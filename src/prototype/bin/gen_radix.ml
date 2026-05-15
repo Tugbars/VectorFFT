@@ -288,27 +288,73 @@ let () =
       fp shared (count_ops shared) 0
     end else shared
   in
-  (* FMA lift was historically applied unconditionally with the comment
-   * "GCC -O3 -mfma auto-fuses un-lifted Mul+Add patterns reliably, so
-   * fma_lift is essentially a no-op for codegen perf." That claim turns
-   * out to be false for composite (Cooley-Tukey) DAGs: explicit NK_Fma
-   * nodes constrain GCC's register allocation more than auto-fused
-   * mul+add chains, producing significantly more vmovapd reg-reg moves
-   * (R=32 SU+Spill: loop-body 251 vmovapd with fma_lift vs ~100 without
-   * — and total FP instructions 910 vs 717, where hand has 709).
+  (* FMA lift gating — per-codelet-family policy (doc 56).
    *
-   * Empirical llvm-mca SKX cycles (R=32 t1_dit loop body):
-   *   With fma_lift:    312 cycles
-   *   Without fma_lift: 226 cycles  (beating hand 338 by 33%)
+   * History: doc 28 gated fma_lift to `aggressive` (= Direct primes) only,
+   * based on a measurement at R=32 t1_dit_su_spill showing 33-48%
+   * regression. That measurement was specific to the UNCONDITIONAL
+   * lifting policy (`liftable_mul = true`) which duplicated shared Muls
+   * across consumers, blowing op count from 717 to 910 instructions.
    *
-   * For primes (Direct construction with conjugate pairs), fma_lift IS a
-   * marginal win (~1-2% on R=13/R=17 cycles) — the prime DAG shape
-   * exposes specific Add(Mul, c) patterns that benefit from explicit FMA
-   * encoding. So gate fma_lift to aggressive (= Direct primes) only.
+   * Doc 56 restored `single_use` as the lifting predicate in
+   * algsimp.ml's fma_lift. With single_use:
+   *   - Every lift is op-count-preserving (1 mul + 1 add → 1 fma)
+   *   - Doc 54's compile failure (hashcons unification across DAG roots)
+   *     does not reproduce — that failure mode was driven by duplicated
+   *     Mul nodes, not by spill_markers/inline_set as initially diagnosed
+   *   - R=32 t1 SU+spill, which doc 28 reported as 33-48% regression,
+   *     now WINS 5.2% with single_use fma_lift and up to 26.8% with
+   *     fma_lift + M-project combined
    *
-   * See docs/28_composite_regression_fma_lift.md for full investigation. *)
+   * With those obstacles removed, the gating simplifies to: enable
+   * fma_lift everywhere except Split_radix (untested, retain doc 28
+   * default).
+   *
+   * Note: there is a SEPARATE performance question, distinct from
+   * correctness — R=64 n1 AVX-512 (the no-twiddle hot path) regresses
+   * ~7% with explicit FMA atoms even under single_use. This is not
+   * about op counts (266 ops preserved); it's about gcc's freedom to
+   * schedule mul+add chains independently of FMA fusion. Resolving
+   * this would require either operand-ordering hints in NK_Fma or
+   * codelet-specific tuning, both outside doc 56's scope.
+   *
+   * VFFT_FORCE_FMA_LIFT=1 / VFFT_DISABLE_FMA_LIFT=1 override for
+   * experimentation. *)
+  let fma_lift_safe =
+    match Vfft_v2.Dft.pick_algorithm n with
+    | Vfft_v2.Dft.Direct -> true
+    | Vfft_v2.Dft.Cooley_Tukey _ -> true
+    | Vfft_v2.Dft.Split_radix -> false in
+  let force_fma_lift =
+    try Sys.getenv "VFFT_FORCE_FMA_LIFT" = "1" with Not_found -> false in
+  let disable_fma_lift =
+    try Sys.getenv "VFFT_DISABLE_FMA_LIFT" = "1" with Not_found -> false in
+  let apply_fma_lift =
+    (fma_lift_safe || force_fma_lift) && not disable_fma_lift in
+  (* Capture spill-marker tags BEFORE fma_lift so they can be passed as
+   * frozen — fma_lift must not rewrite nodes that are spill targets,
+   * because spill_markers reference exact tags and emit_c walks only
+   * the reachable-from-assigns subset. Mirror of the doc 30 / doc 31
+   * peephole fix for lift_sub_neg_mul.
+   *
+   * Computing the tags requires running lift_spill_markers on the
+   * pre-fma_lift DAG. The same call runs again post-fma_lift to build
+   * spill_info; both calls produce the same tags because frozen nodes
+   * are preserved by fma_lift. *)
+  let frozen_tags =
+    if apply_fma_lift && spill_markers <> [] then begin
+      let pre_markers = Vfft_v2.Algsimp.lift_spill_markers ~reassoc spill_markers in
+      let tbl = Hashtbl.create 64 in
+      List.iter (fun (m : Vfft_v2.Algsimp.spill_tag_marker) ->
+        Hashtbl.replace tbl m.re_tag ();
+        Hashtbl.replace tbl m.im_tag ()
+      ) pre_markers;
+      Some tbl
+    end else None
+  in
   let deduped =
-    if aggressive then Vfft_v2.Algsimp.fma_lift post_trans
+    if apply_fma_lift then
+      Vfft_v2.Algsimp.fma_lift ~frozen_tags post_trans
     else post_trans
   in
 

@@ -1,37 +1,21 @@
-(* emit_c.ml — C source emitter for SIMD FFT codelets.
+(* emit_c.ml — naive AVX-512 C emitter for radix-N t1_dit codelets.
  *
- * Input: a list of (Expr.elem_ref * Algsimp.t) assignments, scheduled by
- * schedule.ml. Output: a complete C function string with intrinsics,
- * compilable by gcc-11+ or ICX with `-mavx512f` / `-mavx2 -mfma`.
+ * Walks the hash-consed DAG in topological order, emits one __m512d
+ * variable per node. No scheduling, no register allocation — GCC handles
+ * those when compiling the resulting C.
  *
- * Two declaration forms per node:
- *   - default:  `const __m512d tN = <expr>;`  — gcc picks the register
- *   - pinned:   `register __m512d tN asm("zmmK") = <expr>;
- *                asm volatile ("" : "+v"(tN));`
- *     The volatile barrier is load-bearing: without it gcc treats the
- *     `register asm()` clause as advisory and may reallocate. With it,
- *     the variable IS in zmmK at that program point. Choice between
- *     forms is per-tag, driven by the current_regalloc ref populated
- *     by regalloc.ml (M_PROJECT.md).
+ * The output signature matches user's gen_radix4.py t1_dit form:
  *
- * Codelet shapes (selected via CLI flags in gen_radix.ml, threaded as
- * params here):
- *   --in-place           rio_re/rio_im reads and writes the same buffer
- *                        (default: separate in_re/out_re); ios+me param shape
- *   --twiddled           t1 codelet: pre-multiply inputs by runtime twiddles
- *                        (Cmul atoms); else n1 no-twiddle
- *   --t1s                scalar-broadcast twiddles (one set across all
- *                        K batches) — for inner CT codelets
- *   --dif --bwd          DIF orientation, backward sign — see doc 18
- *   --log3               TP_Log3 twiddle derivation (binary decomposition)
- *   --twidsq             square-block OOP with separate is/os strides
- *                        (doc 43 cascade boundaries)
- *   --strided            Design C 2D row FFT: load-fused 4×4 (AVX2) or
- *                        8×8 (AVX-512) in-register transpose at codelet
- *                        boundary, no scratch buffer (doc 56)
+ *   void radix<N>_t1_dit_fwd_avx512(
+ *       const double *in_re,  const double *in_im,
+ *       double       *out_re, double       *out_im,
+ *       const double *tw_re,  const double *tw_im,
+ *       size_t K)
  *
- * Scheduler selection (Topological / Bisection / SU / Annotated variants)
- * is threaded via the `scheduler` parameter to emit_codelet. *)
+ * Inputs/outputs are split-complex with K-stride layout: element j's real
+ * component is in_re[j*K + k], imag in_im[j*K + k]. Twiddles same layout.
+ * Loop iterates k by 8 (AVX-512 vector width for double).
+ *)
 
 open Algsimp
 
@@ -196,6 +180,67 @@ let current_regalloc : Regalloc.allocation option ref = ref None
  * up name_overrides for reloaded values. *)
 let current_emit_position : int ref = ref 0
 
+(* === Selective pinning (doc 56 follow-up) ===
+ *
+ * When M-project's register pinning is active (current_regalloc is
+ * Some), every scheduled value gets emitted as:
+ *
+ *   register __m512d t<tag> asm("zmmK") = <body>;
+ *   asm volatile ("" : "+v"(t<tag>));
+ *
+ * The `asm volatile` is a side-effect barrier to gcc. It prevents
+ * `Add(Mul(a,b), c) → vfmadd*` auto-contraction across the barrier,
+ * which kills FMA fusion on multi-use Muls that single_use lifting
+ * (in algsimp's fma_lift) correctly refuses to duplicate.
+ *
+ * Measured impact on R=64 n1 AVX-512 hot path: under M-project,
+ * gcc adds ZERO auto-fusion (asm FMA count = source FMA count).
+ * Unbarriered emission gets 160 asm FMAs; barriered gets 117 (with
+ * fma_lift on) or 34 (without). 43-126 FMAs lost to the barriers.
+ *
+ * Mechanism this set targets: NK_Mul nodes whose consumers include
+ * at least one Add/Sub. For these, dropping the pin lets gcc see
+ * the Mul → Add pattern and emit `vfmadd*pd` directly to the Add's
+ * pinned destination register. The Mul value disappears entirely;
+ * no intermediate register is needed; M-project's RA choice for
+ * the Mul (which would have placed it in a specific zmm slot)
+ * becomes moot.
+ *
+ * Conservative scope: only Muls with at least one Add/Sub consumer
+ * are unpinned. Muls consumed solely by Fma/Cmul/output/Neg/Mul
+ * keep their pin — those don't gain from auto-fusion and may
+ * benefit from M-project's RA placement. Add/Sub/Fma/Neg/Cmul
+ * nodes themselves keep their pin: they're either the *result* of
+ * an FMA (already an explicit intrinsic) or values M-project needs
+ * to control directly.
+ *
+ * Gating: VFFT_DISABLE_SELECTIVE_PIN=1 reverts to pin-everything
+ * for A/B testing and as a safety belt.
+ *
+ * Threading: same single-threaded assumption as current_regalloc. *)
+let current_unpin_candidates : (int, unit) Hashtbl.t option ref = ref None
+
+(* Walk the scheduled DAG and identify NK_Mul tags that have at least
+ * one direct Add/Sub consumer. Single-pass; O(nodes + edges). *)
+let compute_unpin_candidates (scheduled : t list) : (int, unit) Hashtbl.t =
+  (* Step 1: find tags of all NK_Mul nodes (these are the candidates) *)
+  let mul_tags : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  List.iter (fun n ->
+    match n.node with
+    | NK_Mul _ -> Hashtbl.replace mul_tags n.tag ()
+    | _ -> ()
+  ) scheduled;
+  (* Step 2: scan Add/Sub nodes, mark any Mul operand as unpin candidate *)
+  let result : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  List.iter (fun n ->
+    match n.node with
+    | NK_Add (a, b) | NK_Sub (a, b) ->
+      if Hashtbl.mem mul_tags a.tag then Hashtbl.replace result a.tag ();
+      if Hashtbl.mem mul_tags b.tag then Hashtbl.replace result b.tag ()
+    | _ -> ()
+  ) scheduled;
+  result
+
 let render_node_def
     ?(no_declarator = false)
     ?(inline_set : (int, unit) Hashtbl.t option = None)
@@ -326,9 +371,26 @@ let render_node_def
      * through to the existing const-decl behavior. The Reg path gives
      * us deterministic register choice; the Default path is
      * byte-identical to pre-M3a output, which is what we want when
-     * VFFT_USE_REGALLOC is unset. *)
+     * VFFT_USE_REGALLOC is unset.
+     *
+     * Selective pinning (doc 56 follow-up): if this node is in
+     * current_unpin_candidates (NK_Mul with at least one Add/Sub
+     * consumer), fall through to const_decl even when regalloc has
+     * a Reg binding for it. This lets gcc auto-fuse the Mul→Add
+     * pattern across what would otherwise be an asm volatile barrier.
+     * The Mul disappears into the consumer's vfmadd instruction;
+     * M-project's chosen register for the Mul becomes moot.
+     * Override: VFFT_DISABLE_SELECTIVE_PIN=1. *)
+    let selective_pin_disabled =
+      try Sys.getenv "VFFT_DISABLE_SELECTIVE_PIN" = "1"
+      with Not_found -> false in
+    let is_unpin_candidate =
+      if selective_pin_disabled then false
+      else match !current_unpin_candidates with
+        | None -> false
+        | Some tbl -> Hashtbl.mem tbl e.tag in
     match !current_regalloc with
-    | Some alloc ->
+    | Some alloc when not is_unpin_candidate ->
       (match Regalloc.lookup alloc e.tag with
        | Regalloc.Reg reg_name ->
          Printf.sprintf "        %s"
@@ -342,6 +404,9 @@ let render_node_def
          Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
        | Regalloc.Default ->
          Printf.sprintf "        %s" (Isa.const_decl isa (v e) body))
+    | Some _ ->
+      (* Selective unpin: drop the pin to enable gcc auto-fusion *)
+      Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
     | None ->
       Printf.sprintf "        %s" (Isa.const_decl isa (v e) body)
 
@@ -662,17 +727,97 @@ let emit_codelet
       match Regalloc.allocate ~isa ~scheduled ~inline_set ~force_last_use () with
       | Regalloc.Allocated alloc ->
         current_regalloc := Some alloc;
+        current_unpin_candidates := Some (compute_unpin_candidates scheduled);
         let (regs, _) = Regalloc.count_bindings alloc in
         Printf.eprintf "[%s:%s] regalloc: %d tags bound\n" name label regs
       | Regalloc.Overflow budget ->
         current_regalloc := None;
+        current_unpin_candidates := None;
         Printf.eprintf "[%s:%s] regalloc: OVERFLOW budget=%d, falling back to default\n"
           name label budget
     end
   in
-  let clear_alloc () = current_regalloc := None in
+  let clear_alloc () =
+    current_regalloc := None;
+    current_unpin_candidates := None
+  in
   let _ = install_alloc in
   let _ = clear_alloc in
+
+  (* === Stage 4 helpers ===
+   *
+   * `install_alloc_canonical` is the Stage-3-aware wrapper around
+   * `Regalloc.allocate`. It takes a `Regalloc.regalloc_input` record
+   * (the canonical shape) rather than three separate optional args.
+   * Used by the prime/n1 path (Stage 4); the cluster-spill recipe
+   * continues to use the older `install_alloc` for compatibility.
+   *
+   * The spill emission helpers (`emit_regalloc_spill_decl`,
+   * `emit_node_spill_sites`, `emit_node_reload_sites`) factor out the
+   * per-position M5/M6 emission patterns from the cluster-spill recipe.
+   * In the spill recipe they remain inline (no need to refactor working
+   * code); the prime/n1 path uses them through this factored form. *)
+  let install_alloc_canonical (label : string)
+        (input : Regalloc.regalloc_input) =
+    if regalloc_enabled then begin
+      match Regalloc.allocate ~isa
+              ~scheduled:input.scheduled
+              ~inline_set:input.inline_set
+              ~force_last_use:input.force_last_use () with
+      | Regalloc.Allocated alloc ->
+        current_regalloc := Some alloc;
+        current_unpin_candidates :=
+          Some (compute_unpin_candidates input.scheduled);
+        let (regs, _) = Regalloc.count_bindings alloc in
+        Printf.eprintf "[%s:%s] regalloc: %d tags bound\n" name label regs
+      | Regalloc.Overflow budget ->
+        current_regalloc := None;
+        current_unpin_candidates := None;
+        Printf.eprintf
+          "[%s:%s] regalloc: OVERFLOW budget=%d, falling back to default\n"
+          name label budget
+    end
+  in
+  let _ = install_alloc_canonical in
+  let emit_regalloc_spill_decl (buf : Buffer.t) =
+    match !current_regalloc with
+    | Some alloc when alloc.num_spill_slots > 0 ->
+      Buffer.add_string buf (Printf.sprintf
+        "        %s regalloc_spill[%d];\n"
+        isa.vec_type alloc.num_spill_slots)
+    | _ -> ()
+  in
+  let emit_node_spill_sites (buf : Buffer.t) (pos : int) =
+    match !current_regalloc with
+    | Some alloc ->
+      (match Hashtbl.find_opt alloc.spill_sites pos with
+       | Some spills ->
+         List.iter (fun (tag, slot) ->
+           Buffer.add_string buf (Printf.sprintf
+             "        %s(&regalloc_spill[%d], t%d);\n"
+             isa.storeu_pd slot tag)
+         ) spills
+       | None -> ())
+    | None -> ()
+  in
+  let emit_node_reload_sites (buf : Buffer.t) (pos : int) =
+    match !current_regalloc with
+    | Some alloc ->
+      (match Hashtbl.find_opt alloc.reload_sites pos with
+       | Some reloads ->
+         List.iter (fun (r : Regalloc.reload_decl) ->
+           Buffer.add_string buf (Printf.sprintf
+             "        %s\n"
+             (Isa.pinned_reg_decl isa r.reload_name r.reload_reg
+                (Printf.sprintf "%s(&regalloc_spill[%d])"
+                   isa.loadu_pd r.reload_slot)))
+         ) reloads
+       | None -> ())
+    | None -> ()
+  in
+  let _ = emit_regalloc_spill_decl in
+  let _ = emit_node_spill_sites in
+  let _ = emit_node_reload_sites in
 
   (* The twidsq flag selects the OOP-with-separate-strides signature.
    * Doc 43 introduced the twidsq math layer; this branch emits the
@@ -1771,16 +1916,39 @@ let emit_codelet
    | None ->
   (match scheduler with
    | Topological ->
-     (* Existing path: emit all definitions in topo order, then stores. *)
+     (* Existing path: emit all definitions in topo order, then stores.
+      *
+      * Stage 4: when VFFT_USE_REGALLOC is set, run M3a/M5/M6 on this
+      * codelet. Topological has no inlining and no duplicate-entry
+      * issue (nodes is topo-sorted with each tag exactly once), but
+      * we still go through prepare_for_simple_codelet for uniformity
+      * and to get force_last_use construction for free. *)
      let roots = List.map snd assigns in
      let nodes = topo_sort_reachable roots in
      record_peak_live "topological_s1" (nodes);
-     List.iter (fun e ->
-       Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+     let input = Regalloc.prepare_for_simple_codelet
+       ~raw_scheduled:nodes ~assigns () in
+     install_alloc_canonical "topo_n1" input;
+     emit_regalloc_spill_decl buf;
+     List.iteri (fun pos e ->
+       current_emit_position := pos;
+       emit_node_spill_sites buf pos;
+       emit_node_reload_sites buf pos;
+       Buffer.add_string buf
+         (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
        Buffer.add_char buf '\n'
-     ) nodes;
+     ) input.scheduled;
+     (* End-of-schedule spill/reload emission. force_last_use put
+      * output tags at position n=List.length input.scheduled, so the
+      * allocator may have spill/reload sites at that position.
+      * Mirrors the cluster-spill recipe's pass1_n handling. *)
+     let n = List.length input.scheduled in
+     current_emit_position := n;
+     emit_node_spill_sites buf n;
+     emit_node_reload_sites buf n;
      Buffer.add_char buf '\n';
-     List.iter (fun (lhs, e) -> emit_store buf lhs e) assigns
+     List.iter (fun (lhs, e) -> emit_store buf lhs e) assigns;
+     clear_alloc ()
 
    | Bisection ->
      (* Frigo's bisection schedule: each entry is either an intermediate
@@ -1795,27 +1963,43 @@ let emit_codelet
       * once; when we hit the output node afterwards, we just store the
       * existing t<tag>. We track which tags have been defined to avoid
       * duplicate definitions. *)
-     let scheduled = Schedule.bisection_schedule assigns in
-     record_peak_live "bisection_s1" (List.map snd scheduled);
+     let scheduled_raw = Schedule.bisection_schedule assigns in
+     record_peak_live "bisection_s1" (List.map snd scheduled_raw);
+     (* Stage 4: route through canonical prep. Bisection has the same
+      * (oref_opt, e) duplicate-entry pattern as SU. *)
+     let input = Regalloc.prepare_for_simple_codelet_from_oref
+       ~raw_scheduled:scheduled_raw ~assigns () in
+     install_alloc_canonical "bisect_n1" input;
+     emit_regalloc_spill_decl buf;
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-     List.iter (fun (oref_opt, e) ->
-       match oref_opt with
-       | None ->
-         (* Intermediate computation: emit definition if not already. *)
-         if not (Hashtbl.mem defined e.tag) then begin
-           Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
-           Buffer.add_char buf '\n'
-         end
-       | Some oref ->
-         (* Output: ensure the value is defined, then emit a store. *)
-         if not (Hashtbl.mem defined e.tag) then begin
-           Hashtbl.add defined e.tag ();
-           Buffer.add_string buf (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
-           Buffer.add_char buf '\n'
-         end;
-         emit_store buf oref e
-     ) scheduled
+     List.iteri (fun pos (e : t) ->
+       current_emit_position := pos;
+       emit_node_spill_sites buf pos;
+       emit_node_reload_sites buf pos;
+       if not (Hashtbl.mem defined e.tag) then begin
+         Hashtbl.add defined e.tag ();
+         Buffer.add_string buf
+           (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+         Buffer.add_char buf '\n'
+       end
+     ) input.scheduled;
+     (* End-of-schedule spill/reload emission. *)
+     let n = List.length input.scheduled in
+     current_emit_position := n;
+     emit_node_spill_sites buf n;
+     emit_node_reload_sites buf n;
+     Buffer.add_char buf '\n';
+     (* Stores at end-of-scope, mirroring SU/Topological pattern. *)
+     List.iter (fun (lhs, e) ->
+       if not (Hashtbl.mem defined e.tag) then begin
+         Hashtbl.add defined e.tag ();
+         Buffer.add_string buf
+           (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+         Buffer.add_char buf '\n'
+       end;
+       emit_store buf lhs e
+     ) assigns;
+     clear_alloc ()
 
    | Annotated_topological ->
      (* Topological order, but emitted with nested-block scopes via annotate.ml.
@@ -1884,53 +2068,58 @@ let emit_codelet
       * hand-coded FFTW codelet style and significantly reduces register
       * pressure for DIF prime codelets.
       *
-      * M3a/M5 regalloc on this path: codelets that don't enter the spill
-      * recipe (primes, n1, anything without CT-decomposed spill markers)
-      * also get install_alloc here. Wrapped in try-with because M5's
-      * Belady eviction can throw "no eviction candidate" on some prime
-      * DAGs at peak pressure — when it throws, current_regalloc stays
-      * None and emission falls back to default const_decl style (same
-      * as gcc-RA-only, no regression). M3a fit / clean M5 spill → we
-      * get register asm pinning. Mirrors the spill-path install_alloc
-      * sites at lines 1291 / 1585. *)
-     let scheduled = Schedule.su_schedule uarch assigns in
-     record_peak_live "su_s1" (List.map snd scheduled);
+      * Stage 4: when VFFT_USE_REGALLOC is set, route through the
+      * canonical prep. The SU scheduler's output contains duplicate
+      * entries when a tag appears as both intermediate (None, e) and
+      * store sink (Some oref, e) — `prepare_for_simple_codelet_from_oref`
+      * dedupes. Emission walks `input.scheduled` (deduped) for defs,
+      * then `assigns` for stores at end-of-scope. This matches the
+      * cluster-spill recipe's def-then-stores ordering and resolves
+      * the position-space ambiguity that broke M7. *)
+     let scheduled_raw = Schedule.su_schedule uarch assigns in
+     record_peak_live "su_s1" (List.map snd scheduled_raw);
      let inline_set = compute_inline_set assigns in
-     (try install_alloc "su_s1" (List.map snd scheduled) (Some inline_set) None
-      with _ ->
-        current_regalloc := None;
-        Printf.eprintf "[%s:su_s1] regalloc: M5 threw, falling back to default\n" name);
-     (* If M5 allocated spill slots, declare the scratch array at the
-      * top of the for-loop body (mirrors the spill recipe site). *)
-     (match !current_regalloc with
-      | Some alloc when alloc.num_spill_slots > 0 ->
-        Buffer.add_string buf (Printf.sprintf
-          "        %s regalloc_spill[%d];\n"
-          isa.vec_type alloc.num_spill_slots)
-      | _ -> ());
+     let input = Regalloc.prepare_for_simple_codelet_from_oref
+       ~raw_scheduled:scheduled_raw ~assigns
+       ~inline_set:(Some inline_set) () in
+     install_alloc_canonical "su_n1" input;
+     emit_regalloc_spill_decl buf;
      let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
      let is_inlined e = Hashtbl.mem inline_set e.tag in
-     List.iter (fun (oref_opt, e) ->
-       match oref_opt with
-       | None ->
-         (* Skip emission for inlined values — their consumer will inline. *)
-         if not (is_inlined e) && not (Hashtbl.mem defined e.tag) then begin
-           Hashtbl.add defined e.tag ();
-           Buffer.add_string buf
-             (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~inline_set:(Some inline_set) e);
-           Buffer.add_char buf '\n'
-         end
-       | Some oref ->
-         (* Stores reference the value by t<tag>, so the value MUST be
-          * named. Sinks are excluded from inline_set, so this is safe. *)
-         if not (Hashtbl.mem defined e.tag) then begin
-           Hashtbl.add defined e.tag ();
-           Buffer.add_string buf
-             (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~inline_set:(Some inline_set) e);
-           Buffer.add_char buf '\n'
-         end;
-         emit_store buf oref e
-     ) scheduled;
+     List.iteri (fun pos (e : t) ->
+       current_emit_position := pos;
+       emit_node_spill_sites buf pos;
+       emit_node_reload_sites buf pos;
+       (* Skip emission for inlined values — their consumer will inline. *)
+       if not (is_inlined e) && not (Hashtbl.mem defined e.tag) then begin
+         Hashtbl.add defined e.tag ();
+         Buffer.add_string buf
+           (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n
+              ~inline_set:(Some inline_set) e);
+         Buffer.add_char buf '\n'
+       end
+     ) input.scheduled;
+     (* End-of-schedule spill/reload emission. *)
+     let n = List.length input.scheduled in
+     current_emit_position := n;
+     emit_node_spill_sites buf n;
+     emit_node_reload_sites buf n;
+     Buffer.add_char buf '\n';
+     (* Output stores happen after the def loop, like Topological.
+      * The cluster-spill recipe does the same pattern (defs in pass,
+      * stores via final List.iter assigns). *)
+     List.iter (fun (lhs, e) ->
+       (* Ensure the value is defined (it should be — SU's intermediate
+        * was in input.scheduled — but the defined-check is harmless). *)
+       if not (Hashtbl.mem defined e.tag) && not (is_inlined e) then begin
+         Hashtbl.add defined e.tag ();
+         Buffer.add_string buf
+           (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n
+              ~inline_set:(Some inline_set) e);
+         Buffer.add_char buf '\n'
+       end;
+       emit_store buf lhs e
+     ) assigns;
      clear_alloc ()
 
    | Annotated_SU uarch ->

@@ -1,29 +1,61 @@
-(* regalloc.ml — SSA-based register allocator with Belady spilling.
+(* regalloc.ml — SSA-based register allocator (M1: types + stub).
  *
- * Sits between schedule.ml (scheduled Algsimp.t list) and emit_c.ml
- * (declaration emission). Returns an `allocation` record mapping each
- * tag to a `Reg "zmmK"` / `Reg "ymmK"` binding or `Default` (fall
- * through to gcc's RA for that tag).
+ * === ROLE IN THE PIPELINE ===
  *
- * Algorithm: linear-scan along the schedule order. Because SSA
- * interference graphs are chordal (Hack & Goos 2006) and the schedule
- * order is a perfect elimination ordering, greedy coloring is
- * provably optimal in linear time. When the budget (vec_regs - 4 on
- * AVX-512, vec_regs - 2 on AVX2) is exhausted, Belady eviction
- * (latest-next-use victim) spills to a `regalloc_spill[]` arena;
- * spilled tags are reloaded into fresh register-pinned variables
- * (`tN_rK`) whose lifetimes are tracked across multiple uses (M6) to
- * avoid redundant loads.
+ * Sits between Schedule (which produces an ordered list of Algsimp.t)
+ * and Emit_c's declaration emission. Maps each tag to either a
+ * concrete physical register name OR Default (fall through to the
+ * existing emit_c behavior, where gcc picks the register).
  *
- * The output is consumed by emit_c.ml's `current_regalloc` ref, which
- * switches per-tag between the `const __m512d` and `register asm()`+
- * barrier declaration forms.
+ * The eventual goal: emit `register __m512d tN asm("zmm5") = ...;`
+ * for every tag, bypassing gcc's register allocator entirely. That
+ * gives compiler-agnostic output — gcc-11, gcc-13, and clang all see
+ * the same register assignment instead of each running their own RA
+ * pass and producing different code.
  *
- * Gated by env vars `VFFT_USE_REGALLOC=1` (M3a only, overflow falls
- * back to gcc) and `VFFT_USE_REGALLOC=1 VFFT_USE_REGALLOC_M5=1`
- * (M3a+M5+M6). With env vars unset, emit_c produces gcc-RA output.
+ * === STAGING ===
  *
- * Full design + measurement record: src/prototype/lib/M_PROJECT.md. *)
+ * M1 (this file): just the types + a stub `allocate_stub` that
+ *   returns an empty allocation. Every tag falls through to Default,
+ *   so output is byte-identical to a build without regalloc.
+ *
+ * M2: live-range analysis. Compute peak_live per codelet; report it
+ *   for sanity-checking against the existing pass-1/pass-2 split.
+ *
+ * M3: real chordal greedy coloring for within-budget codelets (R<=32
+ *   on AVX-512). Emit_c starts consuming the allocation.
+ *
+ * M4: validation cells. R=4 through R=32 across AVX-512 and AVX2 with
+ *   gcc-11.
+ *
+ * M5: pre-spilling for codelets that exceed per-pass register budget
+ *   (R=64 on AVX2, R=128/256 anywhere).
+ *
+ * M6: extend to R=128, R=256.
+ *
+ * === DESIGN NOTES ===
+ *
+ * 1. SSA -> chordal interference graph (Hack & Goos 2006). Since our
+ *    IR is SSA-equivalent via hashconsing (each tag is single
+ *    assignment), the live-range interference graph is chordal.
+ *    Chordal graphs are optimally colorable in polynomial time via
+ *    greedy coloring along a perfect elimination ordering. M3
+ *    implements this; for now we only need the type machinery.
+ *
+ * 2. We do NOT decide spilling here. The pass-1/pass-2 spill markers
+ *    from Algsimp.lift_spill_markers (consumed by Emit_c.make_spill_info)
+ *    pre-decide which values cross the pass boundary. Within each
+ *    pass, chordal coloring tells us what fits. If a pass exceeds
+ *    register budget after that, M5's pre-spilling adds finer-grained
+ *    scratchpad evictions.
+ *
+ * 3. The `Default` assignment is the escape hatch: any tag we don't
+ *    explicitly bind gets emit_c's existing `const __m512d tN = ...;`
+ *    treatment, which leaves register choice to gcc. Useful for:
+ *      - tags that get inlined by `should_inline` and never named
+ *      - the "fused slot" forward-declared values (see emit_c.ml ~256)
+ *      - any case we haven't yet handled
+ *    This is what makes M1 a no-op: every tag is Default. *)
 
 (* What an allocator decides per tag. *)
 type assignment =
@@ -649,6 +681,28 @@ let allocate_with_spilling
    * underlying tag is the one being used by the current instruction,
    * and evicting would orphan the reference. *)
   let pick_belady_victim p =
+    (* Belady victim selection — pick allocated tag with farthest next use.
+     *
+     * Two-part fix (uncovered during Stage 4 R=11/R=17 AVX2 testing):
+     *
+     * Part 1: use `next_use_after tag (p - 1)` not `next_use_after tag p`.
+     *   The latter only sees uses STRICTLY AFTER p. A sentinel covering
+     *   [134, 136, 138] at p=138 would return None (treated as max_int,
+     *   ideal victim) — but 138 IS the current use. Using (p-1) catches
+     *   this: returns 138, smallest possible priority.
+     *
+     * Part 2: FILTER OUT candidates with nu <= p. They're needed RIGHT
+     *   NOW (the current allocation will overwrite their pinned register
+     *   before the consumer at pos p reads it). At extreme pressure
+     *   (R=17/R=19 AVX2), all candidates may have nu = p (every register
+     *   holds a value being read at p). In that case return None —
+     *   allocator must surface this as Overflow, not silently corrupt
+     *   data. Part 1 alone is insufficient because Hashtbl.iter ordering
+     *   is unstable; when everyone has nu = p, the picker arbitrarily
+     *   picks one — silent miscompile. Filtering forces a hard fail.
+     *
+     * Sentinels created AT pos p are already self_protected (don't pick
+     * something just created), which is independent of the nu > p rule. *)
     let best = ref None in
     Hashtbl.iter (fun tag _color ->
       let self_protect =
@@ -658,14 +712,17 @@ let allocate_with_spilling
         else false
       in
       if not self_protect then begin
-        let nu = match next_use_after tag p with
+        let nu = match next_use_after tag (p - 1) with
           | Some k -> k
           | None -> max_int    (* no more uses → ideal victim *)
         in
-        match !best with
-        | None -> best := Some (tag, nu)
-        | Some (_, bnu) when nu > bnu -> best := Some (tag, nu)
-        | _ -> ()
+        (* Filter: only consider candidates strictly after p. *)
+        if nu > p then begin
+          match !best with
+          | None -> best := Some (tag, nu)
+          | Some (_, bnu) when nu > bnu -> best := Some (tag, nu)
+          | _ -> ()
+        end
       end
     ) allocated;
     !best
@@ -846,16 +903,24 @@ let allocate_with_spilling
         ) covered;
         Some name
   in
+  (* Stage 4: Overflow signal — set by do_reload or main-loop Step 2
+   * when pick_belady_victim returns None (extreme pressure). Mirrors
+   * the Exit-flag pattern used by the non-spilling first pass. *)
+  let belady_overflow_at = ref (-1) in
+
   (* The "must-succeed" variant — used by Step 1 (reloads for IR-level
    * preds, which MUST have a register since the node's RHS references
-   * the reload variable name). If this fails, it's a bug or a
-   * fundamental register-pressure issue we can't recover from. *)
+   * the reload variable name).
+   *
+   * Stage 4 addition: if try_reload returns None (no victim available
+   * under extreme pressure), surface as Overflow via belady_overflow_at
+   * + Exit, mirroring Step 2's allocation-failure path. *)
   let do_reload (tag : int) (pos : int) : string =
     match try_reload tag pos with
     | Some name -> name
     | None ->
-      failwith (Printf.sprintf
-        "regalloc: reload at pos %d needs reg but no victim" pos)
+      belady_overflow_at := pos;
+      raise Exit
   in
 
   let do_alloc tag color =
@@ -877,7 +942,16 @@ let allocate_with_spilling
        Hashtbl.replace forced_at pos (tag :: prev)
      ) tbl);
 
-  (* Walk the schedule. *)
+  (* Walk the schedule.
+   *
+   * Stage 4 addition: if `pick_belady_victim` returns None (extreme
+   * pressure where every allocated tag is needed at current pos), we
+   * surface as `Overflow` rather than throwing a fatal exception.
+   * This lets `allocate` fall through to its caller's overflow
+   * handling (typically: caller sees Overflow and skips regalloc,
+   * emitting the codelet via the default non-pinned path). Mirrors
+   * the Exit-flag pattern used in the non-spilling first pass. *)
+  (try
   List.iteri (fun i (e : Algsimp.t) ->
     release_dead i;
     (* Step 1: emit reloads for all spilled preds used at position i.
@@ -932,20 +1006,10 @@ let allocate_with_spilling
          * reuse its color for the current node. *)
         match pick_belady_victim i with
         | None ->
-          (* No evictable victim: every allocated tag is self-protecting
-           * (e.g. all sentinels were created at this same position for
-           * a multi-operand instruction whose ALL operands needed reload
-           * simultaneously). Empirically seen on R=19 t1 — long prime DAG
-           * with bottleneck instructions of 14+ live operands on AVX-2.
-           *
-           * Defensive fall-through: leave THIS tag unallocated. render_
-           * node_def will see no allocation for this tag and emit the
-           * default `const __m256d t<tag> = body;` form, falling back to
-           * gcc-RA for just this value. Surrounding tags keep their M
-           * pinning. Strictly better than aborting the whole codelet. *)
-          Printf.eprintf
-            "regalloc: warning: no eviction candidate at pos %d tag %d \
-             — falling back to gcc-RA for this tag\n" i e.tag
+          (* Extreme pressure: every live tag is used at position i.
+           * Surface as Overflow so the caller can fall back. *)
+          belady_overflow_at := i;
+          raise Exit
         | Some (victim_tag, _) ->
           let freed_color = do_spill victim_tag i in
           do_alloc e.tag freed_color
@@ -970,7 +1034,12 @@ let allocate_with_spilling
          ) tags
        done
      | None -> ())
-  ) scheduled;
+  ) scheduled
+  with Exit -> ());
+
+  if !belady_overflow_at >= 0 then
+    Overflow budget
+  else begin
 
   (* Post-iter: handle force_last_use positions BEYOND the schedule
    * (i.e., position == n). These are tags whose output stores happen
@@ -1000,6 +1069,110 @@ let allocate_with_spilling
               spilled_of_tag = spilled;
               name_overrides;
             }
+  end
+
+(* === Stage 3: Canonical regalloc input ===
+ *
+ * `regalloc_input` is the canonical shape that `allocate` consumes.
+ * It bundles the three parameters (scheduled, inline_set, force_last_use)
+ * that historically were passed as separate optional arguments.
+ *
+ * Two callers produce a regalloc_input:
+ *
+ *   1. The cluster-spill recipe (in emit_c.ml). Its prep is deeply
+ *      entwined with classify_passes, min_slot ordering, cluster-aware
+ *      flush positions, and SU-per-cluster subsetting. It's been working
+ *      correctly for the 9-case regression suite; we leave it as-is.
+ *      It constructs `regalloc_input` records inline and passes them
+ *      to `allocate` directly.
+ *
+ *   2. `prepare_for_simple_codelet` (this module). For straight-line
+ *      codelets without the cluster-spill pass structure: primes,
+ *      n1 codelets, strided variants. Takes raw scheduler output
+ *      (which may contain duplicate entries when the scheduler emits
+ *      both intermediate (None, e) and store sink (Some oref, e)
+ *      entries for the same e) and produces a deduplicated regalloc_input.
+ *
+ * Both callers' outputs are checked at `allocate` entry via the I1+I5
+ * assertions. The dedup property (I1) is enforced structurally by
+ * `prepare_for_simple_codelet`; cluster-spill's pass1_blocked /
+ * pass2_ordered satisfy I1 by their construction (filtered topo sort).
+ *
+ * The Stage 4 prime/n1 hookup will:
+ *   - Run its scheduler (Topo/Bisection/SU) to produce raw scheduled
+ *   - Call prepare_for_simple_codelet to get a canonical regalloc_input
+ *   - Pass to allocate
+ *   - Walk the SAME deduped list for emission (resolves I2 structurally:
+ *     no divergence between allocator's position-space and emitter's
+ *     position-space, because there's exactly one list)
+ *)
+
+type regalloc_input = {
+  scheduled : Algsimp.t list;
+  inline_set : (int, unit) Hashtbl.t option;
+  force_last_use : (int, int) Hashtbl.t option;
+}
+
+(* For simple codelets (no pass-structure cluster-spill recipe).
+ *
+ * Input: `raw_scheduled` may contain duplicate entries — the SU and
+ * Bisection schedulers emit `(oref_opt, e) list` where the same `e`
+ * appears once as intermediate (oref_opt=None) and once as store
+ * sink (oref_opt=Some oref). Callers should flatten via `List.map snd`
+ * before passing, OR pass the full `(oref_opt, e) list` raw if they
+ * want this function to handle the flattening.
+ *
+ * Output: a `regalloc_input` where `scheduled` contains each tag
+ * exactly once (the first occurrence in raw_scheduled, which is the
+ * def position by scheduler convention). `force_last_use` maps each
+ * output tag (from `assigns`) to the end-of-schedule position, so
+ * the allocator keeps output registers live until they can be stored.
+ *
+ * The Topological scheduler's output has no duplicates by construction;
+ * this function still works (dedup is a no-op) and produces the same
+ * regalloc_input shape, so callers can use it uniformly across all
+ * three schedulers. *)
+let prepare_for_simple_codelet
+    ~(raw_scheduled : Algsimp.t list)
+    ~(assigns : (Expr.elem_ref * Algsimp.t) list)
+    ?(inline_set : (int, unit) Hashtbl.t option = None)
+    ()
+    : regalloc_input =
+  (* Dedupe, preserving first occurrence per tag. *)
+  let seen = Hashtbl.create 256 in
+  let deduped = List.filter (fun (e : Algsimp.t) ->
+    if Hashtbl.mem seen e.tag then false
+    else (Hashtbl.add seen e.tag (); true)
+  ) raw_scheduled in
+  (* Build force_last_use: every output tag → end-of-schedule.
+   * This pins output registers as live until the def loop completes,
+   * after which the emitter walks `assigns` to emit stores. The
+   * cluster-spill recipe uses cluster-aware positions instead; for
+   * simple codelets with no cluster structure, end-of-schedule is
+   * the right answer. *)
+  let n = List.length deduped in
+  let force_last_use : (int, int) Hashtbl.t = Hashtbl.create 16 in
+  List.iter (fun (_, (e : Algsimp.t)) ->
+    Hashtbl.replace force_last_use e.tag n
+  ) assigns;
+  { scheduled = deduped;
+    inline_set;
+    force_last_use = Some force_last_use;
+  }
+
+(* Variant for callers that have raw `(oref_opt, e) list` from SU/Bisection.
+ * Flattens then dedupes. *)
+let prepare_for_simple_codelet_from_oref
+    ~(raw_scheduled : (Expr.elem_ref option * Algsimp.t) list)
+    ~(assigns : (Expr.elem_ref * Algsimp.t) list)
+    ?(inline_set : (int, unit) Hashtbl.t option = None)
+    ()
+    : regalloc_input =
+  prepare_for_simple_codelet
+    ~raw_scheduled:(List.map snd raw_scheduled)
+    ~assigns
+    ~inline_set
+    ()
 
 (* === Top-level allocate wrapper (M3a + M5 fallback) ===
  *
@@ -1016,6 +1189,76 @@ let allocate
     ?(force_last_use : (int, int) Hashtbl.t option = None)
     ()
     : alloc_result =
+  (* === Stage 2: Input contract assertions ===
+   *
+   * Encodes the implicit contract documented in REGALLOC_CONTRACT.md.
+   * Catches misuse (e.g. caller passes duplicate entries from raw SU
+   * scheduler output) BEFORE the allocator silently produces wrong
+   * output.
+   *
+   * After empirical testing against the 9-case regression suite, the
+   * checkable subset is:
+   *
+   *   I1 — Each tag appears at most once in `scheduled`.
+   *   I5 — force_last_use keys must be tags that appear in scheduled.
+   *
+   * Invariants attempted but found NOT checkable at the allocator level:
+   *
+   *   I3 (all preds in scope) — fails on legitimate cross-pass references.
+   *     Pass 2 nodes reference pass 1 spilled values via spill_re[]/spill_im[]
+   *     arrays at the C level; the Algsimp DAG retains the pred relation but
+   *     the pred is in a different pass's scheduled list. The allocator's
+   *     existing behavior (silently ignore out-of-scope preds) is correct:
+   *     preds without an entry in `allocated` cause no color leakage in
+   *     release_dead. Without spill_info context, the allocator can't
+   *     distinguish "legitimately cross-pass" from "caller-bug missing".
+   *     Resolved structurally in Stage 3: the canonical prep pass will
+   *     ensure callers pass consistent inputs without needing this check.
+   *
+   *   I4 (inline_set disjoint from scheduled) — fails on legitimate overlap.
+   *     The cluster-spill recipe places inlinable tags in BOTH pass1_blocked
+   *     AND inline_set; the allocator's `is_inlined` check correctly skips
+   *     allocation while still using positions for release_dead bookkeeping.
+   *     My Stage 1 reading misclassified this as a violation.
+   *
+   * I2 (emission order matches scheduled order) and P1 (emitter walks
+   * the same list passed to allocate) are inter-module invariants
+   * resolved structurally in Stage 3; not checkable here.
+   *
+   * I6 (force_last_use values are guaranteed-late) is a hint-only
+   * sanity check, not required for correctness; deferred.
+   *
+   * Failures here are `failwith` — silent wrong output is far worse
+   * than a loud crash during codelet generation.
+   *
+   * I1 alone is sufficient to catch the M7 R=3 AVX-512 bug (duplicate
+   * entries in SU branch's `List.map snd scheduled` output). That was
+   * the original motivating bug for this entire contract project. *)
+  let validate_input () =
+    let scheduled_tags : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    (* I1: dedup check. *)
+    List.iter (fun (e : Algsimp.t) ->
+      if Hashtbl.mem scheduled_tags e.tag then
+        failwith (Printf.sprintf
+          "Regalloc.allocate (I1): tag %d appears multiple times in \
+           scheduled — caller must deduplicate (raw SU/Bisection output \
+           contains (None,e) intermediates AND (Some oref,e) store sinks \
+           for the same e; pass deduplicated emission order)" e.tag);
+      Hashtbl.add scheduled_tags e.tag ()
+    ) scheduled;
+    (* I5: force_last_use keys must be in scheduled. *)
+    (match force_last_use with
+     | None -> ()
+     | Some tbl ->
+       Hashtbl.iter (fun tag _pos ->
+         if not (Hashtbl.mem scheduled_tags tag) then
+           failwith (Printf.sprintf
+             "Regalloc.allocate (I5): force_last_use entry for t%d, \
+              but tag is not in scheduled — caller likely confused \
+              about which tags are in this allocation's scope" tag)
+       ) tbl)
+  in
+  validate_input ();
   let b = match budget with
     | Some b -> b
     | None ->
@@ -1038,4 +1281,3 @@ let allocate
     allocate_with_spilling ~isa ~scheduled ~budget:b
       ~skip_tags ~inline_set ~force_last_use ()
   | Overflow _ as o -> o
-  

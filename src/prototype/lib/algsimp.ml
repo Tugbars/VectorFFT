@@ -1,27 +1,27 @@
-(* algsimp.ml — hash-consed IR with algebraic simplification + CSE.
+(* algsimp.ml — algebraic simplification and common subexpression elimination.
  *
- * Smart constructors (mk_add, mk_mul, ...) intern every node so
- * structurally-equal subtrees become physically the same value. Equality
- * reduces to tag comparison; CSE is automatic.
+ * This is the meat of the math layer. Two responsibilities:
  *
- * Simplifications applied at construction time:
- *   - identity / annihilator folds (x*0=0, x*1=x, x+0=x, x-x=0)
- *   - FP-noise canonicalization (cos(π/2) ≈ 6e-17 → 0)
- *   - Sub(Neg(Mul(a,b)),c) → fnmsub peephole (doc 30)
- *   - Cmul opaque atoms for complex multiplies (re=xr·wr - xi·wi,
- *     im=xr·wi + xi·wr) preserved through reassoc
- *   - fma_lift: Add(Mul(a,b),c) → NK_Fma node (gated to primes only,
- *     doc 28 — regresses composites)
+ *   1. ALGEBRAIC SIMPLIFICATION: fold trivial operations like x*0 = 0,
+ *      x*1 = x, x+0 = x, x-x = 0, etc. Also canonicalize floating-point
+ *      noise like cos(pi/2) = 6e-17 (mathematically zero, computationally
+ *      tiny) into exact zero.
  *
- * Per-DAG passes (run after of_assignments):
- *   - dedup_sub_pairs           canonicalize Sub orderings + merge
- *   - share_subsums             cross-output partial-sum factoring
- *                               (composite/pow2 only, doc 23)
- *   - transposition fixed-point Frigo network transposition, iterated
- *                               with share_subsums between passes
+ *   2. COMMON SUBEXPRESSION ELIMINATION (CSE): identify subtrees that
+ *      appear multiple times and share them. For DFT-N this finds the
+ *      Cooley-Tukey butterfly structure mechanically, without it being
+ *      programmed in.
  *
- * Algorithm-class gating (Direct primes vs CT composites) is in
- * gen_radix.ml via the `aggressive` flag. *)
+ * The CSE trick is hash-consing: smart constructors (mk_add, mk_mul, ...)
+ * intern every newly-built expression, so structurally-equal subtrees
+ * become physically the same value. Equality reduces to pointer/tag
+ * comparison; CSE is automatic.
+ *
+ * Frigo's genfft does this. We do the same with one extension: stronger
+ * canonicalization of floating-point constants, so the generator is
+ * robust to numerical noise from cos/sin computations at radices that
+ * aren't pure power-of-two.
+ *)
 
 open Expr
 
@@ -1531,8 +1531,33 @@ let transpose (assigns : (Expr.elem_ref * t) list)
  * - The pass is "conservative" in that it never lifts when use_count > 1.
  *   It does NOT try to push factoring back to enable more fusion. *)
 
-let fma_lift (assigns : (Expr.elem_ref * t) list)
+(* fma_lift with optional [frozen_tags] set.
+ *
+ * When [frozen_tags] is supplied, any node whose tag is in the set is
+ * returned UNCHANGED by the rewrite, preserving both its tag identity and
+ * its entire subtree. This is required when fma_lift runs alongside the
+ * SU+spill recipe: spill_markers reference tags BEFORE fma_lift; if those
+ * tags are rewritten into Fma atoms, the markers point to nodes orphaned
+ * from the reachable DAG. emit_c walks reachable nodes only, so spill
+ * stores never emit, PASS 2 reloads garbage, and stale operand pointers
+ * (cached in non-rewritten subtrees) reference undeclared tags.
+ *
+ * Mirror of the doc 30 / doc 31 fix for lift_sub_neg_mul: keep the rewrite
+ * self-consistent with respect to ALL DAG roots (assigns + spill_markers),
+ * not just assigns.
+ *
+ * Frozen-tag handling: parents of frozen nodes may still be rewritten;
+ * their operand pointers continue to reference the frozen child (unchanged).
+ * Children of frozen nodes are NOT visited by the rewrite walk through this
+ * path, but are reachable via other parents if shared, in which case those
+ * other paths produce normal rewrites. *)
+let fma_lift ?(frozen_tags : (int, unit) Hashtbl.t option = None)
+             (assigns : (Expr.elem_ref * t) list)
     : (Expr.elem_ref * t) list =
+  let is_frozen tag = match frozen_tags with
+    | None -> false
+    | Some tbl -> Hashtbl.mem tbl tag
+  in
   (* Step 1: Compute global use_count over the assigns DAG. *)
   let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
   let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
@@ -1559,35 +1584,40 @@ let fma_lift (assigns : (Expr.elem_ref * t) list)
   List.iter (fun (_, e) -> bump e.tag; walk e) assigns;
 
   let single_use n = (try Hashtbl.find use_count n.tag with Not_found -> 0) = 1 in
-  let _ = single_use in  (* now using the more permissive `liftable` below *)
 
-  (* A Mul with use_count > 1 can still be lifted into FMAs IF all its
-   * consumers will absorb it via FMA fusion. The cost analysis:
+  (* Lifting policy (doc 56 restoration of single_use):
    *
-   *   Shared (current behavior, single_use only): 1 mul + N adds = N+1 ops
-   *   Duplicated into N fmas:                     N fmas             = N ops
+   * Earlier this function used `liftable_mul = true` unconditionally, with
+   * the argument that duplicating shared Muls is "free" at asm level
+   * because (a) each Fma computes a*b internally and (b) the original Mul
+   * becomes unreachable if all consumers absorb it. That argument breaks
+   * on composite codelets where:
+   *   1. Shared Muls (e.g. twiddle products consumed by multiple
+   *      butterflies) have non-Add consumers that keep the Mul alive,
+   *      AND the duplicated Fmas each redo the multiplication in parallel.
+   *   2. Even when the Mul becomes dead, N parallel Fmas issue N
+   *      independent muls competing for FMA port throughput, where the
+   *      shared schedule issued 1 mul.
    *
-   * Duplication wins by 1 op per shared mul. The "duplication" is
-   * implicit at the asm level: each Fma(a, b, c) computes a*b internally.
-   * The original Mul node becomes unreachable from outputs IF all its
-   * consumers are FMA-lifting Adds/Subs. emit_c won't emit it.
+   * doc 28 measured this as 33-48% regression on R=32 t1 (910 vs 717 FP
+   * instructions, vs hand's 709). The single_use restriction restores
+   * the invariant: every lift is op-count-preserving (1 mul + 1 add → 1
+   * fma), never op-count-increasing.
    *
-   * If the Mul has consumers that AREN'T Add/Sub (e.g., another Mul, a
-   * Cmul operand, or a direct output store), the standalone Mul stays
-   * alive. In that case, lifting an Add consumer still works at the
-   * source level, and at the asm level the Mul is computed once and the
-   * FMA computes its own a*b in parallel — slight redundancy, but
-   * harmless because mul throughput is high (2/cycle on modern x86).
-   *
-   * Net: we always lift Mul into Fma when the consumer is an Add/Sub,
-   * regardless of use_count. *)
-  let liftable_mul (_n : t) : bool = true in
+   * For shared Muls (use_count > 1), fma_lift now leaves them as
+   * Mul + Add patterns. gcc's pattern matcher still contracts them at
+   * the asm level via `-O3 -ffp-contract=fast`, so we don't lose FMAs
+   * for un-lifted patterns — we just keep the operand-ordering
+   * flexibility that lets gcc pick the right fmadd variant during RA. *)
+  let liftable_mul (n : t) : bool = single_use n in
 
   (* Step 2: Walk the DAG, lifting patterns greedily. Each Add/Sub examines
    * its operands; if one is a single-use Mul (or single-use Neg(Mul)),
    * lift to Fma. *)
   let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
   let rec rewrite (n : t) : t =
+    if is_frozen n.tag then n  (* preserve frozen tag identity and subtree *)
+    else
     match Hashtbl.find_opt cache n.tag with
     | Some r -> r
     | None ->
@@ -1644,15 +1674,19 @@ let fma_lift (assigns : (Expr.elem_ref * t) list)
       r
 
   (* Try to fuse `m_node + other` as an FMA — m_node is the candidate
-   * Mul/Neg(Mul) operand of an Add, other is the addend. *)
+   * Mul/Neg(Mul) operand of an Add, other is the addend.
+   * Refuses if m_node is frozen (a spill-marker target) — lifting would
+   * orphan m_node from the rewritten DAG. *)
   and try_lift_add_operand (m_node : t) (other : t) : t option =
+    if is_frozen m_node.tag then None
+    else
     match m_node.node with
     | NK_Mul (a, b) when liftable_mul m_node ->
       (* Fma(a, b, other, F, F) = a*b + other *)
       Some (hashcons (NK_Fma (a, b, other, false, false)))
     | NK_Neg inner when liftable_mul m_node ->
       (match inner.node with
-       | NK_Mul (a, b) when liftable_mul inner ->
+       | NK_Mul (a, b) when liftable_mul inner && not (is_frozen inner.tag) ->
          (* Fma(a, b, other, T, F) = -a*b + other *)
          Some (hashcons (NK_Fma (a, b, other, true, false)))
        | _ -> None)
@@ -1660,13 +1694,15 @@ let fma_lift (assigns : (Expr.elem_ref * t) list)
 
   (* Sub(left, right) where left is Mul/Neg(Mul). *)
   and try_lift_sub_left (left : t) (right : t) : t option =
+    if is_frozen left.tag then None
+    else
     match left.node with
     | NK_Mul (a, b) when liftable_mul left ->
       (* Fma(a, b, right, F, T) = a*b - right *)
       Some (hashcons (NK_Fma (a, b, right, false, true)))
     | NK_Neg inner when liftable_mul left ->
       (match inner.node with
-       | NK_Mul (a, b) when liftable_mul inner ->
+       | NK_Mul (a, b) when liftable_mul inner && not (is_frozen inner.tag) ->
          (* Fma(a, b, right, T, T) = -a*b - right *)
          Some (hashcons (NK_Fma (a, b, right, true, true)))
        | _ -> None)
@@ -1674,13 +1710,15 @@ let fma_lift (assigns : (Expr.elem_ref * t) list)
 
   (* Sub(left, right) where right is Mul/Neg(Mul). *)
   and try_lift_sub_right (left : t) (right : t) : t option =
+    if is_frozen right.tag then None
+    else
     match right.node with
     | NK_Mul (a, b) when liftable_mul right ->
       (* Fma(a, b, left, T, F) = -a*b + left *)
       Some (hashcons (NK_Fma (a, b, left, true, false)))
     | NK_Neg inner when liftable_mul right ->
       (match inner.node with
-       | NK_Mul (a, b) when liftable_mul inner ->
+       | NK_Mul (a, b) when liftable_mul inner && not (is_frozen inner.tag) ->
          (* Fma(a, b, left, F, F) = a*b + left *)
          Some (hashcons (NK_Fma (a, b, left, false, false)))
        | _ -> None)
