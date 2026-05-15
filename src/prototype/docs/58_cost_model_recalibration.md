@@ -249,9 +249,29 @@ CPE rows and cache-tier values should both be regenerated per calibration host. 
 - `src/prototype/cost_model/generated/radix_cpe.h` — banked CPE numbers (Raptor Lake AVX-2)
 - `src/prototype/cost_model/generated/radix_profile.h` — DAG op-count profile (re-measured post-doc56 fma_lift)
 
+## Round 4: me-swept CPE and the 2D experiment
+
+After the buffer floor, the next-priority improvement was understanding why CPE measured at K=256 doesn't transfer to plan stages where me (codelet inner-loop length) varies wildly: a stage with R=16 at N=4096 K=256 has me=65536, not 256. The original bench was measuring one specific operating point that no real plan stage actually uses.
+
+**me-sweep landed**: measure_cpe now sweeps me ∈ {256, 4096, 65536} per (R, variant, isa); factorizer.h interpolates in log-me space. Revealed an empirical phase transition: t1 codelets degrade 3-4× at large me (twiddle table exceeds L3 cache), while t1s stays flat. The min-over-variants lookup now picks t1s automatically at large me. Final mean error: 0.386× (slightly tighter than the 0.43× pre-sweep state).
+
+**2D (me, ios) sweep was attempted next and rolled back**. The hypothesis: 2D-bench captures per-codelet stride-cache behavior directly, making cache_factor redundant. Empirically:
+
+| | V1 mean error |
+|---|---|
+| 1D me + cache_factor | **0.43×** |
+| 2D (me, ios), cache_factor removed | 0.79× ↑ regressed |
+| 2D (me, ios), cache_factor restored | 1.13× ↑↑ double-counts |
+
+The 2D bench captures intra-codelet stride-cache accurately — 2-stage plans like `{64,64}` N=4096 K=256 land at 1.01× of measured. But multi-stage plans regressed because the 2D bench can't capture **cross-stage cache carry**: in the executor, stage s-1's writes warm cache for stage s's reads, and the bench (which measures one codelet in isolation, repeatedly) has different cache state than a multi-stage plan. The 2D experiment definitively showed:
+- ✓ Per-codelet (me, ios) cost can be measured precisely
+- ✗ Cross-stage cache carry cannot — it requires plan-level timing (MEASURE mode)
+
+Rolled back to 1D me-sweep + cache_factor. Final mean error: **0.386×**.
+
 ## Status
 
-- ✓ V1 mean error 5.90× → 0.42× → 0.47× (with DRAM cells added) on Raptor Lake AVX-2
+- ✓ V1 mean error 5.90× → 0.42× → 0.47× → **0.386×** on Raptor Lake AVX-2
 - ✓ Per-regime accuracy: L2-fitting 0.42×, L3-fitting 0.30× (tightest), DRAM 0.63×
 - ✓ Ranking correct on 5/6 plans (N=1024 K=128), 5/7 (N=4096 K=256), 3/5 (N=16384 K=512)
 - ✓ Buffer-streaming floor (`cf=4.0` when `buffer > L3`) catches the DRAM regime
