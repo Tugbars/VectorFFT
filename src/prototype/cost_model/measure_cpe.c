@@ -83,11 +83,13 @@
  */
 #define CPE_N_ME_SAMPLES   3
 static const size_t CPE_ME_VALUES[CPE_N_ME_SAMPLES] = {
-    /* Dropped me=1048576 — bench runs are getting killed at that size on
-     * this host (likely WSL memory pressure or signal). 3 me samples
-     * spanning 256× range still cover the amortization curve well. */
     256, 4096, 65536
 };
+
+/* Per-cell memory cap (kept as a safety net for very large me at very
+ * large R; the 1D sweep at these values is well within bounds for our
+ * radix set, but the check is cheap). */
+#define CPE_BUFFER_CAP     (8 * 1024 * 1024)
 
 /* ─────────────────────── ISA selection ─────────────────────────
  * Default target is AVX-2. Compile with -DVFFT_ISA_AVX512=1 for AVX-512.
@@ -467,12 +469,20 @@ static double bench_one(codelet_fn fn, int R, size_t me, double *cv_out)
 {
     if (fn == NULL) { *cv_out = 0.0; return 0.0; }
     size_t ios = BENCH_K;
+    /* Skip cells that would exceed the buffer cap (safety; the 1D me-sweep
+     * is well within bounds for our radix set). */
+    size_t rio_span = (size_t)(R - 1) * ios + me;
+    size_t tw_span  = (size_t)R * me;
+    if (rio_span > CPE_BUFFER_CAP || tw_span > CPE_BUFFER_CAP) {
+        *cv_out = 0.0;
+        return 0.0;
+    }
     /* rio buffer must span (R-1)*ios + me doubles (last leg's last access). */
-    size_t nelem = (size_t)(R - 1) * ios + me + 64;
+    size_t nelem = rio_span + 64;
     /* Twiddle buffer: the codelet body accesses tw_re/tw_im at offsets
      * j*me + k (NOT j*ios + k) for legs j=1..R-1, k=0..me-1. So the
      * twiddle table needs (R-1)*me doubles, not (R-1)*ios. */
-    size_t ntw   = (size_t)R * me + 64;
+    size_t ntw   = tw_span + 64;
     double *rio_re = xaligned_alloc(nelem * sizeof(double));
     double *rio_im = xaligned_alloc(nelem * sizeof(double));
     double *tw_re  = xaligned_alloc(ntw   * sizeof(double));
@@ -529,7 +539,7 @@ static double predicted_cyc(int R, int is_n1)
 
 typedef struct {
     int    R;
-    /* Per-me-sample arrays: index ∈ [0, CPE_N_ME_SAMPLES). */
+    /* 1D arrays indexed by me sample (CPE_N_ME_SAMPLES). */
     double cyc_n1   [CPE_N_ME_SAMPLES];
     double cyc_t1   [CPE_N_ME_SAMPLES];
     double cyc_t1s  [CPE_N_ME_SAMPLES];
@@ -717,8 +727,6 @@ int main(int argc, char **argv)
             double ns_t1s  = bench_one(e->t1s_fn,  e->R, me, &r->cv_t1s [j]);
             double ns_log3 = bench_one(e->log3_fn, e->R, me, &r->cv_log3[j]);
 
-            /* Convert ns/call → cycles/butterfly: cyc = ns × freq_ghz × 1e-9 × 1e9 / me
-             * = ns × freq_ghz / me. (freq_ghz is in cycles/ns.) */
             r->cyc_n1  [j] = ns_n1   * freq_ghz / (double)me;
             r->cyc_t1  [j] = ns_t1   * freq_ghz / (double)me;
             r->cyc_t1s [j] = r->has_t1s  ? ns_t1s  * freq_ghz / (double)me : 0.0;
@@ -736,9 +744,7 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Regression summary: how well does ops/SIMD predict measured?
-     * Computed per (R, me) pair so we can see how the me-sweep narrows
-     * the gap as me grows (amortization). */
+    /* Regression summary per me cell across all radixes. */
     printf("\n[regression summary: measured cyc / predicted (ops/SIMD) per me sample]\n");
     for (int j = 0; j < CPE_N_ME_SAMPLES; j++) {
         double sum_n1 = 0, sum_t1 = 0, max_resN1 = 0, max_resT1 = 0;
@@ -756,7 +762,7 @@ int main(int argc, char **argv)
                 if (res > max_resT1) max_resT1 = res;
             }
         }
-        printf("  me=%7zu:  n1 mean=%.3f max=%.3f  (n=%d)   t1 mean=%.3f max=%.3f  (n=%d)\n",
+        printf("  me=%7zu:  n1 mean=%.3f max=%.3f (n=%d)   t1 mean=%.3f max=%.3f (n=%d)\n",
                CPE_ME_VALUES[j],
                sum_n1 / (nN1 ? nN1 : 1), max_resN1, nN1,
                sum_t1 / (nT1 ? nT1 : 1), max_resT1, nT1);

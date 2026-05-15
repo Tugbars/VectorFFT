@@ -337,9 +337,10 @@ static int stride_factorize_greedy(int N, size_t K,
  * given me — the optimistic assumption that the planner picks whichever
  * variant runs fastest at this me. */
 
-/* Linear interpolation in log-me space between two CPE samples. */
+/* Linear log-interp between CPE me samples. Returns 0.0 if no useful
+ * data (all samples zero). Falls back to nearest non-zero when one
+ * endpoint is missing. */
 static inline double _cpe_interpolate(const double *samples, size_t me) {
-    /* Find bracket [lo, hi] in CPE_ME_VALUES; clamp at endpoints. */
     int n = CPE_N_ME_SAMPLES;
     if (me <= CPE_ME_VALUES[0])      return samples[0];
     if (me >= CPE_ME_VALUES[n - 1])  return samples[n - 1];
@@ -350,7 +351,6 @@ static inline double _cpe_interpolate(const double *samples, size_t me) {
     double llo = log((double)CPE_ME_VALUES[lo]);
     double lhi = log((double)CPE_ME_VALUES[hi]);
     double t = (lme - llo) / (lhi - llo);
-    /* If either endpoint is 0 (unmeasured), use the non-zero one alone. */
     if (samples[lo] == 0.0) return samples[hi];
     if (samples[hi] == 0.0) return samples[lo];
     return samples[lo] * (1.0 - t) + samples[hi] * t;
@@ -361,17 +361,12 @@ static inline double _radix_cpe_lookup_at_me(int R, int is_first_stage,
     if (R <= 0 || R >= STRIDE_RADIX_PROFILE_MAX_R) return 0.0;
     const stride_radix_cpe_t *t = isa_avx512 ? &stride_radix_cpe_avx512[R]
                                               : &stride_radix_cpe_avx2[R];
-    if (is_first_stage) {
-        double v = _cpe_interpolate(t->cyc_n1, me);
-        return v;
-    }
+    if (is_first_stage) return _cpe_interpolate(t->cyc_n1, me);
     /* Inner stage: interpolate each available t-variant, take min. */
     double best = 1e30;
     double v;
     v = _cpe_interpolate(t->cyc_t1, me);
     if (v > 0.0 && v < best) best = v;
-    /* For t1s/log3, only consider if the first sample is non-zero
-     * (indicates the variant exists for this radix). */
     if (t->cyc_t1s[0] > 0.0) {
         v = _cpe_interpolate(t->cyc_t1s, me);
         if (v > 0.0 && v < best) best = v;
@@ -383,9 +378,7 @@ static inline double _radix_cpe_lookup_at_me(int R, int is_first_stage,
     return (best < 1e29) ? best : 0.0;
 }
 
-/* Back-compat shim — keeps the old signature working for callers that
- * haven't been updated to pass me through. Defaults me to the canonical
- * K=256 sample point. New code should use _radix_cpe_lookup_at_me. */
+/* Back-compat shim — defaults to me=256 sample point. */
 static inline double _radix_cpe_lookup(int R, int is_first_stage, int isa_avx512) {
     return _radix_cpe_lookup_at_me(R, is_first_stage, 256, isa_avx512);
 }
@@ -415,10 +408,10 @@ static inline double _radix_butterfly_cost(int R, int stage_idx,
     }
 
     int is_first_stage = (stage_idx == 0);
-    /* Use the me-swept CPE — the lookup interpolates between sample
-     * points based on the actual inner-loop length the executor will
-     * use at this stage. Crucial for the t1 codelets that degrade
-     * 3-4× at large me (twiddle-bandwidth blowup). */
+    /* me-swept CPE — interpolates between sample points to reflect
+     * amortization at the executor's actual inner-loop length. The
+     * cache_factor in the scoring loop handles stride-dependent
+     * effects on top of this. */
     double cpe = _radix_cpe_lookup_at_me(R, is_first_stage, me, isa_avx512);
     if (cpe > 0.0) return cpe;
 
@@ -558,7 +551,7 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
         /* Per-butterfly cycle cost. Stage 0 uses n1, else inner. */
         /* me at this stage = (N/R) butterflies per FFT × K columns. The
          * me-swept CPE interpolation uses this to pick the right point
-         * on the amortization-cum-twiddle-bandwidth curve. */
+         * on the amortization curve. */
         size_t me_s = (size_t)(N / R) * K;
         double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
 
@@ -566,19 +559,16 @@ static double stride_score_factorization(const int *factors, int nf, size_t K,
         size_t ws = (size_t)R * stride * 16;
 
         /* Cache-fit penalty — recalibrated 2026-05-15 from measured plan
-         * timings on Raptor Lake AVX-2. Previous tiers (1.0, 3.0, 10.0)
-         * were 3-5× too aggressive — HW prefetcher + L3 absorb most of
-         * the DRAM penalty. New tiers derived from {32,32}, {16,16,16},
-         * {64,64}, {4,4,4,4,4} effective-cf measurements. */
+         * timings on Raptor Lake AVX-2. Tiers (1.0, 1.4, 2.3, 4.0) replace
+         * the original (1.0, 3.0, 10.0) which were 3-5× too aggressive.
+         * Buffer-streaming floor (cf_buffer) forces at least DRAM cf when
+         * the whole rio buffer exceeds L3 — captures the case where inner
+         * stages with small per-group ws still stream from DRAM. */
         double cf_stage;
         if      (ws <= l1) cf_stage = 1.0;
         else if (ws <= l2) cf_stage = 1.4;
         else if (ws <= l3) cf_stage = 2.3;
         else               cf_stage = 4.0;
-        /* Effective cf = max(per-stage, buffer-floor). Inner stages
-         * with small per-group ws inherit the buffer's DRAM cost when
-         * total_buffer > L3 (otherwise they'd be optimistically rated
-         * cache-friendly while actually streaming DRAM). */
         double cache_factor = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
 
         /* Data access cost weighted by per-radix butterfly cost.
@@ -671,7 +661,7 @@ static double stride_score_factorization_v2(const int *factors, int nf, size_t K
 
         /* me at this stage = (N/R) butterflies per FFT × K columns. The
          * me-swept CPE interpolation uses this to pick the right point
-         * on the amortization-cum-twiddle-bandwidth curve. */
+         * on the amortization curve. */
         size_t me_s = (size_t)(N / R) * K;
         double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
 
