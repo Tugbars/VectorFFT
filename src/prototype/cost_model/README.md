@@ -165,6 +165,83 @@ grep -cE 'vf(n)?m(add|sub)[0-9]+pd' /tmp/r${R}.s
 # Compare against radix_profile.h column n_fma for the same R / variant.
 ```
 
+## Calibration history (2026-05-15)
+
+The first end-to-end calibration on Raptor Lake AVX-2 dropped V1 mean
+prediction error from **5.90× to 0.42×** (~14× tighter). Two changes:
+
+1. **`_radix_butterfly_cost` now reads measured CPE** from `radix_cpe.h`
+   (4-column: `cyc_n1`, `cyc_t1`, `cyc_t1s`, `cyc_log3`) and falls back to
+   the ops/SIMD profile only when no CPE entry exists. The fallback was
+   previously the only path because `radix_cpe.h` was empty placeholder.
+
+2. **`cache_factor` tiers recalibrated** from `(1.0, 3.0, 10.0)` to
+   `(1.0, 1.4, 2.3, 4.0)` with an L3 tier added. Old tiers were 3-5× too
+   aggressive on Raptor Lake — HW prefetcher + the i9-14900K's 36 MB L3
+   absorb most of the DRAM penalty the 10× factor assumed.
+
+   New tiers derived empirically from effective-cf observations on
+   `{32,32}`, `{16,16,16}`, `{64,64}`, `{4,4,4,4,4}` plans timed via
+   `cost_model/score_and_time_plans.c`.
+
+**Ranking validation**: at N=1024 K=128, the old model ranked the
+6-stage `{4,4,4,4,4}` plan as 2nd-WORST (it's all about "stage count
+penalty"). New model correctly ranks it best (matches measured 437K
+cycles — the empirical winner because tiny per-stage working sets stay
+hot in L1 and the prefetcher streams cleanly). 5/6 plans now ordered
+correctly relative to measured cycles.
+
+**Buffer-streaming floor (added after recalibration)**: every stage
+takes `cf = max(per_stage_cf, cf_buffer)` where `cf_buffer = 4.0` when
+the rio buffer exceeds L3 (DRAM regime), else `0` (per-stage check is
+sufficient). Inside L3 the HW prefetcher absorbs inter-stage cost so
+the per-group ws metric is right; above L3 every stage actually streams
+DRAM regardless of per-group locality. Validated against an N=16384
+K=512 cell — without the floor, inner stages of large plans were rated
+optimistically cache-friendly while actually paying DRAM bandwidth.
+
+**Residual mean error** by regime (architectural floor of per-stage
+independent scoring):
+- L2-fitting cells: ~0.42×
+- L3-fitting cells: ~0.30× (tightest — recalibration matches this regime best)
+- DRAM cells: ~0.63× (buffer floor in right direction, cf=4.0 slightly overshoots)
+
+Sources of remaining error:
+- Per-stage independent scoring (can't see what runs next)
+- No HW prefetcher state model
+- No cross-stage register / cache-line carry beyond the L1 hot-set heuristic
+- No port-contention / OOO-window model
+- CPE banked at K=256 only — doesn't perfectly transfer to other K
+
+Closing further requires K-swept CPE (~6× bench data), pair-table CPE
+(combinatorial in (R_prev, R_curr) × K), or full plan-level MEASURE
+mode. All three are documented alternatives, not cost-model improvements.
+
+**Cost-model V2** (`stride_score_factorization_v2`) adds hot-set carry
+between stages + DTLB pressure modeling. Both are correct but
+quantitatively marginal post-recalibration (V1=0.42, V2=0.43). The
+additions were calibrated against the broken 5.9× baseline; they slightly
+overshoot now. Live alongside V1; tests can call either.
+
+**Per-host portability**: all calibration values (cache tiers, CPE rows,
+dTLB entries / miss cycles) are Raptor Lake AVX-2 specific. To
+recalibrate on a different host:
+
+```bash
+# 1. Bank fresh CPE for the new host
+bash cost_model/build_measure_cpe.sh
+build_tuned/measure_cpe                  # pinned, perf governor
+
+# 2. Re-time the validation plans
+bash cost_model/build_score_and_time.sh
+build_tuned/score_and_time_plans         # pinned
+
+# 3. Read effective cache_factor per plan, update factorizer.h tiers
+```
+
+The 4-column CPE in `radix_cpe.h` and the `(1, 1.4, 2.3, 4)` tiers in
+`factorizer.h` should both be regenerated on each calibration host.
+
 ## Fingerprint extension
 
 Production's `radix_cpe.h` fingerprint includes host OS / CPU / effective

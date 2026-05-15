@@ -73,7 +73,23 @@ let counts_for (r : int) (variant : string) : Vfft_v2.Profile.op_counts option =
     let reassoc = Vfft_v2.Dft.needs_reassoc r in
     let simplified = Vfft_v2.Algsimp.of_assignments ~reassoc assigns in
     let deduped = Vfft_v2.Algsimp.dedup_sub_pairs simplified in
-    Some (Vfft_v2.Profile.count_ops deduped)
+    (* Mirror gen_radix.ml's fma_lift gate (doc 56). Direct and Cooley_Tukey
+     * both get fma_lift; Split_radix off. Without this, n_fma in the
+     * generated profile undercounts what emit_c.ml actually renders for
+     * post-doc56 codelets — composites would show pre-fma_lift counts
+     * (e.g. R=16 t1 avx2: n_fma=33 stale vs ~42+ rendered). For trig
+     * variants there's no algorithm-class gate; they inherit dft_r2c's
+     * own choices, so we don't apply fma_lift to them here. *)
+    let post_lift =
+      match variant with
+      | "n1" | "t1" ->
+        (match Vfft_v2.Dft.pick_algorithm r with
+         | Vfft_v2.Dft.Direct -> Vfft_v2.Algsimp.fma_lift deduped
+         | Vfft_v2.Dft.Cooley_Tukey _ -> Vfft_v2.Algsimp.fma_lift deduped
+         | Vfft_v2.Dft.Split_radix -> deduped)
+      | _ -> deduped  (* trig: no fma_lift here *)
+    in
+    Some (Vfft_v2.Profile.count_ops post_lift)
 
 let emit_table ~(isa : string) ~(variant : string) (radixes : int list) =
   Printf.printf
