@@ -70,9 +70,18 @@ typedef struct {
     /* Per-group full K-replicated twiddle tables. FLAT/LOG3 codelets
      * read these. Layout: grp_tw_re[g][(j-1)*K + k] for j=1..R-1.
      *   FLAT  : combined cf × per_leg (cf already baked in)
-     *   LOG3  : raw per_leg (executor applies cf to ALL legs first) */
+     *   LOG3  : raw per_leg (executor applies cf to ALL legs first)
+     *
+     * Pointer arrays point into pools below (single allocation per
+     * stage). Avoids per-group calloc thrashing — production pattern. */
     double **grp_tw_re;
     double **grp_tw_im;
+    /* Backing pools for tw_scalar_re/im[g] and grp_tw_re/im[g]
+     * (per-stage single-allocation; group pointers index into these). */
+    double *tw_scalar_pool_re;
+    double *tw_scalar_pool_im;
+    double *tw_pool_re;
+    double *tw_pool_im;
     /* n1_fallback path: full per-element twiddle for all R legs.
      * cf_all[g*R*K + j*K + k]. Used at R=64 large-K when (cmul+n1) beats t1. */
     double *cf_all_re;
