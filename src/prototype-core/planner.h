@@ -10,21 +10,22 @@
  * All three:
  *   1. Decide factorization (wisdom's, or greedy largest-first into
  *      available radixes).
- *   2. Allocate stride_plan_t + per-stage layout via twiddle.h's
+ *   2. Decide per-stage variant assignment (wisdom's variants[], or
+ *      default T1S everywhere in estimate mode).
+ *   3. Allocate stride_plan_t + per-stage layout via twiddle.h's
  *      vfft_proto_compute_groups.
- *   3. Wire codelet function pointers from the registry — currently
- *      T1S only (the dominant variant in production wisdom).
- *   4. Compute twiddle tables via vfft_proto_compute_twiddles_dit.
- *   5. Pre-walk the (B)+(A) tape for plan_executors.h lookups.
+ *   4. Wire codelet function pointers from the registry per variant:
+ *        FLAT  → reg->t1_dit_fwd[R]      (t1_fwd slot)
+ *        LOG3  → reg->t1_dit_log3_fwd[R] (t1_fwd slot, use_log3=1)
+ *        T1S   → reg->t1s_dit_fwd[R]    (t1s_fwd slot)
+ *   5. Compute twiddle tables via vfft_proto_compute_twiddles_dit.
+ *   6. Pre-walk the (B)+(A) tape for plan_executors.h lookups.
  *
  * Scope:
  *   - Factorizable N (radixes 2..512). Non-factorable / prime N
  *     returns NULL — caller can fall back to production for those.
  *   - Forward direction only (bwd lands in a later phase).
- *   - T1S variant for inner stages (matches the executor's current
- *     codepath). Future phase extends to FLAT and LOG3 variants;
- *     wisdom entries that prefer those are honored with T1S substitution
- *     (correctness-preserving, may sacrifice some perf).
+ *   - Variants FLAT (0), LOG3 (1), T1S (2). BUF (3) falls back to T1S.
  *   - DIT orientation (DIF deferred).
  */
 #ifndef VFFT_PROTO_CORE_PLANNER_H
@@ -35,6 +36,12 @@
 #include "wisdom_reader.h"
 #include "../prototype/generated/registry.h"  /* IWYU pragma: keep */
 #include <stdlib.h>
+
+/* Variant codes match the wisdom file format. */
+#define VFFT_PROTO_VARIANT_FLAT 0
+#define VFFT_PROTO_VARIANT_LOG3 1
+#define VFFT_PROTO_VARIANT_T1S  2
+#define VFFT_PROTO_VARIANT_BUF  3
 
 /* Available radixes (must match the registry's standard set, sorted
  * largest-first for greedy factorization). */
@@ -47,8 +54,6 @@ static const int VFFT_PROTO_AVAILABLE_RADIXES[] = {
 /* SIMD-aware reorder: pow2 innermost (after factorization). Mirrors
  * production's SIMD reorder pass. */
 static inline void vfft_proto_reorder_pow2_innermost(int *factors, int nf) {
-    /* Move pow2 factors to the END (innermost = last stage). Stable
-     * sort that preserves relative order of same-class factors. */
     int tmp[STRIDE_MAX_STAGES];
     int oi = 0;
     /* Non-pow2 first (outermost). */
@@ -64,8 +69,7 @@ static inline void vfft_proto_reorder_pow2_innermost(int *factors, int nf) {
     memcpy(factors, tmp, (size_t)nf * sizeof(int));
 }
 
-/* Greedy largest-first factorization of N into VFFT_PROTO_AVAILABLE_RADIXES.
- * Returns nf > 0 on success, 0 if N has a prime factor we can't cover. */
+/* Greedy largest-first factorization of N into VFFT_PROTO_AVAILABLE_RADIXES. */
 static inline int vfft_proto_factorize(int N, int *factors) {
     int nf = 0;
     int remaining = N;
@@ -82,29 +86,46 @@ static inline int vfft_proto_factorize(int N, int *factors) {
     return nf;
 }
 
-/* Wire codelet function pointers for one stage based on the radix. */
-static inline void vfft_proto_wire_stage_codelets(
-    stride_stage_t *st, int R, const vfft_proto_registry_t *reg)
+/* Wire codelet function pointers for one stage based on radix + variant.
+ * Returns 0 if the variant's required codelet is missing in reg. */
+static inline int vfft_proto_wire_stage_codelets(
+    stride_stage_t *st, int R, int variant,
+    const vfft_proto_registry_t *reg)
 {
-    /* T1S-only for now (matches executor_generic.h's codepath). FLAT
-     * and LOG3 substitute T1S — correctness-preserving. */
     st->n1_fwd  = reg->n1_fwd[R];
-    st->t1s_fwd = reg->t1s_dit_fwd[R];
+    st->n1_bwd  = reg->n1_bwd[R];  /* required for bwd direction */
+    if (!st->n1_fwd) return 0;
+
+    /* Clear all variant slots first. */
+    st->t1_fwd    = NULL;
+    st->t1s_fwd   = NULL;
+    st->use_log3  = 0;
+
+    switch (variant) {
+    case VFFT_PROTO_VARIANT_LOG3:
+        st->t1_fwd   = reg->t1_dit_log3_fwd[R];
+        st->use_log3 = 1;
+        return st->t1_fwd != NULL;
+    case VFFT_PROTO_VARIANT_FLAT:
+        st->t1_fwd = reg->t1_dit_fwd[R];
+        return st->t1_fwd != NULL;
+    case VFFT_PROTO_VARIANT_T1S:
+    case VFFT_PROTO_VARIANT_BUF:  /* BUF not implemented — fall back to T1S */
+    default:
+        st->t1s_fwd = reg->t1s_dit_fwd[R];
+        if (st->t1s_fwd) return 1;
+        /* T1S unavailable for this radix — try FLAT as last resort. */
+        st->t1_fwd = reg->t1_dit_fwd[R];
+        return st->t1_fwd != NULL;
+    }
 }
 
-/* Build a plan with explicit factorization + registry. Returns NULL on
- * allocation failure or if any required codelet slot is empty in reg. */
+/* Build a plan with explicit factorization + variants + registry. */
 static inline stride_plan_t *vfft_proto_plan_create(
-    int N, size_t K, const int *factors, int nf,
+    int N, size_t K, const int *factors, const int *variants, int nf,
     const vfft_proto_registry_t *reg)
 {
     if (nf <= 0 || nf >= STRIDE_MAX_STAGES) return NULL;
-
-    /* Verify every radix has the codelets we need. */
-    for (int s = 0; s < nf; s++) {
-        int R = factors[s];
-        if (!reg->n1_fwd[R] || !reg->t1s_dit_fwd[R]) return NULL;
-    }
 
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(*plan));
     plan->N = N;
@@ -113,21 +134,34 @@ static inline stride_plan_t *vfft_proto_plan_create(
     plan->use_dif_forward = 0;
     for (int s = 0; s < nf; s++) plan->factors[s] = factors[s];
 
-    /* Wire codelets + compute layout + compute twiddles per stage. */
+    /* Wire codelets for each stage. Stage 0 always uses n1 (no twiddle)
+     * so its variant choice is moot — but we still wire t1/t1s for
+     * consistency with production. */
     for (int s = 0; s < nf; s++) {
-        vfft_proto_wire_stage_codelets(&plan->stages[s], factors[s], reg);
+        int v = variants ? variants[s] : VFFT_PROTO_VARIANT_T1S;
+        if (!vfft_proto_wire_stage_codelets(&plan->stages[s],
+                                             factors[s], v, reg)) {
+            free(plan);
+            return NULL;
+        }
     }
-    vfft_proto_compute_plan_tables(plan);
 
-    /* Pre-walk the (B)+(A) tape so plan_executors.h's specialized path
-     * can dispatch directly when the lookup matches. */
+    /* Compute layout then twiddles (twiddles read st->use_log3 set above). */
+    for (int s = 0; s < nf; s++) {
+        vfft_proto_compute_groups(plan, s);
+        vfft_proto_compute_twiddles_dit(plan, s);
+    }
+
+    /* Pre-walk the (B)+(A) tape. Tape is T1S-shaped (scalar twiddles);
+     * for FLAT/LOG3 stages the tape entries point at grp_tw arrays
+     * instead, but the specialized executor lookup will only fire for
+     * tape shapes its emitted variant matches, so we populate scalars
+     * unconditionally and let the lookup miss for non-T1S plans. */
     for (int s = 0; s < nf; s++) {
         stride_stage_t *st = &plan->stages[s];
         const int G = st->num_groups;
-        if (posix_memalign((void **)&st->tape, 64,
+        if (vfft_proto_posix_memalign((void **)&st->tape, 64,
                            (size_t)G * sizeof(stride_invocation_t)) != 0) {
-            /* Tape allocation failure isn't fatal — generic executor
-             * doesn't use it. Leave NULL. */
             st->tape = NULL;
             continue;
         }
@@ -141,30 +175,26 @@ static inline stride_plan_t *vfft_proto_plan_create(
     return plan;
 }
 
-/* Wisdom-first plan creation. If wis has an entry for (N, K), use its
- * factorization. Otherwise fall back to greedy factorize. Returns NULL
- * for cells we can't handle (non-factorable / prime). */
+/* Wisdom-first plan creation. */
 static inline stride_plan_t *vfft_proto_auto_plan(
     int N, size_t K,
     const vfft_proto_registry_t *reg,
     const vfft_proto_wisdom_t *wis)
 {
-    /* 1. Wisdom hit. */
     if (wis) {
         const vfft_proto_wisdom_entry_t *e =
             vfft_proto_wisdom_lookup(wis, N, K);
         if (e && e->nf > 0 && !e->use_dif_forward) {
-            stride_plan_t *plan = vfft_proto_plan_create(N, K, e->factors, e->nf, reg);
+            stride_plan_t *plan = vfft_proto_plan_create(
+                N, K, e->factors, e->variants, e->nf, reg);
             if (plan) return plan;
-            /* Fall through if codelet shape didn't match. */
         }
     }
 
-    /* 2. Estimate mode: greedy factorize. */
     int factors[STRIDE_MAX_STAGES];
     int nf = vfft_proto_factorize(N, factors);
-    if (nf == 0) return NULL;  /* non-factorable — caller falls back */
-    return vfft_proto_plan_create(N, K, factors, nf, reg);
+    if (nf == 0) return NULL;
+    return vfft_proto_plan_create(N, K, factors, /*variants=*/NULL, nf, reg);
 }
 
 /* Strict wisdom: returns NULL if (N, K) not in wisdom. */
@@ -176,21 +206,19 @@ static inline stride_plan_t *vfft_proto_wise_plan(
     if (!wis) return NULL;
     const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(wis, N, K);
     if (!e || e->nf == 0 || e->use_dif_forward) return NULL;
-    return vfft_proto_plan_create(N, K, e->factors, e->nf, reg);
+    return vfft_proto_plan_create(N, K, e->factors, e->variants, e->nf, reg);
 }
 
-/* Estimate-only plan: ignores wisdom even if present. */
+/* Estimate-only plan: ignores wisdom, defaults to T1S everywhere. */
 static inline stride_plan_t *vfft_proto_estimate_plan(
     int N, size_t K, const vfft_proto_registry_t *reg)
 {
     int factors[STRIDE_MAX_STAGES];
     int nf = vfft_proto_factorize(N, factors);
     if (nf == 0) return NULL;
-    return vfft_proto_plan_create(N, K, factors, nf, reg);
+    return vfft_proto_plan_create(N, K, factors, /*variants=*/NULL, nf, reg);
 }
 
-/* Destroy a plan built by any of the above. Frees twiddle tables, tape,
- * group_base, then the plan itself. */
 static inline void vfft_proto_plan_destroy(stride_plan_t *plan) {
     if (!plan) return;
     vfft_proto_free_plan_tables(plan);

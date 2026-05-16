@@ -126,19 +126,37 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
 {
     stride_stage_t *st = &plan->stages[s];
     const int    nf = plan->num_stages;
+    const size_t K  = plan->K;
     const int    N  = plan->N;
     const int    R  = st->radix;
     const int    ng = st->num_groups;
 
-    /* Allocate per-group arrays. T1S subset only. */
+    /* Allocate per-group arrays. Both scalar (T1S) and K-replicated
+     * (FLAT/LOG3) twiddle tables get populated; storage rule depends on
+     * st->use_log3 (set by planner before this call):
+     *   T1S    consumer reads tw_scalar (combined cf × per_leg)
+     *   FLAT   consumer reads grp_tw    (combined cf × per_leg, K-replicated)
+     *   LOG3   consumer reads grp_tw    (raw per_leg; executor applies cf
+     *                                    to ALL legs before codelet call) */
     st->needs_tw     = (int *)     calloc((size_t)ng, sizeof(int));
     st->cf0_re       = (double *)  calloc((size_t)ng, sizeof(double));
     st->cf0_im       = (double *)  calloc((size_t)ng, sizeof(double));
     st->tw_scalar_re = (double **) calloc((size_t)ng, sizeof(double *));
     st->tw_scalar_im = (double **) calloc((size_t)ng, sizeof(double *));
+    st->grp_tw_re    = (double **) calloc((size_t)ng, sizeof(double *));
+    st->grp_tw_im    = (double **) calloc((size_t)ng, sizeof(double *));
+
+    /* cf_all: K-replicated combined twiddle for ALL R legs (including leg 0).
+     * Layout: cf_all_re[g * R * K + j * K + kk]. Read by the backward
+     * executor as conj(twiddle) to undo the forward pre-multiplication.
+     * Always allocated — bwd direction can be invoked without re-planning. */
+    st->cf_all_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
 
     if (s == 0) {
-        /* First stage: no twiddle. cf0 = 1.0, all groups skip twiddle. */
+        /* First stage: no twiddle. cf0 = 1.0, all groups skip twiddle.
+         * cf_all entries for stage 0 stay zero — bwd executor only reads
+         * them when needs_tw[g] is set, which is false here. */
         for (int g = 0; g < ng; g++) {
             st->cf0_re[g] = 1.0;
             st->cf0_im[g] = 0.0;
@@ -194,6 +212,7 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
             st->needs_tw[g] = 0;
             st->cf0_re[g]   = 1.0;
             st->cf0_im[g]   = 0.0;
+            /* cf_all entries stay zero — bwd skips them when !needs_tw[g]. */
         } else {
             st->needs_tw[g] = 1;
 
@@ -206,24 +225,69 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
             st->cf0_re[g] = cfr;
             st->cf0_im[g] = cfi;
 
-            /* Per-leg scalar twiddles (legs 1..R-1). Method C: combined
-             * = cf0 × per_leg[j]. */
+            /* cf_all leg 0 = cf (per_leg[0] = 1). */
+            {
+                size_t base_idx = (size_t)g * R * K + 0 * K;
+                for (size_t kk = 0; kk < K; kk++) {
+                    st->cf_all_re[base_idx + kk] = cfr;
+                    st->cf_all_im[base_idx + kk] = cfi;
+                }
+            }
+
+            /* Per-leg scalar twiddles (legs 1..R-1). FLAT/T1S store
+             * combined cf × per_leg; LOG3 stores raw per_leg.
+             * grp_tw is the K-replicated version of the same. */
             double *stw_r = (double *)calloc((size_t)(R - 1), sizeof(double));
             double *stw_i = (double *)calloc((size_t)(R - 1), sizeof(double));
             st->tw_scalar_re[g] = stw_r;
             st->tw_scalar_im[g] = stw_i;
 
+            double *gtw_r = (double *)calloc((size_t)(R - 1) * K, sizeof(double));
+            double *gtw_i = (double *)calloc((size_t)(R - 1) * K, sizeof(double));
+            st->grp_tw_re[g] = gtw_r;
+            st->grp_tw_im[g] = gtw_i;
+
+            const int log3 = st->use_log3;
             for (int j = 1; j < R; j++) {
                 int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
                 if (leg_exp < 0) leg_exp += N;
                 double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                 double lr = cos(leg_angle);
                 double li = sin(leg_angle);
-                /* Combined = cf × per_leg (Method C). */
-                double wr = cfr * lr - cfi * li;
-                double wi = cfr * li + cfi * lr;
+                /* Combined twiddle (always cf × per_leg), regardless of variant.
+                 * Forward storage (stw_r/stw_i, gtw_r/gtw_i) varies by variant
+                 * (LOG3 stores raw per_leg without cf); cf_all stores combined
+                 * for ALL variants so bwd doesn't need to branch. */
+                double comb_r = cfr * lr - cfi * li;
+                double comb_i = cfr * li + cfi * lr;
+
+                double wr, wi;
+                if (log3) {
+                    /* LOG3: forward stored value is raw per_leg (no cf baked in). */
+                    wr = lr;
+                    wi = li;
+                } else {
+                    /* T1S/FLAT: forward stored value is combined cf × per_leg. */
+                    wr = comb_r;
+                    wi = comb_i;
+                }
                 stw_r[j - 1] = wr;
                 stw_i[j - 1] = wi;
+                {
+                    size_t base_idx = (size_t)(j - 1) * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        gtw_r[base_idx + kk] = wr;
+                        gtw_i[base_idx + kk] = wi;
+                    }
+                }
+                /* cf_all: combined (variant-independent) for bwd. */
+                {
+                    size_t base_idx = (size_t)g * R * K + (size_t)j * K;
+                    for (size_t kk = 0; kk < K; kk++) {
+                        st->cf_all_re[base_idx + kk] = comb_r;
+                        st->cf_all_im[base_idx + kk] = comb_i;
+                    }
+                }
             }
         }
 
@@ -261,11 +325,19 @@ static inline void vfft_proto_free_plan_tables(stride_plan_t *plan)
                 free(st->tw_scalar_im[g]);
             }
         }
+        if (st->grp_tw_re) {
+            for (int g = 0; g < st->num_groups; g++) {
+                free(st->grp_tw_re[g]);
+                free(st->grp_tw_im[g]);
+            }
+        }
         free(st->tw_scalar_re); free(st->tw_scalar_im);
+        free(st->grp_tw_re);    free(st->grp_tw_im);
+        free(st->cf_all_re);    free(st->cf_all_im);
         free(st->group_base);
         free(st->needs_tw);
         free(st->cf0_re); free(st->cf0_im);
-        if (st->tape) free(st->tape);
+        if (st->tape) vfft_proto_aligned_free(st->tape);
     }
 }
 

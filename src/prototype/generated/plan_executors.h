@@ -29,10 +29,20 @@
 #define STRIDE_MAX_STAGES 16
 
 /* Function pointer types for codelet slots. Used by baseline (function-
- * pointer) executor paths; the spike executor calls by symbol directly. */
+ * pointer) executor paths; the spike executor calls by symbol directly.
+ *
+ *   vfft_proto_codelet_fn — t1/t1s/log3, 6-arg in-place (matches
+ *                            production's stride_t1_fn).
+ *   vfft_proto_n1_fn      — n1, 7-arg OOP (matches production's
+ *                            stride_n1_fn). The registry wraps the
+ *                            6-arg in-place codelet to expose this
+ *                            signature; see registry_<isa>.h. */
 typedef void (*vfft_proto_codelet_fn)(double *, double *,
                                       const double *, const double *,
                                       size_t, size_t);
+typedef void (*vfft_proto_n1_fn)(const double *, const double *,
+                                  double *, double *,
+                                  size_t, size_t, size_t);
 
 /* Pre-walked invocation tape entry (Plan B+A). One entry per (stage,
  * group). Populated at plan-build time so the executor's inner loop is
@@ -57,12 +67,26 @@ typedef struct {
     double *cf0_im;
     double **tw_scalar_re;
     double **tw_scalar_im;
+    /* Per-group full K-replicated twiddle tables. FLAT/LOG3 codelets
+     * read these. Layout: grp_tw_re[g][(j-1)*K + k] for j=1..R-1.
+     *   FLAT  : combined cf × per_leg (cf already baked in)
+     *   LOG3  : raw per_leg (executor applies cf to ALL legs first) */
+    double **grp_tw_re;
+    double **grp_tw_im;
+    /* n1_fallback path: full per-element twiddle for all R legs.
+     * cf_all[g*R*K + j*K + k]. Used at R=64 large-K when (cmul+n1) beats t1. */
+    double *cf_all_re;
+    double *cf_all_im;
+    int    use_n1_fallback;  /* 1 = use cf_all + n1 instead of t1 */
+    int    use_log3;         /* 1 = grp_tw is raw per_leg, apply cf to ALL legs */
     /* Pre-walked tape — what the (B)+(A) spike executor consumes. */
     stride_invocation_t *tape;
     /* Function-pointer slots for baseline (generic-style) executor.
      * The spike executor ignores these and calls by direct symbol. */
-    vfft_proto_codelet_fn n1_fwd;
-    vfft_proto_codelet_fn t1s_fwd;
+    vfft_proto_n1_fn      n1_fwd;   /* 7-arg OOP (in==out for in-place) */
+    vfft_proto_n1_fn      n1_bwd;   /* 7-arg OOP, inverse butterfly for bwd */
+    vfft_proto_codelet_fn t1_fwd;   /* FLAT or LOG3 codelet (per use_log3) */
+    vfft_proto_codelet_fn t1s_fwd;  /* T1S scalar-broadcast codelet */
 } stride_stage_t;
 
 typedef struct {
@@ -74,19 +98,33 @@ typedef struct {
     int    use_dif_forward;
 } stride_plan_t;
 
-/* Stub for the scalar twiddle preprocessing call the executor makes when
- * cf0 is non-trivial. In the spike harness, cf0 is always (1.0, 0.0) and
- * this branch is never taken; provide a stub so plan_executors.h links. */
+#include <immintrin.h>
+
+/* Scalar cmul: (re + i*im) *= (cfr + i*cfi), in-place over n lanes.
+ * Mirrors production's _stride_cmul_scalar_avx2 in src/core/executor.h. */
 static inline void _stride_cmul_scalar_inplace(double *re, double *im,
                                                 size_t n,
                                                 double cfr, double cfi) {
-    (void)re; (void)im; (void)n; (void)cfr; (void)cfi;
-    /* spike harness sets cf0=(1.0,0.0) so this is never called. */
+    __m256d vcfr = _mm256_set1_pd(cfr);
+    __m256d vcfi = _mm256_set1_pd(cfi);
+    size_t k = 0;
+    for (; k + 4 <= n; k += 4) {
+        __m256d vr = _mm256_loadu_pd(re + k);
+        __m256d vi = _mm256_loadu_pd(im + k);
+        __m256d nr = _mm256_fmsub_pd(vr, vcfr, _mm256_mul_pd(vi, vcfi));
+        __m256d ni = _mm256_fmadd_pd(vr, vcfi, _mm256_mul_pd(vi, vcfr));
+        _mm256_storeu_pd(re + k, nr);
+        _mm256_storeu_pd(im + k, ni);
+    }
+    for (; k < n; k++) {
+        double tr = re[k];
+        re[k] = tr * cfr - im[k] * cfi;
+        im[k] = tr * cfi + im[k] * cfr;
+    }
 }
 
 /* SIMD broadcast helper for the FLAT variant's K-blocked tw_buf staging.
  * Mirrors production's _stride_broadcast_avx2 in src/core/executor.h. */
-#include <immintrin.h>
 static inline void _stride_broadcast_2(double *out_re, double *out_im, size_t n,
                                        double s_re, double s_im) {
     __m256d vr = _mm256_set1_pd(s_re);
