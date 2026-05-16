@@ -19,6 +19,16 @@
  * because the math layer t1=t1s; see counts_for. *)
 let radixes_n1  = [2; 3; 4; 5; 6; 7; 8; 10; 11; 12; 13; 16; 17; 19; 20; 25; 32; 64; 128; 256; 512; 1024]
 let radixes_t1  = [2; 4; 5; 6; 7; 8; 10; 11; 12; 13; 16; 17; 19; 20; 25; 32; 64; 128; 256; 512; 1024]
+(* log3 covers the same radix set as t1 at the math layer (TP_Log3 is a
+ * substitution into dft_expand_twiddled; the policy applies to external
+ * twiddles regardless of radix). The current generator scripts only
+ * emit log3 .c files for pow2 codelets, but the profile is useful for
+ * ALL radixes — measure_cpe's CPE table picks the min-cost variant per
+ * radix, and the cost model wants to see log3's ops/SIMD for any radix
+ * where it might pay off. If dft_expand_twiddled with TP_Log3 throws
+ * on a particular R, counts_for's try/with falls through to None and
+ * the slot is left zero in the emitted table. */ *)
+let radixes_log3 = [2; 4; 5; 6; 7; 8; 10; 11; 12; 13; 16; 17; 19; 20; 25; 32; 64; 128; 256; 512; 1024]
 
 (* Trig codelet inventory under src/prototype/codelets/{isa}/trig/.
  * Identical across both ISAs; populated by scripts/generate_codelets.sh
@@ -51,6 +61,12 @@ let counts_for (r : int) (variant : string) : Vfft_v2.Profile.op_counts option =
     match variant with
     | "n1" -> (try Some (Vfft_v2.Dft.dft_expand r) with _ -> None)
     | "t1" -> (try Some (Vfft_v2.Dft.dft_expand_twiddled r) with _ -> None)
+    (* log3 = t1 DAG with TP_Log3 twiddle policy. Twiddle Loads are
+     * replaced by Cmul derivation chains from a small base set of
+     * power-of-2 W values — fewer loads but more arithmetic. The DAG
+     * counts here include those extra Cmul nodes, so n_load drops and
+     * n_mul/n_fma rise relative to the plain t1 row. */ *)
+    | "log3" -> (try Some (Vfft_v2.Dft.dft_expand_twiddled ~policy:Vfft_v2.Dft.TP_Log3 r) with _ -> None)
     (* Trig transforms — same hash-cons + dedup pipeline as n1/t1.
      * Matches the v1 pipeline used by gen_radix.ml before the optional
      * factor/share passes; gives a stable baseline that compares apples-
@@ -82,7 +98,7 @@ let counts_for (r : int) (variant : string) : Vfft_v2.Profile.op_counts option =
      * own choices, so we don't apply fma_lift to them here. *)
     let post_lift =
       match variant with
-      | "n1" | "t1" ->
+      | "n1" | "t1" | "log3" ->
         (match Vfft_v2.Dft.pick_algorithm r with
          | Vfft_v2.Dft.Direct -> Vfft_v2.Algsimp.fma_lift deduped
          | Vfft_v2.Dft.Cooley_Tukey _ -> Vfft_v2.Algsimp.fma_lift deduped
@@ -145,6 +161,7 @@ let emit_header ~isas =
   List.iter (fun isa ->
     emit_table ~isa ~variant:"n1" radixes_n1;
     emit_table ~isa ~variant:"t1" radixes_t1;
+    emit_table ~isa ~variant:"log3" radixes_log3;
     (* Trig profile tables — one per (transform, isa). Indexed by N
      * (the transform size), same array-of-struct layout as the C2C
      * tables so the same _stride_total_ops helper applies. *)

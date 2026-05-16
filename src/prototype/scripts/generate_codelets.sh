@@ -79,9 +79,10 @@
 #   classes — the generator's internal dispatch picks the right pipeline
 #   based on pick_algorithm(N). You don't need different flags per
 #   family for this. The family separation in this script reflects
-#   different VARIANT MATRICES (e.g., log3 only applies to pow2) and
 #   per-family wisdom from docs 33-42 about optimal CT factorizations,
-#   not different optimization-pass gating.
+#   not different optimization-pass gating. log3 now applies to every
+#   family (primes, composites, pow2) — TP_Log3 is a Cmul-derivation
+#   pass on EXTERNAL twiddles, orthogonal to the Direct/CT kernel split.
 #
 # Reference: bin/gen_radix.ml around line 158 (the `aggressive` flag)
 # and the doc 28 / 29 / 30 writeups for the empirical motivation.
@@ -93,7 +94,9 @@
 #     - Recipe auto-fires for R ≥ 5 (doc 29)
 #     - Conjugate-pair construction for odd primes ≥ 3 (doc 23)
 #     - fma_lift gated to primes only (doc 28)
-#     - Variants: t1/t1s × DIT/DIF × Fwd/Bwd = 8 per radix
+#     - Variants: t1/t1s × DIT/DIF × Fwd/Bwd × Flat/Log3 = 16 per radix
+#       (log3 added 2026-05-16; prod wisdom uses primes-log3 for inner
+#       stages of large plans, e.g. R=13 ×6 at N=2197.)
 #
 #   POW2 (R ∈ {4,8,16,32,64,128,256,512})
 #     - Recipe + SU auto-fires (doc 13)
@@ -108,6 +111,8 @@
 #
 #   SMALL NON-PRIME COMPOSITES (R ∈ {6,10,12,20,25})
 #     - Generated for completeness; recipe applies
+#     - log3 ON (2026-05-16): R=25 is the largest single log3 user in
+#       production wisdom (15 selections). R=10/12/20 also picked.
 #
 #   COMPILER (doc 38): gcc-11 + -flive-range-shrinkage on AVX-512
 #     gcc-13 is fine for AVX2 (the flag's AVX2 effect varies by R)
@@ -229,8 +234,9 @@ emit_variants() {
   emit_codelet $R $isa $family "--t1s --dif"                   "t1s_dif_fwd"
   emit_codelet $R $isa $family "--t1s --dif --bwd"             "t1s_dif_bwd"
 
-  # log3 variants: only for pow2 R ≥ 4 where TP_Log3 is meaningful.
-  # Log3 derives twiddles by binary decomposition (R=2 → trivial, skip).
+  # log3 variants: TP_Log3 derives external twiddles by binary
+  # decomposition. Applies at every family (primes, composites, pow2);
+  # R=2 trivially equals flat, so callers may skip it.
   if [ "$with_log3" = "yes" ]; then
     emit_codelet $R $isa $family "--log3"                      "t1_dit_fwd_log3"
     emit_codelet $R $isa $family "--log3 --bwd"                "t1_dit_bwd_log3"
@@ -347,27 +353,21 @@ for isa in $ISAS; do
   for family in $FAMILIES; do
     case $family in
       primes)
-        # Primes: 8 t1/t1s variants + 2 n1 variants per R. No log3 (twiddle
-        # reduction doesn't apply to monolithic prime DFTs in our generator).
+        # Primes: 8 t1/t1s variants + 8 log3 variants + 2 n1 variants per R.
+        # log3 IS meaningful for primes: TP_Log3 applies at the external
+        # twiddle layer (Cmul wrappers around the monolithic DFT), not at
+        # the kernel level — so derived twiddles save bandwidth on the
+        # innermost stage even when the kernel is a Winograd direct DFT.
+        # Production wisdom selects log3 for R∈{3,5,7,11,13,17,19} on
+        # innermost stages of large plans (see vfft_wisdom_tuned.txt).
         echo "  └─ family: primes ($PRIMES)"
         for R in $PRIMES; do
           # n1 first-stage codelets (DIT fwd / DIF bwd entry points).
           emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
 
-          for v in t1_dit_fwd t1_dit_bwd t1_dif_fwd t1_dif_bwd \
-                   t1s_dit_fwd t1s_dit_bwd t1s_dif_fwd t1s_dif_bwd; do
-            # Build the flag string from variant name
-            flags=""
-            [[ "$v" == *"t1s"* ]] && flags="$flags --t1s"
-            [[ "$v" == *"dif"* ]] && flags="$flags --dif"
-            [[ "$v" == *"bwd"* ]] && flags="$flags --bwd"
-            if emit_codelet $R $isa $family "$flags" "$v"; then
-              TOTAL_OK=$((TOTAL_OK+1))
-            else
-              TOTAL_FAIL=$((TOTAL_FAIL+1))
-            fi
-          done
+          emit_variants $R $isa $family yes
+          TOTAL_OK=$((TOTAL_OK + 16))
         done
         ;;
 
@@ -424,12 +424,16 @@ for isa in $ISAS; do
 
       composites)
         # Small non-prime composites used by mixed-radix planners.
+        # log3 ON: production wisdom selects R=25 with log3 15 times (more
+        # than any other radix) and R=10/12/20 once each as innermost
+        # stages. The log3 derivation saves twiddle bandwidth on big-me
+        # inner-stage runs, which is exactly where these composites land.
         echo "  └─ family: composites ($COMPOSITES)"
         for R in $COMPOSITES; do
           emit_n1_codelet $R $isa $family ""      "n1_fwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
           emit_n1_codelet $R $isa $family "--bwd" "n1_bwd" && TOTAL_OK=$((TOTAL_OK+1)) || TOTAL_FAIL=$((TOTAL_FAIL+1))
-          emit_variants $R $isa $family no  # log3 supported only for pow2
-          TOTAL_OK=$((TOTAL_OK + 8))
+          emit_variants $R $isa $family yes
+          TOTAL_OK=$((TOTAL_OK + 16))
         done
         ;;
 

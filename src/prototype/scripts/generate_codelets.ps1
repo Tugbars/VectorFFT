@@ -61,8 +61,10 @@
     The same gen_radix.exe N --twiddled ... command works for all
     radixes; the generator's internal dispatch picks the right pipeline
     based on pick_algorithm(N). Family separation in this script
-    reflects different VARIANT MATRICES (log3 only on pow2, etc.) and
-    per-family wisdom from docs 33-42, NOT optimization-pass gating.
+    reflects per-family wisdom from docs 33-42, NOT optimization-pass
+    gating. log3 now applies to every family (primes, composites, pow2)
+    — TP_Log3 is a Cmul-derivation pass on EXTERNAL twiddles,
+    orthogonal to the Direct/CT kernel split.
 
     Reference: bin/gen_radix.ml around line 158 (the `aggressive` flag)
     and the doc 23 / 28 / 30 writeups for empirical motivation.
@@ -74,7 +76,7 @@
         - Recipe auto-fires for R ≥ 5 (doc 29)
         - Conjugate-pair construction for odd primes ≥ 3 (doc 23)
         - fma_lift gated to primes only (doc 28)
-        - 8 variants per R
+        - 16 variants per R (8 flat + 8 log3, log3 added 2026-05-16)
 
       POW2 (R ∈ {4,8,16,32,64,128,256,512})
         - Recipe + SU auto-fires (doc 13)
@@ -89,7 +91,8 @@
         - 2 variants
 
       SMALL NON-PRIME COMPOSITES (R ∈ {6,10,12,20,25})
-        - Recipe applies, 8 variants
+        - Recipe applies, 16 variants (log3 added 2026-05-16: R=25 is
+          the single largest log3 user in production wisdom)
 
       COMPILER (doc 38): gcc-11 + -flive-range-shrinkage on AVX-512.
         gcc-13 fine for AVX2 (flag's AVX2 effect varies by R).
@@ -350,20 +353,16 @@ foreach ($isaName in $Isas) {
 
         switch ($family) {
             "primes" {
+                # 8 flat t1/t1s + 8 log3 variants + 2 n1 per R.
+                # log3 IS meaningful for primes: TP_Log3 applies at the
+                # external twiddle layer (Cmul wrappers), not the kernel.
+                # Production wisdom uses R∈{3,5,7,11,13,17,19} log3 on
+                # innermost stages of large plans.
                 Write-Host "  └─ family: primes ($radixStr)"
                 foreach ($r in $radixes) {
                     if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
                     if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
-                    foreach ($v in @("t1_dit_fwd","t1_dit_bwd","t1_dif_fwd","t1_dif_bwd",
-                                      "t1s_dit_fwd","t1s_dit_bwd","t1s_dif_fwd","t1s_dif_bwd")) {
-                        $flags = @()
-                        if ($v -like "*t1s*") { $flags += "--t1s" }
-                        if ($v -like "*dif*") { $flags += "--dif" }
-                        if ($v -like "*bwd*") { $flags += "--bwd" }
-                        if (Invoke-Codelet -R $r -IsaName $isaName -Family $family -Flags $flags -Suffix $v) {
-                            $TotalOK++
-                        } else { $TotalFail++ }
-                    }
+                    $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $true)
                 }
             }
 
@@ -391,11 +390,14 @@ foreach ($isaName in $Isas) {
             }
 
             "composites" {
+                # log3 ON (2026-05-16): R=25 is the largest single log3
+                # user in production wisdom (15 selections). R=10/12/20
+                # also picked as innermost stages.
                 Write-Host "  └─ family: composites ($radixStr)"
                 foreach ($r in $radixes) {
                     if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @()        -Suffix "n1_fwd") { $TotalOK++ } else { $TotalFail++ }
                     if (Invoke-N1 -R $r -IsaName $isaName -Family $family -ExtraFlags @("--bwd") -Suffix "n1_bwd") { $TotalOK++ } else { $TotalFail++ }
-                    $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $false)
+                    $TotalOK += (Invoke-Variants -R $r -IsaName $isaName -Family $family -WithLog3 $true)
                 }
             }
 
