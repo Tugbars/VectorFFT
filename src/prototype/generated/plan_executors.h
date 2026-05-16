@@ -84,16 +84,51 @@ static inline void _stride_cmul_scalar_inplace(double *re, double *im,
     /* spike harness sets cf0=(1.0,0.0) so this is never called. */
 }
 
+/* SIMD broadcast helper for the FLAT variant's K-blocked tw_buf staging.
+ * Mirrors production's _stride_broadcast_avx2 in src/core/executor.h. */
+#include <immintrin.h>
+static inline void _stride_broadcast_2(double *out_re, double *out_im, size_t n,
+                                       double s_re, double s_im) {
+    __m256d vr = _mm256_set1_pd(s_re);
+    __m256d vi = _mm256_set1_pd(s_im);
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        _mm256_storeu_pd(out_re + i, vr);
+        _mm256_storeu_pd(out_im + i, vi);
+    }
+    for (; i < n; i++) {
+        out_re[i] = s_re; out_im[i] = s_im;
+    }
+}
+
+/* K-block size for FLAT variant tw_buf staging. Mirrors production's
+ * STRIDE_TW_BLOCK_K=64. Keeps the staging buffer in L1 for any R≤64. */
+#ifndef VFFT_PROTO_TW_BLOCK_K
+#define VFFT_PROTO_TW_BLOCK_K 64
+#endif
+
 #endif /* VFFT_PROTO_USE_PRODUCTION_PLAN_T */
 
 /* Externs for the codelets called by the executors below. */
 extern void radix4_n1_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
+extern void radix4_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix4_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
 extern void radix4_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix8_n1_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix8_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix8_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -310,6 +345,349 @@ static void exec_n1024_k128_44444_v02222_dit_fwd_avx2(const stride_plan_t *plan,
     }
 }
 
+/* Plan-shaped executor specialization
+ *   N=131072 K=4
+ *   factors=4,4,4,4,8,4,4,4
+ *   variants=FLAT,FLAT,FLAT,FLAT,FLAT,FLAT,FLAT,FLAT
+ *   orient=DIT dir=FWD isa=avx2
+ *
+ * Drop-in replacement for _stride_execute_fwd_slice_from when the
+ * runtime plan matches the tuple above. */
+static void exec_n131072_k4_44448444_v00000000_dit_fwd_avx2(const stride_plan_t *plan,
+                                                           double *re, double *im,
+                                                           size_t slice_K, size_t full_K,
+                                                           int start_stage)
+{
+    (void)full_K;  /* unused for T1S-only plans */
+
+    /* Stage 0: R=4, variant=FLAT */
+    if (start_stage <= 0) {
+        const stride_stage_t *st = &plan->stages[0];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            size_t base = tape[g].base;
+            radix4_n1_fwd_avx2(re + base, im + base, NULL, NULL, stride, slice_K);
+        }
+    }
+
+    /* Stage 1: R=4, variant=FLAT */
+    if (start_stage <= 1) {
+        const stride_stage_t *st = &plan->stages[1];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 2: R=4, variant=FLAT */
+    if (start_stage <= 2) {
+        const stride_stage_t *st = &plan->stages[2];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 3: R=4, variant=FLAT */
+    if (start_stage <= 3) {
+        const stride_stage_t *st = &plan->stages[3];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 4: R=8, variant=FLAT */
+    if (start_stage <= 4) {
+        const stride_stage_t *st = &plan->stages[4];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[7 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[7 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 7; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix8_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 5: R=4, variant=FLAT */
+    if (start_stage <= 5) {
+        const stride_stage_t *st = &plan->stages[5];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 6: R=4, variant=FLAT */
+    if (start_stage <= 6) {
+        const stride_stage_t *st = &plan->stages[6];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+
+    /* Stage 7: R=4, variant=FLAT */
+    if (start_stage <= 7) {
+        const stride_stage_t *st = &plan->stages[7];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            double *base_re = re + inv.base;
+            double *base_im = im + inv.base;
+            double tw_buf_re[3 * VFFT_PROTO_TW_BLOCK_K];
+            double tw_buf_im[3 * VFFT_PROTO_TW_BLOCK_K];
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;
+                for (int j = 0; j < 3; j++) {
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                        tw_buf_im + (size_t)j * this_K,
+                                        this_K, inv.tw_re[j], inv.tw_im[j]);
+                }
+                radix4_t1_dit_fwd_avx2(base_re + kb, base_im + kb,
+                                           tw_buf_re, tw_buf_im,
+                                           stride, this_K);
+            }
+        }
+    }
+}
+
+/* Plan-shaped executor specialization
+ *   N=131072 K=4
+ *   factors=4,4,4,4,8,4,4,4
+ *   variants=FLAT,LOG3,LOG3,LOG3,LOG3,LOG3,LOG3,LOG3
+ *   orient=DIT dir=FWD isa=avx2
+ *
+ * Drop-in replacement for _stride_execute_fwd_slice_from when the
+ * runtime plan matches the tuple above. */
+static void exec_n131072_k4_44448444_v01111111_dit_fwd_avx2(const stride_plan_t *plan,
+                                                           double *re, double *im,
+                                                           size_t slice_K, size_t full_K,
+                                                           int start_stage)
+{
+    (void)full_K;  /* unused for T1S-only plans */
+
+    /* Stage 0: R=4, variant=FLAT */
+    if (start_stage <= 0) {
+        const stride_stage_t *st = &plan->stages[0];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            size_t base = tape[g].base;
+            radix4_n1_fwd_avx2(re + base, im + base, NULL, NULL, stride, slice_K);
+        }
+    }
+
+    /* Stage 1: R=4, variant=LOG3 */
+    if (start_stage <= 1) {
+        const stride_stage_t *st = &plan->stages[1];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 2: R=4, variant=LOG3 */
+    if (start_stage <= 2) {
+        const stride_stage_t *st = &plan->stages[2];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 3: R=4, variant=LOG3 */
+    if (start_stage <= 3) {
+        const stride_stage_t *st = &plan->stages[3];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 4: R=8, variant=LOG3 */
+    if (start_stage <= 4) {
+        const stride_stage_t *st = &plan->stages[4];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix8_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 5: R=4, variant=LOG3 */
+    if (start_stage <= 5) {
+        const stride_stage_t *st = &plan->stages[5];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 6: R=4, variant=LOG3 */
+    if (start_stage <= 6) {
+        const stride_stage_t *st = &plan->stages[6];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+
+    /* Stage 7: R=4, variant=LOG3 */
+    if (start_stage <= 7) {
+        const stride_stage_t *st = &plan->stages[7];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;  /* hoisted */
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+        }
+    }
+}
+
 
 /* Lookup: returns the specialized executor for this plan or NULL.
  * Caller is expected to fall back to _stride_execute_fwd_slice_from
@@ -341,6 +719,32 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && plan->factors[3] == 4
         && plan->factors[4] == 4)
         return exec_n1024_k128_44444_v02222_dit_fwd_avx2;
+
+    /* Entry: N=131072 K=4 factors=4,4,4,4,8,4,4,4 */
+    if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 8
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 4
+        && plan->factors[4] == 8
+        && plan->factors[5] == 4
+        && plan->factors[6] == 4
+        && plan->factors[7] == 4)
+        return exec_n131072_k4_44448444_v00000000_dit_fwd_avx2;
+
+    /* Entry: N=131072 K=4 factors=4,4,4,4,8,4,4,4 */
+    if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 8
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 4
+        && plan->factors[4] == 8
+        && plan->factors[5] == 4
+        && plan->factors[6] == 4
+        && plan->factors[7] == 4)
+        return exec_n131072_k4_44448444_v01111111_dit_fwd_avx2;
 
     return NULL;  /* cold cell — caller falls back to generic */
 }

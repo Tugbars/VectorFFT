@@ -74,3 +74,4 @@ src/prototype/docs/59_avx512_strided_test_guide.md
 /src/prototype/_build/default
 /src/prototype/_build
 /src/prototype/_build_bench
+/src/prototype/build_tuned
