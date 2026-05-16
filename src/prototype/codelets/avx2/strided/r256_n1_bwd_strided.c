@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx2,fma")))
-void radix256_n1_bwd_avx2_gen_strided(
+void radix256_n1_bwd_avx2_strided(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,

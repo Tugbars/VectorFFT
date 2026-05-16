@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx2,fma")))
-void radix16_dct4_avx2_gen(
+void radix16_dct4_avx2(
     const double * __restrict__ in_re,
     const double * __restrict__ in_im,
     double       * __restrict__ out_re,
