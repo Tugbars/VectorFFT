@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx2,fma")))
-void radix8_t1s_dit_bwd_avx2_gen_inplace_su_spill(
+void radix8_t1s_dit_bwd_avx2(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,

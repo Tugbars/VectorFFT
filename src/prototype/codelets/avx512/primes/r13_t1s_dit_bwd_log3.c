@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx512f")))
-void radix13_t1s_dit_log3_bwd_avx512_gen_inplace_su(
+void radix13_t1s_dit_log3_bwd_avx512(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,

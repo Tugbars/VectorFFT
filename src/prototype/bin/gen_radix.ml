@@ -370,94 +370,75 @@ let () =
   in
 
   if !emit_c then begin
-    let suffix = if !in_place then "_inplace" else "" in
+    (* Symbol naming aligned with production (src/stride-fft/codelets/{isa}/):
+     * radix{R}_{variant}_{isa}. No _gen, _inplace, _su, _spill suffixes.
+     *
+     * The old suffix machinery encoded which codegen passes fired (Sethi-
+     * Ullman scheduler, spill recipe, in-place vs OOP). With M-active being
+     * universal post-doc-56 and the in-place vs OOP distinction captured
+     * by separate variant strings (n1 vs t1_oop), per-symbol decoration of
+     * codegen state is noise — the diagnostic info still lives in source
+     * comments at the top of each .c. The shorter names match production
+     * exactly so prototype codelets drop directly into core symbol slots
+     * during the eventual wire-up. *)
     let variant = if !log3 then "_log3" else "" in
     let t1s_infix = if !t1s then "s" else "" in
     let dir_suffix = if !dif then "dif" else "dit" in
     let sgn_suffix = if !bwd then "bwd" else "fwd" in
-    let sched_suffix = match !bisect, !su, !annotate with
-      | false, false, false -> ""
-      | true,  false, false -> "_bisect"
-      | false, true,  false -> "_su"
-      | false, false, true  -> "_anno"
-      | true,  false, true  -> "_bisect_anno"
-      | false, true,  true  -> "_su_anno"
-      | _ -> "_combo"
-    in
-    let spill_suffix =
-      if !spill && spill_info <> None then
-        if !fuse > 0 then Printf.sprintf "_spill_fuse%d" !fuse
-        else "_spill"
-      else ""
-    in
     let name =
       if !r2c then
-        (* R2C forward codelet: radix{N}_r2c_{sgn}_{isa}_gen *)
-        Printf.sprintf "radix%d_r2c_%s_%s_gen%s%s%s"
-          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+        (* R2C forward codelet: radix{N}_r2c_{sgn}_{isa} *)
+        Printf.sprintf "radix%d_r2c_%s_%s" n sgn_suffix isa.name
       else if !r2c_first then
-        (* R2C first-stage cascade codelet: radix{R}_r2c_first_{sgn}_{isa}_gen
+        (* R2C first-stage cascade codelet: radix{R}_r2c_first_{sgn}_{isa}
          * The {R} here is the SUB-DFT radix, not the total transform size. *)
-        Printf.sprintf "radix%d_r2c_first_%s_%s_gen%s%s%s"
-          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_r2c_first_%s_%s" n sgn_suffix isa.name
       else if !rdft then
-        (* FFTW-style real-input DFT: radix{N}_rdft_{sgn}_{isa}_gen *)
-        Printf.sprintf "radix%d_rdft_%s_%s_gen%s%s%s"
-          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+        (* FFTW-style real-input DFT: radix{N}_rdft_{sgn}_{isa} *)
+        Printf.sprintf "radix%d_rdft_%s_%s" n sgn_suffix isa.name
       else if !hc2hc then
         (* Middle-stage Hermitian-packed cascade codelet:
-         * radix{R}_hc2hc_{dir}_{sgn}_{isa}_gen *)
-        Printf.sprintf "radix%d_hc2hc_%s_%s_%s_gen%s%s%s"
-          n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
+         * radix{R}_hc2hc_{dir}_{sgn}_{isa} *)
+        Printf.sprintf "radix%d_hc2hc_%s_%s_%s" n dir_suffix sgn_suffix isa.name
       else if !hc2c then
         (* Last-stage cascade codelet: Hermitian-packed in, natural complex out:
-         * radix{R}_hc2c_{dir}_{sgn}_{isa}_gen *)
-        Printf.sprintf "radix%d_hc2c_%s_%s_%s_gen%s%s%s"
-          n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
+         * radix{R}_hc2c_{dir}_{sgn}_{isa} *)
+        Printf.sprintf "radix%d_hc2c_%s_%s_%s" n dir_suffix sgn_suffix isa.name
       else if !dct2 then
-        (* DCT-II via Makhoul's reduction: radix{N}_dct2_{isa}_gen *)
-        Printf.sprintf "radix%d_dct2_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DCT-II via Makhoul's reduction: radix{N}_dct2_{isa} *)
+        Printf.sprintf "radix%d_dct2_%s" n isa.name
       else if !dct2_trigII then
-        (* DCT-II via FFTW trigII embedding: radix{N}_dct2_trigII_{isa}_gen *)
-        Printf.sprintf "radix%d_dct2_trigII_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DCT-II via FFTW trigII embedding: radix{N}_dct2_trigII_{isa} *)
+        Printf.sprintf "radix%d_dct2_trigII_%s" n isa.name
       else if !dct3 then
-        (* DCT-III via inverse-Makhoul: radix{N}_dct3_{isa}_gen *)
-        Printf.sprintf "radix%d_dct3_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DCT-III via inverse-Makhoul: radix{N}_dct3_{isa} *)
+        Printf.sprintf "radix%d_dct3_%s" n isa.name
       else if !dht then
-        (* DHT (Discrete Hartley Transform): radix{N}_dht_{isa}_gen *)
-        Printf.sprintf "radix%d_dht_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DHT (Discrete Hartley Transform): radix{N}_dht_{isa} *)
+        Printf.sprintf "radix%d_dht_%s" n isa.name
       else if !dst2 then
-        (* DST-II via DCT-II wrapper: radix{N}_dst2_{isa}_gen *)
-        Printf.sprintf "radix%d_dst2_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DST-II via DCT-II wrapper: radix{N}_dst2_{isa} *)
+        Printf.sprintf "radix%d_dst2_%s" n isa.name
       else if !dst3 then
-        (* DST-III via DCT-III wrapper: radix{N}_dst3_{isa}_gen *)
-        Printf.sprintf "radix%d_dst3_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DST-III via DCT-III wrapper: radix{N}_dst3_{isa} *)
+        Printf.sprintf "radix%d_dst3_%s" n isa.name
       else if !dct4 then
-        (* DCT-IV via Lee 1984: radix{N}_dct4_{isa}_gen *)
-        Printf.sprintf "radix%d_dct4_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        (* DCT-IV via Lee 1984: radix{N}_dct4_{isa} *)
+        Printf.sprintf "radix%d_dct4_%s" n isa.name
       else if !c2r then
-        (* C2R backward codelet: radix{N}_c2r_{isa}_gen
+        (* C2R backward codelet: radix{N}_c2r_{isa}
          * c2r is always backward, so no separate sgn_suffix is needed. *)
-        Printf.sprintf "radix%d_c2r_%s_gen%s%s%s"
-          n isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_c2r_%s" n isa.name
       else if !twidsq then
         (* Twidsq codelets use their own name pattern reflecting the
-         * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}_gen. *)
-        Printf.sprintf "radix%d_twidsq_%s_%s_%s_gen%s%s%s"
-          n dir_suffix sgn_suffix isa.name suffix sched_suffix spill_suffix
+         * inter-stage role: radix{N}_twidsq_{dir}_{sgn}_{isa}. *)
+        Printf.sprintf "radix%d_twidsq_%s_%s_%s" n dir_suffix sgn_suffix isa.name
       else if !twiddled then
-        Printf.sprintf "radix%d_t1%s_%s%s_%s_%s_gen%s%s%s"
-          n t1s_infix dir_suffix variant sgn_suffix isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_t1%s_%s%s_%s_%s"
+          n t1s_infix dir_suffix variant sgn_suffix isa.name
       else
-        Printf.sprintf "radix%d_n1_%s_%s_gen%s%s%s%s"
-          n sgn_suffix isa.name suffix sched_suffix spill_suffix
+        Printf.sprintf "radix%d_n1_%s_%s%s"
+          n sgn_suffix isa.name
           (if !strided then "_strided" else "")
     in
     let scheduler : Vfft_v2.Emit_c.scheduler = match !bisect, !su, !annotate with
