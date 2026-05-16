@@ -165,6 +165,76 @@ grep -cE 'vf(n)?m(add|sub)[0-9]+pd' /tmp/r${R}.s
 # Compare against radix_profile.h column n_fma for the same R / variant.
 ```
 
+### The architectural floor — per-plan error ≥ 30% is structural
+
+After all the recalibration this cost model has been through (measured
+CPE, recalibrated cache_factor tiers, L3 awareness, buffer-streaming
+floor, me-sweep), the **per-plan relative error sits at ~32%** on
+Raptor Lake AVX-2 (V1 mean 0.32×, V2 mean 0.33× across 18 plans spanning
+N=1024..16384, K=128..512 — see `score_and_time_plans` output).
+
+This isn't a tuning gap — it's a hard floor that the current model's
+per-stage independent scoring architecture cannot break. Three reasons:
+
+1. **No hardware prefetcher state model.** The HW prefetcher is a
+   stateful engine that learns access patterns across stages: stage 0's
+   stride-N/R sweep teaches it the next sweep, stage 1 starts hot.
+   Our cost model scores each stage independently with a static
+   cache_factor; the inter-stage learning is opaque to us. Real impact
+   on multi-stage cells: a "warm" stage runs 1.2-1.8× faster than the
+   stage's isolated bench, depending on stride relationship. We can't
+   capture this without modeling the prefetcher's L2 streaming
+   confidence state.
+
+2. **No cross-stage register/cache carry.** When stage N's output is
+   stage N+1's input, the working set transitions: some lines stay
+   L1-hot, some get evicted, some are still in L2. The exact transition
+   depends on stage stride/size and how the executor sequences group
+   iterations. We approximate this via `cache_factor` tiers, which is
+   a static lookup of `(working_set ÷ L1, L2, L3)` → 1.0/1.4/2.3/4.0.
+   That's a coarse approximation of a continuous spectrum. Tried 2D
+   (me, ios) sweep to capture this empirically — regressed predictions
+   (V1 went 0.43× → 0.79×) because it missed cross-stage cache carry
+   that the static tier scheme accidentally got right. Rolled back.
+
+3. **No port contention or OoO scheduler model.** The Raptor Lake
+   pipeline has ports for FMA, load, store, branch — the throughput
+   ceiling depends on which ports the codelet keeps busy. Two codelets
+   with identical FLOP counts can differ 1.5× in cycle count if one
+   stresses port 0 (FMA) and the other stresses port 4 (store). Our
+   `bf_cost = measured_cpe × cache_factor` is port-agnostic.
+
+**These bottlenecks aren't measurable per-codelet in isolation.** The
+codelet's *intrinsic* CPE comes from its own port mix + dependency
+chain; that's what `radix_cpe.h` captures (and what V1 uses correctly).
+The PLAN's CPE is the codelet's CPE plus or minus 30% based on:
+- which other codelets ran just before (prefetcher state)
+- how big their working sets were (cache occupancy)
+- which ports they hammered (saturation carry-over)
+
+These are PLAN-level effects measurable only via **measurement** at
+plan scope. Production VectorFFT does this via `VFFT_MEASURE` mode —
+it bench's real plans and stores the winners in wisdom. The cost
+model exists for cells **not** in wisdom (estimate mode); it's a
+prior, not an oracle.
+
+**What this means for using the cost model:**
+
+- The cost model **picks the right winner per cell** (3/3 in the
+  validation set — see `score_and_time_plans` output). Use it for plan
+  *ranking*.
+- The absolute cycle-count estimate is **±30% off** on average. Don't
+  use it for absolute time predictions.
+- Adding "more accurate" model components hits diminishing returns
+  quickly. Pair-table CPE (per-(R₁,R₂) sub-tables) would compress some
+  of the cross-stage effect but combinatorial blowup: 22 × 22 pairs ×
+  4 variant combos × 3 me-samples = 5800 cells to bench. Not worth it
+  for what would still be a ~20% floor.
+
+If you ever see "improve cost model accuracy" on a TODO list, **the
+correct response is "no — use measurement at plan scope instead."** The
+estimate-mode cost model is a prior, not the verdict.
+
 ## Calibration history (2026-05-15)
 
 The first end-to-end calibration on Raptor Lake AVX-2 dropped V1 mean
