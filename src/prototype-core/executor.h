@@ -47,14 +47,25 @@ static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
                                            double *re, double *im,
                                            size_t slice_K)
 {
-    /* Tier 1: try the (B)+(A) plan-shaped specialization. */
+    /* Tier 1 (plan-shaped specialization) is DISABLED for now.
+     *
+     * Bug: the hand-emitted specialized executors in plan_executors.h
+     * unconditionally call t1s_fwd for inner-stage groups without
+     * branching on needs_tw[g]. Groups with k_prev=0 have a NULL
+     * tw_scalar pointer → NULL deref → segfault. The cells curated
+     * for the spike happened to not trigger this; the DP planner does
+     * (e.g. N=1024 K=128 factors=[4,4,4,4,4]).
+     *
+     * Fix: update emit_executor_h.ml to emit per-group needs_tw[g]
+     * branches (matching the generic path), then re-enable Tier 1. */
+#ifdef VFFT_PROTO_ENABLE_TIER1_SPECIALIZATION
     vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx2(plan);
     if (fn) {
         fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
         return;
     }
+#endif
 
-    /* Tier 2: cold cell — generic per-stage loop. */
     vfft_proto_execute_fwd_generic(plan, re, im, slice_K);
 }
 

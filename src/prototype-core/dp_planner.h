@@ -256,20 +256,8 @@ static inline double _vfft_proto_dp_bench(
 {
     size_t total = (size_t)N * K_eff;
 
-#ifdef VFFT_PROTO_DP_TRACE
-    fprintf(stderr, "[dp-trace] bench N=%d K_eff=%zu factors=", N, K_eff);
-    for (int s = 0; s < nf; s++) fprintf(stderr, "%s%d", s?"x":"", factors[s]);
-    fprintf(stderr, " ctx_buf=%zu total=%zu\n", ctx->buf_total, total);
-    fflush(stderr);
-#endif
-
     /* Bench buffers must be large enough. */
-    if (total > ctx->buf_total) {
-#ifdef VFFT_PROTO_DP_TRACE
-        fprintf(stderr, "[dp-trace] BUFFER TOO SMALL — skip\n"); fflush(stderr);
-#endif
-        return 1e18;
-    }
+    if (total > ctx->buf_total) return 1e18;
 
     /* All radixes must have n1 + t1s available (current path: T1S only). */
     for (int s = 0; s < nf; s++) {

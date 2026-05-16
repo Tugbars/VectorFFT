@@ -165,12 +165,21 @@ let emit_stage (e : plan_entry) (stage_idx : int) (d : direction) ~isa =
       (n1_symbol ~r ~direction:d ~isa);
     Printf.printf "        }\n"
   end else begin
-    (* Inner stages: T1S spike scope. needs_tw/cf0 branches dropped — the
-     * plan-build code asserts all inner-stage groups take the T1S path
-     * with trivial cf0. Future iteration: re-introduce those as compile-
-     * time-decided codepaths per variant class. *)
+    (* Inner stages: branch per-group on tape[g].tw_re != NULL.
+     *
+     * Real plans (DP-built, wisdom-driven) have inner-stage groups with
+     * k_prev=0 where needs_tw=0 and tw_scalar_re[g]=NULL. The earlier
+     * spike harness assumed all inner groups had twiddles (its hand-
+     * built plans were constructed that way); calling the t1s/t1/log3
+     * codelet on a NULL twiddle pointer crashes. The needs_tw[g]==0
+     * path falls back to n1 (same dispatch the generic executor uses). *)
+    let n1_sym = n1_symbol ~r ~direction:d ~isa in
     Printf.printf "        for (int g = 0; g < num_groups; g++) {\n";
     Printf.printf "            const stride_invocation_t inv = tape[g];\n";
+    Printf.printf "            if (inv.tw_re == NULL) {\n";
+    Printf.printf "                %s(re + inv.base, im + inv.base, NULL, NULL, stride, slice_K);\n" n1_sym;
+    Printf.printf "                continue;\n";
+    Printf.printf "            }\n";
     (match v with
      | T1S  ->
        Printf.printf "            %s(re + inv.base, im + inv.base,\n"
