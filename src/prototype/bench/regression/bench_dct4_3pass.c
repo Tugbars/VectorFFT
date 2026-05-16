@@ -24,30 +24,30 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-__attribute__((target("avx2,fma"))) void radix8_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix16_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix16_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix32_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix32_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix64_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix64_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 
 /* c2c backward (IFFT) for inner kernel at N/2. */
-__attribute__((target("avx2,fma"))) void radix4_n1_bwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix4_n1_bwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix8_n1_bwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_n1_bwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix16_n1_bwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix16_n1_bwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix32_n1_bwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix32_n1_bwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 
@@ -232,10 +232,10 @@ int main(void) {
     printf("  (pre-twiddle + c2c-N/2 IFFT + post-twiddle)\n");
     printf("================================================================\n");
     cell_t cells[] = {
-        {8,  radix8_dct4_avx2_gen,  radix4_n1_bwd_avx2_gen, NULL,NULL,NULL,NULL},
-        {16, radix16_dct4_avx2_gen, radix8_n1_bwd_avx2_gen, NULL,NULL,NULL,NULL},
-        {32, radix32_dct4_avx2_gen, radix16_n1_bwd_avx2_gen,NULL,NULL,NULL,NULL},
-        {64, radix64_dct4_avx2_gen, radix32_n1_bwd_avx2_gen,NULL,NULL,NULL,NULL},
+        {8,  radix8_dct4_avx2,  radix4_n1_bwd_avx2, NULL,NULL,NULL,NULL},
+        {16, radix16_dct4_avx2, radix8_n1_bwd_avx2, NULL,NULL,NULL,NULL},
+        {32, radix32_dct4_avx2, radix16_n1_bwd_avx2,NULL,NULL,NULL,NULL},
+        {64, radix64_dct4_avx2, radix32_n1_bwd_avx2,NULL,NULL,NULL,NULL},
     };
     size_t Ks[] = {32, 64, 128, 256, 512, 1024, 0};
     int fails = 0;

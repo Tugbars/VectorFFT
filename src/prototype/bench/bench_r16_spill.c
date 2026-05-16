@@ -11,10 +11,10 @@
 #include "../radix16_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dit_fwd_avx512_spill(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static void fr(double*p,size_t n,unsigned s){for(size_t i=0;i<n;i++){s=s*1103515245u+12345u;p[i]=(double)((int)(s>>8)&0x7fffff)/(double)0x800000-0.5;}}
@@ -26,8 +26,8 @@ static size_t K;
 static double *hr,*hi,*tr,*ti,*sr,*si,*twr,*twi;
 
 static void cH(){radix16_t1_dit_fwd_avx512(hr,hi,twr,twi,K,K);}
-static void cT(){radix16_t1_dit_fwd_avx512_gen_inplace(tr,ti,twr,twi,K,K);}
-static void cS(){radix16_t1_dit_fwd_avx512_gen_inplace_spill(sr,si,twr,twi,K,K);}
+static void cT(){radix16_t1_dit_fwd_avx512(tr,ti,twr,twi,K,K);}
+static void cS(){radix16_t1_dit_fwd_avx512_spill(sr,si,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

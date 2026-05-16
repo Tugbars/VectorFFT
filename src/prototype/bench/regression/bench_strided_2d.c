@@ -22,32 +22,32 @@
     double *rio_re, double *rio_im,\
     const double *tw_re, const double *tw_im,\
     size_t row_stride, size_t me)
-DECL_STRIDED(radix16_n1_fwd_avx2_gen_strided);
-DECL_STRIDED(radix32_n1_fwd_avx2_gen_strided);
-DECL_STRIDED(radix64_n1_fwd_avx2_gen_strided);
-DECL_STRIDED(radix128_n1_fwd_avx2_gen_strided);
-DECL_STRIDED(radix256_n1_fwd_avx2_gen_strided);
+DECL_STRIDED(radix16_n1_fwd_avx2_strided);
+DECL_STRIDED(radix32_n1_fwd_avx2_strided);
+DECL_STRIDED(radix64_n1_fwd_avx2_strided);
+DECL_STRIDED(radix128_n1_fwd_avx2_strided);
+DECL_STRIDED(radix256_n1_fwd_avx2_strided);
 /* Strided bwd. */
-DECL_STRIDED(radix16_n1_bwd_avx2_gen_strided);
-DECL_STRIDED(radix32_n1_bwd_avx2_gen_strided);
-DECL_STRIDED(radix64_n1_bwd_avx2_gen_strided);
-DECL_STRIDED(radix128_n1_bwd_avx2_gen_strided);
-DECL_STRIDED(radix256_n1_bwd_avx2_gen_strided);
+DECL_STRIDED(radix16_n1_bwd_avx2_strided);
+DECL_STRIDED(radix32_n1_bwd_avx2_strided);
+DECL_STRIDED(radix64_n1_bwd_avx2_strided);
+DECL_STRIDED(radix128_n1_bwd_avx2_strided);
+DECL_STRIDED(radix256_n1_bwd_avx2_strided);
 
 /* Standard OOP codelets (reference path). */
 #define DECL_STD(name) __attribute__((target("avx2,fma"))) void name(\
     const double *, const double *, double *, double *,\
     const double *, const double *, size_t)
-DECL_STD(radix16_n1_fwd_avx2_gen);
-DECL_STD(radix32_n1_fwd_avx2_gen);
-DECL_STD(radix64_n1_fwd_avx2_gen);
-DECL_STD(radix128_n1_fwd_avx2_gen);
-DECL_STD(radix256_n1_fwd_avx2_gen);
-DECL_STD(radix16_n1_bwd_avx2_gen);
-DECL_STD(radix32_n1_bwd_avx2_gen);
-DECL_STD(radix64_n1_bwd_avx2_gen);
-DECL_STD(radix128_n1_bwd_avx2_gen);
-DECL_STD(radix256_n1_bwd_avx2_gen);
+DECL_STD(radix16_n1_fwd_avx2);
+DECL_STD(radix32_n1_fwd_avx2);
+DECL_STD(radix64_n1_fwd_avx2);
+DECL_STD(radix128_n1_fwd_avx2);
+DECL_STD(radix256_n1_fwd_avx2);
+DECL_STD(radix16_n1_bwd_avx2);
+DECL_STD(radix32_n1_bwd_avx2);
+DECL_STD(radix64_n1_bwd_avx2);
+DECL_STD(radix128_n1_bwd_avx2);
+DECL_STD(radix256_n1_bwd_avx2);
 
 typedef void (*strided_fn_t)(double *, double *,
                              const double *, const double *,
@@ -229,16 +229,16 @@ int main(void) {
     struct { const char *name; int N;
              strided_fn_t fs_fwd, fs_bwd;
              std_fn_t     fr_fwd, fr_bwd; } rows[] = {
-        {"R16",  16,  radix16_n1_fwd_avx2_gen_strided,  radix16_n1_bwd_avx2_gen_strided,
-                     radix16_n1_fwd_avx2_gen,          radix16_n1_bwd_avx2_gen},
-        {"R32",  32,  radix32_n1_fwd_avx2_gen_strided,  radix32_n1_bwd_avx2_gen_strided,
-                     radix32_n1_fwd_avx2_gen,          radix32_n1_bwd_avx2_gen},
-        {"R64",  64,  radix64_n1_fwd_avx2_gen_strided,  radix64_n1_bwd_avx2_gen_strided,
-                     radix64_n1_fwd_avx2_gen,          radix64_n1_bwd_avx2_gen},
-        {"R128", 128, radix128_n1_fwd_avx2_gen_strided, radix128_n1_bwd_avx2_gen_strided,
-                     radix128_n1_fwd_avx2_gen,         radix128_n1_bwd_avx2_gen},
-        {"R256", 256, radix256_n1_fwd_avx2_gen_strided, radix256_n1_bwd_avx2_gen_strided,
-                     radix256_n1_fwd_avx2_gen,         radix256_n1_bwd_avx2_gen},
+        {"R16",  16,  radix16_n1_fwd_avx2_strided,  radix16_n1_bwd_avx2_strided,
+                     radix16_n1_fwd_avx2,          radix16_n1_bwd_avx2},
+        {"R32",  32,  radix32_n1_fwd_avx2_strided,  radix32_n1_bwd_avx2_strided,
+                     radix32_n1_fwd_avx2,          radix32_n1_bwd_avx2},
+        {"R64",  64,  radix64_n1_fwd_avx2_strided,  radix64_n1_bwd_avx2_strided,
+                     radix64_n1_fwd_avx2,          radix64_n1_bwd_avx2},
+        {"R128", 128, radix128_n1_fwd_avx2_strided, radix128_n1_bwd_avx2_strided,
+                     radix128_n1_fwd_avx2,         radix128_n1_bwd_avx2},
+        {"R256", 256, radix256_n1_fwd_avx2_strided, radix256_n1_bwd_avx2_strided,
+                     radix256_n1_fwd_avx2,         radix256_n1_bwd_avx2},
     };
     size_t Bs[] = {8, 32, 128, 256, 0};
     int fails = 0;

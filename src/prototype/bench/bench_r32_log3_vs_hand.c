@@ -16,7 +16,7 @@ static void hand_fwd(double *r, double *i, const double *tr, const double *ti, s
 }
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_log3_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static double max_rel(const double*a,const double*b,size_t n){double m=0;for(size_t i=0;i<n;i++){double d=fabs(a[i]-b[i]);double s=fabs(a[i])+fabs(b[i])+1e-30;double r=d/s;if(r>m)m=r;}return m;}
@@ -27,7 +27,7 @@ static size_t K;
 static double *bH_r,*bH_i,*bLR_r,*bLR_i,*twr,*twi;
 
 static void cH(){hand_fwd(bH_r,bH_i,twr,twi,K,K);}
-static void cLR(){radix32_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(bLR_r,bLR_i,twr,twi,K,K);}
+static void cLR(){radix32_t1_dit_log3_fwd_avx512(bLR_r,bLR_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

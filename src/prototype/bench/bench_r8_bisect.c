@@ -2,7 +2,7 @@
  *
  * Compares:
  *   A) hand_t1_dit  — user's hand-coded radix8_t1_dit_fwd_avx512 (in-place)
- *   B) gen_t1_dit   — generated radix8_t1_dit_fwd_avx512_gen_inplace_bisect (in-place)
+ *   B) gen_t1_dit   — generated radix8_t1_dit_fwd_avx512 (in-place)
  *
  * Same methodology as bench_r4.c but with 8 legs instead of 4 and 7 twiddles.
  */
@@ -18,7 +18,7 @@
 #include "../radix8_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix8_t1_dit_fwd_avx512_gen_inplace_bisect(
+void radix8_t1_dit_fwd_avx512(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,
@@ -84,7 +84,7 @@ static void call_handcoded(void) {
 }
 
 static void call_generated(void) {
-    radix8_t1_dit_fwd_avx512_gen_inplace_bisect(g_rio_re_gen, g_rio_im_gen,
+    radix8_t1_dit_fwd_avx512(g_rio_re_gen, g_rio_im_gen,
                                           g_tw_re, g_tw_im,
                                           g_K, g_K);
 }
@@ -118,7 +118,7 @@ int main(int argc, char **argv) {
     memcpy(g_rio_im_gen,  g_in_orig_im, 8 * K * sizeof(double));
 
     radix8_t1_dit_fwd_avx512(g_rio_re_hand, g_rio_im_hand, g_tw_re, g_tw_im, K, K);
-    radix8_t1_dit_fwd_avx512_gen_inplace_bisect(g_rio_re_gen, g_rio_im_gen, g_tw_re, g_tw_im, K, K);
+    radix8_t1_dit_fwd_avx512(g_rio_re_gen, g_rio_im_gen, g_tw_re, g_tw_im, K, K);
 
     double err_re = max_rel_err(g_rio_re_hand, g_rio_re_gen, 8 * K);
     double err_im = max_rel_err(g_rio_im_hand, g_rio_im_gen, 8 * K);

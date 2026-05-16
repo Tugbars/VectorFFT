@@ -21,13 +21,13 @@
 #include <immintrin.h>
 
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx512f")))
-void radix16_t1_dif_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dif_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx512f")))
-void radix32_t1_dif_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dif_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static double now(){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec*1e9+t.tv_nsec;}
@@ -39,10 +39,10 @@ static double *in_r, *in_i, *twr, *twi;
 static double *ref_DIT_r, *ref_DIT_i, *ref_DIF_r, *ref_DIF_i;
 static int radix_id;  /* 16 or 32 */
 
-static void cDIT_16(){radix16_t1_dit_fwd_avx512_gen_inplace_su_spill(bDIT_r,bDIT_i,twr,twi,K,K);}
-static void cDIF_16(){radix16_t1_dif_fwd_avx512_gen_inplace_su_spill(bDIF_r,bDIF_i,twr,twi,K,K);}
-static void cDIT_32(){radix32_t1_dit_fwd_avx512_gen_inplace_su_spill(bDIT_r,bDIT_i,twr,twi,K,K);}
-static void cDIF_32(){radix32_t1_dif_fwd_avx512_gen_inplace_su_spill(bDIF_r,bDIF_i,twr,twi,K,K);}
+static void cDIT_16(){radix16_t1_dit_fwd_avx512(bDIT_r,bDIT_i,twr,twi,K,K);}
+static void cDIF_16(){radix16_t1_dif_fwd_avx512(bDIF_r,bDIF_i,twr,twi,K,K);}
+static void cDIT_32(){radix32_t1_dit_fwd_avx512(bDIT_r,bDIT_i,twr,twi,K,K);}
+static void cDIF_32(){radix32_t1_dif_fwd_avx512(bDIF_r,bDIF_i,twr,twi,K,K);}
 
 /* Compute reference for one radix N at all K positions.
  * DIT reference: y_j = DFT_N(W * x)_j

@@ -8,13 +8,13 @@
 #include "../radix8_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix8_t1_dit_fwd_avx512_gen_inplace(
+void radix8_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix8_t1_dit_fwd_avx512_gen_inplace_anno(
+void radix8_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
@@ -26,8 +26,8 @@ static double bn(void(*f)(),int r,int t){double b=1e18;for(int i=0;i<100;i++)f()
 
 static size_t K;static double*hr,*hi,*tr,*ti,*ar,*ai,*twr,*twi;
 static void cH(){radix8_t1_dit_fwd_avx512(hr,hi,twr,twi,K,K);}
-static void cT(){radix8_t1_dit_fwd_avx512_gen_inplace(tr,ti,twr,twi,K,K);}
-static void cA(){radix8_t1_dit_fwd_avx512_gen_inplace_anno(ar,ai,twr,twi,K,K);}
+static void cT(){radix8_t1_dit_fwd_avx512(tr,ti,twr,twi,K,K);}
+static void cA(){radix8_t1_dit_fwd_avx512(ar,ai,twr,twi,K,K);}
 
 int main(int c,char**v){K=c>1?atoi(v[1]):512;
     hr=aa(8*K);hi=aa(8*K);tr=aa(8*K);ti=aa(8*K);ar=aa(8*K);ai=aa(8*K);twr=aa(7*K);twi=aa(7*K);

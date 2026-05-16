@@ -3,8 +3,8 @@
  *
  * Production has no specialized DHT codelet at any N, so the comparison
  * is OCaml fused codelet vs production-style 3-pass:
- *   3-pass:    radix8_rdft_fwd_avx2_gen  +  hand-written butterfly
- *   fused:     radix8_dht_avx2_gen                                       */
+ *   3-pass:    radix8_rdft_fwd_avx2  +  hand-written butterfly
+ *   fused:     radix8_dht_avx2                                       */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,14 +21,14 @@
 #define N 8
 
 __attribute__((target("avx2,fma")))
-void radix8_dht_avx2_gen(
+void radix8_dht_avx2(
     const double *in_re, const double *in_im,
     double *out_re, double *out_im,
     const double *tw_re, const double *tw_im,
     size_t K);
 
 __attribute__((target("avx2,fma")))
-void radix8_rdft_fwd_avx2_gen(
+void radix8_rdft_fwd_avx2(
     const double *in_re, const double *in_im,
     double *out_re, double *out_im,
     const double *tw_re, const double *tw_im,
@@ -82,7 +82,7 @@ __attribute__((target("avx2,fma")))
 static void dht_3pass(const double *in, double *out,
                       double *scratch_re, double *scratch_im,
                       const double *dummy, size_t K) {
-    radix8_rdft_fwd_avx2_gen(in, dummy, scratch_re, scratch_im, dummy, dummy, K);
+    radix8_rdft_fwd_avx2(in, dummy, scratch_re, scratch_im, dummy, dummy, K);
     for (size_t b = 0; b < K; b += 4) {
         __m256d re0 = _mm256_loadu_pd(&scratch_re[0*K + b]);
         _mm256_storeu_pd(&out[0*K + b], re0);
@@ -105,7 +105,7 @@ static void call_3pass(void) {
     dht_3pass(g_in, g_out_3pass, g_scratch_re, g_scratch_im, g_dummy, g_K);
 }
 static void call_fused(void) {
-    radix8_dht_avx2_gen(g_in, g_dummy, g_out_ocaml_re, g_out_ocaml_im,
+    radix8_dht_avx2(g_in, g_dummy, g_out_ocaml_re, g_out_ocaml_im,
                         g_dummy, g_dummy, g_K);
 }
 

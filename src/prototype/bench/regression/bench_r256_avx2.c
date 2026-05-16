@@ -44,27 +44,27 @@
 /* ── Codelet externs ──────────────────────────────────────────────── */
 
 __attribute__((target("avx2,fma")))
-void radix256_n1_fwd_avx2_gen_inplace(
+void radix256_n1_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix256_t1_dit_fwd_avx2_gen_inplace_su_spill(
+void radix256_t1_dit_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix256_t1s_dit_fwd_avx2_gen_inplace_su_spill(
+void radix256_t1s_dit_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix256_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(
+void radix256_t1_dit_log3_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix256_t1s_dit_log3_fwd_avx2_gen_inplace_su_spill(
+void radix256_t1s_dit_log3_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix16_n1_fwd_avx2_gen_inplace(
+void radix16_n1_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
@@ -172,7 +172,7 @@ static void multistage_twiddle_mul(double *re, double *im,
 static void call_multi_16x16(void) {
     /* Stage 1: 16 inner DFT-16, fixed b, stride 16*K over a. */
     for (int b = 0; b < 16; b++) {
-        radix16_n1_fwd_avx2_gen_inplace(
+        radix16_n1_fwd_avx2(
             g_rio_re + (size_t)b * g_K,
             g_rio_im + (size_t)b * g_K,
             NULL, NULL,
@@ -183,7 +183,7 @@ static void call_multi_16x16(void) {
                            g_stage_tw_re, g_stage_tw_im, g_K);
     /* Stage 2: 16 outer DFT-16, fixed a, stride K over b. */
     for (int a = 0; a < 16; a++) {
-        radix16_n1_fwd_avx2_gen_inplace(
+        radix16_n1_fwd_avx2(
             g_rio_re + (size_t)a * 16 * g_K,
             g_rio_im + (size_t)a * 16 * g_K,
             NULL, NULL,
@@ -194,23 +194,23 @@ static void call_multi_16x16(void) {
 /* ── Wrappers for each contestant ─────────────────────────────────── */
 
 static void call_mono_n1(void) {
-    radix256_n1_fwd_avx2_gen_inplace(
+    radix256_n1_fwd_avx2(
         g_rio_re, g_rio_im, NULL, NULL, g_K, g_K);
 }
 static void call_mono_t1(void) {
-    radix256_t1_dit_fwd_avx2_gen_inplace_su_spill(
+    radix256_t1_dit_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1s(void) {
-    radix256_t1s_dit_fwd_avx2_gen_inplace_su_spill(
+    radix256_t1s_dit_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1_log3(void) {
-    radix256_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(
+    radix256_t1_dit_log3_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1s_log3(void) {
-    radix256_t1s_dit_log3_fwd_avx2_gen_inplace_su_spill(
+    radix256_t1s_dit_log3_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 

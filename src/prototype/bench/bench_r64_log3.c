@@ -9,11 +9,11 @@
 #include <immintrin.h>
 
 __attribute__((target("avx512f")))
-void radix64_t1_dit_fwd_avx512_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix64_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx512f")))
-void radix64_t1_dit_log3_fwd_avx512_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix64_t1_dit_log3_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx512f")))
-void radix64_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix64_t1_dit_log3_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static double max_rel(const double*a,const double*b,size_t n){double m=0;for(size_t i=0;i<n;i++){double d=fabs(a[i]-b[i]);double s=fabs(a[i])+fabs(b[i])+1e-30;double r=d/s;if(r>m)m=r;}return m;}
@@ -23,9 +23,9 @@ static double bn(void(*f)(),int r,int t){double b=1e18;for(int i=0;i<100;i++)f()
 static size_t K;
 static double *bF_r,*bF_i,*bL_r,*bL_i,*bLR_r,*bLR_i,*twr,*twi;
 
-static void cF(){radix64_t1_dit_fwd_avx512_gen_inplace(bF_r,bF_i,twr,twi,K,K);}
-static void cL(){radix64_t1_dit_log3_fwd_avx512_gen_inplace(bL_r,bL_i,twr,twi,K,K);}
-static void cLR(){radix64_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(bLR_r,bLR_i,twr,twi,K,K);}
+static void cF(){radix64_t1_dit_fwd_avx512(bF_r,bF_i,twr,twi,K,K);}
+static void cL(){radix64_t1_dit_log3_fwd_avx512(bL_r,bL_i,twr,twi,K,K);}
+static void cLR(){radix64_t1_dit_log3_fwd_avx512(bLR_r,bLR_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

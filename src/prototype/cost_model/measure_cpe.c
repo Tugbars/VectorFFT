@@ -123,86 +123,86 @@ typedef void (*codelet_fn)(double *, double *,
 #if defined(USE_AVX2)
 
 /* ─── n1 (no-twiddle) ─── */
-extern void radix2_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_n1_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted — research-only, not in cost model scope */
 
 /* ─── t1 (twiddled, default rendering) ─── */
-extern void radix2_t1_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted */
 
 /* ─── t1s (twiddled, set1-twiddle rendering) ─── */
-extern void radix2_t1s_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1s_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1s_dit_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1s_dit_fwd_avx2_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1s_dit_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 has no t1s variant per the script — t1s_fn = NULL in dispatch */
 
 /* ─── log3 (twiddled, log3 twiddle derivation, t1 rendering) — pow2 only ─── */
-extern void radix4_t1_dit_log3_fwd_avx2_gen_inplace(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted */
 
 typedef struct {
@@ -214,27 +214,27 @@ typedef struct {
 } radix_entry_t;
 
 static const radix_entry_t RADIX_TABLE[] = {
-    {    2, radix2_n1_fwd_avx2_gen_inplace_su,    radix2_t1_dit_fwd_avx2_gen_inplace,            radix2_t1s_dit_fwd_avx2_gen_inplace,            NULL                                                  },
-    {    3, radix3_n1_fwd_avx2_gen_inplace_su,    radix3_t1_dit_fwd_avx2_gen_inplace,            radix3_t1s_dit_fwd_avx2_gen_inplace,            NULL                                                  },
-    {    4, radix4_n1_fwd_avx2_gen_inplace_su,    radix4_t1_dit_fwd_avx2_gen_inplace,            radix4_t1s_dit_fwd_avx2_gen_inplace,            radix4_t1_dit_log3_fwd_avx2_gen_inplace               },
-    {    5, radix5_n1_fwd_avx2_gen_inplace_su,    radix5_t1_dit_fwd_avx2_gen_inplace_su,         radix5_t1s_dit_fwd_avx2_gen_inplace_su,         NULL                                                  },
-    {    6, radix6_n1_fwd_avx2_gen_inplace_su,    radix6_t1_dit_fwd_avx2_gen_inplace_su_spill,   radix6_t1s_dit_fwd_avx2_gen_inplace_su_spill,   NULL                                                  },
-    {    7, radix7_n1_fwd_avx2_gen_inplace_su,    radix7_t1_dit_fwd_avx2_gen_inplace_su,         radix7_t1s_dit_fwd_avx2_gen_inplace_su,         NULL                                                  },
-    {    8, radix8_n1_fwd_avx2_gen_inplace_su,    radix8_t1_dit_fwd_avx2_gen_inplace_su_spill,   radix8_t1s_dit_fwd_avx2_gen_inplace_su_spill,   radix8_t1_dit_log3_fwd_avx2_gen_inplace_su_spill      },
-    {   10, radix10_n1_fwd_avx2_gen_inplace_su,   radix10_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix10_t1s_dit_fwd_avx2_gen_inplace_su_spill,  NULL                                                  },
-    {   11, radix11_n1_fwd_avx2_gen_inplace_su,   radix11_t1_dit_fwd_avx2_gen_inplace_su,        radix11_t1s_dit_fwd_avx2_gen_inplace_su,        NULL                                                  },
-    {   12, radix12_n1_fwd_avx2_gen_inplace_su,   radix12_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix12_t1s_dit_fwd_avx2_gen_inplace_su_spill,  NULL                                                  },
-    {   13, radix13_n1_fwd_avx2_gen_inplace_su,   radix13_t1_dit_fwd_avx2_gen_inplace_su,        radix13_t1s_dit_fwd_avx2_gen_inplace_su,        NULL                                                  },
-    {   16, radix16_n1_fwd_avx2_gen_inplace_su,   radix16_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix16_t1s_dit_fwd_avx2_gen_inplace_su_spill,  radix16_t1_dit_log3_fwd_avx2_gen_inplace_su_spill     },
-    {   17, radix17_n1_fwd_avx2_gen_inplace_su,   radix17_t1_dit_fwd_avx2_gen_inplace_su,        radix17_t1s_dit_fwd_avx2_gen_inplace_su,        NULL                                                  },
-    {   19, radix19_n1_fwd_avx2_gen_inplace_su,   radix19_t1_dit_fwd_avx2_gen_inplace_su,        radix19_t1s_dit_fwd_avx2_gen_inplace_su,        NULL                                                  },
-    {   20, radix20_n1_fwd_avx2_gen_inplace_su,   radix20_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix20_t1s_dit_fwd_avx2_gen_inplace_su_spill,  NULL                                                  },
-    {   25, radix25_n1_fwd_avx2_gen_inplace_su,   radix25_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix25_t1s_dit_fwd_avx2_gen_inplace_su_spill,  NULL                                                  },
-    {   32, radix32_n1_fwd_avx2_gen_inplace_su,   radix32_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix32_t1s_dit_fwd_avx2_gen_inplace_su_spill,  radix32_t1_dit_log3_fwd_avx2_gen_inplace_su_spill     },
-    {   64, radix64_n1_fwd_avx2_gen_inplace_su,   radix64_t1_dit_fwd_avx2_gen_inplace_su_spill,  radix64_t1s_dit_fwd_avx2_gen_inplace_su_spill,  radix64_t1_dit_log3_fwd_avx2_gen_inplace_su_spill     },
-    {  128, radix128_n1_fwd_avx2_gen_inplace_su,  radix128_t1_dit_fwd_avx2_gen_inplace_su_spill, radix128_t1s_dit_fwd_avx2_gen_inplace_su_spill, radix128_t1_dit_log3_fwd_avx2_gen_inplace_su_spill    },
-    {  256, radix256_n1_fwd_avx2_gen_inplace_su,  radix256_t1_dit_fwd_avx2_gen_inplace_su_spill, radix256_t1s_dit_fwd_avx2_gen_inplace_su_spill, radix256_t1_dit_log3_fwd_avx2_gen_inplace_su_spill    },
-    {  512, radix512_n1_fwd_avx2_gen_inplace_su,  radix512_t1_dit_fwd_avx2_gen_inplace_su_spill, radix512_t1s_dit_fwd_avx2_gen_inplace_su_spill, radix512_t1_dit_log3_fwd_avx2_gen_inplace_su_spill    },
+    {    2, radix2_n1_fwd_avx2,    radix2_t1_dit_fwd_avx2,            radix2_t1s_dit_fwd_avx2,            NULL                                                  },
+    {    3, radix3_n1_fwd_avx2,    radix3_t1_dit_fwd_avx2,            radix3_t1s_dit_fwd_avx2,            NULL                                                  },
+    {    4, radix4_n1_fwd_avx2,    radix4_t1_dit_fwd_avx2,            radix4_t1s_dit_fwd_avx2,            radix4_t1_dit_log3_fwd_avx2               },
+    {    5, radix5_n1_fwd_avx2,    radix5_t1_dit_fwd_avx2,         radix5_t1s_dit_fwd_avx2,         NULL                                                  },
+    {    6, radix6_n1_fwd_avx2,    radix6_t1_dit_fwd_avx2,   radix6_t1s_dit_fwd_avx2,   NULL                                                  },
+    {    7, radix7_n1_fwd_avx2,    radix7_t1_dit_fwd_avx2,         radix7_t1s_dit_fwd_avx2,         NULL                                                  },
+    {    8, radix8_n1_fwd_avx2,    radix8_t1_dit_fwd_avx2,   radix8_t1s_dit_fwd_avx2,   radix8_t1_dit_log3_fwd_avx2      },
+    {   10, radix10_n1_fwd_avx2,   radix10_t1_dit_fwd_avx2,  radix10_t1s_dit_fwd_avx2,  NULL                                                  },
+    {   11, radix11_n1_fwd_avx2,   radix11_t1_dit_fwd_avx2,        radix11_t1s_dit_fwd_avx2,        NULL                                                  },
+    {   12, radix12_n1_fwd_avx2,   radix12_t1_dit_fwd_avx2,  radix12_t1s_dit_fwd_avx2,  NULL                                                  },
+    {   13, radix13_n1_fwd_avx2,   radix13_t1_dit_fwd_avx2,        radix13_t1s_dit_fwd_avx2,        NULL                                                  },
+    {   16, radix16_n1_fwd_avx2,   radix16_t1_dit_fwd_avx2,  radix16_t1s_dit_fwd_avx2,  radix16_t1_dit_log3_fwd_avx2     },
+    {   17, radix17_n1_fwd_avx2,   radix17_t1_dit_fwd_avx2,        radix17_t1s_dit_fwd_avx2,        NULL                                                  },
+    {   19, radix19_n1_fwd_avx2,   radix19_t1_dit_fwd_avx2,        radix19_t1s_dit_fwd_avx2,        NULL                                                  },
+    {   20, radix20_n1_fwd_avx2,   radix20_t1_dit_fwd_avx2,  radix20_t1s_dit_fwd_avx2,  NULL                                                  },
+    {   25, radix25_n1_fwd_avx2,   radix25_t1_dit_fwd_avx2,  radix25_t1s_dit_fwd_avx2,  NULL                                                  },
+    {   32, radix32_n1_fwd_avx2,   radix32_t1_dit_fwd_avx2,  radix32_t1s_dit_fwd_avx2,  radix32_t1_dit_log3_fwd_avx2     },
+    {   64, radix64_n1_fwd_avx2,   radix64_t1_dit_fwd_avx2,  radix64_t1s_dit_fwd_avx2,  radix64_t1_dit_log3_fwd_avx2     },
+    {  128, radix128_n1_fwd_avx2,  radix128_t1_dit_fwd_avx2, radix128_t1s_dit_fwd_avx2, radix128_t1_dit_log3_fwd_avx2    },
+    {  256, radix256_n1_fwd_avx2,  radix256_t1_dit_fwd_avx2, radix256_t1s_dit_fwd_avx2, radix256_t1_dit_log3_fwd_avx2    },
+    {  512, radix512_n1_fwd_avx2,  radix512_t1_dit_fwd_avx2, radix512_t1s_dit_fwd_avx2, radix512_t1_dit_log3_fwd_avx2    },
     /* R=1024 — research-only, intentionally omitted from cost-model scope */
 };
 
@@ -243,85 +243,85 @@ static const radix_entry_t RADIX_TABLE[] = {
 /* AVX-512 externs — same shape, primes get _su everywhere (R=2/3 differ from AVX-2). */
 
 /* ─── n1 ─── */
-extern void radix2_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_n1_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted */
 
 /* ─── t1 ─── */
-extern void radix2_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted */
 
 /* ─── t1s ─── */
-extern void radix2_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1s_dit_fwd_avx512_gen_inplace_su(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1s_dit_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix2_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix3_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix5_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix6_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix7_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix10_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix11_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix12_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix13_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix17_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix19_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix20_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix25_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 
 /* ─── log3 (pow2 ≥ 4) ─── */
-extern void radix4_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_log3_fwd_avx512_gen_inplace_su_spill(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix4_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix8_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix16_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix32_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix64_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix128_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix256_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
+extern void radix512_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
 /* R=1024 omitted */
 
 typedef struct {
@@ -333,27 +333,27 @@ typedef struct {
 } radix_entry_t;
 
 static const radix_entry_t RADIX_TABLE[] = {
-    {    2, radix2_n1_fwd_avx512_gen_inplace_su,    radix2_t1_dit_fwd_avx512_gen_inplace_su,        radix2_t1s_dit_fwd_avx512_gen_inplace_su,        NULL                                                  },
-    {    3, radix3_n1_fwd_avx512_gen_inplace_su,    radix3_t1_dit_fwd_avx512_gen_inplace_su,        radix3_t1s_dit_fwd_avx512_gen_inplace_su,        NULL                                                  },
-    {    4, radix4_n1_fwd_avx512_gen_inplace_su,    radix4_t1_dit_fwd_avx512_gen_inplace_su_spill,  radix4_t1s_dit_fwd_avx512_gen_inplace_su_spill,  radix4_t1_dit_log3_fwd_avx512_gen_inplace_su_spill    },
-    {    5, radix5_n1_fwd_avx512_gen_inplace_su,    radix5_t1_dit_fwd_avx512_gen_inplace_su,        radix5_t1s_dit_fwd_avx512_gen_inplace_su,        NULL                                                  },
-    {    6, radix6_n1_fwd_avx512_gen_inplace_su,    radix6_t1_dit_fwd_avx512_gen_inplace_su_spill,  radix6_t1s_dit_fwd_avx512_gen_inplace_su_spill,  NULL                                                  },
-    {    7, radix7_n1_fwd_avx512_gen_inplace_su,    radix7_t1_dit_fwd_avx512_gen_inplace_su,        radix7_t1s_dit_fwd_avx512_gen_inplace_su,        NULL                                                  },
-    {    8, radix8_n1_fwd_avx512_gen_inplace_su,    radix8_t1_dit_fwd_avx512_gen_inplace_su_spill,  radix8_t1s_dit_fwd_avx512_gen_inplace_su_spill,  radix8_t1_dit_log3_fwd_avx512_gen_inplace_su_spill    },
-    {   10, radix10_n1_fwd_avx512_gen_inplace_su,   radix10_t1_dit_fwd_avx512_gen_inplace_su_spill, radix10_t1s_dit_fwd_avx512_gen_inplace_su_spill, NULL                                                  },
-    {   11, radix11_n1_fwd_avx512_gen_inplace_su,   radix11_t1_dit_fwd_avx512_gen_inplace_su,       radix11_t1s_dit_fwd_avx512_gen_inplace_su,       NULL                                                  },
-    {   12, radix12_n1_fwd_avx512_gen_inplace_su,   radix12_t1_dit_fwd_avx512_gen_inplace_su_spill, radix12_t1s_dit_fwd_avx512_gen_inplace_su_spill, NULL                                                  },
-    {   13, radix13_n1_fwd_avx512_gen_inplace_su,   radix13_t1_dit_fwd_avx512_gen_inplace_su,       radix13_t1s_dit_fwd_avx512_gen_inplace_su,       NULL                                                  },
-    {   16, radix16_n1_fwd_avx512_gen_inplace_su,   radix16_t1_dit_fwd_avx512_gen_inplace_su_spill, radix16_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix16_t1_dit_log3_fwd_avx512_gen_inplace_su_spill   },
-    {   17, radix17_n1_fwd_avx512_gen_inplace_su,   radix17_t1_dit_fwd_avx512_gen_inplace_su,       radix17_t1s_dit_fwd_avx512_gen_inplace_su,       NULL                                                  },
-    {   19, radix19_n1_fwd_avx512_gen_inplace_su,   radix19_t1_dit_fwd_avx512_gen_inplace_su,       radix19_t1s_dit_fwd_avx512_gen_inplace_su,       NULL                                                  },
-    {   20, radix20_n1_fwd_avx512_gen_inplace_su,   radix20_t1_dit_fwd_avx512_gen_inplace_su_spill, radix20_t1s_dit_fwd_avx512_gen_inplace_su_spill, NULL                                                  },
-    {   25, radix25_n1_fwd_avx512_gen_inplace_su,   radix25_t1_dit_fwd_avx512_gen_inplace_su_spill, radix25_t1s_dit_fwd_avx512_gen_inplace_su_spill, NULL                                                  },
-    {   32, radix32_n1_fwd_avx512_gen_inplace_su,   radix32_t1_dit_fwd_avx512_gen_inplace_su_spill, radix32_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix32_t1_dit_log3_fwd_avx512_gen_inplace_su_spill   },
-    {   64, radix64_n1_fwd_avx512_gen_inplace_su,   radix64_t1_dit_fwd_avx512_gen_inplace_su_spill, radix64_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix64_t1_dit_log3_fwd_avx512_gen_inplace_su_spill   },
-    {  128, radix128_n1_fwd_avx512_gen_inplace_su,  radix128_t1_dit_fwd_avx512_gen_inplace_su_spill, radix128_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix128_t1_dit_log3_fwd_avx512_gen_inplace_su_spill },
-    {  256, radix256_n1_fwd_avx512_gen_inplace_su,  radix256_t1_dit_fwd_avx512_gen_inplace_su_spill, radix256_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix256_t1_dit_log3_fwd_avx512_gen_inplace_su_spill },
-    {  512, radix512_n1_fwd_avx512_gen_inplace_su,  radix512_t1_dit_fwd_avx512_gen_inplace_su_spill, radix512_t1s_dit_fwd_avx512_gen_inplace_su_spill, radix512_t1_dit_log3_fwd_avx512_gen_inplace_su_spill },
+    {    2, radix2_n1_fwd_avx512,    radix2_t1_dit_fwd_avx512,        radix2_t1s_dit_fwd_avx512,        NULL                                                  },
+    {    3, radix3_n1_fwd_avx512,    radix3_t1_dit_fwd_avx512,        radix3_t1s_dit_fwd_avx512,        NULL                                                  },
+    {    4, radix4_n1_fwd_avx512,    radix4_t1_dit_fwd_avx512,  radix4_t1s_dit_fwd_avx512,  radix4_t1_dit_log3_fwd_avx512    },
+    {    5, radix5_n1_fwd_avx512,    radix5_t1_dit_fwd_avx512,        radix5_t1s_dit_fwd_avx512,        NULL                                                  },
+    {    6, radix6_n1_fwd_avx512,    radix6_t1_dit_fwd_avx512,  radix6_t1s_dit_fwd_avx512,  NULL                                                  },
+    {    7, radix7_n1_fwd_avx512,    radix7_t1_dit_fwd_avx512,        radix7_t1s_dit_fwd_avx512,        NULL                                                  },
+    {    8, radix8_n1_fwd_avx512,    radix8_t1_dit_fwd_avx512,  radix8_t1s_dit_fwd_avx512,  radix8_t1_dit_log3_fwd_avx512    },
+    {   10, radix10_n1_fwd_avx512,   radix10_t1_dit_fwd_avx512, radix10_t1s_dit_fwd_avx512, NULL                                                  },
+    {   11, radix11_n1_fwd_avx512,   radix11_t1_dit_fwd_avx512,       radix11_t1s_dit_fwd_avx512,       NULL                                                  },
+    {   12, radix12_n1_fwd_avx512,   radix12_t1_dit_fwd_avx512, radix12_t1s_dit_fwd_avx512, NULL                                                  },
+    {   13, radix13_n1_fwd_avx512,   radix13_t1_dit_fwd_avx512,       radix13_t1s_dit_fwd_avx512,       NULL                                                  },
+    {   16, radix16_n1_fwd_avx512,   radix16_t1_dit_fwd_avx512, radix16_t1s_dit_fwd_avx512, radix16_t1_dit_log3_fwd_avx512   },
+    {   17, radix17_n1_fwd_avx512,   radix17_t1_dit_fwd_avx512,       radix17_t1s_dit_fwd_avx512,       NULL                                                  },
+    {   19, radix19_n1_fwd_avx512,   radix19_t1_dit_fwd_avx512,       radix19_t1s_dit_fwd_avx512,       NULL                                                  },
+    {   20, radix20_n1_fwd_avx512,   radix20_t1_dit_fwd_avx512, radix20_t1s_dit_fwd_avx512, NULL                                                  },
+    {   25, radix25_n1_fwd_avx512,   radix25_t1_dit_fwd_avx512, radix25_t1s_dit_fwd_avx512, NULL                                                  },
+    {   32, radix32_n1_fwd_avx512,   radix32_t1_dit_fwd_avx512, radix32_t1s_dit_fwd_avx512, radix32_t1_dit_log3_fwd_avx512   },
+    {   64, radix64_n1_fwd_avx512,   radix64_t1_dit_fwd_avx512, radix64_t1s_dit_fwd_avx512, radix64_t1_dit_log3_fwd_avx512   },
+    {  128, radix128_n1_fwd_avx512,  radix128_t1_dit_fwd_avx512, radix128_t1s_dit_fwd_avx512, radix128_t1_dit_log3_fwd_avx512 },
+    {  256, radix256_n1_fwd_avx512,  radix256_t1_dit_fwd_avx512, radix256_t1s_dit_fwd_avx512, radix256_t1_dit_log3_fwd_avx512 },
+    {  512, radix512_n1_fwd_avx512,  radix512_t1_dit_fwd_avx512, radix512_t1s_dit_fwd_avx512, radix512_t1_dit_log3_fwd_avx512 },
     /* R=1024 — research-only, intentionally omitted from cost-model scope */
 };
 

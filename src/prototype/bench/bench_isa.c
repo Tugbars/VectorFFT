@@ -22,25 +22,25 @@
 
 /* Forward declarations of the codelets. */
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace(
+void radix16_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix16_t1_dit_fwd_avx2_gen_inplace(
+void radix16_t1_dit_fwd_avx2(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix8_t1_dit_fwd_avx512_gen_inplace(
+void radix8_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix8_t1_dit_fwd_avx2_gen_inplace(
+void radix8_t1_dit_fwd_avx2(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
@@ -98,15 +98,15 @@ static double *g_in_re, *g_in_im;
 
 static void call_512(void) {
     if (g_R == 16)
-        radix16_t1_dit_fwd_avx512_gen_inplace(g_rio_re_512, g_rio_im_512, g_tw_re, g_tw_im, g_K, g_K);
+        radix16_t1_dit_fwd_avx512(g_rio_re_512, g_rio_im_512, g_tw_re, g_tw_im, g_K, g_K);
     else
-        radix8_t1_dit_fwd_avx512_gen_inplace(g_rio_re_512, g_rio_im_512, g_tw_re, g_tw_im, g_K, g_K);
+        radix8_t1_dit_fwd_avx512(g_rio_re_512, g_rio_im_512, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_256(void) {
     if (g_R == 16)
-        radix16_t1_dit_fwd_avx2_gen_inplace(g_rio_re_256, g_rio_im_256, g_tw_re, g_tw_im, g_K, g_K);
+        radix16_t1_dit_fwd_avx2(g_rio_re_256, g_rio_im_256, g_tw_re, g_tw_im, g_K, g_K);
     else
-        radix8_t1_dit_fwd_avx2_gen_inplace(g_rio_re_256, g_rio_im_256, g_tw_re, g_tw_im, g_K, g_K);
+        radix8_t1_dit_fwd_avx2(g_rio_re_256, g_rio_im_256, g_tw_re, g_tw_im, g_K, g_K);
 }
 
 int main(int argc, char **argv) {

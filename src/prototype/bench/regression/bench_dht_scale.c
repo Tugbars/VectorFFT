@@ -17,29 +17,29 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-__attribute__((target("avx2,fma"))) void radix8_dht_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_dht_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix16_dht_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix16_dht_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix32_dht_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix32_dht_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix64_dht_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix64_dht_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
 
-__attribute__((target("avx2,fma"))) void radix8_rdft_fwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_rdft_fwd_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix16_rdft_fwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix16_rdft_fwd_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix32_rdft_fwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix32_rdft_fwd_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
-__attribute__((target("avx2,fma"))) void radix64_rdft_fwd_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix64_rdft_fwd_avx2(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
 
@@ -167,10 +167,10 @@ int main(void) {
     printf("  DHT scaling: fused DAG vs 3-pass (rdft + butterfly) at N=8..64\n");
     printf("================================================================\n");
     cell_t cells[] = {
-        {8,  radix8_dht_avx2_gen,  radix8_rdft_fwd_avx2_gen},
-        {16, radix16_dht_avx2_gen, radix16_rdft_fwd_avx2_gen},
-        {32, radix32_dht_avx2_gen, radix32_rdft_fwd_avx2_gen},
-        {64, radix64_dht_avx2_gen, radix64_rdft_fwd_avx2_gen},
+        {8,  radix8_dht_avx2,  radix8_rdft_fwd_avx2},
+        {16, radix16_dht_avx2, radix16_rdft_fwd_avx2},
+        {32, radix32_dht_avx2, radix32_rdft_fwd_avx2},
+        {64, radix64_dht_avx2, radix64_rdft_fwd_avx2},
     };
     size_t Ks[] = {32, 128, 512, 0};
     int fails = 0;

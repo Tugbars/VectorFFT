@@ -19,7 +19,7 @@ static void hand_fwd(double *r, double *i, const double *tr, const double *ti,
 }
 
 __attribute__((target("avx512f")))
-void radix64_t1_dif_fwd_avx512_gen_inplace(
+void radix64_t1_dif_fwd_avx512(
     double*, double*, const double*, const double*, size_t, size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
@@ -31,7 +31,7 @@ static size_t K;
 static double *bH_r,*bH_i,*bT_r,*bT_i,*twr,*twi;
 
 static void cH(){hand_fwd(bH_r,bH_i,twr,twi,K,K);}
-static void cT(){radix64_t1_dif_fwd_avx512_gen_inplace(bT_r,bT_i,twr,twi,K,K);}
+static void cT(){radix64_t1_dif_fwd_avx512(bT_r,bT_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;
