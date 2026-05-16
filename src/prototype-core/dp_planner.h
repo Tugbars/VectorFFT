@@ -424,6 +424,63 @@ static int _vfft_proto_dp_solve_topk(
               _vfft_proto_dp_subplan_cmp);
 
     int n_keep = (n_accum < VFFT_PROTO_DP_TOPK_MAX) ? n_accum : VFFT_PROTO_DP_TOPK_MAX;
+
+    /* PRESERVE BASE-CASE [N] UNCONDITIONALLY (2026-05-17 fix).
+     *
+     * If N is itself a registered radix ≤ 64, ensure the single-stage
+     * plan [N] survives top-K filtering at this cache slot — even if
+     * its measured cost-here ranks worse than multi-stage candidates.
+     *
+     * Why: [N] benched in isolation at this (N, K_eff) slot reflects
+     * R=N codelet running at stride=K_eff with no upstream stages.
+     * That's a wrong-context measurement. When [N] gets composed by a
+     * parent as a TAIL stage (e.g., parent builds [R_outer, ..., N] for
+     * a larger FFT), it runs at stride=K_outer (much smaller) with hot
+     * cache from prior stages — a totally different operating regime.
+     * The isolated bench underestimates its in-context value; we keep
+     * it alive so the parent has the option to compose with it.
+     *
+     * Before this fix: [16] benched poorly at (N=16, K_eff=8192) got
+     * pruned by TOPK_MAX=3, making [4,4,4,16] (the measured winner of
+     * N=1024 K=128) structurally unreachable. The "rest of the plan"
+     * was assembled only from sub-cache top-K, and [16] wasn't there.
+     *
+     * After this fix: [16] is always in (N=16, *) cache rows. Parents
+     * can compose [R, 16], [R, R', 16], etc., which then bench at the
+     * parent's real context. Real measurement still decides the parent-
+     * level winner; we just stop pre-pruning a viable building block.
+     *
+     * Cost: 0 extra benches (the base case was already benched above).
+     * One slot in top-K may now be occupied by [N] instead of a
+     * multi-stage plan, but multi-stage plans that lose to [N] at this
+     * slot's measurement context lose to it for a context-specific
+     * reason that wouldn't propagate to parent contexts anyway. */
+    if (N > 0 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N] && N <= 64) {
+        /* Is [N] already in top-K? */
+        int base_in_top_k = 0;
+        for (int i = 0; i < n_keep; i++) {
+            if (accum[i].nfactors == 1 && accum[i].factors[0] == N) {
+                base_in_top_k = 1;
+                break;
+            }
+        }
+        if (!base_in_top_k) {
+            /* Find [N] elsewhere in accum and swap into last top-K slot. */
+            for (int i = n_keep; i < n_accum; i++) {
+                if (accum[i].nfactors == 1 && accum[i].factors[0] == N) {
+                    /* Move [N] into top-K, displacing the worst current slot. */
+                    if (n_keep > 0) {
+                        accum[n_keep - 1] = accum[i];
+                    } else if (n_accum > 0) {
+                        accum[0] = accum[i];
+                        n_keep = 1;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     vfft_proto_dp_entry_t *e = _vfft_proto_dp_insert(ctx, N, K_eff);
     if (e) {
         for (int i = 0; i < n_keep; i++) e->plans[i] = accum[i];
