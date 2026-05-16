@@ -542,3 +542,9 @@ unrolled per-iteration. Separate workstream, not built.
   to production-style `radix{R}_{variant}_{isa}`. 832 codelets regenerated,
   66 consumer files updated. Drop-in compatible with production symbol
   slots once n1 signature alignment lands (separate task).
+- [docs/62_dif_log3_spill_recipe_bug.md](62_dif_log3_spill_recipe_bug.md)
+  — DIF + LOG3 + spill recipe use-before-decl bug surfaced during the
+  registry mass-link test in this session. Workaround landed
+  ([lib/dft.ml:899](../lib/dft.ml#L899)); root cause not fixed. Surface
+  area: 8 codelets at R=12 / R=25 DIF log3. Runtime impact: zero
+  (DIF codelets never invoked in current wisdom).
