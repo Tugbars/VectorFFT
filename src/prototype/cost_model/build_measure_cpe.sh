@@ -30,13 +30,14 @@ else
   exit 1
 fi
 
-# Gather codelet sources for this ISA. xl_pow2 (R=1024) skipped per scope.
+# Gather codelet sources for this ISA. xl_pow2 (R=1024) included now —
+# registry.h externs every codelet (including R=1024's 4 codelets), so the
+# linker needs them all. R=1024 codelets aren't bench'd (excluded from
+# RADIX_LIST in measure_cpe.c) but their addresses get taken by the
+# registry init function.
 CODELETS=""
-for fam in primes small_pow2 mid_pow2 large_pow2 composites; do
-  for f in $ROOT/codelets/$ISA/$fam/r*_n1_fwd.c \
-           $ROOT/codelets/$ISA/$fam/r*_t1_dit_fwd.c \
-           $ROOT/codelets/$ISA/$fam/r*_t1s_dit_fwd.c \
-           $ROOT/codelets/$ISA/$fam/r*_t1_dit_fwd_log3.c; do
+for fam in primes small_pow2 mid_pow2 large_pow2 xl_pow2 composites; do
+  for f in $ROOT/codelets/$ISA/$fam/r*.c; do
     [ -f "$f" ] && CODELETS="$CODELETS $f"
   done
 done
