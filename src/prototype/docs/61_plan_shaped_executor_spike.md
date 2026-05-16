@@ -548,3 +548,11 @@ unrolled per-iteration. Separate workstream, not built.
   ([lib/dft.ml:899](../lib/dft.ml#L899)); root cause not fixed. Surface
   area: 8 codelets at R=12 / R=25 DIF log3. Runtime impact: zero
   (DIF codelets never invoked in current wisdom).
+- **`measure_cpe.c` refactor — first registry.h consumer** (same session,
+  2026-05-16). Replaced ~180 lines of hand-coded externs + per-ISA
+  RADIX_TABLE definitions with `#include "../generated/registry.h"`
+  + a 20-line `init_radix_table()` helper. measure_cpe now populates
+  its dispatch table at runtime from the registry slots, picking up
+  newly-emitted codelets (e.g. log3 on primes/composites) automatically.
+  No more "update externs when codelet naming changes" maintenance tax.
+  File shrunk 796 → 616 lines.

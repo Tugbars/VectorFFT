@@ -4,13 +4,14 @@
  * K=256, emit cost_model/generated/radix_cpe.h. Concrete differences vs
  * production's tools/radix_profile/measure_cpe.c:
  *
- *   1. NO registry.h dependency. Production routes through a struct of
- *      function pointers populated by stride_registry_init(). Prototype
- *      links codelets directly via per-radix extern declarations below.
- *      Suffix per (R, variant, isa) is hardcoded — the OCaml emitter
- *      picks `_gen_inplace`, `_gen_inplace_su`, or `_gen_inplace_su_spill`
- *      based on whether SU scheduler / spill recipe auto-fires; we mirror
- *      its choice in the dispatch table.
+ *   1. Uses the prototype's own auto-generated registry.h (sibling to
+ *      production's src/core/registry.h). Codelet inventory comes from
+ *      generated/registry.h via emit_registry_h.exe — no hand-coded
+ *      externs. Codelet symbols are named radix{R}_{variant}_{isa}
+ *      (post-rename, production-aligned naming). Pre-doc56 the OCaml
+ *      emitter used decorated suffixes (_gen_inplace_su_spill etc.);
+ *      those were stripped in the same session that introduced the
+ *      registry, so naming is fully predictable from (R, variant, isa).
  *
  *   2. Codelet paths point at src/prototype/codelets/{isa}/{family}/*.c
  *      (linked separately via cost_model/build_measure_cpe.sh).
@@ -115,253 +116,71 @@ typedef void (*codelet_fn)(double *, double *,
                            const double *, const double *,
                            size_t, size_t);
 
-/* ──────────────── per-ISA extern declarations ───────────────────
- * Each entry is the actual symbol the OCaml emitter produces for that
- * (R, variant, isa). Inventoried 2026-05-15 against the post-doc56
- * codelet tree. Update if the emitter's suffix-selection logic changes.
+/* ──────────────── registry-based codelet dispatch ───────────────
+ *
+ * Previously this file hand-coded ~150 extern declarations + a static
+ * RADIX_TABLE per ISA, listing every codelet symbol the bench would
+ * call. That inventory had to be kept in sync with the OCaml emitter
+ * by hand — broke any time codelet naming changed.
+ *
+ * Now the OCaml side owns this inventory: emit_registry_h.exe emits
+ * generated/registry.h with one extern per emitted codelet, plus an
+ * init function that wires every codelet into a typed struct. We
+ * #include that here and populate our RADIX_TABLE at runtime from the
+ * registry slots.
+ *
+ * Benefits:
+ *   - One source of truth (OCaml emit → header → consumer). Codelet
+ *     renames/additions propagate via a single regen, no edits here.
+ *   - Newly-emitted codelets (e.g. log3 on primes/composites added
+ *     2026-05-16) automatically appear in the bench — non-NULL slots
+ *     get measured.
+ *   - Symbol naming is computable from (R, variant, isa) so no manual
+ *     suffix tracking.
  */
-#if defined(USE_AVX2)
-
-/* ─── n1 (no-twiddle) ─── */
-extern void radix2_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_n1_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted — research-only, not in cost model scope */
-
-/* ─── t1 (twiddled, default rendering) ─── */
-extern void radix2_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted */
-
-/* ─── t1s (twiddled, set1-twiddle rendering) ─── */
-extern void radix2_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1s_dit_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 has no t1s variant per the script — t1s_fn = NULL in dispatch */
-
-/* ─── log3 (twiddled, log3 twiddle derivation, t1 rendering) — pow2 only ─── */
-extern void radix4_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_log3_fwd_avx2(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted */
+#include "../generated/registry.h"
 
 typedef struct {
     int R;
     codelet_fn n1_fn;
     codelet_fn t1_fn;
-    codelet_fn t1s_fn;   /* NULL if not available (currently only R=1024) */
-    codelet_fn log3_fn;  /* NULL if not pow2 ≥ 4 */
+    codelet_fn t1s_fn;   /* NULL if codelet doesn't exist for this radix */
+    codelet_fn log3_fn;  /* NULL if codelet doesn't exist for this radix */
 } radix_entry_t;
 
-static const radix_entry_t RADIX_TABLE[] = {
-    {    2, radix2_n1_fwd_avx2,    radix2_t1_dit_fwd_avx2,            radix2_t1s_dit_fwd_avx2,            NULL                                                  },
-    {    3, radix3_n1_fwd_avx2,    radix3_t1_dit_fwd_avx2,            radix3_t1s_dit_fwd_avx2,            NULL                                                  },
-    {    4, radix4_n1_fwd_avx2,    radix4_t1_dit_fwd_avx2,            radix4_t1s_dit_fwd_avx2,            radix4_t1_dit_log3_fwd_avx2               },
-    {    5, radix5_n1_fwd_avx2,    radix5_t1_dit_fwd_avx2,         radix5_t1s_dit_fwd_avx2,         NULL                                                  },
-    {    6, radix6_n1_fwd_avx2,    radix6_t1_dit_fwd_avx2,   radix6_t1s_dit_fwd_avx2,   NULL                                                  },
-    {    7, radix7_n1_fwd_avx2,    radix7_t1_dit_fwd_avx2,         radix7_t1s_dit_fwd_avx2,         NULL                                                  },
-    {    8, radix8_n1_fwd_avx2,    radix8_t1_dit_fwd_avx2,   radix8_t1s_dit_fwd_avx2,   radix8_t1_dit_log3_fwd_avx2      },
-    {   10, radix10_n1_fwd_avx2,   radix10_t1_dit_fwd_avx2,  radix10_t1s_dit_fwd_avx2,  NULL                                                  },
-    {   11, radix11_n1_fwd_avx2,   radix11_t1_dit_fwd_avx2,        radix11_t1s_dit_fwd_avx2,        NULL                                                  },
-    {   12, radix12_n1_fwd_avx2,   radix12_t1_dit_fwd_avx2,  radix12_t1s_dit_fwd_avx2,  NULL                                                  },
-    {   13, radix13_n1_fwd_avx2,   radix13_t1_dit_fwd_avx2,        radix13_t1s_dit_fwd_avx2,        NULL                                                  },
-    {   16, radix16_n1_fwd_avx2,   radix16_t1_dit_fwd_avx2,  radix16_t1s_dit_fwd_avx2,  radix16_t1_dit_log3_fwd_avx2     },
-    {   17, radix17_n1_fwd_avx2,   radix17_t1_dit_fwd_avx2,        radix17_t1s_dit_fwd_avx2,        NULL                                                  },
-    {   19, radix19_n1_fwd_avx2,   radix19_t1_dit_fwd_avx2,        radix19_t1s_dit_fwd_avx2,        NULL                                                  },
-    {   20, radix20_n1_fwd_avx2,   radix20_t1_dit_fwd_avx2,  radix20_t1s_dit_fwd_avx2,  NULL                                                  },
-    {   25, radix25_n1_fwd_avx2,   radix25_t1_dit_fwd_avx2,  radix25_t1s_dit_fwd_avx2,  NULL                                                  },
-    {   32, radix32_n1_fwd_avx2,   radix32_t1_dit_fwd_avx2,  radix32_t1s_dit_fwd_avx2,  radix32_t1_dit_log3_fwd_avx2     },
-    {   64, radix64_n1_fwd_avx2,   radix64_t1_dit_fwd_avx2,  radix64_t1s_dit_fwd_avx2,  radix64_t1_dit_log3_fwd_avx2     },
-    {  128, radix128_n1_fwd_avx2,  radix128_t1_dit_fwd_avx2, radix128_t1s_dit_fwd_avx2, radix128_t1_dit_log3_fwd_avx2    },
-    {  256, radix256_n1_fwd_avx2,  radix256_t1_dit_fwd_avx2, radix256_t1s_dit_fwd_avx2, radix256_t1_dit_log3_fwd_avx2    },
-    {  512, radix512_n1_fwd_avx2,  radix512_t1_dit_fwd_avx2, radix512_t1s_dit_fwd_avx2, radix512_t1_dit_log3_fwd_avx2    },
-    /* R=1024 — research-only, intentionally omitted from cost-model scope */
+/* Same radix set the prior hand-coded RADIX_TABLE had — R=1024 excluded
+ * (research-only, out of cost-model scope). Order matters for stable
+ * output across runs. */
+static const int RADIX_LIST[] = {
+    2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13,
+    16, 17, 19, 20, 25, 32, 64, 128, 256, 512
 };
+#define N_RADIX (sizeof(RADIX_LIST) / sizeof(RADIX_LIST[0]))
 
-#elif defined(USE_AVX512)
+static radix_entry_t RADIX_TABLE[N_RADIX];
+static vfft_proto_registry_t g_reg;
 
-/* AVX-512 externs — same shape, primes get _su everywhere (R=2/3 differ from AVX-2). */
-
-/* ─── n1 ─── */
-extern void radix2_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_n1_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted */
-
-/* ─── t1 ─── */
-extern void radix2_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted */
-
-/* ─── t1s ─── */
-extern void radix2_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix3_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix4_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix5_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix6_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix7_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix10_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix11_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix12_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix13_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix17_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix19_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix20_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix25_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1s_dit_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-
-/* ─── log3 (pow2 ≥ 4) ─── */
-extern void radix4_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix8_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix16_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix32_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix64_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix128_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix256_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-extern void radix512_t1_dit_log3_fwd_avx512(double*, double*, const double*, const double*, size_t, size_t);
-/* R=1024 omitted */
-
-typedef struct {
-    int R;
-    codelet_fn n1_fn;
-    codelet_fn t1_fn;
-    codelet_fn t1s_fn;
-    codelet_fn log3_fn;
-} radix_entry_t;
-
-static const radix_entry_t RADIX_TABLE[] = {
-    {    2, radix2_n1_fwd_avx512,    radix2_t1_dit_fwd_avx512,        radix2_t1s_dit_fwd_avx512,        NULL                                                  },
-    {    3, radix3_n1_fwd_avx512,    radix3_t1_dit_fwd_avx512,        radix3_t1s_dit_fwd_avx512,        NULL                                                  },
-    {    4, radix4_n1_fwd_avx512,    radix4_t1_dit_fwd_avx512,  radix4_t1s_dit_fwd_avx512,  radix4_t1_dit_log3_fwd_avx512    },
-    {    5, radix5_n1_fwd_avx512,    radix5_t1_dit_fwd_avx512,        radix5_t1s_dit_fwd_avx512,        NULL                                                  },
-    {    6, radix6_n1_fwd_avx512,    radix6_t1_dit_fwd_avx512,  radix6_t1s_dit_fwd_avx512,  NULL                                                  },
-    {    7, radix7_n1_fwd_avx512,    radix7_t1_dit_fwd_avx512,        radix7_t1s_dit_fwd_avx512,        NULL                                                  },
-    {    8, radix8_n1_fwd_avx512,    radix8_t1_dit_fwd_avx512,  radix8_t1s_dit_fwd_avx512,  radix8_t1_dit_log3_fwd_avx512    },
-    {   10, radix10_n1_fwd_avx512,   radix10_t1_dit_fwd_avx512, radix10_t1s_dit_fwd_avx512, NULL                                                  },
-    {   11, radix11_n1_fwd_avx512,   radix11_t1_dit_fwd_avx512,       radix11_t1s_dit_fwd_avx512,       NULL                                                  },
-    {   12, radix12_n1_fwd_avx512,   radix12_t1_dit_fwd_avx512, radix12_t1s_dit_fwd_avx512, NULL                                                  },
-    {   13, radix13_n1_fwd_avx512,   radix13_t1_dit_fwd_avx512,       radix13_t1s_dit_fwd_avx512,       NULL                                                  },
-    {   16, radix16_n1_fwd_avx512,   radix16_t1_dit_fwd_avx512, radix16_t1s_dit_fwd_avx512, radix16_t1_dit_log3_fwd_avx512   },
-    {   17, radix17_n1_fwd_avx512,   radix17_t1_dit_fwd_avx512,       radix17_t1s_dit_fwd_avx512,       NULL                                                  },
-    {   19, radix19_n1_fwd_avx512,   radix19_t1_dit_fwd_avx512,       radix19_t1s_dit_fwd_avx512,       NULL                                                  },
-    {   20, radix20_n1_fwd_avx512,   radix20_t1_dit_fwd_avx512, radix20_t1s_dit_fwd_avx512, NULL                                                  },
-    {   25, radix25_n1_fwd_avx512,   radix25_t1_dit_fwd_avx512, radix25_t1s_dit_fwd_avx512, NULL                                                  },
-    {   32, radix32_n1_fwd_avx512,   radix32_t1_dit_fwd_avx512, radix32_t1s_dit_fwd_avx512, radix32_t1_dit_log3_fwd_avx512   },
-    {   64, radix64_n1_fwd_avx512,   radix64_t1_dit_fwd_avx512, radix64_t1s_dit_fwd_avx512, radix64_t1_dit_log3_fwd_avx512   },
-    {  128, radix128_n1_fwd_avx512,  radix128_t1_dit_fwd_avx512, radix128_t1s_dit_fwd_avx512, radix128_t1_dit_log3_fwd_avx512 },
-    {  256, radix256_n1_fwd_avx512,  radix256_t1_dit_fwd_avx512, radix256_t1s_dit_fwd_avx512, radix256_t1_dit_log3_fwd_avx512 },
-    {  512, radix512_n1_fwd_avx512,  radix512_t1_dit_fwd_avx512, radix512_t1s_dit_fwd_avx512, radix512_t1_dit_log3_fwd_avx512 },
-    /* R=1024 — research-only, intentionally omitted from cost-model scope */
-};
-
+/* Initialize RADIX_TABLE from the registry. Call once at startup. */
+static void init_radix_table(void) {
+#if defined(USE_AVX512)
+    vfft_proto_registry_init_avx512(&g_reg);
+#elif defined(USE_AVX2)
+    vfft_proto_registry_init_avx2(&g_reg);
 #else
 #error "must define USE_AVX2 or USE_AVX512"
 #endif
-
-#define N_RADIX (sizeof(RADIX_TABLE) / sizeof(RADIX_TABLE[0]))
+    for (size_t i = 0; i < N_RADIX; i++) {
+        int R = RADIX_LIST[i];
+        RADIX_TABLE[i].R       = R;
+        /* Cast: vfft_proto_codelet_fn and codelet_fn have the same
+         * signature but are nominally distinct C types. The cast is
+         * always safe (identical underlying ABI). */
+        RADIX_TABLE[i].n1_fn   = (codelet_fn)g_reg.n1_fwd[R];
+        RADIX_TABLE[i].t1_fn   = (codelet_fn)g_reg.t1_dit_fwd[R];
+        RADIX_TABLE[i].t1s_fn  = (codelet_fn)g_reg.t1s_dit_fwd[R];
+        RADIX_TABLE[i].log3_fn = (codelet_fn)g_reg.t1_dit_log3_fwd[R];
+    }
+}
 
 /* ─────────────────────── time / freq plumbing ─────────────────────── */
 
@@ -682,6 +501,7 @@ int main(int argc, char **argv)
     if (!out_path) out_path = "cost_model/generated/radix_cpe.h";
 
     timer_init();
+    init_radix_table();  /* populate from registry — replaces hand-coded externs */
     printf("[measure_cpe] calibrating CPU frequency...\n");
     double freq_ghz = measure_freq_ghz();
     printf("[measure_cpe] effective freq = %.3f GHz\n", freq_ghz);
