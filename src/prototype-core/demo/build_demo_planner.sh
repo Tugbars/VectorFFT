@@ -18,12 +18,47 @@ CC=${CC:-gcc-15}
 NJOBS=${NJOBS:-$(nproc 2>/dev/null || echo 4)}
 
 # Reuse measure_cpe's .o cache when available so we don't rebuild
-# 378 codelets just for this demo.
-OBJ_DIR=$ROOT/src/prototype/build_tuned/obj/avx2
+# 378 codelets just for this demo. Per-toolchain cache (gcc vs icx
+# produce incompatible .o formats on Windows — separate subdirs).
+CACHE_TAG=$(basename "$CC" | tr -d '.-')
+OBJ_DIR=$ROOT/src/prototype/build_tuned/obj/avx2_${CACHE_TAG}
 
 CFLAGS="-O2 -mavx2 -mfma -march=native -Wno-incompatible-pointer-types"
 case "$CC" in
-  *icx*|*icc*) CFLAGS="-O2 -mavx2 -mfma -xHost" ;;
+  *icx*|*icc*) CFLAGS="-O2 -mavx2 -mfma -xHost -Wno-incompatible-pointer-types" ;;
+esac
+
+# CLEAN=1 forces full recompile.
+if [ "${CLEAN:-0}" = "1" ]; then
+  echo "[build_demo_planner] CLEAN=1 — flushing $OBJ_DIR"
+  rm -rf "$OBJ_DIR"
+fi
+
+# ICX needs the oneAPI + MSVC + Windows-SDK lib paths to find libircmt /
+# libcmt / ucrt / kernel32. When setvars.bat hasn't been sourced, fill in
+# the standard candidate paths ourselves. Append (don't replace) so a
+# pre-sourced setvars.bat wins.
+case "$CC" in
+  *icx*|*icc*)
+    EXTRA_LIB_DIRS=(
+      "C:\\Program Files (x86)\\Intel\\oneAPI\\compiler\\2025.3\\lib"
+      "C:\\Program Files (x86)\\Intel\\oneAPI\\compiler\\latest\\lib"
+      "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.42.34433\\lib\\x64"
+      "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64"
+      "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\um\\x64"
+    )
+    for win_p in "${EXTRA_LIB_DIRS[@]}"; do
+      unix_p=$(cygpath -u "$win_p" 2>/dev/null || echo "")
+      if [ -n "$unix_p" ] && [ -d "$unix_p" ]; then
+        if [ -z "$LIB" ]; then
+          LIB="$win_p"
+        else
+          LIB="$LIB;$win_p"
+        fi
+      fi
+    done
+    export LIB
+    ;;
 esac
 
 OUT_DIR=$ROOT/src/prototype/build_tuned
@@ -77,10 +112,20 @@ printf '%s\n' "${ALL_SOURCES[@]}" | xargs -P $NJOBS -I {} bash -c 'compile_one "
 T1=$(date +%s)
 echo "[build_demo_planner] compile phase: $((T1-T0))s"
 
-# Link.
-ALL_OBJS=()
+# Link — use a response file so we don't blow past Windows' command-line
+# length limit when passing 378 codelet .o paths.
+# ICX/clang doesn't translate POSIX /c/... paths when reading from
+# response files; convert to mixed Windows form (C:/...) via cygpath.
+RSP=$OBJ_DIR/link.rsp
+> $RSP
+HAVE_CYGPATH=0
+command -v cygpath >/dev/null 2>&1 && HAVE_CYGPATH=1
 for src in "${ALL_SOURCES[@]}"; do
-  ALL_OBJS+=("$OBJ_DIR/$(basename "$src" .c).o")
+  OBJ_PATH="$OBJ_DIR/$(basename "$src" .c).o"
+  if [ $HAVE_CYGPATH -eq 1 ]; then
+    OBJ_PATH=$(cygpath -m "$OBJ_PATH")
+  fi
+  echo "$OBJ_PATH" >> $RSP
 done
 
 T0=$(date +%s)
@@ -88,7 +133,7 @@ $CC $CFLAGS \
     -I $PROTO_CORE \
     -I $GENERATED \
     "$PROTO_CORE/demo/demo_planner.c" \
-    "${ALL_OBJS[@]}" \
+    @$RSP \
     -o $OUT -lm
 T1=$(date +%s)
 echo "[build_demo_planner] link phase: $((T1-T0))s"

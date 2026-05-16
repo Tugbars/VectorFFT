@@ -57,6 +57,12 @@ let dir_str    = function Fwd -> "fwd" | Bwd -> "bwd"
 let n1_symbol ~r ~direction ~isa =
   Printf.sprintf "radix%d_n1_%s_%s" r (dir_str direction) isa
 
+(* OOP wrapper around the 6-arg in-place n1 codelet. Bridges to
+   production's 7-arg stride_n1_fn signature so the registry slot is
+   drop-in compatible when src/core/ is eventually replaced. *)
+let n1_wrapper_symbol ~r ~direction ~isa =
+  Printf.sprintf "vfft_proto_n1_r%d_%s_%s" r (dir_str direction) isa
+
 let t1_symbol ~r ~kind ~orient ~log3 ~direction ~isa =
   let l3 = if log3 then "log3_" else "" in
   Printf.sprintf "radix%d_%s_%s_%s%s_%s"
@@ -144,22 +150,31 @@ let emit_typedef () =
   print_endline "#ifndef VFFT_PROTO_REGISTRY_TYPES_H";
   print_endline "#define VFFT_PROTO_REGISTRY_TYPES_H";
   print_endline "";
-  print_endline "/* Codelet function pointer type. Same signature for n1 (tw_re/im";
-  print_endline " * ignored), t1 (twiddle buffer), t1s (scalar twiddles), and log3";
-  print_endline " * (sparse base-twiddle buffer). The codelet body uses tw_re/im";
-  print_endline " * according to its variant. */";
+  print_endline "/* Codelet function pointer types.";
+  print_endline " *";
+  print_endline " *   vfft_proto_codelet_fn — 6-arg in-place (t1/t1s/log3 codelets).";
+  print_endline " *                            Matches production's stride_t1_fn.";
+  print_endline " *   vfft_proto_n1_fn      — 7-arg OOP (n1 codelets, wrapped).";
+  print_endline " *                            Matches production's stride_n1_fn so the";
+  print_endline " *                            registry slot is drop-in compatible when";
+  print_endline " *                            src/core/ is eventually replaced. */";
   print_endline "typedef void (*vfft_proto_codelet_fn)(double *rio_re, double *rio_im,";
   print_endline "                                      const double *tw_re, const double *tw_im,";
   print_endline "                                      size_t ios, size_t me);";
+  print_endline "typedef void (*vfft_proto_n1_fn)(const double *in_re, const double *in_im,";
+  print_endline "                                  double *out_re, double *out_im,";
+  print_endline "                                  size_t is, size_t os, size_t vl);";
   print_endline "";
   print_endline "#define VFFT_PROTO_REG_MAX_RADIX 1025";
   print_endline ""
 
 let emit_struct () =
   print_endline "typedef struct {";
-  print_endline "    /* No-twiddle (first/last stage) codelets. */";
-  print_endline "    vfft_proto_codelet_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];";
-  print_endline "    vfft_proto_codelet_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];";
+  print_endline "    /* No-twiddle (first/last stage) codelets. 7-arg OOP signature;";
+  print_endline "     * registry init assigns auto-generated wrappers that bridge the";
+  print_endline "     * underlying 6-arg in-place codelet to the OOP shape. */";
+  print_endline "    vfft_proto_n1_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];";
+  print_endline "    vfft_proto_n1_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];";
   print_endline "";
   print_endline "    /* Twiddled inner-stage codelets. 16 slots:";
   print_endline "     *   kind   ∈ { t1, t1s }";
@@ -175,6 +190,43 @@ let emit_struct () =
   print_endline ""
   (* Note: types guard #endif emitted later, after the helpers. *)
 
+(* n1 OOP wrappers: bridge the 6-arg in-place codelets to the 7-arg
+   OOP signature. Emitted as static inline functions in the registry
+   header so they're available to the init function below. *)
+let emit_n1_oop_wrappers ~isa =
+  print_endline "/* ─────────────────────────────────────────────────────────────────";
+  print_endline " * n1 OOP wrappers — bridge the 6-arg in-place codelets to the 7-arg";
+  print_endline " * OOP signature production's `stride_n1_fn` exposes.";
+  print_endline " *";
+  print_endline " * In the common case (in==out, is==os), the wrapper just forwards";
+  print_endline " * to the underlying codelet — branch-predicted away after the first";
+  print_endline " * call. When in != out, we copy is-strided input to os-strided";
+  print_endline " * output first, then call the in-place butterfly. Pure-overlap or";
+  print_endline " * mismatched stride with shared buffer is unsupported (no current";
+  print_endline " * caller hits that — the executor always passes in==out, is==os).";
+  print_endline " * ───────────────────────────────────────────────────────────────── */";
+  print_endline "#define VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(R, dir, isa) \\";
+  print_endline "    static inline void vfft_proto_n1_r##R##_##dir##_##isa( \\";
+  print_endline "        const double *in_re, const double *in_im, \\";
+  print_endline "        double *out_re, double *out_im, \\";
+  print_endline "        size_t is, size_t os, size_t vl) { \\";
+  print_endline "        if (in_re != out_re || in_im != out_im) { \\";
+  print_endline "            for (int j = 0; j < (R); j++) { \\";
+  print_endline "                memcpy(out_re + (size_t)j*os, in_re + (size_t)j*is, vl*sizeof(double)); \\";
+  print_endline "                memcpy(out_im + (size_t)j*os, in_im + (size_t)j*is, vl*sizeof(double)); \\";
+  print_endline "            } \\";
+  print_endline "        } \\";
+  print_endline "        radix##R##_n1_##dir##_##isa(out_re, out_im, NULL, NULL, os, vl); \\";
+  print_endline "    }";
+  print_endline "";
+  List.iter (fun r ->
+    if has_n1 r then begin
+      Printf.printf "VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(%d, fwd, %s)\n" r isa;
+      Printf.printf "VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(%d, bwd, %s)\n" r isa
+    end
+  ) all_radixes;
+  print_endline ""
+
 let emit_init ~isa =
   Printf.printf "/* Initialize the registry for ISA=%s. Codelets that aren't emitted\n" isa;
   Printf.printf " * for a given radix (e.g. R=1024 has no DIF or t1s) leave their slots\n";
@@ -183,11 +235,11 @@ let emit_init ~isa =
   print_endline "    memset(reg, 0, sizeof(*reg));";
   print_endline "";
   (* n1 *)
-  print_endline "    /* n1 codelets */";
+  print_endline "    /* n1 codelets (7-arg OOP wrappers around 6-arg in-place codelets) */";
   List.iter (fun r ->
     if has_n1 r then begin
-      Printf.printf "    reg->n1_fwd[%d] = %s;\n" r (n1_symbol ~r ~direction:Fwd ~isa);
-      Printf.printf "    reg->n1_bwd[%d] = %s;\n" r (n1_symbol ~r ~direction:Bwd ~isa)
+      Printf.printf "    reg->n1_fwd[%d] = %s;\n" r (n1_wrapper_symbol ~r ~direction:Fwd ~isa);
+      Printf.printf "    reg->n1_bwd[%d] = %s;\n" r (n1_wrapper_symbol ~r ~direction:Bwd ~isa)
     end
   ) all_radixes;
   print_endline "";
@@ -262,6 +314,7 @@ let emit_header_file ~isa =
   print_endline "";
   print_endline "#endif /* VFFT_PROTO_REGISTRY_TYPES_H */";
   print_endline "";
+  emit_n1_oop_wrappers ~isa;
   emit_init ~isa;
   print_endline "";
   Printf.printf "#endif /* VFFT_PROTO_REGISTRY_%s_H */\n" isa_upper

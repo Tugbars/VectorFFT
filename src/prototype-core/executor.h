@@ -58,4 +58,22 @@ static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
     vfft_proto_execute_fwd_generic(plan, re, im, slice_K);
 }
 
+/* Backward execution (unnormalized).
+ *
+ * For DIT forward + DIT backward, fwd then bwd yields the original input
+ * × N (the standard unnormalized FFT roundtrip — the planner does not
+ * divide by N). Callers that want a normalized inverse divide by N
+ * themselves. The roundtrip uses the same memory layout as forward;
+ * no permutation step required (the zero-permutation property).
+ *
+ * No (B)+(A) specialization is emitted for bwd in this phase. All bwd
+ * cells go through the generic loop, which has the same per-group cost
+ * as production's DIT bwd. */
+static inline void vfft_proto_execute_bwd(const stride_plan_t *plan,
+                                           double *re, double *im,
+                                           size_t slice_K)
+{
+    vfft_proto_execute_bwd_generic(plan, re, im, slice_K);
+}
+
 #endif /* VFFT_PROTO_CORE_EXECUTOR_H */

@@ -1176,20 +1176,29 @@ extern void radix1024_t1_dit_log3_fwd_avx512(double *rio_re, double *rio_im,
 #ifndef VFFT_PROTO_REGISTRY_TYPES_H
 #define VFFT_PROTO_REGISTRY_TYPES_H
 
-/* Codelet function pointer type. Same signature for n1 (tw_re/im
- * ignored), t1 (twiddle buffer), t1s (scalar twiddles), and log3
- * (sparse base-twiddle buffer). The codelet body uses tw_re/im
- * according to its variant. */
+#include <string.h>  /* memcpy in n1 OOP wrappers */
+
+/* Codelet function pointer types.
+ *
+ *   vfft_proto_codelet_fn — 6-arg in-place (t1/t1s/log3 codelets).
+ *                            Matches production's stride_t1_fn.
+ *   vfft_proto_n1_fn      — 7-arg OOP (n1 codelets, wrapped).
+ *                            Matches production's stride_n1_fn. */
 typedef void (*vfft_proto_codelet_fn)(double *rio_re, double *rio_im,
                                       const double *tw_re, const double *tw_im,
                                       size_t ios, size_t me);
+typedef void (*vfft_proto_n1_fn)(const double *in_re, const double *in_im,
+                                  double *out_re, double *out_im,
+                                  size_t is, size_t os, size_t vl);
 
 #define VFFT_PROTO_REG_MAX_RADIX 1025
 
 typedef struct {
-    /* No-twiddle (first/last stage) codelets. */
-    vfft_proto_codelet_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];
-    vfft_proto_codelet_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];
+    /* No-twiddle (first/last stage) codelets. 7-arg OOP signature;
+     * registry init assigns auto-generated wrappers that bridge the
+     * underlying 6-arg in-place codelet to the OOP shape. */
+    vfft_proto_n1_fn n1_fwd[VFFT_PROTO_REG_MAX_RADIX];
+    vfft_proto_n1_fn n1_bwd[VFFT_PROTO_REG_MAX_RADIX];
 
     /* Twiddled inner-stage codelets. 16 slots:
      *   kind   ∈ { t1, t1s }
@@ -1252,57 +1261,121 @@ static inline int vfft_proto_has_t1s_dif_log3(const vfft_proto_registry_t *reg, 
 
 #endif /* VFFT_PROTO_REGISTRY_TYPES_H */
 
+/* n1 OOP wrappers — see registry_avx2.h for full discussion. The macro
+ * lives in this header (not the shared types header) so that AVX-2 and
+ * AVX-512 each emit their own per-radix wrappers without colliding. */
+#ifndef VFFT_PROTO_DEFINE_N1_OOP_WRAPPER
+#define VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(R, dir, isa) \
+    static inline void vfft_proto_n1_r##R##_##dir##_##isa( \
+        const double *in_re, const double *in_im, \
+        double *out_re, double *out_im, \
+        size_t is, size_t os, size_t vl) { \
+        if (in_re != out_re || in_im != out_im) { \
+            for (int j = 0; j < (R); j++) { \
+                memcpy(out_re + (size_t)j*os, in_re + (size_t)j*is, vl*sizeof(double)); \
+                memcpy(out_im + (size_t)j*os, in_im + (size_t)j*is, vl*sizeof(double)); \
+            } \
+        } \
+        radix##R##_n1_##dir##_##isa(out_re, out_im, NULL, NULL, os, vl); \
+    }
+#endif
+
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(2,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(2,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(3,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(3,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(4,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(4,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(5,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(5,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(6,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(6,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(7,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(7,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(8,    fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(8,    bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(10,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(10,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(11,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(11,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(12,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(12,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(13,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(13,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(16,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(16,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(17,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(17,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(19,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(19,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(20,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(20,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(25,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(25,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(32,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(32,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(64,   fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(64,   bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(128,  fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(128,  bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(256,  fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(256,  bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(512,  fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(512,  bwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(1024, fwd, avx512)
+VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(1024, bwd, avx512)
+
 /* Initialize the registry for ISA=avx512. Codelets that aren't emitted
  * for a given radix (e.g. R=1024 has no DIF or t1s) leave their slots
  * NULL. Callers use the query helpers below to test before dispatch. */
 static inline void vfft_proto_registry_init_avx512(vfft_proto_registry_t *reg) {
     memset(reg, 0, sizeof(*reg));
 
-    /* n1 codelets */
-    reg->n1_fwd[2] = radix2_n1_fwd_avx512;
-    reg->n1_bwd[2] = radix2_n1_bwd_avx512;
-    reg->n1_fwd[3] = radix3_n1_fwd_avx512;
-    reg->n1_bwd[3] = radix3_n1_bwd_avx512;
-    reg->n1_fwd[4] = radix4_n1_fwd_avx512;
-    reg->n1_bwd[4] = radix4_n1_bwd_avx512;
-    reg->n1_fwd[5] = radix5_n1_fwd_avx512;
-    reg->n1_bwd[5] = radix5_n1_bwd_avx512;
-    reg->n1_fwd[6] = radix6_n1_fwd_avx512;
-    reg->n1_bwd[6] = radix6_n1_bwd_avx512;
-    reg->n1_fwd[7] = radix7_n1_fwd_avx512;
-    reg->n1_bwd[7] = radix7_n1_bwd_avx512;
-    reg->n1_fwd[8] = radix8_n1_fwd_avx512;
-    reg->n1_bwd[8] = radix8_n1_bwd_avx512;
-    reg->n1_fwd[10] = radix10_n1_fwd_avx512;
-    reg->n1_bwd[10] = radix10_n1_bwd_avx512;
-    reg->n1_fwd[11] = radix11_n1_fwd_avx512;
-    reg->n1_bwd[11] = radix11_n1_bwd_avx512;
-    reg->n1_fwd[12] = radix12_n1_fwd_avx512;
-    reg->n1_bwd[12] = radix12_n1_bwd_avx512;
-    reg->n1_fwd[13] = radix13_n1_fwd_avx512;
-    reg->n1_bwd[13] = radix13_n1_bwd_avx512;
-    reg->n1_fwd[16] = radix16_n1_fwd_avx512;
-    reg->n1_bwd[16] = radix16_n1_bwd_avx512;
-    reg->n1_fwd[17] = radix17_n1_fwd_avx512;
-    reg->n1_bwd[17] = radix17_n1_bwd_avx512;
-    reg->n1_fwd[19] = radix19_n1_fwd_avx512;
-    reg->n1_bwd[19] = radix19_n1_bwd_avx512;
-    reg->n1_fwd[20] = radix20_n1_fwd_avx512;
-    reg->n1_bwd[20] = radix20_n1_bwd_avx512;
-    reg->n1_fwd[25] = radix25_n1_fwd_avx512;
-    reg->n1_bwd[25] = radix25_n1_bwd_avx512;
-    reg->n1_fwd[32] = radix32_n1_fwd_avx512;
-    reg->n1_bwd[32] = radix32_n1_bwd_avx512;
-    reg->n1_fwd[64] = radix64_n1_fwd_avx512;
-    reg->n1_bwd[64] = radix64_n1_bwd_avx512;
-    reg->n1_fwd[128] = radix128_n1_fwd_avx512;
-    reg->n1_bwd[128] = radix128_n1_bwd_avx512;
-    reg->n1_fwd[256] = radix256_n1_fwd_avx512;
-    reg->n1_bwd[256] = radix256_n1_bwd_avx512;
-    reg->n1_fwd[512] = radix512_n1_fwd_avx512;
-    reg->n1_bwd[512] = radix512_n1_bwd_avx512;
-    reg->n1_fwd[1024] = radix1024_n1_fwd_avx512;
-    reg->n1_bwd[1024] = radix1024_n1_bwd_avx512;
+    /* n1 codelets (7-arg OOP wrappers around 6-arg in-place codelets) */
+    reg->n1_fwd[2] = vfft_proto_n1_r2_fwd_avx512;
+    reg->n1_bwd[2] = vfft_proto_n1_r2_bwd_avx512;
+    reg->n1_fwd[3] = vfft_proto_n1_r3_fwd_avx512;
+    reg->n1_bwd[3] = vfft_proto_n1_r3_bwd_avx512;
+    reg->n1_fwd[4] = vfft_proto_n1_r4_fwd_avx512;
+    reg->n1_bwd[4] = vfft_proto_n1_r4_bwd_avx512;
+    reg->n1_fwd[5] = vfft_proto_n1_r5_fwd_avx512;
+    reg->n1_bwd[5] = vfft_proto_n1_r5_bwd_avx512;
+    reg->n1_fwd[6] = vfft_proto_n1_r6_fwd_avx512;
+    reg->n1_bwd[6] = vfft_proto_n1_r6_bwd_avx512;
+    reg->n1_fwd[7] = vfft_proto_n1_r7_fwd_avx512;
+    reg->n1_bwd[7] = vfft_proto_n1_r7_bwd_avx512;
+    reg->n1_fwd[8] = vfft_proto_n1_r8_fwd_avx512;
+    reg->n1_bwd[8] = vfft_proto_n1_r8_bwd_avx512;
+    reg->n1_fwd[10] = vfft_proto_n1_r10_fwd_avx512;
+    reg->n1_bwd[10] = vfft_proto_n1_r10_bwd_avx512;
+    reg->n1_fwd[11] = vfft_proto_n1_r11_fwd_avx512;
+    reg->n1_bwd[11] = vfft_proto_n1_r11_bwd_avx512;
+    reg->n1_fwd[12] = vfft_proto_n1_r12_fwd_avx512;
+    reg->n1_bwd[12] = vfft_proto_n1_r12_bwd_avx512;
+    reg->n1_fwd[13] = vfft_proto_n1_r13_fwd_avx512;
+    reg->n1_bwd[13] = vfft_proto_n1_r13_bwd_avx512;
+    reg->n1_fwd[16] = vfft_proto_n1_r16_fwd_avx512;
+    reg->n1_bwd[16] = vfft_proto_n1_r16_bwd_avx512;
+    reg->n1_fwd[17] = vfft_proto_n1_r17_fwd_avx512;
+    reg->n1_bwd[17] = vfft_proto_n1_r17_bwd_avx512;
+    reg->n1_fwd[19] = vfft_proto_n1_r19_fwd_avx512;
+    reg->n1_bwd[19] = vfft_proto_n1_r19_bwd_avx512;
+    reg->n1_fwd[20] = vfft_proto_n1_r20_fwd_avx512;
+    reg->n1_bwd[20] = vfft_proto_n1_r20_bwd_avx512;
+    reg->n1_fwd[25] = vfft_proto_n1_r25_fwd_avx512;
+    reg->n1_bwd[25] = vfft_proto_n1_r25_bwd_avx512;
+    reg->n1_fwd[32] = vfft_proto_n1_r32_fwd_avx512;
+    reg->n1_bwd[32] = vfft_proto_n1_r32_bwd_avx512;
+    reg->n1_fwd[64] = vfft_proto_n1_r64_fwd_avx512;
+    reg->n1_bwd[64] = vfft_proto_n1_r64_bwd_avx512;
+    reg->n1_fwd[128] = vfft_proto_n1_r128_fwd_avx512;
+    reg->n1_bwd[128] = vfft_proto_n1_r128_bwd_avx512;
+    reg->n1_fwd[256] = vfft_proto_n1_r256_fwd_avx512;
+    reg->n1_bwd[256] = vfft_proto_n1_r256_bwd_avx512;
+    reg->n1_fwd[512] = vfft_proto_n1_r512_fwd_avx512;
+    reg->n1_bwd[512] = vfft_proto_n1_r512_bwd_avx512;
+    reg->n1_fwd[1024] = vfft_proto_n1_r1024_fwd_avx512;
+    reg->n1_bwd[1024] = vfft_proto_n1_r1024_bwd_avx512;
 
     /* t1_dit_fwd */
     reg->t1_dit_fwd[2] = radix2_t1_dit_fwd_avx512;
