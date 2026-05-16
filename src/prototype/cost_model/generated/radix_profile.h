@@ -86,6 +86,30 @@ static const stride_radix_profile_t stride_radix_profile_t1_avx2[STRIDE_RADIX_PR
     [1024] = { .n_add = 23456, .n_mul =  9368, .n_fma =  4574, .n_load =  4094, .n_store =  2048, .n_blend =   0, .n_set1 = 257, .n_xor =   0, .n_decls =  32124 },
 };
 
+static const stride_radix_profile_t stride_radix_profile_log3_avx2[STRIDE_RADIX_PROFILE_MAX_R] = {
+    [   2] = { .n_add =     4, .n_mul =     2, .n_fma =     2, .n_load =     6, .n_store =     4, .n_blend =   0, .n_set1 =   0, .n_xor =   0, .n_decls =     12 },
+    [   4] = { .n_add =    16, .n_mul =     8, .n_fma =     8, .n_load =    12, .n_store =     8, .n_blend =   0, .n_set1 =   0, .n_xor =   0, .n_decls =     36 },
+    [   5] = { .n_add =    20, .n_mul =    14, .n_fma =    22, .n_load =    16, .n_store =    10, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =     52 },
+    [   6] = { .n_add =    34, .n_mul =    24, .n_fma =    20, .n_load =    18, .n_store =    12, .n_blend =   0, .n_set1 =   2, .n_xor =   0, .n_decls =     72 },
+    [   7] = { .n_add =    30, .n_mul =    24, .n_fma =    48, .n_load =    20, .n_store =    14, .n_blend =   0, .n_set1 =   6, .n_xor =   0, .n_decls =     76 },
+    [   8] = { .n_add =    50, .n_mul =    25, .n_fma =    24, .n_load =    22, .n_store =    16, .n_blend =   0, .n_set1 =   1, .n_xor =   0, .n_decls =     96 },
+    [  10] = { .n_add =    72, .n_mul =    56, .n_fma =    48, .n_load =    28, .n_store =    20, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =    136 },
+    [  11] = { .n_add =    50, .n_mul =    42, .n_fma =   122, .n_load =    30, .n_store =    22, .n_blend =   0, .n_set1 =  10, .n_xor =   0, .n_decls =    124 },
+    [  12] = { .n_add =    95, .n_mul =    59, .n_fma =    45, .n_load =    32, .n_store =    24, .n_blend =   0, .n_set1 =   2, .n_xor =   0, .n_decls =    172 },
+    [  13] = { .n_add =    60, .n_mul =    52, .n_fma =   172, .n_load =    34, .n_store =    26, .n_blend =   0, .n_set1 =  15, .n_xor =   0, .n_decls =    148 },
+    [  16] = { .n_add =   132, .n_mul =    66, .n_fma =    64, .n_load =    40, .n_store =    32, .n_blend =   0, .n_set1 =   3, .n_xor =   0, .n_decls =    236 },
+    [  17] = { .n_add =    80, .n_mul =    70, .n_fma =   294, .n_load =    44, .n_store =    34, .n_blend =   0, .n_set1 =  17, .n_xor =   0, .n_decls =    196 },
+    [  19] = { .n_add =    90, .n_mul =    80, .n_fma =   368, .n_load =    48, .n_store =    38, .n_blend =   0, .n_set1 =  21, .n_xor =   0, .n_decls =    220 },
+    [  20] = { .n_add =   192, .n_mul =   138, .n_fma =   106, .n_load =    50, .n_store =    40, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =    324 },
+    [  25] = { .n_add =   274, .n_mul =   232, .n_fma =   164, .n_load =    60, .n_store =    50, .n_blend =   0, .n_set1 =  20, .n_xor =   0, .n_decls =    438 },
+    [  32] = { .n_add =   332, .n_mul =   164, .n_fma =   158, .n_load =    74, .n_store =    64, .n_blend =   0, .n_set1 =   7, .n_xor =   0, .n_decls =    564 },
+    [  64] = { .n_add =   811, .n_mul =   389, .n_fma =   357, .n_load =   140, .n_store =   128, .n_blend =   0, .n_set1 =  16, .n_xor =   0, .n_decls =   1308 },
+    [ 128] = { .n_add =  1965, .n_mul =   965, .n_fma =   721, .n_load =   270, .n_store =   256, .n_blend =   0, .n_set1 =  33, .n_xor =   0, .n_decls =   2956 },
+    [ 256] = { .n_add =  4558, .n_mul =  2228, .n_fma =  1502, .n_load =   528, .n_store =   512, .n_blend =   0, .n_set1 =  65, .n_xor =   0, .n_decls =   6588 },
+    [ 512] = { .n_add = 10403, .n_mul =  5063, .n_fma =  3175, .n_load =  1042, .n_store =  1024, .n_blend =   0, .n_set1 = 132, .n_xor =   0, .n_decls =  14620 },
+    [1024] = { .n_add = 23456, .n_mul = 11394, .n_fma =  6600, .n_load =  2068, .n_store =  2048, .n_blend =   0, .n_set1 = 257, .n_xor =   0, .n_decls =  32124 },
+};
+
 static const stride_radix_profile_t stride_radix_profile_dct2_avx2[STRIDE_RADIX_PROFILE_MAX_R] = {
     [   8] = { .n_add =    25, .n_mul =    22, .n_fma =     1, .n_load =     8, .n_store =     8, .n_blend =   0, .n_set1 =   9, .n_xor =   0, .n_decls =     34 },
     [  16] = { .n_add =    75, .n_mul =    55, .n_fma =     4, .n_load =    16, .n_store =    16, .n_blend =   0, .n_set1 =  17, .n_xor =   3, .n_decls =     85 },
@@ -175,6 +199,30 @@ static const stride_radix_profile_t stride_radix_profile_t1_avx512[STRIDE_RADIX_
     [ 256] = { .n_add =  4558, .n_mul =  1734, .n_fma =  1008, .n_load =  1022, .n_store =   512, .n_blend =   0, .n_set1 =  65, .n_xor =   0, .n_decls =   6588 },
     [ 512] = { .n_add = 10403, .n_mul =  4059, .n_fma =  2171, .n_load =  2046, .n_store =  1024, .n_blend =   0, .n_set1 = 132, .n_xor =   0, .n_decls =  14620 },
     [1024] = { .n_add = 23456, .n_mul =  9368, .n_fma =  4574, .n_load =  4094, .n_store =  2048, .n_blend =   0, .n_set1 = 257, .n_xor =   0, .n_decls =  32124 },
+};
+
+static const stride_radix_profile_t stride_radix_profile_log3_avx512[STRIDE_RADIX_PROFILE_MAX_R] = {
+    [   2] = { .n_add =     4, .n_mul =     2, .n_fma =     2, .n_load =     6, .n_store =     4, .n_blend =   0, .n_set1 =   0, .n_xor =   0, .n_decls =     12 },
+    [   4] = { .n_add =    16, .n_mul =     8, .n_fma =     8, .n_load =    12, .n_store =     8, .n_blend =   0, .n_set1 =   0, .n_xor =   0, .n_decls =     36 },
+    [   5] = { .n_add =    20, .n_mul =    14, .n_fma =    22, .n_load =    16, .n_store =    10, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =     52 },
+    [   6] = { .n_add =    34, .n_mul =    24, .n_fma =    20, .n_load =    18, .n_store =    12, .n_blend =   0, .n_set1 =   2, .n_xor =   0, .n_decls =     72 },
+    [   7] = { .n_add =    30, .n_mul =    24, .n_fma =    48, .n_load =    20, .n_store =    14, .n_blend =   0, .n_set1 =   6, .n_xor =   0, .n_decls =     76 },
+    [   8] = { .n_add =    50, .n_mul =    25, .n_fma =    24, .n_load =    22, .n_store =    16, .n_blend =   0, .n_set1 =   1, .n_xor =   0, .n_decls =     96 },
+    [  10] = { .n_add =    72, .n_mul =    56, .n_fma =    48, .n_load =    28, .n_store =    20, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =    136 },
+    [  11] = { .n_add =    50, .n_mul =    42, .n_fma =   122, .n_load =    30, .n_store =    22, .n_blend =   0, .n_set1 =  10, .n_xor =   0, .n_decls =    124 },
+    [  12] = { .n_add =    95, .n_mul =    59, .n_fma =    45, .n_load =    32, .n_store =    24, .n_blend =   0, .n_set1 =   2, .n_xor =   0, .n_decls =    172 },
+    [  13] = { .n_add =    60, .n_mul =    52, .n_fma =   172, .n_load =    34, .n_store =    26, .n_blend =   0, .n_set1 =  15, .n_xor =   0, .n_decls =    148 },
+    [  16] = { .n_add =   132, .n_mul =    66, .n_fma =    64, .n_load =    40, .n_store =    32, .n_blend =   0, .n_set1 =   3, .n_xor =   0, .n_decls =    236 },
+    [  17] = { .n_add =    80, .n_mul =    70, .n_fma =   294, .n_load =    44, .n_store =    34, .n_blend =   0, .n_set1 =  17, .n_xor =   0, .n_decls =    196 },
+    [  19] = { .n_add =    90, .n_mul =    80, .n_fma =   368, .n_load =    48, .n_store =    38, .n_blend =   0, .n_set1 =  21, .n_xor =   0, .n_decls =    220 },
+    [  20] = { .n_add =   192, .n_mul =   138, .n_fma =   106, .n_load =    50, .n_store =    40, .n_blend =   0, .n_set1 =   4, .n_xor =   0, .n_decls =    324 },
+    [  25] = { .n_add =   274, .n_mul =   232, .n_fma =   164, .n_load =    60, .n_store =    50, .n_blend =   0, .n_set1 =  20, .n_xor =   0, .n_decls =    438 },
+    [  32] = { .n_add =   332, .n_mul =   164, .n_fma =   158, .n_load =    74, .n_store =    64, .n_blend =   0, .n_set1 =   7, .n_xor =   0, .n_decls =    564 },
+    [  64] = { .n_add =   811, .n_mul =   389, .n_fma =   357, .n_load =   140, .n_store =   128, .n_blend =   0, .n_set1 =  16, .n_xor =   0, .n_decls =   1308 },
+    [ 128] = { .n_add =  1965, .n_mul =   965, .n_fma =   721, .n_load =   270, .n_store =   256, .n_blend =   0, .n_set1 =  33, .n_xor =   0, .n_decls =   2956 },
+    [ 256] = { .n_add =  4558, .n_mul =  2228, .n_fma =  1502, .n_load =   528, .n_store =   512, .n_blend =   0, .n_set1 =  65, .n_xor =   0, .n_decls =   6588 },
+    [ 512] = { .n_add = 10403, .n_mul =  5063, .n_fma =  3175, .n_load =  1042, .n_store =  1024, .n_blend =   0, .n_set1 = 132, .n_xor =   0, .n_decls =  14620 },
+    [1024] = { .n_add = 23456, .n_mul = 11394, .n_fma =  6600, .n_load =  2068, .n_store =  2048, .n_blend =   0, .n_set1 = 257, .n_xor =   0, .n_decls =  32124 },
 };
 
 static const stride_radix_profile_t stride_radix_profile_dct2_avx512[STRIDE_RADIX_PROFILE_MAX_R] = {
