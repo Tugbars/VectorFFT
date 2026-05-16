@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx512f")))
-void radix64_dst3_avx512_gen(
+void radix64_dst3_avx512(
     const double * __restrict__ in_re,
     const double * __restrict__ in_im,
     double       * __restrict__ out_re,

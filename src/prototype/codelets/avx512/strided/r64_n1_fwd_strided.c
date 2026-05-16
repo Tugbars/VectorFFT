@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx512f")))
-void radix64_n1_fwd_avx512_gen_strided(
+void radix64_n1_fwd_avx512_strided(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,

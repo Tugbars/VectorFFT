@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 __attribute__((target("avx512f")))
-void radix10_t1s_dif_bwd_avx512_gen_inplace_su_spill(
+void radix10_t1s_dif_bwd_avx512(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,
