@@ -1,43 +1,61 @@
 /* executor.h — 1D C2C execution dispatch for prototype-core.
  *
- * [Phase 1 placeholder — will be populated when Phase 1 lands.]
+ * Public entry point: vfft_proto_execute_fwd().
  *
- * Public entry point:
+ * Two-tier dispatch:
  *
- *   void vfft_proto_execute_fwd(const stride_plan_t *plan,
- *                               double *re, double *im, size_t slice_K);
+ *   1. Call vfft_proto_lookup_fwd_avx2(plan) from plan_executors.h.
+ *      Returns a specialized executor (the (B)+(A) plan-shaped fast
+ *      path) if one was emitted for this plan's shape, NULL otherwise.
  *
- * Internally:
- *   1. Call vfft_proto_lookup_fwd_<isa>(plan) from plan_executors.h.
- *   2. If non-NULL: invoke the specialized plan-shaped executor (the
- *      (B)+(A) tape-walk fast path; saves 5-6% wall time on T1S/FLAT
- *      cells per the spike measurements in docs/61).
- *   3. If NULL (cold cell, no specialization for this plan shape):
- *      fall back to vfft_proto_execute_fwd_generic in executor_generic.h.
+ *   2. If non-NULL: invoke it. Saves 5-6% wall time on T1S/FLAT cells
+ *      per the spike measurements in docs/61.
  *
- * Two-tier dispatch keeps the spike's specialized fast path as a
- * strict optimization layer; the generic path is the correctness
- * baseline that handles every plan shape the planner produces.
+ *   3. If NULL (cold cell): fall back to vfft_proto_execute_fwd_generic
+ *      from executor_generic.h. The generic loop handles every plan
+ *      shape; the specialized path is a strict optimization on top.
  *
- * Scope mirrors plan.h's: 1D C2C, in-place, single-threaded, DIT
- * (DIF deferred). Backward direction will land alongside the
- * forward implementation when Phase 1 ships.
+ * Phase 1 scope:
+ *   - 1D C2C only
+ *   - In-place (re/im are both input and output)
+ *   - Single-threaded
+ *   - DIT orientation (DIF deferred to a later phase)
+ *   - Forward direction only (bwd lands alongside in a later phase)
+ *
+ * Phase 1 simplifying assumption:
+ *   The lookup picks avx2; AVX-512 dispatch lives in the per-ISA
+ *   registry but isn't wired through here yet. Build per-ISA binaries
+ *   for now (same model as production).
  */
 #ifndef VFFT_PROTO_CORE_EXECUTOR_H
 #define VFFT_PROTO_CORE_EXECUTOR_H
 
 #include "plan.h"
+#include "executor_generic.h"  // IWYU pragma: keep
 
-/* Phase 1 will add:
+/* Forward execution.
  *
- *   void vfft_proto_execute_fwd(const stride_plan_t *plan,
- *                               double *re, double *im,
- *                               size_t slice_K);
- *   void vfft_proto_execute_bwd(const stride_plan_t *plan,
- *                               double *re, double *im,
- *                               size_t slice_K);
- *
- * Internally: lookup specialized; fall back to generic.
+ * Inputs (in-place):
+ *   plan     — fully populated stride_plan_t from the planner (or
+ *              hand-constructed for testing)
+ *   re/im    — split-complex buffers of size plan->N * slice_K doubles
+ *              each. Will be overwritten with the transform.
+ *   slice_K  — K batches to process (may be ≤ plan->K for split
+ *              execution, but Phase 1 uses slice_K == plan->K)
  */
+static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
+                                           double *re, double *im,
+                                           size_t slice_K)
+{
+    /* Tier 1: try the (B)+(A) plan-shaped specialization. */
+    vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx2(plan);
+    if (fn) {
+        fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
+        return;
+    }
+
+    /* Tier 2: cold cell — generic per-stage loop. */
+    vfft_proto_execute_fwd_generic(plan, re, im, slice_K);
+}
 
 #endif /* VFFT_PROTO_CORE_EXECUTOR_H */
