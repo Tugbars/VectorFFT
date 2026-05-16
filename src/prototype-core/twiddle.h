@@ -137,7 +137,13 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
      *   T1S    consumer reads tw_scalar (combined cf × per_leg)
      *   FLAT   consumer reads grp_tw    (combined cf × per_leg, K-replicated)
      *   LOG3   consumer reads grp_tw    (raw per_leg; executor applies cf
-     *                                    to ALL legs before codelet call) */
+     *                                    to ALL legs before codelet call)
+     *
+     * Storage strategy (mirrors production src/core/executor.h):
+     *   - Pointer arrays (tw_scalar_re, grp_tw_re, etc) hold ng pointers.
+     *   - Backing storage lives in 4 stage-level POOLS (one allocation each).
+     *   - Per-group pointers index into the pools. Avoids ng × 4 callocs
+     *     per stage which thrash the heap on long search loops. */
     st->needs_tw     = (int *)     calloc((size_t)ng, sizeof(int));
     st->cf0_re       = (double *)  calloc((size_t)ng, sizeof(double));
     st->cf0_im       = (double *)  calloc((size_t)ng, sizeof(double));
@@ -145,6 +151,19 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
     st->tw_scalar_im = (double **) calloc((size_t)ng, sizeof(double *));
     st->grp_tw_re    = (double **) calloc((size_t)ng, sizeof(double *));
     st->grp_tw_im    = (double **) calloc((size_t)ng, sizeof(double *));
+
+    /* Per-stage POOLS. Sized for the worst case where every group has
+     * a non-trivial twiddle (no k_prev=0 row). When some groups skip,
+     * their pool slots are unused but the slot offsets stay reserved
+     * — a small memory waste, but eliminates per-group allocation. */
+    const size_t scalar_per_grp = (R > 1) ? (size_t)(R - 1) : 0;
+    const size_t grp_per_grp    = scalar_per_grp * K;
+    if (s > 0 && scalar_per_grp > 0) {
+        st->tw_scalar_pool_re = (double *)calloc((size_t)ng * scalar_per_grp, sizeof(double));
+        st->tw_scalar_pool_im = (double *)calloc((size_t)ng * scalar_per_grp, sizeof(double));
+        st->tw_pool_re        = (double *)calloc((size_t)ng * grp_per_grp,    sizeof(double));
+        st->tw_pool_im        = (double *)calloc((size_t)ng * grp_per_grp,    sizeof(double));
+    }
 
     /* cf_all: K-replicated combined twiddle for ALL R legs (including leg 0).
      * Layout: cf_all_re[g * R * K + j * K + kk]. Read by the backward
@@ -236,14 +255,17 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
 
             /* Per-leg scalar twiddles (legs 1..R-1). FLAT/T1S store
              * combined cf × per_leg; LOG3 stores raw per_leg.
-             * grp_tw is the K-replicated version of the same. */
-            double *stw_r = (double *)calloc((size_t)(R - 1), sizeof(double));
-            double *stw_i = (double *)calloc((size_t)(R - 1), sizeof(double));
+             * grp_tw is the K-replicated version of the same.
+             *
+             * Per-group pointers point into stage-level pools (allocated
+             * above). No per-group calloc — eliminates heap thrash. */
+            double *stw_r = st->tw_scalar_pool_re + (size_t)g * scalar_per_grp;
+            double *stw_i = st->tw_scalar_pool_im + (size_t)g * scalar_per_grp;
             st->tw_scalar_re[g] = stw_r;
             st->tw_scalar_im[g] = stw_i;
 
-            double *gtw_r = (double *)calloc((size_t)(R - 1) * K, sizeof(double));
-            double *gtw_i = (double *)calloc((size_t)(R - 1) * K, sizeof(double));
+            double *gtw_r = st->tw_pool_re + (size_t)g * grp_per_grp;
+            double *gtw_i = st->tw_pool_im + (size_t)g * grp_per_grp;
             st->grp_tw_re[g] = gtw_r;
             st->grp_tw_im[g] = gtw_i;
 
@@ -319,18 +341,12 @@ static inline void vfft_proto_free_plan_tables(stride_plan_t *plan)
 {
     for (int s = 0; s < plan->num_stages; s++) {
         stride_stage_t *st = &plan->stages[s];
-        if (st->tw_scalar_re) {
-            for (int g = 0; g < st->num_groups; g++) {
-                free(st->tw_scalar_re[g]);
-                free(st->tw_scalar_im[g]);
-            }
-        }
-        if (st->grp_tw_re) {
-            for (int g = 0; g < st->num_groups; g++) {
-                free(st->grp_tw_re[g]);
-                free(st->grp_tw_im[g]);
-            }
-        }
+        /* Free per-stage POOLS (one allocation per pool, not per group). */
+        free(st->tw_scalar_pool_re);
+        free(st->tw_scalar_pool_im);
+        free(st->tw_pool_re);
+        free(st->tw_pool_im);
+        /* Free pointer arrays (small — ng pointers). */
         free(st->tw_scalar_re); free(st->tw_scalar_im);
         free(st->grp_tw_re);    free(st->grp_tw_im);
         free(st->cf_all_re);    free(st->cf_all_im);
