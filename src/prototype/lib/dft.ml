@@ -896,6 +896,27 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
      * This is the same fallback path Direct takes — both algorithms simply
      * lack a clean cluster boundary for the current recipe shape. *)
     (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
+  | Cooley_Tukey (_n1, _n2) when policy = TP_Log3 && direction = DIF ->
+    (* KNOWN BUG: DIF + TP_Log3 + spill recipe produces use-before-decl
+     * in emitted C. The spill recipe captures pass1 outputs as markers
+     * and reorders their declarations; for log3 in DIF the Cmul-derived
+     * twiddle intermediates (high-fanout, used at output side) get
+     * scheduled out-of-order relative to their consumers.
+     *
+     * Surface area: R=12 and R=25 dif log3 codelets (R=12=4×3, R=25=5×5
+     * — composites with non-pow2 sub-radixes).
+     *
+     * Workaround: fall back to plain expansion for (DIF, TP_Log3) only.
+     * Other (direction, policy) combos keep the spill recipe. The
+     * resulting DIF log3 codelets miss the spill optimization but are
+     * correct. Production wisdom uses use_dif_forward=0 universally, so
+     * these codelets are never invoked at runtime anyway — they exist
+     * for library completeness.
+     *
+     * Real fix: rework spill recipe to either exclude log3 Cmul nodes
+     * from pass1_assigns or insert reload sites at every use of a
+     * spilled value. Separate workstream. *)
+    (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
   | Cooley_Tukey (n1, n2) ->
     (* DIT pre-multiplies inputs by twiddles; DIF leaves inputs raw and
      * post-multiplies outputs at the end. The internal CT decomposition
