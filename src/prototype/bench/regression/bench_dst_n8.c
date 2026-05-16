@@ -24,10 +24,10 @@
 #include "../../../vectorfft_tune/generated/dct8/dct2_n8_avx2.h"
 #include "../../../vectorfft_tune/generated/dct8/dct3_n8_avx2.h"
 
-__attribute__((target("avx2,fma"))) void radix8_dst2_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_dst2_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix8_dst3_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_dst3_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 
@@ -156,10 +156,10 @@ static void call_3pass(void) {
 }
 static void call_fused(void) {
     if (g_mode == 0)
-        radix8_dst2_avx2_gen(g_in, g_dummy, g_out_fused, g_out_im,
+        radix8_dst2_avx2(g_in, g_dummy, g_out_fused, g_out_im,
                              g_dummy, g_dummy, g_K);
     else
-        radix8_dst3_avx2_gen(g_in, g_dummy, g_out_fused, g_out_im,
+        radix8_dst3_avx2(g_in, g_dummy, g_out_fused, g_out_im,
                              g_dummy, g_dummy, g_K);
 }
 

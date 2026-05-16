@@ -27,9 +27,9 @@ typedef void (*fn_t)(const double *, const double *, double *, double *,
     const double *, const double *, double *, double *,\
     const double *, const double *, size_t)
 
-DECL(radix16_dct2_avx2_gen); DECL(radix32_dct2_avx2_gen); DECL(radix64_dct2_avx2_gen);
-DECL(radix16_dst2_avx2_gen); DECL(radix32_dst2_avx2_gen); DECL(radix64_dst2_avx2_gen);
-DECL(radix16_dst3_avx2_gen); DECL(radix32_dst3_avx2_gen); DECL(radix64_dst3_avx2_gen);
+DECL(radix16_dct2_avx2); DECL(radix32_dct2_avx2); DECL(radix64_dct2_avx2);
+DECL(radix16_dst2_avx2); DECL(radix32_dst2_avx2); DECL(radix64_dst2_avx2);
+DECL(radix16_dst3_avx2); DECL(radix32_dst3_avx2); DECL(radix64_dst3_avx2);
 
 static double *aa(size_t n) {
     void *p = NULL;
@@ -131,15 +131,15 @@ int main(void) {
     printf("  (production has no specialized codelet at these sizes)\n");
     printf("================================================================\n");
     struct row { const char *name; int N; fn_t fn; bf_fn_t bf; } rows[] = {
-        {"DCT-II",  16, radix16_dct2_avx2_gen, bf_dct2},
-        {"DCT-II",  32, radix32_dct2_avx2_gen, bf_dct2},
-        {"DCT-II",  64, radix64_dct2_avx2_gen, bf_dct2},
-        {"DST-II",  16, radix16_dst2_avx2_gen, bf_dst2},
-        {"DST-II",  32, radix32_dst2_avx2_gen, bf_dst2},
-        {"DST-II",  64, radix64_dst2_avx2_gen, bf_dst2},
-        {"DST-III", 16, radix16_dst3_avx2_gen, bf_dst3},
-        {"DST-III", 32, radix32_dst3_avx2_gen, bf_dst3},
-        {"DST-III", 64, radix64_dst3_avx2_gen, bf_dst3},
+        {"DCT-II",  16, radix16_dct2_avx2, bf_dct2},
+        {"DCT-II",  32, radix32_dct2_avx2, bf_dct2},
+        {"DCT-II",  64, radix64_dct2_avx2, bf_dct2},
+        {"DST-II",  16, radix16_dst2_avx2, bf_dst2},
+        {"DST-II",  32, radix32_dst2_avx2, bf_dst2},
+        {"DST-II",  64, radix64_dst2_avx2, bf_dst2},
+        {"DST-III", 16, radix16_dst3_avx2, bf_dst3},
+        {"DST-III", 32, radix32_dst3_avx2, bf_dst3},
+        {"DST-III", 64, radix64_dst3_avx2, bf_dst3},
     };
     size_t Ks[] = {32, 128, 512, 0};
     int fails = 0;

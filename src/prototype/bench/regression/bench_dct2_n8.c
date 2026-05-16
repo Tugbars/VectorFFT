@@ -2,7 +2,7 @@
  *   Production hand-written codelet  vs  OCaml DAG compiler emit.
  *
  * Production: dct2_n8_avx2(in, out, K) — single split-complex buffer.
- * OCaml:      radix8_dct2_avx2_gen(in_re, in_im, out_re, out_im, tw_re, tw_im, K)
+ * OCaml:      radix8_dct2_avx2(in_re, in_im, out_re, out_im, tw_re, tw_im, K)
  *             — same in_re input as production's `in`; in_im/tw_* unused; out_im
  *             is zero by construction (DCT output is purely real, only out_re
  *             is read for the comparison).
@@ -26,7 +26,7 @@
 
 /* OCaml-generated codelet — extern. */
 __attribute__((target("avx2,fma")))
-void radix8_dct2_avx2_gen(
+void radix8_dct2_avx2(
     const double *in_re, const double *in_im,
     double *out_re, double *out_im,
     const double *tw_re, const double *tw_im,
@@ -75,7 +75,7 @@ static void call_prod(void) {
     dct2_n8_avx2(g_in, g_out_prod, g_K);
 }
 static void call_ocaml(void) {
-    radix8_dct2_avx2_gen(g_in, g_dummy,
+    radix8_dct2_avx2(g_in, g_dummy,
                          g_out_ocaml_re, g_out_ocaml_im,
                          g_dummy, g_dummy, g_K);
 }
@@ -137,7 +137,7 @@ int main(void) {
     printf("  Op count comparison (vector instructions):\n");
     printf("    FFTW e10_8 (FMA, scalar):   34  [reference, not benched]\n");
     printf("    Production dct2_n8_avx2:    36  [bench target]\n");
-    printf("    OCaml radix8_dct2_avx2_gen: 48  (+33%% vs FFTW, +33%% vs production)\n");
+    printf("    OCaml radix8_dct2_avx2: 48  (+33%% vs FFTW, +33%% vs production)\n");
     printf("================================================================\n");
     size_t Ks[] = {32, 64, 128, 256, 512, 1024, 0};
     int fails = 0;

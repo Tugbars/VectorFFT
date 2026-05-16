@@ -23,7 +23,7 @@
 #include "../../../vectorfft_tune/generated/dct8/dct2_n8_avx2.h"
 
 __attribute__((target("avx2,fma")))
-void radix8_dct3_avx2_gen(
+void radix8_dct3_avx2(
     const double *in_re, const double *in_im,
     double *out_re, double *out_im,
     const double *tw_re, const double *tw_im,
@@ -72,7 +72,7 @@ static void call_prod(void) {
     dct3_n8_avx2(g_in, g_out_prod, g_K);
 }
 static void call_ocaml(void) {
-    radix8_dct3_avx2_gen(g_in, g_dummy,
+    radix8_dct3_avx2(g_in, g_dummy,
                          g_out_ocaml_re, g_out_ocaml_im,
                          g_dummy, g_dummy, g_K);
 }
@@ -98,7 +98,7 @@ static int roundtrip_check(size_t K) {
     double *dummy  = aa(N * K);
     fr(x, N * K, 0xDC);
     dct2_n8_avx2(x, y, K);
-    radix8_dct3_avx2_gen(y, dummy, z_re, z_im, dummy, dummy, K);
+    radix8_dct3_avx2(y, dummy, z_re, z_im, dummy, dummy, K);
     /* Normalize: x_recovered = z / (2N) */
     double scale = 1.0 / (2.0 * (double)N);
     double err = 0;
@@ -156,7 +156,7 @@ int main(void) {
     printf("================================================================\n");
     printf("  Op count (vector instructions):\n");
     printf("    Production dct3_n8_avx2:    29  [bench target]\n");
-    printf("    OCaml radix8_dct3_avx2_gen: 58  (+100%% static; binary FMA-fuses)\n");
+    printf("    OCaml radix8_dct3_avx2: 58  (+100%% static; binary FMA-fuses)\n");
     printf("================================================================\n");
     printf("Roundtrip identity check (dct3∘dct2)/2N = x:\n");
     int rt = roundtrip_check(32);

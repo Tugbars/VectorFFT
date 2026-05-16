@@ -17,16 +17,16 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-__attribute__((target("avx2,fma"))) void radix8_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix8_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix16_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix16_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix32_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix32_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
-__attribute__((target("avx2,fma"))) void radix64_dct4_avx2_gen(
+__attribute__((target("avx2,fma"))) void radix64_dct4_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t);
 
@@ -130,10 +130,10 @@ int main(void) {
     printf("================================================================\n");
 
     struct { int N; dct4_fn_t fn; } entries[] = {
-        {8,  radix8_dct4_avx2_gen},
-        {16, radix16_dct4_avx2_gen},
-        {32, radix32_dct4_avx2_gen},
-        {64, radix64_dct4_avx2_gen},
+        {8,  radix8_dct4_avx2},
+        {16, radix16_dct4_avx2},
+        {32, radix32_dct4_avx2},
+        {64, radix64_dct4_avx2},
     };
     size_t Ks[] = {32, 128, 512, 0};
     int fails = 0;

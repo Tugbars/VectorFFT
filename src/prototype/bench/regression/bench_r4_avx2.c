@@ -22,7 +22,7 @@
 
 /* OCaml-generated R=4 — extern */
 __attribute__((target("avx2,fma")))
-void radix4_t1_dit_fwd_avx2_gen_inplace(
+void radix4_t1_dit_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 static double *aa(size_t n) {
@@ -84,7 +84,7 @@ static void call_hand(void) {
 }
 
 static void call_ocaml(void) {
-    radix4_t1_dit_fwd_avx2_gen_inplace(
+    radix4_t1_dit_fwd_avx2(
         g_rio_re_b, g_rio_im_b, g_tw_re, g_tw_im, g_K, g_K);
 }
 

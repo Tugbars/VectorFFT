@@ -11,13 +11,13 @@
 #include "../radix16_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace(
+void radix16_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace_su(
+void radix16_t1_dit_fwd_avx512(
     double * __restrict__, double * __restrict__,
     const double * __restrict__, const double * __restrict__,
     size_t, size_t);
@@ -70,8 +70,8 @@ static double *g_tw_re, *g_tw_im;
 static double *g_in_re, *g_in_im;
 
 static void cH(void) { radix16_t1_dit_fwd_avx512(g_rio_re_h, g_rio_im_h, g_tw_re, g_tw_im, g_K, g_K); }
-static void cT(void) { radix16_t1_dit_fwd_avx512_gen_inplace(g_rio_re_t, g_rio_im_t, g_tw_re, g_tw_im, g_K, g_K); }
-static void cS(void) { radix16_t1_dit_fwd_avx512_gen_inplace_su(g_rio_re_s, g_rio_im_s, g_tw_re, g_tw_im, g_K, g_K); }
+static void cT(void) { radix16_t1_dit_fwd_avx512(g_rio_re_t, g_rio_im_t, g_tw_re, g_tw_im, g_K, g_K); }
+static void cS(void) { radix16_t1_dit_fwd_avx512(g_rio_re_s, g_rio_im_s, g_tw_re, g_tw_im, g_K, g_K); }
 
 int main(int argc, char **argv) {
     g_K = (argc > 1) ? (size_t)atoi(argv[1]) : 1024;

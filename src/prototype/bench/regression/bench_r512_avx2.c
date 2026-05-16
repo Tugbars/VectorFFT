@@ -37,31 +37,31 @@
 /* ── Codelet externs ──────────────────────────────────────────────── */
 
 __attribute__((target("avx2,fma")))
-void radix512_n1_fwd_avx2_gen_inplace(
+void radix512_n1_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix512_t1_dit_fwd_avx2_gen_inplace_su_spill(
+void radix512_t1_dit_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix512_t1s_dit_fwd_avx2_gen_inplace_su_spill(
+void radix512_t1s_dit_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix512_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(
+void radix512_t1_dit_log3_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix512_t1s_dit_log3_fwd_avx2_gen_inplace_su_spill(
+void radix512_t1s_dit_log3_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix16_n1_fwd_avx2_gen_inplace(
+void radix16_n1_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx2,fma")))
-void radix32_n1_fwd_avx2_gen_inplace(
+void radix32_n1_fwd_avx2(
     double *, double *, const double *, const double *, size_t, size_t);
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
@@ -166,7 +166,7 @@ static void multistage_twiddle_mul(double *re, double *im,
 static void call_multi_16x32(void) {
     /* Stage 1: 32 inner DFT-16, fixed b, stride 32*K over a. */
     for (int b = 0; b < 32; b++) {
-        radix16_n1_fwd_avx2_gen_inplace(
+        radix16_n1_fwd_avx2(
             g_rio_re + (size_t)b * g_K,
             g_rio_im + (size_t)b * g_K,
             NULL, NULL,
@@ -177,7 +177,7 @@ static void call_multi_16x32(void) {
                            g_stage_tw_re, g_stage_tw_im, g_K);
     /* Stage 2: 16 outer DFT-32, fixed a, stride K over b. */
     for (int a = 0; a < 16; a++) {
-        radix32_n1_fwd_avx2_gen_inplace(
+        radix32_n1_fwd_avx2(
             g_rio_re + (size_t)a * 32 * g_K,
             g_rio_im + (size_t)a * 32 * g_K,
             NULL, NULL,
@@ -188,23 +188,23 @@ static void call_multi_16x32(void) {
 /* ── Wrappers ────────────────────────────────────────────────────── */
 
 static void call_mono_n1(void) {
-    radix512_n1_fwd_avx2_gen_inplace(
+    radix512_n1_fwd_avx2(
         g_rio_re, g_rio_im, NULL, NULL, g_K, g_K);
 }
 static void call_mono_t1(void) {
-    radix512_t1_dit_fwd_avx2_gen_inplace_su_spill(
+    radix512_t1_dit_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1s(void) {
-    radix512_t1s_dit_fwd_avx2_gen_inplace_su_spill(
+    radix512_t1s_dit_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1_log3(void) {
-    radix512_t1_dit_log3_fwd_avx2_gen_inplace_su_spill(
+    radix512_t1_dit_log3_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_mono_t1s_log3(void) {
-    radix512_t1s_dit_log3_fwd_avx2_gen_inplace_su_spill(
+    radix512_t1s_dit_log3_fwd_avx2(
         g_rio_re, g_rio_im, g_tw_re, g_tw_im, g_K, g_K);
 }
 

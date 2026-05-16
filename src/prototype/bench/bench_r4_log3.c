@@ -2,7 +2,7 @@
  *
  * Compares:
  *   A) hand_t1_dit  — user's hand-coded radix4_t1_dit_fwd_avx512 (in-place)
- *   B) gen_t1_dit   — generated radix4_t1_dit_fwd_avx512_gen (out-of-place)
+ *   B) gen_t1_dit   — generated radix4_t1_dit_fwd_avx512 (out-of-place)
  *
  * For correctness: both run on the same input + twiddles. Outputs compared
  * elementwise within a small tolerance.
@@ -13,7 +13,7 @@
  * Note on signature differences:
  *   Hand-coded: radix4_t1_dit_log3_fwd_avx512(rio_re, rio_im, W_re, W_im, ios, me)
  *               — in-place, ios=stride between legs, me=batch size (=K)
- *   Generated:  radix4_t1_dit_fwd_avx512_gen(in_re, in_im, out_re, out_im,
+ *   Generated:  radix4_t1_dit_fwd_avx512(in_re, in_im, out_re, out_im,
  *                                            tw_re, tw_im, K)
  *               — out-of-place, K is the batch
  *
@@ -37,7 +37,7 @@
 /* Forward declaration of the generated codelet — defined in radix4_gen_inplace.c.
  * In-place form, signature matches hand-coded radix4_t1_dit_fwd_avx512. */
 __attribute__((target("avx512f")))
-void radix4_t1_dit_log3_fwd_avx512_gen_inplace(
+void radix4_t1_dit_log3_fwd_avx512(
     double       * __restrict__ rio_re,
     double       * __restrict__ rio_im,
     const double * __restrict__ tw_re,
@@ -130,7 +130,7 @@ static void call_handcoded(void) {
 static void call_generated(void) {
     /* In-place codelet, same signature as hand-coded, separate buffer
      * (so the two timed loops don't share cache state). */
-    radix4_t1_dit_log3_fwd_avx512_gen_inplace(g_rio_re_gen, g_rio_im_gen,
+    radix4_t1_dit_log3_fwd_avx512(g_rio_re_gen, g_rio_im_gen,
                                           g_tw_re, g_tw_im,
                                           g_K, g_K);
 }
@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
     memcpy(g_rio_im_gen,  g_in_orig_im, 4 * K * sizeof(double));
 
     radix4_t1_dit_log3_fwd_avx512(g_rio_re_hand, g_rio_im_hand, g_tw_re, g_tw_im, K, K);
-    radix4_t1_dit_log3_fwd_avx512_gen_inplace(g_rio_re_gen, g_rio_im_gen, g_tw_re, g_tw_im, K, K);
+    radix4_t1_dit_log3_fwd_avx512(g_rio_re_gen, g_rio_im_gen, g_tw_re, g_tw_im, K, K);
 
     double err_re = max_rel_err(g_rio_re_hand, g_rio_re_gen, 4 * K);
     double err_im = max_rel_err(g_rio_im_hand, g_rio_im_gen, 4 * K);

@@ -11,22 +11,22 @@
 #include "../radix32_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512_spill(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse1(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512_spill_fuse1(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse2(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512_spill_fuse2(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse4(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512_spill_fuse4(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse8(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx512_spill_fuse8(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static void fr(double*p,size_t n,unsigned s){for(size_t i=0;i<n;i++){s=s*1103515245u+12345u;p[i]=(double)((int)(s>>8)&0x7fffff)/(double)0x800000-0.5;}}
@@ -38,12 +38,12 @@ static size_t K;
 static double *bH_r,*bH_i,*bT_r,*bT_i,*bS_r,*bS_i,*bF1_r,*bF1_i,*bF2_r,*bF2_i,*bF4_r,*bF4_i,*bF8_r,*bF8_i,*twr,*twi;
 
 static void cH(){radix32_t1_dit_fwd_avx512(bH_r,bH_i,twr,twi,K,K);}
-static void cT(){radix32_t1_dit_fwd_avx512_gen_inplace(bT_r,bT_i,twr,twi,K,K);}
-static void cS(){radix32_t1_dit_fwd_avx512_gen_inplace_spill(bS_r,bS_i,twr,twi,K,K);}
-static void cF1(){radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse1(bF1_r,bF1_i,twr,twi,K,K);}
-static void cF2(){radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse2(bF2_r,bF2_i,twr,twi,K,K);}
-static void cF4(){radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse4(bF4_r,bF4_i,twr,twi,K,K);}
-static void cF8(){radix32_t1_dit_fwd_avx512_gen_inplace_spill_fuse8(bF8_r,bF8_i,twr,twi,K,K);}
+static void cT(){radix32_t1_dit_fwd_avx512(bT_r,bT_i,twr,twi,K,K);}
+static void cS(){radix32_t1_dit_fwd_avx512_spill(bS_r,bS_i,twr,twi,K,K);}
+static void cF1(){radix32_t1_dit_fwd_avx512_spill_fuse1(bF1_r,bF1_i,twr,twi,K,K);}
+static void cF2(){radix32_t1_dit_fwd_avx512_spill_fuse2(bF2_r,bF2_i,twr,twi,K,K);}
+static void cF4(){radix32_t1_dit_fwd_avx512_spill_fuse4(bF4_r,bF4_i,twr,twi,K,K);}
+static void cF8(){radix32_t1_dit_fwd_avx512_spill_fuse8(bF8_r,bF8_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

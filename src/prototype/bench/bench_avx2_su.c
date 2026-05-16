@@ -9,17 +9,17 @@
 #include <immintrin.h>
 
 __attribute__((target("avx2,fma")))
-void radix8_t1_dit_fwd_avx2_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix8_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx2,fma")))
-void radix8_t1_dit_fwd_avx2_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix8_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx2,fma")))
-void radix16_t1_dit_fwd_avx2_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx2,fma")))
-void radix16_t1_dit_fwd_avx2_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix16_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx2,fma")))
-void radix32_t1_dit_fwd_avx2_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 __attribute__((target("avx2,fma")))
-void radix32_t1_dit_fwd_avx2_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix32_t1_dit_fwd_avx2(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static void fr(double*p,size_t n,unsigned s){for(size_t i=0;i<n;i++){s=s*1103515245u+12345u;p[i]=(double)((int)(s>>8)&0x7fffff)/(double)0x800000-0.5;}}
@@ -31,8 +31,8 @@ static size_t K, R;
 static double *bT_r,*bT_i,*bSU_r,*bSU_i,*twr,*twi;
 
 #define WRAP(R) \
-static void cT_##R(){radix##R##_t1_dit_fwd_avx2_gen_inplace(bT_r,bT_i,twr,twi,K,K);} \
-static void cSU_##R(){radix##R##_t1_dit_fwd_avx2_gen_inplace_su_spill(bSU_r,bSU_i,twr,twi,K,K);}
+static void cT_##R(){radix##R##_t1_dit_fwd_avx2(bT_r,bT_i,twr,twi,K,K);} \
+static void cSU_##R(){radix##R##_t1_dit_fwd_avx2(bSU_r,bSU_i,twr,twi,K,K);}
 
 WRAP(8)
 WRAP(16)

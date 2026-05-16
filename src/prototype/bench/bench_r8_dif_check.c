@@ -12,7 +12,7 @@
 #include <immintrin.h>
 
 __attribute__((target("avx512f")))
-void radix8_t1_dif_fwd_avx512_gen_inplace_su_spill(
+void radix8_t1_dif_fwd_avx512(
     double*, double*, const double*, const double*, size_t, size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
@@ -41,7 +41,7 @@ int main(int c, char**v){
     }
 
     /* Run our DIF */
-    radix8_t1_dif_fwd_avx512_gen_inplace_su_spill(bSU_r, bSU_i, twr, twi, K, K);
+    radix8_t1_dif_fwd_avx512(bSU_r, bSU_i, twr, twi, K, K);
 
     /* Reference: for each k, compute DFT-8(x[*, k]), then post-multiply by W^j*k/(8K) */
     for (size_t k = 0; k < K; k++) {

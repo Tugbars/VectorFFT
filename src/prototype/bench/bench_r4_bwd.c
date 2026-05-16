@@ -17,7 +17,7 @@ static void hand_bwd(double *r, double *i, const double *tr, const double *ti,
 }
 
 __attribute__((target("avx512f")))
-void radix4_t1_dit_bwd_avx512_gen_inplace_su_spill(
+void radix4_t1_dit_bwd_avx512(
     double*, double*, const double*, const double*, size_t, size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
@@ -29,7 +29,7 @@ static size_t K;
 static double *bH_r,*bH_i,*bSU_r,*bSU_i,*twr,*twi;
 
 static void cH(){hand_bwd(bH_r,bH_i,twr,twi,K,K);}
-static void cSU(){radix4_t1_dit_bwd_avx512_gen_inplace_su_spill(bSU_r,bSU_i,twr,twi,K,K);}
+static void cSU(){radix4_t1_dit_bwd_avx512(bSU_r,bSU_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

@@ -7,7 +7,7 @@
  *
  * Key differences from the AVX2 version:
  *   - target attribute "avx512f" instead of "avx2,fma"
- *   - symbols *_avx512_gen* instead of *_avx2_gen*
+ *   - symbols *_avx512* instead of *_avx2*
  *   - gather_b_x_n / scatter_n_x_b use the 8x8 in-register transpose
  *     (transpose.h Kernel C) with b += 8, k += 8 step sizes
  */
@@ -25,32 +25,32 @@
     double *rio_re, double *rio_im,\
     const double *tw_re, const double *tw_im,\
     size_t row_stride, size_t me)
-DECL_STRIDED(radix16_n1_fwd_avx512_gen_strided);
-DECL_STRIDED(radix32_n1_fwd_avx512_gen_strided);
-DECL_STRIDED(radix64_n1_fwd_avx512_gen_strided);
-DECL_STRIDED(radix128_n1_fwd_avx512_gen_strided);
-DECL_STRIDED(radix256_n1_fwd_avx512_gen_strided);
+DECL_STRIDED(radix16_n1_fwd_avx512_strided);
+DECL_STRIDED(radix32_n1_fwd_avx512_strided);
+DECL_STRIDED(radix64_n1_fwd_avx512_strided);
+DECL_STRIDED(radix128_n1_fwd_avx512_strided);
+DECL_STRIDED(radix256_n1_fwd_avx512_strided);
 /* Strided bwd. */
-DECL_STRIDED(radix16_n1_bwd_avx512_gen_strided);
-DECL_STRIDED(radix32_n1_bwd_avx512_gen_strided);
-DECL_STRIDED(radix64_n1_bwd_avx512_gen_strided);
-DECL_STRIDED(radix128_n1_bwd_avx512_gen_strided);
-DECL_STRIDED(radix256_n1_bwd_avx512_gen_strided);
+DECL_STRIDED(radix16_n1_bwd_avx512_strided);
+DECL_STRIDED(radix32_n1_bwd_avx512_strided);
+DECL_STRIDED(radix64_n1_bwd_avx512_strided);
+DECL_STRIDED(radix128_n1_bwd_avx512_strided);
+DECL_STRIDED(radix256_n1_bwd_avx512_strided);
 
 /* Standard OOP codelets (reference path). */
 #define DECL_STD(name) __attribute__((target("avx512f"))) void name(\
     const double *, const double *, double *, double *,\
     const double *, const double *, size_t)
-DECL_STD(radix16_n1_fwd_avx512_gen);
-DECL_STD(radix32_n1_fwd_avx512_gen);
-DECL_STD(radix64_n1_fwd_avx512_gen);
-DECL_STD(radix128_n1_fwd_avx512_gen);
-DECL_STD(radix256_n1_fwd_avx512_gen);
-DECL_STD(radix16_n1_bwd_avx512_gen);
-DECL_STD(radix32_n1_bwd_avx512_gen);
-DECL_STD(radix64_n1_bwd_avx512_gen);
-DECL_STD(radix128_n1_bwd_avx512_gen);
-DECL_STD(radix256_n1_bwd_avx512_gen);
+DECL_STD(radix16_n1_fwd_avx512);
+DECL_STD(radix32_n1_fwd_avx512);
+DECL_STD(radix64_n1_fwd_avx512);
+DECL_STD(radix128_n1_fwd_avx512);
+DECL_STD(radix256_n1_fwd_avx512);
+DECL_STD(radix16_n1_bwd_avx512);
+DECL_STD(radix32_n1_bwd_avx512);
+DECL_STD(radix64_n1_bwd_avx512);
+DECL_STD(radix128_n1_bwd_avx512);
+DECL_STD(radix256_n1_bwd_avx512);
 
 typedef void (*strided_fn_t)(double *, double *,
                              const double *, const double *,
@@ -297,16 +297,16 @@ int main(void) {
     struct { const char *name; int N;
              strided_fn_t fs_fwd, fs_bwd;
              std_fn_t     fr_fwd, fr_bwd; } rows[] = {
-        {"R16",  16,  radix16_n1_fwd_avx512_gen_strided,  radix16_n1_bwd_avx512_gen_strided,
-                     radix16_n1_fwd_avx512_gen,          radix16_n1_bwd_avx512_gen},
-        {"R32",  32,  radix32_n1_fwd_avx512_gen_strided,  radix32_n1_bwd_avx512_gen_strided,
-                     radix32_n1_fwd_avx512_gen,          radix32_n1_bwd_avx512_gen},
-        {"R64",  64,  radix64_n1_fwd_avx512_gen_strided,  radix64_n1_bwd_avx512_gen_strided,
-                     radix64_n1_fwd_avx512_gen,          radix64_n1_bwd_avx512_gen},
-        {"R128", 128, radix128_n1_fwd_avx512_gen_strided, radix128_n1_bwd_avx512_gen_strided,
-                     radix128_n1_fwd_avx512_gen,         radix128_n1_bwd_avx512_gen},
-        {"R256", 256, radix256_n1_fwd_avx512_gen_strided, radix256_n1_bwd_avx512_gen_strided,
-                     radix256_n1_fwd_avx512_gen,         radix256_n1_bwd_avx512_gen},
+        {"R16",  16,  radix16_n1_fwd_avx512_strided,  radix16_n1_bwd_avx512_strided,
+                     radix16_n1_fwd_avx512,          radix16_n1_bwd_avx512},
+        {"R32",  32,  radix32_n1_fwd_avx512_strided,  radix32_n1_bwd_avx512_strided,
+                     radix32_n1_fwd_avx512,          radix32_n1_bwd_avx512},
+        {"R64",  64,  radix64_n1_fwd_avx512_strided,  radix64_n1_bwd_avx512_strided,
+                     radix64_n1_fwd_avx512,          radix64_n1_bwd_avx512},
+        {"R128", 128, radix128_n1_fwd_avx512_strided, radix128_n1_bwd_avx512_strided,
+                     radix128_n1_fwd_avx512,         radix128_n1_bwd_avx512},
+        {"R256", 256, radix256_n1_fwd_avx512_strided, radix256_n1_bwd_avx512_strided,
+                     radix256_n1_fwd_avx512,         radix256_n1_bwd_avx512},
     };
     size_t Bs[] = {8, 32, 128, 256, 0};
     int fails = 0;

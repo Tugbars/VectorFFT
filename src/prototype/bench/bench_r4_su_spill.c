@@ -11,10 +11,10 @@
 #include "../radix4_handcoded.h"
 
 __attribute__((target("avx512f")))
-void radix4_t1_dit_fwd_avx512_gen_inplace(double*,double*,const double*,const double*,size_t,size_t);
+void radix4_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 __attribute__((target("avx512f")))
-void radix4_t1_dit_fwd_avx512_gen_inplace_su_spill(double*,double*,const double*,const double*,size_t,size_t);
+void radix4_t1_dit_fwd_avx512(double*,double*,const double*,const double*,size_t,size_t);
 
 static double *aa(size_t n){void*p=NULL;if(posix_memalign(&p,64,n*8)){exit(1);}return p;}
 static void fr(double*p,size_t n,unsigned s){for(size_t i=0;i<n;i++){s=s*1103515245u+12345u;p[i]=(double)((int)(s>>8)&0x7fffff)/(double)0x800000-0.5;}}
@@ -26,8 +26,8 @@ static size_t K;
 static double *bH_r,*bH_i,*bT_r,*bT_i,*bSU_r,*bSU_i,*twr,*twi;
 
 static void cH(){radix4_t1_dit_fwd_avx512(bH_r,bH_i,twr,twi,K,K);}
-static void cT(){radix4_t1_dit_fwd_avx512_gen_inplace(bT_r,bT_i,twr,twi,K,K);}
-static void cSU(){radix4_t1_dit_fwd_avx512_gen_inplace_su_spill(bSU_r,bSU_i,twr,twi,K,K);}
+static void cT(){radix4_t1_dit_fwd_avx512(bT_r,bT_i,twr,twi,K,K);}
+static void cSU(){radix4_t1_dit_fwd_avx512(bSU_r,bSU_i,twr,twi,K,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

@@ -20,12 +20,12 @@ static void hand_fwd(const double *ir, const double *ii,
 }
 
 __attribute__((target("avx512f")))
-void radix64_t1_dit_fwd_avx512_gen(
+void radix64_t1_dit_fwd_avx512(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
 
 __attribute__((target("avx512f")))
-void radix64_t1_dit_fwd_avx512_gen_su_spill(
+void radix64_t1_dit_fwd_avx512_su_spill(
     const double*, const double*, double*, double*,
     const double*, const double*, size_t);
 
@@ -40,8 +40,8 @@ static double *in_r, *in_i;
 static double *bH_r,*bH_i,*bT_r,*bT_i,*bSU_r,*bSU_i,*twr,*twi;
 
 static void cH(){hand_fwd(in_r,in_i,bH_r,bH_i,twr,twi,K);}
-static void cT(){radix64_t1_dit_fwd_avx512_gen(in_r,in_i,bT_r,bT_i,twr,twi,K);}
-static void cSU(){radix64_t1_dit_fwd_avx512_gen_su_spill(in_r,in_i,bSU_r,bSU_i,twr,twi,K);}
+static void cT(){radix64_t1_dit_fwd_avx512(in_r,in_i,bT_r,bT_i,twr,twi,K);}
+static void cSU(){radix64_t1_dit_fwd_avx512_su_spill(in_r,in_i,bSU_r,bSU_i,twr,twi,K);}
 
 int main(int c,char**v){
     K = c>1 ? (size_t)atoi(v[1]) : 1024;

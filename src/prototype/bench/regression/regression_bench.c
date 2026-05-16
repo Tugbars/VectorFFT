@@ -27,19 +27,19 @@
 
 /* OCaml-generated codelets (linked as separate translation units) */
 __attribute__((target("avx512f")))
-void radix16_t1_dit_fwd_avx512_gen_inplace_su_spill(
+void radix16_t1_dit_fwd_avx512(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix25_t1_dit_fwd_avx512_gen_inplace_su_spill(
+void radix25_t1_dit_fwd_avx512(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix32_t1_dit_fwd_avx512_gen_inplace_su_spill(
+void radix32_t1_dit_fwd_avx512(
     double *, double *, const double *, const double *, size_t, size_t);
 
 __attribute__((target("avx512f")))
-void radix64_t1_dit_fwd_avx512_gen_inplace_su_spill(
+void radix64_t1_dit_fwd_avx512(
     double *, double *, const double *, const double *, size_t, size_t);
 
 static double *aa(size_t n) {
@@ -104,7 +104,7 @@ static void call_hand_r16(void) {
     radix16_t1_dit_fwd_avx512(g_rio_re_a, g_rio_im_a, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_ocaml_r16(void) {
-    radix16_t1_dit_fwd_avx512_gen_inplace_su_spill(
+    radix16_t1_dit_fwd_avx512(
         g_rio_re_b, g_rio_im_b, g_tw_re, g_tw_im, g_K, g_K);
 }
 
@@ -112,7 +112,7 @@ static void call_hand_r25(void) {
     radix25_t1_dit_fwd_avx512(g_rio_re_a, g_rio_im_a, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_ocaml_r25(void) {
-    radix25_t1_dit_fwd_avx512_gen_inplace_su_spill(
+    radix25_t1_dit_fwd_avx512(
         g_rio_re_b, g_rio_im_b, g_tw_re, g_tw_im, g_K, g_K);
 }
 
@@ -120,7 +120,7 @@ static void call_hand_r32(void) {
     radix32_t1_dit_fwd_avx512(g_rio_re_a, g_rio_im_a, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_ocaml_r32(void) {
-    radix32_t1_dit_fwd_avx512_gen_inplace_su_spill(
+    radix32_t1_dit_fwd_avx512(
         g_rio_re_b, g_rio_im_b, g_tw_re, g_tw_im, g_K, g_K);
 }
 
@@ -128,7 +128,7 @@ static void call_hand_r64(void) {
     radix64_t1_dit_fwd_avx512(g_rio_re_a, g_rio_im_a, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_ocaml_r64(void) {
-    radix64_t1_dit_fwd_avx512_gen_inplace_su_spill(
+    radix64_t1_dit_fwd_avx512(
         g_rio_re_b, g_rio_im_b, g_tw_re, g_tw_im, g_K, g_K);
 }
 

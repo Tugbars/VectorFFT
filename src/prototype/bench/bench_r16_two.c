@@ -5,8 +5,8 @@
  * noise polluting the numbers).
  *
  *   Hand   = user's hand-coded radix16_t1_dit_fwd_avx512
- *   Topo   = generated radix16_t1_dit_fwd_avx512_gen_inplace (topological order)
- *   Bisect = generated radix16_t1_dit_fwd_avx512_gen_inplace_bisect (Frigo bisection)
+ *   Topo   = generated radix16_t1_dit_fwd_avx512 (topological order)
+ *   Bisect = generated radix16_t1_dit_fwd_avx512 (Frigo bisection)
  */
 
 #include <stdio.h>
@@ -74,7 +74,7 @@ static void call_hand(void) {
     radix16_t1_dit_fwd_avx512(g_rio_re_hand, g_rio_im_hand, g_tw_re, g_tw_im, g_K, g_K);
 }
 static void call_topo(void) {
-    radix16_t1_dit_fwd_avx512_gen_inplace(g_rio_re_topo, g_rio_im_topo, g_tw_re, g_tw_im, g_K, g_K);
+    radix16_t1_dit_fwd_avx512(g_rio_re_topo, g_rio_im_topo, g_tw_re, g_tw_im, g_K, g_K);
 }
 
 int main(int argc, char **argv) {
