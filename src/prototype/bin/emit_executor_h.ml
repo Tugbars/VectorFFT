@@ -62,6 +62,28 @@ let spike_entries : plan_entry list = [
     factors  = [| 4; 4; 4; 4; 4 |];
     variants = [| FLAT; T1S; T1S; T1S; T1S |];
     use_dif_forward = false };
+  (* Synthetic entry — same N=131072 K=4 shape as the wisdom entry above,
+   * but with FLAT inner stages instead of T1S. Wisdom doesn't pick this
+   * exact configuration (T1S beats FLAT at K=4 in production measurement),
+   * but exercising the FLAT codepath at maximum invocation count is the
+   * cleanest way to measure whether (B)+(A) helps FLAT. The FLAT path
+   * has more per-group wrapper work (K-blocked tw_buf staging via
+   * _stride_broadcast_2) than T1S, so the (B)+(A) gain on this synthetic
+   * cell tells us whether the spike helps broadly across variants. *)
+  { n = 131072; k = 4;
+    factors  = [| 4; 4; 4; 4; 8; 4; 4; 4 |];
+    variants = [| FLAT; FLAT; FLAT; FLAT; FLAT; FLAT; FLAT; FLAT |];
+    use_dif_forward = false };
+  (* Synthetic LOG3 entry — same shape again, all-LOG3 inner stages.
+   * Production rarely picks LOG3 for many-inner-stage plans (twiddle-
+   * bandwidth-bound innermost-stage use-case), so this is research-only.
+   * LOG3 path in production applies cf0 to ALL R legs (vs T1S's leg 0
+   * only) — slightly more per-group prep than T1S. (B)+(A) expected to
+   * recover similar share. *)
+  { n = 131072; k = 4;
+    factors  = [| 4; 4; 4; 4; 8; 4; 4; 4 |];
+    variants = [| FLAT; LOG3; LOG3; LOG3; LOG3; LOG3; LOG3; LOG3 |];
+    use_dif_forward = false };
 ]
 
 (* Direction of the transform. Spike emits forward only. *)
@@ -156,11 +178,40 @@ let emit_stage (e : plan_entry) (stage_idx : int) (d : direction) ~isa =
        Printf.printf "                                       inv.tw_re, inv.tw_im,\n";
        Printf.printf "                                       stride, slice_K);\n"
      | FLAT ->
-       Printf.printf "            /* FLAT variant emission deferred — spike scope is T1S only. */\n";
-       Printf.printf "            (void)inv; abort();\n"
+       (* FLAT variant: K-blocked tw_buf staging via _stride_broadcast_2,
+        * then call the t1 (flat-twiddle) codelet. Mirrors production's
+        * else-if branch at executor.h:455-491. tw_buf size is compile-time
+        * constant ((R-1) × VFFT_PROTO_TW_BLOCK_K) so it stack-allocates
+        * cleanly and fits L1 for any R≤64. *)
+       Printf.printf "            double *base_re = re + inv.base;\n";
+       Printf.printf "            double *base_im = im + inv.base;\n";
+       Printf.printf "            double tw_buf_re[%d * VFFT_PROTO_TW_BLOCK_K];\n" (r - 1);
+       Printf.printf "            double tw_buf_im[%d * VFFT_PROTO_TW_BLOCK_K];\n" (r - 1);
+       Printf.printf "            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {\n";
+       Printf.printf "                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K)\n";
+       Printf.printf "                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K;\n";
+       Printf.printf "                for (int j = 0; j < %d; j++) {\n" (r - 1);
+       Printf.printf "                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,\n";
+       Printf.printf "                                        tw_buf_im + (size_t)j * this_K,\n";
+       Printf.printf "                                        this_K, inv.tw_re[j], inv.tw_im[j]);\n";
+       Printf.printf "                }\n";
+       Printf.printf "                %s(base_re + kb, base_im + kb,\n"
+         (t1_symbol ~r ~variant:FLAT ~direction:d ~isa);
+       Printf.printf "                                           tw_buf_re, tw_buf_im,\n";
+       Printf.printf "                                           stride, this_K);\n";
+       Printf.printf "            }\n"
      | LOG3 ->
-       Printf.printf "            /* LOG3 variant emission deferred — spike scope is T1S only. */\n";
-       Printf.printf "            (void)inv; abort();\n"
+       (* LOG3 variant: in production this path also applies cf0 to ALL
+        * R legs (not just leg 0 like T1S — see executor.h:420-437). The
+        * spike bench uses cf0=(1.0,0.0) so that branch is skipped; the
+        * emitted path collapses to one direct call per group, like T1S
+        * but to a different codelet symbol. Real-plan integration needs
+        * the cf branch re-added (with cf0 either pre-walked into the
+        * tape or read from st->cf0_re[g] like the baseline). *)
+       Printf.printf "            %s(re + inv.base, im + inv.base,\n"
+         (t1_symbol ~r ~variant:LOG3 ~direction:d ~isa);
+       Printf.printf "                                            inv.tw_re, inv.tw_im,\n";
+       Printf.printf "                                            stride, slice_K);\n"
      | BUF  ->
        Printf.printf "            /* BUF variant emission deferred. */\n";
        Printf.printf "            (void)inv; abort();\n");
@@ -313,6 +364,29 @@ let emit_header_file ~isa =
   print_endline "    (void)re; (void)im; (void)n; (void)cfr; (void)cfi;";
   print_endline "    /* spike harness sets cf0=(1.0,0.0) so this is never called. */";
   print_endline "}";
+  print_endline "";
+  print_endline "/* SIMD broadcast helper for the FLAT variant's K-blocked tw_buf staging.";
+  print_endline " * Mirrors production's _stride_broadcast_avx2 in src/core/executor.h. */";
+  print_endline "#include <immintrin.h>";
+  print_endline "static inline void _stride_broadcast_2(double *out_re, double *out_im, size_t n,";
+  print_endline "                                       double s_re, double s_im) {";
+  print_endline "    __m256d vr = _mm256_set1_pd(s_re);";
+  print_endline "    __m256d vi = _mm256_set1_pd(s_im);";
+  print_endline "    size_t i = 0;";
+  print_endline "    for (; i + 4 <= n; i += 4) {";
+  print_endline "        _mm256_storeu_pd(out_re + i, vr);";
+  print_endline "        _mm256_storeu_pd(out_im + i, vi);";
+  print_endline "    }";
+  print_endline "    for (; i < n; i++) {";
+  print_endline "        out_re[i] = s_re; out_im[i] = s_im;";
+  print_endline "    }";
+  print_endline "}";
+  print_endline "";
+  print_endline "/* K-block size for FLAT variant tw_buf staging. Mirrors production's";
+  print_endline " * STRIDE_TW_BLOCK_K=64. Keeps the staging buffer in L1 for any R≤64. */";
+  print_endline "#ifndef VFFT_PROTO_TW_BLOCK_K";
+  print_endline "#define VFFT_PROTO_TW_BLOCK_K 64";
+  print_endline "#endif";
   print_endline "";
   print_endline "#endif /* VFFT_PROTO_USE_PRODUCTION_PLAN_T */";
   print_endline "";
