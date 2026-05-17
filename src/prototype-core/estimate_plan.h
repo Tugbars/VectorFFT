@@ -139,6 +139,111 @@ static inline double _vfft_proto_v4_score(
 }
 
 /* ─────────────────────────────────────────────────────────────────
+ * V5 SCORING — V4 minus wide_penalty term.
+ *
+ * wide_penalty was added in V4 to model the assumption that wide
+ * codelets (R≥8) take an extra-latency hit when their working set
+ * spills out of L1. That assumption was true BEFORE commit c18b7c1
+ * (2026-05-15) "Force YMM register allocation in AVX2 codelets" —
+ * the wide codelets used to suffer compiler-induced register spills,
+ * which surfaced as load-port pressure × cache-tier latency.
+ *
+ * Post-c18b7c1, the spill-analyzer-driven YMM-pinning produces
+ * spill-FREE wide codelets. The CPE measurement (radix_cpe.h,
+ * 2026-05-15 23:11) confirms it: R=16 cyc_t1s is 13.5/13.6/13.8
+ * across me=256/4096/65536 (flat); R=32 is 73.6/74.4/74.2 (flat).
+ * No me-curve = no spill-driven degradation.
+ *
+ * So wide_penalty is now an artifact penalizing a pattern that
+ * doesn't exist. V5 drops it. data_cost already captures the per-R
+ * compute cost via measured CPE × cf_eff cache scaling.
+ *
+ * Concrete consequence: cells where the true winner has R=8 outer
+ * + larger tail (e.g., N=16384 K=4 patient winner [4,8,32,16]) move
+ * from V4-rank ~21 to V5-rank in single digits.
+ *
+ * NOTE: This is calibrated for current spill-free AVX2 codelets on
+ * Raptor Lake. If a future regalloc change reintroduces spills, or
+ * if AVX-512 codelets show different behavior, the wide_penalty
+ * term may need to come back (perhaps gated on a per-ISA, per-R
+ * spill-fingerprint). For now: data, not heuristics.
+ * ───────────────────────────────────────────────────────────────── */
+
+static inline double _vfft_proto_v5_score(
+    const int *factors, int nf, size_t K, int N,
+    const stride_cpu_info_t *cpu)
+{
+    const size_t l1 = cpu->l1d_bytes;
+    const size_t l2 = cpu->l2_bytes;
+    const size_t l3 = cpu->l3_bytes;
+    const int dtlb_entries     = (cpu->dtlb_entries    > 0) ? cpu->dtlb_entries    : 96;
+    const int dtlb_miss_cycles = (cpu->dtlb_miss_cycles > 0) ? cpu->dtlb_miss_cycles : 7;
+#if defined(__AVX512F__)
+    const int isa_avx512 = 1;
+#else
+    const int isa_avx512 = 0;
+#endif
+    double score = 0.0;
+    const size_t total_bytes = (size_t)N * K * 16;
+    const double fraction_hot = (total_bytes > 0 && l1 < total_bytes)
+                              ? (double)l1 / (double)total_bytes : 1.0;
+    const double cf_buffer = (total_bytes > l3) ? 4.0 : 0.0;
+
+    double bytes_per_cycle;
+    if      (total_bytes <= l1) bytes_per_cycle = 45.0;
+    else if (total_bytes <= l2) bytes_per_cycle = 14.0;
+    else if (total_bytes <= l3) bytes_per_cycle =  7.0;
+    else                        bytes_per_cycle =  9.0;
+    const double buffer_pass_cost_per_stage =
+        2.0 * (double)total_bytes / bytes_per_cycle;
+
+    size_t accumulated_K = K;
+    for (int s = 0; s < nf; s++) {
+        int R = factors[s];
+        int groups = N / R;
+        size_t stride = K;
+        for (int d = s + 1; d < nf; d++) stride *= factors[d];
+
+        size_t me_s = (size_t)(N / R) * K;
+        double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
+
+        size_t ws = (size_t)R * stride * 16;
+        double cf_stage;
+        if      (ws <= l1) cf_stage = 1.0;
+        else if (ws <= l2) cf_stage = 1.4;
+        else if (ws <= l3) cf_stage = 2.3;
+        else               cf_stage = 4.0;
+        double cf_cold = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
+
+        double cf_eff = (s == 0) ? cf_cold
+                                  : fraction_hot * 1.0 + (1.0 - fraction_hot) * cf_cold;
+
+        double data_cost = (double)groups * (double)K * bf_cost * cf_eff;
+
+        double dtlb_cost = 0.0;
+        if (s > 0) {
+            size_t bytes_spanned = (size_t)R * stride * 8;
+            int pages_per_group  = (int)((bytes_spanned + 4095) / 4096);
+            if (pages_per_group > dtlb_entries) {
+                int excess = pages_per_group - dtlb_entries;
+                dtlb_cost = (double)groups * (double)excess * (double)dtlb_miss_cycles;
+            }
+        }
+
+        double tw_cost = 0.0;
+        if (s > 0) {
+            size_t tw_bytes = (size_t)(R - 1) * accumulated_K * 16;
+            if (tw_bytes > l1) tw_cost = (double)(R - 1) * accumulated_K * 4.0;
+            else               tw_cost = (double)(R - 1) * accumulated_K;
+        }
+
+        score += data_cost + tw_cost + dtlb_cost + buffer_pass_cost_per_stage;
+        accumulated_K *= R;
+    }
+    return score;
+}
+
+/* ─────────────────────────────────────────────────────────────────
  * FACTORIZATION ENUMERATION + SCORING
  *
  * Recursively walks every ordered factorization of N using available
