@@ -43,18 +43,46 @@
  *   slice_K  — K batches to process (may be ≤ plan->K for split
  *              execution, but Phase 1 uses slice_K == plan->K)
  */
+/* Compile-time Tier 1 lookup selector: pick AVX-512 when available,
+ * fall back to AVX-2 otherwise. Both lookups exist in plan_executors.h;
+ * the AVX-512 set is guarded by #ifdef __AVX512F__. */
+static inline vfft_proto_exec_fn
+_vfft_proto_lookup_fwd(const stride_plan_t *plan)
+{
+#if defined(__AVX512F__)
+    vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx512(plan);
+    if (fn) return fn;
+#endif
+    return vfft_proto_lookup_fwd_avx2(plan);
+}
+
+static inline vfft_proto_exec_fn
+_vfft_proto_lookup_bwd(const stride_plan_t *plan)
+{
+#if defined(__AVX512F__)
+    vfft_proto_exec_fn fn = vfft_proto_lookup_bwd_avx512(plan);
+    if (fn) return fn;
+#endif
+    return vfft_proto_lookup_bwd_avx2(plan);
+}
+
 static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
                                            double *re, double *im,
                                            size_t slice_K)
 {
-    /* DIF dispatch (no Tier 1 specialization yet). */
+    /* DIF dispatch (Tier 1 specialization supported via lookup). */
     if (plan->use_dif_forward) {
+        vfft_proto_exec_fn fn = _vfft_proto_lookup_fwd(plan);
+        if (fn) {
+            fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
+            return;
+        }
         vfft_proto_execute_fwd_generic_dif(plan, re, im, slice_K);
         return;
     }
 
-    /* DIT path: try Tier 1, fall back to generic. */
-    vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx2(plan);
+    /* DIT path. */
+    vfft_proto_exec_fn fn = _vfft_proto_lookup_fwd(plan);
     if (fn) {
         fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
         return;
@@ -72,14 +100,19 @@ static inline void vfft_proto_execute_bwd(const stride_plan_t *plan,
                                            double *re, double *im,
                                            size_t slice_K)
 {
-    /* DIF dispatch (no Tier 1 specialization yet). */
+    /* DIF dispatch (Tier 1 specialization supported via lookup). */
     if (plan->use_dif_forward) {
+        vfft_proto_exec_fn fn = _vfft_proto_lookup_bwd(plan);
+        if (fn) {
+            fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
+            return;
+        }
         vfft_proto_execute_bwd_generic_dif(plan, re, im, slice_K);
         return;
     }
 
-    /* DIT path: try Tier 1, fall back to generic. */
-    vfft_proto_exec_fn fn = vfft_proto_lookup_bwd_avx2(plan);
+    /* DIT path. */
+    vfft_proto_exec_fn fn = _vfft_proto_lookup_bwd(plan);
     if (fn) {
         fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
         return;
