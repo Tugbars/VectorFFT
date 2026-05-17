@@ -92,8 +92,11 @@
  * warmup/trial counts and configurable rep floor.
  * ───────────────────────────────────────────────────────────────── */
 
-static inline double vfft_proto_bench_patient(
+/* DIT/DIF-aware variant. The `use_dif_forward` flag is plumbed through but
+ * callers default to DIT (0) until the calibrator opts in. */
+static inline double vfft_proto_bench_patient_ex(
     int N, size_t K, const int *factors, int nf,
+    int use_dif_forward,
     const vfft_proto_registry_t *reg,
     double *re, double *im, double *orig_re, double *orig_im)
 {
@@ -105,8 +108,8 @@ static inline double vfft_proto_bench_patient(
             return 1e18;
     }
 
-    stride_plan_t *plan = vfft_proto_plan_create(
-        N, K, factors, /*variants=*/NULL, nf, reg);
+    stride_plan_t *plan = vfft_proto_plan_create_ex(
+        N, K, factors, /*variants=*/NULL, nf, use_dif_forward, reg);
     if (!plan) return 1e18;
 
     /* Deeper warmup. */
@@ -163,8 +166,9 @@ static int _vfft_proto_patient_top_cmp(const void *a, const void *b) {
     return (ca < cb) ? -1 : (ca > cb) ? 1 : 0;
 }
 
-static inline double vfft_proto_patient_exhaustive_search(
+static inline double vfft_proto_patient_exhaustive_search_ex(
     int N, size_t K,
+    int use_dif_forward,
     const vfft_proto_registry_t *reg,
     vfft_proto_factorization_t *best_fact,
     int verbose)
@@ -222,8 +226,9 @@ static inline double vfft_proto_patient_exhaustive_search(
             const int *factors_p = plist->perms[pi];
             int nf = f->nfactors;
 
-            double ns = vfft_proto_bench_patient(
-                N, K, factors_p, nf, reg, re, im, orig_re, orig_im);
+            double ns = vfft_proto_bench_patient_ex(
+                N, K, factors_p, nf, use_dif_forward,
+                reg, re, im, orig_re, orig_im);
             total_candidates++;
 
             if (ns < global_best_ns) {
@@ -278,9 +283,9 @@ static inline double vfft_proto_patient_exhaustive_search(
             printf("  [patient] second pass: re-benching top-%d...\n", n_top);
 
         for (int i = 0; i < n_top; i++) {
-            double ns = vfft_proto_bench_patient(
-                N, K, topn[i].factors, topn[i].nfactors, reg,
-                re, im, orig_re, orig_im);
+            double ns = vfft_proto_bench_patient_ex(
+                N, K, topn[i].factors, topn[i].nfactors, use_dif_forward,
+                reg, re, im, orig_re, orig_im);
             if (verbose >= 1) {
                 printf("    rebench rank %2d: ", i + 1);
                 for (int s = 0; s < topn[i].nfactors; s++)
@@ -319,13 +324,15 @@ static inline double vfft_proto_patient_exhaustive_search(
     return global_best_ns;
 }
 
-static inline stride_plan_t *vfft_proto_patient_exhaustive_plan_verbose(
-    int N, size_t K, const vfft_proto_registry_t *reg,
+/* DIT/DIF-aware variant. */
+static inline stride_plan_t *vfft_proto_patient_exhaustive_plan_verbose_ex(
+    int N, size_t K, int use_dif_forward, const vfft_proto_registry_t *reg,
     int *out_factors, int *out_nf, double *out_ns,
     int verbose)
 {
     vfft_proto_factorization_t best;
-    double ns = vfft_proto_patient_exhaustive_search(N, K, reg, &best, verbose);
+    double ns = vfft_proto_patient_exhaustive_search_ex(
+        N, K, use_dif_forward, reg, &best, verbose);
     if (out_ns) *out_ns = ns;
     if (best.nfactors == 0) {
         if (out_nf) *out_nf = 0;
@@ -334,8 +341,40 @@ static inline stride_plan_t *vfft_proto_patient_exhaustive_plan_verbose(
     if (out_factors) memcpy(out_factors, best.factors,
                             (size_t)best.nfactors * sizeof(int));
     if (out_nf) *out_nf = best.nfactors;
-    return vfft_proto_plan_create(N, K, best.factors, /*variants=*/NULL,
-                                  best.nfactors, reg);
+    return vfft_proto_plan_create_ex(N, K, best.factors, /*variants=*/NULL,
+                                     best.nfactors, use_dif_forward, reg);
+}
+
+/* Back-compat: DIT-only (current default). */
+static inline stride_plan_t *vfft_proto_patient_exhaustive_plan_verbose(
+    int N, size_t K, const vfft_proto_registry_t *reg,
+    int *out_factors, int *out_nf, double *out_ns,
+    int verbose)
+{
+    return vfft_proto_patient_exhaustive_plan_verbose_ex(
+        N, K, /*use_dif_forward=*/0, reg, out_factors, out_nf, out_ns, verbose);
+}
+
+/* Back-compat: DIT-only search. */
+static inline double vfft_proto_patient_exhaustive_search(
+    int N, size_t K,
+    const vfft_proto_registry_t *reg,
+    vfft_proto_factorization_t *best_fact,
+    int verbose)
+{
+    return vfft_proto_patient_exhaustive_search_ex(
+        N, K, /*use_dif_forward=*/0, reg, best_fact, verbose);
+}
+
+/* Back-compat: DIT-only bench. */
+static inline double vfft_proto_bench_patient(
+    int N, size_t K, const int *factors, int nf,
+    const vfft_proto_registry_t *reg,
+    double *re, double *im, double *orig_re, double *orig_im)
+{
+    return vfft_proto_bench_patient_ex(
+        N, K, factors, nf, /*use_dif_forward=*/0,
+        reg, re, im, orig_re, orig_im);
 }
 
 #endif /* VFFT_PROTO_CORE_EXHAUSTIVE_PATIENT_H */

@@ -32,3 +32,19 @@
 # DIF test entry: N=1024 K=128, factors=[4,4,4,4,4], use_dif_forward=1, all-FLAT.
 # Validates the DIF Tier 1 dispatch + macros + DAG-corrected t1_dif_bwd path.
 1024 128 5 4 4 4 4 4 0 0 0 0 1 0 0 0 0 0
+
+# ──────────────────────────────────────────────────────────────────────
+# Patient-bench K=4 pow2 sweep (2026-05-17, i9-14900KF, CPU2-pinned, High-perf plan)
+# Each row's best_ns is the patient verdict; variants are all-T1S inner
+# (outer stage is no-twiddle n1 — variant=0/FLAT placeholder).
+# ──────────────────────────────────────────────────────────────────────
+8 4 1 8 13 0 0 0 0 0
+16 4 1 16 23.8 0 0 0 0 0
+32 4 1 32 59.1 0 0 0 0 0
+64 4 1 64 142.8 0 0 0 0 0
+128 4 2 8 16 320.8 0 0 0 0 0 2
+256 4 2 16 16 722.6 0 0 0 0 0 2
+# patient 2026-05-17 22:49:36  N=512 K=4  wall=137.23s  CPU2-pinned
+512 4 2 16 32 1543.3 0 0 0 0 0 2
+# patient 2026-05-17 23:09:37  N=1024 K=4  wall=204.34s  CPU2-pinned
+1024 4 2 64 16 4241.7 0 0 0 0 0 2
