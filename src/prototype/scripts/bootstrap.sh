@@ -165,11 +165,13 @@ else
   lines=$(wc -l < cost_model/generated/radix_profile.h)
   status_line "emit_profile_h"  "cost_model/generated/radix_profile.h ($lines lines)"  "$(elapsed $T)s"
 
-  # 2b. plan_executors.h (avx2)
+  # 2b. plan_executors.h (avx2) — entries sourced from spike_wisdom.txt
   T=$(now_s)
-  ./_build/default/bin/emit_executor_h.exe --isa avx2 > generated/plan_executors.h
+  ./_build/default/bin/emit_executor_h.exe --isa avx2 \
+      --wisdom generated/spike_wisdom.txt > generated/plan_executors.h
   lines=$(wc -l < generated/plan_executors.h)
-  status_line "emit_executor_h"  "generated/plan_executors.h ($lines lines)"  "$(elapsed $T)s"
+  entries=$(grep -cE "^[0-9]" generated/spike_wisdom.txt)
+  status_line "emit_executor_h"  "$entries wisdom entries, $lines lines"  "$(elapsed $T)s"
 
   # 2c. registry_avx2.h
   T=$(now_s)
