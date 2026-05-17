@@ -30,6 +30,8 @@
 #include "../planner.h"
 #include "../exhaustive_plan.h"
 #include "../exhaustive_recursive.h"
+#include "../exhaustive_screened.h"
+#include "../exhaustive_patient.h"
 
 static void print_factors(const int *f, int n) {
     for (int s = 0; s < n; s++) printf("%s%d", s ? "x" : "", f[s]);
@@ -38,14 +40,24 @@ static void print_factors(const int *f, int n) {
 int main(int argc, char **argv) {
     int N = 8192;
     size_t K = 4;
-    const char *mode = "both";
+    const char *mode = "all";
     int verbose = 1;
+    int top_m = VFFT_PROTO_SCREEN_TOPM_DEFAULT;
     if (argc >= 3) { N = atoi(argv[1]); K = (size_t)atoll(argv[2]); }
     if (argc >= 4) mode = argv[3];
     if (argc >= 5) verbose = atoi(argv[4]);
+    if (argc >= 6) top_m = atoi(argv[5]);
 
-    int run_flat = (strcmp(mode, "flat") == 0 || strcmp(mode, "both") == 0);
-    int run_rec  = (strcmp(mode, "rec")  == 0 || strcmp(mode, "both") == 0);
+    /* mode tokens: flat | rec | screen | patient | both (=flat+rec) | all (=flat+rec+screen) */
+    int run_flat    = (strcmp(mode, "flat")    == 0
+                      || strcmp(mode, "both") == 0
+                      || strcmp(mode, "all")  == 0);
+    int run_rec     = (strcmp(mode, "rec")     == 0
+                      || strcmp(mode, "both") == 0
+                      || strcmp(mode, "all")  == 0);
+    int run_screen  = (strcmp(mode, "screen")  == 0
+                      || strcmp(mode, "all")  == 0);
+    int run_patient = (strcmp(mode, "patient") == 0);
 
     printf("[demo-recursive-exhaustive] N=%d K=%zu mode=%s\n",
            N, (size_t)K, mode);
@@ -93,6 +105,40 @@ int main(int argc, char **argv) {
         printf("\n");
     }
 
+    int    screen_factors[STRIDE_MAX_STAGES];
+    int    screen_nf      = 0;
+    double screen_ns      = 0.0;
+    double screen_wall    = 0.0;
+
+    /* ─── V4-SCREENED EXHAUSTIVE ─── */
+    if (run_screen) {
+        printf("=== V4-SCREENED exhaustive (cost-model rank + top-M bench) ===\n");
+        double t0 = vfft_proto_now_ns();
+        stride_plan_t *plan = vfft_proto_screened_exhaustive_plan_verbose(
+            N, K, &reg, top_m, screen_factors, &screen_nf, &screen_ns, verbose);
+        double t1 = vfft_proto_now_ns();
+        screen_wall = (t1 - t0) / 1e9;
+        if (plan) vfft_proto_plan_destroy(plan);
+        printf("\n");
+    }
+
+    int    pat_factors[STRIDE_MAX_STAGES];
+    int    pat_nf      = 0;
+    double pat_ns      = 0.0;
+    double pat_wall    = 0.0;
+
+    /* ─── PATIENT EXHAUSTIVE ─── */
+    if (run_patient) {
+        printf("=== PATIENT exhaustive (deeper bench, pacing, top-N rebench) ===\n");
+        double t0 = vfft_proto_now_ns();
+        stride_plan_t *plan = vfft_proto_patient_exhaustive_plan_verbose(
+            N, K, &reg, pat_factors, &pat_nf, &pat_ns, verbose);
+        double t1 = vfft_proto_now_ns();
+        pat_wall = (t1 - t0) / 1e9;
+        if (plan) vfft_proto_plan_destroy(plan);
+        printf("\n");
+    }
+
     /* ─── SUMMARY ─── */
     printf("=== Summary for N=%d K=%zu ===\n", N, (size_t)K);
     if (run_flat) {
@@ -109,20 +155,42 @@ int main(int argc, char **argv) {
         printf("  RECURSIVE stats: %d signatures planned, %d benches, "
                "%d cache hits\n", rec_sigs, rec_benches, rec_hits);
     }
+    if (run_screen) {
+        printf("  SCREENED (M=%d): ", top_m);
+        print_factors(screen_factors, screen_nf);
+        printf("  = %.1f ns (%.3f µs)  wall=%.2fs\n",
+               screen_ns, screen_ns / 1000.0, screen_wall);
+    }
+    if (run_patient) {
+        printf("  PATIENT: ");
+        print_factors(pat_factors, pat_nf);
+        printf("  = %.1f ns (%.3f µs)  wall=%.2fs\n",
+               pat_ns, pat_ns / 1000.0, pat_wall);
+    }
     if (run_flat && run_rec && flat_wall > 0.0) {
-        printf("  Speedup (flat/recursive wall): %.2fx\n",
+        printf("  Flat / Recursive speedup: %.2fx\n",
                flat_wall / rec_wall);
-
-        /* Are the winners the same? */
         int same = (flat_nf == rec_nf);
-        if (same) {
-            for (int i = 0; i < flat_nf; i++)
-                if (flat_factors[i] != rec_factors[i]) { same = 0; break; }
-        }
-        printf("  Winners agree: %s", same ? "yes" : "no");
+        if (same) for (int i = 0; i < flat_nf; i++)
+            if (flat_factors[i] != rec_factors[i]) { same = 0; break; }
+        printf("  Recursive vs flat winner: %s", same ? "match" : "different");
         if (!same) {
             double pct = (rec_ns - flat_ns) / flat_ns * 100.0;
-            printf("  (recursive is %.1f%% %s)",
+            printf("  (recursive %.1f%% %s)",
+                   pct >= 0 ? pct : -pct, pct >= 0 ? "slower" : "faster");
+        }
+        printf("\n");
+    }
+    if (run_flat && run_screen && flat_wall > 0.0) {
+        printf("  Flat / Screened speedup:  %.2fx\n",
+               flat_wall / screen_wall);
+        int same = (flat_nf == screen_nf);
+        if (same) for (int i = 0; i < flat_nf; i++)
+            if (flat_factors[i] != screen_factors[i]) { same = 0; break; }
+        printf("  Screened vs flat winner:  %s", same ? "match" : "different");
+        if (!same) {
+            double pct = (screen_ns - flat_ns) / flat_ns * 100.0;
+            printf("  (screened %.1f%% %s)",
                    pct >= 0 ? pct : -pct, pct >= 0 ? "slower" : "faster");
         }
         printf("\n");
