@@ -339,14 +339,202 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
  * port above is complete and self-contained.) */
 
 /* ────────────────────────────────────────────────────────────────────
+ * DIF twiddle compute. Ported from production's
+ * src/core/executor.h:plan_compute_twiddles_dif_c.
+ *
+ * Differences from DIT:
+ *   - No-twiddle stage is the LAST (s == nf-1), not the first.
+ *   - Stage exponent uses k_NEXT (s+1 axis) instead of k_PREV (s-1 axis).
+ *   - cf0 is identically 1 (every term in e_DIF contains j, so leg 0
+ *     has W^0 = 1 unconditionally — no leg-0 post-mul needed).
+ *   - needs_tw[g] based on g_factor = k_next*S_s + lower_data_pos.
+ *     Cannot shortcut on k_next == 0 alone: k_next=0 with non-zero
+ *     lower_data_pos still has nonzero per-leg exponents.
+ *   - grp_tw / tw_scalar store RAW per_leg (no cf baked in since cf=1).
+ * ──────────────────────────────────────────────────────────────────── */
+static inline void vfft_proto_compute_twiddles_dif(stride_plan_t *plan, int s)
+{
+    stride_stage_t *st = &plan->stages[s];
+    const int nf = plan->num_stages;
+    const size_t K = plan->K;
+    const int N = plan->N;
+    const int R = st->radix;
+    const int ng = st->num_groups;
+
+    st->needs_tw = (int *)calloc(ng, sizeof(int));
+    st->grp_tw_re = (double **)calloc(ng, sizeof(double *));
+    st->grp_tw_im = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_re = (double **)calloc(ng, sizeof(double *));
+    st->tw_scalar_im = (double **)calloc(ng, sizeof(double *));
+    st->cf0_re = (double *)calloc(ng, sizeof(double));
+    st->cf0_im = (double *)calloc(ng, sizeof(double));
+
+    if (s == nf - 1) {
+        /* Last stage in DIF: no output-edge twiddle. */
+        st->tw_pool_re = st->tw_pool_im = NULL;
+        st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
+        st->cf_all_re = st->cf_all_im = NULL;
+        for (int g = 0; g < ng; g++) {
+            st->cf0_re[g] = 1.0;
+            st->cf0_im[g] = 0.0;
+        }
+        return;
+    }
+
+    int S_s = 1;
+    for (int d = s + 2; d < nf; d++) S_s *= plan->factors[d];
+    int ow_prev = 1;
+    for (int d = 0; d < s; d++) ow_prev *= plan->factors[d];
+
+    int other_sizes[STRIDE_MAX_STAGES];
+    int n_other = 0;
+    for (int d = 0; d < nf; d++)
+        if (d != s) other_sizes[n_other++] = plan->factors[d];
+
+    /* Count twiddled groups upfront for pool allocation. */
+    int n_tw_groups = 0;
+    {
+        int counter[STRIDE_MAX_STAGES];
+        memset(counter, 0, sizeof(counter));
+        for (int g = 0; g < ng; g++) {
+            int k_next = 0;
+            int lower_data_pos = 0;
+            int ci = 0;
+            for (int d = 0; d < nf; d++) {
+                if (d == s) continue;
+                if (d == s + 1) k_next = counter[ci];
+                if (d > s + 1) {
+                    int w = 1;
+                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    lower_data_pos += counter[ci] * w;
+                }
+                ci++;
+            }
+            if (k_next * S_s + lower_data_pos != 0) n_tw_groups++;
+            for (int d = n_other - 1; d >= 0; d--) {
+                counter[d]++;
+                if (counter[d] < other_sizes[d]) break;
+                counter[d] = 0;
+            }
+        }
+    }
+
+    size_t per_grp = (size_t)(R - 1) * K;
+    size_t scalar_per_grp = (size_t)(R - 1);
+
+    if (n_tw_groups > 0) {
+        vfft_proto_posix_memalign((void **)&st->tw_pool_re, 64,
+            (size_t)n_tw_groups * per_grp * sizeof(double));
+        vfft_proto_posix_memalign((void **)&st->tw_pool_im, 64,
+            (size_t)n_tw_groups * per_grp * sizeof(double));
+        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_re, 64,
+            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+        vfft_proto_posix_memalign((void **)&st->tw_scalar_pool_im, 64,
+            (size_t)n_tw_groups * scalar_per_grp * sizeof(double));
+    } else {
+        st->tw_pool_re = st->tw_pool_im = NULL;
+        st->tw_scalar_pool_re = st->tw_scalar_pool_im = NULL;
+    }
+
+    st->cf_all_re = (double *)calloc((size_t)ng * R * K, sizeof(double));
+    st->cf_all_im = (double *)calloc((size_t)ng * R * K, sizeof(double));
+
+    int counter[STRIDE_MAX_STAGES];
+    memset(counter, 0, sizeof(counter));
+    int tw_idx = 0;
+
+    for (int g = 0; g < ng; g++) {
+        int k_next = 0;
+        int lower_data_pos = 0;
+        {
+            int ci = 0;
+            for (int d = 0; d < nf; d++) {
+                if (d == s) continue;
+                if (d == s + 1) k_next = counter[ci];
+                if (d > s + 1) {
+                    int w = 1;
+                    for (int d2 = d + 1; d2 < nf; d2++) w *= plan->factors[d2];
+                    lower_data_pos += counter[ci] * w;
+                }
+                ci++;
+            }
+        }
+
+        /* cf0 = 1 unconditionally in DIF (W^0 for leg j=0). */
+        st->cf0_re[g] = 1.0;
+        st->cf0_im[g] = 0.0;
+
+        const long long g_factor =
+            (long long)k_next * S_s + (long long)lower_data_pos;
+
+        /* cf_all path — filled for symmetry but no DIF executor reads it.
+         * Production preserves this convention. */
+        for (int j = 0; j < R; j++) {
+            int tw_exp = (int)(((long long)j * ow_prev * g_factor) % N);
+            if (tw_exp < 0) tw_exp += N;
+            double angle = -2.0 * M_PI * (double)tw_exp / (double)N;
+            double wr = cos(angle), wi = sin(angle);
+            for (size_t kk = 0; kk < K; kk++) {
+                st->cf_all_re[(size_t)g * R * K + (size_t)j * K + kk] = wr;
+                st->cf_all_im[(size_t)g * R * K + (size_t)j * K + kk] = wi;
+            }
+        }
+
+        if (g_factor == 0) {
+            st->needs_tw[g] = 0;
+        } else {
+            st->needs_tw[g] = 1;
+
+            double *tw_r = st->tw_pool_re + (size_t)tw_idx * per_grp;
+            double *tw_i = st->tw_pool_im + (size_t)tw_idx * per_grp;
+            st->grp_tw_re[g] = tw_r;
+            st->grp_tw_im[g] = tw_i;
+
+            double *stw_r = st->tw_scalar_pool_re + (size_t)tw_idx * scalar_per_grp;
+            double *stw_i = st->tw_scalar_pool_im + (size_t)tw_idx * scalar_per_grp;
+            st->tw_scalar_re[g] = stw_r;
+            st->tw_scalar_im[g] = stw_i;
+
+            /* Per-leg twiddle for legs 1..R-1. No cf baking needed (cf=1). */
+            for (int j = 1; j < R; j++) {
+                int leg_exp = (int)(((long long)j * ow_prev * g_factor) % N);
+                if (leg_exp < 0) leg_exp += N;
+                double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                double lr = cos(leg_angle), li = sin(leg_angle);
+                stw_r[j - 1] = lr;
+                stw_i[j - 1] = li;
+                size_t base_idx = (size_t)(j - 1) * K;
+                for (size_t kk = 0; kk < K; kk++) {
+                    tw_r[base_idx + kk] = lr;
+                    tw_i[base_idx + kk] = li;
+                }
+            }
+            tw_idx++;
+        }
+
+        for (int d = n_other - 1; d >= 0; d--) {
+            counter[d]++;
+            if (counter[d] < other_sizes[d]) break;
+            counter[d] = 0;
+        }
+    }
+}
+
+/* ────────────────────────────────────────────────────────────────────
  * Top-level driver — call after the plan's factors[] / num_stages / K
  * / N are set. Populates every stage's runtime tables.
+ *
+ * Dispatches to DIT or DIF twiddle compute based on use_dif_forward.
  * ──────────────────────────────────────────────────────────────────── */
 static inline void vfft_proto_compute_plan_tables(stride_plan_t *plan)
 {
     for (int s = 0; s < plan->num_stages; s++) {
         vfft_proto_compute_groups(plan, s);
-        vfft_proto_compute_twiddles_dit(plan, s);
+        if (plan->use_dif_forward) {
+            vfft_proto_compute_twiddles_dif(plan, s);
+        } else {
+            vfft_proto_compute_twiddles_dit(plan, s);
+        }
     }
 }
 

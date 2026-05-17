@@ -569,6 +569,7 @@ let emit_header_file (entries : plan_entry list) ~isa =
   print_endline "    vfft_proto_n1_fn      n1_fwd;";
   print_endline "    vfft_proto_n1_fn      n1_bwd;";
   print_endline "    vfft_proto_codelet_fn t1_fwd;";
+  print_endline "    vfft_proto_codelet_fn t1_bwd;   /* used by DIF bwd executor (fused) */";
   print_endline "    vfft_proto_codelet_fn t1s_fwd;";
   print_endline "} stride_stage_t;";
   print_endline "";

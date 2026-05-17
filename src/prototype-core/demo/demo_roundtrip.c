@@ -34,9 +34,10 @@ static double *alloc_doubles(size_t n) {
 static void free_doubles(double *p) { vfft_proto_aligned_free(p); }
 
 /* Build a plan with explicit per-stage variant, run fwd then bwd, measure
- * how close we are to N*input. */
-static double run_roundtrip(int N, size_t K, int variant,
-                             const vfft_proto_registry_t *reg)
+ * how close we are to N*input. orient = 0 (DIT) or 1 (DIF). */
+static double run_roundtrip_oriented(int N, size_t K, int variant,
+                                      int use_dif_forward,
+                                      const vfft_proto_registry_t *reg)
 {
     int factors[STRIDE_MAX_STAGES];
     int nf = vfft_proto_factorize(N, factors);
@@ -45,8 +46,8 @@ static double run_roundtrip(int N, size_t K, int variant,
     int variants[STRIDE_MAX_STAGES];
     for (int s = 0; s < nf; s++) variants[s] = variant;
 
-    stride_plan_t *plan = vfft_proto_plan_create(
-        N, K, factors, variants, nf, reg);
+    stride_plan_t *plan = vfft_proto_plan_create_ex(
+        N, K, factors, variants, nf, use_dif_forward, reg);
     if (!plan) return 1e18;
 
     size_t buf_len = (size_t)N * K;
@@ -87,25 +88,34 @@ static double run_roundtrip(int N, size_t K, int variant,
     return max_abs_err;
 }
 
-static int run_cell(int N, size_t K, const vfft_proto_registry_t *reg) {
+static int run_cell_oriented(int N, size_t K, int use_dif_forward,
+                               const vfft_proto_registry_t *reg) {
     const char *vnames[3] = {"FLAT", "LOG3", "T1S "};
     const int   vcodes[3] = {VFFT_PROTO_VARIANT_FLAT,
                              VFFT_PROTO_VARIANT_LOG3,
                              VFFT_PROTO_VARIANT_T1S};
-    printf("  N=%-5d K=%-4zu  fwd→bwd should yield N×x:\n", N, (size_t)K);
+    const char *orient = use_dif_forward ? "DIF" : "DIT";
+    printf("  [%s] N=%-5d K=%-4zu  fwd→bwd should yield N×x:\n",
+           orient, N, (size_t)K);
     int fails = 0;
-    /* Absolute error scales with N (output is N×x), so tolerance must too.
-     * Use rel = err / N < 1e-12  (≈ FP64 eps × log2(N) headroom). */
     double thresh = 1e-12 * (double)N;
     if (thresh < 1e-9) thresh = 1e-9;
     for (int v = 0; v < 3; v++) {
-        double err = run_roundtrip(N, K, vcodes[v], reg);
+        double err = run_roundtrip_oriented(N, K, vcodes[v], use_dif_forward, reg);
         const char *verdict = (err < thresh) ? "PASS" : "FAIL";
         printf("    variant=%s  max_abs_err=%.2e  %s\n",
                vnames[v], err, verdict);
         if (err >= thresh) fails++;
     }
     return fails;
+}
+
+static int run_cell(int N, size_t K, const vfft_proto_registry_t *reg) {
+    return run_cell_oriented(N, K, /*use_dif_forward=*/0, reg);
+}
+
+static int run_cell_dif(int N, size_t K, const vfft_proto_registry_t *reg) {
+    return run_cell_oriented(N, K, /*use_dif_forward=*/1, reg);
 }
 
 int main(void) {

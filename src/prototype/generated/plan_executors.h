@@ -58,6 +58,7 @@ typedef struct {
     vfft_proto_n1_fn      n1_fwd;
     vfft_proto_n1_fn      n1_bwd;
     vfft_proto_codelet_fn t1_fwd;
+    vfft_proto_codelet_fn t1_bwd;   /* used by DIF bwd executor (fused) */
     vfft_proto_codelet_fn t1s_fwd;
 } stride_stage_t;
 
