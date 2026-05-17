@@ -78,7 +78,7 @@ for src in "${ALL_SOURCES[@]}"; do
   echo "$(cygpath -m "$OBJ_DIR/$(basename "$src" .c).o")" >> $RSP
 done
 
-$CC $CFLAGS \
+$CC $CFLAGS $CFLAGS_EXTRA \
     -I $PROTO_CORE \
     -I $GENERATED \
     "$PROTO_CORE/demo/demo_dp_one_cell.c" \

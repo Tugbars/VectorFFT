@@ -58,13 +58,17 @@ static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
      *
      * Fix: update emit_executor_h.ml to emit per-group needs_tw[g]
      * branches (matching the generic path), then re-enable Tier 1. */
-#ifdef VFFT_PROTO_ENABLE_TIER1_SPECIALIZATION
+    /* Tier 1 (plan-shaped specialization) — RE-ENABLED 2026-05-17.
+     * NULL-tw bug fixed by patching plan_executors.h to branch on
+     * inv.tw_re before calling t1s codelets (groups with k_prev=0 now
+     * dispatch to n1 codelet). Specialization is selected by factor
+     * list only; variant-mix mismatch could still dispatch to a wrong
+     * specialization, so use only for matching all-T1S plans. */
     vfft_proto_exec_fn fn = vfft_proto_lookup_fwd_avx2(plan);
     if (fn) {
         fn(plan, re, im, slice_K, plan->K, /*start_stage=*/0);
         return;
     }
-#endif
 
     vfft_proto_execute_fwd_generic(plan, re, im, slice_K);
 }
