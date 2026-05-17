@@ -28,3 +28,7 @@
 # Synthetic all-LOG3 variant. Research-only; production rarely picks LOG3
 # for many-inner-stage plans (twiddle-bandwidth pressure).
 131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 1 1 1 1 1 1 1
+
+# DIF test entry: N=1024 K=128, factors=[4,4,4,4,4], use_dif_forward=1, all-FLAT.
+# Validates the DIF Tier 1 dispatch + macros + DAG-corrected t1_dif_bwd path.
+1024 128 5 4 4 4 4 4 0 0 0 0 1 0 0 0 0 0

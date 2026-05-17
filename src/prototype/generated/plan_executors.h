@@ -133,6 +133,12 @@ extern void radix4_n1_bwd_avx2(double *rio_re, double *rio_im,
 extern void radix4_n1_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
+extern void radix4_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix4_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
 extern void radix4_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -346,6 +352,107 @@ extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
         } \
     }
 
+/* ── DIF orientation macros ─────────────────────────────────────────
+ *
+ * DIF differs from DIT in two structural ways:
+ *   1. The no-twiddle stage is the LAST (s = nf-1), not the first.
+ *   2. cf0 = 1 universally (every cross-stage exponent contains j),
+ *      so no executor-side leg-0 cmul is needed.
+ *
+ * Codelet calling convention: t1_dif_{fwd,bwd}_log3 takes raw per-leg
+ * twiddles (read from grp_tw, K-replicated); t1_dif_{fwd,bwd} takes the
+ * same layout for prototype-core's plan build (no separate flat staging).
+ *
+ * DIF backward uses the FUSED t1_dif_bwd codelet — production couldn't
+ * (the old DAG was wrong); the dft.ml fix made it inverse-of-fwd. */
+
+/* DIF no-twiddle outer stage (s = nf-1). Just n1_fwd, no group branch. */
+#define VFFT_PROTO_STAGE_DIF_OUTER(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int    num_groups  = st->num_groups; \
+        const size_t stride      = st->stride; \
+        const size_t *group_base = st->group_base; \
+        for (int g = 0; g < num_groups; g++) { \
+            radix##R##_n1_fwd_##ISA(re + group_base[g], im + group_base[g], \
+                                      NULL, NULL, stride, slice_K); \
+        } \
+    }
+
+/* DIF FLAT (also T1S→FLAT fallback): codelet does butterfly + post-mul */
+/* legs 1..R-1 by grp_tw. needs_tw=0 groups fall to n1_fwd. */
+#define VFFT_PROTO_STAGE_DIF_FLAT(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int    num_groups  = st->num_groups; \
+        const size_t stride      = st->stride; \
+        const int    *needs_tw    = st->needs_tw; \
+        const size_t *group_base  = st->group_base; \
+        double      **grp_tw_re   = st->grp_tw_re; \
+        double      **grp_tw_im   = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \
+                                          stride, slice_K); \
+                continue; \
+            } \
+            radix##R##_t1_dif_fwd_##ISA(base_re, base_im, \
+                                          grp_tw_re[g], grp_tw_im[g], \
+                                          stride, slice_K); \
+        } \
+    }
+
+/* DIF LOG3: same as DIF_FLAT but calls log3 codelet variant. */
+#define VFFT_PROTO_STAGE_DIF_LOG3(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int    num_groups  = st->num_groups; \
+        const size_t stride      = st->stride; \
+        const int    *needs_tw    = st->needs_tw; \
+        const size_t *group_base  = st->group_base; \
+        double      **grp_tw_re   = st->grp_tw_re; \
+        double      **grp_tw_im   = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \
+                                          stride, slice_K); \
+                continue; \
+            } \
+            radix##R##_t1_dif_log3_fwd_##ISA(base_re, base_im, \
+                                              grp_tw_re[g], grp_tw_im[g], \
+                                              stride, slice_K); \
+        } \
+    }
+
+/* DIF backward: fused t1_dif_bwd codelet (T_conj then B⁻¹) for needs_tw=1
+ * groups, n1_bwd for needs_tw=0. cf0=1 in DIF so no leg-0 cmul needed. */
+#define VFFT_PROTO_STAGE_DIF_BWD(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int    num_groups  = st->num_groups; \
+        const size_t stride      = st->stride; \
+        const int    *needs_tw    = st->needs_tw; \
+        const size_t *group_base  = st->group_base; \
+        double      **grp_tw_re   = st->grp_tw_re; \
+        double      **grp_tw_im   = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, \
+                                          stride, slice_K); \
+                continue; \
+            } \
+            radix##R##_t1_dif_bwd_##ISA(base_re, base_im, \
+                                          grp_tw_re[g], grp_tw_im[g], \
+                                          stride, slice_K); \
+        } \
+    }
+
 /* Function-pointer signature shared by forward and backward executors. */
 typedef void (*vfft_proto_exec_fn)(const stride_plan_t *, double *, double *,
                                    size_t, size_t, int);
@@ -468,6 +575,24 @@ static void exec_n131072_k4_44448444_v01111111_dit_fwd_avx2(const stride_plan_t 
     VFFT_PROTO_STAGE_LOG3 (7,  4, avx2)
 }
 
+/* Plan-shaped executor specialization
+ *   N=1024 K=128
+ *   factors=4,4,4,4,4
+ *   variants=FLAT,FLAT,FLAT,FLAT,FLAT
+ *   orient=DIF dir=FWD isa=avx2 */
+static void exec_n1024_k128_44444_v00000_dif_fwd_avx2(const stride_plan_t *plan,
+                                                     double *re, double *im,
+                                                     size_t slice_K, size_t full_K,
+                                                     int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_FLAT (0,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_FLAT (1,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_FLAT (2,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_FLAT (3,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_OUTER(4,  4, avx2)
+}
+
 /* ── Backward executors ──────────────────────────────────────── */
 /* Plan-shaped executor specialization
  *   N=131072 K=4
@@ -523,6 +648,23 @@ static void exec_n1024_k128_44444_dit_bwd_avx2(const stride_plan_t *plan,
     VFFT_PROTO_STAGE_BWD(0,  4, avx2)
 }
 
+/* Plan-shaped executor specialization
+ *   N=1024 K=128
+ *   factors=4,4,4,4,4
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx2 */
+static void exec_n1024_k128_44444_dif_bwd_avx2(const stride_plan_t *plan,
+                                              double *re, double *im,
+                                              size_t slice_K, size_t full_K,
+                                              int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(4,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_BWD(3,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_BWD(2,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_BWD(1,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_BWD(0,  4, avx2)
+}
+
 
 /* Forward lookup: returns the specialized executor for this plan or NULL.
  * Caller falls back to the generic executor when this returns NULL. */
@@ -533,6 +675,20 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         for (int _s = 1; _s < (nstages); _s++) \
             if ((plan)->stages[_s].t1s_fwd == NULL) { _ok = 0; break; } \
         _ok; })
+
+    /* Entry: N=1024 K=128 factors=4,4,4,4,4 variants=v00000 */
+    if (plan->N == 1024 && plan->K == 128 && plan->num_stages == 5
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 4
+        && plan->factors[4] == 4
+        && plan->stages[0].t1_fwd  != NULL && !plan->stages[0].use_log3
+        && plan->stages[1].t1_fwd  != NULL && !plan->stages[1].use_log3
+        && plan->stages[2].t1_fwd  != NULL && !plan->stages[2].use_log3
+        && plan->stages[3].t1_fwd  != NULL && !plan->stages[3].use_log3)
+        return exec_n1024_k128_44444_v00000_dif_fwd_avx2;
 
     /* Entry: N=1024 K=128 factors=4,4,4,4,4 variants=v02222 */
     if (plan->N == 1024 && plan->K == 128 && plan->num_stages == 5
@@ -664,6 +820,16 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_bwd_avx2(const stride_plan_t 
         && plan->factors[3] == 4
         && plan->factors[4] == 4)
         return exec_n1024_k128_44444_dit_bwd_avx2;
+
+    /* Entry: N=1024 K=128 factors=4,4,4,4,4 */
+    if (plan->N == 1024 && plan->K == 128 && plan->num_stages == 5
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 4
+        && plan->factors[4] == 4)
+        return exec_n1024_k128_44444_dif_bwd_avx2;
 
     return NULL;
 }
