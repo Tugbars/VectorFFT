@@ -492,9 +492,10 @@ let emit_stage_macros () =
   print_endline " * function signature). Uses st->stride hoisted once per stage.";
   print_endline " * ─────────────────────────────────────────────────────────────────── */";
   print_endline "";
-  print_endline "/* Broadcast scalar conj-mul: leg[0] *= conj(cf0) using AVX2 SIMD.";
+  print_endline "/* Broadcast scalar conj-mul: leg[0] *= conj(cf0) using SIMD.";
   print_endline " * Used by the fused bwd path to apply the leg-0 common-factor that";
-  print_endline " * the t1s_bwd codelet doesn't handle (codelet only touches legs 1..R-1). */";
+  print_endline " * the t1s_bwd codelet doesn't handle (codelet only touches legs 1..R-1).";
+  print_endline " * Two ISA variants emitted; macro token-pastes ISA suffix at use site. */";
   print_endline "#define VFFT_PROTO_BWD_LEG0_CONJ_avx2(re_p, im_p, cfr, cfi, n) \\";
   print_endline "    do { \\";
   print_endline "        if ((cfr) != 1.0 || (cfi) != 0.0) { \\";
@@ -504,7 +505,6 @@ let emit_stage_macros () =
   print_endline "            for (; _kk + 4 <= (n); _kk += 4) { \\";
   print_endline "                __m256d _vr = _mm256_loadu_pd((re_p) + _kk); \\";
   print_endline "                __m256d _vi = _mm256_loadu_pd((im_p) + _kk); \\";
-  print_endline "                /* re' = re*cfr + im*cfi; im' = im*cfr - re*cfi  (conj cmul) */ \\";
   print_endline "                __m256d _nr = _mm256_fmadd_pd(_vi, _vcfi, _mm256_mul_pd(_vr, _vcfr)); \\";
   print_endline "                __m256d _ni = _mm256_fnmadd_pd(_vr, _vcfi, _mm256_mul_pd(_vi, _vcfr)); \\";
   print_endline "                _mm256_storeu_pd((re_p) + _kk, _nr); \\";
@@ -517,6 +517,30 @@ let emit_stage_macros () =
   print_endline "            } \\";
   print_endline "        } \\";
   print_endline "    } while (0)";
+  print_endline "";
+  print_endline "#if defined(__AVX512F__)";
+  print_endline "#define VFFT_PROTO_BWD_LEG0_CONJ_avx512(re_p, im_p, cfr, cfi, n) \\";
+  print_endline "    do { \\";
+  print_endline "        if ((cfr) != 1.0 || (cfi) != 0.0) { \\";
+  print_endline "            __m512d _vcfr = _mm512_set1_pd(cfr); \\";
+  print_endline "            __m512d _vcfi = _mm512_set1_pd(cfi); \\";
+  print_endline "            size_t _kk = 0; \\";
+  print_endline "            for (; _kk + 8 <= (n); _kk += 8) { \\";
+  print_endline "                __m512d _vr = _mm512_loadu_pd((re_p) + _kk); \\";
+  print_endline "                __m512d _vi = _mm512_loadu_pd((im_p) + _kk); \\";
+  print_endline "                __m512d _nr = _mm512_fmadd_pd(_vi, _vcfi, _mm512_mul_pd(_vr, _vcfr)); \\";
+  print_endline "                __m512d _ni = _mm512_fnmadd_pd(_vr, _vcfi, _mm512_mul_pd(_vi, _vcfr)); \\";
+  print_endline "                _mm512_storeu_pd((re_p) + _kk, _nr); \\";
+  print_endline "                _mm512_storeu_pd((im_p) + _kk, _ni); \\";
+  print_endline "            } \\";
+  print_endline "            for (; _kk < (n); _kk++) { \\";
+  print_endline "                double _tr = (re_p)[_kk]; \\";
+  print_endline "                (re_p)[_kk] = _tr * (cfr) + (im_p)[_kk] * (cfi); \\";
+  print_endline "                (im_p)[_kk] = (im_p)[_kk] * (cfr) - _tr * (cfi); \\";
+  print_endline "            } \\";
+  print_endline "        } \\";
+  print_endline "    } while (0)";
+  print_endline "#endif /* __AVX512F__ */";
   print_endline "";
   print_endline "/* Backward stage: FUSED inverse butterfly + post-twiddle via t1s_bwd codelet.";
   print_endline " *";
@@ -779,30 +803,43 @@ let emit_header_file (entries : plan_entry list) ~isa =
   print_endline "#endif /* VFFT_PROTO_USE_PRODUCTION_PLAN_T */";
   print_endline "";
   let bwd_entries = dedup_for_bwd entries in
-  let all_externs =
-    let fwd_syms = List.concat_map (fun e -> collect_externs e `Fwd ~isa) entries in
-    let bwd_syms = List.concat_map (fun e -> collect_externs e `Bwd ~isa) bwd_entries in
-    List.sort_uniq compare (fwd_syms @ bwd_syms)
+  (* Per-ISA emission helper: externs + executors + lookups. *)
+  let emit_for_isa isa =
+    let all_externs =
+      let fwd_syms = List.concat_map (fun e -> collect_externs e `Fwd ~isa) entries in
+      let bwd_syms = List.concat_map (fun e -> collect_externs e `Bwd ~isa) bwd_entries in
+      List.sort_uniq compare (fwd_syms @ bwd_syms)
+    in
+    Printf.printf "/* Externs for %s codelets called by the executors below. */\n" isa;
+    List.iter (fun sym ->
+      Printf.printf
+        "extern void %s(double *rio_re, double *rio_im,\n\
+        \                                 const double *tw_re, const double *tw_im,\n\
+        \                                 size_t ios, size_t me);\n" sym
+    ) all_externs;
+    print_endline "";
+    Printf.printf "/* ── Forward executors (%s) ────────────────────────────── */\n" isa;
+    List.iter (fun e -> emit_executor e `Fwd ~isa; print_endline "") entries;
+    Printf.printf "/* ── Backward executors (%s) ─────────────────────────────── */\n" isa;
+    List.iter (fun e -> emit_executor e `Bwd ~isa; print_endline "") bwd_entries;
+    emit_lookup_fwd entries ~isa;
+    emit_lookup_bwd entries ~isa
   in
-  print_endline "/* Externs for the codelets called by the executors below. */";
-  List.iter (fun sym ->
-    Printf.printf
-      "extern void %s(double *rio_re, double *rio_im,\n\
-      \                                 const double *tw_re, const double *tw_im,\n\
-      \                                 size_t ios, size_t me);\n" sym
-  ) all_externs;
-  print_endline "";
   emit_stage_macros ();
   print_endline "/* Function-pointer signature shared by forward and backward executors. */";
   print_endline "typedef void (*vfft_proto_exec_fn)(const stride_plan_t *, double *, double *,";
   print_endline "                                   size_t, size_t, int);";
   print_endline "";
-  print_endline "/* ── Forward executors ───────────────────────────────────────── */";
-  List.iter (fun e -> emit_executor e `Fwd ~isa; print_endline "") entries;
-  print_endline "/* ── Backward executors ──────────────────────────────────────── */";
-  List.iter (fun e -> emit_executor e `Bwd ~isa; print_endline "") bwd_entries;
-  emit_lookup_fwd entries ~isa;
-  emit_lookup_bwd entries ~isa;
+  (* AVX-2 emission — always available on x86-64 with AVX2 (the project's
+   * minimum baseline). *)
+  emit_for_isa "avx2";
+  print_endline "";
+  (* AVX-512 emission — guarded by __AVX512F__ so non-AVX-512 builds don't
+   * try to link against AVX-512 codelet symbols that aren't compiled in. *)
+  print_endline "#if defined(__AVX512F__)";
+  emit_for_isa "avx512";
+  print_endline "#endif /* __AVX512F__ */";
+  let _ = isa in  (* unused now; CLI param kept for backward-compat. *)
   print_endline "";
   print_endline "#endif /* VFFT_PROTO_PLAN_EXECUTORS_H */"
 
