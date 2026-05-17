@@ -465,6 +465,12 @@ let emit_stage_macros () =
   print_endline "            const stride_invocation_t inv = tape[g]; \\";
   print_endline "            double *base_re = re + inv.base; \\";
   print_endline "            double *base_im = im + inv.base; \\";
+  print_endline "            if (!inv.tw_re) { \\";
+  print_endline "                /* needs_tw=0 group (k_prev=0 in DIT): no twiddle, use n1. */ \\";
+  print_endline "                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \\";
+  print_endline "                                         stride, slice_K); \\";
+  print_endline "                continue; \\";
+  print_endline "            } \\";
   print_endline "            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
   print_endline "            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
   print_endline "            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \\";
