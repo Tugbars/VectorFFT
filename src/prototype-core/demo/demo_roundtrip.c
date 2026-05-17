@@ -94,12 +94,16 @@ static int run_cell(int N, size_t K, const vfft_proto_registry_t *reg) {
                              VFFT_PROTO_VARIANT_T1S};
     printf("  N=%-5d K=%-4zu  fwd→bwd should yield N×x:\n", N, (size_t)K);
     int fails = 0;
+    /* Absolute error scales with N (output is N×x), so tolerance must too.
+     * Use rel = err / N < 1e-12  (≈ FP64 eps × log2(N) headroom). */
+    double thresh = 1e-12 * (double)N;
+    if (thresh < 1e-9) thresh = 1e-9;
     for (int v = 0; v < 3; v++) {
         double err = run_roundtrip(N, K, vcodes[v], reg);
-        const char *verdict = (err < 1e-9) ? "PASS" : "FAIL";
+        const char *verdict = (err < thresh) ? "PASS" : "FAIL";
         printf("    variant=%s  max_abs_err=%.2e  %s\n",
                vnames[v], err, verdict);
-        if (err >= 1e-9) fails++;
+        if (err >= thresh) fails++;
     }
     return fails;
 }
@@ -121,6 +125,10 @@ int main(void) {
     failures += run_cell(125,   4, &reg);
     failures += run_cell(128, 128, &reg);
     failures += run_cell(256,  32, &reg);
+    /* Wisdom-targeted cells: these exercise the Tier 1 specialized
+     * backward executors (vfft_proto_lookup_bwd_avx2 returns non-NULL). */
+    failures += run_cell(1024, 128, &reg);
+    failures += run_cell(131072, 4, &reg);
 
     printf("\n");
     if (failures == 0)
