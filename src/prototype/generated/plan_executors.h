@@ -181,6 +181,18 @@ extern void radix8_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
+extern void radix32_n1_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix32_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix64_n1_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix64_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
 
 /* Plan-shaped executor specialization
  *   N=131072 K=4
@@ -217,9 +229,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -231,9 +249,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -245,9 +269,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -259,9 +289,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix8_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix8_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix8_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -273,9 +309,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -287,9 +329,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -301,9 +349,15 @@ static void exec_n131072_k4_44448444_v02222222_dit_fwd_avx2(const stride_plan_t 
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 }
@@ -343,9 +397,15 @@ static void exec_n1024_k128_44444_v02222_dit_fwd_avx2(const stride_plan_t *plan,
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -357,9 +417,15 @@ static void exec_n1024_k128_44444_v02222_dit_fwd_avx2(const stride_plan_t *plan,
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -371,9 +437,15 @@ static void exec_n1024_k128_44444_v02222_dit_fwd_avx2(const stride_plan_t *plan,
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 
@@ -385,9 +457,15 @@ static void exec_n1024_k128_44444_v02222_dit_fwd_avx2(const stride_plan_t *plan,
         const size_t stride     = st->stride;  /* hoisted */
         for (int g = 0; g < num_groups; g++) {
             const stride_invocation_t inv = tape[g];
-            radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
-                                       inv.tw_re, inv.tw_im,
-                                       stride, slice_K);
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
         }
     }
 }
@@ -736,6 +814,227 @@ static void exec_n131072_k4_44448444_v01111111_dit_fwd_avx2(const stride_plan_t 
 }
 
 
+/* Plan-shaped executor specialization
+ *   N=131072 K=4
+ *   factors=4,4,4,32,64
+ *   variants=T1S,T1S,T1S,T1S,T1S
+ *   orient=DIT dir=FWD isa=avx2
+ *
+ * Patient-verdict plan from 2026-05-17. Hand-written following the
+ * v02222222 pattern with `inv.tw_re` branch (NULL → n1 fallback).
+ */
+static void exec_n131072_k4_4443264_v22222_dit_fwd_avx2(const stride_plan_t *plan,
+                                                       double *re, double *im,
+                                                       size_t slice_K, size_t full_K,
+                                                       int start_stage)
+{
+    (void)full_K;  /* unused for T1S-only plans */
+
+    /* Stage 0: R=4, variant=T1S (= n1 since no twiddle at outer) */
+    if (start_stage <= 0) {
+        const stride_stage_t *st = &plan->stages[0];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            size_t base = tape[g].base;
+            radix4_n1_fwd_avx2(re + base, im + base, NULL, NULL, stride, slice_K);
+        }
+    }
+
+    /* Stage 1: R=4, variant=T1S */
+    if (start_stage <= 1) {
+        const stride_stage_t *st = &plan->stages[1];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 2: R=4, variant=T1S */
+    if (start_stage <= 2) {
+        const stride_stage_t *st = &plan->stages[2];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 3: R=32, variant=T1S */
+    if (start_stage <= 3) {
+        const stride_stage_t *st = &plan->stages[3];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix32_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+            } else {
+                radix32_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                     NULL, NULL,
+                                     stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 4: R=64, variant=T1S */
+    if (start_stage <= 4) {
+        const stride_stage_t *st = &plan->stages[4];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix64_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+            } else {
+                radix64_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                     NULL, NULL,
+                                     stride, slice_K);
+            }
+        }
+    }
+}
+
+/* Plan-shaped executor specialization
+ *   N=131072 K=4
+ *   factors=4,4,4,32,64
+ *   variants=T1S,T1S,LOG3,T1S,T1S
+ *   orient=DIT dir=FWD isa=avx2
+ *
+ * Patient-verdict factorization + variant-cartesian-best mix
+ * (2026-05-17). Stage 2 R=4 uses LOG3 instead of T1S — variant
+ * search showed 5-6% improvement at this stage.
+ */
+static void exec_n131072_k4_4443264_v22122_dit_fwd_avx2(const stride_plan_t *plan,
+                                                       double *re, double *im,
+                                                       size_t slice_K, size_t full_K,
+                                                       int start_stage)
+{
+    (void)full_K;
+
+    /* Stage 0: R=4, T1S (= n1 since stage 0 has no twiddle) */
+    if (start_stage <= 0) {
+        const stride_stage_t *st = &plan->stages[0];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            size_t base = tape[g].base;
+            radix4_n1_fwd_avx2(re + base, im + base, NULL, NULL, stride, slice_K);
+        }
+    }
+
+    /* Stage 1: R=4, T1S */
+    if (start_stage <= 1) {
+        const stride_stage_t *st = &plan->stages[1];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix4_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                           inv.tw_re, inv.tw_im,
+                                           stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 2: R=4, LOG3 — uses radix4_t1_dit_log3_fwd_avx2 codelet.
+     * Tape's tw_re/tw_im point at the LOG3 twiddle layout (raw per_leg
+     * with cf pre-applied to all legs at plan-build time). */
+    if (start_stage <= 2) {
+        const stride_stage_t *st = &plan->stages[2];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix4_t1_dit_log3_fwd_avx2(re + inv.base, im + inv.base,
+                                                inv.tw_re, inv.tw_im,
+                                                stride, slice_K);
+            } else {
+                radix4_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                    NULL, NULL,
+                                    stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 3: R=32, T1S */
+    if (start_stage <= 3) {
+        const stride_stage_t *st = &plan->stages[3];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix32_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+            } else {
+                radix32_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                     NULL, NULL,
+                                     stride, slice_K);
+            }
+        }
+    }
+
+    /* Stage 4: R=64, T1S */
+    if (start_stage <= 4) {
+        const stride_stage_t *st = &plan->stages[4];
+        const stride_invocation_t * __restrict__ tape = st->tape;
+        const int    num_groups = st->num_groups;
+        const size_t stride     = st->stride;
+        for (int g = 0; g < num_groups; g++) {
+            const stride_invocation_t inv = tape[g];
+            if (inv.tw_re) {
+                radix64_t1s_dit_fwd_avx2(re + inv.base, im + inv.base,
+                                            inv.tw_re, inv.tw_im,
+                                            stride, slice_K);
+            } else {
+                radix64_n1_fwd_avx2(re + inv.base, im + inv.base,
+                                     NULL, NULL,
+                                     stride, slice_K);
+            }
+        }
+    }
+}
+
 /* Lookup: returns the specialized executor for this plan or NULL.
  * Caller is expected to fall back to _stride_execute_fwd_slice_from
  * when this returns NULL (cold cell, not in wisdom). */
@@ -744,7 +1043,41 @@ typedef void (*vfft_proto_exec_fn)(const stride_plan_t *, double *, double *,
 
 static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t *plan)
 {
-    /* Entry: N=131072 K=4 factors=4,4,4,4,8,4,4,4 */
+    /* Variant check helper: a stage is T1S iff t1s_fwd != NULL (planner
+     * clears t1_fwd/t1s_fwd then sets exactly one based on variant). */
+    #define _MATCH_T1S_INNER(plan, nstages) ({ int _ok = 1; \
+        for (int _s = 1; _s < (nstages); _s++) \
+            if ((plan)->stages[_s].t1s_fwd == NULL) { _ok = 0; break; } \
+        _ok; })
+
+    /* Entry: N=131072 K=4 factors=4,4,4,32,64 variants=T1S,T1S,LOG3,T1S,T1S
+     * (patient verdict factorization + variant-cartesian-best mix 2026-05-17).
+     * Must come BEFORE the all-T1S entry for this same factor list. */
+    if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 5
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 32
+        && plan->factors[4] == 64
+        && plan->stages[1].t1s_fwd != NULL
+        && plan->stages[2].t1_fwd  != NULL && plan->stages[2].use_log3
+        && plan->stages[3].t1s_fwd != NULL
+        && plan->stages[4].t1s_fwd != NULL)
+        return exec_n131072_k4_4443264_v22122_dit_fwd_avx2;
+
+    /* Entry: N=131072 K=4 factors=4,4,4,32,64 variants=T1S×5 (patient 2026-05-17) */
+    if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 5
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 4
+        && plan->factors[1] == 4
+        && plan->factors[2] == 4
+        && plan->factors[3] == 32
+        && plan->factors[4] == 64
+        && _MATCH_T1S_INNER(plan, 5))
+        return exec_n131072_k4_4443264_v22222_dit_fwd_avx2;
+
+    /* Entry: N=131072 K=4 factors=4,4,4,4,8,4,4,4 variants=FLAT,T1S×7 */
     if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 8
         && plan->use_dif_forward == 0
         && plan->factors[0] == 4
@@ -754,18 +1087,22 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && plan->factors[4] == 8
         && plan->factors[5] == 4
         && plan->factors[6] == 4
-        && plan->factors[7] == 4)
+        && plan->factors[7] == 4
+        && _MATCH_T1S_INNER(plan, 8))
         return exec_n131072_k4_44448444_v02222222_dit_fwd_avx2;
 
-    /* Entry: N=1024 K=128 factors=4,4,4,4,4 */
+    /* Entry: N=1024 K=128 factors=4,4,4,4,4 variants=FLAT,T1S×4 */
     if (plan->N == 1024 && plan->K == 128 && plan->num_stages == 5
         && plan->use_dif_forward == 0
         && plan->factors[0] == 4
         && plan->factors[1] == 4
         && plan->factors[2] == 4
         && plan->factors[3] == 4
-        && plan->factors[4] == 4)
+        && plan->factors[4] == 4
+        && _MATCH_T1S_INNER(plan, 5))
         return exec_n1024_k128_44444_v02222_dit_fwd_avx2;
+
+    #undef _MATCH_T1S_INNER
 
     /* Entry: N=131072 K=4 factors=4,4,4,4,8,4,4,4 */
     if (plan->N == 131072 && plan->K == 4 && plan->num_stages == 8
