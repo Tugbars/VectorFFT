@@ -912,26 +912,31 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
      * This is the same fallback path Direct takes — both algorithms simply
      * lack a clean cluster boundary for the current recipe shape. *)
     (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
-  | Cooley_Tukey (_n1, _n2) when policy = TP_Log3 && direction = DIF ->
-    (* KNOWN BUG: DIF + TP_Log3 + spill recipe produces use-before-decl
-     * in emitted C. The spill recipe captures pass1 outputs as markers
-     * and reorders their declarations; for log3 in DIF the Cmul-derived
-     * twiddle intermediates (high-fanout, used at output side) get
-     * scheduled out-of-order relative to their consumers.
+  | Cooley_Tukey (_n1, _n2) when policy = TP_Log3
+                              && ((direction = DIF && sign = `Fwd)
+                                  || (direction = DIT && sign = `Bwd)) ->
+    (* KNOWN BUG: POST-twiddle + TP_Log3 + spill recipe produces
+     * use-before-decl in emitted C. The spill recipe captures pass1
+     * outputs as markers and reorders their declarations; for log3 with
+     * post-twiddle, the Cmul-derived twiddle intermediates (high-fanout,
+     * used at output side) get scheduled out-of-order relative to their
+     * consumers.
      *
-     * Surface area: R=12 and R=25 dif log3 codelets (R=12=4×3, R=25=5×5
-     * — composites with non-pow2 sub-radixes).
+     * Both (DIF, Fwd) and (DIT, Bwd) use the POST-twiddle structure (the
+     * latter via the sign-flip in this function — backward DIT is the
+     * inverse of forward DIT, hence structurally POST). The same spill
+     * recipe bug affects both.
      *
-     * Workaround: fall back to plain expansion for (DIF, TP_Log3) only.
-     * Other (direction, policy) combos keep the spill recipe. The
-     * resulting DIF log3 codelets miss the spill optimization but are
-     * correct. Production wisdom uses use_dif_forward=0 universally, so
-     * these codelets are never invoked at runtime anyway — they exist
-     * for library completeness.
+     * Surface area: R=12 and R=25 log3 codelets (composites with non-pow2
+     * sub-radixes), in both DIF-fwd and DIT-bwd directions.
      *
-     * Real fix: rework spill recipe to either exclude log3 Cmul nodes
-     * from pass1_assigns or insert reload sites at every use of a
-     * spilled value. Separate workstream. *)
+     * Workaround: fall back to plain expansion for these combos. Other
+     * (direction, policy, sign) combos keep the spill recipe. The resulting
+     * codelets miss the spill optimization but are correct.
+     *
+     * Real fix: rework spill recipe to either exclude log3 Cmul nodes from
+     * pass1_assigns or insert reload sites at every use of a spilled value.
+     * Separate workstream. *)
     (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
   | Cooley_Tukey (n1, n2) ->
     (* Pre vs post twiddle, decided by (direction, sign) — see comment in

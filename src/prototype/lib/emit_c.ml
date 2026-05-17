@@ -717,8 +717,12 @@ let emit_codelet
    * Threading: this is a top-level ref, so concurrent emit_codelet
    * calls in the same process would race. Our codelet generator is
    * single-threaded; documenting the limitation here. *)
+  (* M-project (M3a/M5/M6 regalloc) is ON BY DEFAULT.
+   * Opt OUT with VFFT_NO_REGALLOC=1 (for legacy comparison / debugging).
+   * Legacy opt-IN flag VFFT_USE_REGALLOC=1 still works for explicit confirmation. *)
   let regalloc_enabled =
-    try Sys.getenv "VFFT_USE_REGALLOC" = "1" with Not_found -> false
+    let opt_out = try Sys.getenv "VFFT_NO_REGALLOC" = "1" with Not_found -> false in
+    not opt_out
   in
   let install_alloc (label : string) (scheduled : t list)
                     (inline_set : (int, unit) Hashtbl.t option)
