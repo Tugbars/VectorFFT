@@ -708,20 +708,36 @@ let dft_expand ?(sign = `Fwd) (n : int) : Expr.assignment list =
  * shred them because they're inside Cmul nodes after lifting. *)
 let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
     (n : int) : Expr.assignment list =
-  (* DIT: pre-multiply inputs by twiddles, then run DFT.
-   * DIF: run DFT, then post-multiply outputs by twiddles.
+  (* Structurally, twiddled codelets have two options:
+   *   - PRE-twiddle: multiply inputs by twiddles, then run DFT
+   *   - POST-twiddle: run DFT, then multiply outputs by twiddles
    *
-   * Leg 0 has trivial twiddle W^0 = 1 in both cases.
+   * For forward direction the choice mirrors the algorithm name:
+   *   DIT fwd: PRE-twiddle  (decimation-in-time)
+   *   DIF fwd: POST-twiddle (decimation-in-frequency)
    *
-   * For sign=Bwd, internal CT twiddles use +θ (handled by `dft ~sign`),
-   * and external twiddles use conjugate cmul (handled by ~conj here).
+   * For backward (sign=Bwd), the codelet must be the inverse of the
+   * corresponding forward codelet. Since (T·B)⁻¹ = B⁻¹·T⁻¹ and twiddle
+   * doesn't commute with butterfly, the inverse has the OPPOSITE order:
+   *   DIT bwd = inverse of (T then B) = B⁻¹ then T⁻¹  → POST-twiddle structure
+   *   DIF bwd = inverse of (B then T) = T⁻¹ then B⁻¹ → PRE-twiddle structure
+   *
+   * The inverse butterfly B⁻¹ is the +θ DFT kernel (handled by `dft ~sign`)
+   * and T⁻¹ for unit-magnitude twiddles is conj(T) (handled by ~conj here).
    *
    * Twiddle Exprs may be cmul derivation patterns (TP_Log3) or simple
    * Loads (TP_Flat). The per-leg Sub(Mul,Mul)/Add(Mul,Mul) cmul pattern
    * is preserved so Algsimp.of_expr can lift it to Cmul opaque atoms. *)
   let conj = (sign = `Bwd) in
-  match direction with
-  | DIT ->
+  let pre_twiddle =
+    match direction, sign with
+    | DIT, `Fwd -> true   (* DIT fwd: T then B *)
+    | DIT, `Bwd -> false  (* inverse of DIT fwd: B⁻¹ then T_conj  → POST *)
+    | DIF, `Fwd -> false  (* DIF fwd: B then T *)
+    | DIF, `Bwd -> true   (* inverse of DIF fwd: T_conj then B⁻¹  → PRE *)
+  in
+  if pre_twiddle then begin
+    (* PRE-twiddle: multiply inputs by twiddles (conj if Bwd), then DFT. *)
     let twiddled_re = Array.make n (Const 0.0) in
     let twiddled_im = Array.make n (Const 0.0) in
     twiddled_re.(0) <- Load (Input (0, true));
@@ -743,9 +759,9 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
       acc := (Output (k, false), out_im.(k)) :: !acc
     done;
     List.rev !acc
-
-  | DIF ->
-    (* Run DFT on raw inputs, then twiddle the outputs. *)
+  end else begin
+    (* POST-twiddle: run DFT on raw inputs, then twiddle the outputs
+     * (conj if Bwd). *)
     let input_re k = Load (Input (k, true)) in
     let input_im k = Load (Input (k, false)) in
     let raw_re, raw_im = dft ~sign n input_re input_im in
@@ -759,7 +775,6 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
       acc := (Output (k, true),  out_re) :: !acc;
       acc := (Output (k, false), out_im) :: !acc
     done;
-    (* Reverse so order matches DIT: ascending k, re before im for each k. *)
     let sorted = List.sort (fun (a, _) (b, _) ->
       match a, b with
       | Output (ka, ra), Output (kb, rb) ->
@@ -768,6 +783,7 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
       | _ -> 0
     ) !acc in
     sorted
+  end
 
 (* === OUT-OF-PLACE TWIDSQ EXPANSION (FFTW-style intermediate codelet) ===
  *
@@ -918,11 +934,18 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
      * spilled value. Separate workstream. *)
     (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
   | Cooley_Tukey (n1, n2) ->
-    (* DIT pre-multiplies inputs by twiddles; DIF leaves inputs raw and
-     * post-multiplies outputs at the end. The internal CT decomposition
-     * (with spill markers between PASS 1 and PASS 2) is identical. *)
-    let input_re, input_im = match direction with
-      | DIT ->
+    (* Pre vs post twiddle, decided by (direction, sign) — see comment in
+     * dft_expand_twiddled. Forward DIT and backward DIF use PRE-twiddle;
+     * forward DIF and backward DIT use POST-twiddle. *)
+    let pre_twiddle =
+      match direction, sign with
+      | DIT, `Fwd -> true
+      | DIT, `Bwd -> false
+      | DIF, `Fwd -> false
+      | DIF, `Bwd -> true
+    in
+    let input_re, input_im =
+      if pre_twiddle then begin
         let twiddled_re = Array.make n (Const 0.0) in
         let twiddled_im = Array.make n (Const 0.0) in
         twiddled_re.(0) <- Load (Input (0, true));
@@ -936,7 +959,7 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
           twiddled_im.(k) <- out_im
         done;
         ((fun k -> twiddled_re.(k)), (fun k -> twiddled_im.(k)))
-      | DIF ->
+      end else
         ((fun k -> Load (Input (k, true))),
          (fun k -> Load (Input (k, false))))
     in
@@ -998,22 +1021,22 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `F
       done
     done;
 
-    (* For DIF, post-multiply outputs by external twiddles. *)
+    (* Post-twiddle (if POST structure) — applied to legs 1..n-1. *)
     let out_re = Array.make n (Const 0.0) in
     let out_im = Array.make n (Const 0.0) in
-    (match direction with
-     | DIT ->
-       Array.blit raw_re 0 out_re 0 n;
-       Array.blit raw_im 0 out_im 0 n
-     | DIF ->
-       out_re.(0) <- raw_re.(0);
-       out_im.(0) <- raw_im.(0);
-       for k = 1 to n - 1 do
-         let (wr, wi) = twiddle_expr policy n k in
-         let (or_, oi) = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
-         out_re.(k) <- or_;
-         out_im.(k) <- oi
-       done);
+    if pre_twiddle then begin
+      Array.blit raw_re 0 out_re 0 n;
+      Array.blit raw_im 0 out_im 0 n
+    end else begin
+      out_re.(0) <- raw_re.(0);
+      out_im.(0) <- raw_im.(0);
+      for k = 1 to n - 1 do
+        let (wr, wi) = twiddle_expr policy n k in
+        let (or_, oi) = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
+        out_re.(k) <- or_;
+        out_im.(k) <- oi
+      done
+    end;
 
     let acc = ref [] in
     for k = n - 1 downto 0 do
