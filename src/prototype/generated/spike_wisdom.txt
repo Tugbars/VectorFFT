@@ -1,0 +1,30 @@
+@version 5
+# prototype-core spike wisdom — entries the OCaml emitter compiles into
+# plan_executors.h. Format mirrors production's vfft_wisdom_tuned.txt:
+#   N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes...
+# variant codes: 0=FLAT 1=LOG3 2=T1S 3=BUF
+#
+# best_ns / use_blocked / split_stage / block_groups are read for format
+# compatibility but ignored by the prototype emitter.
+
+# Patient verdict (2026-05-17, paced bench): [4,4,4,32,64] with stage 2 = LOG3
+# (variant-cartesian-best mix). N=131072 K=4 i9-14900KF AVX2.
+131072 4 5 4 4 4 32 64 1389000 0 0 0 0 2 2 1 2 2
+
+# Patient verdict (2026-05-17): [4,4,4,32,64] all-T1S, = 1407 µs / 1.59× MKL.
+131072 4 5 4 4 4 32 64 1407000 0 0 0 0 2 2 2 2 2
+
+# Old production wisdom for N=131072 K=4: [4,4,4,4,8,4,4,4] with FLAT outer + T1S inner.
+131072 4 8 4 4 4 4 8 4 4 4 1432000 0 0 0 0 0 2 2 2 2 2 2 2
+
+# Validation cell for the (B)+(A) tape on a smaller plan. Also doubles as the
+# comparison target for radix1024_n1_fwd_avx2 (monolithic xl_pow2 codelet).
+1024 128 5 4 4 4 4 4 0 0 0 0 0 0 2 2 2 2
+
+# Synthetic all-FLAT variant of the old wisdom plan. Exercises FLAT codepath
+# at maximum invocation count; not a wisdom pick (T1S beats FLAT here).
+131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+
+# Synthetic all-LOG3 variant. Research-only; production rarely picks LOG3
+# for many-inner-stage plans (twiddle-bandwidth pressure).
+131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 1 1 1 1 1 1 1
