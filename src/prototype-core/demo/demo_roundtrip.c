@@ -119,13 +119,14 @@ static int run_cell_dif(int N, size_t K, const vfft_proto_registry_t *reg) {
 }
 
 int main(void) {
-    printf("[demo-roundtrip] Phase 6 validation: DIT-fwd → DIT-bwd = N×x\n\n");
+    printf("[demo-roundtrip] DIT + DIF roundtrip validation: fwd → bwd = N×x\n\n");
 
     vfft_proto_registry_t reg;
     vfft_proto_registry_init(&reg);
     printf("  registry: avx2 init complete\n\n");
 
     int failures = 0;
+    printf("─── DIT orientation ───\n");
     failures += run_cell(16,    4, &reg);
     failures += run_cell(64,    4, &reg);
     failures += run_cell(128,   4, &reg);
@@ -135,10 +136,23 @@ int main(void) {
     failures += run_cell(125,   4, &reg);
     failures += run_cell(128, 128, &reg);
     failures += run_cell(256,  32, &reg);
-    /* Wisdom-targeted cells: these exercise the Tier 1 specialized
-     * backward executors (vfft_proto_lookup_bwd_avx2 returns non-NULL). */
+    /* Wisdom-targeted cells: exercise Tier 1 specialized backward executors. */
     failures += run_cell(1024, 128, &reg);
     failures += run_cell(131072, 4, &reg);
+
+    printf("\n─── DIF orientation (generic only, no Tier 1) ───\n");
+    /* DIF skips T1S (production parity — DIF only supports FLAT and LOG3). */
+    failures += run_cell_dif(16,    4, &reg);
+    failures += run_cell_dif(64,    4, &reg);
+    failures += run_cell_dif(128,   4, &reg);
+    failures += run_cell_dif(256,   4, &reg);
+    failures += run_cell_dif(60,    4, &reg);
+    failures += run_cell_dif(100,   4, &reg);
+    failures += run_cell_dif(125,   4, &reg);
+    failures += run_cell_dif(128, 128, &reg);
+    failures += run_cell_dif(256,  32, &reg);
+    failures += run_cell_dif(1024, 128, &reg);
+    failures += run_cell_dif(131072, 4, &reg);
 
     printf("\n");
     if (failures == 0)
