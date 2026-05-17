@@ -259,9 +259,12 @@ static inline stride_plan_t *vfft_proto_estimate_plan_v4(
     return vfft_proto_plan_create(N, K, s.best, /*variants=*/NULL, s.best_nf, reg);
 }
 
-/* Variant that also reports the picked factorization (for diagnostics). */
-static inline stride_plan_t *vfft_proto_estimate_plan_v4_verbose(
-    int N, size_t K, const vfft_proto_registry_t *reg,
+/* DIT/DIF-aware verbose variant. Cost model is orientation-agnostic
+ * (factorization shape determines score, not orient), so estimate picks
+ * the same factors for both orientations — only the built plan differs. */
+static inline stride_plan_t *vfft_proto_estimate_plan_v4_verbose_ex(
+    int N, size_t K, int use_dif_forward,
+    const vfft_proto_registry_t *reg,
     int *out_factors, int *out_nf, double *out_score)
 {
     if (N <= 1) {
@@ -284,7 +287,17 @@ static inline stride_plan_t *vfft_proto_estimate_plan_v4_verbose(
     if (out_factors) memcpy(out_factors, s.best, (size_t)s.best_nf * sizeof(int));
     if (out_nf)      *out_nf = s.best_nf;
     if (out_score)   *out_score = s.best_score;
-    return vfft_proto_plan_create(N, K, s.best, /*variants=*/NULL, s.best_nf, reg);
+    return vfft_proto_plan_create_ex(N, K, s.best, /*variants=*/NULL,
+                                      s.best_nf, use_dif_forward, reg);
+}
+
+/* Back-compat: DIT-only verbose. */
+static inline stride_plan_t *vfft_proto_estimate_plan_v4_verbose(
+    int N, size_t K, const vfft_proto_registry_t *reg,
+    int *out_factors, int *out_nf, double *out_score)
+{
+    return vfft_proto_estimate_plan_v4_verbose_ex(
+        N, K, /*use_dif_forward=*/0, reg, out_factors, out_nf, out_score);
 }
 
 #endif /* VFFT_PROTO_CORE_ESTIMATE_PLAN_H */
