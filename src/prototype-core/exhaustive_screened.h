@@ -9,12 +9,11 @@
  * expensive, and most of those candidates are obviously bad and never
  * threaten the winner.
  *
- * The recursive memoized exhaustive (exhaustive_recursive.h) hits the
- * same wall the DP planner hits: caching sub-plans by ISOLATED
- * measurement at (N_sub, K_eff_sub) loses the in-context signal —
- * tail-heavy patterns ([..., 32, 16]) that win in composition rank
- * poorly when measured cold at small K_eff. TOP-K alone can't recover
- * this.
+ * Recursive memoized exhaustive (FFTW-style) was tried and hits the
+ * same wall the DP planner hits — caching sub-plans by ISOLATED
+ * measurement at (N_sub, K_eff_sub) loses the in-context signal that
+ * makes tail-heavy patterns ([..., 32, 16]) win in composition. TOP-K
+ * alone can't recover it. See memory note v4_estimate_and_exhaustive_port.
  *
  * V4-SCREENED: same enumeration as flat, but rank candidates by the
  * V4 cost model BEFORE benching. V4 scores the FULL plan at parent
@@ -25,12 +24,13 @@
  *
  * The cost-model journey memory ([cost_model_recalibration]) and
  * [v4_estimate_and_exhaustive_port] establish that V4 lands rank-1 on
- * the canonical cells. M=10 catches small ranking errors; M=20
- * conservative. The trade-off is concrete:
+ * the canonical cells. M=10 catches small ranking errors; M=20-25 is
+ * conservative for cells where V4's wide-R-outer penalty pushes the
+ * true winner to rank ~20. The trade-off is concrete:
  *
- *   Flat:            ~580 benches, picks true winner
- *   Recursive K=3:   ~160 benches, picks 28-352% worse plan
- *   V4-Screened M=10: ~10 benches, expected to pick within 0-3%
+ *   Flat:             ~580 benches, picks true winner
+ *   V4-Screened M=10:  ~10 benches, picks within 0-30% of true winner
+ *   V4-Screened M=25:  ~25 benches, picks within 0-3% of true winner
  *
  * Algorithm:
  *   1. Enumerate every (multiset × permutation) using the same code
@@ -145,13 +145,6 @@ static inline double vfft_proto_screened_exhaustive_search(
             }
             if (!ok) continue;
 
-            /* V4 score (with wide_penalty). V5 (= V4 minus wide_penalty)
-             * was tested when c18b7c1 made R=16/R=32 codelets spill-free
-             * but empirically degraded 5/6 cells: wide_penalty was
-             * compensating for the overweighted buffer_pass_per_stage
-             * term. Real fix is joint recalibration of both — kept here
-             * as V4 until that work lands. See estimate_plan.h's V5
-             * comment + memory note v4_wide_penalty_artifact. */
             double sc = _vfft_proto_v4_score(factors_p, nf, K, N, &cpu);
 
             memcpy(cands[n_cands].factors, factors_p, nf * sizeof(int));

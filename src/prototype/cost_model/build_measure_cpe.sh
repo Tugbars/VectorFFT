@@ -226,14 +226,39 @@ printf '%s\n' "${ALL_SOURCES[@]}" | xargs -P $NJOBS -I {} bash -c 'compile_one "
 T1=$(date +%s)
 echo "[build_measure_cpe] compile phase: $((T1-T0))s"
 
+# Compiler-runtime libs for icx on Windows (oneAPI + MSVC + Win SDK).
+case "$CC" in
+  *icx*|*icc*)
+    EXTRA_LIB_DIRS=(
+      "C:\\Program Files (x86)\\Intel\\oneAPI\\compiler\\2025.3\\lib"
+      "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.42.34433\\lib\\x64"
+      "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\ucrt\\x64"
+      "C:\\Program Files (x86)\\Windows Kits\\10\\Lib\\10.0.22621.0\\um\\x64"
+    )
+    for win_p in "${EXTRA_LIB_DIRS[@]}"; do
+      unix_p=$(cygpath -u "$win_p" 2>/dev/null || echo "")
+      if [ -n "$unix_p" ] && [ -d "$unix_p" ]; then
+        if [ -z "$LIB" ]; then LIB="$win_p"; else LIB="$LIB;$win_p"; fi
+      fi
+    done
+    export LIB
+    ;;
+esac
+
 # ── Stage 3: link ─────────────────────────────────────────────────────
 echo "[build_measure_cpe] linking..."
 T0=$(date +%s)
-ALL_OBJS=()
+RSP=$OBJ_DIR/link_measure_cpe.rsp
+> $RSP
 for src in "${ALL_SOURCES[@]}"; do
-  ALL_OBJS+=("$OBJ_DIR/$(basename "$src" .c).o")
+  obj=$OBJ_DIR/$(basename "$src" .c).o
+  if command -v cygpath >/dev/null 2>&1; then
+    echo "$(cygpath -m "$obj")" >> $RSP
+  else
+    echo "$obj" >> $RSP
+  fi
 done
-$CC $CFLAGS "${ALL_OBJS[@]}" -o $OUT -lm
+$CC $CFLAGS @$RSP -o $OUT -lm
 T1=$(date +%s)
 echo "[build_measure_cpe] link phase: $((T1-T0))s"
 

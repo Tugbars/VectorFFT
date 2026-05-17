@@ -34,6 +34,11 @@
 #include "../prototype/cost_model/factorizer.h"  /* stride_cpu_info_t,
                                                   * _radix_butterfly_cost,
                                                   * stride_detect_cpu */
+#include "../prototype/cost_model/generated/radix_memboundness.h"  /* measured
+                                                  * per-(R, tier) CPE inflation
+                                                  * factors; replaces V4's
+                                                  * wide_penalty heuristic for
+                                                  * R ≥ 16 */
 #include "../prototype/generated/registry.h"
 #include <stdlib.h>
 #include <string.h>
@@ -71,131 +76,37 @@ static inline double _vfft_proto_v4_score(
                               ? (double)l1 / (double)total_bytes : 1.0;
     const double cf_buffer = (total_bytes > l3) ? 4.0 : 0.0;
 
-    const double extra_lat_l2   = 7.0;
-    const double extra_lat_l3   = 35.0;
-    const double extra_lat_dram = 150.0;
-    const int    baseline_R     = 4;
+    /* extra_lat_* and baseline_R were V4's wide_penalty knobs (2026-05-17
+     * onward subsumed by the measured radix_memboundness.h table for R ≥ 16
+     * and dropped for R < 16). Left as documentation of what the heuristic
+     * looked like before the measurement; see [v4_wide_penalty_artifact]. */
 
-    /* Buffer-pass cost per stage transition. */
-    double bytes_per_cycle;
-    if      (total_bytes <= l1) bytes_per_cycle = 45.0;
-    else if (total_bytes <= l2) bytes_per_cycle = 14.0;
-    else if (total_bytes <= l3) bytes_per_cycle =  7.0;
-    else                        bytes_per_cycle =  9.0;
-    const double buffer_pass_cost_per_stage =
-        2.0 * (double)total_bytes / bytes_per_cycle;
-
-    size_t accumulated_K = K;
-    for (int s = 0; s < nf; s++) {
-        int R = factors[s];
-        int groups = N / R;
-        size_t stride = K;
-        for (int d = s + 1; d < nf; d++) stride *= factors[d];
-
-        size_t me_s = (size_t)(N / R) * K;
-        double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
-
-        size_t ws = (size_t)R * stride * 16;
-        double cf_stage;
-        double extra_lat;
-        if      (ws <= l1) { cf_stage = 1.0; extra_lat = 0.0; }
-        else if (ws <= l2) { cf_stage = 1.4; extra_lat = extra_lat_l2; }
-        else if (ws <= l3) { cf_stage = 2.3; extra_lat = extra_lat_l3; }
-        else               { cf_stage = 4.0; extra_lat = extra_lat_dram; }
-        double cf_cold = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
-
-        double cf_eff = (s == 0) ? cf_cold
-                                  : fraction_hot * 1.0 + (1.0 - fraction_hot) * cf_cold;
-
-        double data_cost = (double)groups * (double)K * bf_cost * cf_eff;
-
-        int extra_loads = R - baseline_R;
-        if (extra_loads < 0) extra_loads = 0;
-        double wide_penalty = (double)extra_loads * extra_lat
-                            * (double)groups * (double)K;
-
-        double dtlb_cost = 0.0;
-        if (s > 0) {
-            size_t bytes_spanned = (size_t)R * stride * 8;
-            int pages_per_group  = (int)((bytes_spanned + 4095) / 4096);
-            if (pages_per_group > dtlb_entries) {
-                int excess = pages_per_group - dtlb_entries;
-                dtlb_cost = (double)groups * (double)excess * (double)dtlb_miss_cycles;
-            }
-        }
-
-        double tw_cost = 0.0;
-        if (s > 0) {
-            size_t tw_bytes = (size_t)(R - 1) * accumulated_K * 16;
-            if (tw_bytes > l1) tw_cost = (double)(R - 1) * accumulated_K * 4.0;
-            else               tw_cost = (double)(R - 1) * accumulated_K;
-        }
-
-        score += data_cost + tw_cost + dtlb_cost + wide_penalty
-              + buffer_pass_cost_per_stage;
-        accumulated_K *= R;
+    /* Buffer-pass cost per stage transition.
+     *
+     * Was hardcoded `2 × total_bytes / bytes_per_cycle` where
+     * bytes_per_cycle = 45/14/7/9 from spec sheets. Now reads the
+     * MEASURED stride-1 memcpy throughput from radix_memboundness.h's
+     * companion table (2026-05-17 onward). Reality on Raptor Lake with
+     * AVX2 memcpy is ~6-15× faster than spec sheets predicted, because
+     * memcpy uses streaming stores + HW prefetcher gets it right.
+     *
+     * The 2× factor (one read + one write per stage) stays — that's a
+     * structural property of in-place FFT, not measurement-dependent. */
+    int total_tier = (total_bytes <= l1) ? STRIDE_MB_TIER_L1
+                   : (total_bytes <= l2) ? STRIDE_MB_TIER_L2
+                   : (total_bytes <= l3) ? STRIDE_MB_TIER_L3
+                                          : STRIDE_MB_TIER_DRAM;
+    double cyc_per_byte_pass = stride_cache_cyc_per_byte_avx2[total_tier];
+    if (cyc_per_byte_pass <= 0.0) {
+        /* Fall back to spec-sheet constants if the measurement table is
+         * empty (e.g., other ISA, or before measure_memboundness was run). */
+        double bpc = (total_bytes <= l1) ? 45.0
+                   : (total_bytes <= l2) ? 14.0
+                   : (total_bytes <= l3) ?  7.0 : 9.0;
+        cyc_per_byte_pass = 1.0 / bpc;
     }
-    return score;
-}
-
-/* ─────────────────────────────────────────────────────────────────
- * V5 SCORING — V4 minus wide_penalty term.
- *
- * wide_penalty was added in V4 to model the assumption that wide
- * codelets (R≥8) take an extra-latency hit when their working set
- * spills out of L1. That assumption was true BEFORE commit c18b7c1
- * (2026-05-15) "Force YMM register allocation in AVX2 codelets" —
- * the wide codelets used to suffer compiler-induced register spills,
- * which surfaced as load-port pressure × cache-tier latency.
- *
- * Post-c18b7c1, the spill-analyzer-driven YMM-pinning produces
- * spill-FREE wide codelets. The CPE measurement (radix_cpe.h,
- * 2026-05-15 23:11) confirms it: R=16 cyc_t1s is 13.5/13.6/13.8
- * across me=256/4096/65536 (flat); R=32 is 73.6/74.4/74.2 (flat).
- * No me-curve = no spill-driven degradation.
- *
- * So wide_penalty is now an artifact penalizing a pattern that
- * doesn't exist. V5 drops it. data_cost already captures the per-R
- * compute cost via measured CPE × cf_eff cache scaling.
- *
- * Concrete consequence: cells where the true winner has R=8 outer
- * + larger tail (e.g., N=16384 K=4 patient winner [4,8,32,16]) move
- * from V4-rank ~21 to V5-rank in single digits.
- *
- * NOTE: This is calibrated for current spill-free AVX2 codelets on
- * Raptor Lake. If a future regalloc change reintroduces spills, or
- * if AVX-512 codelets show different behavior, the wide_penalty
- * term may need to come back (perhaps gated on a per-ISA, per-R
- * spill-fingerprint). For now: data, not heuristics.
- * ───────────────────────────────────────────────────────────────── */
-
-static inline double _vfft_proto_v5_score(
-    const int *factors, int nf, size_t K, int N,
-    const stride_cpu_info_t *cpu)
-{
-    const size_t l1 = cpu->l1d_bytes;
-    const size_t l2 = cpu->l2_bytes;
-    const size_t l3 = cpu->l3_bytes;
-    const int dtlb_entries     = (cpu->dtlb_entries    > 0) ? cpu->dtlb_entries    : 96;
-    const int dtlb_miss_cycles = (cpu->dtlb_miss_cycles > 0) ? cpu->dtlb_miss_cycles : 7;
-#if defined(__AVX512F__)
-    const int isa_avx512 = 1;
-#else
-    const int isa_avx512 = 0;
-#endif
-    double score = 0.0;
-    const size_t total_bytes = (size_t)N * K * 16;
-    const double fraction_hot = (total_bytes > 0 && l1 < total_bytes)
-                              ? (double)l1 / (double)total_bytes : 1.0;
-    const double cf_buffer = (total_bytes > l3) ? 4.0 : 0.0;
-
-    double bytes_per_cycle;
-    if      (total_bytes <= l1) bytes_per_cycle = 45.0;
-    else if (total_bytes <= l2) bytes_per_cycle = 14.0;
-    else if (total_bytes <= l3) bytes_per_cycle =  7.0;
-    else                        bytes_per_cycle =  9.0;
     const double buffer_pass_cost_per_stage =
-        2.0 * (double)total_bytes / bytes_per_cycle;
+        2.0 * (double)total_bytes * cyc_per_byte_pass;
 
     size_t accumulated_K = K;
     for (int s = 0; s < nf; s++) {
@@ -208,36 +119,76 @@ static inline double _vfft_proto_v5_score(
         double bf_cost = _radix_butterfly_cost(R, s, me_s, isa_avx512);
 
         size_t ws = (size_t)R * stride * 16;
-        double cf_stage;
-        if      (ws <= l1) cf_stage = 1.0;
-        else if (ws <= l2) cf_stage = 1.4;
-        else if (ws <= l3) cf_stage = 2.3;
-        else               cf_stage = 4.0;
-        double cf_cold = (cf_stage > cf_buffer) ? cf_stage : cf_buffer;
+        int tier = (ws <= l1) ? STRIDE_MB_TIER_L1
+                 : (ws <= l2) ? STRIDE_MB_TIER_L2
+                 : (ws <= l3) ? STRIDE_MB_TIER_L3
+                              : STRIDE_MB_TIER_DRAM;
+
+        /* Cache scaling factor. For R ≥ 16 we use the MEASURED memory-
+         * boundness factor from radix_memboundness.h (2026-05-17 onward).
+         * For smaller R (no measurement table entry), fall back to the
+         * heuristic cf_stage. The mb_factor SUBSUMES what V4's wide_penalty
+         * term used to add: the codelet's actual per-tier slowdown is
+         * captured directly, not approximated via (R-4) × extra_lat. */
+        double cache_scale;
+        if (R >= 16 && R < STRIDE_RADIX_PROFILE_MAX_R
+            && stride_radix_memboundness_avx2[R].factor[STRIDE_MB_TIER_L1] > 0.0)
+        {
+            cache_scale = stride_radix_memboundness_avx2[R].factor[tier];
+            if (cache_scale < 1.0) cache_scale = 1.0;  /* guard against table holes */
+        } else {
+            /* Small-radix heuristic, unchanged from original V4. */
+            cache_scale = (ws <= l1) ? 1.0
+                        : (ws <= l2) ? 1.4
+                        : (ws <= l3) ? 2.3
+                                     : 4.0;
+        }
+        double cf_cold = (cache_scale > cf_buffer) ? cache_scale : cf_buffer;
 
         double cf_eff = (s == 0) ? cf_cold
                                   : fraction_hot * 1.0 + (1.0 - fraction_hot) * cf_cold;
 
         double data_cost = (double)groups * (double)K * bf_cost * cf_eff;
 
-        double dtlb_cost = 0.0;
-        if (s > 0) {
-            size_t bytes_spanned = (size_t)R * stride * 8;
-            int pages_per_group  = (int)((bytes_spanned + 4095) / 4096);
-            if (pages_per_group > dtlb_entries) {
-                int excess = pages_per_group - dtlb_entries;
-                dtlb_cost = (double)groups * (double)excess * (double)dtlb_miss_cycles;
-            }
-        }
+        /* dtlb_cost REMOVED (2026-05-17).
+         *
+         * Old term charged `groups × (pages_per_group − 96) × 7 cyc`
+         * for any group whose stride spans more pages than the L1 DTLB
+         * (96 entries on Raptor Lake). At N=131072 K=4 [2,4,64,16,16],
+         * the S1 R=4 stage spans 512 pages per group → V4 charged 95M
+         * cycles for that ONE stage's "page walks". Patient measurement
+         * for that plan is 1.78 ms — V4 was 31× off.
+         *
+         * Why it was wrong: Raptor Lake's STLB holds 2048 entries
+         * (vs DTLB's 96); page walks are nearly never required for
+         * working sets under ~8 MB. Plus the HW prefetcher prefetches
+         * page-table entries for predictable strided patterns. The
+         * `7 × excess` formula models neither.
+         *
+         * Could be re-added with proper STLB modeling + HW-prefetch
+         * awareness, but for now the term is doing strictly more
+         * harm than good. */
 
         double tw_cost = 0.0;
         if (s > 0) {
+            /* Twiddle-load cost. With HW prefetcher + sequential access
+             * pattern + dual load ports, the per-element cost is well
+             * under 1 cyc — measured at K=256 inner stages it's effectively
+             * hidden behind compute. The old V4 charged `4 × (R-1) × acc_K`
+             * for L1-spilled twiddle tables, which dominates the score for
+             * deep plans (e.g., N=131072 K=4 inner R=16 has acc_K=32768
+             * and tw_cost was ~2M cyc) and breaks rankings vs measurement.
+             *
+             * Scale down to 0.5 cyc/element when in L1, 1.0 when spilled.
+             * Mirrors HW reality where the codelet's twiddle stream is
+             * mostly bandwidth-not-latency-bound.
+             */
             size_t tw_bytes = (size_t)(R - 1) * accumulated_K * 16;
-            if (tw_bytes > l1) tw_cost = (double)(R - 1) * accumulated_K * 4.0;
-            else               tw_cost = (double)(R - 1) * accumulated_K;
+            if (tw_bytes > l1) tw_cost = (double)(R - 1) * accumulated_K * 1.0;
+            else               tw_cost = (double)(R - 1) * accumulated_K * 0.5;
         }
 
-        score += data_cost + tw_cost + dtlb_cost + buffer_pass_cost_per_stage;
+        score += data_cost + tw_cost + buffer_pass_cost_per_stage;
         accumulated_K *= R;
     }
     return score;

@@ -79,8 +79,12 @@
  * close the amortization gap. ios stays fixed at K — stride-dependent
  * cache costs are handled separately via factorizer.h's cache_factor.
  *
- * Empirical me values in our test plans range 4K to 2M, so the sample
- * grid covers that range plus margins. log-spaced.
+ * me=32 / 64 covers the small-K regime (our pow2 K=4..K=64 test cells
+ * after multiplication by inner stage factors typically land >=16).
+ * me=256 / 4096 / 65536 covers the original grid for backward-compat.
+ *
+ * NOTE: me<32 caused segfaults on some codelets (likely inner-loop
+ * unroll factors that read past me). me=32 is the safe floor.
  */
 #define CPE_N_ME_SAMPLES   3
 static const size_t CPE_ME_VALUES[CPE_N_ME_SAMPLES] = {
