@@ -181,4 +181,80 @@ static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
     }
 }
 
+/* ────────────────────────────────────────────────────────────────────
+ * DIF forward executor — generic (function-pointer dispatch) path.
+ *
+ * Per production's _stride_execute_fwd_dif_slice:
+ *   - Walks stages 0..nf-1 (same as DIT forward).
+ *   - For needs_tw[g]=0: call n1_fwd (no inter-stage twiddle).
+ *   - For needs_tw[g]=1: call t1_fwd (DIF variant) with grp_tw —
+ *     the codelet does butterfly first, then post-multiplies legs
+ *     1..R-1 by per-leg twiddle. cf0 = 1 in DIF, so no leg-0 work.
+ * ──────────────────────────────────────────────────────────────────── */
+static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
+                                                       double *re, double *im,
+                                                       size_t slice_K)
+{
+    for (int s = 0; s < plan->num_stages; s++) {
+        const stride_stage_t *st = &plan->stages[s];
+        const int G = st->num_groups;
+
+        for (int g = 0; g < G; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
+
+            if (!st->needs_tw[g]) {
+                st->n1_fwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, slice_K);
+                continue;
+            }
+
+            /* DIF: codelet does butterfly + post-mul legs 1..R-1 by grp_tw.
+             * cf0 = 1 universally so no leg-0 cmul needed. */
+            st->t1_fwd(base_re, base_im,
+                       st->grp_tw_re[g], st->grp_tw_im[g],
+                       st->stride, slice_K);
+        }
+    }
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * DIF backward executor — uses the FUSED t1_dif_bwd codelet.
+ *
+ * Production's _stride_execute_bwd_dif_slice does manual pre-mul-conj
+ * + n1_bwd because the old t1_dif_bwd codelet was NOT the inverse of
+ * t1_dif_fwd. With our dft.ml fix (sign=Bwd flips DIF to PRE-twiddle
+ * structure), the codelet now correctly inverts forward DIF:
+ *   t1_dif_bwd(input) = B⁻¹(T_conj(input))
+ *
+ * So this executor just calls the codelet directly when needs_tw[g],
+ * or n1_bwd otherwise. Walks stages in reverse (output → input).
+ * ──────────────────────────────────────────────────────────────────── */
+static inline void vfft_proto_execute_bwd_generic_dif(const stride_plan_t *plan,
+                                                       double *re, double *im,
+                                                       size_t slice_K)
+{
+    for (int s = plan->num_stages - 1; s >= 0; s--) {
+        const stride_stage_t *st = &plan->stages[s];
+        const int G = st->num_groups;
+
+        for (int g = 0; g < G; g++) {
+            double *base_re = re + st->group_base[g];
+            double *base_im = im + st->group_base[g];
+
+            if (!st->needs_tw[g]) {
+                st->n1_bwd(base_re, base_im, base_re, base_im,
+                           st->stride, st->stride, slice_K);
+                continue;
+            }
+
+            /* Fused inverse: t1_dif_bwd does T_conj + inverse butterfly.
+             * cf0 = 1 in DIF — no executor-side leg-0 cmul needed. */
+            st->t1_bwd(base_re, base_im,
+                       st->grp_tw_re[g], st->grp_tw_im[g],
+                       st->stride, slice_K);
+        }
+    }
+}
+
 #endif /* VFFT_PROTO_CORE_EXECUTOR_GENERIC_H */

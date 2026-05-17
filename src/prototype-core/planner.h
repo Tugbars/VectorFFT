@@ -87,32 +87,59 @@ static inline int vfft_proto_factorize(int N, int *factors) {
 }
 
 /* Wire codelet function pointers for one stage based on radix + variant.
- * Returns 0 if the variant's required codelet is missing in reg. */
+ * Returns 0 if the variant's required codelet is missing in reg.
+ *
+ * use_dif_forward selects DIF (post-twiddle) vs DIT (pre-twiddle) codelet
+ * family. Production parity: DIF only supports FLAT and LOG3 (no T1S);
+ * T1S in DIF mode falls back to FLAT. */
 static inline int vfft_proto_wire_stage_codelets(
-    stride_stage_t *st, int R, int variant,
+    stride_stage_t *st, int R, int variant, int use_dif_forward,
     const vfft_proto_registry_t *reg)
 {
     st->n1_fwd  = reg->n1_fwd[R];
-    st->n1_bwd  = reg->n1_bwd[R];  /* required for bwd direction */
+    st->n1_bwd  = reg->n1_bwd[R];
     if (!st->n1_fwd) return 0;
 
     /* Clear all variant slots first. */
     st->t1_fwd    = NULL;
+    st->t1_bwd    = NULL;
     st->t1s_fwd   = NULL;
     st->use_log3  = 0;
 
+    if (use_dif_forward) {
+        switch (variant) {
+        case VFFT_PROTO_VARIANT_LOG3:
+            st->t1_fwd   = reg->t1_dif_log3_fwd[R];
+            st->t1_bwd   = reg->t1_dif_log3_bwd[R];
+            st->use_log3 = 1;
+            return st->t1_fwd != NULL && st->t1_bwd != NULL;
+        case VFFT_PROTO_VARIANT_FLAT:
+        case VFFT_PROTO_VARIANT_T1S:   /* DIF has no T1S — fall back to FLAT */
+        case VFFT_PROTO_VARIANT_BUF:
+        default:
+            st->t1_fwd = reg->t1_dif_fwd[R];
+            st->t1_bwd = reg->t1_dif_bwd[R];
+            return st->t1_fwd != NULL && st->t1_bwd != NULL;
+        }
+    }
+
+    /* DIT (default). */
     switch (variant) {
     case VFFT_PROTO_VARIANT_LOG3:
         st->t1_fwd   = reg->t1_dit_log3_fwd[R];
+        st->t1_bwd   = reg->t1_dit_log3_bwd[R];
         st->use_log3 = 1;
         return st->t1_fwd != NULL;
     case VFFT_PROTO_VARIANT_FLAT:
         st->t1_fwd = reg->t1_dit_fwd[R];
+        st->t1_bwd = reg->t1_dit_bwd[R];
         return st->t1_fwd != NULL;
     case VFFT_PROTO_VARIANT_T1S:
     case VFFT_PROTO_VARIANT_BUF:  /* BUF not implemented — fall back to T1S */
     default:
         st->t1s_fwd = reg->t1s_dit_fwd[R];
+        /* t1_bwd for fallback path (also lets DIT-bwd Tier 1 work). */
+        st->t1_bwd  = reg->t1_dit_bwd[R];
         if (st->t1s_fwd) return 1;
         /* T1S unavailable for this radix — try FLAT as last resort. */
         st->t1_fwd = reg->t1_dit_fwd[R];
@@ -120,10 +147,10 @@ static inline int vfft_proto_wire_stage_codelets(
     }
 }
 
-/* Build a plan with explicit factorization + variants + registry. */
-static inline stride_plan_t *vfft_proto_plan_create(
+/* Full plan create with DIF orientation flag. */
+static inline stride_plan_t *vfft_proto_plan_create_ex(
     int N, size_t K, const int *factors, const int *variants, int nf,
-    const vfft_proto_registry_t *reg)
+    int use_dif_forward, const vfft_proto_registry_t *reg)
 {
     if (nf <= 0 || nf >= STRIDE_MAX_STAGES) return NULL;
 
@@ -131,25 +158,30 @@ static inline stride_plan_t *vfft_proto_plan_create(
     plan->N = N;
     plan->K = K;
     plan->num_stages = nf;
-    plan->use_dif_forward = 0;
+    plan->use_dif_forward = use_dif_forward;
     for (int s = 0; s < nf; s++) plan->factors[s] = factors[s];
 
-    /* Wire codelets for each stage. Stage 0 always uses n1 (no twiddle)
-     * so its variant choice is moot — but we still wire t1/t1s for
-     * consistency with production. */
+    /* Wire codelets per stage. For DIF the no-twiddle stage is the LAST
+     * (s == nf-1); for DIT it's the first (s == 0). Variant choice on the
+     * no-twiddle stage is moot but still wired for consistency. */
     for (int s = 0; s < nf; s++) {
         int v = variants ? variants[s] : VFFT_PROTO_VARIANT_T1S;
         if (!vfft_proto_wire_stage_codelets(&plan->stages[s],
-                                             factors[s], v, reg)) {
+                                             factors[s], v,
+                                             use_dif_forward, reg)) {
             free(plan);
             return NULL;
         }
     }
 
-    /* Compute layout then twiddles (twiddles read st->use_log3 set above). */
+    /* Compute layout then twiddles (dispatched by use_dif_forward). */
     for (int s = 0; s < nf; s++) {
         vfft_proto_compute_groups(plan, s);
-        vfft_proto_compute_twiddles_dit(plan, s);
+        if (use_dif_forward) {
+            vfft_proto_compute_twiddles_dif(plan, s);
+        } else {
+            vfft_proto_compute_twiddles_dit(plan, s);
+        }
     }
 
     /* Pre-walk the (B)+(A) tape. Tape is T1S-shaped (scalar twiddles);
@@ -173,6 +205,15 @@ static inline stride_plan_t *vfft_proto_plan_create(
     }
 
     return plan;
+}
+
+/* Build a plan with default DIT orientation (use_dif_forward = 0). */
+static inline stride_plan_t *vfft_proto_plan_create(
+    int N, size_t K, const int *factors, const int *variants, int nf,
+    const vfft_proto_registry_t *reg)
+{
+    return vfft_proto_plan_create_ex(N, K, factors, variants, nf,
+                                      /*use_dif_forward=*/0, reg);
 }
 
 /* Wisdom-first plan creation. */
