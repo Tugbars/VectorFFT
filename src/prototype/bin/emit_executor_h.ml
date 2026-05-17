@@ -116,7 +116,7 @@ let n1_symbol ~r ~direction ~isa =
   Printf.sprintf "radix%d_n1_%s_%s" r (dir_str direction) isa
 
 (* orient: `Dit or `Dif (codelet family). The codelet name encodes orientation
- * in the {dit|dif} infix; variant selects which codelet within the family. *)
+ * in the dit/dif infix; variant selects which codelet within the family. *)
 let t1_symbol ~r ~variant ~direction ?(orient=`Dit) ~isa () =
   let o = match orient with `Dit -> "dit" | `Dif -> "dif" in
   match variant, orient with
@@ -145,26 +145,36 @@ let executor_name (e : plan_entry) (d : direction) ~isa =
     Printf.sprintf "exec_n%d_k%d_%s_%s_%s_%s"
       e.n e.k (join_int e.factors) orient (dir_str d) isa
 
-(* Collect codelet externs the executor will call. *)
+(* Collect codelet externs the executor will call. Picks DIT or DIF
+ * codelet symbols based on use_dif_forward. *)
 let collect_externs (e : plan_entry) (d : direction) ~isa : string list =
   let acc = ref [] in
+  let orient = if e.use_dif_forward then `Dif else `Dit in
+  let nf = Array.length e.factors in
   match d with
   | `Bwd ->
-    (* Backward fused path: needs_tw=0 → n1_bwd; needs_tw=1 → t1s_dit_bwd
-     * (fused inv-butterfly + post-twiddle, plus executor conj(cf0) on leg 0). *)
+    (* DIT bwd: n1_bwd + t1s_dit_bwd (fused).
+     * DIF bwd: n1_bwd + t1_dif_bwd (fused). *)
     Array.iter (fun r ->
       acc := n1_symbol ~r ~direction:`Bwd ~isa :: !acc;
-      acc := t1_symbol ~r ~variant:T1S ~direction:`Bwd ~isa :: !acc
+      let bwd_variant = if e.use_dif_forward then FLAT else T1S in
+      acc := t1_symbol ~r ~variant:bwd_variant ~direction:`Bwd ~orient ~isa () :: !acc
     ) e.factors;
     List.sort_uniq compare !acc
   | `Fwd ->
     Array.iteri (fun s v ->
       let r = e.factors.(s) in
-      if s = 0 then
+      let is_outer =
+        if e.use_dif_forward then s = nf - 1 else s = 0
+      in
+      if is_outer then
         acc := n1_symbol ~r ~direction:`Fwd ~isa :: !acc
       else begin
-        acc := t1_symbol ~r ~variant:v ~direction:`Fwd ~isa :: !acc;
-        (* needs_tw[g]=0 fallback path uses the n1 codelet for the same R. *)
+        (* DIF folds T1S → FLAT (DIF has no T1S codelet). *)
+        let effective_v =
+          if e.use_dif_forward && v = T1S then FLAT else v
+        in
+        acc := t1_symbol ~r ~variant:effective_v ~direction:`Fwd ~orient ~isa () :: !acc;
         acc := n1_symbol ~r ~direction:`Fwd ~isa :: !acc
       end
     ) e.variants;
@@ -277,13 +287,24 @@ let sort_for_lookup (entries : plan_entry list) : plan_entry list =
   in
   List.stable_sort cmp entries
 
-(* Emit the per-entry match condition (variant-aware). *)
+(* Emit the per-entry match condition (variant-aware).
+ *
+ * For DIF entries, the planner folds T1S → FLAT (no T1S codelet in DIF),
+ * so the lookup variant check for T1S stages in a DIF entry must match
+ * the FLAT pattern. _MATCH_T1S_INNER never applies in DIF mode.
+ *
+ * For DIF, the "outer" (no-twiddle) stage is the LAST (nf-1), not stage 0,
+ * so variant checks on the outer stage are skipped accordingly. *)
 let emit_match_body (e : plan_entry) =
   let nf = Array.length e.factors in
+  (* For DIF, T1S → FLAT folding; also _MATCH_T1S_INNER is DIT-only. *)
   let all_inner_t1s =
-    let ok = ref true in
-    Array.iteri (fun i v -> if i >= 1 && v <> T1S then ok := false) e.variants;
-    !ok
+    if e.use_dif_forward then false
+    else begin
+      let ok = ref true in
+      Array.iteri (fun i v -> if i >= 1 && v <> T1S then ok := false) e.variants;
+      !ok
+    end
   in
   Printf.printf "    if (plan->N == %d && plan->K == %d && plan->num_stages == %d\n"
     e.n e.k nf;
@@ -294,15 +315,23 @@ let emit_match_body (e : plan_entry) =
   ) e.factors;
   if all_inner_t1s then
     Printf.printf "\n        && _MATCH_T1S_INNER(plan, %d)" nf
-  else
+  else begin
+    let outer_stage_idx = if e.use_dif_forward then nf - 1 else 0 in
     Array.iteri (fun s v ->
-      if s = 0 then () (* stage 0: OUTER (n1) — variant irrelevant *)
-      else match v with
+      if s = outer_stage_idx then ()
+      else begin
+        (* DIF: T1S falls back to FLAT in planner — check the FLAT pattern. *)
+        let effective_v =
+          if e.use_dif_forward && v = T1S then FLAT else v
+        in
+        match effective_v with
         | T1S  -> Printf.printf "\n        && plan->stages[%d].t1s_fwd != NULL" s
         | LOG3 -> Printf.printf "\n        && plan->stages[%d].t1_fwd  != NULL && plan->stages[%d].use_log3" s s
         | FLAT -> Printf.printf "\n        && plan->stages[%d].t1_fwd  != NULL && !plan->stages[%d].use_log3" s s
         | BUF  -> failwith "BUF unsupported"
-    ) e.variants;
+      end
+    ) e.variants
+  end;
   Printf.printf ")\n"
 
 let emit_lookup_fwd (entries : plan_entry list) ~isa =
@@ -525,6 +554,107 @@ let emit_stage_macros () =
   print_endline "            /* Executor: apply conj(cf0) to leg 0 (codelet skipped it). */ \\";
   print_endline "            VFFT_PROTO_BWD_LEG0_CONJ_##ISA(base_re, base_im, \\";
   print_endline "                                            cf0_re[g], cf0_im[g], slice_K); \\";
+  print_endline "        } \\";
+  print_endline "    }";
+  print_endline "";
+  print_endline "/* ── DIF orientation macros ─────────────────────────────────────────";
+  print_endline " *";
+  print_endline " * DIF differs from DIT in two structural ways:";
+  print_endline " *   1. The no-twiddle stage is the LAST (s = nf-1), not the first.";
+  print_endline " *   2. cf0 = 1 universally (every cross-stage exponent contains j),";
+  print_endline " *      so no executor-side leg-0 cmul is needed.";
+  print_endline " *";
+  print_endline " * Codelet calling convention: t1_dif_{fwd,bwd}_log3 takes raw per-leg";
+  print_endline " * twiddles (read from grp_tw, K-replicated); t1_dif_{fwd,bwd} takes the";
+  print_endline " * same layout for prototype-core's plan build (no separate flat staging).";
+  print_endline " *";
+  print_endline " * DIF backward uses the FUSED t1_dif_bwd codelet — production couldn't";
+  print_endline " * (the old DAG was wrong); the dft.ml fix made it inverse-of-fwd. */";
+  print_endline "";
+  print_endline "/* DIF no-twiddle outer stage (s = nf-1). Just n1_fwd, no group branch. */";
+  print_endline "#define VFFT_PROTO_STAGE_DIF_OUTER(S, R, ISA) \\";
+  print_endline "    if (start_stage <= (S)) { \\";
+  print_endline "        const stride_stage_t *st = &plan->stages[S]; \\";
+  print_endline "        const int    num_groups  = st->num_groups; \\";
+  print_endline "        const size_t stride      = st->stride; \\";
+  print_endline "        const size_t *group_base = st->group_base; \\";
+  print_endline "        for (int g = 0; g < num_groups; g++) { \\";
+  print_endline "            radix##R##_n1_fwd_##ISA(re + group_base[g], im + group_base[g], \\";
+  print_endline "                                      NULL, NULL, stride, slice_K); \\";
+  print_endline "        } \\";
+  print_endline "    }";
+  print_endline "";
+  print_endline "/* DIF FLAT (also T1S→FLAT fallback): codelet does butterfly + post-mul */";
+  print_endline "/* legs 1..R-1 by grp_tw. needs_tw=0 groups fall to n1_fwd. */";
+  print_endline "#define VFFT_PROTO_STAGE_DIF_FLAT(S, R, ISA) \\";
+  print_endline "    if (start_stage <= (S)) { \\";
+  print_endline "        const stride_stage_t *st = &plan->stages[S]; \\";
+  print_endline "        const int    num_groups  = st->num_groups; \\";
+  print_endline "        const size_t stride      = st->stride; \\";
+  print_endline "        const int    *needs_tw    = st->needs_tw; \\";
+  print_endline "        const size_t *group_base  = st->group_base; \\";
+  print_endline "        double      **grp_tw_re   = st->grp_tw_re; \\";
+  print_endline "        double      **grp_tw_im   = st->grp_tw_im; \\";
+  print_endline "        for (int g = 0; g < num_groups; g++) { \\";
+  print_endline "            double *base_re = re + group_base[g]; \\";
+  print_endline "            double *base_im = im + group_base[g]; \\";
+  print_endline "            if (!needs_tw[g]) { \\";
+  print_endline "                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \\";
+  print_endline "                                          stride, slice_K); \\";
+  print_endline "                continue; \\";
+  print_endline "            } \\";
+  print_endline "            radix##R##_t1_dif_fwd_##ISA(base_re, base_im, \\";
+  print_endline "                                          grp_tw_re[g], grp_tw_im[g], \\";
+  print_endline "                                          stride, slice_K); \\";
+  print_endline "        } \\";
+  print_endline "    }";
+  print_endline "";
+  print_endline "/* DIF LOG3: same as DIF_FLAT but calls log3 codelet variant. */";
+  print_endline "#define VFFT_PROTO_STAGE_DIF_LOG3(S, R, ISA) \\";
+  print_endline "    if (start_stage <= (S)) { \\";
+  print_endline "        const stride_stage_t *st = &plan->stages[S]; \\";
+  print_endline "        const int    num_groups  = st->num_groups; \\";
+  print_endline "        const size_t stride      = st->stride; \\";
+  print_endline "        const int    *needs_tw    = st->needs_tw; \\";
+  print_endline "        const size_t *group_base  = st->group_base; \\";
+  print_endline "        double      **grp_tw_re   = st->grp_tw_re; \\";
+  print_endline "        double      **grp_tw_im   = st->grp_tw_im; \\";
+  print_endline "        for (int g = 0; g < num_groups; g++) { \\";
+  print_endline "            double *base_re = re + group_base[g]; \\";
+  print_endline "            double *base_im = im + group_base[g]; \\";
+  print_endline "            if (!needs_tw[g]) { \\";
+  print_endline "                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \\";
+  print_endline "                                          stride, slice_K); \\";
+  print_endline "                continue; \\";
+  print_endline "            } \\";
+  print_endline "            radix##R##_t1_dif_log3_fwd_##ISA(base_re, base_im, \\";
+  print_endline "                                              grp_tw_re[g], grp_tw_im[g], \\";
+  print_endline "                                              stride, slice_K); \\";
+  print_endline "        } \\";
+  print_endline "    }";
+  print_endline "";
+  print_endline "/* DIF backward: fused t1_dif_bwd codelet (T_conj then B⁻¹) for needs_tw=1";
+  print_endline " * groups, n1_bwd for needs_tw=0. cf0=1 in DIF so no leg-0 cmul needed. */";
+  print_endline "#define VFFT_PROTO_STAGE_DIF_BWD(S, R, ISA) \\";
+  print_endline "    if (start_stage <= (S)) { \\";
+  print_endline "        const stride_stage_t *st = &plan->stages[S]; \\";
+  print_endline "        const int    num_groups  = st->num_groups; \\";
+  print_endline "        const size_t stride      = st->stride; \\";
+  print_endline "        const int    *needs_tw    = st->needs_tw; \\";
+  print_endline "        const size_t *group_base  = st->group_base; \\";
+  print_endline "        double      **grp_tw_re   = st->grp_tw_re; \\";
+  print_endline "        double      **grp_tw_im   = st->grp_tw_im; \\";
+  print_endline "        for (int g = 0; g < num_groups; g++) { \\";
+  print_endline "            double *base_re = re + group_base[g]; \\";
+  print_endline "            double *base_im = im + group_base[g]; \\";
+  print_endline "            if (!needs_tw[g]) { \\";
+  print_endline "                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, \\";
+  print_endline "                                          stride, slice_K); \\";
+  print_endline "                continue; \\";
+  print_endline "            } \\";
+  print_endline "            radix##R##_t1_dif_bwd_##ISA(base_re, base_im, \\";
+  print_endline "                                          grp_tw_re[g], grp_tw_im[g], \\";
+  print_endline "                                          stride, slice_K); \\";
   print_endline "        } \\";
   print_endline "    }";
   print_endline ""
