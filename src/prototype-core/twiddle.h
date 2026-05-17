@@ -284,15 +284,30 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
             st->tw_scalar_re[g] = stw_r;
             st->tw_scalar_im[g] = stw_i;
 
+            /* tw_scalar ALWAYS stores combined cf*per_leg[j] for legs 1..R-1
+             * (regardless of use_log3). This unifies the bwd executor path:
+             * t1s_bwd codelet expects combined twiddles. Forward T1S also uses
+             * this format. Forward LOG3 uses grp_tw (filled separately below)
+             * with raw per_leg — that path doesn't read tw_scalar. */
+            for (int j = 1; j < R; j++) {
+                int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
+                if (leg_exp < 0) leg_exp += N;
+                double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
+                double lr = cos(leg_angle), li = sin(leg_angle);
+                double wr = cfr * lr - cfi * li;
+                double wi = cfr * li + cfi * lr;
+                stw_r[j - 1] = wr;
+                stw_i[j - 1] = wi;
+            }
             if (st->use_log3) {
-                /* Log3: store raw per_leg[j] for ALL legs (no cf baked in). */
+                /* Log3 grp_tw: raw per_leg (no cf baked in) — fwd LOG3 codelet
+                 * expects this format and the executor pre-applies cf to all R
+                 * legs before calling the codelet. */
                 for (int j = 1; j < R; j++) {
                     int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
                     if (leg_exp < 0) leg_exp += N;
                     double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
                     double lr = cos(leg_angle), li = sin(leg_angle);
-                    stw_r[j - 1] = lr;
-                    stw_i[j - 1] = li;
                     size_t base_idx = (size_t)(j - 1) * K;
                     for (size_t kk = 0; kk < K; kk++) {
                         tw_r[base_idx + kk] = lr;
@@ -300,20 +315,12 @@ static inline void vfft_proto_compute_twiddles_dit(stride_plan_t *plan, int s)
                     }
                 }
             } else {
-                /* Flat: combined = cf * per_leg[j] for legs 1..R-1. */
+                /* Flat grp_tw: combined cf*per_leg, K-replicated. */
                 for (int j = 1; j < R; j++) {
-                    int leg_exp = (int)(((long long)k_prev * ow_prev * j * S_s) % N);
-                    if (leg_exp < 0) leg_exp += N;
-                    double leg_angle = -2.0 * M_PI * (double)leg_exp / (double)N;
-                    double lr = cos(leg_angle), li = sin(leg_angle);
-                    double wr = cfr * lr - cfi * li;
-                    double wi = cfr * li + cfi * lr;
-                    stw_r[j - 1] = wr;
-                    stw_i[j - 1] = wi;
                     size_t base_idx = (size_t)(j - 1) * K;
                     for (size_t kk = 0; kk < K; kk++) {
-                        tw_r[base_idx + kk] = wr;
-                        tw_i[base_idx + kk] = wi;
+                        tw_r[base_idx + kk] = stw_r[j - 1];
+                        tw_i[base_idx + kk] = stw_i[j - 1];
                     }
                 }
             }

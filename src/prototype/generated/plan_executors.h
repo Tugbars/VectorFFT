@@ -120,6 +120,9 @@ extern void radix32_n1_bwd_avx2(double *rio_re, double *rio_im,
 extern void radix32_n1_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
+extern void radix32_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
 extern void radix32_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -135,6 +138,9 @@ extern void radix4_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
 extern void radix4_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
+extern void radix4_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
 extern void radix4_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
@@ -142,6 +148,9 @@ extern void radix64_n1_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix64_n1_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix64_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix64_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -157,6 +166,9 @@ extern void radix8_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix8_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
+                                 const double *tw_re, const double *tw_im,
+                                 size_t ios, size_t me);
+extern void radix8_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
                                  const double *tw_re, const double *tw_im,
                                  size_t ios, size_t me);
 extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
@@ -268,54 +280,68 @@ extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
  * function signature). Uses st->stride hoisted once per stage.
  * ─────────────────────────────────────────────────────────────────── */
 
-/* leg *= conj(W) — explicit AVX2 SIMD, 4 lanes/iter + scalar tail.
- * Auto-vectorizers handle the scalar form OK but generate worse code
- * than this hand-rolled version (loop carry, mixed precision, etc.). */
-#define VFFT_PROTO_BWD_CMUL_CONJ_avx2(lr, li, wr, wi, n) \
+/* Broadcast scalar conj-mul: leg[0] *= conj(cf0) using AVX2 SIMD.
+ * Used by the fused bwd path to apply the leg-0 common-factor that
+ * the t1s_bwd codelet doesn't handle (codelet only touches legs 1..R-1). */
+#define VFFT_PROTO_BWD_LEG0_CONJ_avx2(re_p, im_p, cfr, cfi, n) \
     do { \
-        size_t _kk = 0; \
-        for (; _kk + 4 <= (n); _kk += 4) { \
-            __m256d _vlr = _mm256_loadu_pd((lr) + _kk); \
-            __m256d _vli = _mm256_loadu_pd((li) + _kk); \
-            __m256d _vwr = _mm256_loadu_pd((wr) + _kk); \
-            __m256d _vwi = _mm256_loadu_pd((wi) + _kk); \
-            /* lr' = lr*wr + li*wi */ \
-            __m256d _nlr = _mm256_fmadd_pd(_vli, _vwi, _mm256_mul_pd(_vlr, _vwr)); \
-            /* li' = li*wr - lr*wi */ \
-            __m256d _nli = _mm256_fnmadd_pd(_vlr, _vwi, _mm256_mul_pd(_vli, _vwr)); \
-            _mm256_storeu_pd((lr) + _kk, _nlr); \
-            _mm256_storeu_pd((li) + _kk, _nli); \
-        } \
-        for (; _kk < (n); _kk++) { \
-            double _tr = (lr)[_kk]; \
-            (lr)[_kk] = _tr * (wr)[_kk] + (li)[_kk] * (wi)[_kk]; \
-            (li)[_kk] = (li)[_kk] * (wr)[_kk] - _tr * (wi)[_kk]; \
+        if ((cfr) != 1.0 || (cfi) != 0.0) { \
+            __m256d _vcfr = _mm256_set1_pd(cfr); \
+            __m256d _vcfi = _mm256_set1_pd(cfi); \
+            size_t _kk = 0; \
+            for (; _kk + 4 <= (n); _kk += 4) { \
+                __m256d _vr = _mm256_loadu_pd((re_p) + _kk); \
+                __m256d _vi = _mm256_loadu_pd((im_p) + _kk); \
+                /* re' = re*cfr + im*cfi; im' = im*cfr - re*cfi  (conj cmul) */ \
+                __m256d _nr = _mm256_fmadd_pd(_vi, _vcfi, _mm256_mul_pd(_vr, _vcfr)); \
+                __m256d _ni = _mm256_fnmadd_pd(_vr, _vcfi, _mm256_mul_pd(_vi, _vcfr)); \
+                _mm256_storeu_pd((re_p) + _kk, _nr); \
+                _mm256_storeu_pd((im_p) + _kk, _ni); \
+            } \
+            for (; _kk < (n); _kk++) { \
+                double _tr = (re_p)[_kk]; \
+                (re_p)[_kk] = _tr * (cfr) + (im_p)[_kk] * (cfi); \
+                (im_p)[_kk] = (im_p)[_kk] * (cfr) - _tr * (cfi); \
+            } \
         } \
     } while (0)
 
+/* Backward stage: FUSED inverse butterfly + post-twiddle via t1s_bwd codelet.
+ *
+ * The t1s_bwd codelet (after the dft.ml DAG fix) does:
+ *   1. Inverse butterfly (B⁻¹ = +θ-kernel DFT) on raw inputs
+ *   2. Post-multiply legs 1..R-1 by conj(tw_scalar)
+ *
+ * Executor adds the leg-0 conj(cf0) post-mul (codelet doesn't touch leg 0).
+ *
+ * Compared to the pre-fusion path (n1_bwd + R-leg manual cmul loop), this
+ * eliminates one full load/store pass over R-1 legs — the inverse butterfly's
+ * output already has the legs in registers ready for the post-twiddle. */
 #define VFFT_PROTO_STAGE_BWD(S, R, ISA) \
     if (start_stage <= (S)) { \
         const stride_stage_t *st = &plan->stages[S]; \
         const int    num_groups  = st->num_groups; \
         const size_t stride      = st->stride; \
-        const int    *needs_tw   = st->needs_tw; \
-        const size_t *group_base = st->group_base; \
-        const double *cf_all_re  = st->cf_all_re; \
-        const double *cf_all_im  = st->cf_all_im; \
+        const int    *needs_tw    = st->needs_tw; \
+        const size_t *group_base  = st->group_base; \
+        const double *cf0_re      = st->cf0_re; \
+        const double *cf0_im      = st->cf0_im; \
+        double      **tw_scalar_re = st->tw_scalar_re; \
+        double      **tw_scalar_im = st->tw_scalar_im; \
         for (int g = 0; g < num_groups; g++) { \
             double *base_re = re + group_base[g]; \
             double *base_im = im + group_base[g]; \
-            radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \
-            if (!needs_tw[g]) continue; \
-            const double *cfr = cf_all_re + (size_t)g * (R) * full_K; \
-            const double *cfi = cf_all_im + (size_t)g * (R) * full_K; \
-            for (int j = 0; j < (R); j++) { \
-                double *lr = base_re + (size_t)j * stride; \
-                double *li = base_im + (size_t)j * stride; \
-                const double *wr = cfr + (size_t)j * full_K; \
-                const double *wi = cfi + (size_t)j * full_K; \
-                VFFT_PROTO_BWD_CMUL_CONJ_##ISA(lr, li, wr, wi, slice_K); \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \
+                continue; \
             } \
+            /* Fused: codelet does B⁻¹ + post-twiddle for legs 1..R-1. */ \
+            radix##R##_t1s_dit_bwd_##ISA(base_re, base_im, \
+                                          tw_scalar_re[g], tw_scalar_im[g], \
+                                          stride, slice_K); \
+            /* Executor: apply conj(cf0) to leg 0 (codelet skipped it). */ \
+            VFFT_PROTO_BWD_LEG0_CONJ_##ISA(base_re, base_im, \
+                                            cf0_re[g], cf0_im[g], slice_K); \
         } \
     }
 

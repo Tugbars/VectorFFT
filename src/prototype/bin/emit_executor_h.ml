@@ -146,9 +146,11 @@ let collect_externs (e : plan_entry) (d : direction) ~isa : string list =
   let acc = ref [] in
   match d with
   | `Bwd ->
-    (* Backward calls n1_bwd only (one per stage radix). *)
+    (* Backward fused path: needs_tw=0 → n1_bwd; needs_tw=1 → t1s_dit_bwd
+     * (fused inv-butterfly + post-twiddle, plus executor conj(cf0) on leg 0). *)
     Array.iter (fun r ->
-      acc := n1_symbol ~r ~direction:`Bwd ~isa :: !acc
+      acc := n1_symbol ~r ~direction:`Bwd ~isa :: !acc;
+      acc := t1_symbol ~r ~variant:T1S ~direction:`Bwd ~isa :: !acc
     ) e.factors;
     List.sort_uniq compare !acc
   | `Fwd ->
@@ -438,54 +440,68 @@ let emit_stage_macros () =
   print_endline " * function signature). Uses st->stride hoisted once per stage.";
   print_endline " * ─────────────────────────────────────────────────────────────────── */";
   print_endline "";
-  print_endline "/* leg *= conj(W) — explicit AVX2 SIMD, 4 lanes/iter + scalar tail.";
-  print_endline " * Auto-vectorizers handle the scalar form OK but generate worse code";
-  print_endline " * than this hand-rolled version (loop carry, mixed precision, etc.). */";
-  print_endline "#define VFFT_PROTO_BWD_CMUL_CONJ_avx2(lr, li, wr, wi, n) \\";
+  print_endline "/* Broadcast scalar conj-mul: leg[0] *= conj(cf0) using AVX2 SIMD.";
+  print_endline " * Used by the fused bwd path to apply the leg-0 common-factor that";
+  print_endline " * the t1s_bwd codelet doesn't handle (codelet only touches legs 1..R-1). */";
+  print_endline "#define VFFT_PROTO_BWD_LEG0_CONJ_avx2(re_p, im_p, cfr, cfi, n) \\";
   print_endline "    do { \\";
-  print_endline "        size_t _kk = 0; \\";
-  print_endline "        for (; _kk + 4 <= (n); _kk += 4) { \\";
-  print_endline "            __m256d _vlr = _mm256_loadu_pd((lr) + _kk); \\";
-  print_endline "            __m256d _vli = _mm256_loadu_pd((li) + _kk); \\";
-  print_endline "            __m256d _vwr = _mm256_loadu_pd((wr) + _kk); \\";
-  print_endline "            __m256d _vwi = _mm256_loadu_pd((wi) + _kk); \\";
-  print_endline "            /* lr' = lr*wr + li*wi */ \\";
-  print_endline "            __m256d _nlr = _mm256_fmadd_pd(_vli, _vwi, _mm256_mul_pd(_vlr, _vwr)); \\";
-  print_endline "            /* li' = li*wr - lr*wi */ \\";
-  print_endline "            __m256d _nli = _mm256_fnmadd_pd(_vlr, _vwi, _mm256_mul_pd(_vli, _vwr)); \\";
-  print_endline "            _mm256_storeu_pd((lr) + _kk, _nlr); \\";
-  print_endline "            _mm256_storeu_pd((li) + _kk, _nli); \\";
-  print_endline "        } \\";
-  print_endline "        for (; _kk < (n); _kk++) { \\";
-  print_endline "            double _tr = (lr)[_kk]; \\";
-  print_endline "            (lr)[_kk] = _tr * (wr)[_kk] + (li)[_kk] * (wi)[_kk]; \\";
-  print_endline "            (li)[_kk] = (li)[_kk] * (wr)[_kk] - _tr * (wi)[_kk]; \\";
+  print_endline "        if ((cfr) != 1.0 || (cfi) != 0.0) { \\";
+  print_endline "            __m256d _vcfr = _mm256_set1_pd(cfr); \\";
+  print_endline "            __m256d _vcfi = _mm256_set1_pd(cfi); \\";
+  print_endline "            size_t _kk = 0; \\";
+  print_endline "            for (; _kk + 4 <= (n); _kk += 4) { \\";
+  print_endline "                __m256d _vr = _mm256_loadu_pd((re_p) + _kk); \\";
+  print_endline "                __m256d _vi = _mm256_loadu_pd((im_p) + _kk); \\";
+  print_endline "                /* re' = re*cfr + im*cfi; im' = im*cfr - re*cfi  (conj cmul) */ \\";
+  print_endline "                __m256d _nr = _mm256_fmadd_pd(_vi, _vcfi, _mm256_mul_pd(_vr, _vcfr)); \\";
+  print_endline "                __m256d _ni = _mm256_fnmadd_pd(_vr, _vcfi, _mm256_mul_pd(_vi, _vcfr)); \\";
+  print_endline "                _mm256_storeu_pd((re_p) + _kk, _nr); \\";
+  print_endline "                _mm256_storeu_pd((im_p) + _kk, _ni); \\";
+  print_endline "            } \\";
+  print_endline "            for (; _kk < (n); _kk++) { \\";
+  print_endline "                double _tr = (re_p)[_kk]; \\";
+  print_endline "                (re_p)[_kk] = _tr * (cfr) + (im_p)[_kk] * (cfi); \\";
+  print_endline "                (im_p)[_kk] = (im_p)[_kk] * (cfr) - _tr * (cfi); \\";
+  print_endline "            } \\";
   print_endline "        } \\";
   print_endline "    } while (0)";
   print_endline "";
+  print_endline "/* Backward stage: FUSED inverse butterfly + post-twiddle via t1s_bwd codelet.";
+  print_endline " *";
+  print_endline " * The t1s_bwd codelet (after the dft.ml DAG fix) does:";
+  print_endline " *   1. Inverse butterfly (B⁻¹ = +θ-kernel DFT) on raw inputs";
+  print_endline " *   2. Post-multiply legs 1..R-1 by conj(tw_scalar)";
+  print_endline " *";
+  print_endline " * Executor adds the leg-0 conj(cf0) post-mul (codelet doesn't touch leg 0).";
+  print_endline " *";
+  print_endline " * Compared to the pre-fusion path (n1_bwd + R-leg manual cmul loop), this";
+  print_endline " * eliminates one full load/store pass over R-1 legs — the inverse butterfly's";
+  print_endline " * output already has the legs in registers ready for the post-twiddle. */";
   print_endline "#define VFFT_PROTO_STAGE_BWD(S, R, ISA) \\";
   print_endline "    if (start_stage <= (S)) { \\";
   print_endline "        const stride_stage_t *st = &plan->stages[S]; \\";
   print_endline "        const int    num_groups  = st->num_groups; \\";
   print_endline "        const size_t stride      = st->stride; \\";
-  print_endline "        const int    *needs_tw   = st->needs_tw; \\";
-  print_endline "        const size_t *group_base = st->group_base; \\";
-  print_endline "        const double *cf_all_re  = st->cf_all_re; \\";
-  print_endline "        const double *cf_all_im  = st->cf_all_im; \\";
+  print_endline "        const int    *needs_tw    = st->needs_tw; \\";
+  print_endline "        const size_t *group_base  = st->group_base; \\";
+  print_endline "        const double *cf0_re      = st->cf0_re; \\";
+  print_endline "        const double *cf0_im      = st->cf0_im; \\";
+  print_endline "        double      **tw_scalar_re = st->tw_scalar_re; \\";
+  print_endline "        double      **tw_scalar_im = st->tw_scalar_im; \\";
   print_endline "        for (int g = 0; g < num_groups; g++) { \\";
   print_endline "            double *base_re = re + group_base[g]; \\";
   print_endline "            double *base_im = im + group_base[g]; \\";
-  print_endline "            radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \\";
-  print_endline "            if (!needs_tw[g]) continue; \\";
-  print_endline "            const double *cfr = cf_all_re + (size_t)g * (R) * full_K; \\";
-  print_endline "            const double *cfi = cf_all_im + (size_t)g * (R) * full_K; \\";
-  print_endline "            for (int j = 0; j < (R); j++) { \\";
-  print_endline "                double *lr = base_re + (size_t)j * stride; \\";
-  print_endline "                double *li = base_im + (size_t)j * stride; \\";
-  print_endline "                const double *wr = cfr + (size_t)j * full_K; \\";
-  print_endline "                const double *wi = cfi + (size_t)j * full_K; \\";
-  print_endline "                VFFT_PROTO_BWD_CMUL_CONJ_##ISA(lr, li, wr, wi, slice_K); \\";
+  print_endline "            if (!needs_tw[g]) { \\";
+  print_endline "                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \\";
+  print_endline "                continue; \\";
   print_endline "            } \\";
+  print_endline "            /* Fused: codelet does B⁻¹ + post-twiddle for legs 1..R-1. */ \\";
+  print_endline "            radix##R##_t1s_dit_bwd_##ISA(base_re, base_im, \\";
+  print_endline "                                          tw_scalar_re[g], tw_scalar_im[g], \\";
+  print_endline "                                          stride, slice_K); \\";
+  print_endline "            /* Executor: apply conj(cf0) to leg 0 (codelet skipped it). */ \\";
+  print_endline "            VFFT_PROTO_BWD_LEG0_CONJ_##ISA(base_re, base_im, \\";
+  print_endline "                                            cf0_re[g], cf0_im[g], slice_K); \\";
   print_endline "        } \\";
   print_endline "    }";
   print_endline ""
