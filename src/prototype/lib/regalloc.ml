@@ -1271,8 +1271,11 @@ let allocate
       if isa.vec_regs >= 32 then isa.vec_regs - 4
       else isa.vec_regs - 2
   in
+  (* M5 (Belady spilling) is ON BY DEFAULT alongside M3a.
+   * Opt OUT with VFFT_NO_REGALLOC_M5=1 (for debugging the linear-scan-only path). *)
   let m5_enabled =
-    try Sys.getenv "VFFT_USE_REGALLOC_M5" = "1" with Not_found -> false
+    let opt_out = try Sys.getenv "VFFT_NO_REGALLOC_M5" = "1" with Not_found -> false in
+    not opt_out
   in
   match allocate_linear_scan ~isa ~scheduled ~budget:b
           ~skip_tags ~inline_set ~force_last_use () with
