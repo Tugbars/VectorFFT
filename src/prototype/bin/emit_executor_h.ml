@@ -115,12 +115,16 @@ let dir_str : direction -> string = function `Fwd -> "fwd" | `Bwd -> "bwd"
 let n1_symbol ~r ~direction ~isa =
   Printf.sprintf "radix%d_n1_%s_%s" r (dir_str direction) isa
 
-let t1_symbol ~r ~variant ~direction ~isa =
-  match variant with
-  | FLAT -> Printf.sprintf "radix%d_t1_dit_%s_%s"      r (dir_str direction) isa
-  | LOG3 -> Printf.sprintf "radix%d_t1_dit_log3_%s_%s" r (dir_str direction) isa
-  | T1S  -> Printf.sprintf "radix%d_t1s_dit_%s_%s"     r (dir_str direction) isa
-  | BUF  -> failwith "BUF variant unsupported"
+(* orient: `Dit or `Dif (codelet family). The codelet name encodes orientation
+ * in the {dit|dif} infix; variant selects which codelet within the family. *)
+let t1_symbol ~r ~variant ~direction ?(orient=`Dit) ~isa () =
+  let o = match orient with `Dit -> "dit" | `Dif -> "dif" in
+  match variant, orient with
+  | FLAT, _ -> Printf.sprintf "radix%d_t1_%s_%s_%s"      r o (dir_str direction) isa
+  | LOG3, _ -> Printf.sprintf "radix%d_t1_%s_log3_%s_%s" r o (dir_str direction) isa
+  | T1S, `Dit -> Printf.sprintf "radix%d_t1s_dit_%s_%s" r (dir_str direction) isa
+  | T1S, `Dif -> failwith "T1S not supported in DIF (planner falls back to FLAT)"
+  | BUF, _  -> failwith "BUF variant unsupported"
 
 (* Executor function name. For forward, encodes the full (factors, variants)
  * tuple. For backward, only (N, K, factors) — backward uses only n1 codelets
@@ -178,24 +182,43 @@ let dedup_for_bwd (entries : plan_entry list) : plan_entry list =
 
 (* ── C emission ────────────────────────────────────────────────────── *)
 
-(* Per-stage forward emission: a single macro invocation. *)
+(* Per-stage forward emission. Picks DIT or DIF macro family based on
+ * use_dif_forward, picks variant macro within the family. For DIF, T1S
+ * falls back to FLAT (production parity — DIF has no T1S codelet). *)
 let emit_stage_fwd (e : plan_entry) (stage_idx : int) ~isa =
   let r = e.factors.(stage_idx) in
   let v = e.variants.(stage_idx) in
+  let nf = Array.length e.factors in
   let macro =
-    if stage_idx = 0 then "VFFT_PROTO_STAGE_OUTER"
-    else match v with
-      | T1S  -> "VFFT_PROTO_STAGE_T1S  "
-      | LOG3 -> "VFFT_PROTO_STAGE_LOG3 "
-      | FLAT -> "VFFT_PROTO_STAGE_FLAT "
-      | BUF  -> failwith "BUF variant unsupported"
+    if e.use_dif_forward then begin
+      (* DIF: no-twiddle stage is LAST (s = nf-1). *)
+      if stage_idx = nf - 1 then "VFFT_PROTO_STAGE_DIF_OUTER"
+      else match v with
+        | LOG3 -> "VFFT_PROTO_STAGE_DIF_LOG3 "
+        | FLAT | T1S | BUF -> "VFFT_PROTO_STAGE_DIF_FLAT "
+    end else begin
+      (* DIT: no-twiddle stage is FIRST (s = 0). *)
+      if stage_idx = 0 then "VFFT_PROTO_STAGE_OUTER"
+      else match v with
+        | T1S  -> "VFFT_PROTO_STAGE_T1S  "
+        | LOG3 -> "VFFT_PROTO_STAGE_LOG3 "
+        | FLAT -> "VFFT_PROTO_STAGE_FLAT "
+        | BUF  -> failwith "BUF variant unsupported"
+    end
   in
   Printf.printf "    %s(%d, %2d, %s)\n" macro stage_idx r isa
 
-(* Per-stage backward emission. Single macro (no variant). *)
+(* Per-stage backward emission. DIT uses VFFT_PROTO_STAGE_BWD (t1s_dit_bwd
+ * + executor-side leg-0 cf cmul). DIF uses VFFT_PROTO_STAGE_DIF_BWD (fused
+ * t1_dif_bwd, no leg-0 cmul since cf0=1 in DIF). Both handle the needs_tw=0
+ * fallback (n1_bwd) inside the macro, so all stages emit the same macro. *)
 let emit_stage_bwd (e : plan_entry) (stage_idx : int) ~isa =
   let r = e.factors.(stage_idx) in
-  Printf.printf "    VFFT_PROTO_STAGE_BWD(%d, %2d, %s)\n" stage_idx r isa
+  let macro =
+    if e.use_dif_forward then "VFFT_PROTO_STAGE_DIF_BWD"
+    else "VFFT_PROTO_STAGE_BWD"
+  in
+  Printf.printf "    %s(%d, %2d, %s)\n" macro stage_idx r isa
 
 let emit_executor (e : plan_entry) (d : direction) ~isa =
   let fn_name = executor_name e d ~isa in
