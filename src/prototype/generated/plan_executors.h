@@ -268,6 +268,31 @@ extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
  * function signature). Uses st->stride hoisted once per stage.
  * ─────────────────────────────────────────────────────────────────── */
 
+/* leg *= conj(W) — explicit AVX2 SIMD, 4 lanes/iter + scalar tail.
+ * Auto-vectorizers handle the scalar form OK but generate worse code
+ * than this hand-rolled version (loop carry, mixed precision, etc.). */
+#define VFFT_PROTO_BWD_CMUL_CONJ_avx2(lr, li, wr, wi, n) \
+    do { \
+        size_t _kk = 0; \
+        for (; _kk + 4 <= (n); _kk += 4) { \
+            __m256d _vlr = _mm256_loadu_pd((lr) + _kk); \
+            __m256d _vli = _mm256_loadu_pd((li) + _kk); \
+            __m256d _vwr = _mm256_loadu_pd((wr) + _kk); \
+            __m256d _vwi = _mm256_loadu_pd((wi) + _kk); \
+            /* lr' = lr*wr + li*wi */ \
+            __m256d _nlr = _mm256_fmadd_pd(_vli, _vwi, _mm256_mul_pd(_vlr, _vwr)); \
+            /* li' = li*wr - lr*wi */ \
+            __m256d _nli = _mm256_fnmadd_pd(_vlr, _vwi, _mm256_mul_pd(_vli, _vwr)); \
+            _mm256_storeu_pd((lr) + _kk, _nlr); \
+            _mm256_storeu_pd((li) + _kk, _nli); \
+        } \
+        for (; _kk < (n); _kk++) { \
+            double _tr = (lr)[_kk]; \
+            (lr)[_kk] = _tr * (wr)[_kk] + (li)[_kk] * (wi)[_kk]; \
+            (li)[_kk] = (li)[_kk] * (wr)[_kk] - _tr * (wi)[_kk]; \
+        } \
+    } while (0)
+
 #define VFFT_PROTO_STAGE_BWD(S, R, ISA) \
     if (start_stage <= (S)) { \
         const stride_stage_t *st = &plan->stages[S]; \
@@ -289,12 +314,7 @@ extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
                 double *li = base_im + (size_t)j * stride; \
                 const double *wr = cfr + (size_t)j * full_K; \
                 const double *wi = cfi + (size_t)j * full_K; \
-                /* leg *= conj(W): scalar inner; gcc/icx auto-vectorize */ \
-                for (size_t kk = 0; kk < slice_K; kk++) { \
-                    double tr = lr[kk]; \
-                    lr[kk] = tr * wr[kk] + li[kk] * wi[kk]; \
-                    li[kk] = li[kk] * wr[kk] - tr * wi[kk]; \
-                } \
+                VFFT_PROTO_BWD_CMUL_CONJ_##ISA(lr, li, wr, wi, slice_K); \
             } \
         } \
     }
