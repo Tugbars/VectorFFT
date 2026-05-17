@@ -38,7 +38,6 @@
 # Each row's best_ns is the patient verdict; variants are all-T1S inner
 # (outer stage is no-twiddle n1 — variant=0/FLAT placeholder).
 # ──────────────────────────────────────────────────────────────────────
-8 4 1 8 13 0 0 0 0 0
 16 4 1 16 23.8 0 0 0 0 0
 32 4 1 32 59.1 0 0 0 0 0
 64 4 1 64 142.8 0 0 0 0 0
@@ -49,3 +48,5 @@
 1024 4 2 64 16 4241.7 0 0 0 0 0 2
 # calibrate 2026-05-17 23:32:28  N=128 K=4 mode=best orient=dit CPU2-pinned
 128 4 2 8 16 285.9 0 0 0 0 0 2
+# calibrate 2026-05-17 23:43:10  N=8 K=4 mode=best orient=dit CPU2-pinned
+8 4 1 8 11.4 0 0 0 0 0

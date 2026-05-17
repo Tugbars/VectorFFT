@@ -1,4 +1,4 @@
-# run_calibrate.ps1 — orchestrate prototype-core wisdom calibration.
+# run_calibrate.ps1 -- orchestrate prototype-core wisdom calibration.
 #
 # Runs the calibrate.exe binary on (N, K) cells, pinned to CPU 2 (first
 # clean P-core), priority=High. Edits src/prototype/generated/spike_wisdom.txt.
@@ -24,8 +24,8 @@
 #        run_calibrate.ps1 -OverwriteAll
 #
 # Other flags:
-#   -Mode best|patient|dp|estimate   (default: best — runs all 3, picks fastest)
-#   -Orient dit|dif|both             (default: dit — DIF code path plumbed but inactive)
+#   -Mode best|patient|dp|estimate   (default: best -- runs all 3, picks fastest)
+#   -Orient dit|dif|both             (default: dit -- DIF code path plumbed but inactive)
 #
 # Prereqs: power plan = High Performance; calibrate.exe built.
 
@@ -98,7 +98,7 @@ function Get-WisdomCells {
 function Backup-WisdomFile {
     param([string]$WisdomPath)
     if (-not (Test-Path $WisdomPath)) {
-        Write-Host "[backup] no wisdom file at $WisdomPath — nothing to back up"
+        Write-Host "[backup] no wisdom file at $WisdomPath -- nothing to back up"
         return
     }
     $wisdomDir = Split-Path -Parent $WisdomPath
@@ -126,7 +126,7 @@ function Remove-MatchingWisdomEntry {
         $line = $lines[$i]
         $trimmed = $line.TrimStart()
         if ($trimmed.Length -eq 0 -or $trimmed[0] -eq "#" -or $trimmed[0] -eq "@") {
-            # Comment / version line — keep (unless it's the provenance comment
+            # Comment / version line -- keep (unless it's the provenance comment
             # immediately preceding the line we're about to remove; handled below).
             $kept.Add($line) | Out-Null
             continue
@@ -171,18 +171,48 @@ if (-not (Test-Path $exe)) {
     exit 1
 }
 
-# Collect cells: either single (N, K) or comma-separated "N:K" list.
+# Determine operation mode and cell list.
+#
+#   $isSingleCell = -N/-K given (overwrite that cell)
+#   $isBatch      = -Cells given (fill-missing unless -Force)
+#   $isOverwriteAll = -OverwriteAll given (backup + recalibrate everything)
+#
+# The default orient (-Orient dit) is used as the targetDif for "exists" checks
+# when populating from -Cells / -N/-K. For -OverwriteAll we replay each entry's
+# own use_dif_forward value, so DIT and DIF wisdom rows are both refreshed.
+
 $cellList = @()
-if ($Cells) {
+$isSingleCell = ($PSBoundParameters.ContainsKey('N') -and $PSBoundParameters.ContainsKey('K'))
+$isBatch = $false
+$isOverwriteAll = $OverwriteAll.IsPresent
+
+$targetDif = if ($Orient -eq "dif") { 1 } else { 0 }
+
+if ($isOverwriteAll) {
+    Backup-WisdomFile -WisdomPath $wisdomFile
+    foreach ($c in Get-WisdomCells -WisdomPath $wisdomFile) {
+        $cellList += @{ N = $c.N; K = $c.K; UseDif = $c.UseDif; Forced = $true }
+    }
+    if ($cellList.Count -eq 0) {
+        Write-Host "[ERROR] -OverwriteAll given but wisdom file has no entries"
+        exit 1
+    }
+    Write-Host "[orchestrator] -OverwriteAll: $($cellList.Count) cells (backed up, will replay each entry's orient)"
+} elseif ($Cells) {
+    $isBatch = $true
     foreach ($pair in $Cells -split ",") {
         $parts = $pair.Trim() -split ":"
         if ($parts.Count -ne 2) { Write-Host "[ERROR] bad cell '$pair' (expected N:K)"; exit 1 }
-        $cellList += @{ N = [int]$parts[0]; K = [int]$parts[1] }
+        $cellList += @{ N = [int]$parts[0]; K = [int]$parts[1]; UseDif = $targetDif; Forced = $Force.IsPresent }
     }
-} elseif ($N -and $K) {
-    $cellList += @{ N = $N; K = $K }
+} elseif ($isSingleCell) {
+    # Single cell: always overwrite (the user explicitly asked for this cell).
+    $cellList += @{ N = $N; K = $K; UseDif = $targetDif; Forced = $true }
 } else {
-    Write-Host "[ERROR] specify -N and -K, OR -Cells 'N1:K1,N2:K2,...'"
+    Write-Host "[ERROR] specify one of:"
+    Write-Host "  -N <n> -K <k>                single cell (overwrite)"
+    Write-Host "  -Cells 'N1:K1,N2:K2,...'    batch fill-missing (use -Force to overwrite each)"
+    Write-Host "  -OverwriteAll                recalibrate everything (backup first)"
     exit 1
 }
 
@@ -196,13 +226,24 @@ if ($activePlan -notmatch "High|Ultimate") {
 foreach ($cell in $cellList) {
     $cellN = $cell.N
     $cellK = $cell.K
-    $logErr = "c:\tmp\calib_n${cellN}_k${cellK}.err"
-    $logOut = "c:\tmp\calib_n${cellN}_k${cellK}.txt"
+    $cellDif = $cell.UseDif
+    $cellOrient = if ($cellDif -eq 1) { "dif" } else { "dit" }
 
-    Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] N=$cellN K=$cellK starting..."
+    # Fill-missing skip: in non-forced batch mode, skip if the entry already exists.
+    if (-not $cell.Forced) {
+        if (Test-WisdomEntryExists -WisdomPath $wisdomFile -TargetN $cellN -TargetK $cellK -TargetDif $cellDif) {
+            Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] N=$cellN K=$cellK orient=$cellOrient -- already in wisdom, skipping (use -Force to overwrite)"
+            continue
+        }
+    }
+
+    $logErr = "c:\tmp\calib_n${cellN}_k${cellK}_o${cellOrient}.err"
+    $logOut = "c:\tmp\calib_n${cellN}_k${cellK}_o${cellOrient}.txt"
+
+    Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] N=$cellN K=$cellK orient=$cellOrient starting..."
 
     $proc = Start-Process -FilePath $exe `
-        -ArgumentList $cellN, $cellK, "--mode", $Mode, "--orient", $Orient `
+        -ArgumentList $cellN, $cellK, "--mode", $Mode, "--orient", $cellOrient `
         -PassThru -NoNewWindow `
         -RedirectStandardOutput $logOut `
         -RedirectStandardError $logErr
@@ -225,7 +266,7 @@ foreach ($cell in $cellList) {
     Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] DONE: $winnerLine"
     Write-Host "  wisdom -> $wisdomLine"
 
-    # Parse winning use_dif_forward from the new wisdom line — we replace
+    # Parse winning use_dif_forward from the new wisdom line -- we replace
     # the entry matching (N, K, that orient) so DIT and DIF entries for
     # the same (N, K) can coexist.
     $newToks = $wisdomLine -split '\s+'
