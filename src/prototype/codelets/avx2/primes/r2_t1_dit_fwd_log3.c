@@ -12,18 +12,18 @@ void radix2_t1_dit_log3_fwd_avx2(
     size_t me)
 {
     for (size_t k = 0; k < me; k += 4) {
-        register __m256d t0 asm("ymm0") = _mm256_loadu_pd(&rio_re[1*ios + k]); asm volatile ("" : "+v"(t0));
-        register __m256d t1 asm("ymm1") = _mm256_loadu_pd(&tw_re[0*me + k]); asm volatile ("" : "+v"(t1));
-        register __m256d t2 asm("ymm2") = _mm256_loadu_pd(&rio_im[1*ios + k]); asm volatile ("" : "+v"(t2));
-        register __m256d t3 asm("ymm3") = _mm256_loadu_pd(&tw_im[0*me + k]); asm volatile ("" : "+v"(t3));
-        register __m256d t4 asm("ymm4") = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1)); asm volatile ("" : "+v"(t4));
-        register __m256d t5 asm("ymm5") = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1)); asm volatile ("" : "+v"(t5));
-        register __m256d t9 asm("ymm0") = _mm256_loadu_pd(&rio_re[0*ios + k]); asm volatile ("" : "+v"(t9));
-        register __m256d t11 asm("ymm1") = _mm256_loadu_pd(&rio_im[0*ios + k]); asm volatile ("" : "+v"(t11));
-        register __m256d t12 asm("ymm2") = _mm256_sub_pd(t9, t4); asm volatile ("" : "+v"(t12));
-        register __m256d t14 asm("ymm3") = _mm256_sub_pd(t11, t5); asm volatile ("" : "+v"(t14));
-        register __m256d t15 asm("ymm6") = _mm256_add_pd(t4, t9); asm volatile ("" : "+v"(t15));
-        register __m256d t16 asm("ymm0") = _mm256_add_pd(t5, t11); asm volatile ("" : "+v"(t16));
+        const __m256d t0 = _mm256_loadu_pd(&rio_re[1*ios + k]);
+        const __m256d t1 = _mm256_loadu_pd(&tw_re[0*me + k]);
+        const __m256d t2 = _mm256_loadu_pd(&rio_im[1*ios + k]);
+        const __m256d t3 = _mm256_loadu_pd(&tw_im[0*me + k]);
+        const __m256d t4 = _mm256_fnmadd_pd(t2, t3, _mm256_mul_pd(t0, t1));
+        const __m256d t5 = _mm256_fmadd_pd(t0, t3, _mm256_mul_pd(t2, t1));
+        const __m256d t9 = _mm256_loadu_pd(&rio_re[0*ios + k]);
+        const __m256d t11 = _mm256_loadu_pd(&rio_im[0*ios + k]);
+        const __m256d t12 = _mm256_sub_pd(t9, t4);
+        const __m256d t14 = _mm256_sub_pd(t11, t5);
+        const __m256d t15 = _mm256_add_pd(t4, t9);
+        const __m256d t16 = _mm256_add_pd(t5, t11);
 
         _mm256_storeu_pd(&rio_re[1*ios + k], t12);
         _mm256_storeu_pd(&rio_im[1*ios + k], t14);

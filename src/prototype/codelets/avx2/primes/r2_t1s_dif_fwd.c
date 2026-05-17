@@ -12,18 +12,18 @@ void radix2_t1s_dif_fwd_avx2(
     size_t me)
 {
     for (size_t k = 0; k < me; k += 4) {
-        register __m256d t0 asm("ymm0") = _mm256_loadu_pd(&rio_re[1*ios + k]); asm volatile ("" : "+v"(t0));
-        register __m256d t2 asm("ymm1") = _mm256_loadu_pd(&rio_im[1*ios + k]); asm volatile ("" : "+v"(t2));
-        register __m256d t4 asm("ymm2") = _mm256_loadu_pd(&rio_re[0*ios + k]); asm volatile ("" : "+v"(t4));
-        register __m256d t5 asm("ymm3") = _mm256_loadu_pd(&rio_im[0*ios + k]); asm volatile ("" : "+v"(t5));
-        register __m256d t6 asm("ymm4") = _mm256_add_pd(t0, t4); asm volatile ("" : "+v"(t6));
-        register __m256d t7 asm("ymm5") = _mm256_add_pd(t2, t5); asm volatile ("" : "+v"(t7));
-        register __m256d t10 asm("ymm6") = _mm256_sub_pd(t4, t0); asm volatile ("" : "+v"(t10));
-        register __m256d t11 asm("ymm0") = _mm256_set1_pd(tw_re[0]); asm volatile ("" : "+v"(t11));
-        register __m256d t13 asm("ymm2") = _mm256_sub_pd(t5, t2); asm volatile ("" : "+v"(t13));
-        register __m256d t14 asm("ymm1") = _mm256_set1_pd(tw_im[0]); asm volatile ("" : "+v"(t14));
-        register __m256d t15 asm("ymm3") = _mm256_fnmadd_pd(t13, t14, _mm256_mul_pd(t10, t11)); asm volatile ("" : "+v"(t15));
-        register __m256d t16 asm("ymm7") = _mm256_fmadd_pd(t10, t14, _mm256_mul_pd(t13, t11)); asm volatile ("" : "+v"(t16));
+        const __m256d t0 = _mm256_loadu_pd(&rio_re[1*ios + k]);
+        const __m256d t2 = _mm256_loadu_pd(&rio_im[1*ios + k]);
+        const __m256d t4 = _mm256_loadu_pd(&rio_re[0*ios + k]);
+        const __m256d t5 = _mm256_loadu_pd(&rio_im[0*ios + k]);
+        const __m256d t6 = _mm256_add_pd(t0, t4);
+        const __m256d t7 = _mm256_add_pd(t2, t5);
+        const __m256d t10 = _mm256_sub_pd(t4, t0);
+        const __m256d t11 = _mm256_set1_pd(tw_re[0]);
+        const __m256d t13 = _mm256_sub_pd(t5, t2);
+        const __m256d t14 = _mm256_set1_pd(tw_im[0]);
+        const __m256d t15 = _mm256_fnmadd_pd(t13, t14, _mm256_mul_pd(t10, t11));
+        const __m256d t16 = _mm256_fmadd_pd(t10, t14, _mm256_mul_pd(t13, t11));
 
         _mm256_storeu_pd(&rio_re[0*ios + k], t6);
         _mm256_storeu_pd(&rio_im[0*ios + k], t7);
