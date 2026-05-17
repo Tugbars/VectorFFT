@@ -1,6 +1,5 @@
 #!/bin/bash
-# build_demo_recursive_exhaustive.sh — flat vs FFTW-style recursive
-# exhaustive comparison demo.
+# build_demo_exhaustive.sh — DP planner on a single cell.
 set -e
 
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
@@ -39,7 +38,7 @@ esac
 
 OUT_DIR=$ROOT/src/prototype/build_tuned
 mkdir -p $OUT_DIR $OBJ_DIR
-OUT=$OUT_DIR/demo_recursive_exhaustive
+OUT=$OUT_DIR/demo_exhaustive
 
 CODELETS=()
 for fam in primes small_pow2 mid_pow2 large_pow2 composites; do
@@ -73,17 +72,17 @@ export CC CFLAGS OBJ_DIR
 
 printf '%s\n' "${ALL_SOURCES[@]}" | xargs -P $NJOBS -I {} bash -c 'compile_one "$@"' _ {} >/dev/null
 
-RSP=$OBJ_DIR/link_rec_exh.rsp
+RSP=$OBJ_DIR/link_exhaustive.rsp
 > $RSP
 for src in "${ALL_SOURCES[@]}"; do
   echo "$(cygpath -m "$OBJ_DIR/$(basename "$src" .c).o")" >> $RSP
 done
 
-$CC $CFLAGS $CFLAGS_EXTRA \
+$CC $CFLAGS \
     -I $PROTO_CORE \
     -I $GENERATED \
-    "$PROTO_CORE/demo/demo_recursive_exhaustive.c" \
+    "$PROTO_CORE/demo/demo_exhaustive.c" \
     @$RSP \
     -o $OUT -lm 2>&1 | grep -v warning | tail -3
 
-echo "[build_demo_recursive_exhaustive] built $OUT"
+echo "[build_demo_exhaustive] built $OUT"

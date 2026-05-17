@@ -67,6 +67,18 @@
 #define VFFT_PROTO_PATIENT_PACE_MS 200
 #endif
 
+/* Inter-trial pacing — sleep this many ms between the 7 trials of a
+ * SINGLE candidate's bench. Without this, the trials run back-to-back
+ * and the package heats up across them; later trials measure under hot-
+ * package conditions, biasing the "best-of" upward.
+ *
+ * At N=131072 K=4 one execute is ~1.7 ms, so 10 reps × 7 trials =
+ * ~120 ms of solid compute per candidate. 100ms pacing between trials
+ * gives each trial cold-ish package state. */
+#ifndef VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS
+#define VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS 100
+#endif
+
 /* Number of top candidates to re-bench at the end as a tie-breaker.
  * The first-pass winner can drift across runs by 1-2%; a second pass
  * on the leading group with the same patient bench produces a more
@@ -108,9 +120,14 @@ static inline double vfft_proto_bench_patient(
     if (reps < VFFT_PROTO_PATIENT_REPS_MIN) reps = VFFT_PROTO_PATIENT_REPS_MIN;
     if (reps > VFFT_PROTO_PATIENT_REPS_MAX) reps = VFFT_PROTO_PATIENT_REPS_MAX;
 
-    /* Best of N trials. */
+    /* Best of N trials, with inter-trial pacing so the package can
+     * dissipate heat between trials and each trial sees comparable
+     * thermal state. Critical at high N where one trial is hundreds
+     * of milliseconds of solid compute. */
     double best = 1e18;
     for (int t = 0; t < VFFT_PROTO_PATIENT_TRIALS; t++) {
+        if (t > 0 && VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS > 0)
+            _vfft_proto_dp_sleep_ms(VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS);
         memcpy(re, orig_re, total * sizeof(double));
         memcpy(im, orig_im, total * sizeof(double));
         double t0 = vfft_proto_now_ns();
@@ -173,8 +190,9 @@ static inline double vfft_proto_patient_exhaustive_search(
         printf("  [patient] N=%d K=%zu: %d unique decompositions\n",
                N, (size_t)K, flist->count);
         printf("  [patient] config: %d warmups, %d trials, "
-               "pace=%dms, top-%d re-bench\n",
+               "trial-pace=%dms, candidate-pace=%dms, top-%d re-bench\n",
                VFFT_PROTO_PATIENT_WARMUPS, VFFT_PROTO_PATIENT_TRIALS,
+               VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS,
                VFFT_PROTO_PATIENT_PACE_MS, VFFT_PROTO_PATIENT_REBENCH_TOPN);
     }
 
