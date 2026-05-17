@@ -197,18 +197,27 @@ int main(int argc, char **argv)
     if (argc < 3) {
         fprintf(stderr,
             "Usage: %s <N> <K> [--mode patient|dp|estimate|best]\n"
+            "                  [--orient dit|dif|both]\n"
             "                  [--warmups N] [--trials N] [--pace-ms N]\n"
             "Modes:\n"
             "  patient   — exhaustive_patient (gold standard, ~minutes at high N)\n"
-            "  dp        — DP planner (~seconds)\n"
+            "  dp        — DP planner (~seconds; DIF re-benches DP-DIT factorization)\n"
             "  estimate  — V4 cost-model estimate (~ms; benched separately)\n"
-            "  best      — run all three, pick the fastest measured ns (default)\n",
+            "  best      — run all three, pick the fastest measured ns (default)\n"
+            "Orient:\n"
+            "  dit       — DIT-only (default; current active path)\n"
+            "  dif       — DIF-only (code paths plumbed but not yet validated for wisdom)\n"
+            "  both      — run both, pick winner orientation (doubles cost; not default)\n",
             argv[0]);
         return 1;
     }
     int N    = atoi(argv[1]);
     size_t K = (size_t)atoll(argv[2]);
     mode_t mode = MODE_BEST;
+    /* Orient settings: bitmask. 1=DIT, 2=DIF, 3=both. Default DIT-only.
+     * DIF code is plumbed but disabled by default per design until DIF
+     * codelets + Tier 1 are validated for wisdom-driven dispatch. */
+    int run_dit = 1, run_dif = 0;
     int warmups = 10;
     int trials  = 7;
     int pace_ms = 100;
@@ -221,6 +230,12 @@ int main(int argc, char **argv)
             else if (!strcmp(m, "estimate")) mode = MODE_ESTIMATE;
             else if (!strcmp(m, "best"))     mode = MODE_BEST;
             else { fprintf(stderr, "unknown mode: %s\n", m); return 1; }
+        } else if (!strcmp(argv[i], "--orient") && i + 1 < argc) {
+            const char *o = argv[++i];
+            if      (!strcmp(o, "dit"))  { run_dit = 1; run_dif = 0; }
+            else if (!strcmp(o, "dif"))  { run_dit = 0; run_dif = 1; }
+            else if (!strcmp(o, "both")) { run_dit = 1; run_dif = 1; }
+            else { fprintf(stderr, "unknown orient: %s\n", o); return 1; }
         } else if (!strcmp(argv[i], "--warmups") && i + 1 < argc) {
             warmups = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--trials") && i + 1 < argc) {
@@ -236,47 +251,54 @@ int main(int argc, char **argv)
     vfft_proto_registry_t reg;
     vfft_proto_registry_init(&reg);
 
-    fprintf(stderr, "[calibrate] N=%d K=%zu mode=%s "
+    fprintf(stderr, "[calibrate] N=%d K=%zu mode=%s orient=%s%s "
                     "(warmups=%d trials=%d pace_ms=%d)\n",
             N, K,
             mode==MODE_PATIENT?"patient":mode==MODE_DP?"dp":
             mode==MODE_ESTIMATE?"estimate":"best",
+            run_dit ? "DIT" : "", run_dif ? (run_dit ? "+DIF" : "DIF") : "",
             warmups, trials, pace_ms);
 
     int    best_factors[STRIDE_MAX_STAGES];
     int    best_nf = 0;
     double best_ns = 1e18;
+    int    best_orient = 0;  /* 0 = DIT, 1 = DIF */
     const char *best_source = "?";
 
     int    f[STRIDE_MAX_STAGES];
     int    nf = 0;
     double ns = 0.0;
 
-    if (mode == MODE_PATIENT || mode == MODE_BEST) {
-        ns = run_patient(N, K, &reg, f, &nf);
-        if (ns < best_ns) {
-            best_ns = ns;
-            best_nf = nf;
-            memcpy(best_factors, f, sizeof(int) * nf);
-            best_source = "patient";
+    /* Loop over orientations × planners. */
+    for (int orient = 0; orient < 2; orient++) {
+        int use_dif = (orient == 1);
+        if (use_dif && !run_dif) continue;
+        if (!use_dif && !run_dit) continue;
+
+        if (mode == MODE_PATIENT || mode == MODE_BEST) {
+            ns = run_patient(N, K, use_dif, &reg, f, &nf);
+            if (ns < best_ns) {
+                best_ns = ns; best_nf = nf; best_orient = use_dif;
+                memcpy(best_factors, f, sizeof(int) * nf);
+                best_source = "patient";
+            }
         }
-    }
-    if (mode == MODE_DP || mode == MODE_BEST) {
-        ns = run_dp(N, K, &reg, f, &nf, warmups, trials, pace_ms);
-        if (ns < best_ns) {
-            best_ns = ns;
-            best_nf = nf;
-            memcpy(best_factors, f, sizeof(int) * nf);
-            best_source = "dp";
+        if (mode == MODE_DP || mode == MODE_BEST) {
+            ns = run_dp(N, K, use_dif, &reg, f, &nf, warmups, trials, pace_ms);
+            if (ns < best_ns) {
+                best_ns = ns; best_nf = nf; best_orient = use_dif;
+                memcpy(best_factors, f, sizeof(int) * nf);
+                best_source = "dp";
+            }
         }
-    }
-    if (mode == MODE_ESTIMATE || mode == MODE_BEST) {
-        ns = run_estimate(N, K, &reg, f, &nf, warmups, trials, pace_ms);
-        if (ns < best_ns) {
-            best_ns = ns;
-            best_nf = nf;
-            memcpy(best_factors, f, sizeof(int) * nf);
-            best_source = "estimate";
+        if (mode == MODE_ESTIMATE || mode == MODE_BEST) {
+            ns = run_estimate(N, K, use_dif, &reg, f, &nf,
+                              warmups, trials, pace_ms);
+            if (ns < best_ns) {
+                best_ns = ns; best_nf = nf; best_orient = use_dif;
+                memcpy(best_factors, f, sizeof(int) * nf);
+                best_source = "estimate";
+            }
         }
     }
 
@@ -285,11 +307,12 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    fprintf(stderr, "[calibrate] WINNER: %s  factors=", best_source);
+    fprintf(stderr, "[calibrate] WINNER: %s/%s  factors=",
+            best_source, best_orient ? "DIF" : "DIT");
     for (int s = 0; s < best_nf; s++)
         fprintf(stderr, "%s%d", s?"x":"", best_factors[s]);
     fprintf(stderr, "  ns=%.1f\n", best_ns);
 
-    print_wisdom_line(N, K, best_factors, best_nf, best_ns);
+    print_wisdom_line(N, K, best_factors, best_nf, best_ns, best_orient);
     return 0;
 }
