@@ -7,9 +7,12 @@
  *
  * Variant codes: 0=FLAT, 1=LOG3, 2=T1S, 3=BUF (unused in current wisdom).
  *
- * One reader implementation, in-memory table, O(log N) lookup by sorted
- * (N, K). Mirrors production's stride_wisdom_load but standalone (no
- * inclusion from src/core/).
+ * In-memory table with linear (N, K) lookup. Provides BOTH read and write:
+ * load() + lookup() consume wisdom; set() + save() produce it, so the
+ * dag-fft-compiler core can close the loop itself (calibrator: search a
+ * cell -> fill an entry -> set() -> ... -> save() -> regen plan_executors.h).
+ * save() round-trips with load(). Ported from production src/core/planner.h
+ * (stride_wisdom_load / stride_wisdom_save), standalone (no src/core/ include).
  */
 #ifndef VFFT_PROTO_CORE_WISDOM_READER_H
 #define VFFT_PROTO_CORE_WISDOM_READER_H
@@ -112,6 +115,58 @@ vfft_proto_wisdom_lookup(const vfft_proto_wisdom_t *wis,
             return &wis->entries[i];
     }
     return NULL;
+}
+
+/* Insert or replace the entry for (N, K). Returns 1 if a new entry was
+ * appended, 0 if an existing (N,K) entry was overwritten. This is the
+ * accumulate step a calibrator uses: search a cell -> fill an entry -> set().
+ * (Pointers from a prior lookup() may be invalidated by the realloc here.) */
+static inline int vfft_proto_wisdom_set(vfft_proto_wisdom_t *wis,
+                                        const vfft_proto_wisdom_entry_t *e)
+{
+    for (size_t i = 0; i < wis->count; i++) {
+        if (wis->entries[i].N == e->N && wis->entries[i].K == e->K) {
+            wis->entries[i] = *e;
+            return 0;
+        }
+    }
+    if (wis->count >= wis->capacity) {
+        wis->capacity = wis->capacity ? wis->capacity * 2 : 64;
+        wis->entries = realloc(wis->entries,
+                               wis->capacity * sizeof(*wis->entries));
+    }
+    wis->entries[wis->count++] = *e;
+    return 1;
+}
+
+/* Write the table to path in the same v5 format vfft_proto_wisdom_load reads
+ * (round-trips). Returns 0 on success, -1 on open failure. Ported from
+ * production src/core/planner.h:stride_wisdom_save, adapted to this tree's
+ * vfft_proto_wisdom_entry_t (which always carries variant codes, so no -1
+ * placeholders are needed). */
+static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
+                                         const char *path)
+{
+    FILE *f = fopen(path, "w");
+    if (!f) return -1;
+    fprintf(f, "@version 5\n");
+    fprintf(f, "# VectorFFT stride wisdom: %zu entries\n", wis->count);
+    fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups "
+               "use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
+    for (size_t i = 0; i < wis->count; i++) {
+        const vfft_proto_wisdom_entry_t *e = &wis->entries[i];
+        fprintf(f, "%d %zu %d", e->N, e->K, e->nf);
+        for (int j = 0; j < e->nf; j++)
+            fprintf(f, " %d", e->factors[j]);
+        fprintf(f, " %.2f %d %d %d %d", e->best_ns,
+                e->use_blocked, e->split_stage, e->block_groups,
+                e->use_dif_forward);
+        for (int j = 0; j < e->nf; j++)
+            fprintf(f, " %d", e->variants[j]);
+        fprintf(f, "\n");
+    }
+    fclose(f);
+    return 0;
 }
 
 static inline void vfft_proto_wisdom_free(vfft_proto_wisdom_t *wis) {
