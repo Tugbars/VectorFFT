@@ -1,0 +1,9 @@
+symbol,radix,moff_ns,mfence_ns,mon_ns,best_mode,best_over_moff
+radix8_t1_dit_bwd_avx2,8,11.759,12.631,13.180,moff,1.0000
+radix8_t1_dif_fwd_avx2,8,11.758,12.631,13.200,moff,1.0000
+radix16_t1_dit_bwd_avx2,16,39.142,40.183,39.982,moff,1.0000
+radix16_t1_dif_fwd_avx2,16,38.731,40.290,40.007,moff,1.0000
+radix32_t1_dit_bwd_avx2,32,94.574,97.275,97.996,moff,1.0000
+radix32_t1_dif_fwd_avx2,32,95.581,97.579,98.684,moff,1.0000
+radix64_t1_dit_bwd_avx2,64,187.988,204.183,206.566,moff,1.0000
+radix64_t1_dif_fwd_avx2,64,188.240,200.278,204.904,moff,1.0000
