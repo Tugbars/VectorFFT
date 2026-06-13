@@ -1,0 +1,6 @@
+symbol,radix,fused_ns,unfused_ns,split_speedup
+radix16_n1_fwd_avx2,16,20.745,24.727,0.8390
+radix32_n1_fwd_avx2,32,71.786,75.736,0.9478
+radix64_n1_fwd_avx2,64,172.971,187.809,0.9210
+radix32_t1_dit_fwd_avx2,32,92.788,97.420,0.9525
+radix64_t1_dit_fwd_avx2,64,192.295,198.013,0.9711
