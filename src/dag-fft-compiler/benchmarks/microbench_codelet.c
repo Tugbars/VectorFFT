@@ -3,7 +3,12 @@
  * and times it. Purpose: A/B the SAME symbol built from two different codelet
  * trees (OLD src/prototype vs NEW src/dag-fft-compiler) so the ONLY variable is
  * the codelet machine code — the executor, planner, twiddle layout, buffer,
- * compiler, and flags are all held identical by the driver (ab_codelets.sh).
+ * compiler, and flags are all held identical by the driver (ab_codelets.sh /
+ * ab_codelets_icx.ps1).
+ *
+ * Portable: POSIX (gcc/clang in WSL) AND Windows (Intel ICX / MSVC). The timer
+ * is QueryPerformanceCounter on Windows, clock_gettime(MONOTONIC) elsewhere;
+ * aligned alloc is _aligned_malloc vs posix_memalign.
  *
  * Scope: the in-place c2c family (n1 / t1 / t1s / log3 / dit / dif / fwd / bwd),
  * which all share the 6-arg in-place rio ABI:
@@ -16,25 +21,31 @@
  * the identical resident buffer, so any memory effect is common-mode.
  *
  * FTZ/DAZ are forced on so that magnitudes drifting toward denormals over the
- * repeated in-place passes never trip the microcode assist (which would add a
- * confound that is unrelated to codegen). Values may saturate to inf/nan over
- * many passes — that is fine, AVX FMA throughput is unaffected by inf/nan on
- * x86, and correctness is gated separately by gate_inplace_full.c.
+ * repeated in-place passes never trip the microcode assist (an unrelated
+ * confound). Values may saturate to inf/nan over many passes — fine, AVX FMA
+ * throughput is unaffected, and correctness is gated separately.
  *
- * Config macros (set by the driver via -D):
+ * Config macros (set by the driver via -D / -D...):
  *   RN  = radix (buffer sizing)
  *   FN  = exported codelet symbol (e.g. radix16_t1_dit_fwd_avx2)
  *   T1S = 1 if this is a t1s (scalar-twiddle) codelet, else 0 (flat me-strided)
+ * Precision knobs (env, optional): MB_REPS_BUDGET, MB_BESTOF.
  *
  * Output: exactly one line "ns=<min ns per call>" on stdout. Nothing else.
  */
-#define _POSIX_C_SOURCE 200809L
+#ifndef _WIN32
+#  define _POSIX_C_SOURCE 200809L
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <time.h>
-#include <immintrin.h>   /* FTZ/DAZ control */
+#include <immintrin.h>   /* FTZ/DAZ control + codelet intrinsics */
+#ifdef _WIN32
+#  include <windows.h>
+#else
+#  include <time.h>
+#endif
 
 #define MPI 3.14159265358979323846
 
@@ -51,10 +62,34 @@
 /* 6-arg in-place rio signature shared by n1/t1/t1s/log3. */
 extern void FN(double *, double *, const double *, const double *, size_t, size_t);
 
+static void *xaligned(size_t align, size_t sz) {
+#ifdef _WIN32
+    return _aligned_malloc(sz, align);
+#else
+    void *p = NULL;
+    if (posix_memalign(&p, align, sz) != 0) return NULL;
+    return p;
+#endif
+}
+static void xfree(void *p) {
+#ifdef _WIN32
+    _aligned_free(p);
+#else
+    free(p);
+#endif
+}
+
 static double now_ns(void) {
+#ifdef _WIN32
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c);
+    QueryPerformanceFrequency(&f);
+    return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+#endif
 }
 
 int main(void) {
@@ -67,14 +102,11 @@ int main(void) {
     _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
     _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
 
-    double *re, *im, *tw_re, *tw_im;
-    if (posix_memalign((void **)&re,    64, buf * sizeof(double)) ||
-        posix_memalign((void **)&im,    64, buf * sizeof(double)) ||
-        posix_memalign((void **)&tw_re, 64, ((size_t)N * me + 128) * sizeof(double)) ||
-        posix_memalign((void **)&tw_im, 64, ((size_t)N * me + 128) * sizeof(double))) {
-        fprintf(stderr, "alloc failed\n");
-        return 2;
-    }
+    double *re    = (double *)xaligned(64, buf * sizeof(double));
+    double *im    = (double *)xaligned(64, buf * sizeof(double));
+    double *tw_re = (double *)xaligned(64, ((size_t)N * me + 128) * sizeof(double));
+    double *tw_im = (double *)xaligned(64, ((size_t)N * me + 128) * sizeof(double));
+    if (!re || !im || !tw_re || !tw_im) { fprintf(stderr, "alloc failed\n"); return 2; }
 
     /* Benign deterministic data; correctness is gated elsewhere. */
     for (size_t i = 0; i < buf; i++) {
@@ -104,7 +136,7 @@ int main(void) {
     if ((e = getenv("MB_BESTOF"))      && atoi(e) > 0) bestof      = atoi(e);
 
     long reps = (long)(reps_budget / (double)(buf + 1));
-    if (reps < 500)     reps = 500;
+    if (reps < 500)      reps = 500;
     if (reps > 50000000) reps = 50000000;
 
     /* warmup (also pages in + warms caches/branch predictors) */
@@ -120,6 +152,6 @@ int main(void) {
     }
 
     printf("ns=%.4f\n", best);
-    free(re); free(im); free(tw_re); free(tw_im);
+    xfree(re); xfree(im); xfree(tw_re); xfree(tw_im);
     return 0;
 }
