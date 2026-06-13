@@ -1,0 +1,3 @@
+(executables
+ (names gen_radix test_mk_plus dump_ir emit_registry_h emit_executor_h emit_rfft_registry emit_oop_registry emit_trig_registry emit_strided_registry emit_c2r_registry gen_set dbg_eval)
+ (libraries vfft_v2 unix))
