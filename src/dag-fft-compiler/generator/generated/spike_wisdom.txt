@@ -1,0 +1,21 @@
+# spike_wisdom.txt — wisdom entries driving plan_executors.h specialization.
+# RECONSTRUCTED (section 38g) from the committed plan_executors.h forward-
+# entry comments; the original wisdom file was never committed. Fidelity
+# verified by regenerating and comparing executor symbol sets.
+# Format (bin/emit_executor_h.ml): N K nf factors... best_ns use_blocked
+# split_stage block_groups use_dif_forward variants(0=FLAT 1=LOG3 2=T1S 3=BUF)
+131072 4 5 4 4 4 32 64 0 0 0 0 0 2 2 1 2 2
+131072 4 5 4 4 4 32 64 0 0 0 0 0 2 2 2 2 2
+131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 2 2 2 2 2 2 2
+1024 128 5 4 4 4 4 4 0 0 0 0 0 0 2 2 2 2
+131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 0 0 0 0 0 0 0
+131072 4 8 4 4 4 4 8 4 4 4 0 0 0 0 0 0 1 1 1 1 1 1 1
+1024 128 5 4 4 4 4 4 0 0 0 0 1 0 0 0 0 0
+16 4 1 16 0 0 0 0 0 0
+32 4 1 32 0 0 0 0 0 0
+64 4 1 64 0 0 0 0 0 0
+256 4 2 16 16 0 0 0 0 0 0 2
+512 4 2 16 32 0 0 0 0 0 0 2
+1024 4 2 64 16 0 0 0 0 0 0 2
+128 4 2 8 16 0 0 0 0 0 0 2
+8 4 1 8 0 0 0 0 0 0

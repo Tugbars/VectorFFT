@@ -1,0 +1,3 @@
+(executables
+ (names m1_test m2_test stage3_test)
+ (libraries vfft_v2 str))

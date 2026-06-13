@@ -1,0 +1,21 @@
+; The codelet-generator library. Each .ml below becomes a module
+; accessible as Vfft_v2.<Name> from outside this library.
+;
+; Pipeline order (top of pipe to bottom):
+;   Expr      — symbolic math IR
+;   Algsimp   — algebraic simplification + CSE
+;   Simd_ir   — lowering scalar IR to SIMD-typed IR
+;   Uarch     — microarchitecture tables (RPL, SPR, ZEN5, ...)
+;   Schedule  — list scheduler (uses Uarch table)
+;   Regalloc  — linear-scan register allocator
+;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
+;
+; Math-layer modules (one per transform type):
+;   Dft       — complex-to-complex DFT
+;   Dft_r2c   — real-to-complex / complex-to-real DFT (Hermitian-symmetric)
+;   (future:  Dft_dct, Dft_mdct if/when those land)
+
+(library
+ (name vfft_v2)
+ (libraries unix)
+ (modules expr algsimp cnum split_radix dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_c pipeline codelet_oop bb coverage gen_main))
