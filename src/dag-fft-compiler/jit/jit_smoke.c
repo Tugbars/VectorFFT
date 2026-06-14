@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     int core = (argc > 2) ? atoi(argv[2]) : 14;
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin failed\n");
 
-    size_t K = 4;
+    size_t K = (argc > 3) ? (size_t)atoll(argv[3]) : 4;   /* argv[3] = batch count */
     int factors[STRIDE_MAX_STAGES], nf = 0;
     const char *fs = (argc > 1) ? argv[1] : "4,4,4,4,4,4,4,8";
     { char buf[256]; strncpy(buf, fs, sizeof buf - 1); buf[sizeof buf - 1] = 0;
