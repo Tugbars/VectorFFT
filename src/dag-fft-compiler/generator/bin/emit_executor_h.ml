@@ -451,7 +451,8 @@ let emit_stage_macros () =
   print_endline "            const stride_invocation_t inv = tape[g]; \\";
   print_endline "            if (inv.tw_re) { \\";
   print_endline "                /* LOG3 applies cf0 to ALL R legs (codelet reads raw per-leg). \\";
-  print_endline "                 * Note: LOG3 grp_tw wiring is Phase-2.5-incomplete in twiddle.h. */ \\";
+  print_endline "                 * Twiddles come from grp_tw (per-leg LOG3 format), NOT the tape's \\";
+  print_endline "                 * scalar inv.tw — same as the generic LOG3 path and DIF LOG3. */ \\";
   print_endline "                const double _cfr = st->cf0_re[g]; \\";
   print_endline "                const double _cfi = st->cf0_im[g]; \\";
   print_endline "                if (_cfr != 1.0 || _cfi != 0.0) \\";
@@ -460,7 +461,7 @@ let emit_stage_macros () =
   print_endline "                                                    im + inv.base + (size_t)_j * stride, \\";
   print_endline "                                                    slice_K, _cfr, _cfi); \\";
   print_endline "                radix##R##_t1_dit_log3_fwd_##ISA(re + inv.base, im + inv.base, \\";
-  print_endline "                                                  inv.tw_re, inv.tw_im, \\";
+  print_endline "                                                  st->grp_tw_re[g], st->grp_tw_im[g], \\";
   print_endline "                                                  stride, slice_K); \\";
   print_endline "            } else { \\";
   print_endline "                radix##R##_n1_fwd_##ISA(re + inv.base, im + inv.base, \\";
