@@ -40,6 +40,7 @@
 #include "planner.h"
 #include "dp_planner.h"     /* re-use vfft_proto_now_ns + perm gen + factorization_t */
 #include "../prototype/generated/registry.h"
+#include "env.h"            /* depth/prune knobs + their "tested on 1024" provenance */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,12 +76,9 @@ typedef struct {
     int count;
 } vfft_proto_factorization_list_t;
 
-/* Two-bucket depth caps mirror production. Pow2 N has shallow optimal
- * decompositions (most pow2 wisdom is 4-5 stages), so 5 keeps search
- * tractable. Non-pow2 N with many small primes (e.g., 6615=3^3*5*7^2)
- * needs deeper search; 9 matches STRIDE_MAX_STAGES bound. */
-#define VFFT_PROTO_EXH_MAX_DEPTH_POW2    5
-#define VFFT_PROTO_EXH_MAX_DEPTH_NONPOW2 9
+/* Stage-depth caps + variant pre-screen factor now live in env.h
+ * (VFFT_PROTO_EXH_MAX_DEPTH_POW2 / _NONPOW2 / _PRUNE_FACTOR), env-overridable,
+ * with their "tested on N=1024" validation-scope note. */
 
 static inline void _vfft_proto_enumerate_factorizations(
     int remaining, const vfft_proto_registry_t *reg,
@@ -120,14 +118,7 @@ static inline void vfft_proto_enumerate_factorizations(
     list->count = 0;
     int current[STRIDE_MAX_STAGES];
     int n_is_pow2 = (N > 0) && ((N & (N - 1)) == 0);
-    int max_depth = n_is_pow2 ? VFFT_PROTO_EXH_MAX_DEPTH_POW2
-                              : VFFT_PROTO_EXH_MAX_DEPTH_NONPOW2;
-    /* Research override: VFFT_PROTO_EXH_MAX_DEPTH lifts the stage cap (set =16
-     * for absolutely-exhaustive depth on small N). Default unchanged
-     * (5 pow2 / 9 non-pow2). Clamped to STRIDE_MAX_STAGES. */
-    { const char *e = getenv("VFFT_PROTO_EXH_MAX_DEPTH");
-      if (e) { int d = atoi(e); if (d > 0) max_depth = d; } }
-    if (max_depth > STRIDE_MAX_STAGES) max_depth = STRIDE_MAX_STAGES;
+    int max_depth = vfft_proto_env_max_depth(n_is_pow2, STRIDE_MAX_STAGES);
     _vfft_proto_enumerate_factorizations(N, reg, current, 0, max_depth, list);
 }
 
@@ -268,12 +259,9 @@ static inline double vfft_proto_exhaustive_search(
     int total_candidates = 0;
     best_fact->nfactors = 0;
 
-    /* Variant pre-screen factor: skip a factorization's variant cartesian when
-     * its default-variant bench exceeds prune_factor× the global best. Research
-     * override VFFT_PROTO_EXH_PRUNE (default 2.0; set huge to disable). */
-    double prune_factor = 2.0;
-    { const char *e = getenv("VFFT_PROTO_EXH_PRUNE");
-      if (e) { double p = atof(e); if (p > 0) prune_factor = p; } }
+    /* Variant pre-screen factor (default 2.0, env VFFT_PROTO_EXH_PRUNE; see
+     * env.h for the "tested on 1024" provenance). */
+    double prune_factor = vfft_proto_env_prune_factor();
 
     /* Research: best ns seen per stage-count, to answer "does deeper help?". */
     double best_by_nf[STRIDE_MAX_STAGES];
