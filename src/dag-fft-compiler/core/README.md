@@ -45,7 +45,7 @@ gets a prototype-core port after 1D C2C is solid.
 | `src/core/` is **never modified** | Production keeps building. prototype-core is parallel; we never break the working production code path. |
 | `src/prototype-core/` **does not include from `src/core/`** | No `#include "../core/..."` lines. Decouples the two trees so renames and edits on either side don't cascade. |
 | Both directories define `stride_plan_t` / `stride_stage_t` independently | Types are conceptually the same but defined twice. When we eventually unify, prototype-core's types become the canonical ones. |
-| Codelet inventory is shared via `src/prototype/codelets/{isa}/` | One codelet tree, two executor consumers. prototype-core uses prototype codelets exclusively (via `src/prototype/generated/registry.h`). |
+| Codelet inventory is shared via `src/prototype/codelets/{isa}/` | One codelet tree, two executor consumers. prototype-core uses prototype codelets exclusively (via `src/generator/generated/registry.h`). |
 
 ## File map (Phase 0 — all placeholders)
 
@@ -68,8 +68,8 @@ prototype-core's `#include` web (when complete):
 ```
 executor.h            ──┬── plan.h
                         ├── executor_generic.h  ──┬── plan.h
-                        │                          └── ../prototype/generated/registry.h
-                        └── ../prototype/generated/plan_executors.h
+                        │                          └── ../generator/generated/registry.h
+                        └── ../generator/generated/plan_executors.h
 
 planner.h             ──┬── plan.h
                         ├── twiddle.h
@@ -82,8 +82,8 @@ twiddle.h             ── plan.h
 
 External (built dependencies):
 - `src/prototype/codelets/{isa}/` — codelet `.c` files
-- `src/prototype/generated/registry_{avx2,avx512}.h` — codelet inventory
-- `src/prototype/generated/plan_executors.h` — specialized fast paths
+- `src/generator/generated/registry_{avx2,avx512}.h` — codelet inventory
+- `src/generator/generated/plan_executors.h` — specialized fast paths
 - `src/prototype/cost_model/generated/radix_cpe.h` — measured CPE
 - `src/prototype/cost_model/generated/radix_profile.h` — DAG op counts
 - `src/prototype/cost_model/factorizer.h` — cost model

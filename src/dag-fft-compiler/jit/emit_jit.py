@@ -8,7 +8,7 @@ byte-identical to what the OCaml build-time emitter bakes into plan_executors.h
 (same macros -> same machine code -> same speed). The heavy lifting lives in
 jit_prelude.h (the extracted STAGE_* macros + codelet externs + plan types).
 
-Mapping (verified against prototype/generated/plan_executors.h):
+Mapping (verified against generator/generated/plan_executors.h):
   DIT fwd: stage 0 -> STAGE_OUTER; stages 1..n-1 -> STAGE_{FLAT,LOG3,T1S}[v]
   DIF fwd: stages 0..n-2 -> STAGE_DIF_{FLAT,LOG3}[v]; last -> STAGE_DIF_OUTER
 """

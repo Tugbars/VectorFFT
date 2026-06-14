@@ -10,7 +10,7 @@ specialized machine code the build-time emitter bakes into `plan_executors.h`,
 
 The fast path in this library is the **static, plan-shaped executor**: for a known
 `(N, K, factorization, variant-assignment)` tuple, `emit_executor_h.ml` bakes a
-straight-line C function into `../prototype/generated/plan_executors.h` (direct
+straight-line C function into `../generator/generated/plan_executors.h` (direct
 codelet calls, variant branch collapsed). At runtime
 `vfft_proto_lookup_fwd_avx2(plan)` matches a plan to that function.
 
