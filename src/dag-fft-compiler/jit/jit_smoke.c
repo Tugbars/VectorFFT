@@ -8,6 +8,7 @@
  * (3) latency of the resolved fn vs generic. Pass factors as argv[1]
  * (default a COLD 8-stage cell); argv[2]=core (default P-core 14).
  */
+#define _GNU_SOURCE 1   /* must precede libc headers for CPU_SET/pthread_setaffinity_np (Linux env.h pin) */
 #define VFFT_PROTO_DP_PACE_MS 0
 #include <stdio.h>
 #include <stdlib.h>
