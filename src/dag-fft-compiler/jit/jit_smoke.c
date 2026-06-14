@@ -88,7 +88,7 @@ int main(int argc, char **argv) {
 
     /* rigorous latency: INTERLEAVED samples; report min + MEDIAN. Median resists
      * the turbo-spike luck that makes single best-of-N runs disagree run-to-run. */
-    int iters = 500;
+    int iters = (argc > 4) ? atoi(argv[4]) : 500;   /* argv[4] = sample count */
     double *gt = (double *)malloc(iters * sizeof(double));
     double *st = (double *)malloc(iters * sizeof(double));
     for (int w = 0; w < 8; w++) {
