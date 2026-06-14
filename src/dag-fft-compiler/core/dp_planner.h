@@ -95,6 +95,10 @@ static inline void *_vfft_proto_dp_aligned_alloc(size_t align, size_t size) {
 typedef struct {
     int factors[VFFT_PROTO_DP_MAX_STAGES];
     int nfactors;
+    /* Winning per-stage codelet variant from the joint search (0=FLAT 1=LOG3
+     * 2=T1S). All-T1S until a variant-aware search fills it. Stage 0 is the
+     * no-twiddle stage so its entry is moot. */
+    int variants[VFFT_PROTO_DP_MAX_STAGES];
 } vfft_proto_factorization_t;
 
 typedef struct {
