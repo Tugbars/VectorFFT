@@ -139,8 +139,35 @@ static inline void vfft_proto_enumerate_factorizations(
  * are source for memcpy refresh).
  * ───────────────────────────────────────────────────────────────── */
 
-static inline double vfft_proto_bench_one(
-    int N, size_t K, const int *factors, int nf,
+/* ── Variant axis (joint search) ──────────────────────────────────────
+ * The per-stage codelet variant is the THIRD search axis (after multiset and
+ * ordering). Inner stages (1..nf-1) each choose FLAT / LOG3 / T1S; stage 0 is
+ * the no-twiddle stage so its variant is moot. BUF is omitted (it falls back
+ * to T1S in plan_create for DIT). The assignment space is 3^(nf-1). */
+static const int VFFT_PROTO_VARIANT_CHOICES[3] = {
+    VFFT_PROTO_VARIANT_FLAT, VFFT_PROTO_VARIANT_LOG3, VFFT_PROTO_VARIANT_T1S
+};
+
+static inline int vfft_proto_variant_count(int nf) {
+    int c = 1;
+    for (int s = 1; s < nf; s++) c *= 3;   /* 3^(nf-1) */
+    return c;
+}
+
+/* Decode index in [0, 3^(nf-1)) into a per-stage variant array (stage 0 = T1S,
+ * moot; inner stages mixed-radix base 3 over {FLAT,LOG3,T1S}). */
+static inline void vfft_proto_variant_decode(int idx, int nf, int *v) {
+    v[0] = VFFT_PROTO_VARIANT_T1S;
+    for (int s = 1; s < nf; s++) {
+        v[s] = VFFT_PROTO_VARIANT_CHOICES[idx % 3];
+        idx /= 3;
+    }
+}
+
+/* Variant-aware single-candidate bench. variants==NULL → plan_create's T1S
+ * default (so vfft_proto_bench_one below is just this with NULL). */
+static inline double vfft_proto_bench_one_v(
+    int N, size_t K, const int *factors, const int *variants, int nf,
     const vfft_proto_registry_t *reg,
     double *re, double *im, double *orig_re, double *orig_im)
 {
@@ -153,13 +180,8 @@ static inline double vfft_proto_bench_one(
             return 1e18;
     }
 
-    /* Build plan with T1S variant defaults (variants=NULL).
-     * Production routes through _stride_build_plan which consults
-     * wisdom_bridge for variant selection — prototype-core doesn't have
-     * wisdom_bridge so we default to T1S. Variant cartesian is a separate
-     * search layer (not in scope here). */
     stride_plan_t *plan = vfft_proto_plan_create(
-        N, K, factors, /*variants=*/NULL, nf, reg);
+        N, K, factors, variants, nf, reg);
     if (!plan) return 1e18;
 
     /* Warm up — enough to stabilize branch predictors and fill caches. */
@@ -187,6 +209,17 @@ static inline double vfft_proto_bench_one(
 
     vfft_proto_plan_destroy(plan);
     return best;
+}
+
+/* Default-variant (T1S) bench — unchanged interface for callers that don't
+ * search the variant axis (e.g. exhaustive_screened, quick pre-screens). */
+static inline double vfft_proto_bench_one(
+    int N, size_t K, const int *factors, int nf,
+    const vfft_proto_registry_t *reg,
+    double *re, double *im, double *orig_re, double *orig_im)
+{
+    return vfft_proto_bench_one_v(N, K, factors, /*variants=*/NULL, nf, reg,
+                                  re, im, orig_re, orig_im);
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -246,27 +279,42 @@ static inline double vfft_proto_exhaustive_search(
             const int *factors_p = plist->perms[pi];
             int nf = f->nfactors;
 
-            /* Quick single-trial pre-screen: skip if > 1.5× current best. */
-            double quick_ns = vfft_proto_bench_one(
-                N, K, factors_p, nf, reg, re, im, orig_re, orig_im);
+            /* Factorization pre-screen with the default (T1S) variant: if even
+             * that is > 2× the current global best, the variant cartesian for
+             * this ordering is very unlikely to win, so skip it. (2× not 1.5×
+             * since a different variant assignment could still help somewhat.) */
+            double screen_ns = vfft_proto_bench_one_v(
+                N, K, factors_p, /*variants=*/NULL, nf, reg,
+                re, im, orig_re, orig_im);
             total_candidates++;
-
-            if (quick_ns > global_best_ns * 1.5 && global_best_ns < 1e17)
+            if (screen_ns > global_best_ns * 2.0 && global_best_ns < 1e17)
                 continue;
 
-            /* Full bench (re-run with fresh data). */
-            double ns = vfft_proto_bench_one(
-                N, K, factors_p, nf, reg, re, im, orig_re, orig_im);
+            /* Variant cartesian: every per-stage codelet assignment
+             * (3^(nf-1)) on this factorization+ordering, full-benched. */
+            int vcount = vfft_proto_variant_count(nf);
+            for (int vi = 0; vi < vcount; vi++) {
+                int v[STRIDE_MAX_STAGES];
+                vfft_proto_variant_decode(vi, nf, v);
 
-            if (ns < global_best_ns) {
-                global_best_ns = ns;
-                best_fact->nfactors = nf;
-                memcpy(best_fact->factors, factors_p, nf * sizeof(int));
-                if (verbose >= 1) {
-                    printf("    new best ");
-                    for (int s = 0; s < nf; s++)
-                        printf("%s%d", s ? "x" : "", factors_p[s]);
-                    printf(" = %.1f ns\n", ns);
+                double ns = vfft_proto_bench_one_v(
+                    N, K, factors_p, v, nf, reg, re, im, orig_re, orig_im);
+                total_candidates++;
+
+                if (ns < global_best_ns) {
+                    global_best_ns = ns;
+                    best_fact->nfactors = nf;
+                    memcpy(best_fact->factors,  factors_p, nf * sizeof(int));
+                    memcpy(best_fact->variants, v,         nf * sizeof(int));
+                    if (verbose >= 1) {
+                        printf("    new best ");
+                        for (int s = 0; s < nf; s++)
+                            printf("%s%d", s ? "x" : "", factors_p[s]);
+                        printf(" v=[");
+                        for (int s = 0; s < nf; s++)
+                            printf("%s%d", s ? "," : "", v[s]);
+                        printf("] = %.1f ns\n", ns);
+                    }
                 }
             }
         }
@@ -290,7 +338,8 @@ static inline double vfft_proto_exhaustive_search(
     return global_best_ns;
 }
 
-/* Top-level convenience: returns a plan built from exhaustive's pick. */
+/* Top-level convenience: returns a plan built from exhaustive's pick
+ * (factorization + joint-searched per-stage variants). */
 static inline stride_plan_t *vfft_proto_exhaustive_plan(
     int N, size_t K, const vfft_proto_registry_t *reg, int verbose)
 {
@@ -298,11 +347,12 @@ static inline stride_plan_t *vfft_proto_exhaustive_plan(
     double ns = vfft_proto_exhaustive_search(N, K, reg, &best, verbose);
     (void)ns;
     if (best.nfactors == 0) return NULL;
-    return vfft_proto_plan_create(N, K, best.factors, /*variants=*/NULL,
+    return vfft_proto_plan_create(N, K, best.factors, best.variants,
                                   best.nfactors, reg);
 }
 
-/* Verbose variant that also reports picked factorization + measured ns. */
+/* Verbose variant that also reports picked factorization + measured ns. The
+ * returned plan uses the joint-searched per-stage variants. */
 static inline stride_plan_t *vfft_proto_exhaustive_plan_verbose(
     int N, size_t K, const vfft_proto_registry_t *reg,
     int *out_factors, int *out_nf, double *out_ns,
@@ -318,7 +368,29 @@ static inline stride_plan_t *vfft_proto_exhaustive_plan_verbose(
     if (out_factors) memcpy(out_factors, best.factors,
                             (size_t)best.nfactors * sizeof(int));
     if (out_nf)      *out_nf = best.nfactors;
-    return vfft_proto_plan_create(N, K, best.factors, /*variants=*/NULL,
+    return vfft_proto_plan_create(N, K, best.factors, best.variants,
+                                  best.nfactors, reg);
+}
+
+/* Joint accessor: like _verbose but ALSO outputs the per-stage variant codes
+ * (0=FLAT 1=LOG3 2=T1S) so a calibrator can write them into the wisdom file
+ * (vfft_proto_wisdom_entry_t.variants → vfft_proto_wisdom_save). Any out_*
+ * pointer may be NULL. */
+static inline stride_plan_t *vfft_proto_exhaustive_plan_joint(
+    int N, size_t K, const vfft_proto_registry_t *reg,
+    int *out_factors, int *out_variants, int *out_nf, double *out_ns,
+    int verbose)
+{
+    vfft_proto_factorization_t best;
+    double ns = vfft_proto_exhaustive_search(N, K, reg, &best, verbose);
+    if (out_ns) *out_ns = ns;
+    if (best.nfactors == 0) { if (out_nf) *out_nf = 0; return NULL; }
+    if (out_factors)  memcpy(out_factors,  best.factors,
+                             (size_t)best.nfactors * sizeof(int));
+    if (out_variants) memcpy(out_variants, best.variants,
+                             (size_t)best.nfactors * sizeof(int));
+    if (out_nf)       *out_nf = best.nfactors;
+    return vfft_proto_plan_create(N, K, best.factors, best.variants,
                                   best.nfactors, reg);
 }
 
