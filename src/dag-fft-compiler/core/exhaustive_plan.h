@@ -122,6 +122,12 @@ static inline void vfft_proto_enumerate_factorizations(
     int n_is_pow2 = (N > 0) && ((N & (N - 1)) == 0);
     int max_depth = n_is_pow2 ? VFFT_PROTO_EXH_MAX_DEPTH_POW2
                               : VFFT_PROTO_EXH_MAX_DEPTH_NONPOW2;
+    /* Research override: VFFT_PROTO_EXH_MAX_DEPTH lifts the stage cap (set =16
+     * for absolutely-exhaustive depth on small N). Default unchanged
+     * (5 pow2 / 9 non-pow2). Clamped to STRIDE_MAX_STAGES. */
+    { const char *e = getenv("VFFT_PROTO_EXH_MAX_DEPTH");
+      if (e) { int d = atoi(e); if (d > 0) max_depth = d; } }
+    if (max_depth > STRIDE_MAX_STAGES) max_depth = STRIDE_MAX_STAGES;
     _vfft_proto_enumerate_factorizations(N, reg, current, 0, max_depth, list);
 }
 
@@ -262,6 +268,17 @@ static inline double vfft_proto_exhaustive_search(
     int total_candidates = 0;
     best_fact->nfactors = 0;
 
+    /* Variant pre-screen factor: skip a factorization's variant cartesian when
+     * its default-variant bench exceeds prune_factor× the global best. Research
+     * override VFFT_PROTO_EXH_PRUNE (default 2.0; set huge to disable). */
+    double prune_factor = 2.0;
+    { const char *e = getenv("VFFT_PROTO_EXH_PRUNE");
+      if (e) { double p = atof(e); if (p > 0) prune_factor = p; } }
+
+    /* Research: best ns seen per stage-count, to answer "does deeper help?". */
+    double best_by_nf[STRIDE_MAX_STAGES];
+    for (int i = 0; i < STRIDE_MAX_STAGES; i++) best_by_nf[i] = 1e18;
+
     for (int fi = 0; fi < flist->count; fi++) {
         const vfft_proto_factorization_t *f = &flist->results[fi];
 
@@ -287,7 +304,9 @@ static inline double vfft_proto_exhaustive_search(
                 N, K, factors_p, /*variants=*/NULL, nf, reg,
                 re, im, orig_re, orig_im);
             total_candidates++;
-            if (screen_ns > global_best_ns * 2.0 && global_best_ns < 1e17)
+            if (nf < STRIDE_MAX_STAGES && screen_ns < best_by_nf[nf])
+                best_by_nf[nf] = screen_ns;
+            if (screen_ns > global_best_ns * prune_factor && global_best_ns < 1e17)
                 continue;
 
             /* Variant cartesian: every per-stage codelet assignment
@@ -300,6 +319,8 @@ static inline double vfft_proto_exhaustive_search(
                 double ns = vfft_proto_bench_one_v(
                     N, K, factors_p, v, nf, reg, re, im, orig_re, orig_im);
                 total_candidates++;
+                if (nf < STRIDE_MAX_STAGES && ns < best_by_nf[nf])
+                    best_by_nf[nf] = ns;
 
                 if (ns < global_best_ns) {
                     global_best_ns = ns;
@@ -310,9 +331,11 @@ static inline double vfft_proto_exhaustive_search(
                         printf("    new best ");
                         for (int s = 0; s < nf; s++)
                             printf("%s%d", s ? "x" : "", factors_p[s]);
-                        printf(" v=[");
-                        for (int s = 0; s < nf; s++)
-                            printf("%s%d", s ? "," : "", v[s]);
+                        /* stage 0 is the no-twiddle (n1) stage; its variant
+                         * code is moot, so show it as n1 not a variant. */
+                        printf(" v=[n1");
+                        for (int s = 1; s < nf; s++)
+                            printf(",%d", v[s]);
                         printf("] = %.1f ns\n", ns);
                     }
                 }
@@ -327,6 +350,11 @@ static inline double vfft_proto_exhaustive_search(
             printf("%s%d", s ? "x" : "", best_fact->factors[s]);
         printf(" = %.1f ns (%d total candidates)\n",
                global_best_ns, total_candidates);
+        printf("  best by stage-count:");
+        for (int k = 1; k < STRIDE_MAX_STAGES; k++)
+            if (best_by_nf[k] < 1e17)
+                printf("  %dst=%.0f", k, best_by_nf[k]);
+        printf("\n");
     }
 
     free(flist);
