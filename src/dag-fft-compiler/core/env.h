@@ -419,4 +419,20 @@ static inline double vfft_proto_env_prune_factor(void) {
     return p;
 }
 
+/* Wisdom-write overwrite flag, shared by the calibrator (patient/measure) and
+ * the planner write paths. 0 = preserve already-calibrated cells (skip them;
+ * only fill in missing ones) — the safe incremental default. 1 = re-calibrate
+ * and overwrite the cell with the new winner (vfft_proto_wisdom_add collapses to
+ * one entry). Override: VFFT_PROTO_WISDOM_OVERWRITE=1. */
+#ifndef VFFT_PROTO_WISDOM_OVERWRITE
+#define VFFT_PROTO_WISDOM_OVERWRITE 0
+#endif
+
+static inline int vfft_proto_env_wisdom_overwrite(void) {
+    int v = VFFT_PROTO_WISDOM_OVERWRITE;
+    const char *e = getenv("VFFT_PROTO_WISDOM_OVERWRITE");
+    if (e && *e) v = atoi(e);
+    return v;
+}
+
 #endif /* VFFT_PROTO_CORE_ENV_H */
