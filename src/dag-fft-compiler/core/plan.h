@@ -1,7 +1,7 @@
 /* plan.h — stride_plan_t / stride_stage_t for prototype-core 1D C2C.
  *
  * Phase 1 strategy: reuse the minimal `stride_plan_t` / `stride_stage_t`
- * defined in `src/prototype/generated/plan_executors.h`. That struct
+ * defined in `src/generator/generated/plan_executors.h`. That struct
  * already has the fields needed for T1S-variant execution and the
  * (B)+(A) tape walk: `group_base`, `needs_tw`, `cf0_re/im`,
  * `tw_scalar_re/im`, `tape`, plus codelet function pointer slots

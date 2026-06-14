@@ -15,7 +15,7 @@ param(
 )
 $here = $PSScriptRoot
 $root = Split-Path $here -Parent
-if (-not $Wisdom) { $Wisdom = "$root\prototype\generated\spike_wisdom.txt" }
+if (-not $Wisdom) { $Wisdom = "$root\generator\generated\spike_wisdom.txt" }
 if (-not $Csv)    { $Csv    = "$here\results.csv" }
 $exe = "$here\bench_jit_vs_mkl.exe"
 if (-not (Test-Path $exe)) { Write-Host "build first:  powershell -File MKLBench\build.ps1"; exit 1 }

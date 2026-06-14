@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File MKLBench\build.ps1
 powershell -ExecutionPolicy Bypass -File MKLBench\run.ps1
 ```
 `run.ps1` defaults to the calibrated wisdom
-(`../prototype/generated/spike_wisdom.txt`) and writes `results.csv`.
+(`../generator/generated/spike_wisdom.txt`) and writes `results.csv`.
 
 ## Gotchas (learned the hard way)
 1. **LP64, not ILP64.** Build WITHOUT `-DMKL_ILP64`. `mkl_rt`'s DFTI defaults to

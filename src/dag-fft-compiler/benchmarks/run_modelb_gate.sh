@@ -13,7 +13,7 @@ WORK="${TMPDIR:-/tmp}/mbgate"; mkdir -p "$WORK"
 "$GEN" 256 --r2c-term-ls --r2c-term-ls-r 8 --emit-c --isa avx512 2>/dev/null > "$WORK/mb.c"
 # the harness (bh.c) + rt codelet are session artifacts; gate runs if present
 if [ -f /tmp/rprof/bh.c ] && [ -f /tmp/rt_gate/rt256.c ]; then
-  $CC $CFLAGS -I "$REPO/core" -I "$REPO/generator/generated" -I "$REPO/prototype/generated" \
+  $CC $CFLAGS -I "$REPO/core" -I "$REPO/generator/generated" \
     /tmp/rprof/bh.c /tmp/rt_gate/rt256.c "$WORK/mb.c" /tmp/libcodelets.a "$FFTW" \
     -L/usr/local/lib -lmkl_rt -lm -o "$WORK/g" 2>/dev/null
   LD_LIBRARY_PATH=/usr/local/lib "$WORK/g" 2>&1 | grep -E 'MODEL-B'
