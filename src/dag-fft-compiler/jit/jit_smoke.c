@@ -17,7 +17,7 @@
 #include "../core/env.h"
 #include "../core/executor.h"
 #include "../core/planner.h"
-#include "../prototype/generated/registry.h"
+#include "../generator/generated/registry.h"
 #include "jit_runtime.h"
 
 #if defined(_WIN32)

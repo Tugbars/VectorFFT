@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #define VFFT_RFFT_MAX_RADIX 32
 #include "r2c_dispatch.h"
-#include "../prototype/generated/registry.h"
+#include "../generator/generated/registry.h"
 #define DECL(r) \
   void radix##r##_r2cf_avx512(const double*,double*,double*,ptrdiff_t,ptrdiff_t,ptrdiff_t,size_t); \
   void radix##r##_hc2hc_dit_fwd_avx512(const double*,const double*,double*,double*,const double*,const double*,ptrdiff_t,ptrdiff_t,size_t);

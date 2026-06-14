@@ -177,7 +177,7 @@ static int is_pow2(int n) { return n > 0 && (n & (n - 1)) == 0; }
 
 int main(int argc, char **argv) {
     const char *wpath = (argc >= 2) ? argv[1]
-        : "../prototype/generated/spike_wisdom.txt";
+        : "../generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2] : "jit_vs_mkl.csv";
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
 

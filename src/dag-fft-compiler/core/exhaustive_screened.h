@@ -59,7 +59,7 @@
 #include "exhaustive_plan.h"     /* enumeration, perm gen, bench_one */
 #include "estimate_plan.h"       /* _vfft_proto_v4_score, stride_detect_cpu */
 #include "dp_planner.h"          /* now_ns, pacing */
-#include "../prototype/generated/registry.h"
+#include "../generator/generated/registry.h"
 
 #include <stdio.h>
 #include <stdlib.h>
