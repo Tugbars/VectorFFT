@@ -13,16 +13,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <windows.h>
-#include "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/core/env.h"
-#include "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/core/executor.h"
-#include "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/core/planner.h"
-#include "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/prototype/generated/registry.h"
-#include "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/jit/jit_runtime.h"
+#include "../core/env.h"
+#include "../core/executor.h"
+#include "../core/planner.h"
+#include "../prototype/generated/registry.h"
+#include "jit_runtime.h"
 
-static double now_ns(void) {
-    LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
-    return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
+#if defined(_WIN32)
+  #include <windows.h>
+  static double now_ns(void) {
+      LARGE_INTEGER f, c; QueryPerformanceFrequency(&f); QueryPerformanceCounter(&c);
+      return (double)c.QuadPart * 1e9 / (double)f.QuadPart;
+  }
+#else
+  #include <time.h>
+  static double now_ns(void) {
+      struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+      return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+  }
+#endif
+static int cmpd(const void *a, const void *b) {
+    double x = *(const double *)a - *(const double *)b; return (x > 0) - (x < 0);
 }
 
 int main(int argc, char **argv) {
@@ -56,9 +67,9 @@ int main(int argc, char **argv) {
     if (!fn) { printf("  resolve returned NULL (toolchain?) — generic fallback\n"); }
 
     size_t n = (size_t)N * K;
-    double *src_re = _aligned_malloc(n*8,64), *src_im = _aligned_malloc(n*8,64);
-    double *re     = _aligned_malloc(n*8,64), *im     = _aligned_malloc(n*8,64);
-    double *ref_re = _aligned_malloc(n*8,64), *ref_im = _aligned_malloc(n*8,64);
+    double *src_re = stride_alloc(n*8), *src_im = stride_alloc(n*8);
+    double *re     = stride_alloc(n*8), *im     = stride_alloc(n*8);
+    double *ref_re = stride_alloc(n*8), *ref_im = stride_alloc(n*8);
     for (size_t i = 0; i < n; i++) { src_re[i] = sin(0.1*i); src_im[i] = cos(0.07*i); }
 
     /* reference: generic */
@@ -74,18 +85,28 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < n; i++) { double d = fabs(re[i]-ref_re[i]) + fabs(im[i]-ref_im[i]); if (d > md) md = d; }
     printf("  accuracy: max_abs_diff vs generic = %.3e  %s\n", md, md == 0.0 ? "(BIT-EXACT)" : "");
 
-    /* latency: best-of-N, untimed re-init */
-    int iters = 200;
-    double tg = 1e30, tj = 1e30;
-    for (int w = 0; w < 5; w++) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8); vfft_proto_execute_fwd_generic(plan,re,im,K); }
-    for (int it = 0; it < iters; it++) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8);
-        double a=now_ns(); vfft_proto_execute_fwd_generic(plan,re,im,K); double b=now_ns(); if (b-a<tg) tg=b-a; }
-    if (fn) {
-        for (int w = 0; w < 5; w++) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8); fn(plan,re,im,K,plan->K,0); }
-        for (int it = 0; it < iters; it++) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8);
-            double a=now_ns(); fn(plan,re,im,K,plan->K,0); double b=now_ns(); if (b-a<tj) tj=b-a; }
+    /* rigorous latency: INTERLEAVED samples; report min + MEDIAN. Median resists
+     * the turbo-spike luck that makes single best-of-N runs disagree run-to-run. */
+    int iters = 500;
+    double *gt = (double *)malloc(iters * sizeof(double));
+    double *st = (double *)malloc(iters * sizeof(double));
+    for (int w = 0; w < 8; w++) {
+        memcpy(re,src_re,n*8); memcpy(im,src_im,n*8); vfft_proto_execute_fwd_generic(plan,re,im,K);
+        if (fn) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8); fn(plan,re,im,K,plan->K,0); }
     }
-    printf("  latency (best of %d): generic %9.1f ns   resolved %9.1f ns   %.2fx\n",
-           iters, tg, fn ? tj : tg, fn ? tg / tj : 1.0);
+    for (int it = 0; it < iters; it++) {
+        memcpy(re,src_re,n*8); memcpy(im,src_im,n*8);
+        double a=now_ns(); vfft_proto_execute_fwd_generic(plan,re,im,K); double b=now_ns(); gt[it]=b-a;
+        if (fn) { memcpy(re,src_re,n*8); memcpy(im,src_im,n*8);
+            double c=now_ns(); fn(plan,re,im,K,plan->K,0); double d=now_ns(); st[it]=d-c; }
+        else st[it]=gt[it];
+    }
+    qsort(gt, iters, sizeof(double), cmpd); qsort(st, iters, sizeof(double), cmpd);
+    double gmin=gt[0], gmed=gt[iters/2], jmin=st[0], jmed=st[iters/2];
+    printf("  latency ns | generic min %8.1f med %8.1f | resolved min %8.1f med %8.1f\n",
+           gmin, gmed, jmin, jmed);
+    printf("  speedup generic/resolved: min %.3fx  MEDIAN %.3fx\n",
+           jmin>0?gmin/jmin:1.0, jmed>0?gmed/jmed:1.0);
+    free(gt); free(st);
     return 0;
 }
