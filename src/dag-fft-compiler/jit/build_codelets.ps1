@@ -4,14 +4,14 @@
 #
 #   powershell -ExecutionPolicy Bypass -File jit\build_codelets.ps1
 #
-# Outputs (gitignored):  generated/jit/codelets/*.o  +  generated/jit/codelets.rsp
+# Outputs (gitignored):  jit/generated/codelets/*.o  +  jit/generated/codelets.rsp
 param([string]$Gcc = "C:\mingw152\mingw64\bin\gcc.exe")
 $ErrorActionPreference = "Stop"
 $jit  = $PSScriptRoot
 $root = Split-Path $jit -Parent
 $src  = Join-Path $root "codelets\inplace\avx2"
-$out  = Join-Path $root "generated\jit\codelets"
-$rsp  = Join-Path $root "generated\jit\codelets.rsp"
+$out  = Join-Path $jit "generated\codelets"
+$rsp  = Join-Path $jit "generated\codelets.rsp"
 New-Item -ItemType Directory -Force $out | Out-Null
 
 $cf = @("-O3","-mavx2","-mfma","-march=haswell","-Wno-incompatible-pointer-types","-Wno-unused-result")

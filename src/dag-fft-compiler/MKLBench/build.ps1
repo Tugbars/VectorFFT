@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $root = Split-Path $here -Parent          # ...\dag-fft-compiler
-$rsp  = "@$root/generated/jit/codelets.rsp"   # in-repo codelet objects (build_codelets.ps1)
+$rsp  = "@$root/jit/generated/codelets.rsp"   # in-repo codelet objects (build_codelets.ps1)
 $cf = @("-O3","-mavx2","-mfma","-march=haswell","-D_GNU_SOURCE",
         "-Wno-incompatible-pointer-types","-Wno-unused-result")
 & $Gcc @cf "-I$Mkl\include" -c "$here\bench_jit_vs_mkl.c" -o "$here\bench_jit_vs_mkl.o"

@@ -68,7 +68,7 @@ The JIT (like the baked statics) is purely a *speed cache* layered over it.
 | `jit_prelude.h` | Shared include surface for the emitted `.c`. Just re-exports `../core/plan.h`, which pulls in `plan_executors.h`'s `stride_plan_t` + the `VFFT_PROTO_STAGE_*` macros + SIMD stubs. |
 | `jit_runtime.h` | **The resolver.** `vfft_proto_plan_jit_fwd(plan)` → `vfft_proto_exec_fn`. Hashes the plan, checks the registry + on-disk cache, shells out to `emit_jit.py` + `gcc` on a miss, `dlopen`s the result, registers + returns it. Header-only; platform `#ifdef`'d (Win `LoadLibrary`/`.dll`, POSIX `dlopen`/`.so`). |
 | `jit_smoke.c` | Smoke + regression harness: drives the resolver on cold/baked cells, checks **bit-exact accuracy vs generic**, times it, and proves the persistent cache. |
-| `../generated/jit/` | Persistent cache: `jit_<key>.c` + `jit_<key>.dll/.so`. Machine/toolchain-specific → **gitignored**. This is the "compiled wisdom" — a plan compiles **once, ever**. |
+| `../jit/generated/` | Persistent cache: `jit_<key>.c` + `jit_<key>.dll/.so`. Machine/toolchain-specific → **gitignored**. This is the "compiled wisdom" — a plan compiles **once, ever**. |
 
 ---
 
@@ -167,7 +167,7 @@ for (...) {
 | Macro | Windows / Linux default | Meaning |
 |-------|---------|---------|
 | `VFFT_PROTO_JIT_REPO` | `C:/…` / `/mnt/c/…` repo root | base path |
-| `VFFT_PROTO_JIT_DIR`  | `…/generated/jit` | persistent `.c`/lib cache |
+| `VFFT_PROTO_JIT_DIR`  | `…/jit/generated` | persistent `.c`/lib cache |
 | `VFFT_PROTO_JIT_INC`  | `…/jit` | `emit_jit.py` + `jit_prelude.h` dir (also `-I`) |
 | `VFFT_PROTO_JIT_GCC`  | `…/mingw152/…/gcc.exe` / `gcc` | compiler |
 | `VFFT_PROTO_JIT_PYTHON` | `python` / `python3` | emitter interpreter |
@@ -180,8 +180,8 @@ for (...) {
 ## 9. Build & run the smoke test (gcc 15.2, both OSes)
 
 **One-time:** build in-repo codelet objects (no `C:\tmp` dependency):
-- Windows: `powershell -ExecutionPolicy Bypass -File jit\build_codelets.ps1` → `generated/jit/codelets.rsp`
-- Linux:   `bash jit/build_codelets.sh` → `generated/jit/codelets_linux.rsp`
+- Windows: `powershell -ExecutionPolicy Bypass -File jit\build_codelets.ps1` → `jit/generated/codelets.rsp`
+- Linux:   `bash jit/build_codelets.sh` → `jit/generated/codelets_linux.rsp`
 
 **Windows:**
 ```sh
@@ -189,7 +189,7 @@ GCC=C:/mingw152/mingw64/bin/gcc.exe
 ROOT=C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler
 $GCC -O3 -mavx2 -mfma -march=haswell -Wno-incompatible-pointer-types -Wno-unused-result \
      -c $ROOT/jit/jit_smoke.c -o jit_smoke.o
-$GCC jit_smoke.o @$ROOT/generated/jit/codelets.rsp -o jit_smoke.exe -lm
+$GCC jit_smoke.o @$ROOT/jit/generated/codelets.rsp -o jit_smoke.exe -lm
 ./jit_smoke.exe "4,4,4,4,4,4,4,8"   # COLD 8-stage → emit+compile+load
 ./jit_smoke.exe "4,4,4,32,64"       # BAKED        → baked static
 ```
@@ -230,7 +230,7 @@ cache/registry/dispatch.
 ## 11. Known limitations / spike-isms
 
 - **Codelet objects** are built in-repo by `build_codelets.{ps1,sh}` (gitignored
-  `generated/jit/codelets*.rsp`). If absent, JIT compile fails → graceful generic
+  `jit/generated/codelets*.rsp`). If absent, JIT compile fails → graceful generic
   fallback (no crash); just re-run the build script. (No more `C:\tmp` dependency.)
 - **`jit_prelude.h` pulls all of `plan_executors.h`**, including the unused baked
   static executors (compiled then dead-stripped; `-Wno-unused-function`). A later
