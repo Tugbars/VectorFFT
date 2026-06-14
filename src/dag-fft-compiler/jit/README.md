@@ -162,32 +162,43 @@ for (...) {
 
 ---
 
-## 8. Configuration (`jit_runtime.h`, all `#ifndef`-overridable)
+## 8. Configuration (`jit_runtime.h`, `#if _WIN32`/`#else` defaults, all `#ifndef`-overridable)
 
-| Macro | Default | Meaning |
+| Macro | Windows / Linux default | Meaning |
 |-------|---------|---------|
-| `VFFT_PROTO_JIT_REPO` | repo root of `dag-fft-compiler` | base path |
+| `VFFT_PROTO_JIT_REPO` | `C:/…` / `/mnt/c/…` repo root | base path |
 | `VFFT_PROTO_JIT_DIR`  | `…/generated/jit` | persistent `.c`/lib cache |
 | `VFFT_PROTO_JIT_INC`  | `…/jit` | `emit_jit.py` + `jit_prelude.h` dir (also `-I`) |
-| `VFFT_PROTO_JIT_GCC`  | `C:\mingw152\mingw64\bin\gcc.exe` | compiler (backslashes for cmd.exe) |
-| `VFFT_PROTO_JIT_CODELETS` | `@C:/tmp/link.rsp` | gcc `@response-file` of codelet `.o` to link |
-| `VFFT_PROTO_JIT_VERSION` | `1` | bump to bust the on-disk cache |
+| `VFFT_PROTO_JIT_GCC`  | `…/mingw152/…/gcc.exe` / `gcc` | compiler |
+| `VFFT_PROTO_JIT_PYTHON` | `python` / `python3` | emitter interpreter |
+| `VFFT_PROTO_JIT_CFLAGS` | `… -shared` / `… -shared -fPIC` | compile flags |
+| `VFFT_PROTO_JIT_CODELETS` | `@…/codelets.rsp` / `@…/codelets_linux.rsp` | gcc `@response-file` of codelet `.o` |
+| `VFFT_PROTO_JIT_VERSION` | `2` | bump to bust the on-disk cache |
 
 ---
 
-## 9. Build & run the smoke test (native Windows, gcc 15.2)
+## 9. Build & run the smoke test (gcc 15.2, both OSes)
 
+**One-time:** build in-repo codelet objects (no `C:\tmp` dependency):
+- Windows: `powershell -ExecutionPolicy Bypass -File jit\build_codelets.ps1` → `generated/jit/codelets.rsp`
+- Linux:   `bash jit/build_codelets.sh` → `generated/jit/codelets_linux.rsp`
+
+**Windows:**
 ```sh
 GCC=C:/mingw152/mingw64/bin/gcc.exe
 ROOT=C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler
-$GCC -O3 -mavx2 -mfma -march=haswell -c $ROOT/jit/jit_smoke.c -o jit_smoke.o \
-     -Wno-incompatible-pointer-types -Wno-unused-result
-$GCC jit_smoke.o @C:/tmp/link.rsp -o jit_smoke.exe -lm
-./jit_smoke.exe "4,4,4,4,4,4,4,8"   # COLD 8-stage cell  → emit+compile+load
-./jit_smoke.exe "4,4,4,32,64"       # BAKED cell         → baked static
+$GCC -O3 -mavx2 -mfma -march=haswell -Wno-incompatible-pointer-types -Wno-unused-result \
+     -c $ROOT/jit/jit_smoke.c -o jit_smoke.o
+$GCC jit_smoke.o @$ROOT/generated/jit/codelets.rsp -o jit_smoke.exe -lm
+./jit_smoke.exe "4,4,4,4,4,4,4,8"   # COLD 8-stage → emit+compile+load
+./jit_smoke.exe "4,4,4,32,64"       # BAKED        → baked static
 ```
-Expected: `max_abs_diff vs generic = 0.000e+00` (bit-exact); cold 1st-run ~0.7 s,
-fresh-process cache hit ~0.3 ms.
+
+**Linux/WSL:** `bash jit/run_linux_smoke.sh` (links `codelets_linux.rsp`, `-lpthread -ldl`; the
+source needs `_GNU_SOURCE` for env.h's pthread pin — already defined in `jit_smoke.c`).
+
+Expected (both): `max_abs_diff vs generic = 0.000e+00` (bit-exact). Cold 1st-run
+~0.7 s (Windows) / ~3.4 s (WSL — slow `/mnt/c` compile); fresh-process cache hit ~0.3 ms.
 
 ---
 
@@ -205,7 +216,9 @@ Roadmap: `c2c_fwd` (done) → `c2c_bwd`, `c2c_dif` → `r2c`/`c2r` → `2d`/stri
 a **family tag**, and the registry can be **signature-tagged** so families with
 different executor ABIs coexist.
 
-**Linux:** same `emit_jit.py`; `jit_runtime.h` already `#ifdef`s `.so` + `dlopen`.
+**Linux:** PROVEN under WSL (gcc 15.2) — one cross-platform source: `emit_jit.py`
+via python3, `.so`/`dlopen`/`-fPIC`, ELF codelets from `build_codelets.sh`.
+Bit-exact, and Windows re-verified with no regression.
 
 **Future backend swap:** replace the `gcc -shared` step with an in-process codegen
 backend (asmjit / copy-and-patch / LLVM) behind the same resolver interface — that
@@ -216,14 +229,16 @@ cache/registry/dispatch.
 
 ## 11. Known limitations / spike-isms
 
-- **Codelet linkage** uses `@C:/tmp/link.rsp`. If `C:\tmp` is wiped the JIT compile
-  fails → graceful generic fallback (no crash), but no acceleration. **Harden** to
-  an in-repo codelet-object dir or a `codelets.dll`.
+- **Codelet objects** are built in-repo by `build_codelets.{ps1,sh}` (gitignored
+  `generated/jit/codelets*.rsp`). If absent, JIT compile fails → graceful generic
+  fallback (no crash); just re-run the build script. (No more `C:\tmp` dependency.)
 - **`jit_prelude.h` pulls all of `plan_executors.h`**, including the unused baked
   static executors (compiled then dead-stripped; `-Wno-unused-function`). A later
   cut can extract just `{struct, macros}` into a lean header — identical codegen.
-- **Latency magnitude** of the generic-vs-static gap still needs a *clean-machine*
-  measurement (early runs were contention-masked to ~3–10%).
+- **Static-vs-generic gap is small in the measured regime** (~3–4% median, clean
+  machine, large K=4 C2C — a memory-bound regime, per the project thesis). A
+  definitive number needs CPU clock lockdown; the likely *sweet spot* is
+  compute-bound (K=256), not yet measured.
 - **fwd / DIT only** so far (the spike scope). bwd/DIF/other families per §10.
 - **No eviction** in the in-process registry (fixed 256 slots) and no concurrency
   guard around the compile step — fine for single-threaded planning; revisit for
@@ -233,7 +248,10 @@ cache/registry/dispatch.
 
 ## 12. Status & provenance
 
-1D C2C **forward** JIT: spike proven and runtime landed 2026-06-14 (native Windows,
-gcc 15.2, i9-14900KF). Bit-exact vs generic and vs baked static; persistent cache
-verified. `execute_fwd` untouched (zero regression). See the project memory note
+1D C2C **forward** JIT: spike proven and runtime landed 2026-06-14 (gcc 15.2,
+i9-14900KF). Bit-exact vs generic and vs baked static; persistent cache verified;
+`execute_fwd` untouched (zero regression). **Cross-platform: Windows (.dll) and
+Linux/WSL (.so) both proven bit-exact from one source.** Codelet link hardened
+to in-repo objects. Clean-machine latency: static ~3–4% over generic in the
+measured large-K=4-C2C regime (modest; memory-bound). See the project memory note
 `jit_execution_path.md` for the running log.
