@@ -11,7 +11,7 @@
  *     once after planning; it returns the resolved executor. The caller holds
  *     that pointer and calls it directly in the hot loop -> ZERO exec overhead.
  *   - execute_fwd() is left UNTOUCHED -> zero regression for existing callers.
- *   - Persistent cache in generated/jit/: a plan compiles once, ever; subsequent
+ *   - Persistent cache in jit/generated/: a plan compiles once, ever; subsequent
  *     processes just dlopen the cached lib. Key = (N,K,factors,variants,isa,ver).
  *   - Robust: if the toolchain is missing or anything fails, returns NULL and the
  *     caller falls back to the generic executor. JIT is a speed cache, never a
@@ -56,7 +56,7 @@
   #define VFFT_PROTO_JIT_PYTHON "python"
   #endif
   #ifndef VFFT_PROTO_JIT_CODELETS  /* @response-file of codelet .o (PE/COFF) */
-  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/generated/jit/codelets.rsp"
+  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/jit/generated/codelets.rsp"
   #endif
   #ifndef VFFT_PROTO_JIT_CFLAGS
   #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared"
@@ -72,14 +72,14 @@
   #define VFFT_PROTO_JIT_PYTHON "python3"
   #endif
   #ifndef VFFT_PROTO_JIT_CODELETS  /* @response-file of codelet .o (ELF) */
-  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/generated/jit/codelets_linux.rsp"
+  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/jit/generated/codelets_linux.rsp"
   #endif
   #ifndef VFFT_PROTO_JIT_CFLAGS    /* -fPIC required for a Linux shared object */
   #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared -fPIC"
   #endif
 #endif
 #ifndef VFFT_PROTO_JIT_DIR          /* persistent .c/lib cache (same relative path) */
-#define VFFT_PROTO_JIT_DIR  VFFT_PROTO_JIT_REPO "/generated/jit"
+#define VFFT_PROTO_JIT_DIR  VFFT_PROTO_JIT_REPO "/jit/generated"
 #endif
 #ifndef VFFT_PROTO_JIT_INC          /* dir of emit_jit.py + jit_prelude.h (also -I) */
 #define VFFT_PROTO_JIT_INC  VFFT_PROTO_JIT_REPO "/jit"
