@@ -44,24 +44,48 @@
   #define VFFT_JIT_LIBEXT     "so"
 #endif
 
-/* ── Config (all overridable at compile time) ──────────────────────────── */
-#ifndef VFFT_PROTO_JIT_REPO
-#define VFFT_PROTO_JIT_REPO "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler"
+/* ── Config (platform defaults; all overridable at compile time) ───────── */
+#if defined(_WIN32)
+  #ifndef VFFT_PROTO_JIT_REPO
+  #define VFFT_PROTO_JIT_REPO "C:/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler"
+  #endif
+  #ifndef VFFT_PROTO_JIT_GCC       /* program path: backslashes for cmd.exe */
+  #define VFFT_PROTO_JIT_GCC  "C:\\mingw152\\mingw64\\bin\\gcc.exe"
+  #endif
+  #ifndef VFFT_PROTO_JIT_PYTHON
+  #define VFFT_PROTO_JIT_PYTHON "python"
+  #endif
+  #ifndef VFFT_PROTO_JIT_CODELETS  /* @response-file of codelet .o (PE/COFF) */
+  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/generated/jit/codelets.rsp"
+  #endif
+  #ifndef VFFT_PROTO_JIT_CFLAGS
+  #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared"
+  #endif
+#else
+  #ifndef VFFT_PROTO_JIT_REPO      /* WSL/Linux view of the repo */
+  #define VFFT_PROTO_JIT_REPO "/mnt/c/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler"
+  #endif
+  #ifndef VFFT_PROTO_JIT_GCC
+  #define VFFT_PROTO_JIT_GCC  "gcc"
+  #endif
+  #ifndef VFFT_PROTO_JIT_PYTHON
+  #define VFFT_PROTO_JIT_PYTHON "python3"
+  #endif
+  #ifndef VFFT_PROTO_JIT_CODELETS  /* @response-file of codelet .o (ELF) */
+  #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/generated/jit/codelets_linux.rsp"
+  #endif
+  #ifndef VFFT_PROTO_JIT_CFLAGS    /* -fPIC required for a Linux shared object */
+  #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared -fPIC"
+  #endif
 #endif
-#ifndef VFFT_PROTO_JIT_DIR          /* persistent .c/.lib cache */
+#ifndef VFFT_PROTO_JIT_DIR          /* persistent .c/lib cache (same relative path) */
 #define VFFT_PROTO_JIT_DIR  VFFT_PROTO_JIT_REPO "/generated/jit"
 #endif
 #ifndef VFFT_PROTO_JIT_INC          /* dir of emit_jit.py + jit_prelude.h (also -I) */
 #define VFFT_PROTO_JIT_INC  VFFT_PROTO_JIT_REPO "/jit"
 #endif
-#ifndef VFFT_PROTO_JIT_GCC          /* program path (backslashes on Win for cmd.exe) */
-#define VFFT_PROTO_JIT_GCC  "C:\\mingw152\\mingw64\\bin\\gcc.exe"
-#endif
-#ifndef VFFT_PROTO_JIT_CODELETS     /* gcc @response-file of codelet .o to link */
-#define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/generated/jit/codelets.rsp"
-#endif
 #ifndef VFFT_PROTO_JIT_VERSION      /* bump to invalidate the on-disk cache */
-#define VFFT_PROTO_JIT_VERSION 1
+#define VFFT_PROTO_JIT_VERSION 2
 #endif
 
 /* ── Variant recovery: derive the per-stage variant code from the wired plan
@@ -123,16 +147,17 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa, const ch
         vfft_proto_jit_csv(plan, facs, vars, sizeof facs);
         /* emit one .c (no shell redirect — --out writes the file directly) */
         snprintf(cmd, sizeof cmd,
-            "python %s/emit_jit.py --N %d --K %zu --factors %s --variants %s "
+            "%s %s/emit_jit.py --N %d --K %zu --factors %s --variants %s "
             "--isa %s --prelude jit_prelude.h --out %s",
-            VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars, isa, src);
+            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars, isa, src);
         if (system(cmd) != 0) return NULL;
         /* compile to a shared lib; -I so jit_prelude.h resolves */
         snprintf(cmd, sizeof cmd,
-            "%s -O3 -mavx2 -mfma -march=haswell -shared -I%s "
+            "%s %s -I%s "
             "-Wno-unused-function -Wno-incompatible-pointer-types -Wno-unused-result "
             "%s %s -o %s",
-            VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_INC, src, VFFT_PROTO_JIT_CODELETS, lib);
+            VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_CFLAGS, VFFT_PROTO_JIT_INC,
+            src, VFFT_PROTO_JIT_CODELETS, lib);
         if (system(cmd) != 0) return NULL;
     }
 
