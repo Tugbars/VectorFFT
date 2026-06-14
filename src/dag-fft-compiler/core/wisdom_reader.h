@@ -139,6 +139,45 @@ static inline int vfft_proto_wisdom_set(vfft_proto_wisdom_t *wis,
     return 1;
 }
 
+/* Calibrator / planner write primitive. Enforces the production invariant of
+ * EXACTLY ONE entry per (N,K): the cell's winner is the sole entry — multiple
+ * entries for one cell are not allowed. The `overwrite` flag decides what
+ * happens when (N,K) is already present:
+ *   overwrite == 0 : leave the existing cell untouched, return 0 (skip). Used by
+ *                    incremental sweeps that only fill in missing cells and must
+ *                    not clobber an already-calibrated result.
+ *   overwrite != 0 : drop EVERY existing (N,K) entry (collapsing any stale
+ *                    duplicates) and write `e` as the sole entry — "whatever won
+ *                    now is the only entry". Returns 2.
+ * When (N,K) is absent, `e` is appended in either mode (return 1). The collapse
+ * is what reconciles any pre-existing multi-entry cells back to one-per-cell on
+ * the first overwrite pass. */
+static inline int vfft_proto_wisdom_add(vfft_proto_wisdom_t *wis,
+                                        const vfft_proto_wisdom_entry_t *e,
+                                        int overwrite)
+{
+    size_t matches = 0;
+    for (size_t i = 0; i < wis->count; i++)
+        if (wis->entries[i].N == e->N && wis->entries[i].K == e->K) matches++;
+
+    if (matches > 0 && !overwrite) return 0;          /* keep existing cell */
+
+    if (matches > 0) {                                /* collapse all (N,K) */
+        size_t w = 0;
+        for (size_t i = 0; i < wis->count; i++)
+            if (!(wis->entries[i].N == e->N && wis->entries[i].K == e->K))
+                wis->entries[w++] = wis->entries[i];
+        wis->count = w;
+    }
+    if (wis->count >= wis->capacity) {
+        wis->capacity = wis->capacity ? wis->capacity * 2 : 64;
+        wis->entries = realloc(wis->entries,
+                               wis->capacity * sizeof(*wis->entries));
+    }
+    wis->entries[wis->count++] = *e;
+    return matches > 0 ? 2 : 1;
+}
+
 /* Write the table to path in the same v5 format vfft_proto_wisdom_load reads
  * (round-trips). Returns 0 on success, -1 on open failure. Ported from
  * production src/core/planner.h:stride_wisdom_save, adapted to this tree's
