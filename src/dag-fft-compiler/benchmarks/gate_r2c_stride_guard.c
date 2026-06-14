@@ -7,7 +7,7 @@
 #include "threads.h"
 #include "proto_stride_compat.h"
 #include "r2c.h"
-#include "../prototype/generated/registry.h"
+#include "../generator/generated/registry.h"
 
 static void test(int halfN, const int* f, int nf, vfft_proto_registry_t* reg, const char* label){
   stride_plan_t* inner = vfft_proto_plan_create_ex(halfN, 8, f, NULL, nf, 0, reg);

@@ -25,7 +25,7 @@
  * from plan_executors.h ourselves yet. The IWYU pragma below tells
  * include-what-you-use tooling that the consumers of plan.h are
  * intended to inherit these symbols. */
-#include "../prototype/generated/plan_executors.h"  // IWYU pragma: export
+#include "../generator/generated/plan_executors.h"  // IWYU pragma: export
 
 /* Portable aligned-alloc wrapper. POSIX has posix_memalign; MSVC's
  * libc (used by ICX/clang-cl on Windows) has _aligned_malloc. Match
