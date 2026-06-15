@@ -1,17 +1,85 @@
-(* regalloc.ml — SSA-based register allocator (M1: types + stub).
+(* regalloc.ml — SSA register allocator + scheduling fence (the "M-project").
+ *                DORMANT / opt-in on modern x86; see §5 for when to revive it.
+ *
+ * === STATUS ===
+ *   OFF BY DEFAULT since 2026-06-09 (emit_c.ml:1240). Opt-in only:
+ *     VFFT_PIN_FORCE=1   -> M-on   (register pins + scheduling fence)
+ *     VFFT_FORCE_FENCE=1 -> M-fence (scheduling fence only)
+ *   With neither, every tag is Default and output is byte-identical to a build
+ *   without regalloc. The machinery is KEPT, not deleted (see §5).
+ *
+ * === 1. THE PROBLEM WE SAW ===
+ *   On extreme-pressure straight-line SIMD codelets (peak-live ~50 vectors vs
+ *   16 YMM / 32 ZMM), gcc must spill — and it overrode the generator's work in
+ *   ways measured to be worse:
+ *     - it RE-SCHEDULED away from our Sethi-Ullman + Goodman-Hsu order (computed
+ *       to minimize peak register pressure); its own ordering needed more live
+ *       registers;
+ *     - under the resulting pressure it spilled values about to be used instead
+ *       of dead-far-out ones, and duplicated loads at each use site instead of
+ *       reloading once and keeping the value live.
+ *   Net: extra spills + reg-reg moves, more memory traffic, worse ILP than the
+ *   intrinsic schedule allowed. (M_PROJECT.md S1, M_REFERENCES.md S4)
+ *
+ * === 2. THE FIX THIS MODULE APPLIES ===
+ *   Take the decision away from gcc. Emit each value as
+ *     register <vec> tN asm("regN") = ...;  asm volatile("" : "+v"(tN));
+ *   and run our OWN allocator here: linear-scan (M3a) + Belady offline spilling
+ *   to a per-pass scratch arena (M5) + reload-lifetime extension (M6). gcc is
+ *   reduced to a peephole optimizer + assembler driver. Two SEPARABLE clauses:
+ *     - asm("regN")              = the PIN  (forces the physical register)
+ *     - asm volatile("":"+v"(t)) = the FENCE (scheduling barrier: gcc may not
+ *                                  reorder / rematerialize / re-fuse across it)
+ *
+ * === 3. M-on vs M-fence -- and why M-fence was usually enough ===
+ *   M-fence keeps only the FENCE (gcc still picks registers); M-on adds the PIN.
+ *   Both gave real wins pre-fusion (+4%..+23%, 5-trial; M_PROJECT.md S4), but
+ *   M-fence captured essentially all of it (R64 t1 AVX-512: -20% fence-only vs
+ *   -19% pin+fence, within noise; fence_pin_decomposition.md). M-on RARELY beat
+ *   fence-only (a narrow band, log3 AVX-512 R<=32) and MOSTLY harmed.
+ *   THEORY for why the fence alone sufficed: the generator's load-bearing
+ *   contribution is the SCHEDULE -- SU+GH ordering keeps peak live pressure low.
+ *   gcc's weakness was the scheduling/eviction TIMING, not the coloring: given a
+ *   low-pressure ordering, coloring a straight-line block (+ coalescing copies,
+ *   choosing move-free FMA forms) is easy and gcc does it well. So locking the
+ *   SCHEDULE (fence) fixed the actual defect and let gcc color freely. Locking
+ *   the COLORING too (pin) removed gcc's coalescing freedom -> it could no longer
+ *   merge copies or pick move-free encodings -> extra reg-reg moves -> usually a
+ *   net cost, a win only where gcc's coloring genuinely misfired.
+ *
+ * === 4. WHY IT IS NOW UNNECESSARY *AND* HARMFUL ===
+ *   The generator now IR-LIFTS / FUSES all FMAs. That removed the S1 problem:
+ *   gcc has no mul+add left to fuse, so the fusion-driven re-scheduling / RA churn
+ *   no longer happens; the flatter explicit-FMA code schedules + colors well by
+ *   default; and the residual operand-form reg-reg vmovapd are MOVE-ELIMINATED in
+ *   rename (0 port cost, register-count-invariant; verified 2026-06-15 Golden
+ *   Cove, docs/vtune-profiles/vtune_r32_t1_avx2_L1.md). The Belady/load-dup
+ *   premise no longer holds either: per-variable reloads top out at 2-3, not the
+ *   18-20 once believed (m_project_costs.md).
+ *   And it now ACTIVELY HARMS: once gcc's transformations are beneficial, the
+ *   fence -- a blunt barrier -- blocks them. It fragments live ranges and DEFEATS
+ *   operand folding (t1s: the fence un-folds an embedded {1to8} broadcast into a
+ *   named register, +9%); the pin fights gcc's coalescing. The SAME barrier flips
+ *   sign: net-positive when gcc's choices were wrong (pre-fusion), net-negative
+ *   when gcc's choices are right (post-fusion). Net-negative or tie in every cell,
+ *   t1/t1s/log3/n1 x avx2/avx512 x R=4..128, gcc-13 (emit_c.ml:1240-49).
+ *
+ * === 5. WHEN TO REVIVE IT (why it is kept, not deleted) ===
+ *   Fusing all FMAs is NOT universally optimal -- it has its own cost on older /
+ *   different microarchitectures: fewer/weaker FMA ports (work concentrates on
+ *   ports 0/1 with no FP-add port relief), longer FMA latency serializing the
+ *   critical path, NO reg-reg move-elimination (so the operand-form moves
+ *   actually cost cycles), narrower OOO windows that can't hide load-use latency.
+ *   Where fuse-all regresses, the S1 gcc pathologies re-appear and the moves stop
+ *   being free -- and M may again be net-positive: try M-FENCE first, M-ON only if
+ *   it beats fence-only on that target. This is a per-uarch call: RE-MEASURE on
+ *   the deployment CPU before enabling; never default it on.
  *
  * === ROLE IN THE PIPELINE ===
- *
- * Sits between Schedule (which produces an ordered list of Algsimp.t)
- * and Emit_c's declaration emission. Maps each tag to either a
- * concrete physical register name OR Default (fall through to the
- * existing emit_c behavior, where gcc picks the register).
- *
- * The eventual goal: emit `register __m512d tN asm("zmm5") = ...;`
- * for every tag, bypassing gcc's register allocator entirely. That
- * gives compiler-agnostic output — gcc-11, gcc-13, and clang all see
- * the same register assignment instead of each running their own RA
- * pass and producing different code.
+ *   Sits between Schedule (an ordered list of Algsimp.t) and Emit_c's
+ *   declaration emission. Maps each tag to either a concrete physical register
+ *   name OR Default (fall through to emit_c's gcc-picks-the-register behavior --
+ *   the default whenever M is off).
  *
  * === STAGING ===
  *
