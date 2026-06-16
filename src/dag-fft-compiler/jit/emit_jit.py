@@ -26,19 +26,18 @@ DIF_CODELET_INFIX = {0: "t1_dif", 1: "t1_dif_log3"}   # DIF: FLAT/LOG3 only (no 
 
 def codelet_names(factors, variants, orient, direction, isa):
     """Unique codelet symbols the executor calls — emitted as self-contained
-    externs so a COLD plan (not in plan_executors.h's baked extern set) compiles.
-    DIT: OUTER (n1) at stage 0, twiddled stages 1..n-1.
-    DIF: twiddled stages 0..n-2, OUTER (n1) at the last stage (matches emit_body)."""
+    externs so a COLD plan (radixes absent from plan_executors.h's baked extern
+    set) compiles. EVERY stage references its n1 codelet (the STAGE macros call
+    radix{R}_n1 for needs_tw=0 groups), PLUS the per-stage twiddle codelet:
+    DIT twiddles stages 1..n-1; DIF twiddles stages 0..n-2 (OUTER = last)."""
     nf = len(factors)
+    names = [f"radix{factors[s]}_n1_{direction}_{isa}" for s in range(nf)]   # n1 every stage
     if orient == "dit":
-        names = [f"radix{factors[0]}_n1_{direction}_{isa}"]            # OUTER (stage 0)
         for s in range(1, nf):
             names.append(f"radix{factors[s]}_{DIT_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
     else:  # dif
-        names = []
-        for s in range(0, nf - 1):
+        for s in range(nf - 1):
             names.append(f"radix{factors[s]}_{DIF_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
-        names.append(f"radix{factors[nf - 1]}_n1_{direction}_{isa}")  # OUTER (last)
     seen, uniq = set(), []
     for n in names:
         if n not in seen:
