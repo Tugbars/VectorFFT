@@ -17,6 +17,7 @@ usage:
   python build_tuned/calibrate.py --cells 8,64,128,256  # specific cells
   python build_tuned/calibrate.py --all                 # full 18-cell K=4 grid
   python build_tuned/calibrate.py --odds                # odd/prime-power K=4 grid (25 cells)
+  python build_tuned/calibrate.py --evens               # even mixed-composite K=4 grid (24 cells)
   python build_tuned/calibrate.py --skip-build --wisdom C:/tmp/test_wisdom.txt
 """
 from __future__ import annotations
@@ -44,6 +45,13 @@ GRID_K4 = [8, 16, 32, 64, 126, 128, 250, 256, 400, 512,
 ODDS_K4 = [95, 119, 169, 175, 243, 361, 525, 625, 1225, 1331,
            2197, 2205, 2401, 3125, 6615, 11025, 14641, 15625, 16807,
            28561, 78125, 117649, 161051, 390625, 823543]
+# K=4 even mixed-composite grid — the rest of production's K=4 cells: round-decimal
+# 2^a*5^b sizes (60..100000), prime*pow2 (220/340/544/640), and primorial-ish 11/13
+# chains (2310/4620/.../60060). Exercises the even composite radixes 6/10/12/20.
+# Calibrating these completes K=4 to full 67-cell production parity. Smallest-first.
+EVENS_K4 = [60, 100, 200, 220, 340, 500, 544, 640, 1000, 1008, 2000, 2310,
+            2800, 4000, 4620, 5000, 6930, 10000, 13860, 20000, 30030, 50000,
+            60060, 100000]
 # "run a few first" default: a fast, varied spread (single-codelet, 2-stage, 3-stage).
 DEFAULT_FEW = [8, 64, 128, 256, 512, 1024]
 
@@ -94,6 +102,7 @@ def main():
     ap.add_argument('--cells', help='comma list of N (K=4 grid)')
     ap.add_argument('--all', action='store_true', help='full 18-cell grid')
     ap.add_argument('--odds', action='store_true', help='odd/prime-power K=4 grid (25 cells)')
+    ap.add_argument('--evens', action='store_true', help='even mixed-composite K=4 grid (24 cells)')
     ap.add_argument('--K', type=int, default=4)
     ap.add_argument('--core', type=int, default=2)
     ap.add_argument('--cooldown', type=float, default=15.0, help='idle seconds between cells')
@@ -107,6 +116,8 @@ def main():
         cells = GRID_K4
     elif args.odds:
         cells = ODDS_K4
+    elif args.evens:
+        cells = EVENS_K4
     else:
         cells = DEFAULT_FEW
 
