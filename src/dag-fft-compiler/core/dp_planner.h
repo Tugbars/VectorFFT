@@ -182,7 +182,21 @@ static inline void vfft_proto_gen_permutations(
  * overhead at K=3. Cache memory: VFFT_PROTO_DP_CACHE_MAX * VFFT_PROTO_DP_TOPK_MAX * sizeof(plan)
  * = ~120KB at K=3, bounded. */
 #ifndef VFFT_PROTO_DP_TOPK_MAX
-#define VFFT_PROTO_DP_TOPK_MAX 3
+#define VFFT_PROTO_DP_TOPK_MAX 8   /* storage cap per (N,K_eff) row (was 3) */
+#endif
+/* Runtime beam (ctx->beam) selects how many of the TOPK_MAX slots are actually
+ * kept + propagated per node — the search BREADTH. Paired with
+ * believe_subplan_cost: MEASURE = narrow beam + trust cached pcost (fast, K=4);
+ * PATIENT = wide beam + re-measure-all-top-K on every cache hit (FFTW-PATIENT,
+ * the K>=8 path). vfft_proto_dp_set_patient() flips both. */
+#ifndef VFFT_PROTO_DP_BEAM_MEASURE
+#define VFFT_PROTO_DP_BEAM_MEASURE 3   /* original behavior */
+#endif
+#ifndef VFFT_PROTO_DP_BEAM_PATIENT
+#define VFFT_PROTO_DP_BEAM_PATIENT 8   /* <= VFFT_PROTO_DP_TOPK_MAX */
+#endif
+#ifndef VFFT_PROTO_DP_PATIENT_REMEASURE_RUNS
+#define VFFT_PROTO_DP_PATIENT_REMEASURE_RUNS 2 /* best-of-M re-measure of each top-K plan on PATIENT cache hit */
 #endif
 
 typedef struct
@@ -213,8 +227,12 @@ typedef struct
 
     /* Compositional-trust toggle (set by user before vfft_proto_dp_plan).
      * 1 = trust cached pcost (default, MEASURE).
-     * 0 = re-measure on cache hit (PATIENT). */
+     * 0 = re-measure ALL top-K on cache hit (PATIENT). */
     int believe_subplan_cost;
+
+    /* Search breadth: sub-plans kept/propagated per node (1..VFFT_PROTO_DP_TOPK_MAX).
+     * dp_init defaults to BEAM_MEASURE; set with vfft_proto_dp_set_patient(). */
+    int beam;
 
     /* Statistics */
     int n_benchmarks;
@@ -228,6 +246,7 @@ static void vfft_proto_dp_init(vfft_proto_dp_context_t *ctx, size_t K, int max_N
     ctx->max_N = max_N;
     ctx->buf_total = (size_t)max_N * K;
     ctx->believe_subplan_cost = 1; /* default: MEASURE semantics */
+    ctx->beam = VFFT_PROTO_DP_BEAM_MEASURE;
 
     ctx->re = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
     ctx->im = (double *)_vfft_proto_dp_aligned_alloc(64, ctx->buf_total * sizeof(double));
@@ -249,6 +268,19 @@ static void vfft_proto_dp_destroy(vfft_proto_dp_context_t *ctx)
     vfft_proto_aligned_free(ctx->orig_re);
     vfft_proto_aligned_free(ctx->orig_im);
     memset(ctx, 0, sizeof(*ctx));
+}
+
+/* Flip to FFTW-PATIENT width: wide beam + re-measure-all-top-K on cache hit.
+ * MEASURE (the default) stays narrow/fast for K=4; call this for the K>=8 path. */
+static inline void vfft_proto_dp_set_patient(vfft_proto_dp_context_t *ctx)
+{
+    ctx->believe_subplan_cost = 0;
+    ctx->beam = VFFT_PROTO_DP_BEAM_PATIENT;
+}
+static inline void vfft_proto_dp_set_measure(vfft_proto_dp_context_t *ctx)
+{
+    ctx->believe_subplan_cost = 1;
+    ctx->beam = VFFT_PROTO_DP_BEAM_MEASURE;
 }
 
 /* Cache lookup — keyed by (N, K_eff). */
@@ -488,22 +520,39 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
     if (max_out <= 0)
         return 0;
 
+    /* Search breadth for this call (clamped to storage cap). */
+    int beam = (ctx->beam > 0) ? ctx->beam : VFFT_PROTO_DP_BEAM_MEASURE;
+    if (beam > VFFT_PROTO_DP_TOPK_MAX)
+        beam = VFFT_PROTO_DP_TOPK_MAX;
+
     /* Cache check (keyed by N + K_eff). */
     vfft_proto_dp_entry_t *cached = _vfft_proto_dp_lookup(ctx, N, K_eff);
     if (cached)
     {
         ctx->n_cache_hits++;
+        if (!ctx->believe_subplan_cost && cached->n_plans > 0)
+        {
+            /* PATIENT: re-measure EVERY cached plan (best-of-M) and re-sort the
+             * row, so a noise-mis-ranked runner-up can climb back. MEASURE keeps
+             * the cached costs untouched (believe the pcost). */
+            for (int i = 0; i < cached->n_plans; i++)
+            {
+                double fresh = 1e30;
+                for (int run = 0; run < VFFT_PROTO_DP_PATIENT_REMEASURE_RUNS; run++)
+                {
+                    double r = _vfft_proto_dp_bench(ctx, N, cached->plans[i].factors,
+                                         cached->plans[i].nfactors, K_eff, reg);
+                    if (r < fresh)
+                        fresh = r;
+                }
+                cached->plans[i].cost_ns = fresh;
+            }
+            qsort(cached->plans, cached->n_plans, sizeof(cached->plans[0]),
+                  _vfft_proto_dp_subplan_cmp);
+        }
         int n = cached->n_plans < max_out ? cached->n_plans : max_out;
         for (int i = 0; i < n; i++)
             out[i] = cached->plans[i];
-        if (!ctx->believe_subplan_cost && n > 0)
-        {
-            /* PATIENT: re-bench top-1 with the cached factorization. */
-            double fresh = _vfft_proto_dp_bench(ctx, N, cached->plans[0].factors,
-                                     cached->plans[0].nfactors, K_eff, reg);
-            cached->plans[0].cost_ns = fresh;
-            out[0].cost_ns = fresh;
-        }
         return n;
     }
 
@@ -511,7 +560,7 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
      * Sized for |VFFT_PROTO_DP_RADIXES| * VFFT_PROTO_DP_TOPK_MAX + slack. */
     enum
     {
-        _DP_ACCUM_MAX = 64
+        _DP_ACCUM_MAX = 256  /* |R| (~14) * beam (<=8) + base + slack */
     };
     vfft_proto_dp_subplan_t accum[_DP_ACCUM_MAX];
     int n_accum = 0;
@@ -570,7 +619,7 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
          * at batch K_eff * R. */
         size_t K_eff_sub = K_eff * (size_t)R;
         vfft_proto_dp_subplan_t sub[VFFT_PROTO_DP_TOPK_MAX];
-        int n_sub = _vfft_proto_dp_solve_topk(ctx, M, K_eff_sub, reg, sub, VFFT_PROTO_DP_TOPK_MAX);
+        int n_sub = _vfft_proto_dp_solve_topk(ctx, M, K_eff_sub, reg, sub, beam);
 
         for (int s = 0; s < n_sub && n_accum < _DP_ACCUM_MAX; s++)
         {
@@ -600,8 +649,8 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
     if (n_accum > 1)
         qsort(accum, n_accum, sizeof(vfft_proto_dp_subplan_t), _vfft_proto_dp_subplan_cmp);
 
-    /* Cache top VFFT_PROTO_DP_TOPK_MAX. */
-    int n_keep = n_accum < VFFT_PROTO_DP_TOPK_MAX ? n_accum : VFFT_PROTO_DP_TOPK_MAX;
+    /* Cache top `beam` (<= VFFT_PROTO_DP_TOPK_MAX). */
+    int n_keep = n_accum < beam ? n_accum : beam;
     vfft_proto_dp_entry_t *e = _vfft_proto_dp_insert(ctx, N, K_eff);
     if (e)
     {
@@ -650,13 +699,16 @@ static double vfft_proto_dp_plan(vfft_proto_dp_context_t *ctx, int N,
                              vfft_proto_factorization_t *best_fact,
                              int verbose)
 {
-    /* Phase 1: recursive DP to find best radix set.
-     * Top-level call uses K_eff = ctx->K (i.e., the user-requested batch). */
-    int dp_factors[STRIDE_MAX_STAGES];
-    int dp_nf = 0;
-    double dp_ns = _vfft_proto_dp_solve(ctx, N, ctx->K, reg, dp_factors, &dp_nf);
+    int beam = (ctx->beam > 0) ? ctx->beam : VFFT_PROTO_DP_BEAM_MEASURE;
+    if (beam > VFFT_PROTO_DP_TOPK_MAX)
+        beam = VFFT_PROTO_DP_TOPK_MAX;
 
-    if (dp_nf == 0 || dp_ns >= 1e17)
+    /* Phase 1: recursive DP -> top-`beam` candidate multisets for (N, ctx->K).
+     * MEASURE (beam=3) narrows this; PATIENT (beam=8) widens it. */
+    vfft_proto_dp_subplan_t tops[VFFT_PROTO_DP_TOPK_MAX];
+    int n_tops = _vfft_proto_dp_solve_topk(ctx, N, ctx->K, reg, tops, beam);
+
+    if (n_tops == 0 || tops[0].cost_ns >= 1e17)
     {
         if (verbose)
             printf("  N=%d: DP failed to find a plan\n", N);
@@ -665,54 +717,70 @@ static double vfft_proto_dp_plan(vfft_proto_dp_context_t *ctx, int N,
 
     if (verbose)
     {
-        printf("  N=%d K=%zu: DP found ", N, ctx->K);
-        for (int s = 0; s < dp_nf; s++)
-            printf("%s%d", s ? "x" : "", dp_factors[s]);
-        printf(" = %.1f ns (%d benchmarks, %d cache hits)\n",
-               dp_ns, ctx->n_benchmarks, ctx->n_cache_hits);
+        printf("  N=%d K=%zu: DP top-%d (%d benches, %d hits); rank-1 ",
+               N, ctx->K, n_tops, ctx->n_benchmarks, ctx->n_cache_hits);
+        for (int s = 0; s < tops[0].nfactors; s++)
+            printf("%s%d", s ? "x" : "", tops[0].factors[s]);
+        printf(" = %.1f ns\n", tops[0].cost_ns);
     }
 
-    /* Phase 2: try all orderings of the winning set.
-     * The DP always puts the chosen radix first, which may not be optimal
-     * (e.g., large radix last for sequential stride access). */
+    /* Phase 2: permute every UNIQUE retained multiset and bench all orderings.
+     * The recursion only emits radix-first orderings; this recovers the rest.
+     * The D lever: MEASURE permutes its few survivors, PATIENT permutes all
+     * `beam` of them so a runner-up multiset can still win when reordered.
+     * Dedup by sorted multiset so the same set isn't permuted twice. */
+    double global_best = 1e18;
+    best_fact->nfactors = tops[0].nfactors;
+    memcpy(best_fact->factors, tops[0].factors, tops[0].nfactors * sizeof(int));
+
+    int seen_sorted[VFFT_PROTO_DP_TOPK_MAX][STRIDE_MAX_STAGES];
+    int seen_nf[VFFT_PROTO_DP_TOPK_MAX];
+    int n_seen = 0;
+
     vfft_proto_perm_list_t *plist = (vfft_proto_perm_list_t *)malloc(sizeof(*plist));
-    vfft_proto_gen_permutations(dp_factors, dp_nf, plist);
-
-    double global_best = dp_ns;
-    best_fact->nfactors = dp_nf;
-    memcpy(best_fact->factors, dp_factors, dp_nf * sizeof(int));
-
-    for (int pi = 0; pi < plist->count; pi++)
+    for (int t = 0; t < n_tops; t++)
     {
-        /* Skip the ordering we already benchmarked in DP */
-        int same = 1;
-        for (int s = 0; s < dp_nf; s++)
-            if (plist->perms[pi][s] != dp_factors[s])
-            {
-                same = 0;
-                break;
-            }
-        if (same)
+        if (tops[t].cost_ns >= 1e17)
             continue;
 
-        double ns = _vfft_proto_dp_bench(ctx, N, plist->perms[pi], dp_nf, ctx->K, reg);
-        if (ns < global_best)
+        int sorted[STRIDE_MAX_STAGES];
+        memcpy(sorted, tops[t].factors, tops[t].nfactors * sizeof(int));
+        _vfft_proto_sort_asc(sorted, tops[t].nfactors);
+        int dup = 0;
+        for (int d = 0; d < n_seen && !dup; d++)
+            if (seen_nf[d] == tops[t].nfactors &&
+                memcmp(seen_sorted[d], sorted, tops[t].nfactors * sizeof(int)) == 0)
+                dup = 1;
+        if (dup)
+            continue;
+        memcpy(seen_sorted[n_seen], sorted, tops[t].nfactors * sizeof(int));
+        seen_nf[n_seen] = tops[t].nfactors;
+        n_seen++;
+
+        vfft_proto_gen_permutations(tops[t].factors, tops[t].nfactors, plist);
+        for (int pi = 0; pi < plist->count; pi++)
         {
-            global_best = ns;
-            memcpy(best_fact->factors, plist->perms[pi], dp_nf * sizeof(int));
+            double ns = _vfft_proto_dp_bench(ctx, N, plist->perms[pi],
+                                             tops[t].nfactors, ctx->K, reg);
+            if (ns < global_best)
+            {
+                global_best = ns;
+                best_fact->nfactors = tops[t].nfactors;
+                memcpy(best_fact->factors, plist->perms[pi],
+                       tops[t].nfactors * sizeof(int));
+            }
         }
     }
+    free(plist);
 
-    if (verbose && global_best < dp_ns)
+    if (verbose)
     {
-        printf("  N=%d: reordering improved to ", N);
+        printf("  N=%d: best ordering ", N);
         for (int s = 0; s < best_fact->nfactors; s++)
             printf("%s%d", s ? "x" : "", best_fact->factors[s]);
-        printf(" = %.1f ns\n", global_best);
+        printf(" = %.1f ns  (across %d multiset(s))\n", global_best, n_seen);
     }
 
-    free(plist);
-    ctx->n_benchmarks += plist ? 0 : 0; /* already counted in _vfft_proto_dp_bench */
     return global_best;
 }
 
