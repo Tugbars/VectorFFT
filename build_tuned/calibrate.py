@@ -16,6 +16,7 @@ usage:
   python build_tuned/calibrate.py                       # default small subset, K=4
   python build_tuned/calibrate.py --cells 8,64,128,256  # specific cells
   python build_tuned/calibrate.py --all                 # full 18-cell K=4 grid
+  python build_tuned/calibrate.py --odds                # odd/prime-power K=4 grid (25 cells)
   python build_tuned/calibrate.py --skip-build --wisdom C:/tmp/test_wisdom.txt
 """
 from __future__ import annotations
@@ -34,6 +35,15 @@ ULTIMATE_GUID = '9addb3a6-5b21-4f19-9686-4f5825f2ff53'
 # K=4 grid, smallest-first.
 GRID_K4 = [8, 16, 32, 64, 126, 128, 250, 256, 400, 512,
            1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072]
+# K=4 odd / prime-power grid (the coverage gap vs production vfft_wisdom_tuned.txt:
+# dag has calibrated NONE of these - its only non-pow2 cells are even 126/250/400).
+# Exercises odd radixes 3/5/7/11/13/17/19/25 (all present in the avx2 registry with
+# FLAT/LOG3/T1S variants). Smallest-first; non-pow2 => full-exhaustive coarse, so the
+# >100k cells (161051/390625/823543) are the slow tail and run last. No cell needs
+# radix 9 or 23.
+ODDS_K4 = [95, 119, 169, 175, 243, 361, 525, 625, 1225, 1331,
+           2197, 2205, 2401, 3125, 6615, 11025, 14641, 15625, 16807,
+           28561, 78125, 117649, 161051, 390625, 823543]
 # "run a few first" default: a fast, varied spread (single-codelet, 2-stage, 3-stage).
 DEFAULT_FEW = [8, 64, 128, 256, 512, 1024]
 
@@ -83,6 +93,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--cells', help='comma list of N (K=4 grid)')
     ap.add_argument('--all', action='store_true', help='full 18-cell grid')
+    ap.add_argument('--odds', action='store_true', help='odd/prime-power K=4 grid (25 cells)')
     ap.add_argument('--K', type=int, default=4)
     ap.add_argument('--core', type=int, default=2)
     ap.add_argument('--cooldown', type=float, default=15.0, help='idle seconds between cells')
@@ -94,6 +105,8 @@ def main():
         cells = [int(x) for x in args.cells.split(',')]
     elif args.all:
         cells = GRID_K4
+    elif args.odds:
+        cells = ODDS_K4
     else:
         cells = DEFAULT_FEW
 
