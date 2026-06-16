@@ -1,509 +1,287 @@
-/**
- * bench_1d_vs_mkl.c — VectorFFT (new core, MEASURE wisdom) vs MKL.
+/* bench_1d_vs_mkl.c — dag-fft-compiler (JIT static executors) vs Intel MKL, 1D C2C fwd.
  *
- * Companion to calibrate_tuned: the calibrator produces
- *   build_tuned/vfft_wisdom_tuned.txt  (v5, with explicit variant codes)
- * and this binary loads that wisdom, builds plans through the new core's
- * stride_wise_plan (which dispatches v5 entries via
- * _stride_build_plan_explicit), and benches each plan against MKL on
- * the same (N, K) grid bench_1d_csv.c uses.
+ * RE-POINTED to the dag tree + JIT-compliant (2026-06-16). For each CALIBRATED
+ * K=4 wisdom cell (the ones we worked on): build the plan from its
+ * factors+variants+orientation, resolve it through vfft_proto_plan_jit_fwd()
+ * — baked static executor if present, else JIT-compiled (gcc -shared, cached)
+ * — gate on roundtrip accuracy, then time it head-to-head vs MKL.
  *
- * Phase 1 (calibration) is intentionally absent — that's calibrate.py's
- * job. This binary refuses to bench cells with no wisdom entry; run
- * calibrate.py first to populate the grid you want to measure.
+ * JIT compile happens at RESOLVE time (plan phase, before the timing loop), so
+ * the timed path is a pure direct call — ZERO JIT overhead in the measurement.
+ * Cells whose plan fails to resolve fall back to the generic executor (flagged).
  *
- * Usage:
- *   bench_1d_vs_mkl                    # default paths
- *   bench_1d_vs_mkl <wisdom_path> <perf_csv> <acc_csv>
+ * Ideas ported from the production bench: wisdom-driven cell selection (only
+ * cells with an entry are benched), the fwd->bwd roundtrip gate, format_plan
+ * (incl. [override]), GFLOPS. From MKLBench: cachebust between engines, pacing,
+ * and the ISOLATED-RUN methodology — a single sequential run has cross-cell
+ * cache/thermal carryover cachebust() can't clear, so run EACH CELL ISOLATED
+ * (fresh process; run.ps1 does this) and trust only isolated numbers.
  *
- * Outputs:
- *   vfft_perf_tuned_1d.csv  — performance (vfft_ns, mkl_ns, ratio)
- *   vfft_acc_tuned_1d.csv   — roundtrip error
+ * Build: build_tuned/build.py --mkl (dag core + cached codelet lib + mkl_rt LP64).
+ *   NOTE: LP64 (mkl_rt), NOT ILP64 — ILP64 corrupts the DFTI strides array
+ *   ("Inconsistent configuration parameters" at DftiCommit).
  *
- * Build:
- *   The new-core build.py harness needs MKL include + link flags added.
- *   See note at end of file for the minimal extension. Without MKL,
- *   the binary still runs and reports VFFT-only numbers (mkl columns
- *   = 0 in the CSV).
+ * Usage: bench_1d_vs_mkl [wisdom_path] [perf_csv] [pace_ms]
  */
+#define _POSIX_C_SOURCE 200809L
+#define _GNU_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
-#include "planner.h"          /* src/core/planner.h via -I src/core */
-#include "compat.h"
-#include "env.h"
-#include "bluestein_wisdom.h" /* per-(N,K) M/B overrides for prime cells */
+#include "core/executor.h"
+#include "core/planner.h"
+#include "core/dp_planner.h"          /* vfft_proto_now_ns */
+#ifdef VFFT_USE_JIT
+#include "jit/jit_runtime.h"          /* vfft_proto_plan_jit_fwd (build.py --jit) */
+#endif
+#include "generator/generated/registry.h"
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 #endif
 
-#ifndef DEFAULT_WISDOM_PATH
-#define DEFAULT_WISDOM_PATH  "vfft_wisdom_tuned.txt"
+#ifndef BENCH_K
+#define BENCH_K 4                      /* K=4 only — the cells we calibrated (MEASURE) */
 #endif
-#ifndef DEFAULT_PERF_PATH
-#define DEFAULT_PERF_PATH    "vfft_perf_tuned_1d.csv"
-#endif
-#ifndef DEFAULT_ACC_PATH
-#define DEFAULT_ACC_PATH     "vfft_acc_tuned_1d.csv"
+#ifndef MAX_TOTAL_ELEMS
+#define MAX_TOTAL_ELEMS 16777216
 #endif
 
-/* ─────────────────────────────────────────────────────────────────
- * Helpers
- * ───────────────────────────────────────────────────────────────── */
-
-static double gflops(int N, size_t K, double ns) {
-    if (ns <= 0) return 0;
-    return 5.0 * N * log2((double)N) * K / ns;
+static void pace(int ms) {
+    if (ms <= 0) return;
+    struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L };
+    nanosleep(&ts, NULL);
+}
+static double *alloc_d(size_t n) {
+    double *p = NULL;
+    if (vfft_proto_posix_memalign((void **)&p, 64, n * sizeof(double)) != 0) {
+        fprintf(stderr, "alloc failed\n"); exit(1);
+    }
+    return p;
+}
+static void free_d(double *p) { vfft_proto_aligned_free(p); }
+static void cachebust(void) {
+    size_t s = 32 * 1024 * 1024 / sizeof(double);
+    double *j = alloc_d(s);
+    volatile double a = 0;
+    for (size_t i = 0; i < s; i++) j[i] = (double)i * 0.5;
+    for (size_t i = 0; i < s; i++) a += j[i];
+    (void)a; free_d(j);
+}
+static int reps_for(size_t total) {
+    const char *e = getenv("VFFT_REPS");
+    if (e && atoi(e) > 0) return atoi(e);
+    int r = (int)(2e6 / (total + 1));
+    if (r < 8) r = 8; if (r > 100000) r = 100000;
+    return r;
 }
 
-static double bench_vfft(stride_plan_t *plan, int N, size_t K) {
-    size_t total = (size_t)N * K;
-    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    if (!re || !im) {
-        if (re) STRIDE_ALIGNED_FREE(re);
-        if (im) STRIDE_ALIGNED_FREE(im);
-        return 1e18;
-    }
-    for (size_t i = 0; i < total; i++) {
-        re[i] = (double)rand() / RAND_MAX - 0.5;
-        im[i] = (double)rand() / RAND_MAX - 0.5;
-    }
-    /* Warmup */
-    for (int w = 0; w < 10; w++)
-        stride_execute_fwd(plan, re, im);
-
-    int reps = (int)(2e6 / (total + 1));
-    if (reps < 20) reps = 20;
-    if (reps > 100000) reps = 100000;
-
+/* time the resolved (JIT/baked) forward executor — direct fn call, no lookup */
+static double bench_jit(vfft_proto_exec_fn fn, const stride_plan_t *plan,
+                        double *re, double *im, size_t K, size_t total) {
+    for (int w = 0; w < 10; w++) fn(plan, re, im, K, plan->K, 0);
+    int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
-        double t0 = now_ns();
-        for (int i = 0; i < reps; i++)
-            stride_execute_fwd(plan, re, im);
-        double ns = (now_ns() - t0) / reps;
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) fn(plan, re, im, K, plan->K, 0);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
-    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
     return best;
+}
+static double bench_generic(stride_plan_t *plan, double *re, double *im,
+                            size_t K, size_t total) {
+    for (int w = 0; w < 10; w++) vfft_proto_execute_fwd(plan, re, im, K);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(plan, re, im, K);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best) best = ns;
+    }
+    return best;
+}
+
+/* fwd (JIT/generic) then bwd recovers input*N; relative max error. dag's DIT
+ * forward is digit-reversed vs MKL's natural order, so roundtrip — not a direct
+ * fwd-vs-MKL compare — is the correctness criterion. */
+static double roundtrip_err(vfft_proto_exec_fn fn, stride_plan_t *plan, int N, size_t K,
+                            const double *src_re, const double *src_im, size_t total) {
+    double *re = alloc_d(total), *im = alloc_d(total);
+    memcpy(re, src_re, total * sizeof(double)); memcpy(im, src_im, total * sizeof(double));
+    if (fn) fn(plan, re, im, K, plan->K, 0);
+    else    vfft_proto_execute_fwd(plan, re, im, K);
+    vfft_proto_execute_bwd(plan, re, im, K);
+    double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
+    for (size_t i = 0; i < total; i++) {
+        double er = re[i] * inv - src_re[i], ei = im[i] * inv - src_im[i];
+        double e = sqrt(er * er + ei * ei), m = sqrt(src_re[i]*src_re[i] + src_im[i]*src_im[i]);
+        if (e > maxerr) maxerr = e;
+        if (m > maxmag) maxmag = m;
+    }
+    free_d(re); free_d(im);
+    return maxmag > 0 ? maxerr / maxmag : maxerr;
+}
+
+static void format_plan(char *buf, size_t cap, const int *factors, int nf, int use_dif) {
+    if (nf == 0) { snprintf(buf, cap, "[override]"); return; }   /* Rader/Bluestein */
+    size_t p = 0;
+    for (int s = 0; s < nf && p < cap - 8; s++)
+        p += (size_t)snprintf(buf + p, cap - p, "%s%d", s ? "x" : "", factors[s]);
+    snprintf(buf + p, cap - p, "/%s", use_dif ? "DIF" : "DIT");
 }
 
 #ifdef VFFT_HAS_MKL
-static double bench_mkl(int N, size_t K) {
-    size_t total = (size_t)N * K;
-    double *re = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    if (!re || !im) {
-        if (re) STRIDE_ALIGNED_FREE(re);
-        if (im) STRIDE_ALIGNED_FREE(im);
-        return 1e18;
-    }
-    for (size_t i = 0; i < total; i++) {
-        re[i] = (double)rand() / RAND_MAX - 0.5;
-        im[i] = (double)rand() / RAND_MAX - 0.5;
-    }
-    DFTI_DESCRIPTOR_HANDLE desc = NULL;
-    MKL_LONG strides[2] = {0, (MKL_LONG)K};
-    DftiCreateDescriptor(&desc, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
-    DftiSetValue(desc, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
-    DftiSetValue(desc, DFTI_PLACEMENT, DFTI_INPLACE);
-    DftiSetValue(desc, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
-    DftiSetValue(desc, DFTI_INPUT_DISTANCE, 1);
-    DftiSetValue(desc, DFTI_OUTPUT_DISTANCE, 1);
-    DftiSetValue(desc, DFTI_INPUT_STRIDES, strides);
-    DftiSetValue(desc, DFTI_OUTPUT_STRIDES, strides);
-    if (DftiCommitDescriptor(desc) != DFTI_NO_ERROR) {
-        DftiFreeDescriptor(&desc);
-        STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
-        return 1e18;
-    }
-    /* Warmup */
-    for (int w = 0; w < 10; w++)
-        DftiComputeForward(desc, re, im);
-
-    int reps = (int)(2e6 / (total + 1));
-    if (reps < 20) reps = 20;
-    if (reps > 100000) reps = 100000;
-
+static DFTI_DESCRIPTOR_HANDLE mkl_make(int N, size_t K) {
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    MKL_LONG str[2] = {0, (MKL_LONG)K};
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR) return NULL;
+    DftiSetValue(d, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    DftiSetValue(d, DFTI_INPUT_DISTANCE, 1);
+    DftiSetValue(d, DFTI_OUTPUT_DISTANCE, 1);
+    DftiSetValue(d, DFTI_INPUT_STRIDES, str);
+    DftiSetValue(d, DFTI_OUTPUT_STRIDES, str);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return NULL; }
+    return d;
+}
+static double bench_mkl(DFTI_DESCRIPTOR_HANDLE d, double *re, double *im, size_t total) {
+    for (int w = 0; w < 10; w++) DftiComputeForward(d, re, im);
+    int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
-        double t0 = now_ns();
-        for (int i = 0; i < reps; i++)
-            DftiComputeForward(desc, re, im);
-        double ns = (now_ns() - t0) / reps;
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) DftiComputeForward(d, re, im);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
-    DftiFreeDescriptor(&desc);
-    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
     return best;
 }
 #endif
 
-static double roundtrip_err(stride_plan_t *plan, int N, size_t K) {
-    size_t total = (size_t)N * K;
-    double *re  = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *im  = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *ref = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    double *rfi = (double *)STRIDE_ALIGNED_ALLOC(64, total * sizeof(double));
-    if (!re || !im || !ref || !rfi) {
-        if (re) STRIDE_ALIGNED_FREE(re);  if (im) STRIDE_ALIGNED_FREE(im);
-        if (ref) STRIDE_ALIGNED_FREE(ref); if (rfi) STRIDE_ALIGNED_FREE(rfi);
-        return 1e30;
-    }
-    srand(42 + N + (int)K);
-    for (size_t i = 0; i < total; i++) {
-        ref[i] = re[i] = (double)rand() / RAND_MAX - 0.5;
-        rfi[i] = im[i] = (double)rand() / RAND_MAX - 0.5;
-    }
-    stride_execute_fwd(plan, re, im);
-    stride_execute_bwd(plan, re, im);
-    double Nd = (double)N, mx = 0;
-    for (size_t i = 0; i < total; i++) {
-        double d = fabs(re[i] / Nd - ref[i]);
-        if (d > mx) mx = d;
-        d = fabs(im[i] / Nd - rfi[i]);
-        if (d > mx) mx = d;
-    }
-    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
-    STRIDE_ALIGNED_FREE(ref); STRIDE_ALIGNED_FREE(rfi);
-    return mx;
-}
-
-static void format_plan(char *buf, size_t buflen, const stride_plan_t *plan) {
-    buf[0] = 0;
-    if (plan->num_stages == 0) {
-        snprintf(buf, buflen, "[override]");   /* Rader/Bluestein */
-        return;
-    }
-    size_t pos = 0;
-    for (int s = 0; s < plan->num_stages && pos < buflen - 16; s++) {
-        int n = snprintf(buf + pos, buflen - pos, "%s%d",
-                         s ? "x" : "", plan->factors[s]);
-        if (n < 0) break;
-        pos += (size_t)n;
-    }
-}
-
-/* ─────────────────────────────────────────────────────────────────
- * Size grid (mirrors bench_1d_csv.c)
- * ───────────────────────────────────────────────────────────────── */
-
-typedef struct { int N; const char *category; } size_entry_t;
-
-static const size_entry_t all_sizes[] = {
-    {8, "small"}, {16, "small"}, {32, "small"}, {64, "small"}, {128, "small"},
-    {256, "pow2"}, {512, "pow2"}, {1024, "pow2"}, {2048, "pow2"},
-    {4096, "pow2"}, {8192, "pow2"}, {16384, "pow2"}, {32768, "pow2"},
-    {65536, "pow2"}, {131072, "pow2"},
-
-    {60, "composite"}, {100, "composite"}, {200, "composite"},
-    {500, "composite"}, {1000, "composite"}, {2000, "composite"},
-    {5000, "composite"}, {10000, "composite"}, {20000, "composite"},
-    {50000, "composite"}, {100000, "composite"},
-
-    {243, "prime_pow"},   /* 3^5 */
-    {625, "prime_pow"},   /* 5^4 */
-    {2401, "prime_pow"},  /* 7^4 */
-    {3125, "prime_pow"},  /* 5^5 */
-    {15625, "prime_pow"}, /* 5^6 */
-    {16807, "prime_pow"}, /* 7^5 */
-    {78125, "prime_pow"}, /* 5^7 */
-    {117649, "prime_pow"},/* 7^6 */
-    {390625, "prime_pow"},/* 5^8 */
-    {823543, "prime_pow"},/* 7^7 */
-
-    {1331, "genfft"},     /* 11^3 */
-    {14641, "genfft"},    /* 11^4 */
-    {161051, "genfft"},   /* 11^5 */
-    {2197, "genfft"},     /* 13^3 */
-    {28561, "genfft"},    /* 13^4 */
-
-    {127, "rader"}, {251, "rader"}, {257, "rader"}, {401, "rader"},
-    {641, "rader"}, {1009, "rader"}, {2801, "rader"}, {4001, "rader"},
-
-    /* Bluestein primes — N-1 has a prime factor > 19, so Rader doesn't fit.
-     * These auto-route to the Bluestein chirp-z path with pow2 inner FFT. */
-    {47, "bluestein"},   /* p-1 = 2*23  */
-    {59, "bluestein"},   /* p-1 = 2*29  */
-    {83, "bluestein"},   /* p-1 = 2*41  */
-    {107, "bluestein"},  /* p-1 = 2*53  */
-    {167, "bluestein"},  /* p-1 = 2*83  */
-    {179, "bluestein"},  /* p-1 = 2*89  */
-    {263, "bluestein"},  /* p-1 = 2*131 */
-    {311, "bluestein"},  /* p-1 = 2*5*31 (31 > 19) */
-
-    {175, "odd_comp"}, {525, "odd_comp"}, {1225, "odd_comp"},
-    {2205, "odd_comp"}, {6615, "odd_comp"}, {11025, "odd_comp"},
-
-    {2310, "mixed_deep"}, {6930, "mixed_deep"}, {30030, "mixed_deep"},
-    {60060, "mixed_deep"}, {4620, "mixed_deep"}, {13860, "mixed_deep"},
-};
-static const int n_sizes = (int)(sizeof(all_sizes) / sizeof(all_sizes[0]));
-
-static const size_t Ks[] = {4, 32, 256};
-static const int n_Ks = (int)(sizeof(Ks) / sizeof(Ks[0]));
-
-/* ─────────────────────────────────────────────────────────────────
- * Main
- * ───────────────────────────────────────────────────────────────── */
-
-/* Returns 1 if (N, K) appears in the comma-separated "N:K" list `filter`.
- * filter == NULL or empty: no filter active, every cell passes. */
-static int _cell_in_filter(int N, size_t K, const char *filter) {
-    if (!filter || !*filter) return 1;
-    const char *p = filter;
-    while (*p) {
-        int fN = 0, fK = 0;
-        while (*p == ' ' || *p == ',') p++;
-        while (*p >= '0' && *p <= '9') { fN = fN*10 + (*p++ - '0'); }
-        if (*p == ':') {
-            p++;
-            while (*p >= '0' && *p <= '9') { fK = fK*10 + (*p++ - '0'); }
-            if (fN == N && (size_t)fK == K) return 1;
-        }
-        while (*p && *p != ',') p++;
-    }
-    return 0;
-}
-
 int main(int argc, char **argv) {
-    const char *wisdom_path = DEFAULT_WISDOM_PATH;
-    const char *perf_path   = DEFAULT_PERF_PATH;
-    const char *acc_path    = DEFAULT_ACC_PATH;
-    const char *cells       = NULL;  /* --cells "N:K,N:K,..." filter */
-    int run_perf = 1, run_acc = 1;   /* --phase perf|acc|both */
+    const char *wpath = (argc >= 2) ? argv[1]
+        : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
+    const char *csv   = (argc >= 3) ? argv[2] : "vfft_perf_tuned_1d.csv";
+    int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
 
-    int posn = 1;
-    int positional_idx = 0;
-    while (posn < argc) {
-        if (strcmp(argv[posn], "--cells") == 0 && posn + 1 < argc) {
-            cells = argv[posn + 1];
-            posn += 2;
-            continue;
-        }
-        if (strcmp(argv[posn], "--phase") == 0 && posn + 1 < argc) {
-            const char *p = argv[posn + 1];
-            if      (strcmp(p, "perf") == 0) { run_perf = 1; run_acc = 0; }
-            else if (strcmp(p, "acc")  == 0) { run_perf = 0; run_acc = 1; }
-            else if (strcmp(p, "both") == 0) { run_perf = 1; run_acc = 1; }
-            else {
-                fprintf(stderr, "--phase must be one of: perf, acc, both\n");
-                return 2;
-            }
-            posn += 2;
-            continue;
-        }
-        switch (positional_idx) {
-            case 0: wisdom_path = argv[posn]; break;
-            case 1: perf_path   = argv[posn]; break;
-            case 2: acc_path    = argv[posn]; break;
-            default: break;
-        }
-        positional_idx++;
-        posn++;
-    }
-
-    stride_env_init();
-    stride_pin_thread(0);
-    stride_set_num_threads(1);
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(1);
 #endif
+    vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
-    printf("=== bench_1d_vs_mkl: new core (MEASURE wisdom) vs MKL ===\n");
-    printf("wisdom : %s\n", wisdom_path);
-    printf("perf   : %s\n", perf_path);
-    printf("acc    : %s\n", acc_path);
-#ifdef VFFT_HAS_MKL
-    printf("MKL    : enabled\n");
-#else
-    printf("MKL    : DISABLED (rebuild with -DVFFT_HAS_MKL to enable)\n");
+    FILE *f = fopen(wpath, "r");
+    if (!f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
+    FILE *out = fopen(csv, "w");
+    if (out) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+
+    printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
+    printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
+           "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
+    printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
+
+    char line[1024];
+    int benched = 0, skipped = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || line[0] == '@' || line[0] == '\n') continue;
+        char *save;
+        char *tok = strtok_r(line, " \t\n", &save); if (!tok) continue;
+        int N = atoi(tok);
+        tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
+        long Kl = atol(tok);
+        if (Kl != BENCH_K) continue;                         /* K=4 only */
+        tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
+        int nf = atoi(tok);
+        if (nf < 1 || nf >= STRIDE_MAX_STAGES) { skipped++; continue; }
+        int factors[STRIDE_MAX_STAGES], bad = 0;
+        for (int i = 0; i < nf; i++) {
+            tok = strtok_r(NULL, " \t\n", &save);
+            if (!tok) { bad = 1; break; } factors[i] = atoi(tok);
+        }
+        if (bad) continue;
+        tok = strtok_r(NULL, " \t\n", &save);                /* best_ns (ignored) */
+        int use_blocked = 0, split = 0, bgroups = 0, use_dif = 0;
+        if ((tok = strtok_r(NULL, " \t\n", &save))) use_blocked = atoi(tok);
+        if ((tok = strtok_r(NULL, " \t\n", &save))) split = atoi(tok);
+        if ((tok = strtok_r(NULL, " \t\n", &save))) bgroups = atoi(tok);
+        if ((tok = strtok_r(NULL, " \t\n", &save))) use_dif = atoi(tok);
+        (void)use_blocked; (void)split; (void)bgroups;
+        int variants[STRIDE_MAX_STAGES];
+        for (int i = 0; i < nf; i++) {
+            tok = strtok_r(NULL, " \t\n", &save);
+            variants[i] = tok ? atoi(tok) : 2;
+        }
+
+        size_t K = (size_t)BENCH_K;
+        char plan_s[64]; format_plan(plan_s, sizeof plan_s, factors, nf, use_dif);
+
+        if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) {
+            printf("%-8d %-16s   SKIP (N*K too big)\n", N, plan_s); skipped++; continue;
+        }
+
+        stride_plan_t *plan = vfft_proto_plan_create_ex(N, K, factors, variants, nf, use_dif, &reg);
+        if (!plan) { printf("%-8d %-16s   plan_create FAILED\n", N, plan_s); skipped++; continue; }
+
+        /* RESOLVE (plan phase). JIT build (build.py --jit): baked static, else
+         * JIT-compile+cache, timed as a direct call. Default build: generic
+         * executor. The JIT path is the only difference between the two cfgs. */
+        vfft_proto_exec_fn fn = NULL;
+        const char *path = "generic";
+#ifdef VFFT_USE_JIT
+        int baked = (vfft_proto_lookup_fwd_avx2(plan) != NULL);
+        fn = vfft_proto_plan_jit_fwd(plan);
+        path = fn ? (baked ? "baked" : "JIT") : "generic";
 #endif
 
-    stride_registry_t reg;
-    stride_registry_init(&reg);
-
-    stride_wisdom_t wis;
-    stride_wisdom_init(&wis);
-
-    int loaded = stride_wisdom_load(&wis, wisdom_path);
-    if (loaded < 0 || wis.count == 0) {
-        fprintf(stderr,
-                "fatal: no wisdom entries loaded from %s "
-                "(run calibrate.py --mode=measure first)\n",
-                wisdom_path);
-        return 2;
-    }
-    printf("loaded : %d wisdom entries\n", wis.count);
-
-    /* Bluestein companion wisdom: derive sibling path from wisdom_path by
-     * inserting "_bluestein" before the extension. Quiet on miss -- not
-     * every wisdom file has a Bluestein sibling. When loaded, install via
-     * stride_set_bluestein_wisdom so the planner's Bluestein/Rader
-     * dispatch consults it for prime-N cells. */
-    static bluestein_wisdom_t bw;
-    bluestein_wisdom_init(&bw);
-    char bw_path[1024];
-    {
-        const char *dot = strrchr(wisdom_path, '.');
-        const char *slash = strrchr(wisdom_path, '/');
-        const char *bslash = strrchr(wisdom_path, '\\');
-        if (slash && dot && dot < slash)   dot = NULL;
-        if (bslash && dot && dot < bslash) dot = NULL;
-        if (dot) {
-            int prefix = (int)(dot - wisdom_path);
-            snprintf(bw_path, sizeof(bw_path), "%.*s_bluestein%s",
-                     prefix, wisdom_path, dot);
-        } else {
-            snprintf(bw_path, sizeof(bw_path), "%s_bluestein", wisdom_path);
+        size_t total = (size_t)N * K;
+        double *src_re = alloc_d(total), *src_im = alloc_d(total);
+        srand(42 + N + (int)K);
+        for (size_t i = 0; i < total; i++) {
+            src_re[i] = (double)rand() / RAND_MAX - 0.5;
+            src_im[i] = (double)rand() / RAND_MAX - 0.5;
         }
-    }
-    int bw_loaded = bluestein_wisdom_load(&bw, bw_path);
-    if (bw_loaded > 0) {
-        stride_set_bluestein_wisdom(&bw);
-        printf("loaded : %d Bluestein wisdom entries from %s\n", bw_loaded, bw_path);
-    } else {
-        printf("note   : no Bluestein wisdom companion at %s (heuristic fallback)\n",
-               bw_path);
-    }
-    printf("\n");
+        double rel = roundtrip_err(fn, plan, N, K, src_re, src_im, total);
 
-    /* ───────────────────────────────────────────────
-     * Phase 2: Performance benchmark → CSV
-     * ─────────────────────────────────────────────── */
+        double *re = alloc_d(total), *im = alloc_d(total);
+        memcpy(re, src_re, total * sizeof(double)); memcpy(im, src_im, total * sizeof(double));
+        double vns = fn ? bench_jit(fn, plan, re, im, K, total)
+                        : bench_generic(plan, re, im, K, total);
 
-  if (run_perf) {
-    FILE *fp = fopen(perf_path, "w");
-    if (!fp) { fprintf(stderr, "cannot open %s\n", perf_path); return 1; }
-    fprintf(fp, "N,K,category,factors,vfft_ns,mkl_ns,"
-                "vfft_gflops,mkl_gflops,ratio_vs_mkl\n");
-
-    printf("=== Phase 2: Performance ===\n\n");
-    printf("%-8s %-5s %-12s %-20s %10s %10s %8s %8s %7s\n",
-           "N", "K", "category", "factors", "vfft_ns", "mkl_ns",
-           "vfft_GF", "mkl_GF", "ratio");
-    printf("--------+-----+------------+--------------------+----------+"
-           "----------+--------+--------+-------\n");
-
-    if (cells) printf("cells filter active: %s\n", cells);
-
-    int n_benched = 0, n_skipped = 0;
-    for (int si = 0; si < n_sizes; si++) {
-        int N = all_sizes[si].N;
-        const char *cat = all_sizes[si].category;
-        for (int ki = 0; ki < n_Ks; ki++) {
-            size_t K = Ks[ki];
-
-            /* --cells filter: skip cells not in the user-supplied list. */
-            if (!_cell_in_filter(N, K, cells)) { n_skipped++; continue; }
-
-            /* No-wisdom fallback: stride_wise_plan auto-falls-back to
-             * stride_auto_plan, which handles primes (Rader/Bluestein)
-             * and any non-calibrated cell via heuristic factorization.
-             * Matches old stride-fft bench behavior. */
-            const stride_wisdom_entry_t *e =
-                stride_wisdom_lookup(&wis, N, K);
-            (void)e;  /* presence informational only, not gating */
-
-            stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
-            if (!plan) {
-                fprintf(stderr,
-                        "  N=%d K=%zu: wisdom present but stride_wise_plan "
-                        "failed; check codelet registry\n", N, K);
-                n_skipped++;
-                continue;
-            }
-
-            char fstr[64];
-            format_plan(fstr, sizeof(fstr), plan);
-
-            double vns = bench_vfft(plan, N, K);
-            double vgf = gflops(N, K, vns);
-
-            double mns = 0, mgf = 0;
+        double mns = 0; double ratio = 0;
 #ifdef VFFT_HAS_MKL
-            mns = bench_mkl(N, K);
-            mgf = gflops(N, K, mns);
-#endif
-            double ratio = (mns > 0) ? mns / vns : 0;
-
-            printf("%-8d %-5zu %-12s %-20s %9.0f %9.0f %7.2f %7.2f %6.2fx\n",
-                   N, K, cat, fstr, vns, mns, vgf, mgf, ratio);
-            fprintf(fp, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3f\n",
-                    N, K, cat, fstr, vns, mns, vgf, mgf, ratio);
-            fflush(fp);
-
-            stride_plan_destroy(plan);
-            n_benched++;
+        cachebust();
+        DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
+        if (d) {
+            double *rm = alloc_d(total), *imk = alloc_d(total);
+            memcpy(rm, src_re, total * sizeof(double)); memcpy(imk, src_im, total * sizeof(double));
+            mns = bench_mkl(d, rm, imk, total);
+            ratio = (vns > 0) ? mns / vns : 0;
+            free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
         }
+#endif
+        double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
+
+        printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
+               N, plan_s, path, vns, mns, vgf, ratio, rel);
+        if (out) {
+            fprintf(out, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e\n",
+                    N, K, plan_s, path, vns, mns, vgf, ratio, rel);
+            fflush(out);
+        }
+        free_d(re); free_d(im); free_d(src_re); free_d(src_im);
+        vfft_proto_plan_destroy(plan);
+        benched++;
+        pace(pace_ms);
     }
-    fclose(fp);
-    printf("\nBenched %d cells, skipped %d (no wisdom entry).\n",
-           n_benched, n_skipped);
-    printf("Performance → %s\n\n", perf_path);
-  } else {
-    printf("=== Phase 2: SKIPPED (--phase acc) ===\n\n");
-  }
-
-    /* ───────────────────────────────────────────────
-     * Phase 3: Accuracy → CSV
-     * ─────────────────────────────────────────────── */
-
-  if (run_acc) {
-    FILE *fa = fopen(acc_path, "w");
-    if (!fa) { fprintf(stderr, "cannot open %s\n", acc_path); return 1; }
-    fprintf(fa, "N,category,roundtrip_err\n");
-
-    printf("=== Phase 3: Accuracy ===\n\n");
-    printf("%-8s %-12s %12s\n", "N", "category", "roundtrip_err");
-    printf("--------+------------+------------\n");
-
-    for (int si = 0; si < n_sizes; si++) {
-        int N = all_sizes[si].N;
-        const char *cat = all_sizes[si].category;
-        size_t K = 4;
-
-        if (!_cell_in_filter(N, K, cells)) continue;
-        if (!stride_wisdom_lookup(&wis, N, K)) continue;
-
-        stride_plan_t *plan = stride_wise_plan(N, K, &reg, &wis);
-        if (!plan) continue;
-
-        double err = roundtrip_err(plan, N, K);
-        printf("%-8d %-12s %11.2e\n", N, cat, err);
-        fprintf(fa, "%d,%s,%.3e\n", N, cat, err);
-        stride_plan_destroy(plan);
-    }
-    fclose(fa);
-    printf("\nAccuracy → %s\n", acc_path);
-  } else {
-    printf("=== Phase 3: SKIPPED (--phase perf) ===\n");
-  }
-    printf("\nDone.\n");
+    fclose(f);
+    if (out) fclose(out);
+    printf("\nbenched %d cells, skipped %d.  CSV -> %s\n", benched, skipped, csv);
     return 0;
 }
-
-/* ─────────────────────────────────────────────────────────────────
- * Build notes — MKL extension for build.py
- *
- * Production CMake uses ILP64 sequential. To match, build.py needs a
- * `--mkl` flag that appends (when MKLROOT is set in the environment):
- *
- *   includes:  -I"$MKLROOT/include"
- *   flags:     -DVFFT_HAS_MKL -DMKL_ILP64
- *   link:      -L"$MKLROOT/lib/intel64"
- *              mkl_intel_ilp64.lib  mkl_sequential.lib  mkl_core.lib
- *              (Linux: -lmkl_intel_ilp64 -lmkl_sequential -lmkl_core)
- *
- * Discovery probe (mirrors src/stride-fft/CMakeLists.txt:139-177):
- *   - exists $MKLROOT/include/mkl_dfti.h  → header found
- *   - exists $MKLROOT/lib/intel64/mkl_intel_ilp64.lib  → libs present
- *
- * Without --mkl the binary still compiles (VFFT-only path), and the
- * mkl_ns column is 0 in the CSV. Useful as a sanity gate.
- * ───────────────────────────────────────────────────────────────── */
