@@ -1,3 +1,0 @@
-(executables
- (names sr_diag sr_structural_diff sr_union_probe profile_pipeline)
- (libraries vfft_v2 unix))
