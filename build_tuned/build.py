@@ -99,6 +99,23 @@ def dag_codelet_lib(tc) -> str | None:
     return str(lib)
 
 
+def dag_write_jit_rsp():
+    """Point the JIT runtime's codelet response file (jit/generated/codelets.rsp,
+    its default VFFT_PROTO_JIT_CODELETS) at build.py's CACHED .obj objects — so the
+    --jit build config is fully self-contained in build_tuned (no separate
+    jit/build_codelets.ps1 step). The JIT's runtime `gcc -shared` links these .o
+    into each emitted single-plan .dll."""
+    objdir = DAG / '.obj' / DAG_ISA
+    objs = sorted(objdir.glob('*.o'))
+    if not objs:
+        print('  [jit] no codelet objects to point at (run a build first)', file=sys.stderr)
+        return
+    rsp = DAG / 'jit' / 'generated' / 'codelets.rsp'
+    rsp.parent.mkdir(parents=True, exist_ok=True)
+    rsp.write_text('\n'.join(o.as_posix() for o in objs), encoding='ascii')
+    print(f'  [jit] codelets.rsp -> {len(objs)} cached objects')
+
+
 def detect_toolchain():
     # dag dev compiler is gcc (mingw 15.2); production used icx. Override via CC.
     _default_cc = (r'C:\mingw152\mingw64\bin\gcc.exe' if os.name == 'nt' else 'gcc')
@@ -162,7 +179,7 @@ def find_fftw():
     return None, None, None
 
 
-def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
+def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=None):
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     if mkl:
@@ -207,30 +224,33 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
              '-Wno-deprecated-declarations']
     if mkl:
-        flags += ['-DVFFT_HAS_MKL', '-DMKL_ILP64', f'-I{mkl_inc}']
+        # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
+        # strides array -> "Inconsistent configuration parameters" at DftiCommit.
+        flags += ['-DVFFT_HAS_MKL', f'-I{mkl_inc}']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
     # Driver + extras compiled here; dag codelets come from a CACHED static lib
     # (built once by dag_codelet_lib) so a driver rebuild is a fast relink, not
     # a ~100s recompile of ~300 codelets.
+    if jit:
+        flags = flags + ['-DVFFT_USE_JIT']   # bench resolves via vfft_proto_plan_jit_fwd
     base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
     cmd = [tc['cc']] + flags + build_includes() + base_srcs
     lib = dag_codelet_lib(tc)
     if lib:
         cmd.append(lib)
+    if jit:
+        dag_write_jit_rsp()                  # JIT runtime links build.py's cached .o
     cmd += ['-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
     if mkl:
+        # LP64 single dynamic lib (mkl_rt). Runtime needs <mkl>/latest/bin on PATH
+        # (mkl_rt.2.dll) + the mingw bin (libwinpthread-1.dll).
         if tc['is_windows']:
-            # lld-link doesn't honor -L; pass full lib paths instead.
-            cmd += [str(Path(mkl_lib) / 'mkl_intel_ilp64.lib'),
-                    str(Path(mkl_lib) / 'mkl_sequential.lib'),
-                    str(Path(mkl_lib) / 'mkl_core.lib')]
+            cmd += [str(Path(mkl_lib) / 'mkl_rt.lib')]
         else:
-            cmd += [f'-L{mkl_lib}',
-                    '-lmkl_intel_ilp64', '-lmkl_sequential', '-lmkl_core',
-                    '-lpthread', '-lm', '-ldl']
+            cmd += [f'-L{mkl_lib}', '-lmkl_rt', '-lpthread', '-lm', '-ldl']
     if fftw:
         if tc['is_windows']:
             cmd += [str(Path(fftw_lib) / 'fftw3.lib')]
@@ -310,6 +330,10 @@ def main():
     ap.add_argument('--fftw', action='store_true',
                     help='Link FFTW3 (vcpkg double-precision). Adds '
                          '-DVFFT_HAS_FFTW and fftw3.lib.')
+    ap.add_argument('--jit', action='store_true',
+                    help='JIT build config: defines VFFT_USE_JIT (bench resolves '
+                         'plans via vfft_proto_plan_jit_fwd) + points the JIT '
+                         'runtime at build.py-cached codelet objects. All in build_tuned.')
     ap.add_argument('--vfft', action='store_true',
                     help='Compile src/vfft.c alongside the source. Use this '
                          'when the source file uses the public vfft.h API '
@@ -335,7 +359,7 @@ def main():
     extra_srcs = []
     if args.vfft:
         extra_srcs.append(ROOT / 'src' / 'vfft.c')
-    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw,
+    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, jit=args.jit,
                     extra_srcs=extra_srcs)
 
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
