@@ -90,10 +90,15 @@
 
 /* ── Variant recovery: derive the per-stage variant code from the wired plan
  *    (stage 0 is always OUTER; the code there is moot). ───────────────────── */
-static inline int vfft_proto_jit_variant(const stride_stage_t *st, int stage) {
-    if (stage == 0)    return 2;   /* OUTER (n1) — variant code unused for emit */
-    if (st->use_log3)  return 1;   /* LOG3 */
-    if (st->t1s_fwd)   return 2;   /* T1S  */
+static inline int vfft_proto_jit_variant(const stride_plan_t *plan, int stage) {
+    /* OUTER (no-twiddle) stage is 0 for DIT, last for DIF; its code is moot
+     * (emit_jit places n1 there regardless). Other stages: recover from the
+     * wired codelet. DIF never wires t1s_fwd, so it yields 0/1 (FLAT/LOG3). */
+    int outer = plan->use_dif_forward ? (plan->num_stages - 1) : 0;
+    if (stage == outer) return 0;
+    const stride_stage_t *st = &plan->stages[stage];
+    if (st->use_log3) return 1;    /* LOG3 */
+    if (st->t1s_fwd)  return 2;    /* T1S (DIT only) */
     return 0;                      /* FLAT */
 }
 
@@ -105,8 +110,8 @@ static inline void vfft_proto_jit_key(const stride_plan_t *plan, const char *isa
         n += snprintf(out + n, cap - n, "_%d", plan->factors[s]);
     n += snprintf(out + n, cap - n, "_v");
     for (int s = 0; s < plan->num_stages; s++)
-        n += snprintf(out + n, cap - n, "%d", vfft_proto_jit_variant(&plan->stages[s], s));
-    snprintf(out + n, cap - n, "_%s_ver%d", isa, VFFT_PROTO_JIT_VERSION);
+        n += snprintf(out + n, cap - n, "%d", vfft_proto_jit_variant(plan, s));
+    snprintf(out + n, cap - n, "_%s_d%d_ver%d", isa, plan->use_dif_forward, VFFT_PROTO_JIT_VERSION);
 }
 
 /* comma-separated factor + variant lists for emit_jit.py */
@@ -116,7 +121,7 @@ static inline void vfft_proto_jit_csv(const stride_plan_t *plan,
     for (int s = 0; s < plan->num_stages; s++) {
         fp += snprintf(facs + fp, cap - fp, "%s%d", s ? "," : "", plan->factors[s]);
         vp += snprintf(vars + vp, cap - vp, "%s%d", s ? "," : "",
-                       vfft_proto_jit_variant(&plan->stages[s], s));
+                       vfft_proto_jit_variant(plan, s));
     }
 }
 
@@ -148,8 +153,9 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa, const ch
         /* emit one .c (no shell redirect — --out writes the file directly) */
         snprintf(cmd, sizeof cmd,
             "%s %s/emit_jit.py --N %d --K %zu --factors %s --variants %s "
-            "--isa %s --prelude jit_prelude.h --out %s",
-            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars, isa, src);
+            "--orient %s --isa %s --prelude jit_prelude.h --out %s",
+            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars,
+            plan->use_dif_forward ? "dif" : "dit", isa, src);
         if (system(cmd) != 0) return NULL;
         /* compile to a shared lib; -I so jit_prelude.h resolves */
         snprintf(cmd, sizeof cmd,
