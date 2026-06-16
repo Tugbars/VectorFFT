@@ -21,17 +21,24 @@ DIF_VARIANT = {0: "DIF_FLAT", 1: "DIF_LOG3"}        # DIF has no T1S/BUF
 #   OUTER -> radix{R}_n1_{dir}_{isa},  FLAT -> radix{R}_t1_dit_{dir}_{isa},
 #   LOG3  -> radix{R}_t1_dit_log3_{dir}_{isa},  T1S -> radix{R}_t1s_dit_{dir}_{isa}
 DIT_CODELET_INFIX = {0: "t1_dit", 1: "t1_dit_log3", 2: "t1s_dit"}
+DIF_CODELET_INFIX = {0: "t1_dif", 1: "t1_dif_log3"}   # DIF: FLAT/LOG3 only (no T1S)
 
 
 def codelet_names(factors, variants, orient, direction, isa):
     """Unique codelet symbols the executor calls — emitted as self-contained
-    externs so a COLD plan (not in plan_executors.h's baked extern set) compiles."""
-    if orient != "dit":
-        raise SystemExit("DIF codelet externs not wired in spike yet")
+    externs so a COLD plan (not in plan_executors.h's baked extern set) compiles.
+    DIT: OUTER (n1) at stage 0, twiddled stages 1..n-1.
+    DIF: twiddled stages 0..n-2, OUTER (n1) at the last stage (matches emit_body)."""
     nf = len(factors)
-    names = [f"radix{factors[0]}_n1_{direction}_{isa}"]            # OUTER (stage 0)
-    for s in range(1, nf):
-        names.append(f"radix{factors[s]}_{DIT_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
+    if orient == "dit":
+        names = [f"radix{factors[0]}_n1_{direction}_{isa}"]            # OUTER (stage 0)
+        for s in range(1, nf):
+            names.append(f"radix{factors[s]}_{DIT_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
+    else:  # dif
+        names = []
+        for s in range(0, nf - 1):
+            names.append(f"radix{factors[s]}_{DIF_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
+        names.append(f"radix{factors[nf - 1]}_n1_{direction}_{isa}")  # OUTER (last)
     seen, uniq = set(), []
     for n in names:
         if n not in seen:

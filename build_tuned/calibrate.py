@@ -1,13 +1,13 @@
 """
-calibrate.py — orchestrate dag-fft-compiler wisdom calibration.
+calibrate.py - orchestrate dag-fft-compiler wisdom calibration.
 
 Re-pointed from production for the dag tree (2026-06-16):
   - Production switched to "High Performance" and imported powercfg helpers
-    from src/vectorfft_tune/common/orchestrator.py — BOTH retired. We saw this
+    from src/vectorfft_tune/common/orchestrator.py - BOTH retired. We saw this
     session that High Performance got corrupted (turbo latched off) and that
     powercfg freq-capping backfired.
   - So this VERIFIES a turbo-capable scheme (Ultimate Performance) is active and
-    WARNS if not — it does NOT switch schemes (needs admin; you set it once).
+    WARNS if not - it does NOT switch schemes (needs admin; you set it once).
   - Runs the driver ONE CELL PER PROCESS (isolation), High priority, with an
     inter-cell cooldown to reset the thermal baseline (prevents the cross-cell
     heat-soak that inflated numbers ~1.5x this session).
@@ -53,9 +53,9 @@ def verify_power():
         print('[power] WARNING: Ultimate Performance is NOT active. Turbo may be '
               'capped/variable. Set it once (elevated):', file=sys.stderr)
         print(f'        powercfg /setactive {ULTIMATE_GUID}', file=sys.stderr)
-        print('        (calibrate.py does not switch schemes — see header.)', file=sys.stderr)
+        print('        (calibrate.py does not switch schemes - see header.)', file=sys.stderr)
     else:
-        print('[power] Ultimate Performance active — turbo available.')
+        print('[power] Ultimate Performance active - turbo available.')
 
 
 def build():
@@ -98,7 +98,7 @@ def main():
         cells = DEFAULT_FEW
 
     print('=' * 64)
-    print(f' dag calibration — K={args.K}  core={args.core}  cooldown={args.cooldown}s')
+    print(f' dag calibration - K={args.K}  core={args.core}  cooldown={args.cooldown}s')
     print(f' cells ({len(cells)}): {cells}')
     print(f' wisdom: {args.wisdom or "(dag spike_wisdom default)"}')
     print('=' * 64)
