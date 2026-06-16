@@ -314,15 +314,25 @@ static int _vfft_proto_dp_subplan_cmp(const void *a, const void *b)
 
 /* Intra-cell thermal pacing.
  *
- * At K > VFFT_PROTO_DP_PACE_K_THRESHOLD, sustained 100% core load during the
- * search heats the core enough that bench numbers drift up over the
- * minutes-long search at a single cell. The package thermal envelope is
- * shared, so even core-pinned runs are affected at large K.
+ * Sustained 100% core load during a single cell's search heats the core enough
+ * that bench numbers drift up over the run; the package thermal envelope is
+ * shared, so even core-pinned runs are affected. Either trigger arms pacing:
+ *   - K   >  VFFT_PROTO_DP_PACE_K_THRESHOLD     : deep batches (the original
+ *     K=256 minutes-long-search case).
+ *   - N*K >= VFFT_PROTO_DP_PACE_TOTAL_THRESHOLD : large per-bench working set, so
+ *     LOW-K big-N cells pace too (K=4, N>=8192). A ~700-candidate 16384 K=4
+ *     coarse sweep heat-soaks the core enough to drift the coarse ranking;
+ *     before this gate K=4 never paced (verified 2026-06-16).
  *
  * Sleep VFFT_PROTO_DP_PACE_MS ms every VFFT_PROTO_DP_PACE_EVERY benches to let the
- * core temp recover. ~5% wall overhead at K=256, much smoother numbers. */
+ * core recover (PACE_EVERY auto-skips searches with < PACE_EVERY benches). ~5%
+ * wall overhead at K=256; ~33% at K=4 (faster benches) — the heavier duty cycle
+ * is the point: it holds the K=4 coarse pass at a steady clock. */
 #ifndef VFFT_PROTO_DP_PACE_K_THRESHOLD
 #define VFFT_PROTO_DP_PACE_K_THRESHOLD 64
+#endif
+#ifndef VFFT_PROTO_DP_PACE_TOTAL_THRESHOLD
+#define VFFT_PROTO_DP_PACE_TOTAL_THRESHOLD 32768 /* N*K; arms pacing for big-N low-K (K=4 N>=8192) */
 #endif
 #ifndef VFFT_PROTO_DP_PACE_EVERY
 #define VFFT_PROTO_DP_PACE_EVERY 25
@@ -352,9 +362,11 @@ static void _vfft_proto_dp_sleep_ms(int ms)
 }
 #endif
 
-static void _vfft_proto_dp_maybe_pace(vfft_proto_dp_context_t *ctx)
+static void _vfft_proto_dp_maybe_pace(vfft_proto_dp_context_t *ctx, size_t total)
 {
-    if (ctx->K <= (size_t)VFFT_PROTO_DP_PACE_K_THRESHOLD)
+    /* Arm if EITHER trigger fires: deep batch (K) or large per-bench work (N*K). */
+    if (ctx->K <= (size_t)VFFT_PROTO_DP_PACE_K_THRESHOLD
+        && total < (size_t)VFFT_PROTO_DP_PACE_TOTAL_THRESHOLD)
         return;
     if ((ctx->n_benchmarks % VFFT_PROTO_DP_PACE_EVERY) != 0)
         return;
@@ -439,7 +451,7 @@ static double _vfft_proto_dp_bench(vfft_proto_dp_context_t *ctx, int N,
 
     vfft_proto_plan_destroy(plan);
     ctx->n_benchmarks++;
-    _vfft_proto_dp_maybe_pace(ctx);
+    _vfft_proto_dp_maybe_pace(ctx, total);
     return best;
 }
 

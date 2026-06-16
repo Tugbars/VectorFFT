@@ -166,7 +166,7 @@ static double _vfft_proto_dp_bench_explicit(vfft_proto_dp_context_t *ctx, int N,
 
     vfft_proto_plan_destroy(plan);
     ctx->n_benchmarks++;
-    _vfft_proto_dp_maybe_pace(ctx);
+    _vfft_proto_dp_maybe_pace(ctx, total);
     return best;
 }
 
