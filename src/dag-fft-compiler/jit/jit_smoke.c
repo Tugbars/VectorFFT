@@ -43,19 +43,29 @@ int main(int argc, char **argv) {
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin failed\n");
 
     size_t K = (argc > 3) ? (size_t)atoll(argv[3]) : 4;   /* argv[3] = batch count */
+    int use_dif = (argc > 5) ? atoi(argv[5]) : 0;         /* argv[5] = 1 -> DIF */
     int factors[STRIDE_MAX_STAGES], nf = 0;
     const char *fs = (argc > 1) ? argv[1] : "4,4,4,4,4,4,4,8";
     { char buf[256]; strncpy(buf, fs, sizeof buf - 1); buf[sizeof buf - 1] = 0;
       char *t = strtok(buf, ","); while (t && nf < STRIDE_MAX_STAGES) { factors[nf++] = atoi(t); t = strtok(NULL, ","); } }
     int N = 1; for (int i = 0; i < nf; i++) N *= factors[i];
 
+    /* argv[6] = optional per-stage variant codes (comma list); else T1S/FLAT default */
+    int variants[STRIDE_MAX_STAGES]; int *vptr = NULL;
+    if (argc > 6) {
+        char vb[256]; strncpy(vb, argv[6], sizeof vb - 1); vb[sizeof vb - 1] = 0;
+        int vn = 0; char *vt = strtok(vb, ",");
+        while (vt && vn < STRIDE_MAX_STAGES) { variants[vn++] = atoi(vt); vt = strtok(NULL, ","); }
+        if (vn == nf) vptr = variants;
+    }
+
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
-    stride_plan_t *plan = vfft_proto_plan_create_ex(N, K, factors, NULL, nf, 0, &reg);
+    stride_plan_t *plan = vfft_proto_plan_create_ex(N, K, factors, vptr, nf, use_dif, &reg);
     if (!plan) { printf("no plan\n"); return 1; }
 
     int is_baked = (vfft_proto_lookup_fwd_avx2(plan) != NULL);
-    printf("=== JIT runtime: N=%d K=%zu factors=%s (%s) ===\n",
-           N, K, fs, is_baked ? "BAKED cell" : "COLD cell -> JIT");
+    printf("=== JIT runtime: N=%d K=%zu factors=%s %s (%s) ===\n",
+           N, K, fs, use_dif ? "DIF" : "DIT", is_baked ? "BAKED cell" : "COLD cell -> JIT");
 
     /* PLANNER phase: resolve once (cold => emit+compile+load) */
     double r0 = now_ns();
