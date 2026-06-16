@@ -33,24 +33,76 @@ from pathlib import Path
 HERE = Path(__file__).parent.resolve()
 ROOT = HERE.parent  # repo root: highSpeedFFT/
 
-CORE_NEW       = ROOT / 'src' / 'core'
-CORE_PROD      = ROOT / 'src' / 'stride-fft' / 'core'
-TUNED_GEN      = ROOT / 'src' / 'vectorfft_tune' / 'generated'
+# ── RE-POINTED to the dag-fft-compiler tree (2026-06-16) ──────────────
+# Production (src/core + src/vectorfft_tune) is being retired; this harness
+# now builds against dag-fft-compiler. KEY MODEL DIFFERENCE: production
+# header-INCLUDED its SIMD codelets via per-radix -I dirs; dag's codelets are
+# separately-compiled .c files (codelets/inplace/{isa}/*.c) that get LINKED in
+# — the generated registry_{isa}.h holds externs + the init that wires them.
+DAG          = ROOT / 'src' / 'dag-fft-compiler'
+DAG_CORE     = DAG / 'core'
+DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + spike_wisdom
+DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
+DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
 
-# stride-fft codelet dirs are NOT on the include path for AVX2/AVX-512
-# builds. All SIMD codelets come from vectorfft_tune/generated/r{R}/.
-# For scalar fallback (no AVX2/AVX-512) the registry's scalar branch
-# still includes stride-fft scalar headers — that path is handled in
-# build_includes() below by adding the scalar codelet dir conditionally.
-CODELETS_SCALAR = ROOT / 'src' / 'stride-fft' / 'codelets' / 'scalar'
 
-# Tuned radixes whose dispatcher dirs need -I. These match the wisdom_bridge
-# include list and the registry's _REG_TUNED_FULL[_*] calls.
-TUNED_RADIXES = [3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 16, 17, 19, 20, 25, 32, 64]
+def dag_codelet_srcs() -> list[str]:
+    """All dag SIMD codelet .c files to compile+link (the registry references
+    them by symbol). ~300 files; compiled in one invocation."""
+    if not DAG_CODELETS.is_dir():
+        print(f'  [warn] dag codelet dir missing: {DAG_CODELETS}', file=sys.stderr)
+        return []
+    return sorted(str(p) for p in DAG_CODELETS.glob('*.c'))
+
+
+def dag_codelet_lib(tc) -> str | None:
+    """Compile the dag codelets into a CACHED static lib. They're OCaml-
+    generated and unchanged between calibration runs, so the lib rebuilds only
+    when a codelet .c is newer than it — turning a driver rebuild from a ~100s
+    recompile-everything into a fast relink. Delete src/dag-fft-compiler/.obj
+    to force a clean rebuild (e.g. after the OCaml pipeline regenerates)."""
+    srcs = [Path(s) for s in dag_codelet_srcs()]
+    if not srcs:
+        return None
+    objdir = DAG / '.obj' / DAG_ISA
+    objdir.mkdir(parents=True, exist_ok=True)
+    lib = objdir / 'libdagcodelets.a'
+    newest = max(s.stat().st_mtime for s in srcs)
+    if lib.exists() and lib.stat().st_mtime >= newest:
+        print(f'  [codelets] cached lib ({len(srcs)} codelets)')
+        return str(lib)
+    print(f'  [codelets] building static lib from {len(srcs)} codelets '
+          f'(one-time ~100s; cached after) ...', flush=True)
+    for old in objdir.glob('*.o'):   # clear stale objects (regen may rename/drop)
+        old.unlink()
+    cflags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive', '-w']
+    srcs_rsp = objdir / '_srcs.rsp'
+    srcs_rsp.write_text('\n'.join(s.as_posix() for s in srcs), encoding='ascii')
+    r = subprocess.run([tc['cc']] + cflags + build_includes() + ['-c', f'@{srcs_rsp}'],
+                       cwd=str(objdir), capture_output=True, text=True,
+                       encoding='utf-8', errors='replace', env=build_env(tc))
+    if r.returncode != 0:
+        print(f'  [codelets] compile FAILED:\n{r.stderr[:800]}', file=sys.stderr)
+        return None
+    objs = sorted(objdir.glob('*.o'))
+    ar = str(Path(tc['cc']).with_name(Path(tc['cc']).name.replace('gcc', 'ar')))
+    objs_rsp = objdir / '_objs.rsp'
+    objs_rsp.write_text('\n'.join(o.as_posix() for o in objs), encoding='ascii')
+    if lib.exists():
+        lib.unlink()
+    ra = subprocess.run([ar, 'rcs', str(lib), f'@{objs_rsp}'],
+                        capture_output=True, text=True, encoding='utf-8', errors='replace')
+    if ra.returncode != 0:
+        print(f'  [codelets] ar FAILED:\n{ra.stderr[:800]}', file=sys.stderr)
+        return None
+    print(f'  [codelets] lib built ({len(objs)} objects)')
+    return str(lib)
 
 
 def detect_toolchain():
-    cc = os.environ.get('CC', 'icx')
+    # dag dev compiler is gcc (mingw 15.2); production used icx. Override via CC.
+    _default_cc = (r'C:\mingw152\mingw64\bin\gcc.exe' if os.name == 'nt' else 'gcc')
+    cc = os.environ.get('CC', _default_cc)
     cc_basename = Path(cc).name.lower()
     is_windows = os.name == 'nt'
     is_icx = 'icx' in cc_basename
@@ -62,34 +114,11 @@ def detect_toolchain():
 
 
 def build_includes() -> list[str]:
-    """Build the -I flag list. Order matters — first match wins.
-
-    Layout (AVX2 / AVX-512 build):
-        src/core                                 (new core overrides)
-        src/stride-fft/core                      (factorizer, threads, env...)
-        src/vectorfft_tune/generated/r2          (R=2 bootstrap)
-        src/vectorfft_tune/generated/r{3..64}    (per-radix codelets +
-                                                  aux + dispatchers)
-
-    No stride-fft/codelets/avx2 on the path — the new core is fully
-    self-reliant on vectorfft_tune for SIMD codelets.
-    """
-    inc = [str(ROOT / 'include'),
-           str(CORE_NEW), str(CORE_PROD)]
-    # R=2 first (single-variant bootstrap)
-    r2 = TUNED_GEN / 'r2'
-    if r2.is_dir():
-        inc.append(str(r2))
-    for r in TUNED_RADIXES:
-        d = TUNED_GEN / f'r{r}'
-        if d.is_dir():
-            inc.append(str(d))
-        else:
-            print(f'  [warn] missing dispatcher dir: {d}', file=sys.stderr)
-    # Specialized DCT codelets (auto-generated by gen_dct8.py)
-    dct8 = TUNED_GEN / 'dct8'
-    if dct8.is_dir():
-        inc.append(str(dct8))
+    """-I list for the dag-fft-compiler build. dag headers cross-reference each
+    other (and the generated registry) by relative path, so the tree root +
+    core + generated cover everything. No per-radix dirs — SIMD codelets are
+    LINKED .c files (see dag_codelet_srcs), not header-included."""
+    inc = [str(ROOT / 'include'), str(DAG), str(DAG_CORE), str(DAG_GEN)]
     return [f'-I{p}' for p in inc]
 
 
@@ -161,7 +190,7 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
         if mkl:
             flags += ['/DVFFT_HAS_MKL', '/DMKL_ILP64']
             inc += [f'/I{mkl_inc}']
-        all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
+        all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])] + dag_codelet_srcs()
         cmd = [tc['cc']] + flags + inc + all_srcs + [f'/Fe:{out_bin}']
         if mkl:
             cmd += [f'/link', f'/LIBPATH:{mkl_lib}',
@@ -171,17 +200,25 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
     # GCC-style (icx, gcc, clang).
     # _CRT_SECURE_NO_WARNINGS suppresses MSVC's fopen/sscanf deprecation
     # warnings — they spam thousands of lines and bury real errors.
-    flags = ['-O2', '-mavx2', '-mfma',
+    flags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive',
              '-D_CRT_SECURE_NO_WARNINGS',
              '-Wno-overflow', '-Wno-implicit-function-declaration',
              '-Wno-unused-function', '-Wno-unknown-argument',
+             '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
              '-Wno-deprecated-declarations']
     if mkl:
         flags += ['-DVFFT_HAS_MKL', '-DMKL_ILP64', f'-I{mkl_inc}']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
-    all_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
-    cmd = [tc['cc']] + flags + build_includes() + all_srcs + ['-o', str(out_bin)]
+    # Driver + extras compiled here; dag codelets come from a CACHED static lib
+    # (built once by dag_codelet_lib) so a driver rebuild is a fast relink, not
+    # a ~100s recompile of ~300 codelets.
+    base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
+    cmd = [tc['cc']] + flags + build_includes() + base_srcs
+    lib = dag_codelet_lib(tc)
+    if lib:
+        cmd.append(lib)
+    cmd += ['-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
         cmd.append('-fuse-ld=lld')
     if mkl:
@@ -199,7 +236,9 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, extra_srcs=None):
             cmd += [str(Path(fftw_lib) / 'fftw3.lib')]
         else:
             cmd += [f'-L{fftw_lib}', '-lfftw3', '-lm']
-    if not tc['is_windows']:
+    # -lm for gcc (mingw on Windows has libm.a; Linux needs it). NOT for MSVC
+    # or icx-on-Windows (MSVC CRT supplies libm).
+    if not tc['is_msvc_style'] and not (tc['is_windows'] and tc['is_icx']):
         cmd.append('-lm')
     return cmd
 
