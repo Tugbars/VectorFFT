@@ -285,7 +285,7 @@ let dft_expand_r2c_term_rt ?(sign = `Fwd) () : Expr.assignment list =
  *
  * `r` = last radix, `m` = N'/r, `k` = the column index (1 <= k < m-k interior).  *)
 let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
-    : (expr * expr) array =
+    : (expr * expr) array * Dft.spill_marker list =
   (* np = N' = half_N = r*m. Output: r pairs [(X[f], X[mirror])] for s=0..r-1,
    * flattened as [X[k+0m]; X[mir of k+0m]; X[k+1m]; ...] = 2r outputs. *)
   ignore np;
@@ -346,14 +346,28 @@ let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
     out.(2 * s)     <- (xf_re, xf_im);
     out.(2 * s + 1) <- (xmir_re, xmir_im)
   done;
-  out
+  (* PASS-1/PASS-2 spill seam (doc 58): the two stage-twiddled DFT-r outputs ARE
+   * PASS-1; tag them as spill markers (col k -> slots 0..r-1, col m-k -> r..2r-1)
+   * so the fold (PASS-2) reads them via scratch instead of both DFT-r's
+   * co-residing (2*r complex = 32 zmm at r=8 -> monolithic spill storm). *)
+  let markers =
+    let acc = ref [] in
+    for s = r - 1 downto 0 do
+      acc := { Dft.slot = r + s; re_expr = zm_re.(s); im_expr = zm_im.(s) } :: !acc
+    done;
+    for s = r - 1 downto 0 do
+      acc := { Dft.slot = s; re_expr = zk_re.(s); im_expr = zk_im.(s) } :: !acc
+    done;
+    !acc
+  in
+  (out, markers)
 
 (* Assignment-list wrapper: 2r outputs. Output(2s) = X[k+s*m] (Xp slot s),
  * Output(2s+1) = X[mirror of k+s*m] (Xm slot s). The emitter maps even slots to
  * Xp[s], odd slots to Xm[s] over the vl lanes. *)
 let dft_expand_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
     : Expr.assignment list =
-  let out = dft_r2c_term_laststage ~sign np r m in
+  let out, _markers = dft_r2c_term_laststage ~sign np r m in
   let acc = ref [] in
   for s = r - 1 downto 0 do
     let (xf_re, xf_im) = out.(2 * s) in
@@ -364,6 +378,25 @@ let dft_expand_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
     acc := (Output (2 * s + 1, false), xm_im) :: !acc
   done;
   !acc
+
+(* Spill-aware (doc-58 two-pass) variant of dft_expand_r2c_term_laststage: same
+ * outputs, but exposes the two DFT-r columns as PASS-1 spill markers + cluster
+ * shape (2, r), so the recipe machinery blocks the fused DAG instead of letting
+ * gcc spill-storm the 32-zmm monolith. Routes through the standard spill-aware
+ * body emitter (markers are topology-agnostic). *)
+let dft_expand_r2c_term_laststage_spill ?(sign = `Fwd) (np : int) (r : int) (m : int)
+    : Expr.assignment list * Dft.spill_marker list * (int * int) option =
+  let out, markers = dft_r2c_term_laststage ~sign np r m in
+  let acc = ref [] in
+  for s = r - 1 downto 0 do
+    let (xf_re, xf_im) = out.(2 * s) in
+    let (xm_re, xm_im) = out.(2 * s + 1) in
+    acc := (Output (2 * s,     true),  xf_re) :: !acc;
+    acc := (Output (2 * s,     false), xf_im) :: !acc;
+    acc := (Output (2 * s + 1, true),  xm_re) :: !acc;
+    acc := (Output (2 * s + 1, false), xm_im) :: !acc
+  done;
+  (!acc, markers, Some (2, r))
 
 (* === C2R BACKWARD: dft_c2r_direct ===
  *

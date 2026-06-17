@@ -20,6 +20,8 @@ int main(int argc,char**argv){
   rfft_register_all_avx2(&reg);   /* r2cf + hc2hc + RANGED variants (full set) */
   rfft_plan_t*pf=rfft_plan_create(N,K,f,nf,&reg);
   if(!pf){printf("plan NULL\n");return 1;}
+  size_t Kb = (argc>2) ? (size_t)atoi(argv[2]) : K;   /* doc-63 decision sweep */
+  pf->Kb = Kb;
   size_t NK=(size_t)N*K;
   double*x=calloc(NK,8),*hc=calloc(2*NK,8);
   srand(7);for(size_t i=0;i<NK;i++)x[i]=(double)rand()/RAND_MAX*2-1;
@@ -40,7 +42,7 @@ int main(int argc,char**argv){
     c=__rdtsc(); rfft_execute_fwd_packed(pf,x,hc);   ours[r]=__rdtsc()-c;
     c=__rdtsc(); DftiComputeForward(h,xin,cce);        mkl[r]=__rdtsc()-c;}
   unsigned long long o=mn(ours,IT),m=mn(mkl,IT);
-  printf("FWD N=256 (8,32) K=%-3zu | ours=%llu mkl=%llu | mkl/ours=%.3f %s\n",
-    K,o,m,(double)m/o,(double)m/o>1?"OURS faster":"mkl faster");
+  printf("FWD N=256 (8,32) K=%-3zu Kb=%-3zu | ours=%llu mkl=%llu | mkl/ours=%.3f %s\n",
+    K,Kb,o,m,(double)m/o,(double)m/o>1?"OURS faster":"mkl faster");
   DftiFreeDescriptor(&h); return 0;
 }
