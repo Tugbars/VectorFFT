@@ -102,16 +102,19 @@ static inline int vfft_proto_jit_variant(const stride_plan_t *plan, int stage) {
     return 0;                      /* FLAT */
 }
 
-/* filename-safe key = nN_kK_<factors..>_v<variants>_<isa>_verV */
+/* filename-safe key = nN_kK_<factors..>_v<variants>_<isa>_<dir>_dD_verV.
+ * `dir` ("fwd"/"bwd") keeps the two directions in separate cache files — both
+ * emit the same symbol (vfft_proto_jit_exec), so they MUST NOT collide. */
 static inline void vfft_proto_jit_key(const stride_plan_t *plan, const char *isa,
-                                      char *out, size_t cap) {
+                                      const char *dir, char *out, size_t cap) {
     int n = snprintf(out, cap, "n%d_k%zu", plan->N, plan->K);
     for (int s = 0; s < plan->num_stages; s++)
         n += snprintf(out + n, cap - n, "_%d", plan->factors[s]);
     n += snprintf(out + n, cap - n, "_v");
     for (int s = 0; s < plan->num_stages; s++)
         n += snprintf(out + n, cap - n, "%d", vfft_proto_jit_variant(plan, s));
-    snprintf(out + n, cap - n, "_%s_d%d_ver%d", isa, plan->use_dif_forward, VFFT_PROTO_JIT_VERSION);
+    snprintf(out + n, cap - n, "_%s_%s_d%d_ver%d", isa, dir,
+             plan->use_dif_forward, VFFT_PROTO_JIT_VERSION);
 }
 
 /* comma-separated factor + variant lists for emit_jit.py */
@@ -140,7 +143,8 @@ static inline vfft_proto_exec_fn vfft_proto_jit_reg_find(const char *key) {
 /* emit (if needed) → compile (if .lib absent) → load → register. NULL on any
  * failure (caller falls back to generic). */
 static inline vfft_proto_exec_fn
-vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa, const char *key) {
+vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa,
+                            const char *dir, const char *key) {
     char lib[700], src[700];
     snprintf(lib, sizeof lib, "%s/jit_%s.%s", VFFT_PROTO_JIT_DIR, key, VFFT_JIT_LIBEXT);
     snprintf(src, sizeof src, "%s/jit_%s.c",  VFFT_PROTO_JIT_DIR, key);
@@ -153,9 +157,9 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa, const ch
         /* emit one .c (no shell redirect — --out writes the file directly) */
         snprintf(cmd, sizeof cmd,
             "%s %s/emit_jit.py --N %d --K %zu --factors %s --variants %s "
-            "--orient %s --isa %s --prelude jit_prelude.h --out %s",
+            "--orient %s --dir %s --isa %s --prelude jit_prelude.h --out %s",
             VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars,
-            plan->use_dif_forward ? "dif" : "dit", isa, src);
+            plan->use_dif_forward ? "dif" : "dit", dir, isa, src);
         if (system(cmd) != 0) return NULL;
         /* compile to a shared lib; -I so jit_prelude.h resolves */
         snprintf(cmd, sizeof cmd,
@@ -183,17 +187,28 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa, const ch
     return fn;
 }
 
-/* ── The resolver. Call once after planning (planner phase). Returns the forward
- *    executor: baked static if present, else JIT-compiled (cached), else NULL
- *    (caller uses vfft_proto_execute_fwd_generic). ─────────────────────────── */
-static inline vfft_proto_exec_fn vfft_proto_plan_jit_fwd(const stride_plan_t *plan) {
-    vfft_proto_exec_fn baked = vfft_proto_lookup_fwd_avx2(plan);
+/* ── The resolver. Call once after planning (planner phase). Returns the
+ *    direction's executor: baked static if present, else JIT-compiled (cached),
+ *    else NULL (caller uses the generic executor). The fwd/bwd wrappers below
+ *    are the public entry points; bwd added so override plans (Rader/Bluestein)
+ *    can JIT their inner CT FFT in BOTH directions. ─────────────────────────── */
+static inline vfft_proto_exec_fn
+_vfft_proto_plan_jit_dir(const stride_plan_t *plan, const char *dir, int is_bwd) {
+    vfft_proto_exec_fn baked = is_bwd ? vfft_proto_lookup_bwd_avx2(plan)
+                                      : vfft_proto_lookup_fwd_avx2(plan);
     if (baked) return baked;                       /* already specialized */
     char key[256];
-    vfft_proto_jit_key(plan, "avx2", key, sizeof key);
+    vfft_proto_jit_key(plan, "avx2", dir, key, sizeof key);
     vfft_proto_exec_fn fn = vfft_proto_jit_reg_find(key);
     if (fn) return fn;                             /* compiled earlier this run */
-    return vfft_proto_jit_compile_load(plan, "avx2", key);
+    return vfft_proto_jit_compile_load(plan, "avx2", dir, key);
+}
+
+static inline vfft_proto_exec_fn vfft_proto_plan_jit_fwd(const stride_plan_t *plan) {
+    return _vfft_proto_plan_jit_dir(plan, "fwd", 0);
+}
+static inline vfft_proto_exec_fn vfft_proto_plan_jit_bwd(const stride_plan_t *plan) {
+    return _vfft_proto_plan_jit_dir(plan, "bwd", 1);
 }
 
 #endif /* VFFT_PROTO_JIT_RUNTIME_H */
