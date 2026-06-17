@@ -224,6 +224,9 @@ let run (argv : string array) : unit =
           && Dft.should_spill n isa.vec_regs)
       || (not !twiddled && not !hc2hc && not !hc2c
           && Dft.should_block_n1 n isa.vec_regs)
+      (* model-b fused last-stage: two DFT-r columns live at once = always over
+       * budget (32 zmm at r=8) -> always block via the (2,r) spill seam. *)
+      || !r2c_term_ls
       (* NEWSPLIT blocked: E/O1/O3 seam, prototype gate. *)
       || (not !twiddled && not !hc2hc && not !hc2c
           && Sys.getenv_opt "VFFT_NEWSPLIT" = Some "1"
@@ -326,7 +329,7 @@ let run (argv : string array) : unit =
        else (Dft_r2c.dft_expand_r2c_term ~sign n !r2c_term_k, [], None))
     else if !r2c_term_ls then
       (let half = n / 2 in let rr = !r2c_term_ls_r in let mm = half / rr in
-       (Dft_r2c.dft_expand_r2c_term_laststage ~sign half rr mm, [], None))
+       Dft_r2c.dft_expand_r2c_term_laststage_spill ~sign half rr mm)
     else if !hc2c || !hc2c_nat then
       let direction = if !dif then `Dif else `Dit in
       if !spill && not !dif then
