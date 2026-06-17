@@ -649,20 +649,55 @@ static int _vfft_proto_dp_solve_topk(vfft_proto_dp_context_t *ctx, int N, size_t
     if (n_accum > 1)
         qsort(accum, n_accum, sizeof(vfft_proto_dp_subplan_t), _vfft_proto_dp_subplan_cmp);
 
-    /* Cache top `beam` (<= VFFT_PROTO_DP_TOPK_MAX). */
-    int n_keep = n_accum < beam ? n_accum : beam;
+    /* Keep the top `beam`. PATIENT dedups by MULTISET — keep the cheapest
+     * ordering of each distinct factor-set so the beam carries DIVERSE
+     * multisets, not re-orderings of one (the 4096 K=32 lesson: beam=8
+     * collapsed to 2 multisets and missed 4x4x4x64). accum is cost-sorted, so
+     * the first time a multiset appears it's at its cheapest ordering. MEASURE
+     * keeps top-K plans verbatim (K=4 path unchanged). */
+    vfft_proto_dp_subplan_t kept[VFFT_PROTO_DP_TOPK_MAX];
+    int n_keep = 0;
+    if (!ctx->believe_subplan_cost)
+    {
+        for (int i = 0; i < n_accum && n_keep < beam; i++)
+        {
+            int si[STRIDE_MAX_STAGES];
+            memcpy(si, accum[i].factors, accum[i].nfactors * sizeof(int));
+            _vfft_proto_sort_asc(si, accum[i].nfactors);
+            int dup = 0;
+            for (int j = 0; j < n_keep && !dup; j++)
+            {
+                if (kept[j].nfactors != accum[i].nfactors)
+                    continue;
+                int sj[STRIDE_MAX_STAGES];
+                memcpy(sj, kept[j].factors, kept[j].nfactors * sizeof(int));
+                _vfft_proto_sort_asc(sj, kept[j].nfactors);
+                if (memcmp(sj, si, accum[i].nfactors * sizeof(int)) == 0)
+                    dup = 1;
+            }
+            if (!dup)
+                kept[n_keep++] = accum[i];
+        }
+    }
+    else
+    {
+        int lim = n_accum < beam ? n_accum : beam;
+        for (int i = 0; i < lim; i++)
+            kept[n_keep++] = accum[i];
+    }
+
     vfft_proto_dp_entry_t *e = _vfft_proto_dp_insert(ctx, N, K_eff);
     if (e)
     {
         for (int i = 0; i < n_keep; i++)
-            e->plans[i] = accum[i];
+            e->plans[i] = kept[i];
         e->n_plans = n_keep;
     }
 
-    /* Output up to max_out plans. */
+    /* Output up to max_out from the kept set. */
     int n_out = n_keep < max_out ? n_keep : max_out;
     for (int i = 0; i < n_out; i++)
-        out[i] = accum[i];
+        out[i] = kept[i];
     return n_out;
 }
 

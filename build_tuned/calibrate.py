@@ -18,6 +18,7 @@ usage:
   python build_tuned/calibrate.py --all                 # full 18-cell K=4 grid
   python build_tuned/calibrate.py --odds                # odd/prime-power K=4 grid (25 cells)
   python build_tuned/calibrate.py --evens               # even mixed-composite K=4 grid (24 cells)
+  python build_tuned/calibrate.py --K 32 --pow2         # pow2 grid at K=32 (auto widened-DP path)
   python build_tuned/calibrate.py --skip-build --wisdom C:/tmp/test_wisdom.txt
 """
 from __future__ import annotations
@@ -52,6 +53,11 @@ ODDS_K4 = [95, 119, 169, 175, 243, 361, 525, 625, 1225, 1331,
 EVENS_K4 = [60, 100, 200, 220, 340, 500, 544, 640, 1000, 1008, 2000, 2310,
             2800, 4000, 4620, 5000, 6930, 10000, 13860, 20000, 30030, 50000,
             60060, 100000]
+# Pure pow2 grid (GRID_K4 minus the non-pow2 126/250/400). For K>=8 runs
+# (--K 32/256 --pow2): the calibrator auto-flips to the widened PATIENT DP at K>=8,
+# which engages on the >16384 cells (smaller use exhaustive coarse). Smallest-first.
+GRID_POW2 = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384,
+             32768, 65536, 131072]
 # "run a few first" default: a fast, varied spread (single-codelet, 2-stage, 3-stage).
 DEFAULT_FEW = [8, 64, 128, 256, 512, 1024]
 
@@ -103,6 +109,7 @@ def main():
     ap.add_argument('--all', action='store_true', help='full 18-cell grid')
     ap.add_argument('--odds', action='store_true', help='odd/prime-power K=4 grid (25 cells)')
     ap.add_argument('--evens', action='store_true', help='even mixed-composite K=4 grid (24 cells)')
+    ap.add_argument('--pow2', action='store_true', help='pure pow2 grid (15 cells; for K>=8 widened-DP runs)')
     ap.add_argument('--K', type=int, default=4)
     ap.add_argument('--core', type=int, default=2)
     ap.add_argument('--cooldown', type=float, default=15.0, help='idle seconds between cells')
@@ -118,6 +125,8 @@ def main():
         cells = ODDS_K4
     elif args.evens:
         cells = EVENS_K4
+    elif args.pow2:
+        cells = GRID_POW2
     else:
         cells = DEFAULT_FEW
 

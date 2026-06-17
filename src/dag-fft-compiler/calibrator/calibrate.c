@@ -82,6 +82,15 @@ int main(int argc, char **argv) {
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
     vfft_proto_dp_context_t ctx; vfft_proto_dp_init(&ctx, K, N);  /* allocs + randomizes orig buffers */
 
+    /* K>=8 uses the widened PATIENT DP (beam=8 + re-measure-all-top-K + multiset
+     * dedup) for the large-pow2 coarse factorization search; K=4 stays on the
+     * narrow MEASURE DP (believe=1, beam=3). The variant refine layers on either
+     * way, so K>=8 still gets FLAT/T1S/LOG3 + DIT/DIF selection. */
+    if (K >= 8) {
+        vfft_proto_dp_set_patient(&ctx);
+        if (verbose) printf("  [planner] K=%zu>=8: widened PATIENT DP (beam=%d, re-measure-all-top-K)\n", K, ctx.beam);
+    }
+
     /* 1. MEASURE: global best + deploy pool (top-K within threshold). */
     vfft_proto_plan_decision_t dec;
     vfft_proto_plan_decision_t pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
