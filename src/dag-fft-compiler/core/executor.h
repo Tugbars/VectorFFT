@@ -70,6 +70,14 @@ static inline void vfft_proto_execute_fwd(const stride_plan_t *plan,
                                            double *re, double *im,
                                            size_t slice_K)
 {
+    /* Override backend (Rader/Bluestein/DCT/...): the plan carries its own
+     * execute fn and handles the full transform + any internal threading, so
+     * slice_K is moot here. Mirrors production executor.h's override dispatch. */
+    if (plan->override_fwd) {
+        plan->override_fwd(plan->override_data, re, im);
+        return;
+    }
+
     /* DIF dispatch (Tier 1 specialization supported via lookup). */
     if (plan->use_dif_forward) {
         vfft_proto_exec_fn fn = _vfft_proto_lookup_fwd(plan);
@@ -100,6 +108,11 @@ static inline void vfft_proto_execute_bwd(const stride_plan_t *plan,
                                            double *re, double *im,
                                            size_t slice_K)
 {
+    if (plan->override_bwd) {
+        plan->override_bwd(plan->override_data, re, im);
+        return;
+    }
+
     /* DIF dispatch (Tier 1 specialization supported via lookup). */
     if (plan->use_dif_forward) {
         vfft_proto_exec_fn fn = _vfft_proto_lookup_bwd(plan);
