@@ -51,6 +51,14 @@ typedef struct {
     double *scratch_im;
 
     stride_plan_t *inner_plan;  /* (N-1)-point plan with K = B */
+
+    /* Optional JIT-resolved inner executors (plan phase). NULL => fall back to
+     * stride_execute_*_serial (baked-static-or-generic). When set, the hot-path
+     * inner CT FFT runs at specialized speed in BOTH directions — the win for
+     * cold (N-1) factorizations, which matters most at low K. Set via
+     * stride_rader_set_inner_jit(). */
+    vfft_proto_exec_fn inner_jit_fwd;
+    vfft_proto_exec_fn inner_jit_bwd;
 } stride_rader_data_t;
 
 
@@ -245,10 +253,12 @@ static void _rader_worker_fwd(void *arg) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        stride_execute_fwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_fwd) d->inner_jit_fwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_fwd_serial(d->inner_plan, sr, si);
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_fwd_re, d->omega_fwd_im, (size_t)nm1 * B);
-        stride_execute_bwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_bwd) d->inner_jit_bwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 6. Scatter: X[g^{-q}] = x[0] + conv[q] */
         for (int q = 0; q < nm1; q++) {
@@ -302,10 +312,12 @@ static void _rader_worker_bwd(void *arg) {
             memcpy(si + dst, im + src, B * sizeof(double));
         }
 
-        stride_execute_fwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_fwd) d->inner_jit_fwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_fwd_serial(d->inner_plan, sr, si);
         _blue_cmul_vv(sr, si, sr, si,
                       d->omega_bwd_re, d->omega_bwd_im, (size_t)nm1 * B);
-        stride_execute_bwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_bwd) d->inner_jit_bwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* Scatter: x̃[g^p] = X[0] + conv[p] */
         for (int p = 0; p < nm1; p++) {
@@ -504,6 +516,26 @@ static stride_plan_t *stride_rader_plan(
     plan->override_data    = d;
 
     return plan;
+}
+
+/* ── Inner-FFT JIT wiring (plan phase) ───────────────────────────────────────
+ * The (N-1) inner CT FFT is the bulk of Rader's cost. A caller that has the JIT
+ * runtime (vfft_proto_plan_jit_fwd/bwd) resolves both directions of the inner
+ * plan and hands the function pointers back here; the workers then call them
+ * directly instead of the baked-static-or-generic stride_execute_*_serial path.
+ * Both are no-ops on non-Rader plans, so callers can wire unconditionally. */
+static inline stride_plan_t *stride_rader_inner_plan(const stride_plan_t *plan) {
+    if (!plan || plan->override_fwd != _rader_execute_fwd) return NULL;
+    return ((const stride_rader_data_t *)plan->override_data)->inner_plan;
+}
+
+static inline void stride_rader_set_inner_jit(stride_plan_t *plan,
+                                              vfft_proto_exec_fn fwd,
+                                              vfft_proto_exec_fn bwd) {
+    if (!plan || plan->override_fwd != _rader_execute_fwd) return;
+    stride_rader_data_t *d = (stride_rader_data_t *)plan->override_data;
+    d->inner_jit_fwd = fwd;
+    d->inner_jit_bwd = bwd;
 }
 
 

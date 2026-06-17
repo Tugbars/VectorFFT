@@ -23,11 +23,25 @@ typedef vfft_proto_wisdom_t   stride_wisdom_t;
 #define stride_wise_plan(N, K, reg, wis) \
     vfft_proto_wise_plan((N), (K), (reg), (wis))
 
-#ifndef STRIDE_ALIGNED_ALLOC
-#  define STRIDE_ALIGNED_ALLOC(align, size) aligned_alloc((align), (size))
-#endif
-#ifndef STRIDE_ALIGNED_FREE
-#  define STRIDE_ALIGNED_FREE(p) free(p)
+/* Aligned alloc/free. mingw/MSVC lack C11 aligned_alloc, so use _aligned_malloc
+ * + _aligned_free there (matches plan.h's vfft_proto_posix_memalign). The Win
+ * allocator MUST be paired with _aligned_free or the heap corrupts. */
+#include <stdlib.h>
+#if defined(_WIN32) || defined(_MSC_VER)
+#  include <malloc.h>
+#  ifndef STRIDE_ALIGNED_ALLOC
+#    define STRIDE_ALIGNED_ALLOC(align, size) _aligned_malloc((size), (align))
+#  endif
+#  ifndef STRIDE_ALIGNED_FREE
+#    define STRIDE_ALIGNED_FREE(p) _aligned_free(p)
+#  endif
+#else
+#  ifndef STRIDE_ALIGNED_ALLOC
+#    define STRIDE_ALIGNED_ALLOC(align, size) aligned_alloc((align), (size))
+#  endif
+#  ifndef STRIDE_ALIGNED_FREE
+#    define STRIDE_ALIGNED_FREE(p) free(p)
+#  endif
 #endif
 
 static inline void stride_execute_fwd(const stride_plan_t *p,

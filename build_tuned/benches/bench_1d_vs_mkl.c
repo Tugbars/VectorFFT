@@ -38,6 +38,7 @@
 #include "jit/jit_runtime.h"          /* vfft_proto_plan_jit_fwd (build.py --jit) */
 #endif
 #include "generator/generated/registry.h"
+#include "core/prime_dispatch.h"        /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -171,16 +172,20 @@ int main(int argc, char **argv) {
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2] : "vfft_perf_tuned_1d.csv";
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
+    /* rader_only > 0: ISOLATED mode — skip the CT wisdom loop entirely and bench
+     * ONLY that one Rader prime (fresh process per cell, no wisdom heat-soak),
+     * appending one CSV row (caller writes the header once). */
+    int rader_only    = (argc >= 5) ? atoi(argv[4]) : 0;
 
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(1);
 #endif
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
-    FILE *f = fopen(wpath, "r");
-    if (!f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
-    FILE *out = fopen(csv, "w");
-    if (out) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    FILE *f = rader_only ? NULL : fopen(wpath, "r");
+    if (!rader_only && !f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
+    FILE *out = fopen(csv, rader_only ? "a" : "w");
+    if (out && !rader_only) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
 
     printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
     printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
@@ -189,7 +194,7 @@ int main(int argc, char **argv) {
 
     char line[1024];
     int benched = 0, skipped = 0;
-    while (fgets(line, sizeof line, f)) {
+    while (!rader_only && fgets(line, sizeof line, f)) {
         if (line[0] == '#' || line[0] == '@' || line[0] == '\n') continue;
         char *save;
         char *tok = strtok_r(line, " \t\n", &save); if (!tok) continue;
@@ -280,7 +285,81 @@ int main(int argc, char **argv) {
         benched++;
         pace(pace_ms);
     }
-    fclose(f);
+    if (f) fclose(f);
+
+    /* ── Rader prime cells (override plans; not in CT wisdom) ──────────────────
+     * The 8 K=4 Rader primes from production's perf CSV (N-1 radix-smooth, so
+     * auto_plan_dispatch routes them to Rader). The inner (N-1) CT FFT is
+     * JIT-resolved in BOTH directions and wired into the plan, so the timed
+     * override path runs the inner at specialized (baked-or-JIT) speed — the
+     * point of the JIT-to-Rader expansion. ratio_vs_mkl is directly comparable
+     * to production's vfft_perf_tuned_1d.csv (category=rader). */
+    {
+        static const int rader_N[] = {127, 251, 257, 401, 641, 1009, 2801, 4001};
+        size_t K = (size_t)BENCH_K;
+        /* Load CT wisdom so the Rader inner (N-1) FFT rides the MEASURED-best plan
+         * — the dispatch forwards `wisp` to vfft_proto_auto_plan for the inner.
+         * Without this the inner falls to the factorizer default. */
+        vfft_proto_wisdom_t rwis;
+        const vfft_proto_wisdom_t *wisp =
+            (vfft_proto_wisdom_load(&rwis, wpath) == 0) ? &rwis : NULL;
+        for (size_t ci = 0; ci < sizeof rader_N / sizeof rader_N[0]; ci++) {
+            int N = rader_N[ci];
+            if (rader_only && N != rader_only) continue;   /* isolated: one cell only */
+            if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) { skipped++; continue; }
+            stride_plan_t *plan = vfft_proto_auto_plan_dispatch(N, K, &reg, wisp);
+            if (!plan) { printf("%-8d %-16s   dispatch NULL (not Rader?)\n", N, "[override]"); skipped++; continue; }
+
+            const char *path = "rader-gen";
+#ifdef VFFT_USE_JIT
+            stride_plan_t *inner = stride_rader_inner_plan(plan);
+            vfft_proto_exec_fn ifwd = inner ? vfft_proto_plan_jit_fwd(inner) : NULL;
+            vfft_proto_exec_fn ibwd = inner ? vfft_proto_plan_jit_bwd(inner) : NULL;
+            stride_rader_set_inner_jit(plan, ifwd, ibwd);
+            if (ifwd && ibwd) path = "rader-JIT";
+#endif
+            size_t total = (size_t)N * K;
+            double *src_re = alloc_d(total), *src_im = alloc_d(total);
+            srand(42 + N + (int)K);
+            for (size_t i = 0; i < total; i++) {
+                src_re[i] = (double)rand() / RAND_MAX - 0.5;
+                src_im[i] = (double)rand() / RAND_MAX - 0.5;
+            }
+            /* fn=NULL => roundtrip uses vfft_proto_execute_fwd (override -> Rader -> JIT inner). */
+            double rel = roundtrip_err(NULL, plan, N, K, src_re, src_im, total);
+
+            double *re = alloc_d(total), *im = alloc_d(total);
+            memcpy(re, src_re, total * sizeof(double)); memcpy(im, src_im, total * sizeof(double));
+            double vns = bench_generic(plan, re, im, K, total);
+
+            double mns = 0, ratio = 0;
+#ifdef VFFT_HAS_MKL
+            cachebust();
+            DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
+            if (d) {
+                double *rm = alloc_d(total), *imk = alloc_d(total);
+                memcpy(rm, src_re, total * sizeof(double)); memcpy(imk, src_im, total * sizeof(double));
+                mns = bench_mkl(d, rm, imk, total);
+                ratio = (vns > 0) ? mns / vns : 0;
+                free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
+            }
+#endif
+            double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
+            printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
+                   N, "[override]", path, vns, mns, vgf, ratio, rel);
+            if (out) {
+                fprintf(out, "%d,%zu,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e\n",
+                        N, K, "[override]", path, vns, mns, vgf, ratio, rel);
+                fflush(out);
+            }
+            free_d(re); free_d(im); free_d(src_re); free_d(src_im);
+            stride_plan_destroy(plan);   /* bridge: override_destroy-aware (frees rader_data + inner) */
+            benched++;
+            pace(pace_ms);
+        }
+        if (wisp) vfft_proto_wisdom_free(&rwis);
+    }
+
     if (out) fclose(out);
     printf("\nbenched %d cells, skipped %d.  CSV -> %s\n", benched, skipped, csv);
     return 0;

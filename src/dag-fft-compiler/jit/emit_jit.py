@@ -11,6 +11,8 @@ jit_prelude.h (the extracted STAGE_* macros + codelet externs + plan types).
 Mapping (verified against generator/generated/plan_executors.h):
   DIT fwd: stage 0 -> STAGE_OUTER; stages 1..n-1 -> STAGE_{FLAT,LOG3,T1S}[v]
   DIF fwd: stages 0..n-2 -> STAGE_DIF_{FLAT,LOG3}[v]; last -> STAGE_DIF_OUTER
+  DIT bwd: stages n-1..0 (REVERSE) -> STAGE_BWD       (variant-agnostic)
+  DIF bwd: stages n-1..0 (REVERSE) -> STAGE_DIF_BWD   (variant-agnostic)
 """
 import argparse
 
@@ -32,10 +34,20 @@ def codelet_names(factors, variants, orient, direction, isa):
     DIT twiddles stages 1..n-1; DIF twiddles stages 0..n-2 (OUTER = last)."""
     nf = len(factors)
     names = [f"radix{factors[s]}_n1_{direction}_{isa}" for s in range(nf)]   # n1 every stage
-    if orient == "dit":
+    if direction == "bwd":
+        # Backward is VARIANT-AGNOSTIC: STAGE_BWD always calls t1s_dit_bwd (+ a
+        # leg0-conj macro, not a codelet); STAGE_DIF_BWD always calls t1_dif_bwd.
+        # Both read the canonical twiddle layout (tw_scalar / grp_tw) regardless
+        # of the forward variant, so the fwd `variants` don't pick the codelet.
+        # Every stage's macro references the tw codelet (compiled, not just the
+        # taken branch), so emit it for ALL stages — mirrors the baked bwd.
+        tw = "t1s_dit" if orient == "dit" else "t1_dif"
+        for s in range(nf):
+            names.append(f"radix{factors[s]}_{tw}_bwd_{isa}")
+    elif orient == "dit":
         for s in range(1, nf):
             names.append(f"radix{factors[s]}_{DIT_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
-    else:  # dif
+    else:  # dif fwd
         for s in range(nf - 1):
             names.append(f"radix{factors[s]}_{DIF_CODELET_INFIX[variants[s]]}_{direction}_{isa}")
     seen, uniq = set(), []
@@ -58,9 +70,18 @@ def stage_line(suffix, s, r, isa):
     return f"    {name}({s}, {r:2d}, {isa})"
 
 
-def emit_body(factors, variants, orient, isa):
+def emit_body(factors, variants, orient, isa, direction="fwd"):
     nf = len(factors)
     lines = ["    (void)full_K;"]
+    if direction == "bwd":
+        # Backward walks stages in REVERSE (output -> input), mirroring the
+        # generic/baked bwd executors. DIT -> STAGE_BWD (fused t1s_dit_bwd +
+        # leg0-conj); DIF -> STAGE_DIF_BWD (fused t1_dif_bwd). Both branch on
+        # needs_tw internally and are variant-agnostic, so `variants` is unused.
+        macro = "BWD" if orient == "dit" else "DIF_BWD"
+        for s in range(nf - 1, -1, -1):
+            lines.append(stage_line(macro, s, factors[s], isa))
+        return lines
     if orient == "dit":
         lines.append(stage_line("OUTER", 0, factors[0], isa))
         for s in range(1, nf):
@@ -101,7 +122,7 @@ def main():
         variants = [(2 if a.orient == "dit" else 0)] * nf
     assert len(variants) == nf, "variants length must match factors"
 
-    body = emit_body(factors, variants, a.orient, a.isa)
+    body = emit_body(factors, variants, a.orient, a.isa, a.dir)
     if a.body_only:
         emit("\n".join(body))
         return
