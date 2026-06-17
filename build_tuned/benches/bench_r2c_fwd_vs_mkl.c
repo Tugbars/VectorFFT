@@ -1,5 +1,6 @@
 #define _GNU_SOURCE 1
 #define VFFT_RFFT_MAX_RADIX 32
+#define VFFT_RFFT_RANGED 1     /* enable the ranged (one-call-walks-columns) terminator/stages */
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,19 +8,16 @@
 #include <math.h>
 #include <immintrin.h>
 #include <mkl_dfti.h>
-#define DF(r) extern void radix##r##_r2cf_avx2(const double*,double*,double*,ptrdiff_t,ptrdiff_t,ptrdiff_t,size_t);
-#define DHF(r) extern void radix##r##_hc2hc_dit_fwd_avx2(const double*,const double*,double*,double*,const double*,const double*,ptrdiff_t,ptrdiff_t,size_t);
-DF(2)DF(4)DF(8)DF(16)DF(32) DHF(2)DHF(4)DHF(8)DHF(16)
-#include "rfft.h"
+#include <mkl_service.h>   /* mkl_set_num_threads — pin to 1 for a fair ST race */
+/* Full ABI-typed registry (r2cf + hc2hc + RANGED variants), incl rfft.h. */
+#include "rfft_registry_avx2.h"
 static unsigned long long mn(unsigned long long*a,int n){unsigned long long m=~0ULL;for(int i=0;i<n;i++)if(a[i]<m)m=a[i];return m;}
 int main(int argc,char**argv){
+  mkl_set_num_threads(1);   /* fair single-thread race (ours is ST) */
   int N=256; size_t K=argc>1?(size_t)atoi(argv[1]):8;
   int f[2]={8,32}, nf=2; size_t halfN=N/2;
   rfft_codelets_t reg; memset(&reg,0,sizeof reg);
-  reg.r2cf[2]=radix2_r2cf_avx2;reg.r2cf[4]=radix4_r2cf_avx2;reg.r2cf[8]=radix8_r2cf_avx2;
-  reg.r2cf[16]=radix16_r2cf_avx2;reg.r2cf[32]=radix32_r2cf_avx2;
-  reg.hc2hc[2]=radix2_hc2hc_dit_fwd_avx2;reg.hc2hc[4]=radix4_hc2hc_dit_fwd_avx2;
-  reg.hc2hc[8]=radix8_hc2hc_dit_fwd_avx2;reg.hc2hc[16]=radix16_hc2hc_dit_fwd_avx2;
+  rfft_register_all_avx2(&reg);   /* r2cf + hc2hc + RANGED variants (full set) */
   rfft_plan_t*pf=rfft_plan_create(N,K,f,nf,&reg);
   if(!pf){printf("plan NULL\n");return 1;}
   size_t NK=(size_t)N*K;
