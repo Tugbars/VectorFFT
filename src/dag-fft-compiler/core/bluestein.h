@@ -81,6 +81,13 @@ typedef struct {
     double *scratch_im;
 
     stride_plan_t *inner_plan;   /* M-point plan with K = B */
+
+    /* Optional JIT-resolved inner executors (plan phase). NULL => fall back to
+     * stride_execute_*_serial (baked-or-generic). Mirrors the Rader hooks: the
+     * M-point inner CT FFT runs at specialized speed in BOTH directions when set.
+     * Wire via stride_bluestein_set_inner_jit(). */
+    vfft_proto_exec_fn inner_jit_fwd;
+    vfft_proto_exec_fn inner_jit_bwd;
 } stride_bluestein_data_t;
 
 
@@ -401,13 +408,15 @@ static void _blue_worker_fwd(void *arg) {
         memset(si + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
 
         /* 2. Forward FFT of size M (serial — this worker owns its scratch) */
-        stride_execute_fwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_fwd) d->inner_jit_fwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_fwd_serial(d->inner_plan, sr, si);
 
         /* 3. Flat pointwise multiply by pre-expanded B_hat */
         _blue_cmul_vv(sr, si, sr, si, d->B_hat_re, d->B_hat_im, (size_t)M * B);
 
         /* 4. Backward FFT (serial) */
-        stride_execute_bwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_bwd) d->inner_jit_bwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 5. Demodulate: output[n*K+b0+k] = scratch[n*B+k] * chirp[n] */
         for (int n = 0; n < N; n++) {
@@ -443,9 +452,11 @@ static void _blue_worker_bwd(void *arg) {
         memset(sr + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
         memset(si + (size_t)N * B, 0, (size_t)(M - N) * B * sizeof(double));
 
-        stride_execute_fwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_fwd) d->inner_jit_fwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_fwd_serial(d->inner_plan, sr, si);
         _blue_cmul_vv(sr, si, sr, si, d->C_hat_re, d->C_hat_im, (size_t)M * B);
-        stride_execute_bwd_serial(d->inner_plan, sr, si);
+        if (d->inner_jit_bwd) d->inner_jit_bwd(d->inner_plan, sr, si, B, B, 0);
+        else                  stride_execute_bwd_serial(d->inner_plan, sr, si);
 
         /* 5. Demodulate by conj(chirp) */
         for (int n = 0; n < N; n++) {
@@ -642,6 +653,25 @@ static stride_plan_t *stride_bluestein_plan(
     plan->override_data    = d;
 
     return plan;
+}
+
+/* ── Inner-FFT JIT wiring (plan phase) — mirror of the Rader hooks ───────────
+ * The M-point inner CT FFT dominates Bluestein's cost. A caller with the JIT
+ * runtime resolves both directions of the inner plan and hands the pointers
+ * back here; the workers then call them directly instead of the baked-or-generic
+ * path. Both are no-ops on non-Bluestein plans, so callers can wire blindly. */
+static inline stride_plan_t *stride_bluestein_inner_plan(const stride_plan_t *plan) {
+    if (!plan || plan->override_fwd != _bluestein_execute_fwd) return NULL;
+    return ((const stride_bluestein_data_t *)plan->override_data)->inner_plan;
+}
+
+static inline void stride_bluestein_set_inner_jit(stride_plan_t *plan,
+                                                  vfft_proto_exec_fn fwd,
+                                                  vfft_proto_exec_fn bwd) {
+    if (!plan || plan->override_fwd != _bluestein_execute_fwd) return;
+    stride_bluestein_data_t *d = (stride_bluestein_data_t *)plan->override_data;
+    d->inner_jit_fwd = fwd;
+    d->inner_jit_bwd = bwd;
 }
 
 

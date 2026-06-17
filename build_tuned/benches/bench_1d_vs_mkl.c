@@ -287,36 +287,50 @@ int main(int argc, char **argv) {
     }
     if (f) fclose(f);
 
-    /* ── Rader prime cells (override plans; not in CT wisdom) ──────────────────
-     * The 8 K=4 Rader primes from production's perf CSV (N-1 radix-smooth, so
-     * auto_plan_dispatch routes them to Rader). The inner (N-1) CT FFT is
-     * JIT-resolved in BOTH directions and wired into the plan, so the timed
-     * override path runs the inner at specialized (baked-or-JIT) speed — the
-     * point of the JIT-to-Rader expansion. ratio_vs_mkl is directly comparable
-     * to production's vfft_perf_tuned_1d.csv (category=rader). */
+    /* ── Prime cells (Rader + Bluestein override plans; not in CT wisdom) ──────
+     * Rader (N-1 radix-smooth) and Bluestein (else) primes. auto_plan_dispatch
+     * routes each; the inner (N-1 / M) CT FFT is JIT-resolved in BOTH directions
+     * and wired into the plan, so the timed override path runs the inner at
+     * specialized (baked-or-JIT) speed. ratio_vs_mkl is directly comparable to
+     * production's vfft_perf_tuned_1d.csv (category=rader/bluestein). */
     {
-        static const int rader_N[] = {127, 251, 257, 401, 641, 1009, 2801, 4001};
+        static const int prime_N[] = {
+            127, 251, 257, 401, 641, 1009, 2801, 4001,   /* Rader (N-1 smooth) */
+             47,  59,  83, 107,  167,  179,  263,  311,   /* Bluestein */
+        };
         size_t K = (size_t)BENCH_K;
-        /* Load CT wisdom so the Rader inner (N-1) FFT rides the MEASURED-best plan
-         * — the dispatch forwards `wisp` to vfft_proto_auto_plan for the inner.
-         * Without this the inner falls to the factorizer default. */
+        /* CT wisdom so the inner FFT rides the MEASURED-best plan (dispatch forwards
+         * it to vfft_proto_auto_plan); else the inner falls to the factorizer default. */
         vfft_proto_wisdom_t rwis;
         const vfft_proto_wisdom_t *wisp =
             (vfft_proto_wisdom_load(&rwis, wpath) == 0) ? &rwis : NULL;
-        for (size_t ci = 0; ci < sizeof rader_N / sizeof rader_N[0]; ci++) {
-            int N = rader_N[ci];
+        /* Bluestein (M,B) wisdom: lets the dispatch pick M from measurement, else the
+         * _bluestein_choose_m heuristic. Path via VFFT_PROTO_BLUE_WIS env. */
+        bluestein_wisdom_t bwis; bluestein_wisdom_init(&bwis);
+        const char *bpath = getenv("VFFT_PROTO_BLUE_WIS");
+        int have_bwis = bpath ? (bluestein_wisdom_load(&bwis, bpath) == 0) : 0;
+        vfft_proto_dispatch_set_bluestein_wisdom(have_bwis ? &bwis : NULL);
+        for (size_t ci = 0; ci < sizeof prime_N / sizeof prime_N[0]; ci++) {
+            int N = prime_N[ci];
             if (rader_only && N != rader_only) continue;   /* isolated: one cell only */
             if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) { skipped++; continue; }
             stride_plan_t *plan = vfft_proto_auto_plan_dispatch(N, K, &reg, wisp);
-            if (!plan) { printf("%-8d %-16s   dispatch NULL (not Rader?)\n", N, "[override]"); skipped++; continue; }
+            if (!plan) { printf("%-8d %-16s   dispatch NULL\n", N, "[override]"); skipped++; continue; }
 
-            const char *path = "rader-gen";
-#ifdef VFFT_USE_JIT
+            /* Type via the type-specific inner getters (each no-op on the wrong
+             * plan), so we label + JIT-wire whichever it is. */
             stride_plan_t *inner = stride_rader_inner_plan(plan);
+            int is_rader = (inner != NULL);
+            if (!inner) inner = stride_bluestein_inner_plan(plan);
+            const char *path = is_rader ? "rader-gen" : "blue-gen";
+#ifdef VFFT_USE_JIT
             vfft_proto_exec_fn ifwd = inner ? vfft_proto_plan_jit_fwd(inner) : NULL;
             vfft_proto_exec_fn ibwd = inner ? vfft_proto_plan_jit_bwd(inner) : NULL;
-            stride_rader_set_inner_jit(plan, ifwd, ibwd);
-            if (ifwd && ibwd) path = "rader-JIT";
+            stride_rader_set_inner_jit(plan, ifwd, ibwd);      /* no-op if Bluestein */
+            stride_bluestein_set_inner_jit(plan, ifwd, ibwd);  /* no-op if Rader */
+            if (ifwd && ibwd) path = is_rader ? "rader-JIT" : "blue-JIT";
+#else
+            (void)inner;
 #endif
             size_t total = (size_t)N * K;
             double *src_re = alloc_d(total), *src_im = alloc_d(total);
@@ -358,6 +372,7 @@ int main(int argc, char **argv) {
             pace(pace_ms);
         }
         if (wisp) vfft_proto_wisdom_free(&rwis);
+        vfft_proto_dispatch_set_bluestein_wisdom(NULL);   /* bwis leaves scope */
     }
 
     if (out) fclose(out);
