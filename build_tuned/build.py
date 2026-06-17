@@ -48,11 +48,21 @@ DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
 
 def dag_codelet_srcs() -> list[str]:
     """All dag SIMD codelet .c files to compile+link (the registry references
-    them by symbol). ~300 files; compiled in one invocation."""
-    if not DAG_CODELETS.is_dir():
-        print(f'  [warn] dag codelet dir missing: {DAG_CODELETS}', file=sys.stderr)
-        return []
-    return sorted(str(p) for p in DAG_CODELETS.glob('*.c'))
+    them by symbol). ~300 c2c files + the real-FFT families. Compiled in one
+    invocation. The rfft (r2cf + hc2hc) and c2r (r2cb + hc2hc-bwd) codelets live
+    in sibling dirs; including them here lets r2c/c2r benches link the same lib."""
+    dirs = [
+        DAG_CODELETS,                          # c2c in-place
+        DAG / 'codelets' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
+        DAG / 'codelets' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
+    ]
+    srcs: list[str] = []
+    for d in dirs:
+        if d.is_dir():
+            srcs += [str(p) for p in d.glob('*.c')]
+        else:
+            print(f'  [warn] codelet dir missing: {d}', file=sys.stderr)
+    return sorted(srcs)
 
 
 def dag_codelet_lib(tc) -> str | None:

@@ -77,3 +77,4 @@ src/prototype/docs/59_avx512_strided_test_guide.md
 /src/prototype/build_tuned
 /src/dag-fft-compiler/generator/_raylib
 src/dag-fft-compiler/MKLBench/_smoke.txt
+/docs/r2c_bundle
