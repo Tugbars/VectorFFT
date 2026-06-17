@@ -266,6 +266,15 @@ static inline stride_plan_t *vfft_proto_estimate_plan(
 
 static inline void vfft_proto_plan_destroy(stride_plan_t *plan) {
     if (!plan) return;
+    /* Override plans (Rader/Bluestein/DCT) own their data via override_destroy;
+     * they have no staged tables (num_stages=0). Honor it FIRST or we leak the
+     * override_data + its inner plan. Mirrors production's stride_plan_destroy
+     * (src/core/executor.h) and the bridge's stride_plan_destroy. */
+    if (plan->override_destroy) {
+        plan->override_destroy(plan->override_data);
+        free(plan);
+        return;
+    }
     vfft_proto_free_plan_tables(plan);
     free(plan);
 }
