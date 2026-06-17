@@ -34,10 +34,11 @@
 #endif
 
 int main(int argc, char **argv) {
-    if (argc < 2) { fprintf(stderr, "usage: %s <N> [K=4] [cpu]\n", argv[0]); return 2; }
-    int    N    = atoi(argv[1]);
-    size_t K    = (argc >= 3) ? (size_t)atol(argv[2]) : 4;
-    int    core = (argc >= 4) ? atoi(argv[3]) : 2;
+    if (argc < 2) { fprintf(stderr, "usage: %s <N> [K=4] [cpu] [force]\n", argv[0]); return 2; }
+    int    N     = atoi(argv[1]);
+    size_t K     = (argc >= 3) ? (size_t)atol(argv[2]) : 4;
+    int    core  = (argc >= 4) ? atoi(argv[3]) : 2;
+    int    force = (argc >= 5) ? atoi(argv[4]) : 0;   /* 1: refresh this cell even if slower */
 
     stride_env_init();
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin cpu%d\n", core);
@@ -60,6 +61,15 @@ int main(int argc, char **argv) {
     const char *bpath = getenv("VFFT_PROTO_BLUE_WIS"); if (!bpath) bpath = BLUE_WIS;
     bluestein_wisdom_t bw; bluestein_wisdom_init(&bw);
     bluestein_wisdom_load(&bw, bpath);   /* fine if absent */
+
+    /* --force: bluestein_wisdom_add is keep-best (min ns). To get a CONSISTENT
+     * dag-only record (not a mix with production's locked-box ns), neutralize any
+     * existing (N,K) entry so the fresh measurement always wins. */
+    if (force) {
+        for (int i = 0; i < bw.count; i++)
+            if (bw.entries[i].N == N && bw.entries[i].K == K)
+                bw.entries[i].best_ns = 1e30;
+    }
 
     size_t total = (size_t)N * K;
     double *re, *im;

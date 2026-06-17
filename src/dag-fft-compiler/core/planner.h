@@ -225,9 +225,12 @@ static inline stride_plan_t *vfft_proto_auto_plan(
     if (wis) {
         const vfft_proto_wisdom_entry_t *e =
             vfft_proto_wisdom_lookup(wis, N, K);
-        if (e && e->nf > 0 && !e->use_dif_forward) {
-            stride_plan_t *plan = vfft_proto_plan_create(
-                N, K, e->factors, e->variants, e->nf, reg);
+        if (e && e->nf > 0) {
+            /* Honor the wisdom's orientation: plan_create_ex carries use_dif.
+             * DIF execution is validated (baked/JIT/generic DIF all roundtrip);
+             * MEASURE records DIF winners, so the runtime must build them. */
+            stride_plan_t *plan = vfft_proto_plan_create_ex(
+                N, K, e->factors, e->variants, e->nf, e->use_dif_forward, reg);
             if (plan) return plan;
         }
     }
@@ -246,8 +249,9 @@ static inline stride_plan_t *vfft_proto_wise_plan(
 {
     if (!wis) return NULL;
     const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(wis, N, K);
-    if (!e || e->nf == 0 || e->use_dif_forward) return NULL;
-    return vfft_proto_plan_create(N, K, e->factors, e->variants, e->nf, reg);
+    if (!e || e->nf == 0) return NULL;
+    return vfft_proto_plan_create_ex(N, K, e->factors, e->variants, e->nf,
+                                     e->use_dif_forward, reg);
 }
 
 /* Estimate-only plan: ignores wisdom, defaults to T1S everywhere. */
