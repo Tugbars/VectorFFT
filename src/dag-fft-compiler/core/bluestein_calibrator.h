@@ -106,8 +106,11 @@ static double _bcal_bench_bluestein(int N, size_t K, int M, size_t B,
                                      double *re, double *im,
                                      double per_trial_budget, int n_trials)
 {
-    stride_plan_t *inner = stride_wise_plan(M, B,
-        (stride_registry_t *)reg, (stride_wisdom_t *)stride_wis);
+    /* auto_plan (NOT strict wise_plan): match the RUNTIME inner planner — it uses
+     * the DIT wisdom entry if present, else the factorizer default. wise_plan
+     * returns NULL on DIF entries (DIF is planner-disabled), a plan the runtime
+     * never builds; using it here would fail cells the runtime handles fine. */
+    stride_plan_t *inner = vfft_proto_auto_plan(M, B, reg, stride_wis);
     if (!inner) return -1.0;
     stride_plan_t *plan = stride_bluestein_plan(N, K, B, inner, M);
     if (!plan) { stride_plan_destroy(inner); return -1.0; }
@@ -142,8 +145,9 @@ static double _bcal_bench_rader(int N, size_t K, size_t B,
                                  double per_trial_budget, int n_trials)
 {
     int nm1 = N - 1;
-    stride_plan_t *inner = stride_wise_plan(nm1, B,
-        (stride_registry_t *)reg, (stride_wisdom_t *)stride_wis);
+    /* auto_plan: match the runtime inner planner (DIT wisdom or factorizer
+     * default; DIF entries are planner-disabled and never used at runtime). */
+    stride_plan_t *inner = vfft_proto_auto_plan(nm1, B, reg, stride_wis);
     if (!inner) return -1.0;
     stride_plan_t *plan = stride_rader_plan(N, K, B, inner);
     if (!plan) { stride_plan_destroy(inner); return -1.0; }
