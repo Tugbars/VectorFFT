@@ -1,0 +1,17 @@
+N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err
+127,4,[override],rader-JIT,2961,4773,5.995,1.612,1.899e-14
+251,4,[override],rader-JIT,6047,9997,6.618,1.653,5.032e-14
+257,4,[override],rader-JIT,5231,16384,7.867,3.132,3.233e-14
+401,4,[override],rader-JIT,9431,21599,7.354,2.290,3.328e-14
+641,4,[override],rader-JIT,19587,52117,6.103,2.661,3.491e-14
+1009,4,[override],rader-JIT,27471,48806,7.330,1.777,2.177e-14
+2801,4,[override],rader-JIT,91893,236361,6.981,2.572,4.443e-14
+4001,4,[override],rader-JIT,143555,218313,6.670,1.521,6.403e-14
+47,4,[override],blue-JIT,1575,2874,3.316,1.826,2.070e-14
+59,4,[override],blue-JIT,1775,4579,3.910,2.579,1.709e-14
+83,4,[override],blue-JIT,2656,9800,3.984,3.690,3.453e-14
+107,4,[override],blue-JIT,3457,4598,4.173,1.330,3.880e-14
+167,4,[override],blue-JIT,5845,9829,4.219,1.682,3.634e-14
+179,4,[override],blue-JIT,10828,9995,2.474,0.923,2.030e-14
+263,4,[override],blue-JIT,10133,15931,4.173,1.572,2.186e-14
+311,4,[override],blue-JIT,13658,18698,3.771,1.369,5.523e-14
