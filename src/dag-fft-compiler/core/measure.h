@@ -410,8 +410,11 @@ static double vfft_proto_dp_plan_measure(vfft_proto_dp_context_t *ctx, int N,
 
     if (!use_exhaustive) {
         coarse_path = "DP";
+        /* PATIENT (believe=0) pulls the WIDENED beam's worth of distinct multisets
+         * into the coarse pool; MEASURE keeps the narrow default. */
+        int dp_multisets = ctx->believe_subplan_cost ? VFFT_PROTO_MEASURE_DP_TOPK_MULTISETS : ctx->beam;
         n_cands = _vfft_proto_measure_collect_via_dp(ctx, N, reg,
-                    VFFT_PROTO_MEASURE_DP_TOPK_MULTISETS, cands, VFFT_PROTO_MEASURE_MAX_CANDIDATES);
+                    dp_multisets, cands, VFFT_PROTO_MEASURE_MAX_CANDIDATES);
         if (n_cands == 0) { if (verbose) printf("  N=%d MEASURE-DP: no candidates\n", N); return 1e18; }
     } else {
         coarse_path = "exh";

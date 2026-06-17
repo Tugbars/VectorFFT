@@ -22,6 +22,7 @@
  */
 #define VFFT_PROTO_PATIENT_PACE_MS 50           /* inter-candidate: light, keeps the long first pass from drifting */
 #define VFFT_PROTO_PATIENT_INTER_TRIAL_PACE_MS 100 /* inter-trial: denoise each best-of-7 bench (the ratio depends on this) */
+#define H2H_COOLDOWN_MS 10000  /* cool before/between head-to-head benches + between cells (thermal-fair) */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -75,6 +76,7 @@ int main(int argc, char **argv) {
     double logsum = 0; int ncmp = 0, n_conv = 0;
     for (int i = 0; i < nN; i++) {
         int N = Ns[i];
+        if (i > 0) _vfft_proto_dp_sleep_ms(H2H_COOLDOWN_MS);  /* inter-cell cool: each cell starts from a cooled baseline */
 
         /* ground truth (DIT, factorization-only brute force) */
         vfft_proto_factorization_t fexh;
@@ -93,7 +95,12 @@ int main(int argc, char **argv) {
         vfft_proto_dp_destroy(ctx); free(ctx);
         if (fdp.nfactors == 0) { printf("  %-8d  (DP found nothing)\n", N); continue; }
 
-        /* head-to-head: re-time BOTH picks under one common patient bench */
+        /* head-to-head: re-time BOTH picks under one common patient bench.
+         * The brute-force + DP search left the package hot, so COOL first,
+         * alternate which pick is timed first per cell, and cool BETWEEN the two
+         * so the second-is-hotter bias cancels (the cmp_old_new thermal-fair
+         * rule). Without this the head-to-head read 2-3x inflated for cells deep
+         * in the run (2048's was 104-152K vs the ground truth's paced 53-54K). */
         size_t total = (size_t)N * K;
         double *re, *im, *ore, *oim;
         vfft_proto_posix_memalign((void **)&re, 64, total * sizeof(double));
@@ -102,8 +109,17 @@ int main(int argc, char **argv) {
         vfft_proto_posix_memalign((void **)&oim, 64, total * sizeof(double));
         srand(42);
         for (size_t j = 0; j < total; j++) { ore[j] = (double)rand() / RAND_MAX - 0.5; oim[j] = (double)rand() / RAND_MAX - 0.5; }
-        double ns_dp  = vfft_proto_bench_patient_ex(N, K, fdp.factors,  fdp.nfactors,  0, &reg, re, im, ore, oim);
-        double ns_exh = vfft_proto_bench_patient_ex(N, K, fexh.factors, fexh.nfactors, 0, &reg, re, im, ore, oim);
+        double ns_dp, ns_exh;
+        _vfft_proto_dp_sleep_ms(H2H_COOLDOWN_MS);
+        if (i % 2 == 0) {
+            ns_dp  = vfft_proto_bench_patient_ex(N, K, fdp.factors,  fdp.nfactors,  0, &reg, re, im, ore, oim);
+            _vfft_proto_dp_sleep_ms(H2H_COOLDOWN_MS);
+            ns_exh = vfft_proto_bench_patient_ex(N, K, fexh.factors, fexh.nfactors, 0, &reg, re, im, ore, oim);
+        } else {
+            ns_exh = vfft_proto_bench_patient_ex(N, K, fexh.factors, fexh.nfactors, 0, &reg, re, im, ore, oim);
+            _vfft_proto_dp_sleep_ms(H2H_COOLDOWN_MS);
+            ns_dp  = vfft_proto_bench_patient_ex(N, K, fdp.factors,  fdp.nfactors,  0, &reg, re, im, ore, oim);
+        }
         vfft_proto_aligned_free(re); vfft_proto_aligned_free(im);
         vfft_proto_aligned_free(ore); vfft_proto_aligned_free(oim);
 

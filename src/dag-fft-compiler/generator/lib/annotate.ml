@@ -1,8 +1,5 @@
 (* annotate.ml — block-level lifetime annotation for scheduled DAGs.
  *
- * Port of FFTW's genfft/annotate.ml, adapted to operate on a flat
- * scheduled list rather than a Seq tree.
- *
  * What this layer does:
  *   Takes a scheduled list of instructions (e.g. output of bisection
  *   or topological emission) and produces a NESTED-BLOCK structure.
