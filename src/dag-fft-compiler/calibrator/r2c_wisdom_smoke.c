@@ -29,9 +29,10 @@ int main(int argc, char **argv) {
 
     size_t total = (size_t)N * K;
     double *x, *ref, *out;
+    /* packed output buffers are 2*NK (base+NK negative-stride fold guard). */
     vfft_proto_posix_memalign((void**)&x,   64, total*sizeof(double));
-    vfft_proto_posix_memalign((void**)&ref, 64, total*sizeof(double));
-    vfft_proto_posix_memalign((void**)&out, 64, total*sizeof(double));
+    vfft_proto_posix_memalign((void**)&ref, 64, 2*total*sizeof(double));
+    vfft_proto_posix_memalign((void**)&out, 64, 2*total*sizeof(double));
     srand(7); for (size_t i = 0; i < total; i++) x[i] = (double)rand()/RAND_MAX*2-1;
 
     /* (1) heuristic reference */
