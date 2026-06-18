@@ -206,10 +206,15 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
     free(p);
 }
 
-/* factors: f[0] = outermost combine, f[nf-1] = leaf. */
-static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
-                                            const int *factors, int nf,
-                                            const rfft_codelets_t *reg)
+/* factors: f[0] = outermost combine, f[nf-1] = leaf.
+ * Explicit per-stage variant: variant[d] for combine stage d (0..nf-2) is
+ * 0=FLAT, 1=LOG3, 2=T1S(ranged); the leaf (factors[nf-1]) has no variant.
+ * variant=NULL means the default policy (LOG3-preferred + ranged-wired), so the
+ * plain rfft_plan_create wrapper below is byte-identical to the original. */
+static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
+                                               const int *factors, int nf,
+                                               const int *variant,
+                                               const rfft_codelets_t *reg)
 {
     if (nf < 1 || nf > VFFT_RFFT_MAX_STAGES) return NULL;
     if (K == 0 || (K % 8) != 0) return NULL; /* vl must be 8-multiple */
@@ -242,8 +247,31 @@ static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
         if (r > VFFT_RFFT_MAX_RADIX || !reg->r2cf[r] || !reg->hc2hc[r])
             goto fail;
         st->k0 = reg->r2cf[r];
-        st->hc = reg->hc2hc_log3[r] ? reg->hc2hc_log3[r] : reg->hc2hc[r];
-        st->hcr = reg->hc2hc_rng[r];
+        /* Per-stage variant. The PACKED executor runs st->hc/st->hcr for ALL
+         * combine stages (incl d=0), so this is the only variant knob that
+         * matters for the calibrated path. CRITICAL: hcr MUST be NULL for
+         * FLAT/LOG3 or the executor's `if(st->hcr)` ranged branch fires anyway
+         * and mis-attributes the measurement. */
+        {
+            int v = variant ? variant[d] : -1;   /* -1 = default policy */
+            if (v == 0) {                          /* FLAT */
+                st->hc = reg->hc2hc[r];
+                st->hcr = NULL;
+            } else if (v == 1) {                   /* LOG3 (flat fallback) */
+                st->hc = reg->hc2hc_log3[r] ? reg->hc2hc_log3[r] : reg->hc2hc[r];
+                st->hcr = NULL;
+            } else if (v == 2) {                   /* T1S ranged (flat base) */
+                st->hc = reg->hc2hc[r];
+#ifdef VFFT_RFFT_RANGED
+                st->hcr = reg->hc2hc_rng[r];
+#else
+                st->hcr = NULL;                    /* ranged off in this build -> FLAT */
+#endif
+            } else {                               /* default: log3-preferred + ranged */
+                st->hc = reg->hc2hc_log3[r] ? reg->hc2hc_log3[r] : reg->hc2hc[r];
+                st->hcr = reg->hc2hc_rng[r];
+            }
+        }
         st->kmax = (st->m % 2 == 0) ? st->m / 2 - 1 : (st->m - 1) / 2;
         st->has_mid = (st->m % 2 == 0);
 
@@ -304,6 +332,14 @@ static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
 fail:
     rfft_plan_destroy(p);
     return NULL;
+}
+
+/* Default-policy plan create (variant=NULL): byte-identical to the original. */
+static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
+                                            const int *factors, int nf,
+                                            const rfft_codelets_t *reg)
+{
+    return rfft_plan_create_ex(N, K, factors, nf, /*variant=*/NULL, reg);
 }
 
 /* Shared mid-column (k = m/2) kernel, s-blocked (SB = 4) per
