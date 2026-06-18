@@ -123,6 +123,34 @@ static void _r2c_compute_perm(const int *factors, int nf, int N,
         iperm[perm[n]] = n;
 }
 
+/* DIF variant. A DIF-forward inner emits its output in a DIFFERENT order than
+ * DIT: it is the mixed-radix digit reversal with the FACTOR ORDER REVERSED.
+ * (Verified vs dif_order_probe.c — for (4,4,8), DIF slot->freq is exactly the
+ * (8,4,4) digit reversal: slot 1->16, 8->4, 9->20, ...) So iperm[s] (the freq
+ * living at slot s) walks the factors high-index-first, and perm is its inverse.
+ * Produces the same contract the recombine expects: perm[freq]=slot,
+ * iperm[slot]=freq. Lets the r2c path use a DIF inner when wisdom picks one
+ * (DIF is sometimes the faster c2c plan) without forcing a DIT rebuild. */
+static void _r2c_compute_perm_dif(const int *factors, int nf, int N,
+                                  int *perm, int *iperm)
+{
+    for (int s = 0; s < N; s++)
+    {
+        int idx = s, rev = 0, radix_product = 1;
+        for (int k = nf - 1; k >= 0; k--)   /* factors in REVERSE order */
+        {
+            int R = factors[k];
+            int digit = idx % R;
+            idx /= R;
+            rev += digit * (N / (radix_product * R));
+            radix_product *= R;
+        }
+        iperm[s] = rev;          /* frequency living at scratch slot s */
+    }
+    for (int s = 0; s < N; s++)
+        perm[iperm[s]] = s;      /* slot holding frequency f */
+}
+
 static void _r2c_init_twiddles(int N, double *tw_re, double *tw_im)
 {
     int half_N = N / 2;
@@ -770,7 +798,10 @@ static void _r2c_worker_fwd(void *arg) {
 #ifdef VFFT_R2C_PROFILE
         double _tp0 = _r2c_prof_now();
 #endif
-        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd) {
+        /* Pack-fusion is DIT-only (no-twiddle leaf = stage 0). DIF inners (leaf
+         * last) take the explicit-pack + full-inner path below. */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
+            && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
@@ -1158,17 +1189,11 @@ static stride_plan_t *stride_r2c_plan(
     if (N & 1)
         return _r2c_plan_odd(N, K, block_K, inner_plan);
 
-    /* The forward recombine (_r2c_postprocess + _r2c_compute_perm) assumes a
-     * DIT inner: its output sits in digit-reversal order. A DIF inner produces a
-     * DIFFERENT order (see dif_order_probe.c), so the perm would be wrong and the
-     * output garbage. Reject DIF inners here (defense in depth — the dispatcher's
-     * builder forces DIT). Override/0-stage inners (Bluestein/Rader, natural
-     * order, use_dif_forward=0) are fine. */
-    if (inner_plan && inner_plan->use_dif_forward)
-    {
-        stride_plan_destroy(inner_plan);
-        return NULL;
-    }
+    /* The forward recombine reads the inner FFT output via a digit-reversal perm.
+     * DIT and DIF inners produce DIFFERENT output orders, so the perm is chosen by
+     * orientation below (_r2c_compute_perm for DIT, _r2c_compute_perm_dif for DIF).
+     * Both are verified general; no inner shape is rejected. (Override/0-stage
+     * inners are natural-order = identity perm.) */
 
     /* GENERAL-SHAPE RECOMBINE (guard lifted 2026-06-18). The old guard (doc 59
      * §7) whitelisted only (8,16)/(16,8)/single-stage because an earlier
@@ -1215,8 +1240,12 @@ static stride_plan_t *stride_r2c_plan(
     d->iperm = (int *)malloc((size_t)halfN * sizeof(int));
     if (inner_plan->num_stages > 0)
     {
-        _r2c_compute_perm(inner_plan->factors, inner_plan->num_stages, halfN,
-                          d->perm, d->iperm);
+        if (inner_plan->use_dif_forward)
+            _r2c_compute_perm_dif(inner_plan->factors, inner_plan->num_stages,
+                                  halfN, d->perm, d->iperm);
+        else
+            _r2c_compute_perm(inner_plan->factors, inner_plan->num_stages, halfN,
+                              d->perm, d->iperm);
     }
     else
     {
@@ -1290,7 +1319,12 @@ static void _r2c_worker_fwd_oop(void *arg) {
 #ifdef VFFT_R2C_PROFILE
         double _tp0 = _r2c_prof_now();
 #endif
-        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd) {
+        /* Pack-fusion is a DIT-leaf technique: the no-twiddle leaf is stage 0, so
+         * the fused codelet reads the real input there. DIF puts the no-twiddle
+         * stage LAST (stage 0 is a twiddle stage), so fusing into stage 0 is wrong
+         * — DIF inners take the explicit-pack + full-inner path below. */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
+            && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, in, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }

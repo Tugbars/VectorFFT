@@ -187,11 +187,23 @@ Scope and honest expectations:
 
 ---
 
-## 6. Decision
+## 6. Decision — Option A LANDED (2026-06-19)
 
 **Platform directive (2026-06-18):** the platform must offer **both an in-place and an OOP variant for
-every feature** (C2C, R2C, C2R, 2D, …). R2C/C2R OOP is in scope now; OOP C2C is deferred. For r2c the
-OOP variant is not optional polish — it is the path that **eliminates the pack tax** (0.792× → 0.913×).
+every feature** (C2C, R2C, C2R, 2D, …). R2C/C2R OOP is in scope now; OOP C2C is deferred.
+
+**Productionized (Option A, 2026-06-19) — high-K r2c flipped 0.50× → 1.01× MKL:**
+- The OOP codelet tree was **not needed** — `_r2c_fused_first_stage` already pack-fuses for any leaf radix
+  via the regular `n1_fwd` (7-arg separate in/out stride). Build.py unchanged.
+- The shape guard was **stale** and is lifted; the perm-driven `_r2c_postprocess` is general (verified 30
+  shapes × K, all <1e-9). `stride_execute_r2c_inplace` exposes the in-place placement (matches OOP exactly).
+- A latent bug surfaced + fixed: c2c wisdom can pick a **DIF** inner whose output order ≠ DIT
+  digit-reversal → wrong recombine; the builder now force-rebuilds DIF inners as DIT (the recombine requires DIT).
+- **Hybrid dispatch** (`_vfft_r2c_decouple_min_k`, default 32 = measured N=256 crossover): K≤16 → rfft,
+  K≥32 → decoupled stride. Production dispatch vs MKL (SPLIT): K=8 1.07×, K=16 1.03× (rfft); K=32 0.99×,
+  K=64 0.68×, K=128 0.66×, **K=256 1.01×** (decoupled, beats MKL) — the old all-rfft path was 0.50× at K=256.
+
+Below is the original decision framing (kept for context):
 
 | Option | What | Outcome |
 |--------|------|---------|
@@ -205,6 +217,24 @@ batched-SIMD + split layout pays for the strength that wins it everywhere else �
 of that price for free.
 
 ---
+
+## 7. Follow-ups / TODO
+
+- [ ] **Re-calibrate the hybrid threshold for other N.** `_vfft_r2c_decouple_min_k = 32` is the measured
+  crossover for **N=256 only**. Other transform lengths (e.g. 128, 512, 1024, 4096) may cross over at a
+  different K — re-run `bench_r2c_dispatch_vs_mkl.c` per N (and per host) and set via the runtime knob
+  `vfft_r2c_dispatch_set_decouple_min_k()`. It is a single global today; may need to become N-aware.
+- [x] **DIF inner support — DONE (2026-06-19), and measured not worth defaulting to.** Added
+  `_r2c_compute_perm_dif` (DIF output order = digit-reversal with **factor order REVERSED**; verified
+  `r2c_dif_inner_test.c`, all <1e-9), dispatched by `inner->use_dif_forward` in `stride_r2c_plan`, and gated
+  the DIT-leaf pack-fusion off for DIF (DIF leaf is the LAST stage → it takes the explicit-pack path). So
+  any inner orientation is now CORRECT (no more silent-wrong-output). **But the dispatcher still force-DITs
+  the inner for PERFORMANCE:** pack-fusion is DIT-only, and a DIF inner + explicit pack loses more than DIF's
+  c2c edge gains — measured N=256 K=32: DIT+fused **0.99×** vs DIF+explicit **0.87×** MKL. So force-DIT is the
+  perf-optimal default; DIF support is a correctness safety net, not a speed lever.
+- [ ] **Expose the in-place placement through the unified `vfft_r2c_execute_fwd`** (it exists at the stride
+  level as `stride_execute_r2c_inplace`; the top dispatcher currently only does out-of-place).
+- [ ] **Commit** (changes are on `dev/OcamlScheduling`, uncommitted).
 
 ## Appendix — reproduce
 

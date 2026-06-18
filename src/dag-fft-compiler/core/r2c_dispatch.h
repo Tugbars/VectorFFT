@@ -155,10 +155,13 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
     if (!c2c_reg) return NULL;
     stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, c2c_reg, _vfft_r2c_c2c_wis);
     if (!inner) return NULL;
-    /* The r2c recombine requires a DIT inner (digit-reversed output order). c2c
-     * wisdom may pick DIF for the inner cell (faster as a standalone c2c, but its
-     * output order differs — see dif_order_probe.c). Rebuild the same
-     * factorization as DIT (default T1S variants) when that happens. */
+    /* Prefer a DIT inner — PERFORMANCE, not correctness. DIF inners are now fully
+     * correct (stride_r2c_plan picks the DIF-aware recombine perm), but pack-fusion
+     * is a DIT-leaf technique (no-twiddle leaf at stage 0): a DIF inner can't fuse
+     * the pack and must take the explicit-pack path, which loses more than DIF's
+     * standalone-c2c edge gains. Measured N=256 K=32: DIT+fused 0.99× MKL vs
+     * DIF+explicit-pack 0.87×. So when c2c wisdom picks DIF for the inner cell,
+     * rebuild the same factorization as DIT (default T1S). */
     if (inner->use_dif_forward) {
         int nf = inner->num_stages;
         int factors[STRIDE_MAX_STAGES];
