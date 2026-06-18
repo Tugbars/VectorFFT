@@ -63,6 +63,12 @@ typedef struct {
     stride_plan_t    *stride;  /* set iff path == STRIDE */
 } vfft_r2c_plan_t;
 
+/* Optional rfft wisdom (calibrated per-cell factorization + per-stage variant). A
+ * caller that loaded rfft_wisdom.txt sets this; vfft_r2c_plan_create then builds the
+ * calibrated plan on a hit, else the fewest-stage heuristic. NULL-safe. */
+static const vfft_proto_wisdom_t *_vfft_r2c_wis = NULL;
+static inline void vfft_r2c_dispatch_set_wisdom(const vfft_proto_wisdom_t *w) { _vfft_r2c_wis = w; }
+
 /* ---- rfft factorization chooser -------------------------------------------
  * Pick the FEWEST-stage factorization of N over the radixes the rfft codelet
  * set covers, preferring larger radixes. Fewer stages wins (the empirical
@@ -136,10 +142,22 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     /* ---- try rfft (primary) ---- */
     if (rfft_reg) {
         int factors[VFFT_RFFT_MAX_STAGES];
-        int nf = vfft_r2c_choose_rfft_factors(N, have, factors,
+        int nf = 0;
+        const int *variant = NULL;   /* NULL => default policy in rfft_plan_create_ex */
+        /* WISDOM-FIRST: a calibrated entry pins factorization + per-stage variant;
+         * else the fewest-stage heuristic (today's behavior, variant=NULL). */
+        const vfft_proto_wisdom_entry_t *we =
+            _vfft_r2c_wis ? vfft_proto_wisdom_lookup(_vfft_r2c_wis, N, (size_t)K) : NULL;
+        if (we && we->nf >= 1 && we->nf <= VFFT_RFFT_MAX_STAGES) {
+            nf = we->nf;
+            for (int i = 0; i < nf; i++) factors[i] = we->factors[i];
+            variant = we->variants;
+        } else {
+            nf = vfft_r2c_choose_rfft_factors(N, have, factors,
                                               VFFT_RFFT_MAX_STAGES);
+        }
         if (nf >= 1) {
-            rfft_plan_t *rp = rfft_plan_create(N, K, factors, nf, rfft_reg);
+            rfft_plan_t *rp = rfft_plan_create_ex(N, K, factors, nf, variant, rfft_reg);
             if (rp) {
                 p->path = VFFT_R2C_PATH_RFFT;
                 p->rfft = rp;
