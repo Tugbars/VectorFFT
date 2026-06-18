@@ -1158,6 +1158,18 @@ static stride_plan_t *stride_r2c_plan(
     if (N & 1)
         return _r2c_plan_odd(N, K, block_K, inner_plan);
 
+    /* The forward recombine (_r2c_postprocess + _r2c_compute_perm) assumes a
+     * DIT inner: its output sits in digit-reversal order. A DIF inner produces a
+     * DIFFERENT order (see dif_order_probe.c), so the perm would be wrong and the
+     * output garbage. Reject DIF inners here (defense in depth — the dispatcher's
+     * builder forces DIT). Override/0-stage inners (Bluestein/Rader, natural
+     * order, use_dif_forward=0) are fine. */
+    if (inner_plan && inner_plan->use_dif_forward)
+    {
+        stride_plan_destroy(inner_plan);
+        return NULL;
+    }
+
     /* GENERAL-SHAPE RECOMBINE (guard lifted 2026-06-18). The old guard (doc 59
      * §7) whitelisted only (8,16)/(16,8)/single-stage because an earlier
      * _r2c_postprocess was shape-limited. The terminator was since rewritten to

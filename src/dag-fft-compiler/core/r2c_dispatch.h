@@ -78,10 +78,13 @@ static inline void vfft_r2c_dispatch_set_c2c_wisdom(const vfft_proto_wisdom_t *w
 
 /* High-K hybrid threshold: when K >= this AND layout==SPLIT AND a c2c registry is
  * available, the decoupled stride path (pack+c2c(N/2)+Hermitian fold) is PREFERRED
- * over rfft — it wins big at high K (rfft ~0.47x MKL vs decoupled ~0.91x at K=256),
- * while rfft wins at low K. SIZE_MAX = disabled (always prefer rfft). Calibrate per
- * host; default set from N=256 measurements. */
-static size_t _vfft_r2c_decouple_min_k = (size_t)-1;
+ * over rfft — it wins big at high K, while rfft wins at low K. Default 32 is the
+ * measured N=256 crossover (bench_r2c_dispatch_vs_mkl.c, mkl/x ratios):
+ *   K :    8      16     32     64     128    256
+ *   rfft : 1.07x  1.03x  0.67x  0.61x  0.58x  0.50x
+ *   strd : 0.73x  0.88x  0.99x  0.68x  0.66x  1.01x   (K>=32 strd>rfft; K=256 beats MKL)
+ * SIZE_MAX disables (always rfft). Calibrate per host/N; set via the setter. */
+static size_t _vfft_r2c_decouple_min_k = 32;
 static inline void vfft_r2c_dispatch_set_decouple_min_k(size_t k) { _vfft_r2c_decouple_min_k = k; }
 
 /* ---- rfft factorization chooser -------------------------------------------
@@ -152,6 +155,19 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
     if (!c2c_reg) return NULL;
     stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, c2c_reg, _vfft_r2c_c2c_wis);
     if (!inner) return NULL;
+    /* The r2c recombine requires a DIT inner (digit-reversed output order). c2c
+     * wisdom may pick DIF for the inner cell (faster as a standalone c2c, but its
+     * output order differs — see dif_order_probe.c). Rebuild the same
+     * factorization as DIT (default T1S variants) when that happens. */
+    if (inner->use_dif_forward) {
+        int nf = inner->num_stages;
+        int factors[STRIDE_MAX_STAGES];
+        for (int s = 0; s < nf; s++) factors[s] = inner->factors[s];
+        stride_plan_destroy(inner);
+        inner = vfft_proto_plan_create_ex(N / 2, K, factors, /*variants=*/NULL, nf,
+                                          /*use_dif_forward=*/0, c2c_reg);
+        if (!inner) return NULL;
+    }
     stride_plan_t *sp = stride_r2c_plan(N, K, K, inner);  /* frees inner on failure */
     return sp;
 }
