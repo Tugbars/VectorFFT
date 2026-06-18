@@ -299,7 +299,7 @@ int main(int argc, char **argv) {
             variants[i] = tok ? atoi(tok) : 2;
         }
 
-        size_t K = (size_t)BENCH_K;
+        size_t K = (size_t)(target_N ? target_K : BENCH_K);   /* isolated: batch at target_K */
         char plan_s[64]; format_plan(plan_s, sizeof plan_s, factors, nf, use_dif);
 
         if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) {
