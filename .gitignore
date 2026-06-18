@@ -81,3 +81,5 @@ src/dag-fft-compiler/MKLBench/_smoke.txt
 /src/dag-fft-compiler/generator/_build
 /build_tuned/benches/vt_rfft_mkl
 /build_tuned/benches/vt_rfft_ours
+build_tuned/benches/mb_256.txt
+*.txt
