@@ -21,7 +21,14 @@
  *   NOTE: LP64 (mkl_rt), NOT ILP64 — ILP64 corrupts the DFTI strides array
  *   ("Inconsistent configuration parameters" at DftiCommit).
  *
- * Usage: bench_1d_vs_mkl [wisdom_path] [perf_csv] [pace_ms]
+ * Usage: bench_1d_vs_mkl [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
+ *   N=0      : legacy full in-process loop over K=BENCH_K wisdom cells (quick-look).
+ *   N>0      : ISOLATED single cell (N,K) — fresh process per cell (run_bench.py),
+ *              kills cross-cell carryover. K = target K (multi-K: 4/32/256...).
+ *   cool_ms  : idle between the vfft and MKL measurements (+cachebust) — both start
+ *              from a comparable baseline (fixes the fixed-order bias that favored us).
+ *   flip     : 1 = measure MKL first (run_bench.py alternates per cell).
+ *   core     : pin CPU core (-1 = no pin). env VFFT_TRIAL_PACE_MS = inter-trial idle.
  */
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE 1
@@ -32,6 +39,7 @@
 #include <time.h>
 
 #include "core/executor.h"
+#include "core/env.h"                 /* stride_env_init + stride_pin_thread */
 #include "core/planner.h"
 #include "core/dp_planner.h"          /* vfft_proto_now_ns */
 #ifdef VFFT_USE_JIT
@@ -57,6 +65,9 @@ static void pace(int ms) {
     struct timespec ts = { ms / 1000, (long)(ms % 1000) * 1000000L };
     nanosleep(&ts, NULL);
 }
+/* inter-trial idle (env VFFT_TRIAL_PACE_MS) — lets the best-of-5 min reflect a
+ * cooler core on big cells that heat-soak between trials. 0 = back-to-back. */
+static int g_trial_pace_ms = 0;
 static double *alloc_d(size_t n) {
     double *p = NULL;
     if (vfft_proto_posix_memalign((void **)&p, 64, n * sizeof(double)) != 0) {
@@ -88,6 +99,7 @@ static double bench_jit(vfft_proto_exec_fn fn, const stride_plan_t *plan,
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++) fn(plan, re, im, K, plan->K, 0);
         double ns = (vfft_proto_now_ns() - t0) / reps;
@@ -101,6 +113,7 @@ static double bench_generic(stride_plan_t *plan, double *re, double *im,
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(plan, re, im, K);
         double ns = (vfft_proto_now_ns() - t0) / reps;
@@ -158,6 +171,7 @@ static double bench_mkl(DFTI_DESCRIPTOR_HANDLE d, double *re, double *im, size_t
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++) DftiComputeForward(d, re, im);
         double ns = (vfft_proto_now_ns() - t0) / reps;
@@ -167,41 +181,102 @@ static double bench_mkl(DFTI_DESCRIPTOR_HANDLE d, double *re, double *im, size_t
 }
 #endif
 
+/* A/B measure one cell, ORDER-NEUTRALIZED. The legacy loop always ran vfft first
+ * then MKL, so MKL was measured on an already-warmed core (ratio optimistic for us).
+ * Here: cachebust + cool_ms idle BETWEEN the two engines so each starts from a
+ * comparable cache/thermal baseline; flip=1 runs MKL first so run_bench.py can
+ * alternate per cell and average out any residual order bias. fn!=NULL => time the
+ * resolved JIT/baked vfft executor; else the generic (override/Rader) path. */
+static void measure_ab(double *vns_out, double *mns_out,
+                       vfft_proto_exec_fn fn, stride_plan_t *plan,
+                       int N, size_t K, size_t total,
+                       const double *src_re, const double *src_im,
+                       int cool_ms, int flip) {
+    double *re = alloc_d(total), *im = alloc_d(total);
+    double vns = 0, mns = 0;
+    (void)N;
+#ifdef VFFT_HAS_MKL
+    if (flip) {                                  /* MKL first */
+        DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
+        if (d) {
+            double *rm = alloc_d(total), *imk = alloc_d(total);
+            memcpy(rm, src_re, total*sizeof(double)); memcpy(imk, src_im, total*sizeof(double));
+            mns = bench_mkl(d, rm, imk, total);
+            free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
+        }
+        cachebust(); pace(cool_ms);
+        memcpy(re, src_re, total*sizeof(double)); memcpy(im, src_im, total*sizeof(double));
+        vns = fn ? bench_jit(fn, plan, re, im, K, total) : bench_generic(plan, re, im, K, total);
+    } else {                                     /* vfft first (legacy order) */
+        memcpy(re, src_re, total*sizeof(double)); memcpy(im, src_im, total*sizeof(double));
+        vns = fn ? bench_jit(fn, plan, re, im, K, total) : bench_generic(plan, re, im, K, total);
+        cachebust(); pace(cool_ms);
+        DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
+        if (d) {
+            double *rm = alloc_d(total), *imk = alloc_d(total);
+            memcpy(rm, src_re, total*sizeof(double)); memcpy(imk, src_im, total*sizeof(double));
+            mns = bench_mkl(d, rm, imk, total);
+            free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
+        }
+    }
+#else
+    (void)cool_ms; (void)flip; (void)K;
+    memcpy(re, src_re, total*sizeof(double)); memcpy(im, src_im, total*sizeof(double));
+    vns = fn ? bench_jit(fn, plan, re, im, K, total) : bench_generic(plan, re, im, K, total);
+#endif
+    free_d(re); free_d(im);
+    *vns_out = vns; *mns_out = mns;
+}
+
 int main(int argc, char **argv) {
     const char *wpath = (argc >= 2) ? argv[1]
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2] : "vfft_perf_tuned_1d.csv";
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
-    /* rader_only > 0: ISOLATED mode — skip the CT wisdom loop entirely and bench
-     * ONLY that one Rader prime (fresh process per cell, no wisdom heat-soak),
-     * appending one CSV row (caller writes the header once). */
-    int rader_only    = (argc >= 5) ? atoi(argv[4]) : 0;
+    /* ISOLATED single-cell mode: target_N>0 benches ONLY cell (target_N,target_K)
+     * in this (fresh) process — run_bench.py drives one cell per process, killing
+     * cross-cell cache/thermal carryover. A prime target_N rides the override path.
+     * target_N==0 keeps the legacy full in-process loop (quick-look). */
+    int target_N      = (argc >= 5) ? atoi(argv[4]) : 0;
+    long target_K     = (argc >= 6) ? atol(argv[5]) : BENCH_K;
+    int cool_ms       = (argc >= 7) ? atoi(argv[6]) : 0;   /* inter-engine idle (order-bias fix) */
+    int flip          = (argc >= 8) ? atoi(argv[7]) : 0;   /* 1 = MKL first (alternate per cell) */
+    int core          = (argc >= 9) ? atoi(argv[8]) : -1;  /* pin core (-1 = no pin) */
+    { const char *tp = getenv("VFFT_TRIAL_PACE_MS"); g_trial_pace_ms = tp ? atoi(tp) : 0; }
+
+    stride_env_init();
+    if (core >= 0 && stride_pin_thread(core) != 0)
+        fprintf(stderr, "warn: pin cpu%d failed\n", core);
 
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(1);
 #endif
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
-    FILE *f = rader_only ? NULL : fopen(wpath, "r");
-    if (!rader_only && !f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
-    FILE *out = fopen(csv, rader_only ? "a" : "w");
-    if (out && !rader_only) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    FILE *f = fopen(wpath, "r");
+    if (!f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
+    FILE *out = fopen(csv, target_N ? "a" : "w");
+    if (out && !target_N) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
 
-    printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
-    printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
-           "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
-    printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
+    if (!target_N) {
+        printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
+        printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
+               "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
+        printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
+    }
 
     char line[1024];
     int benched = 0, skipped = 0;
-    while (!rader_only && fgets(line, sizeof line, f)) {
+    while (fgets(line, sizeof line, f)) {
         if (line[0] == '#' || line[0] == '@' || line[0] == '\n') continue;
         char *save;
         char *tok = strtok_r(line, " \t\n", &save); if (!tok) continue;
         int N = atoi(tok);
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         long Kl = atol(tok);
-        if (Kl != BENCH_K) continue;                         /* K=4 only */
+        long want_K = target_N ? target_K : (long)BENCH_K;
+        if (Kl != want_K) continue;                          /* legacy: K=BENCH_K; isolated: target_K */
+        if (target_N && N != target_N) continue;             /* isolated: only this cell */
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         int nf = atoi(tok);
         if (nf < 1 || nf >= STRIDE_MAX_STAGES) { skipped++; continue; }
@@ -254,23 +329,9 @@ int main(int argc, char **argv) {
         }
         double rel = roundtrip_err(fn, plan, N, K, src_re, src_im, total);
 
-        double *re = alloc_d(total), *im = alloc_d(total);
-        memcpy(re, src_re, total * sizeof(double)); memcpy(im, src_im, total * sizeof(double));
-        double vns = fn ? bench_jit(fn, plan, re, im, K, total)
-                        : bench_generic(plan, re, im, K, total);
-
-        double mns = 0; double ratio = 0;
-#ifdef VFFT_HAS_MKL
-        cachebust();
-        DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
-        if (d) {
-            double *rm = alloc_d(total), *imk = alloc_d(total);
-            memcpy(rm, src_re, total * sizeof(double)); memcpy(imk, src_im, total * sizeof(double));
-            mns = bench_mkl(d, rm, imk, total);
-            ratio = (vns > 0) ? mns / vns : 0;
-            free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
-        }
-#endif
+        double vns = 0, mns = 0;
+        measure_ab(&vns, &mns, fn, plan, N, K, total, src_re, src_im, cool_ms, flip);
+        double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
         double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
 
         printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
@@ -280,7 +341,7 @@ int main(int argc, char **argv) {
                     N, K, plan_s, path, vns, mns, vgf, ratio, rel);
             fflush(out);
         }
-        free_d(re); free_d(im); free_d(src_re); free_d(src_im);
+        free_d(src_re); free_d(src_im);
         vfft_proto_plan_destroy(plan);
         benched++;
         pace(pace_ms);
@@ -298,7 +359,7 @@ int main(int argc, char **argv) {
             127, 251, 257, 401, 641, 1009, 2801, 4001,   /* Rader (N-1 smooth) */
              47,  59,  83, 107,  167,  179,  263,  311,   /* Bluestein */
         };
-        size_t K = (size_t)BENCH_K;
+        size_t K = (size_t)(target_N ? target_K : BENCH_K);
         /* CT wisdom so the inner FFT rides the MEASURED-best plan (dispatch forwards
          * it to vfft_proto_auto_plan); else the inner falls to the factorizer default. */
         vfft_proto_wisdom_t rwis;
@@ -312,7 +373,7 @@ int main(int argc, char **argv) {
         vfft_proto_dispatch_set_bluestein_wisdom(have_bwis ? &bwis : NULL);
         for (size_t ci = 0; ci < sizeof prime_N / sizeof prime_N[0]; ci++) {
             int N = prime_N[ci];
-            if (rader_only && N != rader_only) continue;   /* isolated: one cell only */
+            if (target_N && N != target_N) continue;       /* isolated: one cell only */
             if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) { skipped++; continue; }
             stride_plan_t *plan = vfft_proto_auto_plan_dispatch(N, K, &reg, wisp);
             if (!plan) { printf("%-8d %-16s   dispatch NULL\n", N, "[override]"); skipped++; continue; }
@@ -342,22 +403,9 @@ int main(int argc, char **argv) {
             /* fn=NULL => roundtrip uses vfft_proto_execute_fwd (override -> Rader -> JIT inner). */
             double rel = roundtrip_err(NULL, plan, N, K, src_re, src_im, total);
 
-            double *re = alloc_d(total), *im = alloc_d(total);
-            memcpy(re, src_re, total * sizeof(double)); memcpy(im, src_im, total * sizeof(double));
-            double vns = bench_generic(plan, re, im, K, total);
-
-            double mns = 0, ratio = 0;
-#ifdef VFFT_HAS_MKL
-            cachebust();
-            DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
-            if (d) {
-                double *rm = alloc_d(total), *imk = alloc_d(total);
-                memcpy(rm, src_re, total * sizeof(double)); memcpy(imk, src_im, total * sizeof(double));
-                mns = bench_mkl(d, rm, imk, total);
-                ratio = (vns > 0) ? mns / vns : 0;
-                free_d(rm); free_d(imk); DftiFreeDescriptor(&d);
-            }
-#endif
+            double vns = 0, mns = 0;
+            measure_ab(&vns, &mns, NULL, plan, N, K, total, src_re, src_im, cool_ms, flip);
+            double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
             double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
             printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
                    N, "[override]", path, vns, mns, vgf, ratio, rel);
@@ -366,7 +414,7 @@ int main(int argc, char **argv) {
                         N, K, "[override]", path, vns, mns, vgf, ratio, rel);
                 fflush(out);
             }
-            free_d(re); free_d(im); free_d(src_re); free_d(src_im);
+            free_d(src_re); free_d(src_im);
             stride_plan_destroy(plan);   /* bridge: override_destroy-aware (frees rader_data + inner) */
             benched++;
             pace(pace_ms);
