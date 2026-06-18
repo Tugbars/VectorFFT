@@ -85,9 +85,12 @@ int main(int argc, char **argv) {
 
     size_t total = (size_t)N * K;
     double *x = NULL, *out = NULL, *ref = NULL;
+    /* x is real (N*K). The packed halfcomplex output uses a `base+NK`
+     * negative-stride fold, so its buffer is allocated 2*NK to guard the
+     * one-past-end base (matches bench_c2r_vs_mkl's proven convention). */
     vfft_proto_posix_memalign((void**)&x,   64, total * sizeof(double));
-    vfft_proto_posix_memalign((void**)&out, 64, total * sizeof(double));
-    vfft_proto_posix_memalign((void**)&ref, 64, total * sizeof(double));
+    vfft_proto_posix_memalign((void**)&out, 64, 2 * total * sizeof(double));
+    vfft_proto_posix_memalign((void**)&ref, 64, 2 * total * sizeof(double));
     srand(7);
     for (size_t i = 0; i < total; i++) x[i] = (double)rand()/RAND_MAX*2.0 - 1.0;
 
