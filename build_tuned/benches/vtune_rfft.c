@@ -14,6 +14,9 @@
  */
 #define VFFT_RFFT_MAX_RADIX 32
 #define VFFT_RFFT_RANGED 1
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>            /* before rfft.h: defines _WINDOWS_ so rfft.h skips its decls */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +34,23 @@ static double *ad(size_t n) {
     return p;
 }
 
+/* Enable SeLockMemoryPrivilege in this process token so rfft_buf_alloc's
+ * VirtualAlloc(MEM_LARGE_PAGES) succeeds. Needs the "Lock pages in memory" right
+ * granted to the user (secpol.msc) + an elevated process; warns + falls back otherwise. */
+static void enable_lock_pages(void) {
+    HANDLE tok; TOKEN_PRIVILEGES tp; LUID luid;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok)) return;
+    if (LookupPrivilegeValueA(NULL, "SeLockMemoryPrivilege", &luid)) {
+        tp.PrivilegeCount = 1; tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        AdjustTokenPrivileges(tok, FALSE, &tp, (DWORD)sizeof tp, NULL, NULL);
+        if (GetLastError() != ERROR_SUCCESS)
+            fprintf(stderr, "[huge] SeLockMemoryPrivilege NOT granted -- enable 'Lock pages in memory' "
+                            "(secpol.msc) + re-login + run elevated; falling back to 4K pages\n");
+    }
+    CloseHandle(tok);
+}
+
 int main(int argc, char **argv) {
     stride_env_init();
     const char *mode = (argc > 1) ? argv[1] : "ours";
@@ -39,6 +59,7 @@ int main(int argc, char **argv) {
     const int do_ours = (strcmp(mode, "mkl") != 0);
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin cpu%d\n", core);
     mkl_set_num_threads(1);
+    if (getenv("VFFT_RFFT_HUGE")) enable_lock_pages();
 
     const int N = 256; const size_t K = 256, NK = (size_t)N*K, halfN = N/2;
 
@@ -47,7 +68,11 @@ int main(int argc, char **argv) {
     rfft_codelets_t reg; memset(&reg, 0, sizeof reg); rfft_register_all_avx2(&reg);
     rfft_plan_t *pf = rfft_plan_create(N, K, f, nf, &reg);
     if (!pf) { printf("plan NULL\n"); return 1; }
-    double *x = ad(NK), *hc = ad(2*NK);
+    int xh = 0, hch = 0;
+    double *x  = (double*)rfft_buf_alloc(NK*8, &xh);        /* input (load-DTLB)  */
+    double *hc = (double*)rfft_buf_alloc(2*NK*8, &hch);     /* packed out (store-DTLB) */
+    fprintf(stderr, "[huge] requested=%d  x=%d hc=%d planeA=%d planeB=%d\n",
+            getenv("VFFT_RFFT_HUGE") ? 1 : 0, xh, hch, pf->planeA_huge, pf->planeB_huge);
     srand(7); for (size_t i = 0; i < NK; i++) x[i] = (double)rand()/RAND_MAX*2-1;
 
     /* MKL r2c, transform-major (its native batch layout) */
@@ -65,6 +90,13 @@ int main(int argc, char **argv) {
     for (int w = 0; w < 20; w++) {           /* warm both */
         rfft_execute_fwd_packed(pf, x, hc); DftiComputeForward(h, xin, cce);
     }
+    /* MKL's AVX2 kernel DLL is now loaded; print its base so objdump can map the
+     * VTune hot-function VAs (func@0x1825c3800 / 0x182549180) to file offsets. */
+    { HMODULE m = GetModuleHandleA("mkl_avx2.2.dll");
+      if (m) fprintf(stderr, "[mkl] mkl_avx2.2.dll base=%p  func1_RVA=0x%llx  func2_RVA=0x%llx\n",
+          (void*)m,
+          (unsigned long long)(0x1825c3800ULL - (uintptr_t)m),
+          (unsigned long long)(0x182549180ULL - (uintptr_t)m)); }
     long iters = 0; double t0 = vfft_proto_now_ns();
     while (vfft_proto_now_ns() - t0 < secs * 1e9) {
         if (do_ours) rfft_execute_fwd_packed(pf, x, hc);
@@ -76,7 +108,7 @@ int main(int argc, char **argv) {
            do_ours ? "ours" : "mkl", iters, el, el*1e6/iters);
 
     DftiFreeDescriptor(&h);
-    vfft_proto_aligned_free(x); vfft_proto_aligned_free(hc);
+    rfft_buf_free(x, xh); rfft_buf_free(hc, hch);
     vfft_proto_aligned_free(xin); vfft_proto_aligned_free(cce);
     rfft_plan_destroy(pf);
     return 0;

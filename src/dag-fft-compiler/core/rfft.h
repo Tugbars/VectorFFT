@@ -47,6 +47,57 @@
 #  define RFFT_ALIGNED_ALLOC(a, sz) aligned_alloc((a), (sz))
 #  define RFFT_ALIGNED_FREE(p)      free(p)
 #endif
+
+/* Optional 2MB LARGE-PAGE allocation for the plane buffers (env VFFT_RFFT_HUGE=1).
+ * VTune showed high-K rfft is store-DTLB-bound (41% DTLB-store at N=256 K=256): the
+ * ~0.5-1.5MB plane spans 128-384 4KB pages and the output stride scatters stores
+ * across them, thrashing the ~96-entry DTLB. A 2MB page collapses the plane to ~1
+ * page, removing the TLB tax. Needs the "Lock pages in memory" privilege
+ * (SeLockMemoryPrivilege, enabled by the harness) + elevation; ALWAYS falls back to
+ * RFFT_ALIGNED_ALLOC if large pages are unavailable, so it is safe by default.
+ * Manual Win32 decls avoid pulling <windows.h> into this widely-included header. */
+#if defined(_WIN32)
+#  if !defined(_WINDOWS_)   /* <windows.h> not included by this TU: declare what we use */
+extern void  *__stdcall VirtualAlloc(void *, size_t, unsigned long, unsigned long);
+extern int    __stdcall VirtualFree(void *, size_t, unsigned long);
+extern size_t __stdcall GetLargePageMinimum(void);
+#  endif
+#  define RFFT_MEM_COMMIT       0x00001000UL
+#  define RFFT_MEM_RESERVE      0x00002000UL
+#  define RFFT_MEM_LARGE_PAGES  0x20000000UL
+#  define RFFT_MEM_RELEASE      0x00008000UL
+#  define RFFT_PAGE_RW          0x04UL
+static int _rfft_huge_on(void) {
+    static int v = -1;
+    if (v < 0) { const char *e = getenv("VFFT_RFFT_HUGE"); v = (e && atoi(e) > 0) ? 1 : 0; }
+    return v;
+}
+#endif
+
+/* Allocate `bytes`; sets *huge=1 iff backed by large pages (else 0 + normal alloc). */
+static inline void *rfft_buf_alloc(size_t bytes, int *huge) {
+    *huge = 0;
+#if defined(_WIN32)
+    if (_rfft_huge_on()) {
+        size_t lp = GetLargePageMinimum();
+        if (lp) {
+            size_t r = ((bytes + lp - 1) / lp) * lp;
+            void *p = VirtualAlloc((void*)0, r,
+                                   RFFT_MEM_RESERVE | RFFT_MEM_COMMIT | RFFT_MEM_LARGE_PAGES,
+                                   RFFT_PAGE_RW);
+            if (p) { *huge = 1; return p; }
+        }
+    }
+#endif
+    return RFFT_ALIGNED_ALLOC(64, bytes);
+}
+static inline void rfft_buf_free(void *p, int huge) {
+    if (!p) return;
+#if defined(_WIN32)
+    if (huge) { VirtualFree(p, 0, RFFT_MEM_RELEASE); return; }
+#endif
+    RFFT_ALIGNED_FREE(p);
+}
 #endif
 /* E1 (section 67): software prefetch of the NEXT column's rows.
  * MEASURED NEGATIVE on the dev container (1-vCPU KVM Cascade Lake):
@@ -193,6 +244,7 @@ typedef struct {
                 * Kb-lane slab so both planes stay cache-resident
                 * across ALL stages. Multiple of 8. */
     double *planeA, *planeB; /* scratch, N*K each, 64B aligned */
+    int planeA_huge, planeB_huge; /* 1 iff large-page backed (VFFT_RFFT_HUGE) */
 } rfft_plan_t;
 
 static inline void rfft_plan_destroy(rfft_plan_t *p)
@@ -202,7 +254,8 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
         free(p->st[d].tw_re); free(p->st[d].tw_im);
         free(p->st[d].mid_c); free(p->st[d].mid_s);
     }
-    RFFT_ALIGNED_FREE(p->planeA); RFFT_ALIGNED_FREE(p->planeB); RFFT_ALIGNED_FREE(p->nat_k0);
+    rfft_buf_free(p->planeA, p->planeA_huge); rfft_buf_free(p->planeB, p->planeB_huge);
+    RFFT_ALIGNED_FREE(p->nat_k0);
     free(p);
 }
 
@@ -309,9 +362,10 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
         }
     }
 
-    p->planeA = (double *)RFFT_ALIGNED_ALLOC(64, (size_t)N * K * 8);
+    p->planeA = (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeA_huge);
+    p->planeB_huge = 0;
     p->planeB = (nf >= 3)
-        ? (double *)RFFT_ALIGNED_ALLOC(64, (size_t)N * K * 8) : NULL;
+        ? (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeB_huge) : NULL;
     if (!p->planeA || (nf >= 3 && !p->planeB)) goto fail;
     p->hcn = (nf >= 2)
         ? (reg->hc2c_log3[p->st[0].radix] ? reg->hc2c_log3[p->st[0].radix]
