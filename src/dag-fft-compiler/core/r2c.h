@@ -1158,37 +1158,17 @@ static stride_plan_t *stride_r2c_plan(
     if (N & 1)
         return _r2c_plan_odd(N, K, block_K, inner_plan);
 
-    /* CORRECTNESS GUARD (doc 59 §7): the terminator group-walk
-     * (_r2c_postprocess + _r2c_compute_perm) reads the inner FFT output via
-     * a digit-reversal perm that is correct only for a NARROW verified set
-     * of inner-c2c factorization shapes. The doc title says "radix<=16
-     * two-stage" but the measured PASS set is exactly two shapes: (8,16)
-     * and (16,8). (16,16), (8,32), (4,64) all produce SILENT WRONG OUTPUT
-     * (err ~30-65) — note (16,16) fails despite both radices being <=16, so
-     * a radix-threshold guard is NOT sufficient; we whitelist the exact
-     * verified shapes. A SINGLE stage is also safe (perm is identity).
-     * Until the group-walk is generalized, refuse everything else here so a
-     * planner cannot build a known-broken plan and get wrong answers with no
-     * error. The dispatcher (r2c_dispatch.h) prefers rfft; this guard stops
-     * the stride FALLBACK from constructing an unverified shape. */
-    if (inner_plan)
-    {
-        int ns = inner_plan->num_stages;
-        int ok = 0;
-        if (ns <= 1)
-            ok = 1;                                  /* identity perm */
-        else if (ns == 2)
-        {
-            int a = inner_plan->factors[0];
-            int b = inner_plan->factors[1];
-            ok = (a == 8 && b == 16) || (a == 16 && b == 8);
-        }
-        if (!ok)
-        {
-            stride_plan_destroy(inner_plan);
-            return NULL;
-        }
-    }
+    /* GENERAL-SHAPE RECOMBINE (guard lifted 2026-06-18). The old guard (doc 59
+     * §7) whitelisted only (8,16)/(16,8)/single-stage because an earlier
+     * _r2c_postprocess was shape-limited. The terminator was since rewritten to
+     * read every frequency from its TRUE scratch slot — primary at z_f = p*B
+     * (iperm[p]=f) and mirror at z_m = perm[mirror]*B — which is correct for ANY
+     * inner-c2c factorization. Verified empirically across {128, (8,16), (16,8),
+     * (4,32), (32,4), (2,64), (64,2), (4,4,8), (8,4,4), (2,8,8), (2,4,4,4)} × K∈
+     * {8,32,256}: all PASS vs reference DFT (<1e-9) — see
+     * benches/r2c_guard_general_test.c. So the stride r2c fallback may now build
+     * any factorization the inner planner produces. (Override/0-stage inner =
+     * natural order = identity perm, handled below.) */
 
     stride_r2c_data_t *d =
         (stride_r2c_data_t *)calloc(1, sizeof(*d));
@@ -1547,6 +1527,20 @@ static inline void stride_execute_r2c(const stride_plan_t *plan,
         memcpy(out_re, real_in, NK * sizeof(double));
         plan->override_fwd(plan->override_data, out_re, out_im);
     }
+}
+
+/* IN-PLACE forward r2c (MKL DFTI_INPLACE-style): the real input plane `re`
+ * (N*K doubles) is OVERWRITTEN with the real output bins out_re[0..N/2], and
+ * `im` ((N/2+1)*K doubles) receives out_im. No separate input buffer — the
+ * caller loads the reals into `re`, then calls this. Both placements share the
+ * same plan + worker; the in-place worker (_r2c_execute_fwd) reads `re` as input
+ * and writes `re`/`im` as output (strictly more aliasing than the OOP path,
+ * which is why OOP is the default — but both are now exposed per the platform
+ * in-place/OOP directive). re must be sized N*K >= (N/2+1)*K. */
+static inline void stride_execute_r2c_inplace(const stride_plan_t *plan,
+                                              double *re, double *im)
+{
+    plan->override_fwd(plan->override_data, re, im);
 }
 
 static inline void stride_execute_c2r(const stride_plan_t *plan,
