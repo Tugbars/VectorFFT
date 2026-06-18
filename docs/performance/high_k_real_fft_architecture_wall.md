@@ -218,6 +218,25 @@ of that price for free.
 
 ---
 
+## 6b. Does the split 2× SIMD edge beat the pack tax at high N? (tested — no)
+
+Hypothesis: N=256 is the regime least favorable to us (tiny inner FFT → pack is a big fraction); at high N,
+FFT compute O(N·log N) outpaces the O(N) pack, and split's 2× SIMD edge should dominate → win by more.
+Tested (`bench_r2c_highN_vs_mkl.c`, calibrated inner wisdom present for all N/2 up to 4096):
+
+| N | 256 | 512 | 1024 | 2048 | 4096 | 8192 |
+|---|-----|-----|------|------|------|------|
+| mkl/strd, K=256 | **0.97×** | 0.64× | 0.85× | 0.65× | 0.66× | 0.55× |
+| mkl/strd, K=64  | 0.71× | 0.78× | 0.70× | 0.69× | 0.65× | 0.57× |
+
+**Falsified** — decoupled/MKL is *best at N=256* and drifts down at high N. The pack-tax-shrinking effect is
+real (visible K=64 N=256→512: 0.71→0.78) but is quickly overwhelmed: the **2× SIMD edge is a *compute*
+lever, and high-N real-FFT is *memory*-bound** (N/2×K plane ≫ L2; the decoupled method's ~3 passes =
+~3× DRAM traffic). When DRAM-bandwidth-bound, instruction efficiency is moot and MKL's fused/cache-blocked
+real-FFT wins. N=256 K=256 wins *because* 512KB is L2-resident — the one spot compute still dominates.
+Consistency: pure C2C still beats MKL at high N (no extra passes); only the real-FFT pack+recombine passes
+lose at scale. ⇒ The sole high-N lever is cutting passes (recombine-fusion / Option B), not more SIMD.
+
 ## 7. Follow-ups / TODO
 
 - [ ] **Re-calibrate the hybrid threshold for other N.** `_vfft_r2c_decouple_min_k = 32` is the measured
