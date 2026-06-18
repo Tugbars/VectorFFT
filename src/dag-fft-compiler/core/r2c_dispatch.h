@@ -83,12 +83,12 @@ static inline int vfft_r2c_choose_rfft_factors(
     int N, const unsigned char *have, int *factors, int max_nf)
 {
     /* When have is NULL, assume the standard committed rfft radix set. */
+    /* STAGE-coverable radixes (need BOTH r2cf AND hc2hc). 32 is LEAF-ONLY
+     * (no hc2hc[32]) so it is NOT a general stage radix — including it makes the
+     * greedy chooser pick 32 as factors[0] (a stage) and fail. Leaf-32 plans
+     * (e.g. the (8,32) doc-60 winner) come from the calibrator/wisdom, not here. */
     static const unsigned char default_have[VFFT_RFFT_MAX_RADIX + 1] = {
-#if VFFT_RFFT_MAX_RADIX >= 32
-        [2]=1,[3]=1,[4]=1,[5]=1,[7]=1,[8]=1,[16]=1,[32]=1
-#else
         [2]=1,[3]=1,[4]=1,[5]=1,[7]=1,[8]=1,[16]=1
-#endif
     };
     if (!have) have = default_have;
     /* Candidate radixes, largest first (prefer big radixes = fewer stages).
