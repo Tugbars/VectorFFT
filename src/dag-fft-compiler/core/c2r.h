@@ -72,9 +72,16 @@ static inline double *c2r_build_mid_inv(const rfft_stage_t *st)
     return inv;
 }
 
-static inline c2r_plan_t *c2r_plan_create(int N, size_t K,
-                                          const int *factors, int nf,
-                                          const rfft_codelets_t *reg)
+/* c2r_plan_create_ex — variant-explicit plan build (mirror of rfft_plan_create_ex).
+ * `variant[d]` selects the DIF-backward combine codelet for combine stage d
+ * (d = 0..nf-2): 0=FLAT, 1=LOG3, 2=T1S(ranged). variant==NULL => default policy
+ * (LOG3-if-present + ranged), the legacy behavior. The leaf (factors[nf-1]) takes
+ * no variant. CRITICAL: stage_hcr MUST be cleared for FLAT/LOG3 or the executor's
+ * `if (stage_hcr[d])` ranged branch fires regardless of stage_hc. */
+static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
+                                             const int *factors, int nf,
+                                             const int *variant,
+                                             const rfft_codelets_t *reg)
 {
     if (nf < 1 || nf > VFFT_RFFT_MAX_STAGES) return NULL;
     if (K == 0 || (K % 8) != 0) return NULL;
@@ -88,10 +95,27 @@ static inline c2r_plan_t *c2r_plan_create(int N, size_t K,
     p->leaf = reg->r2cb[leaf_r];
     for (int d = nf - 2; d >= 0; d--) {
         int r = base->st[d].radix;
-        rfft_hc_fn hc = reg->hc2hc_dif_bwd_log3[r] ? reg->hc2hc_dif_bwd_log3[r] : reg->hc2hc_dif_bwd[r];
+        int v = variant ? variant[d] : -1;   /* -1 = default policy */
+        rfft_hc_fn hc; rfft_hc_rng_fn hcr;
+        if (v == 0) {                          /* FLAT */
+            hc = reg->hc2hc_dif_bwd[r]; hcr = NULL;
+        } else if (v == 1) {                   /* LOG3 */
+            hc = reg->hc2hc_dif_bwd_log3[r] ? reg->hc2hc_dif_bwd_log3[r] : reg->hc2hc_dif_bwd[r];
+            hcr = NULL;
+        } else if (v == 2) {                   /* T1S (ranged) */
+            hc = reg->hc2hc_dif_bwd[r];
+#ifdef VFFT_RFFT_RANGED
+            hcr = reg->hc2hc_dif_rng_bwd[r];
+#else
+            hcr = NULL;
+#endif
+        } else {                               /* default policy (legacy) */
+            hc = reg->hc2hc_dif_bwd_log3[r] ? reg->hc2hc_dif_bwd_log3[r] : reg->hc2hc_dif_bwd[r];
+            hcr = reg->hc2hc_dif_rng_bwd[r];
+        }
         if (!hc || !reg->r2cb[r]) { c2r_plan_destroy(p); return NULL; }
         p->stage_hc[d] = hc;
-        p->stage_hcr[d] = reg->hc2hc_dif_rng_bwd[r];
+        p->stage_hcr[d] = hcr;
         p->stage_dc[d] = reg->r2cb[r];
         if (base->st[d].has_mid) {
             p->mid_inv[d] = c2r_build_mid_inv(&base->st[d]);
@@ -107,6 +131,14 @@ static inline c2r_plan_t *c2r_plan_create(int N, size_t K,
         }
     }
     return p;
+}
+
+/* Default-policy wrapper (legacy behavior, variant=NULL). */
+static inline c2r_plan_t *c2r_plan_create(int N, size_t K,
+                                          const int *factors, int nf,
+                                          const rfft_codelets_t *reg)
+{
+    return c2r_plan_create_ex(N, K, factors, nf, NULL, reg);
 }
 
 static inline void c2r_mid_inv_column(int r, int m, size_t Q, size_t K,
