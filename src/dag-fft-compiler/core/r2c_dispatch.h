@@ -69,6 +69,21 @@ typedef struct {
 static const vfft_proto_wisdom_t *_vfft_r2c_wis = NULL;
 static inline void vfft_r2c_dispatch_set_wisdom(const vfft_proto_wisdom_t *w) { _vfft_r2c_wis = w; }
 
+/* Optional C2C wisdom for the stride-fallback INNER (N/2) plan. Distinct from the
+ * rfft wisdom above: the decoupled path's inner is a complex FFT of size N/2, so it
+ * wants c2c wisdom (spike_wisdom.txt), not rfft wisdom. NULL-safe: without it the
+ * inner falls back to the factorizer default (often degenerate, e.g. (64,2)). */
+static const vfft_proto_wisdom_t *_vfft_r2c_c2c_wis = NULL;
+static inline void vfft_r2c_dispatch_set_c2c_wisdom(const vfft_proto_wisdom_t *w) { _vfft_r2c_c2c_wis = w; }
+
+/* High-K hybrid threshold: when K >= this AND layout==SPLIT AND a c2c registry is
+ * available, the decoupled stride path (pack+c2c(N/2)+Hermitian fold) is PREFERRED
+ * over rfft — it wins big at high K (rfft ~0.47x MKL vs decoupled ~0.91x at K=256),
+ * while rfft wins at low K. SIZE_MAX = disabled (always prefer rfft). Calibrate per
+ * host; default set from N=256 measurements. */
+static size_t _vfft_r2c_decouple_min_k = (size_t)-1;
+static inline void vfft_r2c_dispatch_set_decouple_min_k(size_t k) { _vfft_r2c_decouple_min_k = k; }
+
 /* ---- rfft factorization chooser -------------------------------------------
  * Pick the FEWEST-stage factorization of N over the radixes the rfft codelet
  * set covers, preferring larger radixes. Fewer stages wins (the empirical
@@ -128,6 +143,19 @@ static inline int vfft_r2c_choose_rfft_factors(
  *      (stride cannot pack; caller must either accept SPLIT or provide rfft_reg).
  *   3. If neither can build -> NULL.
  */
+/* Build the decoupled stride r2c plan over N (even): wisdom-best inner c2c(N/2)
+ * + pack-fused first stage + general Hermitian recombine. Returns NULL if N is
+ * odd-without-support or the inner/plan can't build. SPLIT layout only. */
+static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
+                                                    vfft_proto_registry_t *c2c_reg)
+{
+    if (!c2c_reg) return NULL;
+    stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, c2c_reg, _vfft_r2c_c2c_wis);
+    if (!inner) return NULL;
+    stride_plan_t *sp = stride_r2c_plan(N, K, K, inner);  /* frees inner on failure */
+    return sp;
+}
+
 static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     int N, size_t K, vfft_r2c_layout_t layout,
     const rfft_codelets_t *rfft_reg, const unsigned char *have,
@@ -138,6 +166,16 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     vfft_r2c_plan_t *p = (vfft_r2c_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
     p->N = N; p->K = K; p->layout = layout;
+
+    /* ---- HYBRID: prefer the decoupled stride path at high K (SPLIT only) ----
+     * rfft loses badly at high K (~0.47x MKL) while decoupled-r2c hits ~0.91x;
+     * the reverse holds at low K. When K crosses the calibrated threshold and a
+     * c2c registry is present, take stride first; otherwise fall through to rfft. */
+    if (layout == VFFT_R2C_SPLIT && (N % 2) == 0 &&
+        (size_t)K >= _vfft_r2c_decouple_min_k && c2c_reg) {
+        stride_plan_t *sp = _vfft_r2c_build_stride(N, K, c2c_reg);
+        if (sp) { p->path = VFFT_R2C_PATH_STRIDE; p->stride = sp; return p; }
+    }
 
     /* ---- try rfft (primary) ---- */
     if (rfft_reg) {
@@ -172,17 +210,13 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
         free(p);
         return NULL;
     }
-    if (c2c_reg) {
-        /* inner c2c plan over N/2 (the stride r2c contract). */
-        stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, c2c_reg, NULL);
-        if (inner) {
-            stride_plan_t *sp = stride_r2c_plan(N, K, K, inner);
-            if (sp) {
-                p->path = VFFT_R2C_PATH_STRIDE;
-                p->stride = sp;
-                return p;
-            }
-            /* stride_r2c_plan frees inner on failure per its contract */
+    {
+        /* inner c2c plan over N/2 (the stride r2c contract), wisdom-best. */
+        stride_plan_t *sp = _vfft_r2c_build_stride(N, K, c2c_reg);
+        if (sp) {
+            p->path = VFFT_R2C_PATH_STRIDE;
+            p->stride = sp;
+            return p;
         }
     }
 
