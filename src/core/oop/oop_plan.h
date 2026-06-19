@@ -20,8 +20,10 @@
  *   - K % 8 != 0 is rejected (vector-lane contract; prevents the
  *     heap-corruption failure mode outright).
  *   - Aliasing mask: a Bailey stage whose j-stride (in doubles) is a
- *     multiple of 512 (the 4KB L1 set period) with more streams than
- *     8-way associativity is masked. Checked for BOTH stages:
+ *     multiple of 4096 (a 32KB stride) with more than 8 streams is masked
+ *     (see _vfft_oop_stage_aliases below — the catastrophe needs L1 AND L2
+ *     sets to both alias; a stride hitting only the 4KB/512-double L1 set
+ *     period is absorbed by L2 and measures fine). Checked for BOTH stages:
  *     s2 stride R2*K with R1 streams, s1 out... s1 in-stride R1*K with
  *     R2 streams. Masked cells fall through to MODEB (whose wisdom
  *     factorizations use small radixes that fit associativity).
