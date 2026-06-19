@@ -57,14 +57,10 @@ static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
     }
 
     if (plan->num_stages > 1)
-    {
-        stride_plan_t sub = *plan; /* shallow view; stage entries share their
-                                      pointer payloads read-only */
-        memmove(&sub.stages[0], &sub.stages[1],
-                (size_t)(sub.num_stages - 1) * sizeof(stride_stage_t));
-        sub.num_stages -= 1;
-        vfft_proto_execute_fwd_generic(&sub, dst_re, dst_im, slice_K);
-    }
+        /* Resume stages 1.. in-place on dst — directly, no shifted-sub-plan
+         * struct copy (group_base offsets are absolute, so running the original
+         * plan from stage 1 is identical to the old memmove'd view). */
+        vfft_proto_execute_fwd_generic_from(plan, dst_re, dst_im, slice_K, 1);
     return 0;
 }
 

@@ -47,11 +47,16 @@ static inline void _vfft_proto_cmul_conj_vec(
     }
 }
 
-static inline void vfft_proto_execute_fwd_generic(const stride_plan_t *plan,
-                                                   double *re, double *im,
-                                                   size_t slice_K)
+/* Run stages [from_stage, num_stages) of a DIT forward plan, in-place. Lets a
+ * caller resume mid-plan without materializing a shifted sub-plan — the OOP
+ * adapter (oop_execute.h) uses from_stage=1 to run stages 1.. on dst after its
+ * fused stage-0. group_base[g] offsets are absolute, so resuming is identical to
+ * the old "copy plan, memmove stages down one" view, minus the ~2.5KB copy. */
+static inline void vfft_proto_execute_fwd_generic_from(const stride_plan_t *plan,
+                                                       double *re, double *im,
+                                                       size_t slice_K, int from_stage)
 {
-    for (int s = 0; s < plan->num_stages; s++) {
+    for (int s = from_stage; s < plan->num_stages; s++) {
         const stride_stage_t *st = &plan->stages[s];
         const int G = st->num_groups;
         const int R = st->radix;
@@ -132,6 +137,14 @@ static inline void vfft_proto_execute_fwd_generic(const stride_plan_t *plan,
             }
         }
     }
+}
+
+/* Standard full forward (all stages from 0). */
+static inline void vfft_proto_execute_fwd_generic(const stride_plan_t *plan,
+                                                  double *re, double *im,
+                                                  size_t slice_K)
+{
+    vfft_proto_execute_fwd_generic_from(plan, re, im, slice_K, 0);
 }
 
 /* Backward executor — DIT inverse: stages walked in REVERSE order.
