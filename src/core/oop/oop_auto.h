@@ -71,22 +71,11 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_auto(
         const vfft_proto_wisdom_entry_t *e =
             vfft_proto_wisdom_lookup(wis, N, K);
         if (e)
-        {
-            p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
-            if (!p)
-                return NULL;
-            p->N = N;
-            p->K = K;
-            p->mb = vfft_proto_plan_create(N, K, e->factors,
-                                           (int *)e->variants, e->nf,
-                                           (vfft_proto_registry_t *)reg);
-            if (p->mb && !p->mb->use_dif_forward)
-            {
-                p->kind = VFFT_OOP_KIND_MODEB;
-                return p;
-            }
-            free(p);
-        }
+            /* MODEB from the c2c (spike) wisdom entry — carries its per-stage
+             * variants through (distinct from the OOP wisdom path, which has no
+             * variants column; see oop_wisdom.h). Helper owns construction. */
+            return _vfft_oop_make_modeb(N, K, e->factors,
+                                        (const int *)e->variants, e->nf, reg);
     }
     return NULL;
 }
