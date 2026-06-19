@@ -100,7 +100,11 @@ int main(void){
     if(stride_pin_thread(PIN_CORE)!=0) fprintf(stderr,"warn pin\n");
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
     printf("== c2c MT (pool K-split), in-place + OOP, scaling vs T=1 ==\n");
-    run(256,4096,&reg);  run(256,4104,&reg);
-    run(1024,4096,&reg); run(1024,4104,&reg);
+    printf("# working set = N*K*16 bytes. <2MB = L2-resident (compute-bound); >>2MB = DRAM-bound.\n");
+    run(128,512,&reg);   /* 0.5MB */
+    run(256,512,&reg);   /* 2MB   */
+    run(256,1024,&reg);  /* 4MB   */
+    run(512,1024,&reg);  /* 8MB   */
+    run(1024,4096,&reg); /* 64MB DRAM-bound */
     return 0;
 }
