@@ -117,16 +117,12 @@ vfft_oop_plan_create_wisdom(int N, size_t K, const vfft_oop_wisdom_t *w,
     }
     if (e->kind == VFFT_OOP_KIND_BAILEY2)
         return vfft_oop_plan_create_pair(N, K, e->R1, e->R2);  /* validates pair + mask */
-    if (e->kind == VFFT_OOP_KIND_MODEB) {
-        vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof *p);
-        if (!p) return NULL;
-        p->N = N; p->K = K;
-        p->mb = vfft_proto_plan_create(N, K, e->factors, /*variants=*/NULL, e->nf,
-                                       (vfft_proto_registry_t *)reg);
-        if (p->mb && !p->mb->use_dif_forward) { p->kind = VFFT_OOP_KIND_MODEB; return p; }
-        free(p->mb); free(p);
-        return NULL;
-    }
+    if (e->kind == VFFT_OOP_KIND_MODEB)
+        /* OOP wisdom has NO variants column (the format drops them; the
+         * calibrator's DP is all-T1S today) → rebuild NULL = T1S. If a
+         * variant-aware DP lands, add a column, bump the format, pass them here.
+         * Helper owns construction + inner-plan teardown on failure. */
+        return _vfft_oop_make_modeb(N, K, e->factors, /*variants=*/NULL, e->nf, reg);
     return NULL;
 }
 
