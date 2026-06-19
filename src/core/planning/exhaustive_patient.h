@@ -37,7 +37,7 @@
 #include "planner.h"
 #include "exhaustive_plan.h"     /* enumeration, perm gen, bench harness re-use */
 #include "dp_planner.h"          /* now_ns + _sleep_ms */
-#include "../generator/generated/registry.h"
+#include "registry.h"
 
 #include <stdio.h>
 #include <stdlib.h>

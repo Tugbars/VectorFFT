@@ -29,7 +29,7 @@
 #include "measure.h"                 /* vfft_proto_dp_plan_measure (CT sweep) */
 #include "bluestein_calibrator.h"    /* bluestein_calibrate_one (prime sweep) */
 #ifdef VFFT_USE_JIT
-#include "../jit/jit_runtime.h"      /* vfft_proto_plan_jit_fwd/bwd (winner specialization) */
+#include "jit_runtime.h"      /* vfft_proto_plan_jit_fwd/bwd (winner specialization) */
 #endif
 
 /* ── Planning flags (sketch; final names land in vfft.h) ─────────────────── */

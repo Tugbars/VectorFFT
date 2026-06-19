@@ -39,7 +39,7 @@
                                                   * factors; replaces V4's
                                                   * wide_penalty heuristic for
                                                   * R ≥ 16 */
-#include "../generator/generated/registry.h"
+#include "registry.h"
 #include <stdlib.h>
 #include <string.h>
 

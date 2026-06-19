@@ -34,7 +34,7 @@
 #include "plan.h"
 #include "twiddle.h"
 #include "wisdom_reader.h"
-#include "../generator/generated/registry.h"  /* IWYU pragma: keep */
+#include "registry.h"  /* IWYU pragma: keep */
 #include <stdlib.h>
 
 /* Variant codes match the wisdom file format. */

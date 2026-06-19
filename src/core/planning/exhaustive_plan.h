@@ -39,7 +39,7 @@
 #include "executor.h"
 #include "planner.h"
 #include "dp_planner.h"     /* re-use vfft_proto_now_ns + perm gen + factorization_t */
-#include "../generator/generated/registry.h"
+#include "registry.h"
 #include "env.h"            /* depth/prune knobs + their "tested on 1024" provenance */
 
 #include <stdio.h>

@@ -39,8 +39,8 @@ ROOT = HERE.parent  # repo root: highSpeedFFT/
 # header-INCLUDED its SIMD codelets via per-radix -I dirs; dag's codelets are
 # separately-compiled .c files (codelets/inplace/{isa}/*.c) that get LINKED in
 # — the generated registry_{isa}.h holds externs + the init that wires them.
-DAG          = ROOT / 'src' / 'dag-fft-compiler'
-DAG_CORE     = DAG / 'core'
+DAG          = ROOT / 'src' / 'dag-fft-compiler'   # the compiler (generator + generated + jit)
+DAG_CORE     = ROOT / 'src' / 'core'               # the runtime library (moved out of the compiler)
 DAG_GEN      = DAG / 'generator' / 'generated'   # generated registry + spike_wisdom
 DAG_ISA      = os.environ.get('VFFT_ISA', 'avx2')  # avx2 | avx512
 DAG_CODELETS = DAG / 'codelets' / 'inplace' / DAG_ISA
@@ -149,7 +149,7 @@ def build_includes() -> list[str]:
     we walk core/ recursively so a future reorg needs no build edit. SIMD codelets
     are LINKED .c files (see dag_codelet_srcs), not header-included."""
     core_dirs = [DAG_CORE] + sorted(d for d in DAG_CORE.rglob('*') if d.is_dir())
-    inc = [str(ROOT / 'include'), str(DAG), str(DAG_GEN)] + [str(d) for d in core_dirs]
+    inc = [str(ROOT / 'include'), str(DAG), str(DAG_GEN), str(DAG / 'jit')] + [str(d) for d in core_dirs]
     return [f'-I{p}' for p in inc]
 
 
