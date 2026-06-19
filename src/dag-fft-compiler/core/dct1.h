@@ -47,8 +47,10 @@
 #define STRIDE_DCT1_H
 
 #include "executor.h"
+#include "threads.h"
 #include "r2c.h"
 #include <math.h>
+#include <string.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -59,10 +61,67 @@ typedef struct
     int N;       /* user-visible transform size */
     int M;       /* logical extension length (always even) */
     size_t K;    /* batch count */
+    int n_threads;             /* T snapshot at plan-create (MT scratch/dispatch) */
     double *buf_re;            /* M*K staging / r2c in-place buffer */
     double *buf_im;            /* M*K r2c imaginary half */
     stride_plan_t *r2c_plan;   /* M-point r2c plan, batch K (owned) */
 } stride_dct1_data_t;
+
+/* ── MT K-split: pre (extension) and post (extract) passes parallelize over the
+ * K batch (lanes independent); the inner M-point r2c threads internally on the
+ * same pool (if its block_K < K). Mirrors dct.h's three-phase fan-out. ── */
+typedef struct { stride_dct1_data_t *d; double *re; size_t k0, k1; } _dct1_slice_arg_t;
+
+static inline int _dct1_mt_threads(int n_threads_plan, int M, size_t K) {
+    int T = stride_get_num_threads();
+    if (T > n_threads_plan) T = n_threads_plan;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T < 1) T = 1;
+    if (T > 1 && (size_t)M * K < (size_t)8192 * (size_t)T) T = 1;
+    return T;
+}
+
+/* DCT-I even extension: buf[m]=x[m] (m<N), buf[m]=x[M-m] (N<=m<M), per K-slice. */
+static void _dct1_worker_pre(void *arg) {
+    _dct1_slice_arg_t *a = (_dct1_slice_arg_t *)arg;
+    stride_dct1_data_t *d = a->d;
+    const int N = d->N, M = d->M; const size_t K = d->K, k0 = a->k0, slice = a->k1 - a->k0;
+    for (int m = 0; m < N; m++)
+        memcpy(d->buf_re + (size_t)m * K + k0, a->re + (size_t)m * K + k0, slice * sizeof(double));
+    for (int m = N; m < M; m++)
+        memcpy(d->buf_re + (size_t)m * K + k0, a->re + (size_t)(M - m) * K + k0, slice * sizeof(double));
+}
+/* DCT-I extract: Y[k]=Re(Z[k]) = buf_re rows 0..N-1, per K-slice. */
+static void _dct1_worker_post(void *arg) {
+    _dct1_slice_arg_t *a = (_dct1_slice_arg_t *)arg;
+    stride_dct1_data_t *d = a->d;
+    const int N = d->N; const size_t K = d->K, k0 = a->k0, slice = a->k1 - a->k0;
+    for (int k = 0; k < N; k++)
+        memcpy(a->re + (size_t)k * K + k0, d->buf_re + (size_t)k * K + k0, slice * sizeof(double));
+}
+/* DST-I odd extension: buf[0]=0, buf[1..N]=x[0..N-1], buf[N+1]=0,
+ * buf[m]=-x[M-m-1] (N+2<=m<M), per K-slice. */
+static void _dct1_worker_pre_dst(void *arg) {
+    _dct1_slice_arg_t *a = (_dct1_slice_arg_t *)arg;
+    stride_dct1_data_t *d = a->d;
+    const int N = d->N, M = d->M; const size_t K = d->K, k0 = a->k0, k1 = a->k1, slice = k1 - k0;
+    memset(d->buf_re + k0, 0, slice * sizeof(double));                       /* row 0 */
+    for (int m = 1; m <= N; m++)
+        memcpy(d->buf_re + (size_t)m * K + k0, a->re + (size_t)(m - 1) * K + k0, slice * sizeof(double));
+    memset(d->buf_re + (size_t)(N + 1) * K + k0, 0, slice * sizeof(double)); /* row N+1 */
+    for (int m = N + 2; m < M; m++)
+        for (size_t j = k0; j < k1; j++)
+            d->buf_re[(size_t)m * K + j] = -a->re[(size_t)(M - m - 1) * K + j];
+}
+/* DST-I extract: Y[k]=-Im(Z[k+1]), k=0..N-1, per K-slice. */
+static void _dct1_worker_post_dst(void *arg) {
+    _dct1_slice_arg_t *a = (_dct1_slice_arg_t *)arg;
+    stride_dct1_data_t *d = a->d;
+    const int N = d->N; const size_t K = d->K, k0 = a->k0, k1 = a->k1;
+    for (int k = 0; k < N; k++)
+        for (size_t j = k0; j < k1; j++)
+            a->re[(size_t)k * K + j] = -d->buf_im[(size_t)(k + 1) * K + j];
+}
 
 static void _dct1_destroy(void *data)
 {
@@ -89,6 +148,24 @@ static void _dct1_execute(void *data, double *re, double *im)
     const int N = d->N, M = d->M;
     const size_t K = d->K;
 
+    int T = _dct1_mt_threads(d->n_threads, M, K);
+    if (T > 1) {
+        _dct1_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d = d; args[t].re = re;
+            args[t].k0 = (K * (size_t)t) / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_pre, &args[t]);
+        _dct1_worker_pre(&args[0]); _stride_pool_wait_all();
+        stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);   /* inner threads internally */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_post, &args[t]);
+        _dct1_worker_post(&args[0]); _stride_pool_wait_all();
+        return;
+    }
+
     /* even extension */
     memcpy(d->buf_re, re, (size_t)N * K * sizeof(double));
     for (int m = N; m < M; m++)
@@ -108,6 +185,24 @@ static void _dst1_execute(void *data, double *re, double *im)
     const int N = d->N, M = d->M;
     const size_t K = d->K;
     size_t j;
+
+    int T = _dct1_mt_threads(d->n_threads, M, K);
+    if (T > 1) {
+        _dct1_slice_arg_t args[64];
+        for (int t = 0; t < T; t++) {
+            args[t].d = d; args[t].re = re;
+            args[t].k0 = (K * (size_t)t) / (size_t)T;
+            args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
+        }
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_pre_dst, &args[t]);
+        _dct1_worker_pre_dst(&args[0]); _stride_pool_wait_all();
+        stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);   /* inner threads internally */
+        for (int t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_post_dst, &args[t]);
+        _dct1_worker_post_dst(&args[0]); _stride_pool_wait_all();
+        return;
+    }
 
     /* odd extension with forced boundary zeros */
     memset(d->buf_re, 0, K * sizeof(double));
@@ -153,6 +248,7 @@ static stride_plan_t *_boundary_plan(
     d->M = M;
     d->K = K;
     d->r2c_plan = r2c_plan_M;
+    { int T = stride_get_num_threads(); d->n_threads = (T < 1) ? 1 : T; }
 
     size_t MK = (size_t)M * K;
     d->buf_re = (double *)STRIDE_ALIGNED_ALLOC(64, MK * sizeof(double));

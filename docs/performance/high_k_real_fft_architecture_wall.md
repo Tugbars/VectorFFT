@@ -6,10 +6,13 @@
 **Transform under study:** real-input FFT (r2c), N=256, batch K up to 256, split-complex output
 
 > TL;DR — Our FFT *codelets* beat MKL. The library wins C2C and 2D at every size, including
-> K=256. Real-FFT at high K is the **one corner** where we lose (~0.81× MKL). The cause is **not**
-> the codelets and **not** the split layout — it is the *wide-K-batch executor orchestration*, which
-> is exactly what makes us win everywhere else. Every cheap fix was prototyped and ruled out by
-> measurement. Closing the gap requires a fused, L1-resident r2c kernel for that corner only.
+> K=256. Real-FFT at high K is the **one corner** where we lose (~0.81× MKL) **single-threaded**. The
+> cause is **not** the codelets and **not** the split layout — it is the *wide-K-batch executor
+> orchestration*, which is exactly what makes us win everywhere else. Every cheap fix was prototyped and
+> ruled out by measurement. Closing the single-thread gap requires a fused, L1-resident r2c kernel for
+> that corner only. **But the single-thread wall *reverses* under multithreading** — the same wide-batch
+> layout that costs us on one core makes the K-batch embarrassingly parallel, so **dag beats MKL
+> 2.56–3.58× at T8** even where it loses single-threaded (§6c).
 
 ---
 
@@ -237,6 +240,43 @@ real-FFT wins. N=256 K=256 wins *because* 512KB is L2-resident — the one spot 
 Consistency: pure C2C still beats MKL at high N (no extra passes); only the real-FFT pack+recombine passes
 lose at scale. ⇒ The sole high-N lever is cutting passes (recombine-fusion / Option B), not more SIMD.
 
+## 6c. Multithreaded — the single-thread wall REVERSES (2026-06-19)
+
+Everything above is **single-thread**. Under multithreading the picture flips: the wide-K-batch layout
+that costs us on one core (extra full-plane passes) is *exactly* the layout that makes the K-batch
+**embarrassingly parallel** — split the K lanes across the pool, each thread runs a disjoint,
+cache-line-aligned, contiguous slice. No barriers, no transpose, no cross-thread data movement.
+
+Bench (`build_tuned/benches/bench_r2c_mt_vs_mkl.c`): dag on **8 P-cores** (caller pinned core 0, pool
+pins workers to cores 1..7) vs MKL at `mkl_set_num_threads(8)`. Same batched r2c, N=256, split output.
+The dag plan is built with `block_K = K/8` (8 blocks → one per worker); the production dispatcher's
+default `block_K=K` is a single block = serial, so MT requires a sub-K block (TODO §7).
+
+| K    | WS    | dag T1 (ns) | dag T8 (ns) | MKL T1 (ns) | MKL T8 (ns) | dag scal | MKL scal | T1 mkl/dag | **T8 mkl/dag** |
+|------|-------|-------------|-------------|-------------|-------------|----------|----------|------------|----------------|
+| 256  | 0.5MB | 44,786      | 15,358      | 39,496      | 53,888      | 2.92×    | 0.73×    | 0.88×      | **3.51×**      |
+| 512  | 1.0MB | 120,695     | 30,376      | 88,983      | 105,576     | 3.97×    | 0.84×    | 0.74×      | **3.48×**      |
+| 1024 | 2.0MB | 277,012     | 57,834      | 180,433     | 206,888     | 4.79×    | 0.87×    | 0.65×      | **3.58×**      |
+| 2048 | 4.0MB | 617,692     | 151,871     | 381,321     | 400,661     | 4.07×    | 0.95×    | 0.62×      | **2.64×**      |
+| 4096 | 8.0MB | 1,241,547   | 271,758     | 894,132     | 799,011     | 4.57×    | 1.12×    | 0.72×      | **2.94×**      |
+| 8192 | 16MB  | 2,861,444   | 835,167     | 2,050,622   | 2,139,989   | 3.43×    | 0.96×    | 0.72×      | **2.56×**      |
+
+Reading the columns:
+- **`T1 mkl/dag` < 1** — single-threaded, dag loses (0.62–0.88×). This is the §1–§3 wall.
+- **`dag scal` 2.9–4.8×** — dag's K-batch split scales near-linearly across 8 P-cores.
+- **`MKL scal` 0.73–1.12×** — MKL's batched r2c **barely threads** for modest N. At K=256, MKL T8 is
+  *slower* than T1 (threading overhead > benefit); it only edges positive (1.12×) at the largest WS.
+- **`T8 mkl/dag` 2.56–3.58×** — net at 8 threads, **dag wins across the whole sweep**, even at 16MB
+  (DRAM-bound: dag still scales 3.4×, wins 2.56×). The single-thread deficit is fully reversed by scaling.
+
+**Honest read.** This is *both* effects compounding: (1) our split + lane-batched layout turns "K
+independent transforms" into trivially-parallel work — the cleanest possible MT decomposition; and (2)
+MKL's batched small-N r2c threading is weak (it parallelizes within/across modest-N transforms and stalls
+on overhead). A larger-N sweep (fewer lanes) would show where MKL's threading engages and narrow our
+batch advantage — but in the batched regime that dominates 2D/r2c/DCT workloads, the layout's MT edge is
+real and large. The §5/Option-B fused kernel targets the *single-thread* corner; it is orthogonal to this
+MT win and unnecessary wherever the workload is threaded with a wide enough batch.
+
 ## 7. Follow-ups / TODO
 
 - [ ] **Re-calibrate the hybrid threshold for other N.** `_vfft_r2c_decouple_min_k = 32` is the measured
@@ -253,6 +293,14 @@ lose at scale. ⇒ The sole high-N lever is cutting passes (recombine-fusion / O
   perf-optimal default; DIF support is a correctness safety net, not a speed lever.
 - [ ] **Expose the in-place placement through the unified `vfft_r2c_execute_fwd`** (it exists at the stride
   level as `stride_execute_r2c_inplace`; the top dispatcher currently only does out-of-place).
+- [x] **Make r2c MT reachable from the dispatcher — DONE (2026-06-19).** `r2c_dispatch.h` now has
+  `_vfft_r2c_block_k(K)`: when `stride_get_num_threads()>1` at plan-create it picks the largest
+  multiple-of-8 divisor of K that is ≤ K/T (must divide K — a partial block would over-read; must be
+  a mult of 8 for the lane group), giving ~T full blocks. The inner c2c is built at `block_K` (which
+  usually lands on a calibrated cell too, e.g. K=256→32, so the c2c wisdom still hits). Validated via
+  the public path (`bench_r2c_dispatch_mt_vs_mkl.c`, N=256): all cells route to `stride`, MT==T1 err 0,
+  scaling 3.1–4.6×, **dag beats MKL 2.85–4.77× at T8** (K=256..8192). Caller must `stride_set_num_threads()`
+  BEFORE `vfft_r2c_plan_create` (T is snapshotted for scratch sizing + block choice).
 - [ ] **Commit** (changes are on `dev/OcamlScheduling`, uncommitted).
 
 ## Appendix — reproduce
@@ -267,7 +315,9 @@ python build.py --src benches/dif_order_probe.c --compile
 python build.py --src benches/bench_r2c_l1block.c --mkl --compile
 # in-place (with pack) vs OOP (no pack), order-neutralized (§3a):
 python build.py --src benches/bench_r2c_inplace_vs_oop.c --mkl --compile
-# run with MKL bin + C:\mingw152\mingw64\bin on PATH, pinned core 2
+# MULTITHREADED dag (8 P-cores) vs MKL (8 threads) (§6c):
+python build.py --src benches/bench_r2c_mt_vs_mkl.c --mkl --compile
+# run with MKL bin + C:\mingw152\mingw64\bin on PATH, pinned core 2 (ST) / core 0 (MT)
 ```
 
 Related: `src/dag-fft-compiler/docs/rfft_highk_gap_and_mkl_blueprint.md` (native-rfft VTune +

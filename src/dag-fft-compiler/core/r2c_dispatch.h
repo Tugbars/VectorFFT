@@ -149,11 +149,35 @@ static inline int vfft_r2c_choose_rfft_factors(
 /* Build the decoupled stride r2c plan over N (even): wisdom-best inner c2c(N/2)
  * + pack-fused first stage + general Hermitian recombine. Returns NULL if N is
  * odd-without-support or the inner/plan can't build. SPLIT layout only. */
+/* Pick the r2c block width (B). The stride r2c MT path (_r2c_execute_fwd) splits
+ * the K-batch into n_blocks = K/block_K blocks across the pool. block_K = K is a
+ * SINGLE block => serial; for MT we need block_K < K (~T blocks). Constraints:
+ *   - block_K MUST divide K (a partial last block would over-read past lane K), and
+ *   - block_K MUST be a multiple of 8 (AVX-512 lane group; AVX2 needs 4 — 8 is safe).
+ * We take the LARGEST such divisor <= K/T, giving ~T full blocks. T is snapshotted
+ * here (plan-create) to match stride_r2c_plan's per-worker scratch sizing; the user
+ * must set stride_set_num_threads() BEFORE plan_create to enable r2c MT. */
+static inline size_t _vfft_r2c_block_k(size_t K)
+{
+    int T = stride_get_num_threads();
+    if (T < 1) T = 1;
+    if (T <= 1 || K < 16) return K;                 /* serial: one block */
+    size_t target = (K / (size_t)T) & ~(size_t)7;   /* round K/T down to mult of 8 */
+    if (target < 8) target = 8;
+    for (size_t b = target; b >= 8; b -= 8)
+        if (K % b == 0) return b;                   /* largest mult-of-8 divisor <= K/T */
+    return K;                                        /* no clean sub-block: stay serial */
+}
+
 static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
                                                     vfft_proto_registry_t *c2c_reg)
 {
     if (!c2c_reg) return NULL;
-    stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, c2c_reg, _vfft_r2c_c2c_wis);
+    /* MT: build the inner c2c at block_K (the per-block batch width), not full K.
+     * block_K often lands on a calibrated cell too (e.g. K=256 -> 32 @T8), so the
+     * c2c wisdom usually still hits; otherwise it's the factorizer default at block_K. */
+    size_t block_K = _vfft_r2c_block_k(K);
+    stride_plan_t *inner = vfft_proto_auto_plan(N / 2, block_K, c2c_reg, _vfft_r2c_c2c_wis);
     if (!inner) return NULL;
     /* Prefer a DIT inner — PERFORMANCE, not correctness. DIF inners are now fully
      * correct (stride_r2c_plan picks the DIF-aware recombine perm), but pack-fusion
@@ -167,11 +191,11 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
         int factors[STRIDE_MAX_STAGES];
         for (int s = 0; s < nf; s++) factors[s] = inner->factors[s];
         stride_plan_destroy(inner);
-        inner = vfft_proto_plan_create_ex(N / 2, K, factors, /*variants=*/NULL, nf,
+        inner = vfft_proto_plan_create_ex(N / 2, block_K, factors, /*variants=*/NULL, nf,
                                           /*use_dif_forward=*/0, c2c_reg);
         if (!inner) return NULL;
     }
-    stride_plan_t *sp = stride_r2c_plan(N, K, K, inner);  /* frees inner on failure */
+    stride_plan_t *sp = stride_r2c_plan(N, K, block_K, inner);  /* frees inner on failure */
     return sp;
 }
 
