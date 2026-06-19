@@ -20,7 +20,7 @@
 #include "core/env.h"
 #include "generator/generated/registry.h"
 
-#define PIN_CORE 2
+#define PIN_CORE 0   /* pool pins workers to cores 1..T-1; caller must be core 0 */
 #define BEST_OF  11
 #if defined(_WIN32)
 #include <malloc.h>
