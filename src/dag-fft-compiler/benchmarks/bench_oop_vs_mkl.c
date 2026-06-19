@@ -38,6 +38,12 @@
 
 static unsigned long long mn2(unsigned long long a,unsigned long long b){return a<b?a:b;}
 
+/* Optional CSV sink (set in main). Columns:
+ *   N,K,kind,factorization,gate,order,vfft_cyc,mkl_cyc,speedup
+ * speedup = mkl_cyc/vfft_cyc (>1 = we beat MKL). vfft_cyc/mkl_cyc are __rdtsc
+ * min-of-rounds cycle counts. */
+static FILE *g_csv = NULL;
+
 static void run_cell(int N, size_t K,
                      const vfft_proto_wisdom_t *wis,
                      vfft_proto_registry_t *reg)
@@ -139,6 +145,16 @@ static void run_cell(int N, size_t K,
         printf("  N=%-5d K=%-4zu %-7s%-7s gate %-10s order %-9s | "
                "vfft %9llu | mkl %9llu | speed vs MKL %.3f\n",
                N, K, kn, pair, gate, order, mv, mk, (double)mk / mv);
+        if (g_csv) {
+            char fac[16];
+            if (p->kind == VFFT_OOP_KIND_BAILEY2)
+                snprintf(fac, sizeof fac, "%dx%d", p->R1, p->R2);
+            else
+                snprintf(fac, sizeof fac, "%s", kn);
+            fprintf(g_csv, "%d,%zu,%s,%s,%s,%s,%llu,%llu,%.3f\n",
+                    N, K, kn, fac, gate, order, mv, mk, (double)mk / mv);
+            fflush(g_csv);
+        }
     }
 done:
     DftiFreeDescriptor(&d);
@@ -164,6 +180,9 @@ int main(void)
     const vfft_proto_wisdom_t *wisp = have_wis ? &wis : NULL;
     printf("== OOP engine vs MKL DFTI NOT_INPLACE, split, 1 thread, "
            "higher is faster ==\n");
+    g_csv = fopen("oop_vs_mkl.csv", "w");
+    if (g_csv)
+        fprintf(g_csv, "N,K,kind,factorization,gate,order,vfft_cyc,mkl_cyc,speedup\n");
     run_cell(64, 512, wisp, &reg);
     run_cell(128, 512, wisp, &reg);
     run_cell(169, 512, wisp, &reg);
@@ -175,6 +194,7 @@ int main(void)
     printf("(* MODEB correctness = bit-exact vs in-place dataflow per "
            "test_oop_sweep; scrambled order, reorder to natural not "
            "measured)\n");
+    if (g_csv) { fclose(g_csv); printf("# wrote oop_vs_mkl.csv\n"); }
     if (have_wis) vfft_proto_wisdom_free(&wis);
     return 0;
 }
