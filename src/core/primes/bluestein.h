@@ -26,8 +26,11 @@
  *   Pointwise multiply: 5-7%
  *   Demodulate (chirp): 4-7%
  *
- * Current: 0.68x vs MKL at N=509 K=256, 0.81x at K=32.
- * The bottleneck is inner FFT speed, not chirp overhead.
+ * As of April 2026 (PRE-MT / pre-variant-mix engine; LIKELY STALE — re-bench
+ * before citing): 0.68x vs MKL at N=509 K=256, 0.81x at K=32.
+ * The bottleneck is inner FFT speed, not chirp overhead — so this number tracks
+ * the inner CT engine, which has improved substantially since (MT, variant
+ * mixing, faster codelets). Recent Rader cells beat MKL on all 8 benched.
  *
  * Attempted optimizations (no improvement):
  *   - Pre-expanded chirp (M*B format, flat SIMD multiply instead of

@@ -96,10 +96,19 @@ searches `[2N−1, ~1.12·(2N−1)]` (always including the next power of two) an
 of L2. Memory: `2N` chirp + `4MB` kernels + `2MB` scratch, all pre-allocated at plan time
 (not per-call like FFTW).
 
-**Performance reality:** profiling N=509 K=256 (M=1024, B=64) shows the **inner FFTs are
-77–85% of the time**; chirp/pointwise are 7–9% each. So Bluestein's speed *is* the inner
-FFT's speed — it currently runs ~0.68× MKL at N=509 K=256, and the lever is faster/better-M
-inner FFTs (e.g. composite M with our strong non-pow2 codelets), not chirp micro-opt.
+**Performance reality (structural):** profiling N=509 K=256 (M=1024, B=64) shows the
+**inner FFTs are 77–85% of the time**; chirp/pointwise are 7–9% each. So a prime cell's
+speed *is* its inner CT FFT's speed — the lever is faster/better-M inner FFTs (composite M
+with our strong non-pow2 codelets), not chirp micro-optimization. Because the inner rides
+the CT engine, prime performance tracks every CT improvement (MT, variant-mixing, codelet
+gains) for free.
+
+> The `bluestein.h` header still quotes `~0.68× MKL at N=509` — that's an **April-2026
+> in-source datapoint that predates most of the current engine** and should not be read as
+> the current standing; re-bench before citing. The recent measured **Rader** result is the
+> opposite: dag **beats MKL on all 8 benched Rader cells** (2026-06-17; the earlier "N=251
+> 0.60×" was confirmed heat-soak noise → 1.6× isolated). Bluestein hasn't been re-swept
+> since, so treat its old number as stale, not current.
 
 ---
 
