@@ -36,17 +36,22 @@ and emit **natural order**; MODEB is scrambled (digit-reversed), bit-identical t
 in-place dataflow.
 
 ### The rule spine (`oop_plan.h::vfft_oop_plan_create`)
-`K % 8 == 0` is rejected outright (the vector-lane ABI contract — prevents an 8-lane
-overrun that measured as heap corruption). Then: **LEAF** (N≤128 with a leaf codelet) →
-**BAILEY2** (best unmasked divisor pair) → **MODEB** (from the supplied factors).
+`K % 8 != 0` is rejected outright — **K must be a multiple of 8** (the vector-lane ABI
+contract; a sub-8 K overruns each leg slice, measured as heap corruption — so K=256 etc.
+is exactly what the path wants, K=4 is the illegal one). Then: **LEAF** (N≤128 with a leaf
+codelet) → **BAILEY2** (best unmasked divisor pair) → **MODEB** (from the supplied factors).
 
 **Aliasing mask (BAILEY2).** A Bailey stage whose j-stride (doubles) is a multiple of
-**4096 (the 32KB L1+L2 set period) with > 8 streams** (exceeds 8-way associativity) is
-*masked* and skipped — that's the catastrophic-aliasing zone where nothing absorbs the
-streams. Both stages are checked (`R2·K` with R1 streams; `R1·K` with R2 streams).
-Masked cells fall through to MODEB (whose small-radix wisdom factorizations fit
-associativity). Among unmasked pairs the static preference is **balanced-first**
-(min `|R1−R2|`), then the **fatter leaf** (max R2); the tuner overrides per cell.
+**4096 (a 32KB stride) with > 8 streams** is *masked* and skipped (`oop_plan.h:79`). This
+is the empirically-measured catastrophic-aliasing boundary: at a 32KB-multiple stride,
+consecutive streams land in the same L1 sets *and* tend to collide in L2 too, so neither
+cache absorbs them. (A stride that aliases only the **4KB / 512-double L1 set period**
+— `size/associativity = 32KB/8` — e.g. `13·512` doubles, is caught by L2 under the DFT
+arithmetic and measures fine; the catastrophe needs *both* levels aliasing, hence 4096
+not 512.) Both stages are checked (`R2·K` with R1 streams; `R1·K` with R2 streams). Masked
+cells fall through to MODEB (whose small-radix wisdom factorizations fit associativity).
+Among unmasked pairs the static preference is **balanced-first** (min `|R1−R2|`), then the
+**fatter leaf** (max R2); the tuner overrides per cell.
 
 ### MODEB's OOP adapter (`oop_execute.h`)
 The `n1` codelets are contractually out-of-place (7-arg: pass `in==out`, `is==os` for
@@ -73,7 +78,8 @@ Within each ABI, three codelet kinds:
   FMA-port slack to relieve LOAD-port pressure: more FMA, fewer twiddle loads). It wins
   *only* when a stage is load-bound with FMA slack — **not a strict upgrade** over flat.
 
-> **Known wart:** BAILEY2's s2 currently **hardcodes `t1p_log3`** (`oop_plan.h:90`). The
+> **Known wart:** BAILEY2's s2 currently **hardcodes `t1p_log3`** (`oop_plan.h:101`, the
+> `p->t1p = vfft_oop_t1p_fn(R1)` assignment; rationale TODO at `:90`). The
 > flat-vs-log3 choice should move into the planner's port/memboundness model — the
 > auto-emitted `oop_codelets_t` already exposes both `t1p[R]` and `t1p_log3[R]` as
 > distinct slots. Until then the hardcode is the documented default, not an oversight.
