@@ -101,15 +101,18 @@ static inline double *_fft2d_r2c_scratch_im(stride_fft2d_r2c_data_t *d, int t) {
 }
 
 /* Run inner R2C single-threaded on the caller's thread, regardless of the
- * global num_threads setting. Tile-parallel outer wants no nested dispatch. */
-static inline void _fft2d_r2c_inner_fwd(stride_plan_t *plan, double *re, double *im) {
+ * global num_threads setting. Tile-parallel outer wants no nested dispatch.
+ * `tid` selects the inner plan's per-worker scratch slot — each concurrent
+ * tile thread MUST pass a distinct tid (the inner uses d->scratch as its pack
+ * buffer; a shared slot races → garbage). Slots exist up to d->n_threads. */
+static inline void _fft2d_r2c_inner_fwd(stride_plan_t *plan, double *re, double *im, int tid) {
     stride_r2c_data_t *d = (stride_r2c_data_t *)plan->override_data;
-    _r2c_worker_arg_t a = { d, re, im, 0, d->K, 0 };
+    _r2c_worker_arg_t a = { d, re, im, 0, d->K, tid };
     _r2c_worker_fwd(&a);
 }
-static inline void _fft2d_r2c_inner_bwd(stride_plan_t *plan, double *re, double *im) {
+static inline void _fft2d_r2c_inner_bwd(stride_plan_t *plan, double *re, double *im, int tid) {
     stride_r2c_data_t *d = (stride_r2c_data_t *)plan->override_data;
-    _r2c_worker_arg_t a = { d, re, im, 0, d->K, 0 };
+    _r2c_worker_arg_t a = { d, re, im, 0, d->K, tid };
     _r2c_worker_bwd(&a);
 }
 
@@ -129,7 +132,8 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
                                         const double *re_in,
                                         double *out_pad_re, double *out_pad_im,
                                         double *sr, double *si,
-                                        size_t row_start, size_t row_end)
+                                        size_t row_start, size_t row_end,
+                                        int tid)
 {
     const int N2 = d->N2;
     const int halfN_plus1 = N2 / 2 + 1;
@@ -146,7 +150,7 @@ static void _fft2d_r2c_tiled_fwd_range(stride_fft2d_r2c_data_t *d,
 
         /* Inner R2C in-place on scratch. After: sr[f*B + k_local] holds Re bins,
          * si[f*B + k_local] holds Im bins for f=0..N2/2. */
-        _fft2d_r2c_inner_fwd(d->plan_r2c, sr, si);
+        _fft2d_r2c_inner_fwd(d->plan_r2c, sr, si, tid);
 
         /* Scatter split-complex: (halfN_plus1) x B -> B x K_pad (padded).
          * Padding columns [halfN_plus1..K_pad) are zeroed for col-FFT. */
@@ -214,7 +218,7 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
                               this_B, (size_t)halfN_plus1);
 
         /* Inner C2R in-place on scratch. */
-        _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si);
+        _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si, 0);
 
         /* Scatter real: N2 x B -> B x N2. */
         stride_transpose(sr, B, re_out + i * (size_t)N2, (size_t)N2,
@@ -237,12 +241,13 @@ typedef struct {
     double *out_re, *out_im;   /* padded col-FFT scratch destination */
     double *sr, *si;
     size_t row_start, row_end;
+    int tid;
 } _fft2d_r2c_tile_arg_t;
 
 static void _fft2d_r2c_tile_fwd_trampoline(void *arg) {
     _fft2d_r2c_tile_arg_t *a = (_fft2d_r2c_tile_arg_t *)arg;
     _fft2d_r2c_tiled_fwd_range(a->d, a->re_in, a->out_re, a->out_im,
-                                a->sr, a->si, a->row_start, a->row_end);
+                                a->sr, a->si, a->row_start, a->row_end, a->tid);
 }
 
 static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
@@ -252,12 +257,19 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
     const size_t B = d->B;
     int T = stride_get_num_threads();
     if (T > d->num_scratch) T = d->num_scratch;
+    /* The inner r2c plan uses its own per-slot pack scratch (n_threads slots).
+     * Don't dispatch more tile threads than the inner has scratch slots, or
+     * two threads would collide on an inner slot (garbage output). */
+    {
+        stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
+        if (T > rd->n_threads) T = rd->n_threads;
+    }
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
         _fft2d_r2c_tiled_fwd_range(d, re_in, out_re, out_im,
                                     d->scratch_re, d->scratch_im,
-                                    0, N1);
+                                    0, N1, 0);
         return;
     }
 
@@ -279,6 +291,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         args[t].si = _fft2d_r2c_scratch_im(d, t);
         args[t].row_start = row_start;
         args[t].row_end = row_end;
+        args[t].tid = t;
         _stride_pool_dispatch(&_stride_workers[t - 1],
                               _fft2d_r2c_tile_fwd_trampoline, &args[t]);
         n_dispatch++;
@@ -288,7 +301,7 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         if (row_end > N1) row_end = N1;
         _fft2d_r2c_tiled_fwd_range(d, re_in, out_re, out_im,
                                     d->scratch_re, d->scratch_im,
-                                    0, row_end);
+                                    0, row_end, 0);
     }
     if (n_dispatch > 0) _stride_pool_wait_all();
 }
