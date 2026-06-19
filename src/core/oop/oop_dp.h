@@ -124,14 +124,16 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     }
     vfft_oop_execute_fwd(rule,  sr, si, dr, di);       /* warm both */
     vfft_oop_execute_fwd(modeb, sr, si, dr, di);
-    double br = 1e18, bm = 1e18;
+    /* __rdtsc cycles, min-of-9 — same timer the pair tuner uses (axis-2 native),
+     * so both halves of the joint chooser measure on one clock. */
+    unsigned long long br = ~0ULL, bm = ~0ULL;
     for (int r = 0; r < 9; r++) {
-        double t0 = vfft_proto_now_ns();
+        unsigned long long t0 = __rdtsc();
         vfft_oop_execute_fwd(rule, sr, si, dr, di);
-        double a = vfft_proto_now_ns() - t0; if (a < br) br = a;
-        t0 = vfft_proto_now_ns();
+        unsigned long long a = __rdtsc() - t0; if (a < br) br = a;
+        t0 = __rdtsc();
         vfft_oop_execute_fwd(modeb, sr, si, dr, di);
-        double b = vfft_proto_now_ns() - t0; if (b < bm) bm = b;
+        unsigned long long b = __rdtsc() - t0; if (b < bm) bm = b;
     }
     VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
     if (br <= bm) { vfft_oop_plan_destroy(modeb); return rule; }

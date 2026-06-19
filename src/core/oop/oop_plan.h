@@ -255,10 +255,14 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
         }
     }
 
-    /* Rule 3: Mode B through the stride engine (caller-supplied factors).
-     * The pre-alloc'd shell is empty here (LEAF/BAILEY2 didn't fire); discard
-     * it and let the MODEB helper own construction + the inner plan. The helper
-     * returns NULL if factors/nf/reg are absent, matching the old guard. */
+    /* Rule 3: Mode B through the stride engine. Only fires when the CALLER
+     * supplies explicit `factors` (direct/bench callers). The auto/dp/wisdom
+     * entry points call this with factors=NULL,nf=0 — they reach MODEB through
+     * THEIR OWN sources instead (vfft_oop_plan_create_auto via wisdom,
+     * vfft_oop_plan_create_dp via the DP planner). So this branch is reachable,
+     * just not from the no-factors auto path. The pre-alloc'd shell is empty
+     * here (LEAF/BAILEY2 didn't fire); discard it and let the MODEB helper own
+     * construction + inner plan (returns NULL if factors/nf/reg are absent). */
     free(p);
     return _vfft_oop_make_modeb(N, K, factors, /*variants=*/NULL, nf, reg);
 }
