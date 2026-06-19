@@ -60,12 +60,14 @@ int main(void){
         fflush(stdout);
     }
 
-    /* ---- 1D r2c (N, K), block-parallel over K ---- */
+    /* ---- 1D r2c (N, K), block-parallel over K ----
+     * MT distributes K/block_K blocks across the pool. block_K MUST be < K or
+     * there's a single block => no parallelism. Use block_K=256 => 8 blocks. */
     {
-        int N=256; size_t K=2048, NK=(size_t)N*K, OK=(size_t)(N/2+1)*K;
+        int N=256; size_t K=2048, BK=256, NK=(size_t)N*K, OK=(size_t)(N/2+1)*K;
         stride_set_num_threads(8);
-        stride_plan_t*inner=vfft_proto_auto_plan(N/2,K,&reg,NULL);
-        stride_plan_t*p=inner?stride_r2c_plan(N,K,K,inner):NULL;
+        stride_plan_t*inner=vfft_proto_auto_plan(N/2,BK,&reg,NULL);
+        stride_plan_t*p=inner?stride_r2c_plan(N,K,BK,inner):NULL;
         if(!p){printf("1D r2c plan NULL\n");}
         else{
             double*x=AALLOC(NK*8),*orr=AALLOC(OK*8),*oii=AALLOC(OK*8),*ref=AALLOC(OK*8);
