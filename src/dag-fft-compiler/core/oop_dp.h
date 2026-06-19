@@ -99,28 +99,45 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_modeb(
     return NULL;
 }
 
-/* Measure-and-keep-faster: build the rule plan (LEAF/BAILEY2) AND the DP-MODEB
- * plan, time both same-binary round-robin (min-of-rounds), return the faster and
- * destroy the loser. LEAF short-circuits (direct single codelet — effectively
- * always best at N<=128, no point measuring a multi-stage MODEB against it).
+/* The full 2-axis joint chooser (CALIBRATION-TIME):
+ *   Axis 2 (factorization within a kind):
+ *     - native champion = the TUNER's best of {LEAF, all unmasked BAILEY2 pairs}
+ *       (vfft_oop_tune_pairs measures them same-binary).
+ *     - MODEB champion  = the DP planner's best multi-factor decomposition.
+ *   Axis 1 (kind): measure the two champions round-robin, return the faster.
+ * LEAF short-circuits (direct single codelet — always best at its N).
  *
- * This is the CALIBRATION-TIME chooser: it resolves the K-dependent kind choice
- * by measurement (e.g. N=1024 — BAILEY2 32x32 wins at K=120, but MODEB 4^5 wins
- * at K=256, where the only unmasked BAILEY2 pair aliases). Cache its verdict in
- * OOP wisdom so the runtime path is a pure lookup with no measurement. */
+ * This resolves the K-dependent kind choice by measurement (N=1024: BAILEY2
+ * 32x32 wins at K=120; MODEB 4^5 wins at K=256, where every unmasked BAILEY2
+ * pair aliases). Cache its verdict — (N,K) -> {kind, factorization} — in OOP
+ * wisdom so the runtime path is a pure lookup with no measurement. */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     int N, size_t K, vfft_proto_dp_context_t *dp,
     const vfft_proto_registry_t *reg)
 {
     if (K == 0 || (K % 8u) != 0)
         return NULL;
-    vfft_oop_plan_t *rule = vfft_oop_plan_create(N, K, NULL, 0, reg);
-    if (rule && rule->kind == VFFT_OOP_KIND_LEAF)
-        return rule;                                  /* LEAF: no contest */
-    vfft_oop_plan_t *modeb = vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
-    if (!modeb) return rule;                          /* only the rule plan exists */
-    if (!rule)  return modeb;                         /* only MODEB exists */
 
+    /* Axis 2 within the native kinds: tuner picks LEAF or the best BAILEY2 pair. */
+    int r1 = 0, r2 = 0;
+    int nc = vfft_oop_tune_pairs(N, K, &r1, &r2, 0);
+    vfft_oop_plan_t *native = NULL;
+    if (nc > 0) {
+        if (r1 == 0)                              /* LEAF won the tuner */
+            native = vfft_oop_plan_create(N, K, NULL, 0, reg);
+        else                                      /* best BAILEY2 pair */
+            native = vfft_oop_plan_create_pair(N, K, r1, r2);
+    }
+    if (native && native->kind == VFFT_OOP_KIND_LEAF)
+        return native;                            /* LEAF: no contest */
+
+    /* Axis 2 within MODEB: DP's best multi-factor decomposition. */
+    vfft_oop_plan_t *modeb = vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
+    if (!modeb) return native;                    /* only the native plan exists */
+    if (!native) return modeb;                    /* only MODEB exists */
+
+    /* Axis 1: time the two champions, keep the faster. */
+    vfft_oop_plan_t *rule = native;               /* (alias kept for the loop below) */
     size_t T = (size_t)N * K;
     double *sr = (double *)VFFT_OOP_AALLOC(T * 8), *si = (double *)VFFT_OOP_AALLOC(T * 8);
     double *dr = (double *)VFFT_OOP_AALLOC(T * 8), *di = (double *)VFFT_OOP_AALLOC(T * 8);

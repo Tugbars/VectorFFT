@@ -125,6 +125,15 @@ static void run_cell(int N,size_t K,vfft_proto_registry_t*reg,int force_modeb_to
                    fm,rtm,vm,m>0?m/vm:0,kindname(p));
             vfft_oop_plan_destroy(pm);
         }
+        /* the 2-axis joint chooser: tuner-best-native vs DP-best-MODEB */
+        vfft_oop_plan_t *pb = vfft_oop_plan_create_dp_best(N,K,&ctx,reg);
+        if(pb){
+            double rtb=correctness(pb,N,K); char fb[96]; facstr(pb,fb,sizeof fb);
+            double vb=time_oop(pb,sr,si,dr,di,T);
+            printf("        DP-BEST   -> %-7s %-14s rt=%.1e | vfft %9.1f | vs MKL %.3f\n",
+                   kindname(pb),fb,rtb,vb,m>0?m/vb:0);
+            vfft_oop_plan_destroy(pb);
+        }
     }
     if(d)DftiFreeDescriptor(&d);
     AFREE(sr);AFREE(si);AFREE(dr);AFREE(di);AFREE(mr);AFREE(mi);
