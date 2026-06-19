@@ -16,16 +16,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "core/executor.h"
-#include "core/planner.h"
-#include "core/threads.h"
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"
-#include "core/dct.h"
-#include "core/dct4.h"
-#include "core/dst.h"
-#include "core/dht.h"
-#include "core/env.h"
+#include "executor.h"
+#include "planner.h"
+#include "threads.h"
+#include "proto_stride_compat.h"
+#include "r2c.h"
+#include "dct.h"
+#include "dct4.h"
+#include "dst.h"
+#include "dht.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

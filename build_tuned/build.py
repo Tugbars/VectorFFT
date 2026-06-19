@@ -143,10 +143,13 @@ def detect_toolchain():
 
 def build_includes() -> list[str]:
     """-I list for the dag-fft-compiler build. dag headers cross-reference each
-    other (and the generated registry) by relative path, so the tree root +
-    core + generated cover everything. No per-radix dirs — SIMD codelets are
-    LINKED .c files (see dag_codelet_srcs), not header-included."""
-    inc = [str(ROOT / 'include'), str(DAG), str(DAG_CORE), str(DAG_GEN)]
+    other (and the generated registry) BARE (#include "executor.h"), so every
+    core subfolder must be on the -I path. core/ is organized into subfolders
+    (engine/, support/, planning/, transforms/{real,trig,fft2d}/, primes/, oop/);
+    we walk core/ recursively so a future reorg needs no build edit. SIMD codelets
+    are LINKED .c files (see dag_codelet_srcs), not header-included."""
+    core_dirs = [DAG_CORE] + sorted(d for d in DAG_CORE.rglob('*') if d.is_dir())
+    inc = [str(ROOT / 'include'), str(DAG), str(DAG_GEN)] + [str(d) for d in core_dirs]
     return [f'-I{p}' for p in inc]
 
 

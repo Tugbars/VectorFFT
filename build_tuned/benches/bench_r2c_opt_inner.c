@@ -28,12 +28,12 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/executor.h"
-#include "core/env.h"                  /* stride_env_init + stride_pin_thread */
-#include "core/planner.h"
-#include "core/dp_planner.h"           /* vfft_proto_now_ns */
-#include "core/proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
-#include "core/r2c.h"                  /* existing stride-r2c path */
+#include "executor.h"
+#include "env.h"                  /* stride_env_init + stride_pin_thread */
+#include "planner.h"
+#include "dp_planner.h"           /* vfft_proto_now_ns */
+#include "proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
+#include "r2c.h"                  /* existing stride-r2c path */
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

@@ -11,11 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "core/fft2d.h"
-#include "core/fft2d_r2c.h"
-#include "core/planner.h"
-#include "core/threads.h"
-#include "core/env.h"
+#include "fft2d.h"
+#include "fft2d_r2c.h"
+#include "planner.h"
+#include "threads.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define BEST_OF 9

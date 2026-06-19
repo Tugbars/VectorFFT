@@ -27,12 +27,12 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/planner.h"
-#include "core/dp_planner.h"
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"
+#include "executor.h"
+#include "env.h"
+#include "planner.h"
+#include "dp_planner.h"
+#include "proto_stride_compat.h"
+#include "r2c.h"
 #include "generator/generated/registry.h"
 #include "../src/dag-fft-compiler/codelets/oop/avx2/radix4_n1_oop_avx2.c"
 

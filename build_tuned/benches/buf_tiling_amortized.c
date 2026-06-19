@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <immintrin.h>
-#include "core/dp_planner.h"   /* vfft_proto_now_ns, posix_memalign, aligned_free */
+#include "dp_planner.h"   /* vfft_proto_now_ns, posix_memalign, aligned_free */
 
 extern void radix8_hc2hc_dit_fwd_avx2(const double*, const double*, double*, double*,
                                       const double*, const double*, ptrdiff_t, ptrdiff_t, size_t);

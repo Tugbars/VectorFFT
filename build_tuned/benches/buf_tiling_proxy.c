@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <immintrin.h>
-#include "core/dp_planner.h"   /* vfft_proto_now_ns */
+#include "dp_planner.h"   /* vfft_proto_now_ns */
 
 /* radix-8 forward hc2hc; ABI: (in_re,in_im,out_re,out_im,tw_re,tw_im,is,os,vl).
  * Reads R=8 legs at in_*[j*is+v]; writes R outputs at out_*[j*os+v]; vl lanes. */

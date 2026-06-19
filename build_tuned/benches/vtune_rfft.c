@@ -24,8 +24,8 @@
 #include <immintrin.h>
 #include <mkl_dfti.h>
 #include <mkl_service.h>
-#include "core/env.h"            /* stride_env_init, stride_pin_thread */
-#include "core/dp_planner.h"     /* vfft_proto_now_ns, posix_memalign, aligned_free */
+#include "env.h"            /* stride_env_init, stride_pin_thread */
+#include "dp_planner.h"     /* vfft_proto_now_ns, posix_memalign, aligned_free */
 #include "rfft_registry_avx2.h"  /* dag rfft (incl rfft.h) */
 
 static double *ad(size_t n) {

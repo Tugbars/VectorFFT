@@ -22,10 +22,10 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/executor.h"     /* vfft_proto_execute_fwd/bwd (in-place, per-slice) */
-#include "core/planner.h"
-#include "core/threads.h"
-#include "core/env.h"
+#include "executor.h"     /* vfft_proto_execute_fwd/bwd (in-place, per-slice) */
+#include "planner.h"
+#include "threads.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define BEST_OF 13

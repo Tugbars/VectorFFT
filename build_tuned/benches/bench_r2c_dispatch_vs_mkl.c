@@ -22,9 +22,9 @@
 #include <mkl_service.h>
 
 #include "rfft_registry_avx2.h"          /* rfft_codelets_t + rfft_register_all_avx2 */
-#include "core/r2c_dispatch.h"           /* the production dispatcher */
-#include "core/env.h"
-#include "core/dp_planner.h"             /* vfft_proto_now_ns */
+#include "r2c_dispatch.h"           /* the production dispatcher */
+#include "env.h"
+#include "dp_planner.h"             /* vfft_proto_now_ns */
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

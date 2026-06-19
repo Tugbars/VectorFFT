@@ -12,10 +12,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/oop_dp.h"        /* vfft_oop_plan_create_dp_best */
-#include "core/oop_wisdom.h"    /* entry + writer */
+#include "executor.h"
+#include "env.h"
+#include "oop_dp.h"        /* vfft_oop_plan_create_dp_best */
+#include "oop_wisdom.h"    /* entry + writer */
 
 #define PIN_CORE 2
 #if defined(_WIN32)

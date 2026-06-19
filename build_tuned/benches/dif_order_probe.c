@@ -25,11 +25,11 @@
 #include <string.h>
 #include <math.h>
 
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/planner.h"
-#include "core/dp_planner.h"            /* vfft_proto_now_ns */
-#include "core/proto_stride_compat.h"   /* vfft_proto_posix_memalign / _aligned_free */
+#include "executor.h"
+#include "env.h"
+#include "planner.h"
+#include "dp_planner.h"            /* vfft_proto_now_ns */
+#include "proto_stride_compat.h"   /* vfft_proto_posix_memalign / _aligned_free */
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

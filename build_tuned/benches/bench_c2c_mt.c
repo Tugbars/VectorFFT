@@ -13,11 +13,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "core/executor.h"     /* vfft_proto_execute_fwd (in-place, per-slice) */
-#include "core/planner.h"
-#include "core/threads.h"      /* pool */
-#include "core/oop_auto.h"     /* OOP plan + leaf/t1p + vfft_proto_execute_fwd_oop */
-#include "core/env.h"
+#include "executor.h"     /* vfft_proto_execute_fwd (in-place, per-slice) */
+#include "planner.h"
+#include "threads.h"      /* pool */
+#include "oop_auto.h"     /* OOP plan + leaf/t1p + vfft_proto_execute_fwd_oop */
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 0   /* pool pins workers to cores 1..T-1; caller must be core 0 */

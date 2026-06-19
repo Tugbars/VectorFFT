@@ -14,8 +14,8 @@
 #include <math.h>
 #include <mkl_dfti.h>
 #include <mkl_service.h>
-#include "core/fft2d.h"
-#include "core/env.h"
+#include "fft2d.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2
