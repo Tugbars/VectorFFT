@@ -52,7 +52,7 @@
 #include "plan.h"          /* stride_plan_t, vfft_proto_posix_memalign */
 #include "planner.h"       /* vfft_proto_plan_create, vfft_proto_plan_destroy */
 #include "executor.h"      /* vfft_proto_execute_fwd */
-#include "../generator/generated/registry.h"  /* vfft_proto_registry_t, VFFT_PROTO_REG_MAX_RADIX */
+#include "registry.h"  /* vfft_proto_registry_t, VFFT_PROTO_REG_MAX_RADIX */
 
 #include <string.h>
 #include <stdio.h>
