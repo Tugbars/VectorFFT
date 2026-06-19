@@ -55,6 +55,7 @@ def dag_codelet_srcs() -> list[str]:
         DAG_CODELETS,                          # c2c in-place
         DAG / 'codelets' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
         DAG / 'codelets' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
+        DAG / 'codelets' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
     ]
     srcs: list[str] = []
     for d in dirs:
