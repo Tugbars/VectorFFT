@@ -24,6 +24,18 @@
 #include "oop_plan.h"
 #include "wisdom_reader.h"
 
+/* Portable 64B-aligned alloc/free for the pair tuner. mingw lacks C11
+ * aligned_alloc and pairs _aligned_malloc with _aligned_free (not free). */
+#if defined(_WIN32)
+#include <malloc.h>
+#define VFFT_OOP_AALLOC(n) _aligned_malloc((n), 64)
+#define VFFT_OOP_AFREE(p)  _aligned_free(p)
+#else
+#include <stdlib.h>
+#define VFFT_OOP_AALLOC(n) aligned_alloc(64, (n))
+#define VFFT_OOP_AFREE(p)  free(p)
+#endif
+
 typedef struct
 {
     int N;
@@ -113,10 +125,10 @@ static inline int vfft_oop_tune_pairs(int N, size_t K,
         return 0;
 
     size_t T = (size_t)N * K;
-    double *sr = (double *)aligned_alloc(64, T * 8);
-    double *si = (double *)aligned_alloc(64, T * 8);
-    double *dr = (double *)aligned_alloc(64, T * 8);
-    double *di = (double *)aligned_alloc(64, T * 8);
+    double *sr = (double *)VFFT_OOP_AALLOC(T * 8);
+    double *si = (double *)VFFT_OOP_AALLOC(T * 8);
+    double *dr = (double *)VFFT_OOP_AALLOC(T * 8);
+    double *di = (double *)VFFT_OOP_AALLOC(T * 8);
     for (size_t i = 0; i < T; i++)
     {
         sr[i] = (double)(i % 251) * 0.013 - 1.6;
@@ -169,7 +181,7 @@ static inline int vfft_oop_tune_pairs(int N, size_t K,
     }
     for (int c = 0; c < nc; c++)
         vfft_oop_plan_destroy(cand[c]);
-    free(sr); free(si); free(dr); free(di);
+    VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
     return nc;
 }
 

@@ -22,7 +22,19 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 #include "../core/executor.h"
+#include "../core/env.h"        /* stride_pin_thread */
 #include "../core/oop_auto.h"
+
+/* mingw lacks C11 aligned_alloc; _aligned_malloc needs _aligned_free (not free). */
+#if defined(_WIN32)
+#include <malloc.h>
+#define AALLOC(n) _aligned_malloc((n), 64)
+#define AFREE(p)  _aligned_free(p)
+#else
+#include <stdlib.h>
+#define AALLOC(n) aligned_alloc(64, (n))
+#define AFREE(p)  free(p)
+#endif
 
 static unsigned long long mn2(unsigned long long a,unsigned long long b){return a<b?a:b;}
 
@@ -30,23 +42,19 @@ static void run_cell(int N, size_t K,
                      const vfft_proto_wisdom_t *wis,
                      vfft_proto_registry_t *reg)
 {
-    /* phase-4 pipeline: tune pairs if multiple, then auto-create */
-    vfft_oop_pair_hint_t h = {0, 0, 0, 0};
-    int nh = 0, r1 = 0, r2 = 0;
-    if (vfft_oop_tune_pairs(N, K, &r1, &r2, 0) >= 2 && r1 > 0)
-    {
-        h.N = N; h.K = K; h.R1 = r1; h.R2 = r2; nh = 1;
-    }
-    vfft_oop_plan_t *p = vfft_oop_plan_create_auto(N, K, wis, &h, nh, reg);
+    /* rule-spine auto-create (tuner skipped for this baseline — it adds a
+     * residual 6-8% on BAILEY2 cells; the rule's balanced-first pick is the
+     * default). vfft_oop_tune_pairs uses aligned_alloc, dropped on mingw. */
+    vfft_oop_plan_t *p = vfft_oop_plan_create_auto(N, K, wis, NULL, 0, reg);
     if (!p)
     {
         printf("  N=%-5d K=%-4zu  no plan (skipped)\n", N, K);
         return;
     }
     size_t T = (size_t)N * K;
-    double *sr = aligned_alloc(64, T * 8), *si = aligned_alloc(64, T * 8);
-    double *dr = aligned_alloc(64, T * 8), *di = aligned_alloc(64, T * 8);
-    double *mr_ = aligned_alloc(64, T * 8), *mi_ = aligned_alloc(64, T * 8);
+    double *sr = AALLOC(T * 8), *si = AALLOC(T * 8);
+    double *dr = AALLOC(T * 8), *di = AALLOC(T * 8);
+    double *mr_ = AALLOC(T * 8), *mi_ = AALLOC(T * 8);
     srand(53 + N);
     for (size_t i = 0; i < T; i++)
     {
@@ -134,34 +142,39 @@ static void run_cell(int N, size_t K,
     }
 done:
     DftiFreeDescriptor(&d);
-    free(sr); free(si); free(dr); free(di); free(mr_); free(mi_);
+    AFREE(sr); AFREE(si); AFREE(dr); AFREE(di); AFREE(mr_); AFREE(mi_);
     vfft_oop_plan_destroy(p);
 }
 
 int main(void)
 {
     mkl_set_num_threads(1);
+    if (stride_pin_thread(2) != 0) fprintf(stderr, "warn: pin cpu2 failed\n");
     vfft_proto_registry_t reg;
     vfft_proto_registry_init(&reg);
+    /* c2c wisdom is only needed for the MODEB fallback; LEAF/BAILEY2 run without
+     * it. Try the build_tuned-relative paths, else continue (MODEB cells skip). */
     vfft_proto_wisdom_t wis;
-    if (vfft_proto_wisdom_load(&wis, "/tmp/wis/wisdom_v198.txt") != 0)
-    {
-        printf("wisdom load FAIL\n");
-        return 1;
-    }
+    int have_wis =
+        (vfft_proto_wisdom_load(&wis, "../src/dag-fft-compiler/generator/generated/spike_wisdom.txt") == 0) ||
+        (vfft_proto_wisdom_load(&wis, "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt") == 0) ||
+        (vfft_proto_wisdom_load(&wis, "../generator/generated/spike_wisdom.txt") == 0);
+    if (!have_wis)
+        printf("# wisdom load FAIL — MODEB cells will skip; LEAF/BAILEY2 still run\n");
+    const vfft_proto_wisdom_t *wisp = have_wis ? &wis : NULL;
     printf("== OOP engine vs MKL DFTI NOT_INPLACE, split, 1 thread, "
            "higher is faster ==\n");
-    run_cell(64, 512, &wis, &reg);
-    run_cell(128, 512, &wis, &reg);
-    run_cell(169, 512, &wis, &reg);
-    run_cell(512, 120, &wis, &reg);
-    run_cell(1024, 120, &wis, &reg);
-    run_cell(1024, 256, &wis, &reg);
-    run_cell(4096, 256, &wis, &reg);
-    run_cell(2310, 32, &wis, &reg);
+    run_cell(64, 512, wisp, &reg);
+    run_cell(128, 512, wisp, &reg);
+    run_cell(169, 512, wisp, &reg);
+    run_cell(512, 120, wisp, &reg);
+    run_cell(1024, 120, wisp, &reg);
+    run_cell(1024, 256, wisp, &reg);
+    run_cell(4096, 256, wisp, &reg);
+    run_cell(2310, 32, wisp, &reg);
     printf("(* MODEB correctness = bit-exact vs in-place dataflow per "
            "test_oop_sweep; scrambled order, reorder to natural not "
            "measured)\n");
-    vfft_proto_wisdom_free(&wis);
+    if (have_wis) vfft_proto_wisdom_free(&wis);
     return 0;
 }
