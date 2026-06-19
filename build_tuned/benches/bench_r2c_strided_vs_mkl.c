@@ -33,12 +33,12 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>       /* mkl_set_num_threads — pin to 1 for a fair ST race */
 
-#include "core/executor.h"
-#include "core/env.h"          /* stride_env_init + stride_pin_thread */
-#include "core/planner.h"
-#include "core/dp_planner.h"   /* vfft_proto_now_ns */
-#include "core/proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
-#include "core/r2c.h"          /* stride_r2c_plan, stride_execute_r2c, stride_r2c_data_t */
+#include "executor.h"
+#include "env.h"          /* stride_env_init + stride_pin_thread */
+#include "planner.h"
+#include "dp_planner.h"   /* vfft_proto_now_ns */
+#include "proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
+#include "r2c.h"          /* stride_r2c_plan, stride_execute_r2c, stride_r2c_data_t */
 #include "generator/generated/registry.h"
 /* native rfft (packed half-complex) — full ABI-typed registry (r2cf + hc2hc + RANGED) */
 #include "rfft_registry_avx2.h"

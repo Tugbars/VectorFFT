@@ -13,8 +13,8 @@
 #include <string.h>
 #include <math.h>
 #include "rfft_registry_avx2.h"
-#include "core/r2c_dispatch.h"
-#include "core/env.h"
+#include "r2c_dispatch.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

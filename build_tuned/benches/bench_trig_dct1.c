@@ -12,13 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "core/executor.h"
-#include "core/planner.h"
-#include "core/threads.h"
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"
-#include "core/dct1.h"
-#include "core/env.h"
+#include "executor.h"
+#include "planner.h"
+#include "threads.h"
+#include "proto_stride_compat.h"
+#include "r2c.h"
+#include "dct1.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

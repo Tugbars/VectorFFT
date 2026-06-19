@@ -9,9 +9,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "core/oop_auto.h"     /* OOP plan + leaf/t1p + vfft_proto_execute_fwd_oop */
-#include "core/threads.h"      /* pool: dispatch/wait, set/get num threads */
-#include "core/env.h"
+#include "oop_auto.h"     /* OOP plan + leaf/t1p + vfft_proto_execute_fwd_oop */
+#include "threads.h"      /* pool: dispatch/wait, set/get num threads */
+#include "env.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2

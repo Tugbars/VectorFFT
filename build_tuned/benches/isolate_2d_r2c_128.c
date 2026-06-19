@@ -2,8 +2,8 @@
 #define _GNU_SOURCE 1
 #include <stdio.h>
 #include <stdlib.h>
-#include "core/fft2d_r2c.h"
-#include "core/env.h"
+#include "fft2d_r2c.h"
+#include "env.h"
 #include "generator/generated/registry.h"
 #if defined(_WIN32)
 #include <malloc.h>

@@ -14,9 +14,9 @@
 #include <math.h>
 #include <mkl_dfti.h>
 #include <mkl_service.h>
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/oop_wisdom.h"
+#include "executor.h"
+#include "env.h"
+#include "oop_wisdom.h"
 
 #define PIN_CORE 2
 #define BEST_OF  15

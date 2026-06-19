@@ -21,12 +21,12 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/threads.h"       /* pool: set/get num threads, pin (before r2c.h) */
-#include "core/planner.h"       /* vfft_proto_auto_plan (before compat) */
-#include "core/proto_stride_compat.h"  /* STRIDE_ALIGNED_ALLOC + slice helpers (before r2c.h) */
-#include "core/r2c.h"            /* stride_r2c_plan + stride_execute_r2c (MT inside) */
-#include "core/env.h"
-#include "core/dp_planner.h"    /* vfft_proto_now_ns (wall clock) */
+#include "threads.h"       /* pool: set/get num threads, pin (before r2c.h) */
+#include "planner.h"       /* vfft_proto_auto_plan (before compat) */
+#include "proto_stride_compat.h"  /* STRIDE_ALIGNED_ALLOC + slice helpers (before r2c.h) */
+#include "r2c.h"            /* stride_r2c_plan + stride_execute_r2c (MT inside) */
+#include "env.h"
+#include "dp_planner.h"    /* vfft_proto_now_ns (wall clock) */
 #include "generator/generated/registry.h"
 
 #define BEST_OF 15

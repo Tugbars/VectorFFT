@@ -19,11 +19,11 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/executor.h"
-#include "core/planner.h"
-#include "core/dp_planner.h"   /* vfft_proto_now_ns */
-#include "core/proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
-#include "core/r2c.h"          /* stride_r2c_plan, stride_execute_r2c, stride_r2c_data_t */
+#include "executor.h"
+#include "planner.h"
+#include "dp_planner.h"   /* vfft_proto_now_ns */
+#include "proto_stride_compat.h"  /* threads pool + STRIDE_ALIGNED_ALLOC, before r2c.h */
+#include "r2c.h"          /* stride_r2c_plan, stride_execute_r2c, stride_r2c_data_t */
 #include "generator/generated/registry.h"
 
 /* the blocked (doc-58 two-pass) fused last-stage codelet (r=8, m=16) */

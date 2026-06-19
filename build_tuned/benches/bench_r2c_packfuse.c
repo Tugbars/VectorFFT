@@ -40,12 +40,12 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/planner.h"
-#include "core/dp_planner.h"           /* vfft_proto_now_ns */
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"                  /* _r2c_init_twiddles */
+#include "executor.h"
+#include "env.h"
+#include "planner.h"
+#include "dp_planner.h"           /* vfft_proto_now_ns */
+#include "proto_stride_compat.h"
+#include "r2c.h"                  /* _r2c_init_twiddles */
 #include "generator/generated/registry.h"
 
 /* The OOP pack-fused stage-0 leaf. Included directly so the symbol links

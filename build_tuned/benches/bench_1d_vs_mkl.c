@@ -38,15 +38,15 @@
 #include <math.h>
 #include <time.h>
 
-#include "core/executor.h"
-#include "core/env.h"                 /* stride_env_init + stride_pin_thread */
-#include "core/planner.h"
-#include "core/dp_planner.h"          /* vfft_proto_now_ns */
+#include "executor.h"
+#include "env.h"                 /* stride_env_init + stride_pin_thread */
+#include "planner.h"
+#include "dp_planner.h"          /* vfft_proto_now_ns */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h"          /* vfft_proto_plan_jit_fwd (build.py --jit) */
 #endif
 #include "generator/generated/registry.h"
-#include "core/prime_dispatch.h"        /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
+#include "prime_dispatch.h"        /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>

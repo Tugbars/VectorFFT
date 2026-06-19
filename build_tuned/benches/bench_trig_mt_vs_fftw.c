@@ -19,17 +19,17 @@
 #include <string.h>
 #include <math.h>
 
-#include "core/threads.h"
-#include "core/planner.h"
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"
-#include "core/dct.h"
-#include "core/dct4.h"
-#include "core/dst.h"
-#include "core/dht.h"
-#include "core/dct1.h"
-#include "core/env.h"
-#include "core/dp_planner.h"          /* vfft_proto_now_ns */
+#include "threads.h"
+#include "planner.h"
+#include "proto_stride_compat.h"
+#include "r2c.h"
+#include "dct.h"
+#include "dct4.h"
+#include "dst.h"
+#include "dht.h"
+#include "dct1.h"
+#include "env.h"
+#include "dp_planner.h"          /* vfft_proto_now_ns */
 #include "generator/generated/registry.h"
 #include "fftw3.h"
 

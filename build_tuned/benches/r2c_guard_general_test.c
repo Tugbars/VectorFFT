@@ -20,11 +20,11 @@
 #include <string.h>
 #include <math.h>
 
-#include "core/executor.h"
-#include "core/env.h"
-#include "core/planner.h"
-#include "core/proto_stride_compat.h"
-#include "core/r2c.h"
+#include "executor.h"
+#include "env.h"
+#include "planner.h"
+#include "proto_stride_compat.h"
+#include "r2c.h"
 #include "generator/generated/registry.h"
 
 #define PIN_CORE 2
