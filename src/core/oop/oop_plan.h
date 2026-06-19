@@ -153,6 +153,43 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
     return p;
 }
 
+/* Build a MODEB plan (general-N OOP via the stride engine). The SINGLE owner
+ * of the inner stride plan: on success p->mb is set + kind=MODEB; on ANY failure
+ * the inner plan is torn down with vfft_proto_plan_destroy (NOT bare free — the
+ * stride plan owns stage tables + tape + twiddle pools) and NULL is returned.
+ * MODEB requires a DIT inner (OOP stage 0 must be untwiddled). `variants` is the
+ * caller's per-stage variant source (DP's best.variants, a c2c-wisdom entry's
+ * variants, or NULL = T1S default); it is passed straight through so each caller
+ * declares its intent at the call site. Centralizes what used to be ~8 lines of
+ * build+check+ownership copy-pasted across the rule spine / auto / dp / wisdom. */
+static inline vfft_oop_plan_t *_vfft_oop_make_modeb(
+    int N, size_t K, const int *factors, const int *variants, int nf,
+    const vfft_proto_registry_t *reg)
+{
+    if (!factors || nf <= 0 || !reg)
+        return NULL;
+    stride_plan_t *mb = vfft_proto_plan_create(
+        N, K, factors, variants, nf, (vfft_proto_registry_t *)reg);
+    if (!mb)
+        return NULL;
+    if (mb->use_dif_forward)
+    {
+        vfft_proto_plan_destroy(mb); /* DIF inner can't run OOP stage 0 */
+        return NULL;
+    }
+    vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
+    if (!p)
+    {
+        vfft_proto_plan_destroy(mb);
+        return NULL;
+    }
+    p->kind = VFFT_OOP_KIND_MODEB;
+    p->N = N;
+    p->K = K;
+    p->mb = mb;
+    return p;
+}
+
 static inline vfft_oop_plan_t *vfft_oop_plan_create(
     int N, size_t K, const int *factors, int nf,
     const vfft_proto_registry_t *reg)
@@ -218,20 +255,12 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
         }
     }
 
-    /* Rule 3: Mode B through the stride executor (wisdom factors) */
-    if (factors && nf > 0 && reg)
-    {
-        p->mb = vfft_proto_plan_create(N, K, factors, NULL, nf,
-                                       (vfft_proto_registry_t *)reg);
-        if (p->mb && !p->mb->use_dif_forward)
-        {
-            p->kind = VFFT_OOP_KIND_MODEB;
-            return p;
-        }
-    }
-
+    /* Rule 3: Mode B through the stride engine (caller-supplied factors).
+     * The pre-alloc'd shell is empty here (LEAF/BAILEY2 didn't fire); discard
+     * it and let the MODEB helper own construction + the inner plan. The helper
+     * returns NULL if factors/nf/reg are absent, matching the old guard. */
     free(p);
-    return NULL;
+    return _vfft_oop_make_modeb(N, K, factors, /*variants=*/NULL, nf, reg);
 }
 
 static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
@@ -274,9 +303,11 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
         return;
     free(p->Qr);
     free(p->Qi);
-    /* mb plans share the proto planner's ownership conventions; the proto
-     * path has no destroy in Phase 1, so we leak it the same way the
-     * existing tests do. */
+    /* MODEB owns a full stride plan (stage tables + tape + twiddle pools) — tear
+     * it down through the proto destroy, not bare free. (The old "Phase 1 has no
+     * destroy, so we leak it" comment was stale: planner.h now has the destroy.) */
+    if (p->mb)
+        vfft_proto_plan_destroy(p->mb);
     free(p);
 }
 

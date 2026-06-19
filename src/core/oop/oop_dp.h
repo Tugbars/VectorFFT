@@ -49,22 +49,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp(
         vfft_proto_factorization_t best;
         double ns = vfft_proto_dp_plan(dp, N, reg, &best, 0);
         if (ns < 1e17 && best.nfactors > 0)
-        {
-            p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
-            if (!p)
-                return NULL;
-            p->N = N;
-            p->K = K;
-            p->mb = vfft_proto_plan_create(N, K, best.factors, best.variants,
-                                           best.nfactors,
-                                           (vfft_proto_registry_t *)reg);
-            if (p->mb && !p->mb->use_dif_forward)
-            {
-                p->kind = VFFT_OOP_KIND_MODEB;
-                return p;
-            }
-            free(p);
-        }
+            return _vfft_oop_make_modeb(N, K, best.factors, best.variants,
+                                        best.nfactors, reg);
     }
     return NULL;
 }
@@ -82,21 +68,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_modeb(
     double ns = vfft_proto_dp_plan(dp, N, reg, &best, 0);
     if (ns >= 1e17 || best.nfactors <= 0)
         return NULL;
-    vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
-    if (!p)
-        return NULL;
-    p->N = N;
-    p->K = K;
-    p->mb = vfft_proto_plan_create(N, K, best.factors, best.variants,
-                                   best.nfactors, (vfft_proto_registry_t *)reg);
-    if (p->mb && !p->mb->use_dif_forward)
-    {
-        p->kind = VFFT_OOP_KIND_MODEB;
-        return p;
-    }
-    free(p->mb);
-    free(p);
-    return NULL;
+    return _vfft_oop_make_modeb(N, K, best.factors, best.variants,
+                                best.nfactors, reg);
 }
 
 /* The full 2-axis joint chooser (CALIBRATION-TIME):
