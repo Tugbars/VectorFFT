@@ -86,6 +86,7 @@ static inline void vfft_r2c_dispatch_set_c2c_wisdom(const vfft_proto_wisdom_t *w
  * SIZE_MAX disables (always rfft). Calibrate per host/N; set via the setter. */
 static size_t _vfft_r2c_decouple_min_k = 32;
 static inline void vfft_r2c_dispatch_set_decouple_min_k(size_t k) { _vfft_r2c_decouple_min_k = k; }
+static inline size_t vfft_r2c_dispatch_get_decouple_min_k(void) { return _vfft_r2c_decouple_min_k; }
 
 /* ---- rfft factorization chooser -------------------------------------------
  * Pick the FEWEST-stage factorization of N over the radixes the rfft codelet

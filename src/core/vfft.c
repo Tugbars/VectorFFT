@@ -202,6 +202,59 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * R2C DECOUPLE-THRESHOLD BAKE-OFF (high rigor) — instead of the fixed K=32
+ * crossover, build BOTH the rfft and the decoupled-stride plan for this exact
+ * (N,K), time them, and keep the winner. Closes the "decouple threshold" axis:
+ * the K=32 default is the N=256 crossover, but the true crossover shifts per N.
+ * ════════════════════════════════════════════════════════════════════════ */
+/* time vfft_r2c_execute_fwd best-of-5 on deterministic scratch; ns (1e18 on OOM). */
+static double _r2c_time_fwd(const vfft_r2c_plan_t *p, int N, size_t K) {
+    size_t insz = (size_t)N * K, outsz = (size_t)(N / 2 + 1) * K;
+    double *x = NULL, *orr = NULL, *oii = NULL;
+    if (vfft_proto_posix_memalign((void **)&x, 64, insz * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&orr, 64, outsz * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&oii, 64, outsz * sizeof(double))) {
+        vfft_proto_aligned_free(x); vfft_proto_aligned_free(orr); vfft_proto_aligned_free(oii);
+        return 1e18;
+    }
+    for (size_t i = 0; i < insz; i++) x[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
+    for (int w = 0; w < 5; w++) vfft_r2c_execute_fwd(p, x, orr, oii);
+    int reps = (int)(2e6 / (double)(insz + 1)); if (reps < 20) reps = 20; if (reps > 100000) reps = 100000;
+    double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) vfft_r2c_execute_fwd(p, x, orr, oii);
+        double e = (vfft_proto_now_ns() - t0) / reps; if (e < best) best = e;
+    }
+    vfft_proto_aligned_free(x); vfft_proto_aligned_free(orr); vfft_proto_aligned_free(oii);
+    return best;
+}
+/* Build rfft + decoupled-stride for (N,K), time single-thread, return the faster.
+ * (ST decision: rfft never threads while stride does, so ST is conservative — if
+ * stride wins ST it wins harder MT; rfft only wins at tiny K where threading is moot.) */
+static vfft_r2c_plan_t *_r2c_bakeoff(int N, size_t K, const vfft_proto_registry_t *reg) {
+    size_t saved = vfft_r2c_dispatch_get_decouple_min_k();
+    vfft_r2c_dispatch_set_decouple_min_k((size_t)-1);   /* force rfft */
+    vfft_r2c_plan_t *pr = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
+                                               (vfft_proto_registry_t *)reg);
+    vfft_r2c_dispatch_set_decouple_min_k(0);            /* force decoupled stride */
+    vfft_r2c_plan_t *ps = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
+                                               (vfft_proto_registry_t *)reg);
+    vfft_r2c_dispatch_set_decouple_min_k(saved);        /* restore */
+    if (!pr) return ps;
+    if (!ps) return pr;
+    if (pr->path == ps->path) { vfft_r2c_plan_destroy(ps); return pr; }  /* same path (rfft uncovered) */
+    int T = stride_get_num_threads(); stride_set_num_threads(1);
+    double tr = _r2c_time_fwd(pr, N, K), ts = _r2c_time_fwd(ps, N, K);
+    stride_set_num_threads(T);
+    if (getenv("VFFT_BAKEOFF_DBG"))
+        fprintf(stderr, "[bakeoff] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
+                N, (size_t)K, tr, ts, (tr <= ts) ? "rfft" : "STRIDE");
+    if (tr <= ts) { vfft_r2c_plan_destroy(ps); return pr; }
+    vfft_r2c_plan_destroy(pr); return ps;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * TRIG BUILDERS — every DCT/DST/DHT is a stride_plan_t wrapping an inner plan
  * (an r2c plan, or a half-N complex FFT for DCT-IV). The inner c2c cell rides
  * the c2c wisdom table (calibrate-on-miss at rigor, like r2c/c2r).
@@ -491,8 +544,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_r2c_dispatch_set_wisdom(&W->rfft);
-        vfft_r2c_plan_t *rp = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT,
-                                                   _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
+        /* High rigor in the rfft-competitive zone (K<=64, N even): per-cell bake-off
+         * picks rfft-vs-stride by measurement instead of the fixed K=32 threshold.
+         * MEASURE / high-K use the (cheap) fixed-threshold dispatch. */
+        vfft_r2c_plan_t *rp;
+        if (cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && K <= 64)
+            rp = _r2c_bakeoff(N, K, reg);
+        else
+            rp = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT,
+                                      _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
         if (!rp)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
