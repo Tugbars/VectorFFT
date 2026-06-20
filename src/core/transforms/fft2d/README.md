@@ -46,19 +46,50 @@ cache-resident chunks.
 
 ## 2. The transpose engine (`transpose.h`)
 
-The reason tiling is cheap. A multi-regime, cache-oblivious **SIMD transpose** of split-complex
-doubles, auto-selected per ISA:
+The reason tiling is cheap — and a standalone win in its own right: a **blocked, cache-oblivious
+SIMD transpose** of split-complex doubles (`src[N1×N2] → dst[N2×N1]`) that **beats `mkl_domatcopy`
+at every meaningful size** (matched ISA, single-thread, power-of-2 ≥128). It's the substrate under
+both the 2D row pass and Bailey's 4-step FFT. Three design layers:
 
-- **Kernel A — 4×4 AVX2** (compute-bound): classic unpack/`permute2f128`, for L1-resident
-  problems and tails.
-- **Kernel B — 8×4 AVX2 → 4×8 line-filling**: two stacked 4×4 transposes whose outputs write
-  side-by-side so each dest row gets two adjacent 32-byte stores = **one full 64-byte cache
-  line**. Peak 8 YMMs live.
-- **Kernel C — 8×8 AVX-512 line-filling**: three-stage shuffle pipeline (`unpack_pd` →
-  `permutex2var_pd` → `shuffle_f64x2`), one dest row = one 64-byte line.
+**(a) Cache-oblivious recursion (the blocking).** `_TP_DEFINE_REC` is a divide-and-conquer: if both
+`rows ≤ BASE` and `cols ≤ BASE`, run the SIMD base kernel; otherwise **halve the longer dimension**
+and recurse on the two halves. This recursively decomposes any N1×N2 into base-sized tiles that fit
+cache *without knowing the cache size* — the recursion bottoms out exactly when a tile is small enough
+to stay resident, so both source and destination tiles live in cache during the strided shuffle (no
+thrash). Halving the longer side keeps subproblems near-square.
 
-Both AVX2 and AVX-512 variants beat their matching-ISA `mkl_domatcopy` on power-of-2 sizes ≥128
-(single-thread). This is what makes the tiled gather/scatter "nearly free" — and why 2D c2c wins.
+**(b) Cache-aware top-level dispatch.** `stride_transpose` picks the base-tile size **and** kernel by
+working-set bytes, then runs the matching recursion:
+
+| working set | regime | base | kernel |
+|-------------|--------|------|--------|
+| ≤ L1 (32 KB) | small | 16 | A (4×4) |
+| ≤ L2 (1 MB) | medium | 32 | B (8×4) |
+| > L2 | large | 32 (AVX2) / 64 (AVX-512) | B / C |
+
+The L1 split exists because at tiny sizes the 8×N kernel's fixed setup cost beats its line-filling
+benefit — kernel A wins there. (Thresholds are `-D`-overridable, e.g. `-DTP_L2_BYTES=...` for Zen4.)
+
+**(c) Line-filling SIMD base kernels.** The kernels are written so **each destination row write is
+exactly one full 64-byte cache line** — never a partial-line store (which would force a
+read-modify-write):
+- **Kernel A — 4×4 AVX2**: classic `unpack`/`permute2f128`. L1-resident problems and row/col tails.
+- **Kernel B — 8×4 AVX2 → 4×8**: two stacked 4×4 transposes whose outputs land side-by-side, so each
+  dest row is two adjacent 32-byte stores = one 64-byte line. Peak 8 YMMs live (of 16).
+- **Kernel C — 8×8 AVX-512**: `unpack_pd → permutex2var_pd → shuffle_f64x2`, one dest row = one 64-byte
+  ZMM store. ~40 insns for 64 elements ≈ 0.63 insn/element. Peak ~16 ZMMs (of 32).
+
+**Split-complex is de-fused** — the recursion runs twice, once per plane (`re`, then `im`). This gives
+the out-of-order engine two independent dependency chains to overlap, *without* the register pressure
+of a fused re+im kernel (which spills 16 YMMs on AVX2).
+
+**Measured dead-ends (don't re-try):** non-temporal stores on 4×4 (**10× slowdown** on hot-dest loops),
+software prefetch of source rows (neutral→negative), fused re+im on AVX2 (spills), base 48/64 on AVX2
+(regresses small sizes). A fused twiddle+transpose variant (`stride_twiddle_transpose`) also exists for
+Bailey's 4-step combine.
+
+This line-filling + cache-resident-tiling is exactly what makes the 2D tiled gather/scatter "nearly
+free" — and is why 2D c2c beats MKL even before threading.
 
 ---
 
