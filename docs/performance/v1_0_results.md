@@ -102,6 +102,34 @@ and the scrambled-order MODEB (in-place dataflow run OOP; bit-exact roundtrip). 
 > MODEB. Per-stage variants are inherited variant-rich from the in-place wisdom (FLAT/T1S/LOG3 mixed),
 > and BAILEY2's `t1p` stage is flat-vs-log3 searched per cell.
 
+### Out-of-place — vs MKL at T=8
+
+Same OOP cells, dag K-split across 8 P-cores (pool, pinned core 0) vs MKL `mkl_set_num_threads(8)`,
+identical NOT_INPLACE split layout, order-neutralized + paced. MODEB/LEAF are truly lane-sliced;
+BAILEY2 runs single-threaded (its inter-stage transpose isn't lane-independent — 2-phase MT is a
+follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards correctness. Source:
+`bench_1d_vs_mkl.c --oop --mt` → `vfft_perf_tuned_1d_oop_mt.csv` (31 cells).
+
+```
+ N       K     kind     dag/MKL-T8   note
+──────────────────────────────────────────────
+ 8       256   MODEB      38.53×     MKL can't thread tiny batch
+ 16      32    BAILEY2    45.80×     dag-ST vs MKL-8T
+ 64      256   MODEB       5.26×
+ 256     256   MODEB       2.80×
+ 1024    256   MODEB       2.74×
+ 4096    256   MODEB       4.86×
+ 65536   256   MODEB       3.10×
+ 1024    32    MODEB       1.24×     (min)
+──────────────────────────────────────────────
+ Min 1.24×   Median 2.80×   Max 45.80×   Wins 31/31
+```
+
+> **Out-of-place at T=8, VectorFFT beats MKL on 31/31 cells — median 2.80×, up to 45.8× at tiny N.**
+> The huge small-N margins are where MKL can't usefully thread the batch; the steady mid/high-N MODEB
+> wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT pending); BAILEY2 MT is a
+> follow-up — both are conservative floors.
+
 ## 2. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
