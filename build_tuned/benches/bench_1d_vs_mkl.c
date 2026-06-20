@@ -298,22 +298,18 @@ static double bench_mkl_oop(int N, size_t K, const double *sr, const double *si,
 }
 #endif
 /* OOP K-split across the worker pool — the OOP analog of dag_fwd_mt. Each thread
- * runs the full OOP forward on a lane-slice [k0, k0+S) of the K batch (lanes are
- * independent: data[n*K+lane]). Same pool/dispatch mechanism as the in-place MT
- * path; ported from bench_c2c_mt.c. */
+ * runs the forward on a lane-slice [k0, k0+S) of the K batch (lanes are independent:
+ * data[n*K+lane]). Same pool/dispatch mechanism as the in-place MT path.
+ * ONLY the lane-independent kinds are sliced: LEAF (a single codelet) and MODEB
+ * (the in-place dataflow). BAILEY2 has a transpose between its two stages, so a
+ * lane-slice is not end-to-end independent — it is never passed here (oop_fwd_mt
+ * runs it whole via the canonical executor). */
 static void oop_slice(const vfft_oop_plan_t *p, const double *sr, const double *si,
                       double *dr, double *di, size_t k0, size_t S) {
     size_t K = p->K;
     if (p->kind == VFFT_OOP_KIND_LEAF)
         p->leaf(sr+k0, si+k0, dr+k0, di+k0, 0, 0, K, 1, K, 1, S);
-    else if (p->kind == VFFT_OOP_KIND_BAILEY2) {
-        int R1 = p->R1, R2 = p->R2;
-        for (int n1 = 0; n1 < R1; n1++)
-            p->leaf(sr+(size_t)n1*K+k0, si+(size_t)n1*K+k0,
-                    dr+(size_t)n1*R2*K+k0, di+(size_t)n1*R2*K+k0,
-                    0, 0, (size_t)R1*K, 1, K, 1, S);
-        p->t1p(dr+k0, di+k0, dr+k0, di+k0, p->Qr, p->Qi, (size_t)R2*K, 1, (size_t)R2*K, 1, S);
-    } else  /* MODEB: in-place dataflow on the dst slice */
+    else  /* MODEB: in-place dataflow on the dst slice */
         vfft_proto_execute_fwd_oop(p->mb, sr+k0, si+k0, dr+k0, di+k0, S);
 }
 typedef struct { const vfft_oop_plan_t *p; const double *sr,*si; double *dr,*di; size_t k0,S; } _oop_mt_arg;
@@ -323,7 +319,15 @@ static void oop_fwd_mt(const vfft_oop_plan_t *p, const double *sr, const double 
                        double *dr, double *di) {
     size_t K = p->K; int T = g_mt;
     if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T <= 1 || K < 8) { oop_slice(p, sr, si, dr, di, 0, K); return; }
+    /* BAILEY2 is two-stage with a transpose between s1 and s2: s2 reads ACROSS the
+     * n1 blocks s1 wrote, so a lane-slice is NOT independent end-to-end. Naive
+     * K-split corrupts it (the MT-vs-ST gate catches rt~1e0). Proper MT would need
+     * a barrier with a different s2 split dim — until then BAILEY2 runs single-
+     * threaded. LEAF (one codelet) and MODEB (in-place dataflow) are lane-
+     * independent end-to-end and K-split correctly. */
+    if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2) {
+        vfft_oop_execute_fwd(p, sr, si, dr, di); return;   /* canonical whole-K executor */
+    }
     size_t S = ((K / (size_t)T) + 7) & ~(size_t)7; _oop_mt_arg a[64]; int nd = 0;
     for (int t = 1; t < T && t <= _stride_pool_size; t++) {
         size_t k0 = (size_t)t * S; if (k0 >= K) break; size_t ke = k0 + S; if (ke > K) ke = K;
