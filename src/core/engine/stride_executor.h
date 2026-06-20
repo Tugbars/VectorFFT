@@ -344,9 +344,6 @@ typedef struct
     int num_stages;
     size_t K;
     int factors[STRIDE_MAX_STAGES]; /* radix per stage */
-    int variants[STRIDE_MAX_STAGES]; /* per-stage twiddle variant (0=FLAT 1=LOG3
-                                      * 2=T1S 3=BUF), recorded by plan_create_ex
-                                      * so callers (OOP wisdom) can persist it */
     stride_stage_t stages[STRIDE_MAX_STAGES];
 
     /* Blocked executor selection (set by planner_blocked.h).

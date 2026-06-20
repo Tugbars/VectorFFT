@@ -72,6 +72,10 @@ typedef struct {
     size_t K;
     int    num_stages;
     int    factors[STRIDE_MAX_STAGES];
+    int    variants[STRIDE_MAX_STAGES]; /* per-stage twiddle variant (0=FLAT
+                                         * 1=LOG3 2=T1S 3=BUF), recorded by
+                                         * plan_create_ex so OOP wisdom can
+                                         * persist the variant-rich mix */
     stride_stage_t stages[STRIDE_MAX_STAGES];
     int    use_dif_forward;
     /* Override hooks (Bluestein/Rader/DCT plan shells, notebook

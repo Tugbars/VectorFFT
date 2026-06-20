@@ -25,6 +25,7 @@
 #include <string.h>
 #include "executor.h"
 #include "env.h"
+#include "dp_planner.h"     /* vfft_proto_now_ns timer */
 #include "wisdom_reader.h"  /* in-place c2c wisdom (factors + variants) */
 #include "oop_auto.h"       /* vfft_oop_tune_pairs_v + plan create */
 #include "oop_wisdom.h"     /* entry + writer */

@@ -787,6 +787,10 @@ let emit_header_file (entries : plan_entry list) ~isa =
   print_endline "    size_t K;";
   print_endline "    int    num_stages;";
   print_endline "    int    factors[STRIDE_MAX_STAGES];";
+  print_endline "    int    variants[STRIDE_MAX_STAGES]; /* per-stage twiddle variant";
+  print_endline "                                        * (0=FLAT 1=LOG3 2=T1S 3=BUF),";
+  print_endline "                                        * recorded by plan_create_ex so";
+  print_endline "                                        * OOP wisdom can persist the mix */";
   print_endline "    stride_stage_t stages[STRIDE_MAX_STAGES];";
   print_endline "    int    use_dif_forward;";
   print_endline "    /* Override hooks (Bluestein/Rader/DCT plan shells, notebook";

@@ -86,7 +86,9 @@ which simply walks the stages in reverse).
 - **Caveat: forward output is digit-reversed (scrambled) order.** Pure c2c roundtrips
   don't care (the inverse un-scrambles). Consumers that need *natural* spectral order
   (2D, r2c, the DCT/DST/DHT family) absorb the reorder inside their own
-  pre/post-processing rather than paying a standalone permutation pass.
+  pre/post-processing rather than paying a standalone permutation pass. A
+  natural-order in-place c2c mode is a planned feature — see
+  [natural_order_inplace.md](natural_order_inplace.md).
 
 ---
 
