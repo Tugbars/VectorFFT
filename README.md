@@ -1,8 +1,12 @@
 <img width="2560" height="960" alt="image" src="https://github.com/user-attachments/assets/0a206a63-f7d3-45f4-8e1d-be3aca3e2cb5" />
 
 <p align="center">
-  A permutation-free mixed-radix Fast Fourier Transform library in C with hand-tuned AVX2/AVX-512 codelets.<br>
-  <b>Beats Intel MKL on every tested size — 207/207 benchmarks.</b> No external dependencies.
+  A permutation-free, <b>split-layout</b> Fast Fourier Transform library in C — its kernels emitted by a
+  <b>DAG FFT compiler</b> with hand-tuned AVX2/AVX-512 codelets.<br>
+  Complex (C2C), real (R2C/C2R), 2D, and DSP transforms (DCT/DST/DHT) — <b>in-place and out-of-place,
+  single- and multi-threaded</b> — behind one calibrated wisdom planner.<br>
+  <b>Beats Intel MKL on all 207 tested 1D C2C cells single-threaded</b>, and wins on real-FFT and 2D
+  transforms under multithreading. Pure C, no external dependencies.
 </p>
 
 ---

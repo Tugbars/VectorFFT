@@ -104,11 +104,14 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
             re + i * N2, im + i * N2, sr, si,
             (size_t)N2, B, this_B, (size_t)N2);
 
-        /* FFT on scratch */
+        /* FFT on scratch (sub-batch this_B of the B-wide tile). Use the full c2c
+         * executor — it dispatches DIT *or* DIF (and the specialized per-cell
+         * executors), so a DIF row inner round-trips correctly. The old DIT-only
+         * slice helper (_stride_execute_fwd_slice_from) silently mis-ran DIF plans. */
         if (is_bwd)
-            _stride_execute_bwd_slice_until(d->plan_row, sr, si, B, this_B, 0);
+            vfft_proto_execute_bwd(d->plan_row, sr, si, this_B);
         else
-            _stride_execute_fwd_slice_from(d->plan_row, sr, si, B, this_B, 0);
+            vfft_proto_execute_fwd(d->plan_row, sr, si, this_B);
 
         /* Scatter: N2×B → B×N2 (ld_src=B) */
         stride_transpose_pair(
