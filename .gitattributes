@@ -23,3 +23,6 @@ src/dag-fft-compiler/generator/generated/** linguist-generated
 build_tuned/benches/** linguist-vendored
 build_tuned/dev/**     linguist-vendored
 build_tuned/test/**    linguist-vendored
+
+# Cost-model code (and its generated tables) — excluded from the language bar.
+src/dag-fft-compiler/generator/cost_model/** linguist-vendored
