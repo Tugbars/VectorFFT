@@ -80,6 +80,11 @@ int main(void)
                             .dims = 1, .n = {NN, 0}, .howmany = kk, .nthreads = 1, .wisdom = bw};
         vfft_plan bp = vfft_create(&bc);
         const char *path = (bp && bp->rplan) ? (bp->rplan->path == VFFT_R2C_PATH_RFFT ? "rfft" : "STRIDE") : "?";
+        /* probe the in-memory inner-c2c (128,kk): calibrated or degenerate fallback? */
+        const vfft_proto_wisdom_entry_t *ie = vfft_proto_wisdom_lookup(&((struct vfft_wisdom_s *)bw)->c2c, NN / 2, kk);
+        fprintf(stderr, "  [inner c2c (128,%zu)] ", kk);
+        if (ie) { fprintf(stderr, "nf=%d f=[", ie->nf); for (int s = 0; s < ie->nf; s++) fprintf(stderr, "%s%d", s?",":"", ie->factors[s]); fprintf(stderr, "] dif=%d %.0fns\n", ie->use_dif_forward, ie->best_ns); }
+        else fprintf(stderr, "MISS -> degenerate factorizer fallback\n");
         size_t isz = (size_t)NN * kk, osz = (size_t)(hN + 1) * kk;
         double *bx = AAL(isz * 8), *brr = AAL(osz * 8), *bii = AAL(osz * 8);
         srand(5 + (int)kk); for (size_t i = 0; i < isz; i++) bx[i] = (double)rand() / RAND_MAX - 0.5;
