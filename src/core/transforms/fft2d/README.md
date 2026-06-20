@@ -164,10 +164,12 @@ even at modest self-scaling.
 (2D r2c MT is more limited still — the column pass and c2r backward carry more serial structure;
 its single-thread number also starts behind, §4.)
 
-> **Sweep stops at 512².** 1024² is omitted because `stride_plan_2d` builds its inner col/row plans
-> via `vfft_proto_exhaustive_plan` (a live measure, §7) rather than from wisdom — at N=1024 that is
-> minutes per plan. Making the 2D c2c inners wisdom-driven (one-time calibration of the (1024,1024)
-> and (1024,B) cells) is the follow-up that makes 1024² practical.
+> **Sweep stops at 512² here** only because this bench builds via the raw `stride_plan_2d` (which runs
+> `vfft_proto_exhaustive_plan` live every create — minutes at N=1024, never cached). The **unified
+> `vfft` API now builds 2D c2c inners through the wisdom path** (`vfft_create`, dims=2): each col/row
+> inner is a full-search calibrate-on-miss (DP at MEASURE/PATIENT, true exhaustive at EXHAUSTIVE) that
+> is **cached to `spike_wisdom.txt`**. Large N is still slow to *calibrate* (that's the full search) —
+> but it's a one-time, per-platform cost; the banked wisdom makes every later create a fast lookup.
 
 ---
 
@@ -184,8 +186,10 @@ as the hook, but finishing natural-order output is a follow-up.
 
 ## 7. Gotchas
 
-- **Exhaustive-first is slow at large N.** `stride_plan_2d` tries `vfft_proto_exhaustive_plan`
-  (measures) before falling back to `auto_plan` — minutes at 1024². Prefer wisdom-driven inners or
+- **Raw `stride_plan_2d` is exhaustive-at-create (uncached).** It tries `vfft_proto_exhaustive_plan`
+  (measures) before falling back to `auto_plan` — minutes at 1024², every call. The `vfft` API avoids
+  this: its 2D c2c inners are wisdom-driven (calibrate-on-miss, cached). When calling the raw API
+  directly at large N, prefer wisdom-driven inners or
   `auto_plan` for the sub-plans when planning large planes.
 - **N2 must be even** (inherits the 1D r2c even-N constraint).
 - **MKL 2D r2c CCE buffer** needs the **full N1×N2 complex footprint**, not N1×(N2/2+1) —
