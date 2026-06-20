@@ -5,7 +5,7 @@ A **split-layout** Fast Fourier Transform library in C, with AVX2/AVX-512 kernel
 **in-place and out-of-place, single- and multi-threaded** — behind one calibrated wisdom planner that
 picks the fastest plan per transform.
 
-It **beats Intel MKL on all 207 tested 1D C2C cells single- and multi-threaded**, and wins on real-FFT and 2D
+It **beats Intel MKL on all 238 tested 1D C2C cells single- and multi-threaded**, and wins on real-FFT and 2D
 transforms under multithreading. Pure C, no external dependencies.
 
 ---
@@ -18,7 +18,7 @@ transforms under multithreading. Pure C, no external dependencies.
 
 > **Platform:** Intel Core i9-14900KF, 48 KB L1d, DDR5, AVX2, single-threaded  
 > **Competitor:** Intel MKL 2025 (sequential, `mkl_set_num_threads(1)`)  
-> **207 data points** across 9 categories, 3 batch sizes (K=4, K=32, K=256), N=8 to N=823,543
+> **238 data points** across 9 categories, 3 batch sizes (K=4, K=32, K=256), N=8 to N=823,543
 
 ### 1D FFT Throughput — VectorFFT vs Intel MKL
 
@@ -28,43 +28,43 @@ Three panels showing GFLOP/s at each batch size. Blue = VectorFFT, Red = MKL. Di
 
 | Category | Cells | Median | Best Win | Closest MKL Gets |
 |----------|-------|--------|----------|-------------------|
-| **Small pow2** (8-128) | 15 | **4.37x** | **8.98x** (N=8, K=4) | 2.38x (N=128, K=4) |
-| **Power-of-2** (256-131K) | 30 | **1.72x** | **2.74x** (N=512, K=256) | 1.17x (N=131072, K=4) |
-| **Composite** (60-100K) | 33 | **2.69x** | **5.15x** (N=60, K=32) | 1.69x (N=50000, K=256) |
-| **Prime powers** (3,5,7) | 30 | **2.68x** | **3.95x** (N=390625, K=4) | 1.26x (N=243, K=4) |
-| **Prime powers** (R=11,13) | 15 | **2.39x** | **3.06x** (N=14641, K=32) | 1.50x (N=2197, K=256) |
-| **Rader primes** | 24 | **2.04x** | **3.40x** (N=641, K=32) | 1.07x (N=127, K=4) |
-| **Bluestein primes** | 24 | **1.79x** | **4.30x** (N=83, K=256) | 1.32x (N=107, K=32) |
-| **Odd composites** | 18 | **2.67x** | **4.20x** (N=175, K=256) | 1.86x (N=6615, K=4) |
-| **Mixed deep** | 18 | **2.32x** | **3.09x** (N=4620, K=32) | 1.70x (N=6930, K=4) |
+| **Small pow2** (8-128) | 15 | **4.28x** | **15.33x** (N=8, K=4) | 2.60x (N=128, K=4) |
+| **Power-of-2** (256-131K) | 29 | **1.86x** | **3.04x** (N=256, K=32) | 1.10x (N=16384, K=4) |
+| **Composite** | 43 | **2.85x** | **4.51x** (N=200, K=32) | 1.62x (N=10000, K=4) |
+| **Prime powers** (3,5,7) | 25 | **2.69x** | **4.16x** (N=2401, K=256) | 1.67x (N=2401, K=4) |
+| **Prime powers** (R=11,13) | 17 | **2.79x** | **3.75x** (N=169, K=32) | 1.65x (N=2197, K=256) |
+| **Rader primes** | 24 | **2.34x** | **3.85x** (N=641, K=32) | 1.29x (N=4001, K=32) |
+| **Bluestein primes** | 24 | **1.55x** | **3.52x** (N=83, K=4) | 1.02x (N=179, K=256) |
+| **Odd composites** | 26 | **3.47x** | **5.16x** (N=119, K=32) | 2.26x (N=6615, K=256) |
+| **Mixed deep** | 35 | **2.71x** | **5.78x** (N=60, K=32) | 1.66x (N=126, K=4) |
 
 ### Speedup over Intel MKL — All Categories
 
 ![Speedup](docs/performance/vfft_speedup_vs_mkl.png)
 
-Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 207 points are above parity.**
+Every point above the dashed line is a VectorFFT win. Marker size indicates batch count (small=K=4, medium=K=32, large=K=256). **All 238 points are above parity.**
 
 ### Combined Dense Scatter — All Sizes & Batch Counts
 
 ![Scatter](docs/performance/vfft_scatter_all.png)
 
-All 207 data points overlaid. Blue cloud (VectorFFT) consistently above red cloud (MKL). Peak throughput at small N with large K where codelets run entirely from L1.
+All 238 data points overlaid. Blue cloud (VectorFFT) consistently above red cloud (MKL). Peak throughput at small N with large K where codelets run entirely from L1.
 
 ### Highlight Results
 
 | N | K | Category | Factors | VectorFFT | MKL | Speedup |
 |---|---|----------|---------|-----------|-----|---------|
-| 8 | 256 | small | 8 | 103.0 GF/s | 13.3 GF/s | **7.75x** |
-| 8 | 4 | small | 8 | 49.1 GF/s | 5.5 GF/s | **8.98x** |
-| 60 | 32 | composite | 12x5 | 82.0 GF/s | 15.5 GF/s | **5.30x** |
-| 390625 | 4 | prime_pow (5^8) | 25x25x25x25 | 39.3 GF/s | 11.0 GF/s | **3.95x** |
-| 641 | 32 | rader | (override) | 14.9 GF/s | 4.4 GF/s | **3.40x** |
-| 175 | 256 | odd_comp | 5x5x7 | 56.6 GF/s | 15.3 GF/s | **4.20x** |
-| 4620 | 32 | mixed_deep | 7x6x10x11 | 47.2 GF/s | 14.6 GF/s | **3.09x** |
-| 83 | 256 | bluestein | (override) | 8.1 GF/s | 1.9 GF/s | **4.30x** |
-| 179 | 256 | bluestein | (override) | 7.5 GF/s | 4.5 GF/s | **1.66x** *(was tied 1.01x pre-wisdom)* |
-| 131072 | 32 | pow2 | 16x4x4x4x4x4x8 | 18.4 GF/s | 11.3 GF/s | **1.49x** |
-| 131072 | 4 | pow2 | 4x4x4x4x8x4x4x4 | 22.8 GF/s | 21.0 GF/s | 1.18x |
+| 8 | 4 | small | 8 | 75.7 GF/s | 4.9 GF/s | **15.33x** |
+| 60 | 32 | mixed_deep | 5x12 | 89.2 GF/s | 15.4 GF/s | **5.78x** |
+| 119 | 32 | odd_comp | 17x7 | 50.7 GF/s | 9.8 GF/s | **5.16x** |
+| 200 | 32 | composite | 5x8x5 | 69.6 GF/s | 15.4 GF/s | **4.51x** |
+| 2401 | 256 | prime_pow (7^4) | 7x7x7x7 | 44.7 GF/s | 10.7 GF/s | **4.16x** |
+| 169 | 32 | genfft (13^2) | 13x13 | 46.3 GF/s | 12.3 GF/s | **3.75x** |
+| 641 | 32 | rader | (override) | 16.8 GF/s | 4.4 GF/s | **3.85x** |
+| 83 | 4 | bluestein | (override) | 7.0 GF/s | 2.0 GF/s | **3.52x** |
+| 256 | 32 | pow2 | 4x8x8 | 69.7 GF/s | 22.9 GF/s | **3.04x** |
+| 390625 | 4 | prime_pow (5^8) | 25x25x25x25 | 32.3 GF/s | 11.1 GF/s | **2.91x** |
+| 16384 | 4 | pow2 | 8x8x16x16 | 27.2 GF/s | 24.7 GF/s | 1.10x |
 
 ### 2D FFT — Tiled SIMD Transpose
 
@@ -80,67 +80,77 @@ VectorFFT's 2D FFT uses a tiled gather/scatter approach with cache-oblivious SIM
 | 1024x1024 | 3,900 us | 5,512 us | **1.41x** |
 | 100x200 | 40.7 us | 60.9 us | **1.50x** |
 
-Multi-threaded 2D (tile-parallel, per-thread scratch, zero barriers):
-
-| Size | 1 thread | 8 threads | Speedup |
-|------|----------|-----------|---------|
-| 256x256 | 147.5 us | 37.0 us | **3.99x** |
-| 1024x1024 | 3,787 us | 1,002 us | **3.78x** |
+Multi-threaded 2D is tile-parallel on the row pass + K-split on the columns (per-thread scratch, zero
+barriers). A full single- and multi-threaded 2D benchmark — all sizes, head-to-head vs MKL — is in
+progress; those numbers will be published with that run.
 
 ## Accuracy
 
 ![Precision](docs/performance/vfft_precision.png)
 
-Roundtrip error (fwd + bwd / N) across all tested sizes. Errors follow the theoretical O(log2(N) * epsilon) bound. All values within double-precision tolerance.
+Strict **roundtrip** error — `max |fwd→bwd / N − x| / max|x|`, the worst single element across all
+N·K outputs after a full forward + backward — across all tested 1D cells. Errors track the theoretical
+`O(log₂N · ε)` bound (FP64 ε = 2.2e-16); every cell holds ~14 correct digits.
 
 | Category | Min Error | Max Error |
 |----------|-----------|-----------|
-| Small pow2 (8-128) | 1.1e-16 | 3.3e-16 |
-| Power-of-2 (256-131K) | 2.8e-16 | 6.7e-16 |
-| Composite | 2.4e-16 | 8.3e-16 |
-| Prime powers (3,5,7) | 4.6e-16 | 8.8e-16 |
-| Prime powers (R=11,13) | 4.6e-16 | 8.8e-16 |
-| Odd composites | 4.3e-16 | 6.7e-16 |
-| Mixed deep | 5.5e-16 | 1.2e-15 |
+| pow2 small (8-128) | 2.5e-16 | 1.3e-14 |
+| pow2 (256-131K) | 7.9e-16 | 2.6e-14 |
+| composite | 1.1e-14 | 5.7e-14 |
+| prime powers (3,5,7) | 9.8e-15 | 7.1e-14 |
+| genfft (R=11,13) | 1.5e-14 | 4.0e-14 |
+| odd composites | 1.0e-14 | 3.5e-14 |
+| mixed deep | 1.0e-14 | 3.7e-14 |
 
-Errors stay within the theoretical O(log2(N) · ε) bound across the grid. The permutation-free roundtrip guarantees perfect cancellation of digit-reversal — no accumulated permutation error from the Cooley-Tukey decomposition.
+Overall: min 2.5e-16, **median 2.45e-14**, max 7.07e-14 — none exceed 1e-13. This is the *strictest*
+honest statistic (per-element max, relative, full roundtrip); RMS or forward-only error runs ~10–40×
+smaller. The errors grow ~log N exactly as a correct Cooley-Tukey decomposition should.
 
-Rader and Bluestein prime cells use a convolution-based path; their roundtrip error is comparable (~6e-16 to 2e-15 range, dominated by the inner FFT's accumulated rounding), well within FP64 acceptable bounds.
+Rader and Bluestein prime cells use a convolution-based path; their roundtrip error (median ~3e-14,
+max ~7e-14) sits in the same band, dominated by the inner FFT's accumulated rounding — well within FP64.
 
 ---
 
 ## Architecture
 
-VectorFFT uses a **permutation-free stride-based Cooley-Tukey** architecture.
+VectorFFT uses a **stride-based Cooley-Tukey** architecture.
 
 ### Executor
 
-- **Fully in-place** — single buffer, no scratch allocation along the stage chain
-- **Split-complex only** — separate `re[]` / `im[]` arrays. No interleaved codelets; users with packed `{re,im}` data convert via `vfft_deinterleave` / `vfft_reinterleave` at the boundary
+- **In-place and out-of-place** — the in-place path runs the stage chain in a single buffer with no scratch allocation; the out-of-place path reads the source directly into the first stage (no pre-copy)
+- **Split-complex** — separate `re[]` / `im[]` arrays. No interleaved codelets; users with packed `{re,im}` data convert via `vfft_deinterleave` / `vfft_reinterleave` at the boundary
 
 ### Codelets
 
-- **Hand-optimized radixes** for {2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 16, 17, 19, 20, 25, 32, 64} — covers every smooth integer up to 100,000+
-- **Generated by Python scripts** — codegen emits ISA-specific schedules per `(radix, variant, ISA)` triple
+- **Emitted by the DAG FFT compiler** — it builds each transform's data-flow DAG and emits an ISA-specific schedule per `(radix, variant, ISA)` triple. Any radix you need can be generated from the same machinery — the shipped set covers every smooth integer up to 100,000+. Not hand-written.
 - **Three ISA targets**: AVX2 (VL=4), AVX-512 (VL=8), scalar fallback — selected at compile time
 
 ### Planner
 
-VectorFFT ships **four FFTW-style planning modes** with the same flag conventions:
+VectorFFT exposes FFTW-style planning **rigor** tiers — the calibration thoroughness used on a wisdom
+*miss* (a hit ignores rigor and builds the cached plan instantly):
 
-| Flag | Plan time | Path | Use when |
-|------|-----------|------|----------|
-| `VFFT_ESTIMATE` | sub-µs | Closed-form cost-model picks a factorization without running benchmarks | Default. Fast, no setup. |
-| `VFFT_MEASURE` | seconds–minutes | Wisdom database lookup; on miss, calibrates that cell with DP planner + per-codelet variant tuning, inserts into in-memory wisdom | Production-critical, willing to calibrate once |
-| `VFFT_EXHAUSTIVE` | minutes–hours | Wider per-cell search (more candidates, more reps) | Squeezing the last few % |
-| `VFFT_WISDOM_ONLY` | sub-µs | Wisdom-only lookup; returns NULL on miss (no calibration) | Predictable plan time |
+| Rigor | Plan time | What it does on a wisdom miss |
+|-------|-----------|-------------------------------|
+| `VFFT_MEASURE` | seconds–minutes | DP planner (≈ FFTW_MEASURE): beam search over factorizations + per-stage variant tuning, then persist |
+| `VFFT_PATIENT` | minutes | Wider DP beam + re-measure of the top candidates (≈ FFTW_PATIENT) |
+| `VFFT_EXHAUSTIVE` | minutes–hours | Full search — every factorization × permutation × per-stage variant |
+| `VFFT_ESTIMATE` | sub-µs | *Planned* 4th tier — closed-form cost model, no measurement (designed, not yet wired) |
 
 Wisdom mechanics:
 
-- **VTune-calibrated cost model** for `VFFT_ESTIMATE` — closed-form scoring with per-radix CPE (cycles-per-element) measurements. Lands within ~1.20× of measured wisdom on the calibration host. FFTW's `FFTW_ESTIMATE` typically picks plans 2–5× off; ours within 1.3×.
-- **Recursive DP planner** for `VFFT_MEASURE` (FFTW-style) — tries each radix as the first stage, recursively solves sub-problems with memoization, then benchmarks all orderings of the winning factorization (~150 benchmarks for N=100,000 vs ~61,000 for exhaustive search).
-- **Joint plan-level search** at calibration time — ranks plans on a top-K-of-3 stable scoring metric to defeat noise, then per-radix variant tuning (FLAT / LOG3 / T1S / BUF) per `(R, me, ios)` cell.
-- **Wisdom file** persists across runs via `vfft_load_wisdom()` / `vfft_save_wisdom()`. The library does not auto-load any default file — users opt in. A pre-calibrated wisdom file for the Intel i9-14900KF ships at [`examples/14900KF/wisdom.txt`](examples/14900KF/wisdom.txt) (see its README for details on per-host scope and when to recalibrate).
+- **DP planner** (MEASURE / PATIENT) — tries each radix as the first stage, recursively solves
+  sub-problems with memoization, then benchmarks orderings of the winning factorization; PATIENT
+  widens the beam and re-measures the top candidates (~150 benchmarks for N=100,000 vs ~61,000 for a
+  full exhaustive search).
+- **Per-stage variant tuning** — each stage is scored on a noise-robust top-K metric and the best
+  twiddle application (FLAT / LOG3 / T1S / BUF) is chosen per `(R, me, ios)` cell.
+- **Wisdom is a per-feature bundle** — one handle holds the calibrated plans for every transform
+  (c2c / out-of-place / r2c / …), loaded from and saved to a directory. Default: library-managed
+  (auto-load + calibrate-on-miss + save); or pass your own. A pre-calibrated set for the i9-14900KF
+  ships under [`examples/14900KF/`](examples/14900KF/).
+- **`VFFT_ESTIMATE`** — a closed-form cost model for a zero-measurement plan (for users who won't
+  calibrate). Designed; lands as the 4th rigor tier, not yet wired.
 
 ### Transforms
 
@@ -150,8 +160,8 @@ VectorFFT v1.0 covers ten transform variants. Each entry below names the **metho
 |-----------|--------|-------------|:--------:|:---------------:|
 | 1D C2C | DIT forward / DIF backward, fused-twiddle stride executor (Method C) | direct K-split | ✅ cost-model | ✅ joint search |
 | 1D R2C / C2R | Pair-packing (Makhoul) — N/2-point complex FFT + post-butterfly | inner C2C MT (K-split) | ✅ inner halfN | ✅ inner halfN |
-| 2D C2C | Tiled gather/scatter via 8×4 SIMD transpose (default) or full-matrix Bailey | tile-parallel rows + K-split cols | ⚠ same plan as MEASURE | ⚠ greedy fallback in v1.0 (K-split corruption gating, fixes in v1.1) |
-| 2D R2C / C2R | Tiled R2C row pass + 1D C2C col pass (FFTW reduce-along-inner convention) | tile-parallel rows + K-split cols | ⚠ same plan | ⚠ greedy fallback in v1.0 |
+| 2D C2C | Tiled gather/scatter via 8×4 SIMD transpose (default) or full-matrix Bailey | tile-parallel rows + K-split cols | ⚠ same plan as MEASURE | ✅ inner row/col c2c wisdom (calibrate-on-miss) |
+| 2D R2C / C2R | Tiled R2C row pass + 1D C2C col pass (FFTW reduce-along-inner convention) | tile-parallel rows + K-split cols | ⚠ same plan | ✅ inner c2c wisdom (calibrate-on-miss) |
 | DCT-II / III (REDFT10/01) | Makhoul reduction — N-point R2C + pre-permute + post-twiddle. Specialized straight-line N=8 codelet for JPEG block size | three-phase K-split (pre-permute, inner R2C MT, post-twiddle) | ✅ inner halfN | ✅ inner halfN |
 | DCT-IV (REDFT11) | Lee 1984 — single N/2-point complex FFT + pre/post twiddles. Used in MDCT (MP3/AAC/Vorbis/Opus) | three-phase K-split | ✅ inner halfN | ✅ inner halfN |
 | DST-II / III (RODFT10/01) | Wraps DCT-II/III with sign-flip + index reversal | K-split sign-flip + reversal passes | ✅ via inner DCT | ✅ via inner DCT |
@@ -198,71 +208,7 @@ Both inherit ESTIMATE/MEASURE from the inner mixed-radix FFT.
 
 ## Quick Start
 
-**Step 1 — generate the per-radix CPE table** (host-specific, drives the cost model):
-
-```bash
-git clone https://github.com/Tugbars/VectorFFT.git
-cd VectorFFT
-python tools/radix_profile/extract.py                              # op counts (deterministic)
-python build_tuned/build.py --src tools/radix_profile/measure_cpe.c
-tools/radix_profile/measure_cpe.exe                                # cycles/butterfly (host-specific)
-```
-
-`extract.py` writes [`src/core/generated/radix_profile.h`](src/core/generated/radix_profile.h)
-(per-radix op counts, deterministic — re-run after codelet changes).
-`measure_cpe.exe` times each registered codelet variant at K=256 and
-writes [`src/core/generated/radix_cpe.h`](src/core/generated/radix_cpe.h)
-(cycles per butterfly). Together they feed the closed-form cost model in
-[`src/core/factorizer.h`](src/core/factorizer.h) that powers `VFFT_ESTIMATE`.
-
-A reference CPE table for the i9-14900KF is already checked in. Re-run
-on a different host (or after codelet changes) to retune. The tool
-enforces a 5% coefficient-of-variation threshold across 21 runs — if
-the host is too noisy, it refuses to overwrite the header.
-
-**Step 2 — build**:
-
-```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . --config Release
-```
-
-**Step 3 — see the API in action**:
-
-[`examples/quickstart.c`](examples/quickstart.c) is a single self-contained
-program that exercises every public entry point in [`include/vfft.h`](include/vfft.h):
-1D C2C, R2C/C2R, 2D C2C, 2D R2C/C2R, DCT-II/III/IV, DST-II/III, DHT,
-threading, interleaved/split conversion, and the wisdom lifecycle
-(load / save / forget). It also doubles as a correctness gate — every
-demo verifies a forward+backward roundtrip at machine precision.
-
-```bash
-./build/bin/vfft_quickstart           # built automatically by the cmake step above
-```
-
-For pre-calibrated wisdom on Intel Raptor Lake hosts, see
-[`examples/14900KF/`](examples/14900KF/) — it ships 198 calibrated plans
-covering the headline (N, K) grid plus a README explaining when the file
-applies and when to recalibrate for your host.
-
----
-
-## Reproducing Benchmarks
-
-```bash
-# Build benchmarks
-cmake --build build --target vfft_bench_1d_csv vfft_bench_2d_csv
-
-# Run 1D benchmark (calibrates wisdom on first run, ~minutes)
-./build/bin/vfft_bench_1d_csv
-
-# Force recalibration after codelet changes
-./build/bin/vfft_bench_1d_csv --recalibrate
-
-# Results: build/bin/vfft_perf_1d.csv, build/bin/vfft_acc_1d.csv
-# Plot: open src/stride-fft/bench/plot_vfft.ipynb
-```
+_Soon to be updated._
 
 ---
 
