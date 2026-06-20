@@ -351,6 +351,28 @@ static stride_plan_t *stride_plan_2d(
     return _fft2d_wrap(d);
 }
 
+/** 2D plan from caller-supplied inner plans (wisdom-driven). Avoids the slow
+ *  exhaustive sub-plan search in stride_plan_2d — the caller builds the inners
+ *  from wisdom (e.g. via the c2c calibrate-on-miss path), so large N (1024+) is
+ *  tractable. plan_col = N1-point c2c with K=N2; plan_row = N2-point c2c with
+ *  K=B. The 2D plan TAKES OWNERSHIP of both (frees them on failure / destroy). */
+static stride_plan_t *stride_plan_2d_from(
+        int N1, int N2, size_t B,
+        stride_plan_t *plan_col, stride_plan_t *plan_row)
+{
+    if (N1 < 1 || N2 < 1 || B < 1 || !plan_col || !plan_row) {
+        if (plan_col) stride_plan_destroy(plan_col);
+        if (plan_row) stride_plan_destroy(plan_row);
+        return NULL;
+    }
+    stride_fft2d_data_t *d = (stride_fft2d_data_t *)calloc(1, sizeof(*d));
+    if (!d) { stride_plan_destroy(plan_col); stride_plan_destroy(plan_row); return NULL; }
+    d->N1 = N1; d->N2 = N2; d->use_bailey = 0; d->B = B;
+    d->plan_col = plan_col; d->plan_row = plan_row;
+    if (!_fft2d_alloc_scratch(d, (size_t)N2 * B)) { _fft2d_destroy(d); return NULL; }
+    return _fft2d_wrap(d);
+}
+
 /** Bailey 2D plan — always uses full-matrix transpose.
  *  Alternative for architectures where large-K FFT + cache-oblivious
  *  transpose outperforms tiled. Uses exhaustive sub-plan search. */
