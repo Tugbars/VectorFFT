@@ -80,6 +80,30 @@ row pass) → we win. r2c adds the real-FFT pack/recombine passes *plus* the K_p
 perm remap — extra memory traffic, and (like 1D r2c at high K) it's memory-bound where MKL's fused real-FFT
 wins. r2c is correct and shipped; closing the perf gap is the same fused-kernel workstream as 1D r2c.
 
+### 3c. Multithreaded — 2D c2c beats MKL 2.2–6.1× at 8 threads (2026-06-20)
+
+dag on 8 P-cores (caller pinned core 0, pool pins workers 1..7) vs MKL at `mkl_set_num_threads(8)`,
+2D c2c, split / NOT_INPLACE (`build_tuned/benches/bench_fft2d_mt_vs_mkl.c`):
+
+| size | dag T1 (ns) | dag T8 (ns) | MKL T1 (ns) | MKL T8 (ns) | dag scal | MKL scal | T1 mkl/dag | **T8 mkl/dag** |
+|------|-------------|-------------|-------------|-------------|----------|----------|------------|----------------|
+| 64²  | 16,505      | 21,524      | 26,745      | 130,810     | 0.77×    | 0.20×    | 1.62×      | **6.08×**      |
+| 128² | 92,819      | 81,178      | 117,921     | 270,271     | 1.14×    | 0.44×    | 1.27×      | **3.33×**      |
+| 256² | 383,496     | 266,278     | 484,074     | 675,276     | 1.44×    | 0.72×    | 1.26×      | **2.54×**      |
+| 512² | 2,405,716   | 1,499,525   | 3,113,353   | 3,285,215   | 1.60×    | 0.95×    | 1.29×      | **2.19×**      |
+
+Two effects compound. (1) dag's tile-parallel rows + K-split columns scale *modestly but positively*
+(0.77–1.60×; 64² is too small to thread and regresses, the gain grows with size). (2) **MKL's 2D
+threading is actively bad: 0.20–0.95×** — for every size ≤512² MKL T8 is *slower* than MKL T1 (64²
+is 5× slower at T8). Net, **dag wins 2.19–6.08× at T8**, widening the single-thread c2c lead. This is
+the 2D analogue of the r2c §6c reversal: in the batched/2D regime MKL barely threads, and our
+barrier-free split layout wins decisively even at modest self-scaling.
+
+**1024² omitted:** `stride_plan_2d` builds its inner col/row plans via `vfft_proto_exhaustive_plan`
+(a live measure, not wisdom) — minutes per plan at N=1024. Making the 2D c2c inners wisdom-driven
+(one-time calibration of the (1024,1024) and (1024,B) cells) is the follow-up that makes 1024²
+practical. (Today only the 2D *r2c* inner rides c2c wisdom; the 2D c2c row/col inners do not.)
+
 ---
 
 ## 4. Correctness + order
