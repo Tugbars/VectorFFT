@@ -297,14 +297,56 @@ static double bench_mkl_oop(int N, size_t K, const double *sr, const double *si,
     free_d(mr); free_d(mi); DftiFreeDescriptor(&d); return best;
 }
 #endif
+/* OOP K-split across the worker pool — the OOP analog of dag_fwd_mt. Each thread
+ * runs the full OOP forward on a lane-slice [k0, k0+S) of the K batch (lanes are
+ * independent: data[n*K+lane]). Same pool/dispatch mechanism as the in-place MT
+ * path; ported from bench_c2c_mt.c. */
+static void oop_slice(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                      double *dr, double *di, size_t k0, size_t S) {
+    size_t K = p->K;
+    if (p->kind == VFFT_OOP_KIND_LEAF)
+        p->leaf(sr+k0, si+k0, dr+k0, di+k0, 0, 0, K, 1, K, 1, S);
+    else if (p->kind == VFFT_OOP_KIND_BAILEY2) {
+        int R1 = p->R1, R2 = p->R2;
+        for (int n1 = 0; n1 < R1; n1++)
+            p->leaf(sr+(size_t)n1*K+k0, si+(size_t)n1*K+k0,
+                    dr+(size_t)n1*R2*K+k0, di+(size_t)n1*R2*K+k0,
+                    0, 0, (size_t)R1*K, 1, K, 1, S);
+        p->t1p(dr+k0, di+k0, dr+k0, di+k0, p->Qr, p->Qi, (size_t)R2*K, 1, (size_t)R2*K, 1, S);
+    } else  /* MODEB: in-place dataflow on the dst slice */
+        vfft_proto_execute_fwd_oop(p->mb, sr+k0, si+k0, dr+k0, di+k0, S);
+}
+typedef struct { const vfft_oop_plan_t *p; const double *sr,*si; double *dr,*di; size_t k0,S; } _oop_mt_arg;
+static void _oop_mt_tramp(void *a) { _oop_mt_arg *x = (_oop_mt_arg *)a;
+    oop_slice(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S); }
+static void oop_fwd_mt(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                       double *dr, double *di) {
+    size_t K = p->K; int T = g_mt;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T <= 1 || K < 8) { oop_slice(p, sr, si, dr, di, 0, K); return; }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7; _oop_mt_arg a[64]; int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        size_t k0 = (size_t)t * S; if (k0 >= K) break; size_t ke = k0 + S; if (ke > K) ke = K;
+        a[nd] = (_oop_mt_arg){ p, sr, si, dr, di, k0, ke - k0 };
+        _stride_pool_dispatch(&_stride_workers[nd], _oop_mt_tramp, &a[nd]); nd++;
+    }
+    size_t s0 = S < K ? S : K; oop_slice(p, sr, si, dr, di, 0, s0);
+    if (nd) _stride_pool_wait_all();
+}
+/* one OOP forward, single- or multi-threaded per g_oop_mt. */
+static void oop_run(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                    double *dr, double *di) {
+    if (g_oop_mt) oop_fwd_mt(p, sr, si, dr, di);
+    else          vfft_oop_execute_fwd(p, sr, si, dr, di);
+}
 static double time_oop(const vfft_oop_plan_t *p, const double *sr, const double *si,
                        double *dr, double *di, size_t total) {
-    for (int w = 0; w < 10; w++) vfft_oop_execute_fwd(p, sr, si, dr, di);
+    for (int w = 0; w < 10; w++) oop_run(p, sr, si, dr, di);
     int reps = reps_for(total); double best = 1e18;
     for (int t = 0; t < 5; t++) {
         if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++) vfft_oop_execute_fwd(p, sr, si, dr, di);
+        for (int i = 0; i < reps; i++) oop_run(p, sr, si, dr, di);
         double ns = (vfft_proto_now_ns() - t0) / reps; if (ns < best) best = ns;
     }
     return best;
@@ -328,11 +370,22 @@ static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
     double *sr=alloc_d(total),*si=alloc_d(total),*dr=alloc_d(total),*di=alloc_d(total);
     srand(42 + N + (int)K);
     for (size_t i=0;i<total;i++){ sr[i]=(double)rand()/RAND_MAX-0.5; si[i]=(double)rand()/RAND_MAX-0.5; }
-    /* correctness: fwd+bwd == N*x (vfft_oop_execute_bwd is kind-correct incl. MODEB) */
+    /* correctness: fwd+bwd == N*x (vfft_oop_execute_bwd is kind-correct incl. MODEB).
+     * ST forward into dr,di first (also the reference for the MT check below). */
     double *er=alloc_d(total),*ei=alloc_d(total);
     vfft_oop_execute_fwd(p,sr,si,dr,di); vfft_oop_execute_bwd(p,dr,di,er,ei);
     double rel=0; for(size_t i=0;i<total;i++){double a=fabs(er[i]/(double)N-sr[i]),b=fabs(ei[i]/(double)N-si[i]); if(a>rel)rel=a; if(b>rel)rel=b;}
     free_d(er); free_d(ei);
+    /* MT consistency: the K-split forward must match the ST forward (catches
+     * lane-slice races, esp. MODEB's vfft_proto_execute_fwd_oop). Folded into the
+     * gate so a divergent cell shows a large rt error rather than a silent pass. */
+    if (g_oop_mt) {
+        double *mr=alloc_d(total),*mi=alloc_d(total);
+        oop_fwd_mt(p,sr,si,mr,mi);
+        double d=0; for(size_t i=0;i<total;i++){double a=fabs(mr[i]-dr[i]),b=fabs(mi[i]-di[i]); if(a>d)d=a; if(b>d)d=b;}
+        if(d>rel) rel=d;
+        free_d(mr); free_d(mi);
+    }
 
     double vns=0, mns=0;
 #ifdef VFFT_HAS_MKL
@@ -355,16 +408,24 @@ int main(int argc, char **argv) {
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
     int mt = 0, oop = 0;
-    if (argc >= 2 && strcmp(argv[1], "--mt") == 0) {
-        mt = 1; argv++; argc--;
-        const char *e = getenv("VFFT_MT"); g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
-    } else if (argc >= 2 && strcmp(argv[1], "--oop") == 0) {
-        oop = 1; argv++; argc--;   /* out-of-place c2c vs MKL NOT_INPLACE (pow2 cells) */
+    /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
+     * c2c vs MKL NOT_INPLACE). Both together => OOP forward K-split across the pool. */
+    while (argc >= 2 && argv[1][0] == '-' && argv[1][1] == '-') {
+        if (strcmp(argv[1], "--mt") == 0) {
+            mt = 1; const char *e = getenv("VFFT_MT"); g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
+        } else if (strcmp(argv[1], "--oop") == 0) {
+            oop = 1;
+        } else break;
+        argv++; argc--;
     }
+    g_oop_mt = (oop && mt);
     const char *wpath = (argc >= 2) ? argv[1]
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2]
-        : (mt ? "vfft_perf_tuned_1d_mt.csv" : oop ? "vfft_perf_tuned_1d_oop.csv" : "vfft_perf_tuned_1d.csv");
+        : (oop && mt) ? "vfft_perf_tuned_1d_oop_mt.csv"
+        : mt  ? "vfft_perf_tuned_1d_mt.csv"
+        : oop ? "vfft_perf_tuned_1d_oop.csv"
+        :       "vfft_perf_tuned_1d.csv";
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
     /* ISOLATED single-cell mode: target_N>0 benches ONLY cell (target_N,target_K)
      * in this (fresh) process — run_bench.py drives one cell per process, killing
@@ -406,7 +467,9 @@ int main(int argc, char **argv) {
     }
 
     if (!target_N) {
-        if (mt)
+        if (oop && mt)
+            printf("=== dag vs MKL — 1D C2C fwd, OUT-OF-PLACE MULTITHREADED (%d threads, pow2 cells, NOT_INPLACE split, core0-pinned; pace=%dms) ===\n", g_mt, pace_ms);
+        else if (mt)
             printf("=== dag vs MKL — 1D C2C fwd, MULTITHREADED (%d threads, K>=32 cells, core0-pinned; pace=%dms) ===\n", g_mt, pace_ms);
         else if (oop)
             printf("=== dag vs MKL — 1D C2C fwd, OUT-OF-PLACE (pow2 cells, NOT_INPLACE split; pace=%dms) ===\n", pace_ms);
