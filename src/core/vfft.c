@@ -276,6 +276,29 @@ static stride_plan_t *_inner_c2c(int innerN, size_t K, vfft_rigor_t rigor,
     return vfft_proto_auto_plan(innerN, K, reg, cw);
 }
 
+/* Build a c2c plan for (N, build_K) from a factorization calibrated cheaply at
+ * (N, cal_K). Used for the 2D column inner: calibrating directly at K=N2 is a slow
+ * large-working-set measure (43s at (256,256)!), but the factorization transfers
+ * across the batched-K regime, so we calibrate at a small proxy K and build at K=N2
+ * — fast AND wisdom-driven. Falls back to the factorizer default if no entry. */
+static stride_plan_t *_c2c_proxy(int N, size_t build_K, size_t cal_K, vfft_rigor_t rigor,
+                                 const vfft_proto_registry_t *reg,
+                                 vfft_proto_wisdom_t *cw, int recalib)
+{
+    if (cal_K > build_K) cal_K = build_K;
+    if (recalib || !vfft_proto_wisdom_lookup(cw, N, cal_K))
+    {
+        vfft_proto_wisdom_entry_t ne;
+        if (_calibrate_c2c(N, cal_K, rigor, reg, &ne) == 0)
+            vfft_proto_wisdom_add(cw, &ne, 1);
+    }
+    const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(cw, N, cal_K);
+    if (e && e->nf > 0)
+        return vfft_proto_plan_create_ex(N, build_K, e->factors, e->variants, e->nf,
+                                         e->use_dif_forward, reg);
+    return vfft_proto_auto_plan(N, build_K, reg, NULL);   /* factorizer default */
+}
+
 /* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy). */
 static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
                                   const vfft_proto_registry_t *reg,
@@ -321,7 +344,10 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
          * exhaustive-at-create sub-plan search — that exhaustive measure is minutes at
          * N=1024, which made large 2D unusable. col = N1-point K=N2; row = N2-point K=B. */
         size_t B = _fft2d_choose_tile(N2, N1);
-        stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
+        /* col runs at K=N2 (large) — calibrate its factorization at a cheap proxy K
+         * (avoids the slow large-K measure), then build at K=N2. row at K=B is cheap. */
+        size_t col_cal_K = (size_t)N2 < 32 ? (size_t)N2 : 32;
+        stride_plan_t *col = _c2c_proxy(N1, (size_t)N2, col_cal_K, rigor, reg, cw, recalib);
         stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
         if (!col || !row) { if (col) stride_plan_destroy(col); if (row) stride_plan_destroy(row); return NULL; }
         return stride_plan_2d_from(N1, N2, B, col, row);  /* takes ownership */
