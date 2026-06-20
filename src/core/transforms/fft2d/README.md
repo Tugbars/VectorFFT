@@ -30,7 +30,10 @@ contiguous-strided, so no transpose is needed). They differ only in the **row pa
 
 **Tiled (default, `FFT2D B=8`)** — for each tile of B rows:
 1. gather B rows → scratch via SIMD transpose (B×N2 → N2×B)
-2. N2-point FFT with K=B on the scratch (small batch, L1-resident)
+2. N2-point FFT with K=B on the scratch (small batch, L1-resident) — via the full c2c
+   executor (`vfft_proto_execute_fwd/bwd` on the `this_B` sub-batch), so the row inner may be
+   **DIT or DIF**. (The old DIT-only slice helper silently mis-ran DIF inners; the full executor
+   dispatches both, plus the specialized per-cell executors.)
 3. scatter scratch back via SIMD transpose (N2×B → B×N2)
 
 **Bailey (alternative)** — two full-matrix transposes bracket one large-K row FFT:
