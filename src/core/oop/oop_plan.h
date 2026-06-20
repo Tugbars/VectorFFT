@@ -294,11 +294,26 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
     return -1;
 }
 
+/* Unnormalized inverse (output = N * x). KIND-DEPENDENT, because the kind sets
+ * the forward's output ORDER:
+ *   LEAF / BAILEY2 (NATURAL order) — the swap identity IDFT(X)=swap(DFT(swap(X)))
+ *     inverts the forward directly. (Identity only holds for natural order.)
+ *   MODEB (DIGIT-SCRAMBLED order) — the swap identity is INVALID on a scrambled
+ *     spectrum. But MODEB's forward output is bit-identical to the in-place DIT
+ *     dataflow, so its exact inverse is the in-place DIF backward (zero-permutation
+ *     roundtrip): copy the spectrum to dst, run DIF-bwd on dst. src is preserved. */
 static inline int vfft_oop_execute_bwd(const vfft_oop_plan_t *p,
                                        const double *sr, const double *si,
                                        double *dr, double *di)
 {
-    return vfft_oop_execute_fwd(p, si, sr, di, dr);
+    if (p->kind == VFFT_OOP_KIND_MODEB) {
+        size_t NK = (size_t)p->N * p->K;
+        memcpy(dr, sr, NK * sizeof(double));
+        memcpy(di, si, NK * sizeof(double));
+        vfft_proto_execute_bwd_generic(p->mb, dr, di, p->K);
+        return 0;
+    }
+    return vfft_oop_execute_fwd(p, si, sr, di, dr);   /* LEAF/BAILEY2: natural-order swap */
 }
 
 static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
