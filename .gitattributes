@@ -17,3 +17,9 @@ src/dag-fft-compiler/codelets/**            linguist-generated
 # DAG-compiler generated headers (registries, plan_executors, etc.) — also
 # machine output, not decision-making code. Excluded from the language bar.
 src/dag-fft-compiler/generator/generated/** linguist-generated
+
+# Benchmarks, dev scratch, and tests — kept in the repo for users, but not
+# part of the shipped library, so excluded from the language bar.
+build_tuned/benches/** linguist-vendored
+build_tuned/dev/**     linguist-vendored
+build_tuned/test/**    linguist-vendored
