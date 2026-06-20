@@ -40,6 +40,11 @@
 #define _VFFT_RFFT_REGISTER rfft_register_all_avx2
 #endif
 #include "registry.h"      /* vfft_proto_registry_t (generated)              */
+#include "dct.h"           /* DCT-II/III (+ inner r2c)                        */
+#include "dct1.h"          /* DCT-I / DST-I (boundary r2c)                    */
+#include "dct4.h"          /* DCT-IV (inner c2c of N/2)                       */
+#include "dst.h"           /* DST-II/III (wrap DCT-II)                        */
+#include "dht.h"           /* DHT (inner r2c)                                 */
 
 #include <stdlib.h>
 #include <string.h>
@@ -66,8 +71,12 @@ struct vfft_plan_s {
     int    nthreads;
     stride_plan_t   *cplan;      /* c2c in-place (owned)      */
     vfft_oop_plan_t *oplan;      /* c2c out-of-place (owned)  */
-    vfft_r2c_plan_t *rplan;      /* r2c (owned)               */
+    vfft_r2c_plan_t *rplan;      /* r2c / c2r (owned)         */
+    stride_plan_t   *tplan;      /* trig DCT/DST/DHT (owned)  */
 };
+
+/* trig predicate: any DCT/DST/DHT transform enum. */
+#define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
 
 /* ════════════════════════════════════════════════════════════════════════
  * LIBRARY SINGLETONS (lazy)
@@ -142,6 +151,47 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
     out->use_dif_forward = dec.use_dif_forward;
     for (int s = 0; s < dec.nf; s++) { out->factors[s] = dec.factors[s]; out->variants[s] = dec.variants[s]; }
     return 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * TRIG BUILDERS — every DCT/DST/DHT is a stride_plan_t wrapping an inner plan
+ * (an r2c plan, or a half-N complex FFT for DCT-IV). The inner c2c cell rides
+ * the c2c wisdom table (calibrate-on-miss at rigor, like r2c/c2r).
+ * ════════════════════════════════════════════════════════════════════════ */
+static stride_plan_t *_inner_c2c(int innerN, size_t K, vfft_rigor_t rigor,
+                                 const vfft_proto_registry_t *reg,
+                                 vfft_proto_wisdom_t *cw, int recalib) {
+    if (recalib || !vfft_proto_wisdom_lookup(cw, innerN, K)) {
+        vfft_proto_wisdom_entry_t ne;
+        if (_calibrate_c2c(innerN, K, rigor, reg, &ne) == 0)
+            vfft_proto_wisdom_add(cw, &ne, 1);   /* miss falls back to greedy in auto_plan */
+    }
+    return vfft_proto_auto_plan(innerN, K, reg, cw);
+}
+
+/* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy). */
+static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
+                                  const vfft_proto_registry_t *reg,
+                                  vfft_proto_wisdom_t *cw, int recalib) {
+    if (t == VFFT_DCT4) {                                /* inner = half-N complex FFT */
+        stride_plan_t *c2c = _inner_c2c(N / 2, K, rigor, reg, cw, recalib);
+        return c2c ? stride_dct4_plan(N, K, c2c) : NULL;
+    }
+    if (t == VFFT_DCT1 || t == VFFT_DST1) {              /* boundary r2c of M */
+        int M = (t == VFFT_DCT1) ? 2 * (N - 1) : 2 * (N + 1);
+        stride_plan_t *ic = _inner_c2c(M / 2, K, rigor, reg, cw, recalib);
+        stride_plan_t *r  = ic ? stride_r2c_plan(M, K, K, ic) : NULL;
+        if (!r) return NULL;
+        return (t == VFFT_DCT1) ? stride_dct1_plan(N, K, r) : stride_dst1_plan(N, K, r);
+    }
+    /* DCT-II/III, DST-II/III, DHT — all start from an N-point r2c plan. */
+    stride_plan_t *ic = _inner_c2c(N / 2, K, rigor, reg, cw, recalib);
+    stride_plan_t *r  = ic ? stride_r2c_plan(N, K, K, ic) : NULL;
+    if (!r) return NULL;
+    if (t == VFFT_DHT) return stride_dht_plan(N, K, r);
+    stride_plan_t *dct2 = stride_dct2_plan(N, K, r);
+    if (t == VFFT_DCT2 || t == VFFT_DCT3) return dct2;    /* DCT-III = dct2 plan, exec dct3 */
+    return dct2 ? stride_dst2_plan(N, K, dct2) : NULL;     /* DST-II/III wrap DCT-II */
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -251,7 +301,47 @@ vfft_plan vfft_create(const vfft_config_t *cfg) {
         return h;
     }
 
-    /* TODO: c2r, trig, 2D. */
+    /* ── c2r (complex -> real; the r2c inverse). The SPLIT c2r is the stride r2c
+     * plan's backward (stride_execute_c2r); force the STRIDE path so that backward
+     * exists, and the inner rides c2c wisdom. Pairs with split r2c for K>=32. ── */
+    if (cfg->transform == VFFT_C2R) {
+        if ((N % 2) != 0) return NULL;
+        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, K)) {
+            vfft_proto_wisdom_entry_t ne;
+            if (_calibrate_c2c(N / 2, K, cfg->rigor, reg, &ne) == 0) {
+                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+            }
+        }
+        vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
+        vfft_r2c_dispatch_set_decouple_min_k(0);     /* force stride (has the split c2r backward) */
+        vfft_r2c_plan_t *rp = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT,
+                                                   _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
+        vfft_r2c_dispatch_set_decouple_min_k(32);    /* restore default */
+        if (!rp || rp->path != VFFT_R2C_PATH_STRIDE) { if (rp) vfft_r2c_plan_destroy(rp); return NULL; }
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h) { vfft_r2c_plan_destroy(rp); return NULL; }
+        h->transform = VFFT_C2R; h->placement = cfg->placement; h->N = N; h->K = K;
+        h->nthreads = stride_get_num_threads(); h->rplan = rp;
+        return h;
+    }
+
+    /* ── trig (DCT-I..IV / DST-I..III / DHT): real -> real, real-FFT inner. The
+     * inner c2c cell rides c2c wisdom (calibrate-on-miss at rigor). MT internal
+     * (the inner r2c / c2c threads over K). ── */
+    if (_VFFT_IS_TRIG(cfg->transform)) {
+        stride_plan_t *tp = _build_trig(cfg->transform, N, K, cfg->rigor, reg,
+                                        &W->c2c, cfg->recalibrate);
+        if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);  /* persist inner cells */
+        if (!tp) return NULL;
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h) { stride_plan_destroy(tp); return NULL; }
+        h->transform = cfg->transform; h->placement = cfg->placement; h->N = N; h->K = K;
+        h->nthreads = stride_get_num_threads(); h->tplan = tp;
+        return h;
+    }
+
+    /* TODO: 2D (dims==2). */
     return NULL;
 }
 
@@ -277,6 +367,31 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         vfft_r2c_execute_fwd(h->rplan, sre, dre, dim);   /* (void)sim; (void)dir==FORWARD */
         return;
     }
+    if (h->transform == VFFT_C2R) {
+        /* the inverse: split complex in (sre,sim) -> real out (dre). dir ignored. */
+        vfft_set_num_threads(h->nthreads);
+        stride_execute_c2r(h->rplan->stride, sre, sim, dre);
+        return;
+    }
+    if (_VFFT_IS_TRIG(h->transform)) {
+        /* real in (sre) -> real out (dre). Involutory kinds (DCT-I/IV, DST-I, DHT)
+         * ignore `dir`; for II<->III the forward enum picks the matching member and
+         * BACKWARD runs its inverse (DCT-III for a DCT-II plan, etc.). */
+        vfft_set_num_threads(h->nthreads);
+        const stride_plan_t *p = h->tplan; int f = (dir == VFFT_FORWARD);
+        switch (h->transform) {
+        case VFFT_DCT1: stride_execute_dct1(p, sre, dre); break;
+        case VFFT_DCT2: if (f) stride_execute_dct2(p, sre, dre); else stride_execute_dct3(p, sre, dre); break;
+        case VFFT_DCT3: if (f) stride_execute_dct3(p, sre, dre); else stride_execute_dct2(p, sre, dre); break;
+        case VFFT_DCT4: stride_execute_dct4(p, sre, dre); break;
+        case VFFT_DST1: stride_execute_dst1(p, sre, dre); break;
+        case VFFT_DST2: if (f) stride_execute_dst2(p, sre, dre); else stride_execute_dst3(p, sre, dre); break;
+        case VFFT_DST3: if (f) stride_execute_dst3(p, sre, dre); else stride_execute_dst2(p, sre, dre); break;
+        case VFFT_DHT:  stride_execute_dht(p, sre, dre); break;
+        default: break;
+        }
+        return;
+    }
 }
 
 void vfft_destroy(vfft_plan h) {
@@ -284,6 +399,7 @@ void vfft_destroy(vfft_plan h) {
     if (h->cplan) vfft_proto_plan_destroy(h->cplan);
     if (h->oplan) vfft_oop_plan_destroy(h->oplan);
     if (h->rplan) vfft_r2c_plan_destroy(h->rplan);
+    if (h->tplan) stride_plan_destroy(h->tplan);   /* frees inner r2c/c2c via override_destroy */
     free(h);
 }
 
