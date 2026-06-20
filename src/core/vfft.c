@@ -247,10 +247,14 @@ static vfft_r2c_plan_t *_r2c_bakeoff(int N, size_t K, const vfft_proto_registry_
     int T = stride_get_num_threads(); stride_set_num_threads(1);
     double tr = _r2c_time_fwd(pr, N, K), ts = _r2c_time_fwd(ps, N, K);
     stride_set_num_threads(T);
+    /* Hysteresis toward stride: pick rfft only if clearly faster (>3%). Stride is the
+     * structural high-K winner and the only path that threads, so on a near-tie (where
+     * calibration timing noise lives) prefer it — a noisy run can't flip a tie to rfft. */
+    int pick_rfft = (tr < ts * 0.97);
     if (getenv("VFFT_BAKEOFF_DBG"))
         fprintf(stderr, "[bakeoff] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
-                N, (size_t)K, tr, ts, (tr <= ts) ? "rfft" : "STRIDE");
-    if (tr <= ts) { vfft_r2c_plan_destroy(ps); return pr; }
+                N, (size_t)K, tr, ts, pick_rfft ? "rfft" : "STRIDE");
+    if (pick_rfft) { vfft_r2c_plan_destroy(ps); return pr; }
     vfft_r2c_plan_destroy(pr); return ps;
 }
 
@@ -312,7 +316,16 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                                 vfft_proto_wisdom_t *cw, int recalib)
 {
     if (t == VFFT_C2C)
-        return stride_plan_2d(N1, N2, reg);
+    {
+        /* Wisdom-driven inners (calibrate-on-miss at rigor) instead of stride_plan_2d's
+         * exhaustive-at-create sub-plan search — that exhaustive measure is minutes at
+         * N=1024, which made large 2D unusable. col = N1-point K=N2; row = N2-point K=B. */
+        size_t B = _fft2d_choose_tile(N2, N1);
+        stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
+        stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
+        if (!col || !row) { if (col) stride_plan_destroy(col); if (row) stride_plan_destroy(row); return NULL; }
+        return stride_plan_2d_from(N1, N2, B, col, row);  /* takes ownership */
+    }
     if (t == VFFT_R2C || t == VFFT_C2R)
     {
         if (N1 < 2 || N2 < 2 || (N2 & 1))

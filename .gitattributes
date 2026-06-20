@@ -7,3 +7,9 @@
 
 # Auto-generated headers — collapse in GitHub diff views, do not hand-edit.
 # src/core/generated/* linguist-generated
+
+# DAG-compiler output: ~350k lines of machine-generated codelets.
+# Excluded from GitHub's language-percentage bar; files stay in the repo and
+# remain fully browsable/downloadable. The decision-making code (core/ + *.ml)
+# is intentionally NOT excluded so it still counts.
+src/dag-fft-compiler/codelets/**            linguist-generated
