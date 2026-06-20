@@ -5,7 +5,7 @@ A **split-layout** Fast Fourier Transform library in C, with AVX2/AVX-512 kernel
 **in-place and out-of-place, single- and multi-threaded** — behind one calibrated wisdom planner that
 picks the fastest plan per transform.
 
-It **beats Intel MKL on all 207 tested 1D C2C cells single-threaded**, and wins on real-FFT and 2D
+It **beats Intel MKL on all 207 tested 1D C2C cells single- and multi-threaded**, and wins on real-FFT and 2D
 transforms under multithreading. Pure C, no external dependencies.
 
 ---
