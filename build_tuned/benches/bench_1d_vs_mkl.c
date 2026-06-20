@@ -48,6 +48,8 @@
 #endif
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"        /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
+#include "oop_dp.h"                 /* --oop: vfft_oop_plan_create_dp_best (fallback) */
+#include "oop_wisdom.h"             /* --oop: oop wisdom load + create_wisdom (lookup) */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -263,19 +265,105 @@ static void measure_ab(double *vns_out, double *mns_out,
     *vns_out = vns; *mns_out = mns;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * --oop : out-of-place c2c vs MKL (NOT_INPLACE split). True OOP plans (LEAF /
+ * BAILEY2 natural order, MODEB scrambled) from the OOP wisdom (lookup) or
+ * dp_best (fallback). Same fairness: order-flip, pace, cachebust, fair layout.
+ * ════════════════════════════════════════════════════════════════════════ */
+#ifdef VFFT_HAS_MKL
+static DFTI_DESCRIPTOR_HANDLE mkl_make_oop(int N, size_t K) {
+    DFTI_DESCRIPTOR_HANDLE d = NULL; MKL_LONG str[2] = {0, (MKL_LONG)K};
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR) return NULL;
+    DftiSetValue(d, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    DftiSetValue(d, DFTI_INPUT_DISTANCE, 1); DftiSetValue(d, DFTI_OUTPUT_DISTANCE, 1);
+    DftiSetValue(d, DFTI_INPUT_STRIDES, str); DftiSetValue(d, DFTI_OUTPUT_STRIDES, str);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR) { DftiFreeDescriptor(&d); return NULL; }
+    return d;
+}
+static double bench_mkl_oop(int N, size_t K, const double *sr, const double *si, size_t total) {
+    DFTI_DESCRIPTOR_HANDLE d = mkl_make_oop(N, K); if (!d) return 0;
+    double *mr = alloc_d(total), *mi = alloc_d(total);
+    for (int w = 0; w < 10; w++) DftiComputeForward(d, (void *)sr, (void *)si, mr, mi);
+    int reps = reps_for(total); double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) DftiComputeForward(d, (void *)sr, (void *)si, mr, mi);
+        double e = (vfft_proto_now_ns() - t0) / reps; if (e < best) best = e;
+    }
+    free_d(mr); free_d(mi); DftiFreeDescriptor(&d); return best;
+}
+#endif
+static double time_oop(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                       double *dr, double *di, size_t total) {
+    for (int w = 0; w < 10; w++) vfft_oop_execute_fwd(p, sr, si, dr, di);
+    int reps = reps_for(total); double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) vfft_oop_execute_fwd(p, sr, si, dr, di);
+        double ns = (vfft_proto_now_ns() - t0) / reps; if (ns < best) best = ns;
+    }
+    return best;
+}
+static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
+                         const vfft_oop_wisdom_t *oopw, FILE *out, int cool_ms, int flip) {
+    size_t total = (size_t)N * K;
+    vfft_oop_plan_t *p = oopw ? vfft_oop_plan_create_wisdom(N, K, oopw, reg) : NULL;
+    int used_dp = 0; vfft_proto_dp_context_t ctx;
+    if (!p) { vfft_proto_dp_init(&ctx, K, N); p = vfft_oop_plan_create_dp_best(N, K, &ctx, reg); used_dp = 1; }
+    if (!p) { printf("  N=%-8d K=%-5zu  OOP plan NULL\n", N, K); if (used_dp) vfft_proto_dp_destroy(&ctx); return; }
+
+    const char *kind  = p->kind==VFFT_OOP_KIND_LEAF?"LEAF":p->kind==VFFT_OOP_KIND_BAILEY2?"BAILEY2":"MODEB";
+    const char *order = (p->kind==VFFT_OOP_KIND_MODEB) ? "scrambled" : "natural";
+    char fs[64];
+    if (p->kind==VFFT_OOP_KIND_BAILEY2) snprintf(fs, sizeof fs, "%dx%d", p->R1, p->R2);
+    else if (p->kind==VFFT_OOP_KIND_MODEB && p->mb) { size_t o=0; fs[0]='\0';
+        for (int s=0;s<p->mb->num_stages;s++) o+=(size_t)snprintf(fs+o,sizeof fs-o,"%s%d",s?",":"",p->mb->factors[s]); }
+    else snprintf(fs, sizeof fs, "%s", kind);
+
+    double *sr=alloc_d(total),*si=alloc_d(total),*dr=alloc_d(total),*di=alloc_d(total);
+    srand(42 + N + (int)K);
+    for (size_t i=0;i<total;i++){ sr[i]=(double)rand()/RAND_MAX-0.5; si[i]=(double)rand()/RAND_MAX-0.5; }
+    /* correctness: fwd+bwd == N*x (vfft_oop_execute_bwd is kind-correct incl. MODEB) */
+    double *er=alloc_d(total),*ei=alloc_d(total);
+    vfft_oop_execute_fwd(p,sr,si,dr,di); vfft_oop_execute_bwd(p,dr,di,er,ei);
+    double rel=0; for(size_t i=0;i<total;i++){double a=fabs(er[i]/(double)N-sr[i]),b=fabs(ei[i]/(double)N-si[i]); if(a>rel)rel=a; if(b>rel)rel=b;}
+    free_d(er); free_d(ei);
+
+    double vns=0, mns=0;
+#ifdef VFFT_HAS_MKL
+    if (flip) { mns = bench_mkl_oop(N,K,sr,si,total); cachebust(); pace(cool_ms); vns = time_oop(p,sr,si,dr,di,total); }
+    else      { vns = time_oop(p,sr,si,dr,di,total); cachebust(); pace(cool_ms); mns = bench_mkl_oop(N,K,sr,si,total); }
+#else
+    (void)flip; (void)cool_ms; vns = time_oop(p,sr,si,dr,di,total);
+#endif
+    double sp = (vns>0 && mns>0) ? mns/vns : 0;
+    printf("  N=%-8d K=%-5zu %-7s %-12s %-9s rt=%.1e | vfft %10.0f | mkl %10.0f | %.3f\n",
+           N, K, kind, fs, order, rel, vns, mns, sp);
+    if (out) fprintf(out, "%d,%zu,%s,%s,%.1e,%s,%.0f,%.0f,%.3f\n", N, K, kind, fs, rel, order, vns, mns, sp);
+    free_d(sr); free_d(si); free_d(dr); free_d(di);
+    if (used_dp) vfft_proto_dp_destroy(&ctx);
+    vfft_oop_plan_destroy(p);
+}
+
 int main(int argc, char **argv) {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0;
+    int mt = 0, oop = 0;
     if (argc >= 2 && strcmp(argv[1], "--mt") == 0) {
         mt = 1; argv++; argc--;
         const char *e = getenv("VFFT_MT"); g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
+    } else if (argc >= 2 && strcmp(argv[1], "--oop") == 0) {
+        oop = 1; argv++; argc--;   /* out-of-place c2c vs MKL NOT_INPLACE (pow2 cells) */
     }
     const char *wpath = (argc >= 2) ? argv[1]
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2]
-        : (mt ? "vfft_perf_tuned_1d_mt.csv" : "vfft_perf_tuned_1d.csv");
+        : (mt ? "vfft_perf_tuned_1d_mt.csv" : oop ? "vfft_perf_tuned_1d_oop.csv" : "vfft_perf_tuned_1d.csv");
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
     /* ISOLATED single-cell mode: target_N>0 benches ONLY cell (target_N,target_K)
      * in this (fresh) process — run_bench.py drives one cell per process, killing
@@ -285,9 +373,9 @@ int main(int argc, char **argv) {
     long target_K     = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms       = (argc >= 7) ? atoi(argv[6]) : 0;   /* inter-engine idle (order-bias fix) */
     int flip          = (argc >= 8) ? atoi(argv[7]) : 0;   /* 1 = MKL first (alternate per cell) */
-    int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : -1);  /* MT pins core 0 */
+    int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : oop ? 2 : -1);  /* MT->0, OOP->P-core 2 */
     { const char *tp = getenv("VFFT_TRIAL_PACE_MS"); g_trial_pace_ms = tp ? atoi(tp) : 0; }
-    if (mt) target_N = 0;   /* MT mode = full in-process sweep over the wisdom cells */
+    if (mt || oop) target_N = 0;   /* MT/OOP = full in-process sweep over the wisdom cells */
 
     stride_env_init();
     if (core >= 0 && stride_pin_thread(core) != 0)
@@ -299,19 +387,37 @@ int main(int argc, char **argv) {
 #endif
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
+    /* --oop: load the OOP wisdom (pure-lookup build); miss -> dp_best per cell. */
+    vfft_oop_wisdom_t oopw; int have_oopw = 0;
+    if (oop) {
+        const char *op = getenv("VFFT_OOP_WIS");
+        if (!op) op = "../../src/dag-fft-compiler/generator/generated/oop_wisdom.txt";
+        have_oopw = (vfft_oop_wisdom_load(&oopw, op) == 0);
+        printf("# OOP wisdom: %s (%s)\n", op, have_oopw ? "loaded" : "MISS -> dp_best per cell");
+    }
+
     FILE *f = fopen(wpath, "r");
     if (!f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
     FILE *out = fopen(csv, target_N ? "a" : "w");
-    if (out && !target_N) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    if (out && !target_N) {
+        if (oop) fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
+        else     fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    }
 
     if (!target_N) {
         if (mt)
             printf("=== dag vs MKL — 1D C2C fwd, MULTITHREADED (%d threads, K>=32 cells, core0-pinned; pace=%dms) ===\n", g_mt, pace_ms);
+        else if (oop)
+            printf("=== dag vs MKL — 1D C2C fwd, OUT-OF-PLACE (pow2 cells, NOT_INPLACE split; pace=%dms) ===\n", pace_ms);
         else
             printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
-        printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
-               "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
-        printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
+        if (oop)
+            printf("# kind=LEAF/BAILEY2 natural order, MODEB scrambled. gate=roundtrip err. speedup>1 = dag wins.\n");
+        else {
+            printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
+                   "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
+            printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
+        }
     }
 
     char line[1024];
@@ -324,9 +430,14 @@ int main(int argc, char **argv) {
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         long Kl = atol(tok);
         long want_K = target_N ? target_K : (long)BENCH_K;
-        if (mt) { if (Kl < 32) continue; }                   /* MT: all K>=32 cells (MT is moot at K=4) */
+        if (oop) { if (!(N >= 8 && (N & (N - 1)) == 0) || (Kl % 8) != 0) continue; }  /* OOP: pow2 N, K%8==0 */
+        else if (mt) { if (Kl < 32) continue; }              /* MT: all K>=32 cells (MT is moot at K=4) */
         else if (Kl != want_K) continue;                     /* legacy: K=BENCH_K; isolated: target_K */
         if (target_N && N != target_N) continue;             /* isolated: only this cell */
+        if (oop) {                                           /* out-of-place path: own plan + CSV schema */
+            run_oop_cell(N, (size_t)Kl, &reg, have_oopw ? &oopw : NULL, out, cool_ms, flip ^ (benched & 1));
+            benched++; pace(pace_ms); continue;
+        }
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         int nf = atoi(tok);
         if (nf < 1 || nf >= STRIDE_MAX_STAGES) { skipped++; continue; }
@@ -404,6 +515,7 @@ int main(int argc, char **argv) {
      * and wired into the plan, so the timed override path runs the inner at
      * specialized (baked-or-JIT) speed. ratio_vs_mkl is directly comparable to
      * production's vfft_perf_tuned_1d.csv (category=rader/bluestein). */
+    if (!oop)   /* primes ride the in-place override path; OOP mode is pow2-only */
     {
         static const int prime_N[] = {
             127, 251, 257, 401, 641, 1009, 2801, 4001,   /* Rader (N-1 smooth) */

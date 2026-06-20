@@ -166,6 +166,7 @@ static inline stride_plan_t *vfft_proto_plan_create_ex(
      * no-twiddle stage is moot but still wired for consistency. */
     for (int s = 0; s < nf; s++) {
         int v = variants ? variants[s] : VFFT_PROTO_VARIANT_T1S;
+        plan->variants[s] = v;   /* record actual per-stage variant for persistence */
         if (!vfft_proto_wire_stage_codelets(&plan->stages[s],
                                              factors[s], v,
                                              use_dif_forward, reg)) {

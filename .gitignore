@@ -83,3 +83,7 @@ src/dag-fft-compiler/MKLBench/_smoke.txt
 /build_tuned/benches/vt_rfft_ours
 build_tuned/benches/mb_256.txt
 *.txt
+
+# Generated wisdom files are committed — single source of truth, one folder,
+# visible to everyone (spike/rfft/c2r/bluestein/oop). Keep all wisdoms here.
+!src/dag-fft-compiler/generator/generated/*.txt

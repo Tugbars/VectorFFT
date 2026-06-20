@@ -7,16 +7,21 @@
  * MODEB-shaped only (factors+variants) and is shared with the in-place path
  * (different optima). So OOP gets its own store, mirroring rfft/c2r/c2c.
  *
- * File format — one entry per line, '#' comments and blanks ignored:
+ * File format (v2) — one entry per line, '#' comments and blanks ignored:
  *     N K kind [params...] ns
- *   kind 0 = LEAF    :  (no params)            e.g.  64   512  0            117350.0
- *   kind 1 = BAILEY2 :  R1 R2                   e.g.  1024 120  1  32 32     185550.0
- *   kind 2 = MODEB   :  nf f0 f1 ... f(nf-1)    e.g.  1024 256  2  5 4 4 4 4 4  502460.0
+ *   kind 0 = LEAF    :  (no params)                     e.g.  64 512 0 117350.0
+ *   kind 1 = BAILEY2 :  R1 R2 t1p                       e.g.  1024 120 1 32 32 1 185550.0
+ *   kind 2 = MODEB   :  nf f0..f(nf-1) v0..v(nf-1)      e.g.  1024 256 2 5 4 4 4 4 4 0 2 2 2 2 502460.0
+ *   t1p = BAILEY2 s2 twiddle variant (0=flat 1=log3).
+ *   v0..v(nf-1) = MODEB per-stage twiddle variant (0=FLAT 1=LOG3 2=T1S).
  *   ns = measured wall time (informational; the dispatcher ignores it).
  *
- * MODEB variants are not stored: the DP planner is all-T1S today, and MODEB is
- * rebuilt with variants=NULL (= T1S default in vfft_proto_plan_create). When a
- * variant-aware DP lands, add a variants column and a format version bump.
+ * v2 (this format) PERSISTS per-stage variants: MODEB is built from the in-place
+ * c2c wisdom's variant-rich (factors, variants) — FLAT/T1S/LOG3 mixed per stage,
+ * matching the in-place path — and BAILEY2 stores the tuner's flat-vs-log3 pick.
+ * (v1 dropped variants and rebuilt all-T1S; that left per-stage tuning on the
+ * table relative to the in-place engine.) MODEB is DIT-only (OOP stage 0 must be
+ * untwiddled), so DIF-preferring in-place cells fall back to native LEAF/BAILEY2.
  *
  * Lifecycle: offline calibrator (vfft_oop_plan_create_dp_best) writes this file;
  * runtime vfft_oop_plan_create_wisdom() does a pure lookup + build, no measure.
@@ -38,8 +43,10 @@ typedef struct {
     size_t K;
     int    kind;                          /* VFFT_OOP_KIND_{LEAF,BAILEY2,MODEB} */
     int    R1, R2;                        /* BAILEY2 */
+    int    t1p_variant;                   /* BAILEY2 s2: 0=flat 1=log3 */
     int    nf;                            /* MODEB */
     int    factors[STRIDE_MAX_STAGES];    /* MODEB */
+    int    variants[STRIDE_MAX_STAGES];   /* MODEB per-stage 0=FLAT 1=LOG3 2=T1S */
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
 
@@ -69,12 +76,18 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
         if (e->kind == VFFT_OOP_KIND_BAILEY2) {
             tok = strtok(NULL, " \t\n\r"); if (tok) e->R1 = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->R2 = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->t1p_variant = atoi(tok); else ok = 0;
         } else if (e->kind == VFFT_OOP_KIND_MODEB) {
             tok = strtok(NULL, " \t\n\r"); if (tok) e->nf = atoi(tok); else ok = 0;
             if (ok && (e->nf <= 0 || e->nf > STRIDE_MAX_STAGES)) ok = 0;
             for (int i = 0; ok && i < e->nf; i++) {
                 tok = strtok(NULL, " \t\n\r");
                 if (tok) e->factors[i] = atoi(tok); else ok = 0;
+            }
+            /* v2: per-stage variant codes follow the factors */
+            for (int i = 0; ok && i < e->nf; i++) {
+                tok = strtok(NULL, " \t\n\r");
+                if (tok) e->variants[i] = atoi(tok); else ok = 0;
             }
         }
         if (!ok) continue;
@@ -116,13 +129,13 @@ vfft_oop_plan_create_wisdom(int N, size_t K, const vfft_oop_wisdom_t *w,
         return p;
     }
     if (e->kind == VFFT_OOP_KIND_BAILEY2)
-        return vfft_oop_plan_create_pair(N, K, e->R1, e->R2);  /* validates pair + mask */
+        /* validates pair + mask; t1p variant is the tuner's persisted pick */
+        return vfft_oop_plan_create_pair_v(N, K, e->R1, e->R2, e->t1p_variant);
     if (e->kind == VFFT_OOP_KIND_MODEB)
-        /* OOP wisdom has NO variants column (the format drops them; the
-         * calibrator's DP is all-T1S today) → rebuild NULL = T1S. If a
-         * variant-aware DP lands, add a column, bump the format, pass them here.
-         * Helper owns construction + inner-plan teardown on failure. */
-        return _vfft_oop_make_modeb(N, K, e->factors, /*variants=*/NULL, e->nf, reg);
+        /* v2: rebuild with the PERSISTED per-stage variants (the variant-rich
+         * mix inherited from the in-place c2c wisdom), not all-T1S. Helper owns
+         * construction + inner-plan teardown on failure. */
+        return _vfft_oop_make_modeb(N, K, e->factors, e->variants, e->nf, reg);
     return NULL;
 }
 
@@ -134,11 +147,15 @@ static inline void vfft_oop_wisdom_entry_from_plan(vfft_oop_wisdom_entry_t *e,
 {
     memset(e, 0, sizeof *e);
     e->N = N; e->K = K; e->kind = p->kind; e->ns = ns;
-    if (p->kind == VFFT_OOP_KIND_BAILEY2) { e->R1 = p->R1; e->R2 = p->R2; }
+    if (p->kind == VFFT_OOP_KIND_BAILEY2) {
+        e->R1 = p->R1; e->R2 = p->R2; e->t1p_variant = p->t1p_variant;
+    }
     else if (p->kind == VFFT_OOP_KIND_MODEB && p->mb) {
         e->nf = p->mb->num_stages;
-        for (int s = 0; s < e->nf && s < STRIDE_MAX_STAGES; s++)
-            e->factors[s] = p->mb->factors[s];
+        for (int s = 0; s < e->nf && s < STRIDE_MAX_STAGES; s++) {
+            e->factors[s]  = p->mb->factors[s];
+            e->variants[s] = p->mb->variants[s];  /* recorded by plan_create_ex */
+        }
     }
 }
 
@@ -147,10 +164,11 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
 {
     fprintf(f, "%d %zu %d", e->N, e->K, e->kind);
     if (e->kind == VFFT_OOP_KIND_BAILEY2)
-        fprintf(f, " %d %d", e->R1, e->R2);
+        fprintf(f, " %d %d %d", e->R1, e->R2, e->t1p_variant);
     else if (e->kind == VFFT_OOP_KIND_MODEB) {
         fprintf(f, " %d", e->nf);
         for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->factors[s]);
+        for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->variants[s]);
     }
     fprintf(f, " %.1f\n", e->ns);
 }

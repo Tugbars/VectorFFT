@@ -91,15 +91,16 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     if (K == 0 || (K % 8u) != 0)
         return NULL;
 
-    /* Axis 2 within the native kinds: tuner picks LEAF or the best BAILEY2 pair. */
-    int r1 = 0, r2 = 0;
-    int nc = vfft_oop_tune_pairs(N, K, &r1, &r2, 0);
+    /* Axis 2 within the native kinds: tuner picks LEAF or the best BAILEY2 pair,
+     * including the s2 flat-vs-log3 t1p variant. */
+    int r1 = 0, r2 = 0, t1p = 1;
+    int nc = vfft_oop_tune_pairs_v(N, K, &r1, &r2, &t1p, 0);
     vfft_oop_plan_t *native = NULL;
     if (nc > 0) {
         if (r1 == 0)                              /* LEAF won the tuner */
             native = vfft_oop_plan_create(N, K, NULL, 0, reg);
-        else                                      /* best BAILEY2 pair */
-            native = vfft_oop_plan_create_pair(N, K, r1, r2);
+        else                                      /* best BAILEY2 pair + t1p variant */
+            native = vfft_oop_plan_create_pair_v(N, K, r1, r2, t1p);
     }
     if (native && native->kind == VFFT_OOP_KIND_LEAF)
         return native;                            /* LEAF: no contest */

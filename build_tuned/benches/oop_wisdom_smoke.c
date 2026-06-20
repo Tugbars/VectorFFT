@@ -79,7 +79,9 @@ int main(void){
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
     vfft_oop_wisdom_t w;
-    if(vfft_oop_wisdom_load(&w,"oop_wisdom.txt")!=0 && vfft_oop_wisdom_load(&w,"benches/oop_wisdom.txt")!=0){
+    if(vfft_oop_wisdom_load(&w,"../../src/dag-fft-compiler/generator/generated/oop_wisdom.txt")!=0
+       && vfft_oop_wisdom_load(&w,"oop_wisdom.txt")!=0
+       && vfft_oop_wisdom_load(&w,"benches/oop_wisdom.txt")!=0){
         printf("could not load oop_wisdom.txt (run calibrate_oop first)\n"); return 1;
     }
     printf("== OOP wisdom smoke: %d entries, pure-lookup rebuild + correctness + vs MKL ==\n", w.count);
