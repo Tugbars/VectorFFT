@@ -99,6 +99,7 @@ static int reps_for(size_t total) {
  * >1 = the dag forward is pool K-split across the worker pool (same mechanism the
  * production MT path uses); MKL gets mkl_set_num_threads(g_mt). */
 static int g_mt = 1;
+static int g_oop_mt = 0;   /* 1 = --oop --mt : K-split the OOP forward across the pool */
 
 /* one forward at g_mt threads via pool K-split. fn!=NULL => resolved (JIT/baked)
  * executor; fn==NULL => generic (override/Rader/Bluestein) executor. */
