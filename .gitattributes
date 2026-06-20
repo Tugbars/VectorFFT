@@ -13,3 +13,7 @@
 # remain fully browsable/downloadable. The decision-making code (core/ + *.ml)
 # is intentionally NOT excluded so it still counts.
 src/dag-fft-compiler/codelets/**            linguist-generated
+
+# DAG-compiler generated headers (registries, plan_executors, etc.) — also
+# machine output, not decision-making code. Excluded from the language bar.
+src/dag-fft-compiler/generator/generated/** linguist-generated
