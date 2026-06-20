@@ -63,5 +63,41 @@ int main(void)
 
     if (p) vfft_destroy(p);
     vfft_wisdom_free(w); AFR(x); AFR(orr); AFR(oii);
+
+    /* (3) STAGE 2: decouple-threshold bake-off at high rigor. Pre-warm a shared
+     *     bundle at MEASURE (so the inner-c2c + rfft cells are cached), then re-create
+     *     at PATIENT — now only the per-cell bake-off runs (fast, isolated). Expect
+     *     rfft at tiny K, stride at K>=32 (the N=256 crossover), each forward-correct. */
+    printf("-- Stage 2: r2c path bake-off (rigor=PATIENT, per-cell; VFFT_BAKEOFF_DBG for times) --\n");
+    int NN = 256, hN = NN / 2;
+    size_t Ks[] = {8, 32}; int nK = 2;
+    vfft_wisdom *bw = vfft_wisdom_load("/c/tmp/vfft_rfftcal");
+    /* No pre-warm: each PATIENT create calibrates BOTH sides at PATIENT first (a fair
+     * bake-off needs both the rfft cell and the stride inner-c2c tuned at the same rigor). */
+    for (int ki = 0; ki < nK; ki++) {
+        size_t kk = Ks[ki];
+        vfft_config_t bc = {.transform = VFFT_R2C, .placement = VFFT_OUTOFPLACE, .rigor = VFFT_PATIENT,
+                            .dims = 1, .n = {NN, 0}, .howmany = kk, .nthreads = 1, .wisdom = bw};
+        vfft_plan bp = vfft_create(&bc);
+        const char *path = (bp && bp->rplan) ? (bp->rplan->path == VFFT_R2C_PATH_RFFT ? "rfft" : "STRIDE") : "?";
+        size_t isz = (size_t)NN * kk, osz = (size_t)(hN + 1) * kk;
+        double *bx = AAL(isz * 8), *brr = AAL(osz * 8), *bii = AAL(osz * 8);
+        srand(5 + (int)kk); for (size_t i = 0; i < isz; i++) bx[i] = (double)rand() / RAND_MAX - 0.5;
+        double be = -1;
+        if (bp) {
+            vfft_execute(bp, VFFT_FORWARD, bx, NULL, brr, bii);
+            be = 0;
+            for (int k = 0; k <= hN; k++) {
+                double rr = 0, ri = 0;
+                for (int n = 0; n < NN; n++) { double a = -2.0 * M_PI * k * n / (double)NN; rr += bx[(size_t)n*kk]*cos(a); ri += bx[(size_t)n*kk]*sin(a); }
+                double er = fabs(brr[(size_t)k*kk] - rr), ei = fabs(bii[(size_t)k*kk] - ri);
+                if (er > be) be = er; if (ei > be) be = ei;
+            }
+        }
+        printf("  N=256 K=%-3zu  path=%-6s  fwd_err=%.0e  %s\n", kk, path, be,
+               (be >= 0 && be < 1e-9) ? "OK" : "CHECK");
+        if (bp) vfft_destroy(bp); AFR(bx); AFR(brr); AFR(bii);
+    }
+    vfft_wisdom_free(bw);
     return 0;
 }
