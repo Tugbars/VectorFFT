@@ -28,7 +28,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../core/plan.h"   /* stride_plan_t, vfft_proto_exec_fn, lookup_fwd_avx2 */
+#include "plan_executors.h"   /* stride_plan_t, vfft_proto_exec_fn, lookup_fwd/bwd_avx2
+                               * — the self-contained generated header; resolved by
+                               * the in-tree build's core -I walk (DAG_GEN). */
 
 #if defined(_WIN32)
   #include <windows.h>
@@ -83,6 +85,9 @@
 #endif
 #ifndef VFFT_PROTO_JIT_INC          /* dir of emit_jit.py + jit_prelude.h (also -I) */
 #define VFFT_PROTO_JIT_INC  VFFT_PROTO_JIT_REPO "/jit"
+#endif
+#ifndef VFFT_PROTO_JIT_GENINC       /* dir of plan_executors.h (jit_prelude.h pulls it) */
+#define VFFT_PROTO_JIT_GENINC  VFFT_PROTO_JIT_REPO "/generator/generated"
 #endif
 #ifndef VFFT_PROTO_JIT_VERSION      /* bump to invalidate the on-disk cache */
 #define VFFT_PROTO_JIT_VERSION 2
@@ -161,12 +166,13 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa,
             VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, plan->N, plan->K, facs, vars,
             plan->use_dif_forward ? "dif" : "dit", dir, isa, src);
         if (system(cmd) != 0) return NULL;
-        /* compile to a shared lib; -I so jit_prelude.h resolves */
+        /* compile to a shared lib; -I<jit> so jit_prelude.h resolves, -I<generated>
+         * so the plan_executors.h it pulls resolves (core tree moved to src/core/). */
         snprintf(cmd, sizeof cmd,
-            "%s %s -I%s "
+            "%s %s -I%s -I%s "
             "-Wno-unused-function -Wno-incompatible-pointer-types -Wno-unused-result "
             "%s %s -o %s",
-            VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_CFLAGS, VFFT_PROTO_JIT_INC,
+            VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_CFLAGS, VFFT_PROTO_JIT_INC, VFFT_PROTO_JIT_GENINC,
             src, VFFT_PROTO_JIT_CODELETS, lib);
         if (system(cmd) != 0) return NULL;
     }

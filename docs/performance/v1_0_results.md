@@ -71,8 +71,8 @@ as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_per
 > **At T=8, VectorFFT beats MKL on 129/129 cells (K≥32) — median 3.76× (K=32: 3.00×, K=256: 4.38×),
 > up to 41.9× at tiny N where MKL can't usefully thread the batch.** Our split, lane-batched layout
 > makes K independent transforms trivially parallel (no barriers); MKL's batched split-mode threading
-> scales poorly at modest N. These use the **generic** executor (JIT pending the post-core-move fix) —
-> a conservative floor; JIT widens the margin.
+> scales poorly at modest N. These use the **generic** executor — a conservative floor (JIT is wired
+> and bit-exact again post-core-move; re-running with `--jit` widens the margin).
 
 ### Out-of-place — vs MKL (single-thread)
 
@@ -127,8 +127,8 @@ follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards cor
 
 > **Out-of-place at T=8, VectorFFT beats MKL on 31/31 cells — median 2.80×, up to 45.8× at tiny N.**
 > The huge small-N margins are where MKL can't usefully thread the batch; the steady mid/high-N MODEB
-> wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT pending); BAILEY2 MT is a
-> follow-up — both are conservative floors.
+> wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT wired + bit-exact, not yet
+> re-run here); BAILEY2 MT is a follow-up — both are conservative floors.
 
 ## 2. vs FFTW3 — single-thread
 

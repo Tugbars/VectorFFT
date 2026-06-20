@@ -14,10 +14,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "../core/env.h"
-#include "../core/executor.h"
-#include "../core/planner.h"
-#include "../generator/generated/registry.h"
+#include "env.h"        /* core tree moved to src/core/ — bare includes, resolved */
+#include "executor.h"   /* by the build's recursive core -I walk */
+#include "planner.h"
+#include "registry.h"
 #include "jit_runtime.h"
 
 #if defined(_WIN32)
