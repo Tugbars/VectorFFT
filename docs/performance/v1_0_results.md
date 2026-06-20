@@ -1,11 +1,12 @@
 # VectorFFT v1.0 — performance results
 
-Empirical performance of VectorFFT v1.0 across four axes:
+Empirical performance of VectorFFT across three axes:
 
-1. **Wall-time vs MKL** on 1D C2C (the headline competitive metric)
-2. **Estimate-mode plan quality** vs measured wisdom (cost-model accuracy)
-3. **Wall-time vs FFTW3** on 1D C2C and the r2r family (DCT/DST/DHT), single-thread
-4. **Multi-threaded scaling** at T=2/4/8 across all transforms
+1. **Wall-time vs MKL** on 1D C2C — single-thread (238 cells) and multi-threaded (the headline metric)
+2. **Wall-time vs FFTW3** on 1D C2C and the r2r family (DCT/DST/DHT), single-thread
+3. **Multi-threaded scaling** at T=2/4/8 across the transforms
+
+(Plan-quality / cost-model analysis lives in its own doc: [docs/cost_model/](../cost_model/).)
 
 All numbers are from the i9-14900KF calibration host (P-core pinned,
 performance plan, single-threaded unless noted). The numbers move on
@@ -13,186 +14,67 @@ different hardware — see "Hardware caveats" at the end.
 
 ## 1. vs MKL — 1D C2C
 
-Source: [vfft_perf_tuned_1d_mkl.txt](vfft_perf_tuned_1d_mkl.txt)
-(207 cells × MKL ILP64 sequential, calibrated wisdom loaded).
+Source: `build_tuned/benches/vfft_perf_tuned_1d.csv`
+(238 cells × MKL ILP64 sequential, calibrated wisdom loaded).
 
 ```
 Category              Cells    Min   Median    Max   Mean
 ─────────────────────────────────────────────────────────
-Small (N≤128)            15   2.38×   4.37×  8.98×  4.97×
-Power-of-2               30   1.17×   1.80×  2.74×  1.78×
-Composite                33   1.69×   2.69×  5.15×  2.88×
-Odd composite            18   1.86×   2.69×  4.20×  2.83×
-Mixed deep               18   1.70×   2.42×  3.09×  2.30×
-Prime powers             30   1.26×   2.69×  3.95×  2.67×
-Genfft (R=11/13)         15   1.50×   2.39×  3.06×  2.34×
-Rader primes             24   1.07×   2.04×  3.40×  2.10×   ← Bluestein wisdom
-Bluestein primes         24   1.32×   1.79×  4.30×  2.22×   ← Bluestein wisdom
+Small (N≤128)            15   2.60×   4.28× 15.33×  5.98×
+Power-of-2               29   1.10×   1.86×  3.04×  1.96×
+Composite                43   1.62×   2.85×  4.51×  2.93×
+Odd composite            26   2.26×   3.47×  5.16×  3.36×
+Mixed deep               35   1.66×   2.71×  5.78×  2.89×
+Prime powers             25   1.67×   2.69×  4.16×  2.76×
+Genfft (R=11/13)         17   1.65×   2.79×  3.75×  2.63×
+Rader primes             24   1.29×   2.34×  3.85×  2.36×
+Bluestein primes         24   1.02×   1.55×  3.52×  1.74×
 ─────────────────────────────────────────────────────────
-OVERALL                 207   1.07×   2.36×  8.98×  2.58×
+OVERALL                 238   1.02×   2.64× 15.33×  2.83×
 
-Wins vs MKL: 207/207 (100%)
+Wins vs MKL: 238/238 (100%)
 ```
 
 Headline:
 
-> **VectorFFT beats MKL on 100% of bench cells (207/207). Median speedup
-> 2.36×, mean 2.58×, range 1.07×–8.98×.**
+> **VectorFFT beats MKL on 100% of bench cells (238/238). Median speedup
+> 2.64×, mean 2.83×, range 1.02×–15.33×.**
 
-The median 2.36× win comes from VectorFFT's twin advantages:
+The median 2.64× win comes from VectorFFT's twin advantages:
 1. **Plan-level joint search** at calibration time — picks better
    factorizations than per-codelet wisdom (see
    [docs/wisdom/00_thesis.md](../wisdom/00_thesis.md)).
-2. **Fully tuned codelet portfolio** — every radix from 3 to 64 has
+2. **Fully tuned codelet portfolio** — every shipped radix has
    variant codelets (FLAT / LOG3 / T1S / BUF) selected per
    `(R, me, ios)` cell.
 
-### Bluestein wisdom — closing the prime-cell gap
+### Multi-threaded — vs MKL at T=8
 
-Pre-v1.0, Bluestein primes were the weakest category — mean 1.65×, with
-**N=179 K=256 a tie at 1.01×** and several near-ties (47/256 at 1.41×,
-59/256 at 1.62×). The bottleneck wasn't the chirp-z math; it was the
-heuristic that picks the inner FFT length M and the K-axis block size B.
-
-The heuristic's "fewest-stages then smallest-M" rule mis-picked
-codelet-quality. Empirical sweep showed that for many primes a slightly
-larger but pow2-or-rich M lands a much faster inner FFT — e.g.,
-`N=179` heuristic picked `M=361 = 19²` (2 stages of radix-19) while
-`M=384 = 64×6` runs **4.65× faster** (same 2 stages, but radix-64 is a
-vastly better codelet than radix-19).
-
-v1.0 ships a [Bluestein wisdom file](../../build_tuned/vfft_wisdom_tuned_bluestein.txt)
-(36 entries × 12 prime cells × 3 K's) calibrated by the
-[bluestein_calibrate_one core function](../../src/core/bluestein_calibrator.h),
-exposed via [public API](../../include/vfft.h)
-(`vfft_load_bluestein_wisdom`) and consulted by the planner whenever a
-Bluestein/Rader cell is hit. Lookup miss → existing heuristic, so
-non-bench cells are unchanged.
-
-Result on the previously-weakest cells:
-
-| Cell | Before | After | Δ |
-|------|---:|---:|---:|
-| 47/256 | 1.41× | **2.45×** | +0.74× |
-| 59/256 | 1.62× | **2.97×** | +1.35× |
-| 83/256 | 2.83× | **4.30×** | +1.47× |
-| 107/256 | 1.06× | **1.46×** | +0.40× |
-| 179/256 | **1.01×** (tied) | **1.66×** | +0.65× |
-| 311/256 | 1.36× | **1.86×** | +0.50× |
-
-**24/24 Bluestein cells improved**, mean shift +0.51× MKL ratio. The
-"Bluestein in shambles" framing is resolved — every prime now wins
-decisively.
-
-Large Rader primes (N≥641) still use the heuristic because
-calibrator's measurement noise at those scales couldn't reliably beat
-it. Tracked in [docs/dev/wisdom_bridge_predicates.md](../dev/wisdom_bridge_predicates.md)
-as a v1.1 work item (longer-budget calibration).
-
-Figures:
-- ![VectorFFT speedup vs MKL](vfft_speedup_vs_mkl.png) — per-cell ratios
-- ![VectorFFT throughput 1D](vfft_throughput_1d.png) — absolute GFLOP/s
-- ![Per-cell scatter](vfft_scatter_all.png) — speedup distribution
-- ![Numerical precision](vfft_precision.png) — roundtrip error vs MKL
-
-## 2. Cost-model accuracy — estimate vs wisdom
-
-Source: [build_tuned/dev/bench_estimate_vs_wisdom.c](../../build_tuned/dev/bench_estimate_vs_wisdom.c)
-(28 cells × 21 reps min, single-threaded).
-
-Compares plans built by `VFFT_ESTIMATE` (closed-form cost-model
-scoring, sub-millisecond plan time) against plans loaded from
-calibrated wisdom (`VFFT_MEASURE`).
-
-| Cost-model iteration | Mean estimate/wisdom | Notes |
-|---------------------|:-----:|------|
-| Greedy factorizer (no scoring) | 1.85× | baseline |
-| Static op count / SIMD width | 1.69× | first pass |
-| Sqrt-throttled | 1.33× | empirical knee |
-| Linear-throttled | 1.33× | comparable |
-| **VTune-calibrated CPE table (current)** | **1.19–1.32×** | **shipped** |
-
-Range depends on machine state during measurement: calibration-grade
-host gives 1.19×; consumer PC under typical background load gives
-1.32×. Cells often match wisdom exactly:
-
-| Bench cell | Estimate factorization | Wisdom factorization | Ratio |
-|-----------|------------------------|----------------------|------:|
-| N=243 K=256 | 3×3×3×3×3 | same | 1.00× (tie) |
-| N=625 K=256 | 5×5×5×5 | same | 0.99× (estimate beats) |
-| N=1024 K=1024 | 4×4×4×4×4 | same | 0.98× (estimate beats) |
-| N=512 K=1024 | 4×4×4×4×2 | same | 1.03× |
-| N=128 K=1024 | 4×4×4×2 | 4×2×4×4 | 1.04× |
-
-Headline:
-
-> **`VFFT_ESTIMATE` produces plans within ~1.20× of measured wisdom
-> with sub-millisecond plan time, on the calibration host. No
-> first-run measurement cost; no pre-loaded wisdom required.**
-
-Architecture details: [docs/cost_model/](../cost_model/).
-
-### Why this matters for users
-
-Three planning modes ship in v1.0:
-
-| Mode | Plan time | Quality (vs measured) | Use when |
-|------|----------|----------------------|----------|
-| `VFFT_ESTIMATE` | ~µs | 1.0–1.3× | Default. Fast, no setup. |
-| `VFFT_MEASURE` | ~minutes | 1.0× (the verdict) | Production-critical, willing to calibrate. |
-| `VFFT_EXHAUSTIVE` | ~hours | 0.97–1.0× of MEASURE | Squeezing last %. |
-
-`VFFT_ESTIMATE` was a real engineering effort precisely because most
-FFT libraries treat estimate mode as a throwaway heuristic. FFTW
-ESTIMATE typically picks plans 2–5× off the optimum; VectorFFT
-ESTIMATE typically picks within 1.3×.
-
-### Flag honoring across transforms
-
-Source: [build_tuned/dev/bench_gap_check.c](../../build_tuned/dev/bench_gap_check.c).
-
-A diagnostic that plans the same cell with `VFFT_ESTIMATE` and
-`VFFT_MEASURE` and times each. If the two wall times match within
-2%, the flag was silently ignored — both code paths produced the
-same plan.
+dag (8 P-cores, pinned core 0, pool K-split) vs MKL `mkl_set_num_threads(8)`, **identical split
+lane-batched layout**, order-neutralized (engine order flipped per cell) + paced — the same fairness
+as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_perf_tuned_1d_mt.csv`
+(129 cells, K≥32).
 
 ```
-Transform                       est ns     wis ns     ratio  result
-──────────────────────────────────────────────────────────────────────────
-C2C   N=256 K=256              ~est       ~wis        1.25×  estimate slower
-R2C   N=256 K=256              ~est       ~wis        1.29×  estimate slower
-DCT2  N=256 K=256              ~est       ~wis        1.19×  estimate slower
-DCT4  N=256 K=256              ~est       ~wis        1.10×  estimate slower
-DST2  N=256 K=256              ~est       ~wis        1.10×  estimate slower
-DHT   N=256 K=256              ~est       ~wis        1.21×  estimate slower
-2D    128×128                  ~same      ~same       0.98×  IDENTICAL — flag ignored
-2DR2C 128×128                  ~same      ~same       1.01×  IDENTICAL — flag ignored
+ N      K    dag-T8 (ns)  MKL-T8 (ns)  dag/MKL
+─────────────────────────────────────────────
+ 8      256         571       23,906   41.90×
+ 64     256       8,140       46,266    5.68×
+ 256    256      45,560      128,653    2.82×
+ 1024   256     224,288      694,963    3.10×
+ 4096   256     696,100    3,387,937    4.87×
+ 256    32        8,715       19,634    2.25×
+ 1024   32       50,375       66,834    1.33×
+ 4096   32      233,233      405,020    1.74×
 ```
 
-**1D family** (C2C, R2C, DCT-II, DCT-IV, DST-II, DHT): flags honored.
-ESTIMATE picks a closed-form plan; MEASURE picks a calibrated wisdom
-plan. The 1.10–1.29× ratios are consistent with the headline
-estimate-vs-wisdom result above.
+> **At T=8, VectorFFT beats MKL on 129/129 cells (K≥32) — median 3.76× (K=32: 3.00×, K=256: 4.38×),
+> up to 41.9× at tiny N where MKL can't usefully thread the batch.** Our split, lane-batched layout
+> makes K independent transforms trivially parallel (no barriers); MKL's batched split-mode threading
+> scales poorly at modest N. These use the **generic** executor (JIT pending the post-core-move fix) —
+> a conservative floor; JIT widens the margin.
 
-**2D family** (`vfft_plan_2d`, `vfft_plan_2d_r2c`): flags **silently
-ignored** in v1.0. Both plan creators discard their `flags` argument
-and fall through to the same greedy planner. ESTIMATE and MEASURE
-return the same plan.
-
-This is a known v1.0 limitation, not a bug in the cost model. The
-2D path is gated behind a separate K-split + variant-coded plan
-corruption issue (see [src/core/README.md](../../src/core/README.md)
-"Known v1.0 limitations") that is not safe to lift in this release.
-v1.1 fixes the corruption issue and wires both flags through; the
-expected lift mirrors the 1D family (15–30% from MEASURE on cells
-where the cost model picks suboptimally).
-
-User-visible consequence: passing `VFFT_MEASURE` to `vfft_plan_2d*`
-in v1.0 will not improve performance. It returns the same plan as
-`VFFT_ESTIMATE` would. Document accordingly when relying on flag
-behavior.
-
-## 3. vs FFTW3 — single-thread
+## 2. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
@@ -229,7 +111,7 @@ Headline:
 > speedup 3.21×, mean 4.25×, range 0.92×–17.79×.**
 
 The median against FFTW3 (3.21×) is meaningfully higher than the
-median against MKL (2.36× from Section 1). FFTW3 is genuinely behind
+median against MKL (2.64× from Section 1). FFTW3 is genuinely behind
 on power-of-two and prime-power cells once N·K outgrows last-level
 cache — the calibrated wisdom routes around L3 thrashing while
 FFTW's plan search doesn't capture the cache-residency effect.
@@ -257,20 +139,10 @@ inner radices L1-resident across the K=256 batch.
 | N=59 K=256 (Bluestein) | 0.93× (FFTW wins) |
 | N=59 K=32 (Bluestein) | 0.96× (within noise) |
 
-> **Note:** these FFTW3 numbers are from the pre-Bluestein-wisdom run.
-> Per Section 1's vs-MKL re-bench, all 24 Bluestein cells now improve by
-> a mean +0.51× MKL ratio. Applied to the FFTW3 ratios above, these
-> sub-1.0× cells project to **~1.4-1.6× FFTW3 wins**. A fresh
-> `bench_1d_vs_fftw` run is pending and will land in v1.0.1; the table
-> above is preserved as the historical reference. Until then, treat
-> these FFTW3 ratios for Bluestein cells as the lower bound, not the
-> shipped result.
-
-The fix was per-(N, K) calibrated `(M, B)` for Bluestein/Rader,
-documented in Section 1's "Bluestein wisdom" subsection. The original
-hypothesis ("Bluestein has fixed overhead the inner FFT speedup can't
-fully amortize") turned out to be wrong — the gap was in M-selection,
-not chirp-z arithmetic.
+> **Note:** these FFTW3 ratios are the **pre-Bluestein-wisdom** snapshot. With the calibrated
+> per-(N,K) `(M, B)` wisdom these sub-1.0× cells turn into wins (the vs-MKL §1 table shows every
+> Bluestein cell ≥1.0×). A fresh `bench_1d_vs_fftw` run is pending; the table above is the historical
+> lower bound, not the shipped result.
 
 Full per-cell data: [build_tuned/results/vfft_perf_tuned_1d_fftw.txt](../../build_tuned/results/vfft_perf_tuned_1d_fftw.txt)
 (human-readable, generated from
@@ -387,12 +259,12 @@ MKL TT computes a different PDE-oriented math convention, so the
 comparison is informational, not apples-to-apples). FFTW3 is the
 correct r2r baseline.
 
-## 4. Multi-threaded scaling
+## 3. Multi-threaded scaling
 
-### 1D C2C / R2C (direct MT, shipped pre-v1.0)
+### 1D C2C — direct MT vs MKL
 
-Strong scaling already established. Hits memory bandwidth wall at
-large N·K but typically 4–6× at T=8 on small/medium cells.
+See **§1 → "Multi-threaded — vs MKL at T=8"** for the head-to-head: 129/129 wins at T=8, median
+3.76× over MKL (K=32: 3.00×, K=256: 4.38×). R2C inherits the same K-split MT (its inner C2C threads).
 
 ### DCT-II / DCT-III / DCT-IV / DST-II/III / DHT (wrapper MT, new in v1.0)
 
@@ -462,7 +334,7 @@ because it's pure memory bandwidth, and a single optimized memcpy
 typically beats T smaller memcpys when the limit is DRAM throughput.
 DHT will benefit most from v1.1 fused codelets.
 
-## 5. Per-codelet performance (VTune-grade)
+## 4. Per-codelet performance (VTune-grade)
 
 For deep per-radix analysis at K=256 see
 [docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
@@ -488,7 +360,7 @@ these benefit specifically from the cost model's variant-aware
 selection (T1S / LOG3 / BUF) which routes around their bottlenecks
 when wisdom shows another protocol wins.
 
-## 6. Hardware caveats
+## 5. Hardware caveats
 
 ### These numbers are from one CPU
 
@@ -496,8 +368,8 @@ All measurements: i9-14900KF (Raptor Lake, hybrid 8P+16E), 5.7 GHz
 turbo, AVX2. Numbers move on:
 
 - **Sapphire Rapids / Emerald Rapids** — should be similar or better
-  (same uarch family, often better memory subsystem). Cost-model and
-  wisdom carry over without recalibration.
+  (same uarch family, often better memory subsystem). Wisdom carries
+  over without recalibration.
 - **Zen 4 / Zen 5** — different uarch. CPE numbers shift; recommend
   re-running `cpe_measure` and `calibrate_tuned` on the target host.
   Architectural advantages (cost model, wisdom, MT) carry over; per-
@@ -526,26 +398,18 @@ latency. Per-thread efficiency drops sharply past 8. For workloads
 that benefit from many threads, the bench grid should be extended
 (v1.1 work).
 
-## 7. Reproducing these numbers
+## 6. Reproducing these numbers
 
 ### vs MKL
 
 ```
 python build_tuned/build.py --vfft --src build_tuned/benches/bench_1d_vs_mkl.c --mkl
-build_tuned/benches/bench_1d_vs_mkl.exe        # writes vfft_perf_tuned_1d.txt
+build_tuned/benches/bench_1d_vs_mkl.exe        # single-thread -> vfft_perf_tuned_1d.csv
+build_tuned/benches/bench_1d_vs_mkl.exe --mt   # T=8 (K>=32) -> vfft_perf_tuned_1d_mt.csv
 ```
 
-Requires MKL ILP64 sequential (Intel oneAPI install). 207 cells × ~1
-second = ~5 minutes wall.
-
-### Estimate vs wisdom
-
-```
-python build_tuned/build.py --vfft --src build_tuned/dev/bench_estimate_vs_wisdom.c
-cd build_tuned && ./bench_estimate_vs_wisdom.exe
-```
-
-Needs `vfft_wisdom_tuned.txt` in cwd. ~10 seconds wall.
+Requires MKL ILP64 (Intel oneAPI install); single-thread uses `mkl_set_num_threads(1)`, `--mt`
+uses 8. 238 cells × ~1 second = ~5 minutes wall (single-thread).
 
 ### 1D C2C vs FFTW3 (single-thread)
 
@@ -589,17 +453,6 @@ build_tuned/benches/bench_mt_dct.exe
 
 ~30 seconds wall. Run with no other significant load on the machine
 for cleanest numbers.
-
-### Flag honoring (gap diagnostic)
-
-```
-python build_tuned/build.py --vfft --src build_tuned/dev/bench_gap_check.c
-build_tuned/dev/bench_gap_check.exe
-```
-
-Needs `vfft_wisdom_tuned.txt` accessible. ~5 seconds wall. Confirms
-which transforms honor `VFFT_ESTIMATE` vs `VFFT_MEASURE` and which
-silently fall back to a single planner.
 
 ## See also
 

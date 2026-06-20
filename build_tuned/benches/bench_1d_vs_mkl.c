@@ -39,6 +39,7 @@
 #include <time.h>
 
 #include "executor.h"
+#include "threads.h"             /* pool K-split for --mt (set/get threads, dispatch) */
 #include "env.h"                 /* stride_env_init + stride_pin_thread */
 #include "planner.h"
 #include "dp_planner.h"          /* vfft_proto_now_ns */
@@ -92,16 +93,49 @@ static int reps_for(size_t total) {
     return r;
 }
 
-/* time the resolved (JIT/baked) forward executor — direct fn call, no lookup */
+/* MT thread count (--mt). 1 = single-thread (legacy path, byte-identical timing).
+ * >1 = the dag forward is pool K-split across the worker pool (same mechanism the
+ * production MT path uses); MKL gets mkl_set_num_threads(g_mt). */
+static int g_mt = 1;
+
+/* one forward at g_mt threads via pool K-split. fn!=NULL => resolved (JIT/baked)
+ * executor; fn==NULL => generic (override/Rader/Bluestein) executor. */
+typedef struct { vfft_proto_exec_fn fn; const stride_plan_t *p; double *re, *im; size_t k0, S; } _mt_arg;
+static void _mt_tramp(void *a) {
+    _mt_arg *x = (_mt_arg *)a;
+    if (x->fn) x->fn(x->p, x->re + x->k0, x->im + x->k0, x->S, x->p->K, 0);
+    else       vfft_proto_execute_fwd((stride_plan_t *)x->p, x->re + x->k0, x->im + x->k0, x->S);
+}
+static void dag_fwd_mt(vfft_proto_exec_fn fn, const stride_plan_t *p, double *re, double *im) {
+    size_t K = p->K; int T = g_mt;
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T <= 1 || K < 8) {
+        if (fn) fn(p, re, im, K, p->K, 0);
+        else    vfft_proto_execute_fwd((stride_plan_t *)p, re, im, K);
+        return;
+    }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7; _mt_arg a[64]; int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        size_t k0 = (size_t)t * S; if (k0 >= K) break; size_t ke = k0 + S; if (ke > K) ke = K;
+        a[nd] = (_mt_arg){ fn, p, re, im, k0, ke - k0 };
+        _stride_pool_dispatch(&_stride_workers[nd], _mt_tramp, &a[nd]); nd++;
+    }
+    size_t s0 = S < K ? S : K;
+    if (fn) fn(p, re, im, s0, p->K, 0); else vfft_proto_execute_fwd((stride_plan_t *)p, re, im, s0);
+    if (nd) _stride_pool_wait_all();
+}
+
+/* time the dag forward (single- or multi-threaded per g_mt) — 10 warmup, best-of-5. */
 static double bench_jit(vfft_proto_exec_fn fn, const stride_plan_t *plan,
                         double *re, double *im, size_t K, size_t total) {
-    for (int w = 0; w < 10; w++) fn(plan, re, im, K, plan->K, 0);
+    (void)K;
+    for (int w = 0; w < 10; w++) dag_fwd_mt(fn, plan, re, im);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
         if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++) fn(plan, re, im, K, plan->K, 0);
+        for (int i = 0; i < reps; i++) dag_fwd_mt(fn, plan, re, im);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
@@ -109,13 +143,14 @@ static double bench_jit(vfft_proto_exec_fn fn, const stride_plan_t *plan,
 }
 static double bench_generic(stride_plan_t *plan, double *re, double *im,
                             size_t K, size_t total) {
-    for (int w = 0; w < 10; w++) vfft_proto_execute_fwd(plan, re, im, K);
+    (void)K;
+    for (int w = 0; w < 10; w++) dag_fwd_mt(NULL, plan, re, im);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++) {
         if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(plan, re, im, K);
+        for (int i = 0; i < reps; i++) dag_fwd_mt(NULL, plan, re, im);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best) best = ns;
     }
@@ -229,9 +264,18 @@ static void measure_ab(double *vns_out, double *mns_out,
 }
 
 int main(int argc, char **argv) {
+    /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
+     * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
+     * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
+    int mt = 0;
+    if (argc >= 2 && strcmp(argv[1], "--mt") == 0) {
+        mt = 1; argv++; argc--;
+        const char *e = getenv("VFFT_MT"); g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
+    }
     const char *wpath = (argc >= 2) ? argv[1]
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
-    const char *csv   = (argc >= 3) ? argv[2] : "vfft_perf_tuned_1d.csv";
+    const char *csv   = (argc >= 3) ? argv[2]
+        : (mt ? "vfft_perf_tuned_1d_mt.csv" : "vfft_perf_tuned_1d.csv");
     int pace_ms       = (argc >= 4) ? atoi(argv[3]) : 300;
     /* ISOLATED single-cell mode: target_N>0 benches ONLY cell (target_N,target_K)
      * in this (fresh) process — run_bench.py drives one cell per process, killing
@@ -241,15 +285,17 @@ int main(int argc, char **argv) {
     long target_K     = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms       = (argc >= 7) ? atoi(argv[6]) : 0;   /* inter-engine idle (order-bias fix) */
     int flip          = (argc >= 8) ? atoi(argv[7]) : 0;   /* 1 = MKL first (alternate per cell) */
-    int core          = (argc >= 9) ? atoi(argv[8]) : -1;  /* pin core (-1 = no pin) */
+    int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : -1);  /* MT pins core 0 */
     { const char *tp = getenv("VFFT_TRIAL_PACE_MS"); g_trial_pace_ms = tp ? atoi(tp) : 0; }
+    if (mt) target_N = 0;   /* MT mode = full in-process sweep over the wisdom cells */
 
     stride_env_init();
     if (core >= 0 && stride_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
+    if (mt) stride_set_num_threads(g_mt);   /* size the worker pool for K-split */
 
 #ifdef VFFT_HAS_MKL
-    mkl_set_num_threads(1);
+    mkl_set_num_threads(mt ? g_mt : 1);
 #endif
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
 
@@ -259,7 +305,10 @@ int main(int argc, char **argv) {
     if (out && !target_N) fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
 
     if (!target_N) {
-        printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
+        if (mt)
+            printf("=== dag vs MKL — 1D C2C fwd, MULTITHREADED (%d threads, K>=32 cells, core0-pinned; pace=%dms) ===\n", g_mt, pace_ms);
+        else
+            printf("=== dag JIT vs MKL — 1D C2C fwd, K=%d (calibrated cells; pace=%dms) ===\n", BENCH_K, pace_ms);
         printf("%-8s %-16s %-7s %12s %12s %8s %7s %10s\n",
                "N", "plan", "path", "vfft_ns", "mkl_ns", "vGFLOP", "ratio", "rt_err");
         printf("---------+----------------+-------+------------+------------+--------+-------+----------\n");
@@ -275,7 +324,8 @@ int main(int argc, char **argv) {
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         long Kl = atol(tok);
         long want_K = target_N ? target_K : (long)BENCH_K;
-        if (Kl != want_K) continue;                          /* legacy: K=BENCH_K; isolated: target_K */
+        if (mt) { if (Kl < 32) continue; }                   /* MT: all K>=32 cells (MT is moot at K=4) */
+        else if (Kl != want_K) continue;                     /* legacy: K=BENCH_K; isolated: target_K */
         if (target_N && N != target_N) continue;             /* isolated: only this cell */
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         int nf = atoi(tok);
@@ -299,7 +349,7 @@ int main(int argc, char **argv) {
             variants[i] = tok ? atoi(tok) : 2;
         }
 
-        size_t K = (size_t)(target_N ? target_K : BENCH_K);   /* isolated: batch at target_K */
+        size_t K = mt ? (size_t)Kl : (size_t)(target_N ? target_K : BENCH_K);  /* MT: cell's own K */
         char plan_s[64]; format_plan(plan_s, sizeof plan_s, factors, nf, use_dif);
 
         if ((size_t)N * K > (size_t)MAX_TOTAL_ELEMS) {
@@ -330,7 +380,7 @@ int main(int argc, char **argv) {
         double rel = roundtrip_err(fn, plan, N, K, src_re, src_im, total);
 
         double vns = 0, mns = 0;
-        measure_ab(&vns, &mns, fn, plan, N, K, total, src_re, src_im, cool_ms, flip);
+        measure_ab(&vns, &mns, fn, plan, N, K, total, src_re, src_im, cool_ms, mt ? (flip ^ (benched & 1)) : flip);
         double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
         double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
 
@@ -359,7 +409,7 @@ int main(int argc, char **argv) {
             127, 251, 257, 401, 641, 1009, 2801, 4001,   /* Rader (N-1 smooth) */
              47,  59,  83, 107,  167,  179,  263,  311,   /* Bluestein */
         };
-        size_t K = (size_t)(target_N ? target_K : BENCH_K);
+        size_t K = mt ? 256 : (size_t)(target_N ? target_K : BENCH_K);  /* MT: large batch */
         /* CT wisdom so the inner FFT rides the MEASURED-best plan (dispatch forwards
          * it to vfft_proto_auto_plan); else the inner falls to the factorizer default. */
         vfft_proto_wisdom_t rwis;
@@ -404,7 +454,7 @@ int main(int argc, char **argv) {
             double rel = roundtrip_err(NULL, plan, N, K, src_re, src_im, total);
 
             double vns = 0, mns = 0;
-            measure_ab(&vns, &mns, NULL, plan, N, K, total, src_re, src_im, cool_ms, flip);
+            measure_ab(&vns, &mns, NULL, plan, N, K, total, src_re, src_im, cool_ms, mt ? (flip ^ (benched & 1)) : flip);
             double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
             double vgf = (vns > 0) ? 5.0 * N * log2((double)N) * (double)K / vns : 0;
             printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
