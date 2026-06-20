@@ -45,6 +45,8 @@
 #include "dct4.h"          /* DCT-IV (inner c2c of N/2)                       */
 #include "dst.h"           /* DST-II/III (wrap DCT-II)                        */
 #include "dht.h"           /* DHT (inner r2c)                                 */
+#include "fft2d.h"         /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
+#include "fft2d_r2c.h"     /* 2D r2c / c2r                                    */
 
 #include <stdlib.h>
 #include <string.h>
@@ -67,6 +69,7 @@ struct vfft_plan_s {
     vfft_transform_t transform;
     vfft_placement_t placement;
     int    N;
+    int    N2;                   /* 2D second dim (0 = 1D)    */
     size_t K;
     int    nthreads;
     stride_plan_t   *cplan;      /* c2c in-place (owned)      */
@@ -194,6 +197,30 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
     return dct2 ? stride_dst2_plan(N, K, dct2) : NULL;     /* DST-II/III wrap DCT-II */
 }
 
+/* Build a 2D plan (also a stride_plan_t). c2c = tiled-row + native-col (inner row/col
+ * built internally). r2c/c2r = row r2c (N2,B) + col c2c (N1,K_pad), inner cells on c2c
+ * wisdom. The SAME r2c plan serves both directions (fwd=2d_r2c, bwd=2d_c2r). */
+static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
+                                const vfft_proto_registry_t *reg,
+                                vfft_proto_wisdom_t *cw, int recalib) {
+    if (t == VFFT_C2C) return stride_plan_2d(N1, N2, reg);
+    if (t == VFFT_R2C || t == VFFT_C2R) {
+        if (N1 < 2 || N2 < 2 || (N2 & 1)) return NULL;
+        size_t B = 8; if (B > (size_t)N1) B = (size_t)N1;
+        size_t hp1 = (size_t)(N2 / 2 + 1), K_pad = ((hp1 + 3) / 4) * 4;
+        stride_plan_t *inner = _inner_c2c(N2 / 2, B, rigor, reg, cw, recalib);
+        stride_plan_t *pr2c  = inner ? stride_r2c_plan(N2, B, B, inner) : NULL;
+        stride_plan_t *pcol  = _inner_c2c(N1, K_pad, rigor, reg, cw, recalib);
+        if (!pr2c || !pcol) {
+            if (pr2c) stride_plan_destroy(pr2c);
+            if (pcol) stride_plan_destroy(pcol);
+            return NULL;
+        }
+        return stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol);  /* takes ownership */
+    }
+    return NULL;   /* 2D trig not wired */
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * MT EXECUTE — pool K-split over the in-place executor
  * ════════════════════════════════════════════════════════════════════════ */
@@ -227,9 +254,23 @@ vfft_plan vfft_create(const vfft_config_t *cfg) {
     stride_env_init();
     const vfft_proto_registry_t *reg = _registry();
     int N = cfg->n[0]; size_t K = cfg->howmany;
-    if (cfg->dims != 0 && cfg->dims != 1) return NULL;            /* 2D not wired yet */
+    if (cfg->dims < 0 || cfg->dims > 2) return NULL;
     if (cfg->nthreads > 0) vfft_set_num_threads(cfg->nthreads);   /* snapshot before build */
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
+
+    /* ── 2D (dims==2): n[0]=N1, n[1]=N2. c2c in-place (tiled-row + native-col);
+     * r2c/c2r out-of-place (real plane <-> N1 x (N2/2+1) split spectrum, same plan). ── */
+    if (cfg->dims == 2) {
+        int N1 = cfg->n[0], N2 = cfg->n[1];
+        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, &W->c2c, cfg->recalibrate);
+        if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+        if (!tp) return NULL;
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h) { stride_plan_destroy(tp); return NULL; }
+        h->transform = cfg->transform; h->placement = cfg->placement;
+        h->N = N1; h->N2 = N2; h->K = K; h->nthreads = stride_get_num_threads(); h->tplan = tp;
+        return h;
+    }
 
     /* ── c2c IN-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE) {
@@ -348,6 +389,22 @@ vfft_plan vfft_create(const vfft_config_t *cfg) {
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim) {
     if (!h) return;
+    if (h->N2 > 0) {   /* ── 2D (dispatch before the same-named 1D transforms) ── */
+        vfft_set_num_threads(h->nthreads);
+        if (h->transform == VFFT_C2C) {
+            /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
+            size_t plane = (size_t)h->N * h->N2;
+            if (dre != sre) memcpy(dre, sre, plane * sizeof(double));
+            if (dim != sim) memcpy(dim, sim, plane * sizeof(double));
+            if (dir == VFFT_FORWARD) stride_execute_fwd(h->tplan, dre, dim);
+            else                     stride_execute_bwd(h->tplan, dre, dim);
+        } else if (h->transform == VFFT_R2C) {
+            stride_execute_2d_r2c(h->tplan, sre, dre, dim);   /* real plane -> split spectrum */
+        } else if (h->transform == VFFT_C2R) {
+            stride_execute_2d_c2r(h->tplan, sre, sim, dre);   /* split spectrum -> real plane */
+        }
+        return;
+    }
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE) {
         vfft_set_num_threads(h->nthreads);
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0);   /* dst==src */
