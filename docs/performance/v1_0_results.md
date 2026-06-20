@@ -74,6 +74,34 @@ as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_per
 > scales poorly at modest N. These use the **generic** executor (JIT pending the post-core-move fix) —
 > a conservative floor; JIT widens the margin.
 
+### Out-of-place — vs MKL (single-thread)
+
+dag OOP c2c vs MKL `DFTI_NOT_INPLACE` split-complex, **identical layout**, order-neutralized + paced
+(same fairness as the in-place table). Two natural-order kinds (LEAF, BAILEY2 fused-transpose stores)
+and the scrambled-order MODEB (in-place dataflow run OOP; bit-exact roundtrip). Calibrated per-cell in
+**isolated processes** to avoid cross-cell carryover biasing the kind pick. Source:
+`bench_1d_vs_mkl.c --oop` → `vfft_perf_tuned_1d_oop.csv` (31 pow2 cells, K∈{32,128,256,1024}).
+
+```
+ N       K     kind     plan          dag/MKL
+──────────────────────────────────────────────
+ 8       32    LEAF     —              10.78×
+ 8       256   MODEB    8               5.67×
+ 16      32    BAILEY2  4×4             5.97×
+ 64      256   MODEB    4,4,4           2.11×   (carryover sweep mis-picked BAILEY2 → 0.77×)
+ 256     256   MODEB    4,4,16          2.09×
+ 1024    256   MODEB    4,4,4,4,4       1.57×
+ 4096    32    MODEB    4,4,4,8,8       1.63×
+ 65536   256   MODEB    4,4,8,16,32     1.40×
+──────────────────────────────────────────────
+ Min 1.37×   Median 2.01×   Max 10.78×   Mean 2.49×   Wins 31/31
+```
+
+> **Out-of-place, single-thread, VectorFFT beats MKL on 31/31 cells — median 2.01×, range
+> 1.37×–10.78×.** Small N favors the natural-order LEAF/BAILEY2 kinds; mid/high N and high K favor
+> MODEB. Per-stage variants are inherited variant-rich from the in-place wisdom (FLAT/T1S/LOG3 mixed),
+> and BAILEY2's `t1p` stage is flat-vs-log3 searched per cell.
+
 ## 2. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
