@@ -375,7 +375,7 @@ int main(int argc, char **argv) {
     int flip          = (argc >= 8) ? atoi(argv[7]) : 0;   /* 1 = MKL first (alternate per cell) */
     int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : oop ? 2 : -1);  /* MT->0, OOP->P-core 2 */
     { const char *tp = getenv("VFFT_TRIAL_PACE_MS"); g_trial_pace_ms = tp ? atoi(tp) : 0; }
-    if (mt || oop) target_N = 0;   /* MT/OOP = full in-process sweep over the wisdom cells */
+    if (mt) target_N = 0;   /* MT = full in-process sweep; OOP honors isolation (target_N,target_K) */
 
     stride_env_init();
     if (core >= 0 && stride_pin_thread(core) != 0)
@@ -430,7 +430,10 @@ int main(int argc, char **argv) {
         tok = strtok_r(NULL, " \t\n", &save); if (!tok) continue;
         long Kl = atol(tok);
         long want_K = target_N ? target_K : (long)BENCH_K;
-        if (oop) { if (!(N >= 8 && (N & (N - 1)) == 0) || (Kl % 8) != 0) continue; }  /* OOP: pow2 N, K%8==0 */
+        if (oop) {
+            if (!(N >= 8 && (N & (N - 1)) == 0) || (Kl % 8) != 0) continue;  /* OOP: pow2 N, K%8==0 */
+            if (target_N && Kl != target_K) continue;                        /* isolated: only this K */
+        }
         else if (mt) { if (Kl < 32) continue; }              /* MT: all K>=32 cells (MT is moot at K=4) */
         else if (Kl != want_K) continue;                     /* legacy: K=BENCH_K; isolated: target_K */
         if (target_N && N != target_N) continue;             /* isolated: only this cell */
