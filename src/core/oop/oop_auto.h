@@ -80,12 +80,16 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_auto(
     return NULL;
 }
 
-/* Same-binary round-robin pair tuner. Returns number of candidates
- * (0 = none unmasked), winner in *bestR1/*bestR2. */
-static inline int vfft_oop_tune_pairs(int N, size_t K,
-                                      int *bestR1, int *bestR2, int verbose)
+/* Same-binary round-robin pair tuner, variant-aware. Returns number of
+ * candidates (0 = none unmasked), winner in bestR1/bestR2 and the winning s2
+ * twiddle variant in *bestT1p (0 = flat, 1 = log3). Each divisor pair is
+ * enumerated for BOTH t1p variants — flat is FMA-leaner, log3 rebalances ports
+ * — so the per-cell winner is measured, not hardcoded. */
+static inline int vfft_oop_tune_pairs_v(int N, size_t K,
+                                        int *bestR1, int *bestR2, int *bestT1p,
+                                        int verbose)
 {
-    enum { MAXC = 17, ROUNDS = 15 };
+    enum { MAXC = 34, ROUNDS = 15 };
     vfft_oop_plan_t *cand[MAXC];
     int nc = 0;
     /* the direct leaf competes too at N <= 128 (a pair hint must never
@@ -106,9 +110,13 @@ static inline int vfft_oop_tune_pairs(int N, size_t K,
     {
         if (N % R2)
             continue;
-        vfft_oop_plan_t *p = vfft_oop_plan_create_pair(N, K, N / R2, R2);
-        if (p)
-            cand[nc++] = p;
+        /* both t1p variants for this pair (flat = 0, log3 = 1) */
+        for (int v = 0; v < 2 && nc < MAXC; v++)
+        {
+            vfft_oop_plan_t *p = vfft_oop_plan_create_pair_v(N, K, N / R2, R2, v);
+            if (p)
+                cand[nc++] = p;
+        }
     }
     if (nc == 0)
         return 0;
@@ -152,8 +160,9 @@ static inline int vfft_oop_tune_pairs(int N, size_t K,
                        best[c], (double)best[win] / best[c],
                        c == win ? "  <- winner" : "");
             else
-                printf("    %2dx%-3d %10llu cyc  speed vs winner %.3f%s\n",
-                       cand[c]->R1, cand[c]->R2, best[c],
+                printf("    %2dx%-3d %-4s %10llu cyc  speed vs winner %.3f%s\n",
+                       cand[c]->R1, cand[c]->R2,
+                       cand[c]->t1p_variant ? "log3" : "flat", best[c],
                        (double)best[win] / best[c],
                        c == win ? "  <- winner" : "");
         }
@@ -162,16 +171,26 @@ static inline int vfft_oop_tune_pairs(int N, size_t K,
     {
         *bestR1 = 0; /* leaf won: no pair hint; the rule spine handles it */
         *bestR2 = 0;
+        if (bestT1p) *bestT1p = 0;
     }
     else
     {
         *bestR1 = cand[win]->R1;
         *bestR2 = cand[win]->R2;
+        if (bestT1p) *bestT1p = cand[win]->t1p_variant;
     }
     for (int c = 0; c < nc; c++)
         vfft_oop_plan_destroy(cand[c]);
     VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
     return nc;
+}
+
+/* Back-compat wrapper: discards the t1p variant (callers that don't persist it). */
+static inline int vfft_oop_tune_pairs(int N, size_t K,
+                                      int *bestR1, int *bestR2, int verbose)
+{
+    int t1p = 1;
+    return vfft_oop_tune_pairs_v(N, K, bestR1, bestR2, &t1p, verbose);
 }
 
 #endif /* VFFT_OOP_AUTO_H */

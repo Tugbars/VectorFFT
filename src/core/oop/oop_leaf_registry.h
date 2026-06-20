@@ -31,8 +31,9 @@
 #endif
 #define VFFT_OOP_CAT5_(a,b,c,d,e) a##b##c##d##e
 #define VFFT_OOP_CAT5(a,b,c,d,e) VFFT_OOP_CAT5_(a,b,c,d,e)
-#define VFFT_OOP_N1_NAME(R)  VFFT_OOP_CAT5(radix,R,_n1_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
-#define VFFT_OOP_T1P_NAME(R) VFFT_OOP_CAT5(radix,R,_t1p_oop_fwd_,VFFT_OOP_ISA,_UG_UG_log3)
+#define VFFT_OOP_N1_NAME(R)       VFFT_OOP_CAT5(radix,R,_n1_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
+#define VFFT_OOP_T1P_NAME(R)      VFFT_OOP_CAT5(radix,R,_t1p_oop_fwd_,VFFT_OOP_ISA,_UG_UG_log3)
+#define VFFT_OOP_T1P_FLAT_NAME(R) VFFT_OOP_CAT5(radix,R,_t1p_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
 
 typedef void (*vfft_oop11_fn)(const double *, const double *,
                               double *, double *,
@@ -47,6 +48,10 @@ typedef void (*vfft_oop11_fn)(const double *, const double *,
   extern void VFFT_OOP_T1P_NAME(R)( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+#define VFFT_OOP_DECL_T1P_FLAT(R) \
+  extern void VFFT_OOP_T1P_FLAT_NAME(R)( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 
 VFFT_OOP_DECL_N1(2)  VFFT_OOP_DECL_N1(3)  VFFT_OOP_DECL_N1(4)
 VFFT_OOP_DECL_N1(5)  VFFT_OOP_DECL_N1(6)  VFFT_OOP_DECL_N1(7)
@@ -59,6 +64,9 @@ VFFT_OOP_DECL_N1(128)
 VFFT_OOP_DECL_T1P(4)  VFFT_OOP_DECL_T1P(7)  VFFT_OOP_DECL_T1P(8)
 VFFT_OOP_DECL_T1P(13) VFFT_OOP_DECL_T1P(16) VFFT_OOP_DECL_T1P(32)
 VFFT_OOP_DECL_T1P(64)
+VFFT_OOP_DECL_T1P_FLAT(4)  VFFT_OOP_DECL_T1P_FLAT(7)  VFFT_OOP_DECL_T1P_FLAT(8)
+VFFT_OOP_DECL_T1P_FLAT(13) VFFT_OOP_DECL_T1P_FLAT(16) VFFT_OOP_DECL_T1P_FLAT(32)
+VFFT_OOP_DECL_T1P_FLAT(64)
 
 static inline vfft_oop11_fn vfft_oop_leaf_fn(int R)
 {
@@ -81,6 +89,26 @@ static inline vfft_oop11_fn vfft_oop_t1p_fn(int R)
 #undef C
     default: return 0;
     }
+}
+
+/* Flat (non-log3) t1p — the FMA-leaner twiddle stage. log3 is a port rebalance
+ * that wins only when the stage is load-bound with FMA slack; on FMA-bound
+ * stages flat is faster. The BAILEY2 tuner measures both and picks per cell. */
+static inline vfft_oop11_fn vfft_oop_t1p_flat_fn(int R)
+{
+    switch (R)
+    {
+#define C(R) case R: return VFFT_OOP_T1P_FLAT_NAME(R);
+    C(4) C(7) C(8) C(13) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+}
+
+/* Unified getter: variant 0 = flat, 1 = log3. */
+static inline vfft_oop11_fn vfft_oop_t1p_fn_v(int R, int variant)
+{
+    return variant ? vfft_oop_t1p_fn(R) : vfft_oop_t1p_flat_fn(R);
 }
 
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

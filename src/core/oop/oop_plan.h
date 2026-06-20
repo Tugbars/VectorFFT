@@ -65,6 +65,7 @@ typedef struct
     /* LEAF / BAILEY2 */
     vfft_oop11_fn leaf;
     vfft_oop11_fn t1p;
+    int t1p_variant;   /* BAILEY2 s2 twiddle codelet: 0 = flat, 1 = log3 */
     int R1, R2;
     double *Qr, *Qi; /* K-replicated table, (R1-1) x (R2*K/8) */
     /* MODEB */
@@ -81,26 +82,21 @@ static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
     return (stride_doubles % 4096u == 0) && (streams > 8);
 }
 
+/* t1p_variant: 0 = flat, 1 = log3. flat is FMA-leaner; log3 is a port rebalance
+ * that wins only when the s2 stage is load-bound with FMA slack. The BAILEY2
+ * tuner (oop_auto.h) measures both per cell and the winner is persisted in OOP
+ * wisdom; callers with no preference pass 1 (log3, the historical default). */
 static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
-                                         int N, size_t K, int R1, int R2)
+                                         int N, size_t K, int R1, int R2,
+                                         int t1p_variant)
 {
     const size_t rows = (size_t)R2 * (K / VFFT_OOP_GROUPW);
     p->kind = VFFT_OOP_KIND_BAILEY2;
     p->R1 = R1;
     p->R2 = R2;
+    p->t1p_variant = t1p_variant ? 1 : 0;
     p->leaf = vfft_oop_leaf_fn(R2);
-    /* TODO (section 64, flat-vs-log3 selection): vfft_oop_t1p_fn hardcodes
-     * the LOG3 t1p codelet. log3 is NOT a strict upgrade — it is a port
-     * rebalance that spends idle FMA-port slack to relieve LOAD-port pressure
-     * (more FMA, fewer twiddle loads). It wins ONLY when this stage is
-     * load-bound with FMA slack; on an FMA-bound stage flat t1p (fewer FMA)
-     * is faster. The auto-emitted oop_codelets_t registry now exposes BOTH
-     * reg->t1p[R1] (flat) and reg->t1p_log3[R1] (log3) as distinct reachable
-     * slots, so this choice should move into the planner's port model (the
-     * cost model's memboundness signal: high -> log3, low -> flat) instead of
-     * hardcoding log3 here. Until that lands, the hardcode is the documented
-     * default, not an oversight. */
-    p->t1p = vfft_oop_t1p_fn(R1);
+    p->t1p = vfft_oop_t1p_fn_v(R1, p->t1p_variant);
     if (!p->leaf || !p->t1p)
         return -1;
     p->Qr = (double *)malloc((size_t)(R1 - 1) * rows * 8);
@@ -127,15 +123,16 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
     return 0;
 }
 
-/* Pair-explicit BAILEY2 constructor (tuner/hint path). Validates codelet
- * availability and the aliasing mask; returns NULL if the pair is invalid
- * or masked. */
-static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
-                                                         int R1, int R2)
+/* Pair-explicit BAILEY2 constructor (tuner/hint path), variant-explicit.
+ * t1p_variant: 0 = flat, 1 = log3. Validates codelet availability and the
+ * aliasing mask; returns NULL if the pair is invalid or masked. */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_pair_v(int N, size_t K,
+                                                           int R1, int R2,
+                                                           int t1p_variant)
 {
     if (K == 0 || (K % 8u) != 0 || R1 * R2 != N)
         return NULL;
-    if (!vfft_oop_leaf_fn(R2) || !vfft_oop_t1p_fn(R1))
+    if (!vfft_oop_leaf_fn(R2) || !vfft_oop_t1p_fn_v(R1, t1p_variant ? 1 : 0))
         return NULL;
     if (_vfft_oop_stage_aliases((size_t)R2 * K, R1) ||
         _vfft_oop_stage_aliases((size_t)R1 * K, R2))
@@ -145,12 +142,20 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
         return NULL;
     p->N = N;
     p->K = K;
-    if (_vfft_oop_fill_bailey(p, N, K, R1, R2) != 0)
+    if (_vfft_oop_fill_bailey(p, N, K, R1, R2, t1p_variant) != 0)
     {
         free(p);
         return NULL;
     }
     return p;
+}
+
+/* Back-compat wrapper: default t1p variant = log3 (the historical hardcode).
+ * Callers that want the tuned choice use vfft_oop_plan_create_pair_v. */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
+                                                         int R1, int R2)
+{
+    return vfft_oop_plan_create_pair_v(N, K, R1, R2, /*t1p_variant=*/1);
 }
 
 /* Build a MODEB plan (general-N OOP via the stride engine). The SINGLE owner
@@ -248,7 +253,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
         }
         if (bestR2)
         {
-            if (_vfft_oop_fill_bailey(p, N, K, bestR1, bestR2) == 0)
+            /* Rule-spine default = log3; the tuner/wisdom path overrides. */
+            if (_vfft_oop_fill_bailey(p, N, K, bestR1, bestR2, /*t1p=*/1) == 0)
                 return p;
             free(p);
             return NULL;
