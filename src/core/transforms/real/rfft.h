@@ -770,4 +770,78 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
     }
 }
 
+/* ===== rfft NATURAL forward, LANE-RANGE [k0,k0+kw) =====================
+ * MT building block: process only lanes [k0, k0+kw) of the K batch (per-q, NOT
+ * folded — the fold needs the full width). Lanes are independent and the shared
+ * planeA/planeB/nat_k0 are LANE-INDEXED, so concurrent calls on disjoint [k0,kw)
+ * ranges never collide. Output is the natural split half-spectrum for those lanes.
+ * (kw need not be 8-aligned; the codelets' scalar tail covers the remainder.) */
+static inline void rfft_execute_fwd_natural_range(const rfft_plan_t *p, const double *x,
+                                                  double *out_re, double *out_im,
+                                                  size_t k0, size_t kw)
+{
+    const int N = p->N; const size_t K = p->K; const size_t NK = (size_t)N * K;
+    const size_t nh = (size_t)(N / 2);
+    if (p->nf == 1) {
+        p->leaf(x + k0, p->planeA + k0, p->planeA + k0 + NK,
+                (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, kw);
+        memcpy(out_re + k0, p->planeA + k0, kw * 8); memset(out_im + k0, 0, kw * 8);
+        for (size_t f = 1; f < (size_t)((N + 1) / 2); f++) {
+            memcpy(out_re + f * K + k0, p->planeA + f * K + k0, kw * 8);
+            memcpy(out_im + f * K + k0, p->planeA + ((size_t)N - f) * K + k0, kw * 8);
+        }
+        if (N % 2 == 0) { memcpy(out_re + nh * K + k0, p->planeA + nh * K + k0, kw * 8);
+                          memset(out_im + nh * K + k0, 0, kw * 8); }
+        return;
+    }
+    /* LEAF (per-g over this lane range) */
+    { const ptrdiff_t SK = (ptrdiff_t)(p->S * K);
+      for (size_t g = 0; g < p->S; g++)
+          p->leaf(x + g * K + k0, p->planeA + g * K + k0, p->planeA + g * K + k0 + NK,
+                  SK, SK, -SK, kw); }
+    /* intermediate stages d = nf-2 .. 1 (per-q, lane range) */
+    double *cur = p->planeA, *nxt;
+    for (int d = p->nf - 2; d >= 1; d--) {
+        const rfft_stage_t *st = &p->st[d]; const int r = st->radix, m = st->m;
+        const size_t Q = st->Q;
+        const ptrdiff_t QK = (ptrdiff_t)(Q * K), QmK = (ptrdiff_t)(Q * (size_t)m * K);
+        nxt = (cur == p->planeA) ? p->planeB : p->planeA;
+        for (size_t q = 0; q < Q; q++) {
+            double *curq = cur + q * K + k0, *nxtq = nxt + q * K + k0;
+            st->k0(curq, nxtq, nxtq + NK, QK, QmK, -QmK, kw);
+            for (int k = 1; k <= st->kmax; k++)
+                st->hc(curq + (Q * (size_t)(r * k)) * K, curq + (Q * (size_t)(r * (m - k))) * K,
+                       nxtq + (Q * (size_t)k) * K, nxtq + (Q * (size_t)(m - k)) * K,
+                       st->tw_re + (size_t)(k - 1) * r, st->tw_im + (size_t)(k - 1) * r,
+                       QK, QmK, kw);
+            if (st->has_mid)
+                rfft_mid_column(r, m, st->np, Q, K, kw, curq + (Q * (size_t)(r * (m / 2))) * K,
+                                st->mid_c, st->mid_s, 0, 0, nxtq, NULL);
+        }
+        cur = nxt;
+    }
+    /* stage 0: natural terminator (lane range) */
+    { const rfft_stage_t *st = &p->st[0]; const int r = st->radix, m = st->m;
+      const ptrdiff_t mK = (ptrdiff_t)((size_t)m * K);
+      st->k0(cur + k0, p->nat_k0 + k0, p->nat_k0 + (size_t)r * K + k0,
+             (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, kw);
+      memcpy(out_re + k0, p->nat_k0 + k0, kw * 8); memset(out_im + k0, 0, kw * 8);
+      for (int sI = 1; sI < (r + 1) / 2; sI++) {
+          memcpy(out_re + (size_t)sI * (size_t)m * K + k0, p->nat_k0 + (size_t)sI * K + k0, kw * 8);
+          memcpy(out_im + (size_t)sI * (size_t)m * K + k0, p->nat_k0 + (size_t)(r - sI) * K + k0, kw * 8);
+      }
+      if (r % 2 == 0) { memcpy(out_re + nh * K + k0, p->nat_k0 + (size_t)(r / 2) * K + k0, kw * 8);
+                        memset(out_im + nh * K + k0, 0, kw * 8); }
+      for (int k = 1; k <= (m - 1) / 2; k++)
+          p->hcn(cur + (size_t)(r * k) * K + k0, cur + (size_t)(r * (m - k)) * K + k0,
+                 out_re + (size_t)k * K + k0, out_im + (size_t)k * K + k0,
+                 out_re + (size_t)(m - k) * K + k0, out_im + (size_t)(m - k) * K + k0,
+                 st->tw_re + (size_t)(k - 1) * r, st->tw_im + (size_t)(k - 1) * r,
+                 (ptrdiff_t)K, mK, mK, kw);
+      if (st->has_mid)
+          rfft_mid_column(r, m, st->np, 1, K, kw, cur + (size_t)(r * (m / 2)) * K + k0,
+                          st->mid_c, st->mid_s, 1, nh, out_re + k0, out_im + k0);
+    }
+}
+
 #endif /* VFFT_RFFT_H */

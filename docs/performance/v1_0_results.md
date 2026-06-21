@@ -202,7 +202,63 @@ the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
 > is ~6× *slower* than MKL-T1 (8,494 ns) — pure threading overhead — so dag wins 8.6×. Lifting
 > the ceiling (parallel column pass / full-plane tiling) is the 2D-MT follow-up.
 
-## 3. vs FFTW3 — single-thread
+## 3. vs MKL — 1D R2C
+
+R2C is the clearest embodiment of the split-layout trade: the **packing tax** that costs
+us single-thread is the *same* lane-batched layout that makes K-split MT trivially parallel
+(independent lanes, no barriers, no shared transpose buffer). So r2c **loses single-thread
+and wins big multi-threaded** — throughput over single-core latency, by design
+([transforms/real/README.md](../../src/core/transforms/real/README.md)). dag via the real
+dispatcher (`vfft_r2c_plan_create`/`execute`, SPLIT, **JIT-wired**) vs MKL DFTI real r2c
+(CCE); same fairness as §1; correctness vs a reference DFT (r2c is natural order). The
+dispatch routes **rfft** at low K (JIT-specialized — see below) and **decoupled-stride** at
+K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.csv`.
+
+### Single-thread — the packing tax
+
+```
+ N      K     path    dag/MKL    note
+──────────────────────────────────────────────
+ 256    8     rfft     1.07×     JIT-wired rfft, low-K win
+ 256    16    rfft     1.15×
+ 256    256   stride   1.04×
+ 512    8     rfft     1.17×
+ 1024   8     rfft     0.64×     large-N rfft plane = L2-bound
+ 1024   256   stride   0.80×     decoupled-r2c structural gap
+──────────────────────────────────────────────
+ 18 cells: 6 win.  Median 0.79×, range 0.46–1.17×.
+```
+
+> **Single-thread, r2c trails MKL — median 0.79×.** This is the honest cost of the split
+> layout (the pack tax) plus MKL's heavily-tuned real-FFT. The **JIT lifts the low-K rfft
+> cells to wins** (256/8 1.07×, 256/16 1.15×, 512/8 1.17×) — exactly where rfft is
+> competitive; it can't close the large-N rfft L2 wall or the decoupled-stride high-K gap.
+
+### Multi-threaded (T=8) — the layout payoff
+
+```
+ N      K     path    dag/MKL-T8   dag self-scale ST→T8
+──────────────────────────────────────────────────────
+ 256    8     rfft      21.75×     ~1.0× (rfft is ST)
+ 256    256   stride     5.30×     2.79×
+ 512    256   stride     4.47×     4.87×
+ 1024   256   stride     3.65×     3.72×
+ 1024   16    rfft       1.74×     ~1.0×
+──────────────────────────────────────────────────────
+ 18 cells: 18 win.  Median ~4.7×, range 1.74–21.75×.
+```
+
+> **At T=8, r2c beats MKL on all 18 cells — median ~4.7×, up to 21.8×.** The decoupled-stride
+> path (K≥32) K-splits cleanly and scales **2.8–4.9×**. The rfft path (K<32) **also K-splits**
+> (lane ranges, `rfft_natural_mt`), so MT is honored on every path — but its gain is small
+> (~6–9% at K=16, none at K=8) because the rfft K-range sits at the **lane-split SIMD floor**:
+> 8-wide lanes ÷ 8 threads leaves <1 SIMD group/thread, so K=8 falls back to single-thread and
+> K=16 only splits ~2-way. The split layout is still the edge — it lets us thread the batch
+> where MKL's real-FFT can't at modest N (MKL-T8 is ~20× slower than MKL-T1 at 256/8). The same
+> layout that taxed us single-thread is the multithreading edge — the design trade paying off.
+> (c2r mirrors this; its JIT is built + wired, not separately benched here yet.)
+
+## 4. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
@@ -387,7 +443,7 @@ MKL TT computes a different PDE-oriented math convention, so the
 comparison is informational, not apples-to-apples). FFTW3 is the
 correct r2r baseline.
 
-## 4. Multi-threaded scaling
+## 5. Multi-threaded scaling
 
 ### 1D C2C — direct MT vs MKL
 
@@ -462,7 +518,7 @@ because it's pure memory bandwidth, and a single optimized memcpy
 typically beats T smaller memcpys when the limit is DRAM throughput.
 DHT will benefit most from v1.1 fused codelets.
 
-## 5. Per-codelet performance (VTune-grade)
+## 6. Per-codelet performance (VTune-grade)
 
 For deep per-radix analysis at K=256 see
 [docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
@@ -488,7 +544,7 @@ these benefit specifically from the cost model's variant-aware
 selection (T1S / LOG3 / BUF) which routes around their bottlenecks
 when wisdom shows another protocol wins.
 
-## 6. Hardware caveats
+## 7. Hardware caveats
 
 ### These numbers are from one CPU
 
@@ -526,7 +582,7 @@ latency. Per-thread efficiency drops sharply past 8. For workloads
 that benefit from many threads, the bench grid should be extended
 (v1.1 work).
 
-## 7. Reproducing these numbers
+## 8. Reproducing these numbers
 
 ### vs MKL
 

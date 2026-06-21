@@ -297,6 +297,32 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     return NULL;
 }
 
+/* rfft natural-split forward, K-split across the worker pool (lane ranges). The
+ * rfft batch is K independent real FFTs, so each thread runs the full cascade on a
+ * disjoint lane slab via rfft_execute_fwd_natural_range (the shared planes/nat_k0
+ * are lane-indexed -> disjoint -> race-free). Small batches (K<16 or T<=1, i.e.
+ * below the lane-split SIMD floor) fall back to the folded single-thread executor.
+ * The MT path uses the generic ranged executor (not JIT — JIT covers the folded ST
+ * path; a range-aware JIT is a follow-up). */
+typedef struct { const rfft_plan_t *p; const double *x; double *o_re, *o_im; size_t k0, kw; } _rfft_nat_mt_arg;
+static void _rfft_nat_mt_tramp(void *a) { _rfft_nat_mt_arg *x = (_rfft_nat_mt_arg *)a;
+    rfft_execute_fwd_natural_range(x->p, x->x, x->o_re, x->o_im, x->k0, x->kw); }
+static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im) {
+    size_t K = rp->K; int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T <= 1 || K < 16) { rfft_execute_fwd_natural(rp, x, o_re, o_im); return; }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7; if (S == 0) S = 8;
+    _rfft_nat_mt_arg a[64]; int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        size_t k0 = (size_t)t * S; if (k0 >= K) break; size_t ke = k0 + S; if (ke > K) ke = K;
+        a[nd] = (_rfft_nat_mt_arg){ rp, x, o_re, o_im, k0, ke - k0 };
+        _stride_pool_dispatch(&_stride_workers[nd], _rfft_nat_mt_tramp, &a[nd]); nd++;
+    }
+    size_t s0 = S < K ? S : K;
+    rfft_execute_fwd_natural_range(rp, x, o_re, o_im, 0, s0);
+    if (nd) _stride_pool_wait_all();
+}
+
 /* Execute forward. For PACKED: out is the N x K halfcomplex plane; out_im is
  * ignored. For SPLIT: out is out_re, out_im is the imaginary plane.
  * (Single entry keeps callers layout-agnostic once they chose at plan time.) */
@@ -311,6 +337,7 @@ static inline void vfft_r2c_execute_fwd(
 #endif
             rfft_execute_fwd_packed(p->rfft, real_in, out);
         } else {
+            if (stride_get_num_threads() > 1) { rfft_natural_mt(p->rfft, real_in, out, out_im); return; }
 #ifdef VFFT_USE_JIT
             if (p->jit_natural) { p->jit_natural(p->rfft, real_in, out, out_im); return; }
 #endif
