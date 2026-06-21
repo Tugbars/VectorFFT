@@ -82,6 +82,16 @@ typedef struct {
     double *re_pad;
     double *im_pad;
 
+    /* Cached scratch for the OOP convenience wrappers (stride_execute_2d_r2c /
+     * _c2r). The in-place override needs a re buffer sized real_sz (= N1*N2);
+     * c2r additionally needs a temp im buffer (cplx_sz). Allocated ONCE at
+     * plan-create (not per call) so the public OOP API does no malloc/free in
+     * the hot path — MKL's descriptor likewise pre-allocates its scratch. Not
+     * re-entrant per plan (one transform at a time, like an MKL descriptor); the
+     * tile-parallel threads use the per-slot scratch_re/im, not these. */
+    double *oop_re_tmp;   /* real_sz = N1*N2 doubles      (r2c forward scratch) */
+    double *oop_im_tmp;   /* cplx_sz = N1*(N2/2+1) doubles (c2r backward temp im) */
+
     /* Mixed-radix digit-reversal permutation for col FFT (size N1). Multi-stage
      * DIT plans output at digit-reversed positions; pack/unpack uses perm to
      * remap user-natural i <-> col-FFT-output i. */
@@ -420,6 +430,8 @@ static void _fft2d_r2c_destroy(void *data) {
     STRIDE_ALIGNED_FREE(d->scratch_im);
     STRIDE_ALIGNED_FREE(d->re_pad);
     STRIDE_ALIGNED_FREE(d->im_pad);
+    STRIDE_ALIGNED_FREE(d->oop_re_tmp);
+    STRIDE_ALIGNED_FREE(d->oop_im_tmp);
     free(d->perm);
     free(d);
 }
@@ -485,7 +497,13 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
         (size_t)N1 * K_pad * sizeof(double));
     d->im_pad = (double *)STRIDE_ALIGNED_ALLOC(64,
         (size_t)N1 * K_pad * sizeof(double));
-    if (!d->scratch_re || !d->scratch_im || !d->re_pad || !d->im_pad) {
+    /* OOP wrapper scratch, allocated once (see struct comment). */
+    d->oop_re_tmp = (double *)STRIDE_ALIGNED_ALLOC(64,
+        (size_t)N1 * (size_t)N2 * sizeof(double));
+    d->oop_im_tmp = (double *)STRIDE_ALIGNED_ALLOC(64,
+        (size_t)N1 * hp1 * sizeof(double));
+    if (!d->scratch_re || !d->scratch_im || !d->re_pad || !d->im_pad ||
+        !d->oop_re_tmp || !d->oop_im_tmp) {
         _fft2d_r2c_destroy(d);
         return NULL;
     }
@@ -548,14 +566,12 @@ static inline void stride_execute_2d_r2c(const stride_plan_t *plan,
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
     size_t real_sz = (size_t)d->N1 * (size_t)d->N2;
     size_t cplx_sz = (size_t)d->N1 * (size_t)(d->N2 / 2 + 1);
-    /* In-place override needs re sized real_sz (= max(real_sz, cplx_sz)).
-     * Use a scratch re buffer, then copy the lower cplx_sz doubles to out_re. */
-    double *re_tmp = (double *)STRIDE_ALIGNED_ALLOC(64, real_sz * sizeof(double));
-    if (!re_tmp) return;
+    /* In-place override needs re sized real_sz (= max(real_sz, cplx_sz)). Use the
+     * plan's cached scratch (alloc'd once), then copy the lower cplx_sz to out_re. */
+    double *re_tmp = d->oop_re_tmp;
     memcpy(re_tmp, real_in, real_sz * sizeof(double));
     plan->override_fwd(plan->override_data, re_tmp, out_im);
     memcpy(out_re, re_tmp, cplx_sz * sizeof(double));
-    STRIDE_ALIGNED_FREE(re_tmp);
 }
 
 static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
@@ -567,12 +583,10 @@ static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
     size_t cplx_sz = (size_t)d->N1 * (size_t)(d->N2 / 2 + 1);
     /* real_out is sized real_sz; also serves as the re scratch (real_sz >= cplx_sz). */
     memcpy(real_out, in_re, cplx_sz * sizeof(double));
-    /* Need a temp im buffer (override_bwd writes to im too). */
-    double *im_tmp = (double *)STRIDE_ALIGNED_ALLOC(64, cplx_sz * sizeof(double));
-    if (!im_tmp) return;
+    /* Temp im buffer (override_bwd writes to im too) — plan's cached scratch. */
+    double *im_tmp = d->oop_im_tmp;
     memcpy(im_tmp, in_im, cplx_sz * sizeof(double));
     plan->override_bwd(plan->override_data, real_out, im_tmp);
-    STRIDE_ALIGNED_FREE(im_tmp);
 }
 
 

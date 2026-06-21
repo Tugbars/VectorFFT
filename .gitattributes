@@ -26,3 +26,9 @@ build_tuned/test/**    linguist-vendored
 
 # Cost-model code (and its generated tables) — excluded from the language bar.
 src/dag-fft-compiler/generator/cost_model/** linguist-vendored
+
+# JIT runtime-codegen OUTPUT (machine-generated .c/.dll codelets emitted at
+# runtime). Visible/browsable in the repo, but excluded from the language bar —
+# same rationale as the static codelets. Hand-written JIT tooling (emit_*.py,
+# prelude/runtime headers) is NOT excluded, so it still counts.
+src/dag-fft-compiler/jit/generated/** linguist-generated
