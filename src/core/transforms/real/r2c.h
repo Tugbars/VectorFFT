@@ -94,9 +94,14 @@ typedef struct
                    const double*, const double*,
                    ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
 
-    /* Resolved JIT inner for the c2r BACKWARD sliced stages (1..nf-1, reverse).
-     * NULL = generic slice. The fused last stage (stage 0 + Hermitian fold) always
-     * stays generic — it's a bespoke fold codelet, nothing for JIT to specialize. */
+    /* Resolved JIT inner for the sliced stages (NULL = generic). fwd: stages 1..
+     * after the fused pack (start_stage=1), or the whole inner in the fallback
+     * (start_stage=0); bwd: stages 1.. before the fused fold (start_stage=1), or the
+     * whole inner in the fallback (start_stage=0). The fused pack/fold stage 0 stays
+     * generic — bespoke codelet, nothing to specialize. Used by both the 1D stride
+     * r2c/c2r and the 2D tiled row pass (reentrant: each tile/worker passes its own
+     * scratch, the fn touches no shared mutable state). */
+    vfft_proto_exec_fn inner_jit_fwd;
     vfft_proto_exec_fn inner_jit_bwd;
 } stride_r2c_data_t;
 
@@ -811,7 +816,10 @@ static void _r2c_worker_fwd(void *arg) {
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
-            _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
+            if (d->inner_jit_fwd)
+                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
+            else
+                _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
         } else {
             /* Fallback: explicit pack + full inner FFT */
             for (int n = 0; n < halfN; n++) {
@@ -1634,6 +1642,11 @@ static inline void stride_r2c_set_inner_jit_bwd(stride_plan_t *plan,
                                                 vfft_proto_exec_fn bwd) {
     if (!plan || plan->override_bwd != _r2c_execute_bwd) return;
     ((stride_r2c_data_t *)plan->override_data)->inner_jit_bwd = bwd;
+}
+static inline void stride_r2c_set_inner_jit_fwd(stride_plan_t *plan,
+                                                vfft_proto_exec_fn fwd) {
+    if (!plan || plan->override_bwd != _r2c_execute_bwd) return;
+    ((stride_r2c_data_t *)plan->override_data)->inner_jit_fwd = fwd;
 }
 
 #endif /* STRIDE_R2C_H */
