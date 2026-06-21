@@ -644,7 +644,43 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   in
   loop ();
 
-  let intermediates = List.rev !result in
+  let su_intermediates = List.rev !result in
+  (* === SCHEDULE-SEARCH KNOBS (experiment; default = unchanged SU output) ===
+   * VFFT_SCHED_DUMP=<file>: write the SU order as "tag:pred_tags..." per line,
+   *   so the annealer knows the DAG and can permute legally.
+   * VFFT_SCHED_ORDER=<file>: emit the intermediates in the explicit tag order
+   *   from the file (one tag per line) instead of SU's order. The order MUST be
+   *   a complete, legal topological order of su_intermediates — the caller
+   *   (annealer) guarantees this; an illegal order yields a use-before-def C
+   *   compile error, which the search treats as an invalid candidate. *)
+  (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
+   | None -> ()
+   | Some file ->
+     let oc = open_out file in
+     List.iter (fun (_, (n : Algsimp.t)) ->
+       Printf.fprintf oc "%d:%s\n" n.tag
+         (String.concat " "
+            (List.map (fun (p : Algsimp.t) -> string_of_int p.tag) (preds n)))
+     ) su_intermediates;
+     close_out oc);
+  let intermediates =
+    match Sys.getenv_opt "VFFT_SCHED_ORDER" with
+    | None -> su_intermediates
+    | Some file ->
+      let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
+      List.iter (fun (n : Algsimp.t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
+      let ic = open_in file in
+      let tags = ref [] in
+      (try while true do
+         match int_of_string_opt (String.trim (input_line ic)) with
+         | Some t -> tags := t :: !tags
+         | None -> ()
+       done with End_of_file -> ());
+      close_in ic;
+      List.filter_map (fun t ->
+        match Hashtbl.find_opt by_tag t with Some n -> Some (None, n) | None -> None)
+        (List.rev !tags)
+  in
   let stores = List.map (fun (oref, e) -> (Some oref, e)) assigns in
   intermediates @ stores
 

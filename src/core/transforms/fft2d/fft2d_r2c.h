@@ -117,13 +117,25 @@ typedef struct {
  * miss -> the passes fall back to the generic c2c executor). The col plan is a
  * plain whole-plan c2c stride_plan_t, identical in shape to what fft2d.h already
  * JITs; the JIT'd c2c is roundtrip/order-identical to the generic, so d->perm
- * (built from plan_col->factors) stays valid. The row r2c/c2r pass is NOT
- * resolved (worker-shim entry, not a whole-plan call — deferred). */
+ * (built from plan_col->factors) stays valid.
+ *
+ * ROW pass: the row r2c/c2r runs the stride r2c engine per tile (plan_r2c's inner
+ * c2c). We JIT that inner's sliced stages (the row workers call it on per-tile,
+ * per-tid scratch — reentrant, no shared mutable state). The fused pack/fold
+ * stage 0 stays generic (bespoke codelet). r2c fwd uses the inner's fwd JIT, c2r
+ * bwd the bwd JIT; both no-op if the inner isn't a stride r2c plan. */
 static inline void _fft2d_r2c_jit_resolve(stride_fft2d_r2c_data_t *d) {
 #ifdef VFFT_USE_JIT
     if (d->plan_col) {
         d->exec_col_fwd = vfft_proto_plan_jit_fwd(d->plan_col);
         d->exec_col_bwd = vfft_proto_plan_jit_bwd(d->plan_col);
+    }
+    if (d->plan_r2c) {
+        stride_plan_t *rin = stride_r2c_inner_plan(d->plan_r2c);
+        if (rin) {
+            stride_r2c_set_inner_jit_fwd(d->plan_r2c, vfft_proto_plan_jit_fwd(rin));
+            stride_r2c_set_inner_jit_bwd(d->plan_r2c, vfft_proto_plan_jit_bwd(rin));
+        }
     }
 #else
     (void)d;
