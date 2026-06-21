@@ -70,6 +70,10 @@ typedef struct
     double *Qr, *Qi; /* K-replicated table, (R1-1) x (R2*K/8) */
     /* MODEB */
     stride_plan_t *mb;
+    /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
+     * stages 1.. (start_stage=1) after the OOP stage 0; bwd runs the whole
+     * in-place DIF-backward (start_stage=0) on the copied spectrum. */
+    vfft_proto_exec_fn mb_jit_fwd, mb_jit_bwd;
 } vfft_oop_plan_t;
 
 static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
@@ -295,7 +299,7 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
         return 0;
     }
     case VFFT_OOP_KIND_MODEB:
-        return vfft_proto_execute_fwd_oop(p->mb, sr, si, dr, di, K);
+        return vfft_proto_execute_fwd_oop_jit(p->mb, sr, si, dr, di, K, p->mb_jit_fwd);
     }
     return -1;
 }
@@ -316,7 +320,10 @@ static inline int vfft_oop_execute_bwd(const vfft_oop_plan_t *p,
         size_t NK = (size_t)p->N * p->K;
         memcpy(dr, sr, NK * sizeof(double));
         memcpy(di, si, NK * sizeof(double));
-        vfft_proto_execute_bwd_generic(p->mb, dr, di, p->K);
+        if (p->mb_jit_bwd)
+            p->mb_jit_bwd(p->mb, dr, di, p->K, p->mb->K, 0); /* whole in-place bwd (JIT) */
+        else
+            vfft_proto_execute_bwd_generic(p->mb, dr, di, p->K);
         return 0;
     }
     return vfft_oop_execute_fwd(p, si, sr, di, dr);   /* LEAF/BAILEY2: natural-order swap */

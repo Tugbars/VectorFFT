@@ -824,6 +824,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->oplan = op;
+#ifdef VFFT_USE_JIT
+        /* MODEB rides a staged inner plan -> JIT it (fwd: stages 1.. at start_stage=1;
+         * bwd: whole in-place DIF at start_stage=0). LEAF/BAILEY2 have no staged plan. */
+        if (op->kind == VFFT_OOP_KIND_MODEB && op->mb)
+        {
+            op->mb_jit_fwd = vfft_proto_plan_jit_fwd(op->mb);
+            op->mb_jit_bwd = vfft_proto_plan_jit_bwd(op->mb);
+        }
+#endif
         return h;
     }
 
