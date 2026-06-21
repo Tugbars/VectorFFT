@@ -56,6 +56,7 @@
 #include "oop_wisdom.h"         /* --oop: oop wisdom load + create_wisdom (lookup) */
 #include "fft2d.h"              /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
+#include "fft2d_r2c_wisdom.h"   /* --2dr2c: calibrated 2D wisdom + wisdom-aware create */
 #include "rfft_registry_avx2.h" /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
 
@@ -124,6 +125,8 @@ static int g_mt = 1;
 static int g_oop_mt = 0;   /* 1 = --oop --mt : K-split the OOP forward across the pool */
 static int g_2d_mt = 0;    /* 1 = --2d --mt : thread the 2D row pass (tile-parallel pool) */
 static int g_2dr2c_mt = 0; /* 1 = --2dr2c --mt : thread the 2D r2c forward row pass (tile-parallel) */
+static vfft_fft2d_r2c_wisdom_t g_2dr2c_wis;   /* calibrated 2D plans (loaded once in main) */
+static int g_2dr2c_wis_loaded = 0;            /* 1 = 2D wisdom file present -> cells use calibrated plans */
 
 /* one forward at g_mt threads via pool K-split. fn!=NULL => resolved (JIT/baked)
  * executor; fn==NULL => generic (override/Rader/Bluestein) executor. */
@@ -879,21 +882,15 @@ static double bench_mkl_2dr2c(DFTI_DESCRIPTOR_HANDLE h, const double *x, double 
 #endif
 static void run_2dr2c_cell(int N1, int N2, vfft_proto_registry_t *reg, FILE *out, int cool_ms, int flip)
 {
-    size_t B = 8;
-    if (B > (size_t)N1)
-        B = (size_t)N1;
-    size_t hp1 = (size_t)(N2 / 2 + 1), K_pad = ((hp1 + 3) / 4) * 4;
-    /* inner sub-plans (same recipe as bench_fft2d_r2c_vs_mkl.c). Created AFTER main
-     * set the thread count, so plan_2d_r2c_from sizes T scratch slots for --mt. */
-    stride_plan_t *inner = vfft_proto_auto_plan(N2 / 2, B, reg, NULL);
-    stride_plan_t *plan_r2c = inner ? stride_r2c_plan(N2, B, B, inner) : NULL;
-    stride_plan_t *plan_col = vfft_proto_auto_plan(N1, K_pad, reg, NULL);
-    if (!plan_r2c || !plan_col)
-    {
-        printf("  %4dx%-4d  2D r2c sub-plan NULL\n", N1, N2);
-        return;
-    }
-    stride_plan_t *p = stride_plan_2d_r2c_from(N1, N2, B, K_pad, plan_r2c, plan_col);
+    size_t hp1 = (size_t)(N2 / 2 + 1);
+    /* Wisdom-driven create: calibrated 2D plan (own fft2d_r2c_wisdom namespace,
+     * found by the dedicated 2D planner — end-to-end-2D measured, NOT 1D-derived)
+     * if the cell is present, else greedy fallback. Created AFTER main set the
+     * thread count, so plan_2d_r2c_from sizes T scratch slots for --mt. */
+    const char *src = (g_2dr2c_wis_loaded &&
+                       vfft_fft2d_r2c_wisdom_lookup(&g_2dr2c_wis, N1, N2)) ? "wis" : "est";
+    stride_plan_t *p = vfft_fft2d_r2c_plan_create_wisdom(
+        N1, N2, g_2dr2c_wis_loaded ? &g_2dr2c_wis : NULL, reg);
     if (!p)
     {
         printf("  %4dx%-4d  2D r2c plan NULL\n", N1, N2);
@@ -975,10 +972,10 @@ static void run_2dr2c_cell(int N1, int N2, vfft_proto_registry_t *reg, FILE *out
     vns = time_2dr2c(p, x, o_re, o_im, RN);
 #endif
     double sp = (vns > 0 && mns > 0) ? mns / vns : 0;
-    printf("  %4dx%-4d  scrambled rt=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
-           N1, N2, rt, vns, mns, sp, rt < 1e-9 ? "" : "*** RT FAIL ***");
+    printf("  %4dx%-4d  %-3s scrambled rt=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
+           N1, N2, src, rt, vns, mns, sp, rt < 1e-9 ? "" : "*** RT FAIL ***");
     if (out)
-        fprintf(out, "%d,%d,scrambled,%.1e,%.0f,%.0f,%.3f\n", N1, N2, rt, vns, mns, sp);
+        fprintf(out, "%d,%d,%s,scrambled,%.1e,%.0f,%.0f,%.3f\n", N1, N2, src, rt, vns, mns, sp);
     free_d(x);
     free_d(o_re);
     free_d(o_im);
@@ -1245,9 +1242,17 @@ int main(int argc, char **argv)
      * for the tile-parallel row pass. MKL gets mkl_set_num_threads(g_mt) under --mt. */
     if (r2c2d)
     {
+        /* Load the dedicated 2D wisdom (separate namespace). Present cells use the
+         * calibrated plan (src=wis); misses fall back to greedy (src=est). */
+        const char *r2c2d_wpath = "../../src/dag-fft-compiler/generator/generated/fft2d_r2c_wisdom.txt";
+        g_2dr2c_wis_loaded = (vfft_fft2d_r2c_wisdom_load(&g_2dr2c_wis, r2c2d_wpath) == 0
+                              && g_2dr2c_wis.count > 0);
+        printf("# 2D wisdom: %s (%zu cells)\n",
+               g_2dr2c_wis_loaded ? r2c2d_wpath : "NONE (greedy fallback)",
+               g_2dr2c_wis_loaded ? g_2dr2c_wis.count : (size_t)0);
         FILE *o2 = fopen(csv, "w");
         if (o2)
-            fprintf(o2, "N1,N2,order,rt_err,vfft_ns,mkl_ns,speedup\n");
+            fprintf(o2, "N1,N2,src,order,rt_err,vfft_ns,mkl_ns,speedup\n");
         if (mt)
             printf("=== dag vs MKL — 2D R2C fwd MULTITHREADED (%d threads: row pass tile-parallel, col+c2r serial; vs DFTI 2D real CCE, core%d; pace=%dms) ===\n", g_mt, core, pace_ms);
         else
