@@ -48,12 +48,12 @@ open Expr
  * those slots end up as `Const 0.0`, which algsimp folds away — the
  * emitter sees no work for them.
  *)
-let dft_r2c_direct ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) : expr array * expr array =
+let dft_r2c_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr) :
+    expr array * expr array =
   assert (n >= 2 && n mod 2 = 0);
   let half = n / 2 in
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
 
   (* Step 1+2: feed pair-packed reals into a half-point complex DFT.
    * z[k] = x[2k] + i*x[2k+1] is just routing — the c2c DFT reads
@@ -61,7 +61,7 @@ let dft_r2c_direct ?(sign = `Fwd) (n : int)
    * "pack" is purely an indexing trick at the math layer.
    *)
   let z_in_re k = input_re (2 * k) in
-  let z_in_im k = input_re (2 * k + 1) in
+  let z_in_im k = input_re ((2 * k) + 1) in
   let z_re_arr, z_im_arr = Dft.dft half z_in_re z_in_im in
 
   (* Step 3: post-process butterfly.
@@ -72,9 +72,11 @@ let dft_r2c_direct ?(sign = `Fwd) (n : int)
   (* DC and Nyquist: purely real, derived only from Z[0]. *)
   let z0_re = z_re_arr.(0) in
   let z0_im = z_im_arr.(0) in
-  out_re.(0)    <- Add (z0_re, z0_im);     (* X[0]   = Re(Z[0]) + Im(Z[0]) *)
-  out_im.(0)    <- Const 0.0;
-  out_re.(half) <- Sub (z0_re, z0_im);     (* X[N/2] = Re(Z[0]) - Im(Z[0]) *)
+  out_re.(0) <- Add (z0_re, z0_im);
+  (* X[0]   = Re(Z[0]) + Im(Z[0]) *)
+  out_im.(0) <- Const 0.0;
+  out_re.(half) <- Sub (z0_re, z0_im);
+  (* X[N/2] = Re(Z[0]) - Im(Z[0]) *)
   out_im.(half) <- Const 0.0;
 
   (* Pair butterflies: for k in 1..N/2-1, X[k] from (Z[k], Z[N/2-k]).
@@ -98,8 +100,10 @@ let dft_r2c_direct ?(sign = `Fwd) (n : int)
   let half_const = Const 0.5 in
   for k = 1 to half - 1 do
     let m = half - k in
-    let zk_re = z_re_arr.(k) in let zk_im = z_im_arr.(k) in
-    let zm_re = z_re_arr.(m) in let zm_im = z_im_arr.(m) in
+    let zk_re = z_re_arr.(k) in
+    let zk_im = z_im_arr.(k) in
+    let zm_re = z_re_arr.(m) in
+    let zm_im = z_im_arr.(m) in
     let e_re = Mul (Add (zk_re, zm_re), half_const) in
     let e_im = Mul (Sub (zk_im, zm_im), half_const) in
     let o_re = Mul (Sub (zk_re, zm_re), half_const) in
@@ -131,7 +135,7 @@ let dft_expand_r2c ?(sign = `Fwd) (n : int) : Expr.assignment list =
   let out_re, out_im = dft_r2c_direct ~sign n input_re in
   let acc = ref [] in
   for k = half downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
+    acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
   List.rev !acc
@@ -162,18 +166,20 @@ let dft_expand_r2c ?(sign = `Fwd) (n : int) : Expr.assignment list =
  * `k` is the column index (1 <= k < N/4 for a true interior pair). The builder
  * emits BOTH X[k] and X[m] from the shared loads (dual output, layout proof).
  *)
-let dft_r2c_term_pair ?(sign = `Fwd) (n : int) (k : int)
-    : (expr * expr) * (expr * expr) =
+let dft_r2c_term_pair ?(sign = `Fwd) (n : int) (k : int) :
+    (expr * expr) * (expr * expr) =
   assert (n >= 4 && n mod 2 = 0);
   let half = n / 2 in
   let m = half - k in
   assert (k >= 1 && k < half && k <> m);
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
   let half_c = Const 0.5 in
   (* Z[k] = Input 0, Z[m] = Input 1 (executor supplies the pair). *)
-  let zk_re = Load (Input (0, true))  in let zk_im = Load (Input (0, false)) in
-  let zm_re = Load (Input (1, true))  in let zm_im = Load (Input (1, false)) in
+  let zk_re = Load (Input (0, true)) in
+  let zk_im = Load (Input (0, false)) in
+  let zm_re = Load (Input (1, true)) in
+  let zm_im = Load (Input (1, false)) in
   (* E, O for index k from the conj pairing (Z[k], Z[m]) — verified identical to
    * dft_r2c_direct's pair butterfly. *)
   let e_re = Mul (Add (zk_re, zm_re), half_c) in
@@ -182,7 +188,8 @@ let dft_r2c_term_pair ?(sign = `Fwd) (n : int) (k : int)
   let o_im = Mul (Add (zk_im, zm_im), half_c) in
   (* X[k] = E + W_N^k * (-i*O). *)
   let theta_k = sgn *. 2.0 *. pi *. float_of_int k /. float_of_int n in
-  let wkr = Const (cos theta_k) in let wki = Const (sin theta_k) in
+  let wkr = Const (cos theta_k) in
+  let wki = Const (sin theta_k) in
   let xk_re = Add (e_re, Add (Mul (wkr, o_im), Mul (wki, o_re))) in
   let xk_im = Add (e_im, Sub (Mul (wki, o_im), Mul (wkr, o_re))) in
   (* X[m]: the SAME butterfly run with loop index = m, whose partner is
@@ -194,17 +201,22 @@ let dft_r2c_term_pair ?(sign = `Fwd) (n : int) (k : int)
   let om_re = Mul (Sub (zm_re, zk_re), half_c) in
   let om_im = Mul (Add (zm_im, zk_im), half_c) in
   let theta_m = sgn *. 2.0 *. pi *. float_of_int m /. float_of_int n in
-  let wmr = Const (cos theta_m) in let wmi = Const (sin theta_m) in
+  let wmr = Const (cos theta_m) in
+  let wmi = Const (sin theta_m) in
   let xm_re = Add (em_re, Add (Mul (wmr, om_im), Mul (wmi, om_re))) in
   let xm_im = Add (em_im, Sub (Mul (wmi, om_im), Mul (wmr, om_re))) in
   ((xk_re, xk_im), (xm_re, xm_im))
 
 (* Assignment-list wrapper: emits X[k] at Output 0, X[m] at Output 1. *)
-let dft_expand_r2c_term ?(sign = `Fwd) (n : int) (k : int)
-    : Expr.assignment list =
+let dft_expand_r2c_term ?(sign = `Fwd) (n : int) (k : int) :
+    Expr.assignment list =
   let (xk_re, xk_im), (xm_re, xm_im) = dft_r2c_term_pair ~sign n k in
-  [ (Output (0, true),  xk_re); (Output (0, false), xk_im);
-    (Output (1, true),  xm_re); (Output (1, false), xm_im) ]
+  [
+    (Output (0, true), xk_re);
+    (Output (0, false), xk_im);
+    (Output (1, true), xm_re);
+    (Output (1, false), xm_im);
+  ]
 
 (* === R2C-TERM, RUNTIME-TWIDDLE variant (slice 3b) ===
  *
@@ -221,19 +233,20 @@ let dft_expand_r2c_term ?(sign = `Fwd) (n : int) (k : int)
  *
  * Inputs: Input(0)=Z[k], Input(1)=Z[m] (same as the fixed-k variant).
  * Twiddle(0) = W_N^f (the executor supplies the per-frequency twiddle).        *)
-let dft_r2c_term_pair_rt ?(sign = `Fwd) ()
-    : (expr * expr) * (expr * expr) =
+let dft_r2c_term_pair_rt ?(sign = `Fwd) () : (expr * expr) * (expr * expr) =
   ignore sign;
   let half_c = Const 0.5 in
-  let zk_re = Load (Input (0, true))  in let zk_im = Load (Input (0, false)) in
-  let zm_re = Load (Input (1, true))  in let zm_im = Load (Input (1, false)) in
+  let zk_re = Load (Input (0, true)) in
+  let zk_im = Load (Input (0, false)) in
+  let zm_re = Load (Input (1, true)) in
+  let zm_im = Load (Input (1, false)) in
   (* E, O for index k from the conj pairing (Z[k], Z[m]). *)
   let e_re = Mul (Add (zk_re, zm_re), half_c) in
   let e_im = Mul (Sub (zk_im, zm_im), half_c) in
   let o_re = Mul (Sub (zk_re, zm_re), half_c) in
   let o_im = Mul (Add (zk_im, zm_im), half_c) in
   (* W_N^f loaded at runtime. *)
-  let wkr = Load (Twiddle (0, true))  in
+  let wkr = Load (Twiddle (0, true)) in
   let wki = Load (Twiddle (0, false)) in
   (* X[k] = E + W_N^f * (-i*O). NOTE: the fixed-k builder used theta_k with the
    * sign folded into the Const; here the table tw already carries the forward
@@ -247,16 +260,22 @@ let dft_r2c_term_pair_rt ?(sign = `Fwd) ()
   let em_im = Mul (Sub (zm_im, zk_im), half_c) in
   let om_re = Mul (Sub (zm_re, zk_re), half_c) in
   let om_im = Mul (Add (zm_im, zk_im), half_c) in
-  let wmr = Neg wkr in   (* W^m real part = -W^f real part *)
-  let wmi = wki in       (* W^m imag part = +W^f imag part *)
+  let wmr = Neg wkr in
+  (* W^m real part = -W^f real part *)
+  let wmi = wki in
+  (* W^m imag part = +W^f imag part *)
   let xm_re = Add (em_re, Add (Mul (wmr, om_im), Mul (wmi, om_re))) in
   let xm_im = Add (em_im, Sub (Mul (wmi, om_im), Mul (wmr, om_re))) in
   ((xk_re, xk_im), (xm_re, xm_im))
 
 let dft_expand_r2c_term_rt ?(sign = `Fwd) () : Expr.assignment list =
   let (xk_re, xk_im), (xm_re, xm_im) = dft_r2c_term_pair_rt ~sign () in
-  [ (Output (0, true),  xk_re); (Output (0, false), xk_im);
-    (Output (1, true),  xm_re); (Output (1, false), xm_im) ]
+  [
+    (Output (0, true), xk_re);
+    (Output (0, false), xk_im);
+    (Output (1, true), xm_re);
+    (Output (1, false), xm_im);
+  ]
 
 (* === MODEL (b): r2c_term_laststage — fold the last DIT stage INTO the terminator ===
  *
@@ -284,38 +303,47 @@ let dft_expand_r2c_term_rt ?(sign = `Fwd) () : Expr.assignment list =
  *  W^{half-f}=(-re,+im). The executor packs this table per column pair.)
  *
  * `r` = last radix, `m` = N'/r, `k` = the column index (1 <= k < m-k interior).  *)
-let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
-    : (expr * expr) array * Dft.spill_marker list =
+let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int) :
+    (expr * expr) array * Dft.spill_marker list =
   (* np = N' = half_N = r*m. Output: r pairs [(X[f], X[mirror])] for s=0..r-1,
    * flattened as [X[k+0m]; X[mir of k+0m]; X[k+1m]; ...] = 2r outputs. *)
   ignore np;
   let half_c = Const 0.5 in
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> +1.0 in
-  ignore sgn; ignore pi;
+  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  ignore sgn;
+  ignore pi;
   (* --- column k: pre-twiddle then DFT-r --- *)
   (* leg j real/imag = Input(j); pre-twiddle by Twiddle(j) (stage tw for col k). *)
   let colk_in_re j =
-    let lr = Load (Input (j, true)) in let li = Load (Input (j, false)) in
-    let tr = Load (Twiddle (j, true)) in let ti = Load (Twiddle (j, false)) in
+    let lr = Load (Input (j, true)) in
+    let li = Load (Input (j, false)) in
+    let tr = Load (Twiddle (j, true)) in
+    let ti = Load (Twiddle (j, false)) in
     (* (lr + i li)(tr + i ti) real part = lr*tr - li*ti *)
     Sub (Mul (lr, tr), Mul (li, ti))
   in
   let colk_in_im j =
-    let lr = Load (Input (j, true)) in let li = Load (Input (j, false)) in
-    let tr = Load (Twiddle (j, true)) in let ti = Load (Twiddle (j, false)) in
+    let lr = Load (Input (j, true)) in
+    let li = Load (Input (j, false)) in
+    let tr = Load (Twiddle (j, true)) in
+    let ti = Load (Twiddle (j, false)) in
     Add (Mul (lr, ti), Mul (li, tr))
   in
   let zk_re, zk_im = Dft.dft ~sign r colk_in_re colk_in_im in
   (* --- column m-k: legs Input(r..2r-1), stage tw Twiddle(r..2r-1) --- *)
   let colm_in_re j =
-    let lr = Load (Input (r + j, true)) in let li = Load (Input (r + j, false)) in
-    let tr = Load (Twiddle (r + j, true)) in let ti = Load (Twiddle (r + j, false)) in
+    let lr = Load (Input (r + j, true)) in
+    let li = Load (Input (r + j, false)) in
+    let tr = Load (Twiddle (r + j, true)) in
+    let ti = Load (Twiddle (r + j, false)) in
     Sub (Mul (lr, tr), Mul (li, ti))
   in
   let colm_in_im j =
-    let lr = Load (Input (r + j, true)) in let li = Load (Input (r + j, false)) in
-    let tr = Load (Twiddle (r + j, true)) in let ti = Load (Twiddle (r + j, false)) in
+    let lr = Load (Input (r + j, true)) in
+    let li = Load (Input (r + j, false)) in
+    let tr = Load (Twiddle (r + j, true)) in
+    let ti = Load (Twiddle (r + j, false)) in
     Add (Mul (lr, ti), Mul (li, tr))
   in
   let zm_re, zm_im = Dft.dft ~sign r colm_in_re colm_in_im in
@@ -325,14 +353,18 @@ let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
   let out = Array.make (2 * r) (Const 0.0, Const 0.0) in
   for s = 0 to r - 1 do
     let sprime = r - 1 - s in
-    let zfr = zk_re.(s) in let zfi = zk_im.(s) in        (* Z[f], f = k+s*m *)
-    let zmr = zm_re.(sprime) in let zmi = zm_im.(sprime) in (* Z[mirror] *)
+    let zfr = zk_re.(s) in
+    let zfi = zk_im.(s) in
+    (* Z[f], f = k+s*m *)
+    let zmr = zm_re.(sprime) in
+    let zmi = zm_im.(sprime) in
+    (* Z[mirror] *)
     let e_re = Mul (Add (zfr, zmr), half_c) in
     let e_im = Mul (Sub (zfi, zmi), half_c) in
     let o_re = Mul (Sub (zfr, zmr), half_c) in
     let o_im = Mul (Add (zfi, zmi), half_c) in
-    let wkr = Load (Twiddle (2 * r + s, true))  in
-    let wki = Load (Twiddle (2 * r + s, false)) in
+    let wkr = Load (Twiddle ((2 * r) + s, true)) in
+    let wki = Load (Twiddle ((2 * r) + s, false)) in
     let xf_re = Add (e_re, Add (Mul (wkr, o_im), Mul (wki, o_re))) in
     let xf_im = Add (e_im, Sub (Mul (wki, o_im), Mul (wkr, o_re))) in
     (* mirror output: same butterfly index swapped, twiddle (-wkr, +wki) *)
@@ -340,11 +372,12 @@ let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
     let em_im = Mul (Sub (zmi, zfi), half_c) in
     let om_re = Mul (Sub (zmr, zfr), half_c) in
     let om_im = Mul (Add (zmi, zfi), half_c) in
-    let wmr = Neg wkr in let wmi = wki in
+    let wmr = Neg wkr in
+    let wmi = wki in
     let xmir_re = Add (em_re, Add (Mul (wmr, om_im), Mul (wmi, om_re))) in
     let xmir_im = Add (em_im, Sub (Mul (wmi, om_im), Mul (wmr, om_re))) in
-    out.(2 * s)     <- (xf_re, xf_im);
-    out.(2 * s + 1) <- (xmir_re, xmir_im)
+    out.(2 * s) <- (xf_re, xf_im);
+    out.((2 * s) + 1) <- (xmir_re, xmir_im)
   done;
   (* PASS-1/PASS-2 spill seam (doc 58): the two stage-twiddled DFT-r outputs ARE
    * PASS-1; tag them as spill markers (col k -> slots 0..r-1, col m-k -> r..2r-1)
@@ -353,7 +386,8 @@ let dft_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
   let markers =
     let acc = ref [] in
     for s = r - 1 downto 0 do
-      acc := { Dft.slot = r + s; re_expr = zm_re.(s); im_expr = zm_im.(s) } :: !acc
+      acc :=
+        { Dft.slot = r + s; re_expr = zm_re.(s); im_expr = zm_im.(s) } :: !acc
     done;
     for s = r - 1 downto 0 do
       acc := { Dft.slot = s; re_expr = zk_re.(s); im_expr = zk_im.(s) } :: !acc
@@ -370,12 +404,12 @@ let dft_expand_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
   let out, _markers = dft_r2c_term_laststage ~sign np r m in
   let acc = ref [] in
   for s = r - 1 downto 0 do
-    let (xf_re, xf_im) = out.(2 * s) in
-    let (xm_re, xm_im) = out.(2 * s + 1) in
-    acc := (Output (2 * s,     true),  xf_re) :: !acc;
-    acc := (Output (2 * s,     false), xf_im) :: !acc;
-    acc := (Output (2 * s + 1, true),  xm_re) :: !acc;
-    acc := (Output (2 * s + 1, false), xm_im) :: !acc
+    let xf_re, xf_im = out.(2 * s) in
+    let xm_re, xm_im = out.((2 * s) + 1) in
+    acc := (Output (2 * s, true), xf_re) :: !acc;
+    acc := (Output (2 * s, false), xf_im) :: !acc;
+    acc := (Output ((2 * s) + 1, true), xm_re) :: !acc;
+    acc := (Output ((2 * s) + 1, false), xm_im) :: !acc
   done;
   !acc
 
@@ -384,17 +418,18 @@ let dft_expand_r2c_term_laststage ?(sign = `Fwd) (np : int) (r : int) (m : int)
  * shape (2, r), so the recipe machinery blocks the fused DAG instead of letting
  * gcc spill-storm the 32-zmm monolith. Routes through the standard spill-aware
  * body emitter (markers are topology-agnostic). *)
-let dft_expand_r2c_term_laststage_spill ?(sign = `Fwd) (np : int) (r : int) (m : int)
-    : Expr.assignment list * Dft.spill_marker list * (int * int) option =
+let dft_expand_r2c_term_laststage_spill ?(sign = `Fwd) (np : int) (r : int)
+    (m : int) :
+    Expr.assignment list * Dft.spill_marker list * (int * int) option =
   let out, markers = dft_r2c_term_laststage ~sign np r m in
   let acc = ref [] in
   for s = r - 1 downto 0 do
-    let (xf_re, xf_im) = out.(2 * s) in
-    let (xm_re, xm_im) = out.(2 * s + 1) in
-    acc := (Output (2 * s,     true),  xf_re) :: !acc;
-    acc := (Output (2 * s,     false), xf_im) :: !acc;
-    acc := (Output (2 * s + 1, true),  xm_re) :: !acc;
-    acc := (Output (2 * s + 1, false), xm_im) :: !acc
+    let xf_re, xf_im = out.(2 * s) in
+    let xm_re, xm_im = out.((2 * s) + 1) in
+    acc := (Output (2 * s, true), xf_re) :: !acc;
+    acc := (Output (2 * s, false), xf_im) :: !acc;
+    acc := (Output ((2 * s) + 1, true), xm_re) :: !acc;
+    acc := (Output ((2 * s) + 1, false), xm_im) :: !acc
   done;
   (!acc, markers, Some (2, r))
 
@@ -425,9 +460,8 @@ let dft_expand_r2c_term_laststage_spill ?(sign = `Fwd) (np : int) (r : int) (m :
  *   Unpack applies *2.
  *   Total: 1 * (N/2) * 2 = N. ✓
  *)
-let dft_c2r_direct (n : int)
-    (input_re : int -> expr) (input_im : int -> expr)
-    : expr array =
+let dft_c2r_direct (n : int) (input_re : int -> expr) (input_im : int -> expr) :
+    expr array =
   assert (n >= 2 && n mod 2 = 0);
   let half = n / 2 in
   let pi = 4.0 *. atan 1.0 in
@@ -437,15 +471,19 @@ let dft_c2r_direct (n : int)
    *)
   let z_re = Array.make half (Const 0.0) in
   let z_im = Array.make half (Const 0.0) in
-  let x0_re   = input_re 0 in
+  let x0_re = input_re 0 in
   let xnyq_re = input_re half in
-  z_re.(0) <- Add (x0_re, xnyq_re);   (* Z[0].re = X[0] + X[N/2] *)
-  z_im.(0) <- Sub (x0_re, xnyq_re);   (* Z[0].im = X[0] - X[N/2] *)
+  z_re.(0) <- Add (x0_re, xnyq_re);
+  (* Z[0].re = X[0] + X[N/2] *)
+  z_im.(0) <- Sub (x0_re, xnyq_re);
 
+  (* Z[0].im = X[0] - X[N/2] *)
   for k = 1 to half - 1 do
     let m = half - k in
-    let xk_re = input_re k    in let xk_im = input_im k    in
-    let xm_re = input_re m    in let xm_im = input_im m    in
+    let xk_re = input_re k in
+    let xk_im = input_im k in
+    let xm_re = input_re m in
+    let xm_im = input_im m in
     (* conj(X[m]) = (xm_re, -xm_im)
      * S = X[k] + conj(X[m]) = (xk_re + xm_re, xk_im - xm_im)
      * D = X[k] - conj(X[m]) = (xk_re - xm_re, xk_im + xm_im)
@@ -459,18 +497,18 @@ let dft_c2r_direct (n : int)
      * conj(W) = (cos(2πk/N), +sin(2πk/N))
      *)
     let theta = 2.0 *. pi *. float_of_int k /. float_of_int n in
-    let cwr = Const (cos theta) in        (* conj(W).re *)
-    let cwi = Const (sin theta) in        (* conj(W).im *)
+    let cwr = Const (cos theta) in
+    (* conj(W).re *)
+    let cwi = Const (sin theta) in
+    (* conj(W).im *)
     (* conj(W)*D = (cwr*d_re - cwi*d_im, cwr*d_im + cwi*d_re)
      * i * conj(W) * D = (-(cwr*d_im + cwi*d_re), cwr*d_re - cwi*d_im)
      * Z[k] = S + i*conj(W)*D:
      *   Z[k].re = s_re - cwr*d_im - cwi*d_re
      *   Z[k].im = s_im + cwr*d_re - cwi*d_im
      *)
-    let z_k_re =
-      Sub (Sub (s_re, Mul (cwr, d_im)), Mul (cwi, d_re)) in
-    let z_k_im =
-      Sub (Add (s_im, Mul (cwr, d_re)), Mul (cwi, d_im)) in
+    let z_k_re = Sub (Sub (s_re, Mul (cwr, d_im)), Mul (cwi, d_re)) in
+    let z_k_im = Sub (Add (s_im, Mul (cwr, d_re)), Mul (cwi, d_im)) in
     z_re.(k) <- z_k_re;
     z_im.(k) <- z_k_im
   done;
@@ -493,8 +531,8 @@ let dft_c2r_direct (n : int)
    *)
   let out = Array.make n (Const 0.0) in
   for nn = 0 to half - 1 do
-    out.(2 * nn)     <- z_out_re.(nn);
-    out.(2 * nn + 1) <- z_out_im.(nn)
+    out.(2 * nn) <- z_out_re.(nn);
+    out.((2 * nn) + 1) <- z_out_im.(nn)
   done;
   out
 
@@ -554,12 +592,12 @@ let dft_expand_c2r (n : int) : Expr.assignment list =
  * stage and the next are applied externally (by the planner) between
  * codelet calls.
  *)
-let dft_r2c_first ?(sign = `Fwd) (r : int)
-    (input_re : int -> expr) : expr array * expr array =
+let dft_r2c_first ?(sign = `Fwd) (r : int) (input_re : int -> expr) :
+    expr array * expr array =
   assert (r >= 2);
   (* Pair-pack: even reals → real part, odd reals → imag part. *)
   let z_in_re k = input_re (2 * k) in
-  let z_in_im k = input_re (2 * k + 1) in
+  let z_in_im k = input_re ((2 * k) + 1) in
   Dft.dft ~sign r z_in_re z_in_im
 
 (* Assignment-list wrapper for r2c first-stage codelet.
@@ -577,7 +615,7 @@ let dft_expand_r2c_first ?(sign = `Fwd) (r : int) : Expr.assignment list =
   let out_re, out_im = dft_r2c_first ~sign r input_re in
   let acc = ref [] in
   for k = r - 1 downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
+    acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
   List.rev !acc
@@ -606,8 +644,8 @@ let dft_expand_r2c_first ?(sign = `Fwd) (r : int) : Expr.assignment list =
  * positions [0..n/2]; positions [n/2+1..n-1] = conj(positions [n/2-1..1])
  * by construction (no work to emit them).
  *)
-let dft_rdft ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) : expr array * expr array =
+let dft_rdft ?(sign = `Fwd) (n : int) (input_re : int -> expr) :
+    expr array * expr array =
   assert (n >= 2);
   let zero_im _ = Const 0.0 in
   let full_re, full_im = Dft.dft ~sign n input_re zero_im in
@@ -630,7 +668,7 @@ let dft_expand_rdft ?(sign = `Fwd) (n : int) : Expr.assignment list =
   let out_re, out_im = dft_rdft ~sign n input_re in
   let acc = ref [] in
   for k = half downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
+    acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
   List.rev !acc
@@ -650,10 +688,14 @@ let dft_expand_r2cf ?(sign = `Fwd) (n : int) : Expr.assignment list =
   let half = n / 2 in
   let out_re, out_im = dft_rdft ~sign n input_re in
   let im_hi = if n land 1 = 0 then half - 1 else half in
-  let res = List.init (half + 1)
-      (fun k -> (Expr.Output (k, true), out_re.(k))) in
-  let ims = List.init (max 0 im_hi)
-      (fun i -> let k = i + 1 in (Expr.Output (k, false), out_im.(k))) in
+  let res =
+    List.init (half + 1) (fun k -> (Expr.Output (k, true), out_re.(k)))
+  in
+  let ims =
+    List.init (max 0 im_hi) (fun i ->
+        let k = i + 1 in
+        (Expr.Output (k, false), out_im.(k)))
+  in
   res @ ims
 
 (* === r2cb leaf (section 62): the BACKWARD real leaf, exact inverse of
@@ -704,8 +746,8 @@ let dft_expand_r2cb ?(sign = `Bwd) (n : int) : Expr.assignment list =
    * vs the gate's N*x). Map output index k <- result[(n-k) mod n] to undo it.
    * (k=0 and k=n/2 are reversal fixed points, so they are unaffected.) *)
   List.init n (fun k ->
-    let src = if k = 0 then 0 else n - k in
-    (Expr.Output (k, true), out_re.(src)))
+      let src = if k = 0 then 0 else n - k in
+      (Expr.Output (k, true), out_re.(src)))
 
 (* === DCT-II via Makhoul's reduction ===
  *
@@ -746,7 +788,7 @@ let dft_dct2 (n : int) (input_re : int -> expr) : expr array =
     else if k = half && n mod 2 = 0 then input_re (n - 1)
     else if k < half then input_re (2 * k)
     else (* k > half, in range [half+1, n-1] *)
-      input_re (2 * (n - k) - 1)
+      input_re ((2 * (n - k)) - 1)
   in
   (* Step 2: N-point real DFT of the permuted buffer. *)
   let z_re, z_im = dft_rdft ~sign:`Fwd n buf in
@@ -766,7 +808,7 @@ let dft_dct2 (n : int) (input_re : int -> expr) : expr array =
     let a = Mul (Const 2.0, z_re.(i)) in
     let b = Mul (Const 2.0, z_im.(i)) in
     (*  Y[i]   = wa·a + wb·b  *)
-    out.(i)     <- Add (Mul (wa, a), Mul (wb, b));
+    out.(i) <- Add (Mul (wa, a), Mul (wb, b));
     (*  Y[N-i] = wb·a - wa·b  *)
     out.(n - i) <- Sub (Mul (wb, a), Mul (wa, b))
   done;
@@ -782,7 +824,7 @@ let dft_expand_dct2 (n : int) : Expr.assignment list =
   let out = dft_dct2 n input_re in
   let acc = ref [] in
   for k = n - 1 downto 0 do
-    acc := (Output (k, true),  out.(k)) :: !acc
+    acc := (Output (k, true), out.(k)) :: !acc
   done;
   List.rev !acc
 
@@ -817,7 +859,8 @@ let dft_dct2_trigII (n : int) (input_re : int -> expr) : expr array =
   let in_re i =
     if i mod 2 = 0 then zero
     else if i < 2 * n then input_re ((i - 1) / 2)
-    else input_re ((fourn - 1 - i) / 2)   (* Hermitian mirror: g[4N-i] = g[i] *)
+    else input_re ((fourn - 1 - i) / 2)
+    (* Hermitian mirror: g[4N-i] = g[i] *)
   in
   let in_im _ = zero in
   let full_re, _ = Dft.dft ~sign:`Fwd fourn in_re in_im in
@@ -878,7 +921,7 @@ let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
     let theta = pi *. float_of_int i /. (2.0 *. float_of_int n) in
     let wa = cos theta in
     let wb = sin theta in
-    let y_i   = input_re i in
+    let y_i = input_re i in
     let y_nmi = input_re (n - i) in
     (*  a = wa·Y[i] + wb·Y[N-i] = 2·Re(Z[i])  (no /2 — keep 2·Re)
      *  b = wb·Y[i] - wa·Y[N-i] = 2·Im(Z[i])                       *)
@@ -888,22 +931,18 @@ let dft_dct3 (n : int) (input_re : int -> expr) : expr array =
   (* Step 2: N-point inverse R2C of Z → buf.
    * We reuse Dft.dft with sign=Bwd on the Hermitian-extended Z.
    * For positions i > N/2, Z is the conjugate of Z[N-i]. *)
-  let z_in_re k =
-    if k <= half then z_re.(k)
-    else z_re.(n - k)
-  in
-  let z_in_im k =
-    if k <= half then z_im.(k)
-    else Neg (z_im.(n - k))
-  in
+  let z_in_re k = if k <= half then z_re.(k) else z_re.(n - k) in
+  let z_in_im k = if k <= half then z_im.(k) else Neg z_im.(n - k) in
   let buf_re, _buf_im = Dft.dft ~sign:`Bwd n z_in_re z_in_im in
   (* Step 3: inverse permutation to produce Y. *)
   let out = Array.make n (Const 0.0) in
   out.(0) <- buf_re.(0);
   out.(n - 1) <- buf_re.(half);
   for i = 1 to half - 1 do
-    out.(2 * i)     <- buf_re.(i);       (* Y[2i]   = buf[i]   *)
-    out.(2 * i - 1) <- buf_re.(n - i)    (* Y[2i-1] = buf[N-i] *)
+    out.(2 * i) <- buf_re.(i);
+    (* Y[2i]   = buf[i]   *)
+    out.((2 * i) - 1) <- buf_re.(n - i)
+    (* Y[2i-1] = buf[N-i] *)
   done;
   out
 
@@ -940,11 +979,15 @@ let dft_dht (n : int) (input_re : int -> expr) : expr array =
   let half = n / 2 in
   let x_re, x_im = dft_rdft ~sign:`Fwd n input_re in
   let out = Array.make n (Const 0.0) in
-  out.(0)    <- x_re.(0);                          (* H[0]   = Re(X[0])  *)
-  out.(half) <- x_re.(half);                       (* H[N/2] = Re(X[N/2]) *)
+  out.(0) <- x_re.(0);
+  (* H[0]   = Re(X[0])  *)
+  out.(half) <- x_re.(half);
+  (* H[N/2] = Re(X[N/2]) *)
   for k = 1 to half - 1 do
-    out.(k)     <- Sub (x_re.(k), x_im.(k));       (* H[k]   = Re - Im *)
-    out.(n - k) <- Add (x_re.(k), x_im.(k))        (* H[N-k] = Re + Im *)
+    out.(k) <- Sub (x_re.(k), x_im.(k));
+    (* H[k]   = Re - Im *)
+    out.(n - k) <- Add (x_re.(k), x_im.(k))
+    (* H[N-k] = Re + Im *)
   done;
   out
 
@@ -969,10 +1012,7 @@ let dft_expand_dht (n : int) : Expr.assignment list =
  * Post: reverse the output indices.
  * All three steps fold into one DAG. *)
 let dft_dst2 (n : int) (input_re : int -> expr) : expr array =
-  let signed_input k =
-    if k mod 2 = 0 then input_re k
-    else Neg (input_re k)
-  in
+  let signed_input k = if k mod 2 = 0 then input_re k else Neg (input_re k) in
   let dct2_out = dft_dct2 n signed_input in
   let out = Array.make n (Const 0.0) in
   for k = 0 to n - 1 do
@@ -1003,8 +1043,7 @@ let dft_dst3 (n : int) (input_re : int -> expr) : expr array =
   let dct3_out = dft_dct3 n reversed in
   let out = Array.make n (Const 0.0) in
   for k = 0 to n - 1 do
-    if k mod 2 = 0 then out.(k) <- dct3_out.(k)
-    else out.(k) <- Neg (dct3_out.(k))
+    if k mod 2 = 0 then out.(k) <- dct3_out.(k) else out.(k) <- Neg dct3_out.(k)
   done;
   out
 
@@ -1045,7 +1084,7 @@ let dft_dct4 (n : int) (input_re : int -> expr) : expr array =
   let psi_im = Array.make half (Const 0.0) in
   for m = 0 to half - 1 do
     let z_re = input_re (2 * m) in
-    let z_im = Neg (input_re (n - 1 - 2 * m)) in
+    let z_im = Neg (input_re (n - 1 - (2 * m))) in
     let phi = pi *. float_of_int m /. float_of_int n in
     let c = Const (cos phi) in
     let s = Const (sin phi) in
@@ -1056,9 +1095,7 @@ let dft_dct4 (n : int) (input_re : int -> expr) : expr array =
   done;
   (* Step 3: IFFT_{N/2} unnormalized backward c2c on psi. *)
   let ifft_re, ifft_im =
-    Dft.dft ~sign:`Bwd half
-      (fun k -> psi_re.(k))
-      (fun k -> psi_im.(k))
+    Dft.dft ~sign:`Bwd half (fun k -> psi_re.(k)) (fun k -> psi_im.(k))
   in
   (* Step 4 + 5: post-twiddle and extract.
    * Z[k'] = (2cos + 2i·sin) · (ifft_re + i·ifft_im)
@@ -1066,13 +1103,13 @@ let dft_dct4 (n : int) (input_re : int -> expr) : expr array =
    * with cos/sin = cos/sin(π(4k'+1)/(4N)). *)
   let out = Array.make n (Const 0.0) in
   for kp = 0 to half - 1 do
-    let phi = pi *. float_of_int (4 * kp + 1) /. (4.0 *. float_of_int n) in
+    let phi = pi *. float_of_int ((4 * kp) + 1) /. (4.0 *. float_of_int n) in
     let c = Const (2.0 *. cos phi) in
     let s = Const (2.0 *. sin phi) in
     let z_re = Sub (Mul (c, ifft_re.(kp)), Mul (s, ifft_im.(kp))) in
     let z_im = Add (Mul (c, ifft_im.(kp)), Mul (s, ifft_re.(kp))) in
-    out.(2 * kp)         <- z_re;
-    out.(n - 1 - 2 * kp) <- z_im
+    out.(2 * kp) <- z_re;
+    out.(n - 1 - (2 * kp)) <- z_im
   done;
   out
 
@@ -1193,15 +1230,16 @@ let dft_expand_dst1 (n : int) : Expr.assignment list =
  *)
 
 (* sym2: post-rotate upper half by +i. (re, im) → (-im, re) for i ≥ n/2. *)
-let sym2_arr (n : int) (re_arr : expr array) (im_arr : expr array)
-    : expr array * expr array =
+let sym2_arr (n : int) (re_arr : expr array) (im_arr : expr array) :
+    expr array * expr array =
   let r2 = Array.make n (Const 0.0) in
   let i2 = Array.make n (Const 0.0) in
   for i = 0 to n - 1 do
     if 2 * i < n then begin
       r2.(i) <- re_arr.(i);
       i2.(i) <- im_arr.(i)
-    end else begin
+    end
+    else begin
       r2.(i) <- Neg im_arr.(i);
       i2.(i) <- re_arr.(i)
     end
@@ -1210,24 +1248,25 @@ let sym2_arr (n : int) (re_arr : expr array) (im_arr : expr array)
 
 (* sym2i: pre-rotate upper half by -i. (re, im) → (im, -re) for i ≥ n/2.
  * Used by the DIF dispatch. *)
-let sym2i_arr (n : int) (re_arr : expr array) (im_arr : expr array)
-    : expr array * expr array =
+let sym2i_arr (n : int) (re_arr : expr array) (im_arr : expr array) :
+    expr array * expr array =
   let r2 = Array.make n (Const 0.0) in
   let i2 = Array.make n (Const 0.0) in
   for i = 0 to n - 1 do
     if 2 * i < n then begin
       r2.(i) <- re_arr.(i);
       i2.(i) <- im_arr.(i)
-    end else begin
+    end
+    else begin
       r2.(i) <- im_arr.(i);
-      i2.(i) <- Neg (re_arr.(i))
+      i2.(i) <- Neg re_arr.(i)
     end
   done;
   (r2, i2)
 
 (* sym1: combine Re(f(i)) with Im(f(n-1-i)) at every position. *)
-let sym1_arr (n : int) (re_arr : expr array) (im_arr : expr array)
-    : expr array * expr array =
+let sym1_arr (n : int) (re_arr : expr array) (im_arr : expr array) :
+    expr array * expr array =
   let r1 = Array.make n (Const 0.0) in
   let i1 = Array.make n (Const 0.0) in
   for i = 0 to n - 1 do
@@ -1240,18 +1279,17 @@ let sym1_arr (n : int) (re_arr : expr array) (im_arr : expr array)
  *   input_re/im k     : load packed input at position k (k = 0..n-1)
  *   tw_re/im k        : load twiddle for position k (position 0 has trivial W^0 = 1)
  * Returns (out_re, out_im) of length n in Hermitian-packed format. *)
-let dft_hc2hc_dit ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) (input_im : int -> expr)
-    (tw_re : int -> expr) (tw_im : int -> expr)
-    : expr array * expr array =
-  let conj = (sign = `Bwd) in
+let dft_hc2hc_dit ?(sign = `Fwd) (n : int) (input_re : int -> expr)
+    (input_im : int -> expr) (tw_re : int -> expr) (tw_im : int -> expr) :
+    expr array * expr array =
+  let conj = sign = `Bwd in
   (* Pre-twiddle. Position 0's twiddle is W^0 = 1, no multiply. *)
   let twiddled_re = Array.make n (Const 0.0) in
   let twiddled_im = Array.make n (Const 0.0) in
   twiddled_re.(0) <- input_re 0;
   twiddled_im.(0) <- input_im 0;
   for k = 1 to n - 1 do
-    let (re, im) =
+    let re, im =
       Dft.cmul_pattern ~conj (input_re k) (input_im k) (tw_re k) (tw_im k)
     in
     twiddled_re.(k) <- re;
@@ -1259,9 +1297,7 @@ let dft_hc2hc_dit ?(sign = `Fwd) (n : int)
   done;
   (* c2c DFT *)
   let re_arr, im_arr =
-    Dft.dft ~sign n
-      (fun k -> twiddled_re.(k))
-      (fun k -> twiddled_im.(k))
+    Dft.dft ~sign n (fun k -> twiddled_re.(k)) (fun k -> twiddled_im.(k))
   in
   (* Apply sym2 then sym1 to fold into Hermitian-packed output. *)
   let r2, i2 = sym2_arr n re_arr im_arr in
@@ -1270,26 +1306,23 @@ let dft_hc2hc_dit ?(sign = `Fwd) (n : int)
 (* DIF dispatch:
  *   output = byw (Fft.dft sign n (((sym2i n) @@ (sym1 n)) input))
  * Pre-sym chain, DFT, post-twiddle. *)
-let dft_hc2hc_dif ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) (input_im : int -> expr)
-    (tw_re : int -> expr) (tw_im : int -> expr)
-    : expr array * expr array =
-  let conj = (sign = `Bwd) in
+let dft_hc2hc_dif ?(sign = `Fwd) (n : int) (input_re : int -> expr)
+    (input_im : int -> expr) (tw_re : int -> expr) (tw_im : int -> expr) :
+    expr array * expr array =
+  let conj = sign = `Bwd in
   let in_re = Array.init n input_re in
   let in_im = Array.init n input_im in
   let s1_re, s1_im = sym1_arr n in_re in_im in
   let s2i_re, s2i_im = sym2i_arr n s1_re s1_im in
   let re_arr, im_arr =
-    Dft.dft ~sign n
-      (fun k -> s2i_re.(k))
-      (fun k -> s2i_im.(k))
+    Dft.dft ~sign n (fun k -> s2i_re.(k)) (fun k -> s2i_im.(k))
   in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
   out_re.(0) <- re_arr.(0);
   out_im.(0) <- im_arr.(0);
   for k = 1 to n - 1 do
-    let (re, im) =
+    let re, im =
       Dft.cmul_pattern ~conj re_arr.(k) im_arr.(k) (tw_re k) (tw_im k)
     in
     out_re.(k) <- re;
@@ -1301,8 +1334,8 @@ let dft_hc2hc_dif ?(sign = `Fwd) (n : int)
  * Inputs at Input(k, true/false), twiddles at Twiddle(k, true/false) for
  * k = 0..n-1 (twiddle k=0 is unused since position 0 has trivial W^0).
  * Outputs at Output(k, true/false) for k = 0..n-1 in packed format. *)
-let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int)
-    : Expr.assignment list =
+let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int) :
+    Expr.assignment list =
   let input_re k = Load (Input (k, true)) in
   let input_im k = Load (Input (k, false)) in
   (* Section 66: slot convention unified with the t1/spill builders'
@@ -1311,13 +1344,14 @@ let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int)
    * spill-built variants. *)
   let tw_re k = Load (Twiddle (k - 1, true)) in
   let tw_im k = Load (Twiddle (k - 1, false)) in
-  let out_re, out_im = match direction with
+  let out_re, out_im =
+    match direction with
     | `Dit -> dft_hc2hc_dit ~sign n input_re input_im tw_re tw_im
     | `Dif -> dft_hc2hc_dif ~sign n input_re input_im tw_re tw_im
   in
   let acc = ref [] in
   for k = n - 1 downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
+    acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
   List.rev !acc
@@ -1362,15 +1396,16 @@ let dft_expand_hc2hc ?(sign = `Fwd) ?(direction = `Dit) (n : int)
  *)
 
 (* sym: conjugate upper half. (re, im) → (re, -im) for i ≥ n/2. *)
-let sym_arr (n : int) (re_arr : expr array) (im_arr : expr array)
-    : expr array * expr array =
+let sym_arr (n : int) (re_arr : expr array) (im_arr : expr array) :
+    expr array * expr array =
   let r = Array.make n (Const 0.0) in
   let im = Array.make n (Const 0.0) in
   for i = 0 to n - 1 do
     if 2 * i < n then begin
       r.(i) <- re_arr.(i);
       im.(i) <- im_arr.(i)
-    end else begin
+    end
+    else begin
       r.(i) <- re_arr.(i);
       im.(i) <- Neg im_arr.(i)
     end
@@ -1379,50 +1414,44 @@ let sym_arr (n : int) (re_arr : expr array) (im_arr : expr array)
 
 (* hc2c primitive (DIT case):
  *   output = sym n (Fft.dft sign n (byw input)) *)
-let dft_hc2c_dit ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) (input_im : int -> expr)
-    (tw_re : int -> expr) (tw_im : int -> expr)
-    : expr array * expr array =
-  let conj = (sign = `Bwd) in
+let dft_hc2c_dit ?(sign = `Fwd) (n : int) (input_re : int -> expr)
+    (input_im : int -> expr) (tw_re : int -> expr) (tw_im : int -> expr) :
+    expr array * expr array =
+  let conj = sign = `Bwd in
   let twiddled_re = Array.make n (Const 0.0) in
   let twiddled_im = Array.make n (Const 0.0) in
   twiddled_re.(0) <- input_re 0;
   twiddled_im.(0) <- input_im 0;
   for k = 1 to n - 1 do
-    let (re, im) =
+    let re, im =
       Dft.cmul_pattern ~conj (input_re k) (input_im k) (tw_re k) (tw_im k)
     in
     twiddled_re.(k) <- re;
     twiddled_im.(k) <- im
   done;
   let re_arr, im_arr =
-    Dft.dft ~sign n
-      (fun k -> twiddled_re.(k))
-      (fun k -> twiddled_im.(k))
+    Dft.dft ~sign n (fun k -> twiddled_re.(k)) (fun k -> twiddled_im.(k))
   in
   sym_arr n re_arr im_arr
 
 (* hc2c DIF case:
  *   output = byw (Fft.dft sign n (sym n input)) *)
-let dft_hc2c_dif ?(sign = `Fwd) (n : int)
-    (input_re : int -> expr) (input_im : int -> expr)
-    (tw_re : int -> expr) (tw_im : int -> expr)
-    : expr array * expr array =
-  let conj = (sign = `Bwd) in
+let dft_hc2c_dif ?(sign = `Fwd) (n : int) (input_re : int -> expr)
+    (input_im : int -> expr) (tw_re : int -> expr) (tw_im : int -> expr) :
+    expr array * expr array =
+  let conj = sign = `Bwd in
   let in_re = Array.init n input_re in
   let in_im = Array.init n input_im in
   let s_re, s_im = sym_arr n in_re in_im in
   let re_arr, im_arr =
-    Dft.dft ~sign n
-      (fun k -> s_re.(k))
-      (fun k -> s_im.(k))
+    Dft.dft ~sign n (fun k -> s_re.(k)) (fun k -> s_im.(k))
   in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
   out_re.(0) <- re_arr.(0);
   out_im.(0) <- im_arr.(0);
   for k = 1 to n - 1 do
-    let (re, im) =
+    let re, im =
       Dft.cmul_pattern ~conj re_arr.(k) im_arr.(k) (tw_re k) (tw_im k)
     in
     out_re.(k) <- re;
@@ -1435,19 +1464,20 @@ let dft_hc2c_dif ?(sign = `Fwd) (n : int)
  * outputs at Output(k, true/false) for k = 0..n-1.
  * The split-pointer storage convention (Rp/Ip/Rm/Im) is handled at
  * the executor / dispatcher level, not here. *)
-let dft_expand_hc2c ?(sign = `Fwd) ?(direction = `Dit) ?(tw_policy = Dft.TP_Flat) (n : int)
-    : Expr.assignment list =
+let dft_expand_hc2c ?(sign = `Fwd) ?(direction = `Dit)
+    ?(tw_policy = Dft.TP_Flat) (n : int) : Expr.assignment list =
   let input_re k = Load (Input (k, true)) in
   let input_im k = Load (Input (k, false)) in
   let tw_re k = fst (Dft.twiddle_expr tw_policy n k) in
   let tw_im k = snd (Dft.twiddle_expr tw_policy n k) in
-  let out_re, out_im = match direction with
+  let out_re, out_im =
+    match direction with
     | `Dit -> dft_hc2c_dit ~sign n input_re input_im tw_re tw_im
     | `Dif -> dft_hc2c_dif ~sign n input_re input_im tw_re tw_im
   in
   let acc = ref [] in
   for k = n - 1 downto 0 do
-    acc := (Output (k, true),  out_re.(k))  :: !acc;
+    acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
   List.rev !acc
@@ -1465,41 +1495,47 @@ let dft_expand_hc2c ?(sign = `Fwd) ?(direction = `Dit) ?(tw_policy = Dft.TP_Flat
  * DIF pre-syms the INPUTS (cannot be post-transformed from outside
  * the builder) and is unused by the rfft executor: DIF stays on the
  * plain path. *)
-let dft_expand_hc2hc_spill ?(sign = `Fwd) ?(tw_policy = Dft.TP_Flat) (n : int)
-    : Expr.assignment list * Dft.spill_marker list * (int * int) option =
+let dft_expand_hc2hc_spill ?(sign = `Fwd) ?(tw_policy = Dft.TP_Flat) (n : int) :
+    Expr.assignment list * Dft.spill_marker list * (int * int) option =
   let assigns, markers, ct =
-    Dft.dft_expand_twiddled_spill ~policy:tw_policy ~direction:Dft.DIT ~sign n in
+    Dft.dft_expand_twiddled_spill ~policy:tw_policy ~direction:Dft.DIT ~sign n
+  in
   let re = Array.make n (Const 0.0) in
   let im = Array.make n (Const 0.0) in
-  List.iter (fun (lhs, e) ->
-    match lhs with
-    | Expr.Output (k, true)  -> re.(k) <- e
-    | Expr.Output (k, false) -> im.(k) <- e
-    | _ -> ()) assigns;
+  List.iter
+    (fun (lhs, e) ->
+      match lhs with
+      | Expr.Output (k, true) -> re.(k) <- e
+      | Expr.Output (k, false) -> im.(k) <- e
+      | _ -> ())
+    assigns;
   let r2, i2 = sym2_arr n re im in
   let r1, i1 = sym1_arr n r2 i2 in
   let acc = ref [] in
   for k = n - 1 downto 0 do
-    acc := (Expr.Output (k, true),  r1.(k)) :: !acc;
+    acc := (Expr.Output (k, true), r1.(k)) :: !acc;
     acc := (Expr.Output (k, false), i1.(k)) :: !acc
   done;
   (!acc, markers, ct)
 
-let dft_expand_hc2c_spill ?(sign = `Fwd) ?(tw_policy = Dft.TP_Flat) (n : int)
-    : Expr.assignment list * Dft.spill_marker list * (int * int) option =
+let dft_expand_hc2c_spill ?(sign = `Fwd) ?(tw_policy = Dft.TP_Flat) (n : int) :
+    Expr.assignment list * Dft.spill_marker list * (int * int) option =
   let assigns, markers, ct =
-    Dft.dft_expand_twiddled_spill ~policy:tw_policy ~direction:Dft.DIT ~sign n in
+    Dft.dft_expand_twiddled_spill ~policy:tw_policy ~direction:Dft.DIT ~sign n
+  in
   let re = Array.make n (Const 0.0) in
   let im = Array.make n (Const 0.0) in
-  List.iter (fun (lhs, e) ->
-    match lhs with
-    | Expr.Output (k, true)  -> re.(k) <- e
-    | Expr.Output (k, false) -> im.(k) <- e
-    | _ -> ()) assigns;
+  List.iter
+    (fun (lhs, e) ->
+      match lhs with
+      | Expr.Output (k, true) -> re.(k) <- e
+      | Expr.Output (k, false) -> im.(k) <- e
+      | _ -> ())
+    assigns;
   let r1, i1 = sym_arr n re im in
   let acc = ref [] in
   for k = n - 1 downto 0 do
-    acc := (Expr.Output (k, true),  r1.(k)) :: !acc;
+    acc := (Expr.Output (k, true), r1.(k)) :: !acc;
     acc := (Expr.Output (k, false), i1.(k)) :: !acc
   done;
   (!acc, markers, ct)
