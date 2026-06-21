@@ -50,6 +50,14 @@
 #include "fft2d_r2c.h" /* 2D r2c / c2r                                    */
 #include "fft2d_c2c_wisdom.h" /* dedicated 2D c2c wisdom (lookup + calibrated create) */
 #include "fft2d_r2c_wisdom.h" /* dedicated 2D r2c/c2r wisdom (shared struct)          */
+#ifdef VFFT_USE_JIT
+#include "jit/jit_runtime.h"  /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
+                               * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */
+#endif
+#include "prime_dispatch.h"       /* vfft_proto_auto_plan_dispatch (Rader/Bluestein for prime N) */
+#include "bluestein_calibrator.h" /* bluestein_calibrate_one — prime-N (M,B) calibrate-on-miss */
+#include "fft2d_c2c_planner.h"    /* 2D c2c calibrate-on-miss (plan_measure + bench_min); pulls measure.h */
+#include "fft2d_c2r_planner.h"    /* 2D r2c + c2r calibrate-on-miss (pulls fft2d_r2c_planner.h) */
 
 #include <stdlib.h>
 #include <string.h>
@@ -76,6 +84,8 @@ struct vfft_wisdom_s
     vfft_fft2d_c2c_wisdom_t fft2d_c2c;
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
     vfft_fft2d_r2c_wisdom_t fft2d_c2r;   /* shared struct, c2r-tuned plans */
+    char path_bluestein[640];            /* bluestein_wisdom.txt */
+    bluestein_wisdom_t bluestein;        /* prime-N (M,B) for Bluestein cells (Rader needs none) */
 };
 
 struct vfft_plan_s
@@ -90,6 +100,9 @@ struct vfft_plan_s
     vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
     vfft_r2c_plan_t *rplan; /* r2c / c2r (owned)         */
     stride_plan_t *tplan;   /* trig DCT/DST/DHT (owned)  */
+    /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
+     * once at create; execute calls it directly (zero JIT overhead in the hot path). */
+    vfft_proto_exec_fn exec_fwd, exec_bwd;
 };
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
@@ -132,6 +145,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
     snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
     snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
+    snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
@@ -141,6 +155,8 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
     vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c);
     vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r);
+    bluestein_wisdom_init(&W->bluestein);
+    bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
 }
 
 static struct vfft_wisdom_s _def;
@@ -372,9 +388,57 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
     return dct2 ? stride_dst2_plan(N, K, dct2) : NULL; /* DST-II/III wrap DCT-II */
 }
 
+/* Measure an in-place 2D c2c plan end-to-end (for the calibrate-on-miss win-gate). */
+static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
+{
+    size_t T = (size_t)N1 * (size_t)N2;
+    double *re = (double *)malloc(T * sizeof(double));
+    double *im = (double *)malloc(T * sizeof(double));
+    if (!re || !im) { free(re); free(im); return 1e18; }
+    for (size_t i = 0; i < T; i++) { re[i] = (double)rand() / RAND_MAX - 0.5;
+                                     im[i] = (double)rand() / RAND_MAX - 0.5; }
+    double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
+    free(re); free(im);
+    return ns;
+}
+
+/* Measure a 2D r2c forward plan end-to-end (OOP), for the calibrate-on-miss win-gate. */
+static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
+{
+    size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
+    double *x = (double *)malloc(RN * sizeof(double));
+    double *ore = (double *)malloc(CN * sizeof(double));
+    double *oim = (double *)malloc(CN * sizeof(double));
+    if (!x || !ore || !oim) { free(x); free(ore); free(oim); return 1e18; }
+    for (size_t i = 0; i < RN; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
+    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
+    free(x); free(ore); free(oim);
+    return ns;
+}
+
+/* Measure a 2D c2r backward plan end-to-end (OOP): produce the half-spectrum via r2c
+ * first (the c2r input), then time c2r. */
+static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
+{
+    size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
+    double *x = (double *)malloc(RN * sizeof(double));
+    double *ore = (double *)malloc(CN * sizeof(double));
+    double *oim = (double *)malloc(CN * sizeof(double));
+    double *xr = (double *)malloc(RN * sizeof(double));
+    if (!x || !ore || !oim || !xr) { free(x); free(ore); free(oim); free(xr); return 1e18; }
+    for (size_t i = 0; i < RN; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
+    stride_execute_2d_r2c(p, x, ore, oim);   /* valid half-spectrum for c2r input */
+    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
+    free(x); free(ore); free(oim); free(xr);
+    return ns;
+}
+
 /* Build a 2D plan (also a stride_plan_t). c2c = tiled-row + native-col (inner row/col
  * built internally). r2c/c2r = row r2c (N2,B) + col c2c (N1,K_pad), inner cells on c2c
- * wisdom. The SAME r2c plan serves both directions (fwd=2d_r2c, bwd=2d_c2r). */
+ * wisdom. The SAME r2c plan serves both directions (fwd=2d_r2c, bwd=2d_c2r).
+ *
+ * Calibrate-on-miss (c2c): on a 2D-wisdom miss, run the dedicated 2D planner and KEEP it
+ * only if it beats the (1D-wisdom-inner) fallback measured end-to-end — then bank it. */
 static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
                                 const vfft_proto_registry_t *reg,
                                 struct vfft_wisdom_s *W, int recalib)
@@ -388,6 +452,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (!recalib && vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
             return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
 
+        /* Build the fallback (1D-wisdom inners). */
         size_t B = _fft2d_choose_tile(N2, N1);
         stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
         stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
@@ -399,7 +464,28 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 stride_plan_destroy(row);
             return NULL;
         }
-        return stride_plan_2d_from(N1, N2, B, col, row); /* takes ownership */
+        stride_plan_t *fb = stride_plan_2d_from(N1, N2, B, col, row); /* takes ownership */
+        if (!fb)
+            return NULL;
+
+        /* Calibrate-on-miss: run the dedicated 2D planner, keep it ONLY if it beats the
+         * fallback measured end-to-end (the 64² precedent — a fresh 2D calibration can
+         * lose). Bank the winner so future creates hit. */
+        vfft_fft2d_c2c_wisdom_entry_t cal;
+        vfft_fft2d_c2c_mode_t mode =
+            (rigor == VFFT_MEASURE) ? VFFT_FFT2D_C2C_MEASURE : VFFT_FFT2D_C2C_PATIENT;
+        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, 0);
+        if (cal_ns < 1e17)
+        {
+            double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
+            if (cal_ns < fb_ns)
+            {
+                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, 1); /* calibrated wins -> bank */
+                stride_plan_destroy(fb);
+                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+            }
+        }
+        return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
     }
     if (t == VFFT_R2C || t == VFFT_C2R)
     {
@@ -427,7 +513,31 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 stride_plan_destroy(pcol);
             return NULL;
         }
-        return stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol); /* takes ownership */
+        stride_plan_t *fb = stride_plan_2d_r2c_from(N1, N2, B, K_pad, pr2c, pcol); /* owns both */
+        if (!fb)
+            return NULL;
+
+        /* Calibrate-on-miss, scored by DIRECTION (r2c fwd vs c2r bwd — different optima),
+         * kept only if it beats the fallback measured end-to-end. Bank to the per-direction
+         * table (rw). */
+        vfft_fft2d_r2c_wisdom_entry_t cal;
+        vfft_fft2d_r2c_mode_t mode =
+            (rigor == VFFT_MEASURE) ? VFFT_FFT2D_R2C_MEASURE : VFFT_FFT2D_R2C_PATIENT;
+        double cal_ns = (t == VFFT_C2R)
+                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0)
+                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0);
+        if (cal_ns < 1e17)
+        {
+            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2)
+                                           : _vfft_measure_2d_r2c(fb, N1, N2);
+            if (cal_ns < fb_ns)
+            {
+                vfft_fft2d_r2c_wisdom_add(rw, &cal, 1); /* calibrated wins -> bank */
+                stride_plan_destroy(fb);
+                return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+            }
+        }
+        return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
     }
     return NULL; /* 2D trig not wired */
 }
@@ -438,6 +548,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
 typedef struct
 {
     const stride_plan_t *p;
+    vfft_proto_exec_fn fn; /* resolved executor for this direction (NULL = generic) */
     double *re, *im;
     size_t k0, S;
     int dir;
@@ -445,12 +556,17 @@ typedef struct
 static void _ip_tramp(void *a)
 {
     _ip_arg *x = (_ip_arg *)a;
-    if (x->dir)
+    if (x->fn)
+        x->fn(x->p, x->re + x->k0, x->im + x->k0, x->S, x->p->K, 0);
+    else if (x->dir)
         vfft_proto_execute_fwd(x->p, x->re + x->k0, x->im + x->k0, x->S);
     else
         vfft_proto_execute_bwd(x->p, x->re + x->k0, x->im + x->k0, x->S);
 }
-static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir)
+/* In-place c2c, pool K-split. `fn` is the transparent JIT/baked-resolved executor
+ * for `dir` (NULL = fall back to the generic executor) — set once at create. */
+static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
+                    vfft_proto_exec_fn fn)
 {
     size_t K = p->K;
     int T = stride_get_num_threads();
@@ -458,7 +574,9 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir)
         T = _stride_pool_size + 1;
     if (T <= 1 || K < 8)
     {
-        if (dir)
+        if (fn)
+            fn(p, re, im, K, p->K, 0);
+        else if (dir)
             vfft_proto_execute_fwd(p, re, im, K);
         else
             vfft_proto_execute_bwd(p, re, im, K);
@@ -475,12 +593,14 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir)
         size_t ke = k0 + S;
         if (ke > K)
             ke = K;
-        a[nd] = (_ip_arg){p, re, im, k0, ke - k0, dir};
+        a[nd] = (_ip_arg){p, fn, re, im, k0, ke - k0, dir};
         _stride_pool_dispatch(&_stride_workers[nd], _ip_tramp, &a[nd]);
         nd++;
     }
     size_t s0 = S < K ? S : K;
-    if (dir)
+    if (fn)
+        fn(p, re, im, s0, p->K, 0);
+    else if (dir)
         vfft_proto_execute_fwd(p, re, im, s0);
     else
         vfft_proto_execute_bwd(p, re, im, s0);
@@ -513,7 +633,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         int N1 = cfg->n[0], N2 = cfg->n[1];
         stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate);
         if (W->path_c2c[0])
-            vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+            vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* inner-cell calibrate-on-miss */
+        /* persist the dedicated 2D table that _build_2d may have banked, by direction. */
+        if (cfg->transform == VFFT_C2C && W->path_2d_c2c[0])
+            vfft_fft2d_c2c_wisdom_save(&W->fft2d_c2c, W->path_2d_c2c);
+        else if (cfg->transform == VFFT_R2C && W->path_2d_r2c[0])
+            vfft_fft2d_r2c_wisdom_save(&W->fft2d_r2c, W->path_2d_r2c);
+        else if (cfg->transform == VFFT_C2R && W->path_2d_c2r[0])
+            vfft_fft2d_r2c_wisdom_save(&W->fft2d_c2r, W->path_2d_c2r);
         if (!tp)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -535,18 +662,52 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     /* ── c2c IN-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
     {
-        const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-        if (!e || cfg->recalibrate)
+        vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
+        if (_vfft_is_prime(N))
         {
-            vfft_proto_wisdom_entry_t ne;
-            if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+            /* Prime N routes through Rader (radix-smooth N-1: M=N-1 + heuristic B,
+             * no wisdom) or Bluestein (else: (M,B) FROM the bluestein wisdom). Only
+             * the Bluestein cell consults wisdom, so calibrate-on-miss only there. */
+            if (!_vfft_is_radix_smooth(N - 1) &&
+                (cfg->recalibrate || !bluestein_wisdom_lookup(&W->bluestein, N, K)))
             {
-                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                if (W->path_c2c[0])
-                    vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                size_t tot = (size_t)N * K;
+                double *cre = (double *)malloc(tot * sizeof(double));
+                double *cim = (double *)malloc(tot * sizeof(double));
+                if (cre && cim)
+                {
+                    for (size_t i = 0; i < tot; i++)
+                    {
+                        cre[i] = (double)rand() / RAND_MAX - 0.5;
+                        cim[i] = (double)rand() / RAND_MAX - 0.5;
+                    }
+                    double budget = (cfg->rigor == VFFT_MEASURE) ? 0.02 : 0.05;
+                    int trials = (cfg->rigor == VFFT_MEASURE) ? 2 : 3;
+                    bluestein_calibrate_one(&W->bluestein, N, K, reg, &W->c2c,
+                                            cre, cim, budget, trials, NULL);
+                    if (W->path_bluestein[0])
+                        bluestein_wisdom_save(&W->bluestein, W->path_bluestein);
+                }
+                free(cre);
+                free(cim);
             }
         }
-        stride_plan_t *p = vfft_proto_auto_plan(N, K, reg, &W->c2c);
+        else
+        {
+            const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+            if (!e || cfg->recalibrate)
+            {
+                vfft_proto_wisdom_entry_t ne;
+                if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+                {
+                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    if (W->path_c2c[0])
+                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                }
+            }
+        }
+        /* prime-aware: factorable -> CT/wisdom; prime -> Rader/Bluestein (override). */
+        stride_plan_t *p = vfft_proto_auto_plan_dispatch(N, K, reg, &W->c2c);
         if (!p)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -561,6 +722,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->cplan = p;
+#ifdef VFFT_USE_JIT
+        /* Transparent resolve for STAGED plans only; override plans (Rader/Bluestein,
+         * num_stages==0) keep exec_*=NULL -> the generic override-aware executor. */
+        if (p->num_stages > 0)
+        {
+            h->exec_fwd = vfft_proto_plan_jit_fwd(p);
+            h->exec_bwd = vfft_proto_plan_jit_bwd(p);
+        }
+#endif
         return h;
     }
 
@@ -772,7 +942,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
         vfft_set_num_threads(h->nthreads);
-        _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0); /* dst==src */
+        _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
+                dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd); /* transparent JIT/baked */
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)

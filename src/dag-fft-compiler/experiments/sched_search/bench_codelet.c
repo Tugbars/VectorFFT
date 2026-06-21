@@ -63,10 +63,16 @@ static double qpc_freq(void) {
 static int64_t qpc_now(void) {
     LARGE_INTEGER c; QueryPerformanceCounter(&c); return (int64_t)c.QuadPart;
 }
-static void pin_and_prioritize(void) {
-    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1u << 0); /* core 0 */
+static void pin_and_prioritize(int core) {
+    /* Match bench_1d_vs_mkl.c: pin single-thread runs to a quiet P-core
+     * (default P-core 2). Core 0 is OS-contended and produces bimodal timings
+     * even at a locked 5.7 GHz. */
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1u << core);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+}
+static void pace(int ms) {
+    if (ms > 0) Sleep((DWORD)ms);
 }
 static void *dl_open(const char *p) { return (void *)LoadLibraryA(p); }
 static void *dl_sym(void *h, const char *s) {
@@ -80,9 +86,13 @@ static int64_t qpc_now(void) {
     struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
     return (int64_t)t.tv_sec * 1000000000LL + t.tv_nsec;
 }
-static void pin_and_prioritize(void) {
-    cpu_set_t set; CPU_ZERO(&set); CPU_SET(0, &set);
+static void pin_and_prioritize(int core) {
+    cpu_set_t set; CPU_ZERO(&set); CPU_SET(core, &set);
     pthread_setaffinity_np(pthread_self(), sizeof(set), &set);
+}
+static void pace(int ms) {
+    if (ms > 0) { struct timespec ts = {ms/1000, (long)(ms%1000)*1000000L};
+                  nanosleep(&ts, NULL); }
 }
 static void *dl_open(const char *p) { return dlopen(p, RTLD_NOW); }
 static void *dl_sym(void *h, const char *s) { return dlsym(h, s); }
@@ -109,6 +119,8 @@ int main(int argc, char **argv) {
     size_t K = (size_t)strtoull(argv[4], NULL, 10);
     int batches = (argc > 5) ? atoi(argv[5]) : 21;
     double target_ns = (argc > 6) ? atof(argv[6]) : 5.0e7; /* 50 ms */
+    int core = (argc > 7) ? atoi(argv[7]) : 2;   /* quiet P-core (bench_1d_vs_mkl convention) */
+    int pace_ms = (argc > 8) ? atoi(argv[8]) : 5; /* inter-batch idle, lets the core settle */
 
     void *h = dl_open(dll);
     if (!h) { fprintf(stderr, "load failed: %s\n", dll); return 2; }
@@ -130,11 +142,11 @@ int main(int argc, char **argv) {
         tw_re[i] = 0.70710678; tw_im[i] = -0.70710678;
     }
 
-    pin_and_prioritize();
+    pin_and_prioritize(core);
     double freq = qpc_freq();
 
-    /* Warmup. */
-    for (int i = 0; i < 64; i++) fn(re, im, tw_re, tw_im, ios, me);
+    /* Warmup: drive the pinned core to steady state (longer than a few calls). */
+    for (int i = 0; i < 4096; i++) fn(re, im, tw_re, tw_im, ios, me);
 
     /* Auto-calibrate iters so one batch ~= target_ns. */
     size_t iters = 1;
@@ -151,6 +163,7 @@ int main(int argc, char **argv) {
     double *ns_per = (double *)malloc((size_t)batches * sizeof(double));
     double *cyc_per = (double *)malloc((size_t)batches * sizeof(double));
     for (int b = 0; b < batches; b++) {
+        pace(pace_ms);  /* inter-batch idle (bench_1d_vs_mkl pacing) */
         uint64_t c0 = __rdtsc();
         int64_t  t0 = qpc_now();
         for (size_t i = 0; i < iters; i++) fn(re, im, tw_re, tw_im, ios, me);
