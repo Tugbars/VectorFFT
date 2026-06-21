@@ -31,7 +31,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-set(VFFT_ISA "avx2" CACHE STRING "Codelet ISA (avx2/avx512)")
+set(VFFT_ISA "avx2" CACHE STRING "Codelet ISA (avx2/avx512/auto)")
 
 # ── Front-end classification ────────────────────────────────────────────────
 # MSVC is true for cl, clang-cl and icx-cl (MSVC-ABI drivers). Everything else
@@ -48,6 +48,38 @@ set(DAG_CORE     "${CMAKE_SOURCE_DIR}/src/core")
 set(DAG_GEN      "${DAG}/generator/generated")
 set(DAG_JIT      "${DAG}/jit")
 set(DAG_CODELETS "${DAG}/codelets")
+
+# Resolve VFFT_ISA to a CONCRETE codelet ISA. Codelets are pre-generated per ISA
+# (codelets/*/avx2, codelets/*/avx512) — there is no "auto" tree.
+#   - explicit avx2 / avx512  -> trust the user.
+#   - auto (the default, and what the CMake Tools extension may hold cached from the
+#     old root CMake) -> DETECT the host: pick avx512 only if the avx512 codelets
+#     exist AND this CPU actually runs AVX-512 (try_run compiles an _mm512 op and
+#     executes it — it SIGILLs / returns non-zero on a non-AVX-512 CPU). Else avx2.
+if(VFFT_ISA STREQUAL "avx2" OR VFFT_ISA STREQUAL "avx512")
+    # explicit override — leave as-is
+elseif(VFFT_ISA STREQUAL "auto")
+    set(VFFT_ISA "avx2")   # safe fallback (also covers cross-compiling)
+    file(GLOB _a512_probe "${DAG_CODELETS}/inplace/avx512/*.c")
+    if(_a512_probe AND NOT CMAKE_CROSSCOMPILING)
+        if(VFFT_MSVC_STYLE)
+            set(_av512_flag "/arch:AVX512")
+        else()
+            set(_av512_flag "-mavx512f -mavx512dq -mfma")
+        endif()
+        try_run(_av512_run _av512_compile
+            "${CMAKE_BINARY_DIR}/_avx512_probe"
+            "${CMAKE_SOURCE_DIR}/cmake/check_avx512.c"
+            CMAKE_FLAGS "-DCMAKE_C_FLAGS=${_av512_flag}")
+        if(_av512_compile AND _av512_run EQUAL 0)
+            set(VFFT_ISA "avx512")
+        endif()
+    endif()
+    message(STATUS "VFFT_ISA=auto -> detected ${VFFT_ISA} (host CPU)")
+else()
+    message(WARNING "unknown VFFT_ISA='${VFFT_ISA}', using avx2")
+    set(VFFT_ISA "avx2")
+endif()
 
 # ── Recursive core include walk ─────────────────────────────────────────────
 # Core headers cross-include BARE (#include "executor.h"), so every dir that
@@ -176,10 +208,43 @@ if(WIN32 AND VFFT_IS_ICX)
     target_link_options(bench_1d_vs_mkl PRIVATE -fuse-ld=lld)
 endif()
 
+# ── Convenience run targets (appear in the CMake Tools target picker) ───────
+# Each runs the bench FROM build_tuned/benches/ so the relative wisdom paths
+# resolve and the CSVs land there, with the MKL + compiler runtime dirs on PATH
+# (mkl_rt*.dll, and libwinpthread-1.dll for mingw) — the two things that
+# otherwise make a bare "run the exe" fail from the IDE.
+get_filename_component(_mkl_root "${MKL_INCLUDE_DIR}" DIRECTORY)   # .../include -> root
+get_filename_component(_cc_bin   "${CMAKE_C_COMPILER}" DIRECTORY)
+set(_mkl_bin "${_mkl_root}/bin")
+set(_bench_cwd "${CMAKE_SOURCE_DIR}/build_tuned/benches")
+if(WIN32)
+    set(_run_env "PATH=${_mkl_bin};${_cc_bin};$ENV{PATH}")
+else()
+    set(_run_env "LD_LIBRARY_PATH=${_mkl_bin}:$ENV{LD_LIBRARY_PATH}")
+endif()
+
+add_custom_target(run_bench
+    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" $<TARGET_FILE:bench_1d_vs_mkl>
+    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
+    COMMENT "bench_1d_vs_mkl (in-place, calibrated cells)")
+add_custom_target(run_bench_mt
+    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" "VFFT_MT=8" $<TARGET_FILE:bench_1d_vs_mkl> --mt
+    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
+    COMMENT "bench_1d_vs_mkl --mt (8 threads)")
+add_custom_target(run_bench_oop
+    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" $<TARGET_FILE:bench_1d_vs_mkl> --oop
+    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
+    COMMENT "bench_1d_vs_mkl --oop (out-of-place)")
+add_custom_target(run_bench_oop_mt
+    COMMAND ${CMAKE_COMMAND} -E env "${_run_env}" "VFFT_MT=8" $<TARGET_FILE:bench_1d_vs_mkl> --oop --mt
+    WORKING_DIRECTORY "${_bench_cwd}" DEPENDS bench_1d_vs_mkl USES_TERMINAL
+    COMMENT "bench_1d_vs_mkl --oop --mt (8 threads)")
+
 message(STATUS "")
 message(STATUS "  VectorFFT (dag) — bench_1d_vs_mkl")
 message(STATUS "  Build:    ${CMAKE_BUILD_TYPE}   Compiler: ${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
 message(STATUS "  Front-end: ${CMAKE_C_COMPILER} (MSVC-style=${VFFT_MSVC_STYLE}, ICX=${VFFT_IS_ICX})")
 message(STATUS "  ISA:      ${VFFT_ISA}   codelets: ${_ncodelets}")
-message(STATUS "  Run:      put MKL bin (+ mingw bin for gcc) on PATH, then ./bench_1d_vs_mkl [--mt|--oop]")
+message(STATUS "  Run:      build target run_bench | run_bench_mt | run_bench_oop | run_bench_oop_mt")
+message(STATUS "            (these set PATH + cwd automatically; or run ./bench_1d_vs_mkl yourself)")
 message(STATUS "")
