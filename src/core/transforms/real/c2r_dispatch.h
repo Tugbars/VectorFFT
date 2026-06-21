@@ -16,6 +16,9 @@
 
 #include "planner.h"   /* vfft_proto_wisdom_t + lookup (wisdom_reader.h) */
 #include "c2r.h"
+#ifdef VFFT_USE_JIT
+#include "c2r_jit_runtime.h"   /* after c2r.h: resolve the c2r winner's JIT executor */
+#endif
 
 /* Optional c2r wisdom (calibrated per-cell factorization + per-stage variant). */
 static const vfft_proto_wisdom_t *_vfft_c2r_wis = NULL;
@@ -61,7 +64,27 @@ static inline c2r_plan_t *vfft_c2r_plan_create(int N, size_t K, const rfft_codel
         nf = vfft_c2r_choose_factors(N, factors, VFFT_RFFT_MAX_STAGES);
     }
     if (nf < 1) return NULL;
+#ifdef VFFT_USE_JIT
+    /* JIT build: pin EXPLICIT per-stage variants so the plan and the resolved JIT
+     * executor match (smoke-proven bit-exact). Wisdom -> its variants; heuristic ->
+     * all-flat. Then compile the winner's JIT now (cached) and store it. */
+    int vbuf[VFFT_RFFT_MAX_STAGES];
+    for (int i = 0; i < nf; i++) vbuf[i] = (variant ? variant[i] : 0);
+    c2r_plan_t *p = c2r_plan_create_ex(N, K, factors, nf, vbuf, reg);
+    if (p) p->jit_exec = (void *)vfft_c2r_jit_resolve(N, K, factors, nf, vbuf, "avx2");
+    return p;
+#else
     return c2r_plan_create_ex(N, K, factors, nf, variant, reg);
+#endif
+}
+
+/* Execute c2r: JIT-first, generic fallback (mirrors vfft_r2c_execute_fwd). */
+static inline void vfft_c2r_execute(const c2r_plan_t *p, const double *in, double *out)
+{
+#ifdef VFFT_USE_JIT
+    if (p->jit_exec) { ((c2r_jit_fn)p->jit_exec)(p, in, out); return; }
+#endif
+    c2r_execute_packed(p, in, out);
 }
 
 #endif /* VFFT_C2R_DISPATCH_H */
