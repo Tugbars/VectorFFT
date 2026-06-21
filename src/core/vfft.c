@@ -48,6 +48,8 @@
 #include "dht.h"       /* DHT (inner r2c)                                 */
 #include "fft2d.h"     /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
 #include "fft2d_r2c.h" /* 2D r2c / c2r                                    */
+#include "fft2d_c2c_wisdom.h" /* dedicated 2D c2c wisdom (lookup + calibrated create) */
+#include "fft2d_r2c_wisdom.h" /* dedicated 2D r2c/c2r wisdom (shared struct)          */
 
 #include <stdlib.h>
 #include <string.h>
@@ -65,6 +67,15 @@ struct vfft_wisdom_s
     vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format */
     vfft_oop_wisdom_t oop;    /* OOP 2-axis format   */
     vfft_proto_wisdom_t rfft; /* r2c rfft-path factorization+variant   */
+    /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
+     * entry per (N1,N2), two sub-plans each. r2c and c2r have separate tables
+     * (different optima, same bidirectional plan structure). */
+    char path_2d_c2c[640];          /* fft2d_c2c_wisdom.txt */
+    char path_2d_r2c[640];          /* fft2d_r2c_wisdom.txt */
+    char path_2d_c2r[640];          /* fft2d_c2r_wisdom.txt */
+    vfft_fft2d_c2c_wisdom_t fft2d_c2c;
+    vfft_fft2d_r2c_wisdom_t fft2d_r2c;
+    vfft_fft2d_r2c_wisdom_t fft2d_c2r;   /* shared struct, c2r-tuned plans */
 };
 
 struct vfft_plan_s
@@ -118,12 +129,18 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", d);
     snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
     snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
+    snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
+    snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
+    snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
     vfft_oop_wisdom_load(&W->oop, W->path_oop);
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
+    vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
+    vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c);
+    vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r);
 }
 
 static struct vfft_wisdom_s _def;
@@ -360,15 +377,17 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
  * wisdom. The SAME r2c plan serves both directions (fwd=2d_r2c, bwd=2d_c2r). */
 static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
                                 const vfft_proto_registry_t *reg,
-                                vfft_proto_wisdom_t *cw, int recalib)
+                                struct vfft_wisdom_s *W, int recalib)
 {
+    vfft_proto_wisdom_t *cw = &W->c2c; /* 1D c2c table for the _inner_c2c fallback */
     if (t == VFFT_C2C)
     {
-        /* Wisdom-driven inners (full-search calibrate-on-miss at rigor), cached to the
-         * c2c wisdom — replaces stride_plan_2d's exhaustive-at-create (which never cached).
-         * col = N1-point K=N2 c2c; row = N2-point K=B c2c. First-create of large N is slow
-         * (the calibration IS the full DP/exhaustive search) — calibrate once per platform,
-         * bank the wisdom, reuse for the life of the deployment. */
+        /* Dedicated 2D c2c wisdom FIRST (end-to-end-2D measured, independent of 1D
+         * c2c — the cells where it beats the fallback are banked there). On a miss,
+         * fall back to the 1D-wisdom inner path below (calibrate-on-miss at rigor). */
+        if (!recalib && vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
+            return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+
         size_t B = _fft2d_choose_tile(N2, N1);
         stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
         stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
@@ -386,6 +405,13 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
     {
         if (N1 < 2 || N2 < 2 || (N2 & 1))
             return NULL;
+        /* r2c and c2r have separate 2D wisdom tables (different optima, same
+         * bidirectional plan). Pick the table by direction; wisdom-first, else the
+         * 1D-wisdom inner path. */
+        vfft_fft2d_r2c_wisdom_t *rw = (t == VFFT_C2R) ? &W->fft2d_c2r : &W->fft2d_r2c;
+        if (!recalib && vfft_fft2d_r2c_wisdom_lookup(rw, N1, N2))
+            return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+
         size_t B = 8;
         if (B > (size_t)N1)
             B = (size_t)N1;
@@ -485,7 +511,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->dims == 2)
     {
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, &W->c2c, cfg->recalibrate);
+        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate);
         if (W->path_c2c[0])
             vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
         if (!tp)
