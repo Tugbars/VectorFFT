@@ -203,6 +203,58 @@ register pressure.**
   tuning doesn't move them. That leaves: **finer cut topology** and the
   **asm-spill search** as the remaining spill levers.
 
+## Phase 2 — the schedule annealer (iterative compilation) + first win
+
+With the spill levers exhausted (GH dead, cut-topology owned by the plan layer),
+the live lever is a **direct search of a single codelet's internal instruction
+order**, scored on the *realized* output. Method:
+
+- **Injector** (`schedule.ml`, env-gated, default unchanged): `VFFT_SCHED_DUMP`
+  writes su's order + DAG preds; `VFFT_SCHED_ORDER` emits a codelet under an
+  explicit, legality-checked node order. Round-trip (inject su's own order) is
+  **byte-identical** — validated.
+- **Annealer** (`anneal.py`): simulated annealing over **legal reorderings** of
+  the same DAG (move operators: single reinsert / block-move / segment-reversal,
+  each preserving a valid topological order, so every candidate is **bit-exact**
+  by construction). This is **iterative compilation** — each candidate is
+  compiled and `objdump`'d; the search optimizes the *measured asm*, not a model.
+- **Target**: monolithic codelets, which the injector's `su_schedule` path covers.
+  Primes have the headroom (R=11–23: 62–313 stack spills, `su_schedule`,
+  Direct/monolithic — and they bypass the spill recipe, so the most schedule slack).
+
+### Objective correction (the important refinement)
+
+The first runs scored on **stack-spill count** and found 86→75 spills on R=13.
+But on this **noisy execution host** the paired runtime bench cannot arbitrate a
+~2% fine-grain delta (readings bounced 0.975↔1.034 under background load). Worse,
+stack-spill count alone has a hole: a schedule can trade stack spills for reg-reg
+moves. So the objective was changed to the **noise-robust static win condition**:
+
+> **reduce spills *without* increasing total instructions or saturating an
+> already-saturated port.**
+
+Implemented as: **objective = total instruction count** (which subsumes spills +
+reg-reg moves), **gated** on (a) spills must not increase, and (b) FMA count
+invariant — reordering must not change the arithmetic, so the FMA-port pressure is
+fixed and only the overhead (`vmov`) varies. A candidate is a win iff it cuts
+total instructions *and* spills with the arithmetic untouched. This closes the
+spill-vs-move trade hole and removes the dependence on a quiet machine.
+
+### Result (R=13, prime, monolithic, 245 nodes)
+
+| | total insns | stack spills | FMA (invariant) |
+|---|---:|---:|---:|
+| `su` (incumbent) | 2314 | 86 | 132 |
+| **annealed** | **2295** | **79** | 132 |
+| Δ | **−19** | **−7** | 0 |
+
+A clean static win in ~80 SA iterations: fewer instructions *and* fewer spills,
+arithmetic untouched, bit-exact. This is the first demonstration that the search
+**beats the production scheduler** on a single codelet by the noise-robust
+criterion. (A deeper run reached 75 spills / 2302 insns.) Primes were the proving
+ground; the high-value target — **pow2 codelets** — is next, and requires
+extending the injector to the blocked `su_schedule_subset` path (R≥16).
+
 ## Reproduction
 
 Harness + driver live in the gitignored sandbox
