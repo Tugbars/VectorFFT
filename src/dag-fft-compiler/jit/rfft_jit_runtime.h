@@ -82,22 +82,20 @@
 typedef void (*rfft_jit_fn)(const rfft_plan_t *, const double *, double *);            /* packed  */
 typedef void (*rfft_jit_nat_fn)(const rfft_plan_t *, const double *, double *, double *); /* natural */
 
-/* filename-safe key: nN_kK_<factors..>_v<variants>_<isa>_rfft{packed,nat}_verV.
- * `mode` keeps packed/natural in separate cache files (both export rfft_jit_exec). */
-static inline void rfft_jit_key(int N, size_t K, const int *factors, int nf,
-                                const int *variants, const char *isa, const char *mode,
-                                char *out, size_t cap) {
+/* filename-safe key: nN_kK_<factors..>_v<variants>_<isa>_<tag>_verV. `tag` keeps the
+ * real-FFT families/modes in separate cache files (rfftpacked / rfftnat / c2r). */
+static inline void _real_jit_key(int N, size_t K, const int *factors, int nf,
+                                 const int *variants, const char *isa, const char *tag,
+                                 char *out, size_t cap) {
     int n = snprintf(out, cap, "n%d_k%zu", N, K);
     for (int s = 0; s < nf; s++) n += snprintf(out + n, cap - n, "_%d", factors[s]);
     n += snprintf(out + n, cap - n, "_v");
     for (int s = 0; s < nf; s++) n += snprintf(out + n, cap - n, "%d", variants ? variants[s] : 0);
-    snprintf(out + n, cap - n, "_%s_rfft%s_ver%d", isa,
-             (mode && mode[0]=='n') ? "nat" : "packed", VFFT_PROTO_JIT_VERSION);
+    snprintf(out + n, cap - n, "_%s_%s_ver%d", isa, tag, VFFT_PROTO_JIT_VERSION);
 }
 
-/* Process-global shape-keyed registry: a plan compiles/loads once per run. */
-/* registry stores the raw symbol (void*) — packed/natural have different ABIs but
- * both export "rfft_jit_exec"; the key (with mode) keeps them distinct. */
+/* Process-global shape-keyed registry (shared across rfft + c2r). Stores the raw
+ * symbol (void*) — families/modes have different ABIs but the key (tag) is unique. */
 typedef struct { char key[256]; void *fn; VFFT_RJIT_LIB lib; } rfft_jit_entry_t;
 static rfft_jit_entry_t g_rfft_jit_reg[256];
 static int              g_rfft_jit_count = 0;
@@ -108,36 +106,43 @@ static inline void *rfft_jit_reg_find(const char *key) {
     return NULL;
 }
 
-/* emit (if needed) -> compile (if lib absent) -> load -> register. Returns the raw
- * rfft_jit_exec symbol (cast by the mode wrappers below), NULL on any failure
- * (caller falls back to the generic rfft executor). */
+/* Generic real-FFT JIT resolve (rfft + c2r). emit (if needed) -> compile (if lib
+ * absent) -> load -> register. Returns the raw `symbol` (cast by the family
+ * wrappers), NULL on failure (caller falls back to the generic executor).
+ *   prelude   : "rfft_jit_prelude.h" | "c2r_jit_prelude.h"
+ *   script    : "emit_rfft_jit.py"   | "emit_c2r_jit.py"
+ *   symbol    : "rfft_jit_exec"      | "c2r_jit_exec"
+ *   fileprefix: "rfftjit" | "c2rjit"   tag: "rfftpacked"/"rfftnat"/"c2r"
+ *   mode      : "packed"/"natural" -> "--mode X"; NULL/"" -> no --mode (c2r). */
 static inline void *
-_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
-                  const int *variants, const char *isa, const char *mode) {
+_real_jit_resolve(int N, size_t K, const int *factors, int nf, const int *variants,
+                  const char *isa, const char *prelude, const char *script,
+                  const char *symbol, const char *fileprefix, const char *tag,
+                  const char *mode) {
     char key[256];
-    rfft_jit_key(N, K, factors, nf, variants, isa, mode, key, sizeof key);
+    _real_jit_key(N, K, factors, nf, variants, isa, tag, key, sizeof key);
     void *cached = rfft_jit_reg_find(key);
     if (cached) return cached;
 
     char lib[700], src[700];
-    snprintf(lib, sizeof lib, "%s/rfftjit_%s.%s", VFFT_PROTO_JIT_DIR, key, VFFT_RJIT_LIBEXT);
-    snprintf(src, sizeof src, "%s/rfftjit_%s.c",  VFFT_PROTO_JIT_DIR, key);
+    snprintf(lib, sizeof lib, "%s/%s_%s.%s", VFFT_PROTO_JIT_DIR, fileprefix, key, VFFT_RJIT_LIBEXT);
+    snprintf(src, sizeof src, "%s/%s_%s.c",  VFFT_PROTO_JIT_DIR, fileprefix, key);
 
     FILE *probe = fopen(lib, "rb");
     if (probe) { fclose(probe); }                 /* cached -> skip emit + compile */
     else {
-        char facs[256] = {0}, vars[256] = {0}, cmd[3600];
+        char facs[256] = {0}, vars[256] = {0}, modeflag[32] = {0}, cmd[3600];
         size_t fp = 0, vp = 0;
         for (int s = 0; s < nf; s++) {
             fp += (size_t)snprintf(facs + fp, sizeof facs - fp, "%s%d", s ? "," : "", factors[s]);
             vp += (size_t)snprintf(vars + vp, sizeof vars - vp, "%s%d", s ? "," : "", variants ? variants[s] : 0);
         }
+        if (mode && mode[0]) snprintf(modeflag, sizeof modeflag, "--mode %s ", mode);
         snprintf(cmd, sizeof cmd,
-            "%s %s/emit_rfft_jit.py --N %d --K %zu --factors %s --variants %s "
-            "--isa %s --mode %s --prelude rfft_jit_prelude.h --out %s",
-            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, N, K, facs, vars, isa, mode, src);
+            "%s %s/%s --N %d --K %zu --factors %s --variants %s --isa %s %s--prelude %s --out %s",
+            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, script, N, K, facs, vars, isa, modeflag, prelude, src);
         if (system(cmd) != 0) return NULL;
-        /* -I<jit> for the prelude, -I<core/transforms/real> so it finds rfft.h. */
+        /* -I<jit> for the prelude, -I<core/transforms/real> so it finds rfft.h/c2r.h. */
         snprintf(cmd, sizeof cmd,
             "%s %s -I%s -I%s "
             "-Wno-unused-function -Wno-incompatible-pointer-types -Wno-unused-result "
@@ -149,7 +154,7 @@ _rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
 
     VFFT_RJIT_LIB h = VFFT_RJIT_DLOPEN(lib);
     if (!h) return NULL;
-    void *fn = VFFT_RJIT_DLSYM(h, "rfft_jit_exec");
+    void *fn = VFFT_RJIT_DLSYM(h, symbol);
     if (!fn) return NULL;
 
     int cap = (int)(sizeof g_rfft_jit_reg / sizeof g_rfft_jit_reg[0]);
@@ -166,13 +171,15 @@ _rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
 static inline rfft_jit_fn
 vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
                       const int *variants, const char *isa) {
-    return (rfft_jit_fn)_rfft_jit_resolve(N, K, factors, nf, variants, isa, "packed");
+    return (rfft_jit_fn)_real_jit_resolve(N, K, factors, nf, variants, isa,
+        "rfft_jit_prelude.h", "emit_rfft_jit.py", "rfft_jit_exec", "rfftjit", "rfftpacked", "packed");
 }
 /* NATURAL-forward executor (split out_re/out_im) — the r2c split path. */
 static inline rfft_jit_nat_fn
 vfft_rfft_jit_resolve_natural(int N, size_t K, const int *factors, int nf,
                              const int *variants, const char *isa) {
-    return (rfft_jit_nat_fn)_rfft_jit_resolve(N, K, factors, nf, variants, isa, "natural");
+    return (rfft_jit_nat_fn)_real_jit_resolve(N, K, factors, nf, variants, isa,
+        "rfft_jit_prelude.h", "emit_rfft_jit.py", "rfft_jit_exec", "rfftjit", "rfftnat", "natural");
 }
 
 #endif /* VFFT_RFFT_JIT_RUNTIME_H */

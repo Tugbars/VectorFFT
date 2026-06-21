@@ -19,6 +19,10 @@ typedef struct {
     rfft_r2cb_fn stage_dc[VFFT_RFFT_MAX_STAGES];
     size_t Kb;
     double      *mid_inv[VFFT_RFFT_MAX_STAGES];
+    /* Resolved JIT executor (void* to stay type-agnostic here; cast to c2r_jit_fn
+     * by vfft_c2r_execute). NULL -> use the generic c2r_execute_packed. Set by the
+     * dispatch under VFFT_USE_JIT = compiled+cached for the winning plan. */
+    void        *jit_exec;
 } c2r_plan_t;
 
 static inline void c2r_plan_destroy(c2r_plan_t *p)
