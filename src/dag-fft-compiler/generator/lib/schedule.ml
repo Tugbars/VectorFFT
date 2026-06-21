@@ -1125,4 +1125,52 @@ let su_schedule_subset (uarch : Uarch.t) ~(gh : bool) ~(subset : Algsimp.t list)
         loop ()
   in
   loop ();
-  List.rev !result
+  let su_order = List.rev !result in
+  (* === SCHEDULE-SEARCH KNOBS for BLOCKED codelets (per-subset; default off) ===
+   * su_schedule_subset is called once per PASS/group, so dump/inject are keyed by
+   * a deterministic hash of the subset's sorted tags -> each pass gets its own
+   * order file "<prefix>_<key>.txt". Same intent as the su_schedule knobs, keyed.
+   * Illegal/incomplete injected orders fall back to su_order. *)
+  let subset_key =
+    Hashtbl.hash
+      (List.sort compare (List.map (fun (n : Algsimp.t) -> n.tag) subset))
+  in
+  (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
+  | None -> ()
+  | Some prefix ->
+      let oc = open_out (Printf.sprintf "%s_%d.txt" prefix subset_key) in
+      List.iter
+        (fun (n : Algsimp.t) ->
+          let ps =
+            List.filter
+              (fun (p : Algsimp.t) -> Hashtbl.mem in_subset p.tag)
+              (preds n)
+          in
+          Printf.fprintf oc "%d:%s\n" n.tag
+            (String.concat " "
+               (List.map (fun (p : Algsimp.t) -> string_of_int p.tag) ps)))
+        su_order;
+      close_out oc);
+  match Sys.getenv_opt "VFFT_SCHED_ORDER" with
+  | None -> su_order
+  | Some prefix ->
+      let f = Printf.sprintf "%s_%d.txt" prefix subset_key in
+      if not (Sys.file_exists f) then su_order
+      else begin
+        let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
+        List.iter (fun (n : Algsimp.t) -> Hashtbl.replace by_tag n.tag n) subset;
+        let ic = open_in f in
+        let tags = ref [] in
+        (try
+           while true do
+             match int_of_string_opt (String.trim (input_line ic)) with
+             | Some t -> tags := t :: !tags
+             | None -> ()
+           done
+         with End_of_file -> ());
+        close_in ic;
+        let ordered =
+          List.filter_map (fun t -> Hashtbl.find_opt by_tag t) (List.rev !tags)
+        in
+        if List.length ordered = List.length su_order then ordered else su_order
+      end
