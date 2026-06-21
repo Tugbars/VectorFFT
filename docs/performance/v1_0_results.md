@@ -273,19 +273,19 @@ are per-cell tuned; the inner column c2c is JIT-specialized. Source:
 ```
  N1×N2      dag/MKL    order
 ──────────────────────────────────
- 64×64       0.87×     scrambled
- 128×128     0.86×     scrambled
- 256×256     0.66×     scrambled
- 512×512     0.87×     scrambled
+ 64×64       0.86×     scrambled
+ 128×128     0.85×     scrambled
+ 256×256     0.80×     scrambled
+ 512×512     0.89×     scrambled
 ──────────────────────────────────
- median     ~0.86×     (best-of-3)
+ median     ~0.85×     (best-of-3)
 ```
 
-> **Single-thread, 2D R2C trails MKL — median ~0.86×, range 0.66–0.87×.** As with 1D R2C
+> **Single-thread, 2D R2C trails MKL — median ~0.85×, range 0.80–0.89×.** As with 1D R2C
 > (§3), this is the honest cost of the split lane-batched layout (the real-FFT pack tax)
 > against MKL's heavily-tuned 2D real path — the same layout trade that becomes an edge
 > under threading. Per-cell plan tuning closes most of the gap; the 256² cell is the
-> structural laggard (0.66×). See the multi-threaded results below.
+> laggard (0.80×). See the multi-threaded results below.
 
 ### Multi-threaded (T=8)
 
