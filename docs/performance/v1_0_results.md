@@ -173,7 +173,34 @@ Headline:
 > transpose makes gather/scatter nearly free. JIT specializes the cold inner row/col FFTs
 > (bit-exact, +8–19% where it fires). This is in-place scrambled-order 2D (the convolution
 > contract); a natural-order 2D path would add the reorder (far-future, with natural-order
-> in-place). MT (`--2d --mt`) and rectangular / non-pow2 cells are follow-ups.
+> in-place). Rectangular / non-pow2 cells are follow-ups.
+
+### 2D C2C — vs MKL at T=8
+
+Same cells, dag 2D threaded vs MKL `mkl_set_num_threads(8)`, identical split layout,
+order-flipped + paced, **with an MT-vs-ST forward gate** (threaded fwd must equal the
+single-thread fwd bit-for-bit — folded into rt; all e-14, so the tile-parallel path is
+race-free). dag threads the **row pass only** (tile-parallel pool, per-thread scratch);
+the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
+`bench_1d_vs_mkl.c --2d --mt` → `vfft_perf_tuned_2d_mt.csv`.
+
+```
+ N1×N2     dag-T8 (ns)  MKL-T8 (ns)  dag/MKL   dag self-scale ST->T8
+──────────────────────────────────────────────────────────────────
+ 64×64           5,641       48,751   8.64×     0.86× (overhead)
+ 128×128        23,996       87,069   3.63×     ~1.0×
+ 256×256        70,210      214,597   3.06×     1.88×
+ 512×512       500,200    1,307,575   2.61×     1.57×
+──────────────────────────────────────────────────────────────────
+ median                              ~3.34×     (4/4 win)
+```
+
+> **At T=8, 2D C2C beats MKL on all 4 cells — median ~3.3×, up to 8.6×.** Two effects:
+> (1) dag's own scaling is **modest** (256² 1.88×, 512² 1.57×; tiny N regresses under threads)
+> because only the row pass is parallel — the serial column pass caps it. (2) The large
+> vs-MKL margins at small N are **MKL failing to thread tiny 2D**: at 64², MKL-T8 (48,751 ns)
+> is ~6× *slower* than MKL-T1 (8,494 ns) — pure threading overhead — so dag wins 8.6×. Lifting
+> the ceiling (parallel column pass / full-plane tiling) is the 2D-MT follow-up.
 
 ## 3. vs FFTW3 — single-thread
 
