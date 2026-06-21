@@ -40,18 +40,18 @@
 #include "rfft_registry_avx2.h"
 #define _VFFT_RFFT_REGISTER rfft_register_all_avx2
 #endif
-#include "registry.h"  /* vfft_proto_registry_t (generated)              */
-#include "dct.h"       /* DCT-II/III (+ inner r2c)                        */
-#include "dct1.h"      /* DCT-I / DST-I (boundary r2c)                    */
-#include "dct4.h"      /* DCT-IV (inner c2c of N/2)                       */
-#include "dst.h"       /* DST-II/III (wrap DCT-II)                        */
-#include "dht.h"       /* DHT (inner r2c)                                 */
-#include "fft2d.h"     /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
-#include "fft2d_r2c.h" /* 2D r2c / c2r                                    */
+#include "registry.h"         /* vfft_proto_registry_t (generated)              */
+#include "dct.h"              /* DCT-II/III (+ inner r2c)                        */
+#include "dct1.h"             /* DCT-I / DST-I (boundary r2c)                    */
+#include "dct4.h"             /* DCT-IV (inner c2c of N/2)                       */
+#include "dst.h"              /* DST-II/III (wrap DCT-II)                        */
+#include "dht.h"              /* DHT (inner r2c)                                 */
+#include "fft2d.h"            /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
+#include "fft2d_r2c.h"        /* 2D r2c / c2r                                    */
 #include "fft2d_c2c_wisdom.h" /* dedicated 2D c2c wisdom (lookup + calibrated create) */
 #include "fft2d_r2c_wisdom.h" /* dedicated 2D r2c/c2r wisdom (shared struct)          */
 #ifdef VFFT_USE_JIT
-#include "jit/jit_runtime.h"  /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
+#include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
                                * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */
 #endif
 #include "prime_dispatch.h"       /* vfft_proto_auto_plan_dispatch (Rader/Bluestein for prime N) */
@@ -78,14 +78,14 @@ struct vfft_wisdom_s
     /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
      * entry per (N1,N2), two sub-plans each. r2c and c2r have separate tables
      * (different optima, same bidirectional plan structure). */
-    char path_2d_c2c[640];          /* fft2d_c2c_wisdom.txt */
-    char path_2d_r2c[640];          /* fft2d_r2c_wisdom.txt */
-    char path_2d_c2r[640];          /* fft2d_c2r_wisdom.txt */
+    char path_2d_c2c[640]; /* fft2d_c2c_wisdom.txt */
+    char path_2d_r2c[640]; /* fft2d_r2c_wisdom.txt */
+    char path_2d_c2r[640]; /* fft2d_c2r_wisdom.txt */
     vfft_fft2d_c2c_wisdom_t fft2d_c2c;
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
-    vfft_fft2d_r2c_wisdom_t fft2d_c2r;   /* shared struct, c2r-tuned plans */
-    char path_bluestein[640];            /* bluestein_wisdom.txt */
-    bluestein_wisdom_t bluestein;        /* prime-N (M,B) for Bluestein cells (Rader needs none) */
+    vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
+    char path_bluestein[640];          /* bluestein_wisdom.txt */
+    bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
 };
 
 struct vfft_plan_s
@@ -220,10 +220,16 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
         if (best.nfactors > 0 && ens < 1e17)
         {
             memset(out, 0, sizeof *out);
-            out->N = N; out->K = K; out->nf = best.nfactors; out->best_ns = ens;
-            out->use_dif_forward = 0;   /* exhaustive search is DIT */
+            out->N = N;
+            out->K = K;
+            out->nf = best.nfactors;
+            out->best_ns = ens;
+            out->use_dif_forward = 0; /* exhaustive search is DIT */
             for (int s = 0; s < best.nfactors; s++)
-            { out->factors[s] = best.factors[s]; out->variants[s] = best.variants[s]; }
+            {
+                out->factors[s] = best.factors[s];
+                out->variants[s] = best.variants[s];
+            }
             return 0;
         }
         /* exhaustive failed (uncoverable / OOM) -> fall through to DP-patient */
@@ -394,11 +400,20 @@ static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
     size_t T = (size_t)N1 * (size_t)N2;
     double *re = (double *)malloc(T * sizeof(double));
     double *im = (double *)malloc(T * sizeof(double));
-    if (!re || !im) { free(re); free(im); return 1e18; }
-    for (size_t i = 0; i < T; i++) { re[i] = (double)rand() / RAND_MAX - 0.5;
-                                     im[i] = (double)rand() / RAND_MAX - 0.5; }
+    if (!re || !im)
+    {
+        free(re);
+        free(im);
+        return 1e18;
+    }
+    for (size_t i = 0; i < T; i++)
+    {
+        re[i] = (double)rand() / RAND_MAX - 0.5;
+        im[i] = (double)rand() / RAND_MAX - 0.5;
+    }
     double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
-    free(re); free(im);
+    free(re);
+    free(im);
     return ns;
 }
 
@@ -409,10 +424,19 @@ static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
     double *x = (double *)malloc(RN * sizeof(double));
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
-    if (!x || !ore || !oim) { free(x); free(ore); free(oim); return 1e18; }
-    for (size_t i = 0; i < RN; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
+    if (!x || !ore || !oim)
+    {
+        free(x);
+        free(ore);
+        free(oim);
+        return 1e18;
+    }
+    for (size_t i = 0; i < RN; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
     double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
-    free(x); free(ore); free(oim);
+    free(x);
+    free(ore);
+    free(oim);
     return ns;
 }
 
@@ -425,11 +449,22 @@ static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
     double *xr = (double *)malloc(RN * sizeof(double));
-    if (!x || !ore || !oim || !xr) { free(x); free(ore); free(oim); free(xr); return 1e18; }
-    for (size_t i = 0; i < RN; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
-    stride_execute_2d_r2c(p, x, ore, oim);   /* valid half-spectrum for c2r input */
+    if (!x || !ore || !oim || !xr)
+    {
+        free(x);
+        free(ore);
+        free(oim);
+        free(xr);
+        return 1e18;
+    }
+    for (size_t i = 0; i < RN; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
+    stride_execute_2d_r2c(p, x, ore, oim); /* valid half-spectrum for c2r input */
     double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
-    free(x); free(ore); free(oim); free(xr);
+    free(x);
+    free(ore);
+    free(oim);
+    free(xr);
     return ns;
 }
 
@@ -723,12 +758,30 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->nthreads = stride_get_num_threads();
         h->cplan = p;
 #ifdef VFFT_USE_JIT
-        /* Transparent resolve for STAGED plans only; override plans (Rader/Bluestein,
-         * num_stages==0) keep exec_*=NULL -> the generic override-aware executor. */
         if (p->num_stages > 0)
         {
+            /* staged plan -> resolve the whole-plan JIT/baked executor */
             h->exec_fwd = vfft_proto_plan_jit_fwd(p);
             h->exec_bwd = vfft_proto_plan_jit_bwd(p);
+        }
+        else
+        {
+            /* prime override plan (Rader/Bluestein): JIT the inner CT FFT — the override
+             * executor calls inner_jit_* instead of the generic inner. exec_*=NULL keeps
+             * the override-aware path. Accessors/setters are no-ops on the wrong kind. */
+            stride_plan_t *in = stride_rader_inner_plan(p);
+            if (!in)
+                in = stride_bluestein_inner_plan(p);
+            if (in)
+            {
+                vfft_proto_exec_fn ifwd = vfft_proto_plan_jit_fwd(in);
+                vfft_proto_exec_fn ibwd = vfft_proto_plan_jit_bwd(in);
+                if (ifwd && ibwd)
+                {
+                    stride_rader_set_inner_jit(p, ifwd, ibwd);
+                    stride_bluestein_set_inner_jit(p, ifwd, ibwd);
+                }
+            }
         }
 #endif
         return h;
