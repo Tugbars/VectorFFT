@@ -43,6 +43,9 @@
 #include "proto_stride_compat.h"
 #include "transpose.h"
 #include "r2c.h"
+#ifdef VFFT_USE_JIT
+#include "jit_runtime.h"          /* JIT/baked resolve for the inner column c2c FFT */
+#endif
 
 #ifndef FFT2D_R2C_DEFAULT_TILE
 #define FFT2D_R2C_DEFAULT_TILE 8
@@ -86,12 +89,36 @@ typedef struct {
 
     stride_plan_t *plan_r2c;      /* N=N2, K=B, R2C inner */
     stride_plan_t *plan_col;      /* N=N1, K=K_pad, C2C col */
+
+    /* JIT/baked resolved column c2c executor (NULL -> generic). Filled by
+     * _fft2d_r2c_jit_resolve under VFFT_USE_JIT; else NULL (zero behavior change).
+     * The ROW r2c/c2r pass stays generic — it's a per-tile worker-shim entry over
+     * the fused/sliced stride-r2c engine (tid-threaded scratch slots), NOT a
+     * whole-plan call, so it's deferred (same blocker as strided-r2c JIT). */
+    vfft_proto_exec_fn exec_col_fwd, exec_col_bwd;
 } stride_fft2d_r2c_data_t;
 
 
 /* ═══════════════════════════════════════════════════════════════
  * Helpers
  * ═══════════════════════════════════════════════════════════════ */
+
+/* Resolve the column c2c pass (fwd+bwd) to its baked-or-JIT executor (NULL on
+ * miss -> the passes fall back to the generic c2c executor). The col plan is a
+ * plain whole-plan c2c stride_plan_t, identical in shape to what fft2d.h already
+ * JITs; the JIT'd c2c is roundtrip/order-identical to the generic, so d->perm
+ * (built from plan_col->factors) stays valid. The row r2c/c2r pass is NOT
+ * resolved (worker-shim entry, not a whole-plan call — deferred). */
+static inline void _fft2d_r2c_jit_resolve(stride_fft2d_r2c_data_t *d) {
+#ifdef VFFT_USE_JIT
+    if (d->plan_col) {
+        d->exec_col_fwd = vfft_proto_plan_jit_fwd(d->plan_col);
+        d->exec_col_bwd = vfft_proto_plan_jit_bwd(d->plan_col);
+    }
+#else
+    (void)d;
+#endif
+}
 
 static inline double *_fft2d_r2c_scratch_re(stride_fft2d_r2c_data_t *d, int t) {
     return d->scratch_re + (size_t)t * d->tile_real_sz;
@@ -320,7 +347,11 @@ static void _fft2d_r2c_execute_fwd(void *data, double *re, double *im) {
     _fft2d_r2c_tiled_fwd_mt(d, re, d->re_pad, d->im_pad);
 
     /* Phase 2: C2C col FFT at K=K_pad on padded scratch. */
-    stride_execute_fwd(d->plan_col, d->re_pad, d->im_pad);
+    if (d->exec_col_fwd)
+        d->exec_col_fwd(d->plan_col, d->re_pad, d->im_pad,
+                        d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_fwd(d->plan_col, d->re_pad, d->im_pad);
 
     /* Phase 3: pack padded N1*K_pad scratch -> user's N1*(N2/2+1) layout.
      * Col FFT output at row i is at digit-reversed position perm[i] in scratch.
@@ -363,7 +394,11 @@ static void _fft2d_r2c_execute_bwd(void *data, double *re, double *im) {
     }
 
     /* Phase 2: C2C col IFFT at K=K_pad on padded scratch. */
-    stride_execute_bwd(d->plan_col, d->re_pad, d->im_pad);
+    if (d->exec_col_bwd)
+        d->exec_col_bwd(d->plan_col, d->re_pad, d->im_pad,
+                        d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_bwd(d->plan_col, d->re_pad, d->im_pad);
 
     /* Phase 3: tiled C2R row pass reads padded scratch, writes reals to re. */
     _fft2d_r2c_tiled_bwd_range(d, d->re_pad, d->im_pad, re,
@@ -485,6 +520,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
     plan->override_destroy = _fft2d_r2c_destroy;
     plan->override_data    = d;
 
+    _fft2d_r2c_jit_resolve(d);   /* baked/JIT-resolve the column c2c (fwd+bwd) */
     return plan;
 }
 
