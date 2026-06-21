@@ -18,15 +18,15 @@
  *)
 
 type t = {
-  name: string;              (* short identifier, "avx512" | "avx2" *)
-  vec_type: string;          (* C type for one vector, "__m512d" | "__m256d" *)
-  vec_width: int;            (* doubles per vector: 8 | 4 *)
-  vec_regs: int;             (* architectural vector register count *)
-  intrinsic_prefix: string;  (* "_mm512" | "_mm256" *)
-  target_attr: string;       (* GCC __attribute__((target(...))) string *)
-  loadu_pd: string;          (* full intrinsic name for unaligned load *)
-  storeu_pd: string;
-  set1_pd: string;
+  name : string; (* short identifier, "avx512" | "avx2" *)
+  vec_type : string; (* C type for one vector, "__m512d" | "__m256d" *)
+  vec_width : int; (* doubles per vector: 8 | 4 *)
+  vec_regs : int; (* architectural vector register count *)
+  intrinsic_prefix : string; (* "_mm512" | "_mm256" *)
+  target_attr : string; (* GCC __attribute__((target(...))) string *)
+  loadu_pd : string; (* full intrinsic name for unaligned load *)
+  storeu_pd : string;
+  set1_pd : string;
 }
 
 (* === PROFILES ===
@@ -36,29 +36,31 @@ type t = {
  * emission-relevant. A future uarch.ml will add timing parameters on
  * top of the ISA record. *)
 
-let avx512 = {
-  name = "avx512";
-  vec_type = "__m512d";
-  vec_width = 8;
-  vec_regs = 32;
-  intrinsic_prefix = "_mm512";
-  target_attr = "avx512f";
-  loadu_pd = "_mm512_loadu_pd";
-  storeu_pd = "_mm512_storeu_pd";
-  set1_pd = "_mm512_set1_pd";
-}
+let avx512 =
+  {
+    name = "avx512";
+    vec_type = "__m512d";
+    vec_width = 8;
+    vec_regs = 32;
+    intrinsic_prefix = "_mm512";
+    target_attr = "avx512f";
+    loadu_pd = "_mm512_loadu_pd";
+    storeu_pd = "_mm512_storeu_pd";
+    set1_pd = "_mm512_set1_pd";
+  }
 
-let avx2 = {
-  name = "avx2";
-  vec_type = "__m256d";
-  vec_width = 4;
-  vec_regs = 16;
-  intrinsic_prefix = "_mm256";
-  target_attr = "avx2,fma";
-  loadu_pd = "_mm256_loadu_pd";
-  storeu_pd = "_mm256_storeu_pd";
-  set1_pd = "_mm256_set1_pd";
-}
+let avx2 =
+  {
+    name = "avx2";
+    vec_type = "__m256d";
+    vec_width = 4;
+    vec_regs = 16;
+    intrinsic_prefix = "_mm256";
+    target_attr = "avx2,fma";
+    loadu_pd = "_mm256_loadu_pd";
+    storeu_pd = "_mm256_storeu_pd";
+    set1_pd = "_mm256_set1_pd";
+  }
 
 (* Scalar lane (notebook section 53): the cascade's last rung, serving
  * K values that don't fill a vector. vec_width=1; ops render as plain
@@ -66,29 +68,33 @@ let avx2 = {
  * bit-identical to the vector FMA on the same lane, no math.h
  * dependency). Batch lanes never interact, so a lane computed at
  * width 1 is bit-exact with the same lane computed in a zmm. *)
-let scalar = {
-  name = "scalar";
-  vec_type = "double";
-  vec_width = 1;
-  vec_regs = 16;
-  intrinsic_prefix = "";
-  target_attr = "fma";
-  (* Named shims so emit_c's raw `%s(&addr)` / `%s(&addr, v)` spill
-   * sites render valid C; the shims are emitted into scalar codelets'
-   * preamble by emit_c. The helper-path constructors above bypass
-   * these for the hot main-body loads/stores. *)
-  loadu_pd = "vfft_scalar_load";
-  storeu_pd = "vfft_scalar_store";
-  set1_pd = "";
-}
+let scalar =
+  {
+    name = "scalar";
+    vec_type = "double";
+    vec_width = 1;
+    vec_regs = 16;
+    intrinsic_prefix = "";
+    target_attr = "fma";
+    (* Named shims so emit_c's raw `%s(&addr)` / `%s(&addr, v)` spill
+     * sites render valid C; the shims are emitted into scalar codelets'
+     * preamble by emit_c. The helper-path constructors above bypass
+     * these for the hot main-body loads/stores. *)
+    loadu_pd = "vfft_scalar_load";
+    storeu_pd = "vfft_scalar_store";
+    set1_pd = "";
+  }
 
 (* Look up by name, for CLI. *)
 let of_name (s : string) : t =
   match s with
   | "avx512" | "AVX512" | "avx-512" -> avx512
-  | "avx2"   | "AVX2"               -> avx2
-  | "scalar" | "SCALAR"             -> scalar
-  | other -> failwith (Printf.sprintf "unknown ISA: %s (expected avx512, avx2, or scalar)" other)
+  | "avx2" | "AVX2" -> avx2
+  | "scalar" | "SCALAR" -> scalar
+  | other ->
+      failwith
+        (Printf.sprintf "unknown ISA: %s (expected avx512, avx2, or scalar)"
+           other)
 
 (* === INTRINSIC HELPERS ===
  *
@@ -137,7 +143,8 @@ let fmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
 
 (* fnmsub_pd(a, b, c) = -a*b - c   -- negated multiplicand, subtract *)
 let fnmsub_pd (isa : t) (a : string) (b : string) (c : string) : string =
-  if isa.vec_width = 1 then Printf.sprintf "__builtin_fma(-(%s), %s, -(%s))" a b c
+  if isa.vec_width = 1 then
+    Printf.sprintf "__builtin_fma(-(%s), %s, -(%s))" a b c
   else Printf.sprintf "%s(%s, %s, %s)" (intr isa "fnmsub_pd") a b c
 
 let set1_pd_str (isa : t) (literal : string) : string =
@@ -166,9 +173,10 @@ let const_decl (isa : t) (name : string) (expr : string) : string =
  * RA, ignoring the pin (confirmed via probe). With the barrier, gcc
  * is forced to materialize the variable in the pinned register at
  * that exact point, giving us deterministic register choice. *)
-let pinned_reg_decl (isa : t) (name : string) (reg : string)
-                    (expr : string) : string =
-  Printf.sprintf "register %s %s asm(\"%s\") = %s; asm volatile (\"\" : \"+v\"(%s));"
+let pinned_reg_decl (isa : t) (name : string) (reg : string) (expr : string) :
+    string =
+  Printf.sprintf
+    "register %s %s asm(\"%s\") = %s; asm volatile (\"\" : \"+v\"(%s));"
     isa.vec_type name reg expr name
 
 (* Render the fence-only variant: same as pinned_reg_decl but without

@@ -26,12 +26,12 @@ open Algsimp
 type color = BLACK | RED | YELLOW | BLUE
 
 type node = {
-  id: int;                           (* unique id for this DAG (not Algsimp tag) *)
-  alg_node: Algsimp.t;               (* the underlying hash-consed expression *)
-  output_for: Expr.elem_ref option;  (* if this is an assignment root *)
-  mutable preds: node list;
-  mutable succs: node list;
-  mutable color: color;
+  id : int; (* unique id for this DAG (not Algsimp tag) *)
+  alg_node : Algsimp.t; (* the underlying hash-consed expression *)
+  output_for : Expr.elem_ref option; (* if this is an assignment root *)
+  mutable preds : node list;
+  mutable succs : node list;
+  mutable color : color;
 }
 
 (* === DAG CONSTRUCTION === *)
@@ -48,40 +48,51 @@ type node = {
  * the RED wave. *)
 let build_dag (assigns : (Expr.elem_ref * Algsimp.t) list) : node list =
   let next_id = ref 0 in
-  let fresh () = let i = !next_id in incr next_id; i in
+  let fresh () =
+    let i = !next_id in
+    incr next_id;
+    i
+  in
   let by_tag : (int, node) Hashtbl.t = Hashtbl.create 256 in
 
   let rec node_of (e : Algsimp.t) : node =
     match Hashtbl.find_opt by_tag e.tag with
     | Some n -> n
     | None ->
-      let pred_exprs = Algsimp.preds e in
-      let pred_nodes = List.map node_of pred_exprs in
-      let n = {
-        id = fresh ();
-        alg_node = e;
-        output_for = None;
-        preds = pred_nodes;
-        succs = [];
-        color = BLACK;
-      } in
-      Hashtbl.add by_tag e.tag n;
-      List.iter (fun p -> p.succs <- n :: p.succs) pred_nodes;
-      n
+        let pred_exprs = Algsimp.preds e in
+        let pred_nodes = List.map node_of pred_exprs in
+        let n =
+          {
+            id = fresh ();
+            alg_node = e;
+            output_for = None;
+            preds = pred_nodes;
+            succs = [];
+            color = BLACK;
+          }
+        in
+        Hashtbl.add by_tag e.tag n;
+        List.iter (fun p -> p.succs <- n :: p.succs) pred_nodes;
+        n
   in
   let expr_nodes = List.map (fun (_, e) -> node_of e) assigns in
-  let output_nodes = List.map2 (fun (oref, _) e_node ->
-    let n = {
-      id = fresh ();
-      alg_node = e_node.alg_node;
-      output_for = Some oref;
-      preds = [e_node];
-      succs = [];
-      color = BLACK;
-    } in
-    e_node.succs <- n :: e_node.succs;
-    n
-  ) assigns expr_nodes in
+  let output_nodes =
+    List.map2
+      (fun (oref, _) e_node ->
+        let n =
+          {
+            id = fresh ();
+            alg_node = e_node.alg_node;
+            output_for = Some oref;
+            preds = [ e_node ];
+            succs = [];
+            color = BLACK;
+          }
+        in
+        e_node.succs <- n :: e_node.succs;
+        n)
+      assigns expr_nodes
+  in
   let all = Hashtbl.fold (fun _ n acc -> n :: acc) by_tag [] in
   all @ output_nodes
 
@@ -139,28 +150,35 @@ let bisect (nodes : node list) : node list * node list =
   List.iter (fun n -> n.color <- BLUE) outputs;
 
   let rec loopi donep =
-    let frontier = List.filter (fun n ->
-      has_color BLACK n &&
-      List.for_all (has_either_color RED YELLOW) (preds_in n)
-    ) nodes in
+    let frontier =
+      List.filter
+        (fun n ->
+          has_color BLACK n
+          && List.for_all (has_either_color RED YELLOW) (preds_in n))
+        nodes
+    in
     match frontier with
     | [] -> if donep then () else loopo true
     | _ ->
-      List.iter (fun n ->
-        n.color <- RED;
-        List.iter (fun p -> p.color <- RED) (preds_in n)
-      ) frontier;
-      loopo false
+        List.iter
+          (fun n ->
+            n.color <- RED;
+            List.iter (fun p -> p.color <- RED) (preds_in n))
+          frontier;
+        loopo false
   and loopo donep =
-    let frontier = List.filter (fun n ->
-      has_either_color BLACK YELLOW n &&
-      List.for_all (has_color BLUE) (succs_in n)
-    ) nodes in
+    let frontier =
+      List.filter
+        (fun n ->
+          has_either_color BLACK YELLOW n
+          && List.for_all (has_color BLUE) (succs_in n))
+        nodes
+    in
     match frontier with
     | [] -> if donep then () else loopi true
     | _ ->
-      List.iter (fun n -> n.color <- BLUE) frontier;
-      loopi false
+        List.iter (fun n -> n.color <- BLUE) frontier;
+        loopi false
   in
   loopi false;
 
@@ -209,15 +227,22 @@ let connected_components_of (nodes : node list) : node list list =
   let comp_of seed =
     let acc = ref [] in
     let q = Queue.create () in
-    Queue.add seed q; Hashtbl.replace seen seed.id ();
+    Queue.add seed q;
+    Hashtbl.replace seen seed.id ();
     while not (Queue.is_empty q) do
       let n = Queue.pop q in
       acc := n :: !acc;
-      List.iter (fun m ->
-        if Hashtbl.mem in_set m.id && not (Hashtbl.mem seen m.id)
-           && not (is_special_input m) then begin
-          Hashtbl.replace seen m.id (); Queue.add m q
-        end) (n.preds @ n.succs)
+      List.iter
+        (fun m ->
+          if
+            Hashtbl.mem in_set m.id
+            && (not (Hashtbl.mem seen m.id))
+            && not (is_special_input m)
+          then begin
+            Hashtbl.replace seen m.id ();
+            Queue.add m q
+          end)
+        (n.preds @ n.succs)
     done;
     !acc
   in
@@ -227,31 +252,38 @@ let connected_components_of (nodes : node list) : node list list =
       regular
   in
   match comps with
-  | [] -> (match special with [] -> [] | _ -> [special])
-  | _ ->
-    (* Specials consumed by exactly ONE component attach to it (so its
-     * cone stays self-contained). Specials consumed by SEVERAL
-     * components are hoisted ahead of all components, the moral
-     * equivalent of genfft's inline literals being available
-     * everywhere. Attaching a shared constant to its min-id consumer
-     * was a LEGALITY BUG: any earlier-scheduled consumer component
-     * read it before definition (caught by gcc, use-before-def at
-     * R=32). Specials with no in-subset consumer hoist too. *)
-    let comp_arr = Array.of_list (List.map ref comps) in
-    let owner : (int, int) Hashtbl.t = Hashtbl.create 64 in
-    Array.iteri (fun i c -> List.iter (fun n -> Hashtbl.replace owner n.id i) !c) comp_arr;
-    let hoisted = ref [] in
-    List.iter (fun sp ->
-      let cands = List.filter_map (fun m ->
-        if Hashtbl.mem in_set m.id then Hashtbl.find_opt owner m.id else None
-      ) sp.succs in
-      let uniq = List.sort_uniq compare cands in
-      match uniq with
-      | [i] -> comp_arr.(i) := sp :: !(comp_arr.(i))
-      | _ -> hoisted := sp :: !hoisted
-    ) special;
-    let attached = Array.to_list (Array.map (!) comp_arr) in
-    (match !hoisted with [] -> attached | l -> l :: attached)
+  | [] -> ( match special with [] -> [] | _ -> [ special ])
+  | _ -> (
+      (* Specials consumed by exactly ONE component attach to it (so its
+       * cone stays self-contained). Specials consumed by SEVERAL
+       * components are hoisted ahead of all components, the moral
+       * equivalent of genfft's inline literals being available
+       * everywhere. Attaching a shared constant to its min-id consumer
+       * was a LEGALITY BUG: any earlier-scheduled consumer component
+       * read it before definition (caught by gcc, use-before-def at
+       * R=32). Specials with no in-subset consumer hoist too. *)
+      let comp_arr = Array.of_list (List.map ref comps) in
+      let owner : (int, int) Hashtbl.t = Hashtbl.create 64 in
+      Array.iteri
+        (fun i c -> List.iter (fun n -> Hashtbl.replace owner n.id i) !c)
+        comp_arr;
+      let hoisted = ref [] in
+      List.iter
+        (fun sp ->
+          let cands =
+            List.filter_map
+              (fun m ->
+                if Hashtbl.mem in_set m.id then Hashtbl.find_opt owner m.id
+                else None)
+              sp.succs
+          in
+          let uniq = List.sort_uniq compare cands in
+          match uniq with
+          | [ i ] -> comp_arr.(i) := sp :: !(comp_arr.(i))
+          | _ -> hoisted := sp :: !hoisted)
+        special;
+      let attached = Array.to_list (Array.map ( ! ) comp_arr) in
+      match !hoisted with [] -> attached | l -> l :: attached)
 
 (* Port of genfft annotate.ml's `reorder`: greedy ordering of sibling
  * components to maximize variable overlap between adjacent blocks.
@@ -267,93 +299,108 @@ let connected_components_of (nodes : node list) : node list list =
 let reorder_components (comps : node list list) : node list list =
   let vars_of comp =
     let t = Hashtbl.create 32 in
-    List.iter (fun n ->
-      Hashtbl.replace t n.id ();
-      List.iter (fun p -> Hashtbl.replace t p.id ()) n.preds
-    ) comp;
+    List.iter
+      (fun n ->
+        Hashtbl.replace t n.id ();
+        List.iter (fun p -> Hashtbl.replace t p.id ()) n.preds)
+      comp;
     t
   in
   let min_id comp = List.fold_left (fun a n -> min a n.id) max_int comp in
   let tagged = List.map (fun c -> (c, vars_of c, min_id c)) comps in
   let overlap va (_, vb, _) =
-    Hashtbl.fold (fun k () acc -> if Hashtbl.mem vb k then acc + 1 else acc) va 0
+    Hashtbl.fold
+      (fun k () acc -> if Hashtbl.mem vb k then acc + 1 else acc)
+      va 0
   in
   match tagged with
   | [] -> []
   | _ ->
-    (* smallest variable set first *)
-    let start =
-      List.fold_left (fun best c ->
-        let (_, vb, ib) = best and (_, vc, ic) = c in
-        let nb = Hashtbl.length vb and nc = Hashtbl.length vc in
-        if nc < nb || (nc = nb && ic < ib) then c else best
-      ) (List.hd tagged) (List.tl tagged)
-    in
-    let rest = List.filter (fun (_, _, i) -> i <> (let (_,_,i0)=start in i0)) tagged in
-    let rec chain prev_vars remaining acc =
-      match remaining with
-      | [] -> List.rev acc
-      | _ ->
-        let best =
-          List.fold_left (fun b c ->
-            let ob = overlap prev_vars b and oc = overlap prev_vars c in
-            let (_,_,ib) = b and (_,_,ic) = c in
-            if oc > ob || (oc = ob && ic < ib) then c else b
-          ) (List.hd remaining) (List.tl remaining)
-        in
-        let (_, bv, bi) = best in
-        let remaining' = List.filter (fun (_,_,i) -> i <> bi) remaining in
-        chain bv remaining' (best :: acc)
-    in
-    let (c0, v0, _) = start in
-    c0 :: List.map (fun (c,_,_) -> c) (chain v0 rest [])
+      (* smallest variable set first *)
+      let start =
+        List.fold_left
+          (fun best c ->
+            let _, vb, ib = best and _, vc, ic = c in
+            let nb = Hashtbl.length vb and nc = Hashtbl.length vc in
+            if nc < nb || (nc = nb && ic < ib) then c else best)
+          (List.hd tagged) (List.tl tagged)
+      in
+      let rest =
+        List.filter
+          (fun (_, _, i) ->
+            i
+            <>
+            let _, _, i0 = start in
+            i0)
+          tagged
+      in
+      let rec chain prev_vars remaining acc =
+        match remaining with
+        | [] -> List.rev acc
+        | _ ->
+            let best =
+              List.fold_left
+                (fun b c ->
+                  let ob = overlap prev_vars b and oc = overlap prev_vars c in
+                  let _, _, ib = b and _, _, ic = c in
+                  if oc > ob || (oc = ob && ic < ib) then c else b)
+                (List.hd remaining) (List.tl remaining)
+            in
+            let _, bv, bi = best in
+            let remaining' = List.filter (fun (_, _, i) -> i <> bi) remaining in
+            chain bv remaining' (best :: acc)
+      in
+      let c0, v0, _ = start in
+      c0 :: List.map (fun (c, _, _) -> c) (chain v0 rest [])
 
 let rec schedule_nodes (nodes : node list) : node list =
   match nodes with
   | [] -> []
-  | [n] -> [n]
-  | _ ->
-    match connected_components_of nodes with
-    | comps when List.length comps > 1 ->
-      (* Specials-only components (hoisted shared constants/twiddles)
-       * MUST precede everything that reads them; exempt them from
-       * reorder so legality never depends on the greedy chain. *)
-      let specials, rest =
-        List.partition (fun c -> List.for_all is_special_input c) comps in
-      List.concat_map schedule_nodes specials
-      @ List.concat_map schedule_nodes (reorder_components rest)
-    | _ ->
-    let (red, blue) = bisect nodes in
-    if red = [] || blue = [] then
-      topological_order nodes
-    else if List.length red = List.length nodes ||
-            List.length blue = List.length nodes then
-      (* Bisection didn't actually split — fall back. *)
-      topological_order nodes
-    else
-      schedule_nodes red @ schedule_nodes blue
+  | [ n ] -> [ n ]
+  | _ -> (
+      match connected_components_of nodes with
+      | comps when List.length comps > 1 ->
+          (* Specials-only components (hoisted shared constants/twiddles)
+           * MUST precede everything that reads them; exempt them from
+           * reorder so legality never depends on the greedy chain. *)
+          let specials, rest =
+            List.partition (fun c -> List.for_all is_special_input c) comps
+          in
+          List.concat_map schedule_nodes specials
+          @ List.concat_map schedule_nodes (reorder_components rest)
+      | _ ->
+          let red, blue = bisect nodes in
+          if red = [] || blue = [] then topological_order nodes
+          else if
+            List.length red = List.length nodes
+            || List.length blue = List.length nodes
+          then
+            (* Bisection didn't actually split — fall back. *)
+            topological_order nodes
+          else schedule_nodes red @ schedule_nodes blue)
 
 and topological_order (nodes : node list) : node list =
   let emitted = Hashtbl.create 64 in
   let result = ref [] in
   let in_set n = List.exists (fun x -> x.id = n.id) nodes in
   let ready_in_set n =
-    not (Hashtbl.mem emitted n.id) &&
-    in_set n &&
-    List.for_all (fun p ->
-      Hashtbl.mem emitted p.id || not (in_set p)
-    ) n.preds
+    (not (Hashtbl.mem emitted n.id))
+    && in_set n
+    && List.for_all
+         (fun p -> Hashtbl.mem emitted p.id || not (in_set p))
+         n.preds
   in
   let rec loop () =
     let ready = List.filter ready_in_set nodes in
     match ready with
     | [] -> ()
     | rs ->
-      List.iter (fun n ->
-        Hashtbl.add emitted n.id ();
-        result := n :: !result
-      ) rs;
-      loop ()
+        List.iter
+          (fun n ->
+            Hashtbl.add emitted n.id ();
+            result := n :: !result)
+          rs;
+        loop ()
   in
   loop ();
   List.rev !result
@@ -362,15 +409,15 @@ and topological_order (nodes : node list) : node list =
 
 (* Schedule the assignments using Frigo's bisection algorithm.
  * Returns ordered list of (optional output assignment, expression). *)
-let bisection_schedule (assigns : (Expr.elem_ref * Algsimp.t) list)
-    : (Expr.elem_ref option * Algsimp.t) list =
+let bisection_schedule (assigns : (Expr.elem_ref * Algsimp.t) list) :
+    (Expr.elem_ref option * Algsimp.t) list =
   let dag = build_dag assigns in
   let scheduled = schedule_nodes dag in
   List.map (fun n -> (n.output_for, n.alg_node)) scheduled
 
 (* For introspection. *)
-let top_level_bisection (assigns : (Expr.elem_ref * Algsimp.t) list)
-    : node list * node list =
+let top_level_bisection (assigns : (Expr.elem_ref * Algsimp.t) list) :
+    node list * node list =
   let dag = build_dag assigns in
   bisect dag
 
@@ -405,56 +452,58 @@ let top_level_bisection (assigns : (Expr.elem_ref * Algsimp.t) list)
  * critical-path computation. *)
 let node_latency (uarch : Uarch.t) (e : Algsimp.t) : int =
   match e.node with
-  | NK_Const _ -> 0                         (* set1 broadcast: free / inlined *)
+  | NK_Const _ -> 0 (* set1 broadcast: free / inlined *)
   | NK_Load _ -> uarch.load_l1_latency
-  | NK_Neg _ -> uarch.add_latency           (* xor with sign mask, ~ add latency *)
+  | NK_Neg _ -> uarch.add_latency (* xor with sign mask, ~ add latency *)
   | NK_Add _ | NK_Sub _ -> uarch.add_latency
   | NK_Mul _ -> uarch.mul_latency
-  | NK_CmulRe _ | NK_CmulIm _ -> uarch.fma_latency
-                                            (* Cmul emits as 1 mul + 1 fma;
-                                             * latency dominated by fma_latency *)
-  | NK_Fma _ -> uarch.fma_latency           (* single FMA instruction *)
+  | NK_CmulRe _ | NK_CmulIm _ ->
+      uarch.fma_latency
+      (* Cmul emits as 1 mul + 1 fma;
+       * latency dominated by fma_latency *)
+  | NK_Fma _ -> uarch.fma_latency (* single FMA instruction *)
   | NK_Plus _ -> Algsimp.nk_plus_unreachable "schedule.ml:255"
 
 (* Compute critical-path distance from each node to a sink, in cycles.
  * cp_dist[n] = node_latency(n) + max(cp_dist[user] for user in users(n))
  * Sinks have cp_dist = node_latency(n). *)
-let compute_cp_dist (uarch : Uarch.t)
-                    (sinks : Algsimp.t list)
-                    (all_nodes : Algsimp.t list)
-    : (int, int) Hashtbl.t =
+let compute_cp_dist (uarch : Uarch.t) (sinks : Algsimp.t list)
+    (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
   (* Build successor (user) map. *)
   let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
   let add_user prod use =
     let cur = try Hashtbl.find users prod.tag with Not_found -> [] in
     Hashtbl.replace users prod.tag (use :: cur)
   in
-  List.iter (fun n ->
-    List.iter (fun p -> add_user p n) (preds n)
-  ) all_nodes;
+  List.iter (fun n -> List.iter (fun p -> add_user p n) (preds n)) all_nodes;
 
   let cp_dist : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  let sink_tags = List.fold_left (fun acc s ->
-    Hashtbl.replace acc s.tag (); acc
-  ) (Hashtbl.create 16) sinks in
+  let sink_tags =
+    List.fold_left
+      (fun acc s ->
+        Hashtbl.replace acc s.tag ();
+        acc)
+      (Hashtbl.create 16) sinks
+  in
 
   (* Process in tag-descending order. Tag-ascending = topological (children
    * before parents in our hash-cons), so tag-descending = reverse-topological,
    * which is what we want for backward DP. *)
   let sorted_desc = List.sort (fun a b -> compare b.tag a.tag) all_nodes in
-  List.iter (fun n ->
-    let lat = node_latency uarch n in
-    let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
-    let max_user_cp = List.fold_left (fun acc u ->
-      let u_cp = try Hashtbl.find cp_dist u.tag with Not_found -> 0 in
-      max acc u_cp
-    ) 0 user_list in
-    let cp =
-      if Hashtbl.mem sink_tags n.tag then lat
-      else lat + max_user_cp
-    in
-    Hashtbl.replace cp_dist n.tag cp
-  ) sorted_desc;
+  List.iter
+    (fun n ->
+      let lat = node_latency uarch n in
+      let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+      let max_user_cp =
+        List.fold_left
+          (fun acc u ->
+            let u_cp = try Hashtbl.find cp_dist u.tag with Not_found -> 0 in
+            max acc u_cp)
+          0 user_list
+      in
+      let cp = if Hashtbl.mem sink_tags n.tag then lat else lat + max_user_cp in
+      Hashtbl.replace cp_dist n.tag cp)
+    sorted_desc;
   cp_dist
 
 (* Compute SU number — register-pressure approximation.
@@ -467,41 +516,48 @@ let compute_su_number (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
     try Hashtbl.find su e.tag with Not_found -> 1
   in
   let sorted_asc = List.sort (fun a b -> compare a.tag b.tag) all_nodes in
-  List.iter (fun n ->
-    let s = match n.node with
-      | NK_Const _ | NK_Load _ -> 1
-      | NK_Neg a -> get_su a
-      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-        let sa = get_su a and sb = get_su b in
-        if sa = sb then sa + 1
-        else max sa sb
-      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-        (* k-ary SU label: sort children by su descending, label = max_i (su_i + i). *)
-        let sus = List.sort (fun x y -> compare y x)
-                    [get_su a; get_su b; get_su c; get_su d] in
-        let rec compute idx = function
-          | [] -> 0
-          | s :: rest -> max (s + idx) (compute (idx + 1) rest)
-        in
-        compute 0 sus
-      | NK_Fma (a, b, c, _, _) ->
-        (* 3-ary SU label, same scheme as Cmul. *)
-        let sus = List.sort (fun x y -> compare y x)
-                    [get_su a; get_su b; get_su c] in
-        let rec compute idx = function
-          | [] -> 0
-          | s :: rest -> max (s + idx) (compute (idx + 1) rest)
-        in
-        compute 0 sus
-      | NK_Plus _ -> Algsimp.nk_plus_unreachable "schedule.ml:319"
-    in
-    Hashtbl.add su n.tag s
-  ) sorted_asc;
+  List.iter
+    (fun n ->
+      let s =
+        match n.node with
+        | NK_Const _ | NK_Load _ -> 1
+        | NK_Neg a -> get_su a
+        | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+            let sa = get_su a and sb = get_su b in
+            if sa = sb then sa + 1 else max sa sb
+        | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+            (* k-ary SU label: sort children by su descending, label = max_i (su_i + i). *)
+            let sus =
+              List.sort
+                (fun x y -> compare y x)
+                [ get_su a; get_su b; get_su c; get_su d ]
+            in
+            let rec compute idx = function
+              | [] -> 0
+              | s :: rest -> max (s + idx) (compute (idx + 1) rest)
+            in
+            compute 0 sus
+        | NK_Fma (a, b, c, _, _) ->
+            (* 3-ary SU label, same scheme as Cmul. *)
+            let sus =
+              List.sort
+                (fun x y -> compare y x)
+                [ get_su a; get_su b; get_su c ]
+            in
+            let rec compute idx = function
+              | [] -> 0
+              | s :: rest -> max (s + idx) (compute (idx + 1) rest)
+            in
+            compute 0 sus
+        | NK_Plus _ -> Algsimp.nk_plus_unreachable "schedule.ml:319"
+      in
+      Hashtbl.add su n.tag s)
+    sorted_asc;
   su
 
 (* The list scheduler proper. *)
-let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
-    : (Expr.elem_ref option * Algsimp.t) list =
+let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list) :
+    (Expr.elem_ref option * Algsimp.t) list =
   (* Collect all reachable nodes. *)
   let seen : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
   let rec visit (e : Algsimp.t) =
@@ -519,39 +575,44 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
 
   (* Successor map for forward propagation when a node becomes scheduled. *)
   let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
-  List.iter (fun n ->
-    List.iter (fun p ->
-      let cur = try Hashtbl.find users p.tag with Not_found -> [] in
-      Hashtbl.replace users p.tag (n :: cur)
-    ) (preds n)
-  ) all_nodes;
+  List.iter
+    (fun n ->
+      List.iter
+        (fun p ->
+          let cur = try Hashtbl.find users p.tag with Not_found -> [] in
+          Hashtbl.replace users p.tag (n :: cur))
+        (preds n))
+    all_nodes;
 
   (* Unscheduled-pred counter per node. *)
   let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  List.iter (fun n ->
-    Hashtbl.add unsched_count n.tag (List.length (preds n))
-  ) all_nodes;
+  List.iter
+    (fun n -> Hashtbl.add unsched_count n.tag (List.length (preds n)))
+    all_nodes;
 
   (* Ready set: nodes whose predecessors have all been scheduled. *)
   let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let ready : Algsimp.t list ref = ref [] in
-  List.iter (fun n ->
-    if preds n = [] then begin
-      ready := n :: !ready;
-      Hashtbl.add in_ready n.tag ()
-    end
-  ) all_nodes;
+  List.iter
+    (fun n ->
+      if preds n = [] then begin
+        ready := n :: !ready;
+        Hashtbl.add in_ready n.tag ()
+      end)
+    all_nodes;
 
   (* Load source-order tracking: only allow the next-required load to fire. *)
-  let load_tags = List.filter_map (fun n ->
-    match n.node with NK_Load _ -> Some n.tag | _ -> None
-  ) all_nodes |> List.sort compare in
+  let load_tags =
+    List.filter_map
+      (fun n -> match n.node with NK_Load _ -> Some n.tag | _ -> None)
+      all_nodes
+    |> List.sort compare
+  in
   let load_array = Array.of_list load_tags in
   let load_idx = ref 0 in
   let next_required_load () : int option =
-    if !load_idx < Array.length load_array
-    then Some load_array.(!load_idx)
+    if !load_idx < Array.length load_array then Some load_array.(!load_idx)
     else None
   in
 
@@ -590,32 +651,33 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     else
       let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
       let cmp a b =
-        let sa = is_sink a in let sb = is_sink b in
+        let sa = is_sink a in
+        let sb = is_sink b in
         if sa <> sb then compare sb sa
         else
-        let cpa = try Hashtbl.find cp_dist a.tag with Not_found -> 0 in
-        let cpb = try Hashtbl.find cp_dist b.tag with Not_found -> 0 in
-        if cpa <> cpb then compare cpb cpa  (* higher cp_dist first *)
-        else
-          let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
-          let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
-          if sua <> sub then compare sua sub  (* lower su_num breaks ties *)
-          else compare a.tag b.tag             (* stable: tag-ascending *)
+          let cpa = try Hashtbl.find cp_dist a.tag with Not_found -> 0 in
+          let cpb = try Hashtbl.find cp_dist b.tag with Not_found -> 0 in
+          if cpa <> cpb then compare cpb cpa (* higher cp_dist first *)
+          else
+            let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
+            let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
+            if sua <> sub then compare sua sub (* lower su_num breaks ties *)
+            else compare a.tag b.tag (* stable: tag-ascending *)
       in
       match arith_ready with
       | _ :: _ ->
-        (* At least one arithmetic op ready — pick the best one, defer loads. *)
-        Some (List.hd (List.sort cmp arith_ready))
-      | [] ->
-        (* No arithmetic ready — must fire a load to unblock more work.
-         * Fire the next required load (preserves source order). *)
-        let req_load = next_required_load () in
-        let load_candidates = List.filter (fun n ->
-          is_load n && Some n.tag = req_load
-        ) !ready in
-        (match load_candidates with
-         | [] -> None  (* shouldn't happen if scheduling is making progress *)
-         | _ -> Some (List.hd load_candidates))
+          (* At least one arithmetic op ready — pick the best one, defer loads. *)
+          Some (List.hd (List.sort cmp arith_ready))
+      | [] -> (
+          (* No arithmetic ready — must fire a load to unblock more work.
+           * Fire the next required load (preserves source order). *)
+          let req_load = next_required_load () in
+          let load_candidates =
+            List.filter (fun n -> is_load n && Some n.tag = req_load) !ready
+          in
+          match load_candidates with
+          | [] -> None (* shouldn't happen if scheduling is making progress *)
+          | _ -> Some (List.hd load_candidates))
   in
 
   let result : (Expr.elem_ref option * Algsimp.t) list ref = ref [] in
@@ -623,24 +685,29 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     match pick_next () with
     | None -> ()
     | Some n ->
-      Hashtbl.add scheduled n.tag ();
-      ready := List.filter (fun x -> x.tag <> n.tag) !ready;
-      Hashtbl.remove in_ready n.tag;
-      (match n.node with NK_Load _ -> incr load_idx | _ -> ());
-      result := (None, n) :: !result;
-      let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
-      List.iter (fun u ->
-        let cur = try Hashtbl.find unsched_count u.tag with Not_found -> 0 in
-        let new_count = cur - 1 in
-        Hashtbl.replace unsched_count u.tag new_count;
-        if new_count = 0
-           && not (Hashtbl.mem in_ready u.tag)
-           && not (Hashtbl.mem scheduled u.tag) then begin
-          ready := u :: !ready;
-          Hashtbl.add in_ready u.tag ()
-        end
-      ) user_list;
-      loop ()
+        Hashtbl.add scheduled n.tag ();
+        ready := List.filter (fun x -> x.tag <> n.tag) !ready;
+        Hashtbl.remove in_ready n.tag;
+        (match n.node with NK_Load _ -> incr load_idx | _ -> ());
+        result := (None, n) :: !result;
+        let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+        List.iter
+          (fun u ->
+            let cur =
+              try Hashtbl.find unsched_count u.tag with Not_found -> 0
+            in
+            let new_count = cur - 1 in
+            Hashtbl.replace unsched_count u.tag new_count;
+            if
+              new_count = 0
+              && (not (Hashtbl.mem in_ready u.tag))
+              && not (Hashtbl.mem scheduled u.tag)
+            then begin
+              ready := u :: !ready;
+              Hashtbl.add in_ready u.tag ()
+            end)
+          user_list;
+        loop ()
   in
   loop ();
 
@@ -654,32 +721,40 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
    *   (annealer) guarantees this; an illegal order yields a use-before-def C
    *   compile error, which the search treats as an invalid candidate. *)
   (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
-   | None -> ()
-   | Some file ->
-     let oc = open_out file in
-     List.iter (fun (_, (n : Algsimp.t)) ->
-       Printf.fprintf oc "%d:%s\n" n.tag
-         (String.concat " "
-            (List.map (fun (p : Algsimp.t) -> string_of_int p.tag) (preds n)))
-     ) su_intermediates;
-     close_out oc);
+  | None -> ()
+  | Some file ->
+      let oc = open_out file in
+      List.iter
+        (fun (_, (n : Algsimp.t)) ->
+          Printf.fprintf oc "%d:%s\n" n.tag
+            (String.concat " "
+               (List.map (fun (p : Algsimp.t) -> string_of_int p.tag) (preds n))))
+        su_intermediates;
+      close_out oc);
   let intermediates =
     match Sys.getenv_opt "VFFT_SCHED_ORDER" with
     | None -> su_intermediates
     | Some file ->
-      let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
-      List.iter (fun (n : Algsimp.t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
-      let ic = open_in file in
-      let tags = ref [] in
-      (try while true do
-         match int_of_string_opt (String.trim (input_line ic)) with
-         | Some t -> tags := t :: !tags
-         | None -> ()
-       done with End_of_file -> ());
-      close_in ic;
-      List.filter_map (fun t ->
-        match Hashtbl.find_opt by_tag t with Some n -> Some (None, n) | None -> None)
-        (List.rev !tags)
+        let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
+        List.iter
+          (fun (n : Algsimp.t) -> Hashtbl.replace by_tag n.tag n)
+          all_nodes;
+        let ic = open_in file in
+        let tags = ref [] in
+        (try
+           while true do
+             match int_of_string_opt (String.trim (input_line ic)) with
+             | Some t -> tags := t :: !tags
+             | None -> ()
+           done
+         with End_of_file -> ());
+        close_in ic;
+        List.filter_map
+          (fun t ->
+            match Hashtbl.find_opt by_tag t with
+            | Some n -> Some (None, n)
+            | None -> None)
+          (List.rev !tags)
   in
   let stores = List.map (fun (oref, e) -> (Some oref, e)) assigns in
   intermediates @ stores
@@ -725,11 +800,8 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
  *
  * Loads stay deferred behind arithmetic regardless of mode (the load-deferral
  * rule is orthogonal to pressure tracking). *)
-let su_schedule_subset (uarch : Uarch.t)
-    ~(gh : bool)
-    ~(subset : Algsimp.t list)
-    ~(sinks : Algsimp.t list)
-    : Algsimp.t list =
+let su_schedule_subset (uarch : Uarch.t) ~(gh : bool) ~(subset : Algsimp.t list)
+    ~(sinks : Algsimp.t list) : Algsimp.t list =
   (* Subset membership lookup. *)
   let in_subset : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   List.iter (fun n -> Hashtbl.add in_subset n.Algsimp.tag ()) subset;
@@ -754,24 +826,27 @@ let su_schedule_subset (uarch : Uarch.t)
 
   (* Successor map RESTRICTED to subset edges. *)
   let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
-  List.iter (fun n ->
-    List.iter (fun p ->
-      if Hashtbl.mem in_subset p.Algsimp.tag then begin
-        let cur = try Hashtbl.find users p.tag with Not_found -> [] in
-        Hashtbl.replace users p.tag (n :: cur)
-      end
-    ) (preds n)
-  ) subset;
+  List.iter
+    (fun n ->
+      List.iter
+        (fun p ->
+          if Hashtbl.mem in_subset p.Algsimp.tag then begin
+            let cur = try Hashtbl.find users p.tag with Not_found -> [] in
+            Hashtbl.replace users p.tag (n :: cur)
+          end)
+        (preds n))
+    subset;
 
   (* Unscheduled-pred counter — only count predecessors IN the subset.
    * Out-of-subset preds are treated as already satisfied. *)
   let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  List.iter (fun n ->
-    let in_subset_preds = List.filter (fun p ->
-      Hashtbl.mem in_subset p.Algsimp.tag
-    ) (preds n) in
-    Hashtbl.add unsched_count n.tag (List.length in_subset_preds)
-  ) subset;
+  List.iter
+    (fun n ->
+      let in_subset_preds =
+        List.filter (fun p -> Hashtbl.mem in_subset p.Algsimp.tag) (preds n)
+      in
+      Hashtbl.add unsched_count n.tag (List.length in_subset_preds))
+    subset;
 
   (* Remaining-user counter (for Goodman-Hsu): how many in-subset successors
    * of node X are still unscheduled. Initially = total in-subset users.
@@ -783,14 +858,18 @@ let su_schedule_subset (uarch : Uarch.t)
      * Same logic as the `users` table built below; we count entries here. *)
     let user_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
     List.iter (fun n -> Hashtbl.add user_count n.Algsimp.tag 0) subset;
-    List.iter (fun n ->
-      List.iter (fun p ->
-        if Hashtbl.mem in_subset p.Algsimp.tag then begin
-          let cur = try Hashtbl.find user_count p.tag with Not_found -> 0 in
-          Hashtbl.replace user_count p.tag (cur + 1)
-        end
-      ) (preds n)
-    ) subset;
+    List.iter
+      (fun n ->
+        List.iter
+          (fun p ->
+            if Hashtbl.mem in_subset p.Algsimp.tag then begin
+              let cur =
+                try Hashtbl.find user_count p.tag with Not_found -> 0
+              in
+              Hashtbl.replace user_count p.tag (cur + 1)
+            end)
+          (preds n))
+      subset;
     Hashtbl.iter (fun tag c -> Hashtbl.add remaining_users tag c) user_count
   end;
 
@@ -804,7 +883,8 @@ let su_schedule_subset (uarch : Uarch.t)
    * sooner -> fewer stack spills, at a possible latency cost. *)
   let threshold =
     match Sys.getenv_opt "VFFT_GH_THRESHOLD" with
-    | Some s -> (try int_of_string s with _ -> uarch.Uarch.pressure_threshold)
+    | Some s -> (
+        try int_of_string s with _ -> uarch.Uarch.pressure_threshold)
     | None -> uarch.Uarch.pressure_threshold
   in
 
@@ -812,12 +892,13 @@ let su_schedule_subset (uarch : Uarch.t)
   let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let ready : Algsimp.t list ref = ref [] in
-  List.iter (fun n ->
-    if Hashtbl.find unsched_count n.tag = 0 then begin
-      ready := n :: !ready;
-      Hashtbl.add in_ready n.tag ()
-    end
-  ) subset;
+  List.iter
+    (fun n ->
+      if Hashtbl.find unsched_count n.tag = 0 then begin
+        ready := n :: !ready;
+        Hashtbl.add in_ready n.tag ()
+      end)
+    subset;
 
   let is_load n = match n.Algsimp.node with NK_Load _ -> true | _ -> false in
 
@@ -851,14 +932,16 @@ let su_schedule_subset (uarch : Uarch.t)
   let p5_fired = ref 0 in
 
   (* Load source order — only relevant if subset contains loads. *)
-  let load_tags = List.filter_map (fun n ->
-    if is_load n then Some n.Algsimp.tag else None
-  ) subset |> List.sort compare in
+  let load_tags =
+    List.filter_map
+      (fun n -> if is_load n then Some n.Algsimp.tag else None)
+      subset
+    |> List.sort compare
+  in
   let load_array = Array.of_list load_tags in
   let load_idx = ref 0 in
   let next_required_load () =
-    if !load_idx < Array.length load_array
-    then Some load_array.(!load_idx)
+    if !load_idx < Array.length load_array then Some load_array.(!load_idx)
     else None
   in
 
@@ -886,38 +969,41 @@ let su_schedule_subset (uarch : Uarch.t)
       let cmp_latency a b =
         let sa = Hashtbl.mem sink_set a.Algsimp.tag in
         let sb = Hashtbl.mem sink_set b.Algsimp.tag in
-        if sa <> sb then compare sb sa  (* true (sink) before false *)
+        if sa <> sb then compare sb sa (* true (sink) before false *)
         else
-        let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
-        let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
-        if cpa <> cpb then compare cpb cpa
-        else
-          (* Port-balance tier (Option B): when cp_dist is tied, prefer the
-           * op whose port class is "behind." This interleaves P0/P1-only
-           * mul/fma ops with P5-capable add/sub ops, matching the pattern
-           * gcc-11's post-RA scheduler produces. Tier comes AFTER cp_dist
-           * (so critical path is preserved) but BEFORE su_num (port balance
-           * matters more than the SU number tiebreaker for performance).
-           *
-           * Score: how much we want to fire this op based on current
-           * imbalance. Higher = more desired.
-           *   P01 op + p5 ahead  → score positive (catch up p01)
-           *   P5  op + p01 ahead → score positive (catch up p5)
-           *   matched → score 0  *)
-          let port_balance_score n =
-            match port_class n with
-            | `P01 -> !p5_fired - !p01_fired
-            | `P5  -> !p01_fired - !p5_fired
-            | `Other -> 0
+          let cpa =
+            try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0
           in
-          let pba = port_balance_score a in
-          let pbb = port_balance_score b in
-          if pba <> pbb then compare pbb pba  (* higher score first *)
+          let cpb =
+            try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0
+          in
+          if cpa <> cpb then compare cpb cpa
           else
-          let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
-          let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
-          if sua <> sub then compare sua sub
-          else compare a.tag b.tag
+            (* Port-balance tier (Option B): when cp_dist is tied, prefer the
+             * op whose port class is "behind." This interleaves P0/P1-only
+             * mul/fma ops with P5-capable add/sub ops, matching the pattern
+             * gcc-11's post-RA scheduler produces. Tier comes AFTER cp_dist
+             * (so critical path is preserved) but BEFORE su_num (port balance
+             * matters more than the SU number tiebreaker for performance).
+             *
+             * Score: how much we want to fire this op based on current
+             * imbalance. Higher = more desired.
+             *   P01 op + p5 ahead  → score positive (catch up p01)
+             *   P5  op + p01 ahead → score positive (catch up p5)
+             *   matched → score 0  *)
+            let port_balance_score n =
+              match port_class n with
+              | `P01 -> !p5_fired - !p01_fired
+              | `P5 -> !p01_fired - !p5_fired
+              | `Other -> 0
+            in
+            let pba = port_balance_score a in
+            let pbb = port_balance_score b in
+            if pba <> pbb then compare pbb pba (* higher score first *)
+            else
+              let sua = try Hashtbl.find su_num a.tag with Not_found -> 0 in
+              let sub = try Hashtbl.find su_num b.tag with Not_found -> 0 in
+              if sua <> sub then compare sua sub else compare a.tag b.tag
       in
       (* Goodman-Hsu pressure-mode comparator: minimize live-delta.
        *   delta(n) = births(n) - kills(n)
@@ -927,14 +1013,22 @@ let su_schedule_subset (uarch : Uarch.t)
        * Tiebreak with cp_dist DESC (some latency awareness within pressure mode)
        * then tag ASC for stability. *)
       let pressure_delta n =
-        let preds_in_sub = List.filter (fun p ->
-          Hashtbl.mem in_subset p.Algsimp.tag
-        ) (preds n) in
-        let kills = List.fold_left (fun acc p ->
-          let ru = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
-          if ru = 1 then acc + 1 else acc
-        ) 0 preds_in_sub in
-        let n_users = try Hashtbl.find remaining_users n.Algsimp.tag with Not_found -> 0 in
+        let preds_in_sub =
+          List.filter (fun p -> Hashtbl.mem in_subset p.Algsimp.tag) (preds n)
+        in
+        let kills =
+          List.fold_left
+            (fun acc p ->
+              let ru =
+                try Hashtbl.find remaining_users p.Algsimp.tag
+                with Not_found -> 0
+              in
+              if ru = 1 then acc + 1 else acc)
+            0 preds_in_sub
+        in
+        let n_users =
+          try Hashtbl.find remaining_users n.Algsimp.tag with Not_found -> 0
+        in
         let is_sink = Hashtbl.mem sink_set n.tag in
         let births = if n_users > 0 || is_sink then 1 else 0 in
         births - kills
@@ -942,27 +1036,31 @@ let su_schedule_subset (uarch : Uarch.t)
       let cmp_pressure a b =
         let da = pressure_delta a in
         let db = pressure_delta b in
-        if da <> db then compare da db  (* most-negative first *)
+        if da <> db then compare da db (* most-negative first *)
         else
-          let cpa = try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0 in
-          let cpb = try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0 in
-          if cpa <> cpb then compare cpb cpa
-          else compare a.tag b.tag
+          let cpa =
+            try Hashtbl.find cp_dist a.Algsimp.tag with Not_found -> 0
+          in
+          let cpb =
+            try Hashtbl.find cp_dist b.Algsimp.tag with Not_found -> 0
+          in
+          if cpa <> cpb then compare cpb cpa else compare a.tag b.tag
       in
       let cmp =
-        if gh && live_count () > threshold then cmp_pressure
-        else cmp_latency
+        if gh && live_count () > threshold then cmp_pressure else cmp_latency
       in
       match arith_ready with
       | _ :: _ -> Some (List.hd (List.sort cmp arith_ready))
-      | [] ->
-        let req_load = next_required_load () in
-        let load_candidates = List.filter (fun n ->
-          is_load n && Some n.Algsimp.tag = req_load
-        ) !ready in
-        (match load_candidates with
-         | [] -> None
-         | _ -> Some (List.hd load_candidates))
+      | [] -> (
+          let req_load = next_required_load () in
+          let load_candidates =
+            List.filter
+              (fun n -> is_load n && Some n.Algsimp.tag = req_load)
+              !ready
+          in
+          match load_candidates with
+          | [] -> None
+          | _ -> Some (List.hd load_candidates))
   in
 
   let result : Algsimp.t list ref = ref [] in
@@ -970,51 +1068,61 @@ let su_schedule_subset (uarch : Uarch.t)
     match pick_next () with
     | None -> ()
     | Some n ->
-      Hashtbl.add scheduled n.Algsimp.tag ();
-      ready := List.filter (fun x -> x.Algsimp.tag <> n.tag) !ready;
-      Hashtbl.remove in_ready n.tag;
-      (if is_load n then incr load_idx);
-      (* Update port-class counters for port-balance tiebreaker. *)
-      (match port_class n with
-       | `P01 -> incr p01_fired
-       | `P5  -> incr p5_fired
-       | `Other -> ());
-      result := n :: !result;
+        Hashtbl.add scheduled n.Algsimp.tag ();
+        ready := List.filter (fun x -> x.Algsimp.tag <> n.tag) !ready;
+        Hashtbl.remove in_ready n.tag;
+        if is_load n then incr load_idx;
+        (* Update port-class counters for port-balance tiebreaker. *)
+        (match port_class n with
+        | `P01 -> incr p01_fired
+        | `P5 -> incr p5_fired
+        | `Other -> ());
+        result := n :: !result;
 
-      (* Goodman-Hsu live-set update.
-       * 1. For each pred P in subset, decrement P's remaining_users.
-       *    If P hits 0 and isn't a sink, P dies (remove from live).
-       * 2. n itself becomes live if it has remaining users OR is a sink. *)
-      if gh then begin
-        let preds_in_sub = List.filter (fun p ->
-          Hashtbl.mem in_subset p.Algsimp.tag
-        ) (preds n) in
-        List.iter (fun p ->
-          let cur = try Hashtbl.find remaining_users p.Algsimp.tag with Not_found -> 0 in
-          let new_count = cur - 1 in
-          Hashtbl.replace remaining_users p.tag new_count;
-          if new_count = 0 && not (Hashtbl.mem sink_set p.tag) then
-            Hashtbl.remove live p.tag
-        ) preds_in_sub;
-        let n_users = try Hashtbl.find remaining_users n.tag with Not_found -> 0 in
-        let is_sink = Hashtbl.mem sink_set n.tag in
-        if n_users > 0 || is_sink then
-          Hashtbl.replace live n.tag ()
-      end;
+        (* Goodman-Hsu live-set update.
+         * 1. For each pred P in subset, decrement P's remaining_users.
+         *    If P hits 0 and isn't a sink, P dies (remove from live).
+         * 2. n itself becomes live if it has remaining users OR is a sink. *)
+        if gh then begin
+          let preds_in_sub =
+            List.filter (fun p -> Hashtbl.mem in_subset p.Algsimp.tag) (preds n)
+          in
+          List.iter
+            (fun p ->
+              let cur =
+                try Hashtbl.find remaining_users p.Algsimp.tag
+                with Not_found -> 0
+              in
+              let new_count = cur - 1 in
+              Hashtbl.replace remaining_users p.tag new_count;
+              if new_count = 0 && not (Hashtbl.mem sink_set p.tag) then
+                Hashtbl.remove live p.tag)
+            preds_in_sub;
+          let n_users =
+            try Hashtbl.find remaining_users n.tag with Not_found -> 0
+          in
+          let is_sink = Hashtbl.mem sink_set n.tag in
+          if n_users > 0 || is_sink then Hashtbl.replace live n.tag ()
+        end;
 
-      let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
-      List.iter (fun u ->
-        let cur = try Hashtbl.find unsched_count u.Algsimp.tag with Not_found -> 0 in
-        let new_count = cur - 1 in
-        Hashtbl.replace unsched_count u.tag new_count;
-        if new_count = 0
-           && not (Hashtbl.mem in_ready u.tag)
-           && not (Hashtbl.mem scheduled u.tag) then begin
-          ready := u :: !ready;
-          Hashtbl.add in_ready u.tag ()
-        end
-      ) user_list;
-      loop ()
+        let user_list = try Hashtbl.find users n.tag with Not_found -> [] in
+        List.iter
+          (fun u ->
+            let cur =
+              try Hashtbl.find unsched_count u.Algsimp.tag with Not_found -> 0
+            in
+            let new_count = cur - 1 in
+            Hashtbl.replace unsched_count u.tag new_count;
+            if
+              new_count = 0
+              && (not (Hashtbl.mem in_ready u.tag))
+              && not (Hashtbl.mem scheduled u.tag)
+            then begin
+              ready := u :: !ready;
+              Hashtbl.add in_ready u.tag ()
+            end)
+          user_list;
+        loop ()
   in
   loop ();
   List.rev !result

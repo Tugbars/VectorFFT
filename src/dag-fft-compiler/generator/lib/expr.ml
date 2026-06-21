@@ -25,9 +25,9 @@
  * `type t = ... [@@deriving ...]` would give us automatic equality, hash,
  * etc. — but we'll write them explicitly for clarity in the prototype. *)
 type elem_ref =
-  | Input  of int * bool   (* (index, is_real) *)
+  | Input of int * bool (* (index, is_real) *)
   | Output of int * bool
-  | Twiddle of int * bool  (* (twiddle index, is_real) — for t1_dit codelet *)
+  | Twiddle of int * bool (* (twiddle index, is_real) — for t1_dit codelet *)
 
 (* The math IR. An `expr` is a tree of arithmetic operations whose leaves
  * are constants or input element references.
@@ -39,11 +39,11 @@ type elem_ref =
  *)
 type expr =
   | Const of float
-  | Load  of elem_ref       (* read an input/twiddle element *)
-  | Neg   of expr
-  | Add   of expr * expr
-  | Sub   of expr * expr
-  | Mul   of expr * expr
+  | Load of elem_ref (* read an input/twiddle element *)
+  | Neg of expr
+  | Add of expr * expr
+  | Sub of expr * expr
+  | Mul of expr * expr
 
 (* === SMART CONSTRUCTORS ===
  *
@@ -77,10 +77,7 @@ type expr =
 let mk_const (c : float) : expr = Const c
 
 let rec mk_neg (e : expr) : expr =
-  match e with
-  | Neg x -> x
-  | Const c -> Const (-. c)
-  | _ -> Neg e
+  match e with Neg x -> x | Const c -> Const (-.c) | _ -> Neg e
 
 (* Multiplication with constant folding and rotation. Match order matters:
  *   1. Identities (x * 0 = 0, x * 1 = x, x * -1 = -x)
@@ -98,50 +95,50 @@ let rec mk_neg (e : expr) : expr =
  *      consistently fires on the next outer mk_mul).
  *)
 and mk_mul (a : expr) (b : expr) : expr =
-  match a, b with
+  match (a, b) with
   (* Zero absorption *)
   | Const 0.0, _ | _, Const 0.0 -> Const 0.0
   (* One identity *)
   | Const 1.0, x | x, Const 1.0 -> x
   (* -1 -> Neg *)
-  | Const (-1.0), x | x, Const (-1.0) -> mk_neg x
+  | Const -1.0, x | x, Const -1.0 -> mk_neg x
   (* Const * Const fold *)
   | Const x, Const y -> Const (x *. y)
   (* Negation propagation: -a * b -> -(a*b), a * -b -> -(a*b) *)
   | Neg a', _ -> mk_neg (mk_mul a' b)
   | _, Neg b' -> mk_neg (mk_mul a b')
   (* ROTATION: Const * Mul(Const, x) -> Const(c*k) * x. *)
-  | Const _, Mul (Const _, _) ->
-    (match a, b with
-     | Const va, Mul (Const vb, c') -> mk_mul (Const (va *. vb)) c'
-     | _ -> assert false)
-  | Const _, Mul (_, Const _) ->
-    (match a, b with
-     | Const va, Mul (c', Const vb) -> mk_mul (Const (va *. vb)) c'
-     | _ -> assert false)
-  | Mul (Const _, _), Const _ ->
-    (match a, b with
-     | Mul (Const va, c'), Const vb -> mk_mul (Const (va *. vb)) c'
-     | _ -> assert false)
-  | Mul (_, Const _), Const _ ->
-    (match a, b with
-     | Mul (c', Const va), Const vb -> mk_mul (Const (va *. vb)) c'
-     | _ -> assert false)
+  | Const _, Mul (Const _, _) -> (
+      match (a, b) with
+      | Const va, Mul (Const vb, c') -> mk_mul (Const (va *. vb)) c'
+      | _ -> assert false)
+  | Const _, Mul (_, Const _) -> (
+      match (a, b) with
+      | Const va, Mul (c', Const vb) -> mk_mul (Const (va *. vb)) c'
+      | _ -> assert false)
+  | Mul (Const _, _), Const _ -> (
+      match (a, b) with
+      | Mul (Const va, c'), Const vb -> mk_mul (Const (va *. vb)) c'
+      | _ -> assert false)
+  | Mul (_, Const _), Const _ -> (
+      match (a, b) with
+      | Mul (c', Const va), Const vb -> mk_mul (Const (va *. vb)) c'
+      | _ -> assert false)
   (* DISTRIBUTION WITH ROTATION (guarded): Const * Sub(Mul(Const,x), Mul(Const,y))
    *   -> Sub(Mul(Const*Const, x), Mul(Const*Const, y))
    * Net -1 op (one outer Mul replaced by two leaf Muls whose constants
    * collapsed via rotation). Guard ensures we only do this when the win is
    * guaranteed. Same for Add. *)
-  | Const _, Sub (Mul (Const _, _), Mul (Const _, _)) ->
-    (match a, b with
-     | Const k, Sub (Mul (Const c1, x1), Mul (Const c2, x2)) ->
-       mk_sub (mk_mul (Const (k *. c1)) x1) (mk_mul (Const (k *. c2)) x2)
-     | _ -> assert false)
-  | Const _, Add (Mul (Const _, _), Mul (Const _, _)) ->
-    (match a, b with
-     | Const k, Add (Mul (Const c1, x1), Mul (Const c2, x2)) ->
-       mk_add (mk_mul (Const (k *. c1)) x1) (mk_mul (Const (k *. c2)) x2)
-     | _ -> assert false)
+  | Const _, Sub (Mul (Const _, _), Mul (Const _, _)) -> (
+      match (a, b) with
+      | Const k, Sub (Mul (Const c1, x1), Mul (Const c2, x2)) ->
+          mk_sub (mk_mul (Const (k *. c1)) x1) (mk_mul (Const (k *. c2)) x2)
+      | _ -> assert false)
+  | Const _, Add (Mul (Const _, _), Mul (Const _, _)) -> (
+      match (a, b) with
+      | Const k, Add (Mul (Const c1, x1), Mul (Const c2, x2)) ->
+          mk_add (mk_mul (Const (k *. c1)) x1) (mk_mul (Const (k *. c2)) x2)
+      | _ -> assert false)
   (* Canonicalize: Const on the left, so deeper rotations fire predictably. *)
   | _, Const _ -> Mul (b, a)
   (* General case *)
@@ -155,20 +152,20 @@ and mk_mul (a : expr) (b : expr) : expr =
  * Importantly NOT associative-flattening (n-ary Plus) — that's algsimp's
  * job. We just handle the local cases that help downstream simplifiers. *)
 and mk_add (a : expr) (b : expr) : expr =
-  match a, b with
+  match (a, b) with
   | Const 0.0, x | x, Const 0.0 -> x
   | Const x, Const y -> Const (x +. y)
-  | _, Neg b' -> mk_sub a b'           (* x + (-y) = x - y *)
-  | Neg a', _ -> mk_sub b a'           (* (-x) + y = y - x *)
+  | _, Neg b' -> mk_sub a b' (* x + (-y) = x - y *)
+  | Neg a', _ -> mk_sub b a' (* (-x) + y = y - x *)
   | _ -> Add (a, b)
 
 (* Subtraction with mirror rules to mk_add. *)
 and mk_sub (a : expr) (b : expr) : expr =
-  match a, b with
+  match (a, b) with
   | _, Const 0.0 -> a
   | Const 0.0, _ -> mk_neg b
   | Const x, Const y -> Const (x -. y)
-  | _, Neg b' -> mk_add a b'           (* x - (-y) = x + y *)
+  | _, Neg b' -> mk_add a b' (* x - (-y) = x + y *)
   | _ -> Sub (a, b)
 
 (* A complete codelet's math layer output: a list of (output_ref, expr)
@@ -192,11 +189,11 @@ type assignment = elem_ref * expr
 
 let string_of_elem_ref (e : elem_ref) : string =
   match e with
-  | Input  (i, true)  -> Printf.sprintf "x[%d].re" i
-  | Input  (i, false) -> Printf.sprintf "x[%d].im" i
-  | Output (i, true)  -> Printf.sprintf "X[%d].re" i
+  | Input (i, true) -> Printf.sprintf "x[%d].re" i
+  | Input (i, false) -> Printf.sprintf "x[%d].im" i
+  | Output (i, true) -> Printf.sprintf "X[%d].re" i
   | Output (i, false) -> Printf.sprintf "X[%d].im" i
-  | Twiddle (i, true)  -> Printf.sprintf "tw[%d].re" i
+  | Twiddle (i, true) -> Printf.sprintf "tw[%d].re" i
   | Twiddle (i, false) -> Printf.sprintf "tw[%d].im" i
 
 (* Recursive pretty-printer with parentheses inserted minimally.
@@ -206,20 +203,19 @@ let string_of_elem_ref (e : elem_ref) : string =
 let rec string_of_expr_prec (prec : int) (e : expr) : string =
   match e with
   | Const c ->
-    if c < 0.0 then Printf.sprintf "(%g)" c   (* parenthesize negatives *)
-    else Printf.sprintf "%g" c
+      if c < 0.0 then Printf.sprintf "(%g)" c (* parenthesize negatives *)
+      else Printf.sprintf "%g" c
   | Load r -> string_of_elem_ref r
   | Neg e1 ->
-    let s = "-" ^ string_of_expr_prec 2 e1 in
-    if prec > 2 then "(" ^ s ^ ")" else s
+      let s = "-" ^ string_of_expr_prec 2 e1 in
+      if prec > 2 then "(" ^ s ^ ")" else s
   | Add (a, b) ->
-    let s = string_of_expr_prec 1 a ^ " + " ^ string_of_expr_prec 1 b in
-    if prec > 1 then "(" ^ s ^ ")" else s
+      let s = string_of_expr_prec 1 a ^ " + " ^ string_of_expr_prec 1 b in
+      if prec > 1 then "(" ^ s ^ ")" else s
   | Sub (a, b) ->
-    let s = string_of_expr_prec 1 a ^ " - " ^ string_of_expr_prec 2 b in
-    if prec > 1 then "(" ^ s ^ ")" else s
-  | Mul (a, b) ->
-    string_of_expr_prec 3 a ^ " * " ^ string_of_expr_prec 3 b
+      let s = string_of_expr_prec 1 a ^ " - " ^ string_of_expr_prec 2 b in
+      if prec > 1 then "(" ^ s ^ ")" else s
+  | Mul (a, b) -> string_of_expr_prec 3 a ^ " * " ^ string_of_expr_prec 3 b
 
 let string_of_expr (e : expr) : string = string_of_expr_prec 0 e
 
@@ -228,12 +224,13 @@ let string_of_expr (e : expr) : string = string_of_expr_prec 0 e
  * up strings without quadratic-time concatenation. *)
 let string_of_assignments (al : assignment list) : string =
   let buf = Buffer.create 1024 in
-  List.iter (fun (lhs, rhs) ->
-    Buffer.add_string buf (string_of_elem_ref lhs);
-    Buffer.add_string buf " = ";
-    Buffer.add_string buf (string_of_expr rhs);
-    Buffer.add_char buf '\n'
-  ) al;
+  List.iter
+    (fun (lhs, rhs) ->
+      Buffer.add_string buf (string_of_elem_ref lhs);
+      Buffer.add_string buf " = ";
+      Buffer.add_string buf (string_of_expr rhs);
+      Buffer.add_char buf '\n')
+    al;
   Buffer.contents buf
 
 (* === Symbolic DFT-N expansion ===
@@ -265,9 +262,9 @@ let string_of_assignments (al : assignment list) : string =
  * This separation lets us share the DFT body between:
  *   - `dft_expand`:           input n -> Load(Input(n, _))     (no twiddle)
  *   - `dft_expand_twiddled`:  input n -> precomputed cmul(x[n], w[n])
- * *)
-let dft_kernel (n : int) (input_re : int -> expr) (input_im : int -> expr)
-    : assignment list =
+ *)
+let dft_kernel (n : int) (input_re : int -> expr) (input_im : int -> expr) :
+    assignment list =
   let pi = 4.0 *. atan 1.0 in
   let assignments = ref [] in
   for k = 0 to n - 1 do
@@ -284,7 +281,7 @@ let dft_kernel (n : int) (input_re : int -> expr) (input_im : int -> expr)
       re_sum := Add (!re_sum, term_re);
       im_sum := Add (!im_sum, term_im)
     done;
-    assignments := (Output (k, true),  !re_sum) :: !assignments;
+    assignments := (Output (k, true), !re_sum) :: !assignments;
     assignments := (Output (k, false), !im_sum) :: !assignments
   done;
   List.rev !assignments
@@ -325,14 +322,20 @@ let dft_expand_twiddled (n : int) : assignment list =
   twiddled_re.(0) <- Load (Input (0, true));
   twiddled_im.(0) <- Load (Input (0, false));
   for nn = 1 to n - 1 do
-    let a = Load (Input (nn, true)) in        (* x[n].re *)
-    let b = Load (Input (nn, false)) in       (* x[n].im *)
+    let a = Load (Input (nn, true)) in
+    (* x[n].re *)
+    let b = Load (Input (nn, false)) in
+    (* x[n].im *)
     (* Twiddle index: w[nn-1] since leg 0 has no twiddle. So tw_re slot
      * (nn-1) corresponds to leg nn's twiddle. *)
-    let c = Load (Twiddle (nn - 1, true)) in  (* w[n-1].re *)
-    let d = Load (Twiddle (nn - 1, false)) in (* w[n-1].im *)
-    twiddled_re.(nn) <- Sub (Mul (a, c), Mul (b, d));   (* a*c - b*d *)
-    twiddled_im.(nn) <- Add (Mul (a, d), Mul (b, c))    (* a*d + b*c *)
+    let c = Load (Twiddle (nn - 1, true)) in
+    (* w[n-1].re *)
+    let d = Load (Twiddle (nn - 1, false)) in
+    (* w[n-1].im *)
+    twiddled_re.(nn) <- Sub (Mul (a, c), Mul (b, d));
+    (* a*c - b*d *)
+    twiddled_im.(nn) <- Add (Mul (a, d), Mul (b, c))
+    (* a*d + b*c *)
   done;
   let input_re nn = twiddled_re.(nn) in
   let input_im nn = twiddled_im.(nn) in
