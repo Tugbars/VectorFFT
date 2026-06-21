@@ -35,11 +35,19 @@
 #include "executor_generic.h"
 #include <string.h>
 
-static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
-                                             const double *src_re,
-                                             const double *src_im,
-                                             double *dst_re, double *dst_im,
-                                             size_t slice_K)
+/* MODEB OOP forward with an optional JIT inner. Stage 0 runs OOP (src->dst,
+ * untwiddled); stages 1.. resume in-place on dst. `stages1_jit`, if non-NULL, is
+ * the resolved JIT/baked executor for the SAME plan — called with start_stage=1 it
+ * runs EXACTLY stages 1.. in-place (every STAGE_* macro is gated `if start_stage<=S`),
+ * bit-identical to the generic resume but without the per-stage dispatch. NULL ->
+ * generic resume. Stage 0 stays generic — it's a bare n1 codelet loop (codelet floor,
+ * nothing for JIT to specialize). */
+static inline int vfft_proto_execute_fwd_oop_jit(const stride_plan_t *plan,
+                                                 const double *src_re,
+                                                 const double *src_im,
+                                                 double *dst_re, double *dst_im,
+                                                 size_t slice_K,
+                                                 vfft_proto_exec_fn stages1_jit)
 {
     if (plan->use_dif_forward)
         return -1;
@@ -57,11 +65,26 @@ static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
     }
 
     if (plan->num_stages > 1)
-        /* Resume stages 1.. in-place on dst — directly, no shifted-sub-plan
-         * struct copy (group_base offsets are absolute, so running the original
-         * plan from stage 1 is identical to the old memmove'd view). */
-        vfft_proto_execute_fwd_generic_from(plan, dst_re, dst_im, slice_K, 1);
+    {
+        if (stages1_jit)
+            stages1_jit(plan, dst_re, dst_im, slice_K, plan->K, 1); /* stages 1.. (JIT) */
+        else
+            /* group_base offsets are absolute, so running the original plan from
+             * stage 1 is identical to a shifted sub-view. */
+            vfft_proto_execute_fwd_generic_from(plan, dst_re, dst_im, slice_K, 1);
+    }
     return 0;
+}
+
+/* Generic-inner convenience (no JIT). */
+static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
+                                             const double *src_re,
+                                             const double *src_im,
+                                             double *dst_re, double *dst_im,
+                                             size_t slice_K)
+{
+    return vfft_proto_execute_fwd_oop_jit(plan, src_re, src_im,
+                                          dst_re, dst_im, slice_K, NULL);
 }
 
 /* Unnormalized inverse via pointer swap on the forward plan. */
