@@ -763,7 +763,14 @@ let su_schedule_subset (uarch : Uarch.t)
    * which already accounts for cmul/FMA scratch slack. *)
   let live : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let live_count () = Hashtbl.length live in
-  let threshold = uarch.Uarch.pressure_threshold in
+  (* VFFT_GH_THRESHOLD env override (experiment knob; default = unchanged).
+   * Lowering it makes GH pressure-mode engage earlier -> frees registers
+   * sooner -> fewer stack spills, at a possible latency cost. *)
+  let threshold =
+    match Sys.getenv_opt "VFFT_GH_THRESHOLD" with
+    | Some s -> (try int_of_string s with _ -> uarch.Uarch.pressure_threshold)
+    | None -> uarch.Uarch.pressure_threshold
+  in
 
   (* Ready set: nodes with no unscheduled subset preds. *)
   let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in

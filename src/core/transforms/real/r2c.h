@@ -93,6 +93,11 @@ typedef struct
                    double*, double*, double*, double*,
                    const double*, const double*,
                    ptrdiff_t, ptrdiff_t, ptrdiff_t, size_t);
+
+    /* Resolved JIT inner for the c2r BACKWARD sliced stages (1..nf-1, reverse).
+     * NULL = generic slice. The fused last stage (stage 0 + Hermitian fold) always
+     * stays generic — it's a bespoke fold codelet, nothing for JIT to specialize. */
+    vfft_proto_exec_fn inner_jit_bwd;
 } stride_r2c_data_t;
 
 /* ═══════════════════════════════════════════════════════════════
@@ -935,10 +940,20 @@ static void _r2c_worker_bwd(void *arg) {
                         halfN, K, B, b0);
 
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {
-            _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
+            if (d->inner_jit_bwd)
+                /* JIT stages 1..nf-1 (start_stage=1 == slice_until 1); per-thread
+                 * scratch (sr/si) so the shared fn is reentrant — no race. */
+                d->inner_jit_bwd(d->inner, sr, si, B, d->inner->K, 1);
+            else
+                _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
             _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
         } else {
-            stride_execute_bwd_serial(d->inner, sr, si);
+            /* non-fused inner (no scaled-bwd stage 0): whole inner bwd then unpack.
+             * JIT the whole bwd (start_stage=0) when resolved; per-thread scratch. */
+            if (d->inner_jit_bwd)
+                d->inner_jit_bwd(d->inner, sr, si, B, d->inner->K, 0);
+            else
+                stride_execute_bwd_serial(d->inner, sr, si);
             for (int n = 0; n < halfN; n++) {
                 const double *src_r = sr + (size_t)n * B;
                 const double *src_i = si + (size_t)n * B;
@@ -1605,6 +1620,20 @@ static inline void stride_execute_c2r(const stride_plan_t *plan,
     memcpy(real_out, in_re, halfN_plus1_K * sizeof(double));
     memcpy(d->c2r_im_buf, in_im, halfN_plus1_K * sizeof(double));
     plan->override_bwd(plan->override_data, real_out, d->c2r_im_buf);
+}
+
+/* JIT inner for the SPLIT stride c2r backward. stride_r2c_inner_plan returns the
+ * inner c2c (N/2) so the caller can resolve its JIT bwd; set_inner_jit_bwd wires it
+ * (the c2r worker then runs the sliced stages 1..nf-1 via the JIT). Both no-op on a
+ * non-(even-N stride-r2c) plan, so callers can wire unconditionally. */
+static inline stride_plan_t *stride_r2c_inner_plan(const stride_plan_t *plan) {
+    if (!plan || plan->override_bwd != _r2c_execute_bwd) return NULL;
+    return ((const stride_r2c_data_t *)plan->override_data)->inner;
+}
+static inline void stride_r2c_set_inner_jit_bwd(stride_plan_t *plan,
+                                                vfft_proto_exec_fn bwd) {
+    if (!plan || plan->override_bwd != _r2c_execute_bwd) return;
+    ((stride_r2c_data_t *)plan->override_data)->inner_jit_bwd = bwd;
 }
 
 #endif /* STRIDE_R2C_H */
