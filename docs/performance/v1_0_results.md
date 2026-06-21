@@ -1,5 +1,17 @@
 # VectorFFT v1.0 — performance results
 
+> **Where we win most — MKL's blind spot.** VectorFFT's lead over MKL is widest exactly
+> where MKL invests least: **odd / mixed-radix, scrambled-order, in-place, batched.**
+> Power-of-2 is MKL's home turf (decades of split-radix tuning) and our *narrowest* win
+> (median **1.86×**); odd composites — where MKL falls back to generic mixed-radix / Bluestein —
+> are our *fattest* (median **3.47×**, ~2× more margin). Three effects stack into that blind spot:
+> (1) a DAG-compiler-tuned codelet for **every smooth radix** (not just 2/4/8), (2) **scrambled-order**
+> in-place that skips the bit-reversal MKL pays, and (3) the **split lane-batched** layout that makes
+> the throughput regime trivially parallel. MKL is tuned for the opposite corner: power-of-2, natural
+> order, single transform. (Scrambled order is the right contract for convolution-class work — FIR
+> filtering, polynomial / big-integer multiply, correlation, lattice-crypto NTT — where a fwd→bwd
+> roundtrip or a pointwise multiply is order-agnostic.)
+
 Empirical performance of VectorFFT across three axes:
 
 1. **Wall-time vs MKL** on 1D C2C — single-thread (238 cells) and multi-threaded (the headline metric)
