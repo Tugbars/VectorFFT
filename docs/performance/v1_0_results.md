@@ -142,7 +142,40 @@ follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards cor
 > wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT wired + bit-exact, not yet
 > re-run here); BAILEY2 MT is a follow-up — both are conservative floors.
 
-## 2. vs FFTW3 — single-thread
+## 2. vs MKL — 2D C2C
+
+dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native
+column pass) vs MKL DFTI 2D (split, `DFTI_NOT_INPLACE`), single-thread, same fairness
+as §1 (per-cell order-flip, cachebust + pace, best-of-5, ns timing). dag is **in-place,
+scrambled order** (DIT); MKL is natural order — so the definitive correctness gate is the
+roundtrip `fwd+bwd == N1·N2·x` (all e-14/e-15), and `elem≈1e0` just confirms the scramble.
+Source: `bench_1d_vs_mkl.c --2d` → `vfft_perf_tuned_2d.csv`.
+
+The inner row/col FFTs route through the **baked-or-JIT resolver** (`--jit`, via
+`_fft2d_jit_resolve` mirroring `plan_orchestrator.h`); cold inner factorizations get
+JIT-specialized, lifting 3/4 cells over the generic floor:
+
+```
+ N1×N2     generic   JIT     order
+──────────────────────────────────────
+ 64×64      1.56×    1.75×   scrambled
+ 128×128    1.18×    1.40×   scrambled
+ 256×256    1.26×    1.26×   scrambled
+ 512×512    1.29×    1.39×   scrambled
+──────────────────────────────────────
+ median     1.28×    1.39×   (4/4 win)
+```
+
+Headline:
+
+> **2D C2C beats MKL on all 4 tested square cells — median 1.28× (generic) / 1.39× (JIT),
+> up to 1.75×.** The tiled B=8 row pass keeps the working set in L1/L2 and the SIMD 4×4/8×4
+> transpose makes gather/scatter nearly free. JIT specializes the cold inner row/col FFTs
+> (bit-exact, +8–19% where it fires). This is in-place scrambled-order 2D (the convolution
+> contract); a natural-order 2D path would add the reorder (far-future, with natural-order
+> in-place). MT (`--2d --mt`) and rectangular / non-pow2 cells are follow-ups.
+
+## 3. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
@@ -327,7 +360,7 @@ MKL TT computes a different PDE-oriented math convention, so the
 comparison is informational, not apples-to-apples). FFTW3 is the
 correct r2r baseline.
 
-## 3. Multi-threaded scaling
+## 4. Multi-threaded scaling
 
 ### 1D C2C — direct MT vs MKL
 
@@ -402,7 +435,7 @@ because it's pure memory bandwidth, and a single optimized memcpy
 typically beats T smaller memcpys when the limit is DRAM throughput.
 DHT will benefit most from v1.1 fused codelets.
 
-## 4. Per-codelet performance (VTune-grade)
+## 5. Per-codelet performance (VTune-grade)
 
 For deep per-radix analysis at K=256 see
 [docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
@@ -428,7 +461,7 @@ these benefit specifically from the cost model's variant-aware
 selection (T1S / LOG3 / BUF) which routes around their bottlenecks
 when wisdom shows another protocol wins.
 
-## 5. Hardware caveats
+## 6. Hardware caveats
 
 ### These numbers are from one CPU
 
@@ -466,7 +499,7 @@ latency. Per-thread efficiency drops sharply past 8. For workloads
 that benefit from many threads, the bench grid should be extended
 (v1.1 work).
 
-## 6. Reproducing these numbers
+## 7. Reproducing these numbers
 
 ### vs MKL
 
