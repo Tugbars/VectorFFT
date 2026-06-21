@@ -87,3 +87,8 @@ build_tuned/benches/mb_256.txt
 # Generated wisdom files are committed — single source of truth, one folder,
 # visible to everyone (spike/rfft/c2r/bluestein/oop). Keep all wisdoms here.
 !src/dag-fft-compiler/generator/generated/*.txt
+
+# Schedule-search experiment sandbox — local-only, NEVER committed to the repo.
+# Throwaway codelets, benches, and search drivers live here so experiments
+# can't leak into production (see docs/roadmap/schedule_search_plan.md).
+/src/dag-fft-compiler/experiments/
