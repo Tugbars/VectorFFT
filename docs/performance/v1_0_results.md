@@ -258,7 +258,68 @@ K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.
 > layout that taxed us single-thread is the multithreading edge — the design trade paying off.
 > (c2r mirrors this; its JIT is built + wired, not separately benched here yet.)
 
-## 4. vs FFTW3 — single-thread
+## 4. vs MKL — 2D R2C
+
+dag tiled 2D real-to-complex (`fft2d_r2c.h`: tiled R2C row pass + native column c2c)
+vs MKL DFTI 2D real (CCE), single-thread, same fairness as §1–§3 (per-cell order-flip,
+cachebust + pace, best-of-5, ns timing). dag output is **split** (out_re/out_im) and
+**scrambled** (DIT); MKL is CCE-interleaved natural — so the definitive correctness gate
+is the roundtrip `r2c+c2r == N1·N2·x` (all e-14/e-15), not an elementwise compare. Plans
+are per-cell tuned; the inner column c2c is JIT-specialized. Source:
+`bench_1d_vs_mkl.c --2dr2c` → `vfft_perf_tuned_2dr2c.csv`.
+
+### Single-thread
+
+```
+ N1×N2      dag/MKL    order
+──────────────────────────────────
+ 64×64       0.87×     scrambled
+ 128×128     0.86×     scrambled
+ 256×256     0.66×     scrambled
+ 512×512     0.87×     scrambled
+──────────────────────────────────
+ median     ~0.86×     (best-of-3)
+```
+
+> **Single-thread, 2D R2C trails MKL — median ~0.86×, range 0.66–0.87×.** As with 1D R2C
+> (§3), this is the honest cost of the split lane-batched layout (the real-FFT pack tax)
+> against MKL's heavily-tuned 2D real path — the same layout trade that becomes an edge
+> under threading. Per-cell plan tuning closes most of the gap; the 256² cell is the
+> structural laggard (0.66×). See the multi-threaded results below.
+
+### Multi-threaded (T=8)
+
+Same cells, dag threading the **row pass only** (tile-parallel pool, per-thread scratch; the
+column c2c and the c2r backward stay serial — that's the 2D self-scaling ceiling), calibrated
+plans, pinned core 0, with an **MT-vs-ST forward gate** (the threaded fwd must equal the
+single-thread fwd bit-for-bit — folded into rt; all e-14/e-15, so the tile-parallel path is
+race-free). Source: `bench_1d_vs_mkl.c --2dr2c --mt` → `vfft_perf_tuned_2dr2c_mt.csv`.
+
+```
+ N1×N2     dag-T8 (ns)   dag self-scale ST→T8
+──────────────────────────────────────────────
+ 64×64          6,734    0.78×  (overhead)
+ 128×128       23,271    0.96×
+ 256×256       70,010    1.71×
+ 512×512      415,188    1.38×
+──────────────────────────────────────────────
+```
+
+> **dag's 2D R2C self-scaling is modest — 256² 1.71×, 512² 1.38×; tiny N regresses under
+> threads.** Only the row pass is parallel, so the serial column c2c + c2r passes cap it —
+> the same ceiling as 2D C2C (§2). The MT-vs-ST gate confirms the tile-parallel forward is
+> race-free (rt e-14/e-15).
+>
+> **No vs-MKL-T8 ratio is reported here.** MKL's threaded 2D *real* path is pathological in
+> this `mkl_rt` + 8-thread configuration: a fixed ~30–370 ms per-call overhead, independent
+> of transform size and wildly inconsistent run-to-run (256² measured 366 ms one rep, 32 ms
+> the next). MKL-T8 thus comes out ~hundreds-of-× slower than MKL-T1, so the apparent dag
+> "win" of 60×–5000× is a pure measurement artifact, not real speedup — MKL simply does not
+> usefully thread small 2D real transforms in this setup. (1D C2C and 2D C2C thread fine in
+> the same binary, so this is specific to the 2D real descriptor.) Parallelizing dag's column
+> + c2r passes is the 2D-MT follow-up that would lift the self-scaling ceiling.
+
+## 5. vs FFTW3 — single-thread
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
@@ -443,7 +504,7 @@ MKL TT computes a different PDE-oriented math convention, so the
 comparison is informational, not apples-to-apples). FFTW3 is the
 correct r2r baseline.
 
-## 5. Multi-threaded scaling
+## 6. Multi-threaded scaling
 
 ### 1D C2C — direct MT vs MKL
 
@@ -518,7 +579,7 @@ because it's pure memory bandwidth, and a single optimized memcpy
 typically beats T smaller memcpys when the limit is DRAM throughput.
 DHT will benefit most from v1.1 fused codelets.
 
-## 6. Per-codelet performance (VTune-grade)
+## 7. Per-codelet performance (VTune-grade)
 
 For deep per-radix analysis at K=256 see
 [docs/vtune-profiles/](../vtune-profiles/) — one detailed profile per
@@ -544,7 +605,7 @@ these benefit specifically from the cost model's variant-aware
 selection (T1S / LOG3 / BUF) which routes around their bottlenecks
 when wisdom shows another protocol wins.
 
-## 7. Hardware caveats
+## 8. Hardware caveats
 
 ### These numbers are from one CPU
 
@@ -582,7 +643,7 @@ latency. Per-thread efficiency drops sharply past 8. For workloads
 that benefit from many threads, the bench grid should be extended
 (v1.1 work).
 
-## 8. Reproducing these numbers
+## 9. Reproducing these numbers
 
 ### vs MKL
 
