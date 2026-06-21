@@ -147,6 +147,62 @@ validated, and we now know *what* to optimize (asm spills), *what not to*
 
 ---
 
+## Follow-up: the Goodman–Hsu threshold lever (negative result)
+
+The first lever we tried off the Phase 0.3 verdict was "make GH fire harder." GH
+already runs at R=32/64 AVX2 (auto-rule `vec_regs≤16 && n≥32`) and fires (per-pass
+peak-live ~35 > threshold 12). The hypothesis: **lowering the threshold** makes
+the pressure-mode (`delta = births−kills`) free registers earlier → fewer spills.
+
+We added an env-gated knob (default = unchanged production behavior) at
+[`schedule.ml`](../../src/dag-fft-compiler/generator/lib/schedule.ml#L766):
+
+```ocaml
+let threshold =
+  match Sys.getenv_opt "VFFT_GH_THRESHOLD" with
+  | Some s -> (try int_of_string s with _ -> uarch.Uarch.pressure_threshold)
+  | None  -> uarch.Uarch.pressure_threshold
+in
+```
+
+rebuilt the generator (WSL `dune`), and swept the threshold from the default 12
+down to 4:
+
+**Asm spills (flat):**
+
+| R | T=12 | T=10 | T=8 | T=6 | T=4 |
+|---|---:|---:|---:|---:|---:|
+| 32 | 140 | 140 | 142 | 138 | 138 |
+| 64 | 469 | 463 | 457 | 474 | 461 |
+
+**Runtime (T=4 vs T=12, ratio, 50 reps):** R=32 = 0.997 / 0.995 / 0.997
+(K=8/256/1024) — flat. R=64 = 1.000 / 0.912 / 0.966 — flat except one cell.
+
+**Conclusion — the GH-threshold lever is ineffective**, and *for the reason Phase
+0.3 predicted*: GH minimizes the schedule's `peak_live`, and `peak_live ≠ asm
+spills`. Making GH minimize `peak_live` *more aggressively* doesn't change gcc's
+realized spill count — the same root cause that made `bb` (also a `peak_live`
+minimizer) lose. This further closes the "tune the schedule's peak-live" axis:
+**the binding constraint is gcc's realized allocation, not the IR schedule's
+register pressure.**
+
+### Register-allocation context (why this axis is narrow)
+
+- **FFTW genfft does *no* register allocation or spill logic** (grep of all of
+  genfft for `register alloc|regalloc|spill|register pressure` → zero hits). Its
+  strategy is the same as VectorFFT's production path: a pressure-minimizing
+  schedule + `annotate.ml` nested-block lifetime hints + **let the C compiler
+  allocate**. VectorFFT's `annotate.ml` is a direct descendant of FFTW's.
+- VectorFFT's own register allocator — the **M-project** (`regalloc.ml`,
+  register-pin + scheduling-fence) — is **dormant by design**: post-FMA-fusion the
+  residual reg-reg `vmovapd` are move-eliminated in rename (0 cost), so the fence
+  only *blocks* beneficial gcc transforms (defeats operand folding, +9%). It is
+  net-negative or tie in every cell.
+- So gcc's reg-reg **moves** are already handled (fusion + `annotate` +
+  rename-elimination); the open axis is **stack spills**, and GH/`peak_live`
+  tuning doesn't move them. That leaves: **finer cut topology** and the
+  **asm-spill search** as the remaining spill levers.
+
 ## Reproduction
 
 Harness + driver live in the gitignored sandbox
