@@ -50,6 +50,7 @@
 #include "prime_dispatch.h"        /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 #include "oop_dp.h"                 /* --oop: vfft_oop_plan_create_dp_best (fallback) */
 #include "oop_wisdom.h"             /* --oop: oop wisdom load + create_wisdom (lookup) */
+#include "fft2d.h"                  /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -100,6 +101,7 @@ static int reps_for(size_t total) {
  * production MT path uses); MKL gets mkl_set_num_threads(g_mt). */
 static int g_mt = 1;
 static int g_oop_mt = 0;   /* 1 = --oop --mt : K-split the OOP forward across the pool */
+static int g_2d_mt  = 0;   /* 1 = --2d --mt : thread the 2D row pass (tile-parallel pool) */
 
 /* one forward at g_mt threads via pool K-split. fn!=NULL => resolved (JIT/baked)
  * executor; fn==NULL => generic (override/Rader/Bluestein) executor. */
@@ -407,25 +409,116 @@ static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
     vfft_oop_plan_destroy(p);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * --2d : 2D c2c (fft2d.h, tiled) vs MKL DFTI 2D. Same fairness as the 1D paths:
+ * identical split NOT_INPLACE layout, per-cell order-flip, cachebust + pace, ns
+ * timing, best-of-5. 2D forward output is SCRAMBLED order (dag DIT), so the
+ * definitive correctness gate is roundtrip fwd+bwd == N1*N2*x; elem-vs-MKL is
+ * reported to show the order. Own CSV (vfft_perf_tuned_2d.csv).
+ * ════════════════════════════════════════════════════════════════════════ */
+static double time_2d(stride_plan_t *p, double *re, double *im, size_t T) {
+    for (int w = 0; w < 10; w++) stride_execute_fwd(p, re, im);
+    int reps = reps_for(T); double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) stride_execute_fwd(p, re, im);
+        double ns = (vfft_proto_now_ns() - t0) / reps; if (ns < best) best = ns;
+    }
+    return best;
+}
+#ifdef VFFT_HAS_MKL
+static double bench_mkl_2d(DFTI_DESCRIPTOR_HANDLE h, const double *xr, const double *xi,
+                          double *mr, double *mi, size_t T) {
+    for (int w = 0; w < 10; w++) DftiComputeForward(h, (void *)xr, (void *)xi, mr, mi);
+    int reps = reps_for(T); double best = 1e18;
+    for (int t = 0; t < 5; t++) {
+        if (t) pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) DftiComputeForward(h, (void *)xr, (void *)xi, mr, mi);
+        double ns = (vfft_proto_now_ns() - t0) / reps; if (ns < best) best = ns;
+    }
+    return best;
+}
+#endif
+static void run_2d_cell(int N1, int N2, vfft_proto_registry_t *reg, FILE *out, int cool_ms, int flip) {
+    size_t T = (size_t)N1 * N2;
+    stride_plan_t *p = stride_plan_2d(N1, N2, reg);
+    if (!p) { printf("  %4dx%-4d  2D plan NULL\n", N1, N2); return; }
+    double *re=alloc_d(T),*im=alloc_d(T),*xr=alloc_d(T),*xi=alloc_d(T);
+    double *fr=alloc_d(T),*fi=alloc_d(T),*mr=alloc_d(T),*mi=alloc_d(T);
+    srand(11 + N1 + N2);
+    for (size_t i=0;i<T;i++){ xr[i]=(double)rand()/RAND_MAX-0.5; xi[i]=(double)rand()/RAND_MAX-0.5; }
+    /* correctness: roundtrip fwd+bwd == N1*N2*x; stash fwd output for the order check */
+    memcpy(re,xr,T*8); memcpy(im,xi,T*8);
+    stride_execute_fwd(p,re,im); memcpy(fr,re,T*8); memcpy(fi,im,T*8);
+    stride_execute_bwd(p,re,im);
+    double rt=0, sc=(double)N1*N2;
+    for (size_t i=0;i<T;i++){ double a=fabs(re[i]/sc-xr[i]),b=fabs(im[i]/sc-xi[i]); if(a>rt)rt=a; if(b>rt)rt=b; }
+    /* MT: the threaded fwd (fr/fi, computed at g_mt threads above) must match a
+     * single-threaded fwd bit-for-bit — tiles are independent, so any divergence
+     * is a tile/threading race. Folded into rt so a bad cell shows a large gate. */
+    if (g_2d_mt) {
+        stride_set_num_threads(1);
+        memcpy(re,xr,T*8); memcpy(im,xi,T*8); stride_execute_fwd(p,re,im);
+        double d=0; for (size_t i=0;i<T;i++){ double a=fabs(re[i]-fr[i]),b=fabs(im[i]-fi[i]); if(a>d)d=a; if(b>d)d=b; }
+        if (d>rt) rt=d;
+        stride_set_num_threads(g_mt);
+    }
+    double vns=0, mns=0, ewe=-1; const char *order="scrambled";
+#ifdef VFFT_HAS_MKL
+    DFTI_DESCRIPTOR_HANDLE h=0; MKL_LONG dims[2]={N1,N2}; int mok=0;
+    if (DftiCreateDescriptor(&h,DFTI_DOUBLE,DFTI_COMPLEX,2,dims)==DFTI_NO_ERROR) {
+        DftiSetValue(h,DFTI_COMPLEX_STORAGE,DFTI_REAL_REAL);
+        DftiSetValue(h,DFTI_PLACEMENT,DFTI_NOT_INPLACE);
+        mok=(DftiCommitDescriptor(h)==DFTI_NO_ERROR);
+    }
+    if (mok) {
+        DftiComputeForward(h,xr,xi,mr,mi); ewe=0; double mm=0;
+        for (size_t i=0;i<T;i++){ double a=fr[i]-mr[i],b=fi[i]-mi[i]; double e=sqrt(a*a+b*b),m=hypot(mr[i],mi[i]); if(e>ewe)ewe=e; if(m>mm)mm=m; }
+        if (mm>0) ewe/=mm; if (ewe<1e-9) order="natural";
+    }
+    memcpy(re,xr,T*8); memcpy(im,xi,T*8);
+    if (flip){ if(mok)mns=bench_mkl_2d(h,xr,xi,mr,mi,T); cachebust(); pace(cool_ms); vns=time_2d(p,re,im,T); }
+    else     { vns=time_2d(p,re,im,T); cachebust(); pace(cool_ms); if(mok)mns=bench_mkl_2d(h,xr,xi,mr,mi,T); }
+    if (h) DftiFreeDescriptor(&h);
+#else
+    (void)flip;(void)cool_ms;(void)fr;(void)fi;(void)mr;(void)mi;
+    memcpy(re,xr,T*8); memcpy(im,xi,T*8); vns=time_2d(p,re,im,T);
+#endif
+    double sp=(vns>0&&mns>0)?mns/vns:0;
+    printf("  %4dx%-4d  %-9s rt=%.1e elem=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
+           N1,N2,order,rt,ewe<0?0:ewe,vns,mns,sp, rt<1e-9?"":"*** RT FAIL ***");
+    if (out) fprintf(out,"%d,%d,%s,%.1e,%.1e,%.0f,%.0f,%.3f\n",N1,N2,order,rt,ewe<0?0:ewe,vns,mns,sp);
+    free_d(re);free_d(im);free_d(xr);free_d(xi);free_d(fr);free_d(fi);free_d(mr);free_d(mi);
+    stride_plan_destroy(p);
+}
+
 int main(int argc, char **argv) {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0;
+    int mt = 0, oop = 0, twod = 0;
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
-     * c2c vs MKL NOT_INPLACE). Both together => OOP forward K-split across the pool. */
+     * c2c vs MKL NOT_INPLACE), --2d (2D c2c vs MKL DFTI 2D). --oop+--mt => OOP
+     * forward K-split across the pool. */
     while (argc >= 2 && argv[1][0] == '-' && argv[1][1] == '-') {
         if (strcmp(argv[1], "--mt") == 0) {
             mt = 1; const char *e = getenv("VFFT_MT"); g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
         } else if (strcmp(argv[1], "--oop") == 0) {
             oop = 1;
+        } else if (strcmp(argv[1], "--2d") == 0) {
+            twod = 1;
         } else break;
         argv++; argc--;
     }
     g_oop_mt = (oop && mt);
+    g_2d_mt  = (twod && mt);
     const char *wpath = (argc >= 2) ? argv[1]
         : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv   = (argc >= 3) ? argv[2]
+        : (twod && mt) ? "vfft_perf_tuned_2d_mt.csv"
+        : twod ? "vfft_perf_tuned_2d.csv"
         : (oop && mt) ? "vfft_perf_tuned_1d_oop_mt.csv"
         : mt  ? "vfft_perf_tuned_1d_mt.csv"
         : oop ? "vfft_perf_tuned_1d_oop.csv"
@@ -439,7 +532,7 @@ int main(int argc, char **argv) {
     long target_K     = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms       = (argc >= 7) ? atoi(argv[6]) : 0;   /* inter-engine idle (order-bias fix) */
     int flip          = (argc >= 8) ? atoi(argv[7]) : 0;   /* 1 = MKL first (alternate per cell) */
-    int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : oop ? 2 : -1);  /* MT->0, OOP->P-core 2 */
+    int core          = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod) ? 2 : -1);  /* MT->0, OOP/2D->P-core 2 */
     { const char *tp = getenv("VFFT_TRIAL_PACE_MS"); g_trial_pace_ms = tp ? atoi(tp) : 0; }
     if (mt) target_N = 0;   /* MT = full in-process sweep; OOP honors isolation (target_N,target_K) */
 
@@ -452,6 +545,25 @@ int main(int argc, char **argv) {
     mkl_set_num_threads(mt ? g_mt : 1);
 #endif
     vfft_proto_registry_t reg; vfft_proto_registry_init(&reg);
+
+    /* --2d: self-contained 2D c2c sweep (own cell grid + CSV schema), then done. */
+    if (twod) {
+        FILE *o2 = fopen(csv, "w");
+        if (o2) fprintf(o2, "N1,N2,order,rt_err,vsmkl_elem,vfft_ns,mkl_ns,speedup\n");
+        if (mt) printf("=== dag vs MKL — 2D C2C fwd MULTITHREADED (%d threads: row pass tile-parallel, col serial; vs DFTI 2D split NOT_INPLACE, core%d; pace=%dms) ===\n", g_mt, core, pace_ms);
+        else    printf("=== dag vs MKL — 2D C2C fwd (tiled fft2d.h vs DFTI 2D split NOT_INPLACE, ST, core%d; pace=%dms) ===\n", core, pace_ms);
+        printf("# order=scrambled (dag DIT) vs natural (MKL); roundtrip fwd+bwd==N*x is the gate%s. speed>1 = dag wins.\n",
+               mt ? " (+ MT-vs-ST fwd consistency folded in)" : "");
+        int cells[][2] = { {64,64},{128,128},{256,256},{512,512} };
+        int nc = (int)(sizeof cells / sizeof cells[0]), benched = 0;
+        for (int i = 0; i < nc; i++) {
+            run_2d_cell(cells[i][0], cells[i][1], &reg, o2, cool_ms, flip ^ (benched & 1));
+            benched++; pace(pace_ms);
+        }
+        if (o2) fclose(o2);
+        printf("benched %d cells.  CSV -> %s\n", benched, csv);
+        return 0;
+    }
 
     /* --oop: load the OOP wisdom (pure-lookup build); miss -> dp_best per cell. */
     vfft_oop_wisdom_t oopw; int have_oopw = 0;

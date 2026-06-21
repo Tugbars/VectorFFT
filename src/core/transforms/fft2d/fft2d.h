@@ -39,6 +39,9 @@
 #include "threads.h"
 #include "proto_stride_compat.h"
 #include "transpose.h"
+#ifdef VFFT_USE_JIT
+#include "jit_runtime.h"          /* JIT/baked resolve for the inner row/col FFTs */
+#endif
 
 /* Minimum tile height for SIMD efficiency. */
 #define FFT2D_MIN_TILE 4
@@ -66,6 +69,12 @@ typedef struct {
     stride_plan_t *plan_col;   /* N1-point FFT, K = N2 (column FFTs, native) */
     stride_plan_t *plan_row;   /* N2-point FFT, K = N1 (Bailey) or K = B (tiled) */
 
+    /* JIT/baked resolved inner executors (NULL -> generic). Filled by
+     * _fft2d_jit_resolve under VFFT_USE_JIT; otherwise stay NULL and the passes
+     * use the generic executor (zero behavior change). */
+    vfft_proto_exec_fn exec_col_fwd, exec_col_bwd;
+    vfft_proto_exec_fn exec_row_fwd, exec_row_bwd;
+
     size_t B;                  /* tile height */
 
     /* Per-thread scratch buffers for tile-parallel execution.
@@ -80,6 +89,23 @@ typedef struct {
 /* Get scratch pointer for thread t */
 static inline double *_fft2d_scratch(double *pool, size_t tile_sz, int t) {
     return pool + (size_t)t * tile_sz;
+}
+
+/* Resolve the inner row/col FFTs to their baked-or-JIT executors (NULL on miss
+ * -> the passes fall back to the generic executor). Called by every 2D plan
+ * builder. Under VFFT_USE_JIT this turns a cold inner factorization into a
+ * compiled specialized executor (cached); otherwise it is a no-op. The fns are
+ * called as fn(plan, re, im, K, plan->K, 0) — the orchestrator's convention,
+ * identical to stride_execute_fwd / vfft_proto_execute_fwd for these inners. */
+static inline void _fft2d_jit_resolve(stride_fft2d_data_t *d) {
+#ifdef VFFT_USE_JIT
+    if (d->plan_col) { d->exec_col_fwd = vfft_proto_plan_jit_fwd(d->plan_col);
+                       d->exec_col_bwd = vfft_proto_plan_jit_bwd(d->plan_col); }
+    if (d->plan_row) { d->exec_row_fwd = vfft_proto_plan_jit_fwd(d->plan_row);
+                       d->exec_row_bwd = vfft_proto_plan_jit_bwd(d->plan_row); }
+#else
+    (void)d;
+#endif
 }
 
 
@@ -108,7 +134,10 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
          * executor — it dispatches DIT *or* DIF (and the specialized per-cell
          * executors), so a DIF row inner round-trips correctly. The old DIT-only
          * slice helper (_stride_execute_fwd_slice_from) silently mis-ran DIF plans. */
-        if (is_bwd)
+        vfft_proto_exec_fn rf = is_bwd ? d->exec_row_bwd : d->exec_row_fwd;
+        if (rf)
+            rf(d->plan_row, sr, si, this_B, d->plan_row->K, 0);   /* baked/JIT */
+        else if (is_bwd)
             vfft_proto_execute_bwd(d->plan_row, sr, si, this_B);
         else
             vfft_proto_execute_fwd(d->plan_row, sr, si, this_B);
@@ -214,7 +243,10 @@ static void _fft2d_bailey_fwd(stride_fft2d_data_t *d,
 
     stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
-    stride_execute_fwd(d->plan_row, d->scratch_re, d->scratch_im);
+    if (d->exec_row_fwd)
+        d->exec_row_fwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
+    else
+        stride_execute_fwd(d->plan_row, d->scratch_re, d->scratch_im);
     stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
 }
@@ -225,7 +257,10 @@ static void _fft2d_bailey_bwd(stride_fft2d_data_t *d,
 
     stride_transpose_pair(re, im, d->scratch_re, d->scratch_im,
                           N2, N1, N1, N2);
-    stride_execute_bwd(d->plan_row, d->scratch_re, d->scratch_im);
+    if (d->exec_row_bwd)
+        d->exec_row_bwd(d->plan_row, d->scratch_re, d->scratch_im, d->plan_row->K, d->plan_row->K, 0);
+    else
+        stride_execute_bwd(d->plan_row, d->scratch_re, d->scratch_im);
     stride_transpose_pair(d->scratch_re, d->scratch_im, re, im,
                           N1, N2, N2, N1);
 }
@@ -239,7 +274,10 @@ static void _fft2d_execute_fwd(void *data, double *re, double *im) {
     stride_fft2d_data_t *d = (stride_fft2d_data_t *)data;
 
     /* Phase 1: column FFTs — internally threaded via K-split */
-    stride_execute_fwd(d->plan_col, re, im);
+    if (d->exec_col_fwd)
+        d->exec_col_fwd(d->plan_col, re, im, d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_fwd(d->plan_col, re, im);
 
     /* Phase 2: row FFTs */
     if (d->use_bailey)
@@ -258,7 +296,10 @@ static void _fft2d_execute_bwd(void *data, double *re, double *im) {
         _fft2d_tiled_mt(d, re, im, 1);
 
     /* Phase 2: column IFFTs — internally threaded */
-    stride_execute_bwd(d->plan_col, re, im);
+    if (d->exec_col_bwd)
+        d->exec_col_bwd(d->plan_col, re, im, d->plan_col->K, d->plan_col->K, 0);   /* baked/JIT */
+    else
+        stride_execute_bwd(d->plan_col, re, im);
 }
 
 
@@ -284,6 +325,7 @@ static void _fft2d_destroy(void *data) {
 static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _fft2d_destroy(d); return NULL; }
+    _fft2d_jit_resolve(d);   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
     plan->N = d->N1 * d->N2;
     plan->K = 1;
     plan->num_stages = 0;
