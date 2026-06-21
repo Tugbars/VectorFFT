@@ -11,10 +11,10 @@ let () =
   let ac = Algsimp.mk_add a c in
   let result = Algsimp.mk_add ab ac in
 
-  Printf.printf "Tags: a=%d b=%d c=%d ab=%d ac=%d result=%d\n"
-    a.tag b.tag c.tag ab.tag ac.tag result.tag;
+  Printf.printf "Tags: a=%d b=%d c=%d ab=%d ac=%d result=%d\n" a.tag b.tag c.tag
+    ab.tag ac.tag result.tag;
 
-  let schedule = [a; b; c; ab; ac; result] in
+  let schedule = [ a; b; c; ab; ac; result ] in
   let info = Regalloc.peak_live_analysis ~isa:Isa.avx512 ~scheduled:schedule in
   Printf.printf "Test 1: small DAG with distinct loads\n";
   Printf.printf "  Expected peak_live=4\n";
@@ -33,10 +33,12 @@ let () =
   let n3 = Algsimp.mk_add n2 l3 in
   let n4 = Algsimp.mk_add n3 l4 in
   (* Interleave loads and adds — peak should stay small. *)
-  let schedule2 = [l0; l1; n1; l2; n2; l3; n3; l4; n4] in
+  let schedule2 = [ l0; l1; n1; l2; n2; l3; n3; l4; n4 ] in
   Printf.printf "Tags2: l0=%d l1=%d n1=%d l2=%d n2=%d l3=%d n3=%d l4=%d n4=%d\n"
     l0.tag l1.tag n1.tag l2.tag n2.tag l3.tag n3.tag l4.tag n4.tag;
-  let info2 = Regalloc.peak_live_analysis ~isa:Isa.avx512 ~scheduled:schedule2 in
+  let info2 =
+    Regalloc.peak_live_analysis ~isa:Isa.avx512 ~scheduled:schedule2
+  in
   Printf.printf "Test 2: linear chain, interleaved loads+adds\n";
   Printf.printf "  Expected peak_live <= 3\n";
   Printf.printf "  Got: %s\n\n" (Regalloc.format_live_info info2);
