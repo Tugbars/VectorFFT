@@ -39,6 +39,9 @@
 #include "proto_stride_compat.h"
 #include "rfft.h"
 #include "r2c.h"
+#ifdef VFFT_USE_JIT
+#include "rfft_jit_runtime.h"   /* after rfft.h: resolve the rfft winner's JIT executor */
+#endif
 #include <stdlib.h>
 
 /* Output layout the caller wants. */
@@ -61,6 +64,13 @@ typedef struct {
     size_t            K;
     rfft_plan_t      *rfft;    /* set iff path == RFFT */
     stride_plan_t    *stride;  /* set iff path == STRIDE */
+#ifdef VFFT_USE_JIT
+    /* JIT-resolved rfft executor for the winning plan (NULL -> use the generic
+     * rfft executor). Resolved at create-time = compiled+cached on first build
+     * (the "compile the winner after deciding" step). One per layout. */
+    rfft_jit_fn      jit_packed;
+    rfft_jit_nat_fn  jit_natural;
+#endif
 } vfft_r2c_plan_t;
 
 /* Optional rfft wisdom (calibrated per-cell factorization + per-stage variant). A
@@ -238,11 +248,30 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
             nf = vfft_r2c_choose_rfft_factors(N, have, factors,
                                               VFFT_RFFT_MAX_STAGES);
         }
+#ifdef VFFT_USE_JIT
+        /* JIT build: pin EXPLICIT per-stage variants so the plan and the resolved
+         * JIT executor are the same (smoke-proven bit-exact for matched variants).
+         * Wisdom -> its variants; heuristic -> all-flat (guaranteed codelets). */
+        int vbuf[VFFT_RFFT_MAX_STAGES];
+        if (nf >= 1) {
+            for (int i = 0; i < nf; i++) vbuf[i] = (variant ? variant[i] : 0);
+            variant = vbuf;
+        }
+#endif
         if (nf >= 1) {
             rfft_plan_t *rp = rfft_plan_create_ex(N, K, factors, nf, variant, rfft_reg);
             if (rp) {
                 p->path = VFFT_R2C_PATH_RFFT;
                 p->rfft = rp;
+#ifdef VFFT_USE_JIT
+                /* Compile the winner's JIT executor now (cached) and run it at
+                 * execute time; NULL -> the generic rfft executor (e.g. radix
+                 * without hc2c_log3, or no toolchain). */
+                if (p->layout == VFFT_R2C_SPLIT)
+                    p->jit_natural = vfft_rfft_jit_resolve_natural(N, K, factors, nf, vbuf, "avx2");
+                else
+                    p->jit_packed  = vfft_rfft_jit_resolve(N, K, factors, nf, vbuf, "avx2");
+#endif
                 return p;
             }
         }
@@ -276,10 +305,17 @@ static inline void vfft_r2c_execute_fwd(
     double *out, double *out_im)
 {
     if (p->path == VFFT_R2C_PATH_RFFT) {
-        if (p->layout == VFFT_R2C_PACKED)
+        if (p->layout == VFFT_R2C_PACKED) {
+#ifdef VFFT_USE_JIT
+            if (p->jit_packed) { p->jit_packed(p->rfft, real_in, out); return; }
+#endif
             rfft_execute_fwd_packed(p->rfft, real_in, out);
-        else
+        } else {
+#ifdef VFFT_USE_JIT
+            if (p->jit_natural) { p->jit_natural(p->rfft, real_in, out, out_im); return; }
+#endif
             rfft_execute_fwd_natural(p->rfft, real_in, out, out_im);
+        }
     } else {
         /* stride is SPLIT only (guaranteed by plan_create routing) */
         stride_execute_r2c(p->stride, real_in, out, out_im);

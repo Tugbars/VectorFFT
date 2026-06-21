@@ -48,7 +48,10 @@ def stage_params(N, factors):
 
 
 def hc_infix(v):    return "hc2hc_dit_log3_fwd" if v == 1 else "hc2hc_dit_fwd"
-def nat_infix(v):   return "hc2c_nat_log3_fwd"  if v == 1 else "hc2c_nat_fwd"
+# Natural terminator: rfft_plan_create_ex sets p->hcn = hc2c_log3[r0] ? : hc2c[r0]
+# (log3-PREFERRED, ignoring the variant array). Match it -> always log3; if a radix
+# lacks hc2c_log3 the JIT link fails and the caller falls back to the generic path.
+NAT_INFIX = "hc2c_nat_log3_fwd"
 
 
 def codelet_externs(N, factors, variants, isa, mode):
@@ -58,7 +61,7 @@ def codelet_externs(N, factors, variants, isa, mode):
     for (d, r, Q, npv, m, kmax, has_mid) in stages:
         r2cf.add(r)                                   # st->k0 is r2cf[r]
         if mode == "natural" and d == 0:
-            if (m - 1) // 2 >= 1: nat.add((r, nat_infix(variants[0])))
+            if (m - 1) // 2 >= 1: nat.add((r, NAT_INFIX))
         elif kmax >= 1:
             hc.add((r, hc_infix(variants[d])))
     lines = []
@@ -170,7 +173,7 @@ def emit_body_natural(N, factors, variants, isa):
         L.append(f"        memcpy(out_re + nh*K, p->nat_k0 + (size_t){r0 // 2}*K, K*8); memset(out_im + nh*K, 0, K*8);")
     if kmaxT >= 1:
         L += [f"        for (int k = 1; k <= {kmaxT}; k++)",
-              f"            radix{r0}_{nat_infix(variants[0])}_{isa}(",
+              f"            radix{r0}_{NAT_INFIX}_{isa}(",
               f"                {cur} + ((size_t)({r0}*k))*K, {cur} + ((size_t)({r0}*({m0}-k)))*K,",
               "                out_re + (size_t)k*K, out_im + (size_t)k*K,",
               f"                out_re + (size_t)({m0}-k)*K, out_im + (size_t)({m0}-k)*K,",

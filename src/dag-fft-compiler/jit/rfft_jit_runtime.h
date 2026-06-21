@@ -79,38 +79,44 @@
 #define VFFT_PROTO_JIT_VERSION 2
 #endif
 
-typedef void (*rfft_jit_fn)(const rfft_plan_t *, const double *, double *);
+typedef void (*rfft_jit_fn)(const rfft_plan_t *, const double *, double *);            /* packed  */
+typedef void (*rfft_jit_nat_fn)(const rfft_plan_t *, const double *, double *, double *); /* natural */
 
-/* filename-safe key: nN_kK_<factors..>_v<variants>_<isa>_rfftfwd_verV. */
+/* filename-safe key: nN_kK_<factors..>_v<variants>_<isa>_rfft{packed,nat}_verV.
+ * `mode` keeps packed/natural in separate cache files (both export rfft_jit_exec). */
 static inline void rfft_jit_key(int N, size_t K, const int *factors, int nf,
-                                const int *variants, const char *isa,
+                                const int *variants, const char *isa, const char *mode,
                                 char *out, size_t cap) {
     int n = snprintf(out, cap, "n%d_k%zu", N, K);
     for (int s = 0; s < nf; s++) n += snprintf(out + n, cap - n, "_%d", factors[s]);
     n += snprintf(out + n, cap - n, "_v");
     for (int s = 0; s < nf; s++) n += snprintf(out + n, cap - n, "%d", variants ? variants[s] : 0);
-    snprintf(out + n, cap - n, "_%s_rfftfwd_ver%d", isa, VFFT_PROTO_JIT_VERSION);
+    snprintf(out + n, cap - n, "_%s_rfft%s_ver%d", isa,
+             (mode && mode[0]=='n') ? "nat" : "packed", VFFT_PROTO_JIT_VERSION);
 }
 
 /* Process-global shape-keyed registry: a plan compiles/loads once per run. */
-typedef struct { char key[256]; rfft_jit_fn fn; VFFT_RJIT_LIB lib; } rfft_jit_entry_t;
+/* registry stores the raw symbol (void*) — packed/natural have different ABIs but
+ * both export "rfft_jit_exec"; the key (with mode) keeps them distinct. */
+typedef struct { char key[256]; void *fn; VFFT_RJIT_LIB lib; } rfft_jit_entry_t;
 static rfft_jit_entry_t g_rfft_jit_reg[256];
 static int              g_rfft_jit_count = 0;
 
-static inline rfft_jit_fn rfft_jit_reg_find(const char *key) {
+static inline void *rfft_jit_reg_find(const char *key) {
     for (int i = 0; i < g_rfft_jit_count; i++)
         if (strcmp(g_rfft_jit_reg[i].key, key) == 0) return g_rfft_jit_reg[i].fn;
     return NULL;
 }
 
-/* emit (if needed) -> compile (if lib absent) -> load -> register. NULL on any
- * failure (caller falls back to rfft_execute_fwd_packed). */
-static inline rfft_jit_fn
-vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
-                      const int *variants, const char *isa) {
+/* emit (if needed) -> compile (if lib absent) -> load -> register. Returns the raw
+ * rfft_jit_exec symbol (cast by the mode wrappers below), NULL on any failure
+ * (caller falls back to the generic rfft executor). */
+static inline void *
+_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
+                  const int *variants, const char *isa, const char *mode) {
     char key[256];
-    rfft_jit_key(N, K, factors, nf, variants, isa, key, sizeof key);
-    rfft_jit_fn cached = rfft_jit_reg_find(key);
+    rfft_jit_key(N, K, factors, nf, variants, isa, mode, key, sizeof key);
+    void *cached = rfft_jit_reg_find(key);
     if (cached) return cached;
 
     char lib[700], src[700];
@@ -128,8 +134,8 @@ vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
         }
         snprintf(cmd, sizeof cmd,
             "%s %s/emit_rfft_jit.py --N %d --K %zu --factors %s --variants %s "
-            "--isa %s --prelude rfft_jit_prelude.h --out %s",
-            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, N, K, facs, vars, isa, src);
+            "--isa %s --mode %s --prelude rfft_jit_prelude.h --out %s",
+            VFFT_PROTO_JIT_PYTHON, VFFT_PROTO_JIT_INC, N, K, facs, vars, isa, mode, src);
         if (system(cmd) != 0) return NULL;
         /* -I<jit> for the prelude, -I<core/transforms/real> so it finds rfft.h. */
         snprintf(cmd, sizeof cmd,
@@ -143,7 +149,7 @@ vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
 
     VFFT_RJIT_LIB h = VFFT_RJIT_DLOPEN(lib);
     if (!h) return NULL;
-    rfft_jit_fn fn = (rfft_jit_fn)VFFT_RJIT_DLSYM(h, "rfft_jit_exec");
+    void *fn = VFFT_RJIT_DLSYM(h, "rfft_jit_exec");
     if (!fn) return NULL;
 
     int cap = (int)(sizeof g_rfft_jit_reg / sizeof g_rfft_jit_reg[0]);
@@ -154,6 +160,19 @@ vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
         g_rfft_jit_count++;
     }
     return fn;
+}
+
+/* PACKED-forward executor (halfcomplex out). NULL -> caller uses generic. */
+static inline rfft_jit_fn
+vfft_rfft_jit_resolve(int N, size_t K, const int *factors, int nf,
+                      const int *variants, const char *isa) {
+    return (rfft_jit_fn)_rfft_jit_resolve(N, K, factors, nf, variants, isa, "packed");
+}
+/* NATURAL-forward executor (split out_re/out_im) — the r2c split path. */
+static inline rfft_jit_nat_fn
+vfft_rfft_jit_resolve_natural(int N, size_t K, const int *factors, int nf,
+                             const int *variants, const char *isa) {
+    return (rfft_jit_nat_fn)_rfft_jit_resolve(N, K, factors, nf, variants, isa, "natural");
 }
 
 #endif /* VFFT_RFFT_JIT_RUNTIME_H */

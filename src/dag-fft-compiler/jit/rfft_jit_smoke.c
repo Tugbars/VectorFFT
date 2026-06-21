@@ -69,6 +69,48 @@ static int test_cell(rfft_codelets_t *reg, int N, size_t K, const int *f, int nf
     return md < 1e-12 ? 0 : 1;
 }
 
+/* NATURAL (split out_re/out_im) — the path the r2c dispatch executes. Reference is
+ * rfft_execute_fwd_natural; the JIT terminator is log3-preferred to match p->hcn, so
+ * we build the reference with whatever variants but compare the SPLIT output. */
+static int test_cell_nat(rfft_codelets_t *reg, int N, size_t K, const int *f, int nf,
+                        const int *variants) {
+    rfft_plan_t *p = rfft_plan_create_ex(N, K, f, nf, variants, reg);
+    if (!p) { printf("  N=%-5d K=%-4zu  [nat] plan NULL\n", N, K); return 0; }
+    rfft_jit_nat_fn fn = vfft_rfft_jit_resolve_natural(N, K, f, nf, variants, "avx2");
+    if (!fn) { printf("  N=%-5d K=%-4zu  [nat] JIT resolve FAILED\n", N, K); rfft_plan_destroy(p); return 1; }
+
+    size_t NK = (size_t)N * K, RK = ((size_t)(N / 2) + 1) * K;
+    double *x  = (double *)malloc(NK * 8);
+    double *gr = (double *)calloc(RK, 8), *gi = (double *)calloc(RK, 8);
+    double *jr = (double *)calloc(RK, 8), *ji = (double *)calloc(RK, 8);
+    srand(7 + N + (int)K);
+    for (size_t i = 0; i < NK; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
+
+    rfft_execute_fwd_natural(p, x, gr, gi);
+    fn(p, x, jr, ji);
+    double md = 0;
+    for (size_t i = 0; i < RK; i++) {
+        double a = fabs(gr[i] - jr[i]), b = fabs(gi[i] - ji[i]);
+        if (a > md) md = a; if (b > md) md = b;
+    }
+    enum { REPS = 200 };
+    unsigned long long bg = ~0ULL, bj = ~0ULL;
+    for (int w = 0; w < 10; w++) { rfft_execute_fwd_natural(p, x, gr, gi); fn(p, x, jr, ji); }
+    for (int r = 0; r < REPS; r++) {
+        unsigned long long t0 = rdtsc(); rfft_execute_fwd_natural(p, x, gr, gi); unsigned long long a = rdtsc() - t0;
+        if (a < bg) bg = a;
+        t0 = rdtsc(); fn(p, x, jr, ji); unsigned long long b = rdtsc() - t0;
+        if (b < bj) bj = b;
+    }
+    char fs[64]; size_t o = 0; fs[0] = '\0';
+    for (int s = 0; s < nf; s++) o += (size_t)snprintf(fs + o, sizeof fs - o, "%s%d", s ? "x" : "", f[s]);
+    printf("  N=%-5d K=%-4zu %-10s nat   max|gen-jit|=%.1e %s | gen %8llu  jit %8llu cyc | jit/gen %.3f\n",
+           N, K, fs, md, md < 1e-12 ? "BIT-EXACT" : "*** MISMATCH ***",
+           bg, bj, bg > 0 ? (double)bj / bg : 0.0);
+    free(x); free(gr); free(gi); free(jr); free(ji); rfft_plan_destroy(p);
+    return md < 1e-12 ? 0 : 1;
+}
+
 int main(void) {
     rfft_codelets_t reg; memset(&reg, 0, sizeof reg);
     rfft_register_all_avx2(&reg);
@@ -87,6 +129,11 @@ int main(void) {
     int g5[3] = {4, 8, 8};      fails += test_cell(&reg, 256, 8,  g5, 3, VL3, "log3");
     /* higher K too (the win shrinks as the codelet call amortizes) */
     int f6[4] = {4, 4, 4, 4};   fails += test_cell(&reg, 256, 64, f6, 4, VF4, "flat");
+    /* NATURAL output (the r2c split path): JIT vs rfft_execute_fwd_natural. */
+    printf("-- natural (split out_re/out_im) --\n");
+    int n4[4] = {4, 4, 4, 4};   fails += test_cell_nat(&reg, 256, 8, n4, 4, VF4);
+    int n5[3] = {4, 8, 8};      fails += test_cell_nat(&reg, 256, 8, n5, 3, VF3);
+    int n6[4] = {4, 4, 4, 4};   fails += test_cell_nat(&reg, 256, 64, n6, 4, VF4);
     printf("# fails=%d\n", fails);
     return fails ? 1 : 0;
 }
