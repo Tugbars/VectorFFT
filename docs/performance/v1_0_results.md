@@ -324,8 +324,9 @@ race-free). Source: `bench_1d_vs_mkl.c --2dr2c --mt` → `vfft_perf_tuned_2dr2c_
 > the next). MKL-T8 thus comes out ~hundreds-of-× slower than MKL-T1, so the apparent dag
 > "win" of 60×–5000× is a pure measurement artifact, not real speedup — MKL simply does not
 > usefully thread small 2D real transforms in this setup. (1D C2C and 2D C2C thread fine in
-> the same binary, so this is specific to the 2D real descriptor.) Parallelizing dag's column
-> + c2r passes is the 2D-MT follow-up that would lift the self-scaling ceiling.
+> the same binary, so this is specific to the 2D real descriptor.) The c2r backward row pass
+> now threads too (see the 2D C2R subsection below); parallelizing the **column** passes is the
+> remaining 2D-MT lever that would lift the self-scaling ceiling further.
 
 ### 2D C2R (backward)
 
@@ -350,9 +351,33 @@ single-thread (the c2r backward is **serial** — not yet tile-parallel). Roundt
 > structural tax as r2c (§3, §4): the split lane-batched layout costs single-thread what it
 > repays under threading. c2r lands right alongside the r2c forward (0.89× vs §4's 0.85×); 256²
 > is the laggard (0.75×). PATIENT ≈ MEASURE here — the gap is structural, not plan-mode.
-> **No MT row:** the c2r backward is serial in v1.0, and MKL's threaded 2D-real path is
-> anomalous on this host (§4), so a dag-serial-vs-MKL-T8 ratio would be meaningless.
-> Parallelizing the c2r pass is the same 2D-MT follow-up noted above.
+
+#### 2D C2R — multi-threaded (T=8)
+
+The c2r backward is **now tile-parallel** (new this session): its row pass reads the padded
+col-FFT scratch and writes reals to a *distinct* user buffer, so tiles are independent — the
+same tile-parallel pool as the r2c forward, each thread with its own scratch slot + inner-pack
+tid (the prior serial path was forced only by a hardcoded inner-slot index, not a real data
+hazard). The column c2c IFFT stays serial — the self-scaling ceiling, as in §2/§4. **MT-vs-ST
+gate:** the threaded c2r equals the single-thread output bit-for-bit (rt e-14/e-15 — race-free).
+MKL's threaded 2D-real backward is anomalous on this host (§4), so we report dag **self-scaling**,
+not a vs-MKL ratio. Cooled, median of 2. Source: `bench_1d_vs_mkl.c --2dc2r --mt`.
+
+```
+ N1×N2     dag-T8 (ns)   dag self-scale ST→T8
+──────────────────────────────────────────────
+ 64×64          6,007    0.78×  (overhead)
+ 128×128       22,144    0.91×  (overhead)
+ 256×256       66,169    1.59×
+ 512×512      328,031    1.53×
+──────────────────────────────────────────────
+```
+
+> **2D C2R self-scaling — 256² 1.59×, 512² 1.53×; small N regresses under threads.** Right
+> alongside the r2c forward (§4: 1.47× / 1.46×) — only the row pass is parallel, the serial
+> column IFFT caps it. Tiny cells (64²/128²) regress: threading overhead exceeds the few µs of
+> row work. Full-arsenal milestone: **every 2D real path now threads** (r2c forward + c2r
+> backward); parallelizing the column passes is the remaining lever.
 
 ## 5. vs FFTW3 — single-thread
 
