@@ -151,29 +151,37 @@ scrambled order** (DIT); MKL is natural order — so the definitive correctness 
 roundtrip `fwd+bwd == N1·N2·x` (all e-14/e-15), and `elem≈1e0` just confirms the scramble.
 Source: `bench_1d_vs_mkl.c --2d` → `vfft_perf_tuned_2d.csv`.
 
-The inner row/col FFTs route through the **baked-or-JIT resolver** (`--jit`, via
-`_fft2d_jit_resolve` mirroring `plan_orchestrator.h`); cold inner factorizations get
-JIT-specialized, lifting 3/4 cells over the generic floor:
+The plan comes from a dedicated **PATIENT 2D c2c calibration** (own `fft2d_c2c_wisdom`,
+scored *end-to-end on the 2D transform* — PATIENT is the recommended planner; MEASURE is
+the fast mode, exhaustive `stride_plan_2d` the wisdom-miss fallback). Inner row/col FFTs
+are baked-or-JIT resolved (`--jit`). Measured **cooled** (20 s pre-cool + 30 s between
+runs), median of 3. Source: `bench_1d_vs_mkl.c --2d --jit` → `vfft_perf_tuned_2d.csv`.
 
 ```
- N1×N2     generic   JIT     order
-──────────────────────────────────────
- 64×64      1.56×    1.75×   scrambled
- 128×128    1.18×    1.40×   scrambled
- 256×256    1.26×    1.26×   scrambled
- 512×512    1.29×    1.39×   scrambled
-──────────────────────────────────────
- median     1.28×    1.39×   (4/4 win)
+ N1×N2     dag/MKL   order
+──────────────────────────────────
+ 64×64     ~1.6×*    scrambled
+ 128×128    1.41×    scrambled
+ 256×256    1.26×    scrambled
+ 512×512    1.29×    scrambled
+──────────────────────────────────
+ median    ~1.35×    (4/4 win)
 ```
+
+*64² falls back to exhaustive — its PATIENT-banked plan was a calibration **noise
+artifact** (a 5 µs cell is below reliable timing; the gate happened to measure exhaustive
+slow at a hot moment). Exhaustive's 64² plan is measurably faster (~4.8 µs vs ~6.8 µs).
 
 Headline:
 
-> **2D C2C beats MKL on all 4 tested square cells — median 1.28× (generic) / 1.39× (JIT),
-> up to 1.75×.** The tiled B=8 row pass keeps the working set in L1/L2 and the SIMD 4×4/8×4
-> transpose makes gather/scatter nearly free. JIT specializes the cold inner row/col FFTs
-> (bit-exact, +8–19% where it fires). This is in-place scrambled-order 2D (the convolution
-> contract); a natural-order 2D path would add the reorder (far-future, with natural-order
-> in-place). Rectangular / non-pow2 cells are follow-ups.
+> **2D C2C beats MKL on all 4 square cells — PATIENT-calibrated, median ~1.35×, up to 1.41×
+> (128²).** The tiled B=8 row pass keeps the working set in L1/L2 and the SIMD 4×4/8×4
+> transpose makes gather/scatter nearly free; JIT specializes the cold inner FFTs (bit-exact).
+> Our plan times are **thermally rock-stable** (512² = 749 µs across every run this session);
+> the run-to-run swing in the *ratio* is MKL's own variance, not ours. For these small 2D
+> cells **PATIENT ≈ exhaustive** — full enumeration is cheap and good at this size — but both
+> clear MKL on every cell. In-place scrambled-order 2D (the convolution contract);
+> rectangular / non-pow2 cells are follow-ups.
 
 ### 2D C2C — vs MKL at T=8
 
@@ -318,6 +326,33 @@ race-free). Source: `bench_1d_vs_mkl.c --2dr2c --mt` → `vfft_perf_tuned_2dr2c_
 > usefully thread small 2D real transforms in this setup. (1D C2C and 2D C2C thread fine in
 > the same binary, so this is specific to the 2D real descriptor.) Parallelizing dag's column
 > + c2r passes is the 2D-MT follow-up that would lift the self-scaling ceiling.
+
+### 2D C2R (backward)
+
+The inverse — complex (CCE / split) → real 2D, `fft2d_r2c.h`'s c2r path, **PATIENT-calibrated**
+(separate `fft2d_c2r_wisdom`; c2r's optimum ≠ r2c's — all 4 cells WON their own gate),
+single-thread (the c2r backward is **serial** — not yet tile-parallel). Roundtrip
+`r2c+c2r == N1·N2·x` is the gate (all e-14/e-15). Measured **cooled**, median of 3. Source:
+`bench_1d_vs_mkl.c --2dc2r` → `vfft_perf_tuned_2dc2r.csv`.
+
+```
+ N1×N2     dag/MKL   order
+──────────────────────────────────
+ 64×64      0.84×    scrambled
+ 128×128    0.95×    scrambled
+ 256×256    0.75×    scrambled
+ 512×512    0.95×    scrambled
+──────────────────────────────────
+ median    ~0.89×    (single-thread)
+```
+
+> **Single-thread, 2D C2R trails MKL — median ~0.89×, range 0.75–0.95×.** Same real-FFT
+> structural tax as r2c (§3, §4): the split lane-batched layout costs single-thread what it
+> repays under threading. c2r lands right alongside the r2c forward (0.89× vs §4's 0.85×); 256²
+> is the laggard (0.75×). PATIENT ≈ MEASURE here — the gap is structural, not plan-mode.
+> **No MT row:** the c2r backward is serial in v1.0, and MKL's threaded 2D-real path is
+> anomalous on this host (§4), so a dag-serial-vs-MKL-T8 ratio would be meaningless.
+> Parallelizing the c2r pass is the same 2D-MT follow-up noted above.
 
 ## 5. vs FFTW3 — single-thread
 

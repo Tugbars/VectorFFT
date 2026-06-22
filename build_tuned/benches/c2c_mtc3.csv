@@ -1,0 +1,5 @@
+N1,N2,src,order,rt_err,vsmkl_elem,vfft_ns,mkl_ns,speedup
+64,64,exh,scrambled,6.6e-15,1.6e+00,5520,45576,8.257
+128,128,wis,scrambled,9.5e-15,1.5e+00,23416,83846,3.581
+256,256,wis,scrambled,7.4e-15,1.2e+00,80330,207177,2.579
+512,512,wis,scrambled,1.1e-14,1.5e+00,465325,1056788,2.271

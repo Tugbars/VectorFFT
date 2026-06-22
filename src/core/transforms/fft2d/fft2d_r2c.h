@@ -242,7 +242,8 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
                                         const double *in_pad_re, const double *in_pad_im,
                                         double *re_out,
                                         double *sr, double *si,
-                                        size_t row_start, size_t row_end)
+                                        size_t row_start, size_t row_end,
+                                        int tid)
 {
     const int N2 = d->N2;
     const int halfN_plus1 = N2 / 2 + 1;
@@ -266,8 +267,10 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
                               K_pad, B,
                               this_B, (size_t)halfN_plus1);
 
-        /* Inner C2R in-place on scratch. */
-        _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si, 0);
+        /* Inner C2R in-place on scratch. tid selects the inner's per-worker
+         * pack-scratch slot — distinct per tile thread (was hardcoded 0, the
+         * blocker that forced serial backward). */
+        _fft2d_r2c_inner_bwd(d->plan_r2c, sr, si, tid);
 
         /* Scatter real: N2 x B -> B x N2. */
         stride_transpose(sr, B, re_out + i * (size_t)N2, (size_t)N2,
@@ -277,11 +280,16 @@ static void _fft2d_r2c_tiled_bwd_range(stride_fft2d_r2c_data_t *d,
 
 
 /* ═══════════════════════════════════════════════════════════════
- * TILE-PARALLEL THREADING (forward)
+ * TILE-PARALLEL THREADING (forward AND backward)
  *
- * Tiles are independent. Distribute across threads, each owns a scratch slot.
- * For backward, reverse tile order is required for in-place safety, so
- * THREADING IS DISABLED in backward (single-threaded path). v1.1 candidate.
+ * Tiles are independent. Distribute across threads, each owns a scratch slot
+ * + a distinct inner-pack tid. Backward threads too: its row pass reads from
+ * the padded col-FFT scratch (re_pad/im_pad) and writes the real output to a
+ * DISTINCT user buffer, so tiles never clobber each other (the reverse-order
+ * note above describes an in-place-aliased layout that does not occur in the
+ * c2r execute path — in_pad is always internal scratch, re_out the user
+ * buffer). Each thread still walks its own tile range in reverse, harmless
+ * when the buffers are disjoint.
  * ═══════════════════════════════════════════════════════════════ */
 
 typedef struct {
@@ -355,6 +363,78 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
     if (n_dispatch > 0) _stride_pool_wait_all();
 }
 
+/* Backward (C2R) tile-parallel — same partition as the forward. Reads padded
+ * col-FFT scratch (in_pad_re/im), writes reals to re_out (distinct buffer). */
+typedef struct {
+    stride_fft2d_r2c_data_t *d;
+    const double *in_pad_re, *in_pad_im;
+    double *re_out;
+    double *sr, *si;
+    size_t row_start, row_end;
+    int tid;
+} _fft2d_r2c_tile_bwd_arg_t;
+
+static void _fft2d_r2c_tile_bwd_trampoline(void *arg) {
+    _fft2d_r2c_tile_bwd_arg_t *a = (_fft2d_r2c_tile_bwd_arg_t *)arg;
+    _fft2d_r2c_tiled_bwd_range(a->d, a->in_pad_re, a->in_pad_im, a->re_out,
+                                a->sr, a->si, a->row_start, a->row_end, a->tid);
+}
+
+static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
+                                     const double *in_pad_re, const double *in_pad_im,
+                                     double *re_out) {
+    const size_t N1 = (size_t)d->N1;
+    const size_t B = d->B;
+    int T = stride_get_num_threads();
+    if (T > d->num_scratch) T = d->num_scratch;
+    /* Same inner-slot cap as the forward: don't dispatch more tile threads than
+     * the inner r2c plan has pack-scratch slots (else two tiles collide). */
+    {
+        stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
+        if (T > rd->n_threads) T = rd->n_threads;
+    }
+
+    size_t n_tiles = (N1 + B - 1) / B;
+    if (T <= 1 || n_tiles <= 1) {
+        _fft2d_r2c_tiled_bwd_range(d, in_pad_re, in_pad_im, re_out,
+                                    d->scratch_re, d->scratch_im,
+                                    0, N1, 0);
+        return;
+    }
+
+    _fft2d_r2c_tile_bwd_arg_t args[FFT2D_R2C_MAX_THREADS];
+    int n_dispatch = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        size_t tiles_start = (n_tiles * t) / T;
+        size_t tiles_end   = (n_tiles * (t + 1)) / T;
+        size_t row_start   = tiles_start * B;
+        size_t row_end     = tiles_end * B;
+        if (row_end > N1) row_end = N1;
+        if (row_start >= N1) break;
+
+        args[t].d = d;
+        args[t].in_pad_re = in_pad_re;
+        args[t].in_pad_im = in_pad_im;
+        args[t].re_out = re_out;
+        args[t].sr = _fft2d_r2c_scratch_re(d, t);
+        args[t].si = _fft2d_r2c_scratch_im(d, t);
+        args[t].row_start = row_start;
+        args[t].row_end = row_end;
+        args[t].tid = t;
+        _stride_pool_dispatch(&_stride_workers[t - 1],
+                              _fft2d_r2c_tile_bwd_trampoline, &args[t]);
+        n_dispatch++;
+    }
+    {
+        size_t row_end = ((n_tiles * 1) / T) * B;
+        if (row_end > N1) row_end = N1;
+        _fft2d_r2c_tiled_bwd_range(d, in_pad_re, in_pad_im, re_out,
+                                    d->scratch_re, d->scratch_im,
+                                    0, row_end, 0);
+    }
+    if (n_dispatch > 0) _stride_pool_wait_all();
+}
+
 
 /* ═══════════════════════════════════════════════════════════════
  * DISPATCH — forward and backward
@@ -422,10 +502,10 @@ static void _fft2d_r2c_execute_bwd(void *data, double *re, double *im) {
     else
         stride_execute_bwd(d->plan_col, d->re_pad, d->im_pad);
 
-    /* Phase 3: tiled C2R row pass reads padded scratch, writes reals to re. */
-    _fft2d_r2c_tiled_bwd_range(d, d->re_pad, d->im_pad, re,
-                                d->scratch_re, d->scratch_im,
-                                0, (size_t)d->N1);
+    /* Phase 3: tiled C2R row pass reads padded scratch (re_pad/im_pad), writes
+     * reals to the user buffer `re`. Distinct buffers => tiles independent =>
+     * tile-parallel (honors stride_get_num_threads(); serial when T<=1). */
+    _fft2d_r2c_tiled_bwd_mt(d, d->re_pad, d->im_pad, re);
 }
 
 

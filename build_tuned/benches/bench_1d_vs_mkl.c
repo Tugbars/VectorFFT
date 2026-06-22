@@ -126,6 +126,7 @@ static int g_mt = 1;
 static int g_oop_mt = 0;   /* 1 = --oop --mt : K-split the OOP forward across the pool */
 static int g_2d_mt = 0;    /* 1 = --2d --mt : thread the 2D row pass (tile-parallel pool) */
 static int g_2dr2c_mt = 0; /* 1 = --2dr2c --mt : thread the 2D r2c forward row pass (tile-parallel) */
+static int g_2dc2r_mt = 0; /* 1 = --2dc2r --mt : thread the 2D c2r backward row pass (tile-parallel) */
 static vfft_fft2d_r2c_wisdom_t g_2dr2c_wis;   /* calibrated 2D r2c plans (loaded once in main) */
 static int g_2dr2c_wis_loaded = 0;            /* 1 = 2D r2c wisdom present -> cells use calibrated plans */
 static vfft_fft2d_c2c_wisdom_t g_2d_c2c_wis;  /* calibrated 2D c2c plans (loaded once in main) */
@@ -1048,6 +1049,19 @@ static void run_2dc2r_cell(int N1, int N2, vfft_proto_registry_t *reg, FILE *out
     stride_execute_2d_c2r(p, o_re, o_im, xr);
     double rt = 0, sc = (double)N1 * N2;
     for (size_t i = 0; i < RN; i++) { double a = fabs(xr[i] / sc - x[i]); if (a > rt) rt = a; }
+    /* MT gate: the threaded c2r output (xr, computed at g_mt threads above) must
+     * equal a forced single-thread c2r bit-for-bit — tiles are independent, so any
+     * divergence is a race. c2r reads o_re/o_im read-only, so re-running is safe. */
+    if (g_2dc2r_mt) {
+        double *xr_st = alloc_d(RN);
+        stride_set_num_threads(1);
+        stride_execute_2d_c2r(p, o_re, o_im, xr_st);
+        double d = 0;
+        for (size_t i = 0; i < RN; i++) { double a = fabs(xr[i] - xr_st[i]); if (a > d) d = a; }
+        if (d > rt) rt = d;
+        stride_set_num_threads(g_mt);
+        free_d(xr_st);
+    }
 
     double vns = 0, mns = 0;
 #ifdef VFFT_HAS_MKL
@@ -1262,6 +1276,7 @@ int main(int argc, char **argv)
     g_oop_mt = (oop && mt);
     g_2d_mt = (twod && mt);
     g_2dr2c_mt = (r2c2d && mt);
+    g_2dc2r_mt = (r2c2d_bwd && mt);
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)     ? argv[2]
@@ -1269,6 +1284,7 @@ int main(int argc, char **argv)
                       : r2c           ? "vfft_perf_tuned_r2c.csv"
                       : (r2c2d && mt) ? "vfft_perf_tuned_2dr2c_mt.csv"
                       : r2c2d         ? "vfft_perf_tuned_2dr2c.csv"
+                      : (r2c2d_bwd && mt) ? "vfft_perf_tuned_2dc2r_mt.csv"
                       : r2c2d_bwd     ? "vfft_perf_tuned_2dc2r.csv"
                       : (twod && mt)  ? "vfft_perf_tuned_2d_mt.csv"
                       : twod          ? "vfft_perf_tuned_2d.csv"
@@ -1377,8 +1393,9 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    /* --2dc2r: self-contained 2D c2r backward sweep (own CSV), then done. dag c2r
-     * is single-threaded; --mt only changes MKL's thread count. */
+    /* --2dc2r: self-contained 2D c2r backward sweep (own CSV), then done. Under
+     * --mt the dag c2r row pass is tile-parallel (g_2dc2r_mt); MKL's threaded
+     * 2D-real backward is anomalous on this host, so read dag SELF-scaling. */
     if (r2c2d_bwd)
     {
         const char *c2r_wpath = "../../src/dag-fft-compiler/generator/generated/fft2d_c2r_wisdom.txt";
@@ -1390,8 +1407,10 @@ int main(int argc, char **argv)
         FILE *o2 = fopen(csv, "w");
         if (o2)
             fprintf(o2, "N1,N2,src,rt_err,vfft_ns,mkl_ns,speedup\n");
-        printf("=== dag vs MKL — 2D C2R bwd (fft2d_r2c.h c2r SERIAL vs DFTI 2D real backward, core%d; pace=%dms) ===\n", core, pace_ms);
-        printf("# dag c2r is single-threaded; roundtrip r2c+c2r==N*x is the gate. speed>1 = dag wins.\n");
+        printf("=== dag vs MKL — 2D C2R bwd (fft2d_r2c.h c2r %s vs DFTI 2D real backward, core%d; pace=%dms) ===\n",
+               g_2dc2r_mt ? "MT row-parallel (8T)" : "SERIAL", core, pace_ms);
+        printf("# roundtrip r2c+c2r==N*x is the gate%s. speed>1 = dag wins.\n",
+               g_2dc2r_mt ? " (+ MT-vs-ST c2r consistency folded in)" : "");
         int cells[][2] = {{64, 64}, {128, 128}, {256, 256}, {512, 512}};
         int nc = (int)(sizeof cells / sizeof cells[0]), benched = 0;
         for (int i = 0; i < nc; i++)
