@@ -1291,6 +1291,7 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out
         return;
     }
     const char *src = (_vfft_c2r_wis && vfft_proto_wisdom_lookup(_vfft_c2r_wis, N, K)) ? "wis" : "est";
+    fprintf(stderr, "[c2r] N=%d K=%zu plan ok base=%p src=%s\n", N, K, (void *)p->base, src);
     /* x (real, lane-interleaved) -> packed half-spectrum via the plan's own fwd
      * base (format-matched) -> c2r -> y; gate y == N*x (unnormalized inverse). */
     double *x = alloc_d(total), *hc = alloc_d(total * 2), *y = alloc_d(total);
@@ -1298,8 +1299,11 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out
     for (size_t i = 0; i < total; i++)
         x[i] = (double)rand() / RAND_MAX * 2 - 1;
     memset(hc, 0, total * 2 * 8);
+    fprintf(stderr, "[c2r] N=%d fwd start\n", N);
     rfft_execute_fwd_packed(p->base, x, hc);
+    fprintf(stderr, "[c2r] N=%d fwd ok; c2r start\n", N);
     vfft_c2r_execute(p, hc, y);
+    fprintf(stderr, "[c2r] N=%d c2r ok\n", N);
     double sc = (double)N, rel = 0, xm = 0;
     for (size_t i = 0; i < total; i++)
     {
