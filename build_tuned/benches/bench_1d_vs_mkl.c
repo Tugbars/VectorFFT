@@ -59,7 +59,9 @@
 #include "fft2d_r2c_wisdom.h"   /* --2dr2c: calibrated 2D wisdom + wisdom-aware create */
 #include "fft2d_c2c_wisdom.h"   /* --2d: calibrated 2D c2c wisdom + wisdom-aware create */
 #include "rfft_registry_avx2.h" /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
+#include "c2r_registry_avx2.h"  /* --c2r: c2r_register_all_avx2 (r2cb + hc2hc_dif_bwd) */
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
+#include "c2r_dispatch.h"       /* --c2r: vfft_c2r_plan_create / execute (wisdom + JIT) */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -1231,12 +1233,147 @@ static void run_r2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     vfft_r2c_plan_destroy(p);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * --c2r : backward real (halfcomplex -> real), 1D, vs MKL DFTI real backward.
+ * dag c2r consumes the PACKED half-spectrum produced by the plan's OWN forward
+ * base (format-matched, guarantees the roundtrip); gate = c2r(rfft_fwd(x))==N*x.
+ * MKL gets the CCE half-spectrum (transform-major) via its forward, then we time
+ * the backward only. Wisdom-first (c2r_wisdom.txt). Own CSV. Mirror of --r2c.
+ * ════════════════════════════════════════════════════════════════════════ */
+static double time_c2r(const c2r_plan_t *p, const double *hc, double *y, size_t total)
+{
+    for (int w = 0; w < 10; w++)
+        vfft_c2r_execute(p, hc, y);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_c2r_execute(p, hc, y);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    return best;
+}
+#ifdef VFFT_HAS_MKL
+static double bench_mkl_c2r(DFTI_DESCRIPTOR_HANDLE h, const double *cce, double *real_out, size_t total)
+{
+    for (int w = 0; w < 10; w++)
+        DftiComputeBackward(h, (void *)cce, real_out);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            DftiComputeBackward(h, (void *)cce, real_out);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    return best;
+}
+#endif
+static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out, int cool_ms, int flip)
+{
+    const int halfN = N / 2;
+    const size_t total = (size_t)N * K;
+    c2r_plan_t *p = vfft_c2r_plan_create(N, K, rreg);
+    if (!p)
+    {
+        printf("  N=%-6d K=%-5zu  c2r plan NULL\n", N, K);
+        return;
+    }
+    const char *src = (_vfft_c2r_wis && vfft_proto_wisdom_lookup(_vfft_c2r_wis, N, K)) ? "wis" : "est";
+    /* x (real, lane-interleaved) -> packed half-spectrum via the plan's own fwd
+     * base (format-matched) -> c2r -> y; gate y == N*x (unnormalized inverse). */
+    double *x = alloc_d(total), *hc = alloc_d(total * 2), *y = alloc_d(total);
+    srand(29 + N + (int)K);
+    for (size_t i = 0; i < total; i++)
+        x[i] = (double)rand() / RAND_MAX * 2 - 1;
+    memset(hc, 0, total * 2 * 8);
+    rfft_execute_fwd_packed(p->base, x, hc);
+    vfft_c2r_execute(p, hc, y);
+    double sc = (double)N, rel = 0, xm = 0;
+    for (size_t i = 0; i < total; i++)
+    {
+        double e = fabs(y[i] - sc * x[i]);
+        if (e > rel)
+            rel = e;
+        double a = fabs(x[i]);
+        if (a > xm)
+            xm = a;
+    }
+    if (xm > 0)
+        rel /= (sc * xm);
+    double vns = 0, mns = 0;
+#ifdef VFFT_HAS_MKL
+    DFTI_DESCRIPTOR_HANDLE h = 0;
+    int mok = 0;
+    double *xtm = alloc_d(total), *cce = alloc_d((size_t)(halfN + 1) * K * 2), *mout = alloc_d(total);
+    for (size_t t = 0; t < K; t++)
+        for (int n = 0; n < N; n++)
+            xtm[t * (size_t)N + n] = x[(size_t)n * K + t];
+    if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR)
+    {
+        DftiSetValue(h, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+        DftiSetValue(h, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+        DftiSetValue(h, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+        DftiSetValue(h, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+        DftiSetValue(h, DFTI_OUTPUT_DISTANCE, (MKL_LONG)(halfN + 1));
+        mok = (DftiCommitDescriptor(h) == DFTI_NO_ERROR);
+    }
+    if (mok)
+        DftiComputeForward(h, xtm, cce); /* CCE half-spectrum = the c2r input (not timed) */
+    if (flip)
+    {
+        if (mok)
+            mns = bench_mkl_c2r(h, cce, mout, total);
+        cachebust();
+        pace(cool_ms);
+        vns = time_c2r(p, hc, y, total);
+    }
+    else
+    {
+        vns = time_c2r(p, hc, y, total);
+        cachebust();
+        pace(cool_ms);
+        if (mok)
+            mns = bench_mkl_c2r(h, cce, mout, total);
+    }
+    if (h)
+        DftiFreeDescriptor(&h);
+    free_d(xtm);
+    free_d(cce);
+    free_d(mout);
+#else
+    (void)flip;
+    (void)cool_ms;
+    vns = time_c2r(p, hc, y, total);
+#endif
+    double sp = (vns > 0 && mns > 0) ? mns / vns : 0;
+    printf("  N=%-6d K=%-5zu %-3s ref=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
+           N, K, src, rel, vns, mns, sp, rel < 1e-9 ? "" : "*** RT FAIL ***");
+    if (out)
+        fprintf(out, "%d,%zu,%s,%.1e,%.0f,%.0f,%.3f\n", N, K, src, rel, vns, mns, sp);
+    free_d(x);
+    free_d(hc);
+    free_d(y);
+    c2r_plan_destroy(p);
+}
+
 int main(int argc, char **argv)
 {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0;
+    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0;
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
      * c2c vs MKL NOT_INPLACE), --2d (2D c2c), --r2c (1D real fwd vs DFTI real),
      * --2dr2c (2D real fwd vs DFTI 2D real). --oop+--mt => OOP fwd K-split. */
@@ -1268,6 +1405,10 @@ int main(int argc, char **argv)
         {
             r2c2d_bwd = 1;
         }
+        else if (strcmp(argv[1], "--c2r") == 0)
+        {
+            c2r1d = 1;
+        }
         else
             break;
         argv++;
@@ -1286,6 +1427,7 @@ int main(int argc, char **argv)
                       : r2c2d         ? "vfft_perf_tuned_2dr2c.csv"
                       : (r2c2d_bwd && mt) ? "vfft_perf_tuned_2dc2r_mt.csv"
                       : r2c2d_bwd     ? "vfft_perf_tuned_2dc2r.csv"
+                      : c2r1d         ? "vfft_perf_tuned_c2r.csv"
                       : (twod && mt)  ? "vfft_perf_tuned_2d_mt.csv"
                       : twod          ? "vfft_perf_tuned_2d.csv"
                       : (oop && mt)   ? "vfft_perf_tuned_1d_oop_mt.csv"
@@ -1301,7 +1443,7 @@ int main(int argc, char **argv)
     long target_K = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms = (argc >= 7) ? atoi(argv[6]) : 0; /* inter-engine idle (order-bias fix) */
     int flip = (argc >= 8) ? atoi(argv[7]) : 0;    /* 1 = MKL first (alternate per cell) */
-    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || r2c || r2c2d || r2c2d_bwd) ? 2
+    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || r2c || r2c2d || r2c2d_bwd || c2r1d) ? 2
                                                                                                  : -1); /* MT->0, OOP/2D/R2C->P-core 2 */
     {
         const char *tp = getenv("VFFT_TRIAL_PACE_MS");
@@ -1451,6 +1593,43 @@ int main(int argc, char **argv)
             for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
             {
                 run_r2c_cell(Ns[ni], Ks[ki], &rreg, &reg, o2, cool_ms, flip ^ (benched & 1));
+                benched++;
+                pace(pace_ms);
+            }
+        if (o2)
+            fclose(o2);
+        printf("benched %d cells.  CSV -> %s\n", benched, csv);
+        return 0;
+    }
+
+    /* --c2r: self-contained 1D backward-real sweep (c2r.h halfcomplex->real,
+     * JIT-wired) vs MKL DFTI real backward. rreg needs BOTH the rfft forward
+     * codelets (to produce the format-matched packed input via the plan's base)
+     * AND the c2r backward codelets (r2cb + hc2hc_dif_bwd). Mirror of --r2c. */
+    if (c2r1d)
+    {
+        rfft_codelets_t rreg;
+        memset(&rreg, 0, sizeof rreg);
+        rfft_register_all_avx2(&rreg);   /* forward: r2cf + hc2hc_dit_fwd (base fwd) */
+        c2r_register_all_avx2(&rreg);    /* backward: r2cb + hc2hc_dif_bwd (the c2r) */
+        static vfft_proto_wisdom_t c2rwis;
+        const char *c2rw = "../../src/dag-fft-compiler/generator/generated/c2r_wisdom.txt";
+        int have = (vfft_proto_wisdom_load(&c2rwis, c2rw) == 0);
+        if (have)
+            vfft_c2r_dispatch_set_wisdom(&c2rwis);
+        printf("# c2r wisdom: %s (%s)\n", c2rw, have ? "loaded" : "MISS -> heuristic");
+        FILE *o2 = fopen(csv, "w");
+        if (o2)
+            fprintf(o2, "N,K,src,ref_err,vfft_ns,mkl_ns,speedup\n");
+        printf("=== dag vs MKL — 1D C2R bwd (c2r.h halfcomplex->real, JIT-wired, vs DFTI real backward, ST, core%d; pace=%dms) ===\n", core, pace_ms);
+        printf("# packed half-spectrum in; roundtrip c2r(rfft(x))==N*x is the gate. speed>1 = dag wins.\n");
+        int Ns[] = {256, 512, 1024};
+        size_t Ks[] = {8, 16, 32, 64, 128, 256};
+        int benched = 0;
+        for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+            for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
+            {
+                run_c2r_cell(Ns[ni], Ks[ki], &rreg, o2, cool_ms, flip ^ (benched & 1));
                 benched++;
                 pace(pace_ms);
             }
