@@ -1234,16 +1234,21 @@ static void run_r2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * --c2r : backward real (halfcomplex -> real), 1D, vs MKL DFTI real backward.
- * dag c2r consumes the PACKED half-spectrum produced by the plan's OWN forward
- * base (format-matched, guarantees the roundtrip); gate = c2r(rfft_fwd(x))==N*x.
- * MKL gets the CCE half-spectrum (transform-major) via its forward, then we time
- * the backward only. Wisdom-first (c2r_wisdom.txt). Own CSV. Mirror of --r2c.
+ * --c2r : backward real (split half-spectrum -> real), 1D, vs MKL DFTI real
+ * backward. ALIGNED WITH --r2c: dag uses the DECOUPLED-STRIDE c2r
+ * (stride_execute_c2r, the split-layout backward) — the inverse of the split r2c
+ * that --r2c benches — which works at all K. We deliberately avoid the rfft
+ * PACKED forward (it has a latent high-K heap overflow), exactly as --r2c uses the
+ * natural/stride path, never _packed. The c2r input is made by the matching stride
+ * r2c forward (same plan); gate = c2r(r2c(x)) == N*x. MKL gets the CCE half-spectrum
+ * (transform-major) via its forward, then we time the backward only. The inner c2c
+ * rides the c2c wisdom (like the --r2c stride path). Own CSV.
  * ════════════════════════════════════════════════════════════════════════ */
-static double time_c2r(const c2r_plan_t *p, const double *hc, double *y, size_t total)
+static double time_c2r(const stride_plan_t *sp, const double *o_re, const double *o_im,
+                       double *y, size_t total)
 {
     for (int w = 0; w < 10; w++)
-        vfft_c2r_execute(p, hc, y);
+        stride_execute_c2r(sp, o_re, o_im, y);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -1252,7 +1257,7 @@ static double time_c2r(const c2r_plan_t *p, const double *hc, double *y, size_t 
             pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_c2r_execute(p, hc, y);
+            stride_execute_c2r(sp, o_re, o_im, y);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -1280,30 +1285,33 @@ static double bench_mkl_c2r(DFTI_DESCRIPTOR_HANDLE h, const double *cce, double 
     return best;
 }
 #endif
-static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out, int cool_ms, int flip)
+static void run_c2r_cell(int N, size_t K, vfft_proto_registry_t *reg,
+                         const vfft_proto_wisdom_t *c2c_wis, FILE *out, int cool_ms, int flip)
 {
     const int halfN = N / 2;
-    const size_t total = (size_t)N * K;
-    c2r_plan_t *p = vfft_c2r_plan_create(N, K, rreg);
-    if (!p)
+    const size_t total = (size_t)N * K, hcN = (size_t)(halfN + 1) * K;
+    /* Decoupled-stride r2c/c2r plan (single block, ST): inner c2c over N/2, wisdom-best
+     * (mirrors the --r2c stride path). Works at all K — no rfft packed forward. */
+    stride_plan_t *inner = vfft_proto_auto_plan(N / 2, K, reg, c2c_wis);
+    if (!inner)
+    {
+        printf("  N=%-6d K=%-5zu  c2r inner NULL\n", N, K);
+        return;
+    }
+    stride_plan_t *sp = stride_r2c_plan(N, K, K, inner); /* owns inner; block_K=K (ST) */
+    if (!sp)
     {
         printf("  N=%-6d K=%-5zu  c2r plan NULL\n", N, K);
         return;
     }
-    const char *src = (_vfft_c2r_wis && vfft_proto_wisdom_lookup(_vfft_c2r_wis, N, K)) ? "wis" : "est";
-    fprintf(stderr, "[c2r] N=%d K=%zu plan ok base=%p src=%s\n", N, K, (void *)p->base, src);
-    /* x (real, lane-interleaved) -> packed half-spectrum via the plan's own fwd
-     * base (format-matched) -> c2r -> y; gate y == N*x (unnormalized inverse). */
-    double *x = alloc_d(total), *hc = alloc_d(total * 2), *y = alloc_d(total);
+    const char *src = c2c_wis ? "wis" : "est";
+    double *x = alloc_d(total), *o_re = alloc_d(hcN), *o_im = alloc_d(hcN), *y = alloc_d(total);
     srand(29 + N + (int)K);
     for (size_t i = 0; i < total; i++)
         x[i] = (double)rand() / RAND_MAX * 2 - 1;
-    memset(hc, 0, total * 2 * 8);
-    fprintf(stderr, "[c2r] N=%d fwd start\n", N);
-    rfft_execute_fwd_packed(p->base, x, hc);
-    fprintf(stderr, "[c2r] N=%d fwd ok; c2r start\n", N);
-    vfft_c2r_execute(p, hc, y);
-    fprintf(stderr, "[c2r] N=%d c2r ok\n", N);
+    /* forward (split, all-K-safe) makes the c2r input; c2r inverts; gate y == N*x. */
+    stride_execute_r2c(sp, x, o_re, o_im);
+    stride_execute_c2r(sp, o_re, o_im, y);
     double sc = (double)N, rel = 0, xm = 0;
     for (size_t i = 0; i < total; i++)
     {
@@ -1341,11 +1349,11 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out
             mns = bench_mkl_c2r(h, cce, mout, total);
         cachebust();
         pace(cool_ms);
-        vns = time_c2r(p, hc, y, total);
+        vns = time_c2r(sp, o_re, o_im, y, total);
     }
     else
     {
-        vns = time_c2r(p, hc, y, total);
+        vns = time_c2r(sp, o_re, o_im, y, total);
         cachebust();
         pace(cool_ms);
         if (mok)
@@ -1359,17 +1367,19 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, FILE *out
 #else
     (void)flip;
     (void)cool_ms;
-    vns = time_c2r(p, hc, y, total);
+    vns = time_c2r(sp, o_re, o_im, y, total);
 #endif
-    double sp = (vns > 0 && mns > 0) ? mns / vns : 0;
+    double sp_ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     printf("  N=%-6d K=%-5zu %-3s ref=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
-           N, K, src, rel, vns, mns, sp, rel < 1e-9 ? "" : "*** RT FAIL ***");
+           N, K, src, rel, vns, mns, sp_ratio, rel < 1e-9 ? "" : "*** RT FAIL ***");
+    fflush(stdout);
     if (out)
-        fprintf(out, "%d,%zu,%s,%.1e,%.0f,%.0f,%.3f\n", N, K, src, rel, vns, mns, sp);
+        fprintf(out, "%d,%zu,%s,%.1e,%.0f,%.0f,%.3f\n", N, K, src, rel, vns, mns, sp_ratio);
     free_d(x);
-    free_d(hc);
+    free_d(o_re);
+    free_d(o_im);
     free_d(y);
-    c2r_plan_destroy(p);
+    stride_plan_destroy(sp);
 }
 
 int main(int argc, char **argv)
@@ -1606,34 +1616,29 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    /* --c2r: self-contained 1D backward-real sweep (c2r.h halfcomplex->real,
-     * JIT-wired) vs MKL DFTI real backward. rreg needs BOTH the rfft forward
-     * codelets (to produce the format-matched packed input via the plan's base)
-     * AND the c2r backward codelets (r2cb + hc2hc_dif_bwd). Mirror of --r2c. */
+    /* --c2r: self-contained 1D backward-real sweep vs MKL DFTI real backward.
+     * ALIGNED WITH --r2c: the decoupled-stride c2r (split layout) — the inverse of
+     * the split r2c — works at all K and avoids the rfft packed forward's latent
+     * high-K overflow (exactly as --r2c uses natural/stride, never _packed). The
+     * stride inner c2c rides the c2c wisdom, like the --r2c stride path. */
     if (c2r1d)
     {
-        rfft_codelets_t rreg;
-        memset(&rreg, 0, sizeof rreg);
-        rfft_register_all_avx2(&rreg);   /* forward: r2cf + hc2hc_dit_fwd (base fwd) */
-        c2r_register_all_avx2(&rreg);    /* backward: r2cb + hc2hc_dif_bwd (the c2r) */
-        static vfft_proto_wisdom_t c2rwis;
-        const char *c2rw = "../../src/dag-fft-compiler/generator/generated/c2r_wisdom.txt";
-        int have = (vfft_proto_wisdom_load(&c2rwis, c2rw) == 0);
-        if (have)
-            vfft_c2r_dispatch_set_wisdom(&c2rwis);
-        printf("# c2r wisdom: %s (%s)\n", c2rw, have ? "loaded" : "MISS -> heuristic");
+        static vfft_proto_wisdom_t c2cwis;
+        int have = (vfft_proto_wisdom_load(&c2cwis, wpath) == 0);
+        const vfft_proto_wisdom_t *cw = have ? &c2cwis : NULL;
+        printf("# c2c wisdom (stride inner): %s (%s)\n", wpath, have ? "loaded" : "MISS -> heuristic");
         FILE *o2 = fopen(csv, "w");
         if (o2)
             fprintf(o2, "N,K,src,ref_err,vfft_ns,mkl_ns,speedup\n");
-        printf("=== dag vs MKL — 1D C2R bwd (c2r.h halfcomplex->real, JIT-wired, vs DFTI real backward, ST, core%d; pace=%dms) ===\n", core, pace_ms);
-        printf("# packed half-spectrum in; roundtrip c2r(rfft(x))==N*x is the gate. speed>1 = dag wins.\n");
+        printf("=== dag vs MKL — 1D C2R bwd (decoupled-stride split, vs DFTI real backward, ST, core%d; pace=%dms) ===\n", core, pace_ms);
+        printf("# split half-spectrum in; roundtrip c2r(r2c(x))==N*x is the gate. speed>1 = dag wins.\n");
         int Ns[] = {256, 512, 1024};
         size_t Ks[] = {8, 16, 32, 64, 128, 256};
         int benched = 0;
         for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
             for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
             {
-                run_c2r_cell(Ns[ni], Ks[ki], &rreg, o2, cool_ms, flip ^ (benched & 1));
+                run_c2r_cell(Ns[ni], Ks[ki], &reg, cw, o2, cool_ms, flip ^ (benched & 1));
                 benched++;
                 pace(pace_ms);
             }
