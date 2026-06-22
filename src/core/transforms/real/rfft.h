@@ -243,7 +243,7 @@ typedef struct {
     size_t Kb; /* lane-block width (section 65): the cascade runs per
                 * Kb-lane slab so both planes stay cache-resident
                 * across ALL stages. Multiple of 8. */
-    double *planeA, *planeB; /* scratch, N*K each, 64B aligned */
+    double *planeA, *planeB; /* scratch: planeA 2*N*K (leaf split re+im), planeB N*K (packed ping-pong), 64B aligned */
     int planeA_huge, planeB_huge; /* 1 iff large-page backed (VFFT_RFFT_HUGE) */
 } rfft_plan_t;
 
@@ -362,7 +362,11 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
         }
     }
 
-    p->planeA = (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeA_huge);
+    /* 2*N*K: the leaf writes the IM stream at planeA + NK (descending), so the
+     * top im address reaches NK + (S-1)*K < 2*NK. (N*K under-allocated — latent
+     * since the packed/split rfft forward is only driven at K<=16 in production;
+     * the c2r bench exercises it at K=32+ where the overflow segfaults.) */
+    p->planeA = (double *)rfft_buf_alloc((size_t)2 * N * K * 8, &p->planeA_huge);
     p->planeB_huge = 0;
     p->planeB = (nf >= 3)
         ? (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeB_huge) : NULL;
