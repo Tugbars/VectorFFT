@@ -1,0 +1,3 @@
+@fft2d_r2c_version 1
+# N1 N2 B K_pad | row: nf factors.. variants.. dif | col: nf factors.. variants.. dif | best_ns
+128 128 8 68  2 4 16 1 0 1  2 8 16 1 0 1  19092.6

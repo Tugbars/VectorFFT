@@ -1,6 +1,8 @@
 @fft2d_c2c_version 1
 # N1 N2 B | row: nf factors.. variants.. dif | col: nf factors.. variants.. dif | best_ns
-64 64 8  2 4 16 0 0 1  2 16 4 0 2 0  6929.5
+# 64x64 dropped: PATIENT-banked plan runs ~6800ns but exhaustive finds ~4800ns.
+# Its calibration "WON" was a noise artifact (5us cell is below reliable timing,
+# gate measured exhaustive slow at a hot moment). Falls back to exhaustive (~1.5x MKL).
 128 128 8  2 8 16 0 0 1  3 4 4 8 0 2 2 0  24643.4
 256 256 8  2 16 16 0 2 0  4 4 4 4 4 0 2 2 1 0  118836.7
 512 512 8  2 32 16 0 2 0  5 4 4 4 4 2 0 2 2 2 2 0  773775.0
