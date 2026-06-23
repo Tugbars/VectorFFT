@@ -36,10 +36,15 @@
 #if defined(__AVX512F__)
 #include "rfft_registry_avx512.h"
 #define _VFFT_RFFT_REGISTER rfft_register_all_avx512
+#include "c2r_registry_avx512.h"
+#define _VFFT_C2R_REGISTER c2r_register_all_avx512
 #else
 #include "rfft_registry_avx2.h"
 #define _VFFT_RFFT_REGISTER rfft_register_all_avx2
+#include "c2r_registry_avx2.h"
+#define _VFFT_C2R_REGISTER c2r_register_all_avx2
 #endif
+#include "c2r_dispatch.h" /* 2-axis c2r: NATURAL (split-input fast cascade) / SPLIT (stride) */
 #include "registry.h"         /* vfft_proto_registry_t (generated)              */
 #include "dct.h"              /* DCT-II/III (+ inner r2c)                        */
 #include "dct1.h"             /* DCT-I / DST-I (boundary r2c)                    */
@@ -86,6 +91,10 @@ struct vfft_wisdom_s
     vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
     char path_bluestein[640];          /* bluestein_wisdom.txt */
     bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
+    /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
+     * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
+     * for the non-bakeoff (MEASURE / high-K) dispatch; high rigor measures instead. */
+    char path_c2r_path[640];           /* c2r_path.txt */
 };
 
 struct vfft_plan_s
@@ -98,7 +107,8 @@ struct vfft_plan_s
     int nthreads;
     stride_plan_t *cplan;   /* c2c in-place (owned)      */
     vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
-    vfft_r2c_plan_t *rplan; /* r2c / c2r (owned)         */
+    vfft_r2c_plan_t *rplan; /* r2c fwd (owned)           */
+    vfft_c2r_disp_t *c2rdisp; /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     stride_plan_t *tplan;   /* trig DCT/DST/DHT (owned)  */
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
@@ -130,7 +140,8 @@ static const rfft_codelets_t *_rfft_registry(void)
     if (!_rreg_init)
     {
         memset(&_rreg, 0, sizeof _rreg);
-        _VFFT_RFFT_REGISTER(&_rreg);
+        _VFFT_RFFT_REGISTER(&_rreg);   /* fwd: r2cf + hc2hc_dit + hc2c_nat (fwd terminator) */
+        _VFFT_C2R_REGISTER(&_rreg);    /* bwd: r2cb + hc2hc_dif_bwd + hc2c_bwd (natural initiator) */
         _rreg_init = 1;
     }
     return &_rreg;
@@ -146,6 +157,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
     snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
     snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
+    snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
@@ -157,6 +169,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r);
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
+    vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
 }
 
 static struct vfft_wisdom_s _def;
@@ -341,6 +354,81 @@ static vfft_r2c_plan_t *_r2c_bakeoff(int N, size_t K, const vfft_proto_registry_
         return pr;
     }
     vfft_r2c_plan_destroy(pr);
+    return ps;
+}
+
+/* Time a c2r dispatcher (NATURAL or STRIDE) on a split half-spectrum, ST. */
+static double _c2r_time(const vfft_c2r_disp_t *p, int N, size_t K)
+{
+    size_t outsz = (size_t)N * K, hcsz = (size_t)(N / 2 + 1) * K;
+    double *re = NULL, *im = NULL, *y = NULL;
+    if (vfft_proto_posix_memalign((void **)&re, 64, hcsz * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&im, 64, hcsz * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&y, 64, outsz * sizeof(double)))
+    {
+        vfft_proto_aligned_free(re);
+        vfft_proto_aligned_free(im);
+        vfft_proto_aligned_free(y);
+        return 1e18;
+    }
+    for (size_t i = 0; i < hcsz; i++)
+    {
+        re[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
+        im[i] = (double)((i * 40503u) & 0xffff) / 65536.0 - 0.5;
+    }
+    for (int w = 0; w < 5; w++)
+        vfft_c2r_disp_execute(p, re, im, y);
+    int reps = (int)(2e6 / (double)(outsz + 1));
+    if (reps < 20)
+        reps = 20;
+    if (reps > 100000)
+        reps = 100000;
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_c2r_disp_execute(p, re, im, y);
+        double e = (vfft_proto_now_ns() - t0) / reps;
+        if (e < best)
+            best = e;
+    }
+    vfft_proto_aligned_free(re);
+    vfft_proto_aligned_free(im);
+    vfft_proto_aligned_free(y);
+    return best;
+}
+
+/* Build NATURAL + STRIDE c2r for (N,K), time ST, return the faster. The c2r analog
+ * of _r2c_bakeoff: BOTH consume split re/im (same caller I/O contract), so the pick
+ * is transparent. NATURAL = the fast packed cascade on split input (no repack, the
+ * low/mid-K winner); STRIDE = the decoupled high-K path that also threads. Hysteresis
+ * toward stride on a near-tie (it threads and owns high K; calibration noise can't
+ * flip a tie to natural). */
+static vfft_c2r_disp_t *_c2r_bakeoff(int N, size_t K, const vfft_proto_registry_t *reg)
+{
+    vfft_c2r_disp_t *pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
+                                               _rfft_registry(), (vfft_proto_registry_t *)reg);
+    vfft_c2r_disp_t *ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
+                                               _rfft_registry(), (vfft_proto_registry_t *)reg);
+    if (!pn)
+        return ps;
+    if (!ps)
+        return pn;
+    int T = stride_get_num_threads();
+    stride_set_num_threads(1);
+    double tn = _c2r_time(pn, N, K), ts = _c2r_time(ps, N, K);
+    stride_set_num_threads(T);
+    int pick_nat = (tn < ts * 0.97);
+    if (getenv("VFFT_BAKEOFF_DBG"))
+        fprintf(stderr, "[c2r bakeoff] N=%d K=%zu natural=%.0f ns stride=%.0f ns -> %s\n",
+                N, (size_t)K, tn, ts, pick_nat ? "natural" : "STRIDE");
+    if (pick_nat)
+    {
+        vfft_c2r_disp_destroy(ps);
+        return pn;
+    }
+    vfft_c2r_disp_destroy(pn);
     return ps;
 }
 
@@ -897,13 +985,19 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         return h;
     }
 
-    /* ── c2r (complex -> real; the r2c inverse). The SPLIT c2r is the stride r2c
-     * plan's backward (stride_execute_c2r); force the STRIDE path so that backward
-     * exists, and the inner rides c2c wisdom. Pairs with split r2c for K>=32. ── */
+    /* ── c2r (complex -> real; the r2c inverse), SPLIT input (sre/sim). 2-axis,
+     * mirroring r2c: NATURAL (the fast packed cascade run on split input via the
+     * stage-0 natural initiator — no repack, low/mid-K winner) vs STRIDE (decoupled,
+     * high-K + threads). BOTH consume split re/im, so the pick is transparent to the
+     * caller. High rigor MEASURES both at create over the contested low/mid-K zone
+     * (natural's win is non-monotonic in K — a fixed threshold can't capture it);
+     * else wisdom-first (c2r_path.txt) then threshold. No forced path / no hardcode. ── */
     if (cfg->transform == VFFT_C2R)
     {
         if ((N % 2) != 0)
             return NULL;
+        /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
+         * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
         if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, K))
         {
             vfft_proto_wisdom_entry_t ne;
@@ -915,20 +1009,17 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
-        vfft_r2c_dispatch_set_decouple_min_k(0); /* force stride (has the split c2r backward) */
-        vfft_r2c_plan_t *rp = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT,
-                                                   _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
-        vfft_r2c_dispatch_set_decouple_min_k(32); /* restore default */
-        if (!rp || rp->path != VFFT_R2C_PATH_STRIDE)
-        {
-            if (rp)
-                vfft_r2c_plan_destroy(rp);
+        vfft_c2r_disp_t *cd;
+        if (cfg->rigor != VFFT_MEASURE && K <= 128)
+            cd = _c2r_bakeoff(N, K, reg);
+        else
+            cd = vfft_c2r_disp_create_auto(N, K, _rfft_registry(), (vfft_proto_registry_t *)reg);
+        if (!cd)
             return NULL;
-        }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
-            vfft_r2c_plan_destroy(rp);
+            vfft_c2r_disp_destroy(cd);
             return NULL;
         }
         h->transform = VFFT_C2R;
@@ -936,7 +1027,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
-        h->rplan = rp;
+        h->c2rdisp = cd;
         return h;
     }
 
@@ -1028,9 +1119,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2R)
     {
-        /* the inverse: split complex in (sre,sim) -> real out (dre). dir ignored. */
+        /* the inverse: split complex in (sre,sim) -> real out (dre). dir ignored.
+         * NATURAL or STRIDE per the bakeoff/wisdom — both consume split re/im. */
         vfft_set_num_threads(h->nthreads);
-        stride_execute_c2r(h->rplan->stride, sre, sim, dre);
+        vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
         return;
     }
     if (_VFFT_IS_TRIG(h->transform))
@@ -1096,6 +1188,8 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->oplan);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
+    if (h->c2rdisp)
+        vfft_c2r_disp_destroy(h->c2rdisp);
     if (h->tplan)
         stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
     free(h);
