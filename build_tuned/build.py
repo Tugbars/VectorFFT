@@ -87,6 +87,8 @@ def dag_codelet_lib(tc) -> str | None:
     for old in objdir.glob('*.o'):   # clear stale objects (regen may rename/drop)
         old.unlink()
     cflags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive', '-w']
+    if os.environ.get('VFFT_ASAN'):
+        cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     srcs_rsp = objdir / '_srcs.rsp'
     srcs_rsp.write_text('\n'.join(s.as_posix() for s in srcs), encoding='ascii')
     r = subprocess.run([tc['cc']] + cflags + build_includes() + ['-c', f'@{srcs_rsp}'],
@@ -237,6 +239,8 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
              '-Wno-deprecated-declarations']
+    if os.environ.get('VFFT_ASAN'):
+        flags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     if mkl:
         # LP64 (mkl_rt), NOT ILP64: ILP64's 8-byte MKL_LONG corrupts the DFTI
         # strides array -> "Inconsistent configuration parameters" at DftiCommit.

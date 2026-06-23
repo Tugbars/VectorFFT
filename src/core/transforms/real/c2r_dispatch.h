@@ -16,6 +16,7 @@
 
 #include "planner.h"   /* vfft_proto_wisdom_t + lookup (wisdom_reader.h) */
 #include "c2r.h"
+#include "r2c_dispatch.h"   /* 2-axis SPLIT path: _vfft_r2c_build_stride + _vfft_r2c_decouple_min_k + c2c wisdom */
 #ifdef VFFT_USE_JIT
 #include "c2r_jit_runtime.h"   /* after c2r.h: resolve the c2r winner's JIT executor */
 #endif
@@ -85,6 +86,72 @@ static inline void vfft_c2r_execute(const c2r_plan_t *p, const double *in, doubl
     if (p->jit_exec) { ((c2r_jit_fn)p->jit_exec)(p, in, out); return; }
 #endif
     c2r_execute_packed(p, in, out);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 2-AXIS DISPATCHER — route packed (low K) / stride (high K) per cell, mirroring
+ * vfft_r2c. PACKED layout = the rfft-style packed c2r (the low-K winner, consumes a
+ * packed half-spectrum); SPLIT layout = the decoupled-stride c2r (high K, consumes
+ * split out_re/out_im). Crossover at the SAME _vfft_r2c_decouple_min_k r2c uses.
+ * Within each path the factorization is wisdom-tuned (packed -> c2r_wisdom via
+ * vfft_c2r_plan_create; stride -> c2c wisdom via _vfft_r2c_build_stride's inner).
+ * So this is the c2r analog of r2c's path × factorization 2-axis search.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+typedef enum { VFFT_C2R_PACKED = 0, VFFT_C2R_SPLIT = 1 } vfft_c2r_layout_t;
+
+typedef struct {
+    vfft_c2r_layout_t layout;
+    int               N;
+    size_t            K;
+    c2r_plan_t       *packed;   /* set iff layout == PACKED */
+    stride_plan_t    *stride;   /* set iff layout == SPLIT  */
+} vfft_c2r_disp_t;
+
+/* Best layout for (N,K): packed wins low K, stride wins high K — same crossover as
+ * the r2c rfft/stride router (the c2r is the exact inverse, so the regime matches). */
+static inline vfft_c2r_layout_t vfft_c2r_best_layout(size_t K)
+{
+    return (K < _vfft_r2c_decouple_min_k) ? VFFT_C2R_PACKED : VFFT_C2R_SPLIT;
+}
+
+/* Build a 2-axis c2r plan. rfft_reg = rfft codelets (r2cb + DIF-bwd hc2hc, plus the
+ * forward r2cf/hc2hc if the caller will produce the packed input via base) for the
+ * PACKED path; c2c_reg = complex registry for the stride inner. The unused-layout
+ * registry may be NULL. Returns NULL if the chosen path can't be built. */
+static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_layout_t layout,
+                                                    const rfft_codelets_t *rfft_reg,
+                                                    vfft_proto_registry_t *c2c_reg)
+{
+    vfft_c2r_disp_t *p = (vfft_c2r_disp_t *)calloc(1, sizeof(*p));
+    if (!p) return NULL;
+    p->layout = layout; p->N = N; p->K = K;
+    if (layout == VFFT_C2R_PACKED) {
+        p->packed = vfft_c2r_plan_create(N, K, rfft_reg);   /* wisdom-first packed c2r (+JIT) */
+        if (!p->packed) { free(p); return NULL; }
+    } else {
+        p->stride = _vfft_r2c_build_stride(N, K, c2c_reg);  /* decoupled stride r2c/c2r plan */
+        if (!p->stride) { free(p); return NULL; }
+    }
+    return p;
+}
+
+/* Execute. PACKED: in_a = packed half-spectrum plane (in_b ignored). SPLIT: in_a =
+ * out_re, in_b = out_im. out = N*K reals (unnormalized: == N * original real input). */
+static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
+                                         const double *in_a, const double *in_b, double *out)
+{
+    if (p->layout == VFFT_C2R_PACKED)
+        vfft_c2r_execute(p->packed, in_a, out);
+    else
+        stride_execute_c2r(p->stride, in_a, in_b, out);
+}
+
+static inline void vfft_c2r_disp_destroy(vfft_c2r_disp_t *p)
+{
+    if (!p) return;
+    if (p->packed) c2r_plan_destroy(p->packed);
+    if (p->stride) stride_plan_destroy(p->stride);
+    free(p);
 }
 
 #endif /* VFFT_C2R_DISPATCH_H */
