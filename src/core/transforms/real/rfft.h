@@ -362,10 +362,15 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
         }
     }
 
-    p->planeA = (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeA_huge);
+    /* 2*N*K, not N*K: the packed leaf writes the IM stream at planeA + NK (descending),
+     * so the top im address reaches NK + (S-1)*K < 2*NK. N*K under-allocates and the
+     * packed forward overflows at high K (N>=512) — latent because the packed/split rfft
+     * forward is only driven at K<=16 in the r2c dispatcher; the packed c2r input gen
+     * exercises it at K>=32 (planeB likewise for the nf>=3 ping-pong). */
+    p->planeA = (double *)rfft_buf_alloc((size_t)2 * N * K * 8, &p->planeA_huge);
     p->planeB_huge = 0;
     p->planeB = (nf >= 3)
-        ? (double *)rfft_buf_alloc((size_t)N * K * 8, &p->planeB_huge) : NULL;
+        ? (double *)rfft_buf_alloc((size_t)2 * N * K * 8, &p->planeB_huge) : NULL;
     if (!p->planeA || (nf >= 3 && !p->planeB)) goto fail;
     p->hcn = (nf >= 2)
         ? (reg->hc2c_log3[p->st[0].radix] ? reg->hc2c_log3[p->st[0].radix]
