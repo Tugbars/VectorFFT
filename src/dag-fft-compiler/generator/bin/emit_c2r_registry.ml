@@ -26,6 +26,9 @@ type abi =
   | Hc2hc_dif_bwd
   | Hc2hc_dif_bwd_log3
   | Hc2hc_dif_rng_bwd
+  | Hc2c_nat_bwd          (* stage-0 natural initiator: 4 split const-in/2 packed-out *)
+  | Hc2c_nat_bwd_log3
+  | Hc2c_nat_bwd_rng
   | Unknown
 
 let contains hay needle =
@@ -33,9 +36,13 @@ let contains hay needle =
   let rec go i = i + ln <= lh && (String.sub hay i ln = needle || go (i + 1)) in
   ln > 0 && go 0
 
-(* classify from filename stem. Order: log3 before plain bwd. *)
+(* classify from filename stem. Order: rng/log3 before plain bwd (more specific
+ * substrings first). The hc2c_nat_bwd family is the stage-0 natural initiator. *)
 let abi_of stem =
-  if contains stem "_hc2hc_dif_rng_bwd" then Hc2hc_dif_rng_bwd
+  if contains stem "_hc2c_nat_rng_bwd" then Hc2c_nat_bwd_rng
+  else if contains stem "_hc2c_nat_log3_bwd" then Hc2c_nat_bwd_log3
+  else if contains stem "_hc2c_nat_bwd" then Hc2c_nat_bwd
+  else if contains stem "_hc2hc_dif_rng_bwd" then Hc2hc_dif_rng_bwd
   else if contains stem "_hc2hc_dif_log3_bwd" then Hc2hc_dif_bwd_log3
   else if contains stem "_hc2hc_dif_bwd" then Hc2hc_dif_bwd
   else if contains stem "_r2cb" then R2cb
@@ -46,6 +53,9 @@ let slot_of = function
   | Hc2hc_dif_bwd -> Some "hc2hc_dif_bwd"
   | Hc2hc_dif_bwd_log3 -> Some "hc2hc_dif_bwd_log3"
   | Hc2hc_dif_rng_bwd -> Some "hc2hc_dif_rng_bwd"
+  | Hc2c_nat_bwd -> Some "hc2c_bwd"
+  | Hc2c_nat_bwd_log3 -> Some "hc2c_bwd_log3"
+  | Hc2c_nat_bwd_rng -> Some "hc2c_bwd_rng"
   | Unknown -> None
 
 let radix_of stem =
@@ -77,6 +87,19 @@ let proto abi sym =
         "extern void %s(const double*, const double*, double*, double*, const \
          double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, \
          int, size_t);"
+        sym
+  | Hc2c_nat_bwd | Hc2c_nat_bwd_log3 ->
+      (* 4 split const-in (Rp/Ip/Rm/Im) -> 2 packed out (out_re/out_im), tw, isp/ism/os *)
+      Printf.sprintf
+        "extern void %s(const double*, const double*, const double*, const \
+         double*, double*, double*, const double*, const double*, ptrdiff_t, \
+         ptrdiff_t, ptrdiff_t, size_t);"
+        sym
+  | Hc2c_nat_bwd_rng ->
+      Printf.sprintf
+        "extern void %s(const double*, const double*, const double*, const \
+         double*, double*, double*, const double*, const double*, ptrdiff_t, \
+         ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);"
         sym
   | Unknown -> ""
 

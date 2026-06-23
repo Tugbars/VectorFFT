@@ -106,6 +106,16 @@ let n1_oop_strided : bool ref = ref false
  * conjugate-mirror rows (Rm/Im + (r-1-s)*osm). *)
 let hc2c_natural : bool ref = ref false
 
+(* hc2c_natural_bwd (c2r initiator, the INVERSE of hc2c_natural): the backward
+ * natural codelet reads the SPLIT half-spectrum (Rp/Ip direct rows, Rm/Im
+ * conjugate-mirror rows — the same sstar map as the forward, but on the INPUT
+ * side) and writes the 2 PACKED cascade columns (out_re/out_im). I.e. the
+ * forward natural's 2-packed-in / 4-split-out ABI, flipped: 4 split const-in /
+ * 2 packed-out. The butterfly is dft_hc2c_dif ~sign:`Bwd (c2r's DIF-backward).
+ * This lets a split-input c2r run the fast packed cascade with NO repack — the
+ * mirror of how rfft_execute_fwd_natural gives split output at packed speed. *)
+let hc2c_natural_bwd : bool ref = ref false
+
 (* r2c_term (step-2 fusion): the fused forward terminator codelet. Dual-output
  * 2-input shape: reads Z[k] (input 0) and Z[m] (input 1), writes X[k]
  * (Xp pair) and X[m] (Xm pair), vectorized over vl lanes. Simpler than
@@ -234,6 +244,17 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         let row = j / twidsq_n in
         let col = j mod twidsq_n in
         Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row stride col loop_var
+      else if !hc2c_natural_bwd then
+        (* c2r natural INITIATOR: read the SPLIT half-spectrum. Slot j<=sstar is
+         * a direct row (Rp/Ip + j*isp); j>sstar is a conjugate-mirror row
+         * (Rm/Im + (r-1-j)*ism). Exactly the forward terminator's OUTPUT sstar
+         * map, but on the INPUT side. *)
+        begin if j <= !hc2c_nat_sstar then
+          Printf.sprintf "%s[%d*isp + %s]" (if is_re then "Rp" else "Ip") j loop_var
+        else
+          Printf.sprintf "%s[%d*ism + %s]" (if is_re then "Rm" else "Im")
+            (!hc2c_nat_r - 1 - j) loop_var
+        end
       else
         (* r2cb (section 62 / c2r cascade): split input strides. The
          * backward leaf reads the layout r2cf WRITES: re at +is_re from
@@ -2042,6 +2063,45 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
       (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
          isa.vec_width)
   end
+  else if !hc2c_natural_bwd then begin
+    (* c2r natural INITIATOR (inverse of hc2c_natural): four SPLIT const inputs
+     * (Rp/Ip direct rows + Rm/Im conjugate-mirror rows, the same sstar map as
+     * the forward but on the INPUT side) -> two PACKED cascade columns
+     * (out_re/out_im). isp/ism = split input row strides; os = packed output
+     * stride. The forward's 6-pointer ABI, flipped. *)
+    Buffer.add_string buf "    const double * __restrict__ Rp,\n";
+    Buffer.add_string buf "    const double * __restrict__ Ip,\n";
+    Buffer.add_string buf "    const double * __restrict__ Rm,\n";
+    Buffer.add_string buf "    const double * __restrict__ Im,\n";
+    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
+    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
+    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
+    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
+    Buffer.add_string buf "    ptrdiff_t isp,\n";
+    Buffer.add_string buf "    ptrdiff_t ism,\n";
+    Buffer.add_string buf "    ptrdiff_t os,\n";
+    if !hc_ranged then begin
+      Buffer.add_string buf "    ptrdiff_t cs_in,\n";
+      Buffer.add_string buf "    ptrdiff_t cs_out,\n";
+      Buffer.add_string buf "    int kcount,\n"
+    end;
+    Buffer.add_string buf "    size_t vl)\n";
+    Buffer.add_string buf "{\n";
+    (match spill with
+    | None -> ()
+    | Some sp ->
+        Buffer.add_string buf
+          (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
+        Buffer.add_string buf
+          (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
+    Buffer.add_string buf
+      (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
+    if !hc_ranged then
+      Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    Buffer.add_string buf
+      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
+         isa.vec_width)
+  end
   else if !hc_strided then begin
     (* hc2hc / hc2c strided variant (section 62): the generic ABI's
      * hardcoded slot stride K cannot address middle cascade stages
@@ -3549,7 +3609,17 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   Buffer.add_string buf "    }\n";
   if !hc_ranged then begin
     let r = !hc_ranged_r in
-    if !hc2c_natural then begin
+    if !hc2c_natural_bwd then begin
+      (* mirror of the forward natural advance: the 4 SPLIT inputs walk like the
+       * forward's split outputs (direct +, mirror -), the 2 PACKED outputs walk
+       * like the forward's packed inputs (re +, im -). *)
+      Buffer.add_string buf "    Rp += cs_in; Ip += cs_in;\n";
+      Buffer.add_string buf "    Rm -= cs_in; Im -= cs_in;\n";
+      Buffer.add_string buf "    out_re += cs_out; out_im -= cs_out;\n";
+      Buffer.add_string buf
+        (Printf.sprintf "    tw_re += %d; tw_im += %d;\n" r r)
+    end
+    else if !hc2c_natural then begin
       Buffer.add_string buf "    in_re += cs_in; in_im -= cs_in;\n";
       Buffer.add_string buf "    Rp += cs_out; Ip += cs_out;\n";
       Buffer.add_string buf "    Rm -= cs_out; Im -= cs_out;\n";
