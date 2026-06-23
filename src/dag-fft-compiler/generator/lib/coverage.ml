@@ -345,6 +345,45 @@ let files (quadrant : string) : (string * string list) list =
                   isa;
                   "--su";
                 ] );
+              (* c2r NATURAL INITIATOR (stage-0 split-input, inverse of the rfft
+               * forward hc2c_nat terminator): reads the SPLIT half-spectrum and
+               * feeds the packed c2r cascade with no repack. --bwd --dif matches
+               * the cascade orientation; verified to invert the forward at 7e-15. *)
+              ( Printf.sprintf "radix%d_hc2c_nat_log3_bwd_%s.c" r isa,
+                [
+                  string_of_int r;
+                  "--hc2c-nat";
+                  "--bwd";
+                  "--dif";
+                  "--log3";
+                  "--t1s";
+                  "--isa";
+                  isa;
+                  "--su";
+                ] );
+              ( Printf.sprintf "radix%d_hc2c_nat_bwd_%s.c" r isa,
+                [
+                  string_of_int r;
+                  "--hc2c-nat";
+                  "--bwd";
+                  "--dif";
+                  "--t1s";
+                  "--isa";
+                  isa;
+                  "--su";
+                ] );
+              ( Printf.sprintf "radix%d_hc2c_nat_rng_bwd_%s.c" r isa,
+                [
+                  string_of_int r;
+                  "--hc2c-nat";
+                  "--bwd";
+                  "--dif";
+                  "--ranged";
+                  "--t1s";
+                  "--isa";
+                  isa;
+                  "--su";
+                ] );
             ])
           radices
   | q -> failwith ("Coverage.files: unknown quadrant " ^ q)

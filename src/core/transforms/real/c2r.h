@@ -19,6 +19,11 @@ typedef struct {
     rfft_r2cb_fn stage_dc[VFFT_RFFT_MAX_STAGES];
     size_t Kb;
     double      *mid_inv[VFFT_RFFT_MAX_STAGES];
+    /* stage-0 natural INITIATOR codelet (hc2c_nat_bwd): reads the SPLIT
+     * half-spectrum interior columns directly. Set iff reg->hc2c_bwd[st0]
+     * exists (nf>=2). NULL -> no natural path for this plan (c2r_execute_natural
+     * not callable; the packed/stride paths are unaffected). */
+    rfft_hc2c_nat_bwd_fn nat_init;
     /* Resolved JIT executor (void* to stay type-agnostic here; cast to c2r_jit_fn
      * by vfft_c2r_execute). NULL -> use the generic c2r_execute_packed. Set by the
      * dispatch under VFFT_USE_JIT = compiled+cached for the winning plan. */

@@ -171,6 +171,23 @@ typedef void (*rfft_hc2c_nat_rng_fn)(
     ptrdiff_t is, ptrdiff_t osp, ptrdiff_t osm,
     ptrdiff_t cs_in, ptrdiff_t cs_out, int kcount, size_t vl);
 
+/* c2r natural INITIATOR (section 69 inverse): the time-reverse of
+ * rfft_hc2c_nat_fn. Reads the SPLIT half-spectrum (Rp/Ip direct rows + Rm/Im
+ * conjugate-mirror rows) and writes 2 PACKED cascade columns (out_re/out_im).
+ * Lets a split-input c2r run the fast packed cascade with no repack — the
+ * mirror of how the forward terminator gives split output at packed speed. */
+typedef void (*rfft_hc2c_nat_bwd_fn)(
+    const double *Rp, const double *Ip, const double *Rm, const double *Im,
+    double *out_re, double *out_im,
+    const double *tw_re, const double *tw_im,
+    ptrdiff_t isp, ptrdiff_t ism, ptrdiff_t os, size_t vl);
+typedef void (*rfft_hc2c_nat_bwd_rng_fn)(
+    const double *Rp, const double *Ip, const double *Rm, const double *Im,
+    double *out_re, double *out_im,
+    const double *tw_re, const double *tw_im,
+    ptrdiff_t isp, ptrdiff_t ism, ptrdiff_t os,
+    ptrdiff_t cs_in, ptrdiff_t cs_out, int kcount, size_t vl);
+
 /* radix-indexed codelet registry; 0 entries = radix unavailable */
 typedef struct {
     rfft_r2cf_fn r2cf[VFFT_RFFT_MAX_RADIX + 1];
@@ -202,6 +219,12 @@ typedef struct {
      * columns, advancing re-streams up / im-streams down by cs per column.
      * Collapses the c2r interior per-k loop to a single call. */
     rfft_hc_rng_fn hc2hc_dif_rng_bwd[VFFT_RFFT_MAX_RADIX + 1];
+    /* c2r NATURAL initiator slots (inverse of the forward hc2c[] terminator):
+     * the stage-0 split-input codelets (--hc2c-nat --bwd --dif). Let a split
+     * half-spectrum feed the fast packed c2r cascade with no repack. */
+    rfft_hc2c_nat_bwd_fn hc2c_bwd[VFFT_RFFT_MAX_RADIX + 1];
+    rfft_hc2c_nat_bwd_fn hc2c_bwd_log3[VFFT_RFFT_MAX_RADIX + 1];
+    rfft_hc2c_nat_bwd_rng_fn hc2c_bwd_rng[VFFT_RFFT_MAX_RADIX + 1];
 } rfft_codelets_t;
 
 typedef struct {

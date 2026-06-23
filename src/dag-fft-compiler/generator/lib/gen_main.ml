@@ -303,7 +303,12 @@ let run (argv : string array) : unit =
   if !r2c_term_ls then Emit_c.r2c_term_ls_r := !r2c_term_ls_r;
   Emit_c.hc_strided := !hc2hc || !hc2c || !hc2c_nat;
   Emit_c.n1_oop_strided := !oop_strided;
-  Emit_c.hc2c_natural := !hc2c_nat;
+  (* hc2c-nat forward emits the 2-packed-in/4-split-out terminator ABI; the same
+   * flag with --bwd --dif emits the INVERSE (4-split-in/2-packed-out) c2r natural
+   * initiator. Split the ABI selector on sign; everything else (strided, ranged,
+   * r/sstar, naming sgn_suffix) is shared. *)
+  Emit_c.hc2c_natural := !hc2c_nat && not !bwd;
+  Emit_c.hc2c_natural_bwd := !hc2c_nat && !bwd;
   Emit_c.hc_ranged := !ranged && (!hc2hc || !hc2c_nat);
   if !ranged then Emit_c.hc_ranged_r := n;
   if !hc2c_nat then begin

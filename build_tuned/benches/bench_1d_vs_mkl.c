@@ -1531,6 +1531,11 @@ int main(int argc, char **argv)
         {
             c2r1d = 1;
         }
+        else if (strcmp(argv[1], "--c2rcalib") == 0)
+        {
+            c2r1d = 1;     /* reuse the c2r setup (rreg + wisdoms) */
+            c2rcalib = 1;  /* but measure BOTH paths + write c2r_path.txt */
+        }
         else
             break;
         argv++;
@@ -1742,6 +1747,28 @@ int main(int argc, char **argv)
         if (hc2c) vfft_r2c_dispatch_set_c2c_wisdom(&c2cwis); /* SPLIT-path stride inner */
         if (getenv("VFFT_C2R_PACK_ALL")) vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K */
         if (getenv("VFFT_C2R_STRIDE_ALL")) vfft_r2c_dispatch_set_decouple_min_k(0);          /* probe: force STRIDE all K */
+        const char *c2r_pathf = "../../src/dag-fft-compiler/generator/generated/c2r_path.txt";
+        if (c2rcalib)
+        {
+            /* CALIBRATE: measure BOTH dag paths per cell, pick the faster, write the path
+             * table. No MKL -> no high-N*K crash; both dag paths are ASan-clean, so the
+             * full grid runs in one process. This drops the hardcoded crossover. */
+            FILE *pf = fopen(c2r_pathf, "w");
+            if (pf) fprintf(pf, "# 1D c2r path wisdom: N K path (0=packed 1=stride), measured per cell\n");
+            printf("=== c2r PATH calibration (measure both packed+stride, pick winner; no MKL, core%d) ===\n", core);
+            int Nc[] = {256, 512, 1024};
+            size_t Kc[] = {8, 16, 32, 64, 128, 256};
+            for (int ni = 0; ni < 3; ni++)
+                for (int ki = 0; ki < 6; ki++)
+                {
+                    run_c2r_calib_cell(Nc[ni], Kc[ki], &rreg, &reg, pf);
+                    pace(pace_ms);
+                }
+            if (pf) fclose(pf);
+            printf("c2r path wisdom -> %s\n", c2r_pathf);
+            return 0;
+        }
+        vfft_c2r_path_load(c2r_pathf); /* vs-MKL bench routes via the calibrated path (miss -> threshold) */
         /* target_N>0 => single-cell (one process per cell) — isolates the MKL-comparison
          * heap interaction that accumulates across cells on Windows at high N*K. */
         FILE *o2 = fopen(csv, target_N > 0 ? "a" : "w");

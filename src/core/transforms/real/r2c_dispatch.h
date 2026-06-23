@@ -40,36 +40,39 @@
 #include "rfft.h"
 #include "r2c.h"
 #ifdef VFFT_USE_JIT
-#include "rfft_jit_runtime.h"   /* after rfft.h: resolve the rfft winner's JIT executor */
+#include "rfft_jit_runtime.h" /* after rfft.h: resolve the rfft winner's JIT executor */
 #endif
 #include <stdlib.h>
 
 /* Output layout the caller wants. */
-typedef enum {
-    VFFT_R2C_PACKED = 0,  /* packed halfcomplex, one N x K plane (rfft native) */
-    VFFT_R2C_SPLIT  = 1   /* split: separate out_re / out_im (stride native)   */
+typedef enum
+{
+    VFFT_R2C_PACKED = 0, /* packed halfcomplex, one N x K plane (rfft native) */
+    VFFT_R2C_SPLIT = 1   /* split: separate out_re / out_im (stride native)   */
 } vfft_r2c_layout_t;
 
 /* Which executor a plan resolved to (introspection / testing). */
-typedef enum {
-    VFFT_R2C_PATH_RFFT   = 0,
+typedef enum
+{
+    VFFT_R2C_PATH_RFFT = 0,
     VFFT_R2C_PATH_STRIDE = 1
 } vfft_r2c_path_t;
 
 /* Unified plan handle. Exactly one of {rfft, stride} is non-NULL. */
-typedef struct {
-    vfft_r2c_path_t   path;
+typedef struct
+{
+    vfft_r2c_path_t path;
     vfft_r2c_layout_t layout;
-    int               N;
-    size_t            K;
-    rfft_plan_t      *rfft;    /* set iff path == RFFT */
-    stride_plan_t    *stride;  /* set iff path == STRIDE */
+    int N;
+    size_t K;
+    rfft_plan_t *rfft;     /* set iff path == RFFT */
+    stride_plan_t *stride; /* set iff path == STRIDE */
 #ifdef VFFT_USE_JIT
     /* JIT-resolved rfft executor for the winning plan (NULL -> use the generic
      * rfft executor). Resolved at create-time = compiled+cached on first build
      * (the "compile the winner after deciding" step). One per layout. */
-    rfft_jit_fn      jit_packed;
-    rfft_jit_nat_fn  jit_natural;
+    rfft_jit_fn jit_packed;
+    rfft_jit_nat_fn jit_natural;
 #endif
 } vfft_r2c_plan_t;
 
@@ -117,25 +120,40 @@ static inline int vfft_r2c_choose_rfft_factors(
      * greedy chooser pick 32 as factors[0] (a stage) and fail. Leaf-32 plans
      * (e.g. the (8,32) doc-60 winner) come from the calibrator/wisdom, not here. */
     static const unsigned char default_have[VFFT_RFFT_MAX_RADIX + 1] = {
-        [2]=1,[3]=1,[4]=1,[5]=1,[7]=1,[8]=1,[16]=1
-    };
-    if (!have) have = default_have;
+        [2] = 1, [3] = 1, [4] = 1, [5] = 1, [7] = 1, [8] = 1, [16] = 1};
+    if (!have)
+        have = default_have;
     /* Candidate radixes, largest first (prefer big radixes = fewer stages).
      * Capped at VFFT_RFFT_MAX_RADIX. */
-    static const int cand[] = { 32, 16, 8, 7, 5, 4, 3, 2 };
+    static const int cand[] = {32, 16, 8, 7, 5, 4, 3, 2};
     int rem = N, nf = 0;
-    while (rem > 1) {
-        if (nf >= max_nf) return 0;       /* too many stages — give up */
+    while (rem > 1)
+    {
+        if (nf >= max_nf)
+            return 0; /* too many stages — give up */
         int picked = 0;
-        for (unsigned ci = 0; ci < sizeof(cand) / sizeof(cand[0]); ci++) {
+        for (unsigned ci = 0; ci < sizeof(cand) / sizeof(cand[0]); ci++)
+        {
             int r = cand[ci];
-            if (r > VFFT_RFFT_MAX_RADIX) continue;
-            if (!have[r]) continue;
-            if (rem % r == 0) { factors[nf++] = r; rem /= r; picked = 1; break; }
+            if (r > VFFT_RFFT_MAX_RADIX)
+                continue;
+            if (!have[r])
+                continue;
+            if (rem % r == 0)
+            {
+                factors[nf++] = r;
+                rem /= r;
+                picked = 1;
+                break;
+            }
         }
-        if (!picked) return 0;            /* a prime factor we can't cover */
+        if (!picked)
+            return 0; /* a prime factor we can't cover */
     }
-    if (nf == 0) { factors[nf++] = 1; }   /* N == 1 degenerate */
+    if (nf == 0)
+    {
+        factors[nf++] = 1;
+    } /* N == 1 degenerate */
     return nf;
 }
 
@@ -171,25 +189,31 @@ static inline int vfft_r2c_choose_rfft_factors(
 static inline size_t _vfft_r2c_block_k(size_t K)
 {
     int T = stride_get_num_threads();
-    if (T < 1) T = 1;
-    if (T <= 1 || K < 16) return K;                 /* serial: one block */
-    size_t target = (K / (size_t)T) & ~(size_t)7;   /* round K/T down to mult of 8 */
-    if (target < 8) target = 8;
+    if (T < 1)
+        T = 1;
+    if (T <= 1 || K < 16)
+        return K;                                 /* serial: one block */
+    size_t target = (K / (size_t)T) & ~(size_t)7; /* round K/T down to mult of 8 */
+    if (target < 8)
+        target = 8;
     for (size_t b = target; b >= 8; b -= 8)
-        if (K % b == 0) return b;                   /* largest mult-of-8 divisor <= K/T */
-    return K;                                        /* no clean sub-block: stay serial */
+        if (K % b == 0)
+            return b; /* largest mult-of-8 divisor <= K/T */
+    return K;         /* no clean sub-block: stay serial */
 }
 
 static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
                                                     vfft_proto_registry_t *c2c_reg)
 {
-    if (!c2c_reg) return NULL;
+    if (!c2c_reg)
+        return NULL;
     /* MT: build the inner c2c at block_K (the per-block batch width), not full K.
      * block_K often lands on a calibrated cell too (e.g. K=256 -> 32 @T8), so the
      * c2c wisdom usually still hits; otherwise it's the factorizer default at block_K. */
     size_t block_K = _vfft_r2c_block_k(K);
     stride_plan_t *inner = vfft_proto_auto_plan(N / 2, block_K, c2c_reg, _vfft_r2c_c2c_wis);
-    if (!inner) return NULL;
+    if (!inner)
+        return NULL;
     /* Prefer a DIT inner — PERFORMANCE, not correctness. DIF inners are now fully
      * correct (stride_r2c_plan picks the DIF-aware recombine perm), but pack-fusion
      * is a DIT-leaf technique (no-twiddle leaf at stage 0): a DIF inner can't fuse
@@ -197,16 +221,19 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
      * standalone-c2c edge gains. Measured N=256 K=32: DIT+fused 0.99× MKL vs
      * DIF+explicit-pack 0.87×. So when c2c wisdom picks DIF for the inner cell,
      * rebuild the same factorization as DIT (default T1S). */
-    if (inner->use_dif_forward) {
+    if (inner->use_dif_forward)
+    {
         int nf = inner->num_stages;
         int factors[STRIDE_MAX_STAGES];
-        for (int s = 0; s < nf; s++) factors[s] = inner->factors[s];
+        for (int s = 0; s < nf; s++)
+            factors[s] = inner->factors[s];
         stride_plan_destroy(inner);
         inner = vfft_proto_plan_create_ex(N / 2, block_K, factors, /*variants=*/NULL, nf,
                                           /*use_dif_forward=*/0, c2c_reg);
-        if (!inner) return NULL;
+        if (!inner)
+            return NULL;
     }
-    stride_plan_t *sp = stride_r2c_plan(N, K, block_K, inner);  /* frees inner on failure */
+    stride_plan_t *sp = stride_r2c_plan(N, K, block_K, inner); /* frees inner on failure */
     return sp;
 }
 
@@ -215,36 +242,51 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     const rfft_codelets_t *rfft_reg, const unsigned char *have,
     vfft_proto_registry_t *c2c_reg)
 {
-    if (N < 2 || K == 0 || (K % 8) != 0) return NULL;
+    if (N < 2 || K == 0 || (K % 8) != 0)
+        return NULL;
 
     vfft_r2c_plan_t *p = (vfft_r2c_plan_t *)calloc(1, sizeof(*p));
-    if (!p) return NULL;
-    p->N = N; p->K = K; p->layout = layout;
+    if (!p)
+        return NULL;
+    p->N = N;
+    p->K = K;
+    p->layout = layout;
 
     /* ---- HYBRID: prefer the decoupled stride path at high K (SPLIT only) ----
      * rfft loses badly at high K (~0.47x MKL) while decoupled-r2c hits ~0.91x;
      * the reverse holds at low K. When K crosses the calibrated threshold and a
      * c2c registry is present, take stride first; otherwise fall through to rfft. */
     if (layout == VFFT_R2C_SPLIT && (N % 2) == 0 &&
-        (size_t)K >= _vfft_r2c_decouple_min_k && c2c_reg) {
+        (size_t)K >= _vfft_r2c_decouple_min_k && c2c_reg)
+    {
         stride_plan_t *sp = _vfft_r2c_build_stride(N, K, c2c_reg);
-        if (sp) { p->path = VFFT_R2C_PATH_STRIDE; p->stride = sp; return p; }
+        if (sp)
+        {
+            p->path = VFFT_R2C_PATH_STRIDE;
+            p->stride = sp;
+            return p;
+        }
     }
 
     /* ---- try rfft (primary) ---- */
-    if (rfft_reg) {
+    if (rfft_reg)
+    {
         int factors[VFFT_RFFT_MAX_STAGES];
         int nf = 0;
-        const int *variant = NULL;   /* NULL => default policy in rfft_plan_create_ex */
+        const int *variant = NULL; /* NULL => default policy in rfft_plan_create_ex */
         /* WISDOM-FIRST: a calibrated entry pins factorization + per-stage variant;
          * else the fewest-stage heuristic (today's behavior, variant=NULL). */
         const vfft_proto_wisdom_entry_t *we =
             _vfft_r2c_wis ? vfft_proto_wisdom_lookup(_vfft_r2c_wis, N, (size_t)K) : NULL;
-        if (we && we->nf >= 1 && we->nf <= VFFT_RFFT_MAX_STAGES) {
+        if (we && we->nf >= 1 && we->nf <= VFFT_RFFT_MAX_STAGES)
+        {
             nf = we->nf;
-            for (int i = 0; i < nf; i++) factors[i] = we->factors[i];
+            for (int i = 0; i < nf; i++)
+                factors[i] = we->factors[i];
             variant = we->variants;
-        } else {
+        }
+        else
+        {
             nf = vfft_r2c_choose_rfft_factors(N, have, factors,
                                               VFFT_RFFT_MAX_STAGES);
         }
@@ -253,14 +295,18 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
          * JIT executor are the same (smoke-proven bit-exact for matched variants).
          * Wisdom -> its variants; heuristic -> all-flat (guaranteed codelets). */
         int vbuf[VFFT_RFFT_MAX_STAGES];
-        if (nf >= 1) {
-            for (int i = 0; i < nf; i++) vbuf[i] = (variant ? variant[i] : 0);
+        if (nf >= 1)
+        {
+            for (int i = 0; i < nf; i++)
+                vbuf[i] = (variant ? variant[i] : 0);
             variant = vbuf;
         }
 #endif
-        if (nf >= 1) {
+        if (nf >= 1)
+        {
             rfft_plan_t *rp = rfft_plan_create_ex(N, K, factors, nf, variant, rfft_reg);
-            if (rp) {
+            if (rp)
+            {
                 p->path = VFFT_R2C_PATH_RFFT;
                 p->rfft = rp;
 #ifdef VFFT_USE_JIT
@@ -270,7 +316,7 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
                 if (p->layout == VFFT_R2C_SPLIT)
                     p->jit_natural = vfft_rfft_jit_resolve_natural(N, K, factors, nf, vbuf, "avx2");
                 else
-                    p->jit_packed  = vfft_rfft_jit_resolve(N, K, factors, nf, vbuf, "avx2");
+                    p->jit_packed = vfft_rfft_jit_resolve(N, K, factors, nf, vbuf, "avx2");
 #endif
                 return p;
             }
@@ -278,7 +324,8 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     }
 
     /* ---- stride fallback ---- */
-    if (layout == VFFT_R2C_PACKED) {
+    if (layout == VFFT_R2C_PACKED)
+    {
         /* stride cannot produce packed output; no path covers the request */
         free(p);
         return NULL;
@@ -286,7 +333,8 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
     {
         /* inner c2c plan over N/2 (the stride r2c contract), wisdom-best. */
         stride_plan_t *sp = _vfft_r2c_build_stride(N, K, c2c_reg);
-        if (sp) {
+        if (sp)
+        {
             p->path = VFFT_R2C_PATH_STRIDE;
             p->stride = sp;
             return p;
@@ -304,23 +352,50 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
  * below the lane-split SIMD floor) fall back to the folded single-thread executor.
  * The MT path uses the generic ranged executor (not JIT — JIT covers the folded ST
  * path; a range-aware JIT is a follow-up). */
-typedef struct { const rfft_plan_t *p; const double *x; double *o_re, *o_im; size_t k0, kw; } _rfft_nat_mt_arg;
-static void _rfft_nat_mt_tramp(void *a) { _rfft_nat_mt_arg *x = (_rfft_nat_mt_arg *)a;
-    rfft_execute_fwd_natural_range(x->p, x->x, x->o_re, x->o_im, x->k0, x->kw); }
-static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im) {
-    size_t K = rp->K; int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T <= 1 || K < 16) { rfft_execute_fwd_natural(rp, x, o_re, o_im); return; }
-    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7; if (S == 0) S = 8;
-    _rfft_nat_mt_arg a[64]; int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
-        size_t k0 = (size_t)t * S; if (k0 >= K) break; size_t ke = k0 + S; if (ke > K) ke = K;
-        a[nd] = (_rfft_nat_mt_arg){ rp, x, o_re, o_im, k0, ke - k0 };
-        _stride_pool_dispatch(&_stride_workers[nd], _rfft_nat_mt_tramp, &a[nd]); nd++;
+typedef struct
+{
+    const rfft_plan_t *p;
+    const double *x;
+    double *o_re, *o_im;
+    size_t k0, kw;
+} _rfft_nat_mt_arg;
+static void _rfft_nat_mt_tramp(void *a)
+{
+    _rfft_nat_mt_arg *x = (_rfft_nat_mt_arg *)a;
+    rfft_execute_fwd_natural_range(x->p, x->x, x->o_re, x->o_im, x->k0, x->kw);
+}
+static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im)
+{
+    size_t K = rp->K;
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T <= 1 || K < 16)
+    {
+        rfft_execute_fwd_natural(rp, x, o_re, o_im);
+        return;
+    }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    if (S == 0)
+        S = 8;
+    _rfft_nat_mt_arg a[64];
+    int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    {
+        size_t k0 = (size_t)t * S;
+        if (k0 >= K)
+            break;
+        size_t ke = k0 + S;
+        if (ke > K)
+            ke = K;
+        a[nd] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, k0, ke - k0};
+        _stride_pool_dispatch(&_stride_workers[nd], _rfft_nat_mt_tramp, &a[nd]);
+        nd++;
     }
     size_t s0 = S < K ? S : K;
     rfft_execute_fwd_natural_range(rp, x, o_re, o_im, 0, s0);
-    if (nd) _stride_pool_wait_all();
+    if (nd)
+        _stride_pool_wait_all();
 }
 
 /* Execute forward. For PACKED: out is the N x K halfcomplex plane; out_im is
@@ -330,20 +405,38 @@ static inline void vfft_r2c_execute_fwd(
     const vfft_r2c_plan_t *p, const double *real_in,
     double *out, double *out_im)
 {
-    if (p->path == VFFT_R2C_PATH_RFFT) {
-        if (p->layout == VFFT_R2C_PACKED) {
+    if (p->path == VFFT_R2C_PATH_RFFT)
+    {
+        if (p->layout == VFFT_R2C_PACKED)
+        {
 #ifdef VFFT_USE_JIT
-            if (p->jit_packed) { p->jit_packed(p->rfft, real_in, out); return; }
+            if (p->jit_packed)
+            {
+                p->jit_packed(p->rfft, real_in, out);
+                return;
+            }
 #endif
             rfft_execute_fwd_packed(p->rfft, real_in, out);
-        } else {
-            if (stride_get_num_threads() > 1) { rfft_natural_mt(p->rfft, real_in, out, out_im); return; }
+        }
+        else
+        {
+            if (stride_get_num_threads() > 1)
+            {
+                rfft_natural_mt(p->rfft, real_in, out, out_im);
+                return;
+            }
 #ifdef VFFT_USE_JIT
-            if (p->jit_natural) { p->jit_natural(p->rfft, real_in, out, out_im); return; }
+            if (p->jit_natural)
+            {
+                p->jit_natural(p->rfft, real_in, out, out_im);
+                return;
+            }
 #endif
             rfft_execute_fwd_natural(p->rfft, real_in, out, out_im);
         }
-    } else {
+    }
+    else
+    {
         /* stride is SPLIT only (guaranteed by plan_create routing) */
         stride_execute_r2c(p->stride, real_in, out, out_im);
     }
@@ -351,9 +444,12 @@ static inline void vfft_r2c_execute_fwd(
 
 static inline void vfft_r2c_plan_destroy(vfft_r2c_plan_t *p)
 {
-    if (!p) return;
-    if (p->rfft)   rfft_plan_destroy(p->rfft);
-    if (p->stride) stride_plan_destroy(p->stride);
+    if (!p)
+        return;
+    if (p->rfft)
+        rfft_plan_destroy(p->rfft);
+    if (p->stride)
+        stride_plan_destroy(p->stride);
     free(p);
 }
 
