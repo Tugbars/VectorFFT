@@ -131,6 +131,10 @@ static inline c2r_plan_t *c2r_plan_create_ex(int N, size_t K,
             if (!p->mid_inv[d]) { c2r_plan_destroy(p); return NULL; }
         }
     }
+    /* stage-0 natural initiator codelet (split-input). Optional: NULL leaves the
+     * packed/stride paths untouched and just makes c2r_execute_natural unavailable. */
+    if (nf >= 2)
+        p->nat_init = reg->hc2c_bwd[base->st[0].radix];
     p->Kb = K;
     {
         const char *e = getenv("VFFT_C2R_KB");
@@ -255,6 +259,134 @@ static inline void c2r_execute_packed(const c2r_plan_t *p,
                 p->leaf(src + g * K + bb, src + g * K + bb + NK,
                         out + g * K + bb, SK, -SK, SK, bw);
         }
+    }
+}
+
+/* Split-input mid (k=m/2) inverse, the natural analog of c2r_mid_inv_column.
+ * The forward natural mid (rfft_mid_column, mode 1) stored, for each sI with
+ * pp = m/2 + sI*m <= nh: acc_r[sI] at in_re[pp*K], acc_i[sI] at in_im[pp*K].
+ * The packed slot t (= position m/2 + t*m) holds acc_r[t] if pp_t <= nh, else
+ * the mirror's acc_i (sI = r-1-t, read from in_im). Reconstruct mid[t] from the
+ * split planes, then apply the inverse matrix Minv -> dst (the mid column legs). */
+static inline void c2r_mid_inv_column_natural(int r, int m, size_t K, size_t vl,
+                                              size_t nh, const double *in_re,
+                                              const double *in_im,
+                                              const double *Minv, double *dst_base)
+{
+    for (size_t v = 0; v < vl; v++) {
+        double mid[64];
+        for (int t = 0; t < r; t++) {
+            size_t pp = (size_t)(m / 2) + (size_t)t * (size_t)m;
+            if (pp <= nh)
+                mid[t] = in_re[pp * K + v];
+            else {
+                int sI = r - 1 - t;
+                size_t ppm = (size_t)(m / 2) + (size_t)sI * (size_t)m;
+                mid[t] = in_im[ppm * K + v];
+            }
+        }
+        for (int j = 0; j < r; j++) {
+            double acc = 0.0;
+            for (int t = 0; t < r; t++) acc += Minv[j * r + t] * mid[t];
+            dst_base[(size_t)j * K + v] = acc;
+        }
+    }
+}
+
+/* c2r_execute_natural — the SPLIT-input c2r (the inverse of rfft_execute_fwd_natural).
+ * in_re/in_im are the (N/2+1)xK natural half-spectrum (row f = frequency f). The
+ * stage-0 initiator inverts the forward terminator (interior via hc2c_nat_bwd, DC/
+ * Nyquist via inverse-gather + r2cb, mid via the split mid inverse), writing the
+ * packed cascade intermediate planeA; stages 1..nf-2 and the leaf then run exactly
+ * as c2r_execute_packed. No repack — the mirror of how the forward terminator gives
+ * split output at packed speed. Requires nf>=2 and p->nat_init != NULL. Full width
+ * (no Kb blocking) — the natural path is the low/mid-K winner. out = N*x. */
+static inline void c2r_execute_natural(const c2r_plan_t *p,
+                                       const double *in_re, const double *in_im,
+                                       double *out)
+{
+    const rfft_plan_t *b = p->base;
+    const int N = b->N;
+    const size_t K = b->K;
+    const size_t NK = (size_t)N * K;
+    const size_t nh = (size_t)(N / 2);
+
+    /* ===== STAGE 0 INITIATOR: split half-spectrum -> planeA (packed cascade input) ===== */
+    {
+        const rfft_stage_t *st0 = &b->st[0];
+        const int r = st0->radix, m = st0->m;
+        const ptrdiff_t mK = (ptrdiff_t)((size_t)m * K);
+        double *cur0 = b->planeA;
+
+        /* (1) interior columns k=1..(m-1)/2: hc2c_nat_bwd reads split rows k,m-k */
+        for (int k = 1; k <= (m - 1) / 2; k++)
+            p->nat_init(in_re + (size_t)k * K, in_im + (size_t)k * K,
+                        in_re + (size_t)(m - k) * K, in_im + (size_t)(m - k) * K,
+                        cur0 + ((size_t)(r * k)) * K, cur0 + ((size_t)(r * (m - k))) * K,
+                        st0->tw_re + (size_t)(k - 1) * r, st0->tw_im + (size_t)(k - 1) * r,
+                        mK, mK, (ptrdiff_t)K, K);
+
+        /* (2) DC / sub-DC / Nyquist: inverse-gather natural rows into nat_k0 (the
+         * r2cf-output halfcomplex layout), then r2cb -> cur0 col-0 group. */
+        double *nk = b->nat_k0;
+        memcpy(nk, in_re, K * 8);
+        for (int sI = 1; sI < (r + 1) / 2; sI++) {
+            memcpy(nk + (size_t)sI * K, in_re + (size_t)sI * (size_t)m * K, K * 8);
+            memcpy(nk + (size_t)(r - sI) * K, in_im + (size_t)sI * (size_t)m * K, K * 8);
+        }
+        if (r % 2 == 0)
+            memcpy(nk + (size_t)(r / 2) * K, in_re + nh * K, K * 8);
+        p->stage_dc[0](nk, nk + (size_t)r * K, cur0,
+                       (ptrdiff_t)K, -(ptrdiff_t)K, (ptrdiff_t)K, K);
+
+        /* (3) mid column (k=m/2): split mid inverse -> cur0 col r*(m/2). */
+        if (st0->has_mid)
+            c2r_mid_inv_column_natural(r, m, K, K, nh, in_re, in_im,
+                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K);
+    }
+
+    /* ===== STAGES d=1..nf-2: identical to c2r_execute_packed (full width) ===== */
+    double *src = b->planeA;
+    for (int d = 1; d <= b->nf - 2; d++) {
+        const rfft_stage_t *st = &b->st[d];
+        const int r = st->radix, m = st->m;
+        const size_t Q = st->Q;
+        const ptrdiff_t QK = (ptrdiff_t)(Q * K);
+        const ptrdiff_t QmK = (ptrdiff_t)(Q * (size_t)m * K);
+        const int folded = (Q > 1);
+        const size_t Qfold = folded ? 1 : Q;
+        const size_t vlf = folded ? (Q * K) : K;
+        double *dst = (d % 2 == 0) ? b->planeA : b->planeB;
+        for (size_t q = 0; q < Qfold; q++) {
+            const double *srcq = src + q * K;
+            double *dstq = dst + q * K;
+            p->stage_dc[d](srcq, srcq + NK, dstq, QmK, -QmK, QK, vlf);
+            if (p->stage_hcr[d] && st->kmax >= 1) {
+                p->stage_hcr[d](
+                    srcq + (Q * (size_t)1) * K, srcq + (Q * (size_t)(m - 1)) * K,
+                    dstq + (Q * (size_t)(r * 1)) * K,
+                    dstq + (Q * (size_t)(r * (m - 1))) * K,
+                    st->tw_re, st->tw_im, QmK, QK,
+                    (ptrdiff_t)(Q * K), (ptrdiff_t)(Q * (size_t)r * K), st->kmax, vlf);
+            } else
+                for (int k = 1; k <= st->kmax; k++)
+                    p->stage_hc[d](srcq + (Q * (size_t)k) * K,
+                                   srcq + (Q * (size_t)(m - k)) * K,
+                                   dstq + (Q * (size_t)(r * k)) * K,
+                                   dstq + (Q * (size_t)(r * (m - k))) * K,
+                                   st->tw_re + (size_t)(k - 1) * r,
+                                   st->tw_im + (size_t)(k - 1) * r, QmK, QK, vlf);
+            if (st->has_mid)
+                c2r_mid_inv_column(r, m, Q, K, vlf, srcq, p->mid_inv[d],
+                                   dstq + (Q * (size_t)(r * (m / 2))) * K);
+        }
+        src = dst;
+    }
+
+    /* ===== LEAF -> out (real) ===== */
+    {
+        const ptrdiff_t SK = (ptrdiff_t)(b->S * K);
+        p->leaf(src, src + NK, out, SK, -SK, SK, b->S * K);
     }
 }
 
