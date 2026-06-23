@@ -249,7 +249,31 @@ static void trig_cell(vfft_transform_t t, const char *nm, int N, size_t K, doubl
         if (e > rt)
             rt = e;
     }
-    printf("  %-7s N=%-5d K=%-4zu  roundtrip=%.0e  %s\n", nm, N, K, rt, (rt < 1e-9) ? "OK" : "CHECK");
+    /* MT check: an nthreads=8 plan must produce the SAME forward output as ST. The
+     * trig K-splits its pre/post passes + drives the inner r2c's own MT; under --jit
+     * the inner c2c runs the JIT'd executor per MT block. K-split lanes are
+     * independent -> bit-identical to ST (any diff = a real MT/JIT-compose bug). */
+    double mtd = -1.0;
+    vfft_config_t c8 = c;
+    c8.nthreads = 8;
+    vfft_plan p8 = vfft_create(&c8);
+    if (p8)
+    {
+        double *y8 = AAL(NK * 8);
+        vfft_execute(p8, VFFT_FORWARD, x, NULL, y8, NULL);
+        mtd = 0;
+        for (size_t i = 0; i < NK; i++)
+        {
+            double e = fabs(y8[i] - y[i]);
+            if (e > mtd)
+                mtd = e;
+        }
+        AFR(y8);
+        vfft_destroy(p8);
+    }
+    int ok = (rt < 1e-9) && (mtd >= 0.0 && mtd < 1e-12);
+    printf("  %-7s N=%-5d K=%-4zu  roundtrip=%.0e  MT==ST=%.0e  %s\n",
+           nm, N, K, rt, mtd, ok ? "OK" : "CHECK");
     vfft_destroy(p);
     AFR(x);
     AFR(y);

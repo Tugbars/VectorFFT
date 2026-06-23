@@ -450,15 +450,40 @@ static stride_plan_t *_inner_c2c(int innerN, size_t K, vfft_rigor_t rigor,
     return vfft_proto_auto_plan(innerN, K, reg, cw);
 }
 
-/* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy). */
+/* JIT the inner c2c of a trig stride-r2c plan: resolve the inner's JIT fwd/bwd and
+ * wire them in (the trig forward drives the inner via the r2c forward, so inner_jit_fwd
+ * is what runs; bwd set for completeness). NULL-safe / no-op without VFFT_USE_JIT —
+ * exactly the Rader/Bluestein inner-JIT pattern. Transparent: no behavior change beyond
+ * running the JIT'd inner codelets when JIT is compiled in. */
+static inline void _trig_r2c_set_inner_jit(stride_plan_t *r, stride_plan_t *ic)
+{
+#ifdef VFFT_USE_JIT
+    stride_r2c_set_inner_jit_fwd(r, vfft_proto_plan_jit_fwd(ic));
+    stride_r2c_set_inner_jit_bwd(r, vfft_proto_plan_jit_bwd(ic));
+#else
+    (void)r;
+    (void)ic;
+#endif
+}
+
+/* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy).
+ * The inner real-FFT (r2c) / complex-FFT (DCT-IV) rides the c2c wisdom (calibrate-on-
+ * miss) AND, when JIT is compiled in, its inner c2c runs the JIT'd executor. */
 static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
                                   const vfft_proto_registry_t *reg,
                                   vfft_proto_wisdom_t *cw, int recalib)
 {
     if (t == VFFT_DCT4)
-    { /* inner = half-N complex FFT */
+    { /* inner = half-N complex FFT (driven backward) */
         stride_plan_t *c2c = _inner_c2c(N / 2, K, rigor, reg, cw, recalib);
-        return c2c ? stride_dct4_plan(N, K, c2c) : NULL;
+        if (!c2c)
+            return NULL;
+        stride_plan_t *dp = stride_dct4_plan(N, K, c2c);
+#ifdef VFFT_USE_JIT
+        if (dp) /* DCT-IV drives the inner FFT backward -> JIT its bwd */
+            stride_dct4_set_inner_jit_bwd(dp, vfft_proto_plan_jit_bwd(c2c));
+#endif
+        return dp;
     }
     if (t == VFFT_DCT1 || t == VFFT_DST1)
     { /* boundary r2c of M */
@@ -467,6 +492,7 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
         stride_plan_t *r = ic ? stride_r2c_plan(M, K, K, ic) : NULL;
         if (!r)
             return NULL;
+        _trig_r2c_set_inner_jit(r, ic);
         return (t == VFFT_DCT1) ? stride_dct1_plan(N, K, r) : stride_dst1_plan(N, K, r);
     }
     /* DCT-II/III, DST-II/III, DHT — all start from an N-point r2c plan. */
@@ -474,6 +500,7 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
     stride_plan_t *r = ic ? stride_r2c_plan(N, K, K, ic) : NULL;
     if (!r)
         return NULL;
+    _trig_r2c_set_inner_jit(r, ic);
     if (t == VFFT_DHT)
         return stride_dht_plan(N, K, r);
     stride_plan_t *dct2 = stride_dct2_plan(N, K, r);

@@ -63,6 +63,9 @@ typedef struct {
      * where natural-order bin k' lands. We read psi at perm[k']. */
     int *perm;
     stride_plan_t *fft_plan; /* owned: N/2-point complex FFT plan */
+    /* optional JIT'd inner backward executor (the inner FFT is driven backward);
+     * NULL -> generic stride_execute_bwd. Set by stride_dct4_set_inner_jit_bwd. */
+    vfft_proto_exec_fn inner_jit_bwd;
 } stride_dct4_data_t;
 
 
@@ -175,8 +178,11 @@ static void _dct4_execute(void *data, double *re, double *im) {
         _dct4_worker_pre(&args[0]);
         _stride_pool_wait_all();
 
-        /* Phase 2: inner backward N/2-point FFT (uses its own MT) */
-        stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
+        /* Phase 2: inner backward N/2-point FFT (JIT'd inner if wired; own MT) */
+        if (d->inner_jit_bwd)
+            d->inner_jit_bwd(d->fft_plan, d->psi_re, d->psi_im, d->fft_plan->K, d->fft_plan->K, 0);
+        else
+            stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
 
         /* Phase 3: post-twiddle + unpack, T-parallel */
         for (int t = 1; t < T; t++)
@@ -211,7 +217,10 @@ static void _dct4_execute(void *data, double *re, double *im) {
     /* 2. Apply N/2-point backward complex FFT.
      *    Our backward executor takes input in fwd-output (digit-reversed)
      *    layout and produces natural-order output. We pre-permuted in step 1. */
-    stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
+    if (d->inner_jit_bwd)
+        d->inner_jit_bwd(d->fft_plan, d->psi_re, d->psi_im, d->fft_plan->K, d->fft_plan->K, 0);
+    else
+        stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
 
     /* 3. Post-twiddle + unpack. After our bwd (which interprets digit-reversed
      *    input → natural output), psi at position k' is bwd_DFT[k']. Read naturally.
@@ -338,6 +347,14 @@ static stride_plan_t *stride_dct4_plan(int N, size_t K, stride_plan_t *fft_plan_
     plan->override_data    = d;
 
     return plan;
+}
+
+/* Wire a JIT'd inner backward executor for the N/2-point complex FFT that DCT-IV
+ * drives backward. NULL -> generic stride_execute_bwd (no behavior change). */
+static inline void stride_dct4_set_inner_jit_bwd(stride_plan_t *plan, vfft_proto_exec_fn bwd)
+{
+    if (plan && plan->override_data)
+        ((stride_dct4_data_t *)plan->override_data)->inner_jit_bwd = bwd;
 }
 
 
