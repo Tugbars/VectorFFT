@@ -264,7 +264,56 @@ K≥32. Source: `bench_1d_vs_mkl.c --r2c [--mt]` → `vfft_perf_tuned_r2c{,_mt}.
 > K=16 only splits ~2-way. The split layout is still the edge — it lets us thread the batch
 > where MKL's real-FFT can't at modest N (MKL-T8 is ~20× slower than MKL-T1 at 256/8). The same
 > layout that taxed us single-thread is the multithreading edge — the design trade paying off.
-> (c2r mirrors this; its JIT is built + wired, not separately benched here yet.)
+
+### 1D C2R (backward) — the natural split path
+
+c2r (complex→real, the r2c inverse) gets the **same** split-layout treatment, and it's the
+direct mirror of r2c's story. The public API hands c2r a **split** half-spectrum (the r2c
+output), so the fast packed c2r — which needs a *packed* half-spectrum — was unreachable, and
+the old path forced the slow decoupled-**stride** backward (~0.44–0.46× MKL). New this session:
+a **fused natural initiator** (`c2r_execute_natural`, the inverse of rfft's natural terminator)
+reads split re/im **directly** through the fast packed cascade — **no repack**. vfft's c2r front
+door now runs a natural-vs-stride bake-off (mirror of r2c's), picking per cell; the forced-stride
+hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
+`bench_1d_vs_mkl.c --c2r [--mt]`.
+
+#### Single-thread — the packing tax (again)
+```
+ N      K     path      dag/MKL    note
+──────────────────────────────────────────────
+ 256    8     natural    0.92×     ≈parity — packed-speed on split input
+ 256    16    natural    0.74×
+ 256    64    natural    0.55×     mid-K: MKL compute-bound / L1-resident
+ 256    128   natural    0.55×
+──────────────────────────────────────────────
+ natural ≈ 2× the old forced-stride path; reaches MKL parity only at K=8.
+```
+> **Single-thread, c2r trails MKL — same split-layout tax as r2c.** The natural path roughly
+> **doubles** vfft's low-K c2r over the old stride path and reaches **parity at K=8 (0.92×)**,
+> but MKL's compute-bound real backward still wins mid-K. (Even the unreachable packed path is
+> only ~0.61× MKL at K=64 — the gap is structural in the cascade, not the split read.)
+
+#### Multi-threaded (T=8) — the layout payoff (again)
+```
+ N      K     path      dag/MKL-T8   dag self-scale ST→T8
+──────────────────────────────────────────────────────
+ 256    8     natural    ~17×        ~1.0× (K<16: lane-split floor)
+ 256    32    natural    ~7.9×       ~1.4×
+ 256    64    natural    3.9×        1.9×
+ 256    128   natural    3.0×        2.2×
+ 256    256   natural     —          2.8×   (MKL-T8 crashes at N·K≥131072)
+ 512    256   natural     —          3.6×
+ 1024   256   natural     —          2.8×
+──────────────────────────────────────────────────────
+```
+> **At T=8 the split layout pays off — dag wins every cell, scaling 1.9–3.6× to high K.** The
+> natural path K-splits the batch cleanly (`c2r_natural_mt`, pool lane-slabs; MT output is
+> **bit-identical** to single-thread — race-free, lane-indexed scratch). MKL's c2r does **not**
+> benefit from threads at these modest-N batch sizes: **MKL-T8 is slower than MKL-T1** even
+> pinned to the same 8 cores (it parallelizes *within* the length-N transform, not across the
+> K-batch where the work is), so the dag/MKL-T8 ratios at low K are inflated by MKL's thread
+> overhead — the honest number is dag's own **2.8× self-scaling at high K**. Same trade as r2c:
+> the layout that taxes us single-thread is exactly the multithreading edge.
 
 ## 4. vs MKL — 2D R2C
 
