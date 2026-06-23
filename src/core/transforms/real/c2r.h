@@ -390,4 +390,82 @@ static inline void c2r_execute_natural(const c2r_plan_t *p,
     }
 }
 
+/* c2r_execute_natural, LANE-RANGE [k0,k0+kw): process only lanes [k0,kw) of the K
+ * batch — the MT building block (mirror of rfft_execute_fwd_natural_range). Per-q
+ * (NOT folded — the fold needs full width); all scratch (planeA/planeB/nat_k0) is
+ * lane-indexed (+k0), so concurrent calls on disjoint [k0,kw) never collide. kw need
+ * not be 8-aligned (codelet scalar tail covers the remainder). Requires nf>=2. */
+static inline void c2r_execute_natural_range(const c2r_plan_t *p,
+                                             const double *in_re, const double *in_im,
+                                             double *out, size_t k0, size_t kw)
+{
+    const rfft_plan_t *b = p->base;
+    const int N = b->N;
+    const size_t K = b->K;
+    const size_t NK = (size_t)N * K;
+    const size_t nh = (size_t)(N / 2);
+
+    /* ===== STAGE 0 INITIATOR (lane range) ===== */
+    {
+        const rfft_stage_t *st0 = &b->st[0];
+        const int r = st0->radix, m = st0->m;
+        const ptrdiff_t mK = (ptrdiff_t)((size_t)m * K);
+        double *cur0 = b->planeA;
+        for (int k = 1; k <= (m - 1) / 2; k++)
+            p->nat_init(in_re + (size_t)k * K + k0, in_im + (size_t)k * K + k0,
+                        in_re + (size_t)(m - k) * K + k0, in_im + (size_t)(m - k) * K + k0,
+                        cur0 + ((size_t)(r * k)) * K + k0, cur0 + ((size_t)(r * (m - k))) * K + k0,
+                        st0->tw_re + (size_t)(k - 1) * r, st0->tw_im + (size_t)(k - 1) * r,
+                        mK, mK, (ptrdiff_t)K, kw);
+        double *nk = b->nat_k0;
+        memcpy(nk + k0, in_re + k0, kw * 8);
+        for (int sI = 1; sI < (r + 1) / 2; sI++) {
+            memcpy(nk + (size_t)sI * K + k0, in_re + (size_t)sI * (size_t)m * K + k0, kw * 8);
+            memcpy(nk + (size_t)(r - sI) * K + k0, in_im + (size_t)sI * (size_t)m * K + k0, kw * 8);
+        }
+        if (r % 2 == 0)
+            memcpy(nk + (size_t)(r / 2) * K + k0, in_re + nh * K + k0, kw * 8);
+        p->stage_dc[0](nk + k0, nk + (size_t)r * K + k0, cur0 + k0,
+                       (ptrdiff_t)K, -(ptrdiff_t)K, (ptrdiff_t)K, kw);
+        if (st0->has_mid)
+            c2r_mid_inv_column_natural(r, m, K, kw, nh, in_re + k0, in_im + k0,
+                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K + k0);
+    }
+
+    /* ===== STAGES d=1..nf-2 (per-q, lane range) ===== */
+    double *src = b->planeA;
+    for (int d = 1; d <= b->nf - 2; d++) {
+        const rfft_stage_t *st = &b->st[d];
+        const int r = st->radix, m = st->m;
+        const size_t Q = st->Q;
+        const ptrdiff_t QK = (ptrdiff_t)(Q * K);
+        const ptrdiff_t QmK = (ptrdiff_t)(Q * (size_t)m * K);
+        double *dst = (d % 2 == 0) ? b->planeA : b->planeB;
+        for (size_t q = 0; q < Q; q++) {
+            const double *srcq = src + q * K + k0;
+            double *dstq = dst + q * K + k0;
+            p->stage_dc[d](srcq, srcq + NK, dstq, QmK, -QmK, QK, kw);
+            for (int k = 1; k <= st->kmax; k++)
+                p->stage_hc[d](srcq + (Q * (size_t)k) * K,
+                               srcq + (Q * (size_t)(m - k)) * K,
+                               dstq + (Q * (size_t)(r * k)) * K,
+                               dstq + (Q * (size_t)(r * (m - k))) * K,
+                               st->tw_re + (size_t)(k - 1) * r,
+                               st->tw_im + (size_t)(k - 1) * r, QmK, QK, kw);
+            if (st->has_mid)
+                c2r_mid_inv_column(r, m, Q, K, kw, srcq, p->mid_inv[d],
+                                   dstq + (Q * (size_t)(r * (m / 2))) * K);
+        }
+        src = dst;
+    }
+
+    /* ===== LEAF -> out (per-g, lane range) ===== */
+    {
+        const ptrdiff_t SK = (ptrdiff_t)(b->S * K);
+        for (size_t g = 0; g < b->S; g++)
+            p->leaf(src + g * K + k0, src + g * K + k0 + NK, out + g * K + k0,
+                    SK, -SK, SK, kw);
+    }
+}
+
 #endif

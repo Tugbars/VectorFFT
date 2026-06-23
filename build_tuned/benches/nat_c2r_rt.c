@@ -70,6 +70,22 @@ int main(void)
             rfft_execute_fwd_natural(rp, x, ore, oim);
             c2r_execute_natural(cp, ore, oim, y);
 
+            /* RANGE-DECOMPOSITION check (the MT building block): cover K with disjoint
+             * lane slabs via c2r_execute_natural_range; must be bit-identical to the
+             * full folded c2r_execute_natural. If so, the pool K-split MT is correct by
+             * construction (disjoint lanes, lane-indexed scratch). */
+            double *yr = (double *)malloc(NK * 8);
+            memset(yr, 0, NK * 8);
+            size_t S = ((K / 3) + 7) & ~(size_t)7; /* uneven slab to stress edges */
+            if (S == 0) S = 8;
+            for (size_t k0 = 0; k0 < K; k0 += S) {
+                size_t kw = (k0 + S <= K) ? S : (K - k0);
+                c2r_execute_natural_range(cp, ore, oim, yr, k0, kw);
+            }
+            double rng_max = 0.0;
+            for (size_t i = 0; i < NK; i++) { double e = fabs(yr[i] - y[i]); if (e > rng_max) rng_max = e; }
+            free(yr);
+
             /* standard FFT roundtrip metric: max abs error normalized by the
              * signal scale (max|ref|), not per-element (which divides by ~0
              * where x[i]~0 and spuriously inflates). */
@@ -83,10 +99,11 @@ int main(void)
             double maxrel = maxe / (maxref + 1e-30);
             const char *fac =
                 nf == 2 ? "2-stage" : (nf == 3 ? "3-stage" : "n");
-            printf("N=%-5d K=%-4zu nf=%d st0r=%-2d  rel=%.2e  %s\n",
-                   N, K, nf, cp->base->st[0].radix, maxrel,
-                   maxrel < 1e-10 ? "OK" : "FAIL");
-            if (maxrel >= 1e-10) fails++;
+            int ok = (maxrel < 1e-10) && (rng_max == 0.0);
+            printf("N=%-5d K=%-4zu nf=%d st0r=%-2d  rel=%.2e  range_d=%.0e  %s\n",
+                   N, K, nf, cp->base->st[0].radix, maxrel, rng_max,
+                   ok ? "OK" : "FAIL");
+            if (!ok) fails++;
             free(x); free(ore); free(oim); free(y);
             rfft_plan_destroy(rp); c2r_plan_destroy(cp);
             (void)fac;

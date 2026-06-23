@@ -148,17 +148,54 @@ static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_la
     return p;
 }
 
+/* NATURAL c2r, K-split across the worker pool (mirror of rfft_natural_mt). The c2r
+ * batch is K independent backward real FFTs; each thread runs the full natural cascade
+ * on a disjoint lane slab via c2r_execute_natural_range (planeA/planeB/nat_k0 are
+ * lane-indexed -> disjoint -> race-free). Small batches (K<16 or T<=1) fall back to the
+ * folded ST executor. This is where SPLIT layout pays off: clean K-parallel re/im
+ * planes vs MKL's CCE-bound real backward. Caller pins to core 0 (pool owns 1..T-1). */
+typedef struct { const c2r_plan_t *p; const double *re, *im; double *out; size_t k0, kw; } _c2r_nat_mt_arg;
+static void _c2r_nat_mt_tramp(void *a)
+{
+    _c2r_nat_mt_arg *x = (_c2r_nat_mt_arg *)a;
+    c2r_execute_natural_range(x->p, x->re, x->im, x->out, x->k0, x->kw);
+}
+static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const double *im, double *out)
+{
+    size_t K = p->base->K;
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out); return; }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    if (S == 0) S = 8;
+    _c2r_nat_mt_arg a[64];
+    int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        size_t k0 = (size_t)t * S;
+        if (k0 >= K) break;
+        size_t ke = k0 + S;
+        if (ke > K) ke = K;
+        a[nd] = (_c2r_nat_mt_arg){ p, re, im, out, k0, ke - k0 };
+        _stride_pool_dispatch(&_stride_workers[nd], _c2r_nat_mt_tramp, &a[nd]);
+        nd++;
+    }
+    size_t s0 = S < K ? S : K;
+    c2r_execute_natural_range(p, re, im, out, 0, s0);
+    if (nd) _stride_pool_wait_all();
+}
+
 /* Execute. PACKED: in_a = packed half-spectrum plane (in_b ignored). NATURAL/SPLIT:
  * in_a = out_re, in_b = out_im (split half-spectrum). out = N*K reals (unnormalized:
  * == N * original real input). NATURAL runs the fast packed cascade on split input
- * (no repack); SPLIT runs the decoupled-stride path. */
+ * (no repack), K-split across the pool when threaded; SPLIT runs the decoupled-stride
+ * path (which threads internally). */
 static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
                                          const double *in_a, const double *in_b, double *out)
 {
     if (p->layout == VFFT_C2R_PACKED)
         vfft_c2r_execute(p->packed, in_a, out);
     else if (p->layout == VFFT_C2R_NATURAL)
-        c2r_execute_natural(p->packed, in_a, in_b, out);
+        c2r_natural_mt(p->packed, in_a, in_b, out); /* MT-aware; ST fallback inside */
     else
         stride_execute_c2r(p->stride, in_a, in_b, out);
 }
