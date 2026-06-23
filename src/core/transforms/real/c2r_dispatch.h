@@ -154,4 +154,53 @@ static inline void vfft_c2r_disp_destroy(vfft_c2r_disp_t *p)
     free(p);
 }
 
+/* ── PATH WISDOM: per-cell packed/stride decision recorded by the calibrator
+ * (which builds BOTH paths, times them, and picks the winner). The dispatcher
+ * reads this instead of the hardcoded crossover. Format: text lines "N K path"
+ * (path 0 = packed, 1 = stride; '#'/'@' comments). A miss falls back to the
+ * vfft_c2r_best_layout threshold. This is what makes c2r genuinely 2-axis:
+ * the PATH axis is measured per cell, not a constant. ── */
+#define VFFT_C2R_PATH_MAX 256
+typedef struct { int N; int K; int path; } vfft_c2r_path_ent_t;
+static struct { vfft_c2r_path_ent_t e[VFFT_C2R_PATH_MAX]; int n; } _vfft_c2r_paths = { .n = 0 };
+
+static inline int vfft_c2r_path_load(const char *fn)
+{
+    FILE *f = fopen(fn, "r");
+    if (!f) return -1;
+    _vfft_c2r_paths.n = 0;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#' || line[0] == '@' || line[0] == '\n') continue;
+        int N, K, p;
+        if (sscanf(line, "%d %d %d", &N, &K, &p) == 3 && _vfft_c2r_paths.n < VFFT_C2R_PATH_MAX)
+            _vfft_c2r_paths.e[_vfft_c2r_paths.n++] = (vfft_c2r_path_ent_t){ N, K, p };
+    }
+    fclose(f);
+    return _vfft_c2r_paths.n;
+}
+static inline int vfft_c2r_path_lookup(int N, size_t K)   /* -1 = miss */
+{
+    for (int i = 0; i < _vfft_c2r_paths.n; i++)
+        if (_vfft_c2r_paths.e[i].N == N && (size_t)_vfft_c2r_paths.e[i].K == K)
+            return _vfft_c2r_paths.e[i].path;
+    return -1;
+}
+
+/* Wisdom-first layout: the calibrated per-cell path if present, else the threshold. */
+static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
+{
+    int p = vfft_c2r_path_lookup(N, K);
+    if (p == 0) return VFFT_C2R_PACKED;
+    if (p == 1) return VFFT_C2R_SPLIT;
+    return vfft_c2r_best_layout(K);   /* miss -> threshold fallback */
+}
+
+/* Build the c2r plan with the wisdom-chosen (or fallback) path. */
+static inline vfft_c2r_disp_t *vfft_c2r_disp_create_auto(int N, size_t K,
+        const rfft_codelets_t *rfft_reg, vfft_proto_registry_t *c2c_reg)
+{
+    return vfft_c2r_disp_create(N, K, vfft_c2r_layout_wisdom(N, K), rfft_reg, c2c_reg);
+}
+
 #endif /* VFFT_C2R_DISPATCH_H */

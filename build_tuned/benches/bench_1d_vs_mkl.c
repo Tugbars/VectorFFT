@@ -1352,10 +1352,11 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
 {
     const int halfN = N / 2;
     const size_t total = (size_t)N * K, hcN = (size_t)(halfN + 1) * K;
-    /* 2-axis: packed c2r (low K) / decoupled-stride c2r (high K), same crossover as
-     * the r2c rfft/stride router. The dispatcher picks the path; we feed the matching
-     * half-spectrum (packed plane for PACKED, split re/im for SPLIT). */
-    vfft_c2r_layout_t layout = vfft_c2r_best_layout(K);
+    /* 2-axis: packed c2r / decoupled-stride c2r, path chosen by the calibrated PATH
+     * wisdom (c2r_path.txt; measured per cell), falling back to the threshold on a miss
+     * — no hardcoded crossover. We feed the matching half-spectrum (packed plane for
+     * PACKED, split re/im for SPLIT). */
+    vfft_c2r_layout_t layout = vfft_c2r_layout_wisdom(N, K);
     vfft_c2r_disp_t *p = vfft_c2r_disp_create(N, K, layout, rreg, creg);
     if (!p)
     {
@@ -1456,12 +1457,45 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     vfft_c2r_disp_destroy(p);
 }
 
+/* ── c2r PATH CALIBRATOR: time BOTH dag paths (no MKL — so no high-N*K MKL crash,
+ * and both dag paths are ASan-clean) and pick the winner per cell, writing
+ * "N K path" to the path wisdom. This is the "planner measures both + picks" that
+ * drops the hardcoded crossover. ── */
+static double _c2r_measure_path(vfft_c2r_layout_t layout, int N, size_t K,
+                                const rfft_codelets_t *rreg, vfft_proto_registry_t *creg)
+{
+    vfft_c2r_disp_t *p = vfft_c2r_disp_create(N, K, layout, rreg, creg);
+    if (!p) return 1e18;
+    size_t total = (size_t)N * K, hcN = (size_t)(N / 2 + 1) * K;
+    double *x = alloc_d(total), *hc = alloc_d(total * 2), *o_re = alloc_d(hcN), *o_im = alloc_d(hcN), *y = alloc_d(total);
+    srand(29 + N + (int)K);
+    for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
+    const double *in_a, *in_b;
+    if (layout == VFFT_C2R_PACKED) { memset(hc, 0, total * 2 * 8); rfft_execute_fwd_packed(p->packed->base, x, hc); in_a = hc; in_b = NULL; }
+    else { stride_execute_r2c(p->stride, x, o_re, o_im); in_a = o_re; in_b = o_im; }
+    double t = time_c2r(p, in_a, in_b, y, total);
+    free_d(x); free_d(hc); free_d(o_re); free_d(o_im); free_d(y);
+    vfft_c2r_disp_destroy(p);
+    return t;
+}
+static void run_c2r_calib_cell(int N, size_t K, const rfft_codelets_t *rreg,
+                               vfft_proto_registry_t *creg, FILE *pathf)
+{
+    double tp = _c2r_measure_path(VFFT_C2R_PACKED, N, K, rreg, creg);
+    double ts = _c2r_measure_path(VFFT_C2R_SPLIT, N, K, rreg, creg);
+    int path = (tp <= ts) ? 0 : 1;
+    printf("  N=%-6d K=%-5zu  packed %9.0f  stride %9.0f  -> %s\n",
+           N, K, tp, ts, path == 0 ? "PACKED" : "STRIDE");
+    fflush(stdout);
+    if (pathf) { fprintf(pathf, "%d %zu %d\n", N, K, path); fflush(pathf); }
+}
+
 int main(int argc, char **argv)
 {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0;
+    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0;
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
      * c2c vs MKL NOT_INPLACE), --2d (2D c2c), --r2c (1D real fwd vs DFTI real),
      * --2dr2c (2D real fwd vs DFTI 2D real). --oop+--mt => OOP fwd K-split. */
@@ -1706,6 +1740,8 @@ int main(int argc, char **argv)
         if (hpk) vfft_c2r_dispatch_set_wisdom(&c2rwis);      /* PACKED-path factorization */
         int hc2c = (vfft_proto_wisdom_load(&c2cwis, wpath) == 0);
         if (hc2c) vfft_r2c_dispatch_set_c2c_wisdom(&c2cwis); /* SPLIT-path stride inner */
+        if (getenv("VFFT_C2R_PACK_ALL")) vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K */
+        if (getenv("VFFT_C2R_STRIDE_ALL")) vfft_r2c_dispatch_set_decouple_min_k(0);          /* probe: force STRIDE all K */
         /* target_N>0 => single-cell (one process per cell) — isolates the MKL-comparison
          * heap interaction that accumulates across cells on Windows at high N*K. */
         FILE *o2 = fopen(csv, target_N > 0 ? "a" : "w");
