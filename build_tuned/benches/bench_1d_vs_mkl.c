@@ -1363,7 +1363,8 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
         printf("  N=%-6d K=%-5zu  c2r plan NULL\n", N, K);
         return;
     }
-    const char *src = (layout == VFFT_C2R_PACKED) ? "packed" : "stride";
+    const char *src = (layout == VFFT_C2R_PACKED) ? "packed"
+                      : (layout == VFFT_C2R_NATURAL) ? "natural" : "stride";
     double *x = alloc_d(total), *hc = alloc_d(total * 2), *o_re = alloc_d(hcN), *o_im = alloc_d(hcN), *y = alloc_d(total);
     srand(29 + N + (int)K);
     for (size_t i = 0; i < total; i++)
@@ -1378,6 +1379,13 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
         rfft_execute_fwd_packed(p->packed->base, x, hc);
         in_a = hc;
         in_b = NULL;
+    }
+    else if (layout == VFFT_C2R_NATURAL)
+    {
+        /* split half-spectrum via the rfft NATURAL forward (the c2r's own base) */
+        rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im);
+        in_a = o_re;
+        in_b = o_im;
     }
     else
     {
@@ -1472,6 +1480,7 @@ static double _c2r_measure_path(vfft_c2r_layout_t layout, int N, size_t K,
     for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
     const double *in_a, *in_b;
     if (layout == VFFT_C2R_PACKED) { memset(hc, 0, total * 2 * 8); rfft_execute_fwd_packed(p->packed->base, x, hc); in_a = hc; in_b = NULL; }
+    else if (layout == VFFT_C2R_NATURAL) { rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im); in_a = o_re; in_b = o_im; }
     else { stride_execute_r2c(p->stride, x, o_re, o_im); in_a = o_re; in_b = o_im; }
     double t = time_c2r(p, in_a, in_b, y, total);
     free_d(x); free_d(hc); free_d(o_re); free_d(o_im); free_d(y);
@@ -1481,11 +1490,13 @@ static double _c2r_measure_path(vfft_c2r_layout_t layout, int N, size_t K,
 static void run_c2r_calib_cell(int N, size_t K, const rfft_codelets_t *rreg,
                                vfft_proto_registry_t *creg, FILE *pathf)
 {
-    double tp = _c2r_measure_path(VFFT_C2R_PACKED, N, K, rreg, creg);
+    /* NATURAL (split-input fast packed cascade) vs STRIDE — the choice vfft's
+     * split-input front door actually has. path 0 = natural, 1 = stride. */
+    double tn = _c2r_measure_path(VFFT_C2R_NATURAL, N, K, rreg, creg);
     double ts = _c2r_measure_path(VFFT_C2R_SPLIT, N, K, rreg, creg);
-    int path = (tp <= ts) ? 0 : 1;
-    printf("  N=%-6d K=%-5zu  packed %9.0f  stride %9.0f  -> %s\n",
-           N, K, tp, ts, path == 0 ? "PACKED" : "STRIDE");
+    int path = (tn <= ts) ? 0 : 1;
+    printf("  N=%-6d K=%-5zu  natural %9.0f  stride %9.0f  -> %s\n",
+           N, K, tn, ts, path == 0 ? "NATURAL" : "STRIDE");
     fflush(stdout);
     if (pathf) { fprintf(pathf, "%d %zu %d\n", N, K, path); fflush(pathf); }
 }

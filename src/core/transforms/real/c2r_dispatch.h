@@ -97,21 +97,29 @@ static inline void vfft_c2r_execute(const c2r_plan_t *p, const double *in, doubl
  * vfft_c2r_plan_create; stride -> c2c wisdom via _vfft_r2c_build_stride's inner).
  * So this is the c2r analog of r2c's path × factorization 2-axis search.
  * ═══════════════════════════════════════════════════════════════════════════ */
-typedef enum { VFFT_C2R_PACKED = 0, VFFT_C2R_SPLIT = 1 } vfft_c2r_layout_t;
+/* PACKED: rfft-style packed half-spectrum input (one plane). NATURAL: split
+ * re/im input run through the FAST packed cascade via the stage-0 natural
+ * initiator (c2r_execute_natural) — no repack, the low/mid-K winner that a
+ * split-input caller (e.g. vfft, paired with split r2c) can actually use.
+ * SPLIT: the decoupled-stride c2r (high K, threads). NATURAL and SPLIT both
+ * consume split re/im — the vfft front door picks between them by bakeoff. */
+typedef enum { VFFT_C2R_PACKED = 0, VFFT_C2R_SPLIT = 1, VFFT_C2R_NATURAL = 2 } vfft_c2r_layout_t;
 
 typedef struct {
     vfft_c2r_layout_t layout;
     int               N;
     size_t            K;
-    c2r_plan_t       *packed;   /* set iff layout == PACKED */
+    c2r_plan_t       *packed;   /* set iff layout == PACKED or NATURAL (same plan type) */
     stride_plan_t    *stride;   /* set iff layout == SPLIT  */
 } vfft_c2r_disp_t;
 
-/* Best layout for (N,K): packed wins low K, stride wins high K — same crossover as
- * the r2c rfft/stride router (the c2r is the exact inverse, so the regime matches). */
+/* Best SPLIT-input layout for (N,K): NATURAL (fast packed cascade on split input)
+ * wins low/mid K, stride wins high K — same regime as the r2c rfft/stride router
+ * (the c2r is the exact inverse). Both consume split re/im, so this is the choice a
+ * split-input caller (vfft) actually has. PACKED is a separate packed-input layout. */
 static inline vfft_c2r_layout_t vfft_c2r_best_layout(size_t K)
 {
-    return (K < _vfft_r2c_decouple_min_k) ? VFFT_C2R_PACKED : VFFT_C2R_SPLIT;
+    return (K < _vfft_r2c_decouple_min_k) ? VFFT_C2R_NATURAL : VFFT_C2R_SPLIT;
 }
 
 /* Build a 2-axis c2r plan. rfft_reg = rfft codelets (r2cb + DIF-bwd hc2hc, plus the
@@ -125,9 +133,14 @@ static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_la
     vfft_c2r_disp_t *p = (vfft_c2r_disp_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
     p->layout = layout; p->N = N; p->K = K;
-    if (layout == VFFT_C2R_PACKED) {
-        p->packed = vfft_c2r_plan_create(N, K, rfft_reg);   /* wisdom-first packed c2r (+JIT) */
+    if (layout == VFFT_C2R_PACKED || layout == VFFT_C2R_NATURAL) {
+        p->packed = vfft_c2r_plan_create(N, K, rfft_reg);   /* wisdom-first c2r plan (+JIT) */
         if (!p->packed) { free(p); return NULL; }
+        /* NATURAL needs the stage-0 split-input initiator codelet; if the st0
+         * radix has no hc2c_bwd registered, this factorization can't go natural. */
+        if (layout == VFFT_C2R_NATURAL && !p->packed->nat_init) {
+            c2r_plan_destroy(p->packed); free(p); return NULL;
+        }
     } else {
         p->stride = _vfft_r2c_build_stride(N, K, c2c_reg);  /* decoupled stride r2c/c2r plan */
         if (!p->stride) { free(p); return NULL; }
@@ -135,13 +148,17 @@ static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_la
     return p;
 }
 
-/* Execute. PACKED: in_a = packed half-spectrum plane (in_b ignored). SPLIT: in_a =
- * out_re, in_b = out_im. out = N*K reals (unnormalized: == N * original real input). */
+/* Execute. PACKED: in_a = packed half-spectrum plane (in_b ignored). NATURAL/SPLIT:
+ * in_a = out_re, in_b = out_im (split half-spectrum). out = N*K reals (unnormalized:
+ * == N * original real input). NATURAL runs the fast packed cascade on split input
+ * (no repack); SPLIT runs the decoupled-stride path. */
 static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
                                          const double *in_a, const double *in_b, double *out)
 {
     if (p->layout == VFFT_C2R_PACKED)
         vfft_c2r_execute(p->packed, in_a, out);
+    else if (p->layout == VFFT_C2R_NATURAL)
+        c2r_execute_natural(p->packed, in_a, in_b, out);
     else
         stride_execute_c2r(p->stride, in_a, in_b, out);
 }
@@ -191,7 +208,7 @@ static inline int vfft_c2r_path_lookup(int N, size_t K)   /* -1 = miss */
 static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
 {
     int p = vfft_c2r_path_lookup(N, K);
-    if (p == 0) return VFFT_C2R_PACKED;
+    if (p == 0) return VFFT_C2R_NATURAL;   /* split-input fast path (was PACKED) */
     if (p == 1) return VFFT_C2R_SPLIT;
     return vfft_c2r_best_layout(K);   /* miss -> threshold fallback */
 }
