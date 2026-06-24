@@ -107,9 +107,21 @@ rung of a width cascade, same ISA class MKL floors at.
 **Reference impl** (hand-built, validated): `codelets/experiments/scalartail/`
 `r4_n1_fwd_hybrid.c`, `r4_t1s_dit_fwd_hybrid.c`.
 
-**Production path:** teach the generator (`emit_c.ml`) to emit this hybrid tail per
-codelet (per-radix it's uniform — the `if(rem==1)` handles the split at runtime),
-then relax the `K%8` dispatch guards to `K != 0` and let the MT slicer hand the
+**Production path (NOT hand-edits — those were only the experiment):** the tail must
+be **generated through the DAG-compiler machinery**, and it must ride
+`schedule.ml`, not be a bolted-on raw block:
+- Schedule the DAG **once** (`schedule.ml`: SU/list order + spill recipe).
+- `emit_c.ml` renders **that same scheduled node order three ways**: (1) bulk loop,
+  vector `loadu`/`storeu`; (2) masked tail (rem≥2), same order, `loadu→maskload` /
+  `storeu→maskstore`; (3) scalar tail (rem==1), same order, width-1 lowering. The
+  runtime `if(rem==1)` picks (2)/(3); per-radix it's uniform.
+- The masked tail is the *identical* DAG to the bulk ⇒ identical schedule ⇒ only the
+  boundary intrinsics differ. The scalar tail is the same scheduled DAG at width 1.
+- Enabler: make the body emitter parameterizable by `{isa/width, load-store mode}`
+  and call it off the **single** schedule result (don't re-schedule, don't duplicate
+  the spill machinery) — this is the "two-functions-per-file vs macro-VM" question.
+
+Then relax the `K%8` dispatch guards to `K != 0` and let the MT slicer hand the
 remainder to the last worker. **Still open:** the blocked-r8 (r≥8 two-pass) odd-K
 bug, which is in the executor/seam, *not* the tail (see below).
 
