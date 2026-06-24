@@ -87,6 +87,11 @@ static inline void _stride_pin_to_core(int core_id) {
 static DWORD WINAPI _stride_worker_func(LPVOID param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
+    /* FTZ+DAZ per-worker: MXCSR is thread-local, so each worker must flush
+     * denormals like stride_env_init() does on the main thread, else MT compute
+     * can hit the denormal microcode trap (support/README.md). 0x8040 = FTZ
+     * (bit 15) | DAZ (bit 6); inlined to keep threads.h free of an env.h dep. */
+    _mm_setcsr(_mm_getcsr() | 0x8040);
     while (!w->shutdown) {
         /* Spin-wait for work (done==0 means work posted) */
         while (w->done && !w->shutdown)
@@ -101,6 +106,11 @@ static DWORD WINAPI _stride_worker_func(LPVOID param) {
 static void *_stride_worker_func(void *param) {
     _stride_worker_t *w = (_stride_worker_t *)param;
     _stride_pin_to_core(w->core_id);
+    /* FTZ+DAZ per-worker: MXCSR is thread-local, so each worker must flush
+     * denormals like stride_env_init() does on the main thread, else MT compute
+     * can hit the denormal microcode trap (support/README.md). 0x8040 = FTZ
+     * (bit 15) | DAZ (bit 6); inlined to keep threads.h free of an env.h dep. */
+    _mm_setcsr(_mm_getcsr() | 0x8040);
     while (!w->shutdown) {
         while (w->done && !w->shutdown)
             __builtin_ia32_pause();
