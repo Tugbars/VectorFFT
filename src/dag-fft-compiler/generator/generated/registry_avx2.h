@@ -26,978 +26,978 @@
  * ───────────────────────────────────────────────────────────────── */
 
 extern void radix2_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix2_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix3_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix3_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix4_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix4_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix5_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix5_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix6_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix6_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix7_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix7_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix8_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix8_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                               const double *tw_re, const double *tw_im,
+                               size_t ios, size_t me);
 extern void radix10_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix10_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix11_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix11_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix12_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix12_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix13_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix13_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix16_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix16_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix17_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix17_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix19_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix19_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix20_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix20_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix25_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix25_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix32_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix32_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix64_n1_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 extern void radix64_n1_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                const double *tw_re, const double *tw_im,
+                                size_t ios, size_t me);
 
 extern void radix2_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix2_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix2_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix2_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix2_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix2_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix2_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix2_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix2_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix2_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix2_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix2_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix2_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix2_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix2_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix2_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix3_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix3_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix3_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix3_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix3_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix3_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix3_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix3_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix3_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix3_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix3_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix3_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix3_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix3_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix3_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix3_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix4_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix4_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix4_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix4_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix4_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix4_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix4_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix4_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix4_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix4_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix4_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix4_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix4_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix4_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix4_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix4_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix5_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix5_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix5_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix5_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix5_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix5_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix5_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix5_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix5_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix5_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix5_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix5_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix5_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix5_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix5_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix5_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix6_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix6_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix6_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix6_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix6_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix6_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix6_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix6_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix6_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix6_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix6_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix6_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix6_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix6_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix6_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix6_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix7_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix7_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix7_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix7_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix7_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix7_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix7_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix7_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix7_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix7_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix7_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix7_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix7_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix7_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix7_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix7_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix8_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix8_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix8_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix8_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix8_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix8_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                   const double *tw_re, const double *tw_im,
+                                   size_t ios, size_t me);
 extern void radix8_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix8_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                        const double *tw_re, const double *tw_im,
+                                        size_t ios, size_t me);
 extern void radix8_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix8_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix8_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix8_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix8_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix8_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix8_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix8_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix10_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix10_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix10_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix10_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix10_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix10_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix10_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix10_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix10_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix10_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix10_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix10_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix10_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix10_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix10_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix10_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix11_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix11_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix11_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix11_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix11_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix11_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix11_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix11_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix11_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix11_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix11_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix11_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix11_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix11_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix11_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix11_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix12_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix12_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix12_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix12_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix12_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix12_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix12_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix12_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix12_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix12_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix12_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix12_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix12_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix12_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix12_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix12_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix13_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix13_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix13_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix13_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix13_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix13_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix13_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix13_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix13_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix13_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix13_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix13_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix13_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix13_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix13_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix13_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix16_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix16_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix16_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix16_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix16_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix16_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix16_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix16_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix16_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix16_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix16_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix16_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix16_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix16_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix16_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix16_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix17_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix17_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix17_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix17_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix17_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix17_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix17_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix17_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix17_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix17_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix17_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix17_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix17_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix17_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix17_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix17_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix19_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix19_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix19_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix19_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix19_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix19_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix19_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix19_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix19_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix19_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix19_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix19_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix19_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix19_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix19_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix19_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix20_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix20_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix20_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix20_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix20_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix20_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix20_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix20_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix20_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix20_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix20_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix20_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix20_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix20_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix20_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix20_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix25_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix25_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix25_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix25_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix25_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix25_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix25_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix25_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix25_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix25_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix25_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix25_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix25_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix25_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix25_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix25_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix32_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix32_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix32_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix32_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix32_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix32_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix32_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix32_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix32_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix32_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix32_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix32_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix32_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix32_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix32_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix32_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix64_t1_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix64_t1_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix64_t1_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix64_t1_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix64_t1_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix64_t1_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                    const double *tw_re, const double *tw_im,
+                                    size_t ios, size_t me);
 extern void radix64_t1_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix64_t1_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                         const double *tw_re, const double *tw_im,
+                                         size_t ios, size_t me);
 extern void radix64_t1s_dit_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix64_t1s_dit_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix64_t1s_dit_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix64_t1s_dit_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix64_t1s_dif_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix64_t1s_dif_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                     const double *tw_re, const double *tw_im,
+                                     size_t ios, size_t me);
 extern void radix64_t1s_dif_log3_fwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 extern void radix64_t1s_dif_log3_bwd_avx2(double *rio_re, double *rio_im,
-                                 const double *tw_re, const double *tw_im,
-                                 size_t ios, size_t me);
+                                          const double *tw_re, const double *tw_im,
+                                          size_t ios, size_t me);
 
 #ifndef VFFT_PROTO_REGISTRY_TYPES_H
 #define VFFT_PROTO_REGISTRY_TYPES_H
@@ -1014,12 +1014,13 @@ typedef void (*vfft_proto_codelet_fn)(double *rio_re, double *rio_im,
                                       const double *tw_re, const double *tw_im,
                                       size_t ios, size_t me);
 typedef void (*vfft_proto_n1_fn)(const double *in_re, const double *in_im,
-                                  double *out_re, double *out_im,
-                                  size_t is, size_t os, size_t vl);
+                                 double *out_re, double *out_im,
+                                 size_t is, size_t os, size_t vl);
 
 #define VFFT_PROTO_REG_MAX_RADIX 1025
 
-typedef struct {
+typedef struct
+{
     /* No-twiddle (first/last stage) codelets. 7-arg OOP signature;
      * registry init assigns auto-generated wrappers that bridge the
      * underlying 6-arg in-place codelet to the OOP shape. */
@@ -1050,38 +1051,46 @@ typedef struct {
     vfft_proto_codelet_fn t1s_dif_log3_bwd[VFFT_PROTO_REG_MAX_RADIX];
 } vfft_proto_registry_t;
 
-
 /* ─────────────────────────────────────────────────────────────────
  * Query helpers — return non-zero if the codelet exists in the
  * registry for the given radix.
  * ───────────────────────────────────────────────────────────────── */
 
-static inline int vfft_proto_has_n1(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_n1(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[r] != NULL;
 }
 
-static inline int vfft_proto_has_t1_dit(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1_dit(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1_dit_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1_dit_log3(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1_dit_log3(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1_dit_log3_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1_dif(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1_dif(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1_dif_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1_dif_log3(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1_dif_log3(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1_dif_log3_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1s_dit(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1s_dit(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dit_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1s_dit_log3(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1s_dit_log3(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dit_log3_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1s_dif(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1s_dif(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dif_fwd[r] != NULL;
 }
-static inline int vfft_proto_has_t1s_dif_log3(const vfft_proto_registry_t *reg, int r) {
+static inline int vfft_proto_has_t1s_dif_log3(const vfft_proto_registry_t *reg, int r)
+{
     return r > 0 && r < VFFT_PROTO_REG_MAX_RADIX && reg->t1s_dif_log3_fwd[r] != NULL;
 }
 
@@ -1098,18 +1107,21 @@ static inline int vfft_proto_has_t1s_dif_log3(const vfft_proto_registry_t *reg, 
  * mismatched stride with shared buffer is unsupported (no current
  * caller hits that — the executor always passes in==out, is==os).
  * ───────────────────────────────────────────────────────────────── */
-#define VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(R, dir, isa) \
-    static inline void vfft_proto_n1_r##R##_##dir##_##isa( \
-        const double *in_re, const double *in_im, \
-        double *out_re, double *out_im, \
-        size_t is, size_t os, size_t vl) { \
-        if (in_re != out_re || in_im != out_im) { \
-            for (int j = 0; j < (R); j++) { \
-                memcpy(out_re + (size_t)j*os, in_re + (size_t)j*is, vl*sizeof(double)); \
-                memcpy(out_im + (size_t)j*os, in_im + (size_t)j*is, vl*sizeof(double)); \
-            } \
-        } \
-        radix##R##_n1_##dir##_##isa(out_re, out_im, NULL, NULL, os, vl); \
+#define VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(R, dir, isa)                                         \
+    static inline void vfft_proto_n1_r##R##_##dir##_##isa(                                    \
+        const double *in_re, const double *in_im,                                             \
+        double *out_re, double *out_im,                                                       \
+        size_t is, size_t os, size_t vl)                                                      \
+    {                                                                                         \
+        if (in_re != out_re || in_im != out_im)                                               \
+        {                                                                                     \
+            for (int j = 0; j < (R); j++)                                                     \
+            {                                                                                 \
+                memcpy(out_re + (size_t)j * os, in_re + (size_t)j * is, vl * sizeof(double)); \
+                memcpy(out_im + (size_t)j * os, in_im + (size_t)j * is, vl * sizeof(double)); \
+            }                                                                                 \
+        }                                                                                     \
+        radix##R##_n1_##dir##_##isa(out_re, out_im, NULL, NULL, os, vl);                      \
     }
 
 VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(2, fwd, avx2)
@@ -1152,7 +1164,8 @@ VFFT_PROTO_DEFINE_N1_OOP_WRAPPER(64, bwd, avx2)
 /* Initialize the registry for ISA=avx2. Codelets that aren't emitted
  * for a given radix (e.g. R=1024 has no DIF or t1s) leave their slots
  * NULL. Callers use the query helpers below to test before dispatch. */
-static inline void vfft_proto_registry_init_avx2(vfft_proto_registry_t *reg) {
+static inline void vfft_proto_registry_init_avx2(vfft_proto_registry_t *reg)
+{
     memset(reg, 0, sizeof(*reg));
 
     /* n1 codelets (7-arg OOP wrappers around 6-arg in-place codelets) */
@@ -1512,7 +1525,6 @@ static inline void vfft_proto_registry_init_avx2(vfft_proto_registry_t *reg) {
     reg->t1s_dif_log3_bwd[25] = radix25_t1s_dif_log3_bwd_avx2;
     reg->t1s_dif_log3_bwd[32] = radix32_t1s_dif_log3_bwd_avx2;
     reg->t1s_dif_log3_bwd[64] = radix64_t1s_dif_log3_bwd_avx2;
-
 }
 
 #endif /* VFFT_PROTO_REGISTRY_AVX2_H */
