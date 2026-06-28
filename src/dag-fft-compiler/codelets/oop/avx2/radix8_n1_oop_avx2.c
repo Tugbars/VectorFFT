@@ -14,6 +14,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix8_n1_oop_fwd_avx2_UG_UG(
     const double * __restrict__ in_re,
@@ -29,7 +32,8 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
     size_t me)
 {
     (void)tw_re; (void)tw_im;
-    for (size_t b = 0; b < me; b += 4) {
+    size_t b = 0;
+    for (; b + 4 <= me; b += 4) {
         __m256d lane_re_0, lane_im_0;
         __m256d out_lane_re_0, out_lane_im_0;
         __m256d lane_re_1, lane_im_1;
@@ -173,5 +177,152 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
         _mm256_storeu_pd(&out_im[b * out_group_stride + 6 * out_leg_stride], out_lane_im_6);
         _mm256_storeu_pd(&out_re[b * out_group_stride + 7 * out_leg_stride], out_lane_re_7);
         _mm256_storeu_pd(&out_im[b * out_group_stride + 7 * out_leg_stride], out_lane_im_7);
+    }
+    if (b < me) {
+        const size_t rem = me - b;
+        const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        __m256d lane_re_0, lane_im_0;
+        __m256d out_lane_re_0, out_lane_im_0;
+        __m256d lane_re_1, lane_im_1;
+        __m256d out_lane_re_1, out_lane_im_1;
+        __m256d lane_re_2, lane_im_2;
+        __m256d out_lane_re_2, out_lane_im_2;
+        __m256d lane_re_3, lane_im_3;
+        __m256d out_lane_re_3, out_lane_im_3;
+        __m256d lane_re_4, lane_im_4;
+        __m256d out_lane_re_4, out_lane_im_4;
+        __m256d lane_re_5, lane_im_5;
+        __m256d out_lane_re_5, out_lane_im_5;
+        __m256d lane_re_6, lane_im_6;
+        __m256d out_lane_re_6, out_lane_im_6;
+        __m256d lane_re_7, lane_im_7;
+        __m256d out_lane_re_7, out_lane_im_7;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = _mm256_maskload_pd(&in_re[b * in_group_stride + 0 * in_leg_stride], _m);
+        lane_im_0 = _mm256_maskload_pd(&in_im[b * in_group_stride + 0 * in_leg_stride], _m);
+        lane_re_1 = _mm256_maskload_pd(&in_re[b * in_group_stride + 1 * in_leg_stride], _m);
+        lane_im_1 = _mm256_maskload_pd(&in_im[b * in_group_stride + 1 * in_leg_stride], _m);
+        lane_re_2 = _mm256_maskload_pd(&in_re[b * in_group_stride + 2 * in_leg_stride], _m);
+        lane_im_2 = _mm256_maskload_pd(&in_im[b * in_group_stride + 2 * in_leg_stride], _m);
+        lane_re_3 = _mm256_maskload_pd(&in_re[b * in_group_stride + 3 * in_leg_stride], _m);
+        lane_im_3 = _mm256_maskload_pd(&in_im[b * in_group_stride + 3 * in_leg_stride], _m);
+        lane_re_4 = _mm256_maskload_pd(&in_re[b * in_group_stride + 4 * in_leg_stride], _m);
+        lane_im_4 = _mm256_maskload_pd(&in_im[b * in_group_stride + 4 * in_leg_stride], _m);
+        lane_re_5 = _mm256_maskload_pd(&in_re[b * in_group_stride + 5 * in_leg_stride], _m);
+        lane_im_5 = _mm256_maskload_pd(&in_im[b * in_group_stride + 5 * in_leg_stride], _m);
+        lane_re_6 = _mm256_maskload_pd(&in_re[b * in_group_stride + 6 * in_leg_stride], _m);
+        lane_im_6 = _mm256_maskload_pd(&in_im[b * in_group_stride + 6 * in_leg_stride], _m);
+        lane_re_7 = _mm256_maskload_pd(&in_re[b * in_group_stride + 7 * in_leg_stride], _m);
+        lane_im_7 = _mm256_maskload_pd(&in_im[b * in_group_stride + 7 * in_leg_stride], _m);
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const __m256d t0 = lane_re_7;
+                const __m256d t2 = lane_im_7;
+                const __m256d t5 = lane_re_3;
+                const __m256d t6 = lane_im_3;
+                const __m256d t8 = _mm256_sub_pd(t6, t2);
+                const __m256d t10 = _mm256_sub_pd(t5, t0);
+                const __m256d t13 = lane_re_5;
+                const __m256d t14 = lane_im_5;
+                const __m256d t16 = lane_re_1;
+                const __m256d t17 = lane_im_1;
+                const __m256d t18 = _mm256_sub_pd(t17, t14);
+                const __m256d t20 = _mm256_sub_pd(t16, t13);
+                const __m256d t21 = _mm256_add_pd(t10, t18);
+                const __m256d t22 = _mm256_sub_pd(t20, t8);
+                const __m256d t23 = _mm256_sub_pd(t22, t21);
+                const __m256d t24 = _mm256_set1_pd(0.70710678118655002);
+                const __m256d t28 = _mm256_add_pd(t21, t22);
+                const __m256d t31 = lane_re_6;
+                const __m256d t32 = lane_im_6;
+                const __m256d t34 = lane_re_2;
+                const __m256d t35 = lane_im_2;
+                const __m256d t36 = _mm256_sub_pd(t35, t32);
+                const __m256d t38 = _mm256_sub_pd(t34, t31);
+                const __m256d t41 = lane_re_4;
+                const __m256d t42 = lane_im_4;
+                const __m256d t44 = lane_re_0;
+                const __m256d t45 = lane_im_0;
+                const __m256d t46 = _mm256_sub_pd(t45, t42);
+                const __m256d t48 = _mm256_sub_pd(t44, t41);
+                const __m256d t49 = _mm256_add_pd(t38, t46);
+                const __m256d t50 = _mm256_sub_pd(t48, t36);
+                const __m256d t53 = _mm256_add_pd(t2, t6);
+                const __m256d t54 = _mm256_add_pd(t0, t5);
+                const __m256d t56 = _mm256_add_pd(t14, t17);
+                const __m256d t57 = _mm256_add_pd(t13, t16);
+                const __m256d t58 = _mm256_sub_pd(t56, t53);
+                const __m256d t60 = _mm256_sub_pd(t57, t54);
+                const __m256d t63 = _mm256_add_pd(t32, t35);
+                const __m256d t64 = _mm256_add_pd(t31, t34);
+                const __m256d t66 = _mm256_add_pd(t42, t45);
+                const __m256d t67 = _mm256_add_pd(t41, t44);
+                const __m256d t68 = _mm256_sub_pd(t66, t63);
+                const __m256d t70 = _mm256_sub_pd(t67, t64);
+                const __m256d t71 = _mm256_sub_pd(t70, t58);
+                const __m256d t72 = _mm256_add_pd(t60, t68);
+                const __m256d t73 = _mm256_sub_pd(t18, t10);
+                const __m256d t75 = _mm256_add_pd(t8, t20);
+                const __m256d t76 = _mm256_add_pd(t73, t75);
+                const __m256d t79 = _mm256_sub_pd(t73, t75);
+                const __m256d t82 = _mm256_sub_pd(t46, t38);
+                const __m256d t83 = _mm256_add_pd(t36, t48);
+                const __m256d t87 = _mm256_add_pd(t53, t56);
+                const __m256d t88 = _mm256_add_pd(t54, t57);
+                const __m256d t90 = _mm256_add_pd(t63, t66);
+                const __m256d t91 = _mm256_add_pd(t64, t67);
+                const __m256d t92 = _mm256_sub_pd(t91, t88);
+                const __m256d t94 = _mm256_sub_pd(t90, t87);
+                const __m256d t97 = _mm256_add_pd(t58, t70);
+                const __m256d t98 = _mm256_sub_pd(t68, t60);
+                const __m256d t101 = _mm256_add_pd(t88, t91);
+                const __m256d t102 = _mm256_add_pd(t87, t90);
+                const __m256d t103 = _mm256_fmadd_pd(t23, t24, t50);
+                const __m256d t104 = _mm256_fmadd_pd(t24, t28, t49);
+                const __m256d t105 = _mm256_fnmadd_pd(t24, t76, t83);
+                const __m256d t106 = _mm256_fnmadd_pd(t24, t79, t82);
+                const __m256d t107 = _mm256_fnmadd_pd(t23, t24, t50);
+                const __m256d t108 = _mm256_fnmadd_pd(t24, t28, t49);
+                const __m256d t109 = _mm256_fmadd_pd(t24, t76, t83);
+                const __m256d t110 = _mm256_fmadd_pd(t24, t79, t82);
+
+        out_lane_re_7 = t103;
+        out_lane_im_7 = t104;
+        out_lane_re_6 = t71;
+        out_lane_im_6 = t72;
+        out_lane_re_5 = t105;
+        out_lane_im_5 = t106;
+        out_lane_re_4 = t92;
+        out_lane_im_4 = t94;
+        out_lane_re_3 = t107;
+        out_lane_im_3 = t108;
+        out_lane_re_2 = t97;
+        out_lane_im_2 = t98;
+        out_lane_re_1 = t109;
+        out_lane_im_1 = t110;
+        out_lane_re_0 = t101;
+        out_lane_im_0 = t102;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_re_0);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_im_0);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_re_1);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_im_1);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 2 * out_leg_stride], _m, out_lane_re_2);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 2 * out_leg_stride], _m, out_lane_im_2);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_re_3);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_im_3);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 4 * out_leg_stride], _m, out_lane_re_4);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 4 * out_leg_stride], _m, out_lane_im_4);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 5 * out_leg_stride], _m, out_lane_re_5);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 5 * out_leg_stride], _m, out_lane_im_5);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 6 * out_leg_stride], _m, out_lane_re_6);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 6 * out_leg_stride], _m, out_lane_im_6);
+        _mm256_maskstore_pd(&out_re[b * out_group_stride + 7 * out_leg_stride], _m, out_lane_re_7);
+        _mm256_maskstore_pd(&out_im[b * out_group_stride + 7 * out_leg_stride], _m, out_lane_im_7);
     }
 }

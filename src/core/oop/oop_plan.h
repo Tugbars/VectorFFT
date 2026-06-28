@@ -203,13 +203,13 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
     int N, size_t K, const int *factors, int nf,
     const vfft_proto_registry_t *reg)
 {
-    /* K %% 8 == 0 is the lane contract of EVERY kind on this path: the
-     * 11-arg OOP codelets by ABI, and the proto 7-arg avx512 codelets
-     * empirically (8-lane granular; K=4 on exact-size buffers overruns
-     * each leg slice — measured as heap corruption in the phase-5 sweep).
-     * Production handles sub-8 K with padding/ISA dispatch; v1 here
-     * rejects it outright. */
-    if (K == 0 || (K % 8u) != 0)
+    /* K==0 is always invalid. K%8==0 is the lane contract of the BAILEY2 and
+     * MODEB-via-factors kinds below (their t1p kernels are per-block-broadcast /
+     * lane-granular). The LEAF path (a single n1_oop codelet, me=K) now carries
+     * the rem-aware tail (docs/performance/arbitrary_k_tail_handling.md) and
+     * serves ANY K, so odd K is allowed through to Rule 1; the K%8 gate moves
+     * down to Rule 2 (BAILEY2). */
+    if (K == 0)
         return NULL;
 
     vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
@@ -230,7 +230,10 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
         }
     }
 
-    /* Rule 2: fused Bailey two-stage, aliasing-masked */
+    /* Rule 2: fused Bailey two-stage, aliasing-masked. K%8-only: t1p's per-block
+     * broadcast twiddle assumes K is a multiple of the vector width — straddling
+     * blocks at odd K read the wrong twiddle (Phase B adds a per-lane t1p). */
+    if ((K % 8u) == 0)
     {
         int bestR1 = 0, bestR2 = 0;
         for (int R2 = N < 128 ? N : 128; R2 >= 2; R2--)

@@ -94,7 +94,8 @@ static inline int vfft_oop_tune_pairs_v(int N, size_t K,
     int nc = 0;
     /* the direct leaf competes too at N <= 128 (a pair hint must never
      * shadow a faster leaf) */
-    if (N <= 128 && (K % 8u) == 0 && vfft_oop_leaf_fn(N))
+    /* LEAF (single n1_oop codelet, me=K) carries the rem-aware tail -> any K. */
+    if (N <= 128 && vfft_oop_leaf_fn(N))
     {
         vfft_oop_plan_t *p =
             (vfft_oop_plan_t *)calloc(1, sizeof(*p));
