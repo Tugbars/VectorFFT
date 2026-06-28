@@ -23,7 +23,7 @@
 | Feature | Quadrant (files av2/av512) | Family / codelets | Signature & loop | Load/store pattern | Tail |
 |---|---|---|---|---|---|
 | **1D c2c in-place** | `inplace` (324/324) | n1, t1/t1s × dit/dif × fwd/bwd × flat/log3 (18-family) | `(rio_re,rio_im,tw,ios,me)` — `for k<me k+=VW` | `rio[leg*ios+k]`; spill scratch full-width | **DONE** (avx2; composite incl). avx512 emit-present, untested |
-| **1D c2c OOP** | `oop` (45/45) | n1_oop, t1p_oop(+log3), *_spec (baked strides) | `(in_re,in_im,out_re,out_im,tw,…,me)` — `for b<me b+=VW` | `in_re[b*gstride+leg*lstride]` → split out | **READY** |
+| **1D c2c OOP** | `oop` (52/52) | n1_oop, t1p_oop(+log3), **t1_oop (NEW)**, *_spec | `(in_re,in_im,out_re,out_im,tw,…,me)` — `for b<me b+=VW` | `in_re[b*gstride+leg*lstride]` → split out | ✅ **DONE 2026-06-28** |
 | **Trig (DCT/DST/DHT)** | `trig` (36/36) | dct2/3/4, dst2/3/4, dht, dct1, dst1 | `(in,out,K)` 3-arg r2r — `for k<K k+=VW` | `in[leg*K+k]` → `out[…]` | **READY** |
 | **1D r2c (real fwd)** | `rfft` (65/64) | r2cf leaf, hc2hc stage, hc2c / hc2c-nat terminator (+log3, +ranged) | `(in_re[,in_im],out…,is,os…,vl)` — `for v<vl v+=VW` | `in_re[leg*is+v]` → `out`/`Rp,Ip,Rm,Im` | **READY** (ranged + 4-buf split: see notes) |
 | **1D c2r (real bwd)** | `c2r` (50/29) | r2cb leaf, hc2hc_dif_bwd stage, hc2c-nat initiator (+log3, +ranged) | `(in_re,in_im,out_re,is_re,is_im,os_re,vl)` — `for v<vl v+=VW` | `in_re[leg*is_re+v]` → `out_re[…]` | **READY** (ranged: see notes) |
@@ -70,7 +70,11 @@ fallback for the `rem` rows. (a) is the vectorized path and matches the rest of 
 design. This is the one family needing real new emit code.
 
 ## Suggested order (value × ease)
-1. **OOP c2c** — highest-use feature after in-place, identical K semantics, READY.
+1. ~~**OOP c2c**~~ — ✅ **DONE 2026-06-28**. MODEB (scrambled) rides the in-place tail via the
+   n1 OOP wrapper; LEAF (natural, N≤128) tailed n1_oop; BAILEY2 (natural, all N) got a NEW
+   per-lane `t1_oop` codelet + per-group twiddle table (t1p's per-block broadcast straddles k2
+   boundaries at odd K). codelet_oop.ml is a separate emit module — also fixed it hardcoding the
+   obsolete M-fence ON. Validated vs naive DFT (natural order) + roundtrip.
 2. **Trig** — clean 3-arg ABI, READY, self-contained.
 3. **r2c / c2r** — READY but most families (leaf/stage/terminator + ranged); unlocks
    odd-batch real-FFT.

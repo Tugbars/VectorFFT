@@ -125,6 +125,18 @@ let files (quadrant : string) : (string * string list) list =
             ])
           t1p_radices
       in
+      (* PER-GROUP (per-lane) twiddle second-stage codelet (--twiddled, NOT
+       * --twiddled-pos). Twiddle is loadu(tw[j*me+b]) per group, so it's
+       * arbitrary-K-correct (no k2-boundary straddle) and rem-aware-maskable —
+       * the BAILEY2 s2 codelet for odd K (docs arbitrary_k). Forward only; OOP
+       * backward is a pointer-swap on the forward plan. *)
+      let t1 =
+        List.map
+          (fun r ->
+            ( Printf.sprintf "radix%d_t1_oop_%s.c" r isa,
+              (string_of_int r :: base) @ [ "--twiddled" ] ))
+          t1p_radices
+      in
       let extras =
         (* OOP stride-specialized codelets (--oop-strides): strides baked as
          * compile-time constants -> 7-arg ABI, ~6-10% over runtime-stride
@@ -155,7 +167,7 @@ let files (quadrant : string) : (string * string list) list =
             ])
           spec_radices
       in
-      n1 @ t1p @ extras
+      n1 @ t1p @ t1 @ extras
   | "strided-avx2" | "strided-avx512" ->
       let isa = if quadrant = "strided-avx2" then "avx2" else "avx512" in
       let radices =

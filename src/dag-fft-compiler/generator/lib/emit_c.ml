@@ -177,14 +177,21 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
             (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width
                isa.vec_width)
         else if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
-        else Isa.loadu_pd isa (Printf.sprintf "tw_re[%d*me + b]" j)
+        else
+          (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
+             in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
+             are lane-independent and stay unmasked. *)
+          Isa.loadu_pd ~mode:!current_ls_mode isa
+            (Printf.sprintf "tw_re[%d*me + b]" j)
     | Expr.Twiddle (j, false) ->
         if !current_tw_perpos then
           Isa.set1_pd_str isa
             (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width
                isa.vec_width)
         else if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-        else Isa.loadu_pd isa (Printf.sprintf "tw_im[%d*me + b]" j)
+        else
+          Isa.loadu_pd ~mode:!current_ls_mode isa
+            (Printf.sprintf "tw_im[%d*me + b]" j)
     | Expr.Output _ ->
         failwith "render_load: Output ref shouldn't appear as a Load source"
   else

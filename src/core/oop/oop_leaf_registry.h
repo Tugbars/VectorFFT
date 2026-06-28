@@ -34,6 +34,9 @@
 #define VFFT_OOP_N1_NAME(R)       VFFT_OOP_CAT5(radix,R,_n1_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
 #define VFFT_OOP_T1P_NAME(R)      VFFT_OOP_CAT5(radix,R,_t1p_oop_fwd_,VFFT_OOP_ISA,_UG_UG_log3)
 #define VFFT_OOP_T1P_FLAT_NAME(R) VFFT_OOP_CAT5(radix,R,_t1p_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
+/* Per-GROUP (per-lane) twiddle s2 codelet: tw[(l2-1)*me + b] indexed by the
+ * group var b (not a per-VW-block broadcast) -> arbitrary-K-correct + maskable. */
+#define VFFT_OOP_T1_NAME(R)       VFFT_OOP_CAT5(radix,R,_t1_oop_fwd_,VFFT_OOP_ISA,_UG_UG)
 
 typedef void (*vfft_oop11_fn)(const double *, const double *,
                               double *, double *,
@@ -52,6 +55,10 @@ typedef void (*vfft_oop11_fn)(const double *, const double *,
   extern void VFFT_OOP_T1P_FLAT_NAME(R)( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+#define VFFT_OOP_DECL_T1(R) \
+  extern void VFFT_OOP_T1_NAME(R)( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 
 VFFT_OOP_DECL_N1(2)  VFFT_OOP_DECL_N1(3)  VFFT_OOP_DECL_N1(4)
 VFFT_OOP_DECL_N1(5)  VFFT_OOP_DECL_N1(6)  VFFT_OOP_DECL_N1(7)
@@ -67,6 +74,9 @@ VFFT_OOP_DECL_T1P(64)
 VFFT_OOP_DECL_T1P_FLAT(4)  VFFT_OOP_DECL_T1P_FLAT(7)  VFFT_OOP_DECL_T1P_FLAT(8)
 VFFT_OOP_DECL_T1P_FLAT(13) VFFT_OOP_DECL_T1P_FLAT(16) VFFT_OOP_DECL_T1P_FLAT(32)
 VFFT_OOP_DECL_T1P_FLAT(64)
+VFFT_OOP_DECL_T1(4)  VFFT_OOP_DECL_T1(7)  VFFT_OOP_DECL_T1(8)
+VFFT_OOP_DECL_T1(13) VFFT_OOP_DECL_T1(16) VFFT_OOP_DECL_T1(32)
+VFFT_OOP_DECL_T1(64)
 
 static inline vfft_oop11_fn vfft_oop_leaf_fn(int R)
 {
@@ -109,6 +119,21 @@ static inline vfft_oop11_fn vfft_oop_t1p_flat_fn(int R)
 static inline vfft_oop11_fn vfft_oop_t1p_fn_v(int R, int variant)
 {
     return variant ? vfft_oop_t1p_fn(R) : vfft_oop_t1p_flat_fn(R);
+}
+
+/* Per-group (per-lane) twiddle s2 codelet — the arbitrary-K-correct BAILEY2
+ * second stage (paired with a per-GROUP twiddle table: `count` entries/leg,
+ * value W_N^{l2.k2} for group b where k2 = b/K). Used when K % GROUPW != 0;
+ * for aligned K the per-block t1p above is the faster choice. */
+static inline vfft_oop11_fn vfft_oop_t1_fn(int R)
+{
+    switch (R)
+    {
+#define C(R) case R: return VFFT_OOP_T1_NAME(R);
+    C(4) C(7) C(8) C(13) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
 }
 
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */
