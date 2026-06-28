@@ -13,14 +13,13 @@
 #include <immintrin.h>
 #include <stddef.h>
 
-__attribute__((target("avx512f")))
-void radix16_hc2hc_dif_bwd_avx512(
-    const double * __restrict__ in_re,
-    const double * __restrict__ in_im,
-    double       * __restrict__ out_re,
-    double       * __restrict__ out_im,
-    const double * __restrict__ tw_re,
-    const double * __restrict__ tw_im,
+__attribute__((target("avx512f"))) void radix16_hc2hc_dif_bwd_avx512(
+    const double *__restrict__ in_re,
+    const double *__restrict__ in_im,
+    double *__restrict__ out_re,
+    double *__restrict__ out_im,
+    const double *__restrict__ tw_re,
+    const double *__restrict__ tw_im,
     ptrdiff_t is,
     ptrdiff_t os,
     size_t vl)
@@ -28,28 +27,27 @@ void radix16_hc2hc_dif_bwd_avx512(
     const __m512d t22 = _mm512_set1_pd(0.41421356237308998);
     const __m512d t26 = _mm512_set1_pd(0.92387953251128996);
     const __m512d t85 = _mm512_set1_pd(0.70710678118655002);
-    for (size_t v = 0; v < vl; v += 8) {
+    for (size_t v = 0; v < vl; v += 8)
+    {
 
-
-
-        const __m512d t0 = _mm512_loadu_pd(&in_im[0*is + v]);
-        const __m512d t2 = _mm512_loadu_pd(&in_re[15*is + v]);
-        const __m512d t5 = _mm512_loadu_pd(&in_re[7*is + v]);
+        const __m512d t0 = _mm512_loadu_pd(&in_im[0 * is + v]);
+        const __m512d t2 = _mm512_loadu_pd(&in_re[15 * is + v]);
+        const __m512d t5 = _mm512_loadu_pd(&in_re[7 * is + v]);
         const __m512d t10 = _mm512_sub_pd(t5, t0);
         const __m512d t125 = _mm512_add_pd(t0, t5);
-        const __m512d t6 = _mm512_loadu_pd(&in_im[8*is + v]);
+        const __m512d t6 = _mm512_loadu_pd(&in_im[8 * is + v]);
         const __m512d t8 = _mm512_add_pd(t2, t6);
         const __m512d t124 = _mm512_sub_pd(t6, t2);
-        const __m512d t13 = _mm512_loadu_pd(&in_im[4*is + v]);
-        const __m512d t14 = _mm512_loadu_pd(&in_re[11*is + v]);
-        const __m512d t16 = _mm512_loadu_pd(&in_re[3*is + v]);
+        const __m512d t13 = _mm512_loadu_pd(&in_im[4 * is + v]);
+        const __m512d t14 = _mm512_loadu_pd(&in_re[11 * is + v]);
+        const __m512d t16 = _mm512_loadu_pd(&in_re[3 * is + v]);
         const __m512d t20 = _mm512_sub_pd(t16, t13);
         const __m512d t128 = _mm512_add_pd(t13, t16);
         const __m512d t24 = _mm512_add_pd(t8, t20);
         const __m512d t132 = _mm512_sub_pd(t128, t125);
         const __m512d t185 = _mm512_sub_pd(t20, t8);
         const __m512d t227 = _mm512_add_pd(t125, t128);
-        const __m512d t17 = _mm512_loadu_pd(&in_im[12*is + v]);
+        const __m512d t17 = _mm512_loadu_pd(&in_im[12 * is + v]);
         const __m512d t18 = _mm512_add_pd(t14, t17);
         const __m512d t127 = _mm512_sub_pd(t17, t14);
         const __m512d t21 = _mm512_sub_pd(t18, t10);
@@ -62,17 +60,17 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t372 = _mm512_fnmadd_pd(t21, t22, t24);
         const __m512d t382 = _mm512_fmadd_pd(t22, t184, t185);
         const __m512d t388 = _mm512_fmsub_pd(t22, t185, t184);
-        const __m512d t34 = _mm512_loadu_pd(&in_im[2*is + v]);
-        const __m512d t35 = _mm512_loadu_pd(&in_re[13*is + v]);
-        const __m512d t37 = _mm512_loadu_pd(&in_re[5*is + v]);
+        const __m512d t34 = _mm512_loadu_pd(&in_im[2 * is + v]);
+        const __m512d t35 = _mm512_loadu_pd(&in_re[13 * is + v]);
+        const __m512d t37 = _mm512_loadu_pd(&in_re[5 * is + v]);
         const __m512d t41 = _mm512_sub_pd(t37, t34);
         const __m512d t141 = _mm512_add_pd(t34, t37);
-        const __m512d t38 = _mm512_loadu_pd(&in_im[10*is + v]);
+        const __m512d t38 = _mm512_loadu_pd(&in_im[10 * is + v]);
         const __m512d t39 = _mm512_add_pd(t35, t38);
         const __m512d t140 = _mm512_sub_pd(t38, t35);
-        const __m512d t44 = _mm512_loadu_pd(&in_im[6*is + v]);
-        const __m512d t45 = _mm512_loadu_pd(&in_re[9*is + v]);
-        const __m512d t47 = _mm512_loadu_pd(&in_re[1*is + v]);
+        const __m512d t44 = _mm512_loadu_pd(&in_im[6 * is + v]);
+        const __m512d t45 = _mm512_loadu_pd(&in_re[9 * is + v]);
+        const __m512d t47 = _mm512_loadu_pd(&in_re[1 * is + v]);
         const __m512d t51 = _mm512_sub_pd(t47, t44);
         const __m512d t144 = _mm512_add_pd(t44, t47);
         const __m512d t53 = _mm512_add_pd(t39, t51);
@@ -81,7 +79,7 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t230 = _mm512_add_pd(t141, t144);
         const __m512d t233 = _mm512_sub_pd(t230, t227);
         const __m512d t295 = _mm512_add_pd(t227, t230);
-        const __m512d t48 = _mm512_loadu_pd(&in_im[14*is + v]);
+        const __m512d t48 = _mm512_loadu_pd(&in_im[14 * is + v]);
         const __m512d t49 = _mm512_add_pd(t45, t48);
         const __m512d t143 = _mm512_sub_pd(t48, t45);
         const __m512d t52 = _mm512_sub_pd(t49, t41);
@@ -108,24 +106,24 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t457 = _mm512_sub_pd(t150, t137);
         const __m512d t462 = _mm512_add_pd(t386, t388);
         const __m512d t465 = _mm512_add_pd(t380, t382);
-        const __m512d t63 = _mm512_loadu_pd(&in_im[1*is + v]);
-        const __m512d t64 = _mm512_loadu_pd(&in_re[14*is + v]);
-        const __m512d t66 = _mm512_loadu_pd(&in_re[6*is + v]);
+        const __m512d t63 = _mm512_loadu_pd(&in_im[1 * is + v]);
+        const __m512d t64 = _mm512_loadu_pd(&in_re[14 * is + v]);
+        const __m512d t66 = _mm512_loadu_pd(&in_re[6 * is + v]);
         const __m512d t70 = _mm512_sub_pd(t66, t63);
         const __m512d t156 = _mm512_add_pd(t63, t66);
-        const __m512d t67 = _mm512_loadu_pd(&in_im[9*is + v]);
+        const __m512d t67 = _mm512_loadu_pd(&in_im[9 * is + v]);
         const __m512d t68 = _mm512_add_pd(t64, t67);
         const __m512d t155 = _mm512_sub_pd(t67, t64);
-        const __m512d t73 = _mm512_loadu_pd(&in_im[5*is + v]);
-        const __m512d t74 = _mm512_loadu_pd(&in_re[10*is + v]);
-        const __m512d t76 = _mm512_loadu_pd(&in_re[2*is + v]);
+        const __m512d t73 = _mm512_loadu_pd(&in_im[5 * is + v]);
+        const __m512d t74 = _mm512_loadu_pd(&in_re[10 * is + v]);
+        const __m512d t76 = _mm512_loadu_pd(&in_re[2 * is + v]);
         const __m512d t80 = _mm512_sub_pd(t76, t73);
         const __m512d t159 = _mm512_add_pd(t73, t76);
         const __m512d t83 = _mm512_add_pd(t68, t80);
         const __m512d t206 = _mm512_sub_pd(t80, t68);
         const __m512d t162 = _mm512_sub_pd(t159, t156);
         const __m512d t236 = _mm512_add_pd(t156, t159);
-        const __m512d t77 = _mm512_loadu_pd(&in_im[13*is + v]);
+        const __m512d t77 = _mm512_loadu_pd(&in_im[13 * is + v]);
         const __m512d t78 = _mm512_add_pd(t74, t77);
         const __m512d t158 = _mm512_sub_pd(t77, t74);
         const __m512d t81 = _mm512_sub_pd(t78, t70);
@@ -136,17 +134,17 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t90 = _mm512_sub_pd(t81, t83);
         const __m512d t207 = _mm512_sub_pd(t206, t205);
         const __m512d t209 = _mm512_add_pd(t205, t206);
-        const __m512d t93 = _mm512_loadu_pd(&in_im[3*is + v]);
-        const __m512d t94 = _mm512_loadu_pd(&in_re[12*is + v]);
-        const __m512d t96 = _mm512_loadu_pd(&in_re[4*is + v]);
+        const __m512d t93 = _mm512_loadu_pd(&in_im[3 * is + v]);
+        const __m512d t94 = _mm512_loadu_pd(&in_re[12 * is + v]);
+        const __m512d t96 = _mm512_loadu_pd(&in_re[4 * is + v]);
         const __m512d t100 = _mm512_sub_pd(t96, t93);
         const __m512d t166 = _mm512_add_pd(t93, t96);
-        const __m512d t97 = _mm512_loadu_pd(&in_im[11*is + v]);
+        const __m512d t97 = _mm512_loadu_pd(&in_im[11 * is + v]);
         const __m512d t98 = _mm512_add_pd(t94, t97);
         const __m512d t165 = _mm512_sub_pd(t97, t94);
-        const __m512d t103 = _mm512_loadu_pd(&in_im[7*is + v]);
-        const __m512d t104 = _mm512_loadu_pd(&in_re[8*is + v]);
-        const __m512d t106 = _mm512_loadu_pd(&in_re[0*is + v]);
+        const __m512d t103 = _mm512_loadu_pd(&in_im[7 * is + v]);
+        const __m512d t104 = _mm512_loadu_pd(&in_re[8 * is + v]);
+        const __m512d t106 = _mm512_loadu_pd(&in_re[0 * is + v]);
         const __m512d t110 = _mm512_sub_pd(t106, t103);
         const __m512d t169 = _mm512_add_pd(t103, t106);
         const __m512d t112 = _mm512_add_pd(t98, t110);
@@ -177,7 +175,7 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t538 = _mm512_fmadd_pd(t26, t446, t510);
         const __m512d t542 = _mm512_fmadd_pd(t85, t454, t270);
         const __m512d t546 = _mm512_fmadd_pd(t26, t462, t520);
-        const __m512d t107 = _mm512_loadu_pd(&in_im[15*is + v]);
+        const __m512d t107 = _mm512_loadu_pd(&in_im[15 * is + v]);
         const __m512d t108 = _mm512_add_pd(t104, t107);
         const __m512d t168 = _mm512_sub_pd(t107, t104);
         const __m512d t111 = _mm512_sub_pd(t108, t100);
@@ -269,38 +267,38 @@ void radix16_hc2hc_dif_bwd_avx512(
         const __m512d t548 = _mm512_fmadd_pd(t546, t357, _mm512_mul_pd(t547, t359));
         const __m512d t549 = _mm512_fnmadd_pd(t546, t359, _mm512_mul_pd(t547, t357));
 
-        _mm512_storeu_pd(&out_re[15*os + v], t498);
-        _mm512_storeu_pd(&out_im[15*os + v], t499);
-        _mm512_storeu_pd(&out_re[14*os + v], t502);
-        _mm512_storeu_pd(&out_im[14*os + v], t503);
-        _mm512_storeu_pd(&out_re[13*os + v], t508);
-        _mm512_storeu_pd(&out_im[13*os + v], t509);
-        _mm512_storeu_pd(&out_re[12*os + v], t249);
-        _mm512_storeu_pd(&out_im[12*os + v], t250);
-        _mm512_storeu_pd(&out_re[11*os + v], t514);
-        _mm512_storeu_pd(&out_im[11*os + v], t515);
-        _mm512_storeu_pd(&out_re[10*os + v], t518);
-        _mm512_storeu_pd(&out_im[10*os + v], t519);
-        _mm512_storeu_pd(&out_re[9*os + v], t524);
-        _mm512_storeu_pd(&out_im[9*os + v], t525);
-        _mm512_storeu_pd(&out_re[8*os + v], t305);
-        _mm512_storeu_pd(&out_im[8*os + v], t306);
-        _mm512_storeu_pd(&out_re[7*os + v], t528);
-        _mm512_storeu_pd(&out_im[7*os + v], t529);
-        _mm512_storeu_pd(&out_re[6*os + v], t532);
-        _mm512_storeu_pd(&out_im[6*os + v], t533);
-        _mm512_storeu_pd(&out_re[5*os + v], t536);
-        _mm512_storeu_pd(&out_im[5*os + v], t537);
-        _mm512_storeu_pd(&out_re[4*os + v], t337);
-        _mm512_storeu_pd(&out_im[4*os + v], t338);
-        _mm512_storeu_pd(&out_re[3*os + v], t540);
-        _mm512_storeu_pd(&out_im[3*os + v], t541);
-        _mm512_storeu_pd(&out_re[2*os + v], t544);
-        _mm512_storeu_pd(&out_im[2*os + v], t545);
-        _mm512_storeu_pd(&out_re[1*os + v], t548);
-        _mm512_storeu_pd(&out_im[1*os + v], t549);
-        _mm512_storeu_pd(&out_re[0*os + v], t364);
-        _mm512_storeu_pd(&out_im[0*os + v], t365);
+        _mm512_storeu_pd(&out_re[15 * os + v], t498);
+        _mm512_storeu_pd(&out_im[15 * os + v], t499);
+        _mm512_storeu_pd(&out_re[14 * os + v], t502);
+        _mm512_storeu_pd(&out_im[14 * os + v], t503);
+        _mm512_storeu_pd(&out_re[13 * os + v], t508);
+        _mm512_storeu_pd(&out_im[13 * os + v], t509);
+        _mm512_storeu_pd(&out_re[12 * os + v], t249);
+        _mm512_storeu_pd(&out_im[12 * os + v], t250);
+        _mm512_storeu_pd(&out_re[11 * os + v], t514);
+        _mm512_storeu_pd(&out_im[11 * os + v], t515);
+        _mm512_storeu_pd(&out_re[10 * os + v], t518);
+        _mm512_storeu_pd(&out_im[10 * os + v], t519);
+        _mm512_storeu_pd(&out_re[9 * os + v], t524);
+        _mm512_storeu_pd(&out_im[9 * os + v], t525);
+        _mm512_storeu_pd(&out_re[8 * os + v], t305);
+        _mm512_storeu_pd(&out_im[8 * os + v], t306);
+        _mm512_storeu_pd(&out_re[7 * os + v], t528);
+        _mm512_storeu_pd(&out_im[7 * os + v], t529);
+        _mm512_storeu_pd(&out_re[6 * os + v], t532);
+        _mm512_storeu_pd(&out_im[6 * os + v], t533);
+        _mm512_storeu_pd(&out_re[5 * os + v], t536);
+        _mm512_storeu_pd(&out_im[5 * os + v], t537);
+        _mm512_storeu_pd(&out_re[4 * os + v], t337);
+        _mm512_storeu_pd(&out_im[4 * os + v], t338);
+        _mm512_storeu_pd(&out_re[3 * os + v], t540);
+        _mm512_storeu_pd(&out_im[3 * os + v], t541);
+        _mm512_storeu_pd(&out_re[2 * os + v], t544);
+        _mm512_storeu_pd(&out_im[2 * os + v], t545);
+        _mm512_storeu_pd(&out_re[1 * os + v], t548);
+        _mm512_storeu_pd(&out_im[1 * os + v], t549);
+        _mm512_storeu_pd(&out_re[0 * os + v], t364);
+        _mm512_storeu_pd(&out_im[0 * os + v], t365);
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:
