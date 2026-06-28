@@ -27,7 +27,27 @@ type t = {
   loadu_pd : string; (* full intrinsic name for unaligned load *)
   storeu_pd : string;
   set1_pd : string;
+  maskload_pd : string;
+      (* masked unaligned load — avx2 "_mm256_maskload_pd" (addr, mask),
+       * avx512 "_mm512_maskz_loadu_pd" (mask, addr). "" for scalar. *)
+  maskstore_pd : string;
+      (* masked store — avx2 "_mm256_maskstore_pd" (addr, mask, val),
+       * avx512 "_mm512_mask_storeu_pd" (addr, mask, val). "" for scalar. *)
 }
+
+(* Load/store mode for the arbitrary-K tail (notebook section 53 / docs
+ * arbitrary_k). The same scheduled DAG renders three ways off ONE schedule:
+ *   - LS_vector: the bulk loop, full-width loadu/storeu (default; every
+ *     existing codelet path is unchanged because mode defaults to this).
+ *   - LS_masked m: ONE remainder pass, maskload/maskstore gated by the C
+ *     mask variable `m` (an __m256i for avx2 or __mmask8 for avx512) that
+ *     emit_c declares from `rem` at the top of the tail block. Masks only
+ *     the k-indexed rio + per-lane twiddle accesses; broadcast twiddles
+ *     (set1) and constants are lane-independent and bypass loadu entirely,
+ *     so they need no masking.
+ *   - the scalar rem==1 lane reuses the width-1 `scalar` ISA, which ignores
+ *     mode (a single lane is always active). *)
+type ls_mode = LS_vector | LS_masked of string
 
 (* === PROFILES ===
  *
@@ -47,6 +67,8 @@ let avx512 =
     loadu_pd = "_mm512_loadu_pd";
     storeu_pd = "_mm512_storeu_pd";
     set1_pd = "_mm512_set1_pd";
+    maskload_pd = "_mm512_maskz_loadu_pd";
+    maskstore_pd = "_mm512_mask_storeu_pd";
   }
 
 let avx2 =
@@ -60,6 +82,8 @@ let avx2 =
     loadu_pd = "_mm256_loadu_pd";
     storeu_pd = "_mm256_storeu_pd";
     set1_pd = "_mm256_set1_pd";
+    maskload_pd = "_mm256_maskload_pd";
+    maskstore_pd = "_mm256_maskstore_pd";
   }
 
 (* Scalar lane (notebook section 53): the cascade's last rung, serving
@@ -83,6 +107,8 @@ let scalar =
     loadu_pd = "vfft_scalar_load";
     storeu_pd = "vfft_scalar_store";
     set1_pd = "";
+    maskload_pd = "";
+    maskstore_pd = "";
   }
 
 (* Look up by name, for CLI. *)
@@ -151,13 +177,33 @@ let set1_pd_str (isa : t) (literal : string) : string =
   if isa.vec_width = 1 then Printf.sprintf "(%s)" literal
   else Printf.sprintf "%s(%s)" isa.set1_pd literal
 
-let loadu_pd (isa : t) (addr : string) : string =
+(* mode defaults to LS_vector, so all existing positional callers
+ * (`loadu_pd isa addr`) render exactly as before. The arbitrary-K tail
+ * passes ~mode:(LS_masked m) to switch the rio + per-lane twiddle accesses
+ * to masked intrinsics. The width-1 scalar ISA ignores mode (a lone lane
+ * is always active). *)
+let loadu_pd ?(mode = LS_vector) (isa : t) (addr : string) : string =
   if isa.vec_width = 1 then Printf.sprintf "%s" addr
-  else Printf.sprintf "%s(&%s)" isa.loadu_pd addr
+  else
+    match mode with
+    | LS_vector -> Printf.sprintf "%s(&%s)" isa.loadu_pd addr
+    | LS_masked m ->
+        if isa.vec_width = 8 then
+          (* avx512: maskz_loadu(mask, addr) — zeroes inactive lanes *)
+          Printf.sprintf "%s(%s, &%s)" isa.maskload_pd m addr
+        else
+          (* avx2: maskload(addr, mask) — __m256i sign-bit mask *)
+          Printf.sprintf "%s(&%s, %s)" isa.maskload_pd addr m
 
-let storeu_pd (isa : t) (addr : string) (value : string) : string =
+let storeu_pd ?(mode = LS_vector) (isa : t) (addr : string) (value : string) :
+    string =
   if isa.vec_width = 1 then Printf.sprintf "%s = %s" addr value
-  else Printf.sprintf "%s(&%s, %s)" isa.storeu_pd addr value
+  else
+    match mode with
+    | LS_vector -> Printf.sprintf "%s(&%s, %s)" isa.storeu_pd addr value
+    | LS_masked m ->
+        (* avx2 maskstore and avx512 mask_storeu both take (addr, mask, val) *)
+        Printf.sprintf "%s(&%s, %s, %s)" isa.maskstore_pd addr m value
 
 (* Render `const __m512d t<tag> = expr;` or its AVX2 equivalent.
  * Used by emit_c's render_node_def. *)

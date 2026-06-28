@@ -145,6 +145,14 @@ let hc_ranged_r : int ref = ref 0
 let hc2c_nat_sstar : int ref = ref 0
 let hc2c_nat_r : int ref = ref 0
 
+(* Arbitrary-K tail (docs/roadmap/arbitrary_k_vectorization): the mode the
+ * body emitter is currently rendering under. Defaults to LS_vector so every
+ * existing path (and the bulk loop) is byte-identical to before. The in-place
+ * c2c tail sets this to (LS_masked m) around the masked remainder pass; it is
+ * read by render_load (rio + per-lane twiddle loads) and emit_store. Broadcast
+ * twiddles / constants go through set1_pd_str and are never masked. *)
+let current_ls_mode : Isa.ls_mode ref = ref Isa.LS_vector
+
 let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
     ?(twidsq = false) ?(twidsq_n = 0) ?(strided = false) (r : Expr.elem_ref) :
     string =
@@ -266,17 +274,19 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var
     in
     match r with
-    | Expr.Input (j, true) -> Isa.loadu_pd isa (render_input_addr j true)
-    | Expr.Input (j, false) -> Isa.loadu_pd isa (render_input_addr j false)
+    | Expr.Input (j, true) ->
+        Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j true)
+    | Expr.Input (j, false) ->
+        Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j false)
     | Expr.Twiddle (j, true) ->
         if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
         else
-          Isa.loadu_pd isa
+          Isa.loadu_pd ~mode:!current_ls_mode isa
             (Printf.sprintf "tw_re[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Twiddle (j, false) ->
         if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
         else
-          Isa.loadu_pd isa
+          Isa.loadu_pd ~mode:!current_ls_mode isa
             (Printf.sprintf "tw_im[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Output _ ->
         failwith "render_load: Output ref shouldn't appear as a Load source"
@@ -1509,6 +1519,27 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           %d)"
          isa.vec_width radix);
   let buf = Buffer.create 4096 in
+  (* Arbitrary-K rem-aware hybrid tail (docs/roadmap/arbitrary_k). Only the
+   * monolithic in-place c2c batch codelet (rio_re/rio_im/ios/me) gets it; the
+   * blocked/strided two-pass codelets take a different signature branch and are
+   * excluded (they have their own odd-K seam, tracked separately). The bulk
+   * loop is byte-identical on aligned K (one never-taken branch after it); the
+   * tail covers 1..VW-1 leftover lanes: rem==1 scalar single lane, rem>=2 one
+   * masked vector pass. Kill switch VFFT_NO_ANYK_TAIL reverts to the legacy
+   * K%VW==0-only loop. *)
+  (* Phase-1 scope: monolithic in-place codelets only (spill = None). A
+   * spill=Some (CT-blocked / composite) codelet declares __m256d spill_re[]
+   * outside the loop; the scalar tail pass would store `double` into it
+   * (type mismatch). Those — and the strided two-pass codelets, which take a
+   * different signature branch entirely — keep the legacy K%VW==0 contract
+   * until the composite tail is handled separately. The validated cell
+   * ([4,4,4,4,4] T1S, all r4) is entirely monolithic, so nothing is lost. *)
+  let anyk_tail =
+    in_place && spill = None
+    && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
+       | Some _ -> false
+       | None -> true)
+  in
   let family =
     if strided then "strided-batch (Design C, 2D rows)"
     else if twidsq then "twidsq (FFTW-style intermediate)"
@@ -1563,6 +1594,26 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
        ]);
   Buffer.add_string buf "#include <immintrin.h>\n";
   Buffer.add_string buf "#include <stddef.h>\n\n";
+  (* AVX2 masked tail needs an __m256i lane mask: row r has r leading all-ones
+   * (active) lanes. AVX-512 uses an __mmask8 = (1<<rem)-1 computed inline, so
+   * no table. File-scope `static const`, one per codelet .c (name is static =
+   * file-local, no cross-file clash). *)
+  if anyk_tail && isa.vec_width = 4 then begin
+    let vw = isa.vec_width in
+    Buffer.add_string buf
+      (Printf.sprintf "static const long long _vfft_masklo[%d][%d] = {\n    "
+         (vw + 1) vw);
+    for r = 0 to vw do
+      if r > 0 then Buffer.add_string buf ",";
+      Buffer.add_char buf '{';
+      for c = 0 to vw - 1 do
+        if c > 0 then Buffer.add_char buf ',';
+        Buffer.add_string buf (if c < r then "-1" else "0")
+      done;
+      Buffer.add_char buf '}'
+    done;
+    Buffer.add_string buf "};\n\n"
+  end;
   if isa.vec_width = 1 then begin
     Buffer.add_string buf
       "static inline double vfft_scalar_load(const double *p) { return *p; }\n";
@@ -1871,9 +1922,17 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t k = 0; k < me; k += %d) {\n"
-         isa.vec_width)
+    if anyk_tail then begin
+      (* Hoist k so it stays live for the remainder block after the bulk loop. *)
+      Buffer.add_string buf "    size_t k = 0;\n";
+      Buffer.add_string buf
+        (Printf.sprintf "    for (; k + %d <= me; k += %d) {\n" isa.vec_width
+           isa.vec_width)
+    end
+    else
+      Buffer.add_string buf
+        (Printf.sprintf "    for (size_t k = 0; k < me; k += %d) {\n"
+           isa.vec_width)
   end
   else if twidsq then begin
     (* Twidsq OOP signature with separate input/output strides.
@@ -2239,6 +2298,15 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     else "k"
   in
 
+  (* The codelet body, rendered off the SINGLE schedule. Called once for the
+   * bulk loop (isa = outer, LS_vector) and — for the arbitrary-K tail — again
+   * for the scalar single lane (isa = scalar) and the masked vector pass
+   * (isa = outer, LS_masked). The `isa` parameter shadows the outer ISA so
+   * render_node_def / emit_store pick up the per-pass width; the regalloc /
+   * spill helpers above stay inert for the monolithic regalloc-off codelets
+   * that take the tail (so re-rendering is safe and the schedule is computed
+   * deterministically each pass — identical order, no re-scheduling hazard). *)
+  let emit_body (isa : Isa.t) () =
   let render_output_addr k is_re =
     if !r2c_term_laststage then
       (* Output(2s) = Xp slot s at Xp[s*osp+v]; Output(2s+1) = Xm slot s. *)
@@ -2315,12 +2383,14 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     | Expr.Output (k, true) ->
         Buffer.add_string buf "        ";
         Buffer.add_string buf
-          (Isa.storeu_pd isa (render_output_addr k true) value_expr);
+          (Isa.storeu_pd ~mode:!current_ls_mode isa (render_output_addr k true)
+             value_expr);
         Buffer.add_string buf ";\n"
     | Expr.Output (k, false) ->
         Buffer.add_string buf "        ";
         Buffer.add_string buf
-          (Isa.storeu_pd isa (render_output_addr k false) value_expr);
+          (Isa.storeu_pd ~mode:!current_ls_mode isa (render_output_addr k false)
+             value_expr);
         Buffer.add_string buf ";\n"
     | _ -> failwith "emit_codelet: assignment LHS must be an Output"
   in
@@ -3395,7 +3465,9 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
             String.trim (Buffer.contents buf2)
           in
           let scope = Annotate.annotate entries in
-          Annotate.emit_scope isa buf render_intermediate render_store scope));
+          Annotate.emit_scope isa buf render_intermediate render_store scope))
+  in
+  emit_body isa ();
 
   (* Strided postamble: inverse 4×4 transpose + scatter back to matrix.
    * The body has populated out_lane_re_0..radix-1 / out_lane_im_0..radix-1
@@ -3607,6 +3679,34 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   end;
 
   Buffer.add_string buf "    }\n";
+  if anyk_tail then begin
+    (* Rem-aware hybrid tail. The bulk loop stopped at the last full vector;
+     * cover the 1..VW-1 leftover lanes. rem==1 -> scalar single lane (cheap,
+     * on-par at the extreme); rem>=2 -> ONE masked vector pass (flat cost,
+     * holds the MKL margin). Same scheduled DAG, re-rendered: scalar via the
+     * width-1 ISA, masked via maskload/maskstore gated by `_m`. Broadcast
+     * twiddles / constants are lane-independent and stay unmasked. In-place
+     * safe: the masked pass reads/writes only lanes [k, k+rem) = [me-rem, me),
+     * disjoint from the bulk; masked-off lanes never touch memory. *)
+    Buffer.add_string buf "    if (k < me) {\n";
+    Buffer.add_string buf "        const size_t rem = me - k;\n";
+    Buffer.add_string buf "        if (rem == 1) {\n";
+    current_ls_mode := Isa.LS_vector;
+    emit_body Isa.scalar ();
+    Buffer.add_string buf "        } else {\n";
+    (if isa.vec_width = 8 then
+       Buffer.add_string buf
+         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
+     else
+       Buffer.add_string buf
+         "            const __m256i _m = _mm256_loadu_si256((const __m256i \
+          *)_vfft_masklo[rem]);\n");
+    current_ls_mode := Isa.LS_masked "_m";
+    emit_body isa ();
+    current_ls_mode := Isa.LS_vector;
+    Buffer.add_string buf "        }\n";
+    Buffer.add_string buf "    }\n"
+  end;
   if !hc_ranged then begin
     let r = !hc_ranged_r in
     if !hc2c_natural_bwd then begin
