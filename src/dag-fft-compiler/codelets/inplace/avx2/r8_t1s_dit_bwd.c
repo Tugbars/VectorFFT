@@ -13,6 +13,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix8_t1s_dit_bwd_avx2(
     double       * __restrict__ rio_re,
@@ -24,7 +27,8 @@ void radix8_t1s_dit_bwd_avx2(
 {
     __m256d spill_re[8];
     __m256d spill_im[8];
-    for (size_t k = 0; k < me; k += 4) {
+    size_t k = 0;
+    for (; k + 4 <= me; k += 4) {
         const __m256d t25 = _mm256_set1_pd(0.70710678118655002);
 
         {
@@ -174,6 +178,160 @@ void radix8_t1s_dit_bwd_avx2(
         _mm256_storeu_pd(&rio_im[7*ios + k], t148);
         _mm256_storeu_pd(&rio_re[3*ios + k], t155);
         _mm256_storeu_pd(&rio_im[3*ios + k], t156);
+        }
+    }
+    if (k < me) {
+        const size_t rem = me - k;
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        const __m256d t25 = _mm256_set1_pd(0.70710678118655002);
+
+        {
+        const __m256d t33 = _mm256_maskload_pd(&rio_re[6*ios + k], _m);
+        const __m256d t34 = _mm256_maskload_pd(&rio_im[6*ios + k], _m);
+        const __m256d t36 = _mm256_maskload_pd(&rio_re[2*ios + k], _m);
+        const __m256d t40 = _mm256_sub_pd(t36, t33);
+        const __m256d t71 = _mm256_add_pd(t33, t36);
+        const __m256d t37 = _mm256_maskload_pd(&rio_im[2*ios + k], _m);
+        const __m256d t38 = _mm256_sub_pd(t37, t34);
+        const __m256d t70 = _mm256_add_pd(t34, t37);
+        const __m256d t43 = _mm256_maskload_pd(&rio_re[4*ios + k], _m);
+        const __m256d t44 = _mm256_maskload_pd(&rio_im[4*ios + k], _m);
+        const __m256d t46 = _mm256_maskload_pd(&rio_re[0*ios + k], _m);
+        const __m256d t50 = _mm256_sub_pd(t46, t43);
+        const __m256d t52 = _mm256_add_pd(t38, t50);
+            _mm256_storeu_pd(&spill_re[3], t52);
+        const __m256d t95 = _mm256_sub_pd(t50, t38);
+            _mm256_storeu_pd(&spill_re[1], t95);
+        const __m256d t74 = _mm256_add_pd(t43, t46);
+        const __m256d t77 = _mm256_sub_pd(t74, t71);
+            _mm256_storeu_pd(&spill_re[2], t77);
+        const __m256d t109 = _mm256_add_pd(t71, t74);
+            _mm256_storeu_pd(&spill_re[0], t109);
+        const __m256d t47 = _mm256_maskload_pd(&rio_im[0*ios + k], _m);
+        const __m256d t48 = _mm256_sub_pd(t47, t44);
+        const __m256d t51 = _mm256_sub_pd(t48, t40);
+            _mm256_storeu_pd(&spill_im[3], t51);
+        const __m256d t94 = _mm256_add_pd(t40, t48);
+            _mm256_storeu_pd(&spill_im[1], t94);
+        const __m256d t73 = _mm256_add_pd(t44, t47);
+        const __m256d t75 = _mm256_sub_pd(t73, t70);
+            _mm256_storeu_pd(&spill_im[2], t75);
+        const __m256d t108 = _mm256_add_pd(t70, t73);
+            _mm256_storeu_pd(&spill_im[0], t108);
+        const __m256d t0 = _mm256_maskload_pd(&rio_re[7*ios + k], _m);
+        const __m256d t2 = _mm256_maskload_pd(&rio_im[7*ios + k], _m);
+        const __m256d t5 = _mm256_maskload_pd(&rio_re[3*ios + k], _m);
+        const __m256d t10 = _mm256_sub_pd(t5, t0);
+        const __m256d t62 = _mm256_add_pd(t0, t5);
+        const __m256d t6 = _mm256_maskload_pd(&rio_im[3*ios + k], _m);
+        const __m256d t8 = _mm256_sub_pd(t6, t2);
+        const __m256d t61 = _mm256_add_pd(t2, t6);
+        const __m256d t13 = _mm256_maskload_pd(&rio_re[5*ios + k], _m);
+        const __m256d t14 = _mm256_maskload_pd(&rio_im[5*ios + k], _m);
+        const __m256d t16 = _mm256_maskload_pd(&rio_re[1*ios + k], _m);
+        const __m256d t20 = _mm256_sub_pd(t16, t13);
+        const __m256d t23 = _mm256_add_pd(t8, t20);
+            _mm256_storeu_pd(&spill_re[7], t23);
+        const __m256d t88 = _mm256_sub_pd(t20, t8);
+            _mm256_storeu_pd(&spill_re[5], t88);
+        const __m256d t65 = _mm256_add_pd(t13, t16);
+        const __m256d t68 = _mm256_sub_pd(t65, t62);
+            _mm256_storeu_pd(&spill_re[6], t68);
+        const __m256d t106 = _mm256_add_pd(t62, t65);
+            _mm256_storeu_pd(&spill_re[4], t106);
+        const __m256d t17 = _mm256_maskload_pd(&rio_im[1*ios + k], _m);
+        const __m256d t18 = _mm256_sub_pd(t17, t14);
+        const __m256d t21 = _mm256_sub_pd(t18, t10);
+            _mm256_storeu_pd(&spill_im[7], t21);
+        const __m256d t87 = _mm256_add_pd(t10, t18);
+            _mm256_storeu_pd(&spill_im[5], t87);
+        const __m256d t64 = _mm256_add_pd(t14, t17);
+        const __m256d t66 = _mm256_sub_pd(t64, t61);
+            _mm256_storeu_pd(&spill_im[6], t66);
+        const __m256d t105 = _mm256_add_pd(t61, t64);
+            _mm256_storeu_pd(&spill_im[4], t105);
+        }
+        {
+            const __m256d t106 = _mm256_loadu_pd(&spill_re[4]);
+            const __m256d t109 = _mm256_loadu_pd(&spill_re[0]);
+        const __m256d t143 = _mm256_add_pd(t106, t109);
+            const __m256d t105 = _mm256_loadu_pd(&spill_im[4]);
+            const __m256d t108 = _mm256_loadu_pd(&spill_im[0]);
+        const __m256d t144 = _mm256_add_pd(t105, t108);
+        const __m256d t110 = _mm256_sub_pd(t109, t106);
+        const __m256d t113 = _mm256_sub_pd(t108, t105);
+        const __m256d t111 = _mm256_set1_pd(tw_re[3]);
+        const __m256d t114 = _mm256_set1_pd(tw_im[3]);
+        const __m256d t116 = _mm256_fmadd_pd(t110, t111, _mm256_mul_pd(t113, t114));
+        const __m256d t117 = _mm256_fnmadd_pd(t110, t114, _mm256_mul_pd(t113, t111));
+            const __m256d t88 = _mm256_loadu_pd(&spill_re[5]);
+            const __m256d t87 = _mm256_loadu_pd(&spill_im[5]);
+        const __m256d t89 = _mm256_sub_pd(t88, t87);
+        _mm256_maskstore_pd(&rio_re[4*ios + k], _m, t116);
+        _mm256_maskstore_pd(&rio_im[4*ios + k], _m, t117);
+        _mm256_maskstore_pd(&rio_re[0*ios + k], _m, t143);
+        _mm256_maskstore_pd(&rio_im[0*ios + k], _m, t144);
+        const __m256d t91 = _mm256_add_pd(t87, t88);
+            const __m256d t95 = _mm256_loadu_pd(&spill_re[1]);
+        const __m256d t149 = _mm256_fnmadd_pd(t25, t89, t95);
+            const __m256d t94 = _mm256_loadu_pd(&spill_im[1]);
+        const __m256d t150 = _mm256_fnmadd_pd(t25, t91, t94);
+        const __m256d t157 = _mm256_fmadd_pd(t25, t89, t95);
+        const __m256d t158 = _mm256_fmadd_pd(t25, t91, t94);
+        const __m256d t97 = _mm256_set1_pd(tw_re[4]);
+        const __m256d t100 = _mm256_set1_pd(tw_im[4]);
+        const __m256d t151 = _mm256_fmadd_pd(t149, t97, _mm256_mul_pd(t150, t100));
+        const __m256d t152 = _mm256_fnmadd_pd(t149, t100, _mm256_mul_pd(t150, t97));
+        const __m256d t136 = _mm256_set1_pd(tw_re[0]);
+        const __m256d t138 = _mm256_set1_pd(tw_im[0]);
+        const __m256d t159 = _mm256_fmadd_pd(t157, t136, _mm256_mul_pd(t158, t138));
+        const __m256d t160 = _mm256_fnmadd_pd(t157, t138, _mm256_mul_pd(t158, t136));
+            const __m256d t66 = _mm256_loadu_pd(&spill_im[6]);
+            const __m256d t77 = _mm256_loadu_pd(&spill_re[2]);
+        const __m256d t78 = _mm256_add_pd(t66, t77);
+        _mm256_maskstore_pd(&rio_re[5*ios + k], _m, t151);
+        _mm256_maskstore_pd(&rio_im[5*ios + k], _m, t152);
+        _mm256_maskstore_pd(&rio_re[1*ios + k], _m, t159);
+        _mm256_maskstore_pd(&rio_im[1*ios + k], _m, t160);
+            const __m256d t75 = _mm256_loadu_pd(&spill_im[2]);
+            const __m256d t68 = _mm256_loadu_pd(&spill_re[6]);
+        const __m256d t81 = _mm256_sub_pd(t75, t68);
+        const __m256d t127 = _mm256_sub_pd(t77, t66);
+        const __m256d t129 = _mm256_add_pd(t68, t75);
+        const __m256d t79 = _mm256_set1_pd(tw_re[5]);
+        const __m256d t82 = _mm256_set1_pd(tw_im[5]);
+        const __m256d t84 = _mm256_fmadd_pd(t78, t79, _mm256_mul_pd(t81, t82));
+        const __m256d t85 = _mm256_fnmadd_pd(t78, t82, _mm256_mul_pd(t81, t79));
+        const __m256d t128 = _mm256_set1_pd(tw_re[1]);
+        const __m256d t130 = _mm256_set1_pd(tw_im[1]);
+        const __m256d t132 = _mm256_fmadd_pd(t127, t128, _mm256_mul_pd(t129, t130));
+        const __m256d t133 = _mm256_fnmadd_pd(t127, t130, _mm256_mul_pd(t129, t128));
+            const __m256d t21 = _mm256_loadu_pd(&spill_im[7]);
+            const __m256d t23 = _mm256_loadu_pd(&spill_re[7]);
+        const __m256d t24 = _mm256_add_pd(t21, t23);
+        _mm256_maskstore_pd(&rio_re[6*ios + k], _m, t84);
+        _mm256_maskstore_pd(&rio_im[6*ios + k], _m, t85);
+        _mm256_maskstore_pd(&rio_re[2*ios + k], _m, t132);
+        _mm256_maskstore_pd(&rio_im[2*ios + k], _m, t133);
+        const __m256d t30 = _mm256_sub_pd(t21, t23);
+            const __m256d t52 = _mm256_loadu_pd(&spill_re[3]);
+        const __m256d t145 = _mm256_fmadd_pd(t24, t25, t52);
+            const __m256d t51 = _mm256_loadu_pd(&spill_im[3]);
+        const __m256d t146 = _mm256_fmadd_pd(t25, t30, t51);
+        const __m256d t153 = _mm256_fnmadd_pd(t24, t25, t52);
+        const __m256d t154 = _mm256_fnmadd_pd(t25, t30, t51);
+        const __m256d t54 = _mm256_set1_pd(tw_re[6]);
+        const __m256d t56 = _mm256_set1_pd(tw_im[6]);
+        const __m256d t147 = _mm256_fmadd_pd(t145, t54, _mm256_mul_pd(t146, t56));
+        const __m256d t148 = _mm256_fnmadd_pd(t145, t56, _mm256_mul_pd(t146, t54));
+        const __m256d t120 = _mm256_set1_pd(tw_re[2]);
+        const __m256d t122 = _mm256_set1_pd(tw_im[2]);
+        const __m256d t155 = _mm256_fmadd_pd(t153, t120, _mm256_mul_pd(t154, t122));
+        const __m256d t156 = _mm256_fnmadd_pd(t153, t122, _mm256_mul_pd(t154, t120));
+        _mm256_maskstore_pd(&rio_re[7*ios + k], _m, t147);
+        _mm256_maskstore_pd(&rio_im[7*ios + k], _m, t148);
+        _mm256_maskstore_pd(&rio_re[3*ios + k], _m, t155);
+        _mm256_maskstore_pd(&rio_im[3*ios + k], _m, t156);
         }
     }
 }

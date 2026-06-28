@@ -1,5 +1,14 @@
 # Arbitrary-K tail — scalar-tail experiment, full record (2026-06-24)
 
+> **STATUS (2026-06-28): PRODUCTIONIZED.** The rem-aware hybrid tail is now
+> generated through the DAG compiler (isa.ml `ls_mode` + emit_c.ml `emit_body`
+> 3-way render + gate `anyk_tail = in_place && spill=None`), branch
+> `dev/arbitraryTail` (commit 06e40ed0). 170 monolithic in-place AVX2 codelets
+> carry the tail; validated **bit-exact 21/21** (`build_tuned/test/test_anyk_correct.c`,
+> end-to-end via executor) and **1.5–2.1× vs MKL** (`bench_oddk_tail`). Kill-switch
+> `VFFT_NO_ANYK_TAIL` → byte-identical to the pre-tail fast path. Phase-2 (composite/
+> spill=Some, blocked/strided, AVX512, OOP/real-FFT K%8 guards) not yet built.
+
 > Everything learned de-risking the **arbitrary-K** problem (K not a multiple of
 > the SIMD width) by hand-building a tail-handling path and testing it on a real
 > 1D C2C cell vs MKL — *before* committing to the generator change. Companion to
