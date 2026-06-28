@@ -9,6 +9,170 @@
 > `VFFT_NO_ANYK_TAIL` → byte-identical to the pre-tail fast path. Phase-2 (composite/
 > spill=Some, blocked/strided, AVX512, OOP/real-FFT K%8 guards) not yet built.
 
+> **⚠️ SUPERSEDED (2026-06-29): the AVX2 `rem≥2` pass is now SSE2-128, not masked.**
+> The "masked at rem≥2" decision below was correct *in principle* (flat in `rem`) but
+> the **masked implementation lost on Raptor Lake** — `vmaskmovpd` (esp. the store)
+> is slow on this µarch. The vector-efficient remainder that actually won is an
+> **unmasked 128-bit (SSE2) width-2 loop + a scalar straggler**. See
+> [§ AVX2 tail: masked → SSE2-128](#2026-06-29--avx2-tail-pivoted-masked--sse2-128).
+
+## 2026-06-29 — AVX2 tail: masked → SSE2-128, + real-FFT/OOP/trig productionized
+
+The full conclusion of the arbitrary-K arc, after testing **scalar vs masked vs
+SSE2-128** tails on real cells and disassembling MKL to understand *why* the tax
+exists at all. Net: the AVX2 `rem≥2` pass is now **unmasked SSE2-128**, the tail is
+generated for **every AVX2 family** (in-place c2c, r2c/c2r/hc real-FFT, trig r2r,
+OOP), and AVX-512 keeps its masked tail.
+
+### Why the odd-K tax exists at all (MKL disassembly — the root-cause conclusion)
+
+We pay an odd-K tail tax and MKL does **not**, and the reason is purely a **layout
+choice**, confirmed by disassembling `mkl_avx2.2.dll`:
+
+- **MKL r2c is per-transform-contiguous interleaved complex**
+  (`DFTI_CONJUGATE_EVEN_STORAGE = COMPLEX_COMPLEX`, `DISTANCE = N`): each transform
+  is laid out contiguously, SIMD runs *within* one transform, and the batch is a
+  plain outer loop over K. **There is no batch remainder** — K never interacts with
+  the SIMD width — so MKL's per-transform cost is **flat in K** (~125 ns regardless
+  of odd/even K). The named DLL exports (e.g. `mkl_dft_avx2_dz2_r_dft`) are thin
+  orchestrators that indirect-call committed-plan kernel pointers; **zero `vmaskmov`
+  anywhere** in the binary — MKL never needs a masked remainder.
+- **We are split + batch-lane-packed**: 4 transforms packed across the SIMD lanes,
+  stride K. This is *deliberate* — it's exactly why **we crush MKL multi-threaded
+  and at high K** (no per-transform setup, perfect streaming) — but it means K mod
+  VW ≠ 0 leaves a **partial last group**: the odd-K tail tax. The tax is the price
+  of the layout that wins everywhere else.
+
+⇒ The tail problem is **self-inflicted by a layout that's a net win**; the job is to
+make the leftover 1..VW-1 lanes as cheap as possible, not to abandon the layout.
+
+### The bake-off — final verdict on scalar vs masked vs SSE2
+
+Three remainder strategies, all **bit-exact**, tested to destruction:
+
+| strategy | correctness | cost shape | verdict on Raptor Lake |
+|---|---|---|---|
+| **scalar** (rem× single lanes) | ✓ | rises ~`rem`× (each scalar lane ~3–4× a vector lane) | erodes with rem; **keep only for rem=1** |
+| **masked** (1 `vmaskmovpd` pass) | ✓ | flat in `rem` *in theory* | **LOST** — `vmaskmovpd`, esp. the masked *store*, is slow on this µarch; the "1 cheap vector butterfly" never materialized |
+| **SSE2-128** (width-2 loop + scalar straggler) | ✓ | ~rem/2 unmasked 128-bit passes | **WINNER at rem≥2** |
+
+The earlier "masked is flat in rem, so masked wins rem≥2" decision (see
+[§ masked-tail result](#masked-tail-result--decision-rem-aware-hybrid)) was right
+about the *cost shape* but wrong about the *implementation*: masked is only flat if
+the masked op is cheap, and on Raptor Lake it isn't. SSE2-128 gets the flat-ish
+shape **without** touching the slow masked-store path.
+
+### The SSE2-128 tail — mechanism (why it's free to drop in)
+
+- The batch-packed butterfly body is **purely vertical** — every lane does the
+  identical computation, **0 cross-lane ops** (verified by inspection of every
+  anyk_tail codelet). So a 256-bit `__m256d` body narrows **1:1** to a 128-bit
+  `__m128d` body: same instruction sequence, half the lanes, **no restructuring**.
+- **128-bit FMA3** (`_mm_fmadd_pd`) coexists with the 256-bit bulk inside one
+  `__attribute__((target("avx2,fma")))` function: the compiler emits both as
+  **VEX-encoded** (VEX-128 / VEX-256), so there is **no AVX↔legacy-SSE transition
+  penalty** (that penalty only hits non-VEX `0F`-encoded SSE). This is the crux that
+  makes "SSE2 inside an AVX2 codelet" actually fast.
+- Both the SSE2 (width-2) and scalar (width-1) passes render **monolithically**
+  (`emit_body_monolithic`, no CT spill split): a single/double lane has no
+  ymm/zmm register pressure, so the spill split is pointless, **and** it avoids a
+  type clash — a composite codelet's function-scope spill scratch is `__m256d` and
+  must not be referenced from a `__m128d`/`double` pass.
+
+### Robust benchmark — the numbers, and the methodology that earned them
+
+This is **methodology lesson #1 applied at full force** (see below). On the unlocked
+i9-14900KF, the *only* trustworthy A/B was **tight interleaving with NO pacing**:
+alternate masked/SSE2 every short burst so both ride the identical frequency
+trajectory; the **ratio of summed times cancels drift**. K=16 (rem=0, byte-identical
+code in both variants) is the control.
+
+- **rem=2: SSE2 ≈ −35%** vs masked.
+- **rem=3 (SSE2 loop + scalar straggler): ≈ −12%** vs masked (K=7 win-rate ~95%,
+  stable run-to-run). **SSE2 wins both rem=2 and rem=3.**
+- **Pacing made it WORSE**, not better — `cachebust + Sleep` between measurements
+  lets the core re-turbo unpredictably → ~2× swings (exactly lesson #1). The paced
+  bench gave contradictory, control-violating results.
+- The earlier **"−22…−42% broad SSE2 win" was withdrawn** — it was an order/warmup
+  artifact (masked-first / sse2-second, no interleaving).
+- The **K=16 control is bimodal** (coin-flips run-to-run): adding cold tail code
+  shifts the *bulk's* code layout enough to flip a steady-state mode. Only the
+  interleaved ratio — not absolute times — is believed.
+- A brief **3-way** detour (rem=2 SSE2 / rem=3 *masked*) was coded off the *noisy
+  paced* numbers, then **reverted** once the robust data showed SSE2+scalar also
+  wins rem=3. Don't re-propose the 3-way.
+
+### The final CONTRACT (what the generator emits)
+
+```
+bulk:  for (; v + VW <= bound; v += VW)  { full-width body }      // VW=4 (avx2) / 8 (avx512)
+tail:  if (v < bound) {
+         rem = bound - v;
+         if (rem == 1)            { scalar single lane (monolithic) }
+         else if avx2  { for (; v + 2 <= bound; v += 2) { SSE2-128 body (monolithic) }
+                         if (v < bound) { scalar straggler (monolithic) } }
+         else /*avx512*/          { __mmask8 = (1<<rem)-1; one masked pass }
+       }
+```
+
+**AVX-512 keeps masked** — `kmask`/`vmaskz`/`mask_storeu` are architectural and
+full-rate there; narrowing would be a regression. **AVX2 has no mask anywhere** —
+no `vmaskmov`, no `_vfft_masklo` table.
+
+### Generator implementation — TWO emit modules (the coverage gotcha)
+
+The tail lives in **two independent emitters**; changing one does not change the
+other. This bit us — after `emit_c.ml` was SSE2-ified, 32 OOP codelets were still
+masked because they come from `codelet_oop.ml`.
+
+- **`isa.ml`** — added an `sse2` record: `__m128d`, `vec_width=2`,
+  `target("sse2,fma")`, `_mm_*` prefix, empty maskload/maskstore. All arithmetic
+  helpers already branch only on `vec_width`, so `_mm_add_pd`/`_mm_fmadd_pd`/… fall
+  out for free.
+- **`emit_c.ml`** — in-place c2c + real-FFT (r2cf/r2cb, hc2hc/hc2c) + trig (r2r).
+  Removed the masked `rem≥2` branch and the `_vfft_masklo` table; `rem≥2` →
+  SSE2 width-2 loop + scalar straggler; `vec_width=8` (AVX-512) branch unchanged.
+  The real-FFT loop headers (8 of them) use the shared `emit_v_loop_header` so the
+  bound/var (`vl`/`v` for real-FFT, `K` for trig, `me` for c2c) stay consistent.
+- **`codelet_oop.ml`** — the OOP family (n1_oop / t1_oop / spec). Same pivot applied:
+  its tail builds the body via `emit_lane_decls + emit_load_edge +
+  emit_body_monolithic + emit_store_edge` at `{c with isa = Isa.sse2}` for the
+  width-2 loop and `{c with isa = Isa.scalar}` for the straggler; AVX-512 path keeps
+  the inline `__mmask8` masked pass. OOP `anyk_tail` codelets are all **UnitGroup**
+  (vertical, no transpose) so they narrow cleanly; UnitLeg (transpose) codelets are
+  excluded from anyk_tail and unaffected.
+
+**Verified:** `grep -rE "maskstore|maskload|_vfft_masklo"` across **all**
+`codelets/*/avx2/` = **0**; `codelets/oop/avx512/` still carries 32 masked codelets
+(intentional). 526 AVX2 codelets regenerated clean.
+
+### Coverage + guards (where the tail now applies)
+
+- **Done (AVX2 tail generated + bit-exact):** in-place c2c, OOP (n1/t1), trig r2r,
+  real-FFT r2c (r2cf) / c2r (r2cb, hc2c-natural). All via the DAG compiler, no hand
+  edits. Kill-switch `VFFT_NO_ANYK_TAIL` → byte-identical pre-tail fast path.
+- **Selective dispatch guards relaxed** to `K != 0` (from `K%8`): the front door
+  routes odd K to the path that has the tail (e.g. r2c forces rfft at odd K via the
+  `K%8` gate on the stride builder; c2r forces NATURAL at odd K).
+- **AVX-512** remainder = masked (kept, by design).
+- **Strided / blocked-composite (spill=Some) / masked-transpose** remainder is the
+  remaining structural endgame — not built here.
+
+### Gotchas (this session)
+
+- **Two emit modules** (above) — the #1 trap. If you change a tail, grep
+  `codelets/*/avx2/` for `maskstore` afterwards to catch the module you forgot.
+- **Stray-tree from `--root` misparse, recurred.** A `gen_set` run with an empty
+  `--root` wrote a **590-file duplicate tree** under
+  `generator/{c2r,inplace,oop,rfft,trig}/avx2` (byte-identical to `codelets/`), and
+  it got **committed** in `96212ac4`. `git rm`'d — canonical `codelets/` intact,
+  nothing referenced the dupes. Same class as the earlier "1M new code" incident.
+- **Stale `gen_set.exe` after a non-clean build.** A `dune build` that didn't relink
+  served an old binary → `gen_set` emitted masked while direct `gen_radix` emitted
+  SSE2 (same source!). Fix: `export DUNE_CACHE=disabled && rm -rf _build && dune
+  build`, then re-run `gen_set`. Symptom to watch: regenerated files keep a stale
+  mtime / old content.
+
 > Everything learned de-risking the **arbitrary-K** problem (K not a multiple of
 > the SIMD width) by hand-building a tail-handling path and testing it on a real
 > 1D C2C cell vs MKL — *before* committing to the generator change. Companion to
