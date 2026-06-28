@@ -13,6 +13,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix2_r2cf_avx2(
     const double * __restrict__ in_re,
@@ -23,7 +26,8 @@ void radix2_r2cf_avx2(
     ptrdiff_t os_im,
     size_t vl)
 {
-    for (size_t v = 0; v < vl; v += 4) {
+    size_t v = 0;
+    for (; v + 4 <= vl; v += 4) {
         const __m256d t0 = _mm256_loadu_pd(&in_re[1*is + v]);
         const __m256d t3 = _mm256_loadu_pd(&in_re[0*is + v]);
         const __m256d t4 = _mm256_add_pd(t0, t3);
@@ -31,6 +35,27 @@ void radix2_r2cf_avx2(
 
         _mm256_storeu_pd(&out_re[0*os_re + v], t4);
         _mm256_storeu_pd(&out_re[1*os_re + v], t7);
+    }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t0 = in_re[1*is + v];
+        const double t3 = in_re[0*is + v];
+        const double t4 = (t0 + t3);
+        const double t7 = (t3 - t0);
+
+        out_re[0*os_re + v] = t4;
+        out_re[1*os_re + v] = t7;
+        } else {
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        const __m256d t0 = _mm256_maskload_pd(&in_re[1*is + v], _m);
+        const __m256d t3 = _mm256_maskload_pd(&in_re[0*is + v], _m);
+        const __m256d t4 = _mm256_add_pd(t0, t3);
+        const __m256d t7 = _mm256_sub_pd(t3, t0);
+
+        _mm256_maskstore_pd(&out_re[0*os_re + v], _m, t4);
+        _mm256_maskstore_pd(&out_re[1*os_re + v], _m, t7);
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:

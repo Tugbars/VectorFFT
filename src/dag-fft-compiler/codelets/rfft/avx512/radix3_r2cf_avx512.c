@@ -25,7 +25,8 @@ void radix3_r2cf_avx512(
 {
     const __m512d t5 = _mm512_set1_pd(0.86602540378444004);
     const __m512d t7 = _mm512_set1_pd(0.5);
-    for (size_t v = 0; v < vl; v += 8) {
+    size_t v = 0;
+    for (; v + 8 <= vl; v += 8) {
 
 
         const __m512d t0 = _mm512_loadu_pd(&in_re[2*is + v]);
@@ -39,6 +40,39 @@ void radix3_r2cf_avx512(
         _mm512_storeu_pd(&out_re[0*os_re + v], t4);
         _mm512_storeu_pd(&out_re[1*os_re + v], t15);
         _mm512_storeu_pd(&out_im[1*os_im + v], t12);
+    }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t5 = (0.86602540378444004);
+        const double t7 = (0.5);
+        const double t0 = in_re[2*is + v];
+        const double t1 = in_re[1*is + v];
+        const double t2 = (t0 + t1);
+        const double t12 = (-((t5 * (t1 - t0))));
+        const double t3 = in_re[0*is + v];
+        const double t4 = (t2 + t3);
+        const double t15 = __builtin_fma(-(t2), t7, t3);
+
+        out_re[0*os_re + v] = t4;
+        out_re[1*os_re + v] = t15;
+        out_im[1*os_im + v] = t12;
+        } else {
+            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
+        const __m512d t5 = _mm512_set1_pd(0.86602540378444004);
+        const __m512d t7 = _mm512_set1_pd(0.5);
+        const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in_re[2*is + v]);
+        const __m512d t1 = _mm512_maskz_loadu_pd(_m, &in_re[1*is + v]);
+        const __m512d t2 = _mm512_add_pd(t0, t1);
+        const __m512d t12 = _mm512_xor_pd(_mm512_mul_pd(t5, _mm512_sub_pd(t1, t0)), _mm512_set1_pd(-0.0));
+        const __m512d t3 = _mm512_maskz_loadu_pd(_m, &in_re[0*is + v]);
+        const __m512d t4 = _mm512_add_pd(t2, t3);
+        const __m512d t15 = _mm512_fnmadd_pd(t2, t7, t3);
+
+        _mm512_mask_storeu_pd(&out_re[0*os_re + v], _m, t4);
+        _mm512_mask_storeu_pd(&out_re[1*os_re + v], _m, t15);
+        _mm512_mask_storeu_pd(&out_im[1*os_im + v], _m, t12);
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:

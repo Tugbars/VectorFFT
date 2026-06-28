@@ -34,7 +34,8 @@ void radix4_hc2c_nat_rng_fwd_avx512(
     __m512d spill_re[4];
     __m512d spill_im[4];
     for (int kc = 0; kc < kcount; kc++) {
-    for (size_t v = 0; v < vl; v += 8) {
+    size_t v = 0;
+    for (; v + 8 <= vl; v += 8) {
 
         {
         const __m512d t16 = _mm512_loadu_pd(&in_re[2*is + v]);
@@ -101,6 +102,123 @@ void radix4_hc2c_nat_rng_fwd_avx512(
         _mm512_storeu_pd(&Rm[0*osm + v], t48);
         }
     }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t0 = in_re[3*is + v];
+        const double t1 = (tw_re[2]);
+        const double t2 = in_im[3*is + v];
+        const double t3 = (tw_im[2]);
+        const double t4 = __builtin_fma(-(t2), t3, (t0 * t1));
+        const double t5 = __builtin_fma(t0, t3, (t2 * t1));
+        const double t8 = in_re[1*is + v];
+        const double t9 = (tw_re[0]);
+        const double t10 = in_im[1*is + v];
+        const double t11 = (tw_im[0]);
+        const double t12 = __builtin_fma(-(t10), t11, (t8 * t9));
+        const double t13 = __builtin_fma(t8, t11, (t10 * t9));
+        const double t14 = (t5 + t13);
+        const double t32 = (t12 - t4);
+        const double t15 = (t4 + t12);
+        const double t30 = (t13 - t5);
+        const double t16 = in_re[2*is + v];
+        const double t17 = (tw_re[1]);
+        const double t18 = in_im[2*is + v];
+        const double t19 = (tw_im[1]);
+        const double t21 = __builtin_fma(t16, t19, (t18 * t17));
+        const double t20 = __builtin_fma(-(t18), t19, (t16 * t17));
+        const double t22 = in_re[0*is + v];
+        const double t25 = (t20 + t22);
+        const double t27 = (t15 + t25);
+        const double t45 = (t25 - t15);
+        const double t38 = (t22 - t20);
+        const double t40 = (t30 + t38);
+        const double t48 = (t38 - t30);
+        const double t23 = in_im[0*is + v];
+        const double t24 = (t21 + t23);
+        const double t26 = (t14 + t24);
+        const double t36 = (t23 - t21);
+        const double t39 = (t36 - t32);
+        const double t43 = (-((t24 - t14)));
+        const double t47 = (-((t32 + t36)));
+
+        Ip[0*osp + v] = t26;
+        Rp[0*osp + v] = t27;
+        Ip[1*osp + v] = t39;
+        Rp[1*osp + v] = t40;
+        Im[1*osm + v] = t43;
+        Rm[1*osm + v] = t45;
+        Im[0*osm + v] = t47;
+        Rm[0*osm + v] = t48;
+        } else {
+            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
+
+        {
+        const __m512d t16 = _mm512_maskz_loadu_pd(_m, &in_re[2*is + v]);
+        const __m512d t17 = _mm512_set1_pd(tw_re[1]);
+        const __m512d t18 = _mm512_maskz_loadu_pd(_m, &in_im[2*is + v]);
+        const __m512d t19 = _mm512_set1_pd(tw_im[1]);
+        const __m512d t20 = _mm512_fnmadd_pd(t18, t19, _mm512_mul_pd(t16, t17));
+        const __m512d t21 = _mm512_fmadd_pd(t16, t19, _mm512_mul_pd(t18, t17));
+        const __m512d t22 = _mm512_maskz_loadu_pd(_m, &in_re[0*is + v]);
+        const __m512d t25 = _mm512_add_pd(t20, t22);
+            _mm512_storeu_pd(&spill_re[0], t25);
+        const __m512d t38 = _mm512_sub_pd(t22, t20);
+            _mm512_storeu_pd(&spill_re[1], t38);
+        const __m512d t23 = _mm512_maskz_loadu_pd(_m, &in_im[0*is + v]);
+        const __m512d t24 = _mm512_add_pd(t21, t23);
+            _mm512_storeu_pd(&spill_im[0], t24);
+        const __m512d t36 = _mm512_sub_pd(t23, t21);
+            _mm512_storeu_pd(&spill_im[1], t36);
+        const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in_re[3*is + v]);
+        const __m512d t1 = _mm512_set1_pd(tw_re[2]);
+        const __m512d t2 = _mm512_maskz_loadu_pd(_m, &in_im[3*is + v]);
+        const __m512d t3 = _mm512_set1_pd(tw_im[2]);
+        const __m512d t4 = _mm512_fnmadd_pd(t2, t3, _mm512_mul_pd(t0, t1));
+        const __m512d t5 = _mm512_fmadd_pd(t0, t3, _mm512_mul_pd(t2, t1));
+        const __m512d t8 = _mm512_maskz_loadu_pd(_m, &in_re[1*is + v]);
+        const __m512d t9 = _mm512_set1_pd(tw_re[0]);
+        const __m512d t10 = _mm512_maskz_loadu_pd(_m, &in_im[1*is + v]);
+        const __m512d t11 = _mm512_set1_pd(tw_im[0]);
+        const __m512d t12 = _mm512_fnmadd_pd(t10, t11, _mm512_mul_pd(t8, t9));
+        const __m512d t15 = _mm512_add_pd(t4, t12);
+            _mm512_storeu_pd(&spill_re[2], t15);
+        const __m512d t32 = _mm512_sub_pd(t12, t4);
+            _mm512_storeu_pd(&spill_re[3], t32);
+        const __m512d t13 = _mm512_fmadd_pd(t8, t11, _mm512_mul_pd(t10, t9));
+        const __m512d t14 = _mm512_add_pd(t5, t13);
+            _mm512_storeu_pd(&spill_im[2], t14);
+        const __m512d t30 = _mm512_sub_pd(t13, t5);
+            _mm512_storeu_pd(&spill_im[3], t30);
+        }
+        {
+            const __m512d t14 = _mm512_loadu_pd(&spill_im[2]);
+            const __m512d t24 = _mm512_loadu_pd(&spill_im[0]);
+        const __m512d t26 = _mm512_add_pd(t14, t24);
+            const __m512d t15 = _mm512_loadu_pd(&spill_re[2]);
+            const __m512d t25 = _mm512_loadu_pd(&spill_re[0]);
+        const __m512d t27 = _mm512_add_pd(t15, t25);
+        const __m512d t45 = _mm512_sub_pd(t25, t15);
+        const __m512d t43 = _mm512_xor_pd(_mm512_sub_pd(t24, t14), _mm512_set1_pd(-0.0));
+            const __m512d t36 = _mm512_loadu_pd(&spill_im[1]);
+            const __m512d t32 = _mm512_loadu_pd(&spill_re[3]);
+        const __m512d t39 = _mm512_sub_pd(t36, t32);
+        _mm512_mask_storeu_pd(&Ip[0*osp + v], _m, t26);
+        _mm512_mask_storeu_pd(&Rp[0*osp + v], _m, t27);
+        _mm512_mask_storeu_pd(&Im[1*osm + v], _m, t43);
+        _mm512_mask_storeu_pd(&Rm[1*osm + v], _m, t45);
+            const __m512d t30 = _mm512_loadu_pd(&spill_im[3]);
+            const __m512d t38 = _mm512_loadu_pd(&spill_re[1]);
+        const __m512d t40 = _mm512_add_pd(t30, t38);
+        const __m512d t48 = _mm512_sub_pd(t38, t30);
+        const __m512d t47 = _mm512_xor_pd(_mm512_add_pd(t32, t36), _mm512_set1_pd(-0.0));
+        _mm512_mask_storeu_pd(&Ip[1*osp + v], _m, t39);
+        _mm512_mask_storeu_pd(&Rp[1*osp + v], _m, t40);
+        _mm512_mask_storeu_pd(&Im[0*osm + v], _m, t47);
+        _mm512_mask_storeu_pd(&Rm[0*osm + v], _m, t48);
+        }
+        }
+    }
     in_re += cs_in; in_im -= cs_in;
     Rp += cs_out; Ip += cs_out;
     Rm -= cs_out; Im -= cs_out;
@@ -111,7 +229,7 @@ void radix4_hc2c_nat_rng_fwd_avx512(
  *   fp_instr=30  flops=30  (add=8 sub=8 mul=0 fma=0 cmul=6 neg=2)
  *   essential_io=16 ops (vec_loads=8 + stores=8)  [+6 hoisted scalar-twiddle loads, not counted]
  *   cross_pass_cut=4 slots => +16 mem ops, 8 vectors live across pass boundary
- *   memory_floor=32 mem ops   peak_live(max-per-pass)=8   budget=28 regs
+ *   memory_floor=32 mem ops   peak_live(max-per-pass)=18   budget=28 regs
  *   ROOFLINE: MEMORY-BOUND at floor (memory_floor > fp_instr)
  *   PRESSURE: fits (peak_live <= budget)  [CT: peak_live is max over passes; cross_pass_cut is added explicit spill traffic]
  */

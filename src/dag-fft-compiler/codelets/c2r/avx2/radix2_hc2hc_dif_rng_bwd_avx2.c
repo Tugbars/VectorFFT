@@ -13,6 +13,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix2_hc2hc_dif_rng_bwd_avx2(
     const double * __restrict__ in_re,
@@ -29,7 +32,8 @@ void radix2_hc2hc_dif_rng_bwd_avx2(
     size_t vl)
 {
     for (int kc = 0; kc < kcount; kc++) {
-    for (size_t v = 0; v < vl; v += 4) {
+    size_t v = 0;
+    for (; v + 4 <= vl; v += 4) {
         const __m256d t0 = _mm256_loadu_pd(&in_im[0*is + v]);
         const __m256d t2 = _mm256_loadu_pd(&in_re[1*is + v]);
         const __m256d t6 = _mm256_loadu_pd(&in_re[0*is + v]);
@@ -47,6 +51,47 @@ void radix2_hc2hc_dif_rng_bwd_avx2(
         _mm256_storeu_pd(&out_im[1*os + v], t15);
         _mm256_storeu_pd(&out_re[0*os + v], t17);
         _mm256_storeu_pd(&out_im[0*os + v], t18);
+    }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t0 = in_im[0*is + v];
+        const double t2 = in_re[1*is + v];
+        const double t6 = in_re[0*is + v];
+        const double t17 = (t0 + t6);
+        const double t9 = (t6 - t0);
+        const double t8 = in_im[1*is + v];
+        const double t18 = (t8 - t2);
+        const double t11 = (t2 + t8);
+        const double t10 = (tw_re[0]);
+        const double t12 = (tw_im[0]);
+        const double t14 = __builtin_fma(t9, t10, (t11 * t12));
+        const double t15 = __builtin_fma(-(t9), t12, (t11 * t10));
+
+        out_re[1*os + v] = t14;
+        out_im[1*os + v] = t15;
+        out_re[0*os + v] = t17;
+        out_im[0*os + v] = t18;
+        } else {
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        const __m256d t0 = _mm256_maskload_pd(&in_im[0*is + v], _m);
+        const __m256d t2 = _mm256_maskload_pd(&in_re[1*is + v], _m);
+        const __m256d t6 = _mm256_maskload_pd(&in_re[0*is + v], _m);
+        const __m256d t17 = _mm256_add_pd(t0, t6);
+        const __m256d t9 = _mm256_sub_pd(t6, t0);
+        const __m256d t8 = _mm256_maskload_pd(&in_im[1*is + v], _m);
+        const __m256d t18 = _mm256_sub_pd(t8, t2);
+        const __m256d t11 = _mm256_add_pd(t2, t8);
+        const __m256d t10 = _mm256_set1_pd(tw_re[0]);
+        const __m256d t12 = _mm256_set1_pd(tw_im[0]);
+        const __m256d t14 = _mm256_fmadd_pd(t9, t10, _mm256_mul_pd(t11, t12));
+        const __m256d t15 = _mm256_fnmadd_pd(t9, t12, _mm256_mul_pd(t11, t10));
+
+        _mm256_maskstore_pd(&out_re[1*os + v], _m, t14);
+        _mm256_maskstore_pd(&out_im[1*os + v], _m, t15);
+        _mm256_maskstore_pd(&out_re[0*os + v], _m, t17);
+        _mm256_maskstore_pd(&out_im[0*os + v], _m, t18);
+        }
     }
     in_re += cs_in; in_im -= cs_in;
     out_re += cs_out; out_im -= cs_out;

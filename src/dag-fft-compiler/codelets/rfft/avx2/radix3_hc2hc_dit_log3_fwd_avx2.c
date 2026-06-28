@@ -13,6 +13,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix3_hc2hc_dit_log3_fwd_avx2(
     const double * __restrict__ in_re,
@@ -27,7 +30,8 @@ void radix3_hc2hc_dit_log3_fwd_avx2(
 {
     const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
     const __m256d t15 = _mm256_set1_pd(0.5);
-    for (size_t v = 0; v < vl; v += 4) {
+    size_t v = 0;
+    for (; v + 4 <= vl; v += 4) {
 
 
         const __m256d t1 = _mm256_loadu_pd(&in_re[2*is + v]);
@@ -63,6 +67,83 @@ void radix3_hc2hc_dit_log3_fwd_avx2(
         _mm256_storeu_pd(&out_im[1*os + v], t49);
         _mm256_storeu_pd(&out_re[0*os + v], t31);
         _mm256_storeu_pd(&out_im[0*os + v], t50);
+    }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t15 = (0.5);
+        const double t0 = (0.86602540378444004);
+        const double t1 = in_re[2*is + v];
+        const double t2 = (tw_re[1]);
+        const double t3 = in_im[2*is + v];
+        const double t4 = (tw_im[1]);
+        const double t6 = __builtin_fma(t1, t4, (t3 * t2));
+        const double t5 = __builtin_fma(-(t3), t4, (t1 * t2));
+        const double t7 = in_re[1*is + v];
+        const double t8 = (tw_re[0]);
+        const double t9 = in_im[1*is + v];
+        const double t10 = (tw_im[0]);
+        const double t12 = __builtin_fma(t7, t10, (t9 * t8));
+        const double t11 = __builtin_fma(-(t9), t10, (t7 * t8));
+        const double t16 = (t6 + t12);
+        const double t13 = (t11 - t5);
+        const double t25 = (t5 + t11);
+        const double t23 = (t12 - t6);
+        const double t18 = in_im[0*is + v];
+        const double t22 = (t16 + t18);
+        const double t39 = __builtin_fma(-(t15), t16, t18);
+        const double t49 = __builtin_fma(-(t0), t13, t39);
+        const double t47 = (-(__builtin_fma(t0, t13, t39)));
+        const double t27 = in_re[0*is + v];
+        const double t31 = (t25 + t27);
+        const double t42 = __builtin_fma(-(t15), t25, t27);
+        const double t48 = __builtin_fma(t0, t23, t42);
+        const double t50 = __builtin_fma(-(t0), t23, t42);
+
+        out_re[2*os + v] = t47;
+        out_im[2*os + v] = t22;
+        out_re[1*os + v] = t48;
+        out_im[1*os + v] = t49;
+        out_re[0*os + v] = t31;
+        out_im[0*os + v] = t50;
+        } else {
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        const __m256d t15 = _mm256_set1_pd(0.5);
+        const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
+        const __m256d t1 = _mm256_maskload_pd(&in_re[2*is + v], _m);
+        const __m256d t2 = _mm256_set1_pd(tw_re[1]);
+        const __m256d t3 = _mm256_maskload_pd(&in_im[2*is + v], _m);
+        const __m256d t4 = _mm256_set1_pd(tw_im[1]);
+        const __m256d t6 = _mm256_fmadd_pd(t1, t4, _mm256_mul_pd(t3, t2));
+        const __m256d t5 = _mm256_fnmadd_pd(t3, t4, _mm256_mul_pd(t1, t2));
+        const __m256d t7 = _mm256_maskload_pd(&in_re[1*is + v], _m);
+        const __m256d t8 = _mm256_set1_pd(tw_re[0]);
+        const __m256d t9 = _mm256_maskload_pd(&in_im[1*is + v], _m);
+        const __m256d t10 = _mm256_set1_pd(tw_im[0]);
+        const __m256d t12 = _mm256_fmadd_pd(t7, t10, _mm256_mul_pd(t9, t8));
+        const __m256d t11 = _mm256_fnmadd_pd(t9, t10, _mm256_mul_pd(t7, t8));
+        const __m256d t16 = _mm256_add_pd(t6, t12);
+        const __m256d t13 = _mm256_sub_pd(t11, t5);
+        const __m256d t25 = _mm256_add_pd(t5, t11);
+        const __m256d t23 = _mm256_sub_pd(t12, t6);
+        const __m256d t18 = _mm256_maskload_pd(&in_im[0*is + v], _m);
+        const __m256d t22 = _mm256_add_pd(t16, t18);
+        const __m256d t39 = _mm256_fnmadd_pd(t15, t16, t18);
+        const __m256d t49 = _mm256_fnmadd_pd(t0, t13, t39);
+        const __m256d t47 = _mm256_xor_pd(_mm256_fmadd_pd(t0, t13, t39), _mm256_set1_pd(-0.0));
+        const __m256d t27 = _mm256_maskload_pd(&in_re[0*is + v], _m);
+        const __m256d t31 = _mm256_add_pd(t25, t27);
+        const __m256d t42 = _mm256_fnmadd_pd(t15, t25, t27);
+        const __m256d t48 = _mm256_fmadd_pd(t0, t23, t42);
+        const __m256d t50 = _mm256_fnmadd_pd(t0, t23, t42);
+
+        _mm256_maskstore_pd(&out_re[2*os + v], _m, t47);
+        _mm256_maskstore_pd(&out_im[2*os + v], _m, t22);
+        _mm256_maskstore_pd(&out_re[1*os + v], _m, t48);
+        _mm256_maskstore_pd(&out_im[1*os + v], _m, t49);
+        _mm256_maskstore_pd(&out_re[0*os + v], _m, t31);
+        _mm256_maskstore_pd(&out_im[0*os + v], _m, t50);
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:

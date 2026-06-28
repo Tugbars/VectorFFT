@@ -24,7 +24,8 @@ void radix8_r2cb_avx512(
     size_t vl)
 {
     const __m512d t33 = _mm512_set1_pd(0.70710678118655002);
-    for (size_t v = 0; v < vl; v += 8) {
+    size_t v = 0;
+    for (; v + 8 <= vl; v += 8) {
 
         const __m512d t0 = _mm512_loadu_pd(&in_re[1*is_re + v]);
         const __m512d t2 = _mm512_loadu_pd(&in_im[1*is_im + v]);
@@ -68,6 +69,99 @@ void radix8_r2cb_avx512(
         _mm512_storeu_pd(&out_re[5*os_re + v], t84);
         _mm512_storeu_pd(&out_re[6*os_re + v], t80);
         _mm512_storeu_pd(&out_re[7*os_re + v], t85);
+    }
+    if (v < vl) {
+        const size_t rem = vl - v;
+        if (rem == 1) {
+        const double t33 = (0.70710678118655002);
+        const double t0 = in_re[1*is_re + v];
+        const double t2 = in_im[1*is_im + v];
+        const double t5 = in_re[3*is_re + v];
+        const double t25 = (t5 - t0);
+        const double t8 = (t0 + t5);
+        const double t12 = (t8 + t8);
+        const double t6 = in_im[3*is_im + v];
+        const double t7 = (t6 - t2);
+        const double t23 = (t2 + t6);
+        const double t54 = (t23 - t25);
+        const double t74 = ((-(t7)) - t7);
+        const double t71 = (((-(t25)) - t23) - (t23 + t25));
+        const double t76 = (t54 + t54);
+        const double t13 = in_re[2*is_re + v];
+        const double t16 = (t13 + t13);
+        const double t14 = in_im[2*is_im + v];
+        const double t40 = (t14 + t14);
+        const double t17 = in_re[4*is_re + v];
+        const double t18 = in_re[0*is_re + v];
+        const double t19 = (t17 + t18);
+        const double t44 = (t18 - t17);
+        const double t20 = (t16 + t19);
+        const double t21 = (t12 + t20);
+        const double t66 = (t20 - t12);
+        const double t45 = (t44 - t40);
+        const double t82 = __builtin_fma(t33, t71, t45);
+        const double t84 = __builtin_fma(-(t33), t71, t45);
+        const double t52 = (t19 - t16);
+        const double t75 = (t52 - t74);
+        const double t80 = (t52 + t74);
+        const double t63 = (t40 + t44);
+        const double t83 = __builtin_fma(-(t33), t76, t63);
+        const double t85 = __builtin_fma(t33, t76, t63);
+
+        out_re[0*os_re + v] = t21;
+        out_re[1*os_re + v] = t82;
+        out_re[2*os_re + v] = t75;
+        out_re[3*os_re + v] = t83;
+        out_re[4*os_re + v] = t66;
+        out_re[5*os_re + v] = t84;
+        out_re[6*os_re + v] = t80;
+        out_re[7*os_re + v] = t85;
+        } else {
+            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
+        const __m512d t33 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in_re[1*is_re + v]);
+        const __m512d t2 = _mm512_maskz_loadu_pd(_m, &in_im[1*is_im + v]);
+        const __m512d t5 = _mm512_maskz_loadu_pd(_m, &in_re[3*is_re + v]);
+        const __m512d t25 = _mm512_sub_pd(t5, t0);
+        const __m512d t8 = _mm512_add_pd(t0, t5);
+        const __m512d t12 = _mm512_add_pd(t8, t8);
+        const __m512d t6 = _mm512_maskz_loadu_pd(_m, &in_im[3*is_im + v]);
+        const __m512d t7 = _mm512_sub_pd(t6, t2);
+        const __m512d t23 = _mm512_add_pd(t2, t6);
+        const __m512d t54 = _mm512_sub_pd(t23, t25);
+        const __m512d t74 = _mm512_sub_pd(_mm512_xor_pd(t7, _mm512_set1_pd(-0.0)), t7);
+        const __m512d t71 = _mm512_sub_pd(_mm512_sub_pd(_mm512_xor_pd(t25, _mm512_set1_pd(-0.0)), t23), _mm512_add_pd(t23, t25));
+        const __m512d t76 = _mm512_add_pd(t54, t54);
+        const __m512d t13 = _mm512_maskz_loadu_pd(_m, &in_re[2*is_re + v]);
+        const __m512d t16 = _mm512_add_pd(t13, t13);
+        const __m512d t14 = _mm512_maskz_loadu_pd(_m, &in_im[2*is_im + v]);
+        const __m512d t40 = _mm512_add_pd(t14, t14);
+        const __m512d t17 = _mm512_maskz_loadu_pd(_m, &in_re[4*is_re + v]);
+        const __m512d t18 = _mm512_maskz_loadu_pd(_m, &in_re[0*is_re + v]);
+        const __m512d t19 = _mm512_add_pd(t17, t18);
+        const __m512d t44 = _mm512_sub_pd(t18, t17);
+        const __m512d t20 = _mm512_add_pd(t16, t19);
+        const __m512d t21 = _mm512_add_pd(t12, t20);
+        const __m512d t66 = _mm512_sub_pd(t20, t12);
+        const __m512d t45 = _mm512_sub_pd(t44, t40);
+        const __m512d t82 = _mm512_fmadd_pd(t33, t71, t45);
+        const __m512d t84 = _mm512_fnmadd_pd(t33, t71, t45);
+        const __m512d t52 = _mm512_sub_pd(t19, t16);
+        const __m512d t75 = _mm512_sub_pd(t52, t74);
+        const __m512d t80 = _mm512_add_pd(t52, t74);
+        const __m512d t63 = _mm512_add_pd(t40, t44);
+        const __m512d t83 = _mm512_fnmadd_pd(t33, t76, t63);
+        const __m512d t85 = _mm512_fmadd_pd(t33, t76, t63);
+
+        _mm512_mask_storeu_pd(&out_re[0*os_re + v], _m, t21);
+        _mm512_mask_storeu_pd(&out_re[1*os_re + v], _m, t82);
+        _mm512_mask_storeu_pd(&out_re[2*os_re + v], _m, t75);
+        _mm512_mask_storeu_pd(&out_re[3*os_re + v], _m, t83);
+        _mm512_mask_storeu_pd(&out_re[4*os_re + v], _m, t66);
+        _mm512_mask_storeu_pd(&out_re[5*os_re + v], _m, t84);
+        _mm512_mask_storeu_pd(&out_re[6*os_re + v], _m, t80);
+        _mm512_mask_storeu_pd(&out_re[7*os_re + v], _m, t85);
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:
