@@ -1546,14 +1546,47 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
    * the tail resets hoisted_const_tags first → the scalar/masked passes re-emit
    * the consts inline at the right width (double / __m256d), shadowing the
    * function-scope ones (no-op for the hoist-off c2c tree). *)
+  (* Real-FFT cascade families (rfft fwd + c2r bwd): r2cf/r2cb leaves, the hc2hc
+   * stages, packed hc2c, and the hc2c-nat terminator/initiator — ALL set hc_strided
+   * (gen_main: hc_strided := hc2hc || hc2c || hc2c_nat), loop over `v` with bound `vl`,
+   * strided access in[leg*stride + v]. The 2D-transpose `strided` family, the
+   * always-aligned `n1_oop_strided` decoupled-stride inner (executor always passes a
+   * vec-width-multiple B), and r2c_term do NOT set hc_strided and are intentionally
+   * EXCLUDED: transpose tail = phase-2 (masked transpose); stride inner never needs it;
+   * r2c_term = separate fusion phase, wire later. Odd K must route to THIS cascade, not
+   * the stride path (front-door selective-guard relax, src/core/transforms/real). *)
+  let real_fft_sig =
+    !r2cf_signature || !r2cb_signature || !hc_strided
+  in
   let anyk_tail =
-    (in_place || !r2r_signature)
+    (in_place || !r2r_signature || real_fft_sig)
     && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
        | Some _ -> false
        | None -> true)
   in
-  (* tail loop bound: in-place uses `me`; the r2r/trig signature uses `K`. *)
-  let tail_bound = if !r2r_signature then "K" else "me" in
+  (* tail loop bound: in-place uses `me`; the r2r/trig signature uses `K`; the
+   * real-FFT cascade uses `vl`. *)
+  let tail_bound =
+    if !r2r_signature then "K" else if real_fft_sig then "vl" else "me"
+  in
+  (* tail loop var: must match render_load's loop_var — `v` for the real-FFT
+   * cascade, `k` for in-place + r2r/trig. *)
+  let tail_var = if real_fft_sig then "v" else "k" in
+  (* Bulk batch-loop header for the real-FFT `v`-loop, with the conditional hoist so
+   * `v` stays live for the remainder block (mirrors the in-place `k` hoist at the top
+   * of the in-place signature branch). Used by every real-FFT signature branch. *)
+  let emit_v_loop_header bound =
+    if anyk_tail then begin
+      Buffer.add_string buf "    size_t v = 0;\n";
+      Buffer.add_string buf
+        (Printf.sprintf "    for (; v + %d <= %s; v += %d) {\n" isa.vec_width bound
+           isa.vec_width)
+    end
+    else
+      Buffer.add_string buf
+        (Printf.sprintf "    for (size_t v = 0; v < %s; v += %d) {\n" bound
+           isa.vec_width)
+  in
   let family =
     if strided then "strided-batch (Design C, 2D rows)"
     else if twidsq then "twidsq (FFTW-style intermediate)"
@@ -1999,9 +2032,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !r2cf_signature then begin
     (* r2cf leaf v2 (section 62): the composition algebra forces a
@@ -2027,9 +2058,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !r2c_term_laststage then begin
     (* model (b): fused last-stage terminator. Two columns of r complex legs +
@@ -2064,9 +2093,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !r2c_term_signature then begin
     (* r2c_term (step-2 fusion): 2 inputs (Z[k], Z[m]) -> 2 outputs (X[k], X[m]),
@@ -2096,9 +2123,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !hc2c_natural then begin
     (* D2 natural terminator (section 69): four output pointers,
@@ -2132,9 +2157,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
     if !hc_ranged then
       Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !hc2c_natural_bwd then begin
     (* c2r natural INITIATOR (inverse of hc2c_natural): four SPLIT const inputs
@@ -2171,9 +2194,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
     if !hc_ranged then
       Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !hc_strided then begin
     (* hc2hc / hc2c strided variant (section 62): the generic ABI's
@@ -2206,9 +2227,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
     if !hc_ranged then
       Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !n1_oop_strided then begin
     (* strided-OOP n1: ABI = vfft_proto_n1_fn (registry n1 slot shape).
@@ -2233,9 +2252,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t v = 0; v < vl; v += %d) {\n"
-         isa.vec_width)
+    emit_v_loop_header "vl"
   end
   else if !r2r_signature then begin
     Buffer.add_string buf "    const double * __restrict__ in,\n";
@@ -3721,17 +3738,18 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
      * __m256d-vs-double clash). The masked pass keeps the codelet's normal spill
      * recipe (avx2, full-width scratch via the raw isa.storeu_pd field). Broadcast
      * twiddles / constants are lane-independent and stay unmasked. In-place safe:
-     * the masked pass touches only rio lanes [k, k+rem) = [bound-rem, bound),
-     * disjoint from the bulk; masked-off lanes never touch memory. `bound` is `me`
-     * for in-place, `K` for r2r/trig. *)
+     * the masked pass touches only lanes [var, var+rem) = [bound-rem, bound),
+     * disjoint from the bulk; masked-off lanes never touch memory. `bound`/`var` are
+     * `me`/`k` for in-place, `K`/`k` for r2r/trig, `vl`/`v` for the real-FFT cascade. *)
     (* Hoisted trig consts are at function scope (__m256d); clear the skip-set so the
      * scalar (double) and masked (__m256d) tail passes re-emit them inline at the
      * right width, shadowing the function-scope ones. No-op for the hoist-off c2c
      * tree (hoisted_const_tags already empty there). *)
     Hashtbl.reset hoisted_const_tags;
-    Buffer.add_string buf (Printf.sprintf "    if (k < %s) {\n" tail_bound);
     Buffer.add_string buf
-      (Printf.sprintf "        const size_t rem = %s - k;\n" tail_bound);
+      (Printf.sprintf "    if (%s < %s) {\n" tail_var tail_bound);
+    Buffer.add_string buf
+      (Printf.sprintf "        const size_t rem = %s - %s;\n" tail_bound tail_var);
     Buffer.add_string buf "        if (rem == 1) {\n";
     current_ls_mode := Isa.LS_vector;
     emit_body ~force_mono:true Isa.scalar ();
