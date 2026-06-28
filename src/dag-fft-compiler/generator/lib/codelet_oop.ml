@@ -1356,15 +1356,19 @@ let emit_codelet (c : config) : string =
   Emit_c.current_tw_perpos := c.twiddles = PerPositionTwiddles;
   let buf = Buffer.create 4096 in
   (* Arbitrary-K rem-aware tail (docs/performance/arbitrary_k_tail_handling.md).
-     Phase A: the n1_oop family only — NoTwiddles + UnitGroup edges, loop bound
-     me = batch K. No memory twiddle table (internal radix twiddles are set1
-     constants), so the tail just masks the in/out group loads/stores; the body
-     and lane locals stay full-width. t1p (PerPositionTwiddles) is excluded — its
-     per-block broadcast twiddle assumes K%VW==0 and needs a per-lane variant
-     (Phase B). Masked-only remainder (the __m256d lane locals would type-clash a
-     width-1 scalar pass). Kill switch VFFT_NO_ANYK_TAIL. *)
+     UnitGroup edges, loop bound me = group count. Masks the in/out group
+     loads/stores; body + lane locals stay full-width. Two twiddle kinds:
+       - NoTwiddles (n1_oop, LEAF / BAILEY2 stage 1): internal radix twiddles are
+         set1 constants, no memory table -> tail masks rio only.
+       - PerGroupTwiddles (t1_oop, BAILEY2 stage 2 PER-LANE variant): twiddle is
+         loadu(tw[j*me+b]) indexed by the group var -> the tail masks it too
+         (render_load is mode-aware). This is the odd-K-correct s2 codelet (vs
+         t1p's per-block broadcast, which straddles k2 boundaries at odd K).
+     PerPositionTwiddles (t1p, per-block broadcast) is still EXCLUDED — odd K uses
+     the t1_oop variant instead. Masked-only remainder (the __m256d lane locals
+     would type-clash a width-1 scalar pass). Kill switch VFFT_NO_ANYK_TAIL. *)
   let anyk_tail =
-    c.twiddles = NoTwiddles
+    (c.twiddles = NoTwiddles || c.twiddles = PerGroupTwiddles)
     && c.load_pat = UnitGroup && c.store_pat = UnitGroup
     && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
        | Some _ -> false

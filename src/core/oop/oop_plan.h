@@ -94,15 +94,27 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
                                          int N, size_t K, int R1, int R2,
                                          int t1p_variant)
 {
-    const size_t rows = (size_t)R2 * (K / VFFT_OOP_GROUPW);
     p->kind = VFFT_OOP_KIND_BAILEY2;
     p->R1 = R1;
     p->R2 = R2;
     p->t1p_variant = t1p_variant ? 1 : 0;
     p->leaf = vfft_oop_leaf_fn(R2);
-    p->t1p = vfft_oop_t1p_fn_v(R1, p->t1p_variant);
+    /* s2 codelet + twiddle-table granularity depend on K alignment:
+     *   aligned (K % GROUPW == 0): per-VW-block broadcast t1p (set1 per block;
+     *     fewer twiddle reads — the fast path). Table = R2 * (K/GROUPW) rows/leg.
+     *   odd (K % GROUPW != 0): per-GROUP per-lane t1 (loadu(tw[j*me+b])). The
+     *     per-block broadcast would straddle k2 boundaries (a VW-block spanning
+     *     two k2 values needs two twiddles); the per-lane path gives each group
+     *     its own. Table = R2 * K rows/leg (W replicated across the K batches of
+     *     each k2 block). The t1_oop codelet also carries the rem-aware tail for
+     *     the me=R2*K remainder when R2 < GROUPW. */
+    const int aligned = (K % VFFT_OOP_GROUPW) == 0;
+    p->t1p = aligned ? vfft_oop_t1p_fn_v(R1, p->t1p_variant)
+                     : vfft_oop_t1_fn(R1);
     if (!p->leaf || !p->t1p)
         return -1;
+    const size_t reps = aligned ? (K / VFFT_OOP_GROUPW) : K;
+    const size_t rows = (size_t)R2 * reps;
     p->Qr = (double *)malloc((size_t)(R1 - 1) * rows * 8);
     p->Qi = (double *)malloc((size_t)(R1 - 1) * rows * 8);
     if (!p->Qr || !p->Qi)
@@ -116,12 +128,11 @@ static inline int _vfft_oop_fill_bailey(vfft_oop_plan_t *p,
         {
             double a = -2.0 * M_PI * (double)((long)l2 * k2) / (double)N;
             double cr = cos(a), ci = sin(a);
-            for (size_t kb = 0; kb < K / VFFT_OOP_GROUPW; kb++)
+            const size_t base = (size_t)(l2 - 1) * rows + (size_t)k2 * reps;
+            for (size_t g = 0; g < reps; g++)
             {
-                p->Qr[(size_t)(l2 - 1) * rows +
-                      (size_t)k2 * (K / VFFT_OOP_GROUPW) + kb] = cr;
-                p->Qi[(size_t)(l2 - 1) * rows +
-                      (size_t)k2 * (K / VFFT_OOP_GROUPW) + kb] = ci;
+                p->Qr[base + g] = cr;
+                p->Qi[base + g] = ci;
             }
         }
     return 0;
@@ -134,10 +145,16 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair_v(int N, size_t K,
                                                            int R1, int R2,
                                                            int t1p_variant)
 {
-    if (K == 0 || (K % 8u) != 0 || R1 * R2 != N)
+    /* Any nonzero K: aligned uses per-block t1p, odd uses per-lane t1 (Phase B). */
+    if (K == 0 || R1 * R2 != N)
         return NULL;
-    if (!vfft_oop_leaf_fn(R2) || !vfft_oop_t1p_fn_v(R1, t1p_variant ? 1 : 0))
-        return NULL;
+    {
+        const int aligned = (K % VFFT_OOP_GROUPW) == 0;
+        if (!vfft_oop_leaf_fn(R2) ||
+            !(aligned ? vfft_oop_t1p_fn_v(R1, t1p_variant ? 1 : 0)
+                      : vfft_oop_t1_fn(R1)))
+            return NULL;
+    }
     if (_vfft_oop_stage_aliases((size_t)R2 * K, R1) ||
         _vfft_oop_stage_aliases((size_t)R1 * K, R2))
         return NULL;
@@ -230,10 +247,9 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
         }
     }
 
-    /* Rule 2: fused Bailey two-stage, aliasing-masked. K%8-only: t1p's per-block
-     * broadcast twiddle assumes K is a multiple of the vector width — straddling
-     * blocks at odd K read the wrong twiddle (Phase B adds a per-lane t1p). */
-    if ((K % 8u) == 0)
+    /* Rule 2: fused Bailey two-stage, aliasing-masked. Any K: aligned uses the
+     * per-block t1p, odd uses the per-lane t1 + per-group twiddle table
+     * (_vfft_oop_fill_bailey picks by K alignment). */
     {
         int bestR1 = 0, bestR2 = 0;
         for (int R2 = N < 128 ? N : 128; R2 >= 2; R2--)
@@ -241,7 +257,9 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create(
             if (N % R2)
                 continue;
             int R1 = N / R2;
-            if (!vfft_oop_leaf_fn(R2) || !vfft_oop_t1p_fn(R1))
+            const int aligned = (K % VFFT_OOP_GROUPW) == 0;
+            if (!vfft_oop_leaf_fn(R2) ||
+                !(aligned ? vfft_oop_t1p_fn(R1) : vfft_oop_t1_fn(R1)))
                 continue;
             if (_vfft_oop_stage_aliases((size_t)R2 * K, R1))
                 continue; /* s2 j-stride, R1 streams */
