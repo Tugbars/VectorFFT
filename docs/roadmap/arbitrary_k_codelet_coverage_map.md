@@ -94,9 +94,21 @@ design. This is the one family needing real new emit code.
    [= the **r2c** phase-2 item], (c) the trig-stride Makhoul twiddle/permute pre/post tail.
    **So production trig odd-K is gated behind r2c arbitrary-K.** DCT-IV (inner c2c, no r2c)
    is the one that could land first once its dct4-stride pre/post carries the tail.
-3. **r2c / c2r** — READY but most families (leaf/stage/terminator + ranged); unlocks
-   odd-batch real-FFT.
-4. **Strided 2D** — HARD (masked transpose); unlocks odd row/col counts in 2D.
+3. **r2c / c2r** — ✅ codelets DONE 2026-06-28 (rfft cascade: r2cf/r2cb leaves, hc2hc stages,
+   hc2c_nat terminator/initiator, +log3 +ranged — all carry the tail; in-place k-path proven
+   byte-identical). Front door **selectively** relaxed (`src/core/transforms/real/`): rfft/natural
+   guards opened to any K (`rfft.h`, `c2r.h`, `r2c_dispatch.h:245`, `c2r_dispatch.h:54`); the
+   **decoupled-stride path kept K%8-gated** (`_vfft_r2c_build_stride` returns NULL at odd K — shared
+   by r2c stride branch + c2r SPLIT; `c2r_dispatch.h:257` forces NATURAL at odd K). So odd K is
+   routed onto the rfft cascade; the two bake-offs are already NULL-graceful → no bakeoff edit. The
+   r2c stride is the SECOND strategy (vs rfft) — `n1_oop_strided` inner is vec-width-batched, can't
+   do odd K yet. **These two stride gates are TEMPORARY** (see item 4).
+4. **Strided 2D + decoupled-stride r2c/c2r** — HARD (masked transpose: the codelet loads VW whole
+   rows + 4×4/8×8 transpose; a remainder of <VW rows needs masked-load the rem rows → transpose →
+   masked-store). Unlocks odd row/col in 2D AND the decoupled-stride real-FFT path. **Doing this is
+   what lets us DELETE the temporary stride gates from item 3** (`_vfft_r2c_build_stride` K%8 +
+   `c2r_dispatch.h:257` force-NATURAL) — then the bake-off picks stride-vs-rfft at any K. Until then
+   the gates correctly keep odd K off the transpose path.
 5. **AVX-512** — emit path already present for all of the above; needs an AVX-512 host
    to test (this host is AVX2-only).
 6. **Front-door guards** — relax `K%VW` → `K!=0` per feature as its codelets land.
