@@ -379,15 +379,15 @@ let emit_load_unitgroup (buf : Buffer.t) (c : config) : unit =
     "           strided loads populate the R lane registers — no transpose. */\n";
   for j = 0 to c.radix - 1 do
     Buffer.add_string buf
-      (Printf.sprintf
-         "        lane_re_%d = %s(&%s[b * in_group_stride + %d * \
-          in_leg_stride]);\n"
-         j c.isa.loadu_pd base_re j);
+      (Printf.sprintf "        lane_re_%d = %s;\n" j
+         (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+            (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
+               base_re j)));
     Buffer.add_string buf
-      (Printf.sprintf
-         "        lane_im_%d = %s(&%s[b * in_group_stride + %d * \
-          in_leg_stride]);\n"
-         j c.isa.loadu_pd base_im j)
+      (Printf.sprintf "        lane_im_%d = %s;\n" j
+         (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+            (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
+               base_im j)))
   done
 
 (* ═══════════════════════════════════════════════════════════════
@@ -444,15 +444,17 @@ let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
      */\n";
   for j = 0 to c.radix - 1 do
     Buffer.add_string buf
-      (Printf.sprintf
-         "        %s(&%s[b * out_group_stride + %d * out_leg_stride], \
-          out_lane_re_%d);\n"
-         c.isa.storeu_pd base_re j j);
+      (Printf.sprintf "        %s;\n"
+         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
+            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
+               base_re j)
+            (Printf.sprintf "out_lane_re_%d" j)));
     Buffer.add_string buf
-      (Printf.sprintf
-         "        %s(&%s[b * out_group_stride + %d * out_leg_stride], \
-          out_lane_im_%d);\n"
-         c.isa.storeu_pd base_im j j)
+      (Printf.sprintf "        %s;\n"
+         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
+            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
+               base_im j)
+            (Printf.sprintf "out_lane_im_%d" j)))
   done
 
 (* ═══════════════════════════════════════════════════════════════
@@ -474,9 +476,11 @@ let emit_output_write (buf : Buffer.t) (c : config) ~(indent : string)
       | OutOfPlace, false -> "out_im"
     in
     Buffer.add_string buf
-      (Printf.sprintf
-         "%s%s(&%s[b * out_group_stride + %d * out_leg_stride], t%d);\n" indent
-         c.isa.Isa.storeu_pd base j tag)
+      (Printf.sprintf "%s%s;\n" indent
+         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
+            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]" base
+               j)
+            (Printf.sprintf "t%d" tag)))
   end
   else begin
     let lane = if re then "out_lane_re" else "out_lane_im" in
@@ -689,13 +693,23 @@ let prepare_butterfly (c : config) : prepared_body =
   in
 
   (* ─── Fence policy ──────────────────────────────────────────────
-   * Two-rule, per docs/fence_pin_decomposition.md:
-   *   fence ON by default; OFF when (n1 ∧ AVX2 ∧ R∈{8,16}).
-   *   pin is always OFF for codelet_oop in Tier B (regalloc deferred
-   *   to Tier C). ─ *)
-  let is_n1 = c.twiddles = NoTwiddles in
-  let is_avx2 = c.isa.Isa.vec_regs <= 16 in
-  let fence_enabled = not (is_n1 && is_avx2 && (c.radix = 8 || c.radix = 16)) in
+   * M-PROJECT OFF BY DEFAULT (2026-06-09 flip; emit_c.ml:1364). The
+   * scheduling fence is net-negative-or-tie on gcc-13 (it fragments live
+   * ranges and defeats operand folding) and the protective role it played
+   * on gcc-11 is obsolete (IR-lifted FMAs, gcc fuses on its own). This path
+   * previously hardcoded fence ON — that ignored the flip and is corrected
+   * here to mirror the in-place gate EXACTLY: opt-in via env only. Pin stays
+   * off on this path (regalloc deferred to Tier C). ─ *)
+  let opt_out =
+    try Sys.getenv "VFFT_NO_REGALLOC" = "1" with Not_found -> false
+  in
+  let force_pin =
+    try Sys.getenv "VFFT_PIN_FORCE" = "1" with Not_found -> false
+  in
+  let force_fence =
+    try Sys.getenv "VFFT_FORCE_FENCE" = "1" with Not_found -> false
+  in
+  let fence_enabled = (not opt_out) && (force_pin || force_fence) in
 
   {
     assigns_post = assigns;
@@ -1341,11 +1355,42 @@ let emit_codelet (c : config) : string =
   validate c;
   Emit_c.current_tw_perpos := c.twiddles = PerPositionTwiddles;
   let buf = Buffer.create 4096 in
+  (* Arbitrary-K rem-aware tail (docs/performance/arbitrary_k_tail_handling.md).
+     Phase A: the n1_oop family only — NoTwiddles + UnitGroup edges, loop bound
+     me = batch K. No memory twiddle table (internal radix twiddles are set1
+     constants), so the tail just masks the in/out group loads/stores; the body
+     and lane locals stay full-width. t1p (PerPositionTwiddles) is excluded — its
+     per-block broadcast twiddle assumes K%VW==0 and needs a per-lane variant
+     (Phase B). Masked-only remainder (the __m256d lane locals would type-clash a
+     width-1 scalar pass). Kill switch VFFT_NO_ANYK_TAIL. *)
+  let anyk_tail =
+    c.twiddles = NoTwiddles
+    && c.load_pat = UnitGroup && c.store_pat = UnitGroup
+    && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
+       | Some _ -> false
+       | None -> true)
+  in
   (* File header. *)
   Buffer.add_string buf
     "/* Auto-generated by vfft_v2 codelet generator — OOP family (M2). */\n";
   Buffer.add_string buf "#include <immintrin.h>\n";
   Buffer.add_string buf "#include <stddef.h>\n\n";
+  if anyk_tail && c.isa.Isa.vec_width = 4 then begin
+    let vw = c.isa.Isa.vec_width in
+    Buffer.add_string buf
+      (Printf.sprintf "static const long long _vfft_masklo[%d][%d] = {\n    "
+         (vw + 1) vw);
+    for r = 0 to vw do
+      if r > 0 then Buffer.add_string buf ",";
+      Buffer.add_char buf '{';
+      for col = 0 to vw - 1 do
+        if col > 0 then Buffer.add_char buf ',';
+        Buffer.add_string buf (if col < r then "-1" else "0")
+      done;
+      Buffer.add_char buf '}'
+    done;
+    Buffer.add_string buf "};\n\n"
+  end;
   emit_signature buf c;
   (* AVX-512 transpose indices at function scope. Needed by UnitLeg
      load preamble and UnitLeg store postamble. Emitting unconditionally
@@ -1376,12 +1421,43 @@ let emit_codelet (c : config) : string =
       Buffer.add_string buf
         (Printf.sprintf "    %s spill_im[%d];\n" c.isa.Isa.vec_type sp.num_slots));
 
-  emit_loop_open buf c;
-  emit_lane_decls buf c;
-  emit_load_edge buf c;
-  emit_butterfly_body buf c prep;
-  emit_store_edge buf c;
-  emit_loop_close buf;
+  let emit_inner () =
+    emit_lane_decls buf c;
+    emit_load_edge buf c;
+    emit_butterfly_body buf c prep;
+    emit_store_edge buf c
+  in
+  if anyk_tail then begin
+    (* Bulk loop over whole vectors, then a rem-aware masked pass over the
+       1..VW-1 leftover batch lanes. me = batch K, so this is the same shape as
+       the in-place tail; only the in/out group loads/stores are masked. *)
+    let vw = c.isa.Isa.vec_width in
+    Buffer.add_string buf "    size_t b = 0;\n";
+    Buffer.add_string buf
+      (Printf.sprintf "    for (; b + %d <= me; b += %d) {\n" vw vw);
+    Emit_c.current_ls_mode := Isa.LS_vector;
+    emit_inner ();
+    Buffer.add_string buf "    }\n";
+    Buffer.add_string buf "    if (b < me) {\n";
+    Buffer.add_string buf "        const size_t rem = me - b;\n";
+    (if vw = 8 then
+       Buffer.add_string buf
+         "        const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
+     else
+       Buffer.add_string buf
+         "        const __m256i _m = _mm256_loadu_si256((const __m256i \
+          *)_vfft_masklo[rem]);\n");
+    Emit_c.current_ls_mode := Isa.LS_masked "_m";
+    emit_inner ();
+    Emit_c.current_ls_mode := Isa.LS_vector;
+    Buffer.add_string buf "    }\n";
+    Buffer.add_string buf "}\n"
+  end
+  else begin
+    emit_loop_open buf c;
+    emit_inner ();
+    emit_loop_close buf
+  end;
   let family =
     let ep = function
       | UnitGroup -> "UG (unit-stride across the transform group)"

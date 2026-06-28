@@ -35,10 +35,16 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp(
     int N, size_t K, vfft_proto_dp_context_t *dp,
     const vfft_proto_registry_t *reg)
 {
-    if (K == 0 || (K % 8u) != 0)
+    /* Odd / non-multiple-of-8 K is served by MODEB only: MODEB rides the
+     * in-place codelets (rem-aware tail, docs/performance/arbitrary_k_tail_handling.md),
+     * so it handles any K. The native LEAF/BAILEY2 kernels (codelet_oop family)
+     * stay K%8-only — their own creators return NULL below for odd K, so the
+     * native path falls through to MODEB automatically. */
+    if (K == 0)
         return NULL;
 
-    /* Native OOP fast paths first (LEAF at N<=128, then rule-spine BAILEY2). */
+    /* Native OOP fast paths first (LEAF at N<=128, then rule-spine BAILEY2).
+     * Returns NULL for K%8!=0 — those kernels are vector-lane-only. */
     vfft_oop_plan_t *p = vfft_oop_plan_create(N, K, NULL, 0, reg);
     if (p)
         return p;
@@ -62,7 +68,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_modeb(
     int N, size_t K, vfft_proto_dp_context_t *dp,
     const vfft_proto_registry_t *reg)
 {
-    if (K == 0 || (K % 8u) != 0 || !dp || !reg || dp->K != K)
+    /* MODEB handles any K (rides the tailed in-place codelets). */
+    if (K == 0 || !dp || !reg || dp->K != K)
         return NULL;
     vfft_proto_factorization_t best;
     double ns = vfft_proto_dp_plan(dp, N, reg, &best, 0);
@@ -88,11 +95,14 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     int N, size_t K, vfft_proto_dp_context_t *dp,
     const vfft_proto_registry_t *reg)
 {
-    if (K == 0 || (K % 8u) != 0)
+    /* Odd / non-mult-of-8 K: the native tuner yields no candidates (LEAF is
+     * K%8-gated, BAILEY2 pair_v returns NULL), so the chooser below naturally
+     * falls through to MODEB, which rides the tailed in-place codelets. */
+    if (K == 0)
         return NULL;
 
     /* Axis 2 within the native kinds: tuner picks LEAF or the best BAILEY2 pair,
-     * including the s2 flat-vs-log3 t1p variant. */
+     * including the s2 flat-vs-log3 t1p variant. (nc==0 for odd K.) */
     int r1 = 0, r2 = 0, t1p = 1;
     int nc = vfft_oop_tune_pairs_v(N, K, &r1, &r2, &t1p, 0);
     vfft_oop_plan_t *native = NULL;
