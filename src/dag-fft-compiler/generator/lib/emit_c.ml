@@ -1519,27 +1519,28 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           %d)"
          isa.vec_width radix);
   let buf = Buffer.create 4096 in
-  (* Arbitrary-K rem-aware hybrid tail (docs/roadmap/arbitrary_k). Only the
-   * monolithic in-place c2c batch codelet (rio_re/rio_im/ios/me) gets it; the
-   * blocked/strided two-pass codelets take a different signature branch and are
-   * excluded (they have their own odd-K seam, tracked separately). The bulk
-   * loop is byte-identical on aligned K (one never-taken branch after it); the
-   * tail covers 1..VW-1 leftover lanes: rem==1 scalar single lane, rem>=2 one
-   * masked vector pass. Kill switch VFFT_NO_ANYK_TAIL reverts to the legacy
-   * K%VW==0-only loop. *)
-  (* Phase-1 scope: monolithic in-place codelets only (spill = None). A
-   * spill=Some (CT-blocked / composite) codelet declares __m256d spill_re[]
-   * outside the loop; the scalar tail pass would store `double` into it
-   * (type mismatch). Those — and the strided two-pass codelets, which take a
-   * different signature branch entirely — keep the legacy K%VW==0 contract
-   * until the composite tail is handled separately. The validated cell
-   * ([4,4,4,4,4] T1S, all r4) is entirely monolithic, so nothing is lost. *)
+  (* Arbitrary-K rem-aware hybrid tail (docs/roadmap/arbitrary_k). Every in-place
+   * c2c batch codelet (rio_re/rio_im/ios/me) — monolithic AND composite/CT-blocked
+   * (spill=Some) — gets it; the strided two-pass codelets take a different
+   * signature branch and are excluded. The bulk loop is byte-identical on aligned
+   * K (one never-taken branch after it); the tail covers 1..VW-1 leftover lanes.
+   * Kill switch VFFT_NO_ANYK_TAIL reverts to the legacy K%VW==0-only loop.
+   *
+   * rem==1 path: MONOLITHIC (spill=None) uses a scalar single lane (cheapest at
+   * the extreme). COMPOSITE (spill=Some) routes rem==1 through the masked pass
+   * instead — its cross-pass scratch spill_re[]/spill_im[] is declared __m256d, so
+   * a width-1 scalar pass would store `double` into it (type clash) and need the
+   * scalar load/store shims the avx2 preamble doesn't emit. The masked pass needs
+   * neither: the scratch stores/loads use the raw isa.storeu_pd field (full-width,
+   * unmasked — masked-off lanes are scratch garbage, never reach rio), only the
+   * rio reads/writes are masked. mask=1 active lane handles rem==1. *)
   let anyk_tail =
-    in_place && spill = None
+    in_place
     && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
        | Some _ -> false
        | None -> true)
   in
+  let tail_scalar_rem1 = spill = None in
   let family =
     if strided then "strided-batch (Design C, 2D rows)"
     else if twidsq then "twidsq (FFTW-style intermediate)"
@@ -3681,30 +3682,39 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   Buffer.add_string buf "    }\n";
   if anyk_tail then begin
     (* Rem-aware hybrid tail. The bulk loop stopped at the last full vector;
-     * cover the 1..VW-1 leftover lanes. rem==1 -> scalar single lane (cheap,
-     * on-par at the extreme); rem>=2 -> ONE masked vector pass (flat cost,
-     * holds the MKL margin). Same scheduled DAG, re-rendered: scalar via the
-     * width-1 ISA, masked via maskload/maskstore gated by `_m`. Broadcast
-     * twiddles / constants are lane-independent and stay unmasked. In-place
-     * safe: the masked pass reads/writes only lanes [k, k+rem) = [me-rem, me),
-     * disjoint from the bulk; masked-off lanes never touch memory. *)
+     * cover the 1..VW-1 leftover lanes. MONOLITHIC: rem==1 -> scalar single lane
+     * (cheap, on-par at the extreme); rem>=2 -> ONE masked vector pass (flat cost,
+     * holds the MKL margin). COMPOSITE (spill=Some): masked pass for all rem (the
+     * __m256d cross-pass scratch would type-clash a width-1 scalar pass). Same
+     * scheduled DAG, re-rendered: scalar via the width-1 ISA, masked via
+     * maskload/maskstore gated by `_m`. Broadcast twiddles / constants are
+     * lane-independent and stay unmasked; the spill scratch uses the raw
+     * isa.storeu_pd field and stays full-width. In-place safe: the masked pass
+     * reads/writes only rio lanes [k, k+rem) = [me-rem, me), disjoint from the
+     * bulk; masked-off lanes never touch memory. *)
+    let emit_masked_pass () =
+      (if isa.vec_width = 8 then
+         Buffer.add_string buf
+           "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
+       else
+         Buffer.add_string buf
+           "            const __m256i _m = _mm256_loadu_si256((const __m256i \
+            *)_vfft_masklo[rem]);\n");
+      current_ls_mode := Isa.LS_masked "_m";
+      emit_body isa ();
+      current_ls_mode := Isa.LS_vector
+    in
     Buffer.add_string buf "    if (k < me) {\n";
     Buffer.add_string buf "        const size_t rem = me - k;\n";
-    Buffer.add_string buf "        if (rem == 1) {\n";
-    current_ls_mode := Isa.LS_vector;
-    emit_body Isa.scalar ();
-    Buffer.add_string buf "        } else {\n";
-    (if isa.vec_width = 8 then
-       Buffer.add_string buf
-         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
-     else
-       Buffer.add_string buf
-         "            const __m256i _m = _mm256_loadu_si256((const __m256i \
-          *)_vfft_masklo[rem]);\n");
-    current_ls_mode := Isa.LS_masked "_m";
-    emit_body isa ();
-    current_ls_mode := Isa.LS_vector;
-    Buffer.add_string buf "        }\n";
+    if tail_scalar_rem1 then begin
+      Buffer.add_string buf "        if (rem == 1) {\n";
+      current_ls_mode := Isa.LS_vector;
+      emit_body Isa.scalar ();
+      Buffer.add_string buf "        } else {\n";
+      emit_masked_pass ();
+      Buffer.add_string buf "        }\n"
+    end
+    else emit_masked_pass ();
     Buffer.add_string buf "    }\n"
   end;
   if !hc_ranged then begin
