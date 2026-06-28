@@ -1641,26 +1641,8 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
        ]);
   Buffer.add_string buf "#include <immintrin.h>\n";
   Buffer.add_string buf "#include <stddef.h>\n\n";
-  (* AVX2 masked tail needs an __m256i lane mask: row r has r leading all-ones
-   * (active) lanes. AVX-512 uses an __mmask8 = (1<<rem)-1 computed inline, so
-   * no table. File-scope `static const`, one per codelet .c (name is static =
-   * file-local, no cross-file clash). *)
-  if anyk_tail && isa.vec_width = 4 then begin
-    let vw = isa.vec_width in
-    Buffer.add_string buf
-      (Printf.sprintf "static const long long _vfft_masklo[%d][%d] = {\n    "
-         (vw + 1) vw);
-    for r = 0 to vw do
-      if r > 0 then Buffer.add_string buf ",";
-      Buffer.add_char buf '{';
-      for c = 0 to vw - 1 do
-        if c > 0 then Buffer.add_char buf ',';
-        Buffer.add_string buf (if c < r then "-1" else "0")
-      done;
-      Buffer.add_char buf '}'
-    done;
-    Buffer.add_string buf "};\n\n"
-  end;
+  (* No _vfft_masklo table: the avx2 tail is all-SSE2 (no mask), and AVX-512 computes
+   * its __mmask8 = (1<<rem)-1 inline. *)
   if isa.vec_width = 1 then begin
     Buffer.add_string buf
       "static inline double vfft_scalar_load(const double *p) { return *p; }\n";
@@ -3754,16 +3736,38 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     current_ls_mode := Isa.LS_vector;
     emit_body ~force_mono:true Isa.scalar ();
     Buffer.add_string buf "        } else {\n";
-    (if isa.vec_width = 8 then
-       Buffer.add_string buf
-         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
-     else
-       Buffer.add_string buf
-         "            const __m256i _m = _mm256_loadu_si256((const __m256i \
-          *)_vfft_masklo[rem]);\n");
-    current_ls_mode := Isa.LS_masked "_m";
-    emit_body isa ();
-    current_ls_mode := Isa.LS_vector;
+    if isa.vec_width = 8 then begin
+      (* avx512: masked pass (vmaskz/mask_storeu full-rate on SKX+). AVX-512 keeps the
+       * masked tail — its remainder is up to 7 lanes (SSE2's width 2 can't fit it) and
+       * vmaskz is not the slow vmaskmov that the avx2 SSE2 tail works around. *)
+      Buffer.add_string buf
+        "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n";
+      current_ls_mode := Isa.LS_masked "_m";
+      emit_body isa ();
+      current_ls_mode := Isa.LS_vector
+    end
+    else begin
+      (* avx2 SSE2 remainder: width-2 unmasked loop over the rem lanes + a scalar STORE
+       * for an odd straggler. Robustly beats masked vmaskmov at BOTH rem=2 (~-35%) and
+       * rem=3 (~-12%, K=7 ~95% win-rate, tight-interleaved) — even the 2-pass
+       * SSE2+scalar is faster than one vmaskmov pass on Raptor Lake, so avx2 carries no
+       * masked tail at all (no _vfft_masklo table). The width-2 body renders
+       * monolithically (force_mono) so composite codelets don't reference the __m256d
+       * spill at width 2. The straggler MUST be scalar (a 2-wide _mm_storeu_pd would
+       * write one lane past `bound`). *)
+      current_ls_mode := Isa.LS_vector;
+      Buffer.add_string buf
+        (Printf.sprintf "            for (; %s + 2 <= %s; %s += 2) {\n"
+           tail_var tail_bound tail_var);
+      Hashtbl.reset hoisted_const_tags;
+      emit_body ~force_mono:true Isa.sse2 ();
+      Buffer.add_string buf "            }\n";
+      Buffer.add_string buf
+        (Printf.sprintf "            if (%s < %s) {\n" tail_var tail_bound);
+      Hashtbl.reset hoisted_const_tags;
+      emit_body ~force_mono:true Isa.scalar ();
+      Buffer.add_string buf "            }\n"
+    end;
     Buffer.add_string buf "        }\n";
     Buffer.add_string buf "    }\n"
   end;
