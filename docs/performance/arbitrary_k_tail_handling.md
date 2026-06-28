@@ -152,22 +152,22 @@ AVX-512 needs no table: `const __mmask8 _m = (__mmask8)((1u << rem) - 1u);`.
 ## 6. Scope gate — which codelets get the tail
 
 ```ocaml
-let anyk_tail       = in_place && (env VFFT_NO_ANYK_TAIL unset)
-let tail_scalar_rem1 = (spill = None)   (* rem==1 path: scalar vs masked *)
+let anyk_tail = in_place && (env VFFT_NO_ANYK_TAIL unset)
 ```
 
 * **`in_place`** — every c2c batch codelet (`rio_re/rio_im/ios/me` signature), both
   **monolithic** (`spill = None`) and **composite / CT-blocked** (`spill = Some`). The
   strided two-pass codelets (a separate quadrant, for 2D row batches) take a different
   signature branch and are excluded automatically.
-* **`rem == 1` routing** — monolithic codelets use the **scalar** single lane
-  (cheapest at the extreme). Composite codelets route `rem == 1` through the **masked**
-  pass instead: their cross-pass scratch `spill_re[]`/`spill_im[]` is declared
-  `__m256d`, so a width-1 scalar pass would store `double` into it (type clash) and
-  would need the scalar shims the AVX2 preamble doesn't emit. The masked pass needs
-  neither — the scratch stores/loads use the raw `isa.storeu_pd`/`isa.loadu_pd` field
-  (full-width; masked-off lanes are scratch garbage that never reach `rio`), and only
-  the `rio` reads/writes are masked. `mask = 1` active lane handles `rem == 1`.
+* **`rem == 1` is ALWAYS scalar** (the contract) — monolithic *and* composite. The
+  trick for composite: the scalar pass renders the DAG **monolithically** (`emit_body
+  ~force_mono`), i.e. the `None`/scheduler path instead of the PASS1/PASS2 spill path.
+  **At width 1 there is no ymm/zmm register pressure**, so the CT spill split — which
+  exists *only* to relieve vector-register pressure — is unnecessary. Rendering
+  monolithically makes every temp come out `double` and the `__m256d spill_re[]`
+  scratch (still declared at function scope for the bulk/masked passes) is simply **not
+  referenced** by the scalar pass — no `__m256d`-vs-`double` clash, no scalar shims. So
+  there is no need to route composite `rem == 1` through the masked pass.
 
 All **324** in-place AVX2 codelets now carry the tail (170 monolithic + 154 composite);
 the regen showed 0 anomalies.
