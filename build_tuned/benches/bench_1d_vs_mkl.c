@@ -1721,8 +1721,12 @@ int main(int argc, char **argv)
             fprintf(o2, "N,K,path,order,ref_err,vfft_ns,mkl_ns,speedup\n");
         printf("=== dag vs MKL — 1D R2C fwd (rfft natural-split JIT-wired / decoupled-stride, vs DFTI real CCE, ST, core%d; pace=%dms) ===\n", core, pace_ms);
         printf("# path=rfft(low K)/stride(high K); order=natural; ref=vs reference DFT. speed>1 = dag wins.\n");
+        /* TAIL-TAX in the rfft regime: the ONLY cells where rfft is the planner's choice
+         * are K in {8,16} x N in {256,512,1024} (the 6 path=rfft rows in vfft_perf_tuned_r2c.csv).
+         * Re-run those aligned cells + their odd neighbors (rem3 masked: 7,15 ; rem1 scalar: 17)
+         * in the SAME session. Q: does the vs-MKL speedup at K=8/16 survive at K=7/15/17? */
         int Ns[] = {256, 512, 1024};
-        size_t Ks[] = {8, 16, 32, 64, 128, 256};
+        size_t Ks[] = {7, 8, 15, 16, 17};
         int benched = 0;
         for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
             for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)

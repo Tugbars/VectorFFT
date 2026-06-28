@@ -35,7 +35,9 @@
 static rfft_codelets_t  RFFT;
 static vfft_proto_registry_t C2C;
 
-#define AAL(nbytes) aligned_alloc(64, (((nbytes)+63)/64)*64)
+/* rfft/c2r codelets use unaligned loads (loadu/maskload), so plain malloc is fine;
+ * mingw lacks C11 aligned_alloc anyway. */
+#define AAL(nbytes) malloc((size_t)(nbytes))
 
 /* least-squares scale s minimizing ||y - s*x||, then max rel err of y vs s*x. */
 static double rt_relerr(const double *y, const double *x, size_t n) {
