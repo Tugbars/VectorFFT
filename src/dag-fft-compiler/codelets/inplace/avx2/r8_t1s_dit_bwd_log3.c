@@ -182,6 +182,122 @@ void radix8_t1s_dit_log3_bwd_avx2(
     }
     if (k < me) {
         const size_t rem = me - k;
+        if (rem == 1) {
+        const double t25 = (0.70710678118655002);
+        const double t0 = rio_re[7*ios + k];
+        const double t2 = rio_im[7*ios + k];
+        const double t5 = rio_re[3*ios + k];
+        const double t10 = (t5 - t0);
+        const double t70 = (t0 + t5);
+        const double t6 = rio_im[3*ios + k];
+        const double t8 = (t6 - t2);
+        const double t69 = (t2 + t6);
+        const double t13 = rio_re[5*ios + k];
+        const double t14 = rio_im[5*ios + k];
+        const double t16 = rio_re[1*ios + k];
+        const double t20 = (t16 - t13);
+        const double t73 = (t13 + t16);
+        const double t23 = (t8 + t20);
+        const double t96 = (t20 - t8);
+        const double t76 = (t73 - t70);
+        const double t114 = (t70 + t73);
+        const double t17 = rio_im[1*ios + k];
+        const double t18 = (t17 - t14);
+        const double t72 = (t14 + t17);
+        const double t21 = (t18 - t10);
+        const double t95 = (t10 + t18);
+        const double t74 = (t72 - t69);
+        const double t113 = (t69 + t72);
+        const double t24 = (t21 + t23);
+        const double t30 = (t21 - t23);
+        const double t97 = (t96 - t95);
+        const double t99 = (t95 + t96);
+        const double t33 = rio_re[6*ios + k];
+        const double t34 = rio_im[6*ios + k];
+        const double t36 = rio_re[2*ios + k];
+        const double t40 = (t36 - t33);
+        const double t79 = (t33 + t36);
+        const double t37 = rio_im[2*ios + k];
+        const double t38 = (t37 - t34);
+        const double t78 = (t34 + t37);
+        const double t43 = rio_re[4*ios + k];
+        const double t44 = rio_im[4*ios + k];
+        const double t46 = rio_re[0*ios + k];
+        const double t50 = (t46 - t43);
+        const double t82 = (t43 + t46);
+        const double t52 = (t38 + t50);
+        const double t85 = (t82 - t79);
+        const double t103 = (t50 - t38);
+        const double t117 = (t79 + t82);
+        const double t143 = (t114 + t117);
+        const double t86 = (t74 + t85);
+        const double t118 = (t117 - t114);
+        const double t131 = (t85 - t74);
+        const double t145 = __builtin_fma(t24, t25, t52);
+        const double t149 = __builtin_fma(-(t25), t97, t103);
+        const double t153 = __builtin_fma(-(t24), t25, t52);
+        const double t157 = __builtin_fma(t25, t97, t103);
+        const double t47 = rio_im[0*ios + k];
+        const double t48 = (t47 - t44);
+        const double t81 = (t44 + t47);
+        const double t51 = (t48 - t40);
+        const double t83 = (t81 - t78);
+        const double t102 = (t40 + t48);
+        const double t116 = (t78 + t81);
+        const double t144 = (t113 + t116);
+        const double t90 = (t83 - t76);
+        const double t120 = (t116 - t113);
+        const double t132 = (t76 + t83);
+        const double t146 = __builtin_fma(t25, t30, t51);
+        const double t150 = __builtin_fma(-(t25), t99, t102);
+        const double t154 = __builtin_fma(-(t25), t30, t51);
+        const double t158 = __builtin_fma(t25, t99, t102);
+        const double t54 = (tw_re[3]);
+        const double t55 = (tw_re[1]);
+        const double t56 = (tw_re[0]);
+        const double t57 = (tw_im[1]);
+        const double t134 = __builtin_fma(t131, t55, (t132 * t57));
+        const double t135 = __builtin_fma(-(t131), t57, (t132 * t55));
+        const double t58 = (tw_im[0]);
+        const double t159 = __builtin_fma(t157, t56, (t158 * t58));
+        const double t160 = __builtin_fma(-(t157), t58, (t158 * t56));
+        const double t59 = __builtin_fma(-(t57), t58, (t55 * t56));
+        const double t60 = __builtin_fma(t55, t58, (t57 * t56));
+        const double t155 = __builtin_fma(t153, t59, (t154 * t60));
+        const double t156 = __builtin_fma(-(t153), t60, (t154 * t59));
+        const double t61 = (tw_im[3]);
+        const double t122 = __builtin_fma(t118, t54, (t120 * t61));
+        const double t123 = __builtin_fma(-(t118), t61, (t120 * t54));
+        const double t87 = __builtin_fma(-(t61), t57, (t54 * t55));
+        const double t88 = __builtin_fma(t54, t57, (t61 * t55));
+        const double t92 = __builtin_fma(t86, t87, (t90 * t88));
+        const double t93 = __builtin_fma(-(t86), t88, (t90 * t87));
+        const double t105 = __builtin_fma(-(t61), t58, (t54 * t56));
+        const double t106 = __builtin_fma(t54, t58, (t61 * t56));
+        const double t151 = __builtin_fma(t149, t105, (t150 * t106));
+        const double t152 = __builtin_fma(-(t149), t106, (t150 * t105));
+        const double t62 = __builtin_fma(-(t61), t60, (t54 * t59));
+        const double t63 = __builtin_fma(t54, t60, (t61 * t59));
+        const double t147 = __builtin_fma(t145, t62, (t146 * t63));
+        const double t148 = __builtin_fma(-(t145), t63, (t146 * t62));
+
+        rio_re[7*ios + k] = t147;
+        rio_im[7*ios + k] = t148;
+        rio_re[6*ios + k] = t92;
+        rio_im[6*ios + k] = t93;
+        rio_re[5*ios + k] = t151;
+        rio_im[5*ios + k] = t152;
+        rio_re[4*ios + k] = t122;
+        rio_im[4*ios + k] = t123;
+        rio_re[3*ios + k] = t155;
+        rio_im[3*ios + k] = t156;
+        rio_re[2*ios + k] = t134;
+        rio_im[2*ios + k] = t135;
+        rio_re[1*ios + k] = t159;
+        rio_im[1*ios + k] = t160;
+        rio_re[0*ios + k] = t143;
+        rio_im[0*ios + k] = t144;
+        } else {
             const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
         const __m256d t25 = _mm256_set1_pd(0.70710678118655002);
 
@@ -333,13 +449,14 @@ void radix8_t1s_dit_log3_bwd_avx2(
         _mm256_maskstore_pd(&rio_re[3*ios + k], _m, t155);
         _mm256_maskstore_pd(&rio_im[3*ios + k], _m, t156);
         }
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:
  *   fp_instr=96  flops=104  (add=22 sub=22 mul=0 fma=8 cmul=22 neg=0)
  *   essential_io=32 ops (vec_loads=16 + stores=16)  [+6 hoisted scalar-twiddle loads, not counted]
  *   cross_pass_cut=8 slots => +32 mem ops, 16 vectors live across pass boundary
- *   memory_floor=64 mem ops   peak_live(max-per-pass)=11   budget=14 regs
+ *   memory_floor=64 mem ops   peak_live(max-per-pass)=48   budget=14 regs
  *   ROOFLINE: compute-capable at floor (memory_floor <= fp_instr)
- *   PRESSURE: fits (peak_live <= budget)  [CT: peak_live is max over passes; cross_pass_cut is added explicit spill traffic]
+ *   PRESSURE: SPILLS (peak_live > budget)  [CT: peak_live is max over passes; cross_pass_cut is added explicit spill traffic]
  */

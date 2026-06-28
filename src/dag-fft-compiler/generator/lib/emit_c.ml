@@ -1526,28 +1526,24 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           %d)"
          isa.vec_width radix);
   let buf = Buffer.create 4096 in
-  (* Arbitrary-K rem-aware hybrid tail (docs/roadmap/arbitrary_k). Every in-place
-   * c2c batch codelet (rio_re/rio_im/ios/me) — monolithic AND composite/CT-blocked
-   * (spill=Some) — gets it; the strided two-pass codelets take a different
-   * signature branch and are excluded. The bulk loop is byte-identical on aligned
-   * K (one never-taken branch after it); the tail covers 1..VW-1 leftover lanes.
-   * Kill switch VFFT_NO_ANYK_TAIL reverts to the legacy K%VW==0-only loop.
-   *
-   * rem==1 path: MONOLITHIC (spill=None) uses a scalar single lane (cheapest at
-   * the extreme). COMPOSITE (spill=Some) routes rem==1 through the masked pass
-   * instead — its cross-pass scratch spill_re[]/spill_im[] is declared __m256d, so
-   * a width-1 scalar pass would store `double` into it (type clash) and need the
-   * scalar load/store shims the avx2 preamble doesn't emit. The masked pass needs
-   * neither: the scratch stores/loads use the raw isa.storeu_pd field (full-width,
-   * unmasked — masked-off lanes are scratch garbage, never reach rio), only the
-   * rio reads/writes are masked. mask=1 active lane handles rem==1. *)
+  (* Arbitrary-K rem-aware hybrid tail (docs/roadmap/arbitrary_k_scalartail_
+   * experiment.md = THE CONTRACT). Every in-place c2c batch codelet
+   * (rio_re/rio_im/ios/me) — monolithic AND composite/CT-blocked (spill=Some) —
+   * gets it; the strided two-pass codelets take a different signature branch and
+   * are excluded. The bulk loop is byte-identical on aligned K (one never-taken
+   * branch after it); the tail covers 1..VW-1 leftover lanes per the contract:
+   * rem==1 -> ONE scalar single lane; rem>=2 -> ONE masked vector pass. The
+   * scalar pass renders the DAG monolithically at width 1 (emit_body ~force_mono),
+   * so composite codelets honour the same rem==1=scalar contract — a single lane
+   * has no register pressure, so the CT spill scratch is simply not referenced
+   * (no __m256d-vs-double clash). Kill switch VFFT_NO_ANYK_TAIL reverts to the
+   * legacy K%VW==0-only loop. *)
   let anyk_tail =
     in_place
     && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
        | Some _ -> false
        | None -> true)
   in
-  let tail_scalar_rem1 = spill = None in
   let family =
     if strided then "strided-batch (Design C, 2D rows)"
     else if twidsq then "twidsq (FFTW-style intermediate)"
@@ -2314,7 +2310,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
    * spill helpers above stay inert for the monolithic regalloc-off codelets
    * that take the tail (so re-rendering is safe and the schedule is computed
    * deterministically each pass — identical order, no re-scheduling hazard). *)
-  let emit_body (isa : Isa.t) () =
+  let emit_body ?(force_mono = false) (isa : Isa.t) () =
   let render_output_addr k is_re =
     if !r2c_term_laststage then
       (* Output(2s) = Xp slot s at Xp[s*osp+v]; Output(2s+1) = Xm slot s. *)
@@ -2412,7 +2408,15 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
    * Currently only Topological scheduling within passes is supported.
    * SU + spill is straightforward to add later: run SU per-pass on the
    * filtered node lists. For first validation, Topo+spill is the priority. *)
-  (match spill with
+  (* force_mono: render the DAG monolithically (no PASS1/PASS2 spill split) even
+   * for a spill=Some codelet. Used ONLY by the rem==1 SCALAR tail pass: a single
+   * scalar lane has no vector-register pressure, so the CT-blocking that the spill
+   * recipe exists to relieve is unnecessary — and rendering monolithically avoids
+   * the __m256d scratch entirely (the scratch is still declared at function scope
+   * for the bulk/masked passes; the scalar pass simply doesn't reference it). This
+   * is what lets the contract's "rem==1 => scalar single lane" hold for composite
+   * codelets, not just monolithic ones. *)
+  (match (if force_mono then None else spill) with
   | Some sp ->
       let roots = List.map snd assigns in
       let nodes = topo_sort_reachable roots in
@@ -3688,40 +3692,36 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
 
   Buffer.add_string buf "    }\n";
   if anyk_tail then begin
-    (* Rem-aware hybrid tail. The bulk loop stopped at the last full vector;
-     * cover the 1..VW-1 leftover lanes. MONOLITHIC: rem==1 -> scalar single lane
-     * (cheap, on-par at the extreme); rem>=2 -> ONE masked vector pass (flat cost,
-     * holds the MKL margin). COMPOSITE (spill=Some): masked pass for all rem (the
-     * __m256d cross-pass scratch would type-clash a width-1 scalar pass). Same
-     * scheduled DAG, re-rendered: scalar via the width-1 ISA, masked via
-     * maskload/maskstore gated by `_m`. Broadcast twiddles / constants are
-     * lane-independent and stay unmasked; the spill scratch uses the raw
-     * isa.storeu_pd field and stays full-width. In-place safe: the masked pass
-     * reads/writes only rio lanes [k, k+rem) = [me-rem, me), disjoint from the
-     * bulk; masked-off lanes never touch memory. *)
-    let emit_masked_pass () =
-      (if isa.vec_width = 8 then
-         Buffer.add_string buf
-           "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
-       else
-         Buffer.add_string buf
-           "            const __m256i _m = _mm256_loadu_si256((const __m256i \
-            *)_vfft_masklo[rem]);\n");
-      current_ls_mode := Isa.LS_masked "_m";
-      emit_body isa ();
-      current_ls_mode := Isa.LS_vector
-    in
+    (* Rem-aware hybrid tail — THE CONTRACT (docs/roadmap/arbitrary_k_scalartail_
+     * experiment.md): the bulk loop stopped at the last full vector; cover the
+     * 1..VW-1 leftover lanes with
+     *   rem == 1 -> ONE scalar single lane (SSE-1-wide, the measured-cheapest +1 case)
+     *   rem >= 2 -> ONE masked vector pass (flat cost, holds the MKL margin).
+     * This holds for EVERY codelet, monolithic AND composite: the scalar pass
+     * renders the DAG monolithically at width 1 (force_mono) — a single lane has no
+     * register pressure, so the CT spill scratch is simply not referenced (no
+     * __m256d-vs-double clash). The masked pass keeps the codelet's normal spill
+     * recipe (avx2, full-width scratch via the raw isa.storeu_pd field). Broadcast
+     * twiddles / constants are lane-independent and stay unmasked. In-place safe:
+     * the masked pass touches only rio lanes [k, k+rem) = [me-rem, me), disjoint
+     * from the bulk; masked-off lanes never touch memory. *)
     Buffer.add_string buf "    if (k < me) {\n";
     Buffer.add_string buf "        const size_t rem = me - k;\n";
-    if tail_scalar_rem1 then begin
-      Buffer.add_string buf "        if (rem == 1) {\n";
-      current_ls_mode := Isa.LS_vector;
-      emit_body Isa.scalar ();
-      Buffer.add_string buf "        } else {\n";
-      emit_masked_pass ();
-      Buffer.add_string buf "        }\n"
-    end
-    else emit_masked_pass ();
+    Buffer.add_string buf "        if (rem == 1) {\n";
+    current_ls_mode := Isa.LS_vector;
+    emit_body ~force_mono:true Isa.scalar ();
+    Buffer.add_string buf "        } else {\n";
+    (if isa.vec_width = 8 then
+       Buffer.add_string buf
+         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
+     else
+       Buffer.add_string buf
+         "            const __m256i _m = _mm256_loadu_si256((const __m256i \
+          *)_vfft_masklo[rem]);\n");
+    current_ls_mode := Isa.LS_masked "_m";
+    emit_body isa ();
+    current_ls_mode := Isa.LS_vector;
+    Buffer.add_string buf "        }\n";
     Buffer.add_string buf "    }\n"
   end;
   if !hc_ranged then begin

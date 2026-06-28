@@ -177,7 +177,152 @@ void radix8_n1_oop_fwd_avx512_UG_UG(
     }
     if (b < me) {
         const size_t rem = me - b;
-        const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
+        if (rem == 1) {
+        double lane_re_0, lane_im_0;
+        double out_lane_re_0, out_lane_im_0;
+        double lane_re_1, lane_im_1;
+        double out_lane_re_1, out_lane_im_1;
+        double lane_re_2, lane_im_2;
+        double out_lane_re_2, out_lane_im_2;
+        double lane_re_3, lane_im_3;
+        double out_lane_re_3, out_lane_im_3;
+        double lane_re_4, lane_im_4;
+        double out_lane_re_4, out_lane_im_4;
+        double lane_re_5, lane_im_5;
+        double out_lane_re_5, out_lane_im_5;
+        double lane_re_6, lane_im_6;
+        double out_lane_re_6, out_lane_im_6;
+        double lane_re_7, lane_im_7;
+        double out_lane_re_7, out_lane_im_7;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = in_re[b * in_group_stride + 0 * in_leg_stride];
+        lane_im_0 = in_im[b * in_group_stride + 0 * in_leg_stride];
+        lane_re_1 = in_re[b * in_group_stride + 1 * in_leg_stride];
+        lane_im_1 = in_im[b * in_group_stride + 1 * in_leg_stride];
+        lane_re_2 = in_re[b * in_group_stride + 2 * in_leg_stride];
+        lane_im_2 = in_im[b * in_group_stride + 2 * in_leg_stride];
+        lane_re_3 = in_re[b * in_group_stride + 3 * in_leg_stride];
+        lane_im_3 = in_im[b * in_group_stride + 3 * in_leg_stride];
+        lane_re_4 = in_re[b * in_group_stride + 4 * in_leg_stride];
+        lane_im_4 = in_im[b * in_group_stride + 4 * in_leg_stride];
+        lane_re_5 = in_re[b * in_group_stride + 5 * in_leg_stride];
+        lane_im_5 = in_im[b * in_group_stride + 5 * in_leg_stride];
+        lane_re_6 = in_re[b * in_group_stride + 6 * in_leg_stride];
+        lane_im_6 = in_im[b * in_group_stride + 6 * in_leg_stride];
+        lane_re_7 = in_re[b * in_group_stride + 7 * in_leg_stride];
+        lane_im_7 = in_im[b * in_group_stride + 7 * in_leg_stride];
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const double t0 = lane_re_7;
+                const double t2 = lane_im_7;
+                const double t5 = lane_re_3;
+                const double t6 = lane_im_3;
+                const double t8 = (t6 - t2);
+                const double t10 = (t5 - t0);
+                const double t13 = lane_re_5;
+                const double t14 = lane_im_5;
+                const double t16 = lane_re_1;
+                const double t17 = lane_im_1;
+                const double t18 = (t17 - t14);
+                const double t20 = (t16 - t13);
+                const double t21 = (t10 + t18);
+                const double t22 = (t20 - t8);
+                const double t23 = (t22 - t21);
+                const double t24 = (0.70710678118655002);
+                const double t28 = (t21 + t22);
+                const double t31 = lane_re_6;
+                const double t32 = lane_im_6;
+                const double t34 = lane_re_2;
+                const double t35 = lane_im_2;
+                const double t36 = (t35 - t32);
+                const double t38 = (t34 - t31);
+                const double t41 = lane_re_4;
+                const double t42 = lane_im_4;
+                const double t44 = lane_re_0;
+                const double t45 = lane_im_0;
+                const double t46 = (t45 - t42);
+                const double t48 = (t44 - t41);
+                const double t49 = (t38 + t46);
+                const double t50 = (t48 - t36);
+                const double t53 = (t2 + t6);
+                const double t54 = (t0 + t5);
+                const double t56 = (t14 + t17);
+                const double t57 = (t13 + t16);
+                const double t58 = (t56 - t53);
+                const double t60 = (t57 - t54);
+                const double t63 = (t32 + t35);
+                const double t64 = (t31 + t34);
+                const double t66 = (t42 + t45);
+                const double t67 = (t41 + t44);
+                const double t68 = (t66 - t63);
+                const double t70 = (t67 - t64);
+                const double t71 = (t70 - t58);
+                const double t72 = (t60 + t68);
+                const double t73 = (t18 - t10);
+                const double t75 = (t8 + t20);
+                const double t76 = (t73 + t75);
+                const double t79 = (t73 - t75);
+                const double t82 = (t46 - t38);
+                const double t83 = (t36 + t48);
+                const double t87 = (t53 + t56);
+                const double t88 = (t54 + t57);
+                const double t90 = (t63 + t66);
+                const double t91 = (t64 + t67);
+                const double t92 = (t91 - t88);
+                const double t94 = (t90 - t87);
+                const double t97 = (t58 + t70);
+                const double t98 = (t68 - t60);
+                const double t101 = (t88 + t91);
+                const double t102 = (t87 + t90);
+                const double t103 = __builtin_fma(t23, t24, t50);
+                const double t104 = __builtin_fma(t24, t28, t49);
+                const double t105 = __builtin_fma(-(t24), t76, t83);
+                const double t106 = __builtin_fma(-(t24), t79, t82);
+                const double t107 = __builtin_fma(-(t23), t24, t50);
+                const double t108 = __builtin_fma(-(t24), t28, t49);
+                const double t109 = __builtin_fma(t24, t76, t83);
+                const double t110 = __builtin_fma(t24, t79, t82);
+
+        out_lane_re_7 = t103;
+        out_lane_im_7 = t104;
+        out_lane_re_6 = t71;
+        out_lane_im_6 = t72;
+        out_lane_re_5 = t105;
+        out_lane_im_5 = t106;
+        out_lane_re_4 = t92;
+        out_lane_im_4 = t94;
+        out_lane_re_3 = t107;
+        out_lane_im_3 = t108;
+        out_lane_re_2 = t97;
+        out_lane_im_2 = t98;
+        out_lane_re_1 = t109;
+        out_lane_im_1 = t110;
+        out_lane_re_0 = t101;
+        out_lane_im_0 = t102;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        out_re[b * out_group_stride + 0 * out_leg_stride] = out_lane_re_0;
+        out_im[b * out_group_stride + 0 * out_leg_stride] = out_lane_im_0;
+        out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
+        out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
+        out_re[b * out_group_stride + 2 * out_leg_stride] = out_lane_re_2;
+        out_im[b * out_group_stride + 2 * out_leg_stride] = out_lane_im_2;
+        out_re[b * out_group_stride + 3 * out_leg_stride] = out_lane_re_3;
+        out_im[b * out_group_stride + 3 * out_leg_stride] = out_lane_im_3;
+        out_re[b * out_group_stride + 4 * out_leg_stride] = out_lane_re_4;
+        out_im[b * out_group_stride + 4 * out_leg_stride] = out_lane_im_4;
+        out_re[b * out_group_stride + 5 * out_leg_stride] = out_lane_re_5;
+        out_im[b * out_group_stride + 5 * out_leg_stride] = out_lane_im_5;
+        out_re[b * out_group_stride + 6 * out_leg_stride] = out_lane_re_6;
+        out_im[b * out_group_stride + 6 * out_leg_stride] = out_lane_im_6;
+        out_re[b * out_group_stride + 7 * out_leg_stride] = out_lane_re_7;
+        out_im[b * out_group_stride + 7 * out_leg_stride] = out_lane_im_7;
+        } else {
+            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
         __m512d lane_re_0, lane_im_0;
         __m512d out_lane_re_0, out_lane_im_0;
         __m512d lane_re_1, lane_im_1;
@@ -321,5 +466,6 @@ void radix8_n1_oop_fwd_avx512_UG_UG(
         _mm512_mask_storeu_pd(&out_im[b * out_group_stride + 6 * out_leg_stride], _m, out_lane_im_6);
         _mm512_mask_storeu_pd(&out_re[b * out_group_stride + 7 * out_leg_stride], _m, out_lane_re_7);
         _mm512_mask_storeu_pd(&out_im[b * out_group_stride + 7 * out_leg_stride], _m, out_lane_im_7);
+        }
     }
 }

@@ -1432,9 +1432,14 @@ let emit_codelet (c : config) : string =
     emit_store_edge buf c
   in
   if anyk_tail then begin
-    (* Bulk loop over whole vectors, then a rem-aware masked pass over the
-       1..VW-1 leftover batch lanes. me = batch K, so this is the same shape as
-       the in-place tail; only the in/out group loads/stores are masked. *)
+    (* Rem-aware hybrid tail — THE CONTRACT (docs arbitrary_k_scalartail_experiment):
+       bulk full-vector loop, then for the 1..VW-1 leftover batch lanes
+         rem == 1 -> ONE scalar single lane (monolithic, width-1 ISA)
+         rem >= 2 -> ONE masked vector pass (mask in/out group loads/stores).
+       The scalar pass renders MONOLITHICALLY at width 1 (emit_body_monolithic with
+       a scalar config): a single lane has no ymm/zmm register pressure, so the CT
+       spill split is unnecessary, and the lane locals come out `double` with no
+       __m256d clash. me = group count. *)
     let vw = c.isa.Isa.vec_width in
     Buffer.add_string buf "    size_t b = 0;\n";
     Buffer.add_string buf
@@ -1444,16 +1449,26 @@ let emit_codelet (c : config) : string =
     Buffer.add_string buf "    }\n";
     Buffer.add_string buf "    if (b < me) {\n";
     Buffer.add_string buf "        const size_t rem = me - b;\n";
+    Buffer.add_string buf "        if (rem == 1) {\n";
+    (* scalar single lane, monolithic (no vector-register pressure at width 1). *)
+    let c_scalar = { c with isa = Isa.scalar } in
+    Emit_c.current_ls_mode := Isa.LS_vector;
+    emit_lane_decls buf c_scalar;
+    emit_load_edge buf c_scalar;
+    emit_body_monolithic buf c_scalar prep;
+    emit_store_edge buf c_scalar;
+    Buffer.add_string buf "        } else {\n";
     (if vw = 8 then
        Buffer.add_string buf
-         "        const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
+         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n"
      else
        Buffer.add_string buf
-         "        const __m256i _m = _mm256_loadu_si256((const __m256i \
+         "            const __m256i _m = _mm256_loadu_si256((const __m256i \
           *)_vfft_masklo[rem]);\n");
     Emit_c.current_ls_mode := Isa.LS_masked "_m";
     emit_inner ();
     Emit_c.current_ls_mode := Isa.LS_vector;
+    Buffer.add_string buf "        }\n";
     Buffer.add_string buf "    }\n";
     Buffer.add_string buf "}\n"
   end
