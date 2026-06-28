@@ -1537,13 +1537,23 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
    * so composite codelets honour the same rem==1=scalar contract — a single lane
    * has no register pressure, so the CT spill scratch is simply not referenced
    * (no __m256d-vs-double clash). Kill switch VFFT_NO_ANYK_TAIL reverts to the
-   * legacy K%VW==0-only loop. *)
+   * legacy K%VW==0-only loop.
+   *
+   * Enabled for the in-place c2c batch codelet (loop bound `me`) AND the r2r/trig
+   * family (DCT/DST/DHT — signature `(in,out,K)`, loop bound `K`, batched over K,
+   * same simple strided in[leg*K+k] -> out[leg*K+k] pattern, no twiddles). The
+   * trig family hoists its trig-coefficient consts to function scope (__m256d), so
+   * the tail resets hoisted_const_tags first → the scalar/masked passes re-emit
+   * the consts inline at the right width (double / __m256d), shadowing the
+   * function-scope ones (no-op for the hoist-off c2c tree). *)
   let anyk_tail =
-    in_place
+    (in_place || !r2r_signature)
     && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
        | Some _ -> false
        | None -> true)
   in
+  (* tail loop bound: in-place uses `me`; the r2r/trig signature uses `K`. *)
+  let tail_bound = if !r2r_signature then "K" else "me" in
   let family =
     if strided then "strided-batch (Design C, 2D rows)"
     else if twidsq then "twidsq (FFTW-style intermediate)"
@@ -2241,8 +2251,16 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
     Buffer.add_string buf
       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns)));
-    Buffer.add_string buf
-      (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n" isa.vec_width)
+    if anyk_tail then begin
+      Buffer.add_string buf "    size_t k = 0;\n";
+      Buffer.add_string buf
+        (Printf.sprintf "    for (; k + %d <= K; k += %d) {\n" isa.vec_width
+           isa.vec_width)
+    end
+    else
+      Buffer.add_string buf
+        (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n"
+           isa.vec_width)
   end
   else begin
     Buffer.add_string buf "    const double * __restrict__ in_re,\n";
@@ -3703,10 +3721,17 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
      * __m256d-vs-double clash). The masked pass keeps the codelet's normal spill
      * recipe (avx2, full-width scratch via the raw isa.storeu_pd field). Broadcast
      * twiddles / constants are lane-independent and stay unmasked. In-place safe:
-     * the masked pass touches only rio lanes [k, k+rem) = [me-rem, me), disjoint
-     * from the bulk; masked-off lanes never touch memory. *)
-    Buffer.add_string buf "    if (k < me) {\n";
-    Buffer.add_string buf "        const size_t rem = me - k;\n";
+     * the masked pass touches only rio lanes [k, k+rem) = [bound-rem, bound),
+     * disjoint from the bulk; masked-off lanes never touch memory. `bound` is `me`
+     * for in-place, `K` for r2r/trig. *)
+    (* Hoisted trig consts are at function scope (__m256d); clear the skip-set so the
+     * scalar (double) and masked (__m256d) tail passes re-emit them inline at the
+     * right width, shadowing the function-scope ones. No-op for the hoist-off c2c
+     * tree (hoisted_const_tags already empty there). *)
+    Hashtbl.reset hoisted_const_tags;
+    Buffer.add_string buf (Printf.sprintf "    if (k < %s) {\n" tail_bound);
+    Buffer.add_string buf
+      (Printf.sprintf "        const size_t rem = %s - k;\n" tail_bound);
     Buffer.add_string buf "        if (rem == 1) {\n";
     current_ls_mode := Isa.LS_vector;
     emit_body ~force_mono:true Isa.scalar ();
