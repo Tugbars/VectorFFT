@@ -103,7 +103,75 @@ void radix4_n1_oop_fwd_avx2_UG_UG(
     }
     if (b < me) {
         const size_t rem = me - b;
-        const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        if (rem == 1) {
+        double lane_re_0, lane_im_0;
+        double out_lane_re_0, out_lane_im_0;
+        double lane_re_1, lane_im_1;
+        double out_lane_re_1, out_lane_im_1;
+        double lane_re_2, lane_im_2;
+        double out_lane_re_2, out_lane_im_2;
+        double lane_re_3, lane_im_3;
+        double out_lane_re_3, out_lane_im_3;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = in_re[b * in_group_stride + 0 * in_leg_stride];
+        lane_im_0 = in_im[b * in_group_stride + 0 * in_leg_stride];
+        lane_re_1 = in_re[b * in_group_stride + 1 * in_leg_stride];
+        lane_im_1 = in_im[b * in_group_stride + 1 * in_leg_stride];
+        lane_re_2 = in_re[b * in_group_stride + 2 * in_leg_stride];
+        lane_im_2 = in_im[b * in_group_stride + 2 * in_leg_stride];
+        lane_re_3 = in_re[b * in_group_stride + 3 * in_leg_stride];
+        lane_im_3 = in_im[b * in_group_stride + 3 * in_leg_stride];
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const double t0 = lane_re_3;
+                const double t2 = lane_im_3;
+                const double t5 = lane_re_1;
+                const double t6 = lane_im_1;
+                const double t8 = (t6 - t2);
+                const double t10 = (t5 - t0);
+                const double t13 = lane_re_2;
+                const double t14 = lane_im_2;
+                const double t16 = lane_re_0;
+                const double t17 = lane_im_0;
+                const double t18 = (t17 - t14);
+                const double t20 = (t16 - t13);
+                const double t21 = (t20 - t8);
+                const double t22 = (t10 + t18);
+                const double t23 = (t2 + t6);
+                const double t24 = (t0 + t5);
+                const double t26 = (t14 + t17);
+                const double t27 = (t13 + t16);
+                const double t28 = (t27 - t24);
+                const double t30 = (t26 - t23);
+                const double t31 = (t8 + t20);
+                const double t32 = (t18 - t10);
+                const double t33 = (t24 + t27);
+                const double t34 = (t23 + t26);
+
+        out_lane_re_3 = t21;
+        out_lane_im_3 = t22;
+        out_lane_re_2 = t28;
+        out_lane_im_2 = t30;
+        out_lane_re_1 = t31;
+        out_lane_im_1 = t32;
+        out_lane_re_0 = t33;
+        out_lane_im_0 = t34;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        out_re[b * out_group_stride + 0 * out_leg_stride] = out_lane_re_0;
+        out_im[b * out_group_stride + 0 * out_leg_stride] = out_lane_im_0;
+        out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
+        out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
+        out_re[b * out_group_stride + 2 * out_leg_stride] = out_lane_re_2;
+        out_im[b * out_group_stride + 2 * out_leg_stride] = out_lane_im_2;
+        out_re[b * out_group_stride + 3 * out_leg_stride] = out_lane_re_3;
+        out_im[b * out_group_stride + 3 * out_leg_stride] = out_lane_im_3;
+        } else {
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
         __m256d lane_re_0, lane_im_0;
         __m256d out_lane_re_0, out_lane_im_0;
         __m256d lane_re_1, lane_im_1;
@@ -170,5 +238,6 @@ void radix4_n1_oop_fwd_avx2_UG_UG(
         _mm256_maskstore_pd(&out_im[b * out_group_stride + 2 * out_leg_stride], _m, out_lane_im_2);
         _mm256_maskstore_pd(&out_re[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_re_3);
         _mm256_maskstore_pd(&out_im[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_im_3);
+        }
     }
 }

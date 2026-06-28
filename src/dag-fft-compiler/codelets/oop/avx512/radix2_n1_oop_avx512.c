@@ -68,7 +68,43 @@ void radix2_n1_oop_fwd_avx512_UG_UG(
     }
     if (b < me) {
         const size_t rem = me - b;
-        const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
+        if (rem == 1) {
+        double lane_re_0, lane_im_0;
+        double out_lane_re_0, out_lane_im_0;
+        double lane_re_1, lane_im_1;
+        double out_lane_re_1, out_lane_im_1;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = in_re[b * in_group_stride + 0 * in_leg_stride];
+        lane_im_0 = in_im[b * in_group_stride + 0 * in_leg_stride];
+        lane_re_1 = in_re[b * in_group_stride + 1 * in_leg_stride];
+        lane_im_1 = in_im[b * in_group_stride + 1 * in_leg_stride];
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const double t0 = lane_re_1;
+                const double t2 = lane_im_1;
+                const double t5 = lane_re_0;
+                const double t7 = lane_im_0;
+                const double t8 = (t5 - t0);
+                const double t10 = (t7 - t2);
+                const double t11 = (t0 + t5);
+                const double t12 = (t2 + t7);
+
+        out_lane_re_1 = t8;
+        out_lane_im_1 = t10;
+        out_lane_re_0 = t11;
+        out_lane_im_0 = t12;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        out_re[b * out_group_stride + 0 * out_leg_stride] = out_lane_re_0;
+        out_im[b * out_group_stride + 0 * out_leg_stride] = out_lane_im_0;
+        out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
+        out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
+        } else {
+            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
         __m512d lane_re_0, lane_im_0;
         __m512d out_lane_re_0, out_lane_im_0;
         __m512d lane_re_1, lane_im_1;
@@ -103,5 +139,6 @@ void radix2_n1_oop_fwd_avx512_UG_UG(
         _mm512_mask_storeu_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_im_0);
         _mm512_mask_storeu_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_re_1);
         _mm512_mask_storeu_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_im_1);
+        }
     }
 }
