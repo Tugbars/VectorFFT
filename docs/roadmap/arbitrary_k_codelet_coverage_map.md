@@ -24,7 +24,7 @@
 |---|---|---|---|---|---|
 | **1D c2c in-place** | `inplace` (324/324) | n1, t1/t1s × dit/dif × fwd/bwd × flat/log3 (18-family) | `(rio_re,rio_im,tw,ios,me)` — `for k<me k+=VW` | `rio[leg*ios+k]`; spill scratch full-width | **DONE** (avx2; composite incl). avx512 emit-present, untested |
 | **1D c2c OOP** | `oop` (52/52) | n1_oop, t1p_oop(+log3), **t1_oop (NEW)**, *_spec | `(in_re,in_im,out_re,out_im,tw,…,me)` — `for b<me b+=VW` | `in_re[b*gstride+leg*lstride]` → split out | ✅ **DONE 2026-06-28** |
-| **Trig (DCT/DST/DHT)** | `trig` (36/36) | dct2/3/4, dst2/3/4, dht, dct1, dst1 | `(in,out,K)` 3-arg r2r — `for k<K k+=VW` | `in[leg*K+k]` → `out[…]` | **READY** |
+| **Trig (DCT/DST/DHT)** | `trig` (36/36) | dct2/3/4, dst2/3/4, dht, dct1, dst1 | `(in,out,K)` 3-arg r2r — `for k<K k+=VW` | `in[leg*K+k]` → `out[…]` | ✅ **DONE 2026-06-28** (dev direct-codelet layer) |
 | **1D r2c (real fwd)** | `rfft` (65/64) | r2cf leaf, hc2hc stage, hc2c / hc2c-nat terminator (+log3, +ranged) | `(in_re[,in_im],out…,is,os…,vl)` — `for v<vl v+=VW` | `in_re[leg*is+v]` → `out`/`Rp,Ip,Rm,Im` | **READY** (ranged + 4-buf split: see notes) |
 | **1D c2r (real bwd)** | `c2r` (50/29) | r2cb leaf, hc2hc_dif_bwd stage, hc2c-nat initiator (+log3, +ranged) | `(in_re,in_im,out_re,is_re,is_im,os_re,vl)` — `for v<vl v+=VW` | `in_re[leg*is_re+v]` → `out_re[…]` | **READY** (ranged: see notes) |
 | **2D c2c (row batch)** | `strided` (14/8) | n1 fwd/bwd strided | `(rio_re,rio_im,tw,row_stride,me)` — `for b<me b+=VW` | **4×4 transpose**: loads `rio[(b+0..b+3)*row_stride+col]` | **HARD** |
@@ -75,7 +75,25 @@ design. This is the one family needing real new emit code.
    per-lane `t1_oop` codelet + per-group twiddle table (t1p's per-block broadcast straddles k2
    boundaries at odd K). codelet_oop.ml is a separate emit module — also fixed it hardcoding the
    obsolete M-fence ON. Validated vs naive DFT (natural order) + roundtrip.
-2. **Trig** — clean 3-arg ABI, READY, self-contained.
+2. ~~**Trig**~~ — ✅ **DONE 2026-06-28** at the *dev direct-codelet layer*. The dag r2r
+   codelets (`radixN_{dct2,dct3,dct4,dst2,dst3,dst4,dht}_avx2`, N∈{8,16,32,64}) — the
+   "coverage-complete" set in `trig_codelets.h`, registered via `trig_registry_avx2.h`,
+   benched by `bench_trig_vs_fftw.c` — got the rem-aware tail (bulk `for(;k+VW<=K)` +
+   scalar rem==1 with consts re-emitted inline as `double` + masked rem≥2). One wrinkle vs
+   c2c: trig hoists function-scope `__m256d` trig constants, so the tail does
+   `Hashtbl.reset hoisted_const_tags` to re-emit them at scalar/masked width. Validated by
+   `build_tuned/test/test_trig_oddk.c`: 28 codelets × K∈{1,3,5,7} self-consistent vs even
+   K=8 per-column (worst 8.9e-16, masked cols bit-exact) + even-K bulk vs direct FFTW
+   formula (dct2/dst2/dct4/dst4/dht ~1e-13). **No front-door K guard on this layer** — the
+   codelets are called directly `fn(in,out,K)`.
+   ⚠️ **PRODUCTION trig is a SEPARATE path, NOT yet odd-K.** `vfft.h → vfft.c _build_trig`
+   builds Makhoul **stride plans** (`stride_dct2_plan`/`stride_dct4_plan`/`stride_dht_plan`)
+   over an inner `stride_r2c_plan(N,K,K, inner_c2c)` (DCT-IV: inner c2c only). build.py
+   deliberately separates the two (the dag trig codelets are NOT in `dag_codelet_srcs()`).
+   Production odd-K needs: (a) inner c2c odd-K [done], (b) `stride_r2c_plan` pre/post tail
+   [= the **r2c** phase-2 item], (c) the trig-stride Makhoul twiddle/permute pre/post tail.
+   **So production trig odd-K is gated behind r2c arbitrary-K.** DCT-IV (inner c2c, no r2c)
+   is the one that could land first once its dct4-stride pre/post carries the tail.
 3. **r2c / c2r** — READY but most families (leaf/stage/terminator + ranged); unlocks
    odd-batch real-FFT.
 4. **Strided 2D** — HARD (masked transpose); unlocks odd row/col counts in 2D.
