@@ -13,6 +13,9 @@
 #include <immintrin.h>
 #include <stddef.h>
 
+static const long long _vfft_masklo[5][4] = {
+    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
+
 __attribute__((target("avx2,fma")))
 void radix3_dst1_avx2(
     const double * __restrict__ in,
@@ -20,7 +23,8 @@ void radix3_dst1_avx2(
     size_t K)
 {
     const __m256d t9 = _mm256_set1_pd(0.70710678118655002);
-    for (size_t k = 0; k < K; k += 4) {
+    size_t k = 0;
+    for (; k + 4 <= K; k += 4) {
 
         const __m256d t0 = _mm256_loadu_pd(&in[0*K + k]);
         const __m256d t4 = _mm256_loadu_pd(&in[2*K + k]);
@@ -35,6 +39,41 @@ void radix3_dst1_avx2(
         _mm256_storeu_pd(&out[2*K + k], t31);
         _mm256_storeu_pd(&out[1*K + k], t29);
         _mm256_storeu_pd(&out[0*K + k], t33);
+    }
+    if (k < K) {
+        const size_t rem = K - k;
+        if (rem == 1) {
+        const double t9 = (0.70710678118655002);
+        const double t0 = in[0*K + k];
+        const double t4 = in[2*K + k];
+        const double t6 = (t0 + t4);
+        const double t20 = (t4 - t0);
+        const double t29 = ((-(t20)) - t20);
+        const double t14 = in[1*K + k];
+        const double t16 = (t14 + t14);
+        const double t31 = (-(__builtin_fma(-(t9), (t6 + t6), t16)));
+        const double t33 = (-(__builtin_fma(t9, ((-(t6)) - t6), -(t16))));
+
+        out[2*K + k] = t31;
+        out[1*K + k] = t29;
+        out[0*K + k] = t33;
+        } else {
+            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
+        const __m256d t9 = _mm256_set1_pd(0.70710678118655002);
+        const __m256d t0 = _mm256_maskload_pd(&in[0*K + k], _m);
+        const __m256d t4 = _mm256_maskload_pd(&in[2*K + k], _m);
+        const __m256d t6 = _mm256_add_pd(t0, t4);
+        const __m256d t20 = _mm256_sub_pd(t4, t0);
+        const __m256d t29 = _mm256_sub_pd(_mm256_xor_pd(t20, _mm256_set1_pd(-0.0)), t20);
+        const __m256d t14 = _mm256_maskload_pd(&in[1*K + k], _m);
+        const __m256d t16 = _mm256_add_pd(t14, t14);
+        const __m256d t31 = _mm256_xor_pd(_mm256_fnmadd_pd(t9, _mm256_add_pd(t6, t6), t16), _mm256_set1_pd(-0.0));
+        const __m256d t33 = _mm256_xor_pd(_mm256_fmsub_pd(t9, _mm256_sub_pd(_mm256_xor_pd(t6, _mm256_set1_pd(-0.0)), t6), t16), _mm256_set1_pd(-0.0));
+
+        _mm256_maskstore_pd(&out[2*K + k], _m, t31);
+        _mm256_maskstore_pd(&out[1*K + k], _m, t29);
+        _mm256_maskstore_pd(&out[0*K + k], _m, t33);
+        }
     }
 }
 /* codelet-metrics [intrinsic, gen-time]:
