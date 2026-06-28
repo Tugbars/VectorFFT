@@ -14,9 +14,6 @@
 #include <immintrin.h>
 #include <stddef.h>
 
-static const long long _vfft_masklo[5][4] = {
-    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
-
 __attribute__((target("avx2,fma")))
 void radix2_n1_oop_fwd_avx2_UG_UG(
     const double * __restrict__ in_re,
@@ -107,30 +104,30 @@ void radix2_n1_oop_fwd_avx2_UG_UG(
         out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
         out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
         } else {
-            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
-        __m256d lane_re_0, lane_im_0;
-        __m256d out_lane_re_0, out_lane_im_0;
-        __m256d lane_re_1, lane_im_1;
-        __m256d out_lane_re_1, out_lane_im_1;
+            for (; b + 2 <= me; b += 2) {
+        __m128d lane_re_0, lane_im_0;
+        __m128d out_lane_re_0, out_lane_im_0;
+        __m128d lane_re_1, lane_im_1;
+        __m128d out_lane_re_1, out_lane_im_1;
 
         /* UnitGroup load: vec_width groups are consecutive (stride 1)
            so they load as one SIMD register per leg. R separate
            strided loads populate the R lane registers — no transpose. */
-        lane_re_0 = _mm256_maskload_pd(&in_re[b * in_group_stride + 0 * in_leg_stride], _m);
-        lane_im_0 = _mm256_maskload_pd(&in_im[b * in_group_stride + 0 * in_leg_stride], _m);
-        lane_re_1 = _mm256_maskload_pd(&in_re[b * in_group_stride + 1 * in_leg_stride], _m);
-        lane_im_1 = _mm256_maskload_pd(&in_im[b * in_group_stride + 1 * in_leg_stride], _m);
+        lane_re_0 = _mm_loadu_pd(&in_re[b * in_group_stride + 0 * in_leg_stride]);
+        lane_im_0 = _mm_loadu_pd(&in_im[b * in_group_stride + 0 * in_leg_stride]);
+        lane_re_1 = _mm_loadu_pd(&in_re[b * in_group_stride + 1 * in_leg_stride]);
+        lane_im_1 = _mm_loadu_pd(&in_im[b * in_group_stride + 1 * in_leg_stride]);
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m256d t0 = lane_re_1;
-                const __m256d t2 = lane_im_1;
-                const __m256d t5 = lane_re_0;
-                const __m256d t7 = lane_im_0;
-                const __m256d t8 = _mm256_sub_pd(t5, t0);
-                const __m256d t10 = _mm256_sub_pd(t7, t2);
-                const __m256d t11 = _mm256_add_pd(t0, t5);
-                const __m256d t12 = _mm256_add_pd(t2, t7);
+                const __m128d t0 = lane_re_1;
+                const __m128d t2 = lane_im_1;
+                const __m128d t5 = lane_re_0;
+                const __m128d t7 = lane_im_0;
+                const __m128d t8 = _mm_sub_pd(t5, t0);
+                const __m128d t10 = _mm_sub_pd(t7, t2);
+                const __m128d t11 = _mm_add_pd(t0, t5);
+                const __m128d t12 = _mm_add_pd(t2, t7);
 
         out_lane_re_1 = t8;
         out_lane_im_1 = t10;
@@ -138,10 +135,47 @@ void radix2_n1_oop_fwd_avx2_UG_UG(
         out_lane_im_0 = t12;
 
         /* UnitGroup store: R separate strided SIMD stores, no transpose. */
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_re_0);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_im_0);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_re_1);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_im_1);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 0 * out_leg_stride], out_lane_re_0);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], out_lane_im_0);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], out_lane_re_1);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], out_lane_im_1);
+            }
+            if (b < me) {
+        double lane_re_0, lane_im_0;
+        double out_lane_re_0, out_lane_im_0;
+        double lane_re_1, lane_im_1;
+        double out_lane_re_1, out_lane_im_1;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = in_re[b * in_group_stride + 0 * in_leg_stride];
+        lane_im_0 = in_im[b * in_group_stride + 0 * in_leg_stride];
+        lane_re_1 = in_re[b * in_group_stride + 1 * in_leg_stride];
+        lane_im_1 = in_im[b * in_group_stride + 1 * in_leg_stride];
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const double t0 = lane_re_1;
+                const double t2 = lane_im_1;
+                const double t5 = lane_re_0;
+                const double t7 = lane_im_0;
+                const double t8 = (t5 - t0);
+                const double t10 = (t7 - t2);
+                const double t11 = (t0 + t5);
+                const double t12 = (t2 + t7);
+
+        out_lane_re_1 = t8;
+        out_lane_im_1 = t10;
+        out_lane_re_0 = t11;
+        out_lane_im_0 = t12;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        out_re[b * out_group_stride + 0 * out_leg_stride] = out_lane_re_0;
+        out_im[b * out_group_stride + 0 * out_leg_stride] = out_lane_im_0;
+        out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
+        out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
+            }
         }
     }
 }

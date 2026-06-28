@@ -14,9 +14,6 @@
 #include <immintrin.h>
 #include <stddef.h>
 
-static const long long _vfft_masklo[5][4] = {
-    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
-
 __attribute__((target("avx2,fma")))
 void radix6_n1_oop_fwd_avx2_UG_UG(
     const double * __restrict__ in_re,
@@ -265,93 +262,93 @@ void radix6_n1_oop_fwd_avx2_UG_UG(
         out_re[b * out_group_stride + 5 * out_leg_stride] = out_lane_re_5;
         out_im[b * out_group_stride + 5 * out_leg_stride] = out_lane_im_5;
         } else {
-            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
-        __m256d lane_re_0, lane_im_0;
-        __m256d out_lane_re_0, out_lane_im_0;
-        __m256d lane_re_1, lane_im_1;
-        __m256d out_lane_re_1, out_lane_im_1;
-        __m256d lane_re_2, lane_im_2;
-        __m256d out_lane_re_2, out_lane_im_2;
-        __m256d lane_re_3, lane_im_3;
-        __m256d out_lane_re_3, out_lane_im_3;
-        __m256d lane_re_4, lane_im_4;
-        __m256d out_lane_re_4, out_lane_im_4;
-        __m256d lane_re_5, lane_im_5;
-        __m256d out_lane_re_5, out_lane_im_5;
+            for (; b + 2 <= me; b += 2) {
+        __m128d lane_re_0, lane_im_0;
+        __m128d out_lane_re_0, out_lane_im_0;
+        __m128d lane_re_1, lane_im_1;
+        __m128d out_lane_re_1, out_lane_im_1;
+        __m128d lane_re_2, lane_im_2;
+        __m128d out_lane_re_2, out_lane_im_2;
+        __m128d lane_re_3, lane_im_3;
+        __m128d out_lane_re_3, out_lane_im_3;
+        __m128d lane_re_4, lane_im_4;
+        __m128d out_lane_re_4, out_lane_im_4;
+        __m128d lane_re_5, lane_im_5;
+        __m128d out_lane_re_5, out_lane_im_5;
 
         /* UnitGroup load: vec_width groups are consecutive (stride 1)
            so they load as one SIMD register per leg. R separate
            strided loads populate the R lane registers — no transpose. */
-        lane_re_0 = _mm256_maskload_pd(&in_re[b * in_group_stride + 0 * in_leg_stride], _m);
-        lane_im_0 = _mm256_maskload_pd(&in_im[b * in_group_stride + 0 * in_leg_stride], _m);
-        lane_re_1 = _mm256_maskload_pd(&in_re[b * in_group_stride + 1 * in_leg_stride], _m);
-        lane_im_1 = _mm256_maskload_pd(&in_im[b * in_group_stride + 1 * in_leg_stride], _m);
-        lane_re_2 = _mm256_maskload_pd(&in_re[b * in_group_stride + 2 * in_leg_stride], _m);
-        lane_im_2 = _mm256_maskload_pd(&in_im[b * in_group_stride + 2 * in_leg_stride], _m);
-        lane_re_3 = _mm256_maskload_pd(&in_re[b * in_group_stride + 3 * in_leg_stride], _m);
-        lane_im_3 = _mm256_maskload_pd(&in_im[b * in_group_stride + 3 * in_leg_stride], _m);
-        lane_re_4 = _mm256_maskload_pd(&in_re[b * in_group_stride + 4 * in_leg_stride], _m);
-        lane_im_4 = _mm256_maskload_pd(&in_im[b * in_group_stride + 4 * in_leg_stride], _m);
-        lane_re_5 = _mm256_maskload_pd(&in_re[b * in_group_stride + 5 * in_leg_stride], _m);
-        lane_im_5 = _mm256_maskload_pd(&in_im[b * in_group_stride + 5 * in_leg_stride], _m);
+        lane_re_0 = _mm_loadu_pd(&in_re[b * in_group_stride + 0 * in_leg_stride]);
+        lane_im_0 = _mm_loadu_pd(&in_im[b * in_group_stride + 0 * in_leg_stride]);
+        lane_re_1 = _mm_loadu_pd(&in_re[b * in_group_stride + 1 * in_leg_stride]);
+        lane_im_1 = _mm_loadu_pd(&in_im[b * in_group_stride + 1 * in_leg_stride]);
+        lane_re_2 = _mm_loadu_pd(&in_re[b * in_group_stride + 2 * in_leg_stride]);
+        lane_im_2 = _mm_loadu_pd(&in_im[b * in_group_stride + 2 * in_leg_stride]);
+        lane_re_3 = _mm_loadu_pd(&in_re[b * in_group_stride + 3 * in_leg_stride]);
+        lane_im_3 = _mm_loadu_pd(&in_im[b * in_group_stride + 3 * in_leg_stride]);
+        lane_re_4 = _mm_loadu_pd(&in_re[b * in_group_stride + 4 * in_leg_stride]);
+        lane_im_4 = _mm_loadu_pd(&in_im[b * in_group_stride + 4 * in_leg_stride]);
+        lane_re_5 = _mm_loadu_pd(&in_re[b * in_group_stride + 5 * in_leg_stride]);
+        lane_im_5 = _mm_loadu_pd(&in_im[b * in_group_stride + 5 * in_leg_stride]);
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
-                const __m256d t2 = lane_re_4;
-                const __m256d t4 = lane_im_4;
-                const __m256d t7 = lane_re_1;
-                const __m256d t8 = lane_im_1;
-                const __m256d t10 = _mm256_sub_pd(t8, t4);
-                const __m256d t11 = _mm256_set1_pd(0.57735026918961996);
-                const __m256d t16 = _mm256_sub_pd(t7, t2);
-                const __m256d t18 = lane_re_5;
-                const __m256d t19 = lane_im_5;
-                const __m256d t21 = lane_re_2;
-                const __m256d t22 = lane_im_2;
-                const __m256d t23 = _mm256_sub_pd(t22, t19);
-                const __m256d t26 = _mm256_sub_pd(t21, t18);
-                const __m256d t34 = lane_re_3;
-                const __m256d t35 = lane_im_3;
-                const __m256d t37 = lane_re_0;
-                const __m256d t38 = lane_im_0;
-                const __m256d t39 = _mm256_sub_pd(t38, t35);
-                const __m256d t41 = _mm256_sub_pd(t37, t34);
-                const __m256d t44 = _mm256_fnmsub_pd(t11, t16, t10);
-                const __m256d t52 = _mm256_set1_pd(0.5);
-                const __m256d t62 = _mm256_add_pd(t2, t7);
-                const __m256d t63 = _mm256_add_pd(t4, t8);
-                const __m256d t64 = _mm256_add_pd(t18, t21);
-                const __m256d t65 = _mm256_add_pd(t19, t22);
-                const __m256d t66 = _mm256_sub_pd(t63, t65);
-                const __m256d t68 = _mm256_add_pd(t35, t38);
-                const __m256d t69 = _mm256_add_pd(t34, t37);
-                const __m256d t70 = _mm256_add_pd(t62, t64);
-                const __m256d t74 = _mm256_sub_pd(t62, t64);
-                const __m256d t76 = _mm256_add_pd(t63, t65);
-                const __m256d t86 = _mm256_add_pd(t69, t70);
-                const __m256d t87 = _mm256_add_pd(t68, t76);
-                const __m256d t88 = _mm256_fmsub_pd(t11, t26, t23);
-                const __m256d t93 = _mm256_fmadd_pd(t11, t23, t26);
-                const __m256d t95 = _mm256_fnmadd_pd(t10, t11, t16);
-                const __m256d t106 = _mm256_fnmadd_pd(t52, t70, t69);
-                const __m256d t108 = _mm256_fnmadd_pd(t52, t76, t68);
-                const __m256d t122 = _mm256_fnmadd_pd(t0, t66, t106);
-                const __m256d t123 = _mm256_fmadd_pd(t0, t74, t108);
-                const __m256d t126 = _mm256_fmadd_pd(t0, t66, t106);
-                const __m256d t127 = _mm256_fnmadd_pd(t0, t74, t108);
-                const __m256d t129 = _mm256_mul_pd(t0, _mm256_add_pd(t44, t88));
-                const __m256d t131 = _mm256_fnmadd_pd(t52, _mm256_xor_pd(t129, _mm256_set1_pd(-0.0)), t41);
-                const __m256d t133 = _mm256_mul_pd(t0, _mm256_sub_pd(t93, t95));
-                const __m256d t137 = _mm256_mul_pd(t0, _mm256_sub_pd(t88, t44));
-                const __m256d t139 = _mm256_mul_pd(t0, _mm256_add_pd(t93, t95));
-                const __m256d t141 = _mm256_fnmadd_pd(t52, _mm256_xor_pd(t139, _mm256_set1_pd(-0.0)), t39);
-                const __m256d t142 = _mm256_fmadd_pd(t0, t137, t141);
-                const __m256d t144 = _mm256_fnmadd_pd(t0, t137, t141);
-                const __m256d t145 = _mm256_sub_pd(t41, t129);
-                const __m256d t146 = _mm256_sub_pd(t39, t139);
-                const __m256d t147 = _mm256_fnmadd_pd(t0, t133, t131);
-                const __m256d t148 = _mm256_fmadd_pd(t0, t133, t131);
+                const __m128d t0 = _mm_set1_pd(0.86602540378444004);
+                const __m128d t2 = lane_re_4;
+                const __m128d t4 = lane_im_4;
+                const __m128d t7 = lane_re_1;
+                const __m128d t8 = lane_im_1;
+                const __m128d t10 = _mm_sub_pd(t8, t4);
+                const __m128d t11 = _mm_set1_pd(0.57735026918961996);
+                const __m128d t16 = _mm_sub_pd(t7, t2);
+                const __m128d t18 = lane_re_5;
+                const __m128d t19 = lane_im_5;
+                const __m128d t21 = lane_re_2;
+                const __m128d t22 = lane_im_2;
+                const __m128d t23 = _mm_sub_pd(t22, t19);
+                const __m128d t26 = _mm_sub_pd(t21, t18);
+                const __m128d t34 = lane_re_3;
+                const __m128d t35 = lane_im_3;
+                const __m128d t37 = lane_re_0;
+                const __m128d t38 = lane_im_0;
+                const __m128d t39 = _mm_sub_pd(t38, t35);
+                const __m128d t41 = _mm_sub_pd(t37, t34);
+                const __m128d t44 = _mm_fnmsub_pd(t11, t16, t10);
+                const __m128d t52 = _mm_set1_pd(0.5);
+                const __m128d t62 = _mm_add_pd(t2, t7);
+                const __m128d t63 = _mm_add_pd(t4, t8);
+                const __m128d t64 = _mm_add_pd(t18, t21);
+                const __m128d t65 = _mm_add_pd(t19, t22);
+                const __m128d t66 = _mm_sub_pd(t63, t65);
+                const __m128d t68 = _mm_add_pd(t35, t38);
+                const __m128d t69 = _mm_add_pd(t34, t37);
+                const __m128d t70 = _mm_add_pd(t62, t64);
+                const __m128d t74 = _mm_sub_pd(t62, t64);
+                const __m128d t76 = _mm_add_pd(t63, t65);
+                const __m128d t86 = _mm_add_pd(t69, t70);
+                const __m128d t87 = _mm_add_pd(t68, t76);
+                const __m128d t88 = _mm_fmsub_pd(t11, t26, t23);
+                const __m128d t93 = _mm_fmadd_pd(t11, t23, t26);
+                const __m128d t95 = _mm_fnmadd_pd(t10, t11, t16);
+                const __m128d t106 = _mm_fnmadd_pd(t52, t70, t69);
+                const __m128d t108 = _mm_fnmadd_pd(t52, t76, t68);
+                const __m128d t122 = _mm_fnmadd_pd(t0, t66, t106);
+                const __m128d t123 = _mm_fmadd_pd(t0, t74, t108);
+                const __m128d t126 = _mm_fmadd_pd(t0, t66, t106);
+                const __m128d t127 = _mm_fnmadd_pd(t0, t74, t108);
+                const __m128d t129 = _mm_mul_pd(t0, _mm_add_pd(t44, t88));
+                const __m128d t131 = _mm_fnmadd_pd(t52, _mm_xor_pd(t129, _mm_set1_pd(-0.0)), t41);
+                const __m128d t133 = _mm_mul_pd(t0, _mm_sub_pd(t93, t95));
+                const __m128d t137 = _mm_mul_pd(t0, _mm_sub_pd(t88, t44));
+                const __m128d t139 = _mm_mul_pd(t0, _mm_add_pd(t93, t95));
+                const __m128d t141 = _mm_fnmadd_pd(t52, _mm_xor_pd(t139, _mm_set1_pd(-0.0)), t39);
+                const __m128d t142 = _mm_fmadd_pd(t0, t137, t141);
+                const __m128d t144 = _mm_fnmadd_pd(t0, t137, t141);
+                const __m128d t145 = _mm_sub_pd(t41, t129);
+                const __m128d t146 = _mm_sub_pd(t39, t139);
+                const __m128d t147 = _mm_fnmadd_pd(t0, t133, t131);
+                const __m128d t148 = _mm_fmadd_pd(t0, t133, t131);
 
         out_lane_re_5 = t147;
         out_lane_im_5 = t142;
@@ -367,18 +364,134 @@ void radix6_n1_oop_fwd_avx2_UG_UG(
         out_lane_im_0 = t87;
 
         /* UnitGroup store: R separate strided SIMD stores, no transpose. */
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_re_0);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], _m, out_lane_im_0);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_re_1);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], _m, out_lane_im_1);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 2 * out_leg_stride], _m, out_lane_re_2);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 2 * out_leg_stride], _m, out_lane_im_2);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_re_3);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 3 * out_leg_stride], _m, out_lane_im_3);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 4 * out_leg_stride], _m, out_lane_re_4);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 4 * out_leg_stride], _m, out_lane_im_4);
-        _mm256_maskstore_pd(&out_re[b * out_group_stride + 5 * out_leg_stride], _m, out_lane_re_5);
-        _mm256_maskstore_pd(&out_im[b * out_group_stride + 5 * out_leg_stride], _m, out_lane_im_5);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 0 * out_leg_stride], out_lane_re_0);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 0 * out_leg_stride], out_lane_im_0);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 1 * out_leg_stride], out_lane_re_1);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 1 * out_leg_stride], out_lane_im_1);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 2 * out_leg_stride], out_lane_re_2);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 2 * out_leg_stride], out_lane_im_2);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 3 * out_leg_stride], out_lane_re_3);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 3 * out_leg_stride], out_lane_im_3);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 4 * out_leg_stride], out_lane_re_4);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 4 * out_leg_stride], out_lane_im_4);
+        _mm_storeu_pd(&out_re[b * out_group_stride + 5 * out_leg_stride], out_lane_re_5);
+        _mm_storeu_pd(&out_im[b * out_group_stride + 5 * out_leg_stride], out_lane_im_5);
+            }
+            if (b < me) {
+        double lane_re_0, lane_im_0;
+        double out_lane_re_0, out_lane_im_0;
+        double lane_re_1, lane_im_1;
+        double out_lane_re_1, out_lane_im_1;
+        double lane_re_2, lane_im_2;
+        double out_lane_re_2, out_lane_im_2;
+        double lane_re_3, lane_im_3;
+        double out_lane_re_3, out_lane_im_3;
+        double lane_re_4, lane_im_4;
+        double out_lane_re_4, out_lane_im_4;
+        double lane_re_5, lane_im_5;
+        double out_lane_re_5, out_lane_im_5;
+
+        /* UnitGroup load: vec_width groups are consecutive (stride 1)
+           so they load as one SIMD register per leg. R separate
+           strided loads populate the R lane registers — no transpose. */
+        lane_re_0 = in_re[b * in_group_stride + 0 * in_leg_stride];
+        lane_im_0 = in_im[b * in_group_stride + 0 * in_leg_stride];
+        lane_re_1 = in_re[b * in_group_stride + 1 * in_leg_stride];
+        lane_im_1 = in_im[b * in_group_stride + 1 * in_leg_stride];
+        lane_re_2 = in_re[b * in_group_stride + 2 * in_leg_stride];
+        lane_im_2 = in_im[b * in_group_stride + 2 * in_leg_stride];
+        lane_re_3 = in_re[b * in_group_stride + 3 * in_leg_stride];
+        lane_im_3 = in_im[b * in_group_stride + 3 * in_leg_stride];
+        lane_re_4 = in_re[b * in_group_stride + 4 * in_leg_stride];
+        lane_im_4 = in_im[b * in_group_stride + 4 * in_leg_stride];
+        lane_re_5 = in_re[b * in_group_stride + 5 * in_leg_stride];
+        lane_im_5 = in_im[b * in_group_stride + 5 * in_leg_stride];
+
+        /* === BUTTERFLY BODY (monolithic) ===
+           Tier A: algsimp cascade + inline + fence, single scope. */
+                const double t0 = (0.86602540378444004);
+                const double t2 = lane_re_4;
+                const double t4 = lane_im_4;
+                const double t7 = lane_re_1;
+                const double t8 = lane_im_1;
+                const double t10 = (t8 - t4);
+                const double t11 = (0.57735026918961996);
+                const double t16 = (t7 - t2);
+                const double t18 = lane_re_5;
+                const double t19 = lane_im_5;
+                const double t21 = lane_re_2;
+                const double t22 = lane_im_2;
+                const double t23 = (t22 - t19);
+                const double t26 = (t21 - t18);
+                const double t34 = lane_re_3;
+                const double t35 = lane_im_3;
+                const double t37 = lane_re_0;
+                const double t38 = lane_im_0;
+                const double t39 = (t38 - t35);
+                const double t41 = (t37 - t34);
+                const double t44 = __builtin_fma(-(t11), t16, -(t10));
+                const double t52 = (0.5);
+                const double t62 = (t2 + t7);
+                const double t63 = (t4 + t8);
+                const double t64 = (t18 + t21);
+                const double t65 = (t19 + t22);
+                const double t66 = (t63 - t65);
+                const double t68 = (t35 + t38);
+                const double t69 = (t34 + t37);
+                const double t70 = (t62 + t64);
+                const double t74 = (t62 - t64);
+                const double t76 = (t63 + t65);
+                const double t86 = (t69 + t70);
+                const double t87 = (t68 + t76);
+                const double t88 = __builtin_fma(t11, t26, -(t23));
+                const double t93 = __builtin_fma(t11, t23, t26);
+                const double t95 = __builtin_fma(-(t10), t11, t16);
+                const double t106 = __builtin_fma(-(t52), t70, t69);
+                const double t108 = __builtin_fma(-(t52), t76, t68);
+                const double t122 = __builtin_fma(-(t0), t66, t106);
+                const double t123 = __builtin_fma(t0, t74, t108);
+                const double t126 = __builtin_fma(t0, t66, t106);
+                const double t127 = __builtin_fma(-(t0), t74, t108);
+                const double t129 = (t0 * (t44 + t88));
+                const double t131 = __builtin_fma(-(t52), (-(t129)), t41);
+                const double t133 = (t0 * (t93 - t95));
+                const double t137 = (t0 * (t88 - t44));
+                const double t139 = (t0 * (t93 + t95));
+                const double t141 = __builtin_fma(-(t52), (-(t139)), t39);
+                const double t142 = __builtin_fma(t0, t137, t141);
+                const double t144 = __builtin_fma(-(t0), t137, t141);
+                const double t145 = (t41 - t129);
+                const double t146 = (t39 - t139);
+                const double t147 = __builtin_fma(-(t0), t133, t131);
+                const double t148 = __builtin_fma(t0, t133, t131);
+
+        out_lane_re_5 = t147;
+        out_lane_im_5 = t142;
+        out_lane_re_4 = t122;
+        out_lane_im_4 = t123;
+        out_lane_re_3 = t148;
+        out_lane_im_3 = t144;
+        out_lane_re_2 = t126;
+        out_lane_im_2 = t127;
+        out_lane_re_1 = t145;
+        out_lane_im_1 = t146;
+        out_lane_re_0 = t86;
+        out_lane_im_0 = t87;
+
+        /* UnitGroup store: R separate strided SIMD stores, no transpose. */
+        out_re[b * out_group_stride + 0 * out_leg_stride] = out_lane_re_0;
+        out_im[b * out_group_stride + 0 * out_leg_stride] = out_lane_im_0;
+        out_re[b * out_group_stride + 1 * out_leg_stride] = out_lane_re_1;
+        out_im[b * out_group_stride + 1 * out_leg_stride] = out_lane_im_1;
+        out_re[b * out_group_stride + 2 * out_leg_stride] = out_lane_re_2;
+        out_im[b * out_group_stride + 2 * out_leg_stride] = out_lane_im_2;
+        out_re[b * out_group_stride + 3 * out_leg_stride] = out_lane_re_3;
+        out_im[b * out_group_stride + 3 * out_leg_stride] = out_lane_im_3;
+        out_re[b * out_group_stride + 4 * out_leg_stride] = out_lane_re_4;
+        out_im[b * out_group_stride + 4 * out_leg_stride] = out_lane_im_4;
+        out_re[b * out_group_stride + 5 * out_leg_stride] = out_lane_re_5;
+        out_im[b * out_group_stride + 5 * out_leg_stride] = out_lane_im_5;
+            }
         }
     }
 }
