@@ -13,9 +13,6 @@
 #include <immintrin.h>
 #include <stddef.h>
 
-static const long long _vfft_masklo[5][4] = {
-    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
-
 __attribute__((target("avx2,fma")))
 void radix3_r2cf_avx2(
     const double * __restrict__ in_re,
@@ -61,20 +58,36 @@ void radix3_r2cf_avx2(
         out_re[1*os_re + v] = t15;
         out_im[1*os_im + v] = t12;
         } else {
-            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
-        const __m256d t5 = _mm256_set1_pd(0.86602540378444004);
-        const __m256d t7 = _mm256_set1_pd(0.5);
-        const __m256d t0 = _mm256_maskload_pd(&in_re[2*is + v], _m);
-        const __m256d t1 = _mm256_maskload_pd(&in_re[1*is + v], _m);
-        const __m256d t2 = _mm256_add_pd(t0, t1);
-        const __m256d t12 = _mm256_xor_pd(_mm256_mul_pd(t5, _mm256_sub_pd(t1, t0)), _mm256_set1_pd(-0.0));
-        const __m256d t3 = _mm256_maskload_pd(&in_re[0*is + v], _m);
-        const __m256d t4 = _mm256_add_pd(t2, t3);
-        const __m256d t15 = _mm256_fnmadd_pd(t2, t7, t3);
+            for (; v + 2 <= vl; v += 2) {
+        const __m128d t5 = _mm_set1_pd(0.86602540378444004);
+        const __m128d t7 = _mm_set1_pd(0.5);
+        const __m128d t0 = _mm_loadu_pd(&in_re[2*is + v]);
+        const __m128d t1 = _mm_loadu_pd(&in_re[1*is + v]);
+        const __m128d t2 = _mm_add_pd(t0, t1);
+        const __m128d t12 = _mm_xor_pd(_mm_mul_pd(t5, _mm_sub_pd(t1, t0)), _mm_set1_pd(-0.0));
+        const __m128d t3 = _mm_loadu_pd(&in_re[0*is + v]);
+        const __m128d t4 = _mm_add_pd(t2, t3);
+        const __m128d t15 = _mm_fnmadd_pd(t2, t7, t3);
 
-        _mm256_maskstore_pd(&out_re[0*os_re + v], _m, t4);
-        _mm256_maskstore_pd(&out_re[1*os_re + v], _m, t15);
-        _mm256_maskstore_pd(&out_im[1*os_im + v], _m, t12);
+        _mm_storeu_pd(&out_re[0*os_re + v], t4);
+        _mm_storeu_pd(&out_re[1*os_re + v], t15);
+        _mm_storeu_pd(&out_im[1*os_im + v], t12);
+            }
+            if (v < vl) {
+        const double t5 = (0.86602540378444004);
+        const double t7 = (0.5);
+        const double t0 = in_re[2*is + v];
+        const double t1 = in_re[1*is + v];
+        const double t2 = (t0 + t1);
+        const double t12 = (-((t5 * (t1 - t0))));
+        const double t3 = in_re[0*is + v];
+        const double t4 = (t2 + t3);
+        const double t15 = __builtin_fma(-(t2), t7, t3);
+
+        out_re[0*os_re + v] = t4;
+        out_re[1*os_re + v] = t15;
+        out_im[1*os_im + v] = t12;
+            }
         }
     }
 }

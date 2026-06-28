@@ -111,11 +111,34 @@ let scalar =
     maskstore_pd = "";
   }
 
+(* SSE2 + FMA3 (128-bit), used ONLY as the arbitrary-K remainder pass on the AVX2
+ * path: 2 doubles/op, full-throughput loads/stores (no vmaskmov). vec_width=2; every
+ * arithmetic helper takes the intrinsic path (width<>1) → _mm_add_pd / _mm_fmadd_pd /
+ * _mm_mul_pd / _mm_xor_pd via `intr`. No mask intrinsics (the SSE pass is unmasked;
+ * an odd straggler lane is mopped up by the width-1 `scalar` ISA). target_attr is
+ * cosmetic here — the SSE ops are emitted INLINE inside the enclosing avx2,fma codelet
+ * (VEX-128, no AVX↔SSE transition penalty); this record is never emitted standalone. *)
+let sse2 =
+  {
+    name = "sse2";
+    vec_type = "__m128d";
+    vec_width = 2;
+    vec_regs = 16;
+    intrinsic_prefix = "_mm";
+    target_attr = "sse2,fma";
+    loadu_pd = "_mm_loadu_pd";
+    storeu_pd = "_mm_storeu_pd";
+    set1_pd = "_mm_set1_pd";
+    maskload_pd = "";
+    maskstore_pd = "";
+  }
+
 (* Look up by name, for CLI. *)
 let of_name (s : string) : t =
   match s with
   | "avx512" | "AVX512" | "avx-512" -> avx512
   | "avx2" | "AVX2" -> avx2
+  | "sse2" | "SSE2" -> sse2
   | "scalar" | "SCALAR" -> scalar
   | other ->
       failwith

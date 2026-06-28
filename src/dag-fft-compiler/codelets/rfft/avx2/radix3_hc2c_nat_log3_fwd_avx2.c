@@ -13,9 +13,6 @@
 #include <immintrin.h>
 #include <stddef.h>
 
-static const long long _vfft_masklo[5][4] = {
-    {0,0,0,0},{-1,0,0,0},{-1,-1,0,0},{-1,-1,-1,0},{-1,-1,-1,-1}};
-
 __attribute__((target("avx2,fma")))
 void radix3_hc2c_nat_log3_fwd_avx2(
     const double * __restrict__ in_re,
@@ -110,42 +107,80 @@ void radix3_hc2c_nat_log3_fwd_avx2(
         Rp[0*osp + v] = t31;
         Ip[0*osp + v] = t32;
         } else {
-            const __m256i _m = _mm256_loadu_si256((const __m256i *)_vfft_masklo[rem]);
-        const __m256d t15 = _mm256_set1_pd(0.5);
-        const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
-        const __m256d t1 = _mm256_maskload_pd(&in_re[2*is + v], _m);
-        const __m256d t2 = _mm256_set1_pd(tw_im[1]);
-        const __m256d t3 = _mm256_maskload_pd(&in_im[2*is + v], _m);
-        const __m256d t4 = _mm256_set1_pd(tw_re[1]);
-        const __m256d t6 = _mm256_fmadd_pd(t1, t2, _mm256_mul_pd(t3, t4));
-        const __m256d t5 = _mm256_fnmadd_pd(t3, t2, _mm256_mul_pd(t1, t4));
-        const __m256d t7 = _mm256_maskload_pd(&in_re[1*is + v], _m);
-        const __m256d t8 = _mm256_set1_pd(tw_im[0]);
-        const __m256d t9 = _mm256_maskload_pd(&in_im[1*is + v], _m);
-        const __m256d t10 = _mm256_set1_pd(tw_re[0]);
-        const __m256d t12 = _mm256_fmadd_pd(t7, t8, _mm256_mul_pd(t9, t10));
-        const __m256d t11 = _mm256_fnmadd_pd(t9, t8, _mm256_mul_pd(t7, t10));
-        const __m256d t23 = _mm256_add_pd(t6, t12);
-        const __m256d t16 = _mm256_add_pd(t5, t11);
-        const __m256d t21 = _mm256_sub_pd(t11, t5);
-        const __m256d t13 = _mm256_sub_pd(t12, t6);
-        const __m256d t18 = _mm256_maskload_pd(&in_re[0*is + v], _m);
-        const __m256d t31 = _mm256_add_pd(t16, t18);
-        const __m256d t39 = _mm256_fnmadd_pd(t15, t16, t18);
-        const __m256d t46 = _mm256_fnmadd_pd(t0, t13, t39);
-        const __m256d t49 = _mm256_fmadd_pd(t0, t13, t39);
-        const __m256d t25 = _mm256_maskload_pd(&in_im[0*is + v], _m);
-        const __m256d t32 = _mm256_add_pd(t23, t25);
-        const __m256d t41 = _mm256_fnmadd_pd(t15, t23, t25);
-        const __m256d t50 = _mm256_fnmadd_pd(t0, t21, t41);
-        const __m256d t48 = _mm256_xor_pd(_mm256_fmadd_pd(t0, t21, t41), _mm256_set1_pd(-0.0));
+            for (; v + 2 <= vl; v += 2) {
+        const __m128d t15 = _mm_set1_pd(0.5);
+        const __m128d t0 = _mm_set1_pd(0.86602540378444004);
+        const __m128d t1 = _mm_loadu_pd(&in_re[2*is + v]);
+        const __m128d t2 = _mm_set1_pd(tw_im[1]);
+        const __m128d t3 = _mm_loadu_pd(&in_im[2*is + v]);
+        const __m128d t4 = _mm_set1_pd(tw_re[1]);
+        const __m128d t6 = _mm_fmadd_pd(t1, t2, _mm_mul_pd(t3, t4));
+        const __m128d t5 = _mm_fnmadd_pd(t3, t2, _mm_mul_pd(t1, t4));
+        const __m128d t7 = _mm_loadu_pd(&in_re[1*is + v]);
+        const __m128d t8 = _mm_set1_pd(tw_im[0]);
+        const __m128d t9 = _mm_loadu_pd(&in_im[1*is + v]);
+        const __m128d t10 = _mm_set1_pd(tw_re[0]);
+        const __m128d t12 = _mm_fmadd_pd(t7, t8, _mm_mul_pd(t9, t10));
+        const __m128d t11 = _mm_fnmadd_pd(t9, t8, _mm_mul_pd(t7, t10));
+        const __m128d t23 = _mm_add_pd(t6, t12);
+        const __m128d t16 = _mm_add_pd(t5, t11);
+        const __m128d t21 = _mm_sub_pd(t11, t5);
+        const __m128d t13 = _mm_sub_pd(t12, t6);
+        const __m128d t18 = _mm_loadu_pd(&in_re[0*is + v]);
+        const __m128d t31 = _mm_add_pd(t16, t18);
+        const __m128d t39 = _mm_fnmadd_pd(t15, t16, t18);
+        const __m128d t46 = _mm_fnmadd_pd(t0, t13, t39);
+        const __m128d t49 = _mm_fmadd_pd(t0, t13, t39);
+        const __m128d t25 = _mm_loadu_pd(&in_im[0*is + v]);
+        const __m128d t32 = _mm_add_pd(t23, t25);
+        const __m128d t41 = _mm_fnmadd_pd(t15, t23, t25);
+        const __m128d t50 = _mm_fnmadd_pd(t0, t21, t41);
+        const __m128d t48 = _mm_xor_pd(_mm_fmadd_pd(t0, t21, t41), _mm_set1_pd(-0.0));
 
-        _mm256_maskstore_pd(&Rm[0*osm + v], _m, t46);
-        _mm256_maskstore_pd(&Im[0*osm + v], _m, t48);
-        _mm256_maskstore_pd(&Rp[1*osp + v], _m, t49);
-        _mm256_maskstore_pd(&Ip[1*osp + v], _m, t50);
-        _mm256_maskstore_pd(&Rp[0*osp + v], _m, t31);
-        _mm256_maskstore_pd(&Ip[0*osp + v], _m, t32);
+        _mm_storeu_pd(&Rm[0*osm + v], t46);
+        _mm_storeu_pd(&Im[0*osm + v], t48);
+        _mm_storeu_pd(&Rp[1*osp + v], t49);
+        _mm_storeu_pd(&Ip[1*osp + v], t50);
+        _mm_storeu_pd(&Rp[0*osp + v], t31);
+        _mm_storeu_pd(&Ip[0*osp + v], t32);
+            }
+            if (v < vl) {
+        const double t15 = (0.5);
+        const double t0 = (0.86602540378444004);
+        const double t1 = in_re[2*is + v];
+        const double t2 = (tw_im[1]);
+        const double t3 = in_im[2*is + v];
+        const double t4 = (tw_re[1]);
+        const double t6 = __builtin_fma(t1, t2, (t3 * t4));
+        const double t5 = __builtin_fma(-(t3), t2, (t1 * t4));
+        const double t7 = in_re[1*is + v];
+        const double t8 = (tw_im[0]);
+        const double t9 = in_im[1*is + v];
+        const double t10 = (tw_re[0]);
+        const double t12 = __builtin_fma(t7, t8, (t9 * t10));
+        const double t11 = __builtin_fma(-(t9), t8, (t7 * t10));
+        const double t23 = (t6 + t12);
+        const double t16 = (t5 + t11);
+        const double t21 = (t11 - t5);
+        const double t13 = (t12 - t6);
+        const double t18 = in_re[0*is + v];
+        const double t31 = (t16 + t18);
+        const double t39 = __builtin_fma(-(t15), t16, t18);
+        const double t46 = __builtin_fma(-(t0), t13, t39);
+        const double t49 = __builtin_fma(t0, t13, t39);
+        const double t25 = in_im[0*is + v];
+        const double t32 = (t23 + t25);
+        const double t41 = __builtin_fma(-(t15), t23, t25);
+        const double t50 = __builtin_fma(-(t0), t21, t41);
+        const double t48 = (-(__builtin_fma(t0, t21, t41)));
+
+        Rm[0*osm + v] = t46;
+        Im[0*osm + v] = t48;
+        Rp[1*osp + v] = t49;
+        Ip[1*osp + v] = t50;
+        Rp[0*osp + v] = t31;
+        Ip[0*osp + v] = t32;
+            }
         }
     }
 }
