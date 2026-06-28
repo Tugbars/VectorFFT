@@ -4176,6 +4176,79 @@ static void exec_n128_k1024_2444_v0222_dit_fwd_avx2(const stride_plan_t *plan,
     VFFT_PROTO_STAGE_T1S  (3,  4, avx2)
 }
 
+/* Plan-shaped executor specialization
+ *   N=128 K=64
+ *   factors=8,16
+ *   variants=FLAT,T1S
+ *   orient=DIT dir=FWD isa=avx2 */
+static void exec_n128_k64_816_v02_dit_fwd_avx2(const stride_plan_t *plan,
+                                              double *re, double *im,
+                                              size_t slice_K, size_t full_K,
+                                              int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_OUTER(0,  8, avx2)
+    VFFT_PROTO_STAGE_T1S  (1, 16, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=64
+ *   factors=4,16
+ *   variants=LOG3,FLAT
+ *   orient=DIF dir=FWD isa=avx2 */
+static void exec_n64_k64_416_v10_dif_fwd_avx2(const stride_plan_t *plan,
+                                             double *re, double *im,
+                                             size_t slice_K, size_t full_K,
+                                             int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_LOG3 (0,  4, avx2)
+    VFFT_PROTO_STAGE_DIF_OUTER(1, 16, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=8
+ *   factors=64
+ *   variants=FLAT
+ *   orient=DIF dir=FWD isa=avx2 */
+static void exec_n64_k8_64_v0_dif_fwd_avx2(const stride_plan_t *plan,
+                                          double *re, double *im,
+                                          size_t slice_K, size_t full_K,
+                                          int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_OUTER(0, 64, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=32 K=8
+ *   factors=32
+ *   variants=FLAT
+ *   orient=DIF dir=FWD isa=avx2 */
+static void exec_n32_k8_32_v0_dif_fwd_avx2(const stride_plan_t *plan,
+                                          double *re, double *im,
+                                          size_t slice_K, size_t full_K,
+                                          int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_OUTER(0, 32, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=128 K=36
+ *   factors=16,8
+ *   variants=FLAT,T1S
+ *   orient=DIT dir=FWD isa=avx2 */
+static void exec_n128_k36_168_v02_dit_fwd_avx2(const stride_plan_t *plan,
+                                              double *re, double *im,
+                                              size_t slice_K, size_t full_K,
+                                              int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_OUTER(0, 16, avx2)
+    VFFT_PROTO_STAGE_T1S  (1,  8, avx2)
+}
+
 /* ── Backward executors (avx2) ─────────────────────────────── */
 /* Plan-shaped executor specialization
  *   N=1024 K=128
@@ -7328,6 +7401,74 @@ static void exec_n128_k1024_2444_dit_bwd_avx2(const stride_plan_t *plan,
     VFFT_PROTO_STAGE_BWD(0,  2, avx2)
 }
 
+/* Plan-shaped executor specialization
+ *   N=128 K=64
+ *   factors=8,16
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIT dir=BWD isa=avx2 */
+static void exec_n128_k64_816_dit_bwd_avx2(const stride_plan_t *plan,
+                                          double *re, double *im,
+                                          size_t slice_K, size_t full_K,
+                                          int start_stage)
+{
+    VFFT_PROTO_STAGE_BWD(1, 16, avx2)
+    VFFT_PROTO_STAGE_BWD(0,  8, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=64
+ *   factors=4,16
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx2 */
+static void exec_n64_k64_416_dif_bwd_avx2(const stride_plan_t *plan,
+                                         double *re, double *im,
+                                         size_t slice_K, size_t full_K,
+                                         int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(1, 16, avx2)
+    VFFT_PROTO_STAGE_DIF_BWD(0,  4, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=8
+ *   factors=64
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx2 */
+static void exec_n64_k8_64_dif_bwd_avx2(const stride_plan_t *plan,
+                                       double *re, double *im,
+                                       size_t slice_K, size_t full_K,
+                                       int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(0, 64, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=32 K=8
+ *   factors=32
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx2 */
+static void exec_n32_k8_32_dif_bwd_avx2(const stride_plan_t *plan,
+                                       double *re, double *im,
+                                       size_t slice_K, size_t full_K,
+                                       int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(0, 32, avx2)
+}
+
+/* Plan-shaped executor specialization
+ *   N=128 K=36
+ *   factors=16,8
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIT dir=BWD isa=avx2 */
+static void exec_n128_k36_168_dit_bwd_avx2(const stride_plan_t *plan,
+                                          double *re, double *im,
+                                          size_t slice_K, size_t full_K,
+                                          int start_stage)
+{
+    VFFT_PROTO_STAGE_BWD(1,  8, avx2)
+    VFFT_PROTO_STAGE_BWD(0, 16, avx2)
+}
+
 
 /* Forward lookup: returns the specialized executor for this plan or NULL.
  * Caller falls back to the generic executor when this returns NULL. */
@@ -7387,6 +7528,12 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && _MATCH_T1S_INNER(plan, 1))
         return exec_n32_k4_32_v0_dit_fwd_avx2;
 
+    /* Entry: N=32 K=8 factors=32 variants=v0 */
+    if (plan->N == 32 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 32)
+        return exec_n32_k8_32_v0_dif_fwd_avx2;
+
     /* Entry: N=32 K=32 factors=8,4 variants=v02 */
     if (plan->N == 32 && plan->K == 32 && plan->num_stages == 2
         && plan->use_dif_forward == 0
@@ -7434,6 +7581,12 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && _MATCH_T1S_INNER(plan, 1))
         return exec_n64_k4_64_v0_dit_fwd_avx2;
 
+    /* Entry: N=64 K=8 factors=64 variants=v0 */
+    if (plan->N == 64 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 64)
+        return exec_n64_k8_64_v0_dif_fwd_avx2;
+
     /* Entry: N=64 K=32 factors=8,8 variants=v02 */
     if (plan->N == 64 && plan->K == 32 && plan->num_stages == 2
         && plan->use_dif_forward == 0
@@ -7441,6 +7594,14 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && plan->factors[1] == 8
         && _MATCH_T1S_INNER(plan, 2))
         return exec_n64_k32_88_v02_dit_fwd_avx2;
+
+    /* Entry: N=64 K=64 factors=4,16 variants=v10 */
+    if (plan->N == 64 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 16
+        && plan->stages[0].t1_fwd  != NULL && plan->stages[0].use_log3)
+        return exec_n64_k64_416_v10_dif_fwd_avx2;
 
     /* Entry: N=64 K=256 factors=4,4,4 variants=v022 */
     if (plan->N == 64 && plan->K == 256 && plan->num_stages == 3
@@ -7569,6 +7730,22 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx2(const stride_plan_t 
         && plan->factors[1] == 32
         && plan->stages[0].t1_fwd  != NULL && plan->stages[0].use_log3)
         return exec_n128_k32_432_v10_dif_fwd_avx2;
+
+    /* Entry: N=128 K=36 factors=16,8 variants=v02 */
+    if (plan->N == 128 && plan->K == 36 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 16
+        && plan->factors[1] == 8
+        && _MATCH_T1S_INNER(plan, 2))
+        return exec_n128_k36_168_v02_dit_fwd_avx2;
+
+    /* Entry: N=128 K=64 factors=8,16 variants=v02 */
+    if (plan->N == 128 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 8
+        && plan->factors[1] == 16
+        && _MATCH_T1S_INNER(plan, 2))
+        return exec_n128_k64_816_v02_dit_fwd_avx2;
 
     /* Entry: N=128 K=256 factors=4,4,8 variants=v022 */
     if (plan->N == 128 && plan->K == 256 && plan->num_stages == 3
@@ -11168,6 +11345,39 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_bwd_avx2(const stride_plan_t 
         && plan->factors[2] == 4
         && plan->factors[3] == 4)
         return exec_n128_k1024_2444_dit_bwd_avx2;
+
+    /* Entry: N=128 K=64 factors=8,16 */
+    if (plan->N == 128 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 8
+        && plan->factors[1] == 16)
+        return exec_n128_k64_816_dit_bwd_avx2;
+
+    /* Entry: N=64 K=64 factors=4,16 */
+    if (plan->N == 64 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 16)
+        return exec_n64_k64_416_dif_bwd_avx2;
+
+    /* Entry: N=64 K=8 factors=64 */
+    if (plan->N == 64 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 64)
+        return exec_n64_k8_64_dif_bwd_avx2;
+
+    /* Entry: N=32 K=8 factors=32 */
+    if (plan->N == 32 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 32)
+        return exec_n32_k8_32_dif_bwd_avx2;
+
+    /* Entry: N=128 K=36 factors=16,8 */
+    if (plan->N == 128 && plan->K == 36 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 16
+        && plan->factors[1] == 8)
+        return exec_n128_k36_168_dit_bwd_avx2;
 
     return NULL;
 }
@@ -14893,6 +15103,79 @@ static void exec_n128_k1024_2444_v0222_dit_fwd_avx512(const stride_plan_t *plan,
     VFFT_PROTO_STAGE_T1S  (3,  4, avx512)
 }
 
+/* Plan-shaped executor specialization
+ *   N=128 K=64
+ *   factors=8,16
+ *   variants=FLAT,T1S
+ *   orient=DIT dir=FWD isa=avx512 */
+static void exec_n128_k64_816_v02_dit_fwd_avx512(const stride_plan_t *plan,
+                                                double *re, double *im,
+                                                size_t slice_K, size_t full_K,
+                                                int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_OUTER(0,  8, avx512)
+    VFFT_PROTO_STAGE_T1S  (1, 16, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=64
+ *   factors=4,16
+ *   variants=LOG3,FLAT
+ *   orient=DIF dir=FWD isa=avx512 */
+static void exec_n64_k64_416_v10_dif_fwd_avx512(const stride_plan_t *plan,
+                                               double *re, double *im,
+                                               size_t slice_K, size_t full_K,
+                                               int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_LOG3 (0,  4, avx512)
+    VFFT_PROTO_STAGE_DIF_OUTER(1, 16, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=8
+ *   factors=64
+ *   variants=FLAT
+ *   orient=DIF dir=FWD isa=avx512 */
+static void exec_n64_k8_64_v0_dif_fwd_avx512(const stride_plan_t *plan,
+                                            double *re, double *im,
+                                            size_t slice_K, size_t full_K,
+                                            int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_OUTER(0, 64, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=32 K=8
+ *   factors=32
+ *   variants=FLAT
+ *   orient=DIF dir=FWD isa=avx512 */
+static void exec_n32_k8_32_v0_dif_fwd_avx512(const stride_plan_t *plan,
+                                            double *re, double *im,
+                                            size_t slice_K, size_t full_K,
+                                            int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_DIF_OUTER(0, 32, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=128 K=36
+ *   factors=16,8
+ *   variants=FLAT,T1S
+ *   orient=DIT dir=FWD isa=avx512 */
+static void exec_n128_k36_168_v02_dit_fwd_avx512(const stride_plan_t *plan,
+                                                double *re, double *im,
+                                                size_t slice_K, size_t full_K,
+                                                int start_stage)
+{
+    (void)full_K;
+    VFFT_PROTO_STAGE_OUTER(0, 16, avx512)
+    VFFT_PROTO_STAGE_T1S  (1,  8, avx512)
+}
+
 /* ── Backward executors (avx512) ─────────────────────────────── */
 /* Plan-shaped executor specialization
  *   N=1024 K=128
@@ -18045,6 +18328,74 @@ static void exec_n128_k1024_2444_dit_bwd_avx512(const stride_plan_t *plan,
     VFFT_PROTO_STAGE_BWD(0,  2, avx512)
 }
 
+/* Plan-shaped executor specialization
+ *   N=128 K=64
+ *   factors=8,16
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIT dir=BWD isa=avx512 */
+static void exec_n128_k64_816_dit_bwd_avx512(const stride_plan_t *plan,
+                                            double *re, double *im,
+                                            size_t slice_K, size_t full_K,
+                                            int start_stage)
+{
+    VFFT_PROTO_STAGE_BWD(1, 16, avx512)
+    VFFT_PROTO_STAGE_BWD(0,  8, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=64
+ *   factors=4,16
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx512 */
+static void exec_n64_k64_416_dif_bwd_avx512(const stride_plan_t *plan,
+                                           double *re, double *im,
+                                           size_t slice_K, size_t full_K,
+                                           int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(1, 16, avx512)
+    VFFT_PROTO_STAGE_DIF_BWD(0,  4, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=64 K=8
+ *   factors=64
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx512 */
+static void exec_n64_k8_64_dif_bwd_avx512(const stride_plan_t *plan,
+                                         double *re, double *im,
+                                         size_t slice_K, size_t full_K,
+                                         int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(0, 64, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=32 K=8
+ *   factors=32
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIF dir=BWD isa=avx512 */
+static void exec_n32_k8_32_dif_bwd_avx512(const stride_plan_t *plan,
+                                         double *re, double *im,
+                                         size_t slice_K, size_t full_K,
+                                         int start_stage)
+{
+    VFFT_PROTO_STAGE_DIF_BWD(0, 32, avx512)
+}
+
+/* Plan-shaped executor specialization
+ *   N=128 K=36
+ *   factors=16,8
+ *   (backward: variant-independent — uses n1_bwd only)
+ *   orient=DIT dir=BWD isa=avx512 */
+static void exec_n128_k36_168_dit_bwd_avx512(const stride_plan_t *plan,
+                                            double *re, double *im,
+                                            size_t slice_K, size_t full_K,
+                                            int start_stage)
+{
+    VFFT_PROTO_STAGE_BWD(1,  8, avx512)
+    VFFT_PROTO_STAGE_BWD(0, 16, avx512)
+}
+
 
 /* Forward lookup: returns the specialized executor for this plan or NULL.
  * Caller falls back to the generic executor when this returns NULL. */
@@ -18104,6 +18455,12 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx512(const stride_plan_
         && _MATCH_T1S_INNER(plan, 1))
         return exec_n32_k4_32_v0_dit_fwd_avx512;
 
+    /* Entry: N=32 K=8 factors=32 variants=v0 */
+    if (plan->N == 32 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 32)
+        return exec_n32_k8_32_v0_dif_fwd_avx512;
+
     /* Entry: N=32 K=32 factors=8,4 variants=v02 */
     if (plan->N == 32 && plan->K == 32 && plan->num_stages == 2
         && plan->use_dif_forward == 0
@@ -18151,6 +18508,12 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx512(const stride_plan_
         && _MATCH_T1S_INNER(plan, 1))
         return exec_n64_k4_64_v0_dit_fwd_avx512;
 
+    /* Entry: N=64 K=8 factors=64 variants=v0 */
+    if (plan->N == 64 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 64)
+        return exec_n64_k8_64_v0_dif_fwd_avx512;
+
     /* Entry: N=64 K=32 factors=8,8 variants=v02 */
     if (plan->N == 64 && plan->K == 32 && plan->num_stages == 2
         && plan->use_dif_forward == 0
@@ -18158,6 +18521,14 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx512(const stride_plan_
         && plan->factors[1] == 8
         && _MATCH_T1S_INNER(plan, 2))
         return exec_n64_k32_88_v02_dit_fwd_avx512;
+
+    /* Entry: N=64 K=64 factors=4,16 variants=v10 */
+    if (plan->N == 64 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 16
+        && plan->stages[0].t1_fwd  != NULL && plan->stages[0].use_log3)
+        return exec_n64_k64_416_v10_dif_fwd_avx512;
 
     /* Entry: N=64 K=256 factors=4,4,4 variants=v022 */
     if (plan->N == 64 && plan->K == 256 && plan->num_stages == 3
@@ -18286,6 +18657,22 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_fwd_avx512(const stride_plan_
         && plan->factors[1] == 32
         && plan->stages[0].t1_fwd  != NULL && plan->stages[0].use_log3)
         return exec_n128_k32_432_v10_dif_fwd_avx512;
+
+    /* Entry: N=128 K=36 factors=16,8 variants=v02 */
+    if (plan->N == 128 && plan->K == 36 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 16
+        && plan->factors[1] == 8
+        && _MATCH_T1S_INNER(plan, 2))
+        return exec_n128_k36_168_v02_dit_fwd_avx512;
+
+    /* Entry: N=128 K=64 factors=8,16 variants=v02 */
+    if (plan->N == 128 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 8
+        && plan->factors[1] == 16
+        && _MATCH_T1S_INNER(plan, 2))
+        return exec_n128_k64_816_v02_dit_fwd_avx512;
 
     /* Entry: N=128 K=256 factors=4,4,8 variants=v022 */
     if (plan->N == 128 && plan->K == 256 && plan->num_stages == 3
@@ -21885,6 +22272,39 @@ static inline vfft_proto_exec_fn vfft_proto_lookup_bwd_avx512(const stride_plan_
         && plan->factors[2] == 4
         && plan->factors[3] == 4)
         return exec_n128_k1024_2444_dit_bwd_avx512;
+
+    /* Entry: N=128 K=64 factors=8,16 */
+    if (plan->N == 128 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 8
+        && plan->factors[1] == 16)
+        return exec_n128_k64_816_dit_bwd_avx512;
+
+    /* Entry: N=64 K=64 factors=4,16 */
+    if (plan->N == 64 && plan->K == 64 && plan->num_stages == 2
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 4
+        && plan->factors[1] == 16)
+        return exec_n64_k64_416_dif_bwd_avx512;
+
+    /* Entry: N=64 K=8 factors=64 */
+    if (plan->N == 64 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 64)
+        return exec_n64_k8_64_dif_bwd_avx512;
+
+    /* Entry: N=32 K=8 factors=32 */
+    if (plan->N == 32 && plan->K == 8 && plan->num_stages == 1
+        && plan->use_dif_forward == 1
+        && plan->factors[0] == 32)
+        return exec_n32_k8_32_dif_bwd_avx512;
+
+    /* Entry: N=128 K=36 factors=16,8 */
+    if (plan->N == 128 && plan->K == 36 && plan->num_stages == 2
+        && plan->use_dif_forward == 0
+        && plan->factors[0] == 16
+        && plan->factors[1] == 8)
+        return exec_n128_k36_168_dit_bwd_avx512;
 
     return NULL;
 }
