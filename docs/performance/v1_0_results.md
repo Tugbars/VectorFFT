@@ -60,6 +60,53 @@ The median 2.64× win comes from VectorFFT's twin advantages:
    variant codelets (FLAT / LOG3 / T1S / BUF) selected per
    `(R, me, ios)` cell.
 
+### Arbitrary K — odd / non-multiple-of-VW batch (single-thread)
+
+In-place c2c now accepts **any** batch K, not just `K % VW == 0`. A codelet-internal
+rem-aware tail ([arbitrary_k_tail_handling.md](arbitrary_k_tail_handling.md)) covers the
+`1..VW-1` leftover lanes: the bulk full-vector loop, then **`rem==1` → one scalar single
+lane, `rem>=2` → one masked vector pass**. Every radix carries it — monolithic (r2–r5, r7,
+primes) and composite / CT-blocked (r8, r16, r32, r64). Bit-exact at every K (`fwd+bwd ==
+N·x` + a bulk-vs-tail-split diagnostic, all `corr = 0.0`).
+
+Forward vs MKL `DFTI_INPLACE` split, `bench_inplace_oddk` `measure_ab` (best-of-5 min,
+cachebust + cool, order-flip). **Each cell uses its CALIBRATED `spike_wisdom` factorization**
+(odd K reuses the same N's nearest-K plan). Two methodology notes matter:
+- These run the **GENERIC executor** — the only path that carries the tail today. The §1 main
+  table (and the `CSV` column below) is **baked/JIT**, which is ~1.5–2× faster on multi-stage
+  cells, so the *absolute* margins here sit below the baked reference (the documented "generic
+  floor; `--jit` widens it"). The apples-to-apples comparison is **odd-K vs even-K on the same
+  generic executor.**
+- Measured on a **live host**; cells marked `*` show order-flip spread (thermal noise).
+
+```
+ N      plan (calibrated)    K=32 rem0   K=33 rem1   K=31 rem3   | CSV baked K=32
+──────────────────────────────────────────────────────────────────────────────────
+ 64     8x8/DIT              3.43×       2.69×       2.65×       | 3.03×
+ 128    4x32/DIF             1.92×*      2.30×       (noisy)     | 3.26×
+ 256    4x8x8/DIT            1.31×       2.27×       (noisy)     | 3.04×
+ 512    4x4x32/DIF           2.09×       1.78×       2.46×       | 1.98×
+ 1024   4x4x8x8/DIT          1.19×       1.63×       1.64×       | 2.75×
+ 4096   4x4x4x8x8/DIT        2.70×*      1.48×       1.52×       | 2.57×
+──────────────────────────────────────────────────────────────────────────────────
+```
+
+Composite-stage cell (CT-blocked r16, `bench_oddk_composite`, plan N=256 [16,16] T1S):
+`K=8 (rem0) 3.02× · K=13 (rem1) 2.31× · K=17 (rem1) 2.48× · K=15 (rem3) 2.61×`.
+
+> **Odd-K is bit-exact and competitive — on the generic executor it tracks or beats the even-K
+> cell (N=256: even 1.31× → odd 2.27×; N=1024: even 1.19× → odd 1.63×; N=64: even 3.43× → odd
+> ~2.67×).** The tail adds no structural cost; the gap to the baked §1 reference is the
+> generic-vs-baked executor difference, not the remainder handling. Reaching the baked numbers at
+> odd K needs the JIT/baked executor to carry the tail (today JIT = even-K 1D C2C only — a
+> follow-up).
+>
+> **Why scalar-at-rem==1 + masked-at-rem≥2** (the measured contract): a *pure* scalar tail erodes
+> as the scalar fraction grows (1.77× at rem=1 → 1.61× at K=31 → 1.29× at K=15 rem=3), while one
+> masked pass is **flat in rem** (~1.6–1.72×). The hybrid takes the cheaper scalar lane at rem==1
+> and the flat masked pass at rem≥2. The scalar lane renders monolithically (no register pressure
+> at width 1), so even spill-scratch composite codelets honour it.
+
 ### Multi-threaded — vs MKL at T=8
 
 dag (8 P-cores, pinned core 0, pool K-split) vs MKL `mkl_set_num_threads(8)`, **identical split
@@ -141,6 +188,50 @@ follow-up) so its rows are dag-ST vs MKL-8T. A per-cell MT-vs-ST gate guards cor
 > The huge small-N margins are where MKL can't usefully thread the batch; the steady mid/high-N MODEB
 > wins (1.2×–5×) are the real K-split scaling. Generic executor (JIT wired + bit-exact, not yet
 > re-run here); BAILEY2 MT is a follow-up — both are conservative floors.
+
+### Out-of-place — arbitrary K (odd / non-multiple-of-8 batch)
+
+The OOP path used to fail-closed on `K % 8 != 0`. It now serves **any K**, across all three
+kinds, via a **codelet-internal rem-aware tail** (the same contract as the in-place tail,
+`docs/performance/arbitrary_k_tail_handling.md`): the bulk full-vector loop, then for the
+`1..VW-1` leftover batch lanes **`rem==1` → one scalar single lane, `rem>=2` → one masked
+vector pass**. The scalar lane is rendered monolithically (no register pressure at width 1).
+Two of the three kinds keep **natural order** at odd K:
+- **MODEB** (scrambled) rides the tailed in-place codelets (n1 OOP wrapper) — any K, free.
+- **LEAF** (natural, N≤128) — the `n1_oop` leaf carries the tail.
+- **BAILEY2** (natural, all N) — a new **per-lane `t1_oop`** second-stage codelet + a per-group
+  twiddle table replace `t1p`'s per-VW-block broadcast (which straddles k2 boundaries at odd K).
+
+Forward measured vs MKL `NOT_INPLACE` split, calibrated OOP wisdom loaded for the aligned cell
+(K=32) and `dp_best` for the odd cells (no wisdom entry); best-of-5 min, cachebust + cool,
+order-flip. The chooser picks the fastest kind per cell; odd-K natural-order is available
+whenever LEAF/BAILEY2 win.
+
+```
+ N      K    rem  kind     order      dag/MKL
+─────────────────────────────────────────────
+ 8      31   3    LEAF     natural    6.32×
+ 8      33   1    LEAF     natural    6.26×
+ 16     31   3    BAILEY2  natural    2.99×
+ 16     33   1    BAILEY2  natural    2.82×
+ 64     31   3    BAILEY2  natural    1.79×
+ 64     33   1    BAILEY2  natural    2.06×
+ 256    31   3    BAILEY2  natural    1.32×
+ 256    33   1    MODEB    scrambled  1.40×
+ 1024   31   3    BAILEY2  natural    1.30×
+ 1024   33   1    BAILEY2  natural    1.36×
+─────────────────────────────────────────────
+```
+
+> **Odd-K out-of-place beats MKL on every cell — 1.30×–6.32×, landing in the same band as the
+> adjacent calibrated even-K cells (§1 above).** Correctness is the gate: OOP roundtrip
+> `fwd+bwd == N·x` at ~1e-15 every cell, and forced-BAILEY2 forward is bit-correct vs a naive
+> O(N²) DFT in natural order (the per-lane `t1_oop` + per-group twiddle table validated at
+> N=256/512/1024). The `rem==1` scalar lane costs nothing measurable vs the masked neighbours.
+>
+> These were measured on a **live host** (not the locked-down clean machine the §1 even-K table
+> used), so they are **directional** — several cells show order-flip spread from thermal noise.
+> The calibrated even-K cells in §1 are the publication reference; the odd-K numbers track them.
 
 ## 2. vs MKL — 2D C2C
 
