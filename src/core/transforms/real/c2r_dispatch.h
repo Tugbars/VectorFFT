@@ -51,7 +51,7 @@ static inline int vfft_c2r_choose_factors(int N, int *factors, int max_nf)
  * hc2hc families). Returns NULL if N is not coverable. */
 static inline c2r_plan_t *vfft_c2r_plan_create(int N, size_t K, const rfft_codelets_t *reg)
 {
-    if (N < 2 || K == 0 || (K % 8) != 0 || !reg) return NULL;
+    if (N < 2 || K == 0 || !reg) return NULL; /* arbitrary-K: rem-aware tail handles K % VW != 0 (was K%8-gated) */
     int factors[VFFT_RFFT_MAX_STAGES];
     int nf = 0;
     const int *variant = NULL;   /* NULL => default policy in c2r_plan_create_ex */
@@ -254,7 +254,13 @@ static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
 static inline vfft_c2r_disp_t *vfft_c2r_disp_create_auto(int N, size_t K,
         const rfft_codelets_t *rfft_reg, vfft_proto_registry_t *c2c_reg)
 {
-    return vfft_c2r_disp_create(N, K, vfft_c2r_layout_wisdom(N, K), rfft_reg, c2c_reg);
+    /* Arbitrary-K: the SPLIT (decoupled-stride) layout can't do a non-8-multiple K
+     * (its inner is vec-width-batched) — force NATURAL so odd K runs the rfft-style
+     * cascade with the rem-aware tail. Aligned K keeps the wisdom/threshold choice.
+     * (The bakeoff path in vfft.c is already NULL-graceful via _vfft_r2c_build_stride.) */
+    vfft_c2r_layout_t lay =
+        ((K % 8) != 0) ? VFFT_C2R_NATURAL : vfft_c2r_layout_wisdom(N, K);
+    return vfft_c2r_disp_create(N, K, lay, rfft_reg, c2c_reg);
 }
 
 #endif /* VFFT_C2R_DISPATCH_H */

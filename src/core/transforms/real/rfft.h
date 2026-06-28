@@ -293,7 +293,7 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
                                                const rfft_codelets_t *reg)
 {
     if (nf < 1 || nf > VFFT_RFFT_MAX_STAGES) return NULL;
-    if (K == 0 || (K % 8) != 0) return NULL; /* vl must be 8-multiple */
+    if (K == 0) return NULL; /* arbitrary-K: rem-aware tail handles vl % VW != 0 (was K%8-gated) */
     {
         long acc = 1;
         for (int i = 0; i < nf; i++) acc *= factors[i];
