@@ -1,0 +1,279 @@
+# Arbitrary-K padding — the full design record (2026-06-30)
+
+> **The decision, in one paragraph.** The **SSE2/scalar tail** stays the universal
+> default — it makes every K correct on any buffer, and it shipped this session.
+> **Padding** (round the batch to `Kp = roundup(K,VW)`, run pure full-SIMD, discard the
+> junk lanes) is added as an **opt-in fast path** behind a **padded allocator** (the
+> FFTW-`fftw_malloc` model). When the caller used the padded allocator, the **planner
+> measures tail-vs-pad per cell** — jointly with the factorization — and records the
+> winner in wisdom; when the caller brings a tight buffer, it always tails. The design
+> is **uniform across every feature** (no bespoke per-feature padding paths) and
+> **correctness-gated** (per-codelet bit-exact test + per-cell fallback + a
+> stride-match invariant), so the worst case for any cell is "use the tail," never
+> corruption. Measured win where padding applies: **+25–34% on small odd batches.**
+
+This document records *every* decision we reached and *why*, so the reasoning isn't
+lost. It supersedes the earlier "admissibility gate" framing in
+[[arbitrary_k_pad_vs_tail]] with a cleaner, uniform model.
+
+---
+
+## 1. The problem
+
+We process a **batch of K transforms** at once and the SIMD unit does `VW` lanes at a
+time (AVX2 `VW=4`). When `K mod VW ≠ 0`, the leftover `1..VW-1` batch lanes don't fill
+a SIMD group. Two ways to finish them:
+
+- **Tail** — do the leftover lanes at narrower width (SSE2 width-2 + a scalar
+  straggler). Correct, slightly slower per lane.
+- **Padding** — pad the batch to `Kp`, run pure full-width SIMD on `Kp` "transforms"
+  (the extra `Kp-K` are zeros, results discarded), no tail.
+
+## 2. What already shipped — the tail (universal default)
+
+The rem-aware **SSE2/scalar tail** is generated through the DAG compiler for **every
+AVX2 family** (in-place c2c incl. composite, OOP, rfft, c2r, trig). Bit-exact
+validated. AVX-512 keeps its masked tail (architectural). This is the correctness
+floor: **any K works on any buffer.** Padding is therefore a pure *optimization*
+competing against a working tail — decided per cell. See [[arbitrary_k_vectorization]],
+[[arbitrary_k_scalartail_experiment]].
+
+## 3. The padding finding (the motivation)
+
+Calibrated, robust interleaved-median A/B (`build_tuned/benches/bench_pad_vs_tail.c`),
+rem=3, N=256…4096 — **% padding is faster than the tail**:
+
+| K | N=256 | N=512 | N=1024 | N=2048 | N=4096 |
+|---|---|---|---|---|---|
+| **7** | +33% | +1% | +22% | +24% | +28% |
+| **11** | +15% | +9% | **+34%** | +33% | +25% |
+| 15 | −3% | +3% | +5% | +18% | −6% |
+| 19–31 | mixed | mixed | mostly + | mixed | mixed |
+
+- **Small K (7, 11): padding wins everywhere, decisively (+25…+34%)** — the narrow tail
+  is a huge fraction of the work there, so trading it for one wasted full-width
+  transform is a big net win.
+- **rem=1 / large K:** tail wins or ties (padding wastes too much, or the tail is
+  already well-amortized).
+- **Crossover rule:** padding wins when wasted-fraction `(Kp−K)/K` < the tail's overhead
+  fraction → **small K, rem ≥ 2.**
+
+We **conceded** the win is *not* marginal — the clean cells are a third faster.
+
+## 4. The core constraint — padding needs `Kp` memory *in the right layout*
+
+The expensive part of padding is **not** the extra memory — it's the **layout**. Our
+batch-packed split layout puts element `e` of transform `b` at `re[e*K + b]`: the batch
+axis `b` is **contiguous**, elements are at stride `K`. Padding widens the stride to
+`Kp`, and the spare columns are **interleaved between every element-row**, not appended:
+
+```
+tight  (stride 3): [ t0e0 t1e0 t2e0 | t0e1 t1e1 t2e1 ]
+padded (stride 4): [ t0e0 t1e0 t2e0 0 | t0e1 t1e1 t2e1 0 ]
+                                    ^                  ^   spares woven between rows
+```
+
+So "pad" means **the data must physically live at stride `Kp`.** Getting tight (`K`)
+data into a `Kp` layout is a **re-thread** — a copy of the whole batch (every element
+past row 0 moves). On a memory-bound FFT that copy can be ~4 extra passes vs the FFT's
+~`2·nf`, so **transparently copying-to-pad loses** — it costs more than the tail it
+saves. Padding is free only when the data is **born** at stride `Kp` (contract) or the
+re-thread **rides a write that's already happening** (OOP).
+
+## 5. Where padding is free vs cursed (and the FFTW comparison)
+
+- **OOP:** the stage-0 codelet already reads `src` and writes a fresh `dst`. Set
+  `os=Kp` and the re-thread rides that write — **free.**
+- **Strided / AOS (2D row codelet):** each transform is contiguous, so padding *appends*
+  rows — no re-thread. (Moot for the 2D *production* path, which already handles odd
+  dims via the transpose's scalar edges + the vertical tail — see
+  [[strided_2d_tail_no_hard_tail]].)
+- **In-place:** no free write exists; the data just sits there tight → padding needs a
+  contract or a losing copy. **This is the only genuinely "cursed" case.**
+
+**FFTW/MKL don't have this problem at all:** they use *interleaved* complex and
+vectorize *within* a transform, looping over the batch — so the SIMD width never has to
+divide the batch count; there's no batch remainder (it's why MKL is flat-in-K). We have
+the remainder *because* our split + batch-packed layout vectorizes *across* the batch —
+the same choice that wins us MT scaling, batch streaming, and the odd-radix/scrambled
+blind-spot lead. **Padding-vs-tail is the maintenance cost of a layout that wins
+everywhere else** — not a feature we lack relative to FFTW.
+
+## 6. The converged design — opt-in padded allocator + measured tail-vs-pad
+
+We do **not** force a layout (that would break drop-in interop and just relocate the
+re-thread onto callers whose data arrives tight). Instead, the **FFTW model**: provide a
+**padded allocator**; callers who use it get padding, everyone else gets the tail.
+
+### The key realization that makes it uniform and footgun-free
+
+On a **padded buffer** (stride `Kp`), we build **one `Kp`-strided plan**, and *both*
+choices are valid for the K real transforms:
+
+- **`me = Kp`** → pure full-SIMD, no tail, computes the junk columns too → **pad**.
+- **`me = K`** → bulk loop + SSE2/scalar tail for `K mod VW`, skips junk → **tail**.
+
+Same buffer, same plan, just a different batch count. So the wisdom's pad-vs-tail
+verdict is simply **"which `me`"** — and it is **always honorable**, because both are
+correct and free on a padded buffer. That dissolves the deepest danger (a wisdom
+"pad" verdict the runtime can't legally honor): **pad is only ever consulted in padded
+mode, where it is always legal.**
+
+### The uniform rule (every feature)
+
+> **Padded buffer → build the plan at `Kp`, run at the wisdom's `exec_me` (`Kp`=pad or
+> `K`=tail). Tight buffer → build at `K`, run `me=K` with the tail.**
+
+No new codelets, no new executor modes — the codelets already have both the full-SIMD
+bulk *and* the tail; `plan_create_ex(N, W, …)` already takes the width as a parameter.
+All the bespoke per-feature padding mechanics (OOP riding the write, MODEB
+scrambled-backward, r2c-pack-riding, in-place fusion) were only needed to *manufacture*
+`Kp` memory on a tight buffer — the padded allocator obviates all of them.
+
+## 7. The verified technical model (from the code investigation)
+
+A 6-agent code investigation + adversarial verification (709K tokens) confirmed:
+
+- **`ios` (batch stride) is baked into the plan** (`st->stride = K·∏inner factors`,
+  `src/core/engine/twiddle.h:62-71`); the runtime `K` arg flows **only** to `me`/
+  `slice_K`. ⇒ a bare `me=Kp` against a `K`-built plan **over-runs into the next
+  transform** — *wrong*. Padding **requires a `Kp`-built plan** (`plan_create_ex(N,Kp,…)`).
+- **Twiddle ANGLES are K-independent** (`twiddle.h:251-296`; K is only a
+  replication/stride count) ⇒ a `Kp` rebuild reuses the same factorization+variants and
+  just re-lays-out geometry — **cheap to construct.**
+- **Codelet bodies are stride-agnostic** (`rio[leg*ios + k]`) — widening `ios` K→Kp is
+  the only change to addressing; the body is unchanged.
+- **The leg-0 cf0 cmul / bwd conj sweep reads `slice_K` contiguous doubles**
+  (`executor_generic.h:77-113`), so the **batch axis must be physically contiguous and
+  ≥ the run width** — which the padded buffer (`Kp`-wide, batch contiguous) satisfies.
+- **OOP is stage-0-only**; no last-stage-OOP mode exists — irrelevant under the allocator
+  design (we don't fuse), but it's why the in-place *fusion* alternative was "large."
+- **Calibrator buffer-overflow gotcha (real):** `vfft_proto_dp_bench_explicit` benches
+  `N·K_eff` but the dp context buffers are sized `max_N·ctx->K`, and the `K_eff` plumbing
+  is **dead** (every caller passes `ctx->K`). Benching at `Kp>K` **overflows** → the pad
+  leg needs a **second dp context sized at `Kp`** (or self-alloc).
+- **Wisdom trailing-field scheme is forward/backward compatible** (`wisdom_reader.h:88-91`
+  load stops after the `nf` variants; old binaries ignore extra tokens, new binaries
+  default a missing token).
+- *(Citation note: the runtime c2c path is `src/core/engine/{executor_generic.h,
+  twiddle.h, stride_executor.h}`; some investigator citations drifted into the
+  `dag-fft-compiler` generated tree — substance held, line refs corrected here.)*
+
+## 8. Every danger, and how it is resolved
+
+1. **"Pad" is a conditional strategy the wisdom can't guarantee at runtime.**
+   → **Resolved.** Pad is only recorded/consulted in **padded mode**, where the same
+   `Kp`-plan runs at `me=Kp` *or* `me=K` — both legal. Tight mode never reads it.
+2. **"Padding for every feature" = N bespoke paths.**
+   → **Resolved.** The padded-allocator path is **uniform** (build at `Kp`, run at
+   `exec_me`); the per-feature complexity was only for free-padding on tight buffers,
+   which we don't do.
+3. **Marginal/noisy win.**
+   → **Withdrawn** — it's +25…+34% on the clean cells. (The only residue: under MT the
+   batch is sliced into blocks, so "round up to VW" is per **`block_K`**, not K — a
+   wiring detail, addressed by padding per block or shipping ST-first.)
+4. **In-place specifics.** The scary ones (re-thread copy, fusion executor mode) are
+   **gone** — the caller brings `Kp` memory. Residuals, each tackled:
+   - *Plan-stride must equal buffer-stride* → the dispatch builds the plan at the
+     buffer's actual stride (read from the handle); **invariant:** a plan built at width
+     `W` only ever runs at `me ≤ W` on a `W`-strided buffer; one assert at the execute
+     boundary.
+   - *Junk lanes must be in-bounds + zeroed* → the **allocator zeroes** the pad columns
+     (avoids denormal/NaN slowdown of junk lanes; correctness is already safe by lane
+     independence).
+   - *"Junk can't contaminate real lanes" is asserted, not proven* → the **validation
+     gate** (below).
+   - *`Kp`-geometry edge cases (log3/t1p tables, composite spill sized at `Kp`)* →
+     covered by the gate; any failing cell **falls back to `exec_me=K`** (the validated
+     tail).
+
+## 9. The three wrinkles — decided
+
+- **A — factorization optimality. DECIDED: joint search.** The K-optimal factorization
+  is biased by the tail penalty (toward fewer stages); run padded, that bias is gone, so
+  the **`Kp`-optimal factorization can differ.** **The planner finds the best
+  factorization for that specific K considering BOTH the tail path and the full-SIMD
+  path** — i.e. the calibrator runs a DP search at `K` (tail) *and* at `Kp` (pad), and
+  records the globally-best `(factorization, exec_me)` for the padded mode (separately
+  from the tight-mode `K`-factorization). Don't leave the few % on the table.
+- **B — API binding. DECIDED: opaque handle.** The padded allocator returns a handle (or
+  buffer+stride pair) that the execute path reads — the buffer **carries its own
+  padded-ness**, à la an FFTW plan binding its buffer assumptions. A raw pointer + a
+  separate "is it padded?" boolean is forbidden (a padded buffer passed through the tight
+  path would build a `K`-plan and corrupt).
+- **C — JIT/baked unlock. DECIDED: bench on the runtime path.** The baked/JIT executor is
+  gated to `K%VW==0`; odd K falls to the generic executor. But `me=Kp` **is** VW-aligned,
+  so **padding makes the odd-K batch eligible for the baked fast path.** Padding is
+  therefore not only "skip the tail," it can "upgrade to the fast executor." The
+  calibrator must bench `me=Kp` on the path the runtime will use (baked, if available),
+  or it **under-rates** padding. Free upside if captured; a measurement bias if not.
+
+## 10. Implementation plan (file-by-file)
+
+1. **Wisdom** (`src/core/planning/wisdom_reader.h`): add trailing tokens — `exec_me` and
+   an optional **padded factorization** (written only when it differs from the tight
+   one). Forward/backward compatible: absent ⇒ `exec_me=K` ⇒ today's behavior. Written
+   **only for misaligned K** (aligned cells stay blank — "K=4: nothing; K=7: a code").
+2. **Calibrator** (`_calibrate_c2c`, `src/core/vfft.c:226-272`): for misaligned cells,
+   run **DP@K** (tail, existing) **and DP@Kp** (pad), each best-of-min; an **interleaved
+   A/B** between the two winners (no paired-interleave primitive exists in `measure.h` —
+   add it; fixed-order A/B is thermally biased); **3% hysteresis toward the tail** on
+   near-ties (mirrors `_r2c_bakeoff`, `vfft.c:347`). Bench `me=Kp` **on the baked path**
+   when the runtime would use it (wrinkle C). Set `exec_me` in **both** the DP and the
+   exhaustive branch. **Use a second dp context sized at `Kp`** for the pad leg (the
+   overflow fix).
+3. **Padded allocator + handle** (new, front door): returns a `Kp`-wide, **zeroed**
+   buffer + the stride, as an opaque handle. Matching free (respect
+   `_aligned_malloc`/`posix_memalign` ↔ `aligned_free`).
+4. **Runtime dispatch** (`src/core/vfft.c`, `planner.h:233-234`): padded handle ⇒ build
+   plan at `Kp` (the padded factorization) and run at `exec_me`; tight ⇒ build at `K`,
+   run `me=K` with the tail. Plan/wisdom keyed on `(N,K)` but **built at the buffer's
+   actual stride**.
+5. **Validation gate** (the safety net): per-**codelet** bit-exact — for every radix ×
+   variant × {n1,t1} × direction, build the `Kp` plan, run `me=Kp`, require the K real
+   lanes bit-exact vs the `K`-plan `me=K`. Per-codelet granularity covers all
+   factorizations structurally. Nothing merges until green.
+6. **Stride-match invariant assert** at the execute boundary (cheap, catches any wiring
+   slip into silent corruption).
+
+## 11. Rollout (sequencing)
+
+1. **Step 0 — measurement.** Wisdom `exec_me` + the joint DP@K/DP@Kp interleaved A/B
+   (second `Kp` context). Records which cells want pad, on machine-locked numbers. **Zero
+   execution risk** — no codelet/executor surgery, forward/backward compatible.
+2. **Step 1 — padded allocator + uniform dispatch.** The handle + the build-at-`Kp` +
+   run-`exec_me` path. One uniform path for all features. Tight buffers untouched.
+3. **Later (optional):** MT padding (per `block_K`); the wrinkle-A separate-padded-
+   factorization storage if Step 0 shows meat beyond the shared factorization.
+
+## 12. Why it is robust (the backstops)
+
+- **Correctness:** three independent guards mean **no path to silent corruption** — the
+  **stride-match invariant** (catches plan/buffer mismatch), the **per-codelet bit-exact
+  gate** (proves `me=Kp` ≡ `me=K` on the real lanes), and **per-cell `exec_me`
+  fallback** (any failing or losing cell degrades to the already-validated tail). The
+  worst possible outcome for any cell is "padding didn't help here, use the tail."
+- **Performance:** the decision is **measured per cell** (jointly with factorization, on
+  the real runtime path), so we capture the +25–34% small-odd-K win wherever the buffer
+  allows it, and never regress (hysteresis + fallback default to the tail).
+- **Scope:** **uniform** — one mechanism for every feature, no bespoke per-feature
+  padding paths, no new executor modes, no new codelets.
+
+## 13. What we explicitly are NOT doing (and why)
+
+- **No transparent in-place copy-to-pad** — the re-thread copy (~4 passes) loses to the
+  tail on a memory-bound kernel.
+- **No in-place full-fusion executor mode** — the padded allocator makes `Kp` memory
+  available without it, so the new-executor-mode work is unjustified.
+- **No mandatory padded layout** — it would break drop-in interop and merely relocate the
+  re-thread onto callers with tight external data; the opt-in allocator captures the win
+  from cooperative callers while everyone else gets the tail.
+- **No measured padding on tight buffers** — pad is inadmissible there; tail only.
+
+## See also
+- [[arbitrary_k_pad_vs_tail]] — the bench + the earlier planner-pivot (superseded by this).
+- [[arbitrary_k_tail_strategy]] — scrambled→SSE2 / natural→transpose.
+- [[strided_2d_tail_no_hard_tail]] — 2D already handles odd dims; no hard tail remains.
+- [[arbitrary_k_vectorization]] / [[arbitrary_k_scalartail_experiment]] — the shipped tail.
+- [[memory_bound_thesis]] — why the copy-to-pad path loses.
+- [[mkl_blind_spot_positioning]] — why our layout (and thus the tail/pad cost) is the win.
