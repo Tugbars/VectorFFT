@@ -236,15 +236,89 @@ A 6-agent code investigation + adversarial verification (709K tokens) confirmed:
 6. **Stride-match invariant assert** at the execute boundary (cheap, catches any wiring
    slip into silent corruption).
 
-## 11. Rollout (sequencing)
+## 11. The per-feature wisdom fragmentation (the honest scope)
 
-1. **Step 0 — measurement.** Wisdom `exec_me` + the joint DP@K/DP@Kp interleaved A/B
-   (second `Kp` context). Records which cells want pad, on machine-locked numbers. **Zero
-   execution risk** — no codelet/executor surgery, forward/backward compatible.
-2. **Step 1 — padded allocator + uniform dispatch.** The handle + the build-at-`Kp` +
-   run-`exec_me` path. One uniform path for all features. Tight buffers untouched.
-3. **Later (optional):** MT padding (per `block_K`); the wrinkle-A separate-padded-
-   factorization storage if Step 0 shows meat beyond the shared factorization.
+The design is **uniform at the EXECUTION layer** (build at `Kp`, run `exec_me` — same
+codelets, same mechanism, no new executor) but the **wisdom + calibration layer is
+per-feature**: each feature persists its own wisdom in its **own file + own
+parser/format**. So `exec_me` is **not a one-place add** — it must be added to each
+feature's format, and each feature's calibrate path must run its own Step-0 measurement.
+
+| feature | wisdom format / file |
+|---|---|
+| **1D c2c** | `src/core/planning/wisdom_reader.h` → `spike_wisdom.txt` / `vfft_wisdom_tuned` ← **reference impl** |
+| OOP c2c | `src/core/oop/oop_wisdom.h` → `oop_wisdom.txt` |
+| r2c | `src/core/transforms/real/r2c_dispatch.h` (own format) |
+| c2r | `src/core/transforms/real/c2r_dispatch.h` (own format) |
+| 2D c2c | `src/core/transforms/fft2d/fft2d_c2c_wisdom.h` |
+| 2D r2c | `src/core/transforms/fft2d/fft2d_r2c_wisdom.h` |
+| prime N | `src/core/primes/bluestein_wisdom.h` |
+| MT variants | separate `*_mt.csv` files |
+
+So **"padding for every feature" = the same execution mechanism replicated across ~5
+independent wisdom formats + calibrators** — some of which (2D already handles odd dims;
+odd-K r2c routes to the rfft cascade and ST-loses anyway) may not even *want* it. **c2c
+is the reference implementation; the rest follow it one feature at a time.** Each row
+above that we pursue needs its own `exec_me` field + Step-0 measurement noted as an
+explicit follow-up (Phases 2–4 below). (A standing roadmap item,
+`wisdom_bridge_retirement`, would consolidate these formats and make `exec_me` a
+one-place add — optional; don't block padding on it.)
+
+## 12. Rollout — phased & gated, feature-by-feature
+
+Never build features speculatively: c2c proves the pattern, and two gates decide whether
+to go further.
+
+### Phase 0 — c2c measurement
+*Trustworthy per-cell pad-vs-tail verdicts for 1D c2c, capturing the JIT advantage.*
+- ✅ `exec_me` in `wisdom_reader.h` (struct + load default-K + save, `@version 6`,
+  forward/backward compatible).
+- ✅ Step-0 driver `build_tuned/benches/step0_pad_vs_tail_calib.c` — joint DP@K / DP@Kp,
+  interleaved-median A/B on the `Kp` buffer, 3% hysteresis toward tail, writes a v6
+  side-file. Producing sane verdicts (pad wins most cells +4…+25%; `factKp ≠ factK` in
+  ~half — the joint search is live).
+- ☐ **Wire the JIT/baked path into the pad leg** (wrinkle C: `vfft_proto_plan_jit_fwd(pP)`;
+  tail stays generic) — else we under-rate pad on the generic-only floor.
+- ☐ Run the full sweep → table + side-file. Read: how often / by how much pad wins *with
+  JIT*, which near-ties flip.
+- **🚦 GATE:** is the JIT-included pad win big enough to build the runtime? If marginal
+  once the aligned-stride tail + JIT are in, **stop — the tail is already great.**
+
+### Phase 1 — c2c execution (the real win)
+- ☐ **Padded allocator** — `vfft_alloc_batch(N,K)` → opaque handle (zeroed `Kp` buffer +
+  stride); matching free.
+- ☐ **Store the pad (`Kp`) factorization** in wisdom when `exec_me=Kp` (reserved
+  second-factorization trailing field) — the runtime needs the `Kp`-optimal plan, not the
+  tail's.
+- ☐ **Fold the measurement into live `_calibrate_c2c`** (`src/core/vfft.c:226-272`) — write
+  `exec_me` + pad factorization into the production wisdom; set it in **both** branches;
+  use a **second `Kp`-sized dp context** (the verified overflow fix).
+- ☐ **Dispatch** — padded handle → build `Kp`-plan (pad factorization) + run `me=exec_me`;
+  tight → `K`-plan + tail. **Stride-match invariant assert** at the execute boundary.
+- ☐ **Validation gate** — per-codelet bit-exact `me=Kp` vs `me=K`, fwd+bwd. Non-negotiable.
+- **🚦 GATE:** bit-exact green **+** a vs-MKL bench showing the padded win on real cells.
+  Only this justifies the per-feature rollout.
+
+### Phase 2 — OOP c2c (easiest next)
+`exec_me` in `oop_wisdom.h`; Step-0 in the OOP calibrator; dispatch (OOP **rides the
+write** — the allocator pads the output, free); validation. Lowest-friction feature.
+
+### Phase 3 — r2c / c2r (conditional)
+`exec_me` in their own formats; handle the known nuances — **odd K routes to the rfft
+cascade** (uncalibratable), **MT pad axis = `block_K`** not K. Lower priority (r2c ST
+structurally loses); gate hard on Phase-1 results.
+
+### Phase 4 — trig / 2D (as needed)
+- **2D:** skip — already handles odd dims (transpose scalar edges + vertical tail).
+- **trig:** Makhoul stride path; only on demand.
+
+### Cross-cutting (later, within each feature)
+- **MT padding** — pad per `block_K`; follow-up once ST works.
+
+### Immediate next steps
+1. JIT-path fix in the Step-0 driver (wrinkle C).
+2. Run the full c2c sweep.
+3. Review verdicts → decide Phase 1 at the gate.
 
 ## 12. Why it is robust (the backstops)
 
