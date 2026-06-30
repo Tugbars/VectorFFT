@@ -34,6 +34,12 @@ typedef struct {
     int     split_stage;
     int     block_groups;
     double  best_ns;
+    /* exec_me — the batch width to actually RUN at when the caller supplied a
+     * VW-padded (Kp-wide) buffer: K = run me=K with the SSE2/scalar tail, Kp =
+     * run me=Kp full-SIMD (pad). Trailing field (v6); absent in v5 files loads
+     * as K (= today's no-pad behaviour). Only meaningful for misaligned K; for
+     * K%VW==0 it equals K. See docs/roadmap/tail_handling/padding_design_decision.md. */
+    int     exec_me;
 } vfft_proto_wisdom_entry_t;
 
 typedef struct {
@@ -89,6 +95,11 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
             tok = strtok(NULL, " \t\r\n"); if (!tok) goto skip;
             e.variants[i] = atoi(tok);
         }
+        /* Trailing v6 field: exec_me. Missing (v5 file) -> default to K, which
+         * reproduces the no-pad behaviour. Old binaries stop tokenizing after
+         * the variants above, so they ignore this token (forward compatible). */
+        tok = strtok(NULL, " \t\r\n");
+        e.exec_me = tok ? atoi(tok) : (int)e.K;
 
         /* Append. */
         if (wis->count >= wis->capacity) {
@@ -188,10 +199,10 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
 {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "@version 5\n");
+    fprintf(f, "@version 6\n");
     fprintf(f, "# VectorFFT stride wisdom: %zu entries\n", wis->count);
     fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups "
-               "use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
+               "use_dif_forward variant_codes... exec_me (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
     for (size_t i = 0; i < wis->count; i++) {
         const vfft_proto_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nf);
@@ -202,6 +213,8 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
                 e->use_dif_forward);
         for (int j = 0; j < e->nf; j++)
             fprintf(f, " %d", e->variants[j]);
+        /* v6 trailing field: exec_me (default to K if a producer left it 0). */
+        fprintf(f, " %d", e->exec_me ? e->exec_me : (int)e->K);
         fprintf(f, "\n");
     }
     fclose(f);
