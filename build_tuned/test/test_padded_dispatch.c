@@ -3,17 +3,17 @@
  * vfft.h: alloc a padded batch, set config.batch, vfft_create, vfft_execute — proving the
  * dispatch (build Kp-plan + run the padded wisdom's exec_me) is wired correctly.
  *
- * Exercises BOTH branches of the padded create:
- *   PAD  cell (256,7):  seeded padded-wisdom exec_me=Kp=8 -> plan built at Kp, run me=8 (full-SIMD).
- *   TAIL cell (256,11): NO padded-wisdom entry -> fallback -> tight factorization at Kp=12, run me=11.
+ * UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's exec_me, and
+ * the pad plan IS the aligned (N,Kp) entry. Exercises BOTH branches of the padded create:
+ *   PAD  cell (256,7):  (256,7).exec_me=Kp=8 -> use the aligned (256,8) entry, run me=8 (full-SIMD).
+ *   TAIL cell (256,11): (256,11).exec_me=K=11 -> use (256,11)'s own factorization, run me=11 tail.
  * Correctness oracles (in-place c2c emits SCRAMBLED/digit-reversed bin order, so a natural-order
  * DFT can't be compared elementwise): (1) BIT-EXACT vs a tight (config.batch=NULL) reference plan
- * built at the SAME factorization — the STEP-E guarantee through the front door, proving the padded
- * dispatch produces exactly the library's validated tight c2c output; (2) fwd->bwd roundtrip
- * recovers N*x on the K real lanes (invertibility).
+ * built at the SAME factorization — the STEP-E guarantee through the front door; (2) fwd->bwd
+ * roundtrip recovers N*x on the K real lanes (invertibility).
  *
- * Self-contained: seeds spike_wisdom.txt + spike_wisdom_padded.txt into a scratch dir, points
- * VFFT_WISDOM_DIR at it BEFORE the first vfft_create (the default bundle is lazy-loaded once).
+ * Self-contained: seeds the SINGLE spike_wisdom.txt into a scratch dir, points VFFT_WISDOM_DIR at
+ * it BEFORE the first vfft_create (the default bundle is lazy-loaded once).
  *
  * Build: python build.py --src test/test_padded_dispatch.c --vfft
  */
@@ -47,17 +47,14 @@ static void seed_wisdom(void)
     int fac[3] = {4, 8, 8};   /* product 256 — buildable (radix 4/8) */
     int var[3] = {0, 2, 2};   /* n1, T1S, T1S */
 
+    /* UNIFIED single file: padded verdict = the (N,K) entry's exec_me; pad plan = the aligned
+     * (N,Kp) entry. Seed both with the SAME factorization so pad@me=Kp is bit-exact vs tight@me=K. */
     FILE *ft = fopen(WDIR "/spike_wisdom.txt", "w");
     fprintf(ft, "@version 6\n");
-    seed_line(ft, 256, 7,  fac, var, 3, 100.0, 7);    /* tight, exec_me=K (no-pad) */
-    seed_line(ft, 256, 11, fac, var, 3, 100.0, 11);
+    seed_line(ft, 256, 7,  fac, var, 3, 90.0, 8);     /* (256,7): PAD verdict exec_me=Kp=8 */
+    seed_line(ft, 256, 8,  fac, var, 3, 90.0, 0);     /* (256,8): aligned pad plan (exec_me=0) */
+    seed_line(ft, 256, 11, fac, var, 3, 100.0, 11);   /* (256,11): TAIL verdict exec_me=K=11 */
     fclose(ft);
-
-    FILE *fp = fopen(WDIR "/spike_wisdom_padded.txt", "w");
-    fprintf(fp, "@version 6\n");
-    seed_line(fp, 256, 7, fac, var, 3, 90.0, 8);      /* PAD: exec_me=Kp=roundup(7,4)=8 */
-    /* NOTE: no (256,11) padded entry -> that cell tests the TAIL fallback. */
-    fclose(fp);
 }
 
 /* run one (N,K) cell padded, check vs naive DFT + roundtrip + bit-exact vs tight reference. */
@@ -141,8 +138,8 @@ int main(void)
 
     printf("# padded c2c in-place dispatch test (Step D, through vfft.h)\n");
     printf("# wisdom dir: %s\n\n", WDIR);
-    run_cell(256, 7,  "PAD: seeded exec_me=Kp=8");
-    run_cell(256, 11, "TAIL fallback: no padded cell -> exec_me=K=11");
+    run_cell(256, 7,  "PAD: (256,7).exec_me=8 -> aligned (256,8) plan @me=8");
+    run_cell(256, 11, "TAIL: (256,11).exec_me=11 -> own factorization @me=11");
 
     printf(fails ? "\nRESULT: %d CHECK(s) FAILED\n" : "\nRESULT: all checks passed\n", fails);
     return fails ? 1 : 0;

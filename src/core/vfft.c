@@ -284,21 +284,20 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * PADDED pad-vs-tail CALIBRATE-ON-MISS (the planner primitive; a bakeoff like
- * _r2c_bakeoff). When a padded batch (config.batch) hits a cell with no padded
- * verdict, the planner MEASURES the best strategy for THAT cell here, banks it to
- * spike_wisdom_padded.txt, and the create path JITs the winner — same on-miss
- * contract as tight c2c (_calibrate_c2c). This is CALIBRATION (picking the best of
- * our own plans), NOT vs-MKL benchmarking. The bulk grid sweep + the vs-MKL bench
- * are SEPARATE dev/user tools (build_tuned/benches/calibrator/calibrate_pad.c +
- * calibrate_pad.py ; bench_pad_vs_mkl.c) — those stay out of the library.
+ * PADDED pad-vs-tail A/B (the planner primitive; a bakeoff like _r2c_bakeoff).
+ * Decides the padded verdict for a misaligned-K cell: times the TAIL leg (te = the
+ * (N,K) tight factorization, run me=K with the SSE2 tail) against the PAD leg (ae =
+ * the ALIGNED (N,Kp) entry's factorization, run me=Kp full-SIMD on the baked/JIT
+ * path), BOTH built at Kp stride (the padded buffer); interleaved-median, 3%
+ * hysteresis toward the tail, roundtrip-gate the winner. Returns the verdict Kp
+ * (pad) or K (tail), or 0 on failure -> the caller falls back to the tail.
  *
- * Tail leg = the tight factorization `te` (= factK), run me=K with the SSE2 tail.
- * Pad  leg = the best factorization measured fresh at Kp, run me=Kp full-SIMD, on
- *            the baked/JIT fast path (wrinkle C: aligned me is eligible). Both built
- * at Kp; interleaved-median A/B on their own Kp buffers, 3% hysteresis toward the
- * tail, roundtrip-gate the winner. Fills `out`: exec_me=Kp -> factKp+variants ;
- * exec_me=K -> te's factorization. Returns 0 / -1.
+ * UNIFIED wisdom (no separate padded file): the verdict is stamped into the (N,K)
+ * entry's exec_me, and the pad plan IS the aligned (N,Kp) entry — so both `te` and
+ * `ae` are ordinary c2c cells the caller has already calibrated (via _calibrate_c2c).
+ * This is CALIBRATION (picking the best of our own plans), NOT vs-MKL benchmarking;
+ * the bulk grid sweep + the vs-MKL bench are SEPARATE dev/user tools. `rigor` only
+ * sizes the A/B round count.
  * ════════════════════════════════════════════════════════════════════════ */
 #define _VFFT_PADVW 4
 static int _pad_dcmp(const void *a, const void *b) { double d = *(const double *)a - *(const double *)b; return d < 0 ? -1 : d > 0 ? 1 : 0; }
@@ -321,32 +320,20 @@ static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, do
     return vfft_proto_now_ns() - t0;
 }
 static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
-                          const vfft_proto_wisdom_entry_t *te, vfft_proto_wisdom_entry_t *out)
+                          const vfft_proto_wisdom_entry_t *te, const vfft_proto_wisdom_entry_t *ae)
 {
-    if (!te || te->nf <= 0)
-        return -1;
+    if (!te || te->nf <= 0 || !ae || ae->nf <= 0)
+        return 0;
     size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
 
-    /* best PAD factorization at Kp (own context sized at Kp; respects rigor). */
-    vfft_proto_dp_context_t ctx;
-    vfft_proto_dp_init(&ctx, Kp, N);
-    if (rigor != VFFT_MEASURE)
-        vfft_proto_dp_set_patient(&ctx);
-    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
-    int npool = 0;
-    double pns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
-    vfft_proto_dp_destroy(&ctx);
-    if (pns >= 1e17 || dec.nf <= 0)
-        return -1;
-
-    /* tail (factK) and pad (factKp) plans, both at Kp stride (the padded buffer). */
+    /* tail (te = factK) and pad (ae = the aligned (N,Kp) plan), both built at Kp stride. */
     stride_plan_t *pT = vfft_proto_plan_create_ex(N, Kp, te->factors, te->variants, te->nf, te->use_dif_forward, reg);
-    stride_plan_t *pP = vfft_proto_plan_create_ex(N, Kp, dec.factors, dec.variants, dec.nf, dec.use_dif_forward, reg);
+    stride_plan_t *pP = vfft_proto_plan_create_ex(N, Kp, ae->factors, ae->variants, ae->nf, ae->use_dif_forward, reg);
     if (!pT || !pP)
     {
         if (pT) vfft_proto_plan_destroy(pT);
         if (pP) vfft_proto_plan_destroy(pP);
-        return -1;
+        return 0;
     }
     vfft_proto_exec_fn jfP = NULL;
 #ifdef VFFT_USE_JIT
@@ -363,7 +350,7 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
         vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
         vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
-        return -1;
+        return 0;
     }
     _pad_fill(rT, iT, N, K, Kp);
     _pad_fill(rP, iP, N, K, Kp);
@@ -382,16 +369,16 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     }
     double tail_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
     int pad_wins = (pad_ns < tail_ns * 0.97); /* 3% hysteresis toward the tail */
+    int exec_me = pad_wins ? (int)Kp : (int)K;
 
     /* roundtrip-gate the winner at its operating point (recover N*x on the K lanes).
      * reuse rT/iT (fresh input) as the work buffer, rP/iP as the saved reference. */
     stride_plan_t *wp = pad_wins ? pP : pT;
-    size_t me = pad_wins ? Kp : K;
     _pad_fill(rT, iT, N, K, Kp);
     memcpy(rP, rT, tot * sizeof(double));
     memcpy(iP, iT, tot * sizeof(double));
-    vfft_proto_execute_fwd(wp, rT, iT, me);
-    vfft_proto_execute_bwd(wp, rT, iT, me);
+    vfft_proto_execute_fwd(wp, rT, iT, (size_t)exec_me);
+    vfft_proto_execute_bwd(wp, rT, iT, (size_t)exec_me);
     double rtg = 0, inv = 1.0 / (double)N;
     for (size_t e = 0; e < (size_t)N; e++)
         for (size_t l = 0; l < K; l++)
@@ -401,28 +388,13 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
             if (dr > rtg) rtg = dr;
             if (di > rtg) rtg = di;
         }
+    if (rtg > 1e-7)
+        exec_me = 0; /* winner failed the roundtrip -> report failure; caller tails */
 
-    int ok = (rtg <= 1e-7);
-    if (ok)
-    {
-        memset(out, 0, sizeof *out);
-        out->N = N;
-        out->K = K;
-        if (pad_wins)
-        {
-            out->exec_me = (int)Kp; out->nf = dec.nf; out->best_ns = pad_ns; out->use_dif_forward = dec.use_dif_forward;
-            for (int i = 0; i < dec.nf; i++) { out->factors[i] = dec.factors[i]; out->variants[i] = dec.variants[i]; }
-        }
-        else
-        {
-            out->exec_me = (int)K; out->nf = te->nf; out->best_ns = tail_ns; out->use_dif_forward = te->use_dif_forward;
-            for (int i = 0; i < te->nf; i++) { out->factors[i] = te->factors[i]; out->variants[i] = te->variants[i]; }
-        }
-    }
     vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
     vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
     vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
-    return ok ? 0 : -1;
+    return exec_me;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -986,67 +958,73 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             return NULL;
         size_t Kp = b->Kp;
 
-        const vfft_proto_wisdom_entry_t *pe = vfft_proto_wisdom_lookup(&W->c2c_pad, N, K);
-        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+        /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
+         * exec_me, and the pad plan IS the aligned (N,Kp) entry — both ordinary c2c cells. */
+        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);   /* tail leg = factK  */
+        const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);  /* pad leg = aligned (N,Kp) */
+        int misaligned = (Kp != K);
 
-        /* CALIBRATE-ON-MISS (the planner primitive): no padded verdict for this cell yet (or
-         * recalibrate) -> MEASURE the best pad-vs-tail strategy for THIS (N,K), bank it to the
-         * padded wisdom, and the JIT-resolve below packs the winner as a JIT/baked executor —
-         * the same on-miss contract as tight c2c. The tail leg needs the tight factorization
-         * (factK), so tight is calibrated on-miss too. Prime N (no Kp CT plan) skips -> tail /
-         * NULL. (Bulk grid pre-population + the vs-MKL bench are SEPARATE dev/user tools.) */
-        if ((!pe || cfg->recalibrate) && !_vfft_is_prime(N))
+        /* CALIBRATE-ON-MISS (planner primitive). Ensure the (N,K) tight cell is calibrated
+         * (tail leg / — for aligned K — the plan itself). Same on-miss contract as tight c2c. */
+        if ((!te || cfg->recalibrate) && !_vfft_is_prime(N))
         {
-            if (!te || cfg->recalibrate)
+            vfft_proto_wisdom_entry_t ne;
+            if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
             {
-                vfft_proto_wisdom_entry_t tne;
-                if (_calibrate_c2c(N, K, cfg->rigor, reg, &tne) == 0)
+                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                if (W->path_c2c[0])
+                    vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+            }
+        }
+        /* Misaligned + not yet pad-measured (exec_me==0) -> calibrate the aligned (N,Kp) cell
+         * (a normal cell), A/B tail-vs-pad, and STAMP the verdict into (N,K).exec_me. The
+         * JIT-resolve below then packs the winner. Aligned K needs no A/B (Kp==K). Prime skips. */
+        if (misaligned && te && !_vfft_is_prime(N) && (cfg->recalibrate || te->exec_me == 0))
+        {
+            if (!ae || cfg->recalibrate)
+            {
+                vfft_proto_wisdom_entry_t ne;
+                if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
+                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            }
+            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);   /* re-lookup: wisdom_add may realloc */
+            ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+            if (te && ae)
+            {
+                int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
+                if (verdict > 0)
                 {
-                    vfft_proto_wisdom_add(&W->c2c, &tne, 1);
+                    vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
+                    upd.exec_me = verdict;
+                    vfft_proto_wisdom_add(&W->c2c, &upd, 1);
                     if (W->path_c2c[0])
                         vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
                     te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-                }
-            }
-            if (te)
-            {
-                vfft_proto_wisdom_entry_t pne;
-                if (_calibrate_pad(N, K, cfg->rigor, reg, te, &pne) == 0)
-                {
-                    vfft_proto_wisdom_add(&W->c2c_pad, &pne, 1);
-                    if (W->path_c2c_pad[0])
-                        vfft_proto_wisdom_save(&W->c2c_pad, W->path_c2c_pad);
-                    pe = vfft_proto_wisdom_lookup(&W->c2c_pad, N, K);
+                    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
                 }
             }
         }
 
-        /* Select the padded-mode plan: pad verdict -> factKp @me=Kp (full-SIMD) ; tail verdict
-         * (or no padded cell) -> the cell's tail factorization @me=K (always correct). */
+        /* Select: PAD verdict -> the aligned (N,Kp) factorization @me=Kp ; else the (N,K) tight
+         * factorization @me=K (tail on the padded buffer, always correct). */
         const int *facs = NULL, *vars = NULL;
         int nf = 0, use_dif = 0, exec_me = (int)K;
-        if (pe && pe->nf > 0 && pe->exec_me == (int)Kp)
+        if (misaligned && te && te->exec_me == (int)Kp && ae && ae->nf > 0)
         {
-            facs = pe->factors; vars = pe->variants; nf = pe->nf;
-            use_dif = pe->use_dif_forward; exec_me = (int)Kp;
+            facs = ae->factors; vars = ae->variants; nf = ae->nf;
+            use_dif = ae->use_dif_forward; exec_me = (int)Kp;
         }
-        else if (pe && pe->nf > 0)   /* tail verdict: pe carries factK, run me=K */
-        {
-            facs = pe->factors; vars = pe->variants; nf = pe->nf;
-            use_dif = pe->use_dif_forward; exec_me = (int)K;
-        }
-        else if (te && te->nf > 0)   /* no padded cell (calibration failed / prime): tight factK, tail */
+        else if (te && te->nf > 0)
         {
             facs = te->factors; vars = te->variants; nf = te->nf;
             use_dif = te->use_dif_forward; exec_me = (int)K;
         }
         else
-            return NULL;             /* no factorization available */
+            return NULL;             /* no factorization available (e.g. prime N) */
 
-        /* Backstop: the padded wisdom file is an offline trust source. plan_create_ex rejects
-         * unwireable radixes, but a factorization that wires yet doesn't multiply to N would
-         * silently compute the wrong-length transform (the stride check below can't catch that).
-         * Verify coverage before building. (Also hardens the tight-fallback factorization.) */
+        /* Backstop: verify the chosen factorization actually covers N (a wire-able-but-under-
+         * covering factorization would silently compute the wrong-length transform). */
         {
             long long prod = 1;
             for (int i = 0; i < nf; i++) prod *= facs[i];
