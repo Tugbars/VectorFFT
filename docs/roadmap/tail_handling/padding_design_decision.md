@@ -46,13 +46,21 @@ for any feature other than **1D c2c in-place** (returns NULL) so a padded buffer
 never be silently strided wrong through an unsupported path — closing the last
 silent-corruption gap the design set out to eliminate.
 
-**The measurement lives in DEV TOOLING, not the production runtime.** §10.2/§12-Phase-1
-said "fold the measurement into live `_calibrate_c2c`." Re-aimed: `vfft.c`/`vfft.h` is
-the **production API** (reads wisdom, dispatches — no measurement in the runtime); the
-pad-vs-tail measurement belongs in the **inner calibrator** (`build_tuned/benches/
-calibrator/`, one cell per process, thermal-paced) that writes `spike_wisdom_padded.txt`
-offline. So the runtime `vfft_create` is measurement-free; a `calibrate_pad.c` dev tool
-(pending) populates the real padded wisdom.
+**The measurement lives in DEV TOOLING, not the production runtime — HARD RULE (decided
+twice).** §10.2/§12-Phase-1 said "fold the measurement into live `_calibrate_c2c`." Rejected:
+`vfft.c`/`vfft.h` is a **clean FFT library** that only **reads the padded wisdom and
+dispatches** (padded batch → build at Kp, run the wisdom's `exec_me`; on a MISS → the
+always-correct SSE2/scalar **tail fallback**). The pad-vs-tail **A/B benchmark machinery is
+NEVER wired into the production API** — it is a **separate concern** that lives in the inner
+calibrator (`build_tuned/benches/calibrator/calibrate_pad.c` + `calibrate_pad.py`, one cell
+per process, thermal-paced) which writes `spike_wisdom_padded.txt` **offline**. That calibrator
+(and the vs-MKL bench) are **shippable to library users as separate tools** they run to unlock
+padding — deliberately kept OUT of the drop-in library surface. Rationale (user, decided twice):
+separate bulk-calibration / vs-MKL-benchmarking from the FFT-library tool users utilize; don't
+burden the API with machinery that isn't of interest to a plain caller. (A `_calibrate_pad`
+runtime function was briefly added to `vfft.c` and REVERTED — do not re-add.) NOTE: tight c2c
+still calibrates-on-miss in `vfft.c` via `_calibrate_c2c`/`_r2c_bakeoff` — that is the *existing*
+design and out of scope here; the NEW padded path is wisdom-read + tail-fallback only.
 
 **Done + tested (all through `vfft.h`):**
 - **Allocator** (§10.3) — `vfft_alloc_batch`/`free_batch`/`re`/`im`/`stride`, opaque
