@@ -77,6 +77,10 @@ void         vfft_wisdom_free(vfft_wisdom *w);
  * DESCRIPTOR + PLAN
  * ════════════════════════════════════════════════════════════════════════ */
 
+/* Opaque VW-padded batch handle (full contract below, near vfft_alloc_batch).
+ * Declared here so vfft_config_t can carry it as the opt-in padding signal. */
+typedef struct vfft_batch_s *vfft_batch;
+
 typedef struct {
     vfft_transform_t transform;
     vfft_placement_t placement;
@@ -85,6 +89,11 @@ typedef struct {
     int    dims;                  /* 1 (default) or 2                          */
     int    n[2];                  /* n[0]=N for 1D; n[0]=N1, n[1]=N2 for 2D    */
     size_t howmany;               /* K — batch count (lane-batched: data[i*K+lane]) */
+    vfft_batch batch;             /* NULL = tight (default drop-in path). Non-NULL = the
+                                     opt-in VW-padded batch to run on: the plan is built at
+                                     its Kp stride and runs the padded wisdom's exec_me (Kp
+                                     full-SIMD, else me=K tail). Must match howmany + n[0].
+                                     C2C in-place only for now — padding_design_decision.md. */
 
     int    nthreads;              /* 0 = use the current pool / single-thread  */
 
@@ -117,6 +126,30 @@ void vfft_execute(vfft_plan p, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim);
 
 void vfft_destroy(vfft_plan p);
+
+/* ════════════════════════════════════════════════════════════════════════
+ * PADDED BATCH  (opt-in fast path for odd K — docs/roadmap/tail_handling/
+ *               padding_design_decision.md)
+ *
+ * A VW-padded batch: the library allocates the batch at stride Kp = roundup(K,VW)
+ * with the (Kp-K) pad columns ZEROED, and hands it back as an OPAQUE handle that
+ * carries its own stride — so a padded buffer cannot be mistaken for a tight one.
+ * Fill/read the K real lanes through vfft_batch_re/im at the physical stride
+ * vfft_batch_stride() (= Kp): element e of transform t is at re[e*Kp + t].
+ *
+ * On such a buffer the planner may run me=Kp (pure full-SIMD, junk lanes discarded)
+ * OR me=K (SSE2/scalar tail) — whichever the padded wisdom's exec_me picked — both
+ * correct for the K real transforms. To USE it: allocate here, set config.batch to this
+ * handle (+ config.howmany = K, config.n[0] = N), vfft_create, then vfft_execute on
+ * vfft_batch_re/im. Wired for C2C in-place; other features fall back to the tight path.
+ * (vfft_batch itself is typedef'd up by the config struct.) Match alloc with free.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+vfft_batch vfft_alloc_batch(int N, size_t K); /* Kp=roundup(K,VW)-wide, ZEROED re+im; NULL on failure */
+void       vfft_free_batch(vfft_batch b);     /* matching free (do NOT free the re/im pointers yourself) */
+double    *vfft_batch_re(vfft_batch b);       /* K real lanes at stride vfft_batch_stride() */
+double    *vfft_batch_im(vfft_batch b);
+size_t     vfft_batch_stride(vfft_batch b);   /* = Kp (roundup(K,VW)) */
 
 /* ════════════════════════════════════════════════════════════════════════
  * GLOBAL CONTROL  (optional; sensible defaults otherwise)

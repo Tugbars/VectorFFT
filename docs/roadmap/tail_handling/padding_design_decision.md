@@ -18,6 +18,68 @@ lost. It supersedes the earlier "admissibility gate" framing in
 
 ---
 
+## 0. Implementation status & two refinements (2026-07-01)
+
+Phase 0 gate **PASSED** and **Phase 1 c2c is built + validated end-to-end through the
+public API** (`vfft.h`). Two design points were refined *during* implementation; they
+supersede the matching bullets in §§9–12 and are the authoritative version:
+
+**Refinement 1 — padded wisdom is a SEPARATE FILE, not a shared-format mutation.**
+§10.1 originally proposed extending `wisdom_reader.h`'s tight format with an *optional
+padded factorization* trailing field. Rejected in favor of a **parallel file
+`spike_wisdom_padded.txt` in the *same* v6 format**: `factors[]` = the **padded-mode**
+factorization (`factKp` when pad won, `factK` when the tail won even on the padded
+buffer), `exec_me` = `Kp` (run full-SIMD) or `K` (run tail). Rationale: **zero risk to
+the 198-cell tight wisdom** (its format is untouched), it needs **no new struct fields**
+(the v6 `exec_me` already added is sufficient — a padded cell is fully specified by
+`(factors, exec_me)`), and it matches the established per-feature-file pattern (§11).
+The tight path never reads it; padded mode reads it and falls back to the tail on a miss.
+Wired in `vfft.c`: `struct vfft_wisdom_s.c2c_pad` + `path_c2c_pad`, loaded in
+`_bundle_load`, freed in `vfft_wisdom_free`.
+
+**Refinement 2 — the opaque handle (§9.B) binds via `config.batch`.** The allocator
+returns the opaque `vfft_batch`; it enters the plan through a new **`vfft_config_t.batch`
+field** (NULL = tight, the default drop-in path; non-NULL = opt-in padded). One create
+entry point, consistent with the descriptor front door; the handle *is* the padded
+signal (no raw-pointer + separate bool, per §9.B). `vfft_create` rejects `config.batch`
+for any feature other than **1D c2c in-place** (returns NULL) so a padded buffer can
+never be silently strided wrong through an unsupported path — closing the last
+silent-corruption gap the design set out to eliminate.
+
+**The measurement lives in DEV TOOLING, not the production runtime.** §10.2/§12-Phase-1
+said "fold the measurement into live `_calibrate_c2c`." Re-aimed: `vfft.c`/`vfft.h` is
+the **production API** (reads wisdom, dispatches — no measurement in the runtime); the
+pad-vs-tail measurement belongs in the **inner calibrator** (`build_tuned/benches/
+calibrator/`, one cell per process, thermal-paced) that writes `spike_wisdom_padded.txt`
+offline. So the runtime `vfft_create` is measurement-free; a `calibrate_pad.c` dev tool
+(pending) populates the real padded wisdom.
+
+**Done + tested (all through `vfft.h`):**
+- **Allocator** (§10.3) — `vfft_alloc_batch`/`free_batch`/`re`/`im`/`stride`, opaque
+  `Kp`-wide **zeroed** handle. Smoke test green.
+- **Per-codelet bit-exact gate** (§10.5) — `build_tuned/test/test_pad_gate.c`: tight(`K`)
+  vs padded(`Kp`) at `me=Kp`, fwd+bwd, isolated radixes r2…r32 + odd/prime composites
+  (`[3,4,4] [5,4,4] [6,8] [7,8] [5,5,5] [7,7] [3,3,3,3]` …) — **23 plans, all bit-exact**
+  (`bulk=0 tail=0`). (`test_anyk_correct.c` independently confirms the curated pow2 set.)
+- **Dispatch** (§10.4) — `config.batch` → build at `Kp` + run `exec_me`; tail fallback on
+  a padded-wisdom miss; **stride-match invariant** assert; **wrinkle-C JIT gating** (only
+  the aligned pad leg `me=Kp` resolves the baked/JIT executor; the odd tail leg stays on
+  the generic tail-capable executor). `build_tuned/test/test_padded_dispatch.c` drives
+  both branches (seeded PAD cell `exec_me=Kp`; TAIL-fallback cell): **bit-exact vs the
+  tight reference + roundtrip ~7e-15**.
+- **Adversarial review** (4-lens find → verify): 5 confirmed (all nit/low), 2 plausible
+  (low), 7 refuted. No critical/high survived; tight path untouched; no memory-safety or
+  wrinkle-C issues. Fixes applied: the cross-feature `config.batch` guard (above),
+  skip the wasted tight-calibrate when the padded cell already carries a factorization,
+  `product(factors)==N` backstop before building from the trusted padded file, and the
+  stale allocator comment.
+
+**Pending (deferred — heavy CPU):** `calibrate_pad.c`/`calibrate_pad.py` to populate the
+real `spike_wisdom_padded.txt`; the vs-MKL padded-win bench (the Phase-1 perf gate); then
+Phases 2–4.
+
+---
+
 ## 1. The problem
 
 We process a **batch of K transforms** at once and the SIMD unit does `VW` lanes at a

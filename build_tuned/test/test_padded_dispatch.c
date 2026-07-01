@@ -1,0 +1,149 @@
+/* test_padded_dispatch.c — end-to-end public-API test of the PADDED c2c in-place path
+ * (docs/roadmap/tail_handling/padding_design_decision.md, Phase 1 Step D + B). Drives ONLY
+ * vfft.h: alloc a padded batch, set config.batch, vfft_create, vfft_execute — proving the
+ * dispatch (build Kp-plan + run the padded wisdom's exec_me) is wired correctly.
+ *
+ * Exercises BOTH branches of the padded create:
+ *   PAD  cell (256,7):  seeded padded-wisdom exec_me=Kp=8 -> plan built at Kp, run me=8 (full-SIMD).
+ *   TAIL cell (256,11): NO padded-wisdom entry -> fallback -> tight factorization at Kp=12, run me=11.
+ * Correctness oracles (in-place c2c emits SCRAMBLED/digit-reversed bin order, so a natural-order
+ * DFT can't be compared elementwise): (1) BIT-EXACT vs a tight (config.batch=NULL) reference plan
+ * built at the SAME factorization — the STEP-E guarantee through the front door, proving the padded
+ * dispatch produces exactly the library's validated tight c2c output; (2) fwd->bwd roundtrip
+ * recovers N*x on the K real lanes (invertibility).
+ *
+ * Self-contained: seeds spike_wisdom.txt + spike_wisdom_padded.txt into a scratch dir, points
+ * VFFT_WISDOM_DIR at it BEFORE the first vfft_create (the default bundle is lazy-loaded once).
+ *
+ * Build: python build.py --src test/test_padded_dispatch.c --vfft
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <direct.h>   /* _mkdir (mingw) */
+#include "vfft.h"
+
+#define WDIR "padtest_wisdom"
+#define VW 4
+static size_t roundup_vw(size_t k) { return (k + (VW - 1)) & ~(size_t)(VW - 1); }
+
+static int fails = 0;
+#define CHECK(cond, msg) do { if (!(cond)) { printf("    FAIL: %s\n", msg); fails++; } } while (0)
+
+/* seed one v6 wisdom line: N K nf factors... best_ns 0 0 0 0 variants... exec_me */
+static void seed_line(FILE *f, int N, int K, const int *fac, const int *var, int nf, double ns, int exec_me)
+{
+    fprintf(f, "%d %d %d", N, K, nf);
+    for (int i = 0; i < nf; i++) fprintf(f, " %d", fac[i]);
+    fprintf(f, " %.1f 0 0 0 0", ns);
+    for (int i = 0; i < nf; i++) fprintf(f, " %d", var[i]);
+    fprintf(f, " %d\n", exec_me);
+}
+
+static void seed_wisdom(void)
+{
+    _mkdir(WDIR);
+    int fac[3] = {4, 8, 8};   /* product 256 — buildable (radix 4/8) */
+    int var[3] = {0, 2, 2};   /* n1, T1S, T1S */
+
+    FILE *ft = fopen(WDIR "/spike_wisdom.txt", "w");
+    fprintf(ft, "@version 6\n");
+    seed_line(ft, 256, 7,  fac, var, 3, 100.0, 7);    /* tight, exec_me=K (no-pad) */
+    seed_line(ft, 256, 11, fac, var, 3, 100.0, 11);
+    fclose(ft);
+
+    FILE *fp = fopen(WDIR "/spike_wisdom_padded.txt", "w");
+    fprintf(fp, "@version 6\n");
+    seed_line(fp, 256, 7, fac, var, 3, 90.0, 8);      /* PAD: exec_me=Kp=roundup(7,4)=8 */
+    /* NOTE: no (256,11) padded entry -> that cell tests the TAIL fallback. */
+    fclose(fp);
+}
+
+/* run one (N,K) cell padded, check vs naive DFT + roundtrip + bit-exact vs tight reference. */
+static void run_cell(int N, int K, const char *label)
+{
+    size_t Kp = roundup_vw((size_t)K);
+    printf("  cell N=%d K=%d Kp=%zu  [%s]\n", N, K, Kp, label);
+
+    vfft_batch b = vfft_alloc_batch(N, (size_t)K);
+    CHECK(b != NULL, "alloc_batch");
+    if (!b) return;
+    CHECK(vfft_batch_stride(b) == Kp, "batch stride == Kp");
+    double *pre = vfft_batch_re(b), *pim = vfft_batch_im(b);
+
+    /* fill the K real lanes (random), pad lanes already zeroed by the allocator. */
+    srand(1234 + N + K);
+    double *xr = malloc((size_t)N * K * sizeof(double)), *xi = malloc((size_t)N * K * sizeof(double));
+    for (int e = 0; e < N; e++)
+        for (int l = 0; l < K; l++) {
+            double a = (double)rand() / RAND_MAX - 0.5, c = (double)rand() / RAND_MAX - 0.5;
+            xr[e * K + l] = a; xi[e * K + l] = c;
+            pre[(size_t)e * Kp + l] = a; pim[(size_t)e * Kp + l] = c;
+        }
+
+    vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.batch = b;
+    vfft_plan p = vfft_create(&cfg);
+    CHECK(p != NULL, "vfft_create (padded)");
+    if (!p) { free(xr); free(xi); vfft_free_batch(b); return; }
+
+    /* forward, in-place on the padded buffer */
+    vfft_execute(p, VFFT_FORWARD, pre, pim, pre, pim);
+
+    /* bit-exact vs a tight (config.batch=NULL) reference at the SAME factorization */
+    {
+        double *tre = malloc((size_t)N * K * sizeof(double)), *tim = malloc((size_t)N * K * sizeof(double));
+        for (int i = 0; i < N * K; i++) { tre[i] = xr[i]; tim[i] = xi[i]; }
+        vfft_config_t rc; memset(&rc, 0, sizeof rc);
+        rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = VFFT_MEASURE;
+        rc.dims = 1; rc.n[0] = N; rc.howmany = (size_t)K; rc.batch = NULL;
+        vfft_plan pr = vfft_create(&rc);
+        CHECK(pr != NULL, "vfft_create (tight reference)");
+        if (pr) {
+            vfft_execute(pr, VFFT_FORWARD, tre, tim, tre, tim);
+            double be = 0;
+            for (int e = 0; e < N; e++)
+                for (int l = 0; l < K; l++) {
+                    double dr = fabs(pre[(size_t)e * Kp + l] - tre[e * K + l]);
+                    double di = fabs(pim[(size_t)e * Kp + l] - tim[e * K + l]);
+                    if (dr > be) be = dr; if (di > be) be = di;
+                }
+            CHECK(be == 0.0, "padded == tight reference (BIT-EXACT, same factorization)");
+            printf("    padded vs tight ref: max diff %.2e %s\n", be, be == 0.0 ? "(bit-exact)" : "");
+            vfft_destroy(pr);
+        }
+        free(tre); free(tim);
+    }
+
+    /* roundtrip: bwd recovers N*x on the K real lanes */
+    vfft_execute(p, VFFT_BACKWARD, pre, pim, pre, pim);
+    double rt = 0, inv = 1.0 / (double)N;
+    for (int e = 0; e < N; e++)
+        for (int l = 0; l < K; l++) {
+            double dr = fabs(pre[(size_t)e * Kp + l] * inv - xr[e * K + l]);
+            double di = fabs(pim[(size_t)e * Kp + l] * inv - xi[e * K + l]);
+            if (dr > rt) rt = dr; if (di > rt) rt = di;
+        }
+    CHECK(rt < 1e-10, "fwd->bwd roundtrip recovers N*x");
+    printf("    roundtrip err: %.2e\n", rt);
+
+    free(xr); free(xi);
+    vfft_destroy(p);
+    vfft_free_batch(b);
+}
+
+int main(void)
+{
+    seed_wisdom();
+    putenv("VFFT_WISDOM_DIR=" WDIR);   /* must precede the first vfft_create (lazy default bundle) */
+
+    printf("# padded c2c in-place dispatch test (Step D, through vfft.h)\n");
+    printf("# wisdom dir: %s\n\n", WDIR);
+    run_cell(256, 7,  "PAD: seeded exec_me=Kp=8");
+    run_cell(256, 11, "TAIL fallback: no padded cell -> exec_me=K=11");
+
+    printf(fails ? "\nRESULT: %d CHECK(s) FAILED\n" : "\nRESULT: all checks passed\n", fails);
+    return fails ? 1 : 0;
+}
