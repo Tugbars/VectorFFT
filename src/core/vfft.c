@@ -977,20 +977,30 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
             }
         }
-        /* Misaligned + not yet pad-measured (exec_me==0) -> calibrate the aligned (N,Kp) cell
-         * (a normal cell), A/B tail-vs-pad, and STAMP the verdict into (N,K).exec_me. The
-         * JIT-resolve below then packs the winner. Aligned K needs no A/B (Kp==K). Prime skips. */
-        if (misaligned && te && !_vfft_is_prime(N) && (cfg->recalibrate || te->exec_me == 0))
+        /* Misaligned: the aligned (N,Kp) cell IS the pad plan — an ORDINARY c2c cell. Padding
+         * stores ONLY the verdict (exec_me), never a copy of the aligned plan; the plan is
+         * calibrated normally, ON DEMAND. So ensure (N,Kp) exists when we must MEASURE
+         * (unmeasured / recalibrate) OR when the verdict is already PAD (a verdict-only cell —
+         * e.g. shipped wisdom — whose aligned plan isn't present yet would otherwise fall
+         * silently to the tail). When measuring, A/B tail-vs-pad and stamp exec_me. Aligned K
+         * needs no A/B (Kp==K). Prime skips. */
+        if (misaligned && te && !_vfft_is_prime(N))
         {
-            if (!ae || cfg->recalibrate)
+            int measure = (cfg->recalibrate || te->exec_me == 0);
+            int need_aligned = measure || te->exec_me == (int)Kp;
+            int dirty = 0;
+            if (need_aligned && (!ae || cfg->recalibrate))
             {
                 vfft_proto_wisdom_entry_t ne;
                 if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
+                {
                     vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    dirty = 1;
+                }
             }
             te = vfft_proto_wisdom_lookup(&W->c2c, N, K);   /* re-lookup: wisdom_add may realloc */
             ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-            if (te && ae)
+            if (measure && te && ae)
             {
                 int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
                 if (verdict > 0)
@@ -998,12 +1008,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
                     upd.exec_me = verdict;
                     vfft_proto_wisdom_add(&W->c2c, &upd, 1);
-                    if (W->path_c2c[0])
-                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                    dirty = 1;
                     te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
                     ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
                 }
             }
+            if (dirty && W->path_c2c[0])
+                vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
         }
 
         /* Select: PAD verdict -> the aligned (N,Kp) factorization @me=Kp ; else the (N,K) tight

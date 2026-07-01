@@ -51,14 +51,29 @@ static void seed_wisdom(void)
      * (N,Kp) entry. Seed both with the SAME factorization so pad@me=Kp is bit-exact vs tight@me=K. */
     FILE *ft = fopen(WDIR "/spike_wisdom.txt", "w");
     fprintf(ft, "@version 6\n");
-    seed_line(ft, 256, 7,  fac, var, 3, 90.0, 8);     /* (256,7): PAD verdict exec_me=Kp=8 */
+    seed_line(ft, 256, 7,  fac, var, 3, 90.0, 8);     /* (256,7): PAD verdict + (256,8) present */
     seed_line(ft, 256, 8,  fac, var, 3, 90.0, 0);     /* (256,8): aligned pad plan (exec_me=0) */
     seed_line(ft, 256, 11, fac, var, 3, 100.0, 11);   /* (256,11): TAIL verdict exec_me=K=11 */
+    seed_line(ft, 256, 19, fac, var, 3, 90.0, 20);    /* (256,19): PAD verdict but NO (256,20) ->
+                                                       * exercises ON-DEMAND aligned calibration */
     fclose(ft);
 }
 
-/* run one (N,K) cell padded, check vs naive DFT + roundtrip + bit-exact vs tight reference. */
-static void run_cell(int N, int K, const char *label)
+/* does WDIR/spike_wisdom.txt now contain an (N,K) entry? (proves on-demand calibration saved it) */
+static int wisdom_has(int N, int K)
+{
+    FILE *f = fopen(WDIR "/spike_wisdom.txt", "r");
+    if (!f) return 0;
+    char line[512]; int found = 0, n, k;
+    while (fgets(line, sizeof line, f))
+        if (line[0] != '#' && line[0] != '@' && sscanf(line, "%d %d", &n, &k) == 2 && n == N && k == K) { found = 1; break; }
+    fclose(f);
+    return found;
+}
+
+/* run one (N,K) cell padded: roundtrip always; bit-exact vs tight reference only when `bitexact`
+ * (the on-demand-aligned case calibrates a fresh (N,Kp) plan != the seeded factorization). */
+static void run_cell(int N, int K, const char *label, int bitexact)
 {
     size_t Kp = roundup_vw((size_t)K);
     printf("  cell N=%d K=%d Kp=%zu  [%s]\n", N, K, Kp, label);
@@ -90,6 +105,7 @@ static void run_cell(int N, int K, const char *label)
     vfft_execute(p, VFFT_FORWARD, pre, pim, pre, pim);
 
     /* bit-exact vs a tight (config.batch=NULL) reference at the SAME factorization */
+    if (bitexact)
     {
         double *tre = malloc((size_t)N * K * sizeof(double)), *tim = malloc((size_t)N * K * sizeof(double));
         for (int i = 0; i < N * K; i++) { tre[i] = xr[i]; tim[i] = xi[i]; }
@@ -138,8 +154,15 @@ int main(void)
 
     printf("# padded c2c in-place dispatch test (Step D, through vfft.h)\n");
     printf("# wisdom dir: %s\n\n", WDIR);
-    run_cell(256, 7,  "PAD: (256,7).exec_me=8 -> aligned (256,8) plan @me=8");
-    run_cell(256, 11, "TAIL: (256,11).exec_me=11 -> own factorization @me=11");
+    run_cell(256, 7,  "PAD: (256,7).exec_me=8 -> aligned (256,8) plan @me=8", 1);
+    run_cell(256, 11, "TAIL: (256,11).exec_me=11 -> own factorization @me=11", 1);
+
+    /* ON-DEMAND: (256,19).exec_me=20 but (256,20) NOT seeded -> dispatch must calibrate the
+     * aligned (256,20) plan itself, then run pad. Roundtrip-only (fresh plan != seed), and the
+     * (256,20) entry must now exist in the wisdom file (proves the on-demand calibration fired). */
+    CHECK(!wisdom_has(256, 20), "precondition: (256,20) absent before the on-demand cell");
+    run_cell(256, 19, "ON-DEMAND: (256,19).exec_me=20, (256,20) built on the fly", 0);
+    CHECK(wisdom_has(256, 20), "on-demand: (256,20) aligned plan calibrated + saved");
 
     printf(fails ? "\nRESULT: %d CHECK(s) FAILED\n" : "\nRESULT: all checks passed\n", fails);
     return fails ? 1 : 0;
