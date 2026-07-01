@@ -29,6 +29,9 @@
 #include "planner.h"
 #include "dp_planner.h"
 #include "wisdom_reader.h"
+#ifdef VFFT_USE_JIT
+#include "jit/jit_runtime.h"   /* wrinkle C: bench the pad leg on the baked/JIT fast path */
+#endif
 
 #define VW 4
 static size_t roundup_vw(size_t k) { return (k + (VW - 1)) & ~(size_t)(VW - 1); }
@@ -51,10 +54,14 @@ static void fillK(double *re, double *im, int N, size_t K, size_t Kp)
             im[e * Kp + b] = (b < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
         }
 }
-static double burst(stride_plan_t *p, double *re, double *im, size_t me, int reps)
+/* jf != NULL -> bench on the baked/JIT executor (the pad leg, aligned me); NULL -> generic
+ * (the tail leg — odd me, which the baked/JIT path is gated out of). Same call convention
+ * as fft2d.h: fn(plan, re, im, slice_K, plan->K, is_bwd=0). */
+static double burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, double *im, size_t me, int reps)
 {
     double t0 = vfft_proto_now_ns();
-    for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(p, re, im, me);
+    if (jf) for (int i = 0; i < reps; i++) jf(p, re, im, me, p->K, 0);
+    else    for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(p, re, im, me);
     return vfft_proto_now_ns() - t0;
 }
 static int dcmp(const void *a, const void *b) { double d = *(const double *)a - *(const double *)b; return d < 0 ? -1 : d > 0 ? 1 : 0; }
@@ -82,7 +89,8 @@ int main(void)
     printf("# STEP 0 — joint-search pad-vs-tail (best factorization PER LEG). exec_me=Kp -> PAD, =K -> tail.\n");
     printf("# tail = best-K-factorization @ me=K ; pad = best-Kp-factorization @ me=Kp ; both on the Kp buffer.\n");
     printf("# interleaved-median A/B, 3%% hysteresis toward tail. ratio = pad/tail (<1 => pad faster).\n");
-    printf("#  N     K   Kp   factK(tail)   factKp(pad)   tail_ns    pad_ns   pad/tail  exec_me  winner\n");
+    printf("# pad leg runs on the baked/JIT path when built --jit (aligned me=Kp); tail leg always generic.\n");
+    printf("#  N     K   Kp   factK(tail)   factKp(pad)   tail_ns    pad_ns   pad/tail  padexec exec_me  winner\n");
 
     for (int ni = 0; ni < nN; ni++) {
         int N = Ns[ni];
@@ -115,6 +123,17 @@ int main(void)
                 continue;
             }
 
+            /* Wrinkle C: resolve the pad plan's baked/JIT executor (me=Kp is VW-aligned, so it
+             * is eligible). The tail leg stays generic — odd me=K is gated out of baked/JIT.
+             * Under a non-JIT build jfP stays NULL and both legs are generic (the floor). */
+            vfft_proto_exec_fn jfP = NULL;
+            const char *padpath = "generic";
+#ifdef VFFT_USE_JIT
+            int bakedP = (vfft_proto_lookup_fwd_avx2(pP) != NULL);
+            jfP = vfft_proto_plan_jit_fwd(pP);
+            padpath = jfP ? (bakedP ? "baked" : "JIT") : "generic";
+#endif
+
             double *rT = ad((size_t)N * Kp), *iT = ad((size_t)N * Kp);
             double *rP = ad((size_t)N * Kp), *iP = ad((size_t)N * Kp);
             fillK(rT, iT, N, K, Kp);
@@ -122,22 +141,22 @@ int main(void)
 
             int reps = (int)(8000000ull / ((size_t)N * Kp));
             if (reps < 40) reps = 40;
-            for (int w = 0; w < 8; w++) { burst(pT, rT, iT, K, reps); burst(pP, rP, iP, Kp, reps); }
+            for (int w = 0; w < 8; w++) { burst(pT, NULL, rT, iT, K, reps); burst(pP, jfP, rP, iP, Kp, reps); }
 
             static double rt[256], rpd[256];
             int RR = rounds; if (RR > 256) RR = 256;
             for (int r = 0; r < RR; r++) {
                 double t, p;
-                if (r & 1) { t = burst(pT, rT, iT, K, reps);  p = burst(pP, rP, iP, Kp, reps); }
-                else       { p = burst(pP, rP, iP, Kp, reps); t = burst(pT, rT, iT, K, reps); }
+                if (r & 1) { t = burst(pT, NULL, rT, iT, K, reps);  p = burst(pP, jfP, rP, iP, Kp, reps); }
+                else       { p = burst(pP, jfP, rP, iP, Kp, reps); t = burst(pT, NULL, rT, iT, K, reps); }
                 rt[r] = t / reps; rpd[r] = p / reps;   /* per-call ns */
             }
             double tail_ns = med(rt, RR), pad_ns = med(rpd, RR);
             int exec_me = (pad_ns < tail_ns * 0.97) ? (int)Kp : (int)K;   /* 3% hysteresis toward tail */
 
             char fk[64], fkp[64]; facstr(&factK, fk, sizeof fk); facstr(&factKp, fkp, sizeof fkp);
-            printf("  %-5d %-3zu %-3zu  %-13s %-13s %8.0f  %8.0f  %.3f     %-6d  %s\n",
-                   N, K, Kp, fk, fkp, tail_ns, pad_ns, pad_ns / tail_ns, exec_me,
+            printf("  %-5d %-3zu %-3zu  %-13s %-13s %8.0f  %8.0f  %.3f   %-7s %-6d  %s\n",
+                   N, K, Kp, fk, fkp, tail_ns, pad_ns, pad_ns / tail_ns, padpath, exec_me,
                    exec_me == (int)Kp ? "PAD" : "tail");
 
             /* Wisdom entry: store the TIGHT (K-optimal) factorization + exec_me. (The pad
