@@ -320,7 +320,7 @@ structurally loses); gate hard on Phase-1 results.
 2. Run the full c2c sweep.
 3. Review verdicts → decide Phase 1 at the gate.
 
-## 12. Why it is robust (the backstops)
+## 13. Why it is robust (the backstops)
 
 - **Correctness:** three independent guards mean **no path to silent corruption** — the
   **stride-match invariant** (catches plan/buffer mismatch), the **per-codelet bit-exact
@@ -333,7 +333,7 @@ structurally loses); gate hard on Phase-1 results.
 - **Scope:** **uniform** — one mechanism for every feature, no bespoke per-feature
   padding paths, no new executor modes, no new codelets.
 
-## 13. What we explicitly are NOT doing (and why)
+## 14. What we explicitly are NOT doing (and why)
 
 - **No transparent in-place copy-to-pad** — the re-thread copy (~4 passes) loses to the
   tail on a memory-bound kernel.
