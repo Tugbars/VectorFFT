@@ -34,11 +34,14 @@ typedef struct {
     int     split_stage;
     int     block_groups;
     double  best_ns;
-    /* exec_me — the batch width to actually RUN at when the caller supplied a
-     * VW-padded (Kp-wide) buffer: K = run me=K with the SSE2/scalar tail, Kp =
-     * run me=Kp full-SIMD (pad). Trailing field (v6); absent in v5 files loads
-     * as K (= today's no-pad behaviour). Only meaningful for misaligned K; for
-     * K%VW==0 it equals K. See docs/roadmap/tail_handling/padding_design_decision.md. */
+    /* exec_me — the padded pad-vs-tail VERDICT for a misaligned-K cell (only ever read by
+     * the padded dispatch; the tight path ignores it). Three states:
+     *   0  = NOT pad-measured yet (default; also every aligned/tight cell) -> the padded
+     *        planner runs its one-time A/B on a MISS, then stamps K or Kp here.
+     *   K  = TAIL won: run me=K with the SSE2/scalar tail on the Kp buffer (this cell's factors).
+     *   Kp = PAD  won: run me=Kp full-SIMD -> use the aligned (N,Kp) entry's plan instead.
+     * Trailing v6 field; absent (v5) loads as 0. This keeps padding in the SINGLE c2c wisdom
+     * file (no separate padded file). See docs/roadmap/tail_handling/padding_design_decision.md. */
     int     exec_me;
 } vfft_proto_wisdom_entry_t;
 
@@ -95,11 +98,10 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
             tok = strtok(NULL, " \t\r\n"); if (!tok) goto skip;
             e.variants[i] = atoi(tok);
         }
-        /* Trailing v6 field: exec_me. Missing (v5 file) -> default to K, which
-         * reproduces the no-pad behaviour. Old binaries stop tokenizing after
-         * the variants above, so they ignore this token (forward compatible). */
+        /* Trailing v6 field: exec_me (padded verdict). Missing (v5 file) -> 0 = not
+         * pad-measured. Old binaries stop tokenizing after the variants (forward compatible). */
         tok = strtok(NULL, " \t\r\n");
-        e.exec_me = tok ? atoi(tok) : (int)e.K;
+        e.exec_me = tok ? atoi(tok) : 0;
 
         /* Append. */
         if (wis->count >= wis->capacity) {
@@ -213,8 +215,8 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
                 e->use_dif_forward);
         for (int j = 0; j < e->nf; j++)
             fprintf(f, " %d", e->variants[j]);
-        /* v6 trailing field: exec_me (default to K if a producer left it 0). */
-        fprintf(f, " %d", e->exec_me ? e->exec_me : (int)e->K);
+        /* v6 trailing field: exec_me (padded verdict; 0 = not pad-measured, written as-is). */
+        fprintf(f, " %d", e->exec_me);
         fprintf(f, "\n");
     }
     fclose(f);
