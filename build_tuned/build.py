@@ -353,7 +353,7 @@ def main():
                          'plans via vfft_proto_plan_jit_fwd) + points the JIT '
                          'runtime at build.py-cached codelet objects. All in build_tuned.')
     ap.add_argument('--vfft', action='store_true',
-                    help='Compile src/vfft.c alongside the source. Use this '
+                    help='Compile src/core/vfft.c alongside the source. Use this '
                          'when the source file uses the public vfft.h API '
                          '(opaque-handle entry points).')
     args = ap.parse_args()
@@ -376,7 +376,7 @@ def main():
     out_bin = src.parent / (stem + '.exe' if tc['is_windows'] else stem)
     extra_srcs = []
     if args.vfft:
-        extra_srcs.append(ROOT / 'src' / 'vfft.c')
+        extra_srcs.append(DAG_CORE / 'vfft.c')   # canonical src/core/vfft.c (old src/vfft.c retired)
     cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, jit=args.jit,
                     extra_srcs=extra_srcs)
 

@@ -78,6 +78,13 @@ struct vfft_wisdom_s
     char path_oop[640];       /* oop_wisdom.txt     */
     char path_rfft[640];      /* rfft_wisdom.txt    */
     vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format */
+    /* Padded c2c: SEPARATE file, SAME v6 format as c2c. factors[] = the padded-mode
+     * factorization (factKp when pad won, factK when tail won on the padded buffer),
+     * exec_me = Kp (run full-SIMD) or K (run tail). Read-only in production — produced
+     * offline by the calibrate_pad dev tool; consulted only when config.batch != NULL.
+     * Missing cell => tail fallback. See padding_design_decision.md. */
+    char path_c2c_pad[640];   /* spike_wisdom_padded.txt */
+    vfft_proto_wisdom_t c2c_pad;
     vfft_oop_wisdom_t oop;    /* OOP 2-axis format   */
     vfft_proto_wisdom_t rfft; /* r2c rfft-path factorization+variant   */
     /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
@@ -113,7 +120,17 @@ struct vfft_plan_s
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
     vfft_proto_exec_fn exec_fwd, exec_bwd;
+    /* Padded c2c in-place (config.batch != NULL): cplan is built at Kp = the batch stride,
+     * and execute runs `exec_me` batch lanes (Kp = full-SIMD pad, or K = SSE2/scalar tail
+     * on the padded buffer — the padded wisdom's per-cell verdict). padded==0 => tight, the
+     * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
+    int padded;
+    int exec_me;
 };
+
+/* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
+ * buffer can't be passed through the tight execute path by mistake. */
+struct vfft_batch_s { double *re, *im; size_t K, Kp; int N; };
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -151,6 +168,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", d);
+    snprintf(W->path_c2c_pad, sizeof W->path_c2c_pad, "%s/spike_wisdom_padded.txt", d);
     snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
     snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
     snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
@@ -162,6 +180,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
+    vfft_proto_wisdom_load(&W->c2c_pad, W->path_c2c_pad); /* padded c2c (opt-in; absent = tail everywhere) */
     vfft_oop_wisdom_load(&W->oop, W->path_oop);
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
     vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
@@ -772,6 +791,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     size_t K = cfg->howmany;
     if (cfg->dims < 0 || cfg->dims > 2)
         return NULL;
+    /* A VW-padded batch (config.batch) is honored ONLY by the 1D c2c in-place path. Every
+     * other feature would build a tight (stride-K) plan and then stride the caller's Kp-wide
+     * buffer at the wrong stride — silent wrong results. Reject the combination up front rather
+     * than silently ignore the handle: the padding design's contract is NO silent-corruption
+     * path. (Padding for OOP / r2c / c2r / trig / 2D lands in later phases.) */
+    if (cfg->batch &&
+        !(cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->dims < 2))
+        return NULL;
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
@@ -806,6 +833,108 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tplan = tp;
+        return h;
+    }
+
+    /* ── c2c IN-PLACE, PADDED (opt-in: config.batch is a VW-padded Kp-wide buffer) ──
+     * Build the plan at the batch's Kp stride and run the padded wisdom's exec_me: Kp =
+     * pure full-SIMD (junk pad lanes discarded), K = SSE2/scalar tail on the padded buffer.
+     * A missing padded cell — or one where the tail won even padded (exec_me==K) — falls
+     * back to running me=K, which is always correct (the tail; STEP-E bit-exact gate). MT-
+     * padding is a later refinement: padded runs single-thread here, and padding wins at
+     * small K where _c2c_mt is single-thread anyway. Prime N with no direct codelet has no
+     * Kp CT plan -> plan_create_ex returns NULL -> NULL (padding unsupported there for now). */
+    if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->batch)
+    {
+        vfft_batch b = cfg->batch;
+        if (b->K != K || b->N != N)   /* the handle must match the descriptor exactly */
+            return NULL;
+        size_t Kp = b->Kp;
+
+        const vfft_proto_wisdom_entry_t *pe = vfft_proto_wisdom_lookup(&W->c2c_pad, N, K);
+        const int *facs = NULL, *vars = NULL;
+        int nf = 0, use_dif = 0, exec_me = (int)K;
+        if (pe && pe->nf > 0 && pe->exec_me == (int)Kp)
+        {
+            /* padded wisdom: PAD wins -> the pad factorization run full-SIMD at me=Kp. */
+            facs = pe->factors; vars = pe->variants; nf = pe->nf;
+            use_dif = pe->use_dif_forward; exec_me = (int)Kp;
+        }
+        else
+        {
+            /* no padded cell, or the tail won even on the padded buffer: build the tight
+             * factorization at Kp (so the plan stride matches the buffer) and run me=K.
+             * Only calibrate the tight cell on-miss when the padded cell can't already supply
+             * a factorization (a padded exec_me==K entry carries its own factK) — otherwise the
+             * sweep is measured, persisted, then discarded for this create. */
+            const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+            if (!(pe && pe->nf > 0) && (!te || cfg->recalibrate) && !_vfft_is_prime(N))
+            {
+                vfft_proto_wisdom_entry_t ne;
+                if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+                {
+                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    if (W->path_c2c[0])
+                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                    te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+                }
+            }
+            if (pe && pe->nf > 0)   /* padded cell with exec_me==K: use ITS measured factorization */
+            {
+                facs = pe->factors; vars = pe->variants; nf = pe->nf; use_dif = pe->use_dif_forward;
+            }
+            else if (te && te->nf > 0)
+            {
+                facs = te->factors; vars = te->variants; nf = te->nf; use_dif = te->use_dif_forward;
+            }
+            else
+                return NULL;        /* no factorization available (e.g. prime N, no padded cell) */
+            exec_me = (int)K;
+        }
+
+        /* Backstop: the padded wisdom file is an offline trust source. plan_create_ex rejects
+         * unwireable radixes, but a factorization that wires yet doesn't multiply to N would
+         * silently compute the wrong-length transform (the stride check below can't catch that).
+         * Verify coverage before building. (Also hardens the tight-fallback factorization.) */
+        {
+            long long prod = 1;
+            for (int i = 0; i < nf; i++) prod *= facs[i];
+            if (prod != (long long)N)
+                return NULL;
+        }
+
+        stride_plan_t *p = vfft_proto_plan_create_ex(N, Kp, facs, vars, nf, use_dif, reg);
+        if (!p)
+            return NULL;
+        if (p->K != Kp)             /* stride-match invariant: plan stride must equal buffer stride */
+        {
+            vfft_proto_plan_destroy(p);
+            return NULL;
+        }
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h)
+        {
+            vfft_proto_plan_destroy(p);
+            return NULL;
+        }
+        h->transform = VFFT_C2C;
+        h->placement = VFFT_INPLACE;
+        h->N = N;
+        h->K = K;
+        h->nthreads = stride_get_num_threads();
+        h->cplan = p;
+        h->padded = 1;
+        h->exec_me = exec_me;
+#ifdef VFFT_USE_JIT
+        /* Wrinkle C: only the ALIGNED pad leg (me=Kp) is eligible for the baked/JIT fast
+         * path. The tail leg (exec_me==K, odd) MUST use the generic tail-capable executor,
+         * so leave exec_*=NULL there (execute falls back to vfft_proto_execute_fwd/bwd). */
+        if (exec_me == (int)Kp && p->num_stages > 0)
+        {
+            h->exec_fwd = vfft_proto_plan_jit_fwd(p);
+            h->exec_bwd = vfft_proto_plan_jit_bwd(p);
+        }
+#endif
         return h;
     }
 
@@ -1122,6 +1251,22 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
         vfft_set_num_threads(h->nthreads);
+        if (h->padded)
+        {
+            /* padded: run exec_me lanes at the plan's baked Kp stride (single-thread v1).
+             * fn is the baked/JIT executor resolved at create ONLY for the aligned pad leg
+             * (me=Kp); the tail leg keeps fn==NULL -> generic tail-capable executor. */
+            int fdir = (dir == VFFT_FORWARD);
+            vfft_proto_exec_fn fn = fdir ? h->exec_fwd : h->exec_bwd;
+            size_t me = (size_t)h->exec_me;
+            if (fn)
+                fn(h->cplan, sre, sim, me, h->cplan->K, 0);
+            else if (fdir)
+                vfft_proto_execute_fwd(h->cplan, sre, sim, me);
+            else
+                vfft_proto_execute_bwd(h->cplan, sre, sim, me);
+            return;
+        }
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
                 dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd); /* transparent JIT/baked */
         return;
@@ -1222,6 +1367,45 @@ void vfft_destroy(vfft_plan h)
     free(h);
 }
 
+/* ── padded batch: Kp=roundup(K,VW)-wide, ZEROED re+im, opaque handle ──
+ * VW hardcoded to 4 (AVX2 host). A single VW source-of-truth is needed before an
+ * AVX-512 (VW=8) extension — see the padding design doc. This handle DRIVES the padded
+ * c2c in-place execute path: pass it as config.batch to vfft_create and the plan is built
+ * at Kp + run at the padded wisdom's exec_me (see the padded branch in vfft_create). */
+vfft_batch vfft_alloc_batch(int N, size_t K)
+{
+    if (N < 1 || K < 1)
+        return NULL;
+    size_t Kp = (K + 3u) & ~(size_t)3u;   /* roundup(K, VW=4) */
+    struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
+    if (!b)
+        return NULL;
+    size_t bytes = (size_t)N * Kp * sizeof(double);
+    b->re = (double *)stride_alloc(bytes);
+    b->im = (double *)stride_alloc(bytes);
+    if (!b->re || !b->im) {
+        if (b->re) stride_free(b->re);
+        if (b->im) stride_free(b->im);
+        free(b);
+        return NULL;
+    }
+    memset(b->re, 0, bytes);   /* stride_alloc does NOT zero; pad columns MUST be zero */
+    memset(b->im, 0, bytes);
+    b->N = N; b->K = K; b->Kp = Kp;
+    return b;
+}
+void vfft_free_batch(vfft_batch b)
+{
+    if (!b)
+        return;
+    stride_free(b->re);   /* Windows: stride_free == _aligned_free; a plain free() would be UB */
+    stride_free(b->im);
+    free(b);
+}
+double *vfft_batch_re(vfft_batch b)     { return b ? b->re : NULL; }
+double *vfft_batch_im(vfft_batch b)     { return b ? b->im : NULL; }
+size_t  vfft_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
+
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)
 {
@@ -1255,6 +1439,7 @@ void vfft_wisdom_free(vfft_wisdom *w)
     if (!w)
         return;
     vfft_proto_wisdom_free(&w->c2c); /* OOP table is fixed-size, no free */
+    vfft_proto_wisdom_free(&w->c2c_pad);
     vfft_proto_wisdom_free(&w->rfft);
     free(w);
 }
