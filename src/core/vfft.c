@@ -77,14 +77,9 @@ struct vfft_wisdom_s
     char path_c2c[640];       /* spike_wisdom.txt   */
     char path_oop[640];       /* oop_wisdom.txt     */
     char path_rfft[640];      /* rfft_wisdom.txt    */
-    vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format */
-    /* Padded c2c: SEPARATE file, SAME v6 format as c2c. factors[] = the padded-mode
-     * factorization (factKp when pad won, factK when tail won on the padded buffer),
-     * exec_me = Kp (run full-SIMD) or K (run tail). Read-only in production — produced
-     * offline by the calibrate_pad dev tool; consulted only when config.batch != NULL.
-     * Missing cell => tail fallback. See padding_design_decision.md. */
-    char path_c2c_pad[640];   /* spike_wisdom_padded.txt */
-    vfft_proto_wisdom_t c2c_pad;
+    vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format. Also holds the padded
+                               * pad-vs-tail verdict per cell in each entry's exec_me field, and
+                               * the aligned (N,Kp) entries pad reuses — no separate padded file. */
     vfft_oop_wisdom_t oop;    /* OOP 2-axis format   */
     vfft_proto_wisdom_t rfft; /* r2c rfft-path factorization+variant   */
     /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
@@ -168,7 +163,6 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", d);
-    snprintf(W->path_c2c_pad, sizeof W->path_c2c_pad, "%s/spike_wisdom_padded.txt", d);
     snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
     snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
     snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
@@ -180,7 +174,6 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
-    vfft_proto_wisdom_load(&W->c2c_pad, W->path_c2c_pad); /* padded c2c (opt-in; absent = tail everywhere) */
     vfft_oop_wisdom_load(&W->oop, W->path_oop);
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
     vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
@@ -288,6 +281,148 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
         out->variants[s] = dec.variants[s];
     }
     return 0;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * PADDED pad-vs-tail CALIBRATE-ON-MISS (the planner primitive; a bakeoff like
+ * _r2c_bakeoff). When a padded batch (config.batch) hits a cell with no padded
+ * verdict, the planner MEASURES the best strategy for THAT cell here, banks it to
+ * spike_wisdom_padded.txt, and the create path JITs the winner — same on-miss
+ * contract as tight c2c (_calibrate_c2c). This is CALIBRATION (picking the best of
+ * our own plans), NOT vs-MKL benchmarking. The bulk grid sweep + the vs-MKL bench
+ * are SEPARATE dev/user tools (build_tuned/benches/calibrator/calibrate_pad.c +
+ * calibrate_pad.py ; bench_pad_vs_mkl.c) — those stay out of the library.
+ *
+ * Tail leg = the tight factorization `te` (= factK), run me=K with the SSE2 tail.
+ * Pad  leg = the best factorization measured fresh at Kp, run me=Kp full-SIMD, on
+ *            the baked/JIT fast path (wrinkle C: aligned me is eligible). Both built
+ * at Kp; interleaved-median A/B on their own Kp buffers, 3% hysteresis toward the
+ * tail, roundtrip-gate the winner. Fills `out`: exec_me=Kp -> factKp+variants ;
+ * exec_me=K -> te's factorization. Returns 0 / -1.
+ * ════════════════════════════════════════════════════════════════════════ */
+#define _VFFT_PADVW 4
+static int _pad_dcmp(const void *a, const void *b) { double d = *(const double *)a - *(const double *)b; return d < 0 ? -1 : d > 0 ? 1 : 0; }
+static double _pad_med(double *v, int n) { qsort(v, n, sizeof(double), _pad_dcmp); return n & 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]); }
+static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
+{
+    srand(7 + N + (int)K);
+    for (size_t e = 0; e < (size_t)N; e++)
+        for (size_t b = 0; b < Kp; b++)
+        {
+            re[e * Kp + b] = (b < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
+            im[e * Kp + b] = (b < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
+        }
+}
+static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, double *im, size_t me, int reps)
+{
+    double t0 = vfft_proto_now_ns();
+    if (jf) for (int i = 0; i < reps; i++) jf(p, re, im, me, p->K, 0);
+    else    for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(p, re, im, me);
+    return vfft_proto_now_ns() - t0;
+}
+static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
+                          const vfft_proto_wisdom_entry_t *te, vfft_proto_wisdom_entry_t *out)
+{
+    if (!te || te->nf <= 0)
+        return -1;
+    size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
+
+    /* best PAD factorization at Kp (own context sized at Kp; respects rigor). */
+    vfft_proto_dp_context_t ctx;
+    vfft_proto_dp_init(&ctx, Kp, N);
+    if (rigor != VFFT_MEASURE)
+        vfft_proto_dp_set_patient(&ctx);
+    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
+    int npool = 0;
+    double pns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
+    vfft_proto_dp_destroy(&ctx);
+    if (pns >= 1e17 || dec.nf <= 0)
+        return -1;
+
+    /* tail (factK) and pad (factKp) plans, both at Kp stride (the padded buffer). */
+    stride_plan_t *pT = vfft_proto_plan_create_ex(N, Kp, te->factors, te->variants, te->nf, te->use_dif_forward, reg);
+    stride_plan_t *pP = vfft_proto_plan_create_ex(N, Kp, dec.factors, dec.variants, dec.nf, dec.use_dif_forward, reg);
+    if (!pT || !pP)
+    {
+        if (pT) vfft_proto_plan_destroy(pT);
+        if (pP) vfft_proto_plan_destroy(pP);
+        return -1;
+    }
+    vfft_proto_exec_fn jfP = NULL;
+#ifdef VFFT_USE_JIT
+    if (pP->num_stages > 0)
+        jfP = vfft_proto_plan_jit_fwd(pP); /* wrinkle C: aligned pad leg on baked/JIT */
+#endif
+    size_t tot = (size_t)N * Kp;
+    double *rT = NULL, *iT = NULL, *rP = NULL, *iP = NULL;
+    if (vfft_proto_posix_memalign((void **)&rT, 64, tot * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&iT, 64, tot * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&rP, 64, tot * sizeof(double)) ||
+        vfft_proto_posix_memalign((void **)&iP, 64, tot * sizeof(double)))
+    {
+        vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
+        vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
+        vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
+        return -1;
+    }
+    _pad_fill(rT, iT, N, K, Kp);
+    _pad_fill(rP, iP, N, K, Kp);
+    int reps = (int)(8000000ull / tot);
+    if (reps < 40) reps = 40;
+    for (int w = 0; w < 5; w++) { _pad_burst(pT, NULL, rT, iT, K, reps); _pad_burst(pP, jfP, rP, iP, Kp, reps); }
+    int RR = (rigor == VFFT_MEASURE) ? 31 : 81;
+    double rt[128], rp[128];
+    if (RR > 128) RR = 128;
+    for (int r = 0; r < RR; r++)
+    {
+        double t, p;
+        if (r & 1) { t = _pad_burst(pT, NULL, rT, iT, K, reps); p = _pad_burst(pP, jfP, rP, iP, Kp, reps); }
+        else       { p = _pad_burst(pP, jfP, rP, iP, Kp, reps); t = _pad_burst(pT, NULL, rT, iT, K, reps); }
+        rt[r] = t / reps; rp[r] = p / reps;
+    }
+    double tail_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
+    int pad_wins = (pad_ns < tail_ns * 0.97); /* 3% hysteresis toward the tail */
+
+    /* roundtrip-gate the winner at its operating point (recover N*x on the K lanes).
+     * reuse rT/iT (fresh input) as the work buffer, rP/iP as the saved reference. */
+    stride_plan_t *wp = pad_wins ? pP : pT;
+    size_t me = pad_wins ? Kp : K;
+    _pad_fill(rT, iT, N, K, Kp);
+    memcpy(rP, rT, tot * sizeof(double));
+    memcpy(iP, iT, tot * sizeof(double));
+    vfft_proto_execute_fwd(wp, rT, iT, me);
+    vfft_proto_execute_bwd(wp, rT, iT, me);
+    double rtg = 0, inv = 1.0 / (double)N;
+    for (size_t e = 0; e < (size_t)N; e++)
+        for (size_t l = 0; l < K; l++)
+        {
+            double dr = fabs(rT[e * Kp + l] * inv - rP[e * Kp + l]);
+            double di = fabs(iT[e * Kp + l] * inv - iP[e * Kp + l]);
+            if (dr > rtg) rtg = dr;
+            if (di > rtg) rtg = di;
+        }
+
+    int ok = (rtg <= 1e-7);
+    if (ok)
+    {
+        memset(out, 0, sizeof *out);
+        out->N = N;
+        out->K = K;
+        if (pad_wins)
+        {
+            out->exec_me = (int)Kp; out->nf = dec.nf; out->best_ns = pad_ns; out->use_dif_forward = dec.use_dif_forward;
+            for (int i = 0; i < dec.nf; i++) { out->factors[i] = dec.factors[i]; out->variants[i] = dec.variants[i]; }
+        }
+        else
+        {
+            out->exec_me = (int)K; out->nf = te->nf; out->best_ns = tail_ns; out->use_dif_forward = te->use_dif_forward;
+            for (int i = 0; i < te->nf; i++) { out->factors[i] = te->factors[i]; out->variants[i] = te->variants[i]; }
+        }
+    }
+    vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
+    vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
+    vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
+    return ok ? 0 : -1;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -852,45 +987,61 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         size_t Kp = b->Kp;
 
         const vfft_proto_wisdom_entry_t *pe = vfft_proto_wisdom_lookup(&W->c2c_pad, N, K);
-        const int *facs = NULL, *vars = NULL;
-        int nf = 0, use_dif = 0, exec_me = (int)K;
-        if (pe && pe->nf > 0 && pe->exec_me == (int)Kp)
+        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+
+        /* CALIBRATE-ON-MISS (the planner primitive): no padded verdict for this cell yet (or
+         * recalibrate) -> MEASURE the best pad-vs-tail strategy for THIS (N,K), bank it to the
+         * padded wisdom, and the JIT-resolve below packs the winner as a JIT/baked executor —
+         * the same on-miss contract as tight c2c. The tail leg needs the tight factorization
+         * (factK), so tight is calibrated on-miss too. Prime N (no Kp CT plan) skips -> tail /
+         * NULL. (Bulk grid pre-population + the vs-MKL bench are SEPARATE dev/user tools.) */
+        if ((!pe || cfg->recalibrate) && !_vfft_is_prime(N))
         {
-            /* padded wisdom: PAD wins -> the pad factorization run full-SIMD at me=Kp. */
-            facs = pe->factors; vars = pe->variants; nf = pe->nf;
-            use_dif = pe->use_dif_forward; exec_me = (int)Kp;
-        }
-        else
-        {
-            /* no padded cell, or the tail won even on the padded buffer: build the tight
-             * factorization at Kp (so the plan stride matches the buffer) and run me=K.
-             * Only calibrate the tight cell on-miss when the padded cell can't already supply
-             * a factorization (a padded exec_me==K entry carries its own factK) — otherwise the
-             * sweep is measured, persisted, then discarded for this create. */
-            const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            if (!(pe && pe->nf > 0) && (!te || cfg->recalibrate) && !_vfft_is_prime(N))
+            if (!te || cfg->recalibrate)
             {
-                vfft_proto_wisdom_entry_t ne;
-                if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+                vfft_proto_wisdom_entry_t tne;
+                if (_calibrate_c2c(N, K, cfg->rigor, reg, &tne) == 0)
                 {
-                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    vfft_proto_wisdom_add(&W->c2c, &tne, 1);
                     if (W->path_c2c[0])
                         vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
                     te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
                 }
             }
-            if (pe && pe->nf > 0)   /* padded cell with exec_me==K: use ITS measured factorization */
+            if (te)
             {
-                facs = pe->factors; vars = pe->variants; nf = pe->nf; use_dif = pe->use_dif_forward;
+                vfft_proto_wisdom_entry_t pne;
+                if (_calibrate_pad(N, K, cfg->rigor, reg, te, &pne) == 0)
+                {
+                    vfft_proto_wisdom_add(&W->c2c_pad, &pne, 1);
+                    if (W->path_c2c_pad[0])
+                        vfft_proto_wisdom_save(&W->c2c_pad, W->path_c2c_pad);
+                    pe = vfft_proto_wisdom_lookup(&W->c2c_pad, N, K);
+                }
             }
-            else if (te && te->nf > 0)
-            {
-                facs = te->factors; vars = te->variants; nf = te->nf; use_dif = te->use_dif_forward;
-            }
-            else
-                return NULL;        /* no factorization available (e.g. prime N, no padded cell) */
-            exec_me = (int)K;
         }
+
+        /* Select the padded-mode plan: pad verdict -> factKp @me=Kp (full-SIMD) ; tail verdict
+         * (or no padded cell) -> the cell's tail factorization @me=K (always correct). */
+        const int *facs = NULL, *vars = NULL;
+        int nf = 0, use_dif = 0, exec_me = (int)K;
+        if (pe && pe->nf > 0 && pe->exec_me == (int)Kp)
+        {
+            facs = pe->factors; vars = pe->variants; nf = pe->nf;
+            use_dif = pe->use_dif_forward; exec_me = (int)Kp;
+        }
+        else if (pe && pe->nf > 0)   /* tail verdict: pe carries factK, run me=K */
+        {
+            facs = pe->factors; vars = pe->variants; nf = pe->nf;
+            use_dif = pe->use_dif_forward; exec_me = (int)K;
+        }
+        else if (te && te->nf > 0)   /* no padded cell (calibration failed / prime): tight factK, tail */
+        {
+            facs = te->factors; vars = te->variants; nf = te->nf;
+            use_dif = te->use_dif_forward; exec_me = (int)K;
+        }
+        else
+            return NULL;             /* no factorization available */
 
         /* Backstop: the padded wisdom file is an offline trust source. plan_create_ex rejects
          * unwireable radixes, but a factorization that wires yet doesn't multiply to N would
@@ -1439,7 +1590,6 @@ void vfft_wisdom_free(vfft_wisdom *w)
     if (!w)
         return;
     vfft_proto_wisdom_free(&w->c2c); /* OOP table is fixed-size, no free */
-    vfft_proto_wisdom_free(&w->c2c_pad);
     vfft_proto_wisdom_free(&w->rfft);
     free(w);
 }

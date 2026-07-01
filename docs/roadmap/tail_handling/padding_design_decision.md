@@ -46,21 +46,25 @@ for any feature other than **1D c2c in-place** (returns NULL) so a padded buffer
 never be silently strided wrong through an unsupported path — closing the last
 silent-corruption gap the design set out to eliminate.
 
-**The measurement lives in DEV TOOLING, not the production runtime — HARD RULE (decided
-twice).** §10.2/§12-Phase-1 said "fold the measurement into live `_calibrate_c2c`." Rejected:
-`vfft.c`/`vfft.h` is a **clean FFT library** that only **reads the padded wisdom and
-dispatches** (padded batch → build at Kp, run the wisdom's `exec_me`; on a MISS → the
-always-correct SSE2/scalar **tail fallback**). The pad-vs-tail **A/B benchmark machinery is
-NEVER wired into the production API** — it is a **separate concern** that lives in the inner
-calibrator (`build_tuned/benches/calibrator/calibrate_pad.c` + `calibrate_pad.py`, one cell
-per process, thermal-paced) which writes `spike_wisdom_padded.txt` **offline**. That calibrator
-(and the vs-MKL bench) are **shippable to library users as separate tools** they run to unlock
-padding — deliberately kept OUT of the drop-in library surface. Rationale (user, decided twice):
-separate bulk-calibration / vs-MKL-benchmarking from the FFT-library tool users utilize; don't
-burden the API with machinery that isn't of interest to a plain caller. (A `_calibrate_pad`
-runtime function was briefly added to `vfft.c` and REVERTED — do not re-add.) NOTE: tight c2c
-still calibrates-on-miss in `vfft.c` via `_calibrate_c2c`/`_r2c_bakeoff` — that is the *existing*
-design and out of scope here; the NEW padded path is wisdom-read + tail-fallback only.
+**Per-cell CALIBRATE-ON-MISS lives in the PLANNER (production); the BULK sweep + vs-MKL bench
+are separate dev/user tools.** The clean split (the distinction I first got wrong):
+
+- **CALIBRATION = picking the best of OUR OWN plans → PRODUCTION planner.** When a padded batch
+  (`config.batch`) hits a cell with no padded verdict, `vfft_create` calibrates THAT ONE cell:
+  `_calibrate_pad` measures the best pad factorization at Kp + an A/B pad-vs-tail, banks the
+  winner `(factorization, exec_me)` to `spike_wisdom_padded.txt`, and the create path's
+  JIT-resolve packs it as a JIT/baked executor. **Identical on-miss contract as tight c2c**
+  (`_calibrate_c2c` + JIT-at-create). So padding is automatic: user calls FFT for (N,K) → planner
+  finds/saves/JITs the strategy → executor runs it. On failure/prime → the correct tail fallback.
+- **BENCHMARKING = comparing us to MKL → DEV/USER tool, never in the library.** The **bulk grid
+  orchestrator** (`calibrate_pad.py`, sweeping a K×N grid, isolated/PATIENT/paced) and the
+  **vs-MKL benchmark** (`bench_pad_vs_mkl.c` / `run_pad_bench.py`) are the "benchmark machinery"
+  kept OUT of the drop-in API — separate tools (shippable to users) for bulk pre-population and
+  measuring-against-MKL, of no interest to a plain caller.
+- **Parallel impls (matches tight's precedent):** `_calibrate_pad` (planner primitive in `vfft.c`)
+  and the standalone `calibrate_pad.c` dev binary share the same *shape* but are separate — exactly
+  like `_calibrate_c2c` (planner) vs `calibrate.c` (dev binary). The bulk orchestrator drives the
+  binary to pre-fill wisdom offline; the planner fills gaps on demand.
 
 **Done + tested (all through `vfft.h`):**
 - **Allocator** (§10.3) — `vfft_alloc_batch`/`free_batch`/`re`/`im`/`stride`, opaque
