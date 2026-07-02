@@ -977,9 +977,10 @@ static void _r2c_worker_bwd(void *arg) {
             _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
         } else {
             /* non-fused inner (no scaled-bwd stage 0, OR odd B): whole inner bwd then unpack.
-             * JIT the whole bwd (start_stage=0) when resolved AND B is VW-aligned; per-thread
-             * scratch. Odd B -> generic executor (JIT assumes K%VW==0). */
-            if (d->inner_jit_bwd && (B & 3u) == 0)
+             * The inner c2c JIT is odd-K/odd-B SAFE (verified — its STAGE macros call the
+             * rem-aware codelets), so JIT the whole bwd (start_stage=0) for odd B too;
+             * per-thread scratch. */
+            if (d->inner_jit_bwd)
                 d->inner_jit_bwd(d->inner, sr, si, B, d->inner->K, 0);
             else
                 stride_execute_bwd_serial(d->inner, sr, si);
