@@ -35,6 +35,7 @@
 
 #include "executor.h"
 #include "planner.h"
+#include "prime_dispatch.h"       /* auto_plan_dispatch: CT else Rader/Bluestein for prime dims */
 #include "exhaustive_plan.h"
 #include "threads.h"
 #include "proto_stride_compat.h"
@@ -377,14 +378,17 @@ static stride_plan_t *stride_plan_2d(
     d->use_bailey = 0;
     d->B = _fft2d_choose_tile(N2, N1);
 
-    /* Column FFTs: N1-point, K=N2 */
+    /* Column FFTs: N1-point, K=N2. auto_plan_dispatch = CT if factorable, else Rader/Bluestein
+     * (override plan) for a PRIME dimension — both 2D executors already dispatch override_fwd,
+     * and the column FFT feeds a contiguous stride-K=N2 batch (native to Rader/Bluestein). */
     d->plan_col = vfft_proto_exhaustive_plan(N1, (size_t)N2, reg, 0);
-    if (!d->plan_col) d->plan_col = vfft_proto_auto_plan(N1, (size_t)N2, reg, NULL);
+    if (!d->plan_col) d->plan_col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, NULL);
     if (!d->plan_col) { free(d); return NULL; }
 
-    /* Row FFTs: N2-point, K=B */
+    /* Row FFTs: N2-point, K=B (a prime N2 -> Rader/Bluestein at K=B; the transpose scratch is
+     * packed at stride B, which matches the plan's baked K=B). */
     d->plan_row = vfft_proto_exhaustive_plan(N2, d->B, reg, 0);
-    if (!d->plan_row) d->plan_row = vfft_proto_auto_plan(N2, d->B, reg, NULL);
+    if (!d->plan_row) d->plan_row = vfft_proto_auto_plan_dispatch(N2, d->B, reg, NULL);
     if (!d->plan_row) { stride_plan_destroy(d->plan_col); free(d); return NULL; }
 
     /* Per-thread scratch: T copies of N2*B */
