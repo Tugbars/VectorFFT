@@ -56,6 +56,8 @@ static void seed_wisdom(void)
     seed_line(ft, 256, 11, fac, var, 3, 100.0, 11);   /* (256,11): TAIL verdict exec_me=K=11 */
     seed_line(ft, 256, 19, fac, var, 3, 90.0, 20);    /* (256,19): PAD verdict but NO (256,20) ->
                                                        * exercises ON-DEMAND aligned calibration */
+    seed_line(ft, 256, 23, fac, var, 3, 90.0, 24);    /* (256,23): PAD verdict for the MT cell */
+    seed_line(ft, 256, 24, fac, var, 3, 90.0, 0);     /* (256,24): aligned pad plan (K=23 -> Kp=24) */
     fclose(ft);
 }
 
@@ -73,10 +75,10 @@ static int wisdom_has(int N, int K)
 
 /* run one (N,K) cell padded: roundtrip always; bit-exact vs tight reference only when `bitexact`
  * (the on-demand-aligned case calibrates a fresh (N,Kp) plan != the seeded factorization). */
-static void run_cell(int N, int K, const char *label, int bitexact)
+static void run_cell(int N, int K, const char *label, int bitexact, int nthreads)
 {
     size_t Kp = roundup_vw((size_t)K);
-    printf("  cell N=%d K=%d Kp=%zu  [%s]\n", N, K, Kp, label);
+    printf("  cell N=%d K=%d Kp=%zu  T=%d  [%s]\n", N, K, Kp, nthreads ? nthreads : 1, label);
 
     vfft_batch b = vfft_alloc_batch(N, (size_t)K);
     CHECK(b != NULL, "alloc_batch");
@@ -96,7 +98,7 @@ static void run_cell(int N, int K, const char *label, int bitexact)
 
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.batch = b;
+    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.batch = b; cfg.nthreads = nthreads;
     vfft_plan p = vfft_create(&cfg);
     CHECK(p != NULL, "vfft_create (padded)");
     if (!p) { free(xr); free(xi); vfft_free_batch(b); return; }
@@ -154,15 +156,19 @@ int main(void)
 
     printf("# padded c2c in-place dispatch test (Step D, through vfft.h)\n");
     printf("# wisdom dir: %s\n\n", WDIR);
-    run_cell(256, 7,  "PAD: (256,7).exec_me=8 -> aligned (256,8) plan @me=8", 1);
-    run_cell(256, 11, "TAIL: (256,11).exec_me=11 -> own factorization @me=11", 1);
+    run_cell(256, 7,  "PAD: (256,7).exec_me=8 -> aligned (256,8) plan @me=8", 1, 0);
+    run_cell(256, 11, "TAIL: (256,11).exec_me=11 -> own factorization @me=11", 1, 0);
 
     /* ON-DEMAND: (256,19).exec_me=20 but (256,20) NOT seeded -> dispatch must calibrate the
      * aligned (256,20) plan itself, then run pad. Roundtrip-only (fresh plan != seed), and the
      * (256,20) entry must now exist in the wisdom file (proves the on-demand calibration fired). */
     CHECK(!wisdom_has(256, 20), "precondition: (256,20) absent before the on-demand cell");
-    run_cell(256, 19, "ON-DEMAND: (256,19).exec_me=20, (256,20) built on the fly", 0);
+    run_cell(256, 19, "ON-DEMAND: (256,19).exec_me=20, (256,20) built on the fly", 0, 0);
     CHECK(wisdom_has(256, 20), "on-demand: (256,20) aligned plan calibrated + saved");
+
+    /* MT PAD: K=23 (Kp=24>=8) run on 4 threads -> _c2c_mt splits [0,24) into VW-aligned blocks,
+     * pad lanes (23,24) ride the last block full-SIMD. Must stay bit-exact vs the tight reference. */
+    run_cell(256, 23, "MT PAD: (256,23).exec_me=24 @me=24 on 4 threads", 1, 4);
 
     printf(fails ? "\nRESULT: %d CHECK(s) FAILED\n" : "\nRESULT: all checks passed\n", fails);
     return fails ? 1 : 0;
