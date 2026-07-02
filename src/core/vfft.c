@@ -920,7 +920,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * padding lands in later phases. */
     if (cfg->batch && !(cfg->dims < 2 &&
         ((cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE) ||
-          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)))
+          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
+          _VFFT_IS_TRIG(cfg->transform))))
         return NULL;
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
@@ -1380,7 +1381,21 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * (the inner r2c / c2c threads over K). ── */
     if (_VFFT_IS_TRIG(cfg->transform))
     {
-        stride_plan_t *tp = _build_trig(cfg->transform, N, K, cfg->rigor, reg,
+        /* PADDED (opt-in): build at Kp (aligned) so the trig stride plan strides the caller's
+         * Kp-wide real in/out buffers exactly. Pad-only (the trig stride_r2c_plan bakes K, like
+         * r2c). BONUS: the odd-K trig TAIL (stride_r2c_plan pre/post) is an unbuilt phase-2 gap,
+         * so padding is the ONLY correct full-SIMD trig for misaligned K — it sidesteps the tail
+         * by building aligned. Cascade regime (small Kp). */
+        size_t bK = K;
+        int padded = 0;
+        if (cfg->batch)
+        {
+            vfft_batch b = cfg->batch;
+            if (b->xform != (int)cfg->transform || b->N != N || b->K != K)
+                return NULL;
+            bK = b->Kp; padded = 1;
+        }
+        stride_plan_t *tp = _build_trig(cfg->transform, N, bK, cfg->rigor, reg,
                                         &W->c2c, cfg->recalibrate);
         if (W->path_c2c[0])
             vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* persist inner cells */
@@ -1398,6 +1413,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tplan = tp;
+        h->padded = padded;
+        h->exec_me = (int)bK;
         return h;
     }
 
@@ -1559,24 +1576,34 @@ static double *_batch_plane(size_t doubles)
 }
 
 /* Transform-aware padded allocator. c2c is in-place (re/im only, N*Kp each); r2c/c2r
- * are out-of-place with a real plane (N*Kp) and a split spectrum ((N/2+1)*Kp each).
- * All planes Kp-strided so the Kp-built plan lands exactly (element e, lane t -> [e*Kp+t]). */
+ * are out-of-place with a real plane (N*Kp) and a split spectrum ((N/2+1)*Kp each); trig
+ * (DCT/DST/DHT) is real->real out-of-place: real = INPUT plane, re = OUTPUT plane (both
+ * N*Kp), im unused. All planes Kp-strided so the Kp-built plan lands exactly (element e,
+ * lane t -> [e*Kp+t]). */
 vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
 {
     if (N < 1 || K < 1)
         return NULL;
     int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
-    if (xform != VFFT_C2C && !real_side)
-        return NULL;                       /* trig/2D padded handles unsupported for now */
-    if (real_side && (N % 2) != 0)
-        return NULL;                       /* real-FFT needs even N (half-spectrum) */
+    int trig      = _VFFT_IS_TRIG(xform);
+    if (xform != VFFT_C2C && !real_side && !trig)
+        return NULL;                       /* 2D padded handles unsupported for now */
+    if ((real_side || trig) && (N % 2) != 0)
+        return NULL;                       /* real-FFT inner needs even N (half-spectrum) */
     size_t Kp = (K + 3u) & ~(size_t)3u;    /* roundup(K, VW=4) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
     b->N = N; b->K = K; b->Kp = Kp; b->xform = (int)xform;
     int ok = 1;
-    if (real_side)
+    if (trig)   /* real -> real, out-of-place: input plane + output plane, both N*Kp */
+    {
+        size_t data = (size_t)N * Kp;
+        b->real = _batch_plane(data);      /* INPUT plane */
+        b->re   = _batch_plane(data);      /* OUTPUT plane */
+        ok = (b->real && b->re);
+    }
+    else if (real_side)
     {
         size_t spec = (size_t)(N / 2 + 1) * Kp;   /* split spectrum plane */
         b->real = _batch_plane((size_t)N * Kp);   /* real plane */
