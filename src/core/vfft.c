@@ -841,10 +841,14 @@ static void _ip_tramp(void *a)
 }
 /* In-place c2c, pool K-split. `fn` is the transparent JIT/baked-resolved executor
  * for `dir` (NULL = fall back to the generic executor) — set once at create. */
+/* `me` = number of batch lanes to process (tight: p->K ; padded: exec_me = Kp pad / K tail).
+ * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
+ * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
+ * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
 static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
-                    vfft_proto_exec_fn fn)
+                    vfft_proto_exec_fn fn, size_t me)
 {
-    size_t K = p->K;
+    size_t K = me;
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
@@ -1391,24 +1395,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
         vfft_set_num_threads(h->nthreads);
-        if (h->padded)
-        {
-            /* padded: run exec_me lanes at the plan's baked Kp stride (single-thread v1).
-             * fn is the baked/JIT executor resolved at create ONLY for the aligned pad leg
-             * (me=Kp); the tail leg keeps fn==NULL -> generic tail-capable executor. */
-            int fdir = (dir == VFFT_FORWARD);
-            vfft_proto_exec_fn fn = fdir ? h->exec_fwd : h->exec_bwd;
-            size_t me = (size_t)h->exec_me;
-            if (fn)
-                fn(h->cplan, sre, sim, me, h->cplan->K, 0);
-            else if (fdir)
-                vfft_proto_execute_fwd(h->cplan, sre, sim, me);
-            else
-                vfft_proto_execute_bwd(h->cplan, sre, sim, me);
-            return;
-        }
+        /* Unified MT execute: tight runs p->K lanes; padded runs exec_me (Kp = full-SIMD pad,
+         * or K = tail on the Kp-wide buffer). fn (JIT/baked) is resolved at create ONLY for
+         * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
+         * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
+        size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
-                dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd); /* transparent JIT/baked */
+                dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
