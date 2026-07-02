@@ -36,13 +36,30 @@ static void probe(int N, size_t K)
     }
 }
 
+/* execute + roundtrip the dispatch plan directly (the exact path 2D uses: no bluestein wisdom). */
+static void rt_probe(int N, size_t K)
+{
+    stride_plan_t *p = vfft_proto_auto_plan_dispatch(N, K, &REG, NULL);
+    if (!p) { printf("rt N=%d K=%-3zu  plan NULL\n", N, K); return; }
+    size_t tot = (size_t)N * K;
+    double *re=malloc(tot*8),*im=malloc(tot*8),*xr=malloc(tot*8),*xi=malloc(tot*8);
+    srand(5+N+(int)K);
+    for (size_t i=0;i<tot;i++){ double a=(double)rand()/RAND_MAX-0.5,b=(double)rand()/RAND_MAX-0.5; re[i]=xr[i]=a; im[i]=xi[i]=b; }
+    vfft_proto_execute_fwd(p, re, im, K);
+    vfft_proto_execute_bwd(p, re, im, K);
+    double rt=0, inv=1.0/(double)N;
+    for (size_t i=0;i<tot;i++){ double dr=fabs(re[i]*inv-xr[i]),di=fabs(im[i]*inv-xi[i]); if(dr>rt)rt=dr; if(di>rt)rt=di; }
+    printf("rt N=%d K=%-3zu  roundtrip=%.2e %s\n", N, K, rt, rt<1e-9?"ok":"*** WRONG ***");
+    free(re);free(im);free(xr);free(xi); stride_plan_destroy(p);
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
     vfft_proto_registry_init(&REG);
     probe(13, 8);
-    probe(127, 8);
     probe(127, 100);
-    probe(251, 8);
+    printf("--- 1D dispatch roundtrip (the exact uncalibrated path 2D uses) ---\n");
+    rt_probe(127, 8); rt_probe(127, 99); rt_probe(127, 100); rt_probe(127, 104); rt_probe(127, 128);
     return 0;
 }
