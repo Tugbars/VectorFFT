@@ -25,13 +25,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "../core/env.h"
-#include "../core/planner.h"      /* vfft_proto_wisdom_t + load/add/save */
-#include "../core/dp_planner.h"   /* vfft_proto_now_ns */
-#include "../core/rfft.h"
-#include "../core/c2r.h"
-#include "../generator/generated/rfft_registry_avx2.h"  /* forward family (build the spectrum) */
-#include "../generator/generated/c2r_registry_avx2.h"   /* backward family (r2cb + hc2hc_dif_bwd) */
+#include "env.h"            /* bare includes: recursive -I resolves them (../core/ was pre-reorg) */
+#include "planner.h"        /* vfft_proto_wisdom_t + load/add/save */
+#include "dp_planner.h"     /* vfft_proto_now_ns */
+#include "rfft.h"
+#include "c2r.h"
+#include "rfft_registry_avx2.h"  /* forward family (build the spectrum) */
+#include "c2r_registry_avx2.h"   /* backward family (r2cb + hc2hc_dif_bwd) */
 
 #ifndef C2R_WIS
 #define C2R_WIS "../../src/dag-fft-compiler/generator/generated/c2r_wisdom.txt"
@@ -74,7 +74,9 @@ int main(int argc, char **argv) {
     int N = atoi(argv[1]); size_t K = (size_t)atoll(argv[2]);
     int core = (argc > 3) ? atoi(argv[3]) : 2;
     int verbose = (argc > 4) ? atoi(argv[4]) : 1;
-    if (K == 0 || K % 8 != 0) { fprintf(stderr, "K must be a multiple of 8\n"); return 1; }
+    if (K == 0) { fprintf(stderr, "K must be nonzero\n"); return 1; }
+    /* Arbitrary K: the c2r plan-create + executor are arbitrary-K (rem-aware tail); the old
+     * K%8 gate was stale. Odd-K c2r IS calibratable — lets the bulk sweep pre-fill odd-K c2r. */
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin cpu%d\n", core);
 
     rfft_codelets_t reg; memset(&reg, 0, sizeof reg);
