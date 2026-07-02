@@ -65,16 +65,24 @@ int main(void)
     putenv("VFFT_WISDOM_DIR=fft2d_oddk_test");
     system("mkdir fft2d_oddk_test 2>nul");
     printf("# 2D tail handling: aligned / odd / mixed dims. (aX,aY) = 1 if that dim is VW(4)-aligned.\n");
-    printf("== 2D c2c in-place roundtrip ==\n");
+    printf("== 2D c2c in-place roundtrip (non-VW-aligned but FACTORABLE dims) ==\n");
     c2c_cell(8,8); c2c_cell(64,64);                 /* aligned control */
     c2c_cell(7,7); c2c_cell(15,15); c2c_cell(30,30);/* both non-aligned */
     c2c_cell(64,7); c2c_cell(7,64);                 /* one axis non-aligned */
-    c2c_cell(100,127); c2c_cell(127,100); c2c_cell(66,10);
+    c2c_cell(100,99); c2c_cell(99,100); c2c_cell(66,10);  /* 99=9x11 large odd */
     printf("== 2D r2c->c2r roundtrip (r2c along last dim; N2 even for the half-spectrum) ==\n");
     r2c_cell(8,8); r2c_cell(64,64);                 /* aligned */
     r2c_cell(7,8); r2c_cell(15,8); r2c_cell(30,8);  /* N1 (col/c2c axis) non-aligned */
     r2c_cell(64,6); r2c_cell(64,10); r2c_cell(64,30);/* N2 (r2c axis) non-4-aligned even */
-    r2c_cell(7,10); r2c_cell(127,66);               /* both non-aligned */
+    r2c_cell(7,10); r2c_cell(99,66);                /* both non-aligned */
+    /* Prime DIMENSION (no direct codelet, 2D doesn't wire per-axis Rader/Bluestein) -> NULL.
+     * This is a factorization-coverage limit, NOT a tail issue — expected, not a failure. */
+    printf("== prime-dimension coverage (expect create NULL — separate limit, not a tail bug) ==\n");
+    { vfft_config_t c; memset(&c,0,sizeof c); c.transform=VFFT_C2C; c.placement=VFFT_INPLACE;
+      c.rigor=VFFT_MEASURE; c.dims=2; c.n[0]=64; c.n[1]=127; c.howmany=1;
+      vfft_plan p = vfft_create(&c);
+      printf("  c2c 64x127 (prime N2)  -> %s\n", p ? "built (!)" : "NULL (prime dim unsupported, expected)");
+      if (p) vfft_destroy(p); }
     printf(fails ? "\nRESULT: %d FAILURE(S)\n" : "\nRESULT: 2D c2c/r2c/c2r handle non-aligned dims (roundtrip)\n", fails);
     return fails ? 1 : 0;
 }

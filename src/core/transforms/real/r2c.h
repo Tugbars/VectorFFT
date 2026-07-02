@@ -853,7 +853,13 @@ static void _r2c_worker_fwd(void *arg) {
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
-            stride_execute_fwd_serial(d->inner, sr, si);
+            /* Run the WHOLE inner (start_stage=0). The inner c2c JIT is odd-K/odd-B safe (its
+             * STAGE macros call the rem-aware codelets — verified), so use it for the odd-B
+             * fallback too instead of the slower generic executor. */
+            if (d->inner_jit_fwd)
+                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 0);
+            else
+                stride_execute_fwd_serial(d->inner, sr, si);
         }
 #ifdef VFFT_R2C_PROFILE
         { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
@@ -1402,7 +1408,13 @@ static void _r2c_worker_fwd_oop(void *arg) {
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
-            stride_execute_fwd_serial(d->inner, sr, si);
+            /* Run the WHOLE inner (start_stage=0). The inner c2c JIT is odd-K/odd-B safe (its
+             * STAGE macros call the rem-aware codelets — verified), so use it for the odd-B
+             * fallback too instead of the slower generic executor. */
+            if (d->inner_jit_fwd)
+                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 0);
+            else
+                stride_execute_fwd_serial(d->inner, sr, si);
         }
 #ifdef VFFT_R2C_PROFILE
         { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
