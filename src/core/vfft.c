@@ -906,6 +906,84 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
         _stride_pool_wait_all();
 }
 
+/* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
+ * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
+ * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
+ * s1->s2 transpose reads across the R1 n1-blocks, so a lane-slice isn't independent —
+ * it stays single-thread (proper MT needs a barrier on a different split dim). K<8 and
+ * T<=1 also run whole-batch. Odd K rides the last slab's tail (the codelet is rem-aware).
+ * GOTCHA (as with _c2c_mt): the CALLER must pin to core 0 — workers pin 1..T-1. ── */
+static void _oop_slice_fwd(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                           double *dr, double *di, size_t k0, size_t S)
+{
+    size_t K = p->K;
+    if (p->kind == VFFT_OOP_KIND_LEAF)
+        p->leaf(sr + k0, si + k0, dr + k0, di + k0, 0, 0, K, 1, K, 1, S);
+    else /* MODEB: OOP inner on the dst slice (JIT if resolved, else generic) */
+        vfft_proto_execute_fwd_oop_jit(p->mb, sr + k0, si + k0, dr + k0, di + k0, S, p->mb_jit_fwd);
+}
+static void _oop_slice_bwd(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                           double *dr, double *di, size_t k0, size_t S)
+{
+    size_t K = p->K;
+    if (p->kind == VFFT_OOP_KIND_MODEB)
+    {
+        /* copy the slice's spectrum lanes to dst, then DIF-bwd in place on the slice. */
+        for (int e = 0; e < p->N; e++)
+        {
+            memcpy(dr + (size_t)e * K + k0, sr + (size_t)e * K + k0, S * sizeof(double));
+            memcpy(di + (size_t)e * K + k0, si + (size_t)e * K + k0, S * sizeof(double));
+        }
+        if (p->mb_jit_bwd)
+            p->mb_jit_bwd(p->mb, dr + k0, di + k0, S, p->mb->K, 0);
+        else
+            vfft_proto_execute_bwd_generic(p->mb, dr + k0, di + k0, S);
+    }
+    else /* LEAF: natural-order swap identity — bwd = fwd with re/im swapped */
+        p->leaf(si + k0, sr + k0, di + k0, dr + k0, 0, 0, K, 1, K, 1, S);
+}
+typedef struct { const vfft_oop_plan_t *p; const double *sr, *si; double *dr, *di; size_t k0, S; int dir; } _oop_mt_arg_t;
+static void _oop_mt_tramp(void *a)
+{
+    _oop_mt_arg_t *x = (_oop_mt_arg_t *)a;
+    if (x->dir) _oop_slice_fwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
+    else        _oop_slice_bwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
+}
+static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si,
+                    double *dr, double *di, int dir)
+{
+    size_t K = p->K;
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2)
+    {
+        if (dir) vfft_oop_execute_fwd(p, sr, si, dr, di);
+        else     vfft_oop_execute_bwd(p, sr, si, dr, di);
+        return;
+    }
+    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    _oop_mt_arg_t a[64];
+    int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    {
+        size_t k0 = (size_t)t * S;
+        if (k0 >= K)
+            break;
+        size_t ke = k0 + S;
+        if (ke > K)
+            ke = K;
+        a[nd] = (_oop_mt_arg_t){p, sr, si, dr, di, k0, ke - k0, dir};
+        _stride_pool_dispatch(&_stride_workers[nd], _oop_mt_tramp, &a[nd]);
+        nd++;
+    }
+    size_t s0 = S < K ? S : K;
+    if (dir) _oop_slice_fwd(p, sr, si, dr, di, 0, s0);
+    else     _oop_slice_bwd(p, sr, si, dr, di, 0, s0);
+    if (nd)
+        _stride_pool_wait_all();
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
@@ -1495,13 +1573,12 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
-        /* vfft_oop_execute_bwd is kind-correct (natural-order swap for LEAF/BAILEY2;
-         * in-place DIF-bwd-on-copy for MODEB's scrambled order). Single-thread for now
-         * (OOP-MT = the separate MODEB-slice safety fix). */
-        if (dir == VFFT_FORWARD)
-            vfft_oop_execute_fwd(h->oplan, sre, sim, dre, dim);
-        else
-            vfft_oop_execute_bwd(h->oplan, sre, sim, dre, dim);
+        /* MT via the pool K-split (LEAF/MODEB lane-independent; BAILEY2 + small K run
+         * whole-batch — see _oop_mt). vfft_oop_execute_fwd/bwd are kind-correct (natural-
+         * order swap for LEAF/BAILEY2; in-place DIF-bwd-on-copy for MODEB) and are the
+         * single-thread fallback inside _oop_mt. Caller pins core 0 (workers pin 1..T-1). */
+        vfft_set_num_threads(h->nthreads);
+        _oop_mt(h->oplan, sre, sim, dre, dim, dir == VFFT_FORWARD ? 1 : 0);
         return;
     }
     if (h->transform == VFFT_R2C)
