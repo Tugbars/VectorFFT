@@ -46,7 +46,8 @@
 #include "threads.h" /* pool K-split for --mt (set/get threads, dispatch) */
 #include "env.h"     /* stride_env_init + stride_pin_thread */
 #include "planner.h"
-#include "dp_planner.h" /* vfft_proto_now_ns */
+#include "dp_planner.h" /* vfft_proto_now_ns + dp_set_patient */
+#include "measure.h"    /* --pad: vfft_proto_dp_plan_measure (the strongest planner, measured refine) */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd (build.py --jit) */
 #endif
@@ -1501,12 +1502,94 @@ static void run_c2r_calib_cell(int N, size_t K, const rfft_codelets_t *rreg,
     if (pathf) { fprintf(pathf, "%d %zu %d\n", N, K, path); fflush(pathf); }
 }
 
+#ifdef VFFT_HAS_MKL
+/* ════════════════════════════════════════════════════════════════════════
+ * --pad : 1D c2c PADDING vs MKL. For a misaligned K, three engines on one N:
+ *   pad   — the aligned (N,Kp) plan run me=Kp on a Kp-wide buffer (pad lanes 0, discarded),
+ *   tight — the (N,K) plan run me=K (the SSE2/scalar tail) on a K-wide buffer,
+ *   mkl   — DFTI(N,K) inplace split.
+ * Both dag plans JIT/baked-resolved; order-flipped, cachebust + cool between engines (same
+ * fairness as measure_ab). Reports mkl/pad, mkl/tight, and uplift = tight_ns/pad_ns (>1 =
+ * padding beats our own tail). Factorizations come from the STRONGEST planner (measured refine +
+ * PATIENT), matching the production calibrator — NOT bare cost-model DP.
+ * ════════════════════════════════════════════════════════════════════════ */
+/* Best (factors, variants, use_dif) for width W at length N, via the measured DP + PATIENT beam
+ * (same as _calibrate_c2c). Returns 0 + fills `out`, -1 on failure. Own dp context sized at W. */
+static int _pad_best_fac(int N, size_t W, vfft_proto_registry_t *reg, vfft_proto_plan_decision_t *out)
+{
+    vfft_proto_dp_context_t ctx; vfft_proto_dp_init(&ctx, W, N);
+    if (W >= 8) vfft_proto_dp_set_patient(&ctx);   /* widened beam + re-measure top-K */
+    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX]; int npool = 0;
+    double ns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
+    vfft_proto_dp_destroy(&ctx);
+    if (ns >= 1e17 || dec.nf <= 0) return -1;
+    *out = dec; return 0;
+}
+static void run_pad_cell(int N, size_t K, vfft_proto_registry_t *reg, FILE *out, int cool_ms, int flip)
+{
+    size_t Kp = (K + 3) & ~(size_t)3;                  /* roundup(K, VW=4) */
+    vfft_proto_plan_decision_t decK, decKp;
+    if (_pad_best_fac(N, K, reg, &decK) != 0 || _pad_best_fac(N, Kp, reg, &decKp) != 0)
+    { printf("  N=%-6d K=%-4zu  measure failed\n", N, (size_t)K); return; }
+
+    stride_plan_t *pt = vfft_proto_plan_create_ex(N, K,  decK.factors,  decK.variants,  decK.nf,  decK.use_dif_forward, reg);
+    stride_plan_t *pp = vfft_proto_plan_create_ex(N, Kp, decKp.factors, decKp.variants, decKp.nf, decKp.use_dif_forward, reg);
+    if (!pt || !pp) { printf("  N=%-6d K=%-4zu  plan NULL\n", N, (size_t)K);
+                      if (pt) vfft_proto_plan_destroy(pt); if (pp) vfft_proto_plan_destroy(pp); return; }
+    vfft_proto_exec_fn jt = NULL, jp = NULL; const char *ppath = "generic";
+#ifdef VFFT_USE_JIT
+    jt = vfft_proto_plan_jit_fwd(pt);
+    jp = vfft_proto_plan_jit_fwd(pp);
+    ppath = jp ? "jit/baked" : "generic";
+#endif
+    size_t totP = (size_t)N * Kp, totK = (size_t)N * K;
+    double *srP = alloc_d(totP), *siP = alloc_d(totP), *reP = alloc_d(totP), *imP = alloc_d(totP);
+    double *srK = alloc_d(totK), *siK = alloc_d(totK), *reK = alloc_d(totK), *imK = alloc_d(totK);
+    srand(42 + N + (int)K);
+    for (int e = 0; e < N; e++)
+        for (size_t l = 0; l < Kp; l++) {
+            double a = (l < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
+            double b = (l < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
+            srP[e * Kp + l] = a; siP[e * Kp + l] = b;
+            if (l < K) { srK[e * K + l] = a; siK[e * K + l] = b; }
+        }
+    double rt = roundtrip_err(jp, pp, N, Kp, srP, siP, totP);   /* pad lanes 0->0, real lanes recover */
+
+    memcpy(reK, srK, totK * 8); memcpy(imK, siK, totK * 8);
+    DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
+    double padns = 0, titns = 0, mklns = 0;
+    if (flip) {
+        mklns = d ? bench_mkl(d, reK, imK, totK) : 0; cachebust(); pace(cool_ms);
+        padns = bench_jit(jp, pp, reP, imP, Kp, totP); cachebust(); pace(cool_ms);
+        titns = bench_jit(jt, pt, reK, imK, K, totK);
+    } else {
+        padns = bench_jit(jp, pp, reP, imP, Kp, totP); cachebust(); pace(cool_ms);
+        titns = bench_jit(jt, pt, reK, imK, K, totK);  cachebust(); pace(cool_ms);
+        memcpy(reK, srK, totK * 8); memcpy(imK, siK, totK * 8);
+        mklns = d ? bench_mkl(d, reK, imK, totK) : 0;
+    }
+    if (d) DftiFreeDescriptor(&d);
+
+    double r_mp = (padns > 0 && mklns > 0) ? mklns / padns : 0;
+    double r_mt = (titns > 0 && mklns > 0) ? mklns / titns : 0;
+    double up   = (padns > 0 && titns > 0) ? titns / padns : 0;
+    printf("  N=%-6d K=%-4zu rem%zu Kp=%-3zu %-9s rt=%.0e | pad %9.0f tight %9.0f mkl %9.0f | mkl/pad=%.2f mkl/tight=%.2f uplift=%.2f\n",
+           N, (size_t)K, (size_t)K % 4, Kp, ppath, rt, padns, titns, mklns, r_mp, r_mt, up);
+    if (out) fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
+                     N, (size_t)K, Kp, padns, titns, mklns, r_mp, r_mt, up, rt);
+
+    free_d(srP); free_d(siP); free_d(reP); free_d(imP);
+    free_d(srK); free_d(siK); free_d(reK); free_d(imK);
+    vfft_proto_plan_destroy(pt); vfft_proto_plan_destroy(pp);
+}
+#endif /* VFFT_HAS_MKL */
+
 int main(int argc, char **argv)
 {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0;
+    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0;
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
      * c2c vs MKL NOT_INPLACE), --2d (2D c2c), --r2c (1D real fwd vs DFTI real),
      * --2dr2c (2D real fwd vs DFTI 2D real). --oop+--mt => OOP fwd K-split. */
@@ -1547,6 +1630,8 @@ int main(int argc, char **argv)
             c2r1d = 1;     /* reuse the c2r setup (rreg + wisdoms) */
             c2rcalib = 1;  /* but measure BOTH paths + write c2r_path.txt */
         }
+        else if (strcmp(argv[1], "--pad") == 0)
+            pad = 1;       /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
         else
             break;
         argv++;
@@ -1601,6 +1686,34 @@ int main(int argc, char **argv)
 #endif
     vfft_proto_registry_t reg;
     vfft_proto_registry_init(&reg);
+
+#ifdef VFFT_HAS_MKL
+    /* --pad: self-contained 1D c2c PADDING sweep (misaligned-K grid), then done. */
+    if (pad)
+    {
+        const char *pcsv = "vfft_perf_tuned_1d_pad.csv";
+        FILE *o2 = fopen(pcsv, "w");
+        if (o2)
+            fprintf(o2, "N,K,Kp,pad_ns,tight_ns,mkl_ns,mkl_over_pad,mkl_over_tight,uplift,rt_err\n");
+        printf("=== dag vs MKL — 1D C2C PADDING (aligned Kp plan me=Kp vs SSE2 tail me=K vs DFTI(N,K) split inplace, ST, core%d; pace=%dms) ===\n", core, pace_ms);
+        printf("# mkl/pad>1 = padding beats MKL; uplift = tight_ns/pad_ns (>1 = padding beats our own tail). roundtrip is the gate.\n");
+        printf("  %-6s %-4s %-4s %-3s %-9s %-8s | %9s %9s %9s | ratios\n", "N", "K", "rem", "Kp", "path", "rt_err", "pad_ns", "tight_ns", "mkl_ns");
+        int Ns[] = {256, 512, 1024};
+        size_t Ks[] = {7, 11, 15, 19, 23};
+        int benched = 0;
+        for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+            for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
+            {
+                run_pad_cell(Ns[ni], Ks[ki], &reg, o2, cool_ms, flip ^ (benched & 1));
+                benched++;
+                pace(pace_ms);
+            }
+        if (o2)
+            fclose(o2);
+        printf("benched %d pad cells.  CSV -> %s\n", benched, pcsv);
+        return 0;
+    }
+#endif
 
     /* --2d: self-contained 2D c2c sweep (own cell grid + CSV schema), then done. */
     if (twod)
