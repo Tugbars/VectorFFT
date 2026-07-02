@@ -128,13 +128,16 @@ struct vfft_plan_s
  * it was allocated for (a c2c handle must not be handed to an r2c create, etc.).
  *
  *   c2c (in-place):  real == NULL; re/im are the in-place split data, each N*Kp.
+ *   c2c (OUT-OF-PLACE): re/im are the split INPUT, ore/oim the split OUTPUT, each N*Kp
+ *                    (oop==1; Kp=roundup(K,8) so all 3 OOP kinds + wisdom caching work).
  *   r2c (fwd):       real = the real INPUT plane (N*Kp); re/im = the split spectrum
  *                    OUTPUT, each (N/2+1)*Kp.
  *   c2r (bwd):       re/im = the split spectrum INPUT, each (N/2+1)*Kp; real = the
  *                    real OUTPUT plane (N*Kp).
+ *   trig:            real = real INPUT (N*Kp), re = real OUTPUT (N*Kp).
  * All planes are Kp-strided so the Kp-built plan addresses them correctly (element e
  * of transform t is at plane[e*Kp + t]); the pad columns t in [K,Kp) stay zeroed. */
-struct vfft_batch_s { double *real, *re, *im; size_t K, Kp; int N; int xform; };
+struct vfft_batch_s { double *real, *re, *im, *ore, *oim; size_t K, Kp; int N; int xform; int oop; };
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -919,9 +922,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
      * padding lands in later phases. */
     if (cfg->batch && !(cfg->dims < 2 &&
-        ((cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE) ||
-          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
-          _VFFT_IS_TRIG(cfg->transform))))
+        (cfg->transform == VFFT_C2C ||   /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
+         cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
+         _VFFT_IS_TRIG(cfg->transform))))
         return NULL;
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
@@ -971,8 +974,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->batch)
     {
         vfft_batch b = cfg->batch;
-        if (b->xform != (int)VFFT_C2C || b->K != K || b->N != N)  /* handle must match the descriptor exactly */
-            return NULL;                                          /* (an r2c handle's re/im are (N/2+1)*Kp, not N*Kp) */
+        if (b->xform != (int)VFFT_C2C || b->oop || b->K != K || b->N != N)  /* handle must match exactly */
+            return NULL;                    /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
         size_t Kp = b->Kp;
 
         /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
@@ -1191,23 +1194,36 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     /* ── c2c OUT-OF-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
     {
+        /* PADDED (opt-in): build at Kp so the OOP plan strides the caller's Kp-wide 4 planes
+         * exactly. Pad-only (OOP bakes K, no runtime me). Kp = the handle's roundup(K,8), which
+         * keeps all 3 kinds AND lets the (N,Kp) OOP wisdom cell cache (BAILEY2 + the wisdom
+         * reader both hard-gate on K%8). Pad lanes [K,Kp) are zeroed junk, discarded. */
+        size_t bK = K;
+        int padded = 0;
+        if (cfg->batch)
+        {
+            vfft_batch b = cfg->batch;
+            if (b->xform != (int)VFFT_C2C || !b->oop || b->N != N || b->K != K)
+                return NULL;
+            bK = b->Kp; padded = 1;
+        }
         vfft_oop_plan_t *op = NULL;
-        const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup(&W->oop, N, K);
+        const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup(&W->oop, N, bK);
         if (e && !cfg->recalibrate)
-            op = vfft_oop_plan_create_wisdom(N, K, &W->oop, reg); /* pure lookup */
+            op = vfft_oop_plan_create_wisdom(N, bK, &W->oop, reg); /* pure lookup */
         if (!op)
         {
             /* calibrate-on-miss: 2-axis joint chooser (native vs DP-MODEB), persist. */
             vfft_proto_dp_context_t ctx;
-            vfft_proto_dp_init(&ctx, K, N);
+            vfft_proto_dp_init(&ctx, bK, N);
             if (cfg->rigor != VFFT_MEASURE)
                 vfft_proto_dp_set_patient(&ctx);
-            op = vfft_oop_plan_create_dp_best(N, K, &ctx, reg);
+            op = vfft_oop_plan_create_dp_best(N, bK, &ctx, reg);
             vfft_proto_dp_destroy(&ctx);
             if (op)
             {
                 vfft_oop_wisdom_entry_t ne;
-                vfft_oop_wisdom_entry_from_plan(&ne, op, N, K, 0.0);
+                vfft_oop_wisdom_entry_from_plan(&ne, op, N, bK, 0.0);
                 _oop_wisdom_put_and_save(W, &ne, W->path_oop);
             }
         }
@@ -1225,6 +1241,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->oplan = op;
+        h->padded = padded;
+        h->exec_me = (int)bK;
 #ifdef VFFT_USE_JIT
         /* MODEB rides a staged inner plan -> JIT it (fwd: stages 1.. at start_stage=1;
          * bwd: whole in-place DIF at start_stage=0). LEAF/BAILEY2 have no staged plan. */
@@ -1624,6 +1642,28 @@ vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
 /* c2c convenience (the original entry point). */
 vfft_batch vfft_alloc_batch(int N, size_t K) { return vfft_alloc_batch_ex(VFFT_C2C, N, K); }
 
+/* OOP c2c padded handle: 4 split planes (re/im INPUT, ore/oim OUTPUT), each N*Kp. Kp =
+ * roundup(K,8) (NOT VW=4): OOP BAILEY2 hard-gates on K%8 (oop_auto.h) and the OOP wisdom
+ * READER rejects K%8!=0 (oop_wisdom.h) — an 8-aligned Kp keeps all 3 kinds AND lets the
+ * (N,Kp) plan cache, with zero changes to the OOP internals. */
+vfft_batch vfft_alloc_batch_oop(int N, size_t K)
+{
+    if (N < 1 || K < 1)
+        return NULL;
+    size_t Kp = (K + 7u) & ~(size_t)7u;    /* roundup(K, 8) — OOP kind + wisdom alignment */
+    struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
+    if (!b)
+        return NULL;
+    b->N = N; b->K = K; b->Kp = Kp; b->xform = (int)VFFT_C2C; b->oop = 1;
+    size_t data = (size_t)N * Kp;
+    b->re  = _batch_plane(data);           /* INPUT re/im */
+    b->im  = _batch_plane(data);
+    b->ore = _batch_plane(data);           /* OUTPUT re/im */
+    b->oim = _batch_plane(data);
+    if (!(b->re && b->im && b->ore && b->oim)) { vfft_free_batch(b); return NULL; }
+    return b;
+}
+
 void vfft_free_batch(vfft_batch b)
 {
     if (!b)
@@ -1631,11 +1671,15 @@ void vfft_free_batch(vfft_batch b)
     if (b->real) stride_free(b->real);   /* Windows: stride_free == _aligned_free; free() is UB */
     if (b->re)   stride_free(b->re);
     if (b->im)   stride_free(b->im);
+    if (b->ore)  stride_free(b->ore);
+    if (b->oim)  stride_free(b->oim);
     free(b);
 }
-double *vfft_batch_real(vfft_batch b)    { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out) */
-double *vfft_batch_re(vfft_batch b)      { return b ? b->re : NULL; }
-double *vfft_batch_im(vfft_batch b)      { return b ? b->im : NULL; }
+double *vfft_batch_real(vfft_batch b)    { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out / trig in) */
+double *vfft_batch_re(vfft_batch b)      { return b ? b->re : NULL; }    /* OOP: INPUT re */
+double *vfft_batch_im(vfft_batch b)      { return b ? b->im : NULL; }    /* OOP: INPUT im */
+double *vfft_batch_out_re(vfft_batch b)  { return b ? b->ore : NULL; }   /* OOP OUTPUT re (NULL otherwise) */
+double *vfft_batch_out_im(vfft_batch b)  { return b ? b->oim : NULL; }   /* OOP OUTPUT im (NULL otherwise) */
 size_t  vfft_batch_stride(vfft_batch b)  { return b ? b->Kp : 0; }
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */

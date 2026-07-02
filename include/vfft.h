@@ -139,6 +139,9 @@ void vfft_destroy(vfft_plan p);
  *
  *   C2C (in-place):  vfft_batch_re / _im are the in-place split data (N*Kp each);
  *                    the planner runs me=Kp (full-SIMD) or me=K (tail) per wisdom exec_me.
+ *   C2C (OUT-OF-PLACE): vfft_batch_re / _im are the split INPUT, vfft_batch_out_re / _out_im
+ *                    the split OUTPUT (each N*Kp). Allocate with vfft_alloc_batch_oop; PAD-ONLY
+ *                    (OOP bakes K); Kp = roundup(K,8) here (OOP kind + wisdom 8-alignment).
  *   R2C (forward):   vfft_batch_real is the real INPUT (N*Kp); vfft_batch_re / _im are the
  *                    split spectrum OUTPUT ((N/2+1)*Kp each).
  *   C2R (backward):  vfft_batch_re / _im are the split spectrum INPUT; vfft_batch_real is
@@ -151,20 +154,25 @@ void vfft_destroy(vfft_plan p);
  * To USE it: allocate with the matching transform, set config.batch to this handle
  * (+ config.howmany = K, config.n[0] = N, config.transform = the same one), vfft_create,
  * then vfft_execute passing the batch planes (r2c: sre=real, dre/dim=re/im; c2r: sre/sim=
- * re/im, dre=real; c2c in-place: sre/sim=re/im; trig: sre=real, dre=re). OOP / 2D fall back
- * to the tight path. (vfft_batch is typedef'd up by the config struct.) Match alloc with free.
+ * re/im, dre=real; c2c in-place: sre/sim=re/im; c2c OOP: sre/sim=re/im, dre/dim=out_re/out_im;
+ * trig: sre=real, dre=re). 2D falls back to the tight path. Match alloc with free.
  * ════════════════════════════════════════════════════════════════════════ */
 
-vfft_batch vfft_alloc_batch(int N, size_t K);   /* C2C convenience: = vfft_alloc_batch_ex(VFFT_C2C, N, K) */
-/* Transform-aware allocator: C2C (re+im, N*Kp), R2C/C2R (real N*Kp + split spectrum (N/2+1)*Kp),
- * TRIG (real IN + real OUT, N*Kp each). All planes ZEROED. R2C/C2R/TRIG require even N.
- * NULL on failure / unsupported transform (OOP / 2D). */
+vfft_batch vfft_alloc_batch(int N, size_t K);   /* C2C in-place convenience: = vfft_alloc_batch_ex(VFFT_C2C, N, K) */
+/* Transform-aware allocator: C2C in-place (re+im, N*Kp), R2C/C2R (real N*Kp + split spectrum
+ * (N/2+1)*Kp), TRIG (real IN + real OUT, N*Kp each). All planes ZEROED. R2C/C2R/TRIG require
+ * even N. NULL on failure / unsupported transform (2D). For OOP c2c use vfft_alloc_batch_oop. */
 vfft_batch vfft_alloc_batch_ex(vfft_transform_t transform, int N, size_t K);
+/* OOP c2c padded handle: split INPUT (re/im) + split OUTPUT (out_re/out_im), each N*Kp,
+ * Kp=roundup(K,8). ZEROED. Use with config.transform=VFFT_C2C, placement=VFFT_OUTOFPLACE. */
+vfft_batch vfft_alloc_batch_oop(int N, size_t K);
 void       vfft_free_batch(vfft_batch b);     /* matching free (do NOT free the plane pointers yourself) */
 double    *vfft_batch_real(vfft_batch b);     /* real plane: r2c/trig INPUT, c2r OUTPUT (NULL for c2c) */
-double    *vfft_batch_re(vfft_batch b);       /* complex/data plane (trig: real OUTPUT) at stride vfft_batch_stride() */
+double    *vfft_batch_re(vfft_batch b);       /* complex/data plane (trig: real OUTPUT; OOP: INPUT re) */
 double    *vfft_batch_im(vfft_batch b);
-size_t     vfft_batch_stride(vfft_batch b);   /* = Kp (roundup(K,VW)) */
+double    *vfft_batch_out_re(vfft_batch b);   /* OOP c2c OUTPUT re (NULL for other transforms) */
+double    *vfft_batch_out_im(vfft_batch b);   /* OOP c2c OUTPUT im */
+size_t     vfft_batch_stride(vfft_batch b);   /* = Kp (roundup(K,VW); OOP: roundup(K,8)) */
 
 /* ════════════════════════════════════════════════════════════════════════
  * GLOBAL CONTROL  (optional; sensible defaults otherwise)
