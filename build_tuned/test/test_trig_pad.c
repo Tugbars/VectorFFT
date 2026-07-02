@@ -44,7 +44,7 @@ static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
             in[(size_t)n * Kp + k] = v;
         }
     vfft_config_t c; memset(&c, 0, sizeof c);
-    c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_ESTIMATE;
+    c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
     c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b;
     vfft_plan p = vfft_create(&c);
     double err = -1;
@@ -99,7 +99,7 @@ int main(void)
                 for (int k = 0; k < K; k++)
                 { double v = (double)rand() / RAND_MAX - 0.5; x[n * K + k] = v; in[(size_t)n * Kp + k] = v; }
             vfft_config_t c; memset(&c, 0, sizeof c);
-            c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_ESTIMATE;
+            c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
             c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b;
             vfft_plan p = vfft_create(&c);
             if (p)
