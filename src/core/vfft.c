@@ -740,10 +740,16 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (!recalib && vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
             return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
 
-        /* Build the fallback (1D-wisdom inners). */
+        /* Build the fallback (1D-wisdom inners). A PRIME dimension has no CT factorization —
+         * _inner_c2c returns NULL there — so fall back to the prime dispatch (Rader/Bluestein,
+         * an override plan). The 2D executor dispatches override_fwd for both the col FFT
+         * (contiguous K=N2 batch) and the row FFT (transposed K=B tiles). */
+        vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
         size_t B = _fft2d_choose_tile(N2, N1);
         stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
+        if (!col) col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, cw);
         stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
+        if (!row) row = vfft_proto_auto_plan_dispatch(N2, B, reg, cw);
         if (!col || !row)
         {
             if (col)
