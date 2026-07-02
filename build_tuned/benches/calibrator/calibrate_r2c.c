@@ -21,11 +21,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include "../core/env.h"
-#include "../core/planner.h"      /* vfft_proto_wisdom_t + load/add/save (wisdom_reader.h) */
-#include "../core/dp_planner.h"   /* vfft_proto_now_ns */
-#include "../core/rfft.h"
-#include "../generator/generated/rfft_registry_avx2.h"  /* rfft_register_all_avx2 (incl rfft.h) */
+#include "env.h"            /* bare includes: recursive -I resolves them (../core/ was pre-reorg) */
+#include "planner.h"        /* vfft_proto_wisdom_t + load/add/save (wisdom_reader.h) */
+#include "dp_planner.h"     /* vfft_proto_now_ns */
+#include "rfft.h"
+#include "rfft_registry_avx2.h"  /* rfft_register_all_avx2 (incl rfft.h) */
 
 #ifndef RFFT_WIS
 #define RFFT_WIS "../../src/dag-fft-compiler/generator/generated/rfft_wisdom.txt"
@@ -70,7 +70,11 @@ int main(int argc, char **argv) {
     int N = atoi(argv[1]); size_t K = (size_t)atoll(argv[2]);
     int core = (argc > 3) ? atoi(argv[3]) : 2;
     int verbose = (argc > 4) ? atoi(argv[4]) : 1;
-    if (K == 0 || K % 8 != 0) { fprintf(stderr, "K must be a multiple of 8\n"); return 1; }
+    if (K == 0) { fprintf(stderr, "K must be nonzero\n"); return 1; }
+    /* Arbitrary K: the rfft plan-create + packed executor are arbitrary-K now (rem-aware
+     * 8->4->1 tail); the old K%8 gate was stale. Odd-K r2c IS calibratable (matches the
+     * runtime vfft_rfft_calibrate, which accepts odd K). This lets the bulk sweep pre-fill
+     * odd-K r2c wisdom instead of every odd-K caller paying first-create calibration. */
     if (stride_pin_thread(core) != 0) fprintf(stderr, "warn: pin cpu%d\n", core);
 
     rfft_codelets_t reg; memset(&reg, 0, sizeof reg);

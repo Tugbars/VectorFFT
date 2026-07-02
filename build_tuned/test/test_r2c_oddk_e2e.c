@@ -49,15 +49,16 @@ done:
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: watch per-cell progress live */
     /* isolate wisdom so calibrate-on-miss writes to scratch, not the real files */
     putenv("VFFT_WISDOM_DIR=r2c_oddk_test");
     system("mkdir r2c_oddk_test 2>nul");
-    printf("# odd-K r2c->c2r roundtrip through the public API (calibrate-on-miss active)\n");
-    int Ns[] = {128, 256, 512};
-    int Ks[] = {4, 7, 8, 11, 15, 16, 23};
-    for (int n = 0; n < 3; n++)
-        for (int k = 0; k < 7; k++)
-            cell(Ns[n], Ks[k]);
-    printf(fails ? "\nRESULT: %d FAILURE(S)\n" : "\nRESULT: all odd-K r2c roundtrips pass\n", fails);
+    printf("# odd-K r2c->c2r roundtrip through the public planner path (calibrate-on-miss active)\n");
+    printf("# -- rfft regime (K<=64): odd + even --\n");
+    cell(256, 7); cell(256, 8); cell(256, 15); cell(512, 23);
+    printf("# -- STRIDE regime (K>64: decoupled N/2 c2c) -- the coverage gap: even AND odd --\n");
+    cell(256, 100); cell(256, 127); cell(256, 99);
+    cell(512, 100); cell(512, 127);
+    printf(fails ? "\nRESULT: %d FAILURE(S)\n" : "\nRESULT: all odd-K r2c roundtrips pass (both regimes)\n", fails);
     return fails ? 1 : 0;
 }
