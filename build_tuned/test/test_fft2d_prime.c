@@ -52,6 +52,12 @@ int main(void)
     cell(100, 127,"prime row");      /* large prime ROW = the layout question */
     cell(127, 128,"prime col pow2"); /* prime col, pow2 row */
     cell(128, 127,"prime row pow2"); /* prime row, pow2 col */
+    printf("-- isolate 127x100: is it row CT(100) or col Bluestein? --\n");
+    cell(128, 100,"comp col 100");   /* CT col 128, row CT(100) — isolates the row */
+    cell(64, 100, "comp col 100b");  /* another composite col, row CT(100) */
+    cell(127, 60, "pcol N2=60");     /* 60 = 4x15 */
+    cell(127, 200,"pcol N2=200");    /* 200 = 8x25 */
+    cell(127, 50, "pcol N2=50");     /* 50 = 2x25 */
     printf(fails ? "\nRESULT: %d FAILURE(S)\n" : "\nRESULT: 2D prime dims work (Rader/Bluestein)\n", fails);
     return fails ? 1 : 0;
 }
