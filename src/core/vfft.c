@@ -124,8 +124,17 @@ struct vfft_plan_s
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
- * buffer can't be passed through the tight execute path by mistake. */
-struct vfft_batch_s { double *re, *im; size_t K, Kp; int N; };
+ * buffer can't be passed through the tight execute path by mistake, plus the feature
+ * it was allocated for (a c2c handle must not be handed to an r2c create, etc.).
+ *
+ *   c2c (in-place):  real == NULL; re/im are the in-place split data, each N*Kp.
+ *   r2c (fwd):       real = the real INPUT plane (N*Kp); re/im = the split spectrum
+ *                    OUTPUT, each (N/2+1)*Kp.
+ *   c2r (bwd):       re/im = the split spectrum INPUT, each (N/2+1)*Kp; real = the
+ *                    real OUTPUT plane (N*Kp).
+ * All planes are Kp-strided so the Kp-built plan addresses them correctly (element e
+ * of transform t is at plane[e*Kp + t]); the pad columns t in [K,Kp) stay zeroed. */
+struct vfft_batch_s { double *real, *re, *im; size_t K, Kp; int N; int xform; };
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -902,13 +911,16 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     size_t K = cfg->howmany;
     if (cfg->dims < 0 || cfg->dims > 2)
         return NULL;
-    /* A VW-padded batch (config.batch) is honored ONLY by the 1D c2c in-place path. Every
-     * other feature would build a tight (stride-K) plan and then stride the caller's Kp-wide
-     * buffer at the wrong stride — silent wrong results. Reject the combination up front rather
-     * than silently ignore the handle: the padding design's contract is NO silent-corruption
-     * path. (Padding for OOP / r2c / c2r / trig / 2D lands in later phases.) */
-    if (cfg->batch &&
-        !(cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->dims < 2))
+    /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
+     * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
+     * Every other feature would build a tight (stride-K) plan and then stride a Kp-wide buffer
+     * at the wrong stride — silent wrong results. Reject the combination up front rather than
+     * silently ignore the handle: the padding design's contract is NO silent-corruption path.
+     * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
+     * padding lands in later phases. */
+    if (cfg->batch && !(cfg->dims < 2 &&
+        ((cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE) ||
+          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)))
         return NULL;
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
@@ -958,8 +970,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->batch)
     {
         vfft_batch b = cfg->batch;
-        if (b->K != K || b->N != N)   /* the handle must match the descriptor exactly */
-            return NULL;
+        if (b->xform != (int)VFFT_C2C || b->K != K || b->N != N)  /* handle must match the descriptor exactly */
+            return NULL;                                          /* (an r2c handle's re/im are (N/2+1)*Kp, not N*Kp) */
         size_t Kp = b->Kp;
 
         /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
@@ -1227,14 +1239,30 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     /* ── r2c (real -> complex, forward; split output) ── */
     if (cfg->transform == VFFT_R2C)
     {
+        /* PADDED (opt-in): a Kp-wide handle -> build the plan at Kp (the ORDINARY aligned
+         * (N,Kp) rfft cell — full-SIMD, no tail) so it strides the caller's Kp-wide buffers
+         * exactly. r2c/c2r executors bake K with no runtime `me`, so a K-plan can't run the
+         * tail on a Kp-strided buffer -> padded mode is pad-ONLY (the wisdom is unchanged; no
+         * exec_me verdict). Payoff lives in the cascade regime (small Kp<32); a Kp that routes
+         * to the K%8-gated stride path simply yields NULL (padding unsupported for that cell,
+         * caller falls back to the tight tail). */
+        size_t bK = K;                 /* build width: Kp when padded, else K */
+        int padded = 0;
+        if (cfg->batch)
+        {
+            vfft_batch b = cfg->batch;
+            if (b->xform != (int)VFFT_R2C || b->N != N || b->K != K)
+                return NULL;           /* handle must match the descriptor exactly */
+            bK = b->Kp; padded = 1;
+        }
         /* The r2c dispatcher rides the c2c wisdom for its decoupled inner FFT and
          * the rfft wisdom for the rfft path; it auto-threads (sub-K block) when the
          * pool is sized >1 at create. Calibrate-on-miss for the inner cell ensures
          * `rigor` reaches the dominant work (the inner c2c). */
-        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, K))
+        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK))
         {
             vfft_proto_wisdom_entry_t ne;
-            if ((N % 2) == 0 && _calibrate_c2c(N / 2, K, cfg->rigor, reg, &ne) == 0)
+            if ((N % 2) == 0 && _calibrate_c2c(N / 2, bK, cfg->rigor, reg, &ne) == 0)
             {
                 vfft_proto_wisdom_add(&W->c2c, &ne, 1);
                 if (W->path_c2c[0])
@@ -1247,10 +1275,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * regime (K at/below the decouple crossover); the stride path owns high K and
          * ignores rfft wisdom. The rfft search space is small → the sweep is exhaustive
          * + fast at any rigor (it's the calibrate-at-all that closes the gap). */
-        if (K <= 64 && (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->rfft, N, K)))
+        if (bK <= 64 && (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->rfft, N, bK)))
         {
             vfft_proto_wisdom_entry_t rfe;
-            if (vfft_rfft_calibrate(N, K, _rfft_registry(), &rfe) == 0)
+            if (vfft_rfft_calibrate(N, bK, _rfft_registry(), &rfe) == 0)
             {
                 vfft_proto_wisdom_add(&W->rfft, &rfe, 1);
                 if (W->path_rfft[0])
@@ -1263,10 +1291,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * picks rfft-vs-stride by measurement instead of the fixed K=32 threshold.
          * MEASURE / high-K use the (cheap) fixed-threshold dispatch. */
         vfft_r2c_plan_t *rp;
-        if (cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && K <= 64)
-            rp = _r2c_bakeoff(N, K, reg);
+        if (cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && bK <= 64)
+            rp = _r2c_bakeoff(N, bK, reg);
         else
-            rp = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT,
+            rp = vfft_r2c_plan_create(N, bK, VFFT_R2C_SPLIT,
                                       _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
         if (!rp)
             return NULL;
@@ -1282,6 +1310,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->rplan = rp;
+        h->padded = padded;
+        h->exec_me = (int)bK;          /* informational: the width the plan was built at */
         return h;
     }
 
@@ -1296,12 +1326,24 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     {
         if ((N % 2) != 0)
             return NULL;
+        /* PADDED (opt-in): build at Kp (ordinary aligned (N,Kp) c2r cell) so the plan strides
+         * the caller's Kp-wide split-input / real-output buffers exactly. Pad-only (see the r2c
+         * branch: baked-K executors, no runtime `me`); wisdom unchanged; cascade regime. */
+        size_t bK = K;
+        int padded = 0;
+        if (cfg->batch)
+        {
+            vfft_batch b = cfg->batch;
+            if (b->xform != (int)VFFT_C2R || b->N != N || b->K != K)
+                return NULL;
+            bK = b->Kp; padded = 1;
+        }
         /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
          * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
-        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, K))
+        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK))
         {
             vfft_proto_wisdom_entry_t ne;
-            if (_calibrate_c2c(N / 2, K, cfg->rigor, reg, &ne) == 0)
+            if (_calibrate_c2c(N / 2, bK, cfg->rigor, reg, &ne) == 0)
             {
                 vfft_proto_wisdom_add(&W->c2c, &ne, 1);
                 if (W->path_c2c[0])
@@ -1310,10 +1352,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_c2r_disp_t *cd;
-        if (cfg->rigor != VFFT_MEASURE && K <= 128)
-            cd = _c2r_bakeoff(N, K, reg);
+        if (cfg->rigor != VFFT_MEASURE && bK <= 128)
+            cd = _c2r_bakeoff(N, bK, reg);
         else
-            cd = vfft_c2r_disp_create_auto(N, K, _rfft_registry(), (vfft_proto_registry_t *)reg);
+            cd = vfft_c2r_disp_create_auto(N, bK, _rfft_registry(), (vfft_proto_registry_t *)reg);
         if (!cd)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -1328,6 +1370,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->c2rdisp = cd;
+        h->padded = padded;
+        h->exec_me = (int)bK;
         return h;
     }
 
@@ -1505,39 +1549,67 @@ void vfft_destroy(vfft_plan h)
  * AVX-512 (VW=8) extension — see the padding design doc. This handle DRIVES the padded
  * c2c in-place execute path: pass it as config.batch to vfft_create and the plan is built
  * at Kp + run at the padded wisdom's exec_me (see the padded branch in vfft_create). */
-vfft_batch vfft_alloc_batch(int N, size_t K)
+/* stride_alloc + zero (pad columns MUST be zero); NULL-safe caller frees on partial fail. */
+static double *_batch_plane(size_t doubles)
+{
+    double *p = (double *)stride_alloc(doubles * sizeof(double));
+    if (p)
+        memset(p, 0, doubles * sizeof(double));   /* stride_alloc does NOT zero */
+    return p;
+}
+
+/* Transform-aware padded allocator. c2c is in-place (re/im only, N*Kp each); r2c/c2r
+ * are out-of-place with a real plane (N*Kp) and a split spectrum ((N/2+1)*Kp each).
+ * All planes Kp-strided so the Kp-built plan lands exactly (element e, lane t -> [e*Kp+t]). */
+vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
 {
     if (N < 1 || K < 1)
         return NULL;
-    size_t Kp = (K + 3u) & ~(size_t)3u;   /* roundup(K, VW=4) */
+    int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
+    if (xform != VFFT_C2C && !real_side)
+        return NULL;                       /* trig/2D padded handles unsupported for now */
+    if (real_side && (N % 2) != 0)
+        return NULL;                       /* real-FFT needs even N (half-spectrum) */
+    size_t Kp = (K + 3u) & ~(size_t)3u;    /* roundup(K, VW=4) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
-    size_t bytes = (size_t)N * Kp * sizeof(double);
-    b->re = (double *)stride_alloc(bytes);
-    b->im = (double *)stride_alloc(bytes);
-    if (!b->re || !b->im) {
-        if (b->re) stride_free(b->re);
-        if (b->im) stride_free(b->im);
-        free(b);
-        return NULL;
+    b->N = N; b->K = K; b->Kp = Kp; b->xform = (int)xform;
+    int ok = 1;
+    if (real_side)
+    {
+        size_t spec = (size_t)(N / 2 + 1) * Kp;   /* split spectrum plane */
+        b->real = _batch_plane((size_t)N * Kp);   /* real plane */
+        b->re   = _batch_plane(spec);
+        b->im   = _batch_plane(spec);
+        ok = (b->real && b->re && b->im);
     }
-    memset(b->re, 0, bytes);   /* stride_alloc does NOT zero; pad columns MUST be zero */
-    memset(b->im, 0, bytes);
-    b->N = N; b->K = K; b->Kp = Kp;
+    else /* c2c in-place: split data, no real plane */
+    {
+        size_t data = (size_t)N * Kp;
+        b->re = _batch_plane(data);
+        b->im = _batch_plane(data);
+        ok = (b->re && b->im);
+    }
+    if (!ok) { vfft_free_batch(b); return NULL; }
     return b;
 }
+/* c2c convenience (the original entry point). */
+vfft_batch vfft_alloc_batch(int N, size_t K) { return vfft_alloc_batch_ex(VFFT_C2C, N, K); }
+
 void vfft_free_batch(vfft_batch b)
 {
     if (!b)
         return;
-    stride_free(b->re);   /* Windows: stride_free == _aligned_free; a plain free() would be UB */
-    stride_free(b->im);
+    if (b->real) stride_free(b->real);   /* Windows: stride_free == _aligned_free; free() is UB */
+    if (b->re)   stride_free(b->re);
+    if (b->im)   stride_free(b->im);
     free(b);
 }
-double *vfft_batch_re(vfft_batch b)     { return b ? b->re : NULL; }
-double *vfft_batch_im(vfft_batch b)     { return b ? b->im : NULL; }
-size_t  vfft_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
+double *vfft_batch_real(vfft_batch b)    { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out) */
+double *vfft_batch_re(vfft_batch b)      { return b ? b->re : NULL; }
+double *vfft_batch_im(vfft_batch b)      { return b ? b->im : NULL; }
+size_t  vfft_batch_stride(vfft_batch b)  { return b ? b->Kp : 0; }
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)

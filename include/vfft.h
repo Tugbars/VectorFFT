@@ -133,21 +133,32 @@ void vfft_destroy(vfft_plan p);
  *
  * A VW-padded batch: the library allocates the batch at stride Kp = roundup(K,VW)
  * with the (Kp-K) pad columns ZEROED, and hands it back as an OPAQUE handle that
- * carries its own stride — so a padded buffer cannot be mistaken for a tight one.
- * Fill/read the K real lanes through vfft_batch_re/im at the physical stride
- * vfft_batch_stride() (= Kp): element e of transform t is at re[e*Kp + t].
+ * carries its own stride + the transform it was made for — so a padded buffer cannot
+ * be mistaken for a tight one (or a c2c handle for an r2c one). Access every plane at
+ * the physical stride vfft_batch_stride() (= Kp): element e of lane t is at [e*Kp + t].
  *
- * On such a buffer the planner may run me=Kp (pure full-SIMD, junk lanes discarded)
- * OR me=K (SSE2/scalar tail) — whichever the padded wisdom's exec_me picked — both
- * correct for the K real transforms. To USE it: allocate here, set config.batch to this
- * handle (+ config.howmany = K, config.n[0] = N), vfft_create, then vfft_execute on
- * vfft_batch_re/im. Wired for C2C in-place; other features fall back to the tight path.
- * (vfft_batch itself is typedef'd up by the config struct.) Match alloc with free.
+ *   C2C (in-place):  vfft_batch_re / _im are the in-place split data (N*Kp each);
+ *                    the planner runs me=Kp (full-SIMD) or me=K (tail) per wisdom exec_me.
+ *   R2C (forward):   vfft_batch_real is the real INPUT (N*Kp); vfft_batch_re / _im are the
+ *                    split spectrum OUTPUT ((N/2+1)*Kp each).
+ *   C2R (backward):  vfft_batch_re / _im are the split spectrum INPUT; vfft_batch_real is
+ *                    the real OUTPUT (N*Kp). r2c/c2r are PAD-ONLY (build at Kp, full-SIMD;
+ *                    the junk lanes t in [K,Kp) are discarded) — their executors bake K.
+ *
+ * To USE it: allocate with the matching transform, set config.batch to this handle
+ * (+ config.howmany = K, config.n[0] = N, config.transform = the same one), vfft_create,
+ * then vfft_execute passing the batch planes (r2c: sre=real, dre/dim=re/im; c2r: sre/sim=
+ * re/im, dre=real; c2c in-place: sre/sim=re/im). OOP / trig / 2D fall back to the tight
+ * path. (vfft_batch is typedef'd up by the config struct.) Match alloc with free.
  * ════════════════════════════════════════════════════════════════════════ */
 
-vfft_batch vfft_alloc_batch(int N, size_t K); /* Kp=roundup(K,VW)-wide, ZEROED re+im; NULL on failure */
-void       vfft_free_batch(vfft_batch b);     /* matching free (do NOT free the re/im pointers yourself) */
-double    *vfft_batch_re(vfft_batch b);       /* K real lanes at stride vfft_batch_stride() */
+vfft_batch vfft_alloc_batch(int N, size_t K);   /* C2C convenience: = vfft_alloc_batch_ex(VFFT_C2C, N, K) */
+/* Transform-aware allocator: C2C (re+im, N*Kp), R2C/C2R (real N*Kp + split spectrum (N/2+1)*Kp).
+ * All planes ZEROED. R2C/C2R require even N. NULL on failure / unsupported transform. */
+vfft_batch vfft_alloc_batch_ex(vfft_transform_t transform, int N, size_t K);
+void       vfft_free_batch(vfft_batch b);     /* matching free (do NOT free the plane pointers yourself) */
+double    *vfft_batch_real(vfft_batch b);     /* real plane: r2c INPUT / c2r OUTPUT (NULL for c2c) */
+double    *vfft_batch_re(vfft_batch b);       /* complex/data plane at stride vfft_batch_stride() */
 double    *vfft_batch_im(vfft_batch b);
 size_t     vfft_batch_stride(vfft_batch b);   /* = Kp (roundup(K,VW)) */
 
