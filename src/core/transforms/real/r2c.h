@@ -214,8 +214,8 @@ static void _r2c_postprocess(
 #if defined(__AVX512F__)
         for (; k + 8 <= B; k += 8)
         {
-            __m512d zr = _mm512_load_pd(z_re + k);
-            __m512d zi = _mm512_load_pd(z_im + k);
+            __m512d zr = _mm512_loadu_pd(z_re + k);
+            __m512d zi = _mm512_loadu_pd(z_im + k);
             _mm512_storeu_pd(out_re + b0 + k, _mm512_add_pd(zr, zi));
             _mm512_storeu_pd(out_im + b0 + k, _mm512_setzero_pd());
             _mm512_storeu_pd(out_re + nyq_off + k, _mm512_sub_pd(zr, zi));
@@ -225,8 +225,8 @@ static void _r2c_postprocess(
 #if defined(__AVX2__) || defined(__AVX512F__)
         for (; k + 4 <= B; k += 4)
         {
-            __m256d zr = _mm256_load_pd(z_re + k);
-            __m256d zi = _mm256_load_pd(z_im + k);
+            __m256d zr = _mm256_loadu_pd(z_re + k);
+            __m256d zi = _mm256_loadu_pd(z_im + k);
             _mm256_storeu_pd(out_re + b0 + k, _mm256_add_pd(zr, zi));
             _mm256_storeu_pd(out_im + b0 + k, _mm256_setzero_pd());
             _mm256_storeu_pd(out_re + nyq_off + k, _mm256_sub_pd(zr, zi));
@@ -274,10 +274,10 @@ static void _r2c_postprocess(
             if (do_mirror) { vwrm = _mm512_set1_pd(wrm); vwim = _mm512_set1_pd(wim); }
 
             for (; k + 8 <= B; k += 8) {
-                __m512d Zfr = _mm512_load_pd(z_re + z_f + k);
-                __m512d Zfi = _mm512_load_pd(z_im + z_f + k);
-                __m512d Zmr = _mm512_load_pd(z_re + z_m + k);
-                __m512d Zmi = _mm512_load_pd(z_im + z_m + k);
+                __m512d Zfr = _mm512_loadu_pd(z_re + z_f + k);
+                __m512d Zfi = _mm512_loadu_pd(z_im + z_f + k);
+                __m512d Zmr = _mm512_loadu_pd(z_re + z_m + k);
+                __m512d Zmi = _mm512_loadu_pd(z_im + z_m + k);
 
                 __m512d Er = _mm512_mul_pd(_mm512_add_pd(Zfr, Zmr), half_v);
                 __m512d Ei = _mm512_mul_pd(_mm512_sub_pd(Zfi, Zmi), half_v);
@@ -317,10 +317,10 @@ static void _r2c_postprocess(
             if (do_mirror) { vwrm = _mm256_set1_pd(wrm); vwim = _mm256_set1_pd(wim); }
 
             for (; k + 4 <= B; k += 4) {
-                __m256d Zfr = _mm256_load_pd(z_re + z_f + k);
-                __m256d Zfi = _mm256_load_pd(z_im + z_f + k);
-                __m256d Zmr = _mm256_load_pd(z_re + z_m + k);
-                __m256d Zmi = _mm256_load_pd(z_im + z_m + k);
+                __m256d Zfr = _mm256_loadu_pd(z_re + z_f + k);
+                __m256d Zfi = _mm256_loadu_pd(z_im + z_f + k);
+                __m256d Zmr = _mm256_loadu_pd(z_re + z_m + k);
+                __m256d Zmi = _mm256_loadu_pd(z_im + z_m + k);
 
                 __m256d Er = _mm256_mul_pd(_mm256_add_pd(Zfr, Zmr), half_v);
                 __m256d Ei = _mm256_mul_pd(_mm256_sub_pd(Zfi, Zmi), half_v);
@@ -582,8 +582,8 @@ static void _r2c_preprocess(
             {
                 __m512d x0 = _mm512_loadu_pd(in_re + b0 + k);
                 __m512d xn = _mm512_loadu_pd(in_re + nyq + k);
-                _mm512_store_pd(z_re + z0_out + k, _mm512_mul_pd(_mm512_add_pd(x0, xn), half_v));
-                _mm512_store_pd(z_im + z0_out + k, _mm512_mul_pd(_mm512_sub_pd(x0, xn), half_v));
+                _mm512_storeu_pd(z_re + z0_out + k, _mm512_mul_pd(_mm512_add_pd(x0, xn), half_v));
+                _mm512_storeu_pd(z_im + z0_out + k, _mm512_mul_pd(_mm512_sub_pd(x0, xn), half_v));
             }
         }
 #endif
@@ -594,8 +594,8 @@ static void _r2c_preprocess(
             {
                 __m256d x0 = _mm256_loadu_pd(in_re + b0 + k);
                 __m256d xn = _mm256_loadu_pd(in_re + nyq + k);
-                _mm256_store_pd(z_re + z0_out + k, _mm256_mul_pd(_mm256_add_pd(x0, xn), half_v));
-                _mm256_store_pd(z_im + z0_out + k, _mm256_mul_pd(_mm256_sub_pd(x0, xn), half_v));
+                _mm256_storeu_pd(z_re + z0_out + k, _mm256_mul_pd(_mm256_add_pd(x0, xn), half_v));
+                _mm256_storeu_pd(z_im + z0_out + k, _mm256_mul_pd(_mm256_sub_pd(x0, xn), half_v));
             }
         }
 #endif
@@ -660,8 +660,8 @@ static void _r2c_preprocess(
                 __m512d Xor_f = _mm512_fmsub_pd(vcwr, Dr, _mm512_mul_pd(vcwi, Di));
                 __m512d Xoi_f = _mm512_fmadd_pd(vcwr, Di, _mm512_mul_pd(vcwi, Dr));
 
-                _mm512_store_pd(z_re + fo + k, _mm512_sub_pd(Er, Xoi_f));
-                _mm512_store_pd(z_im + fo + k, _mm512_add_pd(Ei, Xor_f));
+                _mm512_storeu_pd(z_re + fo + k, _mm512_sub_pd(Er, Xoi_f));
+                _mm512_storeu_pd(z_im + fo + k, _mm512_add_pd(Ei, Xor_f));
 
                 if (do_mirror)
                 {
@@ -669,8 +669,8 @@ static void _r2c_preprocess(
                     __m512d Xor_m = _mm512_fmsub_pd(vcwr_m, neg_Dr, _mm512_mul_pd(vcwi_m, Di));
                     __m512d Xoi_m = _mm512_fmadd_pd(vcwr_m, Di, _mm512_mul_pd(vcwi_m, neg_Dr));
                     __m512d neg_Ei = _mm512_sub_pd(_mm512_setzero_pd(), Ei);
-                    _mm512_store_pd(z_re + mo + k, _mm512_sub_pd(Er, Xoi_m));
-                    _mm512_store_pd(z_im + mo + k, _mm512_add_pd(neg_Ei, Xor_m));
+                    _mm512_storeu_pd(z_re + mo + k, _mm512_sub_pd(Er, Xoi_m));
+                    _mm512_storeu_pd(z_im + mo + k, _mm512_add_pd(neg_Ei, Xor_m));
                 }
             }
         }
@@ -702,8 +702,8 @@ static void _r2c_preprocess(
                 __m256d Xor_f = _mm256_fmsub_pd(vcwr, Dr, _mm256_mul_pd(vcwi, Di));
                 __m256d Xoi_f = _mm256_fmadd_pd(vcwr, Di, _mm256_mul_pd(vcwi, Dr));
 
-                _mm256_store_pd(z_re + fo + k, _mm256_sub_pd(Er, Xoi_f));
-                _mm256_store_pd(z_im + fo + k, _mm256_add_pd(Ei, Xor_f));
+                _mm256_storeu_pd(z_re + fo + k, _mm256_sub_pd(Er, Xoi_f));
+                _mm256_storeu_pd(z_im + fo + k, _mm256_add_pd(Ei, Xor_f));
 
                 if (do_mirror)
                 {
@@ -711,8 +711,8 @@ static void _r2c_preprocess(
                     __m256d Xor_m = _mm256_fmsub_pd(vcwr_m, neg_Dr, _mm256_mul_pd(vcwi_m, Di));
                     __m256d Xoi_m = _mm256_fmadd_pd(vcwr_m, Di, _mm256_mul_pd(vcwi_m, neg_Dr));
                     __m256d neg_Ei = _mm256_xor_pd(Ei, sign);
-                    _mm256_store_pd(z_re + mo + k, _mm256_sub_pd(Er, Xoi_m));
-                    _mm256_store_pd(z_im + mo + k, _mm256_add_pd(neg_Ei, Xor_m));
+                    _mm256_storeu_pd(z_re + mo + k, _mm256_sub_pd(Er, Xoi_m));
+                    _mm256_storeu_pd(z_im + mo + k, _mm256_add_pd(neg_Ei, Xor_m));
                 }
             }
         }
@@ -827,7 +827,9 @@ static void _r2c_worker_fwd(void *arg) {
             else
                 _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
         } else {
-            /* Fallback: explicit pack + full inner FFT */
+            /* Fallback: explicit pack + full inner FFT. Scratch stores are UNALIGNED
+             * (storeu): dst = scratch + n*B, and for an odd/misaligned B that base isn't
+             * VW-aligned, so an aligned store would fault. (Aligned B just costs a hair.) */
             for (int n = 0; n < halfN; n++) {
                 const double *even = re + (size_t)(2 * n) * K + b0;
                 const double *odd  = re + (size_t)(2 * n + 1) * K + b0;
@@ -836,14 +838,14 @@ static void _r2c_worker_fwd(void *arg) {
                 size_t k = 0;
 #if defined(__AVX512F__)
                 for (; k + 8 <= B; k += 8) {
-                    _mm512_store_pd(dst_r + k, _mm512_loadu_pd(even + k));
-                    _mm512_store_pd(dst_i + k, _mm512_loadu_pd(odd + k));
+                    _mm512_storeu_pd(dst_r + k, _mm512_loadu_pd(even + k));
+                    _mm512_storeu_pd(dst_i + k, _mm512_loadu_pd(odd + k));
                 }
 #endif
 #if defined(__AVX2__) || defined(__AVX512F__)
                 for (; k + 4 <= B; k += 4) {
-                    _mm256_store_pd(dst_r + k, _mm256_loadu_pd(even + k));
-                    _mm256_store_pd(dst_i + k, _mm256_loadu_pd(odd + k));
+                    _mm256_storeu_pd(dst_r + k, _mm256_loadu_pd(even + k));
+                    _mm256_storeu_pd(dst_i + k, _mm256_loadu_pd(odd + k));
                 }
 #endif
                 for (; k < B; k++) { dst_r[k] = even[k]; dst_i[k] = odd[k]; }
@@ -981,12 +983,13 @@ static void _r2c_worker_bwd(void *arg) {
                 double *even = re + (size_t)(2 * n) * K + b0;
                 double *odd  = re + (size_t)(2 * n + 1) * K + b0;
                 size_t k = 0;
+                /* Scratch loads UNALIGNED (loadu): src = scratch + n*B, not VW-aligned for odd B. */
 #if defined(__AVX512F__)
                 {
                     __m512d two = _mm512_set1_pd(2.0);
                     for (; k + 8 <= B; k += 8) {
-                        _mm512_storeu_pd(even + k, _mm512_mul_pd(two, _mm512_load_pd(src_r + k)));
-                        _mm512_storeu_pd(odd + k, _mm512_mul_pd(two, _mm512_load_pd(src_i + k)));
+                        _mm512_storeu_pd(even + k, _mm512_mul_pd(two, _mm512_loadu_pd(src_r + k)));
+                        _mm512_storeu_pd(odd + k, _mm512_mul_pd(two, _mm512_loadu_pd(src_i + k)));
                     }
                 }
 #endif
@@ -994,8 +997,8 @@ static void _r2c_worker_bwd(void *arg) {
                 {
                     __m256d two = _mm256_set1_pd(2.0);
                     for (; k + 4 <= B; k += 4) {
-                        _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_load_pd(src_r + k)));
-                        _mm256_storeu_pd(odd + k, _mm256_mul_pd(two, _mm256_load_pd(src_i + k)));
+                        _mm256_storeu_pd(even + k, _mm256_mul_pd(two, _mm256_loadu_pd(src_r + k)));
+                        _mm256_storeu_pd(odd + k, _mm256_mul_pd(two, _mm256_loadu_pd(src_i + k)));
                     }
                 }
 #endif
@@ -1359,8 +1362,10 @@ static void _r2c_worker_fwd_oop(void *arg) {
          * the fused codelet reads the real input there. DIF puts the no-twiddle
          * stage LAST (stage 0 is a twiddle stage), so fusing into stage 0 is wrong
          * — DIF inners take the explicit-pack + full-inner path below. */
+        /* Odd B (B % VW != 0): skip the fused first stage (its OOP butterfly over-runs the
+         * remainder lanes) — use the explicit-pack fallback (unaligned scratch + full inner). */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
-            && !d->inner->use_dif_forward) {
+            && !d->inner->use_dif_forward && (B & 3u) == 0) {
             _r2c_fused_first_stage(d->inner, in, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
@@ -1382,14 +1387,14 @@ static void _r2c_worker_fwd_oop(void *arg) {
                 size_t k = 0;
 #if defined(__AVX512F__)
                 for (; k + 8 <= B; k += 8) {
-                    _mm512_store_pd(dst_r + k, _mm512_loadu_pd(even + k));
-                    _mm512_store_pd(dst_i + k, _mm512_loadu_pd(odd + k));
+                    _mm512_storeu_pd(dst_r + k, _mm512_loadu_pd(even + k));
+                    _mm512_storeu_pd(dst_i + k, _mm512_loadu_pd(odd + k));
                 }
 #endif
 #if defined(__AVX2__) || defined(__AVX512F__)
                 for (; k + 4 <= B; k += 4) {
-                    _mm256_store_pd(dst_r + k, _mm256_loadu_pd(even + k));
-                    _mm256_store_pd(dst_i + k, _mm256_loadu_pd(odd + k));
+                    _mm256_storeu_pd(dst_r + k, _mm256_loadu_pd(even + k));
+                    _mm256_storeu_pd(dst_i + k, _mm256_loadu_pd(odd + k));
                 }
 #endif
                 for (; k < B; k++) { dst_r[k] = even[k]; dst_i[k] = odd[k]; }
@@ -1503,10 +1508,12 @@ static void _r2c_worker_fwd_oop(void *arg) {
             _r2c_laststage_fused(d->inner, sr, si, a->out_re, a->out_im,
                                  d->tw_re, d->tw_im, d->iperm, d->perm,
                                  halfN, K, B, b0, d->ls_fwd);
-        } else if (d->term_fwd) {
+        } else if (d->term_fwd && (B & 3u) == 0) {
             /* Step-2 fused path (opt-in): interior pairs via the r2c_term
              * codelet, DC/Nyquist + self-paired (f=halfN/2) as scalar
-             * specials (the codelet covers only true interior pairs). */
+             * specials (the codelet covers only true interior pairs).
+             * Odd B -> the r2c_term codelet isn't rem-aware; fall to the
+             * standard (now-unaligned) _r2c_postprocess below. */
             /* DC (f=0) + Nyquist (f=halfN): Z[0] at scratch row perm[0]=0. */
             {
                 size_t nyq_off = (size_t)halfN * K + b0;

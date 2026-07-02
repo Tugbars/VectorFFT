@@ -254,12 +254,11 @@ static inline vfft_c2r_layout_t vfft_c2r_layout_wisdom(int N, size_t K)
 static inline vfft_c2r_disp_t *vfft_c2r_disp_create_auto(int N, size_t K,
         const rfft_codelets_t *rfft_reg, vfft_proto_registry_t *c2c_reg)
 {
-    /* Arbitrary-K: the SPLIT (decoupled-stride) layout can't do a non-8-multiple K
-     * (its inner is vec-width-batched) — force NATURAL so odd K runs the rfft-style
-     * cascade with the rem-aware tail. Aligned K keeps the wisdom/threshold choice.
-     * (The bakeoff path in vfft.c is already NULL-graceful via _vfft_r2c_build_stride.) */
-    vfft_c2r_layout_t lay =
-        ((K % 8) != 0) ? VFFT_C2R_NATURAL : vfft_c2r_layout_wisdom(N, K);
+    /* Arbitrary-K: the SPLIT (decoupled-stride) layout now handles a non-VW-aligned K (its
+     * backward worker _r2c_worker_bwd routes an odd B through the explicit-pack fallback with
+     * the rem-aware inner tail — see r2c.h). So odd K keeps the normal wisdom/threshold choice;
+     * NATURAL still wins below the decouple threshold. (Bakeoff stays NULL-graceful.) */
+    vfft_c2r_layout_t lay = vfft_c2r_layout_wisdom(N, K);
     return vfft_c2r_disp_create(N, K, lay, rfft_reg, c2c_reg);
 }
 
