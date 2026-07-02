@@ -1582,6 +1582,98 @@ static void run_pad_cell(int N, size_t K, vfft_proto_registry_t *reg, FILE *out,
     free_d(srK); free_d(siK); free_d(reK); free_d(imK);
     vfft_proto_plan_destroy(pt); vfft_proto_plan_destroy(pp);
 }
+
+/* ────────────────────────────────────────────────────────────────────────
+ * --padr2c : 1D r2c PADDING. pad = the aligned (N,Kp) rfft plan (full-SIMD) on a Kp-wide
+ * buffer; tight = the (N,K) rfft plan (rem-aware tail) on a K-wide buffer; mkl = DFTI
+ * real(N,K). r2c/c2r bake K (no runtime `me`) so padding is pad-ONLY (build at Kp). NOTE:
+ * r2c ST loses to MKL by design (split-layout pack tax) — the WIN here is uplift = tight/pad
+ * (padding beats our OWN tail); MT is the MKL win. Correctness gate = padded lanes 0..K-1
+ * numerically equal the tight output. Own CSV. ──────────────────────────────────────── */
+static void run_padr2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_proto_registry_t *creg,
+                            FILE *out, int cool_ms, int flip)
+{
+    const int halfN = N / 2;
+    size_t Kp = (K + 3u) & ~(size_t)3u;                    /* roundup(K, VW=4) */
+    /* NOTE: both legs build from the currently-loaded rfft wisdom (shipped aligned cells +
+     * the c2c inner). We deliberately DON'T calibrate the odd (N,K) tight leg here — with a
+     * --jit build that would route odd K onto the rfft JIT executor, which assumes K%VW==0
+     * (odd-K rfft JIT is a phase-2 gap; production uses the GENERIC odd-K executor). Missing
+     * aligned Kp cells (12/20/24) thus use a heuristic factorization, so the pad leg here is
+     * a lower bound — production's calibrate-on-miss (vfft_create) does better. */
+    vfft_r2c_plan_t *pt = vfft_r2c_plan_create(N, K,  VFFT_R2C_SPLIT, rreg, NULL, creg);
+    vfft_r2c_plan_t *pp = vfft_r2c_plan_create(N, Kp, VFFT_R2C_SPLIT, rreg, NULL, creg);
+    if (!pt || !pp) {
+        printf("  N=%-6d K=%-4zu Kp=%-3zu  r2c plan NULL (pt=%p pp=%p — Kp -> gated stride?)\n",
+               N, K, Kp, (void *)pt, (void *)pp);
+        if (pt) vfft_r2c_plan_destroy(pt);
+        if (pp) vfft_r2c_plan_destroy(pp);
+        return;
+    }
+    const char *path = (pp->path == VFFT_R2C_PATH_RFFT) ? "rfft" : "stride";
+    size_t totK = (size_t)N * K,  outK  = (size_t)(halfN + 1) * K;
+    size_t totP = (size_t)N * Kp, outP  = (size_t)(halfN + 1) * Kp;
+    double *xk = alloc_d(totK), *rek = alloc_d(outK), *imk = alloc_d(outK);
+    double *xp = alloc_d(totP), *rep = alloc_d(outP), *imp = alloc_d(outP);
+    memset(xp, 0, totP * 8);                                /* pad lanes MUST be zero */
+    srand(7 + N + (int)K);
+    for (size_t i = 0; i < totK; i++) xk[i] = (double)rand() / RAND_MAX * 2 - 1;
+    for (int n = 0; n < N; n++)                             /* same K signals at stride Kp */
+        for (size_t k = 0; k < K; k++)
+            xp[(size_t)n * Kp + k] = xk[(size_t)n * K + k];
+    /* correctness: padded lanes 0..K-1 == tight (each lane is an independent transform) */
+    vfft_r2c_execute_fwd(pt, xk, rek, imk);
+    vfft_r2c_execute_fwd(pp, xp, rep, imp);
+    double match = 0;
+    for (int hh = 0; hh <= halfN; hh++)
+        for (size_t k = 0; k < K; k++) {
+            double dr = fabs(rep[(size_t)hh * Kp + k] - rek[(size_t)hh * K + k]);
+            double di = fabs(imp[(size_t)hh * Kp + k] - imk[(size_t)hh * K + k]);
+            if (dr > match) match = dr;
+            if (di > match) match = di;
+        }
+    /* MKL real(N,K): transform-major real in, CCE complex-complex out (as in run_r2c_cell) */
+    DFTI_DESCRIPTOR_HANDLE h = 0; int mok = 0;
+    double *xin = alloc_d(totK), *cce = alloc_d(outK * 2);
+    for (size_t t = 0; t < K; t++)
+        for (int n = 0; n < N; n++)
+            xin[t * (size_t)N + n] = xk[(size_t)n * K + t];
+    if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR) {
+        DftiSetValue(h, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+        DftiSetValue(h, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+        DftiSetValue(h, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+        DftiSetValue(h, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+        DftiSetValue(h, DFTI_OUTPUT_DISTANCE, (MKL_LONG)(halfN + 1));
+        mok = (DftiCommitDescriptor(h) == DFTI_NO_ERROR);
+    }
+    double padns = 0, titns = 0, mklns = 0;
+    if (flip) {
+        if (mok) mklns = bench_mkl_r2c(h, xin, cce, totK);
+        cachebust(); pace(cool_ms);
+        padns = time_r2c(pp, xp, rep, imp, totP);
+        cachebust(); pace(cool_ms);
+        titns = time_r2c(pt, xk, rek, imk, totK);
+    } else {
+        padns = time_r2c(pp, xp, rep, imp, totP);
+        cachebust(); pace(cool_ms);
+        titns = time_r2c(pt, xk, rek, imk, totK);
+        cachebust(); pace(cool_ms);
+        if (mok) mklns = bench_mkl_r2c(h, xin, cce, totK);
+    }
+    if (h) DftiFreeDescriptor(&h);
+    double r_mp = (padns > 0 && mklns > 0) ? mklns / padns : 0;
+    double r_mt = (titns > 0 && mklns > 0) ? mklns / titns : 0;
+    double up   = (padns > 0 && titns > 0) ? titns / padns : 0;
+    int bad = (match > 1e-12);
+    printf("  N=%-6d K=%-4zu rem%zu Kp=%-3zu %-6s match=%.0e | pad %10.0f tight %10.0f mkl %10.0f | mkl/pad=%.2f mkl/tight=%.2f uplift=%.2f%s\n",
+           N, K, K % 4, Kp, path, match, padns, titns, mklns, r_mp, r_mt, up, bad ? " <MATCH FAIL>" : "");
+    if (out) fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
+                     N, K, Kp, padns, titns, mklns, r_mp, r_mt, up, match);
+    free_d(xk); free_d(rek); free_d(imk);
+    free_d(xp); free_d(rep); free_d(imp);
+    free_d(xin); free_d(cce);
+    vfft_r2c_plan_destroy(pt); vfft_r2c_plan_destroy(pp);
+}
 #endif /* VFFT_HAS_MKL */
 
 int main(int argc, char **argv)
@@ -1589,7 +1681,7 @@ int main(int argc, char **argv)
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0;
+    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
      * c2c vs MKL NOT_INPLACE), --2d (2D c2c), --r2c (1D real fwd vs DFTI real),
      * --2dr2c (2D real fwd vs DFTI 2D real). --oop+--mt => OOP fwd K-split. */
@@ -1632,6 +1724,8 @@ int main(int argc, char **argv)
         }
         else if (strcmp(argv[1], "--pad") == 0)
             pad = 1;       /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
+        else if (strcmp(argv[1], "--padr2c") == 0)
+            padr2c = 1;    /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
         else
             break;
         argv++;
@@ -1688,29 +1782,39 @@ int main(int argc, char **argv)
     vfft_proto_registry_init(&reg);
 
 #ifdef VFFT_HAS_MKL
-    /* --pad: self-contained 1D c2c PADDING sweep (misaligned-K grid), then done. */
+    /* --pad: 1D c2c PADDING vs MKL. target_N>0 = ISOLATED single cell (one process per cell,
+     * run_bench.py-style — the TRUSTED mode; the in-process grid is a quick-look). */
     if (pad)
     {
         const char *pcsv = "vfft_perf_tuned_1d_pad.csv";
-        FILE *o2 = fopen(pcsv, "w");
-        if (o2)
+        FILE *o2 = fopen(pcsv, target_N ? "a" : "w");
+        if (o2 && !target_N)
             fprintf(o2, "N,K,Kp,pad_ns,tight_ns,mkl_ns,mkl_over_pad,mkl_over_tight,uplift,rt_err\n");
-        printf("=== dag vs MKL — 1D C2C PADDING (aligned Kp plan me=Kp vs SSE2 tail me=K vs DFTI(N,K) split inplace, ST, core%d; pace=%dms) ===\n", core, pace_ms);
-        printf("# mkl/pad>1 = padding beats MKL; uplift = tight_ns/pad_ns (>1 = padding beats our own tail). roundtrip is the gate.\n");
-        printf("  %-6s %-4s %-4s %-3s %-9s %-8s | %9s %9s %9s | ratios\n", "N", "K", "rem", "Kp", "path", "rt_err", "pad_ns", "tight_ns", "mkl_ns");
-        int Ns[] = {256, 512, 1024};
-        size_t Ks[] = {7, 11, 15, 19, 23};
+        if (!target_N)
+        {
+            printf("=== dag vs MKL — 1D C2C PADDING (aligned Kp plan me=Kp vs SSE2 tail me=K vs DFTI(N,K) split inplace, ST, core%d; pace=%dms) ===\n", core, pace_ms);
+            printf("# mkl/pad>1 = padding beats MKL; uplift = tight_ns/pad_ns (>1 = padding beats our own tail). roundtrip is the gate.\n");
+            printf("  %-6s %-4s %-4s %-3s %-9s %-8s | %9s %9s %9s | ratios\n", "N", "K", "rem", "Kp", "path", "rt_err", "pad_ns", "tight_ns", "mkl_ns");
+        }
         int benched = 0;
-        for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
-            for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
-            {
-                run_pad_cell(Ns[ni], Ks[ki], &reg, o2, cool_ms, flip ^ (benched & 1));
-                benched++;
-                pace(pace_ms);
-            }
+        if (target_N > 0)
+            run_pad_cell(target_N, (size_t)target_K, &reg, o2, cool_ms, flip);
+        else
+        {
+            int Ns[] = {256, 512, 1024};
+            size_t Ks[] = {7, 11, 15, 19, 23};
+            for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+                for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
+                {
+                    run_pad_cell(Ns[ni], Ks[ki], &reg, o2, cool_ms, flip ^ (benched & 1));
+                    benched++;
+                    pace(pace_ms);
+                }
+        }
         if (o2)
             fclose(o2);
-        printf("benched %d pad cells.  CSV -> %s\n", benched, pcsv);
+        if (!target_N)
+            printf("benched %d pad cells.  CSV -> %s\n", benched, pcsv);
         return 0;
     }
 #endif
@@ -1853,6 +1957,53 @@ int main(int argc, char **argv)
         printf("benched %d cells.  CSV -> %s\n", benched, csv);
         return 0;
     }
+
+#ifdef VFFT_HAS_MKL
+    /* --padr2c: 1D r2c PADDING vs MKL (+ vs our own tail = uplift). target_N>0 = single cell
+     * (isolated per-process, the trusted mode; in-process grid = quick-look). */
+    if (padr2c)
+    {
+        rfft_codelets_t rreg;
+        memset(&rreg, 0, sizeof rreg);
+        rfft_register_all_avx2(&rreg);
+        static vfft_proto_wisdom_t rwis2, cwis2;
+        const char *rfw = "../../src/dag-fft-compiler/generator/generated/rfft_wisdom.txt";
+        if (vfft_proto_wisdom_load(&rwis2, rfw) == 0)
+            vfft_r2c_dispatch_set_wisdom(&rwis2);
+        if (vfft_proto_wisdom_load(&cwis2, wpath) == 0)
+            vfft_r2c_dispatch_set_c2c_wisdom(&cwis2);
+        const char *pcsv = "vfft_perf_tuned_1d_padr2c.csv";
+        FILE *o2 = fopen(pcsv, target_N ? "a" : "w");
+        if (o2 && !target_N)
+            fprintf(o2, "N,K,Kp,pad_ns,tight_ns,mkl_ns,mkl_over_pad,mkl_over_tight,uplift,match\n");
+        if (!target_N)
+        {
+            printf("=== dag vs MKL — 1D R2C PADDING (aligned Kp rfft plan vs rem-aware tail vs DFTI real(N,K), ST, core%d; pace=%dms) ===\n", core, pace_ms);
+            printf("# uplift = tight/pad (>1 = padding beats our OWN tail — the real win). r2c ST loses MKL by design (split tax); MT is the MKL win. match gates correctness.\n");
+            printf("  %-6s %-4s %-4s %-3s %-6s %-8s | %10s %10s %10s | ratios\n", "N", "K", "rem", "Kp", "path", "match", "pad_ns", "tight_ns", "mkl_ns");
+        }
+        int benched = 0;
+        if (target_N > 0)
+            run_padr2c_cell(target_N, (size_t)target_K, &rreg, &reg, o2, cool_ms, flip);
+        else
+        {
+            int Ns[] = {256, 512, 1024};
+            size_t Ks[] = {7, 11, 15, 19, 23};
+            for (int ni = 0; ni < (int)(sizeof Ns / sizeof Ns[0]); ni++)
+                for (int ki = 0; ki < (int)(sizeof Ks / sizeof Ks[0]); ki++)
+                {
+                    run_padr2c_cell(Ns[ni], Ks[ki], &rreg, &reg, o2, cool_ms, flip ^ (benched & 1));
+                    benched++;
+                    pace(pace_ms);
+                }
+        }
+        if (o2)
+            fclose(o2);
+        if (!target_N)
+            printf("benched %d padr2c cells.  CSV -> %s\n", benched, pcsv);
+        return 0;
+    }
+#endif
 
     /* --c2r: self-contained 1D backward-real sweep vs MKL DFTI real backward.
      * ALIGNED WITH --r2c: the decoupled-stride c2r (split layout) — the inverse of
