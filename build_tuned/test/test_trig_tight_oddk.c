@@ -31,11 +31,14 @@ static void probe(int N, int K)
     vfft_config_t c; memset(&c, 0, sizeof c);
     c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
     c.dims = 1; c.n[0] = N; c.howmany = (size_t)K;   /* NO batch = tight */
+    printf("  DCT2 N=%-4d K=%-3d rem%d  creating...\n", N, K, K % 4); fflush(stdout);
     vfft_plan p = vfft_create(&c);
-    if (!p) { printf("  DCT2 N=%-4d K=%-3d rem%d  -> create NULL (gated)\n", N, K, K % 4); free(x); free(X); free(y); return; }
-
+    if (!p) { printf("    -> create NULL (gated)\n"); free(x); free(X); free(y); return; }
+    printf("    created; fwd...\n"); fflush(stdout);
     vfft_execute(p, VFFT_FORWARD,  x, NULL, X, NULL);   /* DCT-II */
+    printf("    fwd ok; bwd...\n"); fflush(stdout);
     vfft_execute(p, VFFT_BACKWARD, X, NULL, y, NULL);   /* DCT-III (inverse) */
+    printf("    bwd ok\n"); fflush(stdout);
 
     /* (A) forward vs naive */
     double *Xr = (double *)malloc(N * sizeof(double)), *xl = (double *)malloc(N * sizeof(double));

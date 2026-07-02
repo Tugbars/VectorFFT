@@ -75,9 +75,12 @@ static int cell(int N, size_t K) {
     vfft_c2r_disp_execute(cp, re, im, xb);
     double rt = rt_relerr(xb, x, (size_t)N*K);
 
-    /* --- routing checks (odd K must avoid the stride/transpose path) --- */
+    /* --- routing checks --- Odd K BELOW the decouple threshold (32) still runs the rfft/
+     * natural cascade; at/above it the decoupled-STRIDE path now handles odd K too (its
+     * workers route an odd B through the explicit-pack fallback). So only assert cascade for
+     * odd K < 32; odd K >= 32 may legitimately be STRIDE. Roundtrip is the correctness gate. */
     int odd = (K % 8) != 0;
-    int route_ok = !odd || (r2c_rfft && c2r_nat);
+    int route_ok = !odd || (K >= 32) || (r2c_rfft && c2r_nat);
 
     int fail = (rt > 1e-9) || !route_ok;
     printf("  N=%-4d K=%-3zu  r2c=%-6s c2r=%-7s  roundtrip=%.2e %s%s\n",

@@ -207,14 +207,12 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
 {
     if (!c2c_reg)
         return NULL;
-    /* Arbitrary-K: the decoupled-stride path's inner is vec-width-batched (n1_oop_strided,
-     * vl = block_K a VW multiple), so it cannot do a non-8-multiple K. Keep it gated here —
-     * this builder is SHARED by r2c (vfft_r2c_plan_create stride branch) AND c2r
-     * (vfft_c2r_disp_create SPLIT). Returning NULL makes every router fall back to the
-     * rfft/natural cascade (which carries the rem-aware tail): the r2c dispatcher continues
-     * to its rfft path; the c2r bakeoff / disp_create_auto pick NATURAL. */
-    if ((K % 8) != 0)
-        return NULL;
+    /* Arbitrary-K: the decoupled-stride path now handles a non-VW-aligned K. _vfft_r2c_block_k
+     * already returns block_K=K (single serial block) for such K, and the stride r2c workers
+     * route an odd B through the explicit-pack fallback (unaligned scratch + full inner with the
+     * rem-aware codelet tail) — see _r2c_worker_fwd/_bwd/_fwd_oop in r2c.h. (The old K%8 gate here
+     * forced odd K onto the rfft/natural cascade; that route still works and is chosen for K below
+     * the decouple threshold, but the STRIDE variant is no longer gated out.) */
     /* MT: build the inner c2c at block_K (the per-block batch width), not full K.
      * block_K often lands on a calibrated cell too (e.g. K=256 -> 32 @T8), so the
      * c2c wisdom usually still hits; otherwise it's the factorizer default at block_K. */
