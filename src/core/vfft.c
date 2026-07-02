@@ -1413,6 +1413,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 return NULL;
             bK = b->Kp; padded = 1;
         }
+        /* Odd/misaligned tight K now works: the stride r2c inner routes a non-VW-aligned B
+         * through its explicit-pack fallback (rem-aware codelet tail + scalar unpack) instead
+         * of the crashing fused stage — see _r2c_worker_fwd/_bwd in r2c.h. (Padded builds at
+         * VW-aligned Kp regardless.) */
         stride_plan_t *tp = _build_trig(cfg->transform, N, bK, cfg->rigor, reg,
                                         &W->c2c, cfg->recalibrate);
         if (W->path_c2c[0])

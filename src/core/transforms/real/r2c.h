@@ -809,9 +809,15 @@ static void _r2c_worker_fwd(void *arg) {
         double _tp0 = _r2c_prof_now();
 #endif
         /* Pack-fusion is DIT-only (no-twiddle leaf = stage 0). DIF inners (leaf
-         * last) take the explicit-pack + full-inner path below. */
+         * last) take the explicit-pack + full-inner path below.
+         * ARBITRARY-K: the fused first stage calls the stage-0 n1_fwd OUT-OF-PLACE
+         * (re -> sr/si) at width B, and that OOP butterfly does an unmasked VW load of
+         * the final lane group -> over-reads past B and CRASHES for B % VW != 0. Route
+         * a non-VW-aligned B through the explicit-pack fallback instead: its pack loop
+         * has a scalar tail and the inner then runs IN-PLACE with the rem-aware codelet
+         * tail. (VW=4 AVX2 host.) This is the strided-tail "correctness stopgap". */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
-            && !d->inner->use_dif_forward) {
+            && !d->inner->use_dif_forward && (B & 3u) == 0) {
             _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
@@ -947,7 +953,13 @@ static void _r2c_worker_bwd(void *arg) {
         _r2c_preprocess(re, im, sr, si, d->tw_re, d->tw_im, d->perm,
                         halfN, K, B, b0);
 
-        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd) {
+        /* ARBITRARY-K: the fused LAST stage's n1_scaled_bwd writes OUT-OF-PLACE (scratch
+         * -> re) with an unmasked VW store -> over-writes past B and CRASHES for B % VW != 0.
+         * Route a non-VW-aligned B through the non-fused fallback (whole inner bwd in-place
+         * with the rem-aware codelet tail, then an explicit unpack with a scalar tail). Also
+         * skip the inner JIT there — the inner-c2c JIT assumes K % VW == 0 (odd K must use the
+         * generic executor). (VW=4 AVX2 host.) */
+        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_scaled_bwd && (B & 3u) == 0) {
             if (d->inner_jit_bwd)
                 /* JIT stages 1..nf-1 (start_stage=1 == slice_until 1); per-thread
                  * scratch (sr/si) so the shared fn is reentrant — no race. */
@@ -956,9 +968,10 @@ static void _r2c_worker_bwd(void *arg) {
                 _stride_execute_bwd_slice_until(d->inner, sr, si, B, B, 1);
             _r2c_fused_last_stage(d->inner, re, sr, si, K, B, b0);
         } else {
-            /* non-fused inner (no scaled-bwd stage 0): whole inner bwd then unpack.
-             * JIT the whole bwd (start_stage=0) when resolved; per-thread scratch. */
-            if (d->inner_jit_bwd)
+            /* non-fused inner (no scaled-bwd stage 0, OR odd B): whole inner bwd then unpack.
+             * JIT the whole bwd (start_stage=0) when resolved AND B is VW-aligned; per-thread
+             * scratch. Odd B -> generic executor (JIT assumes K%VW==0). */
+            if (d->inner_jit_bwd && (B & 3u) == 0)
                 d->inner_jit_bwd(d->inner, sr, si, B, d->inner->K, 0);
             else
                 stride_execute_bwd_serial(d->inner, sr, si);
