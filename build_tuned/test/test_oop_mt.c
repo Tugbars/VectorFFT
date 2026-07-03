@@ -27,6 +27,10 @@ static void cell(int N, int K)
     double *mo_r=malloc(n*8),*mo_i=malloc(n*8),*so_r=malloc(n*8),*so_i=malloc(n*8),*bk_r=malloc(n*8),*bk_i=malloc(n*8);
     srand(31+N+K);
     for(size_t i=0;i<n;i++){double a=(double)rand()/RAND_MAX-.5,b=(double)rand()/RAND_MAX-.5; ir[i]=xr[i]=a; ii[i]=xi[i]=b;}
+    /* Seed the wisdom deterministically so the MT and ST plans below are the SAME plan
+     * (kind + factorization) — else two independent MEASURE calibrations can pick different
+     * kinds/orders, making the MT-vs-ST elementwise compare meaningless. */
+    { vfft_plan seed = mk(N,K,1); if(seed) vfft_destroy(seed); }
     vfft_plan pm=mk(N,K,T), ps=mk(N,K,1);
     if(!pm||!ps){printf("  N=%-4d K=%-3d  create NULL\n",N,K);fails++;goto d;}
     vfft_execute(ps, VFFT_FORWARD, ir, ii, so_r, so_i);        /* ST fwd */
