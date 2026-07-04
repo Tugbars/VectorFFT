@@ -126,6 +126,12 @@ int main(void)
     /* composite PURE_CYCLE cells, odd/tiny K exercising row tails */
     cell(128, 1); cell(128, 2); cell(128, 3); cell(128, 7); cell(128, 23);
     cell(256, 4); cell(1024, 4); cell(1024, 32); cell(4096, 4);
+    /* P1b: the race + wisdom stamp. 128/64 = T11's PSWAP winner (race path on the 1st
+     * create, stored-verdict REBUILD path on the 2nd); 64/64 = a cell where PSWAP loses
+     * (PURE verdict stamped + reloaded). Correctness must hold under BOTH verdicts. */
+    printf("-- P1b race + stamp + stored-verdict rebuild --\n");
+    cell(128, 64); cell(128, 64);
+    cell(64, 64);  cell(64, 64);
     printf(fails ? "\nP1A GATE: %d FAILURE(S)\n"
                  : "\nP1A GATE PASS: natural order correct fwd+bwd incl FREE/prime/odd-K tails\n",
            fails);

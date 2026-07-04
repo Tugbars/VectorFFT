@@ -25,8 +25,9 @@
 #include "oop_auto.h"      /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"        /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "oop_wisdom.h"    /* OOP wisdom load/lookup/create + entry_from_plan */
-#include "natorder_perm.h" /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
-#include "natorder_exec.h" /* ORDER_NATURAL: cycle/pair reorder passes          */
+#include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
+#include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
+#include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP race + injection     */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -129,8 +130,10 @@ struct vfft_plan_s
      * P1b. nat_list = flattened cycle tape (natorder_perm.h), nat_tmp = 2*K doubles.
      * natural_order_inplace_design.md §2e. */
     int nat_mode;
-    int *nat_list;
-    double *nat_tmp;
+    int *nat_list;      /* PURE: flattened cycle list; PSWAP: flat pair list           */
+    double *nat_tmp;    /* (pool+1)*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K) */
+    int nat_ncyc;       /* PURE: cycle count (for MT split); PSWAP: pair count          */
+    int *nat_cyc_off;   /* PURE: cycle start offsets (ncyc+1); PSWAP: NULL              */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -916,6 +919,66 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
         _stride_pool_wait_all();
 }
 
+/* ── ORDER_NATURAL reorder pass, MT by CYCLE/PAIR ranges (full K-wide rows — NEVER K-split;
+ * K-split makes 64B sub-rows, the measured catastrophic regime). Runs AFTER the forward FFT
+ * (dir!=0) or BEFORE the backward (dir==0, inverse shift). Each worker owns a disjoint set of
+ * cycles/pairs + its own 2K temp slot; disjoint row sets => race-free. natural_order §2e. */
+typedef struct { struct vfft_plan_s *h; double *re, *im; int c0, c1, slot, inv; } _nat_arg;
+static void _nat_cyc_tramp(void *a)
+{
+    _nat_arg *x = (_nat_arg *)a;
+    struct vfft_plan_s *h = x->h;
+    vfft_natorder_cycle_range(x->re, x->im, h->K, h->nat_list, h->nat_cyc_off,
+                              x->c0, x->c1, h->nat_tmp + (size_t)x->slot * 2 * h->K, x->inv);
+}
+static void _nat_pair_tramp(void *a)
+{
+    _nat_arg *x = (_nat_arg *)a;
+    vfft_natorder_pair_range(x->re, x->im, x->h->K, x->h->nat_list, x->c0, x->c1);
+}
+static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
+{
+    int inv = (dir == 0);
+    int nunits = h->nat_ncyc;              /* cycles (PURE) or pairs (PSWAP) */
+    int is_pswap = (h->nat_mode == VFFT_NAT_PSWAP);
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T <= 1 || nunits < T || (size_t)h->N * h->K < 8192)
+    {
+        if (is_pswap)
+            vfft_natorder_pair_range(re, im, h->K, h->nat_list, 0, nunits);
+        else
+            vfft_natorder_cycle_range(re, im, h->K, h->nat_list, h->nat_cyc_off,
+                                      0, nunits, h->nat_tmp, inv);
+        return;
+    }
+    int per = (nunits + T - 1) / T;        /* count-balanced (pairs exact; cycles approx) */
+    _nat_arg a[64];
+    int nd = 0, c = per;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    {
+        if (c >= nunits)
+            break;
+        int c1 = c + per;
+        if (c1 > nunits)
+            c1 = nunits;
+        a[nd] = (_nat_arg){h, re, im, c, c1, nd, inv};
+        _stride_pool_dispatch(&_stride_workers[nd],
+                              is_pswap ? _nat_pair_tramp : _nat_cyc_tramp, &a[nd]);
+        nd++;
+        c = c1;
+    }
+    int m1 = per < nunits ? per : nunits;  /* main thread does [0,per) */
+    if (is_pswap)
+        vfft_natorder_pair_range(re, im, h->K, h->nat_list, 0, m1);
+    else
+        vfft_natorder_cycle_range(re, im, h->K, h->nat_list, h->nat_cyc_off,
+                                  0, m1, h->nat_tmp + (size_t)nd * 2 * h->K, inv);
+    if (nd)
+        _stride_pool_wait_all();
+}
+
 /* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
  * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
  * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
@@ -1290,52 +1353,143 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
         }
 #endif
-        /* ── VFFT_ORDER_NATURAL (P1a: FREE + PURE_CYCLE; SCR/PSWAP/LEAF-IP land in P1b).
-         * order==DEFAULT leaves everything below untouched — byte-identical kill switch. */
+        /* ── VFFT_ORDER_NATURAL (P1b: FREE + PURE_CYCLE + PSWAP w/ injected chains; the
+         * calibrator race stamps the verdict into wisdom v7. SCR/LEAF-IP still degrade to
+         * PURE until their executors land). order==DEFAULT leaves everything below
+         * untouched — byte-identical kill switch. */
         if (cfg->order == VFFT_ORDER_NATURAL)
         {
-            int mode = VFFT_NAT_UNSET;
             const vfft_proto_wisdom_entry_t *e2 = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            if (e2 && e2->nat_mode)
-                mode = e2->nat_mode;
-            if (mode == VFFT_NAT_UNSET)
-                mode = (p->num_stages <= 1) ? VFFT_NAT_FREE : VFFT_NAT_PURE_CYCLE;
-            /* P1b modes degrade to the always-correct floor until their executors land. */
-            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_PURE_CYCLE)
-                mode = VFFT_NAT_PURE_CYCLE;
-            if (mode == VFFT_NAT_PURE_CYCLE)
+            int mode = (e2 && e2->nat_mode && !cfg->recalibrate) ? e2->nat_mode : VFFT_NAT_UNSET;
+            if (p->num_stages <= 1)
+                mode = VFFT_NAT_FREE; /* nf==1 + prime overrides: already natural, no tape */
+            if (mode != VFFT_NAT_FREE)
             {
-                /* Build the cycle tape: impulse probe (one forward) + closed-form
-                 * orientation detect. Chain comes from the wisdom entry (guaranteed for
-                 * staged plans by the calibrate-on-miss above). Any failure => refuse
-                 * natural (NULL) — fail-safe, never silently wrong order. */
+                /* Every remaining path needs the PURE cycle tape (PURE itself, or the race
+                 * baseline). Chain from the wisdom entry; impulse probe + closed-form
+                 * orientation detect. Failure => refuse natural — never silently wrong. */
                 if (!e2)
                 {
                     vfft_destroy(h);
                     return NULL;
                 }
+                int wnf = e2->nf, wfac[STRIDE_MAX_STAGES];
+                int wnat_nf = e2->nat_nf, wnat_fac[STRIDE_MAX_STAGES], wnat_prof = e2->nat_prof;
+                for (int s = 0; s < wnf; s++) wfac[s] = e2->factors[s];
+                for (int s = 0; s < wnat_nf; s++) wnat_fac[s] = e2->nat_factors[s];
                 size_t tot = (size_t)N * K;
                 double *cre = (double *)calloc(tot, sizeof(double));
                 double *cim = (double *)calloc(tot, sizeof(double));
                 int *M = NULL;
                 if (cre && cim)
                 {
-                    int n0 = 1;
-                    cre[(size_t)n0 * K] = 1.0; /* impulse, lane 0 */
+                    cre[K] = 1.0; /* impulse at n0=1, lane 0 */
                     vfft_proto_execute_fwd(p, cre, cim, K);
-                    M = vfft_natorder_detect(N, e2->factors, e2->nf, K, cre, cim, n0);
+                    M = vfft_natorder_detect(N, wfac, wnf, K, cre, cim, 1);
                 }
                 free(cre);
                 free(cim);
-                if (!M)
+                /* per-worker cycle scratch: (pool+1) slots of 2*K doubles (MT split). */
+                h->nat_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * K * sizeof(double));
+                if (M)
+                    h->nat_list = vfft_natorder_mk_cycles(N, M);
+                free(M);
+                if (!h->nat_list || !h->nat_tmp)
                 {
                     vfft_destroy(h);
                     return NULL;
                 }
-                h->nat_list = vfft_natorder_mk_cycles(N, M);
-                h->nat_tmp = (double *)malloc(2 * K * sizeof(double));
-                free(M);
-                if (!h->nat_list || !h->nat_tmp)
+                if (mode == VFFT_NAT_UNSET)
+                {
+                    /* RACE (PURE vs injected palindromic PSWAP; 5% margin) + stamp v7. */
+                    vfft_natorder_verdict_t v;
+                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, &v);
+                    mode = v.mode;
+                    if (mode == VFFT_NAT_PSWAP)
+                    {
+                        vfft_proto_plan_destroy(h->cplan);
+                        h->cplan = v.planB;
+                        free(h->nat_list);
+                        h->nat_list = v.pairs;
+                        h->exec_fwd = NULL;
+                        h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                        h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
+                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
+                    }
+                    vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
+                    ne.nat_mode = mode;
+                    ne.nat_ns = v.ns;
+                    ne.nat_nf = (mode == VFFT_NAT_PSWAP) ? v.nf : 0;
+                    ne.nat_prof = (mode == VFFT_NAT_PSWAP) ? v.prof : 0;
+                    for (int s = 0; s < ne.nat_nf; s++) ne.nat_factors[s] = v.factors[s];
+                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    if (W->path_c2c[0])
+                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                }
+                else if (mode == VFFT_NAT_PSWAP)
+                {
+                    /* Stored PSWAP verdict: rebuild the injected plan from wisdom; any
+                     * failure falls back to PURE (tape already built) — honorable. */
+                    stride_plan_t *pB = NULL;
+                    int *pairs = NULL;
+                    if (wnat_nf > 0)
+                    {
+                        int vb[STRIDE_MAX_STAGES];
+                        for (int s = 0; s < wnat_nf; s++) vb[s] = wnat_prof;
+                        vb[0] = 0;
+                        pB = vfft_proto_plan_create_ex(N, K, wnat_fac, vb, wnat_nf, 0, reg);
+                    }
+                    if (pB)
+                    {
+                        double *br = (double *)calloc(tot, sizeof(double));
+                        double *bi = (double *)calloc(tot, sizeof(double));
+                        int *MB = NULL;
+                        if (br && bi)
+                        {
+                            br[K] = 1.0;
+                            vfft_proto_execute_fwd(pB, br, bi, K);
+                            MB = vfft_natorder_detect(N, wnat_fac, wnat_nf, K, br, bi, 1);
+                        }
+                        free(br);
+                        free(bi);
+                        if (MB)
+                            pairs = vfft_natorder_mk_pairs(N, MB);
+                        free(MB);
+                        if (!pairs)
+                        {
+                            vfft_proto_plan_destroy(pB);
+                            pB = NULL;
+                        }
+                    }
+                    if (pB)
+                    {
+                        vfft_proto_plan_destroy(h->cplan);
+                        h->cplan = pB;
+                        free(h->nat_list);
+                        h->nat_list = pairs;
+                        h->exec_fwd = NULL;
+                        h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                        h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
+                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
+                    }
+                    else
+                        mode = VFFT_NAT_PURE_CYCLE;
+                }
+                else
+                    mode = VFFT_NAT_PURE_CYCLE; /* incl. SCR/LEAF-IP until P1b executors land */
+            }
+            /* MT metadata for the reorder pass: PURE splits cycles (needs offsets), PSWAP
+             * splits pairs (count only). nat_list is now final for the chosen mode. */
+            if (mode == VFFT_NAT_PSWAP)
+                h->nat_ncyc = vfft_natorder_pair_count(h->nat_list);
+            else if (mode == VFFT_NAT_PURE_CYCLE)
+            {
+                h->nat_cyc_off = vfft_natorder_cycle_offsets(h->nat_list, &h->nat_ncyc);
+                if (!h->nat_cyc_off)
                 {
                     vfft_destroy(h);
                     return NULL;
@@ -1639,15 +1793,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
         size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
         /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's
-         * scrambled layout, then the zero-perm DIF backward yields the natural signal. */
-        if (h->nat_mode == VFFT_NAT_PURE_CYCLE && dir != VFFT_FORWARD)
-            vfft_natorder_cycle_pass_inv(sre, sim, h->K, h->nat_list, h->nat_tmp);
+         * scrambled layout, then the zero-perm DIF backward yields the natural signal.
+         * (FREE needs nothing; nat_mode==0 = order=DEFAULT = byte-identical old path.) */
+        if (dir != VFFT_FORWARD &&
+            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
+            _natorder_mt(h, sre, sim, 0);
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
                 dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
-        /* ORDER_NATURAL, forward: unscramble the spectrum in place (T7 cycle-UB pass).
-         * FREE mode needs nothing; nat_mode==0 (order=DEFAULT) is byte-identical old path. */
-        if (h->nat_mode == VFFT_NAT_PURE_CYCLE && dir == VFFT_FORWARD)
-            vfft_natorder_cycle_pass(sre, sim, h->K, h->nat_list, h->nat_tmp);
+        /* ORDER_NATURAL, forward: unscramble the spectrum in place (T7 cycle-UB / T11 pair-swap). */
+        if (dir == VFFT_FORWARD &&
+            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
+            _natorder_mt(h, sre, sim, 1);
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
@@ -1744,6 +1900,7 @@ void vfft_destroy(vfft_plan h)
         stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
     free(h->nat_list);
     free(h->nat_tmp);
+    free(h->nat_cyc_off);
     free(h);
 }
 
