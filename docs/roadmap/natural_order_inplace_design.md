@@ -1,6 +1,6 @@
 # Natural-order in-place 1D C2C — design decision
 
-**Date:** 2026-07-04 · **Status:** DESIGN DECIDED + **Phase-0 MEASURED (§2b) — GO** · **Branch context:** dev/arbitraryTail
+**Date:** 2026-07-04 · **Status:** EMPIRICAL PROGRAM COMPLETE — **see §2e for the FINAL verdict map (supersedes §0 table + §2d)** · **Branch:** dev/arbitraryTail
 **Provenance:** 16-agent design workflow — 5 code readers → 4 independent designs (fused-scatter /
 perm-pass / reuse-OOP / self-sorting) + 3 *measured* Phase-0 gates → 3-lens judge panel (unanimous) +
 completeness critic. Gate harnesses: `build_tuned/test/natorder_g{1,2,3}_*.c` (untracked).
@@ -324,3 +324,97 @@ Identity permutation — flag at plan create, zero execute cost. Tiny coverage (
 6. FFTW prior art (buffered plans + in-place square transpose for N=m·p²): the palindromic-
    factorization special case makes digit-reversal an involution — a potential zero-scratch SCRATCH
    alternative for square-ish N; parked, revisit in Phase 2 if scratch memory is contested.
+
+## 2d. T6 UNIFIED BAKEOFF RESULTS (2026-07-04) — the per-cell winner map
+
+Full raw output: `natorder_t6_bakeoff_results.txt` (probe `build_tuned/test/natorder_t6_bakeoff.c`).
+Baseline = wisdom chain+variants via LOW-LEVEL generic executor (no Tier-1/JIT; uniform across
+candidates — matches wisdom best_ns within ~0-10% at most cells, but 128/4 +32% and **128/64 +60%**
+off wisdom → those two cells' verdicts need a tuned-path recheck in Phase 1).
+
+| cell | WINNER | overhead | runner-up |
+|---|---|---|---|
+| 16/4, 32/4 | FREE | 0% | PURE-cycle +15-18% |
+| 64/4 | LEAF-IP | **−21%** | FREE 0% |
+| 128/4 | SCR-t1 | +17.6% | SCR-t1s +23.7% |
+| 64/64 | PURE-cycle | +36.2% | SCR-t1s +66% (worst cell) |
+| 128/64 | **PSWAP (injected 4·8·4)** | **−9.4%** ⚠ vs generic baseline | SCR-t1s +20.7% |
+| 1024/4 | SCR-t1s | +23.3% | SCR-t1 +27.0% |
+| 1024/32 | SCR-t1s | +26.2% | PURE-cycle +30.2% |
+| 256/256 | PURE-cycle | +14.8% | SCR-t1s +24.5% |
+| 4096/4 | SCR-t1s | +15.9% | SCR-t1 +19.0% |
+| 4096/32 | PURE-cycle | +23.4% | SCR-t1s +46.2% |
+| 4096/256 | PURE-cycle | +16.4% | SCR-t1s +20.9% |
+
+**Conclusions:** (1) FIVE different mechanisms win cells — per-cell verdict architecture CONFIRMED
+required. (2) Shipped tax range: −21% to +36%, typical +15-26%. (3) **Chain injection validated**:
+128/64's injected 4·8·4 runs 0.73× the wisdom chain here AND delivers natural order below scrambled
+cost (⚠ recheck vs Tier-1 path — this cell's generic baseline is 60% off wisdom best_ns).
+(4) **TILED scatter REFUTED as implemented** — lost to plain j-outer at every cell (staging copy
+costs more than the pattern win); do not re-propose without a fused (no-extra-copy) design.
+(5) **t1s_oop emission DEMOTED**: worth only 3-4 points at cells where scatter wins (K=4 band);
+its big wins (15-20 pts at 4096/32+256) are at cells where PURE-cycle wins anyway. Phase-3 optional.
+(6) PSWAP's pass ≈ cycle's pass in cost (involution gave no pass-side advantage); palindromic chains
+matter only where the injected chain itself is competitive. (7) Scatter's honest table tax (t1 vs
+t1s rows) = 3-20 points depending on cell; at tiny cells t1 is FASTER than t1s (L1-hot table).
+
+---
+
+## 2e. FINAL — complete empirical record (T7–T11) and shipped verdict map
+
+**This section supersedes the §0 TL;DR table and §2d.** Methodology from T8 onward (user directive):
+warm-up + 5 rounds with 150 ms cool-down pacing, **averaged** (not best-of), 400 ms between cells,
+pinned core 0 — now the standard for natorder probes. Archive runs: t7_ub, t8_paced,
+t9_celltrans, t10_ub2, **t11_final_clean** (game-noise-free, THE reference) in `natorder_t*_results.txt`.
+
+### Final winner map (T11 clean run; stability judged across all clean runs)
+
+| N | K | winner | tax | stability |
+|---|---|---|---|---|
+| 16/32/64 | 4 | FREE | 0% | solid (64/4: see LEAF-IP note) |
+| 128 | 4 | SCR-t1s | +19% | stable 4/4 |
+| 64 | 64 | PURE-cycle-UB | +30% | stable |
+| 128 | 64 | **PSWAP (inj 4·8·4)** | **−7.3%** | negative 5/6 runs — real |
+| 1024 | 4 | SCR | +27% | stable (t1↔t1s variant flips) |
+| 1024 | 32 | PURE-cycle-UB | +22% | stable |
+| 256 | 256 | PURE-cycle-UB | +30% | baseline drifts (old anomaly) |
+| 4096 | 4 | PURE-cycle-UB | +27% | TIED w/ SCR |
+| 4096 | 32 | PURE-cycle-UB | +18.5% | stable |
+| 4096 | 256 | PURE-cycle-UB | +26% | TIED w/ SCR |
+
+### Kernel-optimization campaign on the permutation pass (user-driven)
+
+- **cycle-UB** (T7): plan-time flattened cycle lists + `_mm_prefetch` + AVX row moves instead of
+  memcpy — shaved 2–13 pts off naive cycle; **owns the K≥32 band and is at its practical ceiling.**
+- **cycle-UB2, 8-way interleaved cycles (T10): REFUTED** — uniformly slower at every cell. Root
+  insight: the move-list has NO data-dependent addressing (next index comes from the list), so OoO
+  already overlaps the loads; there was no serial chain to break. Remaining ~1.45× gap to the
+  in-place-pass floor is TLB/cache-line-miss bound; huge pages already refuted for rfft → ceiling.
+- **CELL-TRANSPOSE via transpose.h recursion (T9): REFUTED** — transpose.h API is scalar-element
+  (can't take K-double cells); its cache-oblivious recursion ported to cell granularity loses every
+  nf=2 cell (+45…+172%) because as a bolt-on it costs 2 passes vs cycle's 1 / scatter's ~0. Would
+  only compete fused as the terminator — which IS the scatter mechanism.
+- **Scatter table tax honestly priced** (T6): kernels stream a data-sized FLAT table (t1_oop reality)
+  vs tiny scalar table (future t1s_oop). Delta = 3–4 pts at cells scatter wins → **t1s_oop OCaml
+  emission DEMOTED to optional**.
+- **L1-tiled (COBRA) scatter: REFUTED** (T6, every cell) — staging copy exceeds the pattern win.
+
+### LEAF-IP: bimodal — calibrate, don't hardcode
+
+Across identical clean runs, aliased-leaf at 64/4 measured **−30 / −24 / +48 / +57%** (same binary,
+paced harness) — alignment/frequency-state sensitivity of the aliased monolithic call. The probe
+cannot settle it; the per-machine plan-time race can (FREE at 0% is the safe default there).
+Correctness is NOT in question (T2/T3: alias-safe by contract after no-restrict regen, 22/22 + gate).
+
+### Phase-1 calibrator specification (from the data)
+
+Candidate set: **FREE / LEAF-IP (T3-gated) / SCR-t1 (j-outer + cf_all; t1s if P3 ever lands) /
+PURE-cycle-UB / PSWAP (INJECTED palindromic + single-leaf chains — the search must inject, wisdom
+chains never contain them)**. Race at plan time under the T8 methodology; persist `nat_mode` (+
+injected chain if PSWAP wins) in wisdom v7 (schema jointly with padding's exec_me). **Win-margin/
+hysteresis rule required**: tied cells (4096/4, 4096/256, 1024/4-variant, 128/64 ~0%, 64/4
+FREE↔LEAF-IP) must not flap on noise. Bands for priors: K=4 multi-stage → scatter; K≥32 → cycle-UB;
+nf=1 → FREE; expect ~+16–30% typical, floor 0%, occasional negative via PSWAP/LEAF-IP.
+
+Dead, measured, never re-propose: strict in-place fused scatter (§3), Stockham (§2c), OOP+copy-back,
+standalone-perm-as-universal, COBRA-tiled scatter, transpose.h cell recursion, interleaved cycles.
