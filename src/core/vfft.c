@@ -27,7 +27,8 @@
 #include "oop_wisdom.h"    /* OOP wisdom load/lookup/create + entry_from_plan */
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
-#include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP race + injection     */
+#include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
+#include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -130,10 +131,11 @@ struct vfft_plan_s
      * P1b. nat_list = flattened cycle tape (natorder_perm.h), nat_tmp = 2*K doubles.
      * natural_order_inplace_design.md §2e. */
     int nat_mode;
-    int *nat_list;      /* PURE: flattened cycle list; PSWAP: flat pair list           */
+    int *nat_list;      /* PURE/SCR: flattened cycle list; PSWAP: flat pair list        */
     double *nat_tmp;    /* (pool+1)*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K) */
-    int nat_ncyc;       /* PURE: cycle count (for MT split); PSWAP: pair count          */
-    int *nat_cyc_off;   /* PURE: cycle start offsets (ncyc+1); PSWAP: NULL              */
+    int nat_ncyc;       /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
+    int *nat_cyc_off;   /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
+    natorder_scr_t *nat_scr; /* SCR: scatter terminator (forward); backward reuses cycle tape */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -1391,19 +1393,25 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 free(cim);
                 /* per-worker cycle scratch: (pool+1) slots of 2*K doubles (MT split). */
                 h->nat_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * K * sizeof(double));
+                int *IM = NULL;
                 if (M)
-                    h->nat_list = vfft_natorder_mk_cycles(N, M);
-                free(M);
-                if (!h->nat_list || !h->nat_tmp)
                 {
+                    h->nat_list = vfft_natorder_mk_cycles(N, M);
+                    IM = (int *)malloc((size_t)N * 4);
+                    if (IM) vfft_natorder_inv_perm(N, M, IM); /* for SCR terminator homes */
+                }
+                if (!h->nat_list || !h->nat_tmp || !IM)
+                {
+                    free(M); free(IM);
                     vfft_destroy(h);
                     return NULL;
                 }
                 if (mode == VFFT_NAT_UNSET)
                 {
-                    /* RACE (PURE vs injected palindromic PSWAP; 5% margin) + stamp v7. */
+                    /* RACE (PURE vs injected-palindrome PSWAP vs SCR scatter terminator; 5% margin)
+                     * + stamp v7. */
                     vfft_natorder_verdict_t v;
-                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, &v);
+                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, M, IM, &v);
                     mode = v.mode;
                     if (mode == VFFT_NAT_PSWAP)
                     {
@@ -1418,6 +1426,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
                     }
+                    else if (mode == VFFT_NAT_SCR)
+                    {
+                        /* keep h->cplan + cycle tape (backward); own the scatter (forward). */
+                        h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
+                        if (!h->nat_scr) { free(M); free(IM); natorder_scr_free(&v.scr); vfft_destroy(h); return NULL; }
+                        *h->nat_scr = v.scr; /* move ownership */
+                    }
                     vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
                     ne.nat_mode = mode;
                     ne.nat_ns = v.ns;
@@ -1427,6 +1442,20 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     vfft_proto_wisdom_add(&W->c2c, &ne, 1);
                     if (W->path_c2c[0])
                         vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                }
+                else if (mode == VFFT_NAT_SCR)
+                {
+                    /* Stored SCR verdict: rebuild the scatter on the calibrated plan; failure
+                     * falls back to PURE (cycle tape already built) — honorable. */
+                    natorder_scr_t sc;
+                    if (natorder_scr_build(&sc, h->cplan, N, K, M, IM))
+                    {
+                        h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
+                        if (h->nat_scr) *h->nat_scr = sc;
+                        else { natorder_scr_free(&sc); mode = VFFT_NAT_PURE_CYCLE; }
+                    }
+                    else
+                        mode = VFFT_NAT_PURE_CYCLE;
                 }
                 else if (mode == VFFT_NAT_PSWAP)
                 {
