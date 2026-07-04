@@ -29,9 +29,16 @@ wisdom. No single mechanism wins everywhere; the hybrid does.
 **Backward direction is free**: natural-in bwd = natural-out fwd with re/im swapped on both sides
 (swap identity, valid because both ends are natural order). Zero new code per mode.
 
-Contender kept warm: **Stockham ping-pong** (D4) — same-pass-count natural order with regular strides,
-no scatter. Enters the same per-cell bakeoff *only* for the open regime (K≤8 multi-stage) if the
-scatter microbench collapses at 64-byte rows; otherwise dropped.
+~~Contender kept warm: **Stockham ping-pong** (D4)~~ — **REFUTED BY MEASUREMENT (T5, 2026-07-04,
+`natorder_t5_stockham.c`)**: compute-matched probe (one generic AVX2 radix-4 kernel driving both a
+generic in-place DIF and a generic Stockham ping-pong, identical flops, correctness ~1e-13 both) shows
+Stockham at **1.86–2.40× the in-place time even fully L2-resident** (1024/4: 2.40×, 4096/4: 2.33×,
+1024/32: 1.86×; 4M control: 3.18×). The "~0% in cache" hypothesis confused bandwidth with memory-op
+throughput: in-cache the FFT is load/store-port-bound, and Stockham doubles line traffic per stage
+(separate src+dst streams vs read-modify-write of the same lines) while its early stages do strided
+small-granularity writes (the distributed transpose work). A 2× structural pattern deficit will not
+be inverted by tuning. **DROPPED for all regions** — the cache-resident region belongs to the SCRATCH
+scatter terminator (+22% measured, COBRA tiling = the remaining upgrade path toward ~+10%).
 
 Refuted and closed (do not re-propose):
 - **OOP + copy-back** (G3): loses everywhere — 1.26× (best, N=64 K=8) to 2.9× (K=256) vs scrambled
@@ -156,6 +163,60 @@ The naive kernel would have falsely killed the design at K=4.
   in-place 1.16–2.49× *before* copy-back (G3) — same double-footprint tax measured here. "OOP beats
   MKL" holds, but PURE/SCRATCH deliver the identical feature 2–3× cheaper. N≤128 aliased LEAF-IP
   (OOP codelet, dst==src) remains the exception and the best result (G1: 1.3× faster).
+
+## 2c. FAILED EXPERIMENT — Stockham ping-pong (T5, 2026-07-04). Do not re-propose without new evidence.
+
+**Hypothesis (as argued, verbatim):** "Inside L2, two-buffer streaming runs at in-place speed
+(measured 156 vs 153 GB/s at K=4), so spreading the reorder across all nf stages as regular-stride
+sequential streams (Stockham autosort) delivers natural order at ~0% overhead for cache-resident
+cells." Stockham was the theoretical ceiling for region 1: same pass count as today, no scatter,
+natural order as a *property of the dataflow*.
+
+**Method (`build_tuned/test/natorder_t5_stockham.c`, untracked):** compute-matched A/B — a naive
+hand-Stockham vs our *tuned* codelets would measure codelet quality, not the theory, so the probe
+implements ONE generic AVX2 radix-4 butterfly (identical DFT4 + 3 twiddle cmuls per group, identical
+flop count, radix-4-only 4^n chains to stay memory-bound) and drives it two ways:
+(a) generic in-place DIF — natural in → digit-reversed out, zero data movement, the engine's
+pattern class; (b) generic mixed-radix Stockham — natural in → natural out, ping-pong A↔B, stage s
+reads `src[j+L(k+Mr)]`, twiddles `W_{4L}^{jr}`, writes `dst[j+L(q+4k)]`. Correctness gated per cell:
+(b) vs naive DFT directly (natural), (a) vs naive through the base-4 digit reversal — both ~1e-13.
+QPC best-of-5, pinned core 0, rescale-chunked timing, wisdom-copy dir.
+
+**Result — REFUTED in its own best region** (ratio = Stockham / in-place, same kernel):
+
+| cell | ping-pong ws | ratio | note |
+|---|---|---|---|
+| 1024×4 | 128 KB (deep L2) | **2.40×** | the cell the hypothesis was strongest for |
+| 4096×4 | 512 KB (L2) | **2.33×** | |
+| 1024×32 | 1 MB (L2) | **1.86×** | |
+| 4096×32 | 4 MB (L3 control) | 3.18× | out-of-region control behaved as predicted |
+
+**Root cause — the hypothesis confused bandwidth with memory-op throughput.** The 156≈153 GB/s
+copy measurement was a *once-through streaming pass*; the FFT re-touches its working set nf times,
+and in-cache it is bound by load/store ports and cache lines per cycle, not GB/s. Two structural
+taxes: (1) Stockham runs separate src and dst streams every stage — double the line traffic of
+in-place's read-modify-write of the same lines; (2) its early stages (small L) write at stride
+4L·K in row granularity — the transpose work is distributed across stages, not eliminated, and at
+K=4 those are 32 B strided writes. A ~2× structural deficit; kernel tuning does not invert sign.
+Consistent with practice: no major CPU FFT ships pure Stockham (it is a GPU pattern — different
+memory system; see the EPYC/GPU roadmap note for where it may become relevant again).
+
+**Scope of the falsification:** row-granular mixed-radix Stockham on this split-plane K-lane layout,
+on this CPU class. Revisit only if one of these materially changes the premise: fused multi-stage
+variants (radix-16 as two fused radix-4 halves the stage count — helps both sides though), a
+lane-blocked data layout that turns the early-stage strided writes into full-line writes, or a GPU
+port. Absent those, region 1 belongs to the SCRATCH scatter terminator (+22% measured; COBRA
+L1-tiling is the upgrade path toward ~+10%).
+
+**Side observation (context-quality only, dispatch overhead differs):** the *generic* radix-4 DIF
+beat the tuned public-API path at both K=4 cells (1024/4: 3370 vs 3833 ns; 4096/4: 17 266 vs
+20 361 ns). Possible K=4 calibration gap for the tuned chains (64·16 and 4·4·8·32-DIF) — breadcrumb,
+not a conclusion.
+
+**Probe-reuse gotcha:** the DFT4 macro originally used internal temporaries named `t0r..t3r`, which
+silently shadowed caller variables of the same name passed as arguments (Stockham failed correctness
+while DIF passed — the tell). Macro locals are now `_u`-prefixed. Check for capture before reusing
+probe kernels.
 
 ## 3. Why the strictly-in-place fused scatter is impossible (and what survives)
 
