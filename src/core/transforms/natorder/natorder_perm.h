@@ -93,6 +93,32 @@ static inline int *vfft_natorder_mk_cycles(int N, const int *M)
     return lst;
 }
 
+/* Scan a flattened cycle list -> malloc'd offset array (ncyc+1 ints; off[c]=list index of
+ * cycle c's first row, off[ncyc]=index of the -2 sentinel) + count. For the MT split. */
+static inline int *vfft_natorder_cycle_offsets(const int *list, int *ncyc_out)
+{
+    int cap = 16, ncyc = 0;
+    int *off = (int *)malloc((size_t)cap * 4);
+    int i = 0;
+    while (list[i] != -2) {
+        if (ncyc + 2 > cap) { cap *= 2; off = (int *)realloc(off, (size_t)cap * 4); }
+        off[ncyc++] = i;
+        while (list[i] != -1) i++;   /* to this cycle's terminator */
+        i++;                          /* past the -1 */
+    }
+    off[ncyc] = i;                    /* sentinel index */
+    *ncyc_out = ncyc;
+    return off;
+}
+
+/* Number of pairs in a flat pair list [a0,b0,...,-2]. */
+static inline int vfft_natorder_pair_count(const int *pairs)
+{
+    int n = 0;
+    while (pairs[2 * n] != -2) n++;
+    return n;
+}
+
 /* Pair list for involutions (PSWAP): flat [a0,b0,a1,b1,...], -2 sentinel. NULL if M is
  * not an involution (caller then rejects the PSWAP verdict — honorable fallback). */
 static inline int *vfft_natorder_mk_pairs(int N, const int *M)
