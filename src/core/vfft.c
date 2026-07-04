@@ -1509,13 +1509,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         mode = VFFT_NAT_PURE_CYCLE;
                 }
                 else
-                    mode = VFFT_NAT_PURE_CYCLE; /* incl. SCR/LEAF-IP until P1b executors land */
+                    mode = VFFT_NAT_PURE_CYCLE; /* LEAF-IP (until its executor lands) -> PURE */
+                free(M);
+                free(IM);
             }
-            /* MT metadata for the reorder pass: PURE splits cycles (needs offsets), PSWAP
-             * splits pairs (count only). nat_list is now final for the chosen mode. */
+            /* MT metadata for the reorder pass: PURE + SCR-backward split cycles (need offsets);
+             * PSWAP splits pairs (count only). nat_list is now final for the chosen mode. */
             if (mode == VFFT_NAT_PSWAP)
                 h->nat_ncyc = vfft_natorder_pair_count(h->nat_list);
-            else if (mode == VFFT_NAT_PURE_CYCLE)
+            else if (mode == VFFT_NAT_PURE_CYCLE || mode == VFFT_NAT_SCR)
             {
                 h->nat_cyc_off = vfft_natorder_cycle_offsets(h->nat_list, &h->nat_ncyc);
                 if (!h->nat_cyc_off)
@@ -1821,15 +1823,23 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
          * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
         size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
-        /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's
-         * scrambled layout, then the zero-perm DIF backward yields the natural signal.
+        /* ORDER_NATURAL SCR forward: fused scatter terminator does the whole forward
+         * (MODEB stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
+        if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
+        {
+            natorder_scr_fwd(h->nat_scr, sre, sim, h->K);
+            return;
+        }
+        /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
+         * layout (cycle inverse; SCR reuses PURE's cycle tape), then zero-perm DIF backward.
          * (FREE needs nothing; nat_mode==0 = order=DEFAULT = byte-identical old path.) */
         if (dir != VFFT_FORWARD &&
-            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
+            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
+             h->nat_mode == VFFT_NAT_SCR))
             _natorder_mt(h, sre, sim, 0);
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
                 dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
-        /* ORDER_NATURAL, forward: unscramble the spectrum in place (T7 cycle-UB / T11 pair-swap). */
+        /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
         if (dir == VFFT_FORWARD &&
             (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
             _natorder_mt(h, sre, sim, 1);
@@ -1930,6 +1940,7 @@ void vfft_destroy(vfft_plan h)
     free(h->nat_list);
     free(h->nat_tmp);
     free(h->nat_cyc_off);
+    if (h->nat_scr) { natorder_scr_free(h->nat_scr); free(h->nat_scr); }
     free(h);
 }
 
