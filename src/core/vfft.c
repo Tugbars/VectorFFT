@@ -981,6 +981,70 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
         _stride_pool_wait_all();
 }
 
+/* ── SCR forward, MT. Two dependent phases with a barrier between:
+ *   (1) MODEB body user->scratch: K-split across lanes (each lane an independent transform,
+ *       exactly like _c2c_mt); odd tail rides the last slab's rem-aware codelets.
+ *   (2) terminator scratch->user: GROUP(q)-split (never K-split — full K-wide scattered rows);
+ *       disjoint scratch reads + disjoint output combs => race-free. Each worker pre-twiddles only
+ *       its own groups' scratch. Caller pins core 0 (workers 1..T-1). ── */
+typedef struct { natorder_scr_t *s; double *ur, *ui; size_t k0, S; } _scr_modeb_arg;
+static void _scr_modeb_tramp(void *a)
+{
+    _scr_modeb_arg *x = (_scr_modeb_arg *)a;
+    vfft_proto_execute_fwd_oop(&x->s->sub, x->ur + x->k0, x->ui + x->k0,
+                               x->s->scr_re + x->k0, x->s->scr_im + x->k0, x->S);
+}
+typedef struct { natorder_scr_t *s; double *ur, *ui; int q0, q1; } _scr_term_arg;
+static void _scr_term_tramp(void *a)
+{
+    _scr_term_arg *x = (_scr_term_arg *)a;
+    natorder_scr_term_range(x->s, x->ur, x->ui, x->q0, x->q1);
+}
+static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
+{
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T <= 1 || K < 8 || (size_t)s->N * K < 8192)
+    {
+        natorder_scr_fwd(s, ur, ui, K);
+        return;
+    }
+    /* phase 1: MODEB body, K-split (lanes) */
+    size_t Sv = ((K / (size_t)T) + 7) & ~(size_t)7;
+    _scr_modeb_arg a1[64];
+    int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    {
+        size_t k0 = (size_t)t * Sv;
+        if (k0 >= K) break;
+        size_t ke = k0 + Sv; if (ke > K) ke = K;
+        a1[nd] = (_scr_modeb_arg){s, ur, ui, k0, ke - k0};
+        _stride_pool_dispatch(&_stride_workers[nd], _scr_modeb_tramp, &a1[nd]);
+        nd++;
+    }
+    { size_t s0 = Sv < K ? Sv : K;
+      vfft_proto_execute_fwd_oop(&s->sub, ur, ui, s->scr_re, s->scr_im, s0); }
+    if (nd)
+        _stride_pool_wait_all();                     /* BARRIER: scratch complete */
+    /* phase 2: terminator, group(q)-split */
+    int P = s->P, per = (P + T - 1) / T;
+    _scr_term_arg a2[64];
+    int nd2 = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    {
+        int q0 = t * per;
+        if (q0 >= P) break;
+        int q1 = q0 + per; if (q1 > P) q1 = P;
+        a2[nd2] = (_scr_term_arg){s, ur, ui, q0, q1};
+        _stride_pool_dispatch(&_stride_workers[nd2], _scr_term_tramp, &a2[nd2]);
+        nd2++;
+    }
+    natorder_scr_term_range(s, ur, ui, 0, per < P ? per : P);
+    if (nd2)
+        _stride_pool_wait_all();
+}
+
 /* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
  * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
  * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
@@ -1827,7 +1891,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * (MODEB stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
         if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
         {
-            natorder_scr_fwd(h->nat_scr, sre, sim, h->K);
+            _scr_fwd_mt(h->nat_scr, sre, sim, h->K);  /* MODEB K-split + terminator q-split */
             return;
         }
         /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
