@@ -97,10 +97,23 @@ typedef struct {
 
     int    nthreads;              /* 0 = use the current pool / single-thread  */
 
+    int    order;                 /* VFFT_ORDER_DEFAULT (0) = engine-native output order
+                                     (in-place 1D C2C forward: digit-scrambled — zero-perm
+                                     roundtrip; everything else already natural).
+                                     VFFT_ORDER_NATURAL = spectrum in natural bin order,
+                                     bin-for-bin MKL/FFTW-comparable. Per-cell measured
+                                     mechanism, verdict persisted in wisdom. In-place 1D
+                                     C2C only — natural_order_inplace_design.md §2e.
+                                     Roundtrip/convolution consumers should keep DEFAULT
+                                     (order is irrelevant there, and it is faster).       */
+
     vfft_wisdom *wisdom;          /* NULL = library-managed (auto load+save);
                                      non-NULL = use this, ignore the default   */
     int    recalibrate;           /* 0 = use existing entry; 1 = re-measure + overwrite */
 } vfft_config_t;
+
+/* Output-order axis (vfft_config_t.order). */
+enum { VFFT_ORDER_DEFAULT = 0, VFFT_ORDER_NATURAL = 1 };
 
 typedef struct vfft_plan_s *vfft_plan;   /* opaque execute-ready handle */
 

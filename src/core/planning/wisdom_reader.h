@@ -43,7 +43,22 @@ typedef struct {
      * Trailing v6 field; absent (v5) loads as 0. This keeps padding in the SINGLE c2c wisdom
      * file (no separate padded file). See docs/roadmap/tail_handling/padding_design_decision.md. */
     int     exec_me;
+    /* ── v7 trailing block: NATURAL-ORDER verdict (order=VFFT_ORDER_NATURAL only; the
+     * scrambled path never reads these). Same optional-trailing mechanism as exec_me:
+     * absent (v5/v6 file) loads as nat_mode=0. The OCaml reader (emit_executor_h.ml
+     * parse_wisdom_line) enforces only a MINIMUM token count and indexes from the front,
+     * so v7 lines pass through codegen untouched (verified). Token order is FROZEN as
+     * `exec_me nat_mode nat_ns [nat_nf nat_factors... nat_prof]` — any future padding
+     * fields append AFTER the natural block. natural_order_inplace_design.md §2e. */
+    int     nat_mode;                        /* 0=UNSET 1=FREE 2=LEAF_IP 3=SCR 4=PURE_CYCLE 5=PSWAP */
+    double  nat_ns;                          /* measured natural-order total (margin rule input) */
+    int     nat_nf;                          /* PSWAP only: injected chain length (else 0)  */
+    int     nat_factors[STRIDE_MAX_STAGES];  /* PSWAP only: the injected palindromic chain  */
+    int     nat_prof;                        /* PSWAP only: uniform variant profile 0/1/2   */
 } vfft_proto_wisdom_entry_t;
+
+enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
+       VFFT_NAT_SCR = 3, VFFT_NAT_PURE_CYCLE = 4, VFFT_NAT_PSWAP = 5 };
 
 typedef struct {
     vfft_proto_wisdom_entry_t *entries;
@@ -102,6 +117,27 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
          * pad-measured. Old binaries stop tokenizing after the variants (forward compatible). */
         tok = strtok(NULL, " \t\r\n");
         e.exec_me = tok ? atoi(tok) : 0;
+        /* Trailing v7 block: natural-order verdict. Missing (v5/v6) -> nat_mode UNSET. */
+        e.nat_mode = 0; e.nat_ns = 0.0; e.nat_nf = 0; e.nat_prof = 0;
+        tok = strtok(NULL, " \t\r\n");
+        if (tok) {
+            e.nat_mode = atoi(tok);
+            tok = strtok(NULL, " \t\r\n");
+            e.nat_ns = tok ? atof(tok) : 0.0;
+            if (e.nat_mode == VFFT_NAT_PSWAP) {
+                tok = strtok(NULL, " \t\r\n"); if (!tok) { e.nat_mode = 0; goto natdone; }
+                e.nat_nf = atoi(tok);
+                if (e.nat_nf < 1 || e.nat_nf > STRIDE_MAX_STAGES) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
+                for (int i = 0; i < e.nat_nf; i++) {
+                    tok = strtok(NULL, " \t\r\n");
+                    if (!tok) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
+                    e.nat_factors[i] = atoi(tok);
+                }
+                tok = strtok(NULL, " \t\r\n");
+                e.nat_prof = tok ? atoi(tok) : 0;
+            }
+        }
+    natdone:;
 
         /* Append. */
         if (wis->count >= wis->capacity) {
@@ -201,10 +237,13 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
 {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "@version 6\n");
+    fprintf(f, "@version 7\n");
     fprintf(f, "# VectorFFT stride wisdom: %zu entries\n", wis->count);
     fprintf(f, "# N K nf factors... best_ns use_blocked split_stage block_groups "
                "use_dif_forward variant_codes... exec_me (v=0:FLAT 1:LOG3 2:T1S 3:BUF)\n");
+    fprintf(f, "# v7 trailing: nat_mode nat_ns [nat_nf nat_factors... nat_prof if PSWAP] "
+               "(nat_mode 0=UNSET 1=FREE 2=LEAF_IP 3=SCR 4=PURE_CYCLE 5=PSWAP); "
+               "future padding fields append AFTER the natural block\n");
     for (size_t i = 0; i < wis->count; i++) {
         const vfft_proto_wisdom_entry_t *e = &wis->entries[i];
         fprintf(f, "%d %zu %d", e->N, e->K, e->nf);
@@ -217,6 +256,15 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
             fprintf(f, " %d", e->variants[j]);
         /* v6 trailing field: exec_me (padded verdict; 0 = not pad-measured, written as-is). */
         fprintf(f, " %d", e->exec_me);
+        /* v7 trailing block: natural-order verdict (mandatory two tokens keep columns regular;
+         * PSWAP appends its self-describing injected-chain block). */
+        fprintf(f, " %d %.2f", e->nat_mode, e->nat_ns);
+        if (e->nat_mode == VFFT_NAT_PSWAP && e->nat_nf > 0) {
+            fprintf(f, " %d", e->nat_nf);
+            for (int j = 0; j < e->nat_nf; j++)
+                fprintf(f, " %d", e->nat_factors[j]);
+            fprintf(f, " %d", e->nat_prof);
+        }
         fprintf(f, "\n");
     }
     fclose(f);

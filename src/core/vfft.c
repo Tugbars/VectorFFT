@@ -25,6 +25,8 @@
 #include "oop_auto.h"      /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"        /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "oop_wisdom.h"    /* OOP wisdom load/lookup/create + entry_from_plan */
+#include "natorder_perm.h" /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
+#include "natorder_exec.h" /* ORDER_NATURAL: cycle/pair reorder passes          */
 #ifndef VFFT_RFFT_MAX_RADIX
 #define VFFT_RFFT_MAX_RADIX 32
 #endif
@@ -121,6 +123,14 @@ struct vfft_plan_s
      * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
     int padded;
     int exec_me;
+    /* VFFT_ORDER_NATURAL (in-place 1D c2c only): the per-cell verdict + its execute tape.
+     * nat_mode==0 (UNSET) means order=DEFAULT — the scrambled path, byte-identical to
+     * pre-natural builds (kill switch). P1a wires FREE + PURE_CYCLE; SCR/PSWAP/LEAF-IP in
+     * P1b. nat_list = flattened cycle tape (natorder_perm.h), nat_tmp = 2*K doubles.
+     * natural_order_inplace_design.md §2e. */
+    int nat_mode;
+    int *nat_list;
+    double *nat_tmp;
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -998,6 +1008,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     size_t K = cfg->howmany;
     if (cfg->dims < 0 || cfg->dims > 2)
         return NULL;
+    /* ORDER_NATURAL is wired for tight in-place 1D C2C only (P1a). Every other combination
+     * (OOP c2c: LEAF/BAILEY2 already natural via their own kinds; r2c/c2r/trig: already
+     * natural; 2D/padded: not wired) is rejected up front — same no-silent-wrong-order
+     * contract as the padding gate below. natural_order_inplace_design.md §2e. */
+    if (cfg->order == VFFT_ORDER_NATURAL &&
+        !(cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE &&
+          cfg->dims < 2 && !cfg->batch))
+        return NULL;
     /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
      * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
      * Every other feature would build a tight (stride-K) plan and then stride a Kp-wide buffer
@@ -1272,6 +1290,59 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
         }
 #endif
+        /* ── VFFT_ORDER_NATURAL (P1a: FREE + PURE_CYCLE; SCR/PSWAP/LEAF-IP land in P1b).
+         * order==DEFAULT leaves everything below untouched — byte-identical kill switch. */
+        if (cfg->order == VFFT_ORDER_NATURAL)
+        {
+            int mode = VFFT_NAT_UNSET;
+            const vfft_proto_wisdom_entry_t *e2 = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+            if (e2 && e2->nat_mode)
+                mode = e2->nat_mode;
+            if (mode == VFFT_NAT_UNSET)
+                mode = (p->num_stages <= 1) ? VFFT_NAT_FREE : VFFT_NAT_PURE_CYCLE;
+            /* P1b modes degrade to the always-correct floor until their executors land. */
+            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_PURE_CYCLE)
+                mode = VFFT_NAT_PURE_CYCLE;
+            if (mode == VFFT_NAT_PURE_CYCLE)
+            {
+                /* Build the cycle tape: impulse probe (one forward) + closed-form
+                 * orientation detect. Chain comes from the wisdom entry (guaranteed for
+                 * staged plans by the calibrate-on-miss above). Any failure => refuse
+                 * natural (NULL) — fail-safe, never silently wrong order. */
+                if (!e2)
+                {
+                    vfft_destroy(h);
+                    return NULL;
+                }
+                size_t tot = (size_t)N * K;
+                double *cre = (double *)calloc(tot, sizeof(double));
+                double *cim = (double *)calloc(tot, sizeof(double));
+                int *M = NULL;
+                if (cre && cim)
+                {
+                    int n0 = 1;
+                    cre[(size_t)n0 * K] = 1.0; /* impulse, lane 0 */
+                    vfft_proto_execute_fwd(p, cre, cim, K);
+                    M = vfft_natorder_detect(N, e2->factors, e2->nf, K, cre, cim, n0);
+                }
+                free(cre);
+                free(cim);
+                if (!M)
+                {
+                    vfft_destroy(h);
+                    return NULL;
+                }
+                h->nat_list = vfft_natorder_mk_cycles(N, M);
+                h->nat_tmp = (double *)malloc(2 * K * sizeof(double));
+                free(M);
+                if (!h->nat_list || !h->nat_tmp)
+                {
+                    vfft_destroy(h);
+                    return NULL;
+                }
+            }
+            h->nat_mode = mode;
+        }
         return h;
     }
 
@@ -1567,8 +1638,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
          * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
         size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
+        /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's
+         * scrambled layout, then the zero-perm DIF backward yields the natural signal. */
+        if (h->nat_mode == VFFT_NAT_PURE_CYCLE && dir != VFFT_FORWARD)
+            vfft_natorder_cycle_pass_inv(sre, sim, h->K, h->nat_list, h->nat_tmp);
         _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
                 dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
+        /* ORDER_NATURAL, forward: unscramble the spectrum in place (T7 cycle-UB pass).
+         * FREE mode needs nothing; nat_mode==0 (order=DEFAULT) is byte-identical old path. */
+        if (h->nat_mode == VFFT_NAT_PURE_CYCLE && dir == VFFT_FORWARD)
+            vfft_natorder_cycle_pass(sre, sim, h->K, h->nat_list, h->nat_tmp);
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
@@ -1663,6 +1742,8 @@ void vfft_destroy(vfft_plan h)
         vfft_c2r_disp_destroy(h->c2rdisp);
     if (h->tplan)
         stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
+    free(h->nat_list);
+    free(h->nat_tmp);
     free(h);
 }
 
