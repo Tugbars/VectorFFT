@@ -99,6 +99,14 @@ static inline void vfft_natorder_cycle_pass_inv(double *re, double *im, size_t K
     }
 }
 
+/* NOTE on prefetch (dist=4, KEPT): measured net-favorable (T8-paced, natorder_pf_probe.c). At the
+ * shipped distance the downside is noise-level (4096/32 +1.1%, 1024/32 −0.5%) while the upside is real
+ * — 256/256 −3%, and 4096/4 −11.5% (thin 32B rows + working set spilling cache, where the OoO window
+ * covers few rows so software prefetch of scattered lines genuinely hides latency). 4096/4 is a PURE↔
+ * SCATTER tie cell PURE can win, and before SCATTER exists PURE serves every thin-row cell — so the
+ * win ships. Small asymmetric bet, kept. (Addresses are list-known, so it's redundant where OoO
+ * already covers it — hence neutral at fat rows — but never materially harmful.) */
+
 /* ── MT range kernels: process a disjoint CYCLE / PAIR range with full K-wide rows.
  * The reorder pass must split by ROW SETS, never by K (K-split makes 64B sub-rows — the
  * measured catastrophic regime, natural_order_inplace_design.md §2e integration note 2).

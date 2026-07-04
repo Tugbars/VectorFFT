@@ -16,6 +16,7 @@
 
 #include "natorder_perm.h"
 #include "natorder_exec.h"
+#include "natorder_scatter.h"
 
 #define VFFT_NATORDER_MARGIN 0.95     /* challenger wins at < 95% of PURE's time */
 #define VFFT_NATORDER_ROUNDS 3
@@ -23,13 +24,15 @@
 
 typedef struct
 {
-    int mode;               /* VFFT_NAT_PURE_CYCLE or VFFT_NAT_PSWAP            */
+    int mode;               /* VFFT_NAT_PURE_CYCLE, VFFT_NAT_PSWAP, or VFFT_NAT_SCR */
     double ns;              /* winner's measured natural-total (wisdom nat_ns)  */
     stride_plan_t *planB;   /* PSWAP: the injected plan (ownership -> caller)   */
     int *pairs;             /* PSWAP: involution pair tape (ownership -> caller)*/
     int nf;                 /* PSWAP: injected chain, for the wisdom stamp      */
     int factors[STRIDE_MAX_STAGES];
     int prof;               /* uniform variant profile used (2 = T1S)           */
+    natorder_scr_t scr;     /* SCR: built scatter terminator (ownership -> caller when mode==SCR) */
+    int has_scr;            /* 1 = scr is live and must be freed by caller-or-here */
 } vfft_natorder_verdict_t;
 
 /* Palindromic candidate chains for N: (a,a), (a,b,a), (a,a,a,a), uniform a^m. Radix must
@@ -79,11 +82,27 @@ static inline double _natorder_sample(stride_plan_t *p, double *re, double *im, 
     return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
-/* The race. pA/cyclesA = the PURE candidate (calibrated scrambled plan + its cycle tape,
- * already built by the caller). On PSWAP win, v->planB/pairs are live and the caller owns
- * them; on PURE win they are NULL. Never fails: PURE is the floor. */
+/* One SCR sample: CHUNK fused forwards (MODEB stages + scatter terminator). */
+static inline double _natorder_scr_sample(natorder_scr_t *scr, double *re, double *im, size_t K)
+{
+    size_t n = (size_t)scr->N * K;
+    for (size_t i = 0; i < n; i++) {
+        re[i] = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
+        im[i] = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
+    }
+    double t0 = vfft_proto_now_ns();
+    for (int c = 0; c < VFFT_NATORDER_CHUNK; c++)
+        natorder_scr_fwd(scr, re, im, K);
+    return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
+}
+
+/* The race. pA/cyclesA = the PURE candidate (calibrated scrambled plan + its cycle tape) + M/IM
+ * (the orientation-detected perm + inverse, for SCR). Challengers: injected-palindrome PSWAP and
+ * the SCR scatter terminator (built from pA). On a challenger win v->planB/pairs (PSWAP) or v->scr
+ * (SCR) are live and the caller owns them. Never fails: PURE is the floor. */
 static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry_t *reg,
                                       stride_plan_t *pA, const int *cyclesA, double *tmp2K,
+                                      const int *M, const int *IM,
                                       vfft_natorder_verdict_t *v)
 {
     memset(v, 0, sizeof *v);
@@ -92,6 +111,10 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
 
     int chains[3][STRIDE_MAX_STAGES], nfs[3];
     int nc = vfft_natorder_palindromes(N, reg, chains, nfs, 3);
+
+    /* SCR candidate: build the scatter terminator on the calibrated plan (0 => not applicable). */
+    natorder_scr_t scr;
+    int have_scr = natorder_scr_build(&scr, pA, N, K, M, IM);
 
     /* build challenger plans + their pair tapes (drop any that fail the involution check) */
     stride_plan_t *pb[3] = {0};
@@ -125,27 +148,36 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     if (!re || !im) { free(re); free(im); goto cleanup_losers; }
     _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K); /* warm-up */
     {
-        double sA = 0, sB[3] = {0, 0, 0};
+        double sA = 0, sB[3] = {0, 0, 0}, sScr = 0;
         for (int r = 0; r < VFFT_NATORDER_ROUNDS; r++) {
             sA += _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K);
             for (int c = 0; c < nc; c++)
                 if (pb[c]) sB[c] += _natorder_sample(pb[c], re, im, K, NULL, prs[c], tmp2K);
+            if (have_scr) sScr += _natorder_scr_sample(&scr, re, im, K);
         }
         v->ns = sA / VFFT_NATORDER_ROUNDS;
-        int best = -1;
-        double bns = v->ns * VFFT_NATORDER_MARGIN; /* must beat PURE by the margin */
+        double bns = v->ns * VFFT_NATORDER_MARGIN; /* challenger must beat PURE by the margin */
+        int bestp = -1, win_scr = 0;
         for (int c = 0; c < nc; c++) {
             if (!pb[c]) continue;
             double t = sB[c] / VFFT_NATORDER_ROUNDS;
-            if (t < bns) { bns = t; best = c; }
+            if (t < bns) { bns = t; bestp = c; win_scr = 0; }
         }
-        if (best >= 0) {
+        if (have_scr) {
+            double t = sScr / VFFT_NATORDER_ROUNDS;
+            if (t < bns) { bns = t; win_scr = 1; bestp = -1; }
+        }
+        if (win_scr) {
+            v->mode = VFFT_NAT_SCR;
+            v->ns = bns;
+            v->scr = scr; v->has_scr = 1; have_scr = 0; /* ownership -> caller */
+        } else if (bestp >= 0) {
             v->mode = VFFT_NAT_PSWAP;
             v->ns = bns;
-            v->planB = pb[best]; pb[best] = NULL;
-            v->pairs = prs[best]; prs[best] = NULL;
-            v->nf = nfs[best];
-            for (int s = 0; s < nfs[best]; s++) v->factors[s] = chains[best][s];
+            v->planB = pb[bestp]; pb[bestp] = NULL;
+            v->pairs = prs[bestp]; prs[bestp] = NULL;
+            v->nf = nfs[bestp];
+            for (int s = 0; s < nfs[bestp]; s++) v->factors[s] = chains[bestp][s];
         }
     }
     free(re); free(im);
@@ -154,6 +186,7 @@ cleanup_losers:
         if (pb[c]) vfft_proto_plan_destroy(pb[c]);
         free(prs[c]);
     }
+    if (have_scr) natorder_scr_free(&scr);  /* SCR lost (or alloc failed) */
 }
 
 #endif /* VFFT_NATORDER_CALIBRATE_H */
