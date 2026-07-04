@@ -33,6 +33,8 @@ typedef struct {
     size_t K;
     size_t *src;                /* [P] scratch base (doubles) for the group at natural q */
     int *twg;                   /* [P] full-plan stage-group index for that group          */
+    vfft_proto_exec_fn sub_jit_fwd; /* MODEB stages 1.. JIT/baked (NULL=generic); set by vfft.c under
+                                     * VFFT_USE_JIT. Stage 0 is a bare n1 loop (codelet floor). */
     int ok;
 } natorder_scr_t;
 
@@ -103,10 +105,11 @@ static inline void natorder_scr_term_range(natorder_scr_t *s, double *ure, doubl
     }
 }
 
-/* Single-thread forward (MODEB body stays ST here; MT split is done by the vfft.c orchestrator). */
+/* Single-thread forward (MODEB body stays ST here; MT split is done by the vfft.c orchestrator).
+ * MODEB stages 1.. run via sub_jit_fwd when resolved (NULL => generic). */
 static inline void natorder_scr_fwd(natorder_scr_t *s, double *ure, double *uim, size_t K)
 {
-    vfft_proto_execute_fwd_oop(&s->sub, ure, uim, s->scr_re, s->scr_im, K); /* stages [0,nf-1) */
+    vfft_proto_execute_fwd_oop_jit(&s->sub, ure, uim, s->scr_re, s->scr_im, K, s->sub_jit_fwd);
     natorder_scr_term_range(s, ure, uim, 0, s->P);
 }
 

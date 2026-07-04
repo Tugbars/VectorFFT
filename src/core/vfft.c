@@ -991,8 +991,9 @@ typedef struct { natorder_scr_t *s; double *ur, *ui; size_t k0, S; } _scr_modeb_
 static void _scr_modeb_tramp(void *a)
 {
     _scr_modeb_arg *x = (_scr_modeb_arg *)a;
-    vfft_proto_execute_fwd_oop(&x->s->sub, x->ur + x->k0, x->ui + x->k0,
-                               x->s->scr_re + x->k0, x->s->scr_im + x->k0, x->S);
+    vfft_proto_execute_fwd_oop_jit(&x->s->sub, x->ur + x->k0, x->ui + x->k0,
+                                   x->s->scr_re + x->k0, x->s->scr_im + x->k0, x->S,
+                                   x->s->sub_jit_fwd);
 }
 typedef struct { natorder_scr_t *s; double *ur, *ui; int q0, q1; } _scr_term_arg;
 static void _scr_term_tramp(void *a)
@@ -1590,6 +1591,12 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     return NULL;
                 }
             }
+#ifdef VFFT_USE_JIT
+            /* SCR: JIT/bake the MODEB body's stages 1.. (stage 0 is a bare n1 loop). Only
+             * meaningful for nf>=3; execute_fwd_oop_jit skips the call when sub has 1 stage. */
+            if (mode == VFFT_NAT_SCR && h->nat_scr && h->nat_scr->sub.num_stages > 1)
+                h->nat_scr->sub_jit_fwd = vfft_proto_plan_jit_fwd(&h->nat_scr->sub);
+#endif
             h->nat_mode = mode;
         }
         return h;
