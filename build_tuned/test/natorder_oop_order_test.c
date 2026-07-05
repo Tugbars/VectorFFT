@@ -24,8 +24,8 @@ static void naive(const double *re, const double *im, int N, size_t K, double *X
         Xr[k] = sr; Xi[k] = si;
     }
 }
-/* one (N,K,order) case: returns fwd-vs-naive relative error (small => natural output). */
-static double run(int N, size_t K, int order, const char *tag)
+/* one (N,K,placement,order) case: returns fwd-vs-naive relative error (small => natural output). */
+static double run(int N, size_t K, int placement, int order, const char *tag)
 {
     size_t tot = (size_t)N * K;
     double *x = malloc(tot * 8), *xi = malloc(tot * 8);
@@ -37,21 +37,23 @@ static double run(int N, size_t K, int order, const char *tag)
     double sc = 0; for (int k = 0; k < N; k++) if (fabs(Xr[k]) > sc) sc = fabs(Xr[k]);
 
     vfft_config_t c; memset(&c, 0, sizeof c);
-    c.transform = VFFT_C2C; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
+    c.transform = VFFT_C2C; c.placement = placement; c.rigor = VFFT_MEASURE;
     c.dims = 1; c.n[0] = N; c.howmany = K; c.nthreads = 1; c.order = order;
     vfft_plan p = vfft_create(&c);
     if (!p) { printf("  %-9s N=%-5d K=%-4zu  order=%d -> NULL\n", tag, N, (size_t)K, order);
               free(x);free(xi);free(sr);free(si);free(dr);free(di);free(Xr);free(Xi); return -1; }
+    int ip = (placement == VFFT_INPLACE);
     memcpy(sr, x, tot * 8); memcpy(si, xi, tot * 8);
-    vfft_execute(p, VFFT_FORWARD, sr, si, dr, di);
+    double *ore = ip ? sr : dr, *oim = ip ? si : di;   /* in-place writes back into sr/si */
+    vfft_execute(p, VFFT_FORWARD, sr, si, ore, oim);
     double eF = 0;
     for (int k = 0; k < N; k++) {
-        double d1 = fabs(dr[(size_t)k * K] - Xr[k]), d2 = fabs(di[(size_t)k * K] - Xi[k]);
+        double d1 = fabs(ore[(size_t)k * K] - Xr[k]), d2 = fabs(oim[(size_t)k * K] - Xi[k]);
         if (d1 > eF) eF = d1; if (d2 > eF) eF = d2;
     }
     eF /= (sc > 0 ? sc : 1);
-    /* roundtrip: bwd(dr,di) -> recover N*x (OOP writes back into sr/si) */
-    vfft_execute(p, VFFT_BACKWARD, dr, di, sr, si);
+    /* roundtrip: bwd(spectrum) -> recover N*x (in-place: ore/oim==sr/si; OOP: dr/di->sr/si) */
+    vfft_execute(p, VFFT_BACKWARD, ore, oim, sr, si);
     double eR = 0, inv = 1.0 / N;
     for (size_t i = 0; i < tot; i++) {
         double d1 = fabs(sr[i] * inv - x[i]), d2 = fabs(si[i] * inv - xi[i]);
@@ -73,17 +75,26 @@ int main(void)
     putenv("VFFT_WISDOM_DIR=natorder_oopord_wis");
     /* cells where DEFAULT picks MODEB (scrambled) per v1_0 -> NATURAL must OVERRIDE to natural. */
     int Ns[] = {64, 256, 1024}; size_t Ks[] = {256, 32, 256};
+    printf("== OUT-OF-PLACE (DEFAULT=fastest, NATURAL=LEAF/BAILEY2, SCRAMBLED=MODEB) ==\n");
     for (int i = 0; i < 3; i++) {
         int N = Ns[i]; size_t K = Ks[i];
         printf("cell N=%d K=%zu:\n", N, K);
-        double eDef = run(N, K, VFFT_ORDER_DEFAULT, "DEFAULT");
-        double eNat = run(N, K, VFFT_ORDER_NATURAL, "NATURAL");
-        double eScr = run(N, K, VFFT_ORDER_SCRAMBLED, "SCRAMBLED");
-        /* contract: NATURAL must be natural (small fwd err); SCRAMBLED must be scrambled (large). */
-        if (eNat >= 0 && eNat > 1e-9) { printf("    !! NATURAL did NOT produce natural order\n"); fails++; }
-        if (eScr >= 0 && eScr < 1e-9) { printf("    !! SCRAMBLED produced natural order (expected scrambled)\n"); fails++; }
-        (void)eDef;
+        run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_DEFAULT, "DEFAULT");
+        double eNat = run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_NATURAL, "NATURAL");
+        double eScr = run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_SCRAMBLED, "SCRAMBLED");
+        if (eNat >= 0 && eNat > 1e-9) { printf("    !! OOP NATURAL not natural\n"); fails++; }
+        if (eScr >= 0 && eScr < 1e-9) { printf("    !! OOP SCRAMBLED not scrambled\n"); fails++; }
     }
-    printf(fails ? "\n%d FAIL\n" : "\nALL OK (order flag honored for OOP)\n", fails);
+    /* IN-PLACE: NATURAL=PURE/PSWAP, SCRAMBLED==DEFAULT=native scrambled (must accept, not NULL). */
+    printf("== IN-PLACE (DEFAULT/SCRAMBLED=native scrambled, NATURAL=PURE/PSWAP) ==\n");
+    for (int i = 0; i < 3; i++) {
+        int N = Ns[i]; size_t K = Ks[i];
+        printf("cell N=%d K=%zu:\n", N, K);
+        double eScr = run(N, K, VFFT_INPLACE, VFFT_ORDER_SCRAMBLED, "SCRAMBLED");
+        double eNat = run(N, K, VFFT_INPLACE, VFFT_ORDER_NATURAL, "NATURAL");
+        if (eScr >= 0 && eScr < 1e-9) { printf("    !! IP SCRAMBLED not scrambled\n"); fails++; }
+        if (eNat >= 0 && eNat > 1e-9) { printf("    !! IP NATURAL not natural\n"); fails++; }
+    }
+    printf(fails ? "\n%d FAIL\n" : "\nALL OK (order flag honored, in-place + OOP)\n", fails);
     return fails ? 1 : 0;
 }

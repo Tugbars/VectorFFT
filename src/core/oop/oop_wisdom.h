@@ -109,6 +109,30 @@ vfft_oop_wisdom_lookup(const vfft_oop_wisdom_t *w, int N, size_t K)
     return NULL;
 }
 
+/* Output-order class of an OOP kind: 1 = NATURAL (LEAF/BAILEY2), 0 = SCRAMBLED (MODEB). This is
+ * what lets one (N,K) cell cache both a natural and a scrambled champion as SEPARATE entries. */
+static inline int vfft_oop_kind_natural(int kind) { return kind != VFFT_OOP_KIND_MODEB; }
+
+/* Order-aware lookup (config.order): ord 1=NATURAL (LEAF/BAILEY2), 2=SCRAMBLED (MODEB), 0=DEFAULT
+ * (the faster of whatever is cached, by ns). Returns the matching-class entry, or the min-ns entry
+ * for DEFAULT, or NULL. With per-(N,K,class) persistence a cell holds up to two entries, so an order
+ * request is served from wisdom instead of re-tuning. Values match include/vfft.h VFFT_ORDER_*. */
+static inline const vfft_oop_wisdom_entry_t *
+vfft_oop_wisdom_lookup_ord(const vfft_oop_wisdom_t *w, int N, size_t K, int ord)
+{
+    if (!w) return NULL;
+    const vfft_oop_wisdom_entry_t *best = NULL;
+    for (int i = 0; i < w->count; i++) {
+        const vfft_oop_wisdom_entry_t *e = &w->e[i];
+        if (e->N != N || e->K != K) continue;
+        int nat = vfft_oop_kind_natural(e->kind);
+        if (ord == 1 && !nat) continue;                  /* NATURAL wanted; skip MODEB */
+        if (ord == 2 && nat)  continue;                  /* SCRAMBLED wanted; skip native */
+        if (!best || e->ns < best->ns) best = e;         /* ord 0: fastest; ord 1/2: the sole class */
+    }
+    return best;
+}
+
 /* Build the exact plan a wisdom entry names — PURE LOOKUP, no measurement.
  * Returns NULL if (N,K) has no entry or the entry's codelets are unavailable
  * (caller then falls back to the rule spine / DP). */
@@ -135,6 +159,29 @@ vfft_oop_plan_create_wisdom(int N, size_t K, const vfft_oop_wisdom_t *w,
         /* v2: rebuild with the PERSISTED per-stage variants (the variant-rich
          * mix inherited from the in-place c2c wisdom), not all-T1S. Helper owns
          * construction + inner-plan teardown on failure. */
+        return _vfft_oop_make_modeb(N, K, e->factors, e->variants, e->nf, reg);
+    return NULL;
+}
+
+/* Build the plan a SPECIFIC entry names (the order-aware path uses lookup_ord then this, so it can
+ * pick the natural or the MODEB champion of a two-entry cell). Same build as create_wisdom's tail. */
+static inline vfft_oop_plan_t *
+vfft_oop_plan_from_entry(const vfft_oop_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
+{
+    if (!e) return NULL;
+    int N = e->N; size_t K = e->K;
+    if (K == 0 || (K % 8u) != 0) return NULL;
+    if (e->kind == VFFT_OOP_KIND_LEAF) {
+        vfft_oop11_fn fn = vfft_oop_leaf_fn(N);
+        if (!fn) return NULL;
+        vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof *p);
+        if (!p) return NULL;
+        p->kind = VFFT_OOP_KIND_LEAF; p->N = N; p->K = K; p->leaf = fn;
+        return p;
+    }
+    if (e->kind == VFFT_OOP_KIND_BAILEY2)
+        return vfft_oop_plan_create_pair_v(N, K, e->R1, e->R2, e->t1p_variant);
+    if (e->kind == VFFT_OOP_KIND_MODEB)
         return _vfft_oop_make_modeb(N, K, e->factors, e->variants, e->nf, reg);
     return NULL;
 }
