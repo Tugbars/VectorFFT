@@ -219,6 +219,12 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                 int ok2 = vfft_natorder_2d_build_axis(N2, d2d->plan_row, &d2, &d2p, 0);
                 if (ok1 && ok2) {
                     d2d->nat_col_list = d2;                  /* dim2 fused into the fwd (mechanism-2) */
+                    /* JIT-resolve the inner plans so the natural score reflects the DEPLOYED path, not
+                     * generic. The generic-vs-JIT bias over-penalizes extra-stage palindromes (4·8·4)
+                     * and would mis-rank them below the scrambled winner (16·8) — the deployment runs
+                     * JIT, so the calibrator must too for the natural pick to be right. Dev-time compile
+                     * cost only (no-op unless built with VFFT_USE_JIT). */
+                    _fft2d_jit_resolve(d2d);
                     double nns = vfft_fft2d_c2c_bench_min_natural(p, N1, N2, re, im, d1, d1p, d1tmp);
                     d2d->nat_col_list = NULL;                /* detach before destroy */
                     if (nns < best_nat) { best_nat = nns; best_nat_r = r; best_nat_c = c; }
