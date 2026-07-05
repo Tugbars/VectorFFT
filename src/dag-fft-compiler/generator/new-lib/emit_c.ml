@@ -1,20 +1,51 @@
-(* emit_c.ml — naive AVX-512 C emitter for radix-N t1_dit codelets.
+(* emit_c.ml — emit_codelet: the C-emission driver for every in-place
+ * codelet family (n1, t1 dit / dif / t1s / log3, twidsq, strided, the
+ * whole r2c / c2r / trig signature zoo).
  *
- * Walks the hash-consed DAG in topological order, emits one __m512d
- * variable per node. No scheduling, no register allocation — GCC handles
- * those when compiling the resulting C.
+ * Top of the emit chain (Emit_state < Emit_render < Emit_c). Given the
+ * simplified assignment DAG plus a scheduler choice and the mode refs
+ * set by the driver, emit_codelet:
  *
- * The output signature matches user's gen_radix4.py t1_dit form:
+ *   1. resolves the signature family (which pointer ABI the function
+ *      gets) from the Emit_state flags;
+ *   2. schedules the DAG — Topological, Frigo Bisection, SU (optionally
+ *      Goodman-Hsu pressure-switched, optionally Bb branch-and-bound
+ *      refined), Annotated variants — monolithic or split per spill
+ *      pass via classify_passes / cluster_split_schedule;
+ *   3. optionally runs Regalloc (M-project pin / fence, opt-in via env)
+ *      and the selective-pin / const-hoist refinements;
+ *   4. renders: k-loop over the batch, per-node declarations through
+ *      Emit_render, spill stores / reloads at pass seams, and the
+ *      arbitrary-K tail (bulk vector loop + masked or scalar remainder
+ *      via Isa.ls_mode) unless VFFT_NO_ANYK_TAIL disables it;
+ *   5. stamps codelet_metadata + provenance so every emitted file
+ *      records the exact command and env that produced it.
  *
- *   void radix<N>_t1_dit_fwd_avx512(
- *       const double *in_re,  const double *in_im,
- *       double       *out_re, double       *out_im,
- *       const double *tw_re,  const double *tw_im,
- *       size_t K)
+ * Inputs / outputs are split-complex with K-stride layout: element j's
+ * real component sits at in_re[j*K + k]; twiddles use the same layout
+ * (or broadcast forms for t1s / t1p). The k-loop steps by the ISA
+ * vector width.
  *
- * Inputs/outputs are split-complex with K-stride layout: element j's real
- * component is in_re[j*K + k], imag in_im[j*K + k]. Twiddles same layout.
- * Loop iterates k by 8 (AVX-512 vector width for double).
+ * emit_codelet is deliberately one large function: it is the single
+ * place where scheduling, spill structure, regalloc and rendering
+ * decisions meet, and its internal phase breakup is a designed,
+ * edit-heavy future change (see new-docs/75_refactor_stage_log.md).
+ * ------------------------------------------------------------------
+ * MODULE CARD (emit_c.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Facade of the emit chain + emit_codelet + the strided
+ * load/store preamble helpers.
+ * PIPELINE: gen_main (or codelet_oop for the oop family) -> here ->
+ * C text on stdout.
+ * PUBLIC SURFACE (measured; grep counts incl. comments):
+ * codelet_oop(46), gen_main(23), pipeline(2), dft_r2c(1), regalloc(1),
+ * gen_set(1 per driver). Hot names: emit_codelet, spill_info,
+ * make_spill_info, scheduler, the Emit_state mode refs re-exported
+ * through the chain.
+ * DEPS: Emit_render chain via include; Algsimp (open), Schedule(7),
+ * Regalloc(21), Isa(20), Annotate(6), Bb(3), Expr(7).
+ * ENV: VFFT_NO_REGALLOC, VFFT_PIN_FORCE, VFFT_FORCE_FENCE,
+ * VFFT_PEAK_LIVE, VFFT_DISABLE_SELECTIVE_PIN, VFFT_NO_ANYK_TAIL.
+ * ------------------------------------------------------------------
  *)
 
 (* Layering: Emit_state (mode refs) < Emit_render (renderers) < this

@@ -1,9 +1,34 @@
 (* emit_render.ml — node/DAG-to-C rendering layer of the emitter.
  *
- * Topological order, load/node renderers, selective pinning, const
- * hoisting, the inlining set, spill configuration, codelet metadata
- * and provenance. Reads modes from Emit_state (re-exported here);
- * emit_codelet in emit_c.ml drives these renderers.
+ * Everything emit_codelet composes but does not itself define:
+ *   - topo_sort_reachable (tag order IS topological order here — the
+ *     hashcons assigns tags bottom-up) and render_load / render_node_def,
+ *     the per-node C renderers with Cmul -> mul+fma lowering and the
+ *     single-use inlining machinery;
+ *   - selective pinning (which NK_Mul tags to unpin so gcc can
+ *     auto-fuse) and constant hoisting for the loop-dominated trig
+ *     family — each with its measured rationale in place;
+ *   - the spill_info type + classify_passes / cluster_split_schedule /
+ *     compute_min_slot_pass1 — the PASS 1 / PASS 2 blocked-emission
+ *     bookkeeping consumed by both emit_c and codelet_oop;
+ *   - codelet_metadata and the provenance block (argv + env overrides
+ *     stamped into every emitted file).
+ *
+ * Feature-local mutable state (unpin candidates, hoisted-const table,
+ * provenance argv) deliberately lives here beside its feature rather
+ * than in emit_state: it is set and read within one emission, not a
+ * driver-facing mode.
+ * ------------------------------------------------------------------
+ * MODULE CARD (emit_render.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The render toolbox between the mode refs and emit_codelet.
+ * PIPELINE: Emit_state modes -> these renderers -> emit_codelet text
+ * PUBLIC SURFACE (measured): zero direct Emit_render.X references —
+ * reached as Emit_c.X (codelet_oop's render_node_def x5,
+ * cluster_split_schedule x5, compute_min_slot_pass1 x4 are the
+ * heaviest external uses).
+ * DEPS: Emit_state via include; Algsimp (open, +8), Isa(44),
+ * Regalloc(5), Expr(17), Uarch(2), Bb(1).
+ * ------------------------------------------------------------------
  *)
 include Emit_state
 

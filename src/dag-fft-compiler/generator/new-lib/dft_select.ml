@@ -1,8 +1,7 @@
-(* dft.ml — c2c DFT algorithm selection + recursive Cooley-Tukey decomposition.
+(* dft_select.ml — c2c DFT algorithm selection.
  *
- * Public entry: `dft ~sign n input_re input_im` returns (out_re, out_im)
- * expr arrays. `dft_expand n` and `dft_expand_twiddled ~policy ~direction
- * ~sign n` produce assignment lists for codelet emission.
+ * Bottom layer of the Dft chain (Dft_select < Dft_recurse < Dft; the
+ * facade re-exports everything, so call sites say Dft.pick_algorithm).
  *
  * pick_algorithm dispatches by N's number-theoretic properties:
  *   - Direct          n = 2, or odd primes (uses conjugate-pair construction)
@@ -12,9 +11,25 @@
  *   - Split_radix     pow2 ≥ 8, opt-in via VFFT_SPLIT_RADIX env var
  *                     (delegated to split_radix.ml)
  *
- * dft_expand_twiddled covers t1_dit / t1_dif / t1s variants with the
- * cmul-pattern detector preserved (Algsimp.of_expr lifts Sub(Mul,Mul) /
- * Add(Mul,Mul) pairs to Cmul opaque atoms before reassoc shreds them). *)
+ * Also here: the decisions that depend only on N and the register
+ * budget — needs_reassoc (whether hash-cons lifting may reassociate),
+ * factor_override (VFFT_CT_FACTOR escape hatch), target_vec_regs (the
+ * ISA register count the picker plans against; gen_main sets it from
+ * the selected ISA before any expansion runs).
+ * ------------------------------------------------------------------
+ * MODULE CARD (dft_select.ml — grep "MODULE CARD" for the full set)
+ * ROLE: algorithm type + pick_algorithm + needs_reassoc +
+ * factor_override + the split-radix / newsplit enable predicates.
+ * PIPELINE: consulted by Dft_recurse at every recursion level and by
+ * drivers (gen_main, pipeline, codelet_oop) for policy decisions.
+ * PUBLIC SURFACE (measured): zero direct Dft_select.X references —
+ * all callers go through the Dft facade.
+ * DEPS: none beyond stdlib (pure N-and-env logic).
+ * STATE: target_vec_regs is a process-global ref, default 32; set it
+ * before expansion or pow2 factorizations assume AVX-512 budgets.
+ * ENV: VFFT_SPLIT_RADIX, VFFT_NEWSPLIT, VFFT_CT_FACTOR.
+ * ------------------------------------------------------------------
+ *)
 
 (* === ALGORITHM SELECTION === *)
 

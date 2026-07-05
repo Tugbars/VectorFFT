@@ -5,6 +5,27 @@
  * layer. Two blocks: the codelet-family signature flags, and the
  * M-project / per-pass emission mode refs. Physically single —
  * re-exported unchanged through Emit_render into Emit_c.
+ *
+ * Why refs and not parameters: the renderers have many call sites
+ * scattered through emit_codelet's scheduler and spill variants;
+ * threading ~20 mode parameters through each would dwarf the feature
+ * code. The cost is the usual one — generation must stay
+ * single-threaded, and every flag a driver sets must be reset before
+ * the next codelet (gen_set generates the whole tree in one process).
+ * ------------------------------------------------------------------
+ * MODULE CARD (emit_state.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Signature-family flags (r2r / r2cf / r2cb / hc2c natural and
+ * ranged / r2c_term family / strided) + tail ls_mode + M-project mode
+ * refs (current_regalloc, fence-only, store-on-compute, emit
+ * position).
+ * PIPELINE: drivers set these; Emit_render reads them per node.
+ * PUBLIC SURFACE (measured): zero direct Emit_state.X references —
+ * all access goes through the Emit_c facade chain (heaviest setters:
+ * gen_main's family wiring and codelet_oop's ls_mode handling).
+ * DEPS: Isa(4), Regalloc(1) for types only.
+ * GOTCHA: process-global single-threaded state; a flag left set by
+ * one codelet silently changes the next codelet's ABI.
+ * ------------------------------------------------------------------
  *)
 
 (* t1p (per-position broadcast) twiddles: one scalar per (leg, position),

@@ -1,3 +1,29 @@
+(* dft_recurse.ml — the c2c recursive constructions.
+ *
+ * Middle layer of the Dft chain (Dft_select < Dft_recurse < Dft).
+ * One atomic mutual-recursion group builds the expr DAG for any N:
+ * dft dispatches on Dft_select.pick_algorithm into dft_direct (naive,
+ * n = 2), dft_direct_conjugate_pair (odd primes), the Winograd 5 / 25
+ * / 7 constructions, dft_ct (Cooley-Tukey n1 x n2), or the
+ * split_radix.ml callback. The group is one `and` chain — it moves as
+ * a unit or not at all. const_cmul (the constant-twiddle complex
+ * multiply with the FFTW-style factored |cr| = |ci| path) lives here
+ * because every construction in the chain leans on it.
+ *
+ * Output convention: functions take input accessors (int -> expr) and
+ * return (out_re, out_im) expr arrays; no assignment lists yet — the
+ * facade's dft_expand wrappers do that packaging.
+ * ------------------------------------------------------------------
+ * MODULE CARD (dft_recurse.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The DAG-building recursion for c2c DFTs (all algorithms).
+ * PIPELINE: Dft facade wrappers -> this recursion -> Expr trees
+ * PUBLIC SURFACE (measured): zero direct Dft_recurse.X references —
+ * dft / dft_ct / const_cmul etc. are reached as Dft.X via the facade
+ * (heaviest external user: dft_r2c with Dft.dft x17).
+ * DEPS: Dft_select via include; Expr (open); Cnum(4); Split_radix(2).
+ * ------------------------------------------------------------------
+ *)
+
 include Dft_select
 open Expr
 
