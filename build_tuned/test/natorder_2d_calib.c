@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 #include "threads.h"
 #include "env.h"
 #include "fft2d_c2c_planner.h"
@@ -44,6 +45,8 @@ static void one(int N1, int N2, vfft_proto_registry_t *reg, vfft_fft2d_c2c_wisdo
 }
 
 int main(int argc, char **argv) {
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << 2);   /* core 2, explicit */
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
     stride_env_init();
     if (stride_pin_thread(2) != 0) fprintf(stderr, "warn: pin failed\n");
     stride_set_num_threads(1);

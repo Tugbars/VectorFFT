@@ -124,7 +124,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     size_t B = _fft2d_choose_tile(N2, N1);
 
     vfft_proto_plan_decision_t row_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX];
-    vfft_proto_plan_decision_t col_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX];
+    vfft_proto_plan_decision_t col_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX + 8]; /* +8 injected palindromes */
 
     if (verbose)
         printf("  [2d-c2c-planner] %dx%d B=%zu mode=%s: seed row(N=%d,K=%zu)\n",
@@ -137,6 +137,31 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     int ncol = _vfft_fft2d_c2c_axis_candidates(N1, (size_t)N2, patient, reg,
                                                col_cand, VFFT_PROTO_MEASURE_DEPLOY_MAX, verbose);
     if (ncol == 0) { if (verbose) printf("  [2d-c2c-planner] col seed failed\n"); return 1e18; }
+
+    /* NATORDER-SPECIFIC POOL AUGMENTATION: the DP deploy pool is SCRAMBLED-optimal and prunes
+     * palindromic chains (they lose the FFT-only race), but a palindrome's digit-reversal is an
+     * involution => cheap pair-swap dim1 reorder, which can win the NATURAL total (128x16: col 4·8·4
+     * beats the scrambled winner 16·8 on natural). Inject palindromic col candidates so the joint
+     * FFT+reorder scoring below can reach them — the 2D analogue of the 1D natorder race's palindrome
+     * injection. They just lose the scrambled score (harmless) and compete only for the natural pick. */
+    {
+        int pchains[8][STRIDE_MAX_STAGES], pnfs[8];
+        int np = vfft_natorder_2d_palindromes(N1, reg, pchains, pnfs, 8);
+        int ninj = 0;
+        for (int i = 0; i < np && ncol < VFFT_PROTO_MEASURE_DEPLOY_MAX + 8; i++) {
+            int dup = 0;
+            for (int c = 0; c < ncol; c++)
+                if (col_cand[c].nf == pnfs[i] &&
+                    !memcmp(col_cand[c].factors, pchains[i], (size_t)pnfs[i] * sizeof(int))) { dup = 1; break; }
+            if (dup) continue;
+            vfft_proto_plan_decision_t d; memset(&d, 0, sizeof d);
+            d.nf = pnfs[i];
+            for (int s = 0; s < pnfs[i]; s++) { d.factors[s] = pchains[i][s]; d.variants[s] = (s == 0) ? 0 : 2; }
+            d.use_dif_forward = 0;                       /* DIT (uniform T1S) — natorder-validated */
+            col_cand[ncol++] = d; ninj++;
+        }
+        if (verbose && ninj) printf("  [2d-c2c-planner] injected %d palindromic col candidate(s) for natorder\n", ninj);
+    }
 
     size_t T = (size_t)N1 * (size_t)N2;
     double *xr = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
