@@ -116,12 +116,24 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     int chains[3][STRIDE_MAX_STAGES], nfs[3];
     int nc = vfft_natorder_palindromes(N, reg, chains, nfs, 3);
 
-    /* SCR candidate: build a DIT plan from the calibrated chain + its scatter + cycle tape (injection;
-     * 0 => not applicable, e.g. LOG3 last stage or comb-check fail). */
+    /* SCR candidate — DEACTIVATED from the wisdom-creation race by default. Paced/locked bench
+     * (2026-07-05, natorder_vs_mkl.c forced-mode @4096/4): SCR = 79.5us vs PURE 28.8us — 2.76x SLOWER,
+     * and 0.45x vs MKL (below MKL) because it must inject an uncalibrated forced-DIT uniform-T1S plan +
+     * double-footprint scratch-fill + 0.40x scattered stores. So SCR is not a plan-determining
+     * methodology. The SCR code is KEPT (scatter terminator + execute path + the create stored-verdict
+     * rebuild): a wisdom entry that ALREADY carries nat_mode=3 still executes SCR correctly (that path
+     * is independent of this race). -DVFFT_NATORDER_RACE_SCR re-enters SCR as a race candidate.
+     * natural_order_inplace_design.md. */
     natorder_scr_t scr;
+    memset(&scr, 0, sizeof scr);
     stride_plan_t *scr_plan = NULL;
     int *scr_cycles = NULL;
-    int have_scr = natorder_scr_build_dit(N, K, scr_chain, scr_nf, reg, &scr, &scr_plan, &scr_cycles);
+    int have_scr = 0;
+#ifdef VFFT_NATORDER_RACE_SCR
+    have_scr = natorder_scr_build_dit(N, K, scr_chain, scr_nf, reg, &scr, &scr_plan, &scr_cycles);
+#else
+    (void)scr_chain; (void)scr_nf;
+#endif
 
     /* build challenger plans + their pair tapes (drop any that fail the involution check) */
     stride_plan_t *pb[3] = {0};

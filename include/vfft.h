@@ -97,23 +97,30 @@ typedef struct {
 
     int    nthreads;              /* 0 = use the current pool / single-thread  */
 
-    int    order;                 /* VFFT_ORDER_DEFAULT (0) = engine-native output order
-                                     (in-place 1D C2C forward: digit-scrambled — zero-perm
-                                     roundtrip; everything else already natural).
-                                     VFFT_ORDER_NATURAL = spectrum in natural bin order,
-                                     bin-for-bin MKL/FFTW-comparable. Per-cell measured
-                                     mechanism, verdict persisted in wisdom. In-place 1D
-                                     C2C only — natural_order_inplace_design.md §2e.
-                                     Roundtrip/convolution consumers should keep DEFAULT
-                                     (order is irrelevant there, and it is faster).       */
+    int    order;                 /* Output-order axis for 1D C2C (the MKL DFTI_ORDERING knob).
+                                     VFFT_ORDER_DEFAULT (0) = engine-native = fastest, order-
+                                       agnostic (in-place: digit-scrambled; OOP: whichever kind
+                                       wins calibration — may be MODEB/scrambled or LEAF/BAILEY2).
+                                     VFFT_ORDER_SCRAMBLED = force the scrambled/fast path (in-place:
+                                       native, == DEFAULT; OOP: the MODEB kind). Explicit "I am
+                                       order-agnostic" — MKL's DFTI_BACKWARD_SCRAMBLED intent.
+                                     VFFT_ORDER_NATURAL = spectrum in natural bin order, bin-for-bin
+                                       MKL/FFTW-comparable (in-place: PURE/PSWAP reorder, per-cell
+                                       measured verdict in wisdom; OOP: the LEAF/BAILEY2 kinds).
+                                     1D C2C only (in-place + OOP); r2c/c2r/trig are already natural,
+                                     2D not wired — natural_order_inplace_design.md §2e.
+                                     Roundtrip/convolution consumers should keep DEFAULT (order is
+                                     irrelevant there, and it is the fastest).                     */
 
     vfft_wisdom *wisdom;          /* NULL = library-managed (auto load+save);
                                      non-NULL = use this, ignore the default   */
     int    recalibrate;           /* 0 = use existing entry; 1 = re-measure + overwrite */
 } vfft_config_t;
 
-/* Output-order axis (vfft_config_t.order). */
-enum { VFFT_ORDER_DEFAULT = 0, VFFT_ORDER_NATURAL = 1 };
+/* Output-order axis (vfft_config_t.order). 1D C2C: DEFAULT=fastest/native, SCRAMBLED=force the
+ * scrambled path (in-place native / OOP MODEB), NATURAL=force natural (in-place PURE/PSWAP / OOP
+ * LEAF/BAILEY2). Values map 1:1 onto the internal OOP kind constraint (0=any,1=natural,2=scrambled). */
+enum { VFFT_ORDER_DEFAULT = 0, VFFT_ORDER_NATURAL = 1, VFFT_ORDER_SCRAMBLED = 2 };
 
 typedef struct vfft_plan_s *vfft_plan;   /* opaque execute-ready handle */
 
