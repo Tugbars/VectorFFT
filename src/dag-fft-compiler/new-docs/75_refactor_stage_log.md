@@ -332,6 +332,71 @@ injection_log splicing into emitted files, and validation of the new
 knobs. Card counts in the file are zip-tree measurements — refresh at
 integration.
 
+## Stage R7 — PROMOTED (DONE 2026-07-05)
+
+Owner copied the new-lib module set into lib/ and committed
+(54c94404 "new lib integration"); the two predicted copy foot-guns
+fired and were fixed in the follow-up working-tree change: lib/dune
+still carried `(name vfft_v2r)` (every production executable failed
+with Library "vfft_v2" not found) -> renamed back to vfft_v2 with the
+staging-tree comment replaced by the production pipeline map; and
+new-bin/ (committed along) -> git rm (it links vfft_v2r, which no
+longer exists; pure scaffolding, both files were sed-clones of bin/).
+Post-promotion gates: bin + bin_test + emit_tool + facdrv all build
+(16 executables, scoped targets); production gen_set regenerated all
+1074 codelets against the committed tree — ZERO content diffs; stray
+sweep clean. lib/ IS now the refactored tree (25 modules, SR-wisdom
+scheduler, no GPL bisection). compare_libs.sh now exits 2 by design.
+Still open from the queue: number.ml + gen_main.ml.orig orphans, the
+schedule-wisdom emit_c wiring (integration session), gen_main/emit_c
+edit-heavy breakups, ir.mli.
+
+## Stage R8 — container-kit integration, waves W1+W2 (DONE 2026-07-05)
+
+Source: the other Fable's applied tree at
+Desktop/VectorFFT-dev-arbitraryTail (its integration/INTEGRATION.md
+describes the schedwisdom patch; the patch was cut against the
+pre-refactor monolith, so nothing was git-applied — every piece was
+cherry-picked against our refactored layout and re-gated here).
+
+W1 (pure files, no OCaml): tools/ verified already-integrated (all 16
+byte-identical); tools/README.md created (the probe-first method plus
+per-instrument evidence, owner-supplied text); generator/sched_wisdom
+(36 dagsig'd order files incl. R=13 minimax and the R=32/64 blocked
+entries) and sched_wisdom_bsm (12) copied; cost_model gained
+ilp_floor.c and pareto.c.
+
+W2 (emit-side wisdom wiring, 4 edits): emit_c gained the per-codelet
+SCHEDULE WISDOM RESOLUTION block (VFFT_SCHED_ORDER wins, else
+`VFFT_SCHED_WISDOM/codelet-symbol`; injection_log reset per codelet)
+and the SCHEDULE WISDOM trailer (spliced from Schedule.injection_log;
+absent when nothing fired); emit_render's provenance watch-list
+gained VFFT_SCHED_ORDER / VFFT_SCHED_WISDOM / VFFT_GH_THRESHOLD /
+VFFT_NO_ANYK_TAIL (a knobbed codelet no longer stamps "(none)");
+gen_main --bisect is now a LOUD failwith naming the GPL deletion
+(adopted from the kit; supersedes R5's silent ignore). GATES: build;
+knobs-off regen = ZERO content diffs vs committed codelets (the
+kit's hard guarantee, reproduced here); wisdom smoke — R=13 with
+VFFT_SCHED_WISDOM injects (trailer + env stamp + schedule changed,
+stock unchanged); --bisect errors with the licensing message.
+NOTE: the provenance watch-list change means knob-on outputs now
+stamp their knobs — intended, and why old knob-on baselines are void.
+
+W3 (NOT DONE — mapped for its own session): the duplicate_uncse pass
+(doc 65 §8, v5 selector). Port map, their tree -> ours:
+algsimp.ml ~3352-3640 (the pass; hashcons-BYPASS clones, MUST be the
+final DAG transform); emit_state.ml dup_barrier_tags ref;
+emit_render.ml two sites (fence defs whose tag is barriered; exclude
+barriered tags from the inline set); gen_main.ml ~740-930 (the
+`VFFT_DUP` knob family wiring incl. S/CAP/COST/ONLY/TRACE, the
+schedule callback, sets
+Emit_c.dup_barrier_tags, writes a vfft_dup_order temp file and pins
+clone placement through the ORDER-INJECTION machinery — i.e. W3
+depends on W2, which is why W2 landed first). Gates when ported:
+knobs-off identity; VFFT_DUP=1 on R=11/13/17/19 vs the probe oracle
+(tools/dup_probe.py) and doc-65 numbers; bit-exactness (duplication
+is bit-exact by construction); win rule on the pinned toolchain.
+
 ## Owner-decision queue (surfaced by this tree's audit; no action taken)
 
 - lib/gen_main.ml.orig: a git-TRACKED stale backup of gen_main.ml.

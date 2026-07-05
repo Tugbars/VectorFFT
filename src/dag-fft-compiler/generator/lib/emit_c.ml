@@ -76,6 +76,25 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   let peak_live_enabled =
     try Sys.getenv "VFFT_PEAK_LIVE" = "1" with Not_found -> false
   in
+  (* === SCHEDULE WISDOM RESOLUTION (per-codelet) ===
+   * Explicit VFFT_SCHED_ORDER (exact file for monolithic, prefix for
+   * blocked subsets) wins; else VFFT_SCHED_WISDOM/<name> — the codelet
+   * symbol is the wisdom key, encoding R, family, direction, and ISA.
+   * The injectors in schedule.ml verify each file's #dagsig, refuse
+   * stale/incomplete orders (falling back to su), and record every
+   * accept/refuse in Schedule.injection_log, spliced into a trailer at
+   * the end of this function. The log is reset here so a multi-codelet
+   * driver (gen_set) stamps each codelet with only its own events.
+   * Default path (neither env set): order_source = None, injectors
+   * no-op, output byte-identical. *)
+  Schedule.injection_log := [];
+  Schedule.order_source :=
+    (match Sys.getenv_opt "VFFT_SCHED_ORDER" with
+    | Some _ as s -> s
+    | None -> (
+        match Sys.getenv_opt "VFFT_SCHED_WISDOM" with
+        | Some dir -> Some (Filename.concat dir name)
+        | None -> None));
   (* Captures the maximum per-pass peak_live across all scheduling sites
    * in this codelet. For CT codelets the emitter schedules each pass
    * separately (with on-demand spill reloads), so the true register
@@ -2514,6 +2533,22 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   Buffer.add_string buf
     (codelet_metadata ~isa ~spill ~tw_broadcast:(t1s || twidsq)
        ~peak_live:!max_pass_peak assigns);
+  (* === SCHEDULE WISDOM TRAILER ===
+   * Spliced from Schedule.injection_log (written at the actual
+   * injection points during scheduling above — single source of truth,
+   * same rule as the provenance header). Emitted as a trailer rather
+   * than in the header because the header is buffered BEFORE
+   * scheduling runs; a header claim would be intent, not fact. Absent
+   * when no injection machinery fired, so default output is
+   * byte-identical. Comments only: object code unchanged. *)
+  (match !Schedule.injection_log with
+  | [] -> ()
+  | l ->
+      Buffer.add_string buf
+        "/* ===================== SCHEDULE WISDOM =====================\n";
+      List.iter (fun s -> Buffer.add_string buf (" * " ^ s ^ "\n")) (List.rev l);
+      Buffer.add_string buf
+        " * ====================================================== */\n");
   Buffer.contents buf
 
 (* ── M2 OOP UnitLeg edge helpers ──────────────────────────────────────
