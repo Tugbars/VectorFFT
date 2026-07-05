@@ -136,6 +136,14 @@ struct vfft_plan_s
     int nat_ncyc;       /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
     int *nat_cyc_off;   /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
     natorder_scr_t *nat_scr; /* SCR: scatter terminator (forward); backward reuses cycle tape */
+    /* VFFT_ORDER_NATURAL for 2D c2c: per-axis digit-reversal reorder tapes. dim1 = whole matrix
+     * rows (plan_col chain, N1 pts, K=N2 contiguous doubles/row); dim2 = within-row (plan_row chain,
+     * N2 pts, K=1). Orthogonal axes => commute. nat2d==0 = scrambled (kill switch). First cut is
+     * single-threaded PURE cycles; a NULL axis list = FREE (already natural). */
+    int nat2d;
+    int *nat2d_row_list;   /* dim1 (N1) cycle tape; NULL = FREE axis */
+    int *nat2d_col_list;   /* dim2 (N2) cycle tape; NULL = FREE axis */
+    double *nat2d_tmp;     /* 2*N2 doubles: shared cycle scratch (covers the K=N2 and K=1 passes) */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -1050,6 +1058,55 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         _stride_pool_wait_all();
 }
 
+/* ── ORDER_NATURAL for 2D c2c (first cut, single-thread PURE cycles). The 2D output is scrambled on
+ * BOTH axes independently: buffer re[i1*N2+i2] = natural[perm1_inv(i1)][perm2_inv(i2)], perm1 from
+ * plan_col's chain (axis-0/rows), perm2 from plan_row's (axis-1/within-row). The 1D natorder machinery
+ * is reused verbatim — the N1xN2 matrix IS the (N rows x K doubles) shape cycle_pass was built for:
+ *   dim1 = N1 whole rows at K=N2 (one cycle_pass call, big SIMD row moves);
+ *   dim2 = within each row at K=1 (N1 calls, scalar — the known-slow axis, a later opt vectorizes it).
+ * Orthogonal axes commute. fft2d natural §. */
+
+/* Probe one inner plan on an impulse, orientation-detect, build its cycle tape. num_stages<=1 => the
+ * axis is already natural (single radix = identity digit-rev; prime override = natural output) => FREE
+ * (list NULL). Returns 1 (ok; *out_list set or left NULL for FREE) or 0 (detect failed => refuse). */
+static int _natorder_2d_build_axis(int N, const stride_plan_t *inner, int **out_list)
+{
+    *out_list = NULL;
+    if (inner->num_stages <= 1)
+        return 1;                                   /* FREE: already natural on this axis */
+    size_t K = inner->K, tot = (size_t)N * K;
+    double *cre = (double *)calloc(tot, sizeof(double));
+    double *cim = (double *)calloc(tot, sizeof(double));
+    int *M = NULL;
+    if (cre && cim)
+    {
+        cre[K] = 1.0;                               /* impulse at n0=1, lane 0 (row 1) */
+        vfft_proto_execute_fwd((stride_plan_t *)inner, cre, cim, K);
+        M = vfft_natorder_detect(N, inner->factors, inner->num_stages, K, cre, cim, 1);
+    }
+    free(cre);
+    free(cim);
+    if (!M)
+        return 0;                                   /* orientation not detected => refuse natural */
+    *out_list = vfft_natorder_mk_cycles(N, M);
+    free(M);
+    return *out_list != NULL;
+}
+
+/* Apply the dim1 (whole matrix rows, N1-axis) reorder on the user buffer. dim2 (within-row, N2-axis) is
+ * fused into the row-FFT SCRATCH pass (mechanism-2, fft2d.h _fft2d_tiled_range: full-SIMD at K=B while
+ * L1-hot), so it is NOT repeated here — this handles only dim1. inv=0 = forward (scrambled->natural,
+ * AFTER the FFT); inv=1 = backward (natural->scrambled, BEFORE the inverse FFT). NULL list = FREE axis. */
+static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
+{
+    if (!h->nat2d_row_list)
+        return;                                     /* dim1 FREE (single-radix / prime column axis) */
+    if (!inv)
+        vfft_natorder_cycle_pass(re, im, (size_t)h->N2, h->nat2d_row_list, h->nat2d_tmp);
+    else
+        vfft_natorder_cycle_pass_inv(re, im, (size_t)h->N2, h->nat2d_row_list, h->nat2d_tmp);
+}
+
 /* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
  * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
  * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
@@ -1143,12 +1200,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->dims < 0 || cfg->dims > 2)
         return NULL;
     /* Order axis (NATURAL/SCRAMBLED) — the 1D C2C scrambled<->natural selector, honored for BOTH
-     * placements: in-place (native scrambled vs PURE/PSWAP natural) and OOP (MODEB scrambled vs
-     * LEAF/BAILEY2 natural). r2c/c2r/trig are inherently natural and 2D c2c + padded aren't wired,
-     * so a non-DEFAULT order there is rejected up front — the same no-silent-wrong-order contract as
-     * the padding gate below. natural_order_inplace_design.md §2e. */
+     * placements: 1D in-place (native scrambled vs PURE/PSWAP natural), 1D OOP (MODEB scrambled vs
+     * LEAF/BAILEY2 natural), and 2D c2c (native scrambled vs a per-axis digit-reversal reorder).
+     * r2c/c2r/trig are inherently natural, and padded (batch) order isn't wired, so a non-DEFAULT
+     * order there is rejected up front — the same no-silent-wrong-order contract as the padding gate
+     * below. natural_order_inplace_design.md §2e. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims < 2 && !cfg->batch))
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 2 && !cfg->batch))
         return NULL;
     /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
      * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
@@ -1196,6 +1254,31 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tplan = tp;
+        /* ORDER_NATURAL (2D c2c): build the two per-axis digit-reversal reorder tapes from the inner
+         * plans' chains. SCRAMBLED/DEFAULT leave nat2d==0 (byte-identical scrambled path). Refuse
+         * (free + NULL) if orientation detect fails on either multi-stage axis — no silent wrong order. */
+        if (cfg->transform == VFFT_C2C && cfg->order == VFFT_ORDER_NATURAL)
+        {
+            stride_fft2d_data_t *d = (stride_fft2d_data_t *)tp->override_data;
+            if (!d || !d->plan_col || !d->plan_row ||
+                !_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list) ||
+                !_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list))
+            {
+                vfft_destroy(h);
+                return NULL;
+            }
+            h->nat2d_tmp = (double *)malloc((size_t)2 * N2 * sizeof(double));
+            if (!h->nat2d_tmp)
+            {
+                vfft_destroy(h);
+                return NULL;
+            }
+            /* dim2 (within-row) is applied in the row-FFT scratch (mechanism-2): borrow the col tape
+             * into the fft2d data. h owns the malloc (freed in vfft_destroy); _fft2d_destroy must NOT
+             * free it. dim1 stays a whole-row pass in _natorder_2d. */
+            d->nat_col_list = h->nat2d_col_list;
+            h->nat2d = 1;
+        }
         return h;
     }
 
@@ -1906,9 +1989,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             if (dim != sim)
                 memcpy(dim, sim, plane * sizeof(double));
             if (dir == VFFT_FORWARD)
+            {
                 stride_execute_fwd(h->tplan, dre, dim);
+                if (h->nat2d)
+                    _natorder_2d(h, dre, dim, 0); /* scrambled -> natural (per-axis) */
+            }
             else
+            {
+                if (h->nat2d)
+                    _natorder_2d(h, dre, dim, 1); /* natural -> scrambled before the inverse FFT */
                 stride_execute_bwd(h->tplan, dre, dim);
+            }
         }
         else if (h->transform == VFFT_R2C)
         {
@@ -2046,6 +2137,9 @@ void vfft_destroy(vfft_plan h)
     free(h->nat_tmp);
     free(h->nat_cyc_off);
     if (h->nat_scr) { natorder_scr_free(h->nat_scr); free(h->nat_scr); }
+    free(h->nat2d_row_list);
+    free(h->nat2d_col_list);
+    free(h->nat2d_tmp);
     free(h);
 }
 

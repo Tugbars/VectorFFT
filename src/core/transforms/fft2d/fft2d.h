@@ -40,6 +40,7 @@
 #include "threads.h"
 #include "proto_stride_compat.h"
 #include "transpose.h"
+#include "natorder_exec.h"       /* VFFT_ORDER_NATURAL: fused dim2 (within-row) reorder in scratch */
 #ifdef VFFT_USE_JIT
 #include "jit_runtime.h"          /* JIT/baked resolve for the inner row/col FFTs */
 #endif
@@ -85,6 +86,12 @@ typedef struct {
     size_t tile_sz;            /* N2 * B (tiled) or N1 * N2 (Bailey) */
     double *scratch_re;
     double *scratch_im;
+
+    /* VFFT_ORDER_NATURAL: the dim2 (within-row / N2-axis) digit-reversal cycle tape, applied to the
+     * row-FFT SCRATCH at K=B (full-SIMD, L1-hot). NULL = scrambled (DEFAULT/SCRAMBLED). BORROWED — the
+     * vfft handle owns the malloc; _fft2d_destroy must NOT free it. dim1 (whole-row) is done separately
+     * by the vfft-level reorder. natural_order_inplace_design.md (2D natural, mechanism-2). */
+    const int *nat_col_list;
 } stride_fft2d_data_t;
 
 /* Get scratch pointer for thread t */
@@ -121,6 +128,10 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
                                 int is_bwd) {
     const int N2 = d->N2;
     const size_t B = d->B;
+    /* dim2 (N2-axis) natural-order reorder scratch: cycle_pass at K=B needs 2*B doubles, and B is
+     * clamped to FFT2D_DEFAULT_TILE in _fft2d_choose_tile, so this stack buffer always suffices.
+     * Unused (and optimized out) when nat_col_list==NULL (scrambled). Per-call => MT-safe. */
+    double rtmp[2 * FFT2D_DEFAULT_TILE];
 
     for (size_t i = row_start; i < row_end; i += B) {
         size_t this_B = B;
@@ -130,6 +141,12 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
         stride_transpose_pair(
             re + i * N2, im + i * N2, sr, si,
             (size_t)N2, B, this_B, (size_t)N2);
+
+        /* ORDER_NATURAL backward: the natural spectrum arrives in the user buffer, so re-scramble the
+         * N2 axis in scratch (K=B, full-SIMD) BEFORE the inverse row FFT — the mirror of the forward
+         * unscramble. Junk lanes [this_B,B) permute harmlessly; the scatter discards them. */
+        if (is_bwd && d->nat_col_list)
+            vfft_natorder_cycle_pass_inv(sr, si, B, d->nat_col_list, rtmp);
 
         /* FFT on scratch (sub-batch this_B of the B-wide tile). Use the full c2c
          * executor — it dispatches DIT *or* DIF (and the specialized per-cell
@@ -142,6 +159,11 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
             vfft_proto_execute_bwd(d->plan_row, sr, si, this_B);
         else
             vfft_proto_execute_fwd(d->plan_row, sr, si, this_B);
+
+        /* ORDER_NATURAL forward: unscramble the N2 axis in scratch (K=B, full-SIMD, L1-hot) right after
+         * the row FFT and before the scatter — the fused dim2 reorder (mechanism-2). */
+        if (!is_bwd && d->nat_col_list)
+            vfft_natorder_cycle_pass(sr, si, B, d->nat_col_list, rtmp);
 
         /* Scatter: N2×B → B×N2 (ld_src=B) */
         stride_transpose_pair(
@@ -326,6 +348,7 @@ static void _fft2d_destroy(void *data) {
 static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _fft2d_destroy(d); return NULL; }
+    d->nat_col_list = NULL;  /* scrambled by default; vfft sets it (borrowed) only for order=NATURAL */
     _fft2d_jit_resolve(d);   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
     plan->N = d->N1 * d->N2;
     plan->K = 1;
