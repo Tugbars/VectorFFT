@@ -15,16 +15,16 @@
  */
 #include "vfft.h"
 
-#include "env.h"           /* stride_env_init, ISA/version, pinning           */
-#include "threads.h"       /* pool: set/get threads, dispatch/wait            */
-#include "planner.h"       /* vfft_proto_auto_plan, plan_destroy              */
-#include "executor.h"      /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
-#include "wisdom_reader.h" /* c2c wisdom load/lookup/add/save/free            */
-#include "dp_planner.h"    /* dp context (calibration)                        */
-#include "measure.h"       /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
-#include "oop_auto.h"      /* OOP plan + leaf/t1p slices                      */
-#include "oop_dp.h"        /* vfft_oop_plan_create_dp_best (calibration)      */
-#include "oop_wisdom.h"    /* OOP wisdom load/lookup/create + entry_from_plan */
+#include "env.h"                /* stride_env_init, ISA/version, pinning           */
+#include "threads.h"            /* pool: set/get threads, dispatch/wait            */
+#include "planner.h"            /* vfft_proto_auto_plan, plan_destroy              */
+#include "executor.h"           /* vfft_proto_execute_fwd/bwd (in-place per-slice) */
+#include "wisdom_reader.h"      /* c2c wisdom load/lookup/add/save/free            */
+#include "dp_planner.h"         /* dp context (calibration)                        */
+#include "measure.h"            /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
+#include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
+#include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
+#include "oop_wisdom.h"         /* OOP wisdom load/lookup/create + entry_from_plan */
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
@@ -48,7 +48,7 @@
 #include "c2r_registry_avx2.h"
 #define _VFFT_C2R_REGISTER c2r_register_all_avx2
 #endif
-#include "c2r_dispatch.h" /* 2-axis c2r: NATURAL (split-input fast cascade) / SPLIT (stride) */
+#include "c2r_dispatch.h"     /* 2-axis c2r: NATURAL (split-input fast cascade) / SPLIT (stride) */
 #include "registry.h"         /* vfft_proto_registry_t (generated)              */
 #include "dct.h"              /* DCT-II/III (+ inner r2c)                        */
 #include "dct1.h"             /* DCT-I / DST-I (boundary r2c)                    */
@@ -100,7 +100,7 @@ struct vfft_wisdom_s
     /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
      * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
      * for the non-bakeoff (MEASURE / high-K) dispatch; high rigor measures instead. */
-    char path_c2r_path[640];           /* c2r_path.txt */
+    char path_c2r_path[640]; /* c2r_path.txt */
 };
 
 struct vfft_plan_s
@@ -111,11 +111,11 @@ struct vfft_plan_s
     int N2; /* 2D second dim (0 = 1D)    */
     size_t K;
     int nthreads;
-    stride_plan_t *cplan;   /* c2c in-place (owned)      */
-    vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
-    vfft_r2c_plan_t *rplan; /* r2c fwd (owned)           */
+    stride_plan_t *cplan;     /* c2c in-place (owned)      */
+    vfft_oop_plan_t *oplan;   /* c2c out-of-place (owned)  */
+    vfft_r2c_plan_t *rplan;   /* r2c fwd (owned)           */
     vfft_c2r_disp_t *c2rdisp; /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
-    stride_plan_t *tplan;   /* trig DCT/DST/DHT (owned)  */
+    stride_plan_t *tplan;     /* trig DCT/DST/DHT (owned)  */
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
     vfft_proto_exec_fn exec_fwd, exec_bwd;
@@ -131,21 +131,21 @@ struct vfft_plan_s
      * P1b. nat_list = flattened cycle tape (natorder_perm.h), nat_tmp = 2*K doubles.
      * natural_order_inplace_design.md §2e. */
     int nat_mode;
-    int *nat_list;      /* PURE/SCR: flattened cycle list; PSWAP: flat pair list        */
-    double *nat_tmp;    /* (pool+1)*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K) */
-    int nat_ncyc;       /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
-    int *nat_cyc_off;   /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
+    int *nat_list;           /* PURE/SCR: flattened cycle list; PSWAP: flat pair list        */
+    double *nat_tmp;         /* (pool+1)*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K) */
+    int nat_ncyc;            /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
+    int *nat_cyc_off;        /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
     natorder_scr_t *nat_scr; /* SCR: scatter terminator (forward); backward reuses cycle tape */
     /* VFFT_ORDER_NATURAL for 2D c2c: per-axis digit-reversal reorder tapes. dim1 = whole matrix
      * rows (plan_col chain, N1 pts, K=N2 contiguous doubles/row); dim2 = within-row (plan_row chain,
      * N2 pts, K=1). Orthogonal axes => commute. nat2d==0 = scrambled (kill switch). First cut is
      * single-threaded PURE cycles; a NULL axis list = FREE (already natural). */
     int nat2d;
-    int *nat2d_row_list;   /* dim1 (N1) reorder tape; NULL = FREE axis (see nat2d_row_is_pairs) */
-    int nat2d_row_is_pairs;/* 1 = row tape is an involution PAIR list (pair_pass, no dep chain, fast);
-                            * 0 = cycle list (cycle_pass). PSWAP when the column chain is palindromic. */
-    int *nat2d_col_list;   /* dim2 (N2) cycle tape (fft2d scratch pass); NULL = FREE axis */
-    double *nat2d_tmp;     /* 2*N2 doubles: cycle scratch for the dim1 cycle_pass fallback */
+    int *nat2d_row_list;    /* dim1 (N1) reorder tape; NULL = FREE axis (see nat2d_row_is_pairs) */
+    int nat2d_row_is_pairs; /* 1 = row tape is an involution PAIR list (pair_pass, no dep chain, fast);
+                             * 0 = cycle list (cycle_pass). PSWAP when the column chain is palindromic. */
+    int *nat2d_col_list;    /* dim2 (N2) cycle tape (fft2d scratch pass); NULL = FREE axis */
+    double *nat2d_tmp;      /* 2*N2 doubles: cycle scratch for the dim1 cycle_pass fallback */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -162,7 +162,14 @@ struct vfft_plan_s
  *   trig:            real = real INPUT (N*Kp), re = real OUTPUT (N*Kp).
  * All planes are Kp-strided so the Kp-built plan addresses them correctly (element e
  * of transform t is at plane[e*Kp + t]); the pad columns t in [K,Kp) stay zeroed. */
-struct vfft_batch_s { double *real, *re, *im, *ore, *oim; size_t K, Kp; int N; int xform; int oop; };
+struct vfft_batch_s
+{
+    double *real, *re, *im, *ore, *oim;
+    size_t K, Kp;
+    int N;
+    int xform;
+    int oop;
+};
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -189,8 +196,8 @@ static const rfft_codelets_t *_rfft_registry(void)
     if (!_rreg_init)
     {
         memset(&_rreg, 0, sizeof _rreg);
-        _VFFT_RFFT_REGISTER(&_rreg);   /* fwd: r2cf + hc2hc_dit + hc2c_nat (fwd terminator) */
-        _VFFT_C2R_REGISTER(&_rreg);    /* bwd: r2cb + hc2hc_dif_bwd + hc2c_bwd (natural initiator) */
+        _VFFT_RFFT_REGISTER(&_rreg); /* fwd: r2cf + hc2hc_dit + hc2c_nat (fwd terminator) */
+        _VFFT_C2R_REGISTER(&_rreg);  /* bwd: r2cb + hc2hc_dif_bwd + hc2c_bwd (natural initiator) */
         _rreg_init = 1;
     }
     return &_rreg;
@@ -340,8 +347,17 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
  * sizes the A/B round count.
  * ════════════════════════════════════════════════════════════════════════ */
 #define _VFFT_PADVW 4
-static int _pad_dcmp(const void *a, const void *b) { double d = *(const double *)a - *(const double *)b; return d < 0 ? -1 : d > 0 ? 1 : 0; }
-static double _pad_med(double *v, int n) { qsort(v, n, sizeof(double), _pad_dcmp); return n & 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]); }
+static int _pad_dcmp(const void *a, const void *b)
+{
+    double d = *(const double *)a - *(const double *)b;
+    return d < 0 ? -1 : d > 0 ? 1
+                              : 0;
+}
+static double _pad_med(double *v, int n)
+{
+    qsort(v, n, sizeof(double), _pad_dcmp);
+    return n & 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
 static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
 {
     srand(7 + N + (int)K);
@@ -355,8 +371,12 @@ static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
 static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, double *im, size_t me, int reps)
 {
     double t0 = vfft_proto_now_ns();
-    if (jf) for (int i = 0; i < reps; i++) jf(p, re, im, me, p->K, 0);
-    else    for (int i = 0; i < reps; i++) vfft_proto_execute_fwd(p, re, im, me);
+    if (jf)
+        for (int i = 0; i < reps; i++)
+            jf(p, re, im, me, p->K, 0);
+    else
+        for (int i = 0; i < reps; i++)
+            vfft_proto_execute_fwd(p, re, im, me);
     return vfft_proto_now_ns() - t0;
 }
 static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
@@ -371,8 +391,10 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     stride_plan_t *pP = vfft_proto_plan_create_ex(N, Kp, ae->factors, ae->variants, ae->nf, ae->use_dif_forward, reg);
     if (!pT || !pP)
     {
-        if (pT) vfft_proto_plan_destroy(pT);
-        if (pP) vfft_proto_plan_destroy(pP);
+        if (pT)
+            vfft_proto_plan_destroy(pT);
+        if (pP)
+            vfft_proto_plan_destroy(pP);
         return 0;
     }
     vfft_proto_exec_fn jfP = NULL;
@@ -387,25 +409,43 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         vfft_proto_posix_memalign((void **)&rP, 64, tot * sizeof(double)) ||
         vfft_proto_posix_memalign((void **)&iP, 64, tot * sizeof(double)))
     {
-        vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
-        vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
-        vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
+        vfft_proto_aligned_free(rT);
+        vfft_proto_aligned_free(iT);
+        vfft_proto_aligned_free(rP);
+        vfft_proto_aligned_free(iP);
+        vfft_proto_plan_destroy(pT);
+        vfft_proto_plan_destroy(pP);
         return 0;
     }
     _pad_fill(rT, iT, N, K, Kp);
     _pad_fill(rP, iP, N, K, Kp);
     int reps = (int)(8000000ull / tot);
-    if (reps < 40) reps = 40;
-    for (int w = 0; w < 5; w++) { _pad_burst(pT, NULL, rT, iT, K, reps); _pad_burst(pP, jfP, rP, iP, Kp, reps); }
+    if (reps < 40)
+        reps = 40;
+    for (int w = 0; w < 5; w++)
+    {
+        _pad_burst(pT, NULL, rT, iT, K, reps);
+        _pad_burst(pP, jfP, rP, iP, Kp, reps);
+    }
     int RR = (rigor == VFFT_MEASURE) ? 31 : 81;
     double rt[128], rp[128];
-    if (RR > 128) RR = 128;
+    if (RR > 128)
+        RR = 128;
     for (int r = 0; r < RR; r++)
     {
         double t, p;
-        if (r & 1) { t = _pad_burst(pT, NULL, rT, iT, K, reps); p = _pad_burst(pP, jfP, rP, iP, Kp, reps); }
-        else       { p = _pad_burst(pP, jfP, rP, iP, Kp, reps); t = _pad_burst(pT, NULL, rT, iT, K, reps); }
-        rt[r] = t / reps; rp[r] = p / reps;
+        if (r & 1)
+        {
+            t = _pad_burst(pT, NULL, rT, iT, K, reps);
+            p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
+        }
+        else
+        {
+            p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
+            t = _pad_burst(pT, NULL, rT, iT, K, reps);
+        }
+        rt[r] = t / reps;
+        rp[r] = p / reps;
     }
     double tail_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
     int pad_wins = (pad_ns < tail_ns * 0.97); /* 3% hysteresis toward the tail */
@@ -425,15 +465,20 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         {
             double dr = fabs(rT[e * Kp + l] * inv - rP[e * Kp + l]);
             double di = fabs(iT[e * Kp + l] * inv - iP[e * Kp + l]);
-            if (dr > rtg) rtg = dr;
-            if (di > rtg) rtg = di;
+            if (dr > rtg)
+                rtg = dr;
+            if (di > rtg)
+                rtg = di;
         }
     if (rtg > 1e-7)
         exec_me = 0; /* winner failed the roundtrip -> report failure; caller tails */
 
-    vfft_proto_aligned_free(rT); vfft_proto_aligned_free(iT);
-    vfft_proto_aligned_free(rP); vfft_proto_aligned_free(iP);
-    vfft_proto_plan_destroy(pT); vfft_proto_plan_destroy(pP);
+    vfft_proto_aligned_free(rT);
+    vfft_proto_aligned_free(iT);
+    vfft_proto_aligned_free(rP);
+    vfft_proto_aligned_free(iP);
+    vfft_proto_plan_destroy(pT);
+    vfft_proto_plan_destroy(pP);
     return exec_me;
 }
 
@@ -779,9 +824,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
         size_t B = _fft2d_choose_tile(N2, N1);
         stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
-        if (!col) col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, cw);
+        if (!col)
+            col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, cw);
         stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
-        if (!row) row = vfft_proto_auto_plan_dispatch(N2, B, reg, cw);
+        if (!row)
+            row = vfft_proto_auto_plan_dispatch(N2, B, reg, cw);
         if (!col || !row)
         {
             if (col)
@@ -948,7 +995,12 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
  * K-split makes 64B sub-rows, the measured catastrophic regime). Runs AFTER the forward FFT
  * (dir!=0) or BEFORE the backward (dir==0, inverse shift). Each worker owns a disjoint set of
  * cycles/pairs + its own 2K temp slot; disjoint row sets => race-free. natural_order §2e. */
-typedef struct { struct vfft_plan_s *h; double *re, *im; int c0, c1, slot, inv; } _nat_arg;
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *re, *im;
+    int c0, c1, slot, inv;
+} _nat_arg;
 static void _nat_cyc_tramp(void *a)
 {
     _nat_arg *x = (_nat_arg *)a;
@@ -964,7 +1016,7 @@ static void _nat_pair_tramp(void *a)
 static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
 {
     int inv = (dir == 0);
-    int nunits = h->nat_ncyc;              /* cycles (PURE) or pairs (PSWAP) */
+    int nunits = h->nat_ncyc; /* cycles (PURE) or pairs (PSWAP) */
     int is_pswap = (h->nat_mode == VFFT_NAT_PSWAP);
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
@@ -978,7 +1030,7 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
                                       0, nunits, h->nat_tmp, inv);
         return;
     }
-    int per = (nunits + T - 1) / T;        /* count-balanced (pairs exact; cycles approx) */
+    int per = (nunits + T - 1) / T; /* count-balanced (pairs exact; cycles approx) */
     _nat_arg a[64];
     int nd = 0, c = per;
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
@@ -994,7 +1046,7 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
         nd++;
         c = c1;
     }
-    int m1 = per < nunits ? per : nunits;  /* main thread does [0,per) */
+    int m1 = per < nunits ? per : nunits; /* main thread does [0,per) */
     if (is_pswap)
         vfft_natorder_pair_range(re, im, h->K, h->nat_list, 0, m1);
     else
@@ -1011,7 +1063,12 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
  *   (2) terminator scratch->user: GROUP(q)-split (never K-split — full K-wide scattered rows);
  *       disjoint scratch reads + disjoint output combs => race-free. Each worker pre-twiddles only
  *       its own groups' scratch. Caller pins core 0 (workers 1..T-1). ── */
-typedef struct { natorder_scr_t *s; double *ur, *ui; size_t k0, S; } _scr_modeb_arg;
+typedef struct
+{
+    natorder_scr_t *s;
+    double *ur, *ui;
+    size_t k0, S;
+} _scr_modeb_arg;
 static void _scr_modeb_tramp(void *a)
 {
     _scr_modeb_arg *x = (_scr_modeb_arg *)a;
@@ -1019,7 +1076,12 @@ static void _scr_modeb_tramp(void *a)
                                    x->s->scr_re + x->k0, x->s->scr_im + x->k0, x->S,
                                    x->s->sub_jit_fwd);
 }
-typedef struct { natorder_scr_t *s; double *ur, *ui; int q0, q1; } _scr_term_arg;
+typedef struct
+{
+    natorder_scr_t *s;
+    double *ur, *ui;
+    int q0, q1;
+} _scr_term_arg;
 static void _scr_term_tramp(void *a)
 {
     _scr_term_arg *x = (_scr_term_arg *)a;
@@ -1042,16 +1104,21 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
     {
         size_t k0 = (size_t)t * Sv;
-        if (k0 >= K) break;
-        size_t ke = k0 + Sv; if (ke > K) ke = K;
+        if (k0 >= K)
+            break;
+        size_t ke = k0 + Sv;
+        if (ke > K)
+            ke = K;
         a1[nd] = (_scr_modeb_arg){s, ur, ui, k0, ke - k0};
         _stride_pool_dispatch(&_stride_workers[nd], _scr_modeb_tramp, &a1[nd]);
         nd++;
     }
-    { size_t s0 = Sv < K ? Sv : K;
-      vfft_proto_execute_fwd_oop(&s->sub, ur, ui, s->scr_re, s->scr_im, s0); }
+    {
+        size_t s0 = Sv < K ? Sv : K;
+        vfft_proto_execute_fwd_oop(&s->sub, ur, ui, s->scr_re, s->scr_im, s0);
+    }
     if (nd)
-        _stride_pool_wait_all();                     /* BARRIER: scratch complete */
+        _stride_pool_wait_all(); /* BARRIER: scratch complete */
     /* phase 2: terminator, group(q)-split */
     int P = s->P, per = (P + T - 1) / T;
     _scr_term_arg a2[64];
@@ -1059,8 +1126,11 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
     {
         int q0 = t * per;
-        if (q0 >= P) break;
-        int q1 = q0 + per; if (q1 > P) q1 = P;
+        if (q0 >= P)
+            break;
+        int q1 = q0 + per;
+        if (q1 > P)
+            q1 = P;
         a2[nd2] = (_scr_term_arg){s, ur, ui, q0, q1};
         _stride_pool_dispatch(&_stride_workers[nd2], _scr_term_tramp, &a2[nd2]);
         nd2++;
@@ -1078,48 +1148,9 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
  *   dim2 = within each row at K=1 (N1 calls, scalar — the known-slow axis, a later opt vectorizes it).
  * Orthogonal axes commute. fft2d natural §. */
 
-/* Probe one inner plan on an impulse, orientation-detect, build its cycle tape. num_stages<=1 => the
- * axis is already natural (single radix = identity digit-rev; prime override = natural output) => FREE
- * (list NULL). Returns 1 (ok; *out_list set or left NULL for FREE) or 0 (detect failed => refuse). */
-static int _natorder_2d_build_axis(int N, const stride_plan_t *inner,
-                                   int **out_list, int *out_is_pairs, int try_pairs)
-{
-    *out_list = NULL;
-    *out_is_pairs = 0;
-    if (inner->num_stages <= 1)
-        return 1;                                   /* FREE: already natural on this axis */
-    size_t K = inner->K, tot = (size_t)N * K;
-    double *cre = (double *)calloc(tot, sizeof(double));
-    double *cim = (double *)calloc(tot, sizeof(double));
-    int *M = NULL;
-    if (cre && cim)
-    {
-        cre[K] = 1.0;                               /* impulse at n0=1, lane 0 (row 1) */
-        vfft_proto_execute_fwd((stride_plan_t *)inner, cre, cim, K);
-        M = vfft_natorder_detect(N, inner->factors, inner->num_stages, K, cre, cim, 1);
-    }
-    free(cre);
-    free(cim);
-    if (!M)
-        return 0;                                   /* orientation not detected => refuse natural */
-    if (try_pairs)
-    {
-        /* A palindromic chain => M is an INVOLUTION => the reorder is independent pair-swaps with no
-         * cycle-following dependency chain: the PSWAP fast path, decisive for the latency-bound low-N
-         * dim1 (whole-row) reorder. mk_pairs returns NULL if M is not an involution. */
-        int *pairs = vfft_natorder_mk_pairs(N, M);
-        if (pairs)
-        {
-            *out_list = pairs;
-            *out_is_pairs = 1;
-            free(M);
-            return 1;
-        }
-    }
-    *out_list = vfft_natorder_mk_cycles(N, M);
-    free(M);
-    return *out_list != NULL;
-}
+/* The per-axis 2D reorder-tape builder is the SHARED vfft_natorder_2d_build_axis in natorder_2d.h
+ * (pulled in via fft2d_c2c_planner.h above) — the SAME one the 2D calibrator uses, so runtime and
+ * calibrator build tapes identically (no drift). The private copy that used to live here was deleted. */
 
 /* Apply the dim1 (whole matrix rows, N1-axis) reorder on the user buffer. dim2 (within-row, N2-axis) is
  * fused into the row-FFT SCRATCH pass (mechanism-2, fft2d.h _fft2d_tiled_range: full-SIMD at K=B while
@@ -1128,7 +1159,7 @@ static int _natorder_2d_build_axis(int N, const stride_plan_t *inner,
 static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 {
     if (!h->nat2d_row_list)
-        return;                                     /* dim1 FREE (single-radix / prime column axis) */
+        return; /* dim1 FREE (single-radix / prime column axis) */
     if (h->nat2d_row_is_pairs)
         /* PSWAP: independent whole-row swaps, no cycle-following dep chain (self-inverse => the same
          * call for fwd and bwd). The latency win for the low-N dim1 reorder. */
@@ -1175,12 +1206,21 @@ static void _oop_slice_bwd(const vfft_oop_plan_t *p, const double *sr, const dou
     else /* LEAF: natural-order swap identity — bwd = fwd with re/im swapped */
         p->leaf(si + k0, sr + k0, di + k0, dr + k0, 0, 0, K, 1, K, 1, S);
 }
-typedef struct { const vfft_oop_plan_t *p; const double *sr, *si; double *dr, *di; size_t k0, S; int dir; } _oop_mt_arg_t;
+typedef struct
+{
+    const vfft_oop_plan_t *p;
+    const double *sr, *si;
+    double *dr, *di;
+    size_t k0, S;
+    int dir;
+} _oop_mt_arg_t;
 static void _oop_mt_tramp(void *a)
 {
     _oop_mt_arg_t *x = (_oop_mt_arg_t *)a;
-    if (x->dir) _oop_slice_fwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
-    else        _oop_slice_bwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
+    if (x->dir)
+        _oop_slice_fwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
+    else
+        _oop_slice_bwd(x->p, x->sr, x->si, x->dr, x->di, x->k0, x->S);
 }
 static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si,
                     double *dr, double *di, int dir)
@@ -1191,8 +1231,10 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
         T = _stride_pool_size + 1;
     if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2)
     {
-        if (dir) vfft_oop_execute_fwd(p, sr, si, dr, di);
-        else     vfft_oop_execute_bwd(p, sr, si, dr, di);
+        if (dir)
+            vfft_oop_execute_fwd(p, sr, si, dr, di);
+        else
+            vfft_oop_execute_bwd(p, sr, si, dr, di);
         return;
     }
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8: floor dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65) */
@@ -1211,8 +1253,10 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
         nd++;
     }
     size_t s0 = S < K ? S : K;
-    if (dir) _oop_slice_fwd(p, sr, si, dr, di, 0, s0);
-    else     _oop_slice_bwd(p, sr, si, dr, di, 0, s0);
+    if (dir)
+        _oop_slice_fwd(p, sr, si, dr, di, 0, s0);
+    else
+        _oop_slice_bwd(p, sr, si, dr, di, 0, s0);
     if (nd)
         _stride_pool_wait_all();
 }
@@ -1248,9 +1292,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
      * padding lands in later phases. */
     if (cfg->batch && !(cfg->dims < 2 &&
-        (cfg->transform == VFFT_C2C ||   /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
-         cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
-         _VFFT_IS_TRIG(cfg->transform))))
+                        (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
+                         cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
+                         _VFFT_IS_TRIG(cfg->transform))))
         return NULL;
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
@@ -1297,8 +1341,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
              * chain is palindromic (forcing a palindromic chain is a wash — its FFT slowdown offsets the
              * reorder win, natural_order §). dim2 (within-row): cycle only (fft2d.h scratch pass). */
             if (!d || !d->plan_col || !d->plan_row ||
-                !_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
-                !_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list, &col_is_pairs, 0))
+                !vfft_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
+                !vfft_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list, &col_is_pairs, 0))
             {
                 vfft_destroy(h);
                 return NULL;
@@ -1329,14 +1373,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->batch)
     {
         vfft_batch b = cfg->batch;
-        if (b->xform != (int)VFFT_C2C || b->oop || b->K != K || b->N != N)  /* handle must match exactly */
-            return NULL;                    /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
+        if (b->xform != (int)VFFT_C2C || b->oop || b->K != K || b->N != N) /* handle must match exactly */
+            return NULL;                                                   /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
         size_t Kp = b->Kp;
 
         /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
          * exec_me, and the pad plan IS the aligned (N,Kp) entry — both ordinary c2c cells. */
-        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);   /* tail leg = factK  */
-        const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);  /* pad leg = aligned (N,Kp) */
+        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);  /* tail leg = factK  */
+        const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp); /* pad leg = aligned (N,Kp) */
         int misaligned = (Kp != K);
 
         /* CALIBRATE-ON-MISS (planner primitive). Ensure the (N,K) tight cell is calibrated
@@ -1373,7 +1417,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     dirty = 1;
                 }
             }
-            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);   /* re-lookup: wisdom_add may realloc */
+            te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* re-lookup: wisdom_add may realloc */
             ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
             if (measure && te && ae)
             {
@@ -1398,22 +1442,29 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         int nf = 0, use_dif = 0, exec_me = (int)K;
         if (misaligned && te && te->exec_me == (int)Kp && ae && ae->nf > 0)
         {
-            facs = ae->factors; vars = ae->variants; nf = ae->nf;
-            use_dif = ae->use_dif_forward; exec_me = (int)Kp;
+            facs = ae->factors;
+            vars = ae->variants;
+            nf = ae->nf;
+            use_dif = ae->use_dif_forward;
+            exec_me = (int)Kp;
         }
         else if (te && te->nf > 0)
         {
-            facs = te->factors; vars = te->variants; nf = te->nf;
-            use_dif = te->use_dif_forward; exec_me = (int)K;
+            facs = te->factors;
+            vars = te->variants;
+            nf = te->nf;
+            use_dif = te->use_dif_forward;
+            exec_me = (int)K;
         }
         else
-            return NULL;             /* no factorization available (e.g. prime N) */
+            return NULL; /* no factorization available (e.g. prime N) */
 
         /* Backstop: verify the chosen factorization actually covers N (a wire-able-but-under-
          * covering factorization would silently compute the wrong-length transform). */
         {
             long long prod = 1;
-            for (int i = 0; i < nf; i++) prod *= facs[i];
+            for (int i = 0; i < nf; i++)
+                prod *= facs[i];
             if (prod != (long long)N)
                 return NULL;
         }
@@ -1421,7 +1472,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         stride_plan_t *p = vfft_proto_plan_create_ex(N, Kp, facs, vars, nf, use_dif, reg);
         if (!p)
             return NULL;
-        if (p->K != Kp)             /* stride-match invariant: plan stride must equal buffer stride */
+        if (p->K != Kp) /* stride-match invariant: plan stride must equal buffer stride */
         {
             vfft_proto_plan_destroy(p);
             return NULL;
@@ -1565,8 +1616,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
                 int wnf = e2->nf, wfac[STRIDE_MAX_STAGES];
                 int wnat_nf = e2->nat_nf, wnat_fac[STRIDE_MAX_STAGES], wnat_prof = e2->nat_prof;
-                for (int s = 0; s < wnf; s++) wfac[s] = e2->factors[s];
-                for (int s = 0; s < wnat_nf; s++) wnat_fac[s] = e2->nat_factors[s];
+                for (int s = 0; s < wnf; s++)
+                    wfac[s] = e2->factors[s];
+                for (int s = 0; s < wnat_nf; s++)
+                    wnat_fac[s] = e2->nat_factors[s];
                 size_t tot = (size_t)N * K;
                 double *cre = (double *)calloc(tot, sizeof(double));
                 double *cim = (double *)calloc(tot, sizeof(double));
@@ -1605,61 +1658,73 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     if (opp)
                     {
                         free(h->nat_list);
-                        h->nat_list = opp;                     /* cplan / exec_fwd stay the calibrated plan */
+                        h->nat_list = opp; /* cplan / exec_fwd stay the calibrated plan */
                         mode = VFFT_NAT_PSWAP;
                         vfft_proto_wisdom_entry_t ne = *e2;
-                        ne.nat_mode = mode; ne.nat_ns = 0.0; ne.nat_nf = 0; ne.nat_prof = 0;
+                        ne.nat_mode = mode;
+                        ne.nat_ns = 0.0;
+                        ne.nat_nf = 0;
+                        ne.nat_prof = 0;
                         vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                        if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                        if (W->path_c2c[0])
+                            vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
                     }
                     else
                     {
-                    /* RACE (PURE vs injected-palindrome PSWAP vs DIT-injected SCR; 5% margin) + stamp.
-                     * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection.
-                     * (Non-palindromic calibrated chains only.) */
-                    vfft_natorder_verdict_t v;
-                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, wfac, wnf, &v);
-                    mode = v.mode;
-                    if (mode == VFFT_NAT_PSWAP)
-                    {
-                        vfft_proto_plan_destroy(h->cplan);
-                        h->cplan = v.planB;
-                        free(h->nat_list);
-                        h->nat_list = v.pairs;
-                        h->exec_fwd = NULL;
-                        h->exec_bwd = NULL;
+                        /* RACE (PURE vs injected-palindrome PSWAP vs DIT-injected SCR; 5% margin) + stamp.
+                         * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection.
+                         * (Non-palindromic calibrated chains only.) */
+                        vfft_natorder_verdict_t v;
+                        vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, wfac, wnf, &v);
+                        mode = v.mode;
+                        if (mode == VFFT_NAT_PSWAP)
+                        {
+                            vfft_proto_plan_destroy(h->cplan);
+                            h->cplan = v.planB;
+                            free(h->nat_list);
+                            h->nat_list = v.pairs;
+                            h->exec_fwd = NULL;
+                            h->exec_bwd = NULL;
 #ifdef VFFT_USE_JIT
-                        h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
-                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+                            h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
+                            h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
-                    }
-                    else if (mode == VFFT_NAT_SCR)
-                    {
-                        /* DIT-injected SCR: swap cplan to the DIT plan (the scatter's sub aliases it),
-                         * take its cycle tape for the backward, re-resolve the DIF-backward JIT. */
-                        h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
-                        if (!h->nat_scr) { free(M); vfft_proto_plan_destroy(v.scr_plan);
-                                           natorder_scr_free(&v.scr); free(v.scr_cycles); vfft_destroy(h); return NULL; }
-                        *h->nat_scr = v.scr;
-                        vfft_proto_plan_destroy(h->cplan);
-                        h->cplan = v.scr_plan;
-                        free(h->nat_list);
-                        h->nat_list = v.scr_cycles;
-                        h->exec_fwd = NULL;
-                        h->exec_bwd = NULL;
+                        }
+                        else if (mode == VFFT_NAT_SCR)
+                        {
+                            /* DIT-injected SCR: swap cplan to the DIT plan (the scatter's sub aliases it),
+                             * take its cycle tape for the backward, re-resolve the DIF-backward JIT. */
+                            h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
+                            if (!h->nat_scr)
+                            {
+                                free(M);
+                                vfft_proto_plan_destroy(v.scr_plan);
+                                natorder_scr_free(&v.scr);
+                                free(v.scr_cycles);
+                                vfft_destroy(h);
+                                return NULL;
+                            }
+                            *h->nat_scr = v.scr;
+                            vfft_proto_plan_destroy(h->cplan);
+                            h->cplan = v.scr_plan;
+                            free(h->nat_list);
+                            h->nat_list = v.scr_cycles;
+                            h->exec_fwd = NULL;
+                            h->exec_bwd = NULL;
 #ifdef VFFT_USE_JIT
-                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+                            h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
-                    }
-                    vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
-                    ne.nat_mode = mode;
-                    ne.nat_ns = v.ns;
-                    ne.nat_nf = (mode == VFFT_NAT_PSWAP) ? v.nf : 0;
-                    ne.nat_prof = (mode == VFFT_NAT_PSWAP) ? v.prof : 0;
-                    for (int s = 0; s < ne.nat_nf; s++) ne.nat_factors[s] = v.factors[s];
-                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                    if (W->path_c2c[0])
-                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                        }
+                        vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
+                        ne.nat_mode = mode;
+                        ne.nat_ns = v.ns;
+                        ne.nat_nf = (mode == VFFT_NAT_PSWAP) ? v.nf : 0;
+                        ne.nat_prof = (mode == VFFT_NAT_PSWAP) ? v.prof : 0;
+                        for (int s = 0; s < ne.nat_nf; s++)
+                            ne.nat_factors[s] = v.factors[s];
+                        vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                        if (W->path_c2c[0])
+                            vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
                     } /* end else (non-opportunistic race) */
                 }
                 else if (mode == VFFT_NAT_SCR)
@@ -1685,7 +1750,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                             h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
                         }
-                        else { natorder_scr_free(&sc); vfft_proto_plan_destroy(sp); free(scyc); mode = VFFT_NAT_PURE_CYCLE; }
+                        else
+                        {
+                            natorder_scr_free(&sc);
+                            vfft_proto_plan_destroy(sp);
+                            free(scyc);
+                            mode = VFFT_NAT_PURE_CYCLE;
+                        }
                     }
                     else
                         mode = VFFT_NAT_PURE_CYCLE;
@@ -1696,8 +1767,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                      * from its perm M (an involution). Mirrors the create-time short-circuit above;
                      * any failure (M not an involution — shouldn't happen) falls back to PURE. */
                     int *pairs = M ? vfft_natorder_mk_pairs(N, M) : NULL;
-                    if (pairs) { free(h->nat_list); h->nat_list = pairs; }
-                    else mode = VFFT_NAT_PURE_CYCLE;
+                    if (pairs)
+                    {
+                        free(h->nat_list);
+                        h->nat_list = pairs;
+                    }
+                    else
+                        mode = VFFT_NAT_PURE_CYCLE;
                 }
                 else if (mode == VFFT_NAT_PSWAP)
                 {
@@ -1708,7 +1784,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     if (wnat_nf > 0)
                     {
                         int vb[STRIDE_MAX_STAGES];
-                        for (int s = 0; s < wnat_nf; s++) vb[s] = wnat_prof;
+                        for (int s = 0; s < wnat_nf; s++)
+                            vb[s] = wnat_prof;
                         vb[0] = 0;
                         pB = vfft_proto_plan_create_ex(N, K, wnat_fac, vb, wnat_nf, 0, reg);
                     }
@@ -1792,7 +1869,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_C2C || !b->oop || b->N != N || b->K != K)
                 return NULL;
-            bK = b->Kp; padded = 1;
+            bK = b->Kp;
+            padded = 1;
         }
         vfft_oop_plan_t *op = NULL;
         int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
@@ -1815,15 +1893,45 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             double nns = 1e30, mns = 1e30;
             vfft_oop_plan_create_champions(N, bK, &ctx, reg, &nat, &nns, &mb, &mns);
             vfft_proto_dp_destroy(&ctx);
-            if (nat) { vfft_oop_wisdom_entry_t ne; vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
-                       _oop_wisdom_put_and_save(W, &ne, W->path_oop); }
-            if (mb)  { vfft_oop_wisdom_entry_t ne; vfft_oop_wisdom_entry_from_plan(&ne, mb,  N, bK, mns);
-                       _oop_wisdom_put_and_save(W, &ne, W->path_oop); }
-            if (ord == VFFT_ORDER_NATURAL)        { op = nat; if (mb)  vfft_oop_plan_destroy(mb); }
-            else if (ord == VFFT_ORDER_SCRAMBLED) { op = mb;  if (nat) vfft_oop_plan_destroy(nat); }
-            else if (nat && mb) { if (nns <= mns) { op = nat; vfft_oop_plan_destroy(mb); }
-                                  else { op = mb; vfft_oop_plan_destroy(nat); } }
-            else op = nat ? nat : mb;
+            if (nat)
+            {
+                vfft_oop_wisdom_entry_t ne;
+                vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
+                _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+            }
+            if (mb)
+            {
+                vfft_oop_wisdom_entry_t ne;
+                vfft_oop_wisdom_entry_from_plan(&ne, mb, N, bK, mns);
+                _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+            }
+            if (ord == VFFT_ORDER_NATURAL)
+            {
+                op = nat;
+                if (mb)
+                    vfft_oop_plan_destroy(mb);
+            }
+            else if (ord == VFFT_ORDER_SCRAMBLED)
+            {
+                op = mb;
+                if (nat)
+                    vfft_oop_plan_destroy(nat);
+            }
+            else if (nat && mb)
+            {
+                if (nns <= mns)
+                {
+                    op = nat;
+                    vfft_oop_plan_destroy(mb);
+                }
+                else
+                {
+                    op = mb;
+                    vfft_oop_plan_destroy(nat);
+                }
+            }
+            else
+                op = nat ? nat : mb;
         }
         if (!op)
             return NULL;
@@ -1863,14 +1971,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * exec_me verdict). Payoff lives in the cascade regime (small Kp<32); a Kp that routes
          * to the K%8-gated stride path simply yields NULL (padding unsupported for that cell,
          * caller falls back to the tight tail). */
-        size_t bK = K;                 /* build width: Kp when padded, else K */
+        size_t bK = K; /* build width: Kp when padded, else K */
         int padded = 0;
         if (cfg->batch)
         {
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_R2C || b->N != N || b->K != K)
-                return NULL;           /* handle must match the descriptor exactly */
-            bK = b->Kp; padded = 1;
+                return NULL; /* handle must match the descriptor exactly */
+            bK = b->Kp;
+            padded = 1;
         }
         /* The r2c dispatcher rides the c2c wisdom for its decoupled inner FFT and
          * the rfft wisdom for the rfft path; it auto-threads (sub-K block) when the
@@ -1928,7 +2037,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->nthreads = stride_get_num_threads();
         h->rplan = rp;
         h->padded = padded;
-        h->exec_me = (int)bK;          /* informational: the width the plan was built at */
+        h->exec_me = (int)bK; /* informational: the width the plan was built at */
         return h;
     }
 
@@ -1953,7 +2062,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_C2R || b->N != N || b->K != K)
                 return NULL;
-            bK = b->Kp; padded = 1;
+            bK = b->Kp;
+            padded = 1;
         }
         /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
          * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
@@ -2009,7 +2119,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             vfft_batch b = cfg->batch;
             if (b->xform != (int)cfg->transform || b->N != N || b->K != K)
                 return NULL;
-            bK = b->Kp; padded = 1;
+            bK = b->Kp;
+            padded = 1;
         }
         /* Odd/misaligned tight K now works: the stride r2c inner routes a non-VW-aligned B
          * through its explicit-pack fallback (rem-aware codelet tail + scalar unpack) instead
@@ -2093,7 +2204,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * (OOP scratch-fill stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
         if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
         {
-            _scr_fwd_mt(h->nat_scr, sre, sim, h->K);  /* scratch-fill K-split + terminator q-split */
+            _scr_fwd_mt(h->nat_scr, sre, sim, h->K); /* scratch-fill K-split + terminator q-split */
             return;
         }
         /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
@@ -2103,7 +2214,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
              h->nat_mode == VFFT_NAT_SCR))
             _natorder_mt(h, sre, sim, 0);
-        _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,  /* dst==src */
+        _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,      /* dst==src */
                 dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
         /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
         if (dir == VFFT_FORWARD &&
@@ -2206,7 +2317,11 @@ void vfft_destroy(vfft_plan h)
     free(h->nat_list);
     free(h->nat_tmp);
     free(h->nat_cyc_off);
-    if (h->nat_scr) { natorder_scr_free(h->nat_scr); free(h->nat_scr); }
+    if (h->nat_scr)
+    {
+        natorder_scr_free(h->nat_scr);
+        free(h->nat_scr);
+    }
     free(h->nat2d_row_list);
     free(h->nat2d_col_list);
     free(h->nat2d_tmp);
@@ -2223,7 +2338,7 @@ static double *_batch_plane(size_t doubles)
 {
     double *p = (double *)stride_alloc(doubles * sizeof(double));
     if (p)
-        memset(p, 0, doubles * sizeof(double));   /* stride_alloc does NOT zero */
+        memset(p, 0, doubles * sizeof(double)); /* stride_alloc does NOT zero */
     return p;
 }
 
@@ -2237,30 +2352,33 @@ vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
     if (N < 1 || K < 1)
         return NULL;
     int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
-    int trig      = _VFFT_IS_TRIG(xform);
+    int trig = _VFFT_IS_TRIG(xform);
     if (xform != VFFT_C2C && !real_side && !trig)
-        return NULL;                       /* 2D padded handles unsupported for now */
+        return NULL; /* 2D padded handles unsupported for now */
     if ((real_side || trig) && (N % 2) != 0)
-        return NULL;                       /* real-FFT inner needs even N (half-spectrum) */
-    size_t Kp = (K + 3u) & ~(size_t)3u;    /* roundup(K, VW=4) */
+        return NULL;                    /* real-FFT inner needs even N (half-spectrum) */
+    size_t Kp = (K + 3u) & ~(size_t)3u; /* roundup(K, VW=4) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
-    b->N = N; b->K = K; b->Kp = Kp; b->xform = (int)xform;
+    b->N = N;
+    b->K = K;
+    b->Kp = Kp;
+    b->xform = (int)xform;
     int ok = 1;
-    if (trig)   /* real -> real, out-of-place: input plane + output plane, both N*Kp */
+    if (trig) /* real -> real, out-of-place: input plane + output plane, both N*Kp */
     {
         size_t data = (size_t)N * Kp;
-        b->real = _batch_plane(data);      /* INPUT plane */
-        b->re   = _batch_plane(data);      /* OUTPUT plane */
+        b->real = _batch_plane(data); /* INPUT plane */
+        b->re = _batch_plane(data);   /* OUTPUT plane */
         ok = (b->real && b->re);
     }
     else if (real_side)
     {
-        size_t spec = (size_t)(N / 2 + 1) * Kp;   /* split spectrum plane */
-        b->real = _batch_plane((size_t)N * Kp);   /* real plane */
-        b->re   = _batch_plane(spec);
-        b->im   = _batch_plane(spec);
+        size_t spec = (size_t)(N / 2 + 1) * Kp; /* split spectrum plane */
+        b->real = _batch_plane((size_t)N * Kp); /* real plane */
+        b->re = _batch_plane(spec);
+        b->im = _batch_plane(spec);
         ok = (b->real && b->re && b->im);
     }
     else /* c2c in-place: split data, no real plane */
@@ -2270,7 +2388,11 @@ vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
         b->im = _batch_plane(data);
         ok = (b->re && b->im);
     }
-    if (!ok) { vfft_free_batch(b); return NULL; }
+    if (!ok)
+    {
+        vfft_free_batch(b);
+        return NULL;
+    }
     return b;
 }
 /* c2c convenience (the original entry point). */
@@ -2284,17 +2406,25 @@ vfft_batch vfft_alloc_batch_oop(int N, size_t K)
 {
     if (N < 1 || K < 1)
         return NULL;
-    size_t Kp = (K + 7u) & ~(size_t)7u;    /* roundup(K, 8) — OOP kind + wisdom alignment */
+    size_t Kp = (K + 7u) & ~(size_t)7u; /* roundup(K, 8) — OOP kind + wisdom alignment */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
-    b->N = N; b->K = K; b->Kp = Kp; b->xform = (int)VFFT_C2C; b->oop = 1;
+    b->N = N;
+    b->K = K;
+    b->Kp = Kp;
+    b->xform = (int)VFFT_C2C;
+    b->oop = 1;
     size_t data = (size_t)N * Kp;
-    b->re  = _batch_plane(data);           /* INPUT re/im */
-    b->im  = _batch_plane(data);
-    b->ore = _batch_plane(data);           /* OUTPUT re/im */
+    b->re = _batch_plane(data); /* INPUT re/im */
+    b->im = _batch_plane(data);
+    b->ore = _batch_plane(data); /* OUTPUT re/im */
     b->oim = _batch_plane(data);
-    if (!(b->re && b->im && b->ore && b->oim)) { vfft_free_batch(b); return NULL; }
+    if (!(b->re && b->im && b->ore && b->oim))
+    {
+        vfft_free_batch(b);
+        return NULL;
+    }
     return b;
 }
 
@@ -2302,19 +2432,24 @@ void vfft_free_batch(vfft_batch b)
 {
     if (!b)
         return;
-    if (b->real) stride_free(b->real);   /* Windows: stride_free == _aligned_free; free() is UB */
-    if (b->re)   stride_free(b->re);
-    if (b->im)   stride_free(b->im);
-    if (b->ore)  stride_free(b->ore);
-    if (b->oim)  stride_free(b->oim);
+    if (b->real)
+        stride_free(b->real); /* Windows: stride_free == _aligned_free; free() is UB */
+    if (b->re)
+        stride_free(b->re);
+    if (b->im)
+        stride_free(b->im);
+    if (b->ore)
+        stride_free(b->ore);
+    if (b->oim)
+        stride_free(b->oim);
     free(b);
 }
-double *vfft_batch_real(vfft_batch b)    { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out / trig in) */
-double *vfft_batch_re(vfft_batch b)      { return b ? b->re : NULL; }    /* OOP: INPUT re */
-double *vfft_batch_im(vfft_batch b)      { return b ? b->im : NULL; }    /* OOP: INPUT im */
-double *vfft_batch_out_re(vfft_batch b)  { return b ? b->ore : NULL; }   /* OOP OUTPUT re (NULL otherwise) */
-double *vfft_batch_out_im(vfft_batch b)  { return b ? b->oim : NULL; }   /* OOP OUTPUT im (NULL otherwise) */
-size_t  vfft_batch_stride(vfft_batch b)  { return b ? b->Kp : 0; }
+double *vfft_batch_real(vfft_batch b) { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out / trig in) */
+double *vfft_batch_re(vfft_batch b) { return b ? b->re : NULL; }      /* OOP: INPUT re */
+double *vfft_batch_im(vfft_batch b) { return b ? b->im : NULL; }      /* OOP: INPUT im */
+double *vfft_batch_out_re(vfft_batch b) { return b ? b->ore : NULL; } /* OOP OUTPUT re (NULL otherwise) */
+double *vfft_batch_out_im(vfft_batch b) { return b ? b->oim : NULL; } /* OOP OUTPUT im (NULL otherwise) */
+size_t vfft_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)

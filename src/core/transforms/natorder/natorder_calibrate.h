@@ -121,15 +121,28 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     v->mode = VFFT_NAT_PURE_CYCLE;
     v->prof = 2; /* T1S */
 
-    int chains[4][STRIDE_MAX_STAGES], nfs[4];
+    int chains[5][STRIDE_MAX_STAGES], nfs[5];
     int nc = vfft_natorder_palindromes(N, reg, chains, nfs, 3);
     /* single-stage [N] leaf (N<=64): a monolithic radix-N codelet emits NATURAL output => FREE reorder
      * (identity perm => mk_pairs returns an empty tape => the pass is a no-op). The DP prunes it (a leaf
      * is a slower FFT than the multi-stage scrambled winner), but a FREE reorder can win the NATURAL
      * total — the biggest 2D win (64x16 -> single radix-64 col, tax 1.34x->1.07x). Inject it as a
      * candidate; it stores + rebuilds through the existing injected-PSWAP path (nf=1, empty pairs). */
-    if (nc < 4 && N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]) {
+    if (nc < 5 && N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]) {
         chains[nc][0] = N; nfs[nc] = 1; nc++;
+    }
+    /* inject the CALIBRATED chain (scr_chain=wfac) if it's a palindrome — its shape (e.g. a·b·b·a) may not
+     * be one vfft_natorder_palindromes produces, so without this the opportunistic (calibrated-chain +
+     * pair) win is UNREACHABLE once vfft.c's has_leaf gate falls through to the race instead of short-
+     * circuiting. Its digit reversal is an involution => pair reorder. Dedup vs the generated set. */
+    if (nc < 5 && scr_nf >= 2 && scr_nf < STRIDE_MAX_STAGES) {
+        int is_pal = 1;
+        for (int s = 0; s < scr_nf; s++) if (scr_chain[s] != scr_chain[scr_nf - 1 - s]) { is_pal = 0; break; }
+        int dup = 0;
+        if (is_pal)
+            for (int c = 0; c < nc; c++)
+                if (nfs[c] == scr_nf && !memcmp(chains[c], scr_chain, (size_t)scr_nf * sizeof(int))) { dup = 1; break; }
+        if (is_pal && !dup) { for (int s = 0; s < scr_nf; s++) chains[nc][s] = scr_chain[s]; nfs[nc] = scr_nf; nc++; }
     }
 
     /* SCR candidate — DEACTIVATED from the wisdom-creation race by default. Paced/locked bench
@@ -152,8 +165,8 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
 #endif
 
     /* build challenger plans + their pair tapes (drop any that fail the involution check) */
-    stride_plan_t *pb[4] = {0};
-    int *prs[4] = {0};
+    stride_plan_t *pb[5] = {0};
+    int *prs[5] = {0};
     for (int c = 0; c < nc; c++) {
         int vb[STRIDE_MAX_STAGES];
         for (int s = 0; s < nfs[c]; s++) vb[s] = 2; /* uniform T1S; stage 0 ignored */
@@ -185,14 +198,14 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
      * path is what lets the injected single-stage/palindrome be ranked as it will actually run (generic
      * mis-ranks extra stages — the 2D calibrator proved this). Cost is at create for order=NATURAL only,
      * and warms the JIT cache the deployed plan reuses. */
-    vfft_proto_exec_fn fnA = NULL, fnB[4] = {0};
+    vfft_proto_exec_fn fnA = NULL, fnB[5] = {0};
 #ifdef VFFT_USE_JIT
     fnA = vfft_proto_plan_jit_fwd(pA);
     for (int c = 0; c < nc; c++) if (pb[c]) fnB[c] = vfft_proto_plan_jit_fwd(pb[c]);
 #endif
     _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA); /* warm-up */
     {
-        double sA = 0, sB[4] = {0, 0, 0, 0}, sScr = 0;
+        double sA = 0, sB[5] = {0, 0, 0, 0, 0}, sScr = 0;
         for (int r = 0; r < VFFT_NATORDER_ROUNDS; r++) {
             sA += _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA);
             for (int c = 0; c < nc; c++)
