@@ -1581,8 +1581,27 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
                 if (mode == VFFT_NAT_UNSET)
                 {
+                    /* OPPORTUNISTIC PSWAP: pA's perm M is an involution (palindromic calibrated chain)
+                     * => pair-swaps beat cycle-following on the SAME calibrated plan (always >= cycle,
+                     * big on narrow rows) — a DETERMINISTIC free win: no injection, no race, no generic-
+                     * vs-JIT bias (which flipped 256/4 PURE<->PSWAP). Wisdom marker: nat_mode=PSWAP with
+                     * nat_nf=0 (= calibrated plan + pairs, distinct from injected PSWAP's nat_nf>0). */
+                    int *opp = M ? vfft_natorder_mk_pairs(N, M) : NULL;
+                    if (opp)
+                    {
+                        free(h->nat_list);
+                        h->nat_list = opp;                     /* cplan / exec_fwd stay the calibrated plan */
+                        mode = VFFT_NAT_PSWAP;
+                        vfft_proto_wisdom_entry_t ne = *e2;
+                        ne.nat_mode = mode; ne.nat_ns = 0.0; ne.nat_nf = 0; ne.nat_prof = 0;
+                        vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                        if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                    }
+                    else
+                    {
                     /* RACE (PURE vs injected-palindrome PSWAP vs DIT-injected SCR; 5% margin) + stamp.
-                     * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection. */
+                     * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection.
+                     * (Non-palindromic calibrated chains only.) */
                     vfft_natorder_verdict_t v;
                     vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, wfac, wnf, &v);
                     mode = v.mode;
@@ -1626,6 +1645,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     vfft_proto_wisdom_add(&W->c2c, &ne, 1);
                     if (W->path_c2c[0])
                         vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                    } /* end else (non-opportunistic race) */
                 }
                 else if (mode == VFFT_NAT_SCR)
                 {
@@ -1655,9 +1675,18 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     else
                         mode = VFFT_NAT_PURE_CYCLE;
                 }
+                else if (mode == VFFT_NAT_PSWAP && wnat_nf == 0)
+                {
+                    /* Stored OPPORTUNISTIC PSWAP: calibrated plan (cplan/exec_fwd unchanged) + pairs
+                     * from its perm M (an involution). Mirrors the create-time short-circuit above;
+                     * any failure (M not an involution — shouldn't happen) falls back to PURE. */
+                    int *pairs = M ? vfft_natorder_mk_pairs(N, M) : NULL;
+                    if (pairs) { free(h->nat_list); h->nat_list = pairs; }
+                    else mode = VFFT_NAT_PURE_CYCLE;
+                }
                 else if (mode == VFFT_NAT_PSWAP)
                 {
-                    /* Stored PSWAP verdict: rebuild the injected plan from wisdom; any
+                    /* Stored INJECTED PSWAP verdict: rebuild the injected plan from wisdom; any
                      * failure falls back to PURE (tape already built) — honorable. */
                     stride_plan_t *pB = NULL;
                     int *pairs = NULL;

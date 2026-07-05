@@ -1,0 +1,5 @@
+; Gate drivers for the new-lib refactor staging tree. Clones of
+; bin/gen_radix.ml and bin/gen_set.ml linked against vfft_v2r.
+(executables
+ (names gen_radix gen_set)
+ (libraries vfft_v2r unix))

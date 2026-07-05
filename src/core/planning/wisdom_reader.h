@@ -125,16 +125,22 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
             tok = strtok(NULL, " \t\r\n");
             e.nat_ns = tok ? atof(tok) : 0.0;
             if (e.nat_mode == VFFT_NAT_PSWAP) {
-                tok = strtok(NULL, " \t\r\n"); if (!tok) { e.nat_mode = 0; goto natdone; }
-                e.nat_nf = atoi(tok);
-                if (e.nat_nf < 1 || e.nat_nf > STRIDE_MAX_STAGES) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
-                for (int i = 0; i < e.nat_nf; i++) {
-                    tok = strtok(NULL, " \t\r\n");
-                    if (!tok) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
-                    e.nat_factors[i] = atoi(tok);
-                }
+                /* INJECTED PSWAP carries a trailing nf-block (nf factors... prof); OPPORTUNISTIC
+                 * PSWAP (calibrated plan + pairs from its own involution perm) writes none, so its
+                 * line ends after nat_ns -> nat_nf stays 0 and we KEEP nat_mode=PSWAP (do NOT
+                 * downgrade to UNSET, or the verdict is silently lost on reload). */
                 tok = strtok(NULL, " \t\r\n");
-                e.nat_prof = tok ? atoi(tok) : 0;
+                if (tok) {
+                    e.nat_nf = atoi(tok);
+                    if (e.nat_nf < 1 || e.nat_nf > STRIDE_MAX_STAGES) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
+                    for (int i = 0; i < e.nat_nf; i++) {
+                        tok = strtok(NULL, " \t\r\n");
+                        if (!tok) { e.nat_mode = 0; e.nat_nf = 0; goto natdone; }
+                        e.nat_factors[i] = atoi(tok);
+                    }
+                    tok = strtok(NULL, " \t\r\n");
+                    e.nat_prof = tok ? atoi(tok) : 0;
+                }
             }
         }
     natdone:;
