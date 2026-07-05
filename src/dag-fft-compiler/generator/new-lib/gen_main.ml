@@ -8,7 +8,6 @@
  *   gen_radix N --twiddled               t1_dit (TP_Flat: load all twiddles)
  *   gen_radix N --twiddled --log3        t1_dit_log3 (load base twiddles, derive rest)
  *   gen_radix N --twiddled --emit-c      emit C code with cost-model defaults
- *   gen_radix N --twiddled --emit-c --bisect   emit with Frigo's bisection scheduler
  *
  * Cost-model defaults (auto-applied unless --no-recipe is passed):
  *   Spill + SU (the "full recipe") auto-enables when the cost model says yes.
@@ -61,7 +60,6 @@ let run (argv : string array) : unit =
   let log3 = ref false in
   let emit_c = ref false in
   let in_place = ref false in
-  let bisect = ref false in
   let annotate = ref false in
   let su = ref false in
   let spill = ref false in
@@ -136,7 +134,6 @@ let run (argv : string array) : unit =
      else if arg = "--log3" then log3 := true
      else if arg = "--emit-c" then emit_c := true
      else if arg = "--in-place" then in_place := true
-     else if arg = "--bisect" then bisect := true
      else if arg = "--annotate" then annotate := true
      else if arg = "--su" then su := true
      else if arg = "--spill" then spill := true
@@ -242,8 +239,8 @@ let run (argv : string array) : unit =
   (* Cost-model auto-defaults.
    *
    * If --no-recipe is set: don't auto-enable anything.
-   * Otherwise: when the rule says yes AND user didn't override with bisect
-   * or annotate, turn on --spill --su automatically.
+   * Otherwise: when the rule says yes AND user didn't override with
+   * annotate, turn on --spill --su automatically.
    *
    * Explicit --spill / --su flags always take effect regardless of the rule.
    *
@@ -252,7 +249,7 @@ let run (argv : string array) : unit =
    * Dft.should_block_n1. Without auto-enable, the n1 path would stay
    * monolithic and miss the spill-recipe wins on the hot path. *)
   let recipe_applicable =
-    (not !bisect) && (not !annotate) && (not !no_recipe)
+    (not !annotate) && (not !no_recipe)
     (* strided is single-stage n1-only by design (v1); the blocked
      * recipe emits spill_re/spill_im markers the strided emitter does
      * not declare. Latent since doc-58 auto-blocking; caught when the
@@ -303,8 +300,7 @@ let run (argv : string array) : unit =
    * a memory-bound codelet's load parallelism — a case where SU measured
    * neutral, not worse. --no-recipe still selects topological. Codelets
    * that already had SU (all t1s, R>=32 n1) are unaffected (no-op here). *)
-  if (not !no_recipe) && (not !bisect) && (not !annotate) && not !su then
-    su := true;
+  if (not !no_recipe) && (not !annotate) && not !su then su := true;
 
   (* Auto-enable Goodman-Hsu mode switch when:
    *   - the recipe is engaged (--su is on), AND
@@ -918,14 +914,11 @@ let run (argv : string array) : unit =
            else "")
     in
     let scheduler : Emit_c.scheduler =
-      match (!bisect, !su, !annotate) with
-      | false, false, false -> Topological
-      | true, false, false -> Bisection
-      | false, true, false -> SU uarch
-      | false, false, true -> Annotated_topological
-      | true, false, true -> Annotated_bisection
-      | false, true, true -> Annotated_SU uarch
-      | _ -> Topological
+      match (!su, !annotate) with
+      | false, false -> Topological
+      | true, false -> SU uarch
+      | false, true -> Annotated_topological
+      | true, true -> Annotated_SU uarch
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
     if !oop then begin

@@ -8,10 +8,10 @@
  *
  *   1. resolves the signature family (which pointer ABI the function
  *      gets) from the Emit_state flags;
- *   2. schedules the DAG — Topological, Frigo Bisection, SU (optionally
- *      Goodman-Hsu pressure-switched, optionally Bb branch-and-bound
- *      refined), Annotated variants — monolithic or split per spill
- *      pass via classify_passes / cluster_split_schedule;
+ *   2. schedules the DAG — Topological or SU (optionally Goodman-Hsu
+ *      pressure-switched, optionally Bb branch-and-bound refined),
+ *      plus Annotated variants — monolithic or split per spill pass
+ *      via classify_passes / cluster_split_schedule;
  *   3. optionally runs Regalloc (M-project pin / fence, opt-in via env)
  *      and the selective-pin / const-hoist refinements;
  *   4. renders: k-loop over the batch, per-node declarations through
@@ -406,9 +406,6 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   let sched_str =
     match scheduler with
     | Topological -> "topological (plain dependency order)"
-    | Bisection ->
-        "Frigo recursive bisection (repaired, sections 27-28; not a production \
-         default)"
     | SU _ ->
         "the list scheduler (flag name --su; lazy loads, sink-first, cp_dist, \
          SU tiebreak; section 30)"
@@ -2091,62 +2088,6 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           Buffer.add_char buf '\n';
           List.iter (fun (lhs, e) -> emit_store buf lhs e) assigns;
           clear_alloc ()
-      | Bisection ->
-          (* Frigo's bisection schedule: each entry is either an intermediate
-           * (None, e) → emit definition, or an output (Some oref, e) → emit store.
-           *
-           * One subtlety: leaves (NK_Const, NK_Load) appear in the schedule
-           * but render as a "load" definition. This is fine — they're still
-           * t<tag> = _mm512_loadu_pd(...) lines.
-           *
-           * Another subtlety: an intermediate node and its output sibling share
-           * the same alg_node (same tag). The intermediate's definition emits
-           * once; when we hit the output node afterwards, we just store the
-           * existing t<tag>. We track which tags have been defined to avoid
-           * duplicate definitions. *)
-          let scheduled_raw = Schedule.bisection_schedule assigns in
-          record_peak_live "bisection_s1" (List.map snd scheduled_raw);
-          (* Stage 4: route through canonical prep. Bisection has the same
-           * (oref_opt, e) duplicate-entry pattern as SU. *)
-          let input =
-            Regalloc.prepare_for_simple_codelet_from_oref
-              ~raw_scheduled:scheduled_raw ~assigns ()
-          in
-          install_alloc_canonical "bisect_n1" input;
-          emit_regalloc_spill_decl buf;
-          let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-          List.iteri
-            (fun pos (e : t) ->
-              current_emit_position := pos;
-              emit_node_spill_sites buf pos;
-              emit_node_reload_sites buf pos;
-              if not (Hashtbl.mem defined e.tag) then begin
-                Hashtbl.add defined e.tag ();
-                Buffer.add_string buf
-                  (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n
-                     ~strided e);
-                Buffer.add_char buf '\n'
-              end)
-            input.scheduled;
-          (* End-of-schedule spill/reload emission. *)
-          let n = List.length input.scheduled in
-          current_emit_position := n;
-          emit_node_spill_sites buf n;
-          emit_node_reload_sites buf n;
-          Buffer.add_char buf '\n';
-          (* Stores at end-of-scope, mirroring SU/Topological pattern. *)
-          List.iter
-            (fun (lhs, e) ->
-              if not (Hashtbl.mem defined e.tag) then begin
-                Hashtbl.add defined e.tag ();
-                Buffer.add_string buf
-                  (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n
-                     ~strided e);
-                Buffer.add_char buf '\n'
-              end;
-              emit_store buf lhs e)
-            assigns;
-          clear_alloc ()
       | Annotated_topological ->
           (* Topological order, but emitted with nested-block scopes via annotate.ml.
            * Same instructions, same order — just nested `{ ... }` to communicate
@@ -2171,46 +2112,9 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
           in
           let scope = Annotate.annotate entries in
           Annotate.emit_scope isa buf render_intermediate render_store scope
-      | Annotated_bisection ->
-          (* Bisection schedule, emitted with nested-block scopes via annotate.ml. *)
-          let scheduled = Schedule.bisection_schedule assigns in
-          record_peak_live "bisection_s2" (List.map snd scheduled);
-          (* Bisection's output may have an alg_node appearing twice (once as
-           * intermediate, once for store). Dedupe so annotate sees a clean list. *)
-          let defined : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-          let entries =
-            List.filter_map
-              (fun (oref_opt, e) ->
-                match oref_opt with
-                | None ->
-                    if Hashtbl.mem defined e.tag then None
-                    else begin
-                      Hashtbl.add defined e.tag ();
-                      Some (None, e)
-                    end
-                | Some oref ->
-                    if not (Hashtbl.mem defined e.tag) then begin
-                      (* Need to emit the definition before the store *)
-                      Hashtbl.add defined e.tag ();
-                      (* Note: this case shouldn't happen in well-formed bisection output. *)
-                      Some (Some oref, e)
-                    end
-                    else Some (Some oref, e))
-              scheduled
-          in
-          let render_intermediate e =
-            render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
-          in
-          let render_store oref e =
-            let buf2 = Buffer.create 128 in
-            emit_store buf2 oref e;
-            String.trim (Buffer.contents buf2)
-          in
-          let scope = Annotate.annotate entries in
-          Annotate.emit_scope isa buf render_intermediate render_store scope
       | SU uarch ->
           (* SU list scheduler: priority = (cp_dist DESC, su_num ASC).
-           * Output shape mirrors Bisection: list of (oref_opt, alg_node)
+           * Output shape: list of (oref_opt, alg_node)
            * where None = intermediate, Some oref = store.
            *
            * Single-use inlining: any intermediate with exactly one consumer

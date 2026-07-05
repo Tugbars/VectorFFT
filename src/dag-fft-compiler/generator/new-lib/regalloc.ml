@@ -1211,7 +1211,7 @@ let allocate_with_spilling ~(isa : Isa.t) ~(scheduled : Algsimp.t list)
  * pass2_ordered satisfy I1 by their construction (filtered topo sort).
  *
  * The Stage 4 prime/n1 hookup will:
- *   - Run its scheduler (Topo/Bisection/SU) to produce raw scheduled
+ *   - Run its scheduler (Topo/SU) to produce raw scheduled
  *   - Call prepare_for_simple_codelet to get a canonical regalloc_input
  *   - Pass to allocate
  *   - Walk the SAME deduped list for emission (resolves I2 structurally:
@@ -1227,8 +1227,8 @@ type regalloc_input = {
 
 (* For simple codelets (no pass-structure cluster-spill recipe).
  *
- * Input: `raw_scheduled` may contain duplicate entries — the SU and
- * Bisection schedulers emit `(oref_opt, e) list` where the same `e`
+ * Input: `raw_scheduled` may contain duplicate entries — the SU
+ * scheduler emits `(oref_opt, e) list` where the same `e`
  * appears once as intermediate (oref_opt=None) and once as store
  * sink (oref_opt=Some oref). Callers should flatten via `List.map snd`
  * before passing, OR pass the full `(oref_opt, e) list` raw if they
@@ -1345,7 +1345,7 @@ let allocate ~(isa : Isa.t) ~(scheduled : Algsimp.t list) ?(budget : int option)
           failwith
             (Printf.sprintf
                "Regalloc.allocate (I1): tag %d appears multiple times in \
-                scheduled — caller must deduplicate (raw SU/Bisection output \
+                scheduled — caller must deduplicate (raw SU output \
                 contains (None,e) intermediates AND (Some oref,e) store sinks \
                 for the same e; pass deduplicated emission order)"
                e.tag);
