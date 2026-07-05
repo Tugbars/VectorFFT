@@ -74,16 +74,20 @@ int main(void)
     system("rmdir /s /q natorder_oopord_wis 2>nul"); system("mkdir natorder_oopord_wis 2>nul");
     putenv("VFFT_WISDOM_DIR=natorder_oopord_wis");
     /* cells where DEFAULT picks MODEB (scrambled) per v1_0 -> NATURAL must OVERRIDE to natural. */
-    int Ns[] = {64, 256, 1024}; size_t Ks[] = {256, 32, 256};
+    int Ns[] = {8, 16, 64, 256, 1024}; size_t Ks[] = {256, 32, 256, 32, 256};  /* 8=LEAF, 16=BAILEY2 */
+    int NC = 5;
     printf("== OUT-OF-PLACE (DEFAULT=fastest, NATURAL=LEAF/BAILEY2, SCRAMBLED=MODEB) ==\n");
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < NC; i++) {
         int N = Ns[i]; size_t K = Ks[i];
         printf("cell N=%d K=%zu:\n", N, K);
         run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_DEFAULT, "DEFAULT");
         double eNat = run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_NATURAL, "NATURAL");
         double eScr = run(N, K, VFFT_OUTOFPLACE, VFFT_ORDER_SCRAMBLED, "SCRAMBLED");
         if (eNat >= 0 && eNat > 1e-9) { printf("    !! OOP NATURAL not natural\n"); fails++; }
-        if (eScr >= 0 && eScr < 1e-9) { printf("    !! OOP SCRAMBLED not scrambled\n"); fails++; }
+        /* SCRAMBLED must be scrambled ONLY for multi-stage plans; for tiny N the DP picks a
+         * single-radix MODEB (nf=1) whose output has no digit reversal, so scrambled==natural. */
+        if (N >= 64 && eScr >= 0 && eScr < 1e-9) { printf("    !! OOP SCRAMBLED not scrambled\n"); fails++; }
+        else if (N < 64 && eScr >= 0 && eScr < 1e-9) printf("    (N<64: single-stage MODEB, scrambled==natural)\n");
     }
     /* IN-PLACE: NATURAL=PURE/PSWAP, SCRAMBLED==DEFAULT=native scrambled (must accept, not NULL). */
     printf("== IN-PLACE (DEFAULT/SCRAMBLED=native scrambled, NATURAL=PURE/PSWAP) ==\n");
@@ -92,7 +96,7 @@ int main(void)
         printf("cell N=%d K=%zu:\n", N, K);
         double eScr = run(N, K, VFFT_INPLACE, VFFT_ORDER_SCRAMBLED, "SCRAMBLED");
         double eNat = run(N, K, VFFT_INPLACE, VFFT_ORDER_NATURAL, "NATURAL");
-        if (eScr >= 0 && eScr < 1e-9) { printf("    !! IP SCRAMBLED not scrambled\n"); fails++; }
+        if (N >= 64 && eScr >= 0 && eScr < 1e-9) { printf("    !! IP SCRAMBLED not scrambled\n"); fails++; }
         if (eNat >= 0 && eNat > 1e-9) { printf("    !! IP NATURAL not natural\n"); fails++; }
     }
     printf(fails ? "\n%d FAIL\n" : "\nALL OK (order flag honored, in-place + OOP)\n", fails);
