@@ -24,6 +24,7 @@
 #include <math.h>
 #include "measure.h"
 #include "fft2d_c2c_wisdom.h"   /* entry struct + (transitively) fft2d.h, planner.h */
+#include "natorder_2d.h"        /* vfft_natorder_2d_build_axis + (transitively) reorder passes */
 
 typedef enum {
     VFFT_FFT2D_C2C_MEASURE = 0,
@@ -55,6 +56,36 @@ static double vfft_fft2d_c2c_bench_min(stride_plan_t *p, int N1, int N2,
     for (int t = 0; t < VFFT_FFT2D_C2C_BENCH_TRIALS; t++) {
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++) stride_execute_fwd(p, re, im);
+        double ns = (vfft_proto_now_ns() - t0) / (double)reps;
+        if (ns < best) best = ns;
+    }
+    return best;
+}
+
+/* NATURAL-total timing: like bench_min, but the timed unit is (2D scrambled fwd + dim1 whole-row
+ * reorder). dim2 (within-row) is fused into the fwd — the CALLER must set
+ * p->override_data->nat_col_list to the dim2 tape before calling (and reset it after). d1_list = dim1
+ * whole-row tape (NULL => dim1 axis FREE), d1_is_pairs picks pair-swap vs cycle, d1_tmp = 2*N2 scratch.
+ * This is what makes the calibrator "natural-aware": each candidate is scored on the full natural cost,
+ * not the scrambled FFT alone. */
+static double vfft_fft2d_c2c_bench_min_natural(stride_plan_t *p, int N1, int N2,
+                                               double *re, double *im,
+                                               int *d1_list, int d1_is_pairs, double *d1_tmp) {
+    size_t total = (size_t)N1 * (size_t)N2;
+    for (int w = 0; w < 10; w++) {
+        stride_execute_fwd(p, re, im);
+        if (d1_list) { if (d1_is_pairs) vfft_natorder_pair_pass(re, im, (size_t)N2, d1_list);
+                       else             vfft_natorder_cycle_pass(re, im, (size_t)N2, d1_list, d1_tmp); }
+    }
+    int reps = _vfft_fft2d_c2c_reps(total);
+    double best = 1e18;
+    for (int t = 0; t < VFFT_FFT2D_C2C_BENCH_TRIALS; t++) {
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) {
+            stride_execute_fwd(p, re, im);
+            if (d1_list) { if (d1_is_pairs) vfft_natorder_pair_pass(re, im, (size_t)N2, d1_list);
+                           else             vfft_natorder_cycle_pass(re, im, (size_t)N2, d1_list, d1_tmp); }
+        }
         double ns = (vfft_proto_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
@@ -112,9 +143,10 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     double *xi = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
     double *re = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
     double *im = (double *)STRIDE_ALIGNED_ALLOC(64, T * sizeof(double));
-    if (!xr || !xi || !re || !im) {
+    double *d1tmp = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)2 * N2 * sizeof(double)); /* dim1 cycle scratch */
+    if (!xr || !xi || !re || !im || !d1tmp) {
         STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
-        STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
+        STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
         return 1e18;
     }
     srand(11 + N1 + N2);
@@ -122,6 +154,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                                      xi[i] = (double)rand() / RAND_MAX - 0.5; }
 
     double best = 1e18; int best_r = -1, best_c = -1;
+    double best_nat = 1e18; int best_nat_r = -1, best_nat_c = -1;   /* natural-total winner */
     int built = 0, gated = 0;
     for (int r = 0; r < nrow; r++) {
         for (int c = 0; c < ncol; c++) {
@@ -151,6 +184,21 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                 gated++;
                 double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
                 if (ns < best) { best = ns; best_r = r; best_c = c; }
+
+                /* NATURAL-total score for THIS candidate: build its dim1 (whole-row) + dim2 (within-row)
+                 * reorder tapes, fuse dim2 into the fwd, time (fwd + dim1 pass). A palindromic col chain
+                 * gets a cheap pair-swap dim1 reorder and can win natural even when it loses scrambled. */
+                stride_fft2d_data_t *d2d = (stride_fft2d_data_t *)p->override_data;
+                int *d1 = NULL, d1p = 0, *d2 = NULL, d2p = 0;
+                int ok1 = vfft_natorder_2d_build_axis(N1, d2d->plan_col, &d1, &d1p, 1);
+                int ok2 = vfft_natorder_2d_build_axis(N2, d2d->plan_row, &d2, &d2p, 0);
+                if (ok1 && ok2) {
+                    d2d->nat_col_list = d2;                  /* dim2 fused into the fwd (mechanism-2) */
+                    double nns = vfft_fft2d_c2c_bench_min_natural(p, N1, N2, re, im, d1, d1p, d1tmp);
+                    d2d->nat_col_list = NULL;                /* detach before destroy */
+                    if (nns < best_nat) { best_nat = nns; best_nat_r = r; best_nat_c = c; }
+                }
+                free(d1); free(d2);
             } else if (verbose) {
                 printf("  [2d-c2c-planner]   row#%d x col#%d GATE FAIL rt=%.1e\n", r, c, rt);
             }
@@ -159,7 +207,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     }
 
     STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
-    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im);
+    STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
 
     if (best_r < 0) { if (verbose) printf("  [2d-c2c-planner] no candidate passed the gate\n"); return 1e18; }
 
@@ -179,9 +227,32 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     out->col_use_dif = col_cand[best_c].use_dif_forward;
     out->best_ns = best;
 
-    if (verbose)
-        printf("  [2d-c2c-planner] best 2D = %.0f ns  (%d built / %d gated, row#%d x col#%d, %dx%d)\n",
-               best, built, gated, best_r, best_c, nrow, ncol);
+    /* v2 NATURAL block: the (row,col) minimizing the natural total. Banked whenever a natural score was
+     * obtained (every gated candidate that could build reorder tapes) — so order=NATURAL create can use
+     * THIS factorization instead of the scrambled winner + bolt-on reorder. */
+    if (best_nat_r >= 0) {
+        out->nat_present = 1;
+        out->nat_B = (int)B;
+        out->nat_row_nf = row_cand[best_nat_r].nf;
+        for (int s = 0; s < out->nat_row_nf; s++) {
+            out->nat_row_factors[s]  = row_cand[best_nat_r].factors[s];
+            out->nat_row_variants[s] = row_cand[best_nat_r].variants[s];
+        }
+        out->nat_row_use_dif = row_cand[best_nat_r].use_dif_forward;
+        out->nat_col_nf = col_cand[best_nat_c].nf;
+        for (int s = 0; s < out->nat_col_nf; s++) {
+            out->nat_col_factors[s]  = col_cand[best_nat_c].factors[s];
+            out->nat_col_variants[s] = col_cand[best_nat_c].variants[s];
+        }
+        out->nat_col_use_dif = col_cand[best_nat_c].use_dif_forward;
+        out->nat_ns = best_nat;
+    }
+
+    if (verbose) {
+        printf("  [2d-c2c-planner] best SCRAMBLED = %.0f ns  (row#%d x col#%d)  |  best NATURAL = %.0f ns  (row#%d x col#%d)%s\n",
+               best, best_r, best_c, best_nat, best_nat_r, best_nat_c,
+               (best_nat_r == best_r && best_nat_c == best_c) ? "  [same]" : "  [DIFFERS]");
+    }
     return best;
 }
 
