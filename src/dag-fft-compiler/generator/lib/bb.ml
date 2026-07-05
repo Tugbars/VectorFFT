@@ -33,7 +33,17 @@
  *
  * Limitation: the search space is N! pre-pruning. For clusters > ~50 ops
  * the time budget will typically expire before exhaustive search completes;
- * best-found-so-far is returned. *)
+ * best-found-so-far is returned.  *
+ * ------------------------------------------------------------------
+ * MODULE CARD (bb.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Time-boxed branch-and-bound cluster scheduler with lexicographic
+ * cost; drop-in alternative to su_schedule_subset when a bb budget
+ * is granted.
+ * PIPELINE: Schedule.subset call sites -> [Bb] (budgeted)
+ * PUBLIC SURFACE (measured; external callers in parens): bb_schedule_subset(4)
+ * DEPS/USED-BY (reference counts): algsimp(36) schedule(2) uarch(3)
+ * ------------------------------------------------------------------
+ *)
 
 (* Re-export of Algsimp.preds — kept under the historical name for the
  * bb_diagnostic CLI. New call sites should use Algsimp.preds directly. *)
