@@ -33,6 +33,8 @@ typedef struct
     int factors[STRIDE_MAX_STAGES];
     int prof;               /* uniform variant profile used (2 = T1S)           */
     natorder_scr_t scr;     /* SCR: built scatter terminator (ownership -> caller when mode==SCR) */
+    stride_plan_t *scr_plan;/* SCR: the DIT-injected plan the scatter runs on (ownership -> caller) */
+    int *scr_cycles;        /* SCR: the DIT plan's cycle tape (backward; ownership -> caller)        */
     int has_scr;            /* 1 = scr is live and must be freed by caller-or-here */
 } vfft_natorder_verdict_t;
 
@@ -97,13 +99,14 @@ static inline double _natorder_scr_sample(natorder_scr_t *scr, double *re, doubl
     return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
-/* The race. pA/cyclesA = the PURE candidate (calibrated scrambled plan + its cycle tape) + M/IM
- * (the orientation-detected perm + inverse, for SCR). Challengers: injected-palindrome PSWAP and
- * the SCR scatter terminator (built from pA). On a challenger win v->planB/pairs (PSWAP) or v->scr
- * (SCR) are live and the caller owns them. Never fails: PURE is the floor. */
+/* The race. pA/cyclesA = the PURE candidate (calibrated plan + its cycle tape). scr_chain/scr_nf =
+ * the calibrated chain (SCR builds its OWN DIT plan from it — injection, since dp_best may calibrate
+ * DIF and SCR needs DIT). Challengers: injected-palindrome PSWAP and the DIT-SCR scatter terminator.
+ * On a challenger win v->planB/pairs (PSWAP) or v->scr/scr_plan/scr_cycles (SCR) are live and the
+ * caller owns them. Never fails: PURE is the floor. */
 static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry_t *reg,
                                       stride_plan_t *pA, const int *cyclesA, double *tmp2K,
-                                      const int *M, const int *IM,
+                                      const int *scr_chain, int scr_nf,
                                       vfft_natorder_verdict_t *v)
 {
     memset(v, 0, sizeof *v);
@@ -113,9 +116,12 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     int chains[3][STRIDE_MAX_STAGES], nfs[3];
     int nc = vfft_natorder_palindromes(N, reg, chains, nfs, 3);
 
-    /* SCR candidate: build the scatter terminator on the calibrated plan (0 => not applicable). */
+    /* SCR candidate: build a DIT plan from the calibrated chain + its scatter + cycle tape (injection;
+     * 0 => not applicable, e.g. LOG3 last stage or comb-check fail). */
     natorder_scr_t scr;
-    int have_scr = natorder_scr_build(&scr, pA, N, K, M, IM);
+    stride_plan_t *scr_plan = NULL;
+    int *scr_cycles = NULL;
+    int have_scr = natorder_scr_build_dit(N, K, scr_chain, scr_nf, reg, &scr, &scr_plan, &scr_cycles);
 
     /* build challenger plans + their pair tapes (drop any that fail the involution check) */
     stride_plan_t *pb[3] = {0};
@@ -171,7 +177,8 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
         if (win_scr) {
             v->mode = VFFT_NAT_SCR;
             v->ns = bns;
-            v->scr = scr; v->has_scr = 1; have_scr = 0; /* ownership -> caller */
+            v->scr = scr; v->scr_plan = scr_plan; v->scr_cycles = scr_cycles;
+            v->has_scr = 1; have_scr = 0; /* ownership -> caller (scr + its DIT plan + cycle tape) */
         } else if (bestp >= 0) {
             v->mode = VFFT_NAT_PSWAP;
             v->ns = bns;
@@ -187,7 +194,11 @@ cleanup_losers:
         if (pb[c]) vfft_proto_plan_destroy(pb[c]);
         free(prs[c]);
     }
-    if (have_scr) natorder_scr_free(&scr);  /* SCR lost (or alloc failed) */
+    if (have_scr) {                         /* SCR lost — free its bundle (scatter + DIT plan + cycles) */
+        natorder_scr_free(&scr);
+        if (scr_plan) vfft_proto_plan_destroy(scr_plan);
+        free(scr_cycles);
+    }
 }
 
 #endif /* VFFT_NATORDER_CALIBRATE_H */
