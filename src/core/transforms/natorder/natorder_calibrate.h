@@ -18,6 +18,9 @@
 #include "natorder_perm.h"
 #include "natorder_exec.h"
 #include "natorder_scatter.h"
+#ifdef VFFT_USE_JIT
+#include "jit_runtime.h"              /* vfft_proto_plan_jit_fwd — score candidates on the DEPLOYED path */
+#endif
 
 #define VFFT_NATORDER_MARGIN 0.95     /* challenger wins at < 95% of PURE's time */
 #define VFFT_NATORDER_ROUNDS 3
@@ -67,9 +70,13 @@ static inline int vfft_natorder_palindromes(int N, const vfft_proto_registry_t *
     return cnt;
 }
 
-/* One timed sample: CHUNK x (forward + reorder pass). Buffers are caller scratch (N*K each). */
+/* One timed sample: CHUNK x (forward + reorder pass). Buffers are caller scratch (N*K each). fn = the
+ * JIT-resolved forward (the DEPLOYED path) when non-NULL; else the generic executor. Measuring JIT is
+ * what lets an injected palindrome / single-stage leaf be ranked as it will actually run — the generic
+ * executor over-penalizes extra stages and mis-ranks them (proven in the 2D calibrator). */
 static inline double _natorder_sample(stride_plan_t *p, double *re, double *im, size_t K,
-                                      const int *cycles, const int *pairs, double *tmp)
+                                      const int *cycles, const int *pairs, double *tmp,
+                                      vfft_proto_exec_fn fn)
 {
     size_t n = (size_t)p->N * K;
     for (size_t i = 0; i < n; i++) {
@@ -78,7 +85,8 @@ static inline double _natorder_sample(stride_plan_t *p, double *re, double *im, 
     }
     double t0 = vfft_proto_now_ns();
     for (int c = 0; c < VFFT_NATORDER_CHUNK; c++) {
-        vfft_proto_execute_fwd(p, re, im, K);
+        if (fn) fn(p, re, im, K, p->K, 0);
+        else    vfft_proto_execute_fwd(p, re, im, K);
         if (cycles) vfft_natorder_cycle_pass(re, im, K, cycles, tmp);
         else if (pairs) vfft_natorder_pair_pass(re, im, K, pairs);
     }
@@ -113,8 +121,16 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     v->mode = VFFT_NAT_PURE_CYCLE;
     v->prof = 2; /* T1S */
 
-    int chains[3][STRIDE_MAX_STAGES], nfs[3];
+    int chains[4][STRIDE_MAX_STAGES], nfs[4];
     int nc = vfft_natorder_palindromes(N, reg, chains, nfs, 3);
+    /* single-stage [N] leaf (N<=64): a monolithic radix-N codelet emits NATURAL output => FREE reorder
+     * (identity perm => mk_pairs returns an empty tape => the pass is a no-op). The DP prunes it (a leaf
+     * is a slower FFT than the multi-stage scrambled winner), but a FREE reorder can win the NATURAL
+     * total — the biggest 2D win (64x16 -> single radix-64 col, tax 1.34x->1.07x). Inject it as a
+     * candidate; it stores + rebuilds through the existing injected-PSWAP path (nf=1, empty pairs). */
+    if (nc < 4 && N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]) {
+        chains[nc][0] = N; nfs[nc] = 1; nc++;
+    }
 
     /* SCR candidate — DEACTIVATED from the wisdom-creation race by default. Paced/locked bench
      * (2026-07-05, natorder_vs_mkl.c forced-mode @4096/4): SCR = 79.5us vs PURE 28.8us — 2.76x SLOWER,
@@ -136,8 +152,8 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
 #endif
 
     /* build challenger plans + their pair tapes (drop any that fail the involution check) */
-    stride_plan_t *pb[3] = {0};
-    int *prs[3] = {0};
+    stride_plan_t *pb[4] = {0};
+    int *prs[4] = {0};
     for (int c = 0; c < nc; c++) {
         int vb[STRIDE_MAX_STAGES];
         for (int s = 0; s < nfs[c]; s++) vb[s] = 2; /* uniform T1S; stage 0 ignored */
@@ -165,13 +181,22 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
     size_t n = (size_t)N * K;
     double *re = (double *)malloc(n * 8), *im = (double *)malloc(n * 8);
     if (!re || !im) { free(re); free(im); goto cleanup_losers; }
-    _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K); /* warm-up */
+    /* JIT-resolve each candidate's deployed forward (no-op unless built --jit). Scoring the deployed
+     * path is what lets the injected single-stage/palindrome be ranked as it will actually run (generic
+     * mis-ranks extra stages — the 2D calibrator proved this). Cost is at create for order=NATURAL only,
+     * and warms the JIT cache the deployed plan reuses. */
+    vfft_proto_exec_fn fnA = NULL, fnB[4] = {0};
+#ifdef VFFT_USE_JIT
+    fnA = vfft_proto_plan_jit_fwd(pA);
+    for (int c = 0; c < nc; c++) if (pb[c]) fnB[c] = vfft_proto_plan_jit_fwd(pb[c]);
+#endif
+    _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA); /* warm-up */
     {
-        double sA = 0, sB[3] = {0, 0, 0}, sScr = 0;
+        double sA = 0, sB[4] = {0, 0, 0, 0}, sScr = 0;
         for (int r = 0; r < VFFT_NATORDER_ROUNDS; r++) {
-            sA += _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K);
+            sA += _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA);
             for (int c = 0; c < nc; c++)
-                if (pb[c]) sB[c] += _natorder_sample(pb[c], re, im, K, NULL, prs[c], tmp2K);
+                if (pb[c]) sB[c] += _natorder_sample(pb[c], re, im, K, NULL, prs[c], tmp2K, fnB[c]);
             if (have_scr) sScr += _natorder_scr_sample(&scr, re, im, K);
         }
         v->ns = sA / VFFT_NATORDER_ROUNDS;
