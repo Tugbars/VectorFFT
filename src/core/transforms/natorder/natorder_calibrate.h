@@ -1,5 +1,6 @@
-/* natorder_calibrate.h — the ORDER_NATURAL per-cell verdict race (P1b: PURE vs injected-chain
- * PSWAP; SCR and LEAF-IP join as their executors land).
+/* natorder_calibrate.h — the ORDER_NATURAL per-cell verdict race: PURE (floor) vs injected-chain
+ * PSWAP vs SCR scatter terminator. (LEAF-IP was prototyped and DITCHED — structurally dominated:
+ * it can only win where nf==1 already routes to FREE; natural_order_inplace_design.md.)
  *
  * Why injection: the DP/beam planner scores chains under scrambled/T1S economics, so palindromic
  * factorizations (whose digit reversal is an involution => cheapest possible reorder) are pruned
