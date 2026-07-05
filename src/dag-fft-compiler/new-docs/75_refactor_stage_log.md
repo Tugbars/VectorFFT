@@ -180,6 +180,12 @@ repo tree, with two owner directives added:
     hooks); emit_c.ml's stage-log pointer and codelet_oop.ml's
     historical note rewritten to present-tense fact. Gates green
     after the rewrite (comment-only changes stay fully gated).
+    Follow-up (same day): the header now leads with the algorithm's
+    canonical name from doc 69 — Starve–Retire (SR) list scheduling —
+    and centers the two load-bearing rules per doc 69's ablation
+    (STARVE load law ~8x, RETIRE sink retirement 43->28; cp_dist /
+    su_num demoted to near-neutral tiebreaks), fulfilling doc 69's
+    "full algorithm description now lives in schedule.ml".
 
 ## Gate battery for this tree (replaces reproduce.sh, which does not
 exist here)
@@ -305,6 +311,27 @@ Production lib/ keeps the code (history preserved there and in git).
 Gates green — byte-identity across all 1074 codelets is itself the
 proof the path was dead.
 
+## Stage R6 — schedule.ml replaced by the SR-wisdom variant (DONE 2026-07-05)
+
+Owner supplied schedule.exp.ml — the zip tree's finished schedule.ml,
+carrying the authoritative SR documentation (the su_schedule header +
+EXPERIMENTAL RECORD that doc 69 points to), the schedule-wisdom
+plumbing (order_source resolution, dagsig staleness verification,
+injection_log provenance), and the VFFT_SU_TIEBREAK / VFFT_LOAD_PACE
+/ VFFT_SCHED_LOADS knobs. It contains NO bisection (removed in the
+zip tree 2026-07-02 on LICENSING grounds: the port derives from
+genfft, which is GPL — incompatible with this repository's MIT
+license; that rationale supersedes R5's dead-weight rationale).
+Swapped in as new-lib/schedule.ml wholesale; the R5+RD1 version is
+superseded (its six-section header is preserved in the session
+archive; header merge is an integration-session docs task).
+compare_libs.sh green: knobs-off output byte-identical, features
+provably dormant. NOT yet wired (the later integration session):
+emit_c-side order_source resolution (`VFFT_SCHED_WISDOM/codelet-symbol`),
+injection_log splicing into emitted files, and validation of the new
+knobs. Card counts in the file are zip-tree measurements — refresh at
+integration.
+
 ## Owner-decision queue (surfaced by this tree's audit; no action taken)
 
 - lib/gen_main.ml.orig: a git-TRACKED stale backup of gen_main.ml.
@@ -325,3 +352,9 @@ proof the path was dead.
   generated/*.h in-place (plan_executors.h was emptied by one during
   this session and restored). Consider (mode promote) -> explicit
   alias, or document the scoped-build rule in scripts.
+- LICENSING (surfaced by stage R6): production lib/schedule.ml still
+  contains the genfft-derived bisection port (GPL-2.0+ derivative in
+  an MIT-licensed repository). The zip tree deleted it for exactly
+  this reason on 2026-07-02, and new-lib carries no trace of it —
+  promotion of new-lib resolves the exposure. Until then, production
+  ships GPL-derived code.

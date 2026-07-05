@@ -8,7 +8,7 @@
 ;   Ir        — hash-consed DAG IR + smart constructors (CSE)
 ;   Algsimp   — algebraic rewrite passes over Ir
 ;   Uarch     — microarchitecture tables (RPL, SPR, ZEN5, ...)
-;   Schedule  — list scheduler (uses Uarch table)
+;   Schedule  — Starve–Retire (SR) list scheduler (uses Uarch table)
 ;   Regalloc  — linear-scan register allocator
 ;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
 ;

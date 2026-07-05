@@ -28,14 +28,20 @@
 static double now_ns(void){ LARGE_INTEGER c,f; QueryPerformanceCounter(&c); QueryPerformanceFrequency(&f);
     return (double)c.QuadPart*1e9/(double)f.QuadPart; }
 
-/* base calibrated line for 1024/4 (chain 64·16 DIT, variants 0 2) + the forced nat tail per variant */
-static const char *NAT_TAIL[4] = {
-    "4 0.00",              /* PURE on calibrated 64·16               */
-    "5 7383.33 3 4 64 4 2",/* PSWAP injected 4·64·4 (current pick)   */
-    "5 0.00 2 32 32 2",    /* PSWAP injected 32·32 (2-stage palindr) */
-    "5 0.00 3 8 16 8 2",   /* PSWAP injected 8·16·8                  */
+/* base calibrated line for 1024/4 (chain 64·16 DIT, variants 0 2) + the forced nat tail per variant.
+ * ALL palindromic factorizations of 1024 over radixes {2,4,8,16,32,64} + PURE, to find the cheapest
+ * natural realization. */
+static const char *NAT_TAIL[7] = {
+    "4 0.00",              /* PURE on calibrated 64·16                */
+    "5 7383.33 3 4 64 4 2",/* PSWAP injected 4·64·4 (current pick)    */
+    "5 0.00 2 32 32 2",    /* PSWAP injected 32·32  (2-stage)         */
+    "5 0.00 3 8 16 8 2",   /* PSWAP injected 8·16·8 (3-stage)         */
+    "5 0.00 3 16 4 16 2",  /* PSWAP injected 16·4·16 (3-stage)        */
+    "5 0.00 4 4 8 8 4 2",  /* PSWAP injected 4·8·8·4 (4-stage)        */
+    "5 0.00 5 4 4 4 4 4 2",/* PSWAP injected 4·4·4·4·4 (5-stage unif) */
 };
-static const char *NAME[4] = { "PURE(64·16)", "PSWAP 4·64·4", "PSWAP 32·32", "PSWAP 8·16·8" };
+static const char *NAME[7] = { "PURE(64·16)", "PSWAP 4·64·4", "PSWAP 32·32", "PSWAP 8·16·8",
+                               "PSWAP 16·4·16", "PSWAP 4·8·8·4", "PSWAP 4·4·4·4·4" };
 
 static void write_wisdom(int v){
     char path[700]; snprintf(path,sizeof path,"%s/spike_wisdom.txt",WISDIR);
