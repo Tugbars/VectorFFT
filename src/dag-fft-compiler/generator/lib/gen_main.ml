@@ -135,6 +135,12 @@ let run (argv : string array) : unit =
      else if arg = "--emit-c" then emit_c := true
      else if arg = "--in-place" then in_place := true
      else if arg = "--annotate" then annotate := true
+     else if arg = "--bisect" then
+       failwith
+         "--bisect removed: the GPL-derived bisection port was deleted for \
+          license hygiene (2026-07-02); see the REMOVED notice in \
+          lib/schedule.ml. Use --su (Starve-Retire) or FFTW upstream for \
+          bisection comparisons."
      else if arg = "--su" then su := true
      else if arg = "--spill" then spill := true
      else if arg = "--no-recipe" then no_recipe := true

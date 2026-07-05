@@ -1,16 +1,18 @@
-; REFACTOR STAGING TREE (library vfft_v2r) — the module-structure rework
-; of lib/ (vfft_v2). Byte-identity of generated codelets against the
-; production tree is enforced by the stage gate battery. Production
-; lib/ stays authoritative until this tree is promoted.
+; The codelet-generator library. Each .ml below becomes a module
+; accessible as Vfft_v2.<Name> from outside this library.
 ;
 ; Pipeline order (top of pipe to bottom):
 ;   Expr      — symbolic math IR
 ;   Ir        — hash-consed DAG IR + smart constructors (CSE)
-;   Algsimp   — algebraic rewrite passes over Ir
+;   Simplify  — algebraic rewrite passes over Ir
+;   Fma_passes — the FMA rewrite family
+;   Algsimp   — facade of the Ir < Simplify < Fma_passes chain
+;               (+ spill lifting, butterfly_share_mul, DAG stats)
 ;   Uarch     — microarchitecture tables (RPL, SPR, ZEN5, ...)
 ;   Schedule  — Starve–Retire (SR) list scheduler (uses Uarch table)
 ;   Regalloc  — linear-scan register allocator
-;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
+;   Emit_state / Emit_render / Emit_c — the emit chain: mode refs,
+;               renderers, and emit_codelet (AVX-512/AVX2 intrinsics)
 ;
 ; Math-layer modules (one per transform type):
 ;   Dft_select  — c2c algorithm choice (pick_algorithm and its predicates)
@@ -19,6 +21,6 @@
 ;                 (include-chained: Dft_select < Dft_recurse < Dft)
 ;   Dft_r2c     — real-to-complex / complex-to-real DFT (Hermitian-symmetric)
 (library
- (name vfft_v2r)
+ (name vfft_v2)
  (libraries unix)
  (modules expr ir simplify fma_passes algsimp cnum split_radix dft_select dft_recurse dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_state emit_render emit_c pipeline codelet_oop bb coverage gen_main))

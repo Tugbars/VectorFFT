@@ -1099,6 +1099,14 @@ let provenance_env_overrides () : string =
       "VFFT_SPLIT_RADIX";
       "VFFT_COLLECT_M";
       "VFFT_DEEP_COLLECT";
+      (* Schedule-search / wisdom knobs. These change the emitted C, so the
+       * stamp must record them (previously an injected codelet stamped
+       * "(none)" — indistinguishable from stock). VFFT_SCHED_DUMP is
+       * excluded: it writes side files only, object code is unchanged. *)
+      "VFFT_SCHED_ORDER";
+      "VFFT_SCHED_WISDOM";
+      "VFFT_GH_THRESHOLD";
+      "VFFT_NO_ANYK_TAIL";
     ]
   in
   let act =
