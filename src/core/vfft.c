@@ -757,16 +757,20 @@ static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
  * only if it beats the (1D-wisdom-inner) fallback measured end-to-end — then bank it. */
 static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
                                 const vfft_proto_registry_t *reg,
-                                struct vfft_wisdom_s *W, int recalib)
+                                struct vfft_wisdom_s *W, int recalib, int order)
 {
     vfft_proto_wisdom_t *cw = &W->c2c; /* 1D c2c table for the _inner_c2c fallback */
     if (t == VFFT_C2C)
     {
+        /* order=NATURAL uses the natural-optimal chain (v2 nat block, dev-calibrated) when banked; else
+         * falls back to the scrambled chain + the runtime bolt-on reorder built downstream. */
+        int nat = (order == VFFT_ORDER_NATURAL);
         /* Dedicated 2D c2c wisdom FIRST (end-to-end-2D measured, independent of 1D
          * c2c — the cells where it beats the fallback are banked there). On a miss,
          * fall back to the 1D-wisdom inner path below (calibrate-on-miss at rigor). */
         if (!recalib && vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
-            return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+            return nat ? vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg)
+                       : vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
 
         /* Build the fallback (1D-wisdom inners). A PRIME dimension has no CT factorization —
          * _inner_c2c returns NULL there — so fall back to the prime dispatch (Rader/Bluestein,
@@ -796,7 +800,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         vfft_fft2d_c2c_wisdom_entry_t cal;
         vfft_fft2d_c2c_mode_t mode =
             (rigor == VFFT_MEASURE) ? VFFT_FFT2D_C2C_MEASURE : VFFT_FFT2D_C2C_PATIENT;
-        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, 0);
+        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/0, 0);
         if (cal_ns < 1e17)
         {
             double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
@@ -804,7 +808,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
             {
                 vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, 1); /* calibrated wins -> bank */
                 stride_plan_destroy(fb);
-                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+                return nat ? vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg)
+                           : vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
             }
         }
         return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
@@ -1251,7 +1256,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->dims == 2)
     {
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate);
+        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
         if (W->path_c2c[0])
             vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* inner-cell calibrate-on-miss */
         /* persist the dedicated 2D table that _build_2d may have banked, by direction. */

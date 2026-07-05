@@ -149,7 +149,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
      * beats the scrambled winner 16·8 on natural). Inject palindromic col candidates so the joint
      * FFT+reorder scoring below can reach them — the 2D analogue of the 1D natorder race's palindrome
      * injection. They just lose the scrambled score (harmless) and compete only for the natural pick. */
-    {
+    if (do_natural) {
         int pchains[8][STRIDE_MAX_STAGES], pnfs[8];
         int np = vfft_natorder_2d_palindromes(N1, reg, pchains, pnfs, 8);
         int ninj = 0;
@@ -218,6 +218,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                 /* NATURAL-total score for THIS candidate: build its dim1 (whole-row) + dim2 (within-row)
                  * reorder tapes, fuse dim2 into the fwd, time (fwd + dim1 pass). A palindromic col chain
                  * gets a cheap pair-swap dim1 reorder and can win natural even when it loses scrambled. */
+                if (do_natural) {
                 stride_fft2d_data_t *d2d = (stride_fft2d_data_t *)p->override_data;
                 int *d1 = NULL, d1p = 0, *d2 = NULL, d2p = 0;
                 int ok1 = vfft_natorder_2d_build_axis(N1, d2d->plan_col, &d1, &d1p, 1);
@@ -235,6 +236,7 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                     if (nns < best_nat) { best_nat = nns; best_nat_r = r; best_nat_c = c; }
                 }
                 free(d1); free(d2);
+                } /* end if (do_natural) */
             } else if (verbose) {
                 printf("  [2d-c2c-planner]   row#%d x col#%d GATE FAIL rt=%.1e\n", r, c, rt);
             }
