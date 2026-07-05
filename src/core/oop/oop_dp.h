@@ -91,88 +91,79 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_modeb(
  * 32x32 wins at K=120; MODEB 4^5 wins at K=256, where every unmasked BAILEY2
  * pair aliases). Cache its verdict — (N,K) -> {kind, factorization} — in OOP
  * wisdom so the runtime path is a pure lookup with no measurement. */
-static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
-    int N, size_t K, vfft_proto_dp_context_t *dp,
-    const vfft_proto_registry_t *reg)
+/* Build BOTH OOP champions for (N,K) and time each (rdtsc min-of-9) — the raw material for the
+ * order axis AND the DEFAULT joint pick. *out_nat = the native champion (LEAF or best BAILEY2 pair =
+ * NATURAL order); *out_mb = the DP-MODEB champion (SCRAMBLED order). Either may be NULL (e.g. no
+ * native candidate at odd K). *out_*_ns = measured cycles (comparable on one clock; 1e30 if a
+ * champion is absent or timing OOMs). The caller persists each present champion as its own
+ * (N,K,kind-class) wisdom cell, so every config.order is served from wisdom without re-tuning.
+ * NOTE: unlike the old create_dp_best, no LEAF short-circuit — LEAF is MEASURED against MODEB so the
+ * create-time pick (min-ns) matches the wisdom-lookup pick (lookup_ord min-ns). LEAF still wins its
+ * small-N cells on time; the extra MODEB build there is cheap and one-off. */
+static inline void vfft_oop_plan_create_champions(
+    int N, size_t K, vfft_proto_dp_context_t *dp, const vfft_proto_registry_t *reg,
+    vfft_oop_plan_t **out_nat, double *out_nat_ns,
+    vfft_oop_plan_t **out_mb, double *out_mb_ns)
 {
-    /* Odd / non-mult-of-8 K: the native tuner yields no candidates (LEAF is
-     * K%8-gated, BAILEY2 pair_v returns NULL), so the chooser below naturally
-     * falls through to MODEB, which rides the tailed in-place codelets. */
-    if (K == 0)
-        return NULL;
-
-    /* Axis 2 within the native kinds: tuner picks LEAF or the best BAILEY2 pair,
-     * including the s2 flat-vs-log3 t1p variant. (nc==0 for odd K.) */
+    *out_nat = NULL; *out_mb = NULL; *out_nat_ns = 1e30; *out_mb_ns = 1e30;
+    if (K == 0) return;
+    /* native champion: tuner picks LEAF or the best BAILEY2 pair + t1p variant (nc==0 for odd K). */
     int r1 = 0, r2 = 0, t1p = 1;
     int nc = vfft_oop_tune_pairs_v(N, K, &r1, &r2, &t1p, 0);
-    vfft_oop_plan_t *native = NULL;
-    if (nc > 0) {
-        if (r1 == 0)                              /* LEAF won the tuner */
-            native = vfft_oop_plan_create(N, K, NULL, 0, reg);
-        else                                      /* best BAILEY2 pair + t1p variant */
-            native = vfft_oop_plan_create_pair_v(N, K, r1, r2, t1p);
-    }
-    if (native && native->kind == VFFT_OOP_KIND_LEAF)
-        return native;                            /* LEAF: no contest */
-
-    /* Axis 2 within MODEB: DP's best multi-factor decomposition. */
-    vfft_oop_plan_t *modeb = vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
-    if (!modeb) return native;                    /* only the native plan exists */
-    if (!native) return modeb;                    /* only MODEB exists */
-
-    /* Axis 1: time the two champions, keep the faster. */
-    vfft_oop_plan_t *rule = native;               /* (alias kept for the loop below) */
+    vfft_oop_plan_t *nat = NULL;
+    if (nc > 0)
+        nat = (r1 == 0) ? vfft_oop_plan_create(N, K, NULL, 0, reg)
+                        : vfft_oop_plan_create_pair_v(N, K, r1, r2, t1p);
+    /* MODEB champion: DP's best multi-factor decomposition. */
+    vfft_oop_plan_t *mb = vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
+    *out_nat = nat; *out_mb = mb;
+    if (!nat && !mb) return;
     size_t T = (size_t)N * K;
     double *sr = (double *)VFFT_OOP_AALLOC(T * 8), *si = (double *)VFFT_OOP_AALLOC(T * 8);
     double *dr = (double *)VFFT_OOP_AALLOC(T * 8), *di = (double *)VFFT_OOP_AALLOC(T * 8);
     if (!sr || !si || !dr || !di) {
         VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
-        vfft_oop_plan_destroy(modeb); return rule;    /* OOM: fall back to the rule */
+        return;                                   /* OOM: leave ns at 1e30 — caller still persists */
     }
     for (size_t i = 0; i < T; i++) {
         sr[i] = (double)(i % 251) * 0.013 - 1.6;
         si[i] = (double)(i % 257) * 0.011 - 1.4;
     }
-    vfft_oop_execute_fwd(rule,  sr, si, dr, di);       /* warm both */
-    vfft_oop_execute_fwd(modeb, sr, si, dr, di);
-    /* __rdtsc cycles, min-of-9 — same timer the pair tuner uses (axis-2 native),
-     * so both halves of the joint chooser measure on one clock. */
-    unsigned long long br = ~0ULL, bm = ~0ULL;
-    for (int r = 0; r < 9; r++) {
-        unsigned long long t0 = __rdtsc();
-        vfft_oop_execute_fwd(rule, sr, si, dr, di);
-        unsigned long long a = __rdtsc() - t0; if (a < br) br = a;
-        t0 = __rdtsc();
-        vfft_oop_execute_fwd(modeb, sr, si, dr, di);
-        unsigned long long b = __rdtsc() - t0; if (b < bm) bm = b;
+    if (nat) {
+        vfft_oop_execute_fwd(nat, sr, si, dr, di);            /* warm */
+        unsigned long long bn = ~0ULL;
+        for (int r = 0; r < 9; r++) {
+            unsigned long long t0 = __rdtsc();
+            vfft_oop_execute_fwd(nat, sr, si, dr, di);
+            unsigned long long a = __rdtsc() - t0; if (a < bn) bn = a;
+        }
+        *out_nat_ns = (double)bn;
+    }
+    if (mb) {
+        vfft_oop_execute_fwd(mb, sr, si, dr, di);             /* warm */
+        unsigned long long bm = ~0ULL;
+        for (int r = 0; r < 9; r++) {
+            unsigned long long t0 = __rdtsc();
+            vfft_oop_execute_fwd(mb, sr, si, dr, di);
+            unsigned long long b = __rdtsc() - t0; if (b < bm) bm = b;
+        }
+        *out_mb_ns = (double)bm;
     }
     VFFT_OOP_AFREE(sr); VFFT_OOP_AFREE(si); VFFT_OOP_AFREE(dr); VFFT_OOP_AFREE(di);
-    if (br <= bm) { vfft_oop_plan_destroy(modeb); return rule; }
-    vfft_oop_plan_destroy(rule); return modeb;
 }
 
-/* Order-constrained joint chooser (RUNTIME, for config.order — the scrambled<->natural selector):
- *   ord 0 (DEFAULT/any) -> the full 2-axis chooser above (fastest kind, order-agnostic).
- *   ord 1 (NATURAL)     -> the NATIVE champion ONLY (LEAF or BAILEY2 = natural order); never MODEB.
- *   ord 2 (SCRAMBLED)   -> the MODEB champion ONLY (scrambled order); never native.
- * Values match include/vfft.h VFFT_ORDER_{DEFAULT,NATURAL,SCRAMBLED}. The ord 1/2 arms just isolate
- * the two halves that create_dp_best would otherwise race, so nothing new is measured. Returns NULL
- * when the requested order has no plan at this (N,K) (e.g. odd K yields no native candidate → a
- * natural OOP request is honestly unavailable rather than silently scrambled). */
-static inline vfft_oop_plan_t *vfft_oop_plan_create_order(
+/* DEFAULT (order-agnostic) joint chooser: both champions, keep the faster. Thin over champions(). */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     int N, size_t K, vfft_proto_dp_context_t *dp,
-    const vfft_proto_registry_t *reg, int ord)
+    const vfft_proto_registry_t *reg)
 {
-    if (ord == 1) {                               /* natural: native champion only */
-        int r1 = 0, r2 = 0, t1p = 1;
-        int nc = vfft_oop_tune_pairs_v(N, K, &r1, &r2, &t1p, 0);
-        if (nc <= 0) return NULL;                 /* no native candidate (e.g. odd K) */
-        if (r1 == 0) return vfft_oop_plan_create(N, K, NULL, 0, reg);   /* LEAF won the tuner */
-        return vfft_oop_plan_create_pair_v(N, K, r1, r2, t1p);          /* best BAILEY2 pair */
+    vfft_oop_plan_t *nat = NULL, *mb = NULL; double nns = 1e30, mns = 1e30;
+    vfft_oop_plan_create_champions(N, K, dp, reg, &nat, &nns, &mb, &mns);
+    if (nat && mb) {
+        if (nns <= mns) { vfft_oop_plan_destroy(mb); return nat; }
+        vfft_oop_plan_destroy(nat); return mb;
     }
-    if (ord == 2)                                 /* scrambled: MODEB champion only */
-        return vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
-    return vfft_oop_plan_create_dp_best(N, K, dp, reg);                 /* DEFAULT: fastest kind */
+    return nat ? nat : mb;
 }
 
 #endif /* VFFT_OOP_DP_H */

@@ -231,8 +231,11 @@ static void _oop_wisdom_put_and_save(struct vfft_wisdom_s *W,
                                      const vfft_oop_wisdom_entry_t *e, const char *path)
 {
     int idx = -1;
+    /* Dedup by (N, K, kind-class) — NOT just (N,K) — so a cell keeps BOTH its natural (LEAF/BAILEY2)
+     * and its scrambled (MODEB) champion. Overwriting by (N,K) alone would collapse the two. */
     for (int i = 0; i < W->oop.count; i++)
-        if (W->oop.e[i].N == e->N && W->oop.e[i].K == e->K)
+        if (W->oop.e[i].N == e->N && W->oop.e[i].K == e->K &&
+            vfft_oop_kind_natural(W->oop.e[i].kind) == vfft_oop_kind_natural(e->kind))
         {
             idx = i;
             break;
@@ -1639,32 +1642,35 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             bK = b->Kp; padded = 1;
         }
         vfft_oop_plan_t *op = NULL;
-        int ord = cfg->order; /* 0=DEFAULT/fastest 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
-        const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup(&W->oop, N, bK);
-        /* Reuse the (N,K)->fastest-kind wisdom only when its kind satisfies the requested order
-         * (MODEB=scrambled; LEAF/BAILEY2=natural). A mismatch falls through to a constrained build. */
-        if (e && !cfg->recalibrate &&
-            !(ord == VFFT_ORDER_NATURAL && e->kind == VFFT_OOP_KIND_MODEB) &&
-            !(ord == VFFT_ORDER_SCRAMBLED && e->kind != VFFT_OOP_KIND_MODEB))
-            op = vfft_oop_plan_create_wisdom(N, bK, &W->oop, reg); /* pure lookup */
+        int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
+        /* Order-aware lookup: the cell can hold BOTH a natural and a MODEB champion as separate
+         * (N,K,kind-class) entries, so the requested order is served straight from wisdom. */
+        const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup_ord(&W->oop, N, bK, ord);
+        if (e && !cfg->recalibrate)
+            op = vfft_oop_plan_from_entry(e, reg); /* the cached champion of the requested class */
         if (!op)
         {
-            /* calibrate-on-miss: order-constrained 2-axis chooser (ord 0=fastest, 1=native-only,
-             * 2=MODEB-only). Persist ONLY the unconstrained DEFAULT verdict — an order-forced plan
-             * must not overwrite the fastest-kind wisdom cell (a natural request on a MODEB-optimal
-             * cell would otherwise poison DEFAULT for every later caller). */
+            /* Calibrate-on-miss: build BOTH champions (native=LEAF/BAILEY2, MODEB), time each, and
+             * persist BOTH as separate (N,K,kind-class) wisdom cells — so every config.order is cached
+             * with no re-tune. Then return the requested order's champion (DEFAULT = the faster by ns).
+             * Persisting both is exactly what makes MODEB and LEAF/BAILEY2 coexist per cell. */
             vfft_proto_dp_context_t ctx;
             vfft_proto_dp_init(&ctx, bK, N);
             if (cfg->rigor != VFFT_MEASURE)
                 vfft_proto_dp_set_patient(&ctx);
-            op = vfft_oop_plan_create_order(N, bK, &ctx, reg, ord);
+            vfft_oop_plan_t *nat = NULL, *mb = NULL;
+            double nns = 1e30, mns = 1e30;
+            vfft_oop_plan_create_champions(N, bK, &ctx, reg, &nat, &nns, &mb, &mns);
             vfft_proto_dp_destroy(&ctx);
-            if (op && ord == VFFT_ORDER_DEFAULT)
-            {
-                vfft_oop_wisdom_entry_t ne;
-                vfft_oop_wisdom_entry_from_plan(&ne, op, N, bK, 0.0);
-                _oop_wisdom_put_and_save(W, &ne, W->path_oop);
-            }
+            if (nat) { vfft_oop_wisdom_entry_t ne; vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
+                       _oop_wisdom_put_and_save(W, &ne, W->path_oop); }
+            if (mb)  { vfft_oop_wisdom_entry_t ne; vfft_oop_wisdom_entry_from_plan(&ne, mb,  N, bK, mns);
+                       _oop_wisdom_put_and_save(W, &ne, W->path_oop); }
+            if (ord == VFFT_ORDER_NATURAL)        { op = nat; if (mb)  vfft_oop_plan_destroy(mb); }
+            else if (ord == VFFT_ORDER_SCRAMBLED) { op = mb;  if (nat) vfft_oop_plan_destroy(nat); }
+            else if (nat && mb) { if (nns <= mns) { op = nat; vfft_oop_plan_destroy(mb); }
+                                  else { op = mb; vfft_oop_plan_destroy(nat); } }
+            else op = nat ? nat : mb;
         }
         if (!op)
             return NULL;
