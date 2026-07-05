@@ -523,7 +523,12 @@ let render_node_def ?(no_declarator = false)
       (* Helper: in fence-only mode emit `register ... = expr; asm volatile(...)`;
        * otherwise emit the plain `const ... = expr;` form. *)
       let non_pinned_decl name body =
-        if !current_fence_only then Isa.fenced_decl isa name body
+        if Hashtbl.mem !dup_barrier_tags e.tag then
+          (* duplication clone (doc 65 §8): non-const + "+x" barrier or
+           * gcc re-CSEs the clone back into the original at -O3. *)
+          Printf.sprintf "%s %s = %s; __asm__ volatile(\"\" : \"+x\"(%s));"
+            isa.vec_type name body name
+        else if !current_fence_only then Isa.fenced_decl isa name body
         else Isa.const_decl isa name body
       in
       match !current_regalloc with
@@ -649,8 +654,13 @@ let compute_inline_set (assigns : (Expr.elem_ref * t) list) :
         | NK_Const _ -> false (* already inlined as set1 broadcast *)
         | _ -> true
       in
-      if count = 1 && (not is_sink) && kind_inlinable then
-        Hashtbl.add result n.tag ())
+      if
+        count = 1 && (not is_sink) && kind_inlinable
+        && not (Hashtbl.mem !dup_barrier_tags n.tag)
+        (* duplication clones MUST be declared: the "+x" barrier that
+         * stops gcc re-CSEing them attaches to the declaration
+         * (doc 65 §8); inlining them makes the clone a no-op. *)
+      then Hashtbl.add result n.tag ())
     nodes;
   result
 
