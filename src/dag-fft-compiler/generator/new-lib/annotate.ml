@@ -27,6 +27,15 @@
  * already-scheduled list at midpoints. This way annotate works on
  * the output of any scheduler — topological order, bisection,
  * future SU, etc.
+ * ------------------------------------------------------------------
+ * MODULE CARD (annotate.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Post-hoc nested-block scope recovery over a scheduled list,
+ * so emitted C declares short-lived values in inner blocks and gcc
+ * reuses their registers. Opt-in via the --annotate scheduler modes.
+ * PIPELINE: any schedule -> annotate -> emit_scope C blocks
+ * PUBLIC SURFACE (measured): emit_c(6): annotate, emit_scope.
+ * DEPS: Algsimp(4), Expr(3), Isa(3), Schedule(1).
+ * ------------------------------------------------------------------
  *)
 
 open Algsimp
