@@ -800,7 +800,12 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         vfft_fft2d_c2c_wisdom_entry_t cal;
         vfft_fft2d_c2c_mode_t mode =
             (rigor == VFFT_MEASURE) ? VFFT_FFT2D_C2C_MEASURE : VFFT_FFT2D_C2C_PATIENT;
-        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/0, 0);
+        /* order=NATURAL + MEASURE on a miss => natural-aware calibrate at create (joint FFT+reorder
+         * score + palindrome injection + JIT measure) and bank the nat chain, so the natural verdict is
+         * reachable through the PUBLIC API — no separate calibrator/.py needed. MEASURE already implies
+         * "willing to spend calibration time"; the JIT-compile cost is a one-time first-create per cell,
+         * then a fast lookup. order=DEFAULT/SCRAMBLED => do_natural=0 (scrambled-only, unchanged). */
+        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/nat, 0);
         if (cal_ns < 1e17)
         {
             double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
