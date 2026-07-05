@@ -83,12 +83,10 @@
  *
  * BUTTERFLY BODY INTEGRATION
  * ──────────────────────────
- * Historical note (M2 first cut): body emission originally stayed in
- * Emit_c and this module only emitted signature + edge prologue and
- * epilogue. Today prepare_butterfly runs the shared
- * Pipeline.prepare_codelet cascade and the body emitters below drive
- * Emit_c's render / spill / schedule helpers directly — one codelet
- * family, self-contained from config to C text.
+ * prepare_butterfly runs the shared Pipeline.prepare_codelet cascade
+ * (hash-cons, pass stack, spill markers), and the body emitters below
+ * drive Emit_c's render / spill / schedule helpers directly — one
+ * codelet family, self-contained from config to C text.
  * ------------------------------------------------------------------
  * MODULE CARD (codelet_oop.ml — grep "MODULE CARD" for the full set)
  * ROLE: The OOP codelet family: config types -> validate -> edge
