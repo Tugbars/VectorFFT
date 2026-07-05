@@ -133,6 +133,59 @@ as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_per
 > scales poorly at modest N. These use the **generic** executor — a conservative floor (JIT is wired
 > and bit-exact again post-core-move; re-running with `--jit` widens the margin).
 
+### Natural order — in-place (single-thread)
+
+In-place c2c natively emits **digit-scrambled** order (the convolution contract — §1 headline). The
+`VFFT_ORDER_NATURAL` flag (parity with MKL's `DFTI_ORDERING`) delivers **bin-for-bin natural order**
+by running the same scrambled FFT plan and then a per-cell **reorder methodology**, chosen and
+persisted per cell (wisdom v7 `nat_mode`):
+
+- **FREE** — the cell is already natural (single-stage / prime); zero extra pass.
+- **PURE** — a cycle-following K-row permutation pass over the scrambled output.
+- **PSWAP** — an involution **pair-swap** on a *palindromic* factorization (whose digit reversal is
+  its own inverse), the cheapest possible reorder. The planner injects a palindromic chain as a
+  candidate since the DP scores factorizations under scrambled economics.
+
+Forward via the public API (`vfft_create` order=NATURAL + `vfft_execute`; the FFT is **JIT/baked**,
+only the reorder pass is a memory permutation) vs MKL's natural DFTI (its default order), same
+fairness as §1 (best-of-5 min, cachebust + cool + order-flip, P-core-pinned). Output order validated
+**bin-for-bin** against a naive O(N²) DFT (elementwise, both natural) **plus** roundtrip
+`fwd+bwd == N·x` (all e-12/e-14 every cell). The **reorder tax** column is natural / the calibrated
+scrambled-JIT cell (§1 CSV). Source: `bench_1d_vs_mkl`-modeled `natorder_vs_mkl.c`.
+
+```
+ N      K    mode    vfft ns   dag/MKL   reorder tax (vs scrambled)
+──────────────────────────────────────────────────────────────────
+ 64     32   PURE        989     2.25×    1.35×
+ 256    32   PURE      6,153     2.35×    1.31×
+ 1024   32   PURE     30,987     1.87×    1.25×
+ 4096   32   PURE    175,927     1.87×    1.20×
+──────────────────────────────────────────────────────────────────
+ 128    4    PURE        505     1.26×      —
+ 256    4    PSWAP       688     1.74×      —   (16·16 palindrome)
+ 512    4    PSWAP     1,945     1.92×      —   (8·8·8 palindrome)
+ 2048   4    PURE     13,149     1.47×      —
+ 4096   4    PURE     30,109     1.16×      —
+ 8192   4    PURE     65,184     1.10×      —
+```
+
+> **Natural-order in-place beats MKL across both bands — K=32 uniformly (1.87–2.35×) and K=4 with the
+> right methodology (1.10–1.92×).** The reorder costs a steady **1.2–1.35× tax** over the scrambled
+> path at K=32 — natural gives up about a fifth of the scrambled lead (the "20–25%" design target) yet
+> still clears MKL comfortably, because MKL pays for its *own* bit-reversal to reach the same natural
+> order. The methodology matters most at K=4: a palindromic factorization makes **PSWAP's pair-swap
+> ~1.8× cheaper than PURE's cycle pass** — 256/4 (=16·16) goes from 0.96× under PURE to **1.74× under
+> PSWAP**. The thin-row K=4 cells (large N) tighten toward parity (8192/4 = 1.10×) as the reorder's
+> small-row gather dominates.
+>
+> Two honesty notes. Measured on a **live host** (not the locked-down §1 machine) → **directional**;
+> the correctness gate (elementwise-natural + roundtrip) is exact. **Mode selection is a follow-up:**
+> the per-cell methodology above is the best-measured mode; the automatic create-time chooser is not
+> yet paced, so on a noisy race it can pick a worse mode (the 256/4 PURE-vs-PSWAP case). Natural order
+> is **in-place 1D C2C only** — r2c/c2r/trig are already natural, and OOP carries its own natural kinds
+> (LEAF/BAILEY2, selectable via the same `VFFT_ORDER_NATURAL` flag; see the out-of-place tables).
+> Roundtrip / convolution consumers should keep the faster scrambled default.
+
 ### Out-of-place — vs MKL (single-thread)
 
 dag OOP c2c vs MKL `DFTI_NOT_INPLACE` split-complex, **identical layout**, order-neutralized + paced
