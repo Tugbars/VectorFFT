@@ -171,6 +171,17 @@ repo tree, with two owner directives added:
 ## Gate battery for this tree (replaces reproduce.sh, which does not
 exist here)
 
+REPO-RESIDENT HARNESS (added 2026-07-05):
+`generator/scripts/compare_libs.sh [--keep] [quadrant ...]` runs the
+whole battery below in one command — builds both libraries (scoped,
+cache off), generates the full tree with BOTH gen_set binaries into
+WSL-native temp roots, diff -r's them, then runs the 8 knob-on spot
+cells through both gen_radix binaries via one neutral copied exe path
+(provenance argv[0] equality). Exit 0 = byte-identical; on FAIL it
+keeps the work dir as evidence. Negative-tested: a planted one-string
+canary in new-lib was caught in both passes, and PASS restored after
+revert. This script IS the promotion gate.
+
 Chained behind `dune build` of SCOPED targets only — never bare
 `dune build`: generated/dune has `mode promote` rules that regenerate
 generated/*.h into the source tree (one bare build emptied

@@ -1,0 +1,7 @@
+N,K,scrambled_ns,natural_ns,tax,nat_mode,nat_nf,mode
+256,4,590,767,1.300,5,0,PSWAP-opp
+512,4,1748,2025,1.159,5,0,PSWAP-opp
+1024,4,4107,6416,1.562,5,3,PSWAP-inj
+256,32,6315,7384,1.169,5,3,PSWAP-inj
+1024,32,24885,31470,1.265,5,0,PSWAP-opp
+64,64,1463,2041,1.395,5,0,PSWAP-opp
