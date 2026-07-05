@@ -57,9 +57,14 @@ int main(int argc, char **argv) {
     if (argc >= 3) {
         one(atoi(argv[1]), atoi(argv[2]), &reg, &w);
     } else {
-        one(128, 16, &reg, &w);   /* expect natural DIFFERS (4·8·4 palindrome) */
-        one(256, 16, &reg, &w);   /* expect same (scrambled-best already palindrome) */
-        one(64, 64, &reg, &w);    /* expect same (wide rows) */
+        /* grid: narrow-row cells (where natural-aware col selection can win via a palindrome) + squares
+         * (wide rows -> pair==cycle -> natural pick == scrambled pick, i.e. no gain). */
+        one(64, 16, &reg, &w);
+        one(128, 16, &reg, &w);   /* expect DIFFERS (4·8·4) */
+        one(256, 16, &reg, &w);
+        one(512, 16, &reg, &w);
+        one(64, 64, &reg, &w);    /* square: expect same */
+        one(128, 128, &reg, &w);  /* square: expect same */
     }
     vfft_fft2d_c2c_wisdom_save(&w, "natorder_2dcalib_wis.txt");
     vfft_fft2d_c2c_wisdom_free(&w);
