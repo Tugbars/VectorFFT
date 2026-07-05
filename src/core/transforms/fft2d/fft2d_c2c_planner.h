@@ -116,9 +116,14 @@ static int _vfft_fft2d_c2c_axis_candidates(int N, size_t K, int patient,
 
 /* Plan the 2D c2c cell (N1,N2). Fills `out`, returns best end-to-end 2D ns
  * (1e18 on failure). Run single-threaded (wisdom is plan-shape). */
+/* do_natural: also score each candidate on the NATURAL total (FFT+reorder), inject palindromic col
+ * candidates, and bank the natural-optimal chain into out->nat_*. This is DEV-time work (per-candidate
+ * JIT compiles when built --jit) — the runtime calibrate-on-miss passes 0 (natural chains come from the
+ * dev calibrator's banked wisdom; the runtime just consumes them). do_natural=0 => scrambled-only,
+ * byte-identical to the pre-natural planner. */
 static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
         const vfft_proto_registry_t *reg, vfft_fft2d_c2c_mode_t mode,
-        vfft_fft2d_c2c_wisdom_entry_t *out, int verbose) {
+        vfft_fft2d_c2c_wisdom_entry_t *out, int do_natural, int verbose) {
     if (N1 < 2 || N2 < 2) return 1e18;
     int patient = (mode == VFFT_FFT2D_C2C_PATIENT);
     size_t B = _fft2d_choose_tile(N2, N1);
