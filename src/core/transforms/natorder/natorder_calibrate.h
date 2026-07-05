@@ -82,7 +82,7 @@ static inline double _natorder_sample(stride_plan_t *p, double *re, double *im, 
     return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
-/* One SCR sample: CHUNK fused forwards (MODEB stages + scatter terminator). */
+/* One SCR sample: CHUNK fused forwards (OOP scratch-fill stages + scatter terminator). */
 static inline double _natorder_scr_sample(natorder_scr_t *scr, double *re, double *im, size_t K)
 {
     size_t n = (size_t)scr->N * K;

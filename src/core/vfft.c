@@ -982,7 +982,8 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
 }
 
 /* ── SCR forward, MT. Two dependent phases with a barrier between:
- *   (1) MODEB body user->scratch: K-split across lanes (each lane an independent transform,
+ *   (1) OOP scratch-fill user->scratch (execute_fwd_oop; NOT the OOP MODEB kind — just its
+ *       stage-0-redirect technique): K-split across lanes (each lane an independent transform,
  *       exactly like _c2c_mt); odd tail rides the last slab's rem-aware codelets.
  *   (2) terminator scratch->user: GROUP(q)-split (never K-split — full K-wide scattered rows);
  *       disjoint scratch reads + disjoint output combs => race-free. Each worker pre-twiddles only
@@ -1011,7 +1012,7 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         natorder_scr_fwd(s, ur, ui, K);
         return;
     }
-    /* phase 1: MODEB body, K-split (lanes) */
+    /* phase 1: OOP scratch-fill, K-split (lanes) */
     size_t Sv = ((K / (size_t)T) + 7) & ~(size_t)7;
     _scr_modeb_arg a1[64];
     int nd = 0;
@@ -1592,7 +1593,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
             }
 #ifdef VFFT_USE_JIT
-            /* SCR: JIT/bake the MODEB body's stages 1.. (stage 0 is a bare n1 loop). Only
+            /* SCR: JIT/bake the OOP scratch-fill's stages 1.. (stage 0 is a bare n1 loop). Only
              * meaningful for nf>=3; execute_fwd_oop_jit skips the call when sub has 1 stage. */
             if (mode == VFFT_NAT_SCR && h->nat_scr && h->nat_scr->sub.num_stages > 1)
                 h->nat_scr->sub_jit_fwd = vfft_proto_plan_jit_fwd(&h->nat_scr->sub);
@@ -1895,10 +1896,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
         size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
         /* ORDER_NATURAL SCR forward: fused scatter terminator does the whole forward
-         * (MODEB stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
+         * (OOP scratch-fill stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
         if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
         {
-            _scr_fwd_mt(h->nat_scr, sre, sim, h->K);  /* MODEB K-split + terminator q-split */
+            _scr_fwd_mt(h->nat_scr, sre, sim, h->K);  /* scratch-fill K-split + terminator q-split */
             return;
         }
         /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled

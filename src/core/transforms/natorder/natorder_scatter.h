@@ -5,23 +5,29 @@
  * vs PURE's +45%). Footprint = OOP (a plan-owned N*K scratch plane pair) — pointer-in-place, not
  * memory-in-place (§1 ambiguity).
  *
- * DATAFLOW (forward): MODEB stage-0 redirect user->scratch + stages 1..nf-2 in-place on scratch
- * (execute_fwd_oop), then a TERMINATOR: for each group, pre-twiddle its R scratch legs by the last
- * stage's combined twiddle (leg0*=cf0, leg j*=tw_scalar[j-1] — twiddle.h:114-118) and run the
+ * NAMING: "OOP scratch-fill" below = the stage-0-out-of-place-redirect execution technique in
+ * oop_execute.h (`vfft_proto_execute_fwd_oop`: run stage 0 src->dst, stages 1.. in-place on dst).
+ * That is the SAME engine the OOP MODEB *kind* uses — but SCR is an IN-PLACE natural-order mode that
+ * merely BORROWS the technique to fill its scratch plane. SCR is NOT the MODEB kind, and the scatter
+ * is a separate terminator stage (below), not part of the scratch-fill.
+ *
+ * DATAFLOW (forward): OOP scratch-fill user->scratch (stage 0 redirect + stages 1..nf-2 in-place on
+ * scratch, via execute_fwd_oop), then a TERMINATOR: for each group, pre-twiddle its R scratch legs by
+ * the last stage's combined twiddle (leg0*=cf0, leg j*=tw_scalar[j-1] — twiddle.h:114-118) and run the
  * OOP-capable n1_fwd (plain radix-R DFT: n1(pretwiddled)==t1(raw)) with in_stride=last->stride,
  * OUT_STRIDE=P*K so leg j lands at natural row q+j*P. Groups iterated in q-ascending order (via the
  * reverse row-base map) => writes are R sequential streams (the j-outer pattern, 0.40x vs 0.10x
  * q-outer — natorder §2b). BACKWARD needs nothing here: a natural spectrum inverts identically for
  * every mode, so vfft.c uses the PURE cycle-inverse + DIF backward.
  *
- * Applicability (else build returns 0 -> caller keeps PURE, honorable): DIT only (MODEB needs an
- * untwiddled OOP stage 0; DIF rejected), nf>=2, last stage not LOG3 (its per-element grp_tw isn't a
- * scalar pre-twiddle), and every group's natural homes must form the stride-P comb (verified). */
+ * Applicability (else build returns 0 -> caller keeps PURE, honorable): DIT only (the OOP scratch-fill
+ * needs an untwiddled out-of-place stage 0; DIF rejected), nf>=2, last stage not LOG3 (its per-element
+ * grp_tw isn't a scalar pre-twiddle), and every group's natural homes must form the stride-P comb. */
 #ifndef VFFT_NATORDER_SCATTER_H
 #define VFFT_NATORDER_SCATTER_H
 
 #include "executor.h"
-#include "oop_execute.h"     /* vfft_proto_execute_fwd_oop (MODEB redirect) */
+#include "oop_execute.h"     /* vfft_proto_execute_fwd_oop — the OOP scratch-fill (stage-0 redirect) */
 #include "planner.h"
 #include <stdlib.h>
 
@@ -33,8 +39,8 @@ typedef struct {
     size_t K;
     size_t *src;                /* [P] scratch base (doubles) for the group at natural q */
     int *twg;                   /* [P] full-plan stage-group index for that group          */
-    vfft_proto_exec_fn sub_jit_fwd; /* MODEB stages 1.. JIT/baked (NULL=generic); set by vfft.c under
-                                     * VFFT_USE_JIT. Stage 0 is a bare n1 loop (codelet floor). */
+    vfft_proto_exec_fn sub_jit_fwd; /* scratch-fill stages 1.. JIT/baked (NULL=generic); set by vfft.c
+                                     * under VFFT_USE_JIT. Stage 0 is a bare n1 loop (codelet floor). */
     int ok;
 } natorder_scr_t;
 
@@ -105,8 +111,8 @@ static inline void natorder_scr_term_range(natorder_scr_t *s, double *ure, doubl
     }
 }
 
-/* Single-thread forward (MODEB body stays ST here; MT split is done by the vfft.c orchestrator).
- * MODEB stages 1.. run via sub_jit_fwd when resolved (NULL => generic). */
+/* Single-thread forward (the OOP scratch-fill stays ST here; MT split is done by the vfft.c
+ * orchestrator). Scratch-fill stages 1.. run via sub_jit_fwd when resolved (NULL => generic). */
 static inline void natorder_scr_fwd(natorder_scr_t *s, double *ure, double *uim, size_t K)
 {
     vfft_proto_execute_fwd_oop_jit(&s->sub, ure, uim, s->scr_re, s->scr_im, K, s->sub_jit_fwd);
