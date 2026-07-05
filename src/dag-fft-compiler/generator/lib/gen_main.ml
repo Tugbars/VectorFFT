@@ -1,11 +1,13 @@
-(* gen_radix.ml — CLI driver.
+(* gen_main.ml — the generator driver: one `run argv` that takes a
+ * codelet request from CLI flags to C text on stdout. bin/gen_radix is
+ * a 1-line wrapper around it; bin/gen_set calls it in-process once per
+ * codelet of the whole tree.
  *
- * Usage:
+ * Usage (via gen_radix):
  *   gen_radix N                          show DAG and stats (no twiddle)
  *   gen_radix N --twiddled               t1_dit (TP_Flat: load all twiddles)
  *   gen_radix N --twiddled --log3        t1_dit_log3 (load base twiddles, derive rest)
  *   gen_radix N --twiddled --emit-c      emit C code with cost-model defaults
- *   gen_radix N --twiddled --emit-c --bisect   emit with Frigo's bisection scheduler
  *
  * Cost-model defaults (auto-applied unless --no-recipe is passed):
  *   Spill + SU (the "full recipe") auto-enables when the cost model says yes.
@@ -14,6 +16,37 @@
  * Override flags:
  *   --no-recipe        force Topo (disable auto spill+SU)
  *   --spill / --su     explicit on (overrides --no-recipe locally per flag)
+ *
+ * `run` is a single sequential function with five phases, in order:
+ *   1. FLAG PARSE — ~50 ref cells, one per CLI flag / family selector.
+ *   2. RECIPE — the cost-model auto-defaults above, plus the SU
+ *      universal default and the Goodman-Hsu auto-enable rule.
+ *   3. FAMILY WIRING + MATH DISPATCH — set the Emit_state signature
+ *      flags for the selected family, then call the matching
+ *      Dft / Dft_r2c expansion to get raw assignments (+ spill
+ *      markers for blocked recipes).
+ *   4. PASS CASCADE — Algsimp.reset, of_assignments, dedup, the
+ *      aggressive prime passes, then the FMA cascade with frozen-tag
+ *      threading and the marker remap chain. NOTE: pipeline.ml holds
+ *      the shared copy of exactly this cascade (used by codelet_oop);
+ *      a semantic change here must be mirrored there until the two
+ *      are unified.
+ *   5. NAME + EMIT — production symbol naming per family, scheduler
+ *      selection, then Codelet_oop.emit_codelet (oop family) or
+ *      Emit_c.emit_codelet (everything else); without --emit-c, DAG
+ *      stats instead.
+ * ------------------------------------------------------------------
+ * MODULE CARD (gen_main.ml — grep "MODULE CARD" for the full set)
+ * ROLE: CLI parse -> recipe -> math layer -> pass cascade -> emit.
+ * PIPELINE: the top-level driver; everything else serves it.
+ * PUBLIC SURFACE (measured): run — called by bin/gen_radix(1),
+ * bin/gen_set(2) and the new-bin clones.
+ * DEPS: Dft(31), Algsimp(28), Emit_c(23), Dft_r2c(23),
+ * Codelet_oop(17), Isa(1), Uarch(1).
+ * ENV: VFFT_NEWSPLIT, VFFT_FORCE_REASSOC, VFFT_NO_SUBDEDUP,
+ * VFFT_DEEP_COLLECT, VFFT_FORCE_FMA_LIFT, VFFT_DISABLE_FMA_LIFT
+ * (plus everything the callees read).
+ * ------------------------------------------------------------------
  *)
 
 let run (argv : string array) : unit =
@@ -27,7 +60,6 @@ let run (argv : string array) : unit =
   let log3 = ref false in
   let emit_c = ref false in
   let in_place = ref false in
-  let bisect = ref false in
   let annotate = ref false in
   let su = ref false in
   let spill = ref false in
@@ -102,7 +134,6 @@ let run (argv : string array) : unit =
      else if arg = "--log3" then log3 := true
      else if arg = "--emit-c" then emit_c := true
      else if arg = "--in-place" then in_place := true
-     else if arg = "--bisect" then bisect := true
      else if arg = "--annotate" then annotate := true
      else if arg = "--su" then su := true
      else if arg = "--spill" then spill := true
@@ -208,8 +239,8 @@ let run (argv : string array) : unit =
   (* Cost-model auto-defaults.
    *
    * If --no-recipe is set: don't auto-enable anything.
-   * Otherwise: when the rule says yes AND user didn't override with bisect
-   * or annotate, turn on --spill --su automatically.
+   * Otherwise: when the rule says yes AND user didn't override with
+   * annotate, turn on --spill --su automatically.
    *
    * Explicit --spill / --su flags always take effect regardless of the rule.
    *
@@ -218,7 +249,7 @@ let run (argv : string array) : unit =
    * Dft.should_block_n1. Without auto-enable, the n1 path would stay
    * monolithic and miss the spill-recipe wins on the hot path. *)
   let recipe_applicable =
-    (not !bisect) && (not !annotate) && (not !no_recipe)
+    (not !annotate) && (not !no_recipe)
     (* strided is single-stage n1-only by design (v1); the blocked
      * recipe emits spill_re/spill_im markers the strided emitter does
      * not declare. Latent since doc-58 auto-blocking; caught when the
@@ -269,8 +300,7 @@ let run (argv : string array) : unit =
    * a memory-bound codelet's load parallelism — a case where SU measured
    * neutral, not worse. --no-recipe still selects topological. Codelets
    * that already had SU (all t1s, R>=32 n1) are unaffected (no-op here). *)
-  if (not !no_recipe) && (not !bisect) && (not !annotate) && not !su then
-    su := true;
+  if (not !no_recipe) && (not !annotate) && not !su then su := true;
 
   (* Auto-enable Goodman-Hsu mode switch when:
    *   - the recipe is engaged (--su is on), AND
@@ -884,14 +914,11 @@ let run (argv : string array) : unit =
            else "")
     in
     let scheduler : Emit_c.scheduler =
-      match (!bisect, !su, !annotate) with
-      | false, false, false -> Topological
-      | true, false, false -> Bisection
-      | false, true, false -> SU uarch
-      | false, false, true -> Annotated_topological
-      | true, false, true -> Annotated_bisection
-      | false, true, true -> Annotated_SU uarch
-      | _ -> Topological
+      match (!su, !annotate) with
+      | false, false -> Topological
+      | true, false -> SU uarch
+      | false, true -> Annotated_topological
+      | true, true -> Annotated_SU uarch
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
     if !oop then begin

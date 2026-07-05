@@ -13,7 +13,20 @@
  * and sans --emit-c, which the driver appends). Structure rules that
  * are CODE, not coverage — the 18-family matrix, the spec stride
  * formula RV = R*8, strided's single-stage restriction — live here as
- * functions, not as data to keep in sync. *)
+ * functions, not as data to keep in sync.
+ * ------------------------------------------------------------------
+ * MODULE CARD (coverage.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The radix / family / quadrant coverage lists and the per-file
+ * gen_radix argv for every codelet in the tree, plus expected_counts.
+ * PIPELINE: walked by gen_set (tree regen) and the registry emitters.
+ * PUBLIC SURFACE (measured): gen_set(3): quadrants, files,
+ * dir_of_quadrant; each bin/emit_*_registry(3): files; and
+ * emit_registry_h(2): ip_radices.
+ * DEPS: none — pure data + shape functions.
+ * GOTCHA: a coverage edit changes what "all" regenerates AND what the
+ * registries declare; regen + registry emit must ship together.
+ * ------------------------------------------------------------------
+ *)
 
 let ip_radices =
   [ 2; 3; 4; 5; 6; 7; 8; 10; 11; 12; 13; 16; 17; 19; 20; 25; 32; 64 ]

@@ -34,6 +34,15 @@
  * Compare to the older `const_cmul`'s tan-factored form
  * `Mul(cr, Sub(xr, Mul(ratio, xi)))`, which buries the constants inside
  * an outer Mul and prevents downstream simplification.
+ * ------------------------------------------------------------------
+ * MODULE CARD (cnum.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Typed complex-number combinators over Expr for constructions
+ * where constants must flow through re/im together (Winograd).
+ * PIPELINE: used inside Dft_recurse's Winograd-5 cnum construction.
+ * PUBLIC SURFACE (measured): dft_recurse(4): cnum, split_re_im,
+ * signal_of_re_im.
+ * DEPS: Expr(3).
+ * ------------------------------------------------------------------
  *)
 
 open Expr

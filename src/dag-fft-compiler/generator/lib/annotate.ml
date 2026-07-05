@@ -1,8 +1,8 @@
 (* annotate.ml — block-level lifetime annotation for scheduled DAGs.
  *
  * What this layer does:
- *   Takes a scheduled list of instructions (e.g. output of bisection
- *   or topological emission) and produces a NESTED-BLOCK structure.
+ *   Takes a scheduled list of instructions (topological or SU order)
+ *   and produces a NESTED-BLOCK structure.
  *   Variables with short live ranges get declared in inner blocks;
  *   variables with long live ranges get declared in outer blocks.
  *
@@ -22,19 +22,28 @@
  *   appear to live until function end (from a syntactic perspective)
  *   and GCC must do its own liveness analysis, which is harder.
  *
- * Frigo's approach uses Seq trees from the bisection scheduler. We
+ * Frigo's genfft derives scopes from its scheduler's Seq trees. We
  * recover scope structure post-hoc by recursively bisecting the
- * already-scheduled list at midpoints. This way annotate works on
- * the output of any scheduler — topological order, bisection,
- * future SU, etc.
+ * already-scheduled list at midpoints (a private list split — not a
+ * graph scheduler). This way annotate works on the output of any
+ * scheduler: topological order, SU, etc.
+ * ------------------------------------------------------------------
+ * MODULE CARD (annotate.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Post-hoc nested-block scope recovery over a scheduled list,
+ * so emitted C declares short-lived values in inner blocks and gcc
+ * reuses their registers. Opt-in via the --annotate scheduler modes.
+ * PIPELINE: any schedule -> annotate -> emit_scope C blocks
+ * PUBLIC SURFACE (measured): emit_c(6): annotate, emit_scope.
+ * DEPS: Algsimp(4), Expr(3), Isa(3).
+ * ------------------------------------------------------------------
  *)
 
 open Algsimp
 
 (* === SCHEDULED ENTRY ===
  *
- * The unit operated on. Matches the output type of
- * Schedule.bisection_schedule and our flat topological order. *)
+ * The unit operated on. Matches the (oref option, node) shape the
+ * schedulers and our flat topological order produce. *)
 
 type entry = {
   output_for : Expr.elem_ref option;

@@ -30,7 +30,7 @@
  * - reachable_nodes / compute_inline_set — cheap to compute per-caller
  *   so we let each emission site do it. Could be lifted up later if a
  *   third caller appears.
- * - Annotate, Bisection, BB — opt-in alternates production handles in
+ * - Annotate, BB — opt-in alternates production handles in
  *   emit_c.ml
  * - Regalloc — log3 AVX-512 R≤32 only, gated in emit_c.ml
  *
@@ -68,7 +68,25 @@
  * frozen_tags) because the spill marker remap_tag chain post-cascade
  * needs them in order. extend_frozen alone is necessary but not
  * sufficient — see the comment in `prepare_codelet` below.
- * ═══════════════════════════════════════════════════════════════════════ *)
+ *
+ * ------------------------------------------------------------------
+ * MODULE CARD (pipeline.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The shared hash-cons -> pass-cascade -> spill_info recipe as
+ * one function, prepare_codelet.
+ * PIPELINE: math-layer raw assignments -> prepare_codelet -> emit
+ * PUBLIC SURFACE (measured): codelet_oop(2): prepare_codelet,
+ * prepared.
+ * DEPS: Algsimp(26), Dft(6), Emit_c(2), Expr(2).
+ * ENV: VFFT_NO_SUBDEDUP, VFFT_DEEP_COLLECT (collect_m and the FMA
+ * knobs are read inside the passes themselves).
+ * GOTCHA 1: caller MUST run Algsimp.reset first — the reset is
+ * deliberately outside this function (drivers differ on when).
+ * GOTCHA 2: gen_main.run still carries its own INLINE copy of this
+ * exact cascade; the two must be kept in lockstep until unified —
+ * a pass added or reordered in one and not the other silently
+ * diverges the oop family from the in-place families.
+ * ------------------------------------------------------------------
+ *)
 
 (* Result of pipeline preparation.
  *

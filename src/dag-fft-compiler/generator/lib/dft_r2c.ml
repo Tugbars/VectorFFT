@@ -5,17 +5,31 @@
  * strategies. Mirrors FFTW's separation between gen_dft.ml (c2c) and
  * gen_r2cf.ml / gen_r2cb.ml / gen_hc2c.ml / gen_hc2hc.ml.
  *
- * As this module grows it will host:
- *   - dft_r2c_direct  (this file, forward r2c via pair-pack + post-process)
- *   - dft_c2r_direct  (TODO: backward c2r via pre-process + unpack)
- *   - dft_r2c_first   (TODO: first-stage cascade codelet, v1.1 t1_r2c_first_R)
- *   - dft_r2c_last    (TODO: last-stage cascade codelet, v1.1 t1_r2c_last_R)
- *   - dft_hc2hc       (TODO: middle stages, Hermitian-packed in & out)
+ * One transform family per banner section, homogeneous throughout:
+ *   - r2c forward (direct, first-stage cascade, fused terminators
+ *     incl. runtime-twiddle and model-b last-stage variants)
+ *   - c2r backward (direct), rdft, native r2cf / r2cb leaves
+ *   - the trig zoo: DCT-I/II/III/IV, DST-1/2/3/4, DHT (each with its
+ *     reduction documented at its section)
+ *   - the Hermitian cascade codelets hc2hc / hc2c, DIT and DIF, with
+ *     spill variants and the natural-split terminator symmetries.
  *
  * The inner complex sub-DFT is delegated to Dft.dft, so all the c2c
  * machinery (CT decomposition, conjugate-pair, recursive dispatch) is
  * reused unchanged. This module only handles the r2c-specific structure:
  * pair-packing at input, Hermitian-extraction butterfly at output.
+ * ------------------------------------------------------------------
+ * MODULE CARD (dft_r2c.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Math layer for every real-input / real-output transform; a
+ * homogeneous dump by design — the section banners are the map, and
+ * splitting one family per file was considered and declined
+ * (owner-ratified: banners already navigate it).
+ * PIPELINE: gen_main family dispatch -> dft_expand_* here -> Algsimp
+ * PUBLIC SURFACE (measured): gen_main(23): one dft_expand_* per
+ * family flag; bin/dbg_eval(1).
+ * DEPS: Dft(35 — heaviest user of the c2c recursion), Expr(35),
+ * Emit_c(1).
+ * ------------------------------------------------------------------
  *)
 
 open Expr

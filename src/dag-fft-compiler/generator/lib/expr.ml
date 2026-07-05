@@ -16,6 +16,21 @@
  * Mul(BaseExpr), ...) and `isinstance` checks, with no compiler-enforced
  * exhaustiveness. The OCaml version catches "I added a Sub case but
  * forgot to handle it in simplify()" at compile time.
+ * ------------------------------------------------------------------
+ * MODULE CARD (expr.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The tree-structured symbolic math IR the math layer emits:
+ * elem_ref (Input / Output / Twiddle slots), expr, assignment, the
+ * folding mk_ constructors, printers, and a reference dft_kernel.
+ * PIPELINE: math layer (Dft / Dft_r2c / Split_radix) builds these ->
+ * Ir.of_assignments hash-conses them into the DAG IR.
+ * PUBLIC SURFACE (measured; grep counts): expr / elem_ref /
+ * assignment types + constructors everywhere the math layer runs:
+ * dft_r2c(35), emit_render(17), dft(14), ir(13), simplify(13),
+ * fma_passes(11), schedule(10), codelet_oop(8), algsimp(8),
+ * emit_c(7), cnum(3), regalloc(3), annotate(3), pipeline(2),
+ * dft_recurse(1) plus bin/dbg_eval(13).
+ * DEPS: none (leaf module — first in the pipeline).
+ * ------------------------------------------------------------------
  *)
 
 (* A reference to an input or output element of the transform.
