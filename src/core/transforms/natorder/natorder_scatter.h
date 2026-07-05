@@ -29,6 +29,7 @@
 #include "executor.h"
 #include "oop_execute.h"     /* vfft_proto_execute_fwd_oop — the OOP scratch-fill (stage-0 redirect) */
 #include "planner.h"
+#include "natorder_perm.h"   /* orientation detect + cycle tape (for the DIT-injected build) */
 #include <stdlib.h>
 
 typedef struct {
@@ -89,6 +90,56 @@ static inline int natorder_scr_build(natorder_scr_t *s, const stride_plan_t *ful
     s->R = R; s->P = P; s->N = N; s->K = K;
     s->ok = 1;
     return 1;
+}
+
+static inline void natorder_scr_free(natorder_scr_t *s); /* fwd decl (defined below) */
+
+/* DIT-INJECTED SCR build. SCR needs a DIT plan (the OOP scratch-fill requires an untwiddled OOP
+ * stage 0), but dp_best calibrates the small-K band as DIF — so SCR is gated out exactly where it
+ * would win. This builds a fresh DIT plan from `chain` (forced DIT, uniform T1S so the last stage is
+ * never LOG3), detects its orientation, and builds the scatter + its cycle tape (for the backward,
+ * which runs cycle-inverse + this plan's DIF-backward). On success (1) the caller OWNS *out_plan
+ * (the scatter's sub aliases it — keep alive), *out_scr, *out_cycles; on failure (0) all are freed
+ * and the caller keeps PURE. Analogous to PSWAP's palindrome injection. natural_order §2e. */
+static inline int natorder_scr_build_dit(int N, size_t K, const int *chain, int nf,
+                                         const vfft_proto_registry_t *reg,
+                                         natorder_scr_t *out_scr, stride_plan_t **out_plan,
+                                         int **out_cycles)
+{
+    *out_plan = NULL;
+    *out_cycles = NULL;
+    if (nf < 2) return 0;
+    int vb[STRIDE_MAX_STAGES];
+    for (int s = 0; s < nf; s++) vb[s] = 2;          /* uniform T1S; stage 0 ignored (untwiddled) */
+    vb[0] = 0;
+    stride_plan_t *p = vfft_proto_plan_create_ex(N, K, chain, vb, nf, 0, reg); /* DIT */
+    if (!p) return 0;
+    size_t tot = (size_t)N * K;
+    double *cre = (double *)calloc(tot, sizeof(double));
+    double *cim = (double *)calloc(tot, sizeof(double));
+    int *M = NULL;
+    if (cre && cim) {
+        cre[K] = 1.0;                                /* impulse at n0=1, lane 0 */
+        vfft_proto_execute_fwd(p, cre, cim, K);
+        M = vfft_natorder_detect(N, chain, nf, K, cre, cim, 1);
+    }
+    free(cre); free(cim);
+    int ok = 0;
+    if (M) {
+        int *IM = (int *)malloc((size_t)N * 4);
+        if (IM) {
+            vfft_natorder_inv_perm(N, M, IM);
+            if (natorder_scr_build(out_scr, p, N, K, M, IM)) {
+                *out_cycles = vfft_natorder_mk_cycles(N, M);
+                if (*out_cycles) { *out_plan = p; ok = 1; }
+                else natorder_scr_free(out_scr);
+            }
+            free(IM);
+        }
+    }
+    free(M);
+    if (!ok) vfft_proto_plan_destroy(p);
+    return ok;
 }
 
 /* Forward: natural spectrum into (ure,uim). Terminator groups [q0,q1) — the whole range for ST;

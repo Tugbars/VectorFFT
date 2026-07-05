@@ -1459,25 +1459,20 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 free(cim);
                 /* per-worker cycle scratch: (pool+1) slots of 2*K doubles (MT split). */
                 h->nat_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * K * sizeof(double));
-                int *IM = NULL;
                 if (M)
+                    h->nat_list = vfft_natorder_mk_cycles(N, M); /* PURE cycle tape (pA's perm) */
+                if (!h->nat_list || !h->nat_tmp)
                 {
-                    h->nat_list = vfft_natorder_mk_cycles(N, M);
-                    IM = (int *)malloc((size_t)N * 4);
-                    if (IM) vfft_natorder_inv_perm(N, M, IM); /* for SCR terminator homes */
-                }
-                if (!h->nat_list || !h->nat_tmp || !IM)
-                {
-                    free(M); free(IM);
+                    free(M);
                     vfft_destroy(h);
                     return NULL;
                 }
                 if (mode == VFFT_NAT_UNSET)
                 {
-                    /* RACE (PURE vs injected-palindrome PSWAP vs SCR scatter terminator; 5% margin)
-                     * + stamp v7. */
+                    /* RACE (PURE vs injected-palindrome PSWAP vs DIT-injected SCR; 5% margin) + stamp.
+                     * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection. */
                     vfft_natorder_verdict_t v;
-                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, M, IM, &v);
+                    vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, wfac, wnf, &v);
                     mode = v.mode;
                     if (mode == VFFT_NAT_PSWAP)
                     {
@@ -1494,10 +1489,21 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     }
                     else if (mode == VFFT_NAT_SCR)
                     {
-                        /* keep h->cplan + cycle tape (backward); own the scatter (forward). */
+                        /* DIT-injected SCR: swap cplan to the DIT plan (the scatter's sub aliases it),
+                         * take its cycle tape for the backward, re-resolve the DIF-backward JIT. */
                         h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
-                        if (!h->nat_scr) { free(M); free(IM); natorder_scr_free(&v.scr); vfft_destroy(h); return NULL; }
-                        *h->nat_scr = v.scr; /* move ownership */
+                        if (!h->nat_scr) { free(M); vfft_proto_plan_destroy(v.scr_plan);
+                                           natorder_scr_free(&v.scr); free(v.scr_cycles); vfft_destroy(h); return NULL; }
+                        *h->nat_scr = v.scr;
+                        vfft_proto_plan_destroy(h->cplan);
+                        h->cplan = v.scr_plan;
+                        free(h->nat_list);
+                        h->nat_list = v.scr_cycles;
+                        h->exec_fwd = NULL;
+                        h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
                     }
                     vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
                     ne.nat_mode = mode;
@@ -1511,14 +1517,28 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
                 else if (mode == VFFT_NAT_SCR)
                 {
-                    /* Stored SCR verdict: rebuild the scatter on the calibrated plan; failure
-                     * falls back to PURE (cycle tape already built) — honorable. */
+                    /* Stored SCR verdict: rebuild the DIT-injected scatter from the calibrated chain;
+                     * on success swap cplan->DIT plan + its cycle tape; failure -> PURE (honorable). */
                     natorder_scr_t sc;
-                    if (natorder_scr_build(&sc, h->cplan, N, K, M, IM))
+                    stride_plan_t *sp = NULL;
+                    int *scyc = NULL;
+                    if (natorder_scr_build_dit(N, K, wfac, wnf, reg, &sc, &sp, &scyc))
                     {
                         h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
-                        if (h->nat_scr) *h->nat_scr = sc;
-                        else { natorder_scr_free(&sc); mode = VFFT_NAT_PURE_CYCLE; }
+                        if (h->nat_scr)
+                        {
+                            *h->nat_scr = sc;
+                            vfft_proto_plan_destroy(h->cplan);
+                            h->cplan = sp;
+                            free(h->nat_list);
+                            h->nat_list = scyc;
+                            h->exec_fwd = NULL;
+                            h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                            h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
+                        }
+                        else { natorder_scr_free(&sc); vfft_proto_plan_destroy(sp); free(scyc); mode = VFFT_NAT_PURE_CYCLE; }
                     }
                     else
                         mode = VFFT_NAT_PURE_CYCLE;
@@ -1575,9 +1595,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         mode = VFFT_NAT_PURE_CYCLE;
                 }
                 else
-                    mode = VFFT_NAT_PURE_CYCLE; /* LEAF-IP (until its executor lands) -> PURE */
+                    mode = VFFT_NAT_PURE_CYCLE; /* reserved/unknown nat_mode (e.g. LEAF_IP=2, ditched) -> PURE */
                 free(M);
-                free(IM);
             }
             /* MT metadata for the reorder pass: PURE + SCR-backward split cycles (need offsets);
              * PSWAP splits pairs (count only). nat_list is now final for the chosen mode. */
