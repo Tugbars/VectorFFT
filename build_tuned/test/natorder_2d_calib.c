@@ -27,7 +27,7 @@ static void chain(const int *f, const int *v, int nf, char *out) {
 
 static void one(int N1, int N2, vfft_proto_registry_t *reg, vfft_fft2d_c2c_wisdom_t *w) {
     vfft_fft2d_c2c_wisdom_entry_t e;
-    double ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, VFFT_FFT2D_C2C_MEASURE, &e, /*verbose=*/1);
+    double ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, /*verbose=*/1);
     if (ns >= 1e17) { printf("%dx%d: MEASURE failed\n", N1, N2); return; }
     char sr[128], sc[128], nr[128], nc[128];
     chain(e.row_factors, e.row_variants, e.row_nf, sr);

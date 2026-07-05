@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
     vfft_fft2d_c2c_wisdom_entry_t e;
     double ns = vfft_fft2d_c2c_plan_measure(
         N1, N2, &reg,
-        patient ? VFFT_FFT2D_C2C_PATIENT : VFFT_FFT2D_C2C_MEASURE, &e, verbose);
+        patient ? VFFT_FFT2D_C2C_PATIENT : VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, verbose);
     if (ns >= 1e17) {
         fprintf(stderr, "2D C2C MEASURE failed for %dx%d\n", N1, N2);
         return 1;
