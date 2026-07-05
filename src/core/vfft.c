@@ -1129,53 +1129,6 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
         vfft_natorder_cycle_pass_inv(re, im, (size_t)h->N2, h->nat2d_row_list, h->nat2d_tmp);
 }
 
-/* Rows are NARROW enough (<= this many doubles) that the dim1 whole-row reorder is dependency-bound, so
- * PSWAP (independent swaps) beats cycle-following 3-5x (natorder_reorder_micro). Above it the reorder is
- * bandwidth-bound and PSWAP is neutral, so injecting a (possibly slower) palindromic column FFT would be
- * a net loss — keep the calibrated chain there. Crossover measured between K=16 (win) and K=64 (tie). */
-#define VFFT_2D_NAT_NARROW_N2 32
-
-/* Palindromic-column injection for NARROW-row NATURAL 2D. If the calibrated column chain is not
- * palindromic its digit reversal M1 is not an involution, so dim1 falls to the slow cycle path. Swap
- * plan_col to a palindromic chain (=> M1 an involution => PSWAP) — trading a little column-FFT speed for
- * the far cheaper reorder. No-op when already palindromic, no palindrome exists, or the rebuild fails
- * (keeps the calibrated plan, correctness unaffected either way). Re-resolves the column JIT executor. */
-static void _natorder_2d_inject_palindrome_col(int N1, size_t N2, stride_fft2d_data_t *d,
-                                               const vfft_proto_registry_t *reg)
-{
-    stride_plan_t *pc = d->plan_col;
-    int nf = pc->num_stages;
-    if (nf < 2 || N2 > VFFT_2D_NAT_NARROW_N2)
-        return;                                       /* single-radix (already involution) or wide rows */
-    int palindromic = 1;
-    for (int i = 0; i < nf; i++)
-        if (pc->factors[i] != pc->factors[nf - 1 - i]) { palindromic = 0; break; }
-    if (palindromic)
-        return;                                       /* M1 already an involution => PSWAP fires as-is */
-
-    int chains[3][STRIDE_MAX_STAGES], nfs[3];
-    int ncand = vfft_natorder_palindromes(N1, reg, chains, nfs, 3);
-    for (int c = 0; c < ncand; c++)
-    {
-        int vb[STRIDE_MAX_STAGES];
-        for (int s = 0; s < nfs[c]; s++) vb[s] = 2;   /* uniform T1S */
-        vb[0] = 0;                                     /* stage 0 untwiddled (DIT) */
-        stride_plan_t *np = vfft_proto_plan_create_ex(N1, N2, chains[c], vb, nfs[c], 0, reg);
-        if (!np)
-            continue;                                  /* chain lacks a codelet — try the next palindrome */
-        stride_plan_destroy(pc);
-        d->plan_col = np;
-#ifdef VFFT_USE_JIT
-        d->exec_col_fwd = vfft_proto_plan_jit_fwd(np);
-        d->exec_col_bwd = vfft_proto_plan_jit_bwd(np);
-#else
-        d->exec_col_fwd = NULL;
-        d->exec_col_bwd = NULL;
-#endif
-        return;
-    }
-}
-
 /* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
  * independently by each worker. LEAF (one codelet) and MODEB (in-place dataflow on
  * the dst) are lane-independent END-TO-END, so K-split is exact. BAILEY2 is NOT: its
@@ -1329,17 +1282,12 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         if (cfg->transform == VFFT_C2C && cfg->order == VFFT_ORDER_NATURAL)
         {
             stride_fft2d_data_t *d = (stride_fft2d_data_t *)tp->override_data;
-            if (!d || !d->plan_col || !d->plan_row)
-            {
-                vfft_destroy(h);
-                return NULL;
-            }
-            /* Narrow rows: swap plan_col to a palindromic chain so the dim1 whole-row reorder becomes
-             * PSWAP (3-5x on narrow rows). No-op when already palindromic / wide rows / no palindrome. */
-            _natorder_2d_inject_palindrome_col(N1, (size_t)N2, d, reg);
             int col_is_pairs = 0; /* dim2 runs cycle_pass in fft2d.h scratch -> never a pair tape */
-            /* dim1 (whole-row): try PSWAP (involution); dim2 (within-row): cycle only (fft2d.h scratch). */
-            if (!_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
+            /* dim1 (whole-row): try PSWAP (involution) — the free latency win when the calibrated column
+             * chain is palindromic (forcing a palindromic chain is a wash — its FFT slowdown offsets the
+             * reorder win, natural_order §). dim2 (within-row): cycle only (fft2d.h scratch pass). */
+            if (!d || !d->plan_col || !d->plan_row ||
+                !_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
                 !_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list, &col_is_pairs, 0))
             {
                 vfft_destroy(h);
