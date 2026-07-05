@@ -261,6 +261,26 @@ ZERO direct qualified references — the frozen-API goal, now measured.
 Gates green after the doc pass (comment-only changes still fully
 gated; the stage-3 lesson).
 
+## Stage R5 — bisection scheduler REMOVED (SEMANTIC, DONE 2026-07-05)
+
+First non-motion stage, owner-directed, per doctrine rule 1 gated on
+its own. Owner
+verdict: the Frigo recursive bisection scheduler is active nowhere —
+reachable only via --bisect, which no coverage cell and no production
+path passes. Removed from new-lib: schedule.ml's entire bisection half
+(color / node / build_dag / bisect / connected_components_of /
+reorder_components / schedule_nodes / topological_order /
+bisection_schedule / top_level_bisection — schedule.ml is now the SU
+half alone, with a REMOVED tombstone), the Bisection and
+Annotated_bisection variants of Emit_render's scheduler type, both
+emit_c.ml match arms, gen_main's --bisect flag (ref, parse, usage,
+recipe conditions, scheduler match now on (!su, !annotate)), and the
+prose mentions in annotate / pipeline / regalloc / emit_c headers.
+annotate.ml's own midpoint list-bisection is unrelated and stays.
+Production lib/ keeps the code (history preserved there and in git).
+Gates green — byte-identity across all 1074 codelets is itself the
+proof the path was dead.
+
 ## Owner-decision queue (surfaced by this tree's audit; no action taken)
 
 - lib/gen_main.ml.orig: a git-TRACKED stale backup of gen_main.ml.
