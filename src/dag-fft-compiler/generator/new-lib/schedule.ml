@@ -1,35 +1,103 @@
-(* schedule.ml — the SU (Sethi-Ullman) list scheduler with the
- * Goodman-Hsu pressure switch; the production scheduler.
+(* schedule.ml — the instruction scheduler: Sethi-Ullman list scheduling
+ *               with latency priorities, a Goodman-Hsu pressure switch,
+ *               and port-class balancing.
  *
- * node_latency + compute_cp_dist derive critical-path distances
- * from a Uarch profile; compute_su_number gives the
- * register-pressure approximation. su_schedule and
- * su_schedule_subset list-schedule with cp_dist as the primary key
- * and load source-order preservation; the Goodman-Hsu refinement
- * (gh flag) switches the priority key to pressure whenever live
- * count crosses the uarch threshold (VFFT_GH_THRESHOLD overrides).
- * su_schedule_subset is the cluster-granular entry the spill
- * recipe and Bb both build on. The opt-in annealer and
- * order-injection knobs (VFFT_SCHED_ORDER, VFFT_SCHED_DUMP) hook
- * in here.
+ * === WHY THE GENERATOR SCHEDULES AT ALL ===
+ *   A codelet is one straight-line block with hundreds of live SIMD
+ *   values competing for 16 YMM / 32 ZMM registers. For such blocks the
+ *   EMISSION ORDER largely determines peak register pressure, and peak
+ *   pressure determines stack spills — the dominant cost the compiler
+ *   cannot undo well on its own (measured: gcc re-schedules toward
+ *   MORE pressure under stress; see the regalloc.ml history). So the
+ *   generator computes a good order itself. gcc mostly preserves it,
+ *   and the opt-in fence machinery in regalloc.ml can pin it exactly.
  *
- * REMOVED 2026-07-05 (owner decision): the Frigo recursive
- * bisection scheduler (genfft port: color waves, build_dag,
- * bisection_schedule, top_level_bisection). It was reachable only
- * through the --bisect CLI flag, which no coverage cell and no
- * production path uses. History: production lib/schedule.ml and
- * git.
+ * === 1. THE BASE HEURISTIC (su_schedule) ===
+ *   Classic ready-list scheduling over the hash-consed DAG, driven by
+ *   two per-node analyses:
+ *
+ *   - cp_dist (compute_cp_dist): critical-path distance to a sink, in
+ *     CYCLES, using the Uarch latency table — a backward DP over the
+ *     DAG in reverse-topological order (tag-descending, because
+ *     hash-cons tags are assigned bottom-up). High cp_dist = on the
+ *     critical path = start early so its dependency chain overlaps
+ *     everything else.
+ *
+ *   - su_num (compute_su_number): the Sethi-Ullman register-need
+ *     label, generalized k-ary for Cmul and Fma atoms (sort child
+ *     labels descending, label = max over i of child_i + i). Exact on
+ *     trees; on DAGs shared subtrees are over-counted, which biases
+ *     them toward being scheduled earlier — the conservative
+ *     direction. Lower su_num breaks ties: finish the cheap subtree
+ *     first, keep fewer partial results alive.
+ *
+ *   Priority: cp_dist DESC, then su_num ASC, then tag ASC — the last
+ *   key makes every schedule deterministic and regeneration-stable.
+ *
+ * === 2. TWO ORDER RULES BEYOND THE PRIORITY KEY ===
+ *   - LAZY LOADS: a load only fires when NO arithmetic is ready, and
+ *     loads fire strictly in source (tag) order. Eager load fronts
+ *     inflate the live set for no ILP gain, and source order keeps
+ *     the access pattern sequential for the hardware prefetcher.
+ *   - SINK-FIRST: a ready sink (a node no other node consumes — it
+ *     only feeds an output store) preempts the cp_dist ranking. This
+ *     is what fixes DIF prime codelets, where the post-multiply cmul
+ *     nodes ARE the outputs: under raw cp_dist DESC they fire LAST,
+ *     pinning their inputs in registers across the whole body.
+ *     Firing each one as soon as its inputs exist kills two live
+ *     values on the spot. Measured on R=17 t1_dif: vmovapd count
+ *     drops from 176 to ~115, matching the hand-written codelet.
+ *     DIT is naturally unaffected (its cmuls are sources, not sinks).
+ *
+ * === 3. THE GOODMAN-HSU PRESSURE SWITCH (~gh:true) ===
+ *   Latency priority and pressure priority want different schedules;
+ *   Goodman-Hsu's answer is to switch keys based on the live count:
+ *   - LATENCY MODE while live <= threshold: the base priority above.
+ *   - PRESSURE MODE while live > threshold: pick the candidate with
+ *     the lowest delta = births - kills, i.e. the op that frees the
+ *     most registers relative to what it allocates.
+ *   The threshold comes from the Uarch profile (pressure_threshold:
+ *   24 on AVX-512, 12 on AVX2, slack reserved for cmul/FMA scratch);
+ *   VFFT_GH_THRESHOLD overrides it for experiments. The recipe layer
+ *   auto-enables gh on AVX2 at R >= 32, where it measures 4-8% over
+ *   the base recipe and is a no-op on AVX-512.
+ *
+ * === 4. PORT-CLASS BALANCING (tiebreaker) ===
+ *   On Ice Lake server, Mul / FMA / Cmul dispatch only to ports 0-1
+ *   while Add / Sub / Neg can also use port 5; a mul-heavy stretch
+ *   starves P5 while P0/P1 back up. gcc-11's post-RA scheduler earns
+ *   ~2.5-3.4% (llvm-mca, R=32..256 c2c) by re-interleaving. When
+ *   cp_dist is tied within a small window, we prefer the op whose
+ *   port class is behind — recovering that interleave at the source
+ *   without disturbing the critical path.
+ *
+ * === 5. SUBSET SCHEDULING (the spill recipe's entry point) ===
+ *   su_schedule_subset schedules a pre-selected subset (PASS 1 or
+ *   PASS 2 of a blocked codelet) while treating out-of-subset
+ *   predecessors — original inputs, reloaded spill values, hoisted
+ *   constants — as already available. cp_dist is still computed over
+ *   the full reachable graph so depth information survives the cut.
+ *   This is the granularity the cluster-spill recipe emits at, and
+ *   the baseline bb.ml's branch-and-bound refiner starts from.
+ *
+ * === 6. SCHEDULE-SEARCH HOOKS ===
+ *   VFFT_SCHED_DUMP writes the chosen order plus the DAG edges;
+ *   VFFT_SCHED_ORDER replays an explicit tag order. Together they
+ *   form the interface the external schedule annealer drives to
+ *   search order-space beyond the heuristic (see new-docs 66 and 68).
+ *   Both default off; output is byte-identical without them.
  * ------------------------------------------------------------------
  * MODULE CARD (schedule.ml — grep "MODULE CARD" for the full set)
- * ROLE: The SU + GH list scheduler and its cp-dist / su-number
- * analyses.
+ * ROLE: The production scheduler: SU + GH list scheduling and its
+ * cp-dist / su-number analyses, port-balance tiebreak, search hooks.
  * PIPELINE: Algsimp DAG -> a schedule -> Regalloc / Emit renderers
  * PUBLIC SURFACE (measured): emit_c: su_schedule,
  * su_schedule_subset; bb: su_schedule_subset, compute_cp_dist;
  * codelet_oop: su_schedule_subset.
- * DEPS: Algsimp (open — the heaviest client of the IR), Expr,
- * Uarch.
+ * DEPS: Algsimp (open — the heaviest client of the IR), Expr, Uarch.
  * ENV: VFFT_GH_THRESHOLD, VFFT_SCHED_ORDER, VFFT_SCHED_DUMP.
+ * DOCS: new-docs 66 (annealer architecture), 68 (bicriteria
+ * formulation), 69 (SU certification), 22 (Bb comparison).
  * ------------------------------------------------------------------
  *)
 

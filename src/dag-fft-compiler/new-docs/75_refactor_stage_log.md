@@ -167,6 +167,19 @@ repo tree, with two owner directives added:
     re-run gates through bin/ and the registry emitters.
 12. HEADER STANDARD (owner-ratified 2026-07-05): regalloc.ml's header
     essay is the documentation example the other modules follow.
+13. HEADERS ARE PUBLIC-LIBRARY DOCS (owner feedback 2026-07-05,
+    strengthening rule 10): this library will be released; file
+    headers address an outside FFT-expert reader. NO process
+    narration of any kind — including REMOVED tombstones (rule 10's
+    carve-out is revoked for headers; a removal is recorded HERE and
+    in git only), refactor-stage pointers, and "historical note"
+    paragraphs. Applied: schedule.ml's R5 tombstone deleted and its
+    header rewritten as a full six-section essay (why scheduling
+    matters, the SU heuristic, lazy-loads + sink-first rules, the
+    Goodman-Hsu switch, port balancing, subset scheduling, search
+    hooks); emit_c.ml's stage-log pointer and codelet_oop.ml's
+    historical note rewritten to present-tense fact. Gates green
+    after the rewrite (comment-only changes stay fully gated).
 
 ## Gate battery for this tree (replaces reproduce.sh, which does not
 exist here)

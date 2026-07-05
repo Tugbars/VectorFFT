@@ -28,8 +28,8 @@
  *
  * emit_codelet is deliberately one large function: it is the single
  * place where scheduling, spill structure, regalloc and rendering
- * decisions meet, and its internal phase breakup is a designed,
- * edit-heavy future change (see new-docs/75_refactor_stage_log.md).
+ * decisions meet, and every codelet family shares that one meeting
+ * point rather than duplicating it.
  * ------------------------------------------------------------------
  * MODULE CARD (emit_c.ml — grep "MODULE CARD" for the full set)
  * ROLE: Facade of the emit chain + emit_codelet + the strided
