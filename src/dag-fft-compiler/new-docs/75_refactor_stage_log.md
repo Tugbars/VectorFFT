@@ -382,20 +382,28 @@ stock unchanged); --bisect errors with the licensing message.
 NOTE: the provenance watch-list change means knob-on outputs now
 stamp their knobs — intended, and why old knob-on baselines are void.
 
-W3 (NOT DONE — mapped for its own session): the duplicate_uncse pass
-(doc 65 §8, v5 selector). Port map, their tree -> ours:
-algsimp.ml ~3352-3640 (the pass; hashcons-BYPASS clones, MUST be the
-final DAG transform); emit_state.ml dup_barrier_tags ref;
-emit_render.ml two sites (fence defs whose tag is barriered; exclude
-barriered tags from the inline set); gen_main.ml ~740-930 (the
-`VFFT_DUP` knob family wiring incl. S/CAP/COST/ONLY/TRACE, the
-schedule callback, sets
-Emit_c.dup_barrier_tags, writes a vfft_dup_order temp file and pins
-clone placement through the ORDER-INJECTION machinery — i.e. W3
-depends on W2, which is why W2 landed first). Gates when ported:
-knobs-off identity; VFFT_DUP=1 on R=11/13/17/19 vs the probe oracle
-(tools/dup_probe.py) and doc-65 numbers; bit-exactness (duplication
-is bit-exact by construction); win rule on the pinned toolchain.
+W3 (DONE, same day): the duplicate_uncse pass (doc 65 §8, v5
+selector) plus the VFFT_BUTTERFLY_SHARE cascade step. Transplanted,
+their tree -> ours: the pass into algsimp.ml before the DAG
+STATISTICS banner (hashcons-BYPASS clones; stays the final DAG
+transform); emit_state.ml dup_barrier_tags ref; emit_render.ml two
+sites (clone defs emit non-const with a "+x" barrier; barriered tags
+excluded from the inline set); gen_main.ml the `VFFT_DUP` knob family
+wiring incl. S/CAP/COST/ONLY/TRACE (skips when spill markers present;
+sets Emit_c.dup_barrier_tags; freezes the pre-dup SR schedule,
+Kahn-recomposes it over the post-dup DAG with clones pinned to their
+consumer's declared anchor, writes a vfft_dup_order temp file and
+feeds it through the ORDER-INJECTION machinery — W3 consumes W2,
+which is why W2 landed first), plus the BSM step between mfl4 and
+flatten and the bsm_tag_remap walk in the marker remap chain.
+GATES: build; knobs-off identity 0 diffs / 1074; VFFT_DUP=1 R=13 —
+10 clones, 255/255 nodes pinned, 10 "+x" barriers in the C, wisdom
+trailer stamped, differs from stock; VFFT_DUP on a spill cell prints
+the skip message; VFFT_BUTTERFLY_SHARE=1 R=32 t1 applies rewrites.
+STILL OWED (the kit's own "decisions that are yours"): re-score the
+shipped wisdom orders and the dup wins under the LOCAL toolchain
+(container gcc 13.3 magnitudes are toolchain-fingerprinted by
+design), then the paired i9 runtime bench as the shipping gate.
 
 ## Owner-decision queue (surfaced by this tree's audit; no action taken)
 

@@ -292,6 +292,385 @@ let butterfly_share_mul ?(frozen_tags : (int, unit) Hashtbl.t option = None)
 
   (new_assigns, tag_remap)
 
+(* === SELECTIVE DUPLICATION (UN-CSE) — doc 65 §8, v5 selector ===
+ *
+ * CSE creates values whose uses span hundreds of schedule slots; on a
+ * 16-register target every such value is a guaranteed spill (doc 65).
+ * This pass clones a long-span cheap value at its LAST use: the
+ * original's live range now ends at its second-to-last use, and the
+ * clone (single consumer) is scheduled just before that use by SR's
+ * own STARVE rule — no placement bookkeeping needed.
+ *
+ * v5 coverability (ported from tools/dup_probe5.py): an operand of a
+ * clone is  (a) a leaf (Load/Const)            -> reference original;
+ *           (b) still alive at the clone point -> reference original
+ *               (zero lifetime extension by construction);
+ *           (c) cheap and recursively coverable -> re-derive (+1 def);
+ *           (d) anything else                   -> reject candidate.
+ * cost = emitted defs (interiors + the value) <= maxcost.
+ * Selection: span DESC, cost ASC, tag ASC; apply-and-recompute up to
+ * `cap` clones (probe computed all plans upfront; recomputing after
+ * each application is the DAG-safe equivalent — divergence possible,
+ * win rule arbitrates).
+ *
+ * HASHCONS BYPASS: clones take fresh tags and are NEVER registered in
+ * hcons_table — registration would merge them straight back into the
+ * original. Consequently this pass MUST run as the FINAL DAG
+ * transform (any later hashcons-rebuild collapses the clones), and
+ * emit_c must fence each clone def (Emit_c.dup_barrier_tags) or gcc
+ * re-CSEs them at -O3 (measured in the probes).
+ *
+ * Deployment: env-gated (VFFT_DUP=1), primes-only per doc 65 (pow2
+ * negative in every probe variant); chain mode (v4, the R=23 win)
+ * needs a load-clone emit path and is a documented follow-up. *)
+let duplicate_uncse ?(span_s = 30) ?(cap = 16) ?(maxcost = 1)
+    ~(schedule : (Expr.elem_ref * t) list -> t list)
+    (assigns : (Expr.elem_ref * t) list) :
+    (Expr.elem_ref * t) list
+    * (int, unit) Hashtbl.t
+    * (int, int) Hashtbl.t
+    * (int * int) list =
+  let barrier : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let remap : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let inserts : (int * int) list ref = ref [] in
+  let fresh (nk : node_kind) : t =
+    let tag = !next_tag in
+    incr next_tag;
+    { tag; node = nk }
+  in
+  let is_leaf n =
+    match n.node with NK_Load _ | NK_Const _ -> true | _ -> false
+  in
+  let cheap n =
+    match n.node with NK_Add _ | NK_Sub _ | NK_Mul _ -> true | _ -> false
+  in
+  let remap_full (m : t) (f : t -> t) : node_kind =
+    match m.node with
+    | NK_Const _ | NK_Load _ -> m.node
+    | NK_Neg a -> NK_Neg (f a)
+    | NK_Add (a, b) -> NK_Add (f a, f b)
+    | NK_Sub (a, b) -> NK_Sub (f a, f b)
+    | NK_Mul (a, b) -> NK_Mul (f a, f b)
+    | NK_Plus ts -> NK_Plus (List.map (fun (sg, x) -> (sg, f x)) ts)
+    | NK_Fma (a, b, c, nm, na) -> NK_Fma (f a, f b, f c, nm, na)
+    | NK_CmulRe (a, b, c, d) -> NK_CmulRe (f a, f b, f c, f d)
+    | NK_CmulIm (a, b, c, d) -> NK_CmulIm (f a, f b, f c, f d)
+  in
+  let cur = ref assigns in
+  let cloned : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let applied = ref 0 in
+  let go = ref true in
+  while !go && !applied < cap do
+    let roots = List.map snd !cur in
+    let topo = topo_sort_reachable roots in
+    (* Spans MUST be measured in SCHEDULE space, not topo/tag space —
+     * the probe's line distances are SR slot distances. Measured: the
+     * same selector in topo space picks wrong values and regresses
+     * every prime (+13/+10/+13 spills at 11/17/19). *)
+    let order = schedule !cur in
+    let users : (int, t list) Hashtbl.t = Hashtbl.create 1024 in
+    List.iter
+      (fun n ->
+        List.iter
+          (fun p ->
+            let l = try Hashtbl.find users p.tag with Not_found -> [] in
+            Hashtbl.replace users p.tag (n :: l))
+          (preds n))
+      topo;
+    let nusers n =
+      List.length (try Hashtbl.find users n.tag with Not_found -> [])
+    in
+    let root_tags : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+    List.iter (fun (_, v) -> Hashtbl.replace root_tags v.tag ()) !cur;
+    (* The probe operates on DECLARED temps only: single-use nodes are
+     * inlined by emit_c and have no line of their own; their textual
+     * reference to an operand appears at the first DECLARED ancestor's
+     * line. Mirror that: declared = multi-use, root, or barrier-clone;
+     * every use-position is anchored to its declared ancestor. *)
+    let declared n =
+      nusers n >= 2 || Hashtbl.mem root_tags n.tag
+      || Hashtbl.mem barrier n.tag
+    in
+    (* decl-LINE space: the probe's positions are lines of DECLARED
+     * temps; inlined nodes have no line. Rank only declared nodes. *)
+    let rank : (int, int) Hashtbl.t = Hashtbl.create 1024 in
+    let li = ref 0 in
+    List.iter
+      (fun n ->
+        (* su_schedule's returned list re-appends the sinks as
+         * (Some ref, node) pairs at the tail — every sink appears
+         * TWICE. Keep the FIRST (true schedule slot); the tail
+         * duplicate inflated sink ranks by ~+44 and made every
+         * sink-consumer spuriously win the last-use argmax (the root
+         * cause of the R=17/19 regressions). *)
+        if declared n && not (Hashtbl.mem rank n.tag) then begin
+          Hashtbl.replace rank n.tag !li;
+          incr li
+        end)
+      order;
+    let anchor_memo : (int, t) Hashtbl.t = Hashtbl.create 1024 in
+    let rec decl_anchor (x : t) : t =
+      match Hashtbl.find_opt anchor_memo x.tag with
+      | Some r -> r
+      | None ->
+          let r =
+            if declared x then x
+            else
+              match Hashtbl.find_opt users x.tag with
+              | Some [ u ] -> decl_anchor u
+              | _ -> x
+          in
+          Hashtbl.add anchor_memo x.tag r;
+          r
+    in
+    let last_rank n =
+      List.fold_left
+        (fun a u ->
+          let d = decl_anchor u in
+          max a (try Hashtbl.find rank d.tag with Not_found -> -1))
+        (-1)
+        (try Hashtbl.find users n.tag with Not_found -> [])
+    in
+    let named n = is_leaf n || declared n in
+    (if Sys.getenv_opt "VFFT_DUP_TRACE" <> None then begin
+       Printf.eprintf "PHASE-A: order=%d declared=%d rank376=%s rank639=%s\n"
+         (List.length order)
+         (Hashtbl.length rank)
+         (match Hashtbl.find_opt rank 376 with
+          | Some r -> string_of_int r | None -> "-")
+         (match Hashtbl.find_opt rank 639 with
+          | Some r -> string_of_int r | None -> "-");
+       let i = ref 0 in
+       List.iter
+         (fun (x : t) ->
+           if declared x && !i < 300 then begin
+             if x.tag = 376 || x.tag = 639 then
+               Printf.eprintf "  declared[%d] = t%d\n" !i x.tag;
+             incr i
+           end)
+         order
+     end);
+    (* plan: post-order interiors list; None = not coverable in budget *)
+    let cheap_named n =
+      cheap n && List.for_all named (preds n)
+    in
+    let plan (n : t) (clone_rank : int) : t list option =
+      let rec resolve (o : t) (ints : t list) : t list option =
+        if is_leaf o then Some ints
+        else if List.exists (fun m -> m.tag = o.tag) ints then Some ints
+        else if last_rank o >= clone_rank then Some ints
+        else if cheap_named o then
+          let step st p = match st with None -> None | Some a -> resolve p a in
+          match List.fold_left step (Some ints) (preds o) with
+          | Some ints' when List.length ints' + 2 <= maxcost ->
+              Some (ints' @ [ o ])
+          | _ -> None
+        else None
+      in
+      let step st p = match st with None -> None | Some a -> resolve p a in
+      List.fold_left step (Some []) (preds n)
+    in
+    let cands = ref [] in
+    List.iter
+      (fun n ->
+        if
+          (* v2 rule (probe-validated): add/sub/mul over DIRECT LEAF
+           * operands only. Generalizing to any-declared operands was
+           * measured to regress every prime (+13..+45 spills). *)
+          cheap n
+          && List.for_all is_leaf (preds n)
+          && (not (Hashtbl.mem cloned n.tag))
+          && (not (Hashtbl.mem barrier n.tag))
+          && List.length (try Hashtbl.find users n.tag with Not_found -> [])
+             >= 2
+        then begin
+          let lr = last_rank n in
+          let own = try Hashtbl.find rank n.tag with Not_found -> 0 in
+          let span = lr - own in
+          if span >= span_s then
+            match plan n lr with
+            | Some ints when List.length ints + 1 <= maxcost ->
+                cands :=
+                  ((-span, List.length ints + 1, n.tag), n, ints)
+                  :: !cands
+            | _ -> ()
+        end)
+      topo;
+    let only =
+      match Sys.getenv_opt "VFFT_DUP_ONLY" with
+      | Some s -> ( try Some (int_of_string s) with _ -> None)
+      | None -> None
+    in
+    let cands =
+      ref
+        (match only with
+        | Some t -> List.filter (fun (_, n, _) -> (n : t).tag = t) !cands
+        | None -> !cands)
+    in
+    let chosen =
+      let sorted =
+        List.sort (fun (k1, _, _) (k2, _, _) -> compare k1 k2) !cands
+      in
+      let rec take k = function
+        | [] -> []
+        | x :: r -> if k = 0 then [] else x :: take (k - 1) r
+      in
+      take (cap - !applied) sorted
+    in
+    if chosen = [] then go := false;
+    let chase t =
+      let rec goc t k =
+        if k > 64 then t
+        else
+          match Hashtbl.find_opt remap t with
+          | Some t' when t' <> t -> goc t' (k + 1)
+          | _ -> t
+      in
+      goc t 0
+    in
+    let trace = Sys.getenv_opt "VFFT_DUP_TRACE" <> None in
+    List.iter (fun ((key : int * int * int), (n0 : t), ints) ->
+        ignore key;
+        ignore ints;
+        let node_of : (int, t) Hashtbl.t = Hashtbl.create 1024 in
+        List.iter
+          (fun (x : t) -> Hashtbl.replace node_of x.tag x)
+          (topo_sort_reachable (List.map snd !cur));
+        let n =
+          match Hashtbl.find_opt node_of (chase n0.tag) with
+          | Some x -> x
+          | None -> n0
+        in
+        Hashtbl.replace cloned n.tag ();
+        let clone_of : (int, t) Hashtbl.t = Hashtbl.create 8 in
+        let mapped o =
+          match Hashtbl.find_opt clone_of o.tag with Some c -> c | None -> o
+        in
+        List.iter
+          (fun m ->
+            let c = fresh (remap_full m mapped) in
+            Hashtbl.replace barrier c.tag ();
+            Hashtbl.replace clone_of m.tag c)
+          (ints @ [ n ]);
+        let c_n = Hashtbl.find clone_of n.tag in
+        (* redirect the LAST user of n to the clone *)
+        (* CURRENT-dag users/anchors: after earlier applications the
+         * true last consumer is often a REBUILT (re-tagged) node; the
+         * round-0 tables score it -1 and the argmax silently redirects
+         * an earlier consumer, leaving the span uncut (measured: the
+         * originals' last uses never moved). Map rebuilt declared
+         * nodes back to pre-image ranks via the remap. *)
+        let users_cur : (int, t list) Hashtbl.t = Hashtbl.create 512 in
+        Hashtbl.iter
+          (fun _ (x : t) ->
+            List.iter
+              (fun (p : t) ->
+                let l =
+                  try Hashtbl.find users_cur p.tag with Not_found -> []
+                in
+                Hashtbl.replace users_cur p.tag (x :: l))
+              (preds x))
+          node_of;
+        let roots_cur : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+        List.iter
+          (fun ((_, v) : Expr.elem_ref * t) ->
+            Hashtbl.replace roots_cur v.tag ())
+          !cur;
+        let declared_cur (x : t) =
+          List.length
+            (try Hashtbl.find users_cur x.tag with Not_found -> [])
+          >= 2
+          || Hashtbl.mem roots_cur x.tag
+          || Hashtbl.mem barrier x.tag
+        in
+        let rec anchor_cur (x : t) : t =
+          if declared_cur x then x
+          else
+            match Hashtbl.find_opt users_cur x.tag with
+            | Some [ w ] -> anchor_cur w
+            | _ -> x
+        in
+        let final_rank : (int, int) Hashtbl.t = Hashtbl.create 512 in
+        Hashtbl.iter
+          (fun t0 r ->
+            let f = chase t0 in
+            match Hashtbl.find_opt final_rank f with
+            | Some r0 when r0 <= r -> ()
+            | _ -> Hashtbl.replace final_rank f r)
+          rank;
+        let arank x =
+          let d = anchor_cur x in
+          match Hashtbl.find_opt final_rank d.tag with
+          | Some r -> r
+          | None -> -1
+        in
+        let u =
+          List.fold_left
+            (fun best x ->
+              match best with
+              | None -> Some x
+              | Some b ->
+                  if
+                    arank x > arank b
+                    || (arank x = arank b && x.tag > b.tag)
+                  then Some x
+                  else best)
+            None
+            (try Hashtbl.find users_cur n.tag
+             with Not_found -> Hashtbl.find users n0.tag)
+          |> Option.get
+        in
+        let u' =
+          hashcons (remap_full u (fun o -> if o.tag = n.tag then c_n else o))
+        in
+        (if trace then begin
+           List.iter
+             (fun (x : t) ->
+               Printf.eprintf "  cand-consumer t%d arank=%d anchor=t%d\n"
+                 x.tag (arank x) (anchor_cur x).tag)
+             (try Hashtbl.find users_cur n.tag
+              with Not_found -> Hashtbl.find users n0.tag)
+         end;
+         if trace then
+           let kind_s (x : t) =
+             match x.node with
+             | NK_Add _ -> "add" | NK_Sub _ -> "sub" | NK_Mul _ -> "mul"
+             | NK_Load _ -> "LOAD" | NK_Const _ -> "K" | _ -> "?"
+           in
+           Printf.eprintf "DUP t%d %s(%s) own=%d lr=%d span=%d -> u=t%d(%s)@%d\n"
+             n.tag (kind_s n)
+             (String.concat ","
+                (List.map (fun (p : t) -> kind_s p) (preds n)))
+             (try Hashtbl.find rank n.tag with Not_found -> -1)
+             (last_rank n)
+             ((last_rank n)
+             - (try Hashtbl.find rank n.tag with Not_found -> 0))
+             u.tag (kind_s u) (arank u));
+        inserts := (c_n.tag, u.tag) :: !inserts;
+        let cache : (int, t) Hashtbl.t = Hashtbl.create 512 in
+        let rec rb (e : t) : t =
+          match Hashtbl.find_opt cache e.tag with
+          | Some r -> r
+          | None ->
+              let r =
+                if e.tag = u.tag then u'
+                else if Hashtbl.mem barrier e.tag then e
+                else if is_leaf e then e
+                else
+                  let nk = remap_full e rb in
+                  if nk = e.node then e else hashcons nk
+              in
+              if r.tag <> e.tag then Hashtbl.replace remap e.tag r.tag;
+              Hashtbl.add cache e.tag r;
+              r
+        in
+        cur := List.map (fun (r, v) -> (r, rb v)) !cur;
+        incr applied)
+      chosen;
+    go := false
+  done;
+  (!cur, barrier, remap, List.rev !inserts)
+
 (* === DAG STATISTICS === *)
 
 type dag_stats = {
