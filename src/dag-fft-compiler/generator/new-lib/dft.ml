@@ -1,3 +1,36 @@
+(* dft.ml — c2c math-layer facade: twiddle policy + expansion wrappers.
+ *
+ * Top of the Dft chain (Dft_select < Dft_recurse < Dft). `include`
+ * re-exports both lower layers, so every Dft.X spelling keeps working:
+ * Dft.pick_algorithm comes from the select layer, Dft.dft from the
+ * recursion, and this file adds what codelet emission actually calls:
+ *
+ *   - twiddle_policy (TP_Flat / TP_Log3) + twiddle_expr, and the DIT /
+ *     DIF direction type — how runtime twiddles enter the DAG;
+ *   - cmul_pattern — the Sub(Mul,Mul) / Add(Mul,Mul) shape that
+ *     Algsimp.of_expr lifts into opaque Cmul atoms so reassociation
+ *     cannot shred complex multiplies;
+ *   - the dft_expand family — assignment-list packaging of the
+ *     recursion for every codelet variant (n1, t1 dit / dif, twidsq,
+ *     il2, blocked n1, newsplit) including the spill variants that
+ *     return PASS 1 / PASS 2 markers;
+ *   - spill_marker and the blocked-recipe predicates should_spill /
+ *     should_block_n1 / exceeds_register_budget that gen_main and
+ *     codelet_oop query when deciding recipe defaults.
+ * ------------------------------------------------------------------
+ * MODULE CARD (dft.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Facade + twiddle policy + dft_expand wrappers + spill markers.
+ * PIPELINE: gen_main / codelet_oop / dft_r2c call these wrappers; the
+ * output feeds Algsimp.of_assignments.
+ * PUBLIC SURFACE (measured; grep counts incl. comments): dft_r2c(35),
+ * gen_main(31), codelet_oop(19), pipeline(6), algsimp(5) + bin
+ * dbg_eval(4), dump_ir(2), facdrv(4). Hot names: dft, pick_algorithm,
+ * TP_Flat / TP_Log3, dft_expand_twiddled_spill, should_block_n1.
+ * DEPS: Dft_recurse via include; Expr (open); Split_radix(2).
+ * ENV (via the chain): VFFT_SPLIT_RADIX, VFFT_NEWSPLIT, VFFT_CT_FACTOR.
+ * ------------------------------------------------------------------
+ *)
+
 include Dft_recurse
 open Expr
 

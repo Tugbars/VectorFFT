@@ -1,8 +1,9 @@
-(* algsimp.ml — algebraic simplification and common subexpression elimination.
+(* ir.ml — the hash-consed DAG IR: node type, smart constructors, CSE.
  *
- * This is the meat of the math layer. Two responsibilities:
+ * The bottom of the rewrite stack. Two responsibilities:
  *
- *   1. ALGEBRAIC SIMPLIFICATION: fold trivial operations like x*0 = 0,
+ *   1. ALGEBRAIC SIMPLIFICATION AT CONSTRUCTION: the smart constructors
+ *      (mk_add, mk_mul, ...) fold trivial operations like x*0 = 0,
  *      x*1 = x, x+0 = x, x-x = 0, etc. Also canonicalize floating-point
  *      noise like cos(pi/2) = 6e-17 (mathematically zero, computationally
  *      tiny) into exact zero.
@@ -21,6 +22,26 @@
  * canonicalization of floating-point constants, so the generator is
  * robust to numerical noise from cos/sin computations at radices that
  * aren't pure power-of-two.
+ *
+ * The rewrite passes that run OVER this IR live in simplify.ml (the
+ * algebraic family), fma_passes.ml (the FMA family) and algsimp.ml
+ * (spill lifting, butterfly_share_mul, statistics). Algsimp re-exports
+ * this module in full, so Algsimp.mk_add etc. remain the canonical
+ * spellings at every call site.
+ * ------------------------------------------------------------------
+ * MODULE CARD (ir.ml — grep "MODULE CARD" for the full set)
+ * ROLE: node_kind / t, the hashcons table (the CSE mechanism itself),
+ * tag counter, preds, topo_sort_reachable, the mk_* smart-constructor
+ * recursion group, and the Expr lift of_expr / of_assignments + reset.
+ * PIPELINE: Expr assignments -> of_assignments -> pass stack -> emit
+ * PUBLIC SURFACE (measured): zero direct Ir.X references — every
+ * consumer reaches these names through the Algsimp facade chain
+ * (Ir < Simplify < Fma_passes < Algsimp).
+ * DEPS (grep counts, comment mentions included): Expr(13).
+ * STATE GOTCHA: hcons_table / next_tag / of_expr_memo are
+ * process-global; Algsimp.reset clears them and MUST run before each
+ * generation or stale tags from a prior codelet leak into the DAG.
+ * ------------------------------------------------------------------
  *)
 
 open Expr
