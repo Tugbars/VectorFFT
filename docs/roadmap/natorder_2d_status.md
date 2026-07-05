@@ -107,11 +107,25 @@ each axis (single-radix on the other axis makes it FREE) tells the real story:
 | 64×16 | 1024 | **dim1-only** | **1.49×** |
 | 256×16 | 4096 | dim1-only | 1.17× |
 
-**dim2 is free** (mechanism-2 works); **the entire tax is dim1** — the whole-row reorder. And the dim1
-tax **shrinks with N** (1.49× @1K → 1.17× @4K) because the reorder is O(N²) while the FFT is O(N²log N),
-so reorder/FFT ~ 1/log N. Extrapolated to the documented **128²–512²** sizes it lands **~1.1×** — and
-since scrambled 2D beats MKL 1.26–1.42× there, natural 2D would be **~1.1× over MKL: competitive**.
-(Unconfirmed — 128²+ times out on *create-time* 2D MEASURE calibration, not the reorder; see §6.)
+**dim2 is free** (mechanism-2 works); **the entire tax is dim1** — the whole-row reorder.
+
+**Large-N measured (2026-07-05, corrected).** Using the *pre-calibrated* canonical 2D wisdom (128²/256²/
+512² already banked → create is a lookup, no MEASURE timeout), the tax at the documented square sizes
+is **stable across runs and does NOT shrink to ~1.1×**:
+
+| cell | scrambled ns | natural ns | tax |
+|---|---|---|---|
+| 64² | ~4.9k | ~7.8k | **1.48–1.60×** |
+| 128² | ~29k | ~36k | **1.23–1.35×** |
+| 256² | ~136k | ~205k | **1.45–1.59×** |
+| 512² | ~810k | ~995k | **1.22–1.24×** |
+
+An earlier note here extrapolated ~1.1× from the *narrow-row* (256×16) shrinkage — that was **wrong**:
+**square cells have wide rows, so the dim1 reorder is bandwidth-bound** (~scattered whole-matrix
+read+write) and doesn't amortize away. Net: with scrambled 2D beating MKL 1.26–1.42×, **natural 2D lands
+roughly at PARITY with MKL (~0.85–1.1×)** — not the clear win extrapolated. That's still a real feature
+(MKL is *also* natural, so we match it there and win everywhere else, incl. scrambled 2D), but the dim1
+tax is the lever to a clear win (see §6).
 
 ### Why dim1 costs what it does — and what PSWAP does
 
