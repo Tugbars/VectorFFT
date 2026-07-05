@@ -19,6 +19,16 @@
  *   - We don't model port assignments or functional-unit counts. The
  *     scheduler uses simple critical-path priority rather than a full
  *     resource model.
+ * ------------------------------------------------------------------
+ * MODULE CARD (uarch.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Per-microarchitecture timing/capacity profiles (latencies,
+ * vec_regs, pressure_threshold, fma_throughput) + of_name lookup.
+ * PIPELINE: Isa record + timing -> SU / GH / Bb scheduling decisions
+ * PUBLIC SURFACE (measured): schedule(6), bb(3), codelet_oop(2),
+ * emit_render(2), gen_main(1). Hot names: t, vec_regs,
+ * pressure_threshold, of_name, the named profiles.
+ * DEPS: Isa(8).
+ * ------------------------------------------------------------------
  *)
 
 type t = {

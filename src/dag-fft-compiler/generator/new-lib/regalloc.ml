@@ -123,7 +123,23 @@
  *      - tags that get inlined by `should_inline` and never named
  *      - the "fused slot" forward-declared values (see emit_c.ml ~256)
  *      - any case we haven't yet handled
- *    This is what makes M1 a no-op: every tag is Default. *)
+ *    This is what makes M1 a no-op: every tag is Default.
+ *
+ * ------------------------------------------------------------------
+ * MODULE CARD (regalloc.ml — grep "MODULE CARD" for the full set)
+ * ROLE: SSA linear-scan register allocator + Belady spilling + the
+ * scheduling fence; DORMANT by default (see STATUS above), byte-no-op
+ * unless VFFT_PIN_FORCE / VFFT_FORCE_FENCE opt in.
+ * PIPELINE: Schedule order -> allocate -> Emit render declarations
+ * PUBLIC SURFACE (measured): emit_c(21): allocate, reload_decl,
+ * prepare_for_simple_codelet variants, count_bindings, Allocated /
+ * Overflow; emit_render(5): lookup, peak_live_analysis, Reg / Spilled
+ * / Default; emit_state(1): the allocation type.
+ * DEPS: Algsimp(34), Isa(7), Expr(3).
+ * ENV: consumed by callers — VFFT_PIN_FORCE, VFFT_FORCE_FENCE,
+ * VFFT_NO_REGALLOC gate whether any of this runs.
+ * ------------------------------------------------------------------
+ *)
 
 (* What an allocator decides per tag. *)
 type assignment =

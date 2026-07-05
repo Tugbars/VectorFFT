@@ -1,6 +1,7 @@
-(* schedule.ml — port of Frigo's recursive bisection scheduler.
+(* schedule.ml — the two instruction schedulers: Frigo bisection and
+ * the SU (Sethi-Ullman) list scheduler with Goodman-Hsu switching.
  *
- * Algorithm (from genfft/schedule.ml lines 85-191):
+ * FIRST HALF — Frigo's recursive bisection (genfft port):
  *   1. Build DAG with explicit predecessor and successor lists.
  *   2. Bisect: alternating waves color nodes RED (input-side) and
  *      BLUE (output-side) until both stabilize. The cut between them
@@ -19,7 +20,35 @@
  * Implementation note: Frigo's representation has explicit DAG nodes
  * with mutable color/predecessor/successor fields. We mirror that
  * structure in `node` below. Our hash-consed Algsimp.t is the input;
- * we build a parallel DAG for scheduling. *)
+ * we build a parallel DAG for scheduling.
+ *
+ * SECOND HALF — the SU list scheduler (the production default):
+ * node_latency + compute_cp_dist give critical-path distances from a
+ * Uarch profile; compute_su_number gives the register-pressure
+ * approximation. su_schedule / su_schedule_subset then list-schedule
+ * with cp_dist as primary key and load source-order preservation, and
+ * the Goodman-Hsu refinement (gh flag) switches the priority key to
+ * pressure whenever live count crosses the uarch threshold — the
+ * behaviour VFFT_GH_THRESHOLD overrides. su_schedule_subset is the
+ * cluster-granular entry the spill recipe and Bb both build on. The
+ * opt-in annealer / order-injection knobs (VFFT_SCHED_ORDER,
+ * VFFT_SCHED_DUMP) hook in here.
+ * ------------------------------------------------------------------
+ * MODULE CARD (schedule.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Both schedulers: bisection_schedule / top_level_bisection and
+ * the SU + GH family with its cp-dist / su-number analyses.
+ * PIPELINE: Algsimp DAG -> a schedule -> Regalloc / Emit renderers
+ * PUBLIC SURFACE (measured): emit_c(7): su_schedule_subset,
+ * su_schedule, bisection_schedule; bb(3): su_schedule_subset,
+ * compute_cp_dist; codelet_oop(2); annotate(1).
+ * DEPS: Algsimp(68 — the heaviest client of the IR), Expr(10),
+ * Uarch(6).
+ * ENV: VFFT_GH_THRESHOLD, VFFT_SCHED_ORDER, VFFT_SCHED_DUMP.
+ * GOTCHA: build_dag appends the synthetic per-assignment output node
+ * to the sink side; passing sinks that already contain outputs
+ * double-appends them — dedupe at the call site.
+ * ------------------------------------------------------------------
+ *)
 
 open Algsimp
 

@@ -83,12 +83,30 @@
  *
  * BUTTERFLY BODY INTEGRATION
  * ──────────────────────────
- * The butterfly body emission (DAG construction, scheduling, regalloc,
- * intrinsic emission) currently lives in Emit_c. For M2 first cut this
- * module emits the signature and edge prologue/epilogue only; the body
- * is provided by an external hook. Once the structure is validated we
- * extract the body emission from Emit_c into a public function and wire
- * it here.
+ * Historical note (M2 first cut): body emission originally stayed in
+ * Emit_c and this module only emitted signature + edge prologue and
+ * epilogue. Today prepare_butterfly runs the shared
+ * Pipeline.prepare_codelet cascade and the body emitters below drive
+ * Emit_c's render / spill / schedule helpers directly — one codelet
+ * family, self-contained from config to C text.
+ * ------------------------------------------------------------------
+ * MODULE CARD (codelet_oop.ml — grep "MODULE CARD" for the full set)
+ * ROLE: The OOP codelet family: config types -> validate -> edge
+ * load/store primitives -> prepare_butterfly -> monolithic / spill /
+ * butterfly bodies -> emit_codelet driver -> canonical_name. Long but
+ * single-concern; deliberately NOT split (owner-ratified).
+ * PIPELINE: gen_main --oop path -> Codelet_oop.emit_codelet -> C
+ * PUBLIC SURFACE (measured): gen_main(17): emit_codelet,
+ * canonical_name, the edge/twiddle constructors, the current_oop_*
+ * mode refs.
+ * DEPS: Emit_c(46), Algsimp(42), Isa(26), Dft(19), Expr(8),
+ * Schedule(2), Uarch(2), Pipeline(2).
+ * ENV: VFFT_FORCE_FMA_LIFT, VFFT_DISABLE_FMA_LIFT, VFFT_NO_REGALLOC,
+ * VFFT_PIN_FORCE, VFFT_FORCE_FENCE, VFFT_NO_ANYK_TAIL.
+ * GOTCHA: mirrors gen_main's recipe decisions (should_spill /
+ * should_block_n1) for the oop shapes; a recipe change in gen_main
+ * needs a matching look here.
+ * ------------------------------------------------------------------
  *)
 
 (* ═══════════════════════════════════════════════════════════════

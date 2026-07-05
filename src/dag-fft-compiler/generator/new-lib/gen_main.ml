@@ -1,6 +1,9 @@
-(* gen_radix.ml — CLI driver.
+(* gen_main.ml — the generator driver: one `run argv` that takes a
+ * codelet request from CLI flags to C text on stdout. bin/gen_radix is
+ * a 1-line wrapper around it; bin/gen_set calls it in-process once per
+ * codelet of the whole tree.
  *
- * Usage:
+ * Usage (via gen_radix):
  *   gen_radix N                          show DAG and stats (no twiddle)
  *   gen_radix N --twiddled               t1_dit (TP_Flat: load all twiddles)
  *   gen_radix N --twiddled --log3        t1_dit_log3 (load base twiddles, derive rest)
@@ -14,6 +17,37 @@
  * Override flags:
  *   --no-recipe        force Topo (disable auto spill+SU)
  *   --spill / --su     explicit on (overrides --no-recipe locally per flag)
+ *
+ * `run` is a single sequential function with five phases, in order:
+ *   1. FLAG PARSE — ~50 ref cells, one per CLI flag / family selector.
+ *   2. RECIPE — the cost-model auto-defaults above, plus the SU
+ *      universal default and the Goodman-Hsu auto-enable rule.
+ *   3. FAMILY WIRING + MATH DISPATCH — set the Emit_state signature
+ *      flags for the selected family, then call the matching
+ *      Dft / Dft_r2c expansion to get raw assignments (+ spill
+ *      markers for blocked recipes).
+ *   4. PASS CASCADE — Algsimp.reset, of_assignments, dedup, the
+ *      aggressive prime passes, then the FMA cascade with frozen-tag
+ *      threading and the marker remap chain. NOTE: pipeline.ml holds
+ *      the shared copy of exactly this cascade (used by codelet_oop);
+ *      a semantic change here must be mirrored there until the two
+ *      are unified.
+ *   5. NAME + EMIT — production symbol naming per family, scheduler
+ *      selection, then Codelet_oop.emit_codelet (oop family) or
+ *      Emit_c.emit_codelet (everything else); without --emit-c, DAG
+ *      stats instead.
+ * ------------------------------------------------------------------
+ * MODULE CARD (gen_main.ml — grep "MODULE CARD" for the full set)
+ * ROLE: CLI parse -> recipe -> math layer -> pass cascade -> emit.
+ * PIPELINE: the top-level driver; everything else serves it.
+ * PUBLIC SURFACE (measured): run — called by bin/gen_radix(1),
+ * bin/gen_set(2) and the new-bin clones.
+ * DEPS: Dft(31), Algsimp(28), Emit_c(23), Dft_r2c(23),
+ * Codelet_oop(17), Isa(1), Uarch(1).
+ * ENV: VFFT_NEWSPLIT, VFFT_FORCE_REASSOC, VFFT_NO_SUBDEDUP,
+ * VFFT_DEEP_COLLECT, VFFT_FORCE_FMA_LIFT, VFFT_DISABLE_FMA_LIFT
+ * (plus everything the callees read).
+ * ------------------------------------------------------------------
  *)
 
 let run (argv : string array) : unit =

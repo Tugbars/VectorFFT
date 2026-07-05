@@ -11,10 +11,21 @@
  *   - Algorithm choices (math is ISA-agnostic; lives in dft.ml)
  *   - Algebraic rewrites (lives in algsimp.ml, deliberately ISA-agnostic)
  *
- * Design constraint: this module's only consumers are the EMIT layer
- * (emit_c.ml, annotate.ml, future stats reporting) and any heuristic
- * that needs register-pressure info (future SU scheduler). The DAG
- * itself never sees an Isa.t.
+ * Design constraint: this module's consumers are the EMIT layer and
+ * any heuristic that needs register-pressure info (the SU scheduler
+ * reads vec_regs through Uarch). The DAG itself never sees an Isa.t.
+ * ------------------------------------------------------------------
+ * MODULE CARD (isa.ml — grep "MODULE CARD" for the full set)
+ * ROLE: ISA record (avx512 / avx2 / sse2 / scalar profiles), the
+ * ls_mode vector-vs-masked tail selector, and the intrinsic-name
+ * builders (mul_pd .. fnmsub_pd, loadu / storeu / set1, const /
+ * pinned / fenced declaration forms).
+ * PIPELINE: everything that renders C consults this.
+ * PUBLIC SURFACE (measured): emit_render(44), codelet_oop(26),
+ * emit_c(20), uarch(8), regalloc(7), emit_state(4), annotate(3),
+ * gen_main(1).
+ * DEPS: none.
+ * ------------------------------------------------------------------
  *)
 
 type t = {

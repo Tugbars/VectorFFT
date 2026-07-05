@@ -147,3 +147,137 @@ Doctrine amendments purchased by the failure:
 | 5 | cli.ml, recipe.ml | gen_main single-let breakup — EDIT-HEAVY (parameter threading, not pure motion; needs its own design) | navigable driver |
 | 6 | emit_state.ml, then c_syntax / spill_recipe / sched_wisdom | emit_c decomposition — mode-state refs are SCATTERED through the renderers (lines 93-396), so a state-collection pass precedes any prefix cut | wisdom plumbing in one place |
 | 7 | ir.mli first interfaces | freeze the node API | accretion prevention |
+
+---
+
+# REPO-TREE APPLICATION (src/dag-fft-compiler, branch dev/arbitraryTail)
+
+The stages above were executed on a different snapshot of the code
+(the zip-shipped tree); none of the extracted files existed in the
+repo's generator/lib. Entries below apply the same doctrine to the
+repo tree, with two owner directives added:
+
+11. PARALLEL TREE (owner directive 2026-07-05): the refactor lives in
+    `generator/new-lib` (dune library `vfft_v2r`) with gate drivers in
+    `generator/new-bin` (clones of bin/gen_radix + bin/gen_set against
+    Vfft_v2r). Production `lib/` (`vfft_v2`), `bin/` and `codelets/`
+    are NOT touched. Promotion is a separate, owner-gated step:
+    replace lib module sources with the new-lib set + the dune modules
+    line (library name stays `vfft_v2`), delete new-lib/new-bin,
+    re-run gates through bin/ and the registry emitters.
+12. HEADER STANDARD (owner-ratified 2026-07-05): regalloc.ml's header
+    essay is the documentation example the other modules follow.
+
+## Gate battery for this tree (replaces reproduce.sh, which does not
+exist here)
+
+Chained behind `dune build` of SCOPED targets only — never bare
+`dune build`: generated/dune has `mode promote` rules that regenerate
+generated/*.h into the source tree (one bare build emptied
+plan_executors.h; restored from git).
+
+1. `dune build new-bin/gen_set.exe new-bin/gen_radix.exe`
+   (DUNE_CACHE=disabled — the stale-cached-exe trap is real).
+2. Knob-ON spot-checks, 8 cells, byte-compared against
+   production-built baselines: VFFT_DEEP_COLLECT R13 avx2,
+   VFFT_COLLECT_M R25 avx512, VFFT_SPLIT_RADIX R32 avx512,
+   VFFT_PIN_FORCE R32 log3 avx512, VFFT_FORCE_FENCE R7 avx2,
+   VFFT_GH_THRESHOLD=8 R64 t1 avx2 raptor_lake, oop R16 UG/UG
+   two-buffer t1 avx2, t1_dif R20 bwd avx2.
+   Provenance note: emitted headers embed argv[0], so baseline and
+   candidate drivers are both invoked via one copied neutral exe path.
+3. Full-tree identity: new-bin gen_set regenerates all quadrants
+   (1074 files) into a scratch root; `diff -r` against the
+   production-generated baseline tree must be empty; stray-tree sweep
+   (find avx2/avx512 dirs outside codelets/) must be empty.
+   Repo checkout is CRLF (core.autocrlf=true) while the generator
+   writes LF — which is why the gate diffs generator output against
+   generator output, never against the working tree.
+
+## Stage R1 — ir.ml (DONE 2026-07-05)
+
+new-lib/algsimp.ml lines 1-766 (through of_assignments) verbatim into
+new-lib/ir.ml: node_kind / t, hashcons, tag counter, preds,
+topo_sort_reachable, the mk_* recursion group, of_expr/of_assignments,
+reset. algsimp.ml = `include Ir` facade + spill lifting + passes.
+Purity proof: chunk concatenation byte-equals the original (cmp).
+Gates green (build / 8-cell spot / 1074-file identity).
+
+## Stage R2 — dft.ml layered split (DONE 2026-07-05)
+
+Same three-layer cut as stage 2 above, boundaries re-derived on this
+tree's content: dft_select.ml (algorithm type, enable predicates,
+factor_override, pick_algorithm, needs_reassoc, target_vec_regs),
+dft_recurse.ml (const_cmul + the dft..dft_ct `and` chain, one unit),
+dft.ml facade (twiddle policy, cmul_pattern, dft_expand wrappers,
+spill markers, should_spill / should_block_n1). Include-chained
+Dft_select < Dft_recurse < Dft. `open Expr` removed from the select
+layer (provably unused — warnings-as-errors enforced it, doctrine
+rule 3). Gates green.
+
+## Stage R3 — emit_c.ml state + render extraction (DONE 2026-07-05)
+
+emit_c.ml -> emit_state.ml (the two mode-ref blocks: the
+signature-flag wall current_tw_perpos..current_ls_mode, and the M3a
+block current_regalloc..current_emit_position) + emit_render.ml (topo
+sort, render_load / render_node_def, selective pinning, const
+hoisting, inline set, spill_info machinery, metadata, provenance) +
+emit_c.ml facade (emit_codelet + strided helpers). Chain
+Emit_state < Emit_render < Emit_c. Feature-local refs (unpin
+candidates, hoisting gate, provenance argv) stay beside their
+features in render, as ratified above. Resolution-order subtlety
+handled: the facade's `open Algsimp` precedes `include Emit_render`
+so the render chain's topo_sort_reachable keeps shadowing Algsimp's,
+as in the single file. emit_codelet (~2.5k lines) remains THE
+remaining disease — its breakup is still the designed edit-heavy
+future stage. Gates green.
+
+## Stage R4 — algsimp pass decomposition (DONE 2026-07-05)
+
+algsimp.ml passes split along its own banners: simplify.ml
+(dedup_sub_pairs, collect_m / deep_collect, lift_sub_neg_mul,
+factor_common_muls, factor_by_atom, share_subsums, transpose) and
+fma_passes.ml (fma_lift, factor_const_muls, multi_use_fma_lift,
+fma_addend_factor, flatten_fma_mul_addend). algsimp.ml = facade
+(`include Fma_passes`, chain Ir < Simplify < Fma_passes) + spill
+lifting + butterfly_share_mul + stats/printing. This tree has no dup
+pass (doc 65's selective duplication is not in this snapshot), so
+stage-4's dup.ml does not apply. Gates green.
+
+## Stage RD1 — headers + module cards (DONE 2026-07-05)
+
+Every compiled new-lib module carries a MODULE CARD (bb.ml's format:
+ROLE / PIPELINE / PUBLIC SURFACE measured by grep with counts /
+DEPS / ENV / GOTCHA) and a reader-oriented header to the regalloc.ml
+standard. Stale headers corrected: emit_c.ml's "naive AVX-512 t1_dit
+emitter" replaced with the real emit_codelet contract; gen_main.ml's
+header no longer claims to be gen_radix.ml and documents run's five
+phases; schedule.ml's header now covers the SU + GH half;
+dft_r2c.ml's TODO list replaced with what the file actually hosts.
+Measured surfaces from a scripted dependency matrix (grep counts,
+comment mentions included). Facade-chain modules (Ir, Simplify,
+Fma_passes, Dft_select, Dft_recurse, Emit_state, Emit_render) have
+ZERO direct qualified references — the frozen-API goal, now measured.
+Gates green after the doc pass (comment-only changes still fully
+gated; the stage-3 lesson).
+
+## Owner-decision queue (surfaced by this tree's audit; no action taken)
+
+- lib/gen_main.ml.orig: a git-TRACKED stale backup of gen_main.ml.
+  Deletion candidate.
+- lib/number.ml: NOT in the dune modules list (uncompiled orphan) and
+  opens with "Ported from FFTW" — the GPL-provenance concern already
+  flagged at stage D1; here it is dead code as well. Deletion
+  candidate pending the git-history scrub decision.
+- lib/simd_ir.ml: 1-line placeholder, IS in the modules list (both
+  trees). Delete or fill.
+- DUPLICATED PASS CASCADE: pipeline.ml (used by codelet_oop) and
+  gen_main.run carry the same hash-cons -> dedup -> FMA-cascade ->
+  marker-remap sequence as two live copies; pipeline.ml's own header
+  names the drift hazard. Unifying gen_main onto
+  Pipeline.prepare_codelet is a SEMANTIC change (doctrine rule 1) —
+  proposed as its own gated stage.
+- generated/dune promote rules: a bare `dune build` regenerates
+  generated/*.h in-place (plan_executors.h was emptied by one during
+  this session and restored). Consider (mode promote) -> explicit
+  alias, or document the scoped-build rule in scripts.
