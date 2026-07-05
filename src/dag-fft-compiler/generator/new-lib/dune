@@ -1,0 +1,21 @@
+; REFACTOR STAGING TREE (library vfft_v2r) — the module-structure rework
+; of lib/ (vfft_v2). Byte-identity of generated codelets against the
+; production tree is enforced by the stage gate battery. Production
+; lib/ stays authoritative until this tree is promoted.
+;
+; Pipeline order (top of pipe to bottom):
+;   Expr      — symbolic math IR
+;   Ir        — hash-consed DAG IR + smart constructors (CSE)
+;   Algsimp   — algebraic rewrite passes over Ir
+;   Uarch     — microarchitecture tables (RPL, SPR, ZEN5, ...)
+;   Schedule  — list scheduler (uses Uarch table)
+;   Regalloc  — linear-scan register allocator
+;   Emit_c    — emit C with AVX-512/AVX2 intrinsics
+;
+; Math-layer modules (one per transform type):
+;   Dft       — complex-to-complex DFT
+;   Dft_r2c   — real-to-complex / complex-to-real DFT (Hermitian-symmetric)
+(library
+ (name vfft_v2r)
+ (libraries unix)
+ (modules expr ir algsimp cnum split_radix dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_c pipeline codelet_oop bb coverage gen_main))
