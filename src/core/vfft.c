@@ -1139,13 +1139,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     size_t K = cfg->howmany;
     if (cfg->dims < 0 || cfg->dims > 2)
         return NULL;
-    /* ORDER_NATURAL is wired for tight in-place 1D C2C only (P1a). Every other combination
-     * (OOP c2c: LEAF/BAILEY2 already natural via their own kinds; r2c/c2r/trig: already
-     * natural; 2D/padded: not wired) is rejected up front — same no-silent-wrong-order
-     * contract as the padding gate below. natural_order_inplace_design.md §2e. */
-    if (cfg->order == VFFT_ORDER_NATURAL &&
-        !(cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE &&
-          cfg->dims < 2 && !cfg->batch))
+    /* Order axis (NATURAL/SCRAMBLED) — the 1D C2C scrambled<->natural selector, honored for BOTH
+     * placements: in-place (native scrambled vs PURE/PSWAP natural) and OOP (MODEB scrambled vs
+     * LEAF/BAILEY2 natural). r2c/c2r/trig are inherently natural and 2D c2c + padded aren't wired,
+     * so a non-DEFAULT order there is rejected up front — the same no-silent-wrong-order contract as
+     * the padding gate below. natural_order_inplace_design.md §2e. */
+    if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
+        !(cfg->transform == VFFT_C2C && cfg->dims < 2 && !cfg->batch))
         return NULL;
     /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
      * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
@@ -1639,19 +1639,27 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             bK = b->Kp; padded = 1;
         }
         vfft_oop_plan_t *op = NULL;
+        int ord = cfg->order; /* 0=DEFAULT/fastest 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
         const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup(&W->oop, N, bK);
-        if (e && !cfg->recalibrate)
+        /* Reuse the (N,K)->fastest-kind wisdom only when its kind satisfies the requested order
+         * (MODEB=scrambled; LEAF/BAILEY2=natural). A mismatch falls through to a constrained build. */
+        if (e && !cfg->recalibrate &&
+            !(ord == VFFT_ORDER_NATURAL && e->kind == VFFT_OOP_KIND_MODEB) &&
+            !(ord == VFFT_ORDER_SCRAMBLED && e->kind != VFFT_OOP_KIND_MODEB))
             op = vfft_oop_plan_create_wisdom(N, bK, &W->oop, reg); /* pure lookup */
         if (!op)
         {
-            /* calibrate-on-miss: 2-axis joint chooser (native vs DP-MODEB), persist. */
+            /* calibrate-on-miss: order-constrained 2-axis chooser (ord 0=fastest, 1=native-only,
+             * 2=MODEB-only). Persist ONLY the unconstrained DEFAULT verdict — an order-forced plan
+             * must not overwrite the fastest-kind wisdom cell (a natural request on a MODEB-optimal
+             * cell would otherwise poison DEFAULT for every later caller). */
             vfft_proto_dp_context_t ctx;
             vfft_proto_dp_init(&ctx, bK, N);
             if (cfg->rigor != VFFT_MEASURE)
                 vfft_proto_dp_set_patient(&ctx);
-            op = vfft_oop_plan_create_dp_best(N, bK, &ctx, reg);
+            op = vfft_oop_plan_create_order(N, bK, &ctx, reg, ord);
             vfft_proto_dp_destroy(&ctx);
-            if (op)
+            if (op && ord == VFFT_ORDER_DEFAULT)
             {
                 vfft_oop_wisdom_entry_t ne;
                 vfft_oop_wisdom_entry_from_plan(&ne, op, N, bK, 0.0);

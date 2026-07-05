@@ -151,4 +151,28 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_dp_best(
     vfft_oop_plan_destroy(rule); return modeb;
 }
 
+/* Order-constrained joint chooser (RUNTIME, for config.order — the scrambled<->natural selector):
+ *   ord 0 (DEFAULT/any) -> the full 2-axis chooser above (fastest kind, order-agnostic).
+ *   ord 1 (NATURAL)     -> the NATIVE champion ONLY (LEAF or BAILEY2 = natural order); never MODEB.
+ *   ord 2 (SCRAMBLED)   -> the MODEB champion ONLY (scrambled order); never native.
+ * Values match include/vfft.h VFFT_ORDER_{DEFAULT,NATURAL,SCRAMBLED}. The ord 1/2 arms just isolate
+ * the two halves that create_dp_best would otherwise race, so nothing new is measured. Returns NULL
+ * when the requested order has no plan at this (N,K) (e.g. odd K yields no native candidate → a
+ * natural OOP request is honestly unavailable rather than silently scrambled). */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_order(
+    int N, size_t K, vfft_proto_dp_context_t *dp,
+    const vfft_proto_registry_t *reg, int ord)
+{
+    if (ord == 1) {                               /* natural: native champion only */
+        int r1 = 0, r2 = 0, t1p = 1;
+        int nc = vfft_oop_tune_pairs_v(N, K, &r1, &r2, &t1p, 0);
+        if (nc <= 0) return NULL;                 /* no native candidate (e.g. odd K) */
+        if (r1 == 0) return vfft_oop_plan_create(N, K, NULL, 0, reg);   /* LEAF won the tuner */
+        return vfft_oop_plan_create_pair_v(N, K, r1, r2, t1p);          /* best BAILEY2 pair */
+    }
+    if (ord == 2)                                 /* scrambled: MODEB champion only */
+        return vfft_oop_plan_create_dp_modeb(N, K, dp, reg);
+    return vfft_oop_plan_create_dp_best(N, K, dp, reg);                 /* DEFAULT: fastest kind */
+}
+
 #endif /* VFFT_OOP_DP_H */
