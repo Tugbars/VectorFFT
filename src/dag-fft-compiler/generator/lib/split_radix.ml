@@ -100,6 +100,18 @@
  * Signature mirrors dft_direct, dft_ct in dft.ml:
  *   Inputs are functions int → expr giving the k-th input's real / imag
  *   Output is (re_outputs, im_outputs) as arrays indexed by output bin k
+ * ------------------------------------------------------------------
+ * MODULE CARD (split_radix.ml — grep "MODULE CARD" for the full set)
+ * ROLE: Split-radix and newsplit DFT constructions for pow2 N,
+ * callback-recursive so it never imports Dft (no module cycle).
+ * PIPELINE: Dft_recurse dispatches here when the picker says
+ * Split_radix; blocked newsplit also called from the Dft facade.
+ * PUBLIC SURFACE (measured): dft_recurse(2): dft_split_radix,
+ * dft_newsplit; dft(2): dft_newsplit_blocked.
+ * DEPS: Expr only (const_cmul duplicated locally, by design).
+ * ENV: reached only when VFFT_SPLIT_RADIX / VFFT_NEWSPLIT enable the
+ * algorithm in dft_select.
+ * ------------------------------------------------------------------
  *)
 
 open Expr

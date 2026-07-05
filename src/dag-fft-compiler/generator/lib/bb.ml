@@ -41,7 +41,8 @@
  * is granted.
  * PIPELINE: Schedule.subset call sites -> [Bb] (budgeted)
  * PUBLIC SURFACE (measured; external callers in parens): bb_schedule_subset(4)
- * DEPS/USED-BY (reference counts): algsimp(36) schedule(2) uarch(3)
+ * DEPS: Algsimp(36), Schedule(3), Uarch(3).
+ * USED-BY: emit_c(3), emit_render(1).
  * ------------------------------------------------------------------
  *)
 
