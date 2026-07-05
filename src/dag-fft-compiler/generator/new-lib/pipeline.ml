@@ -30,7 +30,7 @@
  * - reachable_nodes / compute_inline_set — cheap to compute per-caller
  *   so we let each emission site do it. Could be lifted up later if a
  *   third caller appears.
- * - Annotate, Bisection, BB — opt-in alternates production handles in
+ * - Annotate, BB — opt-in alternates production handles in
  *   emit_c.ml
  * - Regalloc — log3 AVX-512 R≤32 only, gated in emit_c.ml
  *

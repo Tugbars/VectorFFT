@@ -150,7 +150,7 @@ Doctrine amendments purchased by the failure:
 
 ---
 
-# REPO-TREE APPLICATION (src/dag-fft-compiler, branch dev/arbitraryTail)
+## REPO-TREE APPLICATION (src/dag-fft-compiler, branch dev/arbitraryTail)
 
 The stages above were executed on a different snapshot of the code
 (the zip-shipped tree); none of the extracted files existed in the

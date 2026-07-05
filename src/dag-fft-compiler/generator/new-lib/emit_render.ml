@@ -566,10 +566,8 @@ let render_node_def ?(no_declarator = false)
  *)
 type scheduler =
   | Topological (* sort reachable nodes by tag, flat emit *)
-  | Bisection (* Frigo's recursive bisection, flat emit *)
   | Annotated_topological
     (* topological order + nested-block scopes (annotate.ml) *)
-  | Annotated_bisection (* bisection schedule + nested-block scopes *)
   | SU of Uarch.t (* Sethi-Ullman list scheduler with µarch profile *)
   | Annotated_SU of Uarch.t (* SU + nested blocks *)
 
