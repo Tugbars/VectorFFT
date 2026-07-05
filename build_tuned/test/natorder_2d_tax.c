@@ -27,17 +27,13 @@ static double one(int N1,int N2,int order){
 int main(void){
     setvbuf(stdout,NULL,_IONBF,0); SetThreadAffinityMask(GetCurrentThread(),1);
     SetPriorityClass(GetCurrentProcess(),HIGH_PRIORITY_CLASS);
-    system("rmdir /s /q natorder_2dtax_wis 2>nul"); system("mkdir natorder_2dtax_wis 2>nul");
-    putenv("VFFT_WISDOM_DIR=natorder_2dtax_wis");
-    /* 16x* / *x16 isolate the axes: N=16 inner plan is single-radix => that axis is FREE, so
-     * 16x64 = dim2-only reorder and 64x16 = dim1-only reorder. */
-    /* dim1-only (dim2 FREE via single-radix N2=16) at matched 1024-elem size vs the 16x64 dim2-only
-     * (0.99x) already measured — and a bigger dim1-only (256x16) to see if dim1 tax is cache-driven. */
-    int dims[][2]={{64,16},{256,16}};
-    printf("# 2D reorder tax (NATURAL fwd / scrambled fwd), same calibrated plan\n");
-    printf("# 64x16 + 256x16 = dim1-only (dim2 FREE); compare vs 16x64 dim2-only=0.99x\n");
+    putenv("VFFT_WISDOM_DIR=natorder_2dbig_wis");  /* pre-populated with the canonical 2D wisdom */
+    /* LARGE-N tax: 128/256/512 squares are pre-calibrated in the canonical 2D wisdom, so create is a
+     * LOOKUP (no MEASURE timeout). Confirms the "dim1 tax shrinks with N -> ~1.1x" extrapolation. */
+    int dims[][2]={{64,64},{128,128},{256,256},{512,512}};
+    printf("# 2D reorder tax (NATURAL fwd / scrambled fwd), pre-calibrated wisdom (lookup)\n");
     printf("%-9s %-12s %-12s %-8s\n","cell","scrambled_ns","natural_ns","tax");
-    for(int i=0;i<2;i++){
+    for(int i=0;i<4;i++){
         int N1=dims[i][0],N2=dims[i][1];
         double s=one(N1,N2,VFFT_ORDER_DEFAULT);   /* calibrates+banks, times scrambled */
         double n=one(N1,N2,VFFT_ORDER_NATURAL);   /* wisdom lookup + reorder, times natural */
