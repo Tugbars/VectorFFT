@@ -729,6 +729,19 @@ let run (argv : string array) : unit =
   in
   extend_frozen mfl4_tag_remap;
 
+  (* butterfly_share_mul: EXPERIMENT (env-gated, default off). Swap-pair
+   * butterflies where two FMAs hold each other's product as addend:
+   * rewrite so both share one declared Mul, orphaning the other. See
+   * the pass header in algsimp.ml. Runs after the mfl/faf cascade
+   * (patterns are final by then) and BEFORE flatten (which would
+   * absorb the Mul-addends this pass wants to pair). *)
+  let deduped, bsm_tag_remap =
+    if apply_fma_lift && Sys.getenv_opt "VFFT_BUTTERFLY_SHARE" = Some "1"
+    then Algsimp.butterfly_share_mul ~frozen_tags deduped
+    else (deduped, Hashtbl.create 0)
+  in
+  extend_frozen bsm_tag_remap;
+
   (* flatten_fma_mul_addend: Cat-B finisher. After all the mfl/faf
    * iterations, residual `Fma(A, B, Mul(C, D), nm, na)` patterns whose
    * constants don't match (so fma_addend_factor declined them) still
@@ -791,6 +804,11 @@ let run (argv : string array) : unit =
         in
         let t =
           match Hashtbl.find_opt mfl4_tag_remap t with
+          | Some t' -> t'
+          | None -> t
+        in
+        let t =
+          match Hashtbl.find_opt bsm_tag_remap t with
           | Some t' -> t'
           | None -> t
         in

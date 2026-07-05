@@ -146,6 +146,14 @@ let current_regalloc : Regalloc.allocation option ref = ref None
  * basis. *)
 let current_fence_only : bool ref = ref false
 
+(* Duplication-clone barrier set (doc 65 §8): tags of un-CSE clones
+ * produced by Algsimp.duplicate_uncse. The render layer must emit each
+ * as a NON-const declaration with a "+x" compiler barrier (or gcc
+ * re-CSEs the clone back into the original at -O3) and must never
+ * inline them. Set by gen_main when VFFT_DUP=1; empty by default. *)
+let dup_barrier_tags : (int, unit) Hashtbl.t ref =
+  ref (Hashtbl.create 0)
+
 (* Store-on-compute (in-place 2-pass path). When true, each PASS 2 output
  * is stored to the output buffer the moment its value node is emitted,
  * with force_last_use set to that same position, instead of being held
