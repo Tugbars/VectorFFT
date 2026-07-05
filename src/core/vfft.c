@@ -918,7 +918,7 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
             vfft_proto_execute_bwd(p, re, im, K);
         return;
     }
-    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8: floor dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65) */
     _ip_arg a[64];
     int nd = 0;
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
@@ -1036,7 +1036,7 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         return;
     }
     /* phase 1: OOP scratch-fill, K-split (lanes) */
-    size_t Sv = ((K / (size_t)T) + 7) & ~(size_t)7;
+    size_t Sv = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8 (floor dropped last K%T lanes when floor(K/T)%8==0) */
     _scr_modeb_arg a1[64];
     int nd = 0;
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
@@ -1195,7 +1195,7 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
         else     vfft_oop_execute_bwd(p, sr, si, dr, di);
         return;
     }
-    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8: floor dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65) */
     _oop_mt_arg_t a[64];
     int nd = 0;
     for (int t = 1; t < T && t <= _stride_pool_size; t++)
@@ -1595,8 +1595,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                      * => pair-swaps beat cycle-following on the SAME calibrated plan (always >= cycle,
                      * big on narrow rows) — a DETERMINISTIC free win: no injection, no race, no generic-
                      * vs-JIT bias (which flipped 256/4 PURE<->PSWAP). Wisdom marker: nat_mode=PSWAP with
-                     * nat_nf=0 (= calibrated plan + pairs, distinct from injected PSWAP's nat_nf>0). */
-                    int *opp = M ? vfft_natorder_mk_pairs(N, M) : NULL;
+                     * nat_nf=0 (= calibrated plan + pairs, distinct from injected PSWAP's nat_nf>0).
+                     * GATE: if a single-stage [N] leaf exists (N<=64), DON'T short-circuit — fall to the
+                     * race so it can also weigh the single-stage (FREE reorder) candidate, which can beat
+                     * calibrated+pair (the 2D 64x16 lesson). The race re-injects the calibrated palindrome
+                     * as a candidate too, so opportunistic's win is not lost — only augmented. */
+                    int has_leaf = (N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]);
+                    int *opp = (M && !has_leaf) ? vfft_natorder_mk_pairs(N, M) : NULL;
                     if (opp)
                     {
                         free(h->nat_list);

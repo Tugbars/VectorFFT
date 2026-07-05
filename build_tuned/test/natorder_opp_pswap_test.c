@@ -102,15 +102,16 @@ int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     SetThreadAffinityMask(GetCurrentThread(), 1);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    CreateDirectoryA("natorder_opp_wis", NULL);   /* persist wisdom so markers can be inspected */
     putenv("VFFT_WISDOM_DIR=natorder_opp_wis");
 
-    /* Cells: 256/4 = the flip cell (palindromic 16·16 -> opportunistic PSWAP);
-     * 128/64 = injected-PSWAP (4·8·4, nat_nf>0); 64/64 = PURE; 512/4 = another palindrome-candidate. */
-    int Ns[] = {256, 128,  64, 512};
-    int Ks[] = {  4,  64,  64,   4};
+    /* Narrow-K N<=64 cells (single-stage [N] leaf exists; narrow K => reorder is a big fraction, where
+     * single-stage FREE can win) + a palindromic control. Marker `5 ns 1 N prof` => single-stage FREE. */
+    int Ns[] = {64, 64, 32, 32, 256};
+    int Ks[] = { 4,  8,  4,  8,   4};
     int all = 1;
-    printf("# opportunistic-PSWAP 1D natural validation (fresh wisdom = MEASURE, then LOOKUP)\n");
-    for (int i = 0; i < 4; i++) {
+    printf("# 1D natural: single-stage/palindrome injection + JIT race (narrow-K N<=64)\n");
+    for (int i = 0; i < 5; i++) {
         printf("cell %d/%d:\n", Ns[i], Ks[i]);
         all &= check(Ns[i], (size_t)Ks[i], "MEASURE");   /* first create: derive + bank verdict */
         all &= check(Ns[i], (size_t)Ks[i], "LOOKUP");    /* second create: reload stored verdict */
