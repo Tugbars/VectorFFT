@@ -32,6 +32,7 @@
  * winner. Keeps the 2D natural verdict deterministic across noisy runs. */
 #define VFFT_FFT2D_NAT_MARGIN 0.95
 #define VFFT_FFT2D_NAT_MAXC   (VFFT_PROTO_MEASURE_DEPLOY_MAX * (VFFT_PROTO_MEASURE_DEPLOY_MAX + 8))
+#define VFFT_FFT2D_NAT_ROUNDS 4      /* interleaved measurement rounds (order-neutralization) */
 
 typedef enum {
     VFFT_FFT2D_C2C_MEASURE = 0,
@@ -98,6 +99,30 @@ static double vfft_fft2d_c2c_bench_min_natural(stride_plan_t *p, int N1, int N2,
     }
     return best;
 }
+
+/* ONE natural-total timed sample (reps x (fwd + dim1 reorder)) — the interleavable unit. The caller sets
+ * p->override_data->nat_col_list to the dim2 tape once (kept set for all this candidate's samples). Used by
+ * the ORDER-NEUTRALIZED interleaved sweep (measure every candidate once per round, average) so per-candidate
+ * thermal noise drops below the 5% margin => the natural tie-break is deterministic even on a loaded host. */
+static double _fft2d_natural_sample(stride_plan_t *p, int N2, double *re, double *im,
+                                    int reps, int *d1_list, int d1_is_pairs, double *d1_tmp) {
+    double t0 = vfft_proto_now_ns();
+    for (int i = 0; i < reps; i++) {
+        stride_execute_fwd(p, re, im);
+        if (d1_list) { if (d1_is_pairs) vfft_natorder_pair_pass(re, im, (size_t)N2, d1_list);
+                       else             vfft_natorder_cycle_pass(re, im, (size_t)N2, d1_list, d1_tmp); }
+    }
+    return (vfft_proto_now_ns() - t0) / (double)reps;
+}
+
+/* One live natural candidate kept alive across the interleaved sweep: its 2D plan (JIT-resolved), dim1 tape
+ * (+is_pairs), dim2 tape (fused via nat_col_list), the (row,col) indices, reorder rank, and averaged nns. */
+typedef struct {
+    stride_plan_t *p;
+    int *d1; int d1p; int *d2;
+    int r, c, rank;
+    double nns;
+} _fft2d_natcand_t;
 
 /* Run the 1D planner for one axis at (N,K) in the chosen mode; copy its deploy
  * pool (or the single global best) into cand[]. Returns count (>=1) or 0. */
@@ -198,11 +223,10 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     double best = 1e18; int best_r = -1, best_c = -1;
     double best_nat = 1e18; int best_nat_r = -1, best_nat_c = -1;   /* natural winner (raw-min, then tie-broken) */
     int built = 0, gated = 0;
-    /* Natural candidates for the margin + tie-break (stored during the sweep, resolved after it): raw
-     * min(nns) flaps on close cells under timing noise; instead pick the fastest-within-5% with the
-     * cheapest reorder class. natc_rank: 0=FREE (no dim1 tape) 1=PSWAP-pairs (palindrome) 2=PURE-cycle. */
-    double natc_nns[VFFT_FFT2D_NAT_MAXC];
-    int    natc_r[VFFT_FFT2D_NAT_MAXC], natc_c[VFFT_FFT2D_NAT_MAXC], natc_rank[VFFT_FFT2D_NAT_MAXC], natc_n = 0;
+    /* Natural candidates are kept ALIVE (plan + tapes, JIT-resolved) through the sweep, then measured
+     * INTERLEAVED over rounds (order-neutralized like the 1D race) so per-candidate thermal noise drops
+     * below the 5% margin => the tie-break is deterministic. rank: 0=FREE 1=PSWAP-pairs 2=PURE-cycle. */
+    _fft2d_natcand_t nc[VFFT_FFT2D_NAT_MAXC]; int ncn = 0;
     for (int r = 0; r < nrow; r++) {
         for (int c = 0; c < ncol; c++) {
             stride_plan_t *plan_row = vfft_proto_plan_create_ex(
@@ -229,64 +253,93 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
             }
             if (rt < 1e-7) {
                 gated++;
-                double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);
+                double ns = vfft_fft2d_c2c_bench_min(p, N1, N2, re, im);  /* scrambled: isolated best-of-N */
                 if (ns < best) { best = ns; best_r = r; best_c = c; }
 
-                /* NATURAL-total score for THIS candidate: build its dim1 (whole-row) + dim2 (within-row)
-                 * reorder tapes, fuse dim2 into the fwd, time (fwd + dim1 pass). A palindromic col chain
-                 * gets a cheap pair-swap dim1 reorder and can win natural even when it loses scrambled. */
-                if (do_natural) {
-                stride_fft2d_data_t *d2d = (stride_fft2d_data_t *)p->override_data;
-                int *d1 = NULL, d1p = 0, *d2 = NULL, d2p = 0;
-                int ok1 = vfft_natorder_2d_build_axis(N1, d2d->plan_col, &d1, &d1p, 1);
-                int ok2 = vfft_natorder_2d_build_axis(N2, d2d->plan_row, &d2, &d2p, 0);
-                if (ok1 && ok2) {
-                    d2d->nat_col_list = d2;                  /* dim2 fused into the fwd (mechanism-2) */
-                    /* JIT-resolve the inner plans so the natural score reflects the DEPLOYED path, not
-                     * generic. The generic-vs-JIT bias over-penalizes extra-stage palindromes (4·8·4)
-                     * and would mis-rank them below the scrambled winner (16·8) — the deployment runs
-                     * JIT, so the calibrator must too for the natural pick to be right. Dev-time compile
-                     * cost only (no-op unless built with VFFT_USE_JIT). */
-                    _fft2d_jit_resolve(d2d);
-                    double nns = vfft_fft2d_c2c_bench_min_natural(p, N1, N2, re, im, d1, d1p, d1tmp);
-                    d2d->nat_col_list = NULL;                /* detach before destroy */
-                    if (natc_n < VFFT_FFT2D_NAT_MAXC) {
-                        natc_nns[natc_n]  = nns;
-                        natc_r[natc_n]    = r;
-                        natc_c[natc_n]    = c;
-                        natc_rank[natc_n] = (!d1) ? 0 : (d1p ? 1 : 2); /* FREE < PSWAP-pairs < PURE-cycle */
-                        natc_n++;
-                        if (nns < best_nat) best_nat = nns;            /* running min = margin reference */
-                    }
+                /* NATURAL: build the dim1 (whole-row) + dim2 (within-row) tapes, fuse dim2, JIT-resolve, and
+                 * KEEP the candidate alive for the interleaved measurement below (do NOT time it here). A
+                 * palindromic col chain gets a cheap pair-swap dim1 reorder and can win natural. */
+                if (do_natural && ncn < VFFT_FFT2D_NAT_MAXC) {
+                    stride_fft2d_data_t *d2d = (stride_fft2d_data_t *)p->override_data;
+                    int *d1 = NULL, d1p = 0, *d2 = NULL, d2p = 0;
+                    int ok1 = vfft_natorder_2d_build_axis(N1, d2d->plan_col, &d1, &d1p, 1);
+                    int ok2 = vfft_natorder_2d_build_axis(N2, d2d->plan_row, &d2, &d2p, 0);
+                    if (ok1 && ok2) {
+                        d2d->nat_col_list = d2;      /* dim2 fused; stays set for this candidate's samples */
+                        _fft2d_jit_resolve(d2d);     /* score the DEPLOYED path (JIT); dev-time cost only */
+                        nc[ncn].p = p; nc[ncn].d1 = d1; nc[ncn].d1p = d1p; nc[ncn].d2 = d2;
+                        nc[ncn].r = r; nc[ncn].c = c; nc[ncn].rank = (!d1) ? 0 : (d1p ? 1 : 2);
+                        nc[ncn].nns = 1e18; ncn++;   /* seeded high for best-of-rounds (min) */
+                        p = NULL;                    /* ownership -> nc[]; freed in the interleave cleanup */
+                    } else { free(d1); free(d2); }
                 }
-                free(d1); free(d2);
-                } /* end if (do_natural) */
             } else if (verbose) {
                 printf("  [2d-c2c-planner]   row#%d x col#%d GATE FAIL rt=%.1e\n", r, c, rt);
             }
-            stride_plan_destroy(p);
+            if (p) stride_plan_destroy(p);           /* destroy only if not kept as a natural candidate */
+        }
+    }
+
+    /* INTERLEAVED natural measurement: warm each candidate, then measure all once per round over ROUNDS
+     * rounds, keeping the MIN per candidate. Interleaving neutralizes thermal DRIFT (each candidate gets a
+     * fair shot each round); the min rejects transient upward SPIKES (bursty background load) — so the
+     * estimate approaches the true compute time and the margin/tie-break become deterministic. */
+    if (ncn > 0) {
+        int reps = _vfft_fft2d_c2c_reps((size_t)N1 * (size_t)N2);
+        for (int k = 0; k < ncn; k++)
+            (void)_fft2d_natural_sample(nc[k].p, N2, re, im, 10, nc[k].d1, nc[k].d1p, d1tmp);   /* warm-up */
+        for (int round = 0; round < VFFT_FFT2D_NAT_ROUNDS; round++)
+            for (int k = 0; k < ncn; k++) {
+                double s = _fft2d_natural_sample(nc[k].p, N2, re, im, reps, nc[k].d1, nc[k].d1p, d1tmp);
+                if (s < nc[k].nns) nc[k].nns = s;   /* best-of-rounds (min) — spike-robust */
+            }
+        for (int k = 0; k < ncn; k++)
+            if (nc[k].nns < best_nat) best_nat = nc[k].nns;
+        /* free the live candidate plans + tapes (metadata r/c/rank/nns kept for the tie-break). */
+        for (int k = 0; k < ncn; k++) {
+            stride_fft2d_data_t *d2d = (stride_fft2d_data_t *)nc[k].p->override_data;
+            d2d->nat_col_list = NULL;                /* detach the borrowed dim2 tape before destroy */
+            stride_plan_destroy(nc[k].p);
+            free(nc[k].d1); free(nc[k].d2);
         }
     }
 
     STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
     STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
 
-    /* NATURAL margin + tie-break: among candidates within 5% of the fastest natural total, prefer the
-     * cheapest reorder class (FREE < PSWAP-pairs < PURE-cycle), then fewer col stages, then raw speed.
-     * Deterministic across noisy runs, and decided ONLY on natural-intrinsic properties (never scrambled). */
-    if (natc_n > 0) {
+    /* NATURAL margin + tie-break: among candidates within 5% of the fastest (averaged) natural total, prefer
+     * the cheapest reorder class (FREE < PSWAP-pairs < PURE-cycle), then fewer col stages, then the
+     * lexicographically-smaller chain — DETERMINISTIC and decided ONLY on natural-intrinsic properties. */
+    if (ncn > 0) {
         double thresh = best_nat / VFFT_FFT2D_NAT_MARGIN;   /* ~5% slower than the min still counts as a tie */
         int win = -1;
-        for (int i = 0; i < natc_n; i++) {
-            if (natc_nns[i] > thresh) continue;             /* decisively slower than the fastest natural */
+        for (int i = 0; i < ncn; i++) {
+            if (nc[i].nns > thresh) continue;               /* decisively slower than the fastest natural */
             if (win < 0) { win = i; continue; }
-            int ri = natc_rank[i], rw = natc_rank[win];
-            int si = col_cand[natc_c[i]].nf, sw = col_cand[natc_c[win]].nf;
-            if (ri < rw || (ri == rw && si < sw) ||
-                (ri == rw && si == sw && natc_nns[i] < natc_nns[win]))
-                win = i;
+            int ri = nc[i].rank, rw = nc[win].rank;
+            int si = col_cand[nc[i].c].nf, sw = col_cand[nc[win].c].nf;
+            int take;
+            if (ri != rw)      take = (ri < rw);            /* cheaper reorder class (FREE<pairs<cycle) */
+            else if (si != sw) take = (si < sw);            /* fewer col (dim1) stages */
+            else {
+                /* structurally equivalent -> break DETERMINISTICALLY by lexicographically-smaller col chain,
+                 * then row chain — NEVER raw speed. So 4·8·4 vs 8·2·8 always resolve the same way (4·8·4). */
+                const int *fi = col_cand[nc[i].c].factors, *fw = col_cand[nc[win].c].factors;
+                int cmp = 0;
+                for (int s = 0; s < si && !cmp; s++) cmp = fi[s] - fw[s];
+                if (!cmp) {
+                    int rri = row_cand[nc[i].r].nf, rrw = row_cand[nc[win].r].nf;
+                    if (rri != rrw) cmp = rri - rrw;
+                    else {
+                        const int *gi = row_cand[nc[i].r].factors, *gw = row_cand[nc[win].r].factors;
+                        for (int s = 0; s < rri && !cmp; s++) cmp = gi[s] - gw[s];
+                    }
+                }
+                take = (cmp < 0);                           /* cmp==0 => identical chain => keep current */
+            }
+            if (take) win = i;
         }
-        best_nat_r = natc_r[win]; best_nat_c = natc_c[win]; best_nat = natc_nns[win];
+        best_nat_r = nc[win].r; best_nat_c = nc[win].c; best_nat = nc[win].nns;
     }
 
     if (best_r < 0) { if (verbose) printf("  [2d-c2c-planner] no candidate passed the gate\n"); return 1e18; }
