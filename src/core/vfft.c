@@ -145,7 +145,9 @@ struct vfft_plan_s
     int nat2d_row_is_pairs; /* 1 = row tape is an involution PAIR list (pair_pass, no dep chain, fast);
                              * 0 = cycle list (cycle_pass). PSWAP when the column chain is palindromic. */
     int *nat2d_col_list;    /* dim2 (N2) cycle tape (fft2d scratch pass); NULL = FREE axis */
-    double *nat2d_tmp;      /* 2*N2 doubles: cycle scratch for the dim1 cycle_pass fallback */
+    double *nat2d_tmp;      /* (pool+1) slots of 2*N2 doubles: per-worker dim1 cycle scratch (MT) */
+    int nat2d_ncyc;         /* dim1 unit count: cycles (cycle tape) or pairs (pair tape) — MT split */
+    int *nat2d_cyc_off;     /* dim1 cycle start offsets (ncyc+1); NULL for a pair tape */
 };
 
 /* Opaque padded-batch handle (see vfft.h). Carries its own Kp stride so a padded
@@ -955,6 +957,9 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
+                 * the i9 pool is well below 64, so this is a no-op there). */
     if (T <= 1 || K < 8)
     {
         if (fn)
@@ -997,37 +1002,41 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
  * cycles/pairs + its own 2K temp slot; disjoint row sets => race-free. natural_order §2e. */
 typedef struct
 {
-    struct vfft_plan_s *h;
-    double *re, *im;
-    int c0, c1, slot, inv;
+    double *re, *im, *tmp;
+    const int *list, *cyc_off;
+    size_t K;
+    int c0, c1, slot, inv, is_pairs;
 } _nat_arg;
-static void _nat_cyc_tramp(void *a)
+static void _nat_range_tramp(void *a)
 {
     _nat_arg *x = (_nat_arg *)a;
-    struct vfft_plan_s *h = x->h;
-    vfft_natorder_cycle_range(x->re, x->im, h->K, h->nat_list, h->nat_cyc_off,
-                              x->c0, x->c1, h->nat_tmp + (size_t)x->slot * 2 * h->K, x->inv);
+    if (x->is_pairs)
+        vfft_natorder_pair_range(x->re, x->im, x->K, x->list, x->c0, x->c1);
+    else
+        vfft_natorder_cycle_range(x->re, x->im, x->K, x->list, x->cyc_off,
+                                  x->c0, x->c1, x->tmp + (size_t)x->slot * 2 * x->K, x->inv);
 }
-static void _nat_pair_tramp(void *a)
+/* MT split of a whole-row reorder (N rows x K lanes) by unit COUNT (cycles or pairs). Each worker owns a
+ * disjoint unit range + its OWN 2K temp slot (tmp = (pool+1) slots) => disjoint row sets, race-free.
+ * SHARED by the 1D natorder pass and the 2D dim1 (whole-row) pass — same shape — so the 2D dim1 reorder
+ * is no longer single-threaded (it was the whole ~1.2-1.6x tax on one core at 256^2/512^2). inv: 1 =
+ * inverse cycle (backward), 0 = forward; ignored for a self-inverse pair tape. */
+static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
+                                 const int *list, const int *cyc_off, int nunits,
+                                 int is_pairs, double *tmp, int inv)
 {
-    _nat_arg *x = (_nat_arg *)a;
-    vfft_natorder_pair_range(x->re, x->im, x->h->K, x->h->nat_list, x->c0, x->c1);
-}
-static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
-{
-    int inv = (dir == 0);
-    int nunits = h->nat_ncyc; /* cycles (PURE) or pairs (PSWAP) */
-    int is_pswap = (h->nat_mode == VFFT_NAT_PSWAP);
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
-    if (T <= 1 || nunits < T || (size_t)h->N * h->K < 8192)
+    if (T > 64)
+        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
+                 * the i9 pool is well below 64, so this is a no-op there). */
+    if (T <= 1 || nunits < T || N * K < 8192)
     {
-        if (is_pswap)
-            vfft_natorder_pair_range(re, im, h->K, h->nat_list, 0, nunits);
+        if (is_pairs)
+            vfft_natorder_pair_range(re, im, K, list, 0, nunits);
         else
-            vfft_natorder_cycle_range(re, im, h->K, h->nat_list, h->nat_cyc_off,
-                                      0, nunits, h->nat_tmp, inv);
+            vfft_natorder_cycle_range(re, im, K, list, cyc_off, 0, nunits, tmp, inv);
         return;
     }
     int per = (nunits + T - 1) / T; /* count-balanced (pairs exact; cycles approx) */
@@ -1040,20 +1049,23 @@ static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
         int c1 = c + per;
         if (c1 > nunits)
             c1 = nunits;
-        a[nd] = (_nat_arg){h, re, im, c, c1, nd, inv};
-        _stride_pool_dispatch(&_stride_workers[nd],
-                              is_pswap ? _nat_pair_tramp : _nat_cyc_tramp, &a[nd]);
+        a[nd] = (_nat_arg){re, im, tmp, list, cyc_off, K, c, c1, nd, inv, is_pairs};
+        _stride_pool_dispatch(&_stride_workers[nd], _nat_range_tramp, &a[nd]);
         nd++;
         c = c1;
     }
     int m1 = per < nunits ? per : nunits; /* main thread does [0,per) */
-    if (is_pswap)
-        vfft_natorder_pair_range(re, im, h->K, h->nat_list, 0, m1);
+    if (is_pairs)
+        vfft_natorder_pair_range(re, im, K, list, 0, m1);
     else
-        vfft_natorder_cycle_range(re, im, h->K, h->nat_list, h->nat_cyc_off,
-                                  0, m1, h->nat_tmp + (size_t)nd * 2 * h->K, inv);
+        vfft_natorder_cycle_range(re, im, K, list, cyc_off, 0, m1, tmp + (size_t)nd * 2 * K, inv);
     if (nd)
         _stride_pool_wait_all();
+}
+static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
+{
+    _natorder_reorder_mt(re, im, (size_t)h->N, h->K, h->nat_list, h->nat_cyc_off,
+                         h->nat_ncyc, h->nat_mode == VFFT_NAT_PSWAP, h->nat_tmp, dir == 0);
 }
 
 /* ── SCR forward, MT. Two dependent phases with a barrier between:
@@ -1092,6 +1104,9 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
+                 * the i9 pool is well below 64, so this is a no-op there). */
     if (T <= 1 || K < 8 || (size_t)s->N * K < 8192)
     {
         natorder_scr_fwd(s, ur, ui, K);
@@ -1160,14 +1175,11 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
 {
     if (!h->nat2d_row_list)
         return; /* dim1 FREE (single-radix / prime column axis) */
-    if (h->nat2d_row_is_pairs)
-        /* PSWAP: independent whole-row swaps, no cycle-following dep chain (self-inverse => the same
-         * call for fwd and bwd). The latency win for the low-N dim1 reorder. */
-        vfft_natorder_pair_pass(re, im, (size_t)h->N2, h->nat2d_row_list);
-    else if (!inv)
-        vfft_natorder_cycle_pass(re, im, (size_t)h->N2, h->nat2d_row_list, h->nat2d_tmp);
-    else
-        vfft_natorder_cycle_pass_inv(re, im, (size_t)h->N2, h->nat2d_row_list, h->nat2d_tmp);
+    /* MT whole-row (N1 rows x N2 lanes) reorder via the SHARED count-split — same as the 1D pass, so the
+     * dim1 tax now scales with the pool instead of running on one core while the 2D FFT is MT. A pair tape
+     * is self-inverse (inv ignored); a cycle tape uses the inverse cycle on backward. Caller pins core 0. */
+    _natorder_reorder_mt(re, im, (size_t)h->N, (size_t)h->N2, h->nat2d_row_list,
+                         h->nat2d_cyc_off, h->nat2d_ncyc, h->nat2d_row_is_pairs, h->nat2d_tmp, inv);
 }
 
 /* ── OOP c2c multithreading (pool K-split). A lane-slice [k0,k0+S) is executed
@@ -1229,6 +1241,9 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
+                 * the i9 pool is well below 64, so this is a no-op there). */
     if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2)
     {
         if (dir)
@@ -1347,7 +1362,20 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 vfft_destroy(h);
                 return NULL;
             }
-            h->nat2d_tmp = (double *)malloc((size_t)2 * N2 * sizeof(double));
+            /* dim1 MT bookkeeping: unit count + cycle start-offsets (for the per-worker range split),
+             * mirroring the 1D natorder setup. NULL row tape = dim1 FREE (no reorder, no MT). */
+            if (h->nat2d_row_list)
+            {
+                if (h->nat2d_row_is_pairs)
+                    h->nat2d_ncyc = vfft_natorder_pair_count(h->nat2d_row_list);
+                else
+                {
+                    h->nat2d_cyc_off = vfft_natorder_cycle_offsets(h->nat2d_row_list, &h->nat2d_ncyc);
+                    if (!h->nat2d_cyc_off) { vfft_destroy(h); return NULL; }
+                }
+            }
+            /* (pool+1) slots of 2*N2 doubles: one dim1 cycle-scratch slot per worker (+ main). */
+            h->nat2d_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * N2 * sizeof(double));
             if (!h->nat2d_tmp)
             {
                 vfft_destroy(h);
@@ -1555,6 +1583,28 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         stride_plan_t *p = vfft_proto_auto_plan_dispatch(N, K, reg, &W->c2c);
         if (!p)
             return NULL;
+        /* C1: order=NATURAL reads the (N,K) wisdom entry for the base chain (perm detect) + a base to
+         * stamp its verdict onto. If calibration was skipped/failed but auto_plan_dispatch still built a
+         * (greedy) MULTI-STAGE plan, no entry exists and the natural block below would hard-fail (return
+         * NULL) where order=DEFAULT succeeds. Bank one FROM THE BUILT PLAN so an entry is always present
+         * (its chain matches p exactly => a future lookup rebuilds the same plan). Single-stage / prime
+         * overrides are FREE (no entry needed). overwrite=0 => an existing calibrated entry is preserved. */
+        if (cfg->order == VFFT_ORDER_NATURAL && p->num_stages > 1 &&
+            !vfft_proto_wisdom_lookup(&W->c2c, N, K))
+        {
+            vfft_proto_wisdom_entry_t ne;
+            memset(&ne, 0, sizeof ne);
+            ne.N = N;
+            ne.K = K;
+            ne.nf = p->num_stages;
+            for (int s = 0; s < p->num_stages && s < STRIDE_MAX_STAGES; s++)
+            {
+                ne.factors[s] = p->factors[s];
+                ne.variants[s] = p->variants[s];
+            }
+            ne.use_dif_forward = p->use_dif_forward;
+            vfft_proto_wisdom_add(&W->c2c, &ne, 0);
+        }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -2325,6 +2375,7 @@ void vfft_destroy(vfft_plan h)
     free(h->nat2d_row_list);
     free(h->nat2d_col_list);
     free(h->nat2d_tmp);
+    free(h->nat2d_cyc_off);
     free(h);
 }
 
