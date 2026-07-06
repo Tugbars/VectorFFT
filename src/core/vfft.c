@@ -1130,7 +1130,9 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
     }
     {
         size_t s0 = Sv < K ? Sv : K;
-        vfft_proto_execute_fwd_oop(&s->sub, ur, ui, s->scr_re, s->scr_im, s0);
+        vfft_proto_execute_fwd_oop_jit(&s->sub, ur, ui, s->scr_re, s->scr_im, s0,
+                                       s->sub_jit_fwd); /* B6: main slice on JIT too (was generic ->
+                                       straggler at the phase-1 barrier); matches workers + ST path. */
     }
     if (nd)
         _stride_pool_wait_all(); /* BARRIER: scratch complete */
