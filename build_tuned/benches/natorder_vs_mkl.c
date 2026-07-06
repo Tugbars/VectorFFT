@@ -181,14 +181,18 @@ int main(int argc, char **argv)
     int cool_ms = argc > 6 ? atoi(argv[6]) : 250;
     int flip = argc > 7 ? atoi(argv[7]) : 0;
     int core = argc > 8 ? atoi(argv[8]) : 2;
-
-    if (core >= 0) SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << core);
+    int threads = argc > 9 ? atoi(argv[9]) : 1;   /* T: c.nthreads = MKL threads. MT wins live at K>=32. */
+    /* MT: our K-split pool pins workers to cores 1..T-1 and the CALLER runs slab 0 -> pin it to core 0
+     * (the c2c_multithreading_dag gotcha; mirrors bench_1d_vs_mkl's mt->core-0 default). MKL spawns its
+     * own threads that spread independently, so the caller pin does NOT confine MKL-T. ST keeps the P-core. */
+    int pin_core = (threads > 1) ? 0 : core;
+    if (pin_core >= 0) SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << pin_core);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
     char envbuf[512];
     snprintf(envbuf, sizeof envbuf, "VFFT_WISDOM_DIR=%s", wisdir);
     putenv(envbuf);
 #ifdef VFFT_HAS_MKL
-    mkl_set_num_threads(1);
+    mkl_set_num_threads(threads);
 #endif
 
     size_t total = (size_t)N * K;
@@ -199,7 +203,7 @@ int main(int argc, char **argv)
     vfft_config_t c;
     memset(&c, 0, sizeof c);
     c.transform = VFFT_C2C; c.placement = VFFT_INPLACE; c.rigor = VFFT_MEASURE;
-    c.dims = 1; c.n[0] = N; c.howmany = K; c.nthreads = 1; c.order = VFFT_ORDER_NATURAL;
+    c.dims = 1; c.n[0] = N; c.howmany = K; c.nthreads = threads; c.order = VFFT_ORDER_NATURAL;
     vfft_plan h = vfft_create(&c);
     if (!h) { printf("N=%d K=%zu NULL (create failed)\n", N, (size_t)K); return 2; }
 
@@ -229,8 +233,8 @@ int main(int argc, char **argv)
     double ratio = (mns > 0 && vns > 0) ? mns / vns : 0;
     double gfl = vns > 0 ? 5.0 * N * (log(N) / log(2.0)) * K / vns : 0;
 
-    printf("N=%-6d K=%-4zu  vfft=%.0f ns  mkl=%.0f ns  ratio=%.2fx  gflops=%.1f  fwd=%.1e rt=%.1e %s\n",
-           N, (size_t)K, vns, mns, ratio, gfl, eF, eR, bad ? "<FAIL>" : "ok");
+    printf("N=%-6d K=%-4zu T=%d  vfft=%.0f ns  mkl=%.0f ns  ratio=%.2fx  gflops=%.1f  fwd=%.1e rt=%.1e %s\n",
+           N, (size_t)K, threads, vns, mns, ratio, gfl, eF, eR, bad ? "<FAIL>" : "ok");
     if (csv) {
         FILE *f = fopen(csv, "a");
         if (f) { fprintf(f, "%d,%zu,%.0f,%.0f,%.4f,%.4g,%.1e,%.1e\n",
