@@ -982,37 +982,49 @@ static void _ip_tramp(void *a)
  * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
  * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
  * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
-/* PARTIAL-BATCH self-check: does the plan's codelet honor a partial-lane count `me`? Each lane is an
- * INDEPENDENT transform, so a partial run fn(me=K/2) must produce the SAME output on lanes [0,K/2) as the
- * whole run fn(me=K). It doesn't for the radix-8 LOG3 last-stage codelet: its twiddle blocking bakes the
- * full K, so a partial batch computes WRONG values for the lanes it processes (not a lane overrun — the
- * adjacent lanes are untouched). Under _c2c_mt each K-split slab is a partial batch -> every slab is wrong.
- * Flag such plans and run them WHOLE-BATCH under MT (the reorder pass still threads). Lock-free. Catches
- * this DETERMINISTIC bug; the separate natural-MT-first shared-scratch RACE (input-dependent) is NOT caught
- * here. Returns 1 = safe (K-split OK), 0 = unsafe (whole-batch). */
+/* SLAB-SPLIT self-check: does the plan reproduce the WHOLE-batch result when run as _c2c_mt's per-slab
+ * partial batches? Each lane is an INDEPENDENT transform, so splitting [0,K) into slabs [k0,k0+me) and
+ * running fn(me) on each MUST equal fn(K) on the whole. Two codelet families break this, both structural
+ * (NOT concurrency — a SEQUENTIAL replay reproduces them; deterministic given the input):
+ *   (a) radix-8 LOG3 last-stage — its twiddle blocking bakes the full K, so any me<K is wrong (visible on
+ *       ANY input, incl. symmetric);
+ *   (b) DIF chains (use_dif=1) — wrong for a partial batch on ASYMMETRIC input (a symmetric/periodic probe
+ *       like a low-bit index hash MASKS it — that is exactly why an earlier det-input check passed 4·32 DIF
+ *       while rand failed 1.2). So the probe MUST be well-mixed (xorshift, non-periodic).
+ * We replay EVERY slab size _c2c_mt can pick (S = 8,16,..,K — S = ceil(K/T) rounded to 8 for some T, its
+ * slab boundaries k0 = t*S exactly) and compare to the whole. Unsafe if ANY differs -> _c2c_mt runs the
+ * plan WHOLE-batch under MT (the reorder pass still threads). Lock-free, one-time at create. Returns
+ * 1 = safe (K-split OK), 0 = unsafe (whole-batch). */
 static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
 {
     size_t K = p->K;
     if (K < 16) return 1;                       /* _c2c_mt runs ST for K<8; K<16 never splits into >=2 slabs of 8 */
-    size_t h = K / 2, tot = (size_t)p->N * K;
+    size_t tot = (size_t)p->N * K;
+    double *xr = (double *)malloc(tot * 8), *xi = (double *)malloc(tot * 8);
     double *ar = (double *)malloc(tot * 8), *ai = (double *)malloc(tot * 8);
     double *br = (double *)malloc(tot * 8), *bi = (double *)malloc(tot * 8);
-    if (!ar || !ai || !br || !bi) { free(ar); free(ai); free(br); free(bi); return 1; }
+    if (!xr || !xi || !ar || !ai || !br || !bi) { free(xr); free(xi); free(ar); free(ai); free(br); free(bi); return 1; }
+    unsigned long long st = 0x243F6A8885A308D3ULL;   /* xorshift64: well-mixed, non-periodic -> exposes (b) */
     for (size_t i = 0; i < tot; i++) {
-        double v = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
-        ar[i] = br[i] = v; ai[i] = bi[i] = -v;
+        st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+        xr[i] = (double)(st >> 40) / 16777216.0 - 0.5;
+        st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+        xi[i] = (double)(st >> 40) / 16777216.0 - 0.5;
     }
-    if (fn) { fn(p, ar, ai, K, p->K, 0); fn(p, br, bi, h, p->K, 0); } /* whole vs partial-[0,h) */
-    else    { vfft_proto_execute_fwd(p, ar, ai, K); vfft_proto_execute_fwd(p, br, bi, h); }
-    double m = 0;                               /* the partial run's [0,h) lanes must equal the whole run's */
-    for (size_t n = 0; n < (size_t)p->N; n++)
-        for (size_t j = 0; j < h; j++) {
-            size_t idx = n * K + j;
-            double e = fabs(ar[idx] - br[idx]) + fabs(ai[idx] - bi[idx]);
-            if (e > m) m = e;
+    memcpy(ar, xr, tot * 8); memcpy(ai, xi, tot * 8);
+    if (fn) fn(p, ar, ai, K, p->K, 0); else vfft_proto_execute_fwd(p, ar, ai, K);   /* whole-batch reference */
+    int unsafe = 0;
+    for (size_t S = 8; S <= K && !unsafe; S += 8) {      /* every slab size _c2c_mt can choose */
+        memcpy(br, xr, tot * 8); memcpy(bi, xi, tot * 8);
+        for (size_t k0 = 0; k0 < K; k0 += S) {          /* _c2c_mt's exact slab boundaries, replayed sequentially */
+            size_t me = (k0 + S > K) ? K - k0 : S;
+            if (fn) fn(p, br + k0, bi + k0, me, p->K, 0); else vfft_proto_execute_fwd(p, br + k0, bi + k0, me);
         }
-    free(ar); free(ai); free(br); free(bi);
-    return m < 1e-9;
+        for (size_t i = 0; i < tot; i++)
+            if (fabs(ar[i] - br[i]) + fabs(ai[i] - bi[i]) > 1e-9) { unsafe = 1; break; }
+    }
+    free(xr); free(xi); free(ar); free(ai); free(br); free(bi);
+    return !unsafe;
 }
 static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
                     vfft_proto_exec_fn fn, size_t me)
