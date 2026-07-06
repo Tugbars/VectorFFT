@@ -47,9 +47,12 @@ int main(int argc, char **argv) {
            N1, N2, patient ? "PATIENT" : "MEASURE", core);
 
     vfft_fft2d_c2c_wisdom_entry_t e;
+    vfft_fft2d_c2c_nat_entry_t ne; ne.row_nf = 0;   /* self-contained natural record (row_nf=0 = none) */
+    double nat_ns = 1e18;
     double ns = vfft_fft2d_c2c_plan_measure(
         N1, N2, &reg,
-        patient ? VFFT_FFT2D_C2C_PATIENT : VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, verbose);
+        patient ? VFFT_FFT2D_C2C_PATIENT : VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, verbose,
+        &ne, &nat_ns);
     if (ns >= 1e17) {
         fprintf(stderr, "2D C2C MEASURE failed for %dx%d\n", N1, N2);
         return 1;
@@ -58,6 +61,8 @@ int main(int argc, char **argv) {
     vfft_fft2d_c2c_wisdom_t w;
     vfft_fft2d_c2c_wisdom_load(&w, wpath);
     vfft_fft2d_c2c_wisdom_add(&w, &e, /*overwrite=*/1);
+    if (ne.row_nf > 0)                                 /* bank the @nat2d natural record too */
+        vfft_fft2d_c2c_nat_add(&w, &ne, /*overwrite=*/1);
     if (vfft_fft2d_c2c_wisdom_save(&w, wpath) != 0)
         fprintf(stderr, "warn: could not save wisdom to %s\n", wpath);
     vfft_fft2d_c2c_wisdom_free(&w);

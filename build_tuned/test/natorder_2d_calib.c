@@ -27,21 +27,25 @@ static void chain(const int *f, const int *v, int nf, char *out) {
 
 static void one(int N1, int N2, vfft_proto_registry_t *reg, vfft_fft2d_c2c_wisdom_t *w) {
     vfft_fft2d_c2c_wisdom_entry_t e;
-    double ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, /*verbose=*/1);
+    vfft_fft2d_c2c_nat_entry_t ne; ne.row_nf = 0;   /* self-contained natural record */
+    double nat_ns = 1e18;
+    double ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, VFFT_FFT2D_C2C_MEASURE, &e, /*do_natural=*/1, /*verbose=*/1,
+                                            &ne, &nat_ns);
     if (ns >= 1e17) { printf("%dx%d: MEASURE failed\n", N1, N2); return; }
     char sr[128], sc[128], nr[128], nc[128];
     chain(e.row_factors, e.row_variants, e.row_nf, sr);
     chain(e.col_factors, e.col_variants, e.col_nf, sc);
     printf("  %dx%d  B=%d\n", N1, N2, e.B);
     printf("    SCRAMBLED %.0f ns : row[%s] col[%s]\n", e.best_ns, sr, sc);
-    if (e.nat_present) {
-        chain(e.nat_row_factors, e.nat_row_variants, e.nat_row_nf, nr);
-        chain(e.nat_col_factors, e.nat_col_variants, e.nat_col_nf, nc);
-        int diff = (e.nat_col_nf != e.col_nf) || memcmp(e.nat_col_factors, e.col_factors, e.col_nf * sizeof(int))
-                || (e.nat_row_nf != e.row_nf) || memcmp(e.nat_row_factors, e.row_factors, e.row_nf * sizeof(int));
-        printf("    NATURAL   %.0f ns : row[%s] col[%s]   %s\n", e.nat_ns, nr, nc, diff ? "<<< DIFFERS" : "(same chain)");
+    if (ne.row_nf > 0) {
+        chain(ne.row_factors, ne.row_variants, ne.row_nf, nr);
+        chain(ne.col_factors, ne.col_variants, ne.col_nf, nc);
+        int diff = (ne.col_nf != e.col_nf) || memcmp(ne.col_factors, e.col_factors, e.col_nf * sizeof(int))
+                || (ne.row_nf != e.row_nf) || memcmp(ne.row_factors, e.row_factors, e.row_nf * sizeof(int));
+        printf("    NATURAL   %.0f ns : row[%s] col[%s]   %s\n", ne.nat_ns, nr, nc, diff ? "<<< DIFFERS" : "(same chain)");
     }
     vfft_fft2d_c2c_wisdom_add(w, &e, 1);
+    if (ne.row_nf > 0) vfft_fft2d_c2c_nat_add(w, &ne, 1);
 }
 
 int main(int argc, char **argv) {
