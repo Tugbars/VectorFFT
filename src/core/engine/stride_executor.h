@@ -579,13 +579,45 @@ static inline void _stride_execute_fwd_dif_slice(const stride_plan_t *plan,
                 continue;
             }
 
-            /* DIF: codelet does butterfly then post-mul legs 1..R-1 by the
-             * full per-leg twiddle. cf0 is identically 1 in DIF (every term
-             * in the cross-stage exponent contains j, so leg 0 has W^0 = 1
-             * unconditionally). No leg-0 post-mul is needed. */
-            st->t1_fwd(base_re, base_im,
-                       st->grp_tw_re[g], st->grp_tw_im[g],
-                       st->stride, slice_K);
+            /* DIF: codelet does butterfly then post-mul legs 1..R-1 by the per-leg
+             * twiddle. cf0 is identically 1 in DIF (every term in the cross-stage
+             * exponent contains j, so leg 0 has W^0 = 1) so no leg-0 post-mul.
+             *
+             * K-SPLIT SAFETY: the DIF per-leg twiddle is CONSTANT across lanes
+             * (grp_tw rows are broadcasts of tw_scalar[j-1]; see
+             * plan_compute_twiddles_dif_c). The codelet indexes W[(j-1)*me + m],
+             * i.e. it strides the twiddle rows by the batch count `me`. Passing the
+             * baked grp_tw (rows strided at full_K) with me=slice_K<full_K would make
+             * leg j>=2 read the WRONG row (the bug that broke DIF under _c2c_mt K-split
+             * on asymmetric input; symmetric input masked it). Mirror the DIT scalar
+             * path: regenerate a this_K-strided broadcast buffer per BLOCK_K block so
+             * the codelet's row stride matches the buffer. Whole-batch (slice_K==full_K,
+             * K<=BLOCK_K) collapses to one block => bit-identical to the old path. */
+#ifndef STRIDE_TW_BLOCK_K
+#define STRIDE_TW_BLOCK_K 64
+#endif
+            {
+                const int Rm1 = st->radix - 1;
+                const double *stw_r = st->tw_scalar_re[g];
+                const double *stw_i = st->tw_scalar_im[g];
+                double tw_buf_re[63 * STRIDE_TW_BLOCK_K];
+                double tw_buf_im[63 * STRIDE_TW_BLOCK_K];
+                for (size_t kb = 0; kb < slice_K; kb += STRIDE_TW_BLOCK_K)
+                {
+                    size_t this_K = slice_K - kb;
+                    if (this_K > STRIDE_TW_BLOCK_K)
+                        this_K = STRIDE_TW_BLOCK_K;
+                    for (int j = 0; j < Rm1; j++)
+                    {
+                        size_t base = (size_t)j * this_K;
+                        _stride_broadcast_2(tw_buf_re + base, tw_buf_im + base,
+                                            this_K, stw_r[j], stw_i[j]);
+                    }
+                    st->t1_fwd(base_re + kb, base_im + kb,
+                               tw_buf_re, tw_buf_im,
+                               st->stride, this_K);
+                }
+            }
         }
     }
 }
