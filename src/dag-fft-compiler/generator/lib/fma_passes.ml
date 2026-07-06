@@ -14,9 +14,12 @@
  *   2. gcc's own fusion was the original problem, not the solution.
  *      On gcc-11/13, contracting mul+add at -O3 made gcc re-schedule
  *      and re-color LARGE blocks (the R=32 t1 / R=64 cells — its
- *      allocator degrades with block size), and on codelets whose FMA
- *      ports already run ~60% saturated (this host) that churn landed
- *      as extra reg-to-reg vmov traffic. The M-project fought the
+ *      allocator degrades with block size), and the churn landed as
+ *      extra register-allocator traffic. That traffic is the binding
+ *      cost: measurements across current x86 cores show these
+ *      codelets SPILL-BOUND on 16-register files with FMA-port
+ *      headroom to spare, so added moves and spills are paid in full
+ *      while marginal multiply issue is not. The M-project fought the
  *      churn with pins and fences; IR-level lifting SUPERSEDED that
  *      approach: when every profitable fusion is already an NK_Fma
  *      atom, gcc has no mul+add left to contract, so nothing the
