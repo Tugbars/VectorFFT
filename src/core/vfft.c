@@ -871,7 +871,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
             double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
             int scr_won = (cal_ns < fb_ns);
             if (scr_won)
-                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, 1); /* scrambled: calibrated beats fallback */
+                /* REGIME SEPARATION (mirror the 1D scr_recalib guard): a NATURAL create may FILL a cold
+                 * scrambled cell (overwrite=0 appends when absent) but must NEVER clobber a warm one — else a
+                 * read-only-intent natural create silently degrades the user's calibrated scrambled 2D wisdom
+                 * (e.g. downgrades a PATIENT entry to a MEASURE one). DEFAULT keeps overwrite=1. */
+                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, nat ? 0 : 1);
             if (nat && cal_nat.row_nf > 0)
                 vfft_fft2d_c2c_nat_add(&W->fft2d_c2c, &cal_nat, 1); /* natural: J_nat sweep winner, decoupled */
             if (nat)
@@ -1747,7 +1751,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
 #endif
                     }
                     else
-                        mode = VFFT_NAT_PURE_CYCLE; /* rebuild failed -> PURE on the original p (honorable) */
+                    {
+                        /* rebuild failed (OOM) -> honorable PURE on the ORIGINAL scrambled p. Reset the chain
+                         * to p's OWN so the perm probe below detects on the plan actually deployed — otherwise
+                         * detect runs the banked (possibly injected/leaf) chain dfac against p's spectrum,
+                         * matches none, returns NULL, and the create hard-fails instead of degrading. */
+                        mode = VFFT_NAT_PURE_CYCLE;
+                        dnf = p->num_stages; ddif = p->use_dif_forward;
+                        for (int s = 0; s < dnf && s < STRIDE_MAX_STAGES; s++) { dfac[s] = p->factors[s]; dvar[s] = p->variants[s]; }
+                    }
                 }
 
                 /* Perm + reorder tape from the deployed plan p (SCR already holds its cycle tape = scyc). */

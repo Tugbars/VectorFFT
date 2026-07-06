@@ -1,18 +1,191 @@
-(* fma_passes.ml — the FMA rewrite family.
+(* fma_passes.ml — the FMA rewrite family: how mul-and-add pairs become
+ *                  fused multiply-adds at the IR level, and why the IR
+ *                  owns that decision instead of the C compiler.
  *
- * fma_lift (single-use Add/Sub-of-Mul fusion), factor_const_muls,
- * multi_use_fma_lift, fma_addend_factor and the 2-FMA-chain
- * flattener. All frozen-tag aware: passes that rewrite operand
- * structure take the spill-marker frozen set and return a tag remap
- * (consumed by the pipeline's marker remap chain).
+ * === WHY THE IR OWNS FUSION ===
+ *   Three facts force fusion to be decided here, once, before any C
+ *   compiler sees the code:
+ *   1. Compilers disagree. clang-18 contracted essentially zero
+ *      Add-of-Mul patterns on these codelets — 160 asm FMAs vs gcc's
+ *      286 on the same source, +7.4% cycles and 2.5x the RA spills
+ *      (doc 54, container-era measurement; the recorded instance of
+ *      cross-compiler variance). Source-level FMA atoms make fusion
+ *      a property of the code, not of whoever compiles it.
+ *   2. gcc's own fusion was the original problem, not the solution.
+ *      On gcc-11/13, contracting mul+add at -O3 made gcc re-schedule
+ *      and re-color LARGE blocks (the R=32 t1 / R=64 cells — its
+ *      allocator degrades with block size), and on codelets whose FMA
+ *      ports already run ~60% saturated (this host) that churn landed
+ *      as extra reg-to-reg vmov traffic. The M-project fought the
+ *      churn with pins and fences; IR-level lifting SUPERSEDED that
+ *      approach: when every profitable fusion is already an NK_Fma
+ *      atom, gcc has no mul+add left to contract, so nothing the
+ *      allocator does can un-decide fusion. Verified on gcc 15.2
+ *      (fence/pin grid, R=8 and R=32): the FENCE kills contraction
+ *      outright — gcc's 8 auto-FMAs at unfused R=8 drop to 0 and
+ *      R=32 drops 116 to 44 with muls resurfacing 14 to 50 — while
+ *      PIN mode retains most contraction only because emit_render's
+ *      selective unpin deliberately re-opens it; FUSED source emits
+ *      its full FMA count (8/8, 140/140) under every barrier. The
+ *      residual operand-form moves are rename-eliminated (VTune
+ *      2026-06-15, recorded in regalloc.ml, which tells this same
+ *      history from the allocator side). The op-count reductions
+ *      were discovered second, and grew that single lift into the
+ *      recursive cascade below; for what gcc 15.2 does to the churn
+ *      question TODAY, see the measured-effect note further down —
+ *      the sign has inverted, which is its own argument for deciding
+ *      fusion here rather than inheriting whatever this year's
+ *      compiler prefers.
+ *   3. Where we deliberately DON'T lift (shared Muls a lift would
+ *      duplicate), gcc's -ffp-contract=fast still contracts at the asm
+ *      level, and leaving those as Mul-plus-Add preserves gcc's
+ *      freedom to pick the fmadd variant that suits its allocation.
+ *      Verified on gcc 15.2 by compiling the fully UNFUSED IR: gcc
+ *      reconstructs every single-use fusion on its own (R=13: 0
+ *      source FMAs compile to 132 asm FMAs — the cascade's exact
+ *      count). What no contraction can do is the ALGEBRA: at R=32
+ *      gcc reaches only 116 of the cascade's 140 (8 extra muls, 20
+ *      extra addsubs survive), because K-factoring, multi-use
+ *      absorption and the Cat-A/B refactors are rewrites of the
+ *      expression, not fusions of adjacent ops.
+ *   The division of labor (doc 59's three-layer architecture): IR
+ *   passes own profitable fusion; selective pinning in emit_render.ml
+ *   re-opens gcc auto-fusion where pins would block it; the frozen-tag
+ *   and remap machinery below keeps spilled values addressable through
+ *   all of it.
  *
- * The cascade discipline: drivers run factor_const_muls, then
- * alternate fma_addend_factor / multi_use_fma_lift a few rounds, then
- * flatten_fma_mul_addend last. Every pass must (a) leave frozen tags
- * untouched and (b) report where each rewritten tag moved, because
- * spill markers reference exact tags and the emitter walks only the
- * reachable-from-assignments subset — a missed remap means PASS 2
- * reloads a dead node. See pipeline.ml for the canonical ordering.
+ * === THE ATOM ===
+ *   NK_Fma(a, b, c, neg_mul, neg_add) computes
+ *     (neg_mul ? -(a·b) : a·b) + (neg_add ? -c : c)
+ *   — exactly the four hardware forms vfmadd / vfmsub / vfnmadd /
+ *   vfnmsub, one instruction each. Every other pass treats Fma as
+ *   opaque: nothing factors into it, shares through it, or reassociates
+ *   across it. Ir.mk_sub_binary also mints one Fma form at
+ *   CONSTRUCTION time — the unconditional Sub(Neg(Mul), c) -> fnmsub
+ *   peephole (doc 30: replaces xor-mask negations gcc provably fails
+ *   to fuse; 6 stray vxorpd at R=25, 8-26pp on the K=256 cache cliff).
+ *   That peephole is why a few FMAs survive VFFT_DISABLE_FMA_LIFT=1
+ *   (measured: 4 at R=16, 14 at R=25, 12 at R=32 — n1 and t1 alike).
+ *
+ * === THE FIVE PASSES (cascade order) ===
+ *   1. fma_lift — Add/Sub with a SINGLE-USE Mul (or Neg-of-Mul, both
+ *      layers single-use) operand -> one Fma. Eight sign patterns, all
+ *      op-count-preserving: 1 mul + 1 add -> 1 fma, never duplicating.
+ *      The single_use gate IS the lesson of doc 28/56: unconditional
+ *      lifting duplicated shared Muls (717 -> 910 instructions at R=32
+ *      t1, the misdiagnosed "33-48% FMA regression"); with single_use
+ *      the same cell WINS +5.2%, +26.8% combined with M-project.
+ *   2. factor_const_muls — Add(Mul(K,X), Mul(K,Y)) -> Mul(K, Add(X,Y))
+ *      and the Sub twin, K a hash-consed Const (tag identity, not
+ *      value). This is FFTW parity: genfft BUILDS its ASTs factored
+ *      (sum first, one K-multiply after); const_cmul builds ours the
+ *      other way for the |cr|=|ci| twiddle family, and fma_lift alone
+ *      cannot touch the resulting multi-use K-muls. Fires only when
+ *      EVERY use of BOTH Muls is a same-K factor pattern, so the
+ *      originals die (DCE at emit). Fixed-point rounds (cap 20) with
+ *      use-counts recomputed per round, because each round can mint
+ *      higher-level factor patterns.
+ *   3. multi_use_fma_lift — a Mul with N > 1 uses, ALL of them direct
+ *      Add/Sub operands, is absorbed into each consumer as its own
+ *      Fma. Accounting: Mul dead, N adds become N fmas, delta = -1 op;
+ *      free in throughput because the mul happens inside each FMA's
+ *      pipe anyway. One poisoned use (inside Mul, Cmul, either Fma
+ *      slot, a root assignment, or any Neg wrapper) disqualifies ALL
+ *      uses. This is the pass that eats step 2's Mul(K, sum).
+ *   4. fma_addend_factor — Fma(K, X, Mul(K, Y)) with the SAME K in mul
+ *      slot and addend (Cat-A residue; Neg-wrapped addend = type B,
+ *      same fold with neg_add flipped) -> Mul(K, X plus-or-minus Y) by
+ *      the four sign identities. These are exactly the Muls step 3
+ *      rejected for living in an Fma addend. The output is a fresh
+ *      multi-use Mul — which is why the driver interleaves this pass
+ *      with step 3 three times over. Closes R=8/R=16 to exact FFTW op
+ *      parity.
+ *   5. flatten_fma_mul_addend — the Cat-B finisher (docs 59/63):
+ *      Add/Sub(P, Fma(a, b, Mul(c, d))) where the constants DON'T
+ *      match -> the 2-FMA chain Fma(c, d, Fma(a, b, P)); kills the
+ *      standalone Mul and the outer add, -1 op, and shortens the chain
+ *      mul->fma->add (12c) to fma->fma (8c). Single-use required on
+ *      Fma and Mul; a multi-use relaxation (all consumers Add/Sub) is
+ *      DENSITY-GATED: at most 12 candidates -> AUTO ON (R=25: -3.12%,
+ *      R=32: -2.81% runtime), above -> AUTO OFF (R=64's 20 candidates
+ *      measured +6.75% — the buried muls had been free OoO fill, and
+ *      +44 reg-to-reg copies). VFFT_FMA_MULTIUSE=1/0 overrides. If
+ *      both operands of one Add/Sub match, it deliberately rewrites
+ *      NEITHER (the conjugate-pair double-fire costs +2 ops).
+ *
+ * === THE CASCADE (drivers: gen_main.run, Pipeline.prepare_codelet) ===
+ *   fma_lift -> factor_const_muls -> (mfl -> faf) x3 -> mfl ->
+ *   [butterfly_share_mul, only under VFFT_BUTTERFLY_SHARE=1] ->
+ *   flatten_fma_mul_addend. Family gate: Direct ON, Cooley_Tukey ON,
+ *   Split_radix OFF (untested); VFFT_FORCE_FMA_LIFT /
+ *   VFFT_DISABLE_FMA_LIFT override. The two driver copies must stay in
+ *   lockstep (pipeline.ml card, GOTCHA 2).
+ *
+ * === THE SPILL-MARKER CONTRACT ===
+ *   Spill markers name exact tags; the emitter walks only what is
+ *   reachable from the assigns. A pass that rewrites a marker's node
+ *   without telling anyone orphans it: the spill store never emits and
+ *   PASS 2 reloads garbage (the doc 30/31 lesson). Two mechanisms keep
+ *   this safe. FREEZING: marker tags are lifted BEFORE fma_lift and
+ *   passed as frozen_tags; fma_lift returns frozen nodes identity-
+ *   intact (it alone returns no remap). REMAPPING: the other four
+ *   passes may rewrite a frozen Add/Sub/Fma when the rewrite is
+ *   value-preserving, and return old-tag -> new-tag maps; drivers feed
+ *   every remap into the frozen set (extend_frozen) AND compose them
+ *   in cascade order to rewire the markers. flatten's remap is
+ *   deliberately EXCLUDED from the marker chain: a spilled Mul must
+ *   stay addressable as its own reloadable value — remapping it into
+ *   the fused chain would turn "reload" into "recompute".
+ *
+ * === MEASURED EFFECT (stats mode, avx2, gcc 15.2 host, 2026-07-06) ===
+ *   Whole-cascade vector-instruction deltas, on vs off: R=7 -38%,
+ *   R=11 -38%, R=13 -39%, R=25 -28%, R=32 -16%, R=16 -13%, R=8 -7%;
+ *   t1 deltas equal n1 deltas exactly and cmul counts are untouched —
+ *   the cascade never enters the twiddle cmul layer. The R=5 shape of
+ *   it: 8 instructions for one output become 4 fmas; sibling outputs
+ *   share one product as fma(+t17·t18, +t72) / fma(-t17·t18, +t72).
+ *   Note the honest trade: SCALAR-equivalent op count can rise (R=5:
+ *   44 -> 50) while instructions fall (44 -> 32) — the objective is
+ *   instructions and pressure, not flops. End state at the asm level:
+ *   source fma/mul/addsub counts equal gcc's emitted counts EXACTLY at
+ *   R=16/32/64, n1 and t1 — gcc neither adds nor undoes fusion — and
+ *   the residual muls are at their structural floor (the cmul
+ *   mul-in-addend pair, and shared plus-minus butterfly products at
+ *   the 3-op minimum). Honest present-day note (gcc 15.2 A/B, fused
+ *   vs unfused IR of the SAME codelets): the founding churn was a
+ *   LARGE-CODE phenomenon — gcc's allocator degrades as the
+ *   straight-line block grows (rsp traffic ~100 at R=13, ~150 at
+ *   R=32, ~500 at R=64, under either policy), and the historical
+ *   vmov pollution lived at R=32 t1 / R=64 on gcc-11/13. On gcc 15.2
+ *   it is not reproducible at any tested cell, and at the large
+ *   cells the SIGN HAS INVERTED: compiling the unfused IR yields
+ *   FEWER moves and stack ops (R=64 n1: 194 vs 249 reg-reg, 441 vs
+ *   475 rsp) while fusing 60 fewer FMAs — today's gcc exploits
+ *   standalone muls as free schedule fill on big blocks, the same
+ *   mechanism behind flatten's R=64 density gate and the recorded
+ *   ~7% R=64 explicit-FMA residual. That per-toolchain sign flip is
+ *   itself the argument for owning fusion in the IR: source-level
+ *   counts stay stable, measurable and compiler-independent, while
+ *   what any given gcc does with mul+add swings version to version.
+ *   It also marks fused-vs-unfused at R=64-class cells as a live
+ *   runtime question for the per-cell verdict machinery, not a
+ *   settled static one.
+ *
+ * === HISTORY (why the gate looks like this) ===
+ *   An early measurement gated lifting to primes only, off a 33-48%
+ *   composite "regression" later proven to be duplicated-mul artifact
+ *   rather than FMA cost (doc 56). The fnmsub peephole's first life
+ *   as a standalone post-pass orphaned spill markers at R=32/64 —
+ *   the construction-time-versus-post-pass lesson (doc 30) that
+ *   produced the frozen/remap machinery here. doc 54 recorded clang's
+ *   fusion blindness and a composite compile failure root-caused to
+ *   the same duplication; doc 56 restored single_use and simplified
+ *   the gate to what ships; doc 59 built this cascade and the
+ *   three-layer architecture; doc 63 named Cat-A/Cat-B. Open
+ *   residuals: the odd-prime-outer mixed-radix class (R=15/20/21/35,
+ *   +5-14%, a gcc scheduling effect with op counts preserved —
+ *   doc 56's unshipped pow2-outer gate) and R=64 n1's ~7%
+ *   explicit-FMA scheduling note.
  * ------------------------------------------------------------------
  * MODULE CARD (fma_passes.ml — grep "MODULE CARD" for the full set)
  * ROLE: The FMA rewrite family; closes the FMA-count gap vs FFTW.
@@ -22,7 +195,19 @@
  * multi_use_fma_lift, fma_addend_factor, flatten_fma_mul_addend
  * (gen_main runs the cascade inline; pipeline.ml is the shared copy).
  * DEPS: Simplify via include (chain re-exported onward); Expr(11).
- * ENV: VFFT_FMA_MULTIUSE.
+ * ENV: VFFT_FMA_MULTIUSE (flatten multi-use: 1 on, 0 off, unset =
+ * density AUTO); traces: FACTOR_TRACE, MULIFT_TRACE, MULFMA_TRACE,
+ * FMA_ADDEND_TRACE, FLATTEN_FMA_MUL_TRACE(_VERBOSE).
+ * DOCS: numbered_series 30, 54, 56, 63; 59_today_full_session_arc;
+ * docs/pass_understanding.md.
+ * GOTCHA 1: gen_main and pipeline.ml carry twin copies of the cascade
+ * order and marker chain — change both or diverge the OOP family.
+ * GOTCHA 2: multi_use_fma_lift's header text offers Neg-wrapped-Mul
+ * absorption, but the code disqualifies every Neg(Mul) context
+ * ("neg-outside-add-sub") and has no fnmadd absorption arm — trust
+ * the code, not that paragraph.
+ * GOTCHA 3: K-matching everywhere is Const TAG identity — two equal
+ * floating-point constants with different tags never factor.
  * ------------------------------------------------------------------
  *)
 
@@ -1346,7 +1531,7 @@ let flatten_fma_mul_addend ?(frozen_tags : (int, unit) Hashtbl.t option = None)
    *   still reference the original Fma, leaving a dangling chain.
    *
    * ============================================================
-   * RUNTIME GATE — why this is env-gated default-OFF
+   * RUNTIME GATE — why multi-use is density-gated, not always-on
    * ============================================================
    *
    * Empirically (Xeon, AVX-512, K=8, best-of-11 × 200k calls):
@@ -1358,9 +1543,11 @@ let flatten_fma_mul_addend ?(frozen_tags : (int, unit) Hashtbl.t option = None)
    *   R=64    -20    +60   -40         0      +6.75% (SLOWER)
    *
    * All three are op-count neutral. R=25/R=32 speed up modestly, but
-   * R=64 regresses by ~6% — so this pass is opt-in by env flag, not
-   * a default optimization. The cause is a subtle critical-path effect
-   * worth understanding before re-enabling unconditionally.
+   * R=64 regresses by ~6% — so the multi-use relaxation ships behind
+   * the candidate-density AUTO gate below (ON at low density where it
+   * wins, OFF at R=64-class density; VFFT_FMA_MULTIUSE=1/0 overrides;
+   * single-use rewrites always run). The cause is a subtle
+   * critical-path effect worth understanding before widening the gate.
    *
    * --- Per-chain analysis ---
    *
