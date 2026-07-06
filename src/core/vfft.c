@@ -982,11 +982,14 @@ static void _ip_tramp(void *a)
  * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
  * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
  * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
-/* Whole-vs-split self-check: does the plan's codelet honor a partial-lane count `me`? A whole-batch forward
- * (me=K) must equal a SEQUENTIAL two-half split (me=K/2 at 0, then me=K-K/2 at +K/2). If it doesn't, the
- * codelet processes the full baked K and a _c2c_mt K-split slab would overrun -> wrong output; flag it and
- * run whole-batch under MT. DETERMINISTIC bug (radix-8 LOG3 last-stage), so this one-time create check is
- * reliable. Returns 1 = safe (K-split OK), 0 = unsafe (run whole-batch). */
+/* PARTIAL-BATCH self-check: does the plan's codelet honor a partial-lane count `me`? Each lane is an
+ * INDEPENDENT transform, so a partial run fn(me=K/2) must produce the SAME output on lanes [0,K/2) as the
+ * whole run fn(me=K). It doesn't for the radix-8 LOG3 last-stage codelet: its twiddle blocking bakes the
+ * full K, so a partial batch computes WRONG values for the lanes it processes (not a lane overrun — the
+ * adjacent lanes are untouched). Under _c2c_mt each K-split slab is a partial batch -> every slab is wrong.
+ * Flag such plans and run them WHOLE-BATCH under MT (the reorder pass still threads). Lock-free. Catches
+ * this DETERMINISTIC bug; the separate natural-MT-first shared-scratch RACE (input-dependent) is NOT caught
+ * here. Returns 1 = safe (K-split OK), 0 = unsafe (whole-batch). */
 static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
 {
     size_t K = p->K;
@@ -996,21 +999,18 @@ static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
     double *br = (double *)malloc(tot * 8), *bi = (double *)malloc(tot * 8);
     if (!ar || !ai || !br || !bi) { free(ar); free(ai); free(br); free(bi); return 1; }
     for (size_t i = 0; i < tot; i++) {
-        double vr = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
-        double vi = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
-        ar[i] = br[i] = vr; ai[i] = bi[i] = vi;
+        double v = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
+        ar[i] = br[i] = v; ai[i] = bi[i] = -v;
     }
-    if (fn) {
-        fn(p, ar, ai, K, p->K, 0);              /* whole batch */
-        fn(p, br, bi, h, p->K, 0);              /* split: lanes [0,h) */
-        fn(p, br + h, bi + h, K - h, p->K, 0);  /* split: lanes [h,K) */
-    } else {
-        vfft_proto_execute_fwd(p, ar, ai, K);
-        vfft_proto_execute_fwd(p, br, bi, h);
-        vfft_proto_execute_fwd(p, br + h, bi + h, K - h);
-    }
-    double m = 0;
-    for (size_t i = 0; i < tot; i++) { double e = fabs(ar[i] - br[i]) + fabs(ai[i] - bi[i]); if (e > m) m = e; }
+    if (fn) { fn(p, ar, ai, K, p->K, 0); fn(p, br, bi, h, p->K, 0); } /* whole vs partial-[0,h) */
+    else    { vfft_proto_execute_fwd(p, ar, ai, K); vfft_proto_execute_fwd(p, br, bi, h); }
+    double m = 0;                               /* the partial run's [0,h) lanes must equal the whole run's */
+    for (size_t n = 0; n < (size_t)p->N; n++)
+        for (size_t j = 0; j < h; j++) {
+            size_t idx = n * K + j;
+            double e = fabs(ar[idx] - br[idx]) + fabs(ai[idx] - bi[idx]);
+            if (e > m) m = e;
+        }
     free(ar); free(ai); free(br); free(bi);
     return m < 1e-9;
 }
