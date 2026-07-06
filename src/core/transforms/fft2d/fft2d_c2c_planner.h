@@ -117,13 +117,18 @@ static int _vfft_fft2d_c2c_axis_candidates(int N, size_t K, int patient,
 /* Plan the 2D c2c cell (N1,N2). Fills `out`, returns best end-to-end 2D ns
  * (1e18 on failure). Run single-threaded (wisdom is plan-shape). */
 /* do_natural: also score each candidate on the NATURAL total (FFT+reorder), inject palindromic col
- * candidates, and bank the natural-optimal chain into out->nat_*. This is DEV-time work (per-candidate
- * JIT compiles when built --jit) — the runtime calibrate-on-miss passes 0 (natural chains come from the
- * dev calibrator's banked wisdom; the runtime just consumes them). do_natural=0 => scrambled-only,
- * byte-identical to the pre-natural planner. */
+ * candidates, and write the natural-optimal chain into the SELF-CONTAINED nat_out record (its own regime;
+ * NOT a field of the scrambled `out`). nat_out->row_nf is set to 0 when no natural result was obtained (or
+ * do_natural=0 / nat_out==NULL); >0 means a valid natural record. *nat_ns_out (if non-NULL) receives the
+ * natural total (1e18 = none). This is DEV-time work (per-candidate JIT compiles when built --jit).
+ * do_natural=0 => scrambled-only, byte-identical to the pre-natural planner. The return value is always
+ * the SCRAMBLED best (the natural decision is made independently by the caller on nat_ns). */
 static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
         const vfft_proto_registry_t *reg, vfft_fft2d_c2c_mode_t mode,
-        vfft_fft2d_c2c_wisdom_entry_t *out, int do_natural, int verbose) {
+        vfft_fft2d_c2c_wisdom_entry_t *out, int do_natural, int verbose,
+        vfft_fft2d_c2c_nat_entry_t *nat_out, double *nat_ns_out) {
+    if (nat_out) nat_out->row_nf = 0;
+    if (nat_ns_out) *nat_ns_out = 1e18;
     if (N1 < 2 || N2 < 2) return 1e18;
     int patient = (mode == VFFT_FFT2D_C2C_PATIENT);
     size_t B = _fft2d_choose_tile(N2, N1);
@@ -265,25 +270,26 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
     out->col_use_dif = col_cand[best_c].use_dif_forward;
     out->best_ns = best;
 
-    /* v2 NATURAL block: the (row,col) minimizing the natural total. Banked whenever a natural score was
-     * obtained (every gated candidate that could build reorder tapes) — so order=NATURAL create can use
-     * THIS factorization instead of the scrambled winner + bolt-on reorder. */
-    if (best_nat_r >= 0) {
-        out->nat_present = 1;
-        out->nat_B = (int)B;
-        out->nat_row_nf = row_cand[best_nat_r].nf;
-        for (int s = 0; s < out->nat_row_nf; s++) {
-            out->nat_row_factors[s]  = row_cand[best_nat_r].factors[s];
-            out->nat_row_variants[s] = row_cand[best_nat_r].variants[s];
+    /* SELF-CONTAINED natural record: the (row,col,B) minimizing the NATURAL total — its OWN regime, NOT a
+     * field of the scrambled `out`. Written whenever a natural score was obtained (a gated candidate that
+     * could build reorder tapes). The caller decides banking on nat_ns vs a natural fallback — INDEPENDENT
+     * of the scrambled cal_ns<fb gate (the scrambled objective must never veto the natural chain). */
+    if (best_nat_r >= 0 && nat_out) {
+        nat_out->N1 = N1; nat_out->N2 = N2; nat_out->nat_B = (int)B;
+        nat_out->row_nf = row_cand[best_nat_r].nf;
+        for (int s = 0; s < nat_out->row_nf; s++) {
+            nat_out->row_factors[s]  = row_cand[best_nat_r].factors[s];
+            nat_out->row_variants[s] = row_cand[best_nat_r].variants[s];
         }
-        out->nat_row_use_dif = row_cand[best_nat_r].use_dif_forward;
-        out->nat_col_nf = col_cand[best_nat_c].nf;
-        for (int s = 0; s < out->nat_col_nf; s++) {
-            out->nat_col_factors[s]  = col_cand[best_nat_c].factors[s];
-            out->nat_col_variants[s] = col_cand[best_nat_c].variants[s];
+        nat_out->row_use_dif = row_cand[best_nat_r].use_dif_forward;
+        nat_out->col_nf = col_cand[best_nat_c].nf;
+        for (int s = 0; s < nat_out->col_nf; s++) {
+            nat_out->col_factors[s]  = col_cand[best_nat_c].factors[s];
+            nat_out->col_variants[s] = col_cand[best_nat_c].variants[s];
         }
-        out->nat_col_use_dif = col_cand[best_nat_c].use_dif_forward;
-        out->nat_ns = best_nat;
+        nat_out->col_use_dif = col_cand[best_nat_c].use_dif_forward;
+        nat_out->nat_ns = best_nat;
+        if (nat_ns_out) *nat_ns_out = best_nat;
     }
 
     if (verbose) {

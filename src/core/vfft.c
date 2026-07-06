@@ -812,12 +812,20 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         /* order=NATURAL uses the natural-optimal chain (v2 nat block, dev-calibrated) when banked; else
          * falls back to the scrambled chain + the runtime bolt-on reorder built downstream. */
         int nat = (order == VFFT_ORDER_NATURAL);
-        /* Dedicated 2D c2c wisdom FIRST (end-to-end-2D measured, independent of 1D
-         * c2c — the cells where it beats the fallback are banked there). On a miss,
-         * fall back to the 1D-wisdom inner path below (calibrate-on-miss at rigor). */
-        if (!recalib && vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
-            return nat ? vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg)
-                       : vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+        /* Dedicated 2D c2c wisdom FIRST — ORDER-AWARE: order=NATURAL short-circuits on the NAT table
+         * (@nat2d), order=DEFAULT on the scrambled table. A scrambled-only cell therefore does NOT deny a
+         * cold natural cell its own calibration (the decoupling). On a miss, fall back to the 1D-wisdom
+         * inner path below (calibrate-on-miss at rigor). */
+        if (!recalib)
+        {
+            if (nat)
+            {
+                if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
+                    return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
+            }
+            else if (vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
+                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+        }
 
         /* Build the fallback (1D-wisdom inners). A PRIME dimension has no CT factorization —
          * _inner_c2c returns NULL there — so fall back to the prime dispatch (Rader/Bluestein,
@@ -843,27 +851,42 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (!fb)
             return NULL;
 
-        /* Calibrate-on-miss: run the dedicated 2D planner, keep it ONLY if it beats the
-         * fallback measured end-to-end (the 64² precedent — a fresh 2D calibration can
-         * lose). Bank the winner so future creates hit. */
+        /* Calibrate-on-miss: run the dedicated 2D planner. TWO INDEPENDENT bank decisions on their OWN
+         * objectives (the whole pivot — scrambled and natural never veto each other):
+         *   SCRAMBLED: bank the scrambled chain iff it beats the fallback end-to-end (cal_ns < fb_ns).
+         *   NATURAL:   bank the self-contained natural record iff the sweep produced one (cal_nat.row_nf>0)
+         *              — the J_nat-minimal over a comprehensive pool (DP + injected palindromes), decided
+         *              on the NATURAL objective, so it is >= the scrambled-chain bolt-on for natural and
+         *              never worse than today. (A vs-fallback J_nat comparison is a possible refinement.) */
         vfft_fft2d_c2c_wisdom_entry_t cal;
+        vfft_fft2d_c2c_nat_entry_t cal_nat;
+        cal_nat.row_nf = 0;
         vfft_fft2d_c2c_mode_t mode =
             (rigor == VFFT_MEASURE) ? VFFT_FFT2D_C2C_MEASURE : VFFT_FFT2D_C2C_PATIENT;
-        /* order=NATURAL + MEASURE on a miss => natural-aware calibrate at create (joint FFT+reorder
-         * score + palindrome injection + JIT measure) and bank the nat chain, so the natural verdict is
-         * reachable through the PUBLIC API — no separate calibrator/.py needed. MEASURE already implies
-         * "willing to spend calibration time"; the JIT-compile cost is a one-time first-create per cell,
-         * then a fast lookup. order=DEFAULT/SCRAMBLED => do_natural=0 (scrambled-only, unchanged). */
-        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/nat, 0);
+        double nat_ns = 1e18;
+        double cal_ns = vfft_fft2d_c2c_plan_measure(N1, N2, reg, mode, &cal, /*do_natural=*/nat, 0,
+                                                    nat ? &cal_nat : NULL, &nat_ns);
         if (cal_ns < 1e17)
         {
             double fb_ns = _vfft_measure_2d_c2c(fb, N1, N2);
-            if (cal_ns < fb_ns)
+            int scr_won = (cal_ns < fb_ns);
+            if (scr_won)
+                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, 1); /* scrambled: calibrated beats fallback */
+            if (nat && cal_nat.row_nf > 0)
+                vfft_fft2d_c2c_nat_add(&W->fft2d_c2c, &cal_nat, 1); /* natural: J_nat sweep winner, decoupled */
+            if (nat)
             {
-                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, 1); /* calibrated wins -> bank */
+                if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
+                {
+                    stride_plan_destroy(fb);
+                    return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
+                }
+                return fb; /* no natural record -> fb (scrambled chain + downstream bolt-on reorder) */
+            }
+            if (scr_won)
+            {
                 stride_plan_destroy(fb);
-                return nat ? vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg)
-                           : vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
             }
         }
         return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
@@ -1278,6 +1301,20 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
         _stride_pool_wait_all();
 }
 
+/* Bank a SELF-CONTAINED 1D natural record (order-tagged @nat table) + persist. The natural verdict
+ * stores its OWN deployed chain (fac/var/nf/use_dif) + mode + measured total — never a copy of the
+ * scrambled entry. mode ∈ {PSWAP, PURE_CYCLE, SCR}; FREE is re-derived at create (num_stages<=1). */
+static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, double ns,
+                         const int *fac, const int *var, int nf, int use_dif)
+{
+    vfft_proto_nat_entry_t nn;
+    memset(&nn, 0, sizeof nn);
+    nn.N = N; nn.K = K; nn.mode = mode; nn.nat_ns = ns; nn.nf = nf; nn.use_dif = use_dif;
+    for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++) { nn.factors[s] = fac[s]; nn.variants[s] = var[s]; }
+    vfft_proto_nat_add(&W->c2c, &nn, 1);
+    if (W->path_c2c[0]) vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
@@ -1570,7 +1607,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         else
         {
             const vfft_proto_wisdom_entry_t *e = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            if (!e || cfg->recalibrate)
+            /* REGIME SEPARATION: order=NATURAL never re-measures/overwrites the SCRAMBLED entry — its
+             * recalibrate governs only the natural verdict (below). It calibrates the scrambled cell just
+             * once, when absent, to build the base plan p (the PURE-floor + race seed). So the natural
+             * floor rides the STABLE banked scrambled chain, not a noisy fresh re-measure. order=DEFAULT/
+             * SCRAMBLED keeps the old recalibrate-overwrites semantics. */
+            int scr_recalib = cfg->recalibrate && cfg->order != VFFT_ORDER_NATURAL;
+            if (!e || scr_recalib)
             {
                 vfft_proto_wisdom_entry_t ne;
                 if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
@@ -1585,28 +1628,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         stride_plan_t *p = vfft_proto_auto_plan_dispatch(N, K, reg, &W->c2c);
         if (!p)
             return NULL;
-        /* C1: order=NATURAL reads the (N,K) wisdom entry for the base chain (perm detect) + a base to
-         * stamp its verdict onto. If calibration was skipped/failed but auto_plan_dispatch still built a
-         * (greedy) MULTI-STAGE plan, no entry exists and the natural block below would hard-fail (return
-         * NULL) where order=DEFAULT succeeds. Bank one FROM THE BUILT PLAN so an entry is always present
-         * (its chain matches p exactly => a future lookup rebuilds the same plan). Single-stage / prime
-         * overrides are FREE (no entry needed). overwrite=0 => an existing calibrated entry is preserved. */
-        if (cfg->order == VFFT_ORDER_NATURAL && p->num_stages > 1 &&
-            !vfft_proto_wisdom_lookup(&W->c2c, N, K))
-        {
-            vfft_proto_wisdom_entry_t ne;
-            memset(&ne, 0, sizeof ne);
-            ne.N = N;
-            ne.K = K;
-            ne.nf = p->num_stages;
-            for (int s = 0; s < p->num_stages && s < STRIDE_MAX_STAGES; s++)
-            {
-                ne.factors[s] = p->factors[s];
-                ne.variants[s] = p->variants[s];
-            }
-            ne.use_dif_forward = p->use_dif_forward;
-            vfft_proto_wisdom_add(&W->c2c, &ne, 0);
-        }
+        /* (Self-contained natural design: the old C1 scrambled-entry bank-from-plan is GONE — the natural
+         * block below no longer reads the scrambled entry, so it can't hard-fail for want of one. Its base
+         * plan is `p` itself, which auto_plan_dispatch always built here.) */
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -1652,141 +1676,42 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * untouched — byte-identical kill switch. */
         if (cfg->order == VFFT_ORDER_NATURAL)
         {
-            const vfft_proto_wisdom_entry_t *e2 = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            int mode = (e2 && e2->nat_mode && !cfg->recalibrate) ? e2->nat_mode : VFFT_NAT_UNSET;
+            const vfft_proto_nat_entry_t *ne = vfft_proto_nat_lookup(&W->c2c, N, K);
+            int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
             if (p->num_stages <= 1)
-                mode = VFFT_NAT_FREE; /* nf==1 + prime overrides: already natural, no tape */
+                mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
             if (mode != VFFT_NAT_FREE)
             {
-                /* Every remaining path needs the PURE cycle tape (PURE itself, or the race
-                 * baseline). Chain from the wisdom entry; impulse probe + closed-form
-                 * orientation detect. Failure => refuse natural — never silently wrong. */
-                if (!e2)
+                /* Self-contained natural — the DEPLOYED plan + its OWN chain drive everything; this path
+                 * NEVER reads the scrambled entry. CONSUME (warm ne) rebuilds the deployed plan from ne's
+                 * own chain (may differ from the scrambled p — a palindrome, or a single-radix leaf) and
+                 * swaps it into cplan. MEASURE reuses the handle's scrambled plan p as the PURE-floor base
+                 * + race seed (the PLAN object — not the wisdom entry). */
+                int consume = (ne && !cfg->recalibrate);
+                int dnf, ddif, dfac[STRIDE_MAX_STAGES], dvar[STRIDE_MAX_STAGES];
+                if (consume)
                 {
-                    vfft_destroy(h);
-                    return NULL;
+                    dnf = ne->nf;
+                    ddif = ne->use_dif;
+                    for (int s = 0; s < dnf && s < STRIDE_MAX_STAGES; s++) { dfac[s] = ne->factors[s]; dvar[s] = ne->variants[s]; }
                 }
-                int wnf = e2->nf, wfac[STRIDE_MAX_STAGES];
-                int wnat_nf = e2->nat_nf, wnat_fac[STRIDE_MAX_STAGES], wnat_prof = e2->nat_prof;
-                for (int s = 0; s < wnf; s++)
-                    wfac[s] = e2->factors[s];
-                for (int s = 0; s < wnat_nf; s++)
-                    wnat_fac[s] = e2->nat_factors[s];
-                size_t tot = (size_t)N * K;
-                double *cre = (double *)calloc(tot, sizeof(double));
-                double *cim = (double *)calloc(tot, sizeof(double));
-                int *M = NULL;
-                if (cre && cim)
+                else
                 {
-                    cre[K] = 1.0; /* impulse at n0=1, lane 0 */
-                    vfft_proto_execute_fwd(p, cre, cim, K);
-                    M = vfft_natorder_detect(N, wfac, wnf, K, cre, cim, 1);
+                    dnf = p->num_stages;
+                    ddif = p->use_dif_forward;
+                    for (int s = 0; s < dnf && s < STRIDE_MAX_STAGES; s++) { dfac[s] = p->factors[s]; dvar[s] = p->variants[s]; }
                 }
-                free(cre);
-                free(cim);
                 /* per-worker cycle scratch: (pool+1) slots of 2*K doubles (MT split). */
                 h->nat_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * K * sizeof(double));
-                if (M)
-                    h->nat_list = vfft_natorder_mk_cycles(N, M); /* PURE cycle tape (pA's perm) */
-                if (!h->nat_list || !h->nat_tmp)
+                if (!h->nat_tmp) { vfft_destroy(h); return NULL; }
+
+                /* CONSUME SCR (parked; rebuild the DIT scatter from the stored chain). */
+                if (consume && mode == VFFT_NAT_SCR)
                 {
-                    free(M);
-                    vfft_destroy(h);
-                    return NULL;
-                }
-                if (mode == VFFT_NAT_UNSET)
-                {
-                    /* OPPORTUNISTIC PSWAP: pA's perm M is an involution (palindromic calibrated chain)
-                     * => pair-swaps beat cycle-following on the SAME calibrated plan (always >= cycle,
-                     * big on narrow rows) — a DETERMINISTIC free win: no injection, no race, no generic-
-                     * vs-JIT bias (which flipped 256/4 PURE<->PSWAP). Wisdom marker: nat_mode=PSWAP with
-                     * nat_nf=0 (= calibrated plan + pairs, distinct from injected PSWAP's nat_nf>0).
-                     * GATE: if a single-stage [N] leaf exists (N<=64), DON'T short-circuit — fall to the
-                     * race so it can also weigh the single-stage (FREE reorder) candidate, which can beat
-                     * calibrated+pair (the 2D 64x16 lesson). The race re-injects the calibrated palindrome
-                     * as a candidate too, so opportunistic's win is not lost — only augmented. */
-                    int has_leaf = (N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]);
-                    int *opp = (M && !has_leaf) ? vfft_natorder_mk_pairs(N, M) : NULL;
-                    if (opp)
-                    {
-                        free(h->nat_list);
-                        h->nat_list = opp; /* cplan / exec_fwd stay the calibrated plan */
-                        mode = VFFT_NAT_PSWAP;
-                        vfft_proto_wisdom_entry_t ne = *e2;
-                        ne.nat_mode = mode;
-                        ne.nat_ns = 0.0;
-                        ne.nat_nf = 0;
-                        ne.nat_prof = 0;
-                        vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                        if (W->path_c2c[0])
-                            vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
-                    }
-                    else
-                    {
-                        /* RACE (PURE vs injected-palindrome PSWAP vs DIT-injected SCR; 5% margin) + stamp.
-                         * SCR builds its OWN DIT plan from the calibrated chain (wfac/wnf) — injection.
-                         * (Non-palindromic calibrated chains only.) */
-                        vfft_natorder_verdict_t v;
-                        vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, wfac, wnf, &v);
-                        mode = v.mode;
-                        if (mode == VFFT_NAT_PSWAP)
-                        {
-                            vfft_proto_plan_destroy(h->cplan);
-                            h->cplan = v.planB;
-                            free(h->nat_list);
-                            h->nat_list = v.pairs;
-                            h->exec_fwd = NULL;
-                            h->exec_bwd = NULL;
-#ifdef VFFT_USE_JIT
-                            h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
-                            h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
-#endif
-                        }
-                        else if (mode == VFFT_NAT_SCR)
-                        {
-                            /* DIT-injected SCR: swap cplan to the DIT plan (the scatter's sub aliases it),
-                             * take its cycle tape for the backward, re-resolve the DIF-backward JIT. */
-                            h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
-                            if (!h->nat_scr)
-                            {
-                                free(M);
-                                vfft_proto_plan_destroy(v.scr_plan);
-                                natorder_scr_free(&v.scr);
-                                free(v.scr_cycles);
-                                vfft_destroy(h);
-                                return NULL;
-                            }
-                            *h->nat_scr = v.scr;
-                            vfft_proto_plan_destroy(h->cplan);
-                            h->cplan = v.scr_plan;
-                            free(h->nat_list);
-                            h->nat_list = v.scr_cycles;
-                            h->exec_fwd = NULL;
-                            h->exec_bwd = NULL;
-#ifdef VFFT_USE_JIT
-                            h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
-#endif
-                        }
-                        vfft_proto_wisdom_entry_t ne = *e2; /* copy BEFORE add (realloc) */
-                        ne.nat_mode = mode;
-                        ne.nat_ns = v.ns;
-                        ne.nat_nf = (mode == VFFT_NAT_PSWAP) ? v.nf : 0;
-                        ne.nat_prof = (mode == VFFT_NAT_PSWAP) ? v.prof : 0;
-                        for (int s = 0; s < ne.nat_nf; s++)
-                            ne.nat_factors[s] = v.factors[s];
-                        vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                        if (W->path_c2c[0])
-                            vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
-                    } /* end else (non-opportunistic race) */
-                }
-                else if (mode == VFFT_NAT_SCR)
-                {
-                    /* Stored SCR verdict: rebuild the DIT-injected scatter from the calibrated chain;
-                     * on success swap cplan->DIT plan + its cycle tape; failure -> PURE (honorable). */
                     natorder_scr_t sc;
                     stride_plan_t *sp = NULL;
                     int *scyc = NULL;
-                    if (natorder_scr_build_dit(N, K, wfac, wnf, reg, &sc, &sp, &scyc))
+                    if (natorder_scr_build_dit(N, K, dfac, dnf, reg, &sc, &sp, &scyc))
                     {
                         h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
                         if (h->nat_scr)
@@ -1794,7 +1719,6 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                             *h->nat_scr = sc;
                             vfft_proto_plan_destroy(h->cplan);
                             h->cplan = sp;
-                            free(h->nat_list);
                             h->nat_list = scyc;
                             h->exec_fwd = NULL;
                             h->exec_bwd = NULL;
@@ -1802,86 +1726,125 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                             h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
                         }
-                        else
-                        {
-                            natorder_scr_free(&sc);
-                            vfft_proto_plan_destroy(sp);
-                            free(scyc);
-                            mode = VFFT_NAT_PURE_CYCLE;
-                        }
+                        else { natorder_scr_free(&sc); vfft_proto_plan_destroy(sp); free(scyc); mode = VFFT_NAT_PURE_CYCLE; }
                     }
                     else
                         mode = VFFT_NAT_PURE_CYCLE;
                 }
-                else if (mode == VFFT_NAT_PSWAP && wnat_nf == 0)
+                /* CONSUME PURE/PSWAP (or SCR-demoted): rebuild the deployed plan from the stored chain. */
+                if (consume && mode != VFFT_NAT_SCR && !h->nat_scr)
                 {
-                    /* Stored OPPORTUNISTIC PSWAP: calibrated plan (cplan/exec_fwd unchanged) + pairs
-                     * from its perm M (an involution). Mirrors the create-time short-circuit above;
-                     * any failure (M not an involution — shouldn't happen) falls back to PURE. */
-                    int *pairs = M ? vfft_natorder_mk_pairs(N, M) : NULL;
-                    if (pairs)
-                    {
-                        free(h->nat_list);
-                        h->nat_list = pairs;
-                    }
-                    else
-                        mode = VFFT_NAT_PURE_CYCLE;
-                }
-                else if (mode == VFFT_NAT_PSWAP)
-                {
-                    /* Stored INJECTED PSWAP verdict: rebuild the injected plan from wisdom; any
-                     * failure falls back to PURE (tape already built) — honorable. */
-                    stride_plan_t *pB = NULL;
-                    int *pairs = NULL;
-                    if (wnat_nf > 0)
-                    {
-                        int vb[STRIDE_MAX_STAGES];
-                        for (int s = 0; s < wnat_nf; s++)
-                            vb[s] = wnat_prof;
-                        vb[0] = 0;
-                        pB = vfft_proto_plan_create_ex(N, K, wnat_fac, vb, wnat_nf, 0, reg);
-                    }
-                    if (pB)
-                    {
-                        double *br = (double *)calloc(tot, sizeof(double));
-                        double *bi = (double *)calloc(tot, sizeof(double));
-                        int *MB = NULL;
-                        if (br && bi)
-                        {
-                            br[K] = 1.0;
-                            vfft_proto_execute_fwd(pB, br, bi, K);
-                            MB = vfft_natorder_detect(N, wnat_fac, wnat_nf, K, br, bi, 1);
-                        }
-                        free(br);
-                        free(bi);
-                        if (MB)
-                            pairs = vfft_natorder_mk_pairs(N, MB);
-                        free(MB);
-                        if (!pairs)
-                        {
-                            vfft_proto_plan_destroy(pB);
-                            pB = NULL;
-                        }
-                    }
-                    if (pB)
+                    stride_plan_t *dp = vfft_proto_plan_create_ex(N, K, dfac, dvar, dnf, ddif, reg);
+                    if (dp)
                     {
                         vfft_proto_plan_destroy(h->cplan);
-                        h->cplan = pB;
-                        free(h->nat_list);
-                        h->nat_list = pairs;
+                        h->cplan = dp; p = dp; /* probe + tape now follow the DEPLOYED plan */
                         h->exec_fwd = NULL;
                         h->exec_bwd = NULL;
 #ifdef VFFT_USE_JIT
-                        h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
-                        h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+                        h->exec_fwd = vfft_proto_plan_jit_fwd(dp);
+                        h->exec_bwd = vfft_proto_plan_jit_bwd(dp);
 #endif
                     }
                     else
-                        mode = VFFT_NAT_PURE_CYCLE;
+                        mode = VFFT_NAT_PURE_CYCLE; /* rebuild failed -> PURE on the original p (honorable) */
                 }
-                else
-                    mode = VFFT_NAT_PURE_CYCLE; /* reserved/unknown nat_mode (e.g. LEAF_IP=2, ditched) -> PURE */
-                free(M);
+
+                /* Perm + reorder tape from the deployed plan p (SCR already holds its cycle tape = scyc). */
+                if (!h->nat_scr)
+                {
+                    size_t tot = (size_t)N * K;
+                    double *cre = (double *)calloc(tot, sizeof(double));
+                    double *cim = (double *)calloc(tot, sizeof(double));
+                    int *M = NULL;
+                    if (cre && cim)
+                    {
+                        cre[K] = 1.0; /* impulse at n0=1, lane 0 */
+                        vfft_proto_execute_fwd(p, cre, cim, K);
+                        M = vfft_natorder_detect(N, dfac, dnf, K, cre, cim, 1);
+                    }
+                    free(cre);
+                    free(cim);
+                    if (!M) { vfft_destroy(h); return NULL; }
+
+                    if (mode == VFFT_NAT_PSWAP)
+                        h->nat_list = vfft_natorder_mk_pairs(N, M); /* CONSUME PSWAP (single-leaf => empty tape = FREE) */
+                    else if (mode == VFFT_NAT_PURE_CYCLE)
+                        h->nat_list = vfft_natorder_mk_cycles(N, M); /* CONSUME PURE */
+                    else /* mode == VFFT_NAT_UNSET: MEASURE */
+                    {
+                        h->nat_list = vfft_natorder_mk_cycles(N, M); /* race PURE-floor baseline */
+                        if (h->nat_list)
+                        {
+                            /* OPPORTUNISTIC PSWAP: p's perm is an involution => pairs beat cycles on the SAME
+                             * plan (deterministic free win). GATE: if a single-stage [N] leaf exists, DON'T
+                             * short-circuit — fall to the race so it also weighs the FREE-reorder single-radix
+                             * candidate (the 2D 64x16 lesson). The race re-injects the calibrated palindrome. */
+                            int has_leaf = (N > 1 && N < VFFT_PROTO_REG_MAX_RADIX && reg->n1_fwd[N]);
+                            int *opp = (!has_leaf) ? vfft_natorder_mk_pairs(N, M) : NULL;
+                            if (opp)
+                            {
+                                free(h->nat_list);
+                                h->nat_list = opp; /* deployed plan p unchanged */
+                                mode = VFFT_NAT_PSWAP;
+                                _bank_nat_1d(W, N, K, mode, 0.0, dfac, dvar, dnf, ddif);
+                            }
+                            else
+                            {
+                                /* RACE (PURE vs injected-palindrome/single-leaf PSWAP vs DIT-SCR; 5% margin),
+                                 * seeded from the deployed chain dfac (the PLAN object, never the scr entry). */
+                                vfft_natorder_verdict_t v;
+                                vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, dfac, dnf, &v);
+                                mode = v.mode;
+                                if (mode == VFFT_NAT_PSWAP)
+                                {
+                                    vfft_proto_plan_destroy(h->cplan);
+                                    h->cplan = v.planB;
+                                    free(h->nat_list);
+                                    h->nat_list = v.pairs;
+                                    h->exec_fwd = NULL;
+                                    h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                                    h->exec_fwd = vfft_proto_plan_jit_fwd(h->cplan);
+                                    h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
+                                    /* deployed = injected chain: v.factors, uniform-prof variants (stage0 FLAT), dif=0. */
+                                    int fac2[STRIDE_MAX_STAGES], var2[STRIDE_MAX_STAGES];
+                                    for (int s = 0; s < v.nf && s < STRIDE_MAX_STAGES; s++) { fac2[s] = v.factors[s]; var2[s] = s ? v.prof : 0; }
+                                    _bank_nat_1d(W, N, K, mode, v.ns, fac2, var2, v.nf, 0);
+                                }
+                                else if (mode == VFFT_NAT_SCR)
+                                {
+                                    h->nat_scr = (natorder_scr_t *)malloc(sizeof(natorder_scr_t));
+                                    if (!h->nat_scr)
+                                    {
+                                        free(M);
+                                        vfft_proto_plan_destroy(v.scr_plan);
+                                        natorder_scr_free(&v.scr);
+                                        free(v.scr_cycles);
+                                        vfft_destroy(h);
+                                        return NULL;
+                                    }
+                                    *h->nat_scr = v.scr;
+                                    vfft_proto_plan_destroy(h->cplan);
+                                    h->cplan = v.scr_plan;
+                                    free(h->nat_list);
+                                    h->nat_list = v.scr_cycles;
+                                    h->exec_fwd = NULL;
+                                    h->exec_bwd = NULL;
+#ifdef VFFT_USE_JIT
+                                    h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
+#endif
+                                    _bank_nat_1d(W, N, K, mode, v.ns, dfac, dvar, dnf, ddif); /* the DIT base chain */
+                                }
+                                else /* PURE floor: deployed = p, bank p's chain */
+                                    _bank_nat_1d(W, N, K, VFFT_NAT_PURE_CYCLE, v.ns, dfac, dvar, dnf, ddif);
+                            }
+                        }
+                    }
+                    free(M);
+                    if (!h->nat_list && mode != VFFT_NAT_SCR) { vfft_destroy(h); return NULL; }
+                }
             }
             /* MT metadata for the reorder pass: PURE + SCR-backward split cycles (need offsets);
              * PSWAP splits pairs (count only). nat_list is now final for the chosen mode. */
