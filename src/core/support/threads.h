@@ -29,6 +29,7 @@
 #  include <windows.h>
 #elif defined(__linux__)
 #  include <pthread.h>
+#  include <unistd.h>
 #endif
 
 /* =====================================================================
@@ -143,6 +144,25 @@ static void _stride_pool_destroy(void) {
     _stride_pool_size = 0;
 }
 
+/* Logical-core count (for clamping pin targets so we never pin past the last CPU). */
+static int _stride_ncpu(void) {
+#ifdef _WIN32
+    SYSTEM_INFO si; GetSystemInfo(&si); return (int)si.dwNumberOfProcessors;
+#elif defined(__linux__)
+    long n = sysconf(_SC_NPROCESSORS_ONLN); return n < 1 ? 1 : (int)n;
+#else
+    return 1;
+#endif
+}
+/* Pin stride: worker i -> logical core (i+1)*stride, caller stays on core 0. On hybrid Intel (14900KF:
+ * logical 0-15 = 8 P-cores x 2 HT, even logical = distinct P-cores) stride 2 puts caller+7 workers on the
+ * 8 DISTINCT P-cores (0,2,..,14) instead of HT-contending 4 P-cores (the old i+1 packed 0..7 = 4 P-cores x
+ * HT, which made MT ~2x slower). Override with VFFT_PIN_STRIDE (set 1 on a non-hybrid/no-HT CPU). */
+static int _stride_pin_stride(void) {
+    const char *e = getenv("VFFT_PIN_STRIDE");
+    int s = e ? atoi(e) : 2;
+    return s < 1 ? 1 : s;
+}
 static void _stride_pool_create(int n_workers) {
     if (_stride_workers) _stride_pool_destroy();
     if (n_workers <= 0) return;
@@ -150,13 +170,15 @@ static void _stride_pool_create(int n_workers) {
     _stride_workers = (_stride_worker_t *)calloc(n_workers, sizeof(_stride_worker_t));
     _stride_pool_size = n_workers;
 
+    int stride = _stride_pin_stride(), ncpu = _stride_ncpu();
     for (int i = 0; i < n_workers; i++) {
         _stride_worker_t *w = &_stride_workers[i];
         w->done = 1;        /* no work pending initially */
         w->shutdown = 0;
         w->func = NULL;
         w->arg = NULL;
-        w->core_id = i + 1; /* pin to core i+1 (core 0 = caller) */
+        int cid = (i + 1) * stride;            /* P-core-aware: skip HT siblings on hybrid Intel */
+        w->core_id = (cid < ncpu) ? cid : -1;  /* beyond the last logical core -> no pin (runs anywhere) */
 #ifdef _WIN32
         w->thread = CreateThread(NULL, 0, _stride_worker_func, w, 0, NULL);
 #elif defined(__linux__)
