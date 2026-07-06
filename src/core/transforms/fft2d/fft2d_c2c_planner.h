@@ -26,6 +26,13 @@
 #include "fft2d_c2c_wisdom.h"   /* entry struct + (transitively) fft2d.h, planner.h */
 #include "natorder_2d.h"        /* vfft_natorder_2d_build_axis + (transitively) reorder passes */
 
+/* Natural-order STABILIZATION (mirrors the 1D race's VFFT_NATORDER_MARGIN): a candidate wins the natural
+ * pick outright only if it beats the fastest by >5%; within 5% is a noise tie, broken NATURAL-INTRINSICALLY
+ * by cheapest reorder (FREE < PSWAP-pairs < PURE-cycle) then fewer col stages — never by the scrambled
+ * winner. Keeps the 2D natural verdict deterministic across noisy runs. */
+#define VFFT_FFT2D_NAT_MARGIN 0.95
+#define VFFT_FFT2D_NAT_MAXC   (VFFT_PROTO_MEASURE_DEPLOY_MAX * (VFFT_PROTO_MEASURE_DEPLOY_MAX + 8))
+
 typedef enum {
     VFFT_FFT2D_C2C_MEASURE = 0,
     VFFT_FFT2D_C2C_PATIENT = 1
@@ -189,8 +196,13 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                                      xi[i] = (double)rand() / RAND_MAX - 0.5; }
 
     double best = 1e18; int best_r = -1, best_c = -1;
-    double best_nat = 1e18; int best_nat_r = -1, best_nat_c = -1;   /* natural-total winner */
+    double best_nat = 1e18; int best_nat_r = -1, best_nat_c = -1;   /* natural winner (raw-min, then tie-broken) */
     int built = 0, gated = 0;
+    /* Natural candidates for the margin + tie-break (stored during the sweep, resolved after it): raw
+     * min(nns) flaps on close cells under timing noise; instead pick the fastest-within-5% with the
+     * cheapest reorder class. natc_rank: 0=FREE (no dim1 tape) 1=PSWAP-pairs (palindrome) 2=PURE-cycle. */
+    double natc_nns[VFFT_FFT2D_NAT_MAXC];
+    int    natc_r[VFFT_FFT2D_NAT_MAXC], natc_c[VFFT_FFT2D_NAT_MAXC], natc_rank[VFFT_FFT2D_NAT_MAXC], natc_n = 0;
     for (int r = 0; r < nrow; r++) {
         for (int c = 0; c < ncol; c++) {
             stride_plan_t *plan_row = vfft_proto_plan_create_ex(
@@ -238,7 +250,14 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
                     _fft2d_jit_resolve(d2d);
                     double nns = vfft_fft2d_c2c_bench_min_natural(p, N1, N2, re, im, d1, d1p, d1tmp);
                     d2d->nat_col_list = NULL;                /* detach before destroy */
-                    if (nns < best_nat) { best_nat = nns; best_nat_r = r; best_nat_c = c; }
+                    if (natc_n < VFFT_FFT2D_NAT_MAXC) {
+                        natc_nns[natc_n]  = nns;
+                        natc_r[natc_n]    = r;
+                        natc_c[natc_n]    = c;
+                        natc_rank[natc_n] = (!d1) ? 0 : (d1p ? 1 : 2); /* FREE < PSWAP-pairs < PURE-cycle */
+                        natc_n++;
+                        if (nns < best_nat) best_nat = nns;            /* running min = margin reference */
+                    }
                 }
                 free(d1); free(d2);
                 } /* end if (do_natural) */
@@ -251,6 +270,24 @@ static double vfft_fft2d_c2c_plan_measure(int N1, int N2,
 
     STRIDE_ALIGNED_FREE(xr); STRIDE_ALIGNED_FREE(xi);
     STRIDE_ALIGNED_FREE(re); STRIDE_ALIGNED_FREE(im); STRIDE_ALIGNED_FREE(d1tmp);
+
+    /* NATURAL margin + tie-break: among candidates within 5% of the fastest natural total, prefer the
+     * cheapest reorder class (FREE < PSWAP-pairs < PURE-cycle), then fewer col stages, then raw speed.
+     * Deterministic across noisy runs, and decided ONLY on natural-intrinsic properties (never scrambled). */
+    if (natc_n > 0) {
+        double thresh = best_nat / VFFT_FFT2D_NAT_MARGIN;   /* ~5% slower than the min still counts as a tie */
+        int win = -1;
+        for (int i = 0; i < natc_n; i++) {
+            if (natc_nns[i] > thresh) continue;             /* decisively slower than the fastest natural */
+            if (win < 0) { win = i; continue; }
+            int ri = natc_rank[i], rw = natc_rank[win];
+            int si = col_cand[natc_c[i]].nf, sw = col_cand[natc_c[win]].nf;
+            if (ri < rw || (ri == rw && si < sw) ||
+                (ri == rw && si == sw && natc_nns[i] < natc_nns[win]))
+                win = i;
+        }
+        best_nat_r = natc_r[win]; best_nat_c = natc_c[win]; best_nat = natc_nns[win];
+    }
 
     if (best_r < 0) { if (verbose) printf("  [2d-c2c-planner] no candidate passed the gate\n"); return 1e18; }
 
