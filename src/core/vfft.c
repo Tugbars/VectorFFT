@@ -125,6 +125,11 @@ struct vfft_plan_s
      * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
     int padded;
     int exec_me;
+    /* 1 = the c2c in-place plan's codelet IGNORES the partial-lane count `me` (processes the full baked K),
+     * so a _c2c_mt K-split slab would overrun adjacent lanes -> wrong output. Detected once at create by a
+     * whole-vs-split self-check; when set, the FFT runs WHOLE-BATCH under MT (the reorder pass still threads).
+     * Root cause: radix-8 LOG3 last-stage codelet. See memory mt_c2c_16x8_wrong_output. */
+    int mt_unsafe;
     /* VFFT_ORDER_NATURAL (in-place 1D c2c only): the per-cell verdict + its execute tape.
      * nat_mode==0 (UNSET) means order=DEFAULT — the scrambled path, byte-identical to
      * pre-natural builds (kill switch). P1a wires FREE + PURE_CYCLE; SCR/PSWAP/LEAF-IP in
@@ -977,6 +982,38 @@ static void _ip_tramp(void *a)
  * The pool splits [0,me) into VW-aligned blocks run at the plan's baked stride p->K. For a
  * padded (Kp-wide) buffer with me=Kp, blocks are 4-aligned so the (Kp-K) zero pad lanes ride
  * in the last block full-SIMD (no per-block tail); with me=K the last block carries the tail. */
+/* Whole-vs-split self-check: does the plan's codelet honor a partial-lane count `me`? A whole-batch forward
+ * (me=K) must equal a SEQUENTIAL two-half split (me=K/2 at 0, then me=K-K/2 at +K/2). If it doesn't, the
+ * codelet processes the full baked K and a _c2c_mt K-split slab would overrun -> wrong output; flag it and
+ * run whole-batch under MT. DETERMINISTIC bug (radix-8 LOG3 last-stage), so this one-time create check is
+ * reliable. Returns 1 = safe (K-split OK), 0 = unsafe (run whole-batch). */
+static int _c2c_mt_safe(const stride_plan_t *p, vfft_proto_exec_fn fn)
+{
+    size_t K = p->K;
+    if (K < 16) return 1;                       /* _c2c_mt runs ST for K<8; K<16 never splits into >=2 slabs of 8 */
+    size_t h = K / 2, tot = (size_t)p->N * K;
+    double *ar = (double *)malloc(tot * 8), *ai = (double *)malloc(tot * 8);
+    double *br = (double *)malloc(tot * 8), *bi = (double *)malloc(tot * 8);
+    if (!ar || !ai || !br || !bi) { free(ar); free(ai); free(br); free(bi); return 1; }
+    for (size_t i = 0; i < tot; i++) {
+        double vr = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
+        double vi = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
+        ar[i] = br[i] = vr; ai[i] = bi[i] = vi;
+    }
+    if (fn) {
+        fn(p, ar, ai, K, p->K, 0);              /* whole batch */
+        fn(p, br, bi, h, p->K, 0);              /* split: lanes [0,h) */
+        fn(p, br + h, bi + h, K - h, p->K, 0);  /* split: lanes [h,K) */
+    } else {
+        vfft_proto_execute_fwd(p, ar, ai, K);
+        vfft_proto_execute_fwd(p, br, bi, h);
+        vfft_proto_execute_fwd(p, br + h, bi + h, K - h);
+    }
+    double m = 0;
+    for (size_t i = 0; i < tot; i++) { double e = fabs(ar[i] - br[i]) + fabs(ai[i] - bi[i]); if (e > m) m = e; }
+    free(ar); free(ai); free(br); free(bi);
+    return m < 1e-9;
+}
 static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
                     vfft_proto_exec_fn fn, size_t me)
 {
@@ -1879,6 +1916,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
 #endif
             h->nat_mode = mode;
         }
+        /* MT-safety: flag plans whose codelet ignores the partial-lane count (so _c2c_mt runs them whole-
+         * batch instead of K-splitting). Checked once here on the FINAL cplan (after any natural rebuild). */
+        h->mt_unsafe = !_c2c_mt_safe(h->cplan, h->exec_fwd);
         return h;
     }
 
@@ -2241,8 +2281,21 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
              h->nat_mode == VFFT_NAT_SCR))
             _natorder_mt(h, sre, sim, 0);
-        _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,      /* dst==src */
-                dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
+        if (h->mt_unsafe)
+        {
+            /* codelet ignores `me` -> K-split would overrun; run the FFT WHOLE-BATCH (the reorder above/below
+             * still threads). Same call shape as _c2c_mt's T<=1 branch. */
+            vfft_proto_exec_fn f = dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd;
+            if (f)
+                f(h->cplan, sre, sim, me, h->cplan->K, 0);
+            else if (dir == VFFT_FORWARD)
+                vfft_proto_execute_fwd(h->cplan, sre, sim, me);
+            else
+                vfft_proto_execute_bwd(h->cplan, sre, sim, me);
+        }
+        else
+            _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,      /* dst==src */
+                    dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
         /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
         if (dir == VFFT_FORWARD &&
             (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
