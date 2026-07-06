@@ -137,55 +137,6 @@
  *   stay addressable as its own reloadable value — remapping it into
  *   the fused chain would turn "reload" into "recompute".
  *
- * === MEASURED EFFECT (stats mode, avx2, gcc 15.2 host, 2026-07-06) ===
- *   Whole-cascade vector-instruction deltas, on vs off: R=7 -38%,
- *   R=11 -38%, R=13 -39%, R=25 -28%, R=32 -16%, R=16 -13%, R=8 -7%;
- *   t1 deltas equal n1 deltas exactly and cmul counts are untouched —
- *   the cascade never enters the twiddle cmul layer. The R=5 shape of
- *   it: 8 instructions for one output become 4 fmas; sibling outputs
- *   share one product as fma(+t17·t18, +t72) / fma(-t17·t18, +t72).
- *   Note the honest trade: SCALAR-equivalent op count can rise (R=5:
- *   44 -> 50) while instructions fall (44 -> 32) — the objective is
- *   instructions and pressure, not flops. End state at the asm level:
- *   source fma/mul/addsub counts equal gcc's emitted counts EXACTLY at
- *   R=16/32/64, n1 and t1 — gcc neither adds nor undoes fusion — and
- *   the residual muls are at their structural floor (the cmul
- *   mul-in-addend pair, and shared plus-minus butterfly products at
- *   the 3-op minimum). Honest present-day note (gcc 15.2 A/B, fused
- *   vs unfused IR of the SAME codelets): the founding churn was a
- *   LARGE-CODE phenomenon — gcc's allocator degrades as the
- *   straight-line block grows (rsp traffic ~100 at R=13, ~150 at
- *   R=32, ~500 at R=64, under either policy), and the historical
- *   vmov pollution lived at R=32 t1 / R=64 on gcc-11/13. On gcc 15.2
- *   it is not reproducible at any tested cell, and at the large
- *   cells the SIGN HAS INVERTED: compiling the unfused IR yields
- *   FEWER moves and stack ops (R=64 n1: 194 vs 249 reg-reg, 441 vs
- *   475 rsp) while fusing 60 fewer FMAs — today's gcc exploits
- *   standalone muls as free schedule fill on big blocks, the same
- *   mechanism behind flatten's R=64 density gate and the recorded
- *   ~7% R=64 explicit-FMA residual. That per-toolchain sign flip is
- *   itself the argument for owning fusion in the IR: source-level
- *   counts stay stable, measurable and compiler-independent, while
- *   what any given gcc does with mul+add swings version to version.
- *   It also marks fused-vs-unfused at R=64-class cells as a live
- *   runtime question for the per-cell verdict machinery, not a
- *   settled static one.
- *
- * === HISTORY (why the gate looks like this) ===
- *   An early measurement gated lifting to primes only, off a 33-48%
- *   composite "regression" later proven to be duplicated-mul artifact
- *   rather than FMA cost (doc 56). The fnmsub peephole's first life
- *   as a standalone post-pass orphaned spill markers at R=32/64 —
- *   the construction-time-versus-post-pass lesson (doc 30) that
- *   produced the frozen/remap machinery here. doc 54 recorded clang's
- *   fusion blindness and a composite compile failure root-caused to
- *   the same duplication; doc 56 restored single_use and simplified
- *   the gate to what ships; doc 59 built this cascade and the
- *   three-layer architecture; doc 63 named Cat-A/Cat-B. Open
- *   residuals: the odd-prime-outer mixed-radix class (R=15/20/21/35,
- *   +5-14%, a gcc scheduling effect with op counts preserved —
- *   doc 56's unshipped pow2-outer gate) and R=64 n1's ~7%
- *   explicit-FMA scheduling note.
  * ------------------------------------------------------------------
  * MODULE CARD (fma_passes.ml — grep "MODULE CARD" for the full set)
  * ROLE: The FMA rewrite family; closes the FMA-count gap vs FFTW.
@@ -198,8 +149,6 @@
  * ENV: VFFT_FMA_MULTIUSE (flatten multi-use: 1 on, 0 off, unset =
  * density AUTO); traces: FACTOR_TRACE, MULIFT_TRACE, MULFMA_TRACE,
  * FMA_ADDEND_TRACE, FLATTEN_FMA_MUL_TRACE(_VERBOSE).
- * DOCS: numbered_series 30, 54, 56, 63; 59_today_full_session_arc;
- * docs/pass_understanding.md.
  * GOTCHA 1: gen_main and pipeline.ml carry twin copies of the cascade
  * order and marker chain — change both or diverge the OOP family.
  * GOTCHA 2: multi_use_fma_lift's header text offers Neg-wrapped-Mul
