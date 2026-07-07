@@ -201,39 +201,39 @@ static inline void _stride_broadcast_2(double *out_re, double *out_im, size_t n,
         }                                                                          \
     }
 
-#define VFFT_PROTO_STAGE_LOG3(S, R, ISA)                                                 \
-    if (start_stage <= (S))                                                              \
-    {                                                                                    \
-        const stride_stage_t *st = &plan->stages[S];                                     \
-        const stride_invocation_t *__restrict__ tape = st->tape;                         \
-        const int num_groups = st->num_groups;                                           \
-        const size_t stride = st->stride;                                                \
-        for (int g = 0; g < num_groups; g++)                                             \
-        {                                                                                \
-            const stride_invocation_t inv = tape[g];                                     \
-            if (inv.tw_re)                                                               \
-            {                                                                            \
-                /* LOG3 applies cf0 to ALL R legs (codelet reads raw per-leg).           \
-                 * Twiddles come from grp_tw (per-leg LOG3 format), NOT the tape's       \
-                 * scalar inv.tw — same as the generic LOG3 path and DIF LOG3. */      \
-                const double _cfr = st->cf0_re[g];                                       \
-                const double _cfi = st->cf0_im[g];                                       \
-                if (_cfr != 1.0 || _cfi != 0.0)                                          \
-                    for (int _j = 0; _j < (R); _j++)                                     \
+#define VFFT_PROTO_STAGE_LOG3(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const stride_invocation_t *__restrict__ tape = st->tape; \
+        const int num_groups = st->num_groups; \
+        const size_t stride = st->stride; \
+        for (int g = 0; g < num_groups; g++) { \
+            const stride_invocation_t inv = tape[g]; \
+            if (inv.tw_re) { \
+                /* LOG3 applies cf0 to ALL R legs (codelet reads raw per-leg). Twiddles come \
+                 * from grp_tw (per-leg LOG3 format), NOT the tape scalar inv.tw. */ \
+                const double _cfr = st->cf0_re[g]; \
+                const double _cfi = st->cf0_im[g]; \
+                if (_cfr != 1.0 || _cfi != 0.0) \
+                    for (int _j = 0; _j < (R); _j++) \
                         _stride_cmul_scalar_inplace(re + inv.base + (size_t)_j * stride, \
                                                     im + inv.base + (size_t)_j * stride, \
-                                                    slice_K, _cfr, _cfi);                \
-                radix##R##_t1_dit_log3_fwd_##ISA(re + inv.base, im + inv.base,           \
-                                                 st->grp_tw_re[g], st->grp_tw_im[g],     \
-                                                 stride, slice_K);                       \
-            }                                                                            \
-            else                                                                         \
-            {                                                                            \
-                radix##R##_n1_fwd_##ISA(re + inv.base, im + inv.base,                    \
-                                        NULL, NULL,                                      \
-                                        stride, slice_K);                                \
-            }                                                                            \
-        }                                                                                \
+                                                    slice_K, _cfr, _cfi); \
+                /* K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride \
+                 * (see DIF_FLAT). LOG3 grp_tw holds raw per-leg; cf already applied above. */ \
+                double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+                double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+                for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \
+                    size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \
+                    for (int j = 0; j < ((R)-1); j++) \
+                        _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, tw_buf_im + (size_t)j * this_K, this_K, \
+                                            st->grp_tw_re[g][(size_t)j * full_K], st->grp_tw_im[g][(size_t)j * full_K]); \
+                    radix##R##_t1_dit_log3_fwd_##ISA(re + inv.base + kb, im + inv.base + kb, tw_buf_re, tw_buf_im, stride, this_K); \
+                } \
+            } else { \
+                radix##R##_n1_fwd_##ISA(re + inv.base, im + inv.base, NULL, NULL, stride, slice_K); \
+            } \
+        } \
     }
 
 #define VFFT_PROTO_STAGE_FLAT(S, R, ISA)                                            \
@@ -421,85 +421,99 @@ static inline void _stride_broadcast_2(double *out_re, double *out_im, size_t n,
 
 /* DIF FLAT (also T1S→FLAT fallback): codelet does butterfly + post-mul */
 /* legs 1..R-1 by grp_tw. needs_tw=0 groups fall to n1_fwd. */
-#define VFFT_PROTO_STAGE_DIF_FLAT(S, R, ISA)                          \
-    if (start_stage <= (S))                                           \
-    {                                                                 \
-        const stride_stage_t *st = &plan->stages[S];                  \
-        const int num_groups = st->num_groups;                        \
-        const size_t stride = st->stride;                             \
-        const int *needs_tw = st->needs_tw;                           \
-        const size_t *group_base = st->group_base;                    \
-        double **grp_tw_re = st->grp_tw_re;                           \
-        double **grp_tw_im = st->grp_tw_im;                           \
-        for (int g = 0; g < num_groups; g++)                          \
-        {                                                             \
-            double *base_re = re + group_base[g];                     \
-            double *base_im = im + group_base[g];                     \
-            if (!needs_tw[g])                                         \
-            {                                                         \
-                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, \
-                                        stride, slice_K);             \
-                continue;                                             \
-            }                                                         \
-            radix##R##_t1_dif_fwd_##ISA(base_re, base_im,             \
-                                        grp_tw_re[g], grp_tw_im[g],   \
-                                        stride, slice_K);             \
-        }                                                             \
+#define VFFT_PROTO_STAGE_DIF_FLAT(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int num_groups = st->num_groups; \
+        const size_t stride = st->stride; \
+        const int *needs_tw = st->needs_tw; \
+        const size_t *group_base = st->group_base; \
+        double **grp_tw_re = st->grp_tw_re; \
+        double **grp_tw_im = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \
+                continue; \
+            } \
+            /* K-split safe: DIF per-leg twiddle is constant across lanes (grp_tw row j = \
+             * broadcast of the leg scalar). Block-broadcast at this_K stride so the codelet's \
+             * W[(j-1)*me+m] row stride matches (full_K-strided grp_tw with me=slice_K reads the \
+             * wrong leg for me<full_K -- the DIF K-split bug). */ \
+            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \
+                for (int j = 0; j < ((R)-1); j++) \
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, tw_buf_im + (size_t)j * this_K, this_K, \
+                                        grp_tw_re[g][(size_t)j * full_K], grp_tw_im[g][(size_t)j * full_K]); \
+                radix##R##_t1_dif_fwd_##ISA(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im, stride, this_K); \
+            } \
+        } \
     }
 
 /* DIF LOG3: same as DIF_FLAT but calls log3 codelet variant. */
-#define VFFT_PROTO_STAGE_DIF_LOG3(S, R, ISA)                             \
-    if (start_stage <= (S))                                              \
-    {                                                                    \
-        const stride_stage_t *st = &plan->stages[S];                     \
-        const int num_groups = st->num_groups;                           \
-        const size_t stride = st->stride;                                \
-        const int *needs_tw = st->needs_tw;                              \
-        const size_t *group_base = st->group_base;                       \
-        double **grp_tw_re = st->grp_tw_re;                              \
-        double **grp_tw_im = st->grp_tw_im;                              \
-        for (int g = 0; g < num_groups; g++)                             \
-        {                                                                \
-            double *base_re = re + group_base[g];                        \
-            double *base_im = im + group_base[g];                        \
-            if (!needs_tw[g])                                            \
-            {                                                            \
-                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL,    \
-                                        stride, slice_K);                \
-                continue;                                                \
-            }                                                            \
-            radix##R##_t1_dif_log3_fwd_##ISA(base_re, base_im,           \
-                                             grp_tw_re[g], grp_tw_im[g], \
-                                             stride, slice_K);           \
-        }                                                                \
+#define VFFT_PROTO_STAGE_DIF_LOG3(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int num_groups = st->num_groups; \
+        const size_t stride = st->stride; \
+        const int *needs_tw = st->needs_tw; \
+        const size_t *group_base = st->group_base; \
+        double **grp_tw_re = st->grp_tw_re; \
+        double **grp_tw_im = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_fwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \
+                continue; \
+            } \
+            /* K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride \
+             * (see DIF_FLAT). LOG3 grp_tw holds raw per-leg. */ \
+            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \
+                for (int j = 0; j < ((R)-1); j++) \
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, tw_buf_im + (size_t)j * this_K, this_K, \
+                                        grp_tw_re[g][(size_t)j * full_K], grp_tw_im[g][(size_t)j * full_K]); \
+                radix##R##_t1_dif_log3_fwd_##ISA(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im, stride, this_K); \
+            } \
+        } \
     }
 
 /* DIF backward: fused t1_dif_bwd codelet (T_conj then B⁻¹) for needs_tw=1
  * groups, n1_bwd for needs_tw=0. cf0=1 in DIF so no leg-0 cmul needed. */
-#define VFFT_PROTO_STAGE_DIF_BWD(S, R, ISA)                           \
-    if (start_stage <= (S))                                           \
-    {                                                                 \
-        const stride_stage_t *st = &plan->stages[S];                  \
-        const int num_groups = st->num_groups;                        \
-        const size_t stride = st->stride;                             \
-        const int *needs_tw = st->needs_tw;                           \
-        const size_t *group_base = st->group_base;                    \
-        double **grp_tw_re = st->grp_tw_re;                           \
-        double **grp_tw_im = st->grp_tw_im;                           \
-        for (int g = 0; g < num_groups; g++)                          \
-        {                                                             \
-            double *base_re = re + group_base[g];                     \
-            double *base_im = im + group_base[g];                     \
-            if (!needs_tw[g])                                         \
-            {                                                         \
-                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, \
-                                        stride, slice_K);             \
-                continue;                                             \
-            }                                                         \
-            radix##R##_t1_dif_bwd_##ISA(base_re, base_im,             \
-                                        grp_tw_re[g], grp_tw_im[g],   \
-                                        stride, slice_K);             \
-        }                                                             \
+#define VFFT_PROTO_STAGE_DIF_BWD(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int num_groups = st->num_groups; \
+        const size_t stride = st->stride; \
+        const int *needs_tw = st->needs_tw; \
+        const size_t *group_base = st->group_base; \
+        double **grp_tw_re = st->grp_tw_re; \
+        double **grp_tw_im = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, stride, slice_K); \
+                continue; \
+            } \
+            /* K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride \
+             * (see DIF_FLAT). t1_dif_bwd conjugates internally. */ \
+            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \
+                for (int j = 0; j < ((R)-1); j++) \
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, tw_buf_im + (size_t)j * this_K, this_K, \
+                                        grp_tw_re[g][(size_t)j * full_K], grp_tw_im[g][(size_t)j * full_K]); \
+                radix##R##_t1_dif_bwd_##ISA(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im, stride, this_K); \
+            } \
+        } \
     }
 
 /* Function-pointer signature shared by forward and backward executors. */

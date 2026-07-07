@@ -90,7 +90,7 @@
 #define VFFT_PROTO_JIT_GENINC  VFFT_PROTO_JIT_REPO "/generator/generated"
 #endif
 #ifndef VFFT_PROTO_JIT_VERSION      /* bump to invalidate the on-disk cache */
-#define VFFT_PROTO_JIT_VERSION 2
+#define VFFT_PROTO_JIT_VERSION 3    /* v3: DIF/LOG3 K-split twiddle fix (block-broadcast) in plan_executors.h macros */
 #endif
 
 /* ── Variant recovery: derive the per-stage variant code from the wired plan
