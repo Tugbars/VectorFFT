@@ -579,13 +579,35 @@ let emit_stage_macros () =
     "                                                    slice_K, _cfr, _cfi); \
      \\";
   print_endline
-    "                radix##R##_t1_dit_log3_fwd_##ISA(re + inv.base, im + \
-     inv.base, \\";
+    "                /* K-split safe: block-broadcast the constant-per-leg grp_tw at \\";
   print_endline
-    "                                                  st->grp_tw_re[g], \
-     st->grp_tw_im[g], \\";
+    "                 * this_K stride (see DIF_FLAT). LOG3 grp_tw holds raw per-leg; \\";
   print_endline
-    "                                                  stride, slice_K); \\";
+    "                 * cf already applied to all R legs above. */ \\";
+  print_endline
+    "                double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "                double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "                for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \\";
+  print_endline
+    "                    size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) \\";
+  print_endline
+    "                                    ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \\";
+  print_endline "                    for (int j = 0; j < ((R)-1); j++) \\";
+  print_endline
+    "                        _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, \\";
+  print_endline
+    "                                            tw_buf_im + (size_t)j * this_K, this_K, \\";
+  print_endline
+    "                                            st->grp_tw_re[g][(size_t)j * full_K], \\";
+  print_endline
+    "                                            st->grp_tw_im[g][(size_t)j * full_K]); \\";
+  print_endline
+    "                    radix##R##_t1_dit_log3_fwd_##ISA(re + inv.base + kb, im + inv.base + kb, \\";
+  print_endline
+    "                                                  tw_buf_re, tw_buf_im, stride, this_K); \\";
+  print_endline "                } \\";
   print_endline "            } else { \\";
   print_endline
     "                radix##R##_n1_fwd_##ISA(re + inv.base, im + inv.base, \\";
@@ -862,10 +884,40 @@ let emit_stage_macros () =
   print_endline "                                          stride, slice_K); \\";
   print_endline "                continue; \\";
   print_endline "            } \\";
-  print_endline "            radix##R##_t1_dif_fwd_##ISA(base_re, base_im, \\";
   print_endline
-    "                                          grp_tw_re[g], grp_tw_im[g], \\";
-  print_endline "                                          stride, slice_K); \\";
+    "            /* K-split safe: DIF per-leg twiddle is constant across lanes (grp_tw \\";
+  print_endline
+    "             * row j = broadcast of the leg scalar). Rebuild a this_K-strided \\";
+  print_endline
+    "             * broadcast per block so the codelet's W[(j-1)*me+m] row stride \\";
+  print_endline
+    "             * matches (full_K-strided grp_tw with me=slice_K reads the wrong \\";
+  print_endline
+    "             * leg for me<full_K — the DIF K-split bug). */ \\";
+  print_endline
+    "            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \\";
+  print_endline
+    "                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) \\";
+  print_endline
+    "                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \\";
+  print_endline "                for (int j = 0; j < ((R)-1); j++) \\";
+  print_endline
+    "                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, \\";
+  print_endline
+    "                                        tw_buf_im + (size_t)j * this_K, this_K, \\";
+  print_endline
+    "                                        grp_tw_re[g][(size_t)j * full_K], \\";
+  print_endline
+    "                                        grp_tw_im[g][(size_t)j * full_K]); \\";
+  print_endline
+    "                radix##R##_t1_dif_fwd_##ISA(base_re + kb, base_im + kb, \\";
+  print_endline
+    "                                              tw_buf_re, tw_buf_im, stride, this_K); \\";
+  print_endline "            } \\";
   print_endline "        } \\";
   print_endline "    }";
   print_endline "";
@@ -890,12 +942,33 @@ let emit_stage_macros () =
   print_endline "                continue; \\";
   print_endline "            } \\";
   print_endline
-    "            radix##R##_t1_dif_log3_fwd_##ISA(base_re, base_im, \\";
+    "            /* K-split safe: block-broadcast the constant-per-leg grp_tw at \\";
   print_endline
-    "                                              grp_tw_re[g], grp_tw_im[g], \
-     \\";
+    "             * this_K stride (see DIF_FLAT). LOG3 grp_tw holds raw per-leg. */ \\";
   print_endline
-    "                                              stride, slice_K); \\";
+    "            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \\";
+  print_endline
+    "                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) \\";
+  print_endline
+    "                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \\";
+  print_endline "                for (int j = 0; j < ((R)-1); j++) \\";
+  print_endline
+    "                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, \\";
+  print_endline
+    "                                        tw_buf_im + (size_t)j * this_K, this_K, \\";
+  print_endline
+    "                                        grp_tw_re[g][(size_t)j * full_K], \\";
+  print_endline
+    "                                        grp_tw_im[g][(size_t)j * full_K]); \\";
+  print_endline
+    "                radix##R##_t1_dif_log3_fwd_##ISA(base_re + kb, base_im + kb, \\";
+  print_endline
+    "                                              tw_buf_re, tw_buf_im, stride, this_K); \\";
+  print_endline "            } \\";
   print_endline "        } \\";
   print_endline "    }";
   print_endline "";
@@ -921,10 +994,34 @@ let emit_stage_macros () =
   print_endline "                                          stride, slice_K); \\";
   print_endline "                continue; \\";
   print_endline "            } \\";
-  print_endline "            radix##R##_t1_dif_bwd_##ISA(base_re, base_im, \\";
   print_endline
-    "                                          grp_tw_re[g], grp_tw_im[g], \\";
-  print_endline "                                          stride, slice_K); \\";
+    "            /* K-split safe: block-broadcast the constant-per-leg grp_tw at \\";
+  print_endline
+    "             * this_K stride (see DIF_FLAT). t1_dif_bwd conjugates internally. */ \\";
+  print_endline
+    "            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \\";
+  print_endline
+    "            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \\";
+  print_endline
+    "                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) \\";
+  print_endline
+    "                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \\";
+  print_endline "                for (int j = 0; j < ((R)-1); j++) \\";
+  print_endline
+    "                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, \\";
+  print_endline
+    "                                        tw_buf_im + (size_t)j * this_K, this_K, \\";
+  print_endline
+    "                                        grp_tw_re[g][(size_t)j * full_K], \\";
+  print_endline
+    "                                        grp_tw_im[g][(size_t)j * full_K]); \\";
+  print_endline
+    "                radix##R##_t1_dif_bwd_##ISA(base_re + kb, base_im + kb, \\";
+  print_endline
+    "                                              tw_buf_re, tw_buf_im, stride, this_K); \\";
+  print_endline "            } \\";
   print_endline "        } \\";
   print_endline "    }";
   print_endline ""

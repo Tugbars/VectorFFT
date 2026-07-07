@@ -1930,7 +1930,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         /* MT-safety: flag plans whose codelet ignores the partial-lane count (so _c2c_mt runs them whole-
          * batch instead of K-splitting). Checked once here on the FINAL cplan (after any natural rebuild). */
-        h->mt_unsafe = !_c2c_mt_safe(h->cplan, h->exec_fwd);
+        /* Safety net (now that the DIF/LOG3 K-split twiddle bug is fixed at codegen): flag any plan whose
+         * codelet still miscomputes a partial batch so _c2c_mt runs it whole-batch. Only MT plans K-split,
+         * so skip the check (and its cost) for single-threaded creates. */
+        h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
         return h;
     }
 

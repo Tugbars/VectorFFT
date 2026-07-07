@@ -87,9 +87,25 @@ static inline void vfft_proto_execute_fwd_generic_from(const stride_plan_t *plan
                         _stride_cmul_scalar_inplace(lr, li, slice_K, cfr, cfi);
                     }
                 }
-                st->t1_fwd(base_re, base_im,
-                           st->grp_tw_re[g], st->grp_tw_im[g],
-                           st->stride, slice_K);
+                /* K-split safe: block-broadcast the constant-per-leg (raw) grp_tw at
+                 * this_K stride so the log3 codelet's W[(j-1)*me+m] row stride matches
+                 * (full_K-strided grp_tw with me=slice_K reads the wrong leg). */
+                {
+                    const int Rm1 = R - 1;
+                    double tw_buf_re[63 * VFFT_PROTO_TW_BLOCK_K];
+                    double tw_buf_im[63 * VFFT_PROTO_TW_BLOCK_K];
+                    for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                        size_t this_K = slice_K - kb;
+                        if (this_K > VFFT_PROTO_TW_BLOCK_K) this_K = VFFT_PROTO_TW_BLOCK_K;
+                        for (int j = 0; j < Rm1; j++)
+                            _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                                tw_buf_im + (size_t)j * this_K, this_K,
+                                                st->grp_tw_re[g][(size_t)j * plan->K],
+                                                st->grp_tw_im[g][(size_t)j * plan->K]);
+                        st->t1_fwd(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im,
+                                   st->stride, this_K);
+                    }
+                }
                 continue;
             }
 
@@ -223,10 +239,26 @@ static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
             }
 
             /* DIF: codelet does butterfly + post-mul legs 1..R-1 by grp_tw.
-             * cf0 = 1 universally so no leg-0 cmul needed. */
-            st->t1_fwd(base_re, base_im,
-                       st->grp_tw_re[g], st->grp_tw_im[g],
-                       st->stride, slice_K);
+             * cf0 = 1 universally so no leg-0 cmul needed.
+             * K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride
+             * so the codelet's W[(j-1)*me+m] row stride matches (full_K-strided grp_tw with
+             * me=slice_K reads the wrong leg for me<full_K -- the DIF K-split bug). */
+            {
+                const int Rm1 = st->radix - 1;
+                double tw_buf_re[63 * VFFT_PROTO_TW_BLOCK_K];
+                double tw_buf_im[63 * VFFT_PROTO_TW_BLOCK_K];
+                for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                    size_t this_K = slice_K - kb;
+                    if (this_K > VFFT_PROTO_TW_BLOCK_K) this_K = VFFT_PROTO_TW_BLOCK_K;
+                    for (int j = 0; j < Rm1; j++)
+                        _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                            tw_buf_im + (size_t)j * this_K, this_K,
+                                            st->grp_tw_re[g][(size_t)j * plan->K],
+                                            st->grp_tw_im[g][(size_t)j * plan->K]);
+                    st->t1_fwd(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im,
+                               st->stride, this_K);
+                }
+            }
         }
     }
 }
@@ -262,10 +294,25 @@ static inline void vfft_proto_execute_bwd_generic_dif(const stride_plan_t *plan,
             }
 
             /* Fused inverse: t1_dif_bwd does T_conj + inverse butterfly.
-             * cf0 = 1 in DIF — no executor-side leg-0 cmul needed. */
-            st->t1_bwd(base_re, base_im,
-                       st->grp_tw_re[g], st->grp_tw_im[g],
-                       st->stride, slice_K);
+             * cf0 = 1 in DIF — no executor-side leg-0 cmul needed.
+             * K-split safe: block-broadcast the constant-per-leg grp_tw at this_K stride
+             * (see the fwd path). t1_dif_bwd conjugates internally. */
+            {
+                const int Rm1 = st->radix - 1;
+                double tw_buf_re[63 * VFFT_PROTO_TW_BLOCK_K];
+                double tw_buf_im[63 * VFFT_PROTO_TW_BLOCK_K];
+                for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) {
+                    size_t this_K = slice_K - kb;
+                    if (this_K > VFFT_PROTO_TW_BLOCK_K) this_K = VFFT_PROTO_TW_BLOCK_K;
+                    for (int j = 0; j < Rm1; j++)
+                        _stride_broadcast_2(tw_buf_re + (size_t)j * this_K,
+                                            tw_buf_im + (size_t)j * this_K, this_K,
+                                            st->grp_tw_re[g][(size_t)j * plan->K],
+                                            st->grp_tw_im[g][(size_t)j * plan->K]);
+                    st->t1_bwd(base_re + kb, base_im + kb, tw_buf_re, tw_buf_im,
+                               st->stride, this_K);
+                }
+            }
         }
     }
 }
