@@ -234,6 +234,70 @@ int main(void)
         }
     }
 
+    /* ---- mono-64 IL twins (M2 fwd + M4 bwd) + split-bwd swap identity ---- */
+    {
+        vfft_oop11_fn mf = vfft_k1_mono_il_fn(64, 0);
+        vfft_oop11_fn mb = vfft_k1_mono_il_fn(64, 1);
+        vfft_oop11_fn ms = vfft_k1_mono_fn(64);
+        if (mf && mb && ms) {
+            int N = 64;
+            double tol = 1e-9 * (double)N, rt_tol = tol * (double)N;
+            double *xr = ad(N), *xi = ad(N), *nr = ad(N), *ni = ad(N);
+            double *dr = ad(N), *di = ad(N), *z = ad((size_t)2 * N);
+            for (int inp = 0; inp < 2; inp++) {
+                if (inp == 0)
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = cos(0.7 * n) + 0.1;
+                        xi[n] = sin(1.3 * n) - 0.05;
+                    }
+                else {
+                    srand(64642);
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = (double)rand() / RAND_MAX - 0.5;
+                        xi[n] = (double)rand() / RAND_MAX - 0.5;
+                    }
+                }
+                naive_dft(N, xr, xi, nr, ni);
+                /* IL fwd vs naive */
+                for (int n = 0; n < N; n++) { z[2*n] = xr[n]; z[2*n+1] = xi[n]; }
+                mf(z, 0, z, 0, 0, 0, 0, 0, 0, 0, 0);
+                double ef = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(z[2*k] - nr[k]), c2 = fabs(z[2*k+1] - ni[k]);
+                    if (c1 > ef) ef = c1;
+                    if (c2 > ef) ef = c2;
+                }
+                /* IL roundtrip: bwd(fwd(x)) == N*x */
+                mb(z, 0, z, 0, 0, 0, 0, 0, 0, 0, 0);
+                double ert = 0;
+                for (int n = 0; n < N; n++) {
+                    double c1 = fabs(z[2*n] - (double)N * xr[n]);
+                    double c2 = fabs(z[2*n+1] - (double)N * xi[n]);
+                    if (c1 > ert) ert = c1;
+                    if (c2 > ert) ert = c2;
+                }
+                /* split bwd via the pointer-swap identity on the fwd mono:
+                 * IDFT(X) = swap(DFT(swap(X))) — feed the naive spectrum
+                 * swapped, read the result swapped: should give N*x. */
+                double eb = 0;
+                ms(ni, nr, di, dr, 0, 0, 0, 0, 0, 0, 0);
+                for (int n = 0; n < N; n++) {
+                    double c1 = fabs(dr[n] - (double)N * xr[n]);
+                    double c2 = fabs(di[n] - (double)N * xi[n]);
+                    if (c1 > eb) eb = c1;
+                    if (c2 > eb) eb = c2;
+                }
+                const char *bad = (ef > tol || ert > rt_tol || eb > rt_tol ||
+                                   ef != ef || ert != ert || eb != eb) ? "  <FAIL>" : "";
+                if (bad[0]) fails++;
+                printf("  K1MONO64-IL %s fwd=%.2e ilrt=%.2e split-bwd=%.2e%s\n",
+                       inp ? "rnd" : "det", ef, ert, eb, bad);
+            }
+            afree(xr); afree(xi); afree(nr); afree(ni);
+            afree(dr); afree(di); afree(z);
+        }
+    }
+
     printf("\n%s (%d fail)\n", fails ? "FAILURES" : "BAILEY2V: ALL GATES GREEN (split+IL, fwd+bwd, det+rnd)", fails);
     return fails ? 1 : 0;
 }

@@ -325,4 +325,32 @@ static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
 #endif
 }
 
+/* mono-64 IL twins (M2/M4): z->z; bwd = fwd DAG with (im,re)-swapped
+ * boundary lattices (swap identity), unnormalized inverse, output (re,im).
+ * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —
+ * call the split fwd with re/im pointer pairs swapped. */
+#if VFFT_OOP_GROUPW == 4u
+extern void vfft_k1_mono64_8x8_il_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void vfft_k1_mono64_8x8_il_bwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+#endif
+
+static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (N)
+    {
+    case 64: return bwd ? vfft_k1_mono64_8x8_il_bwd_avx2
+                        : vfft_k1_mono64_8x8_il_fwd_avx2;
+    default: return 0;
+    }
+#else
+    (void)N; (void)bwd;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */
