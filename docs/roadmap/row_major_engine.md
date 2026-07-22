@@ -282,6 +282,53 @@ Productization order:
 Guardrail unchanged: the bar is **MKL-interleaved** (§9). Split-vs-split wins are reported as
 secondary evidence only.
 
+## 11e. WHY WE LOSE — attributed by experiment (2026-07-22, same session as MKL columns)
+
+Three additions to the spike decomposed the gap: an **in-place** split arm (2 buffers, matching
+MKL's DFTI_INPLACE config), a **native-IL** arm (z→z through the *unwired*
+`radixN_n1_oop_fwd_avx2_UG_UG_il_in` codelets — il_derive.py twins of the split leaves that
+already sit in the codelet lib with the same free-stride 11-arg ABI — plus a v1 exit
+interleave-sweep), and an **IL mono-64**. All gate green det+rand (the deriver's known broken
+tail never runs: our `me=R1` is always %4==0).
+
+| N | MKL-IL | MKL-split | A-split-ip | A-IL-v1 (sweep) | notes |
+|--:|--:|--:|--:|--:|---|
+| 64 | 30.2 | 33.7 | 44 | 60 — **mono-IL 44** | mono-split 33 |
+| 256 | 137.1 | 195.7 | **176** (4×64) | 251 | beats MKL-split 1.11× |
+| 1024 | 753.3 | 776.4 | **1113** (64×16) | 1498 | in-place −15% vs OOP |
+| 4096 | 4078.7 | 4932.8 | 7161 (64×64) | 7700 | in-place ≈ OOP (L2-bound) |
+
+Attribution, in order of measured size:
+
+1. **Input-side IL is FREE today.** A-IL-v1 ≈ A-split-ip + exit-sweep cost, exactly: the
+   `il_in` leaf's in-register deinterleave hides completely under the column pass. The entire
+   v1 IL premium is the un-fused OUTPUT sweep (+75 ns at 256, +385 at 1024) — removed by
+   emitting a **`t1_oop` il_out twin** (assessed as recombination-only: the permute lattice
+   exists in `emit_c.ml:1584-1663`/`emit_render.ml:86-131`; the OOP fold is local to
+   `emit_load/store_unitgroup`, simpler than the ip path — touch `codelet_oop.ml` edge kind +
+   `gen_main.ml` flags + registration).
+2. **The t1 twiddle stream is structural**: `tw[(l2-1)·me+b]` is loadu-streamed →
+   (R1−1)·R2·16 B/execute ≈ N·16 B — a table stream as large as the dataset itself, every
+   execute ([radix16_t1_oop_avx2.c:116](../../src/dag-fft-compiler/codelets/oop/avx2/radix16_t1_oop_avx2.c#L116)).
+   This is the dominant reason we trail MKL-split at N≥1024 *in the same layout*. Fixes:
+   recompute-in-register (strided_twiddle_variants §5) or deeper factorization (P4 recursion).
+3. **Fat-leaf spill traffic**: the radix64 `n1_oop` leaf is a BLOCKED two-pass body with
+   `__m256d spill_re[64]` — 128+128 spill stores/reloads per iteration on top of 128+128 data
+   moves. The leaf pass costs 2.9–5.2 µs at N=4096 partly for this reason.
+4. **Footprint**: in-place (2-buffer) buys 10–15% at N=1024–2048, nothing at ≤512
+   (L1-resident either way) or 4096 (L2-bound either way). Real but secondary.
+5. **MKL's IL advantage at 256 is not just layout**: their IL kernel beats their own split by
+   1.43× at 256 — the fused-mono tier plausibly extends to 256 in MKL. Matching them there may
+   need OUR mono tier at 256 too (the `--k1` emitter, not hand-writing).
+
+Mono-IL at 64: 44 ns vs MKL 30.2 — boundary shuffles cost +11 ns over split-mono 33. The hand
+kernel uses no FMA in its cmuls yet; emitter-scheduled `--k1` codelets are the path to parity,
+not further hand-tuning.
+
+**Priority consequence**: P2 (t1_oop il_out twin → true IL-native four-step at split cost) and
+P3 (--k1 mono tier, IL-first) are confirmed as the two build items; P4 (t1 table
+recompute/recursion) is what's left of the MKL-split gap at large N.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
