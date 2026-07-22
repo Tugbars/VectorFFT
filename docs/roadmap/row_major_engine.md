@@ -526,6 +526,29 @@ per-kernel quality: their straight-line radix-32 kernels vs our doc-58 spill-blo
 their linear twiddle cursor vs our 63 strided rows — i.e. §12.4 items 3 (mono ≤256), 4a
 (linear twiddle layout), 5 (composed/leaner column kernels).
 
+### 12.6 Item 4a MEASURED — linear twiddle layout is MARGINAL; banked as a calibrator variant
+
+`--oop-tw-linear` emitter mode built (ref in emit_state, linear branch in the Twiddle render:
+`tw_re[b*NLEGS + j*VW]`, one contiguous (R1−1)-vector block per quad; UL-only by validation —
+no rem tail exists to mis-index the layout). 5 `_twl` twins + `Qlr/Qli` consumption-order
+tables + `vfft_oop_execute_fwd_2pa_twl`. Gates bit-identical (0.0 — same values, different
+order). **Measured (isolated, cooled): twl vs 2pa on the same pair = −5% (64) / +7% (256) /
+−1% (512) / −4% (1024) / +13% (2048) / −1% (4096) — noise-level, pair-dependent.** The
+scheduler emits twiddle loads in DAG order (not leg-ascending), so the layout is
+quad-block-local rather than truly sequential; block locality evidently wasn't the
+bottleneck — consistent with §12.2 (twiddle share ≈ 0 at R1≤32, and the best pairs mostly
+avoid R1=64). VERDICT: keep `_twl` as a per-cell calibrator variant (free, bit-identical);
+do NOT default it; do NOT build the log3/factored variants unless VTune later shows the
+anchor stream at R1=64 pairs actually evicting L1. The 3-twiddle-methods thesis extends:
+measured selection, not doctrine.
+
+Best-of-today ladder after two-pass (this cooler evening session, isolated):
+64 = **29** (mono, 1.22× MKL-sp) · 256 = **154** (2pa 4×64, **1.25× MKL-sp**, 0.89× MKL-IL)
+· 512 = **360** (0.93×) · 1024 = **1016** (2pb 16×64, 0.75×) · 2048 = **3311** (2pa 64×32,
+0.75×) · 4096 = **7220** (2pb 64×64, 0.68×). Day trajectory at 1024: 1574 → 1319 → 1193 →
+**1016**. Next lever by size: --k1 mono (≤256, targets MKL-IL), leaner column kernels /
+composed pass (≥1024).
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).

@@ -132,6 +132,8 @@ let run (argv : string array) : unit =
      into the boundary (a z buffer cannot pointer-swap re/im). *)
   let oop_il_in_sw = ref false in
   let oop_il_out_sw = ref false in
+  (* §12.4 4a: linear (consumption-order) twiddle table for t1 UL configs *)
+  let oop_tw_linear = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -226,6 +228,7 @@ let run (argv : string array) : unit =
      else if arg = "--oop-il-out" then oop_il_out := true
      else if arg = "--oop-il-in-sw" then oop_il_in_sw := true
      else if arg = "--oop-il-out-sw" then oop_il_out_sw := true
+     else if arg = "--oop-tw-linear" then oop_tw_linear := true
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
        oop_load_pat := arr.(!i + 1);
        incr i
@@ -1258,6 +1261,13 @@ let run (argv : string array) : unit =
         failwith
           "--oop-il-out[-sw] is incompatible with --oop-store-fused (the IL \
            store needs the paired out_lane re/im registers)";
+      if !oop_tw_linear
+         && ((twiddles <> Codelet_oop.PerGroupTwiddles)
+             || load_pat <> Codelet_oop.UnitLeg) then
+        failwith
+          "--oop-tw-linear requires --twiddled (PerGroup) + --oop-load UL \
+           (UL configs carry no rem tail; the tail passes would index the \
+           flat layout)";
       let cname =
         if !post_tw then begin
           let sub = "t1_oop" and rep = "t1_dif_oop" in
@@ -1285,6 +1295,7 @@ let run (argv : string array) : unit =
       let cname = if !oop_il_out then cname ^ "_il_out" else cname in
       let cname = if !oop_il_in_sw then cname ^ "_il_in_sw" else cname in
       let cname = if !oop_il_out_sw then cname ^ "_il_out_sw" else cname in
+      let cname = if !oop_tw_linear then cname ^ "_twl" else cname in
       let cname = if !oop_strides <> None then cname ^ "_spec" else cname in
       let cfg =
         Codelet_oop.
@@ -1308,6 +1319,7 @@ let run (argv : string array) : unit =
       Codelet_oop.current_oop_il_out := !oop_il_out;
       Codelet_oop.current_oop_il_in_sw := !oop_il_in_sw;
       Codelet_oop.current_oop_il_out_sw := !oop_il_out_sw;
+      Codelet_oop.current_oop_tw_linear := !oop_tw_linear;
       print_string (Codelet_oop.emit_codelet cfg)
     end
     else begin

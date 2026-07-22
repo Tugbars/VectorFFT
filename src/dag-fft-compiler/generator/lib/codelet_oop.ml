@@ -266,6 +266,13 @@ let current_oop_il_out : bool ref = ref false
 let current_oop_il_in_sw : bool ref = ref false
 let current_oop_il_out_sw : bool ref = ref false
 
+(* LINEAR twiddle layout (§12.4 4a): pack the t1 table in consumption order
+   (per group-quad, all legs contiguous) — one streaming cursor like MKL's,
+   instead of (R-1) parallel strided rows. UL-load configs only (no rem tail
+   exists there; the tail passes would index the flat layout). Set from
+   gen_main --oop-tw-linear; forwarded to Emit_state via Emit_c at emit. *)
+let current_oop_tw_linear : bool ref = ref false
+
 let il_in_active () = !current_oop_il_in || !current_oop_il_in_sw
 let il_out_active () = !current_oop_il_out || !current_oop_il_out_sw
 
@@ -1750,6 +1757,8 @@ let emit_butterfly_body (buf : Buffer.t) (c : config) (prep : prepared_body) :
 let emit_codelet (c : config) : string =
   validate c;
   Emit_c.current_tw_perpos := c.twiddles = PerPositionTwiddles;
+  Emit_c.current_tw_linear :=
+    (if !current_oop_tw_linear then c.radix - 1 else 0);
   let buf = Buffer.create 4096 in
   (* Arbitrary-K rem-aware tail (docs/performance/arbitrary_k_tail_handling.md).
      UnitGroup edges, loop bound me = group count. Masks the in/out group

@@ -87,6 +87,9 @@ typedef struct
     vfft_oop11_fn il_leaf, il_leaf_sw, t1_il, t1_il_sw;
     /* two-pass twins (§12.4): t1 with UL load / leaf with UL store */
     vfft_oop11_fn t1_ul, leaf_ul;
+    /* linear-twiddle t1_ul twin (§12.4 4a) + its consumption-order table */
+    vfft_oop11_fn t1_ul_twl;
+    double *Qlr, *Qli;
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -264,6 +267,39 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->t1_il_sw   = vfft_oop_t1_il_fn(R1, 1);
     p->t1_ul      = vfft_oop_t1_ul_fn(R1);
     p->leaf_ul    = vfft_oop_leaf_ugul_fn(R2);
+    p->t1_ul_twl  = vfft_oop_t1_ul_twl_fn(R1);
+    if (p->t1_ul_twl && (R2 % 4) == 0)
+    {
+        /* consumption-order table (§12.4 4a): per group-quad b0, all legs'
+         * 4-vectors contiguous — idx = b0*(R1-1) + (l-1)*4 + k, value
+         * W_N^{l*(b0+k)} (same values as Qr/Qi, different order → the twl
+         * codelet is bit-identical to t1_ul). */
+        const size_t rows = (size_t)(R1 - 1) * (size_t)R2;
+        p->Qlr = (double *)malloc(rows * 8);
+        p->Qli = (double *)malloc(rows * 8);
+        if (p->Qlr && p->Qli)
+        {
+            for (int b0 = 0; b0 < R2; b0 += 4)
+                for (int l = 1; l < R1; l++)
+                    for (int k = 0; k < 4; k++)
+                    {
+                        double a = -2.0 * M_PI *
+                                   (double)((long)l * (b0 + k)) / (double)N;
+                        size_t idx = (size_t)b0 * (R1 - 1) +
+                                     (size_t)(l - 1) * 4 + (size_t)k;
+                        p->Qlr[idx] = cos(a);
+                        p->Qli[idx] = sin(a);
+                    }
+        }
+        else
+        {
+            free(p->Qlr); free(p->Qli);
+            p->Qlr = p->Qli = NULL;
+            p->t1_ul_twl = 0;
+        }
+    }
+    else
+        p->t1_ul_twl = 0;
     return p;
 }
 
@@ -446,6 +482,21 @@ static inline int vfft_oop_execute_fwd_2pa(const vfft_oop_plan_t *p,
     return 0;
 }
 
+/* Route (a) with the LINEAR-layout twiddle stream (§12.4 4a): same passes,
+ * the t1 reads Qlr/Qli with one advancing cursor. Bit-identical values. */
+static inline int vfft_oop_execute_fwd_2pa_twl(const vfft_oop_plan_t *p,
+                                               const double *sr, const double *si,
+                                               double *dr, double *di)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->t1_ul_twl)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->leaf(sr, si, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    p->t1_ul_twl(p->col_re, p->col_im, dr, di, p->Qlr, p->Qli,
+                 1, R1, R2, 1, R2);
+    return 0;
+}
+
 static inline int vfft_oop_execute_fwd_2pb(const vfft_oop_plan_t *p,
                                            const double *sr, const double *si,
                                            double *dr, double *di)
@@ -526,6 +577,7 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
         return;
     free(p->Qr);
     free(p->Qi);
+    free(p->Qlr); free(p->Qli);
     free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
     /* MODEB owns a full stride plan (stage tables + tape + twiddle pools) — tear
      * it down through the proto destroy, not bare free. (The old "Phase 1 has no
