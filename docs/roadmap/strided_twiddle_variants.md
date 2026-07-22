@@ -71,11 +71,22 @@ which axis the SIMD vector runs along relative to the twiddle index.*
 
 ## 5. Roadmap — the `t1_strided` family (build only on demonstrated demand)
 
-If strided composition is ever revived (e.g. row lengths outside the mono set where the
-tiled fallback measurably loses, or growing the r2c mono ceiling past 512), the natural
-emission is a **twiddle-applying strided stage codelet** — `rN_t1_{fwd,bwd}_strided` — i.e.
-fold `strided_tw.h`'s separate twiddle pass into the mono's load/store lattice, the same
-fusion pattern as `--post-tw` (§6a53) and the IL boundary folds.
+Two candidate demand sources exist:
+
+- **2D/ND rows outside the mono set** where the tiled fallback measurably loses (or growing
+  the r2c mono ceiling past 512);
+- **the K=1 ceiling residue**
+  ([k1_single_transform.md](../performance/k1_single_transform.md) §5.3): a *scrambled*
+  four-step for single transforms would be assembled from exactly this triad — column pass
+  (lane engine at K=N2) + twiddle stage + strided rows. Note the prize there shrank once
+  BAILEY2 (the fused four-step, −33% vs the scalar tier, with its t1p stage already
+  flat-vs-log3 searched per cell) was found to be the routed answer — the residue left is
+  6.84 → 3.75 µs at N=1024.
+
+If either materializes, the natural emission is a **twiddle-applying strided stage
+codelet** — `rN_t1_{fwd,bwd}_strided` — i.e. fold `strided_tw.h`'s separate twiddle pass
+into the mono's load/store lattice, the same fusion pattern as `--post-tw` (§6a53) and the
+IL boundary folds.
 
 Its own variant axis would then be measurable:
 - **streamed column-indexed table** (what `strided_tw.h` does today, unfused);
