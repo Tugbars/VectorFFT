@@ -494,6 +494,38 @@ lane-engine LOG3/cf0). FFTW selects t1/t2/t3 per cell by measurement — same th
    "fused scatter" made viable by scratch-OOP piping — feeds natural_order_inplace Phase-1
    (the SCRATCH mode's separate scatter sweep may be removable the same way).
 
+### 12.5 Item 1 SHIPPED — two-pass restructure (same day)
+
+Native **UnitLeg edges** in `codelet_oop.ml` (self-contained lattices, widths 4/2/1; the
+`emit_c` M2-phase-2 stubs bypassed; UL+il / UL+post-tw combos failwith-guarded). 10 UL twins
+emitted (`radix{4..64}_{t1_oop_ul, n1_oop_ugul}_avx2.c` — 3× smaller than flat siblings: UL
+configs carry no rem-tail re-renders, `me%4` contract). Registry `vfft_oop_t1_ul_fn` /
+`vfft_oop_leaf_ugul_fn` (avx2-guarded). Plan entry points `vfft_oop_execute_fwd_2pa`
+(leaf-UG → t1-UL, transpose in the t1's loads) and `_2pb` (leaf-UG_UL transposed stores →
+flat t1); 2 passes, 1 scratch pair, dst==src safe, **Qr/Qi unchanged** (group↔leg relabel).
+Gates: **bit-identical (0.0) to the 3-pass path on every cell, det+rand**; 8×128 = 2pa-only
+(no UL-leaf 128) as designed.
+
+Isolated cooled bench (best two-pass route per cell, in-place):
+
+| N | MKL-IL | MKL-sp | 3-pass ip | **best 2-pass** | Δ vs 3-pass | vs MKL-sp |
+|--:|--:|--:|--:|--:|--:|--:|
+| 64 | 31.4 | 35.7 | 42 | **37** (2pa 8×8) | −12% | 1.17× WIN (mono 30: 1.19×) |
+| 256 | 136.0 | 200.0 | 207 | **174** (2pa 64×4) | −16% | **1.15× WIN** |
+| 512 | 297.3 | 336.9 | 406 | **375** (2pb 8×64) | −8% | 0.90× |
+| 1024 | 858.6 | 740.1 | 1421 | **1193** (2pb 32×32) | −16% | 0.62× |
+| 2048 | 2067.3 | 2372.6 | 4528 | **3939** (2pb 64×32) | −13% | 0.60× |
+| 4096 | 4121.1 | 5002.3 | 10111 | **8584** (2pa 64×64) | −15% | 0.58× |
+| 8192 (hot run) | 8989 | 10896 | 28314 | **21868** (2pa 64×128) | −23% | 0.50× |
+
+Two-pass wins **uniformly** (−8…−23%); routes trade wins per cell (2pa fat-leaf small-N,
+2pb mid-N) → one more axis for the joint calibrator. Sanity: 2pb@32×32/1024 ≈ n1(32) 495 +
+t1(32×32) 529 from the §12.2 probe + overhead ≈ 1193 ✓ — the pipeline is now the sum of its
+kernels, no structural slack. Remaining mid-N gap vs MKL-sp (1.6× at 1024) is now PURELY
+per-kernel quality: their straight-line radix-32 kernels vs our doc-58 spill-blocked bodies +
+their linear twiddle cursor vs our 63 strided rows — i.e. §12.4 items 3 (mono ≤256), 4a
+(linear twiddle layout), 5 (composed/leaner column kernels).
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
