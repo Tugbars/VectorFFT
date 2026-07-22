@@ -668,6 +668,50 @@ incumbent unless the challenger wins by a margin (>5%). The mono-128 "refutation
 softens to: mono-128 is within the variance band of the two-pass — let the multi-run
 calibrator decide per machine-state.
 
+### 13.2 FRONT DOOR SHIPPED (steps 3+4)
+
+- **Wisdom**: kind **3** (`VFFT_OOP_KIND_BAILEY2V`) lines in the SAME `oop_wisdom.txt`:
+  `N 1 3 sp_route R1 R2 il_route iR1 iR2 ns` — one line carries BOTH axes (layout is an
+  execute-time buffer contract). Route ids in oop_plan.h (`VFFT_K1_SP_*`: 3p/2pa/2pb/twl/
+  mono/2pa-log3/3p-log3; `VFFT_K1_IL_*`: 3p-il/2p-il/mono-il). Classic K≥8 lookups skip
+  kind-3; `vfft_oop_wisdom_lookup_k1` serves the engine. log3 verdicts resolve at create as
+  fn-pointer swaps (same Qr/Qi); `mono-alt` resolves via `vfft_k1_mono_pair_fn(N, R1)`.
+- **vfft.c**: K=1 branch at the head of the C2C-OOP create block (wisdom → heuristic default
+  on miss: mono@64, balanced-pair 2pb elsewhere; availability degrade chain; classic path
+  only for SCRAMBLED-order requests / engine-create failure). Execute: axis by buffer
+  contract (`sim==dim==NULL` ⇒ z→z IL); split bwd = pointer-swap identity; IL bwd = _sw
+  entries. **No kill-switch — user decision: K=1 is the headline feature.** (The env-switch
+  experiment also exposed that the classic champions path was NEVER K=1-safe — 0xC0000005 in
+  create — so the engine is a fix, not just a fast path.)
+- **Median wisdom** (`benches/k1_aggregate_wisdom.py`, 3 ladder passes): 64=twl 8×8 36.0 ·
+  **128=mono-alt 8×16 72.5** · 256=2pa 64×4 170.4 · 512=2pa 64×8 377.9 · 1024=2pb 32×32
+  1017.0 · 2048=twl 64×32 3410.2 · **4096=2pa-LOG3 64×64 7426.2** (the log3 win held across
+  runs) · 8192=2pa 64×128 21103; IL = 2p-il everywhere except mono-il implied @64.
+- **Public API validated** (`benches/bench_k1_public.c`): create(C2C, OOP, howmany=1) →
+  ALL GREEN, fwd+bwd × split+IL, heuristic path AND wisdom path, whole ladder. First
+  public-API numbers: heuristic 36 ns @64 vs the old route's 151–164 (≥4× for every real
+  K=1 caller before calibration).
+
+## 13.3 Item A LANDED — per-cell stride specialization is a 22–42% lever, NOT 6–10%
+
+`--oop-spec-named` (stride tuple in the symbol so per-cell twins coexist; legacy coverage.ml
+`_spec` names untouched). Four twins emitted for the two winner shapes, 7-arg baked-stride
+ABI. **Same-run, same-pair, gated bit-identical (0.0):**
+
+- 1024 (2pb 32×32): spec **731.1 ns** vs unbaked 1251.7 = **−42%** → **MKL-split PARITY at
+  1024** (their ~740–766). Day trajectory at 1024: 1574 → 1016 → **731**.
+- 4096 (2pa-l3 64×64): spec **7144.9** vs 9109–9287 = **−22%**.
+
+Why so much bigger than the 6–10% prior: the K=1 me is TINY (me=R2=32/64 → 8–16 loop
+iterations), so per-iteration address arithmetic (4 runtime strides × ~R1 addresses) is a
+first-order cost that baking eliminates; the old measurement was at K≥32 where the loop body
+amortized it. NEXT SESSION (production): route ids 7/8 (spec twins per cell) into wisdom +
+create/execute wiring; roll spec twins out to ALL median-winner shapes (64..8192, each is one
+regen line); re-calibrate. Then Item B (composed column pass — design locked in §12.4-5:
+`vfft_proto_execute_fwd_oop` colp + permuted transpose absorbing the digit reversal; unlocks
+16384 via 64×256). Then the K=1 change-inventory + interface call-path writeup (user
+request), then r2c/2D K=1 analogues.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).

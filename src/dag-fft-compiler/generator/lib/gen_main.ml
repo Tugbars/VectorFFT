@@ -139,6 +139,7 @@ let run (argv : string array) : unit =
   let k1_r1 = ref 0 in
   let k1_il = ref false in
   let k1_sw = ref false in
+  let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -241,6 +242,7 @@ let run (argv : string array) : unit =
      end
      else if arg = "--k1-il" then k1_il := true
      else if arg = "--k1-sw" then k1_sw := true
+     else if arg = "--oop-spec-named" then oop_spec_named := true
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
        oop_load_pat := arr.(!i + 1);
        incr i
@@ -1315,7 +1317,18 @@ let run (argv : string array) : unit =
       let cname = if !oop_il_in_sw then cname ^ "_il_in_sw" else cname in
       let cname = if !oop_il_out_sw then cname ^ "_il_out_sw" else cname in
       let cname = if !oop_tw_linear then cname ^ "_twl" else cname in
-      let cname = if !oop_strides <> None then cname ^ "_spec" else cname in
+      let cname =
+        match !oop_strides with
+        | None -> cname
+        | Some (l, g, ol, og) ->
+            if !oop_spec_named then
+              (* stride tuple in the name so multiple specializations of one
+                 radix coexist (K=1 per-cell spec twins, §13.3). Opt-in via
+                 --oop-spec-named: the legacy coverage.ml _spec family keeps
+                 its unsuffixed names. *)
+              Printf.sprintf "%s_spec%d_%d_%d_%d" cname l g ol og
+            else cname ^ "_spec"
+      in
       let cfg =
         Codelet_oop.
           {

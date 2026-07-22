@@ -247,6 +247,58 @@ int main(void)
         if (ref) vfft_oop_plan_destroy(ref);
         vfft_oop_plan_destroy(p);
     }
+    /* ---- stride-spec twins (§13.3 A): must be BIT-identical to their
+     * unbaked routes (same emission, strides folded to constants) ---- */
+    {
+        extern void radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(
+            const double *, const double *, double *, double *,
+            const double *, const double *, size_t);
+        extern void radix32_t1_oop_fwd_avx2_UG_UG_spec32_1_32_1(
+            const double *, const double *, double *, double *,
+            const double *, const double *, size_t);
+        extern void radix64_n1_oop_fwd_avx2_UG_UG_spec64_1_64_1(
+            const double *, const double *, double *, double *,
+            const double *, const double *, size_t);
+        extern void radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(
+            const double *, const double *, double *, double *,
+            const double *, const double *, size_t);
+        struct { int N, R1, R2, which; } SC[] = { {1024,32,32,0}, {4096,64,64,1} };
+        for (int si = 0; si < 2; si++) {
+            int N = SC[si].N, R1 = SC[si].R1, R2 = SC[si].R2;
+            vfft_oop_plan_t *p = vfft_oop_plan_create_k1(N, R1, R2);
+            if (!p) { fails++; continue; }
+            double *xr = ad(N), *xi = ad(N), *ar = ad(N), *ai = ad(N);
+            double *br = ad(N), *bi = ad(N);
+            srand(99 + N);
+            for (int n = 0; n < N; n++) {
+                xr[n] = (double)rand() / RAND_MAX - 0.5;
+                xi[n] = (double)rand() / RAND_MAX - 0.5;
+            }
+            if (SC[si].which == 0) {
+                vfft_oop_execute_fwd_2pb(p, xr, xi, ar, ai);
+                radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(xr, xi, p->col_re, p->col_im, 0, 0, (size_t)R1);
+                radix32_t1_oop_fwd_avx2_UG_UG_spec32_1_32_1(p->col_re, p->col_im, br, bi, p->Qr, p->Qi, (size_t)R2);
+            } else {
+                vfft_oop11_fn sv = p->t1_ul; p->t1_ul = p->t1_ul_l3;
+                vfft_oop_execute_fwd_2pa(p, xr, xi, ar, ai);
+                p->t1_ul = sv;
+                radix64_n1_oop_fwd_avx2_UG_UG_spec64_1_64_1(xr, xi, p->col_re, p->col_im, 0, 0, (size_t)R1);
+                radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(p->col_re, p->col_im, br, bi, p->Qr, p->Qi, (size_t)R2);
+            }
+            double e = 0;
+            for (int k = 0; k < N; k++) {
+                double c1 = fabs(br[k] - ar[k]), c2 = fabs(bi[k] - ai[k]);
+                if (c1 > e) e = c1;
+                if (c2 > e) e = c2;
+            }
+            const char *bad = (e > 0.0) ? "  <FAIL>" : "";
+            if (bad[0]) fails++;
+            printf("  SPEC %dx%d N=%d vs unbaked route = %.1e%s\n", R1, R2, N, e, bad);
+            afree(xr); afree(xi); afree(ar); afree(ai); afree(br); afree(bi);
+            vfft_oop_plan_destroy(p);
+        }
+    }
+
     /* ---- K1 MONO gates (emitted whole-four-step codelets, M1+M3) ---- */
     int monoNs[] = { 64, 128, 256, -128 };  /* -N = alt pair */
     for (int mi = 0; mi < 4; mi++) {
