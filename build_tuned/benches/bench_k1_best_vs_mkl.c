@@ -59,7 +59,7 @@ static double *ad(size_t n)
     return p;
 }
 
-static const char *SPN[] = { "3p", "2pa", "2pb", "twl", "mono", "2pa-l3", "3p-l3" };
+static const char *SPN[] = { "3p", "2pa", "2pb", "twl", "mono", "2pa-l3", "3p-l3", "ccol" };
 static const char *ILN[] = { "-", "3p-il", "2p-il", "mono-il" };
 
 enum { A_MKL_IL = 0, A_MKL_SP, A_WSP, A_JIT, A_WIL, A_XTRA, NARMS };
@@ -90,6 +90,8 @@ static void run_arm(bctx_t *c, int a)
             vfft_oop_execute_fwd_2pa_twl(c->psp, c->wr, c->wi, c->wr, c->wi); break;
         case VFFT_K1_SP_MONO:
             c->mono(c->xr, c->xi, c->dr, c->di, 0, 0, 0, 0, 0, 0, 0); break;
+        case VFFT_K1_SP_CCOL:
+            vfft_oop_execute_fwd_ccol(c->psp, c->wr, c->wi, c->wr, c->wi); break;
         }
         break;
     case A_JIT:
@@ -146,8 +148,8 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int Nd[] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192 };
-    int nN = argc > 1 ? argc - 1 : 8;
+    int Nd[] = { 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384 };
+    int nN = argc > 1 ? argc - 1 : 9;
 
     for (int ni = 0; ni < nN; ni++) {
         int N = argc > 1 ? atoi(argv[ni + 1]) : Nd[ni];
@@ -169,6 +171,11 @@ int main(int argc, char **argv)
 
         if (c.spr == VFFT_K1_SP_MONO)
             c.mono = c.R1 ? vfft_k1_mono_pair_fn(N, c.R1) : vfft_k1_mono_fn(N);
+        else if (c.spr == VFFT_K1_SP_CCOL) {
+            int ccf[6], ccn = e ? vfft_k1_cc_chain_decode(e->cc_chain, ccf) : 0;
+            if (ccn)
+                c.psp = vfft_oop_plan_create_k1_cc(N, c.R1, ccf, ccn, &reg);
+        }
         else {
             c.psp = vfft_oop_plan_create_k1(N, c.R1, c.R2);
             if (c.psp) {

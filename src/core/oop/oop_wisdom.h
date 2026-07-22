@@ -53,6 +53,9 @@ typedef struct {
      * BOTH axes because the buffer layout is an EXECUTE-time contract
      * (sim==dim==NULL => interleaved), unknown at plan create. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
+    /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
+     * (vfft_k1_cc_chain_encode; one extra token before ns on the line). */
+    int    cc_chain;
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
 
@@ -103,6 +106,11 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             tok = strtok(NULL, " \t\n\r"); if (tok) e->k1_il_route = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R1 = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R2 = atoi(tok); else ok = 0;
+            /* CCOL lines carry the encoded column chain before ns */
+            if (ok && e->k1_sp_route == VFFT_K1_SP_CCOL) {
+                tok = strtok(NULL, " \t\n\r");
+                if (tok) e->cc_chain = atoi(tok); else ok = 0;
+            }
             if (ok && e->K != 1) ok = 0;
         }
         if (!ok) continue;
@@ -245,9 +253,12 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
         for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->factors[s]);
         for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->variants[s]);
     }
-    else if (e->kind == VFFT_OOP_KIND_BAILEY2V)
+    else if (e->kind == VFFT_OOP_KIND_BAILEY2V) {
         fprintf(f, " %d %d %d %d %d %d", e->k1_sp_route, e->R1, e->R2,
                 e->k1_il_route, e->il_R1, e->il_R2);
+        if (e->k1_sp_route == VFFT_K1_SP_CCOL)
+            fprintf(f, " %d", e->cc_chain);
+    }
     fprintf(f, " %.1f\n", e->ns);
 }
 

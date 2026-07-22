@@ -2247,14 +2247,39 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     if (!vfft_oop_leaf_fn(R2c) || !vfft_oop_t1_fn(R1c)) continue;
                     if (!sR1 || abs(R1c - R2c) < abs(sR1 - sR2)) { sR1 = R1c; sR2 = R2c; }
                 }
+                if (!sR1 && (N % 64) == 0 && vfft_oop_t1_fn(64))
+                {
+                    /* no classic pair (past the leaf/t1 reach, N >= 16384):
+                     * composed column is the ONLY K=1 route up there */
+                    int ccf_[6];
+                    if (vfft_k1_cc_default_chain(N / 64, ccf_))
+                    {
+                        spr = VFFT_K1_SP_CCOL;
+                        sR1 = 64; sR2 = N / 64;
+                    }
+                }
                 iR1 = sR1; iR2 = sR2;
                 ilr = vfft_k1_mono_il_fn(N, 0) ? VFFT_K1_IL_MONO : VFFT_K1_IL_2P;
             }
             vfft_oop_plan_t *psp = NULL, *pil = NULL;
-            if (spr != VFFT_K1_SP_MONO && sR1)
+            if (spr == VFFT_K1_SP_CCOL && sR1)
+            {
+                /* composed column (§12.4 item 5): chain from the wisdom line,
+                 * else the per-R2 default. Create is self-validating (perm
+                 * discovery); failure falls through to the classic path. */
+                int ccf[6];
+                int ccn = ke ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
+                             : vfft_k1_cc_default_chain(N / sR1, ccf);
+                if (ccn)
+                    psp = vfft_oop_plan_create_k1_cc(N, sR1, ccf, ccn,
+                                                     _registry());
+            }
+            else if (spr != VFFT_K1_SP_MONO && sR1)
                 psp = vfft_oop_plan_create_k1(N, sR1, sR2);
             if (ilr != VFFT_K1_IL_MONO && ilr != VFFT_K1_IL_NONE && iR1)
-                pil = (psp && iR1 == sR1 && iR2 == sR2)
+                /* alias only onto CLASSIC plans — a CC plan (colp set) has no
+                 * IL twins and would silently kill the IL axis */
+                pil = (psp && !psp->colp && iR1 == sR1 && iR2 == sR2)
                           ? psp
                           : vfft_oop_plan_create_k1(N, iR1, iR2);
             int spr0 = spr; /* wisdom route BEFORE folding (JIT picks sources by it) */
@@ -3274,6 +3299,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     return;
                 case VFFT_K1_SP_TWL:
                     vfft_oop_execute_fwd_2pa_twl(h->k1sp, ar, ai, br, bi);
+                    return;
+                case VFFT_K1_SP_CCOL:
+                    vfft_oop_execute_fwd_ccol(h->k1sp, ar, ai, br, bi);
                     return;
                 default:
                     vfft_oop_execute_fwd(h->k1sp, ar, ai, br, bi);
