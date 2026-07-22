@@ -572,6 +572,30 @@ stages route through the validated blocked-body path, intermediate becomes a 2�
 array; M3 is where the 256 cell (today 154 ns four-step vs MKL-IL 136) gets its shot at
 IL-parity. M4 = bwd (conjugated tables + _sw IL twins).
 
+### 12.8 M3 MEASURED — the mono tier's boundary is N=64, same place MKL draws it
+
+M3 generalized the driver to any (R1,R2) (`--k1-r1` override; 128 emitted BOTH pairs, 256 as
+16×16; monolithic-rendered radix-16 bodies first cut). All gate green (1e-14, incl. the 256).
+Race (isolated, cooled): **64 = 30 ns (parity reconfirmed)** · 128: monos 98/104 vs our OWN
+two-pass 86 (2pb 4×32) vs MKL-IL 67.3 · 256: mono **272** vs four-step 175 vs MKL-IL 135.9.
+
+**VERDICT — mono tier REFUTED above 64, banked at 64.** The 128 result is the clean proof:
+a mono has zero pass overhead and still loses to the pass-structured route, so the loss is
+pure register economics (8+ radix-16 bodies + N-sized function-scope state on 16 ymm = spill
+storm; doc-58 predicted monolithic-R16's ~50% penalty). This empirically confirms MKL's own
+tier schedule (§12.1: their mono stops at 64 too) on OUR codelets — the fence §5 warned
+about, measured from the inside. A blocked-body mono-256 might close part of 272→~200 but
+cannot beat the 175 two-pass; not worth the emitter surface. M2/M4 (IL/bwd mono variants)
+now scope to N=64 ONLY.
+
+**Where the K=1 campaign therefore stands / what remains**: tiering = mono-64 (30 ns, MKL-IL
+parity, emitted) + two-pass four-step everywhere else. The ENTIRE remaining gap vs MKL-IL
+(67 vs 86 at 128; 136 vs 175 at 256; 0.6-0.75× at ≥1024) is per-kernel quality of the
+two-pass kernels: MKL's straight-line twiddle-free column kernels (FNA/FNB, no spill arrays)
+and streamed sectioned-store twiddle kernels (W1/W2) vs our doc-58 blocked leaves and t1
+combines. That is the leaner-column-kernels workstream (§12.4 item 5) + the joint calibrator
+— no structural moves left to make.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
