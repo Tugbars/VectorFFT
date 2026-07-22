@@ -88,9 +88,9 @@ deliberately, and DCT-IV is correct + already ahead of FFTW today.
 
 ```sh
 cd build_tuned
-python build.py --src benches/bench_trig_mt_vs_fftw.c --fftw --compile
+python build.py --src build_tuned/benches/bench_trig_mt_vs_fftw.c --fftw --compile
 # run with vcpkg FFTW bin + mingw bin on PATH (caller pins core 0 internally)
-PATH="/c/vcpkg/installed/x64-windows/bin:/c/mingw152/mingw64/bin:$PATH" ./benches/bench_trig_mt_vs_fftw.exe
+PATH="/c/vcpkg/installed/x64-windows/bin:/c/mingw152/mingw64/bin:$PATH" ./build_tuned/benches/bench_trig_mt_vs_fftw.exe
 ```
 
 Related: `docs/performance/high_k_real_fft_architecture_wall.md` (§6c — the r2c MT story this builds on),

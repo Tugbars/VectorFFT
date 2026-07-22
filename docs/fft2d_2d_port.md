@@ -132,9 +132,9 @@ already carries the col digit-reversal perm as the hook for that; finishing natu
 
 ```sh
 cd build_tuned
-python build.py --src benches/bench_fft2d_vs_mkl.c     --mkl --compile   # 2D c2c
-python build.py --src benches/bench_fft2d_r2c_vs_mkl.c --mkl --compile   # 2D r2c
-python build.py --src benches/isolate_2d_r2c_128.c           --compile   # port isolation (no MKL)
+python build.py --src build_tuned/benches/bench_fft2d_vs_mkl.c     --mkl --compile   # 2D c2c
+python build.py --src build_tuned/benches/bench_fft2d_r2c_vs_mkl.c --mkl --compile   # 2D r2c
+python build.py --src build_tuned/benches/isolate_2d_r2c_128.c           --compile   # port isolation (no MKL)
 # run with MKL bin + C:\mingw152\mingw64\bin on PATH, pinned core 2
 ```
 

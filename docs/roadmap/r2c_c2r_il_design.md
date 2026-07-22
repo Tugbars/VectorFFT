@@ -5,7 +5,7 @@ the split-layout boundary taxes, within the committed IL structure (6a16–6a19:
 boundary folds on the stride engine, split interior, z only at true
 boundaries, NULL-halves public contract). This doc supersedes the pre-bench
 sketch; every claim below is anchored to the attribution bench
-(`benches/bench_r2c_tax.c`, three-binary stub-delta methodology the tree
+(`build_tuned/benches/bench_r2c_tax.c`, three-binary stub-delta methodology the tree
 itself defines, plus a live model-B activation test).*
 
 ## 1. What the bench established (same-process, container)
@@ -82,7 +82,7 @@ fwd, so the exit fold reuses fwd OOP stores — no new bwd codelet family.
 
 ## 5. Bench reproduction
 
-`benches/bench_r2c_tax.c`: includes vfft.c same-TU (prof counters + live
+`build_tuned/benches/bench_r2c_tax.c`: includes vfft.c same-TU (prof counters + live
 field access), three binaries (`-DVFFT_R2C_PROFILE`, `-DVFFT_R2C_STUB_PACK`,
 `-DVFFT_R2C_STUB_POST`), shared wisdom bundle so all arms time identical
 plans; model-B activation block self-gates on codelet geometry
@@ -119,7 +119,7 @@ a collision hazard documented in §6a23.
 `st->t1_oop_fwd` at plan time (or a local r2c resolver keyed radix+use_log3,
 NULL → explicit fallback continues); add the DIF branch beside the DIT
 fused-first dispatch (kb-broadcast grp_tw rows, leg0 untwiddled); extend
-`benches/gate_r2c_tail.c` DIF cells to assert the fused path fired. Radices
+`build_tuned/benches/gate_r2c_tail.c` DIF cells to assert the fused path fired. Radices
 needed for spike DIF inners: {5, 10, 20, 25} × {plain, log3} × avx2/avx512.
 
 

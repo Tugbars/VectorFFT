@@ -83,7 +83,7 @@ Three lessons inside those numbers, all recorded in §6a55:
 
 ## 4. Correctness record
 
-Gate: `benches/gate_il_pad.c` (extended §6a57), ALL PASS both builds.
+Gate: `build_tuned/benches/gate_il_pad.c` (extended §6a57), ALL PASS both builds.
 
 - Per-arm roundtrips 4.4e-16 … 8.9e-16.
 - **Cross-arm BIT-IDENTICAL where the two arms' planners picked the same
@@ -121,7 +121,7 @@ an uncalibrated Kp arm simply loses.)
 | what | where |
 |---|---|
 | decision + padded arm + converts + MT | `src/core/vfft.c` (`_exec_c2c_interleaved`, `_vfft_z_dein/_vfft_z_inter`, `_il_pad_*`, `_il_mt_*`) |
-| arm gate + perf race | `benches/gate_il_pad.c` |
-| convert baseline (compiler-vs-hand, §6a56) | `benches/bench_il_convert_vec.c` |
-| MT BIT gate | `benches/gate_il_mt.c` |
+| arm gate + perf race | `build_tuned/benches/gate_il_pad.c` |
+| convert baseline (compiler-vs-hand, §6a56) | `build_tuned/benches/bench_il_convert_vec.c` |
+| MT BIT gate | `build_tuned/benches/gate_il_mt.c` |
 | ledger | `mkl_geometry_contracts.md` §6a55–§6a58 |

@@ -308,15 +308,15 @@ MT win and unnecessary wherever the workload is threaded with a wide enough batc
 ```sh
 cd build_tuned
 # breakdown (pack / c2c / recombine, scalar vs AVX2):
-python build.py --src benches/bench_r2c_opt_inner.c --mkl --compile
+python build.py --src build_tuned/benches/bench_r2c_opt_inner.c --mkl --compile
 # DIF ordering probe (lever 1):
-python build.py --src benches/dif_order_probe.c --compile
+python build.py --src build_tuned/benches/dif_order_probe.c --compile
 # L1-blocking sweep (lever 2):
-python build.py --src benches/bench_r2c_l1block.c --mkl --compile
+python build.py --src build_tuned/benches/bench_r2c_l1block.c --mkl --compile
 # in-place (with pack) vs OOP (no pack), order-neutralized (§3a):
-python build.py --src benches/bench_r2c_inplace_vs_oop.c --mkl --compile
+python build.py --src build_tuned/benches/bench_r2c_inplace_vs_oop.c --mkl --compile
 # MULTITHREADED dag (8 P-cores) vs MKL (8 threads) (§6c):
-python build.py --src benches/bench_r2c_mt_vs_mkl.c --mkl --compile
+python build.py --src build_tuned/benches/bench_r2c_mt_vs_mkl.c --mkl --compile
 # run with MKL bin + C:\mingw152\mingw64\bin on PATH, pinned core 2 (ST) / core 0 (MT)
 ```
 

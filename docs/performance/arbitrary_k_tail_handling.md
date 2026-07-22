@@ -262,6 +262,6 @@ cd ../../../build_tuned && python build.py --src test/test_anyk_correct.c --comp
 ./test/test_anyk_correct.exe
 
 # margin vs MKL: build with --mkl (needs oneAPI on PATH), run one cell per process
-python build.py --src benches/bench_oddk_tail.c --mkl --compile
-benches/bench_oddk_tail.exe 31 0 80     # <K> <flip> <cool_ms>
+python build.py --src build_tuned/benches/bench_oddk_tail.c --mkl --compile
+build_tuned/benches/bench_oddk_tail.exe 31 0 80     # <K> <flip> <cool_ms>
 ```

@@ -140,9 +140,9 @@ Build wiring: `build.py`'s codelet lib now globs `codelets/oop/{isa}` (the OOP `
 
 ```sh
 cd build_tuned
-python build.py --src benches/calibrate_oop.c   --compile        # offline calibrator
-python build.py --src benches/oop_wisdom_smoke.c --mkl --compile  # lookup + validate
-python build.py --src benches/bench_oop_dp.c     --mkl --compile  # DP / dp_best A/B
+python build.py --src build_tuned/benches/calibrate_oop.c   --compile        # offline calibrator
+python build.py --src build_tuned/benches/oop_wisdom_smoke.c --mkl --compile  # lookup + validate
+python build.py --src build_tuned/benches/bench_oop_dp.c     --mkl --compile  # DP / dp_best A/B
 cd benches
 PATH="<MKL bin>;C:\mingw152\mingw64\bin;$PATH"
 ./calibrate_oop.exe        # writes oop_wisdom.txt
