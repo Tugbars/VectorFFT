@@ -176,10 +176,10 @@ static void mono64_il(const double *z_in, double *z_out)
 
 /* ---------------- arms ---------------- */
 enum { A_MKL_IL = 0, A_MKL_SP, A_B2V_SP, A_B2V_IP, A_B2V_IL, A_2PA_IP, A_2PB_IP,
-       A_TWL_IP, A_LEAF, A_M64_SP, A_M64_IL, A_K1M, NARMS };
+       A_TWL_IP, A_LEAF, A_M64_SP, A_M64_IL, A_K1M, A_K1M2, NARMS };
 static const char *ANAME[NARMS] = { "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "B2V-il",
                                     "2pa-ip", "2pb-ip", "twl-ip", "LEAF", "M64-sp", "M64-il",
-                                    "K1M-emit" };
+                                    "K1M-emit", "K1M-alt" };
 
 typedef struct {
     int N;
@@ -209,8 +209,12 @@ static void run_arm(bctx_t *c, int a)
     case A_LEAF:   c->leafN(c->xr, c->xi, c->dr, c->di, 0, 0, 1, 1, 1, 1, 1); break;
     case A_M64_SP: mono64_split(c->xr, c->xi, c->dr, c->di); break;
     case A_M64_IL: mono64_il(c->zs, c->zs); break;
-    case A_K1M: {  /* emitted mono (M1) — same shape as the hand kernel */
+    case A_K1M: {  /* emitted mono (M1/M3) */
         vfft_oop11_fn f = vfft_k1_mono_fn(c->N);
+        f(c->xr, c->xi, c->dr, c->di, 0, 0, 0, 0, 0, 0, 0);
+        break; }
+    case A_K1M2: { /* alternate pair variant */
+        vfft_oop11_fn f = vfft_k1_mono_alt_fn(c->N);
         f(c->xr, c->xi, c->dr, c->di, 0, 0, 0, 0, 0, 0, 0);
         break; }
     }
@@ -230,6 +234,7 @@ static int arm_avail(bctx_t *c, int a)
     case A_LEAF:   return c->leafN != NULL;
     case A_M64_SP: case A_M64_IL: return c->N == 64;
     case A_K1M:    return vfft_k1_mono_fn(c->N) != 0;
+    case A_K1M2:   return vfft_k1_mono_alt_fn(c->N) != 0;
     }
     return 0;
 }
@@ -373,11 +378,12 @@ int main(int argc, char **argv)
                best[A_MKL_SP] / ours_best_sp,
                arm_avail(&c, A_B2V_IL) || N == 64 ? best[A_MKL_IL] / ours_best_il : 0.0);
         if (arm_avail(&c, A_LEAF) || N == 64 || arm_avail(&c, A_K1M))
-            printf("       LEAF=%.0f  M64-sp=%.0f  M64-il=%.0f  K1M-emit=%.0f\n",
+            printf("       LEAF=%.0f  M64-sp=%.0f  M64-il=%.0f  K1M-emit=%.0f  K1M-alt=%.0f\n",
                    arm_avail(&c, A_LEAF) ? best[A_LEAF] : 0.0,
                    N == 64 ? best[A_M64_SP] : 0.0,
                    N == 64 ? best[A_M64_IL] : 0.0,
-                   arm_avail(&c, A_K1M) ? best[A_K1M] : 0.0);
+                   arm_avail(&c, A_K1M) ? best[A_K1M] : 0.0,
+                   arm_avail(&c, A_K1M2) ? best[A_K1M2] : 0.0);
 
         DftiFreeDescriptor(&c.hi); DftiFreeDescriptor(&c.hs);
         if (c.psp) vfft_oop_plan_destroy(c.psp);

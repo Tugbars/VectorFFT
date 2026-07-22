@@ -194,11 +194,13 @@ int main(void)
         if (ref) vfft_oop_plan_destroy(ref);
         vfft_oop_plan_destroy(p);
     }
-    /* ---- K1 MONO gate (emitted whole-four-step codelet, M1: N=64) ---- */
-    {
-        vfft_oop11_fn mono = vfft_k1_mono_fn(64);
+    /* ---- K1 MONO gates (emitted whole-four-step codelets, M1+M3) ---- */
+    int monoNs[] = { 64, 128, 256, -128 };  /* -N = alt pair */
+    for (int mi = 0; mi < 4; mi++) {
+        int N = monoNs[mi] > 0 ? monoNs[mi] : -monoNs[mi];
+        vfft_oop11_fn mono = monoNs[mi] > 0 ? vfft_k1_mono_fn(N)
+                                            : vfft_k1_mono_alt_fn(N);
         if (mono) {
-            int N = 64;
             double tol = 1e-9 * (double)N;
             double *xr = ad(N), *xi = ad(N), *nr = ad(N), *ni = ad(N);
             double *dr = ad(N), *di = ad(N);
@@ -225,7 +227,8 @@ int main(void)
                 }
                 const char *bad = (e > tol || e != e) ? "  <FAIL>" : "";
                 if (bad[0]) fails++;
-                printf("  K1MONO64 %s vs naive = %.2e%s\n", inp ? "rnd" : "det", e, bad);
+                printf("  K1MONO%d%s %s vs naive = %.2e%s\n", N,
+                       monoNs[mi] < 0 ? "-alt" : "", inp ? "rnd" : "det", e, bad);
             }
             afree(xr); afree(xi); afree(nr); afree(ni); afree(dr); afree(di);
         }

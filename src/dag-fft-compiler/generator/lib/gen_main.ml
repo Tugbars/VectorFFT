@@ -136,6 +136,7 @@ let run (argv : string array) : unit =
   let oop_tw_linear = ref false in
   (* §12.4 item 3: whole-K=1-four-step mono codelet (N = the positional arg) *)
   let k1_mono = ref false in
+  let k1_r1 = ref 0 in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -232,6 +233,10 @@ let run (argv : string array) : unit =
      else if arg = "--oop-il-out-sw" then oop_il_out_sw := true
      else if arg = "--oop-tw-linear" then oop_tw_linear := true
      else if arg = "--k1-mono" then k1_mono := true
+     else if arg = "--k1-r1" && !i + 1 < Array.length arr then begin
+       k1_r1 := int_of_string arr.(!i + 1);
+       incr i
+     end
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
        oop_load_pat := arr.(!i + 1);
        incr i
@@ -1204,7 +1209,9 @@ let run (argv : string array) : unit =
     if !k1_mono then
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function
          (emit-time rodata twiddles, natural order). N = positional arg. *)
-      print_string (Codelet_oop.emit_k1_mono ~isa ~n)
+      print_string
+        (Codelet_oop.emit_k1_mono ~isa ~n
+           ~r1_opt:(if !k1_r1 > 0 then Some !k1_r1 else None))
     else if !oop then begin
       (* M2 OOP codelet family path. The DAG construction inside
          Codelet_oop.emit_codelet is independent of gen_radix's `deduped`

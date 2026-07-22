@@ -549,6 +549,29 @@ Best-of-today ladder after two-pass (this cooler evening session, isolated):
 **1016**. Next lever by size: --k1 mono (≤256, targets MKL-IL), leaner column kernels /
 composed pass (≥1024).
 
+### 12.7 Item 3 M1 SHIPPED — `--k1-mono` emitter, N=64 at MKL-IL parity
+
+`Codelet_oop.emit_k1_mono` (~180 LoC driver, end of codelet_oop.ml): the whole K=1 four-step
+as ONE emitted function — per column-chunk h [UG load (shadowed base ptr + `b=0` + baked
+stride consts, existing edge emitter verbatim) → radix-R2 monolithic body (same
+`prepare_butterfly` DAG as the OOP family, block-scoped per instantiation) → four-step
+twiddle cmul against **emit-time rodata tables** (no runtime Qr/Qi, FMA cmuls) → park in
+function-scope U vars] → per row-chunk [4×4 register transpose U→lanes → radix-R1 body → UG
+store, natural order]. `gen_radix.exe 64 --k1-mono --isa avx2 --emit-c` →
+`vfft_k1_mono64_fwd_avx2` (uniform 11-arg ABI, extra args ignored), 699 lines.
+Registry: `vfft_k1_mono_fn(N)`.
+
+Gates: det 1.07e-14 / rnd 2.55e-15 vs naive. **Parity race (isolated, cooled): emitted 31 ns
+vs hand spike 29 vs MKL-IL 30.4** — the driver reproduces the hand kernel within noise on its
+first measured run. The M1 milestone discipline (validate the driver on the size with a
+hand-written oracle before touching register-pressure-heavy sizes) paid exactly as intended.
+
+Remaining mono milestones: M2 = IL variants (compose the existing il_in/il_out lattices into
+the driver's edges); M3 = N=128 (16×8) / 256 (16×16) — lifts the M1 N-restriction, radix-16
+stages route through the validated blocked-body path, intermediate becomes a 2–4KB stack
+array; M3 is where the 256 cell (today 154 ns four-step vs MKL-IL 136) gets its shot at
+IL-parity. M4 = bwd (conjugated tables + _sw IL twins).
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
