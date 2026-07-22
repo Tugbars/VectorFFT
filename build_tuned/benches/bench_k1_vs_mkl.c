@@ -175,13 +175,15 @@ static void mono64_il(const double *z_in, double *z_out)
 }
 
 /* ---------------- arms ---------------- */
-enum { A_MKL_IL = 0, A_MKL_SP, A_B2V_SP, A_B2V_IP, A_B2V_IL, A_LEAF, A_M64_SP, A_M64_IL, NARMS };
-static const char *ANAME[NARMS] = { "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "B2V-il", "LEAF", "M64-sp", "M64-il" };
+enum { A_MKL_IL = 0, A_MKL_SP, A_B2V_SP, A_B2V_IP, A_B2V_IL, A_2PA_IP, A_2PB_IP,
+       A_LEAF, A_M64_SP, A_M64_IL, NARMS };
+static const char *ANAME[NARMS] = { "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "B2V-il",
+                                    "2pa-ip", "2pb-ip", "LEAF", "M64-sp", "M64-il" };
 
 typedef struct {
     int N;
     DFTI_DESCRIPTOR_HANDLE hi, hs;
-    vfft_oop_plan_t *psp, *pip, *pil;   /* chosen pairs per placement/layout */
+    vfft_oop_plan_t *psp, *pip, *pil, *p2a, *p2b;   /* chosen pairs per arm */
     vfft_oop11_fn leafN;
     double *xr, *xi, *dr, *di, *zi, *zs;  /* zi = MKL IL buf, zs = ours IL buf */
     double *mre, *mim;                     /* MKL split bufs */
@@ -197,6 +199,10 @@ static void run_arm(bctx_t *c, int a)
     case A_B2V_IP: /* in-place: d == x (leaf drains x into scratch first) */
         vfft_oop_execute_fwd(c->pip, c->wr, c->wi, c->wr, c->wi); break;
     case A_B2V_IL: vfft_oop_execute_fwd_il(c->pil, c->zs, c->zs); break;
+    case A_2PA_IP: /* two-pass route a, in-place: leaf w->scr, t1-UL scr->w */
+        vfft_oop_execute_fwd_2pa(c->p2a, c->wr, c->wi, c->wr, c->wi); break;
+    case A_2PB_IP: /* two-pass route b, in-place: leaf-UL w->scr, t1 scr->w */
+        vfft_oop_execute_fwd_2pb(c->p2b, c->wr, c->wi, c->wr, c->wi); break;
     case A_LEAF:   c->leafN(c->xr, c->xi, c->dr, c->di, 0, 0, 1, 1, 1, 1, 1); break;
     case A_M64_SP: mono64_split(c->xr, c->xi, c->dr, c->di); break;
     case A_M64_IL: mono64_il(c->zs, c->zs); break;
@@ -211,6 +217,8 @@ static int arm_avail(bctx_t *c, int a)
     case A_B2V_SP: return c->psp != NULL;
     case A_B2V_IP: return c->pip != NULL;
     case A_B2V_IL: return c->pil && c->pil->il_leaf && c->pil->t1_il;
+    case A_2PA_IP: return c->p2a && c->p2a->t1_ul;
+    case A_2PB_IP: return c->p2b && c->p2b->leaf_ul;
     case A_LEAF:   return c->leafN != NULL;
     case A_M64_SP: case A_M64_IL: return c->N == 64;
     }
@@ -244,9 +252,9 @@ int main(int argc, char **argv)
      * bias). Good enough for a bench snapshot; the production pair choice is
      * the calibrator (isolated per-candidate, order-neutralized) writing
      * per-cell (pair x placement x layout) wisdom. */
-    printf("%-6s %9s %9s %13s %13s %13s | %7s %7s %7s\n",
-           "N", "MKL-IL", "MKL-sp", "B2V-sp(pair)", "B2V-ip(pair)", "B2V-il(pair)",
-           "sp/sp", "il/IL", "best/IL");
+    printf("%-6s %9s %9s %13s %13s %13s %13s %13s | %7s %7s\n",
+           "N", "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "2pa-ip", "2pb-ip", "B2V-il",
+           "sp/sp", "best/IL");
 
     for (int ni = 0; ni < nN; ni++) {
         int N = argc > 1 ? atoi(argv[ni + 1]) : Nd[ni];
@@ -280,15 +288,16 @@ int main(int argc, char **argv)
          * cachebust between (a quarter-reps single-shot mispicked pairs at
          * 4096 — the in-tree wisdom/tuner replaces this eventually). */
         int bs1 = 0, bs2 = 0, bp1 = 0, bp2 = 0, bi1 = 0, bi2 = 0;
-        double bsns = 1e18, bpns = 1e18, bins = 1e18;
+        int ba1 = 0, ba2 = 0, bb1 = 0, bb2 = 0;
+        double bsns = 1e18, bpns = 1e18, bins = 1e18, bans = 1e18, bbns = 1e18;
         for (int R2 = (N < 128 ? N : 128); R2 >= 4; R2--) {
             if (N % R2) continue;
             int R1 = N / R2;
             if (R1 < 4 || R1 > 128 || (R1 % 4) || (R2 % 4)) continue;
             vfft_oop_plan_t *p = vfft_oop_plan_create_k1(N, R1, R2);
             if (!p) continue;
-            c.psp = p; c.pip = p; c.pil = p;
-            double t_sp = 1e18, t_ip = 1e18, t_il = 1e18;
+            c.psp = p; c.pip = p; c.pil = p; c.p2a = p; c.p2b = p;
+            double t_sp = 1e18, t_ip = 1e18, t_il = 1e18, t_2a = 1e18, t_2b = 1e18;
             for (int t = 0; t < 2; t++) {
                 if (t) cachebust();
                 double v = time_arm(&c, A_B2V_SP, reps);
@@ -299,15 +308,27 @@ int main(int argc, char **argv)
                     v = time_arm(&c, A_B2V_IL, reps);
                     if (v < t_il) t_il = v;
                 }
+                if (p->t1_ul) {
+                    v = time_arm(&c, A_2PA_IP, reps);
+                    if (v < t_2a) t_2a = v;
+                }
+                if (p->leaf_ul) {
+                    v = time_arm(&c, A_2PB_IP, reps);
+                    if (v < t_2b) t_2b = v;
+                }
             }
             if (t_sp < bsns) { bsns = t_sp; bs1 = R1; bs2 = R2; }
             if (t_ip < bpns) { bpns = t_ip; bp1 = R1; bp2 = R2; }
             if (t_il < bins) { bins = t_il; bi1 = R1; bi2 = R2; }
+            if (t_2a < bans) { bans = t_2a; ba1 = R1; ba2 = R2; }
+            if (t_2b < bbns) { bbns = t_2b; bb1 = R1; bb2 = R2; }
             vfft_oop_plan_destroy(p);
         }
         c.psp = bs1 ? vfft_oop_plan_create_k1(N, bs1, bs2) : NULL;
         c.pip = bp1 ? vfft_oop_plan_create_k1(N, bp1, bp2) : NULL;
         c.pil = bi1 ? vfft_oop_plan_create_k1(N, bi1, bi2) : NULL;
+        c.p2a = ba1 ? vfft_oop_plan_create_k1(N, ba1, ba2) : NULL;
+        c.p2b = bb1 ? vfft_oop_plan_create_k1(N, bb1, bb2) : NULL;
 
         /* measured table: best-of-5, order flipped per trial, cachebust between */
         double best[NARMS];
@@ -322,20 +343,23 @@ int main(int argc, char **argv)
             }
         }
 
-        char sp[32], ip[32], il[32];
+        char sp[32], ip[32], il[32], a2[32], b2[32];
         snprintf(sp, sizeof sp, "%.0f(%dx%d)", best[A_B2V_SP], bs1, bs2);
         snprintf(ip, sizeof ip, "%.0f(%dx%d)", best[A_B2V_IP], bp1, bp2);
         snprintf(il, sizeof il, arm_avail(&c, A_B2V_IL) ? "%.0f(%dx%d)" : "-", best[A_B2V_IL], bi1, bi2);
+        snprintf(a2, sizeof a2, arm_avail(&c, A_2PA_IP) ? "%.0f(%dx%d)" : "-", best[A_2PA_IP], ba1, ba2);
+        snprintf(b2, sizeof b2, arm_avail(&c, A_2PB_IP) ? "%.0f(%dx%d)" : "-", best[A_2PB_IP], bb1, bb2);
         double ours_best_sp = best[A_B2V_SP] < best[A_B2V_IP] ? best[A_B2V_SP] : best[A_B2V_IP];
+        if (arm_avail(&c, A_2PA_IP) && best[A_2PA_IP] < ours_best_sp) ours_best_sp = best[A_2PA_IP];
+        if (arm_avail(&c, A_2PB_IP) && best[A_2PB_IP] < ours_best_sp) ours_best_sp = best[A_2PB_IP];
         double ours_best_il = best[A_B2V_IL];
         if (N == 64) {
             if (best[A_M64_SP] < ours_best_sp) ours_best_sp = best[A_M64_SP];
             if (best[A_M64_IL] < ours_best_il) ours_best_il = best[A_M64_IL];
         }
-        printf("%-6d %9.1f %9.1f %13s %13s %13s | %7.2f %7.2f %7.2f\n",
-               N, best[A_MKL_IL], best[A_MKL_SP], sp, ip, il,
+        printf("%-6d %9.1f %9.1f %13s %13s %13s %13s %13s | %7.2f %7.2f\n",
+               N, best[A_MKL_IL], best[A_MKL_SP], sp, ip, a2, b2, il,
                best[A_MKL_SP] / ours_best_sp,
-               arm_avail(&c, A_B2V_IL) ? best[A_MKL_IL] / best[A_B2V_IL] : 0.0,
                arm_avail(&c, A_B2V_IL) || N == 64 ? best[A_MKL_IL] / ours_best_il : 0.0);
         if (arm_avail(&c, A_LEAF) || N == 64)
             printf("       LEAF=%.0f  M64-sp=%.0f  M64-il=%.0f\n",
@@ -347,6 +371,8 @@ int main(int argc, char **argv)
         if (c.psp) vfft_oop_plan_destroy(c.psp);
         if (c.pip) vfft_oop_plan_destroy(c.pip);
         if (c.pil) vfft_oop_plan_destroy(c.pil);
+        if (c.p2a) vfft_oop_plan_destroy(c.p2a);
+        if (c.p2b) vfft_oop_plan_destroy(c.p2b);
     }
     printf("\nDONE\n");
     return 0;

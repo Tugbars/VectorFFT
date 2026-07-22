@@ -120,6 +120,28 @@ int main(void)
                 if (c2 > e_rt) e_rt = c2;
             }
 
+            /* TWO-PASS routes (§12.4): must be BIT-identical to the 3-pass
+             * output (same codelet DAGs, only edge addressing differs) */
+            double e_2pa = -1, e_2pb = -1;
+            if (p->t1_ul) {
+                vfft_oop_execute_fwd_2pa(p, xr, xi, rr, ri);
+                e_2pa = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(rr[k] - dr[k]), c2 = fabs(ri[k] - di[k]);
+                    if (c1 > e_2pa) e_2pa = c1;
+                    if (c2 > e_2pa) e_2pa = c2;
+                }
+            }
+            if (p->leaf_ul) {
+                vfft_oop_execute_fwd_2pb(p, xr, xi, rr, ri);
+                e_2pb = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(rr[k] - dr[k]), c2 = fabs(ri[k] - di[k]);
+                    if (c1 > e_2pb) e_2pb = c1;
+                    if (c2 > e_2pb) e_2pb = c2;
+                }
+            }
+
             /* IL fwd + IL roundtrip (when twins exist) */
             double e_ilf = -1, e_ilrt = -1;
             if (p->il_leaf && p->t1_il) {
@@ -147,10 +169,12 @@ int main(void)
             const char *bad =
                 (e_fwd > tol || e_rt > rt_tol ||
                  (e_ilf >= 0 && e_ilf > tol) || (e_ilrt >= 0 && e_ilrt > rt_tol) ||
+                 (e_2pa >= 0 && e_2pa > 0.0) ||   /* two-pass must be BIT-identical */
+                 (e_2pb >= 0 && e_2pb > 0.0) ||
                  e_fwd != e_fwd || e_rt != e_rt) ? "  <FAIL>" : "";
             if (bad[0]) fails++;
-            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e%s\n",
-                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, bad);
+            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e 2pa=%.1e 2pb=%.1e%s\n",
+                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, e_2pa, e_2pb, bad);
         }
 
         afree(xr); afree(xi); afree(nr); afree(ni);

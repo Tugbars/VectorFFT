@@ -72,6 +72,13 @@ user buffer (`%rdx`):
 So large-N K=1 in MKL is a four-step (column DFTs in scratch → **separate tiled transpose** → row
 DFTs), NOT one giant kernel. Small N (≤~64) is the four-step collapsed to one in-place pass.
 
+**⚠ 2026-07-22 REVISION (deeper census, §12.1): the mid-N structure is exactly TWO passes, and
+the "transpose-dominated region" reading above was wrong.** N=256/512/1024 all run: pass 1 =
+twiddle-FREE radix-16/32 column kernel, user buffer → **stack-resident** scratch (~24KB frame);
+pass 2 = **streamed-twiddle** radix-16/32 kernel reading scratch linearly and writing the user
+buffer in R strided N/R **sections** — natural order fused into the final stores, NO separate
+transpose/permutation pass, every output written exactly once. The mono tier stops at 64.
+
 ## 4. MKL timing — INTERLEAVED IS FASTER than split (K=1, i9, best-of-9)
 
 | N | IL (ns) | split (ns) | split/IL |
@@ -421,6 +428,71 @@ Large-N addendum (planner-shaped, per user review comment): the column pass need
 monolithic leaf — letting it be a COMPOSED batch plan (DP planner domain, e.g. [16,8] chain at
 K=64 for N=8192) decouples the pair space from the leaf ceiling and is the natural level-3
 recursion (P4).
+
+## 12. GAP-CLOSING RESEARCH (2026-07-22, five threads + probes) — the plan of record
+
+### 12.1 MKL mid-N ground truth (re-disassembled; supersedes the §3c "four-step" reading)
+
+N=256 (16×16), 512 (32×16), 1024 (32×32) are all **exactly TWO passes**: (1) twiddle-free
+radix-16/32 column kernel, user→**stack scratch** (inside a ~24KB aligned frame); (2)
+streamed-twiddle kernel, scratch→user, whose stores go to R strided N/R **sections** — the
+reshaping rides the final stores; there is NO transpose pass and no third sweep. Twiddles are
+**streamed, not recomputed** (~1:1 load:mult; one linear `%r8` cursor, 0x40 B/complex
+splat-duplicated pairs — FFTW's "t2fv storage #2" layout). Byte roofline at 1024: **4 sweeps
+× 16KB + one linear table stream.** Our 3-pass four-step moves 6 sweeps + 63 parallel strided
+table rows. Mono tier confirmed to stop at N=64. (gdb recipe bugs found and fixed in the
+probes README: `watch -l` required, `--args` required — without it gdb silently ran N=64 for
+every "size".)
+
+### 12.2 t1 decomposition probe (`build_tuned/benches/k1_t1_decomp.c`, measured)
+
+t1 (twiddled combine) vs n1 (identical DFT, zero twiddles), same shapes:
+64×16: 853 vs 640 (tw = 212, 25%) · 32×32: 529 vs 495 (tw ≈ 0) · 64×64: 4422 vs 3726
+(tw = 696, 16%) · 64×128: 10666 vs 9066 (tw = 1600, 15%). **Twiddle streaming costs
+15–29% of t1 at R1=64 and ~nothing at R1≤32; the dominant cost is the combine compute +
+its doc-58 pass-boundary spills.** Note 32×32's total t1 (529) beats 64×16's (853): structure
+and pair choice dominate twiddles.
+
+### 12.3 FFTW ground truth (local fftw-3.3.10 source)
+
+No execute-time recurrence anywhere — tables built per-entry at plan time in long-double with
+octant reduction (accuracy-first; kernel/trig.c). The transferable mechanism is **t3-class
+twiddle-log3**: load only {w¹,w³,w⁹,w²⁷} per row and reconstruct the rest via ≤2-term
+in-register complex products (genfft `-twiddle-log3 -precompute-twiddles`) — 7.75× twiddle-byte
+cut at radix-32; N=1024 total twiddle footprint 2KB vs ~16KB t1-style. Leg-axis products of
+loaded b-vectors stay b-vectors, so this DOES transfer to the four-step t1 (unlike our
+lane-engine LOG3/cf0). FFTW selects t1/t2/t3 per cell by measurement — same thesis as ours.
+
+### 12.4 Ranked plan (expected gain at the 1024/4096 cells; every item gated per-cell)
+
+1. **TWO-PASS restructure** — fuse the transpose, matching MKL's shape. Two routes, race
+   them: (a) t1 with a **UnitLeg load edge** (4×4 in-register transpose in the load preamble
+   — un-stub the M2-phase-2 extraction, `emit_c.ml:3310-3330`; the lattice exists inlined at
+   610-807); (b) leaf with **transposed stores**. Removes the transpose sweep (180 ns@1024,
+   1.3 µs@4096), one scratch buffer, and one L1/L2 round-trip → byte-roofline parity with
+   MKL's 4-sweep structure. Est. 1319→~1050 at 1024.
+2. **Calibrated structure choice** (pair × placement × layout wisdom, isolated methodology) —
+   the probe shows R1≤32 combines are disproportionately cheaper (t1 529 vs 853 at 1024);
+   the mispicks cost 10–20% today.
+3. **--k1 mono tier for N≤128** — scoped at ~500–650 LoC (thread report: new driver module
+   composing existing UG edges + blocked-R16 bodies + T4 register-transpose printer + rodata
+   twiddle tables; milestones M1=N-64-parity-vs-hand-spike first). MKL two-passes at 128
+   (68.5 ns) — a mono-128 plausibly WINS outright. Do NOT build on dft_expand_twidsq
+   (batch-vectorized → scalar at K=1); do NOT add lane-varying const IR (rodata tables).
+4. **Twiddle-stream variants for R1=64 shapes only** (the measured 15–29%): try in order
+   (a) **linear table layout** — one cursor in codelet consumption order instead of 63
+   parallel strided rows (fill + render tweak, cheapest, it's what MKL does); (b) **FFTW-t3
+   log3 legs** (63→~5 loads); (c) **factored b-axis anchors** (t1p addressing exists,
+   emit_render.ml:166-169). All become measured per-cell variants per the 3-twiddle-methods
+   thesis. **Pure runtime recurrence: rejected** (126 ymm loop state → stack; breaks
+   bit-exact gates; FFTW's documented accuracy stance).
+5. **Composed column pass** (P4): runnable today — `vfft_proto_execute_fwd_oop` on a
+   `plan_create(R2, R1, factors)` DIT plan + a **permuted** `_vfft_k1_transpose` absorbing the
+   plan-time digit-reversal. Kills the leaf ceiling (N≥8192) and the 128+128 spill wall
+   (structural per oop_stride_specialization.md — emitter knobs measured useless there).
+6. **Bonus for the natural-order workstream**: MKL's sectioned-scatter final pass is the
+   "fused scatter" made viable by scratch-OOP piping — feeds natural_order_inplace Phase-1
+   (the SCRATCH mode's separate scatter sweep may be removable the same way).
 
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.

@@ -403,18 +403,88 @@ let emit_loop_close (buf : Buffer.t) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_load_unitleg (buf : Buffer.t) (c : config) : unit =
-  let in_re_name =
+  (* NATIVE UL load lattice (P2 two-pass restructure, row_major_engine.md §12.4
+     item 1 route (a)): vec_width legs are CONTIGUOUS (leg_stride ~ 1), groups
+     strided — load vw rows (one per group) per leg-quad and 4x4-transpose
+     in-register so the lane axis = groups, as the body expects. This fuses
+     the four-step's transpose into the t1's load edge: the t1 reads the
+     column pass's UNtransposed output directly (Ls=1, Gs=R1), eliminating
+     the separate transpose sweep + one scratch buffer + one L1 round-trip
+     (MKL's two-pass shape, §12.1). Replaces the former Emit_c stub
+     delegation (M2 phase-2) with a self-contained lattice, same approach as
+     the IL edges. *)
+  let base_re =
     match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "in_re"
   in
-  let in_im_name =
+  let base_im =
     match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "in_im"
   in
-  (* Reuses the extracted helper from emit_c.ml — identical machinery to
-     the existing --strided path's preamble, just parameterized over
-     buffer names and stride name. This is exactly the codegen the
-     existing 2D row codelets ship with, now driving the M2 OOP family. *)
-  Emit_c.emit_strided_load_preamble ~isa:c.isa ~radix:c.radix ~in_re_name
-    ~in_im_name ~group_stride_name:"in_group_stride" buf
+  if il_in_active () then
+    failwith "codelet_oop: UnitLeg load does not compose with il_in yet";
+  Buffer.add_string buf
+    "        /* UnitLeg load: vw legs contiguous, vw groups strided; 4x4\n\
+    \           in-register transpose puts groups on the lane axis. */\n";
+  (match c.isa.Isa.vec_width with
+  | 4 ->
+      for lq = 0 to (c.radix / 4) - 1 do
+        let l0 = 4 * lq in
+        List.iter
+          (fun (comp, base) ->
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        { const __m256d _ta = _mm256_loadu_pd(&%s[(b + 0) \
+                  * in_group_stride + %d * in_leg_stride]);\n\
+                 \          const __m256d _tb = _mm256_loadu_pd(&%s[(b + 1) \
+                  * in_group_stride + %d * in_leg_stride]);\n\
+                 \          const __m256d _tc = _mm256_loadu_pd(&%s[(b + 2) \
+                  * in_group_stride + %d * in_leg_stride]);\n\
+                 \          const __m256d _td = _mm256_loadu_pd(&%s[(b + 3) \
+                  * in_group_stride + %d * in_leg_stride]);\n\
+                 \          const __m256d _u0 = _mm256_unpacklo_pd(_ta, _tb);\n\
+                 \          const __m256d _u1 = _mm256_unpackhi_pd(_ta, _tb);\n\
+                 \          const __m256d _u2 = _mm256_unpacklo_pd(_tc, _td);\n\
+                 \          const __m256d _u3 = _mm256_unpackhi_pd(_tc, _td);\n\
+                 \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
+                  0x20);\n\
+                 \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
+                  0x20);\n\
+                 \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
+                  0x31);\n\
+                 \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
+                  0x31); }\n"
+                 base l0 base l0 base l0 base l0 comp l0 comp (l0 + 1) comp
+                 (l0 + 2) comp (l0 + 3)))
+          [ ("re", base_re); ("im", base_im) ]
+      done
+  | 2 ->
+      for lq = 0 to (c.radix / 2) - 1 do
+        let l0 = 2 * lq in
+        List.iter
+          (fun (comp, base) ->
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        { const __m128d _ta = _mm_loadu_pd(&%s[(b + 0) * \
+                  in_group_stride + %d * in_leg_stride]);\n\
+                 \          const __m128d _tb = _mm_loadu_pd(&%s[(b + 1) * \
+                  in_group_stride + %d * in_leg_stride]);\n\
+                 \          lane_%s_%d = _mm_unpacklo_pd(_ta, _tb);\n\
+                 \          lane_%s_%d = _mm_unpackhi_pd(_ta, _tb); }\n"
+                 base l0 base l0 comp l0 comp (l0 + 1)))
+          [ ("re", base_re); ("im", base_im) ]
+      done
+  | 1 ->
+      for l = 0 to c.radix - 1 do
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        lane_re_%d = %s[b * in_group_stride + %d * \
+              in_leg_stride];\n\
+             \        lane_im_%d = %s[b * in_group_stride + %d * \
+              in_leg_stride];\n"
+             l base_re l l base_im l)
+      done
+  | w ->
+      failwith
+        (Printf.sprintf "codelet_oop UL load: vec_width %d not emitted" w))
 
 (* ═══════════════════════════════════════════════════════════════
  * LOAD EDGE — UnitGroup pattern
@@ -546,14 +616,87 @@ let emit_load_edge (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_store_unitleg (buf : Buffer.t) (c : config) : unit =
-  let out_re_name =
+  (* NATIVE UL store lattice (P2 two-pass restructure, route (b)): inverse of
+     the UL load — transpose vw out_lane registers (lane axis = groups) into
+     vw rows (one per group, vw legs contiguous) and store with strided group
+     addressing. Fuses the four-step's transpose into the LEAF's store edge
+     (n1_oop UG_UL: out_leg_stride=1, out_group_stride=R2 writes the
+     transposed intermediate directly). Replaces the former Emit_c stub. *)
+  let base_re =
     match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
   in
-  let out_im_name =
+  let base_im =
     match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "out_im"
   in
-  Emit_c.emit_strided_store_postamble ~isa:c.isa ~radix:c.radix ~out_re_name
-    ~out_im_name ~group_stride_name:"out_group_stride" buf
+  if il_out_active () then
+    failwith "codelet_oop: UnitLeg store does not compose with il_out yet";
+  if !current_post_tw then
+    failwith "codelet_oop: UnitLeg store does not compose with --post-tw yet";
+  Buffer.add_string buf
+    "        /* UnitLeg store: transpose vw out_lanes (lanes=groups) into vw\n\
+    \           rows and store per group with contiguous legs. */\n";
+  (match c.isa.Isa.vec_width with
+  | 4 ->
+      for lq = 0 to (c.radix / 4) - 1 do
+        let l0 = 4 * lq in
+        List.iter
+          (fun (comp, base) ->
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        { const __m256d _u0 = \
+                  _mm256_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
+                 \          const __m256d _u1 = \
+                  _mm256_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
+                 \          const __m256d _u2 = \
+                  _mm256_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
+                 \          const __m256d _u3 = \
+                  _mm256_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
+                 \          _mm256_storeu_pd(&%s[(b + 0) * out_group_stride \
+                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, \
+                  0x20));\n\
+                 \          _mm256_storeu_pd(&%s[(b + 1) * out_group_stride \
+                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, \
+                  0x20));\n\
+                 \          _mm256_storeu_pd(&%s[(b + 2) * out_group_stride \
+                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, \
+                  0x31));\n\
+                 \          _mm256_storeu_pd(&%s[(b + 3) * out_group_stride \
+                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, \
+                  0x31)); }\n"
+                 comp l0 comp (l0 + 1) comp l0 comp (l0 + 1) comp (l0 + 2)
+                 comp (l0 + 3) comp (l0 + 2) comp (l0 + 3) base l0 base l0
+                 base l0 base l0))
+          [ ("re", base_re); ("im", base_im) ]
+      done
+  | 2 ->
+      for lq = 0 to (c.radix / 2) - 1 do
+        let l0 = 2 * lq in
+        List.iter
+          (fun (comp, base) ->
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        { _mm_storeu_pd(&%s[(b + 0) * out_group_stride + \
+                  %d * out_leg_stride], _mm_unpacklo_pd(out_lane_%s_%d, \
+                  out_lane_%s_%d));\n\
+                 \          _mm_storeu_pd(&%s[(b + 1) * out_group_stride + \
+                  %d * out_leg_stride], _mm_unpackhi_pd(out_lane_%s_%d, \
+                  out_lane_%s_%d)); }\n"
+                 base l0 comp l0 comp (l0 + 1) base l0 comp l0 comp (l0 + 1)))
+          [ ("re", base_re); ("im", base_im) ]
+      done
+  | 1 ->
+      for l = 0 to c.radix - 1 do
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        %s[b * out_group_stride + %d * out_leg_stride] = \
+              out_lane_re_%d;\n\
+             \        %s[b * out_group_stride + %d * out_leg_stride] = \
+              out_lane_im_%d;\n"
+             base_re l l base_im l l)
+      done
+  | w ->
+      failwith
+        (Printf.sprintf "codelet_oop UL store: vec_width %d not emitted" w))
 
 (* ═══════════════════════════════════════════════════════════════
  * STORE EDGE — UnitGroup pattern
