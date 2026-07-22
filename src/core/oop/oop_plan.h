@@ -42,6 +42,7 @@
 
 #include <stdlib.h>
 #include <math.h>
+#include <immintrin.h>
 #include "oop_leaf_registry.h"
 #include "oop_execute.h"
 #include "planner.h"
@@ -54,7 +55,15 @@ typedef enum
 {
     VFFT_OOP_KIND_LEAF = 0,
     VFFT_OOP_KIND_BAILEY2 = 1,
-    VFFT_OOP_KIND_MODEB = 2
+    VFFT_OOP_KIND_MODEB = 2,
+    /* K=1 vectorized four-step (docs/roadmap/row_major_engine.md §11):
+     * stage 1 = ONE leaf call at count=R1 (the batch identity: column c IS
+     * lane c — fully vectorized, vs BAILEY2's R1 scalar leaf calls), then an
+     * explicit SIMD 4x4 transpose, then the SAME per-lane t1 stage as
+     * BAILEY2 (Qr/Qi identical). Natural order, OOP, K=1 only. Optional IL
+     * entry points drive the emitted il_in/il_out twins (z->z, zero
+     * conversion passes). Halves BAILEY2 at every N (§11b). */
+    VFFT_OOP_KIND_BAILEY2V = 3
 } vfft_oop_kind_t;
 
 typedef struct
@@ -62,12 +71,20 @@ typedef struct
     vfft_oop_kind_t kind;
     int N;
     size_t K;
-    /* LEAF / BAILEY2 */
+    /* LEAF / BAILEY2 / BAILEY2V */
     vfft_oop11_fn leaf;
     vfft_oop11_fn t1p;
     int t1p_variant;   /* BAILEY2 s2 twiddle codelet: 0 = flat, 1 = log3 */
     int R1, R2;
     double *Qr, *Qi; /* K-replicated table, (R1-1) x (R2*K/8) */
+    /* BAILEY2V: column-pass scratch (N doubles each; tp_re/tp_im hold the
+     * transposed intermediate on the IL path where the caller has no split
+     * destination). Names chosen to avoid windows.h macro collisions (scr2
+     * is a macro in the mingw header chain). IL twins NULL when unavailable
+     * (non-pow2 pair or non-avx2 build) — callers must check before the IL
+     * entry points. */
+    double *col_re, *col_im, *tp_re, *tp_im;
+    vfft_oop11_fn il_leaf, il_leaf_sw, t1_il, t1_il_sw;
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -75,6 +92,29 @@ typedef struct
      * in-place DIF-backward (start_stage=0) on the copied spectrum. */
     vfft_proto_exec_fn mb_jit_fwd, mb_jit_bwd;
 } vfft_oop_plan_t;
+
+/* d[t*R2 + m] = s[m*R1 + t]  (s: R2 rows x R1 cols, row stride R1).
+ * SIMD 4x4 blocks; requires R1 % 4 == 0 && R2 % 4 == 0 (checked at create). */
+static inline void _vfft_k1_transpose(const double *s, double *d, int R2, int R1)
+{
+    for (int m = 0; m < R2; m += 4)
+        for (int t = 0; t < R1; t += 4) {
+            __m256d a = _mm256_loadu_pd(s + (size_t)(m + 0) * R1 + t);
+            __m256d b = _mm256_loadu_pd(s + (size_t)(m + 1) * R1 + t);
+            __m256d c = _mm256_loadu_pd(s + (size_t)(m + 2) * R1 + t);
+            __m256d e = _mm256_loadu_pd(s + (size_t)(m + 3) * R1 + t);
+            __m256d u0 = _mm256_unpacklo_pd(a, b), u1 = _mm256_unpackhi_pd(a, b);
+            __m256d u2 = _mm256_unpacklo_pd(c, e), u3 = _mm256_unpackhi_pd(c, e);
+            _mm256_storeu_pd(d + (size_t)(t + 0) * R2 + m,
+                             _mm256_permute2f128_pd(u0, u2, 0x20));
+            _mm256_storeu_pd(d + (size_t)(t + 1) * R2 + m,
+                             _mm256_permute2f128_pd(u1, u3, 0x20));
+            _mm256_storeu_pd(d + (size_t)(t + 2) * R2 + m,
+                             _mm256_permute2f128_pd(u0, u2, 0x31));
+            _mm256_storeu_pd(d + (size_t)(t + 3) * R2 + m,
+                             _mm256_permute2f128_pd(u1, u3, 0x31));
+        }
+}
 
 static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
 {
@@ -177,6 +217,50 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
                                                          int R1, int R2)
 {
     return vfft_oop_plan_create_pair_v(N, K, R1, R2, /*t1p_variant=*/1);
+}
+
+/* K=1 vectorized four-step (BAILEY2V). Explicit-pair constructor: the pair
+ * search / wisdom layer sits above (the optimal pair drifts with N AND with
+ * layout — §11f: the IL premium scales with t1 store sites, so fat-R2 pairs
+ * win IL cells that balanced pairs win in split). Requires R1,R2 % 4 == 0
+ * (the SIMD transpose block contract). Stage tables reuse the BAILEY2 fill
+ * verbatim (at K=1 the per-lane t1 path fires and Qr[(l2-1)*R2+k2] IS the
+ * four-step diagonal). IL twins resolve to NULL when unavailable (non-pow2
+ * pair / non-avx2) — the split entry points still work; callers check
+ * il_leaf/t1_il before using the *_il entry points. */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
+{
+    if (R1 * R2 != N || (R1 % 4) || (R2 % 4))
+        return NULL;
+    if (!vfft_oop_leaf_fn(R2) || !vfft_oop_t1_fn(R1))
+        return NULL;
+    vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->N = N;
+    p->K = 1;
+    if (_vfft_oop_fill_bailey(p, N, 1, R1, R2, /*t1p_variant=*/0) != 0)
+    {
+        free(p);
+        return NULL;
+    }
+    p->kind = VFFT_OOP_KIND_BAILEY2V;
+    p->col_re  = (double *)malloc((size_t)N * 8);
+    p->col_im  = (double *)malloc((size_t)N * 8);
+    p->tp_re = (double *)malloc((size_t)N * 8);
+    p->tp_im = (double *)malloc((size_t)N * 8);
+    if (!p->col_re || !p->col_im || !p->tp_re || !p->tp_im)
+    {
+        free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
+        free(p->Qr); free(p->Qi);
+        free(p);
+        return NULL;
+    }
+    p->il_leaf    = vfft_oop_leaf_il_fn(R2, 0);
+    p->il_leaf_sw = vfft_oop_leaf_il_fn(R2, 1);
+    p->t1_il      = vfft_oop_t1_il_fn(R1, 0);
+    p->t1_il_sw   = vfft_oop_t1_il_fn(R1, 1);
+    return p;
 }
 
 /* Build a MODEB plan (general-N OOP via the stride engine). The SINGLE owner
@@ -319,10 +403,57 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
                (size_t)R2 * K, 1, (size_t)R2 * K, 1, (size_t)R2 * K);
         return 0;
     }
+    case VFFT_OOP_KIND_BAILEY2V:
+    {
+        /* K=1: [vectorized leaf, count=R1] -> [SIMD transpose] -> [t1].
+         * Bit-identical to BAILEY2 (same codelet DAG, §11a). */
+        const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+        p->leaf(sr, si, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+        _vfft_k1_transpose(p->col_re, dr, (int)R2, (int)R1);
+        _vfft_k1_transpose(p->col_im, di, (int)R2, (int)R1);
+        p->t1p(dr, di, dr, di, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+        return 0;
+    }
     case VFFT_OOP_KIND_MODEB:
         return vfft_proto_execute_fwd_oop_jit(p->mb, sr, si, dr, di, K, p->mb_jit_fwd);
     }
     return -1;
+}
+
+/* ---- BAILEY2V interleaved entry points (z -> z, natural order, K=1) ----
+ * The caller's buffer is INTERLEAVED pairs z[2n]=re, z[2n+1]=im; no
+ * conversion pass exists anywhere: the il_in leaf deinterleaves in its load
+ * lattice, the il_out t1 interleaves in its store lattice. z_in == z_out is
+ * safe (the leaf fully consumes z before the t1 writes it). Returns -1 when
+ * the plan has no IL twins (check p->il_leaf/p->t1_il, §11f). */
+static inline int vfft_oop_execute_fwd_il(const vfft_oop_plan_t *p,
+                                          const double *z_in, double *z_out)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf || !p->t1_il)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->il_leaf(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    _vfft_k1_transpose(p->col_re, p->tp_re, (int)R2, (int)R1);
+    _vfft_k1_transpose(p->col_im, p->tp_im, (int)R2, (int)R1);
+    p->t1_il(p->tp_re, p->tp_im, z_out, 0, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+    return 0;
+}
+
+/* Unnormalized inverse on interleaved z: the swap identity
+ * IDFT = swap(DFT(swap(.))) with both swaps folded into the _sw lattices
+ * (il_in_sw reads (im,re), t1_il_out_sw writes (im,re)); the butterfly DAG
+ * stays the forward one. Output lands in normal (re,im) order. */
+static inline int vfft_oop_execute_bwd_il(const vfft_oop_plan_t *p,
+                                          const double *z_in, double *z_out)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf_sw || !p->t1_il_sw)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->il_leaf_sw(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    _vfft_k1_transpose(p->col_re, p->tp_re, (int)R2, (int)R1);
+    _vfft_k1_transpose(p->col_im, p->tp_im, (int)R2, (int)R1);
+    p->t1_il_sw(p->tp_re, p->tp_im, z_out, 0, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+    return 0;
 }
 
 /* Unnormalized inverse (output = N * x). KIND-DEPENDENT, because the kind sets
@@ -356,6 +487,7 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
         return;
     free(p->Qr);
     free(p->Qi);
+    free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
     /* MODEB owns a full stride plan (stage tables + tape + twiddle pools) — tear
      * it down through the proto destroy, not bare free. (The old "Phase 1 has no
      * destroy, so we leak it" comment was stale: planner.h now has the destroy.) */
