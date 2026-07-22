@@ -72,7 +72,9 @@
 #ifndef VFFT_PROTO_JIT_DIR
 #define VFFT_PROTO_JIT_DIR VFFT_PROTO_JIT_REPO "/jit/generated"
 #endif
-#define VFFT_K1JIT_VERSION 1
+#define VFFT_K1JIT_VERSION 3 /* v3: per-stage static wrappers (one flatten each) —
+                              * v2's single merged mega-function scheduled ~20%
+                              * worse than the AOT twins' separate functions. */
 
 typedef void (*vfft_k1_jit_fn)(const double *, const double *,
                                double *, double *, double *, double *,
@@ -155,36 +157,53 @@ static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int rout
          * Stage-1 strides: L=R1, G=1; store (2pb) OLs=1/OGs=R2 else OL=R1/OG=1.
          * Stage-2: 2pb reads transposed scratch UG (R2,1); 2pa family reads
          * untransposed via UL (1,R1); both store natural (R2,1). me1=R1, me2=R2. */
+        /* v3 shape: TWO static per-stage wrappers, each flattening exactly ONE
+         * codelet — gcc then compiles two separately-scheduled specialized
+         * functions (the AOT spec twins' shape). A single merged flatten
+         * measured ~20% worse (register allocation across the fused body). */
         fprintf(f,
             "/* auto-generated K=1 JIT wrapper — %s. Shape baked, buffers passed. */\n"
             "#include \"%s\"\n"
-            "#include \"%s\"\n"
-            "__attribute__((flatten))\n"
+            "#include \"%s\"\n", key, s1, s2);
+        fprintf(f,
+            "__attribute__((flatten,noinline)) static void _k1_s1(\n"
+            "    const double *sr, const double *si, double *cr, double *ci)\n"
+            "{\n");
+        if (route == 2)
+            fprintf(f, "    %s(sr, si, cr, ci, 0, 0, %d, 1, 1, %d, %d);\n",
+                    f1, R1, R2, R1);
+        else
+            fprintf(f, "    %s(sr, si, cr, ci, 0, 0, %d, 1, %d, 1, %d);\n",
+                    f1, R1, R1, R1);
+        fprintf(f,
+            "}\n"
+            "__attribute__((flatten,noinline)) static void _k1_s2(\n"
+            "    const double *cr, const double *ci, double *dr, double *di,\n"
+            "    const double *qr, const double *qi)\n"
+            "{\n");
+        if (route == 2)
+            fprintf(f, "    %s(cr, ci, dr, di, qr, qi, %d, 1, %d, 1, %d);\n",
+                    f2, R2, R2, R2);
+        else
+            fprintf(f, "    %s(cr, ci, dr, di, qr, qi, 1, %d, %d, 1, %d);\n",
+                    f2, R1, R2, R2);
+        fprintf(f,
+            "}\n"
             "void vfft_k1_jit_exec(const double *sr, const double *si,\n"
             "                      double *dr, double *di,\n"
             "                      double *col_re, double *col_im,\n"
             "                      const double *qr, const double *qi)\n"
-            "{\n", key, s1, s2);
-        if (route == 2)
-            fprintf(f, "    %s(sr, si, col_re, col_im, 0, 0, %d, 1, 1, %d, %d);\n",
-                    f1, R1, R2, R1);
-        else
-            fprintf(f, "    %s(sr, si, col_re, col_im, 0, 0, %d, 1, %d, 1, %d);\n",
-                    f1, R1, R1, R1);
-        if (route == 2)
-            fprintf(f, "    %s(col_re, col_im, dr, di, qr, qi, %d, 1, %d, 1, %d);\n",
-                    f2, R2, R2, R2);
-        else
-            fprintf(f, "    %s(col_re, col_im, dr, di, qr, qi, 1, %d, %d, 1, %d);\n",
-                    f2, R1, R2, R2);
-        fprintf(f, "}\n");
+            "{\n"
+            "    _k1_s1(sr, si, col_re, col_im);\n"
+            "    _k1_s2(col_re, col_im, dr, di, qr, qi);\n"
+            "}\n");
         fclose(f);
         /* unquoted paths, matching jit_runtime.h: cmd.exe mangles a command
          * line that BEGINS with a quote, and none of these paths contain
          * spaces. */
         char cmd[2200];
         snprintf(cmd, sizeof cmd,
-                 "%s -O3 -mavx2 -mfma -march=haswell -shared "
+                 "%s -O3 -mavx2 -mfma -march=native -shared "
                  "-fno-semantic-interposition -w -I%s %s -o %s",
                  VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_REPO, src, lib);
         if (system(cmd) != 0) return NULL;

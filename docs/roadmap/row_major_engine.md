@@ -712,6 +712,33 @@ regen line); re-calibrate. Then Item B (composed column pass — design locked i
 16384 via 64×256). Then the K=1 change-inventory + interface call-path writeup (user
 request), then r2c/2D K=1 analogues.
 
+## 13.4 K=1 JIT WIRED — plan-time stride baking for ANY cell (user-directed)
+
+`src/dag-fft-compiler/jit/k1_jit_runtime.h` + vfft.c hooks: at plan create, the winner split
+route (2pa/2pb/twl/2pa-l3 — mono is already AOT-baked, 3p never wins split-ip) is compiled
+into a per-cell DLL whose wrapper `#include`s the SHIPPED unbaked codelet sources and calls
+them with **literal strides** — gcc inlines + constant-propagates, reproducing the
+`--oop-spec-named` twin without pre-emitting one per shape. Cache
+`jit/generated/k1_n{N}_r{route}_{R1}x{R2}_avx2_ver{V}.{dll,c}`, compile cost locked to
+create, NULL → normal route fns (speed cache, never a correctness dependency; same contract
+as the classic executor JIT). Execute prefers `h->k1_jit` in the split branch; bwd rides the
+same pointer-swap. TWL cells bake against the linear Qlr/Qli (passed, not baked — the disk
+cache is shape-keyed and shared across plans).
+
+Iterations (each verified): v1 `-march=haswell` ≈ unbaked; v2 `-march=native` merged-flatten
+≈ −18% vs unbaked but ~+20% vs AOT twins (one mega-function registers/schedules worse);
+**v3 = two `static` per-stage wrappers, one flatten each (the AOT twins' compilation shape)
+— probe-level parity with the AOT spec pipeline** (1042 vs 973–1254 across runs; the quick
+probe is fixed-order so those arms are within its noise band). Gates: bit-identical (0.0)
+to the unbaked route at every check; public-API ladder ALL GREEN with the JIT active.
+
+⚠ REMAINING (next session): (a) re-race jit-v3 vs AOT-spec vs unbaked under the CALIBRATOR's
+rotated methodology (the quick probe has the fixed-order bias §13.1 exists to prevent) and
+recalibrate the ladder with a JIT candidate arm; (b) if jit ≈ AOT confirmed, the per-cell
+AOT spec twins become redundant (JIT covers every cell incl. heuristic-miss ones) — keep
+only if the no-toolchain fallback matters; (c) the wrapper trick generalizes to the IL
+routes (same two-stage shape) — one more `_vfft_k1jit_route_srcs` table row each.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
