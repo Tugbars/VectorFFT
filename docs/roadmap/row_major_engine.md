@@ -596,6 +596,50 @@ and streamed sectioned-store twiddle kernels (W1/W2) vs our doc-58 blocked leave
 combines. That is the leaner-column-kernels workstream (§12.4 item 5) + the joint calibrator
 — no structural moves left to make.
 
+## 13. PRODUCTIZATION (step 1+2 of 4 DONE, 2026-07-22 late)
+
+**Step 1 — mono-64 tier completed (M2+M4)**: `--k1-il` / `--k1-sw` driver modes emit
+`vfft_k1_mono64_8x8_il_{fwd,bwd}_avx2` (bwd = fwd DAG + _sw lattices, forward tables — the
+swap identity folded into the boundaries; split bwd = caller pointer-swap, zero code). Gates:
+IL fwd 1.07e-14, IL roundtrip 2.84e-14, split-bwd 4.35e-14.
+
+**Bonus — TRUE 2-pass IL route**: the composition [il_in leaf → t1 UL-load + il_out store]
+was already emittable (validation matrix allowed UL load + il_out store in one codelet — no
+new emitter code). 10 twins (`radix{4..64}_t1_oop_ul_ilout[_sw]_avx2.c`) +
+`vfft_oop_execute_{fwd,bwd}_2p_il` (z→z, 2 passes, 1 scratch pair, ZERO conversion/transpose
+sweeps — the full MKL two-pass shape on an interleaved buffer, both directions). All gates
+green.
+
+**Step 2 — the four-axis calibrator** (`build_tuned/benches/calibrate_k1.c`): per-cell
+process, candidates = route {3p, 3p-ip, 2pa-ip, 2pb-ip, twl-ip, 3p-il, 2p-il, mono[-alt,-il]}
+× pair, per-trial candidate-order ROTATION (kills the cmp_old_new fixed-order bias by
+construction), best-of-4, verdicts per axis (split-oop / split-ip / il). Ladder verdicts
+(`benches/k1_calibration_verdicts.csv`):
+
+| N | split-ip winner | il winner |
+|--:|---|---|
+| 64 | twl 8×8 · 37.5 | mono-il · 44.9 |
+| 128 | twl 16×8 · 84.9 | 2p-il 16×8 · 107.2 |
+| 256 | twl 4×64 · 153.6 | 2p-il 4×64 · 224.1 |
+| 512 | 2pa 64×8 · 381.5 | 2p-il 64×8 · 479.7 |
+| 1024 | **2pb 16×64 · 958.8** (best-ever) | 2p-il 16×64 · 1341.4 |
+| 2048 | 2pb 32×64 · 3660.9 | **2p-il 64×32 · 3511.0 — IL beats split!** |
+| 4096 | 2pa 64×64 · 8165.4 | 2p-il 64×64 · 8611.5 |
+| 8192 | twl 64×128 · 19650 | — (no 128 IL leaf) |
+
+Findings: (1) **twl wins 4/8 split-ip cells in-context** — the "marginal" §12.6 variant wins
+when measured per-cell among mixed candidates, vindicating both the bank-don't-default call
+and the measured-selection thesis; (2) **2p-il is within a few % of split everywhere and WINS
+outright at 2048** — the IL boundary fold is essentially free in the 2-pass shape; (3) the
+in-context mono-64 (40.9) loses to twl-ip (37.5) at 64-split while winning the IL axis —
+context-realistic calibration differs from isolated single-arm benches; the front door honors
+the calibrator. (4) 1024 day trajectory: 1574 → 1016 → **958.8**.
+
+**Remaining (next session)**: step 3 = wisdom-format extension (K1VERDICT lines into the OOP
+wisdom family) + vfft.c front-door routing (split → winner route; `sim==dim==NULL` IL
+contract → *_il/mono-il; bwd via swap identity / _sw; old routes = kill-switch); step 4 =
+canonical public-API regression ladder + natmt untouched + full-diff handoff for review.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).

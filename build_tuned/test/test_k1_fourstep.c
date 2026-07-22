@@ -173,6 +173,33 @@ int main(void)
                     if (c2 > e_twl) e_twl = c2;
                 }
             }
+            /* LOG3 twins: same Qr/Qi, derived twiddles -> gate vs NAIVE at
+             * tol (last-ulp difference vs flat is expected) */
+            double e_l3 = -1, e_ull3 = -1;
+            if (p->t1_l3) {
+                vfft_oop11_fn sv = p->t1p;
+                p->t1p = p->t1_l3;
+                vfft_oop_execute_fwd(p, xr, xi, rr, ri);
+                p->t1p = sv;
+                e_l3 = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(rr[k] - nr[k]), c2 = fabs(ri[k] - ni[k]);
+                    if (c1 > e_l3) e_l3 = c1;
+                    if (c2 > e_l3) e_l3 = c2;
+                }
+            }
+            if (p->t1_ul_l3 && p->t1_ul) {
+                vfft_oop11_fn sv = p->t1_ul;
+                p->t1_ul = p->t1_ul_l3;
+                vfft_oop_execute_fwd_2pa(p, xr, xi, rr, ri);
+                p->t1_ul = sv;
+                e_ull3 = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(rr[k] - nr[k]), c2 = fabs(ri[k] - ni[k]);
+                    if (c1 > e_ull3) e_ull3 = c1;
+                    if (c2 > e_ull3) e_ull3 = c2;
+                }
+            }
 
             /* IL fwd + IL roundtrip (when twins exist) */
             double e_ilf = -1, e_ilrt = -1;
@@ -206,10 +233,12 @@ int main(void)
                  (e_twl >= 0 && e_twl > 0.0) ||   /* linear layout: same values */
                  (e_2il >= 0 && e_2il > tol) ||
                  (e_2ilrt >= 0 && e_2ilrt > rt_tol) ||
+                 (e_l3 >= 0 && e_l3 > tol) ||
+                 (e_ull3 >= 0 && e_ull3 > tol) ||
                  e_fwd != e_fwd || e_rt != e_rt) ? "  <FAIL>" : "";
             if (bad[0]) fails++;
-            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e 2pa=%.1e 2pb=%.1e twl=%.1e 2il=%.1e 2ilrt=%.1e%s\n",
-                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, e_2pa, e_2pb, e_twl, e_2il, e_2ilrt, bad);
+            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e 2pa=%.1e 2pb=%.1e twl=%.1e 2il=%.1e 2ilrt=%.1e l3=%.1e ul-l3=%.1e%s\n",
+                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, e_2pa, e_2pb, e_twl, e_2il, e_2ilrt, e_l3, e_ull3, bad);
         }
 
         afree(xr); afree(xi); afree(nr); afree(ni);
