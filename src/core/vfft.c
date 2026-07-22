@@ -2205,10 +2205,11 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         /* ── K=1 engine (row_major_engine.md §13): natural-order routes from
          * kind-3 wisdom or the default heuristic; execute picks the layout
          * axis from the buffer contract (sim==dim==NULL => interleaved z).
-         * The classic path below remains the kill-switch (env VFFT_NO_K1),
-         * the SCRAMBLED-order server, and the fallback for any failure. */
-        if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED &&
-            !getenv("VFFT_NO_K1"))
+         * This IS the K=1 path (no kill-switch — user decision 2026-07-22:
+         * K=1 is the headline feature; the classic champions path below was
+         * never K=1-safe). Classic path still serves SCRAMBLED-order
+         * requests and is the fallback if engine create fails. */
+        if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;

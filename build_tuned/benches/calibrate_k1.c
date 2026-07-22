@@ -49,12 +49,28 @@ static double *ad(size_t n)
 
 /* routes */
 enum { R_3P = 0, R_3P_IP, R_2PA_IP, R_2PB_IP, R_TWL_IP, R_3P_IL, R_2P_IL,
-       R_MONO, R_MONO_ALT, R_MONO_IL, R_3PL3_IP, R_2PAL3_IP };
+       R_MONO, R_MONO_ALT, R_MONO_IL, R_3PL3_IP, R_2PAL3_IP,
+       R_2PB_SPEC, R_2PAL3_SPEC };
 static const char *RNAME[] = { "3p", "3p-ip", "2pa-ip", "2pb-ip", "twl-ip",
                                "3p-il", "2p-il", "mono", "mono-alt", "mono-il",
-                               "3p-l3-ip", "2pa-l3-ip" };
+                               "3p-l3-ip", "2pa-l3-ip",
+                               "2pb-spec", "2pa-l3-spec" };
 /* axis of each route: 0=split-oop 1=split-ip 2=il */
-static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1 };
+static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1 };
+
+/* per-cell stride-specialized twins (§13.3 item A): 7-arg ABI, strides baked */
+extern void radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
+extern void radix32_t1_oop_fwd_avx2_UG_UG_spec32_1_32_1(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
+extern void radix64_n1_oop_fwd_avx2_UG_UG_spec64_1_64_1(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
+extern void radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t);
 
 typedef struct {
     int route, R1, R2;
@@ -82,6 +98,15 @@ static void run_cand(cand_t *c)
      * with the log3 twins at setup (same ABI, same Qr/Qi) */
     case R_3PL3_IP:  vfft_oop_execute_fwd(c->p, wr, wi, wr, wi); break;
     case R_2PAL3_IP: vfft_oop_execute_fwd_2pa(c->p, wr, wi, wr, wi); break;
+    /* stride-spec pipelines (baked-constant twins; scratch/Qr from the plan) */
+    case R_2PB_SPEC: /* 1024 = 2pb 32x32 */
+        radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(wr, wi, c->p->col_re, c->p->col_im, 0, 0, 32);
+        radix32_t1_oop_fwd_avx2_UG_UG_spec32_1_32_1(c->p->col_re, c->p->col_im, wr, wi, c->p->Qr, c->p->Qi, 32);
+        break;
+    case R_2PAL3_SPEC: /* 4096 = 2pa-l3 64x64 */
+        radix64_n1_oop_fwd_avx2_UG_UG_spec64_1_64_1(wr, wi, c->p->col_re, c->p->col_im, 0, 0, 64);
+        radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(c->p->col_re, c->p->col_im, wr, wi, c->p->Qr, c->p->Qi, 64);
+        break;
     }
 }
 
@@ -128,6 +153,16 @@ int main(int argc, char **argv)
                 cand[nc].route = rs[i].route; cand[nc].R1 = R1; cand[nc].R2 = R2;
                 cand[nc].p = p; cand[nc].best = 1e18; nc++;
             }
+        /* stride-spec candidates (cell-gated: emitted for the two winner
+         * shapes only; §13.3 item A measure-first) */
+        if (N == 1024 && R1 == 32 && R2 == 32 && nc < 118) {
+            cand[nc].route = R_2PB_SPEC; cand[nc].R1 = R1; cand[nc].R2 = R2;
+            cand[nc].p = p; cand[nc].best = 1e18; nc++;
+        }
+        if (N == 4096 && R1 == 64 && R2 == 64 && nc < 118) {
+            cand[nc].route = R_2PAL3_SPEC; cand[nc].R1 = R1; cand[nc].R2 = R2;
+            cand[nc].p = p; cand[nc].best = 1e18; nc++;
+        }
         /* LOG3 candidates: dedicated plan with the t1 pointers swapped ONCE
          * at setup (outside timing); same Qr/Qi tables. */
         if ((p->t1_l3 || p->t1_ul_l3) && np < 15 && nc < 118) {
