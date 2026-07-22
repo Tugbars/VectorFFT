@@ -23,9 +23,9 @@ void radix5_r2cb_avx2(
     ptrdiff_t os_re,
     size_t vl)
 {
-    const __m256d t10 = _mm256_set1_pd(0.61803398874989002);
-    const __m256d t16 = _mm256_set1_pd(0.95105651629514998);
-    const __m256d t19 = _mm256_set1_pd(0.55901699437495);
+    const __m256d t10 = _mm256_set1_pd(0.6180339887498949);
+    const __m256d t16 = _mm256_set1_pd(0.95105651629515353);
+    const __m256d t19 = _mm256_set1_pd(0.55901699437494745);
     const __m256d t21 = _mm256_set1_pd(0.25);
     size_t v = 0;
     for (; v + 4 <= vl; v += 4) {
@@ -65,9 +65,9 @@ void radix5_r2cb_avx2(
         const size_t rem = vl - v;
         if (rem == 1) {
         const double t21 = (0.25);
-        const double t10 = (0.61803398874989002);
-        const double t19 = (0.55901699437495);
-        const double t16 = (0.95105651629514998);
+        const double t10 = (0.6180339887498949);
+        const double t19 = (0.55901699437494745);
+        const double t16 = (0.95105651629515353);
         const double t0 = in_re[2*is_re + v];
         const double t1 = (t0 + t0);
         const double t2 = in_re[1*is_re + v];
@@ -98,9 +98,9 @@ void radix5_r2cb_avx2(
         } else {
             for (; v + 2 <= vl; v += 2) {
         const __m128d t21 = _mm_set1_pd(0.25);
-        const __m128d t10 = _mm_set1_pd(0.61803398874989002);
-        const __m128d t19 = _mm_set1_pd(0.55901699437495);
-        const __m128d t16 = _mm_set1_pd(0.95105651629514998);
+        const __m128d t10 = _mm_set1_pd(0.6180339887498949);
+        const __m128d t19 = _mm_set1_pd(0.55901699437494745);
+        const __m128d t16 = _mm_set1_pd(0.95105651629515353);
         const __m128d t0 = _mm_loadu_pd(&in_re[2*is_re + v]);
         const __m128d t1 = _mm_add_pd(t0, t0);
         const __m128d t2 = _mm_loadu_pd(&in_re[1*is_re + v]);
@@ -131,9 +131,9 @@ void radix5_r2cb_avx2(
             }
             if (v < vl) {
         const double t21 = (0.25);
-        const double t10 = (0.61803398874989002);
-        const double t19 = (0.55901699437495);
-        const double t16 = (0.95105651629514998);
+        const double t10 = (0.6180339887498949);
+        const double t19 = (0.55901699437494745);
+        const double t16 = (0.95105651629515353);
         const double t0 = in_re[2*is_re + v];
         const double t1 = (t0 + t0);
         const double t2 = in_re[1*is_re + v];

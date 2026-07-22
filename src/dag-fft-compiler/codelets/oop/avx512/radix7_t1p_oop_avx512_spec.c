@@ -71,7 +71,7 @@ void radix7_t1p_oop_fwd_avx512_UG_UG_spec(
                 const __m512d t10 = _mm512_fnmadd_pd(t8, t7, _mm512_mul_pd(t6, t9));
                 const __m512d t11 = _mm512_fmadd_pd(t6, t7, _mm512_mul_pd(t8, t9));
                 const __m512d t12 = _mm512_sub_pd(t11, t5);
-                const __m512d t13 = _mm512_set1_pd(0.55495813208736999);
+                const __m512d t13 = _mm512_set1_pd(0.55495813208737121);
                 const __m512d t15 = lane_re_6;
                 const __m512d t16 = _mm512_set1_pd(tw_im[5*(me/8) + b/8]);
                 const __m512d t17 = lane_im_6;
@@ -85,7 +85,7 @@ void radix7_t1p_oop_fwd_avx512_UG_UG_spec(
                 const __m512d t25 = _mm512_fnmadd_pd(t23, t22, _mm512_mul_pd(t21, t24));
                 const __m512d t26 = _mm512_fmadd_pd(t21, t22, _mm512_mul_pd(t23, t24));
                 const __m512d t27 = _mm512_sub_pd(t26, t20);
-                const __m512d t29 = _mm512_set1_pd(0.80193773580483996);
+                const __m512d t29 = _mm512_set1_pd(0.80193773580483829);
                 const __m512d t31 = lane_re_5;
                 const __m512d t32 = _mm512_set1_pd(tw_im[4*(me/8) + b/8]);
                 const __m512d t33 = lane_im_5;
@@ -99,13 +99,13 @@ void radix7_t1p_oop_fwd_avx512_UG_UG_spec(
                 const __m512d t41 = _mm512_fnmadd_pd(t39, t38, _mm512_mul_pd(t37, t40));
                 const __m512d t42 = _mm512_fmadd_pd(t37, t38, _mm512_mul_pd(t39, t40));
                 const __m512d t43 = _mm512_sub_pd(t42, t36);
-                const __m512d t45 = _mm512_set1_pd(0.97492791218181996);
+                const __m512d t45 = _mm512_set1_pd(0.97492791218182362);
                 const __m512d t47 = _mm512_add_pd(t35, t41);
-                const __m512d t48 = _mm512_set1_pd(0.35689586789221001);
+                const __m512d t48 = _mm512_set1_pd(0.35689586789220945);
                 const __m512d t50 = _mm512_add_pd(t19, t25);
-                const __m512d t52 = _mm512_set1_pd(0.69202147163009997);
+                const __m512d t52 = _mm512_set1_pd(0.69202147163009586);
                 const __m512d t54 = _mm512_add_pd(t4, t10);
-                const __m512d t56 = _mm512_set1_pd(0.90096886790242003);
+                const __m512d t56 = _mm512_set1_pd(0.90096886790241915);
                 const __m512d t58 = lane_re_0;
                 const __m512d t61 = _mm512_sub_pd(t4, t10);
                 const __m512d t63 = _mm512_sub_pd(t19, t25);

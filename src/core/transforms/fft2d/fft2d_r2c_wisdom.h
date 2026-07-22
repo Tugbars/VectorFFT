@@ -176,7 +176,7 @@ static inline stride_plan_t *vfft_fft2d_r2c_plan_create_wisdom(
 {
     const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
-    size_t       K_pad = ((hp1 + 3) / 4) * 4;
+    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
 
     const vfft_fft2d_r2c_wisdom_entry_t *e = vfft_fft2d_r2c_wisdom_lookup(w, N1, N2);
     if (e && e->row_nf > 0 && e->col_nf > 0) {

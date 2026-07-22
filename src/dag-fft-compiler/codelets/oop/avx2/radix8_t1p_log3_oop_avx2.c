@@ -73,7 +73,7 @@ void radix8_t1p_oop_fwd_avx2_UG_UG_log3(
            PASS 1 emits cluster-sequentially (by min_descendant_slot)
            with spill stores immediately after each producer.
            PASS 2 reloads on-demand before each consumer.  */
-                const __m256d t44 = _mm256_set1_pd(0.70710678118655002);
+                const __m256d t44 = _mm256_set1_pd(0.70710678118654757);
 
         {  /* PASS 1: sub-FFTs of size n2, store to spill */
                     const __m256d t1 = _mm256_set1_pd(tw_re[3*(me/4) + b/4]);

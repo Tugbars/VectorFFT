@@ -40,6 +40,7 @@
 #include "threads.h"
 #include "proto_stride_compat.h"
 #include "transpose.h"
+#include "../fft3d/strided_rows.h"  /* opt-in strided rows (VFFT_STRIDED_ROWS) */
 #include "natorder_exec.h"       /* VFFT_ORDER_NATURAL: fused dim2 (within-row) reorder in scratch */
 #ifdef VFFT_USE_JIT
 #include "jit_runtime.h"          /* JIT/baked resolve for the inner row/col FFTs */
@@ -70,6 +71,9 @@ typedef struct {
 
     stride_plan_t *plan_col;   /* N1-point FFT, K = N2 (column FFTs, native) */
     stride_plan_t *plan_row;   /* N2-point FFT, K = N1 (Bailey) or K = B (tiled) */
+#ifdef VFFT_STRIDED_ROWS
+    _vfft_strided_fn srow_fwd, srow_bwd;   /* tiled rows only; NULL -> native */
+#endif
 
     /* JIT/baked resolved inner executors (NULL -> generic). Filled by
      * _fft2d_jit_resolve under VFFT_USE_JIT; otherwise stay NULL and the passes
@@ -128,6 +132,27 @@ static void _fft2d_tiled_range(stride_fft2d_data_t *d,
                                 int is_bwd) {
     const int N2 = d->N2;
     const size_t B = d->B;
+#ifdef VFFT_STRIDED_ROWS
+    if (d->srow_fwd) {              /* never set in Bailey or natural mode */
+        const int NL = d->N2;
+        _vfft_strided_fn fn = is_bwd ? d->srow_bwd : d->srow_fwd;
+        size_t span = row_end - row_start;
+        size_t bulk = span - (span % (size_t)_VFFT_STRIDED_VW);
+        if (bulk)
+            fn(re + row_start * (size_t)NL, im + row_start * (size_t)NL,
+               NULL, NULL, (size_t)NL, bulk);
+        row_start += bulk;
+        if (row_start < row_end)        /* rem < VW: padded strided tail --
+                                         * SAME natural order as the bulk
+                                         * (uniform per-row order for any R;
+                                         * see strided_rows.h). Uses the
+                                         * caller's tile scratch as staging. */
+            _vfft_strided_tail_padded(fn, re, im, row_start,
+                                      row_end - row_start, NL,
+                                      sr, si);
+        return;
+    }
+#endif
     /* dim2 (N2-axis) natural-order reorder scratch: cycle_pass at K=B needs 2*B doubles, and B is
      * clamped to FFT2D_DEFAULT_TILE in _fft2d_choose_tile, so this stack buffer always suffices.
      * Unused (and optimized out) when nat_col_list==NULL (scrambled). Per-call => MT-safe. */
@@ -349,7 +374,18 @@ static stride_plan_t *_fft2d_wrap(stride_fft2d_data_t *d) {
     stride_plan_t *plan = (stride_plan_t *)calloc(1, sizeof(stride_plan_t));
     if (!plan) { _fft2d_destroy(d); return NULL; }
     d->nat_col_list = NULL;  /* scrambled by default; vfft sets it (borrowed) only for order=NATURAL */
-    _fft2d_jit_resolve(d);   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
+    _fft2d_jit_resolve(d);
+#ifdef VFFT_STRIDED_ROWS
+    /* natural-order mode INCLUDED: the strided mono is verified NATURAL, so
+     * the bulk needs no cycle tape; sub-VW tails run native+tape (natural).
+     * Bailey mode (plan_row at K=N1) stays excluded. */
+    if (d->plan_row && d->plan_row->K != (size_t)d->N1
+        && d->B >= (size_t)_VFFT_STRIDED_VW) {   /* padded-tail staging fits */
+        _vfft_strided_lookup(d->N2, &d->srow_fwd, &d->srow_bwd);
+        if (d->srow_fwd && !_vfft_strided_verify_natural(d->srow_fwd, d->N2))
+            { d->srow_fwd = 0; d->srow_bwd = 0; }
+    }
+#endif   /* baked/JIT-resolve the inner row/col FFTs (all builders) */
     plan->N = d->N1 * d->N2;
     plan->K = 1;
     plan->num_stages = 0;

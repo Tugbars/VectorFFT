@@ -1384,7 +1384,7 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     else if (layout == VFFT_C2R_NATURAL)
     {
         /* split half-spectrum via the rfft NATURAL forward (the c2r's own base) */
-        rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im);
+        rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im, NULL);
         in_a = o_re;
         in_b = o_im;
     }
@@ -1481,7 +1481,7 @@ static double _c2r_measure_path(vfft_c2r_layout_t layout, int N, size_t K,
     for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
     const double *in_a, *in_b;
     if (layout == VFFT_C2R_PACKED) { memset(hc, 0, total * 2 * 8); rfft_execute_fwd_packed(p->packed->base, x, hc); in_a = hc; in_b = NULL; }
-    else if (layout == VFFT_C2R_NATURAL) { rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im); in_a = o_re; in_b = o_im; }
+    else if (layout == VFFT_C2R_NATURAL) { rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im, NULL); in_a = o_re; in_b = o_im; }
     else { stride_execute_r2c(p->stride, x, o_re, o_im); in_a = o_re; in_b = o_im; }
     double t = time_c2r(p, in_a, in_b, y, total);
     free_d(x); free_d(hc); free_d(o_re); free_d(o_im); free_d(y);

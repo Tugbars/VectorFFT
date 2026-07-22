@@ -234,9 +234,21 @@ module ExprMemo = Hashtbl.Make (ExprPhysHash)
 
 let of_expr_memo : t ExprMemo.t = ExprMemo.create 1024
 
+(* Constant identity map: quantize ONLY the dedup key (14 sig digits) so that
+ * numerically-noisy recomputations of the same mathematical constant unify
+ * into one node; STORE the first-seen full-precision value. The previous
+ * behavior stored the quantized value itself, injecting up to ~4e-14
+ * relative error (~22-30 ulp) into every emitted twiddle constant — the
+ * accuracy harness measured exactly that against a long-double reference
+ * (radix-16/8 chains at 28-76 eps L2 vs MKL's 1-3; radix-4 chains, whose
+ * constants are exact, matched MKL). Keyed on the magnitude; sign is
+ * canonicalized to a Neg wrapper as before. Cleared by reset(). *)
+let const_ident : (string, t) Hashtbl.t = Hashtbl.create 256
+
 let reset () =
   Hashtbl.clear hcons_table;
   ExprMemo.clear of_expr_memo;
+  Hashtbl.clear const_ident;
   next_tag := 0
 
 (* === CANONICALIZATION HELPERS === *)
@@ -269,15 +281,27 @@ let mk_const (c : float) : t =
     hashcons (NK_Const 1.0)
   else if Float.abs (rounded +. 1.0) < zero_threshold then
     hashcons (NK_Const (-1.0))
-  else if rounded < 0.0 then
-    (* Canonicalize negative non-trivial constants to -|c|.
-     * This unifies all multiplications-by-c with multiplications-by-(-c):
-     *   Mul(x, -c) → Mul(x, Neg(c)) → Neg(Mul(x, c)) via Neg-hoisting.
-     * The underlying Mul(x, c) is then shared by hash-consing.
-     * Hand-coded codelets do this manually (e.g. vnc = -vc); we get
-     * the same effect mechanically. *)
-    hashcons (NK_Neg (hashcons (NK_Const (-.rounded))))
-  else hashcons (NK_Const rounded)
+  else begin
+    let mag = Float.abs c in
+    let key = Printf.sprintf "%.13e" mag in
+    let base =
+      match Hashtbl.find_opt const_ident key with
+      | Some t0 -> t0
+      | None ->
+          let t0 = hashcons (NK_Const mag) in
+          Hashtbl.add const_ident key t0;
+          t0
+    in
+    if c < 0.0 then
+      (* Canonicalize negative non-trivial constants to -|c|.
+       * This unifies all multiplications-by-c with multiplications-by-(-c):
+       *   Mul(x, -c) → Mul(x, Neg(c)) → Neg(Mul(x, c)) via Neg-hoisting.
+       * The underlying Mul(x, c) is then shared by hash-consing.
+       * Hand-coded codelets do this manually (e.g. vnc = -vc); we get
+       * the same effect mechanically. *)
+      hashcons (NK_Neg base)
+    else base
+  end
 
 let mk_load (r : elem_ref) : t = hashcons (NK_Load r)
 

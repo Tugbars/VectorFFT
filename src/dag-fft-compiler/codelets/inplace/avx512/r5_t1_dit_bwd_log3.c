@@ -25,9 +25,9 @@ void radix5_t1_dit_log3_bwd_avx512(
     size_t k = 0;
     for (; k + 8 <= me; k += 8) {
         const __m512d t30 = _mm512_set1_pd(0.25);
-        const __m512d t19 = _mm512_set1_pd(0.61803398874989002);
-        const __m512d t28 = _mm512_set1_pd(0.55901699437495);
-        const __m512d t23 = _mm512_set1_pd(0.95105651629514998);
+        const __m512d t19 = _mm512_set1_pd(0.6180339887498949);
+        const __m512d t28 = _mm512_set1_pd(0.55901699437494745);
+        const __m512d t23 = _mm512_set1_pd(0.95105651629515353);
         const __m512d t0 = _mm512_loadu_pd(&rio_re[3*ios + k]);
         const __m512d t1 = _mm512_loadu_pd(&rio_re[2*ios + k]);
         const __m512d t2 = _mm512_add_pd(t0, t1);
@@ -102,9 +102,9 @@ void radix5_t1_dit_log3_bwd_avx512(
         const size_t rem = me - k;
         if (rem == 1) {
         const double t30 = (0.25);
-        const double t19 = (0.61803398874989002);
-        const double t28 = (0.55901699437495);
-        const double t23 = (0.95105651629514998);
+        const double t19 = (0.6180339887498949);
+        const double t28 = (0.55901699437494745);
+        const double t23 = (0.95105651629515353);
         const double t0 = rio_re[3*ios + k];
         const double t1 = rio_re[2*ios + k];
         const double t2 = (t0 + t1);
@@ -177,9 +177,9 @@ void radix5_t1_dit_log3_bwd_avx512(
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
         const __m512d t30 = _mm512_set1_pd(0.25);
-        const __m512d t19 = _mm512_set1_pd(0.61803398874989002);
-        const __m512d t28 = _mm512_set1_pd(0.55901699437495);
-        const __m512d t23 = _mm512_set1_pd(0.95105651629514998);
+        const __m512d t19 = _mm512_set1_pd(0.6180339887498949);
+        const __m512d t28 = _mm512_set1_pd(0.55901699437494745);
+        const __m512d t23 = _mm512_set1_pd(0.95105651629515353);
         const __m512d t0 = _mm512_maskz_loadu_pd(_m, &rio_re[3*ios + k]);
         const __m512d t1 = _mm512_maskz_loadu_pd(_m, &rio_re[2*ios + k]);
         const __m512d t2 = _mm512_add_pd(t0, t1);

@@ -83,6 +83,67 @@ let topo_sort_reachable (roots : t list) : t list =
  * where all k iterations share the same twiddle set; the bench harness
  * passes a smaller twiddle array (n-1 scalars instead of (n-1)*me). *)
 
+(* -- ip_il_in lattice: shared z loads + deinterleave, memoized per input
+      index j, emitted lazily at the first scheduled consumer of either side
+      (the pending buffer is flushed as a prefix of the next rendered node
+      definition, so placement follows the scheduler's own ordering).
+      Widths: 8 (permutex2var against function-scope _il_de/_il_do), 4
+      (unpack + permute4x64 0xD8), 2 (unpack pair), 1 (direct pair indexing,
+      no memo). Masked pass (LS_masked m): maskz z loads under the
+      pdep-expanded column mask. *)
+let il_in_name (isa : Isa.t) (j : int) (is_re : bool) : string =
+  let w = isa.vec_width in
+  if w = 1 then
+    Printf.sprintf "in_z[2*(%d*ios + k)%s]" j (if is_re then "" else " + 1")
+  else begin
+    if not (Hashtbl.mem il_seen j) then begin
+      Hashtbl.add il_seen j ();
+      let e = Printf.sprintf "%d*ios + k" j in
+      let b = il_pending in
+      (match (w, !current_ls_mode) with
+       | 8, Isa.LS_vector ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m512d _ilz0_%d = _mm512_loadu_pd(&in_z[2*(%s)]);\n        const __m512d _ilz1_%d = _mm512_loadu_pd(&in_z[2*(%s) + 8]);\n        "
+                j e j e)
+       | 8, Isa.LS_masked m ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const unsigned _ilm_%d = _pdep_u32((unsigned)%s, 0x5555u) * 3u;\n        const __m512d _ilz0_%d = _mm512_maskz_loadu_pd((__mmask8)_ilm_%d, &in_z[2*(%s)]);\n        const __m512d _ilz1_%d = _mm512_maskz_loadu_pd((__mmask8)(_ilm_%d >> 8), &in_z[2*(%s) + 8]);\n        "
+                j m j j e j j e)
+       | 4, _ ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m256d _ilz0_%d = _mm256_loadu_pd(&in_z[2*(%s)]);\n        const __m256d _ilz1_%d = _mm256_loadu_pd(&in_z[2*(%s) + 4]);\n        "
+                j e j e)
+       | 2, _ ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m128d _ilz0_%d = _mm_loadu_pd(&in_z[2*(%s)]);\n        const __m128d _ilz1_%d = _mm_loadu_pd(&in_z[2*(%s) + 2]);\n        "
+                j e j e)
+       | _ -> failwith "il_in_name: unsupported width");
+      (match w with
+       | 8 ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m512d _ilde_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_de, _ilz1_%d);\n        const __m512d _ildo_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_do, _ilz1_%d);\n        "
+                j j j j j j)
+       | 4 ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m256d _ilde_%d = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n        const __m256d _ildo_%d = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n        "
+                j j j j j j)
+       | 2 ->
+           Buffer.add_string b
+             (Printf.sprintf
+                "const __m128d _ilde_%d = _mm_unpacklo_pd(_ilz0_%d, _ilz1_%d);\n        const __m128d _ildo_%d = _mm_unpackhi_pd(_ilz0_%d, _ilz1_%d);\n        "
+                j j j j j j)
+       | _ -> ())
+    end;
+    if is_re then Printf.sprintf "_ilde_%d" j
+    else Printf.sprintf "_ildo_%d" j
+  end
+
 let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
     ?(twidsq = false) ?(twidsq_n = 0) ?(strided = false) (r : Expr.elem_ref) :
     string =
@@ -211,6 +272,10 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var
     in
     match r with
+    | Expr.Input (j, true) when !ip_il_in && in_place ->
+        il_in_name isa j true
+    | Expr.Input (j, false) when !ip_il_in && in_place ->
+        il_in_name isa j false
     | Expr.Input (j, true) ->
         Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j true)
     | Expr.Input (j, false) ->
@@ -356,7 +421,7 @@ let render_hoisted_consts ~(isa : Isa.t) (nodes : t list) : string =
     Buffer.contents b
   end
 
-let render_node_def ?(no_declarator = false)
+let render_node_def_core ?(no_declarator = false)
     ?(inline_set : (int, unit) Hashtbl.t option = None) ?(twidsq = false)
     ?(twidsq_n = 0) ?(strided = false) ~(isa : Isa.t) ~(in_place : bool)
     ~(t1s : bool) (e : t) : string =
@@ -1146,3 +1211,17 @@ let provenance_block ~(family : string) (lines : string list) : string =
     " * ====================================================== */\n";
   Buffer.contents b
 
+
+(* Pending-lattice flush: every rendered node definition carries any il_in
+   lattice statements its expression triggered, placed by the scheduler's
+   own ordering (lazy first-touch). *)
+let render_node_def ?(no_declarator = false)
+    ?(inline_set : (int, unit) Hashtbl.t option = None) ?(twidsq = false)
+    ?(twidsq_n = 0) ?(strided = false) ~(isa : Isa.t) ~(in_place : bool)
+    ~(t1s : bool) (e : t) : string =
+  let core =
+    render_node_def_core ~no_declarator ~inline_set ~twidsq ~twidsq_n
+      ~strided ~isa ~in_place ~t1s e
+  in
+  let p = il_take_pending () in
+  if p = "" then core else p ^ core

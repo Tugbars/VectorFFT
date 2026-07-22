@@ -146,7 +146,13 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
     | _ -> assert false
   end
   else begin
-    let round_13 x = float_of_string (Printf.sprintf "%.13e" x) in
+    (* Unification of symmetric-angle constants now happens in Ir.mk_const,
+       * which dedups on a 14-sig-digit KEY while storing the first-seen
+       * full-precision value. Quantizing the inputs here (the previous
+       * behavior) stored the damaged values themselves: ~22-30 ulp on the
+       * cosine leaf and ~90 ulp on the tangent ratio, measured by the
+       * accuracy harness. Full precision in, full precision emitted. *)
+      let round_13 x = x in
     let cr_r = round_13 cr in
     let ci_r = round_13 ci in
     let acr = abs_float cr_r in
@@ -354,7 +360,13 @@ let newsplit_core (sign : [ `Fwd | `Bwd ]) =
     if ci = 0.0 then (Mul (xr, Const cr), Mul (xi, Const cr))
     else if cr = 0.0 then (Neg (Mul (xi, Const ci)), Mul (xr, Const ci))
     else begin
-      let round_13 x = float_of_string (Printf.sprintf "%.13e" x) in
+      (* Unification of symmetric-angle constants now happens in Ir.mk_const,
+       * which dedups on a 14-sig-digit KEY while storing the first-seen
+       * full-precision value. Quantizing the inputs here (the previous
+       * behavior) stored the damaged values themselves: ~22-30 ulp on the
+       * cosine leaf and ~90 ulp on the tangent ratio, measured by the
+       * accuracy harness. Full precision in, full precision emitted. *)
+      let round_13 x = x in
       let cr_r = round_13 cr and ci_r = round_13 ci in
       let acr = abs_float cr_r and aci = abs_float ci_r in
       let r_abs = min acr aci /. max acr aci in

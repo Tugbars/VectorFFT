@@ -16,6 +16,49 @@ Mapping (verified against generator/generated/plan_executors.h):
 """
 import argparse
 
+# 6a21: variant-bound DIF bwd. LOG3 twin of plan_executors.h's
+# VFFT_PROTO_STAGE_DIF_BWD, extracted verbatim at patch time (only the codelet
+# symbol swapped). Emitted into the TU when a DIF-bwd plan carries a LOG3
+# stage, so the generated header stays untouched. Version-coupled via
+# VFFT_PROTO_JIT_VERSION (5).
+DIF_BWD_LOG3_MACRO = r'''
+#define VFFT_PROTO_STAGE_DIF_BWD_LOG3(S, R, ISA) \
+    if (start_stage <= (S)) { \
+        const stride_stage_t *st = &plan->stages[S]; \
+        const int    num_groups  = st->num_groups; \
+        const size_t stride      = st->stride; \
+        const int    *needs_tw    = st->needs_tw; \
+        const size_t *group_base  = st->group_base; \
+        double      **grp_tw_re   = st->grp_tw_re; \
+        double      **grp_tw_im   = st->grp_tw_im; \
+        for (int g = 0; g < num_groups; g++) { \
+            double *base_re = re + group_base[g]; \
+            double *base_im = im + group_base[g]; \
+            if (!needs_tw[g]) { \
+                radix##R##_n1_bwd_##ISA(base_re, base_im, NULL, NULL, \
+                                          stride, slice_K); \
+                continue; \
+            } \
+            /* K-split safe: block-broadcast the constant-per-leg grp_tw at \
+             * this_K stride (see DIF_FLAT). t1_dif_bwd conjugates internally. */ \
+            double tw_buf_re[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            double tw_buf_im[((R)-1) * VFFT_PROTO_TW_BLOCK_K]; \
+            for (size_t kb = 0; kb < slice_K; kb += VFFT_PROTO_TW_BLOCK_K) { \
+                size_t this_K = (slice_K - kb < VFFT_PROTO_TW_BLOCK_K) \
+                                ? (slice_K - kb) : VFFT_PROTO_TW_BLOCK_K; \
+                for (int j = 0; j < ((R)-1); j++) \
+                    _stride_broadcast_2(tw_buf_re + (size_t)j * this_K, \
+                                        tw_buf_im + (size_t)j * this_K, this_K, \
+                                        grp_tw_re[g][(size_t)j * full_K], \
+                                        grp_tw_im[g][(size_t)j * full_K]); \
+                radix##R##_t1_dif_log3_bwd_##ISA(base_re + kb, base_im + kb, \
+                                              tw_buf_re, tw_buf_im, stride, this_K); \
+            } \
+        } \
+    }
+'''
+
+
 DIT_VARIANT = {0: "FLAT", 1: "LOG3", 2: "T1S"}      # 3=BUF falls back upstream
 DIF_VARIANT = {0: "DIF_FLAT", 1: "DIF_LOG3"}        # DIF has no T1S/BUF
 
@@ -37,6 +80,9 @@ def codelet_names(factors, variants, orient, direction, isa):
     if direction == "bwd":
         # Backward is VARIANT-AGNOSTIC: STAGE_BWD always calls t1s_dit_bwd (+ a
         # leg0-conj macro, not a codelet); STAGE_DIF_BWD always calls t1_dif_bwd.
+        if orient != "dit" and direction == "bwd" and 1 in variants:
+            for r in set(f for f, v in zip(factors, variants) if v == 1):
+                names.append(f"radix{r}_t1_dif_log3_bwd_{isa}")
         # Both read the canonical twiddle layout (tw_scalar / grp_tw) regardless
         # of the forward variant, so the fwd `variants` don't pick the codelet.
         # Every stage's macro references the tw codelet (compiled, not just the
@@ -76,11 +122,16 @@ def emit_body(factors, variants, orient, isa, direction="fwd"):
     if direction == "bwd":
         # Backward walks stages in REVERSE (output -> input), mirroring the
         # generic/baked bwd executors. DIT -> STAGE_BWD (fused t1s_dit_bwd +
-        # leg0-conj); DIF -> STAGE_DIF_BWD (fused t1_dif_bwd). Both branch on
-        # needs_tw internally and are variant-agnostic, so `variants` is unused.
+        # leg0-conj; no generic variant counterpart, stays plain). DIF bwd is
+        # VARIANT-BOUND since 6a21: LOG3 stages emit STAGE_DIF_BWD_LOG3
+        # (matches the generic tier's st->t1_bwd binding; deletes the
+        # DIT->jit/DIF->core selection rule).
         macro = "BWD" if orient == "dit" else "DIF_BWD"
         for s in range(nf - 1, -1, -1):
-            lines.append(stage_line(macro, s, factors[s], isa))
+            m = macro
+            if orient != "dit" and variants[s] == 1:
+                m = "DIF_BWD_LOG3"
+            lines.append(stage_line(m, s, factors[s], isa))
         return lines
     if orient == "dit":
         lines.append(stage_line("OUTER", 0, factors[0], isa))
@@ -92,6 +143,21 @@ def emit_body(factors, variants, orient, isa, direction="fwd"):
         lines.append(stage_line("DIF_OUTER", nf - 1, factors[nf - 1], isa))
     return lines
 
+
+
+
+def guard(body):
+    """Wrap each STAGE line in an `if (S < stop_stage)` for the range flavor.
+    S is the literal stage index already present in the line."""
+    out = []
+    for ln in body:
+        t = ln.strip()
+        if t.startswith("VFFT_PROTO_STAGE_"):
+            s_idx = t.split("(", 1)[1].split(",", 1)[0].strip()
+            out.append(f"    if ({s_idx} < stop_stage) {{ {t} }}")
+        else:
+            out.append(ln)
+    return out
 
 def main():
     ap = argparse.ArgumentParser()
@@ -131,6 +197,8 @@ def main():
     out = [
         "/* AUTO-GENERATED by emit_jit.py - single-plan JIT executor. */",
         f'#include "{a.prelude}"',
+        *( [DIF_BWD_LOG3_MACRO]
+           if (a.dir == "bwd" and a.orient == "dif" and 1 in variants) else [] ),
         "",
         "/* Codelet externs (self-contained: covers cold plans absent from plan_executors.h). */",
         *extern_decls(names),
@@ -141,14 +209,30 @@ def main():
         '#define VFFT_JIT_EXPORT __attribute__((visibility("default")))',
         "#endif",
         "",
+        "/* Range flavor: run stages S with start_stage <= S < stop_stage, in the",
+        " * direction's natural walk order. The per-line stop guard composes with",
+        " * the start gate INSIDE the STAGE macros; both are compile-time-constant",
+        " * comparisons per line. Classic 6-arg symbol = stop_stage-saturated call",
+        " * (cache-compatible: old .so files simply lack this symbol). */",
+        "VFFT_JIT_EXPORT void vfft_proto_jit_exec_range(const stride_plan_t *plan,",
+        "                                               double *re, double *im,",
+        "                                               size_t slice_K, size_t full_K,",
+        "                                               int start_stage, int stop_stage)",
+        "{",
+    ]
+    out.extend(guard(body))
+    out.extend([
+        "}",
+        "",
         "VFFT_JIT_EXPORT void vfft_proto_jit_exec(const stride_plan_t *plan,",
         "                                         double *re, double *im,",
         "                                         size_t slice_K, size_t full_K,",
         "                                         int start_stage)",
         "{",
-    ]
-    out.extend(body)
-    out.append("}")
+        "    vfft_proto_jit_exec_range(plan, re, im, slice_K, full_K,",
+        "                              start_stage, 0x7fffffff);",
+        "}",
+    ])
     emit("\n".join(out))
 
 

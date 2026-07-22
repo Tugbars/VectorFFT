@@ -58,6 +58,7 @@ let run (argv : string array) : unit =
   let twiddled_pos = ref false in
   (* OOP t1p: per-position broadcast twiddles *)
   let log3 = ref false in
+  let post_tw = ref false in
   let emit_c = ref false in
   let in_place = ref false in
   let annotate = ref false in
@@ -103,6 +104,12 @@ let run (argv : string array) : unit =
   let c2r = ref false in
   let strided = ref false in
   let oop_strided = ref false in
+  let strided_il_out = ref false in
+  let strided_r2c = ref false in
+  let strided_il_in = ref false in
+  let strided_ilo_nt = ref false in
+  let ip_il_in = ref false in
+  let ip_il_out = ref false in
   (* strided-OOP n1, pack-fix ABI *)
   (* M2 OOP family CLI args. The --oop flag selects the new codelet
      family (lib/codelet_oop.ml). It's mutually exclusive with --strided
@@ -132,6 +139,7 @@ let run (argv : string array) : unit =
        twiddled_pos := true;
        twiddled := true)
      else if arg = "--log3" then log3 := true
+     else if arg = "--post-tw" then post_tw := true
      else if arg = "--emit-c" then emit_c := true
      else if arg = "--in-place" then in_place := true
      else if arg = "--annotate" then annotate := true
@@ -178,6 +186,31 @@ let run (argv : string array) : unit =
      else if arg = "--c2r" then c2r := true
      else if arg = "--strided" then strided := true
      else if arg = "--oop-strided" then oop_strided := true
+     else if arg = "--strided-il-out" then begin
+       strided := true;
+       strided_il_out := true
+     end
+     else if arg = "--strided-il-in" then begin
+       strided := true;
+       strided_il_in := true
+     end
+     else if arg = "--strided-r2c" then begin
+       strided := true;
+       strided_r2c := true
+     end
+     else if arg = "--strided-il-out-nt" then begin
+       strided := true;
+       strided_il_out := true;
+       strided_ilo_nt := true
+     end
+     else if arg = "--ip-il-in" then begin
+       in_place := true;
+       ip_il_in := true
+     end
+     else if arg = "--ip-il-out" then begin
+       in_place := true;
+       ip_il_out := true
+     end
      else if arg = "--oop" then oop := true
      else if arg = "--oop-buffer-oop" then oop_buf_oop := true
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
@@ -316,7 +349,8 @@ let run (argv : string array) : unit =
    * Empirically this delivers 4-8% over the base recipe on AVX2 R={32,64}
    * and is a no-op on AVX-512 (threshold=24 not reached with cluster-sequential).
    * The flag toggle is free at runtime — pressure mode only fires when needed. *)
-  if !su && isa.vec_regs <= 16 && n >= 32 && not !no_recipe then
+  if !su && isa.vec_regs <= 16 && n >= 32 && not !no_recipe
+     && (try Sys.getenv "VFFT_NO_GH" <> "1" with Not_found -> true) then
     begin if not !gh then gh := true
     end;
 
@@ -339,6 +373,13 @@ let run (argv : string array) : unit =
   if !r2c_term_ls then Emit_c.r2c_term_ls_r := !r2c_term_ls_r;
   Emit_c.hc_strided := !hc2hc || !hc2c || !hc2c_nat;
   Emit_c.n1_oop_strided := !oop_strided;
+  Emit_c.strided_il_out := !strided_il_out;
+  Emit_c.strided_r2c := !strided_r2c;
+  Emit_c.strided_r2c_bwd := !strided_r2c && !bwd;
+  Emit_c.ip_il_in := !ip_il_in;
+  Emit_c.ip_il_out := !ip_il_out;
+  Emit_c.strided_il_in := !strided_il_in;
+  Emit_c.strided_ilo_nt := !strided_ilo_nt;
   (* hc2c-nat forward emits the 2-packed-in/4-split-out terminator ABI; the same
    * flag with --bwd --dif emits the INVERSE (4-split-in/2-packed-out) c2r natural
    * initiator. Split the ABI selector on sign; everything else (strided, ranged,
@@ -1115,12 +1156,22 @@ let run (argv : string array) : unit =
         Printf.sprintf "radix%d_twidsq_%s_%s_%s" n dir_suffix sgn_suffix
           isa.name
       else if !twiddled then
-        Printf.sprintf "radix%d_t1%s_%s%s_%s_%s" n t1s_infix dir_suffix variant
-          sgn_suffix isa.name
+        Printf.sprintf "radix%d_t1%s_%s%s_%s_%s%s" n t1s_infix dir_suffix
+          variant sgn_suffix isa.name
+          (if !ip_il_in then "_il_in"
+           else if !ip_il_out then "_il_out"
+           else "")
       else
         Printf.sprintf "radix%d_n1_%s_%s%s" n sgn_suffix isa.name
-          (if !strided then "_strided"
+          (if !strided then
+             (if !strided_r2c then "_strided_r2c"
+              else if !strided_ilo_nt then "_strided_il_out_nt"
+              else if !strided_il_out then "_strided_il_out"
+              else if !strided_il_in then "_strided_il_in"
+              else "_strided")
            else if !oop_strided then "_oop_strided"
+           else if !ip_il_in then "_il_in"
+           else if !ip_il_out then "_il_out"
            else "")
     in
     let scheduler : Emit_c.scheduler =
@@ -1168,6 +1219,32 @@ let run (argv : string array) : unit =
         Codelet_oop.canonical_name ~radix:n ~isa ~direction ~load_pat ~store_pat
           ~buffer ~twiddles
       in
+      if !post_tw
+         && ((twiddles <> Codelet_oop.PerGroupTwiddles)
+             || direction <> Codelet_oop.Forward
+             || buffer <> Codelet_oop.OutOfPlace) then
+        failwith
+          "--post-tw requires --twiddled (PerGroup) + fwd + --oop-buffer-oop";
+      let cname =
+        if !post_tw then begin
+          let sub = "t1_oop" and rep = "t1_dif_oop" in
+          let sl = String.length sub and n = String.length cname in
+          let b = Buffer.create (n + 4) in
+          let i = ref 0 in
+          while !i < n do
+            if !i + sl <= n && String.sub cname !i sl = sub then begin
+              Buffer.add_string b rep;
+              i := !i + sl
+            end
+            else begin
+              Buffer.add_char b cname.[!i];
+              incr i
+            end
+          done;
+          Buffer.contents b
+        end
+        else cname
+      in
       let cname = if !log3 then cname ^ "_log3" else cname in
       let cname = if !oop_strides <> None then cname ^ "_spec" else cname in
       let cfg =
@@ -1184,6 +1261,7 @@ let run (argv : string array) : unit =
           }
       in
       Codelet_oop.current_tw_log3 := !log3;
+      Codelet_oop.current_post_tw := !post_tw;
       Codelet_oop.current_oop_strides := !oop_strides;
       Codelet_oop.current_oop_fuse := !fuse;
       Codelet_oop.current_oop_store_on_compute := !oop_store_fused;

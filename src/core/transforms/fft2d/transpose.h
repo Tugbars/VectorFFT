@@ -354,12 +354,54 @@ _TP_DEFINE_REC(large, TP_BASE_LARGE, _base_B)
  * ═══════════════════════════════════════════════════════════════ */
 
 /** Out-of-place transpose: src[N1×N2] → dst[N2×N1] */
+#if defined(__AVX2__) || defined(__AVX512F__)
+/* §6a34: skinny-shape fast path. The regime-tiered kernels' blocking is
+ * built for square-ish panels; at the 2D r2c tile shapes (one dim <= 8) a
+ * plain 8x4 register-block sweep measured 35% faster at (256x8), L1
+ * regime. Applies when the 8x4 grid divides exactly; everything else falls
+ * through to the engineered path (which also wins at larger working sets —
+ * measured +12% for the sweep at (512x8), so the guard is shape AND size). */
+static void _tp_skinny_8x4(const double *__restrict__ src, size_t ld_src,
+                           double *__restrict__ dst, size_t ld_dst,
+                           size_t R, size_t C)
+{
+    for (size_t r = 0; r < R; r += 8)
+        for (size_t c = 0; c < C; c += 4) {
+            const double *sp = src + r * ld_src + c;
+            __m256d a0=_mm256_loadu_pd(sp),          a1=_mm256_loadu_pd(sp+ld_src),
+                    a2=_mm256_loadu_pd(sp+2*ld_src), a3=_mm256_loadu_pd(sp+3*ld_src),
+                    a4=_mm256_loadu_pd(sp+4*ld_src), a5=_mm256_loadu_pd(sp+5*ld_src),
+                    a6=_mm256_loadu_pd(sp+6*ld_src), a7=_mm256_loadu_pd(sp+7*ld_src);
+            __m256d t0=_mm256_unpacklo_pd(a0,a1), t1=_mm256_unpackhi_pd(a0,a1);
+            __m256d t2=_mm256_unpacklo_pd(a2,a3), t3=_mm256_unpackhi_pd(a2,a3);
+            __m256d t4=_mm256_unpacklo_pd(a4,a5), t5=_mm256_unpackhi_pd(a4,a5);
+            __m256d t6=_mm256_unpacklo_pd(a6,a7), t7=_mm256_unpackhi_pd(a6,a7);
+            __m256d r0=_mm256_permute2f128_pd(t0,t2,0x20), r1=_mm256_permute2f128_pd(t1,t3,0x20);
+            __m256d r2=_mm256_permute2f128_pd(t0,t2,0x31), r3=_mm256_permute2f128_pd(t1,t3,0x31);
+            __m256d r4=_mm256_permute2f128_pd(t4,t6,0x20), r5=_mm256_permute2f128_pd(t5,t7,0x20);
+            __m256d r6=_mm256_permute2f128_pd(t4,t6,0x31), r7=_mm256_permute2f128_pd(t5,t7,0x31);
+            double *dp = dst + c * ld_dst + r;
+            _mm256_storeu_pd(dp, r0);            _mm256_storeu_pd(dp+4, r4);
+            _mm256_storeu_pd(dp+ld_dst, r1);     _mm256_storeu_pd(dp+ld_dst+4, r5);
+            _mm256_storeu_pd(dp+2*ld_dst, r2);   _mm256_storeu_pd(dp+2*ld_dst+4, r6);
+            _mm256_storeu_pd(dp+3*ld_dst, r3);   _mm256_storeu_pd(dp+3*ld_dst+4, r7);
+        }
+}
+#endif
+
 static void stride_transpose(
     const double *__restrict__ src, size_t ld_src,
     double *__restrict__ dst, size_t ld_dst,
     size_t N1, size_t N2)
 {
     size_t ws = 2 * N1 * N2 * sizeof(double);
+#if defined(__AVX2__) || defined(__AVX512F__)
+    if ((N1 <= 8 || N2 <= 8) && ws <= TP_L1_BYTES
+        && (N1 % 8) == 0 && (N2 % 4) == 0) {
+        _tp_skinny_8x4(src, ld_src, dst, ld_dst, N1, N2);
+        return;
+    }
+#endif
     if (ws <= TP_L1_BYTES)
         _rec_small(src, ld_src, dst, ld_dst, N1, N2);
     else if (ws <= TP_L2_BYTES)

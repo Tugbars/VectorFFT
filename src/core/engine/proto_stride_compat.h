@@ -37,7 +37,8 @@ typedef vfft_proto_wisdom_t   stride_wisdom_t;
 #  endif
 #else
 #  ifndef STRIDE_ALIGNED_ALLOC
-#    define STRIDE_ALIGNED_ALLOC(align, size) aligned_alloc((align), (size))
+#    define STRIDE_ALIGNED_ALLOC(align, size) \
+        aligned_alloc((align), ((size) + (size_t)(align) - 1) & ~((size_t)(align) - 1))
 #  endif
 #  ifndef STRIDE_ALIGNED_FREE
 #    define STRIDE_ALIGNED_FREE(p) free(p)

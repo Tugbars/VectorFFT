@@ -86,8 +86,12 @@ typedef struct {
     vfft_placement_t placement;
     vfft_rigor_t     rigor;       /* sweep thoroughness on a wisdom miss/recalibrate */
 
-    int    dims;                  /* 1 (default) or 2                          */
-    int    n[2];                  /* n[0]=N for 1D; n[0]=N1, n[1]=N2 for 2D    */
+    int    dims;                  /* 1 (default), 2, or 3                      */
+    int    n[3];                  /* n[0]=N (1D); {N1,N2} (2D); {N1,N2,N3} (3D).
+                                     3D: C2C + R2C/C2R (§6a47), howmany==1, order DEFAULT/
+                                     SCRAMBLED (natural is a follow-up); plans
+                                     carry a dedicated (N1,N2,N3) wisdom table
+                                     inside the same vfft_wisdom bundle.       */
     size_t howmany;               /* K — batch count (lane-batched: data[i*K+lane]) */
     vfft_batch batch;             /* NULL = tight (default drop-in path). Non-NULL = the
                                      opt-in VW-padded batch to run on: the plan is built at
@@ -137,8 +141,18 @@ vfft_plan vfft_create(const vfft_config_t *config);
  *   ---------            ---        ---        ---        ---
  *   C2C   fwd/bwd        in.re      in.im      out.re     out.im
  *   R2C   (fwd)          real_in    NULL       out.re     out.im
+ *                          (§6a24: dim==NULL => dre is the INTERLEAVED (CCE)
+ *                           spectrum, (N/2+1)*howmany pairs at dre[2*(f*howmany+t)])
  *   C2R   (bwd)          in.re      in.im      real_out   NULL
+ *                          (§6a24: sim==NULL => sre is the INTERLEAVED (CCE)
+ *                           spectrum INPUT, same layout as the R2C z output)
  *   DCT/DST/DHT          real_in    NULL       real_out   NULL
+ *   C2C   fwd/bwd INTERLEAVED  z_in     NULL       z_out      NULL
+ *         1D tight in-place plans only: sre/dre are INTERLEAVED complex
+ *         (2*N*K doubles; element e of lane t at [2*(e*K+t)]); dre may equal
+ *         sre. order=DEFAULT/SCRAMBLED runs the folded z->z engine path;
+ *         NATURAL / multithreaded / prime-N plans convert internally (always
+ *         correct). Not valid with config.batch (padded buffers are split).
  *
  * `dir` selects forward vs the (unnormalized) inverse; for self-inverse trig
  * (DCT-I/IV, DST-I, DHT) the two coincide. ════════════════════════════════ */

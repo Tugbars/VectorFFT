@@ -28,6 +28,21 @@
  * ═══════════════════════════════════════════════════════════════ */
 #ifndef VFFT_RFFT_H
 #define VFFT_RFFT_H
+/* win-compat: mingw lacks C11 aligned_alloc; Windows must pair _aligned_malloc/_aligned_free
+ * (same shim as proto_stride_compat.h, guarded so whichever comes first wins). */
+#ifndef STRIDE_ALIGNED_ALLOC
+#if defined(_WIN32) || defined(_MSC_VER)
+#include <malloc.h>
+#define STRIDE_ALIGNED_ALLOC(align, size) _aligned_malloc((size), (align))
+#define STRIDE_ALIGNED_FREE(p) _aligned_free(p)
+#else
+#include <stdlib.h>
+#define STRIDE_ALIGNED_ALLOC(align, size) \
+    aligned_alloc((align), ((size) + (size_t)(align) - 1) & ~((size_t)(align) - 1))
+#define STRIDE_ALIGNED_FREE(p) free(p)
+#endif
+#endif
+
 
 #include <stdlib.h>
 #include <string.h>
@@ -181,7 +196,7 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
         free(p->st[d].tw_re); free(p->st[d].tw_im);
         free(p->st[d].mid_c); free(p->st[d].mid_s);
     }
-    free(p->planeA); free(p->planeB); free(p->nat_k0);
+    STRIDE_ALIGNED_FREE(p->planeA); STRIDE_ALIGNED_FREE(p->planeB); STRIDE_ALIGNED_FREE(p->nat_k0);
     free(p);
 }
 
@@ -260,16 +275,16 @@ static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
         }
     }
 
-    p->planeA = (double *)aligned_alloc(64, (size_t)N * K * 8);
+    p->planeA = (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)N * K * 8);
     p->planeB = (nf >= 3)
-        ? (double *)aligned_alloc(64, (size_t)N * K * 8) : NULL;
+        ? (double *)STRIDE_ALIGNED_ALLOC(64, (size_t)N * K * 8) : NULL;
     if (!p->planeA || (nf >= 3 && !p->planeB)) goto fail;
     p->hcn = (nf >= 2)
         ? (reg->hc2c_log3[p->st[0].radix] ? reg->hc2c_log3[p->st[0].radix]
                                           : reg->hc2c[p->st[0].radix])
         : NULL;
     p->hcnr = (nf >= 2) ? reg->hc2c_rng[p->st[0].radix] : NULL;
-    p->nat_k0 = (double *)aligned_alloc(64,
+    p->nat_k0 = (double *)STRIDE_ALIGNED_ALLOC(64,
         (size_t)VFFT_RFFT_MAX_RADIX * K * 8);
     if (!p->nat_k0) goto fail;
     /* Lane-blocking default: OFF (Kb = K). Section 65 measured the

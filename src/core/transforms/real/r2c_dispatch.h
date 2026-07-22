@@ -67,12 +67,14 @@ typedef struct
     size_t K;
     rfft_plan_t *rfft;     /* set iff path == RFFT */
     stride_plan_t *stride; /* set iff path == STRIDE */
+    double *ztmp;          /* §6a24: lazy 2*H*K temp for rfft-path z convert-around */
 #ifdef VFFT_USE_JIT
     /* JIT-resolved rfft executor for the winning plan (NULL -> use the generic
      * rfft executor). Resolved at create-time = compiled+cached on first build
      * (the "compile the winner after deciding" step). One per layout. */
     rfft_jit_fn jit_packed;
     rfft_jit_nat_fn jit_natural;
+    rfft_jit_natz_fn jit_natural_z;   /* §6a27: z-out jit (fwd_z route) */
 #endif
 } vfft_r2c_plan_t;
 
@@ -322,7 +324,19 @@ static inline vfft_r2c_plan_t *vfft_r2c_plan_create(
                  * execute time; NULL -> the generic rfft executor (e.g. radix
                  * without hc2c_log3, or no toolchain). */
                 if (p->layout == VFFT_R2C_SPLIT)
-                    p->jit_natural = vfft_rfft_jit_resolve_natural(N, K, factors, nf, vbuf, "avx2");
+                {
+                    /* §6a27: the natural jit is NOT bound — measured net
+                     * negative across the rfft path's whole K domain
+                     * (K=4: +9.8% over generic, K=16: +1.0%; K>=64 routes
+                     * to STRIDE). Per-k terminator tax at small vl exceeds
+                     * the cascade gain. The natural-z jit inherits the same
+                     * per-k sin plus a ~5x-slower interleave in the jit TU
+                     * (unexplained codegen, not pursued — mode closed).
+                     * Resolvers, emitter modes, and the PIC codelet rsp all
+                     * remain in place for revisit; see §6a27 evidence. */
+                    p->jit_natural = NULL;
+                    p->jit_natural_z = NULL;
+                }
                 else
                     p->jit_packed = vfft_rfft_jit_resolve(N, K, factors, nf, vbuf, "avx2");
 #endif
@@ -366,13 +380,14 @@ typedef struct
     const double *x;
     double *o_re, *o_im;
     size_t k0, kw;
+    double *zo;
 } _rfft_nat_mt_arg;
 static void _rfft_nat_mt_tramp(void *a)
 {
     _rfft_nat_mt_arg *x = (_rfft_nat_mt_arg *)a;
-    rfft_execute_fwd_natural_range(x->p, x->x, x->o_re, x->o_im, x->k0, x->kw);
+    rfft_execute_fwd_natural_range(x->p, x->x, x->o_re, x->o_im, x->k0, x->kw, x->zo);
 }
-static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im)
+static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im, double *zo)
 {
     size_t K = rp->K;
     int T = stride_get_num_threads();
@@ -380,7 +395,7 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
         T = _stride_pool_size + 1;
     if (T <= 1 || K < 16)
     {
-        rfft_execute_fwd_natural(rp, x, o_re, o_im);
+        rfft_execute_fwd_natural(rp, x, o_re, o_im, zo);
         return;
     }
     size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
@@ -396,12 +411,12 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
         size_t ke = k0 + S;
         if (ke > K)
             ke = K;
-        a[nd] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, k0, ke - k0};
+        a[nd] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, k0, ke - k0, zo};
         _stride_pool_dispatch(&_stride_workers[nd], _rfft_nat_mt_tramp, &a[nd]);
         nd++;
     }
     size_t s0 = S < K ? S : K;
-    rfft_execute_fwd_natural_range(rp, x, o_re, o_im, 0, s0);
+    rfft_execute_fwd_natural_range(rp, x, o_re, o_im, 0, s0, zo);
     if (nd)
         _stride_pool_wait_all();
 }
@@ -430,7 +445,7 @@ static inline void vfft_r2c_execute_fwd(
         {
             if (stride_get_num_threads() > 1)
             {
-                rfft_natural_mt(p->rfft, real_in, out, out_im);
+                rfft_natural_mt(p->rfft, real_in, out, out_im, NULL);
                 return;
             }
 #ifdef VFFT_USE_JIT
@@ -440,13 +455,55 @@ static inline void vfft_r2c_execute_fwd(
                 return;
             }
 #endif
-            rfft_execute_fwd_natural(p->rfft, real_in, out, out_im);
+            rfft_execute_fwd_natural(p->rfft, real_in, out, out_im, NULL);
         }
     }
     else
     {
         /* stride is SPLIT only (guaranteed by plan_create routing) */
         stride_execute_r2c(p->stride, real_in, out, out_im);
+    }
+}
+
+/* §6a26: forward with INTERLEAVED (CCE) spectrum output — z holds
+ * (N/2+1)*K complex pairs at z[2*(f*K+t)]. STRIDE: native zo-mode postprocess
+ * (§6a24). RFFT/SPLIT: native interleaved stage-0 terminator (§6a26 — the
+ * split k0/hcn/mid machinery redirected through zscr rows, no convert pass).
+ * PACKED (unreachable from the public path): packed halfcomplex -> CCE unpack
+ * via a lazy ztmp; this also fixes the pre-§6a26 convert-around here, which
+ * wrongly assumed split planes for packed plans. */
+static inline void vfft_r2c_execute_fwd_z(
+    vfft_r2c_plan_t *p, const double *real_in, double *z)
+{
+    if (p->path == VFFT_R2C_PATH_STRIDE)
+    {
+        stride_r2c_data_t *d = (stride_r2c_data_t *)p->stride->override_data;
+        d->zo = z;
+        _r2c_execute_fwd_oop(d, real_in, NULL, NULL);
+        d->zo = NULL;
+        return;
+    }
+    if (p->layout == VFFT_R2C_SPLIT)
+    {
+        /* §6a27: z route is NATIVE always — jit_z measured slower than the
+         * native terminator at every rfft cell (e.g. 24.1 vs 15.7 at (2000,4));
+         * the branch that called it is removed with the binding. */
+        if (stride_get_num_threads() > 1)
+            rfft_natural_mt(p->rfft, real_in, NULL, NULL, z);
+        else
+            rfft_execute_fwd_natural(p->rfft, real_in, NULL, NULL, z);
+        return;
+    }
+    if (!p->ztmp)
+        p->ztmp = (double *)malloc((size_t)p->N * p->K * sizeof(double));
+    vfft_r2c_execute_fwd(p, real_in, p->ztmp, NULL);
+    {
+        size_t K = p->K, N = (size_t)p->N, nh = N / 2;
+        _rfft_zrow_zero_im(z, 0, K, 0, K, p->ztmp);
+        for (size_t f = 1; f < (N + 1) / 2; f++)
+            _rfft_zrow(z, f, K, 0, K, p->ztmp + f * K, p->ztmp + (N - f) * K);
+        if (N % 2 == 0)
+            _rfft_zrow_zero_im(z, nh, K, 0, K, p->ztmp + nh * K);
     }
 }
 
@@ -458,6 +515,7 @@ static inline void vfft_r2c_plan_destroy(vfft_r2c_plan_t *p)
         rfft_plan_destroy(p->rfft);
     if (p->stride)
         stride_plan_destroy(p->stride);
+    free(p->ztmp);
     free(p);
 }
 

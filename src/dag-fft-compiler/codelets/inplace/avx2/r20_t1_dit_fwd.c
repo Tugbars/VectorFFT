@@ -26,12 +26,12 @@ void radix20_t1_dit_fwd_avx2(
     __m256d spill_im[20];
     size_t k = 0;
     for (; k + 4 <= me; k += 4) {
-        const __m256d t0 = _mm256_set1_pd(0.95105651629514998);
-        const __m256d t40 = _mm256_set1_pd(0.32491969623291);
-        const __m256d t87 = _mm256_set1_pd(0.61803398874989002);
-        const __m256d t89 = _mm256_set1_pd(0.80901699437495);
-        const __m256d t126 = _mm256_set1_pd(0.72654252800535002);
-        const __m256d t199 = _mm256_set1_pd(0.55901699437495);
+        const __m256d t0 = _mm256_set1_pd(0.95105651629515364);
+        const __m256d t40 = _mm256_set1_pd(0.32491969623290623);
+        const __m256d t87 = _mm256_set1_pd(0.6180339887498949);
+        const __m256d t89 = _mm256_set1_pd(0.80901699437494745);
+        const __m256d t126 = _mm256_set1_pd(0.7265425280053609);
+        const __m256d t199 = _mm256_set1_pd(0.55901699437494745);
         const __m256d t233 = _mm256_set1_pd(0.25);
 
         {
@@ -510,13 +510,13 @@ void radix20_t1_dit_fwd_avx2(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t40 = (0.32491969623291);
-        const double t126 = (0.72654252800535002);
-        const double t0 = (0.95105651629514998);
-        const double t89 = (0.80901699437495);
+        const double t40 = (0.32491969623290623);
+        const double t126 = (0.7265425280053609);
+        const double t0 = (0.95105651629515364);
+        const double t89 = (0.80901699437494745);
         const double t233 = (0.25);
-        const double t87 = (0.61803398874989002);
-        const double t199 = (0.55901699437495);
+        const double t87 = (0.6180339887498949);
+        const double t199 = (0.55901699437494745);
         const double t2 = rio_re[17*ios + k];
         const double t3 = tw_re[16*me + k];
         const double t4 = rio_im[17*ios + k];
@@ -908,13 +908,13 @@ void radix20_t1_dit_fwd_avx2(
         rio_im[0*ios + k] = t531;
         } else {
             for (; k + 2 <= me; k += 2) {
-        const __m128d t40 = _mm_set1_pd(0.32491969623291);
-        const __m128d t126 = _mm_set1_pd(0.72654252800535002);
-        const __m128d t0 = _mm_set1_pd(0.95105651629514998);
-        const __m128d t89 = _mm_set1_pd(0.80901699437495);
+        const __m128d t40 = _mm_set1_pd(0.32491969623290623);
+        const __m128d t126 = _mm_set1_pd(0.7265425280053609);
+        const __m128d t0 = _mm_set1_pd(0.95105651629515364);
+        const __m128d t89 = _mm_set1_pd(0.80901699437494745);
         const __m128d t233 = _mm_set1_pd(0.25);
-        const __m128d t87 = _mm_set1_pd(0.61803398874989002);
-        const __m128d t199 = _mm_set1_pd(0.55901699437495);
+        const __m128d t87 = _mm_set1_pd(0.6180339887498949);
+        const __m128d t199 = _mm_set1_pd(0.55901699437494745);
         const __m128d t2 = _mm_loadu_pd(&rio_re[17*ios + k]);
         const __m128d t3 = _mm_loadu_pd(&tw_re[16*me + k]);
         const __m128d t4 = _mm_loadu_pd(&rio_im[17*ios + k]);
@@ -1306,13 +1306,13 @@ void radix20_t1_dit_fwd_avx2(
         _mm_storeu_pd(&rio_im[0*ios + k], t531);
             }
             if (k < me) {
-        const double t40 = (0.32491969623291);
-        const double t126 = (0.72654252800535002);
-        const double t0 = (0.95105651629514998);
-        const double t89 = (0.80901699437495);
+        const double t40 = (0.32491969623290623);
+        const double t126 = (0.7265425280053609);
+        const double t0 = (0.95105651629515364);
+        const double t89 = (0.80901699437494745);
         const double t233 = (0.25);
-        const double t87 = (0.61803398874989002);
-        const double t199 = (0.55901699437495);
+        const double t87 = (0.6180339887498949);
+        const double t199 = (0.55901699437494745);
         const double t2 = rio_re[17*ios + k];
         const double t3 = tw_re[16*me + k];
         const double t4 = rio_im[17*ios + k];

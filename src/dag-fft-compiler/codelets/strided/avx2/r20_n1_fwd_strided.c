@@ -206,13 +206,13 @@ void radix20_n1_fwd_avx2_strided(
             lane_im_19 = _mm256_permute2f128_pd(_t1_im, _t3_im, 0x31);
         }
 
-        const __m256d t24 = _mm256_set1_pd(0.32491969623291);
-        const __m256d t78 = _mm256_set1_pd(0.72654252800535002);
-        const __m256d t0 = _mm256_set1_pd(0.95105651629514998);
-        const __m256d t57 = _mm256_set1_pd(0.80901699437495);
+        const __m256d t24 = _mm256_set1_pd(0.32491969623290623);
+        const __m256d t78 = _mm256_set1_pd(0.7265425280053609);
+        const __m256d t0 = _mm256_set1_pd(0.95105651629515364);
+        const __m256d t57 = _mm256_set1_pd(0.80901699437494745);
         const __m256d t157 = _mm256_set1_pd(0.25);
-        const __m256d t55 = _mm256_set1_pd(0.61803398874989002);
-        const __m256d t135 = _mm256_set1_pd(0.55901699437495);
+        const __m256d t55 = _mm256_set1_pd(0.6180339887498949);
+        const __m256d t135 = _mm256_set1_pd(0.55901699437494745);
         const __m256d t2 = lane_re_17;
         const __m256d t4 = lane_im_17;
         const __m256d t7 = lane_re_7;

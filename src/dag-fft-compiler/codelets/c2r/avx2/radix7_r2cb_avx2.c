@@ -23,12 +23,12 @@ void radix7_r2cb_avx2(
     ptrdiff_t os_re,
     size_t vl)
 {
-    const __m256d t13 = _mm256_set1_pd(0.55495813208736999);
-    const __m256d t19 = _mm256_set1_pd(0.80193773580483996);
-    const __m256d t25 = _mm256_set1_pd(0.97492791218181996);
-    const __m256d t27 = _mm256_set1_pd(0.35689586789221001);
-    const __m256d t30 = _mm256_set1_pd(0.69202147163009997);
-    const __m256d t33 = _mm256_set1_pd(0.90096886790242003);
+    const __m256d t13 = _mm256_set1_pd(0.55495813208737121);
+    const __m256d t19 = _mm256_set1_pd(0.80193773580483829);
+    const __m256d t25 = _mm256_set1_pd(0.97492791218182362);
+    const __m256d t27 = _mm256_set1_pd(0.35689586789220945);
+    const __m256d t30 = _mm256_set1_pd(0.69202147163009586);
+    const __m256d t33 = _mm256_set1_pd(0.90096886790241915);
     size_t v = 0;
     for (; v + 4 <= vl; v += 4) {
 
@@ -75,12 +75,12 @@ void radix7_r2cb_avx2(
     if (v < vl) {
         const size_t rem = vl - v;
         if (rem == 1) {
-        const double t27 = (0.35689586789221001);
-        const double t13 = (0.55495813208736999);
-        const double t30 = (0.69202147163009997);
-        const double t19 = (0.80193773580483996);
-        const double t33 = (0.90096886790242003);
-        const double t25 = (0.97492791218181996);
+        const double t27 = (0.35689586789220945);
+        const double t13 = (0.55495813208737121);
+        const double t30 = (0.69202147163009586);
+        const double t19 = (0.80193773580483829);
+        const double t33 = (0.90096886790241915);
+        const double t25 = (0.97492791218182362);
         const double t0 = in_re[3*is_re + v];
         const double t1 = (t0 + t0);
         const double t2 = in_re[2*is_re + v];
@@ -117,12 +117,12 @@ void radix7_r2cb_avx2(
         out_re[6*os_re + v] = t147;
         } else {
             for (; v + 2 <= vl; v += 2) {
-        const __m128d t27 = _mm_set1_pd(0.35689586789221001);
-        const __m128d t13 = _mm_set1_pd(0.55495813208736999);
-        const __m128d t30 = _mm_set1_pd(0.69202147163009997);
-        const __m128d t19 = _mm_set1_pd(0.80193773580483996);
-        const __m128d t33 = _mm_set1_pd(0.90096886790242003);
-        const __m128d t25 = _mm_set1_pd(0.97492791218181996);
+        const __m128d t27 = _mm_set1_pd(0.35689586789220945);
+        const __m128d t13 = _mm_set1_pd(0.55495813208737121);
+        const __m128d t30 = _mm_set1_pd(0.69202147163009586);
+        const __m128d t19 = _mm_set1_pd(0.80193773580483829);
+        const __m128d t33 = _mm_set1_pd(0.90096886790241915);
+        const __m128d t25 = _mm_set1_pd(0.97492791218182362);
         const __m128d t0 = _mm_loadu_pd(&in_re[3*is_re + v]);
         const __m128d t1 = _mm_add_pd(t0, t0);
         const __m128d t2 = _mm_loadu_pd(&in_re[2*is_re + v]);
@@ -159,12 +159,12 @@ void radix7_r2cb_avx2(
         _mm_storeu_pd(&out_re[6*os_re + v], t147);
             }
             if (v < vl) {
-        const double t27 = (0.35689586789221001);
-        const double t13 = (0.55495813208736999);
-        const double t30 = (0.69202147163009997);
-        const double t19 = (0.80193773580483996);
-        const double t33 = (0.90096886790242003);
-        const double t25 = (0.97492791218181996);
+        const double t27 = (0.35689586789220945);
+        const double t13 = (0.55495813208737121);
+        const double t30 = (0.69202147163009586);
+        const double t19 = (0.80193773580483829);
+        const double t33 = (0.90096886790241915);
+        const double t25 = (0.97492791218182362);
         const double t0 = in_re[3*is_re + v];
         const double t1 = (t0 + t0);
         const double t2 = in_re[2*is_re + v];

@@ -24,9 +24,9 @@ void radix12_n1_fwd_avx2(
 {
     size_t k = 0;
     for (; k + 4 <= me; k += 4) {
-        const __m256d t5 = _mm256_set1_pd(0.5);
-        const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
-        const __m256d t42 = _mm256_set1_pd(0.57735026918961996);
+        const __m256d t5 = _mm256_set1_pd(0.49999999999999978);
+        const __m256d t0 = _mm256_set1_pd(0.86602540378443871);
+        const __m256d t42 = _mm256_set1_pd(0.57735026918962595);
         const __m256d t1 = _mm256_loadu_pd(&rio_re[11*ios + k]);
         const __m256d t2 = _mm256_loadu_pd(&rio_re[7*ios + k]);
         const __m256d t16 = _mm256_add_pd(t1, t2);
@@ -184,9 +184,9 @@ void radix12_n1_fwd_avx2(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t5 = (0.5);
-        const double t0 = (0.86602540378444004);
-        const double t42 = (0.57735026918961996);
+        const double t5 = (0.49999999999999978);
+        const double t0 = (0.86602540378443871);
+        const double t42 = (0.57735026918962595);
         const double t1 = rio_re[11*ios + k];
         const double t2 = rio_re[7*ios + k];
         const double t16 = (t1 + t2);
@@ -342,9 +342,9 @@ void radix12_n1_fwd_avx2(
         rio_im[0*ios + k] = t199;
         } else {
             for (; k + 2 <= me; k += 2) {
-        const __m128d t5 = _mm_set1_pd(0.5);
-        const __m128d t0 = _mm_set1_pd(0.86602540378444004);
-        const __m128d t42 = _mm_set1_pd(0.57735026918961996);
+        const __m128d t5 = _mm_set1_pd(0.49999999999999978);
+        const __m128d t0 = _mm_set1_pd(0.86602540378443871);
+        const __m128d t42 = _mm_set1_pd(0.57735026918962595);
         const __m128d t1 = _mm_loadu_pd(&rio_re[11*ios + k]);
         const __m128d t2 = _mm_loadu_pd(&rio_re[7*ios + k]);
         const __m128d t16 = _mm_add_pd(t1, t2);
@@ -500,9 +500,9 @@ void radix12_n1_fwd_avx2(
         _mm_storeu_pd(&rio_im[0*ios + k], t199);
             }
             if (k < me) {
-        const double t5 = (0.5);
-        const double t0 = (0.86602540378444004);
-        const double t42 = (0.57735026918961996);
+        const double t5 = (0.49999999999999978);
+        const double t0 = (0.86602540378443871);
+        const double t42 = (0.57735026918962595);
         const double t1 = rio_re[11*ios + k];
         const double t2 = rio_re[7*ios + k];
         const double t16 = (t1 + t2);

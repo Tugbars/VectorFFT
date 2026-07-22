@@ -89,7 +89,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m512d t0 = _mm512_set1_pd(0.23931566428755999);
+                const __m512d t0 = _mm512_set1_pd(0.23931566428755768);
                 const __m512d t1 = lane_re_7;
                 const __m512d t2 = _mm512_loadu_pd(&tw_im[6*me + b]);
                 const __m512d t3 = lane_im_7;
@@ -103,7 +103,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t11 = _mm512_fnmadd_pd(t9, t8, _mm512_mul_pd(t7, t10));
                 const __m512d t12 = _mm512_fmadd_pd(t7, t8, _mm512_mul_pd(t9, t10));
                 const __m512d t13 = _mm512_sub_pd(t12, t6);
-                const __m512d t15 = _mm512_set1_pd(0.66312265824079997);
+                const __m512d t15 = _mm512_set1_pd(0.66312265824079519);
                 const __m512d t16 = lane_re_8;
                 const __m512d t17 = _mm512_loadu_pd(&tw_im[7*me + b]);
                 const __m512d t18 = lane_im_8;
@@ -117,7 +117,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t26 = _mm512_fnmadd_pd(t24, t23, _mm512_mul_pd(t22, t25));
                 const __m512d t27 = _mm512_fmadd_pd(t22, t23, _mm512_mul_pd(t24, t25));
                 const __m512d t28 = _mm512_sub_pd(t27, t21);
-                const __m512d t30 = _mm512_set1_pd(0.93501624268540995);
+                const __m512d t30 = _mm512_set1_pd(0.93501624268541483);
                 const __m512d t31 = lane_re_9;
                 const __m512d t32 = _mm512_loadu_pd(&tw_im[8*me + b]);
                 const __m512d t33 = lane_im_9;
@@ -131,7 +131,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t41 = _mm512_fnmadd_pd(t39, t38, _mm512_mul_pd(t37, t40));
                 const __m512d t42 = _mm512_fmadd_pd(t37, t38, _mm512_mul_pd(t39, t40));
                 const __m512d t43 = _mm512_sub_pd(t42, t36);
-                const __m512d t45 = _mm512_set1_pd(0.99270887409804998);
+                const __m512d t45 = _mm512_set1_pd(0.99270887409805397);
                 const __m512d t46 = lane_re_10;
                 const __m512d t47 = _mm512_loadu_pd(&tw_im[9*me + b]);
                 const __m512d t48 = lane_im_10;
@@ -158,7 +158,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t70 = _mm512_fnmadd_pd(t68, t67, _mm512_mul_pd(t66, t69));
                 const __m512d t71 = _mm512_fmadd_pd(t66, t67, _mm512_mul_pd(t68, t69));
                 const __m512d t72 = _mm512_sub_pd(t71, t65);
-                const __m512d t73 = _mm512_set1_pd(0.46472317204377001);
+                const __m512d t73 = _mm512_set1_pd(0.46472317204376851);
                 const __m512d t74 = lane_re_11;
                 const __m512d t75 = _mm512_loadu_pd(&tw_im[10*me + b]);
                 const __m512d t76 = lane_im_11;
@@ -172,18 +172,18 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t84 = _mm512_fnmadd_pd(t82, t81, _mm512_mul_pd(t80, t83));
                 const __m512d t85 = _mm512_fmadd_pd(t80, t81, _mm512_mul_pd(t82, t83));
                 const __m512d t86 = _mm512_sub_pd(t85, t79);
-                const __m512d t87 = _mm512_set1_pd(0.82298386589366002);
-                const __m512d t95 = _mm512_set1_pd(0.97094181742605001);
+                const __m512d t87 = _mm512_set1_pd(0.82298386589365635);
+                const __m512d t95 = _mm512_set1_pd(0.97094181742605201);
                 const __m512d t96 = _mm512_add_pd(t5, t11);
-                const __m512d t98 = _mm512_set1_pd(0.74851074817109997);
+                const __m512d t98 = _mm512_set1_pd(0.74851074817110119);
                 const __m512d t99 = _mm512_add_pd(t20, t26);
-                const __m512d t101 = _mm512_set1_pd(0.35460488704254001);
+                const __m512d t101 = _mm512_set1_pd(0.35460488704253545);
                 const __m512d t102 = _mm512_add_pd(t35, t41);
-                const __m512d t104 = _mm512_set1_pd(0.12053668025531999);
+                const __m512d t104 = _mm512_set1_pd(0.12053668025532301);
                 const __m512d t105 = _mm512_add_pd(t50, t56);
-                const __m512d t107 = _mm512_set1_pd(0.56806474673116003);
+                const __m512d t107 = _mm512_set1_pd(0.56806474673115592);
                 const __m512d t108 = _mm512_add_pd(t78, t84);
-                const __m512d t110 = _mm512_set1_pd(0.88545602565321002);
+                const __m512d t110 = _mm512_set1_pd(0.88545602565320991);
                 const __m512d t111 = _mm512_add_pd(t64, t70);
                 const __m512d t113 = lane_re_0;
                 const __m512d t121 = _mm512_sub_pd(t11, t5);
@@ -199,9 +199,9 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t146 = _mm512_add_pd(t79, t85);
                 const __m512d t148 = _mm512_add_pd(t65, t71);
                 const __m512d t150 = lane_im_0;
-                const __m512d t160 = _mm512_set1_pd(0.66312265824078998);
-                const __m512d t303 = _mm512_set1_pd(0.93501624268542005);
-                const __m512d t315 = _mm512_set1_pd(0.35460488704253001);
+                const __m512d t160 = _mm512_set1_pd(0.66312265824079497);
+                const __m512d t303 = _mm512_set1_pd(0.93501624268541561);
+                const __m512d t315 = _mm512_set1_pd(0.35460488704253357);
                 const __m512d t418 = _mm512_add_pd(t96, _mm512_add_pd(t99, _mm512_add_pd(t102, _mm512_add_pd(t105, _mm512_add_pd(t108, _mm512_add_pd(t111, t113))))));
                 const __m512d t424 = _mm512_add_pd(t138, _mm512_add_pd(t140, _mm512_add_pd(t142, _mm512_add_pd(t144, _mm512_add_pd(t146, _mm512_add_pd(t148, t150))))));
                 const __m512d t550 = _mm512_fnmadd_pd(t95, t96, _mm512_fnmadd_pd(t98, t99, _mm512_fnmadd_pd(t101, t102, _mm512_fmadd_pd(t104, t105, _mm512_fmadd_pd(t107, t108, _mm512_fmadd_pd(t110, t111, t113))))));
@@ -370,7 +370,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.23931566428755999);
+                const double t0 = (0.23931566428755768);
                 const double t1 = lane_re_7;
                 const double t2 = tw_im[6*me + b];
                 const double t3 = lane_im_7;
@@ -384,7 +384,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t11 = __builtin_fma(-(t9), t8, (t7 * t10));
                 const double t12 = __builtin_fma(t7, t8, (t9 * t10));
                 const double t13 = (t12 - t6);
-                const double t15 = (0.66312265824079997);
+                const double t15 = (0.66312265824079519);
                 const double t16 = lane_re_8;
                 const double t17 = tw_im[7*me + b];
                 const double t18 = lane_im_8;
@@ -398,7 +398,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t26 = __builtin_fma(-(t24), t23, (t22 * t25));
                 const double t27 = __builtin_fma(t22, t23, (t24 * t25));
                 const double t28 = (t27 - t21);
-                const double t30 = (0.93501624268540995);
+                const double t30 = (0.93501624268541483);
                 const double t31 = lane_re_9;
                 const double t32 = tw_im[8*me + b];
                 const double t33 = lane_im_9;
@@ -412,7 +412,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t41 = __builtin_fma(-(t39), t38, (t37 * t40));
                 const double t42 = __builtin_fma(t37, t38, (t39 * t40));
                 const double t43 = (t42 - t36);
-                const double t45 = (0.99270887409804998);
+                const double t45 = (0.99270887409805397);
                 const double t46 = lane_re_10;
                 const double t47 = tw_im[9*me + b];
                 const double t48 = lane_im_10;
@@ -439,7 +439,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t70 = __builtin_fma(-(t68), t67, (t66 * t69));
                 const double t71 = __builtin_fma(t66, t67, (t68 * t69));
                 const double t72 = (t71 - t65);
-                const double t73 = (0.46472317204377001);
+                const double t73 = (0.46472317204376851);
                 const double t74 = lane_re_11;
                 const double t75 = tw_im[10*me + b];
                 const double t76 = lane_im_11;
@@ -453,18 +453,18 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t84 = __builtin_fma(-(t82), t81, (t80 * t83));
                 const double t85 = __builtin_fma(t80, t81, (t82 * t83));
                 const double t86 = (t85 - t79);
-                const double t87 = (0.82298386589366002);
-                const double t95 = (0.97094181742605001);
+                const double t87 = (0.82298386589365635);
+                const double t95 = (0.97094181742605201);
                 const double t96 = (t5 + t11);
-                const double t98 = (0.74851074817109997);
+                const double t98 = (0.74851074817110119);
                 const double t99 = (t20 + t26);
-                const double t101 = (0.35460488704254001);
+                const double t101 = (0.35460488704253545);
                 const double t102 = (t35 + t41);
-                const double t104 = (0.12053668025531999);
+                const double t104 = (0.12053668025532301);
                 const double t105 = (t50 + t56);
-                const double t107 = (0.56806474673116003);
+                const double t107 = (0.56806474673115592);
                 const double t108 = (t78 + t84);
-                const double t110 = (0.88545602565321002);
+                const double t110 = (0.88545602565320991);
                 const double t111 = (t64 + t70);
                 const double t113 = lane_re_0;
                 const double t121 = (t11 - t5);
@@ -480,9 +480,9 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const double t146 = (t79 + t85);
                 const double t148 = (t65 + t71);
                 const double t150 = lane_im_0;
-                const double t160 = (0.66312265824078998);
-                const double t303 = (0.93501624268542005);
-                const double t315 = (0.35460488704253001);
+                const double t160 = (0.66312265824079497);
+                const double t303 = (0.93501624268541561);
+                const double t315 = (0.35460488704253357);
                 const double t418 = (t96 + (t99 + (t102 + (t105 + (t108 + (t111 + t113))))));
                 const double t424 = (t138 + (t140 + (t142 + (t144 + (t146 + (t148 + t150))))));
                 const double t550 = __builtin_fma(-(t95), t96, __builtin_fma(-(t98), t99, __builtin_fma(-(t101), t102, __builtin_fma(t104, t105, __builtin_fma(t107, t108, __builtin_fma(t110, t111, t113))))));
@@ -649,7 +649,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m512d t0 = _mm512_set1_pd(0.23931566428755999);
+                const __m512d t0 = _mm512_set1_pd(0.23931566428755768);
                 const __m512d t1 = lane_re_7;
                 const __m512d t2 = _mm512_maskz_loadu_pd(_m, &tw_im[6*me + b]);
                 const __m512d t3 = lane_im_7;
@@ -663,7 +663,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t11 = _mm512_fnmadd_pd(t9, t8, _mm512_mul_pd(t7, t10));
                 const __m512d t12 = _mm512_fmadd_pd(t7, t8, _mm512_mul_pd(t9, t10));
                 const __m512d t13 = _mm512_sub_pd(t12, t6);
-                const __m512d t15 = _mm512_set1_pd(0.66312265824079997);
+                const __m512d t15 = _mm512_set1_pd(0.66312265824079519);
                 const __m512d t16 = lane_re_8;
                 const __m512d t17 = _mm512_maskz_loadu_pd(_m, &tw_im[7*me + b]);
                 const __m512d t18 = lane_im_8;
@@ -677,7 +677,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t26 = _mm512_fnmadd_pd(t24, t23, _mm512_mul_pd(t22, t25));
                 const __m512d t27 = _mm512_fmadd_pd(t22, t23, _mm512_mul_pd(t24, t25));
                 const __m512d t28 = _mm512_sub_pd(t27, t21);
-                const __m512d t30 = _mm512_set1_pd(0.93501624268540995);
+                const __m512d t30 = _mm512_set1_pd(0.93501624268541483);
                 const __m512d t31 = lane_re_9;
                 const __m512d t32 = _mm512_maskz_loadu_pd(_m, &tw_im[8*me + b]);
                 const __m512d t33 = lane_im_9;
@@ -691,7 +691,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t41 = _mm512_fnmadd_pd(t39, t38, _mm512_mul_pd(t37, t40));
                 const __m512d t42 = _mm512_fmadd_pd(t37, t38, _mm512_mul_pd(t39, t40));
                 const __m512d t43 = _mm512_sub_pd(t42, t36);
-                const __m512d t45 = _mm512_set1_pd(0.99270887409804998);
+                const __m512d t45 = _mm512_set1_pd(0.99270887409805397);
                 const __m512d t46 = lane_re_10;
                 const __m512d t47 = _mm512_maskz_loadu_pd(_m, &tw_im[9*me + b]);
                 const __m512d t48 = lane_im_10;
@@ -718,7 +718,7 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t70 = _mm512_fnmadd_pd(t68, t67, _mm512_mul_pd(t66, t69));
                 const __m512d t71 = _mm512_fmadd_pd(t66, t67, _mm512_mul_pd(t68, t69));
                 const __m512d t72 = _mm512_sub_pd(t71, t65);
-                const __m512d t73 = _mm512_set1_pd(0.46472317204377001);
+                const __m512d t73 = _mm512_set1_pd(0.46472317204376851);
                 const __m512d t74 = lane_re_11;
                 const __m512d t75 = _mm512_maskz_loadu_pd(_m, &tw_im[10*me + b]);
                 const __m512d t76 = lane_im_11;
@@ -732,18 +732,18 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t84 = _mm512_fnmadd_pd(t82, t81, _mm512_mul_pd(t80, t83));
                 const __m512d t85 = _mm512_fmadd_pd(t80, t81, _mm512_mul_pd(t82, t83));
                 const __m512d t86 = _mm512_sub_pd(t85, t79);
-                const __m512d t87 = _mm512_set1_pd(0.82298386589366002);
-                const __m512d t95 = _mm512_set1_pd(0.97094181742605001);
+                const __m512d t87 = _mm512_set1_pd(0.82298386589365635);
+                const __m512d t95 = _mm512_set1_pd(0.97094181742605201);
                 const __m512d t96 = _mm512_add_pd(t5, t11);
-                const __m512d t98 = _mm512_set1_pd(0.74851074817109997);
+                const __m512d t98 = _mm512_set1_pd(0.74851074817110119);
                 const __m512d t99 = _mm512_add_pd(t20, t26);
-                const __m512d t101 = _mm512_set1_pd(0.35460488704254001);
+                const __m512d t101 = _mm512_set1_pd(0.35460488704253545);
                 const __m512d t102 = _mm512_add_pd(t35, t41);
-                const __m512d t104 = _mm512_set1_pd(0.12053668025531999);
+                const __m512d t104 = _mm512_set1_pd(0.12053668025532301);
                 const __m512d t105 = _mm512_add_pd(t50, t56);
-                const __m512d t107 = _mm512_set1_pd(0.56806474673116003);
+                const __m512d t107 = _mm512_set1_pd(0.56806474673115592);
                 const __m512d t108 = _mm512_add_pd(t78, t84);
-                const __m512d t110 = _mm512_set1_pd(0.88545602565321002);
+                const __m512d t110 = _mm512_set1_pd(0.88545602565320991);
                 const __m512d t111 = _mm512_add_pd(t64, t70);
                 const __m512d t113 = lane_re_0;
                 const __m512d t121 = _mm512_sub_pd(t11, t5);
@@ -759,9 +759,9 @@ void radix13_t1_oop_fwd_avx512_UG_UG(
                 const __m512d t146 = _mm512_add_pd(t79, t85);
                 const __m512d t148 = _mm512_add_pd(t65, t71);
                 const __m512d t150 = lane_im_0;
-                const __m512d t160 = _mm512_set1_pd(0.66312265824078998);
-                const __m512d t303 = _mm512_set1_pd(0.93501624268542005);
-                const __m512d t315 = _mm512_set1_pd(0.35460488704253001);
+                const __m512d t160 = _mm512_set1_pd(0.66312265824079497);
+                const __m512d t303 = _mm512_set1_pd(0.93501624268541561);
+                const __m512d t315 = _mm512_set1_pd(0.35460488704253357);
                 const __m512d t418 = _mm512_add_pd(t96, _mm512_add_pd(t99, _mm512_add_pd(t102, _mm512_add_pd(t105, _mm512_add_pd(t108, _mm512_add_pd(t111, t113))))));
                 const __m512d t424 = _mm512_add_pd(t138, _mm512_add_pd(t140, _mm512_add_pd(t142, _mm512_add_pd(t144, _mm512_add_pd(t146, _mm512_add_pd(t148, t150))))));
                 const __m512d t550 = _mm512_fnmadd_pd(t95, t96, _mm512_fnmadd_pd(t98, t99, _mm512_fnmadd_pd(t101, t102, _mm512_fmadd_pd(t104, t105, _mm512_fmadd_pd(t107, t108, _mm512_fmadd_pd(t110, t111, t113))))));

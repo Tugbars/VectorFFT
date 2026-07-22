@@ -77,7 +77,7 @@ void radix7_t1p_oop_fwd_avx2_UG_UG(
                 const __m256d t10 = _mm256_fnmadd_pd(t8, t7, _mm256_mul_pd(t6, t9));
                 const __m256d t11 = _mm256_fmadd_pd(t6, t7, _mm256_mul_pd(t8, t9));
                 const __m256d t12 = _mm256_sub_pd(t11, t5);
-                const __m256d t13 = _mm256_set1_pd(0.55495813208736999);
+                const __m256d t13 = _mm256_set1_pd(0.55495813208737121);
                 const __m256d t15 = lane_re_6;
                 const __m256d t16 = _mm256_set1_pd(tw_im[5*(me/4) + b/4]);
                 const __m256d t17 = lane_im_6;
@@ -91,7 +91,7 @@ void radix7_t1p_oop_fwd_avx2_UG_UG(
                 const __m256d t25 = _mm256_fnmadd_pd(t23, t22, _mm256_mul_pd(t21, t24));
                 const __m256d t26 = _mm256_fmadd_pd(t21, t22, _mm256_mul_pd(t23, t24));
                 const __m256d t27 = _mm256_sub_pd(t26, t20);
-                const __m256d t29 = _mm256_set1_pd(0.80193773580483996);
+                const __m256d t29 = _mm256_set1_pd(0.80193773580483829);
                 const __m256d t31 = lane_re_5;
                 const __m256d t32 = _mm256_set1_pd(tw_im[4*(me/4) + b/4]);
                 const __m256d t33 = lane_im_5;
@@ -105,13 +105,13 @@ void radix7_t1p_oop_fwd_avx2_UG_UG(
                 const __m256d t41 = _mm256_fnmadd_pd(t39, t38, _mm256_mul_pd(t37, t40));
                 const __m256d t42 = _mm256_fmadd_pd(t37, t38, _mm256_mul_pd(t39, t40));
                 const __m256d t43 = _mm256_sub_pd(t42, t36);
-                const __m256d t45 = _mm256_set1_pd(0.97492791218181996);
+                const __m256d t45 = _mm256_set1_pd(0.97492791218182362);
                 const __m256d t47 = _mm256_add_pd(t35, t41);
-                const __m256d t48 = _mm256_set1_pd(0.35689586789221001);
+                const __m256d t48 = _mm256_set1_pd(0.35689586789220945);
                 const __m256d t50 = _mm256_add_pd(t19, t25);
-                const __m256d t52 = _mm256_set1_pd(0.69202147163009997);
+                const __m256d t52 = _mm256_set1_pd(0.69202147163009586);
                 const __m256d t54 = _mm256_add_pd(t4, t10);
-                const __m256d t56 = _mm256_set1_pd(0.90096886790242003);
+                const __m256d t56 = _mm256_set1_pd(0.90096886790241915);
                 const __m256d t58 = lane_re_0;
                 const __m256d t61 = _mm256_sub_pd(t4, t10);
                 const __m256d t63 = _mm256_sub_pd(t19, t25);

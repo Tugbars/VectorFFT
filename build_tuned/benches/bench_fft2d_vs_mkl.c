@@ -56,6 +56,14 @@ static void run_cell(int N1,int N2,vfft_proto_registry_t*reg){
     double ewe=-1;   /* elementwise vs MKL (informational) */
     int mok=0;
     if(DftiCreateDescriptor(&h,DFTI_DOUBLE,DFTI_COMPLEX,2,dims)==DFTI_NO_ERROR){
+        /* METHODOLOGY WARNING (2026-07-14): this file benches MKL's REAL_REAL
+         * split storage -- its 2.3-5.2x-slower compatibility path (measured),
+         * NOT the v1.0 house methodology (CCE interleaved). Ratios from this
+         * file overstate the margin vs MKL-as-users-run-it. This drifted
+         * config leaked into the first 3D/4D bench revisions (since corrected
+         * to CCE; see v1_0_results.md §2b). Converting this file's buffers/
+         * calls to CCE is a pending 14900KF-pass task.
+         * DO NOT copy this descriptor config into new benches. */
         DftiSetValue(h,DFTI_COMPLEX_STORAGE,DFTI_REAL_REAL);
         DftiSetValue(h,DFTI_PLACEMENT,DFTI_NOT_INPLACE);
         mok=(DftiCommitDescriptor(h)==DFTI_NO_ERROR);
