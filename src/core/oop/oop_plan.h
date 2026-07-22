@@ -85,6 +85,8 @@ typedef struct
      * entry points. */
     double *col_re, *col_im, *tp_re, *tp_im;
     vfft_oop11_fn il_leaf, il_leaf_sw, t1_il, t1_il_sw;
+    /* two-pass twins (§12.4): t1 with UL load / leaf with UL store */
+    vfft_oop11_fn t1_ul, leaf_ul;
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -260,6 +262,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->il_leaf_sw = vfft_oop_leaf_il_fn(R2, 1);
     p->t1_il      = vfft_oop_t1_il_fn(R1, 0);
     p->t1_il_sw   = vfft_oop_t1_il_fn(R1, 1);
+    p->t1_ul      = vfft_oop_t1_ul_fn(R1);
+    p->leaf_ul    = vfft_oop_leaf_ugul_fn(R2);
     return p;
 }
 
@@ -418,6 +422,41 @@ static inline int vfft_oop_execute_fwd(const vfft_oop_plan_t *p,
         return vfft_proto_execute_fwd_oop_jit(p->mb, sr, si, dr, di, K, p->mb_jit_fwd);
     }
     return -1;
+}
+
+/* ---- BAILEY2V TWO-PASS entry points (§12.4 item 1 — MKL's mid-N shape:
+ * no transpose sweep, 2 passes, 1 scratch pair; dst==src is safe for both
+ * routes since the t1 pass reads only the scratch). Natural order.
+ * Route (a): leaf UG x->scr (untransposed), then t1-UL scr->dst — the 4x4
+ *   transpose lives in the t1's load lattice (Ls=1, Gs=R1).
+ * Route (b): leaf UG_UL x->scr (transposed stores, OLs=1/OGs=R2), then the
+ *   standard flat t1 scr->dst.
+ * Qr/Qi are UNCHANGED in both (the group<->leg relabeling keeps W_N^{l.b}).
+ * Same-DAG bodies => outputs bit-identical to the 3-pass path. */
+static inline int vfft_oop_execute_fwd_2pa(const vfft_oop_plan_t *p,
+                                           const double *sr, const double *si,
+                                           double *dr, double *di)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->t1_ul)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->leaf(sr, si, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    p->t1_ul(p->col_re, p->col_im, dr, di, p->Qr, p->Qi,
+             /*Ls=*/1, /*Gs=*/R1, /*OLs=*/R2, /*OGs=*/1, R2);
+    return 0;
+}
+
+static inline int vfft_oop_execute_fwd_2pb(const vfft_oop_plan_t *p,
+                                           const double *sr, const double *si,
+                                           double *dr, double *di)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->leaf_ul)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->leaf_ul(sr, si, p->col_re, p->col_im, 0, 0,
+               /*Ls=*/R1, /*Gs=*/1, /*OLs=*/1, /*OGs=*/R2, R1);
+    p->t1p(p->col_re, p->col_im, dr, di, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+    return 0;
 }
 
 /* ---- BAILEY2V interleaved entry points (z -> z, natural order, K=1) ----

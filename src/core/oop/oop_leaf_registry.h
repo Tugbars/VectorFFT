@@ -197,4 +197,54 @@ static inline vfft_oop11_fn vfft_oop_t1_il_fn(int R, int sw)
 #endif
 }
 
+/* ---- UnitLeg twins (two-pass restructure, row_major_engine.md §12.4) ----
+ * t1 UL_UG: transpose fused into the t1's LOAD lattice (reads the column
+ * pass's untransposed output at Ls=1/Gs=R1); n1 UG_UL: transpose fused into
+ * the leaf's STORE lattice (writes the transposed intermediate at OLs=1/
+ * OGs=R2). Either gives the MKL two-pass shape (no transpose sweep). avx2
+ * only; me must be a multiple of 4 (UL configs carry no rem tail). */
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_UL(R) \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_n1_oop_fwd_avx2_UG_UL( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_UL(4) VFFT_OOP_DECL_UL(8) VFFT_OOP_DECL_UL(16)
+VFFT_OOP_DECL_UL(32) VFFT_OOP_DECL_UL(64)
+#endif
+
+static inline vfft_oop11_fn vfft_oop_t1_ul_fn(int R)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return radix##R##_t1_oop_fwd_avx2_UL_UG;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R;
+    return 0;
+#endif
+}
+
+static inline vfft_oop11_fn vfft_oop_leaf_ugul_fn(int R)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return radix##R##_n1_oop_fwd_avx2_UG_UL;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */
