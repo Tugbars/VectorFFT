@@ -51,6 +51,27 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* K=1 route ids (persisted in kind-3 wisdom lines; row_major_engine.md §13).
+ * Split axis routes run natural-order OOP split; bwd = pointer-swap identity.
+ * IL axis routes run z->z; bwd = the _sw lattice twins. */
+enum
+{
+    VFFT_K1_SP_3P = 0,   /* leaf -> transpose -> t1            */
+    VFFT_K1_SP_2PA = 1,  /* leaf -> t1-UL (transpose in loads)  */
+    VFFT_K1_SP_2PB = 2,  /* leaf-UL (transpose in stores) -> t1 */
+    VFFT_K1_SP_TWL = 3,  /* 2pa with the linear twiddle stream  */
+    VFFT_K1_SP_MONO = 4, /* emitted whole-four-step mono (pair from R1: mono_pair_fn) */
+    VFFT_K1_SP_2PA_L3 = 5, /* 2pa with the log3 t1 (create swaps t1_ul -> t1_ul_l3) */
+    VFFT_K1_SP_3P_L3 = 6   /* 3p with the log3 t1 (create swaps t1p -> t1_l3)       */
+};
+enum
+{
+    VFFT_K1_IL_NONE = 0, /* no IL route available for this N    */
+    VFFT_K1_IL_3P = 1,   /* il_in leaf -> transpose -> t1 -> il sweep-free 3-pass */
+    VFFT_K1_IL_2P = 2,   /* il_in leaf -> t1-UL+il_out (2 passes) */
+    VFFT_K1_IL_MONO = 3  /* emitted mono, il edges              */
+};
+
 typedef enum
 {
     VFFT_OOP_KIND_LEAF = 0,
