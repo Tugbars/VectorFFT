@@ -325,6 +325,56 @@ static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
 #endif
 }
 
+/* t1 LOG3 twins (leg-axis twiddle derivation, FFTW-t3 class): load only the
+ * base legs' twiddle VECTORS and derive the rest by vector cmuls — 252->24
+ * tw loads at radix-64. SAME Qr/Qi table layout (sparse subset of the same
+ * slots), so these are drop-in fn-pointer swaps on the existing plans. Values
+ * differ from flat in last-ulp (derived vs loaded) — gate vs naive, not
+ * bit-cross. */
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_T1L3(R) \
+  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_log3( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_log3( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_T1L3(4) VFFT_OOP_DECL_T1L3(8) VFFT_OOP_DECL_T1L3(16)
+VFFT_OOP_DECL_T1L3(32) VFFT_OOP_DECL_T1L3(64)
+#endif
+
+static inline vfft_oop11_fn vfft_oop_t1_l3_fn(int R)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return radix##R##_t1_oop_fwd_avx2_UG_UG_log3;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R;
+    return 0;
+#endif
+}
+
+static inline vfft_oop11_fn vfft_oop_t1_ul_l3_fn(int R)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return radix##R##_t1_oop_fwd_avx2_UL_UG_log3;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R;
+    return 0;
+#endif
+}
+
 /* mono-64 IL twins (M2/M4): z->z; bwd = fwd DAG with (im,re)-swapped
  * boundary lattices (swap identity), unnormalized inverse, output (re,im).
  * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —

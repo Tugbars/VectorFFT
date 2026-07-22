@@ -92,6 +92,8 @@ typedef struct
     double *Qlr, *Qli;
     /* TRUE 2-pass IL exit: t1 UL-load + il_out store (+_sw for bwd) */
     vfft_oop11_fn t1_ul_il, t1_ul_il_sw;
+    /* LOG3 (leg-axis derivation) twins — same Qr/Qi, drop-in fn swaps */
+    vfft_oop11_fn t1_l3, t1_ul_l3;
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -271,6 +273,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->leaf_ul    = vfft_oop_leaf_ugul_fn(R2);
     p->t1_ul_il    = vfft_oop_t1_ul_il_fn(R1, 0);
     p->t1_ul_il_sw = vfft_oop_t1_ul_il_fn(R1, 1);
+    p->t1_l3       = vfft_oop_t1_l3_fn(R1);
+    p->t1_ul_l3    = vfft_oop_t1_ul_l3_fn(R1);
     p->t1_ul_twl  = vfft_oop_t1_ul_twl_fn(R1);
     if (p->t1_ul_twl && (R2 % 4) == 0)
     {
