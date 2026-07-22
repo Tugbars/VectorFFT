@@ -90,6 +90,8 @@ typedef struct
     /* linear-twiddle t1_ul twin (§12.4 4a) + its consumption-order table */
     vfft_oop11_fn t1_ul_twl;
     double *Qlr, *Qli;
+    /* TRUE 2-pass IL exit: t1 UL-load + il_out store (+_sw for bwd) */
+    vfft_oop11_fn t1_ul_il, t1_ul_il_sw;
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -267,6 +269,8 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->t1_il_sw   = vfft_oop_t1_il_fn(R1, 1);
     p->t1_ul      = vfft_oop_t1_ul_fn(R1);
     p->leaf_ul    = vfft_oop_leaf_ugul_fn(R2);
+    p->t1_ul_il    = vfft_oop_t1_ul_il_fn(R1, 0);
+    p->t1_ul_il_sw = vfft_oop_t1_ul_il_fn(R1, 1);
     p->t1_ul_twl  = vfft_oop_t1_ul_twl_fn(R1);
     if (p->t1_ul_twl && (R2 % 4) == 0)
     {
@@ -526,6 +530,37 @@ static inline int vfft_oop_execute_fwd_il(const vfft_oop_plan_t *p,
     _vfft_k1_transpose(p->col_re, p->tp_re, (int)R2, (int)R1);
     _vfft_k1_transpose(p->col_im, p->tp_im, (int)R2, (int)R1);
     p->t1_il(p->tp_re, p->tp_im, z_out, 0, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+    return 0;
+}
+
+/* TRUE 2-pass IL (z -> z, natural, K=1): il_in leaf (deinterleave in loads,
+ * z -> split column scratch) + t1 UL-load/il_out-store (transpose in loads,
+ * interleave in stores). Two passes, one scratch pair, zero conversion or
+ * transpose sweeps — the full MKL two-pass shape on an interleaved buffer.
+ * z_in == z_out safe. */
+static inline int vfft_oop_execute_fwd_2p_il(const vfft_oop_plan_t *p,
+                                             const double *z_in, double *z_out)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf || !p->t1_ul_il)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->il_leaf(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    p->t1_ul_il(p->col_re, p->col_im, z_out, 0, p->Qr, p->Qi,
+                1, R1, R2, 1, R2);
+    return 0;
+}
+
+/* bwd twin: both swaps folded into the _sw lattices (swap identity),
+ * unnormalized inverse, output in normal (re,im) order. */
+static inline int vfft_oop_execute_bwd_2p_il(const vfft_oop_plan_t *p,
+                                             const double *z_in, double *z_out)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf_sw || !p->t1_ul_il_sw)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    p->il_leaf_sw(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
+    p->t1_ul_il_sw(p->col_re, p->col_im, z_out, 0, p->Qr, p->Qi,
+                   1, R1, R2, 1, R2);
     return 0;
 }
 

@@ -338,6 +338,38 @@ extern void vfft_k1_mono64_8x8_il_bwd_avx2(
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 #endif
 
+/* t1 UL-load + il_out store twins: the TRUE 2-pass IL exit (reads the
+ * untransposed split column output at Ls=1/Gs=R1, transposes in the load
+ * lattice, interleaves in the store lattice). _sw = bwd swap. */
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_UL_ILOUT(R) \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_il_out( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_il_out_sw( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_UL_ILOUT(4) VFFT_OOP_DECL_UL_ILOUT(8) VFFT_OOP_DECL_UL_ILOUT(16)
+VFFT_OOP_DECL_UL_ILOUT(32) VFFT_OOP_DECL_UL_ILOUT(64)
+#endif
+
+static inline vfft_oop11_fn vfft_oop_t1_ul_il_fn(int R, int sw)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UL_UG_il_out_sw \
+                                : radix##R##_t1_oop_fwd_avx2_UL_UG_il_out;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)sw;
+    return 0;
+#endif
+}
+
 static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
 {
 #if VFFT_OOP_GROUPW == 4u
