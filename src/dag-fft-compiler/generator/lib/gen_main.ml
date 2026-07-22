@@ -123,6 +123,15 @@ let run (argv : string array) : unit =
   let oop_store_pat = ref "UL" in
   let oop_buf_oop = ref false in
   (* true → OutOfPlace, false → InPlace *)
+  (* §P2 interleaved-boundary edges on the OOP family (codelet_oop.ml):
+     il_in = load edge reads interleaved z; il_out = store edge writes
+     interleaved z. Replaces the deprecated il_derive.py derived twins. *)
+  let oop_il_in = ref false in
+  let oop_il_out = ref false in
+  (* _sw twins: (im,re)-swapped lattice — bwd via the swap identity folded
+     into the boundary (a z buffer cannot pointer-swap re/im). *)
+  let oop_il_in_sw = ref false in
+  let oop_il_out_sw = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -213,6 +222,10 @@ let run (argv : string array) : unit =
      end
      else if arg = "--oop" then oop := true
      else if arg = "--oop-buffer-oop" then oop_buf_oop := true
+     else if arg = "--oop-il-in" then oop_il_in := true
+     else if arg = "--oop-il-out" then oop_il_out := true
+     else if arg = "--oop-il-in-sw" then oop_il_in_sw := true
+     else if arg = "--oop-il-out-sw" then oop_il_out_sw := true
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
        oop_load_pat := arr.(!i + 1);
        incr i
@@ -1225,6 +1238,26 @@ let run (argv : string array) : unit =
              || buffer <> Codelet_oop.OutOfPlace) then
         failwith
           "--post-tw requires --twiddled (PerGroup) + fwd + --oop-buffer-oop";
+      if !oop_il_in && !oop_il_in_sw then
+        failwith "--oop-il-in and --oop-il-in-sw are mutually exclusive";
+      if !oop_il_out && !oop_il_out_sw then
+        failwith "--oop-il-out and --oop-il-out-sw are mutually exclusive";
+      let any_il_in = !oop_il_in || !oop_il_in_sw in
+      let any_il_out = !oop_il_out || !oop_il_out_sw in
+      if any_il_in && load_pat <> Codelet_oop.UnitGroup then
+        failwith "--oop-il-in[-sw] requires --oop-load UG";
+      if any_il_out && store_pat <> Codelet_oop.UnitGroup then
+        failwith "--oop-il-out[-sw] requires --oop-store UG";
+      if (any_il_in || any_il_out) && buffer <> Codelet_oop.OutOfPlace then
+        failwith "--oop-il-in[-sw]/--oop-il-out[-sw] require --oop-buffer-oop";
+      if (any_il_in || any_il_out) && Isa.(isa.vec_width) <> 4 then
+        failwith
+          "--oop-il-in[-sw]/--oop-il-out[-sw]: avx2 only for now (avx512 \
+           masked IL lattice pending)";
+      if any_il_out && !oop_store_fused then
+        failwith
+          "--oop-il-out[-sw] is incompatible with --oop-store-fused (the IL \
+           store needs the paired out_lane re/im registers)";
       let cname =
         if !post_tw then begin
           let sub = "t1_oop" and rep = "t1_dif_oop" in
@@ -1246,6 +1279,12 @@ let run (argv : string array) : unit =
         else cname
       in
       let cname = if !log3 then cname ^ "_log3" else cname in
+      (* IL suffixes match the derived-twin symbol names 1:1
+         (radixN_..._UG_UG_il_in), so emitted files REPLACE derived ones. *)
+      let cname = if !oop_il_in then cname ^ "_il_in" else cname in
+      let cname = if !oop_il_out then cname ^ "_il_out" else cname in
+      let cname = if !oop_il_in_sw then cname ^ "_il_in_sw" else cname in
+      let cname = if !oop_il_out_sw then cname ^ "_il_out_sw" else cname in
       let cname = if !oop_strides <> None then cname ^ "_spec" else cname in
       let cfg =
         Codelet_oop.
@@ -1265,6 +1304,10 @@ let run (argv : string array) : unit =
       Codelet_oop.current_oop_strides := !oop_strides;
       Codelet_oop.current_oop_fuse := !fuse;
       Codelet_oop.current_oop_store_on_compute := !oop_store_fused;
+      Codelet_oop.current_oop_il_in := !oop_il_in;
+      Codelet_oop.current_oop_il_out := !oop_il_out;
+      Codelet_oop.current_oop_il_in_sw := !oop_il_in_sw;
+      Codelet_oop.current_oop_il_out_sw := !oop_il_out_sw;
       print_string (Codelet_oop.emit_codelet cfg)
     end
     else begin

@@ -329,6 +329,99 @@ not further hand-tuning.
 P3 (--k1 mono tier, IL-first) are confirmed as the two build items; P4 (t1 table
 recompute/recursion) is what's left of the MKL-split gap at large N.
 
+## 11f. P2 CODELET LAYER SHIPPED — native IL emission on the OOP family (2026-07-22)
+
+The emitter now has `--oop-il-in` / `--oop-il-out` (avx2; avx512 masked lattice explicitly
+gated pending). Implementation: two mode refs + an IL branch in
+`emit_load_unitgroup`/`emit_store_unitgroup` (`codelet_oop.ml`), signature swap to
+(z, unused) keeping the 11-arg `vfft_oop11_fn` shape, flags + validation + `_il_in`/`_il_out`
+name suffix in `gen_main.ml`. Because the tail passes re-enter the edge emitters at narrower
+widths, the emitted twins are IL-correct at ALL widths — vector (unpack+perm lattice), SSE2
+(`_mm_unpacklo/hi`), scalar (`z[2k]/z[2k+1]`) — verified in the generated C. This
+definitively retires the il_derive.py mechanism: all 14 derived `radixN_n1_oop_il_*` files
+(both ISAs) are DELETED; emitted `radix{4,8,16,32,64}_{n1_oop_il_in,t1_oop_il_out}_avx2.c`
+live in `codelets/oop/avx2/` (lib now 717). Regen recipe:
+`gen_radix.exe R --oop --oop-buffer-oop --oop-load UG --oop-store UG --isa avx2
+[--twiddled] --oop-il-in|--oop-il-out --emit-c` (WSL, opam 5.2.0, DUNE_CACHE=disabled,
+targeted `dune build bin/gen_radix.exe`).
+
+Spike v2 (z→z, 3 passes: il_in leaf → transpose → t1_il_out; NO sweep) — all gates green
+det+rand; within-session numbers (session runs ~10% warm vs §11e; MKL drifted up equally, so
+compare ratios within-session only — machine lockdown for paper numbers):
+
+| N | split-ip | IL v1 (sweep) | **IL v2 (twin)** | v2 premium over split |
+|--:|--:|--:|--:|--:|
+| 64 | 46 | 61 | **54** | +17% |
+| 256 | 210 (32×8) | 276 | **254** (32×8) | +21% — but only **+6 ns at 4×64** |
+| 1024 | 1368 (32×32) | 1697 | **1544** (32×32) | +13% |
+| 4096 | 9456/10380 (64×64) | 10242 | **9688** (64×64) | ~+3% |
+
+The residual IL premium = boundary shuffles, and it scales with the number of t1 store sites
+(R1·R2/VW): fat-R2 pairs minimize it (4×64 at N=256: IL v2 ≈ split + 6 ns). So the IL pair
+optimum can differ from the split pair optimum — one more reason the per-cell pair wisdom
+must calibrate the layout axis jointly.
+
+**P2 status**: codelet layer DONE (emit path + 10 twins + spike gates + bench). Remaining for
+production: an OOP plan kind that drives the IL twins (BAILEY2V-IL), per-cell (pair × layout)
+wisdom, and bwd (emit an il_out_sw (im,re)-swapped store variant — one more flag on the same
+lattice — since the z-buffer swap identity can't swap pointer args). Then P3 (--k1 mono).
+
+### 11f-2. Plan layer SHIPPED (same day)
+
+- **Emitter**: `--oop-il-in-sw` / `--oop-il-out-sw` added (the (im,re)-swapped lattices; fwd
+  DAG, fwd-named symbols per the established convention). 20 twins total in
+  `codelets/oop/avx2/` (`radix{4..64}_{n1_oop_il_in[,_sw], t1_oop_il_out[,_sw]}_avx2.c`);
+  codelet lib 727.
+- **Registry** ([oop_leaf_registry.h](../../src/core/oop/oop_leaf_registry.h)):
+  `vfft_oop_leaf_il_fn(R, sw)` / `vfft_oop_t1_il_fn(R, sw)`, avx2-guarded (return 0 on
+  avx512 builds → callers degrade to split).
+- **Plan kind** ([oop_plan.h](../../src/core/oop/oop_plan.h)): `VFFT_OOP_KIND_BAILEY2V` +
+  `vfft_oop_plan_create_k1(N, R1, R2)` (K=1, R1/R2 % 4, reuses `_vfft_oop_fill_bailey`
+  tables verbatim) + `_vfft_k1_transpose` + execute cases: split fwd (in the main switch —
+  split bwd rides the existing swap-identity path untouched), and
+  `vfft_oop_execute_fwd_il / _bwd_il(p, z_in, z_out)` (z→z, z_in==z_out safe; bwd = both
+  swaps folded into the _sw lattices, output in normal (re,im) order).
+- **Gates** (`build_tuned/test/test_k1_fourstep.c`): 11 cells × det+rnd, N=64..4096 —
+  split fwd vs naive ✓, **cross vs BAILEY2 = 0.0 bit-identical on every row** ✓, split
+  roundtrip ✓, IL fwd ✓ (same errors as split — same arithmetic), IL roundtrip via _sw ✓,
+  R2=128 degrades to split-only without failure ✓. ALL GREEN.
+
+**Still open on P2**: vfft.c front-door routing (K=1 → BAILEY2V; the interleaved buffer
+contract `sim==dim==NULL` → the *_il entry points) + per-cell (pair × layout) wisdom/tuner.
+Then P3 (--k1 mono emission, hand mono-64 as reference).
+
+### 11g. Plan-API bench vs MKL (isolated cells, cooled, 2026-07-22 evening)
+
+`build_tuned/benches/bench_k1_vs_mkl.c` (--mkl, same-process order-flipped best-of-5;
+in-place arm = `execute_fwd(p, w, w)` — d==x is safe, the leaf drains x into scratch first):
+
+| N | MKL-IL | MKL-sp | B2V-sp | B2V-ip | B2V-il | mono-sp | mono-il | best-sp/MKL-sp |
+|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| 64 | 31.3 | 35.4 | 43 | 42 | 53 | **30** | 44 | **1.18× (mono)** |
+| 256 | 136.4 | 192.9 | 205 | 209 | 261 | | | 0.94× |
+| 1024 | 874.4 | 802.7 | 1574* | **1319** (64×16) | 1828* | | | 0.61× |
+| 4096 | 4077.0 | 4966.4 | 10305* | 9967* | 11363* | | | ~0.50×* |
+
+`*` = pair pick order-biased (see below). Three lessons:
+
+1. **Plan API adds no overhead** — B2V numbers track the spike's raw-call arm within noise;
+   **mono-64-split = 30 ns is AT PARITY with MKL-IL (31.3)** and 1.18× over MKL-split. The
+   P3 mono tier is fully justified as the small-N production route.
+2. **The bench's inline pair sweep reproduces the cmp_old_new fixed-order bias**: candidates
+   are tried R2-descending, first-tried runs coolest, so fat-R2 pairs win ties spuriously
+   (16×64 / 32×128 picked over the spike-proven 64×16 / 64×64). Production pair choice =
+   CALIBRATOR (per-candidate isolated, order-neutralized) writing per-cell
+   **(pair × placement × layout)** wisdom — the axes are coupled (§11f), one joint search.
+3. **Stability is itself diagnostic**: MKL holds ±3% across sessions; our mid-N numbers swing
+   ±25% (172→205 at 256, 1113→1319 at 1024-ip across the day). Their compact working set is
+   frequency-insensitive; our streamed t1 tables + multi-buffer footprint ride the L2. The P4
+   structural fixes are also stability fixes. Paper numbers need machine lockdown.
+
+Large-N addendum (planner-shaped, per user review comment): the column pass need not be a
+monolithic leaf — letting it be a COMPOSED batch plan (DP planner domain, e.g. [16,8] chain at
+K=64 for N=8192) decouples the pair space from the leaf ceiling and is the natural level-3
+recursion (P4).
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).

@@ -240,22 +240,67 @@ let current_oop_fuse : int ref = ref 0
    --oop-store-fused. *)
 let current_oop_store_on_compute : bool ref = ref false
 
+(* §P2 (docs/roadmap/row_major_engine.md §11e): interleaved-boundary edges for
+   the OOP family. il_in: the load edge reads an INTERLEAVED z buffer
+   (in_z[2*(b*Gs + j*Ls)], pair-factor 2 hardwired) and deinterleaves
+   in-register into the split lane registers. il_out: the store edge
+   interleaves the out_lane pair in-register and writes INTERLEAVED out_z.
+   UnitGroup-only (the vector body spans vec_width CONSECUTIVE groups — the UG
+   group_stride=1 contract, same as the split UG edges). Twiddle loads are
+   Expr.Twiddle nodes, structurally untouched. Because the SSE2/scalar tail
+   passes re-run emit_load_edge/emit_store_edge at narrower widths, the tails
+   are IL-correct for ANY me — the reason these are EMITTED, replacing the
+   deprecated il_derive.py derived twins (whose tails read split memory).
+   avx512 (masked-tail lattice) not yet emitted — gen_main gates it.
+   Set from gen_main --oop-il-in / --oop-il-out. *)
+let current_oop_il_in : bool ref = ref false
+let current_oop_il_out : bool ref = ref false
+
+(* _sw twins: same lattice with the (re,im) pairing SWAPPED — il_in_sw reads z
+   pairs as (im,re), il_out_sw writes (im,re). These are the BACKWARD-direction
+   enablers: the unnormalized-inverse swap identity IDFT = swap(DFT(swap(.)))
+   swaps re/im POINTERS on split buffers, which an interleaved z buffer cannot
+   do — so the swap folds into the boundary lattice instead. The butterfly DAG
+   stays the FORWARD one (fwd-named symbols, per the established il_out_sw
+   convention). *)
+let current_oop_il_in_sw : bool ref = ref false
+let current_oop_il_out_sw : bool ref = ref false
+
+let il_in_active () = !current_oop_il_in || !current_oop_il_in_sw
+let il_out_active () = !current_oop_il_out || !current_oop_il_out_sw
+
 (** Emit the function signature into the buffer. Trailing newline before the
     opening brace of the function body. *)
 let emit_signature (buf : Buffer.t) (c : config) : unit =
   Buffer.add_string buf
     (Printf.sprintf "__attribute__((target(\"%s\")))\n" c.isa.target_attr);
   Buffer.add_string buf (Printf.sprintf "void %s(\n" c.name);
-  (* Buffer pointers. *)
+  (* Buffer pointers. IL edges swap the split pair for (z, unused) on their
+     side — argument-for-argument the same 11-arg shape, so the planner's
+     vfft_oop11_fn call sites stay uniform (caller passes NULL for unused). *)
   (match c.buffer with
   | InPlace ->
       Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
       Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
   | OutOfPlace ->
-      Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-      Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-      Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-      Buffer.add_string buf "    double       * __restrict__ out_im,\n");
+      (if il_in_active () then begin
+         Buffer.add_string buf
+           "    const double * __restrict__ in_z,          /* interleaved pairs */\n";
+         Buffer.add_string buf "    const double * __restrict__ in_unused,\n"
+       end
+       else begin
+         Buffer.add_string buf "    const double * __restrict__ in_re,\n";
+         Buffer.add_string buf "    const double * __restrict__ in_im,\n"
+       end);
+      if il_out_active () then begin
+        Buffer.add_string buf
+          "    double       * __restrict__ out_z,         /* interleaved pairs */\n";
+        Buffer.add_string buf "    double       * __restrict__ out_unused,\n"
+      end
+      else begin
+        Buffer.add_string buf "    double       * __restrict__ out_re,\n";
+        Buffer.add_string buf "    double       * __restrict__ out_im,\n"
+      end);
   (* Twiddles. *)
   (match c.twiddles with
   | NoTwiddles ->
@@ -295,7 +340,9 @@ let emit_signature (buf : Buffer.t) (c : config) : unit =
            \    const size_t out_group_stride = %d;\n"
            l g ol og)
   | None -> ());
-  (* Unused-parameter silencing for n1. *)
+  (* Unused-parameter silencing for n1 and the IL unused slots. *)
+  if il_in_active () then Buffer.add_string buf "    (void)in_unused;\n";
+  if il_out_active () then Buffer.add_string buf "    (void)out_unused;\n";
   match c.twiddles with
   | NoTwiddles -> Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n"
   | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles -> ()
@@ -389,30 +436,93 @@ let emit_load_unitleg (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_load_unitgroup (buf : Buffer.t) (c : config) : unit =
-  let base_re =
-    match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "in_re"
-  in
-  let base_im =
-    match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "in_im"
-  in
-  Buffer.add_string buf
-    "        /* UnitGroup load: vec_width groups are consecutive (stride 1)\n";
-  Buffer.add_string buf
-    "           so they load as one SIMD register per leg. R separate\n";
-  Buffer.add_string buf
-    "           strided loads populate the R lane registers — no transpose. */\n";
-  for j = 0 to c.radix - 1 do
+  if il_in_active () then begin
+    (* IL load: vec_width consecutive groups are interleaved (re,im) pairs in
+       z. Two vector loads + unpack/permute deinterleave into the split lane
+       registers — one load pair per leg (the deprecated derived twins loaded
+       each pair twice). Width-parametric so the SSE2/scalar tail passes,
+       which re-enter here with a narrower isa, stay IL-correct.
+       _sw: the (im,re)-swapped read — unpackhi feeds lane_re (the bwd swap
+       identity folded into the lattice). *)
+    let sw = !current_oop_il_in_sw in
+    (* which unpack feeds re / im *)
+    let u_re = if sw then "hi" else "lo" and u_im = if sw then "lo" else "hi" in
     Buffer.add_string buf
-      (Printf.sprintf "        lane_re_%d = %s;\n" j
-         (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
-            (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
-               base_re j)));
+      (if sw then
+         "        /* UnitGroup IL_SW load: interleaved groups read as (im,re) \
+          — bwd swap. */\n"
+       else
+         "        /* UnitGroup IL load: vec_width consecutive interleaved \
+          groups;\n\
+         \           deinterleave in-register into the split lane registers. \
+          */\n");
+    for j = 0 to c.radix - 1 do
+      let addr =
+        Printf.sprintf "2*(b * in_group_stride + %d * in_leg_stride)" j
+      in
+      match c.isa.Isa.vec_width with
+      | 4 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        { const __m256d _ilza = _mm256_loadu_pd(&in_z[%s]);\n\
+               \          const __m256d _ilzb = _mm256_loadu_pd(&in_z[%s + \
+                4]);\n\
+               \          lane_re_%d = \
+                _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, _ilzb), \
+                0xD8);\n\
+               \          lane_im_%d = \
+                _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, _ilzb), \
+                0xD8); }\n"
+               addr addr j u_re j u_im)
+      | 2 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        { const __m128d _ilza = _mm_loadu_pd(&in_z[%s]);\n\
+               \          const __m128d _ilzb = _mm_loadu_pd(&in_z[%s + 2]);\n\
+               \          lane_re_%d = _mm_unpack%s_pd(_ilza, _ilzb);\n\
+               \          lane_im_%d = _mm_unpack%s_pd(_ilza, _ilzb); }\n"
+               addr addr j u_re j u_im)
+      | 1 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        lane_re_%d = in_z[%s + %d];\n\
+               \        lane_im_%d = in_z[%s + %d];\n"
+               j addr (if sw then 1 else 0) j addr (if sw then 0 else 1))
+      | w ->
+          failwith
+            (Printf.sprintf
+               "codelet_oop il_in: vec_width %d not emitted (avx512 masked \
+                lattice pending)"
+               w)
+    done
+  end
+  else begin
+    let base_re =
+      match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "in_re"
+    in
+    let base_im =
+      match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "in_im"
+    in
     Buffer.add_string buf
-      (Printf.sprintf "        lane_im_%d = %s;\n" j
-         (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
-            (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
-               base_im j)))
-  done
+      "        /* UnitGroup load: vec_width groups are consecutive (stride 1)\n";
+    Buffer.add_string buf
+      "           so they load as one SIMD register per leg. R separate\n";
+    Buffer.add_string buf
+      "           strided loads populate the R lane registers — no transpose. \
+       */\n";
+    for j = 0 to c.radix - 1 do
+      Buffer.add_string buf
+        (Printf.sprintf "        lane_re_%d = %s;\n" j
+           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
+                 base_re j)));
+      Buffer.add_string buf
+        (Printf.sprintf "        lane_im_%d = %s;\n" j
+           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
+                 base_im j)))
+    done
+  end
 
 (* ═══════════════════════════════════════════════════════════════
  * LOAD EDGE — dispatch
@@ -507,29 +617,85 @@ let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
        end)
     done
   end;
-  let base_re =
-    match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
-  in
-  let base_im =
-    match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "out_im"
-  in
-  Buffer.add_string buf
-    "        /* UnitGroup store: R separate strided SIMD stores, no transpose. \
-     */\n";
-  for j = 0 to c.radix - 1 do
+  if il_out_active () then begin
+    (* IL store: interleave the split out_lane pair in-register and store
+       vec_width consecutive groups as (re,im) pairs in out_z. Composes with
+       the post-tw cmul above (which operates on out_lane registers). Width-
+       parametric for the SSE2/scalar tail passes. _sw: (im,re)-swapped write
+       (the bwd swap identity folded into the lattice). *)
+    let sw = !current_oop_il_out_sw in
     Buffer.add_string buf
-      (Printf.sprintf "        %s;\n"
-         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
-            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
-               base_re j)
-            (Printf.sprintf "out_lane_re_%d" j)));
+      (if sw then
+         "        /* UnitGroup IL_SW store: interleave in-register as (im,re) \
+          — bwd swap. */\n"
+       else
+         "        /* UnitGroup IL store: interleave in-register, store \
+          vec_width\n\
+         \           consecutive groups as (re,im) pairs in out_z. */\n");
+    for j = 0 to c.radix - 1 do
+      let addr =
+        Printf.sprintf "2*(b * out_group_stride + %d * out_leg_stride)" j
+      in
+      let re_n = Printf.sprintf "out_lane_re_%d" j
+      and im_n = Printf.sprintf "out_lane_im_%d" j in
+      let a = if sw then im_n else re_n and bq = if sw then re_n else im_n in
+      match c.isa.Isa.vec_width with
+      | 4 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        { const __m256d _illo = _mm256_unpacklo_pd(%s, %s);\n\
+               \          const __m256d _ilhi = _mm256_unpackhi_pd(%s, %s);\n\
+               \          _mm256_storeu_pd(&out_z[%s], \
+                _mm256_permute2f128_pd(_illo, _ilhi, 0x20));\n\
+               \          _mm256_storeu_pd(&out_z[%s + 4], \
+                _mm256_permute2f128_pd(_illo, _ilhi, 0x31)); }\n"
+               a bq a bq addr addr)
+      | 2 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        { _mm_storeu_pd(&out_z[%s], _mm_unpacklo_pd(%s, %s));\n\
+               \          _mm_storeu_pd(&out_z[%s + 2], _mm_unpackhi_pd(%s, \
+                %s)); }\n"
+               addr a bq addr a bq)
+      | 1 ->
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        out_z[%s] = %s;\n\
+               \        out_z[%s + 1] = %s;\n"
+               addr a addr bq)
+      | w ->
+          failwith
+            (Printf.sprintf
+               "codelet_oop il_out: vec_width %d not emitted (avx512 masked \
+                lattice pending)"
+               w)
+    done
+  end
+  else begin
+    let base_re =
+      match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
+    in
+    let base_im =
+      match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "out_im"
+    in
     Buffer.add_string buf
-      (Printf.sprintf "        %s;\n"
-         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
-            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
-               base_im j)
-            (Printf.sprintf "out_lane_im_%d" j)))
-  done
+      "        /* UnitGroup store: R separate strided SIMD stores, no \
+       transpose. */\n";
+    for j = 0 to c.radix - 1 do
+      Buffer.add_string buf
+        (Printf.sprintf "        %s;\n"
+           (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
+                 base_re j)
+              (Printf.sprintf "out_lane_re_%d" j)));
+      Buffer.add_string buf
+        (Printf.sprintf "        %s;\n"
+           (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
+                 base_im j)
+              (Printf.sprintf "out_lane_im_%d" j)))
+    done
+  end
 
 (* ═══════════════════════════════════════════════════════════════
  * STORE EDGE — dispatch

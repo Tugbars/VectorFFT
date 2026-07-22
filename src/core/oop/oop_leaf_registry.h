@@ -136,4 +136,65 @@ static inline vfft_oop11_fn vfft_oop_t1_fn(int R)
     }
 }
 
+/* ---- IL-boundary twins (P2, docs/roadmap/row_major_engine.md §11f) ----
+ * Natively emitted (gen_radix --oop-il-in[-sw] / --oop-il-out[-sw]); same
+ * 11-arg ABI with (z, unused) replacing the split pair on the folded side.
+ * _sw = (im,re)-swapped lattice: the bwd swap identity folded into the
+ * boundary (an interleaved z buffer cannot pointer-swap re/im).
+ * avx2 only for now (avx512 masked IL lattice pending) — the resolvers
+ * return 0 on other ISAs so callers degrade to the split path. */
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_IL(R) \
+  extern void radix##R##_n1_oop_fwd_avx2_UG_UG_il_in( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_n1_oop_fwd_avx2_UG_UG_il_in_sw( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_il_out( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_il_out_sw( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_IL(4) VFFT_OOP_DECL_IL(8) VFFT_OOP_DECL_IL(16)
+VFFT_OOP_DECL_IL(32) VFFT_OOP_DECL_IL(64)
+#endif
+
+/* il_in leaf (reads interleaved z, writes split). sw=1 -> (im,re) read. */
+static inline vfft_oop11_fn vfft_oop_leaf_il_fn(int R, int sw)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return sw ? radix##R##_n1_oop_fwd_avx2_UG_UG_il_in_sw \
+                                : radix##R##_n1_oop_fwd_avx2_UG_UG_il_in;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)sw;
+    return 0;
+#endif
+}
+
+/* t1 with interleaved stores (reads split, writes z). sw=1 -> (im,re) write. */
+static inline vfft_oop11_fn vfft_oop_t1_il_fn(int R, int sw)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UG_UG_il_out_sw \
+                                : radix##R##_t1_oop_fwd_avx2_UG_UG_il_out;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)sw;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

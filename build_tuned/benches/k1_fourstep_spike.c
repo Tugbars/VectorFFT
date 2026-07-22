@@ -94,6 +94,12 @@ static void transpose_split(const double *s, double *d, int R2, int R1)
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 K1_IL_IN_DECL(4) K1_IL_IN_DECL(8) K1_IL_IN_DECL(16) K1_IL_IN_DECL(32) K1_IL_IN_DECL(64)
 
+/* NATIVE-emitted t1_oop il_out twins (P2: the exit sweep, fused) */
+#define K1_T1_ILOUT_DECL(R) extern void radix##R##_t1_oop_fwd_avx2_UG_UG_il_out( \
+    const double *, const double *, double *, double *,                           \
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+K1_T1_ILOUT_DECL(4) K1_T1_ILOUT_DECL(8) K1_T1_ILOUT_DECL(16) K1_T1_ILOUT_DECL(32) K1_T1_ILOUT_DECL(64)
+
 static vfft_oop11_fn k1_il_in_leaf(int R)
 {
     switch (R) {
@@ -102,6 +108,18 @@ static vfft_oop11_fn k1_il_in_leaf(int R)
     case 16: return radix16_n1_oop_fwd_avx2_UG_UG_il_in;
     case 32: return radix32_n1_oop_fwd_avx2_UG_UG_il_in;
     case 64: return radix64_n1_oop_fwd_avx2_UG_UG_il_in;
+    default: return 0;
+    }
+}
+
+static vfft_oop11_fn k1_t1_ilout(int R)
+{
+    switch (R) {
+    case 4:  return radix4_t1_oop_fwd_avx2_UG_UG_il_out;
+    case 8:  return radix8_t1_oop_fwd_avx2_UG_UG_il_out;
+    case 16: return radix16_t1_oop_fwd_avx2_UG_UG_il_out;
+    case 32: return radix32_t1_oop_fwd_avx2_UG_UG_il_out;
+    case 64: return radix64_t1_oop_fwd_avx2_UG_UG_il_out;
     default: return 0;
     }
 }
@@ -261,13 +279,14 @@ static void mono64_il_fwd(const double *z_in, double *z_out)
     }
 }
 
-enum { W_BAILEY = 0, W_ARMA, W_ARMA_IP, W_ARMA_IL, W_LEAFPASS, W_TRANSPOSE, W_T1,
-       W_SCALAR, W_LEAFN, W_MONO64, W_MONO64_IL };
+enum { W_BAILEY = 0, W_ARMA, W_ARMA_IP, W_ARMA_IL, W_ARMA_IL2, W_LEAFPASS, W_TRANSPOSE,
+       W_T1, W_SCALAR, W_LEAFN, W_MONO64, W_MONO64_IL };
 
 typedef struct {
     vfft_oop_plan_t *p;      /* forced BAILEY2 pair (leaf, t1p, Qr/Qi, R1, R2) */
     vfft_oop11_fn leafN;     /* whole-N leaf, N<=128, else NULL */
     vfft_oop11_fn il_leaf;   /* il_in column-pass leaf for the current pair (R2 pow2<=64) */
+    vfft_oop11_fn t1_il;     /* emitted t1_oop il_out twin for the current pair (R1 pow2<=64) */
     stride_plan_t *sp;       /* scalar tier (in-place lane engine, K=1) */
     int N;
     const double *xr, *xi;   /* input (const during OOP arms) */
@@ -308,6 +327,15 @@ static void run(ctx_t *c, int what)
         transpose_split(c->ti_, c->di, (int)R2, (int)R1);
         c->p->t1p(c->dr, c->di, c->dr, c->di, c->p->Qr, c->p->Qi, R2, 1, R2, 1, R2);
         interleave_store(c->dr, c->di, c->z, c->N);
+        break; }
+    case W_ARMA_IL2: {
+        /* v2: 3 passes, NO exit sweep — the emitted t1_oop il_out twin reads
+         * split d and stores interleaved z directly. z -> z in place. */
+        const size_t R1 = (size_t)c->p->R1, R2 = (size_t)c->p->R2;
+        c->il_leaf(c->z, 0, c->tr_, c->ti_, 0, 0, R1, 1, R1, 1, R1);
+        transpose_split(c->tr_, c->dr, (int)R2, (int)R1);
+        transpose_split(c->ti_, c->di, (int)R2, (int)R1);
+        c->t1_il(c->dr, c->di, c->z, 0, c->p->Qr, c->p->Qi, R2, 1, R2, 1, R2);
         break; }
     case W_MONO64_IL:
         mono64_il_fwd(c->z, c->z);
@@ -474,19 +502,27 @@ int main(int argc, char **argv)
                 memcpy(wr, xr, (size_t)N * 8); memcpy(wi, xi, (size_t)N * 8);
                 run(&c, W_ARMA_IP);
                 double ei = max_err(N, wr, wi, nr, nsi);
-                double eil = -1.0;
+                double eil = -1.0, eil2 = -1.0;
                 c.il_leaf = k1_il_in_leaf(pR2[i]);
+                c.t1_il = k1_t1_ilout(pR1[i]);
                 if (c.il_leaf) {
                     fill_il(z, xr, xi, N);
                     run(&c, W_ARMA_IL);
                     eil = max_err_il(N, z, nr, nsi);
+                    if (c.t1_il) {
+                        fill_il(z, xr, xi, N);
+                        run(&c, W_ARMA_IL2);
+                        eil2 = max_err_il(N, z, nr, nsi);
+                    }
                 }
                 const char *bad = (eb > tol || ea > tol || ei > tol ||
                                    (c.il_leaf && eil > tol) ||
-                                   eb != eb || ea != ea || ei != ei || eil != eil) ? "  <FAIL>" : "";
+                                   (c.il_leaf && c.t1_il && eil2 > tol) ||
+                                   eb != eb || ea != ea || ei != ei ||
+                                   eil != eil || eil2 != eil2) ? "  <FAIL>" : "";
                 if (bad[0]) fails++;
-                printf("  gate %-3s %3dx%-3d  B2=%.2e  A=%.2e  Aip=%.2e  Ail=%.2e  cross=%.2e%s\n",
-                       inp ? "rnd" : "det", pR1[i], pR2[i], eb, ea, ei, eil, xd, bad);
+                printf("  gate %-3s %3dx%-3d  B2=%.2e  A=%.2e  Aip=%.2e  Ail=%.2e  Ail2=%.2e  cross=%.2e%s\n",
+                       inp ? "rnd" : "det", pR1[i], pR2[i], eb, ea, ei, eil, eil2, xd, bad);
             }
             if (c.leafN) {
                 run(&c, W_LEAFN);
@@ -509,9 +545,9 @@ int main(int argc, char **argv)
         if (fails) { printf("  GATE FAILURES (%d) — timings skipped\n", fails); continue; }
 
         /* ---- timings (rand input persists from gate loop) ---- */
-        printf("  %-9s %10s %10s %10s %10s %7s   %s\n", "pair", "B2(ns)", "A(ns)", "Aip(ns)", "Ail(ns)", "A/B2", "A parts: leaf/tr/t1 (ns)");
-        double bestB = 1e18, bestA = 1e18, bestI = 1e18, bestL = 1e18;
-        int bestBp = -1, bestAp = -1, bestIp = -1, bestLp = -1;
+        printf("  %-9s %10s %10s %10s %10s %10s %7s   %s\n", "pair", "B2(ns)", "A(ns)", "Aip(ns)", "Ail(ns)", "Ail2(ns)", "A/B2", "A parts: leaf/tr/t1 (ns)");
+        double bestB = 1e18, bestA = 1e18, bestI = 1e18, bestL = 1e18, bestL2 = 1e18;
+        int bestBp = -1, bestAp = -1, bestIp = -1, bestLp = -1, bestL2p = -1;
         for (int i = 0; i < nP; i++) {
             if (!plans[i]) continue;
             c.p = plans[i];
@@ -519,9 +555,11 @@ int main(int argc, char **argv)
             double ta = bench(&c, W_ARMA);
             memcpy(wr, xr, (size_t)N * 8); memcpy(wi, xi, (size_t)N * 8);
             double ti = bench(&c, W_ARMA_IP);
-            double til = -1;
+            double til = -1, til2 = -1;
             c.il_leaf = k1_il_in_leaf(pR2[i]);
+            c.t1_il = k1_t1_ilout(pR1[i]);
             if (c.il_leaf) { fill_il(z, xr, xi, N); til = bench(&c, W_ARMA_IL); }
+            if (c.il_leaf && c.t1_il) { fill_il(z, xr, xi, N); til2 = bench(&c, W_ARMA_IL2); }
             double tl = bench(&c, W_LEAFPASS);
             double tt = bench(&c, W_TRANSPOSE);
             double t1 = bench(&c, W_T1);
@@ -529,14 +567,18 @@ int main(int argc, char **argv)
             if (ta < bestA) { bestA = ta; bestAp = i; }
             if (ti < bestI) { bestI = ti; bestIp = i; }
             if (til > 0 && til < bestL) { bestL = til; bestLp = i; }
-            printf("  %3dx%-5d %10.0f %10.0f %10.0f %10.0f %7.2f   %0.f / %0.f / %0.f\n",
-                   pR1[i], pR2[i], tb, ta, ti, til, ta / tb, tl, tt, t1);
+            if (til2 > 0 && til2 < bestL2) { bestL2 = til2; bestL2p = i; }
+            printf("  %3dx%-5d %10.0f %10.0f %10.0f %10.0f %10.0f %7.2f   %0.f / %0.f / %0.f\n",
+                   pR1[i], pR2[i], tb, ta, ti, til, til2, ta / tb, tl, tt, t1);
         }
         if (bestIp >= 0)
             printf("  BEST-IP: %dx%d = %.0f ns (in-place 2-buffer)\n", pR1[bestIp], pR2[bestIp], bestI);
         if (bestLp >= 0)
             printf("  BEST-IL: %dx%d = %.0f ns (z->z native interleaved, v1 with exit sweep)\n",
                    pR1[bestLp], pR2[bestLp], bestL);
+        if (bestL2p >= 0)
+            printf("  BEST-IL2: %dx%d = %.0f ns (z->z, EMITTED t1_oop il_out, 3 passes, no sweep)\n",
+                   pR1[bestL2p], pR2[bestL2p], bestL2);
         if (c.leafN)
             printf("  LEAF(%d) : %10.0f ns   (production K=1 route at N<=128)\n", N, bench(&c, W_LEAFN));
         if (N == 64) {
