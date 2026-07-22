@@ -1994,9 +1994,17 @@ let canonical_name ~radix ~isa ~direction ~load_pat ~store_pat ~buffer ~twiddles
  * is block-scoped so t%d/lane names cannot collide.
  * ═══════════════════════════════════════════════════════════════ *)
 
-let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) : string =
+(* il=true: z->z interleaved boundaries (the driver's load/store edges emit
+   the existing il lattices). sw=true (implies il): the (im,re)-swapped
+   lattices — this IS the backward transform via the swap identity
+   IDFT = swap(DFT(swap(.))): forward DAG, forward rodata tables, both swaps
+   folded into the boundaries (same algebra the 2-pass bwd_il gates proved).
+   Split backward needs no codelet at all (caller pointer-swaps re/im). *)
+let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
+    ~(sw : bool) : string =
   if isa.Isa.vec_width <> 4 then
     failwith "--k1-mono: avx2 only (vec_width 4)";
+  if sw && not il then failwith "--k1-mono: --k1-sw requires --k1-il";
   (* default pair per N; --k1-r1 overrides R1 (r2 = n/r1) *)
   let r1 =
     match r1_opt with
@@ -2020,7 +2028,10 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) : string =
   current_oop_il_in_sw := false;
   current_oop_il_out_sw := false;
   let fname =
-    if n = 64 && r1 = 8 then "vfft_k1_mono64_fwd_avx2" (* M1 name kept *)
+    if il then
+      Printf.sprintf "vfft_k1_mono%d_%dx%d_il_%s_avx2" n r1 r2
+        (if sw then "bwd" else "fwd")
+    else if n = 64 && r1 = 8 then "vfft_k1_mono64_fwd_avx2" (* M1 name kept *)
     else Printf.sprintf "vfft_k1_mono%d_%dx%d_fwd_avx2" n r1 r2
   in
   let mk_cfg r =
@@ -2078,21 +2089,41 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) : string =
       Buffer.add_string buf "};\n")
     [ ("twr", cos); ("twi", sin) ];
   (* uniform 11-arg ABI (vfft_oop11_fn-shaped; strides/tw/me ignored) *)
-  Buffer.add_string buf
-    (Printf.sprintf
-       "\n\
-        __attribute__((target(\"avx2,fma\")))\n\
-        void %s(\n\
-       \    const double * __restrict__ k1_in_re,\n\
-       \    const double * __restrict__ k1_in_im,\n\
-       \    double       * __restrict__ k1_out_re,\n\
-       \    double       * __restrict__ k1_out_im,\n\
-       \    const double * tw_re, const double * tw_im,\n\
-       \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
-        {\n\
-       \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; \
-        (void)s3; (void)me;\n"
-       fname);
+  (if il then
+     Buffer.add_string buf
+       (Printf.sprintf
+          "\n\
+           __attribute__((target(\"avx2,fma\")))\n\
+           void %s(\n\
+          \    const double * __restrict__ k1_in_z,          /* interleaved \
+           pairs */\n\
+          \    const double * __restrict__ k1_in_unused,\n\
+          \    double       * __restrict__ k1_out_z,         /* interleaved \
+           pairs */\n\
+          \    double       * __restrict__ k1_out_unused,\n\
+          \    const double * tw_re, const double * tw_im,\n\
+          \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
+           {\n\
+          \    (void)k1_in_unused; (void)k1_out_unused;\n\
+          \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; \
+           (void)s3; (void)me;\n"
+          fname)
+   else
+     Buffer.add_string buf
+       (Printf.sprintf
+          "\n\
+           __attribute__((target(\"avx2,fma\")))\n\
+           void %s(\n\
+          \    const double * __restrict__ k1_in_re,\n\
+          \    const double * __restrict__ k1_in_im,\n\
+          \    double       * __restrict__ k1_out_re,\n\
+          \    double       * __restrict__ k1_out_im,\n\
+          \    const double * tw_re, const double * tw_im,\n\
+          \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
+           {\n\
+          \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; \
+           (void)s3; (void)me;\n"
+          fname));
   (* function-scope U vars: u_{re,im}_{h}_{m} *)
   for h = 0 to (r1 / 4) - 1 do
     for m = 0 to r2 - 1 do
@@ -2101,17 +2132,32 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) : string =
     done
   done;
   (* ---- stage 1: column chunks ---- *)
+  current_oop_il_in := il && not sw;
+  current_oop_il_in_sw := il && sw;
   for h = 0 to (r1 / 4) - 1 do
-    Buffer.add_string buf
-      (Printf.sprintf
-         "    { /* stage-1 chunk h=%d: columns %d..%d */\n\
-         \        const double *in_re = k1_in_re + %d;\n\
-         \        const double *in_im = k1_in_im + %d;\n\
-         \        const size_t b = 0;\n\
-         \        const size_t in_leg_stride = %d;\n\
-         \        const size_t in_group_stride = 1;\n\
-         \        (void)b; (void)in_group_stride;\n"
-         h (4 * h) ((4 * h) + 3) (4 * h) (4 * h) r1);
+    if il then
+      Buffer.add_string buf
+        (Printf.sprintf
+           "    { /* stage-1 chunk h=%d: columns %d..%d (interleaved) */\n\
+           \        const double *in_z = k1_in_z + %d;\n\
+           \        const size_t b = 0;\n\
+           \        const size_t in_leg_stride = %d;\n\
+           \        const size_t in_group_stride = 1;\n\
+           \        (void)b; (void)in_group_stride;\n"
+           h (4 * h) ((4 * h) + 3)
+           (2 * 4 * h)
+           r1)
+    else
+      Buffer.add_string buf
+        (Printf.sprintf
+           "    { /* stage-1 chunk h=%d: columns %d..%d */\n\
+           \        const double *in_re = k1_in_re + %d;\n\
+           \        const double *in_im = k1_in_im + %d;\n\
+           \        const size_t b = 0;\n\
+           \        const size_t in_leg_stride = %d;\n\
+           \        const size_t in_group_stride = 1;\n\
+           \        (void)b; (void)in_group_stride;\n"
+           h (4 * h) ((4 * h) + 3) (4 * h) (4 * h) r1);
     emit_lane_decls buf cfg_col;
     emit_load_edge buf cfg_col;
     emit_body_monolithic buf cfg_col prep_col;
@@ -2170,17 +2216,33 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) : string =
         [ "re"; "im" ]
     done;
     emit_body_monolithic buf cfg_row prep_row;
-    Buffer.add_string buf
-      (Printf.sprintf
-         "        double *out_re = k1_out_re + %d;\n\
-         \        double *out_im = k1_out_im + %d;\n\
-         \        const size_t b = 0;\n\
-         \        const size_t out_leg_stride = %d;\n\
-         \        const size_t out_group_stride = 1;\n\
-         \        (void)b; (void)out_group_stride;\n"
-         (4 * mh) (4 * mh) r2);
+    current_oop_il_in := false;
+    current_oop_il_in_sw := false;
+    current_oop_il_out := il && not sw;
+    current_oop_il_out_sw := il && sw;
+    (if il then
+       Buffer.add_string buf
+         (Printf.sprintf
+            "        double *out_z = k1_out_z + %d;\n\
+            \        const size_t b = 0;\n\
+            \        const size_t out_leg_stride = %d;\n\
+            \        const size_t out_group_stride = 1;\n\
+            \        (void)b; (void)out_group_stride;\n"
+            (2 * 4 * mh) r2)
+     else
+       Buffer.add_string buf
+         (Printf.sprintf
+            "        double *out_re = k1_out_re + %d;\n\
+            \        double *out_im = k1_out_im + %d;\n\
+            \        const size_t b = 0;\n\
+            \        const size_t out_leg_stride = %d;\n\
+            \        const size_t out_group_stride = 1;\n\
+            \        (void)b; (void)out_group_stride;\n"
+            (4 * mh) (4 * mh) r2));
     emit_store_edge buf cfg_row;
     Buffer.add_string buf "    }\n"
   done;
   Buffer.add_string buf "}\n";
+  current_oop_il_out := false;
+  current_oop_il_out_sw := false;
   Buffer.contents buf
