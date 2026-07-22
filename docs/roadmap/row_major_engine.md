@@ -739,6 +739,54 @@ AOT spec twins become redundant (JIT covers every cell incl. heuristic-miss ones
 only if the no-toolchain fallback matters; (c) the wrapper trick generalizes to the IL
 routes (same two-stage shape) — one more `_vfft_k1jit_route_srcs` table row each.
 
+## 13.5 JIT race verdict + residency probe + Item B (CCOL) PRODUCTIONIZED (2026-07-23)
+
+**JIT race (rotated calibrator + 4 pinned cooled reruns of 512)**: jit **wins 2048 outright**
+(2498.9, a cell with NO AOT twin — generalization proven); 1024/4096 = statistical siblings
+with the AOT twins; **512 loss is REAL, not noise** (2pa 374.8–383.7 vs jit 425–447 in 3
+mutually-consistent runs; disassembly refutes both DLL-overhead and unroll-blowup — baked
+`_k1_s2` ≈ unbaked t1 at 4715/4600 insns, 480/474 spills; baking is NEUTRAL on radix-64@2
+iters, the residual deficit is the baked leaf's 0.9KB compact loop vs the AOT leaf's
+specialized stride paths). At the wisdom-driven MKL bench, jit also won 256 and 8192 on
+FRESH compiles. me-size heuristics are dead (me=4 wins, me=8 loses) → **prefer_jit must be a
+calibrated per-cell wisdom flag** (queued).
+
+**Wisdom-driven vs-MKL bench** (`benches/bench_k1_best_vs_mkl.c`, canonical isolated): split
+axis 64=1.18× · 128=1.30× · 256=1.18× (jit) · 512=0.89 · 1024=0.95 (jit; also edges MKL-IL)
+· 2048=0.67 · 4096=0.65 · 8192=0.58. IL axis 0.48–0.71 everywhere (CCE is MKL's home turf).
+
+**Residency probe** (`benches/k1_stage_probe.c`): radix-64 t1 HELD FIXED, R2 swept — ns/el
+0.56–0.68 (L1: 256/512) → 0.71–0.91 (1024, ws=48KB=L1d) → 0.80–1.32 (L2: 2048–8192). Same
+kernel, same 480 spills both sides ⇒ the ≥2048 deficit is CACHE RESIDENCY, not codelet
+quality. Leaf degrades harder (0.14→1.29). Spill hypothesis refuted by measurement.
+
+**Item B spike** (`benches/k1_ccol_spike.c`): column pass = `vfft_proto_execute_fwd_oop`
+batch plan at K=R1 (the §11 batch identity through the production engine) + EMPIRICALLY
+DISCOVERED perm folded into the transpose + flat t1. Gates ~5e-15 everywhere incl. 16384.
+Isolated: **2048 −15% (cc64[8,4] 2972 vs 2pa 3507) · 4096 −5.7% ([8,8]-tiled) · 8192 tie ·
+16384 = FIRST NUMBER EVER, 52.2µs ([8,8,4]-tiled, 0.45× MKL-IL)**. cc32 (cheap radix-32
+combine) REFUTED at every N; tiled transpose wins ≥4096 (−10% at 8192) → ships as the only
+variant.
+
+**PRODUCTIONIZED as route 7 (`VFFT_K1_SP_CCOL`)**: `vfft_oop_plan_create_k1_cc(N, R1,
+chain, nf, reg)` (self-validating perm discovery at create — convention drift fails the
+create, caller falls back), `_vfft_k1_transpose_perm` (tiled, TB=32),
+`vfft_oop_execute_fwd_ccol` (in-place safe; bwd = pointer swap), destroy tears down the
+column plan. Wisdom kind-3 line gains ONE token when spr==7: the chain code (decimal digits
+= log2 factors, [8,4]→32, [8,8,4]→332; `vfft_k1_cc_chain_encode/decode`). Front door:
+wisdom-driven; heuristic default = CCOL 64×(N/64) when NO classic pair exists (N≥16384) via
+`vfft_k1_cc_default_chain` (reproduces every spike winner). Calibrator: cc arms (2 chains
+per cell, names `cc<code>`), SPMAP/ILMAP extended to 16 entries (fixes a pre-existing OOB
+when a spec/jit candidate won), K1WISDOM emits the chain token; aggregator maps
+`cc<code>`/`jit-v3`/spec names (the old name-map gap closed). Master gate: +5 CCOL cells
+(det+rnd × OOP-vs-naive, in-place BIT-identical to OOP, roundtrip, chain codec) — ALL GREEN
+incl. 16384.
+
+Ceiling note: CCOL narrows ≥2048 (0.67→~0.75 at 2048) but still runs nstages+2 full sweeps
+vs MKL's sectioned 2 — closing further needs transpose-into-last-stage fusion or a sectioned
+exchange (separate decision). Next: prefer_jit wisdom flag; AOT-twin retirement; the K=1
+change-inventory + call-path doc (user request); r2c/2D analogues.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).

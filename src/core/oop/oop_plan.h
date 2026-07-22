@@ -62,7 +62,13 @@ enum
     VFFT_K1_SP_TWL = 3,  /* 2pa with the linear twiddle stream  */
     VFFT_K1_SP_MONO = 4, /* emitted whole-four-step mono (pair from R1: mono_pair_fn) */
     VFFT_K1_SP_2PA_L3 = 5, /* 2pa with the log3 t1 (create swaps t1_ul -> t1_ul_l3) */
-    VFFT_K1_SP_3P_L3 = 6   /* 3p with the log3 t1 (create swaps t1p -> t1_l3)       */
+    VFFT_K1_SP_3P_L3 = 6,  /* 3p with the log3 t1 (create swaps t1p -> t1_l3)       */
+    VFFT_K1_SP_CCOL = 7    /* composed column pass (§12.4 item 5): batch-engine
+                            * column plan (contiguous stages, no leaf ceiling) ->
+                            * permuted tiled transpose (absorbs the column plan's
+                            * digit reversal) -> flat t1. Wisdom carries the
+                            * column chain (cc_chain code). ≥2048 winner cells +
+                            * the ONLY route for N ≥ 16384 (R2 > 128). */
 };
 enum
 {
@@ -115,6 +121,16 @@ typedef struct
     vfft_oop11_fn t1_ul_il, t1_ul_il_sw;
     /* LOG3 (leg-axis derivation) twins — same Qr/Qi, drop-in fn swaps */
     vfft_oop11_fn t1_l3, t1_ul_l3;
+    /* CCOL (K=1 composed column pass): the column pass as a K=R1 batch plan
+     * (the §11 batch identity run through the production stride engine) +
+     * the row permutation mapping spectral row m to the plan's physical
+     * output row (absorbs the digit reversal into the transpose for free).
+     * colp/cc_perm non-NULL only on plans made by create_k1_cc; such plans
+     * carry NO leaf (R2 may exceed the 128-leaf ceiling) and serve ONLY the
+     * ccol execute entry. cc_chain/cc_nf persist the calibrated chain. */
+    stride_plan_t *colp;
+    int *cc_perm;
+    int cc_nf, cc_chain[6];
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -144,6 +160,43 @@ static inline void _vfft_k1_transpose(const double *s, double *d, int R2, int R1
             _mm256_storeu_pd(d + (size_t)(t + 3) * R2 + m,
                              _mm256_permute2f128_pd(u1, u3, 0x31));
         }
+}
+
+/* CCOL transpose: d[t*R2 + m] = s[perm[m]*R1 + t] — the row lookup absorbs
+ * the column plan's digit reversal at zero cost (the transpose touches every
+ * element anyway). TILED over t (TB=32 → ≤32 store lines live per m-sweep):
+ * plain-vs-tiled raced in the spike — tie at 2048, tiled −10% at 8192, so
+ * tiled ships as the single variant. perm = identity reproduces
+ * _vfft_k1_transpose exactly. */
+static inline void _vfft_k1_transpose_perm(const double *s, double *d,
+                                           int R2, int R1, const int *perm)
+{
+    const int TB = 32;
+    for (int tb = 0; tb < R1; tb += TB) {
+        const int te = tb + TB < R1 ? tb + TB : R1;
+        for (int m = 0; m < R2; m += 4) {
+            const double *r0 = s + (size_t)perm[m + 0] * R1;
+            const double *r1 = s + (size_t)perm[m + 1] * R1;
+            const double *r2 = s + (size_t)perm[m + 2] * R1;
+            const double *r3 = s + (size_t)perm[m + 3] * R1;
+            for (int t = tb; t < te; t += 4) {
+                __m256d a = _mm256_loadu_pd(r0 + t);
+                __m256d b = _mm256_loadu_pd(r1 + t);
+                __m256d c = _mm256_loadu_pd(r2 + t);
+                __m256d e = _mm256_loadu_pd(r3 + t);
+                __m256d u0 = _mm256_unpacklo_pd(a, b), u1 = _mm256_unpackhi_pd(a, b);
+                __m256d u2 = _mm256_unpacklo_pd(c, e), u3 = _mm256_unpackhi_pd(c, e);
+                _mm256_storeu_pd(d + (size_t)(t + 0) * R2 + m,
+                                 _mm256_permute2f128_pd(u0, u2, 0x20));
+                _mm256_storeu_pd(d + (size_t)(t + 1) * R2 + m,
+                                 _mm256_permute2f128_pd(u1, u3, 0x20));
+                _mm256_storeu_pd(d + (size_t)(t + 2) * R2 + m,
+                                 _mm256_permute2f128_pd(u0, u2, 0x31));
+                _mm256_storeu_pd(d + (size_t)(t + 3) * R2 + m,
+                                 _mm256_permute2f128_pd(u1, u3, 0x31));
+            }
+        }
+    }
 }
 
 static inline int _vfft_oop_stage_aliases(size_t stride_doubles, int streams)
@@ -330,6 +383,180 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     else
         p->t1_ul_twl = 0;
     return p;
+}
+
+/* Default CCOL column chain per R2 — reproduces every spike winner (2026-07-23:
+ * [8,4]@32, [8,8]@64, [8,16]@128, [8,8,4]@256). Returns nf, 0 = unsupported. */
+static inline int vfft_k1_cc_default_chain(int R2, int *chain)
+{
+    switch (R2) {
+    case 16:   chain[0] = 16; return 1;
+    case 32:   chain[0] = 8; chain[1] = 4;  return 2;
+    case 64:   chain[0] = 8; chain[1] = 8;  return 2;
+    case 128:  chain[0] = 8; chain[1] = 16; return 2;
+    case 256:  chain[0] = 8; chain[1] = 8; chain[2] = 4;  return 3;
+    case 512:  chain[0] = 8; chain[1] = 8; chain[2] = 8;  return 3;
+    case 1024: chain[0] = 8; chain[1] = 8; chain[2] = 16; return 3;
+    default:   return 0;
+    }
+}
+
+/* CCOL chain <-> wisdom int code: decimal digits are log2 of the factors,
+ * first factor = leading digit ([8,4] -> 32, [8,16] -> 34, [8,8,4] -> 332).
+ * Factors are 4..64 (digits 2..6, never 0) so the round-trip is unambiguous. */
+static inline int vfft_k1_cc_chain_encode(const int *chain, int nf)
+{
+    int code = 0;
+    for (int s = 0; s < nf; s++) {
+        int d = 0, v = chain[s];
+        while (v > 1) { v >>= 1; d++; }
+        if ((1 << d) != chain[s] || d < 2 || d > 6) return 0;
+        code = code * 10 + d;
+    }
+    return code;
+}
+static inline int vfft_k1_cc_chain_decode(int code, int *chain)
+{
+    /* callers pass int[6] (== cc_chain[6]); reject longer codes outright */
+    int digs[6], nd = 0;
+    while (code > 0 && nd < 6) { digs[nd++] = code % 10; code /= 10; }
+    if (!nd || code) return 0;
+    for (int s = 0; s < nd; s++) {
+        int d = digs[nd - 1 - s];
+        if (d < 2 || d > 6) return 0;
+        chain[s] = 1 << d;
+    }
+    return nd;
+}
+
+/* K=1 COMPOSED-COLUMN plan (§12.4 item 5): the column pass as a K=R1 batch
+ * plan through the production stride engine — contiguous per-stage streams
+ * where the monolithic leaf sweeps strided, and NO leaf-radix ceiling (R2 up
+ * to the chain's reach; 16384 = 64x256 runs through this create only).
+ *
+ * The batch plan's digit-reversed output row order is DISCOVERED here (an
+ * all-columns-equal probe against a naive R2-point DFT, bijection required)
+ * rather than derived from the factor chain — self-validating: any convention
+ * drift fails the create instead of silently corrupting, and the caller falls
+ * back to the classic routes. Discovery cost is one R2-point batch execute +
+ * an O(R2^2) scalar DFT + match, plan-time only.
+ *
+ * The plan carries NO leaf and serves ONLY vfft_oop_execute_fwd_ccol (split
+ * axis; bwd = the caller's pointer-swap identity, same as every split route). */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
+    int N, int R1, const int *chain, int nf,
+    const vfft_proto_registry_t *reg)
+{
+    if (R1 <= 0 || (R1 % 4) || (N % R1) || nf < 1 || nf > 6)
+        return NULL;
+    const int R2 = N / R1;
+    if (R2 % 4)
+        return NULL;
+    {
+        long prod = 1;
+        for (int s = 0; s < nf; s++) prod *= chain[s];
+        if (prod != R2)
+            return NULL;
+    }
+    vfft_oop11_fn t1 = vfft_oop_t1_fn(R1);
+    if (!t1)
+        return NULL;
+
+    vfft_oop_plan_t *p = (vfft_oop_plan_t *)calloc(1, sizeof(*p));
+    if (!p)
+        return NULL;
+    p->kind = VFFT_OOP_KIND_BAILEY2V;
+    p->N = N;
+    p->K = 1;
+    p->R1 = R1;
+    p->R2 = R2;
+    p->t1p = t1;
+    p->cc_nf = nf;
+    for (int s = 0; s < nf; s++) p->cc_chain[s] = chain[s];
+
+    p->colp = vfft_proto_plan_create(R2, (size_t)R1, chain, NULL, nf, reg);
+    p->cc_perm = (int *)malloc((size_t)R2 * sizeof(int));
+    p->col_re = (double *)malloc((size_t)N * 8);
+    p->col_im = (double *)malloc((size_t)N * 8);
+    p->Qr = (double *)malloc((size_t)(R1 - 1) * (size_t)R2 * 8);
+    p->Qi = (double *)malloc((size_t)(R1 - 1) * (size_t)R2 * 8);
+    if (!p->colp || !p->cc_perm || !p->col_re || !p->col_im || !p->Qr || !p->Qi)
+        goto fail;
+
+    /* odd-K (K=1) flat-t1 table layout, same as _vfft_oop_fill_bailey */
+    for (int l2 = 1; l2 < R1; l2++)
+        for (int k2 = 0; k2 < R2; k2++) {
+            double a = -2.0 * M_PI * (double)((long)l2 * k2) / (double)N;
+            p->Qr[(size_t)(l2 - 1) * R2 + k2] = cos(a);
+            p->Qi[(size_t)(l2 - 1) * R2 + k2] = sin(a);
+        }
+
+    /* perm discovery: every column carries the same signal, so output row q
+     * holds S[m] for the m with perm[m] == q. Local LCG — library code must
+     * not touch the global rand() state. */
+    {
+        double *pr = (double *)malloc((size_t)N * 8);
+        double *pi = (double *)malloc((size_t)N * 8);
+        double *qr = (double *)malloc((size_t)N * 8);
+        double *qi = (double *)malloc((size_t)N * 8);
+        double *sr = (double *)malloc((size_t)R2 * 4 * 8);
+        int bad = (!pr || !pi || !qr || !qi || !sr);
+        if (!bad) {
+            double *si_ = sr + R2, *Sr = sr + 2 * R2, *Si = sr + 3 * R2;
+            unsigned lcg = 0x9E3779B9u;
+            for (int j = 0; j < R2; j++) {
+                lcg = lcg * 1664525u + 1013904223u;
+                sr[j] = (double)(lcg >> 8) / 16777216.0 - 0.5;
+                lcg = lcg * 1664525u + 1013904223u;
+                si_[j] = (double)(lcg >> 8) / 16777216.0 - 0.5;
+            }
+            for (int j = 0; j < R2; j++)
+                for (int t = 0; t < R1; t++) {
+                    pr[(size_t)j * R1 + t] = sr[j];
+                    pi[(size_t)j * R1 + t] = si_[j];
+                }
+            bad = vfft_proto_execute_fwd_oop(p->colp, pr, pi, qr, qi,
+                                             (size_t)R1) != 0;
+            if (!bad) {
+                double mag = 0;
+                for (int m = 0; m < R2; m++) {
+                    Sr[m] = 0; Si[m] = 0;
+                    for (int j = 0; j < R2; j++) {
+                        double a = -2.0 * M_PI *
+                                   (double)(((long)m * j) % R2) / (double)R2;
+                        double cr = cos(a), ci = sin(a);
+                        Sr[m] += sr[j] * cr - si_[j] * ci;
+                        Si[m] += sr[j] * ci + si_[j] * cr;
+                    }
+                    if (fabs(Sr[m]) + fabs(Si[m]) > mag)
+                        mag = fabs(Sr[m]) + fabs(Si[m]);
+                }
+                for (int m = 0; m < R2 && !bad; m++) {
+                    p->cc_perm[m] = -1;
+                    for (int q = 0; q < R2; q++) {
+                        double d = fabs(qr[(size_t)q * R1] - Sr[m]) +
+                                   fabs(qi[(size_t)q * R1] - Si[m]);
+                        if (d < 1e-6 * mag) {
+                            if (p->cc_perm[m] != -1) { bad = 1; break; }
+                            p->cc_perm[m] = q;
+                        }
+                    }
+                    if (p->cc_perm[m] < 0) bad = 1;
+                }
+            }
+        }
+        free(pr); free(pi); free(qr); free(qi); free(sr);
+        if (bad)
+            goto fail;
+    }
+    return p;
+
+fail:
+    if (p->colp) vfft_proto_plan_destroy(p->colp);
+    free(p->cc_perm); free(p->col_re); free(p->col_im);
+    free(p->Qr); free(p->Qi);
+    free(p);
+    return NULL;
 }
 
 /* Build a MODEB plan (general-N OOP via the stride engine). The SINGLE owner
@@ -539,6 +766,25 @@ static inline int vfft_oop_execute_fwd_2pb(const vfft_oop_plan_t *p,
     return 0;
 }
 
+/* CCOL route (create_k1_cc plans ONLY): batch-engine column pass src -> col
+ * scratch (contiguous stages; src fully consumed), permuted tiled transpose
+ * col -> dst (absorbs the digit reversal), flat t1 in-place on dst — the 3p
+ * shape with the strided leaf replaced. dst == src is safe. */
+static inline int vfft_oop_execute_fwd_ccol(const vfft_oop_plan_t *p,
+                                            const double *sr, const double *si,
+                                            double *dr, double *di)
+{
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->colp || !p->cc_perm)
+        return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    if (vfft_proto_execute_fwd_oop(p->colp, sr, si, p->col_re, p->col_im, R1) != 0)
+        return -1;
+    _vfft_k1_transpose_perm(p->col_re, dr, (int)R2, (int)R1, p->cc_perm);
+    _vfft_k1_transpose_perm(p->col_im, di, (int)R2, (int)R1, p->cc_perm);
+    p->t1p(dr, di, dr, di, p->Qr, p->Qi, R2, 1, R2, 1, R2);
+    return 0;
+}
+
 /* ---- BAILEY2V interleaved entry points (z -> z, natural order, K=1) ----
  * The caller's buffer is INTERLEAVED pairs z[2n]=re, z[2n+1]=im; no
  * conversion pass exists anywhere: the il_in leaf deinterleaves in its load
@@ -639,6 +885,10 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
     free(p->Qi);
     free(p->Qlr); free(p->Qli);
     free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
+    /* CCOL: the column plan is a full stride plan; the perm is ours. */
+    if (p->colp)
+        vfft_proto_plan_destroy(p->colp);
+    free(p->cc_perm);
     /* MODEB owns a full stride plan (stage tables + tape + twiddle pools) — tear
      * it down through the proto destroy, not bare free. (The old "Phase 1 has no
      * destroy, so we leak it" comment was stale: planner.h now has the destroy.) */

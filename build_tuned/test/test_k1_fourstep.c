@@ -403,6 +403,97 @@ int main(void)
         }
     }
 
+    /* ---- CCOL route (§12.4 item 5: composed column pass) ----
+     * OOP fwd vs naive; IN-PLACE fwd bit-identical to OOP (colp fully drains
+     * src before the transpose writes it); roundtrip via the pointer-swap
+     * identity; chain encode/decode round-trip. Includes 16384 — the first
+     * cell past the leaf ceiling — and a single-stage chain (identity perm). */
+    {
+        struct { int N, R1, nf, chain[4]; } cc[] = {
+            {1024,  64, 1, {16}},
+            {2048,  64, 2, {8, 4}},
+            {4096,  64, 2, {8, 8}},
+            {8192,  64, 2, {8, 16}},
+            {16384, 64, 3, {8, 8, 4}},
+        };
+        vfft_proto_registry_t creg;
+        vfft_proto_registry_init(&creg);
+        for (int ci = 0; ci < (int)(sizeof cc / sizeof cc[0]); ci++) {
+            int N = cc[ci].N;
+            double tol = 1e-9 * (double)N, rt_tol = tol * (double)N;
+            int code = vfft_k1_cc_chain_encode(cc[ci].chain, cc[ci].nf);
+            int dchain[6], dnf = vfft_k1_cc_chain_decode(code, dchain);
+            int enc_ok = (dnf == cc[ci].nf);
+            for (int s = 0; enc_ok && s < dnf; s++)
+                if (dchain[s] != cc[ci].chain[s]) enc_ok = 0;
+            if (!enc_ok) {
+                printf("  K1CCOL %d chain encode/decode MISMATCH  <FAIL>\n", N);
+                fails++; continue;
+            }
+            vfft_oop_plan_t *p = vfft_oop_plan_create_k1_cc(
+                N, cc[ci].R1, cc[ci].chain, cc[ci].nf, &creg);
+            if (!p) {
+                printf("  K1CCOL %d create=NULL  <FAIL>\n", N);
+                fails++; continue;
+            }
+            double *xr = ad(N), *xi = ad(N), *nr = ad(N), *ni = ad(N);
+            double *dr = ad(N), *di = ad(N), *wr = ad(N), *wi = ad(N);
+            double *rr = ad(N), *ri = ad(N);
+            for (int inp = 0; inp < 2; inp++) {
+                if (inp == 0)
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = cos(0.7 * n) + 0.1;
+                        xi[n] = sin(1.3 * n) - 0.05;
+                    }
+                else {
+                    srand(999 + N);
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = (double)rand() / RAND_MAX - 0.5;
+                        xi[n] = (double)rand() / RAND_MAX - 0.5;
+                    }
+                }
+                naive_dft(N, xr, xi, nr, ni);
+                /* OOP fwd vs naive */
+                vfft_oop_execute_fwd_ccol(p, xr, xi, dr, di);
+                double ef = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(dr[k] - nr[k]), c2 = fabs(di[k] - ni[k]);
+                    if (c1 > ef) ef = c1;
+                    if (c2 > ef) ef = c2;
+                }
+                /* IN-PLACE fwd == OOP fwd, bit (0.0) */
+                memcpy(wr, xr, (size_t)N * 8);
+                memcpy(wi, xi, (size_t)N * 8);
+                vfft_oop_execute_fwd_ccol(p, wr, wi, wr, wi);
+                double eip = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(wr[k] - dr[k]), c2 = fabs(wi[k] - di[k]);
+                    if (c1 > eip) eip = c1;
+                    if (c2 > eip) eip = c2;
+                }
+                /* roundtrip via the split pointer-swap identity */
+                vfft_oop_execute_fwd_ccol(p, di, dr, ri, rr);
+                double ert = 0;
+                for (int n = 0; n < N; n++) {
+                    double c1 = fabs(rr[n] - (double)N * xr[n]);
+                    double c2 = fabs(ri[n] - (double)N * xi[n]);
+                    if (c1 > ert) ert = c1;
+                    if (c2 > ert) ert = c2;
+                }
+                const char *bad = (ef > tol || eip != 0.0 || ert > rt_tol ||
+                                   ef != ef || ert != ert) ? "  <FAIL>" : "";
+                if (bad[0]) fails++;
+                printf("  K1CCOL %-5d [%d", N, cc[ci].chain[0]);
+                for (int s = 1; s < cc[ci].nf; s++) printf(",%d", cc[ci].chain[s]);
+                printf("] %s fwd=%.2e ip-bit=%.1f rt=%.2e%s\n",
+                       inp ? "rnd" : "det", ef, eip, ert, bad);
+            }
+            afree(xr); afree(xi); afree(nr); afree(ni);
+            afree(dr); afree(di); afree(wr); afree(wi); afree(rr); afree(ri);
+            vfft_oop_plan_destroy(p);
+        }
+    }
+
     printf("\n%s (%d fail)\n", fails ? "FAILURES" : "BAILEY2V: ALL GATES GREEN (split+IL, fwd+bwd, det+rnd)", fails);
     return fails ? 1 : 0;
 }

@@ -26,6 +26,7 @@
 #include "k1_jit_runtime.h"
 
 static vfft_k1_jit_fn g_jit = 0;   /* one cell per process -> one resolve */
+static int g_jit_route = -1;       /* the VFFT_K1_SP_* code the jit bakes */
 
 static double now_ms(void)
 {
@@ -53,13 +54,13 @@ static double *ad(size_t n)
 /* routes */
 enum { R_3P = 0, R_3P_IP, R_2PA_IP, R_2PB_IP, R_TWL_IP, R_3P_IL, R_2P_IL,
        R_MONO, R_MONO_ALT, R_MONO_IL, R_3PL3_IP, R_2PAL3_IP,
-       R_2PB_SPEC, R_2PAL3_SPEC, R_JIT };
+       R_2PB_SPEC, R_2PAL3_SPEC, R_JIT, R_CCOL };
 static const char *RNAME[] = { "3p", "3p-ip", "2pa-ip", "2pb-ip", "twl-ip",
                                "3p-il", "2p-il", "mono", "mono-alt", "mono-il",
                                "3p-l3-ip", "2pa-l3-ip",
-                               "2pb-spec", "2pa-l3-spec", "jit-v3" };
+                               "2pb-spec", "2pa-l3-spec", "jit-v3", "cc" };
 /* axis of each route: 0=split-oop 1=split-ip 2=il */
-static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1 };
+static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1 };
 
 /* per-cell stride-specialized twins (§13.3 item A): 7-arg ABI, strides baked */
 extern void radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(
@@ -77,6 +78,7 @@ extern void radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(
 
 typedef struct {
     int route, R1, R2;
+    int cc_code;             /* R_CCOL only: encoded chain (name = "cc<code>") */
     vfft_oop_plan_t *p;      /* NULL for mono routes */
     double best;
 } cand_t;
@@ -112,6 +114,9 @@ static void run_cand(cand_t *c)
         break;
     case R_JIT: /* plan-time-compiled per-cell kernel (v3 shape) */
         g_jit(wr, wi, wr, wi, c->p->col_re, c->p->col_im, c->p->Qr, c->p->Qi);
+        break;
+    case R_CCOL: /* composed column pass, in-place (split-ip axis) */
+        vfft_oop_execute_fwd_ccol(c->p, wr, wi, wr, wi);
         break;
     }
 }
@@ -178,6 +183,7 @@ int main(int argc, char **argv)
             else if (N == 2048 && R1 == 64 && R2 == 32) jr = 3; /* twl  */
             if (jr) {
                 g_jit = vfft_k1_jit_resolve(N, R1, R2, jr);
+                if (g_jit) g_jit_route = jr;
                 if (g_jit && nc < 118) {
                     cand[nc].route = R_JIT; cand[nc].R1 = R1; cand[nc].R2 = R2;
                     cand[nc].p = p; cand[nc].best = 1e18; nc++;
@@ -217,6 +223,34 @@ int main(int argc, char **argv)
             }
         }
     }
+    /* CCOL candidates (§12.4 item 5): R1=64, default + alternate chain per
+     * cell. Independent of the classic pair loop — this is the ONLY arm at
+     * cells past the leaf/t1 reach (16384+). */
+    if ((N % 64) == 0 && N / 64 >= 16) {
+        static const struct { int R2, nfa, a[4], nfb, b[4]; } CCT[] = {
+            { 16,  1, {16},      0, {0} },
+            { 32,  2, {8, 4},    2, {4, 8} },
+            { 64,  2, {8, 8},    2, {16, 4} },
+            { 128, 2, {8, 16},   2, {16, 8} },
+            { 256, 3, {8, 8, 4}, 2, {16, 16} },
+            { 512, 3, {8, 8, 8}, 3, {8, 16, 4} },
+        };
+        for (int e = 0; e < (int)(sizeof CCT / sizeof CCT[0]); e++) {
+            if (CCT[e].R2 != N / 64) continue;
+            for (int v = 0; v < 2; v++) {
+                const int *ch = v ? CCT[e].b : CCT[e].a;
+                int nf = v ? CCT[e].nfb : CCT[e].nfa;
+                if (!nf || np >= 15 || nc >= 118) continue;
+                vfft_oop_plan_t *pc =
+                    vfft_oop_plan_create_k1_cc(N, 64, ch, nf, &reg);
+                if (!pc) continue;
+                plans[np++] = pc;
+                cand[nc].route = R_CCOL; cand[nc].R1 = 64; cand[nc].R2 = N / 64;
+                cand[nc].cc_code = vfft_k1_cc_chain_encode(ch, nf);
+                cand[nc].p = pc; cand[nc].best = 1e18; nc++;
+            }
+        }
+    }
     if (vfft_k1_mono_fn(N))    { cand[nc].route = R_MONO;     cand[nc].R1 = cand[nc].R2 = 0; cand[nc].p = 0; cand[nc].best = 1e18; nc++; }
     if (vfft_k1_mono_alt_fn(N)){ cand[nc].route = R_MONO_ALT; cand[nc].R1 = cand[nc].R2 = 0; cand[nc].p = 0; cand[nc].best = 1e18; nc++; }
     if (vfft_k1_mono_il_fn(N, 0)) { cand[nc].route = R_MONO_IL; cand[nc].R1 = cand[nc].R2 = 0; cand[nc].p = 0; cand[nc].best = 1e18; nc++; }
@@ -240,34 +274,49 @@ int main(int argc, char **argv)
         }
     }
 
-    /* full dump + per-axis verdicts */
+    /* full dump + per-axis verdicts ("cc<code>" names carry the chain) */
     int win[3] = { -1, -1, -1 };
+    char nb[24];
     for (int k = 0; k < nc; k++) {
         int ax = RAXIS[cand[k].route];
         if (win[ax] < 0 || cand[k].best < cand[win[ax]].best) win[ax] = k;
-        printf("cand,%d,%s,%d,%d,%.1f\n", N, RNAME[cand[k].route],
+        const char *nm = RNAME[cand[k].route];
+        if (cand[k].route == R_CCOL) {
+            snprintf(nb, sizeof nb, "cc%d", cand[k].cc_code); nm = nb;
+        }
+        printf("cand,%d,%s,%d,%d,%.1f\n", N, nm,
                cand[k].R1, cand[k].R2, cand[k].best);
     }
     static const char *AXN[3] = { "split-oop", "split-ip", "il" };
     for (int a = 0; a < 3; a++)
-        if (win[a] >= 0)
+        if (win[a] >= 0) {
+            const char *nm = RNAME[cand[win[a]].route];
+            if (cand[win[a]].route == R_CCOL) {
+                snprintf(nb, sizeof nb, "cc%d", cand[win[a]].cc_code); nm = nb;
+            }
             printf("K1VERDICT,%d,%s,%s,%d,%d,%.1f\n", N, AXN[a],
-                   RNAME[cand[win[a]].route], cand[win[a]].R1, cand[win[a]].R2,
+                   nm, cand[win[a]].R1, cand[win[a]].R2,
                    cand[win[a]].best);
+        }
 
     /* ready-to-append kind-3 OOP wisdom line: split verdict = the split-ip
      * winner (route code identical for oop/ip calls), il verdict = the il
      * winner. Format: N 1 3 spr R1 R2 ilr iR1 iR2 ns */
     if (win[1] >= 0)
     {
-        static const int SPMAP[] = { /* internal route -> VFFT_K1_SP_* */
+        /* internal route -> VFFT_K1_SP_* (full 16-entry coverage: the spec
+         * twins report their base route, the jit its baked route, cc = CCOL) */
+        static const int SPMAP[] = {
             VFFT_K1_SP_3P, VFFT_K1_SP_3P, VFFT_K1_SP_2PA, VFFT_K1_SP_2PB,
             VFFT_K1_SP_TWL, -1, -1, VFFT_K1_SP_MONO, VFFT_K1_SP_MONO, -1,
-            VFFT_K1_SP_3P_L3, VFFT_K1_SP_2PA_L3 };
+            VFFT_K1_SP_3P_L3, VFFT_K1_SP_2PA_L3,
+            VFFT_K1_SP_2PB, VFFT_K1_SP_2PA_L3, -1 /* jit: g_jit_route */,
+            VFFT_K1_SP_CCOL };
         static const int ILMAP[] = { -1, -1, -1, -1, -1,
-            VFFT_K1_IL_3P, VFFT_K1_IL_2P, -1, -1, VFFT_K1_IL_MONO, -1, -1 };
+            VFFT_K1_IL_3P, VFFT_K1_IL_2P, -1, -1, VFFT_K1_IL_MONO, -1, -1,
+            -1, -1, -1, -1 };
         cand_t *ws = &cand[win[1]];
-        int spr = SPMAP[ws->route];
+        int spr = (ws->route == R_JIT) ? g_jit_route : SPMAP[ws->route];
         int sR1 = ws->R1, sR2 = ws->R2;
         if (ws->route == R_MONO_ALT) { sR1 = 8; sR2 = N / 8; } /* alt pair marker */
         int ilr = 0, iR1 = 0, iR2 = 0;
@@ -279,7 +328,10 @@ int main(int argc, char **argv)
             if (ilr < 0) ilr = 0;
             iR1 = wi->R1; iR2 = wi->R2;
         }
-        if (spr >= 0)
+        if (spr == VFFT_K1_SP_CCOL)
+            printf("K1WISDOM %d 1 3 %d %d %d %d %d %d %d %.1f\n",
+                   N, spr, sR1, sR2, ilr, iR1, iR2, ws->cc_code, ns);
+        else if (spr >= 0)
             printf("K1WISDOM %d 1 3 %d %d %d %d %d %d %.1f\n",
                    N, spr, sR1, sR2, ilr, iR1, iR2, ns);
     }
