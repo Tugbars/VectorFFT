@@ -23,6 +23,9 @@ src/dag-fft-compiler/generator/generated/** linguist-generated
 build_tuned/benches/** linguist-vendored
 build_tuned/dev/**     linguist-vendored
 build_tuned/test/**    linguist-vendored
+# Every C file anywhere under build_tuned (bench_compilers/, future probe
+# dirs, stray root-level harnesses) — same rationale.
+build_tuned/**/*.c     linguist-vendored
 
 # Cost-model code (and its generated tables) — excluded from the language bar.
 src/dag-fft-compiler/generator/cost_model/** linguist-vendored
