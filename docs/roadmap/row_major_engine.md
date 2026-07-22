@@ -640,6 +640,34 @@ wisdom family) + vfft.c front-door routing (split → winner route; `sim==dim==N
 contract → *_il/mono-il; bwd via swap identity / _sw; old routes = kill-switch); step 4 =
 canonical public-API regression ladder + natmt untouched + full-diff handoff for review.
 
+### 13.1 The twiddle-method menu completed (LOG3) + calibration v2
+
+Per user review: the K=1 t1 stage was FLAT-only while the scrambled 1D path mixes
+FLAT/T1S/LOG3. Geometry (§strided_twiddle_variants §4): T1S and lane-LOG3 are INADMISSIBLE
+here (W varies along the SIMD axis) — but **leg-axis LOG3** (FFTW-t3 class: load base-leg
+twiddle VECTORS {w¹,w³,w⁹,…}, derive the rest by vector cmuls — b-vector products stay
+b-vectors) transfers. Emitted via the EXISTING `--log3` flag on the t1 path (TP_Log3 was
+already the substitution machinery; zero OCaml changes): 10 twins
+(`radix{4..64}_t1_oop_{ugug,ul}_log3_avx2.c`), **252→24 twiddle loads at radix-64**, SAME
+Qr/Qi tables (sparse subset — pure fn-pointer swap on existing plans; plan fields
+t1_l3/t1_ul_l3). Gates green at 1e-14 vs naive (tol-gated: derived twiddles differ from
+loaded in the last ulp, like FFTW's t3).
+
+Calibration v2 (menu now FLAT / FLAT-linear(twl) / LOG3 × route × pair × placement ×
+layout): log3 wins specific slots by 10–18% (3p-l3@1024 1316 vs 1608; 2pa-l3@4096 7426 vs
+8272; 3p-l3@8192 26512 vs 29582) and loses others — a true measured-selection member. v2
+split-ip verdicts (cooler run): 64=mono 30.8 · **128=mono-alt 72.3 (!)** · 256=2pa 170.4 ·
+512=2pb 359 · 1024=2pb 1030 · 2048=twl 2488 · 4096=2pb 6262 · 8192=2pa 22290.
+
+**⚠ Calibration stability finding**: v1→v2 winners FLIPPED at several cells (64: twl 37.5 →
+mono 30.8; 128: 2p-86 → mono-alt 72.3; 2048/4096 absolutes swung ~20%+). Within-run ordering
+is fair (rotation); across runs, frequency/thermal state changes the OPTIMA, not just the
+numbers (L2-sensitive routes suffer when hot; monos don't). FRONT-DOOR REQUIREMENT: persist
+wisdom from the MEDIAN/MAJORITY of ≥3 ladder runs (or a locked-down machine), and prefer an
+incumbent unless the challenger wins by a margin (>5%). The mono-128 "refutation" (§12.8)
+softens to: mono-128 is within the variance band of the two-pass — let the multi-run
+calibrator decide per machine-state.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
