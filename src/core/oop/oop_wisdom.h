@@ -41,12 +41,18 @@
 typedef struct {
     int    N;
     size_t K;
-    int    kind;                          /* VFFT_OOP_KIND_{LEAF,BAILEY2,MODEB} */
-    int    R1, R2;                        /* BAILEY2 */
+    int    kind;                          /* VFFT_OOP_KIND_{LEAF,BAILEY2,MODEB,BAILEY2V} */
+    int    R1, R2;                        /* BAILEY2 pair; K1: the SPLIT-axis pair */
     int    t1p_variant;                   /* BAILEY2 s2: 0=flat 1=log3 */
     int    nf;                            /* MODEB */
     int    factors[STRIDE_MAX_STAGES];    /* MODEB */
     int    variants[STRIDE_MAX_STAGES];   /* MODEB per-stage 0=FLAT 1=LOG3 2=T1S */
+    /* kind 3 (BAILEY2V / K=1 engine): per-axis verdicts. Line format:
+     *   N 1 3 sp_route sp_R1 sp_R2 il_route il_R1 il_R2 ns
+     * routes = VFFT_K1_SP_* / VFFT_K1_IL_* (oop_plan.h). One entry carries
+     * BOTH axes because the buffer layout is an EXECUTE-time contract
+     * (sim==dim==NULL => interleaved), unknown at plan create. */
+    int    k1_sp_route, k1_il_route, il_R1, il_R2;
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
 
@@ -89,6 +95,15 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
                 tok = strtok(NULL, " \t\n\r");
                 if (tok) e->variants[i] = atoi(tok); else ok = 0;
             }
+        } else if (e->kind == VFFT_OOP_KIND_BAILEY2V) {
+            /* kind 3 = K=1 engine: sp_route sp_R1 sp_R2 il_route il_R1 il_R2 */
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->k1_sp_route = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->R1 = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->R2 = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->k1_il_route = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R1 = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R2 = atoi(tok); else ok = 0;
+            if (ok && e->K != 1) ok = 0;
         }
         if (!ok) continue;
         tok = strtok(NULL, " \t\n\r");          /* ns (optional) */
@@ -109,6 +124,18 @@ vfft_oop_wisdom_lookup(const vfft_oop_wisdom_t *w, int N, size_t K)
     return NULL;
 }
 
+/* K=1 engine lookup: the kind-3 entry for N (K==1 by definition). */
+static inline const vfft_oop_wisdom_entry_t *
+vfft_oop_wisdom_lookup_k1(const vfft_oop_wisdom_t *w, int N)
+{
+    if (!w) return NULL;
+    for (int i = 0; i < w->count; i++)
+        if (w->e[i].N == N && w->e[i].K == 1 &&
+            w->e[i].kind == VFFT_OOP_KIND_BAILEY2V)
+            return &w->e[i];
+    return NULL;
+}
+
 /* Output-order class of an OOP kind: 1 = NATURAL (LEAF/BAILEY2), 0 = SCRAMBLED (MODEB). This is
  * what lets one (N,K) cell cache both a natural and a scrambled champion as SEPARATE entries. */
 static inline int vfft_oop_kind_natural(int kind) { return kind != VFFT_OOP_KIND_MODEB; }
@@ -125,6 +152,7 @@ vfft_oop_wisdom_lookup_ord(const vfft_oop_wisdom_t *w, int N, size_t K, int ord)
     for (int i = 0; i < w->count; i++) {
         const vfft_oop_wisdom_entry_t *e = &w->e[i];
         if (e->N != N || e->K != K) continue;
+        if (e->kind == VFFT_OOP_KIND_BAILEY2V) continue; /* K1 entries: lookup_k1 only */
         int nat = vfft_oop_kind_natural(e->kind);
         if (ord == 1 && !nat) continue;                  /* NATURAL wanted; skip MODEB */
         if (ord == 2 && nat)  continue;                  /* SCRAMBLED wanted; skip native */
@@ -217,6 +245,9 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
         for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->factors[s]);
         for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->variants[s]);
     }
+    else if (e->kind == VFFT_OOP_KIND_BAILEY2V)
+        fprintf(f, " %d %d %d %d %d %d", e->k1_sp_route, e->R1, e->R2,
+                e->k1_il_route, e->il_R1, e->il_R2);
     fprintf(f, " %.1f\n", e->ns);
 }
 

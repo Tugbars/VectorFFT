@@ -310,6 +310,10 @@ static inline vfft_oop11_fn vfft_k1_mono_fn(int N)
 #endif
 }
 
+/* pair-aware mono resolver: the wisdom's (R1) picks the emitted variant.
+ * R1 == 0 -> the default for N. */
+static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1);
+
 /* alternate pair (the calibrator's other candidate; today only 128 has one) */
 static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
 {
@@ -387,6 +391,15 @@ extern void vfft_k1_mono64_8x8_il_bwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 #endif
+
+static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
+{
+#if VFFT_OOP_GROUPW == 4u
+    if (N == 128 && R1 == 8) return vfft_k1_mono_alt_fn(128);
+#endif
+    (void)R1;
+    return vfft_k1_mono_fn(N);
+}
 
 /* t1 UL-load + il_out store twins: the TRUE 2-pass IL exit (reads the
  * untransposed split column output at Ls=1/Gs=R1, transposes in the load

@@ -120,6 +120,17 @@ struct vfft_plan_s
     int nthreads;
     stride_plan_t *cplan;     /* c2c in-place (owned)      */
     vfft_oop_plan_t *oplan;   /* c2c out-of-place (owned)  */
+    /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
+     * Route per axis from kind-3 wisdom (or the default heuristic); the axis
+     * is picked at EXECUTE time by the buffer contract (sim==dim==NULL =>
+     * interleaved z, like the in-place IL path). k1sp/k1il are BAILEY2V
+     * plans for the per-axis pairs (may be the same object — k1il==k1sp when
+     * pairs match; owned once). Split bwd = pointer-swap identity; IL bwd =
+     * the _sw entry points. Kill-switch: env VFFT_NO_K1 at create. */
+    int k1_on;
+    int k1_sp_route, k1_il_route;
+    vfft_oop_plan_t *k1sp, *k1il;
+    vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
     vfft_r2c_plan_t *rplan;   /* r2c fwd (owned)           */
     vfft_c2r_disp_t *c2rdisp; /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     stride_plan_t *tplan;     /* trig DCT/DST/DHT (owned)  */
@@ -2191,6 +2202,105 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     /* ── c2c OUT-OF-PLACE ── */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
     {
+        /* ── K=1 engine (row_major_engine.md §13): natural-order routes from
+         * kind-3 wisdom or the default heuristic; execute picks the layout
+         * axis from the buffer contract (sim==dim==NULL => interleaved z).
+         * The classic path below remains the kill-switch (env VFFT_NO_K1),
+         * the SCRAMBLED-order server, and the fallback for any failure. */
+        if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED &&
+            !getenv("VFFT_NO_K1"))
+        {
+            int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
+            int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
+            const vfft_oop_wisdom_entry_t *ke =
+                vfft_oop_wisdom_lookup_k1(&W->oop, N);
+            if (ke)
+            {
+                spr = ke->k1_sp_route; sR1 = ke->R1; sR2 = ke->R2;
+                ilr = ke->k1_il_route; iR1 = ke->il_R1; iR2 = ke->il_R2;
+            }
+            else
+            {
+                /* heuristic default (uncalibrated cell): mono when emitted,
+                 * else 2pb on the most balanced valid pair. The offline
+                 * calibrator (benches/calibrate_k1.c, multi-run median)
+                 * refines this into a kind-3 wisdom line per cell. */
+                if (vfft_k1_mono_fn(N) && N <= 64) spr = VFFT_K1_SP_MONO;
+                for (int R2c = (N < 128 ? N : 128); R2c >= 4; R2c--)
+                {
+                    if (N % R2c) continue;
+                    int R1c = N / R2c;
+                    if (R1c < 4 || R1c > 128 || (R1c % 4) || (R2c % 4)) continue;
+                    if (!vfft_oop_leaf_fn(R2c) || !vfft_oop_t1_fn(R1c)) continue;
+                    if (!sR1 || abs(R1c - R2c) < abs(sR1 - sR2)) { sR1 = R1c; sR2 = R2c; }
+                }
+                iR1 = sR1; iR2 = sR2;
+                ilr = vfft_k1_mono_il_fn(N, 0) ? VFFT_K1_IL_MONO : VFFT_K1_IL_2P;
+            }
+            vfft_oop_plan_t *psp = NULL, *pil = NULL;
+            if (spr != VFFT_K1_SP_MONO && sR1)
+                psp = vfft_oop_plan_create_k1(N, sR1, sR2);
+            if (ilr != VFFT_K1_IL_MONO && ilr != VFFT_K1_IL_NONE && iR1)
+                pil = (psp && iR1 == sR1 && iR2 == sR2)
+                          ? psp
+                          : vfft_oop_plan_create_k1(N, iR1, iR2);
+            /* log3 routes resolve to a create-time fn swap + the base route
+             * (same Qr/Qi; the l3 twins are drop-in pointers) */
+            if (spr == VFFT_K1_SP_3P_L3)
+            {
+                if (psp && psp->t1_l3) psp->t1p = psp->t1_l3;
+                spr = VFFT_K1_SP_3P;
+            }
+            if (spr == VFFT_K1_SP_2PA_L3)
+            {
+                if (psp && psp->t1_ul_l3) psp->t1_ul = psp->t1_ul_l3;
+                spr = VFFT_K1_SP_2PA;
+            }
+            /* availability degrade (wisdom may name routes this build lacks) */
+            if (spr == VFFT_K1_SP_MONO && !vfft_k1_mono_pair_fn(N, sR1)) spr = VFFT_K1_SP_2PB;
+            if (spr != VFFT_K1_SP_MONO)
+            {
+                if (!psp) spr = -1;
+                else
+                {
+                    if (spr == VFFT_K1_SP_TWL && !psp->t1_ul_twl) spr = VFFT_K1_SP_2PA;
+                    if (spr == VFFT_K1_SP_2PB && !psp->leaf_ul)   spr = VFFT_K1_SP_2PA;
+                    if (spr == VFFT_K1_SP_2PA && !psp->t1_ul)     spr = VFFT_K1_SP_3P;
+                }
+            }
+            if (ilr == VFFT_K1_IL_MONO && !vfft_k1_mono_il_fn(N, 0))
+                ilr = pil ? VFFT_K1_IL_2P : VFFT_K1_IL_NONE;
+            if (ilr == VFFT_K1_IL_2P && (!pil || !pil->il_leaf || !pil->t1_ul_il))
+                ilr = (pil && pil->il_leaf && pil->t1_il) ? VFFT_K1_IL_3P
+                                                          : VFFT_K1_IL_NONE;
+            if (ilr == VFFT_K1_IL_3P && (!pil || !pil->il_leaf || !pil->t1_il))
+                ilr = VFFT_K1_IL_NONE;
+            if (spr >= 0)
+            {
+                struct vfft_plan_s *hk =
+                    (struct vfft_plan_s *)calloc(1, sizeof *hk);
+                if (hk)
+                {
+                    hk->transform = VFFT_C2C;
+                    hk->placement = VFFT_OUTOFPLACE;
+                    hk->N = N;
+                    hk->K = 1;
+                    hk->nthreads = stride_get_num_threads();
+                    hk->k1_on = 1;
+                    hk->k1_sp_route = spr;
+                    hk->k1_il_route = ilr;
+                    hk->k1sp = psp;
+                    hk->k1il = pil;
+                    hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
+                    hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
+                    hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
+                    return hk;
+                }
+            }
+            if (pil && pil != psp) vfft_oop_plan_destroy(pil);
+            if (psp) vfft_oop_plan_destroy(psp);
+            /* fall through to the classic OOP path */
+        }
         /* PADDED (opt-in): build at Kp so the OOP plan strides the caller's Kp-wide 4 planes
          * exactly. Pad-only (OOP bakes K, no runtime me). Kp = the handle's roundup(K,8), which
          * keeps all 3 kinds AND lets the (N,Kp) OOP wisdom cell cache (BAILEY2 + the wisdom
@@ -3087,6 +3197,54 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
+        if (h->k1_on)
+        {   /* K=1 engine (§13): axis by buffer contract; natural order both
+             * directions. Split bwd = the pointer-swap identity on the fwd
+             * route; IL bwd = the _sw entry points. */
+            int fwd = (dir == VFFT_FORWARD);
+            if (!sim && !dim && sre && dre)
+            {   /* interleaved z -> z (same contract as the in-place IL path) */
+                switch (h->k1_il_route)
+                {
+                case VFFT_K1_IL_MONO:
+                    (fwd ? h->k1_mono_ilf : h->k1_mono_ilb)(sre, 0, dre, 0,
+                                                            0, 0, 0, 0, 0, 0, 0);
+                    return;
+                case VFFT_K1_IL_2P:
+                    if (fwd) vfft_oop_execute_fwd_2p_il(h->k1il, sre, dre);
+                    else     vfft_oop_execute_bwd_2p_il(h->k1il, sre, dre);
+                    return;
+                case VFFT_K1_IL_3P:
+                    if (fwd) vfft_oop_execute_fwd_il(h->k1il, sre, dre);
+                    else     vfft_oop_execute_bwd_il(h->k1il, sre, dre);
+                    return;
+                default:
+                    return; /* no IL route emitted for this N */
+                }
+            }
+            {
+                const double *ar = fwd ? sre : sim, *ai = fwd ? sim : sre;
+                double *br = fwd ? dre : dim, *bi = fwd ? dim : dre;
+                switch (h->k1_sp_route)
+                {
+                case VFFT_K1_SP_MONO:
+                    h->k1_mono(ar, ai, br, bi, 0, 0, 0, 0, 0, 0, 0);
+                    return;
+                case VFFT_K1_SP_2PA:
+                    vfft_oop_execute_fwd_2pa(h->k1sp, ar, ai, br, bi);
+                    return;
+                case VFFT_K1_SP_2PB:
+                    vfft_oop_execute_fwd_2pb(h->k1sp, ar, ai, br, bi);
+                    return;
+                case VFFT_K1_SP_TWL:
+                    vfft_oop_execute_fwd_2pa_twl(h->k1sp, ar, ai, br, bi);
+                    return;
+                default:
+                    vfft_oop_execute_fwd(h->k1sp, ar, ai, br, bi);
+                    return;
+                }
+            }
+        }
         /* MT via the pool K-split (LEAF/MODEB lane-independent; BAILEY2 + small K run
          * whole-batch — see _oop_mt). vfft_oop_execute_fwd/bwd are kind-correct (natural-
          * order swap for LEAF/BAILEY2; in-place DIF-bwd-on-copy for MODEB) and are the
@@ -3182,6 +3340,10 @@ void vfft_destroy(vfft_plan h)
         vfft_proto_plan_destroy(h->cplan);
     if (h->oplan)
         vfft_oop_plan_destroy(h->oplan);
+    if (h->k1il && h->k1il != h->k1sp)
+        vfft_oop_plan_destroy(h->k1il);
+    if (h->k1sp)
+        vfft_oop_plan_destroy(h->k1sp);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)

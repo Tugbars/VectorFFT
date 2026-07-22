@@ -185,6 +185,35 @@ int main(int argc, char **argv)
                    RNAME[cand[win[a]].route], cand[win[a]].R1, cand[win[a]].R2,
                    cand[win[a]].best);
 
+    /* ready-to-append kind-3 OOP wisdom line: split verdict = the split-ip
+     * winner (route code identical for oop/ip calls), il verdict = the il
+     * winner. Format: N 1 3 spr R1 R2 ilr iR1 iR2 ns */
+    if (win[1] >= 0)
+    {
+        static const int SPMAP[] = { /* internal route -> VFFT_K1_SP_* */
+            VFFT_K1_SP_3P, VFFT_K1_SP_3P, VFFT_K1_SP_2PA, VFFT_K1_SP_2PB,
+            VFFT_K1_SP_TWL, -1, -1, VFFT_K1_SP_MONO, VFFT_K1_SP_MONO, -1,
+            VFFT_K1_SP_3P_L3, VFFT_K1_SP_2PA_L3 };
+        static const int ILMAP[] = { -1, -1, -1, -1, -1,
+            VFFT_K1_IL_3P, VFFT_K1_IL_2P, -1, -1, VFFT_K1_IL_MONO, -1, -1 };
+        cand_t *ws = &cand[win[1]];
+        int spr = SPMAP[ws->route];
+        int sR1 = ws->R1, sR2 = ws->R2;
+        if (ws->route == R_MONO_ALT) { sR1 = 8; sR2 = N / 8; } /* alt pair marker */
+        int ilr = 0, iR1 = 0, iR2 = 0;
+        double ns = ws->best;
+        if (win[2] >= 0)
+        {
+            cand_t *wi = &cand[win[2]];
+            ilr = ILMAP[wi->route];
+            if (ilr < 0) ilr = 0;
+            iR1 = wi->R1; iR2 = wi->R2;
+        }
+        if (spr >= 0)
+            printf("K1WISDOM %d 1 3 %d %d %d %d %d %d %.1f\n",
+                   N, spr, sR1, sR2, ilr, iR1, iR2, ns);
+    }
+
     for (int i = 0; i < np; i++) vfft_oop_plan_destroy(plans[i]);
     return 0;
 }
