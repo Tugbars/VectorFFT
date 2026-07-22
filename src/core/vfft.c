@@ -65,6 +65,9 @@
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
                                * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */
+#include "jit/k1_jit_runtime.h" /* K=1 plan-time stride-baking JIT (§13.3 generalized):
+                                 * wraps the winner route's codelets with LITERAL strides,
+                                 * gcc constant-propagates -> the spec twin, for ANY cell. */
 #endif
 #include "prime_dispatch.h"       /* vfft_proto_auto_plan_dispatch (Rader/Bluestein for prime N) */
 #include "bluestein_calibrator.h" /* bluestein_calibrate_one — prime-N (M,B) calibrate-on-miss */
@@ -131,6 +134,15 @@ struct vfft_plan_s
     int k1_sp_route, k1_il_route;
     vfft_oop_plan_t *k1sp, *k1il;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
+#ifdef VFFT_USE_JIT
+    /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
+     * time with the cell's exact geometry as literal constants. NULL = the
+     * normal route fns (JIT is a speed cache, never a correctness dep).
+     * k1_jit_qr/qi = the table the baked stage-2 expects (Qlr/Qli for TWL,
+     * Qr/Qi otherwise); scratch comes from k1sp->col_re/col_im. */
+    vfft_k1_jit_fn k1_jit;
+    const double *k1_jit_qr, *k1_jit_qi;
+#endif
     vfft_r2c_plan_t *rplan;   /* r2c fwd (owned)           */
     vfft_c2r_disp_t *c2rdisp; /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     stride_plan_t *tplan;     /* trig DCT/DST/DHT (owned)  */
@@ -2245,6 +2257,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 pil = (psp && iR1 == sR1 && iR2 == sR2)
                           ? psp
                           : vfft_oop_plan_create_k1(N, iR1, iR2);
+            int spr0 = spr; /* wisdom route BEFORE folding (JIT picks sources by it) */
             /* log3 routes resolve to a create-time fn swap + the base route
              * (same Qr/Qi; the l3 twins are drop-in pointers) */
             if (spr == VFFT_K1_SP_3P_L3)
@@ -2295,6 +2308,19 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
                     hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
+#ifdef VFFT_USE_JIT
+                    /* stride-baking JIT for the split route (§13.3): compile
+                     * cost locked to create, cached on disk forever; NULL ->
+                     * the normal route fns below. TWL bakes against the
+                     * linear tables. */
+                    if (psp)
+                    {
+                        hk->k1_jit_qr = (spr0 == VFFT_K1_SP_TWL) ? psp->Qlr : psp->Qr;
+                        hk->k1_jit_qi = (spr0 == VFFT_K1_SP_TWL) ? psp->Qli : psp->Qi;
+                        if (hk->k1_jit_qr)
+                            hk->k1_jit = vfft_k1_jit_resolve(N, sR1, sR2, spr0);
+                    }
+#endif
                     return hk;
                 }
             }
@@ -3226,6 +3252,15 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             {
                 const double *ar = fwd ? sre : sim, *ai = fwd ? sim : sre;
                 double *br = fwd ? dre : dim, *bi = fwd ? dim : dre;
+#ifdef VFFT_USE_JIT
+                if (h->k1_jit)
+                {   /* stride-baked whole-route kernel; bwd rides the same
+                     * pointer-swap identity (natural order) */
+                    h->k1_jit(ar, ai, br, bi, h->k1sp->col_re, h->k1sp->col_im,
+                              h->k1_jit_qr, h->k1_jit_qi);
+                    return;
+                }
+#endif
                 switch (h->k1_sp_route)
                 {
                 case VFFT_K1_SP_MONO:
