@@ -141,6 +141,16 @@ int main(void)
                     if (c2 > e_2pb) e_2pb = c2;
                 }
             }
+            double e_twl = -1;
+            if (p->t1_ul_twl) {
+                vfft_oop_execute_fwd_2pa_twl(p, xr, xi, rr, ri);
+                e_twl = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(rr[k] - dr[k]), c2 = fabs(ri[k] - di[k]);
+                    if (c1 > e_twl) e_twl = c1;
+                    if (c2 > e_twl) e_twl = c2;
+                }
+            }
 
             /* IL fwd + IL roundtrip (when twins exist) */
             double e_ilf = -1, e_ilrt = -1;
@@ -171,10 +181,11 @@ int main(void)
                  (e_ilf >= 0 && e_ilf > tol) || (e_ilrt >= 0 && e_ilrt > rt_tol) ||
                  (e_2pa >= 0 && e_2pa > 0.0) ||   /* two-pass must be BIT-identical */
                  (e_2pb >= 0 && e_2pb > 0.0) ||
+                 (e_twl >= 0 && e_twl > 0.0) ||   /* linear layout: same values */
                  e_fwd != e_fwd || e_rt != e_rt) ? "  <FAIL>" : "";
             if (bad[0]) fails++;
-            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e 2pa=%.1e 2pb=%.1e%s\n",
-                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, e_2pa, e_2pb, bad);
+            printf("  %4dx%-3d N=%-5d %s fwd=%.2e cross=%.2e rt=%.2e ilf=%.2e ilrt=%.2e 2pa=%.1e 2pb=%.1e twl=%.1e%s\n",
+                   R1, R2, N, inp ? "rnd" : "det", e_fwd, e_cross, e_rt, e_ilf, e_ilrt, e_2pa, e_2pb, e_twl, bad);
         }
 
         afree(xr); afree(xi); afree(nr); afree(ni);

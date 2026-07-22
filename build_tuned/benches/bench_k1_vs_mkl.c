@@ -176,9 +176,9 @@ static void mono64_il(const double *z_in, double *z_out)
 
 /* ---------------- arms ---------------- */
 enum { A_MKL_IL = 0, A_MKL_SP, A_B2V_SP, A_B2V_IP, A_B2V_IL, A_2PA_IP, A_2PB_IP,
-       A_LEAF, A_M64_SP, A_M64_IL, NARMS };
+       A_TWL_IP, A_LEAF, A_M64_SP, A_M64_IL, NARMS };
 static const char *ANAME[NARMS] = { "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "B2V-il",
-                                    "2pa-ip", "2pb-ip", "LEAF", "M64-sp", "M64-il" };
+                                    "2pa-ip", "2pb-ip", "twl-ip", "LEAF", "M64-sp", "M64-il" };
 
 typedef struct {
     int N;
@@ -203,6 +203,8 @@ static void run_arm(bctx_t *c, int a)
         vfft_oop_execute_fwd_2pa(c->p2a, c->wr, c->wi, c->wr, c->wi); break;
     case A_2PB_IP: /* two-pass route b, in-place: leaf-UL w->scr, t1 scr->w */
         vfft_oop_execute_fwd_2pb(c->p2b, c->wr, c->wi, c->wr, c->wi); break;
+    case A_TWL_IP: /* route a + LINEAR twiddle stream (one cursor) */
+        vfft_oop_execute_fwd_2pa_twl(c->p2a, c->wr, c->wi, c->wr, c->wi); break;
     case A_LEAF:   c->leafN(c->xr, c->xi, c->dr, c->di, 0, 0, 1, 1, 1, 1, 1); break;
     case A_M64_SP: mono64_split(c->xr, c->xi, c->dr, c->di); break;
     case A_M64_IL: mono64_il(c->zs, c->zs); break;
@@ -219,6 +221,7 @@ static int arm_avail(bctx_t *c, int a)
     case A_B2V_IL: return c->pil && c->pil->il_leaf && c->pil->t1_il;
     case A_2PA_IP: return c->p2a && c->p2a->t1_ul;
     case A_2PB_IP: return c->p2b && c->p2b->leaf_ul;
+    case A_TWL_IP: return c->p2a && c->p2a->t1_ul_twl;
     case A_LEAF:   return c->leafN != NULL;
     case A_M64_SP: case A_M64_IL: return c->N == 64;
     }
@@ -252,9 +255,9 @@ int main(int argc, char **argv)
      * bias). Good enough for a bench snapshot; the production pair choice is
      * the calibrator (isolated per-candidate, order-neutralized) writing
      * per-cell (pair x placement x layout) wisdom. */
-    printf("%-6s %9s %9s %13s %13s %13s %13s %13s | %7s %7s\n",
-           "N", "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "2pa-ip", "2pb-ip", "B2V-il",
-           "sp/sp", "best/IL");
+    printf("%-6s %9s %9s %13s %13s %13s %13s %9s %13s | %7s %7s\n",
+           "N", "MKL-IL", "MKL-sp", "B2V-sp", "B2V-ip", "2pa-ip", "2pb-ip", "twl-ip",
+           "B2V-il", "sp/sp", "best/IL");
 
     for (int ni = 0; ni < nN; ni++) {
         int N = argc > 1 ? atoi(argv[ni + 1]) : Nd[ni];
@@ -343,22 +346,24 @@ int main(int argc, char **argv)
             }
         }
 
-        char sp[32], ip[32], il[32], a2[32], b2[32];
+        char sp[32], ip[32], il[32], a2[32], b2[32], tl[32];
         snprintf(sp, sizeof sp, "%.0f(%dx%d)", best[A_B2V_SP], bs1, bs2);
         snprintf(ip, sizeof ip, "%.0f(%dx%d)", best[A_B2V_IP], bp1, bp2);
         snprintf(il, sizeof il, arm_avail(&c, A_B2V_IL) ? "%.0f(%dx%d)" : "-", best[A_B2V_IL], bi1, bi2);
         snprintf(a2, sizeof a2, arm_avail(&c, A_2PA_IP) ? "%.0f(%dx%d)" : "-", best[A_2PA_IP], ba1, ba2);
         snprintf(b2, sizeof b2, arm_avail(&c, A_2PB_IP) ? "%.0f(%dx%d)" : "-", best[A_2PB_IP], bb1, bb2);
+        snprintf(tl, sizeof tl, arm_avail(&c, A_TWL_IP) ? "%.0f" : "-", best[A_TWL_IP]);
         double ours_best_sp = best[A_B2V_SP] < best[A_B2V_IP] ? best[A_B2V_SP] : best[A_B2V_IP];
         if (arm_avail(&c, A_2PA_IP) && best[A_2PA_IP] < ours_best_sp) ours_best_sp = best[A_2PA_IP];
         if (arm_avail(&c, A_2PB_IP) && best[A_2PB_IP] < ours_best_sp) ours_best_sp = best[A_2PB_IP];
+        if (arm_avail(&c, A_TWL_IP) && best[A_TWL_IP] < ours_best_sp) ours_best_sp = best[A_TWL_IP];
         double ours_best_il = best[A_B2V_IL];
         if (N == 64) {
             if (best[A_M64_SP] < ours_best_sp) ours_best_sp = best[A_M64_SP];
             if (best[A_M64_IL] < ours_best_il) ours_best_il = best[A_M64_IL];
         }
-        printf("%-6d %9.1f %9.1f %13s %13s %13s %13s %13s | %7.2f %7.2f\n",
-               N, best[A_MKL_IL], best[A_MKL_SP], sp, ip, a2, b2, il,
+        printf("%-6d %9.1f %9.1f %13s %13s %13s %13s %9s %13s | %7.2f %7.2f\n",
+               N, best[A_MKL_IL], best[A_MKL_SP], sp, ip, a2, b2, tl, il,
                best[A_MKL_SP] / ours_best_sp,
                arm_avail(&c, A_B2V_IL) || N == 64 ? best[A_MKL_IL] / ours_best_il : 0.0);
         if (arm_avail(&c, A_LEAF) || N == 64)

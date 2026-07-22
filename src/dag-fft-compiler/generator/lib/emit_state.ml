@@ -34,6 +34,15 @@
    Set by emit_codelet for PerPositionTwiddles codelets, read below. *)
 let current_tw_perpos : bool ref = ref false
 
+(* LINEAR twiddle layout (row_major_engine.md §12.4 item 4a — the MKL pattern:
+   one streaming cursor instead of (R-1) parallel strided rows). When > 0 the
+   value is NLEGS = R-1 and the per-group twiddle address becomes
+   tw_re[b*NLEGS + j*VW] — the table is packed in CONSUMPTION order (per
+   group-quad: all legs' 4-vectors contiguous). Only valid for configs with
+   no rem tail (UnitLeg load in the OOP family: the tail passes would index
+   the flat layout). Set by emit_codelet from Codelet_oop.current_oop_tw_linear. *)
+let current_tw_linear : int ref = ref 0
+
 (* Lean real-to-real ABI (notebook section 51, step 2): when true, the
  * OOP signature is `(const double *in, double *out, size_t K)` — the
  * convention dct.h's fast paths consume (python n8 vintage). Set by

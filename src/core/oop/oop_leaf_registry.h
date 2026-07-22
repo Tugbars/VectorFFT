@@ -247,4 +247,33 @@ static inline vfft_oop11_fn vfft_oop_leaf_ugul_fn(int R)
 #endif
 }
 
+/* t1 UL twin with LINEAR twiddle layout (§12.4 4a): table packed in
+ * consumption order (per group-quad, all legs' 4-vectors contiguous) —
+ * one streaming cursor. Needs the linear-filled table (Qlr/Qli), NOT the
+ * flat Qr/Qi. */
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_TWL(R) \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_twl( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_TWL(4) VFFT_OOP_DECL_TWL(8) VFFT_OOP_DECL_TWL(16)
+VFFT_OOP_DECL_TWL(32) VFFT_OOP_DECL_TWL(64)
+#endif
+
+static inline vfft_oop11_fn vfft_oop_t1_ul_twl_fn(int R)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return radix##R##_t1_oop_fwd_avx2_UL_UG_twl;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

@@ -163,7 +163,13 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
-        if !current_tw_perpos then
+        if !current_tw_linear > 0 then
+          (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
+             Per quad base = b*NLEGS (each quad consumes NLEGS 4-vectors). *)
+          Isa.loadu_pd ~mode:!current_ls_mode isa
+            (Printf.sprintf "tw_re[b*%d + %d]" !current_tw_linear
+               (j * isa.vec_width))
+        else if !current_tw_perpos then
           Isa.set1_pd_str isa
             (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width
                isa.vec_width)
@@ -175,7 +181,11 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
           Isa.loadu_pd ~mode:!current_ls_mode isa
             (Printf.sprintf "tw_re[%d*me + b]" j)
     | Expr.Twiddle (j, false) ->
-        if !current_tw_perpos then
+        if !current_tw_linear > 0 then
+          Isa.loadu_pd ~mode:!current_ls_mode isa
+            (Printf.sprintf "tw_im[b*%d + %d]" !current_tw_linear
+               (j * isa.vec_width))
+        else if !current_tw_perpos then
           Isa.set1_pd_str isa
             (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width
                isa.vec_width)
