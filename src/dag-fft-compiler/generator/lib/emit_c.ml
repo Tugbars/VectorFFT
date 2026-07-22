@@ -491,14 +491,71 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
      *
      * For v1 only n1 (no-twiddle) is supported; tw_re/tw_im are passed for
      * signature uniformity but unused. *)
-    Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ rio_im,\n";
+    (if !strided_il_in then begin
+       Buffer.add_string buf "    const double * __restrict__ in_z,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
+     end
+     else if !strided_il_out then begin
+       Buffer.add_string buf "    const double * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    const double * __restrict__ rio_im,\n";
+       Buffer.add_string buf "    double       * __restrict__ out_z,\n"
+     end
+     else if !strided_r2c && not !strided_r2c_bwd then begin
+       Buffer.add_string buf "    const double * __restrict__ rio,\n";
+       Buffer.add_string buf "    double       * __restrict__ out_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ out_im,\n"
+     end
+     else if !strided_r2c_bwd then begin
+       Buffer.add_string buf "    const double * __restrict__ in_re,\n";
+       Buffer.add_string buf "    const double * __restrict__ in_im,\n";
+       Buffer.add_string buf "    double       * __restrict__ out,\n"
+     end
+     else begin
+       Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
+     end);
     Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
     Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    size_t row_stride,\n";
+    (if !strided_r2c_bwd then begin
+       Buffer.add_string buf "    size_t in_stride,\n";
+       Buffer.add_string buf "    size_t row_stride_in,\n"
+     end
+     else if !strided_r2c then begin
+       Buffer.add_string buf "    size_t row_stride_in,\n";
+       Buffer.add_string buf "    size_t out_stride,\n"
+     end
+     else Buffer.add_string buf "    size_t row_stride,\n");
     Buffer.add_string buf "    size_t me)\n";
     Buffer.add_string buf "{\n";
     Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n";
+    if !strided_r2c_bwd then begin
+      Buffer.add_string buf
+        "    /* two-for-one c2r (\xc2\xa76a38 bwd emission): the merge prologue \
+         builds\n     * Z = X1 + i*X2 lane vectors from two half-spectra per \
+         lane; the c2c\n     * bwd body then yields z[n] whose Re/Im ARE the \
+         even/odd real rows,\n     * written by the standard store lattice via \
+         the pair shadow. me =\n     * PAIRS; in_stride >= N/2+1; output \
+         unnormalized (rows = N*x). */\n";
+      Buffer.add_string buf "    double       * __restrict__ rio_re = out;\n";
+      Buffer.add_string buf
+        "    double       * __restrict__ rio_im = out + row_stride_in;\n";
+      Buffer.add_string buf
+        "    const size_t row_stride = 2 * row_stride_in;\n"
+    end
+    else if !strided_r2c then begin
+      Buffer.add_string buf
+        "    /* two-for-one r2c (\xc2\xa76a36 emission): even rows enter as re \
+         lanes,\n     * odd rows as im; row_stride is the PAIR stride; the \
+         fused split\n     * emits both rows' half-spectra. me = PAIRS; \
+         out_stride >= N/2+1.\n     * Reference: r16_r2c_fwd_strided.c \
+         (hand-written, -51.7%/-44.9%). */\n";
+      Buffer.add_string buf "    const double * __restrict__ rio_re = rio;\n";
+      Buffer.add_string buf
+        "    const double * __restrict__ rio_im = rio + row_stride_in;\n";
+      Buffer.add_string buf
+        "    const size_t row_stride = 2 * row_stride_in;\n"
+    end;
     (* AVX-512 only: pre-declare the two __m512i index vectors used by the
      * 8×8 transpose preamble AND postamble. Function-scope (outside the
      * b loop) so gcc treats them as loop-invariant constants. The
@@ -511,6 +568,23 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
       Buffer.add_string buf
         "    const __m512i _tp_idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, \
          3, 2);\n"
+    ;
+      if !strided_il_out then begin
+        Buffer.add_string buf
+          "    const __m512i _il_idx_e = _mm512_set_epi64(11, 3, 10, 2, 9, 1, \
+           8, 0);\n";
+        Buffer.add_string buf
+          "    const __m512i _il_idx_o = _mm512_set_epi64(15, 7, 14, 6, 13, 5, \
+           12, 4);\n"
+      end;
+      if !strided_il_in then begin
+        Buffer.add_string buf
+          "    const __m512i _il_idx_de = _mm512_set_epi64(14, 12, 10, 8, 6, \
+           4, 2, 0);\n";
+        Buffer.add_string buf
+          "    const __m512i _il_idx_do = _mm512_set_epi64(15, 13, 11, 9, 7, \
+           5, 3, 1);\n"
+      end
     end;
     Buffer.add_string buf
       (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n"
@@ -518,6 +592,13 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     (* Per-iteration locals: lane_re_0..radix-1 (inputs after transpose),
        out_lane_re_0..radix-1 (outputs before inverse transpose). Plus
        _im versions. *)
+    if !strided_r2c_bwd then
+      for j = 0 to radix / 2 do
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        %s _hx1r_%d, _hx1i_%d, _hx2r_%d, _hx2i_%d;\n"
+             isa.vec_type j j j j)
+      done;
     for j = 0 to radix - 1 do
       Buffer.add_string buf
         (Printf.sprintf "        %s lane_re_%d, lane_im_%d;\n" isa.vec_type j j);
@@ -532,6 +613,139 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
      * each holding (row 0, row 1, row 2, row 3) at one fft_idx. *)
     if isa.vec_width = 4 then begin
       let groups = radix / 4 in
+      if !strided_il_in then
+        for g = 0 to groups - 1 do
+          let j0 = g * 4 in
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        {  /* 4x4 transpose group (il_in): fft_idx %d..%d \
+                */\n"
+               j0 (j0 + 3));
+          for r = 0 to 3 do
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m256d _zv0_%d = \
+                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
+                 r r j0);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m256d _zv1_%d = \
+                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 4]);\n"
+                 r r j0);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m256d _row_re_%d = \
+                  _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zv0_%d, \
+                  _zv1_%d), 0xD8);\n"
+                 r r r);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m256d _row_im_%d = \
+                  _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zv0_%d, \
+                  _zv1_%d), 0xD8);\n"
+                 r r r)
+          done;
+          List.iter
+            (fun suf ->
+              for k = 0 to 3 do
+                let base = k / 2 * 2 in
+                let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m256d _t%d_%s = \
+                      _mm256_%s_pd(_row_%s_%d, _row_%s_%d);\n"
+                     k suf op suf base suf (base + 1))
+              done;
+              for i = 0 to 3 do
+                let ta = i mod 2 in
+                let tb = 2 + (i mod 2) in
+                let imm = if i < 2 then "0x20" else "0x31" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            lane_%s_%d = _mm256_permute2f128_pd(_t%d_%s, \
+                      _t%d_%s, %s);\n"
+                     suf (j0 + i) ta suf tb suf imm)
+              done)
+            [ "re"; "im" ];
+          Buffer.add_string buf "        }\n"
+        done
+      else if !strided_r2c_bwd then begin
+        (* \xc2\xa76a38 merge prologue: transposing-load the four half-plane
+           bin-blocks (X1 = even rows, X2 = odd; re/im planes), then
+           Z[f] = X1[f] + i*X2[f] and the Hermitian mirror
+           Z[n-f] = conj(X1[f]) + i*conj(X2[f]). General formula absorbs
+           DC/Nyquist via the zero-imag contract. All lane_* covered. *)
+        let n = radix in
+        let h = n / 2 in
+        if n mod 2 <> 0 then failwith "strided-r2c bwd requires even radix";
+        let full = h / 4 in
+        for c = 0 to full - 1 do
+          let j0 = c * 4 in
+          List.iter
+            (fun (pl, roff, nm) ->
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "        {  /* merge load group: %s bins %d..%d */\n" nm j0
+                   (j0 + 3));
+              for r = 0 to 3 do
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m256d _mr%d = _mm256_loadu_pd(&%s[(2*(b+%d)+%d)*in_stride + %d]);\n"
+                     r pl r roff j0)
+              done;
+              for k = 0 to 3 do
+                let base = k / 2 * 2 in
+                let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m256d _mt%d = _mm256_%s_pd(_mr%d, _mr%d);\n"
+                     k op base (base + 1))
+              done;
+              for i = 0 to 3 do
+                let ta = i mod 2 in
+                let tb = 2 + (i mod 2) in
+                let imm = if i < 2 then "0x20" else "0x31" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            %s_%d = _mm256_permute2f128_pd(_mt%d, _mt%d, %s);\n"
+                     nm (j0 + i) ta tb imm)
+              done;
+              Buffer.add_string buf "        }\n")
+            [ ("in_re", 0, "_hx1r"); ("in_im", 0, "_hx1i");
+              ("in_re", 1, "_hx2r"); ("in_im", 1, "_hx2i") ]
+        done;
+        (* declare the half vectors (assigned in the groups above / tails below) *)
+        ();
+        for f = 4 * full to h do
+          List.iter
+            (fun (pl, roff, nm) ->
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "        %s_%d = _mm256_set_pd(%s[(2*(b+3)+%d)*in_stride + %d], %s[(2*(b+2)+%d)*in_stride + %d], %s[(2*(b+1)+%d)*in_stride + %d], %s[(2*(b+0)+%d)*in_stride + %d]);\n"
+                   nm f pl roff f pl roff f pl roff f pl roff f))
+            [ ("in_re", 0, "_hx1r"); ("in_im", 0, "_hx1i");
+              ("in_re", 1, "_hx2r"); ("in_im", 1, "_hx2i") ]
+        done;
+        for f = 0 to h do
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        lane_re_%d = _mm256_sub_pd(_hx1r_%d, _hx2i_%d);\n" f f f);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        lane_im_%d = _mm256_add_pd(_hx1i_%d, _hx2r_%d);\n" f f f);
+          if f >= 1 && f <= h - 1 then begin
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        lane_re_%d = _mm256_add_pd(_hx1r_%d, _hx2i_%d);\n"
+                 (n - f) f f);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        lane_im_%d = _mm256_sub_pd(_hx2r_%d, _hx1i_%d);\n"
+                 (n - f) f f)
+          end
+        done
+      end
+      else
       for which_side = 0 to 1 do
         let suf = if which_side = 0 then "re" else "im" in
         for g = 0 to groups - 1 do
@@ -607,6 +821,154 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
        * names so the same identifiers are reused across groups without
        * collision — the `{ ... }` block scope makes that safe. *)
       let groups = radix / 8 in
+      if !strided_il_in then
+        for g = 0 to groups - 1 do
+          let j0 = g * 8 in
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        {  /* 8x8 transpose group (il_in): fft_idx %d..%d \
+                */\n"
+               j0 (j0 + 7));
+          for r = 0 to 7 do
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m512d _zv0_%d = \
+                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
+                 r r j0);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m512d _zv1_%d = \
+                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 8]);\n"
+                 r r j0);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m512d _row_re_%d = \
+                  _mm512_permutex2var_pd(_zv0_%d, _il_idx_de, _zv1_%d);\n"
+                 r r r);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "            const __m512d _row_im_%d = \
+                  _mm512_permutex2var_pd(_zv0_%d, _il_idx_do, _zv1_%d);\n"
+                 r r r)
+          done;
+          List.iter
+            (fun suf ->
+              for k = 0 to 7 do
+                let base = k / 2 * 2 in
+                let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m512d _t%d_%s = \
+                      _mm512_%s_pd(_row_%s_%d, _row_%s_%d);\n"
+                     k suf op suf base suf (base + 1))
+              done;
+              for k = 0 to 7 do
+                let ua = ((k mod 4) mod 2) + k / 4 * 4 in
+                let ub = ua + 2 in
+                let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m512d _x%d_%s = \
+                      _mm512_permutex2var_pd(_t%d_%s, %s, _t%d_%s);\n"
+                     k suf ua suf idx ub suf)
+              done;
+              for i = 0 to 7 do
+                let va = if i < 4 then i else i - 4 in
+                let vb = if i < 4 then i + 4 else i in
+                let imm = if i < 4 then "0x44" else "0xEE" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            lane_%s_%d = _mm512_shuffle_f64x2(_x%d_%s, \
+                      _x%d_%s, %s);\n"
+                     suf (j0 + i) va suf vb suf imm)
+              done)
+            [ "re"; "im" ];
+          Buffer.add_string buf "        }\n"
+        done
+      else if !strided_r2c_bwd then begin
+        (* \xc2\xa76a45: avx512 merge prologue — 8x8 transposing loads of the
+           four half-planes, then Z = X1 + i*X2 with Hermitian mirrors. *)
+        let n = radix in
+        let h = n / 2 in
+        if n mod 2 <> 0 then failwith "strided-r2c bwd requires even radix";
+        let full = h / 8 in
+        for c = 0 to full - 1 do
+          let j0 = c * 8 in
+          List.iter
+            (fun (pl, roff, nm) ->
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "        {  /* merge 8x8 load group: %s bins %d..%d */\n"
+                   nm j0 (j0 + 7));
+              for r = 0 to 7 do
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m512d _mr%d = _mm512_loadu_pd(&%s[(2*(b+%d)+%d)*in_stride + %d]);\n"
+                     r pl r roff j0)
+              done;
+              for k = 0 to 7 do
+                let base = k / 2 * 2 in
+                let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m512d _mt%d = _mm512_%s_pd(_mr%d, _mr%d);\n"
+                     k op base (base + 1))
+              done;
+              for k = 0 to 7 do
+                let ua = ((k mod 4) mod 2) + k / 4 * 4 in
+                let ub = ua + 2 in
+                let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            const __m512d _mv%d = _mm512_permutex2var_pd(_mt%d, %s, _mt%d);\n"
+                     k ua idx ub)
+              done;
+              for i = 0 to 7 do
+                let va = if i < 4 then i else i - 4 in
+                let vb = if i < 4 then i + 4 else i in
+                let imm = if i < 4 then "0x44" else "0xEE" in
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "            %s_%d = _mm512_shuffle_f64x2(_mv%d, _mv%d, %s);\n"
+                     nm (j0 + i) va vb imm)
+              done;
+              Buffer.add_string buf "        }\n")
+            [ ("in_re", 0, "_hx1r"); ("in_im", 0, "_hx1i");
+              ("in_re", 1, "_hx2r"); ("in_im", 1, "_hx2i") ]
+        done;
+        for f = 8 * full to h do
+          List.iter
+            (fun (pl, roff, nm) ->
+              Buffer.add_string buf
+                (Printf.sprintf "        %s_%d = _mm512_set_pd(" nm f);
+              for w = 7 downto 0 do
+                Buffer.add_string buf
+                  (Printf.sprintf "%s[(2*(b+%d)+%d)*in_stride + %d]%s"
+                     pl w roff f (if w = 0 then ");\n" else ", "))
+              done)
+            [ ("in_re", 0, "_hx1r"); ("in_im", 0, "_hx1i");
+              ("in_re", 1, "_hx2r"); ("in_im", 1, "_hx2i") ]
+        done;
+        for f = 0 to h do
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        lane_re_%d = _mm512_sub_pd(_hx1r_%d, _hx2i_%d);\n" f f f);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        lane_im_%d = _mm512_add_pd(_hx1i_%d, _hx2r_%d);\n" f f f);
+          if f >= 1 && f <= h - 1 then begin
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        lane_re_%d = _mm512_add_pd(_hx1r_%d, _hx2i_%d);\n"
+                 (n - f) f f);
+            Buffer.add_string buf
+              (Printf.sprintf
+                 "        lane_im_%d = _mm512_sub_pd(_hx2r_%d, _hx1i_%d);\n"
+                 (n - f) f f)
+          end
+        done
+      end
+      else
       for which_side = 0 to 1 do
         let suf = if which_side = 0 then "re" else "im" in
         for g = 0 to groups - 1 do
@@ -758,13 +1120,41 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     Buffer.add_string buf "\n"
   end
   else if in_place then begin
-    Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ rio_im,\n";
+    (if !ip_il_in then begin
+       Buffer.add_string buf "    const double * __restrict__ in_z,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
+     end
+     else if !ip_il_out then begin
+       Buffer.add_string buf "    const double * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    const double * __restrict__ rio_im,\n";
+       Buffer.add_string buf "    double       * __restrict__ out_z,\n"
+     end
+     else begin
+       Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
+     end);
     Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
     Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
     Buffer.add_string buf "    size_t ios,\n";
     Buffer.add_string buf "    size_t me)\n";
     Buffer.add_string buf "{\n";
+    if isa.vec_width = 8 && (!ip_il_in || !ip_il_out) then begin
+      if !ip_il_in then begin
+        Buffer.add_string buf
+          "    const __m512i _il_de = _mm512_setr_epi64(0,2,4,6,8,10,12,14);\n";
+        Buffer.add_string buf
+          "    const __m512i _il_do = _mm512_setr_epi64(1,3,5,7,9,11,13,15);\n";
+        Buffer.add_string buf "    (void)_il_de; (void)_il_do;\n"
+      end;
+      if !ip_il_out then begin
+        Buffer.add_string buf
+          "    const __m512i _il_pe = _mm512_setr_epi64(0,8,1,9,2,10,3,11);\n";
+        Buffer.add_string buf
+          "    const __m512i _il_po = _mm512_setr_epi64(4,12,5,13,6,14,7,15);\n";
+        Buffer.add_string buf "    (void)_il_pe; (void)_il_po;\n"
+      end
+    end;
     (* Spill array decl, OUTSIDE the for loop so it's allocated once *)
     (match spill with
     | None -> ()
@@ -1152,6 +1542,7 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
    * that take the tail (so re-rendering is safe and the schedule is computed
    * deterministically each pass — identical order, no re-scheduling hazard). *)
   let emit_body ?(force_mono = false) (isa : Isa.t) () =
+    il_reset ();
   let render_output_addr k is_re =
     if !r2c_term_laststage then
       (* Output(2s) = Xp slot s at Xp[s*osp+v]; Output(2s+1) = Xm slot s. *)
@@ -1225,6 +1616,51 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     | Expr.Output (k, false) when strided ->
         Buffer.add_string buf
           (Printf.sprintf "        out_lane_im_%d = %s;\n" k value_expr)
+    | Expr.Output (k, true) when !ip_il_out ->
+        (* defer: fused with the adjacent im-store (sink-first pairs) *)
+        il_stash := Some (k, value_expr)
+    | Expr.Output (k, false) when !ip_il_out ->
+        let vre =
+          match !il_stash with
+          | Some (k2, vre) when k2 = k -> vre
+          | _ -> failwith "ip_il_out: unpaired im store (scheduler contract)"
+        in
+        il_stash := None;
+        let ee = Printf.sprintf "%d*ios + k" k in
+        (match (isa.vec_width, !current_ls_mode) with
+         | 1, _ ->
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        out_z[2*(%s)] = %s;\n        out_z[2*(%s) + 1] = %s;\n"
+                  ee vre ee value_expr)
+         | 8, Isa.LS_vector ->
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        _mm512_storeu_pd(&out_z[2*(%s)], _mm512_permutex2var_pd(%s, _il_pe, %s));\n\
+                   \        _mm512_storeu_pd(&out_z[2*(%s) + 8], _mm512_permutex2var_pd(%s, _il_po, %s));\n"
+                  ee vre value_expr ee vre value_expr)
+         | 8, Isa.LS_masked m ->
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        { const unsigned _ild = _pdep_u32((unsigned)%s, 0x5555u) * 3u;\n\
+                   \          _mm512_mask_storeu_pd(&out_z[2*(%s)], (__mmask8)_ild, _mm512_permutex2var_pd(%s, _il_pe, %s));\n\
+                   \          _mm512_mask_storeu_pd(&out_z[2*(%s) + 8], (__mmask8)(_ild >> 8), _mm512_permutex2var_pd(%s, _il_po, %s)); }\n"
+                  m ee vre value_expr ee vre value_expr)
+         | 4, _ ->
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        { const __m256d _ilp = _mm256_unpacklo_pd(%s, %s);\n\
+                   \          const __m256d _ilq = _mm256_unpackhi_pd(%s, %s);\n\
+                   \          _mm256_storeu_pd(&out_z[2*(%s)], _mm256_permute2f128_pd(_ilp, _ilq, 0x20));\n\
+                   \          _mm256_storeu_pd(&out_z[2*(%s) + 4], _mm256_permute2f128_pd(_ilp, _ilq, 0x31)); }\n"
+                  vre value_expr vre value_expr ee ee)
+         | 2, _ ->
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        _mm_storeu_pd(&out_z[2*(%s)], _mm_unpacklo_pd(%s, %s));\n\
+                   \        _mm_storeu_pd(&out_z[2*(%s) + 2], _mm_unpackhi_pd(%s, %s));\n"
+                  ee vre value_expr ee vre value_expr)
+         | _ -> failwith "ip_il_out: unsupported width")
     | Expr.Output (k, true) ->
         Buffer.add_string buf "        ";
         Buffer.add_string buf
@@ -2236,6 +2672,150 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   if strided && isa.vec_width = 4 then begin
     Buffer.add_string buf "\n";
     let groups = radix / 4 in
+    if !strided_il_out then
+      for g = 0 to groups - 1 do
+        let j0 = g * 4 in
+        let stfn =
+          if !strided_ilo_nt then "_mm256_stream_pd" else "_mm256_storeu_pd"
+        in
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        {  /* inverse 4x4 transpose + interleave: fft_idx \
+              %d..%d */\n"
+             j0 (j0 + 3));
+        List.iter
+          (fun suf ->
+            for k = 0 to 3 do
+              let base = j0 + k / 2 * 2 in
+              let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "            const __m256d _u%d_%s = \
+                    _mm256_%s_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+                   k suf op suf base suf (base + 1))
+            done)
+          [ "re"; "im" ];
+        for k = 0 to 3 do
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            const __m256d _p%d_lo = \
+                _mm256_unpacklo_pd(_u%d_re, _u%d_im);\n"
+               k k k);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            const __m256d _p%d_hi = \
+                _mm256_unpackhi_pd(_u%d_re, _u%d_im);\n"
+               k k k)
+        done;
+        for i = 0 to 3 do
+          let pa = i mod 2 in
+          let pb = 2 + (i mod 2) in
+          let imm = if i < 2 then "0x20" else "0x31" in
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + \
+                %d) + 0], _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
+               stfn i j0 pa pa imm);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + \
+                %d) + 4], _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
+               stfn i j0 pb pb imm)
+        done;
+        Buffer.add_string buf "        }\n"
+      done
+    else if !strided_r2c && not !strided_r2c_bwd then begin
+      (* \xc2\xa76a36 emission: fused two-for-one conjugate split. x1 = even
+         row's half-spectrum, x2 = odd row's; mirror g=(n-f) mod n makes
+         f=0 and Nyquist self-mirroring. Every out_lane_* is consumed. *)
+      let n = radix in
+      let h = n / 2 in
+      if n mod 2 <> 0 then failwith "strided-r2c requires even radix";
+      Buffer.add_string buf
+        "        const __m256d _half = _mm256_set1_pd(0.5);\n";
+      for f = 0 to h do
+        let g = if f = 0 then 0 else n - f in
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m256d x1r_%d = _mm256_mul_pd(_half, _mm256_add_pd(out_lane_re_%d, out_lane_re_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m256d x1i_%d = _mm256_mul_pd(_half, _mm256_sub_pd(out_lane_im_%d, out_lane_im_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m256d x2r_%d = _mm256_mul_pd(_half, _mm256_add_pd(out_lane_im_%d, out_lane_im_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m256d x2i_%d = _mm256_mul_pd(_half, _mm256_sub_pd(out_lane_re_%d, out_lane_re_%d));\n"
+             f g f)
+      done;
+      let full = h / 4 in
+      for c = 0 to full - 1 do
+        let j0 = c * 4 in
+        List.iter
+          (fun (xs, roff) ->
+            List.iter
+              (fun (pl, sfx) ->
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "        {  /* r2c store group: x%s%s, bins %d..%d */\n"
+                     xs sfx j0 (j0 + 3));
+                for k = 0 to 3 do
+                  let base = j0 + k / 2 * 2 in
+                  let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                  Buffer.add_string buf
+                    (Printf.sprintf
+                       "            const __m256d _v%d = _mm256_%s_pd(x%s%s_%d, x%s%s_%d);\n"
+                       k op xs sfx base xs sfx (base + 1))
+                done;
+                for i = 0 to 3 do
+                  let pa = i mod 2 in
+                  let pb = 2 + (i mod 2) in
+                  let imm = if i < 2 then "0x20" else "0x31" in
+                  Buffer.add_string buf
+                    (Printf.sprintf
+                       "            _mm256_storeu_pd(&%s[(2*(b+%d)+%d)*out_stride + %d], _mm256_permute2f128_pd(_v%d, _v%d, %s));\n"
+                       pl i roff j0 pa pb imm)
+                done;
+                Buffer.add_string buf "        }\n")
+              [ ("out_re", "r"); ("out_im", "i") ])
+          [ ("1", 0); ("2", 1) ]
+      done;
+      for f = 4 * full to h do
+        Buffer.add_string buf
+          (Printf.sprintf "        {  /* r2c scalar-tail bin %d */\n" f);
+        Buffer.add_string buf
+          "            double _q[16] __attribute__((aligned(32)));\n";
+        Buffer.add_string buf
+          (Printf.sprintf
+             "            _mm256_store_pd(_q, x1r_%d); _mm256_store_pd(_q + 4, x1i_%d);\n"
+             f f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "            _mm256_store_pd(_q + 8, x2r_%d); _mm256_store_pd(_q + 12, x2i_%d);\n"
+             f f);
+        Buffer.add_string buf
+          "            for (int _w = 0; _w < 4; _w++) {\n";
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_re[(2*(b+(size_t)_w))*out_stride + %d] = _q[_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_im[(2*(b+(size_t)_w))*out_stride + %d] = _q[4+_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_re[(2*(b+(size_t)_w)+1)*out_stride + %d] = _q[8+_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_im[(2*(b+(size_t)_w)+1)*out_stride + %d] = _q[12+_w];\n" f);
+        Buffer.add_string buf "            }\n";
+        Buffer.add_string buf "        }\n"
+      done
+    end
+    else
     for which_side = 0 to 1 do
       let suf = if which_side = 0 then "re" else "im" in
       for g = 0 to groups - 1 do
@@ -2302,6 +2882,171 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
   if strided && isa.vec_width = 8 then begin
     Buffer.add_string buf "\n";
     let groups = radix / 8 in
+    if !strided_il_out then
+      for g = 0 to groups - 1 do
+        let j0 = g * 8 in
+        let stfn =
+          if !strided_ilo_nt then "_mm512_stream_pd" else "_mm512_storeu_pd"
+        in
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        {  /* inverse 8x8 transpose + interleave: fft_idx \
+              %d..%d */\n"
+             j0 (j0 + 7));
+        List.iter
+          (fun suf ->
+            for k = 0 to 7 do
+              let base = j0 + k / 2 * 2 in
+              let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "            const __m512d _u%d_%s = \
+                    _mm512_%s_pd(out_lane_%s_%d, out_lane_%s_%d);\n"
+                   k suf op suf base suf (base + 1))
+            done;
+            for k = 0 to 7 do
+              let ua = ((k mod 4) mod 2) + k / 4 * 4 in
+              let ub = ua + 2 in
+              let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+              Buffer.add_string buf
+                (Printf.sprintf
+                   "            const __m512d _v%d_%s = \
+                    _mm512_permutex2var_pd(_u%d_%s, %s, _u%d_%s);\n"
+                   k suf ua suf idx ub suf)
+            done)
+          [ "re"; "im" ];
+        for i = 0 to 7 do
+          let va = if i < 4 then i else i - 4 in
+          let vb = if i < 4 then i + 4 else i in
+          let imm = if i < 4 then "0x44" else "0xEE" in
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            const __m512d _r%d_re = \
+                _mm512_shuffle_f64x2(_v%d_re, _v%d_re, %s);\n"
+               i va vb imm);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            const __m512d _r%d_im = \
+                _mm512_shuffle_f64x2(_v%d_im, _v%d_im, %s);\n"
+               i va vb imm);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + \
+                %d) + 0], _mm512_permutex2var_pd(_r%d_re, _il_idx_e, \
+                _r%d_im));\n"
+               stfn i j0 i i);
+          Buffer.add_string buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + \
+                %d) + 8], _mm512_permutex2var_pd(_r%d_re, _il_idx_o, \
+                _r%d_im));\n"
+               stfn i j0 i i)
+        done;
+        Buffer.add_string buf "        }\n"
+      done
+    else if !strided_r2c && not !strided_r2c_bwd then begin
+      (* \xc2\xa76a45: avx512 r2c split postamble. Same formulas as the avx2
+         edition on __m512d lane vectors (8 lanes = 8 PAIRS = 16 rows per
+         block); stores via the 3-stage inverse (unpack -> permutex2var
+         tp_idx -> shuffle_f64x2) in 8-bin chunks; scalar-tail bins incl.
+         Nyquist via a 32-double spill. *)
+      let n = radix in
+      let h = n / 2 in
+      if n mod 2 <> 0 then failwith "strided-r2c requires even radix";
+      Buffer.add_string buf
+        "        const __m512d _half = _mm512_set1_pd(0.5);\n";
+      for f = 0 to h do
+        let g = if f = 0 then 0 else n - f in
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m512d x1r_%d = _mm512_mul_pd(_half, _mm512_add_pd(out_lane_re_%d, out_lane_re_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m512d x1i_%d = _mm512_mul_pd(_half, _mm512_sub_pd(out_lane_im_%d, out_lane_im_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m512d x2r_%d = _mm512_mul_pd(_half, _mm512_add_pd(out_lane_im_%d, out_lane_im_%d));\n"
+             f f g);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        const __m512d x2i_%d = _mm512_mul_pd(_half, _mm512_sub_pd(out_lane_re_%d, out_lane_re_%d));\n"
+             f g f)
+      done;
+      let full = h / 8 in
+      for c = 0 to full - 1 do
+        let j0 = c * 8 in
+        List.iter
+          (fun (xs, roff) ->
+            List.iter
+              (fun (pl, sfx) ->
+                Buffer.add_string buf
+                  (Printf.sprintf
+                     "        {  /* r2c 8x8 store group: x%s%s, bins %d..%d */\n"
+                     xs sfx j0 (j0 + 7));
+                for k = 0 to 7 do
+                  let base = j0 + k / 2 * 2 in
+                  let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                  Buffer.add_string buf
+                    (Printf.sprintf
+                       "            const __m512d _u%d = _mm512_%s_pd(x%s%s_%d, x%s%s_%d);\n"
+                       k op xs sfx base xs sfx (base + 1))
+                done;
+                for k = 0 to 7 do
+                  let ua = ((k mod 4) mod 2) + k / 4 * 4 in
+                  let ub = ua + 2 in
+                  let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+                  Buffer.add_string buf
+                    (Printf.sprintf
+                       "            const __m512d _v%d = _mm512_permutex2var_pd(_u%d, %s, _u%d);\n"
+                       k ua idx ub)
+                done;
+                for i = 0 to 7 do
+                  let va = if i < 4 then i else i - 4 in
+                  let vb = if i < 4 then i + 4 else i in
+                  let imm = if i < 4 then "0x44" else "0xEE" in
+                  Buffer.add_string buf
+                    (Printf.sprintf
+                       "            _mm512_storeu_pd(&%s[(2*(b+%d)+%d)*out_stride + %d], _mm512_shuffle_f64x2(_v%d, _v%d, %s));\n"
+                       pl i roff j0 va vb imm)
+                done;
+                Buffer.add_string buf "        }\n")
+              [ ("out_re", "r"); ("out_im", "i") ])
+          [ ("1", 0); ("2", 1) ]
+      done;
+      for f = 8 * full to h do
+        Buffer.add_string buf
+          (Printf.sprintf "        {  /* r2c scalar-tail bin %d */\n" f);
+        Buffer.add_string buf
+          "            double _q[32] __attribute__((aligned(64)));\n";
+        Buffer.add_string buf
+          (Printf.sprintf
+             "            _mm512_store_pd(_q, x1r_%d); _mm512_store_pd(_q + 8, x1i_%d);\n"
+             f f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "            _mm512_store_pd(_q + 16, x2r_%d); _mm512_store_pd(_q + 24, x2i_%d);\n"
+             f f);
+        Buffer.add_string buf
+          "            for (int _w = 0; _w < 8; _w++) {\n";
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_re[(2*(b+(size_t)_w))*out_stride + %d] = _q[_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_im[(2*(b+(size_t)_w))*out_stride + %d] = _q[8+_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_re[(2*(b+(size_t)_w)+1)*out_stride + %d] = _q[16+_w];\n" f);
+        Buffer.add_string buf
+          (Printf.sprintf
+             "                out_im[(2*(b+(size_t)_w)+1)*out_stride + %d] = _q[24+_w];\n" f);
+        Buffer.add_string buf "            }\n";
+        Buffer.add_string buf "        }\n"
+      done
+    end
+    else
     for which_side = 0 to 1 do
       let suf = if which_side = 0 then "re" else "im" in
       for g = 0 to groups - 1 do
@@ -2529,6 +3274,8 @@ let emit_codelet ?(in_place = false) ?(t1s = false) ?(twidsq = false)
     end;
     Buffer.add_string buf "    }\n"
   end;
+  if strided && !strided_ilo_nt then
+    Buffer.add_string buf "    _mm_sfence();\n";
   Buffer.add_string buf "}\n";
   Buffer.add_string buf
     (codelet_metadata ~isa ~spill ~tw_broadcast:(t1s || twidsq)

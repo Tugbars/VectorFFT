@@ -255,6 +255,8 @@ typedef struct {
     rfft_hc2c_nat_fn hcn; /* stage-0 natural terminator (D2), or NULL */
     rfft_hc2c_nat_rng_fn hcnr; /* T1 ranged terminator, or NULL */
     double *nat_k0;       /* k0 scratch column, MAX_RADIX*K doubles */
+    double *zscr;         /* §6a26: 4 * r * zch * K stage-0 z redirect scratch */
+    int zch;              /* §6a26: columns per chunked-hcnr call (L1 budget) */
 #ifdef VFFT_RFFT_PROFILE
     /* per-phase accumulators (ns), reset by caller: [0]=leaf;
      * per stage d: k0 / interior columns / mid */
@@ -279,6 +281,7 @@ static inline void rfft_plan_destroy(rfft_plan_t *p)
     }
     rfft_buf_free(p->planeA, p->planeA_huge); rfft_buf_free(p->planeB, p->planeB_huge);
     RFFT_ALIGNED_FREE(p->nat_k0);
+    RFFT_ALIGNED_FREE(p->zscr);
     free(p);
 }
 
@@ -403,6 +406,22 @@ static inline rfft_plan_t *rfft_plan_create_ex(int N, size_t K,
     p->nat_k0 = (double *)RFFT_ALIGNED_ALLOC(64,
         (size_t)VFFT_RFFT_MAX_RADIX * K * 8);
     if (!p->nat_k0) goto fail;
+    /* §6a26: z-terminator scratch, sized at plan time. Chunk width zch keeps
+     * the 4 planes within ~24KB of L1 (768 = 24576B / (4 planes * 8B)) and is
+     * capped at kmax so the single-chunk case matches split's one hcnr sweep. */
+    p->zscr = NULL;
+    p->zch = 1;
+    if (nf >= 2) {
+        const int _zr = p->st[0].radix;
+        const int _zk = (p->st[0].m - 1) / 2;
+        int _zc = (int)(768 / ((size_t)_zr * K));
+        if (_zc < 1) _zc = 1;
+        if (_zk >= 1 && _zc > _zk) _zc = _zk;
+        p->zch = _zc;
+        p->zscr = (double *)RFFT_ALIGNED_ALLOC(64,
+            (size_t)4 * (size_t)_zr * (size_t)_zc * K * sizeof(double));
+        if (!p->zscr) goto fail;
+    }
     /* Lane-blocking default: OFF (Kb = K). Section 65 measured the
      * L2-slab heuristic as NEGATIVE (-22% at (4,4,16)): Kb=96 cuts
      * each stream burst to ~768B, defeating the prefetchers, and the
@@ -428,12 +447,93 @@ static inline rfft_plan_t *rfft_plan_create(int N, size_t K,
  * section 66. mode 0: packed store (row Q*pp of dst). mode 1:
  * natural store (rows pp <= nh of dst_re/dst_im; im 0 at nh;
  * uppers skipped — self-paired column). slot stride = Q*K. */
+/* §6a26: interleaved-z stores for the natural terminator (z[2*idx],
+ * z[2*idx+1]). Local minimal twins of r2c.h's helpers (include-order keeps
+ * rfft.h standalone). */
+static inline void _rfft_zst1(double *z, size_t idx, double re, double im) {
+    z[2*idx] = re; z[2*idx+1] = im;
+}
+#if defined(__AVX2__) || defined(__AVX512F__)
+static inline void _rfft_zst4(double *z, size_t idx, __m256d re, __m256d im) {
+    __m256d lo = _mm256_unpacklo_pd(re, im), hi = _mm256_unpackhi_pd(re, im);
+    _mm256_storeu_pd(z + 2*idx,     _mm256_permute2f128_pd(lo, hi, 0x20));
+    _mm256_storeu_pd(z + 2*idx + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+}
+/* interleave two K-contiguous source rows into z row `row` lanes [k0,k0+kw) */
+static inline void _rfft_zrow(double *z, size_t row, size_t K, size_t k0,
+                              size_t kw, const double *re, const double *im) {
+    size_t base = row * K + k0, v = 0;
+    for (; v + 4 <= kw; v += 4)
+        _rfft_zst4(z, base + v, _mm256_loadu_pd(re + v), _mm256_loadu_pd(im + v));
+    for (; v < kw; v++) _rfft_zst1(z, base + v, re[v], im[v]);
+}
+static inline void _rfft_zrow_zero_im(double *z, size_t row, size_t K,
+                                      size_t k0, size_t kw, const double *re) {
+    size_t base = row * K + k0, v = 0;
+    __m256d zv = _mm256_setzero_pd();
+    for (; v + 4 <= kw; v += 4)
+        _rfft_zst4(z, base + v, _mm256_loadu_pd(re + v), zv);
+    for (; v < kw; v++) _rfft_zst1(z, base + v, re[v], 0.0);
+}
+#else
+static inline void _rfft_zrow(double *z, size_t row, size_t K, size_t k0,
+                              size_t kw, const double *re, const double *im) {
+    size_t base = row * K + k0;
+    for (size_t v = 0; v < kw; v++) _rfft_zst1(z, base + v, re[v], im[v]);
+}
+static inline void _rfft_zrow_zero_im(double *z, size_t row, size_t K,
+                                      size_t k0, size_t kw, const double *re) {
+    size_t base = row * K + k0;
+    for (size_t v = 0; v < kw; v++) _rfft_zst1(z, base + v, re[v], 0.0);
+}
+#endif
+
+/* §6a28: deinterleave loads — exact inverses of the _rfft_zst* stores. */
+#if defined(__AVX2__) || defined(__AVX512F__)
+static inline void _rfft_zld4d(const double *z, size_t idx, __m256d *re, __m256d *im) {
+    __m256d a = _mm256_loadu_pd(z + 2*idx), b = _mm256_loadu_pd(z + 2*idx + 4);
+    __m256d lo = _mm256_permute2f128_pd(a, b, 0x20);
+    __m256d hi = _mm256_permute2f128_pd(a, b, 0x31);
+    *re = _mm256_unpacklo_pd(lo, hi); *im = _mm256_unpackhi_pd(lo, hi);
+}
+static inline void _rfft_zldrow(const double *z, size_t row, size_t K, size_t k0,
+                                size_t kw, double *re, double *im) {
+    size_t base = row * K + k0, v = 0;
+    for (; v + 4 <= kw; v += 4) {
+        __m256d r_, i_; _rfft_zld4d(z, base + v, &r_, &i_);
+        _mm256_storeu_pd(re + v, r_); _mm256_storeu_pd(im + v, i_);
+    }
+    for (; v < kw; v++) { re[v] = z[2*(base+v)]; im[v] = z[2*(base+v)+1]; }
+}
+static inline void _rfft_zldrow_re(const double *z, size_t row, size_t K, size_t k0,
+                                   size_t kw, double *re) {
+    size_t base = row * K + k0, v = 0;
+    for (; v + 4 <= kw; v += 4) {
+        __m256d r_, i_; _rfft_zld4d(z, base + v, &r_, &i_);
+        _mm256_storeu_pd(re + v, r_); (void)i_;
+    }
+    for (; v < kw; v++) re[v] = z[2*(base+v)];
+}
+#else
+static inline void _rfft_zldrow(const double *z, size_t row, size_t K, size_t k0,
+                                size_t kw, double *re, double *im) {
+    size_t base = row * K + k0;
+    for (size_t v = 0; v < kw; v++) { re[v] = z[2*(base+v)]; im[v] = z[2*(base+v)+1]; }
+}
+static inline void _rfft_zldrow_re(const double *z, size_t row, size_t K, size_t k0,
+                                   size_t kw, double *re) {
+    size_t base = row * K + k0;
+    for (size_t v = 0; v < kw; v++) re[v] = z[2*(base+v)];
+}
+#endif
+
 static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                                    size_t K, size_t vl,
                                    const double *mid_in,
                                    const double *mc, const double *ms,
                                    int natural, size_t nh,
-                                   double *dst, double *dst_im)
+                                   double *dst, double *dst_im,
+                                   double *zo)
 {
     size_t v = 0;
 #if defined(__AVX512F__)
@@ -467,10 +567,14 @@ static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                         _mm512_storeu_pd(dst + (Q * (size_t)pm) * K + v,
                                          acc_i[t]);
                 } else if ((size_t)pp <= nh) {
-                    _mm512_storeu_pd(dst + (size_t)pp * K + v, acc_r[t]);
-                    _mm512_storeu_pd(dst_im + (size_t)pp * K + v,
-                        ((size_t)pp == nh) ? _mm512_setzero_pd()
-                                           : acc_i[t]);
+                    __m512d _ri = ((size_t)pp == nh) ? _mm512_setzero_pd() : acc_i[t];
+                    if (zo) { size_t _bx = (size_t)pp * K + v;
+                        const __m512i _il = _mm512_setr_epi64(0,8,1,9,2,10,3,11);
+                        const __m512i _ih = _mm512_setr_epi64(4,12,5,13,6,14,7,15);
+                        _mm512_storeu_pd(zo + 2*_bx,     _mm512_permutex2var_pd(acc_r[t], _il, _ri));
+                        _mm512_storeu_pd(zo + 2*_bx + 8, _mm512_permutex2var_pd(acc_r[t], _ih, _ri));
+                    } else { _mm512_storeu_pd(dst + (size_t)pp * K + v, acc_r[t]);
+                             _mm512_storeu_pd(dst_im + (size_t)pp * K + v, _ri); }
                 }
             }
         }
@@ -506,10 +610,10 @@ static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                         _mm256_storeu_pd(dst + (Q * (size_t)pm) * K + v,
                                          acc_i[t]);
                 } else if ((size_t)pp <= nh) {
-                    _mm256_storeu_pd(dst + (size_t)pp * K + v, acc_r[t]);
-                    _mm256_storeu_pd(dst_im + (size_t)pp * K + v,
-                        ((size_t)pp == nh) ? _mm256_setzero_pd()
-                                           : acc_i[t]);
+                    __m256d _ri = ((size_t)pp == nh) ? _mm256_setzero_pd() : acc_i[t];
+                    if (zo) _rfft_zst4(zo, (size_t)pp * K + v, acc_r[t], _ri);
+                    else { _mm256_storeu_pd(dst + (size_t)pp * K + v, acc_r[t]);
+                           _mm256_storeu_pd(dst_im + (size_t)pp * K + v, _ri); }
                 }
             }
         }
@@ -534,8 +638,10 @@ static inline void rfft_mid_column(int r, int m, int np, size_t Q,
                 if (pm > np / 2)
                     dst[(Q * (size_t)pm) * K + v] = si;
             } else if ((size_t)pp <= nh) {
-                dst[(size_t)pp * K + v] = sr;
-                dst_im[(size_t)pp * K + v] = ((size_t)pp == nh) ? 0.0 : si;
+                double _si = ((size_t)pp == nh) ? 0.0 : si;
+                if (zo) _rfft_zst1(zo, (size_t)pp * K + v, sr, _si);
+                else { dst[(size_t)pp * K + v] = sr;
+                       dst_im[(size_t)pp * K + v] = _si; }
             }
         }
     }
@@ -658,7 +764,7 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
                 if (st->has_mid)
                     rfft_mid_column(r, m, np, Q, K, vlf,
                         curq + (Q * (size_t)(r * (m / 2))) * K,
-                        st->mid_c, st->mid_s, 0, 0, nxtq, NULL);
+                        st->mid_c, st->mid_s, 0, 0, nxtq, NULL, NULL);
 #ifdef VFFT_RFFT_PROFILE
                 ((rfft_plan_t *)p)->prof_mid[d] += _rfft_now() - _t3;
 #endif
@@ -677,10 +783,110 @@ static inline void rfft_execute_fwd_packed(const rfft_plan_t *p,
  * docs/native_rfft_design.md); the m/2 mid stores (Re, Im) at its
  * low rows directly. v1 runs full-width (plan Kb ignored).
  * Requires reg->hc2c[stage-0 radix] (p->hcn != NULL) for nf >= 2. */
+/* §6a26: stage-0 natural terminator, INTERLEAVED output. Same codelets and
+ * call order as the split stage-0 (values bit-identical); the k0 specials
+ * interleave from nat_k0, the hcn calls land in the plan's zscr rows
+ * (Rp/Ip/Rm/Im planes, row stride K) and are interleaved to z while L1-hot,
+ * mid stores via its zo mode. When the RANGED terminator (hcnr) is bound it
+ * runs in C-column chunks — the same codelet as split's single kcount sweep;
+ * splitting the column loop across calls preserves the per-column arithmetic,
+ * so the z output stays BIT-identical to the split path. Lanes [k0,k0+kw). */
+static inline void _rfft_stage0_z(const rfft_plan_t *p, const double *cur,
+                                  double *z, size_t nh, size_t k0, size_t kw)
+{
+    const rfft_stage_t *st = &p->st[0];
+    const int r = st->radix, m = st->m;
+    const size_t K = p->K;
+
+    st->k0(cur + k0, p->nat_k0 + k0, p->nat_k0 + (size_t)r * K + k0,
+           (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, kw);
+    _rfft_zrow_zero_im(z, 0, K, k0, kw, p->nat_k0 + k0);
+    for (int sI = 1; sI < (r + 1) / 2; sI++)
+        _rfft_zrow(z, (size_t)sI * (size_t)m, K, k0, kw,
+                   p->nat_k0 + (size_t)sI * K + k0,
+                   p->nat_k0 + (size_t)(r - sI) * K + k0);
+    if (r % 2 == 0)
+        _rfft_zrow_zero_im(z, nh, K, k0, kw,
+                           p->nat_k0 + (size_t)(r / 2) * K + k0);
+
+    const size_t zpl = (size_t)r * (size_t)p->zch * K;
+    double *Rp = p->zscr, *Ip = p->zscr + zpl;
+    double *Rm = Ip + zpl, *Im = Rm + zpl;
+    const int kmax = (m - 1) / 2;
+#ifdef VFFT_RFFT_RANGED
+    if (p->hcnr && kmax >= 1) {
+        /* Chunked ranged terminator: C columns per call, slot stride cw*K,
+         * column stride K. The codelet advances the mirror-side pointers by
+         * -cs_out per column, so Rm/Im bases sit at +(cw-1)*K and columns
+         * fill downward. Per-column slot partition is the D2 contract. */
+        const int C = p->zch;
+        for (int k1 = 1; k1 <= kmax; k1 += C) {
+            const int cw = (k1 + C - 1 <= kmax) ? C : (kmax - k1 + 1);
+            const ptrdiff_t oss = (ptrdiff_t)((size_t)cw * K);
+            p->hcnr(cur + ((size_t)(r * k1)) * K + k0,
+                    cur + ((size_t)(r * (m - k1))) * K + k0,
+                    Rp, Ip,
+                    Rm + (size_t)(cw - 1) * K,
+                    Im + (size_t)(cw - 1) * K,
+                    st->tw_re + (size_t)(k1 - 1) * r,
+                    st->tw_im + (size_t)(k1 - 1) * r,
+                    (ptrdiff_t)K, oss, oss,
+                    (ptrdiff_t)((size_t)r * K), (ptrdiff_t)K,
+                    cw, kw);
+            for (int j = 0; j < cw; j++) {
+                const size_t kk = (size_t)(k1 + j);
+                for (int sl = 0; sl < r; sl++) {
+                    size_t f = kk + (size_t)sl * (size_t)m;
+                    if (f <= nh)
+                        _rfft_zrow(z, f, K, k0, kw,
+                                   Rp + ((size_t)sl * (size_t)cw + (size_t)j) * K,
+                                   Ip + ((size_t)sl * (size_t)cw + (size_t)j) * K);
+                    else
+                        _rfft_zrow(z, (size_t)r * (size_t)m - f, K, k0, kw,
+                                   Rm + ((size_t)(r - 1 - sl) * (size_t)cw
+                                        + (size_t)(cw - 1 - j)) * K,
+                                   Im + ((size_t)(r - 1 - sl) * (size_t)cw
+                                        + (size_t)(cw - 1 - j)) * K);
+                }
+            }
+        }
+    } else
+#endif
+    for (int k = 1; k <= kmax; k++) {
+        p->hcn(cur + ((size_t)(r * k)) * K + k0,
+               cur + ((size_t)(r * (m - k))) * K + k0,
+               Rp, Ip, Rm, Im,
+               st->tw_re + (size_t)(k - 1) * r,
+               st->tw_im + (size_t)(k - 1) * r,
+               (ptrdiff_t)K, (ptrdiff_t)K, (ptrdiff_t)K, kw);
+        /* D2 contract: each slot is written exactly ONCE — low slots
+         * (f = k + s*m <= nh) via Rp/Ip + s*osp; upper slots CONJUGATED by
+         * the codelet via Rm/Im + (r-1-s)*osm, belonging at the mirror row
+         * r*m - f (= N - f for the stage-0 terminator). */
+        for (int sl = 0; sl < r; sl++) {
+            size_t f = (size_t)k + (size_t)sl * (size_t)m;
+            if (f <= nh)
+                _rfft_zrow(z, f, K, k0, kw,
+                           Rp + (size_t)sl * K, Ip + (size_t)sl * K);
+            else
+                _rfft_zrow(z, (size_t)r * (size_t)m - f, K, k0, kw,
+                           Rm + (size_t)(r - 1 - sl) * K,
+                           Im + (size_t)(r - 1 - sl) * K);
+        }
+    }
+
+    if (st->has_mid)
+        rfft_mid_column(r, m, st->np, 1, K, kw,
+                        cur + ((size_t)(r * (m / 2))) * K + k0,
+                        st->mid_c, st->mid_s, 1, nh, NULL, NULL,
+                        z + 2 * k0);
+}
+
 static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
                                             const double *x,
                                             double *out_re,
-                                            double *out_im)
+                                            double *out_im,
+                                            double *zo)
 {
     const int N = p->N;
     const size_t K = p->K;
@@ -690,6 +896,15 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
     if (p->nf == 1) {
         p->leaf(x, p->planeA, p->planeA + NK,
                 (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, K);
+        if (zo) {
+            _rfft_zrow_zero_im(zo, 0, K, 0, K, p->planeA);
+            for (size_t f = 1; f < (size_t)((N + 1) / 2); f++)
+                _rfft_zrow(zo, f, K, 0, K, p->planeA + f * K,
+                           p->planeA + ((size_t)N - f) * K);
+            if (N % 2 == 0)
+                _rfft_zrow_zero_im(zo, nh, K, 0, K, p->planeA + nh * K);
+            return;
+        }
         memcpy(out_re, p->planeA, K * 8);
         memset(out_im, 0, K * 8);
         for (size_t f = 1; f < (size_t)((N + 1) / 2); f++) {
@@ -743,10 +958,11 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
         if (st->has_mid)
             rfft_mid_column(r, m, np, Q, K, vlf,
                 cur + (Q * (size_t)(r * (m / 2))) * K,
-                st->mid_c, st->mid_s, 0, 0, nxt, NULL);
+                st->mid_c, st->mid_s, 0, 0, nxt, NULL, NULL);
         cur = nxt;
     }
 
+    if (zo) { _rfft_stage0_z(p, cur, zo, nh, 0, K); return; }
     /* stage 0: natural terminator (Q = 1) */
     {
         const rfft_stage_t *st = &p->st[0];
@@ -794,7 +1010,7 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
         if (st->has_mid)
             rfft_mid_column(r, m, st->np, 1, K, K,
                 cur + ((size_t)(r * (m / 2))) * K,
-                st->mid_c, st->mid_s, 1, nh, out_re, out_im);
+                st->mid_c, st->mid_s, 1, nh, out_re, out_im, NULL);
     }
 }
 
@@ -806,13 +1022,23 @@ static inline void rfft_execute_fwd_natural(const rfft_plan_t *p,
  * (kw need not be 8-aligned; the codelets' scalar tail covers the remainder.) */
 static inline void rfft_execute_fwd_natural_range(const rfft_plan_t *p, const double *x,
                                                   double *out_re, double *out_im,
-                                                  size_t k0, size_t kw)
+                                                  size_t k0, size_t kw,
+                                                  double *zo)
 {
     const int N = p->N; const size_t K = p->K; const size_t NK = (size_t)N * K;
     const size_t nh = (size_t)(N / 2);
     if (p->nf == 1) {
         p->leaf(x + k0, p->planeA + k0, p->planeA + k0 + NK,
                 (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, kw);
+        if (zo) {
+            _rfft_zrow_zero_im(zo, 0, K, k0, kw, p->planeA + k0);
+            for (size_t f = 1; f < (size_t)((N + 1) / 2); f++)
+                _rfft_zrow(zo, f, K, k0, kw, p->planeA + f * K + k0,
+                           p->planeA + ((size_t)N - f) * K + k0);
+            if (N % 2 == 0)
+                _rfft_zrow_zero_im(zo, nh, K, k0, kw, p->planeA + nh * K + k0);
+            return;
+        }
         memcpy(out_re + k0, p->planeA + k0, kw * 8); memset(out_im + k0, 0, kw * 8);
         for (size_t f = 1; f < (size_t)((N + 1) / 2); f++) {
             memcpy(out_re + f * K + k0, p->planeA + f * K + k0, kw * 8);
@@ -844,10 +1070,11 @@ static inline void rfft_execute_fwd_natural_range(const rfft_plan_t *p, const do
                        QK, QmK, kw);
             if (st->has_mid)
                 rfft_mid_column(r, m, st->np, Q, K, kw, curq + (Q * (size_t)(r * (m / 2))) * K,
-                                st->mid_c, st->mid_s, 0, 0, nxtq, NULL);
+                                st->mid_c, st->mid_s, 0, 0, nxtq, NULL, NULL);
         }
         cur = nxt;
     }
+    if (zo) { _rfft_stage0_z(p, cur, zo, nh, k0, kw); return; }
     /* stage 0: natural terminator (lane range) */
     { const rfft_stage_t *st = &p->st[0]; const int r = st->radix, m = st->m;
       const ptrdiff_t mK = (ptrdiff_t)((size_t)m * K);
@@ -868,7 +1095,7 @@ static inline void rfft_execute_fwd_natural_range(const rfft_plan_t *p, const do
                  (ptrdiff_t)K, mK, mK, kw);
       if (st->has_mid)
           rfft_mid_column(r, m, st->np, 1, K, kw, cur + (size_t)(r * (m / 2)) * K + k0,
-                          st->mid_c, st->mid_s, 1, nh, out_re + k0, out_im + k0);
+                          st->mid_c, st->mid_s, 1, nh, out_re + k0, out_im + k0, NULL);
     }
 }
 

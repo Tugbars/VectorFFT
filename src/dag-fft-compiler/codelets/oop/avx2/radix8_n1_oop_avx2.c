@@ -85,7 +85,7 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
                 const __m256d t21 = _mm256_add_pd(t10, t18);
                 const __m256d t22 = _mm256_sub_pd(t20, t8);
                 const __m256d t23 = _mm256_sub_pd(t22, t21);
-                const __m256d t24 = _mm256_set1_pd(0.70710678118655002);
+                const __m256d t24 = _mm256_set1_pd(0.70710678118654757);
                 const __m256d t28 = _mm256_add_pd(t21, t22);
                 const __m256d t31 = lane_re_6;
                 const __m256d t32 = lane_im_6;
@@ -232,7 +232,7 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
                 const double t21 = (t10 + t18);
                 const double t22 = (t20 - t8);
                 const double t23 = (t22 - t21);
-                const double t24 = (0.70710678118655002);
+                const double t24 = (0.70710678118654757);
                 const double t28 = (t21 + t22);
                 const double t31 = lane_re_6;
                 const double t32 = lane_im_6;
@@ -377,7 +377,7 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t21 = _mm_add_pd(t10, t18);
                 const __m128d t22 = _mm_sub_pd(t20, t8);
                 const __m128d t23 = _mm_sub_pd(t22, t21);
-                const __m128d t24 = _mm_set1_pd(0.70710678118655002);
+                const __m128d t24 = _mm_set1_pd(0.70710678118654757);
                 const __m128d t28 = _mm_add_pd(t21, t22);
                 const __m128d t31 = lane_re_6;
                 const __m128d t32 = lane_im_6;
@@ -522,7 +522,7 @@ void radix8_n1_oop_fwd_avx2_UG_UG(
                 const double t21 = (t10 + t18);
                 const double t22 = (t20 - t8);
                 const double t23 = (t22 - t21);
-                const double t24 = (0.70710678118655002);
+                const double t24 = (0.70710678118654757);
                 const double t28 = (t21 + t22);
                 const double t31 = lane_re_6;
                 const double t32 = lane_im_6;

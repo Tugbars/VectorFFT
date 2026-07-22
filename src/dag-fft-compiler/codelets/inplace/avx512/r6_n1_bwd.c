@@ -24,9 +24,9 @@ void radix6_n1_bwd_avx512(
 {
     size_t k = 0;
     for (; k + 8 <= me; k += 8) {
-        const __m512d t10 = _mm512_set1_pd(0.57735026918961996);
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-        const __m512d t48 = _mm512_set1_pd(0.5);
+        const __m512d t10 = _mm512_set1_pd(0.57735026918962595);
+        const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
+        const __m512d t48 = _mm512_set1_pd(0.49999999999999978);
         const __m512d t1 = _mm512_loadu_pd(&rio_re[4*ios + k]);
         const __m512d t3 = _mm512_loadu_pd(&rio_im[4*ios + k]);
         const __m512d t6 = _mm512_loadu_pd(&rio_re[1*ios + k]);
@@ -96,9 +96,9 @@ void radix6_n1_bwd_avx512(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t10 = (0.57735026918961996);
-        const double t0 = (0.86602540378444004);
-        const double t48 = (0.5);
+        const double t10 = (0.57735026918962595);
+        const double t0 = (0.86602540378443871);
+        const double t48 = (0.49999999999999978);
         const double t1 = rio_re[4*ios + k];
         const double t3 = rio_im[4*ios + k];
         const double t6 = rio_re[1*ios + k];
@@ -166,9 +166,9 @@ void radix6_n1_bwd_avx512(
         rio_im[0*ios + k] = t86;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t10 = _mm512_set1_pd(0.57735026918961996);
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-        const __m512d t48 = _mm512_set1_pd(0.5);
+        const __m512d t10 = _mm512_set1_pd(0.57735026918962595);
+        const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
+        const __m512d t48 = _mm512_set1_pd(0.49999999999999978);
         const __m512d t1 = _mm512_maskz_loadu_pd(_m, &rio_re[4*ios + k]);
         const __m512d t3 = _mm512_maskz_loadu_pd(_m, &rio_im[4*ios + k]);
         const __m512d t6 = _mm512_maskz_loadu_pd(_m, &rio_re[1*ios + k]);

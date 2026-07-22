@@ -26,9 +26,9 @@ void radix12_t1_dif_log3_bwd_avx512(
     __m512d spill_im[12];
     size_t k = 0;
     for (; k + 8 <= me; k += 8) {
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-        const __m512d t26 = _mm512_set1_pd(0.5);
-        const __m512d t88 = _mm512_set1_pd(0.57735026918961996);
+        const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
+        const __m512d t26 = _mm512_set1_pd(0.49999999999999978);
+        const __m512d t88 = _mm512_set1_pd(0.57735026918962595);
 
         {
         const __m512d t2 = _mm512_loadu_pd(&tw_re[7*me + k]);
@@ -282,9 +282,9 @@ void radix12_t1_dif_log3_bwd_avx512(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t26 = (0.5);
-        const double t0 = (0.86602540378444004);
-        const double t88 = (0.57735026918961996);
+        const double t26 = (0.49999999999999978);
+        const double t0 = (0.86602540378443871);
+        const double t88 = (0.57735026918962595);
         const double t1 = rio_re[11*ios + k];
         const double t2 = tw_re[7*me + k];
         const double t3 = tw_re[1*me + k];
@@ -484,9 +484,9 @@ void radix12_t1_dif_log3_bwd_avx512(
         rio_im[0*ios + k] = t266;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-        const __m512d t26 = _mm512_set1_pd(0.5);
-        const __m512d t88 = _mm512_set1_pd(0.57735026918961996);
+        const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
+        const __m512d t26 = _mm512_set1_pd(0.49999999999999978);
+        const __m512d t88 = _mm512_set1_pd(0.57735026918962595);
 
         {
         const __m512d t2 = _mm512_maskz_loadu_pd(_m, &tw_re[7*me + k]);

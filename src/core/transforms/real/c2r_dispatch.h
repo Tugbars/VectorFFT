@@ -111,6 +111,7 @@ typedef struct {
     size_t            K;
     c2r_plan_t       *packed;   /* set iff layout == PACKED or NATURAL (same plan type) */
     stride_plan_t    *stride;   /* set iff layout == SPLIT  */
+    double *ztmp; /* §6a24: lazy 2*H*K temp for natural-path z convert-around */
 } vfft_c2r_disp_t;
 
 /* Best SPLIT-input layout for (N,K): NATURAL (fast packed cascade on split input)
@@ -154,18 +155,18 @@ static inline vfft_c2r_disp_t *vfft_c2r_disp_create(int N, size_t K, vfft_c2r_la
  * lane-indexed -> disjoint -> race-free). Small batches (K<16 or T<=1) fall back to the
  * folded ST executor. This is where SPLIT layout pays off: clean K-parallel re/im
  * planes vs MKL's CCE-bound real backward. Caller pins to core 0 (pool owns 1..T-1). */
-typedef struct { const c2r_plan_t *p; const double *re, *im; double *out; size_t k0, kw; } _c2r_nat_mt_arg;
+typedef struct { const c2r_plan_t *p; const double *re, *im; double *out; size_t k0, kw; const double *zi; } _c2r_nat_mt_arg;
 static void _c2r_nat_mt_tramp(void *a)
 {
     _c2r_nat_mt_arg *x = (_c2r_nat_mt_arg *)a;
-    c2r_execute_natural_range(x->p, x->re, x->im, x->out, x->k0, x->kw);
+    c2r_execute_natural_range(x->p, x->re, x->im, x->out, x->k0, x->kw, x->zi);
 }
-static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const double *im, double *out)
+static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const double *im, double *out, const double *zi)
 {
     size_t K = p->base->K;
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out); return; }
+    if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out, zi); return; }
     size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0) S = 8;
     _c2r_nat_mt_arg a[64];
@@ -175,12 +176,12 @@ static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const d
         if (k0 >= K) break;
         size_t ke = k0 + S;
         if (ke > K) ke = K;
-        a[nd] = (_c2r_nat_mt_arg){ p, re, im, out, k0, ke - k0 };
+        a[nd] = (_c2r_nat_mt_arg){ p, re, im, out, k0, ke - k0, zi };
         _stride_pool_dispatch(&_stride_workers[nd], _c2r_nat_mt_tramp, &a[nd]);
         nd++;
     }
     size_t s0 = S < K ? S : K;
-    c2r_execute_natural_range(p, re, im, out, 0, s0);
+    c2r_execute_natural_range(p, re, im, out, 0, s0, zi);
     if (nd) _stride_pool_wait_all();
 }
 
@@ -195,13 +196,71 @@ static inline void vfft_c2r_disp_execute(const vfft_c2r_disp_t *p,
     if (p->layout == VFFT_C2R_PACKED)
         vfft_c2r_execute(p->packed, in_a, out);
     else if (p->layout == VFFT_C2R_NATURAL)
-        c2r_natural_mt(p->packed, in_a, in_b, out); /* MT-aware; ST fallback inside */
+        c2r_natural_mt(p->packed, in_a, in_b, out, NULL); /* MT-aware; ST fallback inside */
     else
         stride_execute_c2r(p->stride, in_a, in_b, out);
 }
 
+/* §6a24: inverse with INTERLEAVED spectrum input (z[2*(f*K+t)]). STRIDE:
+ * native zi-mode preprocess, real_out via the in-place bwd (im arg unused in
+ * zi mode — audited: worker_bwd touches im only through _r2c_preprocess).
+ * NATURAL: deinterleave into a lazy temp, then the normal path. PACKED is
+ * unreachable from the public path. */
+static inline void vfft_c2r_disp_execute_z(
+    vfft_c2r_disp_t *p, const double *z, double *out)
+{
+    if (p->stride)
+    {
+        stride_r2c_data_t *d = (stride_r2c_data_t *)p->stride->override_data;
+        d->zi = z;
+        _r2c_execute_bwd(d, out, NULL);
+        d->zi = NULL;
+        return;
+    }
+    size_t N = (size_t)p->N, K = p->K;
+    size_t H = N / 2 + 1, HK = H * K;
+    if (p->layout == VFFT_C2R_NATURAL)
+    {
+        /* §6a28: native interleaved input — the natural initiator's zi mode
+         * (chunked deinterleave through the base plan's zscr; no ztmp pass). */
+        c2r_natural_mt(p->packed, NULL, NULL, out, z);
+        return;
+    }
+    if (p->layout == VFFT_C2R_PACKED)
+    {
+        /* §6a28: CCE -> packed halfcomplex pack (fixes the pre-§6a28 latent
+         * bug where the convert-around fed split planes to the packed-input
+         * entry). Packed layout: re rows 0..nh, then im rows nh-1..1. */
+        if (!p->ztmp)
+            p->ztmp = (double *)malloc((size_t)N * K * sizeof(double));
+        size_t nh2 = N / 2;
+        for (size_t f = 0; f <= nh2; f++)
+            for (size_t t = 0; t < K; t++)
+                p->ztmp[f * K + t] = z[2 * (f * K + t)];
+        for (size_t f = 1; f + (N % 2 == 0 ? 1 : 0) <= nh2 && f < (N + 1) / 2; f++)
+            for (size_t t = 0; t < K; t++)
+                p->ztmp[(N - f) * K + t] = z[2 * (f * K + t) + 1];
+        vfft_c2r_execute(p->packed, p->ztmp, out);
+        return;
+    }
+    if (!p->ztmp)
+        p->ztmp = (double *)malloc(2 * HK * sizeof(double));
+    double *tr = p->ztmp, *ti = p->ztmp + HK;
+    size_t i = 0;
+#if defined(__AVX2__) || defined(__AVX512F__)
+    for (; i + 4 <= HK; i += 4) {
+        __m256d r, im2; _r2c_ld4(NULL, NULL, z, i, &r, &im2);
+        _mm256_storeu_pd(tr + i, r); _mm256_storeu_pd(ti + i, im2);
+    }
+#endif
+    for (; i < HK; i++) { tr[i] = _r2c_ldr(NULL, z, i); ti[i] = _r2c_ldi(NULL, z, i); }
+    vfft_c2r_disp_execute(p, tr, ti, out);
+}
+
+
 static inline void vfft_c2r_disp_destroy(vfft_c2r_disp_t *p)
 {
+    if (p) free(p->ztmp);
     if (!p) return;
     if (p->packed) c2r_plan_destroy(p->packed);
     if (p->stride) stride_plan_destroy(p->stride);

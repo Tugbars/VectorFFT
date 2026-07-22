@@ -176,12 +176,18 @@ static inline void vfft_proto_execute_fwd_generic(const stride_plan_t *plan,
  * computed variant-independently in twiddle.h (always = cf × per_leg).
  * The forward variant choice only affected how the codelet's input
  * lookup table was structured, not the underlying complex exponentials. */
-static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
-                                                   double *re, double *im,
-                                                   size_t slice_K)
+/* Run stages [num_stages-1, until_stage] of a DIT backward plan, in-place —
+ * the reverse-order companion of vfft_proto_execute_fwd_generic_from. The IL
+ * adapter (il_execute.h) uses until_stage=1 so it can run stage 0's n1_bwd
+ * itself with an interleaved-output codelet. until_stage=0 is the full
+ * backward transform (see the wrapper below). */
+static inline void vfft_proto_execute_bwd_generic_until(const stride_plan_t *plan,
+                                                        double *re, double *im,
+                                                        size_t slice_K,
+                                                        int until_stage)
 {
     const size_t full_K = plan->K;
-    for (int s = plan->num_stages - 1; s >= 0; s--) {
+    for (int s = plan->num_stages - 1; s >= until_stage; s--) {
         const stride_stage_t *st = &plan->stages[s];
         const int G = st->num_groups;
         const int R = st->radix;
@@ -220,6 +226,14 @@ static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
  *     the codelet does butterfly first, then post-multiplies legs
  *     1..R-1 by per-leg twiddle. cf0 = 1 in DIF, so no leg-0 work.
  * ──────────────────────────────────────────────────────────────────── */
+/* Standard full backward (all stages down to 0). */
+static inline void vfft_proto_execute_bwd_generic(const stride_plan_t *plan,
+                                                  double *re, double *im,
+                                                  size_t slice_K)
+{
+    vfft_proto_execute_bwd_generic_until(plan, re, im, slice_K, 0);
+}
+
 static inline void vfft_proto_execute_fwd_generic_dif(const stride_plan_t *plan,
                                                        double *re, double *im,
                                                        size_t slice_K)

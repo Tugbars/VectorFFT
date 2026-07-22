@@ -23,12 +23,12 @@ void radix7_r2cb_avx512(
     ptrdiff_t os_re,
     size_t vl)
 {
-    const __m512d t13 = _mm512_set1_pd(0.55495813208736999);
-    const __m512d t19 = _mm512_set1_pd(0.80193773580483996);
-    const __m512d t25 = _mm512_set1_pd(0.97492791218181996);
-    const __m512d t27 = _mm512_set1_pd(0.35689586789221001);
-    const __m512d t30 = _mm512_set1_pd(0.69202147163009997);
-    const __m512d t33 = _mm512_set1_pd(0.90096886790242003);
+    const __m512d t13 = _mm512_set1_pd(0.55495813208737121);
+    const __m512d t19 = _mm512_set1_pd(0.80193773580483829);
+    const __m512d t25 = _mm512_set1_pd(0.97492791218182362);
+    const __m512d t27 = _mm512_set1_pd(0.35689586789220945);
+    const __m512d t30 = _mm512_set1_pd(0.69202147163009586);
+    const __m512d t33 = _mm512_set1_pd(0.90096886790241915);
     size_t v = 0;
     for (; v + 8 <= vl; v += 8) {
 
@@ -75,12 +75,12 @@ void radix7_r2cb_avx512(
     if (v < vl) {
         const size_t rem = vl - v;
         if (rem == 1) {
-        const double t27 = (0.35689586789221001);
-        const double t13 = (0.55495813208736999);
-        const double t30 = (0.69202147163009997);
-        const double t19 = (0.80193773580483996);
-        const double t33 = (0.90096886790242003);
-        const double t25 = (0.97492791218181996);
+        const double t27 = (0.35689586789220945);
+        const double t13 = (0.55495813208737121);
+        const double t30 = (0.69202147163009586);
+        const double t19 = (0.80193773580483829);
+        const double t33 = (0.90096886790241915);
+        const double t25 = (0.97492791218182362);
         const double t0 = in_re[3*is_re + v];
         const double t1 = (t0 + t0);
         const double t2 = in_re[2*is_re + v];
@@ -117,12 +117,12 @@ void radix7_r2cb_avx512(
         out_re[6*os_re + v] = t147;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t27 = _mm512_set1_pd(0.35689586789221001);
-        const __m512d t13 = _mm512_set1_pd(0.55495813208736999);
-        const __m512d t30 = _mm512_set1_pd(0.69202147163009997);
-        const __m512d t19 = _mm512_set1_pd(0.80193773580483996);
-        const __m512d t33 = _mm512_set1_pd(0.90096886790242003);
-        const __m512d t25 = _mm512_set1_pd(0.97492791218181996);
+        const __m512d t27 = _mm512_set1_pd(0.35689586789220945);
+        const __m512d t13 = _mm512_set1_pd(0.55495813208737121);
+        const __m512d t30 = _mm512_set1_pd(0.69202147163009586);
+        const __m512d t19 = _mm512_set1_pd(0.80193773580483829);
+        const __m512d t33 = _mm512_set1_pd(0.90096886790241915);
+        const __m512d t25 = _mm512_set1_pd(0.97492791218182362);
         const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in_re[3*is_re + v]);
         const __m512d t1 = _mm512_add_pd(t0, t0);
         const __m512d t2 = _mm512_maskz_loadu_pd(_m, &in_re[2*is_re + v]);

@@ -26,7 +26,7 @@ void radix8_t1_dif_fwd_avx512(
     __m512d spill_im[8];
     size_t k = 0;
     for (; k + 8 <= me; k += 8) {
-        const __m512d t24 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t24 = _mm512_set1_pd(0.70710678118654757);
 
         {
         const __m512d t31 = _mm512_loadu_pd(&rio_re[6*ios + k]);
@@ -180,7 +180,7 @@ void radix8_t1_dif_fwd_avx512(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t24 = (0.70710678118655002);
+        const double t24 = (0.70710678118654757);
         const double t0 = rio_re[7*ios + k];
         const double t2 = rio_im[7*ios + k];
         const double t5 = rio_re[3*ios + k];
@@ -296,7 +296,7 @@ void radix8_t1_dif_fwd_avx512(
         rio_im[0*ios + k] = t130;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t24 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t24 = _mm512_set1_pd(0.70710678118654757);
 
         {
         const __m512d t31 = _mm512_maskz_loadu_pd(_m, &rio_re[6*ios + k]);

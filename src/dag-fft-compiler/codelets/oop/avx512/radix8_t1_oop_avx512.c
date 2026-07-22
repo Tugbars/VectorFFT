@@ -74,7 +74,7 @@ void radix8_t1_oop_fwd_avx512_UG_UG(
            PASS 1 emits cluster-sequentially (by min_descendant_slot)
            with spill stores immediately after each producer.
            PASS 2 reloads on-demand before each consumer.  */
-                const __m512d t40 = _mm512_set1_pd(0.70710678118655002);
+                const __m512d t40 = _mm512_set1_pd(0.70710678118654757);
 
         {  /* PASS 1: sub-FFTs of size n2, store to spill */
                     const __m512d t47 = lane_re_6;
@@ -317,7 +317,7 @@ void radix8_t1_oop_fwd_avx512_UG_UG(
                 const double t37 = (t18 + t34);
                 const double t38 = (t36 - t16);
                 const double t39 = (t38 - t37);
-                const double t40 = (0.70710678118655002);
+                const double t40 = (0.70710678118654757);
                 const double t44 = (t37 + t38);
                 const double t47 = lane_re_6;
                 const double t48 = tw_re[5*me + b];
@@ -462,7 +462,7 @@ void radix8_t1_oop_fwd_avx512_UG_UG(
            PASS 1 emits cluster-sequentially (by min_descendant_slot)
            with spill stores immediately after each producer.
            PASS 2 reloads on-demand before each consumer.  */
-                const __m512d t40 = _mm512_set1_pd(0.70710678118655002);
+                const __m512d t40 = _mm512_set1_pd(0.70710678118654757);
 
         {  /* PASS 1: sub-FFTs of size n2, store to spill */
                     const __m512d t47 = lane_re_6;

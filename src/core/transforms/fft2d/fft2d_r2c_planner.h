@@ -101,7 +101,7 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
 
     const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
-    size_t       K_pad = ((hp1 + 3) / 4) * 4;
+    size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
     int          innerN = N2 / 2;
 
     vfft_proto_plan_decision_t row_cand[VFFT_PROTO_MEASURE_DEPLOY_MAX];

@@ -87,15 +87,36 @@ static inline int vfft_proto_execute_fwd_oop(const stride_plan_t *plan,
                                           dst_re, dst_im, slice_K, NULL);
 }
 
-/* Unnormalized inverse via pointer swap on the forward plan. */
+/* MODEB OOP backward with an optional JIT inner — the pointer-swap identity
+ * IDFT(re,im) = swap(DFT(im,re)) composed with the JIT forward. The swap
+ * lives in the DATA POINTERS, not the direction: the plan still executes
+ * its FORWARD dataflow, so `stages1_jit` MUST be the FORWARD-resolved
+ * executor (vfft_proto_plan_jit_fwd), never _bwd — the real backward
+ * executor (fused t1s + leg0-conj) applied to swapped data is a different
+ * transform. Same rejections, ordering semantics, and src preservation as
+ * fwd_oop_jit. No range-fn plumbing on purpose: stage 0 is the fused OOP
+ * boundary and the remainder is exactly classic start_stage=1 — the 6a17
+ * stop gate has no consumer here. */
+static inline int vfft_proto_execute_bwd_oop_jit(const stride_plan_t *plan,
+                                                 const double *src_re,
+                                                 const double *src_im,
+                                                 double *dst_re, double *dst_im,
+                                                 size_t slice_K,
+                                                 vfft_proto_exec_fn stages1_jit)
+{
+    return vfft_proto_execute_fwd_oop_jit(plan, src_im, src_re,
+                                          dst_im, dst_re, slice_K, stages1_jit);
+}
+
+/* Unnormalized inverse via pointer swap on the forward plan (generic inner). */
 static inline int vfft_proto_execute_bwd_oop(const stride_plan_t *plan,
                                              const double *src_re,
                                              const double *src_im,
                                              double *dst_re, double *dst_im,
                                              size_t slice_K)
 {
-    return vfft_proto_execute_fwd_oop(plan, src_im, src_re,
-                                      dst_im, dst_re, slice_K);
+    return vfft_proto_execute_bwd_oop_jit(plan, src_re, src_im,
+                                          dst_re, dst_im, slice_K, NULL);
 }
 
 #endif /* VFFT_OOP_EXECUTE_H */

@@ -172,9 +172,14 @@ else()
     set(VFFT_CODE_FLAGS -O3 ${_arch} -march=native -fpermissive -w)
 endif()
 
-# ── Codelet static lib (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2) ────
-foreach(_fam inplace rfft c2r oop)
+# ── Codelet static lib (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
+#     strided=6a35-45 row engines, il=interleaved-layout folds, trig=DCT/DST) ──
+# *_emit.c are generator bit-gate twins of the hand codelets (same symbol names);
+# linking both would collide — the gates compile them standalone. Mirrors
+# build_tuned/build.py dag_codelet_srcs().
+foreach(_fam inplace rfft c2r oop strided il trig)
     file(GLOB _g "${DAG_CODELETS}/${_fam}/${VFFT_ISA}/*.c")
+    list(FILTER _g EXCLUDE REGEX "_emit\\.c$")
     list(APPEND VFFT_CODELET_SRCS ${_g})
 endforeach()
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)

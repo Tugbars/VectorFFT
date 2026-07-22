@@ -26,12 +26,12 @@ void radix10_t1s_dit_log3_fwd_avx512(
     __m512d spill_im[10];
     size_t k = 0;
     for (; k + 8 <= me; k += 8) {
-        const __m512d t0 = _mm512_set1_pd(0.95105651629514998);
-        const __m512d t25 = _mm512_set1_pd(0.32491969623291);
-        const __m512d t53 = _mm512_set1_pd(0.61803398874989002);
-        const __m512d t55 = _mm512_set1_pd(0.80901699437495);
-        const __m512d t68 = _mm512_set1_pd(0.72654252800535002);
-        const __m512d t118 = _mm512_set1_pd(0.55901699437495);
+        const __m512d t0 = _mm512_set1_pd(0.95105651629515353);
+        const __m512d t25 = _mm512_set1_pd(0.32491969623290634);
+        const __m512d t53 = _mm512_set1_pd(0.6180339887498949);
+        const __m512d t55 = _mm512_set1_pd(0.80901699437494745);
+        const __m512d t68 = _mm512_set1_pd(0.7265425280053609);
+        const __m512d t118 = _mm512_set1_pd(0.55901699437494745);
         const __m512d t132 = _mm512_set1_pd(0.25);
 
         {
@@ -250,13 +250,13 @@ void radix10_t1s_dit_log3_fwd_avx512(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t25 = (0.32491969623291);
-        const double t0 = (0.95105651629514998);
-        const double t68 = (0.72654252800535002);
-        const double t55 = (0.80901699437495);
+        const double t25 = (0.32491969623290634);
+        const double t0 = (0.95105651629515353);
+        const double t68 = (0.7265425280053609);
+        const double t55 = (0.80901699437494745);
         const double t132 = (0.25);
-        const double t53 = (0.61803398874989002);
-        const double t118 = (0.55901699437495);
+        const double t53 = (0.6180339887498949);
+        const double t118 = (0.55901699437494745);
         const double t2 = rio_re[7*ios + k];
         const double t3 = (tw_re[3]);
         const double t4 = (tw_re[1]);
@@ -428,12 +428,12 @@ void radix10_t1s_dit_log3_fwd_avx512(
         rio_im[0*ios + k] = t221;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t0 = _mm512_set1_pd(0.95105651629514998);
-        const __m512d t25 = _mm512_set1_pd(0.32491969623291);
-        const __m512d t53 = _mm512_set1_pd(0.61803398874989002);
-        const __m512d t55 = _mm512_set1_pd(0.80901699437495);
-        const __m512d t68 = _mm512_set1_pd(0.72654252800535002);
-        const __m512d t118 = _mm512_set1_pd(0.55901699437495);
+        const __m512d t0 = _mm512_set1_pd(0.95105651629515353);
+        const __m512d t25 = _mm512_set1_pd(0.32491969623290634);
+        const __m512d t53 = _mm512_set1_pd(0.6180339887498949);
+        const __m512d t55 = _mm512_set1_pd(0.80901699437494745);
+        const __m512d t68 = _mm512_set1_pd(0.7265425280053609);
+        const __m512d t118 = _mm512_set1_pd(0.55901699437494745);
         const __m512d t132 = _mm512_set1_pd(0.25);
 
         {

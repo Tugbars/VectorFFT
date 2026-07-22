@@ -213,6 +213,14 @@ let validate (c : config) : unit =
    of taken as runtime size_t parameters. Folds the leg*stride address
    arithmetic to constant displacements and drops the four argument registers.
    me stays a parameter. Set per-codelet by the caller (gen_radix --oop-strides). *)
+(** §6a53 / Gap-A: POST-twiddle mode. The body expands as a PURE DFT
+    (NoTwiddles math) under the t1 ABI, and a cmul postamble multiplies
+    output legs 1..R-1 by W[(j-1)*me + m] just before the UnitGroup store —
+    out = tw (.) DFT(in), the OOP twin of radix{R}_t1_dif_fwd. Leg 0 stays
+    untwiddled. Loads are ls-mode-aware, so the anyk tail masks them like
+    every other group-indexed access. Set from gen_main --post-tw. *)
+let current_post_tw = ref false
+
 let current_oop_strides : (int * int * int * int) option ref = ref None
 
 (* M-project fuse count for the OOP path: how many trailing PASS-2 sub-DFTs
@@ -449,6 +457,56 @@ let emit_store_unitleg (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
+  if !current_post_tw then begin
+    let scalar = c.isa.Isa.vec_width = 1 in
+    let pfx =
+      match c.isa.Isa.vec_width with
+      | 8 -> "_mm512"
+      | 4 -> "_mm256"
+      | 2 -> "_mm"
+      | _ -> "_scalar_unused"
+    in
+    Buffer.add_string buf
+      "        /* Gap-A post-twiddle: out_j = W[j-1] (.) DFT_j (leg 0 \
+       untwiddled). */\n";
+    for j = 1 to c.radix - 1 do
+      Buffer.add_string buf
+        (Printf.sprintf "        { const %s _ptr = %s;\n" c.isa.Isa.vec_type
+           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "tw_re[%d * me + b]" (j - 1))));
+      Buffer.add_string buf
+        (Printf.sprintf "          const %s _pti = %s;\n" c.isa.Isa.vec_type
+           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+              (Printf.sprintf "tw_im[%d * me + b]" (j - 1))));
+      Buffer.add_string buf
+        (Printf.sprintf "          const %s _pvr = out_lane_re_%d;\n"
+           c.isa.Isa.vec_type j);
+      Buffer.add_string buf
+        (Printf.sprintf "          const %s _pvi = out_lane_im_%d;\n"
+           c.isa.Isa.vec_type j);
+      (if scalar then begin
+         Buffer.add_string buf
+           (Printf.sprintf
+              "          out_lane_re_%d = _ptr * _pvr - _pti * _pvi;\n" j);
+         Buffer.add_string buf
+           (Printf.sprintf
+              "          out_lane_im_%d = _ptr * _pvi + _pti * _pvr;\n        }\n"
+              j)
+       end
+       else begin
+         Buffer.add_string buf
+           (Printf.sprintf
+              "          out_lane_re_%d = %s_fmsub_pd(_ptr, _pvr, \
+               %s_mul_pd(_pti, _pvi));\n"
+              j pfx pfx);
+         Buffer.add_string buf
+           (Printf.sprintf
+              "          out_lane_im_%d = %s_fmadd_pd(_ptr, _pvi, \
+               %s_mul_pd(_pti, _pvr));\n        }\n"
+              j pfx pfx)
+       end)
+    done
+  end;
   let base_re =
     match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
   in
@@ -504,6 +562,9 @@ let emit_output_write (buf : Buffer.t) (c : config) ~(indent : string)
   end
 
 let emit_store_edge (buf : Buffer.t) (c : config) : unit =
+  if !current_post_tw
+     && (c.store_pat <> UnitGroup || !current_oop_store_on_compute) then
+    failwith "post-tw requires UnitGroup store without store-on-compute";
   match c.store_pat with
   | UnitLeg -> emit_store_unitleg buf c
   | UnitGroup ->
@@ -602,6 +663,7 @@ type prepared_body = {
     unchanged (log3 reads a sparse subset of the same slots). *)
 let current_tw_log3 = ref false
 
+
 let prepare_butterfly (c : config) : prepared_body =
   let sign : [ `Fwd | `Bwd ] =
     match c.direction with Forward -> `Fwd | Backward -> `Bwd
@@ -623,7 +685,16 @@ let prepare_butterfly (c : config) : prepared_body =
     c.twiddles <> NoTwiddles && Dft.should_spill c.radix c.isa.Isa.vec_regs
   in
   let raw_assigns, spill_markers_raw, spill_ct =
-    match c.twiddles with
+    if !current_post_tw then begin
+      (* Gap-A: pure-DFT body; twiddles applied in the store postamble.
+         Blocked construction composes: PASS-2 outputs land in out_lane
+         accumulators (non-SoC emit_output_write), which is exactly what
+         the postamble consumes. Gated by closed-form checks either way. *)
+      if Dft.should_block_n1 c.radix c.isa.Isa.vec_regs then
+        Dft.dft_expand_n1_blocked ~sign c.radix
+      else (Dft.dft_expand ~sign c.radix, [], None)
+    end
+    else match c.twiddles with
     | NoTwiddles when use_spill_n1 -> Dft.dft_expand_n1_blocked ~sign c.radix
     | NoTwiddles -> (Dft.dft_expand ~sign c.radix, [], None)
     | (PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles)

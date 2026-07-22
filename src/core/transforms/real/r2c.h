@@ -79,6 +79,9 @@ typedef struct
      * term_fwd is non-NULL and VFFT_R2C_FUSE is enabled, the forward worker
      * uses _r2c_postprocess_fused instead of _r2c_postprocess (kills the
      * separate pass + the block-local mirror access). Default NULL = off. */
+    /* §6a24: interleaved-z boundary mode (set around a z execute; NULL = split) */
+    double *zo;        /* fwd: write spectrum interleaved here */
+    const double *zi;  /* bwd: read spectrum interleaved from here */
     void (*term_fwd)(const double*, const double*, double*, double*,
                      double*, double*, const double*, const double*,
                      ptrdiff_t, size_t);
@@ -188,6 +191,82 @@ static void _r2c_init_twiddles(int N, double *tw_re, double *tw_im)
  *   X[k] = E + W_N^k * (-i * O)
  * ═══════════════════════════════════════════════════════════════ */
 
+/* ── §6a24: interleaved-z (CCE) boundary store/load helpers ──────────
+ * zo/zi == NULL -> split planes; non-NULL -> interleaved at zo[2*idx],
+ * zo[2*idx+1]. The branch is loop-invariant per call site (perfectly
+ * predicted); the interleave/deinterleave is register-only shuffle work.
+ * _r2c_ldr*v are re-only vector loads (DC/Nyquist rows: imag is zero by
+ * construction on the fwd side and ignored on the bwd side). */
+static inline void _r2c_st1(double *out_re, double *out_im, double *zo,
+                            size_t idx, double r, double i) {
+    if (!zo) { out_re[idx] = r; out_im[idx] = i; }
+    else     { zo[2*idx] = r; zo[2*idx+1] = i; }
+}
+static inline double _r2c_ldr(const double *in_re, const double *zi, size_t idx) {
+    return zi ? zi[2*idx] : in_re[idx];
+}
+static inline double _r2c_ldi(const double *in_im, const double *zi, size_t idx) {
+    return zi ? zi[2*idx+1] : in_im[idx];
+}
+#if defined(__AVX2__) || defined(__AVX512F__)
+static inline void _r2c_st4(double *out_re, double *out_im, double *zo,
+                            size_t idx, __m256d r, __m256d i) {
+    if (!zo) { _mm256_storeu_pd(out_re+idx, r); _mm256_storeu_pd(out_im+idx, i); }
+    else {
+        __m256d lo = _mm256_unpacklo_pd(r, i), hi = _mm256_unpackhi_pd(r, i);
+        _mm256_storeu_pd(zo + 2*idx,     _mm256_permute2f128_pd(lo, hi, 0x20));
+        _mm256_storeu_pd(zo + 2*idx + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+    }
+}
+static inline void _r2c_ld4(const double *in_re, const double *in_im,
+                            const double *zi, size_t idx,
+                            __m256d *r, __m256d *i) {
+    if (!zi) { *r = _mm256_loadu_pd(in_re+idx); *i = _mm256_loadu_pd(in_im+idx); }
+    else {
+        __m256d a = _mm256_loadu_pd(zi + 2*idx), b = _mm256_loadu_pd(zi + 2*idx + 4);
+        __m256d t0 = _mm256_permute2f128_pd(a, b, 0x20);
+        __m256d t1 = _mm256_permute2f128_pd(a, b, 0x31);
+        *r = _mm256_unpacklo_pd(t0, t1); *i = _mm256_unpackhi_pd(t0, t1);
+    }
+}
+static inline __m256d _r2c_ldr4v(const double *in_re, const double *zi, size_t idx) {
+    if (!zi) return _mm256_loadu_pd(in_re + idx);
+    __m256d a = _mm256_loadu_pd(zi + 2*idx), b = _mm256_loadu_pd(zi + 2*idx + 4);
+    __m256d t0 = _mm256_permute2f128_pd(a, b, 0x20);
+    __m256d t1 = _mm256_permute2f128_pd(a, b, 0x31);
+    return _mm256_unpacklo_pd(t0, t1);
+}
+#endif
+#ifdef __AVX512F__
+static inline void _r2c_st8(double *out_re, double *out_im, double *zo,
+                            size_t idx, __m512d r, __m512d i) {
+    if (!zo) { _mm512_storeu_pd(out_re+idx, r); _mm512_storeu_pd(out_im+idx, i); }
+    else {
+        const __m512i ilo = _mm512_setr_epi64(0,8,1,9,2,10,3,11);
+        const __m512i ihi = _mm512_setr_epi64(4,12,5,13,6,14,7,15);
+        _mm512_storeu_pd(zo + 2*idx,     _mm512_permutex2var_pd(r, ilo, i));
+        _mm512_storeu_pd(zo + 2*idx + 8, _mm512_permutex2var_pd(r, ihi, i));
+    }
+}
+static inline void _r2c_ld8(const double *in_re, const double *in_im,
+                            const double *zi, size_t idx,
+                            __m512d *r, __m512d *i) {
+    if (!zi) { *r = _mm512_loadu_pd(in_re+idx); *i = _mm512_loadu_pd(in_im+idx); }
+    else {
+        const __m512i ir = _mm512_setr_epi64(0,2,4,6,8,10,12,14);
+        const __m512i ii = _mm512_setr_epi64(1,3,5,7,9,11,13,15);
+        __m512d a = _mm512_loadu_pd(zi + 2*idx), b = _mm512_loadu_pd(zi + 2*idx + 8);
+        *r = _mm512_permutex2var_pd(a, ir, b); *i = _mm512_permutex2var_pd(a, ii, b);
+    }
+}
+static inline __m512d _r2c_ldr8v(const double *in_re, const double *zi, size_t idx) {
+    if (!zi) return _mm512_loadu_pd(in_re + idx);
+    const __m512i ir = _mm512_setr_epi64(0,2,4,6,8,10,12,14);
+    __m512d a = _mm512_loadu_pd(zi + 2*idx), b = _mm512_loadu_pd(zi + 2*idx + 8);
+    return _mm512_permutex2var_pd(a, ir, b);
+}
+#endif
+
 static void _r2c_postprocess(
     const double *__restrict__ z_re,
     const double *__restrict__ z_im,
@@ -197,13 +276,14 @@ static void _r2c_postprocess(
     const double *__restrict__ tw_im,
     const int *__restrict__ iperm,
     const int *__restrict__ perm,
-    int half_N, size_t K, size_t B, size_t b0)
+    int half_N, size_t K, size_t B, size_t b0,
+    double *__restrict__ zo)
 {
 #ifdef VFFT_R2C_STUB_POST
     /* ABLATION (zero-instrument): skip the entire postprocess. The delta in
      * total runtime vs the real postprocess is its TRUE cost, no timers. */
     (void)z_re;(void)z_im;(void)out_re;(void)out_im;(void)tw_re;(void)tw_im;
-    (void)iperm;(void)perm;(void)half_N;(void)K;(void)B;(void)b0;
+    (void)iperm;(void)perm;(void)half_N;(void)K;(void)B;(void)b0(void)zo;
     return;
 #endif
     /* DC (f=0) and Nyquist (f=N/2).
@@ -216,10 +296,8 @@ static void _r2c_postprocess(
         {
             __m512d zr = _mm512_loadu_pd(z_re + k);
             __m512d zi = _mm512_loadu_pd(z_im + k);
-            _mm512_storeu_pd(out_re + b0 + k, _mm512_add_pd(zr, zi));
-            _mm512_storeu_pd(out_im + b0 + k, _mm512_setzero_pd());
-            _mm512_storeu_pd(out_re + nyq_off + k, _mm512_sub_pd(zr, zi));
-            _mm512_storeu_pd(out_im + nyq_off + k, _mm512_setzero_pd());
+            _r2c_st8(out_re, out_im, zo, b0 + k, _mm512_add_pd(zr, zi), _mm512_setzero_pd());
+            _r2c_st8(out_re, out_im, zo, nyq_off + k, _mm512_sub_pd(zr, zi), _mm512_setzero_pd());
         }
 #endif
 #if defined(__AVX2__) || defined(__AVX512F__)
@@ -227,18 +305,14 @@ static void _r2c_postprocess(
         {
             __m256d zr = _mm256_loadu_pd(z_re + k);
             __m256d zi = _mm256_loadu_pd(z_im + k);
-            _mm256_storeu_pd(out_re + b0 + k, _mm256_add_pd(zr, zi));
-            _mm256_storeu_pd(out_im + b0 + k, _mm256_setzero_pd());
-            _mm256_storeu_pd(out_re + nyq_off + k, _mm256_sub_pd(zr, zi));
-            _mm256_storeu_pd(out_im + nyq_off + k, _mm256_setzero_pd());
+            _r2c_st4(out_re, out_im, zo, b0 + k, _mm256_add_pd(zr, zi), _mm256_setzero_pd());
+            _r2c_st4(out_re, out_im, zo, nyq_off + k, _mm256_sub_pd(zr, zi), _mm256_setzero_pd());
         }
 #endif
         for (; k < B; k++)
         {
-            out_re[b0 + k] = z_re[k] + z_im[k];
-            out_im[b0 + k] = 0.0;
-            out_re[nyq_off + k] = z_re[k] - z_im[k];
-            out_im[nyq_off + k] = 0.0;
+            _r2c_st1(out_re, out_im, zo, b0 + k, z_re[k] + z_im[k], 0.0);
+            _r2c_st1(out_re, out_im, zo, nyq_off + k, z_re[k] - z_im[k], 0.0);
         }
     }
 
@@ -290,8 +364,7 @@ static void _r2c_postprocess(
                 __m512d Tr = _mm512_fmsub_pd(vwr, niOr, _mm512_mul_pd(vwi, neg_Or));
                 __m512d Ti = _mm512_fmadd_pd(vwr, neg_Or, _mm512_mul_pd(vwi, niOr));
 
-                _mm512_storeu_pd(out_re + fo_off + k, _mm512_add_pd(Er, Tr));
-                _mm512_storeu_pd(out_im + fo_off + k, _mm512_add_pd(Ei, Ti));
+                _r2c_st8(out_re, out_im, zo, fo_off + k, _mm512_add_pd(Er, Tr), _mm512_add_pd(Ei, Ti));
 
                 if (do_mirror) {
                     __m512d Emi   = _mm512_sub_pd(_mm512_setzero_pd(), Ei);
@@ -301,8 +374,7 @@ static void _r2c_postprocess(
                     __m512d Tmr = _mm512_fmsub_pd(vwrm, niOmr, _mm512_mul_pd(vwim, niOmi));
                     __m512d Tmi = _mm512_fmadd_pd(vwrm, niOmi, _mm512_mul_pd(vwim, niOmr));
 
-                    _mm512_storeu_pd(out_re + mo_off + k, _mm512_add_pd(Er, Tmr));
-                    _mm512_storeu_pd(out_im + mo_off + k, _mm512_add_pd(Emi, Tmi));
+                    _r2c_st8(out_re, out_im, zo, mo_off + k, _mm512_add_pd(Er, Tmr), _mm512_add_pd(Emi, Tmi));
                 }
             }
         }
@@ -333,8 +405,7 @@ static void _r2c_postprocess(
                 __m256d Tr = _mm256_fmsub_pd(vwr, niOr, _mm256_mul_pd(vwi, niOi));
                 __m256d Ti = _mm256_fmadd_pd(vwr, niOi, _mm256_mul_pd(vwi, niOr));
 
-                _mm256_storeu_pd(out_re + fo_off + k, _mm256_add_pd(Er, Tr));
-                _mm256_storeu_pd(out_im + fo_off + k, _mm256_add_pd(Ei, Ti));
+                _r2c_st4(out_re, out_im, zo, fo_off + k, _mm256_add_pd(Er, Tr), _mm256_add_pd(Ei, Ti));
 
                 if (do_mirror) {
                     __m256d Emi   = _mm256_xor_pd(Ei, sign);
@@ -345,8 +416,7 @@ static void _r2c_postprocess(
                     __m256d Tmr = _mm256_fmsub_pd(vwrm, niOmr, _mm256_mul_pd(vwim, niOmi));
                     __m256d Tmi = _mm256_fmadd_pd(vwrm, niOmi, _mm256_mul_pd(vwim, niOmr));
 
-                    _mm256_storeu_pd(out_re + mo_off + k, _mm256_add_pd(Er, Tmr));
-                    _mm256_storeu_pd(out_im + mo_off + k, _mm256_add_pd(Emi, Tmi));
+                    _r2c_st4(out_re, out_im, zo, mo_off + k, _mm256_add_pd(Er, Tmr), _mm256_add_pd(Emi, Tmi));
                 }
             }
         }
@@ -358,14 +428,12 @@ static void _r2c_postprocess(
             double Or = (Zfr - Zmr) * 0.5, Oi = (Zfi + Zmi) * 0.5;
             double niOr = Oi, niOi = -Or;
             double Tr = wr*niOr - wi*niOi, Ti = wr*niOi + wi*niOr;
-            out_re[fo_off+k] = Er + Tr;
-            out_im[fo_off+k] = Ei + Ti;
+            _r2c_st1(out_re, out_im, zo, fo_off+k, Er + Tr, Ei + Ti);
             if (do_mirror) {
                 double Emr = Er, Emi = -Ei, Omr = -Or, Omi = Oi;
                 double niOmr = Omi, niOmi = -Omr;
                 double Tmr = wrm*niOmr - wim*niOmi, Tmi = wrm*niOmi + wim*niOmr;
-                out_re[mo_off+k] = Emr + Tmr;
-                out_im[mo_off+k] = Emi + Tmi;
+                _r2c_st1(out_re, out_im, zo, mo_off+k, Emr + Tmr, Emi + Tmi);
             }
         }
     }
@@ -560,7 +628,8 @@ static void _r2c_preprocess(
     const double *__restrict__ tw_re,
     const double *__restrict__ tw_im,
     const int *__restrict__ perm,
-    int half_N, size_t K, size_t B, size_t b0)
+    int half_N, size_t K, size_t B, size_t b0,
+    const double *__restrict__ zi)
 {
     /* DC: Z[0] written to permuted position perm[0].
      *
@@ -580,8 +649,8 @@ static void _r2c_preprocess(
             __m512d half_v = _mm512_set1_pd(0.5);
             for (; k + 8 <= B; k += 8)
             {
-                __m512d x0 = _mm512_loadu_pd(in_re + b0 + k);
-                __m512d xn = _mm512_loadu_pd(in_re + nyq + k);
+                __m512d x0 = _r2c_ldr8v(in_re, zi, b0 + k);
+                __m512d xn = _r2c_ldr8v(in_re, zi, nyq + k);
                 _mm512_storeu_pd(z_re + z0_out + k, _mm512_mul_pd(_mm512_add_pd(x0, xn), half_v));
                 _mm512_storeu_pd(z_im + z0_out + k, _mm512_mul_pd(_mm512_sub_pd(x0, xn), half_v));
             }
@@ -592,8 +661,8 @@ static void _r2c_preprocess(
             __m256d half_v = _mm256_set1_pd(0.5);
             for (; k + 4 <= B; k += 4)
             {
-                __m256d x0 = _mm256_loadu_pd(in_re + b0 + k);
-                __m256d xn = _mm256_loadu_pd(in_re + nyq + k);
+                __m256d x0 = _r2c_ldr4v(in_re, zi, b0 + k);
+                __m256d xn = _r2c_ldr4v(in_re, zi, nyq + k);
                 _mm256_storeu_pd(z_re + z0_out + k, _mm256_mul_pd(_mm256_add_pd(x0, xn), half_v));
                 _mm256_storeu_pd(z_im + z0_out + k, _mm256_mul_pd(_mm256_sub_pd(x0, xn), half_v));
             }
@@ -601,8 +670,8 @@ static void _r2c_preprocess(
 #endif
         for (; k < B; k++)
         {
-            double x0r = in_re[b0 + k];
-            double xnr = in_re[nyq + k];
+            double x0r = _r2c_ldr(in_re, zi, b0 + k);
+            double xnr = _r2c_ldr(in_re, zi, nyq + k);
             z_re[z0_out + k] = (x0r + xnr) * 0.5;
             z_im[z0_out + k] = (x0r - xnr) * 0.5;
         }
@@ -647,10 +716,8 @@ static void _r2c_preprocess(
             }
             for (; k + 8 <= B; k += 8)
             {
-                __m512d Xfr = _mm512_loadu_pd(in_re + fi + k);
-                __m512d Xfi = _mm512_loadu_pd(in_im + fi + k);
-                __m512d Xmr = _mm512_loadu_pd(in_re + mi + k);
-                __m512d Xmi = _mm512_loadu_pd(in_im + mi + k);
+                __m512d Xfr, Xfi; _r2c_ld8(in_re, in_im, zi, fi + k, &Xfr, &Xfi);
+                __m512d Xmr, Xmi; _r2c_ld8(in_re, in_im, zi, mi + k, &Xmr, &Xmi);
 
                 __m512d Er = _mm512_mul_pd(_mm512_add_pd(Xfr, Xmr), half_v);
                 __m512d Ei = _mm512_mul_pd(_mm512_sub_pd(Xfi, Xmi), half_v);
@@ -689,10 +756,8 @@ static void _r2c_preprocess(
             }
             for (; k + 4 <= B; k += 4)
             {
-                __m256d Xfr = _mm256_loadu_pd(in_re + fi + k);
-                __m256d Xfi = _mm256_loadu_pd(in_im + fi + k);
-                __m256d Xmr = _mm256_loadu_pd(in_re + mi + k);
-                __m256d Xmi = _mm256_loadu_pd(in_im + mi + k);
+                __m256d Xfr, Xfi; _r2c_ld4(in_re, in_im, zi, fi + k, &Xfr, &Xfi);
+                __m256d Xmr, Xmi; _r2c_ld4(in_re, in_im, zi, mi + k, &Xmr, &Xmi);
 
                 __m256d Er = _mm256_mul_pd(_mm256_add_pd(Xfr, Xmr), half_v);
                 __m256d Ei = _mm256_mul_pd(_mm256_sub_pd(Xfi, Xmi), half_v);
@@ -719,8 +784,8 @@ static void _r2c_preprocess(
 #endif
         for (; k < B; k++)
         {
-            double Xfr = in_re[fi + k], Xfi = in_im[fi + k];
-            double Xmr = in_re[mi + k], Xmi = in_im[mi + k];
+            double Xfr = _r2c_ldr(in_re, zi, fi + k), Xfi = _r2c_ldi(in_im, zi, fi + k);
+            double Xmr = _r2c_ldr(in_re, zi, mi + k), Xmi = _r2c_ldi(in_im, zi, mi + k);
 
             double Er = (Xfr + Xmr) * 0.5;
             double Ei = (Xfi - Xmi) * 0.5;
@@ -779,6 +844,119 @@ static inline void _r2c_fused_first_stage(
     }
 }
 
+/* ── §6a53 / Gap-A: fused DIF first stage ─────────────────────────────
+ * out = tw (.) DFT(in) via the post-twiddle OOP family
+ * (radix{R}_t1_dif_oop_fwd, R in {5,10,20,25}); untwiddled groups via the
+ * n1_oop siblings. Direct 11-arg calls (the engine's 7-arg n1 slot is the
+ * OTHER family — dual-ABI landmine, documented). kb-blocked broadcast of
+ * the per-leg grp_tw scalars, leg 0 untwiddled by construction.
+ * Variant-independent: log3-bound plans fuse too (log3 changes tw
+ * DERIVATION only; the table rows read here are identical). Returns -1
+ * with NOTHING done when the radix is uncovered — the explicit-pack
+ * fallback continues. */
+typedef void (*_r2c_oop11_fn)(const double *, const double *, double *,
+                              double *, const double *, const double *,
+                              size_t, size_t, size_t, size_t, size_t);
+#define _R2C_DIFOOP_DECL(R, ISA) \
+    void radix##R##_t1_dif_oop_fwd_##ISA##_UG_UG(const double *, \
+        const double *, double *, double *, const double *, const double *, \
+        size_t, size_t, size_t, size_t, size_t); \
+    void radix##R##_n1_oop_fwd_##ISA##_UG_UG(const double *, const double *, \
+        double *, double *, const double *, const double *, size_t, size_t, \
+        size_t, size_t, size_t);
+_R2C_DIFOOP_DECL(5, avx2) _R2C_DIFOOP_DECL(10, avx2)
+_R2C_DIFOOP_DECL(20, avx2) _R2C_DIFOOP_DECL(25, avx2)
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+_R2C_DIFOOP_DECL(5, avx512) _R2C_DIFOOP_DECL(10, avx512)
+_R2C_DIFOOP_DECL(20, avx512) _R2C_DIFOOP_DECL(25, avx512)
+#endif
+#undef _R2C_DIFOOP_DECL
+
+static int _r2c_dif_fused_hits;   /* gate hook (same-TU visibility) */
+
+static inline _r2c_oop11_fn _r2c_difoop_t1(int r) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    switch (r) {
+    case 5:  return radix5_t1_dif_oop_fwd_avx512_UG_UG;
+    case 10: return radix10_t1_dif_oop_fwd_avx512_UG_UG;
+    case 20: return radix20_t1_dif_oop_fwd_avx512_UG_UG;
+    case 25: return radix25_t1_dif_oop_fwd_avx512_UG_UG;
+    }
+#endif
+    switch (r) {
+    case 5:  return radix5_t1_dif_oop_fwd_avx2_UG_UG;
+    case 10: return radix10_t1_dif_oop_fwd_avx2_UG_UG;
+    case 20: return radix20_t1_dif_oop_fwd_avx2_UG_UG;
+    case 25: return radix25_t1_dif_oop_fwd_avx2_UG_UG;
+    default: return 0;
+    }
+}
+static inline _r2c_oop11_fn _r2c_difoop_n1(int r) {
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    switch (r) {
+    case 5:  return radix5_n1_oop_fwd_avx512_UG_UG;
+    case 10: return radix10_n1_oop_fwd_avx512_UG_UG;
+    case 20: return radix20_n1_oop_fwd_avx512_UG_UG;
+    case 25: return radix25_n1_oop_fwd_avx512_UG_UG;
+    }
+#endif
+    switch (r) {
+    case 5:  return radix5_n1_oop_fwd_avx2_UG_UG;
+    case 10: return radix10_n1_oop_fwd_avx2_UG_UG;
+    case 20: return radix20_n1_oop_fwd_avx2_UG_UG;
+    case 25: return radix25_n1_oop_fwd_avx2_UG_UG;
+    default: return 0;
+    }
+}
+
+static inline void _r2c_bcast2(double *dr, double *di, size_t n, double vr,
+                               double vi) {
+    for (size_t i = 0; i < n; i++) { dr[i] = vr; di[i] = vi; }
+}
+
+static inline int _r2c_fused_first_stage_dif(
+        const stride_plan_t *inner, double *re,
+        double *sr, double *si, size_t K, size_t B, size_t b0)
+{
+    /* §6a53: OPT-IN (VFFT_DIF_FUSED=1). Measured mixed at ship: fused wins
+     * ~-10% at K=256 and {5,16} inners, loses ~+6..7% at {25,5}/small-K —
+     * per-plan measured adoption is the named follow-up; until then the
+     * default must not regress anyone. */
+    if (!getenv("VFFT_DIF_FUSED")) return -1;
+    const stride_stage_t *st = &inner->stages[0];
+    _r2c_oop11_fn tf = _r2c_difoop_t1(st->radix);
+    _r2c_oop11_fn nf = _r2c_difoop_n1(st->radix);
+    if (!tf || !nf) return -1;
+    const size_t leg_scr = st->stride;
+    const size_t elem_per_leg = leg_scr / B;
+    const size_t leg_in = elem_per_leg * 2 * K;
+    const int Rm1 = st->radix - 1;
+    double twb_r[24 * VFFT_PROTO_TW_BLOCK_K];
+    double twb_i[24 * VFFT_PROTO_TW_BLOCK_K];
+    for (int g = 0; g < st->num_groups; g++) {
+        const size_t sb = st->group_base[g];
+        const size_t in_off = (sb / B) * 2 * K + b0;
+        if (!st->needs_tw[g]) {
+            nf(re + in_off, re + K + in_off, sr + sb, si + sb, 0, 0,
+               leg_in, 1, leg_scr, 1, B);
+            continue;
+        }
+        for (size_t kb = 0; kb < B; kb += VFFT_PROTO_TW_BLOCK_K) {
+            size_t tK = B - kb;
+            if (tK > VFFT_PROTO_TW_BLOCK_K) tK = VFFT_PROTO_TW_BLOCK_K;
+            for (int j = 0; j < Rm1; j++)
+                _r2c_bcast2(twb_r + (size_t)j * tK, twb_i + (size_t)j * tK,
+                            tK, st->grp_tw_re[g][(size_t)j * inner->K],
+                            st->grp_tw_im[g][(size_t)j * inner->K]);
+            tf(re + in_off + kb, re + K + in_off + kb,
+               sr + sb + kb, si + sb + kb, twb_r, twb_i,
+               leg_in, 1, leg_scr, 1, tK);
+        }
+    }
+    _r2c_dif_fused_hits++;
+    return 0;
+}
+
 /* Remaining stages use _stride_execute_fwd_slice_from(plan, sr, si, B, B, 1)
  * defined in executor.h — no duplicated executor code needed. */
 
@@ -813,15 +991,26 @@ static void _r2c_worker_fwd(void *arg) {
          * ARBITRARY-K: the fused first stage calls the stage-0 n1_fwd OUT-OF-PLACE
          * (re -> sr/si) at width B, and that OOP butterfly does an unmasked VW load of
          * the final lane group -> over-reads past B and CRASHES for B % VW != 0. Route
-         * a non-VW-aligned B through the explicit-pack fallback instead: its pack loop
-         * has a scalar tail and the inner then runs IN-PLACE with the rem-aware codelet
-         * tail. (VW=4 AVX2 host.) This is the strided-tail "correctness stopgap". */
+         * a non-VW-aligned B through the explicit-pack fallback instead.
+         * 6a23 UPDATE: the OOP n1 family is rem-aware by construction (generator
+         * arbitrary-K tail: masked group loads/stores, see codelet_oop.ml
+         * emit_codelet preamble + arbitrary_k_tail_handling.md), and the engine
+         * gates run it at me=65/67 BIT. The (B & 3)==0 guard was stale and is
+         * REMOVED; odd-B fused is gated in benches/gate_r2c_tail.c. */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
-            && !d->inner->use_dif_forward && (B & 3u) == 0) {
+            && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, re, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
+            if (d->inner_jit_fwd)
+                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
+            else
+                _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
+        } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
+                   && _r2c_fused_first_stage_dif(d->inner, re, sr, si,
+                                                 K, B, b0) == 0) {
+            /* §6a53: fused DIF entry fired; run stages 1.. */
             if (d->inner_jit_fwd)
                 d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 1);
             else
@@ -866,7 +1055,7 @@ static void _r2c_worker_fwd(void *arg) {
 #endif
 
         _r2c_postprocess(sr, si, re, im, d->tw_re, d->tw_im, d->iperm, d->perm,
-                         halfN, K, B, b0);
+                         halfN, K, B, b0, d->zo);
 #ifdef VFFT_R2C_PROFILE
         { double _t3=_r2c_prof_now(); _r2c_prof_post += _t3-_tp0; }
 #endif
@@ -959,7 +1148,7 @@ static void _r2c_worker_bwd(void *arg) {
 
     for (size_t b0 = a->b0_start; b0 < a->b0_end; b0 += B) {
         _r2c_preprocess(re, im, sr, si, d->tw_re, d->tw_im, d->perm,
-                        halfN, K, B, b0);
+                        halfN, K, B, b0, d->zi);
 
         /* ARBITRARY-K: the fused LAST stage's n1_scaled_bwd writes OUT-OF-PLACE (scratch
          * -> re) with an unmasked VW store -> over-writes past B and CRASHES for B % VW != 0.
@@ -1369,15 +1558,16 @@ static void _r2c_worker_fwd_oop(void *arg) {
          * the fused codelet reads the real input there. DIF puts the no-twiddle
          * stage LAST (stage 0 is a twiddle stage), so fusing into stage 0 is wrong
          * — DIF inners take the explicit-pack + full-inner path below. */
-        /* Odd B (B % VW != 0): skip the fused first stage (its OOP butterfly over-runs the
-         * remainder lanes) — use the explicit-pack fallback (unaligned scratch + full inner). */
+        /* 6a23: the OOP n1 family is rem-aware (generator anyk-tail); the old
+         * odd-B guard here was stale and is removed — same as the in-place worker.
+         * Odd B takes the fused path; gated in benches/gate_r2c_tail.c. */
         if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
-            && !d->inner->use_dif_forward && (B & 3u) == 0) {
+            && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, in, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
             { double _t1=_r2c_prof_now(); _r2c_prof_pack += _t1-_tp0; _tp0=_t1; }
 #endif
-            if (d->ls_fwd) {
+            if (d->ls_fwd && !d->zo) {
                 /* Model (b): stages 1..nf-2 via _until, then the fused codelet
                  * AS the last stage (no scratch round-trip). */
                 _stride_execute_fwd_slice_until(d->inner, sr, si, B, B, 1,
@@ -1385,6 +1575,16 @@ static void _r2c_worker_fwd_oop(void *arg) {
             } else {
                 _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
             }
+        } else if (d->inner->num_stages > 0 && d->inner->use_dif_forward
+                   && _r2c_fused_first_stage_dif(d->inner, in, sr, si,
+                                                 K, B, b0) == 0) {
+            /* §6a53: fused DIF entry fired; run stages 1.. (Model-(b)
+             * fork mirrored from the DIT branch above). */
+            if (d->ls_fwd && !d->zo)
+                _stride_execute_fwd_slice_until(d->inner, sr, si, B, B, 1,
+                                                d->inner->num_stages - 1);
+            else
+                _stride_execute_fwd_slice_from(d->inner, sr, si, B, B, 1);
         } else {
             for (int n = 0; n < halfN; n++) {
                 const double *even = in + (size_t)(2 * n) * K + b0;
@@ -1420,7 +1620,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
 #ifdef VFFT_R2C_PROFILE
         { double _t2=_r2c_prof_now(); _r2c_prof_inner += _t2-_tp0; _tp0=_t2; }
 #endif
-        if (d->ls_fwd) {
+        if (d->ls_fwd && !d->zo) {
             /* Model (b): the fused codelet does the last stage + fold for interior
              * group pairs. The self-paired groups (DC/Nyquist column and center)
              * still need their last-stage butterfly run, then scalar fold. We run
@@ -1521,7 +1721,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
             _r2c_laststage_fused(d->inner, sr, si, a->out_re, a->out_im,
                                  d->tw_re, d->tw_im, d->iperm, d->perm,
                                  halfN, K, B, b0, d->ls_fwd);
-        } else if (d->term_fwd && (B & 3u) == 0) {
+        } else if (!d->zo && d->term_fwd && (B & 3u) == 0) {
             /* Step-2 fused path (opt-in): interior pairs via the r2c_term
              * codelet, DC/Nyquist + self-paired (f=halfN/2) as scalar
              * specials (the codelet covers only true interior pairs).
@@ -1563,7 +1763,7 @@ static void _r2c_worker_fwd_oop(void *arg) {
         } else {
             _r2c_postprocess(sr, si, a->out_re, a->out_im,
                              d->tw_re, d->tw_im, d->iperm, d->perm,
-                             halfN, K, B, b0);
+                             halfN, K, B, b0, d->zo);
         }
 #ifdef VFFT_R2C_PROFILE
         { double _t3=_r2c_prof_now(); _r2c_prof_post += _t3-_tp0; }

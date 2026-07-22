@@ -132,7 +132,13 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
      * symmetric angle. Non-symmetric rotations keep their distinct
      * (cr, ci) bit patterns up to the 13-digit rounding mk_const
      * would apply anyway. *)
-    let round_13 x = float_of_string (Printf.sprintf "%.13e" x) in
+    (* Unification of symmetric-angle constants now happens in Ir.mk_const,
+       * which dedups on a 14-sig-digit KEY while storing the first-seen
+       * full-precision value. Quantizing the inputs here (the previous
+       * behavior) stored the damaged values themselves: ~22-30 ulp on the
+       * cosine leaf and ~90 ulp on the tangent ratio, measured by the
+       * accuracy harness. Full precision in, full precision emitted. *)
+      let round_13 x = x in
     let cr_r = round_13 cr in
     let ci_r = round_13 ci in
     let acr = abs_float cr_r in

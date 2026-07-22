@@ -112,7 +112,7 @@ void radix8_n1_fwd_avx512_strided(
             lane_im_7 = _mm512_shuffle_f64x2(_x3_im, _x7_im, 0xEE);
         }
 
-        const __m512d t24 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t24 = _mm512_set1_pd(0.70710678118654757);
         const __m512d t0 = lane_re_7;
         const __m512d t2 = lane_im_7;
         const __m512d t5 = lane_re_3;

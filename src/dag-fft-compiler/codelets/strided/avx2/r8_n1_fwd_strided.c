@@ -98,7 +98,7 @@ void radix8_n1_fwd_avx2_strided(
             lane_im_7 = _mm256_permute2f128_pd(_t1_im, _t3_im, 0x31);
         }
 
-        const __m256d t24 = _mm256_set1_pd(0.70710678118655002);
+        const __m256d t24 = _mm256_set1_pd(0.70710678118654757);
         const __m256d t0 = lane_re_7;
         const __m256d t2 = lane_im_7;
         const __m256d t5 = lane_re_3;

@@ -50,11 +50,11 @@ void radix3_n1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
+                const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
                 const __m512d t1 = lane_im_2;
                 const __m512d t2 = lane_im_1;
                 const __m512d t3 = _mm512_sub_pd(t2, t1);
-                const __m512d t5 = _mm512_set1_pd(0.5);
+                const __m512d t5 = _mm512_set1_pd(0.49999999999999978);
                 const __m512d t6 = lane_re_2;
                 const __m512d t7 = lane_re_1;
                 const __m512d t8 = _mm512_add_pd(t6, t7);
@@ -108,11 +108,11 @@ void radix3_n1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.86602540378444004);
+                const double t0 = (0.86602540378443871);
                 const double t1 = lane_im_2;
                 const double t2 = lane_im_1;
                 const double t3 = (t2 - t1);
-                const double t5 = (0.5);
+                const double t5 = (0.49999999999999978);
                 const double t6 = lane_re_2;
                 const double t7 = lane_re_1;
                 const double t8 = (t6 + t7);
@@ -164,11 +164,11 @@ void radix3_n1_oop_fwd_avx512_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
+                const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
                 const __m512d t1 = lane_im_2;
                 const __m512d t2 = lane_im_1;
                 const __m512d t3 = _mm512_sub_pd(t2, t1);
-                const __m512d t5 = _mm512_set1_pd(0.5);
+                const __m512d t5 = _mm512_set1_pd(0.49999999999999978);
                 const __m512d t6 = lane_re_2;
                 const __m512d t7 = lane_re_1;
                 const __m512d t8 = _mm512_add_pd(t6, t7);

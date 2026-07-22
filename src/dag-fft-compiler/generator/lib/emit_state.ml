@@ -58,6 +58,38 @@ let hc_strided : bool ref = ref false
  * memcpy-then-in-place bridge. n1-only: no twiddles in the DAG. *)
 let n1_oop_strided : bool ref = ref false
 
+(* Interleaved-boundary strided variants (il_architecture.md section 6a4+):
+   il_out — fwd rows codelet stores (re,im) pairs to out_z instead of split
+   rows (interleave fused into the inverse-transpose postamble, plain
+   stores). il_in — bwd rows codelet loads pairs (load-side lattice; not
+   yet wired). *)
+let strided_il_out : bool ref = ref false
+let strided_r2c : bool ref = ref false
+let strided_r2c_bwd : bool ref = ref false
+let strided_il_in : bool ref = ref false
+
+(* il_out with non-temporal (streaming) stores: z is written once and never
+   re-read inside the transform, so NT bypasses RFO and cache pollution.
+   Emits _mm_sfence() before function exit for cross-thread visibility. *)
+let strided_ilo_nt : bool ref = ref false
+
+(* Inplace-family IL boundary modes (il_architecture.md 6a11): the z lattice
+   enters the emitter as render-level memoized emission — first scheduled
+   touch of either side of input index j emits the shared z loads + both
+   deinterleave permutes (lazy placement preserved); stores defer the re side
+   one statement and fuse the (re,im) pair into full-width z stores. *)
+let ip_il_in  : bool ref = ref false
+let ip_il_out : bool ref = ref false
+(* memo: per-emit_body-pass. il_pending accumulates lattice statements to be
+   flushed as a prefix of the next rendered node definition. *)
+let il_seen : (int, unit) Hashtbl.t = Hashtbl.create 64
+let il_pending : Buffer.t = Buffer.create 256
+let il_stash : (int * string) option ref = ref None
+let il_reset () =
+  Hashtbl.reset il_seen; Buffer.clear il_pending; il_stash := None
+let il_take_pending () =
+  let s = Buffer.contents il_pending in Buffer.clear il_pending; s
+
 (* D2 (section 69): hc2c NATURAL-split terminator. Sub-mode of
  * hc_strided (inputs/twiddles identical); overrides the signature
  * (FFTW khc2c-shaped 4-pointer outputs) and the output slot map.

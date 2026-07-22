@@ -24,7 +24,7 @@ void radix8_n1_fwd_avx2(
 {
     size_t k = 0;
     for (; k + 4 <= me; k += 4) {
-        const __m256d t24 = _mm256_set1_pd(0.70710678118655002);
+        const __m256d t24 = _mm256_set1_pd(0.70710678118654757);
         const __m256d t0 = _mm256_loadu_pd(&rio_re[7*ios + k]);
         const __m256d t2 = _mm256_loadu_pd(&rio_im[7*ios + k]);
         const __m256d t5 = _mm256_loadu_pd(&rio_re[3*ios + k]);
@@ -114,7 +114,7 @@ void radix8_n1_fwd_avx2(
     if (k < me) {
         const size_t rem = me - k;
         if (rem == 1) {
-        const double t24 = (0.70710678118655002);
+        const double t24 = (0.70710678118654757);
         const double t0 = rio_re[7*ios + k];
         const double t2 = rio_im[7*ios + k];
         const double t5 = rio_re[3*ios + k];
@@ -202,7 +202,7 @@ void radix8_n1_fwd_avx2(
         rio_im[0*ios + k] = t102;
         } else {
             for (; k + 2 <= me; k += 2) {
-        const __m128d t24 = _mm_set1_pd(0.70710678118655002);
+        const __m128d t24 = _mm_set1_pd(0.70710678118654757);
         const __m128d t0 = _mm_loadu_pd(&rio_re[7*ios + k]);
         const __m128d t2 = _mm_loadu_pd(&rio_im[7*ios + k]);
         const __m128d t5 = _mm_loadu_pd(&rio_re[3*ios + k]);
@@ -290,7 +290,7 @@ void radix8_n1_fwd_avx2(
         _mm_storeu_pd(&rio_im[0*ios + k], t102);
             }
             if (k < me) {
-        const double t24 = (0.70710678118655002);
+        const double t24 = (0.70710678118654757);
         const double t0 = rio_re[7*ios + k];
         const double t2 = rio_im[7*ios + k];
         const double t5 = rio_re[3*ios + k];

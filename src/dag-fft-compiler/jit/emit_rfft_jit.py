@@ -60,7 +60,7 @@ def codelet_externs(N, factors, variants, isa, mode):
     hc, nat = set(), set()
     for (d, r, Q, npv, m, kmax, has_mid) in stages:
         r2cf.add(r)                                   # st->k0 is r2cf[r]
-        if mode == "natural" and d == 0:
+        if mode.startswith("natural") and d == 0:
             if (m - 1) // 2 >= 1: nat.add((r, NAT_INFIX))
         elif kmax >= 1:
             hc.add((r, hc_infix(variants[d])))
@@ -101,7 +101,7 @@ def stage_block(d, r, Q, npv, m, kmax, has_mid, inf, isa, cur, nxt):
     if has_mid:
         L += [f"        rfft_mid_column({r}, {m}, {npv}, (size_t){Q}, K, vlf,",
               f"            {cur} + ((size_t){Q}*(size_t)({r}*({m}/2)))*K,",
-              f"            st->mid_c, st->mid_s, 0, 0, {nxt}, NULL);"]
+              f"            st->mid_c, st->mid_s, 0, 0, {nxt}, NULL, NULL);"]
     L.append("    }")
     return L
 
@@ -131,7 +131,7 @@ def emit_body_natural(N, factors, variants, isa):
     leaf_r, S, stages = stage_params(N, factors)
     nf = len(factors)
     nh = N // 2
-    L = ["    if (p->Kb != p->K) { rfft_execute_fwd_natural(p, x, out_re, out_im); return; }",
+    L = ["    if (p->Kb != p->K) { rfft_execute_fwd_natural(p, x, out_re, out_im, NULL); return; }",
          "    const size_t K = p->K;",
          f"    const size_t NK = (size_t){N} * K;",
          f"    const size_t nh = (size_t){nh};"]
@@ -181,7 +181,94 @@ def emit_body_natural(N, factors, variants, isa):
               "                (ptrdiff_t)K, mK, mK, K);"]
     if mid0:
         L += [f"        rfft_mid_column({r0}, {m0}, {np0}, 1, K, K,",
-              f"            {cur} + ((size_t)({r0}*({m0}/2)))*K, st->mid_c, st->mid_s, 1, nh, out_re, out_im);"]
+              f"            {cur} + ((size_t)({r0}*({m0}/2)))*K, st->mid_c, st->mid_s, 1, nh, out_re, out_im, NULL);"]
+    L.append("    }")
+    return L
+
+
+
+def emit_body_natural_z(N, factors, variants, isa):
+    """§6a27: natural-forward with INTERLEAVED (CCE) z output. Identical cascade
+    and stage-0 codelet sequence to emit_body_natural (per-k NAT_INFIX, same
+    twiddle pointers, same order) with stores redirected: k0/nf==1 rows via
+    _rfft_zrow*, terminator into p->zscr planes then interleaved, mid via its
+    zo mode. Store-redirect only => bit-identical to the natural-mode jit."""
+    leaf_r, S, stages = stage_params(N, factors)
+    nf = len(factors)
+    nh = N // 2
+    L = ["    if (p->Kb != p->K) { rfft_execute_fwd_natural(p, x, NULL, NULL, z); return; }",
+         "    const size_t K = p->K;",
+         f"    const size_t NK = (size_t){N} * K;",
+         f"    const size_t nh = (size_t){nh};"]
+    if nf == 1:
+        L += [f"    radix{leaf_r}_r2cf_{isa}(x, p->planeA, p->planeA + NK, (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, K);",
+              "    _rfft_zrow_zero_im(z, 0, K, 0, K, p->planeA);",
+              f"    for (size_t f = 1; f < (size_t){(N + 1)//2}; f++)",
+              f"        _rfft_zrow(z, f, K, 0, K, p->planeA + f*K, p->planeA + ((size_t){N}-f)*K);"]
+        if N % 2 == 0:
+            L.append("    _rfft_zrow_zero_im(z, nh, K, 0, K, p->planeA + nh*K);")
+        return L
+    L += ["    /* LEAF (folded, vl = S*K) */", "    {",
+          f"        const ptrdiff_t SK = (ptrdiff_t)((size_t){S} * K);",
+          f"        radix{leaf_r}_r2cf_{isa}(x, p->planeA, p->planeA + NK, SK, SK, -SK, (size_t){S} * K);",
+          "    }"]
+    cur = "p->planeA"
+    for (d, r, Q, npv, m, kmax, has_mid) in stages:
+        if d == 0:
+            break
+        nxt = "p->planeB" if cur == "p->planeA" else "p->planeA"
+        L += stage_block(d, r, Q, npv, m, kmax, has_mid, hc_infix(variants[d]), isa, cur, nxt)
+        cur = nxt
+    d0, r0, Q0, np0, m0, kmax0, mid0 = stages[-1]
+    kmaxT = (m0 - 1) // 2
+    L += [f"    /* stage 0: natural terminator, INTERLEAVED z (radix {r0}, m={m0}) */", "    {",
+          "        const rfft_stage_t *st = &p->st[0];",
+          f"        radix{r0}_r2cf_{isa}({cur}, p->nat_k0, p->nat_k0 + (size_t){r0}*K, (ptrdiff_t)K, (ptrdiff_t)K, -(ptrdiff_t)K, K);",
+          "        _rfft_zrow_zero_im(z, 0, K, 0, K, p->nat_k0);",
+          f"        for (int sI = 1; sI < {(r0 + 1)//2}; sI++)",
+          f"            _rfft_zrow(z, (size_t)sI * (size_t){m0}, K, 0, K,",
+          f"                       p->nat_k0 + (size_t)sI*K, p->nat_k0 + (size_t)({r0}-sI)*K);"]
+    if r0 % 2 == 0:
+        L.append(f"        _rfft_zrow_zero_im(z, nh, K, 0, K, p->nat_k0 + (size_t){r0 // 2}*K);")
+    if kmaxT >= 1:
+        # §6a27: batched-k terminator. Writing then immediately re-reading the
+        # same r*K scratch bytes every k serializes iterations on store-to-load
+        # forwarding (measured +48.7% at (2000,4)). Batch B<=min(zch,8) per-k
+        # calls into column-major scratch slots, then interleave the batch —
+        # same codelets, same order, only scratch addressing changes (BIT-safe).
+        L += ["        const int ZB = p->zch < 8 ? p->zch : 8;",
+              f"        const size_t zpl = (size_t){r0} * (size_t)p->zch * K;",
+              "        double *Rp = p->zscr, *Ip = p->zscr + zpl;",
+              "        double *Rm = Ip + zpl, *Im = Rm + zpl;",
+              f"        for (int k1 = 1; k1 <= {kmaxT}; k1 += ZB) {{",
+              f"            const int kb = (k1 + ZB - 1 <= {kmaxT}) ? ZB : ({kmaxT} - k1 + 1);",
+              "            for (int j = 0; j < kb; j++) {",
+              "                const int k = k1 + j;",
+              f"                double *cRp = Rp + (size_t)(j*{r0})*K, *cIp = Ip + (size_t)(j*{r0})*K;",
+              f"                double *cRm = Rm + (size_t)(j*{r0})*K, *cIm = Im + (size_t)(j*{r0})*K;",
+              f"                radix{r0}_{NAT_INFIX}_{isa}(",
+              f"                    {cur} + ((size_t)({r0}*k))*K, {cur} + ((size_t)({r0}*({m0}-k)))*K,",
+              "                    cRp, cIp, cRm, cIm,",
+              f"                    st->tw_re + (size_t)(k-1)*{r0}, st->tw_im + (size_t)(k-1)*{r0},",
+              "                    (ptrdiff_t)K, (ptrdiff_t)K, (ptrdiff_t)K, K);",
+              "            }",
+              "            for (int j = 0; j < kb; j++) {",
+              "                const int k = k1 + j;",
+              f"                const double *cRp = Rp + (size_t)(j*{r0})*K, *cIp = Ip + (size_t)(j*{r0})*K;",
+              f"                const double *cRm = Rm + (size_t)(j*{r0})*K, *cIm = Im + (size_t)(j*{r0})*K;",
+              f"                for (int sl = 0; sl < {r0}; sl++) {{",
+              f"                    size_t f = (size_t)k + (size_t)sl * (size_t){m0};",
+              "                    if (f <= nh)",
+              "                        _rfft_zrow(z, f, K, 0, K, cRp + (size_t)sl*K, cIp + (size_t)sl*K);",
+              "                    else",
+              f"                        _rfft_zrow(z, (size_t){r0 * m0} - f, K, 0, K,",
+              f"                                   cRm + (size_t)({r0}-1-sl)*K, cIm + (size_t)({r0}-1-sl)*K);",
+              "                }",
+              "            }",
+              "        }"]
+    if mid0:
+        L += [f"        rfft_mid_column({r0}, {m0}, {np0}, 1, K, K,",
+              f"            {cur} + ((size_t)({r0}*({m0}/2)))*K, st->mid_c, st->mid_s, 1, nh, NULL, NULL, z);"]
     L.append("    }")
     return L
 
@@ -193,7 +280,7 @@ def main():
     ap.add_argument("--factors", required=True, help="comma list, leaf last (e.g. 16,16)")
     ap.add_argument("--variants", default="", help="comma codes (0/2 flat, 1 log3); default all flat")
     ap.add_argument("--isa", default="avx2")
-    ap.add_argument("--mode", default="packed", choices=["packed", "natural"])
+    ap.add_argument("--mode", default="packed", choices=["packed", "natural", "natural-z"])
     ap.add_argument("--prelude", default="rfft_jit_prelude.h")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
@@ -207,6 +294,10 @@ def main():
         sig = ("VFFT_JIT_EXPORT void rfft_jit_exec(const rfft_plan_t *p, const double *x,\n"
                "                                   double *out_re, double *out_im)")
         body = emit_body_natural(a.N, factors, variants, a.isa)
+    elif a.mode == "natural-z":
+        sig = ("VFFT_JIT_EXPORT void rfft_jit_exec(const rfft_plan_t *p, const double *x,\n"
+               "                                   double *z)")
+        body = emit_body_natural_z(a.N, factors, variants, a.isa)
     else:
         sig = "VFFT_JIT_EXPORT void rfft_jit_exec(const rfft_plan_t *p, const double *x, double *out)"
         body = emit_body_packed(a.N, factors, variants, a.isa)

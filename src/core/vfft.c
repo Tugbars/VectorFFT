@@ -27,6 +27,7 @@
 #include "oop_wisdom.h"         /* OOP wisdom load/lookup/create + entry_from_plan */
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
+#include "il_execute.h"      /* interleaved z<->z folded adapters (6a16/6a17) */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -55,9 +56,11 @@
 #include "dct4.h"             /* DCT-IV (inner c2c of N/2)                       */
 #include "dst.h"              /* DST-II/III (wrap DCT-II)                        */
 #include "dht.h"              /* DHT (inner r2c)                                 */
-#include "fft2d.h"            /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
+#include "fft2d.h"
+#include "transforms/fftnd/fftnd_r2c.h"   /* §6a47/Q1: 3D real transforms */            /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
 #include "fft2d_r2c.h"        /* 2D r2c / c2r                                    */
 #include "fft2d_c2c_wisdom.h" /* dedicated 2D c2c wisdom (lookup + calibrated create) */
+#include "fft3d_wisdom.h" /* dedicated 3D (N1,N2,N3) table — hit -> stride_plan_3d_from */
 #include "fft2d_r2c_wisdom.h" /* dedicated 2D r2c/c2r wisdom (shared struct)          */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
@@ -95,6 +98,8 @@ struct vfft_wisdom_s
     vfft_fft2d_c2c_wisdom_t fft2d_c2c;
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
     vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
+    char path_3d_c2c[640]; /* fft3d_c2c_wisdom.txt */
+    vfft_fft3d_wisdom_t fft3d_c2c; /* dedicated 3D table (B + a_block + 3 axis chains) */
     char path_bluestein[640];          /* bluestein_wisdom.txt */
     bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
     /* 1D c2r NATURAL-vs-STRIDE path decision (c2r_path.txt; "N K path", 0=natural,
@@ -109,6 +114,8 @@ struct vfft_plan_s
     vfft_placement_t placement;
     int N;
     int N2; /* 2D second dim (0 = 1D)    */
+    int N3; /* 3D third dim  (0 = 1D/2D) */
+    int N4; /* 4D fourth dim (0 = rank<4)  — §6a62 */
     size_t K;
     int nthreads;
     stride_plan_t *cplan;     /* c2c in-place (owned)      */
@@ -116,6 +123,8 @@ struct vfft_plan_s
     vfft_r2c_plan_t *rplan;   /* r2c fwd (owned)           */
     vfft_c2r_disp_t *c2rdisp; /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
     stride_plan_t *tplan;     /* trig DCT/DST/DHT (owned)  */
+    vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
+    vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
     vfft_proto_exec_fn exec_fwd, exec_bwd;
@@ -125,6 +134,23 @@ struct vfft_plan_s
      * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
     int padded;
     int exec_me;
+    /* INTERLEAVED z execute (sim==dim==NULL contract, 1D tight in-place c2c):
+     * lazily-allocated split scratch + the once-resolved DIT bwd range executor
+     * (fused-t1s jit tier; NULL -> core). See _exec_c2c_interleaved. */
+    double *il_wr, *il_wi;
+    vfft_proto_exec_range_fn il_rfb;
+    /* §6a55: IL padded arm (tail_handling doctrine port). il_me: 0=undecided,
+     * K=tight (today's fused path), Kp=padded — deinterleave into Kp-strided
+     * work (slack zeroed once; linear stages keep zero lanes zero both
+     * directions), full split execute at Kp, interleave-out at true K.
+     * Verdict from the SAME c2c exec_me wisdom the padded batch path uses
+     * (read via _default_wisdom(): a custom cfg->wisdom plan decides from
+     * the default table — decision quality only, both arms correct).
+     * VFFT_IL_PAD=0/1 forces the arm (gates + same-process benches). */
+    int il_me;
+    int il_race;              /* §6a59: A/B pending flag (decision-scoped) */
+    stride_plan_t *cplan_il;
+    vfft_proto_exec_fn il_pf, il_pb;   /* §6a55: jit tier on cplan_il */
     /* 1 = the c2c in-place plan's codelet IGNORES the partial-lane count `me` (processes the full baked K),
      * so a _c2c_mt K-split slab would overrun adjacent lanes -> wrong output. Detected once at create by a
      * whole-vs-split self-check; when set, the FFT runs WHOLE-BATCH under MT (the reorder pass still threads).
@@ -217,6 +243,7 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
     snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
     snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
+    snprintf(W->path_3d_c2c, sizeof W->path_3d_c2c, "%s/fft3d_c2c_wisdom.txt", d);
     snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
     snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
     snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
@@ -228,6 +255,7 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     vfft_oop_wisdom_load(&W->oop, W->path_oop);
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
     vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
+    vfft_fft3d_wisdom_load(&W->fft3d_c2c, W->path_3d_c2c);
     vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c);
     vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r);
     bluestein_wisdom_init(&W->bluestein);
@@ -1380,7 +1408,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     const vfft_proto_registry_t *reg = _registry();
     int N = cfg->n[0];
     size_t K = cfg->howmany;
-    if (cfg->dims < 0 || cfg->dims > 2)
+    if (cfg->dims < 0 || cfg->dims > 4)   /* §6a62: rank-4 exposed */
         return NULL;
     /* Order axis (NATURAL/SCRAMBLED) — the 1D C2C scrambled<->natural selector, honored for BOTH
      * placements: 1D in-place (native scrambled vs PURE/PSWAP natural), 1D OOP (MODEB scrambled vs
@@ -1389,7 +1417,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * order there is rejected up front — the same no-silent-wrong-order contract as the padding gate
      * below. natural_order_inplace_design.md §2e. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 2 && !cfg->batch))
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !cfg->batch))
         return NULL;
     /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
      * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
@@ -1409,8 +1437,106 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
 
     /* ── 2D (dims==2): n[0]=N1, n[1]=N2. c2c in-place (tiled-row + native-col);
      * r2c/c2r out-of-place (real plane <-> N1 x (N2/2+1) split spectrum, same plan). ── */
+    /* ── 3D (dims==3): n = {N1,N2,N3}. c2c A/B/C passes on one split pair
+     * (OOP = copy then in-place, same shape as 2D). howmany==1 (the wrap is a
+     * K=1 override plan), order DEFAULT/SCRAMBLED only (3D natural is the
+     * fft3d.h nat_col_list follow-up). Wisdom: dedicated (N1,N2,N3) table —
+     * HIT -> stride_plan_3d_from (the fft3d.h-requested path); MISS -> greedy
+     * per-axis exhaustive with the inners visible, banked when expressible. */
+    if (cfg->dims == 4)
+    {   /* §6a62: rank-4 exposure. The engines were rank-general all along
+         * (FFTND_MAX_RANK=4; fndr's builder takes rank; fftnd's generic
+         * wrap covers c2c) — the dispatch just stopped at 3. Same
+         * contracts as 3D: K==1, order DEFAULT/SCRAMBLED, real = OOP with
+         * even last dim. */
+        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+            K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
+            (cfg->n[3] % 2) == 0)
+        {
+            stride_plan_t *tp = stride_plan_nd_r2c(4, cfg->n, reg);
+            if (!tp) return NULL;
+            struct vfft_plan_s *h4 = (struct vfft_plan_s *)calloc(1, sizeof *h4);
+            if (!h4) { stride_plan_destroy(tp); return NULL; }
+            h4->transform = cfg->transform;
+            h4->placement = cfg->placement;
+            h4->N = cfg->n[0]; h4->N2 = cfg->n[1];
+            h4->N3 = cfg->n[2]; h4->N4 = cfg->n[3];
+            h4->K = 1;
+            h4->nthreads = stride_get_num_threads();
+            h4->tplan = tp;
+            return h4;
+        }
+        if (cfg->transform != VFFT_C2C || K != 1 ||
+            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+            return NULL;
+        stride_plan_t *tp = stride_plan_nd(4, cfg->n, reg);
+        if (!tp) return NULL;
+        struct vfft_plan_s *h4 = (struct vfft_plan_s *)calloc(1, sizeof *h4);
+        if (!h4) { stride_plan_destroy(tp); return NULL; }
+        h4->transform = VFFT_C2C;
+        h4->placement = cfg->placement;
+        h4->N = cfg->n[0]; h4->N2 = cfg->n[1];
+        h4->N3 = cfg->n[2]; h4->N4 = cfg->n[3];
+        h4->K = 1;
+        h4->nthreads = stride_get_num_threads();
+        h4->tplan = tp;
+        return h4;
+    }
+    if (cfg->dims == 3)
+    {
+        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+            K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
+            (cfg->n[2] % 2) == 0)
+        {   /* §6a47/Q1: 3D real transforms via the ND r2c engine (strided
+             * row engines + measured adoption live inside the builder). */
+            stride_plan_t *tp = stride_plan_nd_r2c(3, cfg->n, reg);
+            if (!tp) return NULL;
+            struct vfft_plan_s *h3 = (struct vfft_plan_s *)calloc(1, sizeof *h3);
+            if (!h3) { stride_plan_destroy(tp); return NULL; }
+            h3->transform = cfg->transform;
+            h3->placement = cfg->placement;
+            h3->N = cfg->n[0]; h3->N2 = cfg->n[1]; h3->N3 = cfg->n[2];
+            h3->K = 1;
+            h3->nthreads = stride_get_num_threads();
+            h3->tplan = tp;
+            return h3;
+        }
+        if (cfg->transform != VFFT_C2C || K != 1 ||
+            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+            return NULL;
+        int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
+        int banked = 0;
+        stride_plan_t *tp =
+            vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg, &banked);
+        if (banked && W->path_3d_c2c[0])
+            vfft_fft3d_wisdom_save(&W->fft3d_c2c, W->path_3d_c2c);
+        if (!tp)
+            return NULL;
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h)
+        {
+            stride_plan_destroy(tp);
+            return NULL;
+        }
+        h->transform = VFFT_C2C;
+        h->placement = cfg->placement;
+        h->N = N1;
+        h->N2 = N2;
+        h->N3 = N3;
+        h->K = 1;
+        h->nthreads = stride_get_num_threads();
+        h->tplan = tp;
+        return h;
+    }
     if (cfg->dims == 2)
     {
+        /* §6a50/Q4: howmany is the 1D lane-batched convention; the 2D
+         * executors are K-blind, so K != 1 here would silently process one
+         * plane of a K-plane request (hazard demonstrated). Reject up
+         * front, same contract as 3D. Sequential-plane 2D batching is a
+         * designed feature (own dist convention), not a reinterpretation. */
+        if (K != 1)
+            return NULL;
         int N1 = cfg->n[0], N2 = cfg->n[1];
         stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
         if (W->path_c2c[0])
@@ -1437,6 +1563,131 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tplan = tp;
+        /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
+         * path wins at the tile's low K (−27%/call measured). Force the rfft
+         * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
+        if (cfg->transform == VFFT_R2C)
+        {
+            stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
+            size_t saved2 = vfft_r2c_dispatch_get_decouple_min_k();
+            vfft_r2c_dispatch_set_decouple_min_k((size_t)-1);
+            h->rfft_row = vfft_r2c_plan_create(N2, d2->B, VFFT_R2C_SPLIT,
+                                               _rfft_registry(), NULL,
+                                               (vfft_proto_registry_t *)reg);
+            vfft_r2c_dispatch_set_decouple_min_k(saved2);
+            if (h->rfft_row && h->rfft_row->path == VFFT_R2C_PATH_RFFT
+                && h->rfft_row->layout == VFFT_R2C_SPLIT && h->rfft_row->rfft)
+            {
+                /* §6a31: MEASURED adoption — "rfft wins at low K" does not
+                 * survive N-scaling ((512,8) regressed +66% before this
+                 * gate). A/B both inners on tile scratch at create
+                 * (same-process, 64 reps each, sub-ms) and keep the winner. */
+                double *sr0 = _fft2d_r2c_scratch_re(d2, 0);
+                double *si0 = _fft2d_r2c_scratch_im(d2, 0);
+                size_t tsz = d2->tile_real_sz;
+                double *bak2 = (double *)malloc(tsz * sizeof(double));
+                for (size_t ii = 0; ii < tsz; ii++) bak2[ii] = 1.0 + 1e-3 * (double)(ii & 63);
+                rfft_plan_t *rp2 = h->rfft_row->rfft;
+                struct timespec t0_, t1_;
+                double t_str, t_rff;
+                /* per-rep refill BOTH arms (unnormalized reps compound to
+                 * inf otherwise; equal handicap keeps the ratio honest). */
+                memcpy(sr0, bak2, tsz * sizeof(double));
+                _fft2d_r2c_inner_fwd(d2->plan_r2c, sr0, si0, 0);   /* warm */
+                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                for (int rr2 = 0; rr2 < 64; rr2++) {
+                    memcpy(sr0, bak2, tsz * sizeof(double));
+                    _fft2d_r2c_inner_fwd(d2->plan_r2c, sr0, si0, 0);
+                }
+                clock_gettime(CLOCK_MONOTONIC, &t1_);
+                t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+                memcpy(sr0, bak2, tsz * sizeof(double));
+                rfft_execute_fwd_natural(rp2, sr0, sr0, si0, NULL); /* warm */
+                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                for (int rr2 = 0; rr2 < 64; rr2++) {
+                    memcpy(sr0, bak2, tsz * sizeof(double));
+                    rfft_execute_fwd_natural(rp2, sr0, sr0, si0, NULL);
+                }
+                clock_gettime(CLOCK_MONOTONIC, &t1_);
+                t_rff = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+                free(bak2);
+                /* §6a34: hysteresis — engine deltas measured <=3%, inside
+                 * regime-to-regime noise; create-time gates flipped winners
+                 * across weather regimes. The challenger must beat the
+                 * stride incumbent by >5% or the incumbent stays. */
+                if (t_rff * 20 < t_str * 19)
+                    d2->rfft_row = rp2;
+                else
+                {
+                    vfft_r2c_plan_destroy(h->rfft_row);
+                    h->rfft_row = NULL;
+                }
+            }
+            else if (h->rfft_row)
+            {
+                vfft_r2c_plan_destroy(h->rfft_row);
+                h->rfft_row = NULL;
+            }
+        }
+        /* §6a32: bwd twin — c2r natural-engine row inner for the C2R 2D
+         * plan, measured-adopted exactly like the fwd gate. */
+        if (cfg->transform == VFFT_C2R)
+        {
+            stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
+            h->c2r_row = vfft_c2r_disp_create(N2, d2->B, VFFT_C2R_NATURAL,
+                                              _rfft_registry(),
+                                              (vfft_proto_registry_t *)reg);
+            if (h->c2r_row && h->c2r_row->packed && h->c2r_row->packed->nat_init)
+            {
+                double *sr0 = _fft2d_r2c_scratch_re(d2, 0);
+                double *si0 = _fft2d_r2c_scratch_im(d2, 0);
+                size_t tcz = d2->tile_complex_sz, trz = d2->tile_real_sz;
+                double *bkr = (double *)malloc((tcz > trz ? tcz : trz) * sizeof(double));
+                double *bki = (double *)malloc(tcz * sizeof(double));
+                for (size_t ii = 0; ii < tcz; ii++) {
+                    bkr[ii] = 1.0 + 1e-3 * (double)(ii & 63);
+                    bki[ii] = 0.5 - 1e-3 * (double)(ii & 31);
+                }
+                c2r_plan_t *cp2 = h->c2r_row->packed;
+                struct timespec t0_, t1_;
+                double t_str, t_c2r;
+                memcpy(sr0, bkr, tcz * sizeof(double));
+                memcpy(si0, bki, tcz * sizeof(double));
+                _fft2d_r2c_inner_bwd(d2->plan_r2c, sr0, si0, 0);   /* warm */
+                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                for (int rr2 = 0; rr2 < 64; rr2++) {
+                    memcpy(sr0, bkr, tcz * sizeof(double));
+                    memcpy(si0, bki, tcz * sizeof(double));
+                    _fft2d_r2c_inner_bwd(d2->plan_r2c, sr0, si0, 0);
+                }
+                clock_gettime(CLOCK_MONOTONIC, &t1_);
+                t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+                memcpy(sr0, bkr, tcz * sizeof(double));
+                memcpy(si0, bki, tcz * sizeof(double));
+                c2r_execute_natural(cp2, sr0, si0, sr0, NULL);     /* warm */
+                clock_gettime(CLOCK_MONOTONIC, &t0_);
+                for (int rr2 = 0; rr2 < 64; rr2++) {
+                    memcpy(sr0, bkr, tcz * sizeof(double));
+                    memcpy(si0, bki, tcz * sizeof(double));
+                    c2r_execute_natural(cp2, sr0, si0, sr0, NULL);
+                }
+                clock_gettime(CLOCK_MONOTONIC, &t1_);
+                t_c2r = (t1_.tv_sec - t0_.tv_sec) * 1e9 + (t1_.tv_nsec - t0_.tv_nsec);
+                free(bkr); free(bki);
+                if (t_c2r * 20 < t_str * 19)   /* §6a34 hysteresis */
+                    d2->c2r_row = cp2;
+                else
+                {
+                    vfft_c2r_disp_destroy(h->c2r_row);
+                    h->c2r_row = NULL;
+                }
+            }
+            else if (h->c2r_row)
+            {
+                vfft_c2r_disp_destroy(h->c2r_row);
+                h->c2r_row = NULL;
+            }
+        }
         /* ORDER_NATURAL (2D c2c): build the two per-axis digit-reversal reorder tapes from the inner
          * plans' chains. SCRAMBLED/DEFAULT leave nat2d==0 (byte-identical scrambled path). Refuse
          * (free + NULL) if orientation detect fails on either multi-stage axis — no silent wrong order. */
@@ -2235,6 +2486,503 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     return NULL;
 }
 
+/* The full 1D in-place c2c split execute (MT, padded exec_me, NATURAL tapes,
+ * mt_unsafe) — extracted verbatim so the interleaved wrapper can reuse it as
+ * the always-correct fallback. */
+static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
+                              double *re, double *im)
+{
+        vfft_set_num_threads(h->nthreads);
+        /* Unified MT execute: tight runs p->K lanes; padded runs exec_me (Kp = full-SIMD pad,
+         * or K = tail on the Kp-wide buffer). fn (JIT/baked) is resolved at create ONLY for
+         * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
+         * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
+        size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
+        /* ORDER_NATURAL SCR forward: fused scatter terminator does the whole forward
+         * (OOP scratch-fill stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
+        if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
+        {
+            _scr_fwd_mt(h->nat_scr, re, im, h->K); /* scratch-fill K-split + terminator q-split */
+            return;
+        }
+        /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
+         * layout (cycle inverse; SCR reuses PURE's cycle tape), then zero-perm DIF backward.
+         * (FREE needs nothing; nat_mode==0 = order=DEFAULT = byte-identical old path.) */
+        if (dir != VFFT_FORWARD &&
+            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
+             h->nat_mode == VFFT_NAT_SCR))
+            _natorder_mt(h, re, im, 0);
+        if (h->mt_unsafe)
+        {
+            /* codelet ignores `me` -> K-split would overrun; run the FFT WHOLE-BATCH (the reorder above/below
+             * still threads). Same call shape as _c2c_mt's T<=1 branch. */
+            vfft_proto_exec_fn f = dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd;
+            if (f)
+                f(h->cplan, re, im, me, h->cplan->K, 0);
+            else if (dir == VFFT_FORWARD)
+                vfft_proto_execute_fwd(h->cplan, re, im, me);
+            else
+                vfft_proto_execute_bwd(h->cplan, re, im, me);
+        }
+        else
+            _c2c_mt(h->cplan, re, im, dir == VFFT_FORWARD ? 1 : 0,      /* dst==src */
+                    dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
+        /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
+        if (dir == VFFT_FORWARD &&
+            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
+            _natorder_mt(h, re, im, 1);
+        }
+
+/* INTERLEAVED z contract (vfft.h buffer table): 1D tight in-place C2C with
+ * sim==dim==NULL — sre/dre are interleaved complex (2*N*K doubles, element e
+ * of lane t at [2*(e*K+t)]; dre may equal sre). Fast path = the folded z->z
+ * adapters under the 6a17 tier rule (fwd -> core; bwd -> DIT jit fused-t1s,
+ * DIF core), taken when order=DEFAULT and the pool is single-threaded.
+ * Everything else (NATURAL, MT, prime overrides, <2 stages, resolver misses)
+ * falls back to convert -> _exec_c2c_inplace -> convert: always correct,
+ * never silent. Padded batches are excluded by contract (z is tight-only). */
+static void _vfft_z_dein(const double *, double *, double *, size_t);
+static void _vfft_z_inter(const double *, const double *, double *, size_t);
+
+/* §6a58 / Target C: MT for the interleaved path.
+ * C2: il2il lane-slab dispatch (the _c2c_mt pattern verbatim — S =
+ * ceil(K/T) rounded to 8, main thread slab 0, offsets are pure base
+ * adds in the lane-major layout). Resolvability is PRE-FLIGHTED once
+ * (plan-deterministic, not slab-dependent) so dispatch is all-or-
+ * nothing. mt_unsafe routes to the fallback (same stage-codelet hazard
+ * class as _c2c_mt). C1: the fallback's converts slab over flat element
+ * ranges with barriers around the MT inplace. */
+typedef struct {
+    const stride_plan_t *p;
+    const double *zi; double *wr, *wi, *zo;
+    size_t k0, ks; int dir, use_dif;
+    vfft_proto_exec_range_fn rfb;
+} _il_mt_arg;
+static void _il_mt_tramp(void *v)
+{
+    _il_mt_arg *a = (_il_mt_arg *)v;
+    if (a->dir)
+        vfft_proto_execute_fwd_il2il_core(a->p, a->zi + 2 * a->k0,
+                                          a->wr + a->k0, a->wi + a->k0,
+                                          a->zo + 2 * a->k0, a->ks);
+    else if (!a->use_dif)
+        vfft_proto_execute_bwd_il2il_jit(a->p, a->zi + 2 * a->k0,
+                                         a->wr + a->k0, a->wi + a->k0,
+                                         a->zo + 2 * a->k0, a->ks, a->rfb);
+    else
+        vfft_proto_execute_bwd_il2il_core(a->p, a->zi + 2 * a->k0,
+                                          a->wr + a->k0, a->wi + a->k0,
+                                          a->zo + 2 * a->k0, a->ks);
+}
+typedef struct {
+    const double *z; double *wr, *wi, *zo;
+    size_t e0, es; int dir;               /* dir 1 = dein, 0 = inter */
+} _zc_arg;
+static void _zc_tramp(void *v)
+{
+    _zc_arg *a = (_zc_arg *)v;
+    if (a->dir)
+        _vfft_z_dein(a->z + 2 * a->e0, a->wr + a->e0, a->wi + a->e0, a->es);
+    else
+        _vfft_z_inter(a->wr + a->e0, a->wi + a->e0, a->zo + 2 * a->e0,
+                      a->es);
+}
+
+/* §6a57: explicit-intrinsic z<->split converts. Measured parity with gcc
+ * -O2's auto-vectorization (bench_il_convert_vec: hand -3.4%); applied
+ * anyway for COMPILER INDEPENDENCE — other toolchains / -O1 builds are
+ * not guaranteed the auto-vec. AVX-512: 8 complex / iter via
+ * permutex2var (the tree's own IL-store vocabulary); AVX2: 4 complex via
+ * unpack+perm2f128; plain-C floor otherwise. Scalar epilogue, NO masks
+ * (tail_handling doctrine). BIT-identical to the scalar loops by
+ * construction and by gate. */
+static void _vfft_z_dein(const double *z, double *re, double *im, size_t n)
+{
+    size_t i = 0;
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    const __m512i ir = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+    const __m512i ii = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+    for (; i + 8 <= n; i += 8) {
+        __m512d v0 = _mm512_loadu_pd(z + 2 * i);
+        __m512d v1 = _mm512_loadu_pd(z + 2 * i + 8);
+        _mm512_storeu_pd(re + i, _mm512_permutex2var_pd(v0, ir, v1));
+        _mm512_storeu_pd(im + i, _mm512_permutex2var_pd(v0, ii, v1));
+    }
+#elif defined(__AVX2__)
+    for (; i + 4 <= n; i += 4) {
+        __m256d v0 = _mm256_loadu_pd(z + 2 * i);
+        __m256d v1 = _mm256_loadu_pd(z + 2 * i + 4);
+        __m256d t0 = _mm256_permute2f128_pd(v0, v1, 0x20);
+        __m256d t1 = _mm256_permute2f128_pd(v0, v1, 0x31);
+        _mm256_storeu_pd(re + i, _mm256_unpacklo_pd(t0, t1));
+        _mm256_storeu_pd(im + i, _mm256_unpackhi_pd(t0, t1));
+    }
+#endif
+    for (; i < n; i++) { re[i] = z[2*i]; im[i] = z[2*i+1]; }
+}
+static void _vfft_z_inter(const double *re, const double *im, double *z,
+                          size_t n)
+{
+    size_t i = 0;
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    const __m512i lo = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11);
+    const __m512i hi = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
+    for (; i + 8 <= n; i += 8) {
+        __m512d r = _mm512_loadu_pd(re + i);
+        __m512d m = _mm512_loadu_pd(im + i);
+        _mm512_storeu_pd(z + 2 * i,     _mm512_permutex2var_pd(r, lo, m));
+        _mm512_storeu_pd(z + 2 * i + 8, _mm512_permutex2var_pd(r, hi, m));
+    }
+#elif defined(__AVX2__)
+    for (; i + 4 <= n; i += 4) {
+        __m256d r = _mm256_loadu_pd(re + i);
+        __m256d m = _mm256_loadu_pd(im + i);
+        __m256d l2 = _mm256_unpacklo_pd(r, m);
+        __m256d h2 = _mm256_unpackhi_pd(r, m);
+        _mm256_storeu_pd(z + 2 * i,     _mm256_permute2f128_pd(l2, h2, 0x20));
+        _mm256_storeu_pd(z + 2 * i + 4, _mm256_permute2f128_pd(l2, h2, 0x31));
+    }
+#endif
+    for (; i < n; i++) { z[2*i] = re[i]; z[2*i+1] = im[i]; }
+}
+
+static void _il_pad_dein(const double *, double *, double *, int, size_t,
+                         size_t);
+static void _il_pad_inter(const double *, const double *, double *, int,
+                          size_t, size_t);
+
+static int _il_ab_runs;   /* §6a59 gate hook */
+
+/* §6a59: per-cell fused-vs-padded A/B, the exec_me lifecycle mirrored for
+ * IL. Runs ONCE per unmeasured misaligned cell at the first-execute
+ * decision point, on PRIVATE scratch (user buffers untouched). Alternating
+ * arm order per round, medians, 3% hysteresis toward the FUSED incumbent,
+ * winner roundtrip-gated (failure -> K, always-safe). A cold aligned chain
+ * simply LOSES the race and the cell stamps K — the §6a55 +86% hazard
+ * becomes a measured outcome. Stamps te->il_me in-memory; persists with
+ * the bundle save (v7 trailing field). Race budget ~10 ms. */
+static double _il_ab_now(void)
+{
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
+}
+static double _il_ab_med9(double *v)
+{
+    for (int i = 0; i < 9; i++)
+        for (int j = i + 1; j < 9; j++)
+            if (v[j] < v[i]) { double t = v[i]; v[i] = v[j]; v[j] = t; }
+    return v[4];
+}
+static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
+{
+    const int N = h->N;
+    const size_t NK = (size_t)N * K, NKp = (size_t)N * Kp;
+    /* fused resolvability pre-flight: race only the pair production runs. */
+    vfft_il_infold_t fe; vfft_il_outfold_t fx;
+    if (h->cplan->num_stages < 2 || h->cplan->override_fwd
+        || _vfft_il_resolve_fwd_entry(h->cplan, &fe)
+        || _vfft_il_resolve_fwd_exit(h->cplan, &fx))
+        return (int)K;
+    double *zi = (double *)STRIDE_ALIGNED_ALLOC(64, (2 * NK * 8 + 63) & ~(size_t)63);
+    double *zo = (double *)STRIDE_ALIGNED_ALLOC(64, (2 * NK * 8 + 63) & ~(size_t)63);
+    double *wrF = (double *)STRIDE_ALIGNED_ALLOC(64, (NK * 8 + 63) & ~(size_t)63);
+    double *wiF = (double *)STRIDE_ALIGNED_ALLOC(64, (NK * 8 + 63) & ~(size_t)63);
+    double *wrP = (double *)STRIDE_ALIGNED_ALLOC(64, (NKp * 8 + 63) & ~(size_t)63);
+    double *wiP = (double *)STRIDE_ALIGNED_ALLOC(64, (NKp * 8 + 63) & ~(size_t)63);
+    if (!zi || !zo || !wrF || !wiF || !wrP || !wiP) {
+        STRIDE_ALIGNED_FREE(zi); STRIDE_ALIGNED_FREE(zo); STRIDE_ALIGNED_FREE(wrF); STRIDE_ALIGNED_FREE(wiF); STRIDE_ALIGNED_FREE(wrP); STRIDE_ALIGNED_FREE(wiP);
+        return (int)K;
+    }
+    memset(wrP, 0, NKp * 8); memset(wiP, 0, NKp * 8);
+    unsigned sd = 0x9e3779b9u ^ (unsigned)N ^ (unsigned)K;
+    for (size_t i = 0; i < 2 * NK; i++) {
+        sd = sd * 1664525u + 1013904223u;
+        zi[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+    }
+    _il_ab_runs++;
+#define _IL_AB_FUSED() \
+    vfft_proto_execute_fwd_il2il_core(h->cplan, zi, wrF, wiF, zo, K)
+#define _IL_AB_PAD() do { \
+        _il_pad_dein(zi, wrP, wiP, N, K, Kp); \
+        if (h->il_pf) h->il_pf(h->cplan_il, wrP, wiP, Kp, Kp, 0); \
+        else vfft_proto_execute_fwd(h->cplan_il, wrP, wiP, Kp); \
+        _il_pad_inter(wrP, wiP, zo, N, K, Kp); \
+    } while (0)
+    /* estimate + reps for a ~10 ms budget */
+    double t0 = _il_ab_now(); _IL_AB_FUSED(); double ef = _il_ab_now() - t0;
+    t0 = _il_ab_now(); _IL_AB_PAD();          double ep = _il_ab_now() - t0;
+    double est = ef > ep ? ef : ep;
+    int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+    if (reps < 2) reps = 2;
+    if (reps > 64) reps = 64;
+    double rf[9], rp[9];
+    for (int r = 0; r < 9; r++) {
+        double tf, tp;
+        if (r & 1) {
+            t0 = _il_ab_now();
+            for (int i = 0; i < reps; i++) _IL_AB_FUSED();
+            tf = (_il_ab_now() - t0) / reps;
+            t0 = _il_ab_now();
+            for (int i = 0; i < reps; i++) _IL_AB_PAD();
+            tp = (_il_ab_now() - t0) / reps;
+        } else {
+            t0 = _il_ab_now();
+            for (int i = 0; i < reps; i++) _IL_AB_PAD();
+            tp = (_il_ab_now() - t0) / reps;
+            t0 = _il_ab_now();
+            for (int i = 0; i < reps; i++) _IL_AB_FUSED();
+            tf = (_il_ab_now() - t0) / reps;
+        }
+        rf[r] = tf; rp[r] = tp;
+    }
+    double fn = _il_ab_med9(rf), pn = _il_ab_med9(rp);
+    int verdict = (pn < fn * 0.97) ? (int)Kp : (int)K;
+    /* roundtrip-gate the winner (fwd through the winner arm, bwd through
+     * the matching arm) — failure -> K, the always-safe incumbent. */
+    if (verdict == (int)Kp) {
+        _IL_AB_PAD();
+        _il_pad_dein(zo, wrP, wiP, N, K, Kp);
+        if (h->il_pb) h->il_pb(h->cplan_il, wrP, wiP, Kp, Kp, 0);
+        else vfft_proto_execute_bwd(h->cplan_il, wrP, wiP, Kp);
+        _il_pad_inter(wrP, wiP, zo, N, K, Kp);
+        double inv = 1.0 / (double)N, mx = 0;
+        for (size_t i = 0; i < 2 * NK; i++) {
+            double d = zo[i] * inv - zi[i];
+            if (d < 0) d = -d;
+            if (d > mx) mx = d;
+        }
+        if (mx > 1e-11) verdict = (int)K;
+    }
+#undef _IL_AB_FUSED
+#undef _IL_AB_PAD
+    STRIDE_ALIGNED_FREE(zi); STRIDE_ALIGNED_FREE(zo); STRIDE_ALIGNED_FREE(wrF); STRIDE_ALIGNED_FREE(wiF); STRIDE_ALIGNED_FREE(wrP); STRIDE_ALIGNED_FREE(wiP);
+    return verdict;
+}
+
+static void _il_pad_dein(const double *z, double *wr, double *wi,
+                         int N, size_t K, size_t Kp)
+{
+    for (int p = 0; p < N; p++)
+        _vfft_z_dein(z + 2 * (size_t)p * K,
+                     wr + (size_t)p * Kp, wi + (size_t)p * Kp, K);
+}
+static void _il_pad_inter(const double *wr, const double *wi, double *z,
+                          int N, size_t K, size_t Kp)
+{
+    for (int p = 0; p < N; p++)
+        _vfft_z_inter(wr + (size_t)p * Kp, wi + (size_t)p * Kp,
+                      z + 2 * (size_t)p * K, K);
+}
+
+static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
+                                  const double *z_in, double *z_out)
+{
+    const size_t NK = (size_t)h->N * h->K;
+    if (!h->il_me)
+    {
+        /* §6a55 decision, once (read-only on wisdom; stamping stays owned
+         * by the padded batch planner). */
+        const size_t Kd = h->K, Kp = ((Kd + 7) / 8) * 8;
+        int me = (int)Kd;
+        if (Kp != Kd && h->nat_mode == 0) {
+            const char *fv = getenv("VFFT_IL_PAD");
+            if (fv) me = atoi(fv) ? (int)Kp : (int)Kd;
+            else {
+                /* §6a59: the IL-specific verdict. Stamped -> use it;
+                 * unmeasured -> tentatively Kp so cplan_il gets built,
+                 * then the A/B decides and stamps. (exec_me is NOT read
+                 * here — §6a55/§6a41: cross-context.) */
+                vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(
+                    &_default_wisdom()->c2c, h->N, Kd);
+                if (te && (te->il_me == (int)Kd || te->il_me == (int)Kp))
+                    me = te->il_me;
+                else {
+                    me = (int)Kp;
+                    h->il_race = 1;
+                }
+            }
+        }
+        if (me == (int)Kp && Kp != Kd) {
+            vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(
+                &_default_wisdom()->c2c, h->N, Kp);
+            h->cplan_il = (ae && ae->nf > 0)
+                ? vfft_proto_plan_create_ex(h->N, Kp, ae->factors,
+                                            ae->variants, ae->nf,
+                                            ae->use_dif_forward, _registry())
+                : vfft_proto_auto_plan_dispatch(h->N, Kp, _registry(), NULL);
+            if (!h->cplan_il) me = (int)Kd;   /* fail-safe: tight arm */
+#ifdef VFFT_USE_JIT
+            if (h->cplan_il) {
+                h->il_pf = vfft_proto_plan_jit_fwd(h->cplan_il);
+                h->il_pb = vfft_proto_plan_jit_bwd(h->cplan_il);
+            }
+#endif
+            if (h->il_race) {
+                h->il_race = 0;
+                me = h->cplan_il ? _il_ab_race(h, Kd, Kp) : (int)Kd;
+                vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(
+                    &_default_wisdom()->c2c, h->N, Kd);
+                if (te) te->il_me = me;
+                if (me == (int)Kd && h->cplan_il) {
+                    stride_plan_destroy(h->cplan_il);
+                    h->cplan_il = NULL; h->il_pf = NULL; h->il_pb = NULL;
+                }
+            }
+        }
+        h->il_me = me;
+    }
+    if (!h->il_wr)
+    {
+        const size_t Kw = (size_t)h->il_me;
+        h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
+            (((size_t)h->N * Kw) * 8 + 63) & ~(size_t)63);
+        h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64,
+            (((size_t)h->N * Kw) * 8 + 63) & ~(size_t)63);
+        if (h->il_wr && h->il_wi && Kw != h->K) {
+            memset(h->il_wr, 0, (size_t)h->N * Kw * 8);
+            memset(h->il_wi, 0, (size_t)h->N * Kw * 8);
+        }
+#ifdef VFFT_USE_JIT
+        if (h->cplan && !h->cplan->use_dif_forward && h->cplan->num_stages >= 2 &&
+            !h->cplan->override_bwd)
+            h->il_rfb = vfft_proto_plan_jit_bwd_range(h->cplan);
+#endif /* else: il_rfb stays NULL -> bwd_il2il_jit runs its core fallback */
+    }
+    if (!h->il_wr || !h->il_wi)
+        return;
+    if ((size_t)h->il_me != h->K && h->cplan_il)
+    {   /* §6a55 padded arm: unfused, full-width interior at Kp. */
+        _il_pad_dein(z_in, h->il_wr, h->il_wi, h->N, h->K, (size_t)h->il_me);
+        if (dir == VFFT_FORWARD) {
+            if (h->il_pf) h->il_pf(h->cplan_il, h->il_wr, h->il_wi,
+                                   (size_t)h->il_me, (size_t)h->il_me, 0);
+            else vfft_proto_execute_fwd(h->cplan_il, h->il_wr, h->il_wi,
+                                        (size_t)h->il_me);
+        } else {
+            if (h->il_pb) h->il_pb(h->cplan_il, h->il_wr, h->il_wi,
+                                   (size_t)h->il_me, (size_t)h->il_me, 0);
+            else vfft_proto_execute_bwd(h->cplan_il, h->il_wr, h->il_wi,
+                                        (size_t)h->il_me);
+        }
+        _il_pad_inter(h->il_wr, h->il_wi, z_out, h->N, h->K,
+                      (size_t)h->il_me);
+        return;
+    }
+    if (h->nat_mode == 0 && !h->mt_unsafe && h->cplan->num_stages >= 2
+        && !(dir == VFFT_FORWARD ? h->cplan->override_fwd
+                                 : h->cplan->override_bwd))
+    {
+        /* §6a58 pre-flight: core-resolvability implies both tiers work
+         * (jit2 falls to core). All-or-nothing before any dispatch. */
+        vfft_il_infold_t pe_; vfft_il_outfold_t px_;
+        int resolvable = dir == VFFT_FORWARD
+            ? (!_vfft_il_resolve_fwd_entry(h->cplan, &pe_)
+               && !_vfft_il_resolve_fwd_exit(h->cplan, &px_))
+            : (!_vfft_il_resolve_bwd_entry_gen(h->cplan, &pe_)
+               && !_vfft_il_resolve_bwd_exit(h->cplan, &px_));
+        if (resolvable)
+        {
+            size_t K = h->K;
+            int T = stride_get_num_threads();
+            if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+            if (T > 64) T = 64;
+            if (T <= 1 || K < 8)
+            {
+                int rc = dir == VFFT_FORWARD
+                    ? vfft_proto_execute_fwd_il2il_core(h->cplan, z_in,
+                          h->il_wr, h->il_wi, z_out, K)
+                    : (!h->cplan->use_dif_forward
+                        ? vfft_proto_execute_bwd_il2il_jit(h->cplan, z_in,
+                              h->il_wr, h->il_wi, z_out, K, h->il_rfb)
+                        : vfft_proto_execute_bwd_il2il_core(h->cplan, z_in,
+                              h->il_wr, h->il_wi, z_out, K));
+                if (rc == 0) return;
+            }
+            else
+            {
+                size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7)
+                           & ~(size_t)7;
+                _il_mt_arg a[64];
+                int nd = 0;
+                for (int t = 1; t < T && t <= _stride_pool_size; t++)
+                {
+                    size_t k0 = (size_t)t * S;
+                    if (k0 >= K) break;
+                    size_t ke = k0 + S; if (ke > K) ke = K;
+                    a[nd] = (_il_mt_arg){h->cplan, z_in, h->il_wr, h->il_wi,
+                                         z_out, k0, ke - k0,
+                                         dir == VFFT_FORWARD,
+                                         h->cplan->use_dif_forward,
+                                         h->il_rfb};
+                    _stride_pool_dispatch(&_stride_workers[nd], _il_mt_tramp,
+                                          &a[nd]);
+                    nd++;
+                }
+                size_t s0 = S < K ? S : K;
+                int rc = dir == VFFT_FORWARD
+                    ? vfft_proto_execute_fwd_il2il_core(h->cplan, z_in,
+                          h->il_wr, h->il_wi, z_out, s0)
+                    : (!h->cplan->use_dif_forward
+                        ? vfft_proto_execute_bwd_il2il_jit(h->cplan, z_in,
+                              h->il_wr, h->il_wi, z_out, s0, h->il_rfb)
+                        : vfft_proto_execute_bwd_il2il_core(h->cplan, z_in,
+                              h->il_wr, h->il_wi, z_out, s0));
+                if (nd) _stride_pool_wait_all();
+                if (rc == 0) return;
+            }
+        }
+    }
+    {   /* §6a58/C1: slab the converts across the pool (barriered). */
+        int Tc = stride_get_num_threads();
+        if (Tc > _stride_pool_size + 1) Tc = _stride_pool_size + 1;
+        if (Tc > 64) Tc = 64;
+        if (Tc <= 1 || NK < 4096)
+            _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
+        else {
+            size_t Sc = (((NK + (size_t)Tc - 1) / (size_t)Tc) + 7)
+                        & ~(size_t)7;
+            _zc_arg ca[64]; int nd = 0;
+            for (int t = 1; t < Tc && t <= _stride_pool_size; t++) {
+                size_t e0 = (size_t)t * Sc;
+                if (e0 >= NK) break;
+                size_t ee = e0 + Sc; if (ee > NK) ee = NK;
+                ca[nd] = (_zc_arg){z_in, h->il_wr, h->il_wi, NULL,
+                                   e0, ee - e0, 1};
+                _stride_pool_dispatch(&_stride_workers[nd], _zc_tramp,
+                                      &ca[nd]);
+                nd++;
+            }
+            _vfft_z_dein(z_in, h->il_wr, h->il_wi, Sc < NK ? Sc : NK);
+            if (nd) _stride_pool_wait_all();
+        }
+    }
+    _exec_c2c_inplace(h, dir, h->il_wr, h->il_wi);
+    {
+        int Tc = stride_get_num_threads();
+        if (Tc > _stride_pool_size + 1) Tc = _stride_pool_size + 1;
+        if (Tc > 64) Tc = 64;
+        if (Tc <= 1 || NK < 4096)
+            _vfft_z_inter(h->il_wr, h->il_wi, z_out, NK);
+        else {
+            size_t Sc = (((NK + (size_t)Tc - 1) / (size_t)Tc) + 7)
+                        & ~(size_t)7;
+            _zc_arg ca[64]; int nd = 0;
+            for (int t = 1; t < Tc && t <= _stride_pool_size; t++) {
+                size_t e0 = (size_t)t * Sc;
+                if (e0 >= NK) break;
+                size_t ee = e0 + Sc; if (ee > NK) ee = NK;
+                ca[nd] = (_zc_arg){NULL, h->il_wr, h->il_wi, z_out,
+                                   e0, ee - e0, 0};
+                _stride_pool_dispatch(&_stride_workers[nd], _zc_tramp,
+                                      &ca[nd]);
+                nd++;
+            }
+            _vfft_z_inter(h->il_wr, h->il_wi, z_out, Sc < NK ? Sc : NK);
+            if (nd) _stride_pool_wait_all();
+        }
+    }
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
@@ -2246,7 +2994,35 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         if (h->transform == VFFT_C2C)
         {
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
-            size_t plane = (size_t)h->N * h->N2;
+            size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1)
+                           * (h->N4 ? (size_t)h->N4 : 1);
+            if (!sim && !dim)
+            {   /* §6a61: interleaved z for dims>=2 — convert-around via the
+                 * §6a57 primitives + the split engines (was an UNWIRED
+                 * crash: NULL im flowed into the split executors). Correct
+                 * at convert cost; native ND c2c z wiring is the filed
+                 * follow-up. */
+                if (!h->il_wr) {
+                    h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
+                        (plane * 8 + 63) & ~(size_t)63);
+                    h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64,
+                        (plane * 8 + 63) & ~(size_t)63);
+                    if (!h->il_wr || !h->il_wi) return;
+                }
+                _vfft_z_dein(sre, h->il_wr, h->il_wi, plane);
+                if (dir == VFFT_FORWARD)
+                {
+                    stride_execute_fwd(h->tplan, h->il_wr, h->il_wi);
+                    if (h->nat2d) _natorder_2d(h, h->il_wr, h->il_wi, 0);
+                }
+                else
+                {
+                    if (h->nat2d) _natorder_2d(h, h->il_wr, h->il_wi, 1);
+                    stride_execute_bwd(h->tplan, h->il_wr, h->il_wi);
+                }
+                _vfft_z_inter(h->il_wr, h->il_wi, dre, plane);
+                return;
+            }
             if (dre != sre)
                 memcpy(dre, sre, plane * sizeof(double));
             if (dim != sim)
@@ -2264,57 +3040,49 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 stride_execute_bwd(h->tplan, dre, dim);
             }
         }
+        else if (h->transform == VFFT_R2C && h->N3 > 0)
+        {   /* §6a47/Q1: 3D real fwd — rows, axes, unpack; il per §6a24. */
+            stride_fftnd_r2c_data_t *d3 =
+                (stride_fftnd_r2c_data_t *)h->tplan->override_data;
+            d3->il_out = (dim == NULL);
+            _fndr_rows_mt(d3, sre, NULL, 0);
+            for (int m = 0; m < d3->rank - 1; m++) _fndr_axis_mt(d3, m, 0);
+            _fndr_unpack(d3, dre, dim);
+        }
+        else if (h->transform == VFFT_C2R && h->N3 > 0)
+        {
+            stride_fftnd_r2c_data_t *d3 =
+                (stride_fftnd_r2c_data_t *)h->tplan->override_data;
+            d3->il_out = (sim == NULL);
+            _fndr_pack(d3, sre, sim);
+            for (int m = 0; m < d3->rank - 1; m++) _fndr_axis_mt(d3, m, 1);
+            _fndr_rows_mt(d3, NULL, dre, 1);
+        }
         else if (h->transform == VFFT_R2C)
         {
-            stride_execute_2d_r2c(h->tplan, sre, dre, dim); /* real plane -> split spectrum */
+            if (!dim)
+                stride_execute_2d_r2c_z(h->tplan, sre, dre); /* §6a30 native */
+            else
+                stride_execute_2d_r2c(h->tplan, sre, dre, dim); /* real plane -> split spectrum */
         }
         else if (h->transform == VFFT_C2R)
         {
-            stride_execute_2d_c2r(h->tplan, sre, sim, dre); /* split spectrum -> real plane */
+            if (!sim)
+                stride_execute_2d_c2r_z(h->tplan, sre, dre); /* §6a30 native */
+            else
+                stride_execute_2d_c2r(h->tplan, sre, sim, dre); /* split spectrum -> real plane */
         }
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
-        vfft_set_num_threads(h->nthreads);
-        /* Unified MT execute: tight runs p->K lanes; padded runs exec_me (Kp = full-SIMD pad,
-         * or K = tail on the Kp-wide buffer). fn (JIT/baked) is resolved at create ONLY for
-         * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
-         * keeps fn==NULL -> generic tail-capable executor. The pool K-split honors `me`. */
-        size_t me = h->padded ? (size_t)h->exec_me : h->cplan->K;
-        /* ORDER_NATURAL SCR forward: fused scatter terminator does the whole forward
-         * (OOP scratch-fill stages [0,nf-1) on scratch + scattered natural stores). No _c2c_mt. */
-        if (h->nat_mode == VFFT_NAT_SCR && dir == VFFT_FORWARD)
-        {
-            _scr_fwd_mt(h->nat_scr, sre, sim, h->K); /* scratch-fill K-split + terminator q-split */
+        if (!sim && !dim && sre && dre && !h->padded)
+        {   /* interleaved z contract — see _exec_c2c_interleaved */
+            vfft_set_num_threads(h->nthreads);
+            _exec_c2c_interleaved(h, dir, sre, dre);
             return;
         }
-        /* ORDER_NATURAL, backward: natural spectrum in -> pre-perm to the engine's scrambled
-         * layout (cycle inverse; SCR reuses PURE's cycle tape), then zero-perm DIF backward.
-         * (FREE needs nothing; nat_mode==0 = order=DEFAULT = byte-identical old path.) */
-        if (dir != VFFT_FORWARD &&
-            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP ||
-             h->nat_mode == VFFT_NAT_SCR))
-            _natorder_mt(h, sre, sim, 0);
-        if (h->mt_unsafe)
-        {
-            /* codelet ignores `me` -> K-split would overrun; run the FFT WHOLE-BATCH (the reorder above/below
-             * still threads). Same call shape as _c2c_mt's T<=1 branch. */
-            vfft_proto_exec_fn f = dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd;
-            if (f)
-                f(h->cplan, sre, sim, me, h->cplan->K, 0);
-            else if (dir == VFFT_FORWARD)
-                vfft_proto_execute_fwd(h->cplan, sre, sim, me);
-            else
-                vfft_proto_execute_bwd(h->cplan, sre, sim, me);
-        }
-        else
-            _c2c_mt(h->cplan, sre, sim, dir == VFFT_FORWARD ? 1 : 0,      /* dst==src */
-                    dir == VFFT_FORWARD ? h->exec_fwd : h->exec_bwd, me); /* transparent JIT/baked */
-        /* ORDER_NATURAL PURE/PSWAP forward: unscramble in place (T7 cycle-UB / T11 pair-swap). */
-        if (dir == VFFT_FORWARD &&
-            (h->nat_mode == VFFT_NAT_PURE_CYCLE || h->nat_mode == VFFT_NAT_PSWAP))
-            _natorder_mt(h, sre, sim, 1);
+        _exec_c2c_inplace(h, dir, sre, sim);
         return;
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
@@ -2331,7 +3099,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     {
         /* forward only: real in (sre), split complex out (dre,dim). MT internal. */
         vfft_set_num_threads(h->nthreads);
-        vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* (void)sim; (void)dir==FORWARD */
+        if (dim)
+            vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
+        else
+            vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* §6a24: dim==NULL => dre = interleaved CCE */
         return;
     }
     if (h->transform == VFFT_C2R)
@@ -2339,7 +3110,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         /* the inverse: split complex in (sre,sim) -> real out (dre). dir ignored.
          * NATURAL or STRIDE per the bakeoff/wisdom — both consume split re/im. */
         vfft_set_num_threads(h->nthreads);
-        vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
+        if (sim)
+
+            vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
+
+        else
+
+            vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* §6a24: sim==NULL => sre = interleaved CCE in */
         return;
     }
     if (_VFFT_IS_TRIG(h->transform))
@@ -2397,6 +3174,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
 
 void vfft_destroy(vfft_plan h)
 {
+    if (h) { if (h->cplan_il) stride_plan_destroy(h->cplan_il);
+              STRIDE_ALIGNED_FREE(h->il_wr); STRIDE_ALIGNED_FREE(h->il_wi); }
     if (!h)
         return;
     if (h->cplan)
@@ -2407,6 +3186,10 @@ void vfft_destroy(vfft_plan h)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)
         vfft_c2r_disp_destroy(h->c2rdisp);
+    if (h->rfft_row)
+        vfft_r2c_plan_destroy(h->rfft_row);
+    if (h->c2r_row)
+        vfft_c2r_disp_destroy(h->c2r_row);
     if (h->tplan)
         stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
     free(h->nat_list);
@@ -2573,6 +3356,13 @@ int vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
             vfft_oop_wisdom_write_entry(f, &w->oop.e[i]);
         fclose(f);
     }
+    /* 6a22 parity: persist the full loaded set. c2r_path persists at
+     * decision time via its own writer and is not owned by w. */
+    vfft_fft2d_c2c_wisdom_save(&w->fft2d_c2c, tmp.path_2d_c2c);
+    vfft_fft2d_r2c_wisdom_save(&w->fft2d_r2c, tmp.path_2d_r2c);
+    vfft_fft2d_r2c_wisdom_save(&w->fft2d_c2r, tmp.path_2d_c2r);
+    vfft_fft3d_wisdom_save(&w->fft3d_c2c, tmp.path_3d_c2c);
+    bluestein_wisdom_save(&w->bluestein, tmp.path_bluestein);
     return rc;
 }
 void vfft_wisdom_free(vfft_wisdom *w)
@@ -2581,6 +3371,13 @@ void vfft_wisdom_free(vfft_wisdom *w)
         return;
     vfft_proto_wisdom_free(&w->c2c); /* OOP table is fixed-size, no free */
     vfft_proto_wisdom_free(&w->rfft);
+    /* 6a22 parity: free every table _bundle_load populates (c2r_path loads
+     * into a file-static owned by c2r_dispatch, not by w). */
+    vfft_fft2d_c2c_wisdom_free(&w->fft2d_c2c);
+    vfft_fft2d_r2c_wisdom_free(&w->fft2d_r2c);
+    vfft_fft2d_r2c_wisdom_free(&w->fft2d_c2r);
+    vfft_fft3d_wisdom_free(&w->fft3d_c2c);
+    /* bluestein table is fixed-size, no free */
     free(w);
 }
 

@@ -28,9 +28,9 @@ void radix5_hc2c_nat_log3_bwd_avx2(
     ptrdiff_t os,
     size_t vl)
 {
-    const __m256d t4 = _mm256_set1_pd(0.61803398874989002);
-    const __m256d t11 = _mm256_set1_pd(0.95105651629514998);
-    const __m256d t22 = _mm256_set1_pd(0.55901699437495);
+    const __m256d t4 = _mm256_set1_pd(0.6180339887498949);
+    const __m256d t11 = _mm256_set1_pd(0.95105651629515353);
+    const __m256d t22 = _mm256_set1_pd(0.55901699437494745);
     const __m256d t25 = _mm256_set1_pd(0.25);
     size_t v = 0;
     for (; v + 4 <= vl; v += 4) {
@@ -112,9 +112,9 @@ void radix5_hc2c_nat_log3_bwd_avx2(
         const size_t rem = vl - v;
         if (rem == 1) {
         const double t25 = (0.25);
-        const double t4 = (0.61803398874989002);
-        const double t22 = (0.55901699437495);
-        const double t11 = (0.95105651629514998);
+        const double t4 = (0.6180339887498949);
+        const double t22 = (0.55901699437494745);
+        const double t11 = (0.95105651629515353);
         const double t0 = Im[1*ism + v];
         const double t2 = Ip[2*isp + v];
         const double t38 = (t2 - t0);
@@ -187,9 +187,9 @@ void radix5_hc2c_nat_log3_bwd_avx2(
         } else {
             for (; v + 2 <= vl; v += 2) {
         const __m128d t25 = _mm_set1_pd(0.25);
-        const __m128d t4 = _mm_set1_pd(0.61803398874989002);
-        const __m128d t22 = _mm_set1_pd(0.55901699437495);
-        const __m128d t11 = _mm_set1_pd(0.95105651629514998);
+        const __m128d t4 = _mm_set1_pd(0.6180339887498949);
+        const __m128d t22 = _mm_set1_pd(0.55901699437494745);
+        const __m128d t11 = _mm_set1_pd(0.95105651629515353);
         const __m128d t0 = _mm_loadu_pd(&Im[1*ism + v]);
         const __m128d t2 = _mm_loadu_pd(&Ip[2*isp + v]);
         const __m128d t38 = _mm_sub_pd(t2, t0);
@@ -262,9 +262,9 @@ void radix5_hc2c_nat_log3_bwd_avx2(
             }
             if (v < vl) {
         const double t25 = (0.25);
-        const double t4 = (0.61803398874989002);
-        const double t22 = (0.55901699437495);
-        const double t11 = (0.95105651629514998);
+        const double t4 = (0.6180339887498949);
+        const double t22 = (0.55901699437494745);
+        const double t11 = (0.95105651629515353);
         const double t0 = Im[1*ism + v];
         const double t2 = Ip[2*isp + v];
         const double t38 = (t2 - t0);

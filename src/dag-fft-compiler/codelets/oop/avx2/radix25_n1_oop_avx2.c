@@ -143,26 +143,26 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
            PASS 1 emits cluster-sequentially (by min_descendant_slot)
            with spill stores immediately after each producer.
            PASS 2 reloads on-demand before each consumer.  */
-                const __m256d t0 = _mm256_set1_pd(0.90482705246602002);
-                const __m256d t5 = _mm256_set1_pd(0.61803398874989002);
-                const __m256d t11 = _mm256_set1_pd(0.95105651629514998);
-                const __m256d t20 = _mm256_set1_pd(0.55901699437495);
+                const __m256d t0 = _mm256_set1_pd(0.90482705246601947);
+                const __m256d t5 = _mm256_set1_pd(0.6180339887498949);
+                const __m256d t11 = _mm256_set1_pd(0.95105651629515353);
+                const __m256d t20 = _mm256_set1_pd(0.55901699437494745);
                 const __m256d t23 = _mm256_set1_pd(0.25);
-                const __m256d t29 = _mm256_set1_pd(0.47056428121225002);
-                const __m256d t47 = _mm256_set1_pd(0.99211470131447999);
-                const __m256d t72 = _mm256_set1_pd(0.12632937844610001);
-                const __m256d t96 = _mm256_set1_pd(0.84432792550201996);
-                const __m256d t121 = _mm256_set1_pd(0.63461929754415003);
-                const __m256d t141 = _mm256_set1_pd(0.77051324277579003);
-                const __m256d t165 = _mm256_set1_pd(0.82727194597247999);
-                const __m256d t271 = _mm256_set1_pd(0.99802672842827);
-                const __m256d t278 = _mm256_set1_pd(0.062914667253649997);
-                const __m256d t307 = _mm256_set1_pd(0.72896862742141);
-                const __m256d t313 = _mm256_set1_pd(0.93906250581749995);
-                const __m256d t407 = _mm256_set1_pd(0.87630668004386003);
-                const __m256d t409 = _mm256_set1_pd(0.54975465219277997);
-                const __m256d t482 = _mm256_set1_pd(0.96858316112862997);
-                const __m256d t484 = _mm256_set1_pd(0.25675636036771998);
+                const __m256d t29 = _mm256_set1_pd(0.47056428121225158);
+                const __m256d t47 = _mm256_set1_pd(0.99211470131447776);
+                const __m256d t72 = _mm256_set1_pd(0.12632937844610848);
+                const __m256d t96 = _mm256_set1_pd(0.84432792550201508);
+                const __m256d t121 = _mm256_set1_pd(0.63461929754414803);
+                const __m256d t141 = _mm256_set1_pd(0.77051324277578936);
+                const __m256d t165 = _mm256_set1_pd(0.82727194597247522);
+                const __m256d t271 = _mm256_set1_pd(0.99802672842827156);
+                const __m256d t278 = _mm256_set1_pd(0.062914667253649914);
+                const __m256d t307 = _mm256_set1_pd(0.72896862742141155);
+                const __m256d t313 = _mm256_set1_pd(0.93906250581749229);
+                const __m256d t407 = _mm256_set1_pd(0.87630668004386358);
+                const __m256d t409 = _mm256_set1_pd(0.54975465219277009);
+                const __m256d t482 = _mm256_set1_pd(0.96858316112863108);
+                const __m256d t484 = _mm256_set1_pd(0.25675636036772681);
 
         {  /* PASS 1: sub-FFTs of size n2, store to spill */
                     const __m256d t213 = lane_re_15;
@@ -880,15 +880,15 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.90482705246602002);
+                const double t0 = (0.90482705246601947);
                 const double t2 = lane_re_17;
                 const double t3 = lane_re_12;
                 const double t4 = (t3 - t2);
-                const double t5 = (0.61803398874989002);
+                const double t5 = (0.6180339887498949);
                 const double t7 = lane_re_22;
                 const double t8 = lane_re_7;
                 const double t9 = (t8 - t7);
-                const double t11 = (0.95105651629514998);
+                const double t11 = (0.95105651629515353);
                 const double t13 = lane_im_17;
                 const double t14 = lane_im_12;
                 const double t15 = (t13 + t14);
@@ -896,11 +896,11 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t17 = lane_im_7;
                 const double t18 = (t16 + t17);
                 const double t19 = (t18 - t15);
-                const double t20 = (0.55901699437495);
+                const double t20 = (0.55901699437494745);
                 const double t22 = (t15 + t18);
                 const double t23 = (0.25);
                 const double t25 = lane_im_2;
-                const double t29 = (0.47056428121225002);
+                const double t29 = (0.47056428121225158);
                 const double t31 = (t14 - t13);
                 const double t33 = (t17 - t16);
                 const double t36 = (t2 + t3);
@@ -908,7 +908,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t38 = (t37 - t36);
                 const double t40 = (t36 + t37);
                 const double t42 = lane_re_2;
-                const double t47 = (0.99211470131447999);
+                const double t47 = (0.99211470131447776);
                 const double t49 = lane_im_18;
                 const double t50 = lane_im_13;
                 const double t51 = (t50 - t49);
@@ -924,7 +924,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t64 = (t63 - t60);
                 const double t66 = (t60 + t63);
                 const double t68 = lane_re_3;
-                const double t72 = (0.12632937844610001);
+                const double t72 = (0.12632937844610848);
                 const double t74 = (t59 - t58);
                 const double t76 = (t62 - t61);
                 const double t79 = (t49 + t50);
@@ -932,7 +932,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t81 = (t80 - t79);
                 const double t83 = (t79 + t80);
                 const double t85 = lane_im_3;
-                const double t96 = (0.84432792550201996);
+                const double t96 = (0.84432792550201508);
                 const double t98 = lane_re_16;
                 const double t99 = lane_re_11;
                 const double t100 = (t99 - t98);
@@ -948,7 +948,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t113 = (t112 - t109);
                 const double t115 = (t109 + t112);
                 const double t117 = lane_im_1;
-                const double t121 = (0.63461929754415003);
+                const double t121 = (0.63461929754414803);
                 const double t125 = (t108 - t107);
                 const double t127 = (t111 - t110);
                 const double t130 = (t98 + t99);
@@ -956,7 +956,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t132 = (t131 - t130);
                 const double t134 = (t130 + t131);
                 const double t136 = lane_re_1;
-                const double t141 = (0.77051324277579003);
+                const double t141 = (0.77051324277578936);
                 const double t142 = lane_re_19;
                 const double t143 = lane_re_14;
                 const double t144 = (t143 - t142);
@@ -972,7 +972,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t157 = (t156 - t153);
                 const double t159 = (t153 + t156);
                 const double t161 = lane_im_4;
-                const double t165 = (0.82727194597247999);
+                const double t165 = (0.82727194597247522);
                 const double t169 = (t152 - t151);
                 const double t171 = (t155 - t154);
                 const double t174 = (t142 + t143);
@@ -1002,14 +1002,14 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t244 = (t243 - t242);
                 const double t246 = (t242 + t243);
                 const double t248 = lane_re_0;
-                const double t271 = (0.99802672842827);
-                const double t278 = (0.062914667253649997);
-                const double t307 = (0.72896862742141);
-                const double t313 = (0.93906250581749995);
-                const double t407 = (0.87630668004386003);
-                const double t409 = (0.54975465219277997);
-                const double t482 = (0.96858316112862997);
-                const double t484 = (0.25675636036771998);
+                const double t271 = (0.99802672842827156);
+                const double t278 = (0.062914667253649914);
+                const double t307 = (0.72896862742141155);
+                const double t313 = (0.93906250581749229);
+                const double t407 = (0.87630668004386358);
+                const double t409 = (0.54975465219277009);
+                const double t482 = (0.96858316112863108);
+                const double t484 = (0.25675636036772681);
                 const double t543 = (t40 + t42);
                 const double t544 = (t22 + t25);
                 const double t545 = (t66 + t68);
@@ -1510,15 +1510,15 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m128d t0 = _mm_set1_pd(0.90482705246602002);
+                const __m128d t0 = _mm_set1_pd(0.90482705246601947);
                 const __m128d t2 = lane_re_17;
                 const __m128d t3 = lane_re_12;
                 const __m128d t4 = _mm_sub_pd(t3, t2);
-                const __m128d t5 = _mm_set1_pd(0.61803398874989002);
+                const __m128d t5 = _mm_set1_pd(0.6180339887498949);
                 const __m128d t7 = lane_re_22;
                 const __m128d t8 = lane_re_7;
                 const __m128d t9 = _mm_sub_pd(t8, t7);
-                const __m128d t11 = _mm_set1_pd(0.95105651629514998);
+                const __m128d t11 = _mm_set1_pd(0.95105651629515353);
                 const __m128d t13 = lane_im_17;
                 const __m128d t14 = lane_im_12;
                 const __m128d t15 = _mm_add_pd(t13, t14);
@@ -1526,11 +1526,11 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t17 = lane_im_7;
                 const __m128d t18 = _mm_add_pd(t16, t17);
                 const __m128d t19 = _mm_sub_pd(t18, t15);
-                const __m128d t20 = _mm_set1_pd(0.55901699437495);
+                const __m128d t20 = _mm_set1_pd(0.55901699437494745);
                 const __m128d t22 = _mm_add_pd(t15, t18);
                 const __m128d t23 = _mm_set1_pd(0.25);
                 const __m128d t25 = lane_im_2;
-                const __m128d t29 = _mm_set1_pd(0.47056428121225002);
+                const __m128d t29 = _mm_set1_pd(0.47056428121225158);
                 const __m128d t31 = _mm_sub_pd(t14, t13);
                 const __m128d t33 = _mm_sub_pd(t17, t16);
                 const __m128d t36 = _mm_add_pd(t2, t3);
@@ -1538,7 +1538,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t38 = _mm_sub_pd(t37, t36);
                 const __m128d t40 = _mm_add_pd(t36, t37);
                 const __m128d t42 = lane_re_2;
-                const __m128d t47 = _mm_set1_pd(0.99211470131447999);
+                const __m128d t47 = _mm_set1_pd(0.99211470131447776);
                 const __m128d t49 = lane_im_18;
                 const __m128d t50 = lane_im_13;
                 const __m128d t51 = _mm_sub_pd(t50, t49);
@@ -1554,7 +1554,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t64 = _mm_sub_pd(t63, t60);
                 const __m128d t66 = _mm_add_pd(t60, t63);
                 const __m128d t68 = lane_re_3;
-                const __m128d t72 = _mm_set1_pd(0.12632937844610001);
+                const __m128d t72 = _mm_set1_pd(0.12632937844610848);
                 const __m128d t74 = _mm_sub_pd(t59, t58);
                 const __m128d t76 = _mm_sub_pd(t62, t61);
                 const __m128d t79 = _mm_add_pd(t49, t50);
@@ -1562,7 +1562,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t81 = _mm_sub_pd(t80, t79);
                 const __m128d t83 = _mm_add_pd(t79, t80);
                 const __m128d t85 = lane_im_3;
-                const __m128d t96 = _mm_set1_pd(0.84432792550201996);
+                const __m128d t96 = _mm_set1_pd(0.84432792550201508);
                 const __m128d t98 = lane_re_16;
                 const __m128d t99 = lane_re_11;
                 const __m128d t100 = _mm_sub_pd(t99, t98);
@@ -1578,7 +1578,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t113 = _mm_sub_pd(t112, t109);
                 const __m128d t115 = _mm_add_pd(t109, t112);
                 const __m128d t117 = lane_im_1;
-                const __m128d t121 = _mm_set1_pd(0.63461929754415003);
+                const __m128d t121 = _mm_set1_pd(0.63461929754414803);
                 const __m128d t125 = _mm_sub_pd(t108, t107);
                 const __m128d t127 = _mm_sub_pd(t111, t110);
                 const __m128d t130 = _mm_add_pd(t98, t99);
@@ -1586,7 +1586,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t132 = _mm_sub_pd(t131, t130);
                 const __m128d t134 = _mm_add_pd(t130, t131);
                 const __m128d t136 = lane_re_1;
-                const __m128d t141 = _mm_set1_pd(0.77051324277579003);
+                const __m128d t141 = _mm_set1_pd(0.77051324277578936);
                 const __m128d t142 = lane_re_19;
                 const __m128d t143 = lane_re_14;
                 const __m128d t144 = _mm_sub_pd(t143, t142);
@@ -1602,7 +1602,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t157 = _mm_sub_pd(t156, t153);
                 const __m128d t159 = _mm_add_pd(t153, t156);
                 const __m128d t161 = lane_im_4;
-                const __m128d t165 = _mm_set1_pd(0.82727194597247999);
+                const __m128d t165 = _mm_set1_pd(0.82727194597247522);
                 const __m128d t169 = _mm_sub_pd(t152, t151);
                 const __m128d t171 = _mm_sub_pd(t155, t154);
                 const __m128d t174 = _mm_add_pd(t142, t143);
@@ -1632,14 +1632,14 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const __m128d t244 = _mm_sub_pd(t243, t242);
                 const __m128d t246 = _mm_add_pd(t242, t243);
                 const __m128d t248 = lane_re_0;
-                const __m128d t271 = _mm_set1_pd(0.99802672842827);
-                const __m128d t278 = _mm_set1_pd(0.062914667253649997);
-                const __m128d t307 = _mm_set1_pd(0.72896862742141);
-                const __m128d t313 = _mm_set1_pd(0.93906250581749995);
-                const __m128d t407 = _mm_set1_pd(0.87630668004386003);
-                const __m128d t409 = _mm_set1_pd(0.54975465219277997);
-                const __m128d t482 = _mm_set1_pd(0.96858316112862997);
-                const __m128d t484 = _mm_set1_pd(0.25675636036771998);
+                const __m128d t271 = _mm_set1_pd(0.99802672842827156);
+                const __m128d t278 = _mm_set1_pd(0.062914667253649914);
+                const __m128d t307 = _mm_set1_pd(0.72896862742141155);
+                const __m128d t313 = _mm_set1_pd(0.93906250581749229);
+                const __m128d t407 = _mm_set1_pd(0.87630668004386358);
+                const __m128d t409 = _mm_set1_pd(0.54975465219277009);
+                const __m128d t482 = _mm_set1_pd(0.96858316112863108);
+                const __m128d t484 = _mm_set1_pd(0.25675636036772681);
                 const __m128d t543 = _mm_add_pd(t40, t42);
                 const __m128d t544 = _mm_add_pd(t22, t25);
                 const __m128d t545 = _mm_add_pd(t66, t68);
@@ -2140,15 +2140,15 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.90482705246602002);
+                const double t0 = (0.90482705246601947);
                 const double t2 = lane_re_17;
                 const double t3 = lane_re_12;
                 const double t4 = (t3 - t2);
-                const double t5 = (0.61803398874989002);
+                const double t5 = (0.6180339887498949);
                 const double t7 = lane_re_22;
                 const double t8 = lane_re_7;
                 const double t9 = (t8 - t7);
-                const double t11 = (0.95105651629514998);
+                const double t11 = (0.95105651629515353);
                 const double t13 = lane_im_17;
                 const double t14 = lane_im_12;
                 const double t15 = (t13 + t14);
@@ -2156,11 +2156,11 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t17 = lane_im_7;
                 const double t18 = (t16 + t17);
                 const double t19 = (t18 - t15);
-                const double t20 = (0.55901699437495);
+                const double t20 = (0.55901699437494745);
                 const double t22 = (t15 + t18);
                 const double t23 = (0.25);
                 const double t25 = lane_im_2;
-                const double t29 = (0.47056428121225002);
+                const double t29 = (0.47056428121225158);
                 const double t31 = (t14 - t13);
                 const double t33 = (t17 - t16);
                 const double t36 = (t2 + t3);
@@ -2168,7 +2168,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t38 = (t37 - t36);
                 const double t40 = (t36 + t37);
                 const double t42 = lane_re_2;
-                const double t47 = (0.99211470131447999);
+                const double t47 = (0.99211470131447776);
                 const double t49 = lane_im_18;
                 const double t50 = lane_im_13;
                 const double t51 = (t50 - t49);
@@ -2184,7 +2184,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t64 = (t63 - t60);
                 const double t66 = (t60 + t63);
                 const double t68 = lane_re_3;
-                const double t72 = (0.12632937844610001);
+                const double t72 = (0.12632937844610848);
                 const double t74 = (t59 - t58);
                 const double t76 = (t62 - t61);
                 const double t79 = (t49 + t50);
@@ -2192,7 +2192,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t81 = (t80 - t79);
                 const double t83 = (t79 + t80);
                 const double t85 = lane_im_3;
-                const double t96 = (0.84432792550201996);
+                const double t96 = (0.84432792550201508);
                 const double t98 = lane_re_16;
                 const double t99 = lane_re_11;
                 const double t100 = (t99 - t98);
@@ -2208,7 +2208,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t113 = (t112 - t109);
                 const double t115 = (t109 + t112);
                 const double t117 = lane_im_1;
-                const double t121 = (0.63461929754415003);
+                const double t121 = (0.63461929754414803);
                 const double t125 = (t108 - t107);
                 const double t127 = (t111 - t110);
                 const double t130 = (t98 + t99);
@@ -2216,7 +2216,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t132 = (t131 - t130);
                 const double t134 = (t130 + t131);
                 const double t136 = lane_re_1;
-                const double t141 = (0.77051324277579003);
+                const double t141 = (0.77051324277578936);
                 const double t142 = lane_re_19;
                 const double t143 = lane_re_14;
                 const double t144 = (t143 - t142);
@@ -2232,7 +2232,7 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t157 = (t156 - t153);
                 const double t159 = (t153 + t156);
                 const double t161 = lane_im_4;
-                const double t165 = (0.82727194597247999);
+                const double t165 = (0.82727194597247522);
                 const double t169 = (t152 - t151);
                 const double t171 = (t155 - t154);
                 const double t174 = (t142 + t143);
@@ -2262,14 +2262,14 @@ void radix25_n1_oop_fwd_avx2_UG_UG(
                 const double t244 = (t243 - t242);
                 const double t246 = (t242 + t243);
                 const double t248 = lane_re_0;
-                const double t271 = (0.99802672842827);
-                const double t278 = (0.062914667253649997);
-                const double t307 = (0.72896862742141);
-                const double t313 = (0.93906250581749995);
-                const double t407 = (0.87630668004386003);
-                const double t409 = (0.54975465219277997);
-                const double t482 = (0.96858316112862997);
-                const double t484 = (0.25675636036771998);
+                const double t271 = (0.99802672842827156);
+                const double t278 = (0.062914667253649914);
+                const double t307 = (0.72896862742141155);
+                const double t313 = (0.93906250581749229);
+                const double t407 = (0.87630668004386358);
+                const double t409 = (0.54975465219277009);
+                const double t482 = (0.96858316112863108);
+                const double t484 = (0.25675636036772681);
                 const double t543 = (t40 + t42);
                 const double t544 = (t22 + t25);
                 const double t545 = (t66 + t68);

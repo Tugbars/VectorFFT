@@ -76,7 +76,7 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m256d t0 = _mm256_set1_pd(0.23931566428755999);
+                const __m256d t0 = _mm256_set1_pd(0.23931566428755768);
                 const __m256d t1 = lane_re_7;
                 const __m256d t2 = _mm256_set1_pd(tw_re[3*(me/4) + b/4]);
                 const __m256d t3 = _mm256_set1_pd(tw_re[1*(me/4) + b/4]);
@@ -98,7 +98,7 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t19 = _mm256_fnmadd_pd(t18, t17, _mm256_mul_pd(t15, t16));
                 const __m256d t20 = _mm256_fmadd_pd(t15, t17, _mm256_mul_pd(t18, t16));
                 const __m256d t21 = _mm256_sub_pd(t20, t14);
-                const __m256d t23 = _mm256_set1_pd(0.66312265824079997);
+                const __m256d t23 = _mm256_set1_pd(0.66312265824079519);
                 const __m256d t24 = lane_re_8;
                 const __m256d t25 = _mm256_set1_pd(tw_im[7*(me/4) + b/4]);
                 const __m256d t26 = lane_im_8;
@@ -112,7 +112,7 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t34 = _mm256_fnmadd_pd(t33, t32, _mm256_mul_pd(t30, t31));
                 const __m256d t35 = _mm256_fmadd_pd(t30, t32, _mm256_mul_pd(t33, t31));
                 const __m256d t36 = _mm256_sub_pd(t35, t29);
-                const __m256d t38 = _mm256_set1_pd(0.93501624268540995);
+                const __m256d t38 = _mm256_set1_pd(0.93501624268541483);
                 const __m256d t39 = lane_re_9;
                 const __m256d t40 = _mm256_fnmadd_pd(t25, t4, _mm256_mul_pd(t27, t6));
                 const __m256d t41 = _mm256_fmadd_pd(t27, t4, _mm256_mul_pd(t25, t6));
@@ -124,7 +124,7 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t47 = _mm256_fnmadd_pd(t46, t9, _mm256_mul_pd(t45, t2));
                 const __m256d t48 = _mm256_fmadd_pd(t45, t9, _mm256_mul_pd(t46, t2));
                 const __m256d t49 = _mm256_sub_pd(t48, t44);
-                const __m256d t51 = _mm256_set1_pd(0.99270887409804998);
+                const __m256d t51 = _mm256_set1_pd(0.99270887409805397);
                 const __m256d t52 = lane_re_10;
                 const __m256d t53 = _mm256_fnmadd_pd(t25, t5, _mm256_mul_pd(t27, t3));
                 const __m256d t54 = _mm256_fmadd_pd(t27, t5, _mm256_mul_pd(t25, t3));
@@ -147,7 +147,7 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t72 = _mm256_fnmadd_pd(t71, t4, _mm256_mul_pd(t70, t6));
                 const __m256d t73 = _mm256_fmadd_pd(t70, t4, _mm256_mul_pd(t71, t6));
                 const __m256d t74 = _mm256_sub_pd(t73, t69);
-                const __m256d t75 = _mm256_set1_pd(0.46472317204377001);
+                const __m256d t75 = _mm256_set1_pd(0.46472317204376851);
                 const __m256d t76 = lane_re_11;
                 const __m256d t77 = _mm256_fnmadd_pd(t25, t8, _mm256_mul_pd(t27, t7));
                 const __m256d t78 = _mm256_fmadd_pd(t27, t8, _mm256_mul_pd(t25, t7));
@@ -159,18 +159,18 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t84 = _mm256_fnmadd_pd(t83, t5, _mm256_mul_pd(t82, t3));
                 const __m256d t85 = _mm256_fmadd_pd(t82, t5, _mm256_mul_pd(t83, t3));
                 const __m256d t86 = _mm256_sub_pd(t85, t81);
-                const __m256d t87 = _mm256_set1_pd(0.82298386589366002);
-                const __m256d t95 = _mm256_set1_pd(0.97094181742605001);
+                const __m256d t87 = _mm256_set1_pd(0.82298386589365635);
+                const __m256d t95 = _mm256_set1_pd(0.97094181742605201);
                 const __m256d t96 = _mm256_add_pd(t13, t19);
-                const __m256d t98 = _mm256_set1_pd(0.74851074817109997);
+                const __m256d t98 = _mm256_set1_pd(0.74851074817110119);
                 const __m256d t99 = _mm256_add_pd(t28, t34);
-                const __m256d t101 = _mm256_set1_pd(0.35460488704254001);
+                const __m256d t101 = _mm256_set1_pd(0.35460488704253545);
                 const __m256d t102 = _mm256_add_pd(t43, t47);
-                const __m256d t104 = _mm256_set1_pd(0.12053668025531999);
+                const __m256d t104 = _mm256_set1_pd(0.12053668025532301);
                 const __m256d t105 = _mm256_add_pd(t56, t60);
-                const __m256d t107 = _mm256_set1_pd(0.56806474673116003);
+                const __m256d t107 = _mm256_set1_pd(0.56806474673115592);
                 const __m256d t108 = _mm256_add_pd(t80, t84);
-                const __m256d t110 = _mm256_set1_pd(0.88545602565321002);
+                const __m256d t110 = _mm256_set1_pd(0.88545602565320991);
                 const __m256d t111 = _mm256_add_pd(t68, t72);
                 const __m256d t113 = lane_re_0;
                 const __m256d t121 = _mm256_sub_pd(t19, t13);
@@ -186,9 +186,9 @@ void radix13_t1p_oop_fwd_avx2_UG_UG_log3_spec(
                 const __m256d t146 = _mm256_add_pd(t81, t85);
                 const __m256d t148 = _mm256_add_pd(t69, t73);
                 const __m256d t150 = lane_im_0;
-                const __m256d t160 = _mm256_set1_pd(0.66312265824078998);
-                const __m256d t303 = _mm256_set1_pd(0.93501624268542005);
-                const __m256d t315 = _mm256_set1_pd(0.35460488704253001);
+                const __m256d t160 = _mm256_set1_pd(0.66312265824079497);
+                const __m256d t303 = _mm256_set1_pd(0.93501624268541561);
+                const __m256d t315 = _mm256_set1_pd(0.35460488704253357);
                 const __m256d t418 = _mm256_add_pd(t96, _mm256_add_pd(t99, _mm256_add_pd(t102, _mm256_add_pd(t105, _mm256_add_pd(t108, _mm256_add_pd(t111, t113))))));
                 const __m256d t424 = _mm256_add_pd(t138, _mm256_add_pd(t140, _mm256_add_pd(t142, _mm256_add_pd(t144, _mm256_add_pd(t146, _mm256_add_pd(t148, t150))))));
                 const __m256d t550 = _mm256_fnmadd_pd(t95, t96, _mm256_fnmadd_pd(t98, t99, _mm256_fnmadd_pd(t101, t102, _mm256_fmadd_pd(t104, t105, _mm256_fmadd_pd(t107, t108, _mm256_fmadd_pd(t110, t111, t113))))));

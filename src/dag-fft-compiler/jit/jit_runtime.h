@@ -61,7 +61,7 @@
   #define VFFT_PROTO_JIT_CODELETS "@" VFFT_PROTO_JIT_REPO "/jit/generated/codelets.rsp"
   #endif
   #ifndef VFFT_PROTO_JIT_CFLAGS
-  #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared"
+  #define VFFT_PROTO_JIT_CFLAGS "-O3 -mavx2 -mfma -march=haswell -shared -Wno-nonnull"
   #endif
 #else
   #ifndef VFFT_PROTO_JIT_REPO      /* WSL/Linux view of the repo */
@@ -90,7 +90,7 @@
 #define VFFT_PROTO_JIT_GENINC  VFFT_PROTO_JIT_REPO "/generator/generated"
 #endif
 #ifndef VFFT_PROTO_JIT_VERSION      /* bump to invalidate the on-disk cache */
-#define VFFT_PROTO_JIT_VERSION 3    /* v3: DIF/LOG3 K-split twiddle fix (block-broadcast) in plan_executors.h macros */
+#define VFFT_PROTO_JIT_VERSION 6    /* v6: zo-aware executor arities in emitted rfft fallbacks (§6a26) */
 #endif
 
 /* ── Variant recovery: derive the per-stage variant code from the wired plan
@@ -134,7 +134,14 @@ static inline void vfft_proto_jit_csv(const stride_plan_t *plan,
 }
 
 /* ── Process-global registry (shape-keyed): a plan compiles/loads once per run ─ */
-typedef struct { char key[256]; vfft_proto_exec_fn fn; VFFT_JIT_LIB lib; }
+/* Range-capable executor: stages S with start_stage <= S < stop_stage in the
+ * direction's natural walk order (fwd ascending, bwd descending). Emitted
+ * alongside the classic symbol from VFFT_PROTO_JIT_VERSION 4 onward. */
+typedef void (*vfft_proto_exec_range_fn)(const stride_plan_t *, double *, double *,
+                                         size_t, size_t, int, int);
+
+typedef struct { char key[256]; vfft_proto_exec_fn fn;
+                 vfft_proto_exec_range_fn rfn; VFFT_JIT_LIB lib; }
         vfft_proto_jit_entry_t;
 static vfft_proto_jit_entry_t g_vfft_jit_reg[256];
 static int                    g_vfft_jit_count = 0;
@@ -142,6 +149,11 @@ static int                    g_vfft_jit_count = 0;
 static inline vfft_proto_exec_fn vfft_proto_jit_reg_find(const char *key) {
     for (int i = 0; i < g_vfft_jit_count; i++)
         if (strcmp(g_vfft_jit_reg[i].key, key) == 0) return g_vfft_jit_reg[i].fn;
+    return NULL;
+}
+static inline vfft_proto_exec_range_fn vfft_proto_jit_reg_find_range(const char *key) {
+    for (int i = 0; i < g_vfft_jit_count; i++)
+        if (strcmp(g_vfft_jit_reg[i].key, key) == 0) return g_vfft_jit_reg[i].rfn;
     return NULL;
 }
 
@@ -181,12 +193,16 @@ vfft_proto_jit_compile_load(const stride_plan_t *plan, const char *isa,
     if (!h) return NULL;
     vfft_proto_exec_fn fn = (vfft_proto_exec_fn)VFFT_JIT_DLSYM(h, "vfft_proto_jit_exec");
     if (!fn) return NULL;
+    /* range symbol: present from ver4 emissions; NULL for older cached libs. */
+    vfft_proto_exec_range_fn rfn =
+        (vfft_proto_exec_range_fn)VFFT_JIT_DLSYM(h, "vfft_proto_jit_exec_range");
 
     int cap = (int)(sizeof g_vfft_jit_reg / sizeof g_vfft_jit_reg[0]);
     if (g_vfft_jit_count < cap) {
         snprintf(g_vfft_jit_reg[g_vfft_jit_count].key,
                  sizeof g_vfft_jit_reg[0].key, "%s", key);
         g_vfft_jit_reg[g_vfft_jit_count].fn  = fn;
+        g_vfft_jit_reg[g_vfft_jit_count].rfn = rfn;
         g_vfft_jit_reg[g_vfft_jit_count].lib = h;
         g_vfft_jit_count++;
     }
@@ -215,6 +231,27 @@ static inline vfft_proto_exec_fn vfft_proto_plan_jit_fwd(const stride_plan_t *pl
 }
 static inline vfft_proto_exec_fn vfft_proto_plan_jit_bwd(const stride_plan_t *plan) {
     return _vfft_proto_plan_jit_dir(plan, "bwd", 1);
+}
+
+/* ── Range resolvers. Baked executors have no range flavor, so these ALWAYS
+ *    go through the jit cache (identical machine code per the emit doctrine).
+ *    NULL -> caller keeps its generic-interior fallback. ──────────────────── */
+static inline vfft_proto_exec_range_fn
+_vfft_proto_plan_jit_dir_range(const stride_plan_t *plan, const char *dir) {
+    char key[256];
+    vfft_proto_jit_key(plan, "avx2", dir, key, sizeof key);
+    vfft_proto_exec_range_fn rfn = vfft_proto_jit_reg_find_range(key);
+    if (rfn) return rfn;
+    if (!vfft_proto_jit_compile_load(plan, "avx2", dir, key)) return NULL;
+    return vfft_proto_jit_reg_find_range(key);
+}
+static inline vfft_proto_exec_range_fn
+vfft_proto_plan_jit_fwd_range(const stride_plan_t *plan) {
+    return _vfft_proto_plan_jit_dir_range(plan, "fwd");
+}
+static inline vfft_proto_exec_range_fn
+vfft_proto_plan_jit_bwd_range(const stride_plan_t *plan) {
+    return _vfft_proto_plan_jit_dir_range(plan, "bwd");
 }
 
 #endif /* VFFT_PROTO_JIT_RUNTIME_H */

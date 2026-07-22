@@ -43,6 +43,13 @@ typedef struct {
      * Trailing v6 field; absent (v5) loads as 0. This keeps padding in the SINGLE c2c wisdom
      * file (no separate padded file). See docs/roadmap/tail_handling/padding_design_decision.md. */
     int     exec_me;
+    /* il_me — the IL fused-vs-padded VERDICT for a misaligned-K cell (§6a59;
+     * only read by the interleaved-z decision). Same three states as exec_me:
+     * 0 = not IL-measured; K = fused won (tight folds + hybrid tails);
+     * Kp = padded won (unfused, full-width interior at Kp). Trailing v7
+     * field; absent (v5/v6) loads as 0. Stamped at the first-execute A/B,
+     * persists with the bundle save. */
+    int     il_me;
 } vfft_proto_wisdom_entry_t;
 
 enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
@@ -152,6 +159,8 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
          * pad-measured. Old binaries stop tokenizing after the variants (forward compatible). */
         tok = strtok(NULL, " \t\r\n");
         e.exec_me = tok ? atoi(tok) : 0;
+        tok = strtok(NULL, " \t");
+        e.il_me = tok ? atoi(tok) : 0;   /* v7 trailing (absent -> 0) */
         /* Scrambled line ends at exec_me. Any trailing tokens (e.g. a stray embedded v7 nat block
          * from a disposable staging file) are IGNORED — natural verdicts live in @nat lines now. */
 
@@ -273,7 +282,7 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
             fprintf(f, " %d", e->variants[j]);
         /* v6 trailing field: exec_me (padded verdict; 0 = not pad-measured). Scrambled line ENDS
          * here — natural verdicts are emitted below as @nat lines (regime-exclusive records). */
-        fprintf(f, " %d\n", e->exec_me);
+        fprintf(f, " %d %d\n", e->exec_me, e->il_me);   /* v6 + v7 trailing */
     }
     /* Natural table: one self-contained @nat line per entry. */
     for (size_t i = 0; i < wis->nat_count; i++) {

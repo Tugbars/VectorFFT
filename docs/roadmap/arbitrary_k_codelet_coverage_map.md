@@ -22,12 +22,12 @@
 
 | Feature | Quadrant (files av2/av512) | Family / codelets | Signature & loop | Load/store pattern | Tail |
 |---|---|---|---|---|---|
-| **1D c2c in-place** | `inplace` (324/324) | n1, t1/t1s × dit/dif × fwd/bwd × flat/log3 (18-family) | `(rio_re,rio_im,tw,ios,me)` — `for k<me k+=VW` | `rio[leg*ios+k]`; spill scratch full-width | **DONE** (avx2; composite incl). avx512 emit-present, untested |
+| **1D c2c in-place** | `inplace` (324/324) | n1, t1/t1s × dit/dif × fwd/bwd × flat/log3 (18-family) | `(rio_re,rio_im,tw,ios,me)` — `for k<me k+=VW` | `rio[leg*ios+k]`; spill scratch full-width | **DONE** (avx2; composite incl). avx512: **validated 2026-07-14** through the multi-dim adversarial matrix (test_fftnd_tails.c — odd K ∈ {9,15,45,105,315} through every axis pass, per-bin 2.5–3.2 eps vs long-double, MT bit-exact) |
 | **1D c2c OOP** | `oop` (52/52) | n1_oop, t1p_oop(+log3), **t1_oop (NEW)**, *_spec | `(in_re,in_im,out_re,out_im,tw,…,me)` — `for b<me b+=VW` | `in_re[b*gstride+leg*lstride]` → split out | ✅ **DONE 2026-06-28** |
 | **Trig (DCT/DST/DHT)** | `trig` (36/36) | dct2/3/4, dst2/3/4, dht, dct1, dst1 | `(in,out,K)` 3-arg r2r — `for k<K k+=VW` | `in[leg*K+k]` → `out[…]` | ✅ **DONE 2026-06-28** (dev direct-codelet layer) |
 | **1D r2c (real fwd)** | `rfft` (65/64) | r2cf leaf, hc2hc stage, hc2c / hc2c-nat terminator (+log3, +ranged) | `(in_re[,in_im],out…,is,os…,vl)` — `for v<vl v+=VW` | `in_re[leg*is+v]` → `out`/`Rp,Ip,Rm,Im` | **READY** (ranged + 4-buf split: see notes) |
 | **1D c2r (real bwd)** | `c2r` (50/29) | r2cb leaf, hc2hc_dif_bwd stage, hc2c-nat initiator (+log3, +ranged) | `(in_re,in_im,out_re,is_re,is_im,os_re,vl)` — `for v<vl v+=VW` | `in_re[leg*is_re+v]` → `out_re[…]` | **READY** (ranged: see notes) |
-| **2D c2c (row batch)** | `strided` (14/8) | n1 fwd/bwd strided | `(rio_re,rio_im,tw,row_stride,me)` — `for b<me b+=VW` | **4×4 transpose**: loads `rio[(b+0..b+3)*row_stride+col]` | **HARD** |
+| **2D c2c (row batch)** | `strided` (14/8) | n1 fwd/bwd strided | `(rio_re,rio_im,tw,row_stride,me)` — `for b<me b+=VW` | **4×4 transpose**: loads `rio[(b+0..b+3)*row_stride+col]` | **HARD** at emit level; **RESOLVED 2026-07-14 at the orchestrator** — option (a) realized as a padded staging tail (`_vfft_strided_tail_padded`, strided_rows.h): rem rows copied into a VW-row zero-padded slab in the tile scratch, one me=VW call, copy back. Preserves UNIFORM per-row natural order for any R (the natorder identity fast-path's precondition); B ≥ VW guard sizes the staging. Masked-emit tail remains the codelet-level end state |
 
 (2D and real-FFT also compose the 1D in-place codelets for their column/cascade
 passes — those already have the tail. The rows above are the *additional* families

@@ -1,6 +1,8 @@
-@version 5
-# VectorFFT stride wisdom: 3 entries
-# N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes... (v=0:FLAT 1:LOG3 2:T1S 3:BUF)
-256 8 2 8 32 853.07 0 0 0 0 1 0
-512 8 2 16 32 2555.12 0 0 0 0 0 0
-1024 8 3 4 8 32 7263.52 0 0 0 0 2 1 0
+@version 8
+# VectorFFT stride wisdom: 4 scrambled + 0 natural entries
+# scrambled: N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes... exec_me (v=0:FLAT 1:LOG3 2:T1S 3:BUF)
+# natural (self-contained, @nat-tagged -> invisible to @/#-skipping external readers): @nat N K mode nf factors... variants... use_dif nat_ns (mode 1=FREE 3=SCR 4=PURE_CYCLE 5=PSWAP)
+256 8 2 8 32 853.07 0 0 0 0 1 0 0 0
+512 8 2 16 32 2555.12 0 0 0 0 0 0 0 0
+1024 8 3 4 8 32 7263.52 0 0 0 0 2 1 0 0 0
+256 16 2 8 32 2170.29 0 0 0 0 2 0 0 0

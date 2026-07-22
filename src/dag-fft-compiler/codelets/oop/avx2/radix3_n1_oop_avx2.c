@@ -50,11 +50,11 @@ void radix3_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m256d t0 = _mm256_set1_pd(0.86602540378444004);
+                const __m256d t0 = _mm256_set1_pd(0.86602540378443871);
                 const __m256d t1 = lane_im_2;
                 const __m256d t2 = lane_im_1;
                 const __m256d t3 = _mm256_sub_pd(t2, t1);
-                const __m256d t5 = _mm256_set1_pd(0.5);
+                const __m256d t5 = _mm256_set1_pd(0.49999999999999978);
                 const __m256d t6 = lane_re_2;
                 const __m256d t7 = lane_re_1;
                 const __m256d t8 = _mm256_add_pd(t6, t7);
@@ -108,11 +108,11 @@ void radix3_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.86602540378444004);
+                const double t0 = (0.86602540378443871);
                 const double t1 = lane_im_2;
                 const double t2 = lane_im_1;
                 const double t3 = (t2 - t1);
-                const double t5 = (0.5);
+                const double t5 = (0.49999999999999978);
                 const double t6 = lane_re_2;
                 const double t7 = lane_re_1;
                 const double t8 = (t6 + t7);
@@ -164,11 +164,11 @@ void radix3_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const __m128d t0 = _mm_set1_pd(0.86602540378444004);
+                const __m128d t0 = _mm_set1_pd(0.86602540378443871);
                 const __m128d t1 = lane_im_2;
                 const __m128d t2 = lane_im_1;
                 const __m128d t3 = _mm_sub_pd(t2, t1);
-                const __m128d t5 = _mm_set1_pd(0.5);
+                const __m128d t5 = _mm_set1_pd(0.49999999999999978);
                 const __m128d t6 = lane_re_2;
                 const __m128d t7 = lane_re_1;
                 const __m128d t8 = _mm_add_pd(t6, t7);
@@ -220,11 +220,11 @@ void radix3_n1_oop_fwd_avx2_UG_UG(
 
         /* === BUTTERFLY BODY (monolithic) ===
            Tier A: algsimp cascade + inline + fence, single scope. */
-                const double t0 = (0.86602540378444004);
+                const double t0 = (0.86602540378443871);
                 const double t1 = lane_im_2;
                 const double t2 = lane_im_1;
                 const double t3 = (t2 - t1);
-                const double t5 = (0.5);
+                const double t5 = (0.49999999999999978);
                 const double t6 = lane_re_2;
                 const double t7 = lane_re_1;
                 const double t8 = (t6 + t7);

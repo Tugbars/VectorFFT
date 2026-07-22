@@ -80,7 +80,8 @@
 #endif
 
 typedef void (*rfft_jit_fn)(const rfft_plan_t *, const double *, double *);            /* packed  */
-typedef void (*rfft_jit_nat_fn)(const rfft_plan_t *, const double *, double *, double *); /* natural */
+typedef void (*rfft_jit_nat_fn)(const rfft_plan_t *, const double *, double *, double *);
+typedef void (*rfft_jit_natz_fn)(const rfft_plan_t *, const double *, double *); /* natural */
 
 /* filename-safe key: nN_kK_<factors..>_v<variants>_<isa>_<tag>_verV. `tag` keeps the
  * real-FFT families/modes in separate cache files (rfftpacked / rfftnat / c2r). */
@@ -180,6 +181,13 @@ vfft_rfft_jit_resolve_natural(int N, size_t K, const int *factors, int nf,
                              const int *variants, const char *isa) {
     return (rfft_jit_nat_fn)_real_jit_resolve(N, K, factors, nf, variants, isa,
         "rfft_jit_prelude.h", "emit_rfft_jit.py", "rfft_jit_exec", "rfftjit", "rfftnat", "natural");
+}
+/* §6a27: NATURAL-forward, INTERLEAVED z out — the r2c fwd_z path. */
+static inline rfft_jit_natz_fn
+vfft_rfft_jit_resolve_natural_z(int N, size_t K, const int *factors, int nf,
+                                const int *variants, const char *isa) {
+    return (rfft_jit_natz_fn)_real_jit_resolve(N, K, factors, nf, variants, isa,
+        "rfft_jit_prelude.h", "emit_rfft_jit.py", "rfft_jit_exec", "rfftjit", "rfftnatz", "natural-z");
 }
 
 #endif /* VFFT_RFFT_JIT_RUNTIME_H */

@@ -56,11 +56,16 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'rfft' / DAG_ISA,   # r2c forward: r2cf leaf + hc2hc DIT
         DAG / 'codelets' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
         DAG / 'codelets' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
+        DAG / 'codelets' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
+        DAG / 'codelets' / 'il'   / DAG_ISA,   # interleaved-layout campaign: il_in/il_out folds + twins
+        DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
     ]
     srcs: list[str] = []
     for d in dirs:
         if d.is_dir():
-            srcs += [str(p) for p in d.glob('*.c')]
+            # *_emit.c are generator bit-gate twins of the hand codelets — same symbol
+            # names, so linking both would collide; the gates compile them standalone.
+            srcs += [str(p) for p in d.glob('*.c') if not p.name.endswith('_emit.c')]
         else:
             print(f'  [warn] codelet dir missing: {d}', file=sys.stderr)
     return sorted(srcs)

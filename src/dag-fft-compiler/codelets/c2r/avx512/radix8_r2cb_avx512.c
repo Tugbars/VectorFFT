@@ -23,7 +23,7 @@ void radix8_r2cb_avx512(
     ptrdiff_t os_re,
     size_t vl)
 {
-    const __m512d t33 = _mm512_set1_pd(0.70710678118655002);
+    const __m512d t33 = _mm512_set1_pd(0.70710678118654757);
     size_t v = 0;
     for (; v + 8 <= vl; v += 8) {
 
@@ -73,7 +73,7 @@ void radix8_r2cb_avx512(
     if (v < vl) {
         const size_t rem = vl - v;
         if (rem == 1) {
-        const double t33 = (0.70710678118655002);
+        const double t33 = (0.70710678118654757);
         const double t0 = in_re[1*is_re + v];
         const double t2 = in_im[1*is_im + v];
         const double t5 = in_re[3*is_re + v];
@@ -118,7 +118,7 @@ void radix8_r2cb_avx512(
         out_re[7*os_re + v] = t85;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t33 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t33 = _mm512_set1_pd(0.70710678118654757);
         const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in_re[1*is_re + v]);
         const __m512d t2 = _mm512_maskz_loadu_pd(_m, &in_im[1*is_im + v]);
         const __m512d t5 = _mm512_maskz_loadu_pd(_m, &in_re[3*is_re + v]);

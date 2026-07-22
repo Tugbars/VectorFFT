@@ -271,18 +271,19 @@ static inline void c2r_execute_packed(const c2r_plan_t *p,
 static inline void c2r_mid_inv_column_natural(int r, int m, size_t K, size_t vl,
                                               size_t nh, const double *in_re,
                                               const double *in_im,
-                                              const double *Minv, double *dst_base)
+                                              const double *Minv, double *dst_base,
+                                              const double *zi)
 {
     for (size_t v = 0; v < vl; v++) {
         double mid[64];
         for (int t = 0; t < r; t++) {
             size_t pp = (size_t)(m / 2) + (size_t)t * (size_t)m;
             if (pp <= nh)
-                mid[t] = in_re[pp * K + v];
+                mid[t] = zi ? zi[2 * (pp * K + v)] : in_re[pp * K + v];
             else {
                 int sI = r - 1 - t;
                 size_t ppm = (size_t)(m / 2) + (size_t)sI * (size_t)m;
-                mid[t] = in_im[ppm * K + v];
+                mid[t] = zi ? zi[2 * (ppm * K + v) + 1] : in_im[ppm * K + v];
             }
         }
         for (int j = 0; j < r; j++) {
@@ -291,6 +292,77 @@ static inline void c2r_mid_inv_column_natural(int r, int m, size_t K, size_t vl,
             dst_base[(size_t)j * K + v] = acc;
         }
     }
+}
+
+/* §6a28: stage-0 natural INITIATOR, INTERLEAVED (CCE) z input. Mirror of the
+ * fwd §6a26 design: the chunk's z rows are deinterleaved into the base plan's
+ * zscr planes (P/M families, slot stride cw*K, column stride K) filling
+ * EXACTLY the cells the fwd terminator wrote — the same one-sided D2
+ * predicate — then the SAME nat_init codelet runs per column with scratch
+ * pointers (stride-agnostic, §6a26-proven) -> bit-identical to split-in.
+ * DC gathers become fused row deinterleaves; mid reads via its zi mode.
+ * Writes the packed cascade input into planeA lanes [k0,k0+kw). */
+static inline void _c2r_stage0_zin(const c2r_plan_t *p, const double *zi,
+                                   size_t k0, size_t kw)
+{
+    const rfft_plan_t *b = p->base;
+    const rfft_stage_t *st0 = &b->st[0];
+    const int r = st0->radix, m = st0->m;
+    const size_t K = b->K, nh = (size_t)(b->N / 2);
+    double *cur0 = b->planeA;
+
+    const int kmax = (m - 1) / 2;
+    if (kmax >= 1) {
+        const size_t zpl = (size_t)r * (size_t)b->zch * K;
+        double *Ap = b->zscr, *Bp = b->zscr + zpl;
+        double *Am = Bp + zpl, *Bm = Am + zpl;
+        const int C = b->zch;
+        for (int k1 = 1; k1 <= kmax; k1 += C) {
+            const int cw = (k1 + C - 1 <= kmax) ? C : (kmax - k1 + 1);
+            for (int j = 0; j < cw; j++) {
+                const size_t kk = (size_t)(k1 + j);
+                for (int sl = 0; sl < r; sl++) {
+                    size_t fP = kk + (size_t)sl * (size_t)m;
+                    if (fP <= nh)
+                        _rfft_zldrow(zi, fP, K, k0, kw,
+                                     Ap + ((size_t)sl * (size_t)cw + (size_t)j) * K,
+                                     Bp + ((size_t)sl * (size_t)cw + (size_t)j) * K);
+                    size_t fM = ((size_t)m - kk) + (size_t)sl * (size_t)m;
+                    if (fM <= nh)
+                        _rfft_zldrow(zi, fM, K, k0, kw,
+                                     Am + ((size_t)sl * (size_t)cw + (size_t)j) * K,
+                                     Bm + ((size_t)sl * (size_t)cw + (size_t)j) * K);
+                }
+            }
+            for (int j = 0; j < cw; j++) {
+                const int k = k1 + j;
+                const ptrdiff_t iss = (ptrdiff_t)((size_t)cw * K);
+                p->nat_init(Ap + (size_t)j * K, Bp + (size_t)j * K,
+                            Am + (size_t)j * K, Bm + (size_t)j * K,
+                            cur0 + ((size_t)(r * k)) * K + k0,
+                            cur0 + ((size_t)(r * (m - k))) * K + k0,
+                            st0->tw_re + (size_t)(k - 1) * r,
+                            st0->tw_im + (size_t)(k - 1) * r,
+                            iss, iss, (ptrdiff_t)K, kw);
+            }
+        }
+    }
+
+    double *nk = b->nat_k0;
+    _rfft_zldrow_re(zi, 0, K, k0, kw, nk + k0);
+    for (int sI = 1; sI < (r + 1) / 2; sI++)
+        _rfft_zldrow(zi, (size_t)sI * (size_t)m, K, k0, kw,
+                     nk + (size_t)sI * K + k0, nk + (size_t)(r - sI) * K + k0);
+    if (r % 2 == 0)
+        _rfft_zldrow_re(zi, nh, K, k0, kw, nk + (size_t)(r / 2) * K + k0);
+    p->stage_dc[0](nk + k0, nk + (size_t)r * K + k0, cur0 + k0,
+                   (ptrdiff_t)K, -(ptrdiff_t)K, (ptrdiff_t)K, kw);
+
+    if (st0->has_mid)
+        c2r_mid_inv_column_natural(r, m, K, kw, nh, NULL, NULL,
+                                   p->mid_inv[0],
+                                   cur0 + ((size_t)(r * (m / 2))) * K + k0,
+                                   zi + 2 * k0);
 }
 
 /* c2r_execute_natural — the SPLIT-input c2r (the inverse of rfft_execute_fwd_natural).
@@ -303,7 +375,8 @@ static inline void c2r_mid_inv_column_natural(int r, int m, size_t K, size_t vl,
  * (no Kb blocking) — the natural path is the low/mid-K winner. out = N*x. */
 static inline void c2r_execute_natural(const c2r_plan_t *p,
                                        const double *in_re, const double *in_im,
-                                       double *out)
+                                       double *out,
+                                       const double *zi)
 {
     const rfft_plan_t *b = p->base;
     const int N = b->N;
@@ -312,6 +385,7 @@ static inline void c2r_execute_natural(const c2r_plan_t *p,
     const size_t nh = (size_t)(N / 2);
 
     /* ===== STAGE 0 INITIATOR: split half-spectrum -> planeA (packed cascade input) ===== */
+    if (zi) { _c2r_stage0_zin(p, zi, 0, K); } else
     {
         const rfft_stage_t *st0 = &b->st[0];
         const int r = st0->radix, m = st0->m;
@@ -342,7 +416,7 @@ static inline void c2r_execute_natural(const c2r_plan_t *p,
         /* (3) mid column (k=m/2): split mid inverse -> cur0 col r*(m/2). */
         if (st0->has_mid)
             c2r_mid_inv_column_natural(r, m, K, K, nh, in_re, in_im,
-                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K);
+                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K, NULL);
     }
 
     /* ===== STAGES d=1..nf-2: identical to c2r_execute_packed (full width) ===== */
@@ -397,7 +471,8 @@ static inline void c2r_execute_natural(const c2r_plan_t *p,
  * not be 8-aligned (codelet scalar tail covers the remainder). Requires nf>=2. */
 static inline void c2r_execute_natural_range(const c2r_plan_t *p,
                                              const double *in_re, const double *in_im,
-                                             double *out, size_t k0, size_t kw)
+                                             double *out, size_t k0, size_t kw,
+                                             const double *zi)
 {
     const rfft_plan_t *b = p->base;
     const int N = b->N;
@@ -406,6 +481,7 @@ static inline void c2r_execute_natural_range(const c2r_plan_t *p,
     const size_t nh = (size_t)(N / 2);
 
     /* ===== STAGE 0 INITIATOR (lane range) ===== */
+    if (zi) { _c2r_stage0_zin(p, zi, k0, kw); } else
     {
         const rfft_stage_t *st0 = &b->st[0];
         const int r = st0->radix, m = st0->m;
@@ -429,7 +505,7 @@ static inline void c2r_execute_natural_range(const c2r_plan_t *p,
                        (ptrdiff_t)K, -(ptrdiff_t)K, (ptrdiff_t)K, kw);
         if (st0->has_mid)
             c2r_mid_inv_column_natural(r, m, K, kw, nh, in_re + k0, in_im + k0,
-                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K + k0);
+                                       p->mid_inv[0], cur0 + ((size_t)(r * (m / 2))) * K + k0, NULL);
     }
 
     /* ===== STAGES d=1..nf-2 (per-q, lane range) ===== */

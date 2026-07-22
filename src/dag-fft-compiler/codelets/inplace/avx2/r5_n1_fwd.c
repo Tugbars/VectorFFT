@@ -25,9 +25,9 @@ void radix5_n1_fwd_avx2(
     size_t k = 0;
     for (; k + 4 <= me; k += 4) {
         const __m256d t21 = _mm256_set1_pd(0.25);
-        const __m256d t3 = _mm256_set1_pd(0.61803398874989002);
-        const __m256d t18 = _mm256_set1_pd(0.55901699437495);
-        const __m256d t9 = _mm256_set1_pd(0.95105651629514998);
+        const __m256d t3 = _mm256_set1_pd(0.6180339887498949);
+        const __m256d t18 = _mm256_set1_pd(0.55901699437494745);
+        const __m256d t9 = _mm256_set1_pd(0.95105651629515353);
         const __m256d t0 = _mm256_loadu_pd(&rio_im[3*ios + k]);
         const __m256d t1 = _mm256_loadu_pd(&rio_im[2*ios + k]);
         const __m256d t32 = _mm256_add_pd(t0, t1);
@@ -86,9 +86,9 @@ void radix5_n1_fwd_avx2(
         const size_t rem = me - k;
         if (rem == 1) {
         const double t21 = (0.25);
-        const double t3 = (0.61803398874989002);
-        const double t18 = (0.55901699437495);
-        const double t9 = (0.95105651629514998);
+        const double t3 = (0.6180339887498949);
+        const double t18 = (0.55901699437494745);
+        const double t9 = (0.95105651629515353);
         const double t0 = rio_im[3*ios + k];
         const double t1 = rio_im[2*ios + k];
         const double t32 = (t0 + t1);
@@ -145,9 +145,9 @@ void radix5_n1_fwd_avx2(
         } else {
             for (; k + 2 <= me; k += 2) {
         const __m128d t21 = _mm_set1_pd(0.25);
-        const __m128d t3 = _mm_set1_pd(0.61803398874989002);
-        const __m128d t18 = _mm_set1_pd(0.55901699437495);
-        const __m128d t9 = _mm_set1_pd(0.95105651629514998);
+        const __m128d t3 = _mm_set1_pd(0.6180339887498949);
+        const __m128d t18 = _mm_set1_pd(0.55901699437494745);
+        const __m128d t9 = _mm_set1_pd(0.95105651629515353);
         const __m128d t0 = _mm_loadu_pd(&rio_im[3*ios + k]);
         const __m128d t1 = _mm_loadu_pd(&rio_im[2*ios + k]);
         const __m128d t32 = _mm_add_pd(t0, t1);
@@ -204,9 +204,9 @@ void radix5_n1_fwd_avx2(
             }
             if (k < me) {
         const double t21 = (0.25);
-        const double t3 = (0.61803398874989002);
-        const double t18 = (0.55901699437495);
-        const double t9 = (0.95105651629514998);
+        const double t3 = (0.6180339887498949);
+        const double t18 = (0.55901699437494745);
+        const double t9 = (0.95105651629515353);
         const double t0 = rio_im[3*ios + k];
         const double t1 = rio_im[2*ios + k];
         const double t32 = (t0 + t1);
