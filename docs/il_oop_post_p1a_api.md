@@ -119,7 +119,7 @@ duplication, capped refactor blast radius).
 
 ## 7. Runtime-jit + gate/bench reproduction (container recipe)
 
-`benches/` inventory: `gate_tw2.c gate_1020.c gate_dbl3.c` (codelet-level),
+`build_tuned/benches/` inventory: `gate_tw2.c gate_1020.c gate_dbl3.c` (codelet-level),
 `gate_adapt.c` (adapter gate: T1–T11, wisdom `wad.txt`), `probe_jit.c`
 (runtime-jit smoke), `bench_fwdfold.c bench_bwdfold.c` (spike wisdom,
 same-process medians).

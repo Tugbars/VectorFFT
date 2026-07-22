@@ -58,7 +58,7 @@ N=256 present at K=4 from c2c sweeps but absent at K=256), not missing N.
 rigor — exactly as you'd calibrate any c2c cell. These are ordinary c2c
 entries; nothing r2c-specific about the rows themselves.
 
-**4. Validate** by re-running the r2c bench (`benches/bench_r2c_tax.c`, the
+**4. Validate** by re-running the r2c bench (`build_tuned/benches/bench_r2c_tax.c`, the
 `-DVFFT_R2C_PROFILE` binary is enough) with a bundle containing the updated
 file, before/after per cell. Judge by the **vs-MKL ratio**, not absolute µs.
 To confirm the plan actually changed, compare the `(N/2, K)` wisdom line's

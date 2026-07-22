@@ -107,11 +107,11 @@ il_out) — all BIT under the 4ULP/cancellation-floor tail doctrine.
 Adapter layer: 7 forced plans (DIT T1S/LOG3/FLAT exits, DIF LOG3/FLAT,
 K=67 tails both types) x {fwd_ilout, fwd_ilin, bwd_ilout, bwd_ilin,
 fwd_il2il, fwd_il2il in-place-z, bwd_il2il} vs the generic executors:
-ALL BIT, zero ULP tolerance consumed. Sources: benches/gate_tw2.c,
-gate_1020.c, gate_dbl3.c, gate_adapt.c (+ benches/wad.txt forced wisdom).
+ALL BIT, zero ULP tolerance consumed. Sources: build_tuned/benches/gate_tw2.c,
+gate_1020.c, gate_dbl3.c, gate_adapt.c (+ build_tuned/benches/wad.txt forced wisdom).
 
 **Measured (this container, matched-ISA AVX2, same-process medians of 5;
-old path = fwd_ilin + sp2il sweep [tier CORRECTED in 6a17: generic, not jit]; benches/bench_fwdfold.c):**
+old path = fwd_ilin + sp2il sweep [tier CORRECTED in 6a17: generic, not jit]; build_tuned/benches/bench_fwdfold.c):**
 
 | cell | il2il | old path | MKL-IL-lane | fold gain | new vs MKL | old vs MKL |
 |---|---|---|---|---|---|---|
@@ -277,7 +277,7 @@ by contract — z is tight-only). Lazy NK-complex split scratch + one-shot
 makes the public convolution pattern (fwd → pointwise → bwd on z buffers) the
 FIRST production consumer of the il2il surface.
 
-Gate (benches/gate_vfft_il.c, public API, ALL PASS): DIT 64×8 + DIF 100×8
+Gate (build_tuned/benches/gate_vfft_il.c, public API, ALL PASS): DIT 64×8 + DIF 100×8
 fast paths BIT vs split; prime 101 (Bluestein override), NATURAL, and
 nthreads=2 all BIT through the fallback; conv pattern BIT end-to-end;
 roundtrip/N OK everywhere.
@@ -300,7 +300,7 @@ is a K=1 override plan), order DEFAULT/SCRAMBLED (3D natural = the
 nat_col_list follow-up). Execute reuses the 2D branch with an N3-aware plane
 size — the 3D wrap IS a stride_plan_t.
 
-Gate (benches/gate_vfft_3d.c, ALL PASS): 16×20×8 — greedy create 3.81 s,
+Gate (build_tuned/benches/gate_vfft_3d.c, ALL PASS): 16×20×8 — greedy create 3.81 s,
 banked entry, fresh-bundle wisdom-hit create **34 μs (≈110,000× faster)**,
 delta-spectrum |X|²==1 and roundtrip/N identical on both paths; K>1 /
 NATURAL / non-C2C rejects hold. Feature-A gate re-run post-patch: ALL PASS.
@@ -321,7 +321,7 @@ survives at DIF-inner/high-K + B-tails); model-(b) last-stage fusion is
 built, correct (activated live, BAD=0), has NO setter anywhere, and is 17%
 SLOWER as-is (scalar scaffold); rfft-native non-pow2 low-K already BEATS MKL
 (1.22–1.62×); inner-cell wisdom quality moves r2c ~30%. Bench:
-`benches/bench_r2c_tax.c` (same-TU prof + stub-delta + live activation).
+`build_tuned/benches/bench_r2c_tax.c` (same-TU prof + stub-delta + live activation).
 rfft.h:523 UB warning logged as debt.
 
 
@@ -356,7 +356,7 @@ unchanged. DIT bwd win intact (15.1 vs 20.9 this session).
 +fft2d_c2c, +fft2d_r2c, +fft2d_c2r, +fft3d_c2c (frees + saves), +bluestein
 (save; table is fixed-size, no free — like oop). `c2r_path` stays excluded on
 both sides: it loads into a c2r_dispatch file-static and persists via its own
-decision-time writer, not through w. Gate (`benches/gate_w7.c`, ASAN build):
+decision-time writer, not through w. Gate (`build_tuned/benches/gate_w7.c`, ASAN build):
 3× load+free leak-clean (LSAN silent — pre-patch four tables leaked per
 free); save writes all 8 files; save→load→save byte-identical per file.
 Closes the persistence trap where "vfft_wisdom_save succeeded" silently
@@ -370,7 +370,7 @@ dropped every 2D/3D entry (auto-save at create was the only real writer).
 family is rem-aware by construction (generator anyk-tail — masked group
 loads/stores, codelet_oop.ml emit_codelet preamble +
 docs/performance/arbitrary_k_tail_handling.md), and the engine gates already
-ran it at me=65/67. Gate `benches/gate_r2c_tail.c` (same-TU, internal
+ran it at me=65/67. Gate `build_tuned/benches/gate_r2c_tail.c` (same-TU, internal
 stride_r2c_plan with forced block_K, naive O(N²) real-DFT reference):
 DIT-fused B∈{64,65,67} and DIF-explicit B∈{64,67} all ≤3e-13 maxrel — ALL
 PASS. Misaligned-B DIT cells no longer pay the explicit pack. Deliberately
@@ -406,7 +406,7 @@ arity silently.
 `dim==NULL`: `dre` receives the INTERLEAVED (CCE) spectrum — (N/2+1)*howmany
 complex pairs at `dre[2*(f*howmany+t)]`. C2R with `sim==NULL`: `sre` is the
 interleaved spectrum input, same layout. Documented in include/vfft.h rows.
-Gate `benches/gate_vfft_rz.c`: cells (512,256) stride / (2000,4) + (200,4)
+Gate `build_tuned/benches/gate_vfft_rz.c`: cells (512,256) stride / (2000,4) + (200,4)
 rfft / (128,67) odd — fwd z-vs-split BIT, bwd z-vs-split BIT, roundtrip
 ≤2.2e-14: ALL PASS (12/12).
 
@@ -442,8 +442,8 @@ free in context (−0.5%; the 25µs memcpy microbench bound is not
 representative). The MKL line is the first same-layout comparison
 (CCE↔CCE) and sits at MKL's strongest r2c geometry; rfft-native cells beat
 MKL outright per §6a20. Bycatch: the OOP worker's stale pre-6a23 odd-B
-comment was corrected. Benches: benches/bench_rz.c (public, drift-proof),
-benches/bench_rz_iso.c (same-TU 3-arm attribution).
+comment was corrected. Benches: build_tuned/benches/bench_rz.c (public, drift-proof),
+build_tuned/benches/bench_rz_iso.c (same-TU 3-arm attribution).
 
 
 ## 6a25 — Model-B fused last-stage terminator (#8): CLOSED, measured negative
@@ -486,7 +486,7 @@ band, per doctrine.
 **What stays / structural liabilities recorded:** scaffold
 (_r2c_laststage_fused), dispatch branch, typedef — all dormant (no setter).
 Both codelet editions in tree. Decision harness:
-benches/bench_ab_modelb.c (argv cells; link the avx512 codelet TU compiled
+build_tuned/benches/bench_ab_modelb.c (argv cells; link the avx512 codelet TU compiled
 with -mavx512f -mavx512dq). slice_until has no jit counterpart (jit-bound
 inners would additionally forfeit jit on stages 1..nf-2 — a further
 handicap never even reached in these numbers). Revisit conditions: a
@@ -873,7 +873,7 @@ refill from a saved pattern (unnormalized reps compound to inf otherwise —
 x86 inf arithmetic is full-speed so prior decisions were likely right, but
 the hygiene hole is closed; both arms equally handicapped).
 
-**Verdict (same-process forced-arm A/B, benches/bench_2d_row_engine_ab.c):**
+**Verdict (same-process forced-arm A/B, build_tuned/benches/bench_2d_row_engine_ab.c):**
 
 | cell/dir | adoption | engine delta (adopted vs stride) |
 |---|---|---|
@@ -979,7 +979,7 @@ designing rule now has two specimens.
 
 ## 6a35 — v2 stage-1 probe: strided r2c mechanism VALIDATED, emission spec forced
 
-**The probe** (benches/probe_strided_r2c*.c): strided r2c composed from the
+**The probe** (build_tuned/benches/probe_strided_r2c*.c): strided r2c composed from the
 EXISTING c2c strided mono via the two-for-one trick — call
 `fwd(base, base+row_stride, 2*row_stride, R/2)` packing row-pairs as complex
 lanes, then a conjugate-symmetry epilogue splitting each Z into two
@@ -1153,7 +1153,7 @@ variants route through the same OOP executors).
 1.0e-15); the uncovered cells never adopt — regression-proof by
 construction.
 
-**Payoff (same-process forced arms, benches/bench_2d_strided_ab.c):**
+**Payoff (same-process forced arms, build_tuned/benches/bench_2d_strided_ab.c):**
 
 | cell | adoption | fwd (strided vs tiled) | bwd | split/MKL-real |
 |---|---|---|---|---|
@@ -1209,7 +1209,7 @@ native-interleaved real path outright at (256×32), both directions.
 
 ## 6a40 — twiddle-stage design study: the composition law, measured
 
-**The probe** (benches/probe_dif_front.c): a hand DIF radix-2 front
+**The probe** (build_tuned/benches/probe_dif_front.c): a hand DIF radix-2 front
 (contiguous half-span butterflies, vectorized ALONG the row — no
 transposes, no row batching needed) composed with the EXISTING r64 strided
 monos via base-offset sub-rows = a complete N=128 strided c2c row pass with
@@ -1381,7 +1381,7 @@ blocks ST would, so **MT output is BIT-IDENTICAL to ST by construction**.
 The §6a39 adoption arms now call the wrappers (MT-faithful A/B at any
 create-time T). The stw tier stays ST (shared work buffer; dormant tier).
 
-Gate (benches/gate_strided_mt.c, real dispatched workers — pool 1 and 3):
+Gate (build_tuned/benches/gate_strided_mt.c, real dispatched workers — pool 1 and 3):
 T ∈ {1,2,4} at (64,64), fwd and bwd, **BIT at every T**; full 2D gate
 27/27 unchanged. MT SPEED is unmeasurable in this 1-vCPU container
 (threads oversubscribe one core) — correctness is proven here, the
@@ -1487,7 +1487,7 @@ even-N common case), vfft_natorder_mk_cycles + cycle_pass/_inv sweeps
 inside _fndr_axis_mt (fwd: naturalize after; bwd: inverse before). The
 sweeps are ST v1 (light permutation; MT-ization noted).
 
-**Gates (benches/gate_fndr_q1.c):** rank-3 cells — naive ND-DFT verified
+**Gates (build_tuned/benches/gate_fndr_q1.c):** rank-3 cells — naive ND-DFT verified
 (4,6,8) and (6,10,64) and the fixed (8,9,10); roundtrips 5.6e-16…1.4e-15;
 z-vs-split BIT; il roundtrip; (16,16,256) meaty cell. **ALL PASS on both
 builds. 2D regression: avx2 28/28, avx512 28/28.**
@@ -1533,7 +1533,7 @@ bundle-calibration machinery and creates took **31–46 SECONDS**. The
 sidecar now has its own env, **VFFT_ADOPT_WISDOM_DIR**; unset = fully off
 (the default), and the bundle system is untouched.
 
-**Gate (benches/gate_adopt_wisdom.c):** cold run records (file contents
+**Gate (build_tuned/benches/gate_adopt_wisdom.c):** cold run records (file contents
 verified: `2d 64 64 4 1 1` …), warm run **decision-match PASS** with create
 times 1.4→0.9 ms and 1.1→0.4 ms at the small cells (the skip scales to
 tens of ms at campaign cells). ND records verified (5 banked across the ND
@@ -1584,7 +1584,7 @@ bundle-calibration machinery and creates took **31–47 SECONDS**. The
 sidecar now owns **VFFT_ADOPT_WISDOM_DIR** (unset = fully off), completely
 decoupled from bundle semantics.
 
-**Gate (benches/gate_adopt_wisdom.c):** cold run records (file contents
+**Gate (build_tuned/benches/gate_adopt_wisdom.c):** cold run records (file contents
 verified: 2d 64 64 4 1 1 / 2d 256 32 4 1 1), warm run **decision-match
 PASS** with create times 1.4→0.9 ms and 1.1→0.4 ms at the small cells
 (the skipped A/Bs are tens of ms at campaign-size cells). ND records
@@ -1623,7 +1623,7 @@ class (N2-even already excludes primes there). Any mismatch destroys the
 plan and returns NULL with a stderr tag — never a silently wrong spectrum.
 Cost: two memsets + one col FFT + one inner call at create.
 
-**Gates:** benches/gate_cold_prime.c — a FRESH-PROCESS first-create at
+**Gates:** build_tuned/benches/gate_cold_prime.c — a FRESH-PROCESS first-create at
 (41,32) must be NULL (the exact cold path that used to succeed-wrong) and
 (27,32) must stay healthy (1.1e-15) — PASS under both builds. Permanent
 in-gate line [2D prime-N1] reject. **All four matrices ALL PASS** (2D now
@@ -1657,7 +1657,7 @@ unconditionally, and the single remaining `use_dif_forward` guard
 (oop_execute.h:52, fwd side) protects an OOP path that is DIT-by-
 construction (oop_dp builds use_dif_forward=0 only) — vestigial and
 correctly left in place. **Zero tree changes; the debt was ledger
-staleness.** Benches preserved: benches/bench_dif_bwd_jit_{full,ilin}.c.
+staleness.** Benches preserved: build_tuned/benches/bench_dif_bwd_jit_{full,ilin}.c.
 
 Adjacent open mechanism "jit-TU interleave 5×" remains a separate item.
 
@@ -1708,12 +1708,12 @@ stage-0 radix) and loses where the gather does (small K, R=25). Mixed at
 has no A/B scaffold yet; Q3's adopt-wisdom can cache it); until then the
 default must not regress anyone. Numerics fused-vs-explicit 3.8e-15.
 
-**Gates.** benches/gate_r2c_tail.c: 11 cells — dif-defoff polarity (must
+**Gates.** build_tuned/benches/gate_r2c_tail.c: 11 cells — dif-defoff polarity (must
 NOT fire without the env), 3 dit-fused, 2 dif-expl radix-8 (uncovered
 fallback), 5 dif-FUSED with fired-assertions ({10,10} B=64/67, {25,5},
 {20,8} B=65, {5,16}) ≤1.3e-12 — ALL PASS under BOTH builds (the avx512
 resolver arm proven). All four big matrices ALL PASS with the new objects
-linked. A/B bench preserved: benches/bench_dif_fused_ab.c (env-driven
+linked. A/B bench preserved: build_tuned/benches/bench_dif_fused_ab.c (env-driven
 BN/BK/BF0/BF1).
 
 
@@ -1762,7 +1762,7 @@ out at true K. Plain-C boundary helpers, compiler-vectorized, ZERO masks.
 Arm decision is FIRST-EXECUTE-lazy (matching il_wr's lazy pattern);
 VFFT_IL_PAD=0/1 forces it.
 
-**Correctness (benches/gate_il_pad.c, ALL PASS):** per-arm roundtrips
+**Correctness (build_tuned/benches/gate_il_pad.c, ALL PASS):** per-arm roundtrips
 4.4e-16..8.9e-16; cross-arm BIT-IDENTICAL where the two arms' planners
 picked the same chain ((100,5),(200,12) — lane independence makes equal
 chains bit-equal); sorted-magnitude spectrum equality at 2.4e-15/4.9e-15
@@ -1798,7 +1798,7 @@ cell — closing both gaps at once. All four big matrices ALL PASS.
 
 The premise: the fallback's element-by-element z<->split loops looked
 scalar and worth hand-vectorizing. The measurement (same-process, BIT-
-verified movement, benches/bench_il_convert_vec.c at (64,512)):
+verified movement, build_tuned/benches/bench_il_convert_vec.c at (64,512)):
 
 | arm | both converts |
 |---|---|
@@ -1854,7 +1854,7 @@ selection (tier purity preserved per slab).
 _vfft_z_dein/inter with barriers around the (already-MT) inplace
 transform; NK < 4096 stays ST (dispatch overhead floor).
 
-**Gates (benches/gate_il_mt.c, ALL PASS both builds):** MT-vs-ST
+**Gates (build_tuned/benches/gate_il_mt.c, ALL PASS both builds):** MT-vs-ST
 BIT-IDENTICAL — 0 diffs fwd AND bwd — at (200,12,T4), (256,64,T8),
 (100,67,T4 ragged slabs 24/24/19), (504,40,T8), the K<8 single-slab
 boundary, and the natural-order fallback cell (100,96,T4) through
@@ -1889,7 +1889,7 @@ VFFT_IL_PAD still forces (gates/benches); exec_me is never read
 hazard — RACED and verdicted K. The hazard that forced auto-engage
 removal is now a measured outcome, not a shipped regression.
 
-**Gate (extended benches/gate_il_pad.c, ALL PASS both builds):**
+**Gate (extended build_tuned/benches/gate_il_pad.c, ALL PASS both builds):**
 [verdict] cells (200,20) and (1000,12): A/B ran exactly ONCE (counter
 hook), verdict valid, roundtrip e-16, and the second plan on the same
 cell REUSED the stamp without re-racing (te HIT). All prior cells hold;
@@ -1914,7 +1914,7 @@ overwrite adjacent live lanes: **S3 correct-by-necessity there**, its S1
 would require padding the c2c pad allocation itself (a §6a54-analog,
 filed). fft2d c2c: no this_B-into-plan site exists.
 
-**The measurement (benches/bench_tile_partial.c, same-process, jit, med9)
+**The measurement (build_tuned/benches/bench_tile_partial.c, same-process, jit, med9)
 inverted the premise:**
 
 | this_B/B | full-B vs hybrid |
@@ -1941,7 +1941,7 @@ enough for its own session, now with the numbers that justify it.
 
 ## 6a61 — the featureset parity sweep + the last crash class eliminated
 
-**The sweep (benches/sweep_featureset.c):** dims{1..4} x {c2c, r2c+c2r}
+**The sweep (build_tuned/benches/sweep_featureset.c):** dims{1..4} x {c2c, r2c+c2r}
 x howmany{1,5} x order{default,natural} x layout{split,z} through the
 PUBLIC API, 80 cells, each classified OK / REJECT / FAIL, plus a T=4 MT
 pass. Headline: **zero wrong-number cells anywhere** — every gap is a
@@ -1990,7 +1990,7 @@ last dim; c2c via the generic fftnd wrap, real via fndr rank 4. h gains
 N4; the plane products (OOP memcpy + the §6a61 z convert-around) extend
 — so 4D c2c interleaved works on day one through the same fallback.
 
-**Proof (benches/gate_4d.c + the sweep, ALL PASS):** 4D r2c vs the
+**Proof (build_tuned/benches/gate_4d.c + the sweep, ALL PASS):** 4D r2c vs the
 brute-force naive real-DFT at 20 random natural bins: 3.2e-14 — the
 strong check, possible because fndr's output order is defined; c2r
 roundtrip 6.5e-16; c2c Parseval 1.9e-15 + roundtrip 6.7e-16. Sweep d=4:

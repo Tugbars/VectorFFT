@@ -15,8 +15,8 @@
 Companions: `arbitrary_k_tail_handling.md` §8 (the K=1 pure-scalar
 extreme, bit-exactness), `v1_0_results.md` (the BAILEY2 record),
 `il_padding_tail_handling.md` (the verdict-lifecycle pattern the routing
-will reuse). Benches: `benches/bench_k1_answer.c` (the four-arm padding
-race), `benches/bench_k1_bailey.c` (BAILEY2 vs the scalar tier).
+will reuse). Benches: `build_tuned/benches/bench_k1_answer.c` (the four-arm padding
+race), `build_tuned/benches/bench_k1_bailey.c` (BAILEY2 vs the scalar tier).
 
 ## 1. The gap, precisely
 
@@ -105,8 +105,8 @@ small-N design fades to a wash on this box, exactly per the v1_0 record.
 | what | where |
 |---|---|
 | the scalar tier + K=1 bit-exactness | `arbitrary_k_tail_handling.md` §2, §8 |
-| padding race | `benches/bench_k1_answer.c` |
-| BAILEY2 K=1 race | `benches/bench_k1_bailey.c` |
+| padding race | `build_tuned/benches/bench_k1_answer.c` |
+| BAILEY2 K=1 race | `build_tuned/benches/bench_k1_bailey.c` |
 | BAILEY2 record + kinds | `v1_0_results.md`; vfft.c OOP kinds (LEAF/MODEB/BAILEY2) |
 | the dormant twiddle engine | §6a41, `strided_tw.h` |
 | verdict-lifecycle pattern to reuse | `il_padding_tail_handling.md` §5, §6a59 |

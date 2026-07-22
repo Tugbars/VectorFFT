@@ -19,7 +19,7 @@ standard gen_set regeneration (deterministic — regen diff was 0 on the
 already-regenerated families). §2d regenerated 1074 codelets
 (inplace/oop/strided/c2r x avx2/avx512); **rfft + trig trees were left for the
 dev host** — regenerate them there and the fix flows through automatically.
-Verification: accuracy_harness.c (benches/ + outputs) — expect the §2d table:
+Verification: accuracy_harness.c (build_tuned/benches/ + outputs) — expect the §2d table:
 1.8–5.3 eps L2, MKL-parity class (1.3–1.7x), same O(sqrt(log N)) growth.
 
 ## 2. The fftnd module — 5 new headers, header-only
