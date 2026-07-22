@@ -276,4 +276,27 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_twl_fn(int R)
 #endif
 }
 
+/* K1 MONO (§12.4 item 3): the whole K=1 four-step in one emitted function,
+ * emit-time rodata twiddles, natural order, split, fwd. Uniform 11-arg ABI
+ * (tw/strides/me ignored — call with 0s). M1 coverage: N=64. */
+#if VFFT_OOP_GROUPW == 4u
+extern void vfft_k1_mono64_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+#endif
+
+static inline vfft_oop11_fn vfft_k1_mono_fn(int N)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (N)
+    {
+    case 64: return vfft_k1_mono64_fwd_avx2;
+    default: return 0;
+    }
+#else
+    (void)N;
+    return 0;
+#endif
+}
+
 #endif /* VFFT_OOP_LEAF_REGISTRY_H */

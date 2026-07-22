@@ -194,6 +194,43 @@ int main(void)
         if (ref) vfft_oop_plan_destroy(ref);
         vfft_oop_plan_destroy(p);
     }
+    /* ---- K1 MONO gate (emitted whole-four-step codelet, M1: N=64) ---- */
+    {
+        vfft_oop11_fn mono = vfft_k1_mono_fn(64);
+        if (mono) {
+            int N = 64;
+            double tol = 1e-9 * (double)N;
+            double *xr = ad(N), *xi = ad(N), *nr = ad(N), *ni = ad(N);
+            double *dr = ad(N), *di = ad(N);
+            for (int inp = 0; inp < 2; inp++) {
+                if (inp == 0)
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = cos(0.7 * n) + 0.1;
+                        xi[n] = sin(1.3 * n) - 0.05;
+                    }
+                else {
+                    srand(4242);
+                    for (int n = 0; n < N; n++) {
+                        xr[n] = (double)rand() / RAND_MAX - 0.5;
+                        xi[n] = (double)rand() / RAND_MAX - 0.5;
+                    }
+                }
+                naive_dft(N, xr, xi, nr, ni);
+                mono(xr, xi, dr, di, 0, 0, 0, 0, 0, 0, 0);
+                double e = 0;
+                for (int k = 0; k < N; k++) {
+                    double c1 = fabs(dr[k] - nr[k]), c2 = fabs(di[k] - ni[k]);
+                    if (c1 > e) e = c1;
+                    if (c2 > e) e = c2;
+                }
+                const char *bad = (e > tol || e != e) ? "  <FAIL>" : "";
+                if (bad[0]) fails++;
+                printf("  K1MONO64 %s vs naive = %.2e%s\n", inp ? "rnd" : "det", e, bad);
+            }
+            afree(xr); afree(xi); afree(nr); afree(ni); afree(dr); afree(di);
+        }
+    }
+
     printf("\n%s (%d fail)\n", fails ? "FAILURES" : "BAILEY2V: ALL GATES GREEN (split+IL, fwd+bwd, det+rnd)", fails);
     return fails ? 1 : 0;
 }

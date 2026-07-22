@@ -134,6 +134,8 @@ let run (argv : string array) : unit =
   let oop_il_out_sw = ref false in
   (* §12.4 4a: linear (consumption-order) twiddle table for t1 UL configs *)
   let oop_tw_linear = ref false in
+  (* §12.4 item 3: whole-K=1-four-step mono codelet (N = the positional arg) *)
+  let k1_mono = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
   let args = Array.to_list argv in
@@ -229,6 +231,7 @@ let run (argv : string array) : unit =
      else if arg = "--oop-il-in-sw" then oop_il_in_sw := true
      else if arg = "--oop-il-out-sw" then oop_il_out_sw := true
      else if arg = "--oop-tw-linear" then oop_tw_linear := true
+     else if arg = "--k1-mono" then k1_mono := true
      else if arg = "--oop-load" && !i + 1 < Array.length arr then begin
        oop_load_pat := arr.(!i + 1);
        incr i
@@ -1198,7 +1201,11 @@ let run (argv : string array) : unit =
       | true, true -> Annotated_SU uarch
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
-    if !oop then begin
+    if !k1_mono then
+      (* §12.4 item 3: the whole K=1 four-step as ONE emitted function
+         (emit-time rodata twiddles, natural order). N = positional arg. *)
+      print_string (Codelet_oop.emit_k1_mono ~isa ~n)
+    else if !oop then begin
       (* M2 OOP codelet family path. The DAG construction inside
          Codelet_oop.emit_codelet is independent of gen_radix's `deduped`
          (it rebuilds the DAG to control the strided=true flag end-to-end);
