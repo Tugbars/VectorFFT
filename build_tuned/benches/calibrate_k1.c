@@ -23,6 +23,9 @@
 #include "executor.h"
 #include "planner.h"
 #include "oop_plan.h"
+#include "k1_jit_runtime.h"
+
+static vfft_k1_jit_fn g_jit = 0;   /* one cell per process -> one resolve */
 
 static double now_ms(void)
 {
@@ -50,13 +53,13 @@ static double *ad(size_t n)
 /* routes */
 enum { R_3P = 0, R_3P_IP, R_2PA_IP, R_2PB_IP, R_TWL_IP, R_3P_IL, R_2P_IL,
        R_MONO, R_MONO_ALT, R_MONO_IL, R_3PL3_IP, R_2PAL3_IP,
-       R_2PB_SPEC, R_2PAL3_SPEC };
+       R_2PB_SPEC, R_2PAL3_SPEC, R_JIT };
 static const char *RNAME[] = { "3p", "3p-ip", "2pa-ip", "2pb-ip", "twl-ip",
                                "3p-il", "2p-il", "mono", "mono-alt", "mono-il",
                                "3p-l3-ip", "2pa-l3-ip",
-                               "2pb-spec", "2pa-l3-spec" };
+                               "2pb-spec", "2pa-l3-spec", "jit-v3" };
 /* axis of each route: 0=split-oop 1=split-ip 2=il */
-static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1 };
+static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1 };
 
 /* per-cell stride-specialized twins (§13.3 item A): 7-arg ABI, strides baked */
 extern void radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(
@@ -106,6 +109,9 @@ static void run_cand(cand_t *c)
     case R_2PAL3_SPEC: /* 4096 = 2pa-l3 64x64 */
         radix64_n1_oop_fwd_avx2_UG_UG_spec64_1_64_1(wr, wi, c->p->col_re, c->p->col_im, 0, 0, 64);
         radix64_t1_oop_fwd_avx2_UL_UG_log3_spec1_64_64_1(c->p->col_re, c->p->col_im, wr, wi, c->p->Qr, c->p->Qi, 64);
+        break;
+    case R_JIT: /* plan-time-compiled per-cell kernel (v3 shape) */
+        g_jit(wr, wi, wr, wi, c->p->col_re, c->p->col_im, c->p->Qr, c->p->Qi);
         break;
     }
 }
@@ -162,6 +168,35 @@ int main(int argc, char **argv)
         if (N == 4096 && R1 == 64 && R2 == 64 && nc < 118) {
             cand[nc].route = R_2PAL3_SPEC; cand[nc].R1 = R1; cand[nc].R2 = R2;
             cand[nc].p = p; cand[nc].best = 1e18; nc++;
+        }
+        /* JIT arm: resolve for this cell's median-winner (route, pair) */
+        if (!g_jit) {
+            int jr = 0;
+            if (N == 1024 && R1 == 32 && R2 == 32) jr = 2;      /* 2pb  */
+            else if (N == 4096 && R1 == 64 && R2 == 64) jr = 5; /* 2pa-l3 */
+            else if (N == 512 && R1 == 64 && R2 == 8) jr = 1;   /* 2pa  */
+            else if (N == 2048 && R1 == 64 && R2 == 32) jr = 3; /* twl  */
+            if (jr) {
+                g_jit = vfft_k1_jit_resolve(N, R1, R2, jr);
+                if (g_jit && nc < 118) {
+                    cand[nc].route = R_JIT; cand[nc].R1 = R1; cand[nc].R2 = R2;
+                    cand[nc].p = p; cand[nc].best = 1e18; nc++;
+                    if (jr == 3) { /* twl kernel expects the LINEAR tables */
+                        /* swap the plan's Qr/Qi pointers seen by R_JIT via p:
+                           use the dedicated fields directly in run — simplest:
+                           overwrite Qr/Qi on THIS plan copy (it also serves
+                           other candidates!) — NO: create a dedicated plan. */
+                        vfft_oop_plan_t *pj = vfft_oop_plan_create_k1(N, R1, R2);
+                        if (pj && pj->Qlr) {
+                            double *tmp;
+                            tmp = pj->Qr; pj->Qr = pj->Qlr; pj->Qlr = tmp;
+                            tmp = pj->Qi; pj->Qi = pj->Qli; pj->Qli = tmp;
+                            plans[np < 15 ? np++ : np - 1] = pj;
+                            cand[nc - 1].p = pj;
+                        } else if (pj) { vfft_oop_plan_destroy(pj); cand[nc - 1].route = R_2PA_IP; }
+                    }
+                }
+            }
         }
         /* LOG3 candidates: dedicated plan with the t1 pointers swapped ONCE
          * at setup (outside timing); same Qr/Qi tables. */
