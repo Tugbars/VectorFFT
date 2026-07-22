@@ -283,6 +283,15 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_twl_fn(int R)
 extern void vfft_k1_mono64_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void vfft_k1_mono128_16x8_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void vfft_k1_mono128_8x16_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void vfft_k1_mono256_16x16_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 #endif
 
 static inline vfft_oop11_fn vfft_k1_mono_fn(int N)
@@ -290,7 +299,24 @@ static inline vfft_oop11_fn vfft_k1_mono_fn(int N)
 #if VFFT_OOP_GROUPW == 4u
     switch (N)
     {
-    case 64: return vfft_k1_mono64_fwd_avx2;
+    case 64:  return vfft_k1_mono64_fwd_avx2;
+    case 128: return vfft_k1_mono128_16x8_fwd_avx2;
+    case 256: return vfft_k1_mono256_16x16_fwd_avx2;
+    default: return 0;
+    }
+#else
+    (void)N;
+    return 0;
+#endif
+}
+
+/* alternate pair (the calibrator's other candidate; today only 128 has one) */
+static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (N)
+    {
+    case 128: return vfft_k1_mono128_8x16_fwd_avx2;
     default: return 0;
     }
 #else
