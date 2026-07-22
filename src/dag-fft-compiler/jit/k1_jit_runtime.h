@@ -179,10 +179,13 @@ static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int rout
                     f2, R1, R2, R2);
         fprintf(f, "}\n");
         fclose(f);
+        /* unquoted paths, matching jit_runtime.h: cmd.exe mangles a command
+         * line that BEGINS with a quote, and none of these paths contain
+         * spaces. */
         char cmd[2200];
         snprintf(cmd, sizeof cmd,
-                 "\"%s\" -O3 -mavx2 -mfma -march=haswell -shared "
-                 "-fno-semantic-interposition -w -I\"%s\" \"%s\" -o \"%s\"",
+                 "%s -O3 -mavx2 -mfma -march=haswell -shared "
+                 "-fno-semantic-interposition -w -I%s %s -o %s",
                  VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_REPO, src, lib);
         if (system(cmd) != 0) return NULL;
     }
