@@ -198,6 +198,90 @@ MKL_THREADING_LAYER=SEQUENTIAL gdb -batch \
 Probe sources kept in-repo: `build_tuned/benches/mkl_probes/` — `mkl_k1_probe.c` (IL),
 `mkl_k1_split.c` (split), `mkl_k1_time.c` (IL-vs-split timing), + README with the exact gdb recipe.
 
+## 11. THE BAKEOFF — both methods built from our codelets and raced (2026-07-22, i9)
+
+Per the decide-by-measurement directive: both candidate K=1 architectures were built and raced
+before committing to either. Spike: `build_tuned/benches/k1_fourstep_spike.c`
+(`python build.py --src benches/k1_fourstep_spike.c --compile`; MKL columns from
+`benches/mkl_probes/mkl_k1_time.c`). Same machine, same core (pin 2), same hot-loop best-of-N
+methodology both sides. **All numbers below are the i9 re-baseline — they supersede the §7
+container-era µs figures for this host.**
+
+### 11a. The two arms — zero new production codelets
+
+- **Arm A (ours, "four-step over the batch engine")**: the batch identity made literal. Stage 1 =
+  ONE call of the *same* `n1_oop(R2)` codelet BAILEY2 already uses, but at `count=R1` (column c IS
+  lane c — the identity from §7), OOP `x→s`. Then an explicit SIMD 4×4 transpose `s→d`. Then
+  **verbatim** BAILEY2 stage 2 (`t1` + its own `Qr/Qi`; at K=1 the per-lane table
+  `Qr[(l2-1)·R2+k2] = W_N^{l2·k2}` IS the four-step diagonal). Because stage 2 and the leaf are
+  *shared with BAILEY2*, the A/B isolates exactly one variable: vectorized-stage-1+lump-transpose
+  vs scalar-stage-1-with-fused-stores. **Arm A's output is bit-identical to BAILEY2's
+  (cross-diff 0.0)** — same codelet DAG, same rounding.
+- **Arm B ("MKL's method", fused mono)**: hand-written in-register 8×8 four-step at N=64, split
+  layout — per t-half: 8 vector loads → DFT8 across elements → four-step twiddle cmul (k-varying
+  vector constants); 4×4 *register* transposes (the in-register reshaping of §3a, paid once, not
+  smeared); DFT8 across columns per m-half; contiguous natural-order stores. Zero re/im shuffles
+  (split — §3b's advantage kept). ~110 lines of intrinsics. This is the §6a36-discipline hand
+  reference for a future OCaml `--k1` emission mode.
+
+Gates: fwd vs naive O(N²) DFT, natural order, det AND rand inputs — **all green** (1e-15…1e-12,
+every pair, every N, both arms + mono + LEAF).
+
+### 11b. Results (ns, best pair per arm, hot-loop; MKL best-of-9 same pinning)
+
+| N | MKL-IL | MKL-split | **Arm A** (pair) | A / MKL-IL | A / MKL-split | BAILEY2 | scalar tier | old route |
+|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| 64 | 30.2 | 33.9 | **45** (8×8) — **mono 32** | 0.67× (**mono 0.94×**) | **mono WIN 1.06×** | 86 | 155 | LEAF 164 |
+| 128 | 68.6 | 127.7 | **93** (8×16) | 0.74× | **WIN 1.37×** | 191 | 446 | LEAF 696 |
+| 256 | 136.4 | 194.4 | **172** (4×64) | 0.79× | **WIN 1.13×** | 382 | 799 | B2 382 |
+| 512 | 290.1 | 337.9 | **393** (8×64) | 0.74× | 0.86× | 866 | 1602 | |
+| 1024 | 750.1 | 780.5 | **1248** (64×16) | 0.60× | 0.63× | 2442 | 3585 | |
+| 2048 | 2109.6 | 2439.7 | **3326** (64×32) | 0.63× | 0.73× | 7067 | 7897 | |
+| 4096 | 3979.5 | 5025.7 | **7250** (64×64) | 0.55× | 0.69× | 16220 | 18430 | |
+| 8192 | 8739.5 | 10815.0 | **26759** (64×128) | 0.33× | 0.40× | 56824 | 63518 | |
+
+### 11c. What the data says
+
+1. **Arm A halves BAILEY2 at every size** (A/B2 = 0.45–0.52, all pairs, all N). Vectorizing the
+   column pass pays for the explicit transpose several times over; the transpose itself is cheap
+   (11 ns at N=64, ~1.3 µs at N=4096, roughly flat per byte).
+2. **The mono tier is real and we can build it**: mono-64 = 32 ns vs MKL-IL 30.2 (0.94×), and it
+   BEATS MKL's own split kernel (33.9). At N=64 the fused mono beats Arm A 1.4× — in-register
+   reshaping wins exactly where the whole transform fits in registers, as §5 predicted.
+3. **Like-for-like layout (split vs split): we WIN through N≈256** (1.37× at 128, 1.13× at 256)
+   and hold 0.86× at 512 — with zero new codelets. The remaining gap vs MKL-IL at these sizes is
+   substantially the *layout tax* (their one interleaved stream vs our 4–6 split streams, §4),
+   which the existing `codelets/il/` family is designed to remove.
+4. **Optimal pair drifts with N** (4×64 at 256 → 64×16 at 1024 → 64×64 at 4096): fat leaves win
+   when t1's table stream is small; balanced pairs win as R1 grows. Per-cell wisdom calibration,
+   as everywhere else in the engine.
+5. **N≥8192 is the two-level ceiling** (0.33×): the per-lane t1 table alone streams
+   (R1−1)·R2·16 B ≈ 129 KB *per execute* at 64×128, the split-OOP working set (~3 buffer pairs)
+   leaves L2, and the unblocked 4×4 transpose thrashes. MKL recurses (§3c). Fixes are known, not
+   mysterious: level-3 recursion (row pass = another four-step), tiled transpose, and/or
+   twiddle recompute-in-register ([strided_twiddle_variants.md](strided_twiddle_variants.md) §5).
+
+### 11d. VERDICT — commit direction (pending user review of this doc)
+
+**Both methods enter the plan, tiered exactly like MKL tiers its own:** fused mono (Arm B shape)
+for N ≤ ~128; four-step-over-batch (Arm A shape) for 256–4096. Neither arm refuted the other —
+they own disjoint regimes, and the data drew the boundary at N≈128–256.
+
+Productization order:
+
+1. **P1 — BAILEY2V**: generalize the BAILEY2 executor to the Arm A shape (vectorized stage 1 +
+   SIMD transpose; stage 2 unchanged), per-cell (R1,R2) from OOP wisdom, old path as kill-switch.
+   Bit-identical by construction (§11a). Immediate ~2× on the routed K=1 answer.
+2. **P2 — IL-native Arm A** (the flagship): drive the `il/` codelet family through the same
+   4-step so an interleaved caller pays no conversion — attacks the 0.55–0.79× vs MKL-IL head-on.
+3. **P3 — OCaml `--k1` mono emission** for N ∈ {16,32,64,128}, modeled on the validated mono-64
+   hand reference (both layouts; IL variant pays §3a's shuffle tax, split variant doesn't).
+4. **P4 — large-N (≥8192)**: level-3 recursion + tiled transpose + twiddle recompute. Separate
+   workstream; do not let it block P1–P3.
+
+Guardrail unchanged: the bar is **MKL-interleaved** (§9). Split-vs-split wins are reported as
+secondary evidence only.
+
 ## See also
 - [k1_single_transform.md](../performance/k1_single_transform.md) — the K=1 gap + BAILEY2 record.
 - [strided_twiddle_variants.md](strided_twiddle_variants.md) — the twiddle-geometry law (§8.2).
