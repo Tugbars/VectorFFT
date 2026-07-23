@@ -37,93 +37,20 @@ typedef void (*vfft_il_n1b_fn)(const double *, const double *, double *,
 typedef void (*vfft_proto_exec_range_fn)(const stride_plan_t *, double *, double *,
                                          size_t, size_t, int, int);
 
-#define VFFT_IL_DECL(R, ISA) \
-    void radix##R##_n1_fwd_##ISA##_il_in(const double *, double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_n1_bwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t);
-
-#if defined(__AVX512F__) && !defined(VFFT_IL_FORCE_AVX2)
-VFFT_IL_DECL(2, avx512)  VFFT_IL_DECL(4, avx512)  VFFT_IL_DECL(8, avx512)
-VFFT_IL_DECL(16, avx512) VFFT_IL_DECL(32, avx512) VFFT_IL_DECL(64, avx512)
-#define VFFT_IL_F(R) radix##R##_n1_fwd_avx512_il_in
-#define VFFT_IL_B(R) radix##R##_n1_bwd_avx512_il_out
-#else
-VFFT_IL_DECL(2, avx2)  VFFT_IL_DECL(4, avx2)  VFFT_IL_DECL(8, avx2)
-VFFT_IL_DECL(16, avx2) VFFT_IL_DECL(32, avx2) VFFT_IL_DECL(64, avx2)
-#define VFFT_IL_F(R) radix##R##_n1_fwd_avx2_il_in
-#define VFFT_IL_B(R) radix##R##_n1_bwd_avx2_il_out
-#endif
-
-#ifndef VFFT_IL_POW2_ONLY
-/* extended (non-pow2) radices, BOTH ISAs — hoisted out of the avx2 branch
- * so avx512 full-config builds see the decls too (pre-6a16 latent bug). */
-VFFT_IL_DECL(3, avx2)   VFFT_IL_DECL(3, avx512)
-VFFT_IL_DECL(5, avx2)   VFFT_IL_DECL(5, avx512)
-VFFT_IL_DECL(6, avx2)   VFFT_IL_DECL(6, avx512)
-VFFT_IL_DECL(7, avx2)   VFFT_IL_DECL(7, avx512)
-VFFT_IL_DECL(10, avx2)  VFFT_IL_DECL(10, avx512)
-VFFT_IL_DECL(11, avx2)  VFFT_IL_DECL(11, avx512)
-VFFT_IL_DECL(12, avx2)  VFFT_IL_DECL(12, avx512)
-VFFT_IL_DECL(13, avx2)  VFFT_IL_DECL(13, avx512)
-VFFT_IL_DECL(17, avx2)  VFFT_IL_DECL(17, avx512)
-VFFT_IL_DECL(19, avx2)  VFFT_IL_DECL(19, avx512)
-VFFT_IL_DECL(20, avx2)  VFFT_IL_DECL(20, avx512)
-VFFT_IL_DECL(25, avx2)  VFFT_IL_DECL(25, avx512)
-#endif /* !VFFT_IL_POW2_ONLY */
-
-static inline vfft_il_n1f_fn _vfft_il_s0_fwd(int r)
-{
-    switch (r) {
-    case 2:  return VFFT_IL_F(2);
-    case 4:  return VFFT_IL_F(4);
-    case 8:  return VFFT_IL_F(8);
-    case 16: return VFFT_IL_F(16);
-    case 32: return VFFT_IL_F(32);
-    case 64: return VFFT_IL_F(64);
-#ifndef VFFT_IL_POW2_ONLY
-    case 3: return VFFT_IL_F(3);
-    case 5: return VFFT_IL_F(5);
-    case 6: return VFFT_IL_F(6);
-    case 7: return VFFT_IL_F(7);
-    case 10: return VFFT_IL_F(10);
-    case 11: return VFFT_IL_F(11);
-    case 12: return VFFT_IL_F(12);
-    case 13: return VFFT_IL_F(13);
-    case 17: return VFFT_IL_F(17);
-    case 19: return VFFT_IL_F(19);
-    case 20: return VFFT_IL_F(20);
-    case 25: return VFFT_IL_F(25);
-#endif
-    default: return 0;
-    }
-}
-static inline vfft_il_n1b_fn _vfft_il_s0_bwd(int r)
-{
-    switch (r) {
-    case 2:  return VFFT_IL_B(2);
-    case 4:  return VFFT_IL_B(4);
-    case 8:  return VFFT_IL_B(8);
-    case 16: return VFFT_IL_B(16);
-    case 32: return VFFT_IL_B(32);
-    case 64: return VFFT_IL_B(64);
-#ifndef VFFT_IL_POW2_ONLY
-    case 3: return VFFT_IL_B(3);
-    case 5: return VFFT_IL_B(5);
-    case 6: return VFFT_IL_B(6);
-    case 7: return VFFT_IL_B(7);
-    case 10: return VFFT_IL_B(10);
-    case 11: return VFFT_IL_B(11);
-    case 12: return VFFT_IL_B(12);
-    case 13: return VFFT_IL_B(13);
-    case 17: return VFFT_IL_B(17);
-    case 19: return VFFT_IL_B(19);
-    case 20: return VFFT_IL_B(20);
-    case 25: return VFFT_IL_B(25);
-#endif
-    default: return 0;
-    }
-}
+/* ═══════════════════════════════════════════════════════════════════════
+ * DERIVED-IL POPULATION RETIRED (2026-07-24, user architecture decision).
+ * The il_derive.py boundary codelets (codelets/il/, 304 files) were split-
+ * compute bodies with text-rewritten z boundaries — not true IL codelets —
+ * and were DELETED. Every lookup below now resolves 0, so every resolve
+ * wrapper returns -1 and every caller takes its existing fallback branch
+ * (the designed contract for uncovered radices; nothing else changed).
+ *
+ * The fold/execute machinery in the rest of this header is KEPT ON PURPOSE:
+ * these are the connection points the TRUE IL-native codelet family (tier-2:
+ * z-layout compute, fmaddsub cmul, duplicated twiddle tables) will re-wire.
+ * ═══════════════════════════════════════════════════════════════════════ */
+static inline vfft_il_n1f_fn _vfft_il_s0_fwd(int r) { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_s0_bwd(int r) { (void)r; return 0; }
 
 /* ════════════════════════════════════════════════════════════════════════
  * 6a16 extension — variant-aware boundary folding.
@@ -135,173 +62,17 @@ static inline vfft_il_n1b_fn _vfft_il_s0_bwd(int r)
  * bounds; nothing outside this header is modified. Uncovered radices
  * resolve to 0 -> the wrapper returns -1 and the caller falls back.
  * ════════════════════════════════════════════════════════════════════ */
-#define VFFT_IL_DECL_TWO(R, ISA) \
-    void radix##R##_t1s_dit_fwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dit_fwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dit_log3_fwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dif_fwd_##ISA##_il_in(const double *, double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dif_log3_fwd_##ISA##_il_in(const double *, double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dif_bwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_t1_dif_log3_bwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t);
-#define VFFT_IL_DECL_T1SB(R, ISA) \
-    void radix##R##_t1s_dit_bwd_##ISA##_il_in(const double *, double *, double *, \
-        const double *, const double *, size_t, size_t);
-#define VFFT_IL_DECL_N1X(R, ISA) \
-    void radix##R##_n1_fwd_##ISA##_il_out(const double *, const double *, double *, \
-        const double *, const double *, size_t, size_t); \
-    void radix##R##_n1_bwd_##ISA##_il_in(const double *, double *, double *, \
-        const double *, const double *, size_t, size_t);
-
-#if defined(__AVX512F__) && !defined(VFFT_IL_FORCE_AVX2)
-VFFT_IL_DECL_TWO(4, avx512)  VFFT_IL_DECL_TWO(8, avx512)
-VFFT_IL_DECL_TWO(16, avx512) VFFT_IL_DECL_TWO(32, avx512)
-VFFT_IL_DECL_T1SB(2, avx512)  VFFT_IL_DECL_T1SB(4, avx512)  VFFT_IL_DECL_T1SB(8, avx512)
-VFFT_IL_DECL_T1SB(16, avx512) VFFT_IL_DECL_T1SB(32, avx512) VFFT_IL_DECL_T1SB(64, avx512)
-VFFT_IL_DECL_N1X(2, avx512)  VFFT_IL_DECL_N1X(4, avx512)  VFFT_IL_DECL_N1X(8, avx512)
-VFFT_IL_DECL_N1X(16, avx512) VFFT_IL_DECL_N1X(32, avx512) VFFT_IL_DECL_N1X(64, avx512)
-#ifndef VFFT_IL_POW2_ONLY
-VFFT_IL_DECL_TWO(5, avx512)  VFFT_IL_DECL_TWO(10, avx512)
-VFFT_IL_DECL_TWO(20, avx512) VFFT_IL_DECL_TWO(25, avx512)
-VFFT_IL_DECL_T1SB(5, avx512)  VFFT_IL_DECL_T1SB(10, avx512)
-VFFT_IL_DECL_T1SB(20, avx512) VFFT_IL_DECL_T1SB(25, avx512)
-VFFT_IL_DECL_N1X(3, avx512)  VFFT_IL_DECL_N1X(5, avx512)  VFFT_IL_DECL_N1X(6, avx512)
-VFFT_IL_DECL_N1X(7, avx512)  VFFT_IL_DECL_N1X(10, avx512) VFFT_IL_DECL_N1X(11, avx512)
-VFFT_IL_DECL_N1X(12, avx512) VFFT_IL_DECL_N1X(13, avx512) VFFT_IL_DECL_N1X(17, avx512)
-VFFT_IL_DECL_N1X(19, avx512) VFFT_IL_DECL_N1X(20, avx512) VFFT_IL_DECL_N1X(25, avx512)
-#endif
-#define VFFT_IL_T1S_O(R)   radix##R##_t1s_dit_fwd_avx512_il_out
-#define VFFT_IL_T1_O(R)    radix##R##_t1_dit_fwd_avx512_il_out
-#define VFFT_IL_T1L3_O(R)  radix##R##_t1_dit_log3_fwd_avx512_il_out
-#define VFFT_IL_DIF_I(R)   radix##R##_t1_dif_fwd_avx512_il_in
-#define VFFT_IL_DIFL3_I(R) radix##R##_t1_dif_log3_fwd_avx512_il_in
-#define VFFT_IL_DIFB_O(R)  radix##R##_t1_dif_bwd_avx512_il_out
-#define VFFT_IL_DIFBL3_O(R) radix##R##_t1_dif_log3_bwd_avx512_il_out
-#define VFFT_IL_N1F_O(R)   radix##R##_n1_fwd_avx512_il_out
-#define VFFT_IL_N1B_I(R)   radix##R##_n1_bwd_avx512_il_in
-#define VFFT_IL_T1SB_I(R)  radix##R##_t1s_dit_bwd_avx512_il_in
-#else
-VFFT_IL_DECL_TWO(4, avx2)  VFFT_IL_DECL_TWO(8, avx2)
-VFFT_IL_DECL_TWO(16, avx2) VFFT_IL_DECL_TWO(32, avx2)
-VFFT_IL_DECL_T1SB(2, avx2)  VFFT_IL_DECL_T1SB(4, avx2)  VFFT_IL_DECL_T1SB(8, avx2)
-VFFT_IL_DECL_T1SB(16, avx2) VFFT_IL_DECL_T1SB(32, avx2) VFFT_IL_DECL_T1SB(64, avx2)
-VFFT_IL_DECL_N1X(2, avx2)  VFFT_IL_DECL_N1X(4, avx2)  VFFT_IL_DECL_N1X(8, avx2)
-VFFT_IL_DECL_N1X(16, avx2) VFFT_IL_DECL_N1X(32, avx2) VFFT_IL_DECL_N1X(64, avx2)
-#ifndef VFFT_IL_POW2_ONLY
-VFFT_IL_DECL_TWO(5, avx2)  VFFT_IL_DECL_TWO(10, avx2)
-VFFT_IL_DECL_TWO(20, avx2) VFFT_IL_DECL_TWO(25, avx2)
-VFFT_IL_DECL_T1SB(5, avx2)  VFFT_IL_DECL_T1SB(10, avx2)
-VFFT_IL_DECL_T1SB(20, avx2) VFFT_IL_DECL_T1SB(25, avx2)
-VFFT_IL_DECL_N1X(3, avx2)  VFFT_IL_DECL_N1X(5, avx2)  VFFT_IL_DECL_N1X(6, avx2)
-VFFT_IL_DECL_N1X(7, avx2)  VFFT_IL_DECL_N1X(10, avx2) VFFT_IL_DECL_N1X(11, avx2)
-VFFT_IL_DECL_N1X(12, avx2) VFFT_IL_DECL_N1X(13, avx2) VFFT_IL_DECL_N1X(17, avx2)
-VFFT_IL_DECL_N1X(19, avx2) VFFT_IL_DECL_N1X(20, avx2) VFFT_IL_DECL_N1X(25, avx2)
-#endif
-#define VFFT_IL_T1S_O(R)   radix##R##_t1s_dit_fwd_avx2_il_out
-#define VFFT_IL_T1_O(R)    radix##R##_t1_dit_fwd_avx2_il_out
-#define VFFT_IL_T1L3_O(R)  radix##R##_t1_dit_log3_fwd_avx2_il_out
-#define VFFT_IL_DIF_I(R)   radix##R##_t1_dif_fwd_avx2_il_in
-#define VFFT_IL_DIFL3_I(R) radix##R##_t1_dif_log3_fwd_avx2_il_in
-#define VFFT_IL_DIFB_O(R)  radix##R##_t1_dif_bwd_avx2_il_out
-#define VFFT_IL_DIFBL3_O(R) radix##R##_t1_dif_log3_bwd_avx2_il_out
-#define VFFT_IL_N1F_O(R)   radix##R##_n1_fwd_avx2_il_out
-#define VFFT_IL_N1B_I(R)   radix##R##_n1_bwd_avx2_il_in
-#define VFFT_IL_T1SB_I(R)  radix##R##_t1s_dit_bwd_avx2_il_in
-#endif
-
-#define _VFFT_IL_TWSW(NAME, MACRO) \
-static inline vfft_il_n1b_fn NAME(int r) { \
-    switch (r) { \
-    case 4:  return MACRO(4); \
-    case 8:  return MACRO(8); \
-    case 16: return MACRO(16); \
-    case 32: return MACRO(32); \
-    VFFT_IL_TW_EXT(MACRO) \
-    default: return 0; } }
-#define _VFFT_IL_TWSW_I(NAME, MACRO) \
-static inline vfft_il_n1f_fn NAME(int r) { \
-    switch (r) { \
-    case 4:  return MACRO(4); \
-    case 8:  return MACRO(8); \
-    case 16: return MACRO(16); \
-    case 32: return MACRO(32); \
-    VFFT_IL_TW_EXT(MACRO) \
-    default: return 0; } }
-#ifndef VFFT_IL_POW2_ONLY
-#define VFFT_IL_TW_EXT(M) \
-    case 5:  return M(5); \
-    case 10: return M(10); \
-    case 20: return M(20); \
-    case 25: return M(25);
-#else
-#define VFFT_IL_TW_EXT(M)
-#endif
-_VFFT_IL_TWSW(_vfft_il_t1s_ilo, VFFT_IL_T1S_O)
-_VFFT_IL_TWSW(_vfft_il_t1_ilo, VFFT_IL_T1_O)
-_VFFT_IL_TWSW(_vfft_il_t1l3_ilo, VFFT_IL_T1L3_O)
-_VFFT_IL_TWSW(_vfft_il_difb_ilo, VFFT_IL_DIFB_O)
-_VFFT_IL_TWSW(_vfft_il_difbl3_ilo, VFFT_IL_DIFBL3_O)
-_VFFT_IL_TWSW_I(_vfft_il_dif_ili, VFFT_IL_DIF_I)
-_VFFT_IL_TWSW_I(_vfft_il_difl3_ili, VFFT_IL_DIFL3_I)
-
-static inline vfft_il_n1b_fn _vfft_il_n1f_ilo(int r)
-{
-    switch (r) {
-    case 2:  return VFFT_IL_N1F_O(2);
-    case 4:  return VFFT_IL_N1F_O(4);
-    case 8:  return VFFT_IL_N1F_O(8);
-    case 16: return VFFT_IL_N1F_O(16);
-    case 32: return VFFT_IL_N1F_O(32);
-    case 64: return VFFT_IL_N1F_O(64);
-#ifndef VFFT_IL_POW2_ONLY
-    case 3: return VFFT_IL_N1F_O(3);
-    case 5: return VFFT_IL_N1F_O(5);
-    case 6: return VFFT_IL_N1F_O(6);
-    case 7: return VFFT_IL_N1F_O(7);
-    case 10: return VFFT_IL_N1F_O(10);
-    case 11: return VFFT_IL_N1F_O(11);
-    case 12: return VFFT_IL_N1F_O(12);
-    case 13: return VFFT_IL_N1F_O(13);
-    case 17: return VFFT_IL_N1F_O(17);
-    case 19: return VFFT_IL_N1F_O(19);
-    case 20: return VFFT_IL_N1F_O(20);
-    case 25: return VFFT_IL_N1F_O(25);
-#endif
-    default: return 0;
-    }
-}
-static inline vfft_il_n1f_fn _vfft_il_n1b_ili(int r)
-{
-    switch (r) {
-    case 2:  return VFFT_IL_N1B_I(2);
-    case 4:  return VFFT_IL_N1B_I(4);
-    case 8:  return VFFT_IL_N1B_I(8);
-    case 16: return VFFT_IL_N1B_I(16);
-    case 32: return VFFT_IL_N1B_I(32);
-    case 64: return VFFT_IL_N1B_I(64);
-#ifndef VFFT_IL_POW2_ONLY
-    case 3: return VFFT_IL_N1B_I(3);
-    case 5: return VFFT_IL_N1B_I(5);
-    case 6: return VFFT_IL_N1B_I(6);
-    case 7: return VFFT_IL_N1B_I(7);
-    case 10: return VFFT_IL_N1B_I(10);
-    case 11: return VFFT_IL_N1B_I(11);
-    case 12: return VFFT_IL_N1B_I(12);
-    case 13: return VFFT_IL_N1B_I(13);
-    case 17: return VFFT_IL_N1B_I(17);
-    case 19: return VFFT_IL_N1B_I(19);
-    case 20: return VFFT_IL_N1B_I(20);
-    case 25: return VFFT_IL_N1B_I(25);
-#endif
-    default: return 0;
-    }
-}
+/* Variant lookups — all stubbed to 0 (derived population deleted; see the
+ * retirement note above). The true IL-native family re-fills these. */
+static inline vfft_il_n1b_fn _vfft_il_t1s_ilo(int r)    { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_t1_ilo(int r)     { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_t1l3_ilo(int r)   { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_difb_ilo(int r)   { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_difbl3_ilo(int r) { (void)r; return 0; }
+static inline vfft_il_n1f_fn _vfft_il_dif_ili(int r)    { (void)r; return 0; }
+static inline vfft_il_n1f_fn _vfft_il_difl3_ili(int r)  { (void)r; return 0; }
+static inline vfft_il_n1b_fn _vfft_il_n1f_ilo(int r)    { (void)r; return 0; }
+static inline vfft_il_n1f_fn _vfft_il_n1b_ili(int r)    { (void)r; return 0; }
 
 /* Local bounded copies of the generic stage loops (see executor_generic.h). */
 static inline void _vfft_il_fwd_range(const stride_plan_t *plan, double *re,
@@ -435,24 +206,7 @@ static inline void _vfft_il_bwd_dif_range(const stride_plan_t *plan, double *re,
     }
 }
 
-static inline vfft_il_n1f_fn _vfft_il_t1sb_ili(int r)
-{
-    switch (r) {
-    case 2:  return VFFT_IL_T1SB_I(2);
-    case 4:  return VFFT_IL_T1SB_I(4);
-    case 8:  return VFFT_IL_T1SB_I(8);
-    case 16: return VFFT_IL_T1SB_I(16);
-    case 32: return VFFT_IL_T1SB_I(32);
-    case 64: return VFFT_IL_T1SB_I(64);
-#ifndef VFFT_IL_POW2_ONLY
-    case 5:  return VFFT_IL_T1SB_I(5);
-    case 10: return VFFT_IL_T1SB_I(10);
-    case 20: return VFFT_IL_T1SB_I(20);
-    case 25: return VFFT_IL_T1SB_I(25);
-#endif
-    default: return 0;
-    }
-}
+static inline vfft_il_n1f_fn _vfft_il_t1sb_ili(int r) { (void)r; return 0; }
 
 /* Verbatim VFFT_PROTO_BWD_LEG0_CONJ_avx2 (plan_executors.h) as a function —
  * bit parity with the jit STAGE_BWD leg-0 fixup demands the exact FMA
