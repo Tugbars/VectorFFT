@@ -141,6 +141,7 @@ let run (argv : string array) : unit =
   let k1_sw = ref false in
   (* tier-2 TRUE interleaved-native (z) codelet family (codelet_zil.ml) *)
   let z_native = ref false in
+  let z_t2 = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -238,6 +239,7 @@ let run (argv : string array) : unit =
      else if arg = "--oop-il-out-sw" then oop_il_out_sw := true
      else if arg = "--oop-tw-linear" then oop_tw_linear := true
      else if arg = "--z-native" then z_native := true
+     else if arg = "--z-t2" then (z_native := true; z_t2 := true)
      else if arg = "--k1-mono" then k1_mono := true
      else if arg = "--k1-r1" && !i + 1 < Array.length arr then begin
        k1_r1 := int_of_string arr.(!i + 1);
@@ -1217,7 +1219,9 @@ let run (argv : string array) : unit =
     let bb_budget_arg = if !bb then Some !bb_budget else None in
     if !z_native then
       (* tier-2 TRUE interleaved-native family: N (positional) = the radix *)
-      print_string (Codelet_zil.emit_z_n1 ~vec_width:isa.Isa.vec_width ~radix:n)
+      print_string
+        (if !z_t2 then Codelet_zil.emit_z_t2 ~vec_width:isa.Isa.vec_width ~radix:n
+         else Codelet_zil.emit_z_n1 ~vec_width:isa.Isa.vec_width ~radix:n)
     else if !k1_mono then
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function
          (emit-time rodata twiddles, natural order). N = positional arg. *)

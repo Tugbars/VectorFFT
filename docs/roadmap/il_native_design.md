@@ -125,6 +125,17 @@ IL analog of our leg-axis LOG3, a per-cell calibrated variant later, not M1.
 - **Gate VTW2 (32 B/pt) vs compact (16 B/pt) by twiddle-stream residency, per cell** — VTW2 wins
   where the stream is L1/L2-resident (≤mid-N, our IL-hot zone); compact wins where it spills to DRAM.
 
+## 3c. M1 EMITTER — DONE (2026-07-24)
+
+`codelet_zil.ml` = the new complex-vector backend (the existing emitter's `expr` IR is
+real-valued split arithmetic — a genfft-scalar model — so native IL required a separate
+backend, not a renderer swap). `gen_radix.exe 8 --z-native --isa avx2 --emit-c` emits
+`codelets/zil/avx2/radix8_z_n1_avx2.c` (z-pointer oop11-shaped ABI, complex-unit strides,
+2 complex/ymm, ±i via `permute 0x5 + xor` sign mask). Family dir `codelets/zil/` wired into
+build.py. **GATE: emitted == hand oracle BIT-IDENTICAL (0.0); oracle == naive 2.94e-15.**
+NEXT (M2): radices 4/16/32/64 n1 + the t2 twiddle kernel (VTW2 cos-first + BYTW2), then the
+two-pass z→z K=1 route raced vs MKL-IL per §3a.
+
 ## 3b. M1 GO/NO-GO — MEASURED (2026-07-24): GO, regime-dependent
 
 Hand-written z-native radix-8 leaf vs split-radix-8 + il_in/il_out boundary (our current
@@ -150,6 +161,64 @@ whole engine already does.
 **Bonus — the memory-bound thesis, measured again:** split on *two* streams (`re[]`+`im[]`) is
 **49% SLOWER** than split-with-il-conversion on *one* z stream at K=1024. The il boundary buys
 single-stream access and pays for itself mid-K — the two-memory-stream tax is real and large.
+
+## 5. FAMILY BUILD CHECKLIST (numbered; each item gated before the next depends on it)
+
+Twiddle-strategy note first, because it shapes items 5–8: the split engine ships THREE
+calibrated twiddle strategies — **t1/FLAT** (per-lane vector loads from parallel per-leg
+rows, `loadu(&tw_re[l*me+b])`), **t1s/BROADCAST** (`set1(tw_re[l])`, one W shared by all
+lanes — admissible only when W is constant across the SIMD axis), **LOG3** (sparse base
+rows + in-register cmul derivation chains) — plus twl (consumption-order linear layout of
+FLAT). The three-twiddle-methods thesis (per-cell measured mixing) is a core contribution
+and CARRIES OVER: the IL family gets the analog of each, raced per cell, not one collapsed
+method. The twiddle geometry law carries too: in z-vectors the two 128-bit lanes are two
+adjacent columns/rows, so K=1 four-step twiddles VARY across the vector → broadcast-class
+inadmissible there, per-lane-class (VTW2) and leg-axis LOG3 admissible — same law, new clothes.
+
+1. **[DONE] z-n1 radix-8 leaf** — `codelet_zil.ml`, `--z-native`, emitted
+   `codelets/zil/avx2/radix8_z_n1_avx2.c`; GATE: bit-identical to the hand oracle (0.0),
+   oracle vs naive 2.94e-15. IL op-selection rules 1–5 codified in the module header.
+2. **z-n1 radices 4/16/32/64** — same rules; rule 3 (`FLIP+vaddsubpd` lone rotations)
+   activates at R≥16; keep each body spill-free ≤16 ymm or split per the two-regime rule.
+   GATE: per-radix vs naive; bit vs hand oracle where one exists.
+3. **Count/tail contract** — the z loop is 2 complex/iter: state and assert `count % 2 == 0`
+   (the UL twins' `me%4` precedent). All K=1 call sites use multiples of 4; the contract
+   must still be explicit.
+4. **z store lattice (corner-turn-in-stores)** — `vinsertf128 $1` + `vperm2f128 $0x31` per
+   output pair to two sectioned bases (MKL §4 pattern); complex moves as 128-bit units
+   (cheaper than split's two-plane lattice). Variant flag on the emitter like UG/UL.
+5. **z load lattice (transpose-in-loads)** — the UL analog, same lane ops on the load side.
+6. **Twiddle strategy family — the IL analog of each split strategy, each a separate twin:**
+   - **6a. z-T1/VTW2 (dense stream, DEFAULT)** — table emitted at generation: cos-first
+     `[c,c,c',c'][-s,+s,-s',+s']`, 64 B/record, consumption-order single cursor (this IS
+     the twl idea unified with dup+sign-folding); apply = BYTW2 (2 loads + FLIP + mul + fma,
+     zero table-side shuffles). Per-128-bit-lane twiddles → K=1-admissible dense form.
+   - **6b. z-T1 compact (residency-gated variant)** — plain `[c,s]` 16 B/pt + VZMUL
+     (3 shuffles): half the table bytes, more port-5; wins only where the VTW2 stream
+     spills past L2 (large N). Calibrator decides per cell (§3a residency gate).
+   - **6c. z-T1S (broadcast)** — `set1(c)` + sign-alternated sin vector (set1+xor or
+     emit-time VLIT), then the same FLIP+mul+fma core. **Admissible ONLY where both lanes
+     share W** (batch contexts; NOT K=1 columns — geometry law). MKL's baked-immediate
+     combine roots are this strategy's constant-folded extreme.
+   - **6d. z-LOG3 (VTW3/t3-class)** — sparse base twiddles + VZMUL leg-axis derivation
+     chains (FFTW t3fv proves transfer; ~7.75× table-byte cut at R=32). K=1-admissible.
+   GATE: all four bit-or-tolerance vs a common reference; VTW2 fill verified against the
+   MKL live-table dump (docs/research, cos-first Pythagorean check).
+7. **z-t2 kernel, radix-8 first** — 6a apply + combine with `addsub` ±i triads + rule-4
+   FMA folding; two-regime scheduling (unroll + spill-to-widen per §3a). GATE vs naive.
+8. **Backward twins** — direction-specialized codelets: conjugate table fill (`+sin` fold)
+   + swapped `vfmadd↔vfnmadd` + ±i sign — never a runtime branch, never text derivation.
+9. **Registry + build wiring** — `vfft_z_n1_fn(R)` / `vfft_z_t2_fn(R,strategy)` resolvers;
+   `codelets/zil/` already in build.py.
+10. **Two-pass z→z K=1 composition at 512** — race the splits (16×32 per MKL, 64×8/8×64
+    per our engine) × twiddle strategies vs MKL-IL 291 ns. GATE vs naive first.
+11. **Calibrator + wisdom** — z-native routes as new IL-axis arms in calibrate_k1; kind-3
+    il_route codes extended; median discipline as always.
+12. **M4 retirement** — wire the K=1 engine's IL dispatch to the z family, DELETE the
+    32 boundary-lattice twins (population 2), re-wire the il_execute.h sockets for the
+    classic engine's z→z paths.
+13. **Standing gates at every step** — public-API ladder green; master K=1 gate green;
+    no step lands without its numbered gate above.
 
 ## 4. Open questions (resolve by measurement, not argument)
 - VZMUL vs BYTW2 crossover (table bytes vs shuffles) — per-cell, likely BYTW2 everywhere
