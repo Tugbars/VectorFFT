@@ -93,3 +93,4 @@ build_tuned/benches/mb_256.txt
 # can't leak into production (see docs/roadmap/schedule_search_plan.md).
 /src/dag-fft-compiler/experiments/
 /build_tuned/benches/mkl_probes
+/docs/research

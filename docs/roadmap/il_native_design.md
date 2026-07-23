@@ -93,10 +93,63 @@ IL analog of our leg-axis LOG3, a per-cell calibrated variant later, not M1.
   (b) MKL-IL, at a K=8-column microbench. GO/NO-GO on codegen quality (spill count,
   port mix vs FFTW's own objdump).
 - **M2**: `radix8_z_t2` (t2fv analog, VTW2 tables) + the two-pass z→z K=1 route at one
-  cell (512 = 64×8 or 8×64); gate bit-vs-tolerance, race vs MKL-IL 291 ns.
+  cell. **⚠ split choice is a CALIBRATOR AXIS, not fixed**: MKL's disassembled N=512 uses
+  **16×32** (small first radix, larger co-size — small p5-bound reshape leaf, FMA density in
+  pass 2), NOT the 64×8/8×64 this doc first proposed. Race 16×32 alongside 64×8/8×64 vs
+  MKL-IL 291 ns; treat column-radix and W-length as independent axes. See
+  [../research/mkl_il_512_anatomy.md](../research/mkl_il_512_anatomy.md) §8 item 5.
 - **M3**: radix set {4,8,16,32,64} × {n1,t2}, both directions (bwd = conj tables +
-  swapped addsub forms — NOT text derivation); calibrator arms; wisdom.
+  swapped addsub forms — NOT text derivation); calibrator arms; wisdom. Ship
+  **direction-specialized fwd/bwd codelets** (MKL does: fwd/bwd differ only by swapped
+  `vfmadd`↔`vfnmadd` + ±i sign, no runtime branch). Amortize digit-reversal into a
+  **precomputed input-offset stack table** (MKL: `mov 0xNN(%rsp),%r13; vmovupd (%rcx,%r13,1)`)
+  so the permutation costs address-gen, not vector ports.
 - **M4**: re-wire the §2.6 targets; retire population 2; extend JIT wrapper table.
+
+### 3a. MKL-confirmed emitter directives (from docs/research/mkl_il_512_anatomy.md, verified)
+- **Cap the M1 leaf radix at 8, not 16.** MKL's radix-8 column sibling runs spill-free in ≤16
+  ymm (26 FP-arith + 8 transpose + 6 ±i ops); its radix-16 needs a 0x218 stack frame + mid-body
+  spills. Spill-free radix-8 is the AVX2 sweet spot; reserve radix-16/32 for M3.
+- **Two-regime scheduler keyed to arithmetic intensity.** Twiddle-free/low-AI → compact,
+  register-resident, LOOPED (matches our lazy-load sink-first). Twiddle-dense → SPILL-TO-WIDEN:
+  raise the live cap above 16, park completed sub-DAGs in an L1-resident stack pool, unroll
+  fully straight-line (MKL parks ~62 ymm-slots / ~2.4 KB to expose ILP). Keep the streamed
+  VTW2 twiddle-apply a SEPARATE stage feeding scratch — do NOT fuse BYTW2 into the FMA-dense combine.
+- **Port 5 is a first-class scheduler resource.** The twiddle-free pass is p5-BOUND (8 mandatory
+  `vinsertf128`/`vperm2f128` + 3 `vshufpd` vs 4 FMA); a cp_dist scheduler over one generic
+  "vector ALU" will starve it. Add a p5 pressure term; minimize interleave→strided transpose
+  pairs/output. GO/NO-GO metric = match MKL's arith (~26 flop/output, FMA:add≈1:1) while cutting
+  its movement half (MKL is only ~40% arithmetic, ~23% spill, ~12% `vmovapd` copies).
+- **VTW2 record is COS-FIRST** `[c,c,c',c'][-s,+s,-s',+s']` (64 B, two lanes = two adjacent
+  rows, exp r·k), single forward cursor `add $0x40`. Verified byte-level against MKL's live table.
+- **Gate VTW2 (32 B/pt) vs compact (16 B/pt) by twiddle-stream residency, per cell** — VTW2 wins
+  where the stream is L1/L2-resident (≤mid-N, our IL-hot zone); compact wins where it spills to DRAM.
+
+## 3b. M1 GO/NO-GO — MEASURED (2026-07-24): GO, regime-dependent
+
+Hand-written z-native radix-8 leaf vs split-radix-8 + il_in/il_out boundary (our current
+arch), both bit-exact (2.94e-15), on the same interleaved buffer. Bench
+`build_tuned/benches/il_r8_m1_race.c`; full numbers `../research/m1_znative_r8_race.txt`.
+
+| K (batch) | z-native | split+il | verdict |
+|--:|--:|--:|--|
+| 8 | 1.32 | 3.24 | **z-native 2.5× WIN** |
+| 64 | 1.30 | 3.18 | **z-native 2.4× WIN** |
+| 256 | 4.73 | 4.09 | split 1.15× |
+| 1024 | 4.47 | 3.92 | split 1.14× |
+| 4096 | 3.79 | 4.00 | z-native ~tie |
+
+**Verdict: GO.** z-native **dominates 2.5× at small K** (≤64) — the leaf's common regime (the
+four-step leaf runs at K=R1; the mono tier is exactly here). It loses ~15% at mid-K (256–1024)
+where its VL=2 penalty (2× butterfly instrs vs split's 4-wide) is exposed once L1-resident
+latency stops hiding it. **This twiddle-free leaf is z-native's WORST case** (no VTW2/BYTW2
+advantage); the M2 t2 kernel should favor it more. Two consequences: (a) build M1; (b) the
+regime-dependence means **keep both families in the calibrator** — per-cell choice, as the
+whole engine already does.
+
+**Bonus — the memory-bound thesis, measured again:** split on *two* streams (`re[]`+`im[]`) is
+**49% SLOWER** than split-with-il-conversion on *one* z stream at K=1024. The il boundary buys
+single-stream access and pays for itself mid-K — the two-memory-stream tax is real and large.
 
 ## 4. Open questions (resolve by measurement, not argument)
 - VZMUL vs BYTW2 crossover (table bytes vs shuffles) — per-cell, likely BYTW2 everywhere
