@@ -147,6 +147,7 @@ let run (argv : string array) : unit =
   let z_strided = ref false in
   let z_strided_st = ref false in
   let z_post_tw = ref false in
+  let z_trans_st = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -251,6 +252,7 @@ let run (argv : string array) : unit =
      else if arg = "--z-t2ss" then
        (z_native := true; z_t2 := true; z_strided := true; z_strided_st := true)
      else if arg = "--z-t2d" then (z_native := true; z_t2 := true; z_post_tw := true)
+     else if arg = "--z-n1t" then (z_native := true; z_trans_st := true)
      else if arg = "--k1-mono" then k1_mono := true
      else if arg = "--k1-r1" && !i + 1 < Array.length arr then begin
        k1_r1 := int_of_string arr.(!i + 1);
@@ -1236,8 +1238,9 @@ let run (argv : string array) : unit =
              ~post_tw:!z_post_tw ~blocked2:!z_blocked2 ~blocked:!z_blocked
              ~vec_width:isa.Isa.vec_width ~radix:n ()
          else
-           Codelet_zil.emit_z_n1 ~strided:!z_strided ~blocked2:!z_blocked2
-             ~blocked:!z_blocked ~vec_width:isa.Isa.vec_width ~radix:n ())
+           Codelet_zil.emit_z_n1 ~strided:!z_strided ~trans_st:!z_trans_st
+             ~blocked2:!z_blocked2 ~blocked:!z_blocked
+             ~vec_width:isa.Isa.vec_width ~radix:n ())
     else if !k1_mono then
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function
          (emit-time rodata twiddles, natural order). N = positional arg. *)

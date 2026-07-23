@@ -384,9 +384,9 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
  *     [c_l(k), c_l(k), c_l(k+1), c_l(k+1)] then [-s_l(k), +s_l(k), -s_l(k+1), +s_l(k+1)]
  *   (cos-first, sign-folded, per-128-bit-lane = per-column) — single forward
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
-let emit_z_kernel ~(post_tw : bool) ~(strided_st : bool) ~(strided : bool)
-    ~(blocked2 : bool) ~(blocked : bool) ~(vec_width : int) ~(radix : int)
-    ~(twiddled : bool) : string =
+let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
+    ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(vec_width : int)
+    ~(radix : int) ~(twiddled : bool) : string =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
   if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
     failwith "codelet_zil: radix must be one of 4/8/16/32/64";
@@ -394,15 +394,18 @@ let emit_z_kernel ~(post_tw : bool) ~(strided_st : bool) ~(strided : bool)
     failwith "codelet_zil: --z-blocked needs radix >= 16 (r4/r8 are spill-free)";
   if blocked2 && radix <> 64 then
     failwith "codelet_zil: --z-blocked2 (8x8 CT) is radix 64 only";
-  if (strided || strided_st || post_tw) && (blocked || blocked2) then
-    failwith "codelet_zil: strided/post-tw variants not composed with blocked yet";
+  if (strided || strided_st || post_tw || trans_st) && (blocked || blocked2) then
+    failwith "codelet_zil: strided/post-tw/trans-st variants not composed with blocked yet";
   if post_tw && not twiddled then
     failwith "codelet_zil: post_tw (t2d) implies a twiddled kernel";
+  if trans_st && (twiddled || strided || strided_st) then
+    failwith "codelet_zil: trans_st (n1t corner-turn stores) is an n1 variant";
   let kind =
     (if twiddled then if post_tw then "t2d" else "t2" else "n1")
     ^ (if blocked2 then "b2" else if blocked then "b" else "")
     ^ (if strided then "s" else "")
-    ^ if strided_st then "s" else ""
+    ^ (if strided_st then "s" else "")
+    ^ if trans_st then "t" else ""
   in
   let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" radix kind in
   (* render the body FIRST (staging buffer) so CTw constants discovered during
@@ -498,6 +501,24 @@ let emit_z_kernel ~(post_tw : bool) ~(strided_st : bool) ~(strided : bool)
       Buffer.add_string buf (Printf.sprintf "        __m256d out%d;\n" pt)
     done;
     Buffer.add_buffer buf body;
+    if trans_st then
+      (* CORNER-TURN-IN-STORES (checklist item 4; MKL anatomy §4): process
+       * output pairs (p, p+1); two vperm2f128 repack the lanes so BOTH
+       * stores are full-width AND contiguous within their column block:
+       *   lo = [out_p lane k | out_{p+1} lane k]   -> zout[k*OLs + p]
+       *   hi = [out_p lane k+1 | out_{p+1} lane k+1] -> zout[(k+1)*OLs + p]
+       * The transposed scratch lets pass 2 run PLAIN t2 (no strided loads). *)
+      (for p = 0 to (radix / 2) - 1 do
+         let a = 2 * p and b = (2 * p) + 1 in
+         Buffer.add_string buf
+           (Printf.sprintf
+              "        _mm256_storeu_pd(zout + 2*(k*OLs + %d),\n\
+              \            _mm256_permute2f128_pd(out%d, out%d, 0x20));\n\
+              \        _mm256_storeu_pd(zout + 2*((k+1)*OLs + %d),\n\
+              \            _mm256_permute2f128_pd(out%d, out%d, 0x31));\n"
+              a a b a a b)
+       done)
+    else
     for pt = 0 to radix - 1 do
       (* t2d: apply the streamed post-twiddle (BYTW2) to output legs >= 1 *)
       let v =
@@ -527,12 +548,12 @@ let emit_z_kernel ~(post_tw : bool) ~(strided_st : bool) ~(strided : bool)
   Buffer.add_string buf "    }\n}\n";
   Buffer.contents buf
 
-let emit_z_n1 ?(strided = false) ~blocked2 ~blocked ~vec_width ~radix () :
-    string =
-  emit_z_kernel ~post_tw:false ~strided_st:false ~strided ~blocked2 ~blocked
-    ~vec_width ~radix ~twiddled:false
+let emit_z_n1 ?(strided = false) ?(trans_st = false) ~blocked2 ~blocked
+    ~vec_width ~radix () : string =
+  emit_z_kernel ~trans_st ~post_tw:false ~strided_st:false ~strided ~blocked2
+    ~blocked ~vec_width ~radix ~twiddled:false
 
 let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
     ~blocked2 ~blocked ~vec_width ~radix () : string =
-  emit_z_kernel ~post_tw ~strided_st ~strided ~blocked2 ~blocked ~vec_width
-    ~radix ~twiddled:true
+  emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
+    ~blocked ~vec_width ~radix ~twiddled:true
