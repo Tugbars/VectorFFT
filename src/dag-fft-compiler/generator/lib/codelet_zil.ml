@@ -106,29 +106,35 @@ let rec dft_z (n : int) (xs : zx array) : zx array =
   end
 
 (* lowering: hash-consed emission (each distinct node once, topological),
- * distinct CTw constants deduped into static VLIT vectors. *)
-let emit_dft_body (buf : Buffer.t) ~(ind : string) (radix : int)
+ * distinct CTw constants deduped into static VLIT vectors.
+ * ~in_of names the input leg i (default "in<i>"); ~park, when given, receives
+ * (slot, temp-name) per output instead of the default "out<p> = t;" write —
+ * the blocked (Tier-B analog) path uses it to store sub-DFT halves to the
+ * function-scope spill arrays immediately after each producer completes. *)
+let cid (consts : (string, string * float * float) Hashtbl.t) (c, s) : string =
+  let key = Printf.sprintf "%.17g_%.17g" c s in
+  match Hashtbl.find_opt consts key with
+  | Some (n, _, _) -> n
+  | None ->
+      let n = Printf.sprintf "_ZW%d" (Hashtbl.length consts) in
+      Hashtbl.add consts key (n, c, s);
+      n
+
+let emit_dft_body ?(in_of = fun i -> Printf.sprintf "in%d" i) ?park
+    (buf : Buffer.t) ~(ind : string) (radix : int)
     (consts : (string, string * float * float) Hashtbl.t) : unit =
   let outs = dft_z radix (Array.init radix (fun i -> In i)) in
   let memo : (zx, string) Hashtbl.t = Hashtbl.create 128 in
   let ctr = ref 0 in
   let fresh () = incr ctr; Printf.sprintf "z%d" !ctr in
-  let cid (c, s) =
-    let key = Printf.sprintf "%.17g_%.17g" c s in
-    match Hashtbl.find_opt consts key with
-    | Some (n, _, _) -> n
-    | None ->
-        let n = Printf.sprintf "_ZW%d" (Hashtbl.length consts) in
-        Hashtbl.add consts key (n, c, s);
-        n
-  in
+  let cid = cid consts in
   let rec go (e : zx) : string =
     match Hashtbl.find_opt memo e with
     | Some v -> v
     | None ->
         let v =
           match e with
-          | In i -> Printf.sprintf "in%d" i
+          | In i -> in_of i
           | Add (a, b) ->
               let a = go a and b = go b and t = fresh () in
               Buffer.add_string buf
@@ -177,7 +183,10 @@ let emit_dft_body (buf : Buffer.t) ~(ind : string) (radix : int)
   Array.iteri
     (fun p e ->
       let v = go e in
-      Buffer.add_string buf (Printf.sprintf "%sout%d=%s;\n" ind p v))
+      match park with
+      | Some f -> f p v
+      | None ->
+          Buffer.add_string buf (Printf.sprintf "%sout%d=%s;\n" ind p v))
     outs
 
 (* radix-8 forward n1, interleaved. `outs.(p)` is the C expression producing
@@ -217,6 +226,157 @@ let r8_body (buf : Buffer.t) ~(ind : string) : unit =
  * plugs into the existing execution machinery: z in the "re" pointer slot, the
  * "im" slot unused; strides in COMPLEX units (leg Ls, group Gs, out OLs/OGs).
  * Loops `count` columns, 2 per %ymm. *)
+(* BLOCKED (Tier-B analog, doc-58 economics carried to z) body: the DIT
+ * recursion's natural pass boundary. PASS 1a/1b compute the even/odd
+ * half-DFTs (each own loads + twiddle-apply, own brace scope) and PARK every
+ * output to the function-scope zspill[] immediately (z advantage: ONE packed
+ * array, not re/im pairs). PASS 2 reloads pairs on demand, applies the
+ * top-level combine twiddle (same class selection as dft_z), and stores
+ * straight to zout (store-on-compute). *)
+let emit_z_blocked_body (buf : Buffer.t) ~(ind : string) ~(radix : int)
+    ~(twiddled : bool) (consts : (string, string * float * float) Hashtbl.t) :
+    unit =
+  let h = radix / 2 in
+  let p fmt = Printf.ksprintf (fun s -> Buffer.add_string buf (ind ^ s ^ "\n")) fmt in
+  let load_leg name leg =
+    if twiddled && leg >= 1 then begin
+      p "__m256d x_%s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg;
+      p "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n%s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
+        name ((leg - 1) * 8) name ind (((leg - 1) * 8) + 4) name
+    end
+    else p "__m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg
+  in
+  let half tag base_slot leg_of =
+    p "{ /* PASS 1%s: %s half -> zspill[%d..%d] */" tag
+      (if base_slot = 0 then "even" else "odd") base_slot (base_slot + h - 1);
+    for i = 0 to h - 1 do
+      load_leg (Printf.sprintf "ld%s%d" tag i) (leg_of i)
+    done;
+    emit_dft_body buf ~ind:(ind ^ "    ") h consts
+      ~in_of:(fun i -> Printf.sprintf "ld%s%d" tag i)
+      ~park:(fun s v ->
+        Buffer.add_string buf
+          (Printf.sprintf "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
+             ind (base_slot + s) v));
+    p "}"
+  in
+  half "a" 0 (fun i -> 2 * i);
+  half "b" h (fun i -> (2 * i) + 1);
+  p "/* PASS 2: combine, reload-on-demand, store-on-compute */";
+  let pi = 4.0 *. atan 1.0 in
+  for k = 0 to h - 1 do
+    p "{";
+    p "__m256d ek = _mm256_loadu_pd((const double *)&zspill[%d]);" k;
+    p "__m256d ok = _mm256_loadu_pd((const double *)&zspill[%d]);" (h + k);
+    let store idx expr =
+      p "_mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);" idx expr
+    in
+    if k = 0 then begin
+      store 0 "_mm256_add_pd(ek,ok)";
+      store h "_mm256_sub_pd(ek,ok)"
+    end
+    else if 4 * k = radix then begin
+      p "__m256d t = _mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM);";
+      store k "_mm256_add_pd(ek,t)";
+      store (k + h) "_mm256_sub_pd(ek,t)"
+    end
+    else if 8 * k = radix then begin
+      p "__m256d x = _mm256_add_pd(ok,_mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM));";
+      store k (Printf.sprintf "_mm256_fmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh);
+      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh)
+    end
+    else if 8 * k = 3 * radix then begin
+      p "__m256d x = _mm256_sub_pd(_mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM),ok);";
+      store k (Printf.sprintf "_mm256_fmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh);
+      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh)
+    end
+    else begin
+      let c = cos (2.0 *. pi *. float_of_int k /. float_of_int radix)
+      and s = -.sin (2.0 *. pi *. float_of_int k /. float_of_int radix) in
+      let w = cid consts (c, s) in
+      p "__m256d t = _mm256_fmadd_pd(%s_c,ok,_mm256_mul_pd(%s_s,_mm256_permute_pd(ok,0x5)));"
+        w w;
+      store k "_mm256_add_pd(ek,t)";
+      store (k + h) "_mm256_sub_pd(ek,t)"
+    end;
+    p "}"
+  done
+
+(* 2-LEVEL BLOCKED r64 (the 8x8 CT factorization — mono-64's structure at
+ * codelet scope). PASS 1: EIGHT spill-free radix-8 sub-DFTs over the residue
+ * classes n = 8a+i, each parking output j to zspill[8*i + j]. PASS 2: per
+ * output group j, reload the eight slots {8i+j} (the corner-turn is FREE —
+ * absorbed into slot indexing, zero lane ops), apply the constant W64^(i*j)
+ * twiddles (emit-time CTw class selection), radix-8 combine over i, store
+ * X[j + 8m] directly. Both passes are the proven register-clean radix-8 body. *)
+let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
+    (consts : (string, string * float * float) Hashtbl.t) : unit =
+  let radix = 64 in
+  let r = 8 in
+  let p fmt = Printf.ksprintf (fun s -> Buffer.add_string buf (ind ^ s ^ "\n")) fmt in
+  (* PASS 1: sub-DFT i over legs {8a+i} *)
+  for i = 0 to r - 1 do
+    p "{ /* PASS 1.%d: legs {8a+%d} -> zspill[%d..%d by 1] */" i i (8 * i)
+      ((8 * i) + 7);
+    for a = 0 to r - 1 do
+      let leg = (8 * a) + i in
+      let name = Printf.sprintf "ld%d_%d" i a in
+      if twiddled && leg >= 1 then begin
+        p "__m256d x_%s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg;
+        p "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n%s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
+          name ((leg - 1) * 8) name ind (((leg - 1) * 8) + 4) name
+      end
+      else
+        p "__m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg
+    done;
+    emit_dft_body buf ~ind:(ind ^ "    ") r consts
+      ~in_of:(fun a -> Printf.sprintf "ld%d_%d" i a)
+      ~park:(fun j v ->
+        Buffer.add_string buf
+          (Printf.sprintf "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
+             ind ((8 * i) + j) v));
+    p "}"
+  done;
+  (* PASS 2: group j — reload {8i+j}, constant W64^(i*j) twiddles, radix-8
+     over i, store X[j+8m]. *)
+  let pi = 4.0 *. atan 1.0 in
+  for j = 0 to r - 1 do
+    p "{ /* PASS 2.%d: slots {8i+%d} -> X[%d+8m] */" j j j;
+    for i = 0 to r - 1 do
+      p "__m256d rl%d = _mm256_loadu_pd((const double *)&zspill[%d]);" i
+        ((8 * i) + j);
+      let e = i * j mod radix in
+      if e = 0 then p "__m256d tw%d = rl%d;" i i
+      else if 4 * e = radix then
+        p "__m256d tw%d = _mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM);" i i
+      else if 8 * e = radix then begin
+        p "__m256d h%d = _mm256_add_pd(rl%d,_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM));"
+          i i i;
+        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i
+      end
+      else if 8 * e = 3 * radix then begin
+        p "__m256d h%d = _mm256_sub_pd(_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM),rl%d);"
+          i i i;
+        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i
+      end
+      else begin
+        let c = cos (2.0 *. pi *. float_of_int e /. float_of_int radix)
+        and s = -.sin (2.0 *. pi *. float_of_int e /. float_of_int radix) in
+        let w = cid consts (c, s) in
+        p "__m256d tw%d = _mm256_fmadd_pd(%s_c,rl%d,_mm256_mul_pd(%s_s,_mm256_permute_pd(rl%d,0x5)));"
+          i w i w i
+      end
+    done;
+    emit_dft_body buf ~ind:(ind ^ "    ") r consts
+      ~in_of:(fun i -> Printf.sprintf "tw%d" i)
+      ~park:(fun m v ->
+        Buffer.add_string buf
+          (Printf.sprintf
+             "%s    _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n" ind
+             (j + (8 * m)) v));
+    p "}"
+  done
+
 (* shared kernel emitter. twiddled=false -> n1 leaf; twiddled=true -> t2
  * (streamed VTW2 twiddles applied to legs 1..R-1 on load, BYTW2 shape).
  * VTW2 stream contract (values plan-time filled, layout fixed here):
@@ -224,17 +384,34 @@ let r8_body (buf : Buffer.t) ~(ind : string) : unit =
  *     [c_l(k), c_l(k), c_l(k+1), c_l(k+1)] then [-s_l(k), +s_l(k), -s_l(k+1), +s_l(k+1)]
  *   (cos-first, sign-folded, per-128-bit-lane = per-column) — single forward
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
-let emit_z_kernel ~(vec_width : int) ~(radix : int) ~(twiddled : bool) : string =
+let emit_z_kernel ~(post_tw : bool) ~(strided_st : bool) ~(strided : bool)
+    ~(blocked2 : bool) ~(blocked : bool) ~(vec_width : int) ~(radix : int)
+    ~(twiddled : bool) : string =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
   if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
     failwith "codelet_zil: radix must be one of 4/8/16/32/64";
-  let kind = if twiddled then "t2" else "n1" in
+  if blocked && radix < 16 then
+    failwith "codelet_zil: --z-blocked needs radix >= 16 (r4/r8 are spill-free)";
+  if blocked2 && radix <> 64 then
+    failwith "codelet_zil: --z-blocked2 (8x8 CT) is radix 64 only";
+  if (strided || strided_st || post_tw) && (blocked || blocked2) then
+    failwith "codelet_zil: strided/post-tw variants not composed with blocked yet";
+  if post_tw && not twiddled then
+    failwith "codelet_zil: post_tw (t2d) implies a twiddled kernel";
+  let kind =
+    (if twiddled then if post_tw then "t2d" else "t2" else "n1")
+    ^ (if blocked2 then "b2" else if blocked then "b" else "")
+    ^ (if strided then "s" else "")
+    ^ if strided_st then "s" else ""
+  in
   let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" radix kind in
   (* render the body FIRST (staging buffer) so CTw constants discovered during
      lowering can be emitted at file scope before the function *)
   let body = Buffer.create 16384 in
   let consts : (string, string * float * float) Hashtbl.t = Hashtbl.create 16 in
-  (if radix = 8 then r8_body body ~ind:"        "
+  (if blocked2 then emit_z_blocked2_body body ~ind:"        " ~twiddled consts
+   else if blocked then emit_z_blocked_body body ~ind:"        " ~radix ~twiddled consts
+   else if radix = 8 then r8_body body ~ind:"        "
    else emit_dft_body body ~ind:"        " radix consts);
   let buf = Buffer.create 32768 in
   Buffer.add_string buf
@@ -272,46 +449,90 @@ let emit_z_kernel ~(vec_width : int) ~(radix : int) ~(twiddled : bool) : string 
        \    const double * tw_re, const double * tw_im,\n\
        \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
         {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;%s\n\
+       \    (void)zin_unused; (void)zout_unused; (void)tw_im;%s\n%s\
        \    for (size_t k = 0; k + 2 <= count; k += 2) {\n"
        fname
-       (if twiddled then "" else " (void)tw_re;"));
+       ((if strided then "" else " (void)Gs;")
+        ^ (if strided_st then "" else " (void)OGs;")
+        ^ if twiddled then "" else " (void)tw_re;")
+       (if blocked || blocked2 then
+          Printf.sprintf "    __m256d zspill[%d]; /* function-scope: L1-hot across iterations */\n" radix
+        else ""));
   if twiddled then
     Buffer.add_string buf
       (Printf.sprintf
          "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
          (8 * (radix - 1)));
-  (* loads: point p of columns k,k+1 = zin[2*(p*Ls + k) ..+3]; t2 applies the
-     streamed twiddle to legs >= 1 in the load (BYTW2: FLIP + mul + fmadd) *)
-  for pt = 0 to radix - 1 do
-    if twiddled && pt >= 1 then
-      Buffer.add_string buf
-        (Printf.sprintf
-           "        __m256d x%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n\
-           \        __m256d in%d = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x%d,\n\
-           \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x%d, 0x5)));\n"
-           pt pt pt ((pt - 1) * 8) pt (((pt - 1) * 8) + 4) pt)
-    else
-      Buffer.add_string buf
-        (Printf.sprintf
-           "        __m256d in%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
-           pt pt)
-  done;
-  for pt = 0 to radix - 1 do
-    Buffer.add_string buf (Printf.sprintf "        __m256d out%d;\n" pt)
-  done;
-  Buffer.add_buffer buf body;
-  for pt = 0 to radix - 1 do
-    Buffer.add_string buf
-      (Printf.sprintf
-         "        _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), out%d);\n"
-         pt pt)
-  done;
+  if blocked || blocked2 then
+    (* blocked bodies carry their own loads (per sub-DFT) and stores (combine) *)
+    Buffer.add_buffer buf body
+  else begin
+    (* loads: point p of columns k,k+1. Contiguous columns: one 256-bit load at
+       zin[2*(p*Ls + k)]. STRIDED columns (the "s" variant, FFTW LD shape):
+       columns k and k+1 sit Gs complex apart -> two 128-bit loads + insert.
+       t2 applies the streamed twiddle to legs >= 1 in the load (BYTW2). *)
+    for pt = 0 to radix - 1 do
+      let raw = Printf.sprintf "x%d" pt and fin = Printf.sprintf "in%d" pt in
+      let pre_tw = twiddled && (not post_tw) && pt >= 1 in
+      let dst = if pre_tw then raw else fin in
+      (if strided then
+         Buffer.add_string buf
+           (Printf.sprintf
+              "        __m256d %s = _mm256_insertf128_pd(_mm256_castpd128_pd256(\n\
+              \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + k*Gs))),\n\
+              \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + (k+1)*Gs)), 1);\n"
+              dst pt pt)
+       else
+         Buffer.add_string buf
+           (Printf.sprintf
+              "        __m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
+              dst pt));
+      if pre_tw then
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
+             \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
+             fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
+    done;
+    for pt = 0 to radix - 1 do
+      Buffer.add_string buf (Printf.sprintf "        __m256d out%d;\n" pt)
+    done;
+    Buffer.add_buffer buf body;
+    for pt = 0 to radix - 1 do
+      (* t2d: apply the streamed post-twiddle (BYTW2) to output legs >= 1 *)
+      let v =
+        if post_tw && pt >= 1 then begin
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d o%d = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), out%d,\n\
+               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(out%d, 0x5)));\n"
+               pt ((pt - 1) * 8) pt (((pt - 1) * 8) + 4) pt);
+          Printf.sprintf "o%d" pt
+        end
+        else Printf.sprintf "out%d" pt
+      in
+      if strided_st then
+        (* strided stores (OGs != 1): column pair -> two 128-bit stores *)
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + k*OGs), _mm256_castpd256_pd128(%s));\n\
+             \        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + (k+1)*OGs), _mm256_extractf128_pd(%s, 1));\n"
+             pt v pt v)
+      else
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n" pt v)
+    done
+  end;
   Buffer.add_string buf "    }\n}\n";
   Buffer.contents buf
 
-let emit_z_n1 ~(vec_width : int) ~(radix : int) : string =
-  emit_z_kernel ~vec_width ~radix ~twiddled:false
+let emit_z_n1 ?(strided = false) ~blocked2 ~blocked ~vec_width ~radix () :
+    string =
+  emit_z_kernel ~post_tw:false ~strided_st:false ~strided ~blocked2 ~blocked
+    ~vec_width ~radix ~twiddled:false
 
-let emit_z_t2 ~(vec_width : int) ~(radix : int) : string =
-  emit_z_kernel ~vec_width ~radix ~twiddled:true
+let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
+    ~blocked2 ~blocked ~vec_width ~radix () : string =
+  emit_z_kernel ~post_tw ~strided_st ~strided ~blocked2 ~blocked ~vec_width
+    ~radix ~twiddled:true

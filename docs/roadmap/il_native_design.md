@@ -136,6 +136,28 @@ build.py. **GATE: emitted == hand oracle BIT-IDENTICAL (0.0); oracle == naive 2.
 NEXT (M2): radices 4/16/32/64 n1 + the t2 twiddle kernel (VTW2 cos-first + BYTW2), then the
 two-pass z→z K=1 route raced vs MKL-IL per §3a.
 
+## 3d. INTERIM PURE-IL SCOREBOARD (2026-07-24, `zil_ladder_race.c`) — the baseline
+
+z-native two-pass (ONE uncalibrated shape/cell, strided-load t2s, no scheduling work) vs
+LIVE MKL-IL, same process, in-place, all cells gated ~1e-15 first:
+
+| N | shape | z (ns) | MKL-IL (ns) | Z/MKL |
+|--:|---|--:|--:|--:|
+| 64 | 8×8 | 29.6 | 30.2 | **1.02 WIN** |
+| 128 | 8×16 | 67.2 | 68.3 | **1.02 WIN** |
+| 256 | 8×32 | 174.4 | 135.9 | 0.78 |
+| 512 | 8×64 | 398.7 | 290.5 | 0.73 (0.82 in the earlier run — band) |
+| 1024 | 16×64 | 1320.9 | 799.9 | 0.61 |
+| 2048 | 32×64 | 3107.0 | 2633.2 | 0.85 |
+| 4096 | 64×64 | 11162.9 | 4208.2 | 0.38 |
+
+Regime read: **≤128 = WON on first attempt** (vs MKL's hand-polished mono kernels).
+Mid-N 0.61–0.85 with the top levers unbuilt (item 4 corner-turn stores kills the strided
+2×128 load tax; per-cell shape calibration; scheduling). **4096 = the predicted VTW2
+residency cliff** (~126 KB twiddle stream → the 6b compact-table knob) + monolithic
+spilling r64 t2s + single two-pass vs MKL's deeper recursion. This table is the baseline
+every subsequent lever is measured against.
+
 ## 3b. M1 GO/NO-GO — MEASURED (2026-07-24): GO, regime-dependent
 
 Hand-written z-native radix-8 leaf vs split-radix-8 + il_in/il_out boundary (our current
@@ -219,6 +241,61 @@ inadmissible there, per-lane-class (VTW2) and leg-axis LOG3 admissible — same 
     classic engine's z→z paths.
 13. **Standing gates at every step** — public-API ladder green; master K=1 gate green;
     no step lands without its numbered gate above.
+14. **Blocked (Tier-B) zil lowering — BUILT AND RACED (2026-07-24), verdict per-radix.**
+    Blocked twins emitted (`radix{16,32,64}_z_n1b`, `radix{16,32}_z_t2b`): PASS 1a/1b
+    half-DFTs with per-half loads parking to a function-scope packed `zspill[]` (z bonus:
+    ONE array, not split's re/im pair), PASS 2 reload-on-demand + store-on-compute —
+    the split family's structure carried detail-for-detail. Race (`zil_blocked_race.c`,
+    best-of-7 rotated, K ∈ 16..4096, cross-checked + gated vs naive first):
+    **r16 → BLOCKED (n1 −14…−19%, t2 −1…−11%) · r32 → BLOCKED (n1 −5…−22%, t2 −14…−33%
+    across two runs) · r64 single-level → WORSE (+12…+40%; radix-32 halves too fat) ·
+    r64 8×8 TWO-LEVEL (`--z-blocked2`, user-directed) → WINS −17…−31% at every K.**
+    The 8×8 = eight spill-free radix-8 sub-DFTs parking to zspill[8i+j] + eight twiddled
+    (const W64^(i·j), full class selection) radix-8 combines over strided slots — the
+    inter-stage corner-turn is FREE in slot indexing (vs mono-64's 62 lane ops).
+    **CONSTRUCTION LAW (measured): sub-bodies must be SPILL-FREE — cut every radix to
+    radix-8 pieces.** ADOPTED: r4/r8 monolithic; r16/r32 blocked; r64 blocked2 (8×8).
+    Follow-up: r32 as 4×8/8×4 CT (its current radix-16 halves spill ~9% — the law predicts
+    a further win). Verdict radix-determined, not K-determined — static, no calibrator
+    axis. Spill census (monolithic): r8 = 0 (129 insns), r16 ≈ 9%, r32 ≈ 14-15%,
+    r64 ≈ 17%; doc-58's ~50% catastrophe was bodies-of-bodies (mono-256), not these.
+
+15. **Blocked z executor — the large-N recursion (user directive 2026-07-24; the split-point
+    blocked execution the classic engine shipped, NOT the buffered-tiling slab which is a
+    recorded NO-GO — no gather/scatter copies, only reordered execution).** N = R_o × N_i:
+    one global DIF-outer pass (radix-R_o, legs stride N_i, contiguous columns = existing
+    kernel geometry, POST-twiddle W_N^{c·a}) → R_o independent contiguous N_i-point z
+    transforms, each fully L1-resident, each completing all its passes while hot. Kills the
+    4096 cliff structurally: 16×256 projects ~4–4.5 µs vs today's 11.2 (MKL 4.2); also
+    shrinks each inner VTW2 stream to L1 size (defers 6b). Needs two mechanical emitter
+    variants: (a) `t2d` post-twiddle (BYTW2 on outputs before store), (b) strided 2×128
+    STORES on the inner final pass (block c bin q → X[q·R_o + c]; stride params already
+    express it). Gate vs naive-4096; race vs today's 0.38× baseline + MKL-IL live.
+
+## 6. ADOPTED CONSTRUCTION TABLE (measured 2026-07-24; the authority for every zil emission)
+
+**Construction law: sub-bodies must be SPILL-FREE — cut every radix down to radix-8
+pieces.** Radix-8 is the largest interleaved body that runs entirely in 16 ymm (0 spills,
+129 insns); any sub-body that spills internally makes the pass structure pay parking on
+top of its own spills (the single-level r64 failure). The inter-stage corner-turn in a
+blocked body is FREE — absorbed into the zspill slot indexing, zero lane ops (contrast:
+mono-64's in-register transpose = 62 `vinsertf128`/`vperm2f128`).
+
+| radix | construction | flag | evidence (`zil_blocked_race.c`, best-of-7 rotated, K 16–4096) |
+|---|---|---|---|
+| r4, r8 | **monolithic** | `--z-native` | spill-free by nature; r8 = the gold bit-gated body |
+| r16 | **blocked** (2× radix-8) | `--z-blocked` | n1 −14…−19%, t2 −1…−21% |
+| r32 | **blocked** (2× radix-16) | `--z-blocked` | n1 −5…−22%, t2 −14…−33% (two runs) |
+| r64 | **blocked2** (8×8 CT) | `--z-blocked2` | **−17…−31% vs monolithic at every K**; single-level halving was +12…+40% WORSE |
+
+The 8×8 shape (mono-64's factorization at codelet scope): PASS 1 = eight spill-free
+radix-8 sub-DFTs over the residue classes parking to `zspill[8i+j]`; PASS 2 = eight
+groups reloading strided slots `{8i+j}`, constant `W64^{i·j}` twiddles (full class
+selection), radix-8 combine, natural-order stores. Verdicts are radix-determined, not
+K-determined → static per-radix defaults, no calibrator axis.
+
+Follow-up predicted by the law (queued, unbuilt): r32 as a 4×8 CT should beat its current
+radix-16 halves (which spill ~9% internally).
 
 ## 4. Open questions (resolve by measurement, not argument)
 - VZMUL vs BYTW2 crossover (table bytes vs shuffles) — per-cell, likely BYTW2 everywhere
