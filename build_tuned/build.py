@@ -57,7 +57,8 @@ def dag_codelet_srcs() -> list[str]:
         DAG / 'codelets' / 'c2r'  / DAG_ISA,   # c2r inverse: r2cb leaf + hc2hc DIF/ranged
         DAG / 'codelets' / 'oop'  / DAG_ISA,   # OOP c2c: n1 + t1p (LEAF/BAILEY2 kinds)
         DAG / 'codelets' / 'strided' / DAG_ISA,  # strided rows (6a35-6a45): c2c mono + r2c/c2r two-for-one
-        DAG / 'codelets' / 'il'   / DAG_ISA,   # interleaved-layout campaign: il_in/il_out folds + twins
+        DAG / 'codelets' / 'il'   / DAG_ISA,   # RETIRED (derived population deleted 2026-07-24); dir kept as the once-home
+        DAG / 'codelets' / 'zil'  / DAG_ISA,   # tier-2 TRUE interleaved-native (z) family (codelet_zil.ml)
         DAG / 'codelets' / 'trig' / DAG_ISA,   # trig (DCT/DST) specializations
     ]
     srcs: list[str] = []

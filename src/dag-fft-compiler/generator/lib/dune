@@ -23,4 +23,4 @@
 (library
  (name vfft_v2)
  (libraries unix)
- (modules expr ir simplify fma_passes algsimp cnum split_radix dft_select dft_recurse dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_state emit_render emit_c pipeline codelet_oop bb coverage gen_main))
+ (modules expr ir simplify fma_passes algsimp cnum split_radix dft_select dft_recurse dft dft_r2c simd_ir uarch isa schedule annotate regalloc emit_state emit_render emit_c pipeline codelet_oop codelet_zil bb coverage gen_main))
