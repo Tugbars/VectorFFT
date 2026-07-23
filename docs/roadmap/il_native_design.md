@@ -206,9 +206,16 @@ inadmissible there, per-lane-class (VTW2) and leg-axis LOG3 admissible — same 
 3. **Count/tail contract** — the z loop is 2 complex/iter: state and assert `count % 2 == 0`
    (the UL twins' `me%4` precedent). All K=1 call sites use multiples of 4; the contract
    must still be explicit.
-4. **z store lattice (corner-turn-in-stores)** — `vinsertf128 $1` + `vperm2f128 $0x31` per
-   output pair to two sectioned bases (MKL §4 pattern); complex moves as 128-bit units
-   (cheaper than split's two-plane lattice). Variant flag on the emitter like UG/UL.
+4. **z store lattice (corner-turn-in-stores) — RACED (2026-07-24): NEGATIVE, banked.**
+   Built as `n1t` (`--z-n1t`, vperm2f128 pair-repack, full-width sectioned stores) + plain
+   t2 pass 2; C-shapes (grid scratch + t2s) WON every cell (256: 164 vs 178/256 · 512: 359
+   vs 443/572 · 1024: 972 vs ~1830 · 2048: 3796 vs 4346/5145; `zil_item4_race.c`).
+   **LESSON: transposing the scratch MOVES striding to the LEG axis (stride R2, the
+   degraded pattern) — it doesn't remove it. The grid layout + t2s (contiguous legs +
+   cheap 2×128 columns) is already pass-2 consumption order on the axis that matters;
+   MKL's corner-turn wins only into a fully consumption-ordered scratch. The 2×128 load
+   "tax" is nearly free.** Same run: champion mid-N ratios 0.81–0.83 (256/512/1024) —
+   the ladder's 0.61–0.78 was band. n1t kernels remain in-tree for future 3-pass shapes.
 5. **z load lattice (transpose-in-loads)** — the UL analog, same lane ops on the load side.
 6. **Twiddle strategy family — the IL analog of each split strategy, each a separate twin:**
    - **6a. z-T1/VTW2 (dense stream, DEFAULT)** — table emitted at generation: cos-first
@@ -260,17 +267,32 @@ inadmissible there, per-lane-class (VTW2) and leg-axis LOG3 admissible — same 
     axis. Spill census (monolithic): r8 = 0 (129 insns), r16 ≈ 9%, r32 ≈ 14-15%,
     r64 ≈ 17%; doc-58's ~50% catastrophe was bodies-of-bodies (mono-256), not these.
 
-15. **Blocked z executor — the large-N recursion (user directive 2026-07-24; the split-point
-    blocked execution the classic engine shipped, NOT the buffered-tiling slab which is a
-    recorded NO-GO — no gather/scatter copies, only reordered execution).** N = R_o × N_i:
-    one global DIF-outer pass (radix-R_o, legs stride N_i, contiguous columns = existing
-    kernel geometry, POST-twiddle W_N^{c·a}) → R_o independent contiguous N_i-point z
-    transforms, each fully L1-resident, each completing all its passes while hot. Kills the
-    4096 cliff structurally: 16×256 projects ~4–4.5 µs vs today's 11.2 (MKL 4.2); also
-    shrinks each inner VTW2 stream to L1 size (defers 6b). Needs two mechanical emitter
-    variants: (a) `t2d` post-twiddle (BYTW2 on outputs before store), (b) strided 2×128
-    STORES on the inner final pass (block c bin q → X[q·R_o + c]; stride params already
-    express it). Gate vs naive-4096; race vs today's 0.38× baseline + MKL-IL live.
+15. **Blocked z executor v1 — RACED (2026-07-24): NEGATIVE RESULT, banked.** Built as
+    designed (`t2d` post-twiddle outer + `t2ss` strided-store inner, `zil_4096_blocked.c`);
+    gate 3.46e-15 PASS but **12190 ns vs flat 64×64's 8849 vs MKL 4087 (0.34× vs 0.46×)**.
+    Post-mortem, three compounding causes the projection missed: (a) the shape is THREE
+    full-array sweeps vs the flat's two — the extra 64 KB round-trip was unpriced; (b) the
+    inner final stores are a SCATTER (stride-16-complex half-width stores across the whole
+    output; MKL's recursion survives because its stores are sectioned-contiguous — store
+    locality is the whole game at this size); (c) the outer pass's stride-4KB legs are the
+    degraded strided-leaf pattern from the residency probe. LESSON: split-point recursion
+    only pays when the final stores stay SECTIONED; this decomposition can't provide that
+    without an extra reorder pass or scrambled output. 4096 effort REDIRECTED to: item 4
+    corner-turn stores on the FLAT two-pass (remove its strided-load tax — the winning
+    shape) + 6b compact twiddle table (its 126 KB stream). Blocked-v2 (sectioned-store
+    variant) only if those two leave a measured structural gap.
+
+16. **z staged cascade for N ≥ 2048 — the high-N answer (research 2026-07-24:
+    docs/research/high_n_loss_analysis.md).** Root cause of the high-N loss: the flat
+    two-pass FORCES ~N-wide strides in both passes (our pass 1 alone = 4148 ns at 4096 ≈
+    MKL's entire 4087 ns transform); MKL switches families at exactly this boundary to a
+    multi-stage contiguous-streaming cascade (census: ping-pong scratch, ~5 passes, reused
+    small looped stage kernels, user memory touched once each way). Build: 3–4 radix-8/16
+    z stages through ping-pong scratch, per-stage small VTW2 streams; v1 = a C driver
+    composing the EXISTING gated kernels via their (Ls,Gs,OLs,OGs,count) params. Crossover
+    two-pass↔cascade ≈ 1024/2048, per-cell calibrated. Explains both banked negatives
+    (blocked-v1, n1t) under one principle: every pass must stream contiguously; the
+    exchange amortizes across log-many stages.
 
 ## 6. ADOPTED CONSTRUCTION TABLE (measured 2026-07-24; the authority for every zil emission)
 
