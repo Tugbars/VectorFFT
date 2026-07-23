@@ -81,13 +81,15 @@ static inline void r8_z(const __m256d in[8], __m256d out[8])
     __m256d s2=_mm256_add_pd(in[3],in[7]), s3=_mm256_sub_pd(in[3],in[7]);
     __m256d O0=_mm256_add_pd(s0,s2), O2=_mm256_sub_pd(s0,s2);
     __m256d O1=_mm256_add_pd(s1,ZmulNI(s3)), O3=_mm256_sub_pd(s1,ZmulNI(s3));
-    __m256d W1=_mm256_mul_pd(C,_mm256_add_pd(O1,ZmulNI(O1)));
+    /* IL rule 4: fold the C scale into the butterfly via fmadd/fnmadd
+     * (must match codelet_zil.ml exactly — the emit gate is bit-identity) */
+    __m256d X1=_mm256_add_pd(O1,ZmulNI(O1));
     __m256d W2=ZmulNI(O2);
-    __m256d W3=_mm256_mul_pd(C,_mm256_sub_pd(ZmulNI(O3),O3));
+    __m256d X3=_mm256_sub_pd(ZmulNI(O3),O3);
     out[0]=_mm256_add_pd(E0,O0); out[4]=_mm256_sub_pd(E0,O0);
-    out[1]=_mm256_add_pd(E1,W1); out[5]=_mm256_sub_pd(E1,W1);
+    out[1]=_mm256_fmadd_pd(C,X1,E1); out[5]=_mm256_fnmadd_pd(C,X1,E1);
     out[2]=_mm256_add_pd(E2,W2); out[6]=_mm256_sub_pd(E2,W2);
-    out[3]=_mm256_add_pd(E3,W3); out[7]=_mm256_sub_pd(E3,W3);
+    out[3]=_mm256_fmadd_pd(C,X3,E3); out[7]=_mm256_fnmadd_pd(C,X3,E3);
 }
 
 /* ---------- split radix-8 (our current-style compute) ---------- */

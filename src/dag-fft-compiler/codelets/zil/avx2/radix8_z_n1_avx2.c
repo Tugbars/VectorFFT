@@ -45,14 +45,14 @@ void radix8_z_n1_fwd_avx2(
         __m256d _s3ni=_mm256_xor_pd(_mm256_permute_pd(s3,0x5),_M_IM); /* s3*(-i) */
         __m256d O1=_mm256_add_pd(s1,_s3ni), O3=_mm256_sub_pd(s1,_s3ni);
         __m256d _o1ni=_mm256_xor_pd(_mm256_permute_pd(O1,0x5),_M_IM);
-        __m256d W1=_mm256_mul_pd(_C,_mm256_add_pd(O1,_o1ni));
+        __m256d X1=_mm256_add_pd(O1,_o1ni);
         __m256d W2=_mm256_xor_pd(_mm256_permute_pd(O2,0x5),_M_IM); /* O2*(-i) */
         __m256d _o3ni=_mm256_xor_pd(_mm256_permute_pd(O3,0x5),_M_IM);
-        __m256d W3=_mm256_mul_pd(_C,_mm256_sub_pd(_o3ni,O3));
+        __m256d X3=_mm256_sub_pd(_o3ni,O3);
         out0=_mm256_add_pd(E0,O0); out4=_mm256_sub_pd(E0,O0);
-        out1=_mm256_add_pd(E1,W1); out5=_mm256_sub_pd(E1,W1);
+        out1=_mm256_fmadd_pd(_C,X1,E1); out5=_mm256_fnmadd_pd(_C,X1,E1);
         out2=_mm256_add_pd(E2,W2); out6=_mm256_sub_pd(E2,W2);
-        out3=_mm256_add_pd(E3,W3); out7=_mm256_sub_pd(E3,W3);
+        out3=_mm256_fmadd_pd(_C,X3,E3); out7=_mm256_fnmadd_pd(_C,X3,E3);
         _mm256_storeu_pd(zout + 2*((size_t)0*OLs + k), out0);
         _mm256_storeu_pd(zout + 2*((size_t)1*OLs + k), out1);
         _mm256_storeu_pd(zout + 2*((size_t)2*OLs + k), out2);
