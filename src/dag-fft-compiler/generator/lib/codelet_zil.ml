@@ -386,8 +386,8 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
 let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(const_tw : bool)
-    ~(pow_tw : bool) ~(vec_width : int) ~(radix : int) ~(twiddled : bool) :
-    string =
+    ~(pow_tw : bool) ~(tile_ld : bool) ~(vec_width : int) ~(radix : int)
+    ~(twiddled : bool) : string =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
   if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
     failwith "codelet_zil: radix must be one of 4/8/16/32/64";
@@ -405,6 +405,8 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     failwith "codelet_zil: const_tw (t2c) is a plain-t2 variant";
   if pow_tw && (not twiddled || not strided || post_tw || blocked || blocked2) then
     failwith "codelet_zil: pow_tw (t2sp) is a strided-t2 (terminator) variant";
+  if tile_ld && (not strided || radix mod 2 <> 0 || blocked || blocked2) then
+    failwith "codelet_zil: tile_ld (t2st/t2spt) is a strided even-radix variant";
   let kind =
     (if twiddled then if post_tw then "t2d" else "t2" else "n1")
     ^ (if const_tw then "c" else "")
@@ -412,6 +414,7 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     ^ (if strided then "s" else "")
     ^ (if strided_st then "s" else "")
     ^ (if pow_tw then "p" else "")
+    ^ (if tile_ld then "t" else "")
     ^ if trans_st then "t" else ""
   in
   let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" radix kind in
@@ -501,6 +504,47 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
        zin[2*(p*Ls + k)]. STRIDED columns (the "s" variant, FFTW LD shape):
        columns k and k+1 sit Gs complex apart -> two 128-bit loads + insert.
        t2 applies the streamed twiddle to legs >= 1 in the load (BYTW2). *)
+    if tile_ld then begin
+      (* TILED LOADS (t2st/t2spt; REQUIRES Ls==1, legs contiguous): per
+         leg-pair, one WIDE load per column + vperm2f128 repack — R loads +
+         R perms per col-pair vs t2s's 2R xmm loads + R inserts. This is the
+         MKL-finisher load shape (register corner-turn), mirrored. *)
+      for p = 0 to (radix / 2) - 1 do
+        let a = 2 * p and b = (2 * p) + 1 in
+        Buffer.add_string buf
+          (Printf.sprintf
+             "        __m256d _ta%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k*Gs));\n\
+             \        __m256d _tb%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + (k+1)*Gs));\n\
+             \        __m256d x%d = _mm256_permute2f128_pd(_ta%d, _tb%d, 0x20);\n\
+             \        __m256d x%d = _mm256_permute2f128_pd(_ta%d, _tb%d, 0x31);\n"
+             p a p a a p p b p p)
+      done;
+      for pt = 0 to radix - 1 do
+        let raw = Printf.sprintf "x%d" pt and fin = Printf.sprintf "in%d" pt in
+        let pre_tw = twiddled && (not post_tw) && pt >= 1 in
+        if not pre_tw then
+          Buffer.add_string buf
+            (Printf.sprintf "        __m256d %s = %s;\n" fin raw)
+        else if pow_tw then begin
+          if pt >= 2 then
+            Buffer.add_string buf
+              "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, _wc1));\n\
+              \          _ws = _mm256_fmadd_pd(_wc, _ws1, _mm256_mul_pd(_ws, _wc1));\n\
+              \          _wc = _nc; }\n";
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_wc, %s,\n\
+               \            _mm256_mul_pd(_ws, _mm256_permute_pd(%s, 0x5)));\n"
+               fin raw raw)
+        end
+        else
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
+               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
+               fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
+      done
+    end else
     for pt = 0 to radix - 1 do
       let raw = Printf.sprintf "x%d" pt and fin = Printf.sprintf "in%d" pt in
       let pre_tw = twiddled && (not post_tw) && pt >= 1 in
@@ -594,10 +638,11 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
 let emit_z_n1 ?(strided = false) ?(trans_st = false) ~blocked2 ~blocked
     ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st ~post_tw:false ~strided_st:false ~strided ~blocked2
-    ~blocked ~const_tw:false ~pow_tw:false ~vec_width ~radix ~twiddled:false
+    ~blocked ~const_tw:false ~pow_tw:false ~tile_ld:false ~vec_width ~radix
+    ~twiddled:false
 
 let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
-    ?(const_tw = false) ?(pow_tw = false) ~blocked2 ~blocked ~vec_width ~radix
-    () : string =
+    ?(const_tw = false) ?(pow_tw = false) ?(tile_ld = false) ~blocked2 ~blocked
+    ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
-    ~blocked ~const_tw ~pow_tw ~vec_width ~radix ~twiddled:true
+    ~blocked ~const_tw ~pow_tw ~tile_ld ~vec_width ~radix ~twiddled:true
