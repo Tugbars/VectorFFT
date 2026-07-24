@@ -646,3 +646,176 @@ let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
     ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
     ~blocked ~const_tw ~pow_tw ~tile_ld ~vec_width ~radix ~twiddled:true
+
+(* ══════════════════════════════════════════════════════════════════════
+   BLOCK-SPLIT INTERIOR family (z_cascade_plan §4.99/§4.996) — PROMOTED from
+   the gated hand kernels (zil_split_interior.c spike; paced finals
+   zil_split_baked.c). Scratch layout = 64-B [re x4][im x4] blocks (same
+   bytes as 4 z-complex; addressing = z's with +4 doubles for the im half;
+   ONE stream per leg row — MKL's granularity, measured decisive at 16384).
+   Kinds (all standard 11-arg z ABI; kernels use only Ls and count):
+     s0s : z-in  -> split-out leaf (twiddle-free; deinterleave in loads,
+           shuffles paid ONCE per cascade)
+     ms  : split -> split mid, IN-PLACE (caller passes sp as zin AND zout);
+           SHUFFLE-FREE: elementwise split cmul, rotations = renames.
+           tw_re = per-group SPLAT pairs [c x4][s x4], legs 1..R-1, no cursor.
+     msz : split-in -> z-out mid (the cascade's LAST mid; re-interleave in
+           the stores). Same twiddle contract as ms.
+   Bodies are the hand-derived split-plane forms (fixed per radix, template
+   emission — a plane-pair IR backend is not warranted for 2 radices).
+   ══════════════════════════════════════════════════════════════════════ *)
+
+let z_split_macros = {|
+#define DEINT(zlo, zhi, re, im) do {                                  \
+    __m256d _u = _mm256_unpacklo_pd(zlo, zhi);                        \
+    __m256d _v = _mm256_unpackhi_pd(zlo, zhi);                        \
+    re = _mm256_permute4x64_pd(_u, 0xD8);                             \
+    im = _mm256_permute4x64_pd(_v, 0xD8);                             \
+} while (0)
+#define REINT(re, im, zlo, zhi) do {                                  \
+    __m256d _p = _mm256_permute4x64_pd(re, 0xD8);                     \
+    __m256d _q = _mm256_permute4x64_pd(im, 0xD8);                     \
+    zlo = _mm256_unpacklo_pd(_p, _q);                                 \
+    zhi = _mm256_unpackhi_pd(_p, _q);                                 \
+} while (0)
+#define SPLIT_CMUL(ar,ai, ct,st, or_,oi_) do {                        \
+    or_ = _mm256_fnmadd_pd(st, ai, _mm256_mul_pd(ct, ar));            \
+    oi_ = _mm256_fmadd_pd(st, ar, _mm256_mul_pd(ct, ai));             \
+} while (0)
+#define SPLIT_BFLY4(i0r,i0i,i1r,i1i,i2r,i2i,i3r,i3i, o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i) do { \
+    __m256d t0r=_mm256_add_pd(i0r,i2r), t0i=_mm256_add_pd(i0i,i2i);   \
+    __m256d t1r=_mm256_sub_pd(i0r,i2r), t1i=_mm256_sub_pd(i0i,i2i);   \
+    __m256d t2r=_mm256_add_pd(i1r,i3r), t2i=_mm256_add_pd(i1i,i3i);   \
+    __m256d t3r=_mm256_sub_pd(i1r,i3r), t3i=_mm256_sub_pd(i1i,i3i);   \
+    o0r=_mm256_add_pd(t0r,t2r); o0i=_mm256_add_pd(t0i,t2i);           \
+    o2r=_mm256_sub_pd(t0r,t2r); o2i=_mm256_sub_pd(t0i,t2i);           \
+    o1r=_mm256_add_pd(t1r,t3i); o1i=_mm256_sub_pd(t1i,t3r);           \
+    o3r=_mm256_sub_pd(t1r,t3i); o3i=_mm256_add_pd(t1i,t3r);           \
+} while (0)
+#define SPLIT_BFLY8(x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i, \
+                    o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i,o4r,o4i,o5r,o5i,o6r,o6i,o7r,o7i) do { \
+    const __m256d _C = _mm256_set1_pd(0.70710678118654752440);        \
+    __m256d t0r=_mm256_add_pd(x0r,x4r), t0i=_mm256_add_pd(x0i,x4i);   \
+    __m256d t1r=_mm256_sub_pd(x0r,x4r), t1i=_mm256_sub_pd(x0i,x4i);   \
+    __m256d t2r=_mm256_add_pd(x2r,x6r), t2i=_mm256_add_pd(x2i,x6i);   \
+    __m256d t3r=_mm256_sub_pd(x2r,x6r), t3i=_mm256_sub_pd(x2i,x6i);   \
+    __m256d E0r=_mm256_add_pd(t0r,t2r), E0i=_mm256_add_pd(t0i,t2i);   \
+    __m256d E2r=_mm256_sub_pd(t0r,t2r), E2i=_mm256_sub_pd(t0i,t2i);   \
+    __m256d E1r=_mm256_add_pd(t1r,t3i), E1i=_mm256_sub_pd(t1i,t3r);   \
+    __m256d E3r=_mm256_sub_pd(t1r,t3i), E3i=_mm256_add_pd(t1i,t3r);   \
+    __m256d s0r=_mm256_add_pd(x1r,x5r), s0i=_mm256_add_pd(x1i,x5i);   \
+    __m256d s1r=_mm256_sub_pd(x1r,x5r), s1i=_mm256_sub_pd(x1i,x5i);   \
+    __m256d s2r=_mm256_add_pd(x3r,x7r), s2i=_mm256_add_pd(x3i,x7i);   \
+    __m256d s3r=_mm256_sub_pd(x3r,x7r), s3i=_mm256_sub_pd(x3i,x7i);   \
+    __m256d O0r=_mm256_add_pd(s0r,s2r), O0i=_mm256_add_pd(s0i,s2i);   \
+    __m256d O2r=_mm256_sub_pd(s0r,s2r), O2i=_mm256_sub_pd(s0i,s2i);   \
+    __m256d O1r=_mm256_add_pd(s1r,s3i), O1i=_mm256_sub_pd(s1i,s3r);   \
+    __m256d O3r=_mm256_sub_pd(s1r,s3i), O3i=_mm256_add_pd(s1i,s3r);   \
+    __m256d X1r=_mm256_add_pd(O1r,O1i), X1i=_mm256_sub_pd(O1i,O1r);   \
+    __m256d X3r=_mm256_sub_pd(O3i,O3r), X3n=_mm256_add_pd(O3r,O3i);   \
+    o0r=_mm256_add_pd(E0r,O0r); o0i=_mm256_add_pd(E0i,O0i);           \
+    o4r=_mm256_sub_pd(E0r,O0r); o4i=_mm256_sub_pd(E0i,O0i);           \
+    o1r=_mm256_fmadd_pd(_C,X1r,E1r); o1i=_mm256_fmadd_pd(_C,X1i,E1i); \
+    o5r=_mm256_fnmadd_pd(_C,X1r,E1r); o5i=_mm256_fnmadd_pd(_C,X1i,E1i); \
+    o2r=_mm256_add_pd(E2r,O2i); o2i=_mm256_sub_pd(E2i,O2r);           \
+    o6r=_mm256_sub_pd(E2r,O2i); o6i=_mm256_add_pd(E2i,O2r);           \
+    o3r=_mm256_fmadd_pd(_C,X3r,E3r); o3i=_mm256_fnmadd_pd(_C,X3n,E3i); \
+    o7r=_mm256_fnmadd_pd(_C,X3r,E3r); o7i=_mm256_fmadd_pd(_C,X3n,E3i); \
+} while (0)
+|}
+
+let z_split_bfly_call radix =
+  if radix = 4 then
+    "        SPLIT_BFLY4(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
+     \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3]);\n"
+  else
+    "        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
+     \                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],\n\
+     \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],\n\
+     \                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);\n"
+
+let emit_z_split ~(kind : string) ~(radix : int) () : string =
+  if not (List.mem radix [ 4; 8 ]) then
+    failwith "codelet_zil: split family covers radix 4/8 (r16 split = 32 live planes, spills)";
+  if not (List.mem kind [ "s0s"; "ms"; "msz" ]) then
+    failwith "codelet_zil: split kind must be s0s|ms|msz";
+  let r = radix in
+  let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" r kind in
+  let buf = Buffer.create 16384 in
+  Buffer.add_string buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;\n\
+       \ * z_cascade_plan §4.99/§4.996). Scratch = 64-B [re x4][im x4] blocks (z\n\
+       \ * addressing +4 for im; one stream per leg row). %s, fwd.\n\
+       \ * CONTRACT: count %%%% 4 == 0 (4 columns per iteration).%s */\n\
+        #include <immintrin.h>\n\
+        #include <stddef.h>\n%s\n"
+       (match kind with
+        | "s0s" -> "s0s (z-in -> split-out leaf, twiddle-free, deinterleaving loads)"
+        | "ms" -> "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw)"
+        | _ -> "msz (split-in -> z-out LAST mid, re-interleaving stores, splat-pair tw)")
+       (if kind = "s0s" then ""
+        else
+          "\n * tw_re = ONE per-group splat-pair set: legs 1..R-1, 8 doubles/leg\n\
+          \ * [c,c,c,c][s,s,s,s]; no cursor (group-constant). tw_im unused.")
+       z_split_macros);
+  Buffer.add_string buf
+    (Printf.sprintf
+       "__attribute__((target(\"avx2,fma\")))\n\
+        void %s(\n\
+       \    const double * __restrict__ zin,\n\
+       \    const double * __restrict__ zin_unused,\n\
+       \    double       * __restrict__ zout,\n\
+       \    double       * __restrict__ zout_unused,\n\
+       \    const double * tw_re, const double * tw_im,\n\
+       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+        {\n\
+       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; (void)OGs;%s\n\
+       \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
+       \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n"
+       fname
+       (if kind = "s0s" then " (void)tw_re;" else "")
+       r r r r);
+  (* loads *)
+  (match kind with
+   | "s0s" ->
+     Buffer.add_string buf
+       (Printf.sprintf
+          "        for (int l = 0; l < %d; l++) {\n\
+          \            __m256d zlo = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+          \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
+          \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
+          \        }\n" r)
+   | _ ->
+     Buffer.add_string buf
+       (Printf.sprintf
+          "        xr[0] = _mm256_loadu_pd(zin + 2*(size_t)k);\n\
+          \        xi[0] = _mm256_loadu_pd(zin + 2*(size_t)k + 4);\n\
+          \        for (int l = 1; l < %d; l++) {\n\
+          \            __m256d ar = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+          \            __m256d ai = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
+          \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
+          \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
+          \            SPLIT_CMUL(ar, ai, ct, st, xr[l], xi[l]);\n\
+          \        }\n" r));
+  Buffer.add_string buf (z_split_bfly_call r);
+  (* stores *)
+  (match kind with
+   | "msz" ->
+     Buffer.add_string buf
+       (Printf.sprintf
+          "        for (int l = 0; l < %d; l++) {\n\
+          \            __m256d zlo, zhi;\n\
+          \            REINT(or_[l], oi_[l], zlo, zhi);\n\
+          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), zlo);\n\
+          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, zhi);\n\
+          \        }\n" r)
+   | _ ->
+     Buffer.add_string buf
+       (Printf.sprintf
+          "        for (int l = 0; l < %d; l++) {\n\
+          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), or_[l]);\n\
+          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, oi_[l]);\n\
+          \        }\n" r));
+  Buffer.add_string buf "    }\n}\n";
+  Buffer.contents buf
