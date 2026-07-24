@@ -464,6 +464,64 @@ compiled-in winners today; cc_chain-codec-compatible), in-place placement route,
 terminator route, non-pow2/uncovered-N coverage, MT. The K=1 SCRAMBLED OOP interleaved
 contract at 2048–16384 is DONE: served, gated, bidirectional, generator-owned end to end.
 
+## 4.9991. VTUNE ATTRIBUTION (2026-07-25) — the cascade is CORE-bound; mids are near-ceiling; terminator + leaf carry the stalls
+
+Harness: `dev/bench_vtune/vtune_zsplit.c` (production zsplit.h execute in a pinned loop; SW
+hotspots unelevated + uarch-exploration from the user's admin shell). N=16384 fwd, 10 s,
+core 2, MUX 0.995, 5.7 GHz.
+
+**Process top-down**: Retiring 54.5% · **Back-End 43.5% (Core Bound 33.2%, Memory Bound only
+10.3%)** · Front-End 2.2% (DSB 84.7% — the compact-shared-kernel shape vindicated) · Bad-spec
+~0. Ports: **Port 1 = 66.3% vs Port 0 = 44.6%** (add/sub-heavy split bodies pile on the
+FADD-capable port), 3+-ports-utilized 64.7%, shuffles only 5.5% of slots. **The twiddle/
+bandwidth story is CLOSED** (L2-bound 4.5%, DRAM ~0) — levers 1–5 worked; what remains is
+scheduling/ports/latency, the confirmed "kernel scheduling residue."
+
+**Per-pass** (clockticks · instructions · CPI · retiring):
+
+| pass | ticks/pass | insns/pass | CPI | retiring |
+|---|--:|--:|--:|--:|
+| r8_ms (×3) | 8.1e9 | 34.1e9 | **0.238 (4.2 IPC)** | **71%** — near the machine ceiling |
+| sterm (×1) | 17.3e9 | 46.5e9 | 0.371 (2.7 IPC) | 44% |
+| r4_s0s (×1) | 8.3e9 | 20.8e9 | 0.40 | — |
+
+The terminator's 2.1× cost over a mid = 1.37× instructions × 1.56× worse CPI; the leaf's CPI
+0.40 = the 64 KB-stride z loads' L2 latency + DEINT. **Mids are effectively done.**
+
+**Next levers, in profile order**: (1) terminator scheduling — software-pipeline 2
+column-quads/iter (hide TR4→bfly→REINT chains; store-latency submetric 30.6%); (2) leaf
+latency — prefetch/wider blocks against the strided z loads; (3) port-1 rebalance experiment
+(convert some adds to FMA-×1.0, shifting port 1/5 → port 0; raced emitter variant); (4) the
+elephant for another day: 3.8% core utilization = single-thread by contract — K=1 MT
+(group-parallel stages) is the largest untapped multiplier.
+
+### §4.9991 addendum — the 4096 uarch profile (the weakest cell, explained)
+
+| metric | 4096 | 16384 |
+|---|--:|--:|
+| CPI | **0.336** | 0.307 |
+| Retiring | 49.5% | 54.5% |
+| Core Bound | **38.0%** | 33.2% |
+| Memory Bound | 9.7% | 10.3% |
+| Port 1 / Port 0 | 62.8 / 42.8 | 66.3 / 44.6 |
+| Mispredict resteers | **7.0% of clockticks** | ~0 |
+| DSB misses | **13.1%** | 6.9% |
+
+4096 — our worst vs-MKL cell — is the MOST core-bound and the least efficient (CPI 0.336),
+with two 4096-specific signals: **7% mispredict-resteer clockticks and 2× the DSB misses**.
+Cause: the 4.4.4.8.8 chain's deep stages run MANY SHORT LOOPS — the D=8 last mid is 64
+separate calls of a 2-iteration loop; trip-count-2 loops mispredict their exits and churn the
+DSB. 16384 amortizes the same shape over more work. Memory stays ~10% at both cells —
+scheduling is the whole story.
+
+**NEW TOP LEVER — "group-looped stage kernels" (msg)**: move the per-stage GROUP loop INSIDE
+the kernel (one call per stage, internal loop over `ngroups` with constant group stride +
+per-group table advance). This is MKL's exact shape (census: their stage functions are called
+once per stage and loop internally); it kills per-group call overhead AND turns 64–256
+short-loop exits into one long predictable loop — directly targeting the 7% resteers and the
+DSB churn. Compact body preserved (no fusion bloat — the §4.996 lesson respected). Composes
+with sterm software-pipelining (the other confirmed stall mass).
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
