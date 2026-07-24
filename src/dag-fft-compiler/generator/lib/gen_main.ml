@@ -411,6 +411,10 @@ let run (argv : string array) : unit =
     then zp_kind := "msg"
     else if arg = "--zp-msgb"
     then zp_kind := "msgb"
+    else if arg = "--zp-s0s"
+    then zp_kind := "s0s"
+    else if arg = "--zp-s0sb"
+    then zp_kind := "s0sb"
     else if arg = "--z-t2ss"
     then (
       z_native := true;
