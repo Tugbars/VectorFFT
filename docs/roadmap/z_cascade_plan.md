@@ -389,6 +389,25 @@ was 0.38–0.56 with 8192/16384 unserved. Remaining gap = kernel scheduling resi
 size-specialized finishers; next = emitter promotion of the split kernels + productionization
 (registry/calibrator/wisdom, items 9/11) at these locked shapes.
 
+## 4.997. EMITTER PROMOTION DONE (2026-07-24, end of day) — split family is generator-owned
+
+`codelet_zil.ml` gained `emit_z_split` (template promotion of the gated hand kernels — a
+plane-pair IR backend is not warranted for 2 radices): kinds **s0s** (z→split leaf,
+deinterleaving loads), **ms** (split mid, in-place, shuffle-free, splat-pair group-const
+twiddles), **msz** (split→z last mid, re-interleaving stores); flags `--z-s0s/--z-ms/--z-msz`;
+standard 11-arg z ABI (registry-uniform; kernels use Ls + count). Emitted
+`radix{4,8}_z_{s0s,ms,msz}_avx2.c` → codelets/zil/avx2 (lib now 675 objects).
+**PROMOTION BIT-GATE PASS**: finals bench drv/drvT arms re-pointed at the EMITTED kernels —
+all 12 gates identical relerr to the last digit vs the hand-kernel run; performance within
+noise. Nuance banked honestly: drv vs drvT near-tied on split arms (drvT clearly +5% only at
+4096; the big split bodies amortize base_of) — tables are free at plan time, keep them;
+fused-code remains consistently worst (−8..−13% both runs).
+Per-cell wisdom recorded: `build_tuned/k1_wis/zsplit_wisdom.txt` (4 locked shapes +
+methodology). **QUEUED NEXT SESSION**: front-door productionization (registry resolvers +
+calibrator + wisdom loader + vfft.c route — items 9/11) at these locked shapes; then the
+gap-closing campaign (terminator weight, kernel scheduling residue, MKL-style size-specialized
+finishers).
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
