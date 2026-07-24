@@ -415,6 +415,10 @@ let run (argv : string array) : unit =
     then zp_kind := "s0s"
     else if arg = "--zp-s0sb"
     then zp_kind := "s0sb"
+    else if arg = "--zp-sterm"
+    then zp_kind := "sterm"
+    else if arg = "--zp-stermb"
+    then zp_kind := "stermb"
     else if arg = "--z-t2ss"
     then (
       z_native := true;
