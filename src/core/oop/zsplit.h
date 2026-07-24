@@ -130,8 +130,11 @@ static inline vfft_zsplit_plan_t *vfft_zsplit_create(int N, const int *chain,
     vfft_zsplit_plan_t *p = (vfft_zsplit_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
     p->N = N; p->nf = nf;
-    /* per-cell terminator schedule (production-path race, §4.9993) */
-    p->t2q = (N >= 16384) ? 1 : 0;      /* provisional; set by pick race */
+    /* per-cell terminator schedule (production-path pick race, §4.9993:
+     * 3 passes; 4096 leaned sterm2 2/3 with the largest deltas (-2.3/-6.8%),
+     * 2048/8192 leaned sterm, 16384 coin-flip -> conservative sterm).
+     * TODO(calibrator): promote to a measured zsplit-wisdom field. */
+    p->t2q = (N == 4096) ? 1 : 0;
     for (int s = 0; s < nf; s++) p->chain[s] = chain[s];
     p->D[nf - 1] = 1;
     for (int i = nf - 2; i >= 0; i--) p->D[i] = p->D[i + 1] * chain[i + 1];
