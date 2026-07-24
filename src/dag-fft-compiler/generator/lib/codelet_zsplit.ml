@@ -41,21 +41,29 @@
  * (Fun.protect-reset); no other family may leave it non-None.
  * ------------------------------------------------------------------ *)
 
-(* ─── kind table (P1) ─────────────────────────────────────────────── *)
+(* ─── kind table (P1: ms; P2: msg group-loop wrapper) ─────────────── *)
 
 type zs_kind =
-  { base : string (* "ms" — the C-name stem *)
+  { base : string (* "ms" | "msg" — the C-name stem *)
   ; bwd : bool
+  ; group_loop : bool
+    (* msg: emit the ms column loop as a static always_inline _zsg body
+       and export a thin wrapper that walks the Gs groups in-kernel
+       (bp += 2·R·Ls doubles, twg += (R-1)·2·VW). One call per stage —
+       kills the per-group call overhead + trip-count mispredicts
+       (z_cascade_plan §4.9991/§4.9992). *)
   }
 
 let kind_of_string (s : string) : zs_kind =
   match s with
-  | "ms" -> { base = "ms"; bwd = false }
-  | "msb" -> { base = "ms"; bwd = true }
+  | "ms" -> { base = "ms"; bwd = false; group_loop = false }
+  | "msb" -> { base = "ms"; bwd = true; group_loop = false }
+  | "msg" -> { base = "msg"; bwd = false; group_loop = true }
+  | "msgb" -> { base = "msg"; bwd = true; group_loop = true }
   | other ->
     failwith
       (Printf.sprintf
-         "codelet_zsplit: unknown kind %s (P1 supports: ms msb)"
+         "codelet_zsplit: unknown kind %s (P1/P2 support: ms msb msg msgb)"
          other)
 ;;
 
@@ -127,16 +135,25 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
         \ * [re x%d][im x%d] blocks (z addressing +%d for im; one stream per leg row).\n\
         \ * %s\n\
         \ * CONTRACT: count %% %d == 0 (%d columns per iteration).\n\
-        \ * tw_re = ONE per-group splat-pair set: legs 1..R-1, %d doubles/leg\n\
-        \ * [c×%d][s×%d]; no cursor (group-constant). tw_im unused.%s */\n"
+        \ * tw_re = %s: legs 1..R-1, %d doubles/leg\n\
+        \ * [c×%d][s×%d]. tw_im unused.%s */\n"
        vw
        vw
        vw
-       (if k.bwd
-        then "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
-        else "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw), fwd.")
+       ((match k.base, k.bwd with
+         | "msg", false ->
+           "msg (GROUP-LOOPED split mid: one call/stage, in-kernel bp/twg bumps), fwd."
+         | "msg", true ->
+           "msg bwd twin (group loop over IDFT+POST-tw body; table twspb pre-conjugated)."
+         | _, true ->
+           "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
+         | _, false ->
+           "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw), fwd."))
        vw
        vw
+       (if k.group_loop
+        then "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)"
+        else "ONE per-group splat-pair set, no cursor (group-constant)")
        (2 * vw)
        vw
        vw
@@ -152,25 +169,13 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
        ; "schedule: Schedule.su_schedule (SR list scheduler)"
        ]);
   Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
-  Buffer.add_string
-    buf
-    (Printf.sprintf
-       "__attribute__((target(\"%s\")))\n\
-        void %s(\n\
-       \    const double * __restrict__ zin,\n\
-       \    const double * __restrict__ zin_unused,\n\
-       \    double       * __restrict__ zout,\n\
-       \    double       * __restrict__ zout_unused,\n\
-       \    const double * tw_re, const double * tw_im,\n\
-       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-        {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; \
-        (void)OGs;\n"
-       isa.Isa.target_attr
-       fname);
-  Buffer.add_string
-    buf
-    (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
+  (* ── column loop (shared): the ms body. For plain ms it IS the exported
+        function's body; for msg it becomes the _zsg body fn's body. Both
+        name their pointer params zin/zout/tw_re, so the text is shared. ── *)
+  let emit_col_loop () =
+    Buffer.add_string
+      buf
+      (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
   (* ── ZBlockSplit load edge: lane_{re,im}_l from the split planes.
         Leg l's re half at zin + 2*(l*Ls + k), im half +VW. ── *)
   Buffer.add_string buf "        /* ZBlockSplit load edge */\n";
@@ -251,7 +256,73 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
            buf
            (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa addr tname))
        | _ -> failwith "codelet_zsplit: assign LHS is not Output")
-    assigns;
-  Buffer.add_string buf "    }\n}\n";
+      assigns;
+    Buffer.add_string buf "    }\n"
+  in
+  (if not k.group_loop
+   then (
+     (* ── plain ms: exported function wraps the column loop directly ── *)
+     Buffer.add_string
+       buf
+       (Printf.sprintf
+          "__attribute__((target(\"%s\")))\n\
+           void %s(\n\
+          \    const double * __restrict__ zin,\n\
+          \    const double * __restrict__ zin_unused,\n\
+          \    double       * __restrict__ zout,\n\
+          \    double       * __restrict__ zout_unused,\n\
+          \    const double * tw_re, const double * tw_im,\n\
+          \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+           {\n\
+          \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; \
+           (void)OGs;\n"
+          isa.Isa.target_attr
+          fname);
+     emit_col_loop ();
+     Buffer.add_string buf "}\n")
+   else (
+     (* ── msg: static always_inline body + thin group-loop wrapper.
+           The body carries NO target attribute (always_inline requires the
+           callee's target ⊆ caller's; it inlines into the attributed
+           wrapper). Wrapper shape mirrors legacy codelet_zil byte-for-byte:
+           in-place on zout (zin voided), bp += 2·R·Ls, twg += (R-1)·2·VW. ── *)
+     let body_name = Printf.sprintf "_zsg%d%s_body" radix (if k.bwd then "b" else "f") in
+     Buffer.add_string
+       buf
+       (Printf.sprintf
+          "static __attribute__((always_inline)) inline void %s(\n\
+          \    const double * __restrict__ zin, double * __restrict__ zout,\n\
+          \    const double *tw_re, size_t Ls, size_t count)\n\
+           {\n"
+          body_name);
+     emit_col_loop ();
+     Buffer.add_string buf "}\n\n";
+     Buffer.add_string
+       buf
+       (Printf.sprintf
+          "__attribute__((target(\"%s\")))\n\
+           void %s(\n\
+          \    const double * __restrict__ zin,\n\
+          \    const double * __restrict__ zin_unused,\n\
+          \    double       * __restrict__ zout,\n\
+          \    double       * __restrict__ zout_unused,\n\
+          \    const double * tw_re, const double * tw_im,\n\
+          \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+           {\n\
+          \    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
+          \    (void)OLs; (void)OGs;\n\
+          \    double *bp = zout;\n\
+          \    const double *twg = tw_re;\n\
+          \    for (size_t g = 0; g < Gs; g++) {\n\
+          \        %s(bp, bp, twg, Ls, count);\n\
+          \        bp += 2 * (size_t)%d * Ls;\n\
+          \        twg += %d;\n\
+          \    }\n\
+           }\n"
+          isa.Isa.target_attr
+          fname
+          body_name
+          radix
+          ((radix - 1) * 2 * vw))));
   Buffer.contents buf
 ;;
