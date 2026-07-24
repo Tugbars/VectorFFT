@@ -56,8 +56,7 @@ include Ir
  * Add-of-Neg peephole fires naturally during reconstruction.
  *)
 
-let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) :
-    (Expr.elem_ref * t) list =
+let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   (* Step 1: walk DAG, build indexes. *)
   let visited = Hashtbl.create 256 in
   let usage_count = Hashtbl.create 256 in
@@ -65,92 +64,97 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) :
   let sub_index = Hashtbl.create 64 in
   (* (small_tag, big_tag) -> [Sub nodes both directions] *)
   let bump_usage tag =
-    let c = try Hashtbl.find usage_count tag with Not_found -> 0 in
+    let c =
+      try Hashtbl.find usage_count tag with
+      | Not_found -> 0
+    in
     Hashtbl.replace usage_count tag (c + 1)
   in
   let rec visit (e : t) =
-    if not (Hashtbl.mem visited e.tag) then begin
+    if not (Hashtbl.mem visited e.tag)
+    then (
       Hashtbl.add visited e.tag ();
       match e.node with
       | NK_Const _ | NK_Load _ -> ()
       | NK_Neg inner ->
-          bump_usage inner.tag;
-          visit inner
+        bump_usage inner.tag;
+        visit inner
       | NK_Add (a, b) | NK_Mul (a, b) ->
-          bump_usage a.tag;
-          bump_usage b.tag;
-          visit a;
-          visit b
+        bump_usage a.tag;
+        bump_usage b.tag;
+        visit a;
+        visit b
       | NK_Sub (a, b) ->
-          bump_usage a.tag;
-          bump_usage b.tag;
-          (* Index the Sub by (small_tag, big_tag) regardless of direction.
-           * The list will hold both Sub(a,b) and Sub(b,a) if both exist. *)
-          let key = if a.tag < b.tag then (a.tag, b.tag) else (b.tag, a.tag) in
-          let prev = try Hashtbl.find sub_index key with Not_found -> [] in
-          Hashtbl.replace sub_index key (e :: prev);
-          visit a;
-          visit b
+        bump_usage a.tag;
+        bump_usage b.tag;
+        (* Index the Sub by (small_tag, big_tag) regardless of direction.
+         * The list will hold both Sub(a,b) and Sub(b,a) if both exist. *)
+        let key = if a.tag < b.tag then a.tag, b.tag else b.tag, a.tag in
+        let prev =
+          try Hashtbl.find sub_index key with
+          | Not_found -> []
+        in
+        Hashtbl.replace sub_index key (e :: prev);
+        visit a;
+        visit b
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-          (* Cmul outputs are opaque to dedup. Visit the four operands so
-           * usage counts include them; don't index Cmul itself for Sub-pair
-           * matching. *)
-          bump_usage a.tag;
-          bump_usage b.tag;
-          bump_usage c.tag;
-          bump_usage d.tag;
-          visit a;
-          visit b;
-          visit c;
-          visit d
+        (* Cmul outputs are opaque to dedup. Visit the four operands so
+         * usage counts include them; don't index Cmul itself for Sub-pair
+         * matching. *)
+        bump_usage a.tag;
+        bump_usage b.tag;
+        bump_usage c.tag;
+        bump_usage d.tag;
+        visit a;
+        visit b;
+        visit c;
+        visit d
       | NK_Fma (a, b, c, _, _) ->
-          (* Fma is opaque to dedup — same treatment as Cmul. *)
-          bump_usage a.tag;
-          bump_usage b.tag;
-          bump_usage c.tag;
-          visit a;
-          visit b;
-          visit c
-      | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:648"
-    end
+        (* Fma is opaque to dedup — same treatment as Cmul. *)
+        bump_usage a.tag;
+        bump_usage b.tag;
+        bump_usage c.tag;
+        visit a;
+        visit b;
+        visit c
+      | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:648")
   in
   List.iter (fun (_, e) -> visit e) assigns;
-
   (* Step 2: find Sub-pair conflicts and pick winners. *)
   let substitute : (int, t) Hashtbl.t = Hashtbl.create 16 in
   Hashtbl.iter
     (fun _key nodes ->
-      match nodes with
-      | [ _ ] -> () (* only one direction in the DAG, no conflict *)
-      | nodes_list -> (
-          (* Multiple Sub nodes share the same (small,big) key. Should be
-           * exactly two: Sub(a,b) and Sub(b,a). Pick the winner by usage. *)
-          let scored =
-            List.map
-              (fun n ->
+       match nodes with
+       | [ _ ] -> () (* only one direction in the DAG, no conflict *)
+       | nodes_list ->
+         (* Multiple Sub nodes share the same (small,big) key. Should be
+          * exactly two: Sub(a,b) and Sub(b,a). Pick the winner by usage. *)
+         let scored =
+           List.map
+             (fun n ->
                 let c =
-                  try Hashtbl.find usage_count n.tag with Not_found -> 0
+                  try Hashtbl.find usage_count n.tag with
+                  | Not_found -> 0
                 in
-                (c, n))
-              nodes_list
-          in
-          let scored =
-            List.sort
-              (fun (c1, n1) (c2, n2) ->
+                c, n)
+             nodes_list
+         in
+         let scored =
+           List.sort
+             (fun (c1, n1) (c2, n2) ->
                 (* Higher usage wins; tie-break by lower tag (deterministic). *)
                 if c1 <> c2 then compare c2 c1 else compare n1.tag n2.tag)
-              scored
-          in
-          match scored with
+             scored
+         in
+         (match scored with
           | (_, winner) :: losers ->
-              List.iter
-                (fun (_, loser) ->
-                  if loser.tag <> winner.tag then
-                    Hashtbl.add substitute loser.tag (mk_neg winner))
-                losers
+            List.iter
+              (fun (_, loser) ->
+                 if loser.tag <> winner.tag
+                 then Hashtbl.add substitute loser.tag (mk_neg winner))
+              losers
           | [] -> ()))
     sub_index;
-
   (* Step 3: rebuild assignments with the substitution applied.
    * Uses memoization over tags so each shared subtree is rebuilt once. *)
   let rebuild_cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
@@ -158,39 +162,35 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) :
     match Hashtbl.find_opt rebuild_cache e.tag with
     | Some result -> result
     | None ->
-        let result =
-          match Hashtbl.find_opt substitute e.tag with
-          | Some replacement -> replacement
-          | None -> (
-              (* Recursively rebuild children. The smart constructors handle
-               * any new peepholes that fire (e.g. Add of Neg → Sub). *)
-              match e.node with
-              | NK_Const _ | NK_Load _ -> e
-              | NK_Neg inner -> mk_neg (rebuild inner)
-              | NK_Add (a, b) -> mk_add_binary (rebuild a) (rebuild b)
-              | NK_Sub (a, b) -> mk_sub_binary (rebuild a) (rebuild b)
-              | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
-              | NK_CmulRe (a, b, c, d) ->
-                  let re, _im =
-                    mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                  in
-                  re
-              | NK_CmulIm (a, b, c, d) ->
-                  let _re, im =
-                    mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                  in
-                  im
-              | NK_Fma (a, b, c, neg_mul, neg_add) ->
-                  (* Fma is opaque — rebuild its operands but preserve the
-                   * fused structure. *)
-                  hashcons
-                    (NK_Fma (rebuild a, rebuild b, rebuild c, neg_mul, neg_add))
-              | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:718")
-        in
-        Hashtbl.add rebuild_cache e.tag result;
-        result
+      let result =
+        match Hashtbl.find_opt substitute e.tag with
+        | Some replacement -> replacement
+        | None ->
+          (* Recursively rebuild children. The smart constructors handle
+           * any new peepholes that fire (e.g. Add of Neg → Sub). *)
+          (match e.node with
+           | NK_Const _ | NK_Load _ -> e
+           | NK_Neg inner -> mk_neg (rebuild inner)
+           | NK_Add (a, b) -> mk_add_binary (rebuild a) (rebuild b)
+           | NK_Sub (a, b) -> mk_sub_binary (rebuild a) (rebuild b)
+           | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
+           | NK_CmulRe (a, b, c, d) ->
+             let re, _im = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+             re
+           | NK_CmulIm (a, b, c, d) ->
+             let _re, im = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+             im
+           | NK_Fma (a, b, c, neg_mul, neg_add) ->
+             (* Fma is opaque — rebuild its operands but preserve the
+              * fused structure. *)
+             hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, neg_mul, neg_add))
+           | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:718")
+      in
+      Hashtbl.add rebuild_cache e.tag result;
+      result
   in
-  List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
+  List.map (fun (lhs, e) -> lhs, rebuild e) assigns
+;;
 
 (* === COLLECT-M PASS ===
  *
@@ -243,68 +243,66 @@ let dedup_sub_pairs (assigns : (Expr.elem_ref * t) list) :
 let extract_coefficient (t : t) : float * t =
   let unsigned (t : t) : float * t =
     match t.node with
-    | NK_Mul (a, b) -> (
-        match (a.node, b.node) with
-        | NK_Const c, _ -> (c, b)
-        | _, NK_Const c -> (c, a)
-        | _ -> (1.0, t))
-    | _ -> (1.0, t)
+    | NK_Mul (a, b) ->
+      (match a.node, b.node with
+       | NK_Const c, _ -> c, b
+       | _, NK_Const c -> c, a
+       | _ -> 1.0, t)
+    | _ -> 1.0, t
   in
   match t.node with
   | NK_Neg inner ->
-      let c, atom = unsigned inner in
-      (-.c, atom)
+    let c, atom = unsigned inner in
+    -.c, atom
   | _ -> unsigned t
+;;
 
 let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   if
     Sys.getenv_opt "VFFT_COLLECT_M" <> Some "1"
     && Sys.getenv_opt "VFFT_DEEP_COLLECT" <> Some "1"
   then assigns
-  else begin
+  else (
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
-
     (* For each Add/Sub subtree: flatten, recursively rebuild leaves,
      * group by atom, emit collected Plus and lower to binary. *)
     let rec rebuild (e : t) : t =
       match Hashtbl.find_opt cache e.tag with
       | Some r -> r
       | None ->
-          let r =
-            match e.node with
-            | NK_Const _ | NK_Load _ -> e
-            | NK_Neg inner -> mk_neg (rebuild inner)
-            | NK_Add (a, b) ->
-                (* Decide whether to collect: pre-check if this subtree has any
-                 * shared atom. If yes, flatten and collect. If no, preserve the
-                 * original binary structure (it was built by mk_add's pair-fold,
-                 * which is balanced and FMA-friendly; re-flattening would
-                 * linearize it and hurt fma_lift downstream). *)
-                if subtree_has_collectible e then collect_subtree e
-                else mk_add_binary (rebuild a) (rebuild b)
-            | NK_Sub (a, b) ->
-                if subtree_has_collectible e then collect_subtree e
-                else mk_sub_binary (rebuild a) (rebuild b)
-            | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
-            | NK_CmulRe (a, b, c, d) ->
-                let re, _ =
-                  mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                in
-                re
-            | NK_CmulIm (a, b, c, d) ->
-                let _, im =
-                  mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                in
-                im
-            | NK_Fma (a, b, c, nm, na) ->
-                hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
-            | NK_Plus _ ->
-                (* In normal operation collect_m's input is binary-form. If we
-                 * see NK_Plus, lower it and recurse. *)
-                rebuild (lower_plus e)
-          in
-          Hashtbl.add cache e.tag r;
-          r
+        let r =
+          match e.node with
+          | NK_Const _ | NK_Load _ -> e
+          | NK_Neg inner -> mk_neg (rebuild inner)
+          | NK_Add (a, b) ->
+            (* Decide whether to collect: pre-check if this subtree has any
+             * shared atom. If yes, flatten and collect. If no, preserve the
+             * original binary structure (it was built by mk_add's pair-fold,
+             * which is balanced and FMA-friendly; re-flattening would
+             * linearize it and hurt fma_lift downstream). *)
+            if subtree_has_collectible e
+            then collect_subtree e
+            else mk_add_binary (rebuild a) (rebuild b)
+          | NK_Sub (a, b) ->
+            if subtree_has_collectible e
+            then collect_subtree e
+            else mk_sub_binary (rebuild a) (rebuild b)
+          | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
+          | NK_CmulRe (a, b, c, d) ->
+            let re, _ = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+            re
+          | NK_CmulIm (a, b, c, d) ->
+            let _, im = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+            im
+          | NK_Fma (a, b, c, nm, na) ->
+            hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
+          | NK_Plus _ ->
+            (* In normal operation collect_m's input is binary-form. If we
+             * see NK_Plus, lower it and recurse. *)
+            rebuild (lower_plus e)
+        in
+        Hashtbl.add cache e.tag r;
+        r
     (* Check whether an Add/Sub subtree has any collectible structure.
      * "Collectible" means at least two terms share the same atom tag, OR
      * multiple constants appear (could be folded). If neither, the subtree
@@ -319,49 +317,47 @@ let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
       let has_dup = ref false in
       List.iter
         (fun (_, term) ->
-          match term.node with
-          | NK_Const _ -> incr n_consts
-          | _ ->
-              let _, atom = extract_coefficient term in
-              if Hashtbl.mem seen_atoms atom.tag then has_dup := true
-              else Hashtbl.add seen_atoms atom.tag ())
+           match term.node with
+           | NK_Const _ -> incr n_consts
+           | _ ->
+             let _, atom = extract_coefficient term in
+             if Hashtbl.mem seen_atoms atom.tag
+             then has_dup := true
+             else Hashtbl.add seen_atoms atom.tag ())
         terms;
       !has_dup || !n_consts > 1
     (* Collect a subtree: flatten (through Fma), group by atom, emit. *)
     and collect_subtree (e : t) : t =
       let terms = flatten_sum_through_fma 1 e in
-      let rebuilt = List.map (fun (s, t) -> (s, rebuild t)) terms in
+      let rebuilt = List.map (fun (s, t) -> s, rebuild t) terms in
       let by_atom : (int, float * t) Hashtbl.t = Hashtbl.create 16 in
       let constant_acc = ref 0.0 in
       List.iter
         (fun (sign, term) ->
-          match term.node with
-          | NK_Const c ->
-              constant_acc := !constant_acc +. (float_of_int sign *. c)
-          | _ -> (
-              let coeff, atom = extract_coefficient term in
-              let signed_coeff = float_of_int sign *. coeff in
-              match Hashtbl.find_opt by_atom atom.tag with
+           match term.node with
+           | NK_Const c -> constant_acc := !constant_acc +. (float_of_int sign *. c)
+           | _ ->
+             let coeff, atom = extract_coefficient term in
+             let signed_coeff = float_of_int sign *. coeff in
+             (match Hashtbl.find_opt by_atom atom.tag with
               | None -> Hashtbl.add by_atom atom.tag (signed_coeff, atom)
               | Some (existing, _) ->
-                  Hashtbl.replace by_atom atom.tag
-                    (existing +. signed_coeff, atom)))
+                Hashtbl.replace by_atom atom.tag (existing +. signed_coeff, atom)))
         rebuilt;
       let new_terms = ref [] in
       Hashtbl.iter
         (fun _ (c, atom) ->
-          if c <> 0.0 then begin
-            let term = mk_mul (mk_const c) atom in
-            new_terms := (1, term) :: !new_terms
-          end)
+           if c <> 0.0
+           then (
+             let term = mk_mul (mk_const c) atom in
+             new_terms := (1, term) :: !new_terms))
         by_atom;
-      if !constant_acc <> 0.0 then
-        new_terms := (1, mk_const !constant_acc) :: !new_terms;
+      if !constant_acc <> 0.0 then new_terms := (1, mk_const !constant_acc) :: !new_terms;
       let plus_node = mk_plus !new_terms in
       lower_plus plus_node
     in
-    List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
-  end
+    List.map (fun (lhs, e) -> lhs, rebuild e) assigns)
+;;
 
 (* === DEEP-COLLECT (deepCollectM) ===
  *
@@ -404,47 +400,48 @@ let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
  * resulting list of signed terms after pushing Const factors through
  * inner Add/Sub/Neg structure and folding nested Const*Mul rotations. *)
 let rec distribute_term ~(depth : int) ((sign, t) : int * t) : (int * t) list =
-  if depth <= 0 then [ (sign, t) ]
-  else
+  if depth <= 0
+  then [ sign, t ]
+  else (
     match t.node with
     | NK_Neg inner -> distribute_term ~depth (-sign, inner)
-    | NK_Mul (a, b) -> (
-        (* Identify which operand is Const (if any). *)
-        let const_part, other_part =
-          match (a.node, b.node) with
-          | NK_Const _, _ -> (Some a, b)
-          | _, NK_Const _ -> (Some b, a)
-          | _ -> (None, t)
-        in
-        match const_part with
-        | None -> [ (sign, t) ]
-        | Some c -> (
-            match other_part.node with
-            | NK_Add (x, y) ->
-                (* c * (x + y) = c*x + c*y *)
-                distribute_term ~depth:(depth - 1) (sign, mk_mul c x)
-                @ distribute_term ~depth:(depth - 1) (sign, mk_mul c y)
-            | NK_Sub (x, y) ->
-                (* c * (x - y) = c*x - c*y *)
-                distribute_term ~depth:(depth - 1) (sign, mk_mul c x)
-                @ distribute_term ~depth:(depth - 1) (-sign, mk_mul c y)
-            | NK_Neg inner ->
-                (* c * (-x) = -(c * x) *)
-                distribute_term ~depth (-sign, mk_mul c inner)
-            | NK_Mul (m1, m2) -> (
-                (* c * Mul(...): if inner has Const, rotate; otherwise leave. *)
-                let rotated_opt =
-                  match (m1.node, m2.node) with
-                  | NK_Const _, _ -> Some (mk_mul (mk_mul c m1) m2)
-                  | _, NK_Const _ -> Some (mk_mul (mk_mul c m2) m1)
-                  | _ -> None
-                in
-                match rotated_opt with
-                | Some rotated when rotated != t ->
-                    distribute_term ~depth (sign, rotated)
-                | _ -> [ (sign, t) ])
-            | _ -> [ (sign, t) ]))
-    | _ -> [ (sign, t) ]
+    | NK_Mul (a, b) ->
+      (* Identify which operand is Const (if any). *)
+      let const_part, other_part =
+        match a.node, b.node with
+        | NK_Const _, _ -> Some a, b
+        | _, NK_Const _ -> Some b, a
+        | _ -> None, t
+      in
+      (match const_part with
+       | None -> [ sign, t ]
+       | Some c ->
+         (match other_part.node with
+          | NK_Add (x, y) ->
+            (* c * (x + y) = c*x + c*y *)
+            distribute_term ~depth:(depth - 1) (sign, mk_mul c x)
+            @ distribute_term ~depth:(depth - 1) (sign, mk_mul c y)
+          | NK_Sub (x, y) ->
+            (* c * (x - y) = c*x - c*y *)
+            distribute_term ~depth:(depth - 1) (sign, mk_mul c x)
+            @ distribute_term ~depth:(depth - 1) (-sign, mk_mul c y)
+          | NK_Neg inner ->
+            (* c * (-x) = -(c * x) *)
+            distribute_term ~depth (-sign, mk_mul c inner)
+          | NK_Mul (m1, m2) ->
+            (* c * Mul(...): if inner has Const, rotate; otherwise leave. *)
+            let rotated_opt =
+              match m1.node, m2.node with
+              | NK_Const _, _ -> Some (mk_mul (mk_mul c m1) m2)
+              | _, NK_Const _ -> Some (mk_mul (mk_mul c m2) m1)
+              | _ -> None
+            in
+            (match rotated_opt with
+             | Some rotated when rotated != t -> distribute_term ~depth (sign, rotated)
+             | _ -> [ sign, t ])
+          | _ -> [ sign, t ]))
+    | _ -> [ sign, t ])
+;;
 
 (* Group a flat list of signed terms by atom tag and emit collected form.
  * Returns the IR node count of the resulting binary tree, plus the tree
@@ -455,27 +452,27 @@ let collect_terms_to_tree (terms : (int * t) list) : t =
   let constant_acc = ref 0.0 in
   List.iter
     (fun (sign, term) ->
-      match term.node with
-      | NK_Const c -> constant_acc := !constant_acc +. (float_of_int sign *. c)
-      | _ -> (
-          let coeff, atom = extract_coefficient term in
-          let signed_coeff = float_of_int sign *. coeff in
-          match Hashtbl.find_opt by_atom atom.tag with
+       match term.node with
+       | NK_Const c -> constant_acc := !constant_acc +. (float_of_int sign *. c)
+       | _ ->
+         let coeff, atom = extract_coefficient term in
+         let signed_coeff = float_of_int sign *. coeff in
+         (match Hashtbl.find_opt by_atom atom.tag with
           | None -> Hashtbl.add by_atom atom.tag (signed_coeff, atom)
           | Some (existing, _) ->
-              Hashtbl.replace by_atom atom.tag (existing +. signed_coeff, atom)))
+            Hashtbl.replace by_atom atom.tag (existing +. signed_coeff, atom)))
     terms;
   let new_terms = ref [] in
   Hashtbl.iter
     (fun _ (c, atom) ->
-      if c <> 0.0 then begin
-        let term = mk_mul (mk_const c) atom in
-        new_terms := (1, term) :: !new_terms
-      end)
+       if c <> 0.0
+       then (
+         let term = mk_mul (mk_const c) atom in
+         new_terms := (1, term) :: !new_terms))
     by_atom;
-  if !constant_acc <> 0.0 then
-    new_terms := (1, mk_const !constant_acc) :: !new_terms;
+  if !constant_acc <> 0.0 then new_terms := (1, mk_const !constant_acc) :: !new_terms;
   lower_plus (mk_plus !new_terms)
+;;
 
 (* Count the IR nodes reachable from a node (treats hashcons as identity).
  * Used as a cost heuristic to compare distributed vs original forms. *)
@@ -483,51 +480,47 @@ let count_ir_nodes (root : t) : int =
   let seen = Hashtbl.create 64 in
   let n = ref 0 in
   let rec walk e =
-    if Hashtbl.mem seen e.tag then ()
-    else begin
+    if Hashtbl.mem seen e.tag
+    then ()
+    else (
       Hashtbl.add seen e.tag ();
       incr n;
-      List.iter walk (preds e)
-    end
+      List.iter walk (preds e))
   in
   walk root;
   !n
+;;
 
-let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list) :
-    (Expr.elem_ref * t) list =
-  if Sys.getenv_opt "VFFT_DEEP_COLLECT" <> Some "1" then assigns
-  else begin
+let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref * t) list
+  =
+  if Sys.getenv_opt "VFFT_DEEP_COLLECT" <> Some "1"
+  then assigns
+  else (
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
-
     let rec rebuild (e : t) : t =
       match Hashtbl.find_opt cache e.tag with
       | Some r -> r
       | None ->
-          let r =
-            match e.node with
-            | NK_Const _ | NK_Load _ -> e
-            | NK_Neg inner -> mk_neg (rebuild inner)
-            | NK_Add (a, b) ->
-                try_deep_collect e (mk_add_binary (rebuild a) (rebuild b))
-            | NK_Sub (a, b) ->
-                try_deep_collect e (mk_sub_binary (rebuild a) (rebuild b))
-            | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
-            | NK_CmulRe (a, b, c, d) ->
-                let re, _ =
-                  mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                in
-                re
-            | NK_CmulIm (a, b, c, d) ->
-                let _, im =
-                  mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d)
-                in
-                im
-            | NK_Fma (a, b, c, nm, na) ->
-                hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
-            | NK_Plus _ -> rebuild (lower_plus e)
-          in
-          Hashtbl.add cache e.tag r;
-          r
+        let r =
+          match e.node with
+          | NK_Const _ | NK_Load _ -> e
+          | NK_Neg inner -> mk_neg (rebuild inner)
+          | NK_Add (a, b) -> try_deep_collect e (mk_add_binary (rebuild a) (rebuild b))
+          | NK_Sub (a, b) -> try_deep_collect e (mk_sub_binary (rebuild a) (rebuild b))
+          | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
+          | NK_CmulRe (a, b, c, d) ->
+            let re, _ = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+            re
+          | NK_CmulIm (a, b, c, d) ->
+            let _, im = mk_cmul (rebuild a) (rebuild b) (rebuild c) (rebuild d) in
+            im
+          | NK_Fma (a, b, c, nm, na) ->
+            hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
+          | NK_Plus _ -> rebuild (lower_plus e)
+        in
+        Hashtbl.add cache e.tag r;
+        r
     (* Distribute when at least one resulting Mul of c with a child node
      * already exists in the hash-cons table. Even one hit means
      * distribution doesn't add net new nodes (it transforms a Mul-of-Add
@@ -535,71 +528,69 @@ let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list) :
      * guard below, false positives get filtered out. *)
     and any_mul_exists (c : t) (x : t) (y : t) : bool =
       lookup_node
-        (NK_Mul
-           ((if c.tag <= x.tag then c else x), if c.tag <= x.tag then x else c))
+        (NK_Mul ((if c.tag <= x.tag then c else x), if c.tag <= x.tag then x else c))
       <> None
       || lookup_node
-           (NK_Mul
-              ( (if c.tag <= y.tag then c else y),
-                if c.tag <= y.tag then y else c ))
+           (NK_Mul ((if c.tag <= y.tag then c else y), if c.tag <= y.tag then y else c))
          <> None
     and distribute_use_aware ~depth ((sign, t) : int * t) : (int * t) list =
-      if depth <= 0 then [ (sign, t) ]
-      else
+      if depth <= 0
+      then [ sign, t ]
+      else (
         match t.node with
         | NK_Neg inner -> distribute_use_aware ~depth (-sign, inner)
-        | NK_Mul (a, b) -> (
-            let const_part, other_part =
-              match (a.node, b.node) with
-              | NK_Const _, _ -> (Some a, b)
-              | _, NK_Const _ -> (Some b, a)
-              | _ -> (None, t)
-            in
-            match const_part with
-            | None -> [ (sign, t) ]
-            | Some c -> (
-                match other_part.node with
-                | NK_Add (x, y) when any_mul_exists c x y ->
-                    distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c x)
-                    @ distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c y)
-                | NK_Sub (x, y) when any_mul_exists c x y ->
-                    distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c x)
-                    @ distribute_use_aware ~depth:(depth - 1) (-sign, mk_mul c y)
-                | NK_Neg inner ->
-                    distribute_use_aware ~depth (-sign, mk_mul c inner)
-                | NK_Mul (m1, m2) -> (
-                    let rotated_opt =
-                      match (m1.node, m2.node) with
-                      | NK_Const _, _ -> Some (mk_mul (mk_mul c m1) m2)
-                      | _, NK_Const _ -> Some (mk_mul (mk_mul c m2) m1)
-                      | _ -> None
-                    in
-                    match rotated_opt with
-                    | Some rotated when rotated != t ->
-                        distribute_use_aware ~depth (sign, rotated)
-                    | _ -> [ (sign, t) ])
-                | _ -> [ (sign, t) ]))
-        | _ -> [ (sign, t) ]
+        | NK_Mul (a, b) ->
+          let const_part, other_part =
+            match a.node, b.node with
+            | NK_Const _, _ -> Some a, b
+            | _, NK_Const _ -> Some b, a
+            | _ -> None, t
+          in
+          (match const_part with
+           | None -> [ sign, t ]
+           | Some c ->
+             (match other_part.node with
+              | NK_Add (x, y) when any_mul_exists c x y ->
+                distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c x)
+                @ distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c y)
+              | NK_Sub (x, y) when any_mul_exists c x y ->
+                distribute_use_aware ~depth:(depth - 1) (sign, mk_mul c x)
+                @ distribute_use_aware ~depth:(depth - 1) (-sign, mk_mul c y)
+              | NK_Neg inner -> distribute_use_aware ~depth (-sign, mk_mul c inner)
+              | NK_Mul (m1, m2) ->
+                let rotated_opt =
+                  match m1.node, m2.node with
+                  | NK_Const _, _ -> Some (mk_mul (mk_mul c m1) m2)
+                  | _, NK_Const _ -> Some (mk_mul (mk_mul c m2) m1)
+                  | _ -> None
+                in
+                (match rotated_opt with
+                 | Some rotated when rotated != t ->
+                   distribute_use_aware ~depth (sign, rotated)
+                 | _ -> [ sign, t ])
+              | _ -> [ sign, t ]))
+        | _ -> [ sign, t ])
     and try_deep_collect (original : t) (rebuilt_binary : t) : t =
       (* Use the FMA-aware flatten so we see through early-peephole
        * Fma nodes that block ordinary flatten_sum. *)
       let terms = flatten_sum_through_fma 1 original in
       let n_input_terms = List.length terms in
-      let rebuilt_terms = List.map (fun (s, t) -> (s, rebuild t)) terms in
+      let rebuilt_terms = List.map (fun (s, t) -> s, rebuild t) terms in
       let distributed =
         List.concat_map (distribute_use_aware ~depth:depth_limit) rebuilt_terms
       in
-      if List.length distributed <= n_input_terms then rebuilt_binary
-      else begin
+      if List.length distributed <= n_input_terms
+      then rebuilt_binary
+      else (
         let atom_set : (int, unit) Hashtbl.t = Hashtbl.create 16 in
         let has_const = ref false in
         List.iter
           (fun (_, term) ->
-            match term.node with
-            | NK_Const _ -> has_const := true
-            | _ ->
-                let _, atom = extract_coefficient term in
-                Hashtbl.replace atom_set atom.tag ())
+             match term.node with
+             | NK_Const _ -> has_const := true
+             | _ ->
+               let _, atom = extract_coefficient term in
+               Hashtbl.replace atom_set atom.tag ())
           distributed;
         let n_groups = Hashtbl.length atom_set + if !has_const then 1 else 0 in
         (* Strict win condition: collected term count must be STRICTLY LESS
@@ -607,15 +598,18 @@ let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list) :
          * pure expansion-without-merging, which is what caused R=20's
          * regression with the looser check. *)
         let win = n_groups < n_input_terms in
-        if Sys.getenv_opt "VFFT_DEEP_COLLECT_TRACE" = Some "1" then
-          Printf.eprintf "deep_collect: in=%d dist=%d groups=%d %s\n"
-            n_input_terms (List.length distributed) n_groups
+        if Sys.getenv_opt "VFFT_DEEP_COLLECT_TRACE" = Some "1"
+        then
+          Printf.eprintf
+            "deep_collect: in=%d dist=%d groups=%d %s\n"
+            n_input_terms
+            (List.length distributed)
+            n_groups
             (if win then "WIN" else "skip");
-        if win then collect_terms_to_tree distributed else rebuilt_binary
-      end
+        if win then collect_terms_to_tree distributed else rebuilt_binary)
     in
-    List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
-  end
+    List.map (fun (lhs, e) -> lhs, rebuild e) assigns)
+;;
 
 (* === SUB-NEG-MUL → FNMSUB LIFTING ===
  *
@@ -648,41 +642,41 @@ let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list) :
  * total IR ops) but each occurrence is a 3:1 to 4:1 instruction reduction
  * in the hot loop body. *)
 
-let lift_sub_neg_mul (assigns : (Expr.elem_ref * t) list) :
-    (Expr.elem_ref * t) list =
+let lift_sub_neg_mul (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
   let rec rebuild (e : t) : t =
     match Hashtbl.find_opt cache e.tag with
     | Some r -> r
     | None ->
-        let result =
-          match e.node with
-          | NK_Sub (a, b) -> (
-              let a' = rebuild a in
-              let b' = rebuild b in
-              (* Pattern match: Sub(Neg(Mul(x, y)), z) → NK_Fma(x, y, z, true, true) *)
-              match a'.node with
-              | NK_Neg inner -> (
-                  match inner.node with
-                  | NK_Mul (x, y) -> hashcons (NK_Fma (x, y, b', true, true))
-                  | _ -> mk_sub_binary a' b')
+      let result =
+        match e.node with
+        | NK_Sub (a, b) ->
+          let a' = rebuild a in
+          let b' = rebuild b in
+          (* Pattern match: Sub(Neg(Mul(x, y)), z) → NK_Fma(x, y, z, true, true) *)
+          (match a'.node with
+           | NK_Neg inner ->
+             (match inner.node with
+              | NK_Mul (x, y) -> hashcons (NK_Fma (x, y, b', true, true))
               | _ -> mk_sub_binary a' b')
-          | NK_Add (a, b) -> mk_add_binary (rebuild a) (rebuild b)
-          | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
-          | NK_Neg inner -> mk_neg (rebuild inner)
-          | NK_Const _ | NK_Load _ -> e
-          | NK_CmulRe (a, b, c, d) ->
-              hashcons (NK_CmulRe (rebuild a, rebuild b, rebuild c, rebuild d))
-          | NK_CmulIm (a, b, c, d) ->
-              hashcons (NK_CmulIm (rebuild a, rebuild b, rebuild c, rebuild d))
-          | NK_Fma (a, b, c, nm, na) ->
-              hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
-          | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:777"
-        in
-        Hashtbl.add cache e.tag result;
-        result
+           | _ -> mk_sub_binary a' b')
+        | NK_Add (a, b) -> mk_add_binary (rebuild a) (rebuild b)
+        | NK_Mul (a, b) -> mk_mul (rebuild a) (rebuild b)
+        | NK_Neg inner -> mk_neg (rebuild inner)
+        | NK_Const _ | NK_Load _ -> e
+        | NK_CmulRe (a, b, c, d) ->
+          hashcons (NK_CmulRe (rebuild a, rebuild b, rebuild c, rebuild d))
+        | NK_CmulIm (a, b, c, d) ->
+          hashcons (NK_CmulIm (rebuild a, rebuild b, rebuild c, rebuild d))
+        | NK_Fma (a, b, c, nm, na) ->
+          hashcons (NK_Fma (rebuild a, rebuild b, rebuild c, nm, na))
+        | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:777"
+      in
+      Hashtbl.add cache e.tag result;
+      result
   in
-  List.map (fun (lhs, e) -> (lhs, rebuild e)) assigns
+  List.map (fun (lhs, e) -> lhs, rebuild e) assigns
+;;
 
 (* === DISTRIBUTIVE FACTORING ===
  *
@@ -739,18 +733,20 @@ let lift_sub_neg_mul (assigns : (Expr.elem_ref * t) list) :
  *   ~aggressive:true            — full flat-sum factoring. Use for
  *                                 monolithic primes (R=3,5,7,11). *)
 
-let factor_common_muls ?(aggressive = false)
-    (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
-  if not aggressive then assigns
-  else
+let factor_common_muls ?(aggressive = false) (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref * t) list
+  =
+  if not aggressive
+  then assigns
+  else (
     (* If n is Mul(x, Const c) or Mul(Const c, x), return Some (x, c). *)
     let const_mul_of (n : t) : (t * float) option =
       match n.node with
-      | NK_Mul (a, b) -> (
-          match (a.node, b.node) with
-          | NK_Const c, _ -> Some (b, c)
-          | _, NK_Const c -> Some (a, c)
-          | _ -> None)
+      | NK_Mul (a, b) ->
+        (match a.node, b.node with
+         | NK_Const c, _ -> Some (b, c)
+         | _, NK_Const c -> Some (a, c)
+         | _ -> None)
       | _ -> None
     in
     (* Flatten an Add/Sub/Neg chain into [(sign, term)] terms.
@@ -760,7 +756,7 @@ let factor_common_muls ?(aggressive = false)
       | NK_Add (a, b) -> flatten sign a @ flatten sign b
       | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
       | NK_Neg inner -> flatten (-sign) inner
-      | _ -> [ (sign, e) ]
+      | _ -> [ sign, e ]
     in
     (* Reconstruct a sum from a (sign, term) list. Separates positive and
      * negative terms, builds each via mk_add (which flattens + sorts +
@@ -768,19 +764,15 @@ let factor_common_muls ?(aggressive = false)
      * This ensures hash-cons hits when the same semantic sum is constructed
      * elsewhere — e.g., Neg(Add(a, b)) is canonical, never Sub(Neg(a), b). *)
     let rebuild_sum (terms : (int * t) list) : t =
-      let pos =
-        List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms
-      in
-      let neg =
-        List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms
-      in
+      let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+      let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
       let build_sum lst =
         match lst with
         | [] -> mk_const 0.0
         | [ x ] -> x
         | x :: rest -> List.fold_left mk_add x rest
       in
-      match (pos, neg) with
+      match pos, neg with
       | [], [] -> mk_const 0.0
       | _, [] -> build_sum pos
       | [], _ -> mk_neg (build_sum neg)
@@ -788,11 +780,11 @@ let factor_common_muls ?(aggressive = false)
     in
     let max_iter = 20 in
     let rec loop assigns iter =
-      if iter >= max_iter then assigns
-      else begin
+      if iter >= max_iter
+      then assigns
+      else (
         let changed = ref false in
         let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
-
         (* Try to factor a flat term list. Returns new term list and whether
          * any factoring fired. Groups of same-constant Muls become a single
          * new term: (+1, Mul(inner_sum, Const c)). No use-count safety —
@@ -800,138 +792,129 @@ let factor_common_muls ?(aggressive = false)
          * because primes' Winograd structure emerges from precisely this. *)
         let factor_terms (terms : (int * t) list) : (int * t) list * bool =
           if Sys.getenv_opt "FACTOR_TRACE" <> None && List.length terms >= 3
-          then begin
+          then (
             Printf.eprintf "  factor_terms input (%d): " (List.length terms);
             List.iter
               (fun (s, t) ->
-                match const_mul_of t with
-                | Some (_, c) ->
-                    Printf.eprintf "%sc=%g " (if s > 0 then "+" else "-") c
-                | None ->
-                    Printf.eprintf "%sleaf(t%d) "
-                      (if s > 0 then "+" else "-")
-                      t.tag)
+                 match const_mul_of t with
+                 | Some (_, c) -> Printf.eprintf "%sc=%g " (if s > 0 then "+" else "-") c
+                 | None ->
+                   Printf.eprintf "%sleaf(t%d) " (if s > 0 then "+" else "-") t.tag)
               terms;
-            Printf.eprintf "\n"
-          end;
+            Printf.eprintf "\n");
           (* Bucket by constant value of Mul-coefficient.
            * Use float-bit-equality on the constant. *)
-          let by_const : (int64, (int * t * t) list) Hashtbl.t =
-            Hashtbl.create 8
-          in
+          let by_const : (int64, (int * t * t) list) Hashtbl.t = Hashtbl.create 8 in
           (* int64 = float bits; payload is (sign, x, original_mul) *)
           let leftover : (int * t) list ref = ref [] in
           List.iter
             (fun (sign, term) ->
-              match const_mul_of term with
-              | Some (x, c) ->
-                  let key = Int64.bits_of_float c in
-                  let cur =
-                    try Hashtbl.find by_const key with Not_found -> []
-                  in
-                  Hashtbl.replace by_const key ((sign, x, term) :: cur)
-              | _ -> leftover := (sign, term) :: !leftover)
+               match const_mul_of term with
+               | Some (x, c) ->
+                 let key = Int64.bits_of_float c in
+                 let cur =
+                   try Hashtbl.find by_const key with
+                   | Not_found -> []
+                 in
+                 Hashtbl.replace by_const key ((sign, x, term) :: cur)
+               | _ -> leftover := (sign, term) :: !leftover)
             terms;
           let factored = ref [] in
           let any_fired = ref false in
           Hashtbl.iter
             (fun key entries ->
-              match entries with
-              | [] -> ()
-              | [ (s, _, orig) ] ->
-                  (* Single mul with this constant; not a factoring opportunity. *)
-                  leftover := (s, orig) :: !leftover
-              | _ ->
-                  (* ≥2 muls share the same constant. Factor them. *)
-                  any_fired := true;
-                  changed := true;
-                  let inner_terms =
-                    List.map (fun (s, x, _) -> (s, x)) entries
-                  in
-                  let inner_sum = rebuild_sum inner_terms in
-                  let c = Int64.float_of_bits key in
-                  let factored_term = mk_mul inner_sum (mk_const c) in
-                  factored := (1, factored_term) :: !factored)
+               match entries with
+               | [] -> ()
+               | [ (s, _, orig) ] ->
+                 (* Single mul with this constant; not a factoring opportunity. *)
+                 leftover := (s, orig) :: !leftover
+               | _ ->
+                 (* ≥2 muls share the same constant. Factor them. *)
+                 any_fired := true;
+                 changed := true;
+                 let inner_terms = List.map (fun (s, x, _) -> s, x) entries in
+                 let inner_sum = rebuild_sum inner_terms in
+                 let c = Int64.float_of_bits key in
+                 let factored_term = mk_mul inner_sum (mk_const c) in
+                 factored := (1, factored_term) :: !factored)
             by_const;
-          (!leftover @ !factored, !any_fired)
+          !leftover @ !factored, !any_fired
         in
-
         let rec rewrite (n : t) : t =
           match Hashtbl.find_opt cache n.tag with
           | Some r -> r
           | None ->
-              let r =
-                match n.node with
-                | NK_Const _ | NK_Load _ -> n
-                | NK_Neg a ->
-                    let a' = rewrite a in
-                    if a' == a then n else mk_neg a'
-                | NK_Add (a, b) ->
-                    (* Look for factoring across the full flat sum (recurses
-                     * through nested Add/Sub/Neg). If found, restructure via
-                     * rebuild_sum. If not, preserve binary structure with
-                     * substituted children — re-flattening would destroy
-                     * sharing of inner Adds with the rest of the DAG. *)
-                    let raw_terms = flatten 1 n in
-                    let rewritten_terms =
-                      List.map (fun (s, t) -> (s, rewrite t)) raw_terms
-                    in
-                    let new_terms, fired = factor_terms rewritten_terms in
-                    if fired then rebuild_sum new_terms
-                    else
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_add_binary a' b'
-                | NK_Sub (a, b) ->
-                    let raw_terms = flatten 1 n in
-                    let rewritten_terms =
-                      List.map (fun (s, t) -> (s, rewrite t)) raw_terms
-                    in
-                    let new_terms, fired = factor_terms rewritten_terms in
-                    if fired then rebuild_sum new_terms
-                    else
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_sub_binary a' b'
-                | NK_Mul (a, b) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    if a' == a && b' == b then n else mk_mul a' b'
-                | NK_CmulRe (a, b, c, d) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    let d' = rewrite d in
-                    if a' == a && b' == b && c' == c && d' == d then n
-                    else hashcons (NK_CmulRe (a', b', c', d'))
-                | NK_CmulIm (a, b, c, d) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    let d' = rewrite d in
-                    if a' == a && b' == b && c' == c && d' == d then n
-                    else hashcons (NK_CmulIm (a', b', c', d'))
-                | NK_Fma (a, b, c, neg_mul, neg_add) ->
-                    (* Fma is opaque to factoring — the muls inside are already
-                     * claimed by the FMA fusion. Recurse into operands but
-                     * never restructure. *)
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    if a' == a && b' == b && c' == c then n
-                    else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
-                | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:964"
-              in
-              Hashtbl.add cache n.tag r;
-              r
+            let r =
+              match n.node with
+              | NK_Const _ | NK_Load _ -> n
+              | NK_Neg a ->
+                let a' = rewrite a in
+                if a' == a then n else mk_neg a'
+              | NK_Add (a, b) ->
+                (* Look for factoring across the full flat sum (recurses
+                 * through nested Add/Sub/Neg). If found, restructure via
+                 * rebuild_sum. If not, preserve binary structure with
+                 * substituted children — re-flattening would destroy
+                 * sharing of inner Adds with the rest of the DAG. *)
+                let raw_terms = flatten 1 n in
+                let rewritten_terms = List.map (fun (s, t) -> s, rewrite t) raw_terms in
+                let new_terms, fired = factor_terms rewritten_terms in
+                if fired
+                then rebuild_sum new_terms
+                else (
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_add_binary a' b')
+              | NK_Sub (a, b) ->
+                let raw_terms = flatten 1 n in
+                let rewritten_terms = List.map (fun (s, t) -> s, rewrite t) raw_terms in
+                let new_terms, fired = factor_terms rewritten_terms in
+                if fired
+                then rebuild_sum new_terms
+                else (
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_sub_binary a' b')
+              | NK_Mul (a, b) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_mul a' b'
+              | NK_CmulRe (a, b, c, d) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                let d' = rewrite d in
+                if a' == a && b' == b && c' == c && d' == d
+                then n
+                else hashcons (NK_CmulRe (a', b', c', d'))
+              | NK_CmulIm (a, b, c, d) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                let d' = rewrite d in
+                if a' == a && b' == b && c' == c && d' == d
+                then n
+                else hashcons (NK_CmulIm (a', b', c', d'))
+              | NK_Fma (a, b, c, neg_mul, neg_add) ->
+                (* Fma is opaque to factoring — the muls inside are already
+                 * claimed by the FMA fusion. Recurse into operands but
+                 * never restructure. *)
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                if a' == a && b' == b && c' == c
+                then n
+                else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
+              | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:964"
+            in
+            Hashtbl.add cache n.tag r;
+            r
         in
-        let new_assigns =
-          List.map (fun (oref, e) -> (oref, rewrite e)) assigns
-        in
-        if !changed then loop new_assigns (iter + 1) else new_assigns
-      end
+        let new_assigns = List.map (fun (oref, e) -> oref, rewrite e) assigns in
+        if !changed then loop new_assigns (iter + 1) else new_assigns)
     in
-    loop assigns 0
+    loop assigns 0)
+;;
 
 (* === SUBSUM SHARING ===
  *
@@ -987,20 +970,24 @@ let factor_common_muls ?(aggressive = false)
  * Fires only in aggressive mode (primes). Safe-mode CT codelets don't
  * have this pattern. *)
 
-let factor_by_atom ?(aggressive = false) (assigns : (Expr.elem_ref * t) list) :
-    (Expr.elem_ref * t) list =
-  if not aggressive then assigns
-  else
+let factor_by_atom ?(aggressive = false) (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref * t) list
+  =
+  if not aggressive
+  then assigns
+  else (
     let const_of (e : t) : float option =
-      match e.node with NK_Const c -> Some c | _ -> None
+      match e.node with
+      | NK_Const c -> Some c
+      | _ -> None
     in
     let rec atom_view (sign : int) (e : t) : (float * t) option =
       match e.node with
-      | NK_Mul (a, b) -> (
-          match (const_of a, const_of b) with
-          | Some c, None -> Some (float_of_int sign *. c, b)
-          | None, Some c -> Some (float_of_int sign *. c, a)
-          | _ -> None)
+      | NK_Mul (a, b) ->
+        (match const_of a, const_of b with
+         | Some c, None -> Some (float_of_int sign *. c, b)
+         | None, Some c -> Some (float_of_int sign *. c, a)
+         | _ -> None)
       | NK_Neg inner -> atom_view (-sign) inner
       | _ -> None
     in
@@ -1009,216 +996,206 @@ let factor_by_atom ?(aggressive = false) (assigns : (Expr.elem_ref * t) list) :
       | NK_Add (a, b) -> flatten sign a @ flatten sign b
       | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
       | NK_Neg inner -> flatten (-sign) inner
-      | _ -> [ (sign, e) ]
+      | _ -> [ sign, e ]
     in
     let rebuild_sum (terms : (int * t) list) : t =
-      let pos =
-        List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms
-      in
-      let neg =
-        List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms
-      in
+      let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+      let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
       let build lst =
         match lst with
         | [] -> mk_const 0.0
         | [ x ] -> x
         | x :: rest -> List.fold_left mk_add x rest
       in
-      match (pos, neg) with
+      match pos, neg with
       | [], [] -> mk_const 0.0
       | _, [] -> build pos
       | [], _ -> mk_neg (build neg)
       | _, _ -> mk_sub (build pos) (build neg)
     in
-
     let max_iter = 8 in
     let rec loop assigns iter =
-      if iter >= max_iter then assigns
-      else begin
+      if iter >= max_iter
+      then assigns
+      else (
         let changed = ref false in
         let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
-
         (* Bucket flat terms by atom-tag, sum coefficients (compile-time fold).
          * `fired` = at least one bucket had multiple entries OR a coefficient
          * summed to zero. *)
         let factor_terms (terms : (int * t) list) : (int * t) list * bool =
-          let by_atom : (int, t * float ref * int ref) Hashtbl.t =
-            Hashtbl.create 8
-          in
+          let by_atom : (int, t * float ref * int ref) Hashtbl.t = Hashtbl.create 8 in
           let leftover : (int * t) list ref = ref [] in
           List.iter
             (fun (sign, term) ->
-              match atom_view sign term with
-              | Some (c, atom) -> (
-                  match Hashtbl.find_opt by_atom atom.tag with
+               match atom_view sign term with
+               | Some (c, atom) ->
+                 (match Hashtbl.find_opt by_atom atom.tag with
                   | Some (_, acc, count) ->
-                      acc := !acc +. c;
-                      incr count
+                    acc := !acc +. c;
+                    incr count
                   | None -> Hashtbl.add by_atom atom.tag (atom, ref c, ref 1))
-              | None -> leftover := (sign, term) :: !leftover)
+               | None -> leftover := (sign, term) :: !leftover)
             terms;
-
           let new_factored : (int * t) list ref = ref [] in
           let any_collapse_or_zero = ref false in
           Hashtbl.iter
             (fun _ (atom, c_ref, count_ref) ->
-              let c = !c_ref in
-              let count = !count_ref in
-              if c = 0.0 then begin
-                any_collapse_or_zero := true
-              end
-              else if count >= 2 then begin
-                (* Multiple originals collapsed into one. *)
-                let new_term = mk_mul (mk_const c) atom in
-                new_factored := (1, new_term) :: !new_factored;
-                any_collapse_or_zero := true
-              end
-              else begin
-                (* Single occurrence — preserve as Mul(c, atom). *)
-                let new_term = mk_mul (mk_const c) atom in
-                new_factored := (1, new_term) :: !new_factored
-              end)
+               let c = !c_ref in
+               let count = !count_ref in
+               if c = 0.0
+               then any_collapse_or_zero := true
+               else if count >= 2
+               then (
+                 (* Multiple originals collapsed into one. *)
+                 let new_term = mk_mul (mk_const c) atom in
+                 new_factored := (1, new_term) :: !new_factored;
+                 any_collapse_or_zero := true)
+               else (
+                 (* Single occurrence — preserve as Mul(c, atom). *)
+                 let new_term = mk_mul (mk_const c) atom in
+                 new_factored := (1, new_term) :: !new_factored))
             by_atom;
           let final_terms = !new_factored @ !leftover in
-          (final_terms, !any_collapse_or_zero)
+          final_terms, !any_collapse_or_zero
         in
-
         let rec rewrite (n : t) : t =
           match Hashtbl.find_opt cache n.tag with
           | Some r -> r
           | None ->
-              let r =
-                match n.node with
-                | NK_Const _ | NK_Load _ -> n
-                | NK_Neg a ->
-                    let a' = rewrite a in
-                    if a' == a then n else mk_neg a'
-                | NK_Add (a, b) ->
-                    let raw_terms = flatten 1 n in
-                    let rewritten_terms =
-                      List.map (fun (s, t) -> (s, rewrite t)) raw_terms
-                    in
-                    let new_terms, fired = factor_terms rewritten_terms in
-                    if fired then begin
-                      changed := true;
-                      rebuild_sum new_terms
-                    end
-                    else
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_add_binary a' b'
-                | NK_Sub (a, b) ->
-                    let raw_terms = flatten 1 n in
-                    let rewritten_terms =
-                      List.map (fun (s, t) -> (s, rewrite t)) raw_terms
-                    in
-                    let new_terms, fired = factor_terms rewritten_terms in
-                    if fired then begin
-                      changed := true;
-                      rebuild_sum new_terms
-                    end
-                    else
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_sub_binary a' b'
-                | NK_Mul (a, b) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    if a' == a && b' == b then n else mk_mul a' b'
-                | NK_CmulRe (a, b, c, d) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    let d' = rewrite d in
-                    if a' == a && b' == b && c' == c && d' == d then n
-                    else hashcons (NK_CmulRe (a', b', c', d'))
-                | NK_CmulIm (a, b, c, d) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    let d' = rewrite d in
-                    if a' == a && b' == b && c' == c && d' == d then n
-                    else hashcons (NK_CmulIm (a', b', c', d'))
-                | NK_Fma (a, b, c, neg_mul, neg_add) ->
-                    let a' = rewrite a in
-                    let b' = rewrite b in
-                    let c' = rewrite c in
-                    if a' == a && b' == b && c' == c then n
-                    else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
-                | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1174"
-              in
-              Hashtbl.add cache n.tag r;
-              r
+            let r =
+              match n.node with
+              | NK_Const _ | NK_Load _ -> n
+              | NK_Neg a ->
+                let a' = rewrite a in
+                if a' == a then n else mk_neg a'
+              | NK_Add (a, b) ->
+                let raw_terms = flatten 1 n in
+                let rewritten_terms = List.map (fun (s, t) -> s, rewrite t) raw_terms in
+                let new_terms, fired = factor_terms rewritten_terms in
+                if fired
+                then (
+                  changed := true;
+                  rebuild_sum new_terms)
+                else (
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_add_binary a' b')
+              | NK_Sub (a, b) ->
+                let raw_terms = flatten 1 n in
+                let rewritten_terms = List.map (fun (s, t) -> s, rewrite t) raw_terms in
+                let new_terms, fired = factor_terms rewritten_terms in
+                if fired
+                then (
+                  changed := true;
+                  rebuild_sum new_terms)
+                else (
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_sub_binary a' b')
+              | NK_Mul (a, b) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                if a' == a && b' == b then n else mk_mul a' b'
+              | NK_CmulRe (a, b, c, d) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                let d' = rewrite d in
+                if a' == a && b' == b && c' == c && d' == d
+                then n
+                else hashcons (NK_CmulRe (a', b', c', d'))
+              | NK_CmulIm (a, b, c, d) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                let d' = rewrite d in
+                if a' == a && b' == b && c' == c && d' == d
+                then n
+                else hashcons (NK_CmulIm (a', b', c', d'))
+              | NK_Fma (a, b, c, neg_mul, neg_add) ->
+                let a' = rewrite a in
+                let b' = rewrite b in
+                let c' = rewrite c in
+                if a' == a && b' == b && c' == c
+                then n
+                else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
+              | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1174"
+            in
+            Hashtbl.add cache n.tag r;
+            r
         in
-        let new_assigns =
-          List.map (fun (oref, e) -> (oref, rewrite e)) assigns
-        in
-        if !changed then loop new_assigns (iter + 1) else new_assigns
-      end
+        let new_assigns = List.map (fun (oref, e) -> oref, rewrite e) assigns in
+        if !changed then loop new_assigns (iter + 1) else new_assigns)
     in
-    loop assigns 0
+    loop assigns 0)
+;;
 
-let share_subsums ?(aggressive = false) (assigns : (Expr.elem_ref * t) list) :
-    (Expr.elem_ref * t) list =
-  if not aggressive then assigns
-  else
+let share_subsums ?(aggressive = false) (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref * t) list
+  =
+  if not aggressive
+  then assigns
+  else (
     (* Use-count over the whole DAG (excluding our reconstruction). *)
     let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
     let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     let bump tag =
-      let c = try Hashtbl.find use_count tag with Not_found -> 0 in
+      let c =
+        try Hashtbl.find use_count tag with
+        | Not_found -> 0
+      in
       Hashtbl.replace use_count tag (c + 1)
     in
     let rec walk e =
-      if not (Hashtbl.mem visited e.tag) then begin
+      if not (Hashtbl.mem visited e.tag)
+      then (
         Hashtbl.add visited e.tag ();
         match e.node with
         | NK_Const _ | NK_Load _ -> ()
         | NK_Neg a ->
-            bump a.tag;
-            walk a
+          bump a.tag;
+          walk a
         | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-            bump a.tag;
-            bump b.tag;
-            walk a;
-            walk b
+          bump a.tag;
+          bump b.tag;
+          walk a;
+          walk b
         | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-            bump a.tag;
-            bump b.tag;
-            bump c.tag;
-            bump d.tag;
-            walk a;
-            walk b;
-            walk c;
-            walk d
+          bump a.tag;
+          bump b.tag;
+          bump c.tag;
+          bump d.tag;
+          walk a;
+          walk b;
+          walk c;
+          walk d
         | NK_Fma (a, b, c, _, _) ->
-            bump a.tag;
-            bump b.tag;
-            bump c.tag;
-            walk a;
-            walk b;
-            walk c
-        | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1242"
-      end
+          bump a.tag;
+          bump b.tag;
+          bump c.tag;
+          walk a;
+          walk b;
+          walk c
+        | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1242")
     in
     List.iter
       (fun (_, e) ->
-        bump e.tag;
-        walk e)
+         bump e.tag;
+         walk e)
       assigns;
-
     let used_elsewhere n =
-      (try Hashtbl.find use_count n.tag with Not_found -> 0) >= 1
+      (try Hashtbl.find use_count n.tag with
+       | Not_found -> 0)
+      >= 1
     in
-
     let rec flatten (sign : int) (e : t) : (int * t) list =
       match e.node with
       | NK_Add (a, b) -> flatten sign a @ flatten sign b
       | NK_Sub (a, b) -> flatten sign a @ flatten (-sign) b
       | NK_Neg inner -> flatten (-sign) inner
-      | _ -> [ (sign, e) ]
+      | _ -> [ sign, e ]
     in
-
     (* Try to find a pair (i, j) in `terms` with the same sign such that
      * NK_Add(a, b) (sorted by tag) already exists in the hash-cons table
      * with at least one external user. Returns (i, j, existing_node) or None. *)
@@ -1231,135 +1208,130 @@ let share_subsums ?(aggressive = false) (assigns : (Expr.elem_ref * t) list) :
         while !result = None && !j < n do
           let s1, t1 = terms.(!i) in
           let s2, t2 = terms.(!j) in
-          if s1 = s2 && t1.tag <> t2.tag then begin
-            let a, b = if t1.tag <= t2.tag then (t1, t2) else (t2, t1) in
+          if s1 = s2 && t1.tag <> t2.tag
+          then (
+            let a, b = if t1.tag <= t2.tag then t1, t2 else t2, t1 in
             match lookup_node (NK_Add (a, b)) with
             | Some existing when used_elsewhere existing ->
-                result := Some (!i, !j, existing)
-            | _ -> ()
-          end;
+              result := Some (!i, !j, existing)
+            | _ -> ());
           incr j
         done;
         incr i
       done;
       !result
     in
-
     let rebuild_sum_binary (terms : (int * t) list) : t =
-      let pos =
-        List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms
-      in
-      let neg =
-        List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms
-      in
+      let pos = List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms in
+      let neg = List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms in
       let build_chain lst =
         match lst with
         | [] -> mk_const 0.0
         | [ x ] -> x
         | x :: rest -> List.fold_left mk_add_binary x rest
       in
-      match (pos, neg) with
+      match pos, neg with
       | [], [] -> mk_const 0.0
       | _, [] -> build_chain pos
       | [], _ -> mk_neg (build_chain neg)
       | _, _ -> mk_sub_binary (build_chain pos) (build_chain neg)
     in
-
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
     let rec rewrite (n : t) : t =
       match Hashtbl.find_opt cache n.tag with
       | Some r -> r
       | None ->
-          let r =
-            match n.node with
-            | NK_Const _ | NK_Load _ -> n
-            | NK_Neg a ->
-                let a' = rewrite a in
-                if a' == a then n else mk_neg a'
-            | NK_Add _ | NK_Sub _ ->
-                (* Flatten this Add/Sub chain and try to share 2-term subsums. *)
-                let raw_terms = flatten 1 n in
-                let rewritten_terms =
-                  List.map (fun (s, t) -> (s, rewrite t)) raw_terms
-                in
-                if List.length rewritten_terms < 3 then
-                  (* Nothing to share at this level; preserve binary structure. *)
-                  begin match n.node with
-                  | NK_Add (a, b) ->
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_add_binary a' b'
-                  | NK_Sub (a, b) ->
-                      let a' = rewrite a in
-                      let b' = rewrite b in
-                      if a' == a && b' == b then n else mk_sub_binary a' b'
-                  | _ -> n
-                  end
-                else begin
-                  (* Greedy substitution of shareable pairs. *)
-                  let arr = ref (Array.of_list rewritten_terms) in
-                  let any_shared = ref false in
-                  let continue_loop = ref true in
-                  while !continue_loop do
-                    match find_shareable_pair !arr with
-                    | None -> continue_loop := false
-                    | Some (i, j, existing) ->
-                        any_shared := true;
-                        let sign, _ = !arr.(i) in
-                        (* Replace position i with (sign, existing); remove position j. *)
-                        let n_arr = Array.length !arr in
-                        let new_arr = Array.make (n_arr - 1) (1, n) in
-                        Array.blit !arr 0 new_arr 0 i;
-                        new_arr.(i) <- (sign, existing);
-                        Array.blit !arr (i + 1) new_arr (i + 1) (j - i - 1);
-                        if j < n_arr - 1 then
-                          Array.blit !arr (j + 1) new_arr j (n_arr - 1 - j);
-                        arr := new_arr
-                  done;
-                  if !any_shared then rebuild_sum_binary (Array.to_list !arr)
-                  else
-                    (* No pairs shareable; preserve original binary structure. *)
-                    match n.node with
-                    | NK_Add (a, b) ->
-                        let a' = rewrite a in
-                        let b' = rewrite b in
-                        if a' == a && b' == b then n else mk_add_binary a' b'
-                    | NK_Sub (a, b) ->
-                        let a' = rewrite a in
-                        let b' = rewrite b in
-                        if a' == a && b' == b then n else mk_sub_binary a' b'
-                    | _ -> n
-                end
-            | NK_Mul (a, b) ->
+        let r =
+          match n.node with
+          | NK_Const _ | NK_Load _ -> n
+          | NK_Neg a ->
+            let a' = rewrite a in
+            if a' == a then n else mk_neg a'
+          | NK_Add _ | NK_Sub _ ->
+            (* Flatten this Add/Sub chain and try to share 2-term subsums. *)
+            let raw_terms = flatten 1 n in
+            let rewritten_terms = List.map (fun (s, t) -> s, rewrite t) raw_terms in
+            if List.length rewritten_terms < 3
+            then (* Nothing to share at this level; preserve binary structure. *)
+              (
+              match n.node with
+              | NK_Add (a, b) ->
                 let a' = rewrite a in
                 let b' = rewrite b in
-                if a' == a && b' == b then n else mk_mul a' b'
-            | NK_CmulRe (a, b, c, d) ->
+                if a' == a && b' == b then n else mk_add_binary a' b'
+              | NK_Sub (a, b) ->
                 let a' = rewrite a in
                 let b' = rewrite b in
-                let c' = rewrite c in
-                let d' = rewrite d in
-                if a' == a && b' == b && c' == c && d' == d then n
-                else hashcons (NK_CmulRe (a', b', c', d'))
-            | NK_CmulIm (a, b, c, d) ->
-                let a' = rewrite a in
-                let b' = rewrite b in
-                let c' = rewrite c in
-                let d' = rewrite d in
-                if a' == a && b' == b && c' == c && d' == d then n
-                else hashcons (NK_CmulIm (a', b', c', d'))
-            | NK_Fma (a, b, c, neg_mul, neg_add) ->
-                let a' = rewrite a in
-                let b' = rewrite b in
-                let c' = rewrite c in
-                if a' == a && b' == b && c' == c then n
-                else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
-            | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1315"
-          in
-          Hashtbl.add cache n.tag r;
-          r
+                if a' == a && b' == b then n else mk_sub_binary a' b'
+              | _ -> n)
+            else (
+              (* Greedy substitution of shareable pairs. *)
+              let arr = ref (Array.of_list rewritten_terms) in
+              let any_shared = ref false in
+              let continue_loop = ref true in
+              while !continue_loop do
+                match find_shareable_pair !arr with
+                | None -> continue_loop := false
+                | Some (i, j, existing) ->
+                  any_shared := true;
+                  let sign, _ = !arr.(i) in
+                  (* Replace position i with (sign, existing); remove position j. *)
+                  let n_arr = Array.length !arr in
+                  let new_arr = Array.make (n_arr - 1) (1, n) in
+                  Array.blit !arr 0 new_arr 0 i;
+                  new_arr.(i) <- sign, existing;
+                  Array.blit !arr (i + 1) new_arr (i + 1) (j - i - 1);
+                  if j < n_arr - 1 then Array.blit !arr (j + 1) new_arr j (n_arr - 1 - j);
+                  arr := new_arr
+              done;
+              if !any_shared
+              then rebuild_sum_binary (Array.to_list !arr)
+              else (
+                (* No pairs shareable; preserve original binary structure. *)
+                match n.node with
+                | NK_Add (a, b) ->
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_add_binary a' b'
+                | NK_Sub (a, b) ->
+                  let a' = rewrite a in
+                  let b' = rewrite b in
+                  if a' == a && b' == b then n else mk_sub_binary a' b'
+                | _ -> n))
+          | NK_Mul (a, b) ->
+            let a' = rewrite a in
+            let b' = rewrite b in
+            if a' == a && b' == b then n else mk_mul a' b'
+          | NK_CmulRe (a, b, c, d) ->
+            let a' = rewrite a in
+            let b' = rewrite b in
+            let c' = rewrite c in
+            let d' = rewrite d in
+            if a' == a && b' == b && c' == c && d' == d
+            then n
+            else hashcons (NK_CmulRe (a', b', c', d'))
+          | NK_CmulIm (a, b, c, d) ->
+            let a' = rewrite a in
+            let b' = rewrite b in
+            let c' = rewrite c in
+            let d' = rewrite d in
+            if a' == a && b' == b && c' == c && d' == d
+            then n
+            else hashcons (NK_CmulIm (a', b', c', d'))
+          | NK_Fma (a, b, c, neg_mul, neg_add) ->
+            let a' = rewrite a in
+            let b' = rewrite b in
+            let c' = rewrite c in
+            if a' == a && b' == b && c' == c
+            then n
+            else hashcons (NK_Fma (a', b', c', neg_mul, neg_add))
+          | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1315"
+        in
+        Hashtbl.add cache n.tag r;
+        r
     in
-    List.map (fun (oref, e) -> (oref, rewrite e)) assigns
+    List.map (fun (oref, e) -> oref, rewrite e) assigns)
+;;
 
 (* === DAG TRANSPOSITION ===
  *
@@ -1399,73 +1371,72 @@ let transpose (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   let topo_rev : t list ref = ref [] in
   let rec dfs n =
-    if not (Hashtbl.mem visited n.tag) then begin
+    if not (Hashtbl.mem visited n.tag)
+    then (
       Hashtbl.add visited n.tag ();
       (match n.node with
-      | NK_Const _ | NK_Load _ -> ()
-      | NK_Neg a -> dfs a
-      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-          dfs a;
-          dfs b
-      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-          dfs a;
-          dfs b;
-          dfs c;
-          dfs d
-      | NK_Fma (a, b, c, _, _) ->
-          dfs a;
-          dfs b;
-          dfs c
-      | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1433");
-      topo_rev := n :: !topo_rev
-    end
+       | NK_Const _ | NK_Load _ -> ()
+       | NK_Neg a -> dfs a
+       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+         dfs a;
+         dfs b
+       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+         dfs a;
+         dfs b;
+         dfs c;
+         dfs d
+       | NK_Fma (a, b, c, _, _) ->
+         dfs a;
+         dfs b;
+         dfs c
+       | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1433");
+      topo_rev := n :: !topo_rev)
   in
   List.iter (fun (_, e) -> dfs e) assigns;
-
   (* Step 2: Build parent map. For each node, record list of contributions
    * from each parent: (sign, scale_const_option, parent_node). *)
-  let contribs : (int, (int * t option * t) list) Hashtbl.t =
-    Hashtbl.create 256
-  in
+  let contribs : (int, (int * t option * t) list) Hashtbl.t = Hashtbl.create 256 in
   let add_contrib (child : t) (parent : t) (sign : int) (scale : t option) =
-    let cur = try Hashtbl.find contribs child.tag with Not_found -> [] in
+    let cur =
+      try Hashtbl.find contribs child.tag with
+      | Not_found -> []
+    in
     Hashtbl.replace contribs child.tag ((sign, scale, parent) :: cur)
   in
   (* Process each node's structure to register contributions to its children. *)
   Hashtbl.iter (fun _ () -> ()) visited;
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Const _ | NK_Load _ -> ()
-      | NK_Neg a -> add_contrib a n (-1) None
-      | NK_Add (a, b) ->
-          add_contrib a n 1 None;
-          add_contrib b n 1 None
-      | NK_Sub (a, b) ->
-          add_contrib a n 1 None;
-          add_contrib b n (-1) None
-      | NK_Mul (a, b) -> (
-          (* Const · X form — the X operand has weight = const.
-           * Const itself never has a useful T value (it's a leaf with no
-           * input semantics in transposition), so skip its contrib. *)
-          match (a.node, b.node) with
+       match n.node with
+       | NK_Const _ | NK_Load _ -> ()
+       | NK_Neg a -> add_contrib a n (-1) None
+       | NK_Add (a, b) ->
+         add_contrib a n 1 None;
+         add_contrib b n 1 None
+       | NK_Sub (a, b) ->
+         add_contrib a n 1 None;
+         add_contrib b n (-1) None
+       | NK_Mul (a, b) ->
+         (* Const · X form — the X operand has weight = const.
+          * Const itself never has a useful T value (it's a leaf with no
+          * input semantics in transposition), so skip its contrib. *)
+         (match a.node, b.node with
           | NK_Const _, _ -> add_contrib b n 1 (Some a)
           | _, NK_Const _ -> add_contrib a n 1 (Some b)
           | _ ->
-              (* Non-linear Mul — can't transpose cleanly. Skip both
-               * operands. The transposed DAG won't include this node's
-               * contributions. *)
-              ())
-      | NK_CmulRe _ | NK_CmulIm _ ->
-          (* Skip — primes don't produce these. *)
-          ()
-      | NK_Fma _ ->
-          (* Fma is opaque to transposition. The transpose pass shouldn't
-           * normally encounter Fma anyway since fma_lift runs LAST. *)
-          ()
-      | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1456")
+            (* Non-linear Mul — can't transpose cleanly. Skip both
+             * operands. The transposed DAG won't include this node's
+             * contributions. *)
+            ())
+       | NK_CmulRe _ | NK_CmulIm _ ->
+         (* Skip — primes don't produce these. *)
+         ()
+       | NK_Fma _ ->
+         (* Fma is opaque to transposition. The transpose pass shouldn't
+          * normally encounter Fma anyway since fma_lift runs LAST. *)
+         ()
+       | NK_Plus _ -> nk_plus_unreachable "algsimp.ml:1456")
     (List.rev !topo_rev);
-
   (* topo_rev is built by PREPENDING after DFS post-order recursion;
    * the root (added last) ends up at the front, leaves at the back.
    * So topo_rev itself iterates roots-first; List.rev topo_rev iterates
@@ -1476,68 +1447,62 @@ let transpose (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
    * (so parents have T set before children look them up). topo_rev is
    * roots-first, which is parents-first. *)
   let t_value : (int, t) Hashtbl.t = Hashtbl.create 256 in
-
   (* Roots: T[root] = Load with the original output's elem_ref. *)
   List.iter
     (fun (oref, root) ->
-      if not (Hashtbl.mem t_value root.tag) then
-        Hashtbl.add t_value root.tag (mk_load oref))
+       if not (Hashtbl.mem t_value root.tag)
+       then Hashtbl.add t_value root.tag (mk_load oref))
     assigns;
-
   (* For nodes that have contribs (= internal nodes used by parents),
    * compute their T from their parents' T values. Process roots-first. *)
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Const _ -> () (* constants have no transposed value *)
-      | _ ->
-          (* If this node already has a T (it's a root), skip. Otherwise
-           * compute T from contribs. *)
-          if not (Hashtbl.mem t_value n.tag) then begin
-            let parent_contribs =
-              try Hashtbl.find contribs n.tag with Not_found -> []
-            in
-            let terms =
-              List.filter_map
-                (fun (sign, scale, parent) ->
+       match n.node with
+       | NK_Const _ -> () (* constants have no transposed value *)
+       | _ ->
+         (* If this node already has a T (it's a root), skip. Otherwise
+          * compute T from contribs. *)
+         if not (Hashtbl.mem t_value n.tag)
+         then (
+           let parent_contribs =
+             try Hashtbl.find contribs n.tag with
+             | Not_found -> []
+           in
+           let terms =
+             List.filter_map
+               (fun (sign, scale, parent) ->
                   match Hashtbl.find_opt t_value parent.tag with
                   | None -> None (* parent's T not computed; skip *)
                   | Some t_parent ->
-                      let scaled =
-                        match scale with
-                        | None -> t_parent
-                        | Some c -> mk_mul c t_parent
-                      in
-                      Some (sign, scaled))
-                parent_contribs
-            in
-            let pos =
-              List.filter_map
-                (fun (s, t) -> if s > 0 then Some t else None)
-                terms
-            in
-            let neg =
-              List.filter_map
-                (fun (s, t) -> if s < 0 then Some t else None)
-                terms
-            in
-            let build lst =
-              match lst with
-              | [] -> mk_const 0.0
-              | [ x ] -> x
-              | x :: rest -> List.fold_left mk_add x rest
-            in
-            let t_n =
-              match (pos, neg) with
-              | [], [] -> mk_const 0.0
-              | _, [] -> build pos
-              | [], _ -> mk_neg (build neg)
-              | _, _ -> mk_sub (build pos) (build neg)
-            in
-            Hashtbl.add t_value n.tag t_n
-          end)
+                    let scaled =
+                      match scale with
+                      | None -> t_parent
+                      | Some c -> mk_mul c t_parent
+                    in
+                    Some (sign, scaled))
+               parent_contribs
+           in
+           let pos =
+             List.filter_map (fun (s, t) -> if s > 0 then Some t else None) terms
+           in
+           let neg =
+             List.filter_map (fun (s, t) -> if s < 0 then Some t else None) terms
+           in
+           let build lst =
+             match lst with
+             | [] -> mk_const 0.0
+             | [ x ] -> x
+             | x :: rest -> List.fold_left mk_add x rest
+           in
+           let t_n =
+             match pos, neg with
+             | [], [] -> mk_const 0.0
+             | _, [] -> build pos
+             | [], _ -> mk_neg (build neg)
+             | _, _ -> mk_sub (build pos) (build neg)
+           in
+           Hashtbl.add t_value n.tag t_n))
     !topo_rev;
-
   (* topo_rev is roots-first (DFS prepends after recursion → root at front). *)
 
   (* Step 4: Build new assigns. For each input Load (leaf with elem_ref),
@@ -1545,13 +1510,13 @@ let transpose (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   let new_assigns =
     List.filter_map
       (fun n ->
-        match n.node with
-        | NK_Load r -> (
-            match Hashtbl.find_opt t_value n.tag with
+         match n.node with
+         | NK_Load r ->
+           (match Hashtbl.find_opt t_value n.tag with
             | None -> None (* No T computed (e.g., load not in any sum) *)
             | Some t_n -> Some (r, t_n))
-        | _ -> None)
+         | _ -> None)
       !topo_rev
   in
   new_assigns
-
+;;

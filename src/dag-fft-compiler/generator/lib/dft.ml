@@ -50,7 +50,9 @@ open Expr
  * emits Load(Twiddle(j, ...)), log3 substitutes the derivation tree.
  * Algsimp's Cmul handling propagates; nothing else changes. *)
 
-type twiddle_policy = TP_Flat | TP_Log3
+type twiddle_policy =
+  | TP_Flat
+  | TP_Log3
 
 (* DIT vs DIF — duals of each other:
  *   DIT (Decimation-In-Time):   y = DFT(W ⋅ x)   — twiddle on INPUT, pre-butterfly
@@ -59,7 +61,9 @@ type twiddle_policy = TP_Flat | TP_Log3
  * In a CT recursion, you typically pair DIT codelets at one level with
  * DIF codelets at the next so that the twiddle layer flips. FFTW emits
  * both styles for this reason. *)
-type direction = DIT | DIF
+type direction =
+  | DIT
+  | DIF
 
 (* Build a complex multiplication as (out_re, out_im) using the cmul pattern
  * that Algsimp.of_expr will lift to Cmul nodes.
@@ -73,16 +77,19 @@ type direction = DIT | DIF
  * same convention (whatever it is) — those calls use ~conj:false.
  *)
 let cmul_pattern ?(conj = false) (ar : expr) (ai : expr) (br : expr) (bi : expr)
-    : expr * expr =
-  if conj then
+  : expr * expr
+  =
+  if conj
+  then (
     (* (a + ib) · (c - id) = (ac + bd) + i(bc - ad) *)
     let out_re = Add (Mul (ar, br), Mul (ai, bi)) in
     let out_im = Sub (Mul (ai, br), Mul (ar, bi)) in
-    (out_re, out_im)
-  else
+    out_re, out_im)
+  else (
     let out_re = Sub (Mul (ar, br), Mul (ai, bi)) in
     let out_im = Add (Mul (ar, bi), Mul (ai, br)) in
-    (out_re, out_im)
+    out_re, out_im)
+;;
 
 (* Compute the (re, im) Expr trees for the j-th twiddle (1-indexed)
  * under the given policy and radix. Memoization is critical: derived
@@ -95,59 +102,61 @@ let twiddle_expr (policy : twiddle_policy) (n : int) (j : int) : expr * expr =
     match Hashtbl.find_opt cache j with
     | Some result -> result
     | None ->
-        let result = compute j in
-        Hashtbl.add cache j result;
-        result
+      let result = compute j in
+      Hashtbl.add cache j result;
+      result
   and compute j =
     match policy with
     | TP_Flat ->
-        (* Direct load from slot (j-1). *)
-        (Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false)))
+      (* Direct load from slot (j-1). *)
+      Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false))
     | TP_Log3 ->
-        (* Generalized log3: load only the power-of-2 twiddles W^(2^k),
-         * derive everything else by binary decomposition.
-         *
-         * Slot indexing matches TP_Flat (slot = j - 1) so the bench
-         * harness fills the same twiddle array regardless of policy —
-         * TP_Log3 simply consults a sparse subset of slots:
-         *   W^1 → slot 0, W^2 → slot 1, W^4 → slot 3,
-         *   W^8 → slot 7, W^16 → slot 15, W^32 → slot 31.
-         *
-         * Total slot reads per kstep:
-         *   R=16: 4 (vs 15 flat)
-         *   R=32: 5 (vs 31 flat)
-         *   R=64: 6 (vs 63 flat)
-         *
-         * Decomposition: split j = p + q where p is the highest power
-         * of 2 ≤ j. With memoization, each W^k computed once; hash-cons
-         * dedupes across legs.
-         *
-         * Cmul cost per derivation: 4 muls + 2 adds (6 flops). Total:
-         *   R=16: 4 loads + 11 cmuls
-         *   R=32: 5 loads + 26 cmuls
-         *   R=64: 6 loads + 57 cmuls
-         *
-         * Tradeoff: log3 saves twiddle bandwidth at the cost of arith.
-         * Whether it wins depends on which is the bottleneck. *)
-        let is_pow2 x = x > 0 && x land (x - 1) = 0 in
-        let highest_pow2_le j =
-          let rec loop p = if p * 2 > j then p else loop (p * 2) in
-          loop 1
-        in
-        if j < 1 || j >= n then
-          failwith (Printf.sprintf "TP_Log3: j=%d out of range for n=%d" j n)
-        else if is_pow2 j then
-          (* Direct load — slot = j - 1, matching TP_Flat layout. *)
-          (Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false)))
-        else
-          (* Split j = p + q, derive W^j = W^p · W^q. *)
-          let p = highest_pow2_le j in
-          let q = j - p in
-          let wpr, wpi = lookup p in
-          let wqr, wqi = lookup q in
-          cmul_pattern wpr wpi wqr wqi
+      (* Generalized log3: load only the power-of-2 twiddles W^(2^k),
+       * derive everything else by binary decomposition.
+       *
+       * Slot indexing matches TP_Flat (slot = j - 1) so the bench
+       * harness fills the same twiddle array regardless of policy —
+       * TP_Log3 simply consults a sparse subset of slots:
+       *   W^1 → slot 0, W^2 → slot 1, W^4 → slot 3,
+       *   W^8 → slot 7, W^16 → slot 15, W^32 → slot 31.
+       *
+       * Total slot reads per kstep:
+       *   R=16: 4 (vs 15 flat)
+       *   R=32: 5 (vs 31 flat)
+       *   R=64: 6 (vs 63 flat)
+       *
+       * Decomposition: split j = p + q where p is the highest power
+       * of 2 ≤ j. With memoization, each W^k computed once; hash-cons
+       * dedupes across legs.
+       *
+       * Cmul cost per derivation: 4 muls + 2 adds (6 flops). Total:
+       *   R=16: 4 loads + 11 cmuls
+       *   R=32: 5 loads + 26 cmuls
+       *   R=64: 6 loads + 57 cmuls
+       *
+       * Tradeoff: log3 saves twiddle bandwidth at the cost of arith.
+       * Whether it wins depends on which is the bottleneck. *)
+      let is_pow2 x = x > 0 && x land (x - 1) = 0 in
+      let highest_pow2_le j =
+        let rec loop p = if p * 2 > j then p else loop (p * 2) in
+        loop 1
+      in
+      if j < 1 || j >= n
+      then failwith (Printf.sprintf "TP_Log3: j=%d out of range for n=%d" j n)
+      else if is_pow2 j
+      then
+        (* Direct load — slot = j - 1, matching TP_Flat layout. *)
+        Load (Twiddle (j - 1, true)), Load (Twiddle (j - 1, false))
+      else (
+        (* Split j = p + q, derive W^j = W^p · W^q. *)
+        let p = highest_pow2_le j in
+        let q = j - p in
+        let wpr, wpi = lookup p in
+        let wqr, wqi = lookup q in
+        cmul_pattern wpr wpi wqr wqi)
   in
   lookup j
+;;
 
 (* === ASSIGNMENT-LIST WRAPPERS ===
  *
@@ -170,6 +179,7 @@ let dft_expand ?(sign = `Fwd) (n : int) : Expr.assignment list =
    * gives the correct order. *)
   let _ = pairs in
   List.rev !acc
+;;
 
 (* Twiddled (t1_dit) form: pre-multiply inputs by runtime twiddles
  * (Cmul nodes), then run the (possibly Cooley-Tukey-decomposed) DFT
@@ -180,8 +190,9 @@ let dft_expand ?(sign = `Fwd) (n : int) : Expr.assignment list =
  * opaque atoms. The CT decomposition then sees the cmul outputs as
  * leaf-like values in its own Add/Sub structure — algsimp won't
  * shred them because they're inside Cmul nodes after lifting. *)
-let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
-    (n : int) : Expr.assignment list =
+let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd) (n : int)
+  : Expr.assignment list
+  =
   (* Structurally, twiddled codelets have two options:
    *   - PRE-twiddle: multiply inputs by twiddles, then run DFT
    *   - POST-twiddle: run DFT, then multiply outputs by twiddles
@@ -204,13 +215,14 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
    * is preserved so Algsimp.of_expr can lift it to Cmul opaque atoms. *)
   let conj = sign = `Bwd in
   let pre_twiddle =
-    match (direction, sign) with
+    match direction, sign with
     | DIT, `Fwd -> true (* DIT fwd: T then B *)
     | DIT, `Bwd -> false (* inverse of DIT fwd: B⁻¹ then T_conj  → POST *)
     | DIF, `Fwd -> false (* DIF fwd: B then T *)
     | DIF, `Bwd -> true (* inverse of DIF fwd: T_conj then B⁻¹  → PRE *)
   in
-  if pre_twiddle then begin
+  if pre_twiddle
+  then (
     (* PRE-twiddle: multiply inputs by twiddles (conj if Bwd), then DFT. *)
     let twiddled_re = Array.make n (Const 0.0) in
     let twiddled_im = Array.make n (Const 0.0) in
@@ -232,9 +244,8 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
       acc := (Output (k, true), out_re.(k)) :: !acc;
       acc := (Output (k, false), out_im.(k)) :: !acc
     done;
-    List.rev !acc
-  end
-  else begin
+    List.rev !acc)
+  else (
     (* POST-twiddle: run DFT on raw inputs, then twiddle the outputs
      * (conj if Bwd). *)
     let input_re k = Load (Input (k, true)) in
@@ -253,14 +264,14 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
     let sorted =
       List.sort
         (fun (a, _) (b, _) ->
-          match (a, b) with
-          | Output (ka, ra), Output (kb, rb) ->
-              if ka <> kb then compare ka kb else compare (not ra) (not rb)
-          | _ -> 0)
+           match a, b with
+           | Output (ka, ra), Output (kb, rb) ->
+             if ka <> kb then compare ka kb else compare (not ra) (not rb)
+           | _ -> 0)
         !acc
     in
-    sorted
-  end
+    sorted)
+;;
 
 (* === OUT-OF-PLACE TWIDSQ EXPANSION (FFTW-style intermediate codelet) ===
  *
@@ -288,48 +299,47 @@ let dft_expand_twiddled ?(policy = TP_Flat) ?(direction = DIT) ?(sign = `Fwd)
  * are validated. Spill markers are not yet generated — large twidsq sizes
  * will need a parallel _spill variant similar to dft_expand_twiddled_spill.
  *)
-let dft_expand_twidsq ?(direction = DIT) ?(sign = `Fwd) (n : int) :
-    Expr.assignment list =
+let dft_expand_twidsq ?(direction = DIT) ?(sign = `Fwd) (n : int) : Expr.assignment list =
   let conj = sign = `Bwd in
   match direction with
   | DIT ->
-      let acc = ref [] in
-      for i = 0 to n - 1 do
-        (* Step 1: Apply inter-stage twiddle to row i.
-         * For position k > 0 of row i > 0: multiply by W^{i*k}.
-         * For row 0 or position 0: pass-through (W^0 = 1). *)
-        let twiddled_re = Array.make n (Const 0.0) in
-        let twiddled_im = Array.make n (Const 0.0) in
-        for k = 0 to n - 1 do
-          let xr = Load (Input ((i * n) + k, true)) in
-          let xi = Load (Input ((i * n) + k, false)) in
-          if i = 0 || k = 0 then begin
-            twiddled_re.(k) <- xr;
-            twiddled_im.(k) <- xi
-          end
-          else begin
-            let twiddle_slot = ((i - 1) * (n - 1)) + (k - 1) in
-            let wr = Load (Twiddle (twiddle_slot, true)) in
-            let wi = Load (Twiddle (twiddle_slot, false)) in
-            let out_re, out_im = cmul_pattern ~conj xr xi wr wi in
-            twiddled_re.(k) <- out_re;
-            twiddled_im.(k) <- out_im
-          end
-        done;
-        (* Step 2: Compute DFT-n on the twiddled row.
-         * Reuses the existing dft machinery — math layer is buffer-agnostic. *)
-        let input_re k = twiddled_re.(k) in
-        let input_im k = twiddled_im.(k) in
-        let out_re, out_im = dft ~sign n input_re input_im in
-        (* Step 3: Store row i's outputs TRANSPOSED.
-         * Y[i, j] goes to physical slot j*n + i (transposed layout). *)
-        for j = n - 1 downto 0 do
-          acc := (Output ((j * n) + i, true), out_re.(j)) :: !acc;
-          acc := (Output ((j * n) + i, false), out_im.(j)) :: !acc
-        done
+    let acc = ref [] in
+    for i = 0 to n - 1 do
+      (* Step 1: Apply inter-stage twiddle to row i.
+       * For position k > 0 of row i > 0: multiply by W^{i*k}.
+       * For row 0 or position 0: pass-through (W^0 = 1). *)
+      let twiddled_re = Array.make n (Const 0.0) in
+      let twiddled_im = Array.make n (Const 0.0) in
+      for k = 0 to n - 1 do
+        let xr = Load (Input ((i * n) + k, true)) in
+        let xi = Load (Input ((i * n) + k, false)) in
+        if i = 0 || k = 0
+        then (
+          twiddled_re.(k) <- xr;
+          twiddled_im.(k) <- xi)
+        else (
+          let twiddle_slot = ((i - 1) * (n - 1)) + (k - 1) in
+          let wr = Load (Twiddle (twiddle_slot, true)) in
+          let wi = Load (Twiddle (twiddle_slot, false)) in
+          let out_re, out_im = cmul_pattern ~conj xr xi wr wi in
+          twiddled_re.(k) <- out_re;
+          twiddled_im.(k) <- out_im)
       done;
-      List.rev !acc
+      (* Step 2: Compute DFT-n on the twiddled row.
+       * Reuses the existing dft machinery — math layer is buffer-agnostic. *)
+      let input_re k = twiddled_re.(k) in
+      let input_im k = twiddled_im.(k) in
+      let out_re, out_im = dft ~sign n input_re input_im in
+      (* Step 3: Store row i's outputs TRANSPOSED.
+       * Y[i, j] goes to physical slot j*n + i (transposed layout). *)
+      for j = n - 1 downto 0 do
+        acc := (Output ((j * n) + i, true), out_re.(j)) :: !acc;
+        acc := (Output ((j * n) + i, false), out_im.(j)) :: !acc
+      done
+    done;
+    List.rev !acc
   | DIF -> failwith "dft_expand_twidsq: DIF direction not yet implemented"
+;;
 
 (* === SPILL-AWARE EXPANSION ===
  *
@@ -352,7 +362,11 @@ let dft_expand_twidsq ?(direction = DIT) ?(sign = `Fwd) (n : int) :
  *   slot     = n1_idx * N2 + k2
  *   re_expr  = the Expr.expr to materialize at spill_re[slot]
  *   im_expr  = the Expr.expr to materialize at spill_im[slot] *)
-type spill_marker = { slot : int; re_expr : expr; im_expr : expr }
+type spill_marker =
+  { slot : int
+  ; re_expr : expr
+  ; im_expr : expr
+  }
 
 (* Spill-aware version of dft_expand_twiddled.
  *
@@ -366,8 +380,13 @@ type spill_marker = { slot : int; re_expr : expr; im_expr : expr }
  * Twiddle slots by +(n-1). The SU scheduler braids the two
  * independent DAGs by readiness — generator-level column
  * interleaving, the probe for the latency-bound diagnosis. *)
-let dft_expand_twiddled_il2 ?(policy = TP_Flat) ?(direction = DIT)
-    ?(sign = `Fwd) (n : int) : Expr.assignment list =
+let dft_expand_twiddled_il2
+      ?(policy = TP_Flat)
+      ?(direction = DIT)
+      ?(sign = `Fwd)
+      (n : int)
+  : Expr.assignment list
+  =
   let base = dft_expand_twiddled ~policy ~direction ~sign n in
   let shift_ref = function
     | Expr.Input (k, p) -> Expr.Input (k + n, p)
@@ -382,151 +401,144 @@ let dft_expand_twiddled_il2 ?(policy = TP_Flat) ?(direction = DIT)
     | Sub (a, b) -> Sub (shift a, shift b)
     | Mul (a, b) -> Mul (shift a, shift b)
   in
-  let inst2 = List.map (fun (lhs, e) -> (shift_ref lhs, shift e)) base in
+  let inst2 = List.map (fun (lhs, e) -> shift_ref lhs, shift e) base in
   base @ inst2
+;;
 
-let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT)
-    ?(sign = `Fwd) (n : int) :
-    Expr.assignment list * spill_marker list * (int * int) option =
+let dft_expand_twiddled_spill
+      ?(policy = TP_Flat)
+      ?(direction = DIT)
+      ?(sign = `Fwd)
+      (n : int)
+  : Expr.assignment list * spill_marker list * (int * int) option
+  =
   let conj = sign = `Bwd in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   match pick_algorithm n with
   | Direct ->
-      (* No CT structure → no spill boundary. Fall back to plain expansion. *)
-      (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
+    (* No CT structure → no spill boundary. Fall back to plain expansion. *)
+    dft_expand_twiddled ~policy ~direction ~sign n, [], None
   | Split_radix ->
-      (* Split-radix doesn't have the same PASS 1 / PASS 2 cluster boundary
-       * that the recipe machinery is calibrated against. SR's structure is
-       * three recursive sub-DFTs (E of size N/2, O1 and O3 of size N/4) whose
-       * outputs combine in a different topology than CT's symmetric two-pass.
-       *
-       * For this first PR we fall back to plain (non-recipe) expansion: the
-       * codelet still generates correctly, just without spill markers. A
-       * follow-up PR will design a recipe topology for SR that gives R=32/64
-       * comparable spill management to what they get under CT today.
-       *
-       * This is the same fallback path Direct takes — both algorithms simply
-       * lack a clean cluster boundary for the current recipe shape. *)
-      (dft_expand_twiddled ~policy ~direction ~sign n, [], None)
+    (* Split-radix doesn't have the same PASS 1 / PASS 2 cluster boundary
+     * that the recipe machinery is calibrated against. SR's structure is
+     * three recursive sub-DFTs (E of size N/2, O1 and O3 of size N/4) whose
+     * outputs combine in a different topology than CT's symmetric two-pass.
+     *
+     * For this first PR we fall back to plain (non-recipe) expansion: the
+     * codelet still generates correctly, just without spill markers. A
+     * follow-up PR will design a recipe topology for SR that gives R=32/64
+     * comparable spill management to what they get under CT today.
+     *
+     * This is the same fallback path Direct takes — both algorithms simply
+     * lack a clean cluster boundary for the current recipe shape. *)
+    dft_expand_twiddled ~policy ~direction ~sign n, [], None
   | Cooley_Tukey (n1, n2) ->
-      (* Pre vs post twiddle, decided by (direction, sign) — see comment in
-       * dft_expand_twiddled. Forward DIT and backward DIF use PRE-twiddle;
-       * forward DIF and backward DIT use POST-twiddle. *)
-      let pre_twiddle =
-        match (direction, sign) with
-        | DIT, `Fwd -> true
-        | DIT, `Bwd -> false
-        | DIF, `Fwd -> false
-        | DIF, `Bwd -> true
-      in
-      let input_re, input_im =
-        if pre_twiddle then begin
-          let twiddled_re = Array.make n (Const 0.0) in
-          let twiddled_im = Array.make n (Const 0.0) in
-          twiddled_re.(0) <- Load (Input (0, true));
-          twiddled_im.(0) <- Load (Input (0, false));
-          for k = 1 to n - 1 do
-            let xr = Load (Input (k, true)) in
-            let xi = Load (Input (k, false)) in
-            let wr, wi = twiddle_expr policy n k in
-            let out_re, out_im = cmul_pattern ~conj xr xi wr wi in
-            twiddled_re.(k) <- out_re;
-            twiddled_im.(k) <- out_im
-          done;
-          ((fun k -> twiddled_re.(k)), fun k -> twiddled_im.(k))
-        end
-        else
-          ((fun k -> Load (Input (k, true))), fun k -> Load (Input (k, false)))
-      in
-
-      (* MANUALLY drive the outermost CT step (instead of `dft n input_re input_im`)
-       * so we can capture pass1_re/pass1_im as spill markers. The implementation
-       * below is a copy of dft_ct's body — kept in sync with dft_ct. *)
-      let pi = 4.0 *. atan 1.0 in
-
-      (* PASS 1: N1 sub-FFTs of size N2 — same as dft_ct *)
-      let pass1_re = Array.make_matrix n1 n2 (Const 0.0) in
-      let pass1_im = Array.make_matrix n1 n2 (Const 0.0) in
-      for n1_idx = 0 to n1 - 1 do
-        let inner_input_re k2 = input_re (n1_idx + (k2 * n1)) in
-        let inner_input_im k2 = input_im (n1_idx + (k2 * n1)) in
-        let r, i = dft ~sign n2 inner_input_re inner_input_im in
-        for k2 = 0 to n2 - 1 do
-          pass1_re.(n1_idx).(k2) <- r.(k2);
-          pass1_im.(n1_idx).(k2) <- i.(k2)
-        done
-      done;
-
-      (* CAPTURE SPILL MARKERS: one per (n1_idx, k2) PASS 1 output bin. *)
-      let markers = ref [] in
-      for n1_idx = 0 to n1 - 1 do
-        for k2 = 0 to n2 - 1 do
-          let slot = (n1_idx * n2) + k2 in
-          markers :=
-            {
-              slot;
-              re_expr = pass1_re.(n1_idx).(k2);
-              im_expr = pass1_im.(n1_idx).(k2);
-            }
-            :: !markers
-        done
-      done;
-
-      (* INTERNAL TWIDDLES — same as dft_ct, sign-flipped for Bwd *)
-      let twiddled_re_inner = Array.make_matrix n1 n2 (Const 0.0) in
-      let twiddled_im_inner = Array.make_matrix n1 n2 (Const 0.0) in
-      for n1_idx = 0 to n1 - 1 do
-        for k2 = 0 to n2 - 1 do
-          let theta =
-            sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n
-          in
-          let cr = cos theta in
-          let ci = sin theta in
-          let tr, ti =
-            const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci
-          in
-          twiddled_re_inner.(n1_idx).(k2) <- tr;
-          twiddled_im_inner.(n1_idx).(k2) <- ti
-        done
-      done;
-
-      (* PASS 2 — same as dft_ct *)
-      let raw_re = Array.make n (Const 0.0) in
-      let raw_im = Array.make n (Const 0.0) in
-      for k2 = 0 to n2 - 1 do
-        let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
-        let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
-        let r, i = dft ~sign n1 outer_input_re outer_input_im in
-        for k1 = 0 to n1 - 1 do
-          raw_re.((k1 * n2) + k2) <- r.(k1);
-          raw_im.((k1 * n2) + k2) <- i.(k1)
-        done
-      done;
-
-      (* Post-twiddle (if POST structure) — applied to legs 1..n-1. *)
-      let out_re = Array.make n (Const 0.0) in
-      let out_im = Array.make n (Const 0.0) in
-      if pre_twiddle then begin
-        Array.blit raw_re 0 out_re 0 n;
-        Array.blit raw_im 0 out_im 0 n
-      end
-      else begin
-        out_re.(0) <- raw_re.(0);
-        out_im.(0) <- raw_im.(0);
+    (* Pre vs post twiddle, decided by (direction, sign) — see comment in
+     * dft_expand_twiddled. Forward DIT and backward DIF use PRE-twiddle;
+     * forward DIF and backward DIT use POST-twiddle. *)
+    let pre_twiddle =
+      match direction, sign with
+      | DIT, `Fwd -> true
+      | DIT, `Bwd -> false
+      | DIF, `Fwd -> false
+      | DIF, `Bwd -> true
+    in
+    let input_re, input_im =
+      if pre_twiddle
+      then (
+        let twiddled_re = Array.make n (Const 0.0) in
+        let twiddled_im = Array.make n (Const 0.0) in
+        twiddled_re.(0) <- Load (Input (0, true));
+        twiddled_im.(0) <- Load (Input (0, false));
         for k = 1 to n - 1 do
+          let xr = Load (Input (k, true)) in
+          let xi = Load (Input (k, false)) in
           let wr, wi = twiddle_expr policy n k in
-          let or_, oi = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
-          out_re.(k) <- or_;
-          out_im.(k) <- oi
-        done
-      end;
-
-      let acc = ref [] in
-      for k = n - 1 downto 0 do
-        acc := (Output (k, true), out_re.(k)) :: !acc;
-        acc := (Output (k, false), out_im.(k)) :: !acc
-      done;
-      (List.rev !acc, List.rev !markers, Some (n1, n2))
+          let out_re, out_im = cmul_pattern ~conj xr xi wr wi in
+          twiddled_re.(k) <- out_re;
+          twiddled_im.(k) <- out_im
+        done;
+        (fun k -> twiddled_re.(k)), fun k -> twiddled_im.(k))
+      else (fun k -> Load (Input (k, true))), fun k -> Load (Input (k, false))
+    in
+    (* MANUALLY drive the outermost CT step (instead of `dft n input_re input_im`)
+     * so we can capture pass1_re/pass1_im as spill markers. The implementation
+     * below is a copy of dft_ct's body — kept in sync with dft_ct. *)
+    let pi = 4.0 *. atan 1.0 in
+    (* PASS 1: N1 sub-FFTs of size N2 — same as dft_ct *)
+    let pass1_re = Array.make_matrix n1 n2 (Const 0.0) in
+    let pass1_im = Array.make_matrix n1 n2 (Const 0.0) in
+    for n1_idx = 0 to n1 - 1 do
+      let inner_input_re k2 = input_re (n1_idx + (k2 * n1)) in
+      let inner_input_im k2 = input_im (n1_idx + (k2 * n1)) in
+      let r, i = dft ~sign n2 inner_input_re inner_input_im in
+      for k2 = 0 to n2 - 1 do
+        pass1_re.(n1_idx).(k2) <- r.(k2);
+        pass1_im.(n1_idx).(k2) <- i.(k2)
+      done
+    done;
+    (* CAPTURE SPILL MARKERS: one per (n1_idx, k2) PASS 1 output bin. *)
+    let markers = ref [] in
+    for n1_idx = 0 to n1 - 1 do
+      for k2 = 0 to n2 - 1 do
+        let slot = (n1_idx * n2) + k2 in
+        markers
+        := { slot; re_expr = pass1_re.(n1_idx).(k2); im_expr = pass1_im.(n1_idx).(k2) }
+           :: !markers
+      done
+    done;
+    (* INTERNAL TWIDDLES — same as dft_ct, sign-flipped for Bwd *)
+    let twiddled_re_inner = Array.make_matrix n1 n2 (Const 0.0) in
+    let twiddled_im_inner = Array.make_matrix n1 n2 (Const 0.0) in
+    for n1_idx = 0 to n1 - 1 do
+      for k2 = 0 to n2 - 1 do
+        let theta = sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
+        let cr = cos theta in
+        let ci = sin theta in
+        let tr, ti = const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci in
+        twiddled_re_inner.(n1_idx).(k2) <- tr;
+        twiddled_im_inner.(n1_idx).(k2) <- ti
+      done
+    done;
+    (* PASS 2 — same as dft_ct *)
+    let raw_re = Array.make n (Const 0.0) in
+    let raw_im = Array.make n (Const 0.0) in
+    for k2 = 0 to n2 - 1 do
+      let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
+      let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
+      let r, i = dft ~sign n1 outer_input_re outer_input_im in
+      for k1 = 0 to n1 - 1 do
+        raw_re.((k1 * n2) + k2) <- r.(k1);
+        raw_im.((k1 * n2) + k2) <- i.(k1)
+      done
+    done;
+    (* Post-twiddle (if POST structure) — applied to legs 1..n-1. *)
+    let out_re = Array.make n (Const 0.0) in
+    let out_im = Array.make n (Const 0.0) in
+    if pre_twiddle
+    then (
+      Array.blit raw_re 0 out_re 0 n;
+      Array.blit raw_im 0 out_im 0 n)
+    else (
+      out_re.(0) <- raw_re.(0);
+      out_im.(0) <- raw_im.(0);
+      for k = 1 to n - 1 do
+        let wr, wi = twiddle_expr policy n k in
+        let or_, oi = cmul_pattern ~conj raw_re.(k) raw_im.(k) wr wi in
+        out_re.(k) <- or_;
+        out_im.(k) <- oi
+      done);
+    let acc = ref [] in
+    for k = n - 1 downto 0 do
+      acc := (Output (k, true), out_re.(k)) :: !acc;
+      acc := (Output (k, false), out_im.(k)) :: !acc
+    done;
+    List.rev !acc, List.rev !markers, Some (n1, n2)
+;;
 
 (* No-twiddle (n1) variant with spill markers between PASS 1 and PASS 2.
  *
@@ -553,99 +565,92 @@ let dft_expand_twiddled_spill ?(policy = TP_Flat) ?(direction = DIT)
  * benefit from blocking (Direct primes, sizes ≤ threshold where
  * monolithic already fits or wins), falls back to plain dft_expand
  * with empty markers. *)
-let dft_expand_n1_blocked ?(sign = `Fwd) (n : int) :
-    Expr.assignment list * spill_marker list * (int * int) option =
+let dft_expand_n1_blocked ?(sign = `Fwd) (n : int)
+  : Expr.assignment list * spill_marker list * (int * int) option
+  =
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   match pick_algorithm n with
   | Direct ->
-      (* Primes: no CT structure → no pass boundary → no blocking benefit.
-       * Fall back to plain expansion with empty markers. *)
-      (dft_expand ~sign n, [], None)
+    (* Primes: no CT structure → no pass boundary → no blocking benefit.
+     * Fall back to plain expansion with empty markers. *)
+    dft_expand ~sign n, [], None
   | Split_radix ->
-      (* SR has a different topology than CT's symmetric two-pass; the
-       * spill recipe machinery isn't calibrated for it (same caveat as
-       * dft_expand_twiddled_spill). Fall back. A follow-up could add an
-       * SR-specific blocked path. *)
-      (dft_expand ~sign n, [], None)
+    (* SR has a different topology than CT's symmetric two-pass; the
+     * spill recipe machinery isn't calibrated for it (same caveat as
+     * dft_expand_twiddled_spill). Fall back. A follow-up could add an
+     * SR-specific blocked path. *)
+    dft_expand ~sign n, [], None
   | Cooley_Tukey (n1, n2) ->
-      let input_re k = Load (Input (k, true)) in
-      let input_im k = Load (Input (k, false)) in
-
-      (* PASS 1: N1 sub-FFTs of size N2 — identical to dft_ct.
-       * For each n1_idx in [0, N1), compute DFT-N2 on the strided slice
-       *   x[n1_idx], x[n1_idx + N1], x[n1_idx + 2·N1], ...
-       * Inner DFTs recurse via `dft ~sign n2` — uses CT or Direct as
-       * pick_algorithm decides for n2. *)
-      let pass1_re = Array.make_matrix n1 n2 (Const 0.0) in
-      let pass1_im = Array.make_matrix n1 n2 (Const 0.0) in
-      for n1_idx = 0 to n1 - 1 do
-        let inner_input_re k2 = input_re (n1_idx + (k2 * n1)) in
-        let inner_input_im k2 = input_im (n1_idx + (k2 * n1)) in
-        let r, i = dft ~sign n2 inner_input_re inner_input_im in
-        for k2 = 0 to n2 - 1 do
-          pass1_re.(n1_idx).(k2) <- r.(k2);
-          pass1_im.(n1_idx).(k2) <- i.(k2)
-        done
-      done;
-
-      (* CAPTURE SPILL MARKERS: one per (n1_idx, k2) PASS 1 output bin.
-       * Slot indexing matches dft_expand_twiddled_spill so emit_c's spill
-       * info construction sees an identical-shape marker list. *)
-      let markers = ref [] in
-      for n1_idx = 0 to n1 - 1 do
-        for k2 = 0 to n2 - 1 do
-          let slot = (n1_idx * n2) + k2 in
-          markers :=
-            {
-              slot;
-              re_expr = pass1_re.(n1_idx).(k2);
-              im_expr = pass1_im.(n1_idx).(k2);
-            }
-            :: !markers
-        done
-      done;
-
-      (* INTERNAL TWIDDLES: multiply pass1[n1_idx][k2] by Ï_N^{n1_idxÂ·k2}.
-       * Identical to dft_ct's twiddle stage (these are codegen-time
-       * constants, not runtime loads). For (n1_idx=0 â¨ k2=0) the twiddle
-       * is 1 and const_cmul folds away. *)
-      let twiddled_re_inner = Array.make_matrix n1 n2 (Const 0.0) in
-      let twiddled_im_inner = Array.make_matrix n1 n2 (Const 0.0) in
-      for n1_idx = 0 to n1 - 1 do
-        for k2 = 0 to n2 - 1 do
-          let theta =
-            sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n
-          in
-          let cr = cos theta in
-          let ci = sin theta in
-          let tr, ti =
-            const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci
-          in
-          twiddled_re_inner.(n1_idx).(k2) <- tr;
-          twiddled_im_inner.(n1_idx).(k2) <- ti
-        done
-      done;
-
-      (* PASS 2: N2 sub-FFTs of size N1 — identical to dft_ct. *)
-      let out_re = Array.make n (Const 0.0) in
-      let out_im = Array.make n (Const 0.0) in
+    let input_re k = Load (Input (k, true)) in
+    let input_im k = Load (Input (k, false)) in
+    (* PASS 1: N1 sub-FFTs of size N2 — identical to dft_ct.
+     * For each n1_idx in [0, N1), compute DFT-N2 on the strided slice
+     *   x[n1_idx], x[n1_idx + N1], x[n1_idx + 2·N1], ...
+     * Inner DFTs recurse via `dft ~sign n2` — uses CT or Direct as
+     * pick_algorithm decides for n2. *)
+    let pass1_re = Array.make_matrix n1 n2 (Const 0.0) in
+    let pass1_im = Array.make_matrix n1 n2 (Const 0.0) in
+    for n1_idx = 0 to n1 - 1 do
+      let inner_input_re k2 = input_re (n1_idx + (k2 * n1)) in
+      let inner_input_im k2 = input_im (n1_idx + (k2 * n1)) in
+      let r, i = dft ~sign n2 inner_input_re inner_input_im in
       for k2 = 0 to n2 - 1 do
-        let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
-        let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
-        let r, i = dft ~sign n1 outer_input_re outer_input_im in
-        for k1 = 0 to n1 - 1 do
-          out_re.((k1 * n2) + k2) <- r.(k1);
-          out_im.((k1 * n2) + k2) <- i.(k1)
-        done
-      done;
-
-      let acc = ref [] in
-      for k = n - 1 downto 0 do
-        acc := (Output (k, true), out_re.(k)) :: !acc;
-        acc := (Output (k, false), out_im.(k)) :: !acc
-      done;
-      (List.rev !acc, List.rev !markers, Some (n1, n2))
+        pass1_re.(n1_idx).(k2) <- r.(k2);
+        pass1_im.(n1_idx).(k2) <- i.(k2)
+      done
+    done;
+    (* CAPTURE SPILL MARKERS: one per (n1_idx, k2) PASS 1 output bin.
+     * Slot indexing matches dft_expand_twiddled_spill so emit_c's spill
+     * info construction sees an identical-shape marker list. *)
+    let markers = ref [] in
+    for n1_idx = 0 to n1 - 1 do
+      for k2 = 0 to n2 - 1 do
+        let slot = (n1_idx * n2) + k2 in
+        markers
+        := { slot; re_expr = pass1_re.(n1_idx).(k2); im_expr = pass1_im.(n1_idx).(k2) }
+           :: !markers
+      done
+    done;
+    (* INTERNAL TWIDDLES: multiply pass1[n1_idx][k2] by Ï_N^{n1_idxÂ·k2}.
+     * Identical to dft_ct's twiddle stage (these are codegen-time
+     * constants, not runtime loads). For (n1_idx=0 â¨ k2=0) the twiddle
+     * is 1 and const_cmul folds away. *)
+    let twiddled_re_inner = Array.make_matrix n1 n2 (Const 0.0) in
+    let twiddled_im_inner = Array.make_matrix n1 n2 (Const 0.0) in
+    for n1_idx = 0 to n1 - 1 do
+      for k2 = 0 to n2 - 1 do
+        let theta = sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
+        let cr = cos theta in
+        let ci = sin theta in
+        let tr, ti = const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci in
+        twiddled_re_inner.(n1_idx).(k2) <- tr;
+        twiddled_im_inner.(n1_idx).(k2) <- ti
+      done
+    done;
+    (* PASS 2: N2 sub-FFTs of size N1 — identical to dft_ct. *)
+    let out_re = Array.make n (Const 0.0) in
+    let out_im = Array.make n (Const 0.0) in
+    for k2 = 0 to n2 - 1 do
+      let outer_input_re n1_idx = twiddled_re_inner.(n1_idx).(k2) in
+      let outer_input_im n1_idx = twiddled_im_inner.(n1_idx).(k2) in
+      let r, i = dft ~sign n1 outer_input_re outer_input_im in
+      for k1 = 0 to n1 - 1 do
+        out_re.((k1 * n2) + k2) <- r.(k1);
+        out_im.((k1 * n2) + k2) <- i.(k1)
+      done
+    done;
+    let acc = ref [] in
+    for k = n - 1 downto 0 do
+      acc := (Output (k, true), out_re.(k)) :: !acc;
+      acc := (Output (k, false), out_im.(k)) :: !acc
+    done;
+    List.rev !acc, List.rev !markers, Some (n1, n2)
+;;
 
 (* Doc-58-style blocked expansion for the NEWSPLIT construction (scaled
  * conjugate-pair split radix). Same marker contract as
@@ -653,24 +658,24 @@ let dft_expand_n1_blocked ?(sign = `Fwd) (n : int) :
  * boundary instead of CT's symmetric two-pass. The fake ct = (4, n/4)
  * exists purely to drive the emitter's cluster arithmetic — see
  * Split_radix.dft_newsplit_blocked for the slot layout. *)
-let dft_expand_newsplit_blocked ?(sign = `Fwd) (n : int) :
-    Expr.assignment list * spill_marker list * (int * int) option =
+let dft_expand_newsplit_blocked ?(sign = `Fwd) (n : int)
+  : Expr.assignment list * spill_marker list * (int * int) option
+  =
   let input_re k = Load (Input (k, true)) in
   let input_im k = Load (Input (k, false)) in
   let out_re, out_im, raw_markers =
     Split_radix.dft_newsplit_blocked ~sign n input_re input_im
   in
   let markers =
-    List.map
-      (fun (slot, re_expr, im_expr) -> { slot; re_expr; im_expr })
-      raw_markers
+    List.map (fun (slot, re_expr, im_expr) -> { slot; re_expr; im_expr }) raw_markers
   in
   let acc = ref [] in
   for k = n - 1 downto 0 do
     acc := (Output (k, true), out_re.(k)) :: !acc;
     acc := (Output (k, false), out_im.(k)) :: !acc
   done;
-  (List.rev !acc, markers, Some (4, n / 4))
+  List.rev !acc, markers, Some (4, n / 4)
+;;
 
 (* Cost-model rule: should this codelet use the full spill+SU recipe?
  *
@@ -714,6 +719,7 @@ let dft_expand_newsplit_blocked ?(sign = `Fwd) (n : int) :
  * The unified rule: use the recipe iff CT-decomposed AND any clause holds. *)
 let should_spill (n : int) (vec_regs : int) : bool =
   n + 6 > vec_regs || vec_regs >= 32 || n >= 5
+;;
 
 (* Compatibility: callers may want just clause (1) for register-pressure
  * predictions independent of ISA-specific GCC behavior. *)
@@ -769,10 +775,13 @@ let should_block_n1 (n : int) (vec_regs : int) : bool =
   let default_min = if vec_regs <= 16 then 16 else 25 in
   let block_min =
     match Sys.getenv_opt "VFFT_N1_BLOCK_MIN" with
-    | Some s -> ( try int_of_string s with _ -> default_min)
+    | Some s ->
+      (try int_of_string s with
+       | _ -> default_min)
     | None -> default_min
   in
   match pick_algorithm n with
   | Direct -> false (* primes: no CT structure to block *)
   | Split_radix -> false (* SR topology not calibrated for recipe *)
   | Cooley_Tukey _ -> n >= block_min
+;;

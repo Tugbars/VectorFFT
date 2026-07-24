@@ -119,7 +119,10 @@ type node_kind =
    * post-fusion hardware instruction count. *)
   | NK_Fma of t * t * t * bool * bool
 
-and t = { tag : int; node : node_kind }
+and t =
+  { tag : int
+  ; node : node_kind
+  }
 
 (* Immediate predecessors of a node — the IR sub-expressions referenced
  * by its constructor. Walking these reaches the full DAG.
@@ -136,6 +139,7 @@ let preds (e : t) : t list =
   | NK_Plus terms -> List.map snd terms
   | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) -> [ a; b; c; d ]
   | NK_Fma (a, b, c, _, _) -> [ a; b; c ]
+;;
 
 (* Reachable-set topological sort, via `preds`. Hash-cons tags are
  * assigned in construction order, so sorting reachable nodes by tag is a
@@ -150,14 +154,15 @@ let preds (e : t) : t list =
 let topo_sort_reachable (roots : t list) : t list =
   let seen : (int, t) Hashtbl.t = Hashtbl.create 256 in
   let rec visit (e : t) =
-    if not (Hashtbl.mem seen e.tag) then begin
+    if not (Hashtbl.mem seen e.tag)
+    then (
       Hashtbl.add seen e.tag e;
-      List.iter visit (preds e)
-    end
+      List.iter visit (preds e))
   in
   List.iter visit roots;
   Hashtbl.fold (fun _ e acc -> e :: acc) seen []
   |> List.sort (fun (a : t) b -> compare a.tag b.tag)
+;;
 
 (* === NK_PLUS HELPERS ===
  *
@@ -172,10 +177,11 @@ let topo_sort_reachable (roots : t list) : t list =
 let nk_plus_unreachable (site : string) : 'a =
   failwith
     (Printf.sprintf
-       "NK_Plus reached site %S which is not yet wired (Commit 2+).      If \
-        you see this, a consumer is generating NK_Plus before its readers      \
-        are migrated; check the call stack."
+       "NK_Plus reached site %S which is not yet wired (Commit 2+).      If you see \
+        this, a consumer is generating NK_Plus before its readers      are migrated; \
+        check the call stack."
        site)
+;;
 
 (* === HASH-CONSING INFRASTRUCTURE === *)
 
@@ -186,11 +192,12 @@ let hashcons (nk : node_kind) : t =
   match Hashtbl.find_opt hcons_table nk with
   | Some existing -> existing
   | None ->
-      let tag = !next_tag in
-      incr next_tag;
-      let entry = { tag; node = nk } in
-      Hashtbl.add hcons_table nk entry;
-      entry
+    let tag = !next_tag in
+    incr next_tag;
+    let entry = { tag; node = nk } in
+    Hashtbl.add hcons_table nk entry;
+    entry
+;;
 
 (* Lookup-only — returns Some node if it exists in the hash-cons table,
  * None if not. Used by share_subsums to detect pre-existing shareable
@@ -250,49 +257,55 @@ let reset () =
   ExprMemo.clear of_expr_memo;
   Hashtbl.clear const_ident;
   next_tag := 0
+;;
 
 (* === CANONICALIZATION HELPERS === *)
 
 let zero_threshold = 1e-14
 
 let is_zero (e : t) : bool =
-  match e.node with NK_Const c -> Float.abs c < zero_threshold | _ -> false
+  match e.node with
+  | NK_Const c -> Float.abs c < zero_threshold
+  | _ -> false
+;;
 
 let is_one (e : t) : bool =
   match e.node with
   | NK_Const c -> Float.abs (c -. 1.0) < zero_threshold
   | _ -> false
+;;
 
 let is_neg_one (e : t) : bool =
   match e.node with
   | NK_Const c -> Float.abs (c +. 1.0) < zero_threshold
   | _ -> false
+;;
 
 (* === SMART CONSTRUCTORS ===
  * Each does algebraic simplification first, then hash-consing.
  *)
 
 let mk_const (c : float) : t =
-  let rounded =
-    if c = 0.0 then 0.0 else float_of_string (Printf.sprintf "%.13e" c)
-  in
-  if Float.abs rounded < zero_threshold then hashcons (NK_Const 0.0)
-  else if Float.abs (rounded -. 1.0) < zero_threshold then
-    hashcons (NK_Const 1.0)
-  else if Float.abs (rounded +. 1.0) < zero_threshold then
-    hashcons (NK_Const (-1.0))
-  else begin
+  let rounded = if c = 0.0 then 0.0 else float_of_string (Printf.sprintf "%.13e" c) in
+  if Float.abs rounded < zero_threshold
+  then hashcons (NK_Const 0.0)
+  else if Float.abs (rounded -. 1.0) < zero_threshold
+  then hashcons (NK_Const 1.0)
+  else if Float.abs (rounded +. 1.0) < zero_threshold
+  then hashcons (NK_Const (-1.0))
+  else (
     let mag = Float.abs c in
     let key = Printf.sprintf "%.13e" mag in
     let base =
       match Hashtbl.find_opt const_ident key with
       | Some t0 -> t0
       | None ->
-          let t0 = hashcons (NK_Const mag) in
-          Hashtbl.add const_ident key t0;
-          t0
+        let t0 = hashcons (NK_Const mag) in
+        Hashtbl.add const_ident key t0;
+        t0
     in
-    if c < 0.0 then
+    if c < 0.0
+    then
       (* Canonicalize negative non-trivial constants to -|c|.
        * This unifies all multiplications-by-c with multiplications-by-(-c):
        *   Mul(x, -c) → Mul(x, Neg(c)) → Neg(Mul(x, c)) via Neg-hoisting.
@@ -300,8 +313,8 @@ let mk_const (c : float) : t =
        * Hand-coded codelets do this manually (e.g. vnc = -vc); we get
        * the same effect mechanically. *)
       hashcons (NK_Neg base)
-    else base
-  end
+    else base)
+;;
 
 let mk_load (r : elem_ref) : t = hashcons (NK_Load r)
 
@@ -333,7 +346,8 @@ let rec flatten_sum (sign : int) (e : t) : (int * t) list =
   | NK_Add (a, b) -> flatten_sum sign a @ flatten_sum sign b
   | NK_Sub (a, b) -> flatten_sum sign a @ flatten_sum (-sign) b
   | NK_Neg inner -> flatten_sum (-sign) inner
-  | _ -> [ (sign, e) ]
+  | _ -> [ sign, e ]
+;;
 
 (* Deeper flatten that ALSO sees through early-peephole NK_Fma nodes.
  *
@@ -355,21 +369,19 @@ let rec flatten_sum (sign : int) (e : t) : (int * t) list =
  * unchanged so other passes' invariants are preserved. *)
 let rec flatten_sum_through_fma (sign : int) (e : t) : (int * t) list =
   match e.node with
-  | NK_Add (a, b) ->
-      flatten_sum_through_fma sign a @ flatten_sum_through_fma sign b
-  | NK_Sub (a, b) ->
-      flatten_sum_through_fma sign a @ flatten_sum_through_fma (-sign) b
+  | NK_Add (a, b) -> flatten_sum_through_fma sign a @ flatten_sum_through_fma sign b
+  | NK_Sub (a, b) -> flatten_sum_through_fma sign a @ flatten_sum_through_fma (-sign) b
   | NK_Neg inner -> flatten_sum_through_fma (-sign) inner
   | NK_Fma (a, b, c, nm, na) ->
-      (* Reconstruct the multiplied term and addend as separate signed
-       * leaves. The mul term is itself a leaf for flatten purposes
-       * (we don't decompose Mul further). *)
-      let mul_term = hashcons (NK_Mul (a, b)) in
-      let mul_sign = if nm then -sign else sign in
-      let add_sign = if na then -sign else sign in
-      flatten_sum_through_fma mul_sign mul_term
-      @ flatten_sum_through_fma add_sign c
-  | _ -> [ (sign, e) ]
+    (* Reconstruct the multiplied term and addend as separate signed
+     * leaves. The mul term is itself a leaf for flatten purposes
+     * (we don't decompose Mul further). *)
+    let mul_term = hashcons (NK_Mul (a, b)) in
+    let mul_sign = if nm then -sign else sign in
+    let add_sign = if na then -sign else sign in
+    flatten_sum_through_fma mul_sign mul_term @ flatten_sum_through_fma add_sign c
+  | _ -> [ sign, e ]
+;;
 
 (* Cancel pairs of (+1, x) and (-1, x) — they sum to 0 and are dropped.
  * Sort the result canonically by tag.
@@ -381,17 +393,21 @@ let cancel_signs (terms : (int * t) list) : (int * t) list =
   let tag_to_t = Hashtbl.create 16 in
   List.iter
     (fun (s, e) ->
-      Hashtbl.replace tag_to_t e.tag e;
-      let prev = try Hashtbl.find coeff e.tag with Not_found -> 0 in
-      Hashtbl.replace coeff e.tag (prev + s))
+       Hashtbl.replace tag_to_t e.tag e;
+       let prev =
+         try Hashtbl.find coeff e.tag with
+         | Not_found -> 0
+       in
+       Hashtbl.replace coeff e.tag (prev + s))
     terms;
   let result =
     Hashtbl.fold
-      (fun tag c acc ->
-        if c = 0 then acc else (c, Hashtbl.find tag_to_t tag) :: acc)
-      coeff []
+      (fun tag c acc -> if c = 0 then acc else (c, Hashtbl.find tag_to_t tag) :: acc)
+      coeff
+      []
   in
   List.sort (fun (_, a) (_, b) -> compare a.tag b.tag) result
+;;
 
 (* Split a list into (evens, odds) by index — used by interleaved
  * pair-folding to expose butterfly subsums. *)
@@ -399,10 +415,10 @@ let split_interleaved (lst : 'a list) : 'a list * 'a list =
   let evens = ref [] in
   let odds = ref [] in
   List.iteri
-    (fun i x ->
-      if i mod 2 = 0 then evens := x :: !evens else odds := x :: !odds)
+    (fun i x -> if i mod 2 = 0 then evens := x :: !evens else odds := x :: !odds)
     lst;
-  (List.rev !evens, List.rev !odds)
+  List.rev !evens, List.rev !odds
+;;
 
 (* === SMART CONSTRUCTORS (mutually recursive) ===
  *
@@ -439,71 +455,81 @@ and mk_sub (a : t) (b : t) : t =
   emit_pair_fold canonical
 
 and mk_mul (a : t) (b : t) : t =
-  if is_zero a || is_zero b then mk_const 0.0
-  else if is_one a then b
-  else if is_one b then a
-  else if is_neg_one a then mk_neg b
-  else if is_neg_one b then mk_neg a
-  else
-    match (a.node, b.node) with
+  if is_zero a || is_zero b
+  then mk_const 0.0
+  else if is_one a
+  then b
+  else if is_one b
+  then a
+  else if is_neg_one a
+  then mk_neg b
+  else if is_neg_one b
+  then mk_neg a
+  else (
+    match a.node, b.node with
     | NK_Const x, NK_Const y -> mk_const (x *. y)
     | NK_Neg a', _ -> mk_neg (mk_mul a' b)
     | _, NK_Neg b' -> mk_neg (mk_mul a b')
     | _ ->
-        let a, b = if a.tag <= b.tag then (a, b) else (b, a) in
-        hashcons (NK_Mul (a, b))
+      let a, b = if a.tag <= b.tag then a, b else b, a in
+      hashcons (NK_Mul (a, b)))
 
 (* Leaf binary Add — used post-reassoc by emit_pair_fold. Hash-conses,
  * applies trivial identities, and recognizes Add(x, Neg(y)) → Sub(x, y)
  * to avoid redundant Neg+Add pairs after the pair-fold rebuilds. *)
 and mk_add_binary (a : t) (b : t) : t =
-  if is_zero a then b
-  else if is_zero b then a
-  else
-    match (a.node, b.node) with
+  if is_zero a
+  then b
+  else if is_zero b
+  then a
+  else (
+    match a.node, b.node with
     | NK_Const x, NK_Const y -> mk_const (x +. y)
     | _, NK_Neg b' -> mk_sub_binary a b' (* x + (-y) = x - y *)
     | NK_Neg a', _ -> mk_sub_binary b a' (* (-x) + y = y - x *)
     | _ ->
-        let a, b = if a.tag <= b.tag then (a, b) else (b, a) in
-        hashcons (NK_Add (a, b))
+      let a, b = if a.tag <= b.tag then a, b else b, a in
+      hashcons (NK_Add (a, b)))
 
 and mk_sub_binary (a : t) (b : t) : t =
-  if is_zero b then a
-  else if is_zero a then mk_neg b
-  else if a.tag = b.tag then mk_const 0.0
-  else
+  if is_zero b
+  then a
+  else if is_zero a
+  then mk_neg b
+  else if a.tag = b.tag
+  then mk_const 0.0
+  else (
     match b.node with
     | NK_Neg b' ->
-        (* x - (-y) = x + y. Catches the case where const_cmul produced
-         * a Neg in a twiddle output that then gets subtracted. *)
-        mk_add_binary a b'
-    | _ -> (
-        match a.node with
-        | NK_Neg inner -> (
-            match inner.node with
-            | NK_Mul (x, y) ->
-                (* Sub(Neg(Mul(x, y)), b) = -(x*y) - b
-                 *                        = NK_Fma(x, y, b, neg_mul=true, neg_add=true)
-                 *                        = vfnmsub at emission.
-                 *
-                 * dedup_sub_pairs introduces Neg(winner) substitutions; when the
-                 * substitution lands as the LHS of another Sub and the original
-                 * was Mul, we get Sub(Neg(Mul), c) — which without this peephole
-                 * emits as 3-4 instructions including a vxorpd with a -0.0 mask
-                 * (see docs/30_sub_neg_mul_fnmsub.md). The peephole fires at
-                 * construction time (during dedup_sub_pairs' rebuild) so the
-                 * Fma replaces the bad pattern before spill markers, scheduling,
-                 * or register allocation see it.
-                 *
-                 * Implemented as a peephole here (rather than a standalone pass)
-                 * because a standalone pass would orphan nodes that downstream
-                 * code — including spill markers captured before the rewrite —
-                 * still references. Constructing the Fma during dedup means the
-                 * resulting DAG has consistent tags throughout. *)
-                hashcons (NK_Fma (x, y, b, true, true))
-            | _ -> hashcons (NK_Sub (a, b)))
-        | _ -> hashcons (NK_Sub (a, b)))
+      (* x - (-y) = x + y. Catches the case where const_cmul produced
+       * a Neg in a twiddle output that then gets subtracted. *)
+      mk_add_binary a b'
+    | _ ->
+      (match a.node with
+       | NK_Neg inner ->
+         (match inner.node with
+          | NK_Mul (x, y) ->
+            (* Sub(Neg(Mul(x, y)), b) = -(x*y) - b
+             *                        = NK_Fma(x, y, b, neg_mul=true, neg_add=true)
+             *                        = vfnmsub at emission.
+             *
+             * dedup_sub_pairs introduces Neg(winner) substitutions; when the
+             * substitution lands as the LHS of another Sub and the original
+             * was Mul, we get Sub(Neg(Mul), c) — which without this peephole
+             * emits as 3-4 instructions including a vxorpd with a -0.0 mask
+             * (see docs/30_sub_neg_mul_fnmsub.md). The peephole fires at
+             * construction time (during dedup_sub_pairs' rebuild) so the
+             * Fma replaces the bad pattern before spill markers, scheduling,
+             * or register allocation see it.
+             *
+             * Implemented as a peephole here (rather than a standalone pass)
+             * because a standalone pass would orphan nodes that downstream
+             * code — including spill markers captured before the rewrite —
+             * still references. Constructing the Fma during dedup means the
+             * resulting DAG has consistent tags throughout. *)
+            hashcons (NK_Fma (x, y, b, true, true))
+          | _ -> hashcons (NK_Sub (a, b)))
+       | _ -> hashcons (NK_Sub (a, b))))
 
 (* === NK_PLUS SMART CONSTRUCTOR ===
  *
@@ -535,39 +561,37 @@ and mk_plus (terms : (int * t) list) : t =
   let rec flatten (sign : int) (term : t) : (int * t) list =
     match term.node with
     | NK_Plus inner_terms ->
-        List.concat_map (fun (s, t) -> flatten (sign * s) t) inner_terms
+      List.concat_map (fun (s, t) -> flatten (sign * s) t) inner_terms
     | NK_Neg inner -> flatten (-sign) inner
-    | _ -> [ (sign, term) ]
+    | _ -> [ sign, term ]
   in
   let flat = List.concat_map (fun (s, t) -> flatten s t) terms in
-
   (* Step 2: separate constants from non-constants and sum them. *)
   let const_sum = ref 0.0 in
   let nonconst =
     List.filter
       (fun (s, t) ->
-        match t.node with
-        | NK_Const c ->
-            const_sum := !const_sum +. (float_of_int s *. c);
-            false
-        | _ -> true)
+         match t.node with
+         | NK_Const c ->
+           const_sum := !const_sum +. (float_of_int s *. c);
+           false
+         | _ -> true)
       flat
   in
-
   (* Step 3: drop zero-coefficient duplicates (tag-identical with opposite
    * signs cancel). Group by tag; keep terms where the signs don't sum to 0. *)
   let by_tag : (int, int * t) Hashtbl.t = Hashtbl.create 32 in
   List.iter
     (fun (s, t) ->
-      match Hashtbl.find_opt by_tag t.tag with
-      | None -> Hashtbl.add by_tag t.tag (s, t)
-      | Some (s', _) ->
-          let s_new = s + s' in
-          if s_new = 0 then Hashtbl.remove by_tag t.tag
-          else Hashtbl.replace by_tag t.tag (s_new, t))
+       match Hashtbl.find_opt by_tag t.tag with
+       | None -> Hashtbl.add by_tag t.tag (s, t)
+       | Some (s', _) ->
+         let s_new = s + s' in
+         if s_new = 0
+         then Hashtbl.remove by_tag t.tag
+         else Hashtbl.replace by_tag t.tag (s_new, t))
     nonconst;
   let merged = Hashtbl.fold (fun _ v acc -> v :: acc) by_tag [] in
-
   (* Step 4: re-expand merged terms whose coefficient is not ±1.
    * In Commit 2, we don't have coefficient-aware Plus terms, so
    * a coefficient of ±2 means two copies of the same term. We
@@ -576,24 +600,23 @@ and mk_plus (terms : (int * t) list) : t =
   let expanded =
     List.concat_map
       (fun (s, t) ->
-        let n = abs s in
-        let sign = if s >= 0 then 1 else -1 in
-        if n = 0 then []
-        else if n = 1 then [ (sign, t) ]
-        else
-          (* Duplicate (sign, t) n times. *)
-          List.init n (fun _ -> (sign, t)))
+         let n = abs s in
+         let sign = if s >= 0 then 1 else -1 in
+         if n = 0
+         then []
+         else if n = 1
+         then [ sign, t ]
+         else
+           (* Duplicate (sign, t) n times. *)
+           List.init n (fun _ -> sign, t))
       merged
   in
-
   (* Step 5: sort by tag for canonical ordering. *)
   let sorted = List.sort (fun (_, a) (_, b) -> compare a.tag b.tag) expanded in
-
   (* Step 6: re-prepend the const term if non-zero. *)
   let with_const =
     if !const_sum = 0.0 then sorted else (1, mk_const !const_sum) :: sorted
   in
-
   (* Step 7: collapse to single-term forms when appropriate. *)
   match with_const with
   | [] -> mk_const 0.0
@@ -616,7 +639,9 @@ and mk_plus (terms : (int * t) list) : t =
  * Negative terms produce NK_Sub edges; positive terms produce NK_Add edges.
  * The first term carries its sign as Neg-wrap if negative. *)
 and lower_plus (e : t) : t =
-  match e.node with NK_Plus terms -> lower_plus_terms terms | _ -> e
+  match e.node with
+  | NK_Plus terms -> lower_plus_terms terms
+  | _ -> e
 
 (* Lower an n-ary Plus back to a binary Add/Sub tree.
  *
@@ -636,7 +661,7 @@ and lower_plus (e : t) : t =
 and lower_plus_terms (terms : (int * t) list) : t =
   (* Each term may itself contain NK_Plus; lower recursively first so
    * emit_pair_fold sees a fully binary sub-tree at each leaf. *)
-  let recursively_lowered = List.map (fun (s, t) -> (s, lower_plus t)) terms in
+  let recursively_lowered = List.map (fun (s, t) -> s, lower_plus t) terms in
   emit_pair_fold recursively_lowered
 
 (* Tried: Common-multiplicand factoring peephole
@@ -678,39 +703,34 @@ and lower_plus_terms (terms : (int * t) list) : t =
  * fires and we emit Cmul nodes. *)
 and mk_cmul (xr : t) (xi : t) (wr : t) (wi : t) : t * t =
   (* Trivial-twiddle cases (compile-time known): *)
-  match (wr.node, wi.node) with
+  match wr.node, wi.node with
   | NK_Const c1, NK_Const c2 when is_zero wi && is_one wr ->
-      let _ = c1 in
-      let _ = c2 in
-      (xr, xi)
-  | NK_Const _, NK_Const _ when is_zero wr && is_one wi -> (mk_neg xi, xr)
-  | NK_Const _, NK_Const _ when is_zero wr && is_neg_one wi -> (xi, mk_neg xr)
+    let _ = c1 in
+    let _ = c2 in
+    xr, xi
+  | NK_Const _, NK_Const _ when is_zero wr && is_one wi -> mk_neg xi, xr
+  | NK_Const _, NK_Const _ when is_zero wr && is_neg_one wi -> xi, mk_neg xr
   | _ ->
-      (* General case: emit opaque Cmul nodes. *)
-      let re = hashcons (NK_CmulRe (xr, xi, wr, wi)) in
-      let im = hashcons (NK_CmulIm (xr, xi, wr, wi)) in
-      (re, im)
+    (* General case: emit opaque Cmul nodes. *)
+    let re = hashcons (NK_CmulRe (xr, xi, wr, wi)) in
+    let im = hashcons (NK_CmulIm (xr, xi, wr, wi)) in
+    re, im
 
 (* Build a single signed term: (-1, x) -> Neg x. *)
-and emit_signed_term ((sign, e) : int * t) : t =
-  if sign >= 0 then e else mk_neg e
+and emit_signed_term ((sign, e) : int * t) : t = if sign >= 0 then e else mk_neg e
 
 (* Combine two signed terms into one expression. *)
 and combine_two ((s1, e1) : int * t) ((s2, e2) : int * t) : t =
-  match (s1, s2) with
+  match s1, s2 with
   | 1, 1 -> mk_add_binary e1 e2
   | 1, -1 -> mk_sub_binary e1 e2
   | -1, 1 -> mk_sub_binary e2 e1
   | -1, -1 -> mk_neg (mk_add_binary e1 e2)
   | _ ->
-      (* Coefficients other than ±1: emit Mul(const, leaf). Rare in FFT. *)
-      let lhs =
-        if s1 = 0 then mk_const 0.0 else mk_mul (mk_const (float_of_int s1)) e1
-      in
-      let rhs =
-        if s2 = 0 then mk_const 0.0 else mk_mul (mk_const (float_of_int s2)) e2
-      in
-      mk_add_binary lhs rhs
+    (* Coefficients other than ±1: emit Mul(const, leaf). Rare in FFT. *)
+    let lhs = if s1 = 0 then mk_const 0.0 else mk_mul (mk_const (float_of_int s1)) e1 in
+    let rhs = if s2 = 0 then mk_const 0.0 else mk_mul (mk_const (float_of_int s2)) e2 in
+    mk_add_binary lhs rhs
 
 (* Pair-fold a sorted list of signed terms into a binary tree by
  * recursive interleaved splitting. This exposes butterfly subsums
@@ -721,12 +741,13 @@ and emit_pair_fold (terms : (int * t) list) : t =
   | [ t ] -> emit_signed_term t
   | [ t1; t2 ] -> combine_two t1 t2
   | _ ->
-      let evens, odds = split_interleaved terms in
-      let lhs = emit_pair_fold evens in
-      let rhs = emit_pair_fold odds in
-      (* lhs and rhs are now positive subsum expressions (signs were
-       * absorbed during folding via combine_two). Just Add them. *)
-      mk_add_binary lhs rhs
+    let evens, odds = split_interleaved terms in
+    let lhs = emit_pair_fold evens in
+    let rhs = emit_pair_fold odds in
+    (* lhs and rhs are now positive subsum expressions (signs were
+     * absorbed during folding via combine_two). Just Add them. *)
+    mk_add_binary lhs rhs
+;;
 
 (* === LIFT FROM Expr.expr TO HASH-CONSED t ===
  *
@@ -756,56 +777,63 @@ let rec of_expr ?(reassoc = true) (e : Expr.expr) : t =
   match ExprMemo.find_opt of_expr_memo e with
   | Some t -> t
   | None ->
-      let add_op = if reassoc then mk_add else mk_add_binary in
-      let sub_op = if reassoc then mk_sub else mk_sub_binary in
-      let result =
-        match e with
-        | Expr.Const c -> mk_const c
-        | Expr.Load r -> mk_load r
-        | Expr.Neg e1 -> mk_neg (of_expr ~reassoc e1)
-        (* CMUL.RE PATTERN: Sub(Mul(xr, wr), Mul(xi, wi)) → cmul real output. *)
-        | Expr.Sub (Expr.Mul (xr_e, wr_e), Expr.Mul (xi_e, wi_e)) ->
-            let xr = of_expr ~reassoc xr_e in
-            let wr = of_expr ~reassoc wr_e in
-            let xi = of_expr ~reassoc xi_e in
-            let wi = of_expr ~reassoc wi_e in
-            let is_const e =
-              match e.node with
-              | NK_Const _ -> true
-              | NK_Neg n -> (
-                  match n.node with NK_Const _ -> true | _ -> false)
-              | _ -> false
-            in
-            if is_const xr || is_const xi || is_const wr || is_const wi then
-              sub_op (mk_mul xr wr) (mk_mul xi wi)
-            else
-              let re, _im = mk_cmul xr xi wr wi in
-              re
-        (* CMUL.IM PATTERN — needs reassoc flag threaded too. *)
-        | Expr.Add (Expr.Mul (xr_e, wi_e), Expr.Mul (xi_e, wr_e)) ->
-            let xr = of_expr ~reassoc xr_e in
-            let wi = of_expr ~reassoc wi_e in
-            let xi = of_expr ~reassoc xi_e in
-            let wr = of_expr ~reassoc wr_e in
-            let is_const e =
-              match e.node with
-              | NK_Const _ -> true
-              | NK_Neg n -> (
-                  match n.node with NK_Const _ -> true | _ -> false)
-              | _ -> false
-            in
-            if is_const xr || is_const xi || is_const wr || is_const wi then
-              add_op (mk_mul xr wi) (mk_mul xi wr)
-            else
-              let _re, im = mk_cmul xr xi wr wi in
-              im
-        | Expr.Add (a, b) -> add_op (of_expr ~reassoc a) (of_expr ~reassoc b)
-        | Expr.Sub (a, b) -> sub_op (of_expr ~reassoc a) (of_expr ~reassoc b)
-        | Expr.Mul (a, b) -> mk_mul (of_expr ~reassoc a) (of_expr ~reassoc b)
-      in
-      ExprMemo.add of_expr_memo e result;
-      result
+    let add_op = if reassoc then mk_add else mk_add_binary in
+    let sub_op = if reassoc then mk_sub else mk_sub_binary in
+    let result =
+      match e with
+      | Expr.Const c -> mk_const c
+      | Expr.Load r -> mk_load r
+      | Expr.Neg e1 -> mk_neg (of_expr ~reassoc e1)
+      (* CMUL.RE PATTERN: Sub(Mul(xr, wr), Mul(xi, wi)) → cmul real output. *)
+      | Expr.Sub (Expr.Mul (xr_e, wr_e), Expr.Mul (xi_e, wi_e)) ->
+        let xr = of_expr ~reassoc xr_e in
+        let wr = of_expr ~reassoc wr_e in
+        let xi = of_expr ~reassoc xi_e in
+        let wi = of_expr ~reassoc wi_e in
+        let is_const e =
+          match e.node with
+          | NK_Const _ -> true
+          | NK_Neg n ->
+            (match n.node with
+             | NK_Const _ -> true
+             | _ -> false)
+          | _ -> false
+        in
+        if is_const xr || is_const xi || is_const wr || is_const wi
+        then sub_op (mk_mul xr wr) (mk_mul xi wi)
+        else (
+          let re, _im = mk_cmul xr xi wr wi in
+          re)
+      (* CMUL.IM PATTERN — needs reassoc flag threaded too. *)
+      | Expr.Add (Expr.Mul (xr_e, wi_e), Expr.Mul (xi_e, wr_e)) ->
+        let xr = of_expr ~reassoc xr_e in
+        let wi = of_expr ~reassoc wi_e in
+        let xi = of_expr ~reassoc xi_e in
+        let wr = of_expr ~reassoc wr_e in
+        let is_const e =
+          match e.node with
+          | NK_Const _ -> true
+          | NK_Neg n ->
+            (match n.node with
+             | NK_Const _ -> true
+             | _ -> false)
+          | _ -> false
+        in
+        if is_const xr || is_const xi || is_const wr || is_const wi
+        then add_op (mk_mul xr wi) (mk_mul xi wr)
+        else (
+          let _re, im = mk_cmul xr xi wr wi in
+          im)
+      | Expr.Add (a, b) -> add_op (of_expr ~reassoc a) (of_expr ~reassoc b)
+      | Expr.Sub (a, b) -> sub_op (of_expr ~reassoc a) (of_expr ~reassoc b)
+      | Expr.Mul (a, b) -> mk_mul (of_expr ~reassoc a) (of_expr ~reassoc b)
+    in
+    ExprMemo.add of_expr_memo e result;
+    result
+;;
 
-let of_assignments ?(reassoc = true) (al : Expr.assignment list) :
-    (Expr.elem_ref * t) list =
-  List.map (fun (lhs, rhs) -> (lhs, of_expr ~reassoc rhs)) al
+let of_assignments ?(reassoc = true) (al : Expr.assignment list)
+  : (Expr.elem_ref * t) list
+  =
+  List.map (fun (lhs, rhs) -> lhs, of_expr ~reassoc rhs) al
+;;

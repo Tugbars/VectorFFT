@@ -82,7 +82,8 @@ open Expr
  * K-multiplied sums across all uses of this twiddle. *)
 let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
   let abs_eq = abs_float cr = abs_float ci in
-  if abs_eq && cr <> 0.0 then begin
+  if abs_eq && cr <> 0.0
+  then (
     let k = abs_float cr in
     let k_e = Const k in
     let s = Add (xr, xi) in
@@ -96,15 +97,13 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
     let sr = if cr > 0.0 then 1 else -1 in
     let si = if ci > 0.0 then 1 else -1 in
     let with_sign sgn e = if sgn > 0 then e else Neg e in
-    match (sr, si) with
-    | 1, 1 -> (kd, ks) (* out_re=K*D, out_im=K*S *)
-    | 1, -1 -> (ks, with_sign (-1) kd) (* out_re=K*S, out_im=-K*D *)
-    | -1, 1 -> (with_sign (-1) ks, kd) (* out_re=-K*S, out_im=K*D *)
-    | -1, -1 ->
-        (with_sign (-1) kd, with_sign (-1) ks) (* out_re=-K*D, out_im=-K*S *)
-    | _ -> assert false
-  end
-  else begin
+    match sr, si with
+    | 1, 1 -> kd, ks (* out_re=K*D, out_im=K*S *)
+    | 1, -1 -> ks, with_sign (-1) kd (* out_re=K*S, out_im=-K*D *)
+    | -1, 1 -> with_sign (-1) ks, kd (* out_re=-K*S, out_im=K*D *)
+    | -1, -1 -> with_sign (-1) kd, with_sign (-1) ks (* out_re=-K*D, out_im=-K*S *)
+    | _ -> assert false)
+  else (
     (* General case |cr| ≠ |ci|: emit in TAN-FACTORED form (FFTW genfft
      * with -fma flag). Pick the larger of |cr|, |ci| as the OUTER factor
      * (the "cos"), and the ratio as the INNER factor (the "tan"):
@@ -138,13 +137,14 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
        * behavior) stored the damaged values themselves: ~22-30 ulp on the
        * cosine leaf and ~90 ulp on the tangent ratio, measured by the
        * accuracy harness. Full precision in, full precision emitted. *)
-      let round_13 x = x in
+    let round_13 x = x in
     let cr_r = round_13 cr in
     let ci_r = round_13 ci in
     let acr = abs_float cr_r in
     let aci = abs_float ci_r in
     let r_abs = min acr aci /. max acr aci in
-    if acr >= aci then begin
+    if acr >= aci
+    then (
       let tn = if ci_r >= 0.0 = (cr_r >= 0.0) then r_abs else -.r_abs in
       let cr_e = Const cr_r in
       let tn_e = Const tn in
@@ -154,9 +154,8 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
       (* xi + tan*xr *)
       let out_re = Mul (cr_e, inner_re) in
       let out_im = Mul (cr_e, inner_im) in
-      (out_re, out_im)
-    end
-    else begin
+      out_re, out_im)
+    else (
       let ct = if cr_r >= 0.0 = (ci_r >= 0.0) then r_abs else -.r_abs in
       let ci_e = Const ci_r in
       let ct_e = Const ct in
@@ -166,9 +165,8 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
       (* xr + ct*xi *)
       let out_re = Mul (ci_e, inner_re) in
       let out_im = Mul (ci_e, inner_im) in
-      (out_re, out_im)
-    end
-  end
+      out_re, out_im))
+;;
 
 (* The recursive DFT computation.
  *
@@ -191,74 +189,84 @@ let const_cmul (xr : expr) (xi : expr) (cr : float) (ci : float) : expr * expr =
  *   input_im k — Expr tree for the k-th input's imag component
  *   ?sign      — Fwd uses θ = -2πk/N (DFT); Bwd uses θ = +2πk/N (IDFT, no /N).
  *)
-let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+let rec dft ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int -> expr)
+  : expr array * expr array
+  =
   (* Hand-derived Winograd-25 codelet, gated for A/B comparison.
    * See dft_winograd25 (below) for the algebra. *)
-  if n = 25 && Sys.getenv_opt "VFFT_WINOGRAD25" = Some "1" then
-    dft_winograd25 ~sign input_re input_im
-  else
+  if n = 25 && Sys.getenv_opt "VFFT_WINOGRAD25" = Some "1"
+  then dft_winograd25 ~sign input_re input_im
+  else (
     match pick_algorithm n with
     | Direct ->
-        (* For odd N >= 3, the conjugate-pair construction produces a much
-         * better-structured DAG than naive direct DFT: pair sums/diffs are
-         * shared, per-pair-output intermediates (p_re_m, q_im_m, etc.) are
-         * shared between X[m] and X[N-m], and inner sums use linear FMA
-         * chains. For N=2 there's nothing to factor; for even N we never
-         * reach Direct anyway (CT-decomposed).
-         *
-         * Special case for N=5: Winograd-5 (dft_winograd5) exploits algebraic
-         * identities of 5th roots of unity to reduce 36 ops to 32 and matches
-         * FFTW's gen_notw -fma R=5 codelet exactly. Propagates through any
-         * radix that decomposes to DFT-5 (R=15, R=20, R=25, R=50, R=100, ...).
-         *
-         * Empirical trade-off measured for the R=25 cascade
-         * (sandbox Xeon 2.80 GHz, 31 trials × 5000 reps × 10 runs):
-         *   AVX2  : Winograd ~2% faster (spill traffic dominates chain depth)
-         *   AVX-512: Winograd ~4% SLOWER (port parallelism > chain depth)
-         *
-         * The AVX-512 regression is real and reproducible, but the underlying
-         * gap to FFTW (+31 ops at R=25, all butterfly-pair-shared Muls in
-         * inter-pass twiddles) is structurally tied to our binary IR. The
-         * n-ary `Plus` rewrite that FFTW's genfft uses would unblock both
-         * the AVX-512 regression and the R=25/R=64 gap to FFTW — see doc 59
-         * addendum for sizing. Until that lands, the choice is between:
-         *   (a) Pure default win on AVX2, small loss on AVX-512 R=25
-         *   (b) Flag-based dispatch (one more flag, more cognitive load)
-         * We pick (a). Code simplicity > marginal AVX-512 R=25 perf. *)
-        if n = 5 then
-          begin if Sys.getenv_opt "VFFT_CNUM_W5" = Some "1" then begin
-            let input = Cnum.signal_of_re_im input_re input_im in
-            let out = dft_winograd5_cnum ~sign input in
-            Cnum.split_re_im out
-          end
-          else dft_winograd5 ~sign input_re input_im
-          end
-        else if n = 7 then dft_winograd7 ~sign input_re input_im
-        else if n >= 3 && n mod 2 = 1 then
-          dft_direct_conjugate_pair ~sign n input_re input_im
-        else dft_direct ~sign n input_re input_im
+      (* For odd N >= 3, the conjugate-pair construction produces a much
+       * better-structured DAG than naive direct DFT: pair sums/diffs are
+       * shared, per-pair-output intermediates (p_re_m, q_im_m, etc.) are
+       * shared between X[m] and X[N-m], and inner sums use linear FMA
+       * chains. For N=2 there's nothing to factor; for even N we never
+       * reach Direct anyway (CT-decomposed).
+       *
+       * Special case for N=5: Winograd-5 (dft_winograd5) exploits algebraic
+       * identities of 5th roots of unity to reduce 36 ops to 32 and matches
+       * FFTW's gen_notw -fma R=5 codelet exactly. Propagates through any
+       * radix that decomposes to DFT-5 (R=15, R=20, R=25, R=50, R=100, ...).
+       *
+       * Empirical trade-off measured for the R=25 cascade
+       * (sandbox Xeon 2.80 GHz, 31 trials × 5000 reps × 10 runs):
+       *   AVX2  : Winograd ~2% faster (spill traffic dominates chain depth)
+       *   AVX-512: Winograd ~4% SLOWER (port parallelism > chain depth)
+       *
+       * The AVX-512 regression is real and reproducible, but the underlying
+       * gap to FFTW (+31 ops at R=25, all butterfly-pair-shared Muls in
+       * inter-pass twiddles) is structurally tied to our binary IR. The
+       * n-ary `Plus` rewrite that FFTW's genfft uses would unblock both
+       * the AVX-512 regression and the R=25/R=64 gap to FFTW — see doc 59
+       * addendum for sizing. Until that lands, the choice is between:
+       *   (a) Pure default win on AVX2, small loss on AVX-512 R=25
+       *   (b) Flag-based dispatch (one more flag, more cognitive load)
+       * We pick (a). Code simplicity > marginal AVX-512 R=25 perf. *)
+      if n = 5
+      then
+        if Sys.getenv_opt "VFFT_CNUM_W5" = Some "1"
+        then (
+          let input = Cnum.signal_of_re_im input_re input_im in
+          let out = dft_winograd5_cnum ~sign input in
+          Cnum.split_re_im out)
+        else dft_winograd5 ~sign input_re input_im
+      else if n = 7
+      then dft_winograd7 ~sign input_re input_im
+      else if n >= 3 && n mod 2 = 1
+      then dft_direct_conjugate_pair ~sign n input_re input_im
+      else dft_direct ~sign n input_re input_im
     | Cooley_Tukey (n1, n2) -> dft_ct ~sign n1 n2 input_re input_im
     | Split_radix ->
-        (* Split-radix lives in its own module (lib/split_radix.ml). Cross-
-         * module mutual recursion uses the callback pattern: we pass `dft`
-         * itself in as `dft_rec` so SR can recurse on its sub-DFT inputs
-         * (size N/2 and N/4) which dispatch back through the picker. *)
-        if newsplit_enabled () then
-          Split_radix.dft_newsplit ~sign n input_re input_im
-        else
-          Split_radix.dft_split_radix
-            ~dft_rec:(fun ~sign:s n' f g -> dft ~sign:s n' f g)
-            ~sign n input_re input_im
+      (* Split-radix lives in its own module (lib/split_radix.ml). Cross-
+       * module mutual recursion uses the callback pattern: we pass `dft`
+       * itself in as `dft_rec` so SR can recurse on its sub-DFT inputs
+       * (size N/2 and N/4) which dispatch back through the picker. *)
+      if newsplit_enabled ()
+      then Split_radix.dft_newsplit ~sign n input_re input_im
+      else
+        Split_radix.dft_split_radix
+          ~dft_rec:(fun ~sign:s n' f g -> dft ~sign:s n' f g)
+          ~sign
+          n
+          input_re
+          input_im)
 
 (* Direct DFT: matrix-vector form.
  *   X[k].re = Σ_n  a[n] * cos(±2πnk/n) - b[n] * sin(±2πnk/n)
  *   X[k].im = Σ_n  a[n] * sin(±2πnk/n) + b[n] * cos(±2πnk/n)
  * The sign of θ is - for Fwd, + for Bwd. *)
-and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr) (input_im : int -> expr)
+  : expr array * expr array
+  =
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
   for k = 0 to n - 1 do
@@ -276,7 +284,7 @@ and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr)
     out_re.(k) <- !re_sum;
     out_im.(k) <- !im_sum
   done;
-  (out_re, out_im)
+  out_re, out_im
 
 (* === DIRECT DFT WITH EXPLICIT CONJUGATE-PAIR FACTORING ===
  *
@@ -316,33 +324,40 @@ and dft_direct ?(sign = `Fwd) (n : int) (input_re : int -> expr)
  *   X[m].im   = x[0].im + Σ (cos(jm)·s_im_j + sin(jm)·d_re_j)
  *   X[N-m].im = x[0].im + Σ (cos(jm)·s_im_j - sin(jm)·d_re_j)
  *)
-and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_direct_conjugate_pair
+      ?(sign = `Fwd)
+      (n : int)
+      (input_re : int -> expr)
+      (input_im : int -> expr)
+  : expr array * expr array
+  =
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   let half = (n - 1) / 2 in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
-
   (* === STAGE 1: pair sums and diffs (the s_jk and d_jk subterms) ===
    * Computed once each, shared everywhere via OCaml value reuse → hash-cons. *)
   let s_re =
     Array.init (half + 1) (fun j ->
-        if j = 0 then input_re 0 else Add (input_re j, input_re (n - j)))
+      if j = 0 then input_re 0 else Add (input_re j, input_re (n - j)))
   in
   let s_im =
     Array.init (half + 1) (fun j ->
-        if j = 0 then input_im 0 else Add (input_im j, input_im (n - j)))
+      if j = 0 then input_im 0 else Add (input_im j, input_im (n - j)))
   in
   let d_re =
     Array.init (half + 1) (fun j ->
-        if j = 0 then Const 0.0 else Sub (input_re j, input_re (n - j)))
+      if j = 0 then Const 0.0 else Sub (input_re j, input_re (n - j)))
   in
   let d_im =
     Array.init (half + 1) (fun j ->
-        if j = 0 then Const 0.0 else Sub (input_im j, input_im (n - j)))
+      if j = 0 then Const 0.0 else Sub (input_im j, input_im (n - j)))
   in
-
   (* === STAGE 2: linear-chain weighted sums ===
    * Two variants:
    *
@@ -381,18 +396,19 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
       let c = coeffs.(j) in
       let abs_c = Float.abs c in
       let term = Mul (terms.(j), Const abs_c) in
-      acc :=
-        match !acc with
-        | None ->
-            (* First term: if positive, start with the Mul as-is.
-             * If negative, start with Neg(Mul). fma_lift catches the Neg(Mul)
-             * pattern when it's then Add'd to something later, producing fnmadd. *)
-            Some (if c < 0.0 then Neg term else term)
-        | Some a -> Some (if c < 0.0 then Sub (a, term) else Add (a, term))
+      acc
+      := match !acc with
+         | None ->
+           (* First term: if positive, start with the Mul as-is.
+            * If negative, start with Neg(Mul). fma_lift catches the Neg(Mul)
+            * pattern when it's then Add'd to something later, producing fnmadd. *)
+           Some (if c < 0.0 then Neg term else term)
+         | Some a -> Some (if c < 0.0 then Sub (a, term) else Add (a, term))
     done;
-    match !acc with Some a -> a | None -> Const 0.0
+    match !acc with
+    | Some a -> a
+    | None -> Const 0.0
   in
-
   (* === STAGE 3: X[0] — sum of all real/imag inputs ===
    * Using the s_re/s_im pair sums, X[0].re = x[0].re + Σ s_re_j
    * (each pair sum is reused from STAGE 1, no duplicate adds.) *)
@@ -404,13 +420,12 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
   done;
   out_re.(0) <- !x0_re;
   out_im.(0) <- !x0_im;
-
   (* === STAGE 4: pair outputs X[m] and X[N-m] for m = 1..half ===
    * Compute four intermediates once per pair, then combine. *)
   for m = 1 to half do
     let cos_arr =
       Array.init (half + 1) (fun j ->
-          cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n))
+        cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n))
     in
     (* Sin coefficient for the q_im_m = Σ sin(jm)·d_im_j intermediate.
      * The output combinations below use:
@@ -426,9 +441,8 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
      * Both cases: sin_arr coefficient = -sgn · sin(2πjm/N). *)
     let sin_arr =
       Array.init (half + 1) (fun j ->
-          -.sgn *. sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n))
+        -.sgn *. sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n))
     in
-
     (* p_re_m / p_im_m: cosine sums WITH x[0] absorbed as the deepest addend.
      * The chain shape is:
      *   ((((x[0] +/- |c1|·s1) +/- |c2|·s2) +/- |c3|·s3) +/- |c4|·s4) +/- |c5|·s5
@@ -442,7 +456,6 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
     let p_im_m = make_sum_with_init (input_im 0) cos_arr s_im in
     let q_re_m = make_sum sin_arr d_re in
     let q_im_m = make_sum sin_arr d_im in
-
     (* Output combinations. p_re_m / p_im_m already include x[0]; we just
      * add or subtract the q chain. Each output requires exactly 1 op
      * (1 add or 1 sub) at this combining level — matching hand-coded
@@ -452,7 +465,7 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
     out_im.(m) <- Sub (p_im_m, q_re_m);
     out_im.(n - m) <- Add (p_im_m, q_re_m)
   done;
-  (out_re, out_im)
+  out_re, out_im
 
 (* General Cooley-Tukey DIT decomposition: N = N1 · N2.
  *
@@ -478,8 +491,9 @@ and dft_direct_conjugate_pair ?(sign = `Fwd) (n : int) (input_re : int -> expr)
  *   R=8 = CT(2, 4): PASS 1 splits by parity, two DFT-4s (even/odd indices).
  *   R=16 = CT(4, 4): PASS 1 splits by mod-4 residue, four DFT-4s.
  *)
-and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr) (input_im : int -> expr)
+  : expr array * expr array
+  =
   (* Winograd 5-point DFT — exploits algebraic identities of 5th roots of
    * unity to reduce arithmetic vs. the naive direct DFT.
    *
@@ -523,9 +537,12 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
    * with POSITIVE sin coupling. For Bwd (θ = +2πnk/N) the sign flips.
    * Absorb that into the constant so the structural signs in the output
    * assignments below stay identical for both directions. *)
-  let s_sign = match sign with `Fwd -> 1.0 | `Bwd -> -1.0 in
+  let s_sign =
+    match sign with
+    | `Fwd -> 1.0
+    | `Bwd -> -1.0
+  in
   let k_sin_2pi5_s = Const (s_sign *. sin (two_pi /. 5.0)) in
-
   (* Real-channel pre-additions
    *   t4 = x_1.re + x_4.re      ta = t4 - t7
    *   t7 = x_2.re + x_3.re      tt = x_2.re - x_3.re
@@ -541,7 +558,6 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
   let tt = Sub (x2r, x3r) in
   let ta = Sub (t4, t7) in
   let ts = Sub (x1r, x4r) in
-
   (* Imag-channel pre-additions — same structure. *)
   let x0i = input_im 0 in
   let x1i = input_im 1 in
@@ -554,14 +570,11 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
   let tq = Sub (tm, tn) in
   let th = Sub (x2i, x3i) in
   let to_ = Add (tm, tn) in
-
   let out_re = Array.make 5 (Const 0.0) in
   let out_im = Array.make 5 (Const 0.0) in
-
   (* Output 0 — trivial sums, no multiplications. *)
   out_re.(0) <- Add (x0r, t8);
   out_im.(0) <- Add (x0i, to_);
-
   (* Real outputs X_1.re .. X_4.re.
    *   ti = te + (1/φ)·th       — shares sin1·(C.im + D.im·1/φ) = s1·C.im+s2·D.im
    *   tk = th - (1/φ)·te       — pairs for X_2/X_3
@@ -582,7 +595,6 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
   out_re.(4) <- Sub (tb, Mul (k_sin_2pi5_s, ti));
   out_re.(2) <- Sub (tj, Mul (k_sin_2pi5_s, tk));
   out_re.(3) <- Add (tj, Mul (k_sin_2pi5_s, tk));
-
   (* Imag outputs X_1.im .. X_4.im. Mirror of real, with (ts, tt) playing
    * the role of (te, th), (tq, to_) playing (ta, t8), and the cross-
    * coupling sign flipped relative to the real channel — that flip is
@@ -604,8 +616,7 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
   out_im.(4) <- Add (tr, Mul (k_sin_2pi5_s, tu));
   out_im.(2) <- Add (tv, Mul (k_sin_2pi5_s, tw));
   out_im.(3) <- Sub (tv, Mul (k_sin_2pi5_s, tw));
-
-  (out_re, out_im)
+  out_re, out_im
 
 (* ============================================================
  * dft_winograd5_cnum — same algorithm as dft_winograd5, written
@@ -623,15 +634,17 @@ and dft_winograd5 ?(sign = `Fwd) (input_re : int -> expr)
  * no downstream constant multiplication; the rotation only matters
  * when W5 is composed in a larger codelet via cscale or cmul.)
  * ============================================================ *)
-and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
-    Cnum.cnum array =
+and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) : Cnum.cnum array =
   let two_pi = 8.0 *. atan 1.0 in
   let k_quarter = Const 0.25 in
   let k_root5_4 = Const (sqrt 5.0 /. 4.0) in
   let k_inv_phi = Const ((sqrt 5.0 -. 1.0) /. 2.0) in
-  let s_sign = match sign with `Fwd -> 1.0 | `Bwd -> -1.0 in
+  let s_sign =
+    match sign with
+    | `Fwd -> 1.0
+    | `Bwd -> -1.0
+  in
   let k_sin_2pi5_s = Const (s_sign *. sin (two_pi /. 5.0)) in
-
   let open Expr in
   let open Cnum in
   let x0 = input 0 in
@@ -639,7 +652,6 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
   let x2 = input 2 in
   let x3 = input 3 in
   let x4 = input 4 in
-
   (* Real-channel pre-additions. *)
   let t4 = mk_add x1.re x4.re in
   let t7 = mk_add x2.re x3.re in
@@ -647,7 +659,6 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
   let tt = mk_sub x2.re x3.re in
   let ta = mk_sub t4 t7 in
   let ts = mk_sub x1.re x4.re in
-
   (* Imag-channel pre-additions. *)
   let tm = mk_add x1.im x4.im in
   let tn = mk_add x2.im x3.im in
@@ -655,12 +666,9 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
   let tq = mk_sub tm tn in
   let th = mk_sub x2.im x3.im in
   let to_ = mk_add tm tn in
-
   let out = Array.make 5 czero in
-
   (* Output 0 — trivial sums. *)
   out.(0) <- cnum (mk_add x0.re t8) (mk_add x0.im to_);
-
   (* Real outputs X_1.re .. X_4.re *)
   let ti = mk_add te (mk_mul k_inv_phi th) in
   let tk = mk_sub th (mk_mul k_inv_phi te) in
@@ -671,7 +679,6 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
   let x4_re = mk_sub tb (mk_mul k_sin_2pi5_s ti) in
   let x2_re = mk_sub tj (mk_mul k_sin_2pi5_s tk) in
   let x3_re = mk_add tj (mk_mul k_sin_2pi5_s tk) in
-
   (* Imag outputs X_1.im .. X_4.im *)
   let tu = mk_add ts (mk_mul k_inv_phi tt) in
   let tw = mk_sub tt (mk_mul k_inv_phi ts) in
@@ -682,7 +689,6 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
   let x4_im = mk_add tr (mk_mul k_sin_2pi5_s tu) in
   let x2_im = mk_add tv (mk_mul k_sin_2pi5_s tw) in
   let x3_im = mk_sub tv (mk_mul k_sin_2pi5_s tw) in
-
   out.(1) <- cnum x1_re x1_im;
   out.(2) <- cnum x2_re x2_im;
   out.(3) <- cnum x3_re x3_im;
@@ -714,12 +720,16 @@ and dft_winograd5_cnum ?(sign = `Fwd) (input : int -> Cnum.cnum) :
  * twiddled values — specifically whether the W5 internal sums benefit
  * from leaf-level Mul shapes available for FMA fusion.
  *)
-and dft_winograd25 ?(sign = `Fwd) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_winograd25 ?(sign = `Fwd) (input_re : int -> expr) (input_im : int -> expr)
+  : expr array * expr array
+  =
   let two_pi = 8.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   let n = 25 in
-
   (* Pass 1: 5 W5s on input columns. *)
   let p1_re = Array.make_matrix 5 5 (Const 0.0) in
   let p1_im = Array.make_matrix 5 5 (Const 0.0) in
@@ -732,7 +742,6 @@ and dft_winograd25 ?(sign = `Fwd) (input_re : int -> expr)
       p1_im.(j_0).(k) <- i.(k)
     done
   done;
-
   (* Twiddle: plus-of-times form (NOT tan-factored).
    * For (j_0, k_0) with j_0=0 or k_0=0, twiddle is 1 — pass through. *)
   let z_re = Array.make_matrix 5 5 (Const 0.0) in
@@ -744,21 +753,19 @@ and dft_winograd25 ?(sign = `Fwd) (input_re : int -> expr)
       let ci = sin theta in
       let yr = p1_re.(j_0).(k_0) in
       let yi = p1_im.(j_0).(k_0) in
-      if j_0 = 0 || k_0 = 0 then begin
+      if j_0 = 0 || k_0 = 0
+      then (
         (* Identity twiddle. *)
         z_re.(j_0).(k_0) <- yr;
-        z_im.(j_0).(k_0) <- yi
-      end
-      else begin
+        z_im.(j_0).(k_0) <- yi)
+      else (
         (* Plus-of-times: all 4 muls at leaf level. *)
         let cr_e = Const cr in
         let ci_e = Const ci in
         z_re.(j_0).(k_0) <- Sub (Mul (cr_e, yr), Mul (ci_e, yi));
-        z_im.(j_0).(k_0) <- Add (Mul (cr_e, yi), Mul (ci_e, yr))
-      end
+        z_im.(j_0).(k_0) <- Add (Mul (cr_e, yi), Mul (ci_e, yr)))
     done
   done;
-
   (* Pass 2: 5 W5s on rows of z. *)
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
@@ -771,11 +778,11 @@ and dft_winograd25 ?(sign = `Fwd) (input_re : int -> expr)
       out_im.(k_0 + (5 * k_1)) <- i.(k_1)
     done
   done;
+  out_re, out_im
 
-  (out_re, out_im)
-
-and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr) (input_im : int -> expr)
+  : expr array * expr array
+  =
   (* Winograd 7-point DFT — Rader-style decomposition exploiting the
    * multiplicative-group structure of (Z/7Z)*. The cyclic-convolution
    * subproblem factors via Winograd's small-convolution algorithms,
@@ -803,11 +810,14 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   let kp_801937735 = Const 0.801937735804838252472204639014890102331838324 in
   let kp_692021471 = Const 0.692021471630095869627814897002069140197260599 in
   let kp_900968867 = Const 0.900968867902419126236102319507445051165919162 in
-  let s_sign = match sign with `Fwd -> 1.0 | `Bwd -> -1.0 in
+  let s_sign =
+    match sign with
+    | `Fwd -> 1.0
+    | `Bwd -> -1.0
+  in
   let kp_974927912_s =
     Const (s_sign *. 0.974927912181823607018131682993931217232785801)
   in
-
   (* Real-channel pre-additions *)
   let x0r = input_re 0 in
   let x1r = input_re 1 in
@@ -834,7 +844,6 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   (* TO = TG + K555·TH *)
   let t_jj = Sub (t_h, Mul (kp_554958132, t_i)) in
   (* TJ = TH - K555·TI *)
-
   (* Imag-channel pre-additions  (pair diffs are LOW-HIGH here) *)
   let x0i = input_im 0 in
   let x1i = input_im 1 in
@@ -861,14 +870,11 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   (* Ts = Tm + K555·Tg *)
   let t_xX = Sub (t_gI, Mul (kp_554958132, t_jI)) in
   (* Tx = Tg - K555·Tj *)
-
   let out_re = Array.make 7 (Const 0.0) in
   let out_im = Array.make 7 (Const 0.0) in
-
   (* Output 0 — chained sums, 3 adds each channel *)
   out_re.(0) <- Add (Add (Add (x0r, t_4), t_7), t_a);
   out_im.(0) <- Add (Add (Add (x0i, t_aA), t_bB), t_cC);
-
   (* Pair (1, 6) *)
   let to_ = Add (t_gI, Mul (kp_801937735, t_nN)) in
   (* To = Tg + K801·Tn *)
@@ -883,7 +889,6 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   let t_s2 = Sub (x0i, Mul (kp_900968867, t_r2)) in
   out_im.(1) <- Add (t_s2, Mul (kp_974927912_s, t_u2));
   out_im.(6) <- Sub (t_s2, Mul (kp_974927912_s, t_u2));
-
   (* Pair (2, 5) *)
   let t_tT = Sub (t_jI, Mul (kp_801937735, t_sS)) in
   (* Tt = Tj - K801·Ts *)
@@ -897,7 +902,6 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   let t_nN2 = Sub (x0i, Mul (kp_900968867, t_mM2)) in
   out_im.(2) <- Add (t_nN2, Mul (kp_974927912_s, t_pP));
   out_im.(5) <- Sub (t_nN2, Mul (kp_974927912_s, t_pP));
-
   (* Pair (3, 4) *)
   let t_y = Sub (t_mM, Mul (kp_801937735, t_xX)) in
   let t_v = Sub (t_4, Mul (kp_692021471, t_u)) in
@@ -909,15 +913,23 @@ and dft_winograd7 ?(sign = `Fwd) (input_re : int -> expr)
   let t_fF = Sub (x0i, Mul (kp_900968867, t_eE)) in
   out_im.(3) <- Add (t_fF, Mul (kp_974927912_s, t_kK));
   out_im.(4) <- Sub (t_fF, Mul (kp_974927912_s, t_kK));
+  out_re, out_im
 
-  (out_re, out_im)
-
-and dft_ct ?(sign = `Fwd) (n1 : int) (n2 : int) (input_re : int -> expr)
-    (input_im : int -> expr) : expr array * expr array =
+and dft_ct
+      ?(sign = `Fwd)
+      (n1 : int)
+      (n2 : int)
+      (input_re : int -> expr)
+      (input_im : int -> expr)
+  : expr array * expr array
+  =
   let n = n1 * n2 in
   let pi = 4.0 *. atan 1.0 in
-  let sgn = match sign with `Fwd -> -1.0 | `Bwd -> 1.0 in
-
+  let sgn =
+    match sign with
+    | `Fwd -> -1.0
+    | `Bwd -> 1.0
+  in
   (* PASS 1: N1 sub-FFTs of size N2.
    * For each n1_idx in [0, N1), compute DFT-N2 on inputs at
    *   x[n1_idx], x[n1_idx + N1], x[n1_idx + 2·N1], ...
@@ -933,7 +945,6 @@ and dft_ct ?(sign = `Fwd) (n1 : int) (n2 : int) (input_re : int -> expr)
       pass1_im.(n1_idx).(k2) <- i.(k2)
     done
   done;
-
   (* INTERNAL TWIDDLES: multiply pass1[n1_idx][k2] by ω_N^{n1_idx·k2}.
    * For n1_idx=0 or k2=0, the twiddle is 1 and const_cmul folds away.
    * Other (n1_idx, k2) pairs introduce non-trivial cmul nodes. *)
@@ -941,19 +952,14 @@ and dft_ct ?(sign = `Fwd) (n1 : int) (n2 : int) (input_re : int -> expr)
   let twiddled_im = Array.make_matrix n1 n2 (Const 0.0) in
   for n1_idx = 0 to n1 - 1 do
     for k2 = 0 to n2 - 1 do
-      let theta =
-        sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n
-      in
+      let theta = sgn *. 2.0 *. pi *. float_of_int (n1_idx * k2) /. float_of_int n in
       let cr = cos theta in
       let ci = sin theta in
-      let tr, ti =
-        const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci
-      in
+      let tr, ti = const_cmul pass1_re.(n1_idx).(k2) pass1_im.(n1_idx).(k2) cr ci in
       twiddled_re.(n1_idx).(k2) <- tr;
       twiddled_im.(n1_idx).(k2) <- ti
     done
   done;
-
   (* PASS 2: N2 sub-FFTs of size N1.
    * For each k2 in [0, N2), compute DFT-N1 on the column
    *   twiddled[0..N1-1][k2]
@@ -969,6 +975,5 @@ and dft_ct ?(sign = `Fwd) (n1 : int) (n2 : int) (input_re : int -> expr)
       out_im.((k1 * n2) + k2) <- i.(k1)
     done
   done;
-
-  (out_re, out_im)
-
+  out_re, out_im
+;;

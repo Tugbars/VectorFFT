@@ -39,6 +39,7 @@ let equal (N x) (N y) =
   (* use both relative and absolute error *)
   let absdiff = abs_num (x -/ y) in
   absdiff <=/ pepsilon || absdiff <=/ pepsilon */ (abs_num x +/ abs_num y)
+;;
 
 let is_zero = equal zero
 let is_one = equal one
@@ -68,49 +69,52 @@ let sqrt a =
     if almost_equal newguess guess then newguess else sqrt_iter newguess
   in
   sqrt_iter (div a two)
+;;
 
-let csub (xr, xi) (yr, yi) = (round (xr -/ yr), round (xi -/ yi))
-let cdiv (xr, xi) r = (round (xr // r), round (xi // r))
+let csub (xr, xi) (yr, yi) = round (xr -/ yr), round (xi -/ yi)
+let cdiv (xr, xi) r = round (xr // r), round (xi // r)
 
 let cmul (xr, xi) (yr, yi) =
-  (round ((xr */ yr) -/ (xi */ yi)), round ((xr */ yi) +/ (xi */ yr)))
+  round ((xr */ yr) -/ (xi */ yi)), round ((xr */ yi) +/ (xi */ yr))
+;;
 
-let csqr (xr, xi) = (round ((xr */ xr) -/ (xi */ xi)), round (Int 2 */ xr */ xi))
+let csqr (xr, xi) = round ((xr */ xr) -/ (xi */ xi)), round (Int 2 */ xr */ xi)
 let cabssq (xr, xi) = (xr */ xr) +/ (xi */ xi)
-let cconj (xr, xi) = (xr, minus_num xi)
+let cconj (xr, xi) = xr, minus_num xi
 let cinv x = cdiv (cconj x) (cabssq x)
-
-let almost_equal_cnum (xr, xi) (yr, yi) =
-  cabssq (xr -/ yr, xi -/ yi) <=/ epsilonsq2
+let almost_equal_cnum (xr, xi) (yr, yi) = cabssq (xr -/ yr, xi -/ yi) <=/ epsilonsq2
 
 (* Put a complex number to an integer power by repeated squaring: *)
 let rec ipow_cnum x n =
-  if n == 0 then (Int 1, Int 0)
-  else if n < 0 then cinv (ipow_cnum x (-n))
-  else if n mod 2 == 0 then ipow_cnum (csqr x) (n / 2)
+  if n == 0
+  then Int 1, Int 0
+  else if n < 0
+  then cinv (ipow_cnum x (-n))
+  else if n mod 2 == 0
+  then ipow_cnum (csqr x) (n / 2)
   else cmul x (ipow_cnum x (n - 1))
+;;
 
 let twopi = 6.28318530717958647692528676655900576839433879875021164194989
 
 (* Find the nth (complex) primitive root of unity by Newton's method: *)
 let primitive_root_of_unity n =
   let rec root_iter guess =
-    let newguess =
-      csub guess (cdiv (csub guess (ipow_cnum guess (1 - n))) (Int n))
-    in
+    let newguess = csub guess (cdiv (csub guess (ipow_cnum guess (1 - n))) (Int n)) in
     if almost_equal_cnum guess newguess then newguess else root_iter newguess
   in
   let float_to_num f = Int (truncate (f *. 1.0e9)) // Int 1000000000 in
-  root_iter
-    ( float_to_num (cos (twopi /. float n)),
-      float_to_num (sin (twopi /. float n)) )
+  root_iter (float_to_num (cos (twopi /. float n)), float_to_num (sin (twopi /. float n)))
+;;
 
 let cexp n i =
-  if i mod n == 0 then (one, zero)
-  else
+  if i mod n == 0
+  then one, zero
+  else (
     let n2, i2 = Util.lowest_terms n i in
     let c, s = ipow_cnum (primitive_root_of_unity n2) i2 in
-    (makeNum c, makeNum s)
+    makeNum c, makeNum s)
+;;
 
 let to_konst (N n) =
   let f = float_of_num n in
@@ -120,9 +124,10 @@ let to_konst (N n) =
   let r = "0000000000" ^ q in
   let l = String.length r in
   let prefix = if f < 0.0 then "KN" else "KP" in
-  if f' >= 1.0 then
-    prefix ^ string_of_int (truncate f') ^ "_" ^ String.sub r (l - 9) 9
+  if f' >= 1.0
+  then prefix ^ string_of_int (truncate f') ^ "_" ^ String.sub r (l - 9) 9
   else prefix ^ String.sub r (l - 9) 9
+;;
 
 let to_string (N n) = approx_num_fix print_precision n
 let to_float (N n) = float_of_num n

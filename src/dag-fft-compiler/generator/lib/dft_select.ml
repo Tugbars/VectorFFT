@@ -56,6 +56,7 @@ let newsplit_enabled () : bool =
   match Sys.getenv_opt "VFFT_NEWSPLIT" with
   | None | Some "" -> false
   | Some _ -> true
+;;
 
 let split_radix_enabled () : bool =
   newsplit_enabled ()
@@ -63,6 +64,7 @@ let split_radix_enabled () : bool =
   match Sys.getenv_opt "VFFT_SPLIT_RADIX" with
   | None | Some "" -> false
   | Some _ -> true
+;;
 
 (* Pick algorithm based on n's number-theoretic properties.
  *
@@ -112,99 +114,104 @@ let target_vec_regs : int ref = ref 32
 let factor_override (n : int) : algorithm option =
   match Sys.getenv_opt "VFFT_CT_FACTOR" with
   | None -> None
-  | Some s -> (
-      try
-        let colon = String.index s ':' in
-        let nn = int_of_string (String.trim (String.sub s 0 colon)) in
-        if nn <> n then None
-        else begin
-          let rest =
-            String.trim (String.sub s (colon + 1) (String.length s - colon - 1))
-          in
-          if rest = "direct" then Some Direct
-          else if rest = "sr" then Some Split_radix
-          else
-            let comma = String.index rest ',' in
-            let a = int_of_string (String.trim (String.sub rest 0 comma)) in
-            let b =
-              int_of_string
-                (String.trim
-                   (String.sub rest (comma + 1)
-                      (String.length rest - comma - 1)))
-            in
-            Some (Cooley_Tukey (a, b))
-        end
-      with _ -> None)
+  | Some s ->
+    (try
+       let colon = String.index s ':' in
+       let nn = int_of_string (String.trim (String.sub s 0 colon)) in
+       if nn <> n
+       then None
+       else (
+         let rest =
+           String.trim (String.sub s (colon + 1) (String.length s - colon - 1))
+         in
+         if rest = "direct"
+         then Some Direct
+         else if rest = "sr"
+         then Some Split_radix
+         else (
+           let comma = String.index rest ',' in
+           let a = int_of_string (String.trim (String.sub rest 0 comma)) in
+           let b =
+             int_of_string
+               (String.trim
+                  (String.sub rest (comma + 1) (String.length rest - comma - 1)))
+           in
+           Some (Cooley_Tukey (a, b))))
+     with
+     | _ -> None)
+;;
 
 let pick_algorithm (n : int) : algorithm =
   match factor_override n with
   | Some a -> a
-  | None -> (
-      if n <= 2 then Direct
-      else if split_radix_enabled () && n >= 8 && n land (n - 1) = 0 then
-        (* Route pow2 sizes ≥ 8 through Split_radix when VFFT_SPLIT_RADIX is set.
-         * N=4 stays as CT(2,2) regardless — SR's recursion bottoms there.
-         * N=2 stays as Direct (also an SR base case).
-         * Non-pow2 sizes are unaffected: SR requires power-of-two N. *)
-        Split_radix
-      else
-        match n with
-        | 4 -> Cooley_Tukey (2, 2)
-        | 8 -> Cooley_Tukey (2, 4)
-        | 16 -> Cooley_Tukey (4, 4)
-        | 32 -> Cooley_Tukey (4, 8)
-        | 64 when !target_vec_regs <= 16 ->
-            Cooley_Tukey (4, 16)
-            (* AVX2 (16-ymm budget): (4,16) recurses to (4,(4,4)). Deepest
-             * pass has 4 complex = 8 ymm live, well under the 16-ymm budget.
-             * Empirically saves 42 spills vs (8,8) on AVX2 (−9%) and also
-             * −8 fp ops (920 vs 928). On AVX-512 the savings reverse —
-             * (8,8) is symmetric and wins on schedule pressure. *)
-        | 64 ->
-            Cooley_Tukey (8, 8)
-            (* Hand-coded R=64 uses CT(8, 8) — symmetric factorization that
-             * splits the 64-point DFT into 8 sub-FFT-8s in PASS 1 and 8
-             * sub-FFT-8s in PASS 2. Same convention as gen_radix64.py. *)
-        | 128 ->
-            Cooley_Tukey (8, 16)
-            (* R=128 EXPERIMENTAL stress test for spill controller and IR
-             * construction at sizes beyond R=64. CT(8, 16) splits N=128 into
-             * 16 sub-DFT-8s in PASS 1 and 8 sub-DFT-16s in PASS 2. Inner
-             * DFT-16 = CT(4, 4) which is well-tested. The outer DFT-8 is
-             * CT(2, 4). All sub-codelets exist and work cleanly.
-             *
-             * Default fallback CT(2, 64) doesn't terminate in 60s — the
-             * recursion through 64 = CT(8, 8) builds an enormous nested IR.
-             * CT(8, 16) directly avoids this depth.
-             *
-             * Peak live count exceeds 32 ZMM significantly; recipe path is
-             * mandatory. Probably exposes spill controller weaknesses we
-             * want to characterize. See docs/31_R128_spill_stress.md. *)
-        | 256 ->
-            Cooley_Tukey (16, 16)
-            (* R=256 — balanced factorization. 16 sub-DFT-16s in each pass.
-             * Following the precedent set by R=128 (8×16) and R=64 (8×8),
-             * this is the natural "balanced" choice for monolithic generation.
-             * Generates a ~7800-vec-instr codelet (vs R=128's 3318). *)
-        | 512 ->
-            Cooley_Tukey (16, 32)
-            (* R=512 — 16×32 chosen empirically. Multi-stage bench at R=512
-             * showed 16×32 / 32×16 multi-stage dominated 8×64 / 64×8 across
-             * all batch sizes (typically 10-20% faster). The same factorization
-             * principle should apply to the monolithic codelet's INTERNAL
-             * structure: 16×32 splits the work more evenly across moderate-
-             * sized sub-FFTs than 8×64's heavy R=64 + light R=8.
-             *
-             * Picker entry was initially CT(8, 64) on AVX-512-lane-alignment
-             * reasoning, but the data didn't support that intuition — see
-             * docs/34_real_shuffle_and_isa_split.md for the empirical comparison.
-             *
-             * CT(32, 16) was tested in doc 36's Phase 2 prototype and gave
-             * WORSE stack op counts (8752 AVX-512, 14846 AVX2) than CT(16, 32)
-             * — the smaller Pass 1 clusters helped but the larger Pass 2
-             * clusters (sub-DFT-32) hurt more. *)
-        | 1024 -> Cooley_Tukey (32, 32)
-        (* R=1024 EXPERIMENTAL (doc 41) — symmetric factorization. Both
+  | None ->
+    if n <= 2
+    then Direct
+    else if split_radix_enabled () && n >= 8 && n land (n - 1) = 0
+    then
+      (* Route pow2 sizes ≥ 8 through Split_radix when VFFT_SPLIT_RADIX is set.
+       * N=4 stays as CT(2,2) regardless — SR's recursion bottoms there.
+       * N=2 stays as Direct (also an SR base case).
+       * Non-pow2 sizes are unaffected: SR requires power-of-two N. *)
+      Split_radix
+    else (
+      match n with
+      | 4 -> Cooley_Tukey (2, 2)
+      | 8 -> Cooley_Tukey (2, 4)
+      | 16 -> Cooley_Tukey (4, 4)
+      | 32 -> Cooley_Tukey (4, 8)
+      | 64 when !target_vec_regs <= 16 ->
+        Cooley_Tukey (4, 16)
+        (* AVX2 (16-ymm budget): (4,16) recurses to (4,(4,4)). Deepest
+         * pass has 4 complex = 8 ymm live, well under the 16-ymm budget.
+         * Empirically saves 42 spills vs (8,8) on AVX2 (−9%) and also
+         * −8 fp ops (920 vs 928). On AVX-512 the savings reverse —
+         * (8,8) is symmetric and wins on schedule pressure. *)
+      | 64 ->
+        Cooley_Tukey (8, 8)
+        (* Hand-coded R=64 uses CT(8, 8) — symmetric factorization that
+         * splits the 64-point DFT into 8 sub-FFT-8s in PASS 1 and 8
+         * sub-FFT-8s in PASS 2. Same convention as gen_radix64.py. *)
+      | 128 ->
+        Cooley_Tukey (8, 16)
+        (* R=128 EXPERIMENTAL stress test for spill controller and IR
+         * construction at sizes beyond R=64. CT(8, 16) splits N=128 into
+         * 16 sub-DFT-8s in PASS 1 and 8 sub-DFT-16s in PASS 2. Inner
+         * DFT-16 = CT(4, 4) which is well-tested. The outer DFT-8 is
+         * CT(2, 4). All sub-codelets exist and work cleanly.
+         *
+         * Default fallback CT(2, 64) doesn't terminate in 60s — the
+         * recursion through 64 = CT(8, 8) builds an enormous nested IR.
+         * CT(8, 16) directly avoids this depth.
+         *
+         * Peak live count exceeds 32 ZMM significantly; recipe path is
+         * mandatory. Probably exposes spill controller weaknesses we
+         * want to characterize. See docs/31_R128_spill_stress.md. *)
+      | 256 ->
+        Cooley_Tukey (16, 16)
+        (* R=256 — balanced factorization. 16 sub-DFT-16s in each pass.
+         * Following the precedent set by R=128 (8×16) and R=64 (8×8),
+         * this is the natural "balanced" choice for monolithic generation.
+         * Generates a ~7800-vec-instr codelet (vs R=128's 3318). *)
+      | 512 ->
+        Cooley_Tukey (16, 32)
+        (* R=512 — 16×32 chosen empirically. Multi-stage bench at R=512
+         * showed 16×32 / 32×16 multi-stage dominated 8×64 / 64×8 across
+         * all batch sizes (typically 10-20% faster). The same factorization
+         * principle should apply to the monolithic codelet's INTERNAL
+         * structure: 16×32 splits the work more evenly across moderate-
+         * sized sub-FFTs than 8×64's heavy R=64 + light R=8.
+         *
+         * Picker entry was initially CT(8, 64) on AVX-512-lane-alignment
+         * reasoning, but the data didn't support that intuition — see
+         * docs/34_real_shuffle_and_isa_split.md for the empirical comparison.
+         *
+         * CT(32, 16) was tested in doc 36's Phase 2 prototype and gave
+         * WORSE stack op counts (8752 AVX-512, 14846 AVX2) than CT(16, 32)
+         * — the smaller Pass 1 clusters helped but the larger Pass 2
+         * clusters (sub-DFT-32) hurt more. *)
+      | 1024 -> Cooley_Tukey (32, 32)
+      (* R=1024 EXPERIMENTAL (doc 41) — symmetric factorization. Both
          * passes have 32 sub-DFT-32 clusters. Inner DFT-32 = CT(4, 8)
          * is well-tested. Asymmetric alternatives (CT(16,64), CT(64,16))
          * would put one pass's clusters at sub-DFT-64 size which is
@@ -214,7 +221,7 @@ let pick_algorithm (n : int) : algorithm =
          * Test goal: compare monolithic R=1024 stack ops and runtime
          * against multi-stage cascades (R=64×R=16, etc.) under
          * gcc-11 + -flive-range-shrinkage. *)
-        (* User's gen_radix32.py uses CT(8, 4) in their (N1, N2) convention.
+      (* User's gen_radix32.py uses CT(8, 4) in their (N1, N2) convention.
          * Their convention has input mapping n = N2*n1 + n2 (high digit n1),
          * ours has n = n1 + n2*N1 (low digit n1). The labels swap.
          *
@@ -229,64 +236,65 @@ let pick_algorithm (n : int) : algorithm =
          * 32 ZMM with room for twiddles); going wider (e.g. 2×16) would
          * blow the register budget. Going narrower (e.g. 8×4) is also valid
          * but produces deeper inner DFTs in PASS 2. *)
-        (* Mixed-radix composites — first batch (R=6 only for wiring validation;
+      (* Mixed-radix composites — first batch (R=6 only for wiring validation;
          * R=10/12/20/25 follow once R=6 path proves clean). *)
-        | 6 ->
-            Cooley_Tukey (3, 2)
-            (* R=6 = CT(N1=3, N2=2). PASS 1: 2 sub-DFT-3s (prime, conjugate-pair
-             * construction). PASS 2: 3 sub-DFT-2s (trivial add/sub). Internal
-             * twiddles W6: 2 unique exponents (W6^1, W6^2) require cmul; W6^3=−1
-             * is free. Matches gen_radix6.py's (N1=3, N2=2) factorization in our
-             * convention. Peak live ~12 ZMM AVX-512 (fits), ~12 YMM AVX2 (also
-             * fits but tight). *)
-        | 25 ->
-            Cooley_Tukey (5, 5)
-            (* R=25 = CT(N1=5, N2=5). Symmetric prime-prime split. PASS 1: 5
-             * sub-DFT-5s. PASS 2: 5 sub-DFT-5s. All 9 unique internal W25
-             * exponents require cmul (no free rotations like W^N/2 = -1 or
-             * W^N/4 = ±j; none of those exponents arise in W25's grid).
-             * Matches gen_radix25.py's (N1=5, N2=5). Peak live ~50 (raw) so
-             * spill is mandatory on both ISAs. Highest retiring rate codelet
-             * per profiling — recipe path is essential here. *)
-        | 10 ->
-            Cooley_Tukey (5, 2)
-            (* R=10 = CT(N1=5, N2=2). PASS 1: 2 sub-DFT-5s. PASS 2: 5 sub-DFT-2s
-             * (trivial add/sub). Same shape as R=6 (CT with prime N1, trivial
-             * N2) but with DFT-5 inner. Internal twiddles W10: only 2 unique
-             * non-trivial exponents (W10^1, W10^2 — others are 1, -1, ±j and
-             * fold via const_cmul). Matches gen_radix10.py's (N1=5, N2=2). *)
-        | 12 ->
-            Cooley_Tukey (4, 3)
-            (* R=12 = CT(N1=4, N2=3). First non-prime, non-pow2 split — both
-             * factors > 2. PASS 1: 3 sub-DFT-4s (radix-4 butterflies, FMA-poor
-             * but very compact). PASS 2: 4 sub-DFT-3s (prime conjugate-pair).
-             * Free internal twiddles: W12^3 = -j, W12^6 = -1, W12^9 = j; only
-             * 4 unique non-trivial cmul exponents (W12^1, W12^2, W12^4, W12^5
-             * ... folded by symmetry). Matches gen_radix12.py's (N1=4, N2=3). *)
-        | 20 ->
-            Cooley_Tukey (5, 4)
-            (* R=20 = CT(N1=5, N2=4). PASS 1: 4 sub-DFT-5s. PASS 2: 5 sub-DFT-4s.
-             * Mix of prime DFT-5 (8 ops/output via conjugate-pair) and pow2
-             * DFT-4 (very compact). 12 unique non-trivial W20 exponents; some
-             * fold (W20^5 = -j, W20^10 = -1, W20^15 = j). Matches
-             * gen_radix20.py's (N1=5, N2=4). Peak live ~40 — spill threshold,
-             * recipe path likely essential at AVX-512 (32 ZMM). *)
-        | 15 ->
-            Cooley_Tukey (3, 5)
-            (* R=15 = CT(N1=3, N2=5). PASS 1: 5 sub-DFT-3s. PASS 2: 3 sub-DFT-5s.
-             * Without this entry R=15 falls to Direct DFT-15 (308 ops vs FFTW's
-             * 156). With CT(3,5) the costly O(N²) direct path is avoided and
-             * Winograd-5 further trims the three DFT-5 instances (181 ops
-             * vs FFTW's 156, +16% — bounded by the same n-ary-IR limit that
-             * leaves the R=25 gap open). *)
-        | 21 ->
-            Cooley_Tukey (3, 7)
-            (* R=21 = CT(N1=3, N2=7). PASS 1: 7 sub-DFT-3s. PASS 2: 3 sub-DFT-7s.
-             * Without this entry R=21 falls to Direct DFT-21 (O(N²)). With
-             * CT(3,7), Winograd-7 trims the three DFT-7 instances substantially
-             * relative to conjugate-pair Direct. Same cascade pattern as R=15. *)
-        | _ when n mod 2 = 0 -> Cooley_Tukey (2, n / 2)
-        | _ -> Direct)
+      | 6 ->
+        Cooley_Tukey (3, 2)
+        (* R=6 = CT(N1=3, N2=2). PASS 1: 2 sub-DFT-3s (prime, conjugate-pair
+         * construction). PASS 2: 3 sub-DFT-2s (trivial add/sub). Internal
+         * twiddles W6: 2 unique exponents (W6^1, W6^2) require cmul; W6^3=−1
+         * is free. Matches gen_radix6.py's (N1=3, N2=2) factorization in our
+         * convention. Peak live ~12 ZMM AVX-512 (fits), ~12 YMM AVX2 (also
+         * fits but tight). *)
+      | 25 ->
+        Cooley_Tukey (5, 5)
+        (* R=25 = CT(N1=5, N2=5). Symmetric prime-prime split. PASS 1: 5
+         * sub-DFT-5s. PASS 2: 5 sub-DFT-5s. All 9 unique internal W25
+         * exponents require cmul (no free rotations like W^N/2 = -1 or
+         * W^N/4 = ±j; none of those exponents arise in W25's grid).
+         * Matches gen_radix25.py's (N1=5, N2=5). Peak live ~50 (raw) so
+         * spill is mandatory on both ISAs. Highest retiring rate codelet
+         * per profiling — recipe path is essential here. *)
+      | 10 ->
+        Cooley_Tukey (5, 2)
+        (* R=10 = CT(N1=5, N2=2). PASS 1: 2 sub-DFT-5s. PASS 2: 5 sub-DFT-2s
+         * (trivial add/sub). Same shape as R=6 (CT with prime N1, trivial
+         * N2) but with DFT-5 inner. Internal twiddles W10: only 2 unique
+         * non-trivial exponents (W10^1, W10^2 — others are 1, -1, ±j and
+         * fold via const_cmul). Matches gen_radix10.py's (N1=5, N2=2). *)
+      | 12 ->
+        Cooley_Tukey (4, 3)
+        (* R=12 = CT(N1=4, N2=3). First non-prime, non-pow2 split — both
+         * factors > 2. PASS 1: 3 sub-DFT-4s (radix-4 butterflies, FMA-poor
+         * but very compact). PASS 2: 4 sub-DFT-3s (prime conjugate-pair).
+         * Free internal twiddles: W12^3 = -j, W12^6 = -1, W12^9 = j; only
+         * 4 unique non-trivial cmul exponents (W12^1, W12^2, W12^4, W12^5
+         * ... folded by symmetry). Matches gen_radix12.py's (N1=4, N2=3). *)
+      | 20 ->
+        Cooley_Tukey (5, 4)
+        (* R=20 = CT(N1=5, N2=4). PASS 1: 4 sub-DFT-5s. PASS 2: 5 sub-DFT-4s.
+         * Mix of prime DFT-5 (8 ops/output via conjugate-pair) and pow2
+         * DFT-4 (very compact). 12 unique non-trivial W20 exponents; some
+         * fold (W20^5 = -j, W20^10 = -1, W20^15 = j). Matches
+         * gen_radix20.py's (N1=5, N2=4). Peak live ~40 — spill threshold,
+         * recipe path likely essential at AVX-512 (32 ZMM). *)
+      | 15 ->
+        Cooley_Tukey (3, 5)
+        (* R=15 = CT(N1=3, N2=5). PASS 1: 5 sub-DFT-3s. PASS 2: 3 sub-DFT-5s.
+         * Without this entry R=15 falls to Direct DFT-15 (308 ops vs FFTW's
+         * 156). With CT(3,5) the costly O(N²) direct path is avoided and
+         * Winograd-5 further trims the three DFT-5 instances (181 ops
+         * vs FFTW's 156, +16% — bounded by the same n-ary-IR limit that
+         * leaves the R=25 gap open). *)
+      | 21 ->
+        Cooley_Tukey (3, 7)
+        (* R=21 = CT(N1=3, N2=7). PASS 1: 7 sub-DFT-3s. PASS 2: 3 sub-DFT-7s.
+         * Without this entry R=21 falls to Direct DFT-21 (O(N²)). With
+         * CT(3,7), Winograd-7 trims the three DFT-7 instances substantially
+         * relative to conjugate-pair Direct. Same cascade pattern as R=15. *)
+      | _ when n mod 2 = 0 -> Cooley_Tukey (2, n / 2)
+      | _ -> Direct)
+;;
 
 (* Whether algsimp's reassoc pass is appropriate for the given n.
  *
@@ -310,6 +318,6 @@ let needs_reassoc (n : int) : bool =
   | Direct -> n < 3 || n mod 2 = 0 (* only n=2 hits this in practice *)
   | Cooley_Tukey _ -> false
   | Split_radix -> false
+;;
 (* SR construction is structured like CT — already
  * has butterfly form; reassoc would flatten it. *)
-

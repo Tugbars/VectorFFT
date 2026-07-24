@@ -55,55 +55,56 @@ type zx =
   | Add of zx * zx
   | Sub of zx * zx
   | RotNI of zx
-  | Fmadd of float * zx * zx   (* c*x + e *)
-  | Fnmadd of float * zx * zx  (* e - c*x *)
-  | CTw of float * float * zx  (* x * (c + i*s), constants *)
+  | Fmadd of float * zx * zx (* c*x + e *)
+  | Fnmadd of float * zx * zx (* e - c*x *)
+  | CTw of float * float * zx (* x * (c + i*s), constants *)
 
 let sqh = 0.70710678118654752440
 
 (* forward DIT radix-2 recursion over the point list; returns outputs in
  * natural order. Twiddle classes chosen per k as in the header. *)
 let rec dft_z (n : int) (xs : zx array) : zx array =
-  if n = 1 then xs
-  else begin
+  if n = 1
+  then xs
+  else (
     let h = n / 2 in
     let ev = Array.init h (fun i -> xs.(2 * i)) in
     let od = Array.init h (fun i -> xs.((2 * i) + 1)) in
-    let e = dft_z h ev and o = dft_z h od in
+    let e = dft_z h ev
+    and o = dft_z h od in
     let out = Array.make n (In 0) in
     let pi = 4.0 *. atan 1.0 in
     for k = 0 to h - 1 do
       let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
       and s = -.sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
-      if k = 0 then begin
+      if k = 0
+      then (
         out.(k) <- Add (e.(k), o.(k));
-        out.(k + h) <- Sub (e.(k), o.(k))
-      end
-      else if 4 * k = n then begin
+        out.(k + h) <- Sub (e.(k), o.(k)))
+      else if 4 * k = n
+      then (
         let t = RotNI o.(k) in
         out.(k) <- Add (e.(k), t);
-        out.(k + h) <- Sub (e.(k), t)
-      end
-      else if 8 * k = n then begin
+        out.(k + h) <- Sub (e.(k), t))
+      else if 8 * k = n
+      then (
         (* w = (1-i)/sqrt2: fold the scale into the butterfly (rule 4) *)
         let x = Add (o.(k), RotNI o.(k)) in
         out.(k) <- Fmadd (sqh, x, e.(k));
-        out.(k + h) <- Fnmadd (sqh, x, e.(k))
-      end
-      else if 8 * k = 3 * n then begin
+        out.(k + h) <- Fnmadd (sqh, x, e.(k)))
+      else if 8 * k = 3 * n
+      then (
         (* w = -(1+i)/sqrt2 = sqh * (rot(x) - x) *)
         let x = Sub (RotNI o.(k), o.(k)) in
         out.(k) <- Fmadd (sqh, x, e.(k));
-        out.(k + h) <- Fnmadd (sqh, x, e.(k))
-      end
-      else begin
+        out.(k + h) <- Fnmadd (sqh, x, e.(k)))
+      else (
         let t = CTw (c, s, o.(k)) in
         out.(k) <- Add (e.(k), t);
-        out.(k + h) <- Sub (e.(k), t)
-      end
+        out.(k + h) <- Sub (e.(k), t))
     done;
-    out
-  end
+    out)
+;;
 
 (* lowering: hash-consed emission (each distinct node once, topological),
  * distinct CTw constants deduped into static VLIT vectors.
@@ -116,78 +117,119 @@ let cid (consts : (string, string * float * float) Hashtbl.t) (c, s) : string =
   match Hashtbl.find_opt consts key with
   | Some (n, _, _) -> n
   | None ->
-      let n = Printf.sprintf "_ZW%d" (Hashtbl.length consts) in
-      Hashtbl.add consts key (n, c, s);
-      n
+    let n = Printf.sprintf "_ZW%d" (Hashtbl.length consts) in
+    Hashtbl.add consts key (n, c, s);
+    n
+;;
 
-let emit_dft_body ?(in_of = fun i -> Printf.sprintf "in%d" i) ?park
-    (buf : Buffer.t) ~(ind : string) (radix : int)
-    (consts : (string, string * float * float) Hashtbl.t) : unit =
+let emit_dft_body
+      ?(in_of = fun i -> Printf.sprintf "in%d" i)
+      ?park
+      (buf : Buffer.t)
+      ~(ind : string)
+      (radix : int)
+      (consts : (string, string * float * float) Hashtbl.t)
+  : unit
+  =
   let outs = dft_z radix (Array.init radix (fun i -> In i)) in
   let memo : (zx, string) Hashtbl.t = Hashtbl.create 128 in
   let ctr = ref 0 in
-  let fresh () = incr ctr; Printf.sprintf "z%d" !ctr in
+  let fresh () =
+    incr ctr;
+    Printf.sprintf "z%d" !ctr
+  in
   let cid = cid consts in
   let rec go (e : zx) : string =
     match Hashtbl.find_opt memo e with
     | Some v -> v
     | None ->
-        let v =
-          match e with
-          | In i -> in_of i
-          | Add (a, b) ->
-              let a = go a and b = go b and t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf "%s__m256d %s=_mm256_add_pd(%s,%s);\n" ind t a b);
-              t
-          | Sub (a, b) ->
-              let a = go a and b = go b and t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf "%s__m256d %s=_mm256_sub_pd(%s,%s);\n" ind t a b);
-              t
-          | RotNI a ->
-              let a = go a and t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf
-                   "%s__m256d %s=_mm256_xor_pd(_mm256_permute_pd(%s,0x5),_M_IM);\n"
-                   ind t a);
-              t
-          | Fmadd (c, x, e') ->
-              let x = go x and e' = go e' and t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf
-                   "%s__m256d %s=_mm256_fmadd_pd(_mm256_set1_pd(%.17g),%s,%s);\n"
-                   ind t c x e');
-              t
-          | Fnmadd (c, x, e') ->
-              let x = go x and e' = go e' and t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf
-                   "%s__m256d %s=_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),%s,%s);\n"
-                   ind t c x e');
-              t
-          | CTw (c, s, x) ->
-              (* BYTW2-with-constants: FLIP + mul(svec) + fmadd(cvec) *)
-              let x = go x in
-              let w = cid (c, s) in
-              let t = fresh () in
-              Buffer.add_string buf
-                (Printf.sprintf
-                   "%s__m256d %s=_mm256_fmadd_pd(%s_c,%s,_mm256_mul_pd(%s_s,_mm256_permute_pd(%s,0x5)));\n"
-                   ind t w x w x);
-              t
-        in
-        Hashtbl.add memo e v;
-        v
+      let v =
+        match e with
+        | In i -> in_of i
+        | Add (a, b) ->
+          let a = go a
+          and b = go b
+          and t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf "%s__m256d %s=_mm256_add_pd(%s,%s);\n" ind t a b);
+          t
+        | Sub (a, b) ->
+          let a = go a
+          and b = go b
+          and t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf "%s__m256d %s=_mm256_sub_pd(%s,%s);\n" ind t a b);
+          t
+        | RotNI a ->
+          let a = go a
+          and t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "%s__m256d %s=_mm256_xor_pd(_mm256_permute_pd(%s,0x5),_M_IM);\n"
+               ind
+               t
+               a);
+          t
+        | Fmadd (c, x, e') ->
+          let x = go x
+          and e' = go e'
+          and t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "%s__m256d %s=_mm256_fmadd_pd(_mm256_set1_pd(%.17g),%s,%s);\n"
+               ind
+               t
+               c
+               x
+               e');
+          t
+        | Fnmadd (c, x, e') ->
+          let x = go x
+          and e' = go e'
+          and t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "%s__m256d %s=_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),%s,%s);\n"
+               ind
+               t
+               c
+               x
+               e');
+          t
+        | CTw (c, s, x) ->
+          (* BYTW2-with-constants: FLIP + mul(svec) + fmadd(cvec) *)
+          let x = go x in
+          let w = cid (c, s) in
+          let t = fresh () in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "%s__m256d \
+                %s=_mm256_fmadd_pd(%s_c,%s,_mm256_mul_pd(%s_s,_mm256_permute_pd(%s,0x5)));\n"
+               ind
+               t
+               w
+               x
+               w
+               x);
+          t
+      in
+      Hashtbl.add memo e v;
+      v
   in
   Array.iteri
     (fun p e ->
-      let v = go e in
-      match park with
-      | Some f -> f p v
-      | None ->
-          Buffer.add_string buf (Printf.sprintf "%sout%d=%s;\n" ind p v))
+       let v = go e in
+       match park with
+       | Some f -> f p v
+       | None -> Buffer.add_string buf (Printf.sprintf "%sout%d=%s;\n" ind p v))
     outs
+;;
 
 (* radix-8 forward n1, interleaved. `outs.(p)` is the C expression producing
  * output point p from inputs in.(0..7). EXACT translation of the verified
@@ -221,6 +263,7 @@ let r8_body (buf : Buffer.t) ~(ind : string) : unit =
   p "out1=_mm256_fmadd_pd(_C,X1,E1); out5=_mm256_fnmadd_pd(_C,X1,E1);";
   p "out2=_mm256_add_pd(E2,W2); out6=_mm256_sub_pd(E2,W2);";
   p "out3=_mm256_fmadd_pd(_C,X3,E3); out7=_mm256_fnmadd_pd(_C,X3,E3);"
+;;
 
 (* Emit a z-native n1 leaf codelet. ABI mirrors the il-style oop11 shape so it
  * plugs into the existing execution machinery: z in the "re" pointer slot, the
@@ -233,31 +276,55 @@ let r8_body (buf : Buffer.t) ~(ind : string) : unit =
  * array, not re/im pairs). PASS 2 reloads pairs on demand, applies the
  * top-level combine twiddle (same class selection as dft_z), and stores
  * straight to zout (store-on-compute). *)
-let emit_z_blocked_body (buf : Buffer.t) ~(ind : string) ~(radix : int)
-    ~(twiddled : bool) (consts : (string, string * float * float) Hashtbl.t) :
-    unit =
+let emit_z_blocked_body
+      (buf : Buffer.t)
+      ~(ind : string)
+      ~(radix : int)
+      ~(twiddled : bool)
+      (consts : (string, string * float * float) Hashtbl.t)
+  : unit
+  =
   let h = radix / 2 in
   let p fmt = Printf.ksprintf (fun s -> Buffer.add_string buf (ind ^ s ^ "\n")) fmt in
   let load_leg name leg =
-    if twiddled && leg >= 1 then begin
+    if twiddled && leg >= 1
+    then (
       p "__m256d x_%s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg;
-      p "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n%s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
-        name ((leg - 1) * 8) name ind (((leg - 1) * 8) + 4) name
-    end
+      p
+        "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n\
+         %s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
+        name
+        ((leg - 1) * 8)
+        name
+        ind
+        (((leg - 1) * 8) + 4)
+        name)
     else p "__m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg
   in
   let half tag base_slot leg_of =
-    p "{ /* PASS 1%s: %s half -> zspill[%d..%d] */" tag
-      (if base_slot = 0 then "even" else "odd") base_slot (base_slot + h - 1);
+    p
+      "{ /* PASS 1%s: %s half -> zspill[%d..%d] */"
+      tag
+      (if base_slot = 0 then "even" else "odd")
+      base_slot
+      (base_slot + h - 1);
     for i = 0 to h - 1 do
       load_leg (Printf.sprintf "ld%s%d" tag i) (leg_of i)
     done;
-    emit_dft_body buf ~ind:(ind ^ "    ") h consts
+    emit_dft_body
+      buf
+      ~ind:(ind ^ "    ")
+      h
+      consts
       ~in_of:(fun i -> Printf.sprintf "ld%s%d" tag i)
       ~park:(fun s v ->
-        Buffer.add_string buf
-          (Printf.sprintf "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
-             ind (base_slot + s) v));
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
+             ind
+             (base_slot + s)
+             v));
     p "}"
   in
   half "a" 0 (fun i -> 2 * i);
@@ -271,36 +338,39 @@ let emit_z_blocked_body (buf : Buffer.t) ~(ind : string) ~(radix : int)
     let store idx expr =
       p "_mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);" idx expr
     in
-    if k = 0 then begin
+    if k = 0
+    then (
       store 0 "_mm256_add_pd(ek,ok)";
-      store h "_mm256_sub_pd(ek,ok)"
-    end
-    else if 4 * k = radix then begin
+      store h "_mm256_sub_pd(ek,ok)")
+    else if 4 * k = radix
+    then (
       p "__m256d t = _mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM);";
       store k "_mm256_add_pd(ek,t)";
-      store (k + h) "_mm256_sub_pd(ek,t)"
-    end
-    else if 8 * k = radix then begin
+      store (k + h) "_mm256_sub_pd(ek,t)")
+    else if 8 * k = radix
+    then (
       p "__m256d x = _mm256_add_pd(ok,_mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM));";
       store k (Printf.sprintf "_mm256_fmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh);
-      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh)
-    end
-    else if 8 * k = 3 * radix then begin
+      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh))
+    else if 8 * k = 3 * radix
+    then (
       p "__m256d x = _mm256_sub_pd(_mm256_xor_pd(_mm256_permute_pd(ok,0x5),_M_IM),ok);";
       store k (Printf.sprintf "_mm256_fmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh);
-      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh)
-    end
-    else begin
+      store (k + h) (Printf.sprintf "_mm256_fnmadd_pd(_mm256_set1_pd(%.17g),x,ek)" sqh))
+    else (
       let c = cos (2.0 *. pi *. float_of_int k /. float_of_int radix)
       and s = -.sin (2.0 *. pi *. float_of_int k /. float_of_int radix) in
       let w = cid consts (c, s) in
-      p "__m256d t = _mm256_fmadd_pd(%s_c,ok,_mm256_mul_pd(%s_s,_mm256_permute_pd(ok,0x5)));"
-        w w;
+      p
+        "__m256d t = \
+         _mm256_fmadd_pd(%s_c,ok,_mm256_mul_pd(%s_s,_mm256_permute_pd(ok,0x5)));"
+        w
+        w;
       store k "_mm256_add_pd(ek,t)";
-      store (k + h) "_mm256_sub_pd(ek,t)"
-    end;
+      store (k + h) "_mm256_sub_pd(ek,t)");
     p "}"
   done
+;;
 
 (* 2-LEVEL BLOCKED r64 (the 8x8 CT factorization — mono-64's structure at
  * codelet scope). PASS 1: EIGHT spill-free radix-8 sub-DFTs over the residue
@@ -309,32 +379,50 @@ let emit_z_blocked_body (buf : Buffer.t) ~(ind : string) ~(radix : int)
  * absorbed into slot indexing, zero lane ops), apply the constant W64^(i*j)
  * twiddles (emit-time CTw class selection), radix-8 combine over i, store
  * X[j + 8m] directly. Both passes are the proven register-clean radix-8 body. *)
-let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
-    (consts : (string, string * float * float) Hashtbl.t) : unit =
+let emit_z_blocked2_body
+      (buf : Buffer.t)
+      ~(ind : string)
+      ~(twiddled : bool)
+      (consts : (string, string * float * float) Hashtbl.t)
+  : unit
+  =
   let radix = 64 in
   let r = 8 in
   let p fmt = Printf.ksprintf (fun s -> Buffer.add_string buf (ind ^ s ^ "\n")) fmt in
   (* PASS 1: sub-DFT i over legs {8a+i} *)
   for i = 0 to r - 1 do
-    p "{ /* PASS 1.%d: legs {8a+%d} -> zspill[%d..%d by 1] */" i i (8 * i)
-      ((8 * i) + 7);
+    p "{ /* PASS 1.%d: legs {8a+%d} -> zspill[%d..%d by 1] */" i i (8 * i) ((8 * i) + 7);
     for a = 0 to r - 1 do
       let leg = (8 * a) + i in
       let name = Printf.sprintf "ld%d_%d" i a in
-      if twiddled && leg >= 1 then begin
+      if twiddled && leg >= 1
+      then (
         p "__m256d x_%s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg;
-        p "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n%s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
-          name ((leg - 1) * 8) name ind (((leg - 1) * 8) + 4) name
-      end
-      else
-        p "__m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg
+        p
+          "__m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), x_%s,\n\
+           %s    _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(x_%s, 0x5)));"
+          name
+          ((leg - 1) * 8)
+          name
+          ind
+          (((leg - 1) * 8) + 4)
+          name)
+      else p "__m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));" name leg
     done;
-    emit_dft_body buf ~ind:(ind ^ "    ") r consts
+    emit_dft_body
+      buf
+      ~ind:(ind ^ "    ")
+      r
+      consts
       ~in_of:(fun a -> Printf.sprintf "ld%d_%d" i a)
       ~park:(fun j v ->
-        Buffer.add_string buf
-          (Printf.sprintf "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
-             ind ((8 * i) + j) v));
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "%s    _mm256_storeu_pd((double *)&zspill[%d], %s);\n"
+             ind
+             ((8 * i) + j)
+             v));
     p "}"
   done;
   (* PASS 2: group j — reload {8i+j}, constant W64^(i*j) twiddles, radix-8
@@ -343,39 +431,60 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
   for j = 0 to r - 1 do
     p "{ /* PASS 2.%d: slots {8i+%d} -> X[%d+8m] */" j j j;
     for i = 0 to r - 1 do
-      p "__m256d rl%d = _mm256_loadu_pd((const double *)&zspill[%d]);" i
-        ((8 * i) + j);
+      p "__m256d rl%d = _mm256_loadu_pd((const double *)&zspill[%d]);" i ((8 * i) + j);
       let e = i * j mod radix in
-      if e = 0 then p "__m256d tw%d = rl%d;" i i
-      else if 4 * e = radix then
-        p "__m256d tw%d = _mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM);" i i
-      else if 8 * e = radix then begin
-        p "__m256d h%d = _mm256_add_pd(rl%d,_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM));"
-          i i i;
-        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i
-      end
-      else if 8 * e = 3 * radix then begin
-        p "__m256d h%d = _mm256_sub_pd(_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM),rl%d);"
-          i i i;
-        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i
-      end
-      else begin
+      if e = 0
+      then p "__m256d tw%d = rl%d;" i i
+      else if 4 * e = radix
+      then p "__m256d tw%d = _mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM);" i i
+      else if 8 * e = radix
+      then (
+        p
+          "__m256d h%d = \
+           _mm256_add_pd(rl%d,_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM));"
+          i
+          i
+          i;
+        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i)
+      else if 8 * e = 3 * radix
+      then (
+        p
+          "__m256d h%d = \
+           _mm256_sub_pd(_mm256_xor_pd(_mm256_permute_pd(rl%d,0x5),_M_IM),rl%d);"
+          i
+          i
+          i;
+        p "__m256d tw%d = _mm256_mul_pd(_mm256_set1_pd(%.17g),h%d);" i sqh i)
+      else (
         let c = cos (2.0 *. pi *. float_of_int e /. float_of_int radix)
         and s = -.sin (2.0 *. pi *. float_of_int e /. float_of_int radix) in
         let w = cid consts (c, s) in
-        p "__m256d tw%d = _mm256_fmadd_pd(%s_c,rl%d,_mm256_mul_pd(%s_s,_mm256_permute_pd(rl%d,0x5)));"
-          i w i w i
-      end
+        p
+          "__m256d tw%d = \
+           _mm256_fmadd_pd(%s_c,rl%d,_mm256_mul_pd(%s_s,_mm256_permute_pd(rl%d,0x5)));"
+          i
+          w
+          i
+          w
+          i)
     done;
-    emit_dft_body buf ~ind:(ind ^ "    ") r consts
+    emit_dft_body
+      buf
+      ~ind:(ind ^ "    ")
+      r
+      consts
       ~in_of:(fun i -> Printf.sprintf "tw%d" i)
       ~park:(fun m v ->
-        Buffer.add_string buf
+        Buffer.add_string
+          buf
           (Printf.sprintf
-             "%s    _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n" ind
-             (j + (8 * m)) v));
+             "%s    _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n"
+             ind
+             (j + (8 * m))
+             v));
     p "}"
   done
+;;
 
 (* shared kernel emitter. twiddled=false -> n1 leaf; twiddled=true -> t2
  * (streamed VTW2 twiddles applied to legs 1..R-1 on load, BYTW2 shape).
@@ -384,31 +493,45 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
  *     [c_l(k), c_l(k), c_l(k+1), c_l(k+1)] then [-s_l(k), +s_l(k), -s_l(k+1), +s_l(k+1)]
  *   (cos-first, sign-folded, per-128-bit-lane = per-column) — single forward
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
-let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
-    ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(const_tw : bool)
-    ~(pow_tw : bool) ~(pow_tree : bool) ~(tile_ld : bool) ~(vec_width : int)
-    ~(radix : int) ~(twiddled : bool) : string =
+let emit_z_kernel
+      ~(trans_st : bool)
+      ~(post_tw : bool)
+      ~(strided_st : bool)
+      ~(strided : bool)
+      ~(blocked2 : bool)
+      ~(blocked : bool)
+      ~(const_tw : bool)
+      ~(pow_tw : bool)
+      ~(pow_tree : bool)
+      ~(tile_ld : bool)
+      ~(vec_width : int)
+      ~(radix : int)
+      ~(twiddled : bool)
+  : string
+  =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
-  if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
-    failwith "codelet_zil: radix must be one of 4/8/16/32/64";
-  if blocked && radix < 16 then
-    failwith "codelet_zil: --z-blocked needs radix >= 16 (r4/r8 are spill-free)";
-  if blocked2 && radix <> 64 then
-    failwith "codelet_zil: --z-blocked2 (8x8 CT) is radix 64 only";
-  if (strided || strided_st || post_tw || trans_st) && (blocked || blocked2) then
-    failwith "codelet_zil: strided/post-tw/trans-st variants not composed with blocked yet";
-  if post_tw && not twiddled then
-    failwith "codelet_zil: post_tw (t2d) implies a twiddled kernel";
-  if trans_st && (twiddled || strided || strided_st) then
-    failwith "codelet_zil: trans_st (n1t corner-turn stores) is an n1 variant";
-  if const_tw && (not twiddled || post_tw || pow_tw || blocked || blocked2) then
-    failwith "codelet_zil: const_tw (t2c) is a plain-t2 variant";
-  if pow_tw && (not twiddled || not strided || post_tw || blocked || blocked2) then
-    failwith "codelet_zil: pow_tw (t2sp) is a strided-t2 (terminator) variant";
-  if pow_tree && (not pow_tw || radix <> 8) then
-    failwith "codelet_zil: pow_tree (t2sq) refines pow_tw, radix 8 only";
-  if tile_ld && (not strided || radix mod 2 <> 0 || blocked || blocked2) then
-    failwith "codelet_zil: tile_ld (t2st/t2spt) is a strided even-radix variant";
+  if not (List.mem radix [ 4; 8; 16; 32; 64 ])
+  then failwith "codelet_zil: radix must be one of 4/8/16/32/64";
+  if blocked && radix < 16
+  then failwith "codelet_zil: --z-blocked needs radix >= 16 (r4/r8 are spill-free)";
+  if blocked2 && radix <> 64
+  then failwith "codelet_zil: --z-blocked2 (8x8 CT) is radix 64 only";
+  if (strided || strided_st || post_tw || trans_st) && (blocked || blocked2)
+  then
+    failwith
+      "codelet_zil: strided/post-tw/trans-st variants not composed with blocked yet";
+  if post_tw && not twiddled
+  then failwith "codelet_zil: post_tw (t2d) implies a twiddled kernel";
+  if trans_st && (twiddled || strided || strided_st)
+  then failwith "codelet_zil: trans_st (n1t corner-turn stores) is an n1 variant";
+  if const_tw && ((not twiddled) || post_tw || pow_tw || blocked || blocked2)
+  then failwith "codelet_zil: const_tw (t2c) is a plain-t2 variant";
+  if pow_tw && ((not twiddled) || (not strided) || post_tw || blocked || blocked2)
+  then failwith "codelet_zil: pow_tw (t2sp) is a strided-t2 (terminator) variant";
+  if pow_tree && ((not pow_tw) || radix <> 8)
+  then failwith "codelet_zil: pow_tree (t2sq) refines pow_tw, radix 8 only";
+  if tile_ld && ((not strided) || radix mod 2 <> 0 || blocked || blocked2)
+  then failwith "codelet_zil: tile_ld (t2st/t2spt) is a strided even-radix variant";
   let kind =
     (if twiddled then if post_tw then "t2d" else "t2" else "n1")
     ^ (if const_tw then "c" else "")
@@ -424,12 +547,16 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
      lowering can be emitted at file scope before the function *)
   let body = Buffer.create 16384 in
   let consts : (string, string * float * float) Hashtbl.t = Hashtbl.create 16 in
-  (if blocked2 then emit_z_blocked2_body body ~ind:"        " ~twiddled consts
-   else if blocked then emit_z_blocked_body body ~ind:"        " ~radix ~twiddled consts
-   else if radix = 8 then r8_body body ~ind:"        "
-   else emit_dft_body body ~ind:"        " radix consts);
+  if blocked2
+  then emit_z_blocked2_body body ~ind:"        " ~twiddled consts
+  else if blocked
+  then emit_z_blocked_body body ~ind:"        " ~radix ~twiddled consts
+  else if radix = 8
+  then r8_body body ~ind:"        "
+  else emit_dft_body body ~ind:"        " radix consts;
   let buf = Buffer.create 32768 in
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     (Printf.sprintf
        "/* Auto-generated by vfft_v2 — TRUE interleaved-native (z) codelet family\n\
        \ * (codelet_zil.ml; docs/roadmap/il_native_design.md §5). 2 complex per\n\
@@ -438,33 +565,52 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
         #include <immintrin.h>\n\
         #include <stddef.h>\n\n\
         static const __m256d _M_IM = { 0.0, -0.0, 0.0, -0.0 }; /* negate im lanes */\n"
-       (if twiddled then
-          if const_tw then "t2c (GROUP-CONSTANT VTW2 record set, L1-hot, BYTW2 apply)"
-          else if pow_tw then
-            "t2sp (w^1 VTW2 stream + in-register leg powers, BYTW2 apply)"
+       (if twiddled
+        then
+          if const_tw
+          then "t2c (GROUP-CONSTANT VTW2 record set, L1-hot, BYTW2 apply)"
+          else if pow_tw
+          then "t2sp (w^1 VTW2 stream + in-register leg powers, BYTW2 apply)"
           else "t2 (streamed VTW2 twiddles, BYTW2 apply)"
         else "n1 leaf (twiddle-free)")
-       (if twiddled then
-          if const_tw then
-            "\n * tw_re = ONE (R-1)-record VTW2 set for the whole call (group-constant\n\
+       (if twiddled
+        then
+          if const_tw
+          then
+            "\n\
+            \ * tw_re = ONE (R-1)-record VTW2 set for the whole call (group-constant\n\
             \ * twiddles; caller passes its group's set); cursor never advances."
-          else if pow_tw then
-            "\n * tw_re = ONE 64-B w^1 record per column-pair (cos-first sign-folded);\n\
+          else if pow_tw
+          then
+            "\n\
+            \ * tw_re = ONE 64-B w^1 record per column-pair (cos-first sign-folded);\n\
             \ * legs 2..R-1 built in-register by repeated VTW2 cmul; tw_im unused."
           else
-            "\n * tw_re = the VTW2 stream: per column-pair, per leg l>=1, 64-B\n\
+            "\n\
+            \ * tw_re = the VTW2 stream: per column-pair, per leg l>=1, 64-B\n\
             \ * cos-first sign-folded records in consumption order; tw_im unused."
         else ""));
   Hashtbl.iter
     (fun _key (name, c, s) ->
-      Buffer.add_string buf
-        (Printf.sprintf
-           "static const __m256d %s_c = { %.17g, %.17g, %.17g, %.17g };\n\
-            static const __m256d %s_s = { %.17g, %.17g, %.17g, %.17g };\n"
-           name c c c c name (-.s) s (-.s) s))
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "static const __m256d %s_c = { %.17g, %.17g, %.17g, %.17g };\n\
+             static const __m256d %s_s = { %.17g, %.17g, %.17g, %.17g };\n"
+            name
+            c
+            c
+            c
+            c
+            name
+            (-.s)
+            s
+            (-.s)
+            s))
     consts;
   Buffer.add_string buf "\n";
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     (Printf.sprintf
        "__attribute__((target(\"avx2,fma\")))\n\
         void %s(\n\
@@ -475,215 +621,379 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
        \    const double * tw_re, const double * tw_im,\n\
        \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
         {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im;%s\n%s\
-       \    for (size_t k = 0; k + 2 <= count; k += 2) {\n"
+       \    (void)zin_unused; (void)zout_unused; (void)tw_im;%s\n\
+        %s    for (size_t k = 0; k + 2 <= count; k += 2) {\n"
        fname
        ((if strided then "" else " (void)Gs;")
         ^ (if strided_st then "" else " (void)OGs;")
         ^ if twiddled then "" else " (void)tw_re;")
-       (if blocked || blocked2 then
-          Printf.sprintf "    __m256d zspill[%d]; /* function-scope: L1-hot across iterations */\n" radix
+       (if blocked || blocked2
+        then
+          Printf.sprintf
+            "    __m256d zspill[%d]; /* function-scope: L1-hot across iterations */\n"
+            radix
         else ""));
-  if twiddled then
-    (if const_tw then
-       Buffer.add_string buf
-         "        const double *twp = tw_re; /* t2c: ONE group-constant record set (L1-hot) */\n"
-     else
-       Buffer.add_string buf
-         (Printf.sprintf
-            "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
-            (if pow_tw then 8 else 8 * (radix - 1))));
-  if pow_tw then begin
-    Buffer.add_string buf
+  if twiddled
+  then
+    if const_tw
+    then
+      Buffer.add_string
+        buf
+        "        const double *twp = tw_re; /* t2c: ONE group-constant record set \
+         (L1-hot) */\n"
+    else
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
+           (if pow_tw then 8 else 8 * (radix - 1)));
+  if pow_tw
+  then (
+    Buffer.add_string
+      buf
       "        __m256d _wc1 = _mm256_loadu_pd(twp);     /* w^1 cos record */\n\
       \        __m256d _ws1 = _mm256_loadu_pd(twp + 4); /* w^1 sin record (sign-folded) */\n";
-    if not pow_tree then
-      Buffer.add_string buf
-        "        __m256d _wc = _wc1, _ws = _ws1;          /* running w^l */\n"
-  end;
-  if blocked || blocked2 then
+    if not pow_tree
+    then
+      Buffer.add_string
+        buf
+        "        __m256d _wc = _wc1, _ws = _ws1;          /* running w^l */\n");
+  if blocked || blocked2
+  then
     (* blocked bodies carry their own loads (per sub-DFT) and stores (combine) *)
     Buffer.add_buffer buf body
-  else begin
+  else (
     (* loads: point p of columns k,k+1. Contiguous columns: one 256-bit load at
        zin[2*(p*Ls + k)]. STRIDED columns (the "s" variant, FFTW LD shape):
        columns k and k+1 sit Gs complex apart -> two 128-bit loads + insert.
        t2 applies the streamed twiddle to legs >= 1 in the load (BYTW2). *)
-    if tile_ld then begin
+    if tile_ld
+    then (
       (* TILED LOADS (t2st/t2spt; REQUIRES Ls==1, legs contiguous): per
          leg-pair, one WIDE load per column + vperm2f128 repack — R loads +
          R perms per col-pair vs t2s's 2R xmm loads + R inserts. This is the
          MKL-finisher load shape (register corner-turn), mirrored. *)
       for p = 0 to (radix / 2) - 1 do
-        let a = 2 * p and b = (2 * p) + 1 in
-        Buffer.add_string buf
+        let a = 2 * p
+        and b = (2 * p) + 1 in
+        Buffer.add_string
+          buf
           (Printf.sprintf
              "        __m256d _ta%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k*Gs));\n\
              \        __m256d _tb%d = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + (k+1)*Gs));\n\
              \        __m256d x%d = _mm256_permute2f128_pd(_ta%d, _tb%d, 0x20);\n\
              \        __m256d x%d = _mm256_permute2f128_pd(_ta%d, _tb%d, 0x31);\n"
-             p a p a a p p b p p)
+             p
+             a
+             p
+             a
+             a
+             p
+             p
+             b
+             p
+             p)
       done;
       for pt = 0 to radix - 1 do
-        let raw = Printf.sprintf "x%d" pt and fin = Printf.sprintf "in%d" pt in
+        let raw = Printf.sprintf "x%d" pt
+        and fin = Printf.sprintf "in%d" pt in
         let pre_tw = twiddled && (not post_tw) && pt >= 1 in
-        if not pre_tw then
-          Buffer.add_string buf
-            (Printf.sprintf "        __m256d %s = %s;\n" fin raw)
-        else if pow_tree then begin
+        if not pre_tw
+        then Buffer.add_string buf (Printf.sprintf "        __m256d %s = %s;\n" fin raw)
+        else if pow_tree
+        then (
           (* squaring tree: w2=w1*w1, w3=w2*w1, w4=w2*w2, w5=w4*w1, w6=w4*w2,
              w7=w4*w3 — critical path 3 links (vs 6 sequential); the VTW2
              sign-folded form is closed under ARBITRARY products *)
-          (if pt >= 2 then
-             let a, b = [| 0;0;1;2;2;4;4;4 |].(pt), [| 0;0;1;1;2;1;2;3 |].(pt) in
-             Buffer.add_string buf
-               (Printf.sprintf
-                  "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, _mm256_mul_pd(_wc%d, _wc%d));\n\
-                  \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, _mm256_mul_pd(_ws%d, _wc%d));\n"
-                  pt a b a b pt a b a b));
-          Buffer.add_string buf
+          if pt >= 2
+          then (
+            let a, b =
+              [| 0; 0; 1; 2; 2; 4; 4; 4 |].(pt), [| 0; 0; 1; 1; 2; 1; 2; 3 |].(pt)
+            in
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, \
+                  _mm256_mul_pd(_wc%d, _wc%d));\n\
+                 \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, \
+                  _mm256_mul_pd(_ws%d, _wc%d));\n"
+                 pt
+                 a
+                 b
+                 a
+                 b
+                 pt
+                 a
+                 b
+                 a
+                 b));
+          Buffer.add_string
+            buf
             (Printf.sprintf
                "        __m256d %s = _mm256_fmadd_pd(_wc%d, %s,\n\
                \            _mm256_mul_pd(_ws%d, _mm256_permute_pd(%s, 0x5)));\n"
-               fin pt raw pt raw)
-        end
-        else if pow_tw then begin
-          if pt >= 2 then
-            Buffer.add_string buf
-              "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, _wc1));\n\
+               fin
+               pt
+               raw
+               pt
+               raw))
+        else if pow_tw
+        then (
+          if pt >= 2
+          then
+            Buffer.add_string
+              buf
+              "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, \
+               _wc1));\n\
               \          _ws = _mm256_fmadd_pd(_wc, _ws1, _mm256_mul_pd(_ws, _wc1));\n\
               \          _wc = _nc; }\n";
-          Buffer.add_string buf
+          Buffer.add_string
+            buf
             (Printf.sprintf
                "        __m256d %s = _mm256_fmadd_pd(_wc, %s,\n\
                \            _mm256_mul_pd(_ws, _mm256_permute_pd(%s, 0x5)));\n"
-               fin raw raw)
-        end
+               fin
+               raw
+               raw))
         else
-          Buffer.add_string buf
+          Buffer.add_string
+            buf
             (Printf.sprintf
                "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
-               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
-               fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
-      done
-    end else
-    for pt = 0 to radix - 1 do
-      let raw = Printf.sprintf "x%d" pt and fin = Printf.sprintf "in%d" pt in
-      let pre_tw = twiddled && (not post_tw) && pt >= 1 in
-      let dst = if pre_tw then raw else fin in
-      (if strided then
-         Buffer.add_string buf
-           (Printf.sprintf
-              "        __m256d %s = _mm256_insertf128_pd(_mm256_castpd128_pd256(\n\
-              \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + k*Gs))),\n\
-              \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + (k+1)*Gs)), 1);\n"
-              dst pt pt)
-       else
-         Buffer.add_string buf
-           (Printf.sprintf
-              "        __m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
-              dst pt));
-      if pre_tw then
-        if pow_tree then begin
-          (* squaring tree (see tile_ld branch): critical path 3 links *)
-          (if pt >= 2 then
-             let a, b = [| 0;0;1;2;2;4;4;4 |].(pt), [| 0;0;1;1;2;1;2;3 |].(pt) in
-             Buffer.add_string buf
-               (Printf.sprintf
-                  "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, _mm256_mul_pd(_wc%d, _wc%d));\n\
-                  \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, _mm256_mul_pd(_ws%d, _wc%d));\n"
-                  pt a b a b pt a b a b));
-          Buffer.add_string buf
+               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), \
+                _mm256_permute_pd(%s, 0x5)));\n"
+               fin
+               ((pt - 1) * 8)
+               raw
+               (((pt - 1) * 8) + 4)
+               raw)
+      done)
+    else
+      for pt = 0 to radix - 1 do
+        let raw = Printf.sprintf "x%d" pt
+        and fin = Printf.sprintf "in%d" pt in
+        let pre_tw = twiddled && (not post_tw) && pt >= 1 in
+        let dst = if pre_tw then raw else fin in
+        if strided
+        then
+          Buffer.add_string
+            buf
             (Printf.sprintf
-               "        __m256d %s = _mm256_fmadd_pd(_wc%d, %s,\n\
-               \            _mm256_mul_pd(_ws%d, _mm256_permute_pd(%s, 0x5)));\n"
-               fin pt raw pt raw)
-        end
-        else if pow_tw then begin
-          (* t2sp: advance the running twiddle to w^l (VTW2 sign-folded form is
+               "        __m256d %s = _mm256_insertf128_pd(_mm256_castpd128_pd256(\n\
+               \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + k*Gs))),\n\
+               \            _mm_loadu_pd(zin + 2*((size_t)%d*Ls + (k+1)*Gs)), 1);\n"
+               dst
+               pt
+               pt)
+        else
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
+               dst
+               pt);
+        if pre_tw
+        then
+          if pow_tree
+          then (
+            (* squaring tree (see tile_ld branch): critical path 3 links *)
+            if pt >= 2
+            then (
+              let a, b =
+                [| 0; 0; 1; 2; 2; 4; 4; 4 |].(pt), [| 0; 0; 1; 1; 2; 1; 2; 3 |].(pt)
+              in
+              Buffer.add_string
+                buf
+                (Printf.sprintf
+                   "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, \
+                    _mm256_mul_pd(_wc%d, _wc%d));\n\
+                   \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, \
+                    _mm256_mul_pd(_ws%d, _wc%d));\n"
+                   pt
+                   a
+                   b
+                   a
+                   b
+                   pt
+                   a
+                   b
+                   a
+                   b));
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        __m256d %s = _mm256_fmadd_pd(_wc%d, %s,\n\
+                 \            _mm256_mul_pd(_ws%d, _mm256_permute_pd(%s, 0x5)));\n"
+                 fin
+                 pt
+                 raw
+                 pt
+                 raw))
+          else if pow_tw
+          then (
+            (* t2sp: advance the running twiddle to w^l (VTW2 sign-folded form is
              closed under elementwise cmul: c'=c*c1-s*s1, s'=s*c1+c*s1), then
              BYTW2-apply from registers — 64B/pair streamed instead of (R-1)*64B *)
-          if pt >= 2 then
-            Buffer.add_string buf
-              "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, _wc1));\n\
-              \          _ws = _mm256_fmadd_pd(_wc, _ws1, _mm256_mul_pd(_ws, _wc1));\n\
-              \          _wc = _nc; }\n";
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        __m256d %s = _mm256_fmadd_pd(_wc, %s,\n\
-               \            _mm256_mul_pd(_ws, _mm256_permute_pd(%s, 0x5)));\n"
-               fin raw raw)
-        end
-        else
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
-               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
-               fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
-    done;
+            if pt >= 2
+            then
+              Buffer.add_string
+                buf
+                "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, \
+                 _wc1));\n\
+                \          _ws = _mm256_fmadd_pd(_wc, _ws1, _mm256_mul_pd(_ws, _wc1));\n\
+                \          _wc = _nc; }\n";
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        __m256d %s = _mm256_fmadd_pd(_wc, %s,\n\
+                 \            _mm256_mul_pd(_ws, _mm256_permute_pd(%s, 0x5)));\n"
+                 fin
+                 raw
+                 raw))
+          else
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
+                 \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), \
+                  _mm256_permute_pd(%s, 0x5)));\n"
+                 fin
+                 ((pt - 1) * 8)
+                 raw
+                 (((pt - 1) * 8) + 4)
+                 raw)
+      done;
     for pt = 0 to radix - 1 do
       Buffer.add_string buf (Printf.sprintf "        __m256d out%d;\n" pt)
     done;
     Buffer.add_buffer buf body;
-    if trans_st then
+    if trans_st
+    then
       (* CORNER-TURN-IN-STORES (checklist item 4; MKL anatomy §4): process
        * output pairs (p, p+1); two vperm2f128 repack the lanes so BOTH
        * stores are full-width AND contiguous within their column block:
        *   lo = [out_p lane k | out_{p+1} lane k]   -> zout[k*OLs + p]
        *   hi = [out_p lane k+1 | out_{p+1} lane k+1] -> zout[(k+1)*OLs + p]
        * The transposed scratch lets pass 2 run PLAIN t2 (no strided loads). *)
-      (for p = 0 to (radix / 2) - 1 do
-         let a = 2 * p and b = (2 * p) + 1 in
-         Buffer.add_string buf
-           (Printf.sprintf
-              "        _mm256_storeu_pd(zout + 2*(k*OLs + %d),\n\
-              \            _mm256_permute2f128_pd(out%d, out%d, 0x20));\n\
-              \        _mm256_storeu_pd(zout + 2*((k+1)*OLs + %d),\n\
-              \            _mm256_permute2f128_pd(out%d, out%d, 0x31));\n"
-              a a b a a b)
-       done)
+      for p = 0 to (radix / 2) - 1 do
+        let a = 2 * p
+        and b = (2 * p) + 1 in
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        _mm256_storeu_pd(zout + 2*(k*OLs + %d),\n\
+             \            _mm256_permute2f128_pd(out%d, out%d, 0x20));\n\
+             \        _mm256_storeu_pd(zout + 2*((k+1)*OLs + %d),\n\
+             \            _mm256_permute2f128_pd(out%d, out%d, 0x31));\n"
+             a
+             a
+             b
+             a
+             a
+             b)
+      done
     else
-    for pt = 0 to radix - 1 do
-      (* t2d: apply the streamed post-twiddle (BYTW2) to output legs >= 1 *)
-      let v =
-        if post_tw && pt >= 1 then begin
-          Buffer.add_string buf
+      for pt = 0 to radix - 1 do
+        (* t2d: apply the streamed post-twiddle (BYTW2) to output legs >= 1 *)
+        let v =
+          if post_tw && pt >= 1
+          then (
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        __m256d o%d = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), out%d,\n\
+                 \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), \
+                  _mm256_permute_pd(out%d, 0x5)));\n"
+                 pt
+                 ((pt - 1) * 8)
+                 pt
+                 (((pt - 1) * 8) + 4)
+                 pt);
+            Printf.sprintf "o%d" pt)
+          else Printf.sprintf "out%d" pt
+        in
+        if strided_st
+        then
+          (* strided stores (OGs != 1): column pair -> two 128-bit stores *)
+          Buffer.add_string
+            buf
             (Printf.sprintf
-               "        __m256d o%d = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), out%d,\n\
-               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(out%d, 0x5)));\n"
-               pt ((pt - 1) * 8) pt (((pt - 1) * 8) + 4) pt);
-          Printf.sprintf "o%d" pt
-        end
-        else Printf.sprintf "out%d" pt
-      in
-      if strided_st then
-        (* strided stores (OGs != 1): column pair -> two 128-bit stores *)
-        Buffer.add_string buf
-          (Printf.sprintf
-             "        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + k*OGs), _mm256_castpd256_pd128(%s));\n\
-             \        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + (k+1)*OGs), _mm256_extractf128_pd(%s, 1));\n"
-             pt v pt v)
-      else
-        Buffer.add_string buf
-          (Printf.sprintf
-             "        _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n" pt v)
-    done
-  end;
+               "        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + k*OGs), \
+                _mm256_castpd256_pd128(%s));\n\
+               \        _mm_storeu_pd(zout + 2*((size_t)%d*OLs + (k+1)*OGs), \
+                _mm256_extractf128_pd(%s, 1));\n"
+               pt
+               v
+               pt
+               v)
+        else
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        _mm256_storeu_pd(zout + 2*((size_t)%d*OLs + k), %s);\n"
+               pt
+               v)
+      done);
   Buffer.add_string buf "    }\n}\n";
   Buffer.contents buf
+;;
 
-let emit_z_n1 ?(strided = false) ?(trans_st = false) ~blocked2 ~blocked
-    ~vec_width ~radix () : string =
-  emit_z_kernel ~trans_st ~post_tw:false ~strided_st:false ~strided ~blocked2
-    ~blocked ~const_tw:false ~pow_tw:false ~pow_tree:false ~tile_ld:false
-    ~vec_width ~radix ~twiddled:false
+let emit_z_n1
+      ?(strided = false)
+      ?(trans_st = false)
+      ~blocked2
+      ~blocked
+      ~vec_width
+      ~radix
+      ()
+  : string
+  =
+  emit_z_kernel
+    ~trans_st
+    ~post_tw:false
+    ~strided_st:false
+    ~strided
+    ~blocked2
+    ~blocked
+    ~const_tw:false
+    ~pow_tw:false
+    ~pow_tree:false
+    ~tile_ld:false
+    ~vec_width
+    ~radix
+    ~twiddled:false
+;;
 
-let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
-    ?(const_tw = false) ?(pow_tw = false) ?(pow_tree = false)
-    ?(tile_ld = false) ~blocked2 ~blocked ~vec_width ~radix () : string =
-  emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
-    ~blocked ~const_tw ~pow_tw ~pow_tree ~tile_ld ~vec_width ~radix
+let emit_z_t2
+      ?(strided = false)
+      ?(strided_st = false)
+      ?(post_tw = false)
+      ?(const_tw = false)
+      ?(pow_tw = false)
+      ?(pow_tree = false)
+      ?(tile_ld = false)
+      ~blocked2
+      ~blocked
+      ~vec_width
+      ~radix
+      ()
+  : string
+  =
+  emit_z_kernel
+    ~trans_st:false
+    ~post_tw
+    ~strided_st
+    ~strided
+    ~blocked2
+    ~blocked
+    ~const_tw
+    ~pow_tw
+    ~pow_tree
+    ~tile_ld
+    ~vec_width
+    ~radix
     ~twiddled:true
+;;
 
 (* ══════════════════════════════════════════════════════════════════════
    BLOCK-SPLIT INTERIOR family (z_cascade_plan §4.99/§4.996) — PROMOTED from
@@ -703,7 +1013,8 @@ let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
    emission — a plane-pair IR backend is not warranted for 2 radices).
    ══════════════════════════════════════════════════════════════════════ *)
 
-let z_split_macros = {|
+let z_split_macros =
+  {|
 #define DEINT(zlo, zhi, re, im) do {                                  \
     __m256d _u = _mm256_unpacklo_pd(zlo, zhi);                        \
     __m256d _v = _mm256_unpackhi_pd(zlo, zhi);                        \
@@ -818,11 +1129,13 @@ let z_split_macros = {|
     o7r=_mm256_fmadd_pd(_C,X3r,E3r); o7i=_mm256_fnmadd_pd(_C,X3n,E3i); \
 } while (0)
 |}
+;;
 
 let z_split_bfly_call ?(inv = false) radix =
   let m4 = if inv then "SPLIT_BFLY4_INV" else "SPLIT_BFLY4" in
   let m8 = if inv then "SPLIT_BFLY8_INV" else "SPLIT_BFLY8" in
-  if radix = 4 then
+  if radix = 4
+  then
     Printf.sprintf
       "        %s(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
       \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3]);\n"
@@ -834,28 +1147,30 @@ let z_split_bfly_call ?(inv = false) radix =
       \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],\n\
       \                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);\n"
       m8
+;;
 
 let emit_z_split ~(kind : string) ~(radix : int) () : string =
-  if not (List.mem radix [ 4; 8 ]) then
-    failwith "codelet_zil: split family covers radix 4/8 (r16 split = 32 live planes, spills)";
-  if not
-       (List.mem kind
-          [ "s0s"; "ms"; "msz"; "sterm"; "s0sb"; "msb"; "stermb"; "msg"; "msgb" ])
+  if not (List.mem radix [ 4; 8 ])
   then
     failwith
-      "codelet_zil: split kind must be s0s|ms|msz|sterm|s0sb|msb|stermb|msg|msgb";
-  if (kind = "sterm" || kind = "stermb") && radix <> 8 then
-    failwith "codelet_zil: sterm/stermb (split terminator pair) is radix 8 only";
+      "codelet_zil: split family covers radix 4/8 (r16 split = 32 live planes, spills)";
+  if
+    not
+      (List.mem
+         kind
+         [ "s0s"; "ms"; "msz"; "sterm"; "s0sb"; "msb"; "stermb"; "msg"; "msgb" ])
+  then
+    failwith "codelet_zil: split kind must be s0s|ms|msz|sterm|s0sb|msb|stermb|msg|msgb";
+  if (kind = "sterm" || kind = "stermb") && radix <> 8
+  then failwith "codelet_zil: sterm/stermb (split terminator pair) is radix 8 only";
   let r = radix in
   let bwd = List.mem kind [ "s0sb"; "msb"; "stermb"; "msgb" ] in
-  let base_kind =
-    if bwd then String.sub kind 0 (String.length kind - 1) else kind
-  in
+  let base_kind = if bwd then String.sub kind 0 (String.length kind - 1) else kind in
   let fname =
-    Printf.sprintf "radix%d_z_%s_%s_avx2" r base_kind
-      (if bwd then "bwd" else "fwd")
+    Printf.sprintf "radix%d_z_%s_%s_avx2" r base_kind (if bwd then "bwd" else "fwd")
   in
-  if kind = "msg" || kind = "msgb" then
+  if kind = "msg" || kind = "msgb"
+  then (
     (* GROUP-LOOPED split mid (VTune lever "msg", §4.9991 addendum): the ms/msb
        body wrapped in a kernel-INTERNAL group loop — ONE call per stage.
        Rationale (measured): per-group calls of trip-count-2 inner loops cost
@@ -867,12 +1182,14 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
        by (R-1)*8. ABI: zin==zout = plane, tw_re = g-major splat sets,
        Ls = D, Gs = ngroups, count = D. OLs/OGs unused. *)
     let loads =
-      if bwd then
+      if bwd
+      then
         Printf.sprintf
           "        for (int l = 0; l < %d; l++) {\n\
           \            xr[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
           \            xi[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
-          \        }\n" r
+          \        }\n"
+          r
       else
         Printf.sprintf
           "        xr[0] = _mm256_loadu_pd(zin + 2*(size_t)k);\n\
@@ -883,10 +1200,12 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
           \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
           \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
           \            SPLIT_CMUL(ar, ai, ct, st, xr[l], xi[l]);\n\
-          \        }\n" r
+          \        }\n"
+          r
     in
     let post =
-      if bwd then
+      if bwd
+      then
         Printf.sprintf
           "        for (int l = 1; l < %d; l++) {\n\
           \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
@@ -894,7 +1213,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
           \            __m256d rr, ii;\n\
           \            SPLIT_CMUL(or_[l], oi_[l], ct, st, rr, ii);\n\
           \            or_[l] = rr; oi_[l] = ii;\n\
-          \        }\n" r
+          \        }\n"
+          r
       else ""
     in
     Printf.sprintf
@@ -903,14 +1223,15 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \ * contiguous group spans base += R*Ls, table += (R-1)*8). Body = %s.\n\
       \ * CONTRACT: count %%%% 4 == 0; Gs = ngroups; zin==zout (in-place). */\n\
        #include <immintrin.h>\n\
-       #include <stddef.h>\n%s\n\
+       #include <stddef.h>\n\
+       %s\n\
        static __attribute__((always_inline)) inline void _zsg%d%s_body(\n\
       \    const double * __restrict__ zin, double * __restrict__ zout,\n\
       \    const double *tw_re, size_t Ls, size_t count)\n\
        {\n\
       \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
-      \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n%s%s%s\
-      \        for (int l = 0; l < %d; l++) {\n\
+      \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n\
+       %s%s%s        for (int l = 0; l < %d; l++) {\n\
       \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), or_[l]);\n\
       \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, oi_[l]);\n\
       \        }\n\
@@ -937,15 +1258,24 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
        }\n"
       base_kind
       (if bwd then "msb (IDFT + post-CONJ splat tw)" else "ms (splat tw + DFT)")
-      z_split_macros r
-      (if bwd then "b" else "f")
-      r r r r loads
-      (z_split_bfly_call ~inv:bwd r)
-      post r fname r
+      z_split_macros
+      r
       (if bwd then "b" else "f")
       r
-      ((r - 1) * 8)
-  else if kind = "stermb" then
+      r
+      r
+      r
+      loads
+      (z_split_bfly_call ~inv:bwd r)
+      post
+      r
+      fname
+      r
+      (if bwd then "b" else "f")
+      r
+      ((r - 1) * 8))
+  else if kind = "stermb"
+  then
     (* INVERSE split terminator (the bwd cascade's FIRST stage): consumes the
        digit-reversed z comb, inverse radix-8 DFT, POST-multiplies legs 1..7
        by the CONJUGATED packed per-column w^1 (conjugation is TABLE-SIDE:
@@ -959,7 +1289,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \ * post-multiplied CONJ packed per-column w^1 (table-side conj), transpose in\n\
       \ * stores. CONTRACT: count %%%% 4 == 0. bwd(fwd) = N*x. */\n\
        #include <immintrin.h>\n\
-       #include <stddef.h>\n%s\n\
+       #include <stddef.h>\n\
+       %s\n\
        __attribute__((target(\"avx2,fma\")))\n\
        void %s(\n\
       \    const double * __restrict__ zin,\n\
@@ -969,7 +1300,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \    const double * tw_re, const double * tw_im,\n\
       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
        {\n\
-      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;\n\
+      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; \
+       (void)OGs;\n\
       \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
       \        __m256d xr[8], xi[8];\n\
       \        for (int l = 0; l < 8; l++) {\n\
@@ -977,8 +1309,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*OLs + k) + 4);\n\
       \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
       \        }\n\
-      \        __m256d or_[8], oi_[8];\n%s\
-      \        {\n\
+      \        __m256d or_[8], oi_[8];\n\
+       %s        {\n\
       \            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);\n\
       \            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);\n\
       \            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;\n\
@@ -1021,8 +1353,11 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \        }\n\
       \    }\n\
        }\n"
-      z_split_macros fname (z_split_bfly_call ~inv:true 8)
-  else if kind = "sterm" then
+      z_split_macros
+      fname
+      (z_split_bfly_call ~inv:true 8)
+  else if kind = "sterm"
+  then
     (* split-input TERMINATOR (measured winner, terminator race 2026-07-24:
        +4-7% over t2sp/t2spt at every cell): reads the block-split plane
        directly (ALL mids stay plain ms — no msz pass), 4 columns/iteration,
@@ -1039,7 +1374,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \ * re-interleave fused in stores. CONTRACT: count %%%% 4 == 0; mids = ms only.\n\
       \ * tw_re layout: per 4 columns at tw_re + 2k: [c(k..k+3)][s(k..k+3)]. */\n\
        #include <immintrin.h>\n\
-       #include <stddef.h>\n%s\n\
+       #include <stddef.h>\n\
+       %s\n\
        __attribute__((target(\"avx2,fma\")))\n\
        void %s(\n\
       \    const double * __restrict__ zin,\n\
@@ -1049,7 +1385,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \    const double * tw_re, const double * tw_im,\n\
       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
        {\n\
-      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;\n\
+      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; \
+       (void)OGs;\n\
       \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
       \        __m256d xr[8], xi[8];\n\
       \        {\n\
@@ -1092,8 +1429,8 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \            WPROD(c4, s4, c3, s3, cw, sw);\n\
       \            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;\n\
       \        }\n\
-      \        __m256d or_[8], oi_[8];\n%s\
-      \        for (int l = 0; l < 8; l++) {\n\
+      \        __m256d or_[8], oi_[8];\n\
+       %s        for (int l = 0; l < 8; l++) {\n\
       \            __m256d zlo, zhi;\n\
       \            REINT(or_[l], oi_[l], zlo, zhi);\n\
       \            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);\n\
@@ -1101,107 +1438,131 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       \        }\n\
       \    }\n\
        }\n"
-      z_split_macros fname (z_split_bfly_call 8)
-  else
-  let buf = Buffer.create 16384 in
-  Buffer.add_string buf
-    (Printf.sprintf
-       "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;\n\
-       \ * z_cascade_plan §4.99/§4.996). Scratch = 64-B [re x4][im x4] blocks (z\n\
-       \ * addressing +4 for im; one stream per leg row). %s, fwd.\n\
-       \ * CONTRACT: count %%%% 4 == 0 (4 columns per iteration).%s */\n\
-        #include <immintrin.h>\n\
-        #include <stddef.h>\n%s\n"
-       (match kind with
-        | "s0s" -> "s0s (z-in -> split-out leaf, twiddle-free, deinterleaving loads)"
-        | "ms" -> "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw)"
-        | "msb" ->
-          "msb (INVERSE split mid: IDFT body, POST-multiplied CONJ splat-pair tw)"
-        | "s0sb" ->
-          "s0sb (INVERSE leaf: split-in -> z-out, IDFT body, twiddle-free)"
-        | _ -> "msz (split-in -> z-out LAST mid, re-interleaving stores, splat-pair tw)")
-       (if kind = "s0s" || kind = "s0sb" then ""
-        else
-          "\n * tw_re = ONE per-group splat-pair set: legs 1..R-1, 8 doubles/leg\n\
-          \ * [c,c,c,c][s,s,s,s]; no cursor (group-constant; bwd = CONJ values,\n\
-          \ * table-side). tw_im unused.")
-       z_split_macros);
-  Buffer.add_string buf
-    (Printf.sprintf
-       "__attribute__((target(\"avx2,fma\")))\n\
-        void %s(\n\
-       \    const double * __restrict__ zin,\n\
-       \    const double * __restrict__ zin_unused,\n\
-       \    double       * __restrict__ zout,\n\
-       \    double       * __restrict__ zout_unused,\n\
-       \    const double * tw_re, const double * tw_im,\n\
-       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-        {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; (void)OGs;%s\n\
-       \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
-       \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n"
-       fname
-       (if kind = "s0s" || kind = "s0sb" then " (void)tw_re;" else "")
-       r r r r);
-  (* loads *)
-  (match kind with
-   | "s0s" ->
-     Buffer.add_string buf
-       (Printf.sprintf
-          "        for (int l = 0; l < %d; l++) {\n\
-          \            __m256d zlo = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
-          \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
-          \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
-          \        }\n" r)
-   | "s0sb" | "msb" ->
-     (* bwd: plain split loads, NO twiddle on load (post-applied for msb) *)
-     Buffer.add_string buf
-       (Printf.sprintf
-          "        for (int l = 0; l < %d; l++) {\n\
-          \            xr[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
-          \            xi[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
-          \        }\n" r)
-   | _ ->
-     Buffer.add_string buf
-       (Printf.sprintf
-          "        xr[0] = _mm256_loadu_pd(zin + 2*(size_t)k);\n\
-          \        xi[0] = _mm256_loadu_pd(zin + 2*(size_t)k + 4);\n\
-          \        for (int l = 1; l < %d; l++) {\n\
-          \            __m256d ar = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
-          \            __m256d ai = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
-          \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
-          \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
-          \            SPLIT_CMUL(ar, ai, ct, st, xr[l], xi[l]);\n\
-          \        }\n" r));
-  Buffer.add_string buf (z_split_bfly_call ~inv:bwd r);
-  (* msb: POST-multiply output legs 1..R-1 by the (conj, table-side) set *)
-  if kind = "msb" then
-    Buffer.add_string buf
+      z_split_macros
+      fname
+      (z_split_bfly_call 8)
+  else (
+    let buf = Buffer.create 16384 in
+    Buffer.add_string
+      buf
       (Printf.sprintf
-         "        for (int l = 1; l < %d; l++) {\n\
-         \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
-         \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
-         \            __m256d rr, ii;\n\
-         \            SPLIT_CMUL(or_[l], oi_[l], ct, st, rr, ii);\n\
-         \            or_[l] = rr; oi_[l] = ii;\n\
-         \        }\n" r);
-  (* stores *)
-  (match kind with
-   | "msz" | "s0sb" ->
-     Buffer.add_string buf
-       (Printf.sprintf
-          "        for (int l = 0; l < %d; l++) {\n\
-          \            __m256d zlo, zhi;\n\
-          \            REINT(or_[l], oi_[l], zlo, zhi);\n\
-          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), zlo);\n\
-          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, zhi);\n\
-          \        }\n" r)
-   | _ ->
-     Buffer.add_string buf
-       (Printf.sprintf
-          "        for (int l = 0; l < %d; l++) {\n\
-          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), or_[l]);\n\
-          \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, oi_[l]);\n\
-          \        }\n" r));
-  Buffer.add_string buf "    }\n}\n";
-  Buffer.contents buf
+         "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;\n\
+         \ * z_cascade_plan §4.99/§4.996). Scratch = 64-B [re x4][im x4] blocks (z\n\
+         \ * addressing +4 for im; one stream per leg row). %s, fwd.\n\
+         \ * CONTRACT: count %%%% 4 == 0 (4 columns per iteration).%s */\n\
+          #include <immintrin.h>\n\
+          #include <stddef.h>\n\
+          %s\n"
+         (match kind with
+          | "s0s" -> "s0s (z-in -> split-out leaf, twiddle-free, deinterleaving loads)"
+          | "ms" -> "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw)"
+          | "msb" ->
+            "msb (INVERSE split mid: IDFT body, POST-multiplied CONJ splat-pair tw)"
+          | "s0sb" -> "s0sb (INVERSE leaf: split-in -> z-out, IDFT body, twiddle-free)"
+          | _ -> "msz (split-in -> z-out LAST mid, re-interleaving stores, splat-pair tw)")
+         (if kind = "s0s" || kind = "s0sb"
+          then ""
+          else
+            "\n\
+            \ * tw_re = ONE per-group splat-pair set: legs 1..R-1, 8 doubles/leg\n\
+            \ * [c,c,c,c][s,s,s,s]; no cursor (group-constant; bwd = CONJ values,\n\
+            \ * table-side). tw_im unused.")
+         z_split_macros);
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "__attribute__((target(\"avx2,fma\")))\n\
+          void %s(\n\
+         \    const double * __restrict__ zin,\n\
+         \    const double * __restrict__ zin_unused,\n\
+         \    double       * __restrict__ zout,\n\
+         \    double       * __restrict__ zout_unused,\n\
+         \    const double * tw_re, const double * tw_im,\n\
+         \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+          {\n\
+         \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; \
+          (void)OGs;%s\n\
+         \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
+         \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n"
+         fname
+         (if kind = "s0s" || kind = "s0sb" then " (void)tw_re;" else "")
+         r
+         r
+         r
+         r);
+    (* loads *)
+    (match kind with
+     | "s0s" ->
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        for (int l = 0; l < %d; l++) {\n\
+            \            __m256d zlo = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+            \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
+            \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
+            \        }\n"
+            r)
+     | "s0sb" | "msb" ->
+       (* bwd: plain split loads, NO twiddle on load (post-applied for msb) *)
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        for (int l = 0; l < %d; l++) {\n\
+            \            xr[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+            \            xi[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
+            \        }\n"
+            r)
+     | _ ->
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        xr[0] = _mm256_loadu_pd(zin + 2*(size_t)k);\n\
+            \        xi[0] = _mm256_loadu_pd(zin + 2*(size_t)k + 4);\n\
+            \        for (int l = 1; l < %d; l++) {\n\
+            \            __m256d ar = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+            \            __m256d ai = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
+            \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
+            \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
+            \            SPLIT_CMUL(ar, ai, ct, st, xr[l], xi[l]);\n\
+            \        }\n"
+            r));
+    Buffer.add_string buf (z_split_bfly_call ~inv:bwd r);
+    (* msb: POST-multiply output legs 1..R-1 by the (conj, table-side) set *)
+    if kind = "msb"
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        for (int l = 1; l < %d; l++) {\n\
+           \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
+           \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
+           \            __m256d rr, ii;\n\
+           \            SPLIT_CMUL(or_[l], oi_[l], ct, st, rr, ii);\n\
+           \            or_[l] = rr; oi_[l] = ii;\n\
+           \        }\n"
+           r);
+    (* stores *)
+    (match kind with
+     | "msz" | "s0sb" ->
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        for (int l = 0; l < %d; l++) {\n\
+            \            __m256d zlo, zhi;\n\
+            \            REINT(or_[l], oi_[l], zlo, zhi);\n\
+            \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), zlo);\n\
+            \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, zhi);\n\
+            \        }\n"
+            r)
+     | _ ->
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        for (int l = 0; l < %d; l++) {\n\
+            \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k), or_[l]);\n\
+            \            _mm256_storeu_pd(zout + 2*((size_t)l*Ls + k) + 4, oi_[l]);\n\
+            \        }\n"
+            r));
+    Buffer.add_string buf "    }\n}\n";
+    Buffer.contents buf)
+;;

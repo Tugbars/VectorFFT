@@ -31,7 +31,6 @@
  * ------------------------------------------------------------------
  *)
 include Emit_state
-
 open Algsimp
 
 (* === Topological sort of the DAG nodes ===
@@ -43,29 +42,30 @@ open Algsimp
 let topo_sort_reachable (roots : t list) : t list =
   let seen = Hashtbl.create 256 in
   let rec visit (e : t) =
-    if not (Hashtbl.mem seen e.tag) then begin
+    if not (Hashtbl.mem seen e.tag)
+    then (
       Hashtbl.add seen e.tag e;
       match e.node with
       | NK_Const _ | NK_Load _ -> ()
       | NK_Neg e1 -> visit e1
       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-          visit a;
-          visit b
+        visit a;
+        visit b
       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-          visit a;
-          visit b;
-          visit c;
-          visit d
+        visit a;
+        visit b;
+        visit c;
+        visit d
       | NK_Fma (a, b, c, _, _) ->
-          visit a;
-          visit b;
-          visit c
-      | NK_Plus _ -> Algsimp.nk_plus_unreachable "emit_c.ml:33"
-    end
+        visit a;
+        visit b;
+        visit c
+      | NK_Plus _ -> Algsimp.nk_plus_unreachable "emit_c.ml:33")
   in
   List.iter visit roots;
   let nodes = Hashtbl.fold (fun _ e acc -> e :: acc) seen [] in
   List.sort (fun a b -> compare a.tag b.tag) nodes
+;;
 
 (* === Render a Load operation as C ===
  *
@@ -93,65 +93,130 @@ let topo_sort_reachable (roots : t list) : t list =
       pdep-expanded column mask. *)
 let il_in_name (isa : Isa.t) (j : int) (is_re : bool) : string =
   let w = isa.vec_width in
-  if w = 1 then
-    Printf.sprintf "in_z[2*(%d*ios + k)%s]" j (if is_re then "" else " + 1")
-  else begin
-    if not (Hashtbl.mem il_seen j) then begin
+  if w = 1
+  then Printf.sprintf "in_z[2*(%d*ios + k)%s]" j (if is_re then "" else " + 1")
+  else (
+    if not (Hashtbl.mem il_seen j)
+    then (
       Hashtbl.add il_seen j ();
       let e = Printf.sprintf "%d*ios + k" j in
       let b = il_pending in
-      (match (w, !current_ls_mode) with
+      (match w, !current_ls_mode with
        | 8, Isa.LS_vector ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m512d _ilz0_%d = _mm512_loadu_pd(&in_z[2*(%s)]);\n        const __m512d _ilz1_%d = _mm512_loadu_pd(&in_z[2*(%s) + 8]);\n        "
-                j e j e)
+         Buffer.add_string
+           b
+           (Printf.sprintf
+              "const __m512d _ilz0_%d = _mm512_loadu_pd(&in_z[2*(%s)]);\n\
+              \        const __m512d _ilz1_%d = _mm512_loadu_pd(&in_z[2*(%s) + 8]);\n\
+              \        "
+              j
+              e
+              j
+              e)
        | 8, Isa.LS_masked m ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const unsigned _ilm_%d = _pdep_u32((unsigned)%s, 0x5555u) * 3u;\n        const __m512d _ilz0_%d = _mm512_maskz_loadu_pd((__mmask8)_ilm_%d, &in_z[2*(%s)]);\n        const __m512d _ilz1_%d = _mm512_maskz_loadu_pd((__mmask8)(_ilm_%d >> 8), &in_z[2*(%s) + 8]);\n        "
-                j m j j e j j e)
+         Buffer.add_string
+           b
+           (Printf.sprintf
+              "const unsigned _ilm_%d = _pdep_u32((unsigned)%s, 0x5555u) * 3u;\n\
+              \        const __m512d _ilz0_%d = _mm512_maskz_loadu_pd((__mmask8)_ilm_%d, \
+               &in_z[2*(%s)]);\n\
+              \        const __m512d _ilz1_%d = _mm512_maskz_loadu_pd((__mmask8)(_ilm_%d \
+               >> 8), &in_z[2*(%s) + 8]);\n\
+              \        "
+              j
+              m
+              j
+              j
+              e
+              j
+              j
+              e)
        | 4, _ ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m256d _ilz0_%d = _mm256_loadu_pd(&in_z[2*(%s)]);\n        const __m256d _ilz1_%d = _mm256_loadu_pd(&in_z[2*(%s) + 4]);\n        "
-                j e j e)
+         Buffer.add_string
+           b
+           (Printf.sprintf
+              "const __m256d _ilz0_%d = _mm256_loadu_pd(&in_z[2*(%s)]);\n\
+              \        const __m256d _ilz1_%d = _mm256_loadu_pd(&in_z[2*(%s) + 4]);\n\
+              \        "
+              j
+              e
+              j
+              e)
        | 2, _ ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m128d _ilz0_%d = _mm_loadu_pd(&in_z[2*(%s)]);\n        const __m128d _ilz1_%d = _mm_loadu_pd(&in_z[2*(%s) + 2]);\n        "
-                j e j e)
+         Buffer.add_string
+           b
+           (Printf.sprintf
+              "const __m128d _ilz0_%d = _mm_loadu_pd(&in_z[2*(%s)]);\n\
+              \        const __m128d _ilz1_%d = _mm_loadu_pd(&in_z[2*(%s) + 2]);\n\
+              \        "
+              j
+              e
+              j
+              e)
        | _ -> failwith "il_in_name: unsupported width");
-      (match w with
-       | 8 ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m512d _ilde_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_de, _ilz1_%d);\n        const __m512d _ildo_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_do, _ilz1_%d);\n        "
-                j j j j j j)
-       | 4 ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m256d _ilde_%d = _mm256_permute4x64_pd(_mm256_unpacklo_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n        const __m256d _ildo_%d = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n        "
-                j j j j j j)
-       | 2 ->
-           Buffer.add_string b
-             (Printf.sprintf
-                "const __m128d _ilde_%d = _mm_unpacklo_pd(_ilz0_%d, _ilz1_%d);\n        const __m128d _ildo_%d = _mm_unpackhi_pd(_ilz0_%d, _ilz1_%d);\n        "
-                j j j j j j)
-       | _ -> ())
-    end;
-    if is_re then Printf.sprintf "_ilde_%d" j
-    else Printf.sprintf "_ildo_%d" j
-  end
+      match w with
+      | 8 ->
+        Buffer.add_string
+          b
+          (Printf.sprintf
+             "const __m512d _ilde_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_de, _ilz1_%d);\n\
+             \        const __m512d _ildo_%d = _mm512_permutex2var_pd(_ilz0_%d, _il_do, \
+              _ilz1_%d);\n\
+             \        "
+             j
+             j
+             j
+             j
+             j
+             j)
+      | 4 ->
+        Buffer.add_string
+          b
+          (Printf.sprintf
+             "const __m256d _ilde_%d = \
+              _mm256_permute4x64_pd(_mm256_unpacklo_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n\
+             \        const __m256d _ildo_%d = \
+              _mm256_permute4x64_pd(_mm256_unpackhi_pd(_ilz0_%d, _ilz1_%d), 0xD8);\n\
+             \        "
+             j
+             j
+             j
+             j
+             j
+             j)
+      | 2 ->
+        Buffer.add_string
+          b
+          (Printf.sprintf
+             "const __m128d _ilde_%d = _mm_unpacklo_pd(_ilz0_%d, _ilz1_%d);\n\
+             \        const __m128d _ildo_%d = _mm_unpackhi_pd(_ilz0_%d, _ilz1_%d);\n\
+             \        "
+             j
+             j
+             j
+             j
+             j
+             j)
+      | _ -> ());
+    if is_re then Printf.sprintf "_ilde_%d" j else Printf.sprintf "_ildo_%d" j)
+;;
 
-let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
-    ?(twidsq = false) ?(twidsq_n = 0) ?(strided = false) (r : Expr.elem_ref) :
-    string =
+let render_load
+      ~(isa : Isa.t)
+      ~(in_place : bool)
+      ~(t1s : bool)
+      ?(twidsq = false)
+      ?(twidsq_n = 0)
+      ?(strided = false)
+      (r : Expr.elem_ref)
+  : string
+  =
   (* In strided mode, Input(j, _) refers to pre-computed lane locals
    * populated by the 4×4 transpose preamble at the top of each loop iter.
    * Twiddles still go through their normal load path (n1 codelets don't
    * have inter-stage twiddles anyway). *)
-  if strided then
+  if strided
+  then (
     match r with
     | Expr.Input (j, true) -> Printf.sprintf "lane_re_%d" j
     | Expr.Input (j, false) -> Printf.sprintf "lane_im_%d" j
@@ -163,41 +228,46 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
-        if !current_tw_linear > 0 then
-          (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
+      if !current_tw_linear > 0
+      then
+        (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
              Per quad base = b*NLEGS (each quad consumes NLEGS 4-vectors). *)
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_re[b*%d + %d]" !current_tw_linear
-               (j * isa.vec_width))
-        else if !current_tw_perpos then
-          Isa.set1_pd_str isa
-            (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width
-               isa.vec_width)
-        else if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
-        else
-          (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
+        Isa.loadu_pd
+          ~mode:!current_ls_mode
+          isa
+          (Printf.sprintf "tw_re[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
+      else if !current_tw_perpos
+      then
+        Isa.set1_pd_str
+          isa
+          (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
+      else if t1s
+      then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
+      else
+        (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
              in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
              are lane-independent and stay unmasked. *)
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_re[%d*me + b]" j)
+        Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j)
     | Expr.Twiddle (j, false) ->
-        if !current_tw_linear > 0 then
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_im[b*%d + %d]" !current_tw_linear
-               (j * isa.vec_width))
-        else if !current_tw_perpos then
-          Isa.set1_pd_str isa
-            (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width
-               isa.vec_width)
-        else if t1s then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-        else
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_im[%d*me + b]" j)
+      if !current_tw_linear > 0
+      then
+        Isa.loadu_pd
+          ~mode:!current_ls_mode
+          isa
+          (Printf.sprintf "tw_im[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
+      else if !current_tw_perpos
+      then
+        Isa.set1_pd_str
+          isa
+          (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
+      else if t1s
+      then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
+      else Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j)
     | Expr.Output _ ->
-        failwith "render_load: Output ref shouldn't appear as a Load source"
-  else
+      failwith "render_load: Output ref shouldn't appear as a Load source")
+  else (
     let in_buf is_re =
-      match (in_place, is_re) with
+      match in_place, is_re with
       | true, true -> "rio_re"
       | true, false -> "rio_im"
       | false, true -> if !r2r_signature then "in" else "in_re"
@@ -223,55 +293,67 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
      * K-interleaved). The twidsq path preserves this convention for the
      * inner-slot dim and adds the row dim multiplied by the row stride. *)
     let stride =
-      if in_place then "ios"
-      else if twidsq then "is"
-      else if
-        !r2cf_signature || !r2cb_signature || !hc_strided || !n1_oop_strided
+      if in_place
+      then "ios"
+      else if twidsq
+      then "is"
+      else if !r2cf_signature || !r2cb_signature || !hc_strided || !n1_oop_strided
       then "is"
       else "K"
     in
     let loop_var =
       if
-        twidsq || !r2cf_signature || !r2cb_signature || !hc_strided
-        || !n1_oop_strided || !r2c_term_signature || !r2c_term_laststage
+        twidsq
+        || !r2cf_signature
+        || !r2cb_signature
+        || !hc_strided
+        || !n1_oop_strided
+        || !r2c_term_signature
+        || !r2c_term_laststage
       then "v"
       else "k"
     in
-    let tw_stride =
-      if in_place then "me" else if !hc_strided then "vl" else "K"
-    in
+    let tw_stride = if in_place then "me" else if !hc_strided then "vl" else "K" in
     let tw_broadcast = t1s || twidsq || !r2c_term_rt || !r2c_term_laststage in
     let render_input_addr j is_re =
       let buf = in_buf is_re in
-      if !r2c_term_laststage then
+      if !r2c_term_laststage
+      then (
         (* Input(j) j<r = col k leg j at ink[j*is_leg+v]; Input(r+j) = col m-k leg j
          * at inm[j*is_leg+v]. r is r2c_term_ls_r. *)
         let r = !r2c_term_ls_r in
         let bk = if is_re then "ink_re" else "ink_im" in
         let bm = if is_re then "inm_re" else "inm_im" in
-        if j < r then Printf.sprintf "%s[%d*is_leg + %s]" bk j loop_var
-        else Printf.sprintf "%s[%d*is_leg + %s]" bm (j - r) loop_var
-      else if !r2c_term_signature then
+        if j < r
+        then Printf.sprintf "%s[%d*is_leg + %s]" bk j loop_var
+        else Printf.sprintf "%s[%d*is_leg + %s]" bm (j - r) loop_var)
+      else if !r2c_term_signature
+      then
         (* r2c_term: Input(0)=Z[k] at in_re[v]; Input(1)=Z[m] at in_re[is+v].
          * Two scratch rows, row stride `is`, vectorized over v. *)
-        if j = 0 then Printf.sprintf "%s[%s]" buf loop_var
+        if j = 0
+        then Printf.sprintf "%s[%s]" buf loop_var
         else Printf.sprintf "%s[is + %s]" buf loop_var
-      else if twidsq && twidsq_n > 0 then
+      else if twidsq && twidsq_n > 0
+      then (
         let row = j / twidsq_n in
         let col = j mod twidsq_n in
-        Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row stride col loop_var
-      else if !hc2c_natural_bwd then
+        Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row stride col loop_var)
+      else if !hc2c_natural_bwd
+      then
         (* c2r natural INITIATOR: read the SPLIT half-spectrum. Slot j<=sstar is
          * a direct row (Rp/Ip + j*isp); j>sstar is a conjugate-mirror row
          * (Rm/Im + (r-1-j)*ism). Exactly the forward terminator's OUTPUT sstar
          * map, but on the INPUT side. *)
-        begin if j <= !hc2c_nat_sstar then
-          Printf.sprintf "%s[%d*isp + %s]" (if is_re then "Rp" else "Ip") j loop_var
+        if j <= !hc2c_nat_sstar
+        then Printf.sprintf "%s[%d*isp + %s]" (if is_re then "Rp" else "Ip") j loop_var
         else
-          Printf.sprintf "%s[%d*ism + %s]" (if is_re then "Rm" else "Im")
-            (!hc2c_nat_r - 1 - j) loop_var
-        end
-      else
+          Printf.sprintf
+            "%s[%d*ism + %s]"
+            (if is_re then "Rm" else "Im")
+            (!hc2c_nat_r - 1 - j)
+            loop_var
+      else (
         (* r2cb (section 62 / c2r cascade): split input strides. The
          * backward leaf reads the layout r2cf WRITES: re at +is_re from
          * its base, im at NEGATIVE stride from a one-past (+NK) base.
@@ -279,29 +361,34 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
         let stride =
           if !r2cb_signature then if is_re then "is_re" else "is_im" else stride
         in
-        Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var
+        Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var)
     in
     match r with
-    | Expr.Input (j, true) when !ip_il_in && in_place ->
-        il_in_name isa j true
-    | Expr.Input (j, false) when !ip_il_in && in_place ->
-        il_in_name isa j false
+    | Expr.Input (j, true) when !ip_il_in && in_place -> il_in_name isa j true
+    | Expr.Input (j, false) when !ip_il_in && in_place -> il_in_name isa j false
     | Expr.Input (j, true) ->
-        Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j true)
+      Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j true)
     | Expr.Input (j, false) ->
-        Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j false)
+      Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j false)
     | Expr.Twiddle (j, true) ->
-        if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
-        else
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_re[%d*%s + %s]" j tw_stride loop_var)
+      if tw_broadcast
+      then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
+      else
+        Isa.loadu_pd
+          ~mode:!current_ls_mode
+          isa
+          (Printf.sprintf "tw_re[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Twiddle (j, false) ->
-        if tw_broadcast then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-        else
-          Isa.loadu_pd ~mode:!current_ls_mode isa
-            (Printf.sprintf "tw_im[%d*%s + %s]" j tw_stride loop_var)
+      if tw_broadcast
+      then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
+      else
+        Isa.loadu_pd
+          ~mode:!current_ls_mode
+          isa
+          (Printf.sprintf "tw_im[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Output _ ->
-        failwith "render_load: Output ref shouldn't appear as a Load source"
+      failwith "render_load: Output ref shouldn't appear as a Load source")
+;;
 
 (* === Render a single node's definition as C ===
  *
@@ -328,7 +415,6 @@ let render_load ~(isa : Isa.t) ~(in_place : bool) ~(t1s : bool)
  * is C source readability and compiler handling of long expressions,
  * not correctness. Multi-use nodes act as natural "stop" points. *)
 let inline_max_depth = 32
-
 
 (* === Selective pinning (doc 56 follow-up) ===
  *
@@ -377,21 +463,22 @@ let compute_unpin_candidates (scheduled : t list) : (int, unit) Hashtbl.t =
   let mul_tags : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Mul _ -> Hashtbl.replace mul_tags n.tag ()
-      | _ -> ())
+       match n.node with
+       | NK_Mul _ -> Hashtbl.replace mul_tags n.tag ()
+       | _ -> ())
     scheduled;
   (* Step 2: scan Add/Sub nodes, mark any Mul operand as unpin candidate *)
   let result : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Add (a, b) | NK_Sub (a, b) ->
-          if Hashtbl.mem mul_tags a.tag then Hashtbl.replace result a.tag ();
-          if Hashtbl.mem mul_tags b.tag then Hashtbl.replace result b.tag ()
-      | _ -> ())
+       match n.node with
+       | NK_Add (a, b) | NK_Sub (a, b) ->
+         if Hashtbl.mem mul_tags a.tag then Hashtbl.replace result a.tag ();
+         if Hashtbl.mem mul_tags b.tag then Hashtbl.replace result b.tag ()
+       | _ -> ())
     scheduled;
   result
+;;
 
 (* ── Constant hoisting (notebook section 51) ──────────────────────
  * NK_Const nodes are loop-invariant by definition, but emitting them
@@ -413,30 +500,43 @@ let hoist_consts_enabled : bool ref = ref false
 
 let render_hoisted_consts ~(isa : Isa.t) (nodes : t list) : string =
   Hashtbl.reset hoisted_const_tags;
-  if not !hoist_consts_enabled then ""
-  else begin
+  if not !hoist_consts_enabled
+  then ""
+  else (
     let b = Buffer.create 256 in
     List.iter
       (fun e ->
-        match e.node with
-        | NK_Const c ->
-            Hashtbl.replace hoisted_const_tags e.tag ();
-            Buffer.add_string b
-              (Printf.sprintf "    %s\n"
-                 (Isa.const_decl isa
-                    (Printf.sprintf "t%d" e.tag)
-                    (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c))))
-        | _ -> ())
+         match e.node with
+         | NK_Const c ->
+           Hashtbl.replace hoisted_const_tags e.tag ();
+           Buffer.add_string
+             b
+             (Printf.sprintf
+                "    %s\n"
+                (Isa.const_decl
+                   isa
+                   (Printf.sprintf "t%d" e.tag)
+                   (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c))))
+         | _ -> ())
       nodes;
-    Buffer.contents b
-  end
+    Buffer.contents b)
+;;
 
-let render_node_def_core ?(no_declarator = false)
-    ?(inline_set : (int, unit) Hashtbl.t option = None) ?(twidsq = false)
-    ?(twidsq_n = 0) ?(strided = false) ~(isa : Isa.t) ~(in_place : bool)
-    ~(t1s : bool) (e : t) : string =
-  if Hashtbl.mem hoisted_const_tags e.tag then ""
-  else
+let render_node_def_core
+      ?(no_declarator = false)
+      ?(inline_set : (int, unit) Hashtbl.t option = None)
+      ?(twidsq = false)
+      ?(twidsq_n = 0)
+      ?(strided = false)
+      ~(isa : Isa.t)
+      ~(in_place : bool)
+      ~(t1s : bool)
+      (e : t)
+  : string
+  =
+  if Hashtbl.mem hoisted_const_tags e.tag
+  then ""
+  else (
     (* Name renderer: usually returns "t<tag>", but if M5 has installed a
      * name override for (current_emit_position, t.tag) and t is not the
      * tag being defined (i.e., t is an operand reference, not the LHS),
@@ -444,27 +544,30 @@ let render_node_def_core ?(no_declarator = false)
      * variables. *)
     let v t =
       let default_name () = Printf.sprintf "t%d" t.tag in
-      if t.tag = e.tag then default_name () (* LHS: never override *)
-      else
+      if t.tag = e.tag
+      then default_name () (* LHS: never override *)
+      else (
         match !current_regalloc with
         | None -> default_name ()
-        | Some alloc -> (
-            match
-              Hashtbl.find_opt alloc.name_overrides
-                (!current_emit_position, t.tag)
-            with
-            | Some n -> n
-            | None -> default_name ())
+        | Some alloc ->
+          (match
+             Hashtbl.find_opt alloc.name_overrides (!current_emit_position, t.tag)
+           with
+           | Some n -> n
+           | None -> default_name ()))
     in
     (* Should this node be inlined into its consumer's expression? *)
     let should_inline n =
-      match inline_set with None -> false | Some tbl -> Hashtbl.mem tbl n.tag
+      match inline_set with
+      | None -> false
+      | Some tbl -> Hashtbl.mem tbl n.tag
     in
     (* Render an operand. If single-use, inline its expression recursively
      * (up to depth limit). Otherwise, just emit `t<tag>` and rely on the
      * standalone declaration (which will be emitted elsewhere). *)
     let rec render_operand depth n =
-      if depth >= inline_max_depth || not (should_inline n) then v n
+      if depth >= inline_max_depth || not (should_inline n)
+      then v n
       else render_inlined depth n
     and render_inlined depth n =
       (* Recursive case: inline this node's expression. Don't inline Loads
@@ -482,39 +585,31 @@ let render_node_def_core ?(no_declarator = false)
       match n.node with
       | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
       | NK_Load _ -> v n (* don't inline loads — keep named *)
-      | NK_Neg inner -> (
-          match inner.node with
-          | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
-          | _ ->
-              Isa.xor_pd isa
-                (render_operand (depth + 1) inner)
-                (Isa.set1_pd_str isa "-0.0"))
+      | NK_Neg inner ->
+        (match inner.node with
+         | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
+         | _ ->
+           Isa.xor_pd isa (render_operand (depth + 1) inner) (Isa.set1_pd_str isa "-0.0"))
       | NK_Add (a, b) ->
-          Isa.add_pd isa
-            (render_operand (depth + 1) a)
-            (render_operand (depth + 1) b)
+        Isa.add_pd isa (render_operand (depth + 1) a) (render_operand (depth + 1) b)
       | NK_Sub (a, b) ->
-          Isa.sub_pd isa
-            (render_operand (depth + 1) a)
-            (render_operand (depth + 1) b)
+        Isa.sub_pd isa (render_operand (depth + 1) a) (render_operand (depth + 1) b)
       | NK_Mul (a, b) ->
-          Isa.mul_pd isa
-            (render_operand (depth + 1) a)
-            (render_operand (depth + 1) b)
+        Isa.mul_pd isa (render_operand (depth + 1) a) (render_operand (depth + 1) b)
       | NK_CmulRe _ | NK_CmulIm _ -> v n (* don't inline cmul *)
-      | NK_Fma (a, b, c, neg_mul, neg_add) -> (
-          let ra = render_operand (depth + 1) a in
-          let rb = render_operand (depth + 1) b in
-          let rc = render_operand (depth + 1) c in
-          match (neg_mul, neg_add) with
-          | false, false -> Isa.fmadd_pd isa ra rb rc
-          | false, true -> Isa.fmsub_pd isa ra rb rc
-          | true, false -> Isa.fnmadd_pd isa ra rb rc
-          | true, true -> Isa.fnmsub_pd isa ra rb rc)
+      | NK_Fma (a, b, c, neg_mul, neg_add) ->
+        let ra = render_operand (depth + 1) a in
+        let rb = render_operand (depth + 1) b in
+        let rc = render_operand (depth + 1) c in
+        (match neg_mul, neg_add with
+         | false, false -> Isa.fmadd_pd isa ra rb rc
+         | false, true -> Isa.fmsub_pd isa ra rb rc
+         | true, false -> Isa.fnmadd_pd isa ra rb rc
+         | true, true -> Isa.fnmsub_pd isa ra rb rc)
       | NK_Plus _ ->
-          (* NK_Plus must be lowered to binary NK_Add/NK_Sub before the emitter
-           * runs. If it reaches here, it's a bug in the lowering pass. *)
-          Algsimp.nk_plus_unreachable "emit_c.ml render_operand"
+        (* NK_Plus must be lowered to binary NK_Add/NK_Sub before the emitter
+         * runs. If it reaches here, it's a bug in the lowering pass. *)
+        Algsimp.nk_plus_unreachable "emit_c.ml render_operand"
     in
     (* Operand renderer for THIS node's body — depth=0 meaning we're already
      * inside the body of `e`, so its operands start at depth=0 (and inline up
@@ -523,39 +618,39 @@ let render_node_def_core ?(no_declarator = false)
     let body =
       match e.node with
       | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
-      | NK_Load r ->
-          render_load ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
-      | NK_Neg inner -> (
-          (* Neg(Const c) is a compile-time constant — emit as a single
-           * broadcast of -c rather than a runtime XOR. *)
-          match inner.node with
-          | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
-          | _ -> Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa "-0.0"))
+      | NK_Load r -> render_load ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
+      | NK_Neg inner ->
+        (* Neg(Const c) is a compile-time constant — emit as a single
+         * broadcast of -c rather than a runtime XOR. *)
+        (match inner.node with
+         | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" (-.c))
+         | _ -> Isa.xor_pd isa (op inner) (Isa.set1_pd_str isa "-0.0"))
       | NK_Add (a, b) -> Isa.add_pd isa (op a) (op b)
       | NK_Sub (a, b) -> Isa.sub_pd isa (op a) (op b)
       | NK_Mul (a, b) -> Isa.mul_pd isa (op a) (op b)
       | NK_CmulRe (xr, xi, wr, wi) ->
-          Isa.fnmadd_pd isa (op xi) (op wi) (Isa.mul_pd isa (op xr) (op wr))
+        Isa.fnmadd_pd isa (op xi) (op wi) (Isa.mul_pd isa (op xr) (op wr))
       | NK_CmulIm (xr, xi, wr, wi) ->
-          Isa.fmadd_pd isa (op xr) (op wi) (Isa.mul_pd isa (op xi) (op wr))
-      | NK_Fma (a, b, c, neg_mul, neg_add) -> (
-          (* (neg_mul ? -a*b : a*b) + (neg_add ? -c : c)
-           *
-           *   neg_mul=F, neg_add=F:  a*b + c       → fmadd
-           *   neg_mul=F, neg_add=T:  a*b - c       → fmsub
-           *   neg_mul=T, neg_add=F:  -a*b + c      → fnmadd
-           *   neg_mul=T, neg_add=T:  -a*b - c      → fnmsub *)
-          match (neg_mul, neg_add) with
-          | false, false -> Isa.fmadd_pd isa (op a) (op b) (op c)
-          | false, true -> Isa.fmsub_pd isa (op a) (op b) (op c)
-          | true, false -> Isa.fnmadd_pd isa (op a) (op b) (op c)
-          | true, true -> Isa.fnmsub_pd isa (op a) (op b) (op c))
+        Isa.fmadd_pd isa (op xr) (op wi) (Isa.mul_pd isa (op xi) (op wr))
+      | NK_Fma (a, b, c, neg_mul, neg_add) ->
+        (* (neg_mul ? -a*b : a*b) + (neg_add ? -c : c)
+         *
+         *   neg_mul=F, neg_add=F:  a*b + c       → fmadd
+         *   neg_mul=F, neg_add=T:  a*b - c       → fmsub
+         *   neg_mul=T, neg_add=F:  -a*b + c      → fnmadd
+         *   neg_mul=T, neg_add=T:  -a*b - c      → fnmsub *)
+        (match neg_mul, neg_add with
+         | false, false -> Isa.fmadd_pd isa (op a) (op b) (op c)
+         | false, true -> Isa.fmsub_pd isa (op a) (op b) (op c)
+         | true, false -> Isa.fnmadd_pd isa (op a) (op b) (op c)
+         | true, true -> Isa.fnmsub_pd isa (op a) (op b) (op c))
       | NK_Plus _ ->
-          (* NK_Plus must be lowered to binary NK_Add/NK_Sub before this point.
-           * If it reaches the body renderer, the lowering pass missed it. *)
-          Algsimp.nk_plus_unreachable "emit_c.ml render_body"
+        (* NK_Plus must be lowered to binary NK_Add/NK_Sub before this point.
+         * If it reaches the body renderer, the lowering pass missed it. *)
+        Algsimp.nk_plus_unreachable "emit_c.ml render_body"
     in
-    if no_declarator then
+    if no_declarator
+    then
       (* Plain assignment to a variable forward-declared at outer scope.
        * Used for spill "fused slots" — values whose lifetime crosses the
        * PASS 1 / PASS 2 boundary as register-resident SSA, so they're
@@ -563,7 +658,7 @@ let render_node_def_core ?(no_declarator = false)
        * Not eligible for M3a register pinning: the variable was already
        * declared without a pin, so we just assign. *)
       Printf.sprintf "        %s = %s;" (v e) body
-    else
+    else (
       (* === M3a regalloc switch ===
        *
        * If the active allocation (current_regalloc) has a Reg binding
@@ -585,46 +680,52 @@ let render_node_def_core ?(no_declarator = false)
        * M-project's chosen register for the Mul becomes moot.
        * Override: VFFT_DISABLE_SELECTIVE_PIN=1. *)
       let selective_pin_disabled =
-        try Sys.getenv "VFFT_DISABLE_SELECTIVE_PIN" = "1"
-        with Not_found -> false
+        try Sys.getenv "VFFT_DISABLE_SELECTIVE_PIN" = "1" with
+        | Not_found -> false
       in
       let is_unpin_candidate =
-        if selective_pin_disabled then false
-        else
+        if selective_pin_disabled
+        then false
+        else (
           match !current_unpin_candidates with
           | None -> false
-          | Some tbl -> Hashtbl.mem tbl e.tag
+          | Some tbl -> Hashtbl.mem tbl e.tag)
       in
       (* Helper: in fence-only mode emit `register ... = expr; asm volatile(...)`;
        * otherwise emit the plain `const ... = expr;` form. *)
       let non_pinned_decl name body =
-        if Hashtbl.mem !dup_barrier_tags e.tag then
+        if Hashtbl.mem !dup_barrier_tags e.tag
+        then
           (* duplication clone (doc 65 §8): non-const + "+x" barrier or
            * gcc re-CSEs the clone back into the original at -O3. *)
-          Printf.sprintf "%s %s = %s; __asm__ volatile(\"\" : \"+x\"(%s));"
-            isa.vec_type name body name
-        else if !current_fence_only then Isa.fenced_decl isa name body
+          Printf.sprintf
+            "%s %s = %s; __asm__ volatile(\"\" : \"+x\"(%s));"
+            isa.vec_type
+            name
+            body
+            name
+        else if !current_fence_only
+        then Isa.fenced_decl isa name body
         else Isa.const_decl isa name body
       in
       match !current_regalloc with
-      | Some alloc when not is_unpin_candidate -> (
-          match Regalloc.lookup alloc e.tag with
-          | Regalloc.Reg reg_name ->
-              Printf.sprintf "        %s"
-                (Isa.pinned_reg_decl isa (v e) reg_name body)
-          | Regalloc.Spilled _ ->
-              (* M5: the Spilled variant is reserved but no longer used by
-               * the spilling allocator (it tracks spills via spill_sites
-               * separately, keeping the tag's assignment as Reg). If we
-               * see Spilled here it's a future extension; fall back to
-               * Default emission. *)
-              Printf.sprintf "        %s" (non_pinned_decl (v e) body)
-          | Regalloc.Default ->
-              Printf.sprintf "        %s" (non_pinned_decl (v e) body))
+      | Some alloc when not is_unpin_candidate ->
+        (match Regalloc.lookup alloc e.tag with
+         | Regalloc.Reg reg_name ->
+           Printf.sprintf "        %s" (Isa.pinned_reg_decl isa (v e) reg_name body)
+         | Regalloc.Spilled _ ->
+           (* M5: the Spilled variant is reserved but no longer used by
+            * the spilling allocator (it tracks spills via spill_sites
+            * separately, keeping the tag's assignment as Reg). If we
+            * see Spilled here it's a future extension; fall back to
+            * Default emission. *)
+           Printf.sprintf "        %s" (non_pinned_decl (v e) body)
+         | Regalloc.Default -> Printf.sprintf "        %s" (non_pinned_decl (v e) body))
       | Some _ ->
-          (* Selective unpin: drop the pin to enable gcc auto-fusion *)
-          Printf.sprintf "        %s" (non_pinned_decl (v e) body)
-      | None -> Printf.sprintf "        %s" (non_pinned_decl (v e) body)
+        (* Selective unpin: drop the pin to enable gcc auto-fusion *)
+        Printf.sprintf "        %s" (non_pinned_decl (v e) body)
+      | None -> Printf.sprintf "        %s" (non_pinned_decl (v e) body)))
+;;
 
 (* === Emit a complete codelet ===
  *
@@ -646,8 +747,7 @@ let render_node_def_core ?(no_declarator = false)
  *)
 type scheduler =
   | Topological (* sort reachable nodes by tag, flat emit *)
-  | Annotated_topological
-    (* topological order + nested-block scopes (annotate.ml) *)
+  | Annotated_topological (* topological order + nested-block scopes (annotate.ml) *)
   | SU of Uarch.t (* Sethi-Ullman list scheduler with µarch profile *)
   | Annotated_SU of Uarch.t (* SU + nested blocks *)
 
@@ -682,34 +782,36 @@ type scheduler =
  * predecessor PLUS 1 if the tag also appears as an output assignment
  * (the store counts as a use).
  *)
-let compute_inline_set (assigns : (Expr.elem_ref * t) list) :
-    (int, unit) Hashtbl.t =
+let compute_inline_set (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
   let roots = List.map snd assigns in
   let nodes = topo_sort_reachable roots in
   (* Use count = how many other nodes reference this tag. *)
   let use_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
   let bump tag =
-    let cur = try Hashtbl.find use_count tag with Not_found -> 0 in
+    let cur =
+      try Hashtbl.find use_count tag with
+      | Not_found -> 0
+    in
     Hashtbl.replace use_count tag (cur + 1)
   in
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Const _ | NK_Load _ -> ()
-      | NK_Neg a -> bump a.tag
-      | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-          bump a.tag;
-          bump b.tag
-      | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-          bump a.tag;
-          bump b.tag;
-          bump c.tag;
-          bump d.tag
-      | NK_Fma (a, b, c, _, _) ->
-          bump a.tag;
-          bump b.tag;
-          bump c.tag
-      | NK_Plus _ -> Algsimp.nk_plus_unreachable "emit_c.ml use_count walker")
+       match n.node with
+       | NK_Const _ | NK_Load _ -> ()
+       | NK_Neg a -> bump a.tag
+       | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
+         bump a.tag;
+         bump b.tag
+       | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
+         bump a.tag;
+         bump b.tag;
+         bump c.tag;
+         bump d.tag
+       | NK_Fma (a, b, c, _, _) ->
+         bump a.tag;
+         bump b.tag;
+         bump c.tag
+       | NK_Plus _ -> Algsimp.nk_plus_unreachable "emit_c.ml use_count walker")
     nodes;
   (* Each output assignment also counts as a use. *)
   List.iter (fun (_, e) -> bump e.tag) assigns;
@@ -720,24 +822,30 @@ let compute_inline_set (assigns : (Expr.elem_ref * t) list) :
   let result = Hashtbl.create 256 in
   List.iter
     (fun n ->
-      let count = try Hashtbl.find use_count n.tag with Not_found -> 0 in
-      let is_sink = Hashtbl.mem sink_tags n.tag in
-      let kind_inlinable =
-        match n.node with
-        | NK_Load _ -> false (* don't duplicate loads *)
-        | NK_CmulRe _ | NK_CmulIm _ -> false (* paired emit *)
-        | NK_Const _ -> false (* already inlined as set1 broadcast *)
-        | _ -> true
-      in
-      if
-        count = 1 && (not is_sink) && kind_inlinable
-        && not (Hashtbl.mem !dup_barrier_tags n.tag)
-        (* duplication clones MUST be declared: the "+x" barrier that
-         * stops gcc re-CSEing them attaches to the declaration
-         * (doc 65 §8); inlining them makes the clone a no-op. *)
-      then Hashtbl.add result n.tag ())
+       let count =
+         try Hashtbl.find use_count n.tag with
+         | Not_found -> 0
+       in
+       let is_sink = Hashtbl.mem sink_tags n.tag in
+       let kind_inlinable =
+         match n.node with
+         | NK_Load _ -> false (* don't duplicate loads *)
+         | NK_CmulRe _ | NK_CmulIm _ -> false (* paired emit *)
+         | NK_Const _ -> false (* already inlined as set1 broadcast *)
+         | _ -> true
+       in
+       if
+         count = 1
+         && (not is_sink)
+         && kind_inlinable
+         && not (Hashtbl.mem !dup_barrier_tags n.tag)
+         (* duplication clones MUST be declared: the "+x" barrier that
+          * stops gcc re-CSEing them attaches to the declaration
+          * (doc 65 §8); inlining them makes the clone a no-op. *)
+       then Hashtbl.add result n.tag ())
     nodes;
   result
+;;
 
 (* === SPILL CONFIGURATION ===
  *
@@ -765,46 +873,49 @@ let compute_inline_set (assigns : (Expr.elem_ref * t) list) :
  * to the LAST sub-DFT-n2 output positions in each PASS 1 sub-FFT — the
  * latest-emitted (and thus latest-stored) values, which are also the
  * first-consumed in PASS 2 emission order. *)
-type spill_info = {
-  re_slot : (int, int) Hashtbl.t; (* re tag → slot *)
-  im_slot : (int, int) Hashtbl.t; (* im tag → slot *)
-  num_slots : int;
-  fused_slots : (int, unit) Hashtbl.t; (* slots NOT spilled — kept in regs *)
-  ct_n1 : int; (* PASS 1 sub-FFT count, 0 if not CT-decomposed *)
-  ct_n2 : int; (* PASS 1 sub-FFT size, 0 if not CT-decomposed *)
-}
+type spill_info =
+  { re_slot : (int, int) Hashtbl.t (* re tag → slot *)
+  ; im_slot : (int, int) Hashtbl.t (* im tag → slot *)
+  ; num_slots : int
+  ; fused_slots : (int, unit) Hashtbl.t (* slots NOT spilled — kept in regs *)
+  ; ct_n1 : int (* PASS 1 sub-FFT count, 0 if not CT-decomposed *)
+  ; ct_n2 : int (* PASS 1 sub-FFT size, 0 if not CT-decomposed *)
+  }
 
-let make_spill_info ?ct ?(fuse = 0) (markers : Algsimp.spill_tag_marker list) :
-    spill_info =
+let make_spill_info ?ct ?(fuse = 0) (markers : Algsimp.spill_tag_marker list) : spill_info
+  =
   let re_slot = Hashtbl.create 64 in
   let im_slot = Hashtbl.create 64 in
   let max_slot = ref (-1) in
   List.iter
     (fun m ->
-      Hashtbl.replace re_slot m.Algsimp.re_tag m.slot;
-      Hashtbl.replace im_slot m.Algsimp.im_tag m.slot;
-      if m.slot > !max_slot then max_slot := m.slot)
+       Hashtbl.replace re_slot m.Algsimp.re_tag m.slot;
+       Hashtbl.replace im_slot m.Algsimp.im_tag m.slot;
+       if m.slot > !max_slot then max_slot := m.slot)
     markers;
   let fused_slots = Hashtbl.create 16 in
   let ct_n1, ct_n2 =
-    match ct with Some (n1, n2) -> (n1, n2) | None -> (0, 0)
+    match ct with
+    | Some (n1, n2) -> n1, n2
+    | None -> 0, 0
   in
   (match ct with
-  | Some (n1, n2) when fuse > 0 ->
-      let m = min fuse n2 in
-      for k2 = n2 - m to n2 - 1 do
-        for n1_idx = 0 to n1 - 1 do
-          Hashtbl.replace fused_slots ((n1_idx * n2) + k2) ()
-        done
-      done
-  | _ -> ());
+   | Some (n1, n2) when fuse > 0 ->
+     let m = min fuse n2 in
+     for k2 = n2 - m to n2 - 1 do
+       for n1_idx = 0 to n1 - 1 do
+         Hashtbl.replace fused_slots ((n1_idx * n2) + k2) ()
+       done
+     done
+   | _ -> ());
   { re_slot; im_slot; num_slots = !max_slot + 1; fused_slots; ct_n1; ct_n2 }
+;;
 
 let is_spilled (sp : spill_info) (tag : int) : bool =
   Hashtbl.mem sp.re_slot tag || Hashtbl.mem sp.im_slot tag
+;;
 
-let is_fused_slot (sp : spill_info) (slot : int) : bool =
-  Hashtbl.mem sp.fused_slots slot
+let is_fused_slot (sp : spill_info) (slot : int) : bool = Hashtbl.mem sp.fused_slots slot
 
 (* === Intrinsic codelet metadata (emitted as a header comment) ===
  *
@@ -827,12 +938,18 @@ let is_fused_slot (sp : spill_info) (slot : int) : bool =
  * codelets, a whole-codelet upper bound for CT-decomposed ones whose true
  * per-pass register floor is the cross-pass cut. The minimum-register
  * schedule itself is NP-hard, so this is a bound, not the optimum. *)
-let codelet_metadata ~(isa : Isa.t) ~(spill : spill_info option)
-    ~(tw_broadcast : bool) ~(peak_live : int)
-    (assigns : (Expr.elem_ref * t) list) : string =
+let codelet_metadata
+      ~(isa : Isa.t)
+      ~(spill : spill_info option)
+      ~(tw_broadcast : bool)
+      ~(peak_live : int)
+      (assigns : (Expr.elem_ref * t) list)
+  : string
+  =
   let nodes = topo_sort_reachable (List.map snd assigns) in
   let peak_live =
-    if peak_live > 0 then peak_live
+    if peak_live > 0
+    then peak_live
     else (Regalloc.peak_live_analysis ~isa ~scheduled:nodes).peak_live
   in
   let nadd = ref 0
@@ -842,29 +959,27 @@ let codelet_metadata ~(isa : Isa.t) ~(spill : spill_info option)
   and ncmul = ref 0
   and nneg = ref 0
   and n_vload =
-    ref
-      0 (* per-iteration vector loads: input data + (non-broadcast) twiddles *)
+    ref 0 (* per-iteration vector loads: input data + (non-broadcast) twiddles *)
   and n_swload =
     ref 0
     (* loop-invariant scalar twiddle broadcasts (hoisted, ~free) *)
   in
   List.iter
     (fun n ->
-      match n.node with
-      | NK_Add _ -> incr nadd
-      | NK_Sub _ -> incr nsub
-      | NK_Mul _ -> incr nmul
-      | NK_Fma _ -> incr nfma
-      | NK_Neg _ -> incr nneg
-      | NK_CmulRe _ | NK_CmulIm _ -> incr ncmul
-      | NK_Load r -> (
-          match r with
+       match n.node with
+       | NK_Add _ -> incr nadd
+       | NK_Sub _ -> incr nsub
+       | NK_Mul _ -> incr nmul
+       | NK_Fma _ -> incr nfma
+       | NK_Neg _ -> incr nneg
+       | NK_CmulRe _ | NK_CmulIm _ -> incr ncmul
+       | NK_Load r ->
+         (match r with
           | Expr.Input _ -> incr n_vload
-          | Expr.Twiddle _ ->
-              if tw_broadcast then incr n_swload else incr n_vload
+          | Expr.Twiddle _ -> if tw_broadcast then incr n_swload else incr n_vload
           | Expr.Output _ ->
-              incr n_vload (* defensive: Output as load source is invalid *))
-      | NK_Const _ | NK_Plus _ -> ())
+            incr n_vload (* defensive: Output as load source is invalid *))
+       | NK_Const _ | NK_Plus _ -> ())
     nodes;
   let fp_instr = !nadd + !nsub + !nmul + !nfma + (2 * !ncmul) + !nneg in
   let flops = !nadd + !nsub + !nmul + (2 * !nfma) + (2 * !ncmul) + !nneg in
@@ -872,8 +987,13 @@ let codelet_metadata ~(isa : Isa.t) ~(spill : spill_info option)
   (* per-iteration vector loads only *)
   let ess_stores = List.length assigns in
   let ess_io = ess_loads + ess_stores in
-  let xslots = match spill with Some sp -> sp.num_slots | None -> 0 in
-  let xpass_mem = 4 * xslots and xpass_live = 2 * xslots in
+  let xslots =
+    match spill with
+    | Some sp -> sp.num_slots
+    | None -> 0
+  in
+  let xpass_mem = 4 * xslots
+  and xpass_live = 2 * xslots in
   let memory_floor = ess_io + xpass_mem in
   let budget = isa.vec_regs - if isa.vec_regs >= 32 then 4 else 2 in
   let membound = memory_floor > fp_instr in
@@ -881,31 +1001,48 @@ let codelet_metadata ~(isa : Isa.t) ~(spill : spill_info option)
   Printf.sprintf
     "/* codelet-metrics [intrinsic, gen-time]:\n\
     \ *   fp_instr=%d  flops=%d  (add=%d sub=%d mul=%d fma=%d cmul=%d neg=%d)\n\
-    \ *   essential_io=%d ops (vec_loads=%d + stores=%d)  [+%d hoisted \
-     scalar-twiddle loads, not counted]\n\
-    \ *   cross_pass_cut=%d slots => +%d mem ops, %d vectors live across pass \
-     boundary\n\
+    \ *   essential_io=%d ops (vec_loads=%d + stores=%d)  [+%d hoisted scalar-twiddle \
+     loads, not counted]\n\
+    \ *   cross_pass_cut=%d slots => +%d mem ops, %d vectors live across pass boundary\n\
     \ *   memory_floor=%d mem ops   peak_live(max-per-pass)=%d   budget=%d regs\n\
     \ *   ROOFLINE: %s at floor (memory_floor %s fp_instr)\n\
     \ *   PRESSURE: %s (peak_live %s budget)%s\n\
     \ */\n"
-    fp_instr flops !nadd !nsub !nmul !nfma !ncmul !nneg ess_io ess_loads
-    ess_stores !n_swload xslots xpass_mem xpass_live memory_floor peak_live
+    fp_instr
+    flops
+    !nadd
+    !nsub
+    !nmul
+    !nfma
+    !ncmul
+    !nneg
+    ess_io
+    ess_loads
+    ess_stores
+    !n_swload
+    xslots
+    xpass_mem
+    xpass_live
+    memory_floor
+    peak_live
     budget
     (if membound then "MEMORY-BOUND" else "compute-capable")
     (if membound then ">" else "<=")
     (if fits then "fits" else "SPILLS")
     (if fits then "<=" else ">")
-    (if xslots > 0 then
-       "  [CT: peak_live is max over passes; cross_pass_cut is added explicit \
-        spill traffic]"
+    (if xslots > 0
+     then
+       "  [CT: peak_live is max over passes; cross_pass_cut is added explicit spill \
+        traffic]"
      else "")
+;;
 
 (* Is this tag's spill slot fused (kept in register, not stored)? *)
 let is_fused_tag (sp : spill_info) (tag : int) : bool =
-  match (Hashtbl.find_opt sp.re_slot tag, Hashtbl.find_opt sp.im_slot tag) with
+  match Hashtbl.find_opt sp.re_slot tag, Hashtbl.find_opt sp.im_slot tag with
   | Some s, _ | _, Some s -> is_fused_slot sp s
   | None, None -> false
+;;
 
 (* ── compute_min_slot_pass1 ─────────────────────────────────────────
  * Assign each PASS-1 node a min_slot (its own spill slot if it is a
@@ -922,8 +1059,9 @@ let is_fused_tag (sp : spill_info) (tag : int) : bool =
  * sort DELETES that latent dependence: this helper is correct regardless
  * of the caller's input order. (Also uses Hashtbl.replace, not add;
  * equivalent here since each tag is visited once in the reverse walk.) ─ *)
-let compute_min_slot_pass1 (sp : spill_info) (pass1_nodes : t list) :
-    (int, int) Hashtbl.t * t list =
+let compute_min_slot_pass1 (sp : spill_info) (pass1_nodes : t list)
+  : (int, int) Hashtbl.t * t list
+  =
   let lookup_slot tag =
     match Hashtbl.find_opt sp.re_slot tag with
     | Some s -> Some s
@@ -934,46 +1072,57 @@ let compute_min_slot_pass1 (sp : spill_info) (pass1_nodes : t list) :
   let succs : (int, int list) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun (e : t) ->
-      List.iter
-        (fun (p : t) ->
-          if Hashtbl.mem pass1_set p.tag then begin
-            let cur = try Hashtbl.find succs p.tag with Not_found -> [] in
-            Hashtbl.replace succs p.tag (e.tag :: cur)
-          end)
-        (preds e))
+       List.iter
+         (fun (p : t) ->
+            if Hashtbl.mem pass1_set p.tag
+            then (
+              let cur =
+                try Hashtbl.find succs p.tag with
+                | Not_found -> []
+              in
+              Hashtbl.replace succs p.tag (e.tag :: cur)))
+         (preds e))
     pass1_nodes;
   let min_slot : (int, int) Hashtbl.t = Hashtbl.create 256 in
   (* Reverse topological order = descending tag (hash-cons tags are
      construction-ordered). Explicit sort, not List.rev — see header. *)
-  let pass1_rev =
-    List.sort (fun (a : t) b -> compare b.tag a.tag) pass1_nodes
-  in
+  let pass1_rev = List.sort (fun (a : t) b -> compare b.tag a.tag) pass1_nodes in
   List.iter
     (fun (e : t) ->
-      let my =
-        match lookup_slot e.tag with
-        | Some s -> Some s
-        | None -> (
-            let s_tags = try Hashtbl.find succs e.tag with Not_found -> [] in
-            let s_mins =
-              List.filter_map (fun t -> Hashtbl.find_opt min_slot t) s_tags
-            in
-            match s_mins with
+       let my =
+         match lookup_slot e.tag with
+         | Some s -> Some s
+         | None ->
+           let s_tags =
+             try Hashtbl.find succs e.tag with
+             | Not_found -> []
+           in
+           let s_mins = List.filter_map (fun t -> Hashtbl.find_opt min_slot t) s_tags in
+           (match s_mins with
             | [] -> None
             | _ -> Some (List.fold_left min max_int s_mins))
-      in
-      match my with Some s -> Hashtbl.replace min_slot e.tag s | None -> ())
+       in
+       match my with
+       | Some s -> Hashtbl.replace min_slot e.tag s
+       | None -> ())
     pass1_rev;
   let pass1_blocked_topo =
     List.sort
       (fun (a : t) b ->
-        let ma = try Hashtbl.find min_slot a.tag with Not_found -> max_int in
-        let mb = try Hashtbl.find min_slot b.tag with Not_found -> max_int in
-        let c = compare ma mb in
-        if c <> 0 then c else compare a.tag b.tag)
+         let ma =
+           try Hashtbl.find min_slot a.tag with
+           | Not_found -> max_int
+         in
+         let mb =
+           try Hashtbl.find min_slot b.tag with
+           | Not_found -> max_int
+         in
+         let c = compare ma mb in
+         if c <> 0 then c else compare a.tag b.tag)
       pass1_nodes
   in
-  (min_slot, pass1_blocked_topo)
+  min_slot, pass1_blocked_topo
+;;
 
 (* ── cluster_split_schedule ─────────────────────────────────────────
  * PASS-1 cluster-local scheduling: split a min_slot-ordered node list
@@ -997,11 +1146,16 @@ let compute_min_slot_pass1 (sp : spill_info) (pass1_nodes : t list) :
  *
  * The ct_n2 <= 0 guard (non-CT — shouldn't fire for R>=25, all CT) lives
  * INSIDE the helper so no caller (present or future) can forget it. ─ *)
-let cluster_split_schedule (sp : spill_info) ~(pass1_blocked_topo : t list)
-    ~(min_slot : (int, int) Hashtbl.t)
-    ~(schedule_cluster : subset:t list -> sinks:t list -> t list) : t list =
-  if sp.ct_n2 <= 0 then pass1_blocked_topo
-  else begin
+let cluster_split_schedule
+      (sp : spill_info)
+      ~(pass1_blocked_topo : t list)
+      ~(min_slot : (int, int) Hashtbl.t)
+      ~(schedule_cluster : subset:t list -> sinks:t list -> t list)
+  : t list
+  =
+  if sp.ct_n2 <= 0
+  then pass1_blocked_topo
+  else (
     let cluster_of_node (e : t) =
       match Hashtbl.find_opt min_slot e.tag with
       | Some s -> s / sp.ct_n2
@@ -1010,20 +1164,21 @@ let cluster_split_schedule (sp : spill_info) ~(pass1_blocked_topo : t list)
     (* Walk pass1_blocked_topo, split into contiguous same-cluster runs. *)
     let groups : (int * t list) list =
       let rec go acc cur_cluster cur_acc = function
-        | [] -> (
-            match cur_acc with
-            | [] -> List.rev acc
-            | _ -> List.rev ((cur_cluster, List.rev cur_acc) :: acc))
+        | [] ->
+          (match cur_acc with
+           | [] -> List.rev acc
+           | _ -> List.rev ((cur_cluster, List.rev cur_acc) :: acc))
         | n :: rest ->
-            let k = cluster_of_node n in
-            if k = cur_cluster then go acc cur_cluster (n :: cur_acc) rest
-            else
-              let acc' =
-                match cur_acc with
-                | [] -> acc
-                | _ -> (cur_cluster, List.rev cur_acc) :: acc
-              in
-              go acc' k [ n ] rest
+          let k = cluster_of_node n in
+          if k = cur_cluster
+          then go acc cur_cluster (n :: cur_acc) rest
+          else (
+            let acc' =
+              match cur_acc with
+              | [] -> acc
+              | _ -> (cur_cluster, List.rev cur_acc) :: acc
+            in
+            go acc' k [ n ] rest)
       in
       match pass1_blocked_topo with
       | [] -> []
@@ -1031,16 +1186,16 @@ let cluster_split_schedule (sp : spill_info) ~(pass1_blocked_topo : t list)
     in
     List.concat_map
       (fun (_cluster_id, group_nodes) ->
-        let cluster_sinks =
-          List.filter
-            (fun (e : t) ->
-              Hashtbl.mem sp.re_slot e.tag || Hashtbl.mem sp.im_slot e.tag)
-            group_nodes
-        in
-        if cluster_sinks = [] then group_nodes
-        else schedule_cluster ~subset:group_nodes ~sinks:cluster_sinks)
-      groups
-  end
+         let cluster_sinks =
+           List.filter
+             (fun (e : t) -> Hashtbl.mem sp.re_slot e.tag || Hashtbl.mem sp.im_slot e.tag)
+             group_nodes
+         in
+         if cluster_sinks = []
+         then group_nodes
+         else schedule_cluster ~subset:group_nodes ~sinks:cluster_sinks)
+      groups)
+;;
 
 (* Split a topologically-ordered list of nodes into PASS 1 and PASS 2.
  *
@@ -1051,28 +1206,28 @@ let cluster_split_schedule (sp : spill_info) ~(pass1_blocked_topo : t list)
  *
  * Walk in topological order so each node's preds have already been
  * classified by the time we reach it. *)
-let classify_passes (sp : spill_info) (nodes : t list) :
-    (int, [ `Pass1 | `Pass2 ]) Hashtbl.t =
+let classify_passes (sp : spill_info) (nodes : t list)
+  : (int, [ `Pass1 | `Pass2 ]) Hashtbl.t
+  =
   let cls = Hashtbl.create 256 in
   List.iter
     (fun e ->
-      if is_spilled sp e.tag then Hashtbl.add cls e.tag `Pass1
-      else
-        let pred_in_pass2 =
-          List.exists
-            (fun p ->
-              match Hashtbl.find_opt cls p.tag with
-              | Some `Pass2 -> true
-              | _ -> false)
-            (preds e)
-        in
-        let pred_is_spilled =
-          List.exists (fun p -> is_spilled sp p.tag) (preds e)
-        in
-        if pred_in_pass2 || pred_is_spilled then Hashtbl.add cls e.tag `Pass2
-        else Hashtbl.add cls e.tag `Pass1)
+       if is_spilled sp e.tag
+       then Hashtbl.add cls e.tag `Pass1
+       else (
+         let pred_in_pass2 =
+           List.exists
+             (fun p ->
+                match Hashtbl.find_opt cls p.tag with
+                | Some `Pass2 -> true
+                | _ -> false)
+             (preds e)
+         in
+         let pred_is_spilled = List.exists (fun p -> is_spilled sp p.tag) (preds e) in
+         if pred_in_pass2 || pred_is_spilled
+         then Hashtbl.add cls e.tag `Pass2
+         else Hashtbl.add cls e.tag `Pass1))
     nodes;
-
   (* DIF post-multiply: Twiddle Loads (and log3 cmul derivations of them) have
    * no spill-slot ancestors, so the forward pass classifies them as Pass1.
    * But their CONSUMERS may be in Pass2 (cmul on PASS 2 outputs). C block
@@ -1086,11 +1241,14 @@ let classify_passes (sp : spill_info) (nodes : t list) :
   let consumers : (int, t list) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun e ->
-      List.iter
-        (fun p ->
-          let prev = try Hashtbl.find consumers p.tag with Not_found -> [] in
-          Hashtbl.replace consumers p.tag (e :: prev))
-        (preds e))
+       List.iter
+         (fun p ->
+            let prev =
+              try Hashtbl.find consumers p.tag with
+              | Not_found -> []
+            in
+            Hashtbl.replace consumers p.tag (e :: prev))
+         (preds e))
     nodes;
   (* Iterate to fixpoint: a node X may need reclassification once a node it
    * feeds (Y) gets reclassified, in case Y was the reason X stayed Pass1. *)
@@ -1099,23 +1257,23 @@ let classify_passes (sp : spill_info) (nodes : t list) :
     changed := false;
     List.iter
       (fun e ->
-        match Hashtbl.find_opt cls e.tag with
-        | Some `Pass1 when not (is_spilled sp e.tag) ->
-            let cs = try Hashtbl.find consumers e.tag with Not_found -> [] in
-            if
-              cs <> []
-              && List.for_all
-                   (fun c -> Hashtbl.find_opt cls c.tag = Some `Pass2)
-                   cs
-            then begin
-              Hashtbl.replace cls e.tag `Pass2;
-              changed := true
-            end
-        | _ -> ())
+         match Hashtbl.find_opt cls e.tag with
+         | Some `Pass1 when not (is_spilled sp e.tag) ->
+           let cs =
+             try Hashtbl.find consumers e.tag with
+             | Not_found -> []
+           in
+           if
+             cs <> []
+             && List.for_all (fun c -> Hashtbl.find_opt cls c.tag = Some `Pass2) cs
+           then (
+             Hashtbl.replace cls e.tag `Pass2;
+             changed := true)
+         | _ -> ())
       nodes
   done;
-
   cls
+;;
 
 (* ── filter_inline_set_cross_pass ───────────────────────────────────
  * Single source of truth for the spill-path inline-set filter, shared
@@ -1133,36 +1291,44 @@ let classify_passes (sp : spill_info) (nodes : t list) :
  *     must round-trip through the spill array).
  * `nodes` is taken as a parameter rather than recomputed so callers that
  * already hold the reachable set don't topo-sort twice. ─ *)
-let filter_inline_set_cross_pass (assigns : (Expr.elem_ref * t) list)
-    (sp : spill_info) (nodes : t list) : (int, unit) Hashtbl.t =
+let filter_inline_set_cross_pass
+      (assigns : (Expr.elem_ref * t) list)
+      (sp : spill_info)
+      (nodes : t list)
+  : (int, unit) Hashtbl.t
+  =
   let cls = classify_passes sp nodes in
   let all = compute_inline_set assigns in
   let consumers : (int, t list) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun e ->
-      List.iter
-        (fun p ->
-          let prev = try Hashtbl.find consumers p.tag with Not_found -> [] in
-          Hashtbl.replace consumers p.tag (e :: prev))
-        (preds e))
+       List.iter
+         (fun p ->
+            let prev =
+              try Hashtbl.find consumers p.tag with
+              | Not_found -> []
+            in
+            Hashtbl.replace consumers p.tag (e :: prev))
+         (preds e))
     nodes;
   let filtered = Hashtbl.create 64 in
   Hashtbl.iter
     (fun tag () ->
-      if not (is_spilled sp tag) then begin
-        let producer_class = Hashtbl.find_opt cls tag in
-        let consumer_classes =
-          match Hashtbl.find_opt consumers tag with
-          | None -> []
-          | Some cs -> List.map (fun c -> Hashtbl.find_opt cls c.tag) cs
-        in
-        if
-          consumer_classes <> []
-          && List.for_all (fun cc -> cc = producer_class) consumer_classes
-        then Hashtbl.add filtered tag ()
-      end)
+       if not (is_spilled sp tag)
+       then (
+         let producer_class = Hashtbl.find_opt cls tag in
+         let consumer_classes =
+           match Hashtbl.find_opt consumers tag with
+           | None -> []
+           | Some cs -> List.map (fun c -> Hashtbl.find_opt cls c.tag) cs
+         in
+         if
+           consumer_classes <> []
+           && List.for_all (fun cc -> cc = producer_class) consumer_classes
+         then Hashtbl.add filtered tag ()))
     all;
   filtered
+;;
 
 (* ── PROVENANCE STAMP ────────────────────────────────────────────────
  * Every generated file records the exact command line, active env
@@ -1176,62 +1342,85 @@ let provenance_argv : string array option ref = ref None
 
 let provenance_env_overrides () : string =
   let keys =
-    [
-      "VFFT_N1_BLOCK_MIN";
-      "VFFT_NO_REGALLOC";
-      "VFFT_PIN_FORCE";
-      "VFFT_CT_FACTOR";
-      "VFFT_SPLIT_RADIX";
-      "VFFT_COLLECT_M";
-      "VFFT_DEEP_COLLECT";
-      (* Schedule-search / wisdom knobs. These change the emitted C, so the
+    [ "VFFT_N1_BLOCK_MIN"
+    ; "VFFT_NO_REGALLOC"
+    ; "VFFT_PIN_FORCE"
+    ; "VFFT_CT_FACTOR"
+    ; "VFFT_SPLIT_RADIX"
+    ; "VFFT_COLLECT_M"
+    ; "VFFT_DEEP_COLLECT"
+    ; (* Schedule-search / wisdom knobs. These change the emitted C, so the
        * stamp must record them (previously an injected codelet stamped
        * "(none)" — indistinguishable from stock). VFFT_SCHED_DUMP is
        * excluded: it writes side files only, object code is unchanged. *)
-      "VFFT_SCHED_ORDER";
-      "VFFT_SCHED_WISDOM";
-      "VFFT_GH_THRESHOLD";
-      "VFFT_NO_ANYK_TAIL";
+      "VFFT_SCHED_ORDER"
+    ; "VFFT_SCHED_WISDOM"
+    ; "VFFT_GH_THRESHOLD"
+    ; "VFFT_NO_ANYK_TAIL"
     ]
   in
   let act =
     List.filter_map
       (fun k ->
-        match Sys.getenv_opt k with
-        | Some v -> Some (k ^ "=" ^ v)
-        | None -> None)
+         match Sys.getenv_opt k with
+         | Some v -> Some (k ^ "=" ^ v)
+         | None -> None)
       keys
   in
-  match act with [] -> "(none)" | l -> String.concat " " l
+  match act with
+  | [] -> "(none)"
+  | l -> String.concat " " l
+;;
 
 let provenance_block ~(family : string) (lines : string list) : string =
   let b = Buffer.create 1024 in
-  Buffer.add_string b
-    "/* ===================== PROVENANCE =====================\n";
-  Buffer.add_string b
-    (Printf.sprintf " * Generated by: %s\n"
-       (String.concat " "
+  Buffer.add_string b "/* ===================== PROVENANCE =====================\n";
+  Buffer.add_string
+    b
+    (Printf.sprintf
+       " * Generated by: %s\n"
+       (String.concat
+          " "
           (Array.to_list
-             (match !provenance_argv with Some a -> a | None -> Sys.argv))));
-  Buffer.add_string b
+             (match !provenance_argv with
+              | Some a -> a
+              | None -> Sys.argv))));
+  Buffer.add_string
+    b
     (Printf.sprintf " * Env overrides: %s\n" (provenance_env_overrides ()));
   Buffer.add_string b (Printf.sprintf " * Family: %s\n" family);
   List.iter (fun l -> Buffer.add_string b (" * " ^ l ^ "\n")) lines;
-  Buffer.add_string b
-    " * ====================================================== */\n";
+  Buffer.add_string b " * ====================================================== */\n";
   Buffer.contents b
-
+;;
 
 (* Pending-lattice flush: every rendered node definition carries any il_in
    lattice statements its expression triggered, placed by the scheduler's
    own ordering (lazy first-touch). *)
-let render_node_def ?(no_declarator = false)
-    ?(inline_set : (int, unit) Hashtbl.t option = None) ?(twidsq = false)
-    ?(twidsq_n = 0) ?(strided = false) ~(isa : Isa.t) ~(in_place : bool)
-    ~(t1s : bool) (e : t) : string =
+let render_node_def
+      ?(no_declarator = false)
+      ?(inline_set : (int, unit) Hashtbl.t option = None)
+      ?(twidsq = false)
+      ?(twidsq_n = 0)
+      ?(strided = false)
+      ~(isa : Isa.t)
+      ~(in_place : bool)
+      ~(t1s : bool)
+      (e : t)
+  : string
+  =
   let core =
-    render_node_def_core ~no_declarator ~inline_set ~twidsq ~twidsq_n
-      ~strided ~isa ~in_place ~t1s e
+    render_node_def_core
+      ~no_declarator
+      ~inline_set
+      ~twidsq
+      ~twidsq_n
+      ~strided
+      ~isa
+      ~in_place
+      ~t1s
+      e
   in
   let p = il_take_pending () in
   if p = "" then core else p ^ core
+;;
