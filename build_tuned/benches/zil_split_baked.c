@@ -305,15 +305,17 @@ static void run_drv(const double *z0, double *A, double *out, int termt)
  * the code — the production shape if full fusion loses to I-cache bloat) ── */
 static void run_drvT(const double *z0, double *A, double *out, int termt)
 {
-    s0z2s_r4(z0, SP, DD[0], DD[0]);
+    radix4_z_s0s_fwd_avx2(z0, 0, SP, 0, 0, 0, (unsigned long long)DD[0], 0,
+                          (unsigned long long)DD[0], 0, (unsigned long long)DD[0]);
     for (int s = 1; s <= NF - 3; s++) {
         int Rm1 = R[s] - 1;
+        zfn f = (R[s] == 8) ? radix8_z_ms_fwd_avx2 : radix4_z_ms_fwd_avx2;
         const long *gbs = gb[s];
         for (long g = 0; g < GG[s]; g++) {
             long b = gbs[g];
-            const double *tw = twsp[s] + (size_t)g * Rm1 * 8;
-            if (R[s] == 8) mid_s2s_r8(SP + 2 * b, tw, DD[s], DD[s]);
-            else          mid_s2s_r4(SP + 2 * b, tw, DD[s], DD[s]);
+            f(SP + 2 * b, 0, SP + 2 * b, 0, twsp[s] + (size_t)g * Rm1 * 8, 0,
+              (unsigned long long)DD[s], 0, (unsigned long long)DD[s], 0,
+              (unsigned long long)DD[s]);
         }
     }
     {
@@ -321,7 +323,11 @@ static void run_drvT(const double *z0, double *A, double *out, int termt)
         const long *gbs = gb[s];
         for (long g = 0; g < GG[s]; g++) {
             long b = gbs[g];
-            mid_s2z_r8(SP + 2 * b, A + 2 * b, twsp[s] + (size_t)g * Rm1 * 8, DD[s], DD[s]);
+            radix8_z_msz_fwd_avx2(SP + 2 * b, 0, A + 2 * b, 0,
+                                  twsp[s] + (size_t)g * Rm1 * 8, 0,
+                                  (unsigned long long)DD[s], 0,
+                                  (unsigned long long)DD[s], 0,
+                                  (unsigned long long)DD[s]);
         }
     }
     zfn tf = termt ? radix8_z_t2spt_fwd_avx2 : radix8_z_t2sp_fwd_avx2;
