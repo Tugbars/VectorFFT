@@ -576,6 +576,199 @@ Note this run has no wisdom dir → default chains + default t2q, so the bwd
 matter, not a pipeline-vs-legacy difference. Per-kernel A/B (confound-free,
 one allocation) recorded next.
 
+### 2026-07-25 (P6.3) — per-kernel A/B: cascade-equivalent. PORT COMPLETE.
+
+Confound-free A/B (`scratchpad/p6arms/zil_pipe_race.c`): both families linked
+in ONE binary, each hot r8 kernel raced arm-rotated in ONE 4KB allocation,
+canonical discipline (core 2, HIGH_PRIORITY, 32 MB cachebust, best-of-9).
+Four runs, pipeline/legacy ratio:
+
+| kernel | run0 | run1 | run2 | run3 | read |
+|---|---|---|---|---|---|
+| s0s r8    | 1.033 | 0.975 | 1.048 | 1.016 | WASH (crosses 1.0) |
+| msg r8    | 0.956 | 0.986 | 0.981 | 1.009 | WASH, slight pipe edge |
+| sterm r8  | 1.022 | 0.950 | 0.965 | 1.038 | WASH (crosses 1.0) |
+| sterm2 r8 | 0.983 | 1.163 | 1.144 | 0.582 | placement/thermal noise |
+
+s0s/msg/sterm all straddle 1.0 across runs → code-quality-equivalent within
+measurement noise. sterm2's ratio is meaningless as a static A/B: the LEGACY
+arm's absolute time alone swung 1790→3579 ns run-to-run — the documented
+sterm2 placement sensitivity (§4.9993, the reason it's a dual kind with a
+measured per-cell t2q race). The census gives the code-quality truth: sterm2
+pipeline vs legacy is +2 movupd / 214 (0.9%), everything else exact — a 14%
+swing is dynamic, not the kernel. The decision-relevant signal is the
+CASCADE front-door (previous entry), which runs the real t2q pick and lands
+fully in-band (fwd 0.77–0.91×) — no cell regresses.
+
+**VERDICT: the port is functionally complete.** All 11 production kernels
+regenerate through the DAG pipeline BIT-IDENTICAL to the legacy hand emitter
+(31/31 kernel gate + cascade 1e-15 gates), the cascade performs in the
+reference band with the pipeline kernels swapped in, and per-kernel timing
+is cascade-equivalent. The one review finding (flag mutual-exclusion) is
+fixed. Acceptance (parity within ±3% at the cascade level, not a win) is
+MET.
+
+### 2026-07-25 — TRANCHE 2/3 (bailey2 + solo): scope finding, direction PENDING.
+
+Investigated bailey2 before building (agent cross-map + direct read). It is
+a fundamentally different situation from the cascade:
+
+- **zil-bailey2 is PURE-BENCH** — zero `src/core` refs to `n1t`/`n1b2`/`t2s`
+  (only the 12 build_tuned/benches drivers). Never promoted to production.
+- **Its ALGORITHM is already pipeline-hosted.** `oop_plan.h` ships
+  **BAILEY2** (split-plane four-step: codelet_oop `n1_oop` leaf + `t1p` mid,
+  split Qr/Qi, :696) and **BAILEY2V** (K=1 interleaved-z→z four-step,
+  `execute_fwd_il`/`2p_il` :799–827) — both wired through vfft.h, both
+  codelet_oop-generated. Same math as zil-bailey2.
+- **codelet_oop's IL edges (il_in/il_out) are boundary-only on a SPLIT
+  kernel** (DEINT→split body→REINT). That IS the design's split-body+z-edge
+  default, and it is exactly what BAILEY2V already does. codelet_oop has NO
+  VTW2/BYTW2 — its twiddle is unconditionally split CmulRe/CmulIm.
+- **zil-bailey2's ONLY unique contribution is the fully-interleaved BODY**
+  (BYTW2/RotNI, no split-boundary conversions). The split pipeline provably
+  CANNOT emit it — codelet_zil.ml:10-15 states the real-valued backend
+  "cannot be re-rendered interleaved... a separate, small complex-vector
+  backend." Pipeline-hosting it = building a packed-complex node set
+  (RotNI/paired-rotation/BYTW2/CTw) through algsimp/schedule/emit — the
+  "expensive fork" §2 warned against. **SOLO (tranche 3) shares this exact
+  fork** (monolithic interleaved z_n1, same backend).
+
+Contrast with the cascade: it ported cleanly precisely because its kernels
+were ALREADY split-real (block-split interior). Bailey2's kernels are
+interleaved throughout.
+
+**DIRECTION SET (user, 2026-07-25) — build the interleaved-complex backend
+(option C). CORRECTS my earlier "already covered" framing.** Full IL is a
+first-class PRODUCT layout, not a perf variant:
+- **MKL and FFTW default to interleaved** — users expect it; split is the
+  niche that needs justifying.
+- **IL pays NO R2C/C2R tax** — a full-IL path does real transforms without
+  the split-plane conversion the hybrid pays somewhere.
+- **IL makes K=1 (single-transform) smoother.**
+So BAILEY2V (IL boundary, SPLIT interior) is NOT the full-IL offering — it
+still carries split machinery. The zil interleaved-body family (BYTW2/RotNI,
+interleaved throughout) IS the full-IL layout we want to give users, and the
+original directive stands: generate it through schedule.ml/algsimp/emit,
+replacing codelet_zil's standalone hand-scheduled raw-string emission. The
+fork is justified by delivering a layout users want, not by beating split on
+speed. Tranche 2 (bailey2) + 3 (solo) are the small/mid-N pieces of this
+full-IL offering (cascade covers ≥2048).
+
+**Approach (see §11):** the zx IR (codelet_zil In/Add/Sub/RotNI/Fmadd/CTw)
+is already a complex-vector DAG; the work is routing it through the SHARED
+SU scheduler + a new interleaved emit rendering mode (packed-complex
+lowering: add/sub→vector add/sub, ×±i→RotNI permute+xor, cmul→BYTW2),
+instead of hand scheduling. Feasibility hinges on how node-kind-agnostic
+schedule.ml/algsimp are — investigated next.
+
 **Cutover status:** the swap is STAGED in the working tree for the user's
 review/commit; not committed by the assistant. Rollback = `git checkout --
-src/dag-fft-compiler/codelets/zil/avx2/` or regen from `--z-*`.
+src/dag-fft-compiler/codelets/zil/avx2/` or regen from `--z-*`. Not re-run
+(orthogonal to the port — the swap changes kernel SOURCE, not runtime
+dispatch): `zsplit_wis_gate` (the t2q calibrate→wisdom machinery lives in
+vfft.c, untouched, and races two present bit-identical terminators) and the
+avx512 compile-gate R4 (deferred to EPYC hardware, §5). Tranches 2–3
+(bailey2, solo) remain per §1c/§8.
+
+---
+
+## 11. FULL-IL BACKEND design (tranche 2/3 — interleaved-complex)
+
+GOAL (user, 2026-07-25): a FULL interleaved-complex (IL) FFT path as a
+first-class product layout — MKL/FFTW default to IL, it pays no R2C/C2R tax,
+and it makes K=1 smoother. The zil interleaved-body family (bailey2 four-step
++ solo monolithic) IS that layout. The directive: generate it through the
+SHARED pipeline machinery instead of codelet_zil's standalone hand-scheduled
+raw strings, for maintainability + reach (AVX-512).
+
+### 11.1 FEASIBILITY VERDICT (coupling audit, 2026-07-25) — RESOLVED
+
+Two architectures were on the table; the audit picked the answer:
+
+- **(b) merge into `Ir.node_kind`** = REPO-WIDE cascade. `lib/dune` has no
+  `(flags)` stanza → dune dev profile → non-exhaustive `match` is FATAL.
+  The NK_Plus precedent shows **~34–36 arm sites per added kind** across 7
+  modules; ~3–5 packed kinds ⇒ **150–180 arm edits**. Cost centers are
+  `fma_passes.ml` (12) + `simplify.ml` (9) — the real-valued passes a complex
+  kernel NEVER runs, yet must be edited (and kept correct) just to compile.
+  `of_expr` (ir.ml:788) is hardwired to split-complex cmul detection, so a
+  packed DAG wouldn't even flow through it. VERDICT: **rejected** — high cost,
+  ongoing burden, zero benefit for the interleaved family.
+
+- **(a) keep the complex IR separate; reuse ONLY the scheduler + Isa emit** =
+  LOCALIZED. `Schedule.su_schedule`/`su_schedule_subset` are generic in the
+  node payload — the core loop is pure `preds`-based dataflow; the ONLY
+  kind-specific reads are `node_latency` (schedule.ml:302) and
+  `compute_su_number` (:387). So the shared SU scheduler (STARVE/RETIRE
+  ordering, GH pressure switch, wisdom injection) is reusable by giving the
+  complex IR a `preds`/`latency` adapter (~40 lines), with ZERO touches to the
+  150-site cascade. `Isa.add_pd/sub_pd/mul_pd/fmadd_pd/fnmadd_pd` (isa.ml:169-
+  223) are layout-agnostic strings — reusable as-is; only 2–3 permute/xor
+  helpers are missing from isa.ml. VERDICT: **chosen.**
+
+**This revises "make codelet_zil part of the machinery" in practice:** the
+valuable, reusable shared piece is the SCHEDULER (schedule.ml) + the Isa emit
+layer — NOT algsimp/dft, which are real-valued/split by construction and
+unwanted for interleaved kernels (CSE/sharing is free via hash-cons either
+way). So the port shares what helps (scheduling quality + AVX-512 width
+parameterization) and keeps the complex IR + complex math layer (zx's dft_z)
+separate — the surgical option, and the one that actually honors the intent
+without a counterproductive IR merger.
+
+### 11.2 What the port actually is (option a, concrete)
+
+The existing zx IR (codelet_zil.ml:53-60: `In|Add|Sub|RotNI|Fmadd|Fnmadd|CTw`)
+is already a clean complex-vector DAG that hash-conses. The port replaces its
+two weak spots — hand-scheduling and raw-string emission — with shared
+machinery:
+
+1. **`preds`/`latency` adapter on zx** (~40 lines). Either functorize
+   schedule.ml over a tiny `(PREDS + COST)` signature (cleaner; one scheduler,
+   two IRs — best honors "use schedule.ml") or lift the SR loop verbatim.
+   Gives zx the SU scheduler + GH + wisdom, replacing its hand A/B-interleave
+   and the sterm2-style phases (which tranche 1 showed the SU scheduler
+   reproduces well, and are placement-luck-fragile by hand).
+2. **Isa-helper emission**: rewrite zx's lowering to build op strings via
+   `Isa.*` (width-parametric → AVX-512 reach) instead of literal `_mm256_`.
+   Reuse add/sub/mul/fmadd/fnmadd as-is; add to isa.ml:
+   - `permute_pd` (the 0x5 re/im swap — CFlip),
+   - a general `xor_pd` against a named mask (RotNI's `_M_IM` sign flip; the
+     current xor_pd is contractually pinned to `-0.0`, isa.ml:187),
+   - emit-preamble for `_M_IM` + the VTW2/VLIT const vectors.
+3. **Interleaved edges + driver** (mirrors codelet_zsplit's shape): packed z
+   load/store `in_z[2*(b*Gs + j*Ls)]` (2 complex/vec), the four-step leaf's
+   corner-turn store, and the 11-arg z ABI. math (zx dft_z) → hash-cons →
+   su_schedule (via adapter) → Isa-emit.
+
+Nothing touches Ir/algsimp/dft. The complex math layer (dft_z DIT-2 +
+r8_body) is a direct transcription of the settled, race-gated zx algorithm.
+
+### 11.3 Phasing (NO CODE until user go-ahead)
+
+- **CIL-0**: the scheduler adapter (functor or lifted SR loop) + the 2–3
+  isa.ml helpers. Prove the shared scheduler drives a zx DAG (schedule one
+  trivial kernel, diff instruction order sanity).
+- **CIL-1 (solo, the proof kernel)**: r8 `z_n1` monolithic, const twiddles
+  (CTw) — the simplest interleaved kernel. zx dft_z/r8_body → adapter →
+  su_schedule → Isa-emit. Gate 1e-15 (or bit-exact) vs legacy
+  `radix8_z_n1_fwd_avx2`. Proves the whole IL-through-shared-scheduler path.
+- **CIL-2 (solo radices)**: r4/16/32/64; blocked variants.
+- **CIL-3 (bailey2 leaf)**: n1t/n1b2 corner-turn store.
+- **CIL-4 (bailey2 mid)**: t2 family — LOAD-flavor BYTW2 (VTW2 packed table)
+  + strided/tiled edges; the t2 flag zoo → config axes.
+- **CIL-5**: regression (bit-exact vs legacy per kernel) + paced race vs
+  legacy IL kernels; wire a runtime driver if promoting to production.
+
+### 11.4 Decisions for the user (before CIL-0)
+
+1. **Scheduler reuse mechanism**: functorize schedule.ml over `(PREDS+COST)`
+   (cleaner, one scheduler, small refactor of a 1713-line file) vs. lift the
+   ~40-line SR loop into the complex backend (faster, mild duplication).
+   Recommend: functorize — it's the literal "goes through schedule.ml."
+2. **Where the complex backend lives**: extend codelet_zil.ml in place
+   (replace its hand-schedule/raw-emit internals) vs. a new codelet_cil.ml
+   that supersedes it. Recommend: refactor codelet_zil in place so there's
+   one interleaved emitter, not two.
+3. **Scope now**: solo first (CIL-1, the clean proof) then bailey2, or
+   bailey2-mid-first (the t2 family, the actual four-step champion). Recommend
+   solo-first — smallest kernel, no twiddle-table plumbing, proves the path.
