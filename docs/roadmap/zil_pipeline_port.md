@@ -377,3 +377,205 @@ dft.ml + ~30 in gen_main.ml + render_load cases; zero changes to
 algsimp/schedule/regalloc/pipeline. Tranches 2–3 add config axes and twiddle
 renderings to the same module, not new machinery — the t2 flag zoo becomes
 config fields.
+
+---
+
+## 9. IMPLEMENTATION LOG
+
+### 2026-07-25 — P0–P4 built and gated in one pass. Headline: BIT-IDENTITY.
+
+Every pipeline-emitted kernel so far produces **exactly** the legacy kernel's
+output (max|d| = 0.0 on random inputs, all cells of the per-kernel gate) —
+stronger than the ≤1e-15 the plan asked for. The algsimp cascade + SU
+scheduler reproduce the hand kernels' FMA shapes and effective summation
+order at these radices. 10 of the 11 production kernels are done; only
+sterm2 (P5) remains.
+
+| phase | scope | gate result |
+|---|---|---|
+| R0 | legacy regen determinism | PASS — 9/11 byte-identical; 2 fwd s0s files differ only by later-added unused macros (TR4/WPROD/_INV in the shared pack); committed files predate them, compiled code unchanged |
+| P0 | dft.ml: `TP_PowW1` + `~table_conj` | `bin/dbg_zil_math.ml` OVERALL PASS (R=4/8: slot-0-only census, fwd vs direct ≤3.3e-15, roundtrip = N·x ≤1.8e-15, double-conj sentinel fails as required) |
+| P1 | ms/msb r4+r8 (`ZBlockSplit` edges + `SplatPair` tw render) | BIT-IDENTICAL ×4; scalar ≤3.6e-15; roundtrip ≤1.3e-15 |
+| P2 | msg/msgb (always_inline `_zsg` body + group-loop wrapper, exact legacy bumps) | BIT-IDENTICAL ×4 (multi-group, in-place, cursor `+ (R-1)·8`) |
+| P3 | s0s/s0sb (`E_z` DEINT/REINT edges) | BIT-IDENTICAL ×4; roundtrip exact |
+| P4 | sterm/stermb (`E_blocks` TR4 edge, `TP_PowW1` squaring tree ≡ legacy WPROD chain, OLs comb) | BIT-IDENTICAL ×2; scalar ≤7e-15; roundtrip ≤5.3e-15 |
+
+R1 object-level census (gcc 15.2 -O3 -mavx2 -mfma, objdump class counts):
+- **ms8 fwd**: arithmetic EXACT (22 add / 22 sub / 22 FMA / 14 mul both);
+  pipeline **spills LESS** (74 vs 86 vmovupd, −12) — SU order helps gcc here.
+- **ms8 bwd**: arithmetic equal (one add rendered as vxorpd-neg); +3 movupd.
+- **sterm fwd**: arithmetic EXACT (34 FMA / 26 mul / 22 / 22) and the
+  **port-5 shuffle profile EXACT** (8 vperm2f128 + 16 vpermpd + 32 vunpck);
+  pipeline +13 vmovupd (hand phase order tighter in the terminator) —
+  R3-race territory, worst case absorbed by the t2q pick.
+
+New/changed files (all UNCOMMITTED, user reviews):
+- `generator/lib/codelet_zsplit.ml` (NEW, ~450 lines): kinds ms/msb/msg/
+  msgb/s0s/s0sb/sterm/stermb; edges `E_planes`/`E_z`/`E_blocks` with stride
+  names (Ls/OLs); TR4 helper; computed (void) lists; frozen 11-arg ABI.
+- `generator/lib/dft.ml`: `TP_PowW1` policy (squaring-tree derivation from
+  slot 0) + `~table_conj` on `dft_expand_twiddled`.
+- `generator/lib/emit_state.ml` + `emit_render.ml`: `current_tw_zsplit`
+  render mode (`tw_re[off + j·2VW]`, sin half `+VW`; tw_im slot dead).
+  Default None — legacy families byte-identical (verified via R0 re-diff).
+- `generator/lib/dune`, `bin/dune`, `bin/dbg_zil_math.ml` (NEW),
+  `gen_main.ml`: `--zp-{ms,msb,msg,msgb,s0s,s0sb,sterm,stermb}` flags →
+  `Codelet_zsplit.emit_codelet`; legacy `--z-*` untouched.
+- Gate harness: scratchpad `p1gate/gate.c` (30 checks, OVERALL PASS) —
+  to be promoted to `build_tuned/benches/zil_pipe_gate.c` at P6.
+
+### 2026-07-25 (later) — P5 DONE. All 11 production kernels now pipeline-hosted.
+
+**sterm2** built as designed: `prepare ~two_inst:true` concatenates two
+shifted DAG instances (Input/Output +R slots, Twiddle +1 slot — instance
+B's packed-w¹ record lands at `tw_re[2k+8]` for free), SU braids them; the
+emitted function shares one `k` cursor across the `k+=8` main loop and the
+baseline-shaped 4-column tail (a second, 1-instance DAG prepared AFTER the
+main body is rendered — Algsimp.reset sequencing, MODULE CARD GOTCHA 2).
+`emit_col_loop` is now parameterized (`~open_line ~ninst`); all three edges
+handle instance offsets. Gate (count=60 exercises main+tail): pipeline
+sterm2 **BIT-IDENTICAL to pipeline sterm AND to legacy sterm2** (0.0/0.0).
+
+R1 -O3 census sterm2: **near-perfect** — every arithmetic and shuffle class
+exact (66/66 add, 66/66 sub, 78/78 mul, 102/102 FMA, 24 perm2f128 + 48
+permpd + 96 unpck identical), vmovupd 214 vs 216 (+2, noise). The SU braid
+over the 2-instance DAG reproduces the hand 5-phase template's live-set
+behavior — the 1-quad +13-movupd delta vanishes at 2-quad. Strong prior for
+the R3 race; the per-cell t2q pick remains the arbiter either way.
+
+Remaining:
+- **P6**: full-cascade R2 through zsplit.h with pipeline .c files swapped
+  in, R3 paced race per canonical discipline, then the cutover of §7.
+  The kernel-level gate is already promoted to
+  `build_tuned/benches/zil_pipe_gate.c` (self-documenting header: arm
+  regen commands + build line).
+
+---
+
+## 10. P6 RUNBOOK (handoff — fully specified, no session context needed)
+
+Everything below is procedural; the architecture work is done and gated.
+
+**Build/regen discipline (unchanged, from memory + this doc):**
+- Generator: WSL, `cd src/dag-fft-compiler/generator`, `DUNE_CACHE=disabled
+  /home/tugbars/.opam/5.2.0/bin/dune build --root <ABS PATH> bin/gen_radix.exe`.
+  NEVER bare `dune build`.
+- Pipeline kinds need `--isa avx2 --uarch raptor_lake_avx2 --emit-c`
+  (default isa is avx512 → the VW gate fails the run, by design).
+- Gate exes run by hand need `C:\mingw152\mingw64\bin` AND the MKL bin dir
+  on PATH (else 0xC0000135), `MKL_THREADING_LAYER=SEQUENTIAL`,
+  `MKL_NUM_THREADS=1` for any MKL-referencing bench.
+- Any compile of zsplit kernels outside build.py: add `-mavx2 -mfma`
+  (msg `_zsg` bodies carry no per-function target attribute).
+
+**P6.1 — kernel gate re-run (sanity):** regenerate arms per the
+zil_pipe_gate.c header, compile, run. Expected: 31/31 PASS, all
+legacy-vs-pipeline lines 0.0 (bit). Any nonzero after a generator change =
+STOP, diff the emitted C vs the frozen reference intent (§9 tables).
+
+**P6.2 — cascade R2 (swap-in):** regenerate the 11 production files WITH
+THE PIPELINE EMITTER under their production filenames into
+`src/dag-fft-compiler/codelets/zil/avx2/` (keep the legacy originals
+aside for instant rollback — they regenerate from `--z-*` flags anyway):
+`radix{4,8}_z_s0s_avx2.c` ← `--zp-s0s`, `radix{4,8}_z_s0s_bwd_avx2.c` ←
+`--zp-s0sb`, `radix{4,8}_z_msg_avx2.c` ← `--zp-msg`,
+`radix{4,8}_z_msg_bwd_avx2.c` ← `--zp-msgb`, `radix8_z_sterm_avx2.c` ←
+`--zp-sterm`, `radix8_z_sterm2_avx2.c` ← `--zp-sterm2`,
+`radix8_z_sterm_bwd_avx2.c` ← `--zp-stermb`. Then rebuild via
+build_tuned/build.py and run, unchanged: the zsplit gate benches,
+`zsplit_wis_gate.c` (calibrate→wisdom→create round trip), and the API
+1e-15 gates 2048–16384 fwd+bwd. Expected: identical results to the legacy
+build — the kernels are bit-identical, so any deviation is a build/harness
+problem, not a numerics one.
+
+**P6.3 — R3 paced race:** canonical discipline (pin logical core 2 = mask
+4, HIGH_PRIORITY_CLASS, 32 MB cachebust, arm rotation, Sleep pacing,
+best-of-9; model on bench_1d_vs_mkl.c / zil_sterm_pipe.c). Two levels:
+(a) per-kernel legacy-vs-pipeline in ONE binary/allocation; (b) front-door
+vfft.h at 2048/4096/8192/16384 fwd+bwd vs the §4.9994 reference numbers
+(fwd 0.78–0.89× MKL, bwd 2048 ≥ 1.0×). Acceptance: within ±3% per cell.
+Since the kernels are bit-identical, deltas can come ONLY from code
+placement/alignment — treat like §4.9993 (measured, not reasoned; the
+t2q race already covers the sterm/sterm2 choice per cell). Known static
+prior: sterm 1-quad has +13 vmovupd vs legacy at -O3, sterm2 is +2, ms is
+−12 — expect a wash overall.
+
+**P6.4 — cutover:** after green R2+R3, the pipeline emitter becomes the
+regen source for the 11 production files; legacy `--z-*` split kinds stay
+callable in codelet_zil.ml (the zx kernel family still needs it for
+tranches 2–3). Update §9 with the race table. User commits everything.
+
+### 2026-07-25 (P6 in progress) — review finding fixed; cascade swap staged.
+
+**Adversarial review (3 lenses + refutation verify).** Ran to partial
+completion — 3 of 11 agents finished, 8 errored on a Fable-5 monthly spend
+limit, so the `ocaml-robustness` and `shared-state` lenses did NOT fully
+run. The `wiring` lens produced ONE finding, independently VERIFIED
+(refuted=false):
+
+- **CONFIRMED (medium) — no --zp/--z mutual-exclusion guard.** The pipeline
+  (`--zp-*`) and legacy (`--z-*`) families emit byte-identical symbol names,
+  and gen_main's dispatch is fixed-priority (zp wins). Passing both would
+  silently substitute the pipeline kernel under the legacy name → an A/B
+  regen that concatenates a legacy-z base with a zp variant compares
+  pipeline-vs-pipeline for a FALSE parity verdict, exactly in the
+  sterm/sterm2 family where the t2q pick turns on ±5% placement luck. No
+  numeric gate can catch it (both emitters are bit-identical).
+  **FIX (gen_main.ml, before dispatch):** `if zp_kind<>"" && (z_native ||
+  k1_mono || oop) then failwith`. Verified: conflict → Fatal error + ZERO
+  bytes on stdout (an A/B `> file.c` gets an empty file → loud link error,
+  not a silent pipeline-vs-pipeline compare); each family alone still emits
+  correctly. (Note: gen_radix.exe exit code stays 0 on ANY error under the
+  WSL-runs-Windows-exe interop — a pre-existing property of every error
+  path, not this guard; the empty-stdout + Fatal-error message is the loud
+  signal scripts/humans key on.)
+
+The two incomplete lenses were reasoned through directly (author review,
+not machine-verified): (a) OCaml robustness — sterm2's two prepares capture
+`assigns`/`scheduled`/`inline_set`/`re_tag` freshly per `emit_col_loop`
+call; main and tail `t<tag>` locals live in separate C block scopes (no
+collision despite both restarting tags at Algsimp.reset); `Array.make
+nslots` sizes to `2·radix` for two_inst matching the Output slot range;
+`Fun.protect` reset runs per body. (b) Shared-state — `current_tw_zsplit`
+defaults None (R0 re-diff proves legacy families byte-identical), the `Some`
+is set INSIDE the protected thunk so a pre-set throw can't leak it, and the
+reset runs on the exception path. Both empirically corroborated by the
+bit-identical gates. Residual risk: the un-run machine lenses could surface
+something these two paragraphs miss — acceptable given 31/31 bit-identity,
+but worth a re-run if the spend limit clears.
+
+### 2026-07-25 (P6.1–P6.2) — kernel gate re-confirmed; 11 files swapped in.
+
+- **P6.1:** all 30 arms regenerated fresh (WSL, clean /tmp), committed
+  `zil_pipe_gate.c` recompiled + run → **31/31 PASS, every
+  legacy-vs-pipeline line 0.0**. Determinism + bit-identity hold from a cold
+  regen.
+- **P6.2 (swap staged):** the 11 production files in `codelets/zil/avx2/`
+  overwritten with pipeline output under identical names (symbol-match
+  verified 1:1 first; legacy backed up to scratchpad AND regenerable from
+  `--z-*`). `git diff --stat`: 11 files, +1777/−1590 (source restructure;
+  object code bit-identical). `.obj/avx2` cache cleared. Cascade-level gate
+  run: see next entry.
+
+**Cascade R2 + front-door R3 (pipeline kernels swapped in).** Codelet lib
+rebuilt from the 11 swapped files (688 objects compiled clean — first
+full-build compile-test of the pipeline output). `zsplit_api_gate` through
+vfft.h with the real zsplit.h twiddle tables:
+
+| N | fwd(drev) relerr | roundtrip relerr | fwd vs MKL | bwd vs MKL |
+|---|---|---|---|---|
+| 2048  | 2.6e-15 | 1.1e-15 | 0.91 | 0.89 |
+| 4096  | 3.3e-15 | 1.2e-15 | 0.77 | 0.74 |
+| 8192  | 4.5e-15 | 1.1e-15 | 0.82 | 0.73 |
+| 16384 | 5.5e-15 | 1.4e-15 | 0.88 | 0.84 |
+
+All gates PASS; timings in the §4.9994 reference band (fwd 0.78–0.89×) — no
+regression from the swap (expected: numerically bit-identical kernels).
+Note this run has no wisdom dir → default chains + default t2q, so the bwd
+2048 = 1.01 WIN (calibrated) doesn't show; that's a wisdom-population
+matter, not a pipeline-vs-legacy difference. Per-kernel A/B (confound-free,
+one allocation) recorded next.
+
+**Cutover status:** the swap is STAGED in the working tree for the user's
+review/commit; not committed by the assistant. Rollback = `git checkout --
+src/dag-fft-compiler/codelets/zil/avx2/` or regen from `--z-*`.
