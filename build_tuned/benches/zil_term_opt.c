@@ -39,6 +39,10 @@ D(radix4_z_msz_fwd_avx2) D(radix8_z_msz_fwd_avx2)
 D(radix8_z_t2sp_fwd_avx2) D(radix8_z_t2spt_fwd_avx2)
 D(radix8_z_t2sq_fwd_avx2) D(radix8_z_t2sqt_fwd_avx2)
 D(radix8_z_sterm_fwd_avx2)   /* EMITTED promotion of the hand t2sps below */
+/* bwd twins (INV butterflies, conj tables table-side, mirrored geometry) */
+D(radix4_z_s0s_bwd_avx2) D(radix8_z_s0s_bwd_avx2)
+D(radix4_z_ms_bwd_avx2)  D(radix8_z_ms_bwd_avx2)
+D(radix8_z_sterm_bwd_avx2)
 
 /* ── hand t2sps: split-input z-output terminator, radix 8, 4 cols/iter ── */
 #define TR4(a0,a1,a2,a3, t0,t1,t2,t3) do {                            \
@@ -163,6 +167,7 @@ static int N, NF;
 static int R[8];
 static long DD[8], GG[8];
 static double *twsp[8], *twp1, *twq;
+static double *twspb[8], *twqb;    /* CONJ tables for the bwd cascade */
 static long *gb[8];
 static double *SP;
 
@@ -193,6 +198,7 @@ static void build_tables(void)
         int Rm1 = R[s] - 1;
         long M = (long)N / DD[s];
         twsp[s] = (double *)_mm_malloc((size_t)GG[s] * Rm1 * 8 * 8, 64);
+        twspb[s] = (double *)_mm_malloc((size_t)GG[s] * Rm1 * 8 * 8, 64);
         gb[s] = (long *)malloc((size_t)GG[s] * sizeof(long));
         for (long g = 0; g < GG[s]; g++) {
             gb[s][g] = base_of(g, s, R, DD);
@@ -200,7 +206,11 @@ static void build_tables(void)
             for (int l = 1; l < R[s]; l++) {
                 double a = -TAU * (double)(((long)l * brev) % M) / (double)M;
                 double *sp2 = twsp[s] + ((size_t)g * Rm1 + (l - 1)) * 8;
-                for (int j = 0; j < 4; j++) { sp2[j] = cos(a); sp2[4 + j] = sin(a); }
+                double *sb2 = twspb[s] + ((size_t)g * Rm1 + (l - 1)) * 8;
+                for (int j = 0; j < 4; j++) {
+                    sp2[j] = cos(a); sp2[4 + j] = sin(a);
+                    sb2[j] = cos(a); sb2[4 + j] = -sin(a);   /* conj */
+                }
             }
         }
     }
@@ -208,10 +218,13 @@ static void build_tables(void)
         long cols = (long)N / 8, pairs = cols / 2;
         twp1 = (double *)_mm_malloc((size_t)pairs * 64, 64);
         twq = (double *)_mm_malloc((size_t)cols * 16, 64);
+        twqb = (double *)_mm_malloc((size_t)cols * 16, 64);
         for (long k = 0; k < cols; k++) {
             double a = -TAU * (double)(brev_prefix(k, NF - 1, R) % N) / (double)N;
             twq[2 * (k & ~3L) + (k & 3L)] = cos(a);
             twq[2 * (k & ~3L) + 4 + (k & 3L)] = sin(a);
+            twqb[2 * (k & ~3L) + (k & 3L)] = cos(a);
+            twqb[2 * (k & ~3L) + 4 + (k & 3L)] = -sin(a);   /* conj */
         }
         for (long p = 0; p < pairs; p++) {
             double a0 = -TAU * (double)(brev_prefix(2 * p, NF - 1, R) % N) / (double)N;
@@ -264,6 +277,32 @@ static void run_arm(int arm, int termt, const double *z0, double *A, double *out
     else          tf = termt ? radix8_z_t2spt_fwd_avx2 : radix8_z_t2sp_fwd_avx2;
     tf(A, 0, out, 0, twp1, 0, 1, 8, (unsigned long long)(N / 8), 1,
        (unsigned long long)(N / 8));
+}
+
+/* INVERSE cascade: z drev comb -> natural z, x N. Mirror pipeline:
+ * stermb (comb -> split) -> msb stages in REVERSE order (conj tables) ->
+ * s0sb (split -> z). Roundtrip contract: bwd(fwd(x)) = N*x. */
+static void run_bwd(const double *S, double *out)
+{
+    radix8_z_sterm_bwd_avx2(S, 0, SP, 0, twqb, 0, 0, 0,
+                            (unsigned long long)(N / 8), 0,
+                            (unsigned long long)(N / 8));
+    for (int s = NF - 2; s >= 1; s--) {
+        int Rm1 = R[s] - 1;
+        zfn f = (R[s] == 8) ? radix8_z_ms_bwd_avx2 : radix4_z_ms_bwd_avx2;
+        const long *gbs = gb[s];
+        for (long g = 0; g < GG[s]; g++) {
+            long b = gbs[g];
+            f(SP + 2 * b, 0, SP + 2 * b, 0, twspb[s] + (size_t)g * Rm1 * 8, 0,
+              (unsigned long long)DD[s], 0, (unsigned long long)DD[s], 0,
+              (unsigned long long)DD[s]);
+        }
+    }
+    {
+        zfn f = (R[0] == 8) ? radix8_z_s0s_bwd_avx2 : radix4_z_s0s_bwd_avx2;
+        f(SP, 0, out, 0, 0, 0, (unsigned long long)DD[0], 0,
+          (unsigned long long)DD[0], 0, (unsigned long long)DD[0]);
+    }
 }
 
 static double now_ms(void)
@@ -336,6 +375,20 @@ int main(int argc, char **argv)
                (err / mag < 1e-11) ? "PASS" : "FAIL");
         if (err / mag >= 1e-11) return 1;
     }
+    {   /* ROUNDTRIP gate: sterm-arm fwd -> bwd cascade == N*x */
+        run_arm(2, termt, z0, A, z);           /* z = S (drev comb) */
+        run_bwd(z, A);                          /* A = N*x expected */
+        double err = 0, m2 = 0;
+        for (long i = 0; i < 2 * (long)N; i++) {
+            double d = fabs(A[i] - (double)N * z0[i]);
+            if (d > err) err = d;
+            double g = fabs((double)N * z0[i]);
+            if (g > m2) m2 = g;
+        }
+        printf("GATE rtrip(bwd) relerr=%.3e %s\n", err / m2,
+               (err / m2 < 1e-11) ? "PASS" : "FAIL");
+        if (err / m2 >= 1e-11) return 1;
+    }
 
     DFTI_DESCRIPTOR_HANDLE h = NULL;
     DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
@@ -368,6 +421,26 @@ int main(int argc, char **argv)
     printf("sterm (t2sps, all-ms)  %9.1f ns   vsMKL %.2f   vs champ %.2f\n",
            best[2], best[3] / best[2], best[0] / best[2]);
     printf("MKL-IL                 %9.1f ns\n", best[3]);
+
+    {   /* bwd timing: inverse cascade vs DftiComputeBackward (paced best-of-5) */
+        double bb = 1e18, bm = 1e18;
+        run_arm(2, termt, z0, A, z);            /* fresh S in z */
+        for (int t = 0; t < 5; t++) {
+            cachebust(); Sleep(150);
+            for (int w = 0; w < 6; w++) run_bwd(z, A);
+            double t0 = now_ms();
+            for (int i = 0; i < reps; i++) run_bwd(z, A);
+            double ns = (now_ms() - t0) * 1e6 / reps;
+            if (ns < bb) bb = ns;
+            for (int w = 0; w < 6; w++) DftiComputeBackward(h, A);
+            t0 = now_ms();
+            for (int i = 0; i < reps; i++) DftiComputeBackward(h, A);
+            ns = (now_ms() - t0) * 1e6 / reps;
+            if (ns < bm) bm = ns;
+        }
+        printf("bwd cascade            %9.1f ns   vsMKLbwd %.2f\n", bb, bm / bb);
+        printf("MKL-IL bwd             %9.1f ns\n", bm);
+    }
     printf("DONE\n");
     return 0;
 }
