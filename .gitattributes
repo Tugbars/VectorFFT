@@ -36,6 +36,13 @@ src/dag-fft-compiler/generator/cost_model/** linguist-vendored
 
 # JIT runtime-codegen OUTPUT (machine-generated .c/.dll codelets emitted at
 # runtime). Visible/browsable in the repo, but excluded from the language bar —
-# same rationale as the static codelets. Hand-written JIT tooling (emit_*.py,
-# prelude/runtime headers) is NOT excluded, so it still counts.
+# same rationale as the static codelets.
 src/dag-fft-compiler/jit/generated/** linguist-generated
+
+# The language bar represents the shipped library = src/core. Everything else
+# C-shaped is scaffolding: build-system probes, the public-header shim,
+# generator-side tooling, and the JIT prelude/runtime C surface.
+cmake/**                                  linguist-vendored
+include/**                                linguist-vendored
+src/dag-fft-compiler/generator/scripts/** linguist-vendored
+src/dag-fft-compiler/jit/**               linguist-vendored
