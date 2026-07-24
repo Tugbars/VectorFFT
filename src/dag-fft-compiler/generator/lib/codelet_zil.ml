@@ -385,8 +385,9 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
  *   (cos-first, sign-folded, per-128-bit-lane = per-column) — single forward
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
 let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
-    ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(vec_width : int)
-    ~(radix : int) ~(twiddled : bool) : string =
+    ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(const_tw : bool)
+    ~(pow_tw : bool) ~(vec_width : int) ~(radix : int) ~(twiddled : bool) :
+    string =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
   if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
     failwith "codelet_zil: radix must be one of 4/8/16/32/64";
@@ -400,11 +401,17 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     failwith "codelet_zil: post_tw (t2d) implies a twiddled kernel";
   if trans_st && (twiddled || strided || strided_st) then
     failwith "codelet_zil: trans_st (n1t corner-turn stores) is an n1 variant";
+  if const_tw && (not twiddled || post_tw || pow_tw || blocked || blocked2) then
+    failwith "codelet_zil: const_tw (t2c) is a plain-t2 variant";
+  if pow_tw && (not twiddled || not strided || post_tw || blocked || blocked2) then
+    failwith "codelet_zil: pow_tw (t2sp) is a strided-t2 (terminator) variant";
   let kind =
     (if twiddled then if post_tw then "t2d" else "t2" else "n1")
+    ^ (if const_tw then "c" else "")
     ^ (if blocked2 then "b2" else if blocked then "b" else "")
     ^ (if strided then "s" else "")
     ^ (if strided_st then "s" else "")
+    ^ (if pow_tw then "p" else "")
     ^ if trans_st then "t" else ""
   in
   let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" radix kind in
@@ -426,11 +433,22 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
         #include <immintrin.h>\n\
         #include <stddef.h>\n\n\
         static const __m256d _M_IM = { 0.0, -0.0, 0.0, -0.0 }; /* negate im lanes */\n"
-       (if twiddled then "t2 (streamed VTW2 twiddles, BYTW2 apply)"
+       (if twiddled then
+          if const_tw then "t2c (GROUP-CONSTANT VTW2 record set, L1-hot, BYTW2 apply)"
+          else if pow_tw then
+            "t2sp (w^1 VTW2 stream + in-register leg powers, BYTW2 apply)"
+          else "t2 (streamed VTW2 twiddles, BYTW2 apply)"
         else "n1 leaf (twiddle-free)")
        (if twiddled then
-          "\n * tw_re = the VTW2 stream: per column-pair, per leg l>=1, 64-B\n\
-          \ * cos-first sign-folded records in consumption order; tw_im unused."
+          if const_tw then
+            "\n * tw_re = ONE (R-1)-record VTW2 set for the whole call (group-constant\n\
+            \ * twiddles; caller passes its group's set); cursor never advances."
+          else if pow_tw then
+            "\n * tw_re = ONE 64-B w^1 record per column-pair (cos-first sign-folded);\n\
+            \ * legs 2..R-1 built in-register by repeated VTW2 cmul; tw_im unused."
+          else
+            "\n * tw_re = the VTW2 stream: per column-pair, per leg l>=1, 64-B\n\
+            \ * cos-first sign-folded records in consumption order; tw_im unused."
         else ""));
   Hashtbl.iter
     (fun _key (name, c, s) ->
@@ -462,10 +480,19 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
           Printf.sprintf "    __m256d zspill[%d]; /* function-scope: L1-hot across iterations */\n" radix
         else ""));
   if twiddled then
+    (if const_tw then
+       Buffer.add_string buf
+         "        const double *twp = tw_re; /* t2c: ONE group-constant record set (L1-hot) */\n"
+     else
+       Buffer.add_string buf
+         (Printf.sprintf
+            "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
+            (if pow_tw then 8 else 8 * (radix - 1))));
+  if pow_tw then
     Buffer.add_string buf
-      (Printf.sprintf
-         "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
-         (8 * (radix - 1)));
+      "        __m256d _wc1 = _mm256_loadu_pd(twp);     /* w^1 cos record */\n\
+      \        __m256d _ws1 = _mm256_loadu_pd(twp + 4); /* w^1 sin record (sign-folded) */\n\
+      \        __m256d _wc = _wc1, _ws = _ws1;          /* running w^l */\n";
   if blocked || blocked2 then
     (* blocked bodies carry their own loads (per sub-DFT) and stores (combine) *)
     Buffer.add_buffer buf body
@@ -491,11 +518,27 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
               "        __m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
               dst pt));
       if pre_tw then
-        Buffer.add_string buf
-          (Printf.sprintf
-             "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
-             \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
-             fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
+        if pow_tw then begin
+          (* t2sp: advance the running twiddle to w^l (VTW2 sign-folded form is
+             closed under elementwise cmul: c'=c*c1-s*s1, s'=s*c1+c*s1), then
+             BYTW2-apply from registers — 64B/pair streamed instead of (R-1)*64B *)
+          if pt >= 2 then
+            Buffer.add_string buf
+              "        { __m256d _nc = _mm256_fnmadd_pd(_ws, _ws1, _mm256_mul_pd(_wc, _wc1));\n\
+              \          _ws = _mm256_fmadd_pd(_wc, _ws1, _mm256_mul_pd(_ws, _wc1));\n\
+              \          _wc = _nc; }\n";
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_wc, %s,\n\
+               \            _mm256_mul_pd(_ws, _mm256_permute_pd(%s, 0x5)));\n"
+               fin raw raw)
+        end
+        else
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_mm256_loadu_pd(twp + %d), %s,\n\
+               \            _mm256_mul_pd(_mm256_loadu_pd(twp + %d), _mm256_permute_pd(%s, 0x5)));\n"
+               fin ((pt - 1) * 8) raw (((pt - 1) * 8) + 4) raw)
     done;
     for pt = 0 to radix - 1 do
       Buffer.add_string buf (Printf.sprintf "        __m256d out%d;\n" pt)
@@ -551,9 +594,10 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
 let emit_z_n1 ?(strided = false) ?(trans_st = false) ~blocked2 ~blocked
     ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st ~post_tw:false ~strided_st:false ~strided ~blocked2
-    ~blocked ~vec_width ~radix ~twiddled:false
+    ~blocked ~const_tw:false ~pow_tw:false ~vec_width ~radix ~twiddled:false
 
 let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
-    ~blocked2 ~blocked ~vec_width ~radix () : string =
+    ?(const_tw = false) ?(pow_tw = false) ~blocked2 ~blocked ~vec_width ~radix
+    () : string =
   emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
-    ~blocked ~vec_width ~radix ~twiddled:true
+    ~blocked ~const_tw ~pow_tw ~vec_width ~radix ~twiddled:true

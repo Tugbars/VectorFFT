@@ -28,8 +28,9 @@ Reverse-engineered MKL's own ≥2048 path (gdb+objdump at N=4096/8192/16384, 4-l
 [../research/mkl_highN_cascade_anatomy.md](../research/mkl_highN_cascade_anatomy.md)). MKL runs
 **exactly the shape this plan proposes**, which retires the design risk:
 
-- **One parameterized stage-kernel suite reused across all N** (pass-1 kernel VMA 0x1825c28ce
-  identical at 4096/8192/16384) → validates "one z kernel per radix, stride/table-parameterized."
+- **One parameterized cascade reused across all N** (pass-1 kernel VMA 0x1825c38ce identical at
+  4096/8192/16384 — corrected +0x1000 per the anatomy doc's §0.5 erratum; it is ONE fused ymm
+  function, fn 0x3800, end-to-end) → validates "one z kernel per radix, stride/table-parameterized."
 - **OOP transpose ingest (plane A→B, corner-turn) → in-place contiguous middle passes → final
   unload** → this IS our MODEB trick, verbatim, in MKL's binary. User memory read-once/written-twice;
   every log-N intermediate pass stays in scratch (two ping-pong planes, linear in N).
@@ -41,13 +42,14 @@ Two refinements this census forces into the build:
 1. **Race radix-4 stages too, not just radix-8/16.** MKL's default *deep* ymm stage is **radix-4**
    (VL=2, FMA, in-place, contiguous), with radix-8 mixed in for odd powers. Our construction law
    favored radix-8; add radix-4 chains to the step-2 race (e.g. 4096 = 4·4·4·4·4·4, 8·8·radix-... ).
-2. **We can go WIDE everywhere — our structural edge.** MKL is forced to a **128-bit** ingest
-   because it *gathers* (index table `movsxd r11,[rbp+r11*2]`; scattered access won't vectorize
-   wide) and only the contiguous cascade goes **256-bit ymm**. Our SCR terminator + stage-0 use
-   **sequential streams** (measured 0.40× vs scatter 0.10×), so our z ingest stays **ymm VL=2** —
-   a width advantage over MKL's narrow gather ingest. (Answers the earlier open question "does MKL
-   use a precomputed offset table?" — yes, but for a narrow direct-DFT we already out-measure with
-   streams; keep the sequential SCR terminator.)
+2. **Width is PARITY, not an edge (corrected 2026-07-24 — anatomy §0.5 erratum).** Live
+   re-verification proved MKL's 2^k ingest is **ymm-wide radix-4 with strided leg loads** (same
+   shape as our stage-0 leaf, radix-4 vs our radix-8) — the earlier "MKL is stuck at a 128-bit
+   gather ingest" claim came from a +0x1000 VMA mapping error and is retracted; the offset-table
+   answer is "not on the 2^k path." What MKL's finisher actually does: size-specialized bodies
+   (dispatch on remaining {4,8,16}) writing user memory through a **register corner-turn store
+   lattice** (vunpck+vperm2f128) — no per-column VTW2 gather pass. Our sequential-stream SCR
+   advice stands on our OWN measurement (0.40× vs 0.10×), not on an MKL contrast.
 
 ## 1. The architecture — three shipped mechanisms, re-expressed in z
 
@@ -154,6 +156,75 @@ stride engine's `plan_compute_twiddles` back half, lines ~1303-1942, not yet don
 - Stage-0's 8 KB-stride streams: if measurably hot, swap stage order (DIF-style outer
   small-radix first — `t2d` exists) — a race variant, not a redesign.
 - Chain choice per cell = calibrator axis (like ccol's cc_chain).
+
+## 4.9. FIRST SPIKE BUILT + MEASURED (2026-07-24) — thesis validated
+
+`build_tuned/benches/zil_cascade.c` (spike, per §3 step 1). N=4096, radix-8 (8^4),
+both arms **bit-exact vs naive (3.195e-15)**. Index math derived + runnable-gated by a
+3-way independent derivation workflow (scalar protos gated <1e-15 at 64/512/4096 before
+wiring). Stable measured (pinned P-core, best-of-9, cachebust; MKL the stable reference):
+
+| arm | ns | vs MKL | structure |
+|---|--:|--:|---|
+| flat 64×64 two-pass | 8600–10700 | 0.38–0.48× | four-step radix-64, whole-buffer strided |
+| cascade A (natural) | ~8110 | 0.50× | recursive four-step ×4 radix-8, **scatter** middle (OLs=512) + 1 corner-turn (folded into a t2s strided read) |
+| **cascade B (in-place)** | **~7210** | **0.56×** | grid-preserving DIT: middle stages **in-place small-stride** (Ls=OLs=64 then 8) = **L1-hot blocks**; t2s gather terminator; digit-reversed out |
+| MKL-IL | ~4080 | 1.0 | in-place contiguous cascade |
+
+**Thesis validated in-session**: in-place contiguous stages (B) > scatter four-step (A) >
+flat. Localization is the lever — B's L1-hot in-place blocks are the MKL-shaped win; A's
+OLs=512 scatter strides the whole 64 KB like the flat two-pass and gains little. Both cascades
+compose the EXISTING gated z kernels (radix8 n1/t2/t2s) through their stride params — **zero new
+codelets**, exactly as the plan predicted. Arm B maps to the census's OOP-ingest→in-place-middle
+shape.
+
+**Remaining gap to MKL (0.56→1.0), asm-verified 2026-07-24** (our codelet .o disasm + MKL live
+x/i — anatomy §0.5 erratum applied):
+- **S0 leaf is NOT the differentiator** (earlier claim corrected): our S0 = 8 ymm streams at
+  16·Ls B apart (verified: 8 scaled `vmovupd ymm` loads/stores per iter); MKL's ingest is the
+  SAME wide-strided shape (ymm radix-4, legs at N/4·{0..3}, live-verified at 0x38c5).
+- **S3 terminator IS a real differentiator** (verified): our t2s = xmm+vinsertf128 pair-loads +
+  `add rax,0x1c0` twiddle cursor = **448 B/col-pair → 112 KiB** VTW2 stream (flat pass-2:
+  126 KiB — "as heavy as" confirmed). MKL instead finishes with **size-specialized bodies**
+  (dispatcher `cmp r11,{4,8,16}` at 0x4ef8) writing user memory through a **register
+  corner-turn store lattice** (vunpck+vperm2f128, site 0x5f05) — no 100 KiB-class per-column
+  twiddle gather pass.
+- **Execution shape**: MKL's whole cascade is ONE fused function (no per-group call loop);
+  ours is 74 codelet calls.
+Next levers (measure each): a corner-turn-lattice terminator (n1t-style stores instead of the
+t2s gather + heavy VTW2); radix mixes (radix-4 deep stages / 16^3 fewer passes, §0.5 refinement
+1); tighter S1/S2 col-const twiddle (re-reads identical records — cache-hot but wasteful);
+fewer/fused calls. Extend to 2048/8192/16384 (§3 step 3) once the 4096 structure is tuned.
+
+## 4.95. CHAIN PLANNER RUN (2026-07-24) — exhaustive per-cell search, steps 3+4 delivered
+
+User directive: "we can't just arbitrarily choose the stages." Correct — and measured. Built
+`build_tuned/benches/zil_chain_dp.c`: generalizes the arm-B executor to ANY factor chain
+(mixed radices; grid-preserving DIT; TRUE in-place middles on one plane — itself worth ~2% over
+ping-pong; t2s gather terminator; mixed-radix digit-reversed out, gate permutation
+`m = drev(g·Rt+l)`), enumerates ALL chains (S0 n1∈{4..64}, mids t2∈{8..64}, term t2s∈{8..64};
+nf=2 = the flat two-pass, subsumed), gates each vs naive, races all + MKL per cell. At these Ns
+the space is tiny (13/18/24/34 chains at 2048/4096/8192/16384) so **exhaustive measurement IS the
+planner** (per the cost-model-ceiling lesson); DP/beam only if the space ever explodes.
+**All 89 chains gate <1e-12 across the 4 cells.**
+
+| N | winner | ns | vs MKL | prior z standing | flat rank in field |
+|---|---|--:|--:|--:|---|
+| 2048  | 32.8.8   | 2966  | **0.73×** | 0.54× | 32.64 #6 (0.65×) — crossover cell |
+| 4096  | 4.8.16.8 | 6762  | **0.64×** | 0.46× | 64.64 #10 (0.47×) |
+| 8192  | 8.8.16.8 | 15268 | **0.62×** | unserved | — |
+| 16384 | 4.8.64.8 | 37175 | **0.56×** | unserved | — |
+
+Findings: (1) **every winner terminates radix-8** (t2s gather cheapest at 8 contiguous legs);
+(2) interiors differ per cell — hand-picking fails: my 8.8.8.8 ranked #3 @4096, and the plan's
+own 16.16.16 candidate ranked **#14, below flat** — the planner was not optional; (3) winners
+lead with radix-4/small leaves where available (matches MKL's radix-4 census bias — and we only
+have radix-4 as n1: **emit radix4_z_t2/t2s** is now a measured-priority follow-up); (4) crossover
+flat↔cascade sits at ~2048 exactly where 2N·16 crosses 48 KB L1 — matching MKL's own family
+boundary. Remaining gap (0.73→0.56 decaying with N) = the §4.9 verified differentiators
+(terminator VTW2-stream weight; fused-function vs 74-call execution) — next levers unchanged.
+Production path: per-cell wisdom stores the winning chain (cc_chain-style token), then bake/JIT
+the winner to kill the call tax (MKL's fused function is AOT-baked — census-verified, not JIT).
 
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
