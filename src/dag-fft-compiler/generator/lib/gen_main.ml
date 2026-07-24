@@ -145,6 +145,8 @@ let run (argv : string array) : unit =
   let z_blocked = ref false in
   let z_blocked2 = ref false in
   let z_strided = ref false in
+  let z_const_tw = ref false in
+  let z_pow_tw = ref false in
   let z_strided_st = ref false in
   let z_post_tw = ref false in
   let z_trans_st = ref false in
@@ -249,6 +251,9 @@ let run (argv : string array) : unit =
      else if arg = "--z-blocked" then (z_native := true; z_blocked := true)
      else if arg = "--z-blocked2" then (z_native := true; z_blocked2 := true)
      else if arg = "--z-t2s" then (z_native := true; z_t2 := true; z_strided := true)
+     else if arg = "--z-t2c" then (z_native := true; z_t2 := true; z_const_tw := true)
+     else if arg = "--z-t2sp" then
+       (z_native := true; z_t2 := true; z_strided := true; z_pow_tw := true)
      else if arg = "--z-t2ss" then
        (z_native := true; z_t2 := true; z_strided := true; z_strided_st := true)
      else if arg = "--z-t2d" then (z_native := true; z_t2 := true; z_post_tw := true)
@@ -1235,7 +1240,8 @@ let run (argv : string array) : unit =
       print_string
         (if !z_t2 then
            Codelet_zil.emit_z_t2 ~strided:!z_strided ~strided_st:!z_strided_st
-             ~post_tw:!z_post_tw ~blocked2:!z_blocked2 ~blocked:!z_blocked
+             ~post_tw:!z_post_tw ~const_tw:!z_const_tw ~pow_tw:!z_pow_tw
+             ~blocked2:!z_blocked2 ~blocked:!z_blocked
              ~vec_width:isa.Isa.vec_width ~radix:n ()
          else
            Codelet_zil.emit_z_n1 ~strided:!z_strided ~trans_st:!z_trans_st
