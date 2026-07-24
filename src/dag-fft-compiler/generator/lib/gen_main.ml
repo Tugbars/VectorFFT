@@ -154,6 +154,10 @@ let run (argv : string array) : unit =
   let z_strided_st = ref false in
   let z_post_tw = ref false in
   let z_trans_st = ref false in
+  (* pipeline-hosted zsplit family (codelet_zsplit.ml; zil_pipeline_port.md).
+     P1 kinds: "ms" | "msb". Distinct from z_split_kind (legacy emitter)
+     so the two are A/B-able side by side until cutover. *)
+  let zp_kind = ref "" in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -399,6 +403,10 @@ let run (argv : string array) : unit =
     then (
       z_native := true;
       z_split_kind := "msgb")
+    else if arg = "--zp-ms"
+    then zp_kind := "ms"
+    else if arg = "--zp-msb"
+    then zp_kind := "msb"
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1495,7 +1503,14 @@ let run (argv : string array) : unit =
       | true, true -> Annotated_SU uarch
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
-    if !z_native
+    if !zp_kind <> ""
+    then
+      (* pipeline-hosted zsplit family: N (positional) = the radix. Goes
+         through Dft -> Pipeline.prepare_codelet -> Schedule.su_schedule ->
+         Emit_c rendering (zil_pipeline_port.md), unlike the legacy
+         codelet_zil raw-template branch below. *)
+      print_string (Codelet_zsplit.emit_codelet ~kind:!zp_kind ~radix:n ~isa ~uarch)
+    else if !z_native
     then
       (* tier-2 TRUE interleaved-native family: N (positional) = the radix *)
       print_string

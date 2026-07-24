@@ -43,6 +43,18 @@ let current_tw_perpos : bool ref = ref false
    the flat layout). Set by emit_codelet from Codelet_oop.current_oop_tw_linear. *)
 let current_tw_linear : int ref = ref 0
 
+(* zil BLOCK-SPLIT twiddle records (codelet_zsplit; zil_pipeline_port.md §3).
+   The zsplit families keep BOTH halves of a twiddle record in tw_re — the
+   z ABI's tw_im slot is dead. A record is [c×VW][s×VW] (2·VW doubles):
+   splat-pair sets for the mids (one record per leg, group-constant), packed
+   per-column w¹ for the terminator (one record per VW columns, streamed).
+   When Some off, Twiddle(j, re) renders loadu(&tw_re[off + j*2VW]) and
+   Twiddle(j, im) renders loadu(&tw_re[off + j*2VW + VW]); `off` is a C
+   expression prefix ("" for table-start records, "2*k" for the terminator's
+   column-indexed stream). Set/cleared by Codelet_zsplit.emit_codelet only;
+   default None leaves every existing family byte-identical. *)
+let current_tw_zsplit : string option ref = ref None
+
 (* Lean real-to-real ABI (notebook section 51, step 2): when true, the
  * OOP signature is `(const double *in, double *out, size_t K)` — the
  * convention dct.h's fast paths consume (python n8 vintage). Set by
