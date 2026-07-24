@@ -286,6 +286,58 @@ start: 0.54/0.46/—/—). Remaining gap ≈1.3–1.5× is now **kernel-body qua
 finishers) — codelet-level work, not composition. Next: productionize (wisdom chains + plan-time
 tables + registry/calibrator wiring, checklist items 9/11) and/or M1-style body-quality race.
 
+## 4.98. KERNEL CENSUS + LEVER 5 DEFINED (2026-07-24) — the block-split interior
+
+Instruction-class census of our compiled loop bodies vs MKL fn 0x3800's loops (full table +
+evidence: [../research/mkl_highN_cascade_anatomy.md](../research/mkl_highN_cascade_anatomy.md)
+§4.5). Verdict on "are our codelets worse": **NO on spills (0 both sides), NO on op count
+(whole-transform ≈88K insns BOTH at 4096)** — the 1.5× gap is IPC/port mix. Root cause
+discovered: **MKL's high-N cascade runs a BLOCK-SPLIT scratch interior** (re-block+im-block;
+z only at the API boundary; conversion fused into ingest stores + finisher store lattice).
+Their mids: ZERO shuffles/xors (elementwise split cmul, splat-re/im twiddle pairs). Our z mids:
+17 port-5 ops per 16 complex. Mid-N stays truly interleaved (2 passes can't amortize the
+conversion); high-N converts (log-many passes can) — the layout switches WITH the family.
+
+**Lever 5 — block-split interior (approved direction pending spike):** keep the z boundary
+(user directive intact — no user-visible split), run the cascade scratch block-split:
+- S0 leaf: z loads → radix butterfly → **split-converting corner-turn stores** (we own this
+  machinery: n1t store lattice + Design-C repack patterns);
+- mids: new **split-mid kind** (shuffle-free elementwise cmul, splat-pair twiddles — the split
+  engine's arithmetic in cascade clothes; group-constant tables like t2c);
+- terminator: gather + last twiddle + **split→z re-interleave fused in the store lattice**
+  (the t2s* family grows the conversion role — completing its MKL-finisher shape).
+Expected win bound: eliminate ~17 port-5 ops/16cx in every mid pass + IPC headroom; race vs
+the t2c/t2sp champion per cell, same gates.
+
+## 4.99. ⭐ LEVER 5 MEASURED (2026-07-24) — BLOCK-SPLIT INTERIOR IS THE BREAKTHROUGH: 16384 at 0.85×
+
+`build_tuned/benches/zil_split_interior.c` — hand-kernel spike of the §4.98 design (S0
+z→split converting leaf; shuffle-free split mids, splat-pair group-const twiddles, in-place;
+last mid re-interleaves split→z in its stores; EXISTING z t2sp terminator unchanged). The z
+API boundary is fully preserved — split exists only inside the scratch. All gates bit-exact.
+
+**Layout granularity was decisive, exactly as MKL chose it**: the first cut used FULL split
+planes (re[], im[] + anti-alias pad) — won at 4096 (−3%) but LOST at 16384 (+7.7%: two
+streams per leg row double the stream/TLB pressure). Retrofit to **BLOCK-split** (64 B
+`[re×4][im×4]` blocks — same bytes as 4 z-complex, addressing = z + `+4` for im, ONE stream
+per leg row) swung 16384 by +29%:
+
+| cell | split-interior | z-interior ctl (same chain) | lever | prior best (any arm) |
+|---|--:|--:|--:|--:|
+| 4096 (8.8.8.8) | **5609 = 0.73×** | 6157 = 0.66× | **−8.9%** | 6342 (0.67×) |
+| 16384 (4.8.8.8.8) | **23086 = 0.85×** | 26410 = 0.74× | **−12.6%** | 27210 baked (0.78×) |
+
+Even all-radix-4 split (4⁶ = 5894 @4096) beats every z-interior arm. The census's port-5
+prediction held: mids run ZERO shuffles/xors; conversions live only in S0 (paid once) and the
+last mid's stores. Spike arms are UN-baked (tabled bases, extern calls) — the §4.97 bake lever
+stacks on top.
+
+**Follow-ups to productionize lever 5**: run 2048/8192 + full chain×interior joint calibration
+in the planner; t2spt tiled terminator for 16384 (spike used t2sp); bake the split winners;
+promote hand kernels to emitter kinds (codelet_zil.ml split-mid backend — the split bodies are
+plane-pair macros, mechanical); natural-order terminator; bwd twins. The hand kernels live in
+the spike only — emitter promotion is the production path.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
