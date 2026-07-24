@@ -44,10 +44,10 @@
     unsigned long long, unsigned long long, unsigned long long,         \
     unsigned long long, unsigned long long);
 VFFT_ZS_DECL(radix4_z_s0s_fwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_fwd_avx2)
-VFFT_ZS_DECL(radix4_z_ms_fwd_avx2)   VFFT_ZS_DECL(radix8_z_ms_fwd_avx2)
+VFFT_ZS_DECL(radix4_z_msg_fwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_fwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_fwd_avx2)
 VFFT_ZS_DECL(radix4_z_s0s_bwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_bwd_avx2)
-VFFT_ZS_DECL(radix4_z_ms_bwd_avx2)   VFFT_ZS_DECL(radix8_z_ms_bwd_avx2)
+VFFT_ZS_DECL(radix4_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_bwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_bwd_avx2)
 #undef VFFT_ZS_DECL
 
@@ -186,23 +186,17 @@ static inline void vfft_zsplit_execute_fwd(const vfft_zsplit_plan_t *p,
                               (unsigned long long)p->D[0], 0,
                               (unsigned long long)p->D[0], 0,
                               (unsigned long long)p->D[0]);
+    /* mids: ONE group-looped call per stage (msg — §4.9991 addendum: kills
+     * the per-group call overhead + trip-count-2 loop-exit mispredicts) */
     for (int s = 1; s <= nf - 2; s++) {
-        int Rm1 = p->chain[s] - 1;
-        const long *gbs = p->gb[s];
-        if (p->chain[s] == 8)
-            for (long g = 0; g < p->G[s]; g++)
-                radix8_z_ms_fwd_avx2(p->sp + 2 * gbs[g], 0, p->sp + 2 * gbs[g], 0,
-                                     p->twsp[s] + (size_t)g * Rm1 * 8, 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s]);
-        else
-            for (long g = 0; g < p->G[s]; g++)
-                radix4_z_ms_fwd_avx2(p->sp + 2 * gbs[g], 0, p->sp + 2 * gbs[g], 0,
-                                     p->twsp[s] + (size_t)g * Rm1 * 8, 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s]);
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long, unsigned long long,
+                  unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2 : radix4_z_msg_fwd_avx2;
+        f(p->sp, 0, p->sp, 0, p->twsp[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
     }
     radix8_z_sterm_fwd_avx2(p->sp, 0, zout, 0, p->twq, 0, 0, 0,
                             (unsigned long long)(p->N / 8), 0,
@@ -218,22 +212,14 @@ static inline void vfft_zsplit_execute_bwd(const vfft_zsplit_plan_t *p,
                             (unsigned long long)(p->N / 8), 0,
                             (unsigned long long)(p->N / 8));
     for (int s = nf - 2; s >= 1; s--) {
-        int Rm1 = p->chain[s] - 1;
-        const long *gbs = p->gb[s];
-        if (p->chain[s] == 8)
-            for (long g = 0; g < p->G[s]; g++)
-                radix8_z_ms_bwd_avx2(p->sp + 2 * gbs[g], 0, p->sp + 2 * gbs[g], 0,
-                                     p->twspb[s] + (size_t)g * Rm1 * 8, 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s]);
-        else
-            for (long g = 0; g < p->G[s]; g++)
-                radix4_z_ms_bwd_avx2(p->sp + 2 * gbs[g], 0, p->sp + 2 * gbs[g], 0,
-                                     p->twspb[s] + (size_t)g * Rm1 * 8, 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s], 0,
-                                     (unsigned long long)p->D[s]);
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long, unsigned long long,
+                  unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2 : radix4_z_msg_bwd_avx2;
+        f(p->sp, 0, p->sp, 0, p->twspb[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
     }
     if (p->chain[0] == 8)
         radix8_z_s0s_bwd_avx2(p->sp, 0, zout, 0, 0, 0,
