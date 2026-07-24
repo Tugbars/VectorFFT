@@ -735,18 +735,39 @@ must vary exactly one thing inside one allocation.
 
 ### (d) The levers left, ranked
 
-1. **Move the terminator's load-side transpose into the last mid's stores.** Deletes 32 of its
-   64 shuffles — the entire measured excess over MKL. The mid pays them, but the mid is
-   port-balanced with headroom while the terminator is 2.4× over. Port arithmetic: mid ≈ +26%,
-   terminator ≈ −44% → **net −5…−11% overall**. Best-evidenced lever; MKL's finisher is the
-   existence proof. (Cost: the last mid becomes orientation-aware — a new emitter kind.)
+1. **✅ CENSUS-CONFIRMED — BUILD. Move the terminator's load-side transpose into the last mid's
+   stores.** Deletes 32 of its 64 shuffles — the entire measured excess over MKL. The mid pays
+   them, but the mid is port-balanced with headroom while the terminator is 2.4× over. Port
+   arithmetic: mid ≈ +26%, terminator ≈ −44% → **net −5…−11% overall**.
+   **The finisher census (anatomy §9) turned the premise from inference into fact and made it
+   stronger than expected**: MKL's *entire cascade interior* — 0x1825c3b81–0x1825c5a85, ~1900
+   instructions covering every radix-4 and radix-8 middle — contains **zero shuffle
+   instructions**. It carries split-planar end-to-end and converts layout **exactly twice per
+   transform, both times fused into a store path**. The cleanest proof that the target
+   orientation is free for the producing stage: MKL's 0x5579 radix-4 pass is instruction-for-
+   instruction the same butterfly as its radix-4 finisher **minus the 16-shuffle corner-turn**.
+   Our 1.0 store-side shuffle/complex already matches MKL exactly; the 1.0 load-side is pure
+   surplus. (Cost: the last mid becomes orientation-aware — a new emitter kind.)
 2. **Padded plane pitch** — measured in (c): **~2–4% overall**. Needs a slice-aware group loop in
    `msg` (nested: bump by group span within a slice, by span+pad across slices) plus slice-aware
    leaf/terminator addressing. Contained, no new math.
-3. **Radix-16 terminator** — MKL dispatches finishers on `cmp r11,{4,8,16}`, so it has one.
-   Absorbs a whole mid pass (16% of time at 16384). Blocked today by registers: a radix-16 split
-   butterfly wants 32 live ymm on a 16-register machine (the emitter's own radix cap). High
-   risk / high reward.
+3. **❌ CENSUS-REFUTED — DON'T BUILD. Radix-16 terminator.** The premise was wrong: **MKL has no
+   radix-16 finisher.** `0x1825c5579` (the `r11==16` arm) is a radix-4 *middle* that tail-jumps
+   into the radix-4 finisher — `shr r11,0x2` … `jmp 0x1825c5c2e`. **MKL factors 16 = 4 × 4,
+   exactly as our generator already does; our radix cap is vindicated.** Confirmed three ways
+   (twiddle cursor 0xc0 not 0x3c0; file-wide `add rbx,imm` audit finds no 0x3c0 anywhere; no
+   cos/sin(π/8) constant pair exists). There is no technique to copy because there is nothing
+   to copy. **Cheapest possible outcome for this lever — killed for the price of a text search.**
+
+   **↳ REDIRECT: a radix-8 terminator instead.** MKL *does* ship a genuine radix-8 finisher
+   (0x1825c5831): 5.34 insns/complex vs radix-4's 4.44, but per radix-2-equivalent stage that is
+   **1.78 vs 2.22 — ~20% cheaper per unit of work.** Building one means hitting the same
+   16-register wall MKL hit, and its three concessions are named and copyable (anatomy §9.3):
+   spill-to-dead-input-slot (out-of-place loops only), memory-operand rematerialization, and a
+   corner-turn downgrade to `vextractf128`-to-memory — ⚠ the last one is a **cost, not a saving**
+   (48 port-5 + 32 store uops per 32 complex, vs radix-4's 32 + 16). Note our terminator is
+   *already* radix-8, so this mainly informs the per-radix terminator family and the chain
+   planner's terminal-radix axis.
 4. **⭐ The finisher census (do this FIRST).** Anatomy §8 flagged characterizing MKL's three
    finishers (0x5c2e / 0x5831 / 0x5579) as "the now-sharpest remaining-gap comparison" and it was
    never done. It is objdump-only, no code churn, and it **decides both #1 and #3**: (i) do the
@@ -794,6 +815,34 @@ prints intrinsics as literal text. Measured consequences:
 | ISA argument to the emit entry point | **`emit_z_split` takes none** (`emit_z_t2`/`_n1` take `~vec_width` only) | full `Isa.t` |
 | re-pasted macro boilerplate in the emitted tree | **1546 lines = 9% of 16 387**, 129 copies of the same ~9 macros across 60 files | none (rendered per node) |
 
+**⚠ BUT — measure before porting: on ARITHMETIC the two generators already TIE (census 2026-07-24).**
+Same butterfly (radix-8 twiddled, 32 complex per inner iteration), two generators, AVX2 main loop
+only (the pipeline codelet's 2-wide SSE tail excluded):
+
+| | add | sub | mul | fma | shuf | ld | st |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| PIPELINE `r8_t1s_dit_fwd` (dag→simplify→schedule→regalloc) | 22 | 22 | 14 | 22 | 0 | 32 | 32 |
+| HAND `radix8_z_msg` (macro-expanded) | **22** | **22** | **14** | **22** | **0** | **16** | **16** |
+
+**The arithmetic is identical — exactly.** Independently derived, too (theirs by grep of generated
+source, ours by hand from the macro bodies). So `simplify.ml`'s whole apparatus — CSE,
+`factor_common_muls`, `share_subsums`, the FMA passes — has **nothing left to find** in this
+butterfly: the hand-written macro already sits on the same op count the pipeline derives.
+(ld/st are NOT comparable across the two: different layouts and twiddle strategies — split planes
++ streamed T1S vs block-split + group-constant splat pairs. Our 16/16 is a *design* win from
+lever t2c and block-split, not a code-generation win.)
+
+**Consequence for the port decision.** Porting zil onto the pipeline would **not** be expected to
+make the current mids faster — they are already at the pipeline's arithmetic output. Every win in
+this campaign came from **layout and memory design** (block-split, splat-pair twiddles, group
+loops, schedule shape), which the pipeline does not decide. So a general "hand vs pipeline"
+performance harness would very likely measure ≈0 on the mids, and the port must be justified by
+**reach, not speed**: ISA parameterization (AVX-512 / EPYC), radix-as-a-parameter (the per-radix
+terminator family), and regalloc/spill analysis. Residual uncertainty a harness *could* still
+resolve: equal op count ≠ equal schedule, and the pipeline's `su_schedule_subset` ordering may or
+may not survive gcc `-O3` re-scheduling. That question is only interesting where register
+pressure actually binds — **the terminator and radix-16, not the mids.**
+
 Two things follow that the roadmap cares about. (1) **The block-split production family is
 AVX2-only *by construction*** — not by choice of target, but because the butterflies are literal
 `_mm256_*` strings and `emit_z_split` has no ISA parameter at all. The AVX-512 phase-2 and EPYC
@@ -813,12 +862,79 @@ tricks `Emit_c` does not currently express. Porting zil onto the pipeline means 
 the block-split form — a real project, and the honest prerequisite to a per-radix terminator
 family rather than a fifth hand-written kernel.
 
+### (e0) SEQUENCING DECISION (user, 2026-07-24)
+
+**Finish the zil optimization campaign first; THEN port `codelet_zil` onto the full pipeline.**
+Rationale is the arithmetic-parity census in (f): porting is not expected to make the current
+kernels faster, so it must not block the levers that do. Ordering:
+
+1. MKL finisher census (running) → decides levers 1 and 3.
+2. Remaining zil optimization on the current hand-written emitter (lever 1, then 2/3 as the
+   census allows). One more hand-written kernel is an accepted one-off.
+3. **Then** the pipeline port, justified by REACH not speed.
+
+⚠ Two caveats to carry into step 3, so "the port buys no performance" is not over-remembered:
+(i) the parity result is for the **mids**, where nothing spills — the terminator family is where
+register pressure actually binds (uj2 at ~48 live values, radix-16 at ~32), and `regalloc` +
+`spill_info` are exactly the tools for it, so a speed benefit THERE is untested, not refuted;
+(ii) on **other ISAs** the port is straightforwardly a performance item — AVX-512 and the EPYC
+port cannot reach the z cascade at all today (319 literal `_mm256_`, no ISA parameter).
+
 ### (e) The gap is not uniform — aim at 4096
 
 Front door after §4.9994: 2048 **0.92** · 4096 **0.81** · 8192 **0.86** · 16384 **0.93**. So
 16384 is 7% off and **4096 is 19% off**. 4096's chain (4.4.4.8.8) carries three cheap radix-4
 mids against one expensive radix-8 terminator — the highest terminator-to-mid ratio of any cell,
 i.e. exactly the shape lever #1 attacks hardest.
+
+## 4.9996. LEVER 1 BUILT + MEASURED (2026-07-24) — arithmetically real, architecturally a WASH; the residual gap is in-place-vs-ping-pong
+
+Spike `benches/zil_orient_spike.c`: an orientation-aware last mid (`msgt`, applies the
+terminator's 4 TR4s in its stores) + a transpose-free terminator (`stermf`, loads pre-oriented,
+no load TR4). Bit-gate against the real `msg`+`sterm` on the same shared-front snapshot.
+
+**Correctness: BIT-IDENTICAL at all 4 cells** (maxabs 0.0). The element mapping is confirmed
+exactly right — the terminator's radix-8 combines the last mid's 8 output columns with mid-leg as
+SIMD lane, and its TR4 swaps (mid-leg ↔ mid-column) per 4×4 tile; `msgt` does that swap in its
+stores, `stermf` loads contiguously. Per-iteration base stays `16*k`.
+
+**Performance: a WASH** (isolated last-mid+terminator region, 3 paced runs): 4096 consistently
+−1…−2%, but 8192 +1…+8%, 2048/16384 swing both ways — **net ≈0, dominated by noise.** The
+projected −5…−11% did not materialize, and the reason is structural, not a coding miss:
+
+**The in-place hazard forces a cost that offsets the port-5 saving.** The transposed stores
+scatter across the whole 128-double group, so a naïve incremental in-place `msgt` clobbers its own
+k=4-block inputs (verified: first build was −10% but garbage). The three legal fixes each cost
+back what the transpose move saves:
+
+| variant | correctness | measured | why |
+|---|---|--:|---|
+| in-place incremental | ✗ (RAW hazard) | −10% | the −10% is the *true* port-5 potential, on garbage |
+| snapshot group→stack, then compute | ✓ | +10…+18% | the 128-dbl copy/group is pure added traffic |
+| out-of-place into a 2nd plane | ✓ | +5…+22% | a whole extra N-complex plane, even warm |
+| in-place **register-blocked** (both k-blocks live, then store) | ✓ | **≈0% (−2…+8%)** | ~32 live ymm ⇒ heavy stack spills eat the win |
+
+The register-blocked variant is the best of the correct ones and lands at break-even. **The
+port-5 arithmetic was right — the terminator really is 2.4× over on port 5 — but capturing it
+requires either spilling (holding a whole group) or an extra plane, and both cost ≈ what they
+save.** MKL escapes this only because it **ping-pongs planes for every stage** (out-of-place
+throughout, anatomy §9): it already paid for the second plane, so the load-transpose deletion is
+free for it. Our cascade is **in-place single-plane by design** — we *save* that plane and pay for
+it, once, as the terminator's load-transpose. The two designs are the same total work in a
+different place.
+
+**Verdict: DON'T productionize lever 1.** A new emitter kind + OOP-plane-or-register-blocking +
+fwd/bwd twins + calibration, for a measured net ≈0, is negative expected value. Spike kept as the
+record. **This closes the "last ~15%" investigation**: within the in-place single-plane
+architecture the micro-levers are exhausted (mids at MKL parity, terminator port-bound but its
+relief is self-cancelling, radix-16 refuted, sterm scheduling placement-noise-limited). The
+remaining gap to MKL is the **architectural** in-place-vs-ping-pong choice plus MT — not a missing
+kernel optimization. Capturing it would mean re-architecting to ping-pong planes (adds traffic to
+*every* stage, not just the last) — a large change of uncertain net value at our current
+0.78–0.93 band, explicitly deferred.
+
+**Remaining real levers** (unchanged by this): MT (the 3.9%-utilization multiplier), and the
+zil→pipeline port for REACH (AVX-512/EPYC, per §4.9995(f)/(e0)) — not for single-thread speed.
 
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
