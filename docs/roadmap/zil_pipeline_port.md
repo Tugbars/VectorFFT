@@ -19,8 +19,9 @@ for some kinds, raw string templates for the production split family, 486 litera
 - **No AVX-512 / EPYC path.** The pipeline gets width-8 nearly free (all shuffle
   devices already have `_mm512` twins; `Isa.t` is consumed only at emission).
 - **Family growth cost.** Every new kind (the sterm2 campaign, the msg lever, the
-  bwd twins) is another hand template; the split family is now 10 production
-  kernels plus ~50 spike kinds, all frozen to one ISA.
+  bwd twins) is another hand template; the family now spans three composition
+  methods (§1c: solo / bailey2 / cascade) totalling ~60 emitted kernels, all
+  frozen to one ISA.
 - **Pass improvements don't propagate.** FMA-lift/collect improvements, SU/GH
   scheduler wisdom, regalloc widening — none of it reaches zil.
 
@@ -81,11 +82,34 @@ Two families behind one **11-arg ABI** (identical to the oop signature shape;
 - **zx-IR kernel family** (`emit_z_kernel`): n1/t2 kinds over packed interleaved
   complex (2 complex/ymm), `zx = In|Add|Sub|RotNI|Fmadd|Fnmadd|CTw`, hand r8_body,
   blocked/blocked2 spill devices, VTW2/BYTW2 streamed twiddles, squaring tree.
-  **Bench/spike only — no production reference.**
-- **Split family** (`emit_z_split`, raw templates): the production cascade.
-  `src/core` references exactly these 10 entry points (zsplit.h:46-52):
-  `radix{4,8}_z_s0s_{fwd,bwd}`, `radix{4,8}_z_msg_{fwd,bwd}`,
-  `radix8_z_sterm_fwd`, `radix8_z_sterm2_fwd`, `radix8_z_sterm_bwd`.
+  These serve the **solo** and **bailey2** methods (§1c) — currently bench-tier
+  (raced in build_tuned; no `src/core` reference yet), but part of the strategy.
+- **Split family** (`emit_z_split`, raw templates): the **cascade** method —
+  the only one production-wired today. `src/core` references exactly these 10
+  entry points (zsplit.h:46-52): `radix{4,8}_z_s0s_{fwd,bwd}`,
+  `radix{4,8}_z_msg_{fwd,bwd}`, `radix8_z_sterm_fwd`, `radix8_z_sterm2_fwd`,
+  `radix8_z_sterm_bwd`.
+
+### 1c. The three zil methods (the strategy, per Tugbars 2026-07-24)
+
+The zil strategy is one family with THREE composition methods; the port must
+cover the family, not just the production-wired method:
+
+| method | composition | kinds used | N range | status |
+|---|---|---|---|---|
+| **solo** | ONE monolithic codelet = whole transform | `z_n1` r4/8; `+blocked` r16/32; `+blocked2` r64 | ≤64 | bench-tier (mono hand-ref; cf. pipeline `emit_k1_mono` twins in production) |
+| **bailey2** | two-stage flat N=R1×R2 | stage 1 `z_n1t`/`z_n1b2` (corner-turn / blocked2 leaf) + stage 2 `z_t2/t2s/t2sp/t2sq/…` (VTW2-streamed twiddled mid) | 256–4096 | bench-tier (e.g. flat 4096 = n1b2 + t2s, zil_4096_decomp.c) |
+| **cascade** | nf≥3 staged chain, block-split interior | `s0s → msg×k → sterm/sterm2` (+ bwd twins) | ≥2048 | **PRODUCTION** (zsplit.h, kind-4 wisdom) |
+
+Two convergences worth exploiting rather than porting around:
+- zil's `blocked`/`blocked2` spill devices are a hand re-implementation of the
+  pipeline's NATIVE recipe machinery (`dft_expand_n1_blocked` /
+  `dft_expand_twiddled_spill` + spill markers + SU+GH). The port replaces them
+  with the real thing, not a re-derivation.
+- solo overlaps `codelet_oop.emit_k1_mono` (already pipeline-hosted; its IL
+  variants `vfft_k1_mono64_8x8_il_*` are production via oop_leaf_registry.h and
+  measured ≈ MKL-IL in the K=1 bakeoff). Solo's port is likely a CONVERGENCE
+  with emit_k1_mono + races vs the zx hand kernels, not new emission code.
 
 Split-family semantics (what must be reproduced):
 
@@ -112,15 +136,36 @@ kind-4 oop_wisdom / `_calibrate_zsplit_t2q` machinery in vfft.c.
 
 ## 2. Scope
 
-**In scope:** the 10 production split-family kernels, re-derived through
-math layer → `Pipeline.prepare_codelet` → SU schedule → shared edge/Isa emission.
-Emitted function names, the 11-arg ABI, table layouts, and zsplit.h stay
-byte-compatible → drop-in `.c` files in `codelets/zil/avx2/`.
+**In scope: the whole zil strategy — all three methods (§1c)**, re-derived
+through math layer → `Pipeline.prepare_codelet` → SU schedule → shared edge/Isa
+emission. Sequenced by production exposure:
 
-**Out of scope:** the zx-IR kernel family (n1/t2 spike kinds). They stay in
-`codelet_zil.ml` untouched for bench reproducibility; retirement is a separate
-later decision. No runtime changes (zsplit.h/vfft.c) except the eventual
-AVX-512 plan-geometry parameterization (§5, deferred).
+- **Tranche 1 — cascade** (the production method): the 10 split-family kernels.
+  Emitted function names, the 11-arg ABI, table layouts, and zsplit.h stay
+  byte-compatible → drop-in `.c` files in `codelets/zil/avx2/`.
+- **Tranche 2 — bailey2**: the stage-1 leaves (`n1t`, `n1b2`) and the t2 mid
+  family (`t2`, `t2s`, `t2c`, `t2d`, `t2sp`, `t2sq`, tiled/ss variants as
+  needed by the benches that consume them). Same ABI freeze.
+- **Tranche 3 — solo**: `z_n1` (+ blocked devices). Preferred route is
+  CONVERGENCE with `emit_k1_mono` (already pipeline-hosted, production via
+  oop_leaf_registry.h) rather than a parallel emitter — decided by racing
+  pipeline output vs the zx hand kernels per radix.
+
+**Representation decision (applies to tranches 2–3):** the zx kinds keep data
+INTERLEAVED through the body (RotNI/BYTW2 pay ~1 shuffle per twiddle apply);
+the pipeline DAG is split-real. The port default is **split-real body +
+DEINT/REINT z edges** — same FLOPs, zero interior shuffles, boundary shuffles
+instead (the cascade thesis, which beat the IL levers t2c/t2sp at scale). Per
+kind this is a measured question: R3 races legacy-interleaved vs
+pipeline-split; a kind whose interleaved body wins on its home cells stays
+grandfathered as a hand template (same policy as sterm2, §6.2). We do NOT
+build a complex-vector node set / interleaved render mode unless multiple
+kinds refuse to converge — that is the expensive fork, taken only on evidence.
+
+**Out of scope:** runtime changes (zsplit.h / vfft.c / oop_leaf_registry.h)
+except the eventual AVX-512 plan-geometry parameterization (§5, deferred).
+Legacy `codelet_zil.ml` stays callable (`--z-legacy`) until every tranche
+lands; retirement is a separate decision.
 
 **Non-goal:** i9 performance improvement. Acceptance is parity within the
 ±3% placement-luck band (§4.9993), not a win.
@@ -149,6 +194,25 @@ AVX-512 plan-geometry parameterization (§5, deferred).
 
 Everything in the "new" rows is edge/config vocabulary — no new DAG node kinds,
 no scheduler changes, no new pass. The math is entirely expressible today.
+
+### 3b. Tranche 2–3 additions (bailey2 + solo kinds)
+
+| zil device | pipeline counterpart | status |
+|---|---|---|
+| `n1` solo body (monolithic radix-R, no tw) | `dft_expand` + il_in/il_out z edges — the `emit_k1_mono` shape | **exists** (convergence candidate) |
+| `blocked` / `blocked2` spill devices (zspill parking, 8×8 CT two-pass) | `dft_expand_n1_blocked` / `dft_expand_twiddled_spill` + spill markers + SU+GH recipe — the pipeline's NATIVE machinery | **exists** (the port DELETES the hand device) |
+| `n1t` corner-turn stores | existing UnitLeg store transpose family (`emit_store_unitleg`, permute2f128 repack) | **reuse** |
+| `t2` streamed twiddled mid | `dft_expand_twiddled ~direction:DIT` + new `VTW2Packed` twiddle kind: cos-first sign-folded 64-B record per column-pair, cursor `tw + (k>>1)*8*(R-1)` | **new twiddle-kind rendering** |
+| `t2s` strided columns (FFTW LD shape) | strided edge addressing (`Gs`-spaced columns) — UnitGroup/strided edges exist; 128-bit half-load composition is an edge detail | **reuse + edge param** |
+| `t2c` group-constant twiddles | `SplatPairTwiddles` fixed-cursor variant (same kind as msg, no bump) | **shared with tranche 1** |
+| `t2d` post-twiddle | `direction=DIF` post-tw structure (dft.ml exists; codelet_oop `current_post_tw` precedent) | **exists** |
+| `t2sp`/`t2sq` w¹-stream + in-register powers | `TP_PowW1` — same policy as sterm (t2sp = running-product chain variant, t2sq = squaring tree) | **shared with tranche 1** |
+| VLIT emit-time const twiddles (`CTw` dedup → file-scope statics) | algsimp Const folding + emit_render const materialization; per-file static dedup is an emission detail | **exists (mechanism)** |
+| tiled loads (`t2st`, vperm2f128 corner-turn) | 4×4 transpose template family | **reuse** |
+
+The t2 family's per-kind flags (strided/const/post/pow/tile) map onto config
+axes of ONE emitter path — the flag zoo collapses into the same
+config-record style codelet_oop already uses.
 
 ---
 
@@ -297,8 +361,19 @@ commits every step; nothing is committed by the assistant.
 5. **P4** TR4 edge + `TP_PowW1` + comb store → **sterm / stermb**.
 6. **P5** il2-style 2-instance concat → **sterm2**; per-cell race verdict.
 7. **P6** bwd msg twins (`~table_conj` post-tw path) → **msgb**; full-cascade
-   R2/R3; cutover per §7.
+   R2/R3; **tranche-1 cutover** per §7.
+8. **P7 (tranche 2)** `VTW2Packed` twiddle kind + strided/tiled edge params →
+   **t2 family** (t2, t2s, t2c, t2d, t2sp, t2sq); then **n1t / n1b2** leaves via
+   UnitLeg-store + native spill recipe; gate each vs legacy via the same
+   R1/R2 shape, race on the bailey2 bench cells (zil_4096_decomp / zil_512_race
+   arms).
+9. **P8 (tranche 3)** solo: race pipeline `emit_k1_mono`-style output (il
+   edges) vs zx `z_n1` per radix on the mono bench cells; converge or
+   grandfather per verdict. Expected outcome: convergence (delete the hand
+   blocked devices; pipeline recipe machinery replaces them).
 
-Estimated new OCaml: ~600–900 lines (codelet_zsplit.ml) + ~60 in dft.ml +
-~30 in gen_main.ml + render_load cases; zero changes to
-algsimp/schedule/regalloc/pipeline.
+Estimated new OCaml (tranche 1): ~600–900 lines (codelet_zsplit.ml) + ~60 in
+dft.ml + ~30 in gen_main.ml + render_load cases; zero changes to
+algsimp/schedule/regalloc/pipeline. Tranches 2–3 add config axes and twiddle
+renderings to the same module, not new machinery — the t2 flag zoo becomes
+config fields.
