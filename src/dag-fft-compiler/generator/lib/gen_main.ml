@@ -375,6 +375,10 @@ let run (argv : string array) : unit =
     then (
       z_native := true;
       z_split_kind := "sterm")
+    else if arg = "--z-sterm2"
+    then (
+      z_native := true;
+      z_split_kind := "sterm2")
     else if arg = "--z-s0sb"
     then (
       z_native := true;

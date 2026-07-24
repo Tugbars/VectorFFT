@@ -46,6 +46,7 @@
 VFFT_ZS_DECL(radix4_z_s0s_fwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_fwd_avx2)
 VFFT_ZS_DECL(radix4_z_msg_fwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_fwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_fwd_avx2)
+VFFT_ZS_DECL(radix8_z_sterm2_fwd_avx2)   /* 2-quad unroll-and-jam twin (§4.9993) */
 VFFT_ZS_DECL(radix4_z_s0s_bwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_bwd_avx2)
 VFFT_ZS_DECL(radix4_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_bwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_bwd_avx2)
@@ -62,6 +63,14 @@ typedef struct {
     double *twspb[VFFT_ZSPLIT_MAX_NF];  /* bwd (conjugated) sets */
     double *twq, *twqb;                 /* terminator packed per-col w^1, fwd/bwd */
     double *sp;                         /* block-split scratch, N complex */
+    int t2q;                            /* fwd terminator schedule: 0 = sterm
+                                         * (single-quad), 1 = sterm2 (2-quad
+                                         * unroll-and-jam). Bit-identical pair;
+                                         * per-cell pick — their delta is the
+                                         * same order as code-placement luck
+                                         * (§4.9993), so it is MEASURED, not
+                                         * reasoned. bwd keeps single-quad
+                                         * (2-quad refuted: +29..36% kernel). */
 } vfft_zsplit_plan_t;
 
 /* calibrated per-cell winners (zsplit_wisdom.txt, paced finals 2026-07-24) */
@@ -121,6 +130,8 @@ static inline vfft_zsplit_plan_t *vfft_zsplit_create(int N, const int *chain,
     vfft_zsplit_plan_t *p = (vfft_zsplit_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
     p->N = N; p->nf = nf;
+    /* per-cell terminator schedule (production-path race, §4.9993) */
+    p->t2q = (N >= 16384) ? 1 : 0;      /* provisional; set by pick race */
     for (int s = 0; s < nf; s++) p->chain[s] = chain[s];
     p->D[nf - 1] = 1;
     for (int i = nf - 2; i >= 0; i--) p->D[i] = p->D[i + 1] * chain[i + 1];
@@ -198,9 +209,10 @@ static inline void vfft_zsplit_execute_fwd(const vfft_zsplit_plan_t *p,
           (unsigned long long)p->D[s], (unsigned long long)p->G[s],
           0, 0, (unsigned long long)p->D[s]);
     }
-    radix8_z_sterm_fwd_avx2(p->sp, 0, zout, 0, p->twq, 0, 0, 0,
-                            (unsigned long long)(p->N / 8), 0,
-                            (unsigned long long)(p->N / 8));
+    (p->t2q ? radix8_z_sterm2_fwd_avx2 : radix8_z_sterm_fwd_avx2)(
+        p->sp, 0, zout, 0, p->twq, 0, 0, 0,
+        (unsigned long long)(p->N / 8), 0,
+        (unsigned long long)(p->N / 8));
 }
 
 /* digit-reversed comb z in -> N * natural z out. zin==zout OK. */
