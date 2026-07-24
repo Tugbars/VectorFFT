@@ -228,6 +228,17 @@ let render_load
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
+      (match !current_tw_zsplit with
+       | Some off ->
+         (* zsplit record [c×VW][s×VW] in tw_re (tw_im slot dead) — see
+            Emit_state.current_tw_zsplit. *)
+         let idx = j * 2 * isa.vec_width in
+         Isa.loadu_pd
+           isa
+           (if off = ""
+            then Printf.sprintf "tw_re[%d]" idx
+            else Printf.sprintf "tw_re[%s + %d]" off idx)
+       | None ->
       if !current_tw_linear > 0
       then
         (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
@@ -247,8 +258,18 @@ let render_load
         (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
              in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
              are lane-independent and stay unmasked. *)
-        Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j)
+        Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
     | Expr.Twiddle (j, false) ->
+      (match !current_tw_zsplit with
+       | Some off ->
+         (* zsplit: the sin half lives at +VW inside the tw_re record. *)
+         let idx = (j * 2 * isa.vec_width) + isa.vec_width in
+         Isa.loadu_pd
+           isa
+           (if off = ""
+            then Printf.sprintf "tw_re[%d]" idx
+            else Printf.sprintf "tw_re[%s + %d]" off idx)
+       | None ->
       if !current_tw_linear > 0
       then
         Isa.loadu_pd
@@ -262,7 +283,7 @@ let render_load
           (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
       else if t1s
       then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-      else Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j)
+      else Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
     | Expr.Output _ ->
       failwith "render_load: Output ref shouldn't appear as a Load source")
   else (
