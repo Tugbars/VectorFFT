@@ -575,6 +575,61 @@ run-varies 0.88–0.95 — the dedicated bwd bench had shown 1.15× at 2048. Run
 exe needs BOTH `C:\mingw152\mingw64\bin` (libwinpthread) and the MKL `bin` dir on PATH, else
 it dies 0xC0000135 before main.)
 
+## 4.9993. STERM SOFTWARE-PIPELINING CAMPAIGN (2026-07-24) — uj2 wins the kernel, placement luck eats the cascade; resolved as a MEASURED per-cell pick
+
+**Setup**: VTune (§4.9991) named sterm the stall mass (CPI 0.371, 44% retiring, store
+latency + FB-full). Five scheduling-only variants were built and adversarially verified
+(bit-identity mandatory, several verifiers compiled + empirically bit-checked), then raced
+inside the real cascade in `benches/zil_sterm_pipe.c` with two controls: `emit` (linked
+emitted kernel) and `copy` (same source pasted in the bench TU — the code-placement
+yardstick). All arms gated bit-identical at all 4 cells before timing.
+
+**Arm verdicts** (vs the copy control):
+
+- **uj2 — 2-quad unroll-and-jam: the kernel-level WINNER.** Two independent 4-column
+  bodies per trip (A/B), phases [loads A+B (16 store lines in flight)] [TR4 A] [TR4 B]
+  [twiddle trees alternated op-by-op] [BFLY A, stores A] [BFLY B, stores B]. In the
+  first build: kernel-only −6..−18%, full-cascade −2..−5%, consistent across 2 process
+  runs. The register-wall bet pays *at the kernel level*: doubled store-stream MLP + two
+  independent squaring-tree chains outweigh the spills.
+- **nt — non-temporal full-line stores: REFUTED** (+3..+24% kernel). Killing the RFO is
+  not worth evicting the output to DRAM at these sizes.
+- **rot — cross-iteration twiddle rotation: REFUTED** (+2..+8% kernel at most cells).
+  The rotated c1/c2/c4 pairs deepen the live set exactly where spills already bite.
+- **phase / pfw** (live-range phasing, PREFETCHW on the 8 output streams): noise-level.
+- **bwd twin (sterm_bwd_uj2): cleanly REFUTED** (+29..+36% kernel-only at every cell —
+  far beyond noise). bwd's 8 distant streams are LOAD streams the hardware prefetchers
+  already handle; doubled MLP buys nothing, doubled spill pressure is pure cost.
+  **bwd keeps the single-quad schedule.**
+
+**The placement-luck discovery (the real finding).** Rebuilding the bench TU with the bwd
+arms added reshuffled every function's address — and the fwd verdict FLIPPED at 2048/4096
+(uj2 from −5% to +4..+7% vs copy, in BOTH its TU and linked placements), while a later lib
+relayout flipped 2048 back. Code placement (DSB packing / JCC-erratum alignment) moves
+these kernels by ±5% — the same order as the schedule delta. The first build's clean win
+and the second's low-N loss are both "true" for their binaries. Corollary banked: at
+effect sizes ≤5%, a single-binary A/B is evidence about THAT binary, not about the code.
+
+**Resolution — both schedules are generator-owned, the pick is MEASURED per cell:**
+
+- `codelet_zil.ml`: kind `sterm` = original single-quad schedule (§4.998, restored);
+  kind `sterm2` = the uj2 schedule (`--z-sterm2`; emitted `radix8_z_sterm2_fwd_avx2`,
+  fwd-only). Both heads/bodies are raw-string templates; emitted sterm2 body is
+  byte-identical to the raced arm.
+- `zsplit.h`: plan field `t2q` selects the fwd terminator
+  (`t2q ? sterm2 : sterm`); create() sets a per-cell default from the production-path
+  pick race (`benches/zil_sterm_pick.c`, 3 passes, isolated cells): **4096 → sterm2**
+  (2/3 picks, largest deltas −2.3/−6.8%), 2048/8192 → sterm, 16384 coin-flip → sterm.
+  TODO(calibrator): promote t2q to a measured zsplit-wisdom field per install.
+
+**API gate after the campaign: OVERALL PASS** (drev + roundtrip 1e-15 at all 4 cells),
+front door 2048 0.87/0.91 · 4096 0.78/0.73 · 8192 0.81/0.77 · 16384 0.87/0.85 (fwd/bwd
+vs MKL) — within the msg-era band. Net: correctness-guaranteed dual-schedule machinery +
+measured picks; the honest headline is that sterm scheduling alone cannot beat placement
+noise at cascade granularity. The remaining profile-ordered levers (port-1→0 FMA-ify —
+which changes the OP MIX, not just the schedule — and MT) are the ones with headroom
+beyond the noise floor.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
