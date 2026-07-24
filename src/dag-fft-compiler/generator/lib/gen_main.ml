@@ -419,6 +419,8 @@ let run (argv : string array) : unit =
     then zp_kind := "sterm"
     else if arg = "--zp-stermb"
     then zp_kind := "stermb"
+    else if arg = "--zp-sterm2"
+    then zp_kind := "sterm2"
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1515,6 +1517,25 @@ let run (argv : string array) : unit =
       | true, true -> Annotated_SU uarch
     in
     let bb_budget_arg = if !bb then Some !bb_budget else None in
+    (* MUTUAL EXCLUSION (zil_pipeline_port.md §9 review finding): the pipeline
+       zsplit family (the zp flags) and the legacy interleaved-native family
+       (the z flags) emit BYTE-IDENTICAL symbol names, and the dispatch below
+       is fixed-priority (zp wins). Passing both would silently substitute the
+       pipeline kernel under the legacy name — an A/B script that concatenates
+       a legacy-z base with a zp variant would then compare pipeline-vs-
+       pipeline and report a FALSE parity verdict, exactly in the sterm/sterm2
+       family where the per-cell t2q pick turns on plus/minus 5 percent
+       placement luck. There is no valid reason to request both in one
+       invocation, so fail loudly rather than let the loser arm masquerade as
+       the winner. *)
+    if !zp_kind <> "" && (!z_native || !k1_mono || !oop)
+    then
+      failwith
+        (Printf.sprintf
+           "gen_main: --zp-%s (pipeline zsplit) conflicts with a legacy \
+            --z-*/--k1-mono/--oop flag in the same invocation. They emit \
+            identical symbol names; pass exactly one family per run."
+           !zp_kind);
     if !zp_kind <> ""
     then
       (* pipeline-hosted zsplit family: N (positional) = the radix. Goes
