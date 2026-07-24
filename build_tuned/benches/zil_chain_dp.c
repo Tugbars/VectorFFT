@@ -141,35 +141,40 @@ static void build_chain(chain_t *c)
     for (int i = nf - 2; i >= 0; i--) c->D[i] = c->D[i + 1] * c->R[i + 1];
     c->G[0] = 1;
     for (int i = 1; i < nf; i++) c->G[i] = c->G[i - 1] * c->R[i - 1];
-    c->twbytes = 0;
     const double TAU = 2.0 * M_PI;
+    size_t mid_full = 0, mid_cst = 0;
 
-    /* middles: col-constant per group, record repeated across the group's pairs */
+    /* middles: group-constant twiddles. t2 arm streams a replicated record per
+     * column-pair; t2c arm reads ONE record set per group (L1-hot). */
     for (int s = 1; s <= nf - 2; s++) {
         long pairs = c->D[s] / 2, M = (long)N / c->D[s];
         size_t rl = (size_t)(c->R[s] - 1) * 8;                 /* rec doubles/pair */
         size_t sz = (size_t)c->G[s] * pairs * rl * 8;
         c->twm[s] = (double *)_mm_malloc(sz, 64);
-        c->twbytes += sz;
+        c->twc[s] = (double *)_mm_malloc((size_t)c->G[s] * rl * 8, 64);
+        mid_full += sz;
+        mid_cst += (size_t)c->G[s] * rl * 8;
         for (long g = 0; g < c->G[s]; g++) {
             long brev = brev_prefix(g, s, c->R);
             double *gp = c->twm[s] + (size_t)g * pairs * rl;
+            double *gc = c->twc[s] + (size_t)g * rl;
             for (int l = 1; l < c->R[s]; l++) {
                 double a = -TAU * (double)(((long)l * brev) % M) / (double)M;
                 vtw2_rec(gp + (size_t)(l - 1) * 8, a, a);
+                vtw2_rec(gc + (size_t)(l - 1) * 8, a, a);
             }
             for (long p = 1; p < pairs; p++)                   /* replicate */
                 memcpy(gp + (size_t)p * rl, gp, rl * 8);
         }
     }
-    /* terminator: genuine per-column records, W_N^{l*brev(k)} */
+    /* terminator: FLAT per-column records W_N^{l*brev(k)} (t2s arm) + w^1-only
+     * stream (t2sp arm: 64B/pair, legs 2.. built in-register) */
     {
         int Rt = c->R[nf - 1];
         long cols = (long)N / Rt, pairs = cols / 2;
         size_t rl = (size_t)(Rt - 1) * 8;
-        size_t sz = (size_t)pairs * rl * 8;
-        c->twt = (double *)_mm_malloc(sz, 64);
-        c->twbytes += sz;
+        c->twt = (double *)_mm_malloc((size_t)pairs * rl * 8, 64);
+        c->twp1 = (double *)_mm_malloc((size_t)pairs * 8 * 8, 64);
         for (long p = 0; p < pairs; p++) {
             long b0 = brev_prefix(2 * p, nf - 1, c->R);
             long b1 = brev_prefix(2 * p + 1, nf - 1, c->R);
@@ -177,35 +182,47 @@ static void build_chain(chain_t *c)
                 double a0 = -TAU * (double)(((long)l * b0) % N) / (double)N;
                 double a1 = -TAU * (double)(((long)l * b1) % N) / (double)N;
                 vtw2_rec(c->twt + (size_t)p * rl + (size_t)(l - 1) * 8, a0, a1);
+                if (l == 1) vtw2_rec(c->twp1 + (size_t)p * 8, a0, a1);
             }
         }
+        size_t term_full = (size_t)pairs * rl * 8, term_p1 = (size_t)pairs * 64;
+        c->twb[0] = mid_full + term_full;   /* t2  mids + t2s  term */
+        c->twb[1] = mid_cst + term_full;    /* t2c mids + t2s  term */
+        c->twb[2] = mid_full + term_p1;     /* t2  mids + t2sp term */
+        c->twb[3] = mid_cst + term_p1;      /* t2c mids + t2sp term */
     }
     char *w = c->name;
     for (int i = 0; i < nf; i++) w += sprintf(w, "%s%d", i ? "." : "", c->R[i]);
 }
 
-static void run_chain(const chain_t *c, const double *z0, double *A, double *out)
+/* v: bit0 = t2c mids, bit1 = t2sp term */
+static void run_chain(const chain_t *c, int v, const double *z0, double *A,
+                      double *out)
 {
     const int nf = c->nf;
+    const int midc = v & 1, termp = (v >> 1) & 1;
     n1_of(c->R[0])(z0, 0, A, 0, 0, 0,
                    (unsigned long long)c->D[0], 0, (unsigned long long)c->D[0], 0,
                    (unsigned long long)c->D[0]);
     for (int s = 1; s <= nf - 2; s++) {
-        zfn f = t2_of(c->R[s]);
+        zfn f = midc ? t2c_of(c->R[s]) : t2_of(c->R[s]);
         long pairs = c->D[s] / 2;
         size_t rl = (size_t)(c->R[s] - 1) * 8;
         for (long g = 0; g < c->G[s]; g++) {
             long b = base_of(g, s, c->R, c->D);
-            f(A + 2 * b, 0, A + 2 * b, 0, c->twm[s] + (size_t)g * pairs * rl, 0,
+            const double *tw = midc ? c->twc[s] + (size_t)g * rl
+                                    : c->twm[s] + (size_t)g * pairs * rl;
+            f(A + 2 * b, 0, A + 2 * b, 0, tw, 0,
               (unsigned long long)c->D[s], 0, (unsigned long long)c->D[s], 0,
               (unsigned long long)c->D[s]);
         }
     }
     {
         int Rt = c->R[nf - 1];
-        t2s_of(Rt)(A, 0, out, 0, c->twt, 0,
-                   1, (unsigned long long)Rt, (unsigned long long)(N / Rt), 1,
-                   (unsigned long long)(N / Rt));
+        zfn f = termp ? t2sp_of(Rt) : t2s_of(Rt);
+        f(A, 0, out, 0, termp ? c->twp1 : c->twt, 0,
+          1, (unsigned long long)Rt, (unsigned long long)(N / Rt), 1,
+          (unsigned long long)(N / Rt));
     }
 }
 
@@ -266,27 +283,34 @@ int main(int argc, char **argv)
         if (g > mag) mag = g;
     }
 
-    /* build + gate every chain (digit-reversed compare) */
-    int ok = 0;
+    /* build + gate every chain x variant (digit-reversed compare) */
+    int ok = 0, tot = 0;
     for (int ci = 0; ci < NC; ci++) {
         chain_t *c = &C[ci];
         build_chain(c);
-        run_chain(c, z0, A, z);
         int Rt = c->R[c->nf - 1];
         long NR = (long)N / Rt;
-        double err = 0;
-        for (long idx = 0; idx < N; idx++) {
-            long l = idx / NR, g = idx % NR;
-            long m = drev_full(g * Rt + l, c->R, c->nf);
-            double d = fabs(z[2 * idx] - Rr[m]) + fabs(z[2 * idx + 1] - Ri[m]);
-            if (d > err) err = d;
+        for (int v = 0; v < NV; v++) {
+            if ((v >> 1) && !t2sp_of(Rt)) { c->best[v] = -1; continue; }
+            tot++;
+            run_chain(c, v, z0, A, z);
+            double err = 0;
+            for (long idx = 0; idx < N; idx++) {
+                long l = idx / NR, g = idx % NR;
+                long m = drev_full(g * Rt + l, c->R, c->nf);
+                double d = fabs(z[2 * idx] - Rr[m]) + fabs(z[2 * idx + 1] - Ri[m]);
+                if (d > err) err = d;
+            }
+            double rel = err / mag;
+            c->best[v] = 1e18;
+            if (rel < 1e-11) ok++;
+            else {
+                printf("GATE FAIL %-14s v%d relerr=%.3e\n", c->name, v, rel);
+                c->best[v] = -1;
+            }
         }
-        double rel = err / mag;
-        c->best = 1e18;
-        if (rel < 1e-12) ok++;
-        else { printf("GATE FAIL %-14s relerr=%.3e\n", c->name, rel); c->best = -1; }
     }
-    printf("# gates: %d/%d PASS\n", ok, NC);
+    printf("# gates: %d/%d PASS (chain x variant)\n", ok, tot);
 
     /* race: all gated chains + MKL, best-of-7, cachebust, rotated order */
     DFTI_DESCRIPTOR_HANDLE h = NULL;
@@ -294,19 +318,20 @@ int main(int argc, char **argv)
     DftiCommitDescriptor(h);
     int reps = (int)(4.0e6 / N); if (reps < 200) reps = 200;
     double mkl_best = 1e18;
-    int narm = NC + 1;
+    int narm = NC * NV + 1;
     for (int t = 0; t < 7; t++) {
         if (t) cachebust();
         for (int q = 0; q < narm; q++) {
             int a = (t & 1) ? (narm - 1 - q) : q;
-            if (a < NC) {
-                chain_t *c = &C[a];
-                if (c->best < 0) continue;
-                for (int w = 0; w < 6; w++) run_chain(c, z0, A, z);
+            if (a < NC * NV) {
+                chain_t *c = &C[a / NV];
+                int v = a % NV;
+                if (c->best[v] < 0) continue;
+                for (int w = 0; w < 6; w++) run_chain(c, v, z0, A, z);
                 double t0 = now_ms();
-                for (int i = 0; i < reps; i++) run_chain(c, z0, A, z);
+                for (int i = 0; i < reps; i++) run_chain(c, v, z0, A, z);
                 double ns = (now_ms() - t0) * 1e6 / reps;
-                if (ns < c->best) c->best = ns;
+                if (ns < c->best[v]) c->best[v] = ns;
             } else {
                 for (int w = 0; w < 6; w++) DftiComputeForward(h, z);
                 double t0 = now_ms();
@@ -317,20 +342,34 @@ int main(int argc, char **argv)
         }
     }
 
-    /* ranked report */
-    for (int i = 0; i < NC; i++)                 /* selection sort by best */
-        for (int j = i + 1; j < NC; j++)
-            if (C[j].best >= 0 && (C[i].best < 0 || C[j].best < C[i].best)) {
-                chain_t tmp = C[i]; C[i] = C[j]; C[j] = tmp;
+    /* ranked report over (chain, variant) tuples */
+    static const char *VN[NV] = { "t2 /t2s ", "t2c/t2s ", "t2 /t2sp", "t2c/t2sp" };
+    typedef struct { int ci, v; double ns; } row_t;
+    row_t rows[MAXC * NV];
+    int nr = 0;
+    for (int ci = 0; ci < NC; ci++)
+        for (int v = 0; v < NV; v++)
+            if (C[ci].best[v] >= 0 && C[ci].best[v] < 1e17) {
+                rows[nr].ci = ci; rows[nr].v = v; rows[nr].ns = C[ci].best[v]; nr++;
             }
-    printf("\n# N=%d chain race (scrambled-out cascade, in-place mids) vs MKL-IL %.1f ns\n",
+    for (int i = 0; i < nr; i++)
+        for (int j = i + 1; j < nr; j++)
+            if (rows[j].ns < rows[i].ns) { row_t tt = rows[i]; rows[i] = rows[j]; rows[j] = tt; }
+    printf("\n# N=%d chain x variant race vs MKL-IL %.1f ns  (mids/term: t2c=group-const tw, t2sp=w^1 powers)\n",
            N, mkl_best);
-    printf("%-4s %-14s %-6s %9s %7s %7s\n", "rank", "chain", "twKB", "ns", "vsMKL", "note");
-    for (int i = 0; i < NC; i++) {
-        if (C[i].best < 0) continue;
-        printf("%-4d %-14s %-6.0f %9.1f %7.2f %s\n", i + 1, C[i].name,
-               (double)C[i].twbytes / 1024.0, C[i].best, mkl_best / C[i].best,
-               C[i].nf == 2 ? "flat two-pass" : "");
+    printf("%-4s %-14s %-9s %-7s %9s %7s %s\n", "rank", "chain", "variant", "twKB", "ns", "vsMKL", "note");
+    int shown = 0;
+    for (int i = 0; i < nr && shown < 16; i++, shown++) {
+        chain_t *c = &C[rows[i].ci];
+        printf("%-4d %-14s %-9s %-7.0f %9.1f %7.2f %s\n", i + 1, c->name,
+               VN[rows[i].v], (double)c->twb[rows[i].v] / 1024.0, rows[i].ns,
+               mkl_best / rows[i].ns, c->nf == 2 ? "flat two-pass" : "");
+    }
+    /* per-lever attribution on the fastest chain */
+    if (nr) {
+        chain_t *c = &C[rows[0].ci];
+        printf("\n# lever attribution on %s: base(t2/t2s)=%.1f  +t2c=%.1f  +t2sp=%.1f  both=%.1f\n",
+               c->name, c->best[0], c->best[1], c->best[2], c->best[3]);
     }
     printf("DONE\n");
     return 0;
