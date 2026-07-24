@@ -43,8 +43,18 @@
 
 (* ─── kind table (P1: ms; P2: msg group-loop wrapper) ─────────────── *)
 
+(* Edge shapes for the column loop's memory boundary:
+     E_planes — block-split planes: re at 2*(l*Ls+k), im +VW. Plain vector
+                loads/stores, shuffle-free (the interior contract).
+     E_z      — natural interleaved z at the same leg addressing: two z
+                vectors per leg, DEINT on load / REINT on store (the API
+                boundary; shuffles paid once per cascade). *)
+type zs_edge =
+  | E_planes
+  | E_z
+
 type zs_kind =
-  { base : string (* "ms" | "msg" — the C-name stem *)
+  { base : string (* "ms" | "msg" | "s0s" — the C-name stem *)
   ; bwd : bool
   ; group_loop : bool
     (* msg: emit the ms column loop as a static always_inline _zsg body
@@ -52,18 +62,35 @@ type zs_kind =
        (bp += 2·R·Ls doubles, twg += (R-1)·2·VW). One call per stage —
        kills the per-group call overhead + trip-count mispredicts
        (z_cascade_plan §4.9991/§4.9992). *)
+  ; twiddled : bool (* false: n1 math + (void)tw_re (s0s leaf) *)
+  ; in_edge : zs_edge
+  ; out_edge : zs_edge
   }
 
 let kind_of_string (s : string) : zs_kind =
   match s with
-  | "ms" -> { base = "ms"; bwd = false; group_loop = false }
-  | "msb" -> { base = "ms"; bwd = true; group_loop = false }
-  | "msg" -> { base = "msg"; bwd = false; group_loop = true }
-  | "msgb" -> { base = "msg"; bwd = true; group_loop = true }
+  | "ms" ->
+    { base = "ms"; bwd = false; group_loop = false; twiddled = true
+    ; in_edge = E_planes; out_edge = E_planes }
+  | "msb" ->
+    { base = "ms"; bwd = true; group_loop = false; twiddled = true
+    ; in_edge = E_planes; out_edge = E_planes }
+  | "msg" ->
+    { base = "msg"; bwd = false; group_loop = true; twiddled = true
+    ; in_edge = E_planes; out_edge = E_planes }
+  | "msgb" ->
+    { base = "msg"; bwd = true; group_loop = true; twiddled = true
+    ; in_edge = E_planes; out_edge = E_planes }
+  | "s0s" ->
+    { base = "s0s"; bwd = false; group_loop = false; twiddled = false
+    ; in_edge = E_z; out_edge = E_planes }
+  | "s0sb" ->
+    { base = "s0s"; bwd = true; group_loop = false; twiddled = false
+    ; in_edge = E_planes; out_edge = E_z }
   | other ->
     failwith
       (Printf.sprintf
-         "codelet_zsplit: unknown kind %s (P1/P2 support: ms msb msg msgb)"
+         "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb)"
          other)
 ;;
 
@@ -89,14 +116,18 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
   (* ─── math layer ──────────────────────────────────────────────────
      ms fwd: DIT pre-twiddle t1 (legs 1..R-1 cmul'd on load) — exactly
      dft_expand_twiddled's (DIT, Fwd). msb: (DIT, Bwd) = IDFT butterfly +
-     POST-twiddle, with ~table_conj because twspb carries the conjugation. *)
+     POST-twiddle, with ~table_conj because twspb carries the conjugation.
+     s0s/s0sb: twiddle-free n1 (the leaf pays only the z boundary). *)
   let raw_assigns =
-    Dft.dft_expand_twiddled
-      ~policy:Dft.TP_Flat
-      ~direction:Dft.DIT
-      ~sign
-      ~table_conj:k.bwd
-      radix
+    if k.twiddled
+    then
+      Dft.dft_expand_twiddled
+        ~policy:Dft.TP_Flat
+        ~direction:Dft.DIT
+        ~sign
+        ~table_conj:k.bwd
+        radix
+    else Dft.dft_expand ~sign radix
   in
   (* ─── prepare (shared cascade) ──────────────────────────────────── *)
   Algsimp.reset ();
@@ -135,12 +166,15 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
         \ * [re x%d][im x%d] blocks (z addressing +%d for im; one stream per leg row).\n\
         \ * %s\n\
         \ * CONTRACT: count %% %d == 0 (%d columns per iteration).\n\
-        \ * tw_re = %s: legs 1..R-1, %d doubles/leg\n\
-        \ * [c×%d][s×%d]. tw_im unused.%s */\n"
+        \ * %s%s */\n"
        vw
        vw
        vw
        ((match k.base, k.bwd with
+         | "s0s", false ->
+           "s0s (z-in -> split-out leaf, twiddle-free, DEINT loads), fwd."
+         | "s0s", true ->
+           "s0s bwd twin (split-in -> natural-z-out IDFT leaf, REINT stores)."
          | "msg", false ->
            "msg (GROUP-LOOPED split mid: one call/stage, in-kernel bp/twg bumps), fwd."
          | "msg", true ->
@@ -151,20 +185,28 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
            "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw), fwd."))
        vw
        vw
-       (if k.group_loop
-        then "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)"
-        else "ONE per-group splat-pair set, no cursor (group-constant)")
-       (2 * vw)
-       vw
-       vw
+       (if not k.twiddled
+        then "tw_re/tw_im unused (twiddle-free leaf)."
+        else
+          Printf.sprintf
+            "tw_re = %s: legs 1..R-1, %d doubles/leg [c×%d][s×%d]. tw_im unused."
+            (if k.group_loop
+             then "Gs per-group splat-pair sets, in-kernel cursor (twg bump/group)"
+             else "ONE per-group splat-pair set, no cursor (group-constant)")
+            (2 * vw)
+            vw
+            vw)
        (if k.bwd then " Roundtrip = N*x (no 1/N in-kernel)." else ""));
   Buffer.add_string
     buf
     (Emit_c.provenance_block
        ~family:"zsplit-pipeline"
        [ Printf.sprintf "kind=%s radix=%d dir=%s isa=%s" k.base radix dir_s isa.Isa.name
-       ; "math: Dft.dft_expand_twiddled TP_Flat DIT"
-         ^ (if k.bwd then " sign=Bwd table_conj=true" else " sign=Fwd")
+       ; (if k.twiddled
+          then
+            "math: Dft.dft_expand_twiddled TP_Flat DIT"
+            ^ (if k.bwd then " sign=Bwd table_conj=true" else " sign=Fwd")
+          else "math: Dft.dft_expand (n1)" ^ if k.bwd then " sign=Bwd" else " sign=Fwd")
        ; "prepare: Pipeline.prepare_codelet (monolithic, fuse=0)"
        ; "schedule: Schedule.su_schedule (SR list scheduler)"
        ]);
@@ -176,33 +218,67 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw);
-  (* ── ZBlockSplit load edge: lane_{re,im}_l from the split planes.
-        Leg l's re half at zin + 2*(l*Ls + k), im half +VW. ── *)
-  Buffer.add_string buf "        /* ZBlockSplit load edge */\n";
-  for l = 0 to radix - 1 do
-    let re_addr =
-      if l = 0
-      then "zin[2*(size_t)k]"
-      else Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
-    in
-    let im_addr =
-      if l = 0
-      then Printf.sprintf "zin[2*(size_t)k + %d]" vw
-      else Printf.sprintf "zin[2*((size_t)%d*Ls + k) + %d]" l vw
-    in
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "        %s\n        %s\n"
-         (Isa.const_decl
-            isa
-            (Printf.sprintf "lane_re_%d" l)
-            (Isa.loadu_pd isa re_addr))
-         (Isa.const_decl
-            isa
-            (Printf.sprintf "lane_im_%d" l)
-            (Isa.loadu_pd isa im_addr)))
-  done;
+  (match k.in_edge with
+   | E_planes ->
+     (* ── ZBlockSplit load edge: lane_{re,im}_l from the split planes.
+           Leg l's re half at zin + 2*(l*Ls + k), im half +VW. ── *)
+     Buffer.add_string buf "        /* ZBlockSplit load edge */\n";
+     for l = 0 to radix - 1 do
+       let re_addr =
+         if l = 0
+         then "zin[2*(size_t)k]"
+         else Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
+       in
+       let im_addr =
+         if l = 0
+         then Printf.sprintf "zin[2*(size_t)k + %d]" vw
+         else Printf.sprintf "zin[2*((size_t)%d*Ls + k) + %d]" l vw
+       in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s\n        %s\n"
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "lane_re_%d" l)
+               (Isa.loadu_pd isa re_addr))
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "lane_im_%d" l)
+               (Isa.loadu_pd isa im_addr)))
+     done
+   | E_z ->
+     (* ── Z load edge (DEINT): two z vectors per leg, deinterleaved into
+           the lane planes — unpacklo/hi + permute4x64 0xD8, the shuffles
+           the cascade pays once at its API boundary. ── *)
+     Buffer.add_string buf "        /* Z load edge (DEINT) */\n";
+     let unlo = Isa.intr isa "unpacklo_pd"
+     and unhi = Isa.intr isa "unpackhi_pd"
+     and p44 = Isa.intr isa "permute4x64_pd" in
+     for l = 0 to radix - 1 do
+       let zlo_addr = Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l in
+       let zhi_addr = Printf.sprintf "zin[2*((size_t)%d*Ls + k) + %d]" l vw in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s\n        %s\n        %s\n        %s\n"
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "_zl_%d" l)
+               (Isa.loadu_pd isa zlo_addr))
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "_zh_%d" l)
+               (Isa.loadu_pd isa zhi_addr))
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "lane_re_%d" l)
+               (Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unlo l l))
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "lane_im_%d" l)
+               (Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unhi l l)))
+     done);
   (* ── SU-scheduled body. Defs in schedule order (first occurrence per
         tag); single-use tags render inline at their consumer. Twiddle
         loads render via the zsplit record mode. ── *)
@@ -232,31 +308,62 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
               Buffer.add_char buf '\n'))
          scheduled);
   (* ── ZBlockSplit store edge (in place: same plane addressing). ── *)
-  Buffer.add_string buf "        /* ZBlockSplit store edge */\n";
+  (* per-leg output tag arrays (both edge shapes consume pairs) *)
+  let re_tag = Array.make radix (-1)
+  and im_tag = Array.make radix (-1) in
   List.iter
     (fun (lhs, (e : Algsimp.t)) ->
-       let tname = Printf.sprintf "t%d" e.Algsimp.tag in
        match lhs with
-       | Expr.Output (l, true) ->
-         let addr =
-           if l = 0
-           then "zout[2*(size_t)k]"
-           else Printf.sprintf "zout[2*((size_t)%d*Ls + k)]" l
-         in
-         Buffer.add_string
-           buf
-           (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa addr tname))
-       | Expr.Output (l, false) ->
-         let addr =
-           if l = 0
-           then Printf.sprintf "zout[2*(size_t)k + %d]" vw
-           else Printf.sprintf "zout[2*((size_t)%d*Ls + k) + %d]" l vw
-         in
-         Buffer.add_string
-           buf
-           (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa addr tname))
+       | Expr.Output (l, true) -> re_tag.(l) <- e.Algsimp.tag
+       | Expr.Output (l, false) -> im_tag.(l) <- e.Algsimp.tag
        | _ -> failwith "codelet_zsplit: assign LHS is not Output")
-      assigns;
+    assigns;
+  (match k.out_edge with
+   | E_planes ->
+     Buffer.add_string buf "        /* ZBlockSplit store edge */\n";
+     for l = 0 to radix - 1 do
+       let re_addr =
+         if l = 0
+         then "zout[2*(size_t)k]"
+         else Printf.sprintf "zout[2*((size_t)%d*Ls + k)]" l
+       in
+       let im_addr =
+         if l = 0
+         then Printf.sprintf "zout[2*(size_t)k + %d]" vw
+         else Printf.sprintf "zout[2*((size_t)%d*Ls + k) + %d]" l vw
+       in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s;\n        %s;\n"
+            (Isa.storeu_pd isa re_addr (Printf.sprintf "t%d" re_tag.(l)))
+            (Isa.storeu_pd isa im_addr (Printf.sprintf "t%d" im_tag.(l))))
+     done
+   | E_z ->
+     (* ── Z store edge (REINT): permute4x64 0xD8 each plane, then
+           unpacklo/hi re-interleaves back to natural z. ── *)
+     Buffer.add_string buf "        /* Z store edge (REINT) */\n";
+     let unlo = Isa.intr isa "unpacklo_pd"
+     and unhi = Isa.intr isa "unpackhi_pd"
+     and p44 = Isa.intr isa "permute4x64_pd" in
+     for l = 0 to radix - 1 do
+       let zlo_addr = Printf.sprintf "zout[2*((size_t)%d*Ls + k)]" l in
+       let zhi_addr = Printf.sprintf "zout[2*((size_t)%d*Ls + k) + %d]" l vw in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s\n        %s\n        %s;\n        %s;\n"
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "_pr_%d" l)
+               (Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(l)))
+            (Isa.const_decl
+               isa
+               (Printf.sprintf "_qi_%d" l)
+               (Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(l)))
+            (Isa.storeu_pd isa zlo_addr (Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo l l))
+            (Isa.storeu_pd isa zhi_addr (Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi l l)))
+     done);
     Buffer.add_string buf "    }\n"
   in
   (if not k.group_loop
@@ -275,9 +382,10 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
           \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
            {\n\
           \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OLs; \
-           (void)OGs;\n"
+           (void)OGs;%s\n"
           isa.Isa.target_attr
-          fname);
+          fname
+          (if k.twiddled then "" else " (void)tw_re;"));
      emit_col_loop ();
      Buffer.add_string buf "}\n")
    else (
