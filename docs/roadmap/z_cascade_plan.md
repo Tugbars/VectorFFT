@@ -226,6 +226,32 @@ boundary. Remaining gap (0.73→0.56 decaying with N) = the §4.9 verified diffe
 Production path: per-cell wisdom stores the winning chain (cc_chain-style token), then bake/JIT
 the winner to kill the call tax (MKL's fused function is AOT-baked — census-verified, not JIT).
 
+## 4.96. LEVERS 1+2 MEASURED (2026-07-24) — t2c + t2sp kernels; high-N collapse CLOSED
+
+Emitted two z-kernel kinds (codelet_zil.ml, flags `--z-t2c`/`--z-t2sp`): **t2c** = t2 with
+group-constant VTW2 record set (frozen cursor, L1-hot — the z-analog of split t1s);
+**t2sp** = t2s terminator streaming ONE w¹ record/col-pair, legs 2..R-1 built in-register
+(VTW2 sign-folded form is closed under elementwise cmul: c'=c·c1−s·s1, s'=s·c1+c·s1 — 4 ops/leg).
+Raced as variant axes in zil_chain_dp.c: **294/294 chain×variant gates pass**.
+
+| N | base→both (ns) | lever gain | vs MKL (was at session start) | winner |
+|---|--:|--:|--:|---|
+| 2048  | 2889→2761   | −4.4%  | **0.73×** (0.54) | 16.16.8 t2c/t2sp |
+| 4096  | 6494→6342   | −2.3%  | **0.67×** (0.46) | 4.8.16.8 t2c/t2sp |
+| 8192  | 15255→13933 | −8.7%  | **0.67×** (—)    | 4.16.16.8 t2c/t2sp |
+| 16384 | 36716→28773 | **−21.6%** | **0.70×** (—) | 4.8.8.8.8 t2c/t2sp |
+
+Findings: (1) the twiddle-bandwidth lever is **N-dependent** — negligible at 4096 (tables
+L2-resident, prefetch hides the stream; my 10%+ byte-count projection was WRONG there),
+decisive at 16384 (FLAT tables 1.4 MiB ≈ L2 capacity; t2c alone −18.8%); (2) **t2c unlocks
+deep chains** — the 16384 winner became the 5-stage 4.8.8.8.8 (previously mid-field) because
+group-constant twiddles remove the deep-chain table penalty; 3 of 4 cells changed winning
+chains → chain and kernel-variant must be calibrated JOINTLY, per cell; (3) **the high-N
+collapse is closed**: z family now 0.67–0.73× MKL across ALL ≥2048, no decay with N.
+Remaining gap ≈ 1.4×: per-stage kernel quality (MKL's lean radix-4 ymm bodies — emit
+radix4 z_t2/t2c mids to test MKL-aligned all-radix-4 chains), lever 3 (n1t-load terminator),
+lever 4 (AOT bake via emit_executor_h.ml pattern / JIT — kills the per-group call tax).
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
