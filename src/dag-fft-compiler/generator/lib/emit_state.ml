@@ -87,17 +87,26 @@ let strided_ilo_nt : bool ref = ref false
    touch of either side of input index j emits the shared z loads + both
    deinterleave permutes (lazy placement preserved); stores defer the re side
    one statement and fuse the (re,im) pair into full-width z stores. *)
-let ip_il_in  : bool ref = ref false
+let ip_il_in : bool ref = ref false
 let ip_il_out : bool ref = ref false
+
 (* memo: per-emit_body-pass. il_pending accumulates lattice statements to be
    flushed as a prefix of the next rendered node definition. *)
 let il_seen : (int, unit) Hashtbl.t = Hashtbl.create 64
 let il_pending : Buffer.t = Buffer.create 256
 let il_stash : (int * string) option ref = ref None
+
 let il_reset () =
-  Hashtbl.reset il_seen; Buffer.clear il_pending; il_stash := None
+  Hashtbl.reset il_seen;
+  Buffer.clear il_pending;
+  il_stash := None
+;;
+
 let il_take_pending () =
-  let s = Buffer.contents il_pending in Buffer.clear il_pending; s
+  let s = Buffer.contents il_pending in
+  Buffer.clear il_pending;
+  s
+;;
 
 (* D2 (section 69): hc2c NATURAL-split terminator. Sub-mode of
  * hc_strided (inputs/twiddles identical); overrides the signature
@@ -154,7 +163,6 @@ let hc2c_nat_r : int ref = ref 0
  * twiddles / constants go through set1_pd_str and are never masked. *)
 let current_ls_mode : Isa.ls_mode ref = ref Isa.LS_vector
 
-
 (* === M3a regalloc consumption point ===
  *
  * Top-level mutable ref that carries the active register allocation
@@ -192,8 +200,7 @@ let current_fence_only : bool ref = ref false
  * as a NON-const declaration with a "+x" compiler barrier (or gcc
  * re-CSEs the clone back into the original at -O3) and must never
  * inline them. Set by gen_main when VFFT_DUP=1; empty by default. *)
-let dup_barrier_tags : (int, unit) Hashtbl.t ref =
-  ref (Hashtbl.create 0)
+let dup_barrier_tags : (int, unit) Hashtbl.t ref = ref (Hashtbl.create 0)
 
 (* Store-on-compute (in-place 2-pass path). When true, each PASS 2 output
  * is stored to the output buffer the moment its value node is emitted,

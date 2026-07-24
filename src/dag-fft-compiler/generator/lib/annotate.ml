@@ -45,11 +45,10 @@ open Algsimp
  * The unit operated on. Matches the (oref option, node) shape the
  * schedulers and our flat topological order produce. *)
 
-type entry = {
-  output_for : Expr.elem_ref option;
-      (* None = intermediate; Some = output store *)
-  alg_node : Algsimp.t;
-}
+type entry =
+  { output_for : Expr.elem_ref option (* None = intermediate; Some = output store *)
+  ; alg_node : Algsimp.t
+  }
 
 (* === SCOPE TREE ===
  *
@@ -65,10 +64,10 @@ type entry = {
 
 type scope =
   | Leaf of entry
-  | Block of {
-      decls : int list; (* tags declared at this scope level *)
-      body : scope list;
-    }
+  | Block of
+      { decls : int list (* tags declared at this scope level *)
+      ; body : scope list
+      }
 
 (* === LIFETIME ANALYSIS === *)
 
@@ -80,8 +79,9 @@ type scope =
  *
  * last_use[tag] = the highest index where tag is referenced.
  *   Referenced by: another intermediate's preds, or an output entry's alg_node. *)
-let compute_lifetimes (entries : entry array) :
-    (int, int) Hashtbl.t * (int, int) Hashtbl.t =
+let compute_lifetimes (entries : entry array)
+  : (int, int) Hashtbl.t * (int, int) Hashtbl.t
+  =
   let first_def = Hashtbl.create 256 in
   let last_use = Hashtbl.create 256 in
   let n = Array.length entries in
@@ -89,24 +89,23 @@ let compute_lifetimes (entries : entry array) :
     let entry = entries.(i) in
     match entry.output_for with
     | None ->
-        (* This entry defines the alg_node as a new variable. *)
-        if not (Hashtbl.mem first_def entry.alg_node.tag) then
-          Hashtbl.add first_def entry.alg_node.tag i;
-        (* It also USES its predecessors (which were defined earlier). *)
-        List.iter
-          (fun p -> Hashtbl.replace last_use p.tag i)
-          (preds entry.alg_node)
+      (* This entry defines the alg_node as a new variable. *)
+      if not (Hashtbl.mem first_def entry.alg_node.tag)
+      then Hashtbl.add first_def entry.alg_node.tag i;
+      (* It also USES its predecessors (which were defined earlier). *)
+      List.iter (fun p -> Hashtbl.replace last_use p.tag i) (preds entry.alg_node)
     | Some _ ->
-        (* Output store entry: uses the alg_node (defined earlier). *)
-        Hashtbl.replace last_use entry.alg_node.tag i
+      (* Output store entry: uses the alg_node (defined earlier). *)
+      Hashtbl.replace last_use entry.alg_node.tag i
   done;
   (* Variables that are defined but never used (rare — would be dead code,
    * but include them anyway for safety): set last_use = first_def. *)
   Hashtbl.iter
     (fun tag def_idx ->
-      if not (Hashtbl.mem last_use tag) then Hashtbl.add last_use tag def_idx)
+       if not (Hashtbl.mem last_use tag) then Hashtbl.add last_use tag def_idx)
     first_def;
-  (first_def, last_use)
+  first_def, last_use
+;;
 
 (* === RECURSIVE BISECTION FOR SCOPE TREE ===
  *
@@ -125,32 +124,42 @@ let compute_lifetimes (entries : entry array) :
  * GCC handles small-scope register allocation fine. *)
 let min_block_size = 8
 
-let rec scope_range (entries : entry array) (first_def : (int, int) Hashtbl.t)
-    (last_use : (int, int) Hashtbl.t) (lo : int) (hi : int) : scope =
+let rec scope_range
+          (entries : entry array)
+          (first_def : (int, int) Hashtbl.t)
+          (last_use : (int, int) Hashtbl.t)
+          (lo : int)
+          (hi : int)
+  : scope
+  =
   let lookup tbl tag default =
-    match Hashtbl.find_opt tbl tag with Some v -> v | None -> default
+    match Hashtbl.find_opt tbl tag with
+    | Some v -> v
+    | None -> default
   in
   let len = hi - lo in
-  if len <= 0 then Block { decls = []; body = [] }
-  else if len <= min_block_size then (
+  if len <= 0
+  then Block { decls = []; body = [] }
+  else if len <= min_block_size
+  then (
     (* Leaf block: declare tags whose lifetime is entirely in [lo, hi).
      * Tags that escape are handled by the enclosing scope. *)
     let local_decls = ref [] in
     for i = lo to hi - 1 do
       let e = entries.(i) in
-      if e.output_for = None then begin
+      if e.output_for = None
+      then (
         let tag = e.alg_node.tag in
         let def_i = lookup first_def tag i in
         let use_i = lookup last_use tag def_i in
-        if def_i >= lo && use_i < hi then local_decls := tag :: !local_decls
-      end
+        if def_i >= lo && use_i < hi then local_decls := tag :: !local_decls)
     done;
     let body = ref [] in
     for i = hi - 1 downto lo do
       body := Leaf entries.(i) :: !body
     done;
     Block { decls = List.rev !local_decls; body = !body })
-  else
+  else (
     let mid = (lo + hi) / 2 in
     let left = scope_range entries first_def last_use lo mid in
     let right = scope_range entries first_def last_use mid hi in
@@ -160,15 +169,16 @@ let rec scope_range (entries : entry array) (first_def : (int, int) Hashtbl.t)
     let cross_decls = ref [] in
     for i = lo to mid - 1 do
       let e = entries.(i) in
-      if e.output_for = None then begin
+      if e.output_for = None
+      then (
         let tag = e.alg_node.tag in
         let def_i = lookup first_def tag i in
         let use_i = lookup last_use tag def_i in
-        if def_i >= lo && def_i < mid && use_i >= mid && use_i < hi then
-          cross_decls := tag :: !cross_decls
-      end
+        if def_i >= lo && def_i < mid && use_i >= mid && use_i < hi
+        then cross_decls := tag :: !cross_decls)
     done;
-    Block { decls = List.rev !cross_decls; body = [ left; right ] }
+    Block { decls = List.rev !cross_decls; body = [ left; right ] })
+;;
 
 (* === PUBLIC API === *)
 
@@ -179,6 +189,7 @@ let annotate (entries : (Expr.elem_ref option * Algsimp.t) list) : scope =
   in
   let first_def, last_use = compute_lifetimes arr in
   scope_range arr first_def last_use 0 (Array.length arr)
+;;
 
 (* === EMIT HELPERS ===
  *
@@ -225,22 +236,27 @@ let strip_const_prefix (isa : Isa.t) (line : string) : string =
   match String.index_opt line 'c' with
   | None -> line
   | Some i ->
-      let rest = String.sub line i (String.length line - i) in
-      if
-        String.length rest >= String.length prefix
-        && String.sub rest 0 (String.length prefix) = prefix
-      then
-        let leading = String.sub line 0 i in
-        let after =
-          String.sub rest (String.length prefix)
-            (String.length rest - String.length prefix)
-        in
-        leading ^ after
-      else line
+    let rest = String.sub line i (String.length line - i) in
+    if
+      String.length rest >= String.length prefix
+      && String.sub rest 0 (String.length prefix) = prefix
+    then (
+      let leading = String.sub line 0 i in
+      let after =
+        String.sub rest (String.length prefix) (String.length rest - String.length prefix)
+      in
+      leading ^ after)
+    else line
+;;
 
-let emit_scope (isa : Isa.t) (buf : Buffer.t)
-    (render_intermediate : Algsimp.t -> string)
-    (render_store : Expr.elem_ref -> Algsimp.t -> string) (s : scope) : unit =
+let emit_scope
+      (isa : Isa.t)
+      (buf : Buffer.t)
+      (render_intermediate : Algsimp.t -> string)
+      (render_store : Expr.elem_ref -> Algsimp.t -> string)
+      (s : scope)
+  : unit
+  =
   let forward_declared : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let render_decls tags =
     Isa.forward_decl isa (List.map (fun t -> Printf.sprintf "t%d" t) tags)
@@ -248,44 +264,41 @@ let emit_scope (isa : Isa.t) (buf : Buffer.t)
   let rec walk indent s =
     match s with
     | Leaf entry ->
-        Buffer.add_string buf indent;
-        (match entry.output_for with
-        | None ->
-            let line = render_intermediate entry.alg_node in
-            if Hashtbl.mem forward_declared entry.alg_node.tag then
-              Buffer.add_string buf (strip_const_prefix isa line)
-            else Buffer.add_string buf line
-        | Some oref -> Buffer.add_string buf (render_store oref entry.alg_node));
-        Buffer.add_char buf '\n'
+      Buffer.add_string buf indent;
+      (match entry.output_for with
+       | None ->
+         let line = render_intermediate entry.alg_node in
+         if Hashtbl.mem forward_declared entry.alg_node.tag
+         then Buffer.add_string buf (strip_const_prefix isa line)
+         else Buffer.add_string buf line
+       | Some oref -> Buffer.add_string buf (render_store oref entry.alg_node));
+      Buffer.add_char buf '\n'
     | Block { decls; body } ->
-        let new_decls =
-          List.filter (fun t -> not (Hashtbl.mem forward_declared t)) decls
-        in
-        List.iter (fun t -> Hashtbl.add forward_declared t ()) new_decls;
+      let new_decls = List.filter (fun t -> not (Hashtbl.mem forward_declared t)) decls in
+      List.iter (fun t -> Hashtbl.add forward_declared t ()) new_decls;
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "{\n";
+      if new_decls <> []
+      then (
         Buffer.add_string buf indent;
-        Buffer.add_string buf "{\n";
-        if new_decls <> [] then begin
-          Buffer.add_string buf indent;
-          Buffer.add_string buf "  ";
-          Buffer.add_string buf (render_decls new_decls);
-          Buffer.add_char buf '\n'
-        end;
-        let inner_indent = indent ^ "  " in
-        List.iter (walk inner_indent) body;
-        Buffer.add_string buf indent;
-        Buffer.add_string buf "}\n";
-        List.iter (fun t -> Hashtbl.remove forward_declared t) new_decls
+        Buffer.add_string buf "  ";
+        Buffer.add_string buf (render_decls new_decls);
+        Buffer.add_char buf '\n');
+      let inner_indent = indent ^ "  " in
+      List.iter (walk inner_indent) body;
+      Buffer.add_string buf indent;
+      Buffer.add_string buf "}\n";
+      List.iter (fun t -> Hashtbl.remove forward_declared t) new_decls
   in
   match s with
   | Block { decls; body } ->
-      let new_decls =
-        List.filter (fun t -> not (Hashtbl.mem forward_declared t)) decls
-      in
-      List.iter (fun t -> Hashtbl.add forward_declared t ()) new_decls;
-      if new_decls <> [] then begin
-        Buffer.add_string buf "        ";
-        Buffer.add_string buf (render_decls new_decls);
-        Buffer.add_char buf '\n'
-      end;
-      List.iter (walk "        ") body
+    let new_decls = List.filter (fun t -> not (Hashtbl.mem forward_declared t)) decls in
+    List.iter (fun t -> Hashtbl.add forward_declared t ()) new_decls;
+    if new_decls <> []
+    then (
+      Buffer.add_string buf "        ";
+      Buffer.add_string buf (render_decls new_decls);
+      Buffer.add_char buf '\n');
+    List.iter (walk "        ") body
   | Leaf _ -> walk "        " s
+;;

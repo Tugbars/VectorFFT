@@ -92,12 +92,12 @@
  *
  * Both gen_radix and codelet_oop consume this. emit_c then takes the
  * assigns + spill_info to build its scheduled emission. *)
-type prepared = {
-  assigns : (Expr.elem_ref * Algsimp.t) list;
-  (* spill_info is None when monolithic, Some when the math layer
+type prepared =
+  { assigns : (Expr.elem_ref * Algsimp.t) list
+  ; (* spill_info is None when monolithic, Some when the math layer
      produced spill markers (R≥25 CT for n1, or should_spill for t1). *)
-  spill_info : Emit_c.spill_info option;
-}
+    spill_info : Emit_c.spill_info option
+  }
 
 (* ─── prepare_codelet ────────────────────────────────────────────────
  * Single shared entry point. Mirrors gen_radix.ml lines 250-598 exactly,
@@ -121,12 +121,19 @@ type prepared = {
  *     reloads, no register retention across pass boundary)
  *
  * Returns prepared { assigns; spill_info }. ─ *)
-let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
-    ~(spill_markers_raw : Dft.spill_marker list)
-    ~(spill_ct : (int * int) option) ~(reassoc : bool) ~(aggressive : bool)
-    ~(algorithm : Dft.algorithm) ~(force_fma_lift : bool)
-    ~(disable_fma_lift : bool) ~(build_spill_info : bool) ~(fuse : int) :
-    prepared =
+let prepare_codelet
+      ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
+      ~(spill_markers_raw : Dft.spill_marker list)
+      ~(spill_ct : (int * int) option)
+      ~(reassoc : bool)
+      ~(aggressive : bool)
+      ~(algorithm : Dft.algorithm)
+      ~(force_fma_lift : bool)
+      ~(disable_fma_lift : bool)
+      ~(build_spill_info : bool)
+      ~(fuse : int)
+  : prepared
+  =
   (* Hash-cons. CRITICAL: caller must have run Algsimp.reset () before
      this point. The reset clears the global hash-cons table; without
      it, prior generations leak tags into our DAG and the remap chain
@@ -137,11 +144,11 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
      preserves both call patterns without behavior change. *)
   let simplified = Algsimp.of_assignments ~reassoc raw_assigns in
   let deduped_pre =
-    (if Sys.getenv_opt "VFFT_NO_SUBDEDUP" = Some "1" then fun x -> x
+    (if Sys.getenv_opt "VFFT_NO_SUBDEDUP" = Some "1"
+     then fun x -> x
      else Algsimp.dedup_sub_pairs)
       simplified
   in
-
   (* Aggressive prime-only passes. For Direct primes (aggressive=true),
      factor_common_muls / factor_by_atom recognize Winograd structure:
        c·x_a + c·x_b → c·(x_a + x_b)
@@ -153,41 +160,39 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
   let factored = Algsimp.factor_common_muls ~aggressive deduped_pre in
   let factored = Algsimp.factor_by_atom ~aggressive factored in
   let factored =
-    (if Sys.getenv_opt "VFFT_NO_SUBDEDUP" = Some "1" then fun x -> x
+    (if Sys.getenv_opt "VFFT_NO_SUBDEDUP" = Some "1"
+     then fun x -> x
      else Algsimp.dedup_sub_pairs)
       factored
   in
-
   (* collect_m: opt-in via VFFT_COLLECT_M=1. Default off in gen_radix.
      Falls through to identity when the env var is unset. Placed after
      dedup_sub_pairs (sees canonicalized form) and before fma_lift
      (Mul nodes it introduces are visible to FMA absorption). *)
   let factored = Algsimp.collect_m factored in
-
   (* deep_collect: opt-in via VFFT_DEEP_COLLECT=1. Default off.
      Fixpoint loop combining deep_collect + collect_m. *)
   let factored =
-    if Sys.getenv_opt "VFFT_DEEP_COLLECT" = Some "1" then begin
+    if Sys.getenv_opt "VFFT_DEEP_COLLECT" = Some "1"
+    then (
       let max_iters = 5 in
       let rec loop n cur =
-        if n = 0 then cur
-        else
+        if n = 0
+        then cur
+        else (
           let next = Algsimp.deep_collect cur in
           let next = Algsimp.collect_m next in
           let same =
             try
-              List.for_all2
-                (fun (_, a) (_, b) -> a.Algsimp.tag = b.Algsimp.tag)
-                cur next
-            with Invalid_argument _ -> false
+              List.for_all2 (fun (_, a) (_, b) -> a.Algsimp.tag = b.Algsimp.tag) cur next
+            with
+            | Invalid_argument _ -> false
           in
-          if same then cur else loop (n - 1) next
+          if same then cur else loop (n - 1) next)
       in
-      loop max_iters factored
-    end
+      loop max_iters factored)
     else factored
   in
-
   (* share_subsums: aggressive-only. For CT codelets (is_direct=false
      for our flow), production calls share_subsums with aggressive=false
      which is a no-op. We match exactly. *)
@@ -195,7 +200,6 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
   let shared =
     if is_direct then factored else Algsimp.share_subsums ~aggressive factored
   in
-
   (* Transpose FP loop. Production guards this with
      `aggressive && not has_cmul && not is_direct`. Since aggressive
      ↔ is_direct in the current pipeline, this conjunction is always
@@ -208,7 +212,6 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
      ran. With it goes its only consumer of the legacy op-counter, so
      post_trans is just the shared DAG. *)
   let post_trans = shared in
-
   (* FMA lift gating per doc 56. *)
   let fma_lift_safe =
     match algorithm with
@@ -216,50 +219,45 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
     | Dft.Cooley_Tukey _ -> true
     | Dft.Split_radix -> false
   in
-  let apply_fma_lift =
-    (fma_lift_safe || force_fma_lift) && not disable_fma_lift
-  in
-
+  let apply_fma_lift = (fma_lift_safe || force_fma_lift) && not disable_fma_lift in
   (* Capture pre-cascade frozen_tags from spill markers. Must run
      lift_spill_markers BEFORE fma_lift so the marker tags reference
      nodes that fma_lift can leave unchanged via the frozen guard. *)
   let frozen_tags : (int, unit) Hashtbl.t option =
-    if apply_fma_lift && spill_markers_raw <> [] then begin
+    if apply_fma_lift && spill_markers_raw <> []
+    then (
       let pre_markers = Algsimp.lift_spill_markers ~reassoc spill_markers_raw in
       let tbl = Hashtbl.create 64 in
       List.iter
         (fun (m : Algsimp.spill_tag_marker) ->
-          Hashtbl.replace tbl m.re_tag ();
-          Hashtbl.replace tbl m.im_tag ())
+           Hashtbl.replace tbl m.re_tag ();
+           Hashtbl.replace tbl m.im_tag ())
         pre_markers;
-      Some tbl
-    end
+      Some tbl)
     else None
   in
   let extend_frozen (remap : (int, int) Hashtbl.t) =
     match frozen_tags with
     | None -> ()
-    | Some tbl ->
-        Hashtbl.iter (fun _old_t new_t -> Hashtbl.replace tbl new_t ()) remap
+    | Some tbl -> Hashtbl.iter (fun _old_t new_t -> Hashtbl.replace tbl new_t ()) remap
   in
-
   let deduped =
-    if apply_fma_lift then
-      Algsimp.fma_lift ?frozen_tags:(Some frozen_tags) post_trans
+    if apply_fma_lift
+    then Algsimp.fma_lift ?frozen_tags:(Some frozen_tags) post_trans
     else post_trans
   in
-
   (* The 8-remap cascade. CAPTURE each remap individually — the spill
      marker post-cascade remap_tag chain needs them in order.
      extend_frozen alone keeps the cascade self-consistent but doesn't
      tell the marker where its tag MOVED TO. *)
   let empty_remap () : (int, int) Hashtbl.t = Hashtbl.create 0 in
   let step pass a =
-    if apply_fma_lift then (
+    if apply_fma_lift
+    then (
       let a', remap = pass ?frozen_tags:(Some frozen_tags) a in
       extend_frozen remap;
-      (a', remap))
-    else (a, empty_remap ())
+      a', remap)
+    else a, empty_remap ()
   in
   let deduped, factor_tag_remap = step Algsimp.factor_const_muls deduped in
   let deduped, mfl_tag_remap = step Algsimp.multi_use_fma_lift deduped in
@@ -269,12 +267,8 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
   let deduped, mfl3_tag_remap = step Algsimp.multi_use_fma_lift deduped in
   let deduped, fma_addend_remap3 = step Algsimp.fma_addend_factor deduped in
   let deduped, mfl4_tag_remap = step Algsimp.multi_use_fma_lift deduped in
-  let deduped, _flatten_tag_remap =
-    step Algsimp.flatten_fma_mul_addend deduped
-  in
-
+  let deduped, _flatten_tag_remap = step Algsimp.flatten_fma_mul_addend deduped in
   let assigns = deduped in
-
   (* Build spill_info post-cascade. The remap chain walks each marker
      tag through the 8 remaps in cascade order. flatten_tag_remap is
      intentionally EXCLUDED: flatten produces 2-FMA chains that absorb
@@ -284,11 +278,14 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
      Mul means re-computing the chain). Production excludes it too —
      see gen_radix.ml line 588 (last walk is mfl4, not flatten). *)
   let spill_info =
-    if build_spill_info && spill_markers_raw <> [] then
+    if build_spill_info && spill_markers_raw <> []
+    then (
       let raw_markers = Algsimp.lift_spill_markers ~reassoc spill_markers_raw in
       let remap_tag t =
         let walk tbl t =
-          match Hashtbl.find_opt tbl t with Some t' -> t' | None -> t
+          match Hashtbl.find_opt tbl t with
+          | Some t' -> t'
+          | None -> t
         in
         let t = walk factor_tag_remap t in
         let t = walk mfl_tag_remap t in
@@ -303,11 +300,11 @@ let prepare_codelet ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
       let tag_markers =
         List.map
           (fun (m : Algsimp.spill_tag_marker) ->
-            { m with re_tag = remap_tag m.re_tag; im_tag = remap_tag m.im_tag })
+             { m with re_tag = remap_tag m.re_tag; im_tag = remap_tag m.im_tag })
           raw_markers
       in
-      Some (Emit_c.make_spill_info ?ct:spill_ct ~fuse tag_markers)
+      Some (Emit_c.make_spill_info ?ct:spill_ct ~fuse tag_markers))
     else None
   in
-
   { assigns; spill_info }
+;;

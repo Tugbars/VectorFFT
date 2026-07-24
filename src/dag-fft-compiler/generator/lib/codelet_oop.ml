@@ -114,21 +114,21 @@
 (** Pattern of an edge of the codelet (load side or store side). *)
 type edge_pattern =
   | UnitLeg
-      (** leg_stride = 1: vec_width legs per SIMD register after AOS→SOA
+  (** leg_stride = 1: vec_width legs per SIMD register after AOS→SOA
           transpose preamble. Reuses the 4×4/8×8 transpose machinery from the
           existing --strided path. *)
   | UnitGroup
-      (** group_stride = 1: vec_width groups per SIMD register loaded directly
+  (** group_stride = 1: vec_width groups per SIMD register loaded directly
           (no transpose needed). R lanes populated by R separate strided SIMD
           loads. *)
   | StridedFallback
-      (** Both strides non-unit. Scalar-load+insert sequence. Not emitted in M2
+  (** Both strides non-unit. Scalar-load+insert sequence. Not emitted in M2
           first cut. *)
 
 (** Buffer layout of the codelet. *)
 type buffer_layout =
-  | InPlace  (** Single (rio_re, rio_im) buffer pair. *)
-  | OutOfPlace  (** Separate (in_re, in_im) and (out_re, out_im) pairs. *)
+  | InPlace (** Single (rio_re, rio_im) buffer pair. *)
+  | OutOfPlace (** Separate (in_re, in_im) and (out_re, out_im) pairs. *)
 
 (** Twiddle presence. n1 = no twiddles. t1 = per-group vector twiddles, one
     value per (leg, batch): tw_re[(j-1)*me + b]. t1s = scalar-broadcast
@@ -144,22 +144,24 @@ type twiddle_kind =
 (* t1p: per-position twiddle, broadcast across batch lanes *)
 
 (** Direction of the transform. *)
-type direction = Forward | Backward
+type direction =
+  | Forward
+  | Backward
 
-type config = {
-  radix : int;
-  isa : Isa.t;
-  direction : direction;
-  load_pat : edge_pattern;
-  store_pat : edge_pattern;
-  buffer : buffer_layout;
-  twiddles : twiddle_kind;
-  name : string;
-      (** Symbol name as emitted in the .c file. Caller-supplied to allow
+(** Full configuration of one codelet variant. *)
+type config =
+  { radix : int
+  ; isa : Isa.t
+  ; direction : direction
+  ; load_pat : edge_pattern
+  ; store_pat : edge_pattern
+  ; buffer : buffer_layout
+  ; twiddles : twiddle_kind
+  ; name : string
+    (** Symbol name as emitted in the .c file. Caller-supplied to allow
           consistent naming with existing convention (radix_R_t1_oop_fwd_avx512
           etc.). *)
-}
-(** Full configuration of one codelet variant. *)
+  }
 
 (* ═══════════════════════════════════════════════════════════════
  * VALIDATION
@@ -171,26 +173,31 @@ type config = {
 (** Raise [Failure] with a clear message if the config is malformed or
     unsupported by M2 first cut. *)
 let validate (c : config) : unit =
-  if c.radix <= 0 then
-    failwith (Printf.sprintf "codelet_oop: radix must be > 0 (got %d)" c.radix);
+  if c.radix <= 0
+  then failwith (Printf.sprintf "codelet_oop: radix must be > 0 (got %d)" c.radix);
   (* UnitLeg requires the AOS→SOA transpose preamble to process
      vec_width legs per iteration, which requires radix divisible
      by vec_width. *)
-  if c.load_pat = UnitLeg && c.radix mod c.isa.vec_width <> 0 then
+  if c.load_pat = UnitLeg && c.radix mod c.isa.vec_width <> 0
+  then
     failwith
       (Printf.sprintf
-         "codelet_oop: UnitLeg load requires radix %% vec_width = 0 (got \
-          radix=%d, vec_width=%d)"
-         c.radix c.isa.vec_width);
-  if c.store_pat = UnitLeg && c.radix mod c.isa.vec_width <> 0 then
+         "codelet_oop: UnitLeg load requires radix %% vec_width = 0 (got radix=%d, \
+          vec_width=%d)"
+         c.radix
+         c.isa.vec_width);
+  if c.store_pat = UnitLeg && c.radix mod c.isa.vec_width <> 0
+  then
     failwith
       (Printf.sprintf
-         "codelet_oop: UnitLeg store requires radix %% vec_width = 0 (got \
-          radix=%d, vec_width=%d)"
-         c.radix c.isa.vec_width);
+         "codelet_oop: UnitLeg store requires radix %% vec_width = 0 (got radix=%d, \
+          vec_width=%d)"
+         c.radix
+         c.isa.vec_width);
   (* M2 first cut: defer StridedFallback. *)
-  if c.load_pat = StridedFallback || c.store_pat = StridedFallback then
-    failwith "codelet_oop: StridedFallback edge not yet supported in M2"
+  if c.load_pat = StridedFallback || c.store_pat = StridedFallback
+  then failwith "codelet_oop: StridedFallback edge not yet supported in M2"
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * SIGNATURE EMISSION
@@ -213,6 +220,7 @@ let validate (c : config) : unit =
    of taken as runtime size_t parameters. Folds the leg*stride address
    arithmetic to constant displacements and drops the four argument registers.
    me stays a parameter. Set per-codelet by the caller (gen_radix --oop-strides). *)
+
 (** §6a53 / Gap-A: POST-twiddle mode. The body expands as a PURE DFT
     (NoTwiddles math) under the t1 ABI, and a cmul postamble multiplies
     output legs 1..R-1 by W[(j-1)*me + m] just before the UnitGroup store —
@@ -272,87 +280,91 @@ let current_oop_il_out_sw : bool ref = ref false
    exists there; the tail passes would index the flat layout). Set from
    gen_main --oop-tw-linear; forwarded to Emit_state via Emit_c at emit. *)
 let current_oop_tw_linear : bool ref = ref false
-
 let il_in_active () = !current_oop_il_in || !current_oop_il_in_sw
 let il_out_active () = !current_oop_il_out || !current_oop_il_out_sw
 
 (** Emit the function signature into the buffer. Trailing newline before the
     opening brace of the function body. *)
 let emit_signature (buf : Buffer.t) (c : config) : unit =
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     (Printf.sprintf "__attribute__((target(\"%s\")))\n" c.isa.target_attr);
   Buffer.add_string buf (Printf.sprintf "void %s(\n" c.name);
   (* Buffer pointers. IL edges swap the split pair for (z, unused) on their
      side — argument-for-argument the same 11-arg shape, so the planner's
      vfft_oop11_fn call sites stay uniform (caller passes NULL for unused). *)
   (match c.buffer with
-  | InPlace ->
-      Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
-      Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
-  | OutOfPlace ->
-      (if il_in_active () then begin
-         Buffer.add_string buf
-           "    const double * __restrict__ in_z,          /* interleaved pairs */\n";
-         Buffer.add_string buf "    const double * __restrict__ in_unused,\n"
-       end
-       else begin
-         Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-         Buffer.add_string buf "    const double * __restrict__ in_im,\n"
-       end);
-      if il_out_active () then begin
-        Buffer.add_string buf
-          "    double       * __restrict__ out_z,         /* interleaved pairs */\n";
-        Buffer.add_string buf "    double       * __restrict__ out_unused,\n"
-      end
-      else begin
-        Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-        Buffer.add_string buf "    double       * __restrict__ out_im,\n"
-      end);
+   | InPlace ->
+     Buffer.add_string buf "    double       * __restrict__ rio_re,\n";
+     Buffer.add_string buf "    double       * __restrict__ rio_im,\n"
+   | OutOfPlace ->
+     if il_in_active ()
+     then (
+       Buffer.add_string
+         buf
+         "    const double * __restrict__ in_z,          /* interleaved pairs */\n";
+       Buffer.add_string buf "    const double * __restrict__ in_unused,\n")
+     else (
+       Buffer.add_string buf "    const double * __restrict__ in_re,\n";
+       Buffer.add_string buf "    const double * __restrict__ in_im,\n");
+     if il_out_active ()
+     then (
+       Buffer.add_string
+         buf
+         "    double       * __restrict__ out_z,         /* interleaved pairs */\n";
+       Buffer.add_string buf "    double       * __restrict__ out_unused,\n")
+     else (
+       Buffer.add_string buf "    double       * __restrict__ out_re,\n";
+       Buffer.add_string buf "    double       * __restrict__ out_im,\n"));
   (* Twiddles. *)
   (match c.twiddles with
-  | NoTwiddles ->
-      (* For signature uniformity with the t1 variant (and to make the
+   | NoTwiddles ->
+     (* For signature uniformity with the t1 variant (and to make the
         planner's job easier — same call site shape), the n1 variant
         still takes tw_re/tw_im pointers. Caller passes NULL. The body
         marks them (void) to silence -Wunused-parameter. *)
-      Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-      Buffer.add_string buf "    const double * __restrict__ tw_im,\n"
-  | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles ->
-      Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-      Buffer.add_string buf "    const double * __restrict__ tw_im,\n");
+     Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
+     Buffer.add_string buf "    const double * __restrict__ tw_im,\n"
+   | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles ->
+     Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
+     Buffer.add_string buf "    const double * __restrict__ tw_im,\n");
   (* Stride parameters. Always four — even when InPlace, the load and
      store edges may use different strides (this is what enables the
      fused transpose). When current_oop_strides is set, these become
      compile-time constants inside the body (see after the brace) and
      are dropped from the parameter list. *)
   (match !current_oop_strides with
-  | None ->
-      Buffer.add_string buf "    size_t in_leg_stride,\n";
-      Buffer.add_string buf "    size_t in_group_stride,\n";
-      Buffer.add_string buf "    size_t out_leg_stride,\n";
-      Buffer.add_string buf "    size_t out_group_stride,\n"
-  | Some _ -> ());
+   | None ->
+     Buffer.add_string buf "    size_t in_leg_stride,\n";
+     Buffer.add_string buf "    size_t in_group_stride,\n";
+     Buffer.add_string buf "    size_t out_leg_stride,\n";
+     Buffer.add_string buf "    size_t out_group_stride,\n"
+   | Some _ -> ());
   (* Multiplicity: number of butterfly groups to process. *)
   Buffer.add_string buf "    size_t me)\n";
   Buffer.add_string buf "{\n";
   (match !current_oop_strides with
-  | Some (l, g, ol, og) ->
-      Buffer.add_string buf
-        (Printf.sprintf
-           "    /* stride-specialized: strides baked, folds to constant \
-            displacements */\n\
-           \    const size_t in_leg_stride    = %d;\n\
-           \    const size_t in_group_stride  = %d;\n\
-           \    const size_t out_leg_stride   = %d;\n\
-           \    const size_t out_group_stride = %d;\n"
-           l g ol og)
-  | None -> ());
+   | Some (l, g, ol, og) ->
+     Buffer.add_string
+       buf
+       (Printf.sprintf
+          "    /* stride-specialized: strides baked, folds to constant displacements */\n\
+          \    const size_t in_leg_stride    = %d;\n\
+          \    const size_t in_group_stride  = %d;\n\
+          \    const size_t out_leg_stride   = %d;\n\
+          \    const size_t out_group_stride = %d;\n"
+          l
+          g
+          ol
+          og)
+   | None -> ());
   (* Unused-parameter silencing for n1 and the IL unused slots. *)
   if il_in_active () then Buffer.add_string buf "    (void)in_unused;\n";
   if il_out_active () then Buffer.add_string buf "    (void)out_unused;\n";
   match c.twiddles with
   | NoTwiddles -> Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n"
   | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles -> ()
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * LANE REGISTER DECLARATIONS
@@ -367,18 +379,19 @@ let emit_signature (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_lane_decls (buf : Buffer.t) (c : config) : unit =
-  let need_out_lane =
-    not (!current_oop_store_on_compute && c.store_pat = UnitGroup)
-  in
+  let need_out_lane = not (!current_oop_store_on_compute && c.store_pat = UnitGroup) in
   for j = 0 to c.radix - 1 do
-    Buffer.add_string buf
+    Buffer.add_string
+      buf
       (Printf.sprintf "        %s lane_re_%d, lane_im_%d;\n" c.isa.vec_type j j);
-    if need_out_lane then
-      Buffer.add_string buf
-        (Printf.sprintf "        %s out_lane_re_%d, out_lane_im_%d;\n"
-           c.isa.vec_type j j)
+    if need_out_lane
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf "        %s out_lane_re_%d, out_lane_im_%d;\n" c.isa.vec_type j j)
   done;
   Buffer.add_string buf "\n"
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * LOOP STRUCTURE
@@ -388,13 +401,15 @@ let emit_lane_decls (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_loop_open (buf : Buffer.t) (c : config) : unit =
-  Buffer.add_string buf
-    (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n"
-       c.isa.vec_width)
+  Buffer.add_string
+    buf
+    (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n" c.isa.vec_width)
+;;
 
 let emit_loop_close (buf : Buffer.t) : unit =
   Buffer.add_string buf "    }\n";
   Buffer.add_string buf "}\n"
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * LOAD EDGE — UnitLeg pattern
@@ -421,77 +436,104 @@ let emit_load_unitleg (buf : Buffer.t) (c : config) : unit =
      delegation (M2 phase-2) with a self-contained lattice, same approach as
      the IL edges. *)
   let base_re =
-    match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "in_re"
+    match c.buffer with
+    | InPlace -> "rio_re"
+    | OutOfPlace -> "in_re"
   in
   let base_im =
-    match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "in_im"
+    match c.buffer with
+    | InPlace -> "rio_im"
+    | OutOfPlace -> "in_im"
   in
-  if il_in_active () then
-    failwith "codelet_oop: UnitLeg load does not compose with il_in yet";
-  Buffer.add_string buf
+  if il_in_active ()
+  then failwith "codelet_oop: UnitLeg load does not compose with il_in yet";
+  Buffer.add_string
+    buf
     "        /* UnitLeg load: vw legs contiguous, vw groups strided; 4x4\n\
     \           in-register transpose puts groups on the lane axis. */\n";
-  (match c.isa.Isa.vec_width with
+  match c.isa.Isa.vec_width with
   | 4 ->
-      for lq = 0 to (c.radix / 4) - 1 do
-        let l0 = 4 * lq in
-        List.iter
-          (fun (comp, base) ->
-            Buffer.add_string buf
-              (Printf.sprintf
-                 "        { const __m256d _ta = _mm256_loadu_pd(&%s[(b + 0) \
-                  * in_group_stride + %d * in_leg_stride]);\n\
-                 \          const __m256d _tb = _mm256_loadu_pd(&%s[(b + 1) \
-                  * in_group_stride + %d * in_leg_stride]);\n\
-                 \          const __m256d _tc = _mm256_loadu_pd(&%s[(b + 2) \
-                  * in_group_stride + %d * in_leg_stride]);\n\
-                 \          const __m256d _td = _mm256_loadu_pd(&%s[(b + 3) \
-                  * in_group_stride + %d * in_leg_stride]);\n\
-                 \          const __m256d _u0 = _mm256_unpacklo_pd(_ta, _tb);\n\
-                 \          const __m256d _u1 = _mm256_unpackhi_pd(_ta, _tb);\n\
-                 \          const __m256d _u2 = _mm256_unpacklo_pd(_tc, _td);\n\
-                 \          const __m256d _u3 = _mm256_unpackhi_pd(_tc, _td);\n\
-                 \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
-                  0x20);\n\
-                 \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
-                  0x20);\n\
-                 \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
-                  0x31);\n\
-                 \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
-                  0x31); }\n"
-                 base l0 base l0 base l0 base l0 comp l0 comp (l0 + 1) comp
-                 (l0 + 2) comp (l0 + 3)))
-          [ ("re", base_re); ("im", base_im) ]
-      done
+    for lq = 0 to (c.radix / 4) - 1 do
+      let l0 = 4 * lq in
+      List.iter
+        (fun (comp, base) ->
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        { const __m256d _ta = _mm256_loadu_pd(&%s[(b + 0) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          const __m256d _tb = _mm256_loadu_pd(&%s[(b + 1) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          const __m256d _tc = _mm256_loadu_pd(&%s[(b + 2) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          const __m256d _td = _mm256_loadu_pd(&%s[(b + 3) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          const __m256d _u0 = _mm256_unpacklo_pd(_ta, _tb);\n\
+                \          const __m256d _u1 = _mm256_unpackhi_pd(_ta, _tb);\n\
+                \          const __m256d _u2 = _mm256_unpacklo_pd(_tc, _td);\n\
+                \          const __m256d _u3 = _mm256_unpackhi_pd(_tc, _td);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, 0x20);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, 0x20);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, 0x31);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, 0x31); }\n"
+                base
+                l0
+                base
+                l0
+                base
+                l0
+                base
+                l0
+                comp
+                l0
+                comp
+                (l0 + 1)
+                comp
+                (l0 + 2)
+                comp
+                (l0 + 3)))
+        [ "re", base_re; "im", base_im ]
+    done
   | 2 ->
-      for lq = 0 to (c.radix / 2) - 1 do
-        let l0 = 2 * lq in
-        List.iter
-          (fun (comp, base) ->
-            Buffer.add_string buf
-              (Printf.sprintf
-                 "        { const __m128d _ta = _mm_loadu_pd(&%s[(b + 0) * \
-                  in_group_stride + %d * in_leg_stride]);\n\
-                 \          const __m128d _tb = _mm_loadu_pd(&%s[(b + 1) * \
-                  in_group_stride + %d * in_leg_stride]);\n\
-                 \          lane_%s_%d = _mm_unpacklo_pd(_ta, _tb);\n\
-                 \          lane_%s_%d = _mm_unpackhi_pd(_ta, _tb); }\n"
-                 base l0 base l0 comp l0 comp (l0 + 1)))
-          [ ("re", base_re); ("im", base_im) ]
-      done
+    for lq = 0 to (c.radix / 2) - 1 do
+      let l0 = 2 * lq in
+      List.iter
+        (fun (comp, base) ->
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        { const __m128d _ta = _mm_loadu_pd(&%s[(b + 0) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          const __m128d _tb = _mm_loadu_pd(&%s[(b + 1) * \
+                 in_group_stride + %d * in_leg_stride]);\n\
+                \          lane_%s_%d = _mm_unpacklo_pd(_ta, _tb);\n\
+                \          lane_%s_%d = _mm_unpackhi_pd(_ta, _tb); }\n"
+                base
+                l0
+                base
+                l0
+                comp
+                l0
+                comp
+                (l0 + 1)))
+        [ "re", base_re; "im", base_im ]
+    done
   | 1 ->
-      for l = 0 to c.radix - 1 do
-        Buffer.add_string buf
-          (Printf.sprintf
-             "        lane_re_%d = %s[b * in_group_stride + %d * \
-              in_leg_stride];\n\
-             \        lane_im_%d = %s[b * in_group_stride + %d * \
-              in_leg_stride];\n"
-             l base_re l l base_im l)
-      done
-  | w ->
-      failwith
-        (Printf.sprintf "codelet_oop UL load: vec_width %d not emitted" w))
+    for l = 0 to c.radix - 1 do
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        lane_re_%d = %s[b * in_group_stride + %d * in_leg_stride];\n\
+           \        lane_im_%d = %s[b * in_group_stride + %d * in_leg_stride];\n"
+           l
+           base_re
+           l
+           l
+           base_im
+           l)
+    done
+  | w -> failwith (Printf.sprintf "codelet_oop UL load: vec_width %d not emitted" w)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * LOAD EDGE — UnitGroup pattern
@@ -513,7 +555,8 @@ let emit_load_unitleg (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_load_unitgroup (buf : Buffer.t) (c : config) : unit =
-  if il_in_active () then begin
+  if il_in_active ()
+  then (
     (* IL load: vec_width consecutive groups are interleaved (re,im) pairs in
        z. Two vector loads + unpack/permute deinterleave into the split lane
        registers — one load pair per leg (the deprecated derived twins loaded
@@ -523,83 +566,108 @@ let emit_load_unitgroup (buf : Buffer.t) (c : config) : unit =
        identity folded into the lattice). *)
     let sw = !current_oop_il_in_sw in
     (* which unpack feeds re / im *)
-    let u_re = if sw then "hi" else "lo" and u_im = if sw then "lo" else "hi" in
-    Buffer.add_string buf
-      (if sw then
-         "        /* UnitGroup IL_SW load: interleaved groups read as (im,re) \
-          — bwd swap. */\n"
+    let u_re = if sw then "hi" else "lo"
+    and u_im = if sw then "lo" else "hi" in
+    Buffer.add_string
+      buf
+      (if sw
+       then
+         "        /* UnitGroup IL_SW load: interleaved groups read as (im,re) — bwd \
+          swap. */\n"
        else
-         "        /* UnitGroup IL load: vec_width consecutive interleaved \
-          groups;\n\
-         \           deinterleave in-register into the split lane registers. \
-          */\n");
+         "        /* UnitGroup IL load: vec_width consecutive interleaved groups;\n\
+         \           deinterleave in-register into the split lane registers. */\n");
     for j = 0 to c.radix - 1 do
-      let addr =
-        Printf.sprintf "2*(b * in_group_stride + %d * in_leg_stride)" j
-      in
+      let addr = Printf.sprintf "2*(b * in_group_stride + %d * in_leg_stride)" j in
       match c.isa.Isa.vec_width with
       | 4 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        { const __m256d _ilza = _mm256_loadu_pd(&in_z[%s]);\n\
-               \          const __m256d _ilzb = _mm256_loadu_pd(&in_z[%s + \
-                4]);\n\
-               \          lane_re_%d = \
-                _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, _ilzb), \
-                0xD8);\n\
-               \          lane_im_%d = \
-                _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, _ilzb), \
-                0xD8); }\n"
-               addr addr j u_re j u_im)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        { const __m256d _ilza = _mm256_loadu_pd(&in_z[%s]);\n\
+             \          const __m256d _ilzb = _mm256_loadu_pd(&in_z[%s + 4]);\n\
+             \          lane_re_%d = _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, \
+              _ilzb), 0xD8);\n\
+             \          lane_im_%d = _mm256_permute4x64_pd(_mm256_unpack%s_pd(_ilza, \
+              _ilzb), 0xD8); }\n"
+             addr
+             addr
+             j
+             u_re
+             j
+             u_im)
       | 2 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        { const __m128d _ilza = _mm_loadu_pd(&in_z[%s]);\n\
-               \          const __m128d _ilzb = _mm_loadu_pd(&in_z[%s + 2]);\n\
-               \          lane_re_%d = _mm_unpack%s_pd(_ilza, _ilzb);\n\
-               \          lane_im_%d = _mm_unpack%s_pd(_ilza, _ilzb); }\n"
-               addr addr j u_re j u_im)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        { const __m128d _ilza = _mm_loadu_pd(&in_z[%s]);\n\
+             \          const __m128d _ilzb = _mm_loadu_pd(&in_z[%s + 2]);\n\
+             \          lane_re_%d = _mm_unpack%s_pd(_ilza, _ilzb);\n\
+             \          lane_im_%d = _mm_unpack%s_pd(_ilza, _ilzb); }\n"
+             addr
+             addr
+             j
+             u_re
+             j
+             u_im)
       | 1 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        lane_re_%d = in_z[%s + %d];\n\
-               \        lane_im_%d = in_z[%s + %d];\n"
-               j addr (if sw then 1 else 0) j addr (if sw then 0 else 1))
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        lane_re_%d = in_z[%s + %d];\n        lane_im_%d = in_z[%s + %d];\n"
+             j
+             addr
+             (if sw then 1 else 0)
+             j
+             addr
+             (if sw then 0 else 1))
       | w ->
-          failwith
-            (Printf.sprintf
-               "codelet_oop il_in: vec_width %d not emitted (avx512 masked \
-                lattice pending)"
-               w)
-    done
-  end
-  else begin
+        failwith
+          (Printf.sprintf
+             "codelet_oop il_in: vec_width %d not emitted (avx512 masked lattice pending)"
+             w)
+    done)
+  else (
     let base_re =
-      match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "in_re"
+      match c.buffer with
+      | InPlace -> "rio_re"
+      | OutOfPlace -> "in_re"
     in
     let base_im =
-      match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "in_im"
+      match c.buffer with
+      | InPlace -> "rio_im"
+      | OutOfPlace -> "in_im"
     in
-    Buffer.add_string buf
+    Buffer.add_string
+      buf
       "        /* UnitGroup load: vec_width groups are consecutive (stride 1)\n";
-    Buffer.add_string buf
+    Buffer.add_string
+      buf
       "           so they load as one SIMD register per leg. R separate\n";
-    Buffer.add_string buf
-      "           strided loads populate the R lane registers — no transpose. \
-       */\n";
+    Buffer.add_string
+      buf
+      "           strided loads populate the R lane registers — no transpose. */\n";
     for j = 0 to c.radix - 1 do
-      Buffer.add_string buf
-        (Printf.sprintf "        lane_re_%d = %s;\n" j
-           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
-              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
-                 base_re j)));
-      Buffer.add_string buf
-        (Printf.sprintf "        lane_im_%d = %s;\n" j
-           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
-              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]"
-                 base_im j)))
-    done
-  end
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        lane_re_%d = %s;\n"
+           j
+           (Isa.loadu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
+              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]" base_re j)));
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        lane_im_%d = %s;\n"
+           j
+           (Isa.loadu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
+              (Printf.sprintf "%s[b * in_group_stride + %d * in_leg_stride]" base_im j)))
+    done)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * LOAD EDGE — dispatch
@@ -609,8 +677,8 @@ let emit_load_edge (buf : Buffer.t) (c : config) : unit =
   match c.load_pat with
   | UnitLeg -> emit_load_unitleg buf c
   | UnitGroup -> emit_load_unitgroup buf c
-  | StridedFallback ->
-      failwith "emit_load_edge: StridedFallback not yet supported"
+  | StridedFallback -> failwith "emit_load_edge: StridedFallback not yet supported"
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * STORE EDGE — UnitLeg pattern
@@ -630,80 +698,116 @@ let emit_store_unitleg (buf : Buffer.t) (c : config) : unit =
      (n1_oop UG_UL: out_leg_stride=1, out_group_stride=R2 writes the
      transposed intermediate directly). Replaces the former Emit_c stub. *)
   let base_re =
-    match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
+    match c.buffer with
+    | InPlace -> "rio_re"
+    | OutOfPlace -> "out_re"
   in
   let base_im =
-    match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "out_im"
+    match c.buffer with
+    | InPlace -> "rio_im"
+    | OutOfPlace -> "out_im"
   in
-  if il_out_active () then
-    failwith "codelet_oop: UnitLeg store does not compose with il_out yet";
-  if !current_post_tw then
-    failwith "codelet_oop: UnitLeg store does not compose with --post-tw yet";
-  Buffer.add_string buf
+  if il_out_active ()
+  then failwith "codelet_oop: UnitLeg store does not compose with il_out yet";
+  if !current_post_tw
+  then failwith "codelet_oop: UnitLeg store does not compose with --post-tw yet";
+  Buffer.add_string
+    buf
     "        /* UnitLeg store: transpose vw out_lanes (lanes=groups) into vw\n\
     \           rows and store per group with contiguous legs. */\n";
-  (match c.isa.Isa.vec_width with
+  match c.isa.Isa.vec_width with
   | 4 ->
-      for lq = 0 to (c.radix / 4) - 1 do
-        let l0 = 4 * lq in
-        List.iter
-          (fun (comp, base) ->
-            Buffer.add_string buf
-              (Printf.sprintf
-                 "        { const __m256d _u0 = \
-                  _mm256_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
-                 \          const __m256d _u1 = \
-                  _mm256_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
-                 \          const __m256d _u2 = \
-                  _mm256_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
-                 \          const __m256d _u3 = \
-                  _mm256_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d);\n\
-                 \          _mm256_storeu_pd(&%s[(b + 0) * out_group_stride \
-                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, \
-                  0x20));\n\
-                 \          _mm256_storeu_pd(&%s[(b + 1) * out_group_stride \
-                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, \
-                  0x20));\n\
-                 \          _mm256_storeu_pd(&%s[(b + 2) * out_group_stride \
-                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, \
-                  0x31));\n\
-                 \          _mm256_storeu_pd(&%s[(b + 3) * out_group_stride \
-                  + %d * out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, \
-                  0x31)); }\n"
-                 comp l0 comp (l0 + 1) comp l0 comp (l0 + 1) comp (l0 + 2)
-                 comp (l0 + 3) comp (l0 + 2) comp (l0 + 3) base l0 base l0
-                 base l0 base l0))
-          [ ("re", base_re); ("im", base_im) ]
-      done
+    for lq = 0 to (c.radix / 4) - 1 do
+      let l0 = 4 * lq in
+      List.iter
+        (fun (comp, base) ->
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        { const __m256d _u0 = _mm256_unpacklo_pd(out_lane_%s_%d, \
+                 out_lane_%s_%d);\n\
+                \          const __m256d _u1 = _mm256_unpackhi_pd(out_lane_%s_%d, \
+                 out_lane_%s_%d);\n\
+                \          const __m256d _u2 = _mm256_unpacklo_pd(out_lane_%s_%d, \
+                 out_lane_%s_%d);\n\
+                \          const __m256d _u3 = _mm256_unpackhi_pd(out_lane_%s_%d, \
+                 out_lane_%s_%d);\n\
+                \          _mm256_storeu_pd(&%s[(b + 0) * out_group_stride + %d * \
+                 out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, 0x20));\n\
+                \          _mm256_storeu_pd(&%s[(b + 1) * out_group_stride + %d * \
+                 out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, 0x20));\n\
+                \          _mm256_storeu_pd(&%s[(b + 2) * out_group_stride + %d * \
+                 out_leg_stride], _mm256_permute2f128_pd(_u0, _u2, 0x31));\n\
+                \          _mm256_storeu_pd(&%s[(b + 3) * out_group_stride + %d * \
+                 out_leg_stride], _mm256_permute2f128_pd(_u1, _u3, 0x31)); }\n"
+                comp
+                l0
+                comp
+                (l0 + 1)
+                comp
+                l0
+                comp
+                (l0 + 1)
+                comp
+                (l0 + 2)
+                comp
+                (l0 + 3)
+                comp
+                (l0 + 2)
+                comp
+                (l0 + 3)
+                base
+                l0
+                base
+                l0
+                base
+                l0
+                base
+                l0))
+        [ "re", base_re; "im", base_im ]
+    done
   | 2 ->
-      for lq = 0 to (c.radix / 2) - 1 do
-        let l0 = 2 * lq in
-        List.iter
-          (fun (comp, base) ->
-            Buffer.add_string buf
-              (Printf.sprintf
-                 "        { _mm_storeu_pd(&%s[(b + 0) * out_group_stride + \
-                  %d * out_leg_stride], _mm_unpacklo_pd(out_lane_%s_%d, \
-                  out_lane_%s_%d));\n\
-                 \          _mm_storeu_pd(&%s[(b + 1) * out_group_stride + \
-                  %d * out_leg_stride], _mm_unpackhi_pd(out_lane_%s_%d, \
-                  out_lane_%s_%d)); }\n"
-                 base l0 comp l0 comp (l0 + 1) base l0 comp l0 comp (l0 + 1)))
-          [ ("re", base_re); ("im", base_im) ]
-      done
+    for lq = 0 to (c.radix / 2) - 1 do
+      let l0 = 2 * lq in
+      List.iter
+        (fun (comp, base) ->
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        { _mm_storeu_pd(&%s[(b + 0) * out_group_stride + %d * \
+                 out_leg_stride], _mm_unpacklo_pd(out_lane_%s_%d, out_lane_%s_%d));\n\
+                \          _mm_storeu_pd(&%s[(b + 1) * out_group_stride + %d * \
+                 out_leg_stride], _mm_unpackhi_pd(out_lane_%s_%d, out_lane_%s_%d)); }\n"
+                base
+                l0
+                comp
+                l0
+                comp
+                (l0 + 1)
+                base
+                l0
+                comp
+                l0
+                comp
+                (l0 + 1)))
+        [ "re", base_re; "im", base_im ]
+    done
   | 1 ->
-      for l = 0 to c.radix - 1 do
-        Buffer.add_string buf
-          (Printf.sprintf
-             "        %s[b * out_group_stride + %d * out_leg_stride] = \
-              out_lane_re_%d;\n\
-             \        %s[b * out_group_stride + %d * out_leg_stride] = \
-              out_lane_im_%d;\n"
-             base_re l l base_im l l)
-      done
-  | w ->
-      failwith
-        (Printf.sprintf "codelet_oop UL store: vec_width %d not emitted" w))
+    for l = 0 to c.radix - 1 do
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        %s[b * out_group_stride + %d * out_leg_stride] = out_lane_re_%d;\n\
+           \        %s[b * out_group_stride + %d * out_leg_stride] = out_lane_im_%d;\n"
+           base_re
+           l
+           l
+           base_im
+           l
+           l)
+    done
+  | w -> failwith (Printf.sprintf "codelet_oop UL store: vec_width %d not emitted" w)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * STORE EDGE — UnitGroup pattern
@@ -717,7 +821,8 @@ let emit_store_unitleg (buf : Buffer.t) (c : config) : unit =
  * ═══════════════════════════════════════════════════════════════ *)
 
 let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
-  if !current_post_tw then begin
+  if !current_post_tw
+  then (
     let scalar = c.isa.Isa.vec_width = 1 in
     let pfx =
       match c.isa.Isa.vec_width with
@@ -726,126 +831,170 @@ let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
       | 2 -> "_mm"
       | _ -> "_scalar_unused"
     in
-    Buffer.add_string buf
-      "        /* Gap-A post-twiddle: out_j = W[j-1] (.) DFT_j (leg 0 \
-       untwiddled). */\n";
+    Buffer.add_string
+      buf
+      "        /* Gap-A post-twiddle: out_j = W[j-1] (.) DFT_j (leg 0 untwiddled). */\n";
     for j = 1 to c.radix - 1 do
-      Buffer.add_string buf
-        (Printf.sprintf "        { const %s _ptr = %s;\n" c.isa.Isa.vec_type
-           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        { const %s _ptr = %s;\n"
+           c.isa.Isa.vec_type
+           (Isa.loadu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
               (Printf.sprintf "tw_re[%d * me + b]" (j - 1))));
-      Buffer.add_string buf
-        (Printf.sprintf "          const %s _pti = %s;\n" c.isa.Isa.vec_type
-           (Isa.loadu_pd ~mode:!Emit_c.current_ls_mode c.isa
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "          const %s _pti = %s;\n"
+           c.isa.Isa.vec_type
+           (Isa.loadu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
               (Printf.sprintf "tw_im[%d * me + b]" (j - 1))));
-      Buffer.add_string buf
-        (Printf.sprintf "          const %s _pvr = out_lane_re_%d;\n"
-           c.isa.Isa.vec_type j);
-      Buffer.add_string buf
-        (Printf.sprintf "          const %s _pvi = out_lane_im_%d;\n"
-           c.isa.Isa.vec_type j);
-      (if scalar then begin
-         Buffer.add_string buf
-           (Printf.sprintf
-              "          out_lane_re_%d = _ptr * _pvr - _pti * _pvi;\n" j);
-         Buffer.add_string buf
-           (Printf.sprintf
-              "          out_lane_im_%d = _ptr * _pvi + _pti * _pvr;\n        }\n"
-              j)
-       end
-       else begin
-         Buffer.add_string buf
-           (Printf.sprintf
-              "          out_lane_re_%d = %s_fmsub_pd(_ptr, _pvr, \
-               %s_mul_pd(_pti, _pvi));\n"
-              j pfx pfx);
-         Buffer.add_string buf
-           (Printf.sprintf
-              "          out_lane_im_%d = %s_fmadd_pd(_ptr, _pvi, \
-               %s_mul_pd(_pti, _pvr));\n        }\n"
-              j pfx pfx)
-       end)
-    done
-  end;
-  if il_out_active () then begin
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "          const %s _pvr = out_lane_re_%d;\n"
+           c.isa.Isa.vec_type
+           j);
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "          const %s _pvi = out_lane_im_%d;\n"
+           c.isa.Isa.vec_type
+           j);
+      if scalar
+      then (
+        Buffer.add_string
+          buf
+          (Printf.sprintf "          out_lane_re_%d = _ptr * _pvr - _pti * _pvi;\n" j);
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "          out_lane_im_%d = _ptr * _pvi + _pti * _pvr;\n        }\n"
+             j))
+      else (
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "          out_lane_re_%d = %s_fmsub_pd(_ptr, _pvr, %s_mul_pd(_pti, _pvi));\n"
+             j
+             pfx
+             pfx);
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "          out_lane_im_%d = %s_fmadd_pd(_ptr, _pvi, %s_mul_pd(_pti, _pvr));\n\
+             \        }\n"
+             j
+             pfx
+             pfx))
+    done);
+  if il_out_active ()
+  then (
     (* IL store: interleave the split out_lane pair in-register and store
        vec_width consecutive groups as (re,im) pairs in out_z. Composes with
        the post-tw cmul above (which operates on out_lane registers). Width-
        parametric for the SSE2/scalar tail passes. _sw: (im,re)-swapped write
        (the bwd swap identity folded into the lattice). *)
     let sw = !current_oop_il_out_sw in
-    Buffer.add_string buf
-      (if sw then
-         "        /* UnitGroup IL_SW store: interleave in-register as (im,re) \
-          — bwd swap. */\n"
+    Buffer.add_string
+      buf
+      (if sw
+       then
+         "        /* UnitGroup IL_SW store: interleave in-register as (im,re) — bwd \
+          swap. */\n"
        else
-         "        /* UnitGroup IL store: interleave in-register, store \
-          vec_width\n\
+         "        /* UnitGroup IL store: interleave in-register, store vec_width\n\
          \           consecutive groups as (re,im) pairs in out_z. */\n");
     for j = 0 to c.radix - 1 do
-      let addr =
-        Printf.sprintf "2*(b * out_group_stride + %d * out_leg_stride)" j
-      in
+      let addr = Printf.sprintf "2*(b * out_group_stride + %d * out_leg_stride)" j in
       let re_n = Printf.sprintf "out_lane_re_%d" j
       and im_n = Printf.sprintf "out_lane_im_%d" j in
-      let a = if sw then im_n else re_n and bq = if sw then re_n else im_n in
+      let a = if sw then im_n else re_n
+      and bq = if sw then re_n else im_n in
       match c.isa.Isa.vec_width with
       | 4 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        { const __m256d _illo = _mm256_unpacklo_pd(%s, %s);\n\
-               \          const __m256d _ilhi = _mm256_unpackhi_pd(%s, %s);\n\
-               \          _mm256_storeu_pd(&out_z[%s], \
-                _mm256_permute2f128_pd(_illo, _ilhi, 0x20));\n\
-               \          _mm256_storeu_pd(&out_z[%s + 4], \
-                _mm256_permute2f128_pd(_illo, _ilhi, 0x31)); }\n"
-               a bq a bq addr addr)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        { const __m256d _illo = _mm256_unpacklo_pd(%s, %s);\n\
+             \          const __m256d _ilhi = _mm256_unpackhi_pd(%s, %s);\n\
+             \          _mm256_storeu_pd(&out_z[%s], _mm256_permute2f128_pd(_illo, \
+              _ilhi, 0x20));\n\
+             \          _mm256_storeu_pd(&out_z[%s + 4], _mm256_permute2f128_pd(_illo, \
+              _ilhi, 0x31)); }\n"
+             a
+             bq
+             a
+             bq
+             addr
+             addr)
       | 2 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        { _mm_storeu_pd(&out_z[%s], _mm_unpacklo_pd(%s, %s));\n\
-               \          _mm_storeu_pd(&out_z[%s + 2], _mm_unpackhi_pd(%s, \
-                %s)); }\n"
-               addr a bq addr a bq)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        { _mm_storeu_pd(&out_z[%s], _mm_unpacklo_pd(%s, %s));\n\
+             \          _mm_storeu_pd(&out_z[%s + 2], _mm_unpackhi_pd(%s, %s)); }\n"
+             addr
+             a
+             bq
+             addr
+             a
+             bq)
       | 1 ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        out_z[%s] = %s;\n\
-               \        out_z[%s + 1] = %s;\n"
-               addr a addr bq)
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        out_z[%s] = %s;\n        out_z[%s + 1] = %s;\n"
+             addr
+             a
+             addr
+             bq)
       | w ->
-          failwith
-            (Printf.sprintf
-               "codelet_oop il_out: vec_width %d not emitted (avx512 masked \
-                lattice pending)"
-               w)
-    done
-  end
-  else begin
+        failwith
+          (Printf.sprintf
+             "codelet_oop il_out: vec_width %d not emitted (avx512 masked lattice \
+              pending)"
+             w)
+    done)
+  else (
     let base_re =
-      match c.buffer with InPlace -> "rio_re" | OutOfPlace -> "out_re"
+      match c.buffer with
+      | InPlace -> "rio_re"
+      | OutOfPlace -> "out_re"
     in
     let base_im =
-      match c.buffer with InPlace -> "rio_im" | OutOfPlace -> "out_im"
+      match c.buffer with
+      | InPlace -> "rio_im"
+      | OutOfPlace -> "out_im"
     in
-    Buffer.add_string buf
-      "        /* UnitGroup store: R separate strided SIMD stores, no \
-       transpose. */\n";
+    Buffer.add_string
+      buf
+      "        /* UnitGroup store: R separate strided SIMD stores, no transpose. */\n";
     for j = 0 to c.radix - 1 do
-      Buffer.add_string buf
-        (Printf.sprintf "        %s;\n"
-           (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
-              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
-                 base_re j)
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        %s;\n"
+           (Isa.storeu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
+              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]" base_re j)
               (Printf.sprintf "out_lane_re_%d" j)));
-      Buffer.add_string buf
-        (Printf.sprintf "        %s;\n"
-           (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
-              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]"
-                 base_im j)
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        %s;\n"
+           (Isa.storeu_pd
+              ~mode:!Emit_c.current_ls_mode
+              c.isa
+              (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]" base_im j)
               (Printf.sprintf "out_lane_im_%d" j)))
-    done
-  end
+    done)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * STORE EDGE — dispatch
@@ -855,39 +1004,49 @@ let emit_store_unitgroup (buf : Buffer.t) (c : config) : unit =
    directly to the output buffer; otherwise accumulates into out_lane_* (the
    default, and the path UnitLeg's transpose requires). `indent` matches the
    surrounding scope. *)
-let emit_output_write (buf : Buffer.t) (c : config) ~(indent : string)
-    ~(re : bool) ~(j : int) ~(tag : int) : unit =
-  if !current_oop_store_on_compute && c.store_pat = UnitGroup then begin
+let emit_output_write
+      (buf : Buffer.t)
+      (c : config)
+      ~(indent : string)
+      ~(re : bool)
+      ~(j : int)
+      ~(tag : int)
+  : unit
+  =
+  if !current_oop_store_on_compute && c.store_pat = UnitGroup
+  then (
     let base =
-      match (c.buffer, re) with
+      match c.buffer, re with
       | InPlace, true -> "rio_re"
       | InPlace, false -> "rio_im"
       | OutOfPlace, true -> "out_re"
       | OutOfPlace, false -> "out_im"
     in
-    Buffer.add_string buf
-      (Printf.sprintf "%s%s;\n" indent
-         (Isa.storeu_pd ~mode:!Emit_c.current_ls_mode c.isa
-            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]" base
-               j)
-            (Printf.sprintf "t%d" tag)))
-  end
-  else begin
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "%s%s;\n"
+         indent
+         (Isa.storeu_pd
+            ~mode:!Emit_c.current_ls_mode
+            c.isa
+            (Printf.sprintf "%s[b * out_group_stride + %d * out_leg_stride]" base j)
+            (Printf.sprintf "t%d" tag))))
+  else (
     let lane = if re then "out_lane_re" else "out_lane_im" in
-    Buffer.add_string buf (Printf.sprintf "%s%s_%d = t%d;\n" indent lane j tag)
-  end
+    Buffer.add_string buf (Printf.sprintf "%s%s_%d = t%d;\n" indent lane j tag))
+;;
 
 let emit_store_edge (buf : Buffer.t) (c : config) : unit =
-  if !current_post_tw
-     && (c.store_pat <> UnitGroup || !current_oop_store_on_compute) then
-    failwith "post-tw requires UnitGroup store without store-on-compute";
+  if !current_post_tw && (c.store_pat <> UnitGroup || !current_oop_store_on_compute)
+  then failwith "post-tw requires UnitGroup store without store-on-compute";
   match c.store_pat with
   | UnitLeg -> emit_store_unitleg buf c
   | UnitGroup ->
-      (* store-on-compute already wrote every output inline in the body *)
-      if !current_oop_store_on_compute then () else emit_store_unitgroup buf c
-  | StridedFallback ->
-      failwith "emit_store_edge: StridedFallback not yet supported"
+    (* store-on-compute already wrote every output inline in the body *)
+    if !current_oop_store_on_compute then () else emit_store_unitgroup buf c
+  | StridedFallback -> failwith "emit_store_edge: StridedFallback not yet supported"
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * BUTTERFLY BODY (HOOK)
@@ -942,13 +1101,13 @@ let emit_store_edge (buf : Buffer.t) (c : config) : unit =
  * can use spill_info to declare spill arrays at the right scope
  * (outside the for-loop). Body emission then consumes this record.
  * ─────────────────────────────────────────────────────────────────── *)
-type prepared_body = {
-  assigns_post : (Expr.elem_ref * Algsimp.t) list;
-  reachable_nodes : Algsimp.t list;
-  inline_set : (int, unit) Hashtbl.t;
-  spill_info : Emit_c.spill_info option;
-  fence_enabled : bool;
-}
+type prepared_body =
+  { assigns_post : (Expr.elem_ref * Algsimp.t) list
+  ; reachable_nodes : Algsimp.t list
+  ; inline_set : (int, unit) Hashtbl.t
+  ; spill_info : Emit_c.spill_info option
+  ; fence_enabled : bool
+  }
 
 (* ───────────────────────────────────────────────────────────────────
  * PREPARE_BUTTERFLY
@@ -979,12 +1138,12 @@ type prepared_body = {
     unchanged (log3 reads a sparse subset of the same slots). *)
 let current_tw_log3 = ref false
 
-
 let prepare_butterfly (c : config) : prepared_body =
   let sign : [ `Fwd | `Bwd ] =
-    match c.direction with Forward -> `Fwd | Backward -> `Bwd
+    match c.direction with
+    | Forward -> `Fwd
+    | Backward -> `Bwd
   in
-
   (* ─── Math layer ────────────────────────────────────────────────
    * Decide whether to use the blocked / spill variant. Cross-file mirror
    * of gen_main's construction selector (step-3 extraction target — see
@@ -1001,32 +1160,35 @@ let prepare_butterfly (c : config) : prepared_body =
     c.twiddles <> NoTwiddles && Dft.should_spill c.radix c.isa.Isa.vec_regs
   in
   let raw_assigns, spill_markers_raw, spill_ct =
-    if !current_post_tw then begin
+    if !current_post_tw
+    then
       (* Gap-A: pure-DFT body; twiddles applied in the store postamble.
          Blocked construction composes: PASS-2 outputs land in out_lane
          accumulators (non-SoC emit_output_write), which is exactly what
          the postamble consumes. Gated by closed-form checks either way. *)
-      if Dft.should_block_n1 c.radix c.isa.Isa.vec_regs then
-        Dft.dft_expand_n1_blocked ~sign c.radix
-      else (Dft.dft_expand ~sign c.radix, [], None)
-    end
-    else match c.twiddles with
-    | NoTwiddles when use_spill_n1 -> Dft.dft_expand_n1_blocked ~sign c.radix
-    | NoTwiddles -> (Dft.dft_expand ~sign c.radix, [], None)
-    | (PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles)
-      when use_spill_t1 ->
+      if Dft.should_block_n1 c.radix c.isa.Isa.vec_regs
+      then Dft.dft_expand_n1_blocked ~sign c.radix
+      else Dft.dft_expand ~sign c.radix, [], None
+    else (
+      match c.twiddles with
+      | NoTwiddles when use_spill_n1 -> Dft.dft_expand_n1_blocked ~sign c.radix
+      | NoTwiddles -> Dft.dft_expand ~sign c.radix, [], None
+      | (PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles) when use_spill_t1 ->
         Dft.dft_expand_twiddled_spill
           ~policy:(if !current_tw_log3 then Dft.TP_Log3 else Dft.TP_Flat)
-          ~direction:Dft.DIT ~sign c.radix
-    | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles ->
+          ~direction:Dft.DIT
+          ~sign
+          c.radix
+      | PerGroupTwiddles | BroadcastTwiddles | PerPositionTwiddles ->
         ( Dft.dft_expand_twiddled
             ~policy:(if !current_tw_log3 then Dft.TP_Log3 else Dft.TP_Flat)
-            ~direction:Dft.DIT ~sign c.radix,
-          [],
-          None )
+            ~direction:Dft.DIT
+            ~sign
+            c.radix
+        , []
+        , None ))
   in
   let has_spill = spill_markers_raw <> [] in
-
   (* ─── Algsimp pipeline ──────────────────────────────────────────
    * Reset hash-cons table — mandatory before of_assignments. Without
    * this, prior codelet generations leak tags into our DAG (we'd see
@@ -1053,21 +1215,28 @@ let prepare_butterfly (c : config) : prepared_body =
     | Dft.Cooley_Tukey _ | Dft.Split_radix -> false
   in
   let force_fma_lift =
-    try Sys.getenv "VFFT_FORCE_FMA_LIFT" = "1" with Not_found -> false
+    try Sys.getenv "VFFT_FORCE_FMA_LIFT" = "1" with
+    | Not_found -> false
   in
   let disable_fma_lift =
-    try Sys.getenv "VFFT_DISABLE_FMA_LIFT" = "1" with Not_found -> false
+    try Sys.getenv "VFFT_DISABLE_FMA_LIFT" = "1" with
+    | Not_found -> false
   in
   let pipe : Pipeline.prepared =
-    Pipeline.prepare_codelet ~raw_assigns ~spill_markers_raw ~spill_ct ~reassoc
+    Pipeline.prepare_codelet
+      ~raw_assigns
+      ~spill_markers_raw
+      ~spill_ct
+      ~reassoc
       ~aggressive
       ~algorithm:(Dft.pick_algorithm c.radix)
-      ~force_fma_lift ~disable_fma_lift ~build_spill_info:has_spill
+      ~force_fma_lift
+      ~disable_fma_lift
+      ~build_spill_info:has_spill
       ~fuse:!current_oop_fuse
   in
   let assigns = pipe.assigns in
   let spill_info = pipe.spill_info in
-
   (* ─── Topological sort of reachable nodes ───────────────────────
    * Single source of truth: Algsimp.topo_sort_reachable (preds-based,
    * NK_Plus-tolerant). Collects reachable-from-assigns nodes only; spill
@@ -1079,7 +1248,6 @@ let prepare_butterfly (c : config) : prepared_body =
   let nodes = Algsimp.topo_sort_reachable roots in
   let _ = has_spill in
   (* still used downstream via spill_info presence *)
-
   (* ─── compute_inline_set ────────────────────────────────────────
    * Tags with use_count=1 (excluding Load/Const/Cmul/sinks) get
    * inlined at their consumer. For the spill path the set is filtered
@@ -1094,7 +1262,6 @@ let prepare_butterfly (c : config) : prepared_body =
     | None -> Emit_c.compute_inline_set assigns
     | Some sp -> Emit_c.filter_inline_set_cross_pass assigns sp nodes
   in
-
   (* ─── Fence policy ──────────────────────────────────────────────
    * M-PROJECT OFF BY DEFAULT (2026-06-09 flip; emit_c.ml:1364). The
    * scheduling fence is net-negative-or-tie on gcc-13 (it fragments live
@@ -1104,23 +1271,25 @@ let prepare_butterfly (c : config) : prepared_body =
    * here to mirror the in-place gate EXACTLY: opt-in via env only. Pin stays
    * off on this path (regalloc deferred to Tier C). ─ *)
   let opt_out =
-    try Sys.getenv "VFFT_NO_REGALLOC" = "1" with Not_found -> false
+    try Sys.getenv "VFFT_NO_REGALLOC" = "1" with
+    | Not_found -> false
   in
   let force_pin =
-    try Sys.getenv "VFFT_PIN_FORCE" = "1" with Not_found -> false
+    try Sys.getenv "VFFT_PIN_FORCE" = "1" with
+    | Not_found -> false
   in
   let force_fence =
-    try Sys.getenv "VFFT_FORCE_FENCE" = "1" with Not_found -> false
+    try Sys.getenv "VFFT_FORCE_FENCE" = "1" with
+    | Not_found -> false
   in
   let fence_enabled = (not opt_out) && (force_pin || force_fence) in
-
-  {
-    assigns_post = assigns;
-    reachable_nodes = nodes;
-    inline_set;
-    spill_info;
-    fence_enabled;
+  { assigns_post = assigns
+  ; reachable_nodes = nodes
+  ; inline_set
+  ; spill_info
+  ; fence_enabled
   }
+;;
 
 (* ───────────────────────────────────────────────────────────────────
  * EMIT_BODY_MONOLITHIC (Tier A path)
@@ -1129,38 +1298,42 @@ let prepare_butterfly (c : config) : prepared_body =
  * gcc handles allocation. This is the existing Tier-A behavior,
  * unchanged from the previous wiring.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_body_monolithic (buf : Buffer.t) (c : config) (prep : prepared_body) :
-    unit =
+let emit_body_monolithic (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
   Buffer.add_string buf "\n";
   Buffer.add_string buf "        /* === BUTTERFLY BODY (monolithic) ===\n";
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     "           Tier A: algsimp cascade + inline + fence, single scope. */\n";
   let tw_broadcast = c.twiddles = BroadcastTwiddles in
   List.iter
     (fun (e : Algsimp.t) ->
-      if not (Hashtbl.mem prep.inline_set e.tag) then begin
-        Buffer.add_string buf "        ";
-        Buffer.add_string buf
-          (Emit_c.render_node_def ~isa:c.isa ~in_place:(c.buffer = InPlace)
-             ~t1s:tw_broadcast ~strided:true ~inline_set:(Some prep.inline_set)
-             e);
-        Buffer.add_char buf '\n'
-      end)
+       if not (Hashtbl.mem prep.inline_set e.tag)
+       then (
+         Buffer.add_string buf "        ";
+         Buffer.add_string
+           buf
+           (Emit_c.render_node_def
+              ~isa:c.isa
+              ~in_place:(c.buffer = InPlace)
+              ~t1s:tw_broadcast
+              ~strided:true
+              ~inline_set:(Some prep.inline_set)
+              e);
+         Buffer.add_char buf '\n'))
     prep.reachable_nodes;
   Buffer.add_char buf '\n';
   List.iter
     (fun (lhs, (e : Algsimp.t)) ->
-      match lhs with
-      | Expr.Output (j, true) ->
-          emit_output_write buf c ~indent:"        " ~re:true ~j ~tag:e.tag
-      | Expr.Output (j, false) ->
-          emit_output_write buf c ~indent:"        " ~re:false ~j ~tag:e.tag
-      | _ ->
-          failwith
-            "codelet_oop: assign LHS is not Output (math-layer invariant \
-             violated)")
+       match lhs with
+       | Expr.Output (j, true) ->
+         emit_output_write buf c ~indent:"        " ~re:true ~j ~tag:e.tag
+       | Expr.Output (j, false) ->
+         emit_output_write buf c ~indent:"        " ~re:false ~j ~tag:e.tag
+       | _ ->
+         failwith "codelet_oop: assign LHS is not Output (math-layer invariant violated)")
     prep.assigns_post;
   Buffer.add_char buf '\n'
+;;
 
 (* ───────────────────────────────────────────────────────────────────
  * EMIT_BODY_SPILL (Tier B/C path)
@@ -1191,44 +1364,48 @@ let emit_body_monolithic (buf : Buffer.t) (c : config) (prep : prepared_body) :
  * Caller has already declared spill_re[N] / spill_im[N] at function
  * scope (outside the for-loop), visible across both pass scopes.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
-    (sp : Emit_c.spill_info) : unit =
+let emit_body_spill
+      (buf : Buffer.t)
+      (c : config)
+      (prep : prepared_body)
+      (sp : Emit_c.spill_info)
+  : unit
+  =
   Buffer.add_string buf "\n";
   Buffer.add_string buf "        /* === BUTTERFLY BODY (spill recipe) ===\n";
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     (Printf.sprintf
        "           Tier B: PASS 1 / PASS 2 split via %d spill slots, fuse=0.\n"
        sp.num_slots);
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     "           PASS 1 emits cluster-sequentially (by min_descendant_slot)\n";
-  Buffer.add_string buf
-    "           with spill stores immediately after each producer.\n";
-  Buffer.add_string buf
-    "           PASS 2 reloads on-demand before each consumer.  */\n";
-
+  Buffer.add_string buf "           with spill stores immediately after each producer.\n";
+  Buffer.add_string buf "           PASS 2 reloads on-demand before each consumer.  */\n";
   let tw_broadcast = c.twiddles = BroadcastTwiddles in
   let cls = Emit_c.classify_passes sp prep.reachable_nodes in
-
   (* Const nodes are hoisted to outer scope (before either pass opens)
      so they're in scope from both. They're free of dependencies and
      each contributes O(1) to live set. *)
   let is_const (e : Algsimp.t) =
-    match e.node with Algsimp.NK_Const _ -> true | _ -> false
+    match e.node with
+    | Algsimp.NK_Const _ -> true
+    | _ -> false
   in
   let const_nodes = List.filter is_const prep.reachable_nodes in
   let pass1_nodes =
     List.filter
       (fun (e : Algsimp.t) ->
-        (not (is_const e)) && Hashtbl.find_opt cls e.tag = Some `Pass1)
+         (not (is_const e)) && Hashtbl.find_opt cls e.tag = Some `Pass1)
       prep.reachable_nodes
   in
   let pass2_nodes =
     List.filter
       (fun (e : Algsimp.t) ->
-        (not (is_const e)) && Hashtbl.find_opt cls e.tag = Some `Pass2)
+         (not (is_const e)) && Hashtbl.find_opt cls e.tag = Some `Pass2)
       prep.reachable_nodes
   in
-
   let pass1_assigns =
     List.filter
       (fun (_, (e : Algsimp.t)) -> Hashtbl.find_opt cls e.tag = Some `Pass1)
@@ -1239,18 +1416,22 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
       (fun (_, (e : Algsimp.t)) -> Hashtbl.find_opt cls e.tag = Some `Pass2)
       prep.assigns_post
   in
-
   (* Hoist constants. *)
   List.iter
     (fun (e : Algsimp.t) ->
-      Buffer.add_string buf "        ";
-      Buffer.add_string buf
-        (Emit_c.render_node_def ~isa:c.isa ~in_place:(c.buffer = InPlace)
-           ~t1s:tw_broadcast ~strided:true ~inline_set:(Some prep.inline_set) e);
-      Buffer.add_char buf '\n')
+       Buffer.add_string buf "        ";
+       Buffer.add_string
+         buf
+         (Emit_c.render_node_def
+            ~isa:c.isa
+            ~in_place:(c.buffer = InPlace)
+            ~t1s:tw_broadcast
+            ~strided:true
+            ~inline_set:(Some prep.inline_set)
+            e);
+       Buffer.add_char buf '\n')
     const_nodes;
   Buffer.add_char buf '\n';
-
   (* ─── Cluster-sequential PASS 1 ordering ───────────────────────
    * Compute min_descendant_slot for each PASS 1 node: the smallest
    * spill slot reachable through its forward successors (within
@@ -1268,10 +1449,7 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
   (* min_slot + pre-cluster ordering via the shared Emit_c helper (single
      source with the in-place path; uses an explicit descending sort so it
      does not depend on pass1_nodes' input order). *)
-  let min_slot, pass1_blocked_topo =
-    Emit_c.compute_min_slot_pass1 sp pass1_nodes
-  in
-
+  let min_slot, pass1_blocked_topo = Emit_c.compute_min_slot_pass1 sp pass1_nodes in
   (* ─── Tier C: cluster-local SU scheduling for PASS 1 ──────────────
    * Replace tag-order within each sub-FFT cluster with SU ordering.
    * Cluster boundary: min_slot range corresponding to one PASS 1
@@ -1295,7 +1473,8 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
    * (raptor_lake_avx2 = 12, avx512 profiles = 24) must match the target
    * register file, or GH engages far too late on 16-register builds. *)
   let uarch =
-    if c.isa.Isa.vec_regs <= 16 then Uarch.raptor_lake_avx2
+    if c.isa.Isa.vec_regs <= 16
+    then Uarch.raptor_lake_avx2
     else Uarch.sapphire_rapids_avx512
   in
   let gh = c.isa.Isa.vec_regs <= 16 && c.radix >= 32 in
@@ -1305,11 +1484,13 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
      uses su_schedule_subset (no bb_budget knob). The ct_n2<=0 guard lives
      inside the helper. *)
   let pass1_blocked =
-    Emit_c.cluster_split_schedule sp ~pass1_blocked_topo ~min_slot
+    Emit_c.cluster_split_schedule
+      sp
+      ~pass1_blocked_topo
+      ~min_slot
       ~schedule_cluster:(fun ~subset ~sinks ->
         Schedule.su_schedule_subset uarch ~gh ~subset ~sinks)
   in
-
   (* ─── PASS 1 emission ──────────────────────────────────────────
    * Open block, emit nodes in cluster-sequential order, emit spill
    * stores immediately after each spilled producer, emit PASS 1
@@ -1324,31 +1505,44 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
   let is_fused_tag tag = Emit_c.is_fused_tag sp tag in
   List.iter
     (fun (e : Algsimp.t) ->
-      if (not (Hashtbl.mem prep.inline_set e.tag)) && is_fused_tag e.tag then
-        Buffer.add_string buf
-          (Printf.sprintf "        %s t%d;\n" c.isa.Isa.vec_type e.tag))
+       if (not (Hashtbl.mem prep.inline_set e.tag)) && is_fused_tag e.tag
+       then
+         Buffer.add_string
+           buf
+           (Printf.sprintf "        %s t%d;\n" c.isa.Isa.vec_type e.tag))
     pass1_blocked;
-  Buffer.add_string buf
-    "        {  /* PASS 1: sub-FFTs of size n2, store to spill */\n";
+  Buffer.add_string buf "        {  /* PASS 1: sub-FFTs of size n2, store to spill */\n";
   List.iter
     (fun (e : Algsimp.t) ->
-      if not (Hashtbl.mem prep.inline_set e.tag) then
-        begin if is_fused_tag e.tag then begin
-          (* assignment to the forward-declared register; no spill store *)
-          Buffer.add_string buf
-            (Emit_c.render_node_def ~no_declarator:true ~isa:c.isa
-               ~in_place:(c.buffer = InPlace) ~t1s:tw_broadcast ~strided:true
-               ~inline_set:(Some prep.inline_set) e);
-          Buffer.add_char buf '\n'
-        end
-        else begin
-          Buffer.add_string buf "            ";
-          Buffer.add_string buf
-            (Emit_c.render_node_def ~isa:c.isa ~in_place:(c.buffer = InPlace)
-               ~t1s:tw_broadcast ~strided:true
-               ~inline_set:(Some prep.inline_set) e);
-          Buffer.add_char buf '\n';
-          (* Spill store(s) for this tag — re_slot and/or im_slot may match.
+       if not (Hashtbl.mem prep.inline_set e.tag)
+       then
+         if is_fused_tag e.tag
+         then (
+           (* assignment to the forward-declared register; no spill store *)
+           Buffer.add_string
+             buf
+             (Emit_c.render_node_def
+                ~no_declarator:true
+                ~isa:c.isa
+                ~in_place:(c.buffer = InPlace)
+                ~t1s:tw_broadcast
+                ~strided:true
+                ~inline_set:(Some prep.inline_set)
+                e);
+           Buffer.add_char buf '\n')
+         else (
+           Buffer.add_string buf "            ";
+           Buffer.add_string
+             buf
+             (Emit_c.render_node_def
+                ~isa:c.isa
+                ~in_place:(c.buffer = InPlace)
+                ~t1s:tw_broadcast
+                ~strided:true
+                ~inline_set:(Some prep.inline_set)
+                e);
+           Buffer.add_char buf '\n';
+           (* Spill store(s) for this tag — re_slot and/or im_slot may match.
          The same tag never appears in both (re and im are distinct
          dft_expand_n1_blocked output bins).
 
@@ -1356,22 +1550,26 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
          takes `double *` and rejects `__m256d *` from `&spill_re[N]`.
          For AVX-512 the cast is a no-op accepted via `void *`. Always
          emitting the cast keeps the emitter ISA-independent. *)
-          (match Hashtbl.find_opt sp.re_slot e.tag with
-          | Some slot ->
-              Buffer.add_string buf
+           (match Hashtbl.find_opt sp.re_slot e.tag with
+            | Some slot ->
+              Buffer.add_string
+                buf
                 (Printf.sprintf
                    "            %s((double *)&spill_re[%d], t%d);\n"
-                   c.isa.Isa.storeu_pd slot e.tag)
-          | None -> ());
-          match Hashtbl.find_opt sp.im_slot e.tag with
-          | Some slot ->
-              Buffer.add_string buf
-                (Printf.sprintf
-                   "            %s((double *)&spill_im[%d], t%d);\n"
-                   c.isa.Isa.storeu_pd slot e.tag)
-          | None -> ()
-        end
-        end)
+                   c.isa.Isa.storeu_pd
+                   slot
+                   e.tag)
+            | None -> ());
+           match Hashtbl.find_opt sp.im_slot e.tag with
+           | Some slot ->
+             Buffer.add_string
+               buf
+               (Printf.sprintf
+                  "            %s((double *)&spill_im[%d], t%d);\n"
+                  c.isa.Isa.storeu_pd
+                  slot
+                  e.tag)
+           | None -> ()))
     pass1_blocked;
   (* PASS 1 output assigns: outputs whose value is computed entirely
      in PASS 1 (no spilled dependency). These exist because some
@@ -1380,18 +1578,15 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
      them at end of PASS 1's scope so the value is still in scope. *)
   List.iter
     (fun (lhs, (e : Algsimp.t)) ->
-      match lhs with
-      | Expr.Output (j, true) ->
-          emit_output_write buf c ~indent:"            " ~re:true ~j ~tag:e.tag
-      | Expr.Output (j, false) ->
-          emit_output_write buf c ~indent:"            " ~re:false ~j ~tag:e.tag
-      | _ ->
-          failwith
-            "codelet_oop: assign LHS is not Output (math-layer invariant \
-             violated)")
+       match lhs with
+       | Expr.Output (j, true) ->
+         emit_output_write buf c ~indent:"            " ~re:true ~j ~tag:e.tag
+       | Expr.Output (j, false) ->
+         emit_output_write buf c ~indent:"            " ~re:false ~j ~tag:e.tag
+       | _ ->
+         failwith "codelet_oop: assign LHS is not Output (math-layer invariant violated)")
     pass1_assigns;
   Buffer.add_string buf "        }\n\n";
-
   (* ─── PASS 2 emission ──────────────────────────────────────────
    * Open block. For each PASS 2 node, walk its predecessors; for
    * any spilled pred not yet reloaded, emit a reload from
@@ -1401,33 +1596,41 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
    * Reload format: `const __m512d tN = _mm512_loadu_pd(&spill_re[slot]);`
    * — reusing the same tag name as the original PASS 1 producer (which
    * has gone out of scope when PASS 1's block closed). ─ *)
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     "        {  /* PASS 2: reload spilled values, sub-FFTs of size n1 */\n";
   let reloaded : (int, unit) Hashtbl.t = Hashtbl.create 64 in
   let emit_reload_if_needed (p : Algsimp.t) =
-    if Hashtbl.mem reloaded p.tag then ()
-    else begin
+    if Hashtbl.mem reloaded p.tag
+    then ()
+    else (
       let do_reload arr_name slot =
         (* Same `double *` cast as the spill stores: required for
            AVX2 — _mm256_loadu_pd takes `double const *`; harmless
            via `void const *` for AVX-512. *)
-        Buffer.add_string buf
+        Buffer.add_string
+          buf
           (Printf.sprintf
              "            const %s t%d = %s((const double *)&%s[%d]);\n"
-             c.isa.Isa.vec_type p.tag c.isa.Isa.loadu_pd arr_name slot);
+             c.isa.Isa.vec_type
+             p.tag
+             c.isa.Isa.loadu_pd
+             arr_name
+             slot);
         Hashtbl.add reloaded p.tag ()
       in
       match Hashtbl.find_opt sp.re_slot p.tag with
       | Some slot ->
-          if Emit_c.is_fused_slot sp slot then Hashtbl.add reloaded p.tag ()
-          else do_reload "spill_re" slot
-      | None -> (
-          match Hashtbl.find_opt sp.im_slot p.tag with
-          | Some slot ->
-              if Emit_c.is_fused_slot sp slot then Hashtbl.add reloaded p.tag ()
-              else do_reload "spill_im" slot
-          | None -> ())
-    end
+        if Emit_c.is_fused_slot sp slot
+        then Hashtbl.add reloaded p.tag ()
+        else do_reload "spill_re" slot
+      | None ->
+        (match Hashtbl.find_opt sp.im_slot p.tag with
+         | Some slot ->
+           if Emit_c.is_fused_slot sp slot
+           then Hashtbl.add reloaded p.tag ()
+           else do_reload "spill_im" slot
+         | None -> ()))
   in
   (* Transitive reload through inlined predecessors: if X is inlined
      into Z and X references a spilled Y, Z's rendered body
@@ -1435,10 +1638,9 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
      emit_reload_if_needed is idempotent so re-visits are safe. *)
   let rec reload_through_inlines (e : Algsimp.t) =
     emit_reload_if_needed e;
-    if Hashtbl.mem prep.inline_set e.tag then
-      List.iter reload_through_inlines (Algsimp.preds e)
+    if Hashtbl.mem prep.inline_set e.tag
+    then List.iter reload_through_inlines (Algsimp.preds e)
   in
-
   (* ─── Tier C: cluster-local SU scheduling for PASS 2 ──────────────
    * Build cluster_of_pass2_node via the same fixpoint as emit_c's PASS-2
    * path. STATUS: this PASS-2 mirror was assessed during the step-2 de-dup
@@ -1485,125 +1687,125 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
    * below. We hoist it to outer scope so the emission loop can read it
    * after pass2_ordered is built. ─ *)
   let cluster_of_pass2_node : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  if pass2_nodes <> [] && sp.ct_n2 > 0 then begin
+  if pass2_nodes <> [] && sp.ct_n2 > 0
+  then (
     let min_input_slot : (int, int) Hashtbl.t = Hashtbl.create 256 in
     (* Walk in topo order so preds are already classified when we visit. *)
     List.iter
       (fun (e : Algsimp.t) ->
-        let direct = lookup_slot e.tag in
-        let pred_min =
-          List.fold_left
-            (fun acc (p : Algsimp.t) ->
-              match Hashtbl.find_opt min_input_slot p.tag with
-              | Some s -> (
-                  match acc with None -> Some s | Some a -> Some (min a s))
-              | None -> acc)
-            None (Algsimp.preds e)
-        in
-        let my =
-          match (direct, pred_min) with
-          | Some a, Some b -> Some (min a b)
-          | Some a, None | None, Some a -> Some a
-          | None, None -> None
-        in
-        match my with
-        | Some s -> Hashtbl.replace min_input_slot e.tag s
-        | None -> ())
+         let direct = lookup_slot e.tag in
+         let pred_min =
+           List.fold_left
+             (fun acc (p : Algsimp.t) ->
+                match Hashtbl.find_opt min_input_slot p.tag with
+                | Some s ->
+                  (match acc with
+                   | None -> Some s
+                   | Some a -> Some (min a s))
+                | None -> acc)
+             None
+             (Algsimp.preds e)
+         in
+         let my =
+           match direct, pred_min with
+           | Some a, Some b -> Some (min a b)
+           | Some a, None | None, Some a -> Some a
+           | None, None -> None
+         in
+         match my with
+         | Some s -> Hashtbl.replace min_input_slot e.tag s
+         | None -> ())
       prep.reachable_nodes;
     List.iter
       (fun (e : Algsimp.t) ->
-        match Hashtbl.find_opt min_input_slot e.tag with
-        | Some s -> Hashtbl.replace cluster_of_pass2_node e.tag (s mod sp.ct_n2)
-        | None -> ())
+         match Hashtbl.find_opt min_input_slot e.tag with
+         | Some s -> Hashtbl.replace cluster_of_pass2_node e.tag (s mod sp.ct_n2)
+         | None -> ())
       pass2_nodes;
     (* Fixpoint propagation for unclustered intermediates. *)
     let consumers_p2 : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
     List.iter
       (fun (e : Algsimp.t) ->
-        List.iter
-          (fun (p : Algsimp.t) ->
-            let prev =
-              try Hashtbl.find consumers_p2 p.tag with Not_found -> []
-            in
-            Hashtbl.replace consumers_p2 p.tag (e :: prev))
-          (Algsimp.preds e))
+         List.iter
+           (fun (p : Algsimp.t) ->
+              let prev =
+                try Hashtbl.find consumers_p2 p.tag with
+                | Not_found -> []
+              in
+              Hashtbl.replace consumers_p2 p.tag (e :: prev))
+           (Algsimp.preds e))
       pass2_nodes;
     let first_walk : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-    Hashtbl.iter
-      (fun tag _ -> Hashtbl.add first_walk tag ())
-      cluster_of_pass2_node;
+    Hashtbl.iter (fun tag _ -> Hashtbl.add first_walk tag ()) cluster_of_pass2_node;
     let changed = ref true in
     while !changed do
       changed := false;
       List.iter
         (fun (e : Algsimp.t) ->
-          if not (Hashtbl.mem first_walk e.tag) then begin
-            let cs =
-              try Hashtbl.find consumers_p2 e.tag with Not_found -> []
-            in
-            let consumer_cluster =
-              List.fold_left
-                (fun acc (cn : Algsimp.t) ->
-                  match
-                    (acc, Hashtbl.find_opt cluster_of_pass2_node cn.tag)
-                  with
-                  | None, Some k -> Some k
-                  | Some a, Some k -> Some (min a k)
-                  | _, None -> acc)
-                None cs
-            in
-            match
-              (consumer_cluster, Hashtbl.find_opt cluster_of_pass2_node e.tag)
-            with
-            | Some k, None ->
-                Hashtbl.add cluster_of_pass2_node e.tag k;
-                changed := true
-            | Some new_k, Some old_k when new_k < old_k ->
-                Hashtbl.replace cluster_of_pass2_node e.tag new_k;
-                changed := true
-            | _ -> ()
-          end)
+           if not (Hashtbl.mem first_walk e.tag)
+           then (
+             let cs =
+               try Hashtbl.find consumers_p2 e.tag with
+               | Not_found -> []
+             in
+             let consumer_cluster =
+               List.fold_left
+                 (fun acc (cn : Algsimp.t) ->
+                    match acc, Hashtbl.find_opt cluster_of_pass2_node cn.tag with
+                    | None, Some k -> Some k
+                    | Some a, Some k -> Some (min a k)
+                    | _, None -> acc)
+                 None
+                 cs
+             in
+             match consumer_cluster, Hashtbl.find_opt cluster_of_pass2_node e.tag with
+             | Some k, None ->
+               Hashtbl.add cluster_of_pass2_node e.tag k;
+               changed := true
+             | Some new_k, Some old_k when new_k < old_k ->
+               Hashtbl.replace cluster_of_pass2_node e.tag new_k;
+               changed := true
+             | _ -> ()))
         pass2_nodes
-    done
-  end;
+    done);
   let pass2_ordered =
-    if pass2_nodes = [] || sp.ct_n2 <= 0 then pass2_nodes
-    else begin
+    if pass2_nodes = [] || sp.ct_n2 <= 0
+    then pass2_nodes
+    else (
       (* Group pass2_nodes by cluster k2 (preserve relative order within
          a group by reversing twice). *)
       let groups = Array.make sp.ct_n2 [] in
       List.iter
         (fun (e : Algsimp.t) ->
-          match Hashtbl.find_opt cluster_of_pass2_node e.tag with
-          | Some k2 -> groups.(k2) <- e :: groups.(k2)
-          | None -> ())
+           match Hashtbl.find_opt cluster_of_pass2_node e.tag with
+           | Some k2 -> groups.(k2) <- e :: groups.(k2)
+           | None -> ())
         pass2_nodes;
       let assign_tags =
         List.fold_left
           (fun acc (_, (e : Algsimp.t)) ->
-            Hashtbl.replace acc e.tag ();
-            acc)
-          (Hashtbl.create 32) prep.assigns_post
+             Hashtbl.replace acc e.tag ();
+             acc)
+          (Hashtbl.create 32)
+          prep.assigns_post
       in
       let result = ref [] in
       for k2 = 0 to sp.ct_n2 - 1 do
         let group_nodes = List.rev groups.(k2) in
         let group_sinks =
-          List.filter
-            (fun (e : Algsimp.t) -> Hashtbl.mem assign_tags e.tag)
-            group_nodes
+          List.filter (fun (e : Algsimp.t) -> Hashtbl.mem assign_tags e.tag) group_nodes
         in
         let scheduled =
-          if group_nodes = [] then []
-          else if group_sinks = [] then group_nodes
+          if group_nodes = []
+          then []
+          else if group_sinks = []
+          then group_nodes
           else
-            Schedule.su_schedule_subset uarch ~gh ~subset:group_nodes
-              ~sinks:group_sinks
+            Schedule.su_schedule_subset uarch ~gh ~subset:group_nodes ~sinks:group_sinks
         in
         result := scheduled :: !result
       done;
-      List.concat (List.rev !result)
-    end
+      List.concat (List.rev !result))
   in
   (* ─── Cluster-boundary store flush prep ───────────────────────────
    * Production groups pass2_assigns by cluster_of_pass2_node and
@@ -1648,86 +1850,90 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
   in
   List.iter
     (fun ((_, (e : Algsimp.t)) as a) ->
-      match Hashtbl.find_opt cluster_of_pass2_node e.tag with
-      | Some k2 ->
-          let cur =
-            try Hashtbl.find assigns_by_cluster k2 with Not_found -> []
-          in
-          Hashtbl.replace assigns_by_cluster k2 (a :: cur)
-      | None -> () (* unclustered → flushed in the tail sweep below *))
+       match Hashtbl.find_opt cluster_of_pass2_node e.tag with
+       | Some k2 ->
+         let cur =
+           try Hashtbl.find assigns_by_cluster k2 with
+           | Not_found -> []
+         in
+         Hashtbl.replace assigns_by_cluster k2 (a :: cur)
+       | None -> () (* unclustered → flushed in the tail sweep below *))
     pass2_assigns;
   let flushed_tags : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   let emit_output_store lhs (e : Algsimp.t) =
     match lhs with
     | Expr.Output (j, true) ->
-        emit_output_write buf c ~indent:"            " ~re:true ~j ~tag:e.tag
+      emit_output_write buf c ~indent:"            " ~re:true ~j ~tag:e.tag
     | Expr.Output (j, false) ->
-        emit_output_write buf c ~indent:"            " ~re:false ~j ~tag:e.tag
+      emit_output_write buf c ~indent:"            " ~re:false ~j ~tag:e.tag
     | _ ->
-        failwith
-          "codelet_oop: assign LHS is not Output (math-layer invariant \
-           violated)"
+      failwith "codelet_oop: assign LHS is not Output (math-layer invariant violated)"
   in
   let flush_cluster_stores k2 =
     match Hashtbl.find_opt assigns_by_cluster k2 with
     | Some clist ->
-        (* List was built with `e :: cur` so it's in reverse insertion
+      (* List was built with `e :: cur` so it's in reverse insertion
          order; List.rev restores the original pass2_assigns order. *)
-        List.iter
-          (fun (lhs, (e : Algsimp.t)) ->
-            if not (Hashtbl.mem flushed_tags e.tag) then begin
-              (* Edge case: an output value whose only consumer is the
+      List.iter
+        (fun (lhs, (e : Algsimp.t)) ->
+           if not (Hashtbl.mem flushed_tags e.tag)
+           then (
+             (* Edge case: an output value whose only consumer is the
              store itself never gets reloaded during normal pass2_ordered
              emission. Force a reload here if needed. *)
-              emit_reload_if_needed e;
-              emit_output_store lhs e;
-              Hashtbl.add flushed_tags e.tag ()
-            end)
-          (List.rev clist)
+             emit_reload_if_needed e;
+             emit_output_store lhs e;
+             Hashtbl.add flushed_tags e.tag ()))
+        (List.rev clist)
     | None -> ()
   in
-
   let last_cluster : int option ref = ref None in
   List.iter
     (fun (e : Algsimp.t) ->
-      (* Cluster-boundary detection. Only fire on cluster CHANGE; the
+       (* Cluster-boundary detection. Only fire on cluster CHANGE; the
        first node in PASS 2 sets last_cluster without flushing. *)
-      (match Hashtbl.find_opt cluster_of_pass2_node e.tag with
-      | Some k2 -> (
-          match !last_cluster with
-          | Some prev when prev <> k2 ->
-              flush_cluster_stores prev;
-              last_cluster := Some k2
-          | None -> last_cluster := Some k2
-          | _ -> ())
-      | None -> ());
-      (* unclustered node — no boundary signal *)
-      if not (Hashtbl.mem prep.inline_set e.tag) then begin
-        List.iter reload_through_inlines (Algsimp.preds e);
-        Buffer.add_string buf "            ";
-        Buffer.add_string buf
-          (Emit_c.render_node_def ~isa:c.isa ~in_place:(c.buffer = InPlace)
-             ~t1s:tw_broadcast ~strided:true ~inline_set:(Some prep.inline_set)
-             e);
-        Buffer.add_char buf '\n'
-      end)
+       (match Hashtbl.find_opt cluster_of_pass2_node e.tag with
+        | Some k2 ->
+          (match !last_cluster with
+           | Some prev when prev <> k2 ->
+             flush_cluster_stores prev;
+             last_cluster := Some k2
+           | None -> last_cluster := Some k2
+           | _ -> ())
+        | None -> ());
+       (* unclustered node — no boundary signal *)
+       if not (Hashtbl.mem prep.inline_set e.tag)
+       then (
+         List.iter reload_through_inlines (Algsimp.preds e);
+         Buffer.add_string buf "            ";
+         Buffer.add_string
+           buf
+           (Emit_c.render_node_def
+              ~isa:c.isa
+              ~in_place:(c.buffer = InPlace)
+              ~t1s:tw_broadcast
+              ~strided:true
+              ~inline_set:(Some prep.inline_set)
+              e);
+         Buffer.add_char buf '\n'))
     pass2_ordered;
   (* Final flush: the last cluster's stores (its boundary never fires
      since there's no following cluster to trigger it). *)
   (match !last_cluster with
-  | Some last -> flush_cluster_stores last
-  | None -> ());
+   | Some last -> flush_cluster_stores last
+   | None -> ());
   (* Tail sweep for any pass2_assigns whose value wasn't in
      cluster_of_pass2_node (shouldn't happen for our CT codelets but
      handle defensively — production also has this safety net). *)
   List.iter
     (fun (lhs, (e : Algsimp.t)) ->
-      if not (Hashtbl.mem flushed_tags e.tag) then begin
-        emit_reload_if_needed e;
-        emit_output_store lhs e
-      end)
+       if not (Hashtbl.mem flushed_tags e.tag)
+       then (
+         emit_reload_if_needed e;
+         emit_output_store lhs e))
     pass2_assigns;
   Buffer.add_string buf "        }\n\n"
+;;
 
 (* ───────────────────────────────────────────────────────────────────
  * EMIT_BUTTERFLY_BODY — Tier A/B dispatch
@@ -1736,16 +1942,16 @@ let emit_body_spill (buf : Buffer.t) (c : config) (prep : prepared_body)
  * prep.spill_info. Uses Fun.protect to ensure the fence ref resets
  * even on exception.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_butterfly_body (buf : Buffer.t) (c : config) (prep : prepared_body) :
-    unit =
+let emit_butterfly_body (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
   let saved_fence = !Emit_c.current_fence_only in
   Emit_c.current_fence_only := prep.fence_enabled;
   Fun.protect
     ~finally:(fun () -> Emit_c.current_fence_only := saved_fence)
     (fun () ->
-      match prep.spill_info with
-      | None -> emit_body_monolithic buf c prep
-      | Some sp -> emit_body_spill buf c prep sp)
+       match prep.spill_info with
+       | None -> emit_body_monolithic buf c prep
+       | Some sp -> emit_body_spill buf c prep sp)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * TOP-LEVEL CODELET EMISSION
@@ -1757,8 +1963,7 @@ let emit_butterfly_body (buf : Buffer.t) (c : config) (prep : prepared_body) :
 let emit_codelet (c : config) : string =
   validate c;
   Emit_c.current_tw_perpos := c.twiddles = PerPositionTwiddles;
-  Emit_c.current_tw_linear :=
-    (if !current_oop_tw_linear then c.radix - 1 else 0);
+  Emit_c.current_tw_linear := if !current_oop_tw_linear then c.radix - 1 else 0;
   let buf = Buffer.create 4096 in
   (* Arbitrary-K rem-aware tail (docs/performance/arbitrary_k_tail_handling.md).
      UnitGroup edges, loop bound me = group count. Masks the in/out group
@@ -1774,13 +1979,16 @@ let emit_codelet (c : config) : string =
      would type-clash a width-1 scalar pass). Kill switch VFFT_NO_ANYK_TAIL. *)
   let anyk_tail =
     (c.twiddles = NoTwiddles || c.twiddles = PerGroupTwiddles)
-    && c.load_pat = UnitGroup && c.store_pat = UnitGroup
-    && (match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
-       | Some _ -> false
-       | None -> true)
+    && c.load_pat = UnitGroup
+    && c.store_pat = UnitGroup
+    &&
+    match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
+    | Some _ -> false
+    | None -> true
   in
   (* File header. *)
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     "/* Auto-generated by vfft_v2 codelet generator — OOP family (M2). */\n";
   Buffer.add_string buf "#include <immintrin.h>\n";
   Buffer.add_string buf "#include <stddef.h>\n\n";
@@ -1793,14 +2001,12 @@ let emit_codelet (c : config) : string =
      edge is present (gcc will eliminate the unused decls). The
      emit_avx512_transpose_indices helper is itself a no-op for AVX2,
      so this call is safe in all cases. *)
-  if c.load_pat = UnitLeg || c.store_pat = UnitLeg then
-    Emit_c.emit_avx512_transpose_indices c.isa buf;
-
+  if c.load_pat = UnitLeg || c.store_pat = UnitLeg
+  then Emit_c.emit_avx512_transpose_indices c.isa buf;
   (* Prepare the body: math layer + algsimp pipeline + spill_info
      construction. Done BEFORE the for-loop opens so we know whether
      to emit spill_re/spill_im array declarations at function scope. *)
   let prep = prepare_butterfly c in
-
   (* Spill array declarations — outside the for-loop so they're
      allocated once per codelet call, reused across k iterations. The
      in-place path (emit_c) emits the same spill_re[N]/spill_im[N] decls
@@ -1809,20 +2015,22 @@ let emit_codelet (c : config) : string =
      small to centralize — see the design/accident rule in
      docs/large_n_pass_minimization_plan.md). *)
   (match prep.spill_info with
-  | None -> ()
-  | Some sp ->
-      Buffer.add_string buf
-        (Printf.sprintf "    %s spill_re[%d];\n" c.isa.Isa.vec_type sp.num_slots);
-      Buffer.add_string buf
-        (Printf.sprintf "    %s spill_im[%d];\n" c.isa.Isa.vec_type sp.num_slots));
-
+   | None -> ()
+   | Some sp ->
+     Buffer.add_string
+       buf
+       (Printf.sprintf "    %s spill_re[%d];\n" c.isa.Isa.vec_type sp.num_slots);
+     Buffer.add_string
+       buf
+       (Printf.sprintf "    %s spill_im[%d];\n" c.isa.Isa.vec_type sp.num_slots));
   let emit_inner () =
     emit_lane_decls buf c;
     emit_load_edge buf c;
     emit_butterfly_body buf c prep;
     emit_store_edge buf c
   in
-  if anyk_tail then begin
+  if anyk_tail
+  then (
     (* Rem-aware hybrid tail — THE CONTRACT (docs arbitrary_k_scalartail_experiment):
        bulk full-vector loop, then for the 1..VW-1 leftover batch lanes
          rem == 1 -> ONE scalar single lane (monolithic, width-1 ISA)
@@ -1833,8 +2041,7 @@ let emit_codelet (c : config) : string =
        __m256d clash. me = group count. *)
     let vw = c.isa.Isa.vec_width in
     Buffer.add_string buf "    size_t b = 0;\n";
-    Buffer.add_string buf
-      (Printf.sprintf "    for (; b + %d <= me; b += %d) {\n" vw vw);
+    Buffer.add_string buf (Printf.sprintf "    for (; b + %d <= me; b += %d) {\n" vw vw);
     Emit_c.current_ls_mode := Isa.LS_vector;
     emit_inner ();
     Buffer.add_string buf "    }\n";
@@ -1849,15 +2056,16 @@ let emit_codelet (c : config) : string =
     emit_body_monolithic buf c_scalar prep;
     emit_store_edge buf c_scalar;
     Buffer.add_string buf "        } else {\n";
-    if vw = 8 then begin
+    if vw = 8
+    then (
       (* avx512: masked pass (vmaskz/mask_storeu full-rate; remainder up to 7 lanes). *)
-      Buffer.add_string buf
+      Buffer.add_string
+        buf
         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n";
       Emit_c.current_ls_mode := Isa.LS_masked "_m";
       emit_inner ();
-      Emit_c.current_ls_mode := Isa.LS_vector
-    end
-    else begin
+      Emit_c.current_ls_mode := Isa.LS_vector)
+    else (
       (* avx2 SSE2 remainder (DEFAULT, mirrors emit_c): a width-2 unmasked loop over the
        * rem lanes + a scalar straggler — faster than vmaskmov on Raptor Lake, and the
        * UnitGroup OOP body is vertical so it narrows 1:1 to 128-bit. Both passes render
@@ -1876,17 +2084,14 @@ let emit_codelet (c : config) : string =
       emit_load_edge buf c_scalar;
       emit_body_monolithic buf c_scalar prep;
       emit_store_edge buf c_scalar;
-      Buffer.add_string buf "            }\n"
-    end;
+      Buffer.add_string buf "            }\n");
     Buffer.add_string buf "        }\n";
     Buffer.add_string buf "    }\n";
-    Buffer.add_string buf "}\n"
-  end
-  else begin
+    Buffer.add_string buf "}\n")
+  else (
     emit_loop_open buf c;
     emit_inner ();
-    emit_loop_close buf
-  end;
+    emit_loop_close buf);
   let family =
     let ep = function
       | UnitGroup -> "UG (unit-stride across the transform group)"
@@ -1904,42 +2109,45 @@ let emit_codelet (c : config) : string =
       | InPlace -> "InPlace"
       | OutOfPlace -> "OutOfPlace (Bailey v3_t1)"
     in
-    Printf.sprintf "OOP %s; edges %s/%s; buffer %s" tw (ep c.load_pat)
-      (ep c.store_pat) buf_s
+    Printf.sprintf
+      "OOP %s; edges %s/%s; buffer %s"
+      tw
+      (ep c.load_pat)
+      (ep c.store_pat)
+      buf_s
   in
   let vec_regs = c.isa.Isa.vec_regs in
-  let blocked =
-    c.twiddles = NoTwiddles && Dft.should_block_n1 c.radix vec_regs
-  in
+  let blocked = c.twiddles = NoTwiddles && Dft.should_block_n1 c.radix vec_regs in
   let gh = vec_regs <= 16 && c.radix >= 32 in
   let prov =
-    Emit_c.provenance_block ~family
-      [
-        Printf.sprintf "ISA: %d vector regs%s" vec_regs
-          (if vec_regs <= 16 then " (16-reg pressure rules apply)" else "");
-        "Scheduler: shared Pipeline cascade + cluster-sequential emission; \
-         Tier C cluster-local SU on the spill path (section 24); monolithic \
-         path tag-ordered (Tier 1 queue item, section 25)";
-        Printf.sprintf
-          "Tier C uarch: %s (per-ISA selection: GH threshold 12 vs 24; section \
-           24)"
-          (if vec_regs <= 16 then "raptor_lake_avx2"
-           else "sapphire_rapids_avx512");
-        Printf.sprintf
-          "GH pressure mode: %b (auto-rule: vec_regs<=16 && radix>=32)" gh;
-        (if blocked then
-           "Construction: BLOCKED two-pass (shared dft_expand_n1_blocked, doc \
-            58); threshold n>=16 on <=16-reg ISAs else 25 (section 35)"
+    Emit_c.provenance_block
+      ~family
+      [ Printf.sprintf
+          "ISA: %d vector regs%s"
+          vec_regs
+          (if vec_regs <= 16 then " (16-reg pressure rules apply)" else "")
+      ; "Scheduler: shared Pipeline cascade + cluster-sequential emission; Tier C \
+         cluster-local SU on the spill path (section 24); monolithic path tag-ordered \
+         (Tier 1 queue item, section 25)"
+      ; Printf.sprintf
+          "Tier C uarch: %s (per-ISA selection: GH threshold 12 vs 24; section 24)"
+          (if vec_regs <= 16 then "raptor_lake_avx2" else "sapphire_rapids_avx512")
+      ; Printf.sprintf "GH pressure mode: %b (auto-rule: vec_regs<=16 && radix>=32)" gh
+      ; (if blocked
+         then
+           "Construction: BLOCKED two-pass (shared dft_expand_n1_blocked, doc 58); \
+            threshold n>=16 on <=16-reg ISAs else 25 (section 35)"
          else
-           "Construction: MONOLITHIC (below blocking threshold, or \
-            twiddled/prime path)");
-        Printf.sprintf "Value fences: %b (Pipeline-computed prep.fence_enabled)"
-          prep.fence_enabled;
-        "Regalloc+pinning: not wired on the OOP path (render-convention \
-         blocker, section 36)";
+           "Construction: MONOLITHIC (below blocking threshold, or twiddled/prime path)")
+      ; Printf.sprintf
+          "Value fences: %b (Pipeline-computed prep.fence_enabled)"
+          prep.fence_enabled
+      ; "Regalloc+pinning: not wired on the OOP path (render-convention blocker, section \
+         36)"
       ]
   in
   prov ^ Buffer.contents buf
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * NAMING CONVENTION
@@ -1959,25 +2167,37 @@ let edge_pattern_suffix = function
   | UnitLeg -> "UL"
   | UnitGroup -> "UG"
   | StridedFallback -> "SF"
+;;
 
 let twiddle_suffix = function
   | NoTwiddles -> "n1"
   | PerGroupTwiddles -> "t1"
   | BroadcastTwiddles -> "t1s"
   | PerPositionTwiddles -> "t1p"
+;;
 
-let direction_suffix = function Forward -> "fwd" | Backward -> "bwd"
-let buffer_suffix = function InPlace -> "inplace" | OutOfPlace -> "oop"
+let direction_suffix = function
+  | Forward -> "fwd"
+  | Backward -> "bwd"
+;;
+
+let buffer_suffix = function
+  | InPlace -> "inplace"
+  | OutOfPlace -> "oop"
+;;
 
 (** Compose a canonical name from the variant fields. *)
-let canonical_name ~radix ~isa ~direction ~load_pat ~store_pat ~buffer ~twiddles
-    : string =
-  Printf.sprintf "radix%d_%s_%s_%s_%s_%s_%s" radix (twiddle_suffix twiddles)
+let canonical_name ~radix ~isa ~direction ~load_pat ~store_pat ~buffer ~twiddles : string =
+  Printf.sprintf
+    "radix%d_%s_%s_%s_%s_%s_%s"
+    radix
+    (twiddle_suffix twiddles)
     (buffer_suffix buffer)
     (direction_suffix direction)
     Isa.(isa.name)
     (edge_pattern_suffix load_pat)
     (edge_pattern_suffix store_pat)
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  * K1 MONO EMISSION (--k1-mono; row_major_engine.md §12.4 item 3)
@@ -2000,22 +2220,31 @@ let canonical_name ~radix ~isa ~direction ~load_pat ~store_pat ~buffer ~twiddles
    IDFT = swap(DFT(swap(.))): forward DAG, forward rodata tables, both swaps
    folded into the boundaries (same algebra the 2-pass bwd_il gates proved).
    Split backward needs no codelet at all (caller pointer-swaps re/im). *)
-let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
-    ~(sw : bool) : string =
-  if isa.Isa.vec_width <> 4 then
-    failwith "--k1-mono: avx2 only (vec_width 4)";
+let emit_k1_mono
+      ~(isa : Isa.t)
+      ~(n : int)
+      ~(r1_opt : int option)
+      ~(il : bool)
+      ~(sw : bool)
+  : string
+  =
+  if isa.Isa.vec_width <> 4 then failwith "--k1-mono: avx2 only (vec_width 4)";
   if sw && not il then failwith "--k1-mono: --k1-sw requires --k1-il";
   (* default pair per N; --k1-r1 overrides R1 (r2 = n/r1) *)
   let r1 =
     match r1_opt with
     | Some r -> r
-    | None -> ( match n with 64 -> 8 | 128 -> 16 | 256 -> 16 | _ ->
-        failwith "--k1-mono: N in {64,128,256} (M3)" )
+    | None ->
+      (match n with
+       | 64 -> 8
+       | 128 -> 16
+       | 256 -> 16
+       | _ -> failwith "--k1-mono: N in {64,128,256} (M3)")
   in
   if n mod r1 <> 0 then failwith "--k1-mono: R1 must divide N";
   let r2 = n / r1 in
-  if r1 mod 4 <> 0 || r2 mod 4 <> 0 then
-    failwith "--k1-mono: R1 and R2 must be multiples of 4";
+  if r1 mod 4 <> 0 || r2 mod 4 <> 0
+  then failwith "--k1-mono: R1 and R2 must be multiples of 4";
   (* neutralize every mode ref that could leak from a prior emission *)
   Emit_c.current_ls_mode := Isa.LS_vector;
   Emit_c.current_tw_perpos := false;
@@ -2028,35 +2257,42 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
   current_oop_il_in_sw := false;
   current_oop_il_out_sw := false;
   let fname =
-    if il then
-      Printf.sprintf "vfft_k1_mono%d_%dx%d_il_%s_avx2" n r1 r2
+    if il
+    then
+      Printf.sprintf
+        "vfft_k1_mono%d_%dx%d_il_%s_avx2"
+        n
+        r1
+        r2
         (if sw then "bwd" else "fwd")
-    else if n = 64 && r1 = 8 then "vfft_k1_mono64_fwd_avx2" (* M1 name kept *)
+    else if n = 64 && r1 = 8
+    then "vfft_k1_mono64_fwd_avx2" (* M1 name kept *)
     else Printf.sprintf "vfft_k1_mono%d_%dx%d_fwd_avx2" n r1 r2
   in
   let mk_cfg r =
-    {
-      radix = r;
-      isa;
-      direction = Forward;
-      load_pat = UnitGroup;
-      store_pat = UnitGroup;
-      buffer = OutOfPlace;
-      twiddles = NoTwiddles;
-      name = fname;
+    { radix = r
+    ; isa
+    ; direction = Forward
+    ; load_pat = UnitGroup
+    ; store_pat = UnitGroup
+    ; buffer = OutOfPlace
+    ; twiddles = NoTwiddles
+    ; name = fname
     }
   in
   (* two per-stage configs/preps: columns are radix-R2, rows radix-R1. Bodies
      render MONOLITHICALLY even when prepare_butterfly chose the blocked
      construction (radix 16): emit_body_monolithic ignores spill markers —
      the same precedent the SSE2/scalar tails ship on. *)
-  let cfg_col = mk_cfg r2 and cfg_row = mk_cfg r1 in
+  let cfg_col = mk_cfg r2
+  and cfg_row = mk_cfg r1 in
   validate cfg_col;
   validate cfg_row;
   let prep_col = prepare_butterfly cfg_col in
   let prep_row = prepare_butterfly cfg_row in
   let buf = Buffer.create 65536 in
-  Buffer.add_string buf
+  Buffer.add_string
+    buf
     "/* Auto-generated by vfft_v2 codelet generator — K1 MONO family\n\
     \ * (row_major_engine.md §12.4 item 3). Whole K=1 four-step in ONE\n\
     \ * function; four-step twiddles are EMIT-TIME rodata (no runtime\n\
@@ -2067,67 +2303,68 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
   let pi = 4.0 *. atan 1.0 in
   List.iter
     (fun (nm, f) ->
-      Buffer.add_string buf
-        (Printf.sprintf "static const double vfft_k1m%d_%s[%d][%d][4] = {\n" n
-           nm (r1 / 4) (r2 - 1));
-      for h = 0 to (r1 / 4) - 1 do
-        Buffer.add_string buf "  {";
-        for m = 1 to r2 - 1 do
-          Buffer.add_string buf "{";
-          for j = 0 to 3 do
-            let a =
-              -2.0 *. pi
-              *. float_of_int (m * ((4 * h) + j))
-              /. float_of_int n
-            in
-            Buffer.add_string buf (Printf.sprintf "%.17g," (f a))
-          done;
-          Buffer.add_string buf "},"
-        done;
-        Buffer.add_string buf "},\n"
-      done;
-      Buffer.add_string buf "};\n")
-    [ ("twr", cos); ("twi", sin) ];
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "static const double vfft_k1m%d_%s[%d][%d][4] = {\n"
+            n
+            nm
+            (r1 / 4)
+            (r2 - 1));
+       for h = 0 to (r1 / 4) - 1 do
+         Buffer.add_string buf "  {";
+         for m = 1 to r2 - 1 do
+           Buffer.add_string buf "{";
+           for j = 0 to 3 do
+             let a = -2.0 *. pi *. float_of_int (m * ((4 * h) + j)) /. float_of_int n in
+             Buffer.add_string buf (Printf.sprintf "%.17g," (f a))
+           done;
+           Buffer.add_string buf "},"
+         done;
+         Buffer.add_string buf "},\n"
+       done;
+       Buffer.add_string buf "};\n")
+    [ "twr", cos; "twi", sin ];
   (* uniform 11-arg ABI (vfft_oop11_fn-shaped; strides/tw/me ignored) *)
-  (if il then
-     Buffer.add_string buf
-       (Printf.sprintf
-          "\n\
-           __attribute__((target(\"avx2,fma\")))\n\
-           void %s(\n\
-          \    const double * __restrict__ k1_in_z,          /* interleaved \
-           pairs */\n\
-          \    const double * __restrict__ k1_in_unused,\n\
-          \    double       * __restrict__ k1_out_z,         /* interleaved \
-           pairs */\n\
-          \    double       * __restrict__ k1_out_unused,\n\
-          \    const double * tw_re, const double * tw_im,\n\
-          \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
-           {\n\
-          \    (void)k1_in_unused; (void)k1_out_unused;\n\
-          \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; \
-           (void)s3; (void)me;\n"
-          fname)
-   else
-     Buffer.add_string buf
-       (Printf.sprintf
-          "\n\
-           __attribute__((target(\"avx2,fma\")))\n\
-           void %s(\n\
-          \    const double * __restrict__ k1_in_re,\n\
-          \    const double * __restrict__ k1_in_im,\n\
-          \    double       * __restrict__ k1_out_re,\n\
-          \    double       * __restrict__ k1_out_im,\n\
-          \    const double * tw_re, const double * tw_im,\n\
-          \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
-           {\n\
-          \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; \
-           (void)s3; (void)me;\n"
-          fname));
+  if il
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "\n\
+          __attribute__((target(\"avx2,fma\")))\n\
+          void %s(\n\
+         \    const double * __restrict__ k1_in_z,          /* interleaved pairs */\n\
+         \    const double * __restrict__ k1_in_unused,\n\
+         \    double       * __restrict__ k1_out_z,         /* interleaved pairs */\n\
+         \    double       * __restrict__ k1_out_unused,\n\
+         \    const double * tw_re, const double * tw_im,\n\
+         \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
+          {\n\
+         \    (void)k1_in_unused; (void)k1_out_unused;\n\
+         \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; (void)s3; (void)me;\n"
+         fname)
+  else
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "\n\
+          __attribute__((target(\"avx2,fma\")))\n\
+          void %s(\n\
+         \    const double * __restrict__ k1_in_re,\n\
+         \    const double * __restrict__ k1_in_im,\n\
+         \    double       * __restrict__ k1_out_re,\n\
+         \    double       * __restrict__ k1_out_im,\n\
+         \    const double * tw_re, const double * tw_im,\n\
+         \    size_t s0, size_t s1, size_t s2, size_t s3, size_t me)\n\
+          {\n\
+         \    (void)tw_re; (void)tw_im; (void)s0; (void)s1; (void)s2; (void)s3; (void)me;\n"
+         fname);
   (* function-scope U vars: u_{re,im}_{h}_{m} *)
   for h = 0 to (r1 / 4) - 1 do
     for m = 0 to r2 - 1 do
-      Buffer.add_string buf
+      Buffer.add_string
+        buf
         (Printf.sprintf "    __m256d u_re_%d_%d, u_im_%d_%d;\n" h m h m)
     done
   done;
@@ -2135,8 +2372,10 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
   current_oop_il_in := il && not sw;
   current_oop_il_in_sw := il && sw;
   for h = 0 to (r1 / 4) - 1 do
-    if il then
-      Buffer.add_string buf
+    if il
+    then
+      Buffer.add_string
+        buf
         (Printf.sprintf
            "    { /* stage-1 chunk h=%d: columns %d..%d (interleaved) */\n\
            \        const double *in_z = k1_in_z + %d;\n\
@@ -2144,11 +2383,14 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
            \        const size_t in_leg_stride = %d;\n\
            \        const size_t in_group_stride = 1;\n\
            \        (void)b; (void)in_group_stride;\n"
-           h (4 * h) ((4 * h) + 3)
+           h
+           (4 * h)
+           ((4 * h) + 3)
            (2 * 4 * h)
            r1)
     else
-      Buffer.add_string buf
+      Buffer.add_string
+        buf
         (Printf.sprintf
            "    { /* stage-1 chunk h=%d: columns %d..%d */\n\
            \        const double *in_re = k1_in_re + %d;\n\
@@ -2157,62 +2399,105 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
            \        const size_t in_leg_stride = %d;\n\
            \        const size_t in_group_stride = 1;\n\
            \        (void)b; (void)in_group_stride;\n"
-           h (4 * h) ((4 * h) + 3) (4 * h) (4 * h) r1);
+           h
+           (4 * h)
+           ((4 * h) + 3)
+           (4 * h)
+           (4 * h)
+           r1);
     emit_lane_decls buf cfg_col;
     emit_load_edge buf cfg_col;
     emit_body_monolithic buf cfg_col prep_col;
-    Buffer.add_string buf
+    Buffer.add_string
+      buf
       (Printf.sprintf
-         "        u_re_%d_0 = out_lane_re_0;\n\
-         \        u_im_%d_0 = out_lane_im_0;\n"
-         h h);
+         "        u_re_%d_0 = out_lane_re_0;\n        u_im_%d_0 = out_lane_im_0;\n"
+         h
+         h);
     for m = 1 to r2 - 1 do
-      Buffer.add_string buf
+      Buffer.add_string
+        buf
         (Printf.sprintf
-           "        { const __m256d _twr = \
-            _mm256_loadu_pd(vfft_k1m%d_twr[%d][%d]);\n\
-           \          const __m256d _twi = \
-            _mm256_loadu_pd(vfft_k1m%d_twi[%d][%d]);\n\
+           "        { const __m256d _twr = _mm256_loadu_pd(vfft_k1m%d_twr[%d][%d]);\n\
+           \          const __m256d _twi = _mm256_loadu_pd(vfft_k1m%d_twi[%d][%d]);\n\
            \          u_re_%d_%d = _mm256_fmsub_pd(_twr, out_lane_re_%d, \
             _mm256_mul_pd(_twi, out_lane_im_%d));\n\
            \          u_im_%d_%d = _mm256_fmadd_pd(_twr, out_lane_im_%d, \
             _mm256_mul_pd(_twi, out_lane_re_%d)); }\n"
-           n h (m - 1) n h (m - 1) h m m m h m m m)
+           n
+           h
+           (m - 1)
+           n
+           h
+           (m - 1)
+           h
+           m
+           m
+           m
+           h
+           m
+           m
+           m)
     done;
     Buffer.add_string buf "    }\n"
   done;
   (* ---- stage 2: row chunks (transpose from U + radix-R1 body + store) ---- *)
   for mh = 0 to (r2 / 4) - 1 do
-    Buffer.add_string buf
-      (Printf.sprintf "    { /* stage-2 chunk mh=%d: rows m=%d..%d */\n" mh
-         (4 * mh) ((4 * mh) + 3));
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    { /* stage-2 chunk mh=%d: rows m=%d..%d */\n"
+         mh
+         (4 * mh)
+         ((4 * mh) + 3));
     emit_lane_decls buf cfg_row;
     (* T4: leg t=4h+j register = column j across rows u_*_h_{4mh..4mh+3} *)
     for h = 0 to (r1 / 4) - 1 do
       List.iter
         (fun comp ->
-          Buffer.add_string buf
-            (Printf.sprintf
-               "        { const __m256d _u0 = _mm256_unpacklo_pd(u_%s_%d_%d, \
-                u_%s_%d_%d);\n\
-               \          const __m256d _u1 = _mm256_unpackhi_pd(u_%s_%d_%d, \
-                u_%s_%d_%d);\n\
-               \          const __m256d _u2 = _mm256_unpacklo_pd(u_%s_%d_%d, \
-                u_%s_%d_%d);\n\
-               \          const __m256d _u3 = _mm256_unpackhi_pd(u_%s_%d_%d, \
-                u_%s_%d_%d);\n\
-               \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
-                0x20);\n\
-               \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
-                0x20);\n\
-               \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, \
-                0x31);\n\
-               \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, \
-                0x31); }\n"
-               comp h (4 * mh) comp h ((4 * mh) + 1) comp h (4 * mh) comp h
-               ((4 * mh) + 1) comp h ((4 * mh) + 2) comp h ((4 * mh) + 3)
-               comp h ((4 * mh) + 2) comp h ((4 * mh) + 3) comp (4 * h) comp
-               ((4 * h) + 1) comp ((4 * h) + 2) comp ((4 * h) + 3)))
+           Buffer.add_string
+             buf
+             (Printf.sprintf
+                "        { const __m256d _u0 = _mm256_unpacklo_pd(u_%s_%d_%d, u_%s_%d_%d);\n\
+                \          const __m256d _u1 = _mm256_unpackhi_pd(u_%s_%d_%d, u_%s_%d_%d);\n\
+                \          const __m256d _u2 = _mm256_unpacklo_pd(u_%s_%d_%d, u_%s_%d_%d);\n\
+                \          const __m256d _u3 = _mm256_unpackhi_pd(u_%s_%d_%d, u_%s_%d_%d);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, 0x20);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, 0x20);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u0, _u2, 0x31);\n\
+                \          lane_%s_%d = _mm256_permute2f128_pd(_u1, _u3, 0x31); }\n"
+                comp
+                h
+                (4 * mh)
+                comp
+                h
+                ((4 * mh) + 1)
+                comp
+                h
+                (4 * mh)
+                comp
+                h
+                ((4 * mh) + 1)
+                comp
+                h
+                ((4 * mh) + 2)
+                comp
+                h
+                ((4 * mh) + 3)
+                comp
+                h
+                ((4 * mh) + 2)
+                comp
+                h
+                ((4 * mh) + 3)
+                comp
+                (4 * h)
+                comp
+                ((4 * h) + 1)
+                comp
+                ((4 * h) + 2)
+                comp
+                ((4 * h) + 3)))
         [ "re"; "im" ]
     done;
     emit_body_monolithic buf cfg_row prep_row;
@@ -2220,25 +2505,31 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
     current_oop_il_in_sw := false;
     current_oop_il_out := il && not sw;
     current_oop_il_out_sw := il && sw;
-    (if il then
-       Buffer.add_string buf
-         (Printf.sprintf
-            "        double *out_z = k1_out_z + %d;\n\
-            \        const size_t b = 0;\n\
-            \        const size_t out_leg_stride = %d;\n\
-            \        const size_t out_group_stride = 1;\n\
-            \        (void)b; (void)out_group_stride;\n"
-            (2 * 4 * mh) r2)
-     else
-       Buffer.add_string buf
-         (Printf.sprintf
-            "        double *out_re = k1_out_re + %d;\n\
-            \        double *out_im = k1_out_im + %d;\n\
-            \        const size_t b = 0;\n\
-            \        const size_t out_leg_stride = %d;\n\
-            \        const size_t out_group_stride = 1;\n\
-            \        (void)b; (void)out_group_stride;\n"
-            (4 * mh) (4 * mh) r2));
+    if il
+    then
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        double *out_z = k1_out_z + %d;\n\
+           \        const size_t b = 0;\n\
+           \        const size_t out_leg_stride = %d;\n\
+           \        const size_t out_group_stride = 1;\n\
+           \        (void)b; (void)out_group_stride;\n"
+           (2 * 4 * mh)
+           r2)
+    else
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        double *out_re = k1_out_re + %d;\n\
+           \        double *out_im = k1_out_im + %d;\n\
+           \        const size_t b = 0;\n\
+           \        const size_t out_leg_stride = %d;\n\
+           \        const size_t out_group_stride = 1;\n\
+           \        (void)b; (void)out_group_stride;\n"
+           (4 * mh)
+           (4 * mh)
+           r2);
     emit_store_edge buf cfg_row;
     Buffer.add_string buf "    }\n"
   done;
@@ -2246,3 +2537,4 @@ let emit_k1_mono ~(isa : Isa.t) ~(n : int) ~(r1_opt : int option) ~(il : bool)
   current_oop_il_out := false;
   current_oop_il_out_sw := false;
   Buffer.contents buf
+;;

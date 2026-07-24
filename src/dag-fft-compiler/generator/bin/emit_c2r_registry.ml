@@ -26,27 +26,37 @@ type abi =
   | Hc2hc_dif_bwd
   | Hc2hc_dif_bwd_log3
   | Hc2hc_dif_rng_bwd
-  | Hc2c_nat_bwd          (* stage-0 natural initiator: 4 split const-in/2 packed-out *)
+  | Hc2c_nat_bwd (* stage-0 natural initiator: 4 split const-in/2 packed-out *)
   | Hc2c_nat_bwd_log3
   | Hc2c_nat_bwd_rng
   | Unknown
 
 let contains hay needle =
-  let lh = String.length hay and ln = String.length needle in
+  let lh = String.length hay
+  and ln = String.length needle in
   let rec go i = i + ln <= lh && (String.sub hay i ln = needle || go (i + 1)) in
   ln > 0 && go 0
+;;
 
 (* classify from filename stem. Order: rng/log3 before plain bwd (more specific
  * substrings first). The hc2c_nat_bwd family is the stage-0 natural initiator. *)
 let abi_of stem =
-  if contains stem "_hc2c_nat_rng_bwd" then Hc2c_nat_bwd_rng
-  else if contains stem "_hc2c_nat_log3_bwd" then Hc2c_nat_bwd_log3
-  else if contains stem "_hc2c_nat_bwd" then Hc2c_nat_bwd
-  else if contains stem "_hc2hc_dif_rng_bwd" then Hc2hc_dif_rng_bwd
-  else if contains stem "_hc2hc_dif_log3_bwd" then Hc2hc_dif_bwd_log3
-  else if contains stem "_hc2hc_dif_bwd" then Hc2hc_dif_bwd
-  else if contains stem "_r2cb" then R2cb
+  if contains stem "_hc2c_nat_rng_bwd"
+  then Hc2c_nat_bwd_rng
+  else if contains stem "_hc2c_nat_log3_bwd"
+  then Hc2c_nat_bwd_log3
+  else if contains stem "_hc2c_nat_bwd"
+  then Hc2c_nat_bwd
+  else if contains stem "_hc2hc_dif_rng_bwd"
+  then Hc2hc_dif_rng_bwd
+  else if contains stem "_hc2hc_dif_log3_bwd"
+  then Hc2hc_dif_bwd_log3
+  else if contains stem "_hc2hc_dif_bwd"
+  then Hc2hc_dif_bwd
+  else if contains stem "_r2cb"
+  then R2cb
   else Unknown
+;;
 
 let slot_of = function
   | R2cb -> Some "r2cb"
@@ -57,101 +67,97 @@ let slot_of = function
   | Hc2c_nat_bwd_log3 -> Some "hc2c_bwd_log3"
   | Hc2c_nat_bwd_rng -> Some "hc2c_bwd_rng"
   | Unknown -> None
+;;
 
 let radix_of stem =
-  if String.length stem > 5 && String.sub stem 0 5 = "radix" then
+  if String.length stem > 5 && String.sub stem 0 5 = "radix"
+  then (
     let rec d i acc =
-      if i < String.length stem && stem.[i] >= '0' && stem.[i] <= '9' then
-        d (i + 1) ((acc * 10) + (Char.code stem.[i] - Char.code '0'))
-      else if i = 5 then None
+      if i < String.length stem && stem.[i] >= '0' && stem.[i] <= '9'
+      then d (i + 1) ((acc * 10) + (Char.code stem.[i] - Char.code '0'))
+      else if i = 5
+      then None
       else Some acc
     in
-    d 5 0
+    d 5 0)
   else None
+;;
 
 (* extern prototype text per ABI *)
 let proto abi sym =
   match abi with
   | R2cb ->
-      Printf.sprintf
-        "extern void %s(const double*, const double*, double*, ptrdiff_t, \
-         ptrdiff_t, ptrdiff_t, size_t);"
-        sym
+    Printf.sprintf
+      "extern void %s(const double*, const double*, double*, ptrdiff_t, ptrdiff_t, \
+       ptrdiff_t, size_t);"
+      sym
   | Hc2hc_dif_bwd | Hc2hc_dif_bwd_log3 ->
-      Printf.sprintf
-        "extern void %s(const double*, const double*, double*, double*, const \
-         double*, const double*, ptrdiff_t, ptrdiff_t, size_t);"
-        sym
+    Printf.sprintf
+      "extern void %s(const double*, const double*, double*, double*, const double*, \
+       const double*, ptrdiff_t, ptrdiff_t, size_t);"
+      sym
   | Hc2hc_dif_rng_bwd ->
-      Printf.sprintf
-        "extern void %s(const double*, const double*, double*, double*, const \
-         double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, \
-         int, size_t);"
-        sym
+    Printf.sprintf
+      "extern void %s(const double*, const double*, double*, double*, const double*, \
+       const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);"
+      sym
   | Hc2c_nat_bwd | Hc2c_nat_bwd_log3 ->
-      (* 4 split const-in (Rp/Ip/Rm/Im) -> 2 packed out (out_re/out_im), tw, isp/ism/os *)
-      Printf.sprintf
-        "extern void %s(const double*, const double*, const double*, const \
-         double*, double*, double*, const double*, const double*, ptrdiff_t, \
-         ptrdiff_t, ptrdiff_t, size_t);"
-        sym
+    (* 4 split const-in (Rp/Ip/Rm/Im) -> 2 packed out (out_re/out_im), tw, isp/ism/os *)
+    Printf.sprintf
+      "extern void %s(const double*, const double*, const double*, const double*, \
+       double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, \
+       size_t);"
+      sym
   | Hc2c_nat_bwd_rng ->
-      Printf.sprintf
-        "extern void %s(const double*, const double*, const double*, const \
-         double*, double*, double*, const double*, const double*, ptrdiff_t, \
-         ptrdiff_t, ptrdiff_t, ptrdiff_t, ptrdiff_t, int, size_t);"
-        sym
+    Printf.sprintf
+      "extern void %s(const double*, const double*, const double*, const double*, \
+       double*, double*, const double*, const double*, ptrdiff_t, ptrdiff_t, ptrdiff_t, \
+       ptrdiff_t, ptrdiff_t, int, size_t);"
+      sym
   | Unknown -> ""
+;;
 
 let () =
   let isa = ref "avx512" in
   Arg.parse
-    [ ("--isa", Arg.Set_string isa, "avx2|avx512") ]
+    [ "--isa", Arg.Set_string isa, "avx2|avx512" ]
     (fun _ -> ())
     "emit_c2r_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "c2r-" ^ isa in
   let files = Vfft_v2.Coverage.files quadrant in
-
   let entries =
     List.filter_map
       (fun (fname_c, _argv) ->
-        let stem =
-          if Filename.check_suffix fname_c ".c" then
-            Filename.chop_suffix fname_c ".c"
-          else fname_c
-        in
-        let a = abi_of stem in
-        match (radix_of stem, slot_of a) with
-        | Some r, Some slot -> Some (stem, a, slot, r) (* symbol == stem *)
-        | _ -> None)
+         let stem =
+           if Filename.check_suffix fname_c ".c"
+           then Filename.chop_suffix fname_c ".c"
+           else fname_c
+         in
+         let a = abi_of stem in
+         match radix_of stem, slot_of a with
+         | Some r, Some slot -> Some (stem, a, slot, r) (* symbol == stem *)
+         | _ -> None)
       files
   in
-
   Printf.printf "/* AUTO-GENERATED by bin/emit_c2r_registry.ml from\n";
   Printf.printf " * Coverage.files \"%s\". DO NOT EDIT BY HAND.\n" quadrant;
   Printf.printf " * Regenerate: dune build (promote rule) or\n";
   Printf.printf " *   dune exec bin/emit_c2r_registry.exe -- --isa %s\n" isa;
   Printf.printf " *\n";
-  Printf.printf
-    " * Fills the c2r slots of rfft_codelets_t (r2cb leaf + DIF backward\n";
-  Printf.printf
-    " * twiddle stages). Consumed by core/c2r.h. ABI-typed: r2cb is 7-arg\n";
+  Printf.printf " * Fills the c2r slots of rfft_codelets_t (r2cb leaf + DIF backward\n";
+  Printf.printf " * twiddle stages). Consumed by core/c2r.h. ABI-typed: r2cb is 7-arg\n";
   Printf.printf " * (is_re/is_im split), hc2hc_dif_bwd is 9-arg. */\n";
   Printf.printf "#ifndef VFFT_C2R_REGISTRY_%s_H\n" (String.uppercase_ascii isa);
-  Printf.printf "#define VFFT_C2R_REGISTRY_%s_H\n\n"
-    (String.uppercase_ascii isa);
+  Printf.printf "#define VFFT_C2R_REGISTRY_%s_H\n\n" (String.uppercase_ascii isa);
   Printf.printf "#include \"rfft.h\"\n\n";
-
   Printf.printf "/* extern declarations (every c2r codelet in coverage) */\n";
   List.iter (fun (sym, a, _slot, _r) -> print_endline (proto a sym)) entries;
   Printf.printf "\n";
-
-  Printf.printf
-    "static inline void c2r_register_all_%s(rfft_codelets_t *reg)\n{\n" isa;
+  Printf.printf "static inline void c2r_register_all_%s(rfft_codelets_t *reg)\n{\n" isa;
   List.iter
-    (fun (sym, _a, slot, r) ->
-      Printf.printf "    reg->%s[%d] = %s;\n" slot r sym)
+    (fun (sym, _a, slot, r) -> Printf.printf "    reg->%s[%d] = %s;\n" slot r sym)
     entries;
   Printf.printf "}\n\n";
   Printf.printf "#endif\n"
+;;
