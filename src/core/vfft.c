@@ -308,15 +308,28 @@ static struct vfft_wisdom_s *_default_wisdom(void)
 
 /* OOP wisdom is write-by-entry (no in-memory add/save round-trip helper); provide
  * one: replace-or-append in memory, then rewrite the whole file. */
+
+/* Persistence class of a kind: 0 = MODEB (scrambled champion), 1 = native
+ * (LEAF/BAILEY2), 2 = K1 engine (kind 3), 3 = zsplit cascade cell (kind 4).
+ * One (N,K) cell may hold one entry PER CLASS. */
+static int _oop_kind_class(int kind)
+{
+    if (kind == VFFT_OOP_KIND_MODEB) return 0;
+    if (kind == VFFT_OOP_KIND_BAILEY2V) return 2;
+    if (kind == VFFT_OOP_KIND_ZSPLIT) return 3;
+    return 1;
+}
+
 static void _oop_wisdom_put_and_save(struct vfft_wisdom_s *W,
                                      const vfft_oop_wisdom_entry_t *e, const char *path)
 {
     int idx = -1;
-    /* Dedup by (N, K, kind-class) — NOT just (N,K) — so a cell keeps BOTH its natural (LEAF/BAILEY2)
-     * and its scrambled (MODEB) champion. Overwriting by (N,K) alone would collapse the two. */
+    /* Dedup by (N, K, kind-class) — NOT just (N,K) — so a cell keeps its natural (LEAF/BAILEY2),
+     * scrambled (MODEB), K1 and zsplit champions as SEPARATE entries. Overwriting by (N,K)
+     * alone would collapse them. */
     for (int i = 0; i < W->oop.count; i++)
         if (W->oop.e[i].N == e->N && W->oop.e[i].K == e->K &&
-            vfft_oop_kind_natural(W->oop.e[i].kind) == vfft_oop_kind_natural(e->kind))
+            _oop_kind_class(W->oop.e[i].kind) == _oop_kind_class(e->kind))
         {
             idx = i;
             break;
@@ -544,6 +557,94 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     vfft_proto_plan_destroy(pT);
     vfft_proto_plan_destroy(pP);
     return exec_me;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * ZSPLIT TERMINATOR PICK (K=1 SCRAMBLED cascade, z_cascade_plan §4.9993) —
+ * sterm vs sterm2 are BIT-IDENTICAL schedules whose delta (±5%) is the same
+ * order as code-placement luck, so the pick is measured on THIS binary at
+ * first create and banked as a kind-4 oop_wisdom line. ~10 ms budget in the
+ * _il_ab_race shape: alternating arm order per round, median-of-rounds, 3%
+ * hysteresis toward the compiled default. Returns the winner's median ns
+ * (0.0 on OOM/sanity failure; zs->t2q holds the verdict either way). */
+static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
+{
+    const int N = zs->N;
+    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
+    const int inc = zs->t2q; /* compiled default = incumbent */
+    double *zi = NULL, *zo = NULL, *zo2 = NULL;
+    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo2, 64, sz))
+    {
+        vfft_proto_aligned_free(zi);
+        vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2);
+        return 0.0;
+    }
+    srand(11 + N);
+    for (int i = 0; i < 2 * N; i++)
+        zi[i] = (double)rand() / RAND_MAX - 0.5;
+
+    /* sanity: the pair is bit-identical by contract; if a build ever breaks
+     * that, keep the incumbent and don't bank. */
+    zs->t2q = 0;
+    vfft_zsplit_execute_fwd(zs, zi, zo);
+    zs->t2q = 1;
+    vfft_zsplit_execute_fwd(zs, zi, zo2);
+    if (memcmp(zo, zo2, sz) != 0)
+    {
+        zs->t2q = inc;
+        vfft_proto_aligned_free(zi);
+        vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2);
+        return 0.0;
+    }
+
+    /* size bursts to ~0.3 ms from one estimated exec */
+    double t0 = vfft_proto_now_ns();
+    vfft_zsplit_execute_fwd(zs, zi, zo);
+    double est = vfft_proto_now_ns() - t0;
+    if (est < 1.0)
+        est = 1.0;
+    int reps = (int)(300000.0 / est);
+    if (reps < 2)
+        reps = 2;
+    if (reps > 64)
+        reps = 64;
+
+    int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
+    double m0[32], m1[32];
+    if (RR > 32)
+        RR = 32;
+    for (int r = 0; r < RR; r++)
+    {
+        double a, b;
+        int first = r & 1;
+        zs->t2q = first;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_zsplit_execute_fwd(zs, zi, zo);
+        a = (vfft_proto_now_ns() - t0) / reps;
+        zs->t2q = !first;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_zsplit_execute_fwd(zs, zi, zo);
+        b = (vfft_proto_now_ns() - t0) / reps;
+        m0[r] = first ? a : b;
+        m1[r] = first ? b : a;
+    }
+    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
+    int win;
+    if (inc == 0)
+        win = (n1 < n0 * 0.97) ? 1 : 0; /* 3% hysteresis toward the default */
+    else
+        win = (n0 < n1 * 0.97) ? 0 : 1;
+    zs->t2q = win;
+    vfft_proto_aligned_free(zi);
+    vfft_proto_aligned_free(zo);
+    vfft_proto_aligned_free(zo2);
+    return win ? n1 : n0;
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -2234,11 +2335,54 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
              * z->z contract at the covered cells (matched-permutation
              * roundtrip, gated). Classic create still runs below — it keeps
              * serving the split-plane contract and every uncovered N; the
-             * cascade plan is attached to the classic handle at the end. */
+             * cascade plan is attached to the classic handle at the end.
+             *
+             * Wisdom (kind-4 oop_wisdom line, §4.9993): hit -> pure read of
+             * chain + terminator pick; miss/recalibrate -> default chain +
+             * the ~10 ms t2q pick race, banked. The pick MUST be measured on
+             * the installed binary: sterm vs sterm2 are bit-identical and
+             * their delta is code-placement-order. */
             int zch[VFFT_ZSPLIT_MAX_NF];
-            int znf = vfft_zsplit_default_chain(N, zch);
+            int znf = 0;
+            const vfft_oop_wisdom_entry_t *ze =
+                vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
+            int ze_hit = (ze && !cfg->recalibrate);
+            if (ze_hit && ze->cc_chain)
+                znf = vfft_k1_cc_chain_decode(ze->cc_chain, zch);
             if (znf)
+            {
                 zs_pending = vfft_zsplit_create(N, zch, znf);
+                if (!zs_pending)
+                    znf = 0;            /* stale/invalid wisdom chain: fall back */
+            }
+            if (!zs_pending)
+            {
+                znf = vfft_zsplit_default_chain(N, zch);
+                if (znf)
+                    zs_pending = vfft_zsplit_create(N, zch, znf);
+            }
+            if (zs_pending)
+            {
+                if (ze_hit)
+                    zs_pending->t2q = ze->zs_t2q ? 1 : 0;
+                else
+                {
+                    double zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
+                    if (zns > 0.0)
+                    {
+                        vfft_oop_wisdom_entry_t ne;
+                        memset(&ne, 0, sizeof ne);
+                        ne.N = N;
+                        ne.K = 1;
+                        ne.kind = VFFT_OOP_KIND_ZSPLIT;
+                        ne.zs_t2q = zs_pending->t2q;
+                        ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
+                                                              zs_pending->nf);
+                        ne.ns = zns;
+                        _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+                    }
+                }
+            }
         }
         if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED)
         {

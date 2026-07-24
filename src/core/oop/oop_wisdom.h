@@ -54,8 +54,15 @@ typedef struct {
      * (sim==dim==NULL => interleaved), unknown at plan create. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
     /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
-     * (vfft_k1_cc_chain_encode; one extra token before ns on the line). */
+     * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
+     * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
     int    cc_chain;
+    /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
+     * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
+     *   N 1 4 zs_t2q cc_chain ns
+     * The pick is placement-order-sensitive (§4.9993), so it is measured on
+     * the installed binary by the create-time race, never hand-set. */
+    int    zs_t2q;
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
 
@@ -112,6 +119,11 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
                 if (tok) e->cc_chain = atoi(tok); else ok = 0;
             }
             if (ok && e->K != 1) ok = 0;
+        } else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
+            /* kind 4 = K=1 SCRAMBLED cascade: zs_t2q cc_chain */
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->zs_t2q = atoi(tok); else ok = 0;
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->cc_chain = atoi(tok); else ok = 0;
+            if (ok && e->K != 1) ok = 0;
         }
         if (!ok) continue;
         tok = strtok(NULL, " \t\n\r");          /* ns (optional) */
@@ -144,6 +156,18 @@ vfft_oop_wisdom_lookup_k1(const vfft_oop_wisdom_t *w, int N)
     return NULL;
 }
 
+/* K=1 SCRAMBLED cascade lookup: the kind-4 entry for N (K==1 by definition). */
+static inline const vfft_oop_wisdom_entry_t *
+vfft_oop_wisdom_lookup_zsplit(const vfft_oop_wisdom_t *w, int N)
+{
+    if (!w) return NULL;
+    for (int i = 0; i < w->count; i++)
+        if (w->e[i].N == N && w->e[i].K == 1 &&
+            w->e[i].kind == VFFT_OOP_KIND_ZSPLIT)
+            return &w->e[i];
+    return NULL;
+}
+
 /* Output-order class of an OOP kind: 1 = NATURAL (LEAF/BAILEY2), 0 = SCRAMBLED (MODEB). This is
  * what lets one (N,K) cell cache both a natural and a scrambled champion as SEPARATE entries. */
 static inline int vfft_oop_kind_natural(int kind) { return kind != VFFT_OOP_KIND_MODEB; }
@@ -161,6 +185,7 @@ vfft_oop_wisdom_lookup_ord(const vfft_oop_wisdom_t *w, int N, size_t K, int ord)
         const vfft_oop_wisdom_entry_t *e = &w->e[i];
         if (e->N != N || e->K != K) continue;
         if (e->kind == VFFT_OOP_KIND_BAILEY2V) continue; /* K1 entries: lookup_k1 only */
+        if (e->kind == VFFT_OOP_KIND_ZSPLIT) continue;   /* cascade cells: lookup_zsplit only */
         int nat = vfft_oop_kind_natural(e->kind);
         if (ord == 1 && !nat) continue;                  /* NATURAL wanted; skip MODEB */
         if (ord == 2 && nat)  continue;                  /* SCRAMBLED wanted; skip native */
@@ -259,6 +284,8 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
         if (e->k1_sp_route == VFFT_K1_SP_CCOL)
             fprintf(f, " %d", e->cc_chain);
     }
+    else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
+        fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);
     fprintf(f, " %.1f\n", e->ns);
 }
 
