@@ -439,6 +439,31 @@ three kernel kinds total, all generator-owned, all shuffle-work confined to the 
 boundary-touching passes. Remaining vs MKL ≈ scheduling residue + their size-specialized
 finisher bodies — VTune attribution is the queued next probe.
 
+## 4.999. PRODUCTIONIZED (2026-07-25) — the cascade is live behind vfft.h
+
+**bwd twins first** (the scrambled contract requires a matched-permutation roundtrip; split
+routes get bwd free via the pointer-swap identity, z-interleaved does not): emitted kinds
+`s0sb`/`msb`/`stermb` (flags `--z-s0sb/--z-msb/--z-stermb`) — INV butterflies derived by the
+conj rule (every CROSS-PLANE term flips sign; verified line-by-line), twiddle conjugation is
+TABLE-side (kernels unchanged), geometries mirror (stermb's comb loads are cheaper than fwd's
+transposes). **Roundtrip gates 1.1–1.4e-15 at all 4 cells, first build.** bwd timing:
+0.72–0.80× MKL-bwd; **2048 bwd = 2376 ns = 1.15× — an outright WIN over MKL.**
+
+**Production wiring**: `src/core/oop/zsplit.h` (plan struct, create builds every table incl.
+conj twins + plan-time base tables per the §4.996 verdict, execute_fwd/_bwd, destroy,
+`vfft_zsplit_default_chain` = the calibrated winners — the ccol default-chain precedent);
+`vfft.c`: create-time attach for K=1 OOP SCRAMBLED at covered N (classic oplan still built —
+split-contract + uncovered N lose nothing), execute-time interleaved z→z dispatch ahead of
+k1/classic, destroy. **Public-API gate `zsplit_api_gate.c` (--vfft --mkl): OVERALL PASS** —
+drev-compare (doubles as ROUTING proof: the classic scramble would fail it) + roundtrip
+through vfft.h at all 4 cells; front-door bench 0.79–0.95× both directions (same-process;
+wisdom-grade numbers remain the §4.996/§4.998 paced finals).
+
+**Remaining for full items 9/11**: calibrator emitting zsplit wisdom lines (defaults are the
+compiled-in winners today; cc_chain-codec-compatible), in-place placement route, natural-order
+terminator route, non-pow2/uncovered-N coverage, MT. The K=1 SCRAMBLED OOP interleaved
+contract at 2048–16384 is DONE: served, gated, bidirectional, generator-owned end to end.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:

@@ -28,6 +28,7 @@
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "il_execute.h"      /* interleaved z<->z folded adapters (6a16/6a17) */
+#include "zsplit.h"          /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -133,6 +134,11 @@ struct vfft_plan_s
     int k1_on;
     int k1_sp_route, k1_il_route;
     vfft_oop_plan_t *k1sp, *k1il;
+    /* K=1 SCRAMBLED interleaved z->z: the block-split cascade (zsplit.h;
+     * ≥2048 cells, default chains = calibrated winners). Serves ONLY the
+     * interleaved execute contract (sim==dim==NULL); split-contract and
+     * uncovered cells fall through to the classic path. Owned. */
+    vfft_zsplit_plan_t *zsplit;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -2221,6 +2227,19 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * K=1 is the headline feature; the classic champions path below was
          * never K=1-safe). Classic path still serves SCRAMBLED-order
          * requests and is the fallback if engine create fails. */
+        vfft_zsplit_plan_t *zs_pending = NULL;
+        if (K == 1 && !cfg->batch && cfg->order == VFFT_ORDER_SCRAMBLED)
+        {
+            /* SCRAMBLED K=1: the block-split cascade owns the interleaved
+             * z->z contract at the covered cells (matched-permutation
+             * roundtrip, gated). Classic create still runs below — it keeps
+             * serving the split-plane contract and every uncovered N; the
+             * cascade plan is attached to the classic handle at the end. */
+            int zch[VFFT_ZSPLIT_MAX_NF];
+            int znf = vfft_zsplit_default_chain(N, zch);
+            if (znf)
+                zs_pending = vfft_zsplit_create(N, zch, znf);
+        }
         if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
@@ -2429,10 +2448,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 op = nat ? nat : mb;
         }
         if (!op)
+        {
+            vfft_zsplit_destroy(zs_pending);
             return NULL;
+        }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
+            vfft_zsplit_destroy(zs_pending);
             vfft_oop_plan_destroy(op);
             return NULL;
         }
@@ -2442,6 +2465,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->oplan = op;
+        h->zsplit = zs_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
 #ifdef VFFT_USE_JIT
@@ -3249,6 +3273,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
+        if (h->zsplit && !sim && !dim && sre && dre)
+        {   /* K=1 SCRAMBLED interleaved z->z: the block-split cascade.
+             * fwd: natural -> digit-reversed comb; bwd consumes the SAME
+             * comb -> N*natural (matched-permutation roundtrip). */
+            if (dir == VFFT_FORWARD)
+                vfft_zsplit_execute_fwd(h->zsplit, sre, dre);
+            else
+                vfft_zsplit_execute_bwd(h->zsplit, sre, dre);
+            return;
+        }
         if (h->k1_on)
         {   /* K=1 engine (§13): axis by buffer contract; natural order both
              * directions. Split bwd = the pointer-swap identity on the fwd
@@ -3404,6 +3438,8 @@ void vfft_destroy(vfft_plan h)
         vfft_proto_plan_destroy(h->cplan);
     if (h->oplan)
         vfft_oop_plan_destroy(h->oplan);
+    if (h->zsplit)
+        vfft_zsplit_destroy(h->zsplit);
     if (h->k1il && h->k1il != h->k1sp)
         vfft_oop_plan_destroy(h->k1il);
     if (h->k1sp)
