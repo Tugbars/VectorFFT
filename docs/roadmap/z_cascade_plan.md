@@ -522,6 +522,59 @@ short-loop exits into one long predictable loop — directly targeting the 7% re
 DSB churn. Compact body preserved (no fusion bloat — the §4.996 lesson respected). Composes
 with sterm software-pipelining (the other confirmed stall mass).
 
+## 4.9992. ⭐ MSG LEVER LANDED + CONFIRMED (2026-07-24) — resteers 7.0% → 0.3%; the front end is CLOSED
+
+**What shipped**: `msg`/`msgb` kinds in `codelet_zil.ml` — the per-stage GROUP loop moved
+INSIDE the kernel. One call per stage; an `always_inline` static `_zsg{r}{f|b}_body` holds the
+compact split body (§4.996 fusion lesson respected), and the exported wrapper loops groups:
+`_body(...); bp += 2*R*Ls; twg += (R-1)*8;`. This hinges on a structural fact worth keeping:
+**group bases are contiguous** — grid-preserving stages tile the plane, `base(g) = g·R·D` —
+so the wrapper is a span bump, no index table. Emitted `radix{4,8}_z_msg_{fwd,bwd}_avx2.c`;
+`src/core/oop/zsplit.h` execute_fwd/bwd swapped to ONE msg call per stage (5 calls total at
+16384, down from ~74 in the spike era).
+
+**Clean A/B** (interleaved vs frozen pre-msg build `vtune_zsplit_nog.exe`, msg won every round):
+
+| N | pre-msg best | msg best | Δ | vs MKL |
+|---|--:|--:|--:|--:|
+| 4096 | 5350 ns | **5094 ns** | **−4.8%** | ≈0.78× |
+| 16384 | 23472 ns | **21963 ns** | **−6.4%** | ≈0.86× (best ever) |
+
+**uarch CONFIRMATION** (admin uarch-exploration, `vtu4096msg`, N=4096 — the cell with the
+pathology). The §4.9991-addendum prediction verified line by line:
+
+| metric | pre-msg | msg |
+|---|--:|--:|
+| Mispredict resteers | **7.0% of clockticks** | **0.3%** |
+| Branch resteers total | — | 0.7% |
+| Bad speculation | — | 0.5% of slots |
+| Front-End Bound | — | **2.1% of slots** (DSB coverage 85.4%) |
+| DSB misses | 13.1% | 10.9% (residual costs only 3.5% FE-bandwidth slots) |
+
+The trip-count-2 loop-exit thesis was exactly right: one long internal loop per stage and the
+predictor locks on. Note the profile *shifted*, not just shrank — CPI ticked 0.336→0.347 while
+wall time fell, because msg **retires fewer instructions per transform** (call/prologue/
+table-setup gone) and the freed slots now expose back-end memory latency: Memory Bound
+9.7%→15.9% (FB Full 12.9% of clockticks, Store Latency the biggest sub-bucket). That is the
+next lever's territory, not a regression: with the front end closed, 4096's remaining stalls
+are **fill-buffer/store scheduling** (sterm software-pipelining, prefetch) and the unchanged
+**port skew** (Port 1 62.3% vs Port 0 43.1% — the FMA-ify race is still live).
+
+**Public-API gate w/ msg live (front door, `benches/zsplit_api_gate.exe`): OVERALL PASS** —
+all 8 gates (drev routing proof + roundtrip) at 1e-15, and the best front-door band to date:
+
+| N | fwd ns | vsMKL | bwd ns | vsMKL-bwd |
+|---|--:|--:|--:|--:|
+| 2048 | 2404.8 | 0.95 | 2248.9 | 0.93 |
+| 4096 | 5064.5 | 0.78 | 5142.8 | 0.77 |
+| 8192 | 10212.9 | **0.86** | 10231.4 | 0.86 |
+| 16384 | 21920.1 | **0.87** | 22268.9 | 0.85 |
+
+(8192 jumped 0.81→0.86 and 16384 0.82→0.87 vs the pre-msg wisdom finals; 2048 fwd ratio
+run-varies 0.88–0.95 — the dedicated bwd bench had shown 1.15× at 2048. Run note: the gate
+exe needs BOTH `C:\mingw152\mingw64\bin` (libwinpthread) and the MKL `bin` dir on PATH, else
+it dies 0xC0000135 before main.)
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
