@@ -19,7 +19,7 @@ void radix3_dst1_avx2(
     double       * __restrict__ out,
     size_t K)
 {
-    const __m256d t9 = _mm256_set1_pd(0.70710678118655002);
+    const __m256d t9 = _mm256_set1_pd(0.70710678118654757);
     size_t k = 0;
     for (; k + 4 <= K; k += 4) {
 
@@ -40,7 +40,7 @@ void radix3_dst1_avx2(
     if (k < K) {
         const size_t rem = K - k;
         if (rem == 1) {
-        const double t9 = (0.70710678118655002);
+        const double t9 = (0.70710678118654757);
         const double t0 = in[0*K + k];
         const double t4 = in[2*K + k];
         const double t6 = (t0 + t4);
@@ -56,7 +56,7 @@ void radix3_dst1_avx2(
         out[0*K + k] = t33;
         } else {
             for (; k + 2 <= K; k += 2) {
-        const __m128d t9 = _mm_set1_pd(0.70710678118655002);
+        const __m128d t9 = _mm_set1_pd(0.70710678118654757);
         const __m128d t0 = _mm_loadu_pd(&in[0*K + k]);
         const __m128d t4 = _mm_loadu_pd(&in[2*K + k]);
         const __m128d t6 = _mm_add_pd(t0, t4);
@@ -72,7 +72,7 @@ void radix3_dst1_avx2(
         _mm_storeu_pd(&out[0*K + k], t33);
             }
             if (k < K) {
-        const double t9 = (0.70710678118655002);
+        const double t9 = (0.70710678118654757);
         const double t0 = in[0*K + k];
         const double t4 = in[2*K + k];
         const double t6 = (t0 + t4);

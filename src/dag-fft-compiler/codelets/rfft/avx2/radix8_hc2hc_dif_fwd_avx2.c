@@ -25,7 +25,7 @@ void radix8_hc2hc_dif_fwd_avx2(
     ptrdiff_t os,
     size_t vl)
 {
-    const __m256d t24 = _mm256_set1_pd(0.70710678118655002);
+    const __m256d t24 = _mm256_set1_pd(0.70710678118654757);
     size_t v = 0;
     for (; v + 4 <= vl; v += 4) {
 
@@ -146,7 +146,7 @@ void radix8_hc2hc_dif_fwd_avx2(
     if (v < vl) {
         const size_t rem = vl - v;
         if (rem == 1) {
-        const double t24 = (0.70710678118655002);
+        const double t24 = (0.70710678118654757);
         const double t0 = in_im[0*is + v];
         const double t2 = in_re[7*is + v];
         const double t5 = in_re[3*is + v];
@@ -262,7 +262,7 @@ void radix8_hc2hc_dif_fwd_avx2(
         out_im[0*os + v] = t130;
         } else {
             for (; v + 2 <= vl; v += 2) {
-        const __m128d t24 = _mm_set1_pd(0.70710678118655002);
+        const __m128d t24 = _mm_set1_pd(0.70710678118654757);
         const __m128d t0 = _mm_loadu_pd(&in_im[0*is + v]);
         const __m128d t2 = _mm_loadu_pd(&in_re[7*is + v]);
         const __m128d t5 = _mm_loadu_pd(&in_re[3*is + v]);
@@ -378,7 +378,7 @@ void radix8_hc2hc_dif_fwd_avx2(
         _mm_storeu_pd(&out_im[0*os + v], t130);
             }
             if (v < vl) {
-        const double t24 = (0.70710678118655002);
+        const double t24 = (0.70710678118654757);
         const double t0 = in_im[0*is + v];
         const double t2 = in_re[7*is + v];
         const double t5 = in_re[3*is + v];

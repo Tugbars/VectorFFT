@@ -1149,6 +1149,204 @@ let z_split_bfly_call ?(inv = false) radix =
       m8
 ;;
 
+(* 2-QUAD UNROLL-AND-JAM sterm body (sterm scheduling race 2026-07-24,
+   z_cascade_plan §4.9993): two independent 4-column bodies per trip double
+   the store-stream MLP (16 lines in flight) and run two independent
+   squaring-tree twiddle chains; bit-identical to the single-quad schedule
+   (scheduling only), measured -2..-5%% full-cascade / -6..-18%% kernel-only
+   at every production cell. Emitted as [void <fname>] ^ this body. *)
+let zsterm_uj2_body = {c|(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;
+    const size_t oL = 2*OLs;
+    size_t k = 0;
+    for (; k + 8 <= count; k += 8) {
+        const double *pA = zin + 16*k;
+        const double *pB = pA + 64;
+        double *q = zout + 2*k;
+        /* ---- phase 1: all 32 input loads up front (16 lines in flight) ---- */
+        __m256d rl0A = _mm256_loadu_pd(pA +  0), il0A = _mm256_loadu_pd(pA +  4);
+        __m256d rh0A = _mm256_loadu_pd(pA +  8), ih0A = _mm256_loadu_pd(pA + 12);
+        __m256d rl1A = _mm256_loadu_pd(pA + 16), il1A = _mm256_loadu_pd(pA + 20);
+        __m256d rh1A = _mm256_loadu_pd(pA + 24), ih1A = _mm256_loadu_pd(pA + 28);
+        __m256d rl2A = _mm256_loadu_pd(pA + 32), il2A = _mm256_loadu_pd(pA + 36);
+        __m256d rh2A = _mm256_loadu_pd(pA + 40), ih2A = _mm256_loadu_pd(pA + 44);
+        __m256d rl3A = _mm256_loadu_pd(pA + 48), il3A = _mm256_loadu_pd(pA + 52);
+        __m256d rh3A = _mm256_loadu_pd(pA + 56), ih3A = _mm256_loadu_pd(pA + 60);
+        __m256d rl0B = _mm256_loadu_pd(pB +  0), il0B = _mm256_loadu_pd(pB +  4);
+        __m256d rh0B = _mm256_loadu_pd(pB +  8), ih0B = _mm256_loadu_pd(pB + 12);
+        __m256d rl1B = _mm256_loadu_pd(pB + 16), il1B = _mm256_loadu_pd(pB + 20);
+        __m256d rh1B = _mm256_loadu_pd(pB + 24), ih1B = _mm256_loadu_pd(pB + 28);
+        __m256d rl2B = _mm256_loadu_pd(pB + 32), il2B = _mm256_loadu_pd(pB + 36);
+        __m256d rh2B = _mm256_loadu_pd(pB + 40), ih2B = _mm256_loadu_pd(pB + 44);
+        __m256d rl3B = _mm256_loadu_pd(pB + 48), il3B = _mm256_loadu_pd(pB + 52);
+        __m256d rh3B = _mm256_loadu_pd(pB + 56), ih3B = _mm256_loadu_pd(pB + 60);
+        /* ---- phase 2: transposes (port-1/5 shuffle work under load latency) ---- */
+        __m256d xr0A, xr1A, xr2A, xr3A, xr4A, xr5A, xr6A, xr7A;
+        __m256d xi0A, xi1A, xi2A, xi3A, xi4A, xi5A, xi6A, xi7A;
+        TR4(rl0A, rl1A, rl2A, rl3A, xr0A, xr1A, xr2A, xr3A);
+        TR4(il0A, il1A, il2A, il3A, xi0A, xi1A, xi2A, xi3A);
+        TR4(rh0A, rh1A, rh2A, rh3A, xr4A, xr5A, xr6A, xr7A);
+        TR4(ih0A, ih1A, ih2A, ih3A, xi4A, xi5A, xi6A, xi7A);
+        __m256d xr0B, xr1B, xr2B, xr3B, xr4B, xr5B, xr6B, xr7B;
+        __m256d xi0B, xi1B, xi2B, xi3B, xi4B, xi5B, xi6B, xi7B;
+        TR4(rl0B, rl1B, rl2B, rl3B, xr0B, xr1B, xr2B, xr3B);
+        TR4(il0B, il1B, il2B, il3B, xi0B, xi1B, xi2B, xi3B);
+        TR4(rh0B, rh1B, rh2B, rh3B, xr4B, xr5B, xr6B, xr7B);
+        TR4(ih0B, ih1B, ih2B, ih3B, xi4B, xi5B, xi6B, xi7B);
+        /* ---- phase 3: serial squaring tree + CMULs, A/B alternated op-by-op.
+           Two independent WPROD latency chains keep FMA ports 0/1 saturated.
+           Per-body op sequence identical to baseline:
+           CMUL1, W2, CMUL2, W3, CMUL3, W4, CMUL4, W5, CMUL5, W6, CMUL6, W7, CMUL7. */
+        __m256d c1A = _mm256_loadu_pd(tw_re + 2*k);
+        __m256d s1A = _mm256_loadu_pd(tw_re + 2*k +  4);
+        __m256d c1B = _mm256_loadu_pd(tw_re + 2*k +  8);
+        __m256d s1B = _mm256_loadu_pd(tw_re + 2*k + 12);
+        __m256d yr1A, yi1A, yr2A, yi2A, yr3A, yi3A, yr4A, yi4A,
+                yr5A, yi5A, yr6A, yi6A, yr7A, yi7A;
+        __m256d yr1B, yi1B, yr2B, yi2B, yr3B, yi3B, yr4B, yi4B,
+                yr5B, yi5B, yr6B, yi6B, yr7B, yi7B;
+        __m256d c2A, s2A, c3A, s3A, c4A, s4A, c5A, s5A, c6A, s6A, c7A, s7A;
+        __m256d c2B, s2B, c3B, s3B, c4B, s4B, c5B, s5B, c6B, s6B, c7B, s7B;
+        SPLIT_CMUL(xr1A, xi1A, c1A, s1A, yr1A, yi1A);
+        SPLIT_CMUL(xr1B, xi1B, c1B, s1B, yr1B, yi1B);
+        WPROD(c1A, s1A, c1A, s1A, c2A, s2A);
+        WPROD(c1B, s1B, c1B, s1B, c2B, s2B);
+        SPLIT_CMUL(xr2A, xi2A, c2A, s2A, yr2A, yi2A);
+        SPLIT_CMUL(xr2B, xi2B, c2B, s2B, yr2B, yi2B);
+        WPROD(c2A, s2A, c1A, s1A, c3A, s3A);
+        WPROD(c2B, s2B, c1B, s1B, c3B, s3B);
+        SPLIT_CMUL(xr3A, xi3A, c3A, s3A, yr3A, yi3A);
+        SPLIT_CMUL(xr3B, xi3B, c3B, s3B, yr3B, yi3B);
+        WPROD(c2A, s2A, c2A, s2A, c4A, s4A);
+        WPROD(c2B, s2B, c2B, s2B, c4B, s4B);
+        SPLIT_CMUL(xr4A, xi4A, c4A, s4A, yr4A, yi4A);
+        SPLIT_CMUL(xr4B, xi4B, c4B, s4B, yr4B, yi4B);
+        WPROD(c4A, s4A, c1A, s1A, c5A, s5A);
+        WPROD(c4B, s4B, c1B, s1B, c5B, s5B);
+        SPLIT_CMUL(xr5A, xi5A, c5A, s5A, yr5A, yi5A);
+        SPLIT_CMUL(xr5B, xi5B, c5B, s5B, yr5B, yi5B);
+        WPROD(c4A, s4A, c2A, s2A, c6A, s6A);
+        WPROD(c4B, s4B, c2B, s2B, c6B, s6B);
+        SPLIT_CMUL(xr6A, xi6A, c6A, s6A, yr6A, yi6A);
+        SPLIT_CMUL(xr6B, xi6B, c6B, s6B, yr6B, yi6B);
+        WPROD(c4A, s4A, c3A, s3A, c7A, s7A);
+        WPROD(c4B, s4B, c3B, s3B, c7B, s7B);
+        SPLIT_CMUL(xr7A, xi7A, c7A, s7A, yr7A, yi7A);
+        SPLIT_CMUL(xr7B, xi7B, c7B, s7B, yr7B, yi7B);
+        /* ---- phase 4: BFLY A + stores A first, so A's 16 outputs die before
+           B's butterfly peaks; B's FMA work overlaps A's store drain ---- */
+        __m256d o0rA,o0iA,o1rA,o1iA,o2rA,o2iA,o3rA,o3iA,
+                o4rA,o4iA,o5rA,o5iA,o6rA,o6iA,o7rA,o7iA;
+        SPLIT_BFLY8(xr0A,xi0A, yr1A,yi1A, yr2A,yi2A, yr3A,yi3A,
+                    yr4A,yi4A, yr5A,yi5A, yr6A,yi6A, yr7A,yi7A,
+                    o0rA,o0iA, o1rA,o1iA, o2rA,o2iA, o3rA,o3iA,
+                    o4rA,o4iA, o5rA,o5iA, o6rA,o6iA, o7rA,o7iA);
+        { __m256d zlo, zhi; REINT(o0rA,o0iA, zlo, zhi);
+          _mm256_storeu_pd(q         , zlo); _mm256_storeu_pd(q          + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o1rA,o1iA, zlo, zhi);
+          _mm256_storeu_pd(q +   oL  , zlo); _mm256_storeu_pd(q +   oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o2rA,o2iA, zlo, zhi);
+          _mm256_storeu_pd(q + 2*oL  , zlo); _mm256_storeu_pd(q + 2*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o3rA,o3iA, zlo, zhi);
+          _mm256_storeu_pd(q + 3*oL  , zlo); _mm256_storeu_pd(q + 3*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o4rA,o4iA, zlo, zhi);
+          _mm256_storeu_pd(q + 4*oL  , zlo); _mm256_storeu_pd(q + 4*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o5rA,o5iA, zlo, zhi);
+          _mm256_storeu_pd(q + 5*oL  , zlo); _mm256_storeu_pd(q + 5*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o6rA,o6iA, zlo, zhi);
+          _mm256_storeu_pd(q + 6*oL  , zlo); _mm256_storeu_pd(q + 6*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o7rA,o7iA, zlo, zhi);
+          _mm256_storeu_pd(q + 7*oL  , zlo); _mm256_storeu_pd(q + 7*oL   + 4, zhi); }
+        /* ---- phase 5: BFLY B + stores B (adjacent 64B lines to A's) ---- */
+        __m256d o0rB,o0iB,o1rB,o1iB,o2rB,o2iB,o3rB,o3iB,
+                o4rB,o4iB,o5rB,o5iB,o6rB,o6iB,o7rB,o7iB;
+        SPLIT_BFLY8(xr0B,xi0B, yr1B,yi1B, yr2B,yi2B, yr3B,yi3B,
+                    yr4B,yi4B, yr5B,yi5B, yr6B,yi6B, yr7B,yi7B,
+                    o0rB,o0iB, o1rB,o1iB, o2rB,o2iB, o3rB,o3iB,
+                    o4rB,o4iB, o5rB,o5iB, o6rB,o6iB, o7rB,o7iB);
+        { __m256d zlo, zhi; REINT(o0rB,o0iB, zlo, zhi);
+          _mm256_storeu_pd(q          + 8, zlo); _mm256_storeu_pd(q          + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o1rB,o1iB, zlo, zhi);
+          _mm256_storeu_pd(q +   oL   + 8, zlo); _mm256_storeu_pd(q +   oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o2rB,o2iB, zlo, zhi);
+          _mm256_storeu_pd(q + 2*oL   + 8, zlo); _mm256_storeu_pd(q + 2*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o3rB,o3iB, zlo, zhi);
+          _mm256_storeu_pd(q + 3*oL   + 8, zlo); _mm256_storeu_pd(q + 3*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o4rB,o4iB, zlo, zhi);
+          _mm256_storeu_pd(q + 4*oL   + 8, zlo); _mm256_storeu_pd(q + 4*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o5rB,o5iB, zlo, zhi);
+          _mm256_storeu_pd(q + 5*oL   + 8, zlo); _mm256_storeu_pd(q + 5*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o6rB,o6iB, zlo, zhi);
+          _mm256_storeu_pd(q + 6*oL   + 8, zlo); _mm256_storeu_pd(q + 6*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o7rB,o7iB, zlo, zhi);
+          _mm256_storeu_pd(q + 7*oL   + 8, zlo); _mm256_storeu_pd(q + 7*oL   + 12, zhi); }
+    }
+    /* ---- baseline-shaped 4-column tail (count % 8 == 4) ---- */
+    for (; k + 4 <= count; k += 4) {
+        __m256d xr[8], xi[8];
+        {
+            __m256d rl0 = _mm256_loadu_pd(zin + 16*k);
+            __m256d il0 = _mm256_loadu_pd(zin + 16*k + 4);
+            __m256d rh0 = _mm256_loadu_pd(zin + 16*k + 8);
+            __m256d ih0 = _mm256_loadu_pd(zin + 16*k + 12);
+            __m256d rl1 = _mm256_loadu_pd(zin + 16*(k+1));
+            __m256d il1 = _mm256_loadu_pd(zin + 16*(k+1) + 4);
+            __m256d rh1 = _mm256_loadu_pd(zin + 16*(k+1) + 8);
+            __m256d ih1 = _mm256_loadu_pd(zin + 16*(k+1) + 12);
+            __m256d rl2 = _mm256_loadu_pd(zin + 16*(k+2));
+            __m256d il2 = _mm256_loadu_pd(zin + 16*(k+2) + 4);
+            __m256d rh2 = _mm256_loadu_pd(zin + 16*(k+2) + 8);
+            __m256d ih2 = _mm256_loadu_pd(zin + 16*(k+2) + 12);
+            __m256d rl3 = _mm256_loadu_pd(zin + 16*(k+3));
+            __m256d il3 = _mm256_loadu_pd(zin + 16*(k+3) + 4);
+            __m256d rh3 = _mm256_loadu_pd(zin + 16*(k+3) + 8);
+            __m256d ih3 = _mm256_loadu_pd(zin + 16*(k+3) + 12);
+            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);
+            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);
+            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);
+            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);
+        }
+        {
+            __m256d c1 = _mm256_loadu_pd(tw_re + 2*k);
+            __m256d s1 = _mm256_loadu_pd(tw_re + 2*k + 4);
+            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;
+            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;
+            WPROD(c1, s1, c1, s1, c2, s2);
+            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;
+            WPROD(c2, s2, c1, s1, c3, s3);
+            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;
+            WPROD(c2, s2, c2, s2, c4, s4);
+            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;
+            WPROD(c4, s4, c1, s1, cw, sw);
+            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;
+            WPROD(c4, s4, c2, s2, cw, sw);
+            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;
+            WPROD(c4, s4, c3, s3, cw, sw);
+            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;
+        }
+        __m256d or_[8], oi_[8];
+        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],
+                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],
+                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],
+                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);
+        for (int l = 0; l < 8; l++) {
+            __m256d zlo, zhi;
+            REINT(or_[l], oi_[l], zlo, zhi);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);
+        }
+    }
+}
+|c}
+;;
+
 let emit_z_split ~(kind : string) ~(radix : int) () : string =
   if not (List.mem radix [ 4; 8 ])
   then
@@ -1358,89 +1556,28 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
       (z_split_bfly_call ~inv:true 8)
   else if kind = "sterm"
   then
-    (* split-input TERMINATOR (measured winner, terminator race 2026-07-24:
-       +4-7% over t2sp/t2spt at every cell): reads the block-split plane
-       directly (ALL mids stay plain ms — no msz pass), 4 columns/iteration,
-       4x4 register transposes on load, shuffle-free split butterfly +
-       twiddles, PACKED per-column w^1 table (16 B/col, half of w^1-VTW2),
-       squaring-tree powers, re-interleave fused in the stores.
-       ABI mapping: zin = block-split plane, zout = z out (digit-reversed
-       comb), tw_re = packed table ([c x4][s x4] per 4 cols at tw_re + 2k),
-       OLs = N/R, count = N/R. Ls/Gs/OGs unused. *)
+    (* split-input TERMINATOR, 2-QUAD UNROLL-AND-JAM schedule (sterm race
+       2026-07-24, z_cascade_plan §4.9993; supersedes the single-quad §4.998
+       schedule bit-identically): A = cols k..k+3, B = cols k+4..k+7 per trip;
+       phases [loads A+B] [TR4 A] [TR4 B] [tw tree + CMULs alternated A/B]
+       [BFLY A] [stores A] [BFLY B] [stores B]; baseline-shaped 4-col tail.
+       ABI unchanged: zin = block-split plane, zout = z out (drev comb),
+       tw_re = packed [c x4][s x4] per 4 cols at tw_re + 2k, OLs = count = N/R. *)
     Printf.sprintf
-      "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;\n\
-      \ * z_cascade_plan §4.99/§4.998). sterm: SPLIT-INPUT terminator, 4 cols/iter,\n\
-      \ * packed per-column w^1 twiddles (16 B/col), shuffle-free split math,\n\
-      \ * re-interleave fused in stores. CONTRACT: count %%%% 4 == 0; mids = ms only.\n\
-      \ * tw_re layout: per 4 columns at tw_re + 2k: [c(k..k+3)][s(k..k+3)]. */\n\
-       #include <immintrin.h>\n\
-       #include <stddef.h>\n\
-       %s\n\
-       __attribute__((target(\"avx2,fma\")))\n\
-       void %s(\n\
-      \    const double * __restrict__ zin,\n\
-      \    const double * __restrict__ zin_unused,\n\
-      \    double       * __restrict__ zout,\n\
-      \    double       * __restrict__ zout_unused,\n\
-      \    const double * tw_re, const double * tw_im,\n\
-      \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-       {\n\
-      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; \
-       (void)OGs;\n\
-      \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
-      \        __m256d xr[8], xi[8];\n\
-      \        {\n\
-      \            __m256d rl0 = _mm256_loadu_pd(zin + 16*(size_t)k);\n\
-      \            __m256d il0 = _mm256_loadu_pd(zin + 16*(size_t)k + 4);\n\
-      \            __m256d rh0 = _mm256_loadu_pd(zin + 16*(size_t)k + 8);\n\
-      \            __m256d ih0 = _mm256_loadu_pd(zin + 16*(size_t)k + 12);\n\
-      \            __m256d rl1 = _mm256_loadu_pd(zin + 16*((size_t)k+1));\n\
-      \            __m256d il1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 4);\n\
-      \            __m256d rh1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 8);\n\
-      \            __m256d ih1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 12);\n\
-      \            __m256d rl2 = _mm256_loadu_pd(zin + 16*((size_t)k+2));\n\
-      \            __m256d il2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 4);\n\
-      \            __m256d rh2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 8);\n\
-      \            __m256d ih2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 12);\n\
-      \            __m256d rl3 = _mm256_loadu_pd(zin + 16*((size_t)k+3));\n\
-      \            __m256d il3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 4);\n\
-      \            __m256d rh3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 8);\n\
-      \            __m256d ih3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 12);\n\
-      \            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);\n\
-      \            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);\n\
-      \            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);\n\
-      \            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);\n\
-      \        }\n\
-      \        {\n\
-      \            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);\n\
-      \            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);\n\
-      \            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;\n\
-      \            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;\n\
-      \            WPROD(c1, s1, c1, s1, c2, s2);\n\
-      \            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;\n\
-      \            WPROD(c2, s2, c1, s1, c3, s3);\n\
-      \            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;\n\
-      \            WPROD(c2, s2, c2, s2, c4, s4);\n\
-      \            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;\n\
-      \            WPROD(c4, s4, c1, s1, cw, sw);\n\
-      \            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;\n\
-      \            WPROD(c4, s4, c2, s2, cw, sw);\n\
-      \            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;\n\
-      \            WPROD(c4, s4, c3, s3, cw, sw);\n\
-      \            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;\n\
-      \        }\n\
-      \        __m256d or_[8], oi_[8];\n\
-       %s        for (int l = 0; l < 8; l++) {\n\
-      \            __m256d zlo, zhi;\n\
-      \            REINT(or_[l], oi_[l], zlo, zhi);\n\
-      \            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);\n\
-      \            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);\n\
-      \        }\n\
-      \    }\n\
-       }\n"
+      "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;
+\n      \ * z_cascade_plan §4.99/§4.998/§4.9993). sterm: SPLIT-INPUT terminator,
+\n      \ * 2-QUAD UNROLL-AND-JAM (8 cols/trip + 4-col tail), packed per-column w^1
+\n      \ * twiddles (16 B/col), shuffle-free split math, re-interleave fused in
+\n      \ * stores. CONTRACT: count %%%% 4 == 0; mids = ms only.
+\n      \ * tw_re layout: per 4 columns at tw_re + 2k: [c(k..k+3)][s(k..k+3)]. */
+\n       #include <immintrin.h>
+\n       #include <stddef.h>
+\n       %s
+\n       __attribute__((target(\"avx2,fma\")))
+\n       void %s"
       z_split_macros
       fname
-      (z_split_bfly_call 8)
+    ^ zsterm_uj2_body
   else (
     let buf = Buffer.create 16384 in
     Buffer.add_string

@@ -19,17 +19,17 @@ void radix8_dst4_avx512(
     double       * __restrict__ out,
     size_t K)
 {
-    const __m512d t0 = _mm512_set1_pd(1.9903694533444001);
-    const __m512d t2 = _mm512_set1_pd(0.38268343236509);
-    const __m512d t5 = _mm512_set1_pd(0.92387953251128996);
-    const __m512d t26 = _mm512_set1_pd(0.70710678118655002);
-    const __m512d t39 = _mm512_set1_pd(0.19603428065912001);
-    const __m512d t44 = _mm512_set1_pd(0.58056935450892);
-    const __m512d t57 = _mm512_set1_pd(1.9138806714644001);
-    const __m512d t62 = _mm512_set1_pd(1.7638425286967001);
-    const __m512d t64 = _mm512_set1_pd(0.94279347365199995);
-    const __m512d t69 = _mm512_set1_pd(1.2687865683273001);
-    const __m512d t72 = _mm512_set1_pd(1.5460209067255);
+    const __m512d t0 = _mm512_set1_pd(1.9903694533443939);
+    const __m512d t2 = _mm512_set1_pd(0.38268343236508984);
+    const __m512d t5 = _mm512_set1_pd(0.92387953251128674);
+    const __m512d t26 = _mm512_set1_pd(0.70710678118654757);
+    const __m512d t39 = _mm512_set1_pd(0.19603428065912121);
+    const __m512d t44 = _mm512_set1_pd(0.58056935450892466);
+    const __m512d t57 = _mm512_set1_pd(1.9138806714644179);
+    const __m512d t62 = _mm512_set1_pd(1.7638425286967101);
+    const __m512d t64 = _mm512_set1_pd(0.94279347365199528);
+    const __m512d t69 = _mm512_set1_pd(1.268786568327291);
+    const __m512d t72 = _mm512_set1_pd(1.546020906725474);
     size_t k = 0;
     for (; k + 8 <= K; k += 8) {
 
@@ -94,17 +94,17 @@ void radix8_dst4_avx512(
     if (k < K) {
         const size_t rem = K - k;
         if (rem == 1) {
-        const double t2 = (0.38268343236509);
-        const double t5 = (0.92387953251128996);
-        const double t26 = (0.70710678118655002);
-        const double t0 = (1.9903694533444001);
-        const double t39 = (0.19603428065912001);
-        const double t44 = (0.58056935450892);
-        const double t57 = (1.9138806714644001);
-        const double t62 = (1.7638425286967001);
-        const double t64 = (0.94279347365199995);
-        const double t69 = (1.2687865683273001);
-        const double t72 = (1.5460209067255);
+        const double t2 = (0.38268343236508984);
+        const double t5 = (0.92387953251128674);
+        const double t26 = (0.70710678118654757);
+        const double t0 = (1.9903694533443939);
+        const double t39 = (0.19603428065912121);
+        const double t44 = (0.58056935450892466);
+        const double t57 = (1.9138806714644179);
+        const double t62 = (1.7638425286967101);
+        const double t64 = (0.94279347365199528);
+        const double t69 = (1.268786568327291);
+        const double t72 = (1.546020906725474);
         const double t1 = in[6*K + k];
         const double t3 = in[1*K + k];
         const double t90 = __builtin_fma(t1, t2, -((t3 * t5)));
@@ -154,17 +154,17 @@ void radix8_dst4_avx512(
         out[0*K + k] = t213;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t2 = _mm512_set1_pd(0.38268343236509);
-        const __m512d t5 = _mm512_set1_pd(0.92387953251128996);
-        const __m512d t26 = _mm512_set1_pd(0.70710678118655002);
-        const __m512d t0 = _mm512_set1_pd(1.9903694533444001);
-        const __m512d t39 = _mm512_set1_pd(0.19603428065912001);
-        const __m512d t44 = _mm512_set1_pd(0.58056935450892);
-        const __m512d t57 = _mm512_set1_pd(1.9138806714644001);
-        const __m512d t62 = _mm512_set1_pd(1.7638425286967001);
-        const __m512d t64 = _mm512_set1_pd(0.94279347365199995);
-        const __m512d t69 = _mm512_set1_pd(1.2687865683273001);
-        const __m512d t72 = _mm512_set1_pd(1.5460209067255);
+        const __m512d t2 = _mm512_set1_pd(0.38268343236508984);
+        const __m512d t5 = _mm512_set1_pd(0.92387953251128674);
+        const __m512d t26 = _mm512_set1_pd(0.70710678118654757);
+        const __m512d t0 = _mm512_set1_pd(1.9903694533443939);
+        const __m512d t39 = _mm512_set1_pd(0.19603428065912121);
+        const __m512d t44 = _mm512_set1_pd(0.58056935450892466);
+        const __m512d t57 = _mm512_set1_pd(1.9138806714644179);
+        const __m512d t62 = _mm512_set1_pd(1.7638425286967101);
+        const __m512d t64 = _mm512_set1_pd(0.94279347365199528);
+        const __m512d t69 = _mm512_set1_pd(1.268786568327291);
+        const __m512d t72 = _mm512_set1_pd(1.546020906725474);
         const __m512d t1 = _mm512_maskz_loadu_pd(_m, &in[6*K + k]);
         const __m512d t3 = _mm512_maskz_loadu_pd(_m, &in[1*K + k]);
         const __m512d t90 = _mm512_fmsub_pd(t1, t2, _mm512_mul_pd(t3, t5));

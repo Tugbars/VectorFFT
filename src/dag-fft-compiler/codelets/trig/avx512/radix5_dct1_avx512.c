@@ -19,7 +19,7 @@ void radix5_dct1_avx512(
     double       * __restrict__ out,
     size_t K)
 {
-    const __m512d t21 = _mm512_set1_pd(0.70710678118655002);
+    const __m512d t21 = _mm512_set1_pd(0.70710678118654757);
     size_t k = 0;
     for (; k + 8 <= K; k += 8) {
 
@@ -51,7 +51,7 @@ void radix5_dct1_avx512(
     if (k < K) {
         const size_t rem = K - k;
         if (rem == 1) {
-        const double t21 = (0.70710678118655002);
+        const double t21 = (0.70710678118654757);
         const double t0 = in[1*K + k];
         const double t3 = in[3*K + k];
         const double t16 = (t3 - t0);
@@ -78,7 +78,7 @@ void radix5_dct1_avx512(
         out[0*K + k] = t39;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t21 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t21 = _mm512_set1_pd(0.70710678118654757);
         const __m512d t0 = _mm512_maskz_loadu_pd(_m, &in[1*K + k]);
         const __m512d t3 = _mm512_maskz_loadu_pd(_m, &in[3*K + k]);
         const __m512d t16 = _mm512_sub_pd(t3, t0);

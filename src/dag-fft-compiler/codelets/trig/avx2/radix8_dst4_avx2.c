@@ -19,17 +19,17 @@ void radix8_dst4_avx2(
     double       * __restrict__ out,
     size_t K)
 {
-    const __m256d t0 = _mm256_set1_pd(1.9903694533444001);
-    const __m256d t2 = _mm256_set1_pd(0.38268343236509);
-    const __m256d t5 = _mm256_set1_pd(0.92387953251128996);
-    const __m256d t26 = _mm256_set1_pd(0.70710678118655002);
-    const __m256d t39 = _mm256_set1_pd(0.19603428065912001);
-    const __m256d t44 = _mm256_set1_pd(0.58056935450892);
-    const __m256d t57 = _mm256_set1_pd(1.9138806714644001);
-    const __m256d t62 = _mm256_set1_pd(1.7638425286967001);
-    const __m256d t64 = _mm256_set1_pd(0.94279347365199995);
-    const __m256d t69 = _mm256_set1_pd(1.2687865683273001);
-    const __m256d t72 = _mm256_set1_pd(1.5460209067255);
+    const __m256d t0 = _mm256_set1_pd(1.9903694533443939);
+    const __m256d t2 = _mm256_set1_pd(0.38268343236508984);
+    const __m256d t5 = _mm256_set1_pd(0.92387953251128674);
+    const __m256d t26 = _mm256_set1_pd(0.70710678118654757);
+    const __m256d t39 = _mm256_set1_pd(0.19603428065912121);
+    const __m256d t44 = _mm256_set1_pd(0.58056935450892466);
+    const __m256d t57 = _mm256_set1_pd(1.9138806714644179);
+    const __m256d t62 = _mm256_set1_pd(1.7638425286967101);
+    const __m256d t64 = _mm256_set1_pd(0.94279347365199528);
+    const __m256d t69 = _mm256_set1_pd(1.268786568327291);
+    const __m256d t72 = _mm256_set1_pd(1.546020906725474);
     size_t k = 0;
     for (; k + 4 <= K; k += 4) {
 
@@ -94,17 +94,17 @@ void radix8_dst4_avx2(
     if (k < K) {
         const size_t rem = K - k;
         if (rem == 1) {
-        const double t2 = (0.38268343236509);
-        const double t5 = (0.92387953251128996);
-        const double t26 = (0.70710678118655002);
-        const double t0 = (1.9903694533444001);
-        const double t39 = (0.19603428065912001);
-        const double t44 = (0.58056935450892);
-        const double t57 = (1.9138806714644001);
-        const double t62 = (1.7638425286967001);
-        const double t64 = (0.94279347365199995);
-        const double t69 = (1.2687865683273001);
-        const double t72 = (1.5460209067255);
+        const double t2 = (0.38268343236508984);
+        const double t5 = (0.92387953251128674);
+        const double t26 = (0.70710678118654757);
+        const double t0 = (1.9903694533443939);
+        const double t39 = (0.19603428065912121);
+        const double t44 = (0.58056935450892466);
+        const double t57 = (1.9138806714644179);
+        const double t62 = (1.7638425286967101);
+        const double t64 = (0.94279347365199528);
+        const double t69 = (1.268786568327291);
+        const double t72 = (1.546020906725474);
         const double t1 = in[6*K + k];
         const double t3 = in[1*K + k];
         const double t90 = __builtin_fma(t1, t2, -((t3 * t5)));
@@ -154,17 +154,17 @@ void radix8_dst4_avx2(
         out[0*K + k] = t213;
         } else {
             for (; k + 2 <= K; k += 2) {
-        const __m128d t2 = _mm_set1_pd(0.38268343236509);
-        const __m128d t5 = _mm_set1_pd(0.92387953251128996);
-        const __m128d t26 = _mm_set1_pd(0.70710678118655002);
-        const __m128d t0 = _mm_set1_pd(1.9903694533444001);
-        const __m128d t39 = _mm_set1_pd(0.19603428065912001);
-        const __m128d t44 = _mm_set1_pd(0.58056935450892);
-        const __m128d t57 = _mm_set1_pd(1.9138806714644001);
-        const __m128d t62 = _mm_set1_pd(1.7638425286967001);
-        const __m128d t64 = _mm_set1_pd(0.94279347365199995);
-        const __m128d t69 = _mm_set1_pd(1.2687865683273001);
-        const __m128d t72 = _mm_set1_pd(1.5460209067255);
+        const __m128d t2 = _mm_set1_pd(0.38268343236508984);
+        const __m128d t5 = _mm_set1_pd(0.92387953251128674);
+        const __m128d t26 = _mm_set1_pd(0.70710678118654757);
+        const __m128d t0 = _mm_set1_pd(1.9903694533443939);
+        const __m128d t39 = _mm_set1_pd(0.19603428065912121);
+        const __m128d t44 = _mm_set1_pd(0.58056935450892466);
+        const __m128d t57 = _mm_set1_pd(1.9138806714644179);
+        const __m128d t62 = _mm_set1_pd(1.7638425286967101);
+        const __m128d t64 = _mm_set1_pd(0.94279347365199528);
+        const __m128d t69 = _mm_set1_pd(1.268786568327291);
+        const __m128d t72 = _mm_set1_pd(1.546020906725474);
         const __m128d t1 = _mm_loadu_pd(&in[6*K + k]);
         const __m128d t3 = _mm_loadu_pd(&in[1*K + k]);
         const __m128d t90 = _mm_fmsub_pd(t1, t2, _mm_mul_pd(t3, t5));
@@ -214,17 +214,17 @@ void radix8_dst4_avx2(
         _mm_storeu_pd(&out[0*K + k], t213);
             }
             if (k < K) {
-        const double t2 = (0.38268343236509);
-        const double t5 = (0.92387953251128996);
-        const double t26 = (0.70710678118655002);
-        const double t0 = (1.9903694533444001);
-        const double t39 = (0.19603428065912001);
-        const double t44 = (0.58056935450892);
-        const double t57 = (1.9138806714644001);
-        const double t62 = (1.7638425286967001);
-        const double t64 = (0.94279347365199995);
-        const double t69 = (1.2687865683273001);
-        const double t72 = (1.5460209067255);
+        const double t2 = (0.38268343236508984);
+        const double t5 = (0.92387953251128674);
+        const double t26 = (0.70710678118654757);
+        const double t0 = (1.9903694533443939);
+        const double t39 = (0.19603428065912121);
+        const double t44 = (0.58056935450892466);
+        const double t57 = (1.9138806714644179);
+        const double t62 = (1.7638425286967101);
+        const double t64 = (0.94279347365199528);
+        const double t69 = (1.268786568327291);
+        const double t72 = (1.546020906725474);
         const double t1 = in[6*K + k];
         const double t3 = in[1*K + k];
         const double t90 = __builtin_fma(t1, t2, -((t3 * t5)));

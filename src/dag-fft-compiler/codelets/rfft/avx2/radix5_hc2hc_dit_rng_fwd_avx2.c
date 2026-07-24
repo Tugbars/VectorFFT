@@ -28,9 +28,9 @@ void radix5_hc2hc_dit_rng_fwd_avx2(
     int kcount,
     size_t vl)
 {
-    const __m256d t13 = _mm256_set1_pd(0.61803398874989002);
-    const __m256d t29 = _mm256_set1_pd(0.95105651629514998);
-    const __m256d t34 = _mm256_set1_pd(0.55901699437495);
+    const __m256d t13 = _mm256_set1_pd(0.6180339887498949);
+    const __m256d t29 = _mm256_set1_pd(0.95105651629515353);
+    const __m256d t34 = _mm256_set1_pd(0.55901699437494745);
     const __m256d t37 = _mm256_set1_pd(0.25);
     for (int kc = 0; kc < kcount; kc++) {
     size_t v = 0;
@@ -113,9 +113,9 @@ void radix5_hc2hc_dit_rng_fwd_avx2(
         const size_t rem = vl - v;
         if (rem == 1) {
         const double t37 = (0.25);
-        const double t13 = (0.61803398874989002);
-        const double t34 = (0.55901699437495);
-        const double t29 = (0.95105651629514998);
+        const double t13 = (0.6180339887498949);
+        const double t34 = (0.55901699437494745);
+        const double t29 = (0.95105651629515353);
         const double t0 = in_re[3*is + v];
         const double t1 = (tw_im[2]);
         const double t2 = in_im[3*is + v];
@@ -188,9 +188,9 @@ void radix5_hc2hc_dit_rng_fwd_avx2(
         } else {
             for (; v + 2 <= vl; v += 2) {
         const __m128d t37 = _mm_set1_pd(0.25);
-        const __m128d t13 = _mm_set1_pd(0.61803398874989002);
-        const __m128d t34 = _mm_set1_pd(0.55901699437495);
-        const __m128d t29 = _mm_set1_pd(0.95105651629514998);
+        const __m128d t13 = _mm_set1_pd(0.6180339887498949);
+        const __m128d t34 = _mm_set1_pd(0.55901699437494745);
+        const __m128d t29 = _mm_set1_pd(0.95105651629515353);
         const __m128d t0 = _mm_loadu_pd(&in_re[3*is + v]);
         const __m128d t1 = _mm_set1_pd(tw_im[2]);
         const __m128d t2 = _mm_loadu_pd(&in_im[3*is + v]);
@@ -263,9 +263,9 @@ void radix5_hc2hc_dit_rng_fwd_avx2(
             }
             if (v < vl) {
         const double t37 = (0.25);
-        const double t13 = (0.61803398874989002);
-        const double t34 = (0.55901699437495);
-        const double t29 = (0.95105651629514998);
+        const double t13 = (0.6180339887498949);
+        const double t34 = (0.55901699437494745);
+        const double t29 = (0.95105651629515353);
         const double t0 = in_re[3*is + v];
         const double t1 = (tw_im[2]);
         const double t2 = in_im[3*is + v];
