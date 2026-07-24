@@ -272,6 +272,9 @@ let run (argv : string array) : unit =
      else if arg = "--z-ms" then (z_native := true; z_split_kind := "ms")
      else if arg = "--z-msz" then (z_native := true; z_split_kind := "msz")
      else if arg = "--z-sterm" then (z_native := true; z_split_kind := "sterm")
+     else if arg = "--z-s0sb" then (z_native := true; z_split_kind := "s0sb")
+     else if arg = "--z-msb" then (z_native := true; z_split_kind := "msb")
+     else if arg = "--z-stermb" then (z_native := true; z_split_kind := "stermb")
      else if arg = "--z-t2ss" then
        (z_native := true; z_t2 := true; z_strided := true; z_strided_st := true)
      else if arg = "--z-t2d" then (z_native := true; z_t2 := true; z_post_tw := true)

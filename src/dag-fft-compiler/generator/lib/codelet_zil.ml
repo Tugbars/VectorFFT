@@ -774,28 +774,161 @@ let z_split_macros = {|
     o3r=_mm256_fmadd_pd(_C,X3r,E3r); o3i=_mm256_fnmadd_pd(_C,X3n,E3i); \
     o7r=_mm256_fnmadd_pd(_C,X3r,E3r); o7i=_mm256_fmadd_pd(_C,X3n,E3i); \
 } while (0)
+/* INVERSE butterflies (IDFT bodies): derived from the fwd macros by the
+ * conj rule IDFT = conj(DFT(conj(.))) — every CROSS-PLANE term flips sign,
+ * same-plane terms unchanged. Same op counts, zero shuffles. */
+#define SPLIT_BFLY4_INV(i0r,i0i,i1r,i1i,i2r,i2i,i3r,i3i, o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i) do { \
+    __m256d t0r=_mm256_add_pd(i0r,i2r), t0i=_mm256_add_pd(i0i,i2i);   \
+    __m256d t1r=_mm256_sub_pd(i0r,i2r), t1i=_mm256_sub_pd(i0i,i2i);   \
+    __m256d t2r=_mm256_add_pd(i1r,i3r), t2i=_mm256_add_pd(i1i,i3i);   \
+    __m256d t3r=_mm256_sub_pd(i1r,i3r), t3i=_mm256_sub_pd(i1i,i3i);   \
+    o0r=_mm256_add_pd(t0r,t2r); o0i=_mm256_add_pd(t0i,t2i);           \
+    o2r=_mm256_sub_pd(t0r,t2r); o2i=_mm256_sub_pd(t0i,t2i);           \
+    o1r=_mm256_sub_pd(t1r,t3i); o1i=_mm256_add_pd(t1i,t3r);  /* +(+i)t3 */ \
+    o3r=_mm256_add_pd(t1r,t3i); o3i=_mm256_sub_pd(t1i,t3r);  /* -(+i)t3 */ \
+} while (0)
+#define SPLIT_BFLY8_INV(x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i, \
+                    o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i,o4r,o4i,o5r,o5i,o6r,o6i,o7r,o7i) do { \
+    const __m256d _C = _mm256_set1_pd(0.70710678118654752440);        \
+    __m256d t0r=_mm256_add_pd(x0r,x4r), t0i=_mm256_add_pd(x0i,x4i);   \
+    __m256d t1r=_mm256_sub_pd(x0r,x4r), t1i=_mm256_sub_pd(x0i,x4i);   \
+    __m256d t2r=_mm256_add_pd(x2r,x6r), t2i=_mm256_add_pd(x2i,x6i);   \
+    __m256d t3r=_mm256_sub_pd(x2r,x6r), t3i=_mm256_sub_pd(x2i,x6i);   \
+    __m256d E0r=_mm256_add_pd(t0r,t2r), E0i=_mm256_add_pd(t0i,t2i);   \
+    __m256d E2r=_mm256_sub_pd(t0r,t2r), E2i=_mm256_sub_pd(t0i,t2i);   \
+    __m256d E1r=_mm256_sub_pd(t1r,t3i), E1i=_mm256_add_pd(t1i,t3r);   \
+    __m256d E3r=_mm256_add_pd(t1r,t3i), E3i=_mm256_sub_pd(t1i,t3r);   \
+    __m256d s0r=_mm256_add_pd(x1r,x5r), s0i=_mm256_add_pd(x1i,x5i);   \
+    __m256d s1r=_mm256_sub_pd(x1r,x5r), s1i=_mm256_sub_pd(x1i,x5i);   \
+    __m256d s2r=_mm256_add_pd(x3r,x7r), s2i=_mm256_add_pd(x3i,x7i);   \
+    __m256d s3r=_mm256_sub_pd(x3r,x7r), s3i=_mm256_sub_pd(x3i,x7i);   \
+    __m256d O0r=_mm256_add_pd(s0r,s2r), O0i=_mm256_add_pd(s0i,s2i);   \
+    __m256d O2r=_mm256_sub_pd(s0r,s2r), O2i=_mm256_sub_pd(s0i,s2i);   \
+    __m256d O1r=_mm256_sub_pd(s1r,s3i), O1i=_mm256_add_pd(s1i,s3r);   \
+    __m256d O3r=_mm256_add_pd(s1r,s3i), O3i=_mm256_sub_pd(s1i,s3r);   \
+    __m256d X1r=_mm256_sub_pd(O1r,O1i), X1i=_mm256_add_pd(O1i,O1r);   \
+    __m256d X3r=_mm256_add_pd(O3i,O3r), X3n=_mm256_sub_pd(O3r,O3i);   \
+    o0r=_mm256_add_pd(E0r,O0r); o0i=_mm256_add_pd(E0i,O0i);           \
+    o4r=_mm256_sub_pd(E0r,O0r); o4i=_mm256_sub_pd(E0i,O0i);           \
+    o1r=_mm256_fmadd_pd(_C,X1r,E1r); o1i=_mm256_fmadd_pd(_C,X1i,E1i); \
+    o5r=_mm256_fnmadd_pd(_C,X1r,E1r); o5i=_mm256_fnmadd_pd(_C,X1i,E1i); \
+    o2r=_mm256_sub_pd(E2r,O2i); o2i=_mm256_add_pd(E2i,O2r);           \
+    o6r=_mm256_add_pd(E2r,O2i); o6i=_mm256_sub_pd(E2i,O2r);           \
+    o3r=_mm256_fnmadd_pd(_C,X3r,E3r); o3i=_mm256_fmadd_pd(_C,X3n,E3i); \
+    o7r=_mm256_fmadd_pd(_C,X3r,E3r); o7i=_mm256_fnmadd_pd(_C,X3n,E3i); \
+} while (0)
 |}
 
-let z_split_bfly_call radix =
+let z_split_bfly_call ?(inv = false) radix =
+  let m4 = if inv then "SPLIT_BFLY4_INV" else "SPLIT_BFLY4" in
+  let m8 = if inv then "SPLIT_BFLY8_INV" else "SPLIT_BFLY8" in
   if radix = 4 then
-    "        SPLIT_BFLY4(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
-     \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3]);\n"
+    Printf.sprintf
+      "        %s(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
+      \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3]);\n"
+      m4
   else
-    "        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
-     \                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],\n\
-     \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],\n\
-     \                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);\n"
+    Printf.sprintf
+      "        %s(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],\n\
+      \                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],\n\
+      \                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],\n\
+      \                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);\n"
+      m8
 
 let emit_z_split ~(kind : string) ~(radix : int) () : string =
   if not (List.mem radix [ 4; 8 ]) then
     failwith "codelet_zil: split family covers radix 4/8 (r16 split = 32 live planes, spills)";
-  if not (List.mem kind [ "s0s"; "ms"; "msz"; "sterm" ]) then
-    failwith "codelet_zil: split kind must be s0s|ms|msz|sterm";
-  if kind = "sterm" && radix <> 8 then
-    failwith "codelet_zil: sterm (split-input terminator) is radix 8 only";
+  if not (List.mem kind [ "s0s"; "ms"; "msz"; "sterm"; "s0sb"; "msb"; "stermb" ])
+  then failwith "codelet_zil: split kind must be s0s|ms|msz|sterm|s0sb|msb|stermb";
+  if (kind = "sterm" || kind = "stermb") && radix <> 8 then
+    failwith "codelet_zil: sterm/stermb (split terminator pair) is radix 8 only";
   let r = radix in
-  let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" r kind in
-  if kind = "sterm" then
+  let bwd = List.mem kind [ "s0sb"; "msb"; "stermb" ] in
+  let base_kind =
+    if bwd then String.sub kind 0 (String.length kind - 1) else kind
+  in
+  let fname =
+    Printf.sprintf "radix%d_z_%s_%s_avx2" r base_kind
+      (if bwd then "bwd" else "fwd")
+  in
+  if kind = "stermb" then
+    (* INVERSE split terminator (the bwd cascade's FIRST stage): consumes the
+       digit-reversed z comb, inverse radix-8 DFT, POST-multiplies legs 1..7
+       by the CONJUGATED packed per-column w^1 (conjugation is TABLE-SIDE:
+       the plan fills +sin), transposes leg-vectors back to blocks, stores
+       the block-split plane. Comb loads are contiguous per leg (cheaper
+       than fwd's load transposes). ABI: zin = z comb, zout = split plane,
+       tw_re = packed conj table at tw_re+2k, OLs = N/8, count = N/8. *)
+    Printf.sprintf
+      "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml).\n\
+      \ * stermb: INVERSE split terminator (z drev comb -> split plane), IDFT bodies,\n\
+      \ * post-multiplied CONJ packed per-column w^1 (table-side conj), transpose in\n\
+      \ * stores. CONTRACT: count %%%% 4 == 0. bwd(fwd) = N*x. */\n\
+       #include <immintrin.h>\n\
+       #include <stddef.h>\n%s\n\
+       __attribute__((target(\"avx2,fma\")))\n\
+       void %s(\n\
+      \    const double * __restrict__ zin,\n\
+      \    const double * __restrict__ zin_unused,\n\
+      \    double       * __restrict__ zout,\n\
+      \    double       * __restrict__ zout_unused,\n\
+      \    const double * tw_re, const double * tw_im,\n\
+      \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+       {\n\
+      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;\n\
+      \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
+      \        __m256d xr[8], xi[8];\n\
+      \        for (int l = 0; l < 8; l++) {\n\
+      \            __m256d zlo = _mm256_loadu_pd(zin + 2*((size_t)l*OLs + k));\n\
+      \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*OLs + k) + 4);\n\
+      \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
+      \        }\n\
+      \        __m256d or_[8], oi_[8];\n%s\
+      \        {\n\
+      \            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);\n\
+      \            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);\n\
+      \            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;\n\
+      \            SPLIT_CMUL(or_[1], oi_[1], c1, s1, rr, ii); or_[1] = rr; oi_[1] = ii;\n\
+      \            WPROD(c1, s1, c1, s1, c2, s2);\n\
+      \            SPLIT_CMUL(or_[2], oi_[2], c2, s2, rr, ii); or_[2] = rr; oi_[2] = ii;\n\
+      \            WPROD(c2, s2, c1, s1, c3, s3);\n\
+      \            SPLIT_CMUL(or_[3], oi_[3], c3, s3, rr, ii); or_[3] = rr; oi_[3] = ii;\n\
+      \            WPROD(c2, s2, c2, s2, c4, s4);\n\
+      \            SPLIT_CMUL(or_[4], oi_[4], c4, s4, rr, ii); or_[4] = rr; oi_[4] = ii;\n\
+      \            WPROD(c4, s4, c1, s1, cw, sw);\n\
+      \            SPLIT_CMUL(or_[5], oi_[5], cw, sw, rr, ii); or_[5] = rr; oi_[5] = ii;\n\
+      \            WPROD(c4, s4, c2, s2, cw, sw);\n\
+      \            SPLIT_CMUL(or_[6], oi_[6], cw, sw, rr, ii); or_[6] = rr; oi_[6] = ii;\n\
+      \            WPROD(c4, s4, c3, s3, cw, sw);\n\
+      \            SPLIT_CMUL(or_[7], oi_[7], cw, sw, rr, ii); or_[7] = rr; oi_[7] = ii;\n\
+      \        }\n\
+      \        {\n\
+      \            __m256d b0, b1, b2, b3;\n\
+      \            TR4(or_[0], or_[1], or_[2], or_[3], b0, b1, b2, b3);\n\
+      \            _mm256_storeu_pd(zout + 16*(size_t)k,        b0);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 1),  b1);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 2),  b2);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 3),  b3);\n\
+      \            TR4(oi_[0], oi_[1], oi_[2], oi_[3], b0, b1, b2, b3);\n\
+      \            _mm256_storeu_pd(zout + 16*(size_t)k + 4,       b0);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 1) + 4, b1);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 2) + 4, b2);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 3) + 4, b3);\n\
+      \            TR4(or_[4], or_[5], or_[6], or_[7], b0, b1, b2, b3);\n\
+      \            _mm256_storeu_pd(zout + 16*(size_t)k + 8,       b0);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 1) + 8, b1);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 2) + 8, b2);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 3) + 8, b3);\n\
+      \            TR4(oi_[4], oi_[5], oi_[6], oi_[7], b0, b1, b2, b3);\n\
+      \            _mm256_storeu_pd(zout + 16*(size_t)k + 12,       b0);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 1) + 12, b1);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 2) + 12, b2);\n\
+      \            _mm256_storeu_pd(zout + 16*((size_t)k + 3) + 12, b3);\n\
+      \        }\n\
+      \    }\n\
+       }\n"
+      z_split_macros fname (z_split_bfly_call ~inv:true 8)
+  else if kind = "sterm" then
     (* split-input TERMINATOR (measured winner, terminator race 2026-07-24:
        +4-7% over t2sp/t2spt at every cell): reads the block-split plane
        directly (ALL mids stay plain ms — no msz pass), 4 columns/iteration,
@@ -888,11 +1021,16 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
        (match kind with
         | "s0s" -> "s0s (z-in -> split-out leaf, twiddle-free, deinterleaving loads)"
         | "ms" -> "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw)"
+        | "msb" ->
+          "msb (INVERSE split mid: IDFT body, POST-multiplied CONJ splat-pair tw)"
+        | "s0sb" ->
+          "s0sb (INVERSE leaf: split-in -> z-out, IDFT body, twiddle-free)"
         | _ -> "msz (split-in -> z-out LAST mid, re-interleaving stores, splat-pair tw)")
-       (if kind = "s0s" then ""
+       (if kind = "s0s" || kind = "s0sb" then ""
         else
           "\n * tw_re = ONE per-group splat-pair set: legs 1..R-1, 8 doubles/leg\n\
-          \ * [c,c,c,c][s,s,s,s]; no cursor (group-constant). tw_im unused.")
+          \ * [c,c,c,c][s,s,s,s]; no cursor (group-constant; bwd = CONJ values,\n\
+          \ * table-side). tw_im unused.")
        z_split_macros);
   Buffer.add_string buf
     (Printf.sprintf
@@ -909,7 +1047,7 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
        \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
        \        __m256d xr[%d], xi[%d], or_[%d], oi_[%d];\n"
        fname
-       (if kind = "s0s" then " (void)tw_re;" else "")
+       (if kind = "s0s" || kind = "s0sb" then " (void)tw_re;" else "")
        r r r r);
   (* loads *)
   (match kind with
@@ -920,6 +1058,14 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
           \            __m256d zlo = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
           \            __m256d zhi = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
           \            DEINT(zlo, zhi, xr[l], xi[l]);\n\
+          \        }\n" r)
+   | "s0sb" | "msb" ->
+     (* bwd: plain split loads, NO twiddle on load (post-applied for msb) *)
+     Buffer.add_string buf
+       (Printf.sprintf
+          "        for (int l = 0; l < %d; l++) {\n\
+          \            xr[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k));\n\
+          \            xi[l] = _mm256_loadu_pd(zin + 2*((size_t)l*Ls + k) + 4);\n\
           \        }\n" r)
    | _ ->
      Buffer.add_string buf
@@ -933,10 +1079,21 @@ let emit_z_split ~(kind : string) ~(radix : int) () : string =
           \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
           \            SPLIT_CMUL(ar, ai, ct, st, xr[l], xi[l]);\n\
           \        }\n" r));
-  Buffer.add_string buf (z_split_bfly_call r);
+  Buffer.add_string buf (z_split_bfly_call ~inv:bwd r);
+  (* msb: POST-multiply output legs 1..R-1 by the (conj, table-side) set *)
+  if kind = "msb" then
+    Buffer.add_string buf
+      (Printf.sprintf
+         "        for (int l = 1; l < %d; l++) {\n\
+         \            __m256d ct = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8);\n\
+         \            __m256d st = _mm256_loadu_pd(tw_re + (size_t)(l - 1) * 8 + 4);\n\
+         \            __m256d rr, ii;\n\
+         \            SPLIT_CMUL(or_[l], oi_[l], ct, st, rr, ii);\n\
+         \            or_[l] = rr; oi_[l] = ii;\n\
+         \        }\n" r);
   (* stores *)
   (match kind with
-   | "msz" ->
+   | "msz" | "s0sb" ->
      Buffer.add_string buf
        (Printf.sprintf
           "        for (int l = 0; l < %d; l++) {\n\
