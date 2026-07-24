@@ -408,6 +408,37 @@ calibrator + wisdom loader + vfft.c route — items 9/11) at these locked shapes
 gap-closing campaign (terminator weight, kernel scheduling residue, MKL-style size-specialized
 finishers).
 
+## 4.998. TERMINATOR-WEIGHT ATTACK (2026-07-24 night) — sterm wins: band 0.76–0.89×
+
+Two fixes raced (`zil_term_opt.c`, paced, all gates PASS at every cell, both runs):
+
+1. **Tree-powers** (emitted kinds t2sq/t2sqt: squaring tree w²=w₁², w₄=w₂², … — critical
+   path 6→3 links): **marginal** (+0–3%, even −2% once at 2048). The OOO engine was already
+   hiding most of the sequential chain. Kinds kept in the arsenal; wisdom decides.
+2. **sterm — the split-input terminator** (hand-derived, then PROMOTED to
+   `emit_z_split ~kind:"sterm"`, flag `--z-sterm`, emitted radix8_z_sterm; promotion bit-gate
+   PASS with relerr identical to the last digit): reads the block-split plane directly (ALL
+   mids stay plain `ms` — the msz pass is GONE), 4 columns/iteration via 4×4 register
+   transposes on load, shuffle-free split butterfly + twiddles, **packed per-column w¹ table
+   (16 B/col — half of w¹-VTW2)**, tree powers, re-interleave fused in the stores.
+   **WINNER: +4–8% at every cell, both runs.**
+
+| cell | champ (t2sp/t2spt) | **sterm** | vs MKL |
+|---|--:|--:|--:|
+| 2048  | 2603  | **2440**  | **0.89×** |
+| 4096  | 5456  | **5205**  | **0.76×** |
+| 8192  | 11478 | **10826** | **0.81×** |
+| 16384 | 24762 | **23028** | **0.82×** |
+
+Attribution lesson (banked): I ranked the latency-chain fix first and the structural rework
+second — measurement inverted it. The terminator's weight was structural (z-form shuffles,
+2-col width, stream bytes, the msz chore-pass), not the dependency chain.
+**Band after the attack: 0.76–0.89× (wisdom-grade, paced, same-run MKL)**; wisdom file
+updated (all-ms mids + sterm, packed twq table). Execution shape now: s0s → ms× → sterm —
+three kernel kinds total, all generator-owned, all shuffle-work confined to the two
+boundary-touching passes. Remaining vs MKL ≈ scheduling residue + their size-specialized
+finisher bodies — VTune attribution is the queued next probe.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
