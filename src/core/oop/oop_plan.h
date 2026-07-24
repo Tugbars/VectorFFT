@@ -90,7 +90,12 @@ typedef enum
      * BAILEY2 (Qr/Qi identical). Natural order, OOP, K=1 only. Optional IL
      * entry points drive the emitted il_in/il_out twins (z->z, zero
      * conversion passes). Halves BAILEY2 at every N (§11b). */
-    VFFT_OOP_KIND_BAILEY2V = 3
+    VFFT_OOP_KIND_BAILEY2V = 3,
+    /* K=1 SCRAMBLED block-split cascade cell (zsplit.h, z_cascade_plan
+     * §4.9993): wisdom-only kind — never a vfft_oop_plan_t; carries the
+     * cascade chain (cc_chain codec) + the measured sterm-vs-sterm2
+     * terminator pick (zs_t2q). Line: N 1 4 t2q cc_chain ns. */
+    VFFT_OOP_KIND_ZSPLIT = 4
 } vfft_oop_kind_t;
 
 typedef struct
