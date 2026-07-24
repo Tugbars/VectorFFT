@@ -19,15 +19,15 @@ void radix8_dct2_avx512(
     double       * __restrict__ out,
     size_t K)
 {
-    const __m512d t0 = _mm512_set1_pd(0.19509032201613);
-    const __m512d t14 = _mm512_set1_pd(0.70710678118655002);
+    const __m512d t0 = _mm512_set1_pd(0.19509032201612825);
+    const __m512d t14 = _mm512_set1_pd(0.70710678118654757);
     const __m512d t29 = _mm512_set1_pd(2);
-    const __m512d t31 = _mm512_set1_pd(0.98078528040322999);
-    const __m512d t37 = _mm512_set1_pd(0.38268343236509);
-    const __m512d t48 = _mm512_set1_pd(0.92387953251128996);
-    const __m512d t55 = _mm512_set1_pd(0.55557023301959996);
-    const __m512d t63 = _mm512_set1_pd(0.83146961230255001);
-    const __m512d t73 = _mm512_set1_pd(1.4142135623731);
+    const __m512d t31 = _mm512_set1_pd(0.98078528040323043);
+    const __m512d t37 = _mm512_set1_pd(0.38268343236508978);
+    const __m512d t48 = _mm512_set1_pd(0.92387953251128674);
+    const __m512d t55 = _mm512_set1_pd(0.55557023301960218);
+    const __m512d t63 = _mm512_set1_pd(0.83146961230254524);
+    const __m512d t73 = _mm512_set1_pd(1.4142135623730951);
     size_t k = 0;
     for (; k + 8 <= K; k += 8) {
 
@@ -85,15 +85,15 @@ void radix8_dct2_avx512(
     if (k < K) {
         const size_t rem = K - k;
         if (rem == 1) {
-        const double t14 = (0.70710678118655002);
+        const double t14 = (0.70710678118654757);
         const double t29 = (2);
-        const double t0 = (0.19509032201613);
-        const double t31 = (0.98078528040322999);
-        const double t37 = (0.38268343236509);
-        const double t55 = (0.55557023301959996);
-        const double t63 = (0.83146961230255001);
-        const double t48 = (0.92387953251128996);
-        const double t73 = (1.4142135623731);
+        const double t0 = (0.19509032201612825);
+        const double t31 = (0.98078528040323043);
+        const double t37 = (0.38268343236508978);
+        const double t55 = (0.55557023301960218);
+        const double t63 = (0.83146961230254524);
+        const double t48 = (0.92387953251128674);
+        const double t73 = (1.4142135623730951);
         const double t1 = in[1*K + k];
         const double t4 = in[6*K + k];
         const double t7 = (t4 - t1);
@@ -138,15 +138,15 @@ void radix8_dct2_avx512(
         out[0*K + k] = t86;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t14 = _mm512_set1_pd(0.70710678118655002);
+        const __m512d t14 = _mm512_set1_pd(0.70710678118654757);
         const __m512d t29 = _mm512_set1_pd(2);
-        const __m512d t0 = _mm512_set1_pd(0.19509032201613);
-        const __m512d t31 = _mm512_set1_pd(0.98078528040322999);
-        const __m512d t37 = _mm512_set1_pd(0.38268343236509);
-        const __m512d t55 = _mm512_set1_pd(0.55557023301959996);
-        const __m512d t63 = _mm512_set1_pd(0.83146961230255001);
-        const __m512d t48 = _mm512_set1_pd(0.92387953251128996);
-        const __m512d t73 = _mm512_set1_pd(1.4142135623731);
+        const __m512d t0 = _mm512_set1_pd(0.19509032201612825);
+        const __m512d t31 = _mm512_set1_pd(0.98078528040323043);
+        const __m512d t37 = _mm512_set1_pd(0.38268343236508978);
+        const __m512d t55 = _mm512_set1_pd(0.55557023301960218);
+        const __m512d t63 = _mm512_set1_pd(0.83146961230254524);
+        const __m512d t48 = _mm512_set1_pd(0.92387953251128674);
+        const __m512d t73 = _mm512_set1_pd(1.4142135623730951);
         const __m512d t1 = _mm512_maskz_loadu_pd(_m, &in[1*K + k]);
         const __m512d t4 = _mm512_maskz_loadu_pd(_m, &in[6*K + k]);
         const __m512d t7 = _mm512_sub_pd(t4, t1);

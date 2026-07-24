@@ -25,8 +25,8 @@ void radix3_hc2hc_dif_fwd_avx512(
     ptrdiff_t os,
     size_t vl)
 {
-    const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
-    const __m512d t6 = _mm512_set1_pd(0.5);
+    const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
+    const __m512d t6 = _mm512_set1_pd(0.49999999999999978);
     size_t v = 0;
     for (; v + 8 <= vl; v += 8) {
 
@@ -68,8 +68,8 @@ void radix3_hc2hc_dif_fwd_avx512(
     if (v < vl) {
         const size_t rem = vl - v;
         if (rem == 1) {
-        const double t6 = (0.5);
-        const double t0 = (0.86602540378444004);
+        const double t6 = (0.49999999999999978);
+        const double t0 = (0.86602540378443871);
         const double t1 = in_re[2*is + v];
         const double t3 = in_im[1*is + v];
         const double t17 = (t3 - t1);
@@ -105,8 +105,8 @@ void radix3_hc2hc_dif_fwd_avx512(
         out_im[0*os + v] = t32;
         } else {
             const __mmask8 _m = (__mmask8)((1u << rem) - 1u);
-        const __m512d t6 = _mm512_set1_pd(0.5);
-        const __m512d t0 = _mm512_set1_pd(0.86602540378444004);
+        const __m512d t6 = _mm512_set1_pd(0.49999999999999978);
+        const __m512d t0 = _mm512_set1_pd(0.86602540378443871);
         const __m512d t1 = _mm512_maskz_loadu_pd(_m, &in_re[2*is + v]);
         const __m512d t3 = _mm512_maskz_loadu_pd(_m, &in_im[1*is + v]);
         const __m512d t17 = _mm512_sub_pd(t3, t1);

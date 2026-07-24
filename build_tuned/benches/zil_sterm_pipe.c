@@ -165,7 +165,683 @@ static void sterm_fwd_copy(
 }
 
 /* ===================== WORKFLOW ARMS PASTED BELOW ===================== */
-/* ARMS_PLACEHOLDER */
+/* ================= ARM rot (sterm_fwd_rot, OK) ================= */
+/* ARM rot — cross-iteration rotation of the twiddle squaring tree.
+ * Bit-identical to radix8_z_sterm_fwd_avx2: every FP op has the same operands
+ * in the same order; only cross-value scheduling / liveness is restructured.
+ * Pipeline: iteration k's store tail computes iteration k+4's c1/c2/c4, so the
+ * serial squaring chain never gates the top of an iteration. */
+__attribute__((target("avx2,fma")))
+void sterm_fwd_rot(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im;
+    (void)Ls; (void)Gs; (void)OGs;
+    if (count < 4) return;
+
+    const __m256d C7 = _mm256_set1_pd(0.70710678118654752440);
+    const size_t oL = 2 * OLs;
+
+    /* Prologue: rotated head of the twiddle tree for k = 0. */
+    __m256d cw1 = _mm256_loadu_pd(tw_re);
+    __m256d sw1 = _mm256_loadu_pd(tw_re + 4);
+    __m256d cw2, sw2, cw4, sw4;
+    WPROD(cw1, sw1, cw1, sw1, cw2, sw2);
+    WPROD(cw2, sw2, cw2, sw2, cw4, sw4);
+
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        const double *zp = zin + 16 * k;
+        double *po = zout + 2 * k;
+        /* Next group's twiddle index, clamped (branchless) so the final trip
+         * re-reads its own valid columns instead of running off the table;
+         * those recomputed values are dead after the loop. */
+        const size_t kn2 = (k + 8 <= count) ? 2 * (k + 4) : 2 * k;
+
+        /* ---- data loads + column->leg transposes: independent of twiddles,
+         * they fill the front of the iteration while the pre-rotated
+         * cw1/cw2/cw4 from the previous trip are already sitting ready. ---- */
+        __m256d rl0 = _mm256_loadu_pd(zp + 0);
+        __m256d il0 = _mm256_loadu_pd(zp + 4);
+        __m256d rh0 = _mm256_loadu_pd(zp + 8);
+        __m256d ih0 = _mm256_loadu_pd(zp + 12);
+        __m256d rl1 = _mm256_loadu_pd(zp + 16);
+        __m256d il1 = _mm256_loadu_pd(zp + 20);
+        __m256d rh1 = _mm256_loadu_pd(zp + 24);
+        __m256d ih1 = _mm256_loadu_pd(zp + 28);
+        __m256d rl2 = _mm256_loadu_pd(zp + 32);
+        __m256d il2 = _mm256_loadu_pd(zp + 36);
+        __m256d rh2 = _mm256_loadu_pd(zp + 40);
+        __m256d ih2 = _mm256_loadu_pd(zp + 44);
+        __m256d rl3 = _mm256_loadu_pd(zp + 48);
+        __m256d il3 = _mm256_loadu_pd(zp + 52);
+        __m256d rh3 = _mm256_loadu_pd(zp + 56);
+        __m256d ih3 = _mm256_loadu_pd(zp + 60);
+
+        __m256d x0r, x1r, x2r, x3r, x4r, x5r, x6r, x7r;
+        __m256d x0i, x1i, x2i, x3i, x4i, x5i, x6i, x7i;
+        TR4(rl0, rl1, rl2, rl3, x0r, x1r, x2r, x3r);
+        TR4(il0, il1, il2, il3, x0i, x1i, x2i, x3i);
+        TR4(rh0, rh1, rh2, rh3, x4r, x5r, x6r, x7r);
+        TR4(ih0, ih1, ih2, ih3, x4i, x5i, x6i, x7i);
+
+        /* ---- in-iteration remainder of the tree: only c3->c7 is serial now
+         * (2 WPRODs); c5/c6 hang directly off the pre-rotated c4. Ordered so
+         * each cw pair dies at its last use. Same ops/operand order as
+         * baseline (WPRODs and CMULs are mutually independent values). ---- */
+        __m256d cw3, sw3, cw5, sw5, cw6, sw6, cw7, sw7, rr, ii;
+        WPROD(cw2, sw2, cw1, sw1, cw3, sw3);
+        WPROD(cw4, sw4, cw1, sw1, cw5, sw5);
+        SPLIT_CMUL(x1r, x1i, cw1, sw1, rr, ii); x1r = rr; x1i = ii;
+        WPROD(cw4, sw4, cw2, sw2, cw6, sw6);
+        SPLIT_CMUL(x2r, x2i, cw2, sw2, rr, ii); x2r = rr; x2i = ii;
+        WPROD(cw4, sw4, cw3, sw3, cw7, sw7);
+        SPLIT_CMUL(x3r, x3i, cw3, sw3, rr, ii); x3r = rr; x3i = ii;
+        SPLIT_CMUL(x4r, x4i, cw4, sw4, rr, ii); x4r = rr; x4i = ii;
+        SPLIT_CMUL(x5r, x5i, cw5, sw5, rr, ii); x5r = rr; x5i = ii;
+        SPLIT_CMUL(x6r, x6i, cw6, sw6, rr, ii); x6r = rr; x6i = ii;
+        SPLIT_CMUL(x7r, x7i, cw7, sw7, rr, ii); x7r = rr; x7i = ii;
+
+        /* ---- SPLIT_BFLY8 hand-expanded op-for-op from the macro; outputs
+         * are produced and retired pairwise so o-values never accumulate. */
+        __m256d t0r = _mm256_add_pd(x0r, x4r), t0i = _mm256_add_pd(x0i, x4i);
+        __m256d t1r = _mm256_sub_pd(x0r, x4r), t1i = _mm256_sub_pd(x0i, x4i);
+        __m256d t2r = _mm256_add_pd(x2r, x6r), t2i = _mm256_add_pd(x2i, x6i);
+        __m256d t3r = _mm256_sub_pd(x2r, x6r), t3i = _mm256_sub_pd(x2i, x6i);
+        __m256d E0r = _mm256_add_pd(t0r, t2r), E0i = _mm256_add_pd(t0i, t2i);
+        __m256d E2r = _mm256_sub_pd(t0r, t2r), E2i = _mm256_sub_pd(t0i, t2i);
+        __m256d E1r = _mm256_add_pd(t1r, t3i), E1i = _mm256_sub_pd(t1i, t3r);
+        __m256d E3r = _mm256_sub_pd(t1r, t3i), E3i = _mm256_add_pd(t1i, t3r);
+
+        __m256d u0r = _mm256_add_pd(x1r, x5r), u0i = _mm256_add_pd(x1i, x5i);
+        __m256d u1r = _mm256_sub_pd(x1r, x5r), u1i = _mm256_sub_pd(x1i, x5i);
+        __m256d u2r = _mm256_add_pd(x3r, x7r), u2i = _mm256_add_pd(x3i, x7i);
+        __m256d u3r = _mm256_sub_pd(x3r, x7r), u3i = _mm256_sub_pd(x3i, x7i);
+        __m256d O0r = _mm256_add_pd(u0r, u2r), O0i = _mm256_add_pd(u0i, u2i);
+        __m256d O2r = _mm256_sub_pd(u0r, u2r), O2i = _mm256_sub_pd(u0i, u2i);
+        __m256d O1r = _mm256_add_pd(u1r, u3i), O1i = _mm256_sub_pd(u1i, u3r);
+        __m256d O3r = _mm256_sub_pd(u1r, u3i), O3i = _mm256_add_pd(u1i, u3r);
+
+        /* rotated: next group's w^1 loads issue in the butterfly's shadow */
+        __m256d nc1 = _mm256_loadu_pd(tw_re + kn2);
+        __m256d ns1 = _mm256_loadu_pd(tw_re + kn2 + 4);
+
+        __m256d X1r = _mm256_add_pd(O1r, O1i), X1i = _mm256_sub_pd(O1i, O1r);
+        __m256d X3r = _mm256_sub_pd(O3i, O3r), X3n = _mm256_add_pd(O3r, O3i);
+
+        __m256d zlo, zhi;
+
+        /* pair (0,4) */
+        __m256d o0r = _mm256_add_pd(E0r, O0r), o0i = _mm256_add_pd(E0i, O0i);
+        __m256d o4r = _mm256_sub_pd(E0r, O0r), o4i = _mm256_sub_pd(E0i, O0i);
+        REINT(o0r, o0i, zlo, zhi);
+        _mm256_storeu_pd(po, zlo);
+        _mm256_storeu_pd(po + 4, zhi);
+        REINT(o4r, o4i, zlo, zhi);
+        _mm256_storeu_pd(po + 4 * oL, zlo);
+        _mm256_storeu_pd(po + 4 * oL + 4, zhi);
+
+        /* rotated: c2 = w^2 for the next trip (FMA work interleaved with the
+         * port-5-heavy REINT shuffles and the store burst) */
+        __m256d nc2, ns2;
+        WPROD(nc1, ns1, nc1, ns1, nc2, ns2);
+
+        /* pair (1,5) */
+        __m256d o1r = _mm256_fmadd_pd(C7, X1r, E1r),  o1i = _mm256_fmadd_pd(C7, X1i, E1i);
+        __m256d o5r = _mm256_fnmadd_pd(C7, X1r, E1r), o5i = _mm256_fnmadd_pd(C7, X1i, E1i);
+        REINT(o1r, o1i, zlo, zhi);
+        _mm256_storeu_pd(po + oL, zlo);
+        _mm256_storeu_pd(po + oL + 4, zhi);
+        REINT(o5r, o5i, zlo, zhi);
+        _mm256_storeu_pd(po + 5 * oL, zlo);
+        _mm256_storeu_pd(po + 5 * oL + 4, zhi);
+
+        /* rotated: c4 = w^4 for the next trip */
+        __m256d nc4, ns4;
+        WPROD(nc2, ns2, nc2, ns2, nc4, ns4);
+
+        /* pair (2,6) */
+        __m256d o2r = _mm256_add_pd(E2r, O2i), o2i = _mm256_sub_pd(E2i, O2r);
+        __m256d o6r = _mm256_sub_pd(E2r, O2i), o6i = _mm256_add_pd(E2i, O2r);
+        REINT(o2r, o2i, zlo, zhi);
+        _mm256_storeu_pd(po + 2 * oL, zlo);
+        _mm256_storeu_pd(po + 2 * oL + 4, zhi);
+        REINT(o6r, o6i, zlo, zhi);
+        _mm256_storeu_pd(po + 6 * oL, zlo);
+        _mm256_storeu_pd(po + 6 * oL + 4, zhi);
+
+        /* pair (3,7) */
+        __m256d o3r = _mm256_fmadd_pd(C7, X3r, E3r),  o3i = _mm256_fnmadd_pd(C7, X3n, E3i);
+        __m256d o7r = _mm256_fnmadd_pd(C7, X3r, E3r), o7i = _mm256_fmadd_pd(C7, X3n, E3i);
+        REINT(o3r, o3i, zlo, zhi);
+        _mm256_storeu_pd(po + 3 * oL, zlo);
+        _mm256_storeu_pd(po + 3 * oL + 4, zhi);
+        REINT(o7r, o7i, zlo, zhi);
+        _mm256_storeu_pd(po + 7 * oL, zlo);
+        _mm256_storeu_pd(po + 7 * oL + 4, zhi);
+
+        /* rotate the pipelined twiddle head into place for k+4 */
+        cw1 = nc1; sw1 = ns1;
+        cw2 = nc2; sw2 = ns2;
+        cw4 = nc4; sw4 = ns4;
+    }
+}
+
+/* ================= ARM phase (sterm_fwd_phase, OK) ================= */
+/* ARM "phase": intra-iteration live-range minimization for the sterm
+ * split-input radix-8 terminator. Three phases per 4-column trip:
+ *   A) lo-block loads + TR4 -> legs 0-3; twiddle chain c2/c3/c4; CMUL legs 1-3.
+ *   B) chain extension c5/c6/c7 (kills c1..c3 before the hi loads, overlaps
+ *      serial WPROD FMA latency with the hi loads/transposes); hi-block loads
+ *      + TR4 -> legs 4-7; CMUL legs 4-7.
+ *   C) SPLIT_BFLY8 hand-expanded in the macro's exact op order, with each
+ *      output pair REINT+stored as soon as it is final (o0/o4, o1/o5, o2/o6,
+ *      o3/o7); X1/X3 sunk to just before their consumers. No or_/oi_ arrays.
+ * All FP ops, operand orders, and associations are identical to the baseline
+ * macros; only independent-value ordering and staging differ. */
+__attribute__((target("avx2,fma")))
+void sterm_fwd_phase(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;
+    const __m256d C7 = _mm256_set1_pd(0.70710678118654752440);
+    double * const q0 = zout;
+    double * const q1 = zout +  2*OLs;
+    double * const q2 = zout +  4*OLs;
+    double * const q3 = zout +  6*OLs;
+    double * const q4 = zout +  8*OLs;
+    double * const q5 = zout + 10*OLs;
+    double * const q6 = zout + 12*OLs;
+    double * const q7 = zout + 14*OLs;
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        const double * const p = zin + 16*k;
+
+        /* ---------------- Phase A: lo block -> legs 0-3 ---------------- */
+        __m256d x0r, x0i, x1r, x1i, x2r, x2i, x3r, x3i;
+        {
+            __m256d rl0 = _mm256_loadu_pd(p +  0), il0 = _mm256_loadu_pd(p +  4);
+            __m256d rl1 = _mm256_loadu_pd(p + 16), il1 = _mm256_loadu_pd(p + 20);
+            __m256d rl2 = _mm256_loadu_pd(p + 32), il2 = _mm256_loadu_pd(p + 36);
+            __m256d rl3 = _mm256_loadu_pd(p + 48), il3 = _mm256_loadu_pd(p + 52);
+            TR4(rl0, rl1, rl2, rl3, x0r, x1r, x2r, x3r);
+            TR4(il0, il1, il2, il3, x0i, x1i, x2i, x3i);
+        }
+        __m256d c1, s1, c2, s2, c3, s3, c4, s4;
+        c1 = _mm256_loadu_pd(tw_re + 2*k);
+        s1 = _mm256_loadu_pd(tw_re + 2*k + 4);
+        {
+            __m256d rr, ii;
+            SPLIT_CMUL(x1r, x1i, c1, s1, rr, ii); x1r = rr; x1i = ii;
+            WPROD(c1, s1, c1, s1, c2, s2);
+            SPLIT_CMUL(x2r, x2i, c2, s2, rr, ii); x2r = rr; x2i = ii;
+            WPROD(c2, s2, c1, s1, c3, s3);
+            SPLIT_CMUL(x3r, x3i, c3, s3, rr, ii); x3r = rr; x3i = ii;
+            WPROD(c2, s2, c2, s2, c4, s4);
+        }
+
+        /* ---------------- Phase B: hi block -> legs 4-7 ---------------- */
+        __m256d x4r, x4i, x5r, x5i, x6r, x6i, x7r, x7i;
+        {
+            /* Extend the twiddle chain first: c1/c2/c3 die HERE, and the
+             * serial FMA latency of the three WPRODs overlaps the hi-block
+             * loads and transposes below. Same operands as the baseline's
+             * cw/sw computations -> bit-identical values. */
+            __m256d c5, s5, c6, s6, c7, s7;
+            WPROD(c4, s4, c1, s1, c5, s5);
+            WPROD(c4, s4, c2, s2, c6, s6);
+            WPROD(c4, s4, c3, s3, c7, s7);
+            {
+                __m256d rh0 = _mm256_loadu_pd(p +  8), ih0 = _mm256_loadu_pd(p + 12);
+                __m256d rh1 = _mm256_loadu_pd(p + 24), ih1 = _mm256_loadu_pd(p + 28);
+                __m256d rh2 = _mm256_loadu_pd(p + 40), ih2 = _mm256_loadu_pd(p + 44);
+                __m256d rh3 = _mm256_loadu_pd(p + 56), ih3 = _mm256_loadu_pd(p + 60);
+                TR4(rh0, rh1, rh2, rh3, x4r, x5r, x6r, x7r);
+                TR4(ih0, ih1, ih2, ih3, x4i, x5i, x6i, x7i);
+            }
+            __m256d rr, ii;
+            SPLIT_CMUL(x4r, x4i, c4, s4, rr, ii); x4r = rr; x4i = ii;
+            SPLIT_CMUL(x5r, x5i, c5, s5, rr, ii); x5r = rr; x5i = ii;
+            SPLIT_CMUL(x6r, x6i, c6, s6, rr, ii); x6r = rr; x6i = ii;
+            SPLIT_CMUL(x7r, x7i, c7, s7, rr, ii); x7r = rr; x7i = ii;
+        }
+
+        /* -------- Phase C: BFLY8, outputs stored as soon as final -------- */
+        {
+            __m256d t0r = _mm256_add_pd(x0r, x4r), t0i = _mm256_add_pd(x0i, x4i);
+            __m256d t1r = _mm256_sub_pd(x0r, x4r), t1i = _mm256_sub_pd(x0i, x4i);
+            __m256d t2r = _mm256_add_pd(x2r, x6r), t2i = _mm256_add_pd(x2i, x6i);
+            __m256d t3r = _mm256_sub_pd(x2r, x6r), t3i = _mm256_sub_pd(x2i, x6i);
+            __m256d E0r = _mm256_add_pd(t0r, t2r), E0i = _mm256_add_pd(t0i, t2i);
+            __m256d E2r = _mm256_sub_pd(t0r, t2r), E2i = _mm256_sub_pd(t0i, t2i);
+            __m256d E1r = _mm256_add_pd(t1r, t3i), E1i = _mm256_sub_pd(t1i, t3r);
+            __m256d E3r = _mm256_sub_pd(t1r, t3i), E3i = _mm256_add_pd(t1i, t3r);
+            __m256d s0r = _mm256_add_pd(x1r, x5r), s0i = _mm256_add_pd(x1i, x5i);
+            __m256d s1r = _mm256_sub_pd(x1r, x5r), s1i = _mm256_sub_pd(x1i, x5i);
+            __m256d s2r = _mm256_add_pd(x3r, x7r), s2i = _mm256_add_pd(x3i, x7i);
+            __m256d s3r = _mm256_sub_pd(x3r, x7r), s3i = _mm256_sub_pd(x3i, x7i);
+            __m256d O0r = _mm256_add_pd(s0r, s2r), O0i = _mm256_add_pd(s0i, s2i);
+            __m256d O2r = _mm256_sub_pd(s0r, s2r), O2i = _mm256_sub_pd(s0i, s2i);
+            __m256d O1r = _mm256_add_pd(s1r, s3i), O1i = _mm256_sub_pd(s1i, s3r);
+            __m256d O3r = _mm256_sub_pd(s1r, s3i), O3i = _mm256_add_pd(s1i, s3r);
+            __m256d zlo, zhi;
+            /* legs 0 / 4: final now -> retire E0/O0 immediately */
+            {
+                __m256d o0r = _mm256_add_pd(E0r, O0r), o0i = _mm256_add_pd(E0i, O0i);
+                REINT(o0r, o0i, zlo, zhi);
+                _mm256_storeu_pd(q0 + 2*k,     zlo);
+                _mm256_storeu_pd(q0 + 2*k + 4, zhi);
+                __m256d o4r = _mm256_sub_pd(E0r, O0r), o4i = _mm256_sub_pd(E0i, O0i);
+                REINT(o4r, o4i, zlo, zhi);
+                _mm256_storeu_pd(q4 + 2*k,     zlo);
+                _mm256_storeu_pd(q4 + 2*k + 4, zhi);
+            }
+            /* legs 1 / 5: X1 sunk here (independent), then retire E1/X1 */
+            {
+                __m256d X1r = _mm256_add_pd(O1r, O1i), X1i = _mm256_sub_pd(O1i, O1r);
+                __m256d o1r = _mm256_fmadd_pd(C7, X1r, E1r),
+                        o1i = _mm256_fmadd_pd(C7, X1i, E1i);
+                REINT(o1r, o1i, zlo, zhi);
+                _mm256_storeu_pd(q1 + 2*k,     zlo);
+                _mm256_storeu_pd(q1 + 2*k + 4, zhi);
+                __m256d o5r = _mm256_fnmadd_pd(C7, X1r, E1r),
+                        o5i = _mm256_fnmadd_pd(C7, X1i, E1i);
+                REINT(o5r, o5i, zlo, zhi);
+                _mm256_storeu_pd(q5 + 2*k,     zlo);
+                _mm256_storeu_pd(q5 + 2*k + 4, zhi);
+            }
+            /* legs 2 / 6: retire E2/O2 */
+            {
+                __m256d o2r = _mm256_add_pd(E2r, O2i), o2i = _mm256_sub_pd(E2i, O2r);
+                REINT(o2r, o2i, zlo, zhi);
+                _mm256_storeu_pd(q2 + 2*k,     zlo);
+                _mm256_storeu_pd(q2 + 2*k + 4, zhi);
+                __m256d o6r = _mm256_sub_pd(E2r, O2i), o6i = _mm256_add_pd(E2i, O2r);
+                REINT(o6r, o6i, zlo, zhi);
+                _mm256_storeu_pd(q6 + 2*k,     zlo);
+                _mm256_storeu_pd(q6 + 2*k + 4, zhi);
+            }
+            /* legs 3 / 7: X3 sunk here (independent), then retire E3/X3 */
+            {
+                __m256d X3r = _mm256_sub_pd(O3i, O3r), X3n = _mm256_add_pd(O3r, O3i);
+                __m256d o3r = _mm256_fmadd_pd(C7, X3r, E3r),
+                        o3i = _mm256_fnmadd_pd(C7, X3n, E3i);
+                REINT(o3r, o3i, zlo, zhi);
+                _mm256_storeu_pd(q3 + 2*k,     zlo);
+                _mm256_storeu_pd(q3 + 2*k + 4, zhi);
+                __m256d o7r = _mm256_fnmadd_pd(C7, X3r, E3r),
+                        o7i = _mm256_fmadd_pd(C7, X3n, E3i);
+                REINT(o7r, o7i, zlo, zhi);
+                _mm256_storeu_pd(q7 + 2*k,     zlo);
+                _mm256_storeu_pd(q7 + 2*k + 4, zhi);
+            }
+        }
+    }
+}
+
+/* ================= ARM pfw (sterm_fwd_pfw, OK) ================= */
+/* ARM pfw — STORE-STREAM PREFETCH variant of radix8_z_sterm_fwd_avx2.
+ * Body is the baseline verbatim; only additions are PREFETCHW on all 8
+ * output-leg lines two iterations ahead (k+8 = next-but-one 64B line of
+ * each of the 8 RFO streams) plus one read prefetch on the input stream.
+ * Macros DEINT/REINT/SPLIT_CMUL/TR4/WPROD/SPLIT_BFLY8 are provided by the
+ * bench TU. Prefetching past the buffer end on the last two iterations is
+ * architecturally safe: prefetch never faults. */
+__attribute__((target("avx2,fma,prfchw")))
+void sterm_fwd_pfw(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        /* Write-intent prefetch: the 64B output line each leg will store two
+         * iterations from now (each iter stores exactly one line per leg). */
+        __builtin_prefetch((const void*)(zout + 2*((size_t)0*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)1*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)2*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)3*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)4*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)5*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)6*OLs + k + 8)), 1, 3);
+        __builtin_prefetch((const void*)(zout + 2*((size_t)7*OLs + k + 8)), 1, 3);
+        /* Read prefetch: input block two iterations ahead. */
+        __builtin_prefetch(zin + 16*(k+8), 0, 3);
+        __m256d xr[8], xi[8];
+        {
+            __m256d rl0 = _mm256_loadu_pd(zin + 16*(size_t)k);
+            __m256d il0 = _mm256_loadu_pd(zin + 16*(size_t)k + 4);
+            __m256d rh0 = _mm256_loadu_pd(zin + 16*(size_t)k + 8);
+            __m256d ih0 = _mm256_loadu_pd(zin + 16*(size_t)k + 12);
+            __m256d rl1 = _mm256_loadu_pd(zin + 16*((size_t)k+1));
+            __m256d il1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 4);
+            __m256d rh1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 8);
+            __m256d ih1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 12);
+            __m256d rl2 = _mm256_loadu_pd(zin + 16*((size_t)k+2));
+            __m256d il2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 4);
+            __m256d rh2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 8);
+            __m256d ih2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 12);
+            __m256d rl3 = _mm256_loadu_pd(zin + 16*((size_t)k+3));
+            __m256d il3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 4);
+            __m256d rh3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 8);
+            __m256d ih3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 12);
+            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);
+            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);
+            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);
+            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);
+        }
+        {
+            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);
+            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);
+            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;
+            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;
+            WPROD(c1, s1, c1, s1, c2, s2);
+            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;
+            WPROD(c2, s2, c1, s1, c3, s3);
+            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;
+            WPROD(c2, s2, c2, s2, c4, s4);
+            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;
+            WPROD(c4, s4, c1, s1, cw, sw);
+            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;
+            WPROD(c4, s4, c2, s2, cw, sw);
+            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;
+            WPROD(c4, s4, c3, s3, cw, sw);
+            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;
+        }
+        __m256d or_[8], oi_[8];
+        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],
+                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],
+                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],
+                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);
+        for (int l = 0; l < 8; l++) {
+            __m256d zlo, zhi;
+            REINT(or_[l], oi_[l], zlo, zhi);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);
+        }
+    }
+}
+
+/* ================= ARM uj2 (sterm_fwd_uj2, OK) ================= */
+/* ARM uj2 - 2-quad unroll-and-jam of the split-input radix-8 terminator.
+ * Two independent 4-column bodies per trip: A = cols k..k+3, B = cols k+4..k+7.
+ * Per-column FP operation order is exactly the baseline's (TR4 / WPROD /
+ * SPLIT_CMUL / SPLIT_BFLY8 / REINT, same operands, same association); only
+ * cross-column scheduling, scalarized staging and loop structure differ.
+ * Interleave: [loads A+B] [TR4 A] [TR4 B] [twiddle tree + CMULs alternated
+ * A/B op-by-op] [BFLY A] [stores A] [BFLY B] [stores B].
+ * Tail: baseline-shaped 4-column body for count % 8 == 4. */
+__attribute__((target("avx2,fma")))
+void sterm_fwd_uj2(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;
+    const size_t oL = 2*OLs;
+    size_t k = 0;
+    for (; k + 8 <= count; k += 8) {
+        const double *pA = zin + 16*k;
+        const double *pB = pA + 64;
+        double *q = zout + 2*k;
+        /* ---- phase 1: all 32 input loads up front (16 lines in flight) ---- */
+        __m256d rl0A = _mm256_loadu_pd(pA +  0), il0A = _mm256_loadu_pd(pA +  4);
+        __m256d rh0A = _mm256_loadu_pd(pA +  8), ih0A = _mm256_loadu_pd(pA + 12);
+        __m256d rl1A = _mm256_loadu_pd(pA + 16), il1A = _mm256_loadu_pd(pA + 20);
+        __m256d rh1A = _mm256_loadu_pd(pA + 24), ih1A = _mm256_loadu_pd(pA + 28);
+        __m256d rl2A = _mm256_loadu_pd(pA + 32), il2A = _mm256_loadu_pd(pA + 36);
+        __m256d rh2A = _mm256_loadu_pd(pA + 40), ih2A = _mm256_loadu_pd(pA + 44);
+        __m256d rl3A = _mm256_loadu_pd(pA + 48), il3A = _mm256_loadu_pd(pA + 52);
+        __m256d rh3A = _mm256_loadu_pd(pA + 56), ih3A = _mm256_loadu_pd(pA + 60);
+        __m256d rl0B = _mm256_loadu_pd(pB +  0), il0B = _mm256_loadu_pd(pB +  4);
+        __m256d rh0B = _mm256_loadu_pd(pB +  8), ih0B = _mm256_loadu_pd(pB + 12);
+        __m256d rl1B = _mm256_loadu_pd(pB + 16), il1B = _mm256_loadu_pd(pB + 20);
+        __m256d rh1B = _mm256_loadu_pd(pB + 24), ih1B = _mm256_loadu_pd(pB + 28);
+        __m256d rl2B = _mm256_loadu_pd(pB + 32), il2B = _mm256_loadu_pd(pB + 36);
+        __m256d rh2B = _mm256_loadu_pd(pB + 40), ih2B = _mm256_loadu_pd(pB + 44);
+        __m256d rl3B = _mm256_loadu_pd(pB + 48), il3B = _mm256_loadu_pd(pB + 52);
+        __m256d rh3B = _mm256_loadu_pd(pB + 56), ih3B = _mm256_loadu_pd(pB + 60);
+        /* ---- phase 2: transposes (port-1/5 shuffle work under load latency) ---- */
+        __m256d xr0A, xr1A, xr2A, xr3A, xr4A, xr5A, xr6A, xr7A;
+        __m256d xi0A, xi1A, xi2A, xi3A, xi4A, xi5A, xi6A, xi7A;
+        TR4(rl0A, rl1A, rl2A, rl3A, xr0A, xr1A, xr2A, xr3A);
+        TR4(il0A, il1A, il2A, il3A, xi0A, xi1A, xi2A, xi3A);
+        TR4(rh0A, rh1A, rh2A, rh3A, xr4A, xr5A, xr6A, xr7A);
+        TR4(ih0A, ih1A, ih2A, ih3A, xi4A, xi5A, xi6A, xi7A);
+        __m256d xr0B, xr1B, xr2B, xr3B, xr4B, xr5B, xr6B, xr7B;
+        __m256d xi0B, xi1B, xi2B, xi3B, xi4B, xi5B, xi6B, xi7B;
+        TR4(rl0B, rl1B, rl2B, rl3B, xr0B, xr1B, xr2B, xr3B);
+        TR4(il0B, il1B, il2B, il3B, xi0B, xi1B, xi2B, xi3B);
+        TR4(rh0B, rh1B, rh2B, rh3B, xr4B, xr5B, xr6B, xr7B);
+        TR4(ih0B, ih1B, ih2B, ih3B, xi4B, xi5B, xi6B, xi7B);
+        /* ---- phase 3: serial squaring tree + CMULs, A/B alternated op-by-op.
+           Two independent WPROD latency chains keep FMA ports 0/1 saturated.
+           Per-body op sequence identical to baseline:
+           CMUL1, W2, CMUL2, W3, CMUL3, W4, CMUL4, W5, CMUL5, W6, CMUL6, W7, CMUL7. */
+        __m256d c1A = _mm256_loadu_pd(tw_re + 2*k);
+        __m256d s1A = _mm256_loadu_pd(tw_re + 2*k +  4);
+        __m256d c1B = _mm256_loadu_pd(tw_re + 2*k +  8);
+        __m256d s1B = _mm256_loadu_pd(tw_re + 2*k + 12);
+        __m256d yr1A, yi1A, yr2A, yi2A, yr3A, yi3A, yr4A, yi4A,
+                yr5A, yi5A, yr6A, yi6A, yr7A, yi7A;
+        __m256d yr1B, yi1B, yr2B, yi2B, yr3B, yi3B, yr4B, yi4B,
+                yr5B, yi5B, yr6B, yi6B, yr7B, yi7B;
+        __m256d c2A, s2A, c3A, s3A, c4A, s4A, c5A, s5A, c6A, s6A, c7A, s7A;
+        __m256d c2B, s2B, c3B, s3B, c4B, s4B, c5B, s5B, c6B, s6B, c7B, s7B;
+        SPLIT_CMUL(xr1A, xi1A, c1A, s1A, yr1A, yi1A);
+        SPLIT_CMUL(xr1B, xi1B, c1B, s1B, yr1B, yi1B);
+        WPROD(c1A, s1A, c1A, s1A, c2A, s2A);
+        WPROD(c1B, s1B, c1B, s1B, c2B, s2B);
+        SPLIT_CMUL(xr2A, xi2A, c2A, s2A, yr2A, yi2A);
+        SPLIT_CMUL(xr2B, xi2B, c2B, s2B, yr2B, yi2B);
+        WPROD(c2A, s2A, c1A, s1A, c3A, s3A);
+        WPROD(c2B, s2B, c1B, s1B, c3B, s3B);
+        SPLIT_CMUL(xr3A, xi3A, c3A, s3A, yr3A, yi3A);
+        SPLIT_CMUL(xr3B, xi3B, c3B, s3B, yr3B, yi3B);
+        WPROD(c2A, s2A, c2A, s2A, c4A, s4A);
+        WPROD(c2B, s2B, c2B, s2B, c4B, s4B);
+        SPLIT_CMUL(xr4A, xi4A, c4A, s4A, yr4A, yi4A);
+        SPLIT_CMUL(xr4B, xi4B, c4B, s4B, yr4B, yi4B);
+        WPROD(c4A, s4A, c1A, s1A, c5A, s5A);
+        WPROD(c4B, s4B, c1B, s1B, c5B, s5B);
+        SPLIT_CMUL(xr5A, xi5A, c5A, s5A, yr5A, yi5A);
+        SPLIT_CMUL(xr5B, xi5B, c5B, s5B, yr5B, yi5B);
+        WPROD(c4A, s4A, c2A, s2A, c6A, s6A);
+        WPROD(c4B, s4B, c2B, s2B, c6B, s6B);
+        SPLIT_CMUL(xr6A, xi6A, c6A, s6A, yr6A, yi6A);
+        SPLIT_CMUL(xr6B, xi6B, c6B, s6B, yr6B, yi6B);
+        WPROD(c4A, s4A, c3A, s3A, c7A, s7A);
+        WPROD(c4B, s4B, c3B, s3B, c7B, s7B);
+        SPLIT_CMUL(xr7A, xi7A, c7A, s7A, yr7A, yi7A);
+        SPLIT_CMUL(xr7B, xi7B, c7B, s7B, yr7B, yi7B);
+        /* ---- phase 4: BFLY A + stores A first, so A's 16 outputs die before
+           B's butterfly peaks; B's FMA work overlaps A's store drain ---- */
+        __m256d o0rA,o0iA,o1rA,o1iA,o2rA,o2iA,o3rA,o3iA,
+                o4rA,o4iA,o5rA,o5iA,o6rA,o6iA,o7rA,o7iA;
+        SPLIT_BFLY8(xr0A,xi0A, yr1A,yi1A, yr2A,yi2A, yr3A,yi3A,
+                    yr4A,yi4A, yr5A,yi5A, yr6A,yi6A, yr7A,yi7A,
+                    o0rA,o0iA, o1rA,o1iA, o2rA,o2iA, o3rA,o3iA,
+                    o4rA,o4iA, o5rA,o5iA, o6rA,o6iA, o7rA,o7iA);
+        { __m256d zlo, zhi; REINT(o0rA,o0iA, zlo, zhi);
+          _mm256_storeu_pd(q         , zlo); _mm256_storeu_pd(q          + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o1rA,o1iA, zlo, zhi);
+          _mm256_storeu_pd(q +   oL  , zlo); _mm256_storeu_pd(q +   oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o2rA,o2iA, zlo, zhi);
+          _mm256_storeu_pd(q + 2*oL  , zlo); _mm256_storeu_pd(q + 2*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o3rA,o3iA, zlo, zhi);
+          _mm256_storeu_pd(q + 3*oL  , zlo); _mm256_storeu_pd(q + 3*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o4rA,o4iA, zlo, zhi);
+          _mm256_storeu_pd(q + 4*oL  , zlo); _mm256_storeu_pd(q + 4*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o5rA,o5iA, zlo, zhi);
+          _mm256_storeu_pd(q + 5*oL  , zlo); _mm256_storeu_pd(q + 5*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o6rA,o6iA, zlo, zhi);
+          _mm256_storeu_pd(q + 6*oL  , zlo); _mm256_storeu_pd(q + 6*oL   + 4, zhi); }
+        { __m256d zlo, zhi; REINT(o7rA,o7iA, zlo, zhi);
+          _mm256_storeu_pd(q + 7*oL  , zlo); _mm256_storeu_pd(q + 7*oL   + 4, zhi); }
+        /* ---- phase 5: BFLY B + stores B (adjacent 64B lines to A's) ---- */
+        __m256d o0rB,o0iB,o1rB,o1iB,o2rB,o2iB,o3rB,o3iB,
+                o4rB,o4iB,o5rB,o5iB,o6rB,o6iB,o7rB,o7iB;
+        SPLIT_BFLY8(xr0B,xi0B, yr1B,yi1B, yr2B,yi2B, yr3B,yi3B,
+                    yr4B,yi4B, yr5B,yi5B, yr6B,yi6B, yr7B,yi7B,
+                    o0rB,o0iB, o1rB,o1iB, o2rB,o2iB, o3rB,o3iB,
+                    o4rB,o4iB, o5rB,o5iB, o6rB,o6iB, o7rB,o7iB);
+        { __m256d zlo, zhi; REINT(o0rB,o0iB, zlo, zhi);
+          _mm256_storeu_pd(q          + 8, zlo); _mm256_storeu_pd(q          + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o1rB,o1iB, zlo, zhi);
+          _mm256_storeu_pd(q +   oL   + 8, zlo); _mm256_storeu_pd(q +   oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o2rB,o2iB, zlo, zhi);
+          _mm256_storeu_pd(q + 2*oL   + 8, zlo); _mm256_storeu_pd(q + 2*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o3rB,o3iB, zlo, zhi);
+          _mm256_storeu_pd(q + 3*oL   + 8, zlo); _mm256_storeu_pd(q + 3*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o4rB,o4iB, zlo, zhi);
+          _mm256_storeu_pd(q + 4*oL   + 8, zlo); _mm256_storeu_pd(q + 4*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o5rB,o5iB, zlo, zhi);
+          _mm256_storeu_pd(q + 5*oL   + 8, zlo); _mm256_storeu_pd(q + 5*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o6rB,o6iB, zlo, zhi);
+          _mm256_storeu_pd(q + 6*oL   + 8, zlo); _mm256_storeu_pd(q + 6*oL   + 12, zhi); }
+        { __m256d zlo, zhi; REINT(o7rB,o7iB, zlo, zhi);
+          _mm256_storeu_pd(q + 7*oL   + 8, zlo); _mm256_storeu_pd(q + 7*oL   + 12, zhi); }
+    }
+    /* ---- baseline-shaped 4-column tail (count % 8 == 4) ---- */
+    for (; k + 4 <= count; k += 4) {
+        __m256d xr[8], xi[8];
+        {
+            __m256d rl0 = _mm256_loadu_pd(zin + 16*k);
+            __m256d il0 = _mm256_loadu_pd(zin + 16*k + 4);
+            __m256d rh0 = _mm256_loadu_pd(zin + 16*k + 8);
+            __m256d ih0 = _mm256_loadu_pd(zin + 16*k + 12);
+            __m256d rl1 = _mm256_loadu_pd(zin + 16*(k+1));
+            __m256d il1 = _mm256_loadu_pd(zin + 16*(k+1) + 4);
+            __m256d rh1 = _mm256_loadu_pd(zin + 16*(k+1) + 8);
+            __m256d ih1 = _mm256_loadu_pd(zin + 16*(k+1) + 12);
+            __m256d rl2 = _mm256_loadu_pd(zin + 16*(k+2));
+            __m256d il2 = _mm256_loadu_pd(zin + 16*(k+2) + 4);
+            __m256d rh2 = _mm256_loadu_pd(zin + 16*(k+2) + 8);
+            __m256d ih2 = _mm256_loadu_pd(zin + 16*(k+2) + 12);
+            __m256d rl3 = _mm256_loadu_pd(zin + 16*(k+3));
+            __m256d il3 = _mm256_loadu_pd(zin + 16*(k+3) + 4);
+            __m256d rh3 = _mm256_loadu_pd(zin + 16*(k+3) + 8);
+            __m256d ih3 = _mm256_loadu_pd(zin + 16*(k+3) + 12);
+            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);
+            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);
+            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);
+            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);
+        }
+        {
+            __m256d c1 = _mm256_loadu_pd(tw_re + 2*k);
+            __m256d s1 = _mm256_loadu_pd(tw_re + 2*k + 4);
+            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;
+            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;
+            WPROD(c1, s1, c1, s1, c2, s2);
+            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;
+            WPROD(c2, s2, c1, s1, c3, s3);
+            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;
+            WPROD(c2, s2, c2, s2, c4, s4);
+            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;
+            WPROD(c4, s4, c1, s1, cw, sw);
+            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;
+            WPROD(c4, s4, c2, s2, cw, sw);
+            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;
+            WPROD(c4, s4, c3, s3, cw, sw);
+            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;
+        }
+        __m256d or_[8], oi_[8];
+        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],
+                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],
+                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],
+                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);
+        for (int l = 0; l < 8; l++) {
+            __m256d zlo, zhi;
+            REINT(or_[l], oi_[l], zlo, zhi);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);
+            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);
+        }
+    }
+}
+
+/* ================= ARM nt (sterm_fwd_nt, OK) ================= */
+__attribute__((target("avx2,fma")))
+void sterm_fwd_nt(
+    const double * __restrict__ zin,
+    const double * __restrict__ zin_unused,
+    double       * __restrict__ zout,
+    double       * __restrict__ zout_unused,
+    const double * tw_re, const double * tw_im,
+    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
+{
+    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;
+    for (size_t k = 0; k + 4 <= count; k += 4) {
+        __m256d xr[8], xi[8];
+        {
+            __m256d rl0 = _mm256_loadu_pd(zin + 16*(size_t)k);
+            __m256d il0 = _mm256_loadu_pd(zin + 16*(size_t)k + 4);
+            __m256d rh0 = _mm256_loadu_pd(zin + 16*(size_t)k + 8);
+            __m256d ih0 = _mm256_loadu_pd(zin + 16*(size_t)k + 12);
+            __m256d rl1 = _mm256_loadu_pd(zin + 16*((size_t)k+1));
+            __m256d il1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 4);
+            __m256d rh1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 8);
+            __m256d ih1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 12);
+            __m256d rl2 = _mm256_loadu_pd(zin + 16*((size_t)k+2));
+            __m256d il2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 4);
+            __m256d rh2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 8);
+            __m256d ih2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 12);
+            __m256d rl3 = _mm256_loadu_pd(zin + 16*((size_t)k+3));
+            __m256d il3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 4);
+            __m256d rh3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 8);
+            __m256d ih3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 12);
+            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);
+            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);
+            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);
+            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);
+        }
+        {
+            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);
+            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);
+            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;
+            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;
+            WPROD(c1, s1, c1, s1, c2, s2);
+            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;
+            WPROD(c2, s2, c1, s1, c3, s3);
+            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;
+            WPROD(c2, s2, c2, s2, c4, s4);
+            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;
+            WPROD(c4, s4, c1, s1, cw, sw);
+            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;
+            WPROD(c4, s4, c2, s2, cw, sw);
+            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;
+            WPROD(c4, s4, c3, s3, cw, sw);
+            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;
+        }
+        __m256d or_[8], oi_[8];
+        SPLIT_BFLY8(xr[0],xi[0],xr[1],xi[1],xr[2],xi[2],xr[3],xi[3],
+                    xr[4],xi[4],xr[5],xi[5],xr[6],xi[6],xr[7],xi[7],
+                    or_[0],oi_[0],or_[1],oi_[1],or_[2],oi_[2],or_[3],oi_[3],
+                    or_[4],oi_[4],or_[5],oi_[5],or_[6],oi_[6],or_[7],oi_[7]);
+        for (int l = 0; l < 8; l++) {
+            __m256d zlo, zhi;
+            REINT(or_[l], oi_[l], zlo, zhi);
+            _mm256_stream_pd(zout + 2*((size_t)l*OLs + k), zlo);
+            _mm256_stream_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);
+        }
+    }
+    _mm_sfence();
+}
+
+
 /* ===================== WORKFLOW ARMS PASTED ABOVE ===================== */
 
 /* ---- cascade helpers: mirror vfft_zsplit_execute_fwd with swappable term */
@@ -222,7 +898,11 @@ int main(void)
     arm_t arms[] = {
         { "emit",  radix8_z_sterm_fwd_avx2 },
         { "copy",  sterm_fwd_copy },
-        /* ARM_TABLE_PLACEHOLDER */
+        { "rot",   (zfn)sterm_fwd_rot },
+        { "phase", (zfn)sterm_fwd_phase },
+        { "pfw",   (zfn)sterm_fwd_pfw },
+        { "uj2",   (zfn)sterm_fwd_uj2 },
+        { "nt",    (zfn)sterm_fwd_nt },
     };
     const int NA = (int)(sizeof(arms) / sizeof(arms[0]));
     const int cells[] = { 2048, 4096, 8192, 16384 };
