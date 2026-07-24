@@ -386,8 +386,8 @@ let emit_z_blocked2_body (buf : Buffer.t) ~(ind : string) ~(twiddled : bool)
  *   cursor, (R-1)*8 doubles per column-pair. Passed via the tw_re slot. *)
 let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     ~(strided : bool) ~(blocked2 : bool) ~(blocked : bool) ~(const_tw : bool)
-    ~(pow_tw : bool) ~(tile_ld : bool) ~(vec_width : int) ~(radix : int)
-    ~(twiddled : bool) : string =
+    ~(pow_tw : bool) ~(pow_tree : bool) ~(tile_ld : bool) ~(vec_width : int)
+    ~(radix : int) ~(twiddled : bool) : string =
   if vec_width <> 4 then failwith "codelet_zil: avx2 only (vec_width 4)";
   if not (List.mem radix [ 4; 8; 16; 32; 64 ]) then
     failwith "codelet_zil: radix must be one of 4/8/16/32/64";
@@ -405,6 +405,8 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     failwith "codelet_zil: const_tw (t2c) is a plain-t2 variant";
   if pow_tw && (not twiddled || not strided || post_tw || blocked || blocked2) then
     failwith "codelet_zil: pow_tw (t2sp) is a strided-t2 (terminator) variant";
+  if pow_tree && (not pow_tw || radix <> 8) then
+    failwith "codelet_zil: pow_tree (t2sq) refines pow_tw, radix 8 only";
   if tile_ld && (not strided || radix mod 2 <> 0 || blocked || blocked2) then
     failwith "codelet_zil: tile_ld (t2st/t2spt) is a strided even-radix variant";
   let kind =
@@ -413,7 +415,7 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
     ^ (if blocked2 then "b2" else if blocked then "b" else "")
     ^ (if strided then "s" else "")
     ^ (if strided_st then "s" else "")
-    ^ (if pow_tw then "p" else "")
+    ^ (if pow_tree then "q" else if pow_tw then "p" else "")
     ^ (if tile_ld then "t" else "")
     ^ if trans_st then "t" else ""
   in
@@ -491,11 +493,14 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
          (Printf.sprintf
             "        const double *twp = tw_re + (k >> 1) * (size_t)%d;\n"
             (if pow_tw then 8 else 8 * (radix - 1))));
-  if pow_tw then
+  if pow_tw then begin
     Buffer.add_string buf
       "        __m256d _wc1 = _mm256_loadu_pd(twp);     /* w^1 cos record */\n\
-      \        __m256d _ws1 = _mm256_loadu_pd(twp + 4); /* w^1 sin record (sign-folded) */\n\
-      \        __m256d _wc = _wc1, _ws = _ws1;          /* running w^l */\n";
+      \        __m256d _ws1 = _mm256_loadu_pd(twp + 4); /* w^1 sin record (sign-folded) */\n";
+    if not pow_tree then
+      Buffer.add_string buf
+        "        __m256d _wc = _wc1, _ws = _ws1;          /* running w^l */\n"
+  end;
   if blocked || blocked2 then
     (* blocked bodies carry their own loads (per sub-DFT) and stores (combine) *)
     Buffer.add_buffer buf body
@@ -525,6 +530,23 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
         if not pre_tw then
           Buffer.add_string buf
             (Printf.sprintf "        __m256d %s = %s;\n" fin raw)
+        else if pow_tree then begin
+          (* squaring tree: w2=w1*w1, w3=w2*w1, w4=w2*w2, w5=w4*w1, w6=w4*w2,
+             w7=w4*w3 — critical path 3 links (vs 6 sequential); the VTW2
+             sign-folded form is closed under ARBITRARY products *)
+          (if pt >= 2 then
+             let a, b = [| 0;0;1;2;2;4;4;4 |].(pt), [| 0;0;1;1;2;1;2;3 |].(pt) in
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, _mm256_mul_pd(_wc%d, _wc%d));\n\
+                  \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, _mm256_mul_pd(_ws%d, _wc%d));\n"
+                  pt a b a b pt a b a b));
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_wc%d, %s,\n\
+               \            _mm256_mul_pd(_ws%d, _mm256_permute_pd(%s, 0x5)));\n"
+               fin pt raw pt raw)
+        end
         else if pow_tw then begin
           if pt >= 2 then
             Buffer.add_string buf
@@ -562,7 +584,22 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
               "        __m256d %s = _mm256_loadu_pd(zin + 2*((size_t)%d*Ls + k));\n"
               dst pt));
       if pre_tw then
-        if pow_tw then begin
+        if pow_tree then begin
+          (* squaring tree (see tile_ld branch): critical path 3 links *)
+          (if pt >= 2 then
+             let a, b = [| 0;0;1;2;2;4;4;4 |].(pt), [| 0;0;1;1;2;1;2;3 |].(pt) in
+             Buffer.add_string buf
+               (Printf.sprintf
+                  "        __m256d _wc%d = _mm256_fnmadd_pd(_ws%d, _ws%d, _mm256_mul_pd(_wc%d, _wc%d));\n\
+                  \        __m256d _ws%d = _mm256_fmadd_pd(_wc%d, _ws%d, _mm256_mul_pd(_ws%d, _wc%d));\n"
+                  pt a b a b pt a b a b));
+          Buffer.add_string buf
+            (Printf.sprintf
+               "        __m256d %s = _mm256_fmadd_pd(_wc%d, %s,\n\
+               \            _mm256_mul_pd(_ws%d, _mm256_permute_pd(%s, 0x5)));\n"
+               fin pt raw pt raw)
+        end
+        else if pow_tw then begin
           (* t2sp: advance the running twiddle to w^l (VTW2 sign-folded form is
              closed under elementwise cmul: c'=c*c1-s*s1, s'=s*c1+c*s1), then
              BYTW2-apply from registers — 64B/pair streamed instead of (R-1)*64B *)
@@ -638,14 +675,15 @@ let emit_z_kernel ~(trans_st : bool) ~(post_tw : bool) ~(strided_st : bool)
 let emit_z_n1 ?(strided = false) ?(trans_st = false) ~blocked2 ~blocked
     ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st ~post_tw:false ~strided_st:false ~strided ~blocked2
-    ~blocked ~const_tw:false ~pow_tw:false ~tile_ld:false ~vec_width ~radix
-    ~twiddled:false
+    ~blocked ~const_tw:false ~pow_tw:false ~pow_tree:false ~tile_ld:false
+    ~vec_width ~radix ~twiddled:false
 
 let emit_z_t2 ?(strided = false) ?(strided_st = false) ?(post_tw = false)
-    ?(const_tw = false) ?(pow_tw = false) ?(tile_ld = false) ~blocked2 ~blocked
-    ~vec_width ~radix () : string =
+    ?(const_tw = false) ?(pow_tw = false) ?(pow_tree = false)
+    ?(tile_ld = false) ~blocked2 ~blocked ~vec_width ~radix () : string =
   emit_z_kernel ~trans_st:false ~post_tw ~strided_st ~strided ~blocked2
-    ~blocked ~const_tw ~pow_tw ~tile_ld ~vec_width ~radix ~twiddled:true
+    ~blocked ~const_tw ~pow_tw ~pow_tree ~tile_ld ~vec_width ~radix
+    ~twiddled:true
 
 (* ══════════════════════════════════════════════════════════════════════
    BLOCK-SPLIT INTERIOR family (z_cascade_plan §4.99/§4.996) — PROMOTED from
@@ -692,6 +730,20 @@ let z_split_macros = {|
     o1r=_mm256_add_pd(t1r,t3i); o1i=_mm256_sub_pd(t1i,t3r);           \
     o3r=_mm256_sub_pd(t1r,t3i); o3i=_mm256_add_pd(t1i,t3r);           \
 } while (0)
+#define TR4(a0,a1,a2,a3, t0,t1,t2,t3) do {                            \
+    __m256d _u0 = _mm256_unpacklo_pd(a0, a1);                         \
+    __m256d _u1 = _mm256_unpackhi_pd(a0, a1);                         \
+    __m256d _u2 = _mm256_unpacklo_pd(a2, a3);                         \
+    __m256d _u3 = _mm256_unpackhi_pd(a2, a3);                         \
+    t0 = _mm256_permute2f128_pd(_u0, _u2, 0x20);                      \
+    t1 = _mm256_permute2f128_pd(_u1, _u3, 0x20);                      \
+    t2 = _mm256_permute2f128_pd(_u0, _u2, 0x31);                      \
+    t3 = _mm256_permute2f128_pd(_u1, _u3, 0x31);                      \
+} while (0)
+#define WPROD(cA,sA, cB,sB, cP,sP) do {                               \
+    cP = _mm256_fnmadd_pd(sA, sB, _mm256_mul_pd(cA, cB));             \
+    sP = _mm256_fmadd_pd(cA, sB, _mm256_mul_pd(sA, cB));              \
+} while (0)
 #define SPLIT_BFLY8(x0r,x0i,x1r,x1i,x2r,x2i,x3r,x3i,x4r,x4i,x5r,x5i,x6r,x6i,x7r,x7i, \
                     o0r,o0i,o1r,o1i,o2r,o2i,o3r,o3i,o4r,o4i,o5r,o5i,o6r,o6i,o7r,o7i) do { \
     const __m256d _C = _mm256_set1_pd(0.70710678118654752440);        \
@@ -737,10 +789,93 @@ let z_split_bfly_call radix =
 let emit_z_split ~(kind : string) ~(radix : int) () : string =
   if not (List.mem radix [ 4; 8 ]) then
     failwith "codelet_zil: split family covers radix 4/8 (r16 split = 32 live planes, spills)";
-  if not (List.mem kind [ "s0s"; "ms"; "msz" ]) then
-    failwith "codelet_zil: split kind must be s0s|ms|msz";
+  if not (List.mem kind [ "s0s"; "ms"; "msz"; "sterm" ]) then
+    failwith "codelet_zil: split kind must be s0s|ms|msz|sterm";
+  if kind = "sterm" && radix <> 8 then
+    failwith "codelet_zil: sterm (split-input terminator) is radix 8 only";
   let r = radix in
   let fname = Printf.sprintf "radix%d_z_%s_fwd_avx2" r kind in
+  if kind = "sterm" then
+    (* split-input TERMINATOR (measured winner, terminator race 2026-07-24:
+       +4-7% over t2sp/t2spt at every cell): reads the block-split plane
+       directly (ALL mids stay plain ms — no msz pass), 4 columns/iteration,
+       4x4 register transposes on load, shuffle-free split butterfly +
+       twiddles, PACKED per-column w^1 table (16 B/col, half of w^1-VTW2),
+       squaring-tree powers, re-interleave fused in the stores.
+       ABI mapping: zin = block-split plane, zout = z out (digit-reversed
+       comb), tw_re = packed table ([c x4][s x4] per 4 cols at tw_re + 2k),
+       OLs = N/R, count = N/R. Ls/Gs/OGs unused. *)
+    Printf.sprintf
+      "/* Auto-generated by vfft_v2 — BLOCK-SPLIT interior family (codelet_zil.ml;\n\
+      \ * z_cascade_plan §4.99/§4.998). sterm: SPLIT-INPUT terminator, 4 cols/iter,\n\
+      \ * packed per-column w^1 twiddles (16 B/col), shuffle-free split math,\n\
+      \ * re-interleave fused in stores. CONTRACT: count %%%% 4 == 0; mids = ms only.\n\
+      \ * tw_re layout: per 4 columns at tw_re + 2k: [c(k..k+3)][s(k..k+3)]. */\n\
+       #include <immintrin.h>\n\
+       #include <stddef.h>\n%s\n\
+       __attribute__((target(\"avx2,fma\")))\n\
+       void %s(\n\
+      \    const double * __restrict__ zin,\n\
+      \    const double * __restrict__ zin_unused,\n\
+      \    double       * __restrict__ zout,\n\
+      \    double       * __restrict__ zout_unused,\n\
+      \    const double * tw_re, const double * tw_im,\n\
+      \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
+       {\n\
+      \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Ls; (void)Gs; (void)OGs;\n\
+      \    for (size_t k = 0; k + 4 <= count; k += 4) {\n\
+      \        __m256d xr[8], xi[8];\n\
+      \        {\n\
+      \            __m256d rl0 = _mm256_loadu_pd(zin + 16*(size_t)k);\n\
+      \            __m256d il0 = _mm256_loadu_pd(zin + 16*(size_t)k + 4);\n\
+      \            __m256d rh0 = _mm256_loadu_pd(zin + 16*(size_t)k + 8);\n\
+      \            __m256d ih0 = _mm256_loadu_pd(zin + 16*(size_t)k + 12);\n\
+      \            __m256d rl1 = _mm256_loadu_pd(zin + 16*((size_t)k+1));\n\
+      \            __m256d il1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 4);\n\
+      \            __m256d rh1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 8);\n\
+      \            __m256d ih1 = _mm256_loadu_pd(zin + 16*((size_t)k+1) + 12);\n\
+      \            __m256d rl2 = _mm256_loadu_pd(zin + 16*((size_t)k+2));\n\
+      \            __m256d il2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 4);\n\
+      \            __m256d rh2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 8);\n\
+      \            __m256d ih2 = _mm256_loadu_pd(zin + 16*((size_t)k+2) + 12);\n\
+      \            __m256d rl3 = _mm256_loadu_pd(zin + 16*((size_t)k+3));\n\
+      \            __m256d il3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 4);\n\
+      \            __m256d rh3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 8);\n\
+      \            __m256d ih3 = _mm256_loadu_pd(zin + 16*((size_t)k+3) + 12);\n\
+      \            TR4(rl0, rl1, rl2, rl3, xr[0], xr[1], xr[2], xr[3]);\n\
+      \            TR4(il0, il1, il2, il3, xi[0], xi[1], xi[2], xi[3]);\n\
+      \            TR4(rh0, rh1, rh2, rh3, xr[4], xr[5], xr[6], xr[7]);\n\
+      \            TR4(ih0, ih1, ih2, ih3, xi[4], xi[5], xi[6], xi[7]);\n\
+      \        }\n\
+      \        {\n\
+      \            __m256d c1 = _mm256_loadu_pd(tw_re + 2*(size_t)k);\n\
+      \            __m256d s1 = _mm256_loadu_pd(tw_re + 2*(size_t)k + 4);\n\
+      \            __m256d c2, s2, c3, s3, c4, s4, cw, sw, rr, ii;\n\
+      \            SPLIT_CMUL(xr[1], xi[1], c1, s1, rr, ii); xr[1] = rr; xi[1] = ii;\n\
+      \            WPROD(c1, s1, c1, s1, c2, s2);\n\
+      \            SPLIT_CMUL(xr[2], xi[2], c2, s2, rr, ii); xr[2] = rr; xi[2] = ii;\n\
+      \            WPROD(c2, s2, c1, s1, c3, s3);\n\
+      \            SPLIT_CMUL(xr[3], xi[3], c3, s3, rr, ii); xr[3] = rr; xi[3] = ii;\n\
+      \            WPROD(c2, s2, c2, s2, c4, s4);\n\
+      \            SPLIT_CMUL(xr[4], xi[4], c4, s4, rr, ii); xr[4] = rr; xi[4] = ii;\n\
+      \            WPROD(c4, s4, c1, s1, cw, sw);\n\
+      \            SPLIT_CMUL(xr[5], xi[5], cw, sw, rr, ii); xr[5] = rr; xi[5] = ii;\n\
+      \            WPROD(c4, s4, c2, s2, cw, sw);\n\
+      \            SPLIT_CMUL(xr[6], xi[6], cw, sw, rr, ii); xr[6] = rr; xi[6] = ii;\n\
+      \            WPROD(c4, s4, c3, s3, cw, sw);\n\
+      \            SPLIT_CMUL(xr[7], xi[7], cw, sw, rr, ii); xr[7] = rr; xi[7] = ii;\n\
+      \        }\n\
+      \        __m256d or_[8], oi_[8];\n%s\
+      \        for (int l = 0; l < 8; l++) {\n\
+      \            __m256d zlo, zhi;\n\
+      \            REINT(or_[l], oi_[l], zlo, zhi);\n\
+      \            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k), zlo);\n\
+      \            _mm256_storeu_pd(zout + 2*((size_t)l*OLs + k) + 4, zhi);\n\
+      \        }\n\
+      \    }\n\
+       }\n"
+      z_split_macros fname (z_split_bfly_call 8)
+  else
   let buf = Buffer.create 16384 in
   Buffer.add_string buf
     (Printf.sprintf

@@ -148,6 +148,7 @@ let run (argv : string array) : unit =
   let z_const_tw = ref false in
   let z_pow_tw = ref false in
   let z_tile_ld = ref false in
+  let z_pow_tree = ref false in
   let z_split_kind = ref "" in   (* "s0s"|"ms"|"msz" -> block-split family *)
   let z_strided_st = ref false in
   let z_post_tw = ref false in
@@ -261,9 +262,16 @@ let run (argv : string array) : unit =
      else if arg = "--z-t2spt" then
        (z_native := true; z_t2 := true; z_strided := true; z_pow_tw := true;
         z_tile_ld := true)
+     else if arg = "--z-t2sq" then
+       (z_native := true; z_t2 := true; z_strided := true; z_pow_tw := true;
+        z_pow_tree := true)
+     else if arg = "--z-t2sqt" then
+       (z_native := true; z_t2 := true; z_strided := true; z_pow_tw := true;
+        z_pow_tree := true; z_tile_ld := true)
      else if arg = "--z-s0s" then (z_native := true; z_split_kind := "s0s")
      else if arg = "--z-ms" then (z_native := true; z_split_kind := "ms")
      else if arg = "--z-msz" then (z_native := true; z_split_kind := "msz")
+     else if arg = "--z-sterm" then (z_native := true; z_split_kind := "sterm")
      else if arg = "--z-t2ss" then
        (z_native := true; z_t2 := true; z_strided := true; z_strided_st := true)
      else if arg = "--z-t2d" then (z_native := true; z_t2 := true; z_post_tw := true)
@@ -1253,8 +1261,8 @@ let run (argv : string array) : unit =
          else if !z_t2 then
            Codelet_zil.emit_z_t2 ~strided:!z_strided ~strided_st:!z_strided_st
              ~post_tw:!z_post_tw ~const_tw:!z_const_tw ~pow_tw:!z_pow_tw
-             ~tile_ld:!z_tile_ld ~blocked2:!z_blocked2 ~blocked:!z_blocked
-             ~vec_width:isa.Isa.vec_width ~radix:n ()
+             ~pow_tree:!z_pow_tree ~tile_ld:!z_tile_ld ~blocked2:!z_blocked2
+             ~blocked:!z_blocked ~vec_width:isa.Isa.vec_width ~radix:n ()
          else
            Codelet_zil.emit_z_n1 ~strided:!z_strided ~trans_st:!z_trans_st
              ~blocked2:!z_blocked2 ~blocked:!z_blocked
