@@ -338,6 +338,57 @@ promote hand kernels to emitter kinds (codelet_zil.ml split-mid backend — the 
 plane-pair macros, mechanical); natural-order terminator; bwd twins. The hand kernels live in
 the spike only — emitter promotion is the production path.
 
+## 4.995. JOINT chain×interior PLANNER RE-RUN (2026-07-24) — split wins every cell; chains shifted again
+
+Ported the §4.99 split-interior kernels into zil_chain_dp.c as variants v8 (SPL/t2sp) and v9
+(SPL/t2spt); split arms eligible when nf≥3, R0∈{4,8}, mids∈{4,8}. Both fields run per cell
+(minpart=3 all-10-variant attribution + minpart=2 LEAN {t2c/t2sp, split} big field).
+**1256/1256 gates PASS.** Per-cell champions:
+
+| cell | winner | ns | vs MKL | prior |
+|---|---|--:|--:|--:|
+| 2048  | **4.8.8.8 SPL/t2spt** | 2609 | **0.83×** | 0.76× (16.16.8 t2c — chain CHANGED) |
+| 4096  | 4.4.4.8.8 ≈ 8.8.8.8 SPL | 5923 | 0.73× | = spike |
+| 8192  | **4.4.8.8.8 SPL/t2sp** | 12477 | **0.75×** | 0.65× (4.16.16.8 t2c — chain CHANGED, cell unlocked) |
+| 16384 | 4.8.8.8.8 SPL | 25821 | 0.80× (spike focused: 0.85×) | = spike chain |
+
+Findings: (1) **split-interior wins EVERY cell** — 16384 attribution: SPL 25.8µs vs best z-arm
+29.1µs (−11%); (2) **eligibility reshapes the chain space**: split mids exist only for r4/r8,
+so the planner abandoned r16/r32 interiors — 8192's 0.65→0.75 jump came from the minpart=2
+field unlocking 4.4.8.8.8; chain × interior must be searched JOINTLY (third time the axiom
+holds); (3) **long-sweep drift confirmed** (~5-11% at 16384 vs the focused spike) — exactly
+the thermal-ranking-drift the split DP planner's pacing exists for; wisdom-grade numbers need
+paced, focused finals (see z_chain_planner_notes.md — the dp_planner.h study, same date:
+adopt pacing + adaptive-reps + PATIENT re-measure of finalists into zil_chain_dp).
+**Band after lever 5, best-observed: 0.73–0.85× across all ≥2048** (from 0.38–0.56 at session
+start). Wisdom chains to bake/productionize = the 4 winners above.
+
+## 4.996. PACED FINALS + THE BAKE VERDICT (2026-07-24) — bake the TABLES, share the KERNELS
+
+`zil_split_baked.c`: the four §4.995 winners, three execution shapes each (all gates
+bit-identical), paced trials (Sleep 150ms — the dp_planner lesson), same-run MKL:
+
+| cell | drv (runtime bases) | **drvT (tabled bases, called kernels)** | baked (fused/inlined code) | drvT vs MKL |
+|---|--:|--:|--:|--:|
+| 2048 (4.8.8.8/t2spt)   | 2508  | **2456**  | 2898  | **0.83×** |
+| 4096 (4.4.4.8.8/t2spt) | 5712  | **5337**  | 6171  | **0.74×** |
+| 8192 (4.4.8.8.8/t2sp)  | 12022 | **11177** | 13162 | **0.78×** |
+| 16384 (4.8.8.8.8/t2spt)| 24552 | **23375** | 26642 | **0.81×** |
+
+**Verdict — the production execution shape is settled**: plan-time base TABLES (+2–8%) with
+COMPACT SHARED kernels; full code-fusion is a measured NEGATIVE on the split interior (−7 to
+−13%: the big split bodies inlined into constant-trip loops get unrolled into tens of KB and
+blow L1i, while shared kernels stay resident). This is MKL's own architecture — the census's
+"small looped stage functions driven from an outer driver" — now measured from our side. (The
+z-interior lever-4 result decomposes consistently: its win was ~¾ tables, inlining only helped
+at 293 tiny-body calls.) JIT/AOT emitters should therefore emit PLANS (tables + chain dispatch),
+not fused kernel blobs, for this family.
+
+**WISDOM-GRADE STANDINGS (paced, same-run MKL): 0.74–0.83× across all ≥2048** — session start
+was 0.38–0.56 with 8192/16384 unserved. Remaining gap = kernel scheduling residue + MKL's
+size-specialized finishers; next = emitter promotion of the split kernels + productionization
+(registry/calibrator/wisdom, items 9/11) at these locked shapes.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
