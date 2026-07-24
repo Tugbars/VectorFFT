@@ -252,6 +252,40 @@ Remaining gap ≈ 1.4×: per-stage kernel quality (MKL's lean radix-4 ymm bodies
 radix4 z_t2/t2c mids to test MKL-aligned all-radix-4 chains), lever 3 (n1t-load terminator),
 lever 4 (AOT bake via emit_executor_h.ml pattern / JIT — kills the per-group call tax).
 
+## 4.97. RADIX-4 FIELD + LEVERS 3/4 MEASURED (2026-07-24) — 16384 at 0.78×
+
+**Radix-4 family** (emitted radix4_z_{t2,t2c,t2s,t2sp}; planner minpart=2, LEAN mode, 333 gates
+PASS): competitive — radix-4-led chains fill the top ranks (2048: 4.4.16.8; 8192: 4.4.4.16.8) —
+but NO step change; winners shuffle within the ±2-5% run band. MKL's radix-4 preference does not
+transfer to our kernel family. **Chain space is saturated** (175 chains @16384 bunch within ~15%).
+
+**Lever 3 — tiled terminator loads** (t2st/t2spt: wide ymm + vperm2f128 repack, the MKL-finisher
+load shape; radix {4,8,16}; planner NV=8, 526 gates PASS): real but marginal — t2spt wins 2048
+(+0.7%) and 16384 (+1.4%), ties 4096. The t2s→t2sp powers-stream remains the terminator lever;
+load shape is a trim. (Noted: 8192's t2c arms swung ~20% between runs — allocation-layout
+sensitivity, not a kernel property; cell best stable ~13.9µs.)
+
+**Lever 4 — fusion/bake** (`zil_cascade_baked.c`: baked = codelets #include-renamed into one TU,
+gcc-inlined into constant-trip loops = the MKL AOT shape; three arms isolate the components; all
+gates bit-identical):
+
+| arm | 4096 (8.8.8.8 t2c/t2sp) | 16384 (4.8.8.8.8 t2c/t2spt) |
+|---|--:|--:|
+| drv (base_of hot) | 6818 (0.63×) | 30157 (0.70×) |
+| drvT (tabled bases) | 6439 (**0.67×**) | 27887 (0.76×) |
+| baked (fused+inline) | 6455 (0.66×) | **27210 (0.78×)** |
+
+Attribution: the bulk is **precomputed group-base tables** (−5.6%/−7.5% — free at plan time in
+production); true inlining adds ~2.4pt only at high call counts (293 calls @16384; nothing at 74).
+Production: plan-time base tables mandatory; the emit_executor_h.ml-pattern z backend (or JIT)
+worth it for ≥16384-class cells.
+
+**Standing after levers 1–4**: 2048 ~0.76×, 4096 ~0.67×, 8192 ~0.66×, 16384 **0.78×** (session
+start: 0.54/0.46/—/—). Remaining gap ≈1.3–1.5× is now **kernel-body quality** (per-pass cost
+0.176 ns/el MKL vs ~0.30 ours: scheduling/port balance of the z bodies, MKL's size-specialized
+finishers) — codelet-level work, not composition. Next: productionize (wisdom chains + plan-time
+tables + registry/calibrator wiring, checklist items 9/11) and/or M1-style body-quality race.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
