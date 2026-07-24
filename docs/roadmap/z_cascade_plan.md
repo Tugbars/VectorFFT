@@ -630,6 +630,196 @@ noise at cascade granularity. The remaining profile-ordered levers (port-1→0 F
 which changes the OP MIX, not just the schedule — and MT) are the ones with headroom
 beyond the noise floor.
 
+## 4.9994. CALIBRATE→WISDOM→CREATE WIRED (2026-07-24) — the t2q pick is now measured per install
+
+The §4.9993 resolution is complete: the terminator pick no longer lives in a compiled
+table — it is measured on the installed binary at first create and banked as wisdom.
+
+**Persistence — kind-4 line in `oop_wisdom.txt`** (the K=1 tier's existing home, next to
+the kind-3 engine lines; per the reuse-wisdom-files directive, no new file):
+
+    N 1 4 zs_t2q cc_chain ns        e.g.  4096 1 4 1 22233 5005.5
+
+`zs_t2q` = 0 sterm / 1 sterm2; `cc_chain` = the cascade chain via the kind-3 codec
+(decimal digits = log2 factors: 22233 = 4.4.4.8.8) so the line also carries the chain
+for future chain calibration. Isolation from the split-layout solvers that share the
+table is by kind: `lookup_ord` skips kind-4 (as it skips kind-3), `lookup_k1` requires
+kind-3, the K%8 guard blocks classic builds, and `_oop_wisdom_put_and_save` got a proper
+4-class dedup (MODEB / native / K1 / zsplit) so banking a cascade line can never evict
+the kind-3 or MODEB champion at the same (N,1) cell. Old binaries reading a new file
+degrade safely (kind-4 falls through every build branch → NULL → fallback).
+
+**The race — `_calibrate_zsplit_t2q` (vfft.c, next to `_calibrate_pad`)**: ~10 ms,
+`_il_ab_race` shape — one bit-identity memcmp sanity check, burst size from one estimated
+exec (~0.3 ms/burst), 9 rounds (MEASURE; 21 at higher rigor) with alternating arm order,
+median per arm, **3% hysteresis toward the compiled default**. Runs inside the create
+hook on wisdom miss or `recalibrate=1`; the verdict + chain + ns are banked immediately
+via `_oop_wisdom_put_and_save`. Wisdom hit → pure read (chain decoded from cc_chain,
+falls back to the default chain if a stale line no longer validates), zero measurement.
+
+**Gates** (`benches/zsplit_wis_gate.c`, scratch `VFFT_WISDOM_DIR`, all 4 cells):
+OVERALL PASS — roundtrip 1e-16 through vfft.h on the miss path; kind-4 line banked with
+correct codec; wisdom-hit create bit-identical to the miss create; `recalibrate=1`
+re-races and re-banks. API gate re-run: OVERALL PASS, best front-door band to date —
+2048 0.92 fwd/**1.01 bwd (API-level MKL win)** · 4096 0.81/0.85 · 8192 0.86/0.85 ·
+16384 0.93/0.92.
+
+**The finding, live**: the wis-gate binary banked sterm2 at all 4 cells; the api-gate
+binary (same lib, different link) banked 0/1/1/0 — per-binary placement truth, measured
+per binary. This closes §4.9993's TODO; remaining zsplit roadmap: chain calibration into
+the same kind-4 line, in-place route, natural-order terminator, MT.
+
+## 4.9995. ⭐ WHERE THE LAST ~15% IS (2026-07-24) — the terminator is SHUFFLE-PORT bound, and every excess shuffle is the load-side transpose
+
+Re-read of [mkl_highN_cascade_anatomy.md](../research/mkl_highN_cascade_anatomy.md) against our
+own post-msg profile, plus two new measurements. Headline: **the remaining gap is not memory,
+not op count, and not arithmetic — it is port 5.**
+
+### (a) Shuffle census, ours vs MKL (per COMPLEX, normalized across radices)
+
+Counted by reading the emitted kernels (macro-expanded: `TR4` = 8 port-5 ops, `DEINT`/`REINT` =
+4 each; loop bodies × trip count) against anatomy §4.5's MKL census:
+
+| pass | ours | MKL | time share (16384) |
+|---|--:|--:|--:|
+| leaf (r4 s0s) | 1.00 | 1.25 (r4 ingest) | 17% |
+| mids (r8 msg) | **0** | **0** | 49% |
+| terminator (r8 sterm) | **2.00** | **1.00** (r4 finisher) | 35% |
+
+The mids at 0 is lever 5 banked — that fight is **won and at parity**. The leaf is *better* than
+MKL's ingest. **The entire remaining shuffle excess is one pass and one cause**: our terminator
+issues **64 port-5 ops per iteration** = 4×`TR4` on load (32) + 8×`REINT` on store (32), per 32
+complex. Decompose it and the diagnosis is exact:
+
+- **store-side re-interleave: ours 1.00/complex, MKL 1.00/complex — DEAD EQUAL.**
+- **load-side transpose: ours 1.00/complex, MKL 0.** ← 100% of the excess.
+
+MKL's finisher needs no load-side transpose because **its preceding stage hands the finisher data
+already oriented** (anatomy §4: "corner-turn baked into the stores"). Ours does not, so the
+terminator transposes on the way in and re-interleaves on the way out.
+
+### (b) The port arithmetic (why this costs so much)
+
+Shuffles (`vperm2f128`, `vpermute4x64`, `vunpck*`) issue on **port 5 only**; FP add/sub take
+ports 1/5, mul/FMA take ports 0/1. Per terminator iteration: 80 FP ops (44 add/sub, 14 mul, 22
+FMA) balance to ≈27 cycles across three ports, but the 64 shuffles need **64 cycles on port 5
+alone** → the terminator is **≈2.4× oversubscribed on one port**. That is the whole story of its
+CPI 0.371 / 44% retiring vs the mids' 0.238 / 71%.
+
+**Independent cross-check (it holds).** Predicted whole-transform shuffle rate at 4096 (chain
+4.4.4.8.8): leaf 1.0×4096 + mids 0 + term 2.0×4096 = 12 288 shuffles / ~29 000 cycles =
+**0.42 shuffle-uops/cycle**; VTune measured `Shuffles_256b` 5.8% of pipeline slots ≈ **0.35/cycle**.
+Within the terminator alone that is ~81% of port-5 capacity — saturated.
+
+### (c) Stream-aliasing diagnostic — real but smaller than it first looked
+
+`benches/zil_stream_diag.c` / `zil_stream_diag2.c`. Motivation: leg streams sit `16*Ls` bytes
+apart with `Ls` a power of two, so the stride is always a multiple of 4096 = (64 L1 sets × 64 B)
+— **every leg stream shares one L1D set**, and VTune shows FB-Full 12.9% + Store-Latency 35.1%.
+
+⚠ **v1 over-claimed (banked as a measurement lesson).** v1 reported the leaf −25% at 16384, but
+it allocated a *fresh buffer per arm*, so it varied stride AND base together — the same
+placement confound as §4.9993. v2 varies them independently inside ONE 4 KB-aligned allocation:
+
+| N | base shift (64 B…2 KB) | stride pad (+4c) | stride pad (+32c) |
+|---|--:|--:|--:|
+| 2048 | +0.3 … +11.1% (noise, both signs) | −5.8% | **−18.9%** |
+| 4096 | −3.4 … +1.1% | −1.2% | −4.5% |
+| 8192 | −8.2 … +0.8% | −9.0% | **−11.3%** |
+| 16384 | −0.7 … +6.3% | −5.3% | −7.6% |
+
+**Verdict: base decorrelation does nothing; stride decorrelation is real** (−4.5…−18.9% on the
+leaf, −0…−6% on the terminator). v1's 16384 leaf "contract" number was 4805 ns vs v2's 3496 ns —
+**27% from allocation alignment alone**, a fresh reminder that at these effect sizes the arm
+must vary exactly one thing inside one allocation.
+
+### (d) The levers left, ranked
+
+1. **Move the terminator's load-side transpose into the last mid's stores.** Deletes 32 of its
+   64 shuffles — the entire measured excess over MKL. The mid pays them, but the mid is
+   port-balanced with headroom while the terminator is 2.4× over. Port arithmetic: mid ≈ +26%,
+   terminator ≈ −44% → **net −5…−11% overall**. Best-evidenced lever; MKL's finisher is the
+   existence proof. (Cost: the last mid becomes orientation-aware — a new emitter kind.)
+2. **Padded plane pitch** — measured in (c): **~2–4% overall**. Needs a slice-aware group loop in
+   `msg` (nested: bump by group span within a slice, by span+pad across slices) plus slice-aware
+   leaf/terminator addressing. Contained, no new math.
+3. **Radix-16 terminator** — MKL dispatches finishers on `cmp r11,{4,8,16}`, so it has one.
+   Absorbs a whole mid pass (16% of time at 16384). Blocked today by registers: a radix-16 split
+   butterfly wants 32 live ymm on a 16-register machine (the emitter's own radix cap). High
+   risk / high reward.
+4. **⭐ The finisher census (do this FIRST).** Anatomy §8 flagged characterizing MKL's three
+   finishers (0x5c2e / 0x5831 / 0x5579) as "the now-sharpest remaining-gap comparison" and it was
+   never done. It is objdump-only, no code churn, and it **decides both #1 and #3**: (i) do the
+   r8/r16 finishers also have zero load-side transpose (confirms #1's premise), (ii) how does a
+   radix-16 finisher survive 32 live values on 16 registers (confirms or kills #3).
+   **Also note what the dispatch itself reveals: MKL specializes on the TERMINAL RADIX, not on N**
+   — one suite for all N (§1), three terminal choices. **Our terminator is radix-8 ONLY**
+   (`zsplit.h` rejects any chain whose last factor ≠ 8), so our planner races chains but is forced
+   to end every one in 8. Terminal radix is a **planner axis we have closed off**; since the chain
+   provably differs per cell, the terminal radix plausibly should too.
+5. **MT** — unchanged: 3.9% core utilization, the 4–8× multiplier on a different axis.
+
+**Queued structural item (user directive 2026-07-24): a terminator for EVERY power-of-two
+radix** (2/4/8/16, plausibly 32), so the chain planner can search the terminal radix per cell the
+way MKL's `cmp r11,{4,8,16}` dispatch does. Today `sterm` is radix-8 only and `vfft_zsplit_create`
+rejects any chain whose last factor ≠ 8, so the axis is closed. ⚠ **Cost check before building
+it by hand — see the generator note below**: each new terminal radix is currently a hand-written
+`SPLIT_BFLY{R}` macro body + its INV twin + fwd/bwd kinds + bit-gates, i.e. the exact
+combinatorial hand-writing the DAG compiler exists to eliminate.
+
+### (f) ⚠ Generator note — the zil family does NOT go through the DAG pipeline
+
+Verified by module census of `generator/lib/`:
+
+| | `codelet_zil.ml` (z / block-split family) | `codelet_oop.ml` (split-layout family) |
+|---|---|---|
+| modules referenced | **stdlib only** (Printf, Buffer, Array, Hashtbl, List, String) | Algsimp · Dft · Expr · Pipeline · **Schedule** · **Emit_c** · Isa · Uarch |
+| body production | **116 `Printf.sprintf`/`Buffer` sites** — raw C text + macros | DAG → simplify → schedule → regalloc → render |
+| gets | nothing | algebraic simplification (`dedup_sub_pairs`, `collect_m`, `deep_collect`, `factor_common_muls`, `share_subsums`), FMA passes, `Schedule.su_schedule_subset`, `Emit_c.cluster_split_schedule`, `spill_info`, sched_wisdom |
+
+So **every zil kernel is hand-authored C whose scheduling and register allocation belong entirely
+to gcc.** That is why this campaign's wins came from restructuring *source* (block-split, msg,
+uj2) and why placement/compiler luck (§4.9993) has been worth ±5% — we are negotiating with
+gcc's scheduler, not driving our own.
+
+**It isn't only the scheduler it opted out of — it re-implements EMISSION too.** `codelet_zil.ml`
+bypasses the shared renderer (`emit_c.ml` 4167 + `emit_render.ml` 1426 + `regalloc.ml` 1428 +
+`schedule.ml` 1713 + `uarch.ml` 151 + `isa.ml` 317 ≈ **9.2 K lines of shared machinery**) and
+prints intrinsics as literal text. Measured consequences:
+
+| symptom | zil | oop (pipeline) |
+|---|--:|--:|
+| literal `_mm256_` in the emitter | **319** | 48 (uses `Isa.loadu_pd` / `Isa.vec_type`) |
+| literal `_mm512_` | **0** | — (ISA is a parameter) |
+| ISA argument to the emit entry point | **`emit_z_split` takes none** (`emit_z_t2`/`_n1` take `~vec_width` only) | full `Isa.t` |
+| re-pasted macro boilerplate in the emitted tree | **1546 lines = 9% of 16 387**, 129 copies of the same ~9 macros across 60 files | none (rendered per node) |
+
+Two things follow that the roadmap cares about. (1) **The block-split production family is
+AVX2-only *by construction*** — not by choice of target, but because the butterflies are literal
+`_mm256_*` strings and `emit_z_split` has no ISA parameter at all. The AVX-512 phase-2 and EPYC
+port items cannot reach the z cascade without a rewrite. (2) The DAG compiler's whole thesis is
+*describe the butterfly once, let the pipeline specialize per ISA / uarch / schedule*; **zil opted
+out of that thesis.** That was the correct call for a spike — it is how the band went 0.38 → 0.93
+in days — but the family is now PRODUCTION behind `vfft.h`, and it is accruing exactly the debts
+the pipeline exists to prevent.
+
+**Consequences for the two items on the table**: (i) per-radix terminators as text templates
+multiply hand-written macro bodies × {fwd,bwd} × gates; through the pipeline, radix is a
+*parameter*. (ii) The radix-16 terminator's blocker — 32 live values on 16 registers — is
+precisely what `regalloc`/`spill_info`/the SU scheduler exist to reason about; as a text template
+we would be flying blind. **Counterweight (why it was hand-written in the first place)**: the
+block-split addressing, splat-pair twiddles, and conversions fused into loads/stores are *layout*
+tricks `Emit_c` does not currently express. Porting zil onto the pipeline means teaching Emit_c
+the block-split form — a real project, and the honest prerequisite to a per-radix terminator
+family rather than a fifth hand-written kernel.
+
+### (e) The gap is not uniform — aim at 4096
+
+Front door after §4.9994: 2048 **0.92** · 4096 **0.81** · 8192 **0.86** · 16384 **0.93**. So
+16384 is 7% off and **4096 is 19% off**. 4096's chain (4.4.4.8.8) carries three cheap radix-4
+mids against one expensive radix-8 terminator — the highest terminator-to-mid ratio of any cell,
+i.e. exactly the shape lever #1 attacks hardest.
+
 ## 5. Current standings this plan attacks (interim ladder, band-corrected)
 
 64: 1.02 WIN · 128: 1.02 WIN · 256–1024: ~0.81–0.83 · 2048: 0.54 · 4096: 0.46 · 8192+:
