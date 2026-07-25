@@ -167,6 +167,9 @@ let run (argv : string array) : unit =
      No default: a missing chain is an error, not a heuristic. *)
   let cil_chain = ref "" in
   let cil_blocked = ref false in
+  (* --cil-log3: source the T2 mid's VTW2 records sparsely (load the
+     power-of-two legs, derive the rest). Full-IL, same table layout. *)
+  let cil_log3 = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -446,6 +449,8 @@ let run (argv : string array) : unit =
       incr i)
     else if arg = "--cil-blocked"
     then cil_blocked := true
+    else if arg = "--cil-log3"
+    then cil_log3 := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1632,6 +1637,7 @@ let run (argv : string array) : unit =
          emission. See codelet_cil.ml. *)
       print_string
         (Codelet_cil.emit
+           ~log3:!cil_log3
            ~kind:(Codelet_cil.kind_of_string !cil_kind)
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
            ~blocked:!cil_blocked
