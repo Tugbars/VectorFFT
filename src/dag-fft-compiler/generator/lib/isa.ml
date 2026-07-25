@@ -228,6 +228,58 @@ let set1_pd_str (isa : t) (literal : string) : string =
   else Printf.sprintf "%s(%s)" isa.set1_pd literal
 ;;
 
+(* === PACKED-COMPLEX (full-IL) PRIMITIVES ===
+ *
+ * The interleaved-complex backend (zil_pipeline_port.md §11) holds 2
+ * complex per 256-bit vector as [re,im,re,im]. Its add/sub/mul/fma are the
+ * SAME intrinsics as the real-lane path (a packed complex add IS a vector
+ * add), so those reuse the helpers above unchanged. Only two primitives
+ * have no real-lane equivalent:
+ *
+ *   cflip  — swap re<->im WITHIN each complex. AVX2: vpermilpd imm 0x5
+ *            (per-128-bit-lane swap, so it acts on each complex
+ *            independently). AVX-512 needs imm 0x55 = 0b01010101, the same
+ *            per-lane pattern extended to 4 complex.
+ *   xor_mask — general XOR against a named sign-mask vector. The existing
+ *            xor_pd is contractually pinned to the -0.0 broadcast (see its
+ *            comment); ×(-i) needs the ALTERNATING mask [0,-0,0,-0], which
+ *            must be a named constant, hence this second entry point.
+ *
+ * Together they express the two IL ops:
+ *   RotNI x  =  xor_mask(cflip x, _M_IM)         -- x * (-i)
+ *   BYTW2    =  fmadd(cvec, x, mul(svec, cflip x))
+ *)
+
+(* Per-complex re<->im swap. The immediate differs by width because
+ * vpermilpd's control is one bit per DOUBLE, and we want the same
+ * "swap within each 128-bit lane" pattern at every width. *)
+let cflip_pd (isa : t) (a : string) : string =
+  match isa.vec_width with
+  | 8 -> Printf.sprintf "_mm512_permute_pd(%s, 0x55)" a
+  | 4 -> Printf.sprintf "_mm256_permute_pd(%s, 0x5)" a
+  | 2 -> Printf.sprintf "_mm_permute_pd(%s, 0x1)" a
+  | w -> failwith (Printf.sprintf "cflip_pd: no packed-complex swap at vec_width %d" w)
+;;
+
+(* XOR against a NAMED mask vector (as opposed to xor_pd's -0.0 contract).
+ * Used for the ×(-i) sign flip, where the mask alternates [+0,-0,...]. *)
+let xor_mask_pd (isa : t) (a : string) (mask : string) : string =
+  if isa.vec_width = 1
+  then Printf.sprintf "(-(%s))" a
+  else Printf.sprintf "%s(%s, %s)" (intr isa "xor_pd") a mask
+;;
+
+(* The alternating sign mask that turns a cflip into ×(-i):
+ *   (a+bi)*(-i) = b - ai  ->  swap to [b,a] then negate the imag lane.
+ * Declared once per emitted file by the IL backend's preamble. *)
+let im_mask_decl (isa : t) (name : string) : string =
+  let lanes = isa.vec_width / 2 in
+  let body =
+    String.concat ", " (List.init lanes (fun _ -> "0.0, -0.0") |> fun l -> l)
+  in
+  Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
+;;
+
 (* mode defaults to LS_vector, so all existing positional callers
  * (`loadu_pd isa addr`) render exactly as before. The arbitrary-K tail
  * passes ~mode:(LS_masked m) to switch the rio + per-lane twiddle accesses
