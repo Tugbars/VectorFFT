@@ -123,6 +123,13 @@ and t =
 (* Hash-consing: structural equality becomes tag equality, which is what
  * gives us CSE for free (the shared ±i rotations and repeated subsums in a
  * radix-8 body dedup automatically). Mirrors Ir.hashcons. *)
+(* Twiddle-sourcing policy for the streamed VTW2 table, consulted by the
+   CTwL renderer. A ref rather than a threaded parameter because it is
+   emission state, not IR state — the DAG is identical either way; only how
+   each leg's record is OBTAINED changes. Default false keeps every existing
+   kernel byte-identical. *)
+let tw_log3 = ref false
+
 let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
 let next_tag = ref 0
 
@@ -435,11 +442,104 @@ let render (isa : Isa.t) (tbl : consts) (e : t) : string =
       (v x)
       (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
   | CTwL (leg, x) ->
-    (* BYTW2 against the streamed VTW2 record for this leg. *)
-    let off = (leg - 1) * 2 * isa.Isa.vec_width in
-    let c = Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)
-    and s = Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + isa.Isa.vec_width)) in
+    (* BYTW2 against the VTW2 record for this leg. Under FLAT the record is
+       loaded inline from the streamed cursor; under LOG3 it is a name bound
+       by the prologue (loaded for power-of-two legs, DERIVED otherwise), so
+       the flat path emits byte-identically to before. *)
+    let c, s =
+      if !tw_log3
+      then Printf.sprintf "_wc%d" leg, Printf.sprintf "_ws%d" leg
+      else (
+        let off = (leg - 1) * 2 * isa.Isa.vec_width in
+        ( Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)
+        , Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + isa.Isa.vec_width)) ))
+    in
     Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
+;;
+
+(* ── LOG3 twiddle sourcing for the streamed VTW2 table ───────────────────
+ *
+ * Mirrors dft.ml's TP_Log3 as a SUBSTITUTION: read only the power-of-two
+ * legs from the table and derive the rest by complex multiplication, with
+ * the SAME slot layout as flat (slot = leg-1), so one table serves both
+ * policies and the kernels stay interchangeable. R=8 reads 3 records
+ * instead of 7; R=64 reads 6 instead of 63.
+ *
+ * Derive-then-apply, never chain-apply: chaining x*W^p then *W^q would put
+ * both multiplies on the DATA critical path. Here the derivation is
+ * loop-invariant per column-group and sits off it entirely.
+ *
+ * THE FOLDED FORMAT DERIVES ITSELF. A VTW2 record is cos-broadcast
+ * cp = [c,c,c,c] and SIGN-FOLDED sin sp = [-s,+s,-s,+s]. Then
+ *   sp*sq = [(-sp)(-sq), (+sp)(+sq), ...] = [sp.sq x4]   -- signs cancel
+ * so with cj = cp.cq - sp.sq and sj = cp.sq + sp.cq:
+ *   _wc_j = cp*cq  - sp*sq     -> [cj x4]              (mul + fnmadd)
+ *   _ws_j = cp*sq  + sp*cq     -> [-sj,+sj,-sj,+sj]    (mul + fmadd)
+ * Four vector ops, NO shuffles, and the fold is preserved automatically —
+ * no unpack/repack of the record is needed. *)
+let log3_plan (radix : int) : (int * (int * int) option) list =
+  let is_pow2 x = x > 0 && x land (x - 1) = 0 in
+  let highest_pow2_le j =
+    let rec go p = if p * 2 > j then p else go (p * 2) in
+    go 1
+  in
+  let out = ref [] in
+  (* Ascending j guarantees dependency order: p and q are both < j. *)
+  for j = 1 to radix - 1 do
+    if is_pow2 j
+    then out := (j, None) :: !out
+    else (
+      let p = highest_pow2_le j in
+      out := (j, Some (p, j - p)) :: !out)
+  done;
+  List.rev !out
+;;
+
+let emit_log3_prologue (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
+  let vw = isa.Isa.vec_width in
+  let nload = ref 0 in
+  List.iter
+    (fun (j, src) ->
+       let cj = Printf.sprintf "_wc%d" j
+       and sj = Printf.sprintf "_ws%d" j in
+       match src with
+       | None ->
+         incr nload;
+         let off = (j - 1) * 2 * vw in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl isa cj (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)))
+              (Isa.const_decl
+                 isa
+                 sj
+                 (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + vw)))))
+       | Some (p, q) ->
+         let cp = Printf.sprintf "_wc%d" p
+         and sp = Printf.sprintf "_ws%d" p
+         and cq = Printf.sprintf "_wc%d" q
+         and sq = Printf.sprintf "_ws%d" q in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 cj
+                 (Isa.fnmadd_pd isa sp sq (Isa.mul_pd isa cp cq)))
+              (Isa.const_decl
+                 isa
+                 sj
+                 (Isa.fmadd_pd isa cp sq (Isa.mul_pd isa sp cq)))))
+    (log3_plan radix);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "        /* log3: %d of %d VTW2 records loaded, %d derived */\n"
+       !nload
+       (radix - 1)
+       (radix - 1 - !nload))
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
@@ -490,10 +590,20 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
-let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
-      ~(isa : Isa.t) ~(uarch : Uarch.t)
+let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
+      ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
   : string
   =
+  (* Required, not optional: an optional arg here cannot be erased (OCaml
+     warning 16), and making the policy explicit at every call site is better
+     anyway. Only T2 streams a runtime table, so log3 is meaningless on the
+     other kinds — refuse rather than silently ignore. *)
+  if log3 && kind <> T2
+  then
+    failwith
+      "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing \
+       policy for the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
+  tw_log3 := log3;
   let vw = isa.Isa.vec_width in
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
   let per = vw / 2 in
@@ -796,7 +906,7 @@ let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
        \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;%s\n"
        isa.Isa.target_attr
        radix
-       (kind_name kind)
+       (kind_name kind ^ if !tw_log3 then "_log3" else "")
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
        (if kind = T2 then "" else " (void)tw_re;"));
@@ -820,6 +930,11 @@ let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
          "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
          per
          ((radix - 1) * 2 * vw));
+  (* LOG3 binds every leg's record up front — loaded for power-of-two legs,
+     derived for the rest — so the butterflies below reference names instead
+     of the table. Loop-invariant per column-group, hence off the data
+     critical path. *)
+  if kind = T2 && !tw_log3 then emit_log3_prologue buf isa radix;
   (* Blocked carries its own per-pass loads and stores; the monolithic form
      needs the leg load edge here. *)
   if not blocked
