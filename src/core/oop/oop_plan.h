@@ -75,7 +75,23 @@ enum
     VFFT_K1_IL_NONE = 0, /* no IL route available for this N    */
     VFFT_K1_IL_3P = 1,   /* il_in leaf -> transpose -> t1 -> il sweep-free 3-pass */
     VFFT_K1_IL_2P = 2,   /* il_in leaf -> t1-UL+il_out (2 passes) */
-    VFFT_K1_IL_MONO = 3  /* emitted mono, il edges              */
+    VFFT_K1_IL_MONO = 3, /* emitted mono, il edges              */
+    /* 4 = the Cooley-Tukey zsplit cascade. RECORD-ONLY for now.
+     *
+     * WHY IT EXISTS: the K=1 engine has three strategy families -- mono (<=64),
+     * Bailey two-pass (2P/3P), and the CT cascade (>=2048) -- but the cascade
+     * verdict lives in a kind-4 wisdom entry while mono/Bailey live in kind 3,
+     * so nothing could answer "which METHOD won this cell?" without reading two
+     * kinds and comparing them by hand. Naming it here lets a kind-3 il_route
+     * carry that answer. The cascade chain rides in cc_chain, which the wisdom
+     * entry already carries and already shares with kind 4.
+     *
+     * NOT DISPATCHABLE from the K=1 IL switch yet: the cascade is SCRAMBLED
+     * order while 2P/3P/MONO are natural, and the natural-vs-scrambled division
+     * in wisdom is future work. Until that lands this value is a NOTE ONLY --
+     * plan-create must not build an IL plan from it, and the executor must not
+     * treat it as a runnable IL route. */
+    VFFT_K1_IL_CASCADE = 4
 };
 
 typedef enum

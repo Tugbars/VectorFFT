@@ -2421,8 +2421,54 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         sR1 = 64; sR2 = N / 64;
                     }
                 }
-                iR1 = sR1; iR2 = sR2;
-                ilr = vfft_k1_mono_il_fn(N, 0) ? VFFT_K1_IL_MONO : VFFT_K1_IL_2P;
+                /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
+                 *
+                 * Two independent reasons, both measured:
+                 *  (a) COVERAGE. The loop above filters on SPLIT availability
+                 *      (vfft_oop_leaf_fn / vfft_oop_t1_fn, which reach R=128),
+                 *      but IL codelets stop at R=64 (vfft_oop_leaf_il_fn /
+                 *      vfft_oop_t1_il_fn). So the balanced split pick can name
+                 *      radices IL has no codelet for — at N=16384 it picks
+                 *      128x128 and BOTH IL halves come back NULL, while the
+                 *      route below still claimed IL_2P. Since a 2-pass IL route
+                 *      needs R1*R2 = N with both <= 64, IL 2-pass genuinely
+                 *      tops out at N=4096; above that the honest answer is
+                 *      IL_NONE, not a route that cannot execute.
+                 *  (b) INDEPENDENCE. Even where a split pair is legal for IL,
+                 *      nothing guarantees it is the IL optimum -- the two arms
+                 *      run different codelets over different layouts. The IL
+                 *      planner (planning/dp_planner_il.h) searches this axis by
+                 *      measurement; this loop only has to produce a LEGAL,
+                 *      reasonable default for an uncalibrated cell.
+                 *      (Note: a 2026-07-25 race showing 32x8 beating 4x64 at
+                 *      N=256 was measured on the FUSED emit_k1 family, NOT this
+                 *      staged 2P route -- do not cite it here. Measured on the
+                 *      staged route, 4x64 wins at N=256, agreeing with split.)
+                 *
+                 * Calibrated cells are unaffected: calibrate_k1.c already picks
+                 * an independent IL winner (win[2]) and writes its own iR1/iR2.
+                 * This is only the uncalibrated default. */
+                if (vfft_k1_mono_il_fn(N, 0))
+                {
+                    ilr = VFFT_K1_IL_MONO;   /* mono is whole-N; pair unused */
+                    iR1 = sR1; iR2 = sR2;
+                }
+                else
+                {
+                    for (int R2c = (N < 64 ? N : 64); R2c >= 4; R2c--)
+                    {
+                        if (N % R2c) continue;
+                        int R1c = N / R2c;
+                        if (R1c < 4 || R1c > 64 || (R1c % 4) || (R2c % 4)) continue;
+                        if (!vfft_oop_leaf_il_fn(R2c, 0) || !vfft_oop_t1_il_fn(R1c, 0))
+                            continue;
+                        if (!iR1 || abs(R1c - R2c) < abs(iR1 - iR2))
+                        {
+                            iR1 = R1c; iR2 = R2c;
+                        }
+                    }
+                    ilr = iR1 ? VFFT_K1_IL_2P : VFFT_K1_IL_NONE;
+                }
             }
             vfft_oop_plan_t *psp = NULL, *pil = NULL;
             if (spr == VFFT_K1_SP_CCOL && sR1)
@@ -2439,12 +2485,23 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
             else if (spr != VFFT_K1_SP_MONO && sR1)
                 psp = vfft_oop_plan_create_k1(N, sR1, sR2);
-            if (ilr != VFFT_K1_IL_MONO && ilr != VFFT_K1_IL_NONE && iR1)
+            /* WHITELIST, not a blacklist: only the pair-based IL routes build a
+             * plan from iR1/iR2. MONO is whole-N, NONE has no route, and
+             * CASCADE is record-only (see VFFT_K1_IL_CASCADE in oop_plan.h) --
+             * a growing "!= this && != that" chain would silently start
+             * building plans for any IL route added later. */
+            if ((ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P) && iR1)
                 /* alias only onto CLASSIC plans — a CC plan (colp set) has no
                  * IL twins and would silently kill the IL axis */
                 pil = (psp && !psp->colp && iR1 == sR1 && iR2 == sR2)
                           ? psp
                           : vfft_oop_plan_create_k1(N, iR1, iR2);
+            /* Keep the recorded route TRUTHFUL. A 2P/3P route with no plan
+             * behind it reaches the IL switch in execute and dereferences a
+             * NULL k1il; downgrading here means the route always names
+             * something that can actually run. */
+            if ((ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P) && !pil)
+                ilr = VFFT_K1_IL_NONE;
             int spr0 = spr; /* wisdom route BEFORE folding (JIT picks sources by it) */
             /* log3 routes resolve to a create-time fn swap + the base route
              * (same Qr/Qi; the l3 twins are drop-in pointers) */
