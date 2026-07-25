@@ -280,6 +280,15 @@ let im_mask_decl (isa : t) (name : string) : string =
   Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
 ;;
 
+(* The mirror mask for ×(+i) — the BACKWARD quarter-turn:
+ *   (a+bi)*(+i) = -b + ai  ->  cflip to [b,a], then negate the RE lane.
+ * Same shape as im_mask_decl with the two lanes swapped. *)
+let re_mask_decl (isa : t) (name : string) : string =
+  let lanes = isa.vec_width / 2 in
+  let body = String.concat ", " (List.init lanes (fun _ -> "-0.0, 0.0")) in
+  Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
+;;
+
 (* mode defaults to LS_vector, so all existing positional callers
  * (`loadu_pd isa addr`) render exactly as before. The arbitrary-K tail
  * passes ~mode:(LS_masked m) to switch the rio + per-lane twiddle accesses
