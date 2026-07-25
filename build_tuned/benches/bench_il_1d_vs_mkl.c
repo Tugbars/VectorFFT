@@ -22,6 +22,17 @@
 #include "il_execute.h"
 #include "generator/generated/registry.h"
 #include "mkl_dfti.h"
+/* Win32: MSVCRT has no C11 aligned_alloc; the repo convention (cf. zsplit.h)
+ * is _aligned_malloc with the arguments swapped. The matching free MUST be
+ * _aligned_free — passing _aligned_malloc memory to plain free() is UB on
+ * Windows and crashes at the end of the first cell. Hence AFREE. */
+#ifdef _WIN32
+#include <malloc.h>
+#define aligned_alloc(a, sz) _aligned_malloc((sz), (a))
+#define AFREE(p) _aligned_free(p)
+#else
+#define AFREE(p) free(p)
+#endif
 static double now_min(double *best, double t0, int reps){
     double v=((double)__rdtsc()-t0)/reps; if(v<*best)*best=v; return v; }
 static double maxrel(const double*a,const double*b,size_t n,double s){
@@ -111,7 +122,7 @@ int main(int argc, char**argv){
             N,K, fold_in?"in":"IN!", fold_out?"out":"OUT!",
             tv, tl, tl/tv, tc, tc/tv, tlf/tvf, tsp, tse, e, em);
         DftiFreeDescriptor(&dl); DftiFreeDescriptor(&dc);
-        free(z);free(z0);free(zc);free(cr);free(ci);
+        AFREE(z);AFREE(z0);AFREE(zc);AFREE(cr);AFREE(ci);
         vfft_proto_handle_destroy(&h);
     }
     return 0;
