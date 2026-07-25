@@ -233,6 +233,40 @@ let sqh = 0.70710678118654752440
      else  -> general constant twiddle, s = sgn·sin
    so the ONLY structural difference is which quarter-turn node is used;
    the butterfly shape and op counts are identical in both directions. *)
+(* ONE radix-2 butterfly of an n-point DIT stage: combine the k-th outputs of
+   the even half (ek) and odd half (ok) into outputs k and k+n/2. The twiddle
+   CLASS selection lives here so the monolithic recursion and the BLOCKED
+   construction below share exactly one copy of it — they must agree, or the
+   two forms would not be numerically interchangeable. *)
+let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok : t)
+  : t * t
+  =
+  let pi = 4.0 *. atan 1.0 in
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let sgn = if sign = `Fwd then -1.0 else 1.0 in
+  if k = 0
+  then cadd ek ok, csub ek ok
+  else if 4 * k = n
+  then (
+    let t = rot ok in
+    cadd ek t, csub ek t)
+  else if 8 * k = n
+  then (
+    (* w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e *)
+    let x = cadd ok (rot ok) in
+    cfma sqh x ek, cfnma sqh x ek)
+  else if 8 * k = 3 * n
+  then (
+    (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
+    let x = csub (rot ok) ok in
+    cfma sqh x ek, cfnma sqh x ek)
+  else (
+    let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
+    and s = sgn *. sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
+    let t = ctw c s ok in
+    cadd ek t, csub ek t)
+;;
+
 let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
@@ -241,37 +275,10 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
     let e = dft_cx ~sign h (Array.init h (fun i -> xs.(2 * i)))
     and o = dft_cx ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
     let out = Array.make n xs.(0) in
-    let pi = 4.0 *. atan 1.0 in
-    let rot x = if sign = `Fwd then crot x else crotp x in
-    let sgn = if sign = `Fwd then -1.0 else 1.0 in
     for k = 0 to h - 1 do
-      let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
-      and s = sgn *. sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
-      if k = 0
-      then (
-        out.(k) <- cadd e.(k) o.(k);
-        out.(k + h) <- csub e.(k) o.(k))
-      else if 4 * k = n
-      then (
-        let t = rot o.(k) in
-        out.(k) <- cadd e.(k) t;
-        out.(k + h) <- csub e.(k) t)
-      else if 8 * k = n
-      then (
-        (* w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e *)
-        let x = cadd o.(k) (rot o.(k)) in
-        out.(k) <- cfma sqh x e.(k);
-        out.(k + h) <- cfnma sqh x e.(k))
-      else if 8 * k = 3 * n
-      then (
-        (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
-        let x = csub (rot o.(k)) o.(k) in
-        out.(k) <- cfma sqh x e.(k);
-        out.(k + h) <- cfnma sqh x e.(k))
-      else (
-        let t = ctw c s o.(k) in
-        out.(k) <- cadd e.(k) t;
-        out.(k + h) <- csub e.(k) t)
+      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      out.(k) <- a;
+      out.(k + h) <- b
     done;
     out)
 ;;
@@ -454,6 +461,58 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
   (* Render the body first: it populates the constant table that the file
      preamble must declare. *)
   let body = Buffer.create 4096 in
+  (* ─── ONE SCHEDULED PASS ──────────────────────────────────────────
+     Build a sub-DAG, run it through the SHARED scheduler, and emit
+     loads / defs / stores for it. Used by the BLOCKED construction,
+     which is several passes joined through a spill array.
+
+     Each pass calls `reset ()`, so tag numbering (and therefore the
+     `zN` variable names) RESTARTS — every pass must therefore be
+     emitted inside its own C brace scope, and fully emitted before the
+     next pass begins. Same discipline as sterm2's two DAGs. *)
+  let emit_pass
+        ~(label : string)
+        ~(nin : int)
+        ~(load_of : int -> string)
+        ~(build : t array -> t array)
+        ~(store : int -> string -> unit)
+    : unit
+    =
+    reset ();
+    let ins = Array.init nin cin in
+    let outs = build ins in
+    let assigns =
+      Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
+    in
+    let sch = Sched.su_schedule uarch assigns in
+    Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
+    Array.iteri
+      (fun i (e : t) ->
+         Buffer.add_string
+           body
+           (Printf.sprintf
+              "        %s\n"
+              (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (load_of i))))
+      ins;
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen e.tag)
+           then (
+             Hashtbl.replace seen e.tag ();
+             Buffer.add_string
+               body
+               (Printf.sprintf
+                  "        %s\n"
+                  (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
+      sch;
+    Array.iteri (fun i (e : t) -> store i (Printf.sprintf "z%d" e.tag)) outs;
+    Buffer.add_string body "        }\n"
+  in
+  ignore emit_pass;
   let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun ((_ : Expr.elem_ref option), (e : t)) ->
