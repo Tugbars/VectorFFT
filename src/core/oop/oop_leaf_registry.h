@@ -379,6 +379,75 @@ static inline vfft_oop11_fn vfft_oop_t1_ul_l3_fn(int R)
 #endif
 }
 
+#if VFFT_OOP_GROUPW == 4u
+#define VFFT_OOP_DECL_IL_LOG3(R) \
+  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_log3_il_out( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_log3_il_out_sw( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_log3_il_out( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_log3_il_out_sw( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_OOP_DECL_IL_LOG3(4)  VFFT_OOP_DECL_IL_LOG3(8)  VFFT_OOP_DECL_IL_LOG3(16)
+VFFT_OOP_DECL_IL_LOG3(32) VFFT_OOP_DECL_IL_LOG3(64)
+#endif
+
+/* ---- IL log3 twins ----------------------------------------------------
+ * The interleaved counterparts of vfft_oop_t1_l3_fn / vfft_oop_t1_ul_l3_fn.
+ * log3 (TP_Log3) derives the external twiddles by binary composition instead
+ * of streaming a flat table; on the SPLIT axis it is two of the eight shipped
+ * K=1 routes (VFFT_K1_SP_2PA_L3 / _3P_L3), resolved as a create-time pointer
+ * swap. IL never had them emitted, so the IL route set had no twiddle-strategy
+ * variants at all — this closes that gap.
+ *
+ * NOTE the arity difference from the split resolvers, which take only (R):
+ * split's backward is the pointer-swap identity, while IL backward needs the
+ * _sw lattice twin. That is why IL costs 4 kernels per radix here where split
+ * costs 2 — a structural property of the IL axis, not an oversight.
+ *
+ * Whether log3 actually WINS on IL kernels is unmeasured: it was calibrated on
+ * split codelets, and IL has a different port profile (BYTW2 spends a cflip
+ * per complex multiply). These exist so dp_planner_il.h can RACE them per
+ * cell rather than anyone assuming the split verdict transfers. */
+static inline vfft_oop11_fn vfft_oop_t1_il_l3_fn(int R, int sw)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UG_UG_log3_il_out_sw \
+                                : radix##R##_t1_oop_fwd_avx2_UG_UG_log3_il_out;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)sw;
+    return 0;
+#endif
+}
+
+static inline vfft_oop11_fn vfft_oop_t1_ul_il_l3_fn(int R, int sw)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (R)
+    {
+#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UL_UG_log3_il_out_sw \
+                                : radix##R##_t1_oop_fwd_avx2_UL_UG_log3_il_out;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)R; (void)sw;
+    return 0;
+#endif
+}
+
 /* mono-64 IL twins (M2/M4): z->z; bwd = fwd DAG with (im,re)-swapped
  * boundary lattices (swap identity), unnormalized inverse, output (re,im).
  * ABI: (in_z, unused, out_z, unused, ...). Split bwd needs NO codelet —
