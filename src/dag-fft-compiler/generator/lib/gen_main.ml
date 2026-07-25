@@ -162,6 +162,7 @@ let run (argv : string array) : unit =
      from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
   let cil_kind = ref "" in
   let cil_bwd = ref false in
+  let cil_k1 = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -433,6 +434,8 @@ let run (argv : string array) : unit =
     then cil_kind := "t2"
     else if arg = "--cil-bwd"
     then cil_bwd := true
+    else if arg = "--cil-k1"
+    then cil_k1 := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1540,7 +1543,7 @@ let run (argv : string array) : unit =
        placement luck. There is no valid reason to request both in one
        invocation, so fail loudly rather than let the loser arm masquerade as
        the winner. *)
-    if !cil_kind <> "" && (!zp_kind <> "" || !z_native || !k1_mono || !oop)
+    if (!cil_kind <> "" || !cil_k1) && (!zp_kind <> "" || !z_native || !k1_mono || !oop)
     then
       failwith
         "gen_main: --cil-* (interleaved-complex) conflicts with another codelet \
@@ -1554,7 +1557,18 @@ let run (argv : string array) : unit =
             --z-*/--k1-mono/--oop flag in the same invocation. They emit \
             identical symbol names; pass exactly one family per run."
            !zp_kind);
-    if !cil_kind <> ""
+    if !cil_k1
+    then
+      (* FUSED full-IL K=1: the whole N-point transform as ONE function,
+         emit-time constant twiddles, register-transpose stage boundary.
+         N (positional) = the transform length, not a radix. *)
+      print_string
+        (Codelet_cil.emit_k1
+           ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
+           ~n
+           ~isa
+           ~uarch)
+    else if !cil_kind <> ""
     then
       (* interleaved-complex (full-IL) family: N (positional) = the radix.
          Complex IR -> SHARED SR scheduler (Schedule.Make) -> ISA-parametric

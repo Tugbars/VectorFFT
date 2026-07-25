@@ -995,3 +995,60 @@ measurements. It now states the honest reasons (fma_lift IS valuable and IS an R
 mechanism; this module simply gets FMA shape by construction at pow2, and algsimp
 could not supply Winograd for odd/prime anyway) and acknowledges that `dft_cx`
 duplicates dft.ml's recursion shape.
+
+### 2026-07-25 — FUSED FULL-IL K=1 (`--cil-k1`): the first full-IL-interior route
+
+**Course correction (Tugbars).** My first K=1 attempt (`cil_k1.h`, now deleted) composed
+the transform from TWO kernel calls (n1t then t2) over the 11-arg z ABI, with an
+N-complex scratch plane between them and a RUNTIME VTW2 table. Every one of those is a
+SPLIT-family artifact retrofitted onto IL. Tugbars, correctly, after a week of this
+pattern: *"you read the existing code/structure and you found an excuse to lean towards
+preserving and solving things with the existing machinery."* Banked as
+[[dont-retrofit-il-onto-split-machinery]].
+
+**What K=1 IL actually wants** — and our own MKL study already said so
+(mkl_highN_cascade_anatomy.md: *"the whole 2^k K=1 cascade is ONE function"*):
+
+| | retrofit (wrong) | IL-native (`emit_k1`) |
+|---|---|---|
+| structure | 2 kernel calls | ONE fused function per N |
+| intermediate | scratch plane crossed via ABI | function-scope L1 plane, never escapes |
+| twiddles | runtime VTW2 table | **compile-time VLIT constants** |
+| stage boundary | function call | **register transpose** (permute2f128) |
+| ABI | 11-arg staged codelet | `(const double *zin, double *zout)` |
+
+**Implementation.** `emit_k1` builds the four-step N = n1·n2 with BOTH stages inside one
+function. Stage A runs DFT_n1 over each adjacent column PAIR (one vector load per leg)
+and parks to a flat `double P[2N]`; the turn is two `permute2f128` per (k1-pair, column)
+regrouping lanes from "two j2 of one k1" to "two k1 of one j2"; stage B applies
+w_N^{k1·j2} and runs DFT_n2, storing at complex `k2*n1 + 2d` — which IS natural order,
+so no output permutation ever runs. Every sub-DAG goes through the SHARED SR scheduler.
+New node `CTwV` carries a DIFFERENT emit-time constant per complex lane (the fused
+kernel's two lanes are two different output indices k1, so their twiddles differ) —
+still zero runtime cost, just a wider VLIT.
+
+RESULT — `build_tuned/benches/cil_k1_fused_gate.c`, MKL in its HOME config
+(DFTI_COMPLEX, K=1, contiguous — the exact configuration docs/research studied, so no
+handicap):
+
+| N | vs MKL err | roundtrip err | CIL ns | MKL ns | vs MKL |
+|---|---|---|---|---|---|
+| 16   | 1.3e-16 | 2.3e-16 | **5.0**   | 13.0   | **2.60×** |
+| 64   | 3.0e-16 | 3.3e-16 | **28.9**  | 30.1   | **1.04×** |
+| 256  | 3.2e-16 | 4.5e-16 | 165.7     | 140.3  | 0.85× |
+| 1024 | 6.8e-16 | 8.9e-16 | 1536.0    | 1303.0 | 0.85× |
+
+- **N=16 is 2.6× MKL**; N=64 edges it.
+- N=64 at 28.9 ns **beats the recorded mono-64 hand reference (32 ns, logged as
+  "≈ MKL-IL")** — the fused generated kernel is faster than the hand one.
+- 256/1024 sit at 0.85×, i.e. exactly the library's known ~15% standing.
+- Accuracy improved an ORDER OF MAGNITUDE over the staged form (1e-16 vs 1e-15) —
+  no intermediate memory round-trip means fewer roundings.
+
+This is the FIRST route in the codebase whose interior is interleaved end to end. Every
+prior K=1 IL path converts internally: the z-cascade's leaf is "z-in -> split-out"
+(block-split interior) and BAILEY2V is IL-boundary/split-interior.
+
+NEXT for K=1 completeness: N=4096+ (stage A's plane exceeds L1 — needs blocking or a
+3-stage split), non-pow2 N (complex Winograd/Rader), and a runtime path so users can
+reach it.
