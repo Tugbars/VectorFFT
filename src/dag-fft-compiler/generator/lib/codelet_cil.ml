@@ -290,6 +290,63 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
     out)
 ;;
 
+(* Mixed-radix four-step over the complex IR: `chain` says how the transform is
+   FACTORED, and dft_cx (pure radix-2) is only the leaf.
+
+   Why this exists. dft_cx hardwires 2.2.2.2.2.2 for a 64-point stage — a plan
+   decision baked into an emitter, one level below the one already removed from
+   emit_k1. The IL chain race measured what it costs: with the stage COUNT
+   pinned at two, stage radices grow as sqrt(N), so by N=1024 both stages are
+   fully-unrolled DFT_32/DFT_64 that spill, and no choice of two-stage split
+   recovers more than 5%. Letting the chain reach inside a stage hands that
+   factorization back to the planner.
+
+   Index algebra (standard four-step). With j = j1*n2 + j2 and k = k2*r0 + k1,
+   the cross term j1*n2*k2*r0 is a multiple of N and drops, leaving
+     X[k2*r0 + k1] = DFT_n2 over j2 of ( DFT_r0(column j2)[k1] * w_N^{j2*k1} )
+   so the output lands transposed at k2*r0 + k1, which is why the caller's
+   store index is (k2 * n1 + k1) and no output permutation is ever needed. *)
+let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(chain : int list) (xs : t array)
+  : t array
+  =
+  let n = Array.length xs in
+  let prod = List.fold_left ( * ) 1 chain in
+  if prod <> n
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: dft_chain got %d inputs but the chain multiplies to %d"
+         n
+         prod);
+  match chain with
+  | [] | [ _ ] -> dft_cx ~sign n xs
+  | r0 :: rest ->
+    let n2 = n / r0 in
+    let sgn = if sign = `Fwd then -1.0 else 1.0 in
+    let pi = 4.0 *. atan 1.0 in
+    let cols =
+      Array.init n2 (fun j2 ->
+        dft_cx ~sign r0 (Array.init r0 (fun j1 -> xs.((j1 * n2) + j2))))
+    in
+    let out = Array.make n xs.(0) in
+    for k1 = 0 to r0 - 1 do
+      let row =
+        Array.init n2 (fun j2 ->
+          let v = cols.(j2).(k1) in
+          if k1 = 0 || j2 = 0
+          then v
+          else (
+            let a = sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n in
+            ctw (cos a) (sin a) v))
+      in
+      let r = dft_chain ~sign ~chain:rest row in
+      for k2 = 0 to n2 - 1 do
+        out.((k2 * r0) + k1) <- r.(k2)
+      done
+    done;
+    out
+;;
+
 (* ═══════════════════════════════════════════════════════════════
  *  EMISSION
  * ═══════════════════════════════════════════════════════════════ *)
@@ -647,6 +704,18 @@ let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
                   v)))
     done
   in
+  (* emit_blocked writes its OWN stores (plain leg-major) and never inspects
+     `kind`; the store-edge match below — which is where N1T's corner-turn
+     lives — is skipped entirely when blocked. So --cil-n1t --cil-blocked
+     would emit a kernel NAMED n1t, advertising corner-turned stores, that
+     does not corner-turn: silently wrong output under a correct-looking
+     symbol. Refuse until emit_blocked learns the kind. *)
+  if blocked && kind = N1T
+  then
+    failwith
+      "codelet_cil: --cil-blocked does not implement the N1T corner-turn; \
+       emit_blocked emits plain leg-major stores, so the result would be \
+       mislabelled n1t. Use --cil-n1/--cil-t2 with --cil-blocked.";
   if blocked
   then emit_blocked ()
   else (
@@ -843,29 +912,46 @@ let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
  *             address IS natural order. No output permutation, ever.
  * ═══════════════════════════════════════════════════════════════ *)
 
-let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+(* ~chain: the factorization to emit, supplied BY THE CALLER. This emitter
+   does NOT choose it.
+
+   Plan selection is the planner's job, decided by MEASURED whole-plan search
+   (docs/roadmap/z_chain_planner_notes.md: "DP prunes the search; it never
+   composes costs"). An earlier version of this function picked a "squarest
+   split" internally — a composed cost model, which both contradicted the
+   calibrated chains and caused the measured losses: the N whose split landed
+   on spill-free radices (16 = 4x4, 64 = 8x8) BEAT MKL, while those landing on
+   r16/r32 (256, 1024) sat at 0.85x. Emitters take the plan as INPUT. *)
+let emit_k1
+      ~(dir : dir)
+      ~(chain_a : int list)
+      ~(chain_b : int list)
+      ~(isa : Isa.t)
+      ~(uarch : Uarch.t)
+  : string
+  =
   let vw = isa.Isa.vec_width in
   if vw <> 4
   then failwith "codelet_cil: fused K=1 is written for 2 complex/vector (avx2)";
-  if n < 4 || n land (n - 1) <> 0
-  then
-    failwith
-      (Printf.sprintf "codelet_cil: fused K=1 needs a power of two >= 4 (got %d)" n);
-  (* Squarest split keeps both stages' register pressure down. *)
-  let best = ref 0 in
-  for c = 2 to 64 do
-    if c land (c - 1) = 0 && n mod c = 0
-    then (
-      let o = n / c in
-      if o >= 2 && o <= 64 && o land (o - 1) = 0
-      then if !best = 0 || min c o > min !best (n / !best) then best := c)
-  done;
-  if !best = 0
-  then
-    failwith
-      (Printf.sprintf "codelet_cil: N=%d does not factor into two radices <= 64" n);
-  let n1 = !best in
-  let n2 = n / n1 in
+  if chain_a = [] || chain_b = []
+  then failwith "codelet_cil: emit_k1 needs a factorization for BOTH passes";
+  List.iter
+    (fun r ->
+       if r < 2 || r > 64 || r land (r - 1) <> 0
+       then
+         failwith
+           (Printf.sprintf
+              "codelet_cil: chain factor %d must be a power of two in [2,64]"
+              r))
+    (chain_a @ chain_b);
+  let n1 = List.fold_left ( * ) 1 chain_a
+  and n2 = List.fold_left ( * ) 1 chain_b in
+  let n = n1 * n2 in
+  (* The chain is part of the IDENTITY, not a comment: candidates for one N
+     must coexist in one binary to be raced, and the wisdom that names a
+     winner has to be able to name it. *)
+  let tag_of l = String.concat "x" (List.map string_of_int l) in
+  let chain_tag = "a" ^ tag_of chain_a ^ "_b" ^ tag_of chain_b in
   let sign = if dir = Fwd then `Fwd else `Bwd in
   let sgn = if dir = Fwd then -1.0 else 1.0 in
   let pi = 4.0 *. atan 1.0 in
@@ -924,7 +1010,7 @@ let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
       ~pre:(fun () -> ())
       ~load_of:(fun j1 ->
         Isa.loadu_pd isa (Printf.sprintf "zin[%d]" (2 * ((j1 * n2) + (2 * c)))))
-      ~build:(fun ins -> dft_cx ~sign n1 ins)
+      ~build:(fun ins -> dft_chain ~sign ~chain:chain_a ins)
       ~store:(fun k1 v ->
         Buffer.add_string
           body
@@ -993,7 +1079,7 @@ let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
                    x)
             ins
         in
-        dft_cx ~sign n2 tw)
+        dft_chain ~sign ~chain:chain_b tw)
       ~store:(fun k2 v ->
         Buffer.add_string
           body
@@ -1032,7 +1118,7 @@ let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
     (Printf.sprintf
        "\n\
         __attribute__((target(\"%s\")))\n\
-        void vfft_cil_%d_%s_%s(const double * __restrict__ zin,\n\
+        void vfft_cil_%d_%s_%s_%s(const double * __restrict__ zin,\n\
        \                              double * __restrict__ zout)\n\
         {\n\
        \    double P[%d];  /* stage-A results; L1-resident, never escapes.\n\
@@ -1040,6 +1126,7 @@ let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
        \                       load/store intrinsics take. */\n"
        isa.Isa.target_attr
        n
+       chain_tag
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
        (2 * n));

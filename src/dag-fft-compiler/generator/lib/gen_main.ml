@@ -163,6 +163,9 @@ let run (argv : string array) : unit =
   let cil_kind = ref "" in
   let cil_bwd = ref false in
   let cil_k1 = ref false in
+  (* --cil-chain r0.r1: the fused K=1 factorization, supplied by the PLANNER.
+     No default: a missing chain is an error, not a heuristic. *)
+  let cil_chain = ref "" in
   let cil_blocked = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
@@ -437,6 +440,10 @@ let run (argv : string array) : unit =
     then cil_bwd := true
     else if arg = "--cil-k1"
     then cil_k1 := true
+    else if arg = "--cil-chain" && !i + 1 < Array.length arr
+    then (
+      cil_chain := arr.(!i + 1);
+      incr i)
     else if arg = "--cil-blocked"
     then cil_blocked := true
     else if arg = "--z-t2ss"
@@ -1561,16 +1568,63 @@ let run (argv : string array) : unit =
             identical symbol names; pass exactly one family per run."
            !zp_kind);
     if !cil_k1
-    then
+    then (
       (* FUSED full-IL K=1: the whole N-point transform as ONE function,
          emit-time constant twiddles, register-transpose stage boundary.
-         N (positional) = the transform length, not a radix. *)
+         N (positional) = the transform length, not a radix, and the
+         factorization comes from --cil-chain (the PLANNER's verdict). *)
+      if !cil_chain = ""
+      then
+        failwith
+          "gen_main: --cil-k1 requires --cil-chain A:B — the fused kernel's \
+           factorization is a planner decision, and this emitter deliberately \
+           has no default (see plans-must-come-from-dp-planner-machinery).";
+      (* Syntax: "8.4:8.4" — the colon is the PASS BOUNDARY (the memory plane
+         and register turn sit there), and the dot-separated factors on each
+         side say how that pass's DFT is itself factored. "32.32" with no colon
+         is the degenerate one-radix-per-pass form. Both the split point and
+         the interior factorization are plan, so both are spelled out. *)
+      let parse_factors what s =
+        List.map
+          (fun f ->
+             match int_of_string_opt f with
+             | Some v -> v
+             | None ->
+               failwith
+                 (Printf.sprintf
+                    "gen_main: --cil-chain %s: %S is not an integer radix"
+                    what
+                    f))
+          (String.split_on_char '.' s)
+      in
+      let chain_a, chain_b =
+        match String.split_on_char ':' !cil_chain with
+        | [ a; b ] -> parse_factors "pass A" a, parse_factors "pass B" b
+        | [ one ] ->
+          (match parse_factors "chain" one with
+           | [ a; b ] -> [ a ], [ b ]
+           | _ ->
+             failwith
+               "gen_main: --cil-chain without a ':' must be exactly two radices \
+                (one per pass); use A:B to factor the passes themselves.")
+        | _ -> failwith "gen_main: --cil-chain takes at most one ':'"
+      in
+      let prod = List.fold_left ( * ) 1 (chain_a @ chain_b) in
+      if n > 0 && prod <> n
+      then
+        failwith
+          (Printf.sprintf
+             "gen_main: --cil-chain %s multiplies to %d but N=%d was requested"
+             !cil_chain
+             prod
+             n);
       print_string
         (Codelet_cil.emit_k1
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
-           ~n
+           ~chain_a
+           ~chain_b
            ~isa
-           ~uarch)
+           ~uarch))
     else if !cil_kind <> ""
     then
       (* interleaved-complex (full-IL) family: N (positional) = the radix.
