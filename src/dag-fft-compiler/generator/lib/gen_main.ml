@@ -163,6 +163,7 @@ let run (argv : string array) : unit =
   let cil_kind = ref "" in
   let cil_bwd = ref false in
   let cil_k1 = ref false in
+  let cil_blocked = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -436,6 +437,8 @@ let run (argv : string array) : unit =
     then cil_bwd := true
     else if arg = "--cil-k1"
     then cil_k1 := true
+    else if arg = "--cil-blocked"
+    then cil_blocked := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1577,6 +1580,7 @@ let run (argv : string array) : unit =
         (Codelet_cil.emit
            ~kind:(Codelet_cil.kind_of_string !cil_kind)
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
+           ~blocked:!cil_blocked
            ~radix:n
            ~isa
            ~uarch)

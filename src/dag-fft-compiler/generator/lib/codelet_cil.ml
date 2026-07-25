@@ -433,7 +433,8 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
-let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
+let emit ~(kind : kind) ~(dir : dir) ~(blocked : bool) ~(radix : int)
+      ~(isa : Isa.t) ~(uarch : Uarch.t)
   : string
   =
   let vw = isa.Isa.vec_width in
@@ -536,7 +537,119 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
     Array.iteri (fun i (e : t) -> store i (Printf.sprintf "z%d" e.tag)) outs;
     Buffer.add_string body "        }\n"
   in
-  ignore emit_pass;
+  (* ─── BLOCKED (2-pass) construction ──────────────────────────────
+     Straight-line radix-R needs R values live at once; there are only 16
+     vector registers, so from R=16 up gcc spills hard — MEASURED stack
+     traffic per kernel: r8 12-14, r16 35-53, r32 158-197, r64 537-554.
+     Blocking splits the DIT recursion at its natural seam: the even-leg
+     half-DFT and the odd-leg half-DFT each need only R/2 live, are emitted
+     as separate scheduled passes, and park to a small function-scope spill
+     array; a third pass reloads pairs and runs the top-level butterfly.
+     Peak live drops R -> R/2, which is what makes r32/r64 usable as chain
+     stages at all. Mirrors codelet_zil's emit_z_blocked_body, but each pass
+     is scheduled by the SHARED scheduler and the twiddles stay compile-time
+     constants. *)
+  let emit_blocked () =
+    (* Cooley-Tukey split R = m * p, decimating legs by residue mod m:
+         n = a*m + i    ->   A_i[j] = DFT_p over a of x[a*m+i]
+         X[j + p*k2]    =   DFT_m over i of ( A_i[j] * W_R^{i*j} )
+       PASS 1 emits m sub-DFTs of size p (each needs only p live) parking to
+       S[i*p + j]; PASS 2 emits p groups, each reloading m values, applying
+       the compile-time W_R^{i*j}, and running an m-point DFT.
+       m = 2 is the plain halving (its DFT_2 is exactly butterfly_pair);
+       m = 8 at R=64 is the 8x8 form — needed because halving 64 leaves
+       32-point halves that still spill. Peak live goes R -> max(p, m). *)
+    let m = if radix >= 64 then 8 else 2 in
+    let p = radix / m in
+    let pi = 4.0 *. atan 1.0 in
+    let sgn = if dir = Fwd then -1.0 else 1.0 in
+    let leg_load l = Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l) in
+    (* PASS 1: sub-DFT i over legs { a*m + i } *)
+    for i = 0 to m - 1 do
+      emit_pass
+        ~label:
+          (Printf.sprintf
+             "PASS 1.%d: legs {a*%d+%d} -> S[%d..%d]"
+             i m i (i * p) ((i * p) + p - 1))
+        ~nin:p
+        ~load_of:(fun a -> leg_load ((a * m) + i))
+        ~build:(fun ins ->
+          let ins =
+            if pre_tw
+            then
+              Array.mapi
+                (fun a x ->
+                   let l = (a * m) + i in
+                   if l > 0 then ctwl l x else x)
+                ins
+            else ins
+          in
+          dft_cx ~sign p ins)
+        ~store:(fun j v ->
+          Buffer.add_string
+            body
+            (Printf.sprintf
+               "        %s;\n"
+               (Isa.storeu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))) v)))
+    done;
+    (* PASS 2: per j, twiddle by W_R^{i*j} then DFT_m over i *)
+    for j = 0 to p - 1 do
+      emit_pass
+        ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
+        ~nin:m
+        ~load_of:(fun i ->
+          Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))))
+        ~build:(fun ins ->
+          let o =
+            if m = 2
+            then (
+              (* m=2 is a single top-level butterfly, so use the CLASS-aware
+                 form: it turns W^{R/4} into a free rotation and folds the
+                 W^{R/8} pair into FMAs, which a general complex multiply
+                 would not. Keeps the blocked output bit-identical to the
+                 monolithic one. *)
+              let a, b = butterfly_pair ~sign ~n:radix ~k:j ins.(0) ins.(1) in
+              [| a; b |])
+            else (
+              let tw =
+                Array.mapi
+                  (fun i x ->
+                     let e = i * j mod radix in
+                     if e = 0
+                     then x
+                     else if 4 * e = radix
+                     then (if sign = `Fwd then crot x else crotp x)
+                     else (
+                       let a =
+                         sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix
+                       in
+                       ctw (cos a) (sin a) x))
+                  ins
+              in
+              dft_cx ~sign m tw)
+          in
+          if post_tw
+          then
+            Array.mapi
+              (fun k2 e ->
+                 let l = j + (p * k2) in
+                 if l > 0 then ctwl l e else e)
+              o
+          else o)
+        ~store:(fun k2 v ->
+          Buffer.add_string
+            body
+            (Printf.sprintf
+               "        %s;\n"
+               (Isa.storeu_pd
+                  isa
+                  (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" (j + (p * k2)))
+                  v)))
+    done
+  in
+  if blocked
+  then emit_blocked ()
+  else (
   let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun ((_ : Expr.elem_ref option), (e : t)) ->
@@ -551,7 +664,7 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
              (Printf.sprintf
                 "        %s\n"
                 (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
-    scheduled;
+    scheduled);
   let buf = Buffer.create 8192 in
   Buffer.add_string
     buf
@@ -618,6 +731,14 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
        (if kind = T2 then "" else " (void)tw_re;"));
+  if blocked
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    double S[%d];  /* half-DFT spill: function-scope, L1-hot across \
+          iterations */\n"
+         (vw * radix));
   Buffer.add_string
     buf
     (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" per per);
@@ -630,19 +751,23 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
          "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
          per
          ((radix - 1) * 2 * vw));
-  (* load edge: one packed-complex vector per leg *)
-  for l = 0 to radix - 1 do
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "        %s\n"
-         (Isa.const_decl
-            isa
-            (Printf.sprintf "z%d" (cin l).tag)
-            (Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
-  done;
+  (* Blocked carries its own per-pass loads and stores; the monolithic form
+     needs the leg load edge here. *)
+  if not blocked
+  then
+    for l = 0 to radix - 1 do
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "        %s\n"
+           (Isa.const_decl
+              isa
+              (Printf.sprintf "z%d" (cin l).tag)
+              (Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
+    done;
   Buffer.add_buffer buf body;
-  (* store edge *)
+  (* store edge (blocked emits its own inside PASS 2) *)
+  if not blocked then
   (match kind with
    | N1 | T2 ->
      (* leg-major: leg l's `per` columns stay contiguous *)
