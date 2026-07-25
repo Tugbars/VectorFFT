@@ -101,6 +101,12 @@ type cx_kind =
   | CFmaC of float * t * t (* c*x + e,  real scalar c *)
   | CFnmaC of float * t * t (* -c*x + e, real scalar c *)
   | CTwC of float * float * t (* x * (c + i*s), emit-time constants *)
+  | CTwV of (float * float) array * t
+  (* x * w, with a DIFFERENT emit-time constant per complex lane. The K=1
+     fused kernel needs this: one vector holds two DIFFERENT output indices
+     k1 of the same transform, so their twiddles w_N^{k1*j2} differ. Still
+     zero runtime cost — the whole [c,c,c',c'][-s,+s,-s',+s'] pair is a
+     file-scope VLIT, exactly like CTwC's. Array length = vec_width/2. *)
   | CTwL of int * t
   (* x * w[leg], w LOADED from the streamed VTW2 table — the bailey2 t2
      mid. Same BYTW2 shape as CTwC, but cvec/svec come from the runtime
@@ -143,6 +149,7 @@ let crotp a = mk (CRotPI a)
 let cfma c x e = mk (CFmaC (c, x, e))
 let cfnma c x e = mk (CFnmaC (c, x, e))
 let ctw c s x = mk (CTwC (c, s, x))
+let ctwv w x = mk (CTwV (w, x))
 let ctwl leg x = mk (CTwL (leg, x))
 
 (* ═══════════════════════════════════════════════════════════════
@@ -163,7 +170,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CRotNI a | CRotPI a -> [ a ]
     | CAdd (a, b) | CSub (a, b) -> [ a; b ]
     | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
-    | CTwC (_, _, x) | CTwL (_, x) -> [ x ]
+    | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
   ;;
 
   (* Cycle costs, same convention as schedule.ml's real-valued table.
@@ -176,7 +183,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CAdd _ | CSub _ -> uarch.add_latency
     | CRotNI _ | CRotPI _ -> uarch.add_latency
     | CFmaC _ | CFnmaC _ -> uarch.fma_latency
-    | CTwC _ -> uarch.fma_latency
+    | CTwC _ | CTwV _ -> uarch.fma_latency
     | CTwL _ ->
       (* table load feeds the same mul+fma chain; the load is off the
          critical path in steady state, so charge the arithmetic. *)
@@ -200,7 +207,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CAdd _ | CSub _ -> 'A'
     | CRotNI _ | CRotPI _ -> 'R'
     | CFmaC _ | CFnmaC _ -> 'F'
-    | CTwC _ -> 'X'
+    | CTwC _ | CTwV _ -> 'X'
     | CTwL _ -> 'T'
   ;;
 end
@@ -290,45 +297,55 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
 (* Distinct CTwC constants become file-scope VLIT vectors (cos-broadcast +
  * sign-folded sin), so a general twiddle costs no runtime broadcast: the
  * BYTW2 shape is fmadd(_ZWn_c, x, mul(_ZWn_s, cflip x)). *)
-type consts = (string, string * float * float) Hashtbl.t
+(* A VLIT twiddle constant: one (cos, sin) per complex lane. A broadcast
+   constant (CTwC) is just the degenerate case where every lane matches. *)
+type consts = (string, string * (float * float) array) Hashtbl.t
 
-let const_name (tbl : consts) (c : float) (s : float) : string =
-  let key = Printf.sprintf "%.17g_%.17g" c s in
+let const_name_v (tbl : consts) (w : (float * float) array) : string =
+  let key =
+    String.concat "_" (Array.to_list (Array.map (fun (c, s) -> Printf.sprintf "%.17g:%.17g" c s) w))
+  in
   match Hashtbl.find_opt tbl key with
-  | Some (n, _, _) -> n
+  | Some (n, _) -> n
   | None ->
     let n = Printf.sprintf "_ZW%d" (Hashtbl.length tbl) in
-    Hashtbl.add tbl key (n, c, s);
+    Hashtbl.add tbl key (n, w);
     n
+;;
+
+let const_name (tbl : consts) (lanes : int) (c : float) (s : float) : string =
+  const_name_v tbl (Array.make lanes (c, s))
 ;;
 
 let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
   let b = Buffer.create 256 in
-  let lanes = isa.Isa.vec_width / 2 in
   let items =
     Hashtbl.fold (fun _ v acc -> v :: acc) tbl []
-    |> List.sort (fun (a, _, _) (b, _, _) -> compare a b)
+    |> List.sort (fun (a, _) (b, _) -> compare a b)
   in
   List.iter
-    (fun (n, c, s) ->
-       let rep x = String.concat ", " (List.init (lanes * 2) (fun _ -> x)) in
-       (* cos broadcast; sin sign-folded as [-s, +s] per complex so the
-          cflip'd product lands with the right signs for (a+bi)(c+is). *)
-       let sin_lane =
+    (fun (n, w) ->
+       (* cos duplicated across each complex; sin sign-folded as [-s, +s] per
+          complex so the cflip'd product lands with the right signs for
+          (a+bi)(c+is). One (c,s) PER LANE — a broadcast constant is just the
+          case where every lane is equal. *)
+       let cos_lanes =
          String.concat
            ", "
-           (List.init lanes (fun _ -> Printf.sprintf "%.17g, %.17g" (-.s) s))
+           (Array.to_list (Array.map (fun (c, _) -> Printf.sprintf "%.17g, %.17g" c c) w))
+       in
+       let sin_lanes =
+         String.concat
+           ", "
+           (Array.to_list
+              (Array.map (fun (_, s) -> Printf.sprintf "%.17g, %.17g" (-.s) s) w))
        in
        Buffer.add_string
          b
-         (Printf.sprintf
-            "static const %s %s_c = { %s };\n"
-            isa.Isa.vec_type
-            n
-            (rep (Printf.sprintf "%.17g" c)));
+         (Printf.sprintf "static const %s %s_c = { %s };\n" isa.Isa.vec_type n cos_lanes);
        Buffer.add_string
          b
-         (Printf.sprintf "static const %s %s_s = { %s };\n" isa.Isa.vec_type n sin_lane))
+         (Printf.sprintf "static const %s %s_s = { %s };\n" isa.Isa.vec_type n sin_lanes))
     items;
   Buffer.contents b
 ;;
@@ -347,7 +364,14 @@ let render (isa : Isa.t) (tbl : consts) (e : t) : string =
   | CFnmaC (c, x, acc) ->
     Isa.fnmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CTwC (c, s, x) ->
-    let w = const_name tbl c s in
+    let w = const_name tbl (isa.Isa.vec_width / 2) c s in
+    Isa.fmadd_pd
+      isa
+      (w ^ "_c")
+      (v x)
+      (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+  | CTwV (ws, x) ->
+    let w = const_name_v tbl ws in
     Isa.fmadd_pd
       isa
       (w ^ "_c")
@@ -661,5 +685,240 @@ let emit ~(kind : kind) ~(dir : dir) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uar
        l := !l + 2
      done);
   Buffer.add_string buf "    }\n}\n";
+  Buffer.contents buf
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+ *  FUSED K=1 — the whole N-point transform as ONE function
+ *
+ * This is the IL-NATIVE shape, and it is deliberately NOT built by calling
+ * the n1t/t2 codelets in sequence. Those carry the split family's staged
+ * vocabulary — an 11-arg batched ABI, a memory plane crossed between two
+ * function calls, and a RUNTIME twiddle table. At K=1 with N fixed at
+ * generation time none of that is wanted:
+ *
+ *   - MKL's own K=1 interleaved path is ONE function
+ *     (docs/research/mkl_highN_cascade_anatomy.md: "the whole 2^k K=1
+ *     cascade is ONE function", in-place on a contiguous plane);
+ *   - every twiddle is a COMPILE-TIME constant when N is known, so a
+ *     runtime table is pure waste — they become file-scope VLITs (CTwV);
+ *   - the stage boundary is a register transpose, not an ABI crossing.
+ *
+ * STRUCTURE — four-step over N = n1*n2, both stages inside one function.
+ * Index input as x[j1*n2 + j2] and output as X[k2*n1 + k1].
+ *   stage A : for each PAIR of columns (j2, j2+1) — adjacent complexes, so
+ *             one vector load per leg — run DFT_n1 over j1 lane-wise. Park
+ *             to a function-scope plane P[k1][c].
+ *   turn    : two permute2f128 per (k1-pair, c) regroup lanes from
+ *             "two j2 of one k1" to "two k1 of one j2" — the four-step
+ *             transpose, in REGISTERS.
+ *   stage B : multiply by w_N^{k1*j2} (per-lane VLIT, since the two lanes
+ *             carry k1 = 2d and 2d+1) and run DFT_n2 over j2. Stores land
+ *             at complex k2*n1 + 2d — adjacent, so full-width, and that
+ *             address IS natural order. No output permutation, ever.
+ * ═══════════════════════════════════════════════════════════════ *)
+
+let emit_k1 ~(dir : dir) ~(n : int) ~(isa : Isa.t) ~(uarch : Uarch.t) : string =
+  let vw = isa.Isa.vec_width in
+  if vw <> 4
+  then failwith "codelet_cil: fused K=1 is written for 2 complex/vector (avx2)";
+  if n < 4 || n land (n - 1) <> 0
+  then
+    failwith
+      (Printf.sprintf "codelet_cil: fused K=1 needs a power of two >= 4 (got %d)" n);
+  (* Squarest split keeps both stages' register pressure down. *)
+  let best = ref 0 in
+  for c = 2 to 64 do
+    if c land (c - 1) = 0 && n mod c = 0
+    then (
+      let o = n / c in
+      if o >= 2 && o <= 64 && o land (o - 1) = 0
+      then if !best = 0 || min c o > min !best (n / !best) then best := c)
+  done;
+  if !best = 0
+  then
+    failwith
+      (Printf.sprintf "codelet_cil: N=%d does not factor into two radices <= 64" n);
+  let n1 = !best in
+  let n2 = n / n1 in
+  let sign = if dir = Fwd then `Fwd else `Bwd in
+  let sgn = if dir = Fwd then -1.0 else 1.0 in
+  let pi = 4.0 *. atan 1.0 in
+  let tbl : consts = Hashtbl.create 64 in
+  let body = Buffer.create 16384 in
+  (* One scheduled sub-DAG. Tags restart per call, so each gets its own C
+     brace scope; `pre` emits glue (the register transpose) inside it. *)
+  let pass
+        ~(label : string)
+        ~(nin : int)
+        ~(pre : unit -> unit)
+        ~(load_of : int -> string)
+        ~(build : t array -> t array)
+        ~(store : int -> string -> unit)
+    : unit
+    =
+    reset ();
+    let ins = Array.init nin cin in
+    let outs = build ins in
+    let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
+    let sch = Sched.su_schedule uarch assigns in
+    Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
+    pre ();
+    Array.iteri
+      (fun i (e : t) ->
+         Buffer.add_string
+           body
+           (Printf.sprintf
+              "    %s\n"
+              (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (load_of i))))
+      ins;
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen e.tag)
+           then (
+             Hashtbl.replace seen e.tag ();
+             Buffer.add_string
+               body
+               (Printf.sprintf
+                  "    %s\n"
+                  (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
+      sch;
+    Array.iteri (fun i (e : t) -> store i (Printf.sprintf "z%d" e.tag)) outs;
+    Buffer.add_string body "    }\n"
+  in
+  (* ── stage A: DFT_n1 down each column pair, park to the plane ── *)
+  for c = 0 to (n2 / 2) - 1 do
+    pass
+      ~label:
+        (Printf.sprintf "stage A: columns j2=%d,%d -> P[k1][%d]" (2 * c) ((2 * c) + 1) c)
+      ~nin:n1
+      ~pre:(fun () -> ())
+      ~load_of:(fun j1 ->
+        Isa.loadu_pd isa (Printf.sprintf "zin[%d]" (2 * ((j1 * n2) + (2 * c)))))
+      ~build:(fun ins -> dft_cx ~sign n1 ins)
+      ~store:(fun k1 v ->
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "    %s;\n"
+             (Isa.storeu_pd isa (Printf.sprintf "P[%d]" (vw * ((k1 * (n2 / 2)) + c))) v)))
+  done;
+  (* ── stage B: register turn + per-lane constant twiddle + DFT_n2 ── *)
+  let p2f = Isa.intr isa "permute2f128_pd" in
+  for d = 0 to (n1 / 2) - 1 do
+    pass
+      ~label:
+        (Printf.sprintf
+           "stage B: k1=%d,%d -> X[k2*%d + %d]"
+           (2 * d)
+           ((2 * d) + 1)
+           n1
+           (2 * d))
+      ~nin:n2
+      ~pre:(fun () ->
+        for c = 0 to (n2 / 2) - 1 do
+          Buffer.add_string
+            body
+            (Printf.sprintf
+               "    %s\n    %s\n"
+               (Isa.const_decl
+                  isa
+                  (Printf.sprintf "_a%d" c)
+                  (Isa.loadu_pd isa (Printf.sprintf "P[%d]" (vw * ((2 * d * (n2 / 2)) + c)))))
+               (Isa.const_decl
+                  isa
+                  (Printf.sprintf "_b%d" c)
+                  (Isa.loadu_pd
+                     isa
+                     (Printf.sprintf "P[%d]" (vw * ((((2 * d) + 1) * (n2 / 2)) + c))))));
+          Buffer.add_string
+            body
+            (Printf.sprintf
+               "    %s\n    %s\n"
+               (Isa.const_decl
+                  isa
+                  (Printf.sprintf "_t%d" (2 * c))
+                  (Printf.sprintf "%s(_a%d, _b%d, 0x20)" p2f c c))
+               (Isa.const_decl
+                  isa
+                  (Printf.sprintf "_t%d" ((2 * c) + 1))
+                  (Printf.sprintf "%s(_a%d, _b%d, 0x31)" p2f c c)))
+        done)
+      ~load_of:(fun j2 -> Printf.sprintf "_t%d" j2)
+      ~build:(fun ins ->
+        let tw =
+          Array.mapi
+            (fun j2 x ->
+               if j2 = 0
+               then x
+               else
+                 ctwv
+                   (Array.init
+                      (vw / 2)
+                      (fun lane ->
+                         let k1 = (2 * d) + lane in
+                         let a =
+                           sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n
+                         in
+                         cos a, sin a))
+                   x)
+            ins
+        in
+        dft_cx ~sign n2 tw)
+      ~store:(fun k2 v ->
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "    %s;\n"
+             (Isa.storeu_pd
+                isa
+                (Printf.sprintf "zout[%d]" (2 * ((k2 * n1) + (2 * d))))
+                v)))
+  done;
+  let buf = Buffer.create 32768 in
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "/* Auto-generated by vfft_v2 — FULL-IL FUSED K=1 (codelet_cil.ml).\n\
+       \ * N=%d as ONE function: %d x %d four-step, both stages fused, the\n\
+       \ * stage boundary is a REGISTER transpose (permute2f128), and every\n\
+       \ * twiddle is a compile-time constant — no runtime table, no staged\n\
+       \ * codelet ABI, no split conversion anywhere. Natural order in/out.\n\
+       \ * Interior is interleaved end to end: %d complex per %d-bit vector. */\n\
+        #include <immintrin.h>\n\
+        #include <stddef.h>\n\n"
+       n
+       n1
+       n2
+       (vw / 2)
+       (vw * 64));
+  Buffer.add_string
+    buf
+    (if dir = Fwd
+     then Isa.im_mask_decl isa "_M_IM" ^ "  /* x*(-i) */\n"
+     else Isa.re_mask_decl isa "_M_RE" ^ "  /* x*(+i) */\n");
+  Buffer.add_string buf (emit_const_decls isa tbl);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "\n\
+        __attribute__((target(\"%s\")))\n\
+        void vfft_cil_%d_%s_%s(const double * __restrict__ zin,\n\
+       \                              double * __restrict__ zout)\n\
+        {\n\
+       \    double P[%d];  /* stage-A results; L1-resident, never escapes.\n\
+       \                       Flat doubles so &P[i] is the double* that the\n\
+       \                       load/store intrinsics take. */\n"
+       isa.Isa.target_attr
+       n
+       (if dir = Fwd then "fwd" else "bwd")
+       isa.Isa.name
+       (2 * n));
+  Buffer.add_buffer buf body;
+  Buffer.add_string buf "}\n";
   Buffer.contents buf
 ;;
