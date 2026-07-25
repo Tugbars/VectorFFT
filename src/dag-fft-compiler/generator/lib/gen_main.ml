@@ -158,6 +158,9 @@ let run (argv : string array) : unit =
      P1 kinds: "ms" | "msb". Distinct from z_split_kind (legacy emitter)
      so the two are A/B-able side by side until cutover. *)
   let zp_kind = ref "" in
+  (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
+     from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
+  let cil_n1 = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -421,6 +424,8 @@ let run (argv : string array) : unit =
     then zp_kind := "stermb"
     else if arg = "--zp-sterm2"
     then zp_kind := "sterm2"
+    else if arg = "--cil-n1"
+    then cil_n1 := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1528,6 +1533,12 @@ let run (argv : string array) : unit =
        placement luck. There is no valid reason to request both in one
        invocation, so fail loudly rather than let the loser arm masquerade as
        the winner. *)
+    if !cil_n1 && (!zp_kind <> "" || !z_native || !k1_mono || !oop)
+    then
+      failwith
+        "gen_main: --cil-n1 (interleaved-complex) conflicts with another codelet \
+         family in the same invocation; they emit identical symbol names, so pass \
+         exactly one family per run.";
     if !zp_kind <> "" && (!z_native || !k1_mono || !oop)
     then
       failwith
@@ -1536,7 +1547,13 @@ let run (argv : string array) : unit =
             --z-*/--k1-mono/--oop flag in the same invocation. They emit \
             identical symbol names; pass exactly one family per run."
            !zp_kind);
-    if !zp_kind <> ""
+    if !cil_n1
+    then
+      (* interleaved-complex (full-IL) family: N (positional) = the radix.
+         Complex IR -> SHARED SR scheduler (Schedule.Make) -> ISA-parametric
+         emission. See codelet_cil.ml. *)
+      print_string (Codelet_cil.emit_n1 ~radix:n ~isa ~uarch)
+    else if !zp_kind <> ""
     then
       (* pipeline-hosted zsplit family: N (positional) = the radix. Goes
          through Dft -> Pipeline.prepare_codelet -> Schedule.su_schedule ->

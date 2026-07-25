@@ -314,17 +314,97 @@ let node_latency (uarch : Uarch.t) (e : Algsimp.t) : int =
   | NK_Plus _ -> Algsimp.nk_plus_unreachable "schedule.ml:255"
 ;;
 
-(* Compute critical-path distance from each node to a sink, in cycles.
- * cp_dist[n] = node_latency(n) + max(cp_dist[user] for user in users(n))
- * Sinks have cp_dist = node_latency(n). *)
-let compute_cp_dist
-      (uarch : Uarch.t)
-      (sinks : Algsimp.t list)
-      (all_nodes : Algsimp.t list)
-  : (int, int) Hashtbl.t
-  =
+(* ═══════════════════════════════════════════════════════════════
+ *  SCHEDULER NODE INTERFACE (zil_pipeline_port.md §11 — full-IL)
+ *
+ * The SR scheduler below is dependency-driven: its whole loop reads
+ * `preds` and `tag`, and only FIVE places ever look at a node's payload
+ * (latency, SU label, the STARVE load gate, the const leaf policy, and
+ * the cosmetic dump char). That makes it reusable by ANY DAG, not just
+ * the real-valued Ir — which is what the interleaved-complex (full-IL)
+ * backend needs: it keeps its own packed-complex IR (merging into
+ * Ir.node_kind would cost ~150 exhaustive-match arms across 7 modules,
+ * most of them in real-valued passes an IL kernel never runs) and
+ * borrows ONLY the scheduler, via this signature.
+ *
+ * The record shape `{ tag; node }` is part of the signature on purpose:
+ * it keeps every `e.tag` in the body working unchanged, so functorizing
+ * is a type-level move, not a rewrite of the algorithm.
+ * ═══════════════════════════════════════════════════════════════ *)
+module type SCHED_NODE = sig
+  type payload
+
+  type t =
+    { tag : int
+    ; node : payload
+    }
+
+  (* Immediate operands — the ONLY dependency accessor the loop uses. *)
+  val preds : t -> t list
+
+  (* Cycle cost of producing this node (drives cp_dist). *)
+  val latency : Uarch.t -> t -> int
+
+  (* STARVE rule: loads are admitted late, never competing with arith. *)
+  val is_load : t -> bool
+
+  (* Leaf policy under `Lookahead load admission. *)
+  val is_const : t -> bool
+
+  (* Cosmetic, VFFT_SCHED_DUMP sidecar only. *)
+  val kind_char : t -> char
+end
+
+(* The real-valued Ir instantiation — restores every existing entry point
+ * unchanged via `include Make (Ir_node)` below. *)
+module Ir_node :
+  SCHED_NODE with type payload = Algsimp.node_kind and type t = Algsimp.t = struct
+  type payload = Algsimp.node_kind
+
+  type t = Algsimp.t =
+    { tag : int
+    ; node : payload
+    }
+
+  let preds = Algsimp.preds
+  let latency = node_latency
+
+  let is_load (n : t) =
+    match n.node with
+    | NK_Load _ -> true
+    | _ -> false
+  ;;
+
+  let is_const (n : t) =
+    match n.node with
+    | NK_Const _ -> true
+    | _ -> false
+  ;;
+
+  let kind_char (n : t) =
+    match n.node with
+    | NK_Const _ -> 'C'
+    | NK_Load _ -> 'L'
+    | NK_Add _ | NK_Sub _ -> 'A'
+    | NK_Neg _ -> 'N'
+    | NK_Mul _ -> 'M'
+    | NK_Fma _ -> 'F'
+    | NK_CmulRe _ | NK_CmulIm _ -> 'X'
+    | NK_Plus _ -> 'O'
+  ;;
+end
+
+module Make (N : SCHED_NODE) = struct
+  open N
+
+  (* Compute critical-path distance from each node to a sink, in cycles.
+   * cp_dist[n] = latency(n) + max(cp_dist[user] for user in users(n))
+   * Sinks have cp_dist = latency(n). *)
+  let compute_cp_dist (uarch : Uarch.t) (sinks : t list) (all_nodes : t list)
+    : (int, int) Hashtbl.t
+    =
   (* Build successor (user) map. *)
-  let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
+  let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
   let add_user prod use =
     let cur =
       try Hashtbl.find users prod.tag with
@@ -348,7 +428,7 @@ let compute_cp_dist
   let sorted_desc = List.sort (fun a b -> compare b.tag a.tag) all_nodes in
   List.iter
     (fun n ->
-       let lat = node_latency uarch n in
+       let lat = latency uarch n in
        let user_list =
          try Hashtbl.find users n.tag with
          | Not_found -> []
@@ -374,49 +454,43 @@ let compute_cp_dist
  * For trees, classical SU labels are exact. On DAGs (shared subexprs),
  * this over-estimates pressure for shared values, which is a
  * conservative bias toward scheduling them earlier. *)
-let compute_su_number (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
-  let su : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  let get_su (e : Algsimp.t) : int =
-    try Hashtbl.find su e.tag with
-    | Not_found -> 1
-  in
-  let sorted_asc = List.sort (fun a b -> compare a.tag b.tag) all_nodes in
-  List.iter
-    (fun n ->
-       let s =
-         match n.node with
-         | NK_Const _ | NK_Load _ -> 1
-         | NK_Neg a -> get_su a
-         | NK_Add (a, b) | NK_Sub (a, b) | NK_Mul (a, b) ->
-           let sa = get_su a
-           and sb = get_su b in
-           if sa = sb then sa + 1 else max sa sb
-         | NK_CmulRe (a, b, c, d) | NK_CmulIm (a, b, c, d) ->
-           (* k-ary SU label: sort children by su descending, label = max_i (su_i + i). *)
-           let sus =
-             List.sort (fun x y -> compare y x) [ get_su a; get_su b; get_su c; get_su d ]
-           in
-           let rec compute idx = function
-             | [] -> 0
-             | s :: rest -> max (s + idx) (compute (idx + 1) rest)
-           in
-           compute 0 sus
-         | NK_Fma (a, b, c, _, _) ->
-           (* 3-ary SU label, same scheme as Cmul. *)
-           let sus =
-             List.sort (fun x y -> compare y x) [ get_su a; get_su b; get_su c ]
-           in
-           let rec compute idx = function
-             | [] -> 0
-             | s :: rest -> max (s + idx) (compute (idx + 1) rest)
-           in
-           compute 0 sus
-         | NK_Plus _ -> Algsimp.nk_plus_unreachable "schedule.ml:319"
-       in
-       Hashtbl.add su n.tag s)
-    sorted_asc;
-  su
-;;
+  (* PAYLOAD-GENERIC form. The k-ary label — sort children's SU
+     descending, label = max_i (su_i + i) — reproduces every per-kind
+     case the hand-written version spelled out, so this is a refactor,
+     not a behavior change:
+       leaf (no preds)          -> 1                      (special-cased)
+       unary [a]                -> max(sa+0)      = sa
+       binary [a;b], sa>=sb     -> max(sa, sb+1)
+             ... which equals the old `if sa=sb then sa+1 else max sa sb`
+             (sa=sb: max(v,v+1)=v+1; sa>sb: sb+1<=sa so it is sa)
+       3-ary / 4-ary            -> the same formula the old code already
+                                   used verbatim for Fma / Cmul.
+     Verified empirically too: with this in place every production codelet
+     regenerates BYTE-IDENTICAL (the R0 baseline diff). *)
+  let compute_su_number (all_nodes : t list) : (int, int) Hashtbl.t =
+    let su : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    let get_su (e : t) : int =
+      try Hashtbl.find su e.tag with
+      | Not_found -> 1
+    in
+    let sorted_asc = List.sort (fun a b -> compare a.tag b.tag) all_nodes in
+    List.iter
+      (fun n ->
+         let s =
+           match List.map get_su (preds n) with
+           | [] -> 1
+           | sus ->
+             let sus = List.sort (fun x y -> compare y x) sus in
+             let rec compute idx = function
+               | [] -> 0
+               | s :: rest -> max (s + idx) (compute (idx + 1) rest)
+             in
+             compute 0 sus
+         in
+         Hashtbl.add su n.tag s)
+      sorted_asc;
+    su
+  ;;
 
 (* ============================================================
  * STARVE–RETIRE (SR) LIST SCHEDULING — the production scheduler.
@@ -592,12 +666,12 @@ let compute_su_number (all_nodes : Algsimp.t list) : (int, int) Hashtbl.t =
  * sink retirement minimizes Belady traffic on butterfly DAGs —
  * the theorem this record points at (doc 69 §4).
  * ============================================================ *)
-let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
-  : (Expr.elem_ref option * Algsimp.t) list
+let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref option * t) list
   =
   (* Collect all reachable nodes. *)
-  let seen : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
-  let rec visit (e : Algsimp.t) =
+  let seen : (int, t) Hashtbl.t = Hashtbl.create 256 in
+  let rec visit (e : t) =
     if not (Hashtbl.mem seen e.tag)
     then (
       Hashtbl.add seen e.tag e;
@@ -609,7 +683,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   let cp_dist = compute_cp_dist uarch sinks all_nodes in
   let su_num = compute_su_number all_nodes in
   (* Successor map for forward propagation when a node becomes scheduled. *)
-  let users : (int, Algsimp.t list) Hashtbl.t = Hashtbl.create 256 in
+  let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun n ->
        List.iter
@@ -627,7 +701,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   (* Ready set: nodes whose predecessors have all been scheduled. *)
   let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
   let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
-  let ready : Algsimp.t list ref = ref [] in
+  let ready : t list ref = ref [] in
   List.iter
     (fun n ->
        if preds n = []
@@ -637,12 +711,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     all_nodes;
   (* Load source-order tracking: only allow the next-required load to fire. *)
   let load_tags =
-    List.filter_map
-      (fun n ->
-         match n.node with
-         | NK_Load _ -> Some n.tag
-         | _ -> None)
-      all_nodes
+    List.filter_map (fun n -> if is_load n then Some n.tag else None) all_nodes
     |> List.sort compare
   in
   let load_array = Array.of_list load_tags in
@@ -675,11 +744,6 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
    *
    * Sink detection: a node with EMPTY user list in the DAG. Its only role
    * is to feed an output store. *)
-  let is_load n =
-    match n.node with
-    | NK_Load _ -> true
-    | _ -> false
-  in
   let is_sink n =
     let user_list =
       try Hashtbl.find users n.tag with
@@ -735,19 +799,14 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     | None -> 4
   in
   let since_leaf = ref 0 in
-  let is_const n =
-    match n.Algsimp.node with
-    | NK_Const _ -> true
-    | _ -> false
-  in
   let is_leaf n = is_load n || (load_policy = `Lookahead && is_const n) in
   let is_hot n =
     List.exists
-      (fun (u : Algsimp.t) ->
+      (fun (u : t) ->
          (try Hashtbl.find unsched_count u.tag with
           | Not_found -> 0)
          = 1)
-      (try Hashtbl.find users n.Algsimp.tag with
+      (try Hashtbl.find users n.tag with
        | Not_found -> [])
   in
   (* VFFT_SU_TIEBREAK = cone | affinity (default classic, byte-
@@ -766,19 +825,19 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   let last_mask : Int64.t ref = ref 0L in
   if
     cone_mode
-    && List.length (List.filter (fun (n : Algsimp.t) -> is_sink n) all_nodes) <= 63
+    && List.length (List.filter (fun (n : t) -> is_sink n) all_nodes) <= 63
   then (
     let sink_idx : (int, int) Hashtbl.t = Hashtbl.create 64 in
     let next = ref 0 in
     List.iter
-      (fun (n : Algsimp.t) ->
+      (fun (n : t) ->
          if is_sink n
          then (
            Hashtbl.add sink_idx n.tag !next;
            incr next))
       all_nodes;
     let masks : (int, Int64.t) Hashtbl.t = Hashtbl.create 256 in
-    let rec mask_of (n : Algsimp.t) : Int64.t =
+    let rec mask_of (n : t) : Int64.t =
       match Hashtbl.find_opt masks n.tag with
       | Some m -> m
       | None ->
@@ -800,7 +859,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
       !c
     in
     List.iter
-      (fun (n : Algsimp.t) ->
+      (fun (n : t) ->
          let m = mask_of n in
          Hashtbl.replace sink_mask n.tag m;
          Hashtbl.replace cone_count n.tag (popcount m))
@@ -814,7 +873,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
     done;
     !c
   in
-  let pick_next () : Algsimp.t option =
+  let pick_next () : t option =
     if !ready = []
     then None
     else (
@@ -933,7 +992,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
              | [] -> None
              | ls -> Some (List.hd (List.sort cmp ls)))))
   in
-  let result : (Expr.elem_ref option * Algsimp.t) list ref = ref [] in
+  let result : (Expr.elem_ref option * t) list ref = ref [] in
   let rec loop () =
     match pick_next () with
     | None -> ()
@@ -941,9 +1000,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
       Hashtbl.add scheduled n.tag ();
       ready := List.filter (fun x -> x.tag <> n.tag) !ready;
       Hashtbl.remove in_ready n.tag;
-      (match n.node with
-       | NK_Load _ -> incr load_idx
-       | _ -> ());
+      if is_load n then incr load_idx;
       result := (None, n) :: !result;
       (if cone_mode
        then
@@ -991,8 +1048,8 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
   let mono_sig () =
     dag_signature
       (List.map
-         (fun (_, (n : Algsimp.t)) ->
-            n.tag, List.map (fun (p : Algsimp.t) -> p.tag) (preds n))
+         (fun (_, (n : t)) ->
+            n.tag, List.map (fun (p : t) -> p.tag) (preds n))
          su_intermediates)
   in
   (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
@@ -1001,14 +1058,14 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
      let oc = open_out file in
      Printf.fprintf oc "#dagsig %s\n" (mono_sig ());
      List.iter
-       (fun (_, (n : Algsimp.t)) ->
+       (fun (_, (n : t)) ->
           Printf.fprintf
             oc
             "%d:%s\n"
             n.tag
             (String.concat
                " "
-               (List.map (fun (p : Algsimp.t) -> string_of_int p.tag) (preds n))))
+               (List.map (fun (p : t) -> string_of_int p.tag) (preds n))))
        su_intermediates;
      close_out oc;
      (* Kinds sidecar for machine-model tooling (ILP-floor searcher):
@@ -1018,18 +1075,8 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
       * dump consumers are unaffected. *)
      let kc = open_out (file ^ ".kinds") in
      List.iter
-       (fun (_, (n : Algsimp.t)) ->
-          let k =
-            match n.node with
-            | NK_Const _ -> 'C'
-            | NK_Load _ -> 'L'
-            | NK_Add _ | NK_Sub _ -> 'A'
-            | NK_Neg _ -> 'N'
-            | NK_Mul _ -> 'M'
-            | NK_Fma _ -> 'F'
-            | NK_CmulRe _ | NK_CmulIm _ -> 'X'
-            | NK_Plus _ -> 'O'
-          in
+       (fun (_, (n : t)) ->
+          let k = kind_char n in
           Printf.fprintf kc "%d %c\n" n.tag k)
        su_intermediates;
      close_out kc);
@@ -1056,8 +1103,8 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
                  f);
             su_intermediates
           | _ ->
-            let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
-            List.iter (fun (n : Algsimp.t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
+            let by_tag : (int, t) Hashtbl.t = Hashtbl.create 256 in
+            List.iter (fun (n : t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
             let ordered =
               List.filter_map
                 (fun t ->
@@ -1110,6 +1157,10 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Algsimp.t) list)
  * scheduler should issue early. For PASS 1 we still want loads to be
  * deferred behind ready arithmetic; for PASS 2 there are no loads
  * (reloads happen before the pass). *)
+end
+
+include Make (Ir_node)
+
 (* === GOODMAN-HSU MODE SWITCH ===
  *
  * Optional pressure-aware extension. When ~gh:true is passed, the picker
