@@ -1052,3 +1052,53 @@ prior K=1 IL path converts internally: the z-cascade's leaf is "z-in -> split-ou
 NEXT for K=1 completeness: N=4096+ (stage A's plane exceeds L1 — needs blocking or a
 3-stage split), non-pow2 N (complex Winograd/Rader), and a runtime path so users can
 reach it.
+
+### 2026-07-25 — BLOCKED (Cooley-Tukey split) for the IL codelets: `--cil-blocked`
+
+Purpose (Tugbars' sequencing: blocked FIRST, then wire the DP planner to IL
+planning): make r32/r64 viable as chain stages so the planner has a real menu
+instead of being forced onto small radices by spill pressure.
+
+**Construction.** Split R = m·p, decimating legs by residue mod m:
+`n = a·m + i` → `A_i[j] = DFT_p over a of x[a·m+i]`, then
+`X[j + p·k2] = DFT_m over i of (A_i[j] · W_R^{i·j})`. PASS 1 emits m sub-DFTs
+of size p (each needs only p live) parking to a function-scope `S[]`; PASS 2
+emits p groups, each reloading m values, applying the compile-time
+`W_R^{i·j}`, and running an m-point DFT. Peak live drops R → max(p, m). Every
+pass is scheduled by the SHARED scheduler; twiddles stay compile-time.
+
+**m is chosen by radix, and it matters:** m=2 (halving) for r16/r32, **m=8 for
+r64**. Halving 64 leaves 32-point halves that still spill — the deep 8×8 split
+is what actually fixes it. Same reason codelet_zil has a separate `blocked2`.
+
+**m=2 keeps the class-aware butterfly.** For a single top-level butterfly the
+general "twiddle then DFT_2" form would turn W^{R/4} into a full complex
+multiply and lose the W^{R/8} FMA folds. m=2 therefore routes through
+`butterfly_pair` (the shared class selector), which also keeps its output
+BIT-IDENTICAL to the monolithic form. m=8 uses the general form plus a
+rotation shortcut at `4e = R`.
+
+MEASURED (-O3, stack traffic = spill/reload ops):
+
+| radix | monolithic reg-mov/stack | blocked reg-mov/stack | stack |
+|---|---|---|---|
+| r16 | 7 / 36  | 7 / 31   | −14% |
+| r32 | 20 / 160 | 16 / 101 | **−37%** |
+| r64 | 43 / 534 | 43 / **156** | **−71%** |
+
+GATE `build_tuned/benches/cil_blocked_gate.c`: r16/r32 blocked-vs-monolithic
+**BIT-IDENTICAL** (the class-aware m=2 path), r64 2.8e-15 (the 8×8 split
+re-associates, as expected), all vs scalar DFT ≤9.9e-14. PASS.
+
+NEXT (per the agreed sequencing): wire the DP planner to IL planning, now that
+r32/r64 are no longer automatically disqualified by spills. Note the planner's
+existing calibrated chains (2048 = 4·8·8·8, 4096 = 4·4·4·8·8) were derived when
+big radices DID spill — with blocking they may be re-evaluated, but that is a
+measurement for the planner to make, not an assumption to bake in.
+
+⚠ CORRECTION recorded: `emit_k1`'s factorization is currently a hardcoded
+"squarest split" (4096 → 64×64), which CONTRADICTS those calibrated chains and
+is why N=256 (16×16) and N=1024 (32×32) measured 0.85× while N=16 (4×4) and
+N=64 (8×8) beat MKL — the wins land exactly where the split happens to pick
+spill-free radices. That heuristic must be replaced by planner-supplied chains,
+not re-derived.
