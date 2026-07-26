@@ -889,7 +889,74 @@ Answer it with instructions.
 terminator-shaped pass* [M1, control 1.0034]. It should not be re-proposed as the primary,
 but it should not be discarded as a named fallback either.
 
-### Phase 0b — measure the only unmeasured cost term (half a day)
+### Phase 0b — ✅ MEASURED 2026-07-26 — terminator CONFIRMED, ingest gate FAILS at ≥4096 with a named suspect
+
+Harness `build_tuned/benches/bench_phase0b.c` (real `zsplit.h` plan/twiddles, per-cell
+smoke gates incl. cascade bitcmp, full discipline; logs in scratchpad `p0b/`).
+**Statistic: MEDIAN of 12–54 rotated reps** — best-of minimums chronically tripped the
+control band on large-N `sterm` (thermal-tail min-sampling); medians pass 0.983–1.016 on
+EVERY run. One 8192 run excluded on ABSOLUTE level (med 7858 ns vs 4430 elsewhere =
+degraded clock; its control passed — a passing control validates internal consistency,
+not machine state).
+
+| pair | 2048 | 4096 | 8192 | 16384 |
+|---|---|---|---|---|
+| **B terminator** `stermt/sterm` | 0.80–0.84 | **0.705** | **0.690/0.710** | **0.688/0.690/0.691** (3 runs) |
+| **A ingest** `s0t/s0s` | **0.890/0.893/0.898** (3 runs) | 1.355 | 1.337 | 1.353 |
+
+* **[M2] re-confirmed under passing controls; the 4096 anomaly (0.958) VANISHED**
+  (now 0.705–0.722) — it was the marginal control, as §1.3 suspected.
+* **Gate A (≤1.20) FAILS at ≥4096** — but ~1.35 cannot be the shuffles: the +2 p5 bounds
+  the port-5 charge at 1.125 even if the ingest were p5-bound, and it is not. The charge
+  is MEMORY-side, it FLIPS SIGN at 2048 (ingest an 11% WIN there, ×3 reproduced), and it
+  sits exactly on our one known divergence from MKL: **ρ makes the ingest's stores one
+  LINEAR cursor; MKL's observed ingest SCATTERS one record per plane section.** Per the
+  Phase-0 presumption order this is under diagnosis (store-pattern attribution matrix +
+  MKL store-addressing re-read), NOT a method verdict.
+* Fallback economics if 1.35 stood as-is: terminator −10…−13% of transform vs ingest
+  charge ≈ +6% (17% leaf share) — still net-negative, and 2048 wins on both stages.
+
+#### Phase 0b addendum — ✅ DIAGNOSED same day: the charge was ρ's LINEAR STORE CURSOR, not the turn. **Amendment ZTURN-S adopted.**
+
+Attribution matrix (`build_tuned/benches/bench_ingest_diag.c`, 2×2 lattice×stores, all
+arms bit-exact vs own scalar refs, censuses c≡b / d≡a on every vector class; medians,
+logs `diag_*.log`):
+
+| N (hot) | s0t = turn+LINEAR | **s0t_sect = turn+MKL geometry** | s0s_lin = no-turn+LINEAR | ctl |
+|---|---|---|---|---|
+| 2048 | 0.883 | 0.949 | 1.255 | ✅ |
+| 4096 | 1.338 | **1.003** | **2.146** | ✅ |
+| 8192 | 1.353 | **0.978** | **2.150** | ✅ |
+| 16384 | 0.929 | **0.992** | 1.141 | ✅ |
+
+* **Store column guilty, lattice innocent**: no-turn+linear alone reads 2.15; turn+sectioned
+  reads ≈1.00. Cold (one-shot, >2×L3 ring): linear arms 1.25–1.41, sectioned 1.04–1.07.
+* **Mechanism (predicted, then fingerprinted)**: s0t's single cursor advances 256 B/iter =
+  4× the leg-load rate ⇒ its mod-4K offset SWEEPS the loads ⇒ periodic 4K false aliasing
+  whose cost = store DRAIN latency (L1 at 2048 ≈ free; L2-RFO at ≥4096 ≈ 1.35×). Skew
+  probes match: skew=0 craters the rate-matched arms (constant overlay), skew=2048 changes
+  nothing for the sweeping arm. No placement fixes a sweeping cursor.
+* **MKL asm (OBSERVED, `mkl_il_512_disasm/mkl_highN_cascade_suite.asm`)**: output digit IS
+  innermost in the 64-B record (ρ right there); sections at {0,4N,8N,12N} B take
+  record→section **bitrev2(p mod 4)** with a SHARED +0x40/iter cursor — four rate-matched
+  streams. MKL permutes the LOADS (index table; we don't need one — SCRAMBLED), keeps
+  store rates steady. Their finisher taps the 4 sections N/4 apart, contiguous within each
+  tap ⇒ **the turn-free terminator survives under this geometry.** Also OBSERVED: with OOP
+  + 32B-aligned output, MKL's plane IS the user output buffer (scratch-free cascade) — a
+  separate future lever.
+* **ZTURN-S**: keep record interior (a_0 lanes, split re/im); replace the linear plane
+  order with MKL's sectioned geometry. §2.4's map, the mids' arg rescale, and stf's load
+  addressing must be RE-DERIVED against this layout in Phase 2 (the memcmp gate catches
+  any slip). Arm `c` of the diag harness is the proven ingest reference body.
+* **Honesty items**: the 2048 hot "win" (0.89) is REGIME-BOUND — cold reads 1.25 linear /
+  1.06 sectioned; expect ≈parity in production, not a win. Hot-16384 s0t read 0.93 here vs
+  1.35 in Phase 0b (arena steady-state differs at the L2 boundary) — does not affect the
+  verdict (4096/8192 agree across harnesses; sect ≈1.0 in both). Cold controls at
+  4096/16384 read 1.06/1.19 (VOID) — cold conclusions rest on the passing 2048/8192 cells.
+* **Updated economics**: ingest ≈ FREE (1.00 hot / ~1.05 cold) instead of +1.35 ⇒ net
+  forward projection back to **−10…−15%**.
+
+*(Original phase spec follows.)*
 
 Two paced isolated A/Bs, `zil_sterm_pipe.c`-shaped harness (§6), **both with control arms**:
 
