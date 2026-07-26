@@ -834,9 +834,15 @@ port-5 total = 18 per 16 complex = 1.125/complex
 
 | reading | verdict |
 |---|---|
-| ≤ 20 | **PASS** — proceed |
-| 21–24 | **AMBIGUOUS** — half the margin is gone; net becomes ≈ −0.50/complex. Proceed only with the projection restated |
-| ≥ 25 | **KILL** — the deinterleave and the transpose did not share a lattice; the turn was merely relocated. Say so and stop |
+| 18 | **MATCH** — MKL's own count (census `mkl_highN_cascade_anatomy.md:171,190`: r4 ingest, shuf+xor 20 per 16 complex). Proceed |
+| 19–20 | **PASS** — within reach of the reference; proceed, record the diff |
+| ≥ 21 | **OUR LATTICE IS WRONG — iterate, do not conclude.** MKL achieves 18 on this machine (fn `0x3800`, ingest `0x38c5..0x39f0`, disassembly on file). A worse count from our hand-written body cannot falsify a method a shipping binary demonstrates; it is a defect report on the body. Diff op-class-by-op-class against the census row and the required sequence above, fix, recount |
+
+> **Directive (2026-07-26, Tugbars):** this test has NO kill outcome. MKL is the
+> existence proof for the fused lattice; the only thing a bad reading can indict
+> is our transcription of it. This project's record backs the asymmetry: every
+> measurement error to date has flattered the incumbent structure. The original
+> "≥ 25 KILL" row was an agent-invented band and is retired.
 
 Also record `vmovupd` count vs `radix4_z_s0s_avx2.c`'s 16 (a jump ⇒ spills) and check the
 sign mask is hoisted, not rematerialized per iteration.
@@ -869,11 +875,27 @@ control was 0.99–1.09 and this project's standard is ~1.00.
 **Gate:** `s0t/s0s ≤ 1.20` at every cell. Above that, the ingest charge eats the
 terminator win at N ≥ 8192 and the design must be restated as a small-N-only lever.
 
-### Phase 1 — fix the DP gate bug (independent value, ~30 lines)
+> **Presumption order if this gate fails while the Phase-0 census reads 18:**
+> harness first, our kernel body second, the method last. MKL pays these same 18
+> ops in-situ, profitably, in the faster transform. Every wrong number in this
+> project's record has favoured the incumbent; check the control arm, the SMT
+> sibling, and the spill census before restating the design.
 
-Replace the class gate with roundtrip + permutation-aware spectral (§4.1). **Measurable
-outcome:** run `zil_chain_dp.c` verbose at all four cells and confirm that **more than one
-chain now survives the gate**. Today the answer should be "one".
+### Phase 1 — fix the DP gate bug — ✅ DONE 2026-07-26
+
+Fixed in `dp_planner_il.h` (+258/−25), stronger than specified: independent scalar
+reference per cell with the candidate's own permutation applied, explicit non-finite
+bail (the old gate passed an all-NaN buffer), tolerance held at 1e-12 (measured accept
+band 8.6e-17…7.7e-16). Benched candidates went 2 → 8/10/14/18 at the four cells;
+fault-injection rejects 12 defect classes + 266/266 cross-chain wrong-permutation
+cases. Winners are now 4-heavy like the calibrated defaults (frozen cand-0 chains were
+8-heavy). t2q twins proved bit-identical ⇒ the frozen axis was the CHAIN, and the
+t2q=0/1 wisdom disagreement is the create-path `_calibrate_zsplit_t2q` ±5% placement
+axis, as originally documented. No banked wisdom originated from the broken search;
+nothing voided. `dp_planner.h` (split) has no comparison gate at all — correctness
+defers to the roundtrip gate at `calibrate.c:55-71` — so the defect cannot exist there.
+⚠ `ns` from this planner is not comparable across the fix (per-cell bench count
+changed ⇒ different thermal regime under the `% 4` pacing).
 
 ### Phase 2 — emitter tranche A + the scaffold route (correctness at production scale)
 
