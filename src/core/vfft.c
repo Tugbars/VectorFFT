@@ -29,6 +29,7 @@
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "il_execute.h"      /* interleaved z<->z folded adapters (6a16/6a17) */
 #include "zsplit.h"          /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
+#include "il2p.h"   /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -139,6 +140,12 @@ struct vfft_plan_s
      * interleaved execute contract (sim==dim==NULL); split-contract and
      * uncovered cells fall through to the classic path. Owned. */
     vfft_zsplit_plan_t *zsplit;
+    /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
+     * no split planes. Measured vs the hybrid 2P route it replaces:
+     * 0.558x @N=64, 0.765x @256, 0.956x @1024 (both arms scalar-DFT gated).
+     * FORWARD ONLY today -- il2p's backward stage composition is unsolved, so
+     * bwd keeps using the hybrid route below. Owned; NULL = not available. */
+    vfft_il2p_plan_t *k1il2p;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -2550,6 +2557,15 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                     hk->k1_il_route = ilr;
                     hk->k1sp = psp;
                     hk->k1il = pil;
+                    /* PURE-IL forward route. Measured >= the hybrid 2P route
+                     * it displaces across the whole Bailey band -- 0.558x @64,
+                     * 0.765x @256, 0.956x @1024, both arms gated against a
+                     * scalar DFT -- so it is the DEFAULT wherever its kernels
+                     * exist rather than a wisdom opt-in. NULL (n1t has no
+                     * radix-4 leaf, or the pair is out of reach) simply leaves
+                     * the hybrid route in place. */
+                    if (ilr == VFFT_K1_IL_2P && !getenv("VFFT_NO_IL2P"))
+                        hk->k1il2p = vfft_il2p_create(N, iR1, iR2);
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
                     hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
@@ -3498,6 +3514,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                             0, 0, 0, 0, 0, 0, 0);
                     return;
                 case VFFT_K1_IL_2P:
+                    /* FWD: pure IL when available (no split planes). BWD stays
+                     * on the hybrid route -- il2p's backward stage composition
+                     * is unsolved (both n1t twins corner-turn in their STORES,
+                     * so no pairing of them inverts the turn); il2p.h's
+                     * execute_bwd deliberately returns -1 rather than compute
+                     * wrong data. See docs/research/pure_il_vs_hybrid_il.md. */
+                    if (fwd && h->k1il2p) {
+                        vfft_il2p_execute_fwd(h->k1il2p, sre, dre);
+                        return;
+                    }
                     if (fwd) vfft_oop_execute_fwd_2p_il(h->k1il, sre, dre);
                     else     vfft_oop_execute_bwd_2p_il(h->k1il, sre, dre);
                     return;
@@ -3641,6 +3667,7 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->oplan);
     if (h->zsplit)
         vfft_zsplit_destroy(h->zsplit);
+        vfft_il2p_destroy(h->k1il2p);
     if (h->k1il && h->k1il != h->k1sp)
         vfft_oop_plan_destroy(h->k1il);
     if (h->k1sp)
