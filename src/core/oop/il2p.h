@@ -194,7 +194,34 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
  *
  * The per-kernel backward twins are themselves fine — build_tuned/benches/
  * cil_bwd_gate.c roundtrips t2_fwd/t2_bwd at identical strides with a
- * conjugated table. The defect is purely this route's stage composition. */
+ * conjugated table. The defect is purely this route's stage composition.
+ *
+ * ── 8 COMPOSITIONS ALREADY FALSIFIED (2026-07-26). DO NOT RETRY. ────────
+ * Measured at N=128, R1=16, R2=8 (non-square, so a radix swap is visible).
+ * All roundtrip errors are O(1) — structural, not a conjugation slip:
+ *   leaf_b(R2) -> mid_b(R1), fwd strides, conj table ......... 1.888
+ *   mid_b(R1)  -> leaf_b(R2), reversed order ................. 2.025
+ *   leaf_b(R1) -> mid_b(R2), swapped radices ................. 2.085
+ * and with the PLAIN n1_bwd (no corner-turn) as stage 2, after mid_b(R1):
+ *   n1_b Ls=1  OLs=R1 cnt=R1 ................................. 2.195
+ *   n1_b Ls=R2 OLs=R1 cnt=R1 ................................. 1.993
+ *   n1_b Ls=1  OLs=R1 cnt=R2 ................................. 1.952
+ *   n1_b Ls=R2 OLs=1  cnt=R1 ................................. 2.222
+ *   n1_b Ls=R1 OLs=R1 cnt=R1 ................................. 2.072
+ *
+ * READ THIS BEFORE THE NEXT ATTEMPT: the failure is NOT stride assignment —
+ * five different stride triples on the same structure all fail alike. The
+ * forward stage 1 does (DFT_R2 down columns) THEN (corner-turn in stores);
+ * its inverse is (un-turn) THEN (IDFT_R2), and NO emitted kernel un-turns.
+ *
+ * MOST PROMISING UNEXPLORED DIRECTION: the swapped-radix arm above was tested
+ * with only ONE stride triple. An inverse four-step naturally exchanges which
+ * factor indexes columns, so bwd may legitimately be n1t(R1) -> t2(R2) with a
+ * table built for radix R2 over R1 columns — i.e. the structure was right and
+ * only the strides were wrong. Scan that arm's stride space before adding a
+ * new codelet kind. Derive the index map from the fwd identity
+ *   mid[2*(k*R2 + p)] = DFT_R2(column k)[p],  k in [0,R1), p in [0,R2)
+ * rather than guessing triples. */
 static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
                                         const double *zin, double *zout)
 {
