@@ -45,6 +45,25 @@
  *
  * K is absent by construction — every IL route here is K=1 (oop_plan.h:345
  * sets p->K = 1; vfft_zsplit_plan_t has no K field at all).
+ *
+ * ── THE GATE COMPARES TO TRUTH, NEVER TO ANOTHER CANDIDATE ──────────────────
+ *
+ * Every candidate is checked against an INDEPENDENT reference spectrum built
+ * here, read through THAT candidate's own output permutation. The original
+ * gate made candidate 0 the reference (memcpy on first pass) and compared the
+ * rest to it elementwise. That is legal only when every candidate emits the
+ * same output ORDER — true for NATURAL, FALSE for SCRAMBLED, where each
+ * cascade chain emits its own digit-reversed comb (zsplit.h:9-10). MEASURED
+ * consequence before this fix: of 8/10/14/18 enumerated candidates at
+ * N=2048/4096/8192/16384, exactly TWO were ever benched — one chain, its two
+ * bit-identical t2q twins — and every other chain was rejected at relerr ~1.2.
+ * The CHAIN axis was not searched at all, silently, while the planner still
+ * returned a plausible-looking plan.
+ *
+ * The tempting non-fix is to weaken or skip the gate for SCRAMBLED. That turns
+ * a broken gate into a rubber stamp and is strictly WORSE than the bug: it
+ * would let a numerically wrong plan be banked as a winner. VFFT_IL_DP_GATE_TOL
+ * is deliberately left where it was.
  */
 #ifndef VFFT_DP_PLANNER_IL_H
 #define VFFT_DP_PLANNER_IL_H
@@ -98,7 +117,23 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_BEAM_MEASURE  3
 #define VFFT_IL_DP_BEAM_PATIENT  8
 #define VFFT_IL_DP_MAX_CAND      64       /* candidates per (N, ord)         */
+
+/* Candidate acceptance band. UNCHANGED from the broken gate on purpose: the
+ * fix must not be a weakening. MEASURED on this host over every legal
+ * candidate at N=16..32768, both order classes, all five routes: correct
+ * plans land at <= 1.1e-15 against the reference, so 1e-12 keeps ~1000x
+ * margin; the nearest wrong thing (one interior twiddle off by a relative
+ * 1e-9) reads 1.1e-10 and a mismatched permutation reads ~1.2e+00. */
 #define VFFT_IL_DP_GATE_TOL      1e-12
+
+/* SEPARATE tolerance for the reference's own self-check, and it must stay
+ * separate: the self-check residual is a naive O(N) summation against a
+ * radix-2 tree and grows ~sqrt(N)*eps (measured 3.4e-16 at N=128 to 2.5e-15 at
+ * N=32768), while the candidate band above is flat. Sharing one constant would
+ * mean that tightening the candidate gate toward its measured band silently
+ * makes the REFERENCE unbuildable at large N and refuses whole cells. */
+#define VFFT_IL_DP_REF_TOL       1e-9
+#define VFFT_IL_DP_REF_PROBES    8        /* reference self-check bins       */
 
 typedef enum
 {
@@ -133,11 +168,19 @@ typedef struct
 
     /* Shared benchmark buffers — ONE interleaved plane, not two split planes.
      * z_orig is the pristine input; z_in is refilled from it before every
-     * trial; z_out is the destination. z_ref holds the class reference output
-     * for the correctness gate. All 2*max_N doubles (re,im interleaved). */
+     * trial; z_out is the destination. z_ref holds the INDEPENDENT reference
+     * spectrum of z_orig in NATURAL bin order (_il_dp_ref_build) — it is never
+     * a candidate's output. All 2*max_N doubles (re,im interleaved). */
     double *z_orig, *z_in, *z_out, *z_ref;
     size_t  buf_total;                       /* elements, = 2*max_N           */
     int     max_N;
+
+    /* Which N z_ref currently holds (0 = none) and that spectrum's scale,
+     * max(|re|+|im|). Keyed on N ALONE: the reference is the FUNCTION, not a
+     * plan, so both order classes and every PATIENT re-measure of the cell
+     * share one build. */
+    int     ref_N;
+    double  ref_scale;
 
     /* MEASURE (default): a cache hit returns the cached verdict.
      * PATIENT: a cache hit RE-MEASURES the stored top-K, so a candidate that
@@ -313,27 +356,186 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
     return rc;
 }
 
-/* A plan that computes the wrong thing must never be ranked. Candidates are
- * compared WITHIN a class against the first one that ran — same order
- * contract, so they must agree to rounding. (Cross-class comparison is
- * meaningless and never attempted; see the header note on order.) */
-static int _il_dp_gate(vfft_il_dp_context_t *ctx, int N, int have_ref)
+/* ── the independent correctness reference ─────────────────────────────── */
+
+/* Scalar radix-2 DIT, natural bin order, unnormalized forward. Deliberately
+ * shares NOTHING with the candidates: no codelet, no generated twiddle table,
+ * no plan struct, no permutation contract. The only thing it has in common
+ * with them is the DEFINITION of the forward DFT — which is exactly what the
+ * gate exists to pin.
+ *
+ * Twiddles come from their own angle per (len,k) — N-1 cos/sin pairs for the
+ * whole transform, no recurrence — so the reference is good to a few ulp
+ * (measured against a full O(N^2) DFT below) and the accept band stays wide.
+ * O(N log N), so a planner can afford it: a naive O(N^2) reference would cost
+ * seconds per cell at N=32768 for no extra rejection power. */
+static void _il_dp_ref_dft(double *z, long N)
 {
-    size_t n = (size_t)N * 2u;
-    if (!have_ref)
+    for (long i = 1, j = 0; i < N; i++)              /* bit reversal */
     {
-        memcpy(ctx->z_ref, ctx->z_out, n * sizeof(double));
-        return 1;
+        long bit = N >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j)
+        {
+            double tr = z[2 * i], ti = z[2 * i + 1];
+            z[2 * i] = z[2 * j]; z[2 * i + 1] = z[2 * j + 1];
+            z[2 * j] = tr;       z[2 * j + 1] = ti;
+        }
     }
-    double worst = 0.0, scale = 0.0;
-    for (size_t i = 0; i < n; i++)
+    for (long len = 2; len <= N; len <<= 1)
     {
-        double d = fabs(ctx->z_out[i] - ctx->z_ref[i]);
-        double m = fabs(ctx->z_ref[i]);
+        long half = len >> 1;
+        for (long k = 0; k < half; k++)
+        {
+            double a = -2.0 * M_PI * (double)k / (double)len;
+            double wr = cos(a), wi = sin(a);
+            for (long i = k; i < N; i += len)
+            {
+                double ur = z[2 * i],          ui = z[2 * i + 1];
+                double vr = z[2 * (i + half)], vi = z[2 * (i + half) + 1];
+                double tr = vr * wr - vi * wi;
+                double ti = vr * wi + vi * wr;
+                z[2 * i]          = ur + tr;   z[2 * i + 1]          = ui + ti;
+                z[2 * (i + half)] = ur - tr;   z[2 * (i + half) + 1] = ui - ti;
+            }
+        }
+    }
+}
+
+/* Build (or reuse) the reference spectrum for N. 0 on success, -1 when the
+ * reference cannot be TRUSTED — the caller then refuses the whole cell rather
+ * than ranking candidates against something unverified.
+ *
+ * The reference is the one object here that nothing else validates, so it
+ * validates itself: VFFT_IL_DP_REF_PROBES bins recomputed by DIRECT O(N)
+ * summation, sharing not even the twiddle angles. Same discipline as the
+ * cc_perm discovery at oop_plan.h:521-578, which fails the create rather than
+ * trust an unverified map. */
+static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
+{
+    if (ctx->ref_N == N) return 0;
+    ctx->ref_N = 0;
+
+    /* A radix-2 reference means power-of-two N. Every IL route is pow2 by
+     * construction (cascade chains are products of {4,8}; natural pairs are
+     * pow2 R1*R2, enforced at the enumerator), so this only fires if a future
+     * route widens the space — and then it REFUSES the cell rather than
+     * leaving it ungated. */
+    if (N < 2 || (N & (N - 1))) return -1;
+
+    /* the SAME bytes _il_dp_run_once feeds every candidate. If that ever
+     * changes, ref_N must be invalidated with it. */
+    memcpy(ctx->z_ref, ctx->z_orig, (size_t)N * 2u * sizeof(double));
+    _il_dp_ref_dft(ctx->z_ref, (long)N);
+
+    double scale = 0.0;
+    for (long m = 0; m < N; m++)
+    {
+        double g = fabs(ctx->z_ref[2 * m]) + fabs(ctx->z_ref[2 * m + 1]);
+        if (g > scale) scale = g;
+    }
+    if (!(scale > 0.0)) return -1;            /* also catches a NaN reference */
+
+    for (int b = 0; b < VFFT_IL_DP_REF_PROBES; b++)
+    {
+        long m = ((long)b * N) / VFFT_IL_DP_REF_PROBES + b;
+        if (m >= N) break;
+        double sr = 0.0, si = 0.0;
+        for (long j = 0; j < N; j++)
+        {
+            /* long long: j*m reaches 6.9e10 at N=262144 (the true reach of
+             * nf<=6 over {4,8}) and `long` is 32-bit on the Windows
+             * toolchain this project builds with. */
+            double a = -2.0 * M_PI *
+                       (double)(((long long)j * m) % N) / (double)N;
+            double cr = cos(a), ci = sin(a);
+            sr += ctx->z_orig[2 * j] * cr - ctx->z_orig[2 * j + 1] * ci;
+            si += ctx->z_orig[2 * j] * ci + ctx->z_orig[2 * j + 1] * cr;
+        }
+        double d = fabs(ctx->z_ref[2 * m] - sr) +
+                   fabs(ctx->z_ref[2 * m + 1] - si);
+        if (!(d / scale <= VFFT_IL_DP_REF_TOL)) return -1;      /* NaN-safe */
+    }
+
+    ctx->ref_N     = N;
+    ctx->ref_scale = scale;
+    return 0;
+}
+
+/* The natural-order BIN that output slot `idx` of this candidate holds, or -1
+ * when this route's output permutation is not known here.
+ *
+ * NATURAL routes are the identity by contract (oop_plan.h:815; il2p.h:34-38).
+ * The cascade emits the mixed-radix digit-reversed comb
+ * out[l*(N/Rt) + g] = X[drev(g*Rt + l)] (zsplit.h:9-10), and drev is
+ * _vfft_zs_brev over the FULL chain.
+ *
+ * NOTE this is an INDEPENDENT re-derivation, not a shared expression: the two
+ * _vfft_zs_brev call sites in zsplit.h use different arities on different
+ * arguments (:156 on the group index at stage s, :175 on the column index at
+ * nf-1). That independence is a FEATURE — it is why this gate can catch a
+ * plan whose terminator twiddles are derived with the wrong brev depth. Do not
+ * "unify" them.
+ *
+ * The default arm returns -1 ON PURPOSE. A new route — e.g. the planned ZTURN,
+ * whose permutation differs from the legacy cascade's — is REFUSED until its
+ * map is added here. Refusing costs a candidate; guessing costs a wrong plan
+ * in wisdom. */
+static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
+{
+    switch (c->route)
+    {
+    case VFFT_K1_IL_MONO:
+    case VFFT_K1_IL_2P:
+    case VFFT_K1_IL_3P:
+    case VFFT_K1_IL_2P_PURE:
+        return idx;                                  /* natural by contract */
+    case VFFT_K1_IL_CASCADE:
+    {
+        if (c->nf < 1 || c->nf > VFFT_ZSPLIT_MAX_NF) return -1;
+        long Rt = c->chain[c->nf - 1];               /* terminator radix     */
+        if (Rt < 2 || ((long)N % Rt)) return -1;
+        long NR = (long)N / Rt;
+        return _vfft_zs_brev((idx % NR) * Rt + (idx / NR), c->nf, c->chain);
+    }
+    default:
+        return -1;
+    }
+}
+
+/* A plan that computes the wrong thing must never be ranked. Every candidate
+ * is checked against the SAME independent reference, read through its OWN
+ * output permutation — so chains that emit different combs are all admitted,
+ * while a numerically wrong plan is still rejected, because the reference does
+ * not move with the candidate.
+ *
+ * Returns max(|dRe|+|dIm|) / max(|Re|+|Im|) over the whole output — the metric
+ * the existing gate benches print (zil_chain_dp.c:589-593,
+ * zsplit_api_gate.c:99-111), so numbers here are directly comparable to
+ * theirs — or -1.0 when the candidate must be refused outright (no
+ * permutation map, no trusted reference, or a non-finite deviation).
+ *
+ * The non-finite bail is not decoration. The old `if (d > worst)` idiom
+ * silently PASSED an all-NaN output at relerr 0.0, because every NaN compare
+ * is false; and the obvious `if (!(d <= worst))` repair still passes a SINGLE
+ * NaN bin, because a later finite d overwrites it. Only an explicit test
+ * closes both. */
+static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
+                              const vfft_il_cand_t *c)
+{
+    if (ctx->ref_N != N) return -1.0;
+    double worst = 0.0;
+    for (long idx = 0; idx < N; idx++)
+    {
+        long m = _il_dp_bin_of(c, N, idx);
+        if (m < 0 || m >= (long)N) return -1.0;
+        double d = fabs(ctx->z_out[2 * idx]     - ctx->z_ref[2 * m]) +
+                   fabs(ctx->z_out[2 * idx + 1] - ctx->z_ref[2 * m + 1]);
+        if (!(d < 1e300)) return -1.0;         /* NaN or Inf -> refuse */
         if (d > worst) worst = d;
-        if (m > scale) scale = m;
     }
-    return (scale > 0.0 ? worst / scale : worst) <= VFFT_IL_DP_GATE_TOL;
+    return worst / ctx->ref_scale;
 }
 
 /* Adaptive best-of timing, mirroring dp_planner.h:408 (itself FFTW's
@@ -534,25 +736,56 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     }
     if (ncand <= 0) return 1e18;
 
-    int have_ref = 0, nlive = 0;
+    /* ONE reference for the whole cell, built BEFORE any candidate runs and
+     * shared by every one of them (and by the other order class at this N).
+     * If it cannot be trusted the cell is REFUSED — an ungated search is worse
+     * than no search. */
+    if (_il_dp_ref_build(ctx, N) != 0)
+    {
+        if (verbose)
+            fprintf(stderr, "  [il-dp] N=%d ord=%d NO TRUSTED REFERENCE"
+                            " -- cell refused\n", N, ord);
+        return 1e18;
+    }
+
+    int nlive = 0;
     for (int i = 0; i < ncand; i++)
     {
         cand[i].cost_ns = 1e18;
         if (_il_dp_run_once(ctx, N, &cand[i]) != 0) continue;
-        if (!_il_dp_gate(ctx, N, have_ref))
+        double gerr = _il_dp_gate_err(ctx, N, &cand[i]);
+        if (!(gerr >= 0.0) || gerr > VFFT_IL_DP_GATE_TOL)   /* NaN -> reject */
         {
             if (verbose)
-                fprintf(stderr, "  [il-dp] N=%d ord=%d cand %d FAILED GATE\n",
-                        N, ord, i);
+            {
+                if (gerr < 0.0)
+                    fprintf(stderr, "  [il-dp] N=%d ord=%d cand %d FAILED GATE"
+                            " (refused: no permutation map for route %d, or a"
+                            " non-finite output)\n", N, ord, i, cand[i].route);
+                else
+                    fprintf(stderr, "  [il-dp] N=%d ord=%d cand %d FAILED GATE"
+                            " relerr=%.3e\n", N, ord, i, gerr);
+            }
             continue;
         }
-        have_ref = 1;
         cand[i].cost_ns = _il_dp_bench(ctx, N, &cand[i]);
         if (cand[i].cost_ns < 1e17) nlive++;
         if (verbose)
-            fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d %dx%d nf=%d t2q=%d -> %.1f ns\n",
-                    N, ord, cand[i].route, cand[i].R1, cand[i].R2,
-                    cand[i].nf, cand[i].t2q, cand[i].cost_ns);
+        {
+            /* The CHAIN, not just nf: it is the axis this gate exists to keep
+             * searchable, and `nf=5` alone cannot tell 4.4.4.4.8 from
+             * 8.4.4.4.4 in a race whose top-2 spread is often under 2%. */
+            char ch[VFFT_ZSPLIT_MAX_NF * 3 + 1];
+            int  cn = 0;
+            for (int s = 0; s < cand[i].nf; s++)
+                cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
+                               s ? "." : "", cand[i].chain[s]);
+            if (!cn) snprintf(ch, sizeof ch, "-");
+            fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d %dx%d chain=%s"
+                    " t2q=%d -> %.1f ns (gate %.1e)\n",
+                    N, ord, cand[i].route, cand[i].R1, cand[i].R2, ch,
+                    cand[i].t2q, cand[i].cost_ns, gerr);
+        }
     }
     if (!nlive) return 1e18;
 
