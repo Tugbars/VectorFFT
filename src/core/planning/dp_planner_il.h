@@ -56,6 +56,7 @@
 
 #include "oop_plan.h"   /* IL plans, VFFT_K1_IL_* routes, il availability fns */
 #include "zsplit.h"     /* the CT cascade: create / execute / destroy         */
+#include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -230,8 +231,9 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
  * table-building, not transforms. */
 typedef struct
 {
-    vfft_oop_plan_t    *op;    /* 2P / 3P */
+    vfft_oop_plan_t    *op;    /* 2P / 3P (hybrid: split interior) */
     vfft_zsplit_plan_t *zp;    /* CASCADE */
+    vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_oop11_fn       mono;  /* MONO    */
 } _il_dp_built_t;
 
@@ -244,6 +246,11 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         if (!b->zp) return -1;
         b->zp->t2q = c->t2q;                 /* the searched terminator pick  */
         return 0;
+    }
+    if (c->route == VFFT_K1_IL_2P_PURE)
+    {
+        b->ip = vfft_il2p_create(N, c->R1, c->R2);
+        return b->ip ? 0 : -1;
     }
     if (c->route == VFFT_K1_IL_MONO)
     {
@@ -258,6 +265,7 @@ static void _il_dp_free(_il_dp_built_t *b)
 {
     if (b->op) vfft_oop_plan_destroy(b->op);
     if (b->zp) vfft_zsplit_destroy(b->zp);
+    if (b->ip) vfft_il2p_destroy(b->ip);
     memset(b, 0, sizeof(*b));
 }
 
@@ -268,6 +276,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_CASCADE)
     {
         vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_2P_PURE)
+    {
+        vfft_il2p_execute_fwd(b->ip, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
@@ -421,6 +434,15 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
             if (vfft_oop_t1_il_fn(R1, 0))
             {
                 c.route = VFFT_K1_IL_3P;
+                n = _il_dp_push(out, n, &c);
+            }
+            /* PURE-IL twin of the same pair: same factorization, no split
+             * planes. Enumerated ALONGSIDE the hybrid so the planner picks by
+             * MEASUREMENT per cell rather than us hard-coding the winner --
+             * the two cross over with working-set residency, not with N. */
+            if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
+            {
+                c.route = VFFT_K1_IL_2P_PURE;
                 n = _il_dp_push(out, n, &c);
             }
         }
