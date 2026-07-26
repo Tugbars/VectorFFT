@@ -89,7 +89,7 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TIME_REPEAT   6        /* best-of trials                  */
 #define VFFT_IL_DP_TIME_MIN_NS   2.0e6    /* min wall-clock per trial (2 ms) */
 #define VFFT_IL_DP_TIME_LIMIT_NS 5.0e8    /* per-bench cap (~0.5 s)          */
-#define VFFT_IL_DP_PACE_EVERY    25       /* pace every Nth benchmark        */
+#define VFFT_IL_DP_PACE_EVERY    4        /* pace every Nth benchmark        */
 #define VFFT_IL_DP_PACE_MS       200
 #define VFFT_IL_DP_PACE_N_THRESHOLD 8192  /* arm pacing once a bench is big  */
 
@@ -216,8 +216,14 @@ static vfft_il_dp_entry_t *_il_dp_insert(vfft_il_dp_context_t *ctx, int N, int o
 static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
 {
     /* Thermal drift re-ranks plans, and this project has measured +/-5%
-     * placement swings flipping cascade verdicts. Pacing is not optional. */
-    if (N < VFFT_IL_DP_PACE_N_THRESHOLD) return;
+     * placement swings flipping cascade verdicts. Pacing is not optional.
+     *
+     * NO N GATE. The original copied dp_planner's (K, N*K) trigger, which at
+     * K=1 reduces to N and meant nothing below 8192 ever paced -- exactly
+     * backwards: SMALL cells bench fastest, so they run back-to-back and heat
+     * the part hardest. Measured consequence: unpaced planner runs disagreed
+     * with each other on the N=1024 winner across repeats. */
+    (void)N;
     if ((ctx->n_benchmarks % VFFT_IL_DP_PACE_EVERY) != 0) return;
     _il_dp_sleep_ms(VFFT_IL_DP_PACE_MS);
 }
