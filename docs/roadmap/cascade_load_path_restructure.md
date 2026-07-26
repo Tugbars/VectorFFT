@@ -1124,10 +1124,18 @@ lands (before Phase 5, run both arms on the same chain to keep the comparison cl
 
 Let `r_N = Z/L` (forward) and `r'_N = Zb/Lb` (backward), lower is better.
 
+> **Bar reset (2026-07-26, Tugbars): "even a 5% win is okay from our perspective."**
+> The GO threshold below is amended from `r ≤ 0.94` to **`r ≤ 0.95`**; the PARTIAL band
+> becomes `0.95 < r ≤ 0.98`. A clear, control-passing ~5% win productionizes. Note the
+> resolution context: Phase-0b median ratios reproduced within ~0.5–3% across runs under
+> passing controls, so a 5% effect is above the established noise floor — but cells
+> landing 0.95–0.98 stay PARTIAL (per-cell ship via the searched route axis) because
+> there they are within reach of the ±5% placement band.
+
 | outcome | decision |
 |---|--:|
-| `r ≤ 0.94` at **≥3 of 4 cells**, control 1.00 ± 0.01, reproducing on both compilers | **GO** — productionize, bank per-cell wisdom |
-| `0.94 < r ≤ 0.98` | **PARTIAL** — ship per-cell (the route is a searched axis; losing cells keep legacy) but do **not** invest further until Phase 4b and Phase 6 (pitch) are measured; the aliasing shift is the prime suspect |
+| `r ≤ 0.95` at **≥3 of 4 cells**, control in band, reproducing on both compilers | **GO** — productionize, bank per-cell wisdom |
+| `0.95 < r ≤ 0.98` | **PARTIAL** — ship per-cell (the route is a searched axis; losing cells keep legacy) but do **not** invest further until Phase 4b and Phase 6 (pitch) are measured; the aliasing shift is the prime suspect |
 | `r > 0.98` anywhere with a passing control | that cell keeps legacy. Investigate the object, **not** more timings |
 | `r > 1.00` at ≥3 of 4 cells | **NO-GO** — bank as a committed negative alongside [M4]/[M5]/[M6] |
 
