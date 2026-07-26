@@ -91,7 +91,13 @@ enum
      * in wisdom is future work. Until that lands this value is a NOTE ONLY --
      * plan-create must not build an IL plan from it, and the executor must not
      * treat it as a runnable IL route. */
-    VFFT_K1_IL_CASCADE = 4
+    VFFT_K1_IL_CASCADE = 4,
+    /* 5 = PURE-IL two-pass (il2p.h): n1t -> z scratch -> t2, no split planes
+     * anywhere. Measured vs route 2 (the hybrid it displaces) at the front
+     * door: 0.659x @N=128, 0.722x @256, control cell N=64 reads 1.007 as it
+     * must. FORWARD ONLY -- il2p's backward stage composition is unsolved, so
+     * vfft.c keeps bwd on route 2. */
+    VFFT_K1_IL_2P_PURE = 5
 };
 
 typedef enum
