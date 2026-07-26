@@ -64,6 +64,16 @@ type zs_edge =
   | E_planes of string
   | E_z of string
   | E_blocks
+  | E_sect_tap of string
+    (* ZTURN-S sectioned-record taps (r0=4): leg q -> section SEC[q&3],
+       SEC = bitrev2 = {0,2,1,3}; sections at s*4*STRIDE doubles; 2
+       consecutive 64-B records per section per column group (base
+       4*(size_t)k, second record +8, im +VW). Plain loadu/storeu,
+       shuffle-free. stf load side / stfb store side. *)
+  | E_sect_tr4 of string
+    (* ZTURN-S backward-ingest load network: 4 section records at
+       leg_addr(l = SEC[m], STRIDE) + two emit_tr4 lane transposes
+       (the un-turn). LOAD-ONLY. *)
 
 type zs_kind =
   { base : string (* "ms" | "msg" | "s0s" | "sterm" | "sterm2" — C-name stem *)
@@ -120,24 +130,75 @@ let kind_of_string (s : string) : zs_kind =
     (* fwd only: the bwd 2-quad was REFUTED (+29..36%% kernel, §4.9993). *)
     { mid with base = "sterm2"; uj2 = true; policy = Dft.TP_PowW1
     ; tw_off = "2*(size_t)k"; in_edge = E_blocks; out_edge = E_z "OLs" }
+  (* ── ZTURN-S sectioned kinds (docs/roadmap/cascade_load_path_restructure.md
+        Amendment ZTURN-S; prototype = src/core/oop/zturn_proto.h). Bases are
+        "s0t"/"stf" — NEVER "sterm": fname derives from base, and reusing the
+        incumbent stem would overwrite its generated files (both routes must
+        stay linkable side by side). *)
+  | "s0t" ->
+    (* fwd = closed-form template (emit_s0t_body); edges here feed ONLY
+       uses/plain_voids: loads are natural z at leg addressing (Ls),
+       stores are sectioned records (Ls). *)
+    { mid with base = "s0t"; twiddled = false
+    ; in_edge = E_z "Ls"; out_edge = E_sect_tr4 "Ls" }
+  | "s0tb" ->
+    { mid with base = "s0t"; bwd = true; twiddled = false
+    ; in_edge = E_sect_tr4 "Ls"; out_edge = E_z "Ls" }
+  | "stf" ->
+    { mid with base = "stf"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
+    ; in_edge = E_sect_tap "OLs"; out_edge = E_z "OLs" }
+  | "stfb" ->
+    { mid with base = "stf"; bwd = true; policy = Dft.TP_PowW1
+    ; tw_off = "2*(size_t)k"; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs" }
   | other ->
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2)"
+          stermb sterm2 s0t s0tb stf stfb)"
          other)
 ;;
 
 (* ─── emission ────────────────────────────────────────────────────── *)
 
-let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
+let emit_codelet
+      ~(kind : string)
+      ~(radix : int)
+      ~(r0 : int option)
+      ~(isa : Isa.t)
+      ~(uarch : Uarch.t)
   : string
   =
   let k = kind_of_string kind in
+  (* ── r0 is a PLAN INPUT (chain[0]), never chosen here. The ZTURN-S kinds
+        bake the 4-section geometry into every address, so their fname MUST
+        carry it (a future r0=8 twin sharing the symbol would silently ship
+        a wrong FFT). Legacy kinds must not carry it (provenance stability). *)
+  let r0_dep = k.base = "s0t" || k.base = "stf" in
+  (match r0, r0_dep with
+   | None, true ->
+     failwith
+       "codelet_zsplit: s0t/stf bake r0 into their section addressing; \
+        pass --zp-r0 (plan INPUT, chain[0]; no default)"
+   | Some r, true when r <> 4 ->
+     failwith
+       (Printf.sprintf
+          "codelet_zsplit: only the r0=4 ZTURN-S geometry is emitted (got %d); \
+           an r0=%d twin is NEW emitter work, not a parameter change"
+          r
+          r)
+   | Some _, false ->
+     failwith
+       "codelet_zsplit: --zp-r0 is only for the ZTURN-S kinds; legacy \
+        kinds must not carry it (provenance stability)"
+   | _ -> ());
   if radix <> 4 && radix <> 8
   then failwith "codelet_zsplit: split family is radix 4/8 only (see TIER GATE)";
-  if (k.base = "sterm" || k.base = "sterm2") && radix <> 8
-  then failwith "codelet_zsplit: sterm/sterm2 are radix-8 only (zsplit.h chain contract)";
+  if (k.base = "sterm" || k.base = "sterm2" || k.base = "stf") && radix <> 8
+  then
+    failwith
+      "codelet_zsplit: sterm/sterm2/stf are radix-8 only (zsplit.h chain contract)";
+  if k.base = "s0t" && radix <> 4
+  then failwith "codelet_zsplit: s0t/s0tb are radix-4 only (the r0=4 4-section geometry)";
   let vw = isa.Isa.vec_width in
   if vw <> 4
   then
@@ -147,7 +208,14 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
        (zil_pipeline_port.md §5). *)
     failwith "codelet_zsplit: runtime block geometry is VW=4 until zsplit.h is parameterized";
   let dir_s = if k.bwd then "bwd" else "fwd" in
-  let fname = Printf.sprintf "radix%d_z_%s_%s_%s" radix k.base dir_s isa.Isa.name in
+  let r0_tag =
+    match r0 with
+    | Some r -> Printf.sprintf "_r%d" r
+    | None -> ""
+  in
+  let fname =
+    Printf.sprintf "radix%d_z_%s%s_%s_%s" radix k.base r0_tag dir_s isa.Isa.name
+  in
   let sign : [ `Fwd | `Bwd ] = if k.bwd then `Bwd else `Fwd in
   let force_fma_lift =
     try Sys.getenv "VFFT_FORCE_FMA_LIFT" = "1" with
@@ -255,6 +323,20 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
            "msg (GROUP-LOOPED split mid: one call/stage, in-kernel bp/twg bumps), fwd."
          | "msg", true ->
            "msg bwd twin (group loop over IDFT+POST-tw body; table twspb pre-conjugated)."
+         | "s0t", false ->
+           "s0t (ZTURN-S fused-turn ingest: natural z leg loads, twiddle-free radix-4, \
+            ONE 64-B record per position at section bitrev2(p mod 4), 4 rate-matched \
+            cursors), fwd."
+         | "s0t", true ->
+           "s0tb (ZTURN-S bwd ingest: section-record loads + 4x4 lane transpose \
+            un-turn, IDFT-4, REINT natural-z stores)."
+         | "stf", false ->
+           "stf (ZTURN-S terminator: 4 section taps, 2 consecutive records = 128 B \
+            contiguous per tap, NO load shuffles, packed w^1 squaring tree, REINT \
+            drev-comb stores), fwd."
+         | "stf", true ->
+           "stfb (ZTURN-S bwd terminator: drev comb DEINT in, IDFT + POST conj-w^1, \
+            DIRECT record stores at section taps — no TR4)."
          | _, true ->
            "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
          | _, false ->
@@ -287,7 +369,15 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
     buf
     (Emit_c.provenance_block
        ~family:"zsplit-pipeline"
-       [ Printf.sprintf "kind=%s radix=%d dir=%s isa=%s" k.base radix dir_s isa.Isa.name
+       [ Printf.sprintf
+           "kind=%s radix=%d dir=%s isa=%s%s"
+           k.base
+           radix
+           dir_s
+           isa.Isa.name
+           (match r0 with
+            | Some r -> Printf.sprintf " r0=%d (ZTURN-S sectioned geometry)" r
+            | None -> "")
        ; (if k.twiddled
           then
             Printf.sprintf
@@ -303,6 +393,11 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
        ; "schedule: Schedule.su_schedule (SR list scheduler)"
        ]);
   Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
+  (* s0t fwd's turn lattice needs the (im,re)-swap sign mask for x*(-i);
+     file-scope const so gcc hoists ONE load out of the loop (prototype's
+     _vzt_mim, zturn_proto.h). *)
+  if k.base = "s0t" && not k.bwd
+  then Buffer.add_string buf (Isa.im_mask_decl isa "_zs0t_mim" ^ "\n\n");
   (* TR4 emission helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
      are C variable names; dsts are declared const. *)
@@ -357,6 +452,16 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
     if plus = 0
     then Printf.sprintf "%s[%s]" buf_name base
     else Printf.sprintf "%s[%s + %d]" buf_name base plus
+  in
+  (* ZTURN-S sectioned-record address, r0=4 BAKED IN (hence fname _r4):
+     leg q -> section SEC[q land 3] (SEC = bitrev2 = 0,2,1,3), sections at
+     s*4*STRIDE doubles, record base 4*(size_t)k, second record +8, im +VW. *)
+  let sect_addr (buf_name : string) (q : int) (stride : string) (plus : int) : string =
+    let sec = [| 0; 2; 1; 3 |].(q land 3) in
+    let off = (8 * (q asr 2)) + plus in
+    if sec = 0
+    then Printf.sprintf "%s[4*(size_t)k + %d]" buf_name off
+    else Printf.sprintf "%s[4*((size_t)%d*%s + k) + %d]" buf_name sec stride off
   in
   (* ── column loop: edges + SU-scheduled body + store edge for ONE
         prepared DAG. ninst = 1 normally, 2 for the sterm2 main loop
@@ -462,7 +567,68 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
              (Array.init 4 (fun j ->
                 Printf.sprintf "lane_im_%d" ((inst * radix) + (h * vw) + j)))
          done
-       done);
+       done
+     | E_sect_tap s ->
+       (* ── ZTURN-S section-tap load edge: leg q taps section SEC[q&3];
+             2 consecutive 64-B records per section per column group
+             (128 B contiguous), lanes pass straight through — NO load
+             shuffles (the stf side of the turn's payoff). ── *)
+       Buffer.add_string
+         buf
+         "        /* ZTURN-S section-tap load edge (2 records/section, 128 B \
+          contiguous, no shuffles) */\n";
+       if ninst <> 1
+       then
+         failwith
+           "codelet_zsplit: E_sect_tap has no uj2 form (stf2 twin is out of scope, \
+            consensus doc risk 3)";
+       for q = 0 to radix - 1 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_re_%d" q)
+                 (Isa.loadu_pd isa (sect_addr "zin" q s 0)))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "lane_im_%d" q)
+                 (Isa.loadu_pd isa (sect_addr "zin" q s vw))))
+       done
+     | E_sect_tr4 s ->
+       (* ── ZTURN-S backward-ingest load edge: granule's 4 section records
+             (section order SEC = its own inverse, so natural position
+             order) + 4x4 lane transpose = the un-turn. ── *)
+       Buffer.add_string
+         buf
+         "        /* ZTURN-S section-record load edge + 4x4 lane transpose (un-turn) \
+          */\n";
+       if ninst <> 1 || radix <> vw
+       then failwith "codelet_zsplit: E_sect_tr4 assumes radix = VW = 4, ninst = 1";
+       let sec = [| 0; 2; 1; 3 |] in
+       for m = 0 to 3 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "_sr_%d" m)
+                 (Isa.loadu_pd isa (leg_addr "zin" sec.(m) s 0 0)))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "_si_%d" m)
+                 (Isa.loadu_pd isa (leg_addr "zin" sec.(m) s 0 vw))))
+       done;
+       emit_tr4
+         ~qid:"lr0_0"
+         (Array.init 4 (Printf.sprintf "_sr_%d"))
+         (Array.init 4 (Printf.sprintf "lane_re_%d"));
+       emit_tr4
+         ~qid:"li0_0"
+         (Array.init 4 (Printf.sprintf "_si_%d"))
+         (Array.init 4 (Printf.sprintf "lane_im_%d")));
     (* ── SU-scheduled body. Defs in schedule order (first occurrence per
           tag); single-use tags render inline at their consumer. Twiddle
           loads render via the zsplit record mode. ── *)
@@ -587,13 +753,38 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
                      (Printf.sprintf "_ci%d_%d" h c)))
            done
          done
-       done);
+       done
+     | E_sect_tap s ->
+       (* ── ZTURN-S direct record store edge (stfb): leg q's results go
+             straight to record SEC[q&3]*..., 2k'+(q>>2) — the TR4 store
+             edge is GONE (exact address-mirror of stf's loads). ── *)
+       Buffer.add_string buf "        /* ZTURN-S direct record store edge (no TR4) */\n";
+       for q = 0 to radix - 1 do
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s;\n        %s;\n"
+              (Isa.storeu_pd
+                 isa
+                 (sect_addr "zout" q s 0)
+                 (Printf.sprintf "t%d" re_tag.(q)))
+              (Isa.storeu_pd
+                 isa
+                 (sect_addr "zout" q s vw)
+                 (Printf.sprintf "t%d" im_tag.(q))))
+       done
+     | E_sect_tr4 _ ->
+       failwith
+         "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \
+          template-emitted)");
     Buffer.add_string buf "    }\n"
   in
   (* ── the shared 11-arg z ABI signature + computed (void) list ── *)
   let uses stride =
     let edge_uses = function
-      | E_planes s | E_z s -> s = stride
+      (* section bases are stride-scaled, so the ZTURN-S edges USE their
+         stride (E_sect_tap "OLs" reads/writes at 4*(sec*OLs + k)). *)
+      | E_planes s | E_z s | E_sect_tap s | E_sect_tr4 s -> s = stride
       | E_blocks -> false
     in
     edge_uses k.in_edge || edge_uses k.out_edge
@@ -630,7 +821,108 @@ let emit_codelet ~(kind : string) ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.
          fname
          plain_voids)
   in
-  (if k.uj2
+  (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the emit_tr4 precedent — bodies
+        the col-loop IR cannot express). Every value in the 18-op turn
+        lattice is an interleaved [re,im,re,im] 2-complex vector; the IR
+        models re/im as separate slots per Output, and the cross-pair
+        permute2f128 stores target two section pairs per iteration — no
+        slot/colo decomposition exists. VERBATIM transcription of the proven
+        prototype (src/core/oop/zturn_proto.h _vfft_zturn_s0t_fwd, memcmp-
+        EXACT at all four cells). Source order is LOAD-BEARING (commuted-
+        twins proof, 18-p5 census, gcc ordering doctrine): loads; at0..at3;
+        ar; aY0, aY2, aY1, aY3 (Y2 BEFORE Y1); au0..au3; stores sec re,
+        sec im, sec' re, sec' im. Prototype's noinline/used dropped at
+        emitter transcription (consensus doc §6). ── *)
+  let emit_s0t_body () =
+    let unlo = Isa.intr isa "unpacklo_pd"
+    and unhi = Isa.intr isa "unpackhi_pd"
+    and p2f = Isa.intr isa "permute2f128_pd" in
+    let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
+    let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
+    Buffer.add_string buf "    for (size_t k = 0; k + 4 <= count; k += 4) {\n";
+    List.iter
+      (fun (p, plus, sec_a, sec_b, pos_a, pos_b) ->
+         let v n = p ^ n in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        /* ---- half %s: positions %s, %s -> sections %d, %d \
+               (bitrev2) ---- */\n"
+              (String.uppercase_ascii p)
+              pos_a
+              pos_b
+              sec_a
+              sec_b);
+         for l = 0 to 3 do
+           line
+             (Isa.const_decl
+                isa
+                (v (string_of_int l))
+                (Isa.loadu_pd isa (leg_addr "zin" l "Ls" 0 plus)))
+         done;
+         line (Isa.const_decl isa (v "t0") (Isa.add_pd isa (v "0") (v "2")));
+         line (Isa.const_decl isa (v "t1") (Isa.sub_pd isa (v "0") (v "2")));
+         line (Isa.const_decl isa (v "t2") (Isa.add_pd isa (v "1") (v "3")));
+         line (Isa.const_decl isa (v "t3") (Isa.sub_pd isa (v "1") (v "3")));
+         line
+           (Isa.const_decl
+              isa
+              (v "r")
+              (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v "t3")) "_zs0t_mim"));
+         line (Isa.const_decl isa (v "Y0") (Isa.add_pd isa (v "t0") (v "t2")));
+         line (Isa.const_decl isa (v "Y2") (Isa.sub_pd isa (v "t0") (v "t2")));
+         line (Isa.const_decl isa (v "Y1") (Isa.add_pd isa (v "t1") (v "r")));
+         line (Isa.const_decl isa (v "Y3") (Isa.sub_pd isa (v "t1") (v "r")));
+         line
+           (Isa.const_decl
+              isa
+              (v "u0")
+              (Printf.sprintf "%s(%s, %s)" unlo (v "Y0") (v "Y1")));
+         line
+           (Isa.const_decl
+              isa
+              (v "u1")
+              (Printf.sprintf "%s(%s, %s)" unhi (v "Y0") (v "Y1")));
+         line
+           (Isa.const_decl
+              isa
+              (v "u2")
+              (Printf.sprintf "%s(%s, %s)" unlo (v "Y2") (v "Y3")));
+         line
+           (Isa.const_decl
+              isa
+              (v "u3")
+              (Printf.sprintf "%s(%s, %s)" unhi (v "Y2") (v "Y3")));
+         sline
+           (Isa.storeu_pd
+              isa
+              (leg_addr "zout" sec_a "Ls" 0 0)
+              (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v "u0") (v "u2")));
+         sline
+           (Isa.storeu_pd
+              isa
+              (leg_addr "zout" sec_a "Ls" 0 vw)
+              (Printf.sprintf "%s(%s, %s, 0x20)" p2f (v "u1") (v "u3")));
+         sline
+           (Isa.storeu_pd
+              isa
+              (leg_addr "zout" sec_b "Ls" 0 0)
+              (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v "u0") (v "u2")));
+         sline
+           (Isa.storeu_pd
+              isa
+              (leg_addr "zout" sec_b "Ls" 0 vw)
+              (Printf.sprintf "%s(%s, %s, 0x31)" p2f (v "u1") (v "u3"))))
+      [ "a", 0, 0, 2, "k", "k+1"; "b", vw, 1, 3, "k+2", "k+3" ];
+    Buffer.add_string buf "    }\n"
+  in
+  (if k.base = "s0t" && not k.bwd
+   then (
+     (* ── s0t fwd: closed-form template — no DAG, no prepare ── *)
+     emit_signature ();
+     emit_s0t_body ();
+     Buffer.add_string buf "}\n")
+   else if k.uj2
    then (
      (* ── sterm2: one function, shared k cursor, 2-instance main loop
            (SU-braided) + baseline-shaped VW-column tail. The two DAGs are

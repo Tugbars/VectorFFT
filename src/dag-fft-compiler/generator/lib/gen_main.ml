@@ -158,6 +158,11 @@ let run (argv : string array) : unit =
      P1 kinds: "ms" | "msb". Distinct from z_split_kind (legacy emitter)
      so the two are A/B-able side by side until cutover. *)
   let zp_kind = ref "" in
+  (* --zp-r0: ZTURN-S sectioned kinds (s0t/s0tb/stf/stfb) bake chain[0]
+     into their section addressing — a PLAN INPUT with no default.
+     0 = unset; codelet_zsplit validates (required for ZTURN-S kinds,
+     forbidden for the legacy zp kinds). *)
+  let zp_r0 = ref 0 in
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
      from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
   let cil_kind = ref "" in
@@ -433,6 +438,18 @@ let run (argv : string array) : unit =
     then zp_kind := "stermb"
     else if arg = "--zp-sterm2"
     then zp_kind := "sterm2"
+    else if arg = "--zp-s0t"
+    then zp_kind := "s0t"
+    else if arg = "--zp-s0tb"
+    then zp_kind := "s0tb"
+    else if arg = "--zp-stf"
+    then zp_kind := "stf"
+    else if arg = "--zp-stfb"
+    then zp_kind := "stfb"
+    else if arg = "--zp-r0" && !i + 1 < Array.length arr
+    then (
+      zp_r0 := int_of_string arr.(!i + 1);
+      incr i)
     else if arg = "--cil-n1"
     then cil_kind := "n1"
     else if arg = "--cil-n1t"
@@ -1650,7 +1667,13 @@ let run (argv : string array) : unit =
          through Dft -> Pipeline.prepare_codelet -> Schedule.su_schedule ->
          Emit_c rendering (zil_pipeline_port.md), unlike the legacy
          codelet_zil raw-template branch below. *)
-      print_string (Codelet_zsplit.emit_codelet ~kind:!zp_kind ~radix:n ~isa ~uarch)
+      print_string
+        (Codelet_zsplit.emit_codelet
+           ~kind:!zp_kind
+           ~radix:n
+           ~r0:(if !zp_r0 = 0 then None else Some !zp_r0)
+           ~isa
+           ~uarch)
     else if !z_native
     then
       (* tier-2 TRUE interleaved-native family: N (positional) = the radix *)
