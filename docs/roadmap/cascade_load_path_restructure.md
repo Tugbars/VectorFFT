@@ -1120,7 +1120,35 @@ bench with proper controls).
 chain** for the legacy arm and the **re-searched** chain for the zturn arm once Phase 5
 lands (before Phase 5, run both arms on the same chain to keep the comparison clean).
 
-### 6.4 The number that decides
+### 6.4 The number that decides — ✅ **MEASURED 2026-07-27: GO**
+
+`bench_zturn_final.c` (smoke-EXACT before every timed sample; nm-verified shared msg
+objects; deterministic mod-4K arena; medians of 15–21 rotated reps). Two independent
+15-rep runs + patient 21-rep runs at the contested cells. Only ctl=PASS readings quoted;
+ranges span all passing readings.
+
+| N | fwd hot `r` | fwd cold | bwd hot | bwd cold | joint hot |
+|---|---|---|---|---|---|
+| 2048 | **0.865–0.893** | 0.94–1.00 | **1.036–1.042 (LOSS, real ×3)** | 1.039 | 0.966 |
+| 4096 | **0.880–0.897** | 0.957 | 0.865–0.948 | 0.932–0.969 | 0.87–0.92 |
+| 8192 | **0.883–0.963** | 0.93–0.99 | 0.962 | 0.951 | 0.91–0.96 |
+| 16384 | **0.881–0.893** | 0.95–0.98 | 0.939–0.962 | 0.978 | 0.92 |
+
+* **GO under the amended bar** (`r ≤ 0.95` at ≥3/4): 2048/4096/16384 clear it in every
+  passing reading; 8192 wins in every reading (0.88–0.96) with magnitude varying by
+  machine state. Forward beat the 0.99 forecast at 4096 outright.
+* **2048 backward loses ~1.04 consistently** (hot and cold) — the predicted stfb-spill /
+  s0tb-turn signature. Joint fwd+bwd still wins the cell hot (0.966); cold joint is a
+  wash (~1.00–1.02). Phase-3's SU re-schedule of stfb is now aimed at a measured number.
+* Per-cell ship decision goes to the planner's create-time race (Phase 5), as always —
+  measured, never hand-set. Cutover atomicity respected: fwd/bwd flip together per cell.
+* Machine-state note: absolute levels swung up to 47% between runs while ratios under
+  passing controls reproduced within 1–2%; ratios are the only currency here.
+* Projected vs MKL forward (composing with the 0.78–0.89 standing): **~0.86–1.03** —
+  parity at 2048, 8–14% residual at the upper cells → Phase 6 levers (pitch, tiling,
+  MKL's 16 KB blocked mids, scratch-free OOP).
+
+*(Original decision table follows.)*
 
 Let `r_N = Z/L` (forward) and `r'_N = Zb/Lb` (backward), lower is better.
 

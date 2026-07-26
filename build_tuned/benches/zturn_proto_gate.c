@@ -65,6 +65,73 @@ static double rnd(void)
     return 2.0 * ((double)(g_rng >> 11) * 0x1p-53) - 1.0;
 }
 
+/* ================= PHASE-3 SEAM: generated-kernel substitution ==========
+ * -DZTURN_GEN_KERNELS swaps the four prototype bodies for the GENERATED
+ * codelets (radix4_z_s0t_r4_*, radix8_z_stf_r4_* from codelets/zil/avx2;
+ * codelet_zsplit.ml ZTURN-S kinds) in the execute paths, and arms GATE 0
+ * (per-kernel direct A/B vs the prototype bodies, EXACT memcmp). The
+ * prototype bodies stay linked in BOTH builds (static noinline, used in
+ * zturn_proto.h), so the two routes coexist in one binary. Baseline build
+ * (no define) is macro-inert: ZT_FWD/ZT_BWD are the prototype executors. */
+#ifdef ZTURN_GEN_KERNELS
+#define ZABI const double *, const double *, double *, double *, \
+             const double *, const double *, size_t, size_t, size_t, \
+             size_t, size_t
+void radix4_z_s0t_r4_fwd_avx2(ZABI);
+void radix4_z_s0t_r4_bwd_avx2(ZABI);
+void radix8_z_stf_r4_fwd_avx2(ZABI);
+void radix8_z_stf_r4_bwd_avx2(ZABI);
+/* executors: generated boundary kernels + the SAME production msg mid loop
+ * (copied verbatim from vfft_zturn_execute_{fwd,bwd}, zturn_proto.h) */
+static void zt_exec_fwd(const vfft_zturn_plan_t *p,
+                        const double *zin, double *zout)
+{
+    radix4_z_s0t_r4_fwd_avx2(zin, 0, p->plane, 0, 0, 0,
+                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+    for (int s = 1; s <= p->nf - 2; s++) {
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long, unsigned long long,
+                  unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2 : radix4_z_msg_fwd_avx2;
+        f(p->plane, 0, p->plane, 0, p->twz[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
+    }
+    radix8_z_stf_r4_fwd_avx2(p->plane, 0, zout, 0, p->tzq, 0,
+                             0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+}
+static void zt_exec_bwd(const vfft_zturn_plan_t *p,
+                        const double *zin, double *zout)
+{
+    radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                             0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+    for (int s = p->nf - 2; s >= 1; s--) {
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long, unsigned long long,
+                  unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2 : radix4_z_msg_bwd_avx2;
+        f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
+    }
+    radix4_z_s0t_r4_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
+                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+}
+static long zt_cmp(const double *a, const double *b, size_t nd)
+{
+    long bad = 0;
+    for (size_t i = 0; i < nd; i++) if (memcmp(&a[i], &b[i], 8)) bad++;
+    return bad;
+}
+#define ZT_FWD zt_exec_fwd
+#define ZT_BWD zt_exec_bwd
+#else
+#define ZT_FWD vfft_zturn_execute_fwd
+#define ZT_BWD vfft_zturn_execute_bwd
+#endif
+
 typedef struct { long bad; size_t first; double a, b; int seed; } cmp_t;
 static void cmp_acc(cmp_t *c, double a, double b, size_t idx, int seed)
 {
@@ -103,7 +170,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "usage: zturn_proto_gate [--seeds=K]\n"); return 2;
         }
     }
-    int g1f = 0, g2f = 0, g3f = 0, g4f = 0, g6f = 0, g7f = 0;
+    int g0f = 0, g1f = 0, g2f = 0, g3f = 0, g4f = 0, g6f = 0, g7f = 0;
     printf("== ZTURN-S prototype gates vs production zsplit (seeds=%d) ==\n",
            seeds);
     printf("gate 1/2 EXACT (memcmp): commuted-twin ingest sums, byte-identical\n"
@@ -139,6 +206,57 @@ int main(int argc, char **argv)
             printf("N=%d alloc FAIL\n", N); return 2;
         }
 
+#ifdef ZTURN_GEN_KERNELS
+        /* ------ GATE 0: per-kernel direct A/B vs prototype bodies ------
+         * Same seeded input into the prototype body and the generated
+         * symbol, separate output buffers, memcmp over the full 2N-double
+         * output. EXACT is the bar (the generated bodies are op-for-op
+         * transcriptions; the SU scheduler is edge-blind, so no legitimate
+         * reordering exists). */
+        {
+            double *g0in = (double *)malloc(nd * 8);
+            double *g0a  = (double *)malloc(nd * 8);
+            double *g0b  = (double *)malloc(nd * 8);
+            if (!g0in || !g0a || !g0b) { printf("N=%d GATE0 alloc FAIL\n", N); return 2; }
+            long b_s0t, b_stf, b_stfb, b_s0tb;
+            /* s0t: natural z -> sectioned plane */
+            g_rng = 0xC0DE0000 + (uint64_t)N;
+            for (size_t i = 0; i < nd; i++) g0in[i] = rnd();
+            memset(g0a, 0xCC, nd * 8); memset(g0b, 0xCC, nd * 8);
+            _vfft_zturn_s0t_fwd(g0in, g0a, (size_t)N);
+            radix4_z_s0t_r4_fwd_avx2(g0in, 0, g0b, 0, 0, 0,
+                                     (size_t)N / 4, 0, 0, 0, (size_t)N / 4);
+            b_s0t = zt_cmp(g0a, g0b, nd);
+            /* stf: sectioned plane -> scrambled comb */
+            for (size_t i = 0; i < nd; i++) g0in[i] = rnd();
+            memset(g0a, 0xCC, nd * 8); memset(g0b, 0xCC, nd * 8);
+            _vfft_zturn_stf_fwd(g0in, g0a, zp->tzq, (size_t)N);
+            radix8_z_stf_r4_fwd_avx2(g0in, 0, g0b, 0, zp->tzq, 0,
+                                     0, 0, (size_t)N / 8, 0, (size_t)N / 8);
+            b_stf = zt_cmp(g0a, g0b, nd);
+            /* stfb: scrambled comb -> sectioned plane */
+            for (size_t i = 0; i < nd; i++) g0in[i] = rnd();
+            memset(g0a, 0xCC, nd * 8); memset(g0b, 0xCC, nd * 8);
+            _vfft_zturn_stfb_bwd(g0in, g0a, zp->tzqb, (size_t)N);
+            radix8_z_stf_r4_bwd_avx2(g0in, 0, g0b, 0, zp->tzqb, 0,
+                                     0, 0, (size_t)N / 8, 0, (size_t)N / 8);
+            b_stfb = zt_cmp(g0a, g0b, nd);
+            /* s0tb: sectioned plane -> natural z */
+            for (size_t i = 0; i < nd; i++) g0in[i] = rnd();
+            memset(g0a, 0xCC, nd * 8); memset(g0b, 0xCC, nd * 8);
+            _vfft_zturn_s0tb_bwd(g0in, g0a, (size_t)N);
+            radix4_z_s0t_r4_bwd_avx2(g0in, 0, g0b, 0, 0, 0,
+                                     (size_t)N / 4, 0, 0, 0, (size_t)N / 4);
+            b_s0tb = zt_cmp(g0a, g0b, nd);
+            printf("N=%5d  GATE0 gen-vs-proto per-kernel (EXACT): s0t %ld  stf %ld  "
+                   "stfb %ld  s0tb %ld  (of %zu each)  %s\n",
+                   N, b_s0t, b_stf, b_stfb, b_s0tb, nd,
+                   (b_s0t || b_stf || b_stfb || b_s0tb) ? "FAIL" : "PASS");
+            if (b_s0t || b_stf || b_stfb || b_s0tb) g0f++;
+            free(g0in); free(g0a); free(g0b);
+        }
+#endif
+
         cmp_t g1 = { 0, 0, 0, 0, 0 }, g2a = { 0, 0, 0, 0, 0 },
               g2b = { 0, 0, 0, 0, 0 };
         double rmax_all = 0.0;
@@ -152,7 +270,7 @@ int main(int argc, char **argv)
 
             /* ------------- GATE 1: forward (per seed) ------------- */
             vfft_zsplit_execute_fwd(pp, x, out_ref);
-            vfft_zturn_execute_fwd(zp, x, out_z);
+            ZT_FWD(zp, x, out_z);
             for (size_t l = 0; l < 8; l++)
                 for (size_t k2 = 0; k2 < K2; k2++)
                     for (size_t j = 0; j < 4; j++) {
@@ -164,7 +282,7 @@ int main(int argc, char **argv)
 
             /* ------------- GATE 2: backward (per seed) ------------ */
             vfft_zsplit_execute_bwd(pp, out_ref, back_ref);
-            vfft_zturn_execute_bwd(zp, out_z, back_z);
+            ZT_BWD(zp, out_z, back_z);
             for (size_t i = 0; i < nd; i++)
                 cmp_acc(&g2a, back_z[i], back_ref[i], i, sd);
             /* independent comb through Gamma */
@@ -177,7 +295,7 @@ int main(int argc, char **argv)
                         y_z[2 * zi + 1] = y[2 * li + 1];
                     }
             vfft_zsplit_execute_bwd(pp, y, by_ref);
-            vfft_zturn_execute_bwd(zp, y_z, by_z);
+            ZT_BWD(zp, y_z, by_z);
             for (size_t i = 0; i < nd; i++)
                 cmp_acc(&g2b, by_z[i], by_ref[i], i, sd);
 
@@ -298,12 +416,12 @@ int main(int argc, char **argv)
         /* ------------- GATE 7: in-place (zin == zout), EXACT ------------ */
         {
             memcpy(ip, x0, nd * 8);
-            vfft_zturn_execute_fwd(zp, ip, ip);
+            ZT_FWD(zp, ip, ip);
             long badf = 0;
             for (size_t i = 0; i < nd; i++)
                 if (memcmp(&ip[i], &oz0[i], 8)) badf++;
             memcpy(ip, oz0, nd * 8);
-            vfft_zturn_execute_bwd(zp, ip, ip);
+            ZT_BWD(zp, ip, ip);
             long badb = 0;
             for (size_t i = 0; i < nd; i++)
                 if (memcmp(&ip[i], &bz0[i], 8)) badb++;
@@ -320,9 +438,9 @@ int main(int argc, char **argv)
         vfft_zturn_destroy(zp);
         vfft_zsplit_destroy(pp);
     }
-    const int fails = g1f + g2f + g3f + g4f + g6f + g7f;
-    printf(fails ? "== ZTURN-S PROTOTYPE: GATES FAILED (g1=%d g2=%d g3=%d g4=%d g6=%d g7=%d) ==\n"
-                 : "== ZTURN-S PROTOTYPE: ALL GATES PASS (g1=%d g2=%d g3=%d g4=%d g6=%d g7=%d fails) ==\n",
-           g1f, g2f, g3f, g4f, g6f, g7f);
+    const int fails = g0f + g1f + g2f + g3f + g4f + g6f + g7f;
+    printf(fails ? "== ZTURN-S PROTOTYPE: GATES FAILED (g0=%d g1=%d g2=%d g3=%d g4=%d g6=%d g7=%d) ==\n"
+                 : "== ZTURN-S PROTOTYPE: ALL GATES PASS (g0=%d g1=%d g2=%d g3=%d g4=%d g6=%d g7=%d fails) ==\n",
+           g0f, g1f, g2f, g3f, g4f, g6f, g7f);
     return fails ? 1 : 0;
 }
