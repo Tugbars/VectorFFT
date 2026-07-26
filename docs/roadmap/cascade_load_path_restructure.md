@@ -437,6 +437,13 @@ radix-4 ingest — `mkl_highN_cascade_suite.asm:1530-1553`, **8 `vshufpd` + 8 `v
 lands on MKL's own instruction mix. (We do not need MKL's ~N-byte load-side offset table,
 because we ship SCRAMBLED rather than natural.)
 
+> **ERRATUM (2026-07-26, Phase-0 verifier, recounted from the asm bytes):** the line
+> above undercounts. The actual `0x38c5..0x39f0` body has **10 `vshufpd`**, not 8 — the
+> two extras are same-source `0x5` rotate swaps (`vshufpd ymm4,ymm4,ymm4,0x5` etc., the
+> swap-fusion trick). MKL's true budget is **18 shuffle-class + 2 xor per 16 complex**,
+> matching the anatomy census row (shuf+xor = 20) and making our 18 a **MATCH**, not a
+> pass-with-diff. Our 2 `vpermilpd` occupy the same slots as MKL's 2 rotate-`vshufpd`.
+
 > **The trap to avoid.** Keeping the current *split* butterfly and merely bolting
 > `out_edge = E_blocks` onto `s0s` costs `16 (DEINT) + 16 (TR4 store) = 32` p5 per 16
 > complex — **exactly the 16 the terminator saves. Net zero. That is Lever 1 in a
@@ -820,7 +827,31 @@ cross-route `memcmp` will fail. Correct shape:
 Each step ends in something measurable. Step 0 is the cheapest thing that could kill the
 whole design.
 
-### Phase 0 — THE KILL TEST (hours, no generator run, no plan work)
+### Phase 0 — THE KILL TEST — ✅ MATCH, 18/18, 2026-07-26
+
+**Result: 18 port-5 ops per 16 complex on BOTH gcc 13.2 and gcc 15.2 — equal to MKL's
+shipping ingest. First transcription attempt, zero iterations needed.**
+Spike: `build_tuned/benches/spike_s0t_ingest.c`.
+
+* Census (both compilers, identical vector classes): 4 `unpcklpd` + 4 `unpckhpd` +
+  4 `perm2f128` + 4 `insertf128` + 2 `permilpd` = **18 p5**; 2 `xorpd`; 16 add/sub;
+  8 loads + 8 stores; **zero spills**; mask hoisted pre-loop (register-only in-loop).
+* Correctness: bit-identical to the builder's scalar map reference at 2048/4096/16384;
+  independently confirmed **non-circularly** by a verifier-written naive-DFT reference
+  (different association order, maxabs 1.8e-15 / 8.9e-16, incl. N=8192 which the builder
+  never ran), plus impulse traces that pin the eq-(3) address map AND the forward `−i`
+  rotate direction.
+* vs MKL: same totals (18 + 2), different mix (MKL: 10 `shufpd` + 8 `perm2f128` — see the
+  §2.4 erratum). Total insns/iter **52/56 vs MKL's 59** — we win the scalar bookkeeping
+  (two linear cursors vs MKL's index-table cursor) because SCRAMBLED needs no offset table.
+* ⚠ For any later **timing**, use the **gcc 15.2** object: gcc 13.2 folds 4 leg loads
+  into add/sub memory operands and double-reads 4 addresses (20 accesses vs the faithful
+  8+8). Same p5, same correctness, different load stream.
+* Residual risk, stated honestly: builder and verifier both derived from §2.4, so a
+  misreading shared by the DOC ITSELF would not be caught — the Phase-2
+  `memcmp`-vs-legacy-plane gate is the check against the incumbent and remains mandatory.
+
+*(Original phase spec follows, retained for the record.)*
 
 **Static op census of the interleaved ingest body.** Hand-write it as a ~40-line C
 function, compile `-O3 -mavx2 -mfma`, count port-5-class ops in the objdump per
