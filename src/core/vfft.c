@@ -171,6 +171,7 @@ struct vfft_plan_s
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
      * is the plan's COMMITTED layout (h->layout, stamped at create — the old
+     * execute-time buffer-contract inference is gone). k1sp/k1il are BAILEY2V
      * plans for the per-axis pairs (may be the same object — k1il==k1sp when
      * pairs match; owned once). Split bwd = pointer-swap identity; IL bwd =
      * the _sw entry points. Kill-switch: env VFFT_NO_K1 at create. */
