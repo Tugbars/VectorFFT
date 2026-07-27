@@ -62,10 +62,10 @@ static int cell_real(int d, size_t K, int order, int zlay, int T){
     stride_set_num_threads(T);
     if(zlay){
         vfft_execute(pf,VFFT_FORWARD,a,NULL,b,NULL);
-        vfft_execute(pb,VFFT_FORWARD,b,NULL,c,NULL);
+        vfft_execute(pb,VFFT_BACKWARD,b,NULL,c,NULL); /* C2R = the backward leg */
     } else {
         vfft_execute(pf,VFFT_FORWARD,a,NULL,b,e);
-        vfft_execute(pb,VFFT_FORWARD,b,e,c,NULL);
+        vfft_execute(pb,VFFT_BACKWARD,b,e,c,NULL); /* C2R = the backward leg */
     }
     stride_set_num_threads(1);
     double rt=0; for(size_t i=0;i<sz;i++){double dd=fabs(c[i]/P-a[i]); if(dd>rt)rt=dd;}

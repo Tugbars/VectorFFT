@@ -29,7 +29,7 @@ int main(void){
     }
     printf("4D r2c vs naive (20 bins): %.2e %s\n",worst,worst<1e-9?"PASS":"**FAIL**");
     ok &= worst<1e-9;
-    vfft_execute(pb,VFFT_FORWARD,br,bi,c,NULL);
+    vfft_execute(pb,VFFT_BACKWARD,br,bi,c,NULL); /* C2R = the backward leg */
     double rt=0; for(size_t i=0;i<P;i++){double d=fabs(c[i]/P-a[i]); if(d>rt)rt=d;}
     printf("4D r2c->c2r roundtrip: %.2e %s\n",rt,rt<1e-11?"PASS":"**FAIL**");
     ok &= rt<1e-11;

@@ -182,12 +182,15 @@ extern "C"
     vfft_placement_t placement;
     vfft_rigor_t rigor; /* sweep thoroughness on a wisdom miss/recalibrate */
 
-    int dims;         /* 1 (default), 2, or 3                      */
-    int n[3];         /* n[0]=N (1D); {N1,N2} (2D); {N1,N2,N3} (3D).
+    int dims;         /* 1 (default), 2, 3, or 4                   */
+    int n[4];         /* n[0]=N (1D); {N1,N2} (2D); {N1,N2,N3} (3D);
+                         {N1,N2,N3,N4} (4D §6a62).
                          3D: C2C + R2C/C2R (§6a47), howmany==1, order DEFAULT/
                          SCRAMBLED (natural is a follow-up); plans
                          carry a dedicated (N1,N2,N3) wisdom table
-                         inside the same vfft_wisdom bundle.       */
+                         inside the same vfft_wisdom bundle.
+                         4D: same contracts (K==1, order DEFAULT/SCRAMBLED;
+                         real transforms out-of-place with even N4).  */
     size_t howmany;   /* K — batch count (lane-batched: data[i*K+lane]) */
     vfft_batch batch; /* NULL = tight (default drop-in path). Non-NULL = the
                          opt-in padded batch to run on: the plan is built at its
@@ -281,6 +284,11 @@ extern "C"
    *       IL routes where emitted); every other OOP cell (K>1, uncovered N,
    *       no IL route) CONVERTs around the split champions — the historical
    *       silent no-op / crash cells are GONE.
+   *   1D C2C OOP with no OOP-kind factorization (prime and other N no OOP
+   *       engine covers, either layout): serves via copy-into-destination +
+   *       the in-place engine (the same mechanism 2D..4D OOP uses) — correct,
+   *       documented cost. Padded (config.batch) OOP has no such fallback and
+   *       refuses loudly instead.
    *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D §6a30 +
    *       3D/4D §6a47). Placement must be OUT-OF-PLACE (in-place real FFT is
    *       REJECTED loudly until an MKL-style in-place CCE path exists).
