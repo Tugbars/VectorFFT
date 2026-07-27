@@ -181,6 +181,9 @@ let kind_of_string (s : string) : zs_kind =
     { mid with base = "s0t"; bwd = true; twiddled = false
     ; in_edge = E_sect_tr4 "Ls"; out_edge = E_z "Ls" }
   | "stf" ->
+    (* radix 8 (last==8 chains) AND radix 4 (last==4 chains — the ZTURN-S
+       radix-4 terminator, r4term_sim derivation E6-E11: same edges/policy,
+       radix-parametric sect_addr, OLs = count = N/4, tzq N/16 groups). *)
     { mid with base = "stf"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
     ; in_edge = E_sect_tap "OLs"; out_edge = E_z "OLs" }
   | "stfb" ->
@@ -412,12 +415,24 @@ let emit_codelet
    | _ -> ());
   if radix <> 4 && radix <> 8
   then failwith "codelet_zsplit: split family is radix 4/8 only (see TIER GATE)";
-  if (k.base = "sterm" || k.base = "sterm2" || k.base = "stf" || k.base = "stf2")
-     && radix <> 8
+  if (k.base = "sterm" || k.base = "sterm2") && radix <> 8
   then
     failwith
-      "codelet_zsplit: sterm/sterm2/stf/stf2 are radix-8 only (zsplit.h chain \
+      "codelet_zsplit: sterm/sterm2 are radix-8 only (zsplit.h chain \
        contract)";
+  (* stf/stfb emit at radix 8 AND radix 4 (the ZTURN-S radix-4 terminator,
+     r4term_sim derivation E6-E15: ONE 64-B record per section per group,
+     count = OLs = N/4, truncated squaring tree w^2 = w^2, w^3 = w^2*w).
+     stf2 has NO r4 twin: the 2-quad instance B's "+1 section-record group"
+     offset presumes 2 records/group (radix 8); at radix 4 zturn.h forces
+     t2q = 0 and the planner races CHAINS instead. *)
+  if k.base = "stf2" && radix <> 8
+  then
+    failwith
+      "codelet_zsplit: stf2 is radix-8 only — there is NO stf2@r4 twin (the \
+       radix-4 terminator taps ONE record/section, so instance B's +1-record-\
+       group column offset has no analog; zturn.h forces t2q=0 for last==4 \
+       chains and the planner races chains instead)";
   if k.base = "s0t" && radix <> 4
   then failwith "codelet_zsplit: s0t/s0tb are radix-4 only (the r0=4 4-section geometry)";
   let vw = isa.Isa.vec_width in
@@ -576,12 +591,24 @@ let emit_codelet
            "s0tb (ZTURN-S bwd ingest: section-record loads + 4x4 lane transpose \
             un-turn, IDFT-4, REINT natural-z stores)."
          | "stf", false ->
-           "stf (ZTURN-S terminator: 4 section taps, 2 consecutive records = 128 B \
-            contiguous per tap, NO load shuffles, packed w^1 squaring tree, REINT \
-            drev-comb stores), fwd."
+           if radix = 8
+           then
+             "stf (ZTURN-S terminator: 4 section taps, 2 consecutive records = 128 B \
+              contiguous per tap, NO load shuffles, packed w^1 squaring tree, REINT \
+              drev-comb stores), fwd."
+           else
+             "stf@r4 (ZTURN-S RADIX-4 terminator: 4 section taps, ONE 64-B record \
+              per tap, NO load shuffles, packed w^1 truncated squaring tree, REINT \
+              drev-comb stores; OLs = count = N/4), fwd."
          | "stf", true ->
-           "stfb (ZTURN-S bwd terminator: drev comb DEINT in, IDFT + POST conj-w^1, \
-            DIRECT record stores at section taps — no TR4)."
+           if radix = 8
+           then
+             "stfb (ZTURN-S bwd terminator: drev comb DEINT in, IDFT + POST conj-w^1, \
+              DIRECT record stores at section taps — no TR4)."
+           else
+             "stfb@r4 (ZTURN-S RADIX-4 bwd terminator = the bwd FIRST stage: drev \
+              comb DEINT in, IDFT-4 + POST conj-w^1, DIRECT one-record stores at \
+              section taps — no TR4; OLs = count = N/4)."
          | "stf2", _ ->
            "stf2: 2-quad unroll-and-jam ZTURN-S terminator twin (SU-braided \
             2-instance DAG + baseline-shaped tail; section-tap loads, instance B at \
@@ -713,23 +740,30 @@ let emit_codelet
     else Printf.sprintf "%s[%s + %d]" buf_name base plus
   in
   (* ZTURN-S sectioned-record address, r0=4 BAKED IN (hence fname _r4):
-     leg q -> section SEC[q land 3] (SEC = bitrev2 = 0,2,1,3), sections at
-     s*4*STRIDE doubles, record base 4*(size_t)k, second record +8, im +VW.
+     leg q -> section SEC[q land 3] (SEC = bitrev2 = 0,2,1,3), im +VW.
+     RADIX-PARAMETRIC over the terminator radix (records per section per
+     column group = radix/4, address scale = radix/2 with STRIDE = OLs =
+     N/radix — both collapse to the section double-offset sec*N/2):
+       radix 8: 2 consecutive records (base 4k, second +8, 128 B/tap);
+       radix 4: ONE record (base 2k, 64 B/tap) — derivation (E6):
+                leg q of group k2 taps record SEC[q]*S + k2, S = N/16.
      colo = the uj2 instance's column offset (0 for instance A — renders
      byte-identically to the pre-stf2 form; vw for instance B = the next
-     section-record group, legal because r0 == vw, asserted above). *)
+     section-record group, legal because r0 == vw, asserted above; uj2
+     is radix-8-only, so the r4 form never sees colo <> 0). *)
   let sect_addr (buf_name : string) (q : int) (stride : string) (colo : int)
         (plus : int)
     : string
     =
     let sec = [| 0; 2; 1; 3 |].(q land 3) in
+    let sc = radix / 2 in
     let off = (8 * (q asr 2)) + plus in
     match sec, colo with
-    | 0, 0 -> Printf.sprintf "%s[4*(size_t)k + %d]" buf_name off
-    | 0, o -> Printf.sprintf "%s[4*((size_t)k + %d) + %d]" buf_name o off
-    | s, 0 -> Printf.sprintf "%s[4*((size_t)%d*%s + k) + %d]" buf_name s stride off
+    | 0, 0 -> Printf.sprintf "%s[%d*(size_t)k + %d]" buf_name sc off
+    | 0, o -> Printf.sprintf "%s[%d*((size_t)k + %d) + %d]" buf_name sc o off
+    | s, 0 -> Printf.sprintf "%s[%d*((size_t)%d*%s + k) + %d]" buf_name sc s stride off
     | s, o ->
-      Printf.sprintf "%s[4*((size_t)%d*%s + k + %d) + %d]" buf_name s stride o off
+      Printf.sprintf "%s[%d*((size_t)%d*%s + k + %d) + %d]" buf_name sc s stride o off
   in
   (* ── column loop: edges + SU-scheduled body + store edge for ONE
         prepared DAG. ninst = 1 normally, 2 for the sterm2 main loop
@@ -854,12 +888,18 @@ let emit_codelet
        done
      | E_sect_tap s ->
        (* ── ZTURN-S section-tap load edge: leg q taps section SEC[q&3];
-             2 consecutive 64-B records per section per column group
-             (128 B contiguous), lanes pass straight through — NO load
+             radix/4 consecutive 64-B records per section per column group
+             (r8: 2 records = 128 B contiguous; r4: ONE record = 64 B, the
+             derivation's E6 map), lanes pass straight through — NO load
              shuffles (the stf side of the turn's payoff). ── *)
        load_hdr
-         "        /* ZTURN-S section-tap load edge (2 records/section, 128 B \
-          contiguous, no shuffles) */\n";
+         (if radix = 8
+          then
+            "        /* ZTURN-S section-tap load edge (2 records/section, 128 B \
+             contiguous, no shuffles) */\n"
+          else
+            "        /* ZTURN-S section-tap load edge (1 record/section, 64 B, \
+             no shuffles) */\n");
        (* ninst = 2 (stf2): slots radix..2*radix-1 are instance B = the
           NEXT section-record group at colo = vw columns (r0 == vw
           asserted at the admission gate). ninst = 1 renders slot = q,
