@@ -1036,7 +1036,21 @@ interleaved ingest has to deliver.
 
 ### Phase 4 — THE DECISIVE MEASUREMENT (§6)
 
-### Phase 4b — mids-only aliasing A/B (mandatory, separate, own control)
+### Phase 4b — ✅ MEASURED 2026-07-27: WASH (risk retired; §1.4 prediction was pre-amendment)
+
+**Static finding first:** the §1.4 risk ("the new layout adds one exact-4096-B-stride mid
+per cell") described the PRE-AMENDMENT ρ design. The committed ZTURN-S calls `msg` with
+the identical production tuple, so the mids' address walk is **byte-identical** between
+layouts (live-plan stride table: 4K-flag counts 0→0 / 1→1, not 0→1 / 1→2). Only table
+contents and plane values differ.
+**Measured (single-exe 3-arm A/B, same msg objects nm-verified, snapshot-restored
+in-place chains, 1000 ms pacing):** `r_zt = 0.977–1.014` across all 8 (cell × dir)
+readings, 6/8 controls in band, the 2 voids carrying in-family ratios. **Mids cost
+nothing under ZTURN-S.** Consequence for Phase 6: the pitch lever re-aims at the
+PRE-EXISTING shared 4K-congruent first mid (8 KB leg strides at 4096/8192/16384 — both
+engines alike), not at a ZTURN-specific regression. Harness: scratchpad `p4b/mids_ab.c`.
+
+*(Original phase spec follows.)*
 
 **[D §1.4]** the new layout adds one exact-4096-byte-stride mid at every cell. Race
 `msg` at legacy args vs `msg` at zturn args — **the same object**, only `(Ls, Gs, count)`
