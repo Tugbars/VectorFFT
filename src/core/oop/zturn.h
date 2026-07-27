@@ -35,11 +35,16 @@
  *   Differs from legacy zsplit by a pure per-row (N/32 x 4) transpose
  *   (Gamma): out_z[l*(N/8)+4k'+j] = out_legacy[l*(N/8)+j*(N/32)+k'].
  *
- * Chains = the SAME calibrated per-cell winners as production zsplit
- * (vfft_zsplit_default_chain — no invented chains; the plan re-search is
- * Phase 5's planner tranche). Scope fence: chain[0] == 4 REQUIRED (the
+ * Chains: vfft_zturn2_create_chain takes the chain as PLAN INPUT (mirroring
+ * vfft_zsplit_create) — the Phase-5 planner tranche (dp_planner_il.h route
+ * axis) measures candidate chains through it and vfft.c's wisdom-hit path
+ * replays the banked winner. vfft_zturn2_create(N) is the default-chain
+ * wrapper over the calibrated legacy per-cell winners
+ * (vfft_zsplit_default_chain) — no invented chains on either path.
+ * Scope fence: chain[0] == 4 REQUIRED (the
  * r0 = 4 four-section geometry baked into the _r4 kernels), last == 8,
- * D[nf-2] % 4 == 0 asserted (msg count contract). Roundtrip = N*x (no 1/N
+ * D[nf-2] % 4 == 0 asserted (msg count contract). A chain outside the fence
+ * returns NULL — skipped, never force-fit. Roundtrip = N*x (no 1/N
  * in-kernel), matching zsplit. In-place (zin == zout) OK both directions:
  * fwd zout is written only by stf, which reads only the plane; bwd zin is
  * read only by stfb, the first stage.
@@ -103,11 +108,17 @@ static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
  * proven table builder, not re-derived): mid tables lane-varying and x4
  * section-tiled (g2 = g mod G[s]/4 keeps the production msg arg tuple
  * legal), angle -2*pi*((l*(j+4*brev'(g'))) mod M)/M with M = N/D_s;
- * terminator per-(k',lane) w^1 at angle -2*pi*((j+4*rho(k')) mod N)/N. */
-static inline vfft_zturn2_plan_t *vfft_zturn2_create(int N)
+ * terminator per-(k',lane) w^1 at angle -2*pi*((j+4*rho(k')) mod N)/N.
+ *
+ * CHAIN-AS-INPUT entry (Phase-5 planner tranche): the fences are validated
+ * HERE and only here — callers (the dp_planner_il.h route-axis enumerator,
+ * vfft.c's wisdom-hit replay) delegate legality to this create, the same
+ * "the validator is the law" discipline dp_planner_il.h applies to
+ * vfft_zsplit_create. NULL == the chain is outside the ZTURN-S scope. */
+static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
+                                                           const int *chain,
+                                                           int nf)
 {
-    int chain[VFFT_ZSPLIT_MAX_NF];
-    const int nf = vfft_zsplit_default_chain(N, chain);
     if (nf < 3 || nf > VFFT_ZSPLIT_MAX_NF) return NULL;
     if (chain[0] != 4) return NULL;    /* ZTURN-S fence: 4-section geometry */
     if (chain[nf - 1] != 8) return NULL;
@@ -172,6 +183,16 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create(int N)
 fail:
     vfft_zturn2_destroy(p);
     return NULL;
+}
+
+/* Default-chain wrapper: the calibrated legacy per-cell winners
+ * (vfft_zsplit_default_chain), exactly the pre-tranche-3 behavior. The
+ * wisdom-miss create race and every fence-invalid-chain fallback land here. */
+static inline vfft_zturn2_plan_t *vfft_zturn2_create(int N)
+{
+    int chain[VFFT_ZSPLIT_MAX_NF];
+    const int nf = vfft_zsplit_default_chain(N, chain);
+    return nf ? vfft_zturn2_create_chain(N, chain, nf) : NULL;
 }
 
 /* natural z in -> ZTURN-S scrambled comb out. zin == zout OK (the

@@ -64,6 +64,32 @@
  * a broken gate into a rubber stamp and is strictly WORSE than the bug: it
  * would let a numerically wrong plan be banked as a winner. VFFT_IL_DP_GATE_TOL
  * is deliberately left where it was.
+ *
+ * ── THE ROUTE AXIS (Phase 5 planner tranche, cascade_load_path_restructure
+ *    §4.2) ────────────────────────────────────────────────────────────────────
+ *
+ * SCRAMBLED candidates now carry an ENGINE dimension, `zroute`: every legal
+ * chain is benched under the LEGACY zsplit builder AND — when it clears the
+ * ZTURN-S fence (chain[0] == 4, last == 8, D checks; vfft_zturn2_create_chain
+ * validates, NULL == skipped, never force-fit) — under the ZTURN builder too.
+ * The chain is re-searched PER ROUTE, not transplanted: ZTURN's sectioned
+ * layout moves per-stage cost, so a chain that lost under legacy can win under
+ * ZTURN (§4.2 "the chain must be re-searched, not transplanted").
+ *
+ * Cascade candidates are measured JOINT fwd+bwd (one iteration = execute_fwd;
+ * execute_bwd): the shipped route verdict is joint by cutover atomicity
+ * (vfft.c _calibrate_zroute), so the chain pick is measured on the same axis
+ * — and because ALL cascade candidates share the metric, the route verdict
+ * falls out of the one ranked pool: the global winner IS the better route at
+ * its OWN best chain. NATURAL candidates keep the fwd-only metric (their bwd
+ * is the caller's pointer-swap identity).
+ *
+ * The correctness gate needs nothing weakened for ZTURN: each candidate is
+ * still read through its OWN output permutation, and ZTURN's differs from
+ * legacy's by the per-row (N/32 x 4) Gamma transpose (zturn.h:32-36) —
+ * _il_dp_bin_of applies it before the legacy digit-reversal map. A joint
+ * roundtrip check (bwd(fwd(x)) == N*x, the create race's own sanity) rides
+ * the bench warmup so a cascade with a broken bwd is refused, not ranked.
  */
 #ifndef VFFT_DP_PLANNER_IL_H
 #define VFFT_DP_PLANNER_IL_H
@@ -74,7 +100,8 @@
 #include <math.h>
 
 #include "oop_plan.h"   /* IL plans, VFFT_K1_IL_* routes, il availability fns */
-#include "zsplit.h"     /* the CT cascade: create / execute / destroy         */
+#include "zsplit.h"     /* the CT cascade, LEGACY route: create / execute     */
+#include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 
 #if defined(_WIN32)
@@ -149,8 +176,14 @@ typedef struct
     int    R1, R2;                           /* 2P/3P only, else 0              */
     int    chain[VFFT_ZSPLIT_MAX_NF];        /* CASCADE only                    */
     int    nf;                               /* CASCADE only, else 0            */
-    int    t2q;                              /* CASCADE terminator schedule     */
-    double cost_ns;
+    int    t2q;                              /* CASCADE terminator schedule
+                                              * (legacy: sterm/sterm2; zturn:
+                                              * stf/stf2 — per-engine twins)    */
+    int    zroute;                           /* CASCADE engine: 0 = legacy
+                                              * zsplit, 1 = ZTURN-S (zturn.h);
+                                              * else 0                          */
+    double cost_ns;                          /* CASCADE: JOINT fwd+bwd ns/iter;
+                                              * NATURAL routes: fwd ns/iter     */
 } vfft_il_cand_t;
 
 typedef struct
@@ -281,7 +314,8 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
 typedef struct
 {
     vfft_oop_plan_t    *op;    /* 2P / 3P (hybrid: split interior) */
-    vfft_zsplit_plan_t *zp;    /* CASCADE */
+    vfft_zsplit_plan_t *zp;    /* CASCADE, legacy engine  */
+    vfft_zturn2_plan_t *zt;    /* CASCADE, ZTURN-S engine */
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_oop11_fn       mono;  /* MONO    */
 } _il_dp_built_t;
@@ -291,6 +325,16 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
     memset(b, 0, sizeof(*b));
     if (c->route == VFFT_K1_IL_CASCADE)
     {
+        if (c->zroute)
+        {
+            /* ZTURN-S engine: the chain is PLAN INPUT and the fences live in
+             * the create (chain[0]==4 etc.) — an out-of-scope chain returns
+             * NULL here and the candidate is dropped, never force-fit. */
+            b->zt = vfft_zturn2_create_chain(N, c->chain, c->nf);
+            if (!b->zt) return -1;
+            b->zt->t2q = c->t2q;             /* stf/stf2 — the searched pick  */
+            return 0;
+        }
         b->zp = vfft_zsplit_create(N, c->chain, c->nf);
         if (!b->zp) return -1;
         b->zp->t2q = c->t2q;                 /* the searched terminator pick  */
@@ -314,17 +358,21 @@ static void _il_dp_free(_il_dp_built_t *b)
 {
     if (b->op) vfft_oop_plan_destroy(b->op);
     if (b->zp) vfft_zsplit_destroy(b->zp);
+    if (b->zt) vfft_zturn2_destroy(b->zt);
     if (b->ip) vfft_il2p_destroy(b->ip);
     memset(b, 0, sizeof(*b));
 }
 
-/* Execute a built candidate: z_in -> z_out. This is ALL that gets timed. */
+/* Execute a built candidate FORWARD: z_in -> z_out. The gate reads z_out. */
 static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                        const _il_dp_built_t *b)
 {
     if (c->route == VFFT_K1_IL_CASCADE)
     {
-        vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
+        if (c->zroute)
+            vfft_zturn2_execute_fwd(b->zt, ctx->z_in, ctx->z_out);
+        else
+            vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route == VFFT_K1_IL_2P_PURE)
@@ -342,6 +390,30 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                 : vfft_oop_execute_fwd_il(b->op, ctx->z_in, ctx->z_out)) == 0
                ? 0
                : -1;
+}
+
+/* Execute a built CASCADE candidate JOINT: fwd z_in -> z_out, then bwd
+ * IN-PLACE on z_out (zin == zout is a documented contract of both engines:
+ * zsplit.h:16-17, zturn.h:43-45). One call = one iteration of the metric the
+ * shipped route verdict uses (vfft.c _calibrate_zroute level 2: "the route is
+ * measured on both directions together" by cutover atomicity). After the call
+ * z_out holds bwd(fwd(z_in)) = N * z_in — which is exactly what the warmup's
+ * roundtrip refusal check reads. */
+static int _il_dp_exec_joint(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
+                             const _il_dp_built_t *b)
+{
+    if (c->route != VFFT_K1_IL_CASCADE) return -1;
+    if (c->zroute)
+    {
+        vfft_zturn2_execute_fwd(b->zt, ctx->z_in, ctx->z_out);
+        vfft_zturn2_execute_bwd(b->zt, ctx->z_out, ctx->z_out);
+    }
+    else
+    {
+        vfft_zsplit_execute_fwd(b->zp, ctx->z_in, ctx->z_out);
+        vfft_zsplit_execute_bwd(b->zp, ctx->z_out, ctx->z_out);
+    }
+    return 0;
 }
 
 /* Build + run once (for the correctness gate). Not used for timing. */
@@ -497,7 +569,27 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
         long Rt = c->chain[c->nf - 1];               /* terminator radix     */
         if (Rt < 2 || ((long)N % Rt)) return -1;
         long NR = (long)N / Rt;
-        return _vfft_zs_brev((idx % NR) * Rt + (idx / NR), c->nf, c->chain);
+        long l = idx / NR, r = idx % NR;
+        if (c->zroute)
+        {
+            /* ZTURN-S differs from legacy by a pure per-row (NR/S x S) Gamma
+             * transpose (zturn.h:32-36, S = chain[0] = 4 sections by fence):
+             *   out_zt[l*NR + S*k' + j] = out_legacy[l*NR + j*(NR/S) + k'].
+             * Map the zturn slot back to its legacy slot, then fall through
+             * to the one legacy digit-reversal formula below — the route's
+             * OWN permutation, exactly what lets the shared reference gate
+             * admit both engines without weakening (file header). Verified
+             * against the terminator table builders: legacy col k has w^1
+             * power brev(k, nf-1, chain) = d0 + 4*brev(k', nf-2, chain+1)
+             * with k = d0*(NR/4) + k' (zsplit.h:175), and zturn (k2, lane j)
+             * has power j + 4*brev(k2, nf-2, chain+1) (zturn.h create) — so
+             * lane j <-> digit d0 and k2 <-> k', i.e. this transpose. */
+            long S = c->chain[0];
+            if (S < 1 || (NR % S)) return -1;
+            long kq = r / S, j = r % S;
+            r = j * (NR / S) + kq;
+        }
+        return _vfft_zs_brev(r * Rt + l, c->nf, c->chain);
     }
     default:
         return -1;
@@ -540,16 +632,36 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
 
 /* Adaptive best-of timing, mirroring dp_planner.h:408 (itself FFTW's
  * kernel/timer.c): double `reps` until a trial clears TIME_MIN_NS, then keep
- * the best of TIME_REPEAT trials at that rep count. */
+ * the best of TIME_REPEAT trials at that rep count.
+ *
+ * CASCADE candidates are timed JOINT (fwd+bwd per iteration) — the route
+ * verdict's own metric (file header). The joint warmup doubles as a bwd
+ * correctness gate: bwd(fwd(x)) must equal N*x to the create race's 1e-11
+ * band (vfft.c _calibrate_zroute joint sanity), else the candidate is
+ * REFUSED — the fwd-only reference gate upstream cannot see a broken bwd,
+ * and a plan that cannot invert must never be ranked, let alone banked. */
 static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
                            const vfft_il_cand_t *c)
 {
+    const int joint = (c->route == VFFT_K1_IL_CASCADE);
     _il_dp_built_t b;
     if (_il_dp_build(N, c, &b) != 0) return 1e18;
 
-    /* warmup */
+    /* warmup (+ joint roundtrip refusal for cascades) */
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
-    if (_il_dp_exec(ctx, c, &b) != 0) { _il_dp_free(&b); return 1e18; }
+    if ((joint ? _il_dp_exec_joint(ctx, c, &b) : _il_dp_exec(ctx, c, &b)) != 0)
+    { _il_dp_free(&b); return 1e18; }
+    if (joint)
+    {
+        double worst = 0.0;
+        for (long i = 0; i < 2L * N; i++)
+        {
+            double d = fabs(ctx->z_out[i] / (double)N - ctx->z_in[i]);
+            if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
+            if (d > worst) worst = d;
+        }
+        if (worst > 1e-11) { _il_dp_free(&b); return 1e18; }
+    }
 
     double best = 1e30, elapsed = 0.0;
     int reps = 1, calibrated = 0;
@@ -563,7 +675,8 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
             memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
             double t0 = _il_dp_now_ns();
             for (int i = 0; i < reps; i++)
-                (void)_il_dp_exec(ctx, c, &b);
+                (void)(joint ? _il_dp_exec_joint(ctx, c, &b)
+                             : _il_dp_exec(ctx, c, &b));
             double trial = _il_dp_now_ns() - t0;
             if (trial < tmin) tmin = trial;
             elapsed += trial;
@@ -657,10 +770,15 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
         return n;
     }
 
-    /* SCRAMBLED: ordered chains of {4,8}, nf in [3, MAX_NF], validated by
-     * vfft_zsplit_create. t2q stays a SEARCHED axis — the terminator pick is
-     * placement-order-sensitive and must be measured on the installed binary,
-     * never hand-set. */
+    /* SCRAMBLED: ordered chains of {4,8}, nf in [3, MAX_NF], x ENGINE
+     * (legacy zsplit / ZTURN-S), each validated by ITS OWN route's create —
+     * the validator is the law, twice: vfft_zsplit_create for the legacy
+     * space (chain[0] in {4,8}) and vfft_zturn2_create_chain for the fenced
+     * ZTURN-S subset (chain[0] == 4; a fence-invalid chain simply yields no
+     * zturn candidates — skipped, never force-fit). t2q stays a SEARCHED
+     * axis on BOTH engines — sterm/sterm2 and stf/stf2 are placement-order-
+     * sensitive twins that must be measured on the installed binary, never
+     * hand-set. */
     {
         int chain[VFFT_ZSPLIT_MAX_NF];
         for (int nf = 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
@@ -676,17 +794,28 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
                     prod *= chain[i];
                 }
                 if (prod != (long)N) continue;
-                vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
-                if (!p) continue;              /* the validator is the law    */
-                vfft_zsplit_destroy(p);
-                for (int q = 0; q < 2; q++)
+                int eng_ok[2] = { 0, 0 };
                 {
-                    memset(&c, 0, sizeof c);
-                    c.route = VFFT_K1_IL_CASCADE;
-                    c.nf = nf;
-                    c.t2q = q;
-                    memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
-                    n = _il_dp_push(out, n, &c);
+                    vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
+                    if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
+                }
+                {
+                    vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
+                    if (p) { eng_ok[1] = 1; vfft_zturn2_destroy(p); }
+                }
+                for (int rt = 0; rt < 2; rt++)
+                {
+                    if (!eng_ok[rt]) continue;
+                    for (int q = 0; q < 2; q++)
+                    {
+                        memset(&c, 0, sizeof c);
+                        c.route = VFFT_K1_IL_CASCADE;
+                        c.zroute = rt;
+                        c.nf = nf;
+                        c.t2q = q;
+                        memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
+                        n = _il_dp_push(out, n, &c);
+                    }
                 }
             }
         }
@@ -781,9 +910,12 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
                 cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
                                s ? "." : "", cand[i].chain[s]);
             if (!cn) snprintf(ch, sizeof ch, "-");
-            fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d %dx%d chain=%s"
-                    " t2q=%d -> %.1f ns (gate %.1e)\n",
-                    N, ord, cand[i].route, cand[i].R1, cand[i].R2, ch,
+            fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
+                    "chain=%s t2q=%d -> %.1f ns (gate %.1e)\n",
+                    N, ord, cand[i].route,
+                    cand[i].route == VFFT_K1_IL_CASCADE
+                        ? (cand[i].zroute ? "zturn" : "zsplit") : "-",
+                    cand[i].R1, cand[i].R2, ch,
                     cand[i].t2q, cand[i].cost_ns, gerr);
         }
     }
@@ -800,6 +932,37 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
         if (keep > VFFT_IL_DP_TOPK_MAX) keep = VFFT_IL_DP_TOPK_MAX;
         e->n_top = keep;
         for (int i = 0; i < keep; i++) e->top[i] = cand[i];
+        /* ROUTE DIVERSITY (SCRAMBLED only) — dp_planner.h:657's beam-diversity
+         * precedent (there: diverse multisets, not re-orderings of one),
+         * applied to the ENGINE axis: the kept set must carry the best LIVE
+         * candidate of EACH engine, so (a) a PATIENT cache hit re-races the
+         * ROUTES rather than one route's t2q twins, and (b) the wisdom
+         * emitter can always bank the fallback route's terminator pick.
+         * cand[] is cost-sorted, so the first match is that engine's best at
+         * its OWN best chain. May grow n_top one past beam (still <= TOPK). */
+        if (ord == VFFT_IL_ORD_SCRAMBLED)
+        {
+            for (int rt = 0; rt < 2; rt++)
+            {
+                int present = 0;
+                for (int i = 0; i < e->n_top && !present; i++)
+                    if (e->top[i].route == VFFT_K1_IL_CASCADE &&
+                        e->top[i].zroute == rt)
+                        present = 1;
+                if (present) continue;
+                for (int i = 0; i < ncand; i++)
+                    if (cand[i].cost_ns < 1e17 &&
+                        cand[i].route == VFFT_K1_IL_CASCADE &&
+                        cand[i].zroute == rt)
+                    {
+                        if (e->n_top < VFFT_IL_DP_TOPK_MAX)
+                            e->top[e->n_top++] = cand[i];
+                        else
+                            e->top[e->n_top - 1] = cand[i];
+                        break;
+                    }
+            }
+        }
     }
     if (best) *best = cand[0];
     return cand[0].cost_ns;
@@ -810,9 +973,18 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 /* Write the planner's verdicts as wisdom lines in the EXISTING grammar, so
  * vfft_oop_wisdom_load() picks them up with no reader change:
  *
- *   SCRAMBLED winner -> kind 4:  "N 1 4 zs_t2q cc_chain ns"
+ *   SCRAMBLED winner -> kind 4:  "N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]"
  *      Self-contained. This is the cascade's own entry and already the shape
- *      vfft_oop_wisdom_lookup_zsplit() expects.
+ *      vfft_oop_wisdom_lookup_zsplit() expects. The trailing route pair is
+ *      the tranche-2 format (oop_wisdom.h:62-76), emitted ONLY when the
+ *      winner is the ZTURN engine — a legacy winner's line stays
+ *      byte-identical to the old format. cc_chain is ALWAYS the WINNING
+ *      route's chain (the vfft.c reader replays a route-1 line's chain
+ *      through vfft_zturn2_create_chain); on a route-1 line zs_t2q is the
+ *      best LEGACY candidate's terminator pick — the pick the fallback
+ *      route (VFFT_NO_ZTURN / zturn-create failure) will run with. ns is
+ *      this planner's JOINT fwd+bwd ns/iter for either engine (route-
+ *      comparable by construction; informational in the file).
  *
  *   NATURAL winner   -> kind 3:  "N 1 3 sp_route sp_R1 sp_R2 il_route il_R1 il_R2 ns"
  *      A kind-3 line carries BOTH axes because the buffer layout is an
@@ -834,7 +1006,8 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 static int vfft_il_dp_emit_wisdom(FILE *f, int N,
                                   const vfft_il_cand_t *nat,
                                   int sp_route, int sp_R1, int sp_R2,
-                                  const vfft_il_cand_t *scr)
+                                  const vfft_il_cand_t *scr,
+                                  const vfft_il_cand_t *scr_leg)
 {
     int lines = 0;
     if (!f) return 0;
@@ -853,8 +1026,18 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         int code = vfft_k1_cc_chain_encode(scr->chain, scr->nf);
         if (code)
         {
-            fprintf(f, "%d 1 %d %d %d %.1f\n",
-                    N, VFFT_OOP_KIND_ZSPLIT, scr->t2q, code, scr->cost_ns);
+            if (scr->zroute)
+                /* ZTURN winner: tranche-2 route line. zs_t2q = the best
+                 * legacy candidate's pick (the fallback route's terminator;
+                 * 0 = the compiled default when no legacy candidate survived
+                 * — a valid schedule either way, twins are bit-identical). */
+                fprintf(f, "%d 1 %d %d %d %.1f 1 %d\n",
+                        N, VFFT_OOP_KIND_ZSPLIT,
+                        (scr_leg && scr_leg->cost_ns < 1e17) ? scr_leg->t2q : 0,
+                        code, scr->cost_ns, scr->t2q);
+            else
+                fprintf(f, "%d 1 %d %d %d %.1f\n",
+                        N, VFFT_OOP_KIND_ZSPLIT, scr->t2q, code, scr->cost_ns);
             lines++;
         }
     }
@@ -862,7 +1045,10 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
 }
 
 /* Plan both order classes for N and bank whatever was found. Convenience
- * wrapper: this is the whole calibrate-and-record step for one cell. */
+ * wrapper: this is the whole calibrate-and-record step for one cell. The
+ * best LEGACY-engine cascade candidate is pulled from the stored top-K
+ * (route diversity guarantees it is there whenever one survived) so a
+ * ZTURN-winner line still carries the fallback route's terminator pick. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
                                     int sp_route, int sp_R1, int sp_R2,
                                     int verbose)
@@ -872,7 +1058,18 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
     double sns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_SCRAMBLED, &scr, verbose);
     if (nns >= 1e17) nat.cost_ns = 1e18;
     if (sns >= 1e17) scr.cost_ns = 1e18;
-    return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2, &scr);
+    const vfft_il_cand_t *leg = NULL;
+    {
+        const vfft_il_dp_entry_t *e =
+            _il_dp_lookup(ctx, N, VFFT_IL_ORD_SCRAMBLED);
+        if (e)
+            for (int i = 0; i < e->n_top && !leg; i++)
+                if (e->top[i].route == VFFT_K1_IL_CASCADE &&
+                    e->top[i].zroute == 0)
+                    leg = &e->top[i];
+    }
+    return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2, &scr,
+                                  leg);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */

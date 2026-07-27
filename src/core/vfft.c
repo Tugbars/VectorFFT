@@ -2631,14 +2631,25 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             {
                 if (ze_hit)
                 {
-                    /* pure read: honor route + the winning route's pick.
-                     * (zturn ships on its own calibrated-default chain — a
-                     * zturn2 create ignores the banked cc_chain, which
-                     * describes the LEGACY plan; the Phase-5 planner tranche
-                     * owns the chain re-search.) */
+                    /* pure read: honor route + CHAIN + the winning route's
+                     * pick. cc_chain is the WINNING route's chain (Phase-5
+                     * planner tranche: dp_planner_il.h's route axis banks it
+                     * that way), so a route-1 line replays its chain through
+                     * vfft_zturn2_create_chain. Old race-banked route lines
+                     * carried the legacy default — which IS the chain zturn
+                     * shipped on, so replaying it is behavior-identical. A
+                     * fence-invalid banked chain (hand-edited / stale) falls
+                     * back to the calibrated-default create — skipped, never
+                     * force-fit (and zch/znf already fell back to the default
+                     * chain above if zsplit rejected it too). */
                     zs_pending->t2q = ze->zs_t2q ? 1 : 0;
                     if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
-                        zt_pending = vfft_zturn2_create(N);
+                    {
+                        if (znf)
+                            zt_pending = vfft_zturn2_create_chain(N, zch, znf);
+                        if (!zt_pending)
+                            zt_pending = vfft_zturn2_create(N);
+                    }
                     if (zt_pending)
                     {
                         zt_pending->t2q = ze->zt_t2q ? 1 : 0;
@@ -2681,8 +2692,19 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         ne.K = 1;
                         ne.kind = VFFT_OOP_KIND_ZSPLIT;
                         ne.zs_t2q = zs_pending->t2q;
-                        ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
-                                                              zs_pending->nf);
+                        /* cc_chain = the WINNING route's chain (the reader
+                         * contract above). At this create-time race both
+                         * routes still run the same default chain, so the
+                         * encode is byte-identical either way today — the
+                         * chain-searched winners come from the offline
+                         * planner (dp_planner_il.h route axis / the
+                         * calibrate_zchain driver), not this race. */
+                        if (zroute_pending && zt_pending)
+                            ne.cc_chain = vfft_k1_cc_chain_encode(
+                                zt_pending->chain, zt_pending->nf);
+                        else
+                            ne.cc_chain = vfft_k1_cc_chain_encode(
+                                zs_pending->chain, zs_pending->nf);
                         ne.zs_route = zroute_pending;
                         ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
                         ne.ns = zns;

@@ -113,12 +113,40 @@ static int run_cell(int N, const char *wisdir)
     if (!same) rc = 1;
     vfft_destroy(h2);
 
-    /* #3: forced recalibrate -> re-race, re-bank; still bit-identical */
+    /* #3: forced recalibrate -> re-race, re-bank. Since the route axis
+     * (Phase 5 tranche 2) the re-race may LEGALLY flip the ROUTE on a
+     * joint-marginal cell — legacy and ZTURN emit DIFFERENT (both
+     * SCRAMBLED-legal) permutations, and recalibrate=1 re-measures by
+     * design — so the bit-compare against o1 only applies when the
+     * re-banked route matches create#1's; on a flip, gate the roundtrip
+     * (each route's bwd must invert its own fwd comb). */
+    int r1 = 0, r3 = 0;
+    {   int t_, c_; double n_;
+        if (sscanf(line, "%*d %*d %*d %d %d %lf %d", &t_, &c_, &n_, &r1) < 4)
+            r1 = 0;  /* old-format line = legacy route */
+    }
     vfft_plan h3 = mk(N, 1);
     if (!h3) { printf("N=%d create#3 FAILED\n", N); return 1; }
     vfft_execute(h3, VFFT_FORWARD, in, NULL, o2, NULL);
-    same = memcmp(o1, o2, (size_t)2 * N * 8) == 0;
     have = find_kind4_line(wisdir, N, line, sizeof line);
+    {   int t_, c_; double n_;
+        if (!have ||
+            sscanf(line, "%*d %*d %*d %d %d %lf %d", &t_, &c_, &n_, &r3) < 4)
+            r3 = 0;
+    }
+    if (r1 == r3)
+        same = memcmp(o1, o2, (size_t)2 * N * 8) == 0;
+    else {
+        vfft_execute(h3, VFFT_BACKWARD, o2, NULL, rt, NULL);
+        err = 0;
+        for (int i = 0; i < 2 * N; i++) {
+            double d = fabs(rt[i] / N - in[i]);
+            if (d > err) err = d;
+        }
+        same = err < 1e-13;
+        printf("N=%-6d NOTE  re-race flipped route %d->%d (joint-marginal "
+               "cell); rtrip relerr=%.3e\n", N, r1, r3, err);
+    }
     printf("N=%-6d GATE recal re-race: %s   %s\n",
            N, (same && have) ? "PASS" : "FAIL", have ? line : "(missing)");
     if (!same || !have) rc = 1;
