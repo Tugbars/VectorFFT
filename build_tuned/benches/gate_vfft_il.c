@@ -1,4 +1,8 @@
-/* Public-API gate: INTERLEAVED z contract on vfft_execute (sim==dim==NULL). */
+/* Public-API gate: INTERLEAVED z contract on vfft_execute (layout axis).
+ * Post layout-axis migration: the z contract is COMMITTED at create
+ * (config.layout = VFFT_LAYOUT_INTERLEAVED), so this gate runs TWO plans per
+ * cell — a SPLIT reference plan and an INTERLEAVED plan — instead of the old
+ * one-plan NULL-pointer inference (removed). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,8 +21,10 @@ static int run_cell(int N,size_t K,int order,int nth,const char*tag){
     vfft_config_t c; memset(&c,0,sizeof c);
     c.transform=VFFT_C2C; c.placement=VFFT_INPLACE; c.rigor=VFFT_MEASURE;
     c.dims=1; c.n[0]=N; c.howmany=K; c.order=order; c.nthreads=nth;
-    vfft_plan p=vfft_create(&c);
-    if(!p){ printf("  [%s] create FAIL\n",tag); return 0; }
+    vfft_plan p=vfft_create(&c);              /* SPLIT reference plan */
+    c.layout=VFFT_LAYOUT_INTERLEAVED;
+    vfft_plan pz=vfft_create(&c);             /* committed z plan */
+    if(!p||!pz){ printf("  [%s] create FAIL\n",tag); return 0; }
     double *z=aligned_alloc(64,2*NK*8),*z2=aligned_alloc(64,2*NK*8);
     double *sr=aligned_alloc(64,NK*8),*si=aligned_alloc(64,NK*8);
     double *zin=aligned_alloc(64,2*NK*8);

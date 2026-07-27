@@ -170,8 +170,7 @@ struct vfft_plan_s
     vfft_oop_plan_t *oplan; /* c2c out-of-place (owned)  */
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
-     * is picked at EXECUTE time by the buffer contract (sim==dim==NULL =>
-     * interleaved z, like the in-place IL path). k1sp/k1il are BAILEY2V
+     * is the plan's COMMITTED layout (h->layout, stamped at create — the old
      * plans for the per-axis pairs (may be the same object — k1il==k1sp when
      * pairs match; owned once). Split bwd = pointer-swap identity; IL bwd =
      * the _sw entry points. Kill-switch: env VFFT_NO_K1 at create. */
@@ -179,9 +178,9 @@ struct vfft_plan_s
     int k1_sp_route, k1_il_route;
     vfft_oop_plan_t *k1sp, *k1il;
     /* K=1 SCRAMBLED interleaved z->z: the block-split cascade (zsplit.h;
-     * ≥2048 cells, default chains = calibrated winners). Serves ONLY the
-     * interleaved execute contract (sim==dim==NULL); split-contract and
-     * uncovered cells fall through to the classic path. Owned. */
+     * ≥2048 cells, default chains = calibrated winners). Serves ONLY plans
+     * committed to layout=INTERLEAVED; split-layout plans and uncovered
+     * cells go through the classic path (uncovered IL cells convert). Owned. */
     vfft_zsplit_plan_t *zsplit;
     /* ROUTE AXIS for that cascade (cascade_load_path_restructure §6.4/§2.6):
      * zroute is the ONE field BOTH execute directions dispatch on (0 = legacy
@@ -228,7 +227,7 @@ struct vfft_plan_s
      * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
     int padded;
     int exec_me;
-    /* INTERLEAVED z execute (sim==dim==NULL contract, 1D tight in-place c2c):
+    /* INTERLEAVED z execute (layout=INTERLEAVED plans, 1D tight in-place c2c):
      * lazily-allocated split scratch + the once-resolved DIT bwd range executor
      * (fused-t1s jit tier; NULL -> core). See _exec_c2c_interleaved. */
     double *il_wr, *il_wi;
@@ -2776,12 +2775,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
     {
         /* ── K=1 engine (row_major_engine.md §13): natural-order routes from
-         * kind-3 wisdom or the default heuristic; execute picks the layout
-         * axis from the buffer contract (sim==dim==NULL => interleaved z).
+         * kind-3 wisdom or the default heuristic; execute dispatches on the
+         * COMMITTED layout axis (config.layout, stamped on the handle).
          * This IS the K=1 path (no kill-switch — user decision 2026-07-22:
          * K=1 is the headline feature; the classic champions path below was
          * never K=1-safe). Classic path still serves SCRAMBLED-order
-         * requests and is the fallback if engine create fails. */
+         * requests and is the fallback if engine create fails. Construction
+         * is layout-independent (both axes' routes are built as before). */
         vfft_zsplit_plan_t *zs_pending = NULL;
         vfft_zturn2_plan_t *zt_pending = NULL;
         int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
@@ -3579,14 +3579,15 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
         _natorder_mt(h, re, im, 1);
 }
 
-/* INTERLEAVED z contract (vfft.h buffer table): 1D tight in-place C2C with
- * sim==dim==NULL — sre/dre are interleaved complex (2*N*K doubles, element e
- * of lane t at [2*(e*K+t)]; dre may equal sre). Fast path = the folded z->z
- * adapters under the 6a17 tier rule (fwd -> core; bwd -> DIT jit fused-t1s,
- * DIF core), taken when order=DEFAULT and the pool is single-threaded.
- * Everything else (NATURAL, MT, prime overrides, <2 stages, resolver misses)
- * falls back to convert -> _exec_c2c_inplace -> convert: always correct,
- * never silent. Padded batches are excluded by contract (z is tight-only). */
+/* INTERLEAVED z contract (vfft.h buffer table): 1D tight in-place C2C plans
+ * committed to layout=INTERLEAVED — sre/dre are interleaved complex (2*N*K
+ * doubles, element e of lane t at [2*(e*K+t)]; dre may equal sre). Fast path =
+ * the folded z->z adapters under the 6a17 tier rule (fwd -> core; bwd -> DIT
+ * jit fused-t1s, DIF core), taken when order=DEFAULT and the pool is
+ * single-threaded. Everything else (NATURAL, MT, prime overrides, <2 stages,
+ * resolver misses) falls back to convert -> _exec_c2c_inplace -> convert:
+ * always correct, never silent. Padded batches are excluded at create
+ * (batch + INTERLEAVED is a loud reject; z is tight-only). */
 static void _vfft_z_dein(const double *, double *, double *, size_t);
 static void _vfft_z_inter(const double *, const double *, double *, size_t);
 
@@ -4506,8 +4507,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
-        if (!sim && !dim && sre && dre && !h->padded)
-        { /* interleaved z contract — see _exec_c2c_interleaved */
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        { /* interleaved z contract — see _exec_c2c_interleaved. (padded
+           * plans can't get here: batch+INTERLEAVED is rejected at create.) */
             vfft_set_num_threads(h->nthreads);
             _exec_c2c_interleaved(h, dir, sre, dre);
             return;
@@ -4517,22 +4519,21 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
-        if ((h->zsplit || h->zturn) && !sim && !dim && sre && dre)
-        { /* K=1 SCRAMBLED interleaved z->z: the cascade (legacy zsplit or
-           * ZTURN-S). fwd: natural -> the route's scrambled comb; bwd
-           * consumes the SAME route's comb -> N*natural (matched-
-           * permutation roundtrip). BOTH directions go through the one
-           * route dispatcher — see _exec_zcascade. */
-            _exec_zcascade(h, dir, sre, dre);
-            return;
-        }
-        if (h->k1_on)
-        { /* K=1 engine (§13): axis by buffer contract; natural order both
-           * directions. Split bwd = the pointer-swap identity on the fwd
-           * route; IL bwd = the _sw entry points. */
-            int fwd = (dir == VFFT_FORWARD);
-            if (!sim && !dim && sre && dre)
-            { /* interleaved z -> z (same contract as the in-place IL path) */
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        { /* z -> z, by the committed axis (signature already validated). */
+            if (h->zsplit || h->zturn)
+            { /* K=1 SCRAMBLED: the cascade (legacy zsplit or ZTURN-S).
+               * fwd: natural -> the route's scrambled comb; bwd consumes
+               * the SAME route's comb -> N*natural (matched-permutation
+               * roundtrip). BOTH directions go through the one route
+               * dispatcher — see _exec_zcascade. */
+                _exec_zcascade(h, dir, sre, dre);
+                return;
+            }
+            if (h->k1_on)
+            { /* K=1 engine (§13), IL routes; natural order both directions.
+               * IL bwd = the _sw entry points. */
+                int fwd = (dir == VFFT_FORWARD);
                 switch (h->k1_il_route)
                 {
                 case VFFT_K1_IL_MONO:
@@ -4563,43 +4564,20 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         vfft_oop_execute_bwd_il(h->k1il, sre, dre);
                     return;
                 default:
-                    return; /* no IL route emitted for this N */
+                    break; /* no IL route emitted for this N -> convert
+                            * fallback below (NEVER a silent no-op) */
                 }
             }
-            {
-                const double *ar = fwd ? sre : sim, *ai = fwd ? sim : sre;
-                double *br = fwd ? dre : dim, *bi = fwd ? dim : dre;
-#ifdef VFFT_USE_JIT
-                if (h->k1_jit)
-                { /* stride-baked whole-route kernel; bwd rides the same
-                   * pointer-swap identity (natural order) */
-                    h->k1_jit(ar, ai, br, bi, h->k1sp->col_re, h->k1sp->col_im,
-                              h->k1_jit_qr, h->k1_jit_qi);
-                    return;
-                }
-#endif
-                switch (h->k1_sp_route)
-                {
-                case VFFT_K1_SP_MONO:
-                    h->k1_mono(ar, ai, br, bi, 0, 0, 0, 0, 0, 0, 0);
-                    return;
-                case VFFT_K1_SP_2PA:
-                    vfft_oop_execute_fwd_2pa(h->k1sp, ar, ai, br, bi);
-                    return;
-                case VFFT_K1_SP_2PB:
-                    vfft_oop_execute_fwd_2pb(h->k1sp, ar, ai, br, bi);
-                    return;
-                case VFFT_K1_SP_TWL:
-                    vfft_oop_execute_fwd_2pa_twl(h->k1sp, ar, ai, br, bi);
-                    return;
-                case VFFT_K1_SP_CCOL:
-                    vfft_oop_execute_fwd_ccol(h->k1sp, ar, ai, br, bi);
-                    return;
-                default:
-                    vfft_oop_execute_fwd(h->k1sp, ar, ai, br, bi);
-                    return;
-                }
-            }
+            /* No native z route on this cell (K>1, cascade-uncovered N, or
+             * no K=1 IL route): convert around the split engines. */
+            _exec_c2c_oop_convert(h, dir, sre, dre);
+            return;
+        }
+        if (h->k1_on)
+        { /* K=1 engine, SPLIT planes: natural order; bwd = pointer-swap
+           * identity on the forward route. */
+            _exec_k1_split(h, dir == VFFT_FORWARD, sre, sim, dre, dim);
+            return;
         }
         /* MT via the pool K-split (LEAF/MODEB lane-independent; BAILEY2 + small K run
          * whole-batch — see _oop_mt). vfft_oop_execute_fwd/bwd are kind-correct (natural-
@@ -4611,26 +4589,26 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_R2C)
     {
-        /* forward only: real in (sre), split complex out (dre,dim). MT internal. */
+        /* forward only: real in (sre); spectrum out per the committed layout
+         * (SPLIT dre/dim planes, or INTERLEAVED packed CCE z in dre — §6a24).
+         * MT internal. */
         vfft_set_num_threads(h->nthreads);
-        if (dim)
-            vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* dre = packed CCE spectrum */
         else
-            vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* §6a24: dim==NULL => dre = interleaved CCE */
+            vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
         return;
     }
     if (h->transform == VFFT_C2R)
     {
-        /* the inverse: split complex in (sre,sim) -> real out (dre). dir ignored.
-         * NATURAL or STRIDE per the bakeoff/wisdom — both consume split re/im. */
+        /* the inverse: spectrum in per the committed layout (SPLIT sre/sim, or
+         * INTERLEAVED packed CCE z in sre — §6a24) -> real out (dre). dir
+         * ignored. NATURAL or STRIDE per the bakeoff/wisdom. */
         vfft_set_num_threads(h->nthreads);
-        if (sim)
-
-            vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
-
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* sre = packed CCE spectrum in */
         else
-
-            vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* §6a24: sim==NULL => sre = interleaved CCE in */
+            vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
         return;
     }
     if (_VFFT_IS_TRIG(h->transform))
@@ -4694,6 +4672,8 @@ void vfft_destroy(vfft_plan h)
             stride_plan_destroy(h->cplan_il);
         STRIDE_ALIGNED_FREE(h->il_wr);
         STRIDE_ALIGNED_FREE(h->il_wi);
+        STRIDE_ALIGNED_FREE(h->il_wr2);
+        STRIDE_ALIGNED_FREE(h->il_wi2);
     }
     if (!h)
         return;
@@ -4749,21 +4729,16 @@ static double *_batch_plane(size_t doubles)
     return p;
 }
 
-/* Transform-aware padded allocator. c2c is in-place (re/im only, N*Kp each); r2c/c2r
+/* Internal transform-aware padded allocator (validation lives in the public
+ * vfft_alloc_batch_for door). c2c is in-place (re/im only, N*Kp each); r2c/c2r
  * are out-of-place with a real plane (N*Kp) and a split spectrum ((N/2+1)*Kp each); trig
  * (DCT/DST/DHT) is real->real out-of-place: real = INPUT plane, re = OUTPUT plane (both
  * N*Kp), im unused. All planes Kp-strided so the Kp-built plan lands exactly (element e,
  * lane t -> [e*Kp+t]). */
-vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
+static vfft_batch _batch_alloc_ex(vfft_transform_t xform, int N, size_t K)
 {
-    if (N < 1 || K < 1)
-        return NULL;
     int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
     int trig = _VFFT_IS_TRIG(xform);
-    if (xform != VFFT_C2C && !real_side && !trig)
-        return NULL; /* 2D padded handles unsupported for now */
-    if ((real_side || trig) && (N % 2) != 0)
-        return NULL;                    /* real-FFT inner needs even N (half-spectrum) */
     size_t Kp = (K + 3u) & ~(size_t)3u; /* roundup(K, VW=4) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
@@ -4802,17 +4777,12 @@ vfft_batch vfft_alloc_batch_ex(vfft_transform_t xform, int N, size_t K)
     }
     return b;
 }
-/* c2c convenience (the original entry point). */
-vfft_batch vfft_alloc_batch(int N, size_t K) { return vfft_alloc_batch_ex(VFFT_C2C, N, K); }
-
-/* OOP c2c padded handle: 4 split planes (re/im INPUT, ore/oim OUTPUT), each N*Kp. Kp =
- * roundup(K,8) (NOT VW=4): OOP BAILEY2 hard-gates on K%8 (oop_auto.h) and the OOP wisdom
+/* Internal OOP c2c padded handle: 4 split planes (re/im INPUT, ore/oim OUTPUT), each N*Kp.
+ * Kp = roundup(K,8) (NOT VW=4): OOP BAILEY2 hard-gates on K%8 (oop_auto.h) and the OOP wisdom
  * READER rejects K%8!=0 (oop_wisdom.h) — an 8-aligned Kp keeps all 3 kinds AND lets the
  * (N,Kp) plan cache, with zero changes to the OOP internals. */
-vfft_batch vfft_alloc_batch_oop(int N, size_t K)
+static vfft_batch _batch_alloc_oop(int N, size_t K)
 {
-    if (N < 1 || K < 1)
-        return NULL;
     size_t Kp = (K + 7u) & ~(size_t)7u; /* roundup(K, 8) — OOP kind + wisdom alignment */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
@@ -4851,11 +4821,114 @@ void vfft_free_batch(vfft_batch b)
         stride_free(b->oim);
     free(b);
 }
-double *vfft_batch_real(vfft_batch b) { return b ? b->real : NULL; }  /* real plane (r2c in / c2r out / trig in) */
-double *vfft_batch_re(vfft_batch b) { return b ? b->re : NULL; }      /* OOP: INPUT re */
-double *vfft_batch_im(vfft_batch b) { return b ? b->im : NULL; }      /* OOP: INPUT im */
-double *vfft_batch_out_re(vfft_batch b) { return b ? b->ore : NULL; } /* OOP OUTPUT re (NULL otherwise) */
-double *vfft_batch_out_im(vfft_batch b) { return b ? b->oim : NULL; } /* OOP OUTPUT im (NULL otherwise) */
+/* THE public allocator (batch API consolidation, 9 fns -> 4): the batch is
+ * BORN FROM THE CONFIG, so create's handle-vs-descriptor cross-check is total
+ * by construction and the Kp rule (VW=4 tight vs OOP 8) is an internal detail
+ * keyed off placement. Loud rejection on every unsupported combination —
+ * same voice as vfft_create. */
+vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
+{
+    if (!cfg)
+    {
+        _vfft_warn("vfft_alloc_batch_for: NULL config");
+        return NULL;
+    }
+    if ((int)cfg->transform < (int)VFFT_C2C || (int)cfg->transform > (int)VFFT_DHT)
+    {
+        _vfft_warn("vfft_alloc_batch_for: invalid transform enum %d (valid: VFFT_C2C..VFFT_DHT)",
+                   (int)cfg->transform);
+        return NULL;
+    }
+    if (cfg->dims > 1)
+    {
+        _vfft_warn("vfft_alloc_batch_for: padded batches are 1D only (got dims=%d) — "
+                   "2D+ plans run tight buffers",
+                   cfg->dims);
+        return NULL;
+    }
+    if ((int)cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+    {
+        _vfft_warn("vfft_alloc_batch_for: padded batches are split-plane by construction — "
+                   "layout must be VFFT_LAYOUT_SPLIT");
+        return NULL;
+    }
+    if (cfg->n[0] < 1 || cfg->howmany < 1)
+    {
+        _vfft_warn("vfft_alloc_batch_for: need n[0] >= 1 and howmany >= 1 (got N=%d K=%zu)",
+                   cfg->n[0], cfg->howmany);
+        return NULL;
+    }
+    int N = cfg->n[0];
+    size_t K = cfg->howmany;
+    if (cfg->transform == VFFT_C2C)
+    {
+        if (cfg->placement == VFFT_OUTOFPLACE)
+            return _batch_alloc_oop(N, K); /* 4-plane, Kp=roundup(K,8) */
+        return _batch_alloc_ex(VFFT_C2C, N, K);
+    }
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
+         _VFFT_IS_TRIG(cfg->transform)) &&
+        (N % 2) != 0)
+    {
+        _vfft_warn("vfft_alloc_batch_for: %s padding requires even N (real-FFT inner "
+                   "half-spectrum); got N=%d",
+                   _vfft_tname(cfg->transform), N);
+        return NULL;
+    }
+    return _batch_alloc_ex(cfg->transform, N, K);
+}
+
+/* Fill the vfft_execute arguments in the right roles — the role table lives
+ * HERE, once, inside the library (see the vfft.h padded-batch section).
+ * Roles are the forward data flow; slots the transform does not use are set
+ * to NULL; out-params may themselves be NULL if unwanted. */
+void vfft_batch_planes(vfft_batch b, double **sre, double **sim,
+                       double **dre, double **dim)
+{
+    double *s_re = NULL, *s_im = NULL, *d_re = NULL, *d_im = NULL;
+    if (!b)
+        _vfft_warn("vfft_batch_planes: NULL batch handle — all planes set to NULL");
+    else if (b->oop)
+    { /* c2c out-of-place: input planes -> src, output planes -> dst */
+        s_re = b->re;
+        s_im = b->im;
+        d_re = b->ore;
+        d_im = b->oim;
+    }
+    else if (b->xform == (int)VFFT_C2C)
+    { /* c2c in-place: the same planes fill both roles */
+        s_re = b->re;
+        s_im = b->im;
+        d_re = b->re;
+        d_im = b->im;
+    }
+    else if (b->xform == (int)VFFT_R2C)
+    { /* real in -> split spectrum out */
+        s_re = b->real;
+        d_re = b->re;
+        d_im = b->im;
+    }
+    else if (b->xform == (int)VFFT_C2R)
+    { /* split spectrum in -> real out */
+        s_re = b->re;
+        s_im = b->im;
+        d_re = b->real;
+    }
+    else
+    { /* trig: real in -> real out */
+        s_re = b->real;
+        d_re = b->re;
+    }
+    if (sre)
+        *sre = s_re;
+    if (sim)
+        *sim = s_im;
+    if (dre)
+        *dre = d_re;
+    if (dim)
+        *dim = d_im;
+}
+
 size_t vfft_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
