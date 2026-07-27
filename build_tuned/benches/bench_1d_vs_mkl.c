@@ -17,7 +17,9 @@
  * cache/thermal carryover cachebust() can't clear, so run EACH CELL ISOLATED
  * (fresh process; run.ps1 does this) and trust only isolated numbers.
  *
- * Build: build_tuned/build.py --mkl (dag core + cached codelet lib + mkl_rt LP64).
+ * Build: build_tuned/build.py --mkl --vfft (dag core + cached codelet lib +
+ *   mkl_rt LP64 + src/core/vfft.c — the front door serves the K=1 kind-4
+ *   SCRAMBLED-cascade cells, see run_k1z_cell).
  *   NOTE: LP64 (mkl_rt), NOT ILP64 — ILP64 corrupts the DFTI strides array
  *   ("Inconsistent configuration parameters" at DftiCommit).
  *
@@ -63,6 +65,9 @@
 #include "c2r_registry_avx2.h"  /* --c2r: c2r_register_all_avx2 (r2cb + hc2hc_dif_bwd) */
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
 #include "c2r_dispatch.h"       /* --c2r: vfft_c2r_plan_create / execute (wisdom + JIT) */
+#include "vfft.h"               /* K=1 kind-4 cascade cells: public front door
+                                 * (vfft_create serves the banked route+chain
+                                 * verdict). Requires build.py --vfft. */
 
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
@@ -386,6 +391,233 @@ static void measure_ab(double *vns_out, double *mns_out,
     free_d(im);
     *vns_out = vns;
     *mns_out = mns;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * K=1 SCRAMBLED-cascade cells (kind-4 oop_wisdom lines) — FRONT-DOOR path.
+ *
+ * A "N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]" line (src/core/oop/
+ * oop_wisdom.h is the single source of format truth; the trailing route pair
+ * is the OPTIONAL Phase-5 route axis) carries NO c2c factorization — it is
+ * the banked verdict of the create-time route race. The only measurement
+ * that makes sense for these cells is the PUBLIC front door serving that
+ * verdict: vfft_create (C2C, OUT-OF-PLACE, order=SCRAMBLED, howmany=1) reads
+ * the kind-4 line from the bundle's oop_wisdom.txt and builds the zsplit /
+ * ZTURN-S cascade with the banked chain + terminator pick (pure read, no
+ * race; VFFT_ZRACE_VERBOSE=1 prints the served route). Execution rides the
+ * cascade's interleaved z contract (sim == dim == NULL).
+ *
+ * Fairness mirrors measure_ab exactly: same warmup(10)/best-of-5/reps_for
+ * shape, cachebust + cool_ms idle BETWEEN engines, flip order. MKL is the
+ * interleaved OOP descriptor — the cascade's like-for-like (split REAL_REAL
+ * storage is the batched paths' contract, not K=1 z's; zsplit_api_gate.c
+ * precedent).
+ * ════════════════════════════════════════════════════════════════════════ */
+static vfft_oop_wisdom_t g_k1z_oopw;      /* shipped-reader view of the positional wisdom file */
+static int g_k1z_oopw_loaded = 0;
+static const char *g_k1z_wpath = NULL;
+
+/* Caller-owned front-door bundle rooted at the positional wisdom file's
+ * directory. The front door reads kind-4 lines from <dir>/oop_wisdom.txt
+ * (vfft.c _bundle_paths), so the positional file must BE that file — then
+ * create's pure read serves exactly the lines this process just parsed. Any
+ * other basename would make the bundle read a DIFFERENT file (or miss ->
+ * create-time race + re-bank), silently measuring something else. */
+static vfft_wisdom *k1z_bundle(void)
+{
+    static vfft_wisdom *W = NULL;
+    static int tried = 0;
+    if (tried || !g_k1z_wpath)
+        return W;
+    tried = 1;
+    const char *b1 = strrchr(g_k1z_wpath, '/');
+    const char *b2 = strrchr(g_k1z_wpath, '\\');
+    const char *base = b1 ? b1 : b2;
+    if (b1 && b2)
+        base = (b1 > b2) ? b1 : b2;
+    const char *fname = base ? base + 1 : g_k1z_wpath;
+    if (strcmp(fname, "oop_wisdom.txt") != 0)
+    {
+        fprintf(stderr,
+                "k1z: K=1 kind-4 cells need the wisdom file to be the bundle's "
+                "oop_wisdom.txt (front-door contract); got '%s' — cells skipped\n",
+                fname);
+        return NULL;
+    }
+    char dir[600];
+    if (!base)
+        snprintf(dir, sizeof dir, ".");
+    else
+    {
+        size_t dl = (size_t)(base - g_k1z_wpath); /* dir WITHOUT the separator */
+        if (dl == 0)
+            dl = 1; /* "/oop_wisdom.txt" -> "/" */
+        if (dl >= sizeof dir)
+            dl = sizeof dir - 1;
+        memcpy(dir, g_k1z_wpath, dl);
+        dir[dl] = 0;
+    }
+    W = vfft_wisdom_load(dir);
+    if (!W)
+        fprintf(stderr, "k1z: vfft_wisdom_load(%s) failed — cells skipped\n", dir);
+    return W;
+}
+
+static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
+{
+    for (int w = 0; w < 10; w++)
+        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    return best;
+}
+
+#ifdef VFFT_HAS_MKL
+static double k1z_time_mkl(int N, const double *z0, size_t total)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR)
+        return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return 0;
+    }
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        DftiComputeForward(d, zi, zo);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            DftiComputeForward(d, zi, zo);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    free_d(zi);
+    free_d(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+#endif
+
+static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
+                         FILE *out, int cool_ms, int flip)
+{
+    /* plan descriptor = the banked verdict: decoded cascade chain + route */
+    char plan_s[64];
+    {
+        int ch[8];
+        int nf = vfft_k1_cc_chain_decode(ze->cc_chain, ch);
+        size_t p = (size_t)snprintf(plan_s, sizeof plan_s, "z");
+        if (nf)
+            for (int s = 0; s < nf && p < sizeof plan_s - 8; s++)
+                p += (size_t)snprintf(plan_s + p, sizeof plan_s - p,
+                                      "%s%d", s ? "x" : ":", ch[s]);
+        else
+            p += (size_t)snprintf(plan_s + p, sizeof plan_s - p, ":default");
+        snprintf(plan_s + p, sizeof plan_s - p, "/R%d", ze->zs_route);
+    }
+    const char *path = ze->zs_route ? "zturn" : "zsplit";
+
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8d %-16s   SKIP (front-door bundle unavailable)\n", N, plan_s);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1;
+    cfg.n[0] = N;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_SCRAMBLED;
+    cfg.nthreads = 1;
+    cfg.wisdom = W;
+    vfft_plan h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%-8d %-16s   vfft_create FAILED\n", N, plan_s);
+        return;
+    }
+
+    size_t total = (size_t)N; /* K = 1 */
+    double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total), *rt = alloc_d(2 * total);
+    srand(42 + N + 1);
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (double)rand() / RAND_MAX - 0.5;
+
+    /* roundtrip gate through the API (matched-permutation: bwd inverts fwd) */
+    vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+    vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+    double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
+    for (size_t i = 0; i < 2 * total; i++)
+    {
+        double e = fabs(rt[i] * inv - z0[i]), m = fabs(z0[i]);
+        if (e > maxerr)
+            maxerr = e;
+        if (m > maxmag)
+            maxmag = m;
+    }
+    double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+
+    /* A/B — measure_ab's fairness shape (cachebust + cool between engines, flip) */
+    double vns = 0, mns = 0;
+#ifdef VFFT_HAS_MKL
+    if (flip)
+    { /* MKL first */
+        mns = k1z_time_mkl(N, z0, total);
+        cachebust();
+        pace(cool_ms);
+        vns = k1z_time_vfft(h, z0, S, total);
+    }
+    else
+    { /* vfft first */
+        vns = k1z_time_vfft(h, z0, S, total);
+        cachebust();
+        pace(cool_ms);
+        mns = k1z_time_mkl(N, z0, total);
+    }
+#else
+    (void)cool_ms;
+    (void)flip;
+    vns = k1z_time_vfft(h, z0, S, total);
+#endif
+    double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
+    double vgf = (vns > 0) ? 5.0 * N * log2((double)N) / vns : 0;
+    printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
+           N, plan_s, path, vns, mns, vgf, ratio, rel);
+    if (out)
+    {
+        fprintf(out, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e\n",
+                N, 1, plan_s, path, vns, mns, vgf, ratio, rel);
+        fflush(out);
+    }
+    free_d(z0);
+    free_d(S);
+    free_d(rt);
+    vfft_destroy(h);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -2090,6 +2322,14 @@ int main(int argc, char **argv)
         printf("# OOP wisdom: %s (%s)\n", op, have_oopw ? "loaded" : "MISS -> dp_best per cell");
     }
 
+    /* Shipped-reader view of the SAME positional wisdom file (oop_wisdom.h is
+     * the single source of format truth for OOP kind lines): serves the K=1
+     * kind-4 SCRAMBLED-cascade cells, which route through the vfft front door
+     * instead of the local c2c factor walk (see run_k1z_cell). */
+    g_k1z_wpath = wpath;
+    if (!oop)
+        g_k1z_oopw_loaded = (vfft_oop_wisdom_load(&g_k1z_oopw, wpath) == 0);
+
     FILE *f = fopen(wpath, "r");
     if (!f)
     {
@@ -2162,6 +2402,45 @@ int main(int argc, char **argv)
             run_oop_cell(N, (size_t)Kl, &reg, have_oopw ? &oopw : NULL, out, cool_ms, flip ^ (benched & 1));
             benched++;
             pace(pace_ms);
+            continue;
+        }
+        if (Kl == 1)
+        {
+            /* K==1 wisdom lines are OOP K=1 ENGINE lines (kind 3 = natural
+             * engine, kind 4 = SCRAMBLED cascade; oop_wisdom.h owns the
+             * format, including the OPTIONAL trailing "zs_route zt_t2q"
+             * route pair AFTER ns) — they carry NO c2c factorization, so the
+             * local factor walk below must never touch them. It used to: the
+             * third token (the KIND) was read as nf and {zs_t2q, cc_chain,
+             * trunc(ns), zs_route} became "factors". Old-format kind-4 lines
+             * fell one token short of the nf=4 factor read and were silently
+             * skipped, but the route-extended pair made the parse "succeed":
+             * plan_create FAILED rows (radix 0/22323) for kind-4 lines, and
+             * for kind-3 lines a plan whose prod(factors) != N — planner.h
+             * plan_create_ex never validates the product, so group strides
+             * built from prod(factors) ran the generic executor OUT OF
+             * BOUNDS over N*K-sized buffers (the e+54/inf "generic" rows +
+             * heap scribbling that poisoned later rows at the same N).
+             * Dispatch by kind instead: kind-4 cells run through the vfft
+             * FRONT DOOR (the banked route+chain verdict being served is
+             * exactly what the cell measures); every other K=1 line is
+             * consumed silently. */
+            tok = strtok_r(NULL, " \t\n", &save);
+            if (tok && atoi(tok) == VFFT_OOP_KIND_ZSPLIT && g_k1z_oopw_loaded)
+            {
+                const vfft_oop_wisdom_entry_t *ze =
+                    vfft_oop_wisdom_lookup_zsplit(&g_k1z_oopw, N);
+                if (ze)
+                {
+                    run_k1z_cell(N, ze, out, cool_ms, flip);
+                    benched++;
+                    pace(pace_ms);
+                }
+                else
+                    skipped++;
+            }
+            else
+                skipped++;
             continue;
         }
         tok = strtok_r(NULL, " \t\n", &save);
