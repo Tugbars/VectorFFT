@@ -96,9 +96,11 @@ def trial_pace_for(nk: int) -> int:
 
 
 def build():
-    print('[build] bench_1d_vs_mkl (--mkl --jit) ...', flush=True)
+    # --vfft: the bench routes K=1 kind-4 cascade cells through the public
+    # front door (vfft_create serving the banked route+chain verdict).
+    print('[build] bench_1d_vs_mkl (--mkl --jit --vfft) ...', flush=True)
     r = subprocess.run([sys.executable, str(HERE / 'build.py'),
-                        '--src', str(BENCH_SRC), '--mkl', '--jit', '--compile'])
+                        '--src', str(BENCH_SRC), '--mkl', '--jit', '--vfft', '--compile'])
     if r.returncode != 0 or not BENCH_EXE.exists():
         print('[build] FAILED', file=sys.stderr); sys.exit(1)
 
