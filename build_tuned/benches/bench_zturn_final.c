@@ -85,6 +85,15 @@
  *     <11 kernel .o> -o build_tuned/benches/bench_zturn_final.exe -lm
  * Both engines link the SAME production kernel objects (verify: nm shows
  * exactly one T per radix*_z_* symbol in the exe).
+ *
+ * B1 SEAM (-DZT_STFB_SINK; the zturn_proto_gate.c ZTURN_GEN_KERNELS
+ * precedent): swaps ONLY the challenger's backward TERMINATOR for the SUNK
+ * generated kernel radix8_z_stf_r4sk_bwd_avx2 (--zp-sink store-at-def
+ * interleave; bit-identical output, spill census 33 -> 6). The rest of the
+ * bwd path (msg mids, s0tb ingest) and the whole fwd path stay the
+ * prototype route. Link KDIR/radix8_z_stf_r4sk_bwd_avx2.o in that build.
+ * Baseline build (no define) is macro-inert: ZT_EXEC_BWD is
+ * vfft_zturn_execute_bwd, behavior byte-stable.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,6 +105,40 @@
 
 #include "zsplit.h"        /* production plan + kernels (src/core/oop) */
 #include "zturn_proto.h"   /* ZTURN-S prototype (same production msg objects) */
+
+/* ================= B1 SEAM: sunk bwd terminator substitution ============
+ * -DZT_STFB_SINK swaps the challenger's bwd terminator for the generated
+ * SUNK kernel (see file header). The executor below is vfft_zturn_execute_bwd
+ * (zturn_proto.h) verbatim except the stfb call: same production msg mid
+ * loop, same _vfft_zturn_s0tb_bwd ingest, and the generated symbol takes
+ * the GATE-0-proven arg tuple (OLs = count = N/8). Both smoke and timing
+ * go through ZT_EXEC_BWD, so the sink build's smoke gates the swapped path. */
+#ifdef ZT_STFB_SINK
+#define ZSK_ABI const double *, const double *, double *, double *, \
+                const double *, const double *, size_t, size_t, size_t, \
+                size_t, size_t
+void radix8_z_stf_r4sk_bwd_avx2(ZSK_ABI);
+static void zt_exec_bwd_sink(const vfft_zturn_plan_t *p,
+                             const double *zin, double *zout)
+{
+    radix8_z_stf_r4sk_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                               0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+    for (int s = p->nf - 2; s >= 1; s--) {
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long, unsigned long long,
+                  unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2 : radix4_z_msg_bwd_avx2;
+        f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
+    }
+    _vfft_zturn_s0tb_bwd(p->plane, zout, (size_t)p->N);
+}
+#define ZT_EXEC_BWD zt_exec_bwd_sink
+#else
+#define ZT_EXEC_BWD vfft_zturn_execute_bwd
+#endif
 
 /* ------------------------------------------------------------------ timing */
 static double now_ns(void)
@@ -162,7 +205,7 @@ static vfft_zturn_plan_t  *g_zp = NULL;
 static void run_engine(int arm, int dir, const double *zin, double *out)
 {
     if (arm == 1) {
-        if (dir) vfft_zturn_execute_bwd(g_zp, zin, out);
+        if (dir) ZT_EXEC_BWD(g_zp, zin, out);      /* B1 seam: see header */
         else     vfft_zturn_execute_fwd(g_zp, zin, out);
     } else {                                       /* arms 0 and 2: SAME code */
         if (dir) vfft_zsplit_execute_bwd(g_pp, zin, out);
@@ -269,7 +312,7 @@ static int smoke_cell(int N)
             }
     /* bwd: each engine on ITS OWN comb, outputs both natural, EXACT */
     vfft_zsplit_execute_bwd(g_pp, out_ref, back_ref);
-    vfft_zturn_execute_bwd(g_zp, out_z, back_z);
+    ZT_EXEC_BWD(g_zp, out_z, back_z);              /* B1 seam: see header */
     long badb = 0;
     for (size_t i = 0; i < nd; i++)
         if (memcmp(&back_z[i], &back_ref[i], 8)) badb++;
