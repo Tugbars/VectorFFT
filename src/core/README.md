@@ -1,48 +1,148 @@
-# `core/` layout
+# `core/` — the canonical FFT tree
 
-The dag-fft-compiler core (the canonical FFT tree) is organized into subfolders
-by role, layered by dependency — each layer depends only on the ones above it:
+This is the production core of the dag-fft-compiler library: the **public front
+door** (`vfft.c`, implementing `include/vfft.h`) plus the engines, planners,
+and transform layers it dispatches into. Organized into subfolders by role,
+layered by dependency — each layer depends only on the ones above it.
 
 ```
 core/
-  support/      platform foundation: env (timing/alloc), threads (pool), strided codelet externs
-  engine/       the c2c kernel: executor(s), planner, twiddle, plan types, compat bridge
-  planning/     plan SEARCH + cost model + wisdom + measurement (exhaustive / dp / estimate / measure)
-  transforms/   everything built ON the engine:
-    real/         r2c / c2r / rfft (+ dispatchers, registries)
-    trig/         DCT-I/II/III/IV, DST-I/II/III, DHT (+ N=8 codelets, externs)
-    fft2d/        2D c2c / 2D r2c / transpose
-  primes/       Rader + Bluestein (algorithms, calibrator, wisdom, dispatch)
-  oop/          out-of-place c2c engine (plan / auto / dp / wisdom / execute / registries)
+  vfft.c        THE public API implementation (see "Front door" below)
+  support/      platform foundation
+  engine/       the in-place c2c kernel
+  planning/     plan SEARCH + wisdom (everything measured, nothing estimated)
+  transforms/   everything built ON the engine
+  primes/       Rader + Bluestein for prime N
+  oop/          out-of-place c2c engines (incl. the K=1 z-cascades)
 ```
+
+## Front door: `vfft.c` (public API = `include/vfft.h`)
+
+One create/execute/destroy surface over **four axes** committed at create time:
+`transform` (C2C / R2C / C2R / DCT-I..IV / DST-I..III / DHT) ×
+`placement` (in-place / out-of-place) ×
+`layout` (SPLIT re/im planes / INTERLEAVED z, MKL DFTI_COMPLEX_STORAGE analog) ×
+`order` (DEFAULT / NATURAL / SCRAMBLED, 1D/2D C2C). Plus `dims` 1..4,
+`howmany` (K lanes), the opt-in padded-batch handle (`vfft_alloc_batch_for` →
+`vfft_batch_planes` → `vfft_batch_stride` → `vfft_free_batch`), and rigor.
+
+Contract: every unsupported or invalid cell is **refused at create with an
+actionable stderr message**; `vfft_execute` validates the pointer signature
+against the committed layout/placement/direction and computes NOTHING on a
+mismatch. Never a silent no-op, never silent garbage. The support matrix lives
+in `include/vfft.h` (the capabilities table + the SIGNATURE TABLE /
+SUPPORT MATRIX blocks above `vfft_execute`); the machine proof is the gate
+battery (`gate_api_matrix` / `gate_api_misuse` / `gate_api_example`).
+
+Wisdom: per-feature files auto-loaded as a bundle; canonical home is
+`src/dag-fft-compiler/generator/generated/` (copies elsewhere are operational
+leftovers). `VFFT_WISDOM_DIR` points the bundle at another directory (gates and
+benches use a scratch dir); misses calibrate at `config.rigor` and persist.
+
+Runtime knobs (diagnostics/kill switches): `VFFT_NO_ZTURN` (fall back to the
+legacy zsplit cascade), `VFFT_FORCE_ZROUTE` (pin the K=1 cascade route),
+`VFFT_NO_IL2P` (disable the pure-IL 2-pass route), `VFFT_IL_PAD` (force the IL
+padded arm), `VFFT_ZRACE_VERBOSE` (create-time race logging).
+
+## Subfolders
+
+### `support/` — platform foundation
+`env.h` (timing — QPC on Windows, CLOCK_MONOTONIC elsewhere — aligned alloc,
+env knobs) · `threads.h` (worker pool + pinning; caller owns core 0) ·
+`strided_codelets.h` (externs for the generated SIMD codelets).
+
+### `engine/` — the in-place c2c kernel
+`plan.h` (plan/stage types) · `planner.h` (`vfft_proto_auto_plan`: plan build
+from wisdom/search) · `executor.h` / `executor_generic.h` (the stage walkers) ·
+`stride_executor.h` (strided/ND row engine) · `twiddle.h` (the three measured
+twiddle methods: FLAT / T1S / LOG3, mixed per stage by wisdom) · `compat.h` /
+`proto_stride_compat.h` (bridges between the proto and stride plan worlds).
+
+### `planning/` — plan search + wisdom (all MEASURED)
+`plan_orchestrator.h` (rigor → search routing) · `dp_planner.h` (split-plan DP;
+"DP prunes the search; it never composes costs") · `dp_planner_il.h` (IL
+whole-chain DP + the cascade engine/route axis) · `exhaustive_plan.h` /
+`exhaustive_patient.h` / `exhaustive_screened.h` (the EXHAUSTIVE tiers) ·
+`measure.h` (paced measurement harness) · `estimate_plan.h` (V4 cost model —
+planned ESTIMATE tier, not used for verdicts) · `wisdom_reader.h` (spike v6
+format) · `adopt_wisdom.h` (`VFFT_ADOPT_WISDOM_DIR` import).
+
+### `transforms/` — built on the engine
+- `real/` — `r2c.h`/`r2c_dispatch.h`, `c2r.h`/`c2r_dispatch.h` (NATURAL vs
+  STRIDE per-cell), `rfft.h` + `rfft_calibrate.h`/`rfft_trace.h`.
+- `trig/` — `dct.h` (II/III), `dct1.h`, `dct4.h`, `dst.h`, `dht.h`,
+  `dct2/3_n8_avx2.h` codelets, `trig_codelets.h` externs. Three-phase MT.
+- `fft2d/` — 2D c2c/r2c/c2r: `fft2d.h`, `fft2d_r2c.h`, per-feature planners +
+  wisdom, `transpose.h`, `strided_tw.h`.
+- `fft3d/` — 3D c2c: `fft3d.h`, `fft3d_wisdom.h` ((N1,N2,N3) table),
+  `strided_rows.h`.
+- `fftnd/` — rank-general ND engine (`fndr`, rank ≤ 4; §6a47 3D real, §6a62
+  rank-4 exposure): `fftnd.h`, `fftnd_r2c.h`, `fftnd_planner.h`,
+  `fftnd_wisdom.h`, `fftnd_natorder.h`, `conv.h`.
+- `natorder/` — the VFFT_ORDER_NATURAL machinery (per-cell measured verdict):
+  `natorder_perm.h` (cycle/pair tapes), `natorder_exec.h`,
+  `natorder_scatter.h`, `natorder_calibrate.h` (expensive — probe few cells),
+  `natorder_2d.h` (per-axis reorder tapes).
+- `conv/` — convolution + `il_layout.h` interleave/deinterleave helpers.
+
+### `primes/` — prime-N machinery
+`prime_dispatch.h` (factorable → CT/wisdom; prime → override) · `rader.h` ·
+`bluestein.h` + `bluestein_calibrator.h` ((M,B) calibrate-on-miss) +
+`bluestein_wisdom.h`. **Wired into the IN-PLACE c2c path only** — out-of-place
+C2C refuses prime N loudly (OOP prime wiring is a planned feature).
+
+### `oop/` — out-of-place c2c engines
+`oop_plan.h` (kinds: MODEB scrambled / LEAF / BAILEY2 natural) · `oop_auto.h`
+(champion build) · `oop_dp.h` (KIND×FACT joint search) · `oop_execute.h` ·
+`oop_codelets.h` / `oop_leaf_registry.h` · `oop_wisdom.h` (kind-tagged cells;
+kind-4 = K=1 cascade route lines `N 1 4 t2q cc_chain ns [zs_route zt_t2q]`) ·
+**K=1 ≥2048 cascades**: `zturn.h` (ZTURN-S, the production engine — corner-turn
+fused into ingest stores, MKL's sectioned geometry; beats MKL at 2048/16384) ·
+`zsplit.h` (legacy block-split cascade, `VFFT_NO_ZTURN` fallback + offline
+reference) · `zturn_proto.h` (memcmp-exact derivation prototype, permanent
+reference) · `il2p.h` (pure-IL 2-pass fwd route) · `il_execute.h` (IL routes).
+
+Several subfolders carry their own README.md with deeper notes
+(`engine/`, `oop/`, `planning/`, `primes/`, `support/`, `transforms/real/`,
+`transforms/fft2d/`).
 
 ## Include convention — BARE includes, the build provides `-I`
 
 Headers cross-reference each other **bare**: `#include "executor.h"`, not
 `#include "engine/executor.h"`. The build system puts **every** `core/`
-subfolder on the `-I` search path, so a bare include resolves regardless of which
+subfolder on the `-I` search path (`build_tuned/build.py:build_includes()`
+walks `core/` recursively), so a bare include resolves regardless of which
 subfolder the target lives in. Consequences:
 
-- **Moving a file between subfolders needs no `#include` edits** — only the `-I`
-  list must list the subfolders, and `build_tuned/build.py:build_includes()`
-  walks `core/` recursively so even that is automatic. (CMake will mirror this.)
-- **Header basenames must stay globally unique** across all of `core/` (they are
-  today) — otherwise a bare include is ambiguous (first `-I` wins).
-- Consumers (benches, future public `.c`) also use bare includes:
-  `#include "r2c.h"`, not `#include "core/r2c.h"`.
+- **Moving a file between subfolders needs no `#include` edits.**
+- **Header basenames must stay globally unique** across all of `core/` —
+  otherwise a bare include is ambiguous (first `-I` wins).
+- Consumers (benches, the public build) also use bare includes:
+  `#include "vfft.h"`, `#include "r2c.h"`.
 
 SIMD codelets are **not** here — they live under `dag-fft-compiler/codelets/`
-and compile as linked `.c` files (they include no core headers).
+(generated by the OCaml emitters in `dag-fft-compiler/generator/`) and compile
+as linked `.c` files; they include no core headers.
 
 ## Key entry points
 
-- **c2c**: `engine/planner.h` (`vfft_proto_auto_plan`) → `engine/executor.h`
-  (`vfft_proto_execute_fwd/bwd`). MT via the `support/threads.h` pool (K-split).
-- **r2c/c2r**: `transforms/real/r2c_dispatch.h` (`vfft_r2c_plan_create` /
-  `vfft_r2c_execute_fwd`) — hybrid rfft vs decoupled-stride; auto-threads when
-  `stride_set_num_threads()>1` at plan-create (picks a sub-K `block_K`).
-- **trig/DSP**: `transforms/trig/{dct,dct1,dct4,dst,dht}.h` — three-phase MT
-  (pre-K-split → inner FFT threads → post-K-split).
-- **2D**: `transforms/fft2d/{fft2d,fft2d_r2c}.h` — tile-parallel rows.
-- **OOP c2c**: `oop/oop_auto.h` / `oop/oop_wisdom.h`.
-- **prime N**: `primes/prime_dispatch.h` → Rader / Bluestein.
+- **Public API** (use this unless working on internals): `vfft_create` /
+  `vfft_execute` / `vfft_destroy` in `vfft.c` — everything below is reached
+  through it, chosen by wisdom.
+- **c2c in-place**: `engine/planner.h` (`vfft_proto_auto_plan`) →
+  `engine/executor.h`. MT via the `support/threads.h` pool (K-split).
+- **c2c out-of-place**: `oop/oop_auto.h` champions; K=1 ≥2048 → `oop/zturn.h`.
+- **r2c/c2r**: `transforms/real/r2c_dispatch.h` / `c2r_dispatch.h`.
+- **trig/DSP**: `transforms/trig/{dct,dct1,dct4,dst,dht}.h`.
+- **2D/3D/4D**: `transforms/fft2d/`, `transforms/fft3d/`, `transforms/fftnd/`.
+- **prime N**: `primes/prime_dispatch.h` → Rader / Bluestein (in-place only).
+- **natural order**: `transforms/natorder/` (1D), `natorder_2d.h` (2D).
+
+## Gates
+
+API surface: `gate_api_matrix` / `gate_api_misuse` / `gate_api_example`
+(session scratchpad; walk the full support matrix + misuse diagnostics + the
+header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
+(`zsplit_wis_gate`, `zsplit_api_gate`, `gate_vfft_rz`, `gate_4d`,
+`gate_fndr_q1`, natorder/natmt tests, `regression_vs_mkl`). Run them with
+`VFFT_WISDOM_DIR` pointed at a scratch dir so banked wisdom stays untouched.
