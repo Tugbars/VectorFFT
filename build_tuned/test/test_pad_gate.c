@@ -14,7 +14,7 @@
  * codelet exist", the robust check; there is no has_radix predicate) AND exercises ODD /
  * MIXED factorizations (3,5,6,7,9,prime) that factKp and the r2c/trig features will emit
  * once padding goes cross-feature — and it pads to roundup(K,VW=4), matching the Step-A
- * vfft_alloc_batch buffer exactly.
+ * vfft_alloc_batch_for buffer exactly (the c2c in-place Kp rule).
  *
  * Lane split: BULK lanes (l < (K/VW)*VW) are the full-vector path and MUST be bit-exact;
  * a nonzero bulk error is a seam/executor corruption (pad leaking into real lanes = the
