@@ -553,6 +553,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_SCRAMBLED;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* k1z cells run the committed z contract */
     cfg.nthreads = 1;
     cfg.wisdom = W;
     vfft_plan h = vfft_create(&cfg);
