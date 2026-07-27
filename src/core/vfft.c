@@ -1956,7 +1956,12 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         if (cfg->transform != VFFT_C2C || K != 1 ||
             (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+        {
+            _vfft_warn("vfft_create: 4D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) "
+                       "and out-of-place R2C/C2R only (got %s, howmany=%zu, order=%d)",
+                       _vfft_tname(cfg->transform), K, cfg->order);
             return NULL;
+        }
         stride_plan_t *tp = stride_plan_nd(4, cfg->n, reg);
         if (!tp)
             return NULL;
@@ -1968,6 +1973,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h4->transform = VFFT_C2C;
         h4->placement = cfg->placement;
+        h4->layout = (int)cfg->layout;
         h4->N = cfg->n[0];
         h4->N2 = cfg->n[1];
         h4->N3 = cfg->n[2];
@@ -1995,6 +2001,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
             h3->transform = cfg->transform;
             h3->placement = cfg->placement;
+            h3->layout = (int)cfg->layout;
             h3->N = cfg->n[0];
             h3->N2 = cfg->n[1];
             h3->N3 = cfg->n[2];
@@ -2005,7 +2012,16 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         if (cfg->transform != VFFT_C2C || K != 1 ||
             (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+        {
+            _vfft_warn("vfft_create: 3D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) and "
+                       "out-of-place R2C/C2R with an even last dim only (got %s, howmany=%zu, "
+                       "order=%d%s)",
+                       _vfft_tname(cfg->transform), K, cfg->order,
+                       (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
+                           ? (cfg->n[2] % 2 ? ", odd n[2]" : ", in-place?")
+                           : "");
             return NULL;
+        }
         int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
         int banked = 0;
         stride_plan_t *tp =
@@ -2022,6 +2038,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_C2C;
         h->placement = cfg->placement;
+        h->layout = (int)cfg->layout;
         h->N = N1;
         h->N2 = N2;
         h->N3 = N3;
@@ -2038,7 +2055,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * front, same contract as 3D. Sequential-plane 2D batching is a
          * designed feature (own dist convention), not a reinterpretation. */
         if (K != 1)
+        {
+            _vfft_warn("vfft_create: dims=2 requires howmany==1 (got %zu) — the 2D executors "
+                       "are K-blind and would silently process one plane; batch 2D plans "
+                       "sequentially instead",
+                       K);
             return NULL;
+        }
         int N1 = cfg->n[0], N2 = cfg->n[1];
         stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
         if (W->path_c2c[0])
@@ -2060,6 +2083,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = cfg->transform;
         h->placement = cfg->placement;
+        h->layout = (int)cfg->layout;
         h->N = N1;
         h->N2 = N2;
         h->K = K;
@@ -2210,6 +2234,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 !vfft_natorder_2d_build_axis(N1, d->plan_col, &h->nat2d_row_list, &h->nat2d_row_is_pairs, 1) ||
                 !vfft_natorder_2d_build_axis(N2, d->plan_row, &h->nat2d_col_list, &col_is_pairs, 0))
             {
+                _vfft_warn("vfft_create: 2D %dx%d order=NATURAL — axis reorder-tape build "
+                           "failed for this chain (orientation detect); the cell is "
+                           "unsupported in natural order, use DEFAULT/SCRAMBLED",
+                           N1, N2);
                 vfft_destroy(h);
                 return NULL;
             }
@@ -2257,7 +2285,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     {
         vfft_batch b = cfg->batch;
         if (b->xform != (int)VFFT_C2C || b->oop || b->K != K || b->N != N) /* handle must match exactly */
-            return NULL;                                                   /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
+        {                                                                  /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
+            _vfft_warn("vfft_create: config.batch does not match this in-place C2C descriptor "
+                       "(batch: %s%s N=%d K=%zu; config: C2C in-place N=%d K=%zu) — allocate "
+                       "with vfft_alloc_batch_for(THIS config)",
+                       _vfft_tname(b->xform), b->oop ? " out-of-place" : "", b->N, b->K, N, K);
+            return NULL;
+        }
         size_t Kp = b->Kp;
 
         /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
@@ -2368,6 +2402,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_C2C;
         h->placement = VFFT_INPLACE;
+        h->layout = (int)cfg->layout; /* SPLIT by the batch+IL gate above */
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -2455,6 +2490,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_C2C;
         h->placement = VFFT_INPLACE;
+        h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -3110,6 +3146,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 {
                     hk->transform = VFFT_C2C;
                     hk->placement = VFFT_OUTOFPLACE;
+                    hk->layout = (int)cfg->layout;
                     hk->N = N;
                     hk->K = 1;
                     hk->nthreads = stride_get_num_threads();
@@ -3162,7 +3199,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         {
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_C2C || !b->oop || b->N != N || b->K != K)
+            {
+                _vfft_warn("vfft_create: config.batch does not match this out-of-place C2C "
+                           "descriptor (batch: %s%s N=%d K=%zu; config: C2C out-of-place "
+                           "N=%d K=%zu) — allocate with vfft_alloc_batch_for(THIS config)",
+                           _vfft_tname(b->xform), b->oop ? " out-of-place" : " in-place",
+                           b->N, b->K, N, K);
                 return NULL;
+            }
             bK = b->Kp;
             padded = 1;
         }
@@ -3229,6 +3273,12 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         if (!op)
         {
+            if (ord == VFFT_ORDER_NATURAL)
+                _vfft_warn("vfft_create: no natural-order out-of-place C2C champion for "
+                           "N=%d K=%zu (the natural kinds are gated on this cell) — use "
+                           "order=DEFAULT/SCRAMBLED, or calibrate a natural champion into "
+                           "the wisdom",
+                           N, bK);
             vfft_zsplit_destroy(zs_pending);
             vfft_zturn2_destroy(zt_pending);
             return NULL;
@@ -3243,6 +3293,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_C2C;
         h->placement = VFFT_OUTOFPLACE;
+        h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -3280,7 +3331,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         {
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_R2C || b->N != N || b->K != K)
-                return NULL; /* handle must match the descriptor exactly */
+            { /* handle must match the descriptor exactly */
+                _vfft_warn("vfft_create: config.batch does not match this R2C descriptor "
+                           "(batch: %s N=%d K=%zu; config: R2C N=%d K=%zu) — allocate with "
+                           "vfft_alloc_batch_for(THIS config)",
+                           _vfft_tname(b->xform), b->N, b->K, N, K);
+                return NULL;
+            }
             bK = b->Kp;
             padded = 1;
         }
@@ -3335,6 +3392,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_R2C;
         h->placement = cfg->placement;
+        h->layout = (int)cfg->layout; /* INTERLEAVED == the packed CCE spectrum contract */
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -3354,7 +3412,10 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2R)
     {
         if ((N % 2) != 0)
+        {
+            _vfft_warn("vfft_create: C2R requires even N (half-spectrum inverse); got N=%d", N);
             return NULL;
+        }
         /* PADDED (opt-in): build at Kp (ordinary aligned (N,Kp) c2r cell) so the plan strides
          * the caller's Kp-wide split-input / real-output buffers exactly. Pad-only (see the r2c
          * branch: baked-K executors, no runtime `me`); wisdom unchanged; cascade regime. */
@@ -3364,7 +3425,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         {
             vfft_batch b = cfg->batch;
             if (b->xform != (int)VFFT_C2R || b->N != N || b->K != K)
+            {
+                _vfft_warn("vfft_create: config.batch does not match this C2R descriptor "
+                           "(batch: %s N=%d K=%zu; config: C2R N=%d K=%zu) — allocate with "
+                           "vfft_alloc_batch_for(THIS config)",
+                           _vfft_tname(b->xform), b->N, b->K, N, K);
                 return NULL;
+            }
             bK = b->Kp;
             padded = 1;
         }
@@ -3396,6 +3463,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = VFFT_C2R;
         h->placement = cfg->placement;
+        h->layout = (int)cfg->layout; /* INTERLEAVED == CCE spectrum INPUT contract */
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -3421,7 +3489,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         {
             vfft_batch b = cfg->batch;
             if (b->xform != (int)cfg->transform || b->N != N || b->K != K)
+            {
+                _vfft_warn("vfft_create: config.batch does not match this %s descriptor "
+                           "(batch: %s N=%d K=%zu; config: %s N=%d K=%zu) — allocate with "
+                           "vfft_alloc_batch_for(THIS config)",
+                           _vfft_tname(cfg->transform), _vfft_tname(b->xform), b->N, b->K,
+                           _vfft_tname(cfg->transform), N, K);
                 return NULL;
+            }
             bK = b->Kp;
             padded = 1;
         }
@@ -3443,6 +3518,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         h->transform = cfg->transform;
         h->placement = cfg->placement;
+        h->layout = (int)cfg->layout; /* SPLIT by the trig+IL gate up front */
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
@@ -3452,7 +3528,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         return h;
     }
 
-    /* TODO: 2D (dims==2). */
+    /* unreachable: every transform enum is dispatched above (range-checked up front). */
     return NULL;
 }
 
@@ -4082,10 +4158,255 @@ static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
+/* K=1 engine, SPLIT-plane side (natural order both directions; split bwd =
+ * the pointer-swap identity on the forward route). Extracted verbatim from
+ * the dispatch so the OOP INTERLEAVED convert fallback can reuse it. */
+static void _exec_k1_split(struct vfft_plan_s *h, int fwd,
+                           double *sre, double *sim, double *dre, double *dim)
+{
+    const double *ar = fwd ? sre : sim, *ai = fwd ? sim : sre;
+    double *br = fwd ? dre : dim, *bi = fwd ? dim : dre;
+#ifdef VFFT_USE_JIT
+    if (h->k1_jit)
+    { /* stride-baked whole-route kernel; bwd rides the same
+       * pointer-swap identity (natural order) */
+        h->k1_jit(ar, ai, br, bi, h->k1sp->col_re, h->k1sp->col_im,
+                  h->k1_jit_qr, h->k1_jit_qi);
+        return;
+    }
+#endif
+    switch (h->k1_sp_route)
+    {
+    case VFFT_K1_SP_MONO:
+        h->k1_mono(ar, ai, br, bi, 0, 0, 0, 0, 0, 0, 0);
+        return;
+    case VFFT_K1_SP_2PA:
+        vfft_oop_execute_fwd_2pa(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_2PB:
+        vfft_oop_execute_fwd_2pb(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_TWL:
+        vfft_oop_execute_fwd_2pa_twl(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_CCOL:
+        vfft_oop_execute_fwd_ccol(h->k1sp, ar, ai, br, bi);
+        return;
+    default:
+        vfft_oop_execute_fwd(h->k1sp, ar, ai, br, bi);
+        return;
+    }
+}
+
+/* OOP INTERLEAVED convert fallback: dein z -> split OOP engines -> inter z.
+ * Serves every OOP cell with NO native z route (K>1; K=1 SCRAMBLED at
+ * cascade-uncovered N; K=1 engine cells whose IL route is NONE; k1-create
+ * fallbacks) — the cells that were historically a NULL-deref or a silent
+ * no-op. Always correct, documented convert cost (vfft.h support matrix). */
+static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
+                                  const double *z_in, double *z_out)
+{
+    const size_t NK = (size_t)h->N * h->K;
+    const size_t bytes = (NK * 8 + 63) & ~(size_t)63;
+    if (!h->il_wr)
+    {
+        h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+        h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+    }
+    if (!h->il_wr2)
+    {
+        h->il_wr2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+        h->il_wi2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+    }
+    if (!h->il_wr || !h->il_wi || !h->il_wr2 || !h->il_wi2)
+        return;
+    _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
+    if (h->k1_on)
+        _exec_k1_split(h, dir == VFFT_FORWARD, h->il_wr, h->il_wi,
+                       h->il_wr2, h->il_wi2);
+    else
+    {
+        vfft_set_num_threads(h->nthreads);
+        _oop_mt(h->oplan, h->il_wr, h->il_wi, h->il_wr2, h->il_wi2,
+                dir == VFFT_FORWARD ? 1 : 0);
+    }
+    _vfft_z_inter(h->il_wr2, h->il_wi2, z_out, NK);
+}
+
+/* ── EXECUTE-SIDE SIGNATURE ENFORCEMENT ──
+ * The pointer pattern must MATCH the plan's committed layout; the historical
+ * NULL-pointer inference ("sim==dim==NULL means interleaved") is REMOVED.
+ * Returns 1 (and prints an actionable stderr line) when the call must be
+ * REFUSED — the caller returns without computing ANYTHING, so a mismatch can
+ * never silently reinterpret buffers or produce garbage. */
+static int _vfft_sig_bad(struct vfft_plan_s *h, double *sre, double *sim,
+                         double *dre, double *dim)
+{
+    const int il = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
+    const char *tn = _vfft_tname(h->transform);
+    if (_VFFT_IS_TRIG(h->transform))
+    {
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: %s needs sre=real_in and dre=real_out non-NULL "
+                       "(got sre=%s, dre=%s) — nothing executed",
+                       tn, sre ? "ok" : "NULL", dre ? "ok" : "NULL");
+            return 1;
+        }
+        if (sim || dim)
+        {
+            _vfft_warn("vfft_execute: %s is real->real (sre=real_in, dre=real_out); "
+                       "sim/dim must be NULL — nothing executed",
+                       tn);
+            return 1;
+        }
+        return 0;
+    }
+    if (h->transform == VFFT_R2C)
+    {
+        if (sim)
+        {
+            _vfft_warn("vfft_execute: R2C takes real input in sre only; sim must be NULL "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: R2C needs sre=real_in and dre=%s non-NULL — "
+                       "nothing executed",
+                       il ? "z_CCE_out" : "spectrum re");
+            return 1;
+        }
+        if (il && dim)
+        {
+            _vfft_warn("vfft_execute: this R2C plan is committed to layout=INTERLEAVED "
+                       "(dre = packed CCE spectrum, dim=NULL) but got a non-NULL dim; for "
+                       "split spectrum output create the plan with layout=VFFT_LAYOUT_SPLIT "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!il && !dim)
+        {
+            _vfft_warn("vfft_execute: this R2C plan is committed to layout=SPLIT "
+                       "(dre/dim = split spectrum planes) but dim is NULL. The old "
+                       "\"dim==NULL means CCE\" inference is REMOVED — create the plan with "
+                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
+                       "executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (h->transform == VFFT_C2R)
+    {
+        if (dim)
+        {
+            _vfft_warn("vfft_execute: C2R writes real output to dre only; dim must be NULL "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: C2R needs sre=%s and dre=real_out non-NULL — "
+                       "nothing executed",
+                       il ? "z_CCE_in" : "spectrum re");
+            return 1;
+        }
+        if (il && sim)
+        {
+            _vfft_warn("vfft_execute: this C2R plan is committed to layout=INTERLEAVED "
+                       "(sre = packed CCE spectrum input, sim=NULL) but got a non-NULL sim; "
+                       "for split spectrum input create the plan with layout=VFFT_LAYOUT_SPLIT "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!il && !sim)
+        {
+            _vfft_warn("vfft_execute: this C2R plan is committed to layout=SPLIT "
+                       "(sre/sim = split spectrum planes) but sim is NULL. The old "
+                       "\"sim==NULL means CCE\" inference is REMOVED — create the plan with "
+                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
+                       "executed");
+            return 1;
+        }
+        return 0;
+    }
+    /* C2C (1D..4D) */
+    if (il)
+    {
+        if (sim || dim)
+        {
+            _vfft_warn("vfft_execute: this C2C plan is committed to layout=INTERLEAVED "
+                       "(sre=z_in, dre=z_out, sim=dim=NULL) but got non-NULL sim/dim; for "
+                       "split re/im planes create the plan with layout=VFFT_LAYOUT_SPLIT — "
+                       "nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: INTERLEAVED C2C needs sre=z_in and dre=z_out non-NULL "
+                       "(dre may equal sre) — nothing executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (!sre || !sim)
+    {
+        if (!sim && sre && !dim && dre)
+            _vfft_warn("vfft_execute: this C2C plan is committed to layout=SPLIT (sre/sim + "
+                       "dre/dim planes) but the call passed the interleaved-style signature "
+                       "(sim==dim==NULL). The old NULL-pointer layout inference is REMOVED — "
+                       "create the plan with layout=VFFT_LAYOUT_INTERLEAVED for z buffers — "
+                       "nothing executed");
+        else
+            _vfft_warn("vfft_execute: SPLIT C2C needs sre and sim non-NULL — nothing "
+                       "executed");
+        return 1;
+    }
+    if (h->N2 > 0)
+    { /* 2D..4D: the executor memcpys src->dst when they differ (both
+       * placements); a NULL dst pair means in-place-on-src. */
+        if ((dre == NULL) != (dim == NULL))
+        {
+            _vfft_warn("vfft_execute: 2D+ SPLIT C2C got a half-NULL destination pair "
+                       "(dre=%s, dim=%s) — pass both or neither — nothing executed",
+                       dre ? "ok" : "NULL", dim ? "ok" : "NULL");
+            return 1;
+        }
+        return 0;
+    }
+    if (h->placement == VFFT_INPLACE)
+    { /* in-place engine: the destination arguments are NOT read. Accept the
+       * documented forms only, so an out-of-place-style call cannot silently
+       * leave the result in the source buffers. */
+        if (!(((dre == NULL) && (dim == NULL)) || (dre == sre && dim == sim)))
+        {
+            _vfft_warn("vfft_execute: in-place SPLIT C2C takes dre==sre && dim==sim (or "
+                       "dre=dim=NULL); a different destination is ignored by the in-place "
+                       "engine — for true out-of-place create with "
+                       "placement=VFFT_OUTOFPLACE — nothing executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (!dre || !dim)
+    {
+        _vfft_warn("vfft_execute: out-of-place SPLIT C2C needs dre and dim non-NULL — "
+                   "nothing executed");
+        return 1;
+    }
+    return 0;
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
     if (!h)
+    {
+        _vfft_warn("vfft_execute: NULL plan (vfft_create failed, or the plan was "
+                   "destroyed) — nothing executed");
+        return;
+    }
+    if (_vfft_sig_bad(h, sre, sim, dre, dim))
         return;
     if (h->N2 > 0)
     { /* ── 2D (dispatch before the same-named 1D transforms) ── */
@@ -4094,7 +4415,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         {
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
             size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1) * (h->N4 ? (size_t)h->N4 : 1);
-            if (!sim && !dim)
+            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             { /* §6a61: interleaved z for dims>=2 — convert-around via the
                * §6a57 primitives + the split engines (was an UNWIRED
                * crash: NULL im flowed into the split executors). Correct
@@ -4125,6 +4446,11 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 _vfft_z_inter(h->il_wr, h->il_wi, dre, plane);
                 return;
             }
+            if (!dre && !dim)
+            { /* validated in-place convenience: result stays in sre/sim */
+                dre = sre;
+                dim = sim;
+            }
             if (dre != sre)
                 memcpy(dre, sre, plane * sizeof(double));
             if (dim != sim)
@@ -4143,10 +4469,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             }
         }
         else if (h->transform == VFFT_R2C && h->N3 > 0)
-        { /* §6a47/Q1: 3D real fwd — rows, axes, unpack; il per §6a24. */
+        { /* §6a47/Q1: 3D real fwd — rows, axes, unpack; il per the layout axis. */
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
-            d3->il_out = (dim == NULL);
+            d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
             _fndr_rows_mt(d3, sre, NULL, 0);
             for (int m = 0; m < d3->rank - 1; m++)
                 _fndr_axis_mt(d3, m, 0);
@@ -4156,7 +4482,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         {
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
-            d3->il_out = (sim == NULL);
+            d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
             _fndr_pack(d3, sre, sim);
             for (int m = 0; m < d3->rank - 1; m++)
                 _fndr_axis_mt(d3, m, 1);
@@ -4164,15 +4490,15 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         }
         else if (h->transform == VFFT_R2C)
         {
-            if (!dim)
-                stride_execute_2d_r2c_z(h->tplan, sre, dre); /* §6a30 native */
+            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+                stride_execute_2d_r2c_z(h->tplan, sre, dre); /* §6a30 native CCE */
             else
                 stride_execute_2d_r2c(h->tplan, sre, dre, dim); /* real plane -> split spectrum */
         }
         else if (h->transform == VFFT_C2R)
         {
-            if (!sim)
-                stride_execute_2d_c2r_z(h->tplan, sre, dre); /* §6a30 native */
+            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+                stride_execute_2d_c2r_z(h->tplan, sre, dre); /* §6a30 native CCE */
             else
                 stride_execute_2d_c2r(h->tplan, sre, sim, dre); /* split spectrum -> real plane */
         }
