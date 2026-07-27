@@ -1,35 +1,81 @@
-/* vfft.h — VectorFFT unified public API (the descriptor front door).
+/* vfft.h — VectorFFT public API.
  *
- * One surface over every transform the library ships. Shape = MKL's descriptor
- * semantics (fill a config, create, execute, destroy) ∪ FFTW's planning-rigor
- * dial — minus MKL's DftiSetValue setter-soup (config struct instead) and minus
- * FFTW's ESTIMATE-that-might-be-wrong (only measured rigor tiers are exposed).
+ * ── QUICK START ─────────────────────────────────────────────────────────────
+ *   vfft_config_t cfg = {0};                  // zeroed = sensible defaults
+ *   cfg.transform = VFFT_C2C;
+ *   cfg.n[0]      = 4096;
+ *   cfg.howmany   = 8;                        // batch: 8 transforms at once
+ *   cfg.placement = VFFT_OUTOFPLACE;
+ *   cfg.layout    = VFFT_LAYOUT_SPLIT;        // re[] / im[] planes (default)
+ *   vfft_plan p = vfft_create(&cfg);          // plans; calibrates on first use
+ *   vfft_execute(p, VFFT_FORWARD, in_re, in_im, out_re, out_im);
+ *   vfft_destroy(p);
  *
- * The five axes a user selects (the data contract; nthreads/rigor are dials):
- *   1. transform   — c2c / r2c / c2r / DCT-I..IV / DST-I..III / DHT  (+ dims=2..4)
- *   2. placement   — in-place / out-of-place
- *   3. layout      — SPLIT planes vs INTERLEAVED complex (MKL's
- *                    DFTI_COMPLEX_STORAGE analog; r2c/c2r: split vs CCE spectrum)
- *   4. order       — DEFAULT / NATURAL / SCRAMBLED output-bin order (1D/2D c2c)
- *   5. nthreads    — core count      (+ rigor — calibration thoroughness dial)
+ * ── WHAT A PLAN IS ──────────────────────────────────────────────────────────
+ * vfft_create commits your config to one concrete engine + factorization,
+ * chosen by MEASUREMENT on your machine (persisted in wisdom files; the first
+ * create of a new size calibrates at config.rigor, later creates are instant
+ * hits). You never pick an algorithm — you state the data contract, the
+ * library arranges the rest, and misuse is refused LOUDLY (see ERRORS).
  *
- * THE CONTRACT: the user shouldn't have to babysit interface selections — the
- * library arranges things properly, and misuse is refused LOUDLY. vfft_create
- * COMMITS the plan to one (transform x placement x layout x order) cell: each
- * cell is served natively, served through a documented internal conversion, or
- * REJECTED at create with an actionable stderr message (never a bare NULL for
- * a config-space mistake). vfft_execute then ASSERTS the pointer signature
- * matches the committed layout — a mismatched call prints an error and executes
- * NOTHING (no silent reinterpretation; the historical "sim==dim==NULL means
- * interleaved" inference is REMOVED).
+ * ── WHAT EACH TRANSFORM SUPPORTS (at a glance) ──────────────────────────────
+ *   transform    dims    placement       layout             order            howmany  MT   padded batch
+ *   C2C          1–4     IP + OOP        SPLIT + INTERLVD*  DEF/SCR/NAT**    any K*** yes  IP + OOP
+ *   R2C          1–4     OOP (IP: refused for now)  split | CCE spectrum  natural  any K  yes  pad-only
+ *   C2R          1–4     OOP (IP: refused for now)  split | CCE spectrum  natural  any K  yes  pad-only
+ *   DCT-I..IV    1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
+ *   DST-I..III   1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
+ *   DHT          1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
  *
- * Everything behind this — the per-feature dispatchers, the wisdom files, the
- * plan search engines, JIT — is implementation detail reached through vfft_create.
+ *   *   INTERLEAVED is native for 1D C2C (in-place folded z engine; OOP K=1
+ *       SCRAMBLED cascade). 2D+ C2C and 2D r2c/c2r serve it via a documented
+ *       internal conversion. Other cells are PLANNED — create refuses them
+ *       with "not yet implemented (currently …)" so you know to wait, not
+ *       rethink. FOR NOW: treat interleaved as a 1D-C2C-first feature.
+ *   **  order is a 1D/2D C2C axis (2D NATURAL included). 3D/4D: DEFAULT or
+ *       SCRAMBLED only, K must be 1. r2c/c2r/trig outputs are always natural.
+ *   *** dims>=2 require howmany==1. DCT-I is present but not yet validated.
+ *       2D prime dims are refused at create (not production-safe yet).
+ *       Odd/prime 1D sizes are fully supported (Rader/Bluestein, odd-K tails).
  *
- * STATUS: surface skeleton. vfft_create's dispatch-by-transform + the rigor→sweep
- * wiring is the implementation workstream (productionizes planning/plan_orchestrator.h
- * from c2c+primes to all features). Estimate is a planned 4th rigor tier (slots in
- * once its cost model is re-homed; no surface change).
+ * ── YOUR BUFFERS, PER LAYOUT (what to pass to vfft_execute) ─────────────────
+ *   layout / transform      sre         sim         dre         dim
+ *   SPLIT   C2C             in.re       in.im       out.re      out.im
+ *   INTERLV C2C             z_in        NULL        z_out       NULL
+ *           (z = interleaved pairs, element e of lane t at [2*(e*K+t)];
+ *            in-place: dre may equal sre. sim/dim MUST be NULL — the plan
+ *            was committed to this layout and execute checks the signature.)
+ *   SPLIT   R2C fwd         real_in     NULL        spec.re     spec.im
+ *   INTERLV R2C fwd (CCE)   real_in     NULL        z_spec      NULL
+ *   SPLIT   C2R bwd         spec.re     spec.im     real_out    NULL
+ *   INTERLV C2R bwd (CCE)   z_spec      NULL        real_out    NULL
+ *   —       DCT/DST/DHT     real_in     NULL        real_out    NULL
+ *   Split element e of lane t lives at [e*K + t]. CCE spectrum: (N/2+1)
+ *   interleaved pairs. Backward transforms are unnormalized (scale by 1/N
+ *   yourself after a roundtrip).
+ *
+ * ── PADDED BATCHES (opt-in fast path for awkward K) ─────────────────────────
+ *   vfft_batch b = vfft_alloc_batch_for(&cfg);       // one allocator, any transform
+ *   double *sre,*sim,*dre,*dim;
+ *   vfft_batch_planes(b, &sre,&sim,&dre,&dim);       // fills execute's args in role order
+ *   size_t Kp = vfft_batch_stride(b);                // index YOUR data at [e*Kp + t]
+ *   ... fill inputs ...; cfg.batch = b; p = vfft_create(&cfg);
+ *   vfft_execute(p, dir, sre,sim,dre,dim);  ...  vfft_free_batch(b);
+ *   The batch is born from the config, so it always matches the plan; a
+ *   mismatched handle is refused at create. Split layout only.
+ *
+ * ── WISDOM (performance persistence) ────────────────────────────────────────
+ *   Default: auto-loaded per machine; misses calibrate at config.rigor
+ *   (MEASURE / PATIENT / EXHAUSTIVE — all measured, never estimated) and are
+ *   saved, so the library learns across runs. Override with config.wisdom
+ *   (vfft_wisdom_load/save/free); force re-measurement with recalibrate=1.
+ *
+ * ── ERRORS ──────────────────────────────────────────────────────────────────
+ *   vfft_create returns NULL only AFTER printing an actionable message:
+ *   either "not yet implemented (currently …)" (planned cell — wait) or why
+ *   the combination is invalid (rethink). vfft_execute validates the pointer
+ *   signature against the plan's committed layout and REFUSES a mismatch —
+ *   it never reinterprets your buffers, and it never computes silently wrong.
  */
 #ifndef VFFT_H
 #define VFFT_H
