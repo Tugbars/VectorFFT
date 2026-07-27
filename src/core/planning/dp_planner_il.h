@@ -70,7 +70,8 @@
  *
  * SCRAMBLED candidates now carry an ENGINE dimension, `zroute`: every legal
  * chain is benched under the LEGACY zsplit builder AND — when it clears the
- * ZTURN-S fence (chain[0] == 4, last == 8, D checks; vfft_zturn2_create_chain
+ * ZTURN-S fence (chain[0] == 4, last in {4, 8} — last==4 = the radix-4
+ * terminator, t2q pinned 0 — D checks; vfft_zturn2_create_chain
  * validates, NULL == skipped, never force-fit) — under the ZTURN builder too.
  * The chain is re-searched PER ROUTE, not transplanted: ZTURN's sectioned
  * layout moves per-stage cost, so a chain that lost under legacy can win under

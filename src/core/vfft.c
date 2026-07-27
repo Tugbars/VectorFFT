@@ -80,6 +80,41 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
+
+/* ── misuse diagnostics (THE DIRECTIVE: a config-space mistake is refused
+ * LOUDLY — an actionable one-line stderr message — never a bare NULL and
+ * never a silent reinterpretation at execute). Internal build/OOM failures
+ * stay quiet NULLs; only user-fixable contract violations speak. ── */
+static void _vfft_warn(const char *fmt, ...)
+{
+    va_list ap;
+    fprintf(stderr, "vfft: ");
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    fflush(stderr);
+}
+
+static const char *_vfft_tname(int t)
+{
+    switch (t)
+    {
+    case VFFT_C2C: return "C2C";
+    case VFFT_R2C: return "R2C";
+    case VFFT_C2R: return "C2R";
+    case VFFT_DCT1: return "DCT1";
+    case VFFT_DCT2: return "DCT2";
+    case VFFT_DCT3: return "DCT3";
+    case VFFT_DCT4: return "DCT4";
+    case VFFT_DST1: return "DST1";
+    case VFFT_DST2: return "DST2";
+    case VFFT_DST3: return "DST3";
+    case VFFT_DHT: return "DHT";
+    default: return "?";
+    }
+}
 
 /* ════════════════════════════════════════════════════════════════════════
  * OPAQUE TYPES
@@ -118,6 +153,13 @@ struct vfft_plan_s
 {
     vfft_transform_t transform;
     vfft_placement_t placement;
+    /* Committed layout axis (vfft_layout_t, stamped at create). Execute
+     * dispatches on THIS — never on the pointer signature (the historical
+     * NULL-inference is removed); a signature that contradicts it is a loud
+     * refused error. Construction itself is layout-independent (split-default
+     * plans are untouched by the axis; an INTERLEAVED commitment only selects
+     * the z dispatch + enables the convert fallbacks). */
+    int layout;
     int N;
     int N2; /* 2D second dim (0 = 1D)    */
     int N3; /* 3D third dim  (0 = 1D/2D) */
@@ -190,6 +232,9 @@ struct vfft_plan_s
      * lazily-allocated split scratch + the once-resolved DIT bwd range executor
      * (fused-t1s jit tier; NULL -> core). See _exec_c2c_interleaved. */
     double *il_wr, *il_wi;
+    /* OOP INTERLEAVED convert fallback (no native z route on the cell):
+     * destination split planes for dein -> split-OOP -> inter. Lazy. */
+    double *il_wr2, *il_wi2;
     vfft_proto_exec_range_fn il_rfb;
     /* §6a55: IL padded arm (tail_handling doctrine port). il_me: 0=undecided,
      * K=tight (today's fused path), Kp=padded — deinterleave into Kp-strided
@@ -1725,13 +1770,69 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
 vfft_plan vfft_create(const vfft_config_t *cfg)
 {
     if (!cfg)
+    {
+        _vfft_warn("vfft_create: NULL config");
         return NULL;
+    }
     stride_env_init();
     const vfft_proto_registry_t *reg = _registry();
     int N = cfg->n[0];
     size_t K = cfg->howmany;
-    if (cfg->dims < 0 || cfg->dims > 4) /* §6a62: rank-4 exposed */
+    /* ── CONFIG-SPACE VALIDATION (the matrix commit starts here). Every knob is
+     * range-checked and every unsupported (transform x placement x layout x
+     * order) cell is REJECTED LOUDLY — an out-of-range enum must never leak
+     * into the kind machinery as a de-facto DEFAULT. ── */
+    if ((int)cfg->transform < (int)VFFT_C2C || (int)cfg->transform > (int)VFFT_DHT)
+    {
+        _vfft_warn("vfft_create: invalid transform enum %d (valid: VFFT_C2C..VFFT_DHT)",
+                   (int)cfg->transform);
         return NULL;
+    }
+    if ((int)cfg->placement != (int)VFFT_INPLACE && (int)cfg->placement != (int)VFFT_OUTOFPLACE)
+    {
+        _vfft_warn("vfft_create: invalid placement enum %d (valid: VFFT_INPLACE, VFFT_OUTOFPLACE)",
+                   (int)cfg->placement);
+        return NULL;
+    }
+    if ((int)cfg->layout != (int)VFFT_LAYOUT_SPLIT && (int)cfg->layout != (int)VFFT_LAYOUT_INTERLEAVED)
+    {
+        _vfft_warn("vfft_create: invalid layout enum %d (valid: VFFT_LAYOUT_SPLIT, VFFT_LAYOUT_INTERLEAVED)",
+                   (int)cfg->layout);
+        return NULL;
+    }
+    if (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_NATURAL &&
+        cfg->order != VFFT_ORDER_SCRAMBLED)
+    {
+        _vfft_warn("vfft_create: invalid order value %d (valid: VFFT_ORDER_DEFAULT/NATURAL/SCRAMBLED)",
+                   cfg->order);
+        return NULL;
+    }
+    if ((int)cfg->rigor < (int)VFFT_MEASURE || (int)cfg->rigor > (int)VFFT_EXHAUSTIVE)
+    {
+        _vfft_warn("vfft_create: invalid rigor enum %d (valid: VFFT_MEASURE/PATIENT/EXHAUSTIVE)",
+                   (int)cfg->rigor);
+        return NULL;
+    }
+    if (cfg->dims < 0 || cfg->dims > 4) /* §6a62: rank-4 exposed; 0 == 1D */
+    {
+        _vfft_warn("vfft_create: dims=%d out of range (1..4; 0 is accepted as 1D)", cfg->dims);
+        return NULL;
+    }
+    {
+        int nd = cfg->dims < 1 ? 1 : cfg->dims;
+        for (int d = 0; d < nd; d++)
+            if (cfg->n[d] < 1)
+            {
+                _vfft_warn("vfft_create: n[%d]=%d invalid (every transform length must be >= 1)",
+                           d, cfg->n[d]);
+                return NULL;
+            }
+    }
+    if (K < 1)
+    {
+        _vfft_warn("vfft_create: howmany=0 invalid (batch count must be >= 1)");
+        return NULL;
+    }
     /* Order axis (NATURAL/SCRAMBLED) — the 1D C2C scrambled<->natural selector, honored for BOTH
      * placements: 1D in-place (native scrambled vs PURE/PSWAP natural), 1D OOP (MODEB scrambled vs
      * LEAF/BAILEY2 natural), and 2D c2c (native scrambled vs a per-axis digit-reversal reorder).
@@ -1740,7 +1841,44 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * below. natural_order_inplace_design.md §2e. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
         !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !cfg->batch))
+    {
+        _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "
+                   "(%s is %s) — r2c/c2r/trig are inherently natural-order and padded batches "
+                   "have no order axis; use VFFT_ORDER_DEFAULT",
+                   cfg->order == VFFT_ORDER_NATURAL ? "NATURAL" : "SCRAMBLED",
+                   _vfft_tname(cfg->transform),
+                   cfg->batch ? "padded" : (cfg->transform == VFFT_C2C ? "?" : "not C2C"));
         return NULL;
+    }
+    /* Layout axis gates that are transform-global:
+     *  - real->real transforms have no complex layout;
+     *  - padded batches are split-plane by construction (vfft_batch_planes'
+     *    role table is split), so batch + INTERLEAVED cannot mean anything. */
+    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && _VFFT_IS_TRIG(cfg->transform))
+    {
+        _vfft_warn("vfft_create: layout=INTERLEAVED is meaningless for the real->real %s "
+                   "(real planes in, real planes out) — use VFFT_LAYOUT_SPLIT",
+                   _vfft_tname(cfg->transform));
+        return NULL;
+    }
+    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->batch)
+    {
+        _vfft_warn("vfft_create: config.batch + layout=INTERLEAVED is unsupported — padded "
+                   "batches are split-plane by construction; keep VFFT_LAYOUT_SPLIT and use "
+                   "vfft_batch_planes() to fill the execute arguments");
+        return NULL;
+    }
+    /* In-place real FFT is undefined here (spectrum and real data are separate
+     * planes; an MKL-style in-place CCE pass is a filed follow-up — note this
+     * is a deliberate divergence from MKL, whose real-FFT default IS in-place). */
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        cfg->placement == VFFT_INPLACE)
+    {
+        _vfft_warn("vfft_create: in-place %s is not implemented (real plane and spectrum are "
+                   "separate buffers; in-place CCE is a filed follow-up) — use VFFT_OUTOFPLACE",
+                   _vfft_tname(cfg->transform));
+        return NULL;
+    }
     /* A VW-padded batch (config.batch) is honored by the 1D c2c in-place path and the 1D
      * r2c/c2r paths (build the plan at Kp so it strides the caller's Kp-wide buffer exactly).
      * Every other feature would build a tight (stride-K) plan and then stride a Kp-wide buffer
@@ -1752,7 +1890,13 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
                          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
                          _VFFT_IS_TRIG(cfg->transform))))
+    {
+        _vfft_warn("vfft_create: config.batch is only supported for 1D C2C/R2C/C2R/TRIG plans "
+                   "(got %s, dims=%d) — a padded handle on any other plan would be strided "
+                   "wrong; drop config.batch",
+                   _vfft_tname(cfg->transform), cfg->dims);
         return NULL;
+    }
     if (cfg->nthreads > 0)
         vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
@@ -1765,12 +1909,26 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * fft3d.h nat_col_list follow-up). Wisdom: dedicated (N1,N2,N3) table —
      * HIT -> stride_plan_3d_from (the fft3d.h-requested path); MISS -> greedy
      * per-axis exhaustive with the inners visible, banked when expressible. */
+    if (cfg->dims >= 2 && _VFFT_IS_TRIG(cfg->transform))
+    {
+        _vfft_warn("vfft_create: %dD %s is not implemented — DCT/DST/DHT plans are 1D only",
+                   cfg->dims, _vfft_tname(cfg->transform));
+        return NULL;
+    }
     if (cfg->dims == 4)
     { /* §6a62: rank-4 exposure. The engines were rank-general all along
        * (FFTND_MAX_RANK=4; fndr's builder takes rank; fftnd's generic
        * wrap covers c2c) — the dispatch just stopped at 3. Same
        * contracts as 3D: K==1, order DEFAULT/SCRAMBLED, real = OOP with
        * even last dim. */
+        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+            !(K == 1 && (cfg->n[3] % 2) == 0))
+        {
+            _vfft_warn("vfft_create: 4D %s requires howmany==1 (got %zu) and an even last "
+                       "dim (got %d)",
+                       _vfft_tname(cfg->transform), K, cfg->n[3]);
+            return NULL;
+        }
         if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
             K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
             (cfg->n[3] % 2) == 0)
@@ -1786,6 +1944,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             }
             h4->transform = cfg->transform;
             h4->placement = cfg->placement;
+            h4->layout = (int)cfg->layout;
             h4->N = cfg->n[0];
             h4->N2 = cfg->n[1];
             h4->N3 = cfg->n[2];
