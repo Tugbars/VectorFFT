@@ -163,6 +163,14 @@ let run (argv : string array) : unit =
      0 = unset; codelet_zsplit validates (required for ZTURN-S kinds,
      forbidden for the legacy zp kinds). *)
   let zp_r0 = ref 0 in
+  (* --zp-sink: B1 store-sinking on the zsplit pipeline — interleave the
+     store edge into the SU-scheduled body (store each sink at its def;
+     the Emit_state.current_store_on_compute thesis). OPT-IN modifier:
+     without it every kind's regeneration stays BYTE-IDENTICAL to the
+     committed files; with it the fname gains an "sk" tag (the r0_tag
+     mechanism) so both variants link side by side. codelet_zsplit fails
+     loudly for kinds whose store edge is not sink-capable (stfb only). *)
+  let zp_sink = ref false in
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
      from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
   let cil_kind = ref "" in
@@ -450,6 +458,8 @@ let run (argv : string array) : unit =
     then (
       zp_r0 := int_of_string arr.(!i + 1);
       incr i)
+    else if arg = "--zp-sink"
+    then zp_sink := true
     else if arg = "--cil-n1"
     then cil_kind := "n1"
     else if arg = "--cil-n1t"
@@ -1589,6 +1599,12 @@ let run (argv : string array) : unit =
             --z-*/--k1-mono/--oop flag in the same invocation. They emit \
             identical symbol names; pass exactly one family per run."
            !zp_kind);
+    if !zp_sink && !zp_kind = ""
+    then
+      failwith
+        "gen_main: --zp-sink is a zsplit-pipeline modifier; without a --zp-* \
+         kind it would silently no-op (an A/B script would then time the \
+         UNSUNK kernel under the sunk label), so fail loudly instead.";
     if !cil_k1
     then (
       (* FUSED full-IL K=1: the whole N-point transform as ONE function,
@@ -1672,6 +1688,7 @@ let run (argv : string array) : unit =
            ~kind:!zp_kind
            ~radix:n
            ~r0:(if !zp_r0 = 0 then None else Some !zp_r0)
+           ~sink_stores:!zp_sink
            ~isa
            ~uarch)
     else if !z_native

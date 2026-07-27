@@ -105,12 +105,27 @@ type zs_kind =
        column-indexed packed-w¹ stream. *)
   ; in_edge : zs_edge
   ; out_edge : zs_edge
+  ; sink_stores : bool
+    (* B1 store-sinking: interleave the store edge into the SU-scheduled
+       body — each sink's store is emitted the moment its value node is
+       defined, instead of the whole edge trailing the body (su_schedule
+       is edge-blind; a trailing edge keeps all 2·R sink values live to
+       loop end). Semantics precedent: Emit_state.current_store_on_compute
+       (PASS-2 blocked path) — output value nodes are sinks, their only
+       use is the store, so storing at def is the natural last use.
+       OPT-IN per kind via gen_main --zp-sink (fname gains an "sk" tag);
+       NEVER a kind-table default — the default regeneration of every
+       kind stays byte-identical to the committed files. Only store edges
+       whose per-slot stores are SINGLETON-ready (one direct storeu per
+       sink tag, no cross-slot shuffle/transpose network) can sink;
+       today that is E_sect_tap alone (stfb). *)
   }
 
 let kind_of_string (s : string) : zs_kind =
   let mid = { base = "ms"; bwd = false; group_loop = false; uj2 = false
             ; twiddled = true; policy = Dft.TP_Flat; tw_off = ""
-            ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls" } in
+            ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls"
+            ; sink_stores = false } in
   match s with
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
@@ -164,11 +179,33 @@ let emit_codelet
       ~(kind : string)
       ~(radix : int)
       ~(r0 : int option)
+      ~(sink_stores : bool)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
   =
   let k = kind_of_string kind in
+  (* ── --zp-sink admission gate (the r0_dep-gate precedent: fail loudly,
+        never silently emit the unsunk shape under the sunk name). Only a
+        SINGLETON-ready store edge can sink — E_sect_tap's direct record
+        stores (stfb). TR4/REINT edges (E_blocks, E_z, E_planes) need a
+        readiness-SET interleave (a store fires only when its whole
+        shuffle network's inputs are defined) — NEW emitter work. ── *)
+  let k =
+    if not sink_stores
+    then k
+    else (
+      match k.out_edge with
+      | E_sect_tap _ -> { k with sink_stores = true }
+      | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ ->
+        failwith
+          (Printf.sprintf
+             "codelet_zsplit: --zp-sink: kind %s's store edge is not \
+              sink-capable (only E_sect_tap's direct record stores — stfb — \
+              sink today; TR4/REINT store edges need a readiness-set \
+              interleave, which is NEW emitter work, not a flag)"
+             kind))
+  in
   (* ── r0 is a PLAN INPUT (chain[0]), never chosen here. The ZTURN-S kinds
         bake the 4-section geometry into every address, so their fname MUST
         carry it (a future r0=8 twin sharing the symbol would silently ship
@@ -213,8 +250,12 @@ let emit_codelet
     | Some r -> Printf.sprintf "_r%d" r
     | None -> ""
   in
+  (* the r0_tag mechanism, reused: the sunk variant is a DIFFERENT kernel
+     shape and must stay linkable next to the incumbent (A/B side by
+     side), so its fname carries "sk" (radix8_z_stf_r4sk_bwd_avx2). *)
+  let sink_tag = if k.sink_stores then "sk" else "" in
   let fname =
-    Printf.sprintf "radix%d_z_%s%s_%s_%s" radix k.base r0_tag dir_s isa.Isa.name
+    Printf.sprintf "radix%d_z_%s%s%s_%s_%s" radix k.base r0_tag sink_tag dir_s isa.Isa.name
   in
   let sign : [ `Fwd | `Bwd ] = if k.bwd then `Bwd else `Fwd in
   let force_fma_lift =
@@ -370,7 +411,7 @@ let emit_codelet
     (Emit_c.provenance_block
        ~family:"zsplit-pipeline"
        [ Printf.sprintf
-           "kind=%s radix=%d dir=%s isa=%s%s"
+           "kind=%s radix=%d dir=%s isa=%s%s%s"
            k.base
            radix
            dir_s
@@ -378,6 +419,9 @@ let emit_codelet
            (match r0 with
             | Some r -> Printf.sprintf " r0=%d (ZTURN-S sectioned geometry)" r
             | None -> "")
+           (if k.sink_stores
+            then " sink-stores (store-at-def interleave, --zp-sink)"
+            else "")
        ; (if k.twiddled
           then
             Printf.sprintf
@@ -629,10 +673,64 @@ let emit_codelet
          ~qid:"li0_0"
          (Array.init 4 (Printf.sprintf "_si_%d"))
          (Array.init 4 (Printf.sprintf "lane_im_%d")));
+    (* per-slot output tag arrays (all edge shapes consume pairs) — built
+       BEFORE the body walk so sink_stores can interleave stores at defs *)
+    let re_tag = Array.make nslots (-1)
+    and im_tag = Array.make nslots (-1) in
+    List.iter
+      (fun (lhs, (e : Algsimp.t)) ->
+         match lhs with
+         | Expr.Output (l, true) -> re_tag.(l) <- e.Algsimp.tag
+         | Expr.Output (l, false) -> im_tag.(l) <- e.Algsimp.tag
+         | _ -> failwith "codelet_zsplit: assign LHS is not Output")
+      assigns;
+    (* ── sink_stores pending table: (sink tag, pre-rendered store line)
+          in the trailing edge's slot order (q ascending, re then im).
+          E_sect_tap only — SINGLETON readiness, one direct storeu per
+          sink tag (the emit_codelet admission gate). An ARRAY, not a
+          hashtable: if CSE ever aliases two slots to one tag, each slot
+          keeps its own store line and both fire at that tag's def. ── *)
+    let sink_pending : (int * string) array =
+      if not k.sink_stores
+      then [||]
+      else (
+        match k.out_edge with
+        | E_sect_tap s ->
+          Array.init (2 * nslots) (fun i ->
+            let q = i / 2 in
+            let tag, plus = if i land 1 = 0 then re_tag.(q), 0 else im_tag.(q), vw in
+            ( tag
+            , Printf.sprintf
+                "        %s;\n"
+                (Isa.storeu_pd
+                   isa
+                   (sect_addr "zout" q s plus)
+                   (Printf.sprintf "t%d" tag)) ))
+        | _ ->
+          (* unreachable: emit_codelet's --zp-sink gate admits E_sect_tap only *)
+          failwith "codelet_zsplit: sink_stores without an E_sect_tap store edge")
+    in
+    let sink_done = Array.make (Array.length sink_pending) false in
+    let flush_sunk_stores (tag : int) : unit =
+      Array.iteri
+        (fun i (t, line) ->
+           if (not sink_done.(i)) && t = tag
+           then (
+             sink_done.(i) <- true;
+             Buffer.add_string buf line))
+        sink_pending
+    in
     (* ── SU-scheduled body. Defs in schedule order (first occurrence per
           tag); single-use tags render inline at their consumer. Twiddle
-          loads render via the zsplit record mode. ── *)
-    Buffer.add_string buf "        /* SU-scheduled body (pipeline) */\n";
+          loads render via the zsplit record mode. sink_stores: each def
+          whose tag is a pending sink immediately trails its store line
+          (store-at-def = the value's natural last use, the
+          Emit_state.current_store_on_compute thesis). ── *)
+    Buffer.add_string
+      buf
+      (if k.sink_stores
+       then "        /* SU-scheduled body (pipeline) + sect-tap stores sunk at defs */\n"
+       else "        /* SU-scheduled body (pipeline) */\n");
     Fun.protect
       ~finally:(fun () -> Emit_c.current_tw_zsplit := None)
       (fun () ->
@@ -655,19 +753,27 @@ let emit_codelet
                      ~strided:true
                      ~inline_set:(Some inline_set)
                      e);
-                Buffer.add_char buf '\n'))
+                Buffer.add_char buf '\n';
+                if k.sink_stores then flush_sunk_stores e.Algsimp.tag))
            scheduled);
-    (* per-slot output tag arrays (all edge shapes consume pairs) *)
-    let re_tag = Array.make nslots (-1)
-    and im_tag = Array.make nslots (-1) in
-    List.iter
-      (fun (lhs, (e : Algsimp.t)) ->
-         match lhs with
-         | Expr.Output (l, true) -> re_tag.(l) <- e.Algsimp.tag
-         | Expr.Output (l, false) -> im_tag.(l) <- e.Algsimp.tag
-         | _ -> failwith "codelet_zsplit: assign LHS is not Output")
-      assigns;
     (match k.out_edge with
+     | _ when k.sink_stores ->
+       (* Stores were interleaved at defs; nothing should be pending here:
+          sink tags are never inlined (compute_inline_set treats outputs
+          as sinks — the current_store_on_compute comment's invariant), so
+          every sink tag materialized as a named def in the walk above.
+          Defensive flush, loudly marked — a line below this comment means
+          the slot->tag tables disagree with the schedule. *)
+       Array.iteri
+         (fun i (_, line) ->
+            if not sink_done.(i)
+            then (
+              sink_done.(i) <- true;
+              Buffer.add_string
+                buf
+                "        /* UNSUNK RESIDUAL (slot->tag table / schedule mismatch) */\n";
+              Buffer.add_string buf line))
+         sink_pending
      | E_planes s ->
        Buffer.add_string buf "        /* ZBlockSplit store edge */\n";
        for sl = 0 to nslots - 1 do
