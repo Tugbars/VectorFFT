@@ -348,6 +348,19 @@ module type SCHED_NODE = sig
   (* STARVE rule: loads are admitted late, never competing with arith. *)
   val is_load : t -> bool
 
+  (* B2 (memory ops as first-class scheduled nodes): STORE pseudo-nodes —
+   * a store retires its pred value to memory and produces nothing. The
+   * real-valued Ir has no store nodes (stores live in `assigns`;
+   * su_schedule appends them), so both in-tree instantiations answer
+   * `false` everywhere — the accessor is ADDITIVE and provably inert for
+   * them. The zsplit combined-graph instantiation (Codelet_zsplit.ZNode)
+   * answers true for its ZStore units. The SR loop itself needs no store
+   * rule — an in-graph store is already sink-classed by its empty user
+   * set, so RETIRE fires it at readiness — but this accessor is the
+   * contract by which policy/emission code and the B3 placement search
+   * tell memory retirement apart from arithmetic sinks. *)
+  val is_store : t -> bool
+
   (* Leaf policy under `Lookahead load admission. *)
   val is_const : t -> bool
 
@@ -374,6 +387,10 @@ module Ir_node :
     | NK_Load _ -> true
     | _ -> false
   ;;
+
+  (* No store node kind in the real-valued Ir: stores are the assigns
+   * list, appended by su_schedule (see SCHED_NODE's is_store card). *)
+  let is_store (_ : t) = false
 
   let is_const (n : t) =
     match n.node with
