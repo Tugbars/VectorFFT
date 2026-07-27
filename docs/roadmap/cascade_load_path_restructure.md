@@ -1,5 +1,31 @@
 # K=1 z-cascade load path — restructure plan (ZTURN)
 
+> ## ✅ CAMPAIGN CLOSED 2026-07-27 — MEASURED vs MKL, shipping architecture
+>
+> | N | vfft (ZTURN) | MKL | ratio (>1 = vfft faster) | served as |
+> |---|---|---|---|---|
+> | 2048 | 2106 ns | 2244 ns | **1.07× — BEATS MKL** | zturn 4.4.4.4.8 stf |
+> | 4096 | 4428 | 3762 | 0.85× | zturn 4.4.8.4.8 stf2 |
+> | 8192 | 9878 | 8763 | 0.89× | zturn 4.4.8.8.8 stf |
+> | 16384 | 19790 | 20357 | **1.03× — BEATS MKL** | zturn 4.8.8.8.8 stf2 |
+>
+> (Canonical bench, cell-per-process, wisdom-hit creates, roundtrips 1.1–1.3e-15.
+> Pre-campaign standing was 0.76–0.89 at ALL four cells — every cell improved;
+> parity-or-better at two.)
+>
+> **Shipping architecture (commit 984024bd, net −106 lines in vfft.c):** ZTURN is the
+> only runtime cascade engine (paced best-chains A/B: it wins every cell, fwd 0.85–0.89,
+> joint 0.89–0.94, 8/8 controls); chains + t2q are DP-searched per cell and banked;
+> the create-time race is stf/stf2 only; legacy zsplit = VFFT_NO_ZTURN kill-switch
+> fallback + offline reference in dp_planner_il.h. The per-cell ENGINE race was removed:
+> the hot-regime DP pool's engine "tie" was a regime artifact (third hot-loop inversion
+> of the campaign), and under the representative paced protocol one engine simply wins.
+> Remaining MKL gap at 4096/8192 (11–15%) = Phase 6 levers (pitch on the shared 4K
+> first mid, tiling, MKL's 16 KB blocked mids, scratch-free OOP).
+> ⚠ Offline calibrator caveat: calibrate_zchain ranks engines under the hot regime —
+> restrict to zturn or add a paced re-rank before trusting its ENGINE verdicts; its
+> WITHIN-engine chain rankings are the trusted product.
+
 **Date:** 2026-07-26
 **Scope:** `src/core/oop/zsplit.h` (K=1 SCRAMBLED OOP cascade, N ≥ 2048), emitter
 `src/dag-fft-compiler/generator/lib/codelet_zsplit.ml`.
