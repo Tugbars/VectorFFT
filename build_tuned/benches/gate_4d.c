@@ -35,6 +35,7 @@ int main(void){
     ok &= rt<1e-11;
     /* 4D c2c: roundtrip + Parseval */
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE;
+    cf.layout=VFFT_LAYOUT_INTERLEAVED;   /* 4D c2c cell runs the z contract */
     vfft_plan pc=vfft_create(&cf);
     if(!pc){ printf("4D c2c create FAIL\n"); return 1; }
     double *z=aligned_alloc(64,2*P*8), *z0=aligned_alloc(64,2*P*8);

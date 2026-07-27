@@ -66,6 +66,7 @@ static int run_cell(int N)
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_SCRAMBLED;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* the cascade serves the committed z contract */
     cfg.nthreads = 1;
     vfft_plan h = vfft_create(&cfg);
     if (!h) { printf("N=%d: create FAILED\n", N); return 1; }

@@ -36,12 +36,15 @@ static void cell(int N, int K)
 
     /* ---------- padded r2c (stride Kp) ---------- */
     double match = -1, rt = -1;
-    vfft_batch bf = vfft_alloc_batch_ex(VFFT_R2C, N, (size_t)K);
+    vfft_config_t rcb = rc; /* batch born from the r2c config */
+    vfft_batch bf = vfft_alloc_batch_for(&rcb);
     vfft_plan  pf = NULL;
-    if (!bf) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_ex(R2C) FAILED\n", N, K); fails++; }
+    double *bfreal = NULL, *bfre = NULL, *bfim = NULL, *bfdum = NULL;
+    if (bf) vfft_batch_planes(bf, &bfreal, &bfdum, &bfre, &bfim);
+    if (!bf) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_for(R2C) FAILED\n", N, K); fails++; }
     else if (pt)
     {
-        double *xr = vfft_batch_real(bf);
+        double *xr = bfreal;
         for (int n = 0; n < N; n++)                      /* same K signals at stride Kp */
             for (int k = 0; k < K; k++)
                 xr[(size_t)n * Kp + k] = xt[(size_t)n * K + k];
@@ -51,7 +54,7 @@ static void cell(int N, int K)
         if (!pf) { printf("  N=%-5d K=%-3d Kp=%zu  padded r2c create FAILED (Kp -> gated stride?)\n", N, K, Kp); fails++; }
         else
         {
-            double *rep = vfft_batch_re(bf), *imp = vfft_batch_im(bf);
+            double *rep = bfre, *imp = bfim;
             vfft_execute(pf, VFFT_FORWARD, xr, NULL, rep, imp);
             /* (A) match padded lanes 0..K-1 vs tight */
             match = 0;
@@ -65,25 +68,27 @@ static void cell(int N, int K)
                 }
 
             /* (B) padded roundtrip: c2r on the padded spectrum -> real; recover N*x */
-            vfft_batch bb = vfft_alloc_batch_ex(VFFT_C2R, N, (size_t)K);
-            if (!bb) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_ex(C2R) FAILED\n", N, K); fails++; }
+            vfft_config_t cc; memset(&cc, 0, sizeof cc);
+            cc.transform = VFFT_C2R; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
+            cc.dims = 1; cc.n[0] = N; cc.howmany = (size_t)K;
+            vfft_batch bb = vfft_alloc_batch_for(&cc);
+            if (!bb) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_for(C2R) FAILED\n", N, K); fails++; }
             else
             {
-                double *cre = vfft_batch_re(bb), *cim = vfft_batch_im(bb);
+                double *cre, *cim, *yreal, *ydum;
+                vfft_batch_planes(bb, &cre, &cim, &yreal, &ydum); /* spectrum in -> real out */
                 for (int h = 0; h < H; h++)
                     for (int k = 0; k < K; k++)
                     {
                         cre[(size_t)h * Kp + k] = rep[(size_t)h * Kp + k];
                         cim[(size_t)h * Kp + k] = imp[(size_t)h * Kp + k];
                     }
-                vfft_config_t cc; memset(&cc, 0, sizeof cc);
-                cc.transform = VFFT_C2R; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
-                cc.dims = 1; cc.n[0] = N; cc.howmany = (size_t)K; cc.batch = bb;
+                cc.batch = bb; /* same config the batch was born from */
                 vfft_plan pb = vfft_create(&cc);
                 if (!pb) { printf("  N=%-5d K=%-3d  padded c2r create FAILED\n", N, K); fails++; }
                 else
                 {
-                    double *yr = vfft_batch_real(bb);
+                    double *yr = yreal;
                     vfft_execute(pb, VFFT_BACKWARD, cre, cim, yr, NULL);
                     rt = 0; double inv = 1.0 / (double)N;
                     for (int n = 0; n < N; n++)

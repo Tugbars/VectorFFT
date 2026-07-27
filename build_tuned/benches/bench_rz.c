@@ -15,7 +15,9 @@ int main(void){
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_R2C; cf.placement=VFFT_OUTOFPLACE; cf.rigor=VFFT_MEASURE;
     cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.wisdom=w;
-    vfft_plan p=vfft_create(&cf);
+    vfft_plan p=vfft_create(&cf);                 /* SPLIT spectrum plan */
+    cf.layout=VFFT_LAYOUT_INTERLEAVED;
+    vfft_plan pz=vfft_create(&cf);                /* CCE (z) spectrum plan */
     double *x=aligned_alloc(64,(size_t)N*K*8);
     double *rr=aligned_alloc(64,H*K*8),*ri=aligned_alloc(64,H*K*8);
     double *z=aligned_alloc(64,2*H*K*8);
@@ -31,11 +33,11 @@ int main(void){
     MKL_Complex16 *mo=aligned_alloc(64,H*K*sizeof(MKL_Complex16));
     double ts[11],tz[11],tm[11];
     for(int wu=0;wu<3;wu++){ vfft_execute(p,VFFT_FORWARD,x,NULL,rr,ri);
-        vfft_execute(p,VFFT_FORWARD,x,NULL,z,NULL); DftiComputeForward(mh,x,mo); }
+        vfft_execute(pz,VFFT_FORWARD,x,NULL,z,NULL); DftiComputeForward(mh,x,mo); }
     for(int t=0;t<11;t++){
         double t0=bnow(); for(int i=0;i<L;i++) vfft_execute(p,VFFT_FORWARD,x,NULL,rr,ri);
         ts[t]=(bnow()-t0)/L;
-        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(p,VFFT_FORWARD,x,NULL,z,NULL);
+        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pz,VFFT_FORWARD,x,NULL,z,NULL);
         tz[t]=(bnow()-t0)/L;
         t0=bnow(); for(int i=0;i<L;i++) DftiComputeForward(mh,x,mo);
         tm[t]=(bnow()-t0)/L;
@@ -43,6 +45,6 @@ int main(void){
     double S=med(ts),Z=med(tz),M=med(tm);
     printf("(512,256) public: split=%.2f  z=%.2f (%+.1f%%)  MKL-CCE=%.2f  z/MKL=%.3fx  split/MKL=%.3fx\n",
         S,Z,100*(Z-S)/S,M,M/Z,M/S);
-    vfft_destroy(p); if(w)vfft_wisdom_free(w);
+    vfft_destroy(p); vfft_destroy(pz); if(w)vfft_wisdom_free(w);
     DftiFreeDescriptor(&mh); free(x);free(rr);free(ri);free(z);free(mo);
     return 0; }

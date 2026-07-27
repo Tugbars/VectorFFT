@@ -7,7 +7,7 @@ static int cellmt(int N, size_t K, int T){
     srand(31+N); for(size_t i=0;i<2*sz;i++) z[i]=2.0*rand()/RAND_MAX-1;
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-    cf.dims=1; cf.n[0]=N; cf.howmany=K;
+    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED;
     stride_set_num_threads(1);
     vfft_plan p=vfft_create(&cf);
     memcpy(a,z,2*sz*8); vfft_execute(p,VFFT_FORWARD,a,NULL,a,NULL);
@@ -32,6 +32,7 @@ static int cellnatmt(int N, size_t K, int T){
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
     cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.order=VFFT_ORDER_NATURAL;
+    cf.layout=VFFT_LAYOUT_INTERLEAVED;
     vfft_plan p=vfft_create(&cf);
     if(!p){ printf("  [nat MT] create FAIL\n"); return 0; }
     stride_set_num_threads(1);

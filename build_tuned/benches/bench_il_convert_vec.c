@@ -37,7 +37,7 @@ int main(void){
     printf("hand-vs-scalar BIT diffs=%zu %s\n",d,d?"**FAIL**":"PASS");
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-    cf.dims=1; cf.n[0]=N; cf.howmany=K;
+    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED;
     vfft_plan p=vfft_create(&cf);
     struct vfft_plan_s *h=(struct vfft_plan_s*)p;
     memcpy(zo,z,2*NK*8); vfft_execute(p,VFFT_FORWARD,zo,NULL,zo,NULL);

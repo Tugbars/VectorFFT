@@ -8,6 +8,11 @@
 #include <string.h>
 #include <math.h>
 #include "vfft.h"
+#ifdef _WIN32 /* mingw lacks C11 aligned_alloc; every free() here targets an aligned buffer */
+#include <malloc.h>
+#define aligned_alloc(a, s) _aligned_malloc((s), (a))
+#define free _aligned_free
+#endif
 static int ulp_ok(double a,double b){ if(a==b)return 1;
     double m=fabs(a)>fabs(b)?fabs(a):fabs(b); if(m<1)m=1;
     return fabs(a-b)<=8.0*2.220446049250313e-16*m; }
@@ -35,12 +40,12 @@ static int run_cell(int N,size_t K,int order,int nth,const char*tag){
     for(size_t i=0;i<NK;i++){sr[i]=zin[2*i];si[i]=zin[2*i+1];}
     vfft_execute(p,VFFT_FORWARD,sr,si,sr,si);
     memcpy(z,zin,2*NK*8);
-    vfft_execute(p,VFFT_FORWARD,z,NULL,z,NULL);
+    vfft_execute(pz,VFFT_FORWARD,z,NULL,z,NULL);
     for(size_t i=0;i<NK;i++){z2[2*i]=sr[i];z2[2*i+1]=si[i];}
     all&=cmp(z,z2,2*NK,"fwd il vs split");
     /* bwd: interleaved vs split (spectrum in both layouts) */
     vfft_execute(p,VFFT_BACKWARD,sr,si,sr,si);
-    vfft_execute(p,VFFT_BACKWARD,z,NULL,z,NULL);
+    vfft_execute(pz,VFFT_BACKWARD,z,NULL,z,NULL);
     for(size_t i=0;i<NK;i++){z2[2*i]=sr[i];z2[2*i+1]=si[i];}
     all&=cmp(z,z2,2*NK,"bwd il vs split");
     /* roundtrip scale check vs input */
@@ -50,10 +55,10 @@ static int run_cell(int N,size_t K,int order,int nth,const char*tag){
     { double *kr=aligned_alloc(64,NK*8),*ki=aligned_alloc(64,NK*8);
       for(size_t i=0;i<NK;i++){kr[i]=0.5+0.001*(double)(i%37);ki[i]=0.25-0.002*(double)(i%23);}
       memcpy(z,zin,2*NK*8);
-      vfft_execute(p,VFFT_FORWARD,z,NULL,z,NULL);
+      vfft_execute(pz,VFFT_FORWARD,z,NULL,z,NULL);
       for(size_t i=0;i<NK;i++){ double a=z[2*i],b=z[2*i+1];
           z[2*i]=a*kr[i]-b*ki[i]; z[2*i+1]=a*ki[i]+b*kr[i]; }
-      vfft_execute(p,VFFT_BACKWARD,z,NULL,z,NULL);
+      vfft_execute(pz,VFFT_BACKWARD,z,NULL,z,NULL);
       for(size_t i=0;i<NK;i++){sr[i]=zin[2*i];si[i]=zin[2*i+1];}
       vfft_execute(p,VFFT_FORWARD,sr,si,sr,si);
       for(size_t i=0;i<NK;i++){ double a=sr[i],b=si[i];
@@ -62,7 +67,7 @@ static int run_cell(int N,size_t K,int order,int nth,const char*tag){
       for(size_t i=0;i<NK;i++){z2[2*i]=sr[i];z2[2*i+1]=si[i];}
       all&=cmp(z,z2,2*NK,"conv pattern il/split");
       free(kr);free(ki); }
-    vfft_destroy(p);
+    vfft_destroy(p); vfft_destroy(pz);
     free(z);free(z2);free(sr);free(si);free(zin);
     return all; }
 int main(void){

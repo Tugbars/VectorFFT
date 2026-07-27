@@ -12,9 +12,13 @@ int main(int argc,char**argv){
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_R2C; cf.placement=VFFT_OUTOFPLACE; cf.rigor=VFFT_MEASURE;
     cf.dims=2; cf.n[0]=N1; cf.n[1]=N2; cf.howmany=1;
-    vfft_plan pf=vfft_create(&cf);
+    vfft_plan pf=vfft_create(&cf);                 /* r2c SPLIT */
+    cf.layout=VFFT_LAYOUT_INTERLEAVED;
+    vfft_plan pfz=vfft_create(&cf);                /* r2c CCE */
     cf.transform=VFFT_C2R;
-    vfft_plan pb=vfft_create(&cf);
+    vfft_plan pbz=vfft_create(&cf);                /* c2r CCE-in */
+    cf.layout=VFFT_LAYOUT_SPLIT;
+    vfft_plan pb=vfft_create(&cf);                 /* c2r SPLIT-in */
     double *x=aligned_alloc(64,(size_t)N1*N2*8);
     double *rr=aligned_alloc(64,M*8),*ri=aligned_alloc(64,M*8);
     double *z=aligned_alloc(64,2*M*8);
@@ -36,19 +40,19 @@ int main(int argc,char**argv){
     MKL_Complex16 *mo=aligned_alloc(64,M*sizeof(MKL_Complex16));
     double *ym=aligned_alloc(64,(size_t)N1*N2*8);
     vfft_execute(pf,VFFT_FORWARD,x,NULL,rr,ri);
-    vfft_execute(pf,VFFT_FORWARD,x,NULL,z,NULL);
+    vfft_execute(pfz,VFFT_FORWARD,x,NULL,z,NULL);
     DftiComputeForward(mf,x,mo);
     double fs[9],fz[9],fm[9],bs[9],bz[9],bm[9];
     for(int t=0;t<9;t++){
         double t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pf,VFFT_FORWARD,x,NULL,rr,ri);
         fs[t]=(bnow()-t0)/L;
-        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pf,VFFT_FORWARD,x,NULL,z,NULL);
+        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pfz,VFFT_FORWARD,x,NULL,z,NULL);
         fz[t]=(bnow()-t0)/L;
         t0=bnow(); for(int i=0;i<L;i++) DftiComputeForward(mf,x,mo);
         fm[t]=(bnow()-t0)/L;
         t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pb,VFFT_BACKWARD,rr,ri,y,NULL);
         bs[t]=(bnow()-t0)/L;
-        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pb,VFFT_BACKWARD,z,NULL,y,NULL);
+        t0=bnow(); for(int i=0;i<L;i++) vfft_execute(pbz,VFFT_BACKWARD,z,NULL,y,NULL);
         bz[t]=(bnow()-t0)/L;
         t0=bnow(); for(int i=0;i<L;i++) DftiComputeBackward(mb,mo,ym);
         bm[t]=(bnow()-t0)/L;

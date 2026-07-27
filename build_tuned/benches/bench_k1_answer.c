@@ -13,6 +13,7 @@ static void run(int N){
     double *ar=aligned_alloc(64,(size_t)N*8), *ai=aligned_alloc(64,(size_t)N*8);
     for(int i=0;i<N;i++){ar[i]=z[2*i];ai[i]=z[2*i+1];}
     /* b: z K=1 padded arm (Kp=8 full-width) ; c: z K=1 fused (scalar folds) */
+    cf.layout=VFFT_LAYOUT_INTERLEAVED;          /* z plans commit the axis */
     setenv("VFFT_IL_PAD","1",1); vfft_plan pb=vfft_create(&cf);
     memcpy(w,z,2*(size_t)N*8); vfft_execute(pb,VFFT_FORWARD,w,NULL,w,NULL);
     setenv("VFFT_IL_PAD","0",1); vfft_plan pc=vfft_create(&cf);
