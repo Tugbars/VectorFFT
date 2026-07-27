@@ -59,10 +59,23 @@ typedef struct {
     int    cc_chain;
     /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
      * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
-     *   N 1 4 zs_t2q cc_chain ns
+     *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]
      * The pick is placement-order-sensitive (§4.9993), so it is measured on
-     * the installed binary by the create-time race, never hand-set. */
+     * the installed binary by the create-time race, never hand-set.
+     *
+     * ROUTE AXIS (Phase 5 tranche 2, cascade_load_path_restructure §6.4) —
+     * APPEND-style extension AFTER ns, so every pre-route banked line parses
+     * unchanged as route 0 = legacy zsplit (ns was already the last, optional
+     * token; the writer emits the trailing pair only for route!=0, keeping
+     * legacy lines byte-identical):
+     *   zs_route: 0 = legacy zsplit cascade, 1 = ZTURN-S (zturn.h).
+     *   zt_t2q:   zturn fwd terminator pick, 0 = stf, 1 = stf2 (the stf/stf2
+     *             analog of zs_t2q; measured by the same create race).
+     * A route line's ns is the route race's JOINT fwd+bwd median (the route
+     * verdict is joint by cutover atomicity); a legacy line's ns stays the
+     * fwd-only t2q-race median (informational either way). */
     int    zs_t2q;
+    int    zs_route, zt_t2q;
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
 
@@ -128,6 +141,17 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
         if (!ok) continue;
         tok = strtok(NULL, " \t\n\r");          /* ns (optional) */
         e->ns = tok ? atof(tok) : 0.0;
+        /* kind-4 route axis: OPTIONAL trailing "zs_route zt_t2q" after ns.
+         * Old-format lines end at ns -> both stay 0 = legacy zsplit route
+         * with the stf pick — backward compatible by construction. */
+        if (e->kind == VFFT_OOP_KIND_ZSPLIT && tok) {
+            tok = strtok(NULL, " \t\n\r");
+            if (tok) {
+                e->zs_route = atoi(tok);
+                tok = strtok(NULL, " \t\n\r");
+                e->zt_t2q = tok ? atoi(tok) : 0;
+            }
+        }
         w->count++;
     }
     fclose(f);
@@ -286,7 +310,13 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
     }
     else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
         fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);
-    fprintf(f, " %.1f\n", e->ns);
+    fprintf(f, " %.1f", e->ns);
+    /* kind-4 route axis: trailing "zs_route zt_t2q" AFTER ns, and only for
+     * route!=0 — a legacy verdict re-banks in the exact pre-route format
+     * (old readers, diffs, and banked files stay byte-stable). */
+    if (e->kind == VFFT_OOP_KIND_ZSPLIT && e->zs_route)
+        fprintf(f, " %d %d", e->zs_route, e->zt_t2q);
+    fprintf(f, "\n");
 }
 
 #endif /* VFFT_OOP_WISDOM_H */
