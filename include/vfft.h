@@ -36,7 +36,9 @@
  *       SCRAMBLED only, K must be 1. r2c/c2r/trig outputs are always natural.
  *   *** dims>=2 require howmany==1. DCT-I is present but not yet validated.
  *       2D prime dims are refused at create (not production-safe yet).
- *       Odd/prime 1D sizes are fully supported (Rader/Bluestein, odd-K tails).
+ *       Odd 1D sizes are fully supported (odd radixes, odd-K tails); prime /
+ *       Rader/Bluestein-class 1D sizes are IN-PLACE only — out-of-place C2C
+ *       refuses them loudly (use placement=VFFT_INPLACE).
  *
  * ── YOUR BUFFERS, PER LAYOUT (what to pass to vfft_execute) ─────────────────
  *   layout / transform      sre         sim         dre         dim
@@ -284,11 +286,10 @@ extern "C"
    *       IL routes where emitted); every other OOP cell (K>1, uncovered N,
    *       no IL route) CONVERTs around the split champions — the historical
    *       silent no-op / crash cells are GONE.
-   *   1D C2C OOP with no OOP-kind factorization (prime and other N no OOP
-   *       engine covers, either layout): serves via copy-into-destination +
-   *       the in-place engine (the same mechanism 2D..4D OOP uses) — correct,
-   *       documented cost. Padded (config.batch) OOP has no such fallback and
-   *       refuses loudly instead.
+   *   1D C2C OOP with no OOP-kind factorization (prime and other
+   *       Rader/Bluestein-class N): REJECTED loudly — those sizes are served
+   *       IN-PLACE only (the prime dispatch is not wired into the OOP kinds);
+   *       create with placement=VFFT_INPLACE.
    *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D §6a30 +
    *       3D/4D §6a47). Placement must be OUT-OF-PLACE (in-place real FFT is
    *       REJECTED loudly until an MKL-style in-place CCE path exists).

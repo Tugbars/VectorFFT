@@ -219,10 +219,6 @@ struct vfft_plan_s
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
     vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
-    /* 1D C2C OOP with no OOP-kind factorization (prime N etc.): the plan is a
-     * copy into the destination + this owned IN-PLACE sub-plan run on it —
-     * the same copy-then-in-place mechanism the 2D..4D executors use. */
-    struct vfft_plan_s *ip_sub;
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
     vfft_proto_exec_fn exec_fwd, exec_bwd;
@@ -3278,55 +3274,21 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         }
         if (!op)
         {
-            if (!cfg->batch)
-            { /* No OOP kind factors this N (prime/unfactorable cell): serve via
-               * copy-into-destination + the in-place engine — the same
-               * mechanism the 2D..4D executors use for OOP. Strictly additive
-               * (this cell was previously a refusal), correct for both
-               * layouts; if the in-place create cannot serve it either, ITS
-               * diagnostics explain why and we refuse below. */
-                vfft_config_t ipc = *cfg;
-                ipc.placement = VFFT_INPLACE;
-                struct vfft_plan_s *sub = vfft_create(&ipc);
-                if (sub)
-                {
-                    struct vfft_plan_s *hw =
-                        (struct vfft_plan_s *)calloc(1, sizeof *hw);
-                    if (!hw)
-                    {
-                        vfft_destroy(sub);
-                        vfft_zsplit_destroy(zs_pending);
-                        vfft_zturn2_destroy(zt_pending);
-                        return NULL;
-                    }
-                    hw->transform = VFFT_C2C;
-                    hw->placement = VFFT_OUTOFPLACE;
-                    hw->layout = (int)cfg->layout;
-                    hw->N = N;
-                    hw->K = K;
-                    hw->nthreads = sub->nthreads;
-                    hw->ip_sub = sub;
-                    vfft_zsplit_destroy(zs_pending);
-                    vfft_zturn2_destroy(zt_pending);
-                    return hw;
-                }
-            }
             if (ord == VFFT_ORDER_NATURAL)
                 _vfft_warn("vfft_create: no natural-order out-of-place C2C champion for "
-                           "N=%d K=%zu (the natural kinds are gated on this cell) and the "
-                           "in-place fallback could not serve it either (its message above "
-                           "says why) — use order=DEFAULT/SCRAMBLED, or calibrate a "
-                           "natural champion into the wisdom",
+                           "N=%d K=%zu (the natural kinds are gated on this cell) — use "
+                           "order=DEFAULT/SCRAMBLED, or calibrate a natural champion into "
+                           "the wisdom",
                            N, bK);
             else if (cfg->batch)
                 _vfft_warn("vfft_create: no out-of-place C2C champion for the padded cell "
-                           "N=%d Kp=%zu — the padded OOP path has no copy fallback; drop "
-                           "config.batch or use in-place padding",
+                           "N=%d Kp=%zu — drop config.batch or use in-place padding",
                            N, bK);
             else
-                _vfft_warn("vfft_create: no out-of-place C2C engine covers N=%d K=%zu and "
-                           "the in-place fallback could not serve it either (its message "
-                           "above says why) — nothing to serve",
+                _vfft_warn("vfft_create: no out-of-place C2C engine covers N=%d K=%zu — "
+                           "the OOP kinds need a radix factorization of N; prime and other "
+                           "Rader/Bluestein-class sizes are served IN-PLACE only (create "
+                           "with placement=VFFT_INPLACE)",
                            N, bK);
             vfft_zsplit_destroy(zs_pending);
             vfft_zturn2_destroy(zt_pending);
@@ -4598,25 +4560,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
-        if (h->ip_sub)
-        { /* copy-then-in-place fallback (no OOP kind covers this N): the same
-           * mechanism the 2D..4D executors use. The signature was validated
-           * against the OOP contract (destination disjoint), so the copies
-           * are safe; the sub-plan's own execute revalidates its IP forms. */
-            size_t plane = (size_t)h->N * h->K;
-            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-            {
-                memcpy(dre, sre, 2 * plane * sizeof(double));
-                vfft_execute(h->ip_sub, dir, dre, NULL, dre, NULL);
-            }
-            else
-            {
-                memcpy(dre, sre, plane * sizeof(double));
-                memcpy(dim, sim, plane * sizeof(double));
-                vfft_execute(h->ip_sub, dir, dre, dim, dre, dim);
-            }
-            return;
-        }
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
         { /* z -> z, by the committed axis (signature already validated). */
             if (h->zsplit || h->zturn)
@@ -4777,8 +4720,6 @@ void vfft_destroy(vfft_plan h)
         return;
     if (h->cplan)
         vfft_proto_plan_destroy(h->cplan);
-    if (h->ip_sub)
-        vfft_destroy(h->ip_sub);
     if (h->oplan)
         vfft_oop_plan_destroy(h->oplan);
     if (h->zsplit)
