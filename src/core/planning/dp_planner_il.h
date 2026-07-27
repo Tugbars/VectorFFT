@@ -583,7 +583,12 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
              * power brev(k, nf-1, chain) = d0 + 4*brev(k', nf-2, chain+1)
              * with k = d0*(NR/4) + k' (zsplit.h:175), and zturn (k2, lane j)
              * has power j + 4*brev(k2, nf-2, chain+1) (zturn.h create) — so
-             * lane j <-> digit d0 and k2 <-> k', i.e. this transpose. */
+             * lane j <-> digit d0 and k2 <-> k', i.e. this transpose.
+             * RADIX-PARAMETRIC: at Rt = 4 (the radix-4 terminator) this
+             * same arm is PROVEN correct with no code change — r4term_sim
+             * (E16) / gate P2: brev((j*(N/16)+k2)*4 + l, nf, chain) =
+             * l*(N/4) + 4*rho(k2) + j, i.e. the per-row (N/16 x 4)
+             * Gamma transpose, 0 bad slots at all four cells. */
             long S = c->chain[0];
             if (S < 1 || (NR % S)) return -1;
             long kq = r / S, j = r % S;
@@ -806,7 +811,14 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
                 for (int rt = 0; rt < 2; rt++)
                 {
                     if (!eng_ok[rt]) continue;
-                    for (int q = 0; q < 2; q++)
+                    /* last==4 x ZTURN (the radix-4 terminator) has NO
+                     * stf2 twin — zturn.h forces t2q=0 — so the q=1
+                     * candidate would bench the same binary twice.
+                     * (Legacy zsplit never validates last==4, so rt==0
+                     * cannot reach here with a last==4 chain.) */
+                    const int nq =
+                        (rt == 1 && chain[nf - 1] == 4) ? 1 : 2;
+                    for (int q = 0; q < nq; q++)
                     {
                         memset(&c, 0, sizeof c);
                         c.route = VFFT_K1_IL_CASCADE;

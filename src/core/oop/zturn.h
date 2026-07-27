@@ -29,11 +29,13 @@
  *        -> radix{4,8}_z_msg_bwd -> radix4_z_s0t_r4_bwd (un-turn in the
  *           load network, REINT natural-z stores).
  *
- * Output order (SCRAMBLED class, fwd/bwd MATCHED):
- *   out_z[l*(N/8) + 4*k' + j] = X[l*(N/8) + 4*rho(k') + j],
+ * Output order (SCRAMBLED class, fwd/bwd MATCHED), Rt = chain[nf-1]:
+ *   out_z[l*(N/Rt) + 4*k' + j] = X[l*(N/Rt) + 4*rho(k') + j],
  *   rho = digit reversal over the MIDDLE radices (chain[1..nf-2]).
- *   Differs from legacy zsplit by a pure per-row (N/32 x 4) transpose
- *   (Gamma): out_z[l*(N/8)+4k'+j] = out_legacy[l*(N/8)+j*(N/32)+k'].
+ *   Differs from legacy zsplit by a pure per-row (N/(4*Rt) x 4) transpose
+ *   (Gamma): out_z[l*(N/Rt)+4k'+j] = out_legacy[l*(N/Rt)+j*(N/(4Rt))+k']
+ *   (r8: the original N/32 x 4 form; r4: proven as (E16), r4term_sim
+ *   gate P2 — _il_dp_bin_of's zturn arm is radix-parametric already).
  *
  * Chains: vfft_zturn2_create_chain takes the chain as PLAN INPUT (mirroring
  * vfft_zsplit_create) — the Phase-5 planner tranche (dp_planner_il.h route
@@ -42,8 +44,13 @@
  * wrapper over the calibrated legacy per-cell winners
  * (vfft_zsplit_default_chain) — no invented chains on either path.
  * Scope fence: chain[0] == 4 REQUIRED (the
- * r0 = 4 four-section geometry baked into the _r4 kernels), last == 8,
- * D[nf-2] % 4 == 0 asserted (msg count contract). A chain outside the fence
+ * r0 = 4 four-section geometry baked into the _r4 kernels), last in {4, 8}
+ * (last==8 -> stf/stf2, OLs = count = N/8, tzq N/32 groups; last==4 -> the
+ * RADIX-4 terminator radix4_z_stf_r4_*, OLs = count = N/4, tzq N/16 groups,
+ * t2q forced 0 — no stf2@r4 twin), D[nf-2] % 4 == 0 asserted (msg count
+ * contract; the r4 chains run the msg kernels down to count = D_{nf-2} = 4,
+ * one 4-column iteration per group — legal under the count%4==0 contract,
+ * gated by the r4 cascade gates). A chain outside the fence
  * returns NULL — skipped, never force-fit. Roundtrip = N*x (no 1/N
  * in-kernel), matching zsplit. In-place (zin == zout) OK both directions:
  * fwd zout is written only by stf, which reads only the plane; bwd zin is
@@ -70,6 +77,11 @@ VFFT_ZT_DECL(radix8_z_stf_r4_fwd_avx2)  VFFT_ZT_DECL(radix8_z_stf_r4_bwd_avx2)
 VFFT_ZT_DECL(radix8_z_stf2_r4_fwd_avx2) /* 2-quad unroll-and-jam stf twin
                                          * (fwd-only, mirrors sterm2's scope;
                                          * bit-identical to stf, gate-proven) */
+VFFT_ZT_DECL(radix4_z_stf_r4_fwd_avx2)  /* RADIX-4 terminator (last==4     */
+VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
+                                         * 64-B record/section/group, OLs =
+                                         * count = N/4, truncated squaring
+                                         * tree w^2, w^3. NO stf2 twin. */
 #undef VFFT_ZT_DECL
 
 typedef struct {
@@ -121,13 +133,21 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
 {
     if (nf < 3 || nf > VFFT_ZSPLIT_MAX_NF) return NULL;
     if (chain[0] != 4) return NULL;    /* ZTURN-S fence: 4-section geometry */
-    if (chain[nf - 1] != 8) return NULL;
+    /* terminator in {8, 4}: last==8 = the original ZTURN-S map (stf/stf2);
+     * last==4 = the RADIX-4 terminator (radix4_z_stf_r4_*, r4term_sim
+     * derivation E6-E15, all gates passed at 2048/4096/8192/16384) — what
+     * makes e.g. 4.4.4.4.4.4 legal at 4096 (the 2^9-prefix parity obstacle
+     * of the last==8 fence is gone). */
+    if (chain[nf - 1] != 8 && chain[nf - 1] != 4) return NULL;
     long prod = 1;
     for (int s = 0; s < nf; s++) {
         if (s >= 1 && s <= nf - 2 && chain[s] != 4 && chain[s] != 8) return NULL;
         prod *= chain[s];
     }
-    if (prod != N || (N / 8) % 4) return NULL;
+    /* terminator integrality: count = N/r_t must be a whole number of
+     * 4-column groups (r8: (N/8)%4 — the original fence; r4: (N/4)%4,
+     * automatic for N >= 64 but asserted, spec §4(vi)). */
+    if (prod != N || (N / chain[nf - 1]) % 4) return NULL;
 
     vfft_zturn2_plan_t *p = (vfft_zturn2_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
@@ -163,7 +183,11 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
             }
         }
         {
-            const long K2 = (long)N / 32;
+            /* terminator w^1 groups: N/(4*r_t) — r8: N/32 (the original);
+             * r4: N/16 (E7 — table is N/2 doubles, 2x the r8 size). The
+             * per-(k',lane) angle formula is radix-INDEPENDENT: the group
+             * index k' always spans the MIDDLE digits (chain[1..nf-2]). */
+            const long K2 = (long)N / (4 * chain[nf - 1]);
             p->tzq   = (double *)VFFT_ZS_ALLOC((size_t)K2 * 8 * 8);
             p->tzqb  = (double *)VFFT_ZS_ALLOC((size_t)K2 * 8 * 8);
             p->plane = (double *)VFFT_ZS_ALLOC((size_t)2 * N * 8);
@@ -179,6 +203,14 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
             }
         }
     }
+    /* t2q FORCED 0 for last==4, loudly: there is NO stf2@r4 twin (stf2's
+     * 2-quad instance-B offset presumes 2 records/group — radix 8 only),
+     * so the stf/stf2 race axis does not exist on this arm. The execute
+     * dispatch below is STRUCTURAL about it (the r4 branch never consults
+     * t2q), and _calibrate_zturn_t2q (vfft.c) refuses to race a last==4
+     * plan; the planner races CHAINS instead (dp_planner_il.h emits only
+     * t2q=0 candidates for last==4). */
+    if (p->chain[nf - 1] == 4) p->t2q = 0;
     return p;
 fail:
     vfft_zturn2_destroy(p);
@@ -216,9 +248,16 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
           (unsigned long long)p->D[s], (unsigned long long)p->G[s],
           0, 0, (unsigned long long)p->D[s]);
     }
-    (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
-        p->plane, 0, zout, 0, p->tzq, 0,
-        0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+    if (p->chain[p->nf - 1] == 4)
+        /* RADIX-4 terminator (E6-E11): OLs = count = N/4, 4 columns/iter,
+         * loop trip N/16. STRUCTURALLY no t2q consult — no stf2@r4 twin. */
+        radix4_z_stf_r4_fwd_avx2(
+            p->plane, 0, zout, 0, p->tzq, 0,
+            0, 0, (size_t)p->N / 4, 0, (size_t)p->N / 4);
+    else
+        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+            p->plane, 0, zout, 0, p->tzq, 0,
+            0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
 }
 
 /* ZTURN-S scrambled comb in -> N * natural z out. zin == zout OK (zin is
@@ -226,8 +265,15 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
 static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
                                            const double *zin, double *zout)
 {
-    radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
-                             0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+    if (p->chain[p->nf - 1] == 4)
+        /* RADIX-4 bwd terminator (E12-E15) = the bwd FIRST stage; exact
+         * address mirror of the fwd r4 arm (fwd/bwd permutations matched
+         * per chain — cutover atomicity applies exactly as at r8). */
+        radix4_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                 0, 0, (size_t)p->N / 4, 0, (size_t)p->N / 4);
+    else
+        radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                 0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
     for (int s = p->nf - 2; s >= 1; s--) {
         void (*f)(const double *, const double *, double *, double *,
                   const double *, const double *, unsigned long long,
