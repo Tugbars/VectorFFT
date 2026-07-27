@@ -1,7 +1,8 @@
 /* test_oop_pad.c — OOP c2c PADDING through the public vfft.h. OOP bakes K (no runtime me) ->
  * PAD-ONLY, built at Kp=roundup(K,8) (BAILEY2 + the OOP wisdom reader both hard-gate on K%8).
- * The 4-plane handle: vfft_batch_re/_im = split INPUT, vfft_batch_out_re/_out_im = split OUTPUT,
- * each N*Kp.  OOP output ORDER is kind-dependent (LEAF/BAILEY2 natural, MODEB scrambled), so the
+ * The 4-plane handle (consolidated API): vfft_alloc_batch_for(cfg with placement=OUTOFPLACE);
+ * vfft_batch_planes fills sre/sim = split INPUT, dre/dim = split OUTPUT, each N*Kp.
+ * OOP output ORDER is kind-dependent (LEAF/BAILEY2 natural, MODEB scrambled), so the
  * robust gate is:
  *   (A) fwd->bwd ROUNDTRIP recovers N*x on lanes 0..K-1 (order-independent).
  *   (B) for K%8==0 (Kp==K) the padded fwd output == the TIGHT OOP fwd output, BIT-EXACT.
@@ -14,11 +15,16 @@
 
 static int fails = 0;
 
+static void mk_cfg(vfft_config_t *c, int N, int K, vfft_batch b)
+{
+    memset(c, 0, sizeof *c);
+    c->transform = VFFT_C2C; c->placement = VFFT_OUTOFPLACE; c->rigor = VFFT_MEASURE;
+    c->dims = 1; c->n[0] = N; c->howmany = (size_t)K; c->batch = b;
+}
 static vfft_plan mk_oop(int N, int K, vfft_batch b)
 {
-    vfft_config_t c; memset(&c, 0, sizeof c);
-    c.transform = VFFT_C2C; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
-    c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b;
+    vfft_config_t c;
+    mk_cfg(&c, N, K, b);
     return vfft_create(&c);
 }
 
@@ -27,12 +33,15 @@ static void cell(int N, int K)
     size_t Kp = ((size_t)K + 7u) & ~(size_t)7u;    /* OOP pads to roundup(K,8) */
     int aligned = ((size_t)K == Kp);               /* K%8==0 -> Kp==K -> compare vs tight */
 
-    vfft_batch b = vfft_alloc_batch_oop(N, K);
+    vfft_config_t bc;
+    mk_cfg(&bc, N, K, NULL);
+    vfft_batch b = vfft_alloc_batch_for(&bc);       /* born from the config */
     double *xr = (double *)malloc((size_t)N * K * sizeof(double));
     double *xi = (double *)malloc((size_t)N * K * sizeof(double));
     if (!b || !xr || !xi) { printf("  N=%-5d K=%-3d  alloc FAILED\n", N, K); fails++; goto done; }
     srand(13 + N + K);
-    double *bre = vfft_batch_re(b), *bim = vfft_batch_im(b);
+    double *bre, *bim, *bore, *boim;
+    vfft_batch_planes(b, &bre, &bim, &bore, &boim); /* in re/im -> out re/im roles */
     for (int n = 0; n < N; n++)
         for (int k = 0; k < K; k++)
         {
@@ -43,9 +52,8 @@ static void cell(int N, int K)
     vfft_plan p = mk_oop(N, K, b);
     if (!p) { printf("  N=%-5d K=%-3d Kp=%-3zu  padded OOP create FAILED\n", N, K, Kp); fails++; goto done; }
 
-    /* (A/fwd) padded forward: re/im -> out_re/out_im */
-    vfft_execute(p, VFFT_FORWARD, vfft_batch_re(b), vfft_batch_im(b),
-                 vfft_batch_out_re(b), vfft_batch_out_im(b));
+    /* (A/fwd) padded forward: input planes -> output planes (from planes()) */
+    vfft_execute(p, VFFT_FORWARD, bre, bim, bore, boim);
 
     /* (B) tight OOP fwd (no batch), bit-exact vs padded when Kp==K */
     double tm = -1;
@@ -61,7 +69,7 @@ static void cell(int N, int K)
             if (pt)
             {
                 vfft_execute(pt, VFFT_FORWARD, tre, tim, tor, toi);
-                double *por = vfft_batch_out_re(b), *poi = vfft_batch_out_im(b);
+                double *por = bore, *poi = boim;
                 tm = 0;
                 for (int n = 0; n < N; n++)
                     for (int k = 0; k < K; k++)
@@ -77,9 +85,10 @@ static void cell(int N, int K)
         free(tre); free(tim); free(tor); free(toi);
     }
 
-    /* (A/bwd) padded backward: out_re/out_im -> re/im (overwrites input with N*x) */
-    vfft_execute(p, VFFT_BACKWARD, vfft_batch_out_re(b), vfft_batch_out_im(b),
-                 vfft_batch_re(b), vfft_batch_im(b));
+    /* (A/bwd) padded backward: roundtrip leg — the caller may legally pass
+     * the planes swapped (output planes as the inverse input; documented in
+     * vfft.h): out planes -> in planes, overwriting the input with N*x. */
+    vfft_execute(p, VFFT_BACKWARD, bore, boim, bre, bim);
     double rt = 0, inv = 1.0 / (double)N;
     for (int n = 0; n < N; n++)
         for (int k = 0; k < K; k++)

@@ -1,6 +1,7 @@
 /* bench_k1_public.c — the K=1 engine through the PUBLIC vfft API (§13 step 4).
  * Per N: create (C2C, OOP, howmany=1), gate fwd vs naive + roundtrip for BOTH
- * buffer contracts (split re/im pairs; interleaved z via sim==dim==NULL),
+ * buffer contracts — post layout-axis migration this is TWO plans (SPLIT +
+ * layout=VFFT_LAYOUT_INTERLEAVED; the NULL-pointer inference is removed) —,
  * then hot-loop timing (best-of-5, cachebust) for split-fwd and il-fwd.
  * Honors VFFT_WISDOM_DIR (kind-3 K1 wisdom) — without it, exercises the
  * heuristic-miss path. Kill-switch check: VFFT_NO_K1=1 must still be correct
@@ -73,8 +74,11 @@ int main(int argc, char **argv)
         vfft_config_t c; memset(&c, 0, sizeof c);
         c.transform = VFFT_C2C; c.placement = VFFT_OUTOFPLACE;
         c.rigor = VFFT_MEASURE; c.dims = 1; c.n[0] = N; c.howmany = 1;
-        vfft_plan h = vfft_create(&c);
-        if (!h) { printf("%-6d create=NULL <FAIL>\n", N); fails++; continue; }
+        vfft_plan h = vfft_create(&c);            /* SPLIT plan */
+        c.layout = VFFT_LAYOUT_INTERLEAVED;
+        vfft_plan hz = vfft_create(&c);           /* committed z plan */
+        if (!h || !hz) { printf("%-6d create=NULL <FAIL>\n", N); fails++;
+            if (h) vfft_destroy(h); if (hz) vfft_destroy(hz); continue; }
 
         double *xr = malloc((size_t)N * 8), *xi = malloc((size_t)N * 8);
         double *nr = malloc((size_t)N * 8), *nsi = malloc((size_t)N * 8);
@@ -106,11 +110,13 @@ int main(int argc, char **argv)
             if (c1 > ert) ert = c1;
             if (c2 > ert) ert = c2;
         }
-        /* il fwd + roundtrip (sim==dim==NULL contract); may be unsupported
-         * for some N (no IL route) — detect by output unchanged */
+        /* il fwd + roundtrip on the committed-INTERLEAVED plan. Post layout
+         * axis, a cell with no native IL route CONVERTs (never a silent
+         * no-op) so output is always produced; touched-detect kept as a
+         * harmless compatibility check. */
         double eilf = -1, eilrt = -1;
         memset(zo, 0, (size_t)2 * N * 8);
-        vfft_execute(h, VFFT_FORWARD, z, NULL, zo, NULL);
+        vfft_execute(hz, VFFT_FORWARD, z, NULL, zo, NULL);
         {
             int touched = 0;
             for (int k = 0; k < 2 * N && !touched; k++) if (zo[k] != 0.0) touched = 1;
@@ -121,7 +127,7 @@ int main(int argc, char **argv)
                     if (c1 > eilf) eilf = c1;
                     if (c2 > eilf) eilf = c2;
                 }
-                vfft_execute(h, VFFT_BACKWARD, zo, NULL, zo, NULL);
+                vfft_execute(hz, VFFT_BACKWARD, zo, NULL, zo, NULL);
                 eilrt = 0;
                 for (int n = 0; n < N; n++) {
                     double c1 = fabs(zo[2*n] - (double)N * xr[n]);
@@ -148,9 +154,9 @@ int main(int argc, char **argv)
             double ns = (now_ms() - t0) * 1e6 / reps;
             if (ns < bsp) bsp = ns;
             if (eilf >= 0) {
-                for (int w = 0; w < 10; w++) vfft_execute(h, VFFT_FORWARD, z, NULL, zo, NULL);
+                for (int w = 0; w < 10; w++) vfft_execute(hz, VFFT_FORWARD, z, NULL, zo, NULL);
                 t0 = now_ms();
-                for (int i = 0; i < reps; i++) vfft_execute(h, VFFT_FORWARD, z, NULL, zo, NULL);
+                for (int i = 0; i < reps; i++) vfft_execute(hz, VFFT_FORWARD, z, NULL, zo, NULL);
                 ns = (now_ms() - t0) * 1e6 / reps;
                 if (ns < bil) bil = ns;
             }
@@ -161,7 +167,7 @@ int main(int argc, char **argv)
 
         free(xr); free(xi); free(nr); free(nsi);
         free(dr); free(di); free(rr); free(ri); free(z); free(zo);
-        vfft_destroy(h);
+        vfft_destroy(h); vfft_destroy(hz);
     }
     printf("\n%s (%d fail)\n", fails ? "FAILURES" : "K1 PUBLIC API: ALL GREEN", fails);
     return fails ? 1 : 0;

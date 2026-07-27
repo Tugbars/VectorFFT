@@ -9,7 +9,7 @@ static int cellz(int N, size_t K, int expect_pad){
     srand(21+N); for(size_t i=0;i<2*sz;i++) z[i]=2.0*rand()/RAND_MAX-1;
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-    cf.dims=1; cf.n[0]=N; cf.howmany=K;
+    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED;
     /* the arm decision is FIRST-EXECUTE-lazy: lock each arm with one
        execute while its env is set. */
     setenv("VFFT_IL_PAD","0",1); vfft_plan p0=vfft_create(&cf);
@@ -82,7 +82,7 @@ static int cell_nat(int N, size_t K){
     srand(5); for(size_t i=0;i<2*sz;i++) z[i]=2.0*rand()/RAND_MAX-1;
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.order=VFFT_ORDER_NATURAL;
+    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED; cf.order=VFFT_ORDER_NATURAL;
     vfft_plan p=vfft_create(&cf);
     if(!p){ printf("  [nat z] (%d,%zu) create FAIL\n",N,K); return 0; }
     memcpy(y,z,2*sz*8);
@@ -100,7 +100,7 @@ static int cell_verdict(int N, size_t K){
     srand(61); for(size_t i=0;i<2*sz;i++) z[i]=2.0*rand()/RAND_MAX-1;
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-    cf.dims=1; cf.n[0]=N; cf.howmany=K;
+    cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED;
     unsetenv("VFFT_IL_PAD");
     int r0=_il_ab_runs;
     vfft_plan p1=vfft_create(&cf);
@@ -142,7 +142,7 @@ int main(void){
         srand(3); for(size_t i=0;i<2*sz;i++) z[i]=2.0*rand()/RAND_MAX-1;
         vfft_config_t cf; memset(&cf,0,sizeof cf);
         cf.transform=VFFT_C2C; cf.placement=VFFT_INPLACE; cf.rigor=VFFT_MEASURE;
-        cf.dims=1; cf.n[0]=N; cf.howmany=K;
+        cf.dims=1; cf.n[0]=N; cf.howmany=K; cf.layout=VFFT_LAYOUT_INTERLEAVED;
         setenv("VFFT_IL_PAD","0",1); vfft_plan pK=vfft_create(&cf);
         vfft_execute(pK,VFFT_FORWARD,z,NULL,z,NULL);   /* lock K arm */
         setenv("VFFT_IL_PAD","1",1); vfft_plan pP=vfft_create(&cf);

@@ -14,12 +14,23 @@
 
 static int fails = 0;
 
+static void mk_cfg(vfft_config_t *c, vfft_transform_t xf, int N, int K, vfft_batch b, int nthreads)
+{
+    memset(c, 0, sizeof *c);
+    c->transform = xf; c->placement = VFFT_OUTOFPLACE; c->rigor = VFFT_MEASURE;
+    c->dims = 1; c->n[0] = N; c->howmany = (size_t)K; c->batch = b; c->nthreads = nthreads;
+}
 static vfft_plan mk(vfft_transform_t xf, int N, int K, vfft_batch b, int nthreads)
 {
-    vfft_config_t c; memset(&c, 0, sizeof c);
-    c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
-    c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b; c.nthreads = nthreads;
+    vfft_config_t c;
+    mk_cfg(&c, xf, N, K, b, nthreads);
     return vfft_create(&c);
+}
+static vfft_batch mk_batch(vfft_transform_t xf, int N, int K)
+{
+    vfft_config_t c;
+    mk_cfg(&c, xf, N, K, NULL, 0);
+    return vfft_alloc_batch_for(&c);
 }
 
 static void cell(int N, int K, int T)
@@ -28,9 +39,12 @@ static void cell(int N, int K, int T)
     size_t Kp = ((size_t)K + 3u) & ~(size_t)3u;
     int threads = (Kp >= 16);                         /* rfft_natural_mt floor; else ST fallback */
 
-    vfft_batch bmt = vfft_alloc_batch_ex(VFFT_R2C, N, (size_t)K);
-    vfft_batch bst = vfft_alloc_batch_ex(VFFT_R2C, N, (size_t)K);
+    vfft_batch bmt = mk_batch(VFFT_R2C, N, K);
+    vfft_batch bst = mk_batch(VFFT_R2C, N, K);
     double *x = (double *)malloc((size_t)N * K * sizeof(double));
+    double *mreal = NULL, *mre = NULL, *mim = NULL, *sreal = NULL, *sre_ = NULL, *sim_ = NULL, *dum;
+    if (bmt) vfft_batch_planes(bmt, &mreal, &dum, &mre, &mim);
+    if (bst) vfft_batch_planes(bst, &sreal, &dum, &sre_, &sim_);
     if (!bmt || !bst || !x) { printf("  N=%-5d K=%-3d  alloc FAILED\n", N, K); fails++; goto done; }
     srand(9 + N + K);
     for (int n = 0; n < N; n++)
@@ -38,19 +52,19 @@ static void cell(int N, int K, int T)
         {
             double v = (double)rand() / RAND_MAX - 0.5;
             x[n * K + k] = v;
-            vfft_batch_real(bmt)[(size_t)n * Kp + k] = v;
-            vfft_batch_real(bst)[(size_t)n * Kp + k] = v;
+            mreal[(size_t)n * Kp + k] = v;
+            sreal[(size_t)n * Kp + k] = v;
         }
     vfft_plan pmt = mk(VFFT_R2C, N, K, bmt, T);
     vfft_plan pst = mk(VFFT_R2C, N, K, bst, 1);
     if (!pmt || !pst) { printf("  N=%-5d K=%-3d  r2c create FAILED\n", N, K); fails++; goto done; }
-    vfft_execute(pmt, VFFT_FORWARD, vfft_batch_real(bmt), NULL, vfft_batch_re(bmt), vfft_batch_im(bmt));
-    vfft_execute(pst, VFFT_FORWARD, vfft_batch_real(bst), NULL, vfft_batch_re(bst), vfft_batch_im(bst));
+    vfft_execute(pmt, VFFT_FORWARD, mreal, NULL, mre, mim);
+    vfft_execute(pst, VFFT_FORWARD, sreal, NULL, sre_, sim_);
 
     /* (A) MT vs ST forward, lanes 0..K-1 */
     double mtst = 0;
-    double *rem = vfft_batch_re(bmt), *imm = vfft_batch_im(bmt);
-    double *res = vfft_batch_re(bst), *ims = vfft_batch_im(bst);
+    double *rem = mre, *imm = mim;
+    double *res = sre_, *ims = sim_;
     for (int h = 0; h < H; h++)
         for (int k = 0; k < K; k++)
         {
@@ -62,22 +76,24 @@ static void cell(int N, int K, int T)
 
     /* (B) MT roundtrip: c2r (MT) on the MT spectrum -> real; recover N*x */
     double rt = -1;
-    vfft_batch bc = vfft_alloc_batch_ex(VFFT_C2R, N, (size_t)K);
+    vfft_batch bc = mk_batch(VFFT_C2R, N, K);
     if (!bc) { printf("  N=%-5d K=%-3d  c2r alloc FAILED\n", N, K); fails++; }
     else
     {
+        double *cre, *cim, *creal;
+        vfft_batch_planes(bc, &cre, &cim, &creal, &dum); /* spectrum in -> real out */
         for (int h = 0; h < H; h++)
             for (int k = 0; k < K; k++)
             {
-                vfft_batch_re(bc)[(size_t)h * Kp + k] = rem[(size_t)h * Kp + k];
-                vfft_batch_im(bc)[(size_t)h * Kp + k] = imm[(size_t)h * Kp + k];
+                cre[(size_t)h * Kp + k] = rem[(size_t)h * Kp + k];
+                cim[(size_t)h * Kp + k] = imm[(size_t)h * Kp + k];
             }
         vfft_plan pc = mk(VFFT_C2R, N, K, bc, T);
         if (!pc) { printf("  N=%-5d K=%-3d  c2r create FAILED\n", N, K); fails++; }
         else
         {
-            vfft_execute(pc, VFFT_BACKWARD, vfft_batch_re(bc), vfft_batch_im(bc), vfft_batch_real(bc), NULL);
-            double *y = vfft_batch_real(bc); rt = 0; double inv = 1.0 / (double)N;
+            vfft_execute(pc, VFFT_BACKWARD, cre, cim, creal, NULL);
+            double *y = creal; rt = 0; double inv = 1.0 / (double)N;
             for (int n = 0; n < N; n++)
                 for (int k = 0; k < K; k++)
                 { double d = fabs(y[(size_t)n * Kp + k] * inv - x[n * K + k]); if (d > rt) rt = d; }

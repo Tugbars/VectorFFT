@@ -80,11 +80,15 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
     size_t Kp = roundup_vw((size_t)K);
     printf("  cell N=%d K=%d Kp=%zu  T=%d  [%s]\n", N, K, Kp, nthreads ? nthreads : 1, label);
 
-    vfft_batch b = vfft_alloc_batch(N, (size_t)K);
-    CHECK(b != NULL, "alloc_batch");
+    vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.nthreads = nthreads;
+    vfft_batch b = vfft_alloc_batch_for(&cfg);      /* the batch is born from the config */
+    CHECK(b != NULL, "alloc_batch_for");
     if (!b) return;
     CHECK(vfft_batch_stride(b) == Kp, "batch stride == Kp");
-    double *pre = vfft_batch_re(b), *pim = vfft_batch_im(b);
+    double *pre, *pim, *pdre, *pdim;
+    vfft_batch_planes(b, &pre, &pim, &pdre, &pdim); /* in-place roles: dst == src planes */
 
     /* fill the K real lanes (random), pad lanes already zeroed by the allocator. */
     srand(1234 + N + K);
@@ -96,15 +100,13 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
             pre[(size_t)e * Kp + l] = a; pim[(size_t)e * Kp + l] = c;
         }
 
-    vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
-    cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
-    cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.batch = b; cfg.nthreads = nthreads;
+    cfg.batch = b; /* same config the batch was born from */
     vfft_plan p = vfft_create(&cfg);
     CHECK(p != NULL, "vfft_create (padded)");
     if (!p) { free(xr); free(xi); vfft_free_batch(b); return; }
 
-    /* forward, in-place on the padded buffer */
-    vfft_execute(p, VFFT_FORWARD, pre, pim, pre, pim);
+    /* forward, in-place on the padded buffer (planes() supplied the roles) */
+    vfft_execute(p, VFFT_FORWARD, pre, pim, pdre, pdim);
 
     /* bit-exact vs a tight (config.batch=NULL) reference at the SAME factorization */
     if (bitexact)
@@ -133,7 +135,7 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
     }
 
     /* roundtrip: bwd recovers N*x on the K real lanes */
-    vfft_execute(p, VFFT_BACKWARD, pre, pim, pre, pim);
+    vfft_execute(p, VFFT_BACKWARD, pre, pim, pdre, pdim);
     double rt = 0, inv = 1.0 / (double)N;
     for (int e = 0; e < N; e++)
         for (int l = 0; l < K; l++) {

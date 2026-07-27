@@ -10,6 +10,7 @@ static int cell_c2c(int d, size_t K, int order, int zlay, int T){
     cf.transform=VFFT_C2C; cf.rigor=VFFT_MEASURE; cf.dims=d;
     for(int i=0;i<d;i++) cf.n[i]=NS[d][i];
     cf.howmany=K; cf.order=order; cf.placement=VFFT_INPLACE;
+    cf.layout = zlay ? VFFT_LAYOUT_INTERLEAVED : VFFT_LAYOUT_SPLIT;
     stride_set_num_threads(1);
     vfft_plan p=vfft_create(&cf);
     if(!p){ printf("d=%d c2c K=%zu %s %-5s : REJECT\n",d,K,on(order),zlay?"z":"split"); return 2; }
@@ -44,6 +45,7 @@ static int cell_real(int d, size_t K, int order, int zlay, int T){
     cf.rigor=VFFT_MEASURE; cf.dims=d;
     for(int i=0;i<d;i++) cf.n[i]=NS[d][i];
     cf.howmany=K; cf.order=order; cf.placement=VFFT_OUTOFPLACE;
+    cf.layout = zlay ? VFFT_LAYOUT_INTERLEAVED : VFFT_LAYOUT_SPLIT;
     stride_set_num_threads(1);
     cf.transform=VFFT_R2C;  vfft_plan pf=vfft_create(&cf);
     cf.transform=VFFT_C2R;  vfft_plan pb=vfft_create(&cf);

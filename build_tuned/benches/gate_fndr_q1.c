@@ -10,14 +10,18 @@ static int cellnd(int rank, const int *N, int il){
     vfft_config_t cf; memset(&cf,0,sizeof cf);
     cf.transform=VFFT_R2C; cf.placement=VFFT_OUTOFPLACE; cf.rigor=VFFT_MEASURE;
     cf.dims=rank; for(int i=0;i<rank;i++) cf.n[i]=N[i]; cf.howmany=1;
-    vfft_plan pf=vfft_create(&cf); cf.transform=VFFT_C2R; vfft_plan pb=vfft_create(&cf);
-    if(!pf||!pb){ printf("  [ND"); for(int i=0;i<rank;i++)printf(" %d",N[i]); printf("] plan FAIL\n"); return 0; }
+    vfft_plan pf=vfft_create(&cf);
+    vfft_plan pfz=NULL, pbz=NULL;
+    if(il){ cf.layout=VFFT_LAYOUT_INTERLEAVED; pfz=vfft_create(&cf); cf.layout=VFFT_LAYOUT_SPLIT; }
+    cf.transform=VFFT_C2R; vfft_plan pb=vfft_create(&cf);
+    if(il){ cf.layout=VFFT_LAYOUT_INTERLEAVED; pbz=vfft_create(&cf); cf.layout=VFFT_LAYOUT_SPLIT; }
+    if(!pf||!pb||(il&&(!pfz||!pbz))){ printf("  [ND"); for(int i=0;i<rank;i++)printf(" %d",N[i]); printf("] plan FAIL\n"); return 0; }
     struct vfft_plan_s *hf=(struct vfft_plan_s*)pf;
     stride_fftnd_r2c_data_t *df=(stride_fftnd_r2c_data_t*)hf->tplan->override_data;
     memcpy(y,x,tot*8);
     vfft_execute(pf,VFFT_FORWARD,y,NULL,re,im);
     if(il){
-        vfft_execute(pf,VFFT_FORWARD,y,NULL,z,NULL);
+        vfft_execute(pfz,VFFT_FORWARD,y,NULL,z,NULL);
         size_t bad=0;
         for(size_t i=0;i<R*hp1;i++) if(z[2*i]!=re[i]||z[2*i+1]!=im[i]) bad++;
         printf("  [ND z] fwd z-vs-split BIT: %s (%zu)\n", bad?"**FAIL**":"PASS", bad);
@@ -46,7 +50,7 @@ static int cellnd(int rank, const int *N, int il){
         printf("  [ND"); for(int i=0;i<rank;i++)printf(" %d",N[i]);
         printf("] fwd vs naive: %s (snd_fwd=%s)\n", ok?"PASS":"**FAIL**", df->snd_fwd?"MONO":"tiled");
     }
-    if(il) vfft_execute(pb,VFFT_BACKWARD,z,NULL,y,NULL);
+    if(il) vfft_execute(pbz,VFFT_BACKWARD,z,NULL,y,NULL);
     else   vfft_execute(pb,VFFT_BACKWARD,re,im,y,NULL);
     double mx=0; for(size_t i=0;i<tot;i++){ double dd=fabs(y[i]/(double)tot-x[i]); if(dd>mx)mx=dd; }
     printf("  [ND"); for(int i=0;i<rank;i++)printf(" %d",N[i]);
@@ -56,6 +60,7 @@ static int cellnd(int rank, const int *N, int il){
         ((stride_fftnd_r2c_data_t*)((struct vfft_plan_s*)pb)->tplan->override_data)->snd_bwd?"MONO":"tiled");
     if(mx>=1e-11) ok=0;
     vfft_destroy(pf); vfft_destroy(pb);
+    if(pfz)vfft_destroy(pfz); if(pbz)vfft_destroy(pbz);
     free(x);free(y);free(re);free(im); if(z)free(z);
     return ok;
 }

@@ -30,11 +30,15 @@ static void naive_dct2(const double *x, double *X, int N)
  * return max rel error of the recovered lanes 0..K-1 vs scale*x0 (scale = least-squares). */
 static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
 {
-    vfft_batch b = vfft_alloc_batch_ex(xf, N, (size_t)K);
+    vfft_config_t c; memset(&c, 0, sizeof c);
+    c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
+    c.dims = 1; c.n[0] = N; c.howmany = (size_t)K;
+    vfft_batch b = vfft_alloc_batch_for(&c);
     if (!b) return -1;
     size_t Kp = vfft_batch_stride(b);
     double *x0 = (double *)malloc((size_t)N * K * sizeof(double));
-    double *in = vfft_batch_real(b);
+    double *in, *out, *d1_, *d2_;
+    vfft_batch_planes(b, &in, &d1_, &out, &d2_); /* real in -> real out */
     srand(seed);
     for (int n = 0; n < N; n++)
         for (int k = 0; k < K; k++)
@@ -43,16 +47,15 @@ static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
             x0[n * K + k] = v;
             in[(size_t)n * Kp + k] = v;
         }
-    vfft_config_t c; memset(&c, 0, sizeof c);
-    c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
-    c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b;
+    c.batch = b; /* same config the batch was born from */
     vfft_plan p = vfft_create(&c);
     double err = -1;
     if (p)
     {
-        vfft_execute(p, VFFT_FORWARD,  vfft_batch_real(b), NULL, vfft_batch_re(b),   NULL);
-        vfft_execute(p, VFFT_BACKWARD, vfft_batch_re(b),   NULL, vfft_batch_real(b), NULL);
-        double *y = vfft_batch_real(b);
+        vfft_execute(p, VFFT_FORWARD,  in,  NULL, out, NULL);
+        /* inverse leg: swap the planes (out -> in), documented roundtrip form */
+        vfft_execute(p, VFFT_BACKWARD, out, NULL, in,  NULL);
+        double *y = in;
         double sxy = 0, sxx = 0;                                  /* least-squares scale */
         for (int n = 0; n < N; n++)
             for (int k = 0; k < K; k++)
@@ -87,25 +90,27 @@ int main(void)
     for (int i = 0; i < 6; i++)
     {
         int N = As[i][0], K = As[i][1];
-        vfft_batch b = vfft_alloc_batch_ex(VFFT_DCT2, N, (size_t)K);
+        vfft_config_t c; memset(&c, 0, sizeof c);
+        c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
+        c.dims = 1; c.n[0] = N; c.howmany = (size_t)K;
+        vfft_batch b = vfft_alloc_batch_for(&c);
         size_t Kp = b ? vfft_batch_stride(b) : 0;
         double maxe = -1;
         if (b)
         {
-            double *in = vfft_batch_real(b);
+            double *in, *outp, *dA, *dB;
+            vfft_batch_planes(b, &in, &dA, &outp, &dB);
             double *x = (double *)malloc((size_t)N * K * sizeof(double));
             srand(3 + N + K);
             for (int n = 0; n < N; n++)
                 for (int k = 0; k < K; k++)
                 { double v = (double)rand() / RAND_MAX - 0.5; x[n * K + k] = v; in[(size_t)n * Kp + k] = v; }
-            vfft_config_t c; memset(&c, 0, sizeof c);
-            c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
-            c.dims = 1; c.n[0] = N; c.howmany = (size_t)K; c.batch = b;
+            c.batch = b; /* same config the batch was born from */
             vfft_plan p = vfft_create(&c);
             if (p)
             {
-                vfft_execute(p, VFFT_FORWARD, vfft_batch_real(b), NULL, vfft_batch_re(b), NULL);
-                double *out = vfft_batch_re(b);
+                vfft_execute(p, VFFT_FORWARD, in, NULL, outp, NULL);
+                double *out = outp;
                 double *Xr = (double *)malloc(N * sizeof(double)), *xl = (double *)malloc(N * sizeof(double));
                 maxe = 0;
                 for (int k = 0; k < K; k++)

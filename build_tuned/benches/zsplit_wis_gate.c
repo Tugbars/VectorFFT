@@ -63,6 +63,7 @@ static vfft_plan mk(int N, int recal)
     cfg.n[0] = N;
     cfg.howmany = 1;
     cfg.order = VFFT_ORDER_SCRAMBLED;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* committed z contract */
     cfg.nthreads = 1;
     cfg.recalibrate = recal;
     return vfft_create(&cfg);
