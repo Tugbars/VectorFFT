@@ -29,6 +29,7 @@
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "il_execute.h"      /* interleaved z<->z folded adapters (6a16/6a17) */
 #include "zsplit.h"          /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
+#include "zturn.h"           /* ZTURN-S route twin (Phase 5 tranche 2; cascade_load_path_restructure §6.4) */
 #include "il2p.h"   /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
@@ -140,6 +141,19 @@ struct vfft_plan_s
      * interleaved execute contract (sim==dim==NULL); split-contract and
      * uncovered cells fall through to the classic path. Owned. */
     vfft_zsplit_plan_t *zsplit;
+    /* ROUTE AXIS for that cascade (cascade_load_path_restructure §6.4/§2.6):
+     * zroute is the ONE field BOTH execute directions dispatch on (0 = legacy
+     * zsplit, 1 = ZTURN-S). Cutover atomicity is STRUCTURAL: create keeps
+     * exactly one cascade plan (the loser is destroyed before the handle
+     * exists) and _exec_zcascade is the single consumer, so a mixed
+     * fwd-legacy/bwd-zturn pairing is inexpressible, not just unlikely.
+     * Invariant: zroute==1 <=> zturn!=NULL && zsplit==NULL. The SCRAMBLED
+     * contract permits the routes' different output permutations (§2.6) —
+     * a route's OWN bwd always consumes its OWN fwd comb. Kill switch:
+     * env VFFT_NO_ZTURN at create pins legacy (VFFT_NO_IL2P precedent);
+     * VFFT_FORCE_ZROUTE=legacy|zturn is the gate/test forcing hook. */
+    int zroute;
+    vfft_zturn2_plan_t *zturn;
     /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
      * no split planes. Measured vs the hybrid 2P route it replaces:
      * 0.558x @N=64, 0.765x @256, 0.956x @1024 (both arms scalar-DFT gated).
@@ -648,6 +662,231 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
     else
         win = (n0 < n1 * 0.97) ? 0 : 1;
     zs->t2q = win;
+    if (getenv("VFFT_ZRACE_VERBOSE"))
+        fprintf(stderr, "[zroute] N=%d legacy-t2q race: reps=%d RR=%d "
+                "burst~300us hyst=3%% alt-order median | sterm=%.0f "
+                "sterm2=%.0f -> t2q=%d\n", N, reps, RR, n0, n1, win);
+    vfft_proto_aligned_free(zi);
+    vfft_proto_aligned_free(zo);
+    vfft_proto_aligned_free(zo2);
+    return win ? n1 : n0;
+}
+
+/* ZTURN TERMINATOR PICK — the stf vs stf2 analog of the sterm/sterm2 race
+ * above, SAME mechanics verbatim (bit-identical-pair sanity, ~0.3 ms bursts
+ * sized from one estimated exec, alternating arm order per round, median-of-
+ * rounds, 3% hysteresis toward the compiled default). fwd-only, like t2q
+ * (stf2 mirrors sterm2's fwd-only scope). Returns the winner's median fwd ns
+ * (0.0 on OOM/sanity failure; zt->t2q holds the verdict either way). */
+static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
+{
+    const int N = zt->N;
+    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
+    const int inc = zt->t2q; /* compiled default (0 = stf) = incumbent */
+    double *zi = NULL, *zo = NULL, *zo2 = NULL;
+    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo2, 64, sz))
+    {
+        vfft_proto_aligned_free(zi);
+        vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2);
+        return 0.0;
+    }
+    srand(11 + N);
+    for (int i = 0; i < 2 * N; i++)
+        zi[i] = (double)rand() / RAND_MAX - 0.5;
+
+    /* sanity: stf/stf2 are bit-identical by contract (Phase-3 GATE0); if a
+     * build ever breaks that, keep the incumbent and don't bank. */
+    zt->t2q = 0;
+    vfft_zturn2_execute_fwd(zt, zi, zo);
+    zt->t2q = 1;
+    vfft_zturn2_execute_fwd(zt, zi, zo2);
+    if (memcmp(zo, zo2, sz) != 0)
+    {
+        zt->t2q = inc;
+        vfft_proto_aligned_free(zi);
+        vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2);
+        return 0.0;
+    }
+
+    double t0 = vfft_proto_now_ns();
+    vfft_zturn2_execute_fwd(zt, zi, zo);
+    double est = vfft_proto_now_ns() - t0;
+    if (est < 1.0)
+        est = 1.0;
+    int reps = (int)(300000.0 / est);
+    if (reps < 2)
+        reps = 2;
+    if (reps > 64)
+        reps = 64;
+
+    int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
+    double m0[32], m1[32];
+    if (RR > 32)
+        RR = 32;
+    for (int r = 0; r < RR; r++)
+    {
+        double a, b;
+        int first = r & 1;
+        zt->t2q = first;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_zturn2_execute_fwd(zt, zi, zo);
+        a = (vfft_proto_now_ns() - t0) / reps;
+        zt->t2q = !first;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_zturn2_execute_fwd(zt, zi, zo);
+        b = (vfft_proto_now_ns() - t0) / reps;
+        m0[r] = first ? a : b;
+        m1[r] = first ? b : a;
+    }
+    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
+    int win;
+    if (inc == 0)
+        win = (n1 < n0 * 0.97) ? 1 : 0;
+    else
+        win = (n0 < n1 * 0.97) ? 0 : 1;
+    zt->t2q = win;
+    if (getenv("VFFT_ZRACE_VERBOSE"))
+        fprintf(stderr, "[zroute] N=%d zturn-t2q race: reps=%d RR=%d "
+                "burst~300us hyst=3%% alt-order median | stf=%.0f "
+                "stf2=%.0f -> t2q=%d\n", N, reps, RR, n0, n1, win);
+    vfft_proto_aligned_free(zi);
+    vfft_proto_aligned_free(zo);
+    vfft_proto_aligned_free(zo2);
+    return win ? n1 : n0;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+ * K=1 SCRAMBLED CASCADE ROUTE RACE (Phase 5 tranche 2; §6.4 per-cell ship
+ * via measured race) — the 4 arms legacy{sterm,sterm2} x zturn{stf,stf2}
+ * decided in two measured levels, both in the _il_ab_race shape:
+ *   level 1 (per route, FWD-only, like today's t2q): the shipped
+ *     sterm-vs-sterm2 race, and its stf-vs-stf2 mirror — each route's
+ *     terminator pick, left in zs->t2q / zt->t2q.
+ *   level 2 (ROUTE, JOINT fwd+bwd): terminators pinned at the level-1
+ *     winners, one arm = reps x (execute_fwd; execute_bwd) — the roadmap's
+ *     cutover atomicity flips both directions together, so the route is
+ *     measured on both together. Alternating arm order per round, median-of-
+ *     rounds, 3% hysteresis toward LEGACY (the incumbent route). Joint
+ *     roundtrip (bwd(fwd(x)) == N*x) sanity-gates BOTH arms first; a zturn
+ *     sanity/level-1 failure degrades to the legacy-only verdict (route 0,
+ *     legacy's measured ns still banked) rather than failing the create.
+ * Pacing = the incumbent race's discipline throughout: bursts sized to
+ * ~0.3 ms from one estimated exec (reps clamped [2,64]), RR = 9 rounds at
+ * VFFT_MEASURE / 21 at PATIENT+ (cap 32). VFFT_ZRACE_VERBOSE=1 prints every
+ * level's reps/RR/medians to stderr. Returns the winning route's median ns
+ * (level-2 joint ns; level-1 fwd ns on the legacy-only degrade), 0.0 on
+ * total failure (caller keeps legacy incumbent, banks nothing). *route is
+ * the verdict either way (0 on failure). */
+static double _calibrate_zroute(vfft_zsplit_plan_t *zs, vfft_zturn2_plan_t *zt,
+                                int *route, vfft_rigor_t rigor)
+{
+    *route = 0;
+    const int vb = getenv("VFFT_ZRACE_VERBOSE") != NULL;
+    /* level 1: per-route fwd terminator picks (the shipped race + mirror) */
+    double lns = _calibrate_zsplit_t2q(zs, rigor);
+    if (lns <= 0.0)
+        return 0.0;
+    if (!zt)
+        return lns;
+    double tns = _calibrate_zturn_t2q(zt, rigor);
+    if (tns <= 0.0)
+        return lns;                       /* zturn arm invalid: legacy verdict */
+
+    const int N = zs->N;
+    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
+    double *zi = NULL, *zo = NULL, *zo2 = NULL;
+    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
+        vfft_proto_posix_memalign((void **)&zo2, 64, sz))
+    {
+        vfft_proto_aligned_free(zi);
+        vfft_proto_aligned_free(zo);
+        vfft_proto_aligned_free(zo2);
+        return lns;                       /* OOM: keep legacy, bank its verdict */
+    }
+    srand(11 + N);
+    for (int i = 0; i < 2 * N; i++)
+        zi[i] = (double)rand() / RAND_MAX - 0.5;
+
+    /* joint sanity BOTH arms: each route's bwd must invert its OWN fwd comb
+     * to N*x (the routes' combs differ by Gamma — §2.6 — so this, not a
+     * cross-route memcmp, is the meaningful pre-race gate). */
+    for (int arm = 0; arm < 2; arm++)
+    {
+        if (arm == 0) { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
+        else          { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
+        double err = 0.0;
+        for (int i = 0; i < 2 * N; i++)
+        {
+            double d = zo2[i] / (double)N - zi[i];
+            if (d < 0) d = -d;
+            if (d > err) err = d;
+        }
+        if (err > 1e-11)
+        {
+            vfft_proto_aligned_free(zi);
+            vfft_proto_aligned_free(zo);
+            vfft_proto_aligned_free(zo2);
+            if (vb)
+                fprintf(stderr, "[zroute] N=%d JOINT SANITY FAIL arm=%s "
+                        "(err=%.3e): %s\n", N, arm ? "zturn" : "legacy", err,
+                        arm ? "legacy verdict" : "no bank");
+            return arm ? lns : 0.0;       /* legacy broken: bank nothing */
+        }
+    }
+
+    /* level 2: joint fwd+bwd route race, terminators pinned */
+    double t0 = vfft_proto_now_ns();
+    vfft_zsplit_execute_fwd(zs, zi, zo);
+    vfft_zsplit_execute_bwd(zs, zo, zo2);
+    double est = vfft_proto_now_ns() - t0;
+    if (est < 1.0)
+        est = 1.0;
+    int reps = (int)(300000.0 / est);
+    if (reps < 2)
+        reps = 2;
+    if (reps > 64)
+        reps = 64;
+    int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
+    double m0[32], m1[32];
+    if (RR > 32)
+        RR = 32;
+    for (int r = 0; r < RR; r++)
+    {
+        double a, b;
+        int first = r & 1;                /* alternate which ROUTE goes first */
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+        {
+            if (first) { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
+            else       { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
+        }
+        a = (vfft_proto_now_ns() - t0) / reps;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+        {
+            if (first) { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
+            else       { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
+        }
+        b = (vfft_proto_now_ns() - t0) / reps;
+        m0[r] = first ? b : a;            /* m0 = legacy joint, m1 = zturn joint */
+        m1[r] = first ? a : b;
+    }
+    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
+    int win = (n1 < n0 * 0.97) ? 1 : 0;   /* 3% hysteresis toward legacy */
+    *route = win;
+    if (vb)
+        fprintf(stderr, "[zroute] N=%d ROUTE race (JOINT fwd+bwd): reps=%d "
+                "RR=%d burst~300us hyst=3%%-toward-legacy alt-order median | "
+                "legacy(t2q=%d)=%.0f zturn(t2q=%d)=%.0f -> route=%s\n",
+                N, reps, RR, zs->t2q, n0, zt->t2q, n1,
+                win ? "zturn" : "legacy");
     vfft_proto_aligned_free(zi);
     vfft_proto_aligned_free(zo);
     vfft_proto_aligned_free(zo2);
@@ -2336,6 +2575,8 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * never K=1-safe). Classic path still serves SCRAMBLED-order
          * requests and is the fallback if engine create fails. */
         vfft_zsplit_plan_t *zs_pending = NULL;
+        vfft_zturn2_plan_t *zt_pending = NULL;
+        int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
         if (K == 1 && !cfg->batch && cfg->order == VFFT_ORDER_SCRAMBLED)
         {
             /* SCRAMBLED K=1: the block-split cascade owns the interleaved
@@ -2344,16 +2585,34 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
              * serving the split-plane contract and every uncovered N; the
              * cascade plan is attached to the classic handle at the end.
              *
-             * Wisdom (kind-4 oop_wisdom line, §4.9993): hit -> pure read of
-             * chain + terminator pick; miss/recalibrate -> default chain +
-             * the ~10 ms t2q pick race, banked. The pick MUST be measured on
-             * the installed binary: sterm vs sterm2 are bit-identical and
-             * their delta is code-placement-order. */
+             * Wisdom (kind-4 oop_wisdom line, §4.9993 + route axis §6.4):
+             * hit -> pure read of chain + ROUTE + per-route terminator pick
+             * (an old-format line has no route tokens -> legacy, so every
+             * pre-route banked file keeps its exact pre-route behavior);
+             * miss/recalibrate -> default chain + the create-time race
+             * (_calibrate_zroute: 4 arms, route verdict on JOINT fwd+bwd),
+             * banked. Picks MUST be measured on the installed binary:
+             * sterm/sterm2 (and stf/stf2) are bit-identical and their delta
+             * is code-placement-order. */
             int zch[VFFT_ZSPLIT_MAX_NF];
             int znf = 0;
             const vfft_oop_wisdom_entry_t *ze =
                 vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
             int ze_hit = (ze && !cfg->recalibrate);
+            /* Route forcing, read at CREATE (both directions follow — the
+             * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
+             * switch; VFFT_NO_IL2P precedent) and wins over everything;
+             * VFFT_FORCE_ZROUTE=legacy|zturn (or 0|1) is the gate/test hook
+             * (VFFT_IL_PAD precedent). */
+            int zforce = 0; /* 0 = none, 1 = legacy, 2 = zturn */
+            {
+                const char *fz = getenv("VFFT_FORCE_ZROUTE");
+                if (fz && fz[0])
+                    zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
+                                 ? 2 : 1;
+                if (getenv("VFFT_NO_ZTURN"))
+                    zforce = 1;
+            }
             if (ze_hit && ze->cc_chain)
                 znf = vfft_k1_cc_chain_decode(ze->cc_chain, zch);
             if (znf)
@@ -2371,10 +2630,49 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
             if (zs_pending)
             {
                 if (ze_hit)
+                {
+                    /* pure read: honor route + the winning route's pick.
+                     * (zturn ships on its own calibrated-default chain — a
+                     * zturn2 create ignores the banked cc_chain, which
+                     * describes the LEGACY plan; the Phase-5 planner tranche
+                     * owns the chain re-search.) */
                     zs_pending->t2q = ze->zs_t2q ? 1 : 0;
+                    if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
+                        zt_pending = vfft_zturn2_create(N);
+                    if (zt_pending)
+                    {
+                        zt_pending->t2q = ze->zt_t2q ? 1 : 0;
+                        zroute_pending = 1;
+                    }
+                    if (getenv("VFFT_ZRACE_VERBOSE"))
+                        fprintf(stderr, "[zroute] N=%d wisdom hit: banked "
+                                "route=%d zs_t2q=%d zt_t2q=%d force=%d -> "
+                                "serving route=%d t2q=%d\n", N, ze->zs_route,
+                                ze->zs_t2q, ze->zt_t2q, zforce, zroute_pending,
+                                zroute_pending ? zt_pending->t2q
+                                               : zs_pending->t2q);
+                }
                 else
                 {
-                    double zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
+                    /* miss/recalibrate -> race + bank. zforce==1: the
+                     * legacy-only t2q race, byte-identical to the pre-route
+                     * path (old-format line banked). zforce==2: zturn-only
+                     * stf/stf2 race (route line banked; test hook).
+                     * unforced: the 4-arm route race. */
+                    if (zforce != 1)
+                        zt_pending = vfft_zturn2_create(N);
+                    double zns;
+                    if (!zt_pending)
+                        zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
+                    else if (zforce == 2)
+                    {
+                        zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor);
+                        if (zns > 0.0)
+                            zroute_pending = 1;
+                    }
+                    else
+                        zns = _calibrate_zroute(zs_pending, zt_pending,
+                                                &zroute_pending, cfg->rigor);
                     if (zns > 0.0)
                     {
                         vfft_oop_wisdom_entry_t ne;
@@ -2385,8 +2683,27 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                         ne.zs_t2q = zs_pending->t2q;
                         ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
                                                               zs_pending->nf);
+                        ne.zs_route = zroute_pending;
+                        ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
                         ne.ns = zns;
                         _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+                    }
+                }
+                /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
+                 * survives to the handle — the loser dies here, before the
+                 * handle exists — so fwd and bwd cannot pair across routes. */
+                if (zroute_pending && zt_pending)
+                {
+                    vfft_zsplit_destroy(zs_pending);
+                    zs_pending = NULL;
+                }
+                else
+                {
+                    zroute_pending = 0;
+                    if (zt_pending)
+                    {
+                        vfft_zturn2_destroy(zt_pending);
+                        zt_pending = NULL;
                     }
                 }
             }
@@ -2667,12 +2984,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         if (!op)
         {
             vfft_zsplit_destroy(zs_pending);
+            vfft_zturn2_destroy(zt_pending);
             return NULL;
         }
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
             vfft_zsplit_destroy(zs_pending);
+            vfft_zturn2_destroy(zt_pending);
             vfft_oop_plan_destroy(op);
             return NULL;
         }
@@ -2682,7 +3001,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->oplan = op;
-        h->zsplit = zs_pending;
+        h->zsplit = zs_pending;    /* exactly one of zsplit/zturn is non-NULL */
+        h->zturn = zt_pending;
+        h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
 #ifdef VFFT_USE_JIT
@@ -3386,6 +3707,33 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
+/* K=1 SCRAMBLED cascade dispatch — the ONE consumer of h->zroute for BOTH
+ * directions (cutover atomicity, cascade_load_path_restructure §6.4): the
+ * route flips fwd+bwd together by construction. Only the winning route's
+ * plan exists on the handle (create destroys the loser), so even a dispatch
+ * bug could not pair fwd of one route with bwd of the other — the other
+ * plan pointer is NULL. §2.6: the two routes emit different (both
+ * SCRAMBLED-legal) output permutations; each route's bwd inverts its OWN
+ * fwd comb, which this single-field dispatch guarantees. */
+static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
+                           const double *sre, double *dre)
+{
+    if (h->zroute)
+    {
+        if (dir == VFFT_FORWARD)
+            vfft_zturn2_execute_fwd(h->zturn, sre, dre);
+        else
+            vfft_zturn2_execute_bwd(h->zturn, sre, dre);
+    }
+    else
+    {
+        if (dir == VFFT_FORWARD)
+            vfft_zsplit_execute_fwd(h->zsplit, sre, dre);
+        else
+            vfft_zsplit_execute_bwd(h->zsplit, sre, dre);
+    }
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
@@ -3490,14 +3838,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->transform == VFFT_C2C && h->placement == VFFT_OUTOFPLACE)
     {
-        if (h->zsplit && !sim && !dim && sre && dre)
-        {   /* K=1 SCRAMBLED interleaved z->z: the block-split cascade.
-             * fwd: natural -> digit-reversed comb; bwd consumes the SAME
-             * comb -> N*natural (matched-permutation roundtrip). */
-            if (dir == VFFT_FORWARD)
-                vfft_zsplit_execute_fwd(h->zsplit, sre, dre);
-            else
-                vfft_zsplit_execute_bwd(h->zsplit, sre, dre);
+        if ((h->zsplit || h->zturn) && !sim && !dim && sre && dre)
+        {   /* K=1 SCRAMBLED interleaved z->z: the cascade (legacy zsplit or
+             * ZTURN-S). fwd: natural -> the route's scrambled comb; bwd
+             * consumes the SAME route's comb -> N*natural (matched-
+             * permutation roundtrip). BOTH directions go through the one
+             * route dispatcher — see _exec_zcascade. */
+            _exec_zcascade(h, dir, sre, dre);
             return;
         }
         if (h->k1_on)
@@ -3667,7 +4014,9 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->oplan);
     if (h->zsplit)
         vfft_zsplit_destroy(h->zsplit);
-        vfft_il2p_destroy(h->k1il2p);
+    if (h->zturn)
+        vfft_zturn2_destroy(h->zturn);
+    vfft_il2p_destroy(h->k1il2p);
     if (h->k1il && h->k1il != h->k1sp)
         vfft_oop_plan_destroy(h->k1il);
     if (h->k1sp)

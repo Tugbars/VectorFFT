@@ -62,6 +62,9 @@
     size_t, size_t, size_t, size_t, size_t);
 VFFT_ZT_DECL(radix4_z_s0t_r4_fwd_avx2)  VFFT_ZT_DECL(radix4_z_s0t_r4_bwd_avx2)
 VFFT_ZT_DECL(radix8_z_stf_r4_fwd_avx2)  VFFT_ZT_DECL(radix8_z_stf_r4_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_stf2_r4_fwd_avx2) /* 2-quad unroll-and-jam stf twin
+                                         * (fwd-only, mirrors sterm2's scope;
+                                         * bit-identical to stf, gate-proven) */
 #undef VFFT_ZT_DECL
 
 typedef struct {
@@ -72,6 +75,14 @@ typedef struct {
     double *twzb[VFFT_ZSPLIT_MAX_NF];  /* mid tables, bwd (sin negated)     */
     double *tzq, *tzqb;                /* terminator per-(k',lane) w^1      */
     double *plane;                     /* sectioned plane, 2N doubles, 64B  */
+    int t2q;                           /* fwd terminator schedule: 0 = stf
+                                        * (single-quad), 1 = stf2 (2-quad
+                                        * unroll-and-jam). Bit-identical pair
+                                        * — the zturn analog of zsplit's
+                                        * sterm/sterm2 t2q: placement-luck-
+                                        * sized delta, so MEASURED per cell
+                                        * (vfft.c create race), never
+                                        * reasoned. bwd keeps single-quad. */
 } vfft_zturn2_plan_t;
 
 static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
@@ -184,8 +195,9 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
           (unsigned long long)p->D[s], (unsigned long long)p->G[s],
           0, 0, (unsigned long long)p->D[s]);
     }
-    radix8_z_stf_r4_fwd_avx2(p->plane, 0, zout, 0, p->tzq, 0,
-                             0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
+    (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+        p->plane, 0, zout, 0, p->tzq, 0,
+        0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
 }
 
 /* ZTURN-S scrambled comb in -> N * natural z out. zin == zout OK (zin is
