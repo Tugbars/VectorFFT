@@ -126,7 +126,7 @@ extern "C"
    * DESCRIPTOR + PLAN
    * ════════════════════════════════════════════════════════════════════════ */
 
-  /* Opaque VW-padded batch handle (full contract below, near vfft_alloc_batch).
+  /* Opaque VW-padded batch handle (full contract below, near vfft_alloc_batch_for).
    * Declared here so vfft_config_t can carry it as the opt-in padding signal. */
   typedef struct vfft_batch_s *vfft_batch;
 

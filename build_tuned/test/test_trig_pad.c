@@ -1,7 +1,7 @@
 /* test_trig_pad.c — trig (DCT/DST/DHT) PADDING through the public vfft.h.
  * Trig padding is PAD-ONLY (the trig stride_r2c_plan bakes K) and sidesteps the UNBUILT odd-K
  * trig tail: building at aligned Kp is the ONLY full-SIMD path for misaligned K. Handle is
- * real->real: vfft_batch_real = INPUT (N*Kp), vfft_batch_re = OUTPUT (N*Kp), stride Kp.
+ * real->real: vfft_batch_planes fills sre = INPUT (N*Kp), dre = OUTPUT (N*Kp), stride Kp.
  *   (A) ABSOLUTE: padded DCT-II output lanes 0..K-1 == naive FFTW REDFT10 (incl. odd K).
  *   (B) ROUNDTRIP: fwd->inv recovers scale*x on lanes 0..K-1 for DCT2 (via DCT3), DHT, DCT4.
  * Build: python build.py --src test/test_trig_pad.c --vfft */

@@ -53,6 +53,53 @@ static int def_chain(int N, int *c)
 static long drev_full(long x, const int *r, int nf)
 { long v = 0; for (int i = nf - 1; i >= 0; i--) { v = v * r[i] + (x % r[i]); x /= r[i]; } return v; }
 
+/* ROUTE-AGNOSTIC comb check (route axis, 2026-07-27): the kind-4 wisdom may
+ * serve LEGACY zsplit or ZTURN-S, whose scrambled combs DIFFER (both legal —
+ * the public SCRAMBLED contract promises a fixed route-defined permutation,
+ * not WHICH one; bwd inverts the same route's comb). So the fixed drev
+ * compare only applies to a route-pinned legacy plan; the wisdom-routed plan
+ * is gated as: fwd output must be a BIJECTIVE relabeling of the reference
+ * spectrum (extracted by nearest-match), plus determinism + roundtrip. */
+static const double *g_sort_key;
+static int idx_cmp(const void *a, const void *b)
+{
+    double x = g_sort_key[*(const int *)a], y = g_sort_key[*(const int *)b];
+    return (x > y) - (x < y);
+}
+static int spec_bijection(const double *S, const double *Rr, const double *Ri,
+                          int N, double mag, double *errout)
+{
+    int *ord = (int *)malloc((size_t)N * sizeof(int));
+    unsigned char *used = (unsigned char *)calloc((size_t)N, 1);
+    if (!ord || !used) { free(ord); free(used); return 0; }
+    for (int i = 0; i < N; i++) ord[i] = i;
+    g_sort_key = Rr;
+    qsort(ord, (size_t)N, sizeof(int), idx_cmp);
+    const double win = 1e-9 * mag; /* candidate window on re; (re,im) decides */
+    double err = 0;
+    int ok = 1;
+    for (long idx = 0; idx < N && ok; idx++) {
+        double sr = S[2 * idx], si = S[2 * idx + 1];
+        /* first sorted position with Rr >= sr - win */
+        int lo = 0, hi = N;
+        while (lo < hi) { int mid = (lo + hi) >> 1;
+            if (Rr[ord[mid]] < sr - win) lo = mid + 1; else hi = mid; }
+        int best = -1; double bd = 0;
+        for (int j = lo; j < N && Rr[ord[j]] <= sr + win; j++) {
+            int m = ord[j];
+            if (used[m]) continue;
+            double d = fabs(sr - Rr[m]) + fabs(si - Ri[m]);
+            if (best < 0 || d < bd) { best = m; bd = d; }
+        }
+        if (best < 0 || bd / mag >= 1e-11) { ok = 0; break; }
+        used[best] = 1;
+        if (bd > err) err = bd;
+    }
+    *errout = err / mag;
+    free(ord); free(used);
+    return ok;
+}
+
 static int run_cell(int N)
 {
     int ch[6], nf = def_chain(N, ch);
@@ -95,22 +142,45 @@ static int run_cell(int N)
     }
 
     int rc = 0;
-    /* gate 1: fwd through the API, drev compare (proves the route served) */
+    /* gate 1: fwd drev compare on a route-PINNED legacy plan (the fixed comb
+     * below is the LEGACY zsplit one; VFFT_FORCE_ZROUTE is the documented
+     * gate/test hook — the wisdom-routed plan is gated route-agnostically
+     * as gate 1b). */
+    {
+        _putenv("VFFT_FORCE_ZROUTE=legacy");
+        vfft_plan hL = vfft_create(&cfg);
+        _putenv("VFFT_FORCE_ZROUTE=");
+        if (!hL) { printf("N=%d: legacy-pinned create FAILED\n", N); rc = 1; }
+        else {
+            vfft_execute(hL, VFFT_FORWARD, z0, NULL, S, NULL);
+            long NR = (long)N / 8;
+            double err = 0;
+            for (long idx = 0; idx < N; idx++) {
+                long l = idx / NR, g = idx % NR;
+                long m = drev_full(g * 8 + l, ch, nf);
+                double d = fabs(S[2 * idx] - Rr[m]) + fabs(S[2 * idx + 1] - Ri[m]);
+                if (d > err) err = d;
+            }
+            printf("N=%-6d GATE api-fwd(drev) relerr=%.3e %s   (route-pinned legacy)\n",
+                   N, err / mag, (err / mag < 1e-11) ? "PASS" : "FAIL");
+            if (err / mag >= 1e-11) rc = 1;
+            vfft_destroy(hL);
+        }
+    }
+    /* gate 1b: the WISDOM-ROUTED plan's fwd comb — bijective relabeling of
+     * the reference spectrum + deterministic (two executes bit-identical). */
     vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
     {
-        long NR = (long)N / 8;
-        double err = 0;
-        for (long idx = 0; idx < N; idx++) {
-            long l = idx / NR, g = idx % NR;
-            long m = drev_full(g * 8 + l, ch, nf);
-            double d = fabs(S[2 * idx] - Rr[m]) + fabs(S[2 * idx + 1] - Ri[m]);
-            if (d > err) err = d;
-        }
-        printf("N=%-6d GATE api-fwd(drev) relerr=%.3e %s\n", N, err / mag,
-               (err / mag < 1e-11) ? "PASS" : "FAIL");
-        if (err / mag >= 1e-11) rc = 1;
+        double berr = 0;
+        int bij = spec_bijection(S, Rr, Ri, N, mag, &berr);
+        vfft_execute(h, VFFT_FORWARD, z0, NULL, xr, NULL);
+        int det = memcmp(S, xr, (size_t)2 * N * 8) == 0;
+        printf("N=%-6d GATE api-fwd(comb) bijection=%s relerr=%.3e det=%s %s\n",
+               N, bij ? "yes" : "NO", berr, det ? "yes" : "NO",
+               (bij && det) ? "PASS" : "FAIL");
+        if (!bij || !det) rc = 1;
     }
-    /* gate 2: roundtrip through the API */
+    /* gate 2: roundtrip through the API (matched-permutation contract) */
     vfft_execute(h, VFFT_BACKWARD, S, NULL, xr, NULL);
     {
         double err = 0, m2 = 0;
@@ -125,7 +195,8 @@ static int run_cell(int N)
         if (err / m2 >= 1e-11) rc = 1;
     }
 
-    if (!rc) {   /* front-door bench (paced): API fwd/bwd vs MKL */
+    if (!rc && !getenv("VFFT_GATE_ONLY")) { /* front-door bench (paced): API fwd/bwd vs MKL.
+                                             * VFFT_GATE_ONLY=1 = gates only, no timing. */
         DFTI_DESCRIPTOR_HANDLE mh = NULL;
         DftiCreateDescriptor(&mh, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N);
         DftiCommitDescriptor(mh);
