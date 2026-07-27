@@ -72,8 +72,24 @@ type zs_edge =
        shuffle-free. stf load side / stfb store side. *)
   | E_sect_tr4 of string
     (* ZTURN-S backward-ingest load network: 4 section records at
-       leg_addr(l = SEC[m], STRIDE) + two emit_tr4 lane transposes
+       leg_addr(l = SEC[m], STRIDE) + two tr4_str lane transposes
        (the un-turn). LOAD-ONLY. *)
+
+(* ─── B2 store/load placement policies (--zp-sched) ────────────────
+   Memory operations become first-class SCHEDULED nodes (ZNode below);
+   in B2 their POSITIONS are PINNED to reproduce the existing outputs
+   byte-for-byte — the cost-driven placement SEARCH is B3:
+     ZS_legacy   — [preamble loads] ++ [arith in EXACTLY su_schedule's
+                   order] ++ [stores in edge order]: the committed
+                   placement, as a real node sequence.
+     ZS_afterdef — each singleton store unit immediately after its
+                   sink's def (the B1 --zp-sink shape, on the sequence
+                   path; reproduces radix8_z_stf_r4sk_bwd_avx2's body).
+   ZS_off = the pre-B2 code path, byte-untouched (the default). *)
+type zs_sched =
+  | ZS_off
+  | ZS_legacy
+  | ZS_afterdef
 
 type zs_kind =
   { base : string (* "ms" | "msg" | "s0s" | "sterm" | "sterm2" — C-name stem *)
@@ -119,13 +135,18 @@ type zs_kind =
        whose per-slot stores are SINGLETON-ready (one direct storeu per
        sink tag, no cross-slot shuffle/transpose network) can sink;
        today that is E_sect_tap alone (stfb). *)
+  ; sched : zs_sched
+    (* B2 --zp-sched: emit through the combined memory+arith node
+       sequence (see zs_sched above). NEVER a kind-table default —
+       set only by emit_codelet from the flag, so default regeneration
+       stays on the pre-B2 path (not even entered). *)
   }
 
 let kind_of_string (s : string) : zs_kind =
   let mid = { base = "ms"; bwd = false; group_loop = false; uj2 = false
             ; twiddled = true; policy = Dft.TP_Flat; tw_off = ""
             ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls"
-            ; sink_stores = false } in
+            ; sink_stores = false; sched = ZS_off } in
   match s with
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
@@ -173,6 +194,110 @@ let kind_of_string (s : string) : zs_kind =
          other)
 ;;
 
+(* ─── B2: memory operations as first-class scheduled nodes ─────────
+ *
+ * The zsplit COMBINED graph: the arith DAG (Algsimp, scheduled by
+ * su_schedule) plus address-carrying memory pseudo-nodes for the edge
+ * fragments the pre-B2 code rendered out-of-band (loads in a preamble,
+ * stores in a trailing edge / the B1 flush). Instantiation precedent:
+ * codelet_cil's own Node + Schedule.Make — extending Ir.node_kind was
+ * priced at ~150 match arms and REJECTED there; same verdict here.
+ *
+ * HONESTY LEDGER (what the B2 graph does and does not model):
+ *   - ZStore preds = the wrapped sink value nodes: REAL edges (a store
+ *     fires only after its operands exist). Granularity = one store
+ *     UNIT (zs_store_unit below): the smallest fragment that can fire
+ *     once its sink tags are defined.
+ *   - ZLoad preds = [] AND no arith node points at a ZLoad: the value
+ *     edge from the address-carrying preamble unit to the NK_Load
+ *     value-copies is NOT modeled yet — wiring it (so a search can
+ *     move loads) is B3 work. In B2 every policy pins loads to the
+ *     preamble, where that edge is trivially satisfied.
+ *   - Tags: arith keeps its Algsimp tags; memory nodes get tags above
+ *     the arith maximum (loads first, then stores), preserving the
+ *     tag-ascending-is-topological invariant the scheduler's DPs rely
+ *     on if the combined graph is ever scheduled (ZStores sit topmost).
+ *)
+
+(* One pre-rendered store-edge fragment. The B1 sink_pending table,
+   generalized per edge shape; ALL store consumers render from it —
+   the trailing edge, B1's store-at-def flush, and the B2 sequence
+   walk — so there is exactly one source of store bytes. *)
+type zs_store_unit =
+  { su_tags : int list (* sink value tags this unit retires (fire when all defined) *)
+  ; su_orefs : Expr.elem_ref list (* the Output refs behind su_tags (assigns-side identity) *)
+  ; su_text : string (* the fragment's C, byte-identical to the pre-B2 rendering *)
+  }
+
+type zpayload =
+  | ZArith of Algsimp.t (* a scheduled arith node, by reference *)
+  | ZLoad of { unit_idx : int } (* one load-edge preamble unit *)
+  | ZStore of
+      { unit_idx : int
+      ; sinks : Algsimp.t list (* the wrapped sink nodes = preds *)
+      }
+
+module ZNode : Schedule.SCHED_NODE with type payload = zpayload = struct
+  type payload = zpayload
+
+  type t =
+    { tag : int
+    ; node : payload
+    }
+
+  let preds (n : t) : t list =
+    match n.node with
+    | ZArith e ->
+      List.map
+        (fun (p : Algsimp.t) -> { tag = p.Algsimp.tag; node = ZArith p })
+        (Algsimp.preds e)
+    | ZLoad _ -> [] (* address roots; the value edge to NK_Load is B3 (see ledger) *)
+    | ZStore { sinks; _ } ->
+      List.map (fun (s : Algsimp.t) -> { tag = s.Algsimp.tag; node = ZArith s }) sinks
+  ;;
+
+  let latency (u : Uarch.t) (n : t) : int =
+    match n.node with
+    | ZArith e -> Schedule.node_latency u e
+    | ZLoad _ -> u.Uarch.load_l1_latency
+    | ZStore _ -> u.Uarch.store_latency (* retire cost, mostly hidden *)
+  ;;
+
+  (* NK_Load value-copies KEEP their load class (delegation), so a
+     combined-graph SR run starve-gates them exactly as the Ir run does;
+     ZLoad units are loads too. *)
+  let is_load (n : t) =
+    match n.node with
+    | ZArith e -> Schedule.Ir_node.is_load e
+    | ZLoad _ -> true
+    | ZStore _ -> false
+  ;;
+
+  let is_store (n : t) =
+    match n.node with
+    | ZStore _ -> true
+    | ZArith _ | ZLoad _ -> false
+  ;;
+
+  let is_const (n : t) =
+    match n.node with
+    | ZArith e -> Schedule.Ir_node.is_const e
+    | ZLoad _ | ZStore _ -> false
+  ;;
+
+  let kind_char (n : t) =
+    match n.node with
+    | ZArith e -> Schedule.Ir_node.kind_char e
+    | ZLoad _ -> 'L'
+    | ZStore _ -> 'S'
+  ;;
+end
+
+(* The SHARED SR scheduler over the combined graph. B2 never ships its
+   order (policies are pinned); the VFFT_ZP_SCHED_SU knob below runs it
+   as a B3 seed instrument. *)
+module ZSched = Schedule.Make (ZNode)
+
 (* ─── emission ────────────────────────────────────────────────────── *)
 
 let emit_codelet
@@ -180,6 +305,7 @@ let emit_codelet
       ~(radix : int)
       ~(r0 : int option)
       ~(sink_stores : bool)
+      ~(sched : string option)
       ~(isa : Isa.t)
       ~(uarch : Uarch.t)
   : string
@@ -205,6 +331,51 @@ let emit_codelet
               sink today; TR4/REINT store edges need a readiness-set \
               interleave, which is NEW emitter work, not a flag)"
              kind))
+  in
+  (* ── --zp-sched admission gate (B2): the combined memory+arith node
+        sequence. Loud on: --zp-sink together with --zp-sched (two flags,
+        one output shape — an A/B script would label one arm twice), a
+        bogus policy string (a typo must not silently ship a pinned shape
+        under a searched-sounding name), and afterdef on a store edge
+        that is not sink-capable (exactly the --zp-sink constraint). ── *)
+  let k =
+    match sched with
+    | None -> k
+    | Some _ when sink_stores ->
+      failwith
+        "codelet_zsplit: --zp-sink and --zp-sched request the same stores \
+         through two mechanisms (B1 flush vs B2 sequence); pass exactly one \
+         (--zp-sched afterdef IS the B1 store-at-def shape, sequence-hosted)"
+    | Some "legacy" ->
+      (* Universal by design: legacy is the reproduction policy every kind
+         must pass through (G-1) before B3 searches anything. On s0t fwd
+         (closed-form template, no DAG) it is the identity. *)
+      { k with sched = ZS_legacy }
+    | Some "afterdef" ->
+      (match k.out_edge with
+       | E_sect_tap _ ->
+         (* sink_stores=true reuses B1's fname "sk" tag and body-header
+            text, so the sequence path reproduces the committed sk kernel
+            under the same symbol (A/B side by side with the incumbent). *)
+         { k with sched = ZS_afterdef; sink_stores = true }
+       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ ->
+         failwith
+           (Printf.sprintf
+              "codelet_zsplit: --zp-sched afterdef: kind %s's store edge is \
+               not sink-capable (only E_sect_tap's direct record stores — \
+               stfb — sink today, the --zp-sink constraint; TR4/REINT store \
+               edges need a readiness-set interleave, which is B3 emitter \
+               work, not a policy string)"
+              kind))
+    | Some other ->
+      failwith
+        (Printf.sprintf
+           "codelet_zsplit: --zp-sched %s: unknown placement policy \
+            (policies: legacy = preamble loads ++ SU-order arith ++ trailing \
+            stores, byte-reproduces the committed files; afterdef = each \
+            store at its sink's def, the --zp-sink shape). B3 adds searched \
+            placements; a typo must not silently ship a pinned shape."
+           other)
   in
   (* ── r0 is a PLAN INPUT (chain[0]), never chosen here. The ZTURN-S kinds
         bake the 4-section geometry into every address, so their fname MUST
@@ -419,9 +590,17 @@ let emit_codelet
            (match r0 with
             | Some r -> Printf.sprintf " r0=%d (ZTURN-S sectioned geometry)" r
             | None -> "")
-           (if k.sink_stores
-            then " sink-stores (store-at-def interleave, --zp-sink)"
-            else "")
+           (* B2: ZS_legacy stamps NOTHING here — its job is byte-
+              reproduction of the committed files (the argv line above
+              already records the flag); afterdef reaches sink-stores
+              through the sequence path, so the token names the flag
+              that actually ran. *)
+           (match k.sched with
+            | ZS_afterdef -> " sink-stores (store-at-def interleave, --zp-sched afterdef)"
+            | ZS_off | ZS_legacy ->
+              if k.sink_stores
+              then " sink-stores (store-at-def interleave, --zp-sink)"
+              else "")
        ; (if k.twiddled
           then
             Printf.sprintf
@@ -442,37 +621,36 @@ let emit_codelet
      _vzt_mim, zturn_proto.h). *)
   if k.base = "s0t" && not k.bwd
   then Buffer.add_string buf (Isa.im_mask_decl isa "_zs0t_mim" ^ "\n\n");
-  (* TR4 emission helper (E_blocks): 4 unpacks + 4 permute2f128 turning
+  (* TR4 rendering helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
-     are C variable names; dsts are declared const. *)
-  let emit_tr4 ~(qid : string) (srcs : string array) (dsts : string array) : unit =
+     are C variable names; dsts are declared const. Returns the fragment
+     (B2: edges render through chunk sinks; pre-B2 call sites passed the
+     same two sprintf blocks straight to the buffer — the concatenation
+     is byte-identical). *)
+  let tr4_str ~(qid : string) (srcs : string array) (dsts : string array) : string =
     let unlo = Isa.intr isa "unpacklo_pd"
     and unhi = Isa.intr isa "unpackhi_pd"
     and p2f = Isa.intr isa "permute2f128_pd" in
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "        %s\n        %s\n        %s\n        %s\n"
-         (Isa.const_decl isa (Printf.sprintf "_u0_%s" qid)
-            (Printf.sprintf "%s(%s, %s)" unlo srcs.(0) srcs.(1)))
-         (Isa.const_decl isa (Printf.sprintf "_u1_%s" qid)
-            (Printf.sprintf "%s(%s, %s)" unhi srcs.(0) srcs.(1)))
-         (Isa.const_decl isa (Printf.sprintf "_u2_%s" qid)
-            (Printf.sprintf "%s(%s, %s)" unlo srcs.(2) srcs.(3)))
-         (Isa.const_decl isa (Printf.sprintf "_u3_%s" qid)
-            (Printf.sprintf "%s(%s, %s)" unhi srcs.(2) srcs.(3))));
-    Buffer.add_string
-      buf
-      (Printf.sprintf
-         "        %s\n        %s\n        %s\n        %s\n"
-         (Isa.const_decl isa dsts.(0)
-            (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x20)" p2f qid qid))
-         (Isa.const_decl isa dsts.(1)
-            (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x20)" p2f qid qid))
-         (Isa.const_decl isa dsts.(2)
-            (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x31)" p2f qid qid))
-         (Isa.const_decl isa dsts.(3)
-            (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x31)" p2f qid qid)))
+    Printf.sprintf
+      "        %s\n        %s\n        %s\n        %s\n"
+      (Isa.const_decl isa (Printf.sprintf "_u0_%s" qid)
+         (Printf.sprintf "%s(%s, %s)" unlo srcs.(0) srcs.(1)))
+      (Isa.const_decl isa (Printf.sprintf "_u1_%s" qid)
+         (Printf.sprintf "%s(%s, %s)" unhi srcs.(0) srcs.(1)))
+      (Isa.const_decl isa (Printf.sprintf "_u2_%s" qid)
+         (Printf.sprintf "%s(%s, %s)" unlo srcs.(2) srcs.(3)))
+      (Isa.const_decl isa (Printf.sprintf "_u3_%s" qid)
+         (Printf.sprintf "%s(%s, %s)" unhi srcs.(2) srcs.(3)))
+    ^ Printf.sprintf
+        "        %s\n        %s\n        %s\n        %s\n"
+        (Isa.const_decl isa dsts.(0)
+           (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x20)" p2f qid qid))
+        (Isa.const_decl isa dsts.(1)
+           (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x20)" p2f qid qid))
+        (Isa.const_decl isa dsts.(2)
+           (Printf.sprintf "%s(_u0_%s, _u2_%s, 0x31)" p2f qid qid))
+        (Isa.const_decl isa dsts.(3)
+           (Printf.sprintf "%s(_u1_%s, _u3_%s, 0x31)" p2f qid qid))
   in
   (* column-c block address: base 2·R·(k+c), halves at h·2·VW, im +VW *)
   let blk_addr (buf_name : string) (c : int) (off : int) : string =
@@ -523,16 +701,32 @@ let emit_codelet
     =
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
+    (* ── B2 chunk sinks: every load-edge fragment is rendered through a
+          sink function. Flag-off (ZS_off): the sinks ARE
+          Buffer.add_string buf, called in the exact order of the pre-B2
+          code — the byte path is unchanged (gate G-3). Flag-on: the
+          fragments are captured as ZLoad units and the combined-sequence
+          walk below is the only writer of the loop body. ── *)
+    let sched_on = k.sched <> ZS_off in
+    let load_hdr_s = ref "" in
+    let load_units_rev : string list ref = ref [] in
+    let load_hdr (s : string) : unit =
+      if sched_on then load_hdr_s := s else Buffer.add_string buf s
+    in
+    let load_chunk (s : string) : unit =
+      if sched_on
+      then load_units_rev := s :: !load_units_rev
+      else Buffer.add_string buf s
+    in
     (match k.in_edge with
      | E_planes s ->
        (* ── ZBlockSplit load edge: lane_{re,im}_l from the split planes.
              Leg l's re half at zin + 2*(l*S + k), im half +VW. ── *)
-       Buffer.add_string buf "        /* ZBlockSplit load edge */\n";
+       load_hdr "        /* ZBlockSplit load edge */\n";
        for sl = 0 to nslots - 1 do
          let leg = sl mod radix
          and colo = sl / radix * vw in
-         Buffer.add_string
-           buf
+         load_chunk
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl
@@ -548,15 +742,14 @@ let emit_codelet
        (* ── Z load edge (DEINT): two z vectors per leg, deinterleaved into
              the lane planes — unpacklo/hi + permute4x64 0xD8, the shuffles
              the cascade pays once at its API boundary. ── *)
-       Buffer.add_string buf "        /* Z load edge (DEINT) */\n";
+       load_hdr "        /* Z load edge (DEINT) */\n";
        let unlo = Isa.intr isa "unpacklo_pd"
        and unhi = Isa.intr isa "unpackhi_pd"
        and p44 = Isa.intr isa "permute4x64_pd" in
        for sl = 0 to nslots - 1 do
          let leg = sl mod radix
          and colo = sl / radix * vw in
-         Buffer.add_string
-           buf
+         load_chunk
            (Printf.sprintf
               "        %s\n        %s\n        %s\n        %s\n"
               (Isa.const_decl
@@ -580,12 +773,11 @@ let emit_codelet
        (* ── Block load edge (TR4): per column, load the R/VW block halves
              and TR4 each quad into leg-major lanes (lane = column). The
              terminator's load-side transpose; ninst=2 covers 2·VW cols. ── *)
-       Buffer.add_string buf "        /* Block load edge (TR4) */\n";
+       load_hdr "        /* Block load edge (TR4) */\n";
        let halves = radix / vw in
        for c = 0 to (ninst * vw) - 1 do
          for h = 0 to halves - 1 do
-           Buffer.add_string
-             buf
+           load_chunk
              (Printf.sprintf
                 "        %s\n        %s\n"
                 (Isa.const_decl
@@ -600,16 +792,18 @@ let emit_codelet
        done;
        for inst = 0 to ninst - 1 do
          for h = 0 to halves - 1 do
-           emit_tr4
-             ~qid:(Printf.sprintf "lr%d_%d" h inst)
-             (Array.init 4 (fun j -> Printf.sprintf "_br%d_%d" h ((inst * vw) + j)))
-             (Array.init 4 (fun j ->
-                Printf.sprintf "lane_re_%d" ((inst * radix) + (h * vw) + j)));
-           emit_tr4
-             ~qid:(Printf.sprintf "li%d_%d" h inst)
-             (Array.init 4 (fun j -> Printf.sprintf "_bi%d_%d" h ((inst * vw) + j)))
-             (Array.init 4 (fun j ->
-                Printf.sprintf "lane_im_%d" ((inst * radix) + (h * vw) + j)))
+           load_chunk
+             (tr4_str
+                ~qid:(Printf.sprintf "lr%d_%d" h inst)
+                (Array.init 4 (fun j -> Printf.sprintf "_br%d_%d" h ((inst * vw) + j)))
+                (Array.init 4 (fun j ->
+                   Printf.sprintf "lane_re_%d" ((inst * radix) + (h * vw) + j))));
+           load_chunk
+             (tr4_str
+                ~qid:(Printf.sprintf "li%d_%d" h inst)
+                (Array.init 4 (fun j -> Printf.sprintf "_bi%d_%d" h ((inst * vw) + j)))
+                (Array.init 4 (fun j ->
+                   Printf.sprintf "lane_im_%d" ((inst * radix) + (h * vw) + j))))
          done
        done
      | E_sect_tap s ->
@@ -617,8 +811,7 @@ let emit_codelet
              2 consecutive 64-B records per section per column group
              (128 B contiguous), lanes pass straight through — NO load
              shuffles (the stf side of the turn's payoff). ── *)
-       Buffer.add_string
-         buf
+       load_hdr
          "        /* ZTURN-S section-tap load edge (2 records/section, 128 B \
           contiguous, no shuffles) */\n";
        if ninst <> 1
@@ -627,8 +820,7 @@ let emit_codelet
            "codelet_zsplit: E_sect_tap has no uj2 form (stf2 twin is out of scope, \
             consensus doc risk 3)";
        for q = 0 to radix - 1 do
-         Buffer.add_string
-           buf
+         load_chunk
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl
@@ -644,16 +836,14 @@ let emit_codelet
        (* ── ZTURN-S backward-ingest load edge: granule's 4 section records
              (section order SEC = its own inverse, so natural position
              order) + 4x4 lane transpose = the un-turn. ── *)
-       Buffer.add_string
-         buf
+       load_hdr
          "        /* ZTURN-S section-record load edge + 4x4 lane transpose (un-turn) \
           */\n";
        if ninst <> 1 || radix <> vw
        then failwith "codelet_zsplit: E_sect_tr4 assumes radix = VW = 4, ninst = 1";
        let sec = [| 0; 2; 1; 3 |] in
        for m = 0 to 3 do
-         Buffer.add_string
-           buf
+         load_chunk
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl
@@ -665,14 +855,16 @@ let emit_codelet
                  (Printf.sprintf "_si_%d" m)
                  (Isa.loadu_pd isa (leg_addr "zin" sec.(m) s 0 vw))))
        done;
-       emit_tr4
-         ~qid:"lr0_0"
-         (Array.init 4 (Printf.sprintf "_sr_%d"))
-         (Array.init 4 (Printf.sprintf "lane_re_%d"));
-       emit_tr4
-         ~qid:"li0_0"
-         (Array.init 4 (Printf.sprintf "_si_%d"))
-         (Array.init 4 (Printf.sprintf "lane_im_%d")));
+       load_chunk
+         (tr4_str
+            ~qid:"lr0_0"
+            (Array.init 4 (Printf.sprintf "_sr_%d"))
+            (Array.init 4 (Printf.sprintf "lane_re_%d")));
+       load_chunk
+         (tr4_str
+            ~qid:"li0_0"
+            (Array.init 4 (Printf.sprintf "_si_%d"))
+            (Array.init 4 (Printf.sprintf "lane_im_%d"))));
     (* per-slot output tag arrays (all edge shapes consume pairs) — built
        BEFORE the body walk so sink_stores can interleave stores at defs *)
     let re_tag = Array.make nslots (-1)
@@ -684,41 +876,157 @@ let emit_codelet
          | Expr.Output (l, false) -> im_tag.(l) <- e.Algsimp.tag
          | _ -> failwith "codelet_zsplit: assign LHS is not Output")
       assigns;
-    (* ── sink_stores pending table: (sink tag, pre-rendered store line)
-          in the trailing edge's slot order (q ascending, re then im).
-          E_sect_tap only — SINGLETON readiness, one direct storeu per
-          sink tag (the emit_codelet admission gate). An ARRAY, not a
-          hashtable: if CSE ever aliases two slots to one tag, each slot
-          keeps its own store line and both fire at that tag's def. ── *)
-    let sink_pending : (int * string) array =
-      if not k.sink_stores
-      then [||]
-      else (
-        match k.out_edge with
-        | E_sect_tap s ->
-          Array.init (2 * nslots) (fun i ->
+    (* ── store-edge unit table: ONE pre-rendered table for every store
+          consumer — the trailing edge, B1's store-at-def flush, and the
+          B2 sequence walk all render from it (the B1 sink_pending table,
+          generalized per edge shape; concatenating a table in order
+          reproduces the pre-B2 trailing edge byte-for-byte). Unit
+          granularity = the smallest fragment that can fire once its sink
+          tags are defined: E_sect_tap per (slot, re/im) single storeu
+          (SINGLETON — the only granularity afterdef threads); E_planes /
+          E_z per slot; E_blocks per TR4 quad (the whole shuffle network
+          + its 2·VW stores). An ARRAY, not a hashtable: if CSE ever
+          aliases two slots to one tag, each slot keeps its own unit and
+          both fire at that tag's def. ── *)
+    let store_hdr, (store_units : zs_store_unit array) =
+      match k.out_edge with
+      | E_planes s ->
+        ( "        /* ZBlockSplit store edge */\n"
+        , Array.init nslots (fun sl ->
+            let leg = sl mod radix
+            and colo = sl / radix * vw in
+            { su_tags = [ re_tag.(sl); im_tag.(sl) ]
+            ; su_orefs = [ Expr.Output (sl, true); Expr.Output (sl, false) ]
+            ; su_text =
+                Printf.sprintf
+                  "        %s;\n        %s;\n"
+                  (Isa.storeu_pd
+                     isa
+                     (leg_addr "zout" leg s colo 0)
+                     (Printf.sprintf "t%d" re_tag.(sl)))
+                  (Isa.storeu_pd
+                     isa
+                     (leg_addr "zout" leg s colo vw)
+                     (Printf.sprintf "t%d" im_tag.(sl)))
+            }) )
+      | E_z s ->
+        (* ── Z store edge (REINT): permute4x64 0xD8 each plane, then
+              unpacklo/hi re-interleaves back to natural z. For the
+              terminator this addressing (leg-major on OLs = N/R) IS the
+              digit-reversed comb — the scramble itself is plan-side. ── *)
+        let unlo = Isa.intr isa "unpacklo_pd"
+        and unhi = Isa.intr isa "unpackhi_pd"
+        and p44 = Isa.intr isa "permute4x64_pd" in
+        ( "        /* Z store edge (REINT) */\n"
+        , Array.init nslots (fun sl ->
+            let leg = sl mod radix
+            and colo = sl / radix * vw in
+            { su_tags = [ re_tag.(sl); im_tag.(sl) ]
+            ; su_orefs = [ Expr.Output (sl, true); Expr.Output (sl, false) ]
+            ; su_text =
+                Printf.sprintf
+                  "        %s\n        %s\n        %s;\n        %s;\n"
+                  (Isa.const_decl
+                     isa
+                     (Printf.sprintf "_pr_%d" sl)
+                     (Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(sl)))
+                  (Isa.const_decl
+                     isa
+                     (Printf.sprintf "_qi_%d" sl)
+                     (Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
+                  (Isa.storeu_pd
+                     isa
+                     (leg_addr "zout" leg s colo 0)
+                     (Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
+                  (Isa.storeu_pd
+                     isa
+                     (leg_addr "zout" leg s colo vw)
+                     (Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl))
+            }) )
+      | E_blocks ->
+        (* ── Block store edge (TR4 back): leg-major result vectors
+              transpose to column vectors, stored as each column's R/VW
+              block halves (the stermb output side). Unit = one (inst,h)
+              quad: its two TR4 networks + stores fire together once all
+              8 sink lanes are defined. ── *)
+        let halves = radix / vw in
+        ( "        /* Block store edge (TR4) */\n"
+        , Array.init (ninst * halves) (fun u ->
+            let inst = u / halves
+            and h = u mod halves in
+            let slot j = (inst * radix) + (h * vw) + j in
+            let sr =
+              tr4_str
+                ~qid:(Printf.sprintf "sr%d_%d" h inst)
+                (Array.init 4 (fun j -> Printf.sprintf "t%d" re_tag.(slot j)))
+                (Array.init 4 (fun j -> Printf.sprintf "_cr%d_%d" h ((inst * vw) + j)))
+            and si =
+              tr4_str
+                ~qid:(Printf.sprintf "si%d_%d" h inst)
+                (Array.init 4 (fun j -> Printf.sprintf "t%d" im_tag.(slot j)))
+                (Array.init 4 (fun j -> Printf.sprintf "_ci%d_%d" h ((inst * vw) + j)))
+            in
+            let stores =
+              String.concat
+                ""
+                (List.init vw (fun j ->
+                   let c = (inst * vw) + j in
+                   Printf.sprintf
+                     "        %s;\n        %s;\n"
+                     (Isa.storeu_pd
+                        isa
+                        (blk_addr "zout" c (h * 2 * vw))
+                        (Printf.sprintf "_cr%d_%d" h c))
+                     (Isa.storeu_pd
+                        isa
+                        (blk_addr "zout" c ((h * 2 * vw) + vw))
+                        (Printf.sprintf "_ci%d_%d" h c))))
+            in
+            { su_tags =
+                List.init 4 (fun j -> re_tag.(slot j))
+                @ List.init 4 (fun j -> im_tag.(slot j))
+            ; su_orefs =
+                List.init 4 (fun j -> Expr.Output (slot j, true))
+                @ List.init 4 (fun j -> Expr.Output (slot j, false))
+            ; su_text = sr ^ si ^ stores
+            }) )
+      | E_sect_tap s ->
+        (* ── ZTURN-S direct record store edge (stfb): leg q's results go
+              straight to record SEC[q&3]*..., 2k'+(q>>2) — the TR4 store
+              edge is GONE (exact address-mirror of stf's loads). Unit =
+              ONE storeu per (slot, re/im), q ascending, re then im:
+              SINGLETON-ready, exactly what the --zp-sink/afterdef
+              admission gate promises. ── *)
+        ( "        /* ZTURN-S direct record store edge (no TR4) */\n"
+        , Array.init (2 * nslots) (fun i ->
             let q = i / 2 in
-            let tag, plus = if i land 1 = 0 then re_tag.(q), 0 else im_tag.(q), vw in
-            ( tag
-            , Printf.sprintf
-                "        %s;\n"
-                (Isa.storeu_pd
-                   isa
-                   (sect_addr "zout" q s plus)
-                   (Printf.sprintf "t%d" tag)) ))
-        | _ ->
-          (* unreachable: emit_codelet's --zp-sink gate admits E_sect_tap only *)
-          failwith "codelet_zsplit: sink_stores without an E_sect_tap store edge")
+            let tag, plus, isre =
+              if i land 1 = 0 then re_tag.(q), 0, true else im_tag.(q), vw, false
+            in
+            { su_tags = [ tag ]
+            ; su_orefs = [ Expr.Output (q, isre) ]
+            ; su_text =
+                Printf.sprintf
+                  "        %s;\n"
+                  (Isa.storeu_pd
+                     isa
+                     (sect_addr "zout" q s plus)
+                     (Printf.sprintf "t%d" tag))
+            }) )
+      | E_sect_tr4 _ ->
+        failwith
+          "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \
+           template-emitted)"
     in
-    let sink_done = Array.make (Array.length sink_pending) false in
+    let sink_done = Array.make (Array.length store_units) false in
     let flush_sunk_stores (tag : int) : unit =
       Array.iteri
-        (fun i (t, line) ->
-           if (not sink_done.(i)) && t = tag
+        (fun i (u : zs_store_unit) ->
+           if (not sink_done.(i)) && u.su_tags = [ tag ]
            then (
              sink_done.(i) <- true;
-             Buffer.add_string buf line))
-        sink_pending
+             Buffer.add_string buf u.su_text))
+        store_units
     in
     (* ── SU-scheduled body. Defs in schedule order (first occurrence per
           tag); single-use tags render inline at their consumer. Twiddle
@@ -726,163 +1034,243 @@ let emit_codelet
           whose tag is a pending sink immediately trails its store line
           (store-at-def = the value's natural last use, the
           Emit_state.current_store_on_compute thesis). ── *)
-    Buffer.add_string
-      buf
-      (if k.sink_stores
-       then "        /* SU-scheduled body (pipeline) + sect-tap stores sunk at defs */\n"
-       else "        /* SU-scheduled body (pipeline) */\n");
-    Fun.protect
-      ~finally:(fun () -> Emit_c.current_tw_zsplit := None)
-      (fun () ->
-         Emit_c.current_tw_zsplit := Some k.tw_off;
-         let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-         List.iter
-           (fun ((_ : Expr.elem_ref option), (e : Algsimp.t)) ->
-              if
-                (not (Hashtbl.mem seen e.Algsimp.tag))
-                && not (Hashtbl.mem inline_set e.Algsimp.tag)
+    let body_hdr =
+      if k.sink_stores
+      then "        /* SU-scheduled body (pipeline) + sect-tap stores sunk at defs */\n"
+      else "        /* SU-scheduled body (pipeline) */\n"
+    in
+    (if not sched_on
+     then (
+       (* ══ pre-B2 path (ZS_off): body walk (+ B1 flush) then trailing
+             store edge / defensive residual — byte-for-byte the committed
+             behavior (gate G-3). ══ *)
+       Buffer.add_string buf body_hdr;
+       Fun.protect
+         ~finally:(fun () -> Emit_c.current_tw_zsplit := None)
+         (fun () ->
+            Emit_c.current_tw_zsplit := Some k.tw_off;
+            let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+            List.iter
+              (fun ((_ : Expr.elem_ref option), (e : Algsimp.t)) ->
+                 if
+                   (not (Hashtbl.mem seen e.Algsimp.tag))
+                   && not (Hashtbl.mem inline_set e.Algsimp.tag)
+                 then (
+                   Hashtbl.replace seen e.Algsimp.tag ();
+                   (* render_node_def embeds its own 8-space indent *)
+                   Buffer.add_string
+                     buf
+                     (Emit_c.render_node_def
+                        ~isa
+                        ~in_place:false
+                        ~t1s:false
+                        ~strided:true
+                        ~inline_set:(Some inline_set)
+                        e);
+                   Buffer.add_char buf '\n';
+                   if k.sink_stores then flush_sunk_stores e.Algsimp.tag))
+              scheduled);
+       if k.sink_stores
+       then
+         (* Stores were interleaved at defs; nothing should be pending here:
+            sink tags are never inlined (compute_inline_set treats outputs
+            as sinks — the current_store_on_compute comment's invariant), so
+            every sink tag materialized as a named def in the walk above.
+            Defensive flush, loudly marked — a line below this comment means
+            the slot->tag tables disagree with the schedule. *)
+         Array.iteri
+           (fun i (u : zs_store_unit) ->
+              if not sink_done.(i)
               then (
-                Hashtbl.replace seen e.Algsimp.tag ();
-                (* render_node_def embeds its own 8-space indent *)
+                sink_done.(i) <- true;
                 Buffer.add_string
                   buf
-                  (Emit_c.render_node_def
-                     ~isa
-                     ~in_place:false
-                     ~t1s:false
-                     ~strided:true
-                     ~inline_set:(Some inline_set)
-                     e);
-                Buffer.add_char buf '\n';
-                if k.sink_stores then flush_sunk_stores e.Algsimp.tag))
-           scheduled);
-    (match k.out_edge with
-     | _ when k.sink_stores ->
-       (* Stores were interleaved at defs; nothing should be pending here:
-          sink tags are never inlined (compute_inline_set treats outputs
-          as sinks — the current_store_on_compute comment's invariant), so
-          every sink tag materialized as a named def in the walk above.
-          Defensive flush, loudly marked — a line below this comment means
-          the slot->tag tables disagree with the schedule. *)
-       Array.iteri
-         (fun i (_, line) ->
-            if not sink_done.(i)
-            then (
-              sink_done.(i) <- true;
-              Buffer.add_string
-                buf
-                "        /* UNSUNK RESIDUAL (slot->tag table / schedule mismatch) */\n";
-              Buffer.add_string buf line))
-         sink_pending
-     | E_planes s ->
-       Buffer.add_string buf "        /* ZBlockSplit store edge */\n";
-       for sl = 0 to nslots - 1 do
-         let leg = sl mod radix
-         and colo = sl / radix * vw in
-         Buffer.add_string
-           buf
-           (Printf.sprintf
-              "        %s;\n        %s;\n"
-              (Isa.storeu_pd
-                 isa
-                 (leg_addr "zout" leg s colo 0)
-                 (Printf.sprintf "t%d" re_tag.(sl)))
-              (Isa.storeu_pd
-                 isa
-                 (leg_addr "zout" leg s colo vw)
-                 (Printf.sprintf "t%d" im_tag.(sl))))
-       done
-     | E_z s ->
-       (* ── Z store edge (REINT): permute4x64 0xD8 each plane, then
-             unpacklo/hi re-interleaves back to natural z. For the
-             terminator this addressing (leg-major on OLs = N/R) IS the
-             digit-reversed comb — the scramble itself is plan-side. ── *)
-       Buffer.add_string buf "        /* Z store edge (REINT) */\n";
-       let unlo = Isa.intr isa "unpacklo_pd"
-       and unhi = Isa.intr isa "unpackhi_pd"
-       and p44 = Isa.intr isa "permute4x64_pd" in
-       for sl = 0 to nslots - 1 do
-         let leg = sl mod radix
-         and colo = sl / radix * vw in
-         Buffer.add_string
-           buf
-           (Printf.sprintf
-              "        %s\n        %s\n        %s;\n        %s;\n"
-              (Isa.const_decl
-                 isa
-                 (Printf.sprintf "_pr_%d" sl)
-                 (Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(sl)))
-              (Isa.const_decl
-                 isa
-                 (Printf.sprintf "_qi_%d" sl)
-                 (Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
-              (Isa.storeu_pd
-                 isa
-                 (leg_addr "zout" leg s colo 0)
-                 (Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
-              (Isa.storeu_pd
-                 isa
-                 (leg_addr "zout" leg s colo vw)
-                 (Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl)))
-       done
-     | E_blocks ->
-       (* ── Block store edge (TR4 back): leg-major result vectors transpose
-             to column vectors, stored as each column's R/VW block halves
-             (the stermb output side). ── *)
-       Buffer.add_string buf "        /* Block store edge (TR4) */\n";
-       let halves = radix / vw in
-       for inst = 0 to ninst - 1 do
-         for h = 0 to halves - 1 do
-           emit_tr4
-             ~qid:(Printf.sprintf "sr%d_%d" h inst)
-             (Array.init 4 (fun j ->
-                Printf.sprintf "t%d" re_tag.((inst * radix) + (h * vw) + j)))
-             (Array.init 4 (fun j -> Printf.sprintf "_cr%d_%d" h ((inst * vw) + j)));
-           emit_tr4
-             ~qid:(Printf.sprintf "si%d_%d" h inst)
-             (Array.init 4 (fun j ->
-                Printf.sprintf "t%d" im_tag.((inst * radix) + (h * vw) + j)))
-             (Array.init 4 (fun j -> Printf.sprintf "_ci%d_%d" h ((inst * vw) + j)));
-           for j = 0 to vw - 1 do
-             let c = (inst * vw) + j in
-             Buffer.add_string
-               buf
-               (Printf.sprintf
-                  "        %s;\n        %s;\n"
-                  (Isa.storeu_pd
-                     isa
-                     (blk_addr "zout" c (h * 2 * vw))
-                     (Printf.sprintf "_cr%d_%d" h c))
-                  (Isa.storeu_pd
-                     isa
-                     (blk_addr "zout" c ((h * 2 * vw) + vw))
-                     (Printf.sprintf "_ci%d_%d" h c)))
-           done
-         done
-       done
-     | E_sect_tap s ->
-       (* ── ZTURN-S direct record store edge (stfb): leg q's results go
-             straight to record SEC[q&3]*..., 2k'+(q>>2) — the TR4 store
-             edge is GONE (exact address-mirror of stf's loads). ── *)
-       Buffer.add_string buf "        /* ZTURN-S direct record store edge (no TR4) */\n";
-       for q = 0 to radix - 1 do
-         Buffer.add_string
-           buf
-           (Printf.sprintf
-              "        %s;\n        %s;\n"
-              (Isa.storeu_pd
-                 isa
-                 (sect_addr "zout" q s 0)
-                 (Printf.sprintf "t%d" re_tag.(q)))
-              (Isa.storeu_pd
-                 isa
-                 (sect_addr "zout" q s vw)
-                 (Printf.sprintf "t%d" im_tag.(q))))
-       done
-     | E_sect_tr4 _ ->
-       failwith
-         "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \
-          template-emitted)");
+                  "        /* UNSUNK RESIDUAL (slot->tag table / schedule mismatch) */\n";
+                Buffer.add_string buf u.su_text))
+           store_units
+       else (
+         (* trailing store edge = the unit table in order (the pre-B2
+            per-edge rendering, pre-rendered above) *)
+         Buffer.add_string buf store_hdr;
+         Array.iter
+           (fun (u : zs_store_unit) -> Buffer.add_string buf u.su_text)
+           store_units))
+     else (
+       (* ══ B2 path (--zp-sched): the combined memory+arith sequence.
+             The nodes are REAL (ZNode.t, honest preds/tags); their
+             POSITIONS are the pinned policy — B3 replaces the pinning
+             with measured search, nothing else changes shape. ══ *)
+       let load_units = Array.of_list (List.rev !load_units_rev) in
+       let arith_order =
+         List.filter_map
+           (fun (o, (e : Algsimp.t)) ->
+              match o with
+              | None -> Some e
+              | Some _ ->
+                (* su_schedule's appended assign stores: the sequence's
+                   ZStore units REPLACE this legacy representation *)
+                None)
+           scheduled
+       in
+       let base =
+         1 + List.fold_left (fun m (e : Algsimp.t) -> max m e.Algsimp.tag) 0 arith_order
+       in
+       let by_tag : (int, Algsimp.t) Hashtbl.t = Hashtbl.create 256 in
+       List.iter (fun (e : Algsimp.t) -> Hashtbl.replace by_tag e.Algsimp.tag e) arith_order;
+       let nload = Array.length load_units in
+       let zarith (e : Algsimp.t) : ZNode.t = { ZNode.tag = e.Algsimp.tag; node = ZArith e } in
+       let zload (i : int) : ZNode.t = { ZNode.tag = base + i; node = ZLoad { unit_idx = i } } in
+       let zstore (j : int) : ZNode.t =
+         let sinks =
+           List.filter_map
+             (fun t -> Hashtbl.find_opt by_tag t)
+             store_units.(j).su_tags
+         in
+         { ZNode.tag = base + nload + j; node = ZStore { unit_idx = j; sinks } }
+       in
+       let loads = List.init nload zload in
+       let residual : (int, unit) Hashtbl.t = Hashtbl.create 4 in
+       let combined : ZNode.t list =
+         match k.sched with
+         | ZS_legacy ->
+           (* [preamble loads] ++ [arith in EXACTLY su_schedule's order]
+              ++ [stores in edge order] — the committed placement as a
+              real node sequence (gate G-1). *)
+           loads
+           @ List.map zarith arith_order
+           @ List.init (Array.length store_units) zstore
+         | ZS_afterdef ->
+           (* B1 semantics (gate G-2): each SINGLETON unit threads
+              immediately after its sink's RENDERED def — the inline
+              check mirrors the B1 flush firing only after rendered
+              defs (sink tags are never inlined, so in practice every
+              unit threads). Unthreaded units trail as loud residuals. *)
+           let used = Array.make (Array.length store_units) false in
+           let seq = ref [] in
+           List.iter
+             (fun (e : Algsimp.t) ->
+                seq := zarith e :: !seq;
+                if not (Hashtbl.mem inline_set e.Algsimp.tag)
+                then
+                  Array.iteri
+                    (fun j (u : zs_store_unit) ->
+                       if (not used.(j)) && u.su_tags = [ e.Algsimp.tag ]
+                       then (
+                         used.(j) <- true;
+                         seq := zstore j :: !seq))
+                    store_units)
+             arith_order;
+           Array.iteri
+             (fun j _ ->
+                if not used.(j)
+                then (
+                  Hashtbl.replace residual j ();
+                  seq := zstore j :: !seq))
+             store_units;
+           loads @ List.rev !seq
+         | ZS_off -> assert false (* sched_on *)
+       in
+       (* ── EXPERIMENTAL (B3 seed; default OFF, no gate depends on it):
+             run the SHARED SR scheduler over the combined graph with the
+             ZStore units as first-class sinks. Under SR's own rules a
+             ready ZStore is an empty-user sink, so RETIRE fires it at
+             readiness — after-def placement EMERGES instead of being
+             pinned. ZLoad roots have no users yet (see ZNode's honesty
+             ledger), so the run covers arith+stores; load-edge wiring is
+             B3. Dump is append-mode (sterm2 emits two loops per file);
+             sinks appear once as intermediates and once as su_schedule's
+             trailing assigns echo. Shares the process env with the
+             Ir-side VFFT_SCHED_DUMP hooks — don't set both. ── *)
+       (match Sys.getenv_opt "VFFT_ZP_SCHED_SU" with
+        | None -> ()
+        | Some file ->
+          let store_assigns =
+            List.init (Array.length store_units) (fun j ->
+              ( (match store_units.(j).su_orefs with
+                 | r :: _ -> r
+                 | [] -> failwith "codelet_zsplit: store unit with no output ref")
+              , zstore j ))
+          in
+          let order = ZSched.su_schedule uarch store_assigns in
+          let oc = open_out_gen [ Open_append; Open_creat ] 0o644 file in
+          Printf.fprintf
+            oc
+            "# %s combined-graph SR order (%d rows)\n"
+            fname
+            (List.length order);
+          List.iter
+            (fun ((_ : Expr.elem_ref option), (n : ZNode.t)) ->
+               Printf.fprintf oc "%d %c\n" n.ZNode.tag (ZNode.kind_char n))
+            order;
+          close_out oc);
+       (* ── sequence-driven emission: ONE walk renders loads, arith and
+             stores in sequence order, dispatching through the SCHED_NODE
+             accessors. Headers fire at each class's first node — under
+             the pinned policies that reproduces the pre-B2 header
+             positions exactly. ── *)
+       let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+       let load_hdr_fired = ref false
+       and body_hdr_fired = ref false
+       and store_hdr_fired = ref false in
+       Fun.protect
+         ~finally:(fun () -> Emit_c.current_tw_zsplit := None)
+         (fun () ->
+            Emit_c.current_tw_zsplit := Some k.tw_off;
+            List.iter
+              (fun (zn : ZNode.t) ->
+                 if ZNode.is_store zn
+                 then (
+                   (match k.sched with
+                    | ZS_legacy ->
+                      if not !store_hdr_fired
+                      then (
+                        store_hdr_fired := true;
+                        Buffer.add_string buf store_hdr)
+                    | ZS_afterdef | ZS_off -> ());
+                   match zn.ZNode.node with
+                   | ZStore { unit_idx; _ } ->
+                     if Hashtbl.mem residual unit_idx
+                     then
+                       Buffer.add_string
+                         buf
+                         "        /* UNSUNK RESIDUAL (slot->tag table / schedule \
+                          mismatch) */\n";
+                     Buffer.add_string buf store_units.(unit_idx).su_text
+                   | ZArith _ | ZLoad _ -> assert false)
+                 else (
+                   match zn.ZNode.node with
+                   | ZLoad { unit_idx } ->
+                     (* preamble unit (ZNode.is_load; distinct from the
+                        ZArith-wrapped NK_Load value copies, which are
+                        body defs and render below) *)
+                     assert (ZNode.is_load zn);
+                     if not !load_hdr_fired
+                     then (
+                       load_hdr_fired := true;
+                       Buffer.add_string buf !load_hdr_s);
+                     Buffer.add_string buf load_units.(unit_idx)
+                   | ZArith e ->
+                     if not !body_hdr_fired
+                     then (
+                       body_hdr_fired := true;
+                       Buffer.add_string buf body_hdr);
+                     if
+                       (not (Hashtbl.mem seen e.Algsimp.tag))
+                       && not (Hashtbl.mem inline_set e.Algsimp.tag)
+                     then (
+                       Hashtbl.replace seen e.Algsimp.tag ();
+                       Buffer.add_string
+                         buf
+                         (Emit_c.render_node_def
+                            ~isa
+                            ~in_place:false
+                            ~t1s:false
+                            ~strided:true
+                            ~inline_set:(Some inline_set)
+                            e);
+                       Buffer.add_char buf '\n')
+                   | ZStore _ -> assert false))
+              combined)));
     Buffer.add_string buf "    }\n"
   in
   (* ── the shared 11-arg z ABI signature + computed (void) list ── *)
@@ -927,7 +1315,7 @@ let emit_codelet
          fname
          plain_voids)
   in
-  (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the emit_tr4 precedent — bodies
+  (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the tr4_str precedent — bodies
         the col-loop IR cannot express). Every value in the 18-op turn
         lattice is an interleaved [re,im,re,im] 2-complex vector; the IR
         models re/im as separate slots per Output, and the cross-pair

@@ -203,6 +203,10 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | _ -> false
   ;;
 
+  (* No store node kind in the complex IR either: stores are the assigns
+     list (B2's SCHED_NODE store accessor — trivially false here). *)
+  let is_store (_ : t) = false
+
   (* No standalone const nodes: real coefficients ride inside CFmaC/CTwC as
      emit-time set1/VLIT operands, so there is nothing for the lookahead
      leaf policy to defer. *)

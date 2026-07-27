@@ -171,6 +171,15 @@ let run (argv : string array) : unit =
      mechanism) so both variants link side by side. codelet_zsplit fails
      loudly for kinds whose store edge is not sink-capable (stfb only). *)
   let zp_sink = ref false in
+  (* --zp-sched <policy>: B2 memory-ops-as-scheduled-nodes on the zsplit
+     pipeline — emit through the combined load/arith/store node sequence
+     (codelet_zsplit.ZNode). Policies are PINNED in B2: "legacy"
+     byte-reproduces the committed placement, "afterdef" reproduces the
+     B1 --zp-sink shape (and reuses its "sk" fname tag); the placement
+     SEARCH is B3. "" = flag absent = the pre-B2 emission path, not even
+     entered. Policy strings are validated by codelet_zsplit (loud on
+     typos). *)
+  let zp_sched = ref "" in
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
      from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
   let cil_kind = ref "" in
@@ -460,6 +469,15 @@ let run (argv : string array) : unit =
       incr i)
     else if arg = "--zp-sink"
     then zp_sink := true
+    else if arg = "--zp-sched" && !i + 1 < Array.length arr
+    then (
+      zp_sched := arr.(!i + 1);
+      incr i)
+    else if arg = "--zp-sched"
+    then
+      failwith
+        "gen_main: --zp-sched requires a policy argument (legacy | afterdef); \
+         a bare flag must not silently default to a placement"
     else if arg = "--cil-n1"
     then cil_kind := "n1"
     else if arg = "--cil-n1t"
@@ -1605,6 +1623,13 @@ let run (argv : string array) : unit =
         "gen_main: --zp-sink is a zsplit-pipeline modifier; without a --zp-* \
          kind it would silently no-op (an A/B script would then time the \
          UNSUNK kernel under the sunk label), so fail loudly instead.";
+    if !zp_sched <> "" && !zp_kind = ""
+    then
+      failwith
+        "gen_main: --zp-sched is a zsplit-pipeline modifier; without a --zp-* \
+         kind it would silently no-op (the --zp-sink precedent: an A/B script \
+         would then label the pre-B2 emission as the sequence path), so fail \
+         loudly instead.";
     if !cil_k1
     then (
       (* FUSED full-IL K=1: the whole N-point transform as ONE function,
@@ -1689,6 +1714,7 @@ let run (argv : string array) : unit =
            ~radix:n
            ~r0:(if !zp_r0 = 0 then None else Some !zp_r0)
            ~sink_stores:!zp_sink
+           ~sched:(if !zp_sched = "" then None else Some !zp_sched)
            ~isa
            ~uarch)
     else if !z_native
