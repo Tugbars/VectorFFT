@@ -186,11 +186,22 @@ let kind_of_string (s : string) : zs_kind =
   | "stfb" ->
     { mid with base = "stf"; bwd = true; policy = Dft.TP_PowW1
     ; tw_off = "2*(size_t)k"; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs" }
+  | "stf2" ->
+    (* fwd ONLY (the sterm2 precedent — zsplit.h's bwd always runs the
+       single-quad sterm_bwd; the bwd 2-quad was REFUTED, +29..36%%
+       kernel, §4.9993 — so no stfb2). stf's edges/policy/tw_off + uj2:
+       the 4th create-time race arm (t2q) for the ZTURN-S route,
+       roadmap §3.2(g/h). Instance B = the NEXT section-record group
+       (+vw columns = +8 plane doubles per section tap) and the NEXT
+       packed w^1 record (Twiddle slot +1 = +2*vw doubles) — composing
+       exactly as sterm2's streamed table. *)
+    { mid with base = "stf2"; uj2 = true; policy = Dft.TP_PowW1
+    ; tw_off = "2*(size_t)k"; in_edge = E_sect_tap "OLs"; out_edge = E_z "OLs" }
   | other ->
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb)"
+          stermb sterm2 s0t s0tb stf stfb stf2)"
          other)
 ;;
 
@@ -381,7 +392,7 @@ let emit_codelet
         bake the 4-section geometry into every address, so their fname MUST
         carry it (a future r0=8 twin sharing the symbol would silently ship
         a wrong FFT). Legacy kinds must not carry it (provenance stability). *)
-  let r0_dep = k.base = "s0t" || k.base = "stf" in
+  let r0_dep = k.base = "s0t" || k.base = "stf" || k.base = "stf2" in
   (match r0, r0_dep with
    | None, true ->
      failwith
@@ -401,10 +412,12 @@ let emit_codelet
    | _ -> ());
   if radix <> 4 && radix <> 8
   then failwith "codelet_zsplit: split family is radix 4/8 only (see TIER GATE)";
-  if (k.base = "sterm" || k.base = "sterm2" || k.base = "stf") && radix <> 8
+  if (k.base = "sterm" || k.base = "sterm2" || k.base = "stf" || k.base = "stf2")
+     && radix <> 8
   then
     failwith
-      "codelet_zsplit: sterm/sterm2/stf are radix-8 only (zsplit.h chain contract)";
+      "codelet_zsplit: sterm/sterm2/stf/stf2 are radix-8 only (zsplit.h chain \
+       contract)";
   if k.base = "s0t" && radix <> 4
   then failwith "codelet_zsplit: s0t/s0tb are radix-4 only (the r0=4 4-section geometry)";
   let vw = isa.Isa.vec_width in
@@ -415,6 +428,26 @@ let emit_codelet
        VW=4. Lift this gate together with the zsplit.h vw parameterization
        (zil_pipeline_port.md §5). *)
     failwith "codelet_zsplit: runtime block geometry is VW=4 until zsplit.h is parameterized";
+  (* ⚠ uj2 × E_sect_tap column-offset coincidence (roadmap §3.2(h)): the
+     2-quad instance B sits at colo = vw columns, which lands on "+1
+     section-record group" (+2*vw plane doubles per tap) ONLY because
+     r0 == vw. An r0=8 twin needs an 8-column unroll, not this flag —
+     ASSERTED, not assumed. *)
+  (if k.uj2
+      &&
+      (match k.in_edge with
+       | E_sect_tap _ -> true
+       | E_planes _ | E_z _ | E_blocks | E_sect_tr4 _ -> false)
+   then (
+     match r0 with
+     | Some r when r = vw -> ()
+     | _ ->
+       failwith
+         (Printf.sprintf
+            "codelet_zsplit: stf2's uj2 instance-B column offset (+vw=%d) equals \
+             one section-record group only when r0 == vw; r0 <> vw needs a new \
+             unroll (NEW emitter work, not a parameter change)"
+            vw)));
   let dir_s = if k.bwd then "bwd" else "fwd" in
   let r0_tag =
     match r0 with
@@ -549,6 +582,10 @@ let emit_codelet
          | "stf", true ->
            "stfb (ZTURN-S bwd terminator: drev comb DEINT in, IDFT + POST conj-w^1, \
             DIRECT record stores at section taps — no TR4)."
+         | "stf2", _ ->
+           "stf2: 2-quad unroll-and-jam ZTURN-S terminator twin (SU-braided \
+            2-instance DAG + baseline-shaped tail; section-tap loads, instance B at \
+            +1 record group; bit-identical pair with stf, per-cell t2q pick)."
          | _, true ->
            "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
          | _, false ->
@@ -677,13 +714,22 @@ let emit_codelet
   in
   (* ZTURN-S sectioned-record address, r0=4 BAKED IN (hence fname _r4):
      leg q -> section SEC[q land 3] (SEC = bitrev2 = 0,2,1,3), sections at
-     s*4*STRIDE doubles, record base 4*(size_t)k, second record +8, im +VW. *)
-  let sect_addr (buf_name : string) (q : int) (stride : string) (plus : int) : string =
+     s*4*STRIDE doubles, record base 4*(size_t)k, second record +8, im +VW.
+     colo = the uj2 instance's column offset (0 for instance A — renders
+     byte-identically to the pre-stf2 form; vw for instance B = the next
+     section-record group, legal because r0 == vw, asserted above). *)
+  let sect_addr (buf_name : string) (q : int) (stride : string) (colo : int)
+        (plus : int)
+    : string
+    =
     let sec = [| 0; 2; 1; 3 |].(q land 3) in
     let off = (8 * (q asr 2)) + plus in
-    if sec = 0
-    then Printf.sprintf "%s[4*(size_t)k + %d]" buf_name off
-    else Printf.sprintf "%s[4*((size_t)%d*%s + k) + %d]" buf_name sec stride off
+    match sec, colo with
+    | 0, 0 -> Printf.sprintf "%s[4*(size_t)k + %d]" buf_name off
+    | 0, o -> Printf.sprintf "%s[4*((size_t)k + %d) + %d]" buf_name o off
+    | s, 0 -> Printf.sprintf "%s[4*((size_t)%d*%s + k) + %d]" buf_name s stride off
+    | s, o ->
+      Printf.sprintf "%s[4*((size_t)%d*%s + k + %d) + %d]" buf_name s stride o off
   in
   (* ── column loop: edges + SU-scheduled body + store edge for ONE
         prepared DAG. ninst = 1 normally, 2 for the sterm2 main loop
@@ -814,23 +860,24 @@ let emit_codelet
        load_hdr
          "        /* ZTURN-S section-tap load edge (2 records/section, 128 B \
           contiguous, no shuffles) */\n";
-       if ninst <> 1
-       then
-         failwith
-           "codelet_zsplit: E_sect_tap has no uj2 form (stf2 twin is out of scope, \
-            consensus doc risk 3)";
-       for q = 0 to radix - 1 do
+       (* ninst = 2 (stf2): slots radix..2*radix-1 are instance B = the
+          NEXT section-record group at colo = vw columns (r0 == vw
+          asserted at the admission gate). ninst = 1 renders slot = q,
+          colo = 0 — byte-identical to the pre-stf2 form. *)
+       for sl = 0 to nslots - 1 do
+         let q = sl mod radix
+         and colo = sl / radix * vw in
          load_chunk
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl
                  isa
-                 (Printf.sprintf "lane_re_%d" q)
-                 (Isa.loadu_pd isa (sect_addr "zin" q s 0)))
+                 (Printf.sprintf "lane_re_%d" sl)
+                 (Isa.loadu_pd isa (sect_addr "zin" q s colo 0)))
               (Isa.const_decl
                  isa
-                 (Printf.sprintf "lane_im_%d" q)
-                 (Isa.loadu_pd isa (sect_addr "zin" q s vw))))
+                 (Printf.sprintf "lane_im_%d" sl)
+                 (Isa.loadu_pd isa (sect_addr "zin" q s colo vw))))
        done
      | E_sect_tr4 s ->
        (* ── ZTURN-S backward-ingest load edge: granule's 4 section records
@@ -997,22 +1044,29 @@ let emit_codelet
               ONE storeu per (slot, re/im), q ascending, re then im:
               SINGLETON-ready, exactly what the --zp-sink/afterdef
               admission gate promises. ── *)
-        ( "        /* ZTURN-S direct record store edge (no TR4) */\n"
-        , Array.init (2 * nslots) (fun i ->
-            let q = i / 2 in
-            let tag, plus, isre =
-              if i land 1 = 0 then re_tag.(q), 0, true else im_tag.(q), vw, false
-            in
-            { su_tags = [ tag ]
-            ; su_orefs = [ Expr.Output (q, isre) ]
-            ; su_text =
-                Printf.sprintf
-                  "        %s;\n"
-                  (Isa.storeu_pd
-                     isa
-                     (sect_addr "zout" q s plus)
-                     (Printf.sprintf "t%d" tag))
-            }) )
+        if ninst <> 1
+        then
+          failwith
+            "codelet_zsplit: E_sect_tap store edge has no uj2 form (the bwd \
+             2-quad — stfb2 — is REFUTED, +29..36% kernel, §4.9993; only the \
+             LOAD side unrolls, stf2)"
+        else
+          ( "        /* ZTURN-S direct record store edge (no TR4) */\n"
+          , Array.init (2 * nslots) (fun i ->
+              let q = i / 2 in
+              let tag, plus, isre =
+                if i land 1 = 0 then re_tag.(q), 0, true else im_tag.(q), vw, false
+              in
+              { su_tags = [ tag ]
+              ; su_orefs = [ Expr.Output (q, isre) ]
+              ; su_text =
+                  Printf.sprintf
+                    "        %s;\n"
+                    (Isa.storeu_pd
+                       isa
+                       (sect_addr "zout" q s 0 plus)
+                       (Printf.sprintf "t%d" tag))
+              }) )
       | E_sect_tr4 _ ->
         failwith
           "codelet_zsplit: E_sect_tr4 is load-only (s0t's record stores are \

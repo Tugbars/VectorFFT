@@ -158,7 +158,7 @@ let run (argv : string array) : unit =
      P1 kinds: "ms" | "msb". Distinct from z_split_kind (legacy emitter)
      so the two are A/B-able side by side until cutover. *)
   let zp_kind = ref "" in
-  (* --zp-r0: ZTURN-S sectioned kinds (s0t/s0tb/stf/stfb) bake chain[0]
+  (* --zp-r0: ZTURN-S sectioned kinds (s0t/s0tb/stf/stfb/stf2) bake chain[0]
      into their section addressing — a PLAN INPUT with no default.
      0 = unset; codelet_zsplit validates (required for ZTURN-S kinds,
      forbidden for the legacy zp kinds). *)
@@ -463,6 +463,8 @@ let run (argv : string array) : unit =
     then zp_kind := "stf"
     else if arg = "--zp-stfb"
     then zp_kind := "stfb"
+    else if arg = "--zp-stf2"
+    then zp_kind := "stf2"
     else if arg = "--zp-r0" && !i + 1 < Array.length arr
     then (
       zp_r0 := int_of_string arr.(!i + 1);
