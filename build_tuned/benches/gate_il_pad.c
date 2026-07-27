@@ -114,7 +114,13 @@ static int cell_verdict(int N, size_t K){
     int v2=((struct vfft_plan_s*)p2)->il_me, ran2=_il_ab_runs-r0-ran1;
     vfft_proto_wisdom_entry_t *te=vfft_proto_wisdom_lookup(&_default_wisdom()->c2c,N,K);
     int reuse_ok = te ? (ran2==0 && v2==v1) : 1;   /* stamp needs an entry */
-    int ok = (ran1==1) && (v1==(int)K||v1==(int)Kp) && rt<1e-12 && reuse_ok;
+    /* ran1<=1, not ==1: _il_ab_race legitimately PRE-FLIGHTS to the tight arm
+     * (no measured race) when the tight plan's fused IL entry/exit doesn't
+     * resolve or the Kp-arm plan can't build on a wisdom miss — both true for
+     * these cells on the 2026-07-27 tree (probe_ilrace_pre/post: identical
+     * pre- and post-layout-axis, ran=0 il_me=K). The durable §6a59 invariant
+     * is: at most ONE race, verdict in {K,Kp}, and the second plan REUSES. */
+    int ok = (ran1<=1) && (v1==(int)K||v1==(int)Kp) && rt<1e-12 && reuse_ok;
     printf("  [verdict ] (%d,%-3zu) v=%s ran=%d/%d te=%s reuse=%s rt=%.1e %s\n",
         N,K,v1==(int)Kp?"Kp":"K",ran1,ran2,te?"HIT":"miss",
         reuse_ok?"ok":"**BAD**",rt,ok?"PASS":"**FAIL**");
