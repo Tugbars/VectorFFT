@@ -149,7 +149,9 @@ struct vfft_plan_s
      * fwd-legacy/bwd-zturn pairing is inexpressible, not just unlikely.
      * Invariant: zroute==1 <=> zturn!=NULL && zsplit==NULL. The SCRAMBLED
      * contract permits the routes' different output permutations (§2.6) —
-     * a route's OWN bwd always consumes its OWN fwd comb. Kill switch:
+     * a route's OWN bwd always consumes its OWN fwd comb. ZTURN is the
+     * DEFAULT route on a wisdom miss (2026-07-27 cutover; banked route
+     * verdicts — including old-format = legacy — are honored). Kill switch:
      * env VFFT_NO_ZTURN at create pins legacy (VFFT_NO_IL2P precedent);
      * VFFT_FORCE_ZROUTE=legacy|zturn is the gate/test forcing hook. */
     int zroute;
@@ -587,7 +589,12 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
  * first create and banked as a kind-4 oop_wisdom line. ~10 ms budget in the
  * _il_ab_race shape: alternating arm order per round, median-of-rounds, 3%
  * hysteresis toward the compiled default. Returns the winner's median ns
- * (0.0 on OOM/sanity failure; zs->t2q holds the verdict either way). */
+ * (0.0 on OOM/sanity failure; zs->t2q holds the verdict either way).
+ * REACHABILITY since the 2026-07-27 ZTURN-only cutover: this legacy race is
+ * NOT dead code — it runs only under the VFFT_NO_ZTURN kill switch /
+ * VFFT_FORCE_ZROUTE=legacy, or as the degrade when the zturn create/race
+ * fails for this N (fallback intact; hygiene rule: reachable-under-kill-
+ * switch legacy paths stay). */
 static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
 {
     const int N = zs->N;
@@ -677,7 +684,9 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
  * sized from one estimated exec, alternating arm order per round, median-of-
  * rounds, 3% hysteresis toward the compiled default). fwd-only, like t2q
  * (stf2 mirrors sterm2's fwd-only scope). Returns the winner's median fwd ns
- * (0.0 on OOM/sanity failure; zt->t2q holds the verdict either way). */
+ * (0.0 on OOM/sanity failure; zt->t2q holds the verdict either way).
+ * Since the 2026-07-27 ZTURN-only cutover this IS the kind-4 miss race —
+ * the whole of it (the engine race is offline-only, dp_planner_il.h). */
 static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
 {
     const int N = zt->N;
@@ -761,137 +770,12 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
     return win ? n1 : n0;
 }
 
-/* ════════════════════════════════════════════════════════════════════════
- * K=1 SCRAMBLED CASCADE ROUTE RACE (Phase 5 tranche 2; §6.4 per-cell ship
- * via measured race) — the 4 arms legacy{sterm,sterm2} x zturn{stf,stf2}
- * decided in two measured levels, both in the _il_ab_race shape:
- *   level 1 (per route, FWD-only, like today's t2q): the shipped
- *     sterm-vs-sterm2 race, and its stf-vs-stf2 mirror — each route's
- *     terminator pick, left in zs->t2q / zt->t2q.
- *   level 2 (ROUTE, JOINT fwd+bwd): terminators pinned at the level-1
- *     winners, one arm = reps x (execute_fwd; execute_bwd) — the roadmap's
- *     cutover atomicity flips both directions together, so the route is
- *     measured on both together. Alternating arm order per round, median-of-
- *     rounds, 3% hysteresis toward LEGACY (the incumbent route). Joint
- *     roundtrip (bwd(fwd(x)) == N*x) sanity-gates BOTH arms first; a zturn
- *     sanity/level-1 failure degrades to the legacy-only verdict (route 0,
- *     legacy's measured ns still banked) rather than failing the create.
- * Pacing = the incumbent race's discipline throughout: bursts sized to
- * ~0.3 ms from one estimated exec (reps clamped [2,64]), RR = 9 rounds at
- * VFFT_MEASURE / 21 at PATIENT+ (cap 32). VFFT_ZRACE_VERBOSE=1 prints every
- * level's reps/RR/medians to stderr. Returns the winning route's median ns
- * (level-2 joint ns; level-1 fwd ns on the legacy-only degrade), 0.0 on
- * total failure (caller keeps legacy incumbent, banks nothing). *route is
- * the verdict either way (0 on failure). */
-static double _calibrate_zroute(vfft_zsplit_plan_t *zs, vfft_zturn2_plan_t *zt,
-                                int *route, vfft_rigor_t rigor)
-{
-    *route = 0;
-    const int vb = getenv("VFFT_ZRACE_VERBOSE") != NULL;
-    /* level 1: per-route fwd terminator picks (the shipped race + mirror) */
-    double lns = _calibrate_zsplit_t2q(zs, rigor);
-    if (lns <= 0.0)
-        return 0.0;
-    if (!zt)
-        return lns;
-    double tns = _calibrate_zturn_t2q(zt, rigor);
-    if (tns <= 0.0)
-        return lns;                       /* zturn arm invalid: legacy verdict */
-
-    const int N = zs->N;
-    const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
-    double *zi = NULL, *zo = NULL, *zo2 = NULL;
-    if (vfft_proto_posix_memalign((void **)&zi, 64, sz) ||
-        vfft_proto_posix_memalign((void **)&zo, 64, sz) ||
-        vfft_proto_posix_memalign((void **)&zo2, 64, sz))
-    {
-        vfft_proto_aligned_free(zi);
-        vfft_proto_aligned_free(zo);
-        vfft_proto_aligned_free(zo2);
-        return lns;                       /* OOM: keep legacy, bank its verdict */
-    }
-    srand(11 + N);
-    for (int i = 0; i < 2 * N; i++)
-        zi[i] = (double)rand() / RAND_MAX - 0.5;
-
-    /* joint sanity BOTH arms: each route's bwd must invert its OWN fwd comb
-     * to N*x (the routes' combs differ by Gamma — §2.6 — so this, not a
-     * cross-route memcmp, is the meaningful pre-race gate). */
-    for (int arm = 0; arm < 2; arm++)
-    {
-        if (arm == 0) { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
-        else          { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
-        double err = 0.0;
-        for (int i = 0; i < 2 * N; i++)
-        {
-            double d = zo2[i] / (double)N - zi[i];
-            if (d < 0) d = -d;
-            if (d > err) err = d;
-        }
-        if (err > 1e-11)
-        {
-            vfft_proto_aligned_free(zi);
-            vfft_proto_aligned_free(zo);
-            vfft_proto_aligned_free(zo2);
-            if (vb)
-                fprintf(stderr, "[zroute] N=%d JOINT SANITY FAIL arm=%s "
-                        "(err=%.3e): %s\n", N, arm ? "zturn" : "legacy", err,
-                        arm ? "legacy verdict" : "no bank");
-            return arm ? lns : 0.0;       /* legacy broken: bank nothing */
-        }
-    }
-
-    /* level 2: joint fwd+bwd route race, terminators pinned */
-    double t0 = vfft_proto_now_ns();
-    vfft_zsplit_execute_fwd(zs, zi, zo);
-    vfft_zsplit_execute_bwd(zs, zo, zo2);
-    double est = vfft_proto_now_ns() - t0;
-    if (est < 1.0)
-        est = 1.0;
-    int reps = (int)(300000.0 / est);
-    if (reps < 2)
-        reps = 2;
-    if (reps > 64)
-        reps = 64;
-    int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
-    double m0[32], m1[32];
-    if (RR > 32)
-        RR = 32;
-    for (int r = 0; r < RR; r++)
-    {
-        double a, b;
-        int first = r & 1;                /* alternate which ROUTE goes first */
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-        {
-            if (first) { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
-            else       { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
-        }
-        a = (vfft_proto_now_ns() - t0) / reps;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-        {
-            if (first) { vfft_zsplit_execute_fwd(zs, zi, zo); vfft_zsplit_execute_bwd(zs, zo, zo2); }
-            else       { vfft_zturn2_execute_fwd(zt, zi, zo); vfft_zturn2_execute_bwd(zt, zo, zo2); }
-        }
-        b = (vfft_proto_now_ns() - t0) / reps;
-        m0[r] = first ? b : a;            /* m0 = legacy joint, m1 = zturn joint */
-        m1[r] = first ? a : b;
-    }
-    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
-    int win = (n1 < n0 * 0.97) ? 1 : 0;   /* 3% hysteresis toward legacy */
-    *route = win;
-    if (vb)
-        fprintf(stderr, "[zroute] N=%d ROUTE race (JOINT fwd+bwd): reps=%d "
-                "RR=%d burst~300us hyst=3%%-toward-legacy alt-order median | "
-                "legacy(t2q=%d)=%.0f zturn(t2q=%d)=%.0f -> route=%s\n",
-                N, reps, RR, zs->t2q, n0, zt->t2q, n1,
-                win ? "zturn" : "legacy");
-    vfft_proto_aligned_free(zi);
-    vfft_proto_aligned_free(zo);
-    vfft_proto_aligned_free(zo2);
-    return win ? n1 : n0;
-}
+/* [2026-07-27] The 4-arm ROUTE race (_calibrate_zroute: legacy{sterm,sterm2}
+ * x zturn{stf,stf2}, joint fwd+bwd verdict) was DELETED here when the runtime
+ * went ZTURN-only: a paced best-chains A/B (all 8 controls PASS) showed the
+ * ZTURN cascade beating legacy at EVERY cell joint AND fwd, so the per-cell
+ * engine race died. The dual-engine capability survives OFFLINE only —
+ * dp_planner_il.h's route axis / calibrate_zchain.c. */
 
 /* ════════════════════════════════════════════════════════════════════════
  * R2C DECOUPLE-THRESHOLD BAKE-OFF (high rigor) — instead of the fixed K=32
@@ -2587,13 +2471,16 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
              *
              * Wisdom (kind-4 oop_wisdom line, §4.9993 + route axis §6.4):
              * hit -> pure read of chain + ROUTE + per-route terminator pick
-             * (an old-format line has no route tokens -> legacy, so every
-             * pre-route banked file keeps its exact pre-route behavior);
-             * miss/recalibrate -> default chain + the create-time race
-             * (_calibrate_zroute: 4 arms, route verdict on JOINT fwd+bwd),
-             * banked. Picks MUST be measured on the installed binary:
-             * sterm/sterm2 (and stf/stf2) are bit-identical and their delta
-             * is code-placement-order. */
+             * — the READER honors everything: an old-format line has no
+             * route tokens -> banked LEGACY verdict, SERVED as legacy (user
+             * files keep meaning what they said); a route-1 line replays its
+             * zturn chain through vfft_zturn2_create_chain.
+             * miss/recalibrate -> ZTURN default (2026-07-27 cutover): the
+             * stf/stf2 t2q race on the default chain, banked as a route-1
+             * line (engine race offline-only, dp_planner_il.h). Picks MUST
+             * be measured on the installed binary: sterm/sterm2 (and
+             * stf/stf2) are bit-identical and their delta is
+             * code-placement-order. */
             int zch[VFFT_ZSPLIT_MAX_NF];
             int znf = 0;
             const vfft_oop_wisdom_entry_t *ze =
@@ -2603,7 +2490,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
              * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
              * switch; VFFT_NO_IL2P precedent) and wins over everything;
              * VFFT_FORCE_ZROUTE=legacy|zturn (or 0|1) is the gate/test hook
-             * (VFFT_IL_PAD precedent). */
+             * (VFFT_IL_PAD precedent). Unforced DEFAULT on a MISS is ZTURN
+             * (2026-07-27 cutover); on a HIT the banked route verdict is
+             * honored, whichever way it points. */
             int zforce = 0; /* 0 = none, 1 = legacy, 2 = zturn */
             {
                 const char *fz = getenv("VFFT_FORCE_ZROUTE");
@@ -2665,25 +2554,30 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
                 else
                 {
-                    /* miss/recalibrate -> race + bank. zforce==1: the
-                     * legacy-only t2q race, byte-identical to the pre-route
-                     * path (old-format line banked). zforce==2: zturn-only
-                     * stf/stf2 race (route line banked; test hook).
-                     * unforced: the 4-arm route race. */
+                    /* miss/recalibrate -> the ZTURN-ONLY miss race (2026-07-27
+                     * decision: paced best-chains A/B, all 8 controls PASS,
+                     * zturn beat legacy at EVERY cell joint AND fwd — the
+                     * per-cell ENGINE race is dead; the dual-engine capability
+                     * survives OFFLINE only, in dp_planner_il.h /
+                     * calibrate_zchain). Default (and zforce==2): the stf/stf2
+                     * t2q race on the default zturn chain, banked as a route-1
+                     * line. The legacy sterm/sterm2 race is REACHABLE, not
+                     * dead: zforce==1 (VFFT_NO_ZTURN kill switch / forced
+                     * legacy) runs it byte-identical to the pre-route path
+                     * (old-format line banked = legacy verdict), and a zturn
+                     * create/sanity failure degrades to that same legacy race
+                     * (fallback intact). */
+                    double zns = 0.0;
                     if (zforce != 1)
                         zt_pending = vfft_zturn2_create(N);
-                    double zns;
-                    if (!zt_pending)
-                        zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
-                    else if (zforce == 2)
+                    if (zt_pending)
                     {
                         zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor);
                         if (zns > 0.0)
                             zroute_pending = 1;
                     }
-                    else
-                        zns = _calibrate_zroute(zs_pending, zt_pending,
-                                                &zroute_pending, cfg->rigor);
+                    if (!zroute_pending)
+                        zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
                     if (zns > 0.0)
                     {
                         vfft_oop_wisdom_entry_t ne;
