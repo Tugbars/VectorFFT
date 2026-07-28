@@ -77,8 +77,7 @@ static int wisdom_has(int N, int K)
  * (the on-demand-aligned case calibrates a fresh (N,Kp) plan != the seeded factorization). */
 static void run_cell(int N, int K, const char *label, int bitexact, int nthreads)
 {
-    size_t Kp = roundup_vw((size_t)K);
-    printf("  cell N=%d K=%d Kp=%zu  T=%d  [%s]\n", N, K, Kp, nthreads ? nthreads : 1, label);
+    size_t Kp_pad = roundup_vw((size_t)K); /* the padded width, IF padding wins */
 
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
@@ -86,7 +85,14 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
     vfft_batch b = vfft_alloc_batch_for(&cfg);      /* the batch is born from the config */
     CHECK(b != NULL, "alloc_batch_for");
     if (!b) return;
-    CHECK(vfft_batch_stride(b) == Kp, "batch stride == Kp");
+    /* 2026-07-28: the LIBRARY owns the stride decision (measured tight-vs-padded
+     * verdict), so the caller must READ it from the handle and index with it —
+     * never assume roundup. A TAIL verdict now yields a genuinely tight buffer,
+     * and indexing that at the padded width would run off the end. */
+    size_t Kp = vfft_batch_stride(b);
+    CHECK(Kp == (size_t)K || Kp == Kp_pad, "batch stride is tight K or padded Kp");
+    printf("  cell N=%d K=%d stride=%zu (%s)  T=%d  [%s]\n", N, K, Kp,
+           Kp == (size_t)K ? "TIGHT" : "PADDED", nthreads ? nthreads : 1, label);
     double *pre, *pim, *pdre, *pdim;
     vfft_batch_planes(b, &pre, &pim, &pdre, &pdim); /* in-place roles: dst == src planes */
 

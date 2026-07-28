@@ -479,13 +479,38 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
- * PADDED pad-vs-tail A/B (the planner primitive; a bakeoff like _r2c_bakeoff).
- * Decides the padded verdict for a misaligned-K cell: times the TAIL leg (te = the
- * (N,K) tight factorization, run me=K with the SSE2 tail) against the PAD leg (ae =
- * the ALIGNED (N,Kp) entry's factorization, run me=Kp full-SIMD on the baked/JIT
- * path), BOTH built at Kp stride (the padded buffer); interleaved-median, 3%
- * hysteresis toward the tail, roundtrip-gate the winner. Returns the verdict Kp
- * (pad) or K (tail), or 0 on failure -> the caller falls back to the tail.
+ * TIGHT-vs-PADDED A/B (the planner primitive; a bakeoff like _r2c_bakeoff).
+ * Decides, for a misaligned-K cell, WHICH BUFFER SHAPE the batch allocator
+ * should hand back:
+ *
+ *   TIGHT  (arm A): te's factorization built at stride K,  run me=K  on an
+ *                   N*K  buffer — no waste, rows land unaligned, the leftover
+ *                   lanes go through the narrow tail path.
+ *   PADDED (arm B): ae's factorization built at stride Kp, run me=Kp on an
+ *                   N*Kp buffer — every row aligned, no leftovers, at the cost
+ *                   of computing (Kp-K) lanes of waste at every stage.
+ *
+ * Returns Kp (allocate padded) or K (allocate tight), 0 on failure -> caller
+ * falls back to tight. Interleaved-median, 3% hysteresis toward TIGHT (the
+ * drop-in default), roundtrip-gate the winner at its own stride.
+ *
+ * 🔴 WHY NOT THE OLD RACE (replaced 2026-07-28, Tugbars): it timed
+ * padded-run-Kp-lanes against padded-run-K-lanes — BOTH on the same Kp buffer.
+ * Those are near-identical: same cache lines touched (a Kp row is one line), and
+ * per row 8 lanes = two 4-wide ops vs 6 lanes = one 4-wide + one 2-wide op — the
+ * same instruction count. It never raced either against a genuinely TIGHT
+ * buffer, which is the only comparison that answers "should we pad at all".
+ * Every shipped misaligned cell had exec_me=0 (unmeasured), so no migration.
+ *
+ * MEASUREMENT DISCIPLINE (Tugbars): allocation and plan-build are PLANNING costs,
+ * amortized over every execute — they stay OUTSIDE the timed region. But the
+ * FOOTPRINT difference (N*K vs N*Kp) is a real cache/TLB effect of execution, so
+ * the tight arm gets a genuinely K-sized region, never a K-strided view of a
+ * Kp-sized one. Both regions live in ONE arena with a 64B skew between them
+ * (two separately page-aligned buffers caused 4KB aliasing + bimodal timings
+ * twice in this campaign). Both arms get a JIT executor when one exists —
+ * the pre-2026-07-28 race gave the padded arm a baked kernel and the other the
+ * generic path, which silently favoured padding.
  *
  * UNIFIED wisdom (no separate padded file): the verdict is stamped into the (N,K)
  * entry's exec_me, and the pad plan IS the aligned (N,Kp) entry — so both `te` and
@@ -533,9 +558,13 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     if (!te || te->nf <= 0 || !ae || ae->nf <= 0)
         return 0;
     size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
+    if (Kp == K)
+        return (int)K; /* already aligned: nothing to decide */
 
-    /* tail (te = factK) and pad (ae = the aligned (N,Kp) plan), both built at Kp stride. */
-    stride_plan_t *pT = vfft_proto_plan_create_ex(N, Kp, te->factors, te->variants, te->nf, te->use_dif_forward, reg);
+    /* TIGHT arm at stride K (te = the (N,K) factorization), PADDED arm at
+     * stride Kp (ae = the aligned (N,Kp) factorization). Different strides —
+     * that is the whole point of the comparison. */
+    stride_plan_t *pT = vfft_proto_plan_create_ex(N, K, te->factors, te->variants, te->nf, te->use_dif_forward, reg);
     stride_plan_t *pP = vfft_proto_plan_create_ex(N, Kp, ae->factors, ae->variants, ae->nf, ae->use_dif_forward, reg);
     if (!pT || !pP)
     {
@@ -545,34 +574,46 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
             vfft_proto_plan_destroy(pP);
         return 0;
     }
-    vfft_proto_exec_fn jfP = NULL;
+    /* Each arm at its best: give BOTH a baked/JIT executor where one exists
+     * (giving it to only one arm silently favours that arm). */
+    vfft_proto_exec_fn jfT = NULL, jfP = NULL;
 #ifdef VFFT_USE_JIT
+    if (pT->num_stages > 0)
+        jfT = vfft_proto_plan_jit_fwd(pT);
     if (pP->num_stages > 0)
-        jfP = vfft_proto_plan_jit_fwd(pP); /* wrinkle C: aligned pad leg on baked/JIT */
+        jfP = vfft_proto_plan_jit_fwd(pP);
 #endif
-    size_t tot = (size_t)N * Kp;
-    double *rT = NULL, *iT = NULL, *rP = NULL, *iP = NULL;
-    if (vfft_proto_posix_memalign((void **)&rT, 64, tot * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&iT, 64, tot * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&rP, 64, tot * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&iP, 64, tot * sizeof(double)))
+    /* ONE arena, each arm's region at its TRUE size (so the tight arm's smaller
+     * cache/TLB footprint is authentic), 64B skew between regions so no two
+     * regions are mutually page-aligned (4KB aliasing -> bimodal timings). */
+    const size_t SKEW = 8; /* doubles == 64 B */
+    const size_t szT = (size_t)N * K;  /* tight plane  */
+    const size_t szP = (size_t)N * Kp; /* padded plane */
+    const size_t need = 4 * SKEW + 2 * szT + 2 * szP + 2 * szT; /* + reference planes */
+    double *arena = NULL;
+    if (vfft_proto_posix_memalign((void **)&arena, 64, need * sizeof(double)))
     {
-        vfft_proto_aligned_free(rT);
-        vfft_proto_aligned_free(iT);
-        vfft_proto_aligned_free(rP);
-        vfft_proto_aligned_free(iP);
         vfft_proto_plan_destroy(pT);
         vfft_proto_plan_destroy(pP);
         return 0;
     }
-    _pad_fill(rT, iT, N, K, Kp);
+    double *rT = arena;                  /* tight  re, N*K  */
+    double *iT = rT + szT + SKEW;        /* tight  im, N*K  */
+    double *rP = iT + szT + SKEW;        /* padded re, N*Kp */
+    double *iP = rP + szP + SKEW;        /* padded im, N*Kp */
+    double *refR = iP + szP + SKEW;      /* roundtrip reference, N*K */
+    double *refI = refR + szT;
+
+    /* Identical data in the K live lanes (same seed); the padded arm zero-fills
+     * its waste lanes, the tight arm has none. */
+    _pad_fill(rT, iT, N, K, K);
     _pad_fill(rP, iP, N, K, Kp);
-    int reps = (int)(8000000ull / tot);
+    int reps = (int)(8000000ull / szP);
     if (reps < 40)
         reps = 40;
     for (int w = 0; w < 5; w++)
     {
-        _pad_burst(pT, NULL, rT, iT, K, reps);
+        _pad_burst(pT, jfT, rT, iT, K, reps);
         _pad_burst(pP, jfP, rP, iP, Kp, reps);
     }
     int RR = (rigor == VFFT_MEASURE) ? 31 : 81;
@@ -584,47 +625,54 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         double t, p;
         if (r & 1)
         {
-            t = _pad_burst(pT, NULL, rT, iT, K, reps);
+            t = _pad_burst(pT, jfT, rT, iT, K, reps);
             p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
         }
         else
         {
             p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
-            t = _pad_burst(pT, NULL, rT, iT, K, reps);
+            t = _pad_burst(pT, jfT, rT, iT, K, reps);
         }
         rt[r] = t / reps;
         rp[r] = p / reps;
     }
-    double tail_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
-    int pad_wins = (pad_ns < tail_ns * 0.97); /* 3% hysteresis toward the tail */
+    double tight_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
+    int pad_wins = (pad_ns < tight_ns * 0.97); /* 3% hysteresis toward TIGHT */
     int exec_me = pad_wins ? (int)Kp : (int)K;
 
-    /* roundtrip-gate the winner at its operating point (recover N*x on the K lanes).
-     * reuse rT/iT (fresh input) as the work buffer, rP/iP as the saved reference. */
-    stride_plan_t *wp = pad_wins ? pP : pT;
-    _pad_fill(rT, iT, N, K, Kp);
-    memcpy(rP, rT, tot * sizeof(double));
-    memcpy(iP, iT, tot * sizeof(double));
-    vfft_proto_execute_fwd(wp, rT, iT, (size_t)exec_me);
-    vfft_proto_execute_bwd(wp, rT, iT, (size_t)exec_me);
-    double rtg = 0, inv = 1.0 / (double)N;
-    for (size_t e = 0; e < (size_t)N; e++)
-        for (size_t l = 0; l < K; l++)
-        {
-            double dr = fabs(rT[e * Kp + l] * inv - rP[e * Kp + l]);
-            double di = fabs(iT[e * Kp + l] * inv - iP[e * Kp + l]);
-            if (dr > rtg)
-                rtg = dr;
-            if (di > rtg)
-                rtg = di;
-        }
-    if (rtg > 1e-7)
-        exec_me = 0; /* winner failed the roundtrip -> report failure; caller tails */
+    /* Roundtrip-gate the winner AT ITS OWN STRIDE (recover N*x on the K live
+     * lanes). The winner owns its buffer, so refill it and keep an independent
+     * reference of the K live lanes. */
+    {
+        stride_plan_t *wp = pad_wins ? pP : pT;
+        double *wr = pad_wins ? rP : rT;
+        double *wi = pad_wins ? iP : iT;
+        const size_t st = pad_wins ? Kp : K; /* the winner's stride */
+        _pad_fill(wr, wi, N, K, st);
+        for (size_t e = 0; e < (size_t)N; e++)
+            for (size_t l = 0; l < K; l++)
+            {
+                refR[e * K + l] = wr[e * st + l];
+                refI[e * K + l] = wi[e * st + l];
+            }
+        vfft_proto_execute_fwd(wp, wr, wi, (size_t)exec_me);
+        vfft_proto_execute_bwd(wp, wr, wi, (size_t)exec_me);
+        double rtg = 0, inv = 1.0 / (double)N;
+        for (size_t e = 0; e < (size_t)N; e++)
+            for (size_t l = 0; l < K; l++)
+            {
+                double dr = fabs(wr[e * st + l] * inv - refR[e * K + l]);
+                double di = fabs(wi[e * st + l] * inv - refI[e * K + l]);
+                if (dr > rtg)
+                    rtg = dr;
+                if (di > rtg)
+                    rtg = di;
+            }
+        if (rtg > 1e-7)
+            exec_me = 0; /* winner failed the roundtrip -> caller falls back to tight */
+    }
 
-    vfft_proto_aligned_free(rT);
-    vfft_proto_aligned_free(iT);
-    vfft_proto_aligned_free(rP);
-    vfft_proto_aligned_free(iP);
+    vfft_proto_aligned_free(arena);
     vfft_proto_plan_destroy(pT);
     vfft_proto_plan_destroy(pP);
     return exec_me;
@@ -4776,11 +4824,14 @@ static double *_batch_plane(size_t doubles)
  * (DCT/DST/DHT) is real->real out-of-place: real = INPUT plane, re = OUTPUT plane (both
  * N*Kp), im unused. All planes Kp-strided so the Kp-built plan lands exactly (element e,
  * lane t -> [e*Kp+t]). */
-static vfft_batch _batch_alloc_ex(vfft_transform_t xform, int N, size_t K)
+/* Kp_forced: 0 = use the default roundup; else the caller's measured stride
+ * (see _pad_stride_c2c — K means "allocate tight, padding lost the race"). */
+static vfft_batch _batch_alloc_ex(vfft_transform_t xform, int N, size_t K,
+                                  size_t Kp_forced)
 {
     int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
     int trig = _VFFT_IS_TRIG(xform);
-    size_t Kp = (K + 3u) & ~(size_t)3u; /* roundup(K, VW=4) */
+    size_t Kp = Kp_forced ? Kp_forced : ((K + 3u) & ~(size_t)3u); /* roundup(K, VW=4) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
@@ -4867,6 +4918,79 @@ void vfft_free_batch(vfft_batch b)
  * by construction and the Kp rule (VW=4 tight vs OOP 8) is an internal detail
  * keyed off placement. Loud rejection on every unsupported combination —
  * same voice as vfft_create. */
+/* ════════════════════════════════════════════════════════════════════════
+ * BATCH STRIDE DECISION (1D C2C in-place) — the MEASURED tight-vs-padded
+ * verdict, never a formula. Returns the stride to allocate at: K (tight —
+ * padding lost) or Kp (padded — padding won).
+ *
+ * Calibrate-on-miss, the same contract vfft_create follows: a wisdom HIT is
+ * instant; a MISS races once (_calibrate_pad), banks the verdict, and every
+ * later allocation of that cell is instant. So allocation can pause ONCE per
+ * (N,K) — documented in vfft.h.
+ *
+ * Only 1D C2C has this verdict: _calibrate_pad is a c2c bakeoff, and the
+ * real/trig batches are pad-only by construction (padding is their only
+ * full-SIMD path for misaligned K), so they keep the roundup default.
+ * ════════════════════════════════════════════════════════════════════════ */
+static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
+{
+    const size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
+    if (Kp == K)
+        return K; /* already lane-aligned: nothing to decide */
+    if (_vfft_is_prime(N))
+        return K; /* no CT factorization to race (prime runs its own engine) */
+
+    struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
+    const vfft_proto_registry_t *reg = _registry();
+    const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+    if (te && !cfg->recalibrate)
+    {
+        if (te->exec_me == (int)K)
+            return K;
+        if (te->exec_me == (int)Kp)
+            return Kp;
+    }
+    /* MISS (or recalibrate): ensure both factorizations exist, then race. */
+    int dirty = 0;
+    if (!te || cfg->recalibrate)
+    {
+        vfft_proto_wisdom_entry_t ne;
+        if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+        {
+            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            dirty = 1;
+        }
+    }
+    const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+    if (!ae || cfg->recalibrate)
+    {
+        vfft_proto_wisdom_entry_t ne;
+        if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
+        {
+            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            dirty = 1;
+        }
+    }
+    te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* wisdom_add may realloc */
+    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+    size_t stride = K; /* fall back to tight (the drop-in default) */
+    if (te && ae)
+    {
+        int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
+        if (verdict > 0)
+        {
+            vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
+            upd.exec_me = verdict;
+            vfft_proto_wisdom_add(&W->c2c, &upd, 1);
+            dirty = 1;
+            stride = (size_t)verdict;
+        }
+    }
+    if (dirty && W->path_c2c[0])
+        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+    return stride;
+}
+
 vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
 {
     if (!cfg)
@@ -4904,8 +5028,11 @@ vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
     if (cfg->transform == VFFT_C2C)
     {
         if (cfg->placement == VFFT_OUTOFPLACE)
-            return _batch_alloc_oop(N, K); /* 4-plane, Kp=roundup(K,8) */
-        return _batch_alloc_ex(VFFT_C2C, N, K);
+            return _batch_alloc_oop(N, K); /* 4-plane, Kp=roundup(K,8) — the OOP
+                                            * kinds hard-gate on K%8, so padding
+                                            * is structural there, not a verdict */
+        /* in-place: the MEASURED tight-vs-padded verdict picks the stride */
+        return _batch_alloc_ex(VFFT_C2C, N, K, _pad_stride_c2c(N, K, cfg));
     }
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
          _VFFT_IS_TRIG(cfg->transform)) &&
@@ -4916,7 +5043,9 @@ vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
                    _vfft_tname(cfg->transform), N);
         return NULL;
     }
-    return _batch_alloc_ex(cfg->transform, N, K);
+    /* real/trig: pad-only by construction (padding is their ONLY full-SIMD path
+     * for misaligned K), so they keep the roundup default — no verdict applies. */
+    return _batch_alloc_ex(cfg->transform, N, K, 0);
 }
 
 /* Fill the vfft_execute arguments in the right roles — the role table lives
