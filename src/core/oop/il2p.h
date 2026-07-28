@@ -111,12 +111,34 @@ static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
     }
 }
 
+/* Plain n1 (natural in/out, TWIDDLE-FREE), radix R1 — the second stage of the
+ * F-DIAG backward decomposition below. Distinct from leaf_fn (n1t, which fuses
+ * the corner-turn into its stores) and from mid_fn (t2, which carries the
+ * streamed VTW2 twiddle). */
+#define C(R) \
+  extern void radix##R##_z_n1_bwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+
+static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
+{
+    switch (R) {
+#define C(R) case R: return radix##R##_z_n1_bwd_avx2;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+}
+
 typedef struct {
     int N, R1, R2;
     double *mid;            /* interleaved scratch, 2N doubles */
     double *tw, *twb;       /* streamed VTW2 for t2: fwd and conjugated bwd */
     vfft_il2p_fn leaf_f, leaf_b;   /* n1t, radix R2 */
     vfft_il2p_fn mid_f,  mid_b;    /* t2,  radix R1 */
+    vfft_il2p_fn n1_b;             /* plain n1 bwd, radix R1 (F-DIAG stage 2) */
 } vfft_il2p_plan_t;
 
 static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
@@ -138,11 +160,15 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     vfft_il2p_fn lf = vfft_il2p_leaf_fn(R2, 0), lb = vfft_il2p_leaf_fn(R2, 1);
     vfft_il2p_fn mf = vfft_il2p_mid_fn(R1, 0),  mb = vfft_il2p_mid_fn(R1, 1);
     if (!lf || !lb || !mf || !mb) return 0;
+    /* n1_b may be absent without invalidating the forward plan — only the
+     * F-DIAG backward path needs it, and execute_bwd checks. */
+    vfft_il2p_fn nb = vfft_il2p_n1_bwd_fn(R1);
 
     vfft_il2p_plan_t *p = (vfft_il2p_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
     p->N = N; p->R1 = R1; p->R2 = R2;
     p->leaf_f = lf; p->leaf_b = lb; p->mid_f = mf; p->mid_b = mb;
+    p->n1_b = nb;
 
     size_t ntw = ((size_t)R2 / 2u) * (size_t)(R1 - 1) * 8u;
     p->mid = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
@@ -222,11 +248,70 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
  * new codelet kind. Derive the index map from the fwd identity
  *   mid[2*(k*R2 + p)] = DFT_R2(column k)[p],  k in [0,R1), p in [0,R2)
  * rather than guessing triples. */
+/* ── F-DIAG: the SOLVED backward composition ─────────────────────────────
+ *
+ * Derived 2026-07-29 by two BLIND derivations (first-principles and
+ * artifact-side) that came out formula-identical on the index map, then
+ * validated by a scalar simulator against the gated forward at 7 cells
+ * (1.89e-14 @N=128 16x8 ... 6.47e-13 @N=4096 64x64). Controls: deleting the
+ * diagonal, or applying it POST instead of PRE, both give O(1) error.
+ *
+ * 🔴 WHY THE OLD DIAGNOSIS WAS WRONG. The comment above says the inverse needs
+ * an "un-turn" and that no emitted kernel un-turns. True only for the
+ * OPERATOR-inverse route. This composition keeps the turn exactly where the
+ * forward put it and needs no un-turn at all.
+ *
+ * 🔴 THE 8 FALSIFIED ARMS WERE ONE BIT AWAY. Arm #1 (leaf_b(R2) -> mid_b(R1),
+ * fwd strides, conj table, err 1.888) differs from this ONLY in that the
+ * stage-2 twiddle is applied POST (t2 bwd) instead of PRE. Same stages, same
+ * radices, same strides, same table, same order, same arguments. That is why
+ * no stride scan could ever have found it.
+ *
+ *   stage 1  leaf_b = n1t_bwd(R2), args IDENTICAL to forward stage 1
+ *              mid[k*R2 + p] = IDFT_R2(column k)[p]
+ *   diagonal PRE-multiply by e^{+2pi i * l * col / N}, legs 1..R1-1
+ *   stage 2  n1_b = plain n1_bwd(R1), Ls = OLs = count = R2
+ *
+ * Fusing the diagonal into stage 2 is exactly the T2P kind (pre-twiddle +
+ * backward butterfly + straight store). This F-DIAG form is BITWISE IDENTICAL
+ * to it (|A - F-DIAG| = 0.000e+00 at all 7 cells), so it proves the math on
+ * real hardware with NO new kernel. Keep it as the reference arm once T2P
+ * exists.
+ *
+ * ⚠️ GATE AT NON-SQUARE PAIRS. The two mirror decompositions coincide when
+ * R1 == R2, so 256 (16x16) / 1024 (32x32) / 4096 (64x64) cannot adjudicate.
+ * Use 128 (8x16) or 512 (16x32).
+ *
+ * Returns 0 on success, -1 if this build lacks the plain n1 bwd twin. */
 static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
                                         const double *zin, double *zout)
 {
-    (void)p; (void)zin; (void)zout;
-    return -1;
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    if (!p->n1_b) return -1;
+
+    /* stage 1 — same call shape as the forward leaf, backward twin */
+    p->leaf_b(zin, 0, p->mid, 0, 0, 0, R1, 0, R2, 0, R1);
+
+    /* diagonal: mid[l*R2 + col] *= conj-twiddle, read from the SAME VTW2
+     * records stage 2 would consume. Record layout (see create): per column
+     * PAIR pp, per leg l in 1..R1-1, 8 doubles [c c c c][s -s s -s], lane
+     * j = col & 1. BYTW2 semantics make the applied factor (c - i*s), i.e.
+     * e^{+2pi i * l * col / N} for the bwd table. Leg 0 is w^0 = 1. */
+    for (size_t l = 1; l < R1; l++)
+        for (size_t col = 0; col < R2; col++) {
+            const double *rb =
+                p->twb + ((col >> 1) * (R1 - 1) + (l - 1)) * 8u;
+            const size_t j = col & 1u;
+            const double c = rb[2 * j], s = rb[4 + 2 * j];
+            double *z = p->mid + 2 * (l * R2 + col);
+            const double xr = z[0], xi = z[1];
+            z[0] = c * xr + s * xi;
+            z[1] = c * xi - s * xr;
+        }
+
+    /* stage 2 — plain backward butterfly, twiddle already applied */
+    p->n1_b(p->mid, 0, zout, 0, 0, 0, R2, 0, R2, 0, R2);
+    return 0;
 }
 
 #endif /* VFFT_IL2P_H */
