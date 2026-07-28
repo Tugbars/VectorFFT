@@ -56,21 +56,21 @@
  *   interleaved pairs. Backward transforms are unnormalized (scale by 1/N
  *   yourself after a roundtrip).
  *
- * ── BATCHES (the normal way to allocate one, for ANY K) ─────────────────────
- *   vfft_batch b = vfft_alloc_batch_for(&cfg);       // one allocator, any transform
+ * ── LETTING THE PLAN OWN YOUR BUFFERS (optional, for ANY K) ─────────────────
+ *   cfg.owned_buffers = 1;                           // any 1D transform
+ *   vfft_plan p = vfft_create(&cfg);                 // allocates the planes too
  *   double *sre,*sim,*dre,*dim;
- *   vfft_batch_planes(b, &sre,&sim,&dre,&dim);       // fills execute's args in role order
- *   size_t Kp = vfft_batch_stride(b);                // index YOUR data at [e*Kp + t]
- *   ... fill inputs ...; cfg.batch = b; p = vfft_create(&cfg);
- *   vfft_execute(p, dir, sre,sim,dre,dim);  ...  vfft_free_batch(b);
+ *   vfft_plan_planes(p, &sre,&sim,&dre,&dim);        // execute's args, in role order
+ *   size_t st = vfft_plan_stride(p);                 // index YOUR data at [e*st + t]
+ *   ... fill inputs ...; vfft_execute(p, dir, sre,sim,dre,dim);
+ *   vfft_destroy(p);                                 // frees the planes too
  *   You never reason about SIMD lane counts or odd K: the library measures
  *   whether padding pays for your (N,K) and sizes the planes accordingly.
- *   ALWAYS index with vfft_batch_stride(b) — it may equal K (tight) or a
- *   padded width, and assuming roundup() will run off the end of a tight
- *   buffer. The first allocation of a new cell may pause to measure; the
- *   verdict is persisted, so later ones are instant.
- *   The batch is born from the config, so it always matches the plan; a
- *   mismatched handle is refused at create. Split layout only.
+ *   ALWAYS index with vfft_plan_stride(p) — it may equal K (tight) or a padded
+ *   width, and assuming roundup() will run off the end of a tight buffer. The
+ *   first create of a new cell may pause to measure; the verdict is persisted,
+ *   so later ones are instant. Split layout, 1D only.
+ *   Leave owned_buffers at 0 (the default) to pass your own tight buffers.
  *
  * ── WISDOM (performance persistence) ────────────────────────────────────────
  *   Default: auto-loaded per machine; misses calibrate at config.rigor
@@ -180,10 +180,6 @@ extern "C"
    * DESCRIPTOR + PLAN
    * ════════════════════════════════════════════════════════════════════════ */
 
-  /* Opaque VW-padded batch handle (full contract below, near vfft_alloc_batch_for).
-   * Declared here so vfft_config_t can carry it as the opt-in padding signal. */
-  typedef struct vfft_batch_s *vfft_batch;
-
   typedef struct
   {
     vfft_transform_t transform;
@@ -200,13 +196,16 @@ extern "C"
                          4D: same contracts (K==1, order DEFAULT/SCRAMBLED;
                          real transforms out-of-place with even N4).  */
     size_t howmany;   /* K — batch count (lane-batched: data[i*K+lane]) */
-    vfft_batch batch; /* NULL = tight (default drop-in path). Non-NULL = the
-                         opt-in padded batch to run on: the plan is built at its
-                         Kp stride and runs the padded fast path. MUST come from
-                         vfft_alloc_batch_for(this config) — create cross-checks
-                         transform/placement-shape/N/K totally and rejects any
-                         mismatch loudly. 1D C2C (both placements) + R2C/C2R +
-                         TRIG; layout SPLIT only — padding_design_decision.md. */
+    int owned_buffers; /* 0 (default) = YOU own the buffers: pass your own tight
+                          planes to vfft_execute, indexed at [e*K + t]. This is
+                          the drop-in path and allocates nothing extra.
+                          1 = THE LIBRARY owns them: vfft_create allocates every
+                          plane this (transform x placement) needs, CHOOSES the
+                          stride (measured pad-vs-tight — it may be K or padded),
+                          and frees them in vfft_destroy. Read them back with
+                          vfft_plan_planes() and vfft_plan_stride().
+                          1D only, layout SPLIT only; create refuses otherwise.
+                          See padding_design_decision.md. */
 
     int nthreads; /* 0 = use the current pool / single-thread  */
 
@@ -312,29 +311,87 @@ extern "C"
   void vfft_destroy(vfft_plan p);
 
   /* ════════════════════════════════════════════════════════════════════════
-   * BATCH ALLOCATION — the normal way to allocate a batch, for ANY K
+   * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)
-   * 
-   * ONE allocator for every padded transform; the Kp rule (roundup(K,4) vs
-   * OOP's roundup(K,8)) is internal. Reads cfg->transform/placement/n[0]/
-   * howmany; cfg->batch is ignored. NULL + stderr message on misuse. 
-   * ════════════════════════════════════════════════════════════════════════ 
-   * */
-  vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg);
-  /* Fill the vfft_execute arguments in the right roles (any out-param may be
-   * NULL if unwanted; planes the transform does not use are set to NULL). */
-  void vfft_batch_planes(vfft_batch b, double **sre, double **sim,
-                         double **dre, double **dim);
-  size_t vfft_batch_stride(vfft_batch b); /* = Kp (0 for NULL handle) */
-  void vfft_free_batch(vfft_batch b);     /* matching free */
+   *
+   * Set config.owned_buffers and vfft_create allocates every plane this
+   * (transform x placement) needs, ZEROED, at a stride IT chooses, and frees
+   * them in vfft_destroy. The plan and its buffers are one object, so they
+   * cannot disagree. 1D only, layout SPLIT only.
+   *
+   * The stride rule is internal: 1D C2C in-place uses the MEASURED
+   * tight-vs-padded verdict (so it may be exactly K, and a new (N,K) may pause
+   * once to measure), while C2C out-of-place and the real/trig transforms
+   * always pad. Read it back — never compute it.
+   *
+   *   vfft_config_t cfg = {0};
+   *   cfg.transform = VFFT_C2C; cfg.n[0] = 1024; cfg.howmany = 11;
+   *   cfg.owned_buffers = 1;
+   *   vfft_plan p = vfft_create(&cfg);
+   *   double *sre,*sim,*dre,*dim;  vfft_plan_planes(p,&sre,&sim,&dre,&dim);
+   *   size_t st = vfft_plan_stride(p);        // index YOUR data at [e*st + t]
+   *   ... fill ...;  vfft_execute(p, dir, sre,sim,dre,dim);  vfft_destroy(p);
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  /* Hand back the plan's own planes, already in vfft_execute's argument roles
+   * (planes the transform does not use are set to NULL; any out-param may be
+   * NULL if unwanted). All NULL unless the plan was created with
+   * config.owned_buffers = 1. Owned by the plan — never free them yourself. */
+  void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
+                        double **dre, double **dim);
+  /* The stride to index the plan's buffers with: element e of lane t lives at
+   * plane[e * vfft_plan_stride(p) + t]. Equals config.howmany for a plan that
+   * does not own its buffers. 0 for a NULL plan. */
+  size_t vfft_plan_stride(vfft_plan p);
 
   /* ════════════════════════════════════════════════════════════════════════
    * GLOBAL CONTROL  (optional; sensible defaults otherwise)
    * ════════════════════════════════════════════════════════════════════════ */
 
-  void vfft_set_num_threads(int n); /* size the pool; pin caller to core 0 */
+  /**
+   * @brief Size the shared worker pool.
+   *
+   * Process-global and sticky: every plan created afterwards draws its workers
+   * from this pool. Prefer @c config.nthreads for per-plan control — it is
+   * snapshotted at @c vfft_create, so different plans can use different thread
+   * counts without touching global state.
+   *
+   * @param n Worker count. @c n<=1 means single-threaded.
+   *
+   * @warning SIDE EFFECT: for @c n>1 this PINS THE CALLING THREAD to core 0
+   *          (workers then pin to 1..n-1). If you manage affinity yourself,
+   *          set it AFTER this call — otherwise this overrides you.
+   * @note Not thread-safe against concurrent plan creation or execution: size
+   *       the pool once during setup, before handing plans to worker threads.
+   * @see vfft_get_num_threads, vfft_config_t::nthreads
+   */
+  void vfft_set_num_threads(int n);
+
+  /**
+   * @brief Current pool size.
+   * @return The configured worker count. This is neither the number of threads
+   *         presently executing nor a hardware ceiling — it is exactly what the
+   *         last @c vfft_set_num_threads established.
+   */
   int vfft_get_num_threads(void);
-  const char *vfft_isa(void); /* "avx512" | "avx2" | "scalar"        */
+
+  /**
+   * @brief Which SIMD kernels this build compiled to.
+   * @return One of @c "avx512", @c "avx2", @c "scalar". Static storage — do
+   *         NOT free it; valid for the lifetime of the process.
+   *
+   * @warning This is the BUILD-time ISA, fixed when the library was compiled —
+   *          NOT runtime CPU detection. A binary targets one instruction set:
+   *          an @c "avx2" build running on an AVX-512 machine still reports and
+   *          executes @c "avx2". Rebuild to target a different ISA.
+   */
+  const char *vfft_isa(void);
+
+  /**
+   * @brief Library version, @c "MAJOR.MINOR.PATCH".
+   * @return Static storage — do NOT free it; valid for the lifetime of the
+   *         process.
+   */
   const char *vfft_version(void);
 
 #ifdef __cplusplus

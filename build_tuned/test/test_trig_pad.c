@@ -1,7 +1,8 @@
 /* test_trig_pad.c — trig (DCT/DST/DHT) PADDING through the public vfft.h.
  * Trig padding is PAD-ONLY (the trig stride_r2c_plan bakes K) and sidesteps the UNBUILT odd-K
- * trig tail: building at aligned Kp is the ONLY full-SIMD path for misaligned K. Handle is
- * real->real: vfft_batch_planes fills sre = INPUT (N*Kp), dre = OUTPUT (N*Kp), stride Kp.
+ * trig tail: building at aligned Kp is the ONLY full-SIMD path for misaligned K. The PLAN owns
+ * the planes (config.owned_buffers = 1): vfft_plan_planes fills sre = INPUT (N*Kp),
+ * dre = OUTPUT (N*Kp), stride = vfft_plan_stride(p) = Kp.
  *   (A) ABSOLUTE: padded DCT-II output lanes 0..K-1 == naive FFTW REDFT10 (incl. odd K).
  *   (B) ROUNDTRIP: fwd->inv recovers scale*x on lanes 0..K-1 for DCT2 (via DCT3), DHT, DCT4.
  * Build: python build.py --src test/test_trig_pad.c --vfft */
@@ -33,12 +34,13 @@ static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
     vfft_config_t c; memset(&c, 0, sizeof c);
     c.transform = xf; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
     c.dims = 1; c.n[0] = N; c.howmany = (size_t)K;
-    vfft_batch b = vfft_alloc_batch_for(&c);
-    if (!b) return -1;
-    size_t Kp = vfft_batch_stride(b);
+    c.owned_buffers = 1; /* the plan owns the padded planes and chooses Kp */
+    vfft_plan p = vfft_create(&c);
+    if (!p) return -1;
+    size_t Kp = vfft_plan_stride(p);
     double *x0 = (double *)malloc((size_t)N * K * sizeof(double));
     double *in, *out, *d1_, *d2_;
-    vfft_batch_planes(b, &in, &d1_, &out, &d2_); /* real in -> real out */
+    vfft_plan_planes(p, &in, &d1_, &out, &d2_); /* real in -> real out */
     srand(seed);
     for (int n = 0; n < N; n++)
         for (int k = 0; k < K; k++)
@@ -47,10 +49,7 @@ static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
             x0[n * K + k] = v;
             in[(size_t)n * Kp + k] = v;
         }
-    c.batch = b; /* same config the batch was born from */
-    vfft_plan p = vfft_create(&c);
     double err = -1;
-    if (p)
     {
         vfft_execute(p, VFFT_FORWARD,  in,  NULL, out, NULL);
         /* inverse leg: swap the planes (out -> in), documented roundtrip form */
@@ -70,10 +69,9 @@ static double trig_roundtrip(vfft_transform_t xf, int N, int K, unsigned seed)
                 if (fabs(a) > denom) denom = fabs(a);
             }
         if (denom > 0) err /= denom;
-        vfft_destroy(p);
     }
     free(x0);
-    vfft_free_batch(b);
+    vfft_destroy(p); /* frees the planes */
     return err;
 }
 
@@ -93,36 +91,32 @@ int main(void)
         vfft_config_t c; memset(&c, 0, sizeof c);
         c.transform = VFFT_DCT2; c.placement = VFFT_OUTOFPLACE; c.rigor = VFFT_MEASURE;
         c.dims = 1; c.n[0] = N; c.howmany = (size_t)K;
-        vfft_batch b = vfft_alloc_batch_for(&c);
-        size_t Kp = b ? vfft_batch_stride(b) : 0;
+        c.owned_buffers = 1; /* the plan owns the padded planes and chooses Kp */
+        vfft_plan p = vfft_create(&c);
+        size_t Kp = p ? vfft_plan_stride(p) : 0;
         double maxe = -1;
-        if (b)
+        if (p)
         {
             double *in, *outp, *dA, *dB;
-            vfft_batch_planes(b, &in, &dA, &outp, &dB);
+            vfft_plan_planes(p, &in, &dA, &outp, &dB);
             double *x = (double *)malloc((size_t)N * K * sizeof(double));
             srand(3 + N + K);
             for (int n = 0; n < N; n++)
                 for (int k = 0; k < K; k++)
                 { double v = (double)rand() / RAND_MAX - 0.5; x[n * K + k] = v; in[(size_t)n * Kp + k] = v; }
-            c.batch = b; /* same config the batch was born from */
-            vfft_plan p = vfft_create(&c);
-            if (p)
+            vfft_execute(p, VFFT_FORWARD, in, NULL, outp, NULL);
+            double *out = outp;
+            double *Xr = (double *)malloc(N * sizeof(double)), *xl = (double *)malloc(N * sizeof(double));
+            maxe = 0;
+            for (int k = 0; k < K; k++)
             {
-                vfft_execute(p, VFFT_FORWARD, in, NULL, outp, NULL);
-                double *out = outp;
-                double *Xr = (double *)malloc(N * sizeof(double)), *xl = (double *)malloc(N * sizeof(double));
-                maxe = 0;
-                for (int k = 0; k < K; k++)
-                {
-                    for (int n = 0; n < N; n++) xl[n] = x[n * K + k];
-                    naive_dct2(xl, Xr, N);
-                    for (int kk = 0; kk < N; kk++)
-                    { double d = fabs(out[(size_t)kk * Kp + k] - Xr[kk]); if (d > maxe) maxe = d; }
-                }
-                free(Xr); free(xl); vfft_destroy(p);
+                for (int n = 0; n < N; n++) xl[n] = x[n * K + k];
+                naive_dct2(xl, Xr, N);
+                for (int kk = 0; kk < N; kk++)
+                { double d = fabs(out[(size_t)kk * Kp + k] - Xr[kk]); if (d > maxe) maxe = d; }
             }
-            free(x); vfft_free_batch(b);
+            free(Xr); free(xl);
+            free(x); vfft_destroy(p); /* destroy frees the planes */
         }
         int bad = (maxe < 0) || (maxe > 1e-10);
         if (bad) fails++;

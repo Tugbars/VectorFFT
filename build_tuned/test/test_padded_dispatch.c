@@ -1,15 +1,16 @@
 /* test_padded_dispatch.c — end-to-end public-API test of the PADDED c2c in-place path
  * (docs/roadmap/tail_handling/padding_design_decision.md, Phase 1 Step D + B). Drives ONLY
- * vfft.h: alloc a padded batch, set config.batch, vfft_create, vfft_execute — proving the
- * dispatch (build Kp-plan + run the padded wisdom's exec_me) is wired correctly.
+ * vfft.h: set config.owned_buffers, vfft_create (the plan allocates the planes and CHOOSES the
+ * stride), vfft_plan_planes / vfft_plan_stride, vfft_execute — proving the dispatch (build
+ * Kp-plan + run the padded wisdom's exec_me) is wired correctly.
  *
  * UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's exec_me, and
  * the pad plan IS the aligned (N,Kp) entry. Exercises BOTH branches of the padded create:
  *   PAD  cell (256,7):  (256,7).exec_me=Kp=8 -> use the aligned (256,8) entry, run me=8 (full-SIMD).
  *   TAIL cell (256,11): (256,11).exec_me=K=11 -> use (256,11)'s own factorization, run me=11 tail.
  * Correctness oracles (in-place c2c emits SCRAMBLED/digit-reversed bin order, so a natural-order
- * DFT can't be compared elementwise): (1) BIT-EXACT vs a tight (config.batch=NULL) reference plan
- * built at the SAME factorization — the STEP-E guarantee through the front door; (2) fwd->bwd
+ * DFT can't be compared elementwise): (1) BIT-EXACT vs a tight (owned_buffers=0, caller-allocated)
+ * reference plan built at the SAME factorization — the STEP-E guarantee through the front door; (2) fwd->bwd
  * roundtrip recovers N*x on the K real lanes (invertibility).
  *
  * Self-contained: seeds the SINGLE spike_wisdom.txt into a scratch dir, points VFFT_WISDOM_DIR at
@@ -82,21 +83,24 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
     vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C; cfg.placement = VFFT_INPLACE; cfg.rigor = VFFT_MEASURE;
     cfg.dims = 1; cfg.n[0] = N; cfg.howmany = (size_t)K; cfg.nthreads = nthreads;
-    vfft_batch b = vfft_alloc_batch_for(&cfg);      /* the batch is born from the config */
-    CHECK(b != NULL, "alloc_batch_for");
-    if (!b) return;
+    cfg.owned_buffers = 1;                          /* the PLAN allocates (and frees) the planes */
+    vfft_plan p = vfft_create(&cfg);
+    CHECK(p != NULL, "vfft_create (owned buffers, padded)");
+    if (!p) return;
+    double *pre, *pim, *pdre, *pdim;
+    vfft_plan_planes(p, &pre, &pim, &pdre, &pdim);  /* in-place roles: dst == src planes */
+    CHECK(pre != NULL && pim != NULL, "vfft_plan_planes handed back the owned planes");
+    if (!pre || !pim) { vfft_destroy(p); return; }
     /* 2026-07-28: the LIBRARY owns the stride decision (measured tight-vs-padded
-     * verdict), so the caller must READ it from the handle and index with it —
+     * verdict), so the caller must READ it from the plan and index with it —
      * never assume roundup. A TAIL verdict now yields a genuinely tight buffer,
      * and indexing that at the padded width would run off the end. */
-    size_t Kp = vfft_batch_stride(b);
-    CHECK(Kp == (size_t)K || Kp == Kp_pad, "batch stride is tight K or padded Kp");
+    size_t Kp = vfft_plan_stride(p);
+    CHECK(Kp == (size_t)K || Kp == Kp_pad, "plan stride is tight K or padded Kp");
     printf("  cell N=%d K=%d stride=%zu (%s)  T=%d  [%s]\n", N, K, Kp,
            Kp == (size_t)K ? "TIGHT" : "PADDED", nthreads ? nthreads : 1, label);
-    double *pre, *pim, *pdre, *pdim;
-    vfft_batch_planes(b, &pre, &pim, &pdre, &pdim); /* in-place roles: dst == src planes */
 
-    /* fill the K real lanes (random), pad lanes already zeroed by the allocator. */
+    /* fill the K real lanes (random), pad lanes already zeroed by vfft_create. */
     srand(1234 + N + K);
     double *xr = malloc((size_t)N * K * sizeof(double)), *xi = malloc((size_t)N * K * sizeof(double));
     for (int e = 0; e < N; e++)
@@ -106,22 +110,17 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
             pre[(size_t)e * Kp + l] = a; pim[(size_t)e * Kp + l] = c;
         }
 
-    cfg.batch = b; /* same config the batch was born from */
-    vfft_plan p = vfft_create(&cfg);
-    CHECK(p != NULL, "vfft_create (padded)");
-    if (!p) { free(xr); free(xi); vfft_free_batch(b); return; }
-
-    /* forward, in-place on the padded buffer (planes() supplied the roles) */
+    /* forward, in-place on the plan's own buffer (plan_planes() supplied the roles) */
     vfft_execute(p, VFFT_FORWARD, pre, pim, pdre, pdim);
 
-    /* bit-exact vs a tight (config.batch=NULL) reference at the SAME factorization */
+    /* bit-exact vs a tight (owned_buffers=0, caller-allocated) reference at the SAME factorization */
     if (bitexact)
     {
         double *tre = malloc((size_t)N * K * sizeof(double)), *tim = malloc((size_t)N * K * sizeof(double));
         for (int i = 0; i < N * K; i++) { tre[i] = xr[i]; tim[i] = xi[i]; }
         vfft_config_t rc; memset(&rc, 0, sizeof rc);
         rc.transform = VFFT_C2C; rc.placement = VFFT_INPLACE; rc.rigor = VFFT_MEASURE;
-        rc.dims = 1; rc.n[0] = N; rc.howmany = (size_t)K; rc.batch = NULL;
+        rc.dims = 1; rc.n[0] = N; rc.howmany = (size_t)K; /* owned_buffers = 0: caller's tight buffers */
         vfft_plan pr = vfft_create(&rc);
         CHECK(pr != NULL, "vfft_create (tight reference)");
         if (pr) {
@@ -153,8 +152,7 @@ static void run_cell(int N, int K, const char *label, int bitexact, int nthreads
     printf("    roundtrip err: %.2e\n", rt);
 
     free(xr); free(xi);
-    vfft_destroy(p);
-    vfft_free_batch(b);
+    vfft_destroy(p);   /* frees the plan-owned planes (pre/pim/pdre/pdim) */
 }
 
 int main(void)

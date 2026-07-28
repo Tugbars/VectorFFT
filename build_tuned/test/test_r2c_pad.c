@@ -4,8 +4,8 @@
  *                    Not bit-exact (tight-K and padded-Kp are separately calibrated cells, so
  *                    factorizations can differ) — numerically equal ~1e-13 proves correctness.
  *   (B) ROUNDTRIP:   padded r2c -> padded c2r recovers N*x on lanes 0..K-1.
- * The padded handle is transform-aware: R2C = real INPUT (N*Kp) + split spectrum OUT
- * ((N/2+1)*Kp); C2R the reverse. All planes at stride Kp = roundup(K,4); pad lanes zeroed.
+ * The owned-buffer plan is transform-aware: R2C = real INPUT (N*Kp) + split spectrum OUT
+ * ((N/2+1)*Kp); C2R the reverse. All planes at the stride the PLAN picked; pad lanes zeroed.
  * Build: python build.py --src test/test_r2c_pad.c --vfft */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,7 +18,8 @@ static int fails = 0;
 static void cell(int N, int K)
 {
     int    H  = N / 2 + 1;                       /* half-spectrum rows */
-    size_t Kp = ((size_t)K + 3u) & ~(size_t)3u;  /* roundup(K, VW=4) */
+    size_t Kp = 0;                               /* set from the padded PLAN below —
+                                                  * NEVER a local roundup (see vfft.h) */
 
     /* ---------- tight reference (stride K) ---------- */
     double *xt  = (double *)calloc((size_t)N * K, sizeof(double));
@@ -36,24 +37,23 @@ static void cell(int N, int K)
 
     /* ---------- padded r2c (stride Kp) ---------- */
     double match = -1, rt = -1;
-    vfft_config_t rcb = rc; /* batch born from the r2c config */
-    vfft_batch bf = vfft_alloc_batch_for(&rcb);
+    vfft_config_t rcp = rc; rcp.owned_buffers = 1; /* the PLAN owns the padded planes */
     vfft_plan  pf = NULL;
     double *bfreal = NULL, *bfre = NULL, *bfim = NULL, *bfdum = NULL;
-    if (bf) vfft_batch_planes(bf, &bfreal, &bfdum, &bfre, &bfim);
-    if (!bf) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_for(R2C) FAILED\n", N, K); fails++; }
-    else if (pt)
+    if (pt)
     {
-        double *xr = bfreal;
-        for (int n = 0; n < N; n++)                      /* same K signals at stride Kp */
-            for (int k = 0; k < K; k++)
-                xr[(size_t)n * Kp + k] = xt[(size_t)n * K + k];
-
-        vfft_config_t rcp = rc; rcp.batch = bf;
         pf = vfft_create(&rcp);
-        if (!pf) { printf("  N=%-5d K=%-3d Kp=%zu  padded r2c create FAILED (Kp -> gated stride?)\n", N, K, Kp); fails++; }
+        if (!pf) { printf("  N=%-5d K=%-3d  padded r2c create FAILED (Kp -> gated stride?)\n", N, K); fails++; }
         else
         {
+            vfft_plan_planes(pf, &bfreal, &bfdum, &bfre, &bfim); /* real in -> spectrum out */
+            Kp = vfft_plan_stride(pf);
+
+            double *xr = bfreal;
+            for (int n = 0; n < N; n++)                  /* same K signals at stride Kp */
+                for (int k = 0; k < K; k++)
+                    xr[(size_t)n * Kp + k] = xt[(size_t)n * K + k];
+
             double *rep = bfre, *imp = bfim;
             vfft_execute(pf, VFFT_FORWARD, xr, NULL, rep, imp);
             /* (A) match padded lanes 0..K-1 vs tight */
@@ -71,35 +71,30 @@ static void cell(int N, int K)
             vfft_config_t cc; memset(&cc, 0, sizeof cc);
             cc.transform = VFFT_C2R; cc.placement = VFFT_OUTOFPLACE; cc.rigor = VFFT_MEASURE;
             cc.dims = 1; cc.n[0] = N; cc.howmany = (size_t)K;
-            vfft_batch bb = vfft_alloc_batch_for(&cc);
-            if (!bb) { printf("  N=%-5d K=%-3d  vfft_alloc_batch_for(C2R) FAILED\n", N, K); fails++; }
+            cc.owned_buffers = 1;
+            vfft_plan pb = vfft_create(&cc);
+            if (!pb) { printf("  N=%-5d K=%-3d  padded c2r create FAILED\n", N, K); fails++; }
             else
             {
-                double *cre, *cim, *yreal, *ydum;
-                vfft_batch_planes(bb, &cre, &cim, &yreal, &ydum); /* spectrum in -> real out */
+                double *cre = NULL, *cim = NULL, *yreal = NULL, *ydum = NULL;
+                vfft_plan_planes(pb, &cre, &cim, &yreal, &ydum); /* spectrum in -> real out */
+                size_t Kc = vfft_plan_stride(pb);   /* the c2r plan picks its OWN stride */
                 for (int h = 0; h < H; h++)
                     for (int k = 0; k < K; k++)
                     {
-                        cre[(size_t)h * Kp + k] = rep[(size_t)h * Kp + k];
-                        cim[(size_t)h * Kp + k] = imp[(size_t)h * Kp + k];
+                        cre[(size_t)h * Kc + k] = rep[(size_t)h * Kp + k];
+                        cim[(size_t)h * Kc + k] = imp[(size_t)h * Kp + k];
                     }
-                cc.batch = bb; /* same config the batch was born from */
-                vfft_plan pb = vfft_create(&cc);
-                if (!pb) { printf("  N=%-5d K=%-3d  padded c2r create FAILED\n", N, K); fails++; }
-                else
-                {
-                    double *yr = yreal;
-                    vfft_execute(pb, VFFT_BACKWARD, cre, cim, yr, NULL);
-                    rt = 0; double inv = 1.0 / (double)N;
-                    for (int n = 0; n < N; n++)
-                        for (int k = 0; k < K; k++)
-                        {
-                            double d = fabs(yr[(size_t)n * Kp + k] * inv - xt[(size_t)n * K + k]);
-                            if (d > rt) rt = d;
-                        }
-                    vfft_destroy(pb);
-                }
-                vfft_free_batch(bb);
+                double *yr = yreal;
+                vfft_execute(pb, VFFT_BACKWARD, cre, cim, yr, NULL);
+                rt = 0; double inv = 1.0 / (double)N;
+                for (int n = 0; n < N; n++)
+                    for (int k = 0; k < K; k++)
+                    {
+                        double d = fabs(yr[(size_t)n * Kc + k] * inv - xt[(size_t)n * K + k]);
+                        if (d > rt) rt = d;
+                    }
+                vfft_destroy(pb);                   /* frees cre/cim/yr */
             }
         }
     }
@@ -109,8 +104,7 @@ static void cell(int N, int K)
     printf("  N=%-5d K=%-3d Kp=%zu rem%d  match(pad0..K vs tight)=%9.1e  roundtrip=%9.1e  %s\n",
            N, K, Kp, K % 4, match, rt, bad ? "<FAIL>" : "ok");
 
-    if (pf) vfft_destroy(pf);
-    if (bf) vfft_free_batch(bf);
+    if (pf) vfft_destroy(pf);   /* frees the padded r2c planes */
     if (pt) vfft_destroy(pt);
     free(xt); free(ret); free(imt);
 }
