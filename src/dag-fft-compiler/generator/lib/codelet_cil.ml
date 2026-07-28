@@ -1094,7 +1094,9 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
        \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;%s\n"
        isa.Isa.target_attr
        radix
-       (kind_name kind ^ if !tw_log3 then "_log3" else "")
+       (kind_name kind
+        ^ (if blocked then "b" else "")
+        ^ if !tw_log3 then "_log3" else "")
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
        (if kind = T2 then "" else " (void)tw_re;"));
