@@ -1164,7 +1164,8 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
      let p2f = Isa.intr isa "permute2f128_pd" in
      let n = Array.length outs in
      let l = ref 0 in
-     while !l < n do
+     (* pairs of legs: one permute2f128 per store, both full width *)
+     while !l + 1 < n do
        let a = Printf.sprintf "z%d" outs.(!l).tag
        and b = Printf.sprintf "z%d" outs.(!l + 1).tag in
        Buffer.add_string
@@ -1180,7 +1181,25 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
                (Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" !l)
                (Printf.sprintf "%s(%s, %s, 0x31)" p2f a b)));
        l := !l + 2
-     done);
+     done;
+     (* ODD RADIX: the last leg has no partner to swap lanes with, so its two
+        columns are scattered as two 128-bit stores instead of one paired
+        permute2f128. N1T already refuses anything but 2 complex/vector
+        (checked above), so a 128-bit half IS exactly one column. *)
+     if !l < n
+     then (
+       let a = Printf.sprintf "z%d" outs.(!l).tag in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        _mm_storeu_pd(&zout[2*((size_t)k*OLs + %d)], \
+             _mm256_castpd256_pd128(%s));\n\
+            \        _mm_storeu_pd(&zout[2*(((size_t)k + 1)*OLs + %d)], \
+             _mm256_extractf128_pd(%s, 1));\n"
+            !l
+            a
+            !l
+            a)));
   Buffer.add_string buf "    }\n}\n";
   Buffer.contents buf
 ;;
