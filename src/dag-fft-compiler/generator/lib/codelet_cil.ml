@@ -285,6 +285,21 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     cadd ek t, csub ek t)
 ;;
 
+(* Unwrap a fully-assigned output array. The Option is not decoration: the
+   ORIGINAL `Array.make n xs.(0)` pre-filled every slot with INPUT LEG 0, so a
+   construction that failed to write a slot emitted plausible-looking code that
+   silently returned an input as an output (the r3 signature). With Option the
+   same mistake is a generation-time failure instead. Pow2 output is unchanged —
+   the unwrapped values are the same nodes. *)
+let unwrap_legs (who : string) (out : t option array) : t array =
+  Array.mapi
+    (fun i o ->
+       match o with
+       | Some e -> e
+       | None -> failwith (Printf.sprintf "%s: output leg %d never assigned" who i))
+    out
+;;
+
 let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
@@ -292,13 +307,144 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
     let h = n / 2 in
     let e = dft_cx ~sign h (Array.init h (fun i -> xs.(2 * i)))
     and o = dft_cx ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
-    let out = Array.make n xs.(0) in
+    let out = Array.make n None in
     for k = 0 to h - 1 do
       let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
-      out.(k) <- a;
-      out.(k + h) <- b
+      out.(k) <- Some a;
+      out.(k + h) <- Some b
     done;
-    out)
+    unwrap_legs "dft_cx" out)
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+ *  ODD / PRIME RADICES — the CONJUGATE-PAIR construction
+ *
+ * dft_cx above is a DIT radix-2 recursion and is valid ONLY for powers of two.
+ * Odd radices use the conjugate-pair symmetry instead. With H = (n-1)/2:
+ *
+ *     S_j = x_j + x_{n-j}          D_j = x_j - x_{n-j}        j = 1..H
+ *     X[0]   = x0 + SUM_j S_j
+ *     P_m    = x0 + SUM_j cos(2pi*j*m/n) * S_j       (REAL scalar weights)
+ *     Q_m    =      SUM_j sin(2pi*j*m/n) * D_j       (REAL scalar weights)
+ *     X[m]   = P_m + sigma*i*Q_m,   X[n-m] = P_m - sigma*i*Q_m
+ *                                    sigma = -1 (Fwd), +1 (Bwd)
+ *
+ * This is the SAME construction the real/split side hand-builds in
+ * dft_recurse.ml (:327-468) — it is NOT discovered by algsimp there (which
+ * this module never runs anyway), so quality here is delivered BY
+ * CONSTRUCTION, exactly as it is on the split side.
+ *
+ * THREE MOVES make it fit the existing packed-complex primitives, with NO new
+ * node kind:
+ *
+ *  1. PRE-ROTATE the differences. sigma*i is linear over real scalars, so push
+ *     it inside the sum: R_j = rot(D_j) once per j (H rotations for the whole
+ *     codelet, hash-consed and shared by every output), instead of one rotation
+ *     per output. A Fwd kernel then contains only CRotNI and a Bwd kernel only
+ *     CRotPI, which keeps the one-mask-per-direction preamble correct.
+ *
+ *  2. MAX-MAGNITUDE NORMALIZATION. Seeding the Q chain on the term with the
+ *     LARGEST |sin| lets the leading coefficient be absorbed into the output
+ *     FMA, so no bare "real scalar times x" node is needed (there is none in
+ *     cx_kind). It is also better conditioned: every remaining ratio is <= 1 in
+ *     magnitude, whereas seeding at j=1 would divide by the smallest sine.
+ *
+ *  3. DEGENERATE-COEFFICIENT LADDER (cscale_chain): weights of 0 / +1 / -1 —
+ *     which occur for odd COMPOSITES, e.g. n=9 at j=3,m=3 gives cos=1, sin=0 —
+ *     collapse to nothing / cadd / csub instead of emitting a multiply.
+ *
+ * P_m and Q_m are BIT-IDENTICAL between Fwd and Bwd: every weight is the same
+ * and no sign flips anywhere. The only difference between the two kernels is
+ * which quarter-turn node is used, so BOTH DIRECTIONS come out at the same op
+ * count and the same DAG shape.
+ * ═══════════════════════════════════════════════════════════════ *)
+
+let cx_eps = 1e-14
+
+(* Weighted sum over packed complex with REAL scalar weights, folded into an
+   FMA chain. The SIGN rides in the OPCODE (cfma vs cfnma) and only the
+   magnitude becomes a constant — the same convention dft_recurse.ml uses, and
+   the reason no fma-lift pass is needed afterwards. *)
+let cscale_chain ~(seed : t) (terms : (float * t) list) : t =
+  List.fold_left
+    (fun acc (c, x) ->
+       if abs_float c < cx_eps
+       then acc
+       else if abs_float (c -. 1.0) < cx_eps
+       then cadd acc x
+       else if abs_float (c +. 1.0) < cx_eps
+       then csub acc x
+       else if c > 0.0
+       then cfma c x acc
+       else cfnma (-.c) x acc)
+    seed
+    terms
+;;
+
+let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+  if n < 3 || n mod 2 = 0
+  then failwith (Printf.sprintf "dft_cx_odd: needs an ODD n >= 3, got %d" n);
+  let pi = 4.0 *. atan 1.0 in
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let h = (n - 1) / 2 in
+  (* conjugate pairs, shared by every output leg *)
+  let s = Array.init h (fun i -> cadd xs.(i + 1) xs.(n - i - 1)) in
+  let r = Array.init h (fun i -> rot (csub xs.(i + 1) xs.(n - i - 1))) in
+  let out = Array.make n None in
+  let acc = ref xs.(0) in
+  for i = 0 to h - 1 do
+    acc := cadd !acc s.(i)
+  done;
+  out.(0) <- Some !acc;
+  for m = 1 to h do
+    let cf j = cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
+    let sf j = sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
+    let p = cscale_chain ~seed:xs.(0) (List.init h (fun i -> cf (i + 1), s.(i))) in
+    (* seed the Q chain on the largest |sin| (move 2) *)
+    let jstar = ref 0 in
+    for i = 1 to h - 1 do
+      if abs_float (sf (i + 1)) > abs_float (sf (!jstar + 1)) then jstar := i
+    done;
+    let cstar = sf (!jstar + 1) in
+    (* |sin(2pi*m/n)| > 0 for 1 <= m <= h, and cstar is the max, so this cannot
+       fire; keep it as a loud guard rather than dividing by zero silently. *)
+    if abs_float cstar < cx_eps
+    then failwith (Printf.sprintf "dft_cx_odd: degenerate sine row at n=%d m=%d" n m);
+    let qh =
+      cscale_chain
+        ~seed:r.(!jstar)
+        (List.filteri
+           (fun i _ -> i <> !jstar)
+           (List.init h (fun i -> sf (i + 1) /. cstar, r.(i))))
+    in
+    let a, b =
+      if cstar > 0.0
+      then cfma cstar qh p, cfnma cstar qh p
+      else cfnma (-.cstar) qh p, cfma (-.cstar) qh p
+    in
+    out.(m) <- Some a;
+    out.(n - m) <- Some b
+  done;
+  unwrap_legs "dft_cx_odd" out
+;;
+
+(* Leaf dispatcher: pow2 -> radix-2 DIT, odd -> conjugate pair. An EVEN
+   non-pow2 radix has no leaf construction here (the radix-2 recursion would
+   drop legs) — it must be split explicitly by the caller. *)
+let dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+  if n = 1
+  then xs
+  else if n land (n - 1) = 0
+  then dft_cx ~sign n xs
+  else if n mod 2 = 1
+  then dft_cx_odd ~sign n xs
+  else
+    failwith
+      (Printf.sprintf
+         "codelet_cil: radix %d is EVEN but not a power of two — the radix-2 \
+          recursion would drop legs and the conjugate-pair construction needs \
+          an odd n. Split it explicitly (m.p) instead."
+         n)
 ;;
 
 (* Mixed-radix four-step over the complex IR: `chain` says how the transform is
@@ -595,7 +741,8 @@ type dir =
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
 let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
-      ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
+      ~(split : (int * int) option) ~(radix : int) ~(isa : Isa.t)
+      ~(uarch : Uarch.t)
   : string
   =
   (* Required, not optional: an optional arg here cannot be erased (OCaml
@@ -625,13 +772,15 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
      and prime radices need a different complex construction (Winograd /
      Rader at the complex level) — see zil_pipeline_port.md §11.5. Until
      then, fail loudly rather than emit garbage. *)
-  if radix < 2 || radix land (radix - 1) <> 0
+  if radix < 2 then failwith "codelet_cil: radix must be >= 2";
+  if radix land (radix - 1) <> 0 && radix mod 2 = 0
   then
     failwith
       (Printf.sprintf
-         "codelet_cil: radix %d unsupported — the complex DIT recursion is \
-          radix-2 (powers of two only). Odd/prime radices need a complex \
-          Winograd/Rader construction, not yet written."
+         "codelet_cil: radix %d is EVEN but not a power of two — dft_cx would \
+          drop legs and the conjugate-pair construction needs an odd n. Such a \
+          radix must be split explicitly (m.p); not wired on the monolithic \
+          path."
          radix);
   reset ();
   let sign = if dir = Fwd then `Fwd else `Bwd in
@@ -643,7 +792,7 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
          untwiddled (w^0 = 1), which is why records start at leg 1. *)
       if pre_tw && i > 0 then ctwl i (cin i) else cin i)
   in
-  let outs = dft_cx ~sign radix inputs in
+  let outs = dft_small ~sign radix inputs in
   (* T2 bwd POST-twiddles: conj(w) (.) IDFT(y). Same BYTW2 apply, same table
      slots, just after the butterfly — see the `dir` note above. *)
   let outs =
@@ -730,8 +879,43 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
        m = 2 is the plain halving (its DFT_2 is exactly butterfly_pair);
        m = 8 at R=64 is the 8x8 form — needed because halving 64 leaves
        32-point halves that still spill. Peak live goes R -> max(p, m). *)
-    let m = if radix >= 64 then 8 else 2 in
-    let p = radix / m in
+    (* THE SPLIT IS A PLAN INPUT, NOT AN EMITTER DECISION.
+       For pow2 the historical rule is kept verbatim so every existing kernel
+       stays byte-identical. For a NON-pow2 radix there is no defensible
+       default — `radix / m` with a hand-picked m would either truncate (odd
+       radix, integer division) or re-commit the "squarest split" mistake this
+       same file records under emit_k1: a factorization invented inside an
+       emitter, which contradicted the calibrated chains and caused measured
+       losses. So a non-pow2 blocked emission REQUIRES an explicit ~split, and
+       the emitter only VALIDATES it. *)
+    let m, p =
+      match split with
+      | Some (sm, sp) ->
+        if sm < 2 || sp < 2 || sm * sp <> radix
+        then
+          failwith
+            (Printf.sprintf
+               "codelet_cil: --cil-split %d.%d does not factor radix %d (need \
+                m,p >= 2 and m*p = radix)"
+               sm
+               sp
+               radix);
+        sm, sp
+      | None ->
+        if radix land (radix - 1) <> 0
+        then
+          failwith
+            (Printf.sprintf
+               "codelet_cil: --cil-blocked at radix %d needs an explicit \
+                --cil-split m.p. There is no defensible default for a non-pow2 \
+                radix, and the factorization is a PLAN input, not an emitter \
+                decision."
+               radix)
+        else (
+          let m = if radix >= 64 then 8 else 2 in
+          m, radix / m)
+    in
+    if m * p <> radix then failwith "codelet_cil: blocked split must multiply to radix";
     let pi = 4.0 *. atan 1.0 in
     let sgn = if dir = Fwd then -1.0 else 1.0 in
     let leg_load l = Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l) in
@@ -755,7 +939,7 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
                 ins
             else ins
           in
-          dft_cx ~sign p ins)
+          dft_small ~sign p ins)
         ~store:(fun j v ->
           Buffer.add_string
             body
@@ -797,7 +981,7 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
                        ctw (cos a) (sin a) x))
                   ins
               in
-              dft_cx ~sign m tw)
+              dft_small ~sign m tw)
           in
           if post_tw
           then
