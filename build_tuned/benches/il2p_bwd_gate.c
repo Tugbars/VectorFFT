@@ -19,6 +19,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "il2p.h"
 
 #ifndef M_PI
@@ -105,6 +109,65 @@ static int run(int N, int R1, int R2)
     return bad;
 }
 
+/* Size what T2P would buy.
+ *
+ * ⚠️ bwd/fwd is NOT the right comparison and must not be used: forward's
+ * stage 2 is t2 (twiddled, streams VTW2, BYTW2 in-kernel) while F-DIAG's
+ * stage 2 is n1_b (TWIDDLE-FREE, the diagonal already happened). They are
+ * different decompositions, so the ratio isolates nothing -- it even comes
+ * out < 1 at large N.
+ *
+ * Fusing the diagonal into stage 2 (= the T2P kind) does NOT remove the
+ * twiddle multiply; T2P still performs it. What it removes is the extra
+ * read+write of the whole mid plane and the scalar-vs-SIMD arithmetic. So the
+ * diagonal pass measured IN ISOLATION is the upper bound on the win. */
+static double med(double *v, int n)
+{
+    for (int i = 1; i < n; i++) {
+        double t = v[i]; int j = i - 1;
+        while (j >= 0 && v[j] > t) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = t;
+    }
+    return v[n / 2];
+}
+
+static void timecell(int N, int R1, int R2)
+{
+    vfft_il2p_plan_t *p = vfft_il2p_create(N, R1, R2);
+    if (!p) return;
+    size_t nd = (size_t)2 * N;
+    double *x = malloc(nd * sizeof(double)), *y = malloc(nd * sizeof(double));
+    unsigned seed = 99u + (unsigned)N;
+    for (size_t i = 0; i < nd; i++) x[i] = urand(&seed);
+
+    /* QueryPerformanceCounter (the project's Win timer), cachebust between
+     * arms, and arm ORDER ALTERNATED per round so neither is systematically
+     * measured on a warmed core. Medians, not best-of. */
+    static double bust[1 << 20];
+    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
+    int reps = (int)(8000000 / (N + 1)); if (reps < 50) reps = 50;
+    double f[9], b[9];
+    for (int r = 0; r < 9; r++) {
+        double t_f = 0.0, t_b = 0.0;
+        for (int arm = 0; arm < 2; arm++) {
+            int dofwd = (r & 1) ? (arm == 1) : (arm == 0);   /* alternate */
+            for (size_t i = 0; i < (sizeof bust / sizeof *bust); i += 8) bust[i] += 1.0;
+            LARGE_INTEGER a, z; QueryPerformanceCounter(&a);
+            if (dofwd) for (int i = 0; i < reps; i++) vfft_il2p_execute_fwd(p, x, y);
+            else       for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd(p, x, y);
+            QueryPerformanceCounter(&z);
+            double ns = (double)(z.QuadPart - a.QuadPart) * 1e9
+                        / (double)fq.QuadPart / reps;
+            if (dofwd) t_f = ns; else t_b = ns;
+        }
+        f[r] = t_f; b[r] = t_b;
+    }
+    double fm = med(f, 9), bm = med(b, 9);
+    printf("  N=%-6d %2dx%-3d  fwd=%-9.0f bwd=%-9.0f  bwd/fwd=%.2fx\n",
+           N, R1, R2, fm, bm, bm / fm);
+    free(x); free(y); vfft_il2p_destroy(p);
+}
+
 int main(void)
 {
     int bad = 0;
@@ -128,5 +191,13 @@ int main(void)
     bad |= run(4096, 64, 64);
 
     printf("\n%s\n", bad ? "*** IL2P BWD GATE FAILED ***" : "IL2P BWD GATE PASSED");
+
+    printf("\n-- COST OF THE UNFUSED DIAGONAL (bwd/fwd on the same plan) --\n");
+    printf("   fusing it into stage 2 IS the T2P kind; this sizes what T2P buys\n");
+    timecell(128, 8, 16);
+    timecell(512, 16, 32);
+    timecell(1024, 32, 32);
+    timecell(2048, 32, 64);
+    timecell(4096, 64, 64);
     return bad;
 }
