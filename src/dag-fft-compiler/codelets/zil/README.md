@@ -153,19 +153,41 @@ The parked predecessors are recorded in that file's comment block.
 
 ## 5. WHAT IS ACTUALLY IN `avx2/` — MIXED PROVENANCE
 
-Three different emitters wrote the 220 files here. They are **not interchangeable**. Identify
-any file by its **first two lines**, which name the emitter.
+🔴 **This is ONE family in three HOSTING states — not three families.** `codelet_zil.ml` was the
+original self-contained emitter used to develop the IL codelets; every idea in it was then baked
+into the full DAG pipeline. `codelet_cil.ml` and `codelet_zsplit.ml` are that same family
+**re-hosted on the production machinery** (`algsimp`, the SU scheduler, `regalloc`,
+`emit_render`/`emit_c`, `Isa` parameterization). Do not read the provenance line as "a rival
+implementation" — read it as **"ported yet?"**
 
-| emitter | files | what it is | layout |
+Identify any file by its **first two lines**, which name the emitter.
+
+| emitter | files | hosting state | layout |
 |---|---|---|---|
-| `codelet_cil.ml` | **152** | the canonical full-IL family. All odd/prime radices, and all pow2 **backward** | **pure IL** |
-| `codelet_zil.ml` | **49** | older emitter. **Every pow2 FORWARD kernel**, plus exotic kinds cil never emits (`t2c`, `t2s`, `t2sp`, `t2spt`, `t2st`, `t2sq`, `t2sqt`, `t2ss`, `ms`, `msz`, `n1b2`) | pure IL (packed) |
-| `codelet_zsplit.ml` | **19** | the cascade: `s0t_r4`, `s0s`, `msg`, `stf_r4`, `stf2_r4`, `sterm`, `sterm2` | **boundary IL / split interior** |
+| `codelet_cil.ml` | **152** | **PORTED.** Pipeline-hosted (`zil_pipeline_port.md §11`). All odd/prime radices + all pow2 **backward** | **pure IL** |
+| `codelet_zil.ml` | **43** | **NOT YET PORTED.** Every pow2 **FORWARD** kernel, plus exotic kinds never productionised (`t2c`, `t2s`, `t2sp`, `t2spt`, `t2st`, `t2sq`, `t2sqt`, `t2ss`, `n1b2`) | pure IL (packed) |
+| `codelet_zsplit.ml` | **25** | **PORTED** (tranche 1). The cascade: `s0t_r4`, `s0s`, `msg`, `ms`, `msz`, `stf_r4`, `stf2_r4`, `sterm`, `sterm2` | **boundary IL / split interior** |
 
-Recognise `codelet_zil.ml` output on sight: `(k >> 1)` instead of `(k / 2)`, and `in0`/`out0`
-naming instead of `z0`/`z1`.
+Recognise un-ported (`codelet_zil.ml`) output on sight: `(k >> 1)` instead of `(k / 2)`, and
+`in0`/`out0` naming instead of `z0`/`z1`.
 
-**The 19 cascade files are not a mistake and must not be "fixed" into pure IL.** See §3.
+**Why the port matters — and why it is NOT about i9 speed.** `zil` is a self-contained C-string
+emitter with 486 literal `_mm256_` intrinsics and a hard `vec_width <> 4 -> failwith` gate. It
+bypasses ~9.2K lines of shared machinery, so: **no AVX-512 / EPYC path**, every new kind is
+another hand template, and pass improvements (FMA-lift, scheduler wisdom, regalloc widening)
+**never reach it**. `zil_pipeline_port.md` §0 is explicit that arithmetic parity with the
+pipeline is *already proven* — the port is for **reach and maintainability**.
+
+**Why forward is un-ported but backward is not:** `zil` was **forward-only**, so the backward
+kernels had to be born in `cil` (there was nothing to be bit-identical to). The pow2 forward
+kernels are simply the unfinished tranche.
+
+⇒ **The port gate is BIT-IDENTITY, not an A/B race.** Tranche 1 (cascade) established the
+recipe: all 11 production kernels regenerated **bit-identical** to the legacy emission. Finishing
+tranches 2 (bailey2: `n1t`/`t2`) and 3 (solo: `n1`) follows that recipe. The exotic kinds are
+bench-only research residue and should be dropped with their spikes, not ported.
+
+**The cascade files are not a mistake and must not be "fixed" into pure IL.** See §3.
 
 ---
 
