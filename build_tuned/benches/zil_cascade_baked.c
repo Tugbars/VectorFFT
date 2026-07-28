@@ -33,31 +33,31 @@
  * These bodies have NO file-scope consts except _M_IM, which we rename. ── */
 #define _M_IM _MIM_bk1
 #define radix4_z_n1_fwd_avx2 bk_r4n1
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix4_z_n1_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix4_z_n1_avx2.c"
 #undef _M_IM
 #undef radix4_z_n1_fwd_avx2
 
 #define _M_IM _MIM_bk2
 #define radix8_z_n1_fwd_avx2 bk_r8n1
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_n1_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_n1_avx2.c"
 #undef _M_IM
 #undef radix8_z_n1_fwd_avx2
 
 #define _M_IM _MIM_bk3
 #define radix8_z_t2c_fwd_avx2 bk_r8t2c
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_t2c_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_t2c_avx2.c"
 #undef _M_IM
 #undef radix8_z_t2c_fwd_avx2
 
 #define _M_IM _MIM_bk4
 #define radix8_z_t2sp_fwd_avx2 bk_r8t2sp
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_t2sp_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_t2sp_avx2.c"
 #undef _M_IM
 #undef radix8_z_t2sp_fwd_avx2
 
 #define _M_IM _MIM_bk5
 #define radix8_z_t2spt_fwd_avx2 bk_r8t2spt
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_t2spt_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_t2spt_avx2.c"
 #undef _M_IM
 #undef radix8_z_t2spt_fwd_avx2
 

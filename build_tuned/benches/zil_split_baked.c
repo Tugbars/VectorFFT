@@ -30,12 +30,12 @@
 /* ── baked terminator copies (const-clean r8 files; rename via macro) ── */
 #define _M_IM _MIM_bk1
 #define radix8_z_t2sp_fwd_avx2 bk_t2sp
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_t2sp_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_t2sp_avx2.c"
 #undef _M_IM
 #undef radix8_z_t2sp_fwd_avx2
 #define _M_IM _MIM_bk2
 #define radix8_z_t2spt_fwd_avx2 bk_t2spt
-#include "../../src/dag-fft-compiler/codelets/zil/avx2/radix8_z_t2spt_avx2.c"
+#include "../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix8_z_t2spt_avx2.c"
 #undef _M_IM
 #undef radix8_z_t2spt_fwd_avx2
 
