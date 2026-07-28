@@ -418,6 +418,48 @@ structurally loses); gate hard on Phase-1 results.
   from cooperative callers while everyone else gets the tail.
 - **No measured padding on tight buffers** — pad is inadmissible there; tail only.
 
+## 15 addendum: Trimmed from the header:
+
+   * You do NOT need to think about SIMD lane counts, odd K, or padding. Ask for
+   * a batch, ask it for its stride, index with that stride. The library decides
+   * internally whether padding pays for your (N, K) and hands you the matching
+   * buffers, so the fast path costs you no copies either way.
+   *
+   *   🔴 READ THE STRIDE, NEVER COMPUTE IT. vfft_batch_stride(b) may return K
+   *   (tight) or a padded width — both normal. Assuming roundup(K, lanes) WILL
+   *   index off the end of a tight buffer. Pad-vs-tight is measured per cell, so
+   *   a new (N,K) may pause once to calibrate, then is instant forever after.
+   *
+   * The batch is BORN FROM THE CONFIG: vfft_alloc_batch_for(cfg) reads the
+   * transform/placement/N/howmany it needs and allocates every plane that
+   * (transform x placement) requires at the chosen stride Kp, ZEROED:
+   *
+   *   C2C in-place:    split data planes (re+im), N*Kp each. Kp = the MEASURED
+   *                    verdict: roundup(K,4) if padding wins, else exactly K.
+   *   C2C out-of-place: 4 split planes (input re/im + output re/im), N*Kp
+   *                    each; Kp=roundup(K,8) (OOP kinds + wisdom 8-alignment).
+   *                    PAD-ONLY (OOP bakes K).
+   *   R2C:             real INPUT (N*Kp) + split spectrum OUTPUT
+   *                    ((N/2+1)*Kp each). PAD-ONLY; even N required.
+   *   C2R:             split spectrum INPUT + real OUTPUT (mirror of R2C).
+   *   TRIG (DCT/DST/DHT): real INPUT + real OUTPUT, N*Kp each — the ONLY
+   *                    full-SIMD path for misaligned trig K (no odd-K tail).
+   *
+   * The handle is OPAQUE and self-describing (transform, placement, N, K, Kp)
+   * so a padded buffer cannot be mistaken for a tight one, and vfft_create
+   * cross-checks the handle against the config TOTALLY (transform, placement
+   * shape, N, K — any mismatch is a loud create-time rejection).
+   * config.layout must be SPLIT (padded planes are split by construction).
+   *
+   *
+   * (c2c in-place: sre/dre = re plane, sim/dim = im plane; c2c OOP: input
+   * planes -> sre/sim, output planes -> dre/dim; r2c: sre=real, dre/dim =
+   * spectrum; c2r: sre/sim = spectrum, dre=real, dim=NULL; trig: sre=real-in,
+   * dre=real-out, sim=dim=NULL. Roles are the FORWARD data flow — an OOP
+   * roundtrip may legally pass the planes swapped for the inverse leg.)
+   * Element e of lane t sits at plane[e*Kp + t], Kp = vfft_batch_stride(b).
+   * Match every alloc with vfft_free_batch (never free planes yourself).
+
 ## See also
 - [[arbitrary_k_pad_vs_tail]] — the bench + the earlier planner-pivot (superseded by this).
 - [[arbitrary_k_tail_strategy]] — scrambled→SSE2 / natural→transpose.

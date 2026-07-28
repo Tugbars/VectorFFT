@@ -56,13 +56,19 @@
  *   interleaved pairs. Backward transforms are unnormalized (scale by 1/N
  *   yourself after a roundtrip).
  *
- * ── PADDED BATCHES (opt-in fast path for awkward K) ─────────────────────────
+ * ── BATCHES (the normal way to allocate one, for ANY K) ─────────────────────
  *   vfft_batch b = vfft_alloc_batch_for(&cfg);       // one allocator, any transform
  *   double *sre,*sim,*dre,*dim;
  *   vfft_batch_planes(b, &sre,&sim,&dre,&dim);       // fills execute's args in role order
  *   size_t Kp = vfft_batch_stride(b);                // index YOUR data at [e*Kp + t]
  *   ... fill inputs ...; cfg.batch = b; p = vfft_create(&cfg);
  *   vfft_execute(p, dir, sre,sim,dre,dim);  ...  vfft_free_batch(b);
+ *   You never reason about SIMD lane counts or odd K: the library measures
+ *   whether padding pays for your (N,K) and sizes the planes accordingly.
+ *   ALWAYS index with vfft_batch_stride(b) — it may equal K (tight) or a
+ *   padded width, and assuming roundup() will run off the end of a tight
+ *   buffer. The first allocation of a new cell may pause to measure; the
+ *   verdict is persisted, so later ones are instant.
  *   The batch is born from the config, so it always matches the plan; a
  *   mismatched handle is refused at create. Split layout only.
  *
@@ -306,51 +312,14 @@ extern "C"
   void vfft_destroy(vfft_plan p);
 
   /* ════════════════════════════════════════════════════════════════════════
-   * PADDED BATCH  (opt-in fast path for odd K — docs/roadmap/tail_handling/
-   *               padding_design_decision.md)
-   *
-   * The batch is BORN FROM THE CONFIG: vfft_alloc_batch_for(cfg) reads the
-   * transform/placement/N/howmany it needs and allocates every plane that
-   * (transform x placement) requires at the right padded stride Kp, ZEROED:
-   *
-   *   C2C in-place:    split data planes (re+im), N*Kp each; Kp=roundup(K,4).
-   *                    The planner runs me=Kp (full-SIMD) or me=K (tail) per
-   *                    the padded wisdom's exec_me.
-   *   C2C out-of-place: 4 split planes (input re/im + output re/im), N*Kp
-   *                    each; Kp=roundup(K,8) (OOP kinds + wisdom 8-alignment).
-   *                    PAD-ONLY (OOP bakes K).
-   *   R2C:             real INPUT (N*Kp) + split spectrum OUTPUT
-   *                    ((N/2+1)*Kp each). PAD-ONLY; even N required.
-   *   C2R:             split spectrum INPUT + real OUTPUT (mirror of R2C).
-   *   TRIG (DCT/DST/DHT): real INPUT + real OUTPUT, N*Kp each — the ONLY
-   *                    full-SIMD path for misaligned trig K (no odd-K tail).
-   *
-   * The handle is OPAQUE and self-describing (transform, placement, N, K, Kp)
-   * so a padded buffer cannot be mistaken for a tight one, and vfft_create
-   * cross-checks the handle against the config TOTALLY (transform, placement
-   * shape, N, K — any mismatch is a loud create-time rejection).
-   * config.layout must be SPLIT (padded planes are split by construction).
-   *
-   * To USE it: build the config, b = vfft_alloc_batch_for(&cfg), set
-   * cfg.batch = b, vfft_create, then let vfft_batch_planes() fill the execute
-   * arguments IN THE RIGHT ROLES — the role table lives inside the library:
-   *
-   *   double *sre, *sim, *dre, *dim;
-   *   vfft_batch_planes(b, &sre, &sim, &dre, &dim);
-   *   vfft_execute(plan, dir, sre, sim, dre, dim);
-   *
-   * (c2c in-place: sre/dre = re plane, sim/dim = im plane; c2c OOP: input
-   * planes -> sre/sim, output planes -> dre/dim; r2c: sre=real, dre/dim =
-   * spectrum; c2r: sre/sim = spectrum, dre=real, dim=NULL; trig: sre=real-in,
-   * dre=real-out, sim=dim=NULL. Roles are the FORWARD data flow — an OOP
-   * roundtrip may legally pass the planes swapped for the inverse leg.)
-   * Element e of lane t sits at plane[e*Kp + t], Kp = vfft_batch_stride(b).
-   * Match every alloc with vfft_free_batch (never free planes yourself).
-   * ════════════════════════════════════════════════════════════════════════ */
-
-  /* ONE allocator for every padded transform; the Kp rule (roundup(K,4) vs
+   * BATCH ALLOCATION — the normal way to allocate a batch, for ANY K
+   *                    (docs/roadmap/tail_handling/padding_design_decision.md)
+   * 
+   * ONE allocator for every padded transform; the Kp rule (roundup(K,4) vs
    * OOP's roundup(K,8)) is internal. Reads cfg->transform/placement/n[0]/
-   * howmany; cfg->batch is ignored. NULL + stderr message on misuse. */
+   * howmany; cfg->batch is ignored. NULL + stderr message on misuse. 
+   * ════════════════════════════════════════════════════════════════════════ 
+   * */
   vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg);
   /* Fill the vfft_execute arguments in the right roles (any out-param may be
    * NULL if unwanted; planes the transform does not use are set to NULL). */
