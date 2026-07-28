@@ -1,7 +1,7 @@
 /* test_oop_pad.c — OOP c2c PADDING through the public vfft.h. OOP bakes K (no runtime me) ->
  * PAD-ONLY, built at Kp=roundup(K,8) (BAILEY2 + the OOP wisdom reader both hard-gate on K%8).
- * The 4-plane handle (consolidated API): vfft_alloc_batch_for(cfg with placement=OUTOFPLACE);
- * vfft_batch_planes fills sre/sim = split INPUT, dre/dim = split OUTPUT, each N*Kp.
+ * The plan OWNS the 4 planes (config.owned_buffers = 1 with placement=OUTOFPLACE);
+ * vfft_plan_planes fills sre/sim = split INPUT, dre/dim = split OUTPUT, each N*Kp.
  * OOP output ORDER is kind-dependent (LEAF/BAILEY2 natural, MODEB scrambled), so the
  * robust gate is:
  *   (A) fwd->bwd ROUNDTRIP recovers N*x on lanes 0..K-1 (order-independent).
@@ -15,33 +15,34 @@
 
 static int fails = 0;
 
-static void mk_cfg(vfft_config_t *c, int N, int K, vfft_batch b)
+static void mk_cfg(vfft_config_t *c, int N, int K, int owned)
 {
     memset(c, 0, sizeof *c);
     c->transform = VFFT_C2C; c->placement = VFFT_OUTOFPLACE; c->rigor = VFFT_MEASURE;
-    c->dims = 1; c->n[0] = N; c->howmany = (size_t)K; c->batch = b;
+    c->dims = 1; c->n[0] = N; c->howmany = (size_t)K; c->owned_buffers = owned;
 }
-static vfft_plan mk_oop(int N, int K, vfft_batch b)
+static vfft_plan mk_oop(int N, int K, int owned)
 {
     vfft_config_t c;
-    mk_cfg(&c, N, K, b);
+    mk_cfg(&c, N, K, owned);
     return vfft_create(&c);
 }
 
 static void cell(int N, int K)
 {
-    size_t Kp = ((size_t)K + 7u) & ~(size_t)7u;    /* OOP pads to roundup(K,8) */
-    int aligned = ((size_t)K == Kp);               /* K%8==0 -> Kp==K -> compare vs tight */
-
-    vfft_config_t bc;
-    mk_cfg(&bc, N, K, NULL);
-    vfft_batch b = vfft_alloc_batch_for(&bc);       /* born from the config */
+    /* CREATE FIRST: the planes and the stride now come from the plan itself. */
+    vfft_plan p = mk_oop(N, K, 1);                 /* owned_buffers = 1 */
     double *xr = (double *)malloc((size_t)N * K * sizeof(double));
     double *xi = (double *)malloc((size_t)N * K * sizeof(double));
-    if (!b || !xr || !xi) { printf("  N=%-5d K=%-3d  alloc FAILED\n", N, K); fails++; goto done; }
+    /* The LIBRARY owns the stride (OOP always pads to roundup(K,8) today, but never
+     * assume it — a self-computed width is an OOB index the day a verdict applies). */
+    size_t Kp = vfft_plan_stride(p);               /* 0 when create failed */
+    if (!p) { printf("  N=%-5d K=%-3d Kp=%-3zu  padded OOP create FAILED\n", N, K, Kp); fails++; goto done; }
+    if (!xr || !xi) { printf("  N=%-5d K=%-3d  alloc FAILED\n", N, K); fails++; goto done; }
+    int aligned = ((size_t)K == Kp);               /* Kp==K -> compare vs tight */
     srand(13 + N + K);
     double *bre, *bim, *bore, *boim;
-    vfft_batch_planes(b, &bre, &bim, &bore, &boim); /* in re/im -> out re/im roles */
+    vfft_plan_planes(p, &bre, &bim, &bore, &boim); /* in re/im -> out re/im roles */
     for (int n = 0; n < N; n++)
         for (int k = 0; k < K; k++)
         {
@@ -49,13 +50,10 @@ static void cell(int N, int K)
             xr[n * K + k] = vr; xi[n * K + k] = vi;
             bre[(size_t)n * Kp + k] = vr; bim[(size_t)n * Kp + k] = vi;
         }
-    vfft_plan p = mk_oop(N, K, b);
-    if (!p) { printf("  N=%-5d K=%-3d Kp=%-3zu  padded OOP create FAILED\n", N, K, Kp); fails++; goto done; }
-
     /* (A/fwd) padded forward: input planes -> output planes (from planes()) */
     vfft_execute(p, VFFT_FORWARD, bre, bim, bore, boim);
 
-    /* (B) tight OOP fwd (no batch), bit-exact vs padded when Kp==K */
+    /* (B) tight OOP fwd (caller-owned buffers), bit-exact vs padded when Kp==K */
     double tm = -1;
     if (aligned)
     {
@@ -65,7 +63,7 @@ static void cell(int N, int K)
         if (tre && tim && tor && toi)
         {
             memcpy(tre, xr, nk * sizeof(double)); memcpy(tim, xi, nk * sizeof(double));
-            vfft_plan pt = mk_oop(N, K, NULL);            /* tight (no batch) */
+            vfft_plan pt = mk_oop(N, K, 0);               /* tight (caller buffers) */
             if (pt)
             {
                 vfft_execute(pt, VFFT_FORWARD, tre, tim, tor, toi);
@@ -98,7 +96,7 @@ static void cell(int N, int K)
             if (dr > rt) rt = dr;
             if (di > rt) rt = di;
         }
-    vfft_destroy(p);
+    vfft_destroy(p); p = NULL;                     /* frees the planes it owns */
 
     int bad = (rt > 1e-10) || (aligned && (tm < 0 || tm > 1e-13));
     if (bad) fails++;
@@ -109,7 +107,7 @@ static void cell(int N, int K)
         printf("  N=%-5d K=%-3d Kp=%-3zu rem%d  (odd-Kp: roundtrip only)  roundtrip=%9.1e  %s\n",
                N, K, Kp, K % 8, rt, bad ? "<FAIL>" : "ok");
 done:
-    if (b) vfft_free_batch(b);
+    if (p) vfft_destroy(p);                        /* failure paths only */
     free(xr); free(xi);
 }
 

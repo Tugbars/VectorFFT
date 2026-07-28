@@ -219,6 +219,9 @@ struct vfft_plan_s
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
     vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
+    /* config.owned_buffers: the planes THIS plan allocated and will free.
+     * NULL when the caller brings their own buffers (the drop-in default). */
+    struct vfft_batch_s *own_batch;
     /* Transparent JIT/baked-resolved c2c in-place executor (NULL = generic). Resolved
      * once at create; execute calls it directly (zero JIT overhead in the hot path). */
     vfft_proto_exec_fn exec_fwd, exec_bwd;
@@ -300,6 +303,12 @@ struct vfft_batch_s
     int xform;
     int oop;
 };
+/* INTERNAL handle type. Since 2026-07-28 the batch is no longer part of the
+ * public API: vfft_create owns it (config.owned_buffers) and vfft_destroy frees
+ * it, so a plan and its buffers cannot disagree. Callers reach the planes/stride
+ * through vfft_plan_planes() / vfft_plan_stride(). */
+typedef struct vfft_batch_s *vfft_batch;
+static void _own_batch_free(vfft_batch b); /* defined below; used by vfft_destroy */
 
 /* trig predicate: any DCT/DST/DHT transform enum. */
 #define _VFFT_IS_TRIG(t) ((t) >= VFFT_DCT1 && (t) <= VFFT_DHT)
@@ -1815,7 +1824,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
 
-vfft_plan vfft_create(const vfft_config_t *cfg)
+static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 {
     if (!cfg)
     {
@@ -1888,14 +1897,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * order there is rejected up front — the same no-silent-wrong-order contract as the padding gate
      * below. natural_order_inplace_design.md §2e. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !cfg->batch))
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !ob))
     {
         _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "
                    "(%s is %s) — r2c/c2r/trig are inherently natural-order and padded batches "
                    "have no order axis; use VFFT_ORDER_DEFAULT",
                    cfg->order == VFFT_ORDER_NATURAL ? "NATURAL" : "SCRAMBLED",
                    _vfft_tname(cfg->transform),
-                   cfg->batch ? "padded" : (cfg->transform == VFFT_C2C ? "?" : "not C2C"));
+                   ob ? "padded" : (cfg->transform == VFFT_C2C ? "?" : "not C2C"));
         return NULL;
     }
     /* Layout axis gates that are transform-global:
@@ -1909,11 +1918,11 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                    _vfft_tname(cfg->transform));
         return NULL;
     }
-    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && cfg->batch)
+    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && ob)
     {
         _vfft_warn("vfft_create: config.batch + layout=INTERLEAVED is unsupported — padded "
                    "batches are split-plane by construction; keep VFFT_LAYOUT_SPLIT and use "
-                   "vfft_batch_planes() to fill the execute arguments");
+                   "vfft_plan_planes() to fill the execute arguments");
         return NULL;
     }
     /* In-place real FFT is undefined here (spectrum and real data are separate
@@ -1934,7 +1943,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * silently ignore the handle: the padding design's contract is NO silent-corruption path.
      * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
      * padding lands in later phases. */
-    if (cfg->batch && !(cfg->dims < 2 &&
+    if (ob && !(cfg->dims < 2 &&
                         (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
                          cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
                          _VFFT_IS_TRIG(cfg->transform))))
@@ -2329,14 +2338,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
      * padding is a later refinement: padded runs single-thread here, and padding wins at
      * small K where _c2c_mt is single-thread anyway. Prime N with no direct codelet has no
      * Kp CT plan -> plan_create_ex returns NULL -> NULL (padding unsupported there for now). */
-    if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && cfg->batch)
+    if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE && ob)
     {
-        vfft_batch b = cfg->batch;
+        vfft_batch b = ob;
         if (b->xform != (int)VFFT_C2C || b->oop || b->K != K || b->N != N) /* handle must match exactly */
         {                                                                  /* (an r2c handle's re/im are (N/2+1)*Kp; an OOP handle is 4-plane) */
             _vfft_warn("vfft_create: config.batch does not match this in-place C2C descriptor "
                        "(batch: %s%s N=%d K=%zu; config: C2C in-place N=%d K=%zu) — allocate "
-                       "with vfft_alloc_batch_for(THIS config)",
+                       "— INTERNAL INVARIANT (the plan allocates its own buffers); please report",
                        _vfft_tname(b->xform), b->oop ? " out-of-place" : "", b->N, b->K, N, K);
             return NULL;
         }
@@ -2834,7 +2843,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
         vfft_zsplit_plan_t *zs_pending = NULL;
         vfft_zturn2_plan_t *zt_pending = NULL;
         int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
-        if (K == 1 && !cfg->batch && cfg->order == VFFT_ORDER_SCRAMBLED)
+        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED)
         {
             /* SCRAMBLED K=1: the block-split cascade owns the interleaved
              * z->z contract at the covered cells (matched-permutation
@@ -3013,7 +3022,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                 }
             }
         }
-        if (K == 1 && !cfg->batch && cfg->order != VFFT_ORDER_SCRAMBLED)
+        if (K == 1 && !ob && cfg->order != VFFT_ORDER_SCRAMBLED)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
@@ -3244,14 +3253,14 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * reader both hard-gate on K%8). Pad lanes [K,Kp) are zeroed junk, discarded. */
         size_t bK = K;
         int padded = 0;
-        if (cfg->batch)
+        if (ob)
         {
-            vfft_batch b = cfg->batch;
+            vfft_batch b = ob;
             if (b->xform != (int)VFFT_C2C || !b->oop || b->N != N || b->K != K)
             {
                 _vfft_warn("vfft_create: config.batch does not match this out-of-place C2C "
                            "descriptor (batch: %s%s N=%d K=%zu; config: C2C out-of-place "
-                           "N=%d K=%zu) — allocate with vfft_alloc_batch_for(THIS config)",
+                           "N=%d K=%zu) — INTERNAL INVARIANT (the plan allocates its own buffers); please report",
                            _vfft_tname(b->xform), b->oop ? " out-of-place" : " in-place",
                            b->N, b->K, N, K);
                 return NULL;
@@ -3328,7 +3337,7 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
                            "order=DEFAULT/SCRAMBLED, or calibrate a natural champion into "
                            "the wisdom",
                            N, bK);
-            else if (cfg->batch)
+            else if (ob)
                 _vfft_warn("vfft_create: no out-of-place C2C champion for the padded cell "
                            "N=%d Kp=%zu — drop config.batch or use in-place padding",
                            N, bK);
@@ -3386,9 +3395,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * caller falls back to the tight tail). */
         size_t bK = K; /* build width: Kp when padded, else K */
         int padded = 0;
-        if (cfg->batch)
+        if (ob)
         {
-            vfft_batch b = cfg->batch;
+            vfft_batch b = ob;
             if (b->xform != (int)VFFT_R2C || b->N != N || b->K != K)
             { /* handle must match the descriptor exactly */
                 _vfft_warn("vfft_create: config.batch does not match this R2C descriptor "
@@ -3480,9 +3489,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * branch: baked-K executors, no runtime `me`); wisdom unchanged; cascade regime. */
         size_t bK = K;
         int padded = 0;
-        if (cfg->batch)
+        if (ob)
         {
-            vfft_batch b = cfg->batch;
+            vfft_batch b = ob;
             if (b->xform != (int)VFFT_C2R || b->N != N || b->K != K)
             {
                 _vfft_warn("vfft_create: config.batch does not match this C2R descriptor "
@@ -3544,9 +3553,9 @@ vfft_plan vfft_create(const vfft_config_t *cfg)
          * by building aligned. Cascade regime (small Kp). */
         size_t bK = K;
         int padded = 0;
-        if (cfg->batch)
+        if (ob)
         {
-            vfft_batch b = cfg->batch;
+            vfft_batch b = ob;
             if (b->xform != (int)cfg->transform || b->N != N || b->K != K)
             {
                 _vfft_warn("vfft_create: config.batch does not match this %s descriptor "
@@ -4506,11 +4515,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
             size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1) * (h->N4 ? (size_t)h->N4 : 1);
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-            { /* §6a61: interleaved z for dims>=2 — convert-around via the
-               * §6a57 primitives + the split engines (was an UNWIRED
-               * crash: NULL im flowed into the split executors). Correct
-               * at convert cost; native ND c2c z wiring is the filed
-               * follow-up. */
+            { 
                 if (!h->il_wr)
                 {
                     h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
@@ -4766,6 +4771,8 @@ void vfft_destroy(vfft_plan h)
     }
     if (!h)
         return;
+    if (h->own_batch)
+        _own_batch_free(h->own_batch); /* config.owned_buffers planes */
     if (h->cplan)
         vfft_proto_plan_destroy(h->cplan);
     if (h->oplan)
@@ -4819,7 +4826,7 @@ static double *_batch_plane(size_t doubles)
 }
 
 /* Internal transform-aware padded allocator (validation lives in the public
- * vfft_alloc_batch_for door). c2c is in-place (re/im only, N*Kp each); r2c/c2r
+ * _own_batch_for door). c2c is in-place (re/im only, N*Kp each); r2c/c2r
  * are out-of-place with a real plane (N*Kp) and a split spectrum ((N/2+1)*Kp each); trig
  * (DCT/DST/DHT) is real->real out-of-place: real = INPUT plane, re = OUTPUT plane (both
  * N*Kp), im unused. All planes Kp-strided so the Kp-built plan lands exactly (element e,
@@ -4864,7 +4871,7 @@ static vfft_batch _batch_alloc_ex(vfft_transform_t xform, int N, size_t K,
     }
     if (!ok)
     {
-        vfft_free_batch(b);
+        _own_batch_free(b);
         return NULL;
     }
     return b;
@@ -4891,13 +4898,13 @@ static vfft_batch _batch_alloc_oop(int N, size_t K)
     b->oim = _batch_plane(data);
     if (!(b->re && b->im && b->ore && b->oim))
     {
-        vfft_free_batch(b);
+        _own_batch_free(b);
         return NULL;
     }
     return b;
 }
 
-void vfft_free_batch(vfft_batch b)
+static void _own_batch_free(vfft_batch b)
 {
     if (!b)
         return;
@@ -4991,35 +4998,35 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
     return stride;
 }
 
-vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
+static vfft_batch _own_batch_for(const vfft_config_t *cfg)
 {
     if (!cfg)
     {
-        _vfft_warn("vfft_alloc_batch_for: NULL config");
+        _vfft_warn("vfft_create(owned_buffers): NULL config");
         return NULL;
     }
     if ((int)cfg->transform < (int)VFFT_C2C || (int)cfg->transform > (int)VFFT_DHT)
     {
-        _vfft_warn("vfft_alloc_batch_for: invalid transform enum %d (valid: VFFT_C2C..VFFT_DHT)",
+        _vfft_warn("vfft_create(owned_buffers): invalid transform enum %d (valid: VFFT_C2C..VFFT_DHT)",
                    (int)cfg->transform);
         return NULL;
     }
     if (cfg->dims > 1)
     {
-        _vfft_warn("vfft_alloc_batch_for: padded batches are 1D only (got dims=%d) — "
+        _vfft_warn("vfft_create(owned_buffers): padded batches are 1D only (got dims=%d) — "
                    "2D+ plans run tight buffers",
                    cfg->dims);
         return NULL;
     }
     if ((int)cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED)
     {
-        _vfft_warn("vfft_alloc_batch_for: padded batches are split-plane by construction — "
+        _vfft_warn("vfft_create(owned_buffers): padded batches are split-plane by construction — "
                    "layout must be VFFT_LAYOUT_SPLIT");
         return NULL;
     }
     if (cfg->n[0] < 1 || cfg->howmany < 1)
     {
-        _vfft_warn("vfft_alloc_batch_for: need n[0] >= 1 and howmany >= 1 (got N=%d K=%zu)",
+        _vfft_warn("vfft_create(owned_buffers): need n[0] >= 1 and howmany >= 1 (got N=%d K=%zu)",
                    cfg->n[0], cfg->howmany);
         return NULL;
     }
@@ -5038,7 +5045,7 @@ vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
          _VFFT_IS_TRIG(cfg->transform)) &&
         (N % 2) != 0)
     {
-        _vfft_warn("vfft_alloc_batch_for: %s padding requires even N (real-FFT inner "
+        _vfft_warn("vfft_create(owned_buffers): %s padding requires even N (real-FFT inner "
                    "half-spectrum); got N=%d",
                    _vfft_tname(cfg->transform), N);
         return NULL;
@@ -5052,12 +5059,12 @@ vfft_batch vfft_alloc_batch_for(const vfft_config_t *cfg)
  * HERE, once, inside the library (see the vfft.h padded-batch section).
  * Roles are the forward data flow; slots the transform does not use are set
  * to NULL; out-params may themselves be NULL if unwanted. */
-void vfft_batch_planes(vfft_batch b, double **sre, double **sim,
-                       double **dre, double **dim)
+static void _own_batch_planes(vfft_batch b, double **sre, double **sim,
+                              double **dre, double **dim)
 {
     double *s_re = NULL, *s_im = NULL, *d_re = NULL, *d_im = NULL;
     if (!b)
-        _vfft_warn("vfft_batch_planes: NULL batch handle — all planes set to NULL");
+        _vfft_warn("vfft_plan_planes: NULL batch handle — all planes set to NULL");
     else if (b->oop)
     { /* c2c out-of-place: input planes -> src, output planes -> dst */
         s_re = b->re;
@@ -5099,7 +5106,75 @@ void vfft_batch_planes(vfft_batch b, double **sre, double **sim,
         *dim = d_im;
 }
 
-size_t vfft_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
+static size_t _own_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * PUBLIC CREATE — the plan and its buffers are ONE object (2026-07-28).
+ *
+ * config.owned_buffers = 0 (default): the caller brings tight buffers; this is
+ * a straight pass-through and allocates nothing extra.
+ * config.owned_buffers = 1: allocate the planes HERE, at a stride chosen by the
+ * measured pad-vs-tight verdict, hand them to the inner create as the batch,
+ * and attach them to the plan so vfft_destroy frees them. Because the batch is
+ * built from the SAME config the plan is, the two cannot disagree — the
+ * descriptor cross-checks inside the inner create are now unreachable
+ * invariants rather than a user-facing failure mode.
+ * ════════════════════════════════════════════════════════════════════════ */
+vfft_plan vfft_create(const vfft_config_t *cfg)
+{
+    if (!cfg)
+    {
+        _vfft_warn("vfft_create: NULL config");
+        return NULL;
+    }
+    if (!cfg->owned_buffers)
+        return _vfft_create_inner(cfg, NULL);
+
+    vfft_batch ob = _own_batch_for(cfg); /* warns + returns NULL on misuse */
+    if (!ob)
+        return NULL;
+    struct vfft_plan_s *h = (struct vfft_plan_s *)_vfft_create_inner(cfg, ob);
+    if (!h)
+    {
+        _own_batch_free(ob);
+        return NULL;
+    }
+    h->own_batch = ob;
+    return h;
+}
+
+void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
+                      double **dre, double **dim)
+{
+    if (!p)
+    {
+        _vfft_warn("vfft_plan_planes: NULL plan — all planes set to NULL");
+        if (sre) *sre = NULL;
+        if (sim) *sim = NULL;
+        if (dre) *dre = NULL;
+        if (dim) *dim = NULL;
+        return;
+    }
+    if (!p->own_batch)
+    {
+        _vfft_warn("vfft_plan_planes: this plan does not own its buffers — "
+                   "create it with config.owned_buffers = 1, or pass your own "
+                   "planes to vfft_execute; all planes set to NULL");
+        if (sre) *sre = NULL;
+        if (sim) *sim = NULL;
+        if (dre) *dre = NULL;
+        if (dim) *dim = NULL;
+        return;
+    }
+    _own_batch_planes(p->own_batch, sre, sim, dre, dim);
+}
+
+size_t vfft_plan_stride(vfft_plan p)
+{
+    if (!p)
+        return 0;
+    return p->own_batch ? _own_batch_stride(p->own_batch) : p->K;
+}
 
 /* ── wisdom (caller-owned bundle; `dir` holds the per-feature files) ── */
 vfft_wisdom *vfft_wisdom_load(const char *dir)
