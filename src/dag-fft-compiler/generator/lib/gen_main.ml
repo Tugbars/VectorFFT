@@ -183,6 +183,10 @@ let run (argv : string array) : unit =
   (* interleaved-complex (full-IL) family — codelet_cil.ml, §11. Distinct
      from zp_kind/z_split_kind so all three emitters stay A/B-able. *)
   let cil_kind = ref "" in
+  (* --cil-split m.p : the blocked (2-pass) CT factorization. REQUIRED for a
+     non-pow2 blocked emission — the emitter validates it but never invents
+     one (a factorization is a plan input, not an emitter decision). *)
+  let cil_split = ref "" in
   let cil_bwd = ref false in
   let cil_k1 = ref false in
   (* --cil-chain r0.r1: the fused K=1 factorization, supplied by the PLANNER.
@@ -480,6 +484,10 @@ let run (argv : string array) : unit =
       failwith
         "gen_main: --zp-sched requires a policy argument (legacy | afterdef); \
          a bare flag must not silently default to a placement"
+    else if arg = "--cil-split" && !i + 1 < Array.length arr
+    then (
+      cil_split := arr.(!i + 1);
+      incr i)
     else if arg = "--cil-n1"
     then cil_kind := "n1"
     else if arg = "--cil-n1t"
@@ -1701,6 +1709,23 @@ let run (argv : string array) : unit =
            ~kind:(Codelet_cil.kind_of_string !cil_kind)
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
            ~blocked:!cil_blocked
+           ~split:
+             (if !cil_split = ""
+              then None
+              else (
+                match String.split_on_char '.' !cil_split with
+                | [ a; b ] ->
+                  (try Some (int_of_string a, int_of_string b) with
+                   | _ ->
+                     failwith
+                       (Printf.sprintf
+                          "gen_main: --cil-split %s: expected two integers m.p"
+                          !cil_split))
+                | _ ->
+                  failwith
+                    (Printf.sprintf
+                       "gen_main: --cil-split %s: expected exactly m.p"
+                       !cil_split)))
            ~radix:n
            ~isa
            ~uarch)
