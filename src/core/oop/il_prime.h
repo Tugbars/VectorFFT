@@ -142,14 +142,20 @@ static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
 static inline void _ilprime_cmul_vec(double *a, const double *b, size_t cnt)
 {
 #if defined(__AVX2__)
-    static const __m256d IMSK = { 0.0, -0.0, 0.0, -0.0 };
+    /* (a·b: real = ar·br − ai·bi, imag = ai·br + ar·bi. The mask negates
+     * the EVEN lanes of [ai, ar] so t = [−ai·bi, +ar·bi]; negating the odd
+     * lanes instead computes a·conj(b) — the exact bug the transform-
+     * identity probe caught: both prime methods O(1) wrong with EXACT
+     * roundtrips, because chirp autocorrelation forgives a consistent
+     * conjugation. Roundtrip alone cannot gate Bluestein/Rader.) */
+    static const __m256d RMSK = { -0.0, 0.0, -0.0, 0.0 };
     for (size_t i = 0; i + 2 <= cnt; i += 2) {
         __m256d x = _mm256_loadu_pd(a + 2 * i);
         __m256d w = _mm256_loadu_pd(b + 2 * i);
         __m256d wr = _mm256_movedup_pd(w);              /* [br br] lanes  */
         __m256d wi = _mm256_permute_pd(w, 0xF);         /* [bi bi]        */
         __m256d xs = _mm256_permute_pd(x, 0x5);         /* [ai ar]        */
-        __m256d t  = _mm256_mul_pd(_mm256_xor_pd(xs, IMSK), wi);
+        __m256d t  = _mm256_mul_pd(_mm256_xor_pd(xs, RMSK), wi);
         _mm256_storeu_pd(a + 2 * i, _mm256_fmadd_pd(x, wr, t));
     }
 #else
