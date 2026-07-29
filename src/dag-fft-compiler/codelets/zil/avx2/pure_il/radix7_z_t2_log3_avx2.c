@@ -7,11 +7,13 @@
  * leg 1..R-1, one 8-double record [c x4][-s,+s ...]. Cursor advances
  * 48 doubles per group; BYTW2 = fmadd(c, x, mul(s, cflip x)) — ONE
  * data-side shuffle, zero table-side work. tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 
 static const __m256d _M_IM = { 0.0, -0.0, 0.0, -0.0 };  /* negate im lanes: x*(-i) */
+static const __m128d _M_IM_n = { 0.0, -0.0 };  /* tail twin */
 
 __attribute__((target("avx2,fma")))
 void radix7_z_t2_log3_fwd_avx2(
@@ -23,7 +25,8 @@ void radix7_z_t2_log3_fwd_avx2(
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
     (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;
-    for (size_t k = 0; k + 2 <= count; k += 2) {
+    size_t k = 0;
+    for (; k + 2 <= count; k += 2) {
         const double *twp = tw_re + (k / 2) * (size_t)48;
         const __m256d _wc1 = _mm256_loadu_pd(&twp[0]);
         const __m256d _ws1 = _mm256_loadu_pd(&twp[4]);
@@ -91,5 +94,75 @@ void radix7_z_t2_log3_fwd_avx2(
         _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k)], z44);
         _mm256_storeu_pd(&zout[2*((size_t)5*OLs + k)], z37);
         _mm256_storeu_pd(&zout[2*((size_t)6*OLs + k)], z30);
+    }
+    /* odd-count tail: same DAG at VEX-128, one complex per iteration */
+    for (; k < count; ++k) {
+        const double *twp = tw_re + (k / 2) * (size_t)48;
+        const __m128d _wc1_n = _mm_loadu_pd(&twp[0]);
+        const __m128d _ws1_n = _mm_loadu_pd(&twp[4]);
+        const __m128d _wc2_n = _mm_loadu_pd(&twp[8]);
+        const __m128d _ws2_n = _mm_loadu_pd(&twp[12]);
+        const __m128d _wc3_n = _mm_fnmadd_pd(_ws2_n, _ws1_n, _mm_mul_pd(_wc2_n, _wc1_n));
+        const __m128d _ws3_n = _mm_fmadd_pd(_wc2_n, _ws1_n, _mm_mul_pd(_ws2_n, _wc1_n));
+        const __m128d _wc4_n = _mm_loadu_pd(&twp[24]);
+        const __m128d _ws4_n = _mm_loadu_pd(&twp[28]);
+        const __m128d _wc5_n = _mm_fnmadd_pd(_ws4_n, _ws1_n, _mm_mul_pd(_wc4_n, _wc1_n));
+        const __m128d _ws5_n = _mm_fmadd_pd(_wc4_n, _ws1_n, _mm_mul_pd(_ws4_n, _wc1_n));
+        const __m128d _wc6_n = _mm_fnmadd_pd(_ws4_n, _ws2_n, _mm_mul_pd(_wc4_n, _wc2_n));
+        const __m128d _ws6_n = _mm_fmadd_pd(_wc4_n, _ws2_n, _mm_mul_pd(_ws4_n, _wc2_n));
+        /* log3: 3 of 6 VTW2 records loaded, 3 derived */
+        const __m128d z0 = _mm_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
+        const __m128d z1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m128d z5 = _mm_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m128d z7 = _mm_loadu_pd(&zin[2*((size_t)4*Ls + k)]);
+        const __m128d z9 = _mm_loadu_pd(&zin[2*((size_t)5*Ls + k)]);
+        const __m128d z11 = _mm_loadu_pd(&zin[2*((size_t)6*Ls + k)]);
+        const __m128d z2 = _mm_fmadd_pd(_wc1_n, z1, _mm_mul_pd(_ws1_n, _mm_permute_pd(z1, 0x1)));
+        const __m128d z4 = _mm_fmadd_pd(_wc2_n, z3, _mm_mul_pd(_ws2_n, _mm_permute_pd(z3, 0x1)));
+        const __m128d z6 = _mm_fmadd_pd(_wc3_n, z5, _mm_mul_pd(_ws3_n, _mm_permute_pd(z5, 0x1)));
+        const __m128d z8 = _mm_fmadd_pd(_wc4_n, z7, _mm_mul_pd(_ws4_n, _mm_permute_pd(z7, 0x1)));
+        const __m128d z20 = _mm_sub_pd(z6, z8);
+        const __m128d z21 = _mm_xor_pd(_mm_permute_pd(z20, 0x1), _M_IM_n);
+        const __m128d z15 = _mm_add_pd(z6, z8);
+        const __m128d z10 = _mm_fmadd_pd(_wc5_n, z9, _mm_mul_pd(_ws5_n, _mm_permute_pd(z9, 0x1)));
+        const __m128d z18 = _mm_sub_pd(z4, z10);
+        const __m128d z14 = _mm_add_pd(z4, z10);
+        const __m128d z19 = _mm_xor_pd(_mm_permute_pd(z18, 0x1), _M_IM_n);
+        const __m128d z12 = _mm_fmadd_pd(_wc6_n, z11, _mm_mul_pd(_ws6_n, _mm_permute_pd(z11, 0x1)));
+        const __m128d z13 = _mm_add_pd(z2, z12);
+        const __m128d z16 = _mm_sub_pd(z2, z12);
+        const __m128d z17 = _mm_xor_pd(_mm_permute_pd(z16, 0x1), _M_IM_n);
+        const __m128d z25 = _mm_fmadd_pd(_mm_set1_pd(0.62348980185873359), z13, z0);
+        const __m128d z32 = _mm_fnmadd_pd(_mm_set1_pd(0.22252093395631434), z13, z0);
+        const __m128d z39 = _mm_fnmadd_pd(_mm_set1_pd(0.90096886790241903), z13, z0);
+        const __m128d z22 = _mm_add_pd(z0, z13);
+        const __m128d z26 = _mm_fnmadd_pd(_mm_set1_pd(0.22252093395631434), z14, z25);
+        const __m128d z28 = _mm_fmadd_pd(_mm_set1_pd(0.80193773580483829), z17, z19);
+        const __m128d z33 = _mm_fnmadd_pd(_mm_set1_pd(0.90096886790241915), z14, z32);
+        const __m128d z35 = _mm_fnmadd_pd(_mm_set1_pd(0.44504186791262867), z19, z17);
+        const __m128d z40 = _mm_fmadd_pd(_mm_set1_pd(0.62348980185873337), z14, z39);
+        const __m128d z42 = _mm_fmadd_pd(_mm_set1_pd(0.44504186791262884), z17, z21);
+        const __m128d z23 = _mm_add_pd(z22, z14);
+        const __m128d z24 = _mm_add_pd(z23, z15);
+        const __m128d z27 = _mm_fnmadd_pd(_mm_set1_pd(0.90096886790241903), z15, z26);
+        const __m128d z29 = _mm_fmadd_pd(_mm_set1_pd(0.4450418679126289), z21, z28);
+        const __m128d z30 = _mm_fnmadd_pd(_mm_set1_pd(0.97492791218182362), z29, z27);
+        const __m128d z31 = _mm_fmadd_pd(_mm_set1_pd(0.97492791218182362), z29, z27);
+        const __m128d z34 = _mm_fmadd_pd(_mm_set1_pd(0.62348980185873337), z15, z33);
+        const __m128d z36 = _mm_fnmadd_pd(_mm_set1_pd(0.8019377358048384), z21, z35);
+        const __m128d z37 = _mm_fnmadd_pd(_mm_set1_pd(0.97492791218182362), z36, z34);
+        const __m128d z38 = _mm_fmadd_pd(_mm_set1_pd(0.97492791218182362), z36, z34);
+        const __m128d z41 = _mm_fnmadd_pd(_mm_set1_pd(0.22252093395631409), z15, z40);
+        const __m128d z43 = _mm_fnmadd_pd(_mm_set1_pd(0.80193773580483829), z19, z42);
+        const __m128d z44 = _mm_fnmadd_pd(_mm_set1_pd(0.97492791218182373), z43, z41);
+        const __m128d z45 = _mm_fmadd_pd(_mm_set1_pd(0.97492791218182373), z43, z41);
+        _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z24);
+        _mm_storeu_pd(&zout[2*((size_t)1*OLs + k)], z31);
+        _mm_storeu_pd(&zout[2*((size_t)2*OLs + k)], z38);
+        _mm_storeu_pd(&zout[2*((size_t)3*OLs + k)], z45);
+        _mm_storeu_pd(&zout[2*((size_t)4*OLs + k)], z44);
+        _mm_storeu_pd(&zout[2*((size_t)5*OLs + k)], z37);
+        _mm_storeu_pd(&zout[2*((size_t)6*OLs + k)], z30);
     }
 }

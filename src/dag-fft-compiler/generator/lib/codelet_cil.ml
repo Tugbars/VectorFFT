@@ -593,7 +593,15 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
        (* cos duplicated across each complex; sin sign-folded as [-s, +s] per
           complex so the cflip'd product lands with the right signs for
           (a+bi)(c+is). One (c,s) PER LANE — a broadcast constant is just the
-          case where every lane is equal. *)
+          case where every lane is equal. The C TYPE is chosen PER ENTRY from
+          the lane count: the odd-count tail renders the same DAG at
+          Isa.sse2, whose 1-lane constants land in this same table (distinct
+          keys) and must declare as __m128d. Wide-only files are unchanged. *)
+       let ty =
+         if Array.length w * 2 = isa.Isa.vec_width
+         then isa.Isa.vec_type
+         else Isa.sse2.Isa.vec_type
+       in
        let cos_lanes =
          String.concat
            ", "
@@ -607,23 +615,32 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
        in
        Buffer.add_string
          b
-         (Printf.sprintf "static const %s %s_c = { %s };\n" isa.Isa.vec_type n cos_lanes);
+         (Printf.sprintf "static const %s %s_c = { %s };\n" ty n cos_lanes);
        Buffer.add_string
          b
-         (Printf.sprintf "static const %s %s_s = { %s };\n" isa.Isa.vec_type n sin_lanes))
+         (Printf.sprintf "static const %s %s_s = { %s };\n" ty n sin_lanes))
     items;
   Buffer.contents b
 ;;
 
-(* Render one scheduled node as a C initializer expression. *)
-let render (isa : Isa.t) (tbl : consts) (e : t) : string =
+(* Render one scheduled node as a C initializer expression.
+   ?tw_vw — the vec_width the runtime VTW2 TABLE was built for. Defaults to
+   the render ISA's own width (byte-identical for every existing call). The
+   odd-count tail renders at Isa.sse2 against a table laid out for the WIDE
+   width, so it passes the wide width here: the record is already
+   narrow-readable ([c,c] at off, [-s,+s] at off+tw_vw) — ONLY the address
+   arithmetic must not shrink with the render width.
+   ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
+   narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
+let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : string =
+  let twv = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
   let v (x : t) = Printf.sprintf "z%d" x.tag in
   match e.node with
   | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
   | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
   | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
-  | CRotNI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) "_M_IM"
-  | CRotPI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) "_M_RE"
+  | CRotNI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_IM" ^ msuf)
+  | CRotPI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_RE" ^ msuf)
   | CFmaC (c, x, acc) ->
     Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
@@ -649,11 +666,11 @@ let render (isa : Isa.t) (tbl : consts) (e : t) : string =
        the flat path emits byte-identically to before. *)
     let c, s =
       if !tw_log3
-      then Printf.sprintf "_wc%d" leg, Printf.sprintf "_ws%d" leg
+      then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
-        let off = (leg - 1) * 2 * isa.Isa.vec_width in
+        let off = (leg - 1) * 2 * twv in
         ( Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)
-        , Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + isa.Isa.vec_width)) ))
+        , Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + twv)) ))
     in
     Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
 ;;
@@ -696,13 +713,17 @@ let log3_plan (radix : int) : (int * (int * int) option) list =
   List.rev !out
 ;;
 
-let emit_log3_prologue (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
-  let vw = isa.Isa.vec_width in
+let emit_log3_prologue
+      ?(tw_vw = 0) ?(msuf = "")
+      (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
+  (* ?tw_vw / ?msuf as in `render`: the narrow tail re-binds its own
+     _wc%d_n/_ws%d_n names at Isa.sse2 against the WIDE-geometry table. *)
+  let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
   let nload = ref 0 in
   List.iter
     (fun (j, src) ->
-       let cj = Printf.sprintf "_wc%d" j
-       and sj = Printf.sprintf "_ws%d" j in
+       let cj = Printf.sprintf "_wc%d%s" j msuf
+       and sj = Printf.sprintf "_ws%d%s" j msuf in
        match src with
        | None ->
          incr nload;
@@ -717,10 +738,10 @@ let emit_log3_prologue (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
                  sj
                  (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + vw)))))
        | Some (p, q) ->
-         let cp = Printf.sprintf "_wc%d" p
-         and sp = Printf.sprintf "_ws%d" p
-         and cq = Printf.sprintf "_wc%d" q
-         and sq = Printf.sprintf "_ws%d" q in
+         let cp = Printf.sprintf "_wc%d%s" p msuf
+         and sp = Printf.sprintf "_ws%d%s" p msuf
+         and cq = Printf.sprintf "_wc%d%s" q msuf
+         and sq = Printf.sprintf "_ws%d%s" q msuf in
          Buffer.add_string
            buf
            (Printf.sprintf
@@ -1078,6 +1099,93 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
                 "        %s\n"
                 (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
     scheduled);
+  (* ─── ODD-COUNT TAIL body (docs/roadmap/tail_handling/il_odd_count_tail.md
+     §3): the SAME scheduled DAG re-rendered at Isa.sse2 — one complex per
+     iteration, emitted INLINE in the enclosing avx2,fma function (VEX-128,
+     no AVX↔SSE transition), no scratch, no call, no duplicated column.
+     Rendered BEFORE the preamble is assembled so its 1-lane constants land
+     in `tbl` (declared per-entry as __m128d). MONOLITHIC kernels only —
+     blocked keeps its even-count contract (doc §4d, open question).
+     At per = 2 the leftover is exactly ONE column whose index is EVEN, so
+     the T2 cursor's (k / per) group arithmetic and record lane 0 hold
+     unchanged; the VTW2 record is already narrow-readable ([c,c] at off,
+     [-s,+s] at off + tw_vw) — only the ADDRESSING must keep the wide
+     geometry, hence ~tw_vw below. Own C block + own constants = the RA
+     mitigation emit_c.ml §4052/4058 uses (hot loop must stay unchanged). *)
+  let body_n = Buffer.create 2048 in
+  if not blocked
+  then (
+    let nisa = Isa.sse2 in
+    if kind = T2
+    then
+      Buffer.add_string
+        body_n
+        (Printf.sprintf
+           "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
+           per
+           ((radix - 1) * 2 * vw));
+    if kind = T2 && !tw_log3
+    then emit_log3_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
+    for l = 0 to radix - 1 do
+      Buffer.add_string
+        body_n
+        (Printf.sprintf
+           "        %s\n"
+           (Isa.const_decl
+              nisa
+              (Printf.sprintf "z%d" (cin l).tag)
+              (Isa.loadu_pd nisa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
+    done;
+    let seen_n : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    List.iter
+      (fun ((_ : Expr.elem_ref option), (e : t)) ->
+         match e.node with
+         | CIn _ -> ()
+         | _ ->
+           if not (Hashtbl.mem seen_n e.tag)
+           then (
+             Hashtbl.replace seen_n e.tag ();
+             Buffer.add_string
+               body_n
+               (Printf.sprintf
+                  "        %s\n"
+                  (Isa.const_decl
+                     nisa
+                     (Printf.sprintf "z%d" e.tag)
+                     (render ~tw_vw:vw ~msuf:"_n" nisa tbl e)))))
+      scheduled;
+    match (if !st_turn then N1T else kind) with
+    | N1 | T2 ->
+      Array.iteri
+        (fun l (e : t) ->
+           Buffer.add_string
+             body_n
+             (Printf.sprintf
+                "        %s;\n"
+                (Isa.storeu_pd
+                   nisa
+                   (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l)
+                   (Printf.sprintf "z%d" e.tag))))
+        outs
+    | N1T ->
+      (* one complex per leg: the corner-turn (and the t2tg leg stride) is
+         pure addressing at this width — no permutes, no pairing. *)
+      Array.iteri
+        (fun l (e : t) ->
+           let leg_off =
+             if !st_turn_gs
+             then Printf.sprintf "(size_t)%d*OGs" l
+             else string_of_int l
+           in
+           Buffer.add_string
+             body_n
+             (Printf.sprintf
+                "        %s;\n"
+                (Isa.storeu_pd
+                   nisa
+                   (Printf.sprintf "zout[2*((size_t)k*OLs + %s)]" leg_off)
+                   (Printf.sprintf "z%d" e.tag))))
+        outs);
   let buf = Buffer.create 8192 in
   Buffer.add_string
     buf
@@ -1088,7 +1196,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
        \ * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered\n\
        \ * through the ISA layer, so the same source emits AVX2 / AVX-512.\n\
        \ * %s\n\
-       \ * CONTRACT: count %% %d == 0 (%d columns per iteration). */\n"
+       \ * %s */\n"
        radix
        (match kind with
         | N1 -> "solo n1 (natural order in/out, twiddle-free)"
@@ -1111,18 +1219,32 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
             (2 * vw)
             vw
             ((radix - 1) * 2 * vw))
-       per
-       per);
+       (if blocked
+        then Printf.sprintf "CONTRACT: count %% %d == 0 (%d columns per iteration)." per per
+        else
+          Printf.sprintf
+            "count: ANY >= 1 — %d columns per wide iteration, inline VEX-128\n\
+            \ * odd-count tail for the leftover (il_odd_count_tail.md §3)."
+            per));
   Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
   (* Only the quarter-turn mask this direction actually uses — emitting both
-     would leave an unused static const (warning noise). *)
+     would leave an unused static const (warning noise). The monolithic tail
+     re-renders the DAG at Isa.sse2 and needs the __m128d twin. *)
   if dir = Fwd
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
-    Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n")
+    Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n";
+    if not blocked
+    then (
+      Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
+      Buffer.add_string buf "  /* tail twin */\n"))
   else (
     Buffer.add_string buf (Isa.re_mask_decl isa "_M_RE");
-    Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n");
+    Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n";
+    if not blocked
+    then (
+      Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
+      Buffer.add_string buf "  /* tail twin */\n"));
   Buffer.add_string buf (emit_const_decls isa tbl);
   Buffer.add_string
     buf
@@ -1160,7 +1282,12 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
          (vw * radix));
   Buffer.add_string
     buf
-    (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" per per);
+    (if blocked
+     then Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" per per
+     else
+       (* k hoisted so the tail loop below resumes it; blocked keeps the old
+          form (no tail there) and stays byte-identical. *)
+       Printf.sprintf "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n" per per);
   (* T2's streamed cursor: one record-set per column-group. *)
   if kind = T2
   then
@@ -1277,7 +1404,21 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
             a
             !l
             a))));
-  Buffer.add_string buf "    }\n}\n";
+  Buffer.add_string buf "    }\n";
+  (* ─── ODD-COUNT TAIL loop (monolithic only): resumes k after the wide
+     bulk. `for (; k < count; ++k)` rather than `if` so it generalises when
+     per > 2; at per = 2 it runs at most once and predicts perfectly, and a
+     count < per call skips the wide loop entirely (the low-trip bypass for
+     free). *)
+  if not blocked
+  then (
+    Buffer.add_string
+      buf
+      "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
+    Buffer.add_string buf "    for (; k < count; ++k) {\n";
+    Buffer.add_buffer buf body_n;
+    Buffer.add_string buf "    }\n");
+  Buffer.add_string buf "}\n";
   Buffer.contents buf
 ;;
 

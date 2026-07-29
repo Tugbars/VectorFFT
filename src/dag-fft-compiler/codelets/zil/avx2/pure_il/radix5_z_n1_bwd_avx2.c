@@ -4,11 +4,13 @@
  * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered
  * through the ISA layer, so the same source emits AVX2 / AVX-512.
  * tw_re/tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 
 static const __m256d _M_RE = { -0.0, 0.0, -0.0, 0.0 };  /* negate re lanes: x*(+i) */
+static const __m128d _M_RE_n = { -0.0, 0.0 };  /* tail twin */
 
 __attribute__((target("avx2,fma")))
 void radix5_z_n1_bwd_avx2(
@@ -20,7 +22,8 @@ void radix5_z_n1_bwd_avx2(
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
     (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs; (void)tw_re;
-    for (size_t k = 0; k + 2 <= count; k += 2) {
+    size_t k = 0;
+    for (; k + 2 <= count; k += 2) {
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m256d z1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
         const __m256d z2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
@@ -49,5 +52,36 @@ void radix5_z_n1_bwd_avx2(
         _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], z22);
         _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], z21);
         _mm256_storeu_pd(&zout[2*((size_t)4*OLs + k)], z16);
+    }
+    /* odd-count tail: same DAG at VEX-128, one complex per iteration */
+    for (; k < count; ++k) {
+        const __m128d z0 = _mm_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
+        const __m128d z1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m128d z2 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m128d z4 = _mm_loadu_pd(&zin[2*((size_t)4*Ls + k)]);
+        const __m128d z9 = _mm_sub_pd(z2, z3);
+        const __m128d z6 = _mm_add_pd(z2, z3);
+        const __m128d z10 = _mm_xor_pd(_mm_permute_pd(z9, 0x1), _M_RE_n);
+        const __m128d z5 = _mm_add_pd(z1, z4);
+        const __m128d z7 = _mm_sub_pd(z1, z4);
+        const __m128d z8 = _mm_xor_pd(_mm_permute_pd(z7, 0x1), _M_RE_n);
+        const __m128d z13 = _mm_fmadd_pd(_mm_set1_pd(0.30901699437494745), z5, z0);
+        const __m128d z18 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z5, z0);
+        const __m128d z11 = _mm_add_pd(z0, z5);
+        const __m128d z12 = _mm_add_pd(z11, z6);
+        const __m128d z14 = _mm_fnmadd_pd(_mm_set1_pd(0.80901699437494734), z6, z13);
+        const __m128d z15 = _mm_fmadd_pd(_mm_set1_pd(0.61803398874989501), z10, z8);
+        const __m128d z16 = _mm_fnmadd_pd(_mm_set1_pd(0.95105651629515353), z15, z14);
+        const __m128d z17 = _mm_fmadd_pd(_mm_set1_pd(0.95105651629515353), z15, z14);
+        const __m128d z19 = _mm_fmadd_pd(_mm_set1_pd(0.30901699437494723), z6, z18);
+        const __m128d z20 = _mm_fnmadd_pd(_mm_set1_pd(0.6180339887498949), z8, z10);
+        const __m128d z21 = _mm_fmadd_pd(_mm_set1_pd(0.95105651629515364), z20, z19);
+        const __m128d z22 = _mm_fnmadd_pd(_mm_set1_pd(0.95105651629515364), z20, z19);
+        _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z12);
+        _mm_storeu_pd(&zout[2*((size_t)1*OLs + k)], z17);
+        _mm_storeu_pd(&zout[2*((size_t)2*OLs + k)], z22);
+        _mm_storeu_pd(&zout[2*((size_t)3*OLs + k)], z21);
+        _mm_storeu_pd(&zout[2*((size_t)4*OLs + k)], z16);
     }
 }

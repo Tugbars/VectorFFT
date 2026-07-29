@@ -4,11 +4,13 @@
  * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered
  * through the ISA layer, so the same source emits AVX2 / AVX-512.
  * tw_re/tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 
 static const __m256d _M_IM = { 0.0, -0.0, 0.0, -0.0 };  /* negate im lanes: x*(-i) */
+static const __m128d _M_IM_n = { 0.0, -0.0 };  /* tail twin */
 
 __attribute__((target("avx2,fma")))
 void radix17_z_n1_fwd_avx2(
@@ -20,7 +22,8 @@ void radix17_z_n1_fwd_avx2(
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
     (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs; (void)tw_re;
-    for (size_t k = 0; k + 2 <= count; k += 2) {
+    size_t k = 0;
+    for (; k + 2 <= count; k += 2) {
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m256d z1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
         const __m256d z2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
@@ -223,5 +226,210 @@ void radix17_z_n1_fwd_avx2(
         _mm256_storeu_pd(&zout[2*((size_t)14*OLs + k)], z98);
         _mm256_storeu_pd(&zout[2*((size_t)15*OLs + k)], z81);
         _mm256_storeu_pd(&zout[2*((size_t)16*OLs + k)], z64);
+    }
+    /* odd-count tail: same DAG at VEX-128, one complex per iteration */
+    for (; k < count; ++k) {
+        const __m128d z0 = _mm_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
+        const __m128d z1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m128d z2 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m128d z4 = _mm_loadu_pd(&zin[2*((size_t)4*Ls + k)]);
+        const __m128d z5 = _mm_loadu_pd(&zin[2*((size_t)5*Ls + k)]);
+        const __m128d z6 = _mm_loadu_pd(&zin[2*((size_t)6*Ls + k)]);
+        const __m128d z7 = _mm_loadu_pd(&zin[2*((size_t)7*Ls + k)]);
+        const __m128d z8 = _mm_loadu_pd(&zin[2*((size_t)8*Ls + k)]);
+        const __m128d z9 = _mm_loadu_pd(&zin[2*((size_t)9*Ls + k)]);
+        const __m128d z10 = _mm_loadu_pd(&zin[2*((size_t)10*Ls + k)]);
+        const __m128d z11 = _mm_loadu_pd(&zin[2*((size_t)11*Ls + k)]);
+        const __m128d z12 = _mm_loadu_pd(&zin[2*((size_t)12*Ls + k)]);
+        const __m128d z13 = _mm_loadu_pd(&zin[2*((size_t)13*Ls + k)]);
+        const __m128d z14 = _mm_loadu_pd(&zin[2*((size_t)14*Ls + k)]);
+        const __m128d z15 = _mm_loadu_pd(&zin[2*((size_t)15*Ls + k)]);
+        const __m128d z16 = _mm_loadu_pd(&zin[2*((size_t)16*Ls + k)]);
+        const __m128d z39 = _mm_sub_pd(z8, z9);
+        const __m128d z40 = _mm_xor_pd(_mm_permute_pd(z39, 0x1), _M_IM_n);
+        const __m128d z24 = _mm_add_pd(z8, z9);
+        const __m128d z37 = _mm_sub_pd(z7, z10);
+        const __m128d z38 = _mm_xor_pd(_mm_permute_pd(z37, 0x1), _M_IM_n);
+        const __m128d z23 = _mm_add_pd(z7, z10);
+        const __m128d z35 = _mm_sub_pd(z6, z11);
+        const __m128d z36 = _mm_xor_pd(_mm_permute_pd(z35, 0x1), _M_IM_n);
+        const __m128d z22 = _mm_add_pd(z6, z11);
+        const __m128d z33 = _mm_sub_pd(z5, z12);
+        const __m128d z34 = _mm_xor_pd(_mm_permute_pd(z33, 0x1), _M_IM_n);
+        const __m128d z21 = _mm_add_pd(z5, z12);
+        const __m128d z31 = _mm_sub_pd(z4, z13);
+        const __m128d z32 = _mm_xor_pd(_mm_permute_pd(z31, 0x1), _M_IM_n);
+        const __m128d z20 = _mm_add_pd(z4, z13);
+        const __m128d z29 = _mm_sub_pd(z3, z14);
+        const __m128d z30 = _mm_xor_pd(_mm_permute_pd(z29, 0x1), _M_IM_n);
+        const __m128d z19 = _mm_add_pd(z3, z14);
+        const __m128d z27 = _mm_sub_pd(z2, z15);
+        const __m128d z18 = _mm_add_pd(z2, z15);
+        const __m128d z28 = _mm_xor_pd(_mm_permute_pd(z27, 0x1), _M_IM_n);
+        const __m128d z17 = _mm_add_pd(z1, z16);
+        const __m128d z25 = _mm_sub_pd(z1, z16);
+        const __m128d z26 = _mm_xor_pd(_mm_permute_pd(z25, 0x1), _M_IM_n);
+        const __m128d z49 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435581), z17, z0);
+        const __m128d z66 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065909), z17, z0);
+        const __m128d z83 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653831), z17, z0);
+        const __m128d z100 = _mm_fmadd_pd(_mm_set1_pd(0.092268359463302016), z17, z0);
+        const __m128d z117 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208289), z17, z0);
+        const __m128d z134 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925629), z17, z0);
+        const __m128d z151 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961399), z17, z0);
+        const __m128d z168 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z17, z0);
+        const __m128d z41 = _mm_add_pd(z0, z17);
+        const __m128d z50 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065909), z18, z49);
+        const __m128d z57 = _mm_fmadd_pd(_mm_set1_pd(0.36278926121756172), z26, z32);
+        const __m128d z67 = _mm_fmadd_pd(_mm_set1_pd(0.092268359463302016), z18, z66);
+        const __m128d z74 = _mm_fmadd_pd(_mm_set1_pd(0.67658182242299802), z26, z28);
+        const __m128d z84 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925629), z18, z83);
+        const __m128d z91 = _mm_fmadd_pd(_mm_set1_pd(0.89899825944090817), z26, z38);
+        const __m128d z101 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z18, z100);
+        const __m128d z108 = _mm_fmadd_pd(_mm_set1_pd(0.18453671892660403), z28, z26);
+        const __m128d z118 = _mm_fnmadd_pd(_mm_set1_pd(0.8502171357296141), z18, z117);
+        const __m128d z125 = _mm_fnmadd_pd(_mm_set1_pd(0.96594619936780335), z26, z36);
+        const __m128d z135 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208311), z18, z134);
+        const __m128d z142 = _mm_fnmadd_pd(_mm_set1_pd(0.80143601201832027), z26, z34);
+        const __m128d z152 = _mm_fmadd_pd(_mm_set1_pd(0.4457383557765377), z18, z151);
+        const __m128d z159 = _mm_fmadd_pd(_mm_set1_pd(0.52868745033551512), z26, z30);
+        const __m128d z169 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435581), z18, z168);
+        const __m128d z176 = _mm_fnmadd_pd(_mm_set1_pd(0.184536718926604), z26, z40);
+        const __m128d z42 = _mm_add_pd(z41, z18);
+        const __m128d z51 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653831), z19, z50);
+        const __m128d z58 = _mm_fmadd_pd(_mm_set1_pd(0.67658182242299802), z28, z57);
+        const __m128d z68 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925629), z19, z67);
+        const __m128d z75 = _mm_fmadd_pd(_mm_set1_pd(0.80143601201832038), z30, z74);
+        const __m128d z85 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z19, z84);
+        const __m128d z92 = _mm_fmadd_pd(_mm_set1_pd(0.80143601201832038), z28, z91);
+        const __m128d z102 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208311), z19, z101);
+        const __m128d z109 = _mm_fnmadd_pd(_mm_set1_pd(0.96594619936780357), z30, z108);
+        const __m128d z119 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065853), z19, z118);
+        const __m128d z126 = _mm_fmadd_pd(_mm_set1_pd(0.52868745033551479), z28, z125);
+        const __m128d z136 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435592), z19, z135);
+        const __m128d z143 = _mm_fmadd_pd(_mm_set1_pd(0.96594619936780335), z28, z142);
+        const __m128d z153 = _mm_fmadd_pd(_mm_set1_pd(0.09226835946330203), z19, z152);
+        const __m128d z160 = _mm_fnmadd_pd(_mm_set1_pd(0.89899825944090839), z28, z159);
+        const __m128d z170 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961388), z19, z169);
+        const __m128d z177 = _mm_fmadd_pd(_mm_set1_pd(0.36278926121756178), z28, z176);
+        const __m128d z43 = _mm_add_pd(z42, z19);
+        const __m128d z52 = _mm_fmadd_pd(_mm_set1_pd(0.092268359463302016), z20, z51);
+        const __m128d z59 = _mm_fmadd_pd(_mm_set1_pd(0.89899825944090817), z30, z58);
+        const __m128d z69 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z20, z68);
+        const __m128d z76 = _mm_fmadd_pd(_mm_set1_pd(0.18453671892660403), z32, z75);
+        const __m128d z86 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208311), z20, z85);
+        const __m128d z93 = _mm_fnmadd_pd(_mm_set1_pd(0.18453671892660378), z30, z92);
+        const __m128d z103 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435581), z20, z102);
+        const __m128d z110 = _mm_fnmadd_pd(_mm_set1_pd(0.36278926121756183), z32, z109);
+        const __m128d z120 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653814), z20, z119);
+        const __m128d z127 = _mm_fmadd_pd(_mm_set1_pd(0.67658182242299847), z30, z126);
+        const __m128d z137 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961388), z20, z136);
+        const __m128d z144 = _mm_fnmadd_pd(_mm_set1_pd(0.36278926121756133), z30, z143);
+        const __m128d z154 = _mm_fnmadd_pd(_mm_set1_pd(0.6026346363792574), z20, z153);
+        const __m128d z161 = _mm_fnmadd_pd(_mm_set1_pd(0.80143601201831949), z32, z160);
+        const __m128d z171 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065898), z20, z170);
+        const __m128d z178 = _mm_fnmadd_pd(_mm_set1_pd(0.52868745033551523), z30, z177);
+        const __m128d z44 = _mm_add_pd(z43, z20);
+        const __m128d z53 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208289), z21, z52);
+        const __m128d z60 = _mm_fmadd_pd(_mm_set1_pd(0.96594619936780357), z34, z59);
+        const __m128d z70 = _mm_fnmadd_pd(_mm_set1_pd(0.8502171357296141), z21, z69);
+        const __m128d z77 = _mm_fnmadd_pd(_mm_set1_pd(0.5286874503355149), z34, z76);
+        const __m128d z87 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065853), z21, z86);
+        const __m128d z94 = _mm_fnmadd_pd(_mm_set1_pd(0.96594619936780357), z32, z93);
+        const __m128d z104 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653814), z21, z103);
+        const __m128d z111 = _mm_fmadd_pd(_mm_set1_pd(0.89899825944090817), z34, z110);
+        const __m128d z121 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z21, z120);
+        const __m128d z128 = _mm_fnmadd_pd(_mm_set1_pd(0.89899825944090794), z32, z127);
+        const __m128d z138 = _mm_fmadd_pd(_mm_set1_pd(0.09226835946330042), z21, z137);
+        const __m128d z145 = _mm_fnmadd_pd(_mm_set1_pd(0.52868745033551523), z32, z144);
+        const __m128d z155 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435637), z21, z154);
+        const __m128d z162 = _mm_fmadd_pd(_mm_set1_pd(0.36278926121756028), z34, z161);
+        const __m128d z172 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925663), z21, z171);
+        const __m128d z179 = _mm_fmadd_pd(_mm_set1_pd(0.67658182242299802), z32, z178);
+        const __m128d z45 = _mm_add_pd(z44, z21);
+        const __m128d z54 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925629), z22, z53);
+        const __m128d z61 = _mm_fmadd_pd(_mm_set1_pd(0.80143601201832038), z36, z60);
+        const __m128d z71 = _mm_fnmadd_pd(_mm_set1_pd(0.27366299007208311), z22, z70);
+        const __m128d z78 = _mm_fnmadd_pd(_mm_set1_pd(0.96594619936780357), z36, z77);
+        const __m128d z88 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435592), z22, z87);
+        const __m128d z95 = _mm_fnmadd_pd(_mm_set1_pd(0.67658182242299858), z34, z94);
+        const __m128d z105 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961388), z22, z104);
+        const __m128d z112 = _mm_fmadd_pd(_mm_set1_pd(0.52868745033551534), z36, z111);
+        const __m128d z122 = _mm_fmadd_pd(_mm_set1_pd(0.09226835946330042), z22, z121);
+        const __m128d z129 = _mm_fnmadd_pd(_mm_set1_pd(0.18453671892660381), z34, z128);
+        const __m128d z139 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065964), z22, z138);
+        const __m128d z146 = _mm_fnmadd_pd(_mm_set1_pd(0.67658182242299736), z36, z145);
+        const __m128d z156 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z22, z155);
+        const __m128d z163 = _mm_fmadd_pd(_mm_set1_pd(0.18453671892660409), z36, z162);
+        const __m128d z173 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653725), z22, z172);
+        const __m128d z180 = _mm_fnmadd_pd(_mm_set1_pd(0.80143601201832004), z34, z179);
+        const __m128d z46 = _mm_add_pd(z45, z22);
+        const __m128d z55 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961399), z23, z54);
+        const __m128d z62 = _mm_fmadd_pd(_mm_set1_pd(0.52868745033551512), z38, z61);
+        const __m128d z72 = _mm_fmadd_pd(_mm_set1_pd(0.4457383557765377), z23, z71);
+        const __m128d z79 = _mm_fnmadd_pd(_mm_set1_pd(0.89899825944090839), z38, z78);
+        const __m128d z89 = _mm_fmadd_pd(_mm_set1_pd(0.09226835946330203), z23, z88);
+        const __m128d z96 = _mm_fmadd_pd(_mm_set1_pd(0.36278926121756139), z36, z95);
+        const __m128d z106 = _mm_fnmadd_pd(_mm_set1_pd(0.6026346363792574), z23, z105);
+        const __m128d z113 = _mm_fnmadd_pd(_mm_set1_pd(0.80143601201831949), z38, z112);
+        const __m128d z123 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435637), z23, z122);
+        const __m128d z130 = _mm_fnmadd_pd(_mm_set1_pd(0.36278926121756022), z38, z129);
+        const __m128d z140 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z23, z139);
+        const __m128d z147 = _mm_fnmadd_pd(_mm_set1_pd(0.18453671892660406), z38, z146);
+        const __m128d z157 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065765), z23, z156);
+        const __m128d z164 = _mm_fnmadd_pd(_mm_set1_pd(0.67658182242299958), z38, z163);
+        const __m128d z174 = _mm_fnmadd_pd(_mm_set1_pd(0.2736629900720805), z23, z173);
+        const __m128d z181 = _mm_fmadd_pd(_mm_set1_pd(0.8989982594409085), z36, z180);
+        const __m128d z47 = _mm_add_pd(z46, z23);
+        const __m128d z48 = _mm_add_pd(z47, z24);
+        const __m128d z56 = _mm_fnmadd_pd(_mm_set1_pd(0.98297309968390179), z24, z55);
+        const __m128d z63 = _mm_fmadd_pd(_mm_set1_pd(0.18453671892660403), z40, z62);
+        const __m128d z64 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503447), z63, z56);
+        const __m128d z65 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503447), z63, z56);
+        const __m128d z73 = _mm_fmadd_pd(_mm_set1_pd(0.93247222940435581), z24, z72);
+        const __m128d z80 = _mm_fnmadd_pd(_mm_set1_pd(0.36278926121756183), z40, z79);
+        const __m128d z81 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503447), z80, z73);
+        const __m128d z82 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503447), z80, z73);
+        const __m128d z90 = _mm_fnmadd_pd(_mm_set1_pd(0.85021713572961388), z24, z89);
+        const __m128d z97 = _mm_fmadd_pd(_mm_set1_pd(0.52868745033551534), z40, z96);
+        const __m128d z98 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503447), z97, z90);
+        const __m128d z99 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503447), z97, z90);
+        const __m128d z107 = _mm_fmadd_pd(_mm_set1_pd(0.73900891722065898), z24, z106);
+        const __m128d z114 = _mm_fnmadd_pd(_mm_set1_pd(0.67658182242299814), z40, z113);
+        const __m128d z115 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503447), z114, z107);
+        const __m128d z116 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503447), z114, z107);
+        const __m128d z124 = _mm_fnmadd_pd(_mm_set1_pd(0.60263463637925663), z24, z123);
+        const __m128d z131 = _mm_fnmadd_pd(_mm_set1_pd(0.80143601201832004), z40, z130);
+        const __m128d z132 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503469), z131, z124);
+        const __m128d z133 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503469), z131, z124);
+        const __m128d z141 = _mm_fmadd_pd(_mm_set1_pd(0.44573835577653725), z24, z140);
+        const __m128d z148 = _mm_fmadd_pd(_mm_set1_pd(0.89899825944090839), z40, z147);
+        const __m128d z149 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503469), z148, z141);
+        const __m128d z150 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503469), z148, z141);
+        const __m128d z158 = _mm_fnmadd_pd(_mm_set1_pd(0.2736629900720805), z24, z157);
+        const __m128d z165 = _mm_fmadd_pd(_mm_set1_pd(0.96594619936780424), z40, z164);
+        const __m128d z166 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503447), z165, z158);
+        const __m128d z167 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503447), z165, z158);
+        const __m128d z175 = _mm_fmadd_pd(_mm_set1_pd(0.092268359463301697), z24, z174);
+        const __m128d z182 = _mm_fnmadd_pd(_mm_set1_pd(0.96594619936780413), z38, z181);
+        const __m128d z183 = _mm_fmadd_pd(_mm_set1_pd(0.99573417629503458), z182, z175);
+        const __m128d z184 = _mm_fnmadd_pd(_mm_set1_pd(0.99573417629503458), z182, z175);
+        _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z48);
+        _mm_storeu_pd(&zout[2*((size_t)1*OLs + k)], z65);
+        _mm_storeu_pd(&zout[2*((size_t)2*OLs + k)], z82);
+        _mm_storeu_pd(&zout[2*((size_t)3*OLs + k)], z99);
+        _mm_storeu_pd(&zout[2*((size_t)4*OLs + k)], z116);
+        _mm_storeu_pd(&zout[2*((size_t)5*OLs + k)], z133);
+        _mm_storeu_pd(&zout[2*((size_t)6*OLs + k)], z150);
+        _mm_storeu_pd(&zout[2*((size_t)7*OLs + k)], z167);
+        _mm_storeu_pd(&zout[2*((size_t)8*OLs + k)], z184);
+        _mm_storeu_pd(&zout[2*((size_t)9*OLs + k)], z183);
+        _mm_storeu_pd(&zout[2*((size_t)10*OLs + k)], z166);
+        _mm_storeu_pd(&zout[2*((size_t)11*OLs + k)], z149);
+        _mm_storeu_pd(&zout[2*((size_t)12*OLs + k)], z132);
+        _mm_storeu_pd(&zout[2*((size_t)13*OLs + k)], z115);
+        _mm_storeu_pd(&zout[2*((size_t)14*OLs + k)], z98);
+        _mm_storeu_pd(&zout[2*((size_t)15*OLs + k)], z81);
+        _mm_storeu_pd(&zout[2*((size_t)16*OLs + k)], z64);
     }
 }
