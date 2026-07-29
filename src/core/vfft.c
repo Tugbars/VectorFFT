@@ -4635,16 +4635,33 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                             0, 0, 0, 0, 0, 0, 0);
                     return;
                 case VFFT_K1_IL_2P:
-                    /* FWD: pure IL when available (no split planes). BWD stays
-                     * on the hybrid route -- il2p's backward stage composition
-                     * is unsolved (both n1t twins corner-turn in their STORES,
-                     * so no pairing of them inverts the turn); il2p.h's
-                     * execute_bwd deliberately returns -1 rather than compute
-                     * wrong data. See docs/research/pure_il_vs_hybrid_il.md. */
-                    if (fwd && h->k1il2p)
+                    /* PURE IL, BOTH DIRECTIONS (2026-07-29).
+                     *
+                     * The old note here said il2p's backward composition was
+                     * "unsolved -- both n1t twins corner-turn in their STORES,
+                     * so no pairing of them inverts the turn". That diagnosis
+                     * was WRONG: it holds only for the operator-inverse route.
+                     * The shipped composition keeps the turn where the forward
+                     * put it and needs no un-turn at all. What was actually
+                     * missing was a kernel the EMITTER could not express,
+                     * because twiddle POSITION was hard-wired to DIRECTION.
+                     *
+                     * bwd now runs t2t (POST-twiddle + backward butterfly +
+                     * TURNED store) then n1_bwd at radix R2, gated on real
+                     * hardware at 12 cells incl. 8 non-square in both orders
+                     * (build_tuned/benches/il2p_bwd_gate.c). il2p.h picks the
+                     * arm by AVAILABILITY; the per-cell speed pick belongs in
+                     * wisdom, not here. Falls through to the hybrid only if the
+                     * build lacks the twins. */
+                    if (h->k1il2p)
                     {
-                        vfft_il2p_execute_fwd(h->k1il2p, sre, dre);
-                        return;
+                        if (fwd)
+                        {
+                            vfft_il2p_execute_fwd(h->k1il2p, sre, dre);
+                            return;
+                        }
+                        if (vfft_il2p_execute_bwd(h->k1il2p, sre, dre) == 0)
+                            return;
                     }
                     if (fwd)
                         vfft_oop_execute_fwd_2p_il(h->k1il, sre, dre);
