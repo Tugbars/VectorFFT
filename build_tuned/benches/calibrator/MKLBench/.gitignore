@@ -1,5 +1,0 @@
-# build outputs + per-cell scratch (machine/toolchain specific)
-bench_jit_vs_mkl.exe
-bench_jit_vs_mkl.o
-_one.txt
-_one.csv
