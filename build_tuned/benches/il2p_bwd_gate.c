@@ -209,11 +209,59 @@ static void timecell(int N, int R1, int R2)
     free(x); free(y); vfft_il2p_destroy(p);
 }
 
+/* ── COVERAGE INVARIANT ──────────────────────────────────────────────────
+ * For EVERY (R1,R2) the K=1 IL pair search can select, vfft_il2p_create must
+ * succeed and BOTH directions must run. Any hole means execute silently falls
+ * back to the il_in/il_out hybrid route.
+ *
+ * This replaces the question "can R2=4 ever be reached?", which is the wrong
+ * question: the answer depends on `per` (ISA), the codelet registries and the
+ * search bounds, so it is platform-specific and goes stale. Assert coverage
+ * over the whole domain instead — then the hybrid is unreachable BY
+ * CONSTRUCTION, on any platform, and this gate says so the moment it isn't.
+ *
+ * The domain mirrors vfft.c:3110-3124 exactly. */
+static int coverage(void)
+{
+    static const int IL[] = { 4, 8, 16, 32, 64 };
+    int holes = 0, pairs = 0;
+    for (int a = 0; a < 5; a++)
+        for (int b = 0; b < 5; b++) {
+            int R1 = IL[a], R2 = IL[b], N = R1 * R2;
+            pairs++;
+            vfft_il2p_plan_t *p = vfft_il2p_create(N, R1, R2);
+            if (!p) {
+                printf("  HOLE: N=%-6d %2dx%-3d  create returned NULL"
+                       "  -> execute would fall back to the HYBRID\n", N, R1, R2);
+                holes++;
+                continue;
+            }
+            double *x = malloc((size_t)2 * N * sizeof(double));
+            double *y = malloc((size_t)2 * N * sizeof(double));
+            unsigned s = 7u + (unsigned)N;
+            for (int i = 0; i < 2 * N; i++) x[i] = urand(&s);
+            vfft_il2p_execute_fwd(p, x, y);
+            if (vfft_il2p_execute_bwd(p, x, y) != 0) {
+                printf("  HOLE: N=%-6d %2dx%-3d  bwd unavailable\n", N, R1, R2);
+                holes++;
+            }
+            free(x); free(y);
+            vfft_il2p_destroy(p);
+        }
+    printf("  %d/%d pairs covered%s\n", pairs - holes, pairs,
+           holes ? "" : "  -> hybrid fallback is UNREACHABLE by construction");
+    return holes;
+}
+
 int main(void)
 {
     int bad = 0;
     printf("# il2p F-DIAG backward gate (real emitted kernels)\n");
     printf("# dir = bwd vs naive unnormalized IDFT; rt = bwd(fwd(x)) == N*x\n\n");
+
+    printf("-- COVERAGE: every pair the IL search can select must build --\n");
+    bad |= coverage();
+    printf("\n");
 
     printf("-- NON-SQUARE: these are the cells that discriminate --\n");
     bad |= run(128, 8, 16);
