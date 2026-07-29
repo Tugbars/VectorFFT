@@ -83,6 +83,17 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+/* 🔴 CHAIN-CAP COHERENCE (P2, 2026-07-29). vfft_k1_cc_chain_decode writes up
+ * to VFFT_K1_CC_MAX_NF ints into caller arrays that are sized by EITHER that
+ * macro (ccf/ccf_ here, cc_chain in the plan) or by VFFT_ZSPLIT_MAX_NF (zwch
+ * here, chain[] throughout zsplit/zturn/dp_planner_il). If the codec cap ever
+ * exceeds the cascade cap, decode overruns those arrays — a silent
+ * out-of-bounds WRITE, not a compile error, which is exactly how this class of
+ * bug hides. This is the only translation unit that sees both headers, so the
+ * check lives here and converts the whole class into a build failure. */
+typedef char _vfft_chain_cap_coherent
+    [(VFFT_K1_CC_MAX_NF <= VFFT_ZSPLIT_MAX_NF) ? 1 : -1];
+
 /* ── misuse diagnostics (THE DIRECTIVE: a config-space mistake is refused
  * LOUDLY — an actionable one-line stderr message — never a bare NULL and
  * never a silent reinterpretation at execute). Internal build/OOM failures
@@ -3077,7 +3088,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 {
                     /* no classic pair (past the leaf/t1 reach, N >= 16384):
                      * composed column is the ONLY K=1 route up there */
-                    int ccf_[6];
+                    int ccf_[VFFT_K1_CC_MAX_NF];
                     if (vfft_k1_cc_default_chain(N / 64, ccf_))
                     {
                         spr = VFFT_K1_SP_CCOL;
@@ -3154,7 +3165,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 /* composed column (§12.4 item 5): chain from the wisdom line,
                  * else the per-R2 default. Create is self-validating (perm
                  * discovery); failure falls through to the classic path. */
-                int ccf[6];
+                int ccf[VFFT_K1_CC_MAX_NF];
                 int ccn = ke ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
                              : vfft_k1_cc_default_chain(N / sR1, ccf);
                 if (ccn)
@@ -3262,12 +3273,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * above — the route already names 2P_PURE iff il2p exists.) */
             if (ilr == VFFT_K1_IL_MONO && !vfft_k1_mono_il_fn(N, 0))
                 ilr = VFFT_K1_IL_NONE;
-            /* Handle exists when the SPLIT axis has a route, OR when an
-             * IL-only route does (the chain at odd·2^k N, where no split
-             * K=1 route can exist). IL-only handles are INTERLEAVED-committed
-             * by construction (the chain attempt above is layout-gated), so
-             * the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || il3p || ilpr)
+            /* Handle exists when the SPLIT axis has a route, OR when ANY
+             * IL-only route does — pair, chain, or prime. 🔴 il2p MUST be in
+             * this guard: with the odd-count tail, cells like 50 = 5x10 have
+             * an IL pair but NO split K=1 route (spr == -1); omitting il2p
+             * here silently dropped them to the classic path, whose DEFAULT-
+             * order kind at such N is SCRAMBLED — natural-order callers got
+             * a scrambled spectrum (caught by the public gate, 2026-07-29).
+             * IL-only handles are INTERLEAVED-committed by construction
+             * (every IL attempt above is layout-gated for the spr < 0 case),
+             * so the split dispatch never sees k1_sp_route == -1. */
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+                || il3p || ilpr)
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);

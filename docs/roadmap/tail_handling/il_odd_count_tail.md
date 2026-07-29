@@ -1,6 +1,18 @@
 # IL odd-COUNT tail — design decision and emitter plan
 
-**Status:** design DECIDED, **not implemented**, and **not yet needed** (see §2).
+**Status:** ✅ **IMPLEMENTED 2026-07-29** exactly per §3/§6 (inline narrow arm at
+`Isa.sse2`, `?tw_vw`/`?msuf` render plumbing, per-entry const types, log3/mask
+twins, turned + leg-strided stores degenerate to 128-bit). Monolithic kernels
+only; blocked keeps the even contract (§4d still open). 158 cil kernels
+regenerated + the 9 zil-provenance pow2 fwd n1t/t2 swapped to cil (tranche 2
+of the pipeline port). Gated by `benches/il_tail_gate.c` (counts 1..8,
+canary-separated WRONG / NEVER-WRITTEN / OOB) and end-to-end by the public
+gate: all-odd pairs (45 = 9x5, 225, 675), 2·odd pairs (18, 50, 150), and
+Rader upgrades (19/29/43) all natural, both directions.
+🔴 Wiring lesson the public gate caught: an IL-only PAIR handle must be
+CREATED (the guard initially omitted il2p), else such cells fall to the
+classic path whose default-order kind can be SCRAMBLED — plan-level gates
+could never see that.
 **Scope:** the full-IL family (`codelet_cil.ml`). The split family already solves this — see §5.
 
 ---
