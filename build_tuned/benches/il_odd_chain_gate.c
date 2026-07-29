@@ -458,7 +458,11 @@ int main(void)
     {
         static const int UN[] = { 48, 96, 192, 320, 768, 1536,
                                   31, 97, 127, 257, 509, 1021,
-                                  36, 100, 144, 200, 300, 101 };
+                                  36, 100, 144, 200, 300, 101,
+                                  /* odd-count-tail cells: all-odd pairs and
+                                   * 2·odd pairs, plus tail-upgraded primes */
+                                  45, 63, 225, 675, 18, 50, 150,
+                                  19, 29, 43 };
         for (int i = 0; i < (int)(sizeof UN / sizeof *UN); i++)
             fails += run_public_cell(UN[i]);
     }
