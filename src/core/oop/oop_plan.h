@@ -73,8 +73,14 @@ enum
 enum
 {
     VFFT_K1_IL_NONE = 0, /* no IL route available for this N    */
-    VFFT_K1_IL_3P = 1,   /* il_in leaf -> transpose -> t1 -> il sweep-free 3-pass */
-    VFFT_K1_IL_2P = 2,   /* il_in leaf -> t1-UL+il_out (2 passes) */
+    /* 1, 2 = the RETIRED hybrid routes (il_in leaf -> split scratch -> il_out
+     * store; deleted 2026-07-29 once il2p served both directions and covered
+     * every reachable pair). The VALUES stay reserved because kind-3 wisdom
+     * lines may still carry them: plan-create normalizes either one to an
+     * il2p attempt on the same (iR1,iR2) pair — success -> IL_2P_PURE,
+     * failure -> IL_NONE. Never dispatched; the executor has no arm for them. */
+    VFFT_K1_IL_3P = 1,   /* legacy alias (wisdom-compat only)   */
+    VFFT_K1_IL_2P = 2,   /* legacy alias (wisdom-compat only)   */
     VFFT_K1_IL_MONO = 3, /* emitted mono, il edges              */
     /* 4 = the Cooley-Tukey zsplit cascade. RECORD-ONLY for now.
      *
@@ -93,10 +99,11 @@ enum
      * treat it as a runnable IL route. */
     VFFT_K1_IL_CASCADE = 4,
     /* 5 = PURE-IL two-pass (il2p.h): n1t -> z scratch -> t2, no split planes
-     * anywhere. Measured vs route 2 (the hybrid it displaces) at the front
-     * door: 0.659x @N=128, 0.722x @256, control cell N=64 reads 1.007 as it
-     * must. FORWARD ONLY -- il2p's backward stage composition is unsolved, so
-     * vfft.c keeps bwd on route 2. */
+     * anywhere. THE canonical 2-pass IL route, BOTH DIRECTIONS (bwd solved
+     * 2026-07-29: t2t then n1_bwd(R2), gated at 12 cells incl. 8 non-square).
+     * Measured vs the hybrid it displaced at the front door: 0.659x @N=128,
+     * 0.722x @256, control cell N=64 reads 1.007 as it must — which is why
+     * the hybrid (routes 1/2 above) was deleted rather than kept as an arm. */
     VFFT_K1_IL_2P_PURE = 5
 };
 
@@ -131,21 +138,17 @@ typedef struct
     int t1p_variant;   /* BAILEY2 s2 twiddle codelet: 0 = flat, 1 = log3 */
     int R1, R2;
     double *Qr, *Qi; /* K-replicated table, (R1-1) x (R2*K/8) */
-    /* BAILEY2V: column-pass scratch (N doubles each; tp_re/tp_im hold the
-     * transposed intermediate on the IL path where the caller has no split
-     * destination). Names chosen to avoid windows.h macro collisions (scr2
-     * is a macro in the mingw header chain). IL twins NULL when unavailable
-     * (non-pow2 pair or non-avx2 build) — callers must check before the IL
-     * entry points. */
-    double *col_re, *col_im, *tp_re, *tp_im;
-    vfft_oop11_fn il_leaf, il_leaf_sw, t1_il, t1_il_sw;
+    /* BAILEY2V: column-pass scratch (N doubles each). Names chosen to avoid
+     * windows.h macro collisions (scr2 is a macro in the mingw header chain).
+     * (The tp_re/tp_im transpose scratch and the il_leaf/t1_il/t1_ul_il twin
+     * pointers that lived here served the hybrid IL routes — deleted
+     * 2026-07-29; the IL axis is il2p.h now.) */
+    double *col_re, *col_im;
     /* two-pass twins (§12.4): t1 with UL load / leaf with UL store */
     vfft_oop11_fn t1_ul, leaf_ul;
     /* linear-twiddle t1_ul twin (§12.4 4a) + its consumption-order table */
     vfft_oop11_fn t1_ul_twl;
     double *Qlr, *Qli;
-    /* TRUE 2-pass IL exit: t1 UL-load + il_out store (+_sw for bwd) */
-    vfft_oop11_fn t1_ul_il, t1_ul_il_sw;
     /* LOG3 (leg-axis derivation) twins — same Qr/Qi, drop-in fn swaps */
     vfft_oop11_fn t1_l3, t1_ul_l3;
     /* CCOL (K=1 composed column pass): the column pass as a K=R1 batch plan
@@ -335,9 +338,9 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_pair(int N, size_t K,
  * win IL cells that balanced pairs win in split). Requires R1,R2 % 4 == 0
  * (the SIMD transpose block contract). Stage tables reuse the BAILEY2 fill
  * verbatim (at K=1 the per-lane t1 path fires and Qr[(l2-1)*R2+k2] IS the
- * four-step diagonal). IL twins resolve to NULL when unavailable (non-pow2
- * pair / non-avx2) — the split entry points still work; callers check
- * il_leaf/t1_il before using the *_il entry points. */
+ * four-step diagonal). This plan is SPLIT-only: the IL axis lives in il2p.h
+ * (the hybrid IL twins that used to hang off this plan were deleted
+ * 2026-07-29). */
 static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
 {
     if (R1 * R2 != N || (R1 % 4) || (R2 % 4))
@@ -357,23 +360,15 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1(int N, int R1, int R2)
     p->kind = VFFT_OOP_KIND_BAILEY2V;
     p->col_re  = (double *)malloc((size_t)N * 8);
     p->col_im  = (double *)malloc((size_t)N * 8);
-    p->tp_re = (double *)malloc((size_t)N * 8);
-    p->tp_im = (double *)malloc((size_t)N * 8);
-    if (!p->col_re || !p->col_im || !p->tp_re || !p->tp_im)
+    if (!p->col_re || !p->col_im)
     {
-        free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
+        free(p->col_re); free(p->col_im);
         free(p->Qr); free(p->Qi);
         free(p);
         return NULL;
     }
-    p->il_leaf    = vfft_oop_leaf_il_fn(R2, 0);
-    p->il_leaf_sw = vfft_oop_leaf_il_fn(R2, 1);
-    p->t1_il      = vfft_oop_t1_il_fn(R1, 0);
-    p->t1_il_sw   = vfft_oop_t1_il_fn(R1, 1);
     p->t1_ul      = vfft_oop_t1_ul_fn(R1);
     p->leaf_ul    = vfft_oop_leaf_ugul_fn(R2);
-    p->t1_ul_il    = vfft_oop_t1_ul_il_fn(R1, 0);
-    p->t1_ul_il_sw = vfft_oop_t1_ul_il_fn(R1, 1);
     p->t1_l3       = vfft_oop_t1_l3_fn(R1);
     p->t1_ul_l3    = vfft_oop_t1_ul_l3_fn(R1);
     p->t1_ul_twl  = vfft_oop_t1_ul_twl_fn(R1);
@@ -812,72 +807,11 @@ static inline int vfft_oop_execute_fwd_ccol(const vfft_oop_plan_t *p,
     return 0;
 }
 
-/* ---- BAILEY2V interleaved entry points (z -> z, natural order, K=1) ----
- * The caller's buffer is INTERLEAVED pairs z[2n]=re, z[2n+1]=im; no
- * conversion pass exists anywhere: the il_in leaf deinterleaves in its load
- * lattice, the il_out t1 interleaves in its store lattice. z_in == z_out is
- * safe (the leaf fully consumes z before the t1 writes it). Returns -1 when
- * the plan has no IL twins (check p->il_leaf/p->t1_il, §11f). */
-static inline int vfft_oop_execute_fwd_il(const vfft_oop_plan_t *p,
-                                          const double *z_in, double *z_out)
-{
-    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf || !p->t1_il)
-        return -1;
-    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
-    p->il_leaf(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
-    _vfft_k1_transpose(p->col_re, p->tp_re, (int)R2, (int)R1);
-    _vfft_k1_transpose(p->col_im, p->tp_im, (int)R2, (int)R1);
-    p->t1_il(p->tp_re, p->tp_im, z_out, 0, p->Qr, p->Qi, R2, 1, R2, 1, R2);
-    return 0;
-}
-
-/* TRUE 2-pass IL (z -> z, natural, K=1): il_in leaf (deinterleave in loads,
- * z -> split column scratch) + t1 UL-load/il_out-store (transpose in loads,
- * interleave in stores). Two passes, one scratch pair, zero conversion or
- * transpose sweeps — the full MKL two-pass shape on an interleaved buffer.
- * z_in == z_out safe. */
-static inline int vfft_oop_execute_fwd_2p_il(const vfft_oop_plan_t *p,
-                                             const double *z_in, double *z_out)
-{
-    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf || !p->t1_ul_il)
-        return -1;
-    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
-    p->il_leaf(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
-    p->t1_ul_il(p->col_re, p->col_im, z_out, 0, p->Qr, p->Qi,
-                1, R1, R2, 1, R2);
-    return 0;
-}
-
-/* bwd twin: both swaps folded into the _sw lattices (swap identity),
- * unnormalized inverse, output in normal (re,im) order. */
-static inline int vfft_oop_execute_bwd_2p_il(const vfft_oop_plan_t *p,
-                                             const double *z_in, double *z_out)
-{
-    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf_sw || !p->t1_ul_il_sw)
-        return -1;
-    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
-    p->il_leaf_sw(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
-    p->t1_ul_il_sw(p->col_re, p->col_im, z_out, 0, p->Qr, p->Qi,
-                   1, R1, R2, 1, R2);
-    return 0;
-}
-
-/* Unnormalized inverse on interleaved z: the swap identity
- * IDFT = swap(DFT(swap(.))) with both swaps folded into the _sw lattices
- * (il_in_sw reads (im,re), t1_il_out_sw writes (im,re)); the butterfly DAG
- * stays the forward one. Output lands in normal (re,im) order. */
-static inline int vfft_oop_execute_bwd_il(const vfft_oop_plan_t *p,
-                                          const double *z_in, double *z_out)
-{
-    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->il_leaf_sw || !p->t1_il_sw)
-        return -1;
-    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
-    p->il_leaf_sw(z_in, 0, p->col_re, p->col_im, 0, 0, R1, 1, R1, 1, R1);
-    _vfft_k1_transpose(p->col_re, p->tp_re, (int)R2, (int)R1);
-    _vfft_k1_transpose(p->col_im, p->tp_im, (int)R2, (int)R1);
-    p->t1_il_sw(p->tp_re, p->tp_im, z_out, 0, p->Qr, p->Qi, R2, 1, R2, 1, R2);
-    return 0;
-}
+/* (The BAILEY2V interleaved entry points — vfft_oop_execute_{fwd,bwd}_il and
+ * _{fwd,bwd}_2p_il, the il_in/il_out hybrid routes — were DELETED 2026-07-29.
+ * The IL axis is served by il2p.h in both directions; this plan is split-only.
+ * Rationale: two passes cannot amortize a layout conversion, measured
+ * 0.558x @64 / 0.765x @256 / 0.956x @1024 for pure IL vs the hybrid.) */
 
 /* Unnormalized inverse (output = N * x). KIND-DEPENDENT, because the kind sets
  * the forward's output ORDER:
@@ -911,7 +845,7 @@ static inline void vfft_oop_plan_destroy(vfft_oop_plan_t *p)
     free(p->Qr);
     free(p->Qi);
     free(p->Qlr); free(p->Qli);
-    free(p->col_re); free(p->col_im); free(p->tp_re); free(p->tp_im);
+    free(p->col_re); free(p->col_im);
     /* CCOL: the column plan is a full stride plan; the perm is ours. */
     if (p->colp)
         vfft_proto_plan_destroy(p->colp);

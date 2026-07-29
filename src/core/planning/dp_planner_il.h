@@ -314,12 +314,12 @@ static void _il_dp_maybe_pace(vfft_il_dp_context_t *ctx, int N)
  * table-building, not transforms. */
 typedef struct
 {
-    vfft_oop_plan_t    *op;    /* 2P / 3P (hybrid: split interior) */
     vfft_zsplit_plan_t *zp;    /* CASCADE, legacy engine  */
     vfft_zturn2_plan_t *zt;    /* CASCADE, ZTURN-S engine */
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_oop11_fn       mono;  /* MONO    */
-} _il_dp_built_t;
+} _il_dp_built_t;              /* (the hybrid 2P/3P op arm was deleted
+                                * 2026-07-29 with the il_in/il_out routes) */
 
 static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
 {
@@ -351,13 +351,11 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         b->mono = vfft_k1_mono_il_fn(N, 0);
         return b->mono ? 0 : -1;
     }
-    b->op = vfft_oop_plan_create_k1(N, c->R1, c->R2);
-    return b->op ? 0 : -1;
+    return -1; /* unknown/retired route (e.g. legacy 2P/3P) -> not a candidate */
 }
 
 static void _il_dp_free(_il_dp_built_t *b)
 {
-    if (b->op) vfft_oop_plan_destroy(b->op);
     if (b->zp) vfft_zsplit_destroy(b->zp);
     if (b->zt) vfft_zturn2_destroy(b->zt);
     if (b->ip) vfft_il2p_destroy(b->ip);
@@ -386,11 +384,7 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
         b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 0, 0, 0, 0, 0);
         return 0;
     }
-    return ((c->route == VFFT_K1_IL_2P)
-                ? vfft_oop_execute_fwd_2p_il(b->op, ctx->z_in, ctx->z_out)
-                : vfft_oop_execute_fwd_il(b->op, ctx->z_in, ctx->z_out)) == 0
-               ? 0
-               : -1;
+    return -1; /* unknown/retired route — _il_dp_build already refused it */
 }
 
 /* Execute a built CASCADE candidate JOINT: fwd z_in -> z_out, then bwd
@@ -719,10 +713,12 @@ static int _il_dp_push(vfft_il_cand_t *out, int n, const vfft_il_cand_t *c)
 }
 
 /* Enumerate every legal candidate for (N, ord). Availability is asked of the
- * IL registry (vfft_oop_leaf_il_fn / vfft_oop_t1_il_fn / vfft_oop_t1_ul_il_fn),
- * NEVER the split registry — inheriting split's reach is a recorded measured
- * bug: at N=16384 the balanced split pick is 128x128 and both IL halves come
- * back NULL, because IL codelets stop at R=64 while split reaches 128.
+ * il2p registry (vfft_il2p_leaf_fn / vfft_il2p_mid_fn), NEVER the split
+ * registry — inheriting split's reach is a recorded measured bug: at N=16384
+ * the balanced split pick is 128x128 and both IL halves come back NULL,
+ * because IL kernels stop at R=64 while split reaches 128. (The hybrid 2P/3P
+ * candidates and their vfft_oop_*_il_fn registry were deleted 2026-07-29;
+ * the pair-based IL axis is 2P_PURE only.)
  *
  * Cascade legality is DELEGATED to vfft_zsplit_create (NULL == illegal) rather
  * than re-implemented here. A second copy of that validator would drift. */
@@ -750,23 +746,8 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
             if (N % R2) continue;
             int R1 = N / R2;
             if (R1 < 4 || R1 > 64 || (R1 & (R1 - 1))) continue;
-            if (!vfft_oop_leaf_il_fn(R2, 0)) continue;
             memset(&c, 0, sizeof c);
             c.R1 = R1; c.R2 = R2;
-            if (vfft_oop_t1_ul_il_fn(R1, 0))
-            {
-                c.route = VFFT_K1_IL_2P;
-                n = _il_dp_push(out, n, &c);
-            }
-            if (vfft_oop_t1_il_fn(R1, 0))
-            {
-                c.route = VFFT_K1_IL_3P;
-                n = _il_dp_push(out, n, &c);
-            }
-            /* PURE-IL twin of the same pair: same factorization, no split
-             * planes. Enumerated ALONGSIDE the hybrid so the planner picks by
-             * MEASUREMENT per cell rather than us hard-coding the winner --
-             * the two cross over with working-set residency, not with N. */
             if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
             {
                 c.route = VFFT_K1_IL_2P_PURE;
