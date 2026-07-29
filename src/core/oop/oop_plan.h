@@ -47,6 +47,13 @@
 #include "oop_execute.h"
 #include "planner.h"
 
+/* Longest factor chain the cc_chain codec (vfft_k1_cc_chain_encode/decode)
+ * will carry — one decimal digit per factor, so this is also the digit cap.
+ * Must be >= the cascade's VFFT_ZSPLIT_MAX_NF (zsplit.h): decode() writes
+ * into caller arrays sized by EITHER macro, so a mismatch is a silent
+ * out-of-bounds write. vfft.c, which sees both headers, static-asserts it. */
+#define VFFT_K1_CC_MAX_NF 7
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -177,7 +184,7 @@ typedef struct
      * ccol execute entry. cc_chain/cc_nf persist the calibrated chain. */
     stride_plan_t *colp;
     int *cc_perm;
-    int cc_nf, cc_chain[6];
+    int cc_nf, cc_chain[VFFT_K1_CC_MAX_NF];
     /* MODEB */
     stride_plan_t *mb;
     /* Resolved JIT/baked inner executors for MODEB (NULL = generic). fwd runs
@@ -456,9 +463,12 @@ static inline int vfft_k1_cc_chain_encode(const int *chain, int nf)
 }
 static inline int vfft_k1_cc_chain_decode(int code, int *chain)
 {
-    /* callers pass int[6] (== cc_chain[6]); reject longer codes outright */
-    int digs[6], nd = 0;
-    while (code > 0 && nd < 6) { digs[nd++] = code % 10; code /= 10; }
+    /* callers pass int[VFFT_K1_CC_MAX_NF]; reject longer codes outright.
+     * 🔴 The array size and the loop bound MUST move together: widening only
+     * the bound overruns digs[], widening only the array silently rejects
+     * every longer code (a coverage loss that looks like "no wisdom"). */
+    int digs[VFFT_K1_CC_MAX_NF], nd = 0;
+    while (code > 0 && nd < VFFT_K1_CC_MAX_NF) { digs[nd++] = code % 10; code /= 10; }
     if (!nd || code) return 0;
     for (int s = 0; s < nd; s++) {
         int d = digs[nd - 1 - s];
@@ -486,7 +496,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
     int N, int R1, const int *chain, int nf,
     const vfft_proto_registry_t *reg)
 {
-    if (R1 <= 0 || (R1 % 4) || (N % R1) || nf < 1 || nf > 6)
+    if (R1 <= 0 || (R1 % 4) || (N % R1) || nf < 1 || nf > VFFT_K1_CC_MAX_NF)
         return NULL;
     const int R2 = N / R1;
     if (R2 % 4)

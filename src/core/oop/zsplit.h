@@ -52,7 +52,18 @@ VFFT_ZS_DECL(radix4_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_bwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_bwd_avx2)
 #undef VFFT_ZS_DECL
 
-#define VFFT_ZSPLIT_MAX_NF 6
+/* Longest cascade factor chain. 7 since 2026-07-29: the chain space is
+ * {4,8}^nf with prod == N, so N = 16384 needs nf = 7 to express 4^7 — at 6
+ * the planner could only reach chains with at least one 8, i.e. it returned
+ * the most radix-4-heavy chain REACHABLE rather than the best one. Raising
+ * the cap only ADDS candidates; every existing chain still enumerates and
+ * every banked wisdom line still decodes.
+ * 🔴 Sized arrays follow this macro everywhere (zsplit/zturn/zturn_proto/
+ * dp_planner_il/vfft.c). The cc_chain CODEC has its own bound,
+ * VFFT_K1_CC_MAX_NF (oop_plan.h) — vfft.c static-asserts they agree, because
+ * decode() writes into arrays sized by BOTH and a mismatch is a silent
+ * out-of-bounds write, not a compile error. */
+#define VFFT_ZSPLIT_MAX_NF 7
 
 typedef struct {
     int N, nf;

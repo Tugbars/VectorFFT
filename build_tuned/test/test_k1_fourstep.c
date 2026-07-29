@@ -422,7 +422,7 @@ int main(void)
             int N = cc[ci].N;
             double tol = 1e-9 * (double)N, rt_tol = tol * (double)N;
             int code = vfft_k1_cc_chain_encode(cc[ci].chain, cc[ci].nf);
-            int dchain[6], dnf = vfft_k1_cc_chain_decode(code, dchain);
+            int dchain[VFFT_K1_CC_MAX_NF], dnf = vfft_k1_cc_chain_decode(code, dchain);
             int enc_ok = (dnf == cc[ci].nf);
             for (int s = 0; enc_ok && s < dnf; s++)
                 if (dchain[s] != cc[ci].chain[s]) enc_ok = 0;

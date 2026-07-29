@@ -172,7 +172,8 @@ int main(int argc, char **argv)
         if (c.spr == VFFT_K1_SP_MONO)
             c.mono = c.R1 ? vfft_k1_mono_pair_fn(N, c.R1) : vfft_k1_mono_fn(N);
         else if (c.spr == VFFT_K1_SP_CCOL) {
-            int ccf[6], ccn = e ? vfft_k1_cc_chain_decode(e->cc_chain, ccf) : 0;
+            int ccf[VFFT_K1_CC_MAX_NF],
+                ccn = e ? vfft_k1_cc_chain_decode(e->cc_chain, ccf) : 0;
             if (ccn)
                 c.psp = vfft_oop_plan_create_k1_cc(N, c.R1, ccf, ccn, &reg);
         }

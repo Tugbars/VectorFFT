@@ -93,6 +93,13 @@ VFFT_IL2P_DECL_LEAF(32) VFFT_IL2P_DECL_LEAF(64)
  * recursion): unlock 2-stage pairs at 4·odd² N — 36=6x6, 100=10x10,
  * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)). */
 VFFT_IL2P_DECL_LEAF(6) VFFT_IL2P_DECL_LEAF(10) VFFT_IL2P_DECL_LEAF(12)
+/* odd leaves (2026-07-29, with the odd-count tail): all-odd pairs —
+ * 45 = 9x5, 225 = 15x15, 675 = 27x25. Both stage counts go odd; the
+ * inline VEX-128 tail carries them. */
+VFFT_IL2P_DECL_LEAF(3)  VFFT_IL2P_DECL_LEAF(5)  VFFT_IL2P_DECL_LEAF(7)
+VFFT_IL2P_DECL_LEAF(9)  VFFT_IL2P_DECL_LEAF(11) VFFT_IL2P_DECL_LEAF(13)
+VFFT_IL2P_DECL_LEAF(15) VFFT_IL2P_DECL_LEAF(17) VFFT_IL2P_DECL_LEAF(19)
+VFFT_IL2P_DECL_LEAF(21) VFFT_IL2P_DECL_LEAF(25) VFFT_IL2P_DECL_LEAF(27)
 #undef VFFT_IL2P_DECL_LEAF
 
 /* n1t and t2 both cover 4..64 — the FULL set the K=1 IL pair search can select,
@@ -113,6 +120,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 #define C(R) case R: return bwd ? radix##R##_z_n1t_bwd_avx2 : radix##R##_z_n1t_fwd_avx2;
     C(4) C(8) C(16) C(32) C(64)
     C(6) C(10) C(12)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
     default: return 0;
     }
@@ -338,70 +346,21 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
     p->mid_f(p->mid, 0, zout, 0, p->tw, 0, R2, 0, R2, 0, R2);
 }
 
-/* 🔴 NOT YET CORRECT — DO NOT WIRE. Returns -1 so no caller can silently get
- * wrong data; the forward path above is gated (fwd-vs-scalar 2e-14..1.5e-12
- * at 64/128/256/512/1024/4096, square and non-square pairs alike).
+/* ── F-DIAG: the unfused backward composition (reference + fallback) ─────
  *
- * WHAT IS WRONG: the naive body below (leaf_b then mid_b, forward order,
- * conjugated table) measures a roundtrip error of ~2.0 — O(1), i.e. not a
- * conjugation slip but a structural one. The inverse of (leaf -> mid) is
- * (mid^-1 -> leaf^-1), so the STAGES MUST RUN IN REVERSE ORDER.
+ * Validated 2026-07-29 against the gated forward at 7 cells (1.89e-14
+ * @N=128 16x8 .. 6.47e-13 @N=4096 64x64). Controls: deleting the diagonal,
+ * or applying it POST instead of PRE, both give O(1) error.
  *
- * WHAT STILL NEEDS DECIDING (do not guess): the forward leaf fuses the
- * corner-turn into its STORES, writing (leg p, col k) to mid[2*(k*R2 + p)].
- * Inverting that needs a corner-turn in the LOADS, and it is not established
- * whether radixR_z_n1t_bwd_avx2 does that or simply repeats the store-side
- * turn with an inverse butterfly. Read the emitted bwd source (or
- * codelet_cil.ml's N1T bwd path) before writing this.
- *
- * The per-kernel backward twins are themselves fine — build_tuned/benches/
- * cil_bwd_gate.c roundtrips t2_fwd/t2_bwd at identical strides with a
- * conjugated table. The defect is purely this route's stage composition.
- *
- * ── 8 COMPOSITIONS ALREADY FALSIFIED (2026-07-26). DO NOT RETRY. ────────
- * Measured at N=128, R1=16, R2=8 (non-square, so a radix swap is visible).
- * All roundtrip errors are O(1) — structural, not a conjugation slip:
- *   leaf_b(R2) -> mid_b(R1), fwd strides, conj table ......... 1.888
- *   mid_b(R1)  -> leaf_b(R2), reversed order ................. 2.025
- *   leaf_b(R1) -> mid_b(R2), swapped radices ................. 2.085
- * and with the PLAIN n1_bwd (no corner-turn) as stage 2, after mid_b(R1):
- *   n1_b Ls=1  OLs=R1 cnt=R1 ................................. 2.195
- *   n1_b Ls=R2 OLs=R1 cnt=R1 ................................. 1.993
- *   n1_b Ls=1  OLs=R1 cnt=R2 ................................. 1.952
- *   n1_b Ls=R2 OLs=1  cnt=R1 ................................. 2.222
- *   n1_b Ls=R1 OLs=R1 cnt=R1 ................................. 2.072
- *
- * READ THIS BEFORE THE NEXT ATTEMPT: the failure is NOT stride assignment —
- * five different stride triples on the same structure all fail alike. The
- * forward stage 1 does (DFT_R2 down columns) THEN (corner-turn in stores);
- * its inverse is (un-turn) THEN (IDFT_R2), and NO emitted kernel un-turns.
- *
- * MOST PROMISING UNEXPLORED DIRECTION: the swapped-radix arm above was tested
- * with only ONE stride triple. An inverse four-step naturally exchanges which
- * factor indexes columns, so bwd may legitimately be n1t(R1) -> t2(R2) with a
- * table built for radix R2 over R1 columns — i.e. the structure was right and
- * only the strides were wrong. Scan that arm's stride space before adding a
- * new codelet kind. Derive the index map from the fwd identity
- *   mid[2*(k*R2 + p)] = DFT_R2(column k)[p],  k in [0,R1), p in [0,R2)
- * rather than guessing triples. */
-/* ── F-DIAG: the SOLVED backward composition ─────────────────────────────
- *
- * Derived 2026-07-29 by two BLIND derivations (first-principles and
- * artifact-side) that came out formula-identical on the index map, then
- * validated by a scalar simulator against the gated forward at 7 cells
- * (1.89e-14 @N=128 16x8 ... 6.47e-13 @N=4096 64x64). Controls: deleting the
- * diagonal, or applying it POST instead of PRE, both give O(1) error.
- *
- * 🔴 WHY THE OLD DIAGNOSIS WAS WRONG. The comment above says the inverse needs
- * an "un-turn" and that no emitted kernel un-turns. True only for the
- * OPERATOR-inverse route. This composition keeps the turn exactly where the
- * forward put it and needs no un-turn at all.
- *
- * 🔴 THE 8 FALSIFIED ARMS WERE ONE BIT AWAY. Arm #1 (leaf_b(R2) -> mid_b(R1),
- * fwd strides, conj table, err 1.888) differs from this ONLY in that the
- * stage-2 twiddle is applied POST (t2 bwd) instead of PRE. Same stages, same
- * radices, same strides, same table, same order, same arguments. That is why
- * no stride scan could ever have found it.
+ * 🔴 IF THIS EVER NEEDS RE-DERIVING, DO NOT SCAN STRIDES. Eight compositions
+ * were falsified that way first, all at O(1); the closest failing arm
+ * differed from the correct one by ONE SEMANTIC BIT — stage-2 twiddle POST
+ * vs PRE — with identical stages, radices, strides, table and order, so no
+ * stride scan could ever have reached it. The old "the inverse needs an
+ * un-turn and no emitted kernel un-turns" diagnosis was WRONG: it holds only
+ * for the operator-inverse route, while this composition keeps the turn
+ * exactly where the forward put it. Full record: memory
+ * [[il2p-backward-solved]].
  *
  *   stage 1  leaf_b = n1t_bwd(R2), args IDENTICAL to forward stage 1
  *              mid[k*R2 + p] = IDFT_R2(column k)[p]
