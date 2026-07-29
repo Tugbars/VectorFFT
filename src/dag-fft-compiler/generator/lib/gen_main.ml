@@ -196,6 +196,8 @@ let run (argv : string array) : unit =
   (* --cil-log3: source the T2 mid's VTW2 records sparsely (load the
      power-of-two legs, derive the rest). Full-IL, same table layout. *)
   let cil_log3 = ref false in
+  let cil_pretw = ref false in
+  let cil_turnst = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -506,6 +508,16 @@ let run (argv : string array) : unit =
     then cil_blocked := true
     else if arg = "--cil-log3"
     then cil_log3 := true
+    (* The two decouplings the pure-IL INVERSE needs. Twiddle POSITION and
+       store FORM are independent of direction/kind; tying them was an
+       accident. --cil-pretw gives a backward T2 a PRE-twiddle (symbol tag
+       `p`); --cil-turnst gives it N1T's corner-turned store (tag `t`).
+       Together they express the two rival inverse decompositions so the
+       pair can be RACED rather than argued about. *)
+    else if arg = "--cil-pretw"
+    then cil_pretw := true
+    else if arg = "--cil-turnst"
+    then cil_turnst := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1706,6 +1718,8 @@ let run (argv : string array) : unit =
       print_string
         (Codelet_cil.emit
            ~log3:!cil_log3
+           ~pretw:!cil_pretw
+           ~turnst:!cil_turnst
            ~kind:(Codelet_cil.kind_of_string !cil_kind)
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
            ~blocked:!cil_blocked
@@ -1746,34 +1760,16 @@ let run (argv : string array) : unit =
            ~uarch)
     else if !z_native
     then
-      (* tier-2 TRUE interleaved-native family: N (positional) = the radix *)
-      print_string
-        (if !z_split_kind <> ""
-         then Codelet_zil.emit_z_split ~kind:!z_split_kind ~radix:n ()
-         else if !z_t2
-         then
-           Codelet_zil.emit_z_t2
-             ~strided:!z_strided
-             ~strided_st:!z_strided_st
-             ~post_tw:!z_post_tw
-             ~const_tw:!z_const_tw
-             ~pow_tw:!z_pow_tw
-             ~pow_tree:!z_pow_tree
-             ~tile_ld:!z_tile_ld
-             ~blocked2:!z_blocked2
-             ~blocked:!z_blocked
-             ~vec_width:isa.Isa.vec_width
-             ~radix:n
-             ()
-         else
-           Codelet_zil.emit_z_n1
-             ~strided:!z_strided
-             ~trans_st:!z_trans_st
-             ~blocked2:!z_blocked2
-             ~blocked:!z_blocked
-             ~vec_width:isa.Isa.vec_width
-             ~radix:n
-             ())
+      (* RETIRED 2026-07-29. codelet_zil.ml was the self-contained emitter used
+         to develop the IL family; every idea in it was re-hosted on the full
+         DAG pipeline as codelet_cil.ml (IL kinds) and codelet_zsplit.ml (the
+         cascade). It bypassed the shared machinery, so it had no AVX-512/EPYC
+         path and pass improvements never reached it.
+         Use --cil-n1 / --cil-n1t / --cil-t2 (codelet_cil.ml) or the --zp-*
+         cascade flags (codelet_zsplit.ml) instead. *)
+      failwith
+        "--z-* is RETIRED: codelet_zil.ml is gone. Use --cil-{n1,n1t,t2} \
+         (codelet_cil.ml) or --zp-* (codelet_zsplit.ml)."
     else if !k1_mono
     then
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function

@@ -1,3 +1,33 @@
+(* ═══════════════════════════════════════════════════════════════════════
+ *  🔴 NOT USED. RETIRED 2026-07-29. DO NOT EMIT FROM THIS FILE.
+ *
+ *  This lives in old-lib/ and is NOT in the dune build (lib/dune's `modules`
+ *  no longer lists it, and gen_main's --z-* branch now fails loudly). It is
+ *  kept for REFERENCE ONLY.
+ *
+ *  WHY: this was the self-contained emitter used to DEVELOP the IL codelet
+ *  family. Every idea in it was then baked into the full DAG pipeline —
+ *      IL kinds (n1 / n1t / t2)  -> codelet_cil.ml   (--cil-*)
+ *      the CT cascade            -> codelet_zsplit.ml (--zp-*)
+ *  so this is an ANCESTOR, not a rival implementation. Arithmetic parity with
+ *  the pipeline was already proven (docs/roadmap/zil_pipeline_port.md §0); the
+ *  port was for REACH and maintainability, not i9 speed.
+ *
+ *  WHAT IT COST: 1798 lines of raw C-string templates, 486 literal `_mm256_`
+ *  intrinsics, and a hard `vec_width <> 4 -> failwith` gate. It bypassed
+ *  ~9.2K lines of shared machinery (algsimp, the SU scheduler, regalloc,
+ *  emit_render/emit_c, `Isa` parameterization), so there was NO AVX-512 /
+ *  EPYC path and pass improvements (FMA-lift, scheduler wisdom, regalloc
+ *  widening) never reached it.
+ *
+ *  🔴 IF YOU ARE READING THIS BECAUSE YOU FOUND CODELETS IT EMITTED: those
+ *  are the UN-PORTED tranches (2 = bailey2 n1t/t2, 3 = solo n1). Read a
+ *  provenance line as "ported yet?", never as "which implementation".
+ *  The port gate is BIT-IDENTITY — tranche 1 (cascade) achieved it on all 11
+ *  production kernels. Finish the port; do not resurrect this emitter.
+ *  See src/dag-fft-compiler/codelets/zil/README.md.
+ * ═══════════════════════════════════════════════════════════════════════ *)
+
 (* codelet_zil.ml — TRUE interleaved-native (z-layout) codelet emitter.
  *
  * Tier-2 of the IL-native workstream (docs/roadmap/il_native_design.md,

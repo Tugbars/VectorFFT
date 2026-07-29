@@ -130,6 +130,35 @@ and t =
    kernel byte-identical. *)
 let tw_log3 = ref false
 
+(* PRE-TWIDDLE ON A BACKWARD T2 (the "T2P" kind).
+   Twiddle POSITION is normally derived from DIRECTION: forward pre-twiddles
+   (w . x, then DFT), backward post-twiddles (IDFT, then conj(w) . y). Those
+   are the only two combinations the emitter could express.
+
+   The pure-IL two-pass INVERSE needs the third: PRE-twiddle with a BACKWARD
+   butterfly. Without it the diagonal has to run as a separate scalar sweep
+   over the whole scratch plane, which measures 26-56% of the backward's total
+   time (build_tuned/benches/il2p_bwd_gate.c). Fusing it here does not remove
+   the multiply -- it removes the extra read+write of the plane and does the
+   arithmetic in-register, vectorized.
+
+   Position and direction are INDEPENDENT properties of the kernel; tying them
+   to `dir` was the accident. Default false keeps every existing kernel
+   byte-identical. *)
+let tw_pre = ref false
+
+(* CORNER-TURNED STORE ON A T2 (the "T2T" kind).
+   Store FORM is normally derived from KIND: N1/T2 store leg-major (straight),
+   N1T fuses the four-step transpose into its stores. Like twiddle position,
+   that coupling is an accident — the two are independent.
+
+   The OTHER pure-IL inverse decomposition (transform R1 first, then R2) needs
+   a kernel that carries the twiddle AND turns on store. Building both it and
+   the pre-twiddle kernel is what lets the two decompositions be RACED instead
+   of chosen by argument. Default false keeps every existing kernel
+   byte-identical. *)
+let st_turn = ref false
+
 let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
 let next_tag = ref 0
 
@@ -740,11 +769,13 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
-let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
-      ~(split : (int * int) option) ~(radix : int) ~(isa : Isa.t)
-      ~(uarch : Uarch.t)
+let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(kind : kind)
+      ~(dir : dir) ~(blocked : bool) ~(split : (int * int) option)
+      ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
   : string
   =
+  tw_pre := pretw;
+  st_turn := turnst;
   (* Required, not optional: an optional arg here cannot be erased (OCaml
      warning 16), and making the policy explicit at every call site is better
      anyway. Only T2 streams a runtime table, so log3 is meaningless on the
@@ -759,7 +790,7 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
   let per = vw / 2 in
   (* complex per vector *)
-  if kind = N1T && per <> 2
+  if (kind = N1T || !st_turn) && per <> 2
   then
     (* The corner-turn store pairs two legs with one permute2f128 (a
        2-complex-per-vector shape). A width-8 vector holds 4 complex and
@@ -784,8 +815,10 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
          radix);
   reset ();
   let sign = if dir = Fwd then `Fwd else `Bwd in
-  let pre_tw = kind = T2 && dir = Fwd in
-  let post_tw = kind = T2 && dir = Bwd in
+  (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
+     PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
+  let pre_tw = kind = T2 && (dir = Fwd || !tw_pre) in
+  let post_tw = kind = T2 && dir = Bwd && not !tw_pre in
   let inputs =
     Array.init radix (fun i ->
       (* T2 fwd PRE-twiddles legs 1..R-1 from the streamed table; leg 0 is
@@ -1096,6 +1129,8 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
        radix
        (kind_name kind
         ^ (if blocked then "b" else "")
+        ^ (if !tw_pre && dir = Bwd then "p" else "")
+        ^ (if !st_turn then "t" else "")
         ^ if !tw_log3 then "_log3" else "")
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
@@ -1140,9 +1175,10 @@ let emit ~(log3 : bool) ~(kind : kind) ~(dir : dir) ~(blocked : bool)
               (Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
     done;
   Buffer.add_buffer buf body;
-  (* store edge (blocked emits its own inside PASS 2) *)
+  (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
+     FORM, not the kind: `--cil-turnst` gives a T2 the corner-turned store. *)
   if not blocked then
-  (match kind with
+  (match (if !st_turn then N1T else kind) with
    | N1 | T2 ->
      (* leg-major: leg l's `per` columns stay contiguous *)
      Array.iteri
