@@ -86,17 +86,28 @@ VFFT_IL2P_DECL(32) VFFT_IL2P_DECL(64)
   extern void radix##R##_z_n1t_bwd_avx2( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_IL2P_DECL_LEAF(4)
 VFFT_IL2P_DECL_LEAF(8) VFFT_IL2P_DECL_LEAF(16)
 VFFT_IL2P_DECL_LEAF(32) VFFT_IL2P_DECL_LEAF(64)
 #undef VFFT_IL2P_DECL_LEAF
 
-/* n1t exists for 8..64 (a 4-leg corner-turn leaf was never emitted); t2 for
- * 4..64. The resolvers return 0 outside that reach so callers degrade. */
+/* n1t and t2 both cover 4..64 — the FULL set the K=1 IL pair search can select,
+ * which is what keeps the il_in/il_out hybrid fallback unreachable.
+ *
+ * Radix 4 was added 2026-07-29. The old comment here read "a 4-leg corner-turn
+ * leaf was never emitted", which was true but read as a limitation: the emitter
+ * could always produce it (codelet_cil.ml's n1t refusal is on VECTOR WIDTH,
+ * per<>2, NOT on radix) — the kernel had simply never been asked for. Its
+ * absence left every pair with R2=4 (N=16 4x4, 32 8x4, 64 16x4, 128 32x4) with
+ * no pure-IL plan, so execute silently used the hybrid.
+ *
+ * 🔴 Keep this list equal to the pair search's registry (vfft.c:3110-3124).
+ * benches/il2p_bwd_gate.c asserts that equality by building all 25 pairs. */
 static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 {
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_n1t_bwd_avx2 : radix##R##_z_n1t_fwd_avx2;
-    C(8) C(16) C(32) C(64)
+    C(4) C(8) C(16) C(32) C(64)
 #undef C
     default: return 0;
     }
@@ -203,10 +214,22 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
 
 /* NULL when the pair has no pure-IL kernels, so a caller can fall back rather
  * than build a plan that cannot execute. R2 must be even (the leaf's
- * count%2==0 contract is on R1; the VTW2 stream indexes column PAIRS of R2). */
+ * count%2==0 contract is on R1; the VTW2 stream indexes column PAIRS of R2).
+ *
+ * 🔴 COVERAGE IS THE CONTRACT, NOT AN ACCIDENT.
+ * This must succeed for EVERY (R1,R2) the caller's pair search can select —
+ * otherwise execute silently falls back to the il_in/il_out hybrid route.
+ * Do NOT reason about whether a given gap "can be reached in practice": that
+ * answer depends on the ISA (`per`), the codelet registries and the search
+ * bounds, so it is platform-specific and goes stale. Enforce coverage instead;
+ * benches/il2p_bwd_gate.c asserts it exhaustively over the whole domain.
+ *
+ * The old `R2 < 8` bound was exactly such an accident: it had no structural
+ * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
+ * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
-    if (N <= 0 || R1 < 4 || R2 < 8 || (long)R1 * (long)R2 != (long)N) return 0;
+    if (N <= 0 || R1 < 4 || R2 < 4 || (long)R1 * (long)R2 != (long)N) return 0;
     if ((R1 & 1) || (R2 & 1)) return 0;
     vfft_il2p_fn lf = vfft_il2p_leaf_fn(R2, 0), lb = vfft_il2p_leaf_fn(R2, 1);
     vfft_il2p_fn mf = vfft_il2p_mid_fn(R1, 0),  mb = vfft_il2p_mid_fn(R1, 1);
