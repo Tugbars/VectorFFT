@@ -152,12 +152,23 @@ let tw_pre = ref false
    N1T fuses the four-step transpose into its stores. Like twiddle position,
    that coupling is an accident — the two are independent.
 
-   The OTHER pure-IL inverse decomposition (transform R1 first, then R2) needs
-   a kernel that carries the twiddle AND turns on store. Building both it and
-   the pre-twiddle kernel is what lets the two decompositions be RACED instead
-   of chosen by argument. Default false keeps every existing kernel
+   The pure-IL inverse decomposition (transform R1 first, then R2) needs
+   a kernel that carries the twiddle AND turns on store — t2t, THE canonical
+   backward flat codelet. Default false keeps every existing kernel
    byte-identical. *)
 let st_turn = ref false
+
+(* LEG-STRIDED TURNED STORE (the "T2TG" kind, symbol tag `g`).
+   The plain turned store hard-codes legs at stride 1: (leg p, col k) ->
+   zout[2*(k*OLs + p)]. The 3-STAGE odd-chain BACKWARD (docs/roadmap/
+   il_odd_chain.md) needs its middle stage to interleave leg groups from
+   DIFFERENT calls: the clean l' = e + A*f split forces legs at stride A,
+   i.e. zout[2*(k*OLs + p*OGs)] — so the g variant wires the otherwise
+   `(void)`'d OGs argument as the turned store's LEG STRIDE. OGs=1
+   reproduces t2t's addressing (but t2t stays its own emission — this flag
+   emits a SEPARATE symbol precisely so every existing kernel remains
+   byte-identical). Implies st_turn. *)
+let st_turn_gs = ref false
 
 let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
 let next_tag = ref 0
@@ -769,13 +780,15 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
-let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(kind : kind)
+let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
+      ~(kind : kind)
       ~(dir : dir) ~(blocked : bool) ~(split : (int * int) option)
       ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
   : string
   =
   tw_pre := pretw;
-  st_turn := turnst;
+  st_turn := turnst || turnst_gs;
+  st_turn_gs := turnst_gs;
   (* Required, not optional: an optional arg here cannot be erased (OCaml
      warning 16), and making the policy explicit at every call site is better
      anyway. Only T2 streams a runtime table, so log3 is meaningless on the
@@ -1124,16 +1137,18 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(kind : kind)
        \    const double * tw_re, const double * tw_im,\n\
        \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
         {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs; (void)OGs;%s\n"
+       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs;%s%s\n"
        isa.Isa.target_attr
        radix
        (kind_name kind
         ^ (if blocked then "b" else "")
         ^ (if !tw_pre && dir = Bwd then "p" else "")
         ^ (if !st_turn then "t" else "")
+        ^ (if !st_turn_gs then "g" else "")
         ^ if !tw_log3 then "_log3" else "")
        (if dir = Fwd then "fwd" else "bwd")
        isa.Isa.name
+       (if !st_turn_gs then "" else " (void)OGs;")
        (if kind = T2 then "" else " (void)tw_re;"));
   if blocked
   then
@@ -1193,6 +1208,30 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(kind : kind)
                   (Printf.sprintf "z%d" e.tag))))
        outs
    | N1T ->
+     if !st_turn_gs
+     then
+       (* LEG-STRIDED turn (T2TG): legs sit at stride OGs, so they are NOT
+          contiguous and the paired full-width store below would interleave
+          the wrong legs. Every leg's two columns scatter as two 128-bit
+          halves instead (the odd-tail pattern applied to all legs):
+          (leg p, col k) -> zout[2*(k*OLs + p*OGs)]. Costs 2R narrow stores
+          vs R wide — the price of the chain-bwd middle stage; measured at
+          the plan level, not assumed away. *)
+       Array.iteri
+         (fun l (e : t) ->
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        _mm_storeu_pd(&zout[2*((size_t)k*OLs + (size_t)%d*OGs)], \
+                  _mm256_castpd256_pd128(z%d));\n\
+                 \        _mm_storeu_pd(&zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)], \
+                  _mm256_extractf128_pd(z%d, 1));\n"
+                 l
+                 e.tag
+                 l
+                 e.tag))
+         outs
+     else (
      (* CORNER-TURN (the four-step transpose, fused into the stores).
         Each output vector holds one leg's 2 columns: out_p = [c_k, c_{k+1}].
         Pairing legs p,p+1 and swapping 128-bit lanes regroups them into
@@ -1237,7 +1276,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(kind : kind)
             !l
             a
             !l
-            a)));
+            a))));
   Buffer.add_string buf "    }\n}\n";
   Buffer.contents buf
 ;;

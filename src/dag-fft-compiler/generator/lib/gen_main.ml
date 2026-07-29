@@ -198,6 +198,7 @@ let run (argv : string array) : unit =
   let cil_log3 = ref false in
   let cil_pretw = ref false in
   let cil_turnst = ref false in
+  let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
   let isa_name = ref "avx512" in
   let uarch_name = ref "sapphire_rapids" in
@@ -526,6 +527,15 @@ let run (argv : string array) : unit =
          only."
     else if arg = "--cil-turnst"
     then cil_turnst := true
+    (* --cil-turnst-gs: the T2TG kind (symbol tag `tg`) — t2t's turned store
+       with the otherwise-(void)'d OGs argument wired as the LEG STRIDE
+       ((leg p, col k) -> zout[2*(k*OLs + p*OGs)], every leg scattered as two
+       128-bit halves since strided legs are not contiguous). Built for the
+       3-stage odd-chain BACKWARD's middle stage (docs/roadmap/
+       il_odd_chain.md: the l' = e + A*f split forces legs at stride A).
+       Separate symbol so every existing t2t kernel stays byte-identical. *)
+    else if arg = "--cil-turnst-gs"
+    then cil_turnst_gs := true
     else if arg = "--z-t2ss"
     then (
       z_native := true;
@@ -1728,6 +1738,7 @@ let run (argv : string array) : unit =
            ~log3:!cil_log3
            ~pretw:!cil_pretw
            ~turnst:!cil_turnst
+           ~turnst_gs:!cil_turnst_gs
            ~kind:(Codelet_cil.kind_of_string !cil_kind)
            ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
            ~blocked:!cil_blocked
