@@ -10,8 +10,13 @@
  *   engine  in {legacy zsplit, ZTURN-S}     (each chain validated by ITS OWN
  *                                            route's create; ZTURN's fences
  *                                            filter its subset — chain[0]==4)
- *   x chain: ordered {4,8}^nf, nf in [3,6], prod == N  (ordering-sensitive,
- *                                            every ordering its own candidate)
+ *   x chain: ordered {4,8}^nf, nf in [3, VFFT_ZSPLIT_MAX_NF], prod == N
+ *                                           (ordering-sensitive, every
+ *                                            ordering its own candidate)
+ *     🔴 The cap became 7 on 2026-07-29 (P2). At N=16384 that ADDS exactly
+ *     one chain, 4^7 — the all-radix-4 factorization, previously
+ *     unreachable — so any 16384 verdict banked before that date was chosen
+ *     from a strictly smaller pool and should be re-run.
  *   x t2q   in {0,1}                        (sterm/sterm2 resp. stf/stf2)
  * Every candidate is BUILT, gated against the independent scalar reference
  * through its OWN output permutation, roundtrip-gated (bwd(fwd(x)) == N*x,

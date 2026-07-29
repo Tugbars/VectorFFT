@@ -62,10 +62,23 @@ static long bin_of_slot(long i, int N, const int *chain, int nf, int zturn)
     return _vfft_zs_brev(r * Rt + l, nf, chain);
 }
 
-static int cell(const char *name, int N, const int *chain, int nf, int zturn)
+/* expect_refuse: the chain is KNOWN-illegal for this engine and create must
+ * return NULL (a refusal is the correct answer, not a failure). */
+static int cell_x(const char *name, int N, const int *chain, int nf, int zturn,
+                  int expect_refuse)
 {
     void *p = zturn ? (void *)vfft_zturn2_create_chain(N, chain, nf)
                     : (void *)vfft_zsplit_create(N, chain, nf);
+    if (expect_refuse) {
+        printf("  %-34s refused=%s  %s\n", name, p ? "no" : "yes",
+               p ? "*** FAIL ***" : "ok (by design)");
+        if (p) {
+            if (zturn) vfft_zturn2_destroy((vfft_zturn2_plan_t *)p);
+            else       vfft_zsplit_destroy((vfft_zsplit_plan_t *)p);
+            return 1;
+        }
+        return 0;
+    }
     if (!p) {
         printf("  %-34s create=NULL  *** FAIL ***\n", name);
         return 1;
@@ -112,6 +125,10 @@ static int cell(const char *name, int N, const int *chain, int nf, int zturn)
     free(z); free(y); free(r);
     return bad;
 }
+static int cell(const char *name, int N, const int *chain, int nf, int zturn)
+{
+    return cell_x(name, N, chain, nf, zturn, 0);
+}
 
 int main(void)
 {
@@ -127,19 +144,24 @@ int main(void)
 
     printf("-- NEW at nf=7 (cap-blocked before): 16384 = 4^7 --\n");
     { int c7[7] = { 4, 4, 4, 4, 4, 4, 4 };
-      bad |= cell("16384 4.4.4.4.4.4.4 legacy", 16384, c7, 7, 0);
+      /* ZTURN-ONLY by construction: legacy zsplit refuses any chain whose
+       * last factor is not 8 (its sterm terminator kernel is radix-8 only,
+       * zsplit.h create). ZTURN carries the radix-4 terminator, and ZTURN is
+       * the runtime route since the 2026-07-27 cutover, so this chain is
+       * fully usable where it matters. */
+      bad |= cell_x("16384 4.4.4.4.4.4.4 legacy", 16384, c7, 7, 0, /*refuse=*/1);
       bad |= cell("16384 4.4.4.4.4.4.4 zturn ", 16384, c7, 7, 1); }
 
-    printf("\n-- CONTROLS at nf=6 (reachable before; must be unchanged) --\n");
+    printf("\n-- CONTROLS at nf<=6 (reachable before; must be unchanged) --\n");
     { int c6[6] = { 4, 4, 4, 4, 8, 8 };
       bad |= cell("16384 4.4.4.4.8.8 legacy", 16384, c6, 6, 0);
       bad |= cell("16384 4.4.4.4.8.8 zturn ", 16384, c6, 6, 1); }
     { int c5[5] = { 4, 4, 8, 8, 8 };
       bad |= cell("8192  4.4.8.8.8 legacy", 8192, c5, 5, 0);
       bad |= cell("8192  4.4.8.8.8 zturn ", 8192, c5, 5, 1); }
-    { int c4[4] = { 4, 4, 4, 8 };
-      bad |= cell("2048  4.4.4.8 legacy", 2048, c4, 4, 0);
-      bad |= cell("2048  4.4.4.8 zturn ", 2048, c4, 4, 1); }
+    { int c4[4] = { 4, 8, 8, 8 };   /* 4*8^3 = 2048 */
+      bad |= cell("2048  4.8.8.8 legacy", 2048, c4, 4, 0);
+      bad |= cell("2048  4.8.8.8 zturn ", 2048, c4, 4, 1); }
 
     printf("\n-- cc_chain codec round-trip at the new width --\n");
     { int c7[7] = { 4, 4, 4, 4, 4, 4, 4 }, back[VFFT_K1_CC_MAX_NF];
