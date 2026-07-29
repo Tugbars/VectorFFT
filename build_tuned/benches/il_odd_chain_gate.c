@@ -442,21 +442,23 @@ int main(void)
     fails += run_cell_bwd(256,  4, 8, 8);   /* pow2 control */
     printf("-- il3p PLAN API: default chain, fwd/bwd vs naive + roundtrip --\n");
     {
-        static const int PN[] = { 48, 96, 192, 320, 384, 768, 1280, 1536, 1728 };
+        static const int PN[] = { 48, 96, 192, 320, 384, 768, 1280, 1536, 1728,
+                                  200, 300, 400, 600, 1200 };
         for (int i = 0; i < (int)(sizeof PN / sizeof *PN); i++)
             fails += run_plan_cell(PN[i]);
     }
     printf("-- il_prime PLAN API: Rader/Bluestein on IL inners --\n");
     {
-        static const int PR[] = { 7, 11, 13, 17, 31, 41, 97, 127, 193, 241,
-                                  257, 509, 769, 1021, 2039 };
+        static const int PR[] = { 7, 11, 13, 17, 31, 41, 97, 101, 127, 193,
+                                  241, 257, 509, 769, 1021, 2039 };
         for (int i = 0; i < (int)(sizeof PR / sizeof *PR); i++)
             fails += run_prime_cell(PR[i]);
     }
     printf("-- PUBLIC API (vfft.h, INTERLEAVED K=1): route + dispatch --\n");
     {
         static const int UN[] = { 48, 96, 192, 320, 768, 1536,
-                                  31, 97, 127, 257, 509, 1021 };
+                                  31, 97, 127, 257, 509, 1021,
+                                  36, 100, 144, 200, 300, 101 };
         for (int i = 0; i < (int)(sizeof UN / sizeof *UN); i++)
             fails += run_public_cell(UN[i]);
     }
