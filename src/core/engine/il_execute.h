@@ -1,6 +1,13 @@
 /* il_execute.h — interleaved-boundary execution for DIT chains.
  *
- * Sibling of oop_execute.h. Stage 0 of a DIT plan is untwiddled in every
+ * LIVES IN engine/, NOT oop/ (moved 2026-07-29): every function here is typed
+ * on `stride_plan_t` — the ENGINE plan — and the only headers it needs are
+ * executor.h / executor_generic.h. It is a sibling of oop_execute.h by ROLE
+ * (both fold interleaved boundaries onto a split interior) but not by DATA
+ * TYPE, and it touches no OOP plan at all. Filing it under oop/ made the
+ * folder's dependency layering read backwards.
+ *
+ * Stage 0 of a DIT plan is untwiddled in every
  * group, and the backward generic executor runs stages in REVERSE order,
  * so BOTH user-memory boundaries of a DIT plan are n1 codelets:
  *   forward : stage-0 n1_fwd reads the input   -> derived il_in reads z pairs
