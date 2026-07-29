@@ -508,14 +508,22 @@ let run (argv : string array) : unit =
     then cil_blocked := true
     else if arg = "--cil-log3"
     then cil_log3 := true
-    (* The two decouplings the pure-IL INVERSE needs. Twiddle POSITION and
-       store FORM are independent of direction/kind; tying them was an
-       accident. --cil-pretw gives a backward T2 a PRE-twiddle (symbol tag
-       `p`); --cil-turnst gives it N1T's corner-turned store (tag `t`).
-       Together they express the two rival inverse decompositions so the
-       pair can be RACED rather than argued about. *)
+    (* The store-FORM decoupling the pure-IL INVERSE needs: --cil-turnst
+       gives a backward T2 the N1T corner-turned store (symbol tag `t`) —
+       t2t, THE canonical bwd flat codelet.
+       🔴 --cil-pretw (the t2p kind, PRE-twiddle bwd T2) is RETIRED — Tugbars
+       2026-07-29: t2p lost the bwd race at every R1 <= 32 and was deleted
+       tree-wide (kernels, registry, plan field, execute route, race arms)
+       so no future session re-promotes it by accident. The emitter refuses
+       rather than silently emitting an orphan kind. If a pre-twiddle bwd is
+       ever genuinely needed, the sanctioned direction is the
+       t2t-with-leg-stride store variant (wire OGs), not this flag. *)
     else if arg = "--cil-pretw"
-    then cil_pretw := true
+    then
+      failwith
+        "--cil-pretw (t2p) is RETIRED 2026-07-29 -- t2t is the canonical bwd \
+         semantics tree-wide (see src/core/oop/il2p.h). Deliberate re-enable \
+         only."
     else if arg = "--cil-turnst"
     then cil_turnst := true
     else if arg = "--z-t2ss"

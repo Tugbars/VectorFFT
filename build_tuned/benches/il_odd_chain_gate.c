@@ -56,11 +56,18 @@ static zk_fn t2_fn(int R)
     default: return 0;
     }
 }
+/* 🔴 BACKWARD: NOT YET BUILT — and deliberately NOT the conj-of-forward
+ * (t2p) composition, which was drafted here and then RETIRED with the t2p
+ * kind tree-wide (Tugbars 2026-07-29: t2t is the one canonical bwd
+ * semantics). The chain bwd waits for the t2t-with-leg-stride store
+ * variant (turned store with legs at stride A — wire the currently-unused
+ * OGs slot in the emitter), then gets its own derivation + cells here. */
 
 /* VTW2 table, il2p.h's builder generalized to (legs, cols, modulus):
  * record (pair pp, leg l) at (pp*(legs-1)+(l-1))*8 =
- * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus, k = 2pp+j. */
-static double *build_vtw2(int legs, int cols, int modulus)
+ * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus, k = 2pp+j.
+ * conj=1 flips the sin lanes (table-side conjugation, il2p.h twb style). */
+static double *build_vtw2(int legs, int cols, int modulus, int conj)
 {
     size_t nrec = ((size_t)cols / 2u) * (size_t)(legs - 1);
     double *tw = (double *)malloc(nrec * 8u * sizeof(double));
@@ -71,19 +78,21 @@ static double *build_vtw2(int legs, int cols, int modulus)
             for (int j = 0; j < 2; j++) {
                 double k = (double)(2 * pp + j);
                 double a = -2.0 * M_PI * (double)l * k / (double)modulus;
+                double s = conj ? sin(a) : -sin(a);
                 rf[2 * j] = cos(a); rf[2 * j + 1] = cos(a);
-                rf[4 + 2 * j] = -sin(a); rf[4 + 2 * j + 1] = sin(a);
+                rf[4 + 2 * j] = s; rf[4 + 2 * j + 1] = -s;
             }
         }
     return tw;
 }
 
-static void naive_dft(const double *z, double *X, int N)
+/* dir = -1 forward DFT, +1 unnormalized inverse */
+static void naive_dft(const double *z, double *X, int N, int dir)
 {
     for (int k = 0; k < N; k++) {
         double sr = 0, si = 0;
         for (int n = 0; n < N; n++) {
-            double a = -2.0 * M_PI * (double)n * (double)k / (double)N;
+            double a = (double)dir * 2.0 * M_PI * (double)n * (double)k / (double)N;
             double c = cos(a), s = sin(a);
             sr += z[2 * n] * c - z[2 * n + 1] * s;
             si += z[2 * n] * s + z[2 * n + 1] * c;
@@ -105,13 +114,13 @@ static int run_cell(int N, int R2, int A, int B)
     double *mid2 = (double *)malloc((size_t)2 * N * sizeof(double));
     double *out  = (double *)malloc((size_t)2 * N * sizeof(double));
     double *ref  = (double *)malloc((size_t)2 * N * sizeof(double));
-    double *twB  = build_vtw2(B, R2, B * R2);   /* stage 2a: W_{N/A}^{jq}      */
-    double *twA  = build_vtw2(A, B * R2, N);    /* stage 2b: W_N^{c(q+b*R2)} —
-                                                 * one table over ALL B*R2 cols;
-                                                 * call b reads region b*R2..   */
+    double *twB  = build_vtw2(B, R2, B * R2, 0); /* stage 2a: W_{N/A}^{jq}     */
+    double *twA  = build_vtw2(A, B * R2, N, 0);  /* stage 2b: W_N^{c(q+b*R2)} —
+                                                  * one table over ALL B*R2 cols;
+                                                  * call b reads region b*R2.. */
     srand(1234 + N);
     for (int i = 0; i < 2 * N; i++) z[i] = (double)rand() / RAND_MAX - 0.5;
-    naive_dft(z, ref, N);
+    naive_dft(z, ref, N, -1);
 
     leaf(z, 0, mid1, 0, 0, 0, (size_t)R1, 0, (size_t)R2, 0, (size_t)R1);
     for (int c = 0; c < A; c++)
@@ -135,6 +144,7 @@ static int run_cell(int N, int R2, int A, int B)
     free(z); free(mid1); free(mid2); free(out); free(ref); free(twB); free(twA);
     return ok ? 0 : 1;
 }
+
 
 int main(void)
 {
