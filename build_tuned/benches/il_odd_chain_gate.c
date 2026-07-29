@@ -18,6 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include "il2p.h"
+#include "il_prime.h"
 #include "vfft.h"
 
 #ifndef M_PI
@@ -302,6 +303,63 @@ static int run_plan_cell(int N)
     return bad;
 }
 
+/* Tier 2b: PRIME N via il_prime.h (Rader when the N-1 inner is
+ * IL-expressible, else Bluestein) — fwd/bwd vs naive + roundtrip. */
+static int run_prime_cell(int N)
+{
+    vfft_ilprime_plan_t *p = vfft_ilprime_create(N);
+    if (!p) {
+        printf("  N=%-5d prime create=NULL  *** FAIL ***\n", N);
+        return 1;
+    }
+    const char *meth = p->method ? "rader" : "blue ";
+    double *z   = (double *)malloc((size_t)2 * N * sizeof(double));
+    double *y   = (double *)malloc((size_t)2 * N * sizeof(double));
+    double *r   = (double *)malloc((size_t)2 * N * sizeof(double));
+    double *ref = (double *)malloc((size_t)2 * N * sizeof(double));
+    srand(555 + N);
+    for (int i = 0; i < 2 * N; i++) z[i] = (double)rand() / RAND_MAX - 0.5;
+
+    double ef = 0, eb = 0, ert = 0, scale;
+    vfft_ilprime_execute_fwd(p, z, y);
+    naive_dft(z, ref, N, -1);
+    scale = 0;
+    for (int i = 0; i < 2 * N; i++) {
+        double d = fabs(y[i] - ref[i]);
+        if (d > ef) ef = d;
+        if (fabs(ref[i]) > scale) scale = fabs(ref[i]);
+    }
+    ef /= (scale > 0 ? scale : 1);
+
+    vfft_ilprime_execute_bwd(p, z, y);
+    naive_dft(z, ref, N, +1);
+    scale = 0;
+    for (int i = 0; i < 2 * N; i++) {
+        double d = fabs(y[i] - ref[i]);
+        if (d > eb) eb = d;
+        if (fabs(ref[i]) > scale) scale = fabs(ref[i]);
+    }
+    eb /= (scale > 0 ? scale : 1);
+
+    vfft_ilprime_execute_fwd(p, z, y);
+    vfft_ilprime_execute_bwd(p, y, r);
+    scale = 0;
+    for (int i = 0; i < 2 * N; i++) {
+        double want = (double)N * z[i];
+        double d = fabs(r[i] - want);
+        if (d > ert) ert = d;
+        if (fabs(want) > scale) scale = fabs(want);
+    }
+    ert /= (scale > 0 ? scale : 1);
+
+    int bad = !(ef < 1e-10) || !(eb < 1e-10) || !(ert < 1e-10);
+    printf("  N=%-5d %s M=%-5d  fwd=%-9.2e bwd=%-9.2e rt=%-9.2e  %s\n",
+           N, meth, p->M, ef, eb, ert, bad ? "*** FAIL ***" : "ok");
+    vfft_ilprime_destroy(p);
+    free(z); free(y); free(r); free(ref);
+    return bad;
+}
+
 /* Tier 3: the public front door — an INTERLEAVED K=1 plan at odd·2^k N must
  * route to the chain (create succeeds where no split K=1 route exists) and
  * both directions must dispatch correctly. */
@@ -388,9 +446,17 @@ int main(void)
         for (int i = 0; i < (int)(sizeof PN / sizeof *PN); i++)
             fails += run_plan_cell(PN[i]);
     }
+    printf("-- il_prime PLAN API: Rader/Bluestein on IL inners --\n");
+    {
+        static const int PR[] = { 7, 11, 13, 17, 31, 41, 97, 127, 193, 241,
+                                  257, 509, 769, 1021, 2039 };
+        for (int i = 0; i < (int)(sizeof PR / sizeof *PR); i++)
+            fails += run_prime_cell(PR[i]);
+    }
     printf("-- PUBLIC API (vfft.h, INTERLEAVED K=1): route + dispatch --\n");
     {
-        static const int UN[] = { 48, 96, 192, 320, 768, 1536 };
+        static const int UN[] = { 48, 96, 192, 320, 768, 1536,
+                                  31, 97, 127, 257, 509, 1021 };
         for (int i = 0; i < (int)(sizeof UN / sizeof *UN); i++)
             fails += run_public_cell(UN[i]);
     }

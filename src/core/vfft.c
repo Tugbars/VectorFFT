@@ -31,6 +31,7 @@
 #include "zsplit.h"             /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
 #include "zturn.h"              /* ZTURN-S route twin (Phase 5 tranche 2; cascade_load_path_restructure §6.4) */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
+#include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -212,6 +213,10 @@ struct vfft_plan_s
      * ONLY for INTERLEAVED-committed plans (create guards it — the split
      * dispatch can never reach an IL-only handle). Owned. */
     vfft_il3p_plan_t *k1il3p;
+    /* K=1 PRIME N on the IL machinery (il_prime.h; route VFFT_K1_IL_PRIME):
+     * Rader or Bluestein over il2p/il3p inner plans, both dirs, natural.
+     * Same IL-only-handle rules as k1il3p. Owned. */
+    vfft_ilprime_plan_t *k1ilpr;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -3187,6 +3192,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 if (il3p)
                     ilr = VFFT_K1_IL_CHAIN3;
             }
+            /* PRIME N (route 7): Rader/Bluestein on the IL machinery
+             * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
+             * OOP path refuses. Same IL-only-handle rules as the chain. */
+            vfft_ilprime_plan_t *ilpr = NULL;
+            if (ilr == VFFT_K1_IL_NONE && !il2p && !il3p &&
+                !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+            {
+                ilpr = vfft_ilprime_create(N);
+                if (ilpr)
+                    ilr = VFFT_K1_IL_PRIME;
+            }
             /* availability degrade (wisdom may name routes this build lacks).
              * Runs BEFORE spr0 is captured — P0c: spr0 keys the JIT (and the
              * TWL table pick), and keying it on the PRE-degrade route made
@@ -3242,7 +3259,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * K=1 route can exist). IL-only handles are INTERLEAVED-committed
              * by construction (the chain attempt above is layout-gated), so
              * the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || il3p)
+            if (spr >= 0 || il3p || ilpr)
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);
@@ -3263,6 +3280,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     hk->k1il2p = il2p;
                     /* 3-stage chain route (non-NULL iff ilr==CHAIN3). */
                     hk->k1il3p = il3p;
+                    /* prime route (non-NULL iff ilr==IL_PRIME). */
+                    hk->k1ilpr = ilpr;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
                     hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
@@ -3284,6 +3303,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
             vfft_il2p_destroy(il2p);
             vfft_il3p_destroy(il3p);
+            vfft_ilprime_destroy(ilpr);
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */
@@ -4736,6 +4756,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
+                case VFFT_K1_IL_PRIME:
+                    /* PRIME N via Rader/Bluestein on IL inner plans
+                     * (il_prime.h); both directions, natural order,
+                     * unnormalized inverse like every IL bwd. */
+                    if (h->k1ilpr)
+                    {
+                        if (fwd)
+                            vfft_ilprime_execute_fwd(h->k1ilpr, sre, dre);
+                        else
+                            vfft_ilprime_execute_bwd(h->k1ilpr, sre, dre);
+                        return;
+                    }
+                    break; /* -> convert fallback (NEVER a silent no-op) */
                 default:
                     break; /* no IL route emitted for this N -> convert
                             * fallback below (NEVER a silent no-op) */
@@ -4862,6 +4895,7 @@ void vfft_destroy(vfft_plan h)
         vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
     vfft_il3p_destroy(h->k1il3p);
+    vfft_ilprime_destroy(h->k1ilpr);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->rplan)

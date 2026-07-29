@@ -112,7 +112,16 @@ enum
      * (every stage count is even by construction). The chain is a PLAN
      * INPUT; until the wisdom campaign banks per-cell picks, create uses
      * vfft_il3p_default_chain (a LEGAL default, not a measured plan). */
-    VFFT_K1_IL_CHAIN3 = 6
+    VFFT_K1_IL_CHAIN3 = 6,
+    /* 7 = PRIME N on the pure-IL machinery (il_prime.h): Rader when the
+     * (N-1) inner FFT is IL-expressible (shorter convolution; the split
+     * engine measured it ~2x over Bluestein), else Bluestein at
+     * M = pow2 >= 2N-1. Inner FFTs are il2p/il3p plans — packed complex
+     * end to end, both directions, natural order, N <= 2048 (band).
+     * Mirrors primes/prime_dispatch.h, translated to IL, NOT wrapped
+     * around the in-place engine. Method pick = availability preference;
+     * the measured per-cell pick belongs in wisdom. */
+    VFFT_K1_IL_PRIME = 7
 };
 
 typedef enum
