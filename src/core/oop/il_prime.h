@@ -99,14 +99,16 @@ typedef struct {
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
     in->p2 = 0; in->p3 = 0;
-    /* balanced il2p pair first (any even pair the registries cover — %2,
-     * matching the front door: 100 = 10x10 is a PAIR now), chain second. */
+    /* balanced il2p pair first (any pair the registries cover — no parity
+     * constraint since the odd-count tail; matches the front door), chain
+     * second. Rader inners at N-1 = 2·odd (30 = 5x6, 28 = 7x4) resolve
+     * here now, upgrading those primes from Bluestein. */
     {
         int bR1 = 0, bR2 = 0;
-        for (int R2 = (M < 64 ? M : 64); R2 >= 4; R2--) {
+        for (int R2 = (M < 64 ? M : 64); R2 >= 3; R2--) {
             if (M % R2) continue;
             int R1 = M / R2;
-            if (R1 < 4 || R1 > 64 || (R1 % 2) || (R2 % 2)) continue;
+            if (R1 < 3 || R1 > 64) continue;
             if (!vfft_il2p_leaf_fn(R2, 0) || !vfft_il2p_mid_fn(R1, 0)) continue;
             if (!bR1 || abs(R1 - R2) < abs(bR1 - bR2)) { bR1 = R1; bR2 = R2; }
         }

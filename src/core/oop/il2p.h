@@ -185,6 +185,7 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
     C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
 
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
@@ -192,6 +193,7 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
     switch (R) {
 #define C(R) case R: return radix##R##_z_n1_bwd_avx2;
     C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
     default: return 0;
     }
@@ -220,6 +222,7 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
     C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
 
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
@@ -227,6 +230,7 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
     switch (R) {
 #define C(R) case R: return radix##R##_z_t2t_bwd_avx2;
     C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
     default: return 0;
     }
@@ -255,8 +259,10 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
 }
 
 /* NULL when the pair has no pure-IL kernels, so a caller can fall back rather
- * than build a plan that cannot execute. R2 must be even (the leaf's
- * count%2==0 contract is on R1; the VTW2 stream indexes column PAIRS of R2).
+ * than build a plan that cannot execute. Since 2026-07-29 there is NO parity
+ * constraint: every monolithic cil kernel carries the inline VEX-128
+ * odd-count tail, and the VTW2 table below ceils its pair count so an odd
+ * R2's last (even-indexed) column has its record.
  *
  * 🔴 COVERAGE IS THE CONTRACT, NOT AN ACCIDENT.
  * This must succeed for EVERY (R1,R2) the caller's pair search can select —
@@ -271,8 +277,12 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
-    if (N <= 0 || R1 < 4 || R2 < 4 || (long)R1 * (long)R2 != (long)N) return 0;
-    if ((R1 & 1) || (R2 & 1)) return 0;
+    if (N <= 0 || R1 < 3 || R2 < 3 || (long)R1 * (long)R2 != (long)N) return 0;
+    /* (The old (R1&1)||(R2&1) refusal is GONE — 2026-07-29, with the
+     * odd-COUNT tail: every monolithic cil kernel now carries an inline
+     * VEX-128 tail (il_odd_count_tail.md §3), so odd counts are legal and
+     * all-odd pairs (45 = 9x5) become plans. Registry probes below remain
+     * the availability filter. */
     vfft_il2p_fn lf = vfft_il2p_leaf_fn(R2, 0), lb = vfft_il2p_leaf_fn(R2, 1);
     vfft_il2p_fn mf = vfft_il2p_mid_fn(R1, 0),  mb = vfft_il2p_mid_fn(R1, 1);
     if (!lf || !lb || !mf || !mb) return 0;
@@ -290,13 +300,19 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     p->t2t_b = tt;
     p->n1_b_r2 = nb2;
 
-    size_t ntw = ((size_t)R2 / 2u) * (size_t)(R1 - 1) * 8u;
+    /* CEIL pair count: odd R2's last column (even index R2-1) reads record
+     * pair (R2-1)/2 lane 0 from the tail's cursor — floor would under-
+     * allocate by one record set. Lane 1 of that last record (column R2,
+     * which does not exist) is filled with the k = R2 angle: valid values,
+     * never read. */
+    size_t npair = ((size_t)R2 + 1u) / 2u;
+    size_t ntw = npair * (size_t)(R1 - 1) * 8u;
     p->mid = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
     p->tw  = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
     p->twb = (double *)VFFT_IL2P_ALLOC(ntw * sizeof(double));
     if (!p->mid || !p->tw || !p->twb) { vfft_il2p_destroy(p); return 0; }
 
-    for (size_t pp = 0; pp < (size_t)R2 / 2u; pp++)
+    for (size_t pp = 0; pp < npair; pp++)
         for (int l = 1; l < R1; l++) {
             size_t off = (pp * (size_t)(R1 - 1) + (size_t)(l - 1)) * 8u;
             double *rf = p->tw + off, *rb = p->twb + off;
