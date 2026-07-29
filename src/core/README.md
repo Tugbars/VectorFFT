@@ -56,7 +56,12 @@ env knobs) · `threads.h` (worker pool + pinning; caller owns core 0) ·
 from wisdom/search) · `executor.h` / `executor_generic.h` (the stage walkers) ·
 `stride_executor.h` (strided/ND row engine) · `twiddle.h` (the three measured
 twiddle methods: FLAT / T1S / LOG3, mixed per stage by wisdom) · `compat.h` /
-`proto_stride_compat.h` (bridges between the proto and stride plan worlds).
+`proto_stride_compat.h` (bridges between the proto and stride plan worlds) ·
+`il_execute.h` (interleaved z↔z boundary folds over a `stride_plan_t` — lives
+here, not in `oop/`, because it is typed on the ENGINE plan; its derived-IL
+codelet population was deleted 2026-07-24, so every resolver returns 0 and every
+wrapper returns −1 by design, and the fold machinery is kept as the wiring point
+for a future IL-native family).
 
 ### `planning/` — plan search + wisdom (all MEASURED)
 `plan_orchestrator.h` (rigor → search routing) · `dp_planner.h` (split-plan DP;
@@ -100,7 +105,11 @@ kind-4 = K=1 cascade route lines `N 1 4 t2q cc_chain ns [zs_route zt_t2q]`) ·
 fused into ingest stores, MKL's sectioned geometry; beats MKL at 2048/16384) ·
 `zsplit.h` (legacy block-split cascade, `VFFT_NO_ZTURN` fallback + offline
 reference) · `zturn_proto.h` (memcmp-exact derivation prototype, permanent
-reference) · `il2p.h` (pure-IL 2-pass fwd route) · `il_execute.h` (IL routes).
+reference) · **K=1 NATURAL pure IL**: `il2p.h` (il2p 2-pass pair route, BOTH
+directions since 2026-07-29, plus the il3p 3-stage chain that gives odd·2^k N a
+native route) · `il_prime.h` (prime N via Rader/Bluestein over il2p/il3p inners).
+(`il_execute.h` moved to `engine/` — it is typed on `stride_plan_t`, not on any
+OOP plan.)
 
 Several subfolders carry their own README.md with deeper notes
 (`engine/`, `oop/`, `planning/`, `primes/`, `support/`, `transforms/real/`,
