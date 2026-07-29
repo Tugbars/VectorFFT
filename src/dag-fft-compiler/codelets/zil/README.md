@@ -217,14 +217,17 @@ bench-only research residue and should be dropped with their spikes, not ported.
 
 ## 6. THE RULE
 
-- **N ≤ 2048 (mono, Bailey): PURE IL.** Use `codelet_cil.ml` kernels. Full IL beats the
-  `il_in`/`il_out` hybrids **0.51–0.89×** when L1-resident (route-level 0.558@64, 0.765@256).
+- **N ≤ 2048 (mono, Bailey): PURE IL.** Use `codelet_cil.ml` kernels. Full IL beat the
+  `il_in`/`il_out` hybrids **0.51–0.89×** when L1-resident (route-level 0.558@64, 0.765@256) —
+  which is why those 30 hybrid codelets were **DELETED on 2026-07-29** (along with routes
+  `IL_3P`/`IL_2P`, their registry, and the plan fields) once il2p served both directions over
+  all 25 reachable pairs. The two-pass IL tier is il2p.h alone now.
 - **N ≥ 4096 (cascade): boundary conversion is right.** Keep the `codelet_zsplit.ml` shape.
-- **NEVER build a new IL-boundary / split-interior *codelet*.** The forbidden shape is
+- **NEVER (re)build an IL-boundary / split-interior *codelet*.** The forbidden shape was
   `il_in`/`il_out` in `codelets/oop/avx2/` — a codelet whose **ABI** mixes layouts and therefore
   converts **at every pass boundary** of a 2–3 pass route. The cascade converts **twice for the
   entire transform**, so the cost amortises across every stage. Same conversion, a fraction of
-  the work to spread it over. That is why the hybrids measure slow and the cascade does not.
+  the work to spread it over. That is why the hybrids measured slow and the cascade does not.
   **Test: a signature with `in_re` + `in_im` is HYBRID.** Every file here takes a single
   interleaved `zin`/`zout`, so none of them are.
 
@@ -241,10 +244,11 @@ bench-only research residue and should be dropped with their spikes, not ported.
 
 ## 7. TRAPS
 
-- 🔴 **Symbol ≠ filename.** `radix16_n1_oop_il_in_avx2.c` defines
-  `radix16_n1_oop_fwd_avx2_UG_UG_il_in`. Grepping the basename returns **zero** references and
-  makes a load-bearing file look deletable. **Always check by exported symbol.** (This broke the
-  build on 2026-07-28.)
+- 🔴 **Symbol ≠ filename** — general to every emitted codelet in this tree. The historical
+  example: `radix16_n1_oop_il_in_avx2.c` defined `radix16_n1_oop_fwd_avx2_UG_UG_il_in`;
+  grepping the basename returned **zero** references and made a load-bearing file look
+  deletable. **Always check by exported symbol.** (Broke the build on 2026-07-28; the 2026-07-29
+  hybrid deletion was done symbol-first for exactly this reason.)
 - 🔴 **No odd-COUNT tail exists.** Every kernel here loops `k += per` (per = 2 on AVX2; the
   cascade is `count % 4 == 0`) and silently drops trailing columns if `count` is not a multiple.
   `il2p_create` refuses odd R1/R2 up front, so nothing is wrong today — but a mixed split like

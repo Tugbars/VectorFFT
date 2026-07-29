@@ -212,7 +212,8 @@ static void timecell(int N, int R1, int R2)
 /* ── COVERAGE INVARIANT ──────────────────────────────────────────────────
  * For EVERY (R1,R2) the K=1 IL pair search can select, vfft_il2p_create must
  * succeed and BOTH directions must run. Any hole means execute silently falls
- * back to the il_in/il_out hybrid route.
+ * back to the convert fallback (the il_in/il_out hybrid route this gate was
+ * written to make unreachable was deleted 2026-07-29).
  *
  * This replaces the question "can R2=4 ever be reached?", which is the wrong
  * question: the answer depends on `per` (ISA), the codelet registries and the
