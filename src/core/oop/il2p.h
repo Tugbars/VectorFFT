@@ -89,6 +89,10 @@ VFFT_IL2P_DECL(32) VFFT_IL2P_DECL(64)
 VFFT_IL2P_DECL_LEAF(4)
 VFFT_IL2P_DECL_LEAF(8) VFFT_IL2P_DECL_LEAF(16)
 VFFT_IL2P_DECL_LEAF(32) VFFT_IL2P_DECL_LEAF(64)
+/* even-composite leaves (2026-07-29, emitted via dft_small's mixed
+ * recursion): unlock 2-stage pairs at 4·odd² N — 36=6x6, 100=10x10,
+ * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)). */
+VFFT_IL2P_DECL_LEAF(6) VFFT_IL2P_DECL_LEAF(10) VFFT_IL2P_DECL_LEAF(12)
 #undef VFFT_IL2P_DECL_LEAF
 
 /* n1t and t2 both cover 4..64 — the FULL set the K=1 IL pair search can select,
@@ -108,6 +112,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_n1t_bwd_avx2 : radix##R##_z_n1t_fwd_avx2;
     C(4) C(8) C(16) C(32) C(64)
+    C(6) C(10) C(12)
 #undef C
     default: return 0;
     }
@@ -129,6 +134,7 @@ VFFT_IL2P_DECL_ODD_T2(3)  VFFT_IL2P_DECL_ODD_T2(5)  VFFT_IL2P_DECL_ODD_T2(7)
 VFFT_IL2P_DECL_ODD_T2(9)  VFFT_IL2P_DECL_ODD_T2(11) VFFT_IL2P_DECL_ODD_T2(13)
 VFFT_IL2P_DECL_ODD_T2(15) VFFT_IL2P_DECL_ODD_T2(17) VFFT_IL2P_DECL_ODD_T2(19)
 VFFT_IL2P_DECL_ODD_T2(21) VFFT_IL2P_DECL_ODD_T2(25) VFFT_IL2P_DECL_ODD_T2(27)
+VFFT_IL2P_DECL_ODD_T2(6)  VFFT_IL2P_DECL_ODD_T2(10) VFFT_IL2P_DECL_ODD_T2(12)
 #undef VFFT_IL2P_DECL_ODD_T2
 
 static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
@@ -137,6 +143,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 #define C(R) case R: return bwd ? radix##R##_z_t2_bwd_avx2 : radix##R##_z_t2_fwd_avx2;
     C(4) C(8) C(16) C(32) C(64)
     C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    C(6) C(10) C(12)
 #undef C
     default: return 0;
     }
@@ -155,6 +162,7 @@ VFFT_IL2P_DECL_T2TG(11) VFFT_IL2P_DECL_T2TG(13) VFFT_IL2P_DECL_T2TG(15)
 VFFT_IL2P_DECL_T2TG(16) VFFT_IL2P_DECL_T2TG(17) VFFT_IL2P_DECL_T2TG(19)
 VFFT_IL2P_DECL_T2TG(21) VFFT_IL2P_DECL_T2TG(25) VFFT_IL2P_DECL_T2TG(27)
 VFFT_IL2P_DECL_T2TG(32) VFFT_IL2P_DECL_T2TG(64)
+VFFT_IL2P_DECL_T2TG(6)  VFFT_IL2P_DECL_T2TG(10) VFFT_IL2P_DECL_T2TG(12)
 #undef VFFT_IL2P_DECL_T2TG
 
 static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
@@ -162,7 +170,7 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
     switch (R) {
 #define C(R) case R: return radix##R##_z_t2tg_bwd_avx2;
     C(3) C(4) C(5) C(7) C(8) C(9) C(11) C(13) C(15) C(16) C(17) C(19)
-    C(21) C(25) C(27) C(32) C(64)
+    C(21) C(25) C(27) C(32) C(64) C(6) C(10) C(12)
 #undef C
     default: return 0;
     }
@@ -176,14 +184,14 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
   extern void radix##R##_z_n1_bwd_avx2( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-    C(4) C(8) C(16) C(32) C(64)
+    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
 #undef C
 
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
 {
     switch (R) {
 #define C(R) case R: return radix##R##_z_n1_bwd_avx2;
-    C(4) C(8) C(16) C(32) C(64)
+    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
 #undef C
     default: return 0;
     }
@@ -211,14 +219,14 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
   extern void radix##R##_z_t2t_bwd_avx2( \
       const double *, const double *, double *, double *, \
       const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-    C(4) C(8) C(16) C(32) C(64)
+    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
 #undef C
 
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
 {
     switch (R) {
 #define C(R) case R: return radix##R##_z_t2t_bwd_avx2;
-    C(4) C(8) C(16) C(32) C(64)
+    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
 #undef C
     default: return 0;
     }
@@ -582,14 +590,17 @@ static inline double *_vfft_il3p_vtw2(int legs, int cols, int modulus, int conj)
 }
 
 /* LEGAL default chain for an uncalibrated cell (⚠ default, NOT a measured
- * plan): largest covered pow2 leaf R2 whose cofactor R1 = N/R2 is even and
- * splits as odd·pow2 with both mid kernels present. Returns 1 and fills
- * (R2, A=odd, B=pow2) or returns 0 (no chain — e.g. pow2 N, which the
- * 2-stage pair owns; all-odd N; 4·odd N until radix-6/10/12 exist). */
+ * plan): a covered leaf R2 (pow2 preferred, then even-composite) whose
+ * cofactor R1 = N/R2 is even and splits as A·B with both mid kernels
+ * present — first as odd·pow2, else with an even-composite B (6/10/12),
+ * which serves the single-4 cells like 200 = 4·(5·10), 300 = 6·(5·10).
+ * Returns 0 when no chain exists (pure pow2 N — the pair owns it; all-odd
+ * N — every count odd). */
 static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
 {
-    static const int LEAF[] = { 32, 16, 8, 4 };
-    for (int i = 0; i < 4; i++) {
+    static const int LEAF[] = { 32, 16, 8, 4, 12, 10, 6 };
+    static const int ECB[]  = { 12, 10, 6 };
+    for (int i = 0; i < 7; i++) {
         int r2 = LEAF[i];
         if (N % r2) continue;
         int R1 = N / r2;
@@ -598,11 +609,24 @@ static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
         while ((o & 1) == 0) o >>= 1;      /* odd part */
         int pb = R1 / o;                   /* pow2 part */
         if (o == 1) continue;              /* pure pow2: the pair route owns it */
-        if (pb < 4) continue;              /* radix-2 mids don't exist */
-        if (!vfft_il2p_mid_fn(o, 0) || !vfft_il2p_mid_fn(o, 1)) continue;
-        if (!vfft_il2p_mid_fn(pb, 0) || !vfft_il2p_t2tg_bwd_fn(pb)) continue;
-        *R2 = r2; *A = o; *B = pb;
-        return 1;
+        if (pb >= 4 &&
+            vfft_il2p_mid_fn(o, 0) && vfft_il2p_mid_fn(o, 1) &&
+            vfft_il2p_mid_fn(pb, 0) && vfft_il2p_t2tg_bwd_fn(pb)) {
+            *R2 = r2; *A = o; *B = pb;
+            return 1;
+        }
+        /* single-2 cofactor (pb == 2) or uncovered odd part: try an
+         * even-composite B so the lone factor of 2 rides inside it. */
+        for (int j = 0; j < 3; j++) {
+            int b = ECB[j];
+            if (R1 % b) continue;
+            int a = R1 / b;
+            if (a < 3) continue;           /* no radix-2 mids */
+            if (!vfft_il2p_mid_fn(a, 0) || !vfft_il2p_mid_fn(a, 1)) continue;
+            if (!vfft_il2p_mid_fn(b, 0) || !vfft_il2p_t2tg_bwd_fn(b)) continue;
+            *R2 = r2; *A = a; *B = b;
+            return 1;
+        }
     }
     return 0;
 }

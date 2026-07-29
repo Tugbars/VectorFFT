@@ -3126,7 +3126,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         if (N % R2c)
                             continue;
                         int R1c = N / R2c;
-                        if (R1c < 4 || R1c > 64 || (R1c % 4) || (R2c % 4))
+                        /* %2, not %4: the IL pair contract is EVENNESS (the
+                         * kernels' count%2) — %4 was inherited from split's
+                         * SIMD-transpose contract and silently excluded the
+                         * even-composite radices (6/10/12) that serve
+                         * 36=6x6, 100=10x10, 144=12x12. The registry probes
+                         * below are the availability filter (odd radices sit
+                         * in mid_fn for the CHAIN but the parity guard keeps
+                         * them out of pairs). */
+                        if (R1c < 4 || R1c > 64 || (R1c % 2) || (R2c % 2))
                             continue;
                         if (!vfft_il2p_leaf_fn(R2c, 0) || !vfft_il2p_mid_fn(R1c, 0))
                             continue;

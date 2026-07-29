@@ -99,18 +99,19 @@ typedef struct {
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
     in->p2 = 0; in->p3 = 0;
-    if ((M & (M - 1)) == 0) {
-        /* pow2: balanced il2p pair, same rule as the front door's default */
+    /* balanced il2p pair first (any even pair the registries cover — %2,
+     * matching the front door: 100 = 10x10 is a PAIR now), chain second. */
+    {
         int bR1 = 0, bR2 = 0;
         for (int R2 = (M < 64 ? M : 64); R2 >= 4; R2--) {
             if (M % R2) continue;
             int R1 = M / R2;
-            if (R1 < 4 || R1 > 64 || (R1 % 4) || (R2 % 4)) continue;
+            if (R1 < 4 || R1 > 64 || (R1 % 2) || (R2 % 2)) continue;
             if (!vfft_il2p_leaf_fn(R2, 0) || !vfft_il2p_mid_fn(R1, 0)) continue;
             if (!bR1 || abs(R1 - R2) < abs(bR1 - bR2)) { bR1 = R1; bR2 = R2; }
         }
         if (bR1) in->p2 = vfft_il2p_create(M, bR1, bR2);
-        return in->p2 != 0;
+        if (in->p2) return 1;
     }
     {
         int cR2, cA, cB;
