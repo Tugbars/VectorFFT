@@ -104,7 +104,15 @@ enum
      * Measured vs the hybrid it displaced at the front door: 0.659x @N=128,
      * 0.722x @256, control cell N=64 reads 1.007 as it must — which is why
      * the hybrid (routes 1/2 above) was deleted rather than kept as an arm. */
-    VFFT_K1_IL_2P_PURE = 5
+    VFFT_K1_IL_2P_PURE = 5,
+    /* 6 = PURE-IL 3-STAGE CHAIN (il2p.h il3p): N = R2·A·B with odd factors
+     * as kernel RADICES — the route that covers odd·2^k N (48..1792) in the
+     * Bailey band, both directions (fwd 12/12, bwd 13/13 gated 2026-07-29;
+     * docs/roadmap/il_odd_chain.md). Natural order, no odd-count tail
+     * (every stage count is even by construction). The chain is a PLAN
+     * INPUT; until the wisdom campaign banks per-cell picks, create uses
+     * vfft_il3p_default_chain (a LEGAL default, not a measured plan). */
+    VFFT_K1_IL_CHAIN3 = 6
 };
 
 typedef enum

@@ -70,22 +70,37 @@ GATED 2026-07-29 (build_tuned/benches/il_odd_chain_gate.c, real kernels vs
 naive DFT): 12/12 — 48/96/192/320/768/1536/1728 with odd radices 3/5/27 in
 either mid position + pow2 control 256; rel err 1.2e-14 .. 5.1e-13.
 
-## Backward: WAITS on the t2t-with-leg-stride store variant
+## Backward: SOLVED + GATED on t2t semantics (13/13, 2026-07-29)
 
-The conj-of-forward composition (identical addresses, n1t_bwd + two
-pre-twiddle bwd stages) was drafted and then DROPPED with the tree-wide
-retirement of the t2p kind — Tugbars 2026-07-29: t2p lost the 2-stage bwd
-race at every R1 ≤ 32; one canonical bwd semantics (t2t) tree-wide, no
-rival arm to confuse a future session. `--cil-pretw` now refuses.
+(History: a conj-of-forward draft using pre-twiddle stages was dropped with
+the tree-wide retirement of the t2p kind — one canonical bwd semantics,
+`--cil-pretw` refuses. This reversed-stage composition replaced it.)
 
-The t2t-style chain backward is not yet expressible: reversing the stage
-order needs the middle stage's TURNED store to place legs at stride A
-(derivation: the clean l′ = e + A·f split forces it), and t2t's turned
-store hard-codes legs at stride 1 — the OGs slot is emitted but `(void)`'d.
-Plan: wire OGs as the turned store's leg stride in the emitter (existing
-kernels keep OGs ignored ⇒ byte-identical), emit the odd/pow2 variants,
-re-derive the chain bwd on them, and gate here. Until then the chain is
-FORWARD-ONLY; bwd at chain cells falls back to the convert path.
+The forward's stages inverted in REVERSE order; every count stays even:
+
+    B1  t2_bwd(A), B calls, b = 0..B-1:   IDFT_A across the a legs
+        in  X + 2·b·R2,      Ls = B·R2,   count = R2
+        out mid2 + 2·b·A·R2, OLs = R2     (straight store)
+        tw  conj VTW2(A legs, B·R2 cols, modulus N) + region b·R2
+        → mid2[(bA+c)R2 + q], post-twiddled by conj W_N^{c(q+b·R2)}
+    B2  t2tg_bwd(B), A calls, c = 0..A-1: IDFT_B across the b legs
+        in  mid2 + 2·c·R2,   Ls = A·R2,   count = R2
+        out mid1 + 2·c,      OLs = R1, OGs = A   (LEG-STRIDED turn)
+        tw  conj VTW2(B legs, R2 cols, modulus B·R2)
+        → mid1[q·R1 + j·A + c], post-twiddled by conj W_{B·R2}^{jq}
+    B3  n1_bwd(R2), 1 call:               IDFT_R2 across q
+        in  mid1, Ls = R1;  out zout, OLs = R1;  count = R1  → NATURAL
+
+**t2tg** (`--cil-turnst-gs`, symbol `radixR_z_t2tg_bwd_avx2`) is t2t with
+the `(void)`'d OGs slot wired as the turned store's LEG STRIDE — required
+because the l′ = e + A·f split interleaves leg groups from different c
+calls at stride A. Strided legs are not contiguous, so every leg scatters
+as two 128-bit halves (2R narrow stores vs t2t's R wide — a plan-level
+measured cost, not assumed away). Existing t2t kernels stay byte-identical
+(separate symbol). 17 t2tg_bwd kernels emitted (odd 3..27 + pow2 4..64).
+
+GATED (same gate, bwd section, naive-IDFT oracle): 13/13 — all fwd cells'
+mirrors incl. 1728 with radix-27 in BOTH positions; 1.0e-14 .. 5.1e-13.
 
 VTW2 tables use the il2p record builder verbatim with (legs, modulus)
 parameters: record (pair pp, leg l) at offset (pp·(legs−1)+(l−1))·8,

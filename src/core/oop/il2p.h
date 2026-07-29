@@ -112,11 +112,57 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
     default: return 0;
     }
 }
+/* Odd/prime t2 twins (conjugate-pair construction, codelet_cil.ml,
+ * generated 2026-07-28): the 3-STAGE CHAIN's mid stages put odd factors
+ * here as kernel RADICES (never as counts — that is the whole point of the
+ * chain, docs/roadmap/il_odd_chain.md). The classic 2-stage pair search
+ * never selects them (it requires both factors % 4 == 0), so extending
+ * this registry does not change any pow2 route. */
+#define VFFT_IL2P_DECL_ODD_T2(R) \
+  extern void radix##R##_z_t2_fwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
+  extern void radix##R##_z_t2_bwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_IL2P_DECL_ODD_T2(3)  VFFT_IL2P_DECL_ODD_T2(5)  VFFT_IL2P_DECL_ODD_T2(7)
+VFFT_IL2P_DECL_ODD_T2(9)  VFFT_IL2P_DECL_ODD_T2(11) VFFT_IL2P_DECL_ODD_T2(13)
+VFFT_IL2P_DECL_ODD_T2(15) VFFT_IL2P_DECL_ODD_T2(17) VFFT_IL2P_DECL_ODD_T2(19)
+VFFT_IL2P_DECL_ODD_T2(21) VFFT_IL2P_DECL_ODD_T2(25) VFFT_IL2P_DECL_ODD_T2(27)
+#undef VFFT_IL2P_DECL_ODD_T2
+
 static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 {
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_t2_bwd_avx2 : radix##R##_z_t2_fwd_avx2;
     C(4) C(8) C(16) C(32) C(64)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+#undef C
+    default: return 0;
+    }
+}
+
+/* t2tg — t2t's turned store with OGs wired as the LEG STRIDE (symbol tag
+ * `tg`, emitted by `--cil-turnst-gs`): the chain BACKWARD's middle stage,
+ * where leg groups from different calls interleave at stride A. */
+#define VFFT_IL2P_DECL_T2TG(R) \
+  extern void radix##R##_z_t2tg_bwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_IL2P_DECL_T2TG(3)  VFFT_IL2P_DECL_T2TG(4)  VFFT_IL2P_DECL_T2TG(5)
+VFFT_IL2P_DECL_T2TG(7)  VFFT_IL2P_DECL_T2TG(8)  VFFT_IL2P_DECL_T2TG(9)
+VFFT_IL2P_DECL_T2TG(11) VFFT_IL2P_DECL_T2TG(13) VFFT_IL2P_DECL_T2TG(15)
+VFFT_IL2P_DECL_T2TG(16) VFFT_IL2P_DECL_T2TG(17) VFFT_IL2P_DECL_T2TG(19)
+VFFT_IL2P_DECL_T2TG(21) VFFT_IL2P_DECL_T2TG(25) VFFT_IL2P_DECL_T2TG(27)
+VFFT_IL2P_DECL_T2TG(32) VFFT_IL2P_DECL_T2TG(64)
+#undef VFFT_IL2P_DECL_T2TG
+
+static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
+{
+    switch (R) {
+#define C(R) case R: return radix##R##_z_t2tg_bwd_avx2;
+    C(3) C(4) C(5) C(7) C(8) C(9) C(11) C(13) C(15) C(16) C(17) C(19)
+    C(21) C(25) C(27) C(32) C(64)
 #undef C
     default: return 0;
     }
@@ -449,6 +495,179 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
 {
     if (vfft_il2p_execute_bwd_t2t(p, zin, zout) == 0) return 0;
     return vfft_il2p_execute_bwd_fdiag(p, zin, zout);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * il3p — the 3-STAGE pure-IL chain: N = R2 · A · B (R1 = A·B), the route
+ * that gives odd/prime factors a K=1 IL plan (docs/roadmap/il_odd_chain.md).
+ *
+ * WHY 3 STAGES: every cil kernel vectorizes 2 complex/ymm and requires
+ * count % 2 == 0. In the 2-stage pair the leaf runs at count=R1 and the
+ * mid at count=R2 — BOTH factors must be even, so a 2-stage plan can NEVER
+ * host an odd factor. The chain pins the SIMD axis to the leaf's q columns
+ * (count = R2 at both mid stages, R1 at the leaf — all even) and odd
+ * factors appear only as kernel RADICES. No odd-count tail exists or is
+ * needed on this route.
+ *
+ * FORWARD (gated 12/12 vs naive DFT, real kernels):
+ *   S1  n1t(R2), 1 call:  in zin (Ls=R1), out mid1 (OLs=R2), count=R1
+ *   S2a t2(B), A calls c: in mid1+2cR2 (Ls=A·R2), out mid2+2cR2
+ *                         (OLs=A·R2), count=R2, tw = VTW2(B, R2, B·R2)
+ *   S2b t2(A), B calls b: in mid2+2bAR2 (Ls=R2), out zout+2bR2
+ *                         (OLs=B·R2), count=R2,
+ *                         tw = VTW2(A, B·R2, N) + region b·R2
+ *   ⚠ S2b's twiddle argument is the COMBINED index q + b·R2 — ONE big
+ *   table over all B·R2 columns; dropping the ω_{R1}^{cb} factor fails
+ *   O(1) at every cell including the pow2 control (recorded in the doc).
+ *
+ * BACKWARD (gated 13/13 vs naive IDFT; t2t semantics — t2p is retired):
+ *   B1  t2_bwd(A), B calls b:  in zin+2bR2 (Ls=B·R2), out mid2+2bAR2
+ *                              (OLs=R2), count=R2, tw = conj big + region b
+ *   B2  t2tg_bwd(B), A calls c: in mid2+2cR2 (Ls=A·R2), out mid1+2c
+ *                              (OLs=R1, OGs=A — LEG-STRIDED turn),
+ *                              count=R2, tw = conj VTW2(B, R2, B·R2)
+ *   B3  n1_bwd(R2), 1 call:    in mid1 (Ls=R1), out zout (OLs=R1),
+ *                              count=R1 — NATURAL, unnormalized (N·x)
+ *
+ * zin == zout is safe both directions (each stage fully consumes its input
+ * before the next writes; the boundary stages touch the caller buffers).
+ *
+ * 🔴 The chain (R2, A, B) is a PLAN INPUT. vfft_il3p_default_chain below is
+ * a LEGAL default for uncalibrated cells only — the measured per-cell pick
+ * belongs to the wisdom campaign (plans come from measured search). */
+typedef struct {
+    int N, R2, A, B;               /* R1 = A*B */
+    double *mid1, *mid2;           /* interleaved scratch, 2N doubles each */
+    double *twB, *twA;             /* fwd: S2a table; S2b BIG table         */
+    double *twAc, *twBc;           /* bwd: B1 BIG conj table; B2 conj table */
+    vfft_il2p_fn leaf_f, n1_b;     /* n1t(R2) fwd; n1(R2) bwd               */
+    vfft_il2p_fn tA_f, tB_f;       /* t2(A), t2(B) fwd                      */
+    vfft_il2p_fn tA_b, tBg_b;      /* t2(A) bwd; t2tg(B) bwd                */
+} vfft_il3p_plan_t;
+
+static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
+{
+    if (!p) return;
+    VFFT_IL2P_FREE(p->mid1);
+    VFFT_IL2P_FREE(p->mid2);
+    VFFT_IL2P_FREE(p->twB);
+    VFFT_IL2P_FREE(p->twA);
+    VFFT_IL2P_FREE(p->twAc);
+    VFFT_IL2P_FREE(p->twBc);
+    free(p);
+}
+
+/* VTW2 fill, (legs, cols, modulus)-parametric — same record convention as
+ * the 2-stage create above: (pair pp, leg l) at (pp*(legs-1)+(l-1))*8,
+ * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus. conj flips the sins. */
+static inline double *_vfft_il3p_vtw2(int legs, int cols, int modulus, int conj)
+{
+    size_t nrec = ((size_t)cols / 2u) * (size_t)(legs - 1);
+    double *tw = (double *)VFFT_IL2P_ALLOC(nrec * 8u * sizeof(double));
+    if (!tw) return 0;
+    for (int pp = 0; pp < cols / 2; pp++)
+        for (int l = 1; l < legs; l++) {
+            double *rf = tw + ((size_t)pp * (legs - 1) + (l - 1)) * 8u;
+            for (int j = 0; j < 2; j++) {
+                double k = (double)(2 * pp + j);
+                double a = -2.0 * VFFT_IL2P_PI * (double)l * k / (double)modulus;
+                double s = conj ? sin(a) : -sin(a);
+                rf[2 * j] = cos(a);
+                rf[2 * j + 1] = cos(a);
+                rf[4 + 2 * j] = s;
+                rf[4 + 2 * j + 1] = -s;
+            }
+        }
+    return tw;
+}
+
+/* LEGAL default chain for an uncalibrated cell (⚠ default, NOT a measured
+ * plan): largest covered pow2 leaf R2 whose cofactor R1 = N/R2 is even and
+ * splits as odd·pow2 with both mid kernels present. Returns 1 and fills
+ * (R2, A=odd, B=pow2) or returns 0 (no chain — e.g. pow2 N, which the
+ * 2-stage pair owns; all-odd N; 4·odd N until radix-6/10/12 exist). */
+static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
+{
+    static const int LEAF[] = { 32, 16, 8, 4 };
+    for (int i = 0; i < 4; i++) {
+        int r2 = LEAF[i];
+        if (N % r2) continue;
+        int R1 = N / r2;
+        if (R1 < 4 || (R1 & 1)) continue;
+        int o = R1;
+        while ((o & 1) == 0) o >>= 1;      /* odd part */
+        int pb = R1 / o;                   /* pow2 part */
+        if (o == 1) continue;              /* pure pow2: the pair route owns it */
+        if (pb < 4) continue;              /* radix-2 mids don't exist */
+        if (!vfft_il2p_mid_fn(o, 0) || !vfft_il2p_mid_fn(o, 1)) continue;
+        if (!vfft_il2p_mid_fn(pb, 0) || !vfft_il2p_t2tg_bwd_fn(pb)) continue;
+        *R2 = r2; *A = o; *B = pb;
+        return 1;
+    }
+    return 0;
+}
+
+/* NULL when any kernel or table is unavailable — the caller falls back
+ * (route truthfulness: a chain route always names a runnable plan). */
+static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
+{
+    const int R1 = A * B;
+    if (N <= 0 || (long)R1 * (long)R2 != (long)N) return 0;
+    if ((R1 & 1) || (R2 & 1)) return 0;    /* count contracts, both stages */
+    vfft_il2p_fn lf  = vfft_il2p_leaf_fn(R2, 0);
+    vfft_il2p_fn nb  = vfft_il2p_n1_bwd_fn(R2);
+    vfft_il2p_fn af  = vfft_il2p_mid_fn(A, 0), ab = vfft_il2p_mid_fn(A, 1);
+    vfft_il2p_fn bf  = vfft_il2p_mid_fn(B, 0);
+    vfft_il2p_fn btg = vfft_il2p_t2tg_bwd_fn(B);
+    if (!lf || !nb || !af || !ab || !bf || !btg) return 0;
+
+    vfft_il3p_plan_t *p = (vfft_il3p_plan_t *)calloc(1, sizeof(*p));
+    if (!p) return 0;
+    p->N = N; p->R2 = R2; p->A = A; p->B = B;
+    p->leaf_f = lf; p->n1_b = nb;
+    p->tA_f = af; p->tB_f = bf;
+    p->tA_b = ab; p->tBg_b = btg;
+    p->mid1 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
+    p->mid2 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
+    p->twB  = _vfft_il3p_vtw2(B, R2, B * R2, 0);
+    p->twA  = _vfft_il3p_vtw2(A, B * R2, N, 0);
+    p->twAc = _vfft_il3p_vtw2(A, B * R2, N, 1);
+    p->twBc = _vfft_il3p_vtw2(B, R2, B * R2, 1);
+    if (!p->mid1 || !p->mid2 || !p->twB || !p->twA || !p->twAc || !p->twBc) {
+        vfft_il3p_destroy(p);
+        return 0;
+    }
+    return p;
+}
+
+static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,
+                                         const double *zin, double *zout)
+{
+    const size_t R2 = (size_t)p->R2, A = (size_t)p->A, B = (size_t)p->B;
+    const size_t R1 = A * B;
+    p->leaf_f(zin, 0, p->mid1, 0, 0, 0, R1, 0, R2, 0, R1);
+    for (size_t c = 0; c < A; c++)
+        p->tB_f(p->mid1 + 2 * c * R2, 0, p->mid2 + 2 * c * R2, 0,
+                p->twB, 0, A * R2, 0, A * R2, 0, R2);
+    for (size_t b = 0; b < B; b++)
+        p->tA_f(p->mid2 + 2 * b * A * R2, 0, zout + 2 * b * R2, 0,
+                p->twA + (b * R2 / 2u) * (A - 1) * 8u, 0,
+                R2, 0, B * R2, 0, R2);
+}
+
+static inline void vfft_il3p_execute_bwd(const vfft_il3p_plan_t *p,
+                                         const double *zin, double *zout)
+{
+    const size_t R2 = (size_t)p->R2, A = (size_t)p->A, B = (size_t)p->B;
+    const size_t R1 = A * B;
+    for (size_t b = 0; b < B; b++)
+        p->tA_b(zin + 2 * b * R2, 0, p->mid2 + 2 * b * A * R2, 0,
+                p->twAc + (b * R2 / 2u) * (A - 1) * 8u, 0,
+                B * R2, 0, R2, 0, R2);
+    for (size_t c = 0; c < A; c++)
+        p->tBg_b(p->mid2 + 2 * c * R2, 0, p->mid1 + 2 * c, 0,
+                 p->twBc, 0, A * R2, 0, R1, A, R2);
+    p->n1_b(p->mid1, 0, zout, 0, 0, 0, R1, 0, R1, 0, R1);
 }
 
 #endif /* VFFT_IL2P_H */

@@ -205,6 +205,13 @@ struct vfft_plan_s
      * 0.558x @N=64 / 0.765x @256 / 0.956x @1024 against it (scalar-DFT
      * gated) and was deleted. Owned; NULL <=> k1_il_route != 2P_PURE/MONO. */
     vfft_il2p_plan_t *k1il2p;
+    /* K=1 NATURAL interleaved z->z, PURE-IL 3-STAGE CHAIN (il2p.h il3p):
+     * odd·2^k N in the Bailey band (route VFFT_K1_IL_CHAIN3; both dirs,
+     * gated — docs/roadmap/il_odd_chain.md). Such cells have NO split K=1
+     * route, so the handle may exist with k1_sp_route == -1; that is legal
+     * ONLY for INTERLEAVED-committed plans (create guards it — the split
+     * dispatch can never reach an IL-only handle). Owned. */
+    vfft_il3p_plan_t *k1il3p;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -3163,6 +3170,23 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     il2p = vfft_il2p_create(N, iR1, iR2);
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
+            /* 3-STAGE CHAIN (route 6): the odd·2^k cells the pair search can
+             * never serve (a 2-stage plan needs BOTH factors even — count
+             * parity, il2p.h). Only attempted when the pair axis came up
+             * empty and only for INTERLEAVED-committed plans (an IL-only
+             * handle may carry spr == -1; the split dispatch must never see
+             * one). Chain = LEGAL DEFAULT for the uncalibrated cell; the
+             * measured per-cell pick is the wisdom campaign's job. */
+            vfft_il3p_plan_t *il3p = NULL;
+            if (ilr == VFFT_K1_IL_NONE && !il2p && !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+            {
+                int cR2, cA, cB;
+                if (vfft_il3p_default_chain(N, &cR2, &cA, &cB))
+                    il3p = vfft_il3p_create(N, cR2, cA, cB);
+                if (il3p)
+                    ilr = VFFT_K1_IL_CHAIN3;
+            }
             /* availability degrade (wisdom may name routes this build lacks).
              * Runs BEFORE spr0 is captured — P0c: spr0 keys the JIT (and the
              * TWL table pick), and keying it on the PRE-degrade route made
@@ -3213,7 +3237,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * above — the route already names 2P_PURE iff il2p exists.) */
             if (ilr == VFFT_K1_IL_MONO && !vfft_k1_mono_il_fn(N, 0))
                 ilr = VFFT_K1_IL_NONE;
-            if (spr >= 0)
+            /* Handle exists when the SPLIT axis has a route, OR when an
+             * IL-only route does (the chain at odd·2^k N, where no split
+             * K=1 route can exist). IL-only handles are INTERLEAVED-committed
+             * by construction (the chain attempt above is layout-gated), so
+             * the split dispatch never sees k1_sp_route == -1. */
+            if (spr >= 0 || il3p)
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);
@@ -3232,6 +3261,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     /* PURE-IL pair route, both directions (created and
                      * route-normalized above; non-NULL iff ilr==2P_PURE). */
                     hk->k1il2p = il2p;
+                    /* 3-stage chain route (non-NULL iff ilr==CHAIN3). */
+                    hk->k1il3p = il3p;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
                     hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
@@ -3252,6 +3283,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 }
             }
             vfft_il2p_destroy(il2p);
+            vfft_il3p_destroy(il3p);
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */
@@ -4299,6 +4331,19 @@ static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
     if (!h->il_wr || !h->il_wi || !h->il_wr2 || !h->il_wi2)
         return;
     _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
+    if (h->k1_on && h->k1_sp_route < 0)
+    {
+        /* IL-only K=1 handle (chain cells at odd·2^k N carry NO split
+         * route). Unreachable by construction — the IL switch serves such
+         * handles and its route always names a runnable plan — but if a
+         * future edit breaks that invariant, refuse LOUDLY rather than
+         * dispatch _exec_k1_split on route -1. */
+        _vfft_warn("vfft_execute: IL-only K=1 handle (N=%d) reached the "
+                   "convert fallback — no split route exists; output NOT "
+                   "computed. This is a routing bug; please report.",
+                   h->N);
+        return;
+    }
     if (h->k1_on)
         _exec_k1_split(h, dir == VFFT_FORWARD, h->il_wr, h->il_wi,
                        h->il_wr2, h->il_wi2);
@@ -4677,6 +4722,20 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                             return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
+                case VFFT_K1_IL_CHAIN3:
+                    /* 3-STAGE PURE-IL CHAIN (odd·2^k N): both directions
+                     * gated (fwd 12/12, bwd 13/13 — il_odd_chain.md). Route
+                     * truthfulness guarantees k1il3p != NULL here; the guard
+                     * is defensive, falling to convert, never to silence. */
+                    if (h->k1il3p)
+                    {
+                        if (fwd)
+                            vfft_il3p_execute_fwd(h->k1il3p, sre, dre);
+                        else
+                            vfft_il3p_execute_bwd(h->k1il3p, sre, dre);
+                        return;
+                    }
+                    break; /* -> convert fallback (NEVER a silent no-op) */
                 default:
                     break; /* no IL route emitted for this N -> convert
                             * fallback below (NEVER a silent no-op) */
@@ -4802,6 +4861,7 @@ void vfft_destroy(vfft_plan h)
     if (h->zturn)
         vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
+    vfft_il3p_destroy(h->k1il3p);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->rplan)
