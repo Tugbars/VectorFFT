@@ -136,66 +136,10 @@ static inline vfft_oop11_fn vfft_oop_t1_fn(int R)
     }
 }
 
-/* ---- IL-boundary twins (P2, docs/roadmap/row_major_engine.md §11f) ----
- * Natively emitted (gen_radix --oop-il-in[-sw] / --oop-il-out[-sw]); same
- * 11-arg ABI with (z, unused) replacing the split pair on the folded side.
- * _sw = (im,re)-swapped lattice: the bwd swap identity folded into the
- * boundary (an interleaved z buffer cannot pointer-swap re/im).
- * avx2 only for now (avx512 masked IL lattice pending) — the resolvers
- * return 0 on other ISAs so callers degrade to the split path. */
-#if VFFT_OOP_GROUPW == 4u
-#define VFFT_OOP_DECL_IL(R) \
-  extern void radix##R##_n1_oop_fwd_avx2_UG_UG_il_in( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_n1_oop_fwd_avx2_UG_UG_il_in_sw( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_il_out( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_t1_oop_fwd_avx2_UG_UG_il_out_sw( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_OOP_DECL_IL(4) VFFT_OOP_DECL_IL(8) VFFT_OOP_DECL_IL(16)
-VFFT_OOP_DECL_IL(32) VFFT_OOP_DECL_IL(64)
-#endif
-
-/* il_in leaf (reads interleaved z, writes split). sw=1 -> (im,re) read. */
-static inline vfft_oop11_fn vfft_oop_leaf_il_fn(int R, int sw)
-{
-#if VFFT_OOP_GROUPW == 4u
-    switch (R)
-    {
-#define C(R) case R: return sw ? radix##R##_n1_oop_fwd_avx2_UG_UG_il_in_sw \
-                                : radix##R##_n1_oop_fwd_avx2_UG_UG_il_in;
-    C(4) C(8) C(16) C(32) C(64)
-#undef C
-    default: return 0;
-    }
-#else
-    (void)R; (void)sw;
-    return 0;
-#endif
-}
-
-/* t1 with interleaved stores (reads split, writes z). sw=1 -> (im,re) write. */
-static inline vfft_oop11_fn vfft_oop_t1_il_fn(int R, int sw)
-{
-#if VFFT_OOP_GROUPW == 4u
-    switch (R)
-    {
-#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UG_UG_il_out_sw \
-                                : radix##R##_t1_oop_fwd_avx2_UG_UG_il_out;
-    C(4) C(8) C(16) C(32) C(64)
-#undef C
-    default: return 0;
-    }
-#else
-    (void)R; (void)sw;
-    return 0;
-#endif
-}
+/* (The IL-boundary twin registry — vfft_oop_leaf_il_fn / vfft_oop_t1_il_fn
+ * over the radix{4..64} _il_in/_il_out[_sw] codelets — was DELETED 2026-07-29
+ * along with the hybrid IL routes it served. The IL axis is il2p.h, whose
+ * registries cover the same {4,8,16,32,64} domain in BOTH directions.) */
 
 /* ---- UnitLeg twins (two-pass restructure, row_major_engine.md §12.4) ----
  * t1 UL_UG: transpose fused into the t1's LOAD lattice (reads the column
@@ -401,37 +345,9 @@ static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
     return vfft_k1_mono_fn(N);
 }
 
-/* t1 UL-load + il_out store twins: the TRUE 2-pass IL exit (reads the
- * untransposed split column output at Ls=1/Gs=R1, transposes in the load
- * lattice, interleaves in the store lattice). _sw = bwd swap. */
-#if VFFT_OOP_GROUPW == 4u
-#define VFFT_OOP_DECL_UL_ILOUT(R) \
-  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_il_out( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_t1_oop_fwd_avx2_UL_UG_il_out_sw( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_OOP_DECL_UL_ILOUT(4) VFFT_OOP_DECL_UL_ILOUT(8) VFFT_OOP_DECL_UL_ILOUT(16)
-VFFT_OOP_DECL_UL_ILOUT(32) VFFT_OOP_DECL_UL_ILOUT(64)
-#endif
-
-static inline vfft_oop11_fn vfft_oop_t1_ul_il_fn(int R, int sw)
-{
-#if VFFT_OOP_GROUPW == 4u
-    switch (R)
-    {
-#define C(R) case R: return sw ? radix##R##_t1_oop_fwd_avx2_UL_UG_il_out_sw \
-                                : radix##R##_t1_oop_fwd_avx2_UL_UG_il_out;
-    C(4) C(8) C(16) C(32) C(64)
-#undef C
-    default: return 0;
-    }
-#else
-    (void)R; (void)sw;
-    return 0;
-#endif
-}
+/* (The t1 UL-load + il_out store twin registry — vfft_oop_t1_ul_il_fn over
+ * the radix{4..64} _ul_ilout[_sw] codelets — was DELETED 2026-07-29 with the
+ * rest of the hybrid IL route. il2p.h's t2/t2t kernels are the IL exit now.) */
 
 static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
 {

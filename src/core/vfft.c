@@ -171,13 +171,14 @@ struct vfft_plan_s
     /* K=1 engine (row_major_engine.md §13; c2c OOP, howmany==1, natural).
      * Route per axis from kind-3 wisdom (or the default heuristic); the axis
      * is the plan's COMMITTED layout (h->layout, stamped at create — the old
-     * execute-time buffer-contract inference is gone). k1sp/k1il are BAILEY2V
-     * plans for the per-axis pairs (may be the same object — k1il==k1sp when
-     * pairs match; owned once). Split bwd = pointer-swap identity; IL bwd =
-     * the _sw entry points. Kill-switch: env VFFT_NO_K1 at create. */
+     * execute-time buffer-contract inference is gone). k1sp is the BAILEY2V
+     * plan for the SPLIT pair (owned); the IL axis is k1il2p below — the
+     * hybrid k1il plan and its _sw entry points were deleted 2026-07-29.
+     * Split bwd = pointer-swap identity. Kill-switch: env VFFT_NO_K1 at
+     * create. */
     int k1_on;
     int k1_sp_route, k1_il_route;
-    vfft_oop_plan_t *k1sp, *k1il;
+    vfft_oop_plan_t *k1sp;
     /* K=1 SCRAMBLED interleaved z->z: the block-split cascade (zsplit.h;
      * ≥2048 cells, default chains = calibrated winners). Serves ONLY plans
      * committed to layout=INTERLEAVED; split-layout plans and uncovered
@@ -199,10 +200,10 @@ struct vfft_plan_s
     int zroute;
     vfft_zturn2_plan_t *zturn;
     /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
-     * no split planes. Measured vs the hybrid 2P route it replaces:
-     * 0.558x @N=64, 0.765x @256, 0.956x @1024 (both arms scalar-DFT gated).
-     * FORWARD ONLY today -- il2p's backward stage composition is unsolved, so
-     * bwd keeps using the hybrid route below. Owned; NULL = not available. */
+     * no split planes, BOTH directions (bwd = t2t then n1_bwd(R2), solved
+     * 2026-07-29). THE IL 2-pass plan — the hybrid it displaced measured
+     * 0.558x @N=64 / 0.765x @256 / 0.956x @1024 against it (scalar-DFT
+     * gated) and was deleted. Owned; NULL <=> k1_il_route != 2P_PURE/MONO. */
     vfft_il2p_plan_t *k1il2p;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
@@ -3077,14 +3078,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * Two independent reasons, both measured:
                  *  (a) COVERAGE. The loop above filters on SPLIT availability
                  *      (vfft_oop_leaf_fn / vfft_oop_t1_fn, which reach R=128),
-                 *      but IL codelets stop at R=64 (vfft_oop_leaf_il_fn /
-                 *      vfft_oop_t1_il_fn). So the balanced split pick can name
-                 *      radices IL has no codelet for — at N=16384 it picks
-                 *      128x128 and BOTH IL halves come back NULL, while the
-                 *      route below still claimed IL_2P. Since a 2-pass IL route
-                 *      needs R1*R2 = N with both <= 64, IL 2-pass genuinely
-                 *      tops out at N=4096; above that the honest answer is
-                 *      IL_NONE, not a route that cannot execute.
+                 *      but the il2p registries (vfft_il2p_leaf_fn /
+                 *      vfft_il2p_mid_fn) stop at R=64. So the balanced split
+                 *      pick can name radices IL has no kernel for — at
+                 *      N=16384 it picks 128x128 and BOTH IL halves come back
+                 *      NULL, while the route once claimed IL anyway (recorded
+                 *      bug). Since a 2-pass IL route needs R1*R2 = N with both
+                 *      <= 64, IL 2-pass genuinely tops out at N=4096; above
+                 *      that the honest answer is IL_NONE, not a route that
+                 *      cannot execute.
                  *  (b) INDEPENDENCE. Even where a split pair is legal for IL,
                  *      nothing guarantees it is the IL optimum -- the two arms
                  *      run different codelets over different layouts. The IL
@@ -3114,7 +3116,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         int R1c = N / R2c;
                         if (R1c < 4 || R1c > 64 || (R1c % 4) || (R2c % 4))
                             continue;
-                        if (!vfft_oop_leaf_il_fn(R2c, 0) || !vfft_oop_t1_il_fn(R1c, 0))
+                        if (!vfft_il2p_leaf_fn(R2c, 0) || !vfft_il2p_mid_fn(R1c, 0))
                             continue;
                         if (!iR1 || abs(R1c - R2c) < abs(iR1 - iR2))
                         {
@@ -3122,10 +3124,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             iR2 = R2c;
                         }
                     }
-                    ilr = iR1 ? VFFT_K1_IL_2P : VFFT_K1_IL_NONE;
+                    ilr = iR1 ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
                 }
             }
-            vfft_oop_plan_t *psp = NULL, *pil = NULL;
+            vfft_oop_plan_t *psp = NULL;
+            vfft_il2p_plan_t *il2p = NULL;
             if (spr == VFFT_K1_SP_CCOL && sR1)
             {
                 /* composed column (§12.4 item 5): chain from the wisdom line,
@@ -3140,23 +3143,26 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
             else if (spr != VFFT_K1_SP_MONO && sR1)
                 psp = vfft_oop_plan_create_k1(N, sR1, sR2);
-            /* WHITELIST, not a blacklist: only the pair-based IL routes build a
-             * plan from iR1/iR2. MONO is whole-N, NONE has no route, and
+            /* WHITELIST, not a blacklist: only the pair-based IL routes build
+             * a plan from iR1/iR2. MONO is whole-N, NONE has no route, and
              * CASCADE is record-only (see VFFT_K1_IL_CASCADE in oop_plan.h) --
              * a growing "!= this && != that" chain would silently start
-             * building plans for any IL route added later. */
-            if ((ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P) && iR1)
-                /* alias only onto CLASSIC plans — a CC plan (colp set) has no
-                 * IL twins and would silently kill the IL axis */
-                pil = (psp && !psp->colp && iR1 == sR1 && iR2 == sR2)
-                          ? psp
-                          : vfft_oop_plan_create_k1(N, iR1, iR2);
-            /* Keep the recorded route TRUTHFUL. A 2P/3P route with no plan
-             * behind it reaches the IL switch in execute and dereferences a
-             * NULL k1il; downgrading here means the route always names
-             * something that can actually run. */
-            if ((ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P) && !pil)
-                ilr = VFFT_K1_IL_NONE;
+             * building plans for any IL route added later.
+             *
+             * il2p is the ONLY pair-based IL machinery (the il_in/il_out
+             * hybrids were deleted 2026-07-29), so the legacy wisdom aliases
+             * (3P=1, 2P=2) and the canonical 2P_PURE all normalize to ONE
+             * il2p attempt on the same (iR1,iR2) pair. Route stays TRUTHFUL:
+             * it names 2P_PURE iff the plan exists, else NONE — execute never
+             * dereferences a NULL k1il2p. Kill-switch: env VFFT_NO_IL2P
+             * disables the whole pair-based IL axis (mono is unaffected). */
+            if (ilr == VFFT_K1_IL_2P || ilr == VFFT_K1_IL_3P ||
+                ilr == VFFT_K1_IL_2P_PURE)
+            {
+                if (iR1 && !getenv("VFFT_NO_IL2P"))
+                    il2p = vfft_il2p_create(N, iR1, iR2);
+                ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
+            }
             int spr0 = spr; /* wisdom route BEFORE folding (JIT picks sources by it) */
             /* log3 routes resolve to a create-time fn swap + the base route
              * (same Qr/Qi; the l3 twins are drop-in pointers) */
@@ -3189,12 +3195,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         spr = VFFT_K1_SP_3P;
                 }
             }
+            /* (2P/3P/2P_PURE availability is settled by the normalize block
+             * above — the route already names 2P_PURE iff il2p exists.) */
             if (ilr == VFFT_K1_IL_MONO && !vfft_k1_mono_il_fn(N, 0))
-                ilr = pil ? VFFT_K1_IL_2P : VFFT_K1_IL_NONE;
-            if (ilr == VFFT_K1_IL_2P && (!pil || !pil->il_leaf || !pil->t1_ul_il))
-                ilr = (pil && pil->il_leaf && pil->t1_il) ? VFFT_K1_IL_3P
-                                                          : VFFT_K1_IL_NONE;
-            if (ilr == VFFT_K1_IL_3P && (!pil || !pil->il_leaf || !pil->t1_il))
                 ilr = VFFT_K1_IL_NONE;
             if (spr >= 0)
             {
@@ -3212,16 +3215,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     hk->k1_sp_route = spr;
                     hk->k1_il_route = ilr;
                     hk->k1sp = psp;
-                    hk->k1il = pil;
-                    /* PURE-IL forward route. Measured >= the hybrid 2P route
-                     * it displaces across the whole Bailey band -- 0.558x @64,
-                     * 0.765x @256, 0.956x @1024, both arms gated against a
-                     * scalar DFT -- so it is the DEFAULT wherever its kernels
-                     * exist rather than a wisdom opt-in. NULL (n1t has no
-                     * radix-4 leaf, or the pair is out of reach) simply leaves
-                     * the hybrid route in place. */
-                    if (ilr == VFFT_K1_IL_2P && !getenv("VFFT_NO_IL2P"))
-                        hk->k1il2p = vfft_il2p_create(N, iR1, iR2);
+                    /* PURE-IL pair route, both directions (created and
+                     * route-normalized above; non-NULL iff ilr==2P_PURE). */
+                    hk->k1il2p = il2p;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
                     hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
@@ -3241,8 +3237,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     return hk;
                 }
             }
-            if (pil && pil != psp)
-                vfft_oop_plan_destroy(pil);
+            vfft_il2p_destroy(il2p);
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */
@@ -4625,8 +4620,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 return;
             }
             if (h->k1_on)
-            { /* K=1 engine (§13), IL routes; natural order both directions.
-               * IL bwd = the _sw entry points. */
+            { /* K=1 engine (§13), IL routes; natural order both directions. */
                 int fwd = (dir == VFFT_FORWARD);
                 switch (h->k1_il_route)
                 {
@@ -4634,25 +4628,30 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     (fwd ? h->k1_mono_ilf : h->k1_mono_ilb)(sre, 0, dre, 0,
                                                             0, 0, 0, 0, 0, 0, 0);
                     return;
-                case VFFT_K1_IL_2P:
-                    /* PURE IL, BOTH DIRECTIONS (2026-07-29).
+                case VFFT_K1_IL_2P_PURE:
+                    /* PURE IL, BOTH DIRECTIONS (bwd solved 2026-07-29).
                      *
-                     * The old note here said il2p's backward composition was
-                     * "unsolved -- both n1t twins corner-turn in their STORES,
-                     * so no pairing of them inverts the turn". That diagnosis
-                     * was WRONG: it holds only for the operator-inverse route.
-                     * The shipped composition keeps the turn where the forward
-                     * put it and needs no un-turn at all. What was actually
-                     * missing was a kernel the EMITTER could not express,
-                     * because twiddle POSITION was hard-wired to DIRECTION.
+                     * The long-standing diagnosis that il2p's backward
+                     * composition was "unsolved -- no pairing of the n1t twins
+                     * inverts the turn" was WRONG: it holds only for the
+                     * operator-inverse route. The shipped composition keeps
+                     * the turn where the forward put it and needs no un-turn.
+                     * What was actually missing was a kernel the EMITTER could
+                     * not express, because twiddle POSITION was hard-wired to
+                     * DIRECTION.
                      *
-                     * bwd now runs t2t (POST-twiddle + backward butterfly +
-                     * TURNED store) then n1_bwd at radix R2, gated on real
-                     * hardware at 12 cells incl. 8 non-square in both orders
+                     * bwd runs t2t (POST-twiddle + backward butterfly + TURNED
+                     * store) then n1_bwd at radix R2, gated on real hardware
+                     * at 12 cells incl. 8 non-square in both orders
                      * (build_tuned/benches/il2p_bwd_gate.c). il2p.h picks the
                      * arm by AVAILABILITY; the per-cell speed pick belongs in
-                     * wisdom, not here. Falls through to the hybrid only if the
-                     * build lacks the twins. */
+                     * wisdom, not here.
+                     *
+                     * Route truthfulness (create) guarantees k1il2p != NULL
+                     * here; the bwd availability check is defensive — a build
+                     * without the bwd twins degrades to the convert fallback
+                     * below, never to silence. (The il_in/il_out hybrid arms
+                     * that used to catch this were deleted 2026-07-29.) */
                     if (h->k1il2p)
                     {
                         if (fwd)
@@ -4663,17 +4662,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         if (vfft_il2p_execute_bwd(h->k1il2p, sre, dre) == 0)
                             return;
                     }
-                    if (fwd)
-                        vfft_oop_execute_fwd_2p_il(h->k1il, sre, dre);
-                    else
-                        vfft_oop_execute_bwd_2p_il(h->k1il, sre, dre);
-                    return;
-                case VFFT_K1_IL_3P:
-                    if (fwd)
-                        vfft_oop_execute_fwd_il(h->k1il, sre, dre);
-                    else
-                        vfft_oop_execute_bwd_il(h->k1il, sre, dre);
-                    return;
+                    break; /* -> convert fallback (NEVER a silent no-op) */
                 default:
                     break; /* no IL route emitted for this N -> convert
                             * fallback below (NEVER a silent no-op) */
@@ -4799,8 +4788,6 @@ void vfft_destroy(vfft_plan h)
     if (h->zturn)
         vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
-    if (h->k1il && h->k1il != h->k1sp)
-        vfft_oop_plan_destroy(h->k1il);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->rplan)

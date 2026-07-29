@@ -1,9 +1,10 @@
 /* calibrate_k1.c — the K=1 four-axis calibrator (row_major_engine.md step 2 of
  * productization): per cell N, measure ALL candidates over
  *     route {mono, mono-alt, mono-il, 3p, 3p-ip, 2pa-ip, 2pb-ip, twl-ip,
- *            3p-il, 2p-il}  x  pair (R1xR2)  x  placement  x  layout
+ *            2p-pure}  x  pair (R1xR2)  x  placement  x  layout
  * and print per-axis verdicts (split-oop / split-ip / il) as wisdom-ready
- * lines.
+ * lines. (2p-pure = il2p.h, the pure-IL two-pass; it replaced the hybrid
+ * 3p-il/2p-il arms when those codelets were deleted 2026-07-29.)
  *
  * Methodology (fixes the cmp_old_new fixed-order bias that mispicked pairs in
  * the bench pre-pass): ONE process per cell; per-candidate hot timing (10
@@ -23,6 +24,7 @@
 #include "executor.h"
 #include "planner.h"
 #include "oop_plan.h"
+#include "il2p.h"
 #include "k1_jit_runtime.h"
 
 static vfft_k1_jit_fn g_jit = 0;   /* one cell per process -> one resolve */
@@ -51,16 +53,19 @@ static double *ad(size_t n)
     return p;
 }
 
-/* routes */
-enum { R_3P = 0, R_3P_IP, R_2PA_IP, R_2PB_IP, R_TWL_IP, R_3P_IL, R_2P_IL,
+/* routes. (The hybrid IL arms R_3P_IL/R_2P_IL were deleted 2026-07-29 with
+ * the il_in/il_out codelets; the pair-based IL arm is R_2P_PURE = il2p.h,
+ * which the old table never raced at all — its il verdict could only ever
+ * name mono or a hybrid.) */
+enum { R_3P = 0, R_3P_IP, R_2PA_IP, R_2PB_IP, R_TWL_IP, R_2P_PURE,
        R_MONO, R_MONO_ALT, R_MONO_IL, R_3PL3_IP, R_2PAL3_IP,
        R_2PB_SPEC, R_2PAL3_SPEC, R_JIT, R_CCOL };
 static const char *RNAME[] = { "3p", "3p-ip", "2pa-ip", "2pb-ip", "twl-ip",
-                               "3p-il", "2p-il", "mono", "mono-alt", "mono-il",
+                               "2p-pure", "mono", "mono-alt", "mono-il",
                                "3p-l3-ip", "2pa-l3-ip",
                                "2pb-spec", "2pa-l3-spec", "jit-v3", "cc" };
 /* axis of each route: 0=split-oop 1=split-ip 2=il */
-static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1 };
+static const int RAXIS[] = { 0, 1, 1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 1, 1, 1 };
 
 /* per-cell stride-specialized twins (§13.3 item A): 7-arg ABI, strides baked */
 extern void radix32_n1_oop_fwd_avx2_UG_UL_spec32_1_1_32(
@@ -80,6 +85,7 @@ typedef struct {
     int route, R1, R2;
     int cc_code;             /* R_CCOL only: encoded chain (name = "cc<code>") */
     vfft_oop_plan_t *p;      /* NULL for mono routes */
+    vfft_il2p_plan_t *ip;    /* R_2P_PURE only: the pure-IL plan */
     double best;
 } cand_t;
 
@@ -94,8 +100,8 @@ static void run_cand(cand_t *c)
     case R_2PA_IP: vfft_oop_execute_fwd_2pa(c->p, wr, wi, wr, wi); break;
     case R_2PB_IP: vfft_oop_execute_fwd_2pb(c->p, wr, wi, wr, wi); break;
     case R_TWL_IP: vfft_oop_execute_fwd_2pa_twl(c->p, wr, wi, wr, wi); break;
-    case R_3P_IL:  vfft_oop_execute_fwd_il(c->p, z, z); break;
-    case R_2P_IL:  vfft_oop_execute_fwd_2p_il(c->p, z, z); break;
+    case R_2P_PURE: vfft_il2p_execute_fwd(c->ip, z, z); break; /* z==z safe:
+                     * stage 1 fully consumes z into mid before stage 2 writes */
     case R_MONO:     vfft_k1_mono_fn(N_g)(xr, xi, dr, di, 0,0,0,0,0,0,0); break;
     case R_MONO_ALT: vfft_k1_mono_alt_fn(N_g)(xr, xi, dr, di, 0,0,0,0,0,0,0); break;
     case R_MONO_IL:  vfft_k1_mono_il_fn(N_g, 0)(z, 0, z, 0, 0,0,0,0,0,0,0); break;
@@ -145,6 +151,7 @@ int main(int argc, char **argv)
     /* enumerate candidates */
     cand_t cand[128]; int nc = 0;
     vfft_oop_plan_t *plans[16]; int np = 0;
+    vfft_il2p_plan_t *ilps[16]; int nip = 0;
     for (int R2 = (N < 128 ? N : 128); R2 >= 4; R2--) {
         if (N % R2) continue;
         int R1 = N / R2;
@@ -156,14 +163,22 @@ int main(int argc, char **argv)
             { R_3P, 1 }, { R_3P_IP, 1 },
             { R_2PA_IP, p->t1_ul != 0 }, { R_2PB_IP, p->leaf_ul != 0 },
             { R_TWL_IP, p->t1_ul_twl != 0 },
-            { R_3P_IL, p->il_leaf && p->t1_il },
-            { R_2P_IL, p->il_leaf && p->t1_ul_il },
         };
-        for (int i = 0; i < 7 && nc < 120; i++)
+        for (int i = 0; i < 5 && nc < 120; i++)
             if (rs[i].avail) {
                 cand[nc].route = rs[i].route; cand[nc].R1 = R1; cand[nc].R2 = R2;
-                cand[nc].p = p; cand[nc].best = 1e18; nc++;
+                cand[nc].p = p; cand[nc].ip = 0; cand[nc].best = 1e18; nc++;
             }
+        /* pure-IL twin of the same pair (its OWN plan + registries — il2p
+         * refuses pairs its kernels don't cover, e.g. R > 64) */
+        if (nip < 16 && nc < 120) {
+            vfft_il2p_plan_t *q = vfft_il2p_create(N, R1, R2);
+            if (q) {
+                ilps[nip++] = q;
+                cand[nc].route = R_2P_PURE; cand[nc].R1 = R1; cand[nc].R2 = R2;
+                cand[nc].p = 0; cand[nc].ip = q; cand[nc].best = 1e18; nc++;
+            }
+        }
         /* stride-spec candidates (cell-gated: emitted for the two winner
          * shapes only; §13.3 item A measure-first) */
         if (N == 1024 && R1 == 32 && R2 == 32 && nc < 118) {
@@ -308,12 +323,12 @@ int main(int argc, char **argv)
          * twins report their base route, the jit its baked route, cc = CCOL) */
         static const int SPMAP[] = {
             VFFT_K1_SP_3P, VFFT_K1_SP_3P, VFFT_K1_SP_2PA, VFFT_K1_SP_2PB,
-            VFFT_K1_SP_TWL, -1, -1, VFFT_K1_SP_MONO, VFFT_K1_SP_MONO, -1,
+            VFFT_K1_SP_TWL, -1, VFFT_K1_SP_MONO, VFFT_K1_SP_MONO, -1,
             VFFT_K1_SP_3P_L3, VFFT_K1_SP_2PA_L3,
             VFFT_K1_SP_2PB, VFFT_K1_SP_2PA_L3, -1 /* jit: g_jit_route */,
             VFFT_K1_SP_CCOL };
         static const int ILMAP[] = { -1, -1, -1, -1, -1,
-            VFFT_K1_IL_3P, VFFT_K1_IL_2P, -1, -1, VFFT_K1_IL_MONO, -1, -1,
+            VFFT_K1_IL_2P_PURE, -1, -1, VFFT_K1_IL_MONO, -1, -1,
             -1, -1, -1, -1 };
         cand_t *ws = &cand[win[1]];
         int spr = (ws->route == R_JIT) ? g_jit_route : SPMAP[ws->route];
@@ -337,5 +352,6 @@ int main(int argc, char **argv)
     }
 
     for (int i = 0; i < np; i++) vfft_oop_plan_destroy(plans[i]);
+    for (int i = 0; i < nip; i++) vfft_il2p_destroy(ilps[i]);
     return 0;
 }
