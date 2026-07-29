@@ -100,27 +100,29 @@ static int run(int N, int R1, int R2)
         rt = worst / (scale > 0.0 ? scale : 1.0);
     }
 
-    /* [t2p] the FUSED route A, gated against F-DIAG. Same math, so this must
-     * agree to (near) the last bit; an O(1) gap means the fused kernel's
-     * twiddle indexing is wrong, not the decomposition. */
+    /* (The [t2p] route-A arm and its bit-exactness check vs F-DIAG were
+     * removed 2026-07-29 with the t2p kind — t2t is canonical everywhere.) */
+
+    /* [fdiag] the unfused reference of the retired route-A math — the
+     * availability fallback. Judge vs the naive inverse. */
     double fus = -1.0;
-    int rc_fus = vfft_il2p_execute_bwd_t2p(p, x, y);
-    if (rc_fus == 0 && rc_dir == 0) {
-        double *ydiag = malloc(nd * sizeof(double));
-        vfft_il2p_execute_bwd_fdiag(p, x, ydiag);
+    int rc_fus = vfft_il2p_execute_bwd_fdiag(p, x, y);
+    if (rc_fus == 0) {
+        naive_idft(N, x, ref);
         double worst = 0.0, scale = 0.0;
-        for (int i = 0; i < 2 * N; i++) {
-            double d = fabs(y[i] - ydiag[i]);
-            if (d > worst) worst = d;
-            if (fabs(ydiag[i]) > scale) scale = fabs(ydiag[i]);
+        for (int m = 0; m < N; m++) {
+            double dr = fabs(y[2 * m] - ref[2 * m]);
+            double di = fabs(y[2 * m + 1] - ref[2 * m + 1]);
+            double sc = fabs(ref[2 * m]) + fabs(ref[2 * m + 1]);
+            if (dr + di > worst) worst = dr + di;
+            if (sc > scale) scale = sc;
         }
         fus = worst / (scale > 0.0 ? scale : 1.0);
-        free(ydiag);
     }
 
-    /* [t2t] the RIVAL decomposition (route B), gated the same way. It is a
-     * DIFFERENT operation order, so it will NOT be bit-equal to A — judge it
-     * against the naive inverse, not against A. */
+    /* [t2t] the canonical decomposition, gated directly (it is also what
+     * vfft_il2p_execute_bwd runs, so [dir] above already exercised it —
+     * this arm pins the entry point itself). */
     double bt = -1.0;
     int rc_bt = vfft_il2p_execute_bwd_t2t(p, x, y);
     if (rc_bt == 0) {
@@ -137,9 +139,9 @@ static int run(int N, int R1, int R2)
     }
 
     int bad = (rc_dir != 0) || (rc_rt != 0) || !(dir < 1e-11) || !(rt < 1e-11)
-              || (rc_fus == 0 && !(fus < 1e-13))
+              || (rc_fus == 0 && !(fus < 1e-11))
               || (rc_bt == 0 && !(bt < 1e-11));
-    printf("  N=%-6d %2dx%-3d  %-16s  A=%-9.2e t2p_vs_A=%-9.2e B=%-9.2e  %s\n",
+    printf("  N=%-6d %2dx%-3d  %-16s  dir=%-9.2e fdiag=%-9.2e t2t=%-9.2e  %s\n",
            N, R1, R2, shape, dir, fus, bt, bad ? "*** FAIL ***" : "ok");
 
     free(x); free(y); free(r); free(ref);
@@ -147,67 +149,10 @@ static int run(int N, int R1, int R2)
     return bad;
 }
 
-/* Size what T2P would buy.
- *
- * ⚠️ bwd/fwd is NOT the right comparison and must not be used: forward's
- * stage 2 is t2 (twiddled, streams VTW2, BYTW2 in-kernel) while F-DIAG's
- * stage 2 is n1_b (TWIDDLE-FREE, the diagonal already happened). They are
- * different decompositions, so the ratio isolates nothing -- it even comes
- * out < 1 at large N.
- *
- * Fusing the diagonal into stage 2 (= the T2P kind) does NOT remove the
- * twiddle multiply; T2P still performs it. What it removes is the extra
- * read+write of the whole mid plane and the scalar-vs-SIMD arithmetic. So the
- * diagonal pass measured IN ISOLATION is the upper bound on the win. */
-static double med(double *v, int n)
-{
-    for (int i = 1; i < n; i++) {
-        double t = v[i]; int j = i - 1;
-        while (j >= 0 && v[j] > t) { v[j + 1] = v[j]; j--; }
-        v[j + 1] = t;
-    }
-    return v[n / 2];
-}
-
-static void timecell(int N, int R1, int R2)
-{
-    vfft_il2p_plan_t *p = vfft_il2p_create(N, R1, R2);
-    if (!p) return;
-    size_t nd = (size_t)2 * N;
-    double *x = malloc(nd * sizeof(double)), *y = malloc(nd * sizeof(double));
-    unsigned seed = 99u + (unsigned)N;
-    for (size_t i = 0; i < nd; i++) x[i] = urand(&seed);
-
-    /* QueryPerformanceCounter (the project's Win timer), cachebust between
-     * arms, and arm ORDER ALTERNATED per round so neither is systematically
-     * measured on a warmed core. Medians, not best-of. */
-    static double bust[1 << 20];
-    LARGE_INTEGER fq; QueryPerformanceFrequency(&fq);
-    int reps = (int)(8000000 / (N + 1)); if (reps < 50) reps = 50;
-    double f[9], b[9];
-    for (int r = 0; r < 9; r++) {
-        double t_f = 0.0, t_b = 0.0;
-        for (int arm = 0; arm < 2; arm++) {
-            /* arm 0 = whole F-DIAG backward; arm 1 = the diagonal pass ALONE */
-            int whole = (r & 1) ? (arm == 1) : (arm == 0);   /* alternate */
-            for (size_t i = 0; i < (sizeof bust / sizeof *bust); i += 8) bust[i] += 1.0;
-            LARGE_INTEGER a, z; QueryPerformanceCounter(&a);
-            if (whole)
-                for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd_t2p(p, x, y);
-            else
-                for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd_t2t(p, x, y);
-            QueryPerformanceCounter(&z);
-            double ns = (double)(z.QuadPart - a.QuadPart) * 1e9
-                        / (double)fq.QuadPart / reps;
-            if (whole) t_b = ns; else t_f = ns;
-        }
-        f[r] = t_f; b[r] = t_b;
-    }
-    double tm = med(f, 9), pm = med(b, 9);   /* tm = route B (t2t), pm = route A (t2p) */
-    printf("  N=%-6d %2dx%-3d  A(t2p)=%-9.0f B(t2t)=%-9.0f  B/A=%.2fx  -> %s\n",
-           N, R1, R2, pm, tm, tm / pm, (tm < pm) ? "B WINS" : "A wins");
-    free(x); free(y); vfft_il2p_destroy(p);
-}
+/* (The A-vs-B race harness lived here until 2026-07-29. Its verdict — t2t
+ * canonical, winner tracked R1 with t2t ahead everywhere but R1=64 — is
+ * recorded in il2p.h's backward-path comment; the losing t2p arm was then
+ * deleted tree-wide, so there is nothing left to race.) */
 
 /* ── COVERAGE INVARIANT ──────────────────────────────────────────────────
  * For EVERY (R1,R2) the K=1 IL pair search can select, vfft_il2p_create must
@@ -281,18 +226,5 @@ int main(void)
     bad |= run(4096, 64, 64);
 
     printf("\n%s\n", bad ? "*** IL2P BWD GATE FAILED ***" : "IL2P BWD GATE PASSED");
-
-    printf("\n-- THE RACE: route A (t2p, R2 first) vs route B (t2t, R1 first) --\n");
-    printf("   non-square cells discriminate; square ones are controls\n");
-    timecell(128, 8, 16);
-    timecell(128, 16, 8);
-    timecell(512, 16, 32);
-    timecell(512, 32, 16);
-    timecell(1024, 16, 64);
-    timecell(1024, 64, 16);
-    timecell(2048, 32, 64);
-    timecell(2048, 64, 32);
-    timecell(1024, 32, 32);
-    timecell(4096, 64, 64);
     return bad;
 }

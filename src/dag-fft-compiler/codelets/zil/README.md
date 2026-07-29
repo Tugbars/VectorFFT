@@ -84,29 +84,30 @@ time and banked** — never hand-set. A create-time race times `stf` against `st
 All cascade codelets: **`count % 4 == 0`** (4 columns per iteration), scratch = 64-B
 `[re ×4][im ×4]` blocks, `z` addressing `+4` for the imaginary half, one stream per leg row.
 
-### 2b-bis. 🔴 `t2t` IS THE CANONICAL BACKWARD FLAT CODELET — do not confuse it with `t2p`
+### 2b-bis. 🔴 `t2t` IS THE ONLY BACKWARD FLAT CODELET — `t2p` was RETIRED AND DELETED
 
-Both are backward T2 variants and they look alike in a file listing. They are not
-interchangeable, and only one is the production path.
+`t2t` = POST-twiddle + **T**urned store + backward butterfly: stage 1 of the
+pure-IL inverse (R1 butterfly first; stage 2 = `n1_bwd` at radix **R2**, not
+R1 — using the R1 twin measures 1.1e+00, so `il2p.h` keeps both `n1_b` and
+`n1_b_r2`).
 
-| kernel | twiddle | store | role | status |
-|---|---|---|---|---|
-| **`t2t`** | POST | **TURNED** | stage 1 of the pure-IL inverse (R1 butterfly first) | ✅ **CANONICAL — this is the one production uses** |
-| `t2p` | **PRE** | straight | stage 2 of the rival inverse (R2 butterfly first) | kept, non-default |
+The rival `t2p` kind (**P**re-twiddle, straight store, R2-butterfly-first
+inverse) is **GONE as of 2026-07-29** — Tugbars' call after it lost the
+raced decision: `t2t` won 2–14% at every R1 ≤ 32 (t2p ahead only at the
+rarely-planned R1 = 64) AND covers strictly more pairs (t2p's route needed
+an `n1t` leaf that never existed at R2 = 4). To prevent any future session
+re-promoting the loser: its kernels (17 files), `il2p.h` registry/field/
+route, and the gate's race arm are deleted, and `--cil-pretw` now FAILS
+LOUDLY in the emitter. The unfused F-DIAG form remains in `il2p.h` as the
+availability fallback/reference of that math.
 
-**Mnemonic: the last letter names the unusual property.**
-`t2`**`t`** = **T**urned store · `t2`**`p`** = **P**re-twiddle.
+If a chain composition ever needs pre-twiddle-like semantics again (the
+3-stage odd chain's conj-of-forward wanted it), the sanctioned path is the
+**t2t-with-leg-stride store variant** (wire the `(void)`'d OGs slot as the
+turned store's leg stride), not a t2p revival.
 
-Chosen on measurement, three repeats (`build_tuned/benches/il2p_bwd_gate.c`): the
-winner tracks R1 — `t2t` wins by 2–14% at R1 ≤ 32, `t2p` wins by 1–10% at R1 = 64.
-**IL plans favour many small stages, so R1 = 64 is rare ⇒ `t2t` is the default.**
-`t2t` also covers strictly more pairs: `t2p`'s route needs an `n1t` leaf at radix
-R2, which does not exist at R2 = 4.
-
-⚠️ A SINGLE run of that race read the opposite way and did not reproduce. Repeat
-it before re-deciding.
-⚠️ Its stage 2 partner is `n1_bwd` at radix **R2**, not R1 — using the R1 twin
-measures 1.1e+00. `il2p.h` keeps both (`n1_b`, `n1_b_r2`) for exactly this reason.
+⚠️ A SINGLE run of the original race read the opposite way and did not
+reproduce. Repeat races before re-deciding anything of this kind.
 
 ### 2c. Where the flat codelets fit
 

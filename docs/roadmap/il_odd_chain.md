@@ -32,13 +32,19 @@ base case):
 Split l' = j·A + c (j ∈ [0,B), c ∈ [0,A)), l = a·B + b:
 
     X[(aB+b)R2 + q]
-      = Σ_c ω_A^{ac} · W_N^{cq} · [ Σ_j M[(jA+c)R2+q] · W_{N/A}^{jq} · ω_B^{jb} ]
-        \______stage 2b (radix A)______/  \__________stage 2a (radix B)_________/
+      = Σ_c ω_A^{ac} · W_N^{c(q+b·R2)} · [ Σ_j M[(jA+c)R2+q] · W_{N/A}^{jq} · ω_B^{jb} ]
+        \_______stage 2b (radix A)________/  \__________stage 2a (radix B)_________/
 
-using W_N^{(jA+c)q} = W_{N/A}^{jq} · W_N^{cq}. Both bracketed passes are
-EXACTLY t2-form: legs pre-twiddled per (leg, column q), then a DFT across
-legs — and both tables are INDEPENDENT of the loop that repeats the call
-(stage 2a's of c, stage 2b's of b), so one VTW2 table per stage.
+using ω_{R1}^{(jA+c)(aB+b)} = ω_A^{ac}·ω_{R1}^{cb}·ω_B^{jb} and
+W_N^{(jA+c)q} = W_{N/A}^{jq}·W_N^{cq}, then W_N^{cq}·ω_{R1}^{cb} =
+W_N^{c(q+b·R2)}. Both passes are EXACTLY t2-form (legs twiddled per
+(leg, column), DFT across legs).
+🔴 Stage 2b's twiddle depends on the COMBINED index q + b·R2 — the first
+draft dropped the ω_{R1}^{cb} factor and failed the gate O(1) at every cell
+including the pow2 control. So: stage 2a gets ONE table (independent of its
+repeat index c); stage 2b gets ONE BIG table over all B·R2 columns at
+modulus N, and call b reads its own region starting at column b·R2 (even,
+so regions start on VTW2 pair boundaries and the kernel cursor lines up).
 
 ## Call sequence (existing kernels only — NO new kernel kind needed)
 
@@ -57,8 +63,29 @@ kernels' own turned/straight stores are untouched.
     stage 2b  t2(A), B calls, b = 0..B-1:
               in  mid2 + 2·b·A·R2,   Ls = R2,     count = R2  (EVEN)
               out zout + 2·b·R2,     OLs = B·R2
-              tw  VTW2(A legs, R2 cols, modulus N)
+              tw  VTW2(A legs, B·R2 cols, modulus N) + (b·R2/2)·(A−1)·8
               → X[(aB+b)·R2 + q]  — NATURAL order
+
+GATED 2026-07-29 (build_tuned/benches/il_odd_chain_gate.c, real kernels vs
+naive DFT): 12/12 — 48/96/192/320/768/1536/1728 with odd radices 3/5/27 in
+either mid position + pow2 control 256; rel err 1.2e-14 .. 5.1e-13.
+
+## Backward: WAITS on the t2t-with-leg-stride store variant
+
+The conj-of-forward composition (identical addresses, n1t_bwd + two
+pre-twiddle bwd stages) was drafted and then DROPPED with the tree-wide
+retirement of the t2p kind — Tugbars 2026-07-29: t2p lost the 2-stage bwd
+race at every R1 ≤ 32; one canonical bwd semantics (t2t) tree-wide, no
+rival arm to confuse a future session. `--cil-pretw` now refuses.
+
+The t2t-style chain backward is not yet expressible: reversing the stage
+order needs the middle stage's TURNED store to place legs at stride A
+(derivation: the clean l′ = e + A·f split forces it), and t2t's turned
+store hard-codes legs at stride 1 — the OGs slot is emitted but `(void)`'d.
+Plan: wire OGs as the turned store's leg stride in the emitter (existing
+kernels keep OGs ignored ⇒ byte-identical), emit the odd/pow2 variants,
+re-derive the chain bwd on them, and gate here. Until then the chain is
+FORWARD-ONLY; bwd at chain cells falls back to the convert path.
 
 VTW2 tables use the il2p record builder verbatim with (legs, modulus)
 parameters: record (pair pp, leg l) at offset (pp·(legs−1)+(l−1))·8,
