@@ -132,6 +132,52 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
     }
 }
 
+/* t2p — PRE-twiddle + backward butterfly + STRAIGHT store. This is the F-DIAG
+ * decomposition with the diagonal FUSED into stage 2. Emitted by
+ * `--cil-t2 --cil-bwd --cil-pretw`: twiddle POSITION is independent of
+ * direction, which is the coupling that made this kernel inexpressible before.
+ * Fusing removes an extra read+write of the whole scratch plane and does the
+ * multiply in-register; the unfused diagonal measures 26-56% of backward. */
+#define C(R) \
+  extern void radix##R##_z_t2p_bwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+
+static inline vfft_il2p_fn vfft_il2p_t2p_bwd_fn(int R)
+{
+    switch (R) {
+#define C(R) case R: return radix##R##_z_t2p_bwd_avx2;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+}
+
+/* t2t — POST-twiddle + backward butterfly + TURNED store. Stage 1 of the RIVAL
+ * decomposition (route B), which runs the R1 butterfly FIRST. Emitted by
+ * `--cil-t2 --cil-bwd --cil-turnst`: store FORM is independent of kind, which
+ * is the coupling that made this kernel inexpressible.
+ * All three of POST / TURNED / (Ls,OLs,count) below are FORCED by the
+ * derivation, not chosen — perturbing any one gives O(1) error. */
+#define C(R) \
+  extern void radix##R##_z_t2t_bwd_avx2( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+
+static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
+{
+    switch (R) {
+#define C(R) case R: return radix##R##_z_t2t_bwd_avx2;
+    C(4) C(8) C(16) C(32) C(64)
+#undef C
+    default: return 0;
+    }
+}
+
 typedef struct {
     int N, R1, R2;
     double *mid;            /* interleaved scratch, 2N doubles */
@@ -139,6 +185,11 @@ typedef struct {
     vfft_il2p_fn leaf_f, leaf_b;   /* n1t, radix R2 */
     vfft_il2p_fn mid_f,  mid_b;    /* t2,  radix R1 */
     vfft_il2p_fn n1_b;             /* plain n1 bwd, radix R1 (F-DIAG stage 2) */
+    vfft_il2p_fn t2p_b;            /* fused pre-tw bwd, radix R1 (route A)    */
+    /* ⚠️ route B's stage 2 is n1 bwd at radix R2, NOT R1. Using n1_b there is
+     * a real trap — the control sweep measured it at 1.1e+00. */
+    vfft_il2p_fn t2t_b;            /* post-tw + turned store, radix R1 (B s1) */
+    vfft_il2p_fn n1_b_r2;          /* plain n1 bwd, radix R2      (B s2)      */
 } vfft_il2p_plan_t;
 
 static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
@@ -163,12 +214,18 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     /* n1_b may be absent without invalidating the forward plan — only the
      * F-DIAG backward path needs it, and execute_bwd checks. */
     vfft_il2p_fn nb = vfft_il2p_n1_bwd_fn(R1);
+    vfft_il2p_fn tp = vfft_il2p_t2p_bwd_fn(R1);
+    vfft_il2p_fn tt = vfft_il2p_t2t_bwd_fn(R1);
+    vfft_il2p_fn nb2 = vfft_il2p_n1_bwd_fn(R2);   /* B stage 2 is radix R2 */
 
     vfft_il2p_plan_t *p = (vfft_il2p_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
     p->N = N; p->R1 = R1; p->R2 = R2;
     p->leaf_f = lf; p->leaf_b = lb; p->mid_f = mf; p->mid_b = mb;
     p->n1_b = nb;
+    p->t2p_b = tp;
+    p->t2t_b = tt;
+    p->n1_b_r2 = nb2;
 
     size_t ntw = ((size_t)R2 / 2u) * (size_t)(R1 - 1) * 8u;
     p->mid = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
@@ -283,8 +340,8 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
  * Use 128 (8x16) or 512 (16x32).
  *
  * Returns 0 on success, -1 if this build lacks the plain n1 bwd twin. */
-static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
-                                        const double *zin, double *zout)
+static inline int vfft_il2p_execute_bwd_fdiag(const vfft_il2p_plan_t *p,
+                                              const double *zin, double *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
     if (!p->n1_b) return -1;
@@ -312,6 +369,103 @@ static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
     /* stage 2 — plain backward butterfly, twiddle already applied */
     p->n1_b(p->mid, 0, zout, 0, 0, 0, R2, 0, R2, 0, R2);
     return 0;
+}
+
+/* ROUTE A, FUSED — identical math to F-DIAG above, with the diagonal folded
+ * into stage 2 by the t2p kernel (PRE-twiddle + backward butterfly + straight
+ * store). Stage 1 is untouched; stage 2 swaps n1_bwd for t2p_bwd and takes the
+ * conjugated table, so the whole scratch plane is read and written ONCE
+ * instead of twice, and the multiply happens in-register rather than scalar.
+ *
+ * Gate it against vfft_il2p_execute_bwd (F-DIAG): same c/s values, same order
+ * of operations, so the results should agree to the last bit or very near it.
+ * Any O(1) disagreement means the fused kernel's twiddle indexing is wrong,
+ * NOT that the decomposition is wrong -- F-DIAG already proved the math.
+ *
+ * Returns 0 on success, -1 if this build lacks the t2p twin. */
+static inline int vfft_il2p_execute_bwd_t2p(const vfft_il2p_plan_t *p,
+                                            const double *zin, double *zout)
+{
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    if (!p->t2p_b) return -1;
+    p->leaf_b(zin, 0, p->mid, 0, 0, 0, R1, 0, R2, 0, R1);
+    p->t2p_b(p->mid, 0, zout, 0, p->twb, 0, R2, 0, R2, 0, R2);
+    return 0;
+}
+
+/* ROUTE B — the MIRROR decomposition: run the R1 butterfly FIRST, then R2.
+ * (Route A above runs R2 first, mirroring the forward's stage order.)
+ *
+ * Derived 2026-07-29 by two blind derivations that produced the SAME triples —
+ * nothing to adjudicate — and validated in a scalar simulator at 10 cells
+ * including non-square in BOTH orders. Route A's own numbers were the control.
+ *
+ *   x[a*R1+b] = SUM_k e^{+2pi i ak/R2} e^{+2pi i bk/N} [ SUM_j X[j*R2+k] e^{+2pi i bj/R1} ]
+ *               \____ stage 2, IDFT_R2 ___/ \_twiddle_/  \_____ stage 1, IDFT_R1 ______/
+ *
+ * A views the spectrum as K = a*R1 + b (R1 the fast stride); B takes the
+ * OPPOSITE view on both index lines, K = alpha*R2 + beta and n = gamma*R1 + delta.
+ *
+ * 🔴 THREE THINGS ARE FORCED BY THE DERIVATION, NOT CHOSEN. A control sweep
+ * perturbing one argument at a time gave O(1) error for EVERY perturbation
+ * (0.54 .. 1.37), so this triple is pinned, not one of a family:
+ *   - twiddle POST, not PRE — the factor e^{+2pi i bk/N} depends on b, the R1
+ *     butterfly's OUTPUT leg; a pre-twiddle would index the input leg.
+ *   - store TURNED, not straight.
+ *   - (Ls,OLs,count) exactly as below; swapping counts, radices, or any stride
+ *     all fail at O(1).
+ *
+ * ⚠️ STAGE 2 IS n1_bwd AT RADIX R2, NOT R1. Using p->n1_b (the R1 twin) here
+ * measures 1.1e+00 — the control sweep flagged it explicitly as a trap.
+ *
+ * The table is p->twb UNCHANGED — same pointer route A's stage 2 takes, same
+ * cursor convention. Consumption is exactly ntw = (R2/2)*(R1-1)*8, verified an
+ * EXACT fit (no overread) under ASan at 10 cells. No new table, no new alloc.
+ *
+ * COVERAGE: B works where A cannot. A's stage 1 needs an n1t leaf at radix R2,
+ * which does not exist at R2=4; B was validated at 128=32x4 and 64=16x4 where
+ * route A is unavailable.
+ *
+ * Returns 0 on success, -1 if this build lacks the twins. */
+static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
+                                            const double *zin, double *zout)
+{
+    const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    if (!p->t2t_b || !p->n1_b_r2) return -1;
+    p->t2t_b(zin, 0, p->mid, 0, p->twb, 0, R2, 0, R1, 0, R2);
+    p->n1_b_r2(p->mid, 0, zout, 0, 0, 0, R1, 0, R1, 0, R1);
+    return 0;
+}
+
+/* ── THE DEFAULT BACKWARD PATH ───────────────────────────────────────────
+ * Route B (t2t). Chosen on MEASUREMENT, not argument: three independent runs
+ * of build_tuned/benches/il2p_bwd_gate.c show the winner tracks R1 —
+ *
+ *     R1 <= 32 : B wins, 2-14%   (128 8x16, 128 16x8, 512 16x32,
+ *                                 512 32x16, 1024 16x64)
+ *     R1 == 64 : A wins, 1-10%   (1024 64x16, 2048 64x32, 4096 64x64)
+ *     1024 32x32 : unresolvable at this precision (0.75 / 1.00 / 1.08)
+ *
+ * B's stage 1 IS the R1 butterfly (with a turned store), so a fat R1 makes B
+ * pay early; A defers R1 to stage 2. Tugbars' call: IL plans favour many small
+ * stages, so R1=64 is rare in practice ⇒ default B.
+ *
+ * ⚠️ A SINGLE RUN WOULD HAVE MISLED — the first race read B 9/10 and did not
+ * reproduce (B 7/10, then 6/10). Always repeat this race before re-deciding.
+ *
+ * 🔴 This is a DEFAULT, not a plan. The per-cell pick belongs in wisdom; do NOT
+ * add a hand-written `if (R1 == 64) use A` here — that is precisely the
+ * hand-invented heuristic the project forbids. Fallback order below is by
+ * AVAILABILITY only.
+ *
+ * B also covers strictly more pairs: A's stage 1 needs an n1t leaf at radix R2,
+ * which does not exist at R2=4 (validated at 128=32x4, 64=16x4). */
+static inline int vfft_il2p_execute_bwd(const vfft_il2p_plan_t *p,
+                                        const double *zin, double *zout)
+{
+    if (vfft_il2p_execute_bwd_t2t(p, zin, zout) == 0) return 0;
+    if (vfft_il2p_execute_bwd_t2p(p, zin, zout) == 0) return 0;
+    return vfft_il2p_execute_bwd_fdiag(p, zin, zout);
 }
 
 #endif /* VFFT_IL2P_H */

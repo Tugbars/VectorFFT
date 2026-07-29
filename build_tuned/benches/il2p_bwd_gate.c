@@ -100,9 +100,47 @@ static int run(int N, int R1, int R2)
         rt = worst / (scale > 0.0 ? scale : 1.0);
     }
 
-    int bad = (rc_dir != 0) || (rc_rt != 0) || !(dir < 1e-11) || !(rt < 1e-11);
-    printf("  N=%-6d %2dx%-3d  %-16s  dir=%-9.2e rt=%-9.2e  %s\n",
-           N, R1, R2, shape, dir, rt, bad ? "*** FAIL ***" : "ok");
+    /* [t2p] the FUSED route A, gated against F-DIAG. Same math, so this must
+     * agree to (near) the last bit; an O(1) gap means the fused kernel's
+     * twiddle indexing is wrong, not the decomposition. */
+    double fus = -1.0;
+    int rc_fus = vfft_il2p_execute_bwd_t2p(p, x, y);
+    if (rc_fus == 0 && rc_dir == 0) {
+        double *ydiag = malloc(nd * sizeof(double));
+        vfft_il2p_execute_bwd_fdiag(p, x, ydiag);
+        double worst = 0.0, scale = 0.0;
+        for (int i = 0; i < 2 * N; i++) {
+            double d = fabs(y[i] - ydiag[i]);
+            if (d > worst) worst = d;
+            if (fabs(ydiag[i]) > scale) scale = fabs(ydiag[i]);
+        }
+        fus = worst / (scale > 0.0 ? scale : 1.0);
+        free(ydiag);
+    }
+
+    /* [t2t] the RIVAL decomposition (route B), gated the same way. It is a
+     * DIFFERENT operation order, so it will NOT be bit-equal to A — judge it
+     * against the naive inverse, not against A. */
+    double bt = -1.0;
+    int rc_bt = vfft_il2p_execute_bwd_t2t(p, x, y);
+    if (rc_bt == 0) {
+        naive_idft(N, x, ref);
+        double worst = 0.0, scale = 0.0;
+        for (int m = 0; m < N; m++) {
+            double dr = fabs(y[2 * m] - ref[2 * m]);
+            double di = fabs(y[2 * m + 1] - ref[2 * m + 1]);
+            double sc = fabs(ref[2 * m]) + fabs(ref[2 * m + 1]);
+            if (dr + di > worst) worst = dr + di;
+            if (sc > scale) scale = sc;
+        }
+        bt = worst / (scale > 0.0 ? scale : 1.0);
+    }
+
+    int bad = (rc_dir != 0) || (rc_rt != 0) || !(dir < 1e-11) || !(rt < 1e-11)
+              || (rc_fus == 0 && !(fus < 1e-13))
+              || (rc_bt == 0 && !(bt < 1e-11));
+    printf("  N=%-6d %2dx%-3d  %-16s  A=%-9.2e t2p_vs_A=%-9.2e B=%-9.2e  %s\n",
+           N, R1, R2, shape, dir, fus, bt, bad ? "*** FAIL ***" : "ok");
 
     free(x); free(y); free(r); free(ref);
     vfft_il2p_destroy(p);
@@ -150,21 +188,24 @@ static void timecell(int N, int R1, int R2)
     for (int r = 0; r < 9; r++) {
         double t_f = 0.0, t_b = 0.0;
         for (int arm = 0; arm < 2; arm++) {
-            int dofwd = (r & 1) ? (arm == 1) : (arm == 0);   /* alternate */
+            /* arm 0 = whole F-DIAG backward; arm 1 = the diagonal pass ALONE */
+            int whole = (r & 1) ? (arm == 1) : (arm == 0);   /* alternate */
             for (size_t i = 0; i < (sizeof bust / sizeof *bust); i += 8) bust[i] += 1.0;
             LARGE_INTEGER a, z; QueryPerformanceCounter(&a);
-            if (dofwd) for (int i = 0; i < reps; i++) vfft_il2p_execute_fwd(p, x, y);
-            else       for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd(p, x, y);
+            if (whole)
+                for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd_t2p(p, x, y);
+            else
+                for (int i = 0; i < reps; i++) vfft_il2p_execute_bwd_t2t(p, x, y);
             QueryPerformanceCounter(&z);
             double ns = (double)(z.QuadPart - a.QuadPart) * 1e9
                         / (double)fq.QuadPart / reps;
-            if (dofwd) t_f = ns; else t_b = ns;
+            if (whole) t_b = ns; else t_f = ns;
         }
         f[r] = t_f; b[r] = t_b;
     }
-    double fm = med(f, 9), bm = med(b, 9);
-    printf("  N=%-6d %2dx%-3d  fwd=%-9.0f bwd=%-9.0f  bwd/fwd=%.2fx\n",
-           N, R1, R2, fm, bm, bm / fm);
+    double tm = med(f, 9), pm = med(b, 9);   /* tm = route B (t2t), pm = route A (t2p) */
+    printf("  N=%-6d %2dx%-3d  A(t2p)=%-9.0f B(t2t)=%-9.0f  B/A=%.2fx  -> %s\n",
+           N, R1, R2, pm, tm, tm / pm, (tm < pm) ? "B WINS" : "A wins");
     free(x); free(y); vfft_il2p_destroy(p);
 }
 
@@ -192,12 +233,17 @@ int main(void)
 
     printf("\n%s\n", bad ? "*** IL2P BWD GATE FAILED ***" : "IL2P BWD GATE PASSED");
 
-    printf("\n-- COST OF THE UNFUSED DIAGONAL (bwd/fwd on the same plan) --\n");
-    printf("   fusing it into stage 2 IS the T2P kind; this sizes what T2P buys\n");
+    printf("\n-- THE RACE: route A (t2p, R2 first) vs route B (t2t, R1 first) --\n");
+    printf("   non-square cells discriminate; square ones are controls\n");
     timecell(128, 8, 16);
+    timecell(128, 16, 8);
     timecell(512, 16, 32);
-    timecell(1024, 32, 32);
+    timecell(512, 32, 16);
+    timecell(1024, 16, 64);
+    timecell(1024, 64, 16);
     timecell(2048, 32, 64);
+    timecell(2048, 64, 32);
+    timecell(1024, 32, 32);
     timecell(4096, 64, 64);
     return bad;
 }
