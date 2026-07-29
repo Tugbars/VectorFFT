@@ -3163,22 +3163,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     il2p = vfft_il2p_create(N, iR1, iR2);
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
-            int spr0 = spr; /* wisdom route BEFORE folding (JIT picks sources by it) */
-            /* log3 routes resolve to a create-time fn swap + the base route
-             * (same Qr/Qi; the l3 twins are drop-in pointers) */
-            if (spr == VFFT_K1_SP_3P_L3)
-            {
-                if (psp && psp->t1_l3)
-                    psp->t1p = psp->t1_l3;
-                spr = VFFT_K1_SP_3P;
-            }
-            if (spr == VFFT_K1_SP_2PA_L3)
-            {
-                if (psp && psp->t1_ul_l3)
-                    psp->t1_ul = psp->t1_ul_l3;
-                spr = VFFT_K1_SP_2PA;
-            }
-            /* availability degrade (wisdom may name routes this build lacks) */
+            /* availability degrade (wisdom may name routes this build lacks).
+             * Runs BEFORE spr0 is captured — P0c: spr0 keys the JIT (and the
+             * TWL table pick), and keying it on the PRE-degrade route made
+             * every create at N=8192 shell gcc for a 2PB bake whose
+             * radix-128 UG_UL source does not exist (wisdom names 2PB 64x128;
+             * leaf_ugul stops at 64 so execute degrades to 2PA, but the JIT
+             * kept baking the route that could never compile — and with no
+             * negative cache it retried per create). The L3-missing cases
+             * degrade to their flat base here so spr0 never names an l3 twin
+             * this build lacks; the fold below then only ever swaps pointers
+             * that exist. */
             if (spr == VFFT_K1_SP_MONO && !vfft_k1_mono_pair_fn(N, sR1))
                 spr = VFFT_K1_SP_2PB;
             if (spr != VFFT_K1_SP_MONO)
@@ -3187,6 +3182,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     spr = -1;
                 else
                 {
+                    if (spr == VFFT_K1_SP_3P_L3 && !psp->t1_l3)
+                        spr = VFFT_K1_SP_3P;
+                    if (spr == VFFT_K1_SP_2PA_L3 && !psp->t1_ul_l3)
+                        spr = VFFT_K1_SP_2PA;
                     if (spr == VFFT_K1_SP_TWL && !psp->t1_ul_twl)
                         spr = VFFT_K1_SP_2PA;
                     if (spr == VFFT_K1_SP_2PB && !psp->leaf_ul)
@@ -3194,6 +3193,21 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     if (spr == VFFT_K1_SP_2PA && !psp->t1_ul)
                         spr = VFFT_K1_SP_3P;
                 }
+            }
+            int spr0 = spr; /* the EXECUTABLE wisdom route, pre-L3-fold
+                             * (JIT sources + the Qlr-vs-Qr pick key on it) */
+            /* log3 routes resolve to a create-time fn swap + the base route
+             * (same Qr/Qi; the l3 twins are drop-in pointers — guaranteed
+             * present here by the degrade above) */
+            if (spr == VFFT_K1_SP_3P_L3)
+            {
+                psp->t1p = psp->t1_l3;
+                spr = VFFT_K1_SP_3P;
+            }
+            if (spr == VFFT_K1_SP_2PA_L3)
+            {
+                psp->t1_ul = psp->t1_ul_l3;
+                spr = VFFT_K1_SP_2PA;
             }
             /* (2P/3P/2P_PURE availability is settled by the normalize block
              * above — the route already names 2P_PURE iff il2p exists.) */

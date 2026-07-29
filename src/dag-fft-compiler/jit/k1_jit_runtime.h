@@ -128,7 +128,25 @@ static inline int _vfft_k1jit_route_srcs(int route, int R1, int R2,
     return 0;
 }
 
-/* Resolve (emit-on-miss, compile-on-miss, cache-forever). NULL = fall back. */
+/* Record a resolve FAILURE in the process registry (fn = NULL) so the shape
+ * is never re-attempted this run. Without this, a shape that cannot compile
+ * (e.g. a stage source this build lacks) re-wrote its .c and re-shelled gcc
+ * on EVERY plan create — the recorded N=8192 pathology (P0c): wisdom named
+ * 2PB 64x128, the radix-128 UG_UL source does not exist, and each create
+ * paid a full gcc launch just to fail identically. Cross-process the same
+ * shape now costs two fopen probes (see refuse-before-touch below), not a
+ * compiler run. */
+static inline vfft_k1_jit_fn _vfft_k1jit_fail(const char *key)
+{
+    vfft_k1_jit_entry_t *e = &g_vfft_k1jit_reg[g_vfft_k1jit_count++];
+    snprintf(e->key, sizeof e->key, "%s", key);
+    e->fn = 0;
+    e->lib = 0;
+    return NULL;
+}
+
+/* Resolve (emit-on-miss, compile-on-miss, cache-forever — successes AND
+ * failures, see _vfft_k1jit_fail). NULL = fall back. */
 static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int route)
 {
     if (route != 1 && route != 2 && route != 3 && route != 5) return NULL;
@@ -137,7 +155,7 @@ static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int rout
              N, route, R1, R2, VFFT_K1JIT_VERSION);
     for (int i = 0; i < g_vfft_k1jit_count; i++)
         if (strcmp(g_vfft_k1jit_reg[i].key, key) == 0)
-            return g_vfft_k1jit_reg[i].fn;
+            return g_vfft_k1jit_reg[i].fn; /* NULL here = cached failure */
     if (g_vfft_k1jit_count >= 64) return NULL;
 
     char lib[700], src[700];
@@ -149,9 +167,22 @@ static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int rout
     else {
         char s1[256], s2[256], f1[256], f2[256];
         if (_vfft_k1jit_route_srcs(route, R1, R2, s1, s2, f1, f2, sizeof s1) != 0)
-            return NULL;
+            return _vfft_k1jit_fail(key);
+        /* refuse-before-touch: if a stage source is absent, gcc can only
+         * fail — refuse WITHOUT writing the wrapper .c or launching the
+         * compiler (no fossil, no ~100ms gcc tax, works across processes). */
+        {
+            char sp[700];
+            FILE *sf;
+            snprintf(sp, sizeof sp, "%s/%s", VFFT_PROTO_JIT_REPO, s1);
+            if (!(sf = fopen(sp, "rb"))) return _vfft_k1jit_fail(key);
+            fclose(sf);
+            snprintf(sp, sizeof sp, "%s/%s", VFFT_PROTO_JIT_REPO, s2);
+            if (!(sf = fopen(sp, "rb"))) return _vfft_k1jit_fail(key);
+            fclose(sf);
+        }
         FILE *f = fopen(src, "w");
-        if (!f) return NULL;
+        if (!f) return _vfft_k1jit_fail(key);
         /* wrapper: include the SHIPPED unbaked sources; call with LITERAL
          * strides; flatten -> inline -> constant-propagate == the spec twin.
          * Stage-1 strides: L=R1, G=1; store (2pb) OLs=1/OGs=R2 else OL=R1/OG=1.
@@ -206,12 +237,12 @@ static inline vfft_k1_jit_fn vfft_k1_jit_resolve(int N, int R1, int R2, int rout
                  "%s -O3 -mavx2 -mfma -march=native -shared "
                  "-fno-semantic-interposition -w -I%s %s -o %s",
                  VFFT_PROTO_JIT_GCC, VFFT_PROTO_JIT_REPO, src, lib);
-        if (system(cmd) != 0) return NULL;
+        if (system(cmd) != 0) return _vfft_k1jit_fail(key);
     }
     VFFT_K1JIT_LIB h = VFFT_K1JIT_DLOPEN(lib);
-    if (!h) return NULL;
+    if (!h) return _vfft_k1jit_fail(key);
     vfft_k1_jit_fn fn = (vfft_k1_jit_fn)VFFT_K1JIT_DLSYM(h, "vfft_k1_jit_exec");
-    if (!fn) return NULL;
+    if (!fn) return _vfft_k1jit_fail(key);
     vfft_k1_jit_entry_t *e = &g_vfft_k1jit_reg[g_vfft_k1jit_count++];
     snprintf(e->key, sizeof e->key, "%s", key);
     e->fn = fn;
