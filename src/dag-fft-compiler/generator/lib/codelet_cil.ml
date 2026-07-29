@@ -468,23 +468,34 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   unwrap_legs "dft_cx_odd" out
 ;;
 
-(* Leaf dispatcher: pow2 -> radix-2 DIT, odd -> conjugate pair. An EVEN
-   non-pow2 radix has no leaf construction here (the radix-2 recursion would
-   drop legs) — it must be split explicitly by the caller. *)
-let dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+(* Leaf dispatcher: pow2 -> radix-2 DIT, odd -> conjugate pair, EVEN
+   COMPOSITE (6, 10, 12, ...) -> radix-2 DIT splits whose halves
+   RE-DISPATCH here, so the odd part bottoms out in the conjugate-pair
+   builder instead of dropping legs (dft_cx recursing into an odd half was
+   the hazard the old refusal guarded). butterfly_pair is the ONE shared
+   copy, general-twiddle arm included, so the mixed recursion is the same
+   numeric family — pow2 and odd radices take their old paths untouched
+   (byte-identity preserved). Unlocks the 2-stage IL pairs at 4·odd² N
+   (100 = 10x10, 36 = 6x6) and even-composite chain mids (200 = 4·(5·10)),
+   per Tugbars 2026-07-29. *)
+let rec dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
   else if n land (n - 1) = 0
   then dft_cx ~sign n xs
   else if n mod 2 = 1
   then dft_cx_odd ~sign n xs
-  else
-    failwith
-      (Printf.sprintf
-         "codelet_cil: radix %d is EVEN but not a power of two — the radix-2 \
-          recursion would drop legs and the conjugate-pair construction needs \
-          an odd n. Split it explicitly (m.p) instead."
-         n)
+  else (
+    let h = n / 2 in
+    let e = dft_small ~sign h (Array.init h (fun i -> xs.(2 * i)))
+    and o = dft_small ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
+    let out = Array.make n None in
+    for k = 0 to h - 1 do
+      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      out.(k) <- Some a;
+      out.(k + h) <- Some b
+    done;
+    unwrap_legs "dft_small" out)
 ;;
 
 (* Mixed-radix four-step over the complex IR: `chain` says how the transform is
@@ -809,23 +820,12 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
        2-complex-per-vector shape). A width-8 vector holds 4 complex and
        needs a 4-way lane shuffle instead — not written yet. *)
     failwith "codelet_cil: n1t corner-turn store is written for 2 complex/vector (avx2)";
-  (* RADIX GATE — dft_cx is a DIT-RADIX-2 recursion: it splits n into n/2
-     even + n/2 odd, so it is only valid for powers of two. For an odd n it
-     would silently DROP the last element (n=3 -> h=1 covers legs 0,1 and
-     never writes out[2]), emitting plausible-looking but WRONG code. Odd
-     and prime radices need a different complex construction (Winograd /
-     Rader at the complex level) — see zil_pipeline_port.md §11.5. Until
-     then, fail loudly rather than emit garbage. *)
+  (* RADIX GATE: >= 2 only. Pow2 -> dft_cx, odd -> conjugate pair, and (as
+     of 2026-07-29) EVEN COMPOSITES -> dft_small's mixed radix-2 recursion
+     bottoming out in the odd builder — the old "would drop legs" refusal
+     described dft_cx alone, which the dispatcher no longer exposes to
+     mixed halves. *)
   if radix < 2 then failwith "codelet_cil: radix must be >= 2";
-  if radix land (radix - 1) <> 0 && radix mod 2 = 0
-  then
-    failwith
-      (Printf.sprintf
-         "codelet_cil: radix %d is EVEN but not a power of two — dft_cx would \
-          drop legs and the conjugate-pair construction needs an odd n. Such a \
-          radix must be split explicitly (m.p); not wired on the monolithic \
-          path."
-         radix);
   reset ();
   let sign = if dir = Fwd then `Fwd else `Bwd in
   (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
