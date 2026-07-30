@@ -113,18 +113,30 @@ static const char *_vfft_tname(int t)
 {
     switch (t)
     {
-    case VFFT_C2C: return "C2C";
-    case VFFT_R2C: return "R2C";
-    case VFFT_C2R: return "C2R";
-    case VFFT_DCT1: return "DCT1";
-    case VFFT_DCT2: return "DCT2";
-    case VFFT_DCT3: return "DCT3";
-    case VFFT_DCT4: return "DCT4";
-    case VFFT_DST1: return "DST1";
-    case VFFT_DST2: return "DST2";
-    case VFFT_DST3: return "DST3";
-    case VFFT_DHT: return "DHT";
-    default: return "?";
+    case VFFT_C2C:
+        return "C2C";
+    case VFFT_R2C:
+        return "R2C";
+    case VFFT_C2R:
+        return "C2R";
+    case VFFT_DCT1:
+        return "DCT1";
+    case VFFT_DCT2:
+        return "DCT2";
+    case VFFT_DCT3:
+        return "DCT3";
+    case VFFT_DCT4:
+        return "DCT4";
+    case VFFT_DST1:
+        return "DST1";
+    case VFFT_DST2:
+        return "DST2";
+    case VFFT_DST3:
+        return "DST3";
+    case VFFT_DHT:
+        return "DHT";
+    default:
+        return "?";
     }
 }
 
@@ -619,9 +631,9 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
     /* ONE arena, each arm's region at its TRUE size (so the tight arm's smaller
      * cache/TLB footprint is authentic), 64B skew between regions so no two
      * regions are mutually page-aligned (4KB aliasing -> bimodal timings). */
-    const size_t SKEW = 8; /* doubles == 64 B */
-    const size_t szT = (size_t)N * K;  /* tight plane  */
-    const size_t szP = (size_t)N * Kp; /* padded plane */
+    const size_t SKEW = 8;                                      /* doubles == 64 B */
+    const size_t szT = (size_t)N * K;                           /* tight plane  */
+    const size_t szP = (size_t)N * Kp;                          /* padded plane */
     const size_t need = 4 * SKEW + 2 * szT + 2 * szP + 2 * szT; /* + reference planes */
     double *arena = NULL;
     if (vfft_proto_posix_memalign((void **)&arena, 64, need * sizeof(double)))
@@ -630,11 +642,11 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         vfft_proto_plan_destroy(pP);
         return 0;
     }
-    double *rT = arena;                  /* tight  re, N*K  */
-    double *iT = rT + szT + SKEW;        /* tight  im, N*K  */
-    double *rP = iT + szT + SKEW;        /* padded re, N*Kp */
-    double *iP = rP + szP + SKEW;        /* padded im, N*Kp */
-    double *refR = iP + szP + SKEW;      /* roundtrip reference, N*K */
+    double *rT = arena;             /* tight  re, N*K  */
+    double *iT = rT + szT + SKEW;   /* tight  im, N*K  */
+    double *rP = iT + szT + SKEW;   /* padded re, N*Kp */
+    double *iP = rP + szP + SKEW;   /* padded im, N*Kp */
+    double *refR = iP + szP + SKEW; /* roundtrip reference, N*K */
     double *refI = refR + szT;
 
     /* Identical data in the K live lanes (same seed); the padded arm zero-fills
@@ -1968,9 +1980,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * (Each branch also checks batch->xform / N / K match its descriptor.) OOP / trig / 2D
      * padding lands in later phases. */
     if (ob && !(cfg->dims < 2 &&
-                        (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
-                         cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
-                         _VFFT_IS_TRIG(cfg->transform))))
+                (cfg->transform == VFFT_C2C || /* in-place (exec_me) or OOP (pad-only) — branch checks b->oop */
+                 cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R ||
+                 _VFFT_IS_TRIG(cfg->transform))))
     {
         _vfft_warn("vfft_create: config.batch is only supported for 1D C2C/R2C/C2R/TRIG plans "
                    "(got %s, dims=%d) — a padded handle on any other plan would be strided "
@@ -3283,8 +3295,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
-                || il3p || ilpr)
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr)
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);
@@ -4614,7 +4625,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
             size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1) * (h->N4 ? (size_t)h->N4 : 1);
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-            { 
+            {
                 if (!h->il_wr)
                 {
                     h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
@@ -5286,10 +5297,14 @@ void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
     if (!p)
     {
         _vfft_warn("vfft_plan_planes: NULL plan — all planes set to NULL");
-        if (sre) *sre = NULL;
-        if (sim) *sim = NULL;
-        if (dre) *dre = NULL;
-        if (dim) *dim = NULL;
+        if (sre)
+            *sre = NULL;
+        if (sim)
+            *sim = NULL;
+        if (dre)
+            *dre = NULL;
+        if (dim)
+            *dim = NULL;
         return;
     }
     if (!p->own_batch)
@@ -5297,10 +5312,14 @@ void vfft_plan_planes(vfft_plan p, double **sre, double **sim,
         _vfft_warn("vfft_plan_planes: this plan does not own its buffers — "
                    "create it with config.owned_buffers = 1, or pass your own "
                    "planes to vfft_execute; all planes set to NULL");
-        if (sre) *sre = NULL;
-        if (sim) *sim = NULL;
-        if (dre) *dre = NULL;
-        if (dim) *dim = NULL;
+        if (sre)
+            *sre = NULL;
+        if (sim)
+            *sim = NULL;
+        if (dre)
+            *dre = NULL;
+        if (dim)
+            *dim = NULL;
         return;
     }
     _own_batch_planes(p->own_batch, sre, sim, dre, dim);

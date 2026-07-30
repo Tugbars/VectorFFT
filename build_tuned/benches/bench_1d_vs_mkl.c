@@ -1915,6 +1915,8 @@ int main(int argc, char **argv)
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
     int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
+    int tcut_mode = 0; /* --tcut=... seen: forces a DISTINCT default csv so a
+                        * tiling probe can never overwrite a banked baseline. */
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
      * c2c vs MKL NOT_INPLACE), --2d (2D c2c), --r2c (1D real fwd vs DFTI real),
      * --2dr2c (2D real fwd vs DFTI 2D real). --oop+--mt => OOP fwd K-split. */
@@ -1959,6 +1961,33 @@ int main(int argc, char **argv)
             pad = 1;       /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
         else if (strcmp(argv[1], "--padr2c") == 0)
             padr2c = 1;    /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
+        else if (strncmp(argv[1], "--tcut=", 7) == 0)
+        {
+            /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
+             * (docs/research/tcut_spec.md). Sets the VFFT_TCUT env gate that
+             * vfft_zturn2_create_chain reads, so the k1z cells below build a
+             * TILED plan while everything else about this harness — plan
+             * source, warmup, reps, cachebust, order flip, MKL side, csv — is
+             * untouched. This is the ONLY sanctioned way to get a tcut number
+             * against MKL: the tiling arm is not yet in wisdom, so without a
+             * force there is nothing for a new mode to select and the run
+             * would silently bench the banked untiled plan.
+             *   --tcut=off | --tcut=a1 | --tcut=<j>[:<tfuse>]
+             * Optional twiddle form: --tcuttw=honest.
+             * Everything the arm does is bit-identical to the untiled plan
+             * (gated by build_tuned/benches/zturn_tcut_gate.c), so the csv's
+             * correctness column stays meaningful. */
+            static char buf[64];
+            snprintf(buf, sizeof buf, "VFFT_TCUT=%s", argv[1] + 7);
+            putenv(buf);
+            tcut_mode = 1;
+        }
+        else if (strncmp(argv[1], "--tcuttw=", 9) == 0)
+        {
+            static char buf[64];
+            snprintf(buf, sizeof buf, "VFFT_TCUT_TW=%s", argv[1] + 9);
+            putenv(buf);
+        }
         else
             break;
         argv++;
@@ -1971,6 +2000,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : tcut_mode         ? "vfft_perf_tuned_1d_tcut.csv"
                       : (r2c && mt)       ? "vfft_perf_tuned_r2c_mt.csv"
                       : r2c               ? "vfft_perf_tuned_r2c.csv"
                       : (r2c2d && mt)     ? "vfft_perf_tuned_2dr2c_mt.csv"

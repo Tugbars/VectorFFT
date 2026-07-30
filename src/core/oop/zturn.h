@@ -64,6 +64,7 @@
 #ifndef VFFT_ZTURN_H
 #define VFFT_ZTURN_H
 
+#include <stdio.h>   /* the tcut env gate's loud refusal (stderr)          */
 #include "zsplit.h"   /* chains, _vfft_zs_brev, msg kernel decls, allocator */
 
 /* generator-owned ZTURN-S boundary kernels (codelets/zil/avx2, the frozen
@@ -100,6 +101,23 @@ typedef struct {
                                         * sized delta, so MEASURED per cell
                                         * (vfft.c create race), never
                                         * reasoned. bwd keeps single-quad. */
+    /* ---- TILED MID STAGES (docs/research/tcut_spec.md; EXPERIMENTAL, env
+     * gated, default OFF). All three fields are calloc-ZERO on every existing
+     * path, and zero means EXACTLY today's untiled call-for-call driver —
+     * deliberately NOT a `tcut = -1` sentinel (spec §1.4: a sentinel anyone
+     * forgets to write silently changes the DEFAULT path). */
+    int tiled;   /* 0 = UNTILED (shipping). 1 = TILED (spec §3.4/§3.5, "A2").
+                  * 2 = SECTION-SPLIT STAGE-MAJOR ("A1") — the CONTROL arm:
+                  *     same call count and same twiddle window as tiled=1 at
+                  *     tcut=0, but the plane address order of tiled=0. It
+                  *     exists so an A/B can separate the twiddle-footprint
+                  *     effect (A1-A0) from the pure tiling effect (A2-A1);
+                  *     without it a tcut number confounds the two. */
+    int tcut;    /* read only when tiled == 1; tcut in [0, nf-3] (spec §1.4) */
+    int tfuse;   /* read only when tiled == 1; 1 = cut the terminator per tile */
+    int thonest; /* mid twiddle form: 0 = RESET (default, spec §2.4/§5.4),
+                  * 1 = HONEST per-section offset. Bit-identical pair; F1's
+                  * discriminator, so it must stay reachable. */
 } vfft_zturn2_plan_t;
 
 static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
@@ -113,6 +131,145 @@ static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
     VFFT_ZS_FREE(p->tzqb);
     VFFT_ZS_FREE(p->plane);
     free(p);
+}
+
+/* ===================== TILING AXIS (tcut) — plan-side ======================
+ * docs/research/tcut_spec.md. EXPERIMENTAL, env gated, default OFF.
+ *
+ * The whole mechanism is a LOOP INTERCHANGE over provably independent kernel
+ * calls: a mid group of stage s reads AND writes exactly plane elements
+ * [D[s-1]*g, D[s-1]*(g+1)) and nothing else (spec §1.3/§2.1), the groups of a
+ * stage partition the plane, and windows of different stages are nested, never
+ * crossing. Choosing the window w = D[tcut] makes the tileable set a SUFFIX of
+ * the mids automatically, because SPAN(s) = D[s-1] is DECREASING in s (the
+ * mirror of MKL, whose spans grow so it tiles a prefix).
+ *
+ * Consequence, and it is the gate: no arithmetic expression, no operand order,
+ * no `count`, no `Ls` and no twiddle DOUBLE changes — only `Gs` and base
+ * pointers. Output MUST be memcmp-identical to tiled=0 in both directions
+ * (spec F0). A 1e-16 difference is a FAILURE, not a tolerance.
+ */
+
+/* §2.4 / R7 — the RESET form's legality is a property of the TABLE BUILDER,
+ * not of the kernel: the mid table entry for group g depends on g only through
+ * g2 = g % (G[s]/4) (see the builder below), so the table is literally four
+ * identical copies and substituting (g mod Gp) for g is a BYTE-identical
+ * substitution. If a future builder drops that x4 replication (a desirable
+ * memory saving, spec §5.3) the reset silently stops being an identity. Assert
+ * it instead of assuming it. Returns 1 = periodic (reset legal). */
+static inline int _vfft_zt_tw_periodic(const vfft_zturn2_plan_t *p)
+{
+    for (int s = 1; s <= p->nf - 2; s++) {
+        const size_t rec = (size_t)(p->chain[s] - 1) * 8 * 8; /* bytes/group */
+        const long Gp = p->G[s] / 4;
+        if (Gp <= 0 || p->G[s] % 4) return 0;
+        for (long q = 1; q < 4; q++) {
+            if (memcmp((const char *)p->twz[s] + (size_t)q * Gp * rec,
+                       (const char *)p->twz[s], (size_t)Gp * rec)) return 0;
+            if (memcmp((const char *)p->twzb[s] + (size_t)q * Gp * rec,
+                       (const char *)p->twzb[s], (size_t)Gp * rec)) return 0;
+        }
+    }
+    return 1;
+}
+
+/* Create-time fences (spec §3.6), as a PREDICATE so both callers can use it:
+ * a plan-input tcut (planner/wisdom) wants NULL on illegal, an env override
+ * wants a loud refusal that leaves the DEFAULT path untouched. 1 = legal.
+ *
+ * ⚠ ORDER IS LOAD-BEARING: the tcut RANGE is checked BEFORE p->D[tcut] is
+ * read. Evaluating D[tcut] first is an out-of-bounds read for a negative tcut
+ * (the -1 sentinel spec §1.4 warns about); it happens to be rejected
+ * downstream on every shipped struct layout today, but it is UB and one field
+ * reorder from a silent accept. */
+static inline int _vfft_zt_tile_legal(const vfft_zturn2_plan_t *p, int tiled,
+                                      int tcut, int tfuse)
+{
+    const int nf = p->nf;
+    if (!tiled) return 1;                       /* untiled is always legal   */
+    if (tiled == 2) {                           /* A1 control: section split */
+        for (int s = 1; s <= nf - 2; s++)
+            if (p->G[s] % 4) return 0;
+        return _vfft_zt_tw_periodic(p);
+    }
+    if (tiled != 1) return 0;
+    if (tcut < 0 || tcut > nf - 3) return 0;    /* §1.4 (RANGE FIRST)        */
+    {
+        const long w = p->D[tcut];              /* safe: tcut in range now   */
+        if (w <= 0 || ((long)p->N / 4) % w) return 0;   /* aligned tiles     */
+        for (int s = tcut + 1; s <= nf - 2; s++)
+            if (w % p->D[s - 1] || p->D[s] % 4) return 0; /* span|w ; F2     */
+        for (int s = 1; s <= tcut; s++)
+            if (p->G[s] % 4) return 0;                    /* section split   */
+        if (tfuse) {
+            const long kappa = (p->chain[nf - 1] == 8) ? w / 2 : w;
+            if (kappa % 4) return 0;            /* F2 — would SILENTLY drop  */
+        }
+    }
+    if (!_vfft_zt_tw_periodic(p)) return 0;     /* R7                        */
+    return 1;
+}
+
+/* Plan-input setter (the path a future planner/wisdom replay would use).
+ * Returns 1 on success; on an illegal request it leaves the plan UNTOUCHED
+ * (i.e. still whatever it was, untiled by calloc) and returns 0. */
+static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
+                                       int tcut, int tfuse, int thonest)
+{
+    if (!p) return 0;
+    if (!_vfft_zt_tile_legal(p, tiled, tcut, tfuse)) return 0;
+    p->tiled = tiled;
+    p->tcut = (tiled == 1) ? tcut : 0;
+    p->tfuse = (tiled == 1) ? tfuse : 0;
+    p->thonest = thonest ? 1 : 0;
+    /* §3.3: stf2's 2-quad instance-B offset under a k-shift is verified
+     * bit-exact by the scratchpad probe, but the FUSED arm keeps the
+     * single-quad terminator by DEFAULT (at kappa < 8 the 2-quad main loop
+     * never runs anyway, so it degenerates to stf's shape). This is a CHOICE,
+     * not a correctness requirement. */
+    if (p->tiled == 1 && p->tfuse) p->t2q = 0;
+    return 1;
+}
+
+/* Env gate, mirroring the VFFT_NO_ZTURN / VFFT_FORCE_ZROUTE style (read once
+ * at CREATE so both directions follow one plan field; no execute-path getenv).
+ *
+ *   VFFT_TCUT unset / "" / "off" / "no"  -> UNTILED (shipping default)
+ *   VFFT_TCUT=a1                          -> A1 control arm (tiled = 2)
+ *   VFFT_TCUT=<j>[:<tfuse>]               -> TILED, tcut = j, tfuse = 0|1
+ *   VFFT_TCUT_TW=honest                   -> HONEST mid twiddle offsets
+ *
+ * An ILLEGAL request is refused LOUDLY and leaves the plan untiled — it must
+ * NOT return NULL from create, because that would silently reroute the whole
+ * transform to the legacy zsplit engine and a harness would then be comparing
+ * engines instead of arms. */
+static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
+{
+    const char *e = getenv("VFFT_TCUT");
+    const char *h = getenv("VFFT_TCUT_TW");
+    int tiled = 0, tcut = 0, tfuse = 0, thonest = 0;
+    if (!e || !e[0]) return;
+    if (e[0] == 'o' || e[0] == 'O' || e[0] == 'n' || e[0] == 'N') return;
+    if (h && (h[0] == 'h' || h[0] == 'H')) thonest = 1;
+    if (e[0] == 'a' || e[0] == 'A') {
+        tiled = 2;
+    } else {
+        char *end = 0;
+        long j = strtol(e, &end, 10);
+        if (end == e) return;                   /* unparseable -> untiled    */
+        tiled = 1; tcut = (int)j;
+        if (end && *end == ':') tfuse = (end[1] == '1');
+    }
+    if (!vfft_zturn2_set_tile(p, tiled, tcut, tfuse, thonest))
+        fprintf(stderr, "[tcut] N=%d nf=%d: REFUSED VFFT_TCUT=%s "
+                        "(illegal for this chain) -> running UNTILED\n",
+                p->N, p->nf, e);
+    else if (getenv("VFFT_TCUT_VERBOSE"))
+        fprintf(stderr, "[tcut] N=%d nf=%d tiled=%d tcut=%d tfuse=%d tw=%s "
+                        "w=%ld NT=%ld\n", p->N, p->nf, p->tiled, p->tcut,
+                p->tfuse, p->thonest ? "honest" : "reset",
+                p->tiled == 1 ? p->D[p->tcut] : 0L,
+                p->tiled == 1 ? ((long)p->N / 4) / p->D[p->tcut] : 0L);
 }
 
 /* Plan-time twiddle repack per the canonical map (zturns_consensus doc §3;
@@ -211,6 +368,10 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
      * plan; the planner races CHAINS instead (dp_planner_il.h emits only
      * t2q=0 candidates for last==4). */
     if (p->chain[nf - 1] == 4) p->t2q = 0;
+    /* TILING axis, LAST (it validates against the finished D/G/twz tables and
+     * must never be able to fail this create — an illegal request degrades to
+     * the untiled default, loudly; see _vfft_zt_apply_env). */
+    _vfft_zt_apply_env(p);
     return p;
 fail:
     vfft_zturn2_destroy(p);
@@ -227,6 +388,117 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create(int N)
     return nf ? vfft_zturn2_create_chain(N, chain, nf) : NULL;
 }
 
+/* ==================== TILING AXIS (tcut) — execute-side ====================
+ * Tuples are spec §3.3; nests are §3.4 (fwd) / §3.5 (bwd). Both were validated
+ * against the REAL generated AVX2 kernels and the REAL tables by the
+ * scratchpad harness tcut_break.c (846 POS configs memcmp-EXACT vs production
+ * execute; NEG term-shift / kappa-half / tw+1 all DIFFER, so the check
+ * discriminates). This code is a transcription of that proven nest.
+ */
+typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
+                                double *, const double *, const double *,
+                                unsigned long long, unsigned long long,
+                                unsigned long long, unsigned long long,
+                                unsigned long long);
+
+/* production msg tuple, in-place on `base`; only Gs and the bases vary */
+static inline void _vfft_zt_msg(const vfft_zturn2_plan_t *p, int s,
+                                double *base, const double *tw, long Gs,
+                                int fwd)
+{
+    const _vfft_zt_msg_fn f = (p->chain[s] == 8)
+        ? (fwd ? radix8_z_msg_fwd_avx2 : radix8_z_msg_bwd_avx2)
+        : (fwd ? radix4_z_msg_fwd_avx2 : radix4_z_msg_bwd_avx2);
+    f(base, 0, base, 0, tw, 0,
+      (unsigned long long)p->D[s], (unsigned long long)Gs,
+      0, 0, (unsigned long long)p->D[s]);
+}
+
+/* mid twiddle base. RESET (default) ignores the section: the table is four
+ * identical copies (§2.4, asserted by _vfft_zt_tw_periodic), so all 4 sections
+ * hit the SAME lines — which is the L1 reuse MKL gets from its per-block
+ * cursor restore. HONEST reads copy q; bit-identical, 4x the footprint. */
+static inline const double *_vfft_zt_tw(const vfft_zturn2_plan_t *p, int s,
+                                        long q, long gi, int fwd)
+{
+    const double *tbl = fwd ? p->twz[s] : p->twzb[s];
+    const long idx = gi + (p->thonest ? q * (p->G[s] / 4) : 0);
+    return tbl + (size_t)idx * (p->chain[s] - 1) * 8;
+}
+
+/* terminator, whole plane (whole=1) or cut to tile t (§3.3). The plane shift is
+ * 2*t*w doubles on BOTH radix arms; the zout/tw shift is t*w on r8 (2 doubles
+ * per column, k0 = t*w/2) and 2*t*w on r4 (k0 = t*w). */
+static inline void _vfft_zt_term_fwd(const vfft_zturn2_plan_t *p, double *zout,
+                                     long t, int whole, long w)
+{
+    const long N = p->N;
+    if (p->chain[p->nf - 1] == 4) {
+        if (whole)
+            radix4_z_stf_r4_fwd_avx2(p->plane, 0, zout, 0, p->tzq, 0,
+                                     0, 0, (size_t)N / 4, 0, (size_t)N / 4);
+        else
+            radix4_z_stf_r4_fwd_avx2(p->plane + 2 * t * w, 0,
+                                     zout + 2 * t * w, 0,
+                                     p->tzq + 2 * t * w, 0,
+                                     0, 0, (size_t)N / 4, 0, (size_t)w);
+    } else if (whole) {
+        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+            p->plane, 0, zout, 0, p->tzq, 0,
+            0, 0, (size_t)N / 8, 0, (size_t)N / 8);
+    } else {
+        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+            p->plane + 2 * t * w, 0, zout + t * w, 0, p->tzq + t * w, 0,
+            0, 0, (size_t)N / 8, 0, (size_t)w / 2);
+    }
+}
+
+static inline void _vfft_zt_term_bwd(const vfft_zturn2_plan_t *p,
+                                     const double *zin, long t, int whole,
+                                     long w)
+{
+    const long N = p->N;
+    if (p->chain[p->nf - 1] == 4) {
+        if (whole)
+            radix4_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                     0, 0, (size_t)N / 4, 0, (size_t)N / 4);
+        else
+            radix4_z_stf_r4_bwd_avx2(zin + 2 * t * w, 0, p->plane + 2 * t * w,
+                                     0, p->tzqb + 2 * t * w, 0,
+                                     0, 0, (size_t)N / 4, 0, (size_t)w);
+    } else if (whole) {
+        radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                 0, 0, (size_t)N / 8, 0, (size_t)N / 8);
+    } else {
+        radix8_z_stf_r4_bwd_avx2(zin + t * w, 0, p->plane + 2 * t * w, 0,
+                                 p->tzqb + t * w, 0,
+                                 0, 0, (size_t)N / 8, 0, (size_t)w / 2);
+    }
+}
+
+/* A1 CONTROL ARM (tiled == 2): stage-major, section-split, reset twiddles.
+ * Concatenating q = 0..3 reproduces the UNTILED address sequence exactly
+ * (section q is precisely groups [q*G[s]/4, (q+1)*G[s]/4) of stage s, because
+ * D[s-1] divides D[0] = SEC), so A1 differs from A0 in NOTHING but the twiddle
+ * footprint (65 280 -> 16 320 B at 4096) and the call count. A2 - A1 is
+ * therefore the PURE tiling effect and A1 - A0 the pure table effect; quoting
+ * A2 - A0 as "tiling" confounds the two. */
+static inline void _vfft_zt_mids_a1(const vfft_zturn2_plan_t *p, int fwd)
+{
+    const long SECD = (long)p->N / 2;
+    if (fwd) {
+        for (int s = 1; s <= p->nf - 2; s++)
+            for (long q = 0; q < 4; q++)
+                _vfft_zt_msg(p, s, p->plane + q * SECD,
+                             _vfft_zt_tw(p, s, q, 0, 1), p->G[s] / 4, 1);
+    } else {
+        for (int s = p->nf - 2; s >= 1; s--)
+            for (long q = 0; q < 4; q++)
+                _vfft_zt_msg(p, s, p->plane + q * SECD,
+                             _vfft_zt_tw(p, s, q, 0, 0), p->G[s] / 4, 0);
+    }
+}
+
 /* natural z in -> ZTURN-S scrambled comb out. zin == zout OK (the
  * terminator is the only writer of zout and reads only the plane).
  * Kernel arg tuples = the Phase-3 GATE0-proven calls (zturn_proto_gate.c
@@ -237,16 +509,75 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
 {
     radix4_z_s0t_r4_fwd_avx2(zin, 0, p->plane, 0, 0, 0,
                              (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
-    for (int s = 1; s <= p->nf - 2; s++) {
-        /* PRODUCTION msg kernels BYTE-FOR-BYTE, production arg tuple */
-        void (*f)(const double *, const double *, double *, double *,
-                  const double *, const double *, unsigned long long,
-                  unsigned long long, unsigned long long, unsigned long long,
-                  unsigned long long) =
-            (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2 : radix4_z_msg_fwd_avx2;
-        f(p->plane, 0, p->plane, 0, p->twz[s], 0,
-          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
-          0, 0, (unsigned long long)p->D[s]);
+    /* the ingest is NEVER fused (spec §1.6): mid 1's group span is a WHOLE
+     * section (SPAN(1) = D[0] = SEC for every legal chain), so mid 1 cannot
+     * start on section q until the ingest has swept its entire k range. MKL's
+     * leaf sits outside its block loop for the same reason. */
+    if (p->tiled == 0) {
+        for (int s = 1; s <= p->nf - 2; s++) {
+            /* PRODUCTION msg kernels BYTE-FOR-BYTE, production arg tuple */
+            void (*f)(const double *, const double *, double *, double *,
+                      const double *, const double *, unsigned long long,
+                      unsigned long long, unsigned long long,
+                      unsigned long long, unsigned long long) =
+                (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2
+                                   : radix4_z_msg_fwd_avx2;
+            f(p->plane, 0, p->plane, 0, p->twz[s], 0,
+              (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+              0, 0, (unsigned long long)p->D[s]);
+        }
+    } else if (p->tiled == 2) {
+        _vfft_zt_mids_a1(p, 1);                 /* A1 control arm            */
+    } else {
+        const long SECD = (long)p->N / 2, SEC = (long)p->N / 4;
+        const long w = p->D[p->tcut], NT = SEC / w;
+        if (!p->tfuse) {                        /* fully per-section nest    */
+            for (long q = 0; q < 4; q++) {
+                double *sec = p->plane + q * SECD;
+                for (int s = 1; s <= p->tcut; s++)
+                    _vfft_zt_msg(p, s, sec, _vfft_zt_tw(p, s, q, 0, 1),
+                                 p->G[s] / 4, 1);
+                for (long t = 0; t < NT; t++) {
+                    double *tile = sec + 2 * t * w;
+                    for (int s = p->tcut + 1; s <= p->nf - 2; s++) {
+                        const long span = p->D[s - 1];
+                        _vfft_zt_msg(p, s, tile,
+                                     _vfft_zt_tw(p, s, q, t * w / span, 1),
+                                     w / span, 1);
+                    }
+                }
+            }
+        } else {
+            /* FUSED terminator. 🔴 t is OUTER and q is INNER, and the q loop
+             * may NEVER be hoisted above t: the terminator's footprint is not
+             * a mid group, it is the 4-SECTION cross-product (§1.5), so the
+             * mid-group commutation license does NOT extend across it. With q
+             * outside t, fwd still comes out byte-correct (the terminator only
+             * READS the plane, so the 3 premature calls per tile are
+             * overwritten by the 4th — last-writer-wins) at 4x the terminator
+             * work, while bwd is WRONG (the terminator WRITES the plane and
+             * clobbers already-mid-processed sections). A fwd-only gate cannot
+             * see it. Measured in scratchpad/tcut_break.c. */
+            for (long q = 0; q < 4; q++) {
+                double *sec = p->plane + q * SECD;
+                for (int s = 1; s <= p->tcut; s++)
+                    _vfft_zt_msg(p, s, sec, _vfft_zt_tw(p, s, q, 0, 1),
+                                 p->G[s] / 4, 1);
+            }
+            for (long t = 0; t < NT; t++) {
+                for (long q = 0; q < 4; q++) {
+                    double *tile = p->plane + q * SECD + 2 * t * w;
+                    for (int s = p->tcut + 1; s <= p->nf - 2; s++) {
+                        const long span = p->D[s - 1];
+                        _vfft_zt_msg(p, s, tile,
+                                     _vfft_zt_tw(p, s, q, t * w / span, 1),
+                                     w / span, 1);
+                    }
+                }
+                _vfft_zt_term_fwd(p, zout, t, 0, w);   /* cut, §3.3          */
+            }
+            return;                             /* terminator already done   */
+        }
     }
     if (p->chain[p->nf - 1] == 4)
         /* RADIX-4 terminator (E6-E11): OLs = count = N/4, 4 columns/iter,
@@ -265,25 +596,86 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
 static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
                                            const double *zin, double *zout)
 {
-    if (p->chain[p->nf - 1] == 4)
-        /* RADIX-4 bwd terminator (E12-E15) = the bwd FIRST stage; exact
-         * address mirror of the fwd r4 arm (fwd/bwd permutations matched
-         * per chain — cutover atomicity applies exactly as at r8). */
-        radix4_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
-                                 0, 0, (size_t)p->N / 4, 0, (size_t)p->N / 4);
-    else
-        radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
-                                 0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
-    for (int s = p->nf - 2; s >= 1; s--) {
-        void (*f)(const double *, const double *, double *, double *,
-                  const double *, const double *, unsigned long long,
-                  unsigned long long, unsigned long long, unsigned long long,
-                  unsigned long long) =
-            (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2 : radix4_z_msg_bwd_avx2;
-        f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
-          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
-          0, 0, (unsigned long long)p->D[s]);
+    const long SECD = (long)p->N / 2, SEC = (long)p->N / 4;
+    const int fused = (p->tiled == 1 && p->tfuse);
+    if (!fused) {
+        if (p->chain[p->nf - 1] == 4)
+            /* RADIX-4 bwd terminator (E12-E15) = the bwd FIRST stage; exact
+             * address mirror of the fwd r4 arm (fwd/bwd permutations matched
+             * per chain — cutover atomicity applies exactly as at r8). */
+            radix4_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                     0, 0, (size_t)p->N / 4, 0,
+                                     (size_t)p->N / 4);
+        else
+            radix8_z_stf_r4_bwd_avx2(zin, 0, p->plane, 0, p->tzqb, 0,
+                                     0, 0, (size_t)p->N / 8, 0,
+                                     (size_t)p->N / 8);
     }
+    if (p->tiled == 0) {
+        for (int s = p->nf - 2; s >= 1; s--) {
+            void (*f)(const double *, const double *, double *, double *,
+                      const double *, const double *, unsigned long long,
+                      unsigned long long, unsigned long long,
+                      unsigned long long, unsigned long long) =
+                (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2
+                                   : radix4_z_msg_bwd_avx2;
+            f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
+              (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+              0, 0, (unsigned long long)p->D[s]);
+        }
+    } else if (p->tiled == 2) {
+        _vfft_zt_mids_a1(p, 0);                 /* A1 control arm            */
+    } else {
+        /* exact reverse of §3.4: within a unit, per-tile mids nf-2..tcut+1
+         * first, then the section-level mids tcut..1. */
+        const long w = p->D[p->tcut], NT = SEC / w;
+        if (!fused) {
+            for (long q = 0; q < 4; q++) {
+                double *sec = p->plane + q * SECD;
+                for (long t = 0; t < NT; t++) {
+                    double *tile = sec + 2 * t * w;
+                    for (int s = p->nf - 2; s >= p->tcut + 1; s--) {
+                        const long span = p->D[s - 1];
+                        _vfft_zt_msg(p, s, tile,
+                                     _vfft_zt_tw(p, s, q, t * w / span, 0),
+                                     w / span, 0);
+                    }
+                }
+                for (int s = p->tcut; s >= 1; s--)
+                    _vfft_zt_msg(p, s, sec, _vfft_zt_tw(p, s, q, 0, 0),
+                                 p->G[s] / 4, 0);
+            }
+        } else {
+            /* 🔴 FUSED bwd: t OUTER, q INNER, terminator FIRST within a tile.
+             * Hoisting q above t is SILENTLY WRONG here — _vfft_zt_term_bwd
+             * WRITES the tile-t window in all four sections, so a second call
+             * for the same t clobbers sections already mid-processed, and that
+             * data is never revisited. (The fwd twin survives the same mistake
+             * by last-writer-wins, which is exactly why the invariant is
+             * written at both call sites.) */
+            for (long t = 0; t < NT; t++) {
+                _vfft_zt_term_bwd(p, zin, t, 0, w);
+                for (long q = 0; q < 4; q++) {
+                    double *tile = p->plane + q * SECD + 2 * t * w;
+                    for (int s = p->nf - 2; s >= p->tcut + 1; s--) {
+                        const long span = p->D[s - 1];
+                        _vfft_zt_msg(p, s, tile,
+                                     _vfft_zt_tw(p, s, q, t * w / span, 0),
+                                     w / span, 0);
+                    }
+                }
+            }
+            for (long q = 0; q < 4; q++) {
+                double *sec = p->plane + q * SECD;
+                for (int s = p->tcut; s >= 1; s--)
+                    _vfft_zt_msg(p, s, sec, _vfft_zt_tw(p, s, q, 0, 0),
+                                 p->G[s] / 4, 0);
+            }
+        }
+    }
+    /* s0tb is ALWAYS the untiled last stage — §2.5: it is the only writer of
+     * zout, so zin == zout stays legal. 🔴 If anyone ever fuses s0tb into the
+     * tile loop, in-place breaks. */
     radix4_z_s0t_r4_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
                              (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
 }
