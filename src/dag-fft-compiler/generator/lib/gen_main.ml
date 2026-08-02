@@ -472,6 +472,10 @@ let run (argv : string array) : unit =
     then zp_kind := "stfb"
     else if arg = "--zp-stf2"
     then zp_kind := "stf2"
+    else if arg = "--zp-stfn"
+    then zp_kind := "stfn"
+    else if arg = "--zp-stfbn"
+    then zp_kind := "stfbn"
     else if arg = "--zp-r0" && !i + 1 < Array.length arr
     then (
       zp_r0 := int_of_string arr.(!i + 1);
