@@ -3074,6 +3074,34 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * codelet still miscomputes a partial batch so _c2c_mt runs it whole-batch. Only MT plans K-split,
          * so skip the check (and its cost) for single-threaded creates. */
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+
+        /* ── K=1 SCRAMBLED interleaved IN-PLACE: attach the cascade on a
+         * wisdom HIT (Phase A of docs/roadmap/cascade_natural_inplace_plan.md).
+         *
+         * P0a (zturn_inplace_probe.c): the cascade is alias-safe in==out,
+         * memcmp-proven BOTH directions including tiled and fused-terminator
+         * arms — the same shadow-plane shape MKL uses for its in-place.
+         * HIT-ONLY on purpose: the OOP branch stays the only racer/banker; a
+         * miss serves the classic in-place path exactly as before, so this is
+         * strictly additive. Layout-gated at CREATE (unlike the OOP attach)
+         * because the in-place execute dispatch only consults the cascade
+         * under the interleaved z contract — building it for a split-layout
+         * handle would be dead weight. Mono/Bailey IL tiers stay OOP-only
+         * until their alias-safety is verified per family (A3) — the classic
+         * path keeps serving their in-place cells as today. */
+        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED &&
+            cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        {
+            vfft_zsplit_plan_t *ipzs = NULL;
+            vfft_zturn2_plan_t *ipzt = NULL;
+            int ipzr = 0;
+            if (_k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt, &ipzr))
+            {
+                h->zsplit = ipzs; /* exactly one non-NULL (route atomicity) */
+                h->zturn = ipzt;
+                h->zroute = ipzr;
+            }
+        }
         return h;
     }
 
@@ -4862,6 +4890,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
         { /* interleaved z contract — see _exec_c2c_interleaved. (padded
            * plans can't get here: batch+INTERLEAVED is rejected at create.) */
+            if (h->zsplit || h->zturn)
+            { /* K=1 SCRAMBLED cascade, ALIASED in==out — P0a memcmp-proven
+               * both directions incl tiled/tfuse. The documented in-place
+               * call form allows dre==NULL; normalize to the aliased buffer
+               * (dre==sre is the only other accepted form). */
+                _exec_zcascade(h, dir, sre, dre ? dre : sre);
+                return;
+            }
             vfft_set_num_threads(h->nthreads);
             _exec_c2c_interleaved(h, dir, sre, dre);
             return;
