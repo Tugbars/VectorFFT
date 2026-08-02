@@ -246,6 +246,35 @@ The front-door tiling deltas (−17…−21% against the same chains untiled)
 reproduce the internal A/B. At campaign close the standing was
 1.07/0.85/0.89/1.03; with banked tile widths it is **1.07/0.95/1.01/1.03**.
 
+## 6.2 The in-place cell — same architecture, same standings
+
+The cascade is alias-safe in-place by construction (ingest reads the user
+buffer, the interior lives on an internal plane, the terminator writes the
+user buffer — the same shadow-plane shape MKL uses, whose measured in-place
+tax is ≈0). As of 2026-08-02 the front door serves it: `VFFT_INPLACE` +
+interleaved + scrambled K=1 gets the tiled cascade with its banked width,
+**byte-identical to the OOP output both directions** (gate: all five banked
+cells memcmp-EXACT through `vfft_create`/`vfft_execute`; call form is
+`(z, NULL, z, NULL)` — aliased destination).
+
+Benchmark-derived, this host, 2026-08-02, warm, one run per cell,
+cell-per-process, same-run ratios (canonical bench `--k1zip`: our cascade
+in-place vs MKL `DFTI_INPLACE`, both interleaved; indicative until a
+cool-machine session):
+
+| N | vfft in-place | MKL in-place | ratio (>1 = vfft) |
+|---|---|---|---|
+| 2048 | 2194 ns | 2059 ns | 0.94 |
+| 4096 | 3979 | 4050 | **1.02** |
+| 8192 | 9793 | 8714 | 0.89 |
+| 16384 | 17678 | 18940 | **1.07** |
+| 32768 | 37503 | 37979 | **1.01** |
+
+Because the in-place output is byte-identical to OOP, the work is identical —
+so deltas between this table and §6.1 are thermal jitter, not an in-place tax.
+Note 32768: its first valid measurement (an earlier routing defect silently
+served the classic path there; fixed the same day), and a win.
+
 ⚠️ **Order asymmetry, stated plainly:** our arm delivers SCRAMBLED output (the
 class's contract); MKL delivers NATURAL order — strictly more work, and MKL
 offers no cheaper scrambled mode (`DFTI_BACKWARD_SCRAMBLED` is documented as
