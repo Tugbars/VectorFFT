@@ -39,6 +39,7 @@ Three components stack to make this work:
 6. [07_dif_filter.md](07_dif_filter.md) — why DIF orientation is whole-plan-or-nothing
 7. [08_blocked_executor.md](08_blocked_executor.md) — third orthogonal dimension; doesn't compose with variants in v1.1
 8. [09_decisions.md](09_decisions.md) — ADR record
+9. [10_zturn_calibration_flow.md](10_zturn_calibration_flow.md) — the K=1 SCRAMBLED cascade's **separate** calibrator (`dp_planner_il.h` / `calibrate_zchain.c`): activity diagrams for enumerate → build → gate → bench → bank → replay, colour-coded by what a model decides versus what the clock decides
 
 ## Audiences
 
