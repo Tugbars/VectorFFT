@@ -873,6 +873,22 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                             fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
                                             "not fit the enumeration array\n",
                                     N, dropped);
+                        /* 🔴 SAY WHAT THE BAND EXCLUDED. An out-of-band width
+                         * is never benched, so it leaves no trace in the
+                         * results — the filter cannot be caught being wrong by
+                         * looking at what it produced. The band is fitted to
+                         * four cells on one machine; the count of what it threw
+                         * away is the only evidence that a cell's search was
+                         * narrowed at all. Same rule as the candidate cap:
+                         * no silent drops. */
+                        if (oob && getenv("VFFT_IL_DP_VERBOSE"))
+                            fprintf(stderr, "  [il-dp] N=%d nf=%d: %d of %d "
+                                    "legal widths were OUT OF BAND [%.0f%%,"
+                                    "%.0f%%] of %ld B L1 and were not benched; "
+                                    "%d kept\n",
+                                    N, nf, oob, n, VFFT_ZT_OCC_LO * 100,
+                                    VFFT_ZT_OCC_HI * 100, vfft_cpu_l1d_bytes(),
+                                    nw);
                         vfft_zturn2_destroy(p);
                     }
                 }
