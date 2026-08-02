@@ -135,6 +135,14 @@ type zs_kind =
        whose per-slot stores are SINGLETON-ready (one direct storeu per
        sink tag, no cross-slot shuffle/transpose network) can sink;
        today that is E_sect_tap alone (stfb). *)
+  ; nat_in : bool
+    (* NATURAL-ORDER variant (stfn/stfbn -- docs/research/natterm_spec.md):
+       the IN-side edge and (fwd only) the twiddle stream are addressed
+       through `kn`, a per-iteration column index read from a plan-built
+       rho-inverse (fwd) / rho (bwd) block table carried in via the UNUSED
+       tw_im arg (cast to const size_t ptr). Stores keep `k` ascending --
+       contiguous natural output. Load-side permutation is the measured-free
+       side (P0c: 0.96-1.12x vs +29-50% for store-side). *)
   ; sched : zs_sched
     (* B2 --zp-sched: emit through the combined memory+arith node
        sequence (see zs_sched above). NEVER a kind-table default —
@@ -146,7 +154,7 @@ let kind_of_string (s : string) : zs_kind =
   let mid = { base = "ms"; bwd = false; group_loop = false; uj2 = false
             ; twiddled = true; policy = Dft.TP_Flat; tw_off = ""
             ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls"
-            ; sink_stores = false; sched = ZS_off } in
+            ; sink_stores = false; sched = ZS_off; nat_in = false } in
   match s with
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
@@ -200,11 +208,29 @@ let kind_of_string (s : string) : zs_kind =
        exactly as sterm2's streamed table. *)
     { mid with base = "stf2"; uj2 = true; policy = Dft.TP_PowW1
     ; tw_off = "2*(size_t)k"; in_edge = E_sect_tap "OLs"; out_edge = E_z "OLs" }
+  | "stfn" ->
+    (* NATURAL-ORDER terminator (fwd): stf edges with the IN side (section
+       taps) AND the packed-w1 stream addressed at kn = 4*tbl[k>>2]
+       (tbl = rho-inverse, MSF digit reversal over the middle radices --
+       P0b), stores contiguous ascending = natural interleaved output.
+       Radix 8 AND radix 4, like stf. No uj2 twin (t2q pinned 0 in natural
+       phase 1). *)
+    { mid with base = "stfn"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)kn"
+    ; in_edge = E_sect_tap "OLs"; out_edge = E_z "OLs"; nat_in = true }
+  | "stfbn" ->
+    (* NATURAL-ORDER bwd terminator: consumes a NATURAL spectrum -- the z
+       (user) LOAD edge reads at kn (tbl = rho: the value scrambled-bwd
+       expects at block k sits at natural block rho(k)); the conj-w1 stream
+       and the section-tap plane STORES keep k (they belong to the scrambled
+       column being reconstructed). *)
+    { mid with base = "stfn"; bwd = true; policy = Dft.TP_PowW1
+    ; tw_off = "2*(size_t)k"; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"
+    ; nat_in = true }
   | other ->
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb stf2)"
+          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn)"
          other)
 ;;
 
@@ -395,7 +421,9 @@ let emit_codelet
         bake the 4-section geometry into every address, so their fname MUST
         carry it (a future r0=8 twin sharing the symbol would silently ship
         a wrong FFT). Legacy kinds must not carry it (provenance stability). *)
-  let r0_dep = k.base = "s0t" || k.base = "stf" || k.base = "stf2" in
+  let r0_dep =
+    k.base = "s0t" || k.base = "stf" || k.base = "stf2" || k.base = "stfn"
+  in
   (match r0, r0_dep with
    | None, true ->
      failwith
@@ -613,6 +641,14 @@ let emit_codelet
            "stf2: 2-quad unroll-and-jam ZTURN-S terminator twin (SU-braided \
             2-instance DAG + baseline-shaped tail; section-tap loads, instance B at \
             +1 record group; bit-identical pair with stf, per-cell t2q pick)."
+         | "stfn", false ->
+           "stfn (NATURAL-ORDER ZTURN-S terminator: section-tap loads + packed w^1 \
+            stream at kn = 4*rhoinv[k/4] via the tw_im-carried table, REINT \
+            stores contiguous ascending = natural interleaved out), fwd."
+         | "stfn", true ->
+           "stfbn (NATURAL-ORDER ZTURN-S bwd terminator: NATURAL z in, read at kn = \
+            4*rho[k/4] via the tw_im-carried table, IDFT + POST conj-w^1 at k, \
+            section-record stores at k), bwd."
          | _, true ->
            "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
          | _, false ->
@@ -724,16 +760,16 @@ let emit_codelet
   in
   (* leg-addressed edge address: 2*(leg*STRIDE + k + colo), im/hi +VW.
      colo is the instance's column offset (0 for instance A). *)
-  let leg_addr (buf_name : string) (leg : int) (stride : string) (colo : int)
-        (plus : int)
+  let leg_addr ?(iv = "k") (buf_name : string) (leg : int) (stride : string)
+        (colo : int) (plus : int)
     : string
     =
     let base =
       match leg, colo with
-      | 0, 0 -> "2*(size_t)k"
-      | 0, o -> Printf.sprintf "2*((size_t)k + %d)" o
-      | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + k)" l stride
-      | l, o -> Printf.sprintf "2*((size_t)%d*%s + k + %d)" l stride o
+      | 0, 0 -> Printf.sprintf "2*(size_t)%s" iv
+      | 0, o -> Printf.sprintf "2*((size_t)%s + %d)" iv o
+      | l, 0 -> Printf.sprintf "2*((size_t)%d*%s + %s)" l stride iv
+      | l, o -> Printf.sprintf "2*((size_t)%d*%s + %s + %d)" l stride iv o
     in
     if plus = 0
     then Printf.sprintf "%s[%s]" buf_name base
@@ -751,20 +787,24 @@ let emit_codelet
      byte-identically to the pre-stf2 form; vw for instance B = the next
      section-record group, legal because r0 == vw, asserted above; uj2
      is radix-8-only, so the r4 form never sees colo <> 0). *)
-  let sect_addr (buf_name : string) (q : int) (stride : string) (colo : int)
-        (plus : int)
+  let sect_addr ?(iv = "k") (buf_name : string) (q : int) (stride : string)
+        (colo : int) (plus : int)
     : string
     =
     let sec = [| 0; 2; 1; 3 |].(q land 3) in
     let sc = radix / 2 in
     let off = (8 * (q asr 2)) + plus in
     match sec, colo with
-    | 0, 0 -> Printf.sprintf "%s[%d*(size_t)k + %d]" buf_name sc off
-    | 0, o -> Printf.sprintf "%s[%d*((size_t)k + %d) + %d]" buf_name sc o off
-    | s, 0 -> Printf.sprintf "%s[%d*((size_t)%d*%s + k) + %d]" buf_name sc s stride off
+    | 0, 0 -> Printf.sprintf "%s[%d*(size_t)%s + %d]" buf_name sc iv off
+    | 0, o -> Printf.sprintf "%s[%d*((size_t)%s + %d) + %d]" buf_name sc iv o off
+    | s, 0 ->
+      Printf.sprintf "%s[%d*((size_t)%d*%s + %s) + %d]" buf_name sc s stride iv off
     | s, o ->
-      Printf.sprintf "%s[%d*((size_t)%d*%s + k + %d) + %d]" buf_name sc s stride o off
+      Printf.sprintf
+        "%s[%d*((size_t)%d*%s + %s + %d) + %d]" buf_name sc s stride iv o off
   in
+  (* natural-order in-side index: `kn` (declared per iteration, nat_in only). *)
+  let ivin = if k.nat_in then "kn" else "k" in
   (* ── column loop: edges + SU-scheduled body + store edge for ONE
         prepared DAG. ninst = 1 normally, 2 for the sterm2 main loop
         (slots radix..2·radix-1 are instance B = columns k+VW..k+2·VW-1).
@@ -781,6 +821,11 @@ let emit_codelet
     =
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
+    if k.nat_in
+    then
+      Buffer.add_string
+        buf
+        "        /* natural-order: in-side block index via the rho table (tw_im repurposed; natterm_spec.md) */\n        const size_t kn = 4*((const size_t *)tw_im)[(size_t)k >> 2];\n";
     (* ── B2 chunk sinks: every load-edge fragment is rendered through a
           sink function. Flag-off (ZS_off): the sinks ARE
           Buffer.add_string buf, called in the exact order of the pre-B2
@@ -835,11 +880,11 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zl_%d" sl)
-                 (Isa.loadu_pd isa (leg_addr "zin" leg s colo 0)))
+                 (Isa.loadu_pd isa (leg_addr ~iv:ivin "zin" leg s colo 0)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "_zh_%d" sl)
-                 (Isa.loadu_pd isa (leg_addr "zin" leg s colo vw)))
+                 (Isa.loadu_pd isa (leg_addr ~iv:ivin "zin" leg s colo vw)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" sl)
@@ -913,11 +958,11 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" sl)
-                 (Isa.loadu_pd isa (sect_addr "zin" q s colo 0)))
+                 (Isa.loadu_pd isa (sect_addr ~iv:ivin "zin" q s colo 0)))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_im_%d" sl)
-                 (Isa.loadu_pd isa (sect_addr "zin" q s colo vw))))
+                 (Isa.loadu_pd isa (sect_addr ~iv:ivin "zin" q s colo vw))))
        done
      | E_sect_tr4 s ->
        (* ── ZTURN-S backward-ingest load edge: granule's 4 section records
@@ -1383,7 +1428,8 @@ let emit_codelet
       (List.map
          (fun p -> Printf.sprintf "(void)%s;" p)
          (List.concat
-            [ [ "zin_unused"; "zout_unused"; "tw_im" ]
+            [ ([ "zin_unused"; "zout_unused" ]
+               @ (if k.nat_in then [] else [ "tw_im" ]))
             ; (if uses "Ls" then [] else [ "Ls" ])
             ; [ "Gs" ]
             ; (if uses "OLs" then [] else [ "OLs" ])
