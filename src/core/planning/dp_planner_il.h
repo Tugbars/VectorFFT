@@ -104,6 +104,7 @@
 #include "zsplit.h"     /* the CT cascade, LEGACY route: create / execute     */
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
+#include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -163,6 +164,13 @@ static inline void _il_dp_sleep_ms(int ms)
  *
  * Overflow is now LOUD and REFUSES the cell — see _il_dp_push / vfft_il_dp_plan.
  * Re-run the census after adding any axis. */
+/* tcut tile widths kept per (chain, engine) after the occupancy filter. The
+ * filter enumerates EVERY legal width and this bounds how many reach the
+ * clock — 3 keeps a cell's session small on a thermally noisy machine while
+ * still spanning the band. Raising it costs benchmark time, not correctness;
+ * the filter counts and reports whatever it drops either way. */
+#define VFFT_IL_DP_TILE_KEEP     3
+
 #ifndef VFFT_IL_DP_MAX_CAND               /* overridable so the overflow path
                                            * can be exercised by a probe      */
 #define VFFT_IL_DP_MAX_CAND      256      /* candidates per (N, ord)         */
@@ -205,6 +213,15 @@ typedef struct
     int    zroute;                           /* CASCADE engine: 0 = legacy
                                               * zsplit, 1 = ZTURN-S (zturn.h);
                                               * else 0                          */
+    int    zt_tw;                            /* CASCADE + zroute==1 only: tile
+                                              * WIDTH in complex points.
+                                              * 0 = UNTILED, which is both the
+                                              * default and the shipped
+                                              * behaviour, so a candidate that
+                                              * never sets it is today's plan.
+                                              * Widths are a ZTURN concept —
+                                              * zsplit has no tiled path — so
+                                              * this is always 0 when zroute==0. */
     double cost_ns;                          /* CASCADE: JOINT fwd+bwd ns/iter;
                                               * NATURAL routes: fwd ns/iter     */
 } vfft_il_cand_t;
@@ -356,6 +373,19 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
             b->zt = vfft_zturn2_create_chain(N, c->chain, c->nf);
             if (!b->zt) return -1;
             b->zt->t2q = c->t2q;             /* stf/stf2 — the searched pick  */
+            /* tcut WIDTH — the searched tile. 0 leaves the plan calloc-untiled.
+             * A width that the create fence rejects DROPS the candidate rather
+             * than falling back to untiled: an untiled arm benched under a
+             * tiled label would be recorded as "this width is no faster" when
+             * it never ran, which is the same false-negative the A/B harness
+             * had to be fixed for. */
+            if (c->zt_tw > 0
+                && !vfft_zturn2_set_tile_w(b->zt, 1, c->zt_tw, 0, 0))
+            {
+                vfft_zturn2_destroy(b->zt);
+                b->zt = NULL;
+                return -1;
+            }
             return 0;
         }
         b->zp = vfft_zsplit_create(N, c->chain, c->nf);
@@ -822,9 +852,29 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
                     if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
                 }
+                /* tcut WIDTHS for this chain, ZTURN engine only. The plan is
+                 * kept alive long enough to enumerate them, because legality
+                 * and the L1 cost are properties of (chain, D[], twiddle
+                 * layout) and live in zturn.h — re-deriving them here would be
+                 * a second copy that drifts, the same reason cascade legality
+                 * is delegated to the create rather than reimplemented. */
+                vfft_zt_tile_cand_t wk[VFFT_IL_DP_TILE_KEEP];
+                int nw = 0;
                 {
                     vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
-                    if (p) { eng_ok[1] = 1; vfft_zturn2_destroy(p); }
+                    if (p) {
+                        eng_ok[1] = 1;
+                        vfft_zt_tile_cand_t all[64];
+                        int dropped = 0, oob = 0;
+                        int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
+                        nw = vfft_zturn2_tile_filter(all, n, vfft_cpu_l1d_bytes(),
+                                                     VFFT_IL_DP_TILE_KEEP, wk, &oob);
+                        if (dropped)
+                            fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
+                                            "not fit the enumeration array\n",
+                                    N, dropped);
+                        vfft_zturn2_destroy(p);
+                    }
                 }
                 for (int rt = 0; rt < 2; rt++)
                 {
@@ -836,13 +886,22 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * cannot reach here with a last==4 chain.) */
                     const int nq =
                         (rt == 1 && chain[nf - 1] == 4) ? 1 : 2;
+                    /* Width axis: ZTURN only (rt==1) — zsplit has no tiled
+                     * path. Index -1 is the UNTILED candidate, which must stay
+                     * in the search: tiling is a per-cell verdict, not a
+                     * default, and 2048 measured a real +3.3% LOSS. Dropping
+                     * the untiled arm would make "tiled" unfalsifiable. */
+                    const int wlo = -1;
+                    const int whi = (rt == 1) ? nw - 1 : -1;
                     for (int q = 0; q < nq; q++)
+                    for (int wi = wlo; wi <= whi; wi++)
                     {
                         memset(&c, 0, sizeof c);
                         c.route = VFFT_K1_IL_CASCADE;
                         c.zroute = rt;
                         c.nf = nf;
                         c.t2q = q;
+                        c.zt_tw = (wi >= 0) ? (int)wk[wi].w : 0;
                         memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
                         _il_dp_push(s, &c);
                     }
@@ -1076,14 +1135,25 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         if (code)
         {
             if (scr->zroute)
+            {
                 /* ZTURN winner: tranche-2 route line. zs_t2q = the best
                  * legacy candidate's pick (the fallback route's terminator;
                  * 0 = the compiled default when no legacy candidate survived
                  * — a valid schedule either way, twins are bit-identical). */
-                fprintf(f, "%d 1 %d %d %d %.1f 1 %d\n",
+                fprintf(f, "%d 1 %d %d %d %.1f 1 %d",
                         N, VFFT_OOP_KIND_ZSPLIT,
                         (scr_leg && scr_leg->cost_ns < 1e17) ? scr_leg->t2q : 0,
                         code, scr->cost_ns, scr->t2q);
+                /* tcut width + THE CACHE IT WAS TUNED AGAINST. Emitted only
+                 * when a width actually won, so an untiled verdict re-banks
+                 * byte-identically to the pre-width format. The L1 stamp is
+                 * what lets the reader refuse this line on a machine with a
+                 * different cache instead of silently running a tile that no
+                 * longer fits (oop_wisdom.h). */
+                if (scr->zt_tw > 0)
+                    fprintf(f, " %d %d", scr->zt_tw, (int)vfft_cpu_l1d_bytes());
+                fprintf(f, "\n");
+            }
             else
                 fprintf(f, "%d 1 %d %d %d %.1f\n",
                         N, VFFT_OOP_KIND_ZSPLIT, scr->t2q, code, scr->cost_ns);
