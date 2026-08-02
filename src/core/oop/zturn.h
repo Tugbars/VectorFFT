@@ -78,6 +78,15 @@ VFFT_ZT_DECL(radix8_z_stf_r4_fwd_avx2)  VFFT_ZT_DECL(radix8_z_stf_r4_bwd_avx2)
 VFFT_ZT_DECL(radix8_z_stf2_r4_fwd_avx2) /* 2-quad unroll-and-jam stf twin
                                          * (fwd-only, mirrors sterm2's scope;
                                          * bit-identical to stf, gate-proven) */
+VFFT_ZT_DECL(radix8_z_stfn_r4_fwd_avx2) /* NATURAL-ORDER terminator kinds
+                                         * (natterm_spec.md): load-side rho
+                                         * table via the tw_im slot; stores
+                                         * contiguous ascending = natural
+                                         * interleaved. Emitted 2026-08-02,
+                                         * gated by zturn_stfn_gate.c.      */
+VFFT_ZT_DECL(radix8_z_stfn_r4_bwd_avx2)
+VFFT_ZT_DECL(radix4_z_stfn_r4_fwd_avx2)
+VFFT_ZT_DECL(radix4_z_stfn_r4_bwd_avx2)
 VFFT_ZT_DECL(radix4_z_stf_r4_fwd_avx2)  /* RADIX-4 terminator (last==4     */
 VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * 64-B record/section/group, OLs =
