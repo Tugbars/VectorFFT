@@ -54,8 +54,9 @@ int main(void)
         printf("  NOTE: sizing uses %ld KB, this core reports %ld KB — expected "
                "when the run is not pinned to a P-core.\n",
                L1 / 1024, cc->l1d_seen / 1024);
-    printf("\n  band = [%.0f%%, %.0f%%] of L1, target %.1f%%\n",
-           VFFT_ZT_OCC_LO * 100, VFFT_ZT_OCC_HI * 100, VFFT_ZT_OCC_TARGET * 100);
+    printf("\n  NO FILTER: every legal width listed below is benched by the\n"
+           "  calibrator. Occupancy is shown to EXPLAIN a result, never to\n"
+           "  select one (see the decision note in zturn.h, 2026-08-02).\n");
 
     for (size_t ci = 0; ci < sizeof CELLS / sizeof CELLS[0]; ci++) {
         const cell_t *c = &CELLS[ci];
@@ -76,15 +77,12 @@ int main(void)
                c->N, cs, ((long)c->N / 4) * 16 / 1024);
         printf("    %s\n", c->note);
 
-        vfft_zt_tile_cand_t all[64], keep[8];
+        vfft_zt_tile_cand_t all[64];
         int dropped = 0;
         int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
         if (dropped)
             printf("    *** %d candidates did not fit the array — raise it ***\n",
                    dropped);
-
-        int oob = 0;
-        int nk = vfft_zturn2_tile_filter(all, n, L1, 8, keep, &oob);
 
         printf("    %-9s %-5s %-6s %-4s %10s %10s %10s %8s  %s\n",
                "tile", "cut", "passes", "NT", "tile B", "twiddle B",
@@ -92,19 +90,19 @@ int main(void)
         for (int i = 0; i < n; i++) {
             const vfft_zt_tile_cand_t *k = &all[i];
             const double occ = 100.0 * (double)k->ws_bytes / (double)L1;
-            int kept = 0;
-            for (int j = 0; j < nk; j++) if (keep[j].w == k->w) kept = 1;
+            /* Annotation only. A width over ~100%% of L1 cannot stay resident,
+             * which EXPLAINS a weak result — it does not exclude the width from
+             * being measured. */
+            const char *fit = occ > 110.0 ? "over L1" : (occ < 40.0 ? "small" : "");
             /* mark the ladder rungs — the only widths reachable before today */
             int ladder = 0;
             for (int j = 0; j <= p->nf - 3; j++) if (p->D[j] == k->w) ladder = 1;
-            printf("    %6ldK   %-5d %-6d %-4ld %10ld %10ld %10ld %7.1f%%  %s%s\n",
+            printf("    %6ldK   %-5d %-6d %-4ld %10ld %10ld %10ld %7.1f%% %-8s%s\n",
                    k->tile_bytes / 1024, k->tcut, k->npass, k->nt,
-                   k->tile_bytes, k->tw_bytes, k->ws_bytes, occ,
-                   kept ? "KEEP" : "    ",
+                   k->tile_bytes, k->tw_bytes, k->ws_bytes, occ, fit,
                    ladder ? "  (ladder)" : "  (new — needs the width axis)");
         }
-        printf("    %d legal, %d out of band, %d handed to the calibrator\n",
-               n, oob, nk);
+        printf("    %d legal widths - ALL of them are benched\n", n);
         vfft_zturn2_destroy(p);
     }
 

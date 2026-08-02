@@ -215,6 +215,15 @@ python build_tuned/build.py --src build_tuned/benches/zturn_tile_census.c
 python build_tuned/exec_purity_audit.py
 ```
 
-Related: [05_calibrator_pipeline.md](05_calibrator_pipeline.md) (the split-engine
-pipeline this one is *not*), [06_lookup_pipeline.md](06_lookup_pipeline.md),
-[09_decisions.md](09_decisions.md).
+Related:
+
+- [../performance/zturn_cascade_tiling.md](../performance/zturn_cascade_tiling.md)
+  — **what a tile width *is***: the loop interchange, why the reorder is legal,
+  why the working set is ~2× the tile, and the measurements. Read that first if
+  the `zt_tw` field here is the unfamiliar part.
+- [../roadmap/cascade_load_path_restructure.md](../roadmap/cascade_load_path_restructure.md)
+  — the ZTURN restructure campaign this calibrator serves.
+- [05_calibrator_pipeline.md](05_calibrator_pipeline.md) — the split-engine
+  pipeline this one is *not*.
+- [06_lookup_pipeline.md](06_lookup_pipeline.md),
+  [09_decisions.md](09_decisions.md).
