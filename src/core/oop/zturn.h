@@ -286,6 +286,118 @@ static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
                                   (tiled == 1) ? p->D[tcut] : 0, tfuse, thonest);
 }
 
+/* ══════════════════════ TILE-WIDTH CANDIDATES (planning only) ═════════════
+ * 🔴 NOTHING BELOW MAY BE CALLED FROM AN EXECUTE PATH. These are search
+ * inputs; the execute nests read p->tw and nothing else.
+ *
+ * Enumeration and POLICY are deliberately separate. The enumerator emits EVERY
+ * legal width with what it costs; the filter applies an occupancy band on top.
+ * The reason is falsifiability: the "two thirds of L1" reading rests on two
+ * coincident data points (4096 and 16384/4^7 both landed at 66.5% and were the
+ * two fastest cells measured), and the 16384 banked-chain arm is designed to
+ * stress it. If that reading is wrong, only the constants below change — the
+ * candidate set does not. Detail: tcut_campaign/RESULTS_AND_PLAN.md §2.5/§5.0.
+ */
+
+/* Twiddle records the TILED passes read, per tile. Dominated by the LAST tiled
+ * pass — narrowest groups, so the most records per byte of data — and for an
+ * all-radix-4 chain the series sums to almost exactly one tile, which is why
+ * the L1 working set runs to about TWICE the tile and not once.
+ * Record size is (chain[s]-1)*8 doubles per group, the same layout
+ * _vfft_zt_tw_periodic asserts; groups inside a tile = w / D[s-1]. */
+static inline long _vfft_zt_tw_bytes(const vfft_zturn2_plan_t *p, int tcut, long w)
+{
+    long b = 0;
+    for (int s = tcut + 1; s <= p->nf - 2; s++)
+        b += (w / p->D[s - 1]) * (long)(p->chain[s] - 1) * 64;
+    return b;
+}
+
+typedef struct {
+    long w;            /* tile width, complex points                        */
+    int  tcut;         /* DERIVED from w                                    */
+    int  npass;        /* mid passes fused = nf-2-tcut                      */
+    long nt;           /* tiles per section = SEC / w                       */
+    long tile_bytes;   /* 16*w                                              */
+    long tw_bytes;     /* twiddle window per tile                           */
+    long ws_bytes;     /* tile + twiddles = what must stay in L1            */
+} vfft_zt_tile_cand_t;
+
+/* Every legal width, ascending. Legality is NOT re-implemented here — it is
+ * asked of _vfft_zt_tile_legal_w, the same predicate the setter uses, so the
+ * two cannot drift. Returns the count; *dropped counts anything the caller's
+ * array could not hold (never silent). */
+static inline int vfft_zturn2_tile_candidates(const vfft_zturn2_plan_t *p,
+                                              vfft_zt_tile_cand_t *out,
+                                              int max, int *dropped)
+{
+    int n = 0;
+    if (dropped) *dropped = 0;
+    if (!p || p->nf < 3) return 0;
+    const long SEC = (long)p->N / 4;
+
+    for (long w = 1; w <= SEC; w++) {
+        if (SEC % w) continue;                   /* whole tiles only        */
+        int tcut = 0;
+        if (!_vfft_zt_tile_legal_w(p, 1, w, 0, &tcut)) continue;
+        if (n >= max) { if (dropped) (*dropped)++; continue; }
+        vfft_zt_tile_cand_t *c = &out[n++];
+        c->w = w;
+        c->tcut = tcut;
+        c->npass = p->nf - 2 - tcut;
+        c->nt = SEC / w;
+        c->tile_bytes = 16 * w;
+        c->tw_bytes = _vfft_zt_tw_bytes(p, tcut, w);
+        c->ws_bytes = c->tile_bytes + c->tw_bytes;
+    }
+    return n;
+}
+
+/* ---- POLICY. Change these, not the enumerator, if the reading moves. ---- */
+#define VFFT_ZT_OCC_TARGET 0.665  /* where both fastest measured cells landed */
+#define VFFT_ZT_OCC_LO     0.40   /* below: residency held, too little done   */
+#define VFFT_ZT_OCC_HI     1.10   /* above: nothing stays resident at all.
+                                   * Kept >1.0 on purpose — 8192 measured its
+                                   * best at 99.9%, so a tighter ceiling would
+                                   * have excluded a winner. */
+
+/* Keep candidates inside the occupancy band, best-first by distance from the
+ * target, at most keep_max. Everything rejected is COUNTED — a filter that
+ * quietly narrows the search is the same failure the DP candidate cap had. */
+static inline int vfft_zturn2_tile_filter(const vfft_zt_tile_cand_t *in, int n,
+                                          long l1_bytes, int keep_max,
+                                          vfft_zt_tile_cand_t *out,
+                                          int *n_out_of_band)
+{
+    int m = 0;
+    if (n_out_of_band) *n_out_of_band = 0;
+    if (l1_bytes <= 0) return 0;
+
+    for (int i = 0; i < n; i++) {
+        const double occ = (double)in[i].ws_bytes / (double)l1_bytes;
+        if (occ < VFFT_ZT_OCC_LO || occ > VFFT_ZT_OCC_HI) {
+            if (n_out_of_band) (*n_out_of_band)++;
+            continue;
+        }
+        if (m < keep_max) out[m++] = in[i];
+        else {
+            /* full: displace the current worst if this one is closer */
+            int worst = 0;
+            double dw = -1.0;
+            for (int j = 0; j < m; j++) {
+                double d = (double)out[j].ws_bytes / (double)l1_bytes;
+                d = d > VFFT_ZT_OCC_TARGET ? d - VFFT_ZT_OCC_TARGET
+                                           : VFFT_ZT_OCC_TARGET - d;
+                if (d > dw) { dw = d; worst = j; }
+            }
+            double d = occ > VFFT_ZT_OCC_TARGET ? occ - VFFT_ZT_OCC_TARGET
+                                                : VFFT_ZT_OCC_TARGET - occ;
+            if (d < dw) out[worst] = in[i];
+        }
+    }
+    return m;
+}
+
 /* Env gate, mirroring the VFFT_NO_ZTURN / VFFT_FORCE_ZROUTE style (read once
  * at CREATE so both directions follow one plan field; no execute-path getenv).
  *

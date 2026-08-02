@@ -119,8 +119,41 @@ static void env_set(const char *k, const char *v)
     putenv(s);
 }
 
-typedef struct { const char *label, *tcut, *tw; int bundle; vfft_plan h;
-                 int engaged; } arm_t;
+/* 🔴 ENGAGEMENT TAP. Without it a REFUSED arm falls back to the untiled driver
+ * and reads as ~A0 — which would be reported as "this width gives no win" when
+ * in truth it never ran. The correctness gate already learned this lesson; a
+ * PERFORMANCE harness needs it just as much, and more so now that widths can be
+ * illegal for a given chain. */
+static char g_errpath[1024];
+static long g_errpos = 0;
+static int err_tap_open(const char *dir)
+{
+    snprintf(g_errpath, sizeof g_errpath, "%s/_tcut_ab_stderr.log", dir);
+    if (!freopen(g_errpath, "w", stderr)) return 0;
+    setvbuf(stderr, NULL, _IONBF, 0);
+    g_errpos = 0;
+    return 1;
+}
+static const char *err_tap_read(void)
+{
+    static char buf[8192];
+    buf[0] = 0;
+    fflush(stderr);
+    FILE *f = fopen(g_errpath, "rb");
+    if (!f) return buf;
+    if (fseek(f, g_errpos, SEEK_SET) == 0) {
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        buf[n] = 0;
+        g_errpos += (long)n;
+    }
+    fclose(f);
+    return buf;
+}
+
+typedef struct { const char *label, *tcut, *tw, *w; int bundle; vfft_plan h;
+                 int engaged;                 /* create succeeded            */
+                 int tiled, tcut_got, refused;
+                 long wcx, NT; } arm_t;
 
 int main(int argc, char **argv)
 {
@@ -141,6 +174,9 @@ int main(int argc, char **argv)
     SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)1 << core);
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 #endif
+    if (!err_tap_open(wisdir))
+        printf("note: stderr tap failed — engagement cannot be verified
+");
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     if (!W) { printf("vfft_wisdom_load(%s) FAILED\n", wisdir); return 2; }
     vfft_wisdom *W2 = wisdir2 ? vfft_wisdom_load(wisdir2) : NULL;
@@ -154,31 +190,39 @@ int main(int argc, char **argv)
      * same run as the effect. One A/A arm can only ever give a point estimate
      * of that floor. */
     arm_t arms[] = {
-        {"A0 off      ", "off", "", 0},
-        {"A0' off (A/A)", "off", "", 0},
-        {"A0'' off(A/A)", "off", "", 0},
-        {"A1 sect-split", "a1",  "", 0},     /* table effect, A0 plane order   */
-        {"A2 tcut=0   ", "0",   "", 0},
-        {"A2 tcut=1   ", "1",   "", 0},
-        {"A2 tcut=2   ", "2",   "", 0},
-        {"A2 tcut=0:f ", "0:1", "", 0},
-        {"A1 honest tw ", "a1",  "honest", 0}, /* F1's twiddle discriminator   */
+        {"A0 off      ", "off", "", "", 0},
+        {"A0' off (A/A)", "off", "", "", 0},
+        {"A0'' off(A/A)", "off", "", "", 0},
+        {"A1 sect-split", "a1",  "", "", 0},     /* table effect, A0 plane order   */
+        {"A2 tcut=0   ", "0",   "", "", 0},
+        {"A2 tcut=1   ", "1",   "", "", 0},
+        {"A2 tcut=2   ", "2",   "", "", 0},
+        {"A2 tcut=0:f ", "0:1", "", "", 0},
+        {"A1 honest tw ", "a1",  "honest", "", 0}, /* F1's twiddle discriminator   */
         /* CREATION-ORDER controls, created LAST. Every plan owns its own
          * `plane`, so "allocated later" is a candidate explanation for any
          * delta. If it were the driver, this late untiled arm would look as
          * fast as the tiled ones. It must read ~A0. */
-        {"A0''' off late", "off", "", 0},
-        {"A2 tcut=0 late", "0",   "", 0},
+        {"A0''' off late", "off", "", "", 0},
+        {"A2 tcut=0 late", "0",   "", "", 0},
         /* SECOND CHAIN (--wisdir2), same run, same buffers. §8 R4: tcut changes
          * the chain objective function, so the chain that wins untiled is not
          * necessarily the chain that wins tiled — and comparing chains ACROSS
          * processes is exactly the cross-session comparison this machine
          * forbids. These arms make the joint (chain x tcut) comparison a
          * within-run one. Skipped when --wisdir2 is absent. */
-        {"B0 chain2 off", "off", "", 1},
-        {"B2 chain2 t=0", "0",   "", 1},
-        {"B2 chain2 t=1", "1",   "", 1},
-        {"B2 chain2 t=2", "2",   "", 1},
+        {"B0 chain2 off", "off", "", "", 1},
+        {"B2 chain2 t=0", "0",   "", "", 1},
+        {"B2 chain2 t=1", "1",   "", "", 1},
+        {"B2 chain2 t=2", "2",   "", "", 1},
+        /* ---- EXPLICIT WIDTHS (VFFT_TCUT_W), the axis the chain ladder cannot
+         * reach. The cut is DERIVED from the width. Illegal widths for this
+         * cell are REFUSED at create and reported as such, never timed as if
+         * they had run. tcut_campaign §2.5/§3a. */
+        {"W= 8KB      ", "0", "", "8",  0},
+        {"W=16KB      ", "0", "", "16", 0},   /* MKL's tile */
+        {"W=32KB      ", "0", "", "32", 0},
+        {"W=64KB      ", "0", "", "64", 0},
     };
     const int na = (int)(sizeof arms / sizeof arms[0]);
 
@@ -187,7 +231,9 @@ int main(int argc, char **argv)
         if (arms[a].bundle && !W2) { arms[a].engaged = 0; arms[a].h = NULL; continue; }
         env_set("VFFT_TCUT", arms[a].tcut);
         env_set("VFFT_TCUT_TW", arms[a].tw);
-        env_set("VFFT_TCUT_VERBOSE", "");
+        env_set("VFFT_TCUT_W",  arms[a].w);
+        env_set("VFFT_TCUT_VERBOSE", "1");
+        (void)err_tap_read();                 /* drop anything queued */
         env_set("VFFT_FORCE_ZROUTE", "zturn");
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
@@ -197,6 +243,18 @@ int main(int argc, char **argv)
         cfg.nthreads = 1; cfg.wisdom = arms[a].bundle ? W2 : W;
         arms[a].h = vfft_create(&cfg);
         arms[a].engaged = arms[a].h != NULL;
+        {
+            const char *log = err_tap_read();
+            const char *q = strstr(log, "[tcut]");
+            char form[16];
+            if (q) {
+                if (strstr(q, "REFUSED")) arms[a].refused = 1;
+                else sscanf(q, "[tcut] N=%*d nf=%*d tiled=%d tcut=%d tfuse=%*d "
+                               "tw=%15s w=%ld NT=%ld",
+                            &arms[a].tiled, &arms[a].tcut_got, form,
+                            &arms[a].wcx, &arms[a].NT);
+            }
+        }
     }
 
     /* ONE shared arena: identical input and output addresses for every arm. */
@@ -226,7 +284,7 @@ int main(int argc, char **argv)
     for (int r = 0; r < rounds; r++) {
         for (int k = 0; k < na; k++) {
             const int a = (k + r) % na;            /* ROTATE the arm order */
-            if (!arms[a].engaged) continue;
+            if (!arms[a].engaged || arms[a].refused) continue;
             cachebust();
             pace(cool_ms);
             double ns;
@@ -248,7 +306,7 @@ int main(int argc, char **argv)
 
     /* medians + within-round sign consistency against A0 and against A1 */
     double *tmp = (double *)malloc(sizeof(double) * (size_t)rounds);
-    double m[32];
+    double m[64];
     for (int a = 0; a < na; a++) {
         if (!arms[a].engaged) { m[a] = 0; continue; }
         memcpy(tmp, smp + (size_t)a * rounds, sizeof(double) * (size_t)rounds);
