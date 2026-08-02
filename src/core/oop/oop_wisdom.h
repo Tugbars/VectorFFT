@@ -57,6 +57,29 @@ typedef struct {
      * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
      * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
     int    cc_chain;
+    /* kind 4, tcut WIDTH axis (2026-08-02). OPTIONAL trailing pair AFTER
+     * "zs_route zt_t2q":
+     *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q [zt_tw zt_l1]]
+     *
+     * 🔴 zt_tw == 0 MEANS UNTILED, and that is the whole back-compat story:
+     * every line banked before this axis existed parses with zt_tw = 0 and
+     * therefore replays as exactly today's untiled driver. There is no
+     * sentinel to forget.
+     *
+     * zt_tw = tile width in COMPLEX POINTS (not bytes, not a cut index — the
+     * width is the input and the cut is derived from it, see zturn.h).
+     *
+     * 🔴 zt_l1 = the L1 DATA CACHE SIZE IN BYTES the width was tuned against,
+     * and it is not decoration. This is the first CACHE-OCCUPANCY quantity the
+     * library banks. A chain or a radix is a property of the transform and
+     * ports anywhere; a width is a property of one machine's L1, and on the
+     * wrong machine it fails as a mild slowdown rather than an error — the
+     * worst thing to inherit silently. Replay compares it
+     * (vfft_cpu_l1d_matches) and falls back to UNTILED on a mismatch rather
+     * than using a width tuned for a cache that isn't there. Relevant today:
+     * this CPU is hybrid, P-core L1d 48 KB vs E-core 32 KB. */
+    int    zt_tw;
+    int    zt_l1;
     /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
      * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
      *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]
@@ -150,6 +173,17 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
                 e->zs_route = atoi(tok);
                 tok = strtok(NULL, " \t\n\r");
                 e->zt_t2q = tok ? atoi(tok) : 0;
+                /* tcut width axis: OPTIONAL pair after zt_t2q. Absent -> both
+                 * stay 0 -> zt_tw == 0 -> UNTILED, which is what every line
+                 * banked before this axis existed must keep meaning. */
+                if (tok) {
+                    tok = strtok(NULL, " \t\n\r");
+                    if (tok) {
+                        e->zt_tw = atoi(tok);
+                        tok = strtok(NULL, " \t\n\r");
+                        e->zt_l1 = tok ? atoi(tok) : 0;
+                    }
+                }
             }
         }
         w->count++;
@@ -314,8 +348,16 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
     /* kind-4 route axis: trailing "zs_route zt_t2q" AFTER ns, and only for
      * route!=0 — a legacy verdict re-banks in the exact pre-route format
      * (old readers, diffs, and banked files stay byte-stable). */
-    if (e->kind == VFFT_OOP_KIND_ZSPLIT && e->zs_route)
+    if (e->kind == VFFT_OOP_KIND_ZSPLIT && e->zs_route) {
         fprintf(f, " %d %d", e->zs_route, e->zt_t2q);
+        /* Width pair only when a width was actually banked, so a verdict that
+         * did not use tiling re-banks byte-identically to the pre-width format.
+         * The width is a ZTURN-only concept, so it can never appear without
+         * zs_route — that is why it nests inside this branch rather than
+         * beside it. */
+        if (e->zt_tw > 0)
+            fprintf(f, " %d %d", e->zt_tw, e->zt_l1);
+    }
     fprintf(f, "\n");
 }
 

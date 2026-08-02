@@ -214,6 +214,13 @@ int main(int argc, char **argv)
         {"B2 chain2 t=0", "0",   "", "", 1},
         {"B2 chain2 t=1", "1",   "", "", 1},
         {"B2 chain2 t=2", "2",   "", "", 1},
+        /* chain-2 WIDTH arms: the joint (chain x width) comparison has to be a
+         * WITHIN-RUN one — this machine forbids cross-session comparison, and
+         * tcut changes the chain objective function, so the chain that wins
+         * untiled is not necessarily the one that wins tiled. */
+        {"B W=16KB     ", "0", "", "16", 1},
+        {"B W=32KB     ", "0", "", "32", 1},
+        {"B W=16KB(dup)", "0", "", "16", 1},
         /* ---- EXPLICIT WIDTHS (VFFT_TCUT_W), the axis the chain ladder cannot
          * reach. The cut is DERIVED from the width. Illegal widths for this
          * cell are REFUSED at create and reported as such, never timed as if
@@ -322,10 +329,19 @@ int main(int argc, char **argv)
         m[a] = med(tmp, rounds);
     }
     const int IA1 = 3;                          /* index of the A1 arm */
-    printf("\n  %-14s %10s %7s %9s %8s %9s %8s\n", "arm", "median ns",
-           "p10-p90", "vs A0", "sign/A0", "vs A1", "sign/A1");
+    printf("\n  %-14s %-17s %10s %7s %9s %8s %9s %8s\n", "arm", "ENGAGED AS",
+           "median ns", "p10-p90", "vs A0", "sign/A0", "vs A1", "sign/A1");
     for (int a = 0; a < na; a++) {
         if (!arms[a].engaged) { printf("  %-14s   (create failed)\n", arms[a].label); continue; }
+        /* 🔴 A refused arm must NEVER reach the numeric columns. It was not
+         * timed, so its median is 0 and the ratio prints as a spurious -100%.
+         * Worse, had it been timed it would have run UNTILED and read as a
+         * null result — "this width does not help" when it never ran at all. */
+        if (arms[a].refused) {
+            printf("  %-14s %-17s  REFUSED at create: illegal width for this "
+                   "chain. NOT timed.\n", arms[a].label, "-");
+            continue;
+        }
         int f0 = 0, n0 = 0, f1 = 0, n1 = 0;
         for (int r = 0; r < rounds; r++) {
             double v = smp[(size_t)a * rounds + r];
@@ -338,8 +354,19 @@ int main(int argc, char **argv)
         qsort(tmp, (size_t)rounds, sizeof(double), dcmp);
         double spread = 100.0 * (tmp[(int)(0.9 * (rounds - 1))]
                                  - tmp[(int)(0.1 * (rounds - 1))]) / m[a];
-        printf("  %-14s %10.1f %6.1f%% %+8.2f%% %6d/%-3d %+8.2f%% %6d/%-3d\n",
-               arms[a].label, m[a], spread,
+        /* Print the plan the arm ACTUALLY engaged, not the label it was given.
+         * Arms with different labels can engage identical plans (W=8KB and
+         * tcut=1 are the same w=512 on most chains) — those pairs are the only
+         * honest same-plan noise floor this harness has, and they are invisible
+         * unless the geometry is shown. */
+        char eng[20];
+        if (arms[a].tiled == 1)
+            snprintf(eng, sizeof eng, "t=%d w=%ld NT=%ld",
+                     arms[a].tcut_got, arms[a].wcx, arms[a].NT);
+        else if (arms[a].tiled == 2) snprintf(eng, sizeof eng, "a1 sect-split");
+        else                         snprintf(eng, sizeof eng, "UNTILED");
+        printf("  %-14s %-17s %10.1f %6.1f%% %+8.2f%% %6d/%-3d %+8.2f%% %6d/%-3d\n",
+               arms[a].label, eng, m[a], spread,
                100.0 * (m[a] / m[0] - 1.0), f0, n0,
                100.0 * (m[a] / m[IA1] - 1.0), f1, n1);
     }
