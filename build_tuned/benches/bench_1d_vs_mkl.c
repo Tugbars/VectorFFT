@@ -413,6 +413,9 @@ static void measure_ab(double *vns_out, double *mns_out,
  * storage is the batched paths' contract, not K=1 z's; zsplit_api_gate.c
  * precedent).
  * ════════════════════════════════════════════════════════════════════════ */
+static int g_k1zip = 0;                   /* --k1zip: K=1 kind-4 cells IN-PLACE
+                                           * (both engines) — the apples-to-
+                                           * apples in-place interleaved cell */
 static vfft_oop_wisdom_t g_k1z_oopw;      /* shipped-reader view of the positional wisdom file */
 static int g_k1z_oopw_loaded = 0;
 static const char *g_k1z_wpath = NULL;
@@ -465,8 +468,13 @@ static vfft_wisdom *k1z_bundle(void)
 
 static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
 {
+    /* --k1zip: aliased interleaved form (S, NULL, S, NULL) on the evolving
+     * buffer — mirrors the MKL in-place arm's discipline exactly. */
+    if (g_k1zip)
+        memcpy(S, z0, 2 * total * sizeof(double));
     for (int w = 0; w < 10; w++)
-        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
+                : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -475,7 +483,8 @@ static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
             pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
+                    : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -486,10 +495,13 @@ static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
 #ifdef VFFT_HAS_MKL
 static double k1z_time_mkl(int N, const double *z0, size_t total)
 {
+    /* --k1zip: DFTI_INPLACE, single-buffer compute. Timing loops run on the
+     * evolving buffer (the dataflow is data-independent) — same discipline as
+     * the vfft in-place arm, so neither engine pays a refill in the loop. */
     DFTI_DESCRIPTOR_HANDLE d = NULL;
     if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)N) != DFTI_NO_ERROR)
         return 0;
-    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_PLACEMENT, g_k1zip ? DFTI_INPLACE : DFTI_NOT_INPLACE);
     if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
     {
         DftiFreeDescriptor(&d);
@@ -498,7 +510,7 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
     memcpy(zi, z0, 2 * total * sizeof(double));
     for (int w = 0; w < 10; w++)
-        DftiComputeForward(d, zi, zo);
+        g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -507,7 +519,7 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
             pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            DftiComputeForward(d, zi, zo);
+            g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
@@ -547,7 +559,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     vfft_config_t cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.transform = VFFT_C2C;
-    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.placement = g_k1zip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_MEASURE;
     cfg.dims = 1;
     cfg.n[0] = N;
@@ -569,9 +581,19 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
 
-    /* roundtrip gate through the API (matched-permutation: bwd inverts fwd) */
-    vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
-    vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+    /* roundtrip gate through the API (matched-permutation: bwd inverts fwd).
+     * --k1zip: aliased both legs — the rt buffer carries the round trip. */
+    if (g_k1zip)
+    {
+        memcpy(rt, z0, 2 * total * sizeof(double));
+        vfft_execute(h, VFFT_FORWARD, rt, NULL, rt, NULL);
+        vfft_execute(h, VFFT_BACKWARD, rt, NULL, rt, NULL);
+    }
+    else
+    {
+        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        vfft_execute(h, VFFT_BACKWARD, S, NULL, rt, NULL);
+    }
     double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
     for (size_t i = 0; i < 2 * total; i++)
     {
@@ -1961,6 +1983,14 @@ int main(int argc, char **argv)
             pad = 1;       /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
         else if (strcmp(argv[1], "--padr2c") == 0)
             padr2c = 1;    /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
+        else if (strcmp(argv[1], "--k1zip") == 0)
+        {
+            /* K=1 kind-4 cells IN-PLACE on BOTH engines — the true
+             * apples-to-apples in-place interleaved cell (Phase A4,
+             * docs/roadmap/cascade_natural_inplace_plan.md). Distinct default
+             * CSV below so a probe can never overwrite a banked baseline. */
+            g_k1zip = 1;
+        }
         else if (strncmp(argv[1], "--tcut=", 7) == 0)
         {
             /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
@@ -2000,6 +2030,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : g_k1zip           ? "vfft_perf_tuned_1d_k1zip.csv"
                       : tcut_mode         ? "vfft_perf_tuned_1d_tcut.csv"
                       : (r2c && mt)       ? "vfft_perf_tuned_r2c_mt.csv"
                       : r2c               ? "vfft_perf_tuned_r2c.csv"
