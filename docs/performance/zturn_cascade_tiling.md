@@ -181,13 +181,16 @@ is the *existing* ladder option. The reason is visible in the model: 32 KB fuses
 > 🔴 **Occupancy only ranks candidates when passes-fused is held constant.**
 > At 16384 all three widths fuse three passes and occupancy shows a clean
 > interior optimum. At 8192 the pass count differs and dominates. A
-> target-occupancy heuristic picks wrong at 8192 — which is why the occupancy
-> band is a **filter** and the measured time is the **chooser**.
+> target-occupancy heuristic picks wrong at 8192 — which is why occupancy is a
+> **diagnostic** and the measured time is the only **chooser**: the calibrator
+> benches **every legal width** (an earlier occupancy filter was removed — an
+> excluded width leaves no trace, so a wrong filter would be undetectable from
+> its own output; see `docs/wisdom/10_zturn_calibration_flow.md` §3).
 
 **N=2048 shows no win** (+3.3%, rising monotonically as tiles narrow — the
-per-call cost on a plane already L1-resident). The occupancy model independently
-returns *zero* in-band widths there, so the calibrator spends no benchmark time
-on it.
+per-call cost on a plane already L1-resident). The calibrator benches every
+legal width there too and banks **untiled by measurement** — the verdict is
+earned per cell, never assumed.
 
 ---
 
@@ -221,6 +224,27 @@ Reasoned in isolation, point 2 favours us — and MKL is the faster engine, so t
 model is missing a term. That gap is the argument for **building both and racing
 them**, once tiling itself is settled. Racing them untiled measures the wrong
 thing: tiling is what makes orientation matter.
+
+---
+
+## 6.1 Through the front door — the closing state
+
+Benchmark-derived, this host, 2026-08-02, warm, one run per cell/arm
+(indicative until repeated on a cool machine; each vs-MKL ratio is same-run).
+Canonical bench (`bench_1d_vs_mkl.c`), cell-per-process, core 2, widths arriving
+**via wisdom replay only — zero environment variables**, exactly as a user's
+`vfft_create` gets them. Ratio > 1 = vfft faster than MKL:
+
+| N | pre-width baseline | same chains, tiling off | **tiled via banked wisdom** |
+|---|---|---|---|
+| 2048 | 1.05× | 1.15× | 1.07× (banked untiled) |
+| 4096 | 0.80× | 0.84× | **0.95×** |
+| 8192 | 0.78× | 0.81× | **1.01× — beats MKL** |
+| 16384 | 0.88× | 0.82× | **1.03× — beats MKL** |
+
+The front-door tiling deltas (−17…−21% against the same chains untiled)
+reproduce the internal A/B. At campaign close the standing was
+1.07/0.85/0.89/1.03; with banked tile widths it is **1.07/0.95/1.01/1.03**.
 
 ---
 
