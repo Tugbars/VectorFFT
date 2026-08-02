@@ -1861,6 +1861,217 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
 
+/* ── K=1 SCRAMBLED cascade: WISDOM-HIT replay — THE one definition ──────────
+ *
+ * Resolves the banked kind-4 verdict (route + chain + t2q + tcut width with
+ * its L1 fence and the env-beats-wisdom rule) into exactly one live cascade
+ * plan. Shared by the OOP create branch AND the in-place front door — the
+ * calibrate_zchain incident (two writers, one taught about a new field, a
+ * tiled winner banked as untiled with nothing complaining) is why replay
+ * semantics live in ONE place. Returns 1 with outputs set on a full hit;
+ * 0 (outputs untouched) on miss/recalibrate/create-failure — the caller
+ * decides what a miss means (OOP: race + bank; in-place: classic path).
+ * PLANNING side only; the exec purity audit watches this. */
+static int _k1z_wisdom_replay(const vfft_config_t *cfg,
+                              struct vfft_wisdom_s *W, int N,
+                              vfft_zsplit_plan_t **zs_out,
+                              vfft_zturn2_plan_t **zt_out, int *zroute_out)
+{
+    vfft_zsplit_plan_t *zs_pending = NULL;
+    vfft_zturn2_plan_t *zt_pending = NULL;
+    int zroute_pending = 0;
+    int zch[VFFT_ZSPLIT_MAX_NF];
+    int znf = 0;
+    const vfft_oop_wisdom_entry_t *ze =
+        vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
+    int ze_hit = (ze && !cfg->recalibrate);
+    /* Route forcing, read at CREATE (both directions follow — the
+     * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
+     * switch; VFFT_NO_IL2P precedent) and wins over everything;
+     * VFFT_FORCE_ZROUTE=legacy|zturn (or 0|1) is the gate/test hook
+     * (VFFT_IL_PAD precedent). Unforced DEFAULT on a MISS is ZTURN
+     * (2026-07-27 cutover); on a HIT the banked route verdict is
+     * honored, whichever way it points. */
+    int zforce = 0; /* 0 = none, 1 = legacy, 2 = zturn */
+    {
+        const char *fz = getenv("VFFT_FORCE_ZROUTE");
+        if (fz && fz[0])
+            zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
+                         ? 2
+                         : 1;
+        if (getenv("VFFT_NO_ZTURN"))
+            zforce = 1;
+    }
+    /* The BANKED chain survives zsplit's rejection: a route-1 line
+     * may carry a last==4 chain (the ZTURN radix-4 terminator) that
+     * ONLY vfft_zturn2_create_chain can build — zsplit's create
+     * rejects it (last==8-only), which previously zeroed znf and
+     * OVERWROTE zch with the legacy default before the zturn replay
+     * ever saw the banked bytes. zwch/zwnf keep them; zch/znf stay
+     * the LEGACY arm's working copy (validator-is-the-law, per arm). */
+    int zwch[VFFT_ZSPLIT_MAX_NF];
+    int zwnf = 0;
+    if (ze_hit && ze->cc_chain)
+        zwnf = vfft_k1_cc_chain_decode(ze->cc_chain, zwch);
+    if (zwnf)
+    {
+        memcpy(zch, zwch, sizeof zch);
+        znf = zwnf;
+        zs_pending = vfft_zsplit_create(N, zch, znf);
+        if (!zs_pending)
+            znf = 0; /* not legacy-legal (e.g. last==4): fall back */
+    }
+    if (!zs_pending)
+    {
+        znf = vfft_zsplit_default_chain(N, zch);
+        if (znf)
+            zs_pending = vfft_zsplit_create(N, zch, znf);
+    }
+    if (!ze_hit)
+    {
+        if (zs_pending)
+            vfft_zsplit_destroy(zs_pending);
+        return 0;
+    }
+    /* 🔴 zs_pending MAY BE NULL past this point, and that is a FIX, not an
+     * accident (found 2026-08-02 by the replay probe): a route-1 line can
+     * carry a legacy-illegal chain (last==4) at an N with NO
+     * vfft_zsplit_default_chain entry (32768+). The old code required the
+     * legacy fallback plan to exist before it would even ATTEMPT the zturn
+     * replay, so the whole cascade silently dropped to the classic path —
+     * at 32768 that served ~394us where the cascade serves ~44us, and the
+     * bench labeled the row with the banked chain it never ran. A banked
+     * ZTURN verdict must be replayable WITHOUT a legacy escort; the only
+     * cost is that a later zturn-create failure then has no cascade
+     * fallback (classic path, same as before this feature existed). */
+    /* pure read: honor route + CHAIN + the winning route's
+     * pick. cc_chain is the WINNING route's chain (Phase-5
+     * planner tranche: dp_planner_il.h's route axis banks it
+     * that way), so a route-1 line replays its chain through
+     * vfft_zturn2_create_chain. Old race-banked route lines
+     * carried the legacy default — which IS the chain zturn
+     * shipped on, so replaying it is behavior-identical. A
+     * fence-invalid banked chain (hand-edited / stale) falls
+     * back to the calibrated-default create — skipped, never
+     * force-fit (and zch/znf already fell back to the default
+     * chain above if zsplit rejected it too). */
+    if (zs_pending)
+        zs_pending->t2q = ze->zs_t2q ? 1 : 0;
+    if (!zs_pending && !((ze->zs_route == 1 && zforce != 1) || zforce == 2))
+        return 0;   /* legacy verdict with no buildable legacy plan */
+    if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
+    {
+        /* replay the BANKED chain (zwch — survives a legacy
+         * rejection above, e.g. a last==4 chain), not the
+         * legacy arm's working copy */
+        if (zwnf)
+            zt_pending = vfft_zturn2_create_chain(N, zwch, zwnf);
+        if (!zt_pending)
+            zt_pending = vfft_zturn2_create(N);
+    }
+    if (zt_pending)
+    {
+        zt_pending->t2q = ze->zt_t2q ? 1 : 0;
+        zroute_pending = 1;
+        /* tcut WIDTH replay. Absent field (zt_tw == 0) leaves
+         * the plan calloc-untiled, i.e. exactly today's driver.
+         *
+         * 🔴 The banked width is only valid on the cache it was
+         * tuned against. A width tuned on a 48 KB P-core and
+         * replayed on a 32 KB E-core overshoots by 50%, and
+         * overshoot is the failure mode that costs the whole
+         * benefit at once instead of degrading. So a mismatch
+         * means UNTILED (safe, today's behaviour) and a loud
+         * line — never "use it anyway". */
+        /* 🔴 EXPLICIT ENV BEATS WISDOM — same convention as
+         * VFFT_FORCE_ZROUTE / VFFT_NO_ZTURN. If VFFT_TCUT is
+         * set to ANYTHING (including "off"), the env gate's
+         * verdict stands and the banked width is NOT applied.
+         * Without this, `bench_1d_vs_mkl --tcut=off` against a
+         * width-carrying wisdir would silently run TILED and
+         * every off-vs-tiled A/B would compare tiled vs tiled
+         * and read ~0%%. An arm that is not what its label says
+         * is the exact failure class the engagement taps were
+         * built to catch — this closes it at the source. */
+        const char *tcenv = getenv("VFFT_TCUT");
+        if (ze->zt_tw > 0 && tcenv && tcenv[0])
+        {
+            if (getenv("VFFT_TCUT_VERBOSE"))
+                fprintf(stderr,
+                        "[tcut] N=%d: banked width %d cplx "
+                        "SUPPRESSED by explicit VFFT_TCUT=%s "
+                        "(env override beats wisdom)\n",
+                        N, ze->zt_tw, tcenv);
+        }
+        else if (ze->zt_tw > 0)
+        {
+            if (!vfft_cpu_l1d_matches(ze->zt_l1))
+                fprintf(stderr,
+                        "[tcut] N=%d: banked width %d cplx was "
+                        "tuned for L1d=%d B, this machine has "
+                        "%ld B -> running UNTILED, re-measure "
+                        "this cell\n",
+                        N, ze->zt_tw, ze->zt_l1,
+                        vfft_cpu_l1d_bytes());
+            else if (!vfft_zturn2_set_tile_w(zt_pending, 1,
+                                            ze->zt_tw, 0, 0))
+                fprintf(stderr,
+                        "[tcut] N=%d: banked width %d cplx is "
+                        "ILLEGAL for the banked chain -> "
+                        "running UNTILED\n", N, ze->zt_tw);
+            else if (getenv("VFFT_TCUT_VERBOSE"))
+                /* Same shape as the env gate's line, so one
+                 * parser reads both. Without it a banked width
+                 * is INVISIBLE — the env path announces itself
+                 * and the wisdom path would not, which is the
+                 * asymmetry that lets a replay silently do
+                 * something other than what was banked. */
+                fprintf(stderr,
+                        "[tcut] N=%d nf=%d tiled=%d tcut=%d "
+                        "tfuse=%d tw=%s w=%ld NT=%ld "
+                        "src=wisdom l1=%d\n",
+                        N, zt_pending->nf, zt_pending->tiled,
+                        zt_pending->tcut, zt_pending->tfuse,
+                        zt_pending->thonest ? "honest" : "reset",
+                        zt_pending->tw,
+                        ((long)N / 4) / zt_pending->tw,
+                        ze->zt_l1);
+        }
+    }
+    if (getenv("VFFT_ZRACE_VERBOSE"))
+        fprintf(stderr, "[zroute] N=%d wisdom hit: banked "
+                        "route=%d zs_t2q=%d zt_t2q=%d force=%d -> "
+                        "serving route=%d t2q=%d\n",
+                N, ze->zs_route,
+                ze->zs_t2q, ze->zt_t2q, zforce, zroute_pending,
+                zroute_pending ? zt_pending->t2q
+                               : (zs_pending ? zs_pending->t2q : -1));
+    /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
+     * survives to the handle — the loser dies here, before the
+     * handle exists — so fwd and bwd cannot pair across routes. */
+    if (zroute_pending && zt_pending)
+    {
+        vfft_zsplit_destroy(zs_pending);
+        zs_pending = NULL;
+    }
+    else
+    {
+        zroute_pending = 0;
+        if (zt_pending)
+        {
+            vfft_zturn2_destroy(zt_pending);
+            zt_pending = NULL;
+        }
+    }
+    if (!zs_pending && !zt_pending)
+        return 0;   /* route-1 create failed and no legacy escort — a miss */
+    (void)znf;
+    *zs_out = zs_pending;
+    *zt_out = zt_pending;
+    *zroute_out = zroute_pending;
+    return 1;
+}
+
 static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 {
     if (!cfg)
@@ -2902,170 +3113,33 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * code-placement-order. */
             int zch[VFFT_ZSPLIT_MAX_NF];
             int znf = 0;
-            const vfft_oop_wisdom_entry_t *ze =
-                vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
-            int ze_hit = (ze && !cfg->recalibrate);
-            /* Route forcing, read at CREATE (both directions follow — the
-             * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
-             * switch; VFFT_NO_IL2P precedent) and wins over everything;
-             * VFFT_FORCE_ZROUTE=legacy|zturn (or 0|1) is the gate/test hook
-             * (VFFT_IL_PAD precedent). Unforced DEFAULT on a MISS is ZTURN
-             * (2026-07-27 cutover); on a HIT the banked route verdict is
-             * honored, whichever way it points. */
-            int zforce = 0; /* 0 = none, 1 = legacy, 2 = zturn */
+            if (!_k1z_wisdom_replay(cfg, W, N, &zs_pending, &zt_pending,
+                                    &zroute_pending))
             {
-                const char *fz = getenv("VFFT_FORCE_ZROUTE");
-                if (fz && fz[0])
-                    zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
-                                 ? 2
-                                 : 1;
-                if (getenv("VFFT_NO_ZTURN"))
-                    zforce = 1;
-            }
-            /* The BANKED chain survives zsplit's rejection: a route-1 line
-             * may carry a last==4 chain (the ZTURN radix-4 terminator) that
-             * ONLY vfft_zturn2_create_chain can build — zsplit's create
-             * rejects it (last==8-only), which previously zeroed znf and
-             * OVERWROTE zch with the legacy default before the zturn replay
-             * ever saw the banked bytes. zwch/zwnf keep them; zch/znf stay
-             * the LEGACY arm's working copy (validator-is-the-law, per arm). */
-            int zwch[VFFT_ZSPLIT_MAX_NF];
-            int zwnf = 0;
-            if (ze_hit && ze->cc_chain)
-                zwnf = vfft_k1_cc_chain_decode(ze->cc_chain, zwch);
-            if (zwnf)
-            {
-                memcpy(zch, zwch, sizeof zch);
-                znf = zwnf;
-                zs_pending = vfft_zsplit_create(N, zch, znf);
-                if (!zs_pending)
-                    znf = 0; /* not legacy-legal (e.g. last==4): fall back */
-            }
-            if (!zs_pending)
-            {
-                znf = vfft_zsplit_default_chain(N, zch);
+                /* MISS / recalibrate -> default chain + the create-time t2q
+                 * race + bank (unchanged). The HIT path above is the shared
+                 * single definition of replay semantics. */
+                int zch[VFFT_ZSPLIT_MAX_NF];
+                int znf = vfft_zsplit_default_chain(N, zch);
+                /* Route forcing for the MISS race (the HIT path reads it
+                 * inside _k1z_wisdom_replay): VFFT_NO_ZTURN pins legacy,
+                 * VFFT_FORCE_ZROUTE=legacy|zturn is the test hook. An env
+                 * PARSE is not replay semantics, so this small read may live
+                 * in both places without the two-writers hazard. */
+                int zforce = 0;
+                {
+                    const char *fz = getenv("VFFT_FORCE_ZROUTE");
+                    if (fz && fz[0])
+                        zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
+                                     ? 2
+                                     : 1;
+                    if (getenv("VFFT_NO_ZTURN"))
+                        zforce = 1;
+                }
                 if (znf)
                     zs_pending = vfft_zsplit_create(N, zch, znf);
-            }
-            if (zs_pending)
-            {
-                if (ze_hit)
+                if (zs_pending)
                 {
-                    /* pure read: honor route + CHAIN + the winning route's
-                     * pick. cc_chain is the WINNING route's chain (Phase-5
-                     * planner tranche: dp_planner_il.h's route axis banks it
-                     * that way), so a route-1 line replays its chain through
-                     * vfft_zturn2_create_chain. Old race-banked route lines
-                     * carried the legacy default — which IS the chain zturn
-                     * shipped on, so replaying it is behavior-identical. A
-                     * fence-invalid banked chain (hand-edited / stale) falls
-                     * back to the calibrated-default create — skipped, never
-                     * force-fit (and zch/znf already fell back to the default
-                     * chain above if zsplit rejected it too). */
-                    zs_pending->t2q = ze->zs_t2q ? 1 : 0;
-                    if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
-                    {
-                        /* replay the BANKED chain (zwch — survives a legacy
-                         * rejection above, e.g. a last==4 chain), not the
-                         * legacy arm's working copy */
-                        if (zwnf)
-                            zt_pending = vfft_zturn2_create_chain(N, zwch, zwnf);
-                        if (!zt_pending)
-                            zt_pending = vfft_zturn2_create(N);
-                    }
-                    if (zt_pending)
-                    {
-                        zt_pending->t2q = ze->zt_t2q ? 1 : 0;
-                        zroute_pending = 1;
-                        /* tcut WIDTH replay. Absent field (zt_tw == 0) leaves
-                         * the plan calloc-untiled, i.e. exactly today's driver.
-                         *
-                         * 🔴 The banked width is only valid on the cache it was
-                         * tuned against. A width tuned on a 48 KB P-core and
-                         * replayed on a 32 KB E-core overshoots by 50%, and
-                         * overshoot is the failure mode that costs the whole
-                         * benefit at once instead of degrading. So a mismatch
-                         * means UNTILED (safe, today's behaviour) and a loud
-                         * line — never "use it anyway". */
-                        /* 🔴 EXPLICIT ENV BEATS WISDOM — same convention as
-                         * VFFT_FORCE_ZROUTE / VFFT_NO_ZTURN. If VFFT_TCUT is
-                         * set to ANYTHING (including "off"), the env gate's
-                         * verdict stands and the banked width is NOT applied.
-                         * Without this, `bench_1d_vs_mkl --tcut=off` against a
-                         * width-carrying wisdir would silently run TILED and
-                         * every off-vs-tiled A/B would compare tiled vs tiled
-                         * and read ~0%%. An arm that is not what its label says
-                         * is the exact failure class the engagement taps were
-                         * built to catch — this closes it at the source. */
-                        const char *tcenv = getenv("VFFT_TCUT");
-                        if (ze->zt_tw > 0 && tcenv && tcenv[0])
-                        {
-                            if (getenv("VFFT_TCUT_VERBOSE"))
-                                fprintf(stderr,
-                                        "[tcut] N=%d: banked width %d cplx "
-                                        "SUPPRESSED by explicit VFFT_TCUT=%s "
-                                        "(env override beats wisdom)\n",
-                                        N, ze->zt_tw, tcenv);
-                        }
-                        else if (ze->zt_tw > 0)
-                        {
-                            if (!vfft_cpu_l1d_matches(ze->zt_l1))
-                                fprintf(stderr,
-                                        "[tcut] N=%d: banked width %d cplx was "
-                                        "tuned for L1d=%d B, this machine has "
-                                        "%ld B -> running UNTILED, re-measure "
-                                        "this cell\n",
-                                        N, ze->zt_tw, ze->zt_l1,
-                                        vfft_cpu_l1d_bytes());
-                            else if (!vfft_zturn2_set_tile_w(zt_pending, 1,
-                                                            ze->zt_tw, 0, 0))
-                                fprintf(stderr,
-                                        "[tcut] N=%d: banked width %d cplx is "
-                                        "ILLEGAL for the banked chain -> "
-                                        "running UNTILED\n", N, ze->zt_tw);
-                            else if (getenv("VFFT_TCUT_VERBOSE"))
-                                /* Same shape as the env gate's line, so one
-                                 * parser reads both. Without it a banked width
-                                 * is INVISIBLE — the env path announces itself
-                                 * and the wisdom path would not, which is the
-                                 * asymmetry that lets a replay silently do
-                                 * something other than what was banked. */
-                                fprintf(stderr,
-                                        "[tcut] N=%d nf=%d tiled=%d tcut=%d "
-                                        "tfuse=%d tw=%s w=%ld NT=%ld "
-                                        "src=wisdom l1=%d\n",
-                                        N, zt_pending->nf, zt_pending->tiled,
-                                        zt_pending->tcut, zt_pending->tfuse,
-                                        zt_pending->thonest ? "honest" : "reset",
-                                        zt_pending->tw,
-                                        ((long)N / 4) / zt_pending->tw,
-                                        ze->zt_l1);
-                        }
-                    }
-                    if (getenv("VFFT_ZRACE_VERBOSE"))
-                        fprintf(stderr, "[zroute] N=%d wisdom hit: banked "
-                                        "route=%d zs_t2q=%d zt_t2q=%d force=%d -> "
-                                        "serving route=%d t2q=%d\n",
-                                N, ze->zs_route,
-                                ze->zs_t2q, ze->zt_t2q, zforce, zroute_pending,
-                                zroute_pending ? zt_pending->t2q
-                                               : zs_pending->t2q);
-                }
-                else
-                {
-                    /* miss/recalibrate -> the ZTURN-ONLY miss race (2026-07-27
-                     * decision: paced best-chains A/B, all 8 controls PASS,
-                     * zturn beat legacy at EVERY cell joint AND fwd — the
-                     * per-cell ENGINE race is dead; the dual-engine capability
-                     * survives OFFLINE only, in dp_planner_il.h /
-                     * calibrate_zchain). Default (and zforce==2): the stf/stf2
-                     * t2q race on the default zturn chain, banked as a route-1
-                     * line. The legacy sterm/sterm2 race is REACHABLE, not
-                     * dead: zforce==1 (VFFT_NO_ZTURN kill switch / forced
-                     * legacy) runs it byte-identical to the pre-route path
-                     * (old-format line banked = legacy verdict), and a zturn
-                     * create/sanity failure degrades to that same legacy race
-                     * (fallback intact). */
                     double zns = 0.0;
                     if (zforce != 1)
                         zt_pending = vfft_zturn2_create(N);
@@ -3112,22 +3186,22 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         ne.ns = zns;
                         _oop_wisdom_put_and_save(W, &ne, W->path_oop);
                     }
-                }
-                /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
-                 * survives to the handle — the loser dies here, before the
-                 * handle exists — so fwd and bwd cannot pair across routes. */
-                if (zroute_pending && zt_pending)
-                {
-                    vfft_zsplit_destroy(zs_pending);
-                    zs_pending = NULL;
-                }
-                else
-                {
-                    zroute_pending = 0;
-                    if (zt_pending)
+                    /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
+                     * survives to the handle — the loser dies here, before the
+                     * handle exists — so fwd and bwd cannot pair across routes. */
+                    if (zroute_pending && zt_pending)
                     {
-                        vfft_zturn2_destroy(zt_pending);
-                        zt_pending = NULL;
+                        vfft_zsplit_destroy(zs_pending);
+                        zs_pending = NULL;
+                    }
+                    else
+                    {
+                        zroute_pending = 0;
+                        if (zt_pending)
+                        {
+                            vfft_zturn2_destroy(zt_pending);
+                            zt_pending = NULL;
+                        }
                     }
                 }
             }
