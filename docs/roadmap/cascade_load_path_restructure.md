@@ -1,5 +1,12 @@
 # K=1 z-cascade load path — restructure plan (ZTURN)
 
+> **Follow-on work (2026-08):** the interior of this cascade can be *tiled* —
+> the same passes reordered so a chunk stays L1-resident across several of them.
+> Mechanism, legality argument and measurements:
+> [../performance/zturn_cascade_tiling.md](../performance/zturn_cascade_tiling.md).
+> How a tile width is searched and banked:
+> [../wisdom/10_zturn_calibration_flow.md](../wisdom/10_zturn_calibration_flow.md).
+
 > ## ✅ CAMPAIGN CLOSED 2026-07-27 — MEASURED vs MKL, shipping architecture
 >
 > | N | vfft (ZTURN) | MKL | ratio (>1 = vfft faster) | served as |

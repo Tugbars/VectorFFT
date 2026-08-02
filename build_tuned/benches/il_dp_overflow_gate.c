@@ -20,12 +20,14 @@
 /* Untruncated scrambled totals, MEASURED by il_dp_cand_census.c at cap 256.
  * Re-measure and update after ANY new axis — never edit these by reasoning
  * about the loops. The tcut WIDTH axis (2026-08-02) moved them from
- * 12/15/20/27/35/47/61 to the values below; 1024 and 2048 did not move at all,
- * because the occupancy filter returns no widths there, which is the same
- * verdict the A/B measured (+3.3% = no win at 2048). */
+ * 12/15/20/27/35/47/61 to 12/15/30/48/62/84/108. Then the occupancy FILTER was
+ * removed entirely (2026-08-02) so that every legal width is benched — an
+ * excluded width leaves no trace and a wrong filter would be undetectable — and
+ * they moved again to the values below. That change made 256 binding at 65536
+ * (93 dropped), which is why the cap is now 1024. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 12 }, { 2048, 15 }, { 4096, 30 }, { 8192, 48 },
-    { 16384, 62 }, { 32768, 84 }, { 65536, 108 }
+    { 1024, 35 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
+    { 16384, 171 }, { 32768, 253 }, { 65536, 349 }
 };
 
 int main(void)

@@ -353,49 +353,50 @@ static inline int vfft_zturn2_tile_candidates(const vfft_zturn2_plan_t *p,
     return n;
 }
 
-/* ---- POLICY. Change these, not the enumerator, if the reading moves. ---- */
-#define VFFT_ZT_OCC_TARGET 0.665  /* where both fastest measured cells landed */
-#define VFFT_ZT_OCC_LO     0.40   /* below: residency held, too little done   */
-#define VFFT_ZT_OCC_HI     1.10   /* above: nothing stays resident at all.
-                                   * Kept >1.0 on purpose — 8192 measured its
-                                   * best at 99.9%, so a tighter ceiling would
-                                   * have excluded a winner. */
-
-/* Keep candidates inside the occupancy band, best-first by distance from the
- * target, at most keep_max. Everything rejected is COUNTED — a filter that
- * quietly narrows the search is the same failure the DP candidate cap had. */
-static inline int vfft_zturn2_tile_filter(const vfft_zt_tile_cand_t *in, int n,
-                                          long l1_bytes, int keep_max,
-                                          vfft_zt_tile_cand_t *out,
-                                          int *n_out_of_band)
+/* ══════════════════ NO OCCUPANCY FILTER — BY DECISION ═══════════════════
+ *
+ * 🔴 EVERY LEGAL WIDTH IS BENCHED. Nothing here narrows the search.
+ *
+ * There WAS a filter: an occupancy band [40%,110%] of L1, plus a "keep the
+ * three closest to 66.5%" rule. Both were fitted to four cells on one machine,
+ * and both were removed on 2026-08-02 (Tugbars) for one reason —
+ *
+ *   an excluded width is never timed, so it leaves NO TRACE in the results.
+ *   A wrong band cannot be caught by reading the output. It is the only
+ *   failure mode in this search that is undetectable from its own evidence.
+ *
+ * The cost of removing it is calibration time, and that is the wrong thing to
+ * economise on here. MKL can hardcode per-N parameters because it targets one
+ * vendor's chips; this library cannot, so it measures instead. **A long
+ * calibration is the price of running well on a CPU nobody tuned for** — it is
+ * the product, not the overhead.
+ *
+ * Occupancy is still COMPUTED (see ws_bytes) and still REPORTED, because it
+ * explains results. It just does not gate anything. If you find yourself
+ * writing a filter here again, the question to answer first is: how would
+ * anyone discover it was wrong?
+ *
+ * The only bound left is the caller's array size, and exceeding it is a LOUD
+ * sizing bug, never a silent preference. */
+static inline int vfft_zturn2_tile_all(const vfft_zt_tile_cand_t *in, int n,
+                                       int cap, vfft_zt_tile_cand_t *out,
+                                       int *n_over_cap)
 {
     int m = 0;
-    if (n_out_of_band) *n_out_of_band = 0;
-    if (l1_bytes <= 0) return 0;
-
+    if (n_over_cap) *n_over_cap = 0;
     for (int i = 0; i < n; i++) {
-        const double occ = (double)in[i].ws_bytes / (double)l1_bytes;
-        if (occ < VFFT_ZT_OCC_LO || occ > VFFT_ZT_OCC_HI) {
-            if (n_out_of_band) (*n_out_of_band)++;
-            continue;
-        }
-        if (m < keep_max) out[m++] = in[i];
-        else {
-            /* full: displace the current worst if this one is closer */
-            int worst = 0;
-            double dw = -1.0;
-            for (int j = 0; j < m; j++) {
-                double d = (double)out[j].ws_bytes / (double)l1_bytes;
-                d = d > VFFT_ZT_OCC_TARGET ? d - VFFT_ZT_OCC_TARGET
-                                           : VFFT_ZT_OCC_TARGET - d;
-                if (d > dw) { dw = d; worst = j; }
-            }
-            double d = occ > VFFT_ZT_OCC_TARGET ? occ - VFFT_ZT_OCC_TARGET
-                                                : VFFT_ZT_OCC_TARGET - occ;
-            if (d < dw) out[worst] = in[i];
-        }
+        if (m >= cap) { if (n_over_cap) (*n_over_cap)++; continue; }
+        out[m++] = in[i];
     }
     return m;
+}
+
+/* Occupancy as a fraction of L1 — DIAGNOSTIC ONLY. Reported in logs and the
+ * census so a result can be explained; it decides nothing. */
+static inline double vfft_zturn2_tile_occupancy(const vfft_zt_tile_cand_t *c,
+                                                long l1_bytes)
+{
+    return (l1_bytes > 0) ? (double)c->ws_bytes / (double)l1_bytes : 0.0;
 }
 
 /* Env gate, mirroring the VFFT_NO_ZTURN / VFFT_FORCE_ZROUTE style (read once

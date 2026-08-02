@@ -105,6 +105,7 @@
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
+#include "oop_wisdom.h" /* THE kind-4 line format — one definition, one writer */
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -156,24 +157,37 @@ static inline void _il_dp_sleep_ms(int ms)
  *
  * It was, however, three candidates from binding at 65536, growing ~1.3x per
  * doubling => it would have started truncating at 131072 — SILENTLY, since
- * _il_dp_push simply returned `n` unchanged. And the tcut width axis multiplies
- * the count well before that. Sized for it (widths apply to the ZTURN engine
- * only): ~47 candidates at 32768 x ~3 surviving widths ~= 150, with headroom.
- * 256 * sizeof(vfft_il_cand_t) is ~18 KB of stack in vfft_il_dp_plan, fine on a
- * 1 MB (Win) / 8 MB (Linux) stack.
+ * _il_dp_push simply returned `n` unchanged.
  *
- * Overflow is now LOUD and REFUSES the cell — see _il_dp_push / vfft_il_dp_plan.
- * Re-run the census after adding any axis. */
-/* tcut tile widths kept per (chain, engine) after the occupancy filter. The
- * filter enumerates EVERY legal width and this bounds how many reach the
- * clock — 3 keeps a cell's session small on a thermally noisy machine while
- * still spanning the band. Raising it costs benchmark time, not correctness;
- * the filter counts and reports whatever it drops either way. */
-#define VFFT_IL_DP_TILE_KEEP     3
+ * MEASURED AGAIN after the tcut width axis went UNFILTERED (every legal width
+ * benched, 2026-08-02): 35 / 50 / 80 / 117 / 171 / 253 / 349 for the same N.
+ * **256 was binding** — 65536 dropped 93 candidates and 32768 was 3 short.
+ *
+ * Sized at 1024. The chain count peaks near N=2^17 (about 41 chains, since
+ * MAX_NF=7 forces very large N back down to a handful of all-radix-8 chains),
+ * and widths grow slowly with N, so the true peak is ~450-500. 1024 leaves the
+ * cap comfortably non-binding across the whole range rather than relying on the
+ * refusal — a refused cell banks NOTHING, which is safe but is still a gap.
+ * Cost is 1024 * sizeof(vfft_il_cand_t) on the stack in vfft_il_dp_plan, order
+ * 70 KB, against a 1 MB (Win) / 8 MB (Linux) stack.
+ *
+ * Overflow is LOUD and REFUSES the cell — see _il_dp_push / vfft_il_dp_plan.
+ * 🔴 Re-run benches/il_dp_cand_census.c after ANY new axis and update the
+ * numbers above. They are DATA. Deriving them from the shape of the loops was
+ * wrong by 2.4x the one time it was tried. */
+/* Array bound for tile widths per (chain, engine) — NOT a policy knob.
+ *
+ * It must be large enough to hold every LEGAL width, because VFFT_IL_DP_NO_BAND
+ * (the audit path that falsifies the occupancy band) turns the band off and
+ * keeps them all. Legal widths are the divisors of a section, so for N up to
+ * 2^20 there are at most ~16. Sized so that in normal operation the band is the
+ * only thing that ever narrows the set, and exceeding this is reported as a
+ * SIZING BUG rather than quietly resolved. */
+#define VFFT_IL_DP_TILE_KEEP     16
 
 #ifndef VFFT_IL_DP_MAX_CAND               /* overridable so the overflow path
                                            * can be exercised by a probe      */
-#define VFFT_IL_DP_MAX_CAND      256      /* candidates per (N, ord)         */
+#define VFFT_IL_DP_MAX_CAND      1024     /* candidates per (N, ord)         */
 #endif
 
 /* Candidate acceptance band. UNCHANGED from the broken gate on purpose: the
@@ -865,30 +879,31 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     if (p) {
                         eng_ok[1] = 1;
                         vfft_zt_tile_cand_t all[64];
-                        int dropped = 0, oob = 0;
+                        int dropped = 0, over = 0;
                         int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
-                        nw = vfft_zturn2_tile_filter(all, n, vfft_cpu_l1d_bytes(),
-                                                     VFFT_IL_DP_TILE_KEEP, wk, &oob);
+                        /* 🔴 NO FILTER. Every legal width is benched — see the
+                         * decision note in zturn.h. Occupancy is reported,
+                         * never used to narrow the set: a width that is never
+                         * timed leaves no trace, so a wrong filter would be
+                         * undetectable from its own output. Calibration time is
+                         * what this library trades for running well on chips
+                         * nobody tuned for. */
+                        nw = vfft_zturn2_tile_all(all, n, VFFT_IL_DP_TILE_KEEP,
+                                                  wk, &over);
                         if (dropped)
                             fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
                                             "not fit the enumeration array\n",
                                     N, dropped);
-                        /* 🔴 SAY WHAT THE BAND EXCLUDED. An out-of-band width
-                         * is never benched, so it leaves no trace in the
-                         * results — the filter cannot be caught being wrong by
-                         * looking at what it produced. The band is fitted to
-                         * four cells on one machine; the count of what it threw
-                         * away is the only evidence that a cell's search was
-                         * narrowed at all. Same rule as the candidate cap:
-                         * no silent drops. */
-                        if (oob && getenv("VFFT_IL_DP_VERBOSE"))
-                            fprintf(stderr, "  [il-dp] N=%d nf=%d: %d of %d "
-                                    "legal widths were OUT OF BAND [%.0f%%,"
-                                    "%.0f%%] of %ld B L1 and were not benched; "
-                                    "%d kept\n",
-                                    N, nf, oob, n, VFFT_ZT_OCC_LO * 100,
-                                    VFFT_ZT_OCC_HI * 100, vfft_cpu_l1d_bytes(),
-                                    nw);
+                        /* Over-cap is a SIZING BUG. Loud, always. */
+                        if (over)
+                            fprintf(stderr, "[il-dp] N=%d nf=%d: %d legal tile "
+                                    "widths EXCEEDED VFFT_IL_DP_TILE_KEEP=%d and "
+                                    "were NOT benched — raise it\n",
+                                    N, nf, over, VFFT_IL_DP_TILE_KEEP);
+                        if (nw && getenv("VFFT_IL_DP_VERBOSE"))
+                            fprintf(stderr, "  [il-dp] N=%d nf=%d: %d legal tile "
+                                    "widths, all benched (L1 = %ld B)\n",
+                                    N, nf, nw, vfft_cpu_l1d_bytes());
                         vfft_zturn2_destroy(p);
                     }
                 }
@@ -1160,29 +1175,42 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         int code = vfft_k1_cc_chain_encode(scr->chain, scr->nf);
         if (code)
         {
+            /* 🔴 GO THROUGH THE SHIPPED WRITER, never fprintf the line here.
+             *
+             * This used to hand-print the kind-4 line, which meant TWO places
+             * knew the format — this one and vfft_oop_wisdom_write_entry. When
+             * the tcut width field was added, only one of them learned about
+             * it, and a run banked a TILED winner as UNTILED with nothing
+             * complaining. Building the entry and handing it to the shipped
+             * writer makes the format have exactly one definition, so a new
+             * field cannot be half-adopted. */
+            vfft_oop_wisdom_entry_t e;
+            memset(&e, 0, sizeof e);
+            e.N = N;
+            e.K = 1;
+            e.kind = VFFT_OOP_KIND_ZSPLIT;
+            e.cc_chain = code;
+            e.ns = scr->cost_ns;
             if (scr->zroute)
             {
-                /* ZTURN winner: tranche-2 route line. zs_t2q = the best
-                 * legacy candidate's pick (the fallback route's terminator;
-                 * 0 = the compiled default when no legacy candidate survived
-                 * — a valid schedule either way, twins are bit-identical). */
-                fprintf(f, "%d 1 %d %d %d %.1f 1 %d",
-                        N, VFFT_OOP_KIND_ZSPLIT,
-                        (scr_leg && scr_leg->cost_ns < 1e17) ? scr_leg->t2q : 0,
-                        code, scr->cost_ns, scr->t2q);
-                /* tcut width + THE CACHE IT WAS TUNED AGAINST. Emitted only
-                 * when a width actually won, so an untiled verdict re-banks
-                 * byte-identically to the pre-width format. The L1 stamp is
-                 * what lets the reader refuse this line on a machine with a
-                 * different cache instead of silently running a tile that no
-                 * longer fits (oop_wisdom.h). */
-                if (scr->zt_tw > 0)
-                    fprintf(f, " %d %d", scr->zt_tw, (int)vfft_cpu_l1d_bytes());
-                fprintf(f, "\n");
+                e.zs_route = 1;
+                e.zt_t2q = scr->t2q;
+                /* zs_t2q = the best legacy candidate's pick (the fallback
+                 * route's terminator; 0 = the compiled default when no legacy
+                 * candidate survived — valid either way, twins are
+                 * bit-identical). */
+                e.zs_t2q = (scr_leg && scr_leg->cost_ns < 1e17) ? scr_leg->t2q : 0;
+                /* tcut width + THE CACHE IT WAS TUNED AGAINST. Zero when the
+                 * winner was untiled, and the writer then omits the pair, so
+                 * such a verdict re-banks byte-identically to the pre-width
+                 * format. The L1 stamp is what lets the reader refuse this line
+                 * on a machine with a different cache. */
+                e.zt_tw = scr->zt_tw;
+                e.zt_l1 = scr->zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
             }
             else
-                fprintf(f, "%d 1 %d %d %d %.1f\n",
-                        N, VFFT_OOP_KIND_ZSPLIT, scr->t2q, code, scr->cost_ns);
+                e.zs_t2q = scr->t2q;
+            vfft_oop_wisdom_write_entry(f, &e);
             lines++;
         }
     }
