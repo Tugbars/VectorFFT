@@ -17,10 +17,15 @@
 #include <stdio.h>
 #include "dp_planner_il.h"
 
-/* Untruncated scrambled totals, measured by il_dp_cand_census.c at cap 256. */
+/* Untruncated scrambled totals, MEASURED by il_dp_cand_census.c at cap 256.
+ * Re-measure and update after ANY new axis — never edit these by reasoning
+ * about the loops. The tcut WIDTH axis (2026-08-02) moved them from
+ * 12/15/20/27/35/47/61 to the values below; 1024 and 2048 did not move at all,
+ * because the occupancy filter returns no widths there, which is the same
+ * verdict the A/B measured (+3.3% = no win at 2048). */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 12 }, { 2048, 15 }, { 4096, 20 }, { 8192, 27 },
-    { 16384, 35 }, { 32768, 47 }, { 65536, 61 }
+    { 1024, 12 }, { 2048, 15 }, { 4096, 30 }, { 8192, 48 },
+    { 16384, 62 }, { 32768, 84 }, { 65536, 108 }
 };
 
 int main(void)

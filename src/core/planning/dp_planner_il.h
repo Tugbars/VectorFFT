@@ -1018,13 +1018,23 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
                 cn += snprintf(ch + cn, sizeof ch - (size_t)cn, "%s%d",
                                s ? "." : "", cand[i].chain[s]);
             if (!cn) snprintf(ch, sizeof ch, "-");
+            /* WIDTH is part of a candidate's IDENTITY. Without it two
+             * candidates differing only in tile width print identically, and a
+             * search log that cannot tell its own candidates apart cannot be
+             * audited — the same defect the A/B harness had when it labelled
+             * arms instead of reporting what they engaged. */
+            char wbuf[24];
+            if (cand[i].zt_tw > 0)
+                snprintf(wbuf, sizeof wbuf, " w=%dKB", cand[i].zt_tw * 16 / 1024);
+            else
+                snprintf(wbuf, sizeof wbuf, " w=untiled");
             fprintf(stderr, "  [il-dp] N=%d ord=%d route=%d eng=%s %dx%d "
-                    "chain=%s t2q=%d -> %.1f ns (gate %.1e)\n",
+                    "chain=%s t2q=%d%s -> %.1f ns (gate %.1e)\n",
                     N, ord, cand[i].route,
                     cand[i].route == VFFT_K1_IL_CASCADE
                         ? (cand[i].zroute ? "zturn" : "zsplit") : "-",
                     cand[i].R1, cand[i].R2, ch,
-                    cand[i].t2q, cand[i].cost_ns, gerr);
+                    cand[i].t2q, wbuf, cand[i].cost_ns, gerr);
         }
     }
     if (!nlive) return 1e18;

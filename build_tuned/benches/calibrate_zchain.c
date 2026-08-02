@@ -171,6 +171,13 @@ int main(int argc, char **argv)
             ne.zs_t2q = 0;               /* fallback-route pick, from top-K */
             for (int t = 0; t < ntop; t++)
                 if (!top[t].zroute) { ne.zs_t2q = top[t].t2q; break; }
+            /* 🔴 tcut WIDTH + the cache it was tuned against. This driver banks
+             * through the oop_wisdom.h writer directly, NOT through
+             * vfft_il_dp_emit_wisdom, so the width has to be carried here too —
+             * patching only the emitter left this path silently dropping the
+             * width and banking a tiled winner as untiled. */
+            ne.zt_tw = w->zt_tw;
+            ne.zt_l1 = w->zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
         }
         else
             ne.zs_t2q = w->t2q;
