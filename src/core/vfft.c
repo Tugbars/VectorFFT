@@ -2987,7 +2987,27 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                          * benefit at once instead of degrading. So a mismatch
                          * means UNTILED (safe, today's behaviour) and a loud
                          * line — never "use it anyway". */
-                        if (ze->zt_tw > 0)
+                        /* 🔴 EXPLICIT ENV BEATS WISDOM — same convention as
+                         * VFFT_FORCE_ZROUTE / VFFT_NO_ZTURN. If VFFT_TCUT is
+                         * set to ANYTHING (including "off"), the env gate's
+                         * verdict stands and the banked width is NOT applied.
+                         * Without this, `bench_1d_vs_mkl --tcut=off` against a
+                         * width-carrying wisdir would silently run TILED and
+                         * every off-vs-tiled A/B would compare tiled vs tiled
+                         * and read ~0%%. An arm that is not what its label says
+                         * is the exact failure class the engagement taps were
+                         * built to catch — this closes it at the source. */
+                        const char *tcenv = getenv("VFFT_TCUT");
+                        if (ze->zt_tw > 0 && tcenv && tcenv[0])
+                        {
+                            if (getenv("VFFT_TCUT_VERBOSE"))
+                                fprintf(stderr,
+                                        "[tcut] N=%d: banked width %d cplx "
+                                        "SUPPRESSED by explicit VFFT_TCUT=%s "
+                                        "(env override beats wisdom)\n",
+                                        N, ze->zt_tw, tcenv);
+                        }
+                        else if (ze->zt_tw > 0)
                         {
                             if (!vfft_cpu_l1d_matches(ze->zt_l1))
                                 fprintf(stderr,
