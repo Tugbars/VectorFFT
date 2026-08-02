@@ -922,7 +922,17 @@ static inline int _r2c_fused_first_stage_dif(
      * ~-10% at K=256 and {5,16} inners, loses ~+6..7% at {25,5}/small-K —
      * per-plan measured adoption is the named follow-up; until then the
      * default must not regress anyone. */
-    if (!getenv("VFFT_DIF_FUSED")) return -1;
+    /* 🔴 Read ONCE per process, not per transform. This is called from the r2c
+     * forward execute path (below, twice), so the original
+     * `if (!getenv(...)) return -1;` charged an environment lookup to every
+     * single transform purely to answer "not enabled" — inside a benchmarked
+     * path. Behaviour is unchanged for any process that does not mutate its own
+     * environment mid-run, which is already the convention here (the zturn/
+     * zroute gates all read env once at CREATE). Found by
+     * build_tuned/exec_purity_audit.py. */
+    static int _fused_opt = -1;
+    if (_fused_opt < 0) _fused_opt = getenv("VFFT_DIF_FUSED") ? 1 : 0;
+    if (!_fused_opt) return -1;
     const stride_stage_t *st = &inner->stages[0];
     _r2c_oop11_fn tf = _r2c_difoop_t1(st->radix);
     _r2c_oop11_fn nf = _r2c_difoop_n1(st->radix);
