@@ -175,8 +175,7 @@ int main(int argc, char **argv)
     SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
 #endif
     if (!err_tap_open(wisdir))
-        printf("note: stderr tap failed — engagement cannot be verified
-");
+        printf("note: stderr tap failed - engagement cannot be verified\n");
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     if (!W) { printf("vfft_wisdom_load(%s) FAILED\n", wisdir); return 2; }
     vfft_wisdom *W2 = wisdir2 ? vfft_wisdom_load(wisdir2) : NULL;
@@ -223,6 +222,16 @@ int main(int argc, char **argv)
         {"W=16KB      ", "0", "", "16", 0},   /* MKL's tile */
         {"W=32KB      ", "0", "", "32", 0},
         {"W=64KB      ", "0", "", "64", 0},
+        /* 🔴 PER-WIDTH DUPLICATE CONTROLS. Measured 2026-08-02: two arms that
+         * engage the IDENTICAL plan (W=8KB vs A2 tcut=1, both w=512 NT=4) read
+         * 4.8 points apart at N=8192, while the three UNTILED A/A arms put the
+         * floor at 1.7%. Untiled arms understate the floor for tiled ones —
+         * each plan owns its own `plane`, and cache-residency work is what
+         * alignment luck perturbs. So every width needs its OWN same-plan
+         * control, or a width comparison is unreadable. */
+        {"W= 8KB (dup) ", "0", "", "8",  0},
+        {"W=16KB (dup) ", "0", "", "16", 0},
+        {"W=32KB (dup) ", "0", "", "32", 0},
     };
     const int na = (int)(sizeof arms / sizeof arms[0]);
 
