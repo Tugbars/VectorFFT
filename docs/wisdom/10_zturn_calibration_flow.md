@@ -88,10 +88,8 @@ flowchart TD
 
   ZT -->|"NULL — outside its fence"| NOZT["no zturn candidates"]:::stop
   ZT -->|ok| W1["vfft_zturn2_tile_candidates<br/>EVERY legal width for this plan"]:::model
-  W1 --> W2["cost each: 16·w + twiddle bytes"]:::model
-  W2 --> W3["vfft_zturn2_tile_filter<br/>occupancy band, keep ≤ VFFT_IL_DP_TILE_KEEP"]:::model
-  W3 --> OOB["log what was excluded"]:::model
-  W3 --> CT["+ t2q × { untiled, w₁, w₂, w₃ }"]:::model
+  W1 --> W2["occupancy computed per width<br/>DIAGNOSTIC — decides nothing"]:::model
+  W2 --> CT["+ t2q × { untiled, EVERY legal width }"]:::model
 
   classDef model fill:#2E739B,stroke:#1D4E6C,color:#FFFFFF,stroke-width:1px;
   classDef stop  fill:#9C3A33,stroke:#7A2C26,color:#FFFFFF,stroke-width:1px;
@@ -115,31 +113,37 @@ Points that are easy to get wrong:
 
 ---
 
-## 3. Why the model filters but does not rank
+## 3. Why there is no width filter at all
 
 Occupancy — the fraction of L1 taken by tile plus its twiddle window — is an
-**exact byte count**, not a fitted quantity. The *band* applied to it is a
-heuristic.
+**exact byte count**, not a fitted quantity. It is computed and reported for
+every candidate because it *explains* results. It decides nothing.
 
-The reason the band may not rank is benchmark-derived (this host, 2026-08-02):
-at N=8192 a tile at ~99.9% occupancy fusing **four** passes measured faster than
-one at ~49.7% fusing **three**. Ranking by occupancy alone selects the second and
-is wrong. Occupancy cannot see how many passes were fused, nor the per-call cost
-of a narrower tile, nor cache associativity, nor anything else contending for L1.
+There *was* a filter: an occupancy band plus a keep-the-closest-to-a-target
+rule, both fitted to a handful of cells on one machine. Both were **removed by
+decision** (2026-08-02), for two reasons:
 
-Hence: **the band filters, the clock chooses.**
+1. **A wrong filter here is undetectable from its own output.** An excluded
+   width is never benched and leaves no trace in the results — the only failure
+   mode in this search invisible to its own evidence. (And occupancy is a bad
+   ranker anyway, benchmark-derived: at N=8192 a tile at ~99.9% of L1 fusing
+   four passes measured faster than one at ~49.7% fusing three. Occupancy
+   cannot see passes fused, per-call cost, associativity, or anything else
+   sharing L1.)
+2. **Calibration time is the product, not overhead.** MKL can hardcode per-N
+   parameters because it targets one vendor's chips; this library cannot, so it
+   measures. A long calibration is the tax paid for running well on
+   configurations nobody tuned for.
 
-> ⚠️ One residual heuristic. If more than `VFFT_IL_DP_TILE_KEEP` widths survive
-> the band, the filter keeps those closest to a target occupancy — that *is* a
-> fitted constant ranking candidates. It rarely binds while the band is narrow,
-> but **widening the band without also raising the keep-count hands ranking back
-> to a constant.** The two knobs must move together.
+The audit run the filter could never provide about itself, performed once it
+was gone: unfiltered N=16384 benched **179 candidates instead of 70 and
+produced the same winner** — in 15 seconds, not the minutes the filter was
+supposedly saving.
 
-An excluded width is never benched and therefore leaves no trace in the results,
-so the filter cannot be caught being wrong by inspecting its output. Two
-countermeasures exist: the out-of-band count is reported per chain under
-`VFFT_IL_DP_VERBOSE=1`, and `build_tuned/benches/zturn_tile_census.c` prints the
-full legal space with occupancies without running the planner.
+The only bound left is the caller's array size (`VFFT_IL_DP_TILE_KEEP`, sized
+to hold every legal width), and exceeding it is reported as a **sizing bug**,
+never silently resolved by preference. `build_tuned/benches/zturn_tile_census.c`
+prints the full legal space with occupancies without running the planner.
 
 ---
 
@@ -196,6 +200,22 @@ A missing width, a mismatched cache, or a width the chain cannot express all
 resolve the same way: **untiled, and say so.** Never "use it anyway" — a tile
 sized for a cache that isn't there loses its entire benefit at once rather than
 degrading, which is the failure mode least likely to be noticed.
+
+Two operational rules, both bought with real incidents (2026-08-02):
+
+- **Explicit env beats wisdom.** If `VFFT_TCUT` is set to *anything* (including
+  `off`), the banked width is NOT applied — same convention as
+  `VFFT_FORCE_ZROUTE`. Without this, `bench_1d_vs_mkl --tcut=off` against a
+  width-carrying wisdir silently ran TILED, and every off-vs-tiled A/B compared
+  tiled against tiled.
+- **A stale binary STRIPS new wisdom fields on writeback.** A bench compiled
+  before the width field existed re-banked `oop_wisdom.txt` through its old
+  writer during a create-time stamp and silently dropped the width pair from
+  every line; the next (current) binary then honestly measured a degraded file.
+  The round-trip gate cannot catch this — the old binary passes its *own* round
+  trip. After adding a wisdom field, **rebuild every binary that can write
+  wisdom before any of them touches a calibrated file**; when a banked width
+  vanishes, suspect a stale writer's writeback first.
 
 ---
 
