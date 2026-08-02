@@ -30,6 +30,7 @@
 #include "il_execute.h"         /* interleaved z<->z folded adapters (6a16/6a17) */
 #include "zsplit.h"             /* K=1 SCRAMBLED interleaved: block-split cascade (§4.99+) */
 #include "zturn.h"              /* ZTURN-S route twin (Phase 5 tranche 2; cascade_load_path_restructure §6.4) */
+#include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
@@ -2976,6 +2977,50 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     {
                         zt_pending->t2q = ze->zt_t2q ? 1 : 0;
                         zroute_pending = 1;
+                        /* tcut WIDTH replay. Absent field (zt_tw == 0) leaves
+                         * the plan calloc-untiled, i.e. exactly today's driver.
+                         *
+                         * 🔴 The banked width is only valid on the cache it was
+                         * tuned against. A width tuned on a 48 KB P-core and
+                         * replayed on a 32 KB E-core overshoots by 50%, and
+                         * overshoot is the failure mode that costs the whole
+                         * benefit at once instead of degrading. So a mismatch
+                         * means UNTILED (safe, today's behaviour) and a loud
+                         * line — never "use it anyway". */
+                        if (ze->zt_tw > 0)
+                        {
+                            if (!vfft_cpu_l1d_matches(ze->zt_l1))
+                                fprintf(stderr,
+                                        "[tcut] N=%d: banked width %d cplx was "
+                                        "tuned for L1d=%d B, this machine has "
+                                        "%ld B -> running UNTILED, re-measure "
+                                        "this cell\n",
+                                        N, ze->zt_tw, ze->zt_l1,
+                                        vfft_cpu_l1d_bytes());
+                            else if (!vfft_zturn2_set_tile_w(zt_pending, 1,
+                                                            ze->zt_tw, 0, 0))
+                                fprintf(stderr,
+                                        "[tcut] N=%d: banked width %d cplx is "
+                                        "ILLEGAL for the banked chain -> "
+                                        "running UNTILED\n", N, ze->zt_tw);
+                            else if (getenv("VFFT_TCUT_VERBOSE"))
+                                /* Same shape as the env gate's line, so one
+                                 * parser reads both. Without it a banked width
+                                 * is INVISIBLE — the env path announces itself
+                                 * and the wisdom path would not, which is the
+                                 * asymmetry that lets a replay silently do
+                                 * something other than what was banked. */
+                                fprintf(stderr,
+                                        "[tcut] N=%d nf=%d tiled=%d tcut=%d "
+                                        "tfuse=%d tw=%s w=%ld NT=%ld "
+                                        "src=wisdom l1=%d\n",
+                                        N, zt_pending->nf, zt_pending->tiled,
+                                        zt_pending->tcut, zt_pending->tfuse,
+                                        zt_pending->thonest ? "honest" : "reset",
+                                        zt_pending->tw,
+                                        ((long)N / 4) / zt_pending->tw,
+                                        ze->zt_l1);
+                        }
                     }
                     if (getenv("VFFT_ZRACE_VERBOSE"))
                         fprintf(stderr, "[zroute] N=%d wisdom hit: banked "
@@ -3035,6 +3080,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                 zs_pending->chain, zs_pending->nf);
                         ne.zs_route = zroute_pending;
                         ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
+                        /* tcut width + the cache it was tuned against. 0 when
+                         * untiled, which keeps the banked line byte-identical
+                         * to the pre-width format. This race does not SEARCH
+                         * widths (that is the planner's job); it records
+                         * whatever width the plan is carrying so a verdict is
+                         * never banked as untiled when it was not. */
+                        ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
+                                       ? (int)zt_pending->tw : 0;
+                        ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
                         ne.ns = zns;
                         _oop_wisdom_put_and_save(W, &ne, W->path_oop);
                     }
