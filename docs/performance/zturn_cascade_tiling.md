@@ -246,6 +246,16 @@ The front-door tiling deltas (−17…−21% against the same chains untiled)
 reproduce the internal A/B. At campaign close the standing was
 1.07/0.85/0.89/1.03; with banked tile widths it is **1.07/0.95/1.01/1.03**.
 
+⚠️ **Order asymmetry, stated plainly:** our arm delivers SCRAMBLED output (the
+class's contract); MKL delivers NATURAL order — strictly more work, and MKL
+offers no cheaper scrambled mode (`DFTI_BACKWARD_SCRAMBLED` is documented as
+not implemented for most configurations). These ratios are honest for the
+scrambled contract's consumers (pointwise/convolution pipelines, where a
+matched-permutation inverse cancels the order for free) and must NOT be quoted
+as natural-order parity: at +1%/+3% margins, paying for natural order would
+likely turn the 8192/16384 wins into ties or narrow losses.
+
+
 ---
 
 ## Reproducing
