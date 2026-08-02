@@ -92,8 +92,11 @@ static void env_set(const char *k, const char *v)
 typedef struct {
     const char *name;      /* VFFT_TCUT value */
     const char *tw;        /* VFFT_TCUT_TW value ("" = reset) */
+    const char *w;         /* VFFT_TCUT_W value in KB ("" = ladder width) */
     int want_tiled;        /* predicted plan.tiled, -1 = don't care */
-    int want_tcut, want_tfuse;
+    int want_tcut;         /* -1 = don't care (DERIVED from an explicit width,
+                            * so it varies with N and chain) */
+    int want_tfuse;
 } arm_t;
 
 /* ─────────────────────── plan creation for one arm ─────────────────────── */
@@ -111,6 +114,7 @@ static int make_arm(int N, vfft_wisdom *W, const arm_t *a, armplan_t *out)
     memset(out, 0, sizeof *out);
     env_set("VFFT_TCUT", a->name);
     env_set("VFFT_TCUT_TW", a->tw);
+    env_set("VFFT_TCUT_W",  a->w);
     env_set("VFFT_TCUT_VERBOSE", "1");
     env_set("VFFT_FORCE_ZROUTE", "zturn");   /* the arm under test must be ZTURN-S */
 
@@ -265,19 +269,34 @@ int main(int argc, char **argv)
     if (!W) { printf("vfft_wisdom_load(%s) FAILED\n", wisdir); return 2; }
 
     static const arm_t arms[] = {
-        {"off", "",       0, 0, 0},
-        {"a1",  "",       2, 0, 0},
-        {"a1",  "honest", 2, 0, 0},
-        {"0",   "",       1, 0, 0},
-        {"0",   "honest", 1, 0, 0},
-        {"0:1", "",       1, 0, 1},
-        {"1",   "",       1, 1, 0},
-        {"1:1", "",       1, 1, 1},
-        {"2",   "",       1, 2, 0},
-        {"2:1", "",       1, 2, 1},
-        {"3",   "",       1, 3, 0},
-        {"3:1", "",       1, 3, 1},
-        {"4",   "",       1, 4, 0},   /* expected REFUSED on nf<=6 chains */
+        /* ---- ladder widths (w = D[tcut]); every campaign number is here ---- */
+        {"off", "",       "",   0,  0, 0},
+        {"a1",  "",       "",   2,  0, 0},
+        {"a1",  "honest", "",   2,  0, 0},
+        {"0",   "",       "",   1,  0, 0},
+        {"0",   "honest", "",   1,  0, 0},
+        {"0:1", "",       "",   1,  0, 1},
+        {"1",   "",       "",   1,  1, 0},
+        {"1:1", "",       "",   1,  1, 1},
+        {"2",   "",       "",   1,  2, 0},
+        {"2:1", "",       "",   1,  2, 1},
+        {"3",   "",       "",   1,  3, 0},
+        {"3:1", "",       "",   1,  3, 1},
+        {"4",   "",       "",   1,  4, 0},  /* expected REFUSED on nf<=6 chains */
+
+        /* ---- EXPLICIT widths (VFFT_TCUT_W), the axis the ladder cannot reach.
+         * The cut is DERIVED, so want_tcut is -1: it varies with N and chain.
+         * F0 (memcmp vs untiled) is the real gate here and it does not care
+         * where the cut landed — only that the reorder changed no arithmetic.
+         * 16 KB is MKL's tile and the one N=8192 could never express. */
+        {"0",   "",       "4",  1, -1, 0},
+        {"0",   "",       "8",  1, -1, 0},
+        {"0",   "",       "16", 1, -1, 0},   /* MKL's tile */
+        {"0:1", "",       "16", 1, -1, 1},   /* fused terminator + explicit w */
+        {"0",   "honest", "16", 1, -1, 0},   /* honest twiddles + explicit w */
+        {"0",   "",       "32", 1, -1, 0},
+        {"0",   "",       "64", 1, -1, 0},
+        {"0",   "",       "3",  1, -1, 0},   /* not a divisor -> expect REFUSED */
     };
     const int narms = (int)(sizeof arms / sizeof arms[0]);
 
@@ -345,7 +364,8 @@ int main(int argc, char **argv)
             /* engagement must match the prediction */
             int engok = (A.tiled == arms[ai].want_tiled &&
                          (A.tiled != 1 ||
-                          (A.tcut == arms[ai].want_tcut &&
+                          ((arms[ai].want_tcut < 0 ||
+                            A.tcut == arms[ai].want_tcut) &&
                            A.tfuse == arms[ai].want_tfuse)));
 
             double *S = alloc_z((size_t)N), *R = alloc_z((size_t)N);
@@ -391,7 +411,7 @@ int main(int argc, char **argv)
                    ok ? "PASS" : "*** FAIL ***",
                    engok ? "" : " [engagement mismatch]",
                    deep && arms[ai].want_tiled == 1 && A.tcut == 0 && !A.tfuse
-                       && !arms[ai].tw[0] ? dfts : "");
+                       && !arms[ai].tw[0] && !arms[ai].w[0] ? dfts : "");
             if (ok) passes++; else fails++;
             free_z(S); free_z(R); free_z(R2);
             vfft_destroy(A.h);

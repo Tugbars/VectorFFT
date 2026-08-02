@@ -144,7 +144,29 @@ static inline void _il_dp_sleep_ms(int ms)
 #define VFFT_IL_DP_TOPK_MAX      8
 #define VFFT_IL_DP_BEAM_MEASURE  3
 #define VFFT_IL_DP_BEAM_PATIENT  8
-#define VFFT_IL_DP_MAX_CAND      64       /* candidates per (N, ord)         */
+/* Candidates per (N, ord). Was 64.
+ *
+ * MEASURED on the installed enumerator (benches/il_dp_cand_census.c), scrambled
+ * class: 12 @1024, 15 @2048, 20 @4096, 27 @8192, 35 @16384, 47 @32768,
+ * 61 @65536. So 64 was NOT yet binding — a naive count of
+ * (#chains) x 2 engines x 2 t2q overestimates by ~2.4x because most chains fail
+ * validation on one or both engines. 4^7 at 16384 lands at index 34 and was
+ * being kept.
+ *
+ * It was, however, three candidates from binding at 65536, growing ~1.3x per
+ * doubling => it would have started truncating at 131072 — SILENTLY, since
+ * _il_dp_push simply returned `n` unchanged. And the tcut width axis multiplies
+ * the count well before that. Sized for it (widths apply to the ZTURN engine
+ * only): ~47 candidates at 32768 x ~3 surviving widths ~= 150, with headroom.
+ * 256 * sizeof(vfft_il_cand_t) is ~18 KB of stack in vfft_il_dp_plan, fine on a
+ * 1 MB (Win) / 8 MB (Linux) stack.
+ *
+ * Overflow is now LOUD and REFUSES the cell — see _il_dp_push / vfft_il_dp_plan.
+ * Re-run the census after adding any axis. */
+#ifndef VFFT_IL_DP_MAX_CAND               /* overridable so the overflow path
+                                           * can be exercised by a probe      */
+#define VFFT_IL_DP_MAX_CAND      256      /* candidates per (N, ord)         */
+#endif
 
 /* Candidate acceptance band. UNCHANGED from the broken gate on purpose: the
  * fix must not be a weakening. MEASURED on this host over every legal
@@ -705,11 +727,26 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
 
 /* ── candidate enumeration (THE pluggable piece) ───────────────────────── */
 
-static int _il_dp_push(vfft_il_cand_t *out, int n, const vfft_il_cand_t *c)
+/* Candidate sink. `n` counts what was ACCEPTED, `dropped` counts everything the
+ * cap refused.
+ *
+ * 🔴 The old form returned `n` unchanged on overflow, so a truncated
+ * enumeration was indistinguishable from a complete one and the planner would
+ * happily bank "the best candidate" that was really the best of a PREFIX. The
+ * prefix is not even a random sample: the enumerator walks nf ascending, so the
+ * dropped entries are systematically the highest-nf chains. Any new axis
+ * multiplies the count, so this must stay loud. */
+typedef struct
 {
-    if (n >= VFFT_IL_DP_MAX_CAND) return n;
-    out[n] = *c;
-    return n + 1;
+    vfft_il_cand_t *out;
+    int             n;
+    int             dropped;
+} vfft_il_cand_sink_t;
+
+static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
+{
+    if (s->n >= VFFT_IL_DP_MAX_CAND) { s->dropped++; return; }
+    s->out[s->n++] = *c;
 }
 
 /* Enumerate every legal candidate for (N, ord). Availability is asked of the
@@ -722,9 +759,8 @@ static int _il_dp_push(vfft_il_cand_t *out, int n, const vfft_il_cand_t *c)
  *
  * Cascade legality is DELEGATED to vfft_zsplit_create (NULL == illegal) rather
  * than re-implemented here. A second copy of that validator would drift. */
-static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
+static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
 {
-    int n = 0;
     vfft_il_cand_t c;
 
     if (ord == VFFT_IL_ORD_NATURAL)
@@ -733,7 +769,7 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
         {
             memset(&c, 0, sizeof c);
             c.route = VFFT_K1_IL_MONO;
-            n = _il_dp_push(out, n, &c);
+            _il_dp_push(s, &c);
         }
         /* Ordered pairs: R1 and R2 are NOT interchangeable (R2 is the column
          * radix run at count=R1, R1 the row radix run at count=R2), so both
@@ -751,10 +787,10 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
             if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
             {
                 c.route = VFFT_K1_IL_2P_PURE;
-                n = _il_dp_push(out, n, &c);
+                _il_dp_push(s, &c);
             }
         }
-        return n;
+        return;
     }
 
     /* SCRAMBLED: ordered chains of {4,8}, nf in [3, MAX_NF], x ENGINE
@@ -808,13 +844,12 @@ static int _il_dp_enumerate(int N, int ord, vfft_il_cand_t *out)
                         c.nf = nf;
                         c.t2q = q;
                         memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
-                        n = _il_dp_push(out, n, &c);
+                        _il_dp_push(s, &c);
                     }
                 }
             }
         }
     }
-    return n;
 }
 
 /* ── the entry point ───────────────────────────────────────────────────── */
@@ -855,7 +890,27 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     }
     else
     {
-        ncand = _il_dp_enumerate(N, ord, cand);
+        vfft_il_cand_sink_t sink = { cand, 0, 0 };
+        _il_dp_enumerate(N, ord, &sink);
+        ncand = sink.n;
+
+        /* 🔴 REFUSE a truncated cell rather than banking the best of a prefix.
+         * Silently returning the winner of a subset is worse than returning
+         * nothing: it looks like a searched answer. The prefix is biased too —
+         * the enumerator walks nf ascending, so overflow eats the highest-nf
+         * chains first. Raise VFFT_IL_DP_MAX_CAND; do not paper over this. */
+        if (sink.dropped)
+        {
+            fprintf(stderr,
+                    "[il-dp] N=%d ord=%d: CANDIDATE OVERFLOW — %d enumerated, "
+                    "cap %d, %d DROPPED (highest-nf chains first). The search "
+                    "space was TRUNCATED, so any winner would be the best of a "
+                    "biased subset. Raise VFFT_IL_DP_MAX_CAND. REFUSING this "
+                    "cell.\n",
+                    N, ord, sink.n + sink.dropped, VFFT_IL_DP_MAX_CAND,
+                    sink.dropped);
+            return 1e18;
+        }
     }
     if (ncand <= 0) return 1e18;
 

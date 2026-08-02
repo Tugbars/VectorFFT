@@ -113,7 +113,19 @@ typedef struct {
                   *     exists so an A/B can separate the twiddle-footprint
                   *     effect (A1-A0) from the pure tiling effect (A2-A1);
                   *     without it a tcut number confounds the two. */
-    int tcut;    /* read only when tiled == 1; tcut in [0, nf-3] (spec §1.4) */
+    long tw;     /* TILE WIDTH in complex points; read only when tiled == 1.
+                  * 🔴 THIS IS THE INPUT — `tcut` below is DERIVED from it.
+                  * Was implicit (`w = D[tcut]`) until 2026-08-02, which pinned
+                  * the tile to the chain's running products; that ladder steps
+                  * by 4 or 8, so e.g. from a 32 KB section you could reach 8 KB
+                  * but never 16 KB, and at N=8192 NO chain could express MKL's
+                  * 16 KB tile. Legality never required the pin — see
+                  * _vfft_zt_tile_legal — so the width is now free within
+                  * `D[tcut] | tw | SEC`. calloc-zero ⇒ 0 ⇒ untiled. */
+    int tcut;    /* DERIVED from tw (_vfft_zt_cut_for_width); [0, nf-3].
+                  * Number of mid stages left UNTILED; stages tcut+1..nf-2 are
+                  * the tiled tail. Cached in the plan because the execute nests
+                  * bound their loops with it. */
     int tfuse;   /* read only when tiled == 1; 1 = cut the terminator per tile */
     int thonest; /* mid twiddle form: 0 = RESET (default, spec §2.4/§5.4),
                   * 1 = HONEST per-section offset. Bit-identical pair; F1's
@@ -177,13 +189,27 @@ static inline int _vfft_zt_tw_periodic(const vfft_zturn2_plan_t *p)
  * a plan-input tcut (planner/wisdom) wants NULL on illegal, an env override
  * wants a loud refusal that leaves the DEFAULT path untouched. 1 = legal.
  *
- * ⚠ ORDER IS LOAD-BEARING: the tcut RANGE is checked BEFORE p->D[tcut] is
- * read. Evaluating D[tcut] first is an out-of-bounds read for a negative tcut
- * (the -1 sentinel spec §1.4 warns about); it happens to be rejected
- * downstream on every shipped struct layout today, but it is UB and one field
- * reorder from a silent accept. */
-static inline int _vfft_zt_tile_legal(const vfft_zturn2_plan_t *p, int tiled,
-                                      int tcut, int tfuse)
+ * ⚠ The old signature took `tcut` and derived `w = D[tcut]`, with a load-bearing
+ * range check first (a negative tcut would have made `p->D[tcut]` an OOB read).
+ * That hazard is gone by construction now that WIDTH is the input: `tcut` is
+ * computed from `tw`, never trusted from a caller. */
+
+/* Derive the cut from the width. Stage s is tileable iff its group span
+ * SPAN(s) = D[s-1] divides the tile, and because the D[] form a divisibility
+ * chain (D[s] | D[s-1]) that set is automatically a SUFFIX — so the smallest
+ * qualifying index gives the longest legal tiled tail. Returns tcut, or -1 if
+ * the width admits no stage at all. */
+static inline int _vfft_zt_cut_for_width(const vfft_zturn2_plan_t *p, long w)
+{
+    if (w <= 0) return -1;
+    for (int j = 0; j <= p->nf - 3; j++)
+        if (p->D[j] > 0 && w % p->D[j] == 0) return j;
+    return -1;
+}
+
+/* 1 = legal. On success *tcut_out receives the DERIVED cut. */
+static inline int _vfft_zt_tile_legal_w(const vfft_zturn2_plan_t *p, int tiled,
+                                        long w, int tfuse, int *tcut_out)
 {
     const int nf = p->nf;
     if (!tiled) return 1;                       /* untiled is always legal   */
@@ -193,32 +219,48 @@ static inline int _vfft_zt_tile_legal(const vfft_zturn2_plan_t *p, int tiled,
         return _vfft_zt_tw_periodic(p);
     }
     if (tiled != 1) return 0;
-    if (tcut < 0 || tcut > nf - 3) return 0;    /* §1.4 (RANGE FIRST)        */
-    {
-        const long w = p->D[tcut];              /* safe: tcut in range now   */
-        if (w <= 0 || ((long)p->N / 4) % w) return 0;   /* aligned tiles     */
-        for (int s = tcut + 1; s <= nf - 2; s++)
-            if (w % p->D[s - 1] || p->D[s] % 4) return 0; /* span|w ; F2     */
-        for (int s = 1; s <= tcut; s++)
-            if (p->G[s] % 4) return 0;                    /* section split   */
-        if (tfuse) {
-            const long kappa = (p->chain[nf - 1] == 8) ? w / 2 : w;
-            if (kappa % 4) return 0;            /* F2 — would SILENTLY drop  */
-        }
+
+    if (w <= 0 || ((long)p->N / 4) % w) return 0;   /* aligned, whole tiles  */
+    const int tcut = _vfft_zt_cut_for_width(p, w);
+    if (tcut < 0 || tcut > nf - 3) return 0;
+
+    for (int s = tcut + 1; s <= nf - 2; s++)
+        if (w % p->D[s - 1] || p->D[s] % 4) return 0; /* span|w ; F2         */
+    for (int s = 1; s <= tcut; s++)
+        if (p->G[s] % 4) return 0;                    /* section split       */
+    if (tfuse) {
+        const long kappa = (p->chain[nf - 1] == 8) ? w / 2 : w;
+        if (kappa % 4) return 0;                /* F2 — would SILENTLY drop  */
     }
     if (!_vfft_zt_tw_periodic(p)) return 0;     /* R7                        */
+
+    if (tcut_out) *tcut_out = tcut;
     return 1;
+}
+
+/* Back-compat predicate: the ladder width w = D[tcut]. Kept because it is the
+ * special case every campaign number was measured under, and because the env
+ * syntax still names a cut. */
+static inline int _vfft_zt_tile_legal(const vfft_zturn2_plan_t *p, int tiled,
+                                      int tcut, int tfuse)
+{
+    if (tiled != 1) return _vfft_zt_tile_legal_w(p, tiled, 0, tfuse, 0);
+    if (tcut < 0 || tcut > p->nf - 3) return 0; /* RANGE before D[tcut]      */
+    return _vfft_zt_tile_legal_w(p, tiled, p->D[tcut], tfuse, 0);
 }
 
 /* Plan-input setter (the path a future planner/wisdom replay would use).
  * Returns 1 on success; on an illegal request it leaves the plan UNTOUCHED
  * (i.e. still whatever it was, untiled by calloc) and returns 0. */
-static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
-                                       int tcut, int tfuse, int thonest)
+static inline int vfft_zturn2_set_tile_w(vfft_zturn2_plan_t *p, int tiled,
+                                         long tw, int tfuse, int thonest)
 {
     if (!p) return 0;
-    if (!_vfft_zt_tile_legal(p, tiled, tcut, tfuse)) return 0;
+    int tcut = 0;
+    if (!_vfft_zt_tile_legal_w(p, tiled, (tiled == 1) ? tw : 0, tfuse, &tcut))
+        return 0;
     p->tiled = tiled;
+    p->tw   = (tiled == 1) ? tw : 0;
     p->tcut = (tiled == 1) ? tcut : 0;
     p->tfuse = (tiled == 1) ? tfuse : 0;
     p->thonest = thonest ? 1 : 0;
@@ -231,13 +273,37 @@ static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
     return 1;
 }
 
+/* Back-compat setter naming a CUT, i.e. the ladder width w = D[tcut]. This is
+ * the special case every campaign number in tcut_campaign/ was measured under;
+ * it stays because the env syntax names a cut and because a wisdom record
+ * without a width field must replay as exactly this. */
+static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
+                                       int tcut, int tfuse, int thonest)
+{
+    if (!p) return 0;
+    if (tiled == 1 && (tcut < 0 || tcut > p->nf - 3)) return 0;  /* RANGE 1st */
+    return vfft_zturn2_set_tile_w(p, tiled,
+                                  (tiled == 1) ? p->D[tcut] : 0, tfuse, thonest);
+}
+
 /* Env gate, mirroring the VFFT_NO_ZTURN / VFFT_FORCE_ZROUTE style (read once
  * at CREATE so both directions follow one plan field; no execute-path getenv).
  *
  *   VFFT_TCUT unset / "" / "off" / "no"  -> UNTILED (shipping default)
  *   VFFT_TCUT=a1                          -> A1 control arm (tiled = 2)
- *   VFFT_TCUT=<j>[:<tfuse>]               -> TILED, tcut = j, tfuse = 0|1
+ *   VFFT_TCUT=<j>[:<tfuse>]               -> TILED, LADDER width w = D[j]
+ *   VFFT_TCUT_W=<KB>                      -> TILED, EXPLICIT width; the cut is
+ *                                            DERIVED. Overrides VFFT_TCUT's j
+ *                                            (VFFT_TCUT must still be set, to
+ *                                            carry :tfuse and to keep "unset
+ *                                            means untiled" the single rule).
  *   VFFT_TCUT_TW=honest                   -> HONEST mid twiddle offsets
+ *
+ * VFFT_TCUT_W is the axis the ladder could not reach: widths are constrained
+ * only by `D[tcut] | w | SEC`, not to the chain's running products, so e.g.
+ * N=8192 can be given MKL's 16 KB tile that no chain of {4,8} can express.
+ * KB is the TILE DATA size; the L1 working set is roughly twice that once the
+ * tiled passes' twiddle records are counted (tcut_campaign §2.5).
  *
  * An ILLEGAL request is refused LOUDLY and leaves the plan untiled — it must
  * NOT return NULL from create, because that would silently reroute the whole
@@ -247,7 +313,9 @@ static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
 {
     const char *e = getenv("VFFT_TCUT");
     const char *h = getenv("VFFT_TCUT_TW");
+    const char *wv = getenv("VFFT_TCUT_W");
     int tiled = 0, tcut = 0, tfuse = 0, thonest = 0;
+    long twreq = 0;                             /* 0 = use the ladder width  */
     if (!e || !e[0]) return;
     if (e[0] == 'o' || e[0] == 'O' || e[0] == 'n' || e[0] == 'N') return;
     if (h && (h[0] == 'h' || h[0] == 'H')) thonest = 1;
@@ -259,17 +327,27 @@ static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
         if (end == e) return;                   /* unparseable -> untiled    */
         tiled = 1; tcut = (int)j;
         if (end && *end == ':') tfuse = (end[1] == '1');
+        if (wv && wv[0]) {
+            char *we = 0;
+            long kb = strtol(wv, &we, 10);
+            /* KB of tile DATA -> complex points (16 B each). */
+            if (we != wv && kb > 0) twreq = kb * 1024 / 16;
+        }
     }
-    if (!vfft_zturn2_set_tile(p, tiled, tcut, tfuse, thonest))
-        fprintf(stderr, "[tcut] N=%d nf=%d: REFUSED VFFT_TCUT=%s "
+    const int ok = (tiled == 1 && twreq)
+        ? vfft_zturn2_set_tile_w(p, tiled, twreq, tfuse, thonest)
+        : vfft_zturn2_set_tile(p, tiled, tcut, tfuse, thonest);
+    if (!ok)
+        fprintf(stderr, "[tcut] N=%d nf=%d: REFUSED VFFT_TCUT=%s%s%s "
                         "(illegal for this chain) -> running UNTILED\n",
-                p->N, p->nf, e);
+                p->N, p->nf, e, twreq ? " VFFT_TCUT_W=" : "",
+                twreq ? wv : "");
     else if (getenv("VFFT_TCUT_VERBOSE"))
         fprintf(stderr, "[tcut] N=%d nf=%d tiled=%d tcut=%d tfuse=%d tw=%s "
                         "w=%ld NT=%ld\n", p->N, p->nf, p->tiled, p->tcut,
                 p->tfuse, p->thonest ? "honest" : "reset",
-                p->tiled == 1 ? p->D[p->tcut] : 0L,
-                p->tiled == 1 ? ((long)p->N / 4) / p->D[p->tcut] : 0L);
+                p->tiled == 1 ? p->tw : 0L,
+                p->tiled == 1 ? ((long)p->N / 4) / p->tw : 0L);
 }
 
 /* Plan-time twiddle repack per the canonical map (zturns_consensus doc §3;
@@ -530,7 +608,7 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
         _vfft_zt_mids_a1(p, 1);                 /* A1 control arm            */
     } else {
         const long SECD = (long)p->N / 2, SEC = (long)p->N / 4;
-        const long w = p->D[p->tcut], NT = SEC / w;
+        const long w = p->tw, NT = SEC / w;   /* tw is the INPUT (§ plan) */
         if (!p->tfuse) {                        /* fully per-section nest    */
             for (long q = 0; q < 4; q++) {
                 double *sec = p->plane + q * SECD;
@@ -628,7 +706,7 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
     } else {
         /* exact reverse of §3.4: within a unit, per-tile mids nf-2..tcut+1
          * first, then the section-level mids tcut..1. */
-        const long w = p->D[p->tcut], NT = SEC / w;
+        const long w = p->tw, NT = SEC / w;   /* tw is the INPUT (§ plan) */
         if (!fused) {
             for (long q = 0; q < 4; q++) {
                 double *sec = p->plane + q * SECD;
