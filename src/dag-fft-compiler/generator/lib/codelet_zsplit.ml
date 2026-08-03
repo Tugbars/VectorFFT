@@ -143,6 +143,15 @@ type zs_kind =
        tw_im arg (cast to const size_t ptr). Stores keep `k` ascending --
        contiguous natural output. Load-side permutation is the measured-free
        side (P0c: 0.96-1.12x vs +29-50% for store-side). *)
+  ; dif : bool
+    (* twiddle PLACEMENT direction for dft_expand_twiddled. false = DIT
+       (pre-twiddle at Fwd — every legacy kind). true = DIF (POST-twiddle at
+       Fwd) — required by the DIT-forward boundary kinds: conj(stfb) is
+       "DFT block THEN w^1", and placement travels with (direction, sign)
+       in dft.ml:271-277, so sign=Fwd alone lands on PRE and computes a
+       DIFFERENT (wrong) kernel. Found by the conj-identity gate: dts/dtsn
+       grossly wrong (maxabs ~ output magnitude) while the twiddle-free dtt
+       was EXACT — the placement, not the block, was the bug. *)
   ; sched : zs_sched
     (* B2 --zp-sched: emit through the combined memory+arith node
        sequence (see zs_sched above). NEVER a kind-table default —
@@ -154,7 +163,8 @@ let kind_of_string (s : string) : zs_kind =
   let mid = { base = "ms"; bwd = false; group_loop = false; uj2 = false
             ; twiddled = true; policy = Dft.TP_Flat; tw_off = ""
             ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls"
-            ; sink_stores = false; sched = ZS_off; nat_in = false } in
+            ; sink_stores = false; sched = ZS_off; nat_in = false
+            ; dif = false } in
   match s with
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
@@ -242,14 +252,15 @@ let kind_of_string (s : string) : zs_kind =
        arrangement), DFT + POST w^1 (TP_PowW1 stream at k), section-record
        stores. Radix 8 AND 4, like stf. *)
     { mid with base = "dts"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
-    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs" }
+    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; dif = true }
   | "dtsn" ->
     (* DIT ingest, NATURAL-input twin: dts with the z LOAD edge addressed at
        kn via the tw_im-carried rho table (the stfbn mechanism, conj'd) --
        natural x in, no separate reorder. tw/w^1 stream and plane stores
        keep k. *)
     { mid with base = "dtsn"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
-    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; nat_in = true }
+    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; nat_in = true
+    ; dif = true }
   | "dtt" ->
     (* DIT finisher (plane -> user): s0tb's dataflow at fwd sign.
        Twiddle-free leaf, section-record loads + 4x4 lane transpose, REINT
@@ -566,7 +577,7 @@ let emit_codelet
       then
         Dft.dft_expand_twiddled
           ~policy:k.policy
-          ~direction:Dft.DIT
+          ~direction:(if k.dif then Dft.DIF else Dft.DIT)
           ~sign
           ~table_conj:k.bwd
           radix
@@ -751,11 +762,12 @@ let emit_codelet
        ; (if k.twiddled
           then
             Printf.sprintf
-              "math: Dft.dft_expand_twiddled %s DIT%s%s"
+              "math: Dft.dft_expand_twiddled %s %s%s%s"
               (match k.policy with
                | Dft.TP_PowW1 -> "TP_PowW1"
                | Dft.TP_Log3 -> "TP_Log3"
                | Dft.TP_Flat -> "TP_Flat")
+              (if k.dif then "DIF" else "DIT")
               (if k.bwd then " sign=Bwd table_conj=true" else " sign=Fwd")
               (if k.uj2 then " (2-instance concat, il2-style)" else "")
           else "math: Dft.dft_expand (n1)" ^ if k.bwd then " sign=Bwd" else " sign=Fwd")
