@@ -544,8 +544,12 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
 static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                          FILE *out, int cool_ms, int flip)
 {
-    /* plan descriptor = the banked verdict: decoded cascade chain + route */
+    /* plan descriptor = the banked verdict: decoded cascade chain + route.
+     * ze == NULL is the --k1nat sub-2048 direct cell (Phase B5): no kind-4
+     * line exists for the IL-tier band — the front door serves the @nat
+     * ILP verdict instead, and the label says so. */
     char plan_s[64];
+    if (ze)
     {
         int ch[8];
         int nf = vfft_k1_cc_chain_decode(ze->cc_chain, ch);
@@ -558,7 +562,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
             p += (size_t)snprintf(plan_s + p, sizeof plan_s - p, ":default");
         snprintf(plan_s + p, sizeof plan_s - p, "/R%d", ze->zs_route);
     }
-    const char *path = ze->zs_route ? "zturn" : "zsplit";
+    else
+        snprintf(plan_s, sizeof plan_s, "z:ilp");
+    const char *path = ze ? (ze->zs_route ? "zturn" : "zsplit") : "ilp";
 
     vfft_wisdom *W = k1z_bundle();
     if (!W)
@@ -2880,6 +2886,18 @@ int main(int argc, char **argv)
         vfft_proto_dispatch_set_bluestein_wisdom(NULL); /* bwis leaves scope */
     }
 
+    /* --k1nat sub-2048 direct cell (il_coverage_plan.md Phase B5): these
+     * cells have NO kind-4 line (they are the K=1 IL-tier band, and no
+     * kind-3 K=1 lines ship either), so file-driven enumeration can never
+     * reach them. With an explicit [N] below 2048 the cell runs directly:
+     * the front-door NATURAL in-place create serves the @nat ILP verdict
+     * (racing + banking it on first touch, replaying after). */
+    if (g_k1nat && target_N && target_N < 2048 && benched == 0)
+    {
+        run_k1z_cell(target_N, NULL, out, cool_ms, flip);
+        benched++;
+        skipped = 0;
+    }
     if (out)
         fclose(out);
     printf("\nbenched %d cells, skipped %d.  CSV -> %s\n", benched, skipped, csv);

@@ -1841,6 +1841,59 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
 static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                                   const double *z_in, double *z_out);
 
+/* ── K=1 IL-engine candidate for the IN-PLACE tiers (il_coverage_plan.md
+ * Phase B). Resolves N to exactly one of il2p/il3p (or neither): kind-3
+ * pair when banked, else the balanced-pair heuristic, else the il3p chain
+ * default. MONO is deliberately absent — its kernels are `__restrict__`
+ * and refuse aliasing (A3 record). PRIME cells return neither (the
+ * incumbent keeps serving them; il_prime aliasing is ungated).
+ * ⚠ The pair heuristic MIRRORS the OOP K=1 block's IL search (the
+ * "IL runs its OWN pair search" rules: il2p registries stop at R=64, no
+ * parity constraint since the odd-count tail) — if you touch one, touch
+ * both; they are cross-referenced. Planning side only. */
+static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
+                             vfft_il2p_plan_t **il2p_out,
+                             vfft_il3p_plan_t **il3p_out)
+{
+    *il2p_out = NULL;
+    *il3p_out = NULL;
+    if (getenv("VFFT_NO_IL2P"))
+        return;
+    int iR1 = 0, iR2 = 0;
+    const vfft_oop_wisdom_entry_t *ke = vfft_oop_wisdom_lookup_k1(&W->oop, N);
+    if (ke && ke->il_R1)
+    {
+        iR1 = ke->il_R1;
+        iR2 = ke->il_R2;
+    }
+    else
+    {
+        for (int R2c = (N < 64 ? N : 64); R2c >= 4; R2c--)
+        {
+            if (N % R2c)
+                continue;
+            int R1c = N / R2c;
+            if (R1c < 3 || R1c > 64)
+                continue;
+            if (!vfft_il2p_leaf_fn(R2c, 0) || !vfft_il2p_mid_fn(R1c, 0))
+                continue;
+            if (!iR1 || abs(R1c - R2c) < abs(iR1 - iR2))
+            {
+                iR1 = R1c;
+                iR2 = R2c;
+            }
+        }
+    }
+    if (iR1)
+        *il2p_out = vfft_il2p_create(N, iR1, iR2);
+    if (!*il2p_out)
+    {
+        int cR2, cA, cB;
+        if (vfft_il3p_default_chain(N, &cR2, &cA, &cB))
+            *il3p_out = vfft_il3p_create(N, cR2, cA, cB);
+    }
+}
+
 static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
 {
@@ -2148,7 +2201,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * LEAF/BAILEY2 natural), and 2D c2c (native scrambled vs a per-axis digit-reversal reorder).
      * r2c/c2r/trig are inherently natural, and padded (batch) order isn't wired, so a non-DEFAULT
      * order there is rejected up front — the same no-silent-wrong-order contract as the padding gate
-     * below. natural_order_inplace_design.md §2e. */
+     * below. natural_order_inplace_design.md §2e.
+     *
+     * SCRAMBLED is a CONTRACT, not a specific permutation: the engine may emit ANY self-consistent
+     * output order provided its own bwd consumes its own fwd comb (zroute §2.6). The IDENTITY
+     * permutation qualifies — so where the fastest engine for a cell is natural-native (the K=1 IL
+     * tiers below the cascade), an explicit-SCRAMBLED request is served by it AS natural output,
+     * legally and at full speed (il_coverage_plan.md Phase A). Callers must never assume WHICH
+     * permutation scrambled output carries; that has been the contract since §2.6. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
         !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !ob))
     {
@@ -2888,7 +2948,33 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 else
                     mode = VFFT_NAT_UNSET;
             }
-            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_ZCASC)
+            /* ── ILP candidate (Phase B): the sub-2048 tier of the same
+             * idea — il2p/il3p serve natural in-place interleaved natively
+             * (alias-gated; two-stage through internal scratch, zout
+             * written only by the last stage). Raced end-to-end vs the
+             * convert incumbent, banked in the same @nat slot. */
+            vfft_il2p_plan_t *ilc2 = NULL;
+            vfft_il3p_plan_t *ilc3 = NULL;
+            if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                N < 2048 && !getenv("VFFT_NO_NAT_ILP"))
+                _k1_il_candidate(W, N, &ilc2, &ilc3);
+            if (mode == VFFT_NAT_ILP)
+            {
+                if (ilc2 || ilc3)
+                {
+                    h->k1il2p = ilc2;
+                    h->k1il3p = ilc3;
+                    ilc2 = NULL;
+                    ilc3 = NULL;
+                    if (getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr, "[natorder] N=%d K=%zu replay ILP\n",
+                                N, K);
+                }
+                else
+                    mode = VFFT_NAT_UNSET;
+            }
+            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_ZCASC &&
+                mode != VFFT_NAT_ILP)
             {
                 /* Self-contained natural — the DEPLOYED plan + its OWN chain drive everything; this path
                  * NEVER reads the scrambled entry. CONSUME (warm ne) rebuilds the deployed plan from ne's
@@ -3200,6 +3286,78 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 vfft_zturn2_destroy(zct); /* candidate lost or was unused */
                 zct = NULL;
             }
+            /* ── ILP MEASURE race (Phase B): same protocol as ZCASC — the
+             * finished incumbent's real execute vs the aliased IL engine,
+             * 5 rounds alternated, medians, buffer re-seeded per round.
+             * NATURAL creates only measure; scrambled rides the verdict
+             * hit-only (single @nat writer). */
+            if ((ilc2 || ilc3) && h->nat_mode != VFFT_NAT_ILP &&
+                h->nat_mode != VFFT_NAT_FREE &&
+                h->nat_mode != VFFT_NAT_ZCASC)
+            {
+                double *rz = (double *)malloc(2 * (size_t)N * sizeof(double));
+                double *r0 = (double *)malloc(2 * (size_t)N * sizeof(double));
+                if (rz && r0)
+                {
+                    for (long i = 0; i < 2L * N; i++)
+                        r0[i] = (double)rand() / RAND_MAX - 0.5;
+                    const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
+                    double ti[5], tz[5];
+                    vfft_set_num_threads(h->nthreads);
+                    for (int r = 0; r < 5; r++)
+                    {
+                        for (int a = 0; a < 2; a++)
+                        {
+                            const int arm = (r & 1) ? 1 - a : a;
+                            memcpy(rz, r0, 2 * (size_t)N * sizeof(double));
+                            const double t0 = vfft_proto_now_ns();
+                            for (int i = 0; i < reps; i++)
+                            {
+                                if (arm == 0)
+                                    _exec_c2c_interleaved(h, VFFT_FORWARD,
+                                                          rz, rz);
+                                else if (ilc2)
+                                    vfft_il2p_execute_fwd(ilc2, rz, rz);
+                                else
+                                    vfft_il3p_execute_fwd(ilc3, rz, rz);
+                            }
+                            const double dt =
+                                (vfft_proto_now_ns() - t0) / reps;
+                            if (arm == 0) ti[r] = dt; else tz[r] = dt;
+                        }
+                    }
+                    for (int a = 0; a < 2; a++)
+                    {
+                        double *v = a ? tz : ti;
+                        for (int i = 1; i < 5; i++)
+                            for (int j = i; j > 0 && v[j] < v[j - 1]; j--)
+                            { double t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+                    }
+                    if (tz[2] < ti[2])
+                    {
+                        h->k1il2p = ilc2;
+                        h->k1il3p = ilc3;
+                        ilc2 = NULL;
+                        ilc3 = NULL;
+                        h->nat_mode = VFFT_NAT_ILP;
+                        _bank_nat_1d(W, N, K, VFFT_NAT_ILP, tz[2],
+                                     p->factors, p->variants, p->num_stages,
+                                     p->use_dif_forward);
+                    }
+                    if (getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr,
+                                "[natorder] N=%d K=%zu ilp=%.0fns "
+                                "incumbent=%.0fns -> %s\n",
+                                N, K, tz[2], ti[2],
+                                h->nat_mode == VFFT_NAT_ILP ? "ILP" : "tape");
+                }
+                free(rz);
+                free(r0);
+            }
+            if (ilc2)
+                vfft_il2p_destroy(ilc2);
+            if (ilc3)
+                vfft_il3p_destroy(ilc3);
         }
         /* MT-safety: flag plans whose codelet ignores the partial-lane count (so _c2c_mt runs them whole-
          * batch instead of K-splitting). Checked once here on the FINAL cplan (after any natural rebuild). */
@@ -3233,6 +3391,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 h->zsplit = ipzs; /* exactly one non-NULL (route atomicity) */
                 h->zturn = ipzt;
                 h->zroute = ipzr;
+            }
+            /* Phase B3 (il_coverage_plan.md): sub-2048 explicit-SCRAMBLED
+             * in-place rides the @nat ILP verdict HIT-ONLY — the IL engines
+             * are natural-native and identity is contract-legal (Phase A);
+             * hit-only keeps @nat single-writer (only NATURAL creates
+             * measure/bank). A miss serves the classic convert path exactly
+             * as before — strictly additive. */
+            if (!h->zsplit && !h->zturn && N < 2048 &&
+                !getenv("VFFT_NO_NAT_ILP"))
+            {
+                const vfft_proto_nat_entry_t *nie =
+                    vfft_proto_nat_lookup(&W->c2c, N, K);
+                if (nie && !cfg->recalibrate && nie->mode == VFFT_NAT_ILP)
+                    _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
             }
         }
         return h;
@@ -3367,7 +3539,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 }
             }
         }
-        if (K == 1 && !ob && cfg->order != VFFT_ORDER_SCRAMBLED)
+        /* K=1 engine admission (il_coverage_plan.md Phase A, 2026-08-03):
+         * DEFAULT and NATURAL as always — and now explicit SCRAMBLED too,
+         * WHEN no cascade plan attached above. The scrambled contract is
+         * "any self-consistent permutation; a route's own bwd consumes its
+         * own fwd comb" — the IDENTITY permutation qualifies, so the
+         * natural-native K=1 engines serve an explicit-SCRAMBLED request
+         * legally. Before this, asking for the CHEAPER contract below 2048
+         * got the SLOWER route (convert fallback) while order=DEFAULT got
+         * the native engine — a routing anomaly, nothing more. The
+         * no-cascade guard keeps ≥2048 scrambled on the cascade dispatch
+         * without building a dead-weight k1 engine beside it. */
+        if (K == 1 && !ob &&
+            (cfg->order != VFFT_ORDER_SCRAMBLED ||
+             (!zs_pending && !zt_pending)))
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
@@ -5029,6 +5214,29 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                * call form allows dre==NULL; normalize to the aliased buffer
                * (dre==sre is the only other accepted form). */
                 _exec_zcascade(h, dir, sre, dre ? dre : sre);
+                return;
+            }
+            if (h->k1il2p || h->k1il3p)
+            { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
+               * ALIASED — two-stage engines through internal scratch, zout
+               * written only by the last stage (alias-gated, A3 record).
+               * Attach implies verdict (@nat mode=ILP); both orders land
+               * here (identity permutation under SCRAMBLED — Phase A). */
+                double *zo = dre ? dre : (double *)sre;
+                if (h->k1il2p)
+                {
+                    if (dir == VFFT_FORWARD)
+                        vfft_il2p_execute_fwd(h->k1il2p, sre, zo);
+                    else
+                        (void)vfft_il2p_execute_bwd(h->k1il2p, sre, zo);
+                }
+                else
+                {
+                    if (dir == VFFT_FORWARD)
+                        vfft_il3p_execute_fwd(h->k1il3p, sre, zo);
+                    else
+                        vfft_il3p_execute_bwd(h->k1il3p, sre, zo);
+                }
                 return;
             }
             vfft_set_num_threads(h->nthreads);
