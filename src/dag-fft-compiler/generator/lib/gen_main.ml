@@ -484,6 +484,8 @@ let run (argv : string array) : unit =
     then zp_kind := "dtt"
     else if arg = "--zp-msd"
     then zp_kind := "msd"
+    else if arg = "--zp-dtso"
+    then zp_kind := "dtso"
     else if arg = "--zp-r0" && !i + 1 < Array.length arr
     then (
       zp_r0 := int_of_string arr.(!i + 1);

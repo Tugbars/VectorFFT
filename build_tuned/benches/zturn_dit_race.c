@@ -84,10 +84,15 @@ static const cell_t CELLS[] = {
     { 8192,  6, {4,8,4,4,4,4},     150 },
     { 16384, 7, {4,4,4,4,4,4,4},    75 },
     { 32768, 7, {4,8,4,4,4,4,4},    40 },
+    /* r8-TAIL chains — the r8 DIT ingest never raced in v1 (the DIF-banked
+     * chains all end in 4), and the stage probe showed dtt BEATS the r8
+     * stfn terminator by ~19%. Unbanked chains: legal plan-level probe. */
+    { 16384, 6, {4,8,4,4,4,8},      75 },
+    { 32768, 6, {4,8,4,4,8,8},      40 },
 };
 
-enum { A_S, A_S2, A_N, A_D, A_St, A_Nt, A_COUNT };
-static const char *ANAME[A_COUNT] = { "S", "S'", "N", "D", "St", "Nt" };
+enum { A_S, A_S2, A_N, A_D, A_D2, A_St, A_Nt, A_COUNT };
+static const char *ANAME[A_COUNT] = { "S", "S'", "N", "D", "D2", "St", "Nt" };
 
 int main(void)
 {
@@ -140,7 +145,9 @@ int main(void)
         for (long i = 0; i < 2L * N; i++)
             zin[i] = (double)rand() / RAND_MAX - 0.5;
 
-        /* pre-flight: D == N (tolerance; both natural order) */
+        /* pre-flight: D == N (tolerance; both natural order), and
+         * D2 == D memcmp-EXACT (dtso builds the identical plane bit-for-bit
+         * — this IS the dtso correctness gate, enforced every race) */
         vfft_zturn2_execute_fwd(pn, zin, ref);
         vfft_zturn2_execute_dit_fwd(pd, zin, zout);
         double xm = 0.0, e = 0.0;
@@ -152,6 +159,16 @@ int main(void)
         if (e / xm > 1e-9)
         { printf("%d %s: PRE-FLIGHT FAILED (%.1e) — run void\n",
                  N, cs, e / xm); return 1; }
+        {
+            double *z2 = az(2 * (size_t)N);
+            vfft_zturn2_execute_dit2_fwd(pd, zin, z2);
+            const int eq =
+                memcmp(z2, zout, 2 * (size_t)N * sizeof(double)) == 0;
+            fz(z2);
+            if (!eq)
+            { printf("%d %s: D2 != D (dtso plane identity broken) — run "
+                     "void\n", N, cs); return 1; }
+        }
 
         double smp[A_COUNT][ROUNDS];
         for (int r = 0; r < ROUNDS; r++)
@@ -171,6 +188,8 @@ int main(void)
                         vfft_zturn2_execute_fwd(pn, zin, zout); break;
                     case A_D:
                         vfft_zturn2_execute_dit_fwd(pd, zin, zout); break;
+                    case A_D2:
+                        vfft_zturn2_execute_dit2_fwd(pd, zin, zout); break;
                     case A_St:
                         vfft_zturn2_execute_fwd(pst, zin, zout); break;
                     case A_Nt:
@@ -199,13 +218,14 @@ int main(void)
                    ANAME[a], avg[a], srt[ROUNDS / 2],
                    srt[1], srt[ROUNDS - 2]);
         }
-        printf("  natural: N/S=%.3f  D/S=%.3f  D/N=%.3f  control S'/S=%.3f\n",
+        printf("  natural: N/S=%.3f  D/S=%.3f  D2/S=%.3f  D2/N=%.3f  "
+               "D2/D=%.3f  control S'/S=%.3f\n",
                avg[A_N] / avg[A_S], avg[A_D] / avg[A_S],
-               avg[A_D] / avg[A_N], avg[A_S2] / avg[A_S]);
+               avg[A_D2] / avg[A_S], avg[A_D2] / avg[A_N],
+               avg[A_D2] / avg[A_D], avg[A_S2] / avg[A_S]);
         if (tiled_w)
-            printf("  vs tiled: D/Nt=%.3f  (untiled DIT vs tiled DIF-natural "
-                   "— what D must ultimately beat)\n",
-                   avg[A_D] / avg[A_Nt]);
+            printf("  vs tiled: D2/Nt=%.3f  (untiled DIT-v2 vs tiled "
+                   "DIF-natural)\n", avg[A_D2] / avg[A_Nt]);
 
         fz(zin); fz(zout); fz(ref);
         vfft_zturn2_destroy(ps); vfft_zturn2_destroy(pn);
