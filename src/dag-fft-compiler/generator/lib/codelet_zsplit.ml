@@ -226,11 +226,42 @@ let kind_of_string (s : string) : zs_kind =
     { mid with base = "stfn"; bwd = true; policy = Dft.TP_PowW1
     ; tw_off = "2*(size_t)k"; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"
     ; nat_in = true }
+  (* ── DIT-FORWARD family (docs/research/dit_cascade_spec.md). Algebra:
+        F = conj . B . conj, and conjugation flips only constant signs, so a
+        DIT-forward kernel = an existing BWD kind's DATAFLOW (same edges, same
+        addresses) emitted with sign=Fwd and table_conj=false (bwd=false does
+        both), consuming the plan's FWD tables (twz/tzq — elementwise conj of
+        twzb/tzqb). The mids need NO new kind: conj(msgb) = msg exactly, so
+        the DIT driver walks the EXISTING msg fwd kernels in the bwd stage
+        order. Only the two boundaries are new, and both are recombinations —
+        no emitter-mechanics change. Bit-identity gate is exact BY
+        CONSTRUCTION: dts(x, tzq) == conj(stfb(conj x, tzqb)), memcmp. *)
+  | "dts" ->
+    (* DIT ingest (user -> plane): stfb's dataflow at fwd sign. Reads the
+       user z buffer in DIGIT-REVERSED column order (the DIT-native input
+       arrangement), DFT + POST w^1 (TP_PowW1 stream at k), section-record
+       stores. Radix 8 AND 4, like stf. *)
+    { mid with base = "dts"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
+    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs" }
+  | "dtsn" ->
+    (* DIT ingest, NATURAL-input twin: dts with the z LOAD edge addressed at
+       kn via the tw_im-carried rho table (the stfbn mechanism, conj'd) --
+       natural x in, no separate reorder. tw/w^1 stream and plane stores
+       keep k. *)
+    { mid with base = "dtsn"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
+    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; nat_in = true }
+  | "dtt" ->
+    (* DIT finisher (plane -> user): s0tb's dataflow at fwd sign.
+       Twiddle-free leaf, section-record loads + 4x4 lane transpose, REINT
+       stores contiguous ascending = NATURAL interleaved output with zero
+       indirection on the store side. Radix 4 only (r0=4 geometry). *)
+    { mid with base = "dtt"; twiddled = false
+    ; in_edge = E_sect_tr4 "Ls"; out_edge = E_z "Ls" }
   | other ->
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn)"
+          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt)"
          other)
 ;;
 
@@ -423,6 +454,7 @@ let emit_codelet
         a wrong FFT). Legacy kinds must not carry it (provenance stability). *)
   let r0_dep =
     k.base = "s0t" || k.base = "stf" || k.base = "stf2" || k.base = "stfn"
+    || k.base = "dts" || k.base = "dtsn" || k.base = "dtt"
   in
   (match r0, r0_dep with
    | None, true ->
@@ -461,8 +493,11 @@ let emit_codelet
        radix-4 terminator taps ONE record/section, so instance B's +1-record-\
        group column offset has no analog; zturn.h forces t2q=0 for last==4 \
        chains and the planner races chains instead)";
-  if k.base = "s0t" && radix <> 4
-  then failwith "codelet_zsplit: s0t/s0tb are radix-4 only (the r0=4 4-section geometry)";
+  if (k.base = "s0t" || k.base = "dtt") && radix <> 4
+  then
+    failwith
+      "codelet_zsplit: s0t/s0tb/dtt are radix-4 only (the r0=4 4-section \
+       geometry)";
   let vw = isa.Isa.vec_width in
   if vw <> 4
   then
@@ -649,6 +684,18 @@ let emit_codelet
            "stfbn (NATURAL-ORDER ZTURN-S bwd terminator: NATURAL z in, read at kn = \
             4*rho[k/4] via the tw_im-carried table, IDFT + POST conj-w^1 at k, \
             section-record stores at k), bwd."
+         | "dts", false ->
+           "dts (DIT-FORWARD ZTURN-S ingest = conj(stfb): user z in DIGIT-REVERSED \
+            column order, DFT + POST w^1 (packed stream at k, FWD tzq table), \
+            section-record stores), fwd."
+         | "dtsn", false ->
+           "dtsn (DIT-FORWARD ZTURN-S ingest, NATURAL-input twin = conj(stfbn): \
+            user z read at kn = 4*rho[k/4] via the tw_im-carried table, DFT + \
+            POST w^1 at k, section-record stores at k), fwd."
+         | "dtt", false ->
+           "dtt (DIT-FORWARD ZTURN-S finisher = conj(s0tb): twiddle-free leaf, \
+            section-record loads + 4x4 lane transpose, REINT stores contiguous \
+            ascending = NATURAL interleaved out), fwd."
          | _, true ->
            "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
          | _, false ->
