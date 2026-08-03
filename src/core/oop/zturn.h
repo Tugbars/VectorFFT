@@ -139,6 +139,21 @@ typedef struct {
     int thonest; /* mid twiddle form: 0 = RESET (default, spec §2.4/§5.4),
                   * 1 = HONEST per-section offset. Bit-identical pair; F1's
                   * discriminator, so it must stay reachable. */
+    /* ---- NATURAL-ORDER terminator (natterm_spec.md; env/plan gated, default
+     * OFF = calloc-zero = exactly today's scrambled driver). When on, the
+     * terminator kinds swap to stfn/stfbn: loads (and the fwd w^1 stream)
+     * walk the plane in rho order via a plan-built block table carried in the
+     * kernels' tw_im slot; stores stay contiguous ascending = natural
+     * interleaved output. tfuse is FORCED 0 (rho spans the whole section — a
+     * per-tile terminator cut cannot exist in natural order); t2q is pinned
+     * to the single-quad kind (no stfn2 twin in phase 1). */
+    int natord;      /* 0 = scrambled (shipping), 1 = natural terminator     */
+    size_t *ntf;     /* fwd table: ntf[t] = rho^{-1}(t), one entry per 64-B
+                      * block (M = N/(4*Rt) entries); conv0 MSF reversal over
+                      * chain[1..nf-2] — the P0b-pinned convention           */
+    size_t *ntb;     /* bwd table: ntb[t] = rho(t) — NOT the same table on
+                      * mixed-radix chains (the B2 gate's own first failure);
+                      * identical only when the middle chain is uniform      */
 } vfft_zturn2_plan_t;
 
 static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
@@ -150,6 +165,8 @@ static inline void vfft_zturn2_destroy(vfft_zturn2_plan_t *p)
     }
     VFFT_ZS_FREE(p->tzq);
     VFFT_ZS_FREE(p->tzqb);
+    free(p->ntf);
+    free(p->ntb);
     VFFT_ZS_FREE(p->plane);
     free(p);
 }
@@ -271,7 +288,10 @@ static inline int vfft_zturn2_set_tile_w(vfft_zturn2_plan_t *p, int tiled,
     p->tiled = tiled;
     p->tw   = (tiled == 1) ? tw : 0;
     p->tcut = (tiled == 1) ? tcut : 0;
-    p->tfuse = (tiled == 1) ? tfuse : 0;
+    /* natural order cannot fuse the terminator per tile (rho spans the whole
+     * section) — the flag is dropped silently here because the LEGALITY of
+     * the tiling itself is unaffected; only the fusion arm is. */
+    p->tfuse = (tiled == 1 && !p->natord) ? tfuse : 0;
     p->thonest = thonest ? 1 : 0;
     /* §3.3: stf2's 2-quad instance-B offset under a k-shift is verified
      * bit-exact by the scratchpad probe, but the FUSED arm keeps the
@@ -293,6 +313,49 @@ static inline int vfft_zturn2_set_tile(vfft_zturn2_plan_t *p, int tiled,
     if (tiled == 1 && (tcut < 0 || tcut > p->nf - 3)) return 0;  /* RANGE 1st */
     return vfft_zturn2_set_tile_w(p, tiled,
                                   (tiled == 1) ? p->D[tcut] : 0, tfuse, thonest);
+}
+
+/* conv0 (MSF) digit reversal over r[0..m-1] — the P0b-pinned convention. */
+static inline long _vfft_zt_rho0(long v, const int *r, int m)
+{
+    long d[16];
+    for (int i = m - 1; i >= 0; i--) { d[i] = v % r[i]; v /= r[i]; }
+    long out = 0;
+    for (int i = m - 1; i >= 0; i--) out = out * r[i] + d[i];
+    return out;
+}
+
+/* NATURAL-ORDER setter (PLANNING side; the exec purity audit watches).
+ * Builds both block tables and forces tfuse off. Idempotent; on=0 frees the
+ * tables and restores the scrambled terminator. Returns 1, or 0 on alloc
+ * failure (plan left scrambled — a refusal, never a half-state). */
+static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
+{
+    if (!p) return 0;
+    if (!on)
+    {
+        free(p->ntf); free(p->ntb);
+        p->ntf = p->ntb = NULL;
+        p->natord = 0;
+        return 1;
+    }
+    const long Rt = p->chain[p->nf - 1];
+    const long M = (long)p->N / (4 * Rt);
+    size_t *tf = (size_t *)malloc(sizeof(size_t) * (size_t)M);
+    size_t *tb = (size_t *)malloc(sizeof(size_t) * (size_t)M);
+    if (!tf || !tb) { free(tf); free(tb); return 0; }
+    for (long t = 0; t < M; t++)
+    {
+        const long r = _vfft_zt_rho0(t, p->chain + 1, p->nf - 2);
+        tf[r] = (size_t)t;               /* rho^{-1} by forward evaluation  */
+        tb[t] = (size_t)r;               /* rho                             */
+    }
+    free(p->ntf); free(p->ntb);
+    p->ntf = tf;
+    p->ntb = tb;
+    p->natord = 1;
+    p->tfuse = 0;    /* rho spans the section; per-tile terminator is illegal */
+    return 1;
 }
 
 /* ══════════════════════ TILE-WIDTH CANDIDATES (planning only) ═════════════
@@ -456,6 +519,11 @@ static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
             if (we != wv && kb > 0) twreq = kb * 1024 / 16;
         }
     }
+    /* VFFT_ZT_NATORD=1: natural-order terminator (probe/gate hook; the real
+     * routing is the natorder race, B5). Read once at create like every
+     * other zturn env gate. */
+    if (getenv("VFFT_ZT_NATORD"))
+        (void)vfft_zturn2_set_natord(p, 1);
     const int ok = (tiled == 1 && twreq)
         ? vfft_zturn2_set_tile_w(p, tiled, twreq, tfuse, thonest)
         : vfft_zturn2_set_tile(p, tiled, tcut, tfuse, thonest);
@@ -779,7 +847,17 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
             return;                             /* terminator already done   */
         }
     }
-    if (p->chain[p->nf - 1] == 4)
+    if (p->natord)
+        /* NATURAL terminator: same pass, columns walked in rho order via the
+         * ntf table (tw_im slot), stores contiguous ascending. t2q is
+         * structurally ignored (single-quad kind only). B2 gate: EXACT vs
+         * permute(stf), both radices. */
+        ((p->chain[p->nf - 1] == 4) ? radix4_z_stfn_r4_fwd_avx2
+                                    : radix8_z_stfn_r4_fwd_avx2)(
+            p->plane, 0, zout, 0, p->tzq, (const double *)p->ntf,
+            0, 0, (size_t)p->N / p->chain[p->nf - 1], 0,
+            (size_t)p->N / p->chain[p->nf - 1]);
+    else if (p->chain[p->nf - 1] == 4)
         /* RADIX-4 terminator (E6-E11): OLs = count = N/4, 4 columns/iter,
          * loop trip N/16. STRUCTURALLY no t2q consult — no stf2@r4 twin. */
         radix4_z_stf_r4_fwd_avx2(
@@ -799,7 +877,17 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
     const long SECD = (long)p->N / 2, SEC = (long)p->N / 4;
     const int fused = (p->tiled == 1 && p->tfuse);
     if (!fused) {
-        if (p->chain[p->nf - 1] == 4)
+        if (p->natord)
+            /* NATURAL bwd terminator: consumes a NATURAL spectrum — reads
+             * zin in rho order via ntb (NOT ntf: distinct on mixed-radix
+             * chains, the B2 gate's own first failure), conj-w^1 and plane
+             * stores at k. */
+            ((p->chain[p->nf - 1] == 4) ? radix4_z_stfn_r4_bwd_avx2
+                                        : radix8_z_stfn_r4_bwd_avx2)(
+                zin, 0, p->plane, 0, p->tzqb, (const double *)p->ntb,
+                0, 0, (size_t)p->N / p->chain[p->nf - 1], 0,
+                (size_t)p->N / p->chain[p->nf - 1]);
+        else if (p->chain[p->nf - 1] == 4)
             /* RADIX-4 bwd terminator (E12-E15) = the bwd FIRST stage; exact
              * address mirror of the fwd r4 arm (fwd/bwd permutations matched
              * per chain — cutover atomicity applies exactly as at r8). */
