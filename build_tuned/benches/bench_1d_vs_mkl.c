@@ -416,6 +416,16 @@ static void measure_ab(double *vns_out, double *mns_out,
 static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
+static int g_k1nat = 0;              /* --k1nat (B6): --k1zip discipline +
+                                      * order=NATURAL on our side. MKL is
+                                      * ALWAYS natural — this mode finally
+                                      * removes the permanent scrambled-vs-
+                                      * natural caveat: both engines produce
+                                      * THE SAME spectrum, and the
+                                      * correctness column becomes a CROSS-
+                                      * ENGINE elementwise compare (stronger
+                                      * than roundtrip, which cannot gate
+                                      * ordering). Implies g_k1zip. */
 static vfft_oop_wisdom_t g_k1z_oopw; /* shipped-reader view of the positional wisdom file */
 static int g_k1z_oopw_loaded = 0;
 static const char *g_k1z_wpath = NULL;
@@ -564,7 +574,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     cfg.dims = 1;
     cfg.n[0] = N;
     cfg.howmany = 1;
-    cfg.order = VFFT_ORDER_SCRAMBLED;
+    cfg.order = g_k1nat ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* k1z cells run the committed z contract */
     cfg.nthreads = 1;
     cfg.wisdom = W;
@@ -604,6 +614,43 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
             maxmag = m;
     }
     double rel = maxmag > 0 ? maxerr / maxmag : maxerr;
+#ifdef VFFT_HAS_MKL
+    if (g_k1nat)
+    {
+        /* --k1nat: the correctness column is the CROSS-ENGINE elementwise
+         * compare — both engines natural, same input, same spectrum. This is
+         * the check the scrambled modes structurally cannot run (🔴 roundtrip
+         * cannot gate ordering; it holds under ANY self-consistent
+         * permutation). Overwrites `rel` on purpose: a natural mode whose
+         * spectrum does not match MKL's elementwise is WRONG no matter how
+         * clean its roundtrip is. */
+        DFTI_DESCRIPTOR_HANDLE d = NULL;
+        if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1,
+                                 (MKL_LONG)N) == DFTI_NO_ERROR)
+        {
+            DftiSetValue(d, DFTI_PLACEMENT, DFTI_INPLACE);
+            if (DftiCommitDescriptor(d) == DFTI_NO_ERROR)
+            {
+                double *zm = alloc_d(2 * total), *zv = alloc_d(2 * total);
+                memcpy(zm, z0, 2 * total * sizeof(double));
+                memcpy(zv, z0, 2 * total * sizeof(double));
+                DftiComputeForward(d, zm);
+                vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+                double xe = 0.0, xm = 0.0;
+                for (size_t i = 0; i < 2 * total; i++)
+                {
+                    double e = fabs(zv[i] - zm[i]), m = fabs(zm[i]);
+                    if (e > xe) xe = e;
+                    if (m > xm) xm = m;
+                }
+                rel = xm > 0 ? xe / xm : xe;
+                free_d(zm);
+                free_d(zv);
+            }
+            DftiFreeDescriptor(&d);
+        }
+    }
+#endif
 
     /* A/B — measure_ab's fairness shape (cachebust + cool between engines, flip) */
     double vns = 0, mns = 0;
@@ -2088,6 +2135,18 @@ int main(int argc, char **argv)
              * CSV below so a probe can never overwrite a banked baseline. */
             g_k1zip = 1;
         }
+        else if (strcmp(argv[1], "--k1nat") == 0)
+        {
+            /* B6: natural-vs-natural — the number the natural-order campaign
+             * exists to produce. --k1zip's in-place discipline with
+             * order=NATURAL on our side (ZCASC route, stfn terminator; the
+             * @nat verdict races/banks at create through the front door).
+             * MKL's native order IS natural, so for the first time both
+             * engines compute the SAME spectrum and the correctness column
+             * is a cross-engine elementwise compare. */
+            g_k1zip = 1;
+            g_k1nat = 1;
+        }
         else if (strncmp(argv[1], "--tcut=", 7) == 0)
         {
             /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
@@ -2127,6 +2186,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : g_k1nat           ? "vfft_perf_tuned_1d_k1nat.csv"
                       : g_k1zip           ? "vfft_perf_tuned_1d_k1zip.csv"
                       : tcut_mode         ? "vfft_perf_tuned_1d_tcut.csv"
                       : (r2c && mt)       ? "vfft_perf_tuned_r2c_mt.csv"
