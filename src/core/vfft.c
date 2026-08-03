@@ -1836,6 +1836,11 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
 /* Bank a SELF-CONTAINED 1D natural record (order-tagged @nat table) + persist. The natural verdict
  * stores its OWN deployed chain (fac/var/nf/use_dif) + mode + measured total — never a copy of the
  * scrambled entry. mode ∈ {PSWAP, PURE_CYCLE, SCR}; FREE is re-derived at create (num_stages<=1). */
+/* forward decl: the ZCASC MEASURE race (B5) times the finished incumbent
+ * handle through its real execute path, which is defined further down. */
+static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
+                                  const double *z_in, double *z_out);
+
 static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
 {
@@ -2837,7 +2842,53 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
-            if (mode != VFFT_NAT_FREE)
+            /* ── ZCASC candidate (B5): the K=1 interleaved cascade with the
+             * stfn NATURAL terminator — natural output with NO reorder pass
+             * (B4 falsifier: +2.5–5.7% over scrambled where the tape pays
+             * +13–27%). Built here as a CANDIDATE in this race, never a
+             * parallel path. The chain replays the kind-4 scrambled cascade
+             * verdict (order-agnostic plan data; recalibrate cleared on the
+             * copy — natural recalibrate governs the NATURAL verdict, not
+             * the scrambled one: regime separation, line ~2766). Legacy
+             * zsplit routes have no natural mode — candidate skipped.
+             * Kill switch: VFFT_NO_NAT_ZCASC (VFFT_NO_ZTURN precedent). */
+            vfft_zturn2_plan_t *zct = NULL;
+            if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                N >= 2048 && !getenv("VFFT_NO_NAT_ZCASC"))
+            {
+                vfft_config_t rcfg = *cfg;
+                rcfg.recalibrate = 0;
+                vfft_zsplit_plan_t *zcs = NULL;
+                int zcr = 0;
+                if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
+                {
+                    if (zcs)
+                        vfft_zsplit_destroy(zcs);
+                    if (zct && !vfft_zturn2_set_natord(zct, 1))
+                    {
+                        vfft_zturn2_destroy(zct);
+                        zct = NULL;
+                    }
+                }
+            }
+            /* CONSUME ZCASC: attach and skip the whole tape build. A banked
+             * ZCASC whose kind-4 line has since vanished (or been refused)
+             * degrades to UNSET — re-measure, never hard-fail. */
+            if (mode == VFFT_NAT_ZCASC)
+            {
+                if (zct)
+                {
+                    h->zturn = zct;
+                    h->zroute = 1;
+                    zct = NULL;
+                    if (getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr, "[natorder] N=%d K=%zu replay ZCASC\n",
+                                N, K);
+                }
+                else
+                    mode = VFFT_NAT_UNSET;
+            }
+            if (mode != VFFT_NAT_FREE && mode != VFFT_NAT_ZCASC)
             {
                 /* Self-contained natural — the DEPLOYED plan + its OWN chain drive everything; this path
                  * NEVER reads the scrambled entry. CONSUME (warm ne) rebuilds the deployed plan from ne's
@@ -3067,6 +3118,88 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 h->nat_scr->sub_jit_fwd = vfft_proto_plan_jit_fwd(&h->nat_scr->sub);
 #endif
             h->nat_mode = mode;
+            /* ── ZCASC MEASURE race (B5): the incumbent handle EXACTLY as
+             * built (its real execute path, tape and all) vs the natord
+             * cascade, in-place interleaved on the same scratch. End-to-end
+             * on purpose — the engines share nothing, so any partial-cost
+             * comparison would be a hand heuristic. 5 rounds, alternated
+             * order, medians; buffer re-seeded per round (repeated in-place
+             * fwd amplifies magnitudes — unchecked it walks into inf and
+             * the timing measures denormal/inf handling, not the FFT).
+             * Winner banked in the SAME @nat verdict slot. Loss path: the
+             * earlier bank stands, candidate destroyed. */
+            if (zct && h->nat_mode != VFFT_NAT_ZCASC &&
+                h->nat_mode != VFFT_NAT_FREE)
+            {
+                double *rz = (double *)malloc(2 * (size_t)N * sizeof(double));
+                double *r0 = (double *)malloc(2 * (size_t)N * sizeof(double));
+                if (rz && r0)
+                {
+                    for (long i = 0; i < 2L * N; i++)
+                        r0[i] = (double)rand() / RAND_MAX - 0.5;
+                    const int reps = N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
+                    double ti[5], tz[5];
+                    vfft_set_num_threads(h->nthreads);
+                    for (int r = 0; r < 5; r++)
+                    {
+                        for (int a = 0; a < 2; a++)
+                        {
+                            const int arm = (r & 1) ? 1 - a : a;
+                            memcpy(rz, r0, 2 * (size_t)N * sizeof(double));
+                            const double t0 = vfft_proto_now_ns();
+                            for (int i = 0; i < reps; i++)
+                            {
+                                if (arm == 0)
+                                    _exec_c2c_interleaved(h, VFFT_FORWARD,
+                                                          rz, rz);
+                                else
+                                    vfft_zturn2_execute_fwd(zct, rz, rz);
+                            }
+                            const double dt =
+                                (vfft_proto_now_ns() - t0) / reps;
+                            if (arm == 0) ti[r] = dt; else tz[r] = dt;
+                        }
+                    }
+                    /* median of 5 (tiny insertion sort) */
+                    for (int a = 0; a < 2; a++)
+                    {
+                        double *v = a ? tz : ti;
+                        for (int i = 1; i < 5; i++)
+                            for (int j = i; j > 0 && v[j] < v[j - 1]; j--)
+                            { double t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
+                    }
+                    if (tz[2] < ti[2])
+                    {
+                        h->zturn = zct;
+                        h->zroute = 1;
+                        zct = NULL;
+                        h->nat_mode = VFFT_NAT_ZCASC;
+                        /* chain fields informational (replay reads kind-4) */
+                        _bank_nat_1d(W, N, K, VFFT_NAT_ZCASC, tz[2],
+                                     p->factors, p->variants, p->num_stages,
+                                     p->use_dif_forward);
+                        /* NOTE: the tape artifacts (nat_list/nat_cyc_off/
+                         * nat_tmp/nat_scr) stay allocated — destroy frees
+                         * them; selective freeing here would duplicate
+                         * destroy's invariants for ~O(N) ints of dead
+                         * weight. Flagged, accepted for v1. */
+                    }
+                    if (getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr,
+                                "[natorder] N=%d K=%zu zcasc=%.0fns "
+                                "incumbent=%.0fns -> %s\n",
+                                N, K, tz[2], ti[2],
+                                h->nat_mode == VFFT_NAT_ZCASC ? "ZCASC"
+                                                              : "tape");
+                }
+                free(rz);
+                free(r0);
+            }
+            if (zct)
+            {
+                vfft_zturn2_destroy(zct); /* candidate lost or was unused */
+                zct = NULL;
+            }
         }
         /* MT-safety: flag plans whose codelet ignores the partial-lane count (so _c2c_mt runs them whole-
          * batch instead of K-splitting). Checked once here on the FINAL cplan (after any natural rebuild). */

@@ -92,6 +92,14 @@ static inline int vfft_zsplit_default_chain(int N, int *chain)
     case 4096:  chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=8; chain[4]=8; return 5;
     case 8192:  chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=8; chain[4]=8; return 5;
     case 16384: chain[0]=4; chain[1]=8; chain[2]=8; chain[3]=8; chain[4]=8; return 5;
+    case 32768: /* cold-start seed (B5 gate found the gap: no seed => the
+                 * front-door MISS race never races the cascade at 32768 and
+                 * the cell silently serves the classic path; the shipped
+                 * generated/ wisdom masked it). Legacy-legal (last==8) so
+                 * BOTH routes can build it; the calibrated better chain
+                 * (4.8.4.4.4.4.4) still arrives via wisdom replay. */
+        chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=4; chain[4]=4;
+        chain[5]=4; chain[6]=8; return 7;
     default: return 0;
     }
 }

@@ -53,7 +53,17 @@ typedef struct {
 } vfft_proto_wisdom_entry_t;
 
 enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
-       VFFT_NAT_SCR = 3, VFFT_NAT_PURE_CYCLE = 4, VFFT_NAT_PSWAP = 5 };
+       VFFT_NAT_SCR = 3, VFFT_NAT_PURE_CYCLE = 4, VFFT_NAT_PSWAP = 5,
+       /* ZCASC (B5, 2026-08-03): the K=1 interleaved zturn cascade with the
+        * stfn NATURAL terminator — no reorder pass at all. Raced end-to-end
+        * against the tape incumbent at create (vfft.c natural block) and
+        * banked like every other mode. Replay pulls the CHAIN from the
+        * kind-4 oop line (the scrambled cascade verdict; order-agnostic
+        * plan data) — the @nat entry stores only the VERDICT. An old binary
+        * reading mode=6 falls into its MEASURE branch and re-races: degraded,
+        * never wrong. 2 (LEAF_IP) is retired but NEVER reused — old files
+        * may still carry it with the old meaning. */
+       VFFT_NAT_ZCASC = 6 };
 
 /* ── SELF-CONTAINED natural-order record (order=VFFT_ORDER_NATURAL). Its own DEPLOYED FFT
  * chain (nf/factors/variants/use_dif — the plan the reorder tape follows and that runs
