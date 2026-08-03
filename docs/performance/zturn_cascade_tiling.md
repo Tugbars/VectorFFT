@@ -319,6 +319,56 @@ matched-permutation inverse cancels the order for free) and must NOT be quoted
 as natural-order parity: at +1%/+3% margins, paying for natural order would
 likely turn the 8192/16384 wins into ties or narrow losses.
 
+## 6.3 Natural order through the front door — the asymmetry resolved (2026-08-03)
+
+The warning above is now answered by measurement instead of projection.
+`order=NATURAL` for K=1 interleaved ≥2048 routes to the cascade with the
+**load-permuted stfn terminator — natural output with NO reorder pass**
+(`VFFT_NAT_ZCASC` in the natorder verdict; the create-time race measured the
+cascade 4.7–7.1× faster than the tape incumbent at every cell, and the
+consume path replays the banked verdict with zero race). The chain, route,
+t2q, and tile width all replay from the same kind-4 line the scrambled path
+uses — one calibration serves both orders.
+
+🔴 **Vintage trap, recorded because it burned a table:** the first
+natural-vs-natural run quoted 0.79–0.85 at 4096–16384 — those cells were
+replaying a stale `oop_wisdom.txt` (no tile widths banked, 8192/16384 on
+old chains ending in 8, the ~19 %-slower stfn form, and no 32768 kind-4
+line at all). **Check the kind-4 vintage — chains AND width fields —
+before quoting any front-door table.** All five cells were re-banked
+through `calibrate_zchain` (711 benchmarks total; every winner ends in 4,
+tiled w1024 @ 48 KB L1 at ≥4096), then both order modes re-ran
+same-vintage, same-day.
+
+Benchmark-derived, this host, 2026-08-03, warm, 3 runs/cell,
+cell-per-process, alternated engine order, pinned core 2 (canonical bench
+`--k1zip` / `--k1nat`; both engines in-place interleaved; indicative until
+a cool-machine session):
+
+| N | scrambled (`--k1zip`) | natural (`--k1nat`) | natorder tax | cross-engine err |
+|---|---|---|---|---|
+| 2048 | 1.20–1.34 | 1.01–1.20 | ~2–6 % | 6.9e-16 |
+| 4096 | 1.01–1.02 | 0.97–1.03 | ~2–4 % | 7.3e-16 |
+| 8192 | 1.06–1.07 | 0.98–1.06 | ~3–5 % | 6.2e-16 |
+| 16384 | 1.06–1.09 | 1.02 (×3, tight) | ~5 % | 6.6e-16 |
+| 32768 | 0.99–1.03 | 0.96–1.10 | ~2–4 % | 7.2e-16 |
+
+Readings:
+
+- **In MKL's own best discipline — in-place, interleaved, NATURAL order —
+  the cascade is at parity or ahead at every cell.** §6.2's projection
+  ("wins become ties or narrow losses") landed almost exactly: 8192/16384
+  went from +6–9 % scrambled to −2…+6 % natural.
+- The measured natural tax (scrambled→natural delta, same run pair) is
+  **2–6 %**, matching the B4 falsifier's kernel-level prediction of
+  +2.5–5.7 % — where the incumbent reorder-pass design paid +13–27 %.
+- The cross-engine column is an ELEMENTWISE compare against MKL's spectrum
+  (~7e-16): both engines provably compute the same transform in the same
+  order. The scrambled-vs-natural caveat above is dead for this mode —
+  scrambled is now a 2–6 % *option*, not an asymmetry.
+- 32768's middle natural run hit a thermal event that slowed BOTH engines
+  equally (51/52 µs; ratio held) — the machine-noise protocol's control
+  logic working as intended.
 
 ---
 
@@ -335,6 +385,19 @@ python build_tuned/build.py --src build_tuned/benches/zturn_tile_census.c
 # internal A/B (NOT a vs-MKL number — that only comes from bench_1d_vs_mkl.c)
 python build_tuned/build.py --src build_tuned/benches/zturn_tcut_ab.c --vfft --compile
 zturn_tcut_ab.exe --wisdir $SCRATCH/wisdir --cell 16384 --rounds 21 --cool 200
+
+# §6.3 — refresh the kind-4 vintage FIRST (chains + widths; the burned-table rule),
+# then the same-vintage order pair, cell-per-process, pinned core 2
+python build_tuned/build.py --src benches/calibrate_zchain.c --vfft --compile
+calibrate_zchain.exe <dir-of-oop_wisdom.txt> 1 2048 4096 8192 16384 32768
+python build_tuned/build.py --src benches/bench_1d_vs_mkl.c --mkl --vfft --compile
+bench_1d_vs_mkl.exe --k1zip <dir>/oop_wisdom.txt out_zip.csv 200 <N> 1 400 <flip> 2
+bench_1d_vs_mkl.exe --k1nat <dir>/oop_wisdom.txt out_nat.csv 200 <N> 1 400 <flip> 2
+
+# order=NATURAL front-door correctness (cold-start, scratch wisdom, both dirs
+# vs naive DFT IN ORDER — roundtrip cannot gate ordering)
+python build_tuned/build.py --src benches/vfft_natural_front_gate.c --vfft --compile
+vfft_natural_front_gate.exe --wisdir $SCRATCH/natwis
 ```
 
 Reading the A/B output: group rows by the `ENGAGED AS` column, never by the arm
