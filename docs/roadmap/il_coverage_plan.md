@@ -127,6 +127,64 @@ settle THAT design question first, two-writers history applies).
   (`--oop`-family mode or extend `--k1nat` with a placement flag —
   whichever keeps ONE canonical harness).
 
+## Phase E — spill-control extension to the other kernel families
+*(added 2026-08-04 after the t2b promotion; parent record =
+`docs/performance/il_register_pressure.md` + the twmem campaign. The rule
+that governed Phase-E scoping so far governs its execution: MEASURE the
+family first, treat only where the numbers scream, race every treatment
+per cell.)*
+
+- [ ] **E1 — `msg` cascade-mid render fix (the free win, do first).**
+  The dft.ml named-temp twiddle render lets GCC hoist the temps, spill
+  them, and reload from stack staging — **~7 %/iter of pure artifact**
+  measured in `radix8_z_msg`. Fix = the cil-style inline-in-consumer
+  render (single-use loads spliced into the FMA argument slot) for the
+  dft.ml family's twiddle path, opt-in per kind. Mids are ~60 % of
+  cascade time at 32768, so this touches the ≥2048 headline cells.
+  Gates: bit-identity is NOT guaranteed (render change can reorder
+  loads) — expect memcmp where it holds, scalar-DFT tolerance where it
+  does not, speed per family, 4 KB-aliasing check; wisdom untouched.
+- [ ] **E2 — OOP `t1` r32 campaign (the worst body in the tree).**
+  41.6 % total stack traffic (25.6 % ymm spill + 13.5 % scalar pointer
+  reloads) — worse than pure-IL r32 ever was. TWO root causes, ordered:
+  (a) the **pointer zoo** — ~100 stack-parked leg pointers vs cil's one
+  cursor: cursor-ize the addressing first (its own win, prerequisite for
+  anything else); (b) then evaluate a blocked-analog for that emitter
+  family (does not exist there yet — new machinery, spec before build).
+- [ ] **E3 — permute-free pass 2 via scratch-layout choice** (carried
+  from the pressure doc's lever list): the pure-IL pipeline still runs
+  12–14 % shuffle share; confining lane surgery to the leaf's stores
+  (the s0t trick) makes the mid permute-free. The largest remaining
+  known lever for the sub-2048 natural cells.
+- [ ] **E4 — pure-IL leaf question (`n1t(32)`, LOW priority).** 26.7 %
+  spill but perfect ns/pt scaling at both N — its spills appear cheap.
+  The blocked emitter REFUSES the leaf class today. Open question, only
+  worth touching if E3's restructuring gets into the leaf anyway.
+- [ ] **E5 — t2b16@512 quiet magnitude**: de-bias the timing probe's
+  r16 section (systematic control bias, same sign 3/3 runs — rotate arm
+  order / separate arena) so the banked t2b16 win gets a quotable
+  number.
+- [ ] **E6 — pow2 il3p at 512-class cells via the planner** (+7.6–8.8 %
+  measured twice; 1024 refutes the same chains — per-cell race, banked,
+  never a rule).
+- [ ] **E7 — TILED il3p (the Bailey-band tcut question).** The span-rule
+  verdict, recorded so nobody re-derives it: the 2-stage Bailey (il2p)
+  is STRUCTURALLY untileable — a balanced factorization gives every pass
+  a whole-plane span (`R·s ≤ T` degenerates to `N ≤ T`), and the
+  transpose dependency forbids fusing the pass-1→pass-2 seam. The
+  3-stage chains are different: small-span stages exist, and the prize
+  is concrete — il3p loses at 1024 TODAY purely on working set (3
+  buffers ≈ 48 KB = all of L1d) while winning at 512; fusing stages 2+3
+  per tile of mid1 shrinks the second intermediate to tile size
+  (~33 KB total → fits). Steps: (a) recon — derive per-stage spans from
+  the actual il3p strides for the 512-winning chain shapes at 1024 and
+  check the fusion seam against the span rule (a derivation, not a
+  probe); (b) if legal, probe-level tiled execute (driver-loop change,
+  existing kernels — the tcut lesson says no new kernels needed until
+  measured); (c) race vs il2p-with-t2b48 at 1024/2048 per cell. Honest
+  prior: t2b48 already took 1024 to −25 %; tiled-il3p must beat THAT
+  incumbent, not the old one.
+
 ## Later (explicitly deferred, not dropped)
 
 - Natural-aware CHAIN race (natural replays scrambled-banked chains; the
