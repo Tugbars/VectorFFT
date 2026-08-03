@@ -225,6 +225,41 @@ model is missing a term. That gap is the argument for **building both and racing
 them**, once tiling itself is settled. Racing them untiled measures the wrong
 thing: tiling is what makes orientation matter.
 
+### 7.1 The race ran — DIF-natural stays canonical (benchmark-derived, 2026-08-03)
+
+The DIT-forward family was built as exact conjugates of the backward kinds
+(`dts`/`dtsn`/`dtt`/`msd`, plus the store-side-permuted ingest `dtso`;
+emitter machinery retained in `codelet_zsplit.ml`), gated conj-EXACT at the
+kernel level and ~1e-14 against a naive DFT at the pipeline level, then
+raced against the DIF-natural cascade (stfn terminator) under the paced
+protocol (17 rounds, alternated order, control arm; raw runs in
+`docs/research/dit_race_run{1,2}.txt`, `dit_race_v2_run1.txt`).
+
+Measured on this host, warm:
+
+- **DIT-natural / DIF-natural = 1.05–1.18 at every cell, three runs** —
+  DIT loses everywhere; against *tiled* DIF-natural, 1.26–1.49.
+- Stage decomposition: the mids are at parity (msd ≈ msg within noise);
+  the loss sits in the boundary pair. The DIT finisher `dtt` *beats* the r8
+  stfn terminator by ~19% in isolation, but the ingest gives it all back.
+- **The scatter side is not the cause**: `dtso` (contiguous user reads,
+  rho-scattered stores into the L2-resident plane) measured ≈ `dtsn`
+  (D2/D = 0.92–1.06 across seven cells) — moving the permutation between
+  the ingest's load side and store side changes nothing measurable.
+- r8-tail chains (never picked by the DIF-calibrated bank) do not save it:
+  DIT/DIF-natural ≈ 1.20 on 4.8.4.4.4.8 and 4.8.4.4.8.8.
+
+Reading: the ZTURN-S plane geometry is co-designed with the DIF
+orientation — corner-turn absorbed in the ingest's stores, terminator
+reading contiguous section taps with no load shuffles. The conjugate-derived
+DIT inherits that geometry mirrored to the wrong places (transpose in the
+finisher, the w¹ workload in the ingest), and pays it regardless of which
+side carries the permutation. A competitive DIT needs its own plane
+geometry co-designed for the head-tiling orientation (what MKL builds) —
+a new-geometry campaign, not additional wiring around these kernels.
+The family stays in the tree at ≈1.0× kernel parity vs its donors, so other
+microarchitectures can race it through the same machinery.
+
 ---
 
 ## 6.1 Through the front door — the closing state
