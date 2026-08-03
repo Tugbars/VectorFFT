@@ -47,9 +47,32 @@
 #ifndef VFFT_IL2P_H
 #define VFFT_IL2P_H
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+
+/* Self-contained timer for the create-time t2b race below (same guarded
+ * pattern as dp_planner_il.h / bluestein_calibrator.h — QPC on Windows,
+ * CLOCK_MONOTONIC elsewhere, per the repo timing convention). */
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+static inline double _vfft_il2p_now_ns(void)
+{
+#if defined(_WIN32)
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&c);
+    return 1e9 * (double)c.QuadPart / (double)f.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
+#endif
+}
 
 #ifndef VFFT_IL2P_PI
 #define VFFT_IL2P_PI 3.14159265358979323846
@@ -78,6 +101,36 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
 VFFT_IL2P_DECL(4) VFFT_IL2P_DECL(8) VFFT_IL2P_DECL(16)
 VFFT_IL2P_DECL(32) VFFT_IL2P_DECL(64)
 #undef VFFT_IL2P_DECL
+
+/* ── BLOCKED t2 mids (`--cil-blocked`, symbol tag `b`) — RACED CANDIDATES ─
+ * Promoted 2026-08-03 from the twmem r32exp campaign (docs/research/
+ * twmem_campaign/results/r32exp_blocked.md census + gate, r32exp_timing.md
+ * v1-v3 timing). The blocked form splits the R1 DFT into two passes (m·p),
+ * dropping peak live R1 -> max(m,p): the monolithic r32 t2's RA churn (26
+ * multi-stored frame slots, 21.6% of body insns on ymm stack traffic)
+ * collapses to 0-4 slots. Quiet-machine race: t2b48 [4·8] −18..−20% kernel
+ * and −5..−14% through execute_fwd (WIN 3/3 both levels); t2b [2·16]
+ * −25..−27% kernel, pipeline unresolved; t2b16 [2·8] confirmed over two
+ * sessions. Side-finding: blocked kernels are immune to the per-process
+ * stack-ASLR/4KB-alias tail-risk that inflates the spilling monolith.
+ *
+ * The winner is NEVER hand-set (sterm/sterm2 placement-luck lesson):
+ * vfft_il2p_create races the available variants against the shipped t2 on
+ * the plan's own tables and installs the winner as mid_f — see
+ * _vfft_il2p_race_mid_f below. FWD-ONLY by design: execute_fwd is mid_f's
+ * only consumer; the bwd path standardizes on t2t/F-DIAG and never reads a
+ * mid twin (--cil-blocked could emit a bwd, but it would be an un-raced
+ * orphan). CONTRACT: count % 2 == 0 — blocked kernels carry NO odd-count
+ * tail (monolithic-only feature), so the race requires even R2.
+ * Kill switch: VFFT_NO_T2B (VFFT_NO_IL2P precedent). */
+#define VFFT_IL2P_DECL_T2B(SYM) \
+  extern void SYM( \
+      const double *, const double *, double *, double *, \
+      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+VFFT_IL2P_DECL_T2B(radix16_z_t2b_fwd_avx2)
+VFFT_IL2P_DECL_T2B(radix32_z_t2b_fwd_avx2)
+VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
+#undef VFFT_IL2P_DECL_T2B
 
 #define VFFT_IL2P_DECL_LEAF(R) \
   extern void radix##R##_z_n1t_fwd_avx2( \
@@ -283,6 +336,138 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * The old `R2 < 8` bound was exactly such an accident: it had no structural
  * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
  * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
+/* ── t2b create-time race (t2q precedent: create-time, measured on the
+ * installed binary, no wisdom-format change) ─────────────────────────────
+ * Called at the END of create, when the plan is fully built: races the
+ * shipped t2 mid against the blocked candidate(s) on the plan's OWN tw
+ * table, with the real (Ls,OLs,count) = (R2,R2,R2) mid-call shape, and
+ * installs the winner as p->mid_f. mid_b is untouched (no bwd consumer).
+ *
+ * CORRECTNESS BEFORE SPEED — per candidate, on one probe buffer, vs the
+ * SHIPPED kernel output:
+ *   exact  (t2b 2·16, t2b16 2·8 — m=2 uses the class-aware butterfly_pair,
+ *           bit-identical by construction): memcmp must be 0, else REFUSE;
+ *   toler. (t2b48 4·8 — general ctw W_R^{ij}, genuinely restructured math,
+ *           relmax 3.1e-16 vs shipped offline; scalar-DFT anchor gated it
+ *           in r32exp_blocked.md §3): 1e-12 RELATIVE on the probe, else
+ *           REFUSE.  A refused candidate leaves shipped installed.
+ *
+ * TIMING (t2q shape): ~50us bursts, 7 rounds, arm order alternating per
+ * round, per-arm median of rounds. A candidate displaces shipped only on a
+ * >3% median win (hysteresis — the incumbent keeps ties, t2q precedent).
+ * Between surviving candidates the faster median wins (per-cell measured
+ * pick — 2·16 vs 4·8 is placement-luck territory, never hand-set). */
+static inline void _vfft_il2p_race_mid_f(vfft_il2p_plan_t *p)
+{
+    if (getenv("VFFT_NO_T2B")) return;
+    if (p->R2 & 1) return;   /* blocked contract: count % 2 == 0, NO tail */
+    vfft_il2p_fn cand[2] = { 0, 0 };
+    int exact[2] = { 0, 0 };
+    int nc = 0;
+    if (p->R1 == 16) {
+        cand[0] = radix16_z_t2b_fwd_avx2;   exact[0] = 1; nc = 1;
+    } else if (p->R1 == 32) {
+        cand[0] = radix32_z_t2b_fwd_avx2;   exact[0] = 1;
+        cand[1] = radix32_z_t2b48_fwd_avx2; exact[1] = 0; nc = 2;
+    } else
+        return;
+
+    const size_t R2 = (size_t)p->R2;
+    const size_t n2 = (size_t)p->N * 2u;
+    const size_t sz = n2 * sizeof(double);
+    double *zi = (double *)VFFT_IL2P_ALLOC(sz);
+    double *zs = (double *)VFFT_IL2P_ALLOC(sz);
+    double *zv = (double *)VFFT_IL2P_ALLOC(sz);
+    if (!zi || !zs || !zv) goto done;   /* OOM: keep shipped, no race */
+    {
+        unsigned s = 2463534242u ^ (unsigned)p->N;  /* xorshift32, determin. */
+        for (size_t i = 0; i < n2; i++) {
+            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+            zi[i] = (double)(s & 0xffffu) / 65536.0 - 0.5;
+        }
+    }
+    {
+        /* correctness gate vs shipped output on the probe buffer */
+        p->mid_f(zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
+        double smax = 0.0;
+        for (size_t i = 0; i < n2; i++) {
+            double a = fabs(zs[i]);
+            if (a > smax) smax = a;
+        }
+        int keep[2] = { 0, 0 };
+        for (int c = 0; c < nc; c++) {
+            cand[c](zi, 0, zv, 0, p->tw, 0, R2, 0, R2, 0, R2);
+            if (exact[c])
+                keep[c] = (memcmp(zs, zv, sz) == 0);
+            else {
+                double dmax = 0.0;
+                for (size_t i = 0; i < n2; i++) {
+                    double d = fabs(zv[i] - zs[i]);
+                    if (d > dmax) dmax = d;
+                }
+                keep[c] = (smax > 0.0 && dmax <= 1e-12 * smax);
+            }
+        }
+
+        vfft_il2p_fn arm[3];
+        arm[0] = p->mid_f;
+        int na = 1;
+        for (int c = 0; c < nc; c++)
+            if (keep[c]) arm[na++] = cand[c];
+        if (na == 1) goto done;         /* every candidate refused */
+
+        /* reps for a ~50us burst per arm visit */
+        double t0 = _vfft_il2p_now_ns();
+        p->mid_f(zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
+        double est = _vfft_il2p_now_ns() - t0;
+        if (est < 1.0) est = 1.0;
+        int reps = (int)(50000.0 / est);
+        if (reps < 4)   reps = 4;
+        if (reps > 256) reps = 256;
+
+        enum { RR = 7 };
+        double lap[3][RR];
+        for (int r = 0; r < RR; r++)
+            for (int j = 0; j < na; j++) {
+                int a = (r & 1) ? (na - 1 - j) : j;  /* alternate order */
+                t0 = _vfft_il2p_now_ns();
+                for (int i = 0; i < reps; i++)
+                    arm[a](zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
+                lap[a][r] = (_vfft_il2p_now_ns() - t0) / (double)reps;
+            }
+        double score[3];
+        for (int a = 0; a < na; a++) {   /* median of RR rounds */
+            double v[RR];
+            memcpy(v, lap[a], sizeof v);
+            for (int i = 1; i < RR; i++) {
+                double x = v[i];
+                int j = i;
+                while (j > 0 && v[j - 1] > x) { v[j] = v[j - 1]; j--; }
+                v[j] = x;
+            }
+            score[a] = v[RR / 2];
+        }
+        int win = 0;
+        for (int a = 1; a < na; a++)
+            if (score[a] < score[win]) win = a;
+        if (win != 0 && score[win] < score[0] * 0.97)
+            p->mid_f = arm[win];
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr,
+                    "[zroute] N=%d R1=%d il2p t2b race: arms=%d reps=%d "
+                    "burst~50us hyst=3%% alt-order median | ship=%.0f "
+                    "c0=%.0f c1=%.0f -> %s\n",
+                    p->N, p->R1, na, reps, score[0],
+                    na > 1 ? score[1] : -1.0, na > 2 ? score[2] : -1.0,
+                    p->mid_f == arm[0] ? "ship"
+                                       : (p->mid_f == cand[0] ? "t2b" : "t2b48"));
+    }
+done:
+    VFFT_IL2P_FREE(zi);
+    VFFT_IL2P_FREE(zs);
+    VFFT_IL2P_FREE(zv);
+}
+
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
     if (N <= 0 || R1 < 3 || R2 < 3 || (long)R1 * (long)R2 != (long)N) return 0;
@@ -335,6 +520,9 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
                 rb[4 + 2 * j] = s;  rb[4 + 2 * j + 1] = -s;
             }
         }
+    /* plan fully built — race the blocked t2 candidates for mid_f (no-op
+     * unless R1 is 16/32 with even R2; VFFT_NO_T2B kills it) */
+    _vfft_il2p_race_mid_f(p);
     return p;
 }
 
