@@ -73,11 +73,15 @@ tape/convert below 2048.
   all four cells, fwd vs naive IN ORDER + bwd vs N·x at ~1e-15, aliased,
   scrambled arm IDENT with matched roundtrip, and the 2048 boundary still
   goes ZCASC (no ILP shadowing).
-- [~] **B5 (running)** — `--k1nat` gained the sub-2048 direct cell (no
-  kind-4 line exists for the IL band and no kind-3 K=1 lines ship, so
-  file-driven enumeration cannot reach them; an explicit `[N] < 2048` runs
-  the cell straight through the front door, label `z:ilp`). Cells
-  128–1024 ×3 vs MKL in-place running; table lands next to §6.3.
+- [x] **B5 ✅** — `--k1nat` gained the sub-2048 direct cell (no kind-4
+  line exists for the IL band and no kind-3 K=1 lines ship, so file-driven
+  enumeration cannot reach them; an explicit `[N] < 2048` runs the cell
+  straight through the front door, label `z:ilp`). Recorded as tracked
+  §6.4: **vs MKL in-place natural 0.83–0.91 / 0.76 / 0.68–0.71 /
+  0.59–0.74 at 128/256/512/1024** (warm, ×3, cross-engine ~e-16). Read
+  with the internal 4–9× win: users got 4–9× faster; the residue stands
+  on MKL's deepest-investment ground (small-N batched IL natural) and its
+  closure is the Phase C3 K-across-SIMD question, not routing.
 
 ## Phase C — K=2..4 interleaved batching (measure, then build)
 
