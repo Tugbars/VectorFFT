@@ -189,10 +189,32 @@ sections; two sections self-invalidated at 9.5 %/23 % and were discarded)
   schedule was already near the reachable floor; ordering cannot
   un-spill a 33-wide live set).
 
-Promotion path: emit the blocked twins as first-class kernels, race
-2·16 vs 4·8 vs shipped per cell in the il2p mid slot through the planner,
-bank the verdict in wisdom — after a re-race in a QUIET machine state
-(tonight's magnitudes are not promotion-grade; the shapes are).
+**PROMOTED (2026-08-04, commit `c60d84bb`).** Quiet-machine re-race
+confirmed t2b48 promotion-grade (kernel −18..−20 %, pipeline −5..−14 %,
+3/3 valid sections across three sessions) and t2b's kernel win
+(−25..−27 %; an apparent earlier flip was traced to a per-process
+4 KB-alias state that inflated the shipped/reordered arms +55 % while
+**the blocked kernels sailed through unaffected** — placement-tail-risk
+immunity as a side benefit). The reordered-schedule arm stayed inside
+noise and was NOT promoted.
+
+Shipped form: the three blocked kernels are first-class
+(`radix{32,16}_z_t2b_avx2.c`, `radix32_z_t2b48_avx2.c`, forward-only —
+the backward path never consumes `mid_f`), and `vfft_il2p_create` runs a
+create-time mid race (t2q precedent: measured on the installed binary,
+per cell, no wisdom change): correctness first (memcmp for the
+bit-identical 2·16 class, 1e-12 for 4·8), then 7 paced rounds with a
+>3 % hysteresis favoring the incumbent; kill switch `VFFT_NO_T2B`.
+Both front-door natural gates re-ran ALL PASS from the promoted state;
+the in-tree kernels are byte-identical to the raced campaign probes.
+
+Measured through the front door (`--k1nat`, natural-vs-natural in-place,
+same-day pre/post, 3 passes): **1024: −25 % median ns (1377→1033),
+ratio 0.61→0.73, with the cross-engine error fingerprint changing —
+numeric proof the tolerance-class t2b48 won the create-time race there;
+512: −5.7 % (0.70→0.73), matching t2b16's prior quiet magnitude; 128
+unchanged (the de-facto control cell).** The per-cell picks observed
+live: 256→t2b16, 512→t2b16/t2b48 by pair, 1024→t2b48, 2048→t2b.
 
 ## Reproduction
 
