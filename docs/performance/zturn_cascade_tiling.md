@@ -370,6 +370,39 @@ Readings:
   equally (51/52 µs; ratio held) — the machine-noise protocol's control
   logic working as intended.
 
+### 6.4 The sub-2048 in-place tier (il_coverage_plan.md Phases A+B, 2026-08-03)
+
+Below the cascade tier, in-place interleaved K=1 used to convert to split
+planes and run the proto engine (+ the reorder tape for natural; the il_me
+A/B could even pick a PADDED K=8 plan — seven zero lanes computed for SIMD
+width). Two changes, both raced through the same `@nat` verdict machinery:
+
+- **Routing (Phase A):** an explicit-SCRAMBLED request below 2048 now
+  reaches the native K=1 IL engines (identity permutation — the scrambled
+  contract admits any self-consistent order). Gate: scrambled output
+  memcmp-EXACT vs the natural handle at 0.95–1.05× its speed.
+- **The ILP tier (Phase B):** `VFFT_NAT_ILP` — il2p/il3p attach in-place
+  (aliased, alias-gated; two-stage engines, zout written only by the last
+  stage), raced end-to-end at create vs the convert incumbent:
+  **ILP won 9.1× / 7.2× / 5.7× / 4.0× at 128/256/512/1024.** Scrambled
+  in-place rides the banked verdict hit-only (single wisdom writer).
+
+vs MKL (both in-place, both natural, cross-engine elementwise ~2–4.5e-16;
+warm, 3 runs/cell, cell-per-process, pinned core 2 — indicative):
+
+| N | vfft ns | MKL ns | ratio (>1 = vfft) |
+|---|---|---|---|
+| 128 | 75–82 | 68 | 0.83–0.91 |
+| 256 | 179 | 136 | 0.76 |
+| 512 | 412–429 | 291–295 | 0.68–0.71 |
+| 1024 | 1147–1426 | 837–845 | 0.59–0.74 (drifting, hot machine) |
+
+Read both numbers together: end users at these cells got ~4–9× faster than
+the previous shipping path, and the remaining 0.6–0.9× stands on MKL's
+strongest ground — small-N batched interleaved natural is where their
+investment is deepest (mkl_blind_spot positioning). Closing that residue is
+the K-across-SIMD question (il_coverage_plan Phase C3), not routing.
+
 ---
 
 ## Reproducing
