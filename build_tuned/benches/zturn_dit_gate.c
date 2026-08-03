@@ -89,6 +89,21 @@ static int dcmp(const void *a, const void *b)
     return x < y ? -1 : (x > y ? 1 : 0);
 }
 
+/* conj-identity comparison: 2 = memcmp-EXACT, 1 = equal modulo IEEE zero
+ * sign, 0 = real difference. The ±0 case is INHERENT to the gate, not a
+ * kernel defect: butterfly cancellations a-b with a==b produce +0.0 in BOTH
+ * kernels, but the reference arm's trailing conj negates the donor's +0.0
+ * im-outputs to -0.0. (Found at 2048: MinGW RAND_MAX=32767 quantizes the
+ * inputs, so exact cancellations actually occur.) NaN cannot appear here,
+ * so elementwise == is exactly "bit-equal or ±0 pair". */
+static int cmp3(const double *a, const double *b, long n)
+{
+    if (memcmp(a, b, (size_t)n * sizeof(double)) == 0) return 2;
+    for (long i = 0; i < n; i++)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+
 static long rho0(long v, const int *r, int m)
 {
     long d[16];
@@ -184,7 +199,7 @@ int main(void)
         DTS (x,  0, pa, 0, p->tzq, 0, 0, 0, OLs, 0, OLs);
         STFB(xc, 0, pb, 0, wc,     0, 0, 0, OLs, 0, OLs);
         conj_blk(pb, 2 * (size_t)N);
-        const int ok1 = memcmp(pa, pb, 2 * (size_t)N * sizeof(double)) == 0;
+        const int ok1 = cmp3(pa, pb, 2L * N);
 
         /* ── dtsn == conj(stfbn(conj x, conj w, SAME rho table)) ── */
         memset(pa, 0, 2 * (size_t)N * sizeof(double));
@@ -192,7 +207,7 @@ int main(void)
         DTSN (x,  0, pa, 0, p->tzq, (const double *)tb, 0, 0, OLs, 0, OLs);
         STFBN(xc, 0, pb, 0, wc,     (const double *)tb, 0, 0, OLs, 0, OLs);
         conj_blk(pb, 2 * (size_t)N);
-        const int ok2 = memcmp(pa, pb, 2 * (size_t)N * sizeof(double)) == 0;
+        const int ok2 = cmp3(pa, pb, 2L * N);
 
         /* ── dtt == conj(s0tb(conj plane)) — radix-4, chain-independent ── */
         double *plc = az(2 * (size_t)N);
@@ -203,7 +218,7 @@ int main(void)
         radix4_z_s0t_r4_bwd_avx2(plc, 0, pb, 0, 0, 0,
                                  (size_t)N / 4, 0, 0, 0, (size_t)N / 4);
         conj_il(pb, N);
-        const int ok3 = memcmp(pa, pb, 2 * (size_t)N * sizeof(double)) == 0;
+        const int ok3 = cmp3(pa, pb, 2L * N);
 
         /* ── speed: paced medians, 9 rounds ── */
         double s[6][9];
@@ -239,10 +254,9 @@ int main(void)
 
         const int ok = ok1 && ok2 && ok3;
         if (!ok) fails++;
+        static const char *V[3] = { "DIFF!", "EXAC0", "EXACT" };
         printf("%-7d %-16s %-3d | %-6s %-6s %-6s | %7.3fx %7.3fx %7.3fx%s\n",
-               N, cs, Rt,
-               ok1 ? "EXACT" : "DIFF!", ok2 ? "EXACT" : "DIFF!",
-               ok3 ? "EXACT" : "DIFF!",
+               N, cs, Rt, V[ok1], V[ok2], V[ok3],
                r1, r2, r3, ok ? "" : "   *** FAIL ***");
 
         free(tb);
@@ -251,5 +265,7 @@ int main(void)
     }
 
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
+    printf("EXACT = memcmp; EXAC0 = equal modulo IEEE zero sign (the conj\n"
+           "wrapper maps a cancellation +0.0 to -0.0 — gate artifact, PASS).\n");
     return fails ? 1 : 0;
 }
