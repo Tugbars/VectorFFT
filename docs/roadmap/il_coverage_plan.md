@@ -27,18 +27,19 @@ the natural-native engines may legally serve an explicit-SCRAMBLED request.
 No cheaper genuinely-scrambled pipeline exists to build below 2048 (il2p
 pays no reorder that scrambling could skip) — routing IS the whole fix.
 
-- [ ] **A1** — widen the K=1 engine gate to admit `order == SCRAMBLED`
-  (serve via the natural engines, identity permutation). Document the
-  identity-serving in the order-contract comment block. Kill-switch not
-  needed (strictly-better route; convert fallback remains the miss path).
-- [ ] **A2** — gate: explicit-SCRAMBLED sub-2048 IL OOP through the front
-  door — matched roundtrip `bwd(fwd(x)) == N·x`, output ELEMENTWISE equal
-  to the NATURAL handle's output (identity = same bytes), and create must
-  route to the K=1 engine (no `il_wr2` convert scratch allocated). Speed
-  arm: SCRAMBLED == NATURAL within noise (same engine, same plan).
-- [ ] **A3** — regression: ≥2048 SCRAMBLED still routes to the cascade
-  (the gate change must not shadow the kind-4 attach), and split-layout
-  SCRAMBLED (MODEB) untouched.
+- [x] **A1 ✅ 2026-08-03** — gate widened with a no-cascade guard
+  (`order != SCRAMBLED || (!zs_pending && !zt_pending)`): sub-2048 gets the
+  native engine; ≥2048 keeps the cascade WITHOUT building a dead-weight k1
+  engine beside it (and gains a better-than-convert fallback if a cascade
+  create ever fails). Identity-serving documented at the order fence.
+- [x] **A2 ✅** — `vfft_k1scr_gate.c` ALL PASS: scr==nat memcmp-EXACT at
+  128–1024 (the identity IS the route proof — the old convert route emits
+  a permuted MODEB comb and cannot pass), natural anchored to naive DFT
+  ~1e-15, matched roundtrips, speed 0.95–1.05×.
+- [x] **A3 ✅** — same gate: 4096 SCRAMBLED emits a REAL permutation
+  (cascade comb) with a clean matched roundtrip. Structural note recorded:
+  execute prefers an attached cascade over `k1_on`, so the change's only
+  possible ≥2048 failure mode was dead weight, never wrong output.
 
 ## Phase B — sub-2048 IN-PLACE interleaved tiers (the ZCASC template, one tier down)
 
@@ -47,29 +48,36 @@ structurally refused (`__restrict__`). What's missing is ONLY routing: the
 in-place branch never attaches the IL engines, so both orders pay
 tape/convert below 2048.
 
-- [ ] **B1** — recon + mini-spec: what exactly does in-place sub-2048 IL
-  execute today per order (which convert path, where the tape runs); what
-  the il2p in-place call form is (aliased z, the `(z,NULL,z,NULL)`
-  contract); whether il3p/prime compose aliased. One page, measured
-  incumbent times per cell included (the race's floor).
-- [ ] **B2** — attach + race, NATURAL first: in-place natural block gains
-  an IL-engine candidate below 2048 (same pattern as ZCASC: candidate
-  built at create, raced END-TO-END vs the incumbent's real execute,
-  verdict banked in the SAME `@nat` slot — new mode value, e.g.
-  `VFFT_NAT_ILP`; consume replays, `replay` log line, kill switch
-  `VFFT_NO_NAT_ILP`). 🔴 Never a parallel selection path.
-- [ ] **B3** — SCRAMBLED in-place sub-2048 rides Phase A's identity rule:
-  explicit-SCRAMBLED in-place routes to the same IL candidate (order axis
-  serves both). Gate both orders per direction vs naive DFT — 🔴 roundtrip
-  cannot gate ordering.
-- [ ] **B4** — front gate (cold-start, scratch wisdom): measure+consume
-  per cell {128, 256, 512, 1024} × {natural, scrambled} × in-place, fwd
-  IN ORDER vs naive per direction, aliased arm, tape-tier fallback still
-  correct where the IL engine refuses a cell.
-- [ ] **B5** — the number: `--k1nat`/`--k1zip` runs gain the sub-2048
-  cells (same canonical modes — the cell list follows the banked verdicts,
-  no new mode needed). Record the sub-2048 in-place table vs MKL in the
-  tracked doc next to §6.3.
+- [x] **B1 ✅ 2026-08-03** — recon (in code comments rather than a page,
+  scope was small): the in-place sub-2048 incumbent is
+  `_exec_c2c_interleaved` — deinterleave into split work planes, proto
+  engine (+tape when natural), reinterleave; at K=1 the il_me A/B can even
+  pick a PADDED Kp=8 plan (7 zero lanes computed for SIMD width). il2p and
+  il3p are two-stage through internal scratch — zout written only by the
+  last stage — and were already alias-gated (A3 record); il_prime aliasing
+  is ungated, so prime cells stay with the incumbent.
+- [x] **B2 ✅** — `VFFT_NAT_ILP = 7` in the verdict enum; shared
+  candidate helper `_k1_il_candidate` (kind-3 pair else the balanced-pair
+  heuristic — MIRRORS the OOP K=1 block's IL search, cross-referenced both
+  sites; il3p chain fallback; mono excluded). Natural block: candidate at
+  N<2048, consume short-circuit with `replay ILP` log, end-to-end MEASURE
+  race under the ZCASC protocol, banked in the same `@nat` slot. Kill
+  switch `VFFT_NO_NAT_ILP`. **Race result: ILP won 9.1×/7.2×/5.7×/4.0×
+  at 128/256/512/1024** — the convert incumbent never came close.
+- [x] **B3 ✅** — explicit-SCRAMBLED in-place attaches HIT-ONLY on the
+  banked ILP verdict (single `@nat` writer; a miss serves the classic
+  path). Execute dispatches aliased il2p/il3p before the convert path,
+  both directions, both orders (attach implies verdict).
+- [x] **B4 ✅** — `vfft_ilp_front_gate.c` ALL PASS: measure (raced) +
+  consume (no re-race, bitwise-identical output, replay-line coherence) at
+  all four cells, fwd vs naive IN ORDER + bwd vs N·x at ~1e-15, aliased,
+  scrambled arm IDENT with matched roundtrip, and the 2048 boundary still
+  goes ZCASC (no ILP shadowing).
+- [~] **B5 (running)** — `--k1nat` gained the sub-2048 direct cell (no
+  kind-4 line exists for the IL band and no kind-3 K=1 lines ship, so
+  file-driven enumeration cannot reach them; an explicit `[N] < 2048` runs
+  the cell straight through the front door, label `z:ilp`). Cells
+  128–1024 ×3 vs MKL in-place running; table lands next to §6.3.
 
 ## Phase C — K=2..4 interleaved batching (measure, then build)
 

@@ -63,7 +63,16 @@ enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
         * reading mode=6 falls into its MEASURE branch and re-races: degraded,
         * never wrong. 2 (LEAF_IP) is retired but NEVER reused — old files
         * may still carry it with the old meaning. */
-       VFFT_NAT_ZCASC = 6 };
+       VFFT_NAT_ZCASC = 6,
+       /* ILP (il_coverage_plan.md Phase B, 2026-08-03): the sub-2048 K=1
+        * interleaved IN-PLACE cells served by the native IL engines
+        * (il2p/il3p, alias-gated; mono structurally refuses aliasing) —
+        * natural output, no tape, no layout conversion. Raced end-to-end
+        * vs the convert incumbent at a NATURAL create only; an explicit-
+        * SCRAMBLED in-place create attaches HIT-ONLY on this verdict
+        * (identity permutation — same contract note as Phase A; hit-only
+        * keeps @nat single-writer). Old binaries re-measure, never wrong. */
+       VFFT_NAT_ILP = 7 };
 
 /* ── SELF-CONTAINED natural-order record (order=VFFT_ORDER_NATURAL). Its own DEPLOYED FFT
  * chain (nf/factors/variants/use_dif — the plan the reorder tape follows and that runs
