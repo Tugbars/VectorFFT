@@ -170,6 +170,13 @@ let kind_of_string (s : string) : zs_kind =
   | "msb" -> { mid with bwd = true }
   | "msg" -> { mid with base = "msg"; group_loop = true }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
+  | "msd" ->
+    (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
+       dataflow with DIF placement — DFT block THEN post-cmul(twz as
+       loaded). NOT the msg fwd kernel (that is DIT pre-twiddle): the same
+       placement trap the boundary kinds hit, caught by the pipeline gate
+       (kernels conj-EXACT, composition grossly wrong). *)
+    { mid with base = "msd"; group_loop = true; dif = true }
   | "s0s" ->
     { mid with base = "s0s"; twiddled = false; in_edge = E_z "Ls" }
   | "s0sb" ->
@@ -272,7 +279,7 @@ let kind_of_string (s : string) : zs_kind =
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt)"
+          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt msd)"
          other)
 ;;
 
@@ -695,6 +702,9 @@ let emit_codelet
            "stfbn (NATURAL-ORDER ZTURN-S bwd terminator: NATURAL z in, read at kn = \
             4*rho[k/4] via the tw_im-carried table, IDFT + POST conj-w^1 at k, \
             section-record stores at k), bwd."
+         | "msd", false ->
+           "msd (DIT-FORWARD mid = conj(msgb): group loop over DFT + POST-twiddle \
+            body, fwd table twz as loaded), fwd."
          | "dts", false ->
            "dts (DIT-FORWARD ZTURN-S ingest = conj(stfb): user z in DIGIT-REVERSED \
             column order, DFT + POST w^1 (packed stream at k, FWD tzq table), \
