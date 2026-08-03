@@ -103,6 +103,13 @@ VFFT_ZT_DECL(radix8_z_msd_fwd_avx2)     /* DIT-FORWARD mids = conj(msgb):
                                          * placement trap, caught by the
                                          * pipeline gate. */
 VFFT_ZT_DECL(radix4_z_msd_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_dtso_r4_fwd_avx2) /* dtso: STORE-side permutation twin
+                                         * of dtsn — user reads contiguous
+                                         * at k, w^1 + record stores at kn
+                                         * (table = ntf = rho^{-1}); scatter
+                                         * confined to the hot plane. Plane
+                                         * contents == dtsn's, bit-exact. */
+VFFT_ZT_DECL(radix4_z_dtso_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stf_r4_fwd_avx2)  /* RADIX-4 terminator (last==4     */
 VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * 64-B record/section/group, OLs =
@@ -1013,6 +1020,36 @@ static inline void vfft_zturn2_execute_dit_fwd(const vfft_zturn2_plan_t *p,
     for (int s = p->nf - 2; s >= 1; s--) {
         /* msd, NOT msg fwd: conj(msgb) is DFT + POST-twiddle (DIF form);
          * msg fwd is PRE-twiddle — same math, WRONG composition here. */
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long,
+                  unsigned long long, unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msd_fwd_avx2
+                               : radix4_z_msd_fwd_avx2;
+        f(p->plane, 0, p->plane, 0, p->twz[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
+    }
+    radix4_z_dtt_r4_fwd_avx2(p->plane, 0, zout, 0, 0, 0,
+                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+}
+
+/* DIT-forward v2: the dtso ingest — user reads CONTIGUOUS, the rho scatter
+ * moved to the ingest's plane STORES (table = ntf = rho^{-1}; the stage
+ * probe attributed the v1 race loss entirely to dtsn's scattered
+ * user-memory reads). Plane contents are bit-identical to v1's, so the
+ * whole pipeline output is memcmp-EXACT vs execute_dit_fwd — the race
+ * pre-flight enforces exactly that. Requires natord (ntf). */
+static inline void vfft_zturn2_execute_dit2_fwd(const vfft_zturn2_plan_t *p,
+                                                const double *zin,
+                                                double *zout)
+{
+    const size_t OLt = (size_t)p->N / (size_t)p->chain[p->nf - 1];
+    ((p->chain[p->nf - 1] == 4) ? radix4_z_dtso_r4_fwd_avx2
+                                : radix8_z_dtso_r4_fwd_avx2)(
+        zin, 0, p->plane, 0, p->tzq, (const double *)p->ntf,
+        0, 0, OLt, 0, OLt);
+    for (int s = p->nf - 2; s >= 1; s--) {
         void (*f)(const double *, const double *, double *, double *,
                   const double *, const double *, unsigned long long,
                   unsigned long long, unsigned long long,

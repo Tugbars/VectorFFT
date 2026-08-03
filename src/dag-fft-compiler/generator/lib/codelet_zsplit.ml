@@ -143,6 +143,13 @@ type zs_kind =
        tw_im arg (cast to const size_t ptr). Stores keep `k` ascending --
        contiguous natural output. Load-side permutation is the measured-free
        side (P0c: 0.96-1.12x vs +29-50% for store-side). *)
+  ; nat_out : bool
+    (* STORE-side permutation twin of nat_in (dtso): the OUT-side edge and
+       the twiddle stream are addressed through kn; LOADS keep k ascending
+       (contiguous user reads). Only legal when the OUT edge writes the
+       PLANE (E_sect_tap) -- scattered 64B stores into the L2-resident
+       plane, the cheap side; scattered stores to USER memory are the
+       P0c-condemned side and no kind may do that. *)
   ; dif : bool
     (* twiddle PLACEMENT direction for dft_expand_twiddled. false = DIT
        (pre-twiddle at Fwd — every legacy kind). true = DIF (POST-twiddle at
@@ -164,7 +171,7 @@ let kind_of_string (s : string) : zs_kind =
             ; twiddled = true; policy = Dft.TP_Flat; tw_off = ""
             ; in_edge = E_planes "Ls"; out_edge = E_planes "Ls"
             ; sink_stores = false; sched = ZS_off; nat_in = false
-            ; dif = false } in
+            ; nat_out = false; dif = false } in
   match s with
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
@@ -268,6 +275,17 @@ let kind_of_string (s : string) : zs_kind =
     { mid with base = "dtsn"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)k"
     ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; nat_in = true
     ; dif = true }
+  | "dtso" ->
+    (* DIT ingest, STORE-side-permutation twin of dtsn: user z LOADS stay
+       contiguous at k (the whole point -- reclaim the rho-scattered
+       user-memory reads the stage probe blamed for the race loss); the
+       section-record STORES and the w^1 stream go to kn via the tw_im
+       table = rho^{-1} (ntf). Plane contents IDENTICAL to dtsn's --
+       iteration k does what dtsn's iteration rho^{-1}(k) does -- so the
+       gate is plane memcmp vs dtsn. *)
+    { mid with base = "dtso"; policy = Dft.TP_PowW1; tw_off = "2*(size_t)kn"
+    ; in_edge = E_z "OLs"; out_edge = E_sect_tap "OLs"; nat_out = true
+    ; dif = true }
   | "dtt" ->
     (* DIT finisher (plane -> user): s0tb's dataflow at fwd sign.
        Twiddle-free leaf, section-record loads + 4x4 lane transpose, REINT
@@ -279,7 +297,7 @@ let kind_of_string (s : string) : zs_kind =
     failwith
       (Printf.sprintf
          "codelet_zsplit: unknown kind %s (supported: ms msb msg msgb s0s s0sb sterm \
-          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt msd)"
+          stermb sterm2 s0t s0tb stf stfb stf2 stfn stfbn dts dtsn dtt msd dtso)"
          other)
 ;;
 
@@ -472,7 +490,7 @@ let emit_codelet
         a wrong FFT). Legacy kinds must not carry it (provenance stability). *)
   let r0_dep =
     k.base = "s0t" || k.base = "stf" || k.base = "stf2" || k.base = "stfn"
-    || k.base = "dts" || k.base = "dtsn" || k.base = "dtt"
+    || k.base = "dts" || k.base = "dtsn" || k.base = "dtt" || k.base = "dtso"
   in
   (match r0, r0_dep with
    | None, true ->
@@ -713,6 +731,11 @@ let emit_codelet
            "dtsn (DIT-FORWARD ZTURN-S ingest, NATURAL-input twin = conj(stfbn): \
             user z read at kn = 4*rho[k/4] via the tw_im-carried table, DFT + \
             POST w^1 at k, section-record stores at k), fwd."
+         | "dtso", false ->
+           "dtso (DIT-FORWARD ZTURN-S ingest, STORE-side permutation twin: user z \
+            read CONTIGUOUS at k, DFT + POST w^1 at kn, section-record stores at \
+            kn = 4*rhoinv[k/4] via the tw_im-carried table -- scatter confined to \
+            the hot plane), fwd."
          | "dtt", false ->
            "dtt (DIT-FORWARD ZTURN-S finisher = conj(s0tb): twiddle-free leaf, \
             section-record loads + 4x4 lane transpose, REINT stores contiguous \
@@ -874,6 +897,8 @@ let emit_codelet
   in
   (* natural-order in-side index: `kn` (declared per iteration, nat_in only). *)
   let ivin = if k.nat_in then "kn" else "k" in
+  (* nat_out (dtso): the OUT-side edge walks kn instead. *)
+  let ivout = if k.nat_out then "kn" else "k" in
   (* ── column loop: edges + SU-scheduled body + store edge for ONE
         prepared DAG. ninst = 1 normally, 2 for the sterm2 main loop
         (slots radix..2·radix-1 are instance B = columns k+VW..k+2·VW-1).
@@ -890,7 +915,7 @@ let emit_codelet
     =
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
-    if k.nat_in
+    if k.nat_in || k.nat_out
     then
       Buffer.add_string
         buf
@@ -1218,7 +1243,7 @@ let emit_codelet
                     "        %s;\n"
                     (Isa.storeu_pd
                        isa
-                       (sect_addr "zout" q s 0 plus)
+                       (sect_addr ~iv:ivout "zout" q s 0 plus)
                        (Printf.sprintf "t%d" tag))
               }) )
       | E_sect_tr4 _ ->
@@ -1498,7 +1523,7 @@ let emit_codelet
          (fun p -> Printf.sprintf "(void)%s;" p)
          (List.concat
             [ ([ "zin_unused"; "zout_unused" ]
-               @ (if k.nat_in then [] else [ "tw_im" ]))
+               @ (if k.nat_in || k.nat_out then [] else [ "tw_im" ]))
             ; (if uses "Ls" then [] else [ "Ls" ])
             ; [ "Gs" ]
             ; (if uses "OLs" then [] else [ "OLs" ])
