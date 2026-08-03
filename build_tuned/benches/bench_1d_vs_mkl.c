@@ -413,10 +413,10 @@ static void measure_ab(double *vns_out, double *mns_out,
  * storage is the batched paths' contract, not K=1 z's; zsplit_api_gate.c
  * precedent).
  * ════════════════════════════════════════════════════════════════════════ */
-static int g_k1zip = 0;                   /* --k1zip: K=1 kind-4 cells IN-PLACE
-                                           * (both engines) — the apples-to-
-                                           * apples in-place interleaved cell */
-static vfft_oop_wisdom_t g_k1z_oopw;      /* shipped-reader view of the positional wisdom file */
+static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
+                                      * (both engines) — the apples-to-
+                                      * apples in-place interleaved cell */
+static vfft_oop_wisdom_t g_k1z_oopw; /* shipped-reader view of the positional wisdom file */
 static int g_k1z_oopw_loaded = 0;
 static const char *g_k1z_wpath = NULL;
 
@@ -1619,8 +1619,9 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
         printf("  N=%-6d K=%-5zu  c2r plan NULL\n", N, K);
         return;
     }
-    const char *src = (layout == VFFT_C2R_PACKED) ? "packed"
-                      : (layout == VFFT_C2R_NATURAL) ? "natural" : "stride";
+    const char *src = (layout == VFFT_C2R_PACKED)    ? "packed"
+                      : (layout == VFFT_C2R_NATURAL) ? "natural"
+                                                     : "stride";
     double *x = alloc_d(total), *hc = alloc_d(total * 2), *o_re = alloc_d(hcN), *o_im = alloc_d(hcN), *y = alloc_d(total);
     srand(29 + N + (int)K);
     for (size_t i = 0; i < total; i++)
@@ -1729,17 +1730,39 @@ static double _c2r_measure_path(vfft_c2r_layout_t layout, int N, size_t K,
                                 const rfft_codelets_t *rreg, vfft_proto_registry_t *creg)
 {
     vfft_c2r_disp_t *p = vfft_c2r_disp_create(N, K, layout, rreg, creg);
-    if (!p) return 1e18;
+    if (!p)
+        return 1e18;
     size_t total = (size_t)N * K, hcN = (size_t)(N / 2 + 1) * K;
     double *x = alloc_d(total), *hc = alloc_d(total * 2), *o_re = alloc_d(hcN), *o_im = alloc_d(hcN), *y = alloc_d(total);
     srand(29 + N + (int)K);
-    for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
+    for (size_t i = 0; i < total; i++)
+        x[i] = (double)rand() / RAND_MAX * 2 - 1;
     const double *in_a, *in_b;
-    if (layout == VFFT_C2R_PACKED) { memset(hc, 0, total * 2 * 8); rfft_execute_fwd_packed(p->packed->base, x, hc); in_a = hc; in_b = NULL; }
-    else if (layout == VFFT_C2R_NATURAL) { rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im, NULL); in_a = o_re; in_b = o_im; }
-    else { stride_execute_r2c(p->stride, x, o_re, o_im); in_a = o_re; in_b = o_im; }
+    if (layout == VFFT_C2R_PACKED)
+    {
+        memset(hc, 0, total * 2 * 8);
+        rfft_execute_fwd_packed(p->packed->base, x, hc);
+        in_a = hc;
+        in_b = NULL;
+    }
+    else if (layout == VFFT_C2R_NATURAL)
+    {
+        rfft_execute_fwd_natural(p->packed->base, x, o_re, o_im, NULL);
+        in_a = o_re;
+        in_b = o_im;
+    }
+    else
+    {
+        stride_execute_r2c(p->stride, x, o_re, o_im);
+        in_a = o_re;
+        in_b = o_im;
+    }
     double t = time_c2r(p, in_a, in_b, y, total);
-    free_d(x); free_d(hc); free_d(o_re); free_d(o_im); free_d(y);
+    free_d(x);
+    free_d(hc);
+    free_d(o_re);
+    free_d(o_im);
+    free_d(y);
     vfft_c2r_disp_destroy(p);
     return t;
 }
@@ -1754,7 +1777,11 @@ static void run_c2r_calib_cell(int N, size_t K, const rfft_codelets_t *rreg,
     printf("  N=%-6d K=%-5zu  natural %9.0f  stride %9.0f  -> %s\n",
            N, K, tn, ts, path == 0 ? "NATURAL" : "STRIDE");
     fflush(stdout);
-    if (pathf) { fprintf(pathf, "%d %zu %d\n", N, K, path); fflush(pathf); }
+    if (pathf)
+    {
+        fprintf(pathf, "%d %zu %d\n", N, K, path);
+        fflush(pathf);
+    }
 }
 
 #ifdef VFFT_HAS_MKL
@@ -1772,26 +1799,42 @@ static void run_c2r_calib_cell(int N, size_t K, const rfft_codelets_t *rreg,
  * (same as _calibrate_c2c). Returns 0 + fills `out`, -1 on failure. Own dp context sized at W. */
 static int _pad_best_fac(int N, size_t W, vfft_proto_registry_t *reg, vfft_proto_plan_decision_t *out)
 {
-    vfft_proto_dp_context_t ctx; vfft_proto_dp_init(&ctx, W, N);
-    if (W >= 8) vfft_proto_dp_set_patient(&ctx);   /* widened beam + re-measure top-K */
-    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX]; int npool = 0;
+    vfft_proto_dp_context_t ctx;
+    vfft_proto_dp_init(&ctx, W, N);
+    if (W >= 8)
+        vfft_proto_dp_set_patient(&ctx); /* widened beam + re-measure top-K */
+    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
+    int npool = 0;
     double ns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
     vfft_proto_dp_destroy(&ctx);
-    if (ns >= 1e17 || dec.nf <= 0) return -1;
-    *out = dec; return 0;
+    if (ns >= 1e17 || dec.nf <= 0)
+        return -1;
+    *out = dec;
+    return 0;
 }
 static void run_pad_cell(int N, size_t K, vfft_proto_registry_t *reg, FILE *out, int cool_ms, int flip)
 {
-    size_t Kp = (K + 3) & ~(size_t)3;                  /* roundup(K, VW=4) */
+    size_t Kp = (K + 3) & ~(size_t)3; /* roundup(K, VW=4) */
     vfft_proto_plan_decision_t decK, decKp;
     if (_pad_best_fac(N, K, reg, &decK) != 0 || _pad_best_fac(N, Kp, reg, &decKp) != 0)
-    { printf("  N=%-6d K=%-4zu  measure failed\n", N, (size_t)K); return; }
+    {
+        printf("  N=%-6d K=%-4zu  measure failed\n", N, (size_t)K);
+        return;
+    }
 
-    stride_plan_t *pt = vfft_proto_plan_create_ex(N, K,  decK.factors,  decK.variants,  decK.nf,  decK.use_dif_forward, reg);
+    stride_plan_t *pt = vfft_proto_plan_create_ex(N, K, decK.factors, decK.variants, decK.nf, decK.use_dif_forward, reg);
     stride_plan_t *pp = vfft_proto_plan_create_ex(N, Kp, decKp.factors, decKp.variants, decKp.nf, decKp.use_dif_forward, reg);
-    if (!pt || !pp) { printf("  N=%-6d K=%-4zu  plan NULL\n", N, (size_t)K);
-                      if (pt) vfft_proto_plan_destroy(pt); if (pp) vfft_proto_plan_destroy(pp); return; }
-    vfft_proto_exec_fn jt = NULL, jp = NULL; const char *ppath = "generic";
+    if (!pt || !pp)
+    {
+        printf("  N=%-6d K=%-4zu  plan NULL\n", N, (size_t)K);
+        if (pt)
+            vfft_proto_plan_destroy(pt);
+        if (pp)
+            vfft_proto_plan_destroy(pp);
+        return;
+    }
+    vfft_proto_exec_fn jt = NULL, jp = NULL;
+    const char *ppath = "generic";
 #ifdef VFFT_USE_JIT
     jt = vfft_proto_plan_jit_fwd(pt);
     jp = vfft_proto_plan_jit_fwd(pp);
@@ -1802,40 +1845,68 @@ static void run_pad_cell(int N, size_t K, vfft_proto_registry_t *reg, FILE *out,
     double *srK = alloc_d(totK), *siK = alloc_d(totK), *reK = alloc_d(totK), *imK = alloc_d(totK);
     srand(42 + N + (int)K);
     for (int e = 0; e < N; e++)
-        for (size_t l = 0; l < Kp; l++) {
+        for (size_t l = 0; l < Kp; l++)
+        {
             double a = (l < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
             double b = (l < K) ? (double)rand() / RAND_MAX - 0.5 : 0.0;
-            srP[e * Kp + l] = a; siP[e * Kp + l] = b;
-            if (l < K) { srK[e * K + l] = a; siK[e * K + l] = b; }
+            srP[e * Kp + l] = a;
+            siP[e * Kp + l] = b;
+            if (l < K)
+            {
+                srK[e * K + l] = a;
+                siK[e * K + l] = b;
+            }
         }
-    double rt = roundtrip_err(jp, pp, N, Kp, srP, siP, totP);   /* pad lanes 0->0, real lanes recover */
+    double rt = roundtrip_err(jp, pp, N, Kp, srP, siP, totP); /* pad lanes 0->0, real lanes recover */
 
-    memcpy(reK, srK, totK * 8); memcpy(imK, siK, totK * 8);
+    memcpy(reK, srK, totK * 8);
+    memcpy(imK, siK, totK * 8);
     DFTI_DESCRIPTOR_HANDLE d = mkl_make(N, K);
     double padns = 0, titns = 0, mklns = 0;
-    if (flip) {
-        mklns = d ? bench_mkl(d, reK, imK, totK) : 0; cachebust(); pace(cool_ms);
-        padns = bench_jit(jp, pp, reP, imP, Kp, totP); cachebust(); pace(cool_ms);
+    if (flip)
+    {
+        mklns = d ? bench_mkl(d, reK, imK, totK) : 0;
+        cachebust();
+        pace(cool_ms);
+        padns = bench_jit(jp, pp, reP, imP, Kp, totP);
+        cachebust();
+        pace(cool_ms);
         titns = bench_jit(jt, pt, reK, imK, K, totK);
-    } else {
-        padns = bench_jit(jp, pp, reP, imP, Kp, totP); cachebust(); pace(cool_ms);
-        titns = bench_jit(jt, pt, reK, imK, K, totK);  cachebust(); pace(cool_ms);
-        memcpy(reK, srK, totK * 8); memcpy(imK, siK, totK * 8);
+    }
+    else
+    {
+        padns = bench_jit(jp, pp, reP, imP, Kp, totP);
+        cachebust();
+        pace(cool_ms);
+        titns = bench_jit(jt, pt, reK, imK, K, totK);
+        cachebust();
+        pace(cool_ms);
+        memcpy(reK, srK, totK * 8);
+        memcpy(imK, siK, totK * 8);
         mklns = d ? bench_mkl(d, reK, imK, totK) : 0;
     }
-    if (d) DftiFreeDescriptor(&d);
+    if (d)
+        DftiFreeDescriptor(&d);
 
     double r_mp = (padns > 0 && mklns > 0) ? mklns / padns : 0;
     double r_mt = (titns > 0 && mklns > 0) ? mklns / titns : 0;
-    double up   = (padns > 0 && titns > 0) ? titns / padns : 0;
+    double up = (padns > 0 && titns > 0) ? titns / padns : 0;
     printf("  N=%-6d K=%-4zu rem%zu Kp=%-3zu %-9s rt=%.0e | pad %9.0f tight %9.0f mkl %9.0f | mkl/pad=%.2f mkl/tight=%.2f uplift=%.2f\n",
            N, (size_t)K, (size_t)K % 4, Kp, ppath, rt, padns, titns, mklns, r_mp, r_mt, up);
-    if (out) fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
-                     N, (size_t)K, Kp, padns, titns, mklns, r_mp, r_mt, up, rt);
+    if (out)
+        fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
+                N, (size_t)K, Kp, padns, titns, mklns, r_mp, r_mt, up, rt);
 
-    free_d(srP); free_d(siP); free_d(reP); free_d(imP);
-    free_d(srK); free_d(siK); free_d(reK); free_d(imK);
-    vfft_proto_plan_destroy(pt); vfft_proto_plan_destroy(pp);
+    free_d(srP);
+    free_d(siP);
+    free_d(reP);
+    free_d(imP);
+    free_d(srK);
+    free_d(siK);
+    free_d(reK);
+    free_d(imK);
+    vfft_proto_plan_destroy(pt);
+    vfft_proto_plan_destroy(pp);
 }
 
 /* ────────────────────────────────────────────────────────────────────────
@@ -1849,31 +1920,35 @@ static void run_padr2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_p
                             FILE *out, int cool_ms, int flip)
 {
     const int halfN = N / 2;
-    size_t Kp = (K + 3u) & ~(size_t)3u;                    /* roundup(K, VW=4) */
+    size_t Kp = (K + 3u) & ~(size_t)3u; /* roundup(K, VW=4) */
     /* NOTE: both legs build from the currently-loaded rfft wisdom (shipped aligned cells +
      * the c2c inner). We deliberately DON'T calibrate the odd (N,K) tight leg here — with a
      * --jit build that would route odd K onto the rfft JIT executor, which assumes K%VW==0
      * (odd-K rfft JIT is a phase-2 gap; production uses the GENERIC odd-K executor). Missing
      * aligned Kp cells (12/20/24) thus use a heuristic factorization, so the pad leg here is
      * a lower bound — production's calibrate-on-miss (vfft_create) does better. */
-    vfft_r2c_plan_t *pt = vfft_r2c_plan_create(N, K,  VFFT_R2C_SPLIT, rreg, NULL, creg);
+    vfft_r2c_plan_t *pt = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, creg);
     vfft_r2c_plan_t *pp = vfft_r2c_plan_create(N, Kp, VFFT_R2C_SPLIT, rreg, NULL, creg);
-    if (!pt || !pp) {
+    if (!pt || !pp)
+    {
         printf("  N=%-6d K=%-4zu Kp=%-3zu  r2c plan NULL (pt=%p pp=%p — Kp -> gated stride?)\n",
                N, K, Kp, (void *)pt, (void *)pp);
-        if (pt) vfft_r2c_plan_destroy(pt);
-        if (pp) vfft_r2c_plan_destroy(pp);
+        if (pt)
+            vfft_r2c_plan_destroy(pt);
+        if (pp)
+            vfft_r2c_plan_destroy(pp);
         return;
     }
     const char *path = (pp->path == VFFT_R2C_PATH_RFFT) ? "rfft" : "stride";
-    size_t totK = (size_t)N * K,  outK  = (size_t)(halfN + 1) * K;
-    size_t totP = (size_t)N * Kp, outP  = (size_t)(halfN + 1) * Kp;
+    size_t totK = (size_t)N * K, outK = (size_t)(halfN + 1) * K;
+    size_t totP = (size_t)N * Kp, outP = (size_t)(halfN + 1) * Kp;
     double *xk = alloc_d(totK), *rek = alloc_d(outK), *imk = alloc_d(outK);
     double *xp = alloc_d(totP), *rep = alloc_d(outP), *imp = alloc_d(outP);
-    memset(xp, 0, totP * 8);                                /* pad lanes MUST be zero */
+    memset(xp, 0, totP * 8); /* pad lanes MUST be zero */
     srand(7 + N + (int)K);
-    for (size_t i = 0; i < totK; i++) xk[i] = (double)rand() / RAND_MAX * 2 - 1;
-    for (int n = 0; n < N; n++)                             /* same K signals at stride Kp */
+    for (size_t i = 0; i < totK; i++)
+        xk[i] = (double)rand() / RAND_MAX * 2 - 1;
+    for (int n = 0; n < N; n++) /* same K signals at stride Kp */
         for (size_t k = 0; k < K; k++)
             xp[(size_t)n * Kp + k] = xk[(size_t)n * K + k];
     /* correctness: padded lanes 0..K-1 == tight (each lane is an independent transform) */
@@ -1881,19 +1956,24 @@ static void run_padr2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_p
     vfft_r2c_execute_fwd(pp, xp, rep, imp);
     double match = 0;
     for (int hh = 0; hh <= halfN; hh++)
-        for (size_t k = 0; k < K; k++) {
+        for (size_t k = 0; k < K; k++)
+        {
             double dr = fabs(rep[(size_t)hh * Kp + k] - rek[(size_t)hh * K + k]);
             double di = fabs(imp[(size_t)hh * Kp + k] - imk[(size_t)hh * K + k]);
-            if (dr > match) match = dr;
-            if (di > match) match = di;
+            if (dr > match)
+                match = dr;
+            if (di > match)
+                match = di;
         }
     /* MKL real(N,K): transform-major real in, CCE complex-complex out (as in run_r2c_cell) */
-    DFTI_DESCRIPTOR_HANDLE h = 0; int mok = 0;
+    DFTI_DESCRIPTOR_HANDLE h = 0;
+    int mok = 0;
     double *xin = alloc_d(totK), *cce = alloc_d(outK * 2);
     for (size_t t = 0; t < K; t++)
         for (int n = 0; n < N; n++)
             xin[t * (size_t)N + n] = xk[(size_t)n * K + t];
-    if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR) {
+    if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR)
+    {
         DftiSetValue(h, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
         DftiSetValue(h, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
         DftiSetValue(h, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
@@ -1902,32 +1982,49 @@ static void run_padr2c_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_p
         mok = (DftiCommitDescriptor(h) == DFTI_NO_ERROR);
     }
     double padns = 0, titns = 0, mklns = 0;
-    if (flip) {
-        if (mok) mklns = bench_mkl_r2c(h, xin, cce, totK);
-        cachebust(); pace(cool_ms);
+    if (flip)
+    {
+        if (mok)
+            mklns = bench_mkl_r2c(h, xin, cce, totK);
+        cachebust();
+        pace(cool_ms);
         padns = time_r2c(pp, xp, rep, imp, totP);
-        cachebust(); pace(cool_ms);
+        cachebust();
+        pace(cool_ms);
         titns = time_r2c(pt, xk, rek, imk, totK);
-    } else {
-        padns = time_r2c(pp, xp, rep, imp, totP);
-        cachebust(); pace(cool_ms);
-        titns = time_r2c(pt, xk, rek, imk, totK);
-        cachebust(); pace(cool_ms);
-        if (mok) mklns = bench_mkl_r2c(h, xin, cce, totK);
     }
-    if (h) DftiFreeDescriptor(&h);
+    else
+    {
+        padns = time_r2c(pp, xp, rep, imp, totP);
+        cachebust();
+        pace(cool_ms);
+        titns = time_r2c(pt, xk, rek, imk, totK);
+        cachebust();
+        pace(cool_ms);
+        if (mok)
+            mklns = bench_mkl_r2c(h, xin, cce, totK);
+    }
+    if (h)
+        DftiFreeDescriptor(&h);
     double r_mp = (padns > 0 && mklns > 0) ? mklns / padns : 0;
     double r_mt = (titns > 0 && mklns > 0) ? mklns / titns : 0;
-    double up   = (padns > 0 && titns > 0) ? titns / padns : 0;
+    double up = (padns > 0 && titns > 0) ? titns / padns : 0;
     int bad = (match > 1e-12);
     printf("  N=%-6d K=%-4zu rem%zu Kp=%-3zu %-6s match=%.0e | pad %10.0f tight %10.0f mkl %10.0f | mkl/pad=%.2f mkl/tight=%.2f uplift=%.2f%s\n",
            N, K, K % 4, Kp, path, match, padns, titns, mklns, r_mp, r_mt, up, bad ? " <MATCH FAIL>" : "");
-    if (out) fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
-                     N, K, Kp, padns, titns, mklns, r_mp, r_mt, up, match);
-    free_d(xk); free_d(rek); free_d(imk);
-    free_d(xp); free_d(rep); free_d(imp);
-    free_d(xin); free_d(cce);
-    vfft_r2c_plan_destroy(pt); vfft_r2c_plan_destroy(pp);
+    if (out)
+        fprintf(out, "%d,%zu,%zu,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.1e\n",
+                N, K, Kp, padns, titns, mklns, r_mp, r_mt, up, match);
+    free_d(xk);
+    free_d(rek);
+    free_d(imk);
+    free_d(xp);
+    free_d(rep);
+    free_d(imp);
+    free_d(xin);
+    free_d(cce);
+    vfft_r2c_plan_destroy(pt);
+    vfft_r2c_plan_destroy(pp);
 }
 #endif /* VFFT_HAS_MKL */
 
@@ -1976,13 +2073,13 @@ int main(int argc, char **argv)
         }
         else if (strcmp(argv[1], "--c2rcalib") == 0)
         {
-            c2r1d = 1;     /* reuse the c2r setup (rreg + wisdoms) */
-            c2rcalib = 1;  /* but measure BOTH paths + write c2r_path.txt */
+            c2r1d = 1;    /* reuse the c2r setup (rreg + wisdoms) */
+            c2rcalib = 1; /* but measure BOTH paths + write c2r_path.txt */
         }
         else if (strcmp(argv[1], "--pad") == 0)
-            pad = 1;       /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
+            pad = 1; /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
         else if (strcmp(argv[1], "--padr2c") == 0)
-            padr2c = 1;    /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
+            padr2c = 1; /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
         else if (strcmp(argv[1], "--k1zip") == 0)
         {
             /* K=1 kind-4 cells IN-PLACE on BOTH engines — the true
@@ -2315,11 +2412,15 @@ int main(int argc, char **argv)
         static vfft_proto_wisdom_t c2rwis, c2cwis;
         const char *c2rw = "../../src/dag-fft-compiler/generator/generated/c2r_wisdom.txt";
         int hpk = (vfft_proto_wisdom_load(&c2rwis, c2rw) == 0);
-        if (hpk) vfft_c2r_dispatch_set_wisdom(&c2rwis);      /* PACKED-path factorization */
+        if (hpk)
+            vfft_c2r_dispatch_set_wisdom(&c2rwis); /* PACKED-path factorization */
         int hc2c = (vfft_proto_wisdom_load(&c2cwis, wpath) == 0);
-        if (hc2c) vfft_r2c_dispatch_set_c2c_wisdom(&c2cwis); /* SPLIT-path stride inner */
-        if (getenv("VFFT_C2R_PACK_ALL")) vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K */
-        if (getenv("VFFT_C2R_STRIDE_ALL")) vfft_r2c_dispatch_set_decouple_min_k(0);          /* probe: force STRIDE all K */
+        if (hc2c)
+            vfft_r2c_dispatch_set_c2c_wisdom(&c2cwis); /* SPLIT-path stride inner */
+        if (getenv("VFFT_C2R_PACK_ALL"))
+            vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K */
+        if (getenv("VFFT_C2R_STRIDE_ALL"))
+            vfft_r2c_dispatch_set_decouple_min_k(0); /* probe: force STRIDE all K */
         const char *c2r_pathf = "../../src/dag-fft-compiler/generator/generated/c2r_path.txt";
         if (c2rcalib)
         {
@@ -2327,7 +2428,8 @@ int main(int argc, char **argv)
              * table. No MKL -> no high-N*K crash; both dag paths are ASan-clean, so the
              * full grid runs in one process. This drops the hardcoded crossover. */
             FILE *pf = fopen(c2r_pathf, "w");
-            if (pf) fprintf(pf, "# 1D c2r path wisdom: N K path (0=packed 1=stride), measured per cell\n");
+            if (pf)
+                fprintf(pf, "# 1D c2r path wisdom: N K path (0=packed 1=stride), measured per cell\n");
             printf("=== c2r PATH calibration (measure both packed+stride, pick winner; no MKL, core%d) ===\n", core);
             int Nc[] = {256, 512, 1024};
             size_t Kc[] = {8, 16, 32, 64, 128, 256};
@@ -2337,7 +2439,8 @@ int main(int argc, char **argv)
                     run_c2r_calib_cell(Nc[ni], Kc[ki], &rreg, &reg, pf);
                     pace(pace_ms);
                 }
-            if (pf) fclose(pf);
+            if (pf)
+                fclose(pf);
             printf("c2r path wisdom -> %s\n", c2r_pathf);
             return 0;
         }

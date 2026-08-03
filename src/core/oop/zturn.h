@@ -96,6 +96,13 @@ VFFT_ZT_DECL(radix4_z_dts_r4_fwd_avx2)
 VFFT_ZT_DECL(radix8_z_dtsn_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_dtsn_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_dtt_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_msd_fwd_avx2)     /* DIT-FORWARD mids = conj(msgb):
+                                         * DFT + POST-twiddle group-loop
+                                         * body, twz as loaded. NOT msg fwd
+                                         * (that is DIT pre-twiddle) — the
+                                         * placement trap, caught by the
+                                         * pipeline gate. */
+VFFT_ZT_DECL(radix4_z_msd_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stf_r4_fwd_avx2)  /* RADIX-4 terminator (last==4     */
 VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * 64-B record/section/group, OLs =
@@ -1004,12 +1011,14 @@ static inline void vfft_zturn2_execute_dit_fwd(const vfft_zturn2_plan_t *p,
                                     : radix8_z_dts_r4_fwd_avx2)(
             zin, 0, p->plane, 0, p->tzq, 0, 0, 0, OLt, 0, OLt);
     for (int s = p->nf - 2; s >= 1; s--) {
+        /* msd, NOT msg fwd: conj(msgb) is DFT + POST-twiddle (DIF form);
+         * msg fwd is PRE-twiddle — same math, WRONG composition here. */
         void (*f)(const double *, const double *, double *, double *,
                   const double *, const double *, unsigned long long,
                   unsigned long long, unsigned long long,
                   unsigned long long, unsigned long long) =
-            (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2
-                               : radix4_z_msg_fwd_avx2;
+            (p->chain[s] == 8) ? radix8_z_msd_fwd_avx2
+                               : radix4_z_msd_fwd_avx2;
         f(p->plane, 0, p->plane, 0, p->twz[s], 0,
           (unsigned long long)p->D[s], (unsigned long long)p->G[s],
           0, 0, (unsigned long long)p->D[s]);
