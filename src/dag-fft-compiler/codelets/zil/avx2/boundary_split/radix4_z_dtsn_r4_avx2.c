@@ -9,7 +9,7 @@
  * Env overrides: (none)
  * Family: zsplit-pipeline
  * kind=dtsn radix=4 dir=fwd isa=avx2 r0=4 (ZTURN-S sectioned geometry)
- * math: Dft.dft_expand_twiddled TP_PowW1 DIT sign=Fwd
+ * math: Dft.dft_expand_twiddled TP_PowW1 DIF sign=Fwd
  * prepare: Pipeline.prepare_codelet (monolithic, fuse=0)
  * schedule: Schedule.su_schedule (SR list scheduler)
  * ====================================================== */
@@ -48,49 +48,49 @@ void radix4_z_dtsn_r4_fwd_avx2(
         const __m256d lane_im_3 = _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zl_3, _zh_3), 0xD8);
         /* SU-scheduled body (pipeline) */
         const __m256d t0 = lane_re_3;
-        const __m256d t1 = _mm256_loadu_pd(&tw_re[2*(size_t)k + 0]);
-        const __m256d t2 = _mm256_loadu_pd(&tw_re[2*(size_t)k + 4]);
-        const __m256d t3 = _mm256_fnmadd_pd(t2, t2, _mm256_mul_pd(t1, t1));
-        const __m256d t4 = _mm256_fmadd_pd(t1, t2, _mm256_mul_pd(t2, t1));
-        const __m256d t5 = _mm256_fnmadd_pd(t4, t2, _mm256_mul_pd(t3, t1));
-        const __m256d t6 = _mm256_fmadd_pd(t3, t2, _mm256_mul_pd(t4, t1));
-        const __m256d t7 = lane_im_3;
-        const __m256d t8 = _mm256_fnmadd_pd(t7, t6, _mm256_mul_pd(t0, t5));
-        const __m256d t9 = _mm256_fmadd_pd(t0, t6, _mm256_mul_pd(t7, t5));
-        const __m256d t13 = lane_re_1;
-        const __m256d t14 = lane_im_1;
-        const __m256d t15 = _mm256_fnmadd_pd(t14, t2, _mm256_mul_pd(t13, t1));
-        const __m256d t16 = _mm256_fmadd_pd(t13, t2, _mm256_mul_pd(t14, t1));
-        const __m256d t18 = _mm256_sub_pd(t16, t9);
-        const __m256d t20 = _mm256_sub_pd(t15, t8);
-        const __m256d t35 = _mm256_add_pd(t9, t16);
-        const __m256d t36 = _mm256_add_pd(t8, t15);
-        const __m256d t23 = lane_re_2;
-        const __m256d t24 = lane_im_2;
-        const __m256d t25 = _mm256_fnmadd_pd(t24, t4, _mm256_mul_pd(t23, t3));
-        const __m256d t26 = _mm256_fmadd_pd(t23, t4, _mm256_mul_pd(t24, t3));
-        const __m256d t28 = lane_re_0;
-        const __m256d t32 = _mm256_sub_pd(t28, t25);
-        const __m256d t33 = _mm256_sub_pd(t32, t18);
-        const __m256d t43 = _mm256_add_pd(t18, t32);
-        const __m256d t39 = _mm256_add_pd(t25, t28);
-        const __m256d t40 = _mm256_sub_pd(t39, t36);
-        const __m256d t45 = _mm256_add_pd(t36, t39);
-        const __m256d t29 = lane_im_0;
-        const __m256d t30 = _mm256_sub_pd(t29, t26);
-        const __m256d t34 = _mm256_add_pd(t20, t30);
-        const __m256d t44 = _mm256_sub_pd(t30, t20);
-        const __m256d t38 = _mm256_add_pd(t26, t29);
-        const __m256d t42 = _mm256_sub_pd(t38, t35);
-        const __m256d t46 = _mm256_add_pd(t35, t38);
+        const __m256d t2 = lane_im_3;
+        const __m256d t4 = lane_re_1;
+        const __m256d t7 = _mm256_add_pd(t0, t4);
+        const __m256d t20 = _mm256_sub_pd(t4, t0);
+        const __m256d t5 = lane_im_1;
+        const __m256d t6 = _mm256_add_pd(t2, t5);
+        const __m256d t18 = _mm256_sub_pd(t5, t2);
+        const __m256d t8 = lane_re_2;
+        const __m256d t9 = lane_im_2;
+        const __m256d t10 = lane_re_0;
+        const __m256d t13 = _mm256_add_pd(t8, t10);
+        const __m256d t14 = _mm256_add_pd(t7, t13);
+        const __m256d t26 = _mm256_sub_pd(t10, t8);
+        const __m256d t27 = _mm256_add_pd(t18, t26);
+        const __m256d t34 = _mm256_sub_pd(t13, t7);
+        const __m256d t41 = _mm256_sub_pd(t26, t18);
+        const __m256d t11 = lane_im_0;
+        const __m256d t12 = _mm256_add_pd(t9, t11);
+        const __m256d t15 = _mm256_add_pd(t6, t12);
+        const __m256d t24 = _mm256_sub_pd(t11, t9);
+        const __m256d t29 = _mm256_sub_pd(t24, t20);
+        const __m256d t38 = _mm256_sub_pd(t12, t6);
+        const __m256d t44 = _mm256_add_pd(t20, t24);
+        const __m256d t28 = _mm256_loadu_pd(&tw_re[2*(size_t)k + 0]);
+        const __m256d t30 = _mm256_loadu_pd(&tw_re[2*(size_t)k + 4]);
+        const __m256d t31 = _mm256_fnmadd_pd(t29, t30, _mm256_mul_pd(t27, t28));
+        const __m256d t32 = _mm256_fmadd_pd(t27, t30, _mm256_mul_pd(t29, t28));
+        const __m256d t35 = _mm256_fnmadd_pd(t30, t30, _mm256_mul_pd(t28, t28));
+        const __m256d t36 = _mm256_fmadd_pd(t28, t30, _mm256_mul_pd(t30, t28));
+        const __m256d t39 = _mm256_fnmadd_pd(t38, t36, _mm256_mul_pd(t34, t35));
+        const __m256d t40 = _mm256_fmadd_pd(t34, t36, _mm256_mul_pd(t38, t35));
+        const __m256d t42 = _mm256_fnmadd_pd(t36, t30, _mm256_mul_pd(t35, t28));
+        const __m256d t43 = _mm256_fmadd_pd(t35, t30, _mm256_mul_pd(t36, t28));
+        const __m256d t45 = _mm256_fnmadd_pd(t44, t43, _mm256_mul_pd(t41, t42));
+        const __m256d t46 = _mm256_fmadd_pd(t41, t43, _mm256_mul_pd(t44, t42));
         /* ZTURN-S direct record store edge (no TR4) */
-        _mm256_storeu_pd(&zout[2*(size_t)k + 0], t45);
-        _mm256_storeu_pd(&zout[2*(size_t)k + 4], t46);
-        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 0], t43);
-        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], t44);
-        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 0], t40);
-        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], t42);
-        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 0], t33);
-        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], t34);
+        _mm256_storeu_pd(&zout[2*(size_t)k + 0], t14);
+        _mm256_storeu_pd(&zout[2*(size_t)k + 4], t15);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 0], t31);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k) + 4], t32);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 0], t39);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k) + 4], t40);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 0], t45);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k) + 4], t46);
     }
 }
