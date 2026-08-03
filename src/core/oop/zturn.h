@@ -87,6 +87,15 @@ VFFT_ZT_DECL(radix8_z_stfn_r4_fwd_avx2) /* NATURAL-ORDER terminator kinds
 VFFT_ZT_DECL(radix8_z_stfn_r4_bwd_avx2)
 VFFT_ZT_DECL(radix4_z_stfn_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stfn_r4_bwd_avx2)
+VFFT_ZT_DECL(radix8_z_dts_r4_fwd_avx2)  /* DIT-FORWARD boundary kinds
+                                         * (dit_cascade_spec.md): conj of
+                                         * stfb/stfbn/s0tb — bwd DATAFLOW,
+                                         * fwd DFT block, fwd tables. Gated
+                                         * conj-EXACT by zturn_dit_gate.c. */
+VFFT_ZT_DECL(radix4_z_dts_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_dtsn_r4_fwd_avx2)
+VFFT_ZT_DECL(radix4_z_dtsn_r4_fwd_avx2)
+VFFT_ZT_DECL(radix4_z_dtt_r4_fwd_avx2)
 VFFT_ZT_DECL(radix4_z_stf_r4_fwd_avx2)  /* RADIX-4 terminator (last==4     */
 VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * 64-B record/section/group, OLs =
@@ -965,6 +974,47 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
      * zout, so zin == zout stays legal. 🔴 If anyone ever fuses s0tb into the
      * tile loop, in-place breaks. */
     radix4_z_s0t_r4_bwd_avx2(p->plane, 0, zout, 0, 0, 0,
+                             (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
+}
+
+/* ── DIT-FORWARD execute (Phase C, dit_cascade_spec.md §2): the conj∘B∘conj
+ * mirror of execute_bwd — the bwd DATAFLOW (stage order nf-2..1, identical
+ * call tuples, identical addresses) with fwd MATH (DFT-block kernels, fwd
+ * tables twz/tzq). UNTILED ONLY in this cut: the tiled DIT placement is a
+ * PREFIX, not a suffix (cascade_dit_vs_dif_tiling_race) — that is the
+ * race's question, answered by measurement, not pre-wired here.
+ *
+ * Input: with natord set, dtsn reads NATURAL x via the rho table (🔴 ntb =
+ * rho, NOT ntf — conjugation does not touch addressing, so the DIT ingest
+ * takes the SAME table the bwd natural terminator takes). Without natord,
+ * dts expects DIGIT-REVERSED input — gate/race harnesses only. Output is
+ * natural; dtt is the sole writer of zout, so zin == zout stays legal
+ * (mirror of s0tb, §2.5). */
+static inline void vfft_zturn2_execute_dit_fwd(const vfft_zturn2_plan_t *p,
+                                               const double *zin, double *zout)
+{
+    const size_t OLt = (size_t)p->N / (size_t)p->chain[p->nf - 1];
+    if (p->natord)
+        ((p->chain[p->nf - 1] == 4) ? radix4_z_dtsn_r4_fwd_avx2
+                                    : radix8_z_dtsn_r4_fwd_avx2)(
+            zin, 0, p->plane, 0, p->tzq, (const double *)p->ntb,
+            0, 0, OLt, 0, OLt);
+    else
+        ((p->chain[p->nf - 1] == 4) ? radix4_z_dts_r4_fwd_avx2
+                                    : radix8_z_dts_r4_fwd_avx2)(
+            zin, 0, p->plane, 0, p->tzq, 0, 0, 0, OLt, 0, OLt);
+    for (int s = p->nf - 2; s >= 1; s--) {
+        void (*f)(const double *, const double *, double *, double *,
+                  const double *, const double *, unsigned long long,
+                  unsigned long long, unsigned long long,
+                  unsigned long long, unsigned long long) =
+            (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2
+                               : radix4_z_msg_fwd_avx2;
+        f(p->plane, 0, p->plane, 0, p->twz[s], 0,
+          (unsigned long long)p->D[s], (unsigned long long)p->G[s],
+          0, 0, (unsigned long long)p->D[s]);
+    }
+    radix4_z_dtt_r4_fwd_avx2(p->plane, 0, zout, 0, 0, 0,
                              (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
 }
 
