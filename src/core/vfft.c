@@ -241,6 +241,15 @@ struct vfft_plan_s
      * Rader or Bluestein over il2p/il3p inner plans, both dirs, natural.
      * Same IL-only-handle rules as k1il3p. Owned. */
     vfft_ilprime_plan_t *k1ilpr;
+    /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
+     * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
+     * handle and execute simply runs it K times at 2*N-double strides.
+     * Non-NULL <=> this is a wrapper handle, and then NOTHING else on the
+     * struct is live except transform/placement/layout/N/K. Owned; destroy
+     * frees it. Serving a batch as K independent transforms is why this
+     * geometry needs no batched machinery, no layout conversion, and
+     * inherits every K=1 improvement for free. */
+    struct vfft_plan_s *tcb;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -2356,6 +2365,61 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         _vfft_warn("vfft_create: config.batch + layout=INTERLEAVED is unsupported — padded "
                    "batches are split-plane by construction; keep VFFT_LAYOUT_SPLIT and use "
                    "vfft_plan_planes() to fill the execute arguments");
+        return NULL;
+    }
+    /* ── TRANSFORM-CONTIGUOUS BATCH (config.batch_geom; il_coverage_plan.md
+     * Phase C). The batch is K independent K=1 transforms laid end to end,
+     * so SERVE it that way: build ONE K=1 handle through this same front
+     * door (inheriting every K=1 route, wisdom verdict and race) and run it
+     * K times at 2*N-double strides. No batched plan, no layout conversion,
+     * no new kernels — and every future K=1 gain lands here automatically.
+     *
+     * Measured against the lane-major conversion route it replaces:
+     * 2.5-5x faster across K in {2,3,4} x N in {256..8192}.
+     *
+     * Scope gates (anything else falls through to the normal paths):
+     * 1D C2C, INTERLEAVED, K>1. At K==1 the two geometries are the SAME
+     * addressing, so a wrapper would be pure overhead — fall through and
+     * let the request build its ordinary K=1 plan. SPLIT is untouched
+     * (its batch geometry is the split engines' own contract). */
+    if (cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS &&
+        cfg->transform == VFFT_C2C && cfg->dims < 2 &&
+        cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob)
+    {
+        vfft_config_t c1 = *cfg;
+        c1.howmany = 1;
+        c1.batch_geom = VFFT_BATCH_LANE_MAJOR; /* identical at K=1; keeps the
+                                                * inner create off this path */
+        struct vfft_plan_s *inner = vfft_create(&c1);
+        if (!inner)
+        {
+            _vfft_warn("vfft_create: transform-contiguous batch needs a K=1 plan for "
+                       "N=%d and none could be built — the batch geometry adds no "
+                       "coverage of its own",
+                       N);
+            return NULL;
+        }
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h)
+        {
+            vfft_destroy(inner);
+            return NULL;
+        }
+        h->transform = VFFT_C2C;
+        h->placement = cfg->placement;
+        h->layout = (int)cfg->layout;
+        h->N = N;
+        h->K = K;
+        h->nthreads = stride_get_num_threads();
+        h->tcb = inner;
+        return h;
+    }
+    if (cfg->batch_geom != VFFT_BATCH_LANE_MAJOR &&
+        cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
+    {
+        _vfft_warn("vfft_create: invalid batch_geom %d (valid: VFFT_BATCH_LANE_MAJOR, "
+                   "VFFT_BATCH_TRANSFORM_CONTIGUOUS)",
+                   cfg->batch_geom);
         return NULL;
     }
     /* In-place real FFT is undefined here (spectrum and real data are separate
@@ -5385,6 +5449,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
+    if (h->tcb)
+    { /* ── TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms, each
+       * its own contiguous 2*N-double block. The inner handle carries the
+       * real route, placement and order; this loop only walks the blocks.
+       * The INTERLEAVED C2C signature check above guarantees sre and dre are
+       * both non-NULL (in-place is spelled (z,NULL,z,NULL), i.e. dre==sre),
+       * so the two pointers need no normalization here. */
+        double *d = dre;
+        const size_t tn = 2 * (size_t)h->N;
+        for (size_t t = 0; t < h->K; t++)
+            vfft_execute(h->tcb, dir, sre + t * tn, NULL, d + t * tn, NULL);
+        return;
+    }
     if (h->N2 > 0)
     { /* ── 2D (dispatch before the same-named 1D transforms) ── */
         vfft_set_num_threads(h->nthreads);
@@ -5726,6 +5803,8 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->oplan);
     if (h->zsplit)
         vfft_zsplit_destroy(h->zsplit);
+    if (h->tcb)
+        vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
     if (h->zturn)
         vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
