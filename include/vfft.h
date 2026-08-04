@@ -44,9 +44,14 @@
  *   layout / transform      sre         sim         dre         dim
  *   SPLIT   C2C             in.re       in.im       out.re      out.im
  *   INTERLV C2C             z_in        NULL        z_out       NULL
- *           (z = interleaved pairs, element e of lane t at [2*(e*K+t)];
- *            in-place: dre may equal sre. sim/dim MUST be NULL — the plan
- *            was committed to this layout and execute checks the signature.)
+ *           (z = interleaved pairs. Element e of lane t at [2*(e*K+t)] —
+ *            the default LANE_MAJOR batch geometry. With
+ *            config.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS instead,
+ *            transform t is the contiguous block [2*t*N .. 2*(t+1)*N) —
+ *            the MKL/FFTW idiom, and the faster route at small K. Both
+ *            are identical at K==1. In-place: dre may equal sre. sim/dim
+ *            MUST be NULL — the plan was committed to this layout and
+ *            execute checks the signature.)
  *   SPLIT   R2C fwd         real_in     NULL        spec.re     spec.im
  *   INTERLV R2C fwd (CCE)   real_in     NULL        z_spec      NULL
  *   SPLIT   C2R bwd         spec.re     spec.im     real_out    NULL
@@ -228,6 +233,32 @@ extern "C"
                              Committed at create; execute enforces the matching
                              pointer signature. Default (0) = SPLIT.            */
 
+    int batch_geom; /* WHERE the K transforms of a batch live, for
+                       layout=INTERLEAVED with howmany>1. The axis MKL spells
+                       DFTI_INPUT_DISTANCE/STRIDES and FFTW spells
+                       idist/istride. 1D C2C only; ignored at K==1 (the two
+                       geometries are identical there) and for SPLIT.
+                       VFFT_BATCH_LANE_MAJOR (0, default, unchanged
+                         behavior) = element e of transform t at
+                         z[2*(e*K + t)]. The batched split engines' native
+                         geometry: excellent at large K (a vector spans K
+                         independent transforms, uniform twiddles, and a
+                         K-split across T threads owns whole cache lines
+                         once K >= 4T), served by layout conversion at
+                         small K where it can neither fill a vector nor
+                         split cleanly.
+                       VFFT_BATCH_TRANSFORM_CONTIGUOUS (1) = transform t
+                         occupies z[2*t*N .. 2*(t+1)*N), elements adjacent
+                         inside it — the MKL/FFTW default idiom. Served
+                         NATIVELY as K independent K=1 transforms (no
+                         layout conversion anywhere), so it inherits the
+                         K=1 engines' per-cell performance directly and
+                         parallelizes as one contiguous private block per
+                         thread. Measured 2.5-5x faster than the lane-major
+                         conversion route across K in {2,3,4} x N in
+                         {256..8192} (docs/roadmap/il_coverage_plan.md
+                         Phase C).                                          */
+
     vfft_wisdom *wisdom; /* NULL = library-managed (auto load+save);
                             non-NULL = use this, ignore the default   */
     int recalibrate;     /* 0 = use existing entry; 1 = re-measure + overwrite */
@@ -241,6 +272,16 @@ extern "C"
     VFFT_ORDER_DEFAULT = 0,
     VFFT_ORDER_NATURAL = 1,
     VFFT_ORDER_SCRAMBLED = 2
+  };
+
+  /* Batch geometry axis (vfft_config_t.batch_geom) — see the field comment.
+   * Both libraries we benchmark against expose the same choice; ours differs
+   * only in that LANE_MAJOR is the zero default for backward compatibility,
+   * while their default is the transform-contiguous one. */
+  enum
+  {
+    VFFT_BATCH_LANE_MAJOR = 0,
+    VFFT_BATCH_TRANSFORM_CONTIGUOUS = 1
   };
 
   typedef struct vfft_plan_s *vfft_plan; /* opaque execute-ready handle */
