@@ -148,7 +148,70 @@ batching, and where.
   flat-bad, not small-N-concentrated), and the map ends at a hard
   coverage wall. The two flat passes + the split interior at tiny K
   never approach parity.
-- [x] **C2/C3 — DECIDED 2026-08-04 (Tugbars, with the C1 map in hand):
+- [x] **C2/C3 — RESOLVED 2026-08-04 BY A DIFFERENT ROUTE THAN CHARTERED:
+  transform-contiguous batch geometry, served by looping the K=1
+  engines. SHIPPED same day.** Tugbars: *"do we even need lane major
+  codelets for K=1? why don't we have contiguous for all? How does MKL
+  handle this"* — the question that dissolved the problem. MKL and FFTW
+  both EXPOSE the geometry as an axis (DISTANCE/STRIDES, idist/istride)
+  and both default to transform-contiguous; we had inherited lane-major
+  from the split engines and applied it to IL at every K, which Tugbars
+  called *"a mistake"* to have carried over.
+  - **API**: `config.batch_geom` ∈ {`VFFT_BATCH_LANE_MAJOR` (0,
+    default, unchanged), `VFFT_BATCH_TRANSFORM_CONTIGUOUS` (1)}. 1D C2C
+    INTERLEAVED, K>1. At K==1 the two geometries are the SAME addressing,
+    so create falls through and builds an ordinary K=1 plan (gated
+    bitwise).
+  - **Implementation**: ~40 lines. A TC create builds ONE K=1 handle
+    through the same front door and stores it as `h->tcb`; execute runs
+    it K times at 2N-double strides. **Zero new kernels, zero layout
+    conversion, no batched plan.** Inherits every K=1 route, wisdom
+    verdict, and create-time race automatically — and every future K=1
+    gain lands here for free (the sub-2048 directive compounding).
+  - **MEASURED** (`--kzb` loop arm, K∈{2,3,4} × N∈{256..8192}, ×3,
+    cell-per-process, pinned, alternated): **2.2–5.7× faster than the
+    lane-major bridge at every cell.** vs MKL batched on its OWN home
+    layout: 0.56–0.87 sub-2048 · **1.01–1.18 at 2048** · 0.90–1.13 at
+    4096 · 0.79–0.99 at 8192. That profile IS our K=1 competitive
+    position, inherited exactly as predicted — so the residual gap is
+    now a pure K=1 sub-2048 question, not a batching question.
+    ⚠ K=4 N=512 spread 0.56–0.80 is wide; re-measure before quoting.
+  - **NO TAIL EXISTS** in this geometry: K=3, K=7, K=11 are just that
+    many loops. No padding, no remainder kernel, no `exec_me`
+    verdict, no even-K constraint — the property the campaign docs
+    already noted about MKL ("odd K is just one more transform").
+  - **Gate**: `build_tuned/benches/vfft_tcbatch_gate.c` ALL PASS —
+    fwd/bwd vs independent scalar DFT per transform with DIFFERENT data
+    in each block (catches a route that transformed only one block),
+    BITWISE identity vs K separate K=1 executes, in-place both
+    directions, lane-major still correct at the same cells, K=1
+    non-wrapping bitwise. Includes an odd-N cell (96×3).
+  - 🔴 Contract note found while gating: INTERLEAVED C2C in-place is
+    spelled `(z,NULL,z,NULL)` — `dre` is REQUIRED and aliases `sre`;
+    `(z,NULL,NULL,NULL)` is rejected by the signature check.
+  - **Policy (Tugbars)**: transform-contiguous is the **canonical
+    supported** IL batch geometry; lane-major "exists for the sake of
+    completion" — served by the existing bridge, no further
+    optimization investment. Mirrors MKL's own architecture (tuned path
+    for the sensible layout, generic path for the strided one).
+  - ⏸ OPEN: should `batch_geom`'s DEFAULT flip to transform-contiguous?
+    Canonical-should-be-default argues yes and matches MKL/FFTW; but a
+    flip silently reinterprets any existing lane-major K>1 caller's
+    buffer → wrong results with no error. Tugbars' call.
+- [x] **The K-across-SIMD campaign (chartered earlier the same day) is
+  CLOSED UNBUILT.** Its premise — that K≥2 interleaved needs its own
+  kernel family — was false. Once each transform saturates the vector
+  unit, batching is a convenience, not a performance technique; MKL's
+  own batched home time is ≈K× its K=1 time (2048: 2×2151=4302 vs
+  4043–4087 measured; 4×2151=8604 vs 8114–9003). The RE finding that
+  MKL serves lane-major with a generic spill-heavy body stands, but is
+  now a curiosity rather than an opening: nobody should feed batches in
+  that layout when transform-contiguous exists. MT reinforces it —
+  lane-major K-split needs K ≥ 4T to own whole cache lines (K=32,T=4 →
+  128B/thread ✓; K=4,T=4 → 16B/thread, false sharing on every line),
+  while transform-contiguous gives each thread a private contiguous
+  block. Historical record of the superseded charter:
+- [x] **C2/C3 — the superseded charter (kept for the reasoning trail):
   the convert bridge is NOT an acceptable end state.** His ruling: the
   route-level dein → split-engines → inter bridge "is hybrid-ing IL and
   split with each other just because we do not have a z-consuming
