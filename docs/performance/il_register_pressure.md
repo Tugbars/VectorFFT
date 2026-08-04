@@ -138,8 +138,16 @@ WITH that optimization in effect. Struck through so nobody re-proposes it.
    permanent form is porting the existing top-level pressure mode
    (`~gh`, threshold 12) into the functor as a default-off knob. Pure
    reordering — bit-identity-gateable.
-3. **Permute-free pass 2 via scratch-layout choice** (mechanism 4) —
-   the remaining 12–14 % shuffle share.
+3. ~~**Permute-free pass 2 via scratch-layout choice**~~ — **CLOSED BY
+   ANALYSIS (2026-08-04): already optimal.** The mid is already
+   lane-cross-free with zero reint/deint (plain contiguous loads and
+   stores; the leaf's turned stores carry the whole layout job, in the
+   optimal place). The 12–14 % shuffle share is exactly one in-lane swap
+   per complex rotation — conserved across every kernel variant, the
+   AVX2 floor for interleaved-in/out compute. Only a split-plane
+   representation removes it (a different product family). Struck
+   through so nobody re-proposes it; the residual count lever is
+   fewer-rotation FACTORIZATIONS via the planner.
 4. **Verify folding in the OTHER twiddle-render family** (the
    named-temp path serving the oop/rfft/strided/boundary-split kinds,
    including the stfn terminators): one objdump census; free wins may

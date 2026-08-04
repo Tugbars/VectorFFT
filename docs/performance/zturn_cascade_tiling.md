@@ -340,18 +340,19 @@ through `calibrate_zchain` (711 benchmarks total; every winner ends in 4,
 tiled w1024 @ 48 KB L1 at ≥4096), then both order modes re-ran
 same-vintage, same-day.
 
-Benchmark-derived, this host, 2026-08-03, warm, 3 runs/cell,
-cell-per-process, alternated engine order, pinned core 2 (canonical bench
-`--k1zip` / `--k1nat`; both engines in-place interleaved; indicative until
-a cool-machine session):
+**CITABLE (cool-machine session, 2026-08-04).** Benchmark-derived, this
+host, calm machine, 3 runs/cell, cell-per-process, pinned core 2
+(canonical bench `--k1zip` / `--k1nat`; both engines in-place
+interleaved; per-cell spreads 1–3 %, cross-engine error bit-stable
+across runs — this table supersedes the warm 2026-08-03 ranges):
 
 | N | scrambled (`--k1zip`) | natural (`--k1nat`) | natorder tax | cross-engine err |
 |---|---|---|---|---|
-| 2048 | 1.20–1.34 | 1.01–1.20 | ~2–6 % | 6.9e-16 |
-| 4096 | 1.01–1.02 | 0.97–1.03 | ~2–4 % | 7.3e-16 |
-| 8192 | 1.06–1.07 | 0.98–1.06 | ~3–5 % | 6.2e-16 |
-| 16384 | 1.06–1.09 | 1.02 (×3, tight) | ~5 % | 6.6e-16 |
-| 32768 | 0.99–1.03 | 0.96–1.10 | ~2–4 % | 7.2e-16 |
+| 2048 | **1.15–1.18** | **1.09–1.16** | ~2 % | 6.9e-16 |
+| 4096 | 1.02–1.04 | 0.96–0.99 | ~4 % | 7.3e-16 |
+| 8192 | **1.05–1.06** | 1.00–1.03 | ~3 % | 6.2e-16 |
+| 16384 | **1.05–1.08** | **1.02–1.03** | ~4 % | 6.6e-16 |
+| 32768 | 1.00–1.02 | 0.94–0.97 | ~5 % | 7.2e-16 |
 
 Readings:
 
@@ -387,15 +388,20 @@ width). Two changes, both raced through the same `@nat` verdict machinery:
   **ILP won 9.1× / 7.2× / 5.7× / 4.0× at 128/256/512/1024.** Scrambled
   in-place rides the banked verdict hit-only (single wisdom writer).
 
-vs MKL (both in-place, both natural, cross-engine elementwise ~2–4.5e-16;
-warm, 3 runs/cell, cell-per-process, pinned core 2 — indicative):
+vs MKL (both in-place, both natural, cross-engine elementwise ~2–4.5e-16).
+**CITABLE (cool-machine session, 2026-08-04, with the blocked-mid race
+live — supersedes the warm 2026-08-03 pre-promotion ranges):**
 
 | N | vfft ns | MKL ns | ratio (>1 = vfft) |
 |---|---|---|---|
-| 128 | 75–82 | 68 | 0.83–0.91 |
-| 256 | 179 | 136 | 0.76 |
-| 512 | 412–429 | 291–295 | 0.68–0.71 |
-| 1024 | 1147–1426 | 837–845 | 0.59–0.74 (drifting, hot machine) |
+| 128 | 74–75 | 68 | 0.91 (×3, tight) |
+| 256 | 171–178 | 136 | 0.76–0.79 |
+| 512 | 397–415 | 290–291 | 0.70–0.73 |
+| 1024 | 1042–1107 | 825–833 | 0.74–0.80 |
+
+(The pre-promotion warm table read 0.59–0.74 at 1024 and 0.68–0.71 at
+512 — the blocked-mid promotion moved both cells and killed 1024's slow
+tail; 128 is the unchanged control cell, now ×3 bit-tight.)
 
 Read both numbers together: end users at these cells got ~4–9× faster than
 the previous shipping path, and the remaining 0.6–0.9× stands on MKL's
