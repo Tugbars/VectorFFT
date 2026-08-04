@@ -91,28 +91,92 @@ fused-vs-padded verdict). The split engine is strong at K>1; the question
 is purely whether two conversion passes lose to MKL's native interleaved
 batching, and where.
 
-- [ ] **C0** — contract recon: pin OUR interleaved K>1 layout (lane-
-  contiguous `dist = N` complex vs element-interleaved) from
-  `_il_pad_dein`/`_exec_c2c_interleaved` addressing, and write it into the
-  layout contract docs. The MKL arm must mirror it exactly
-  (`NUMBER_OF_TRANSFORMS=K`, `INPUT_DISTANCE` to match) or the bench
-  measures a strawman.
-- [ ] **C1** — the gap map: ONE new canonical-bench mode (`--kzb`),
-  K ∈ {2,3,4} × N ∈ {256..32768}, ours-as-is (convert) vs MKL native
-  batched interleaved, both placements' story starts OOP, cell-per-process
-  under the noise protocol. Honest priors, stated pre-run: conversion
-  dominates at small N (MKL wins big); at large N the split engine's
-  interior may hold (gap shrinks). No routing change in this step.
-- [ ] **C2** — the cheap native candidate: LANE-LOOP — run the K=1 z
-  machinery per lane (`dist = 2N` doubles): cascade per lane at ≥2048
-  (plane + tables shared, cache-warm across lanes), il2p per lane below.
-  Zero new kernels. Wire as a create-time candidate raced vs the convert
-  incumbent per (N,K) cell, banked — plans from machinery, never a
-  hand cutoff.
-- [ ] **C3** — decision point, from C1+C2 numbers: if lane-loop + convert
-  covers the map competitively, STOP (record why). True K-across-SIMD z
-  kernels (the emitter campaign — what MKL runs at small N) open ONLY if
-  a high-volume region measurably loses, as their own spec'd campaign.
+- [x] **C0 — DONE 2026-08-04 (4-reader recon). The contract is
+  ELEMENT-INTERLEAVED across lanes: element `e` of lane `t` at
+  `z[2*(e*K+t)]`.** Unanimous in code and already public: vfft.h:47/:198/
+  :256-258 state it verbatim; `_il_pad_dein` (vfft.c:4804) reads the K
+  lanes of point p as the K adjacent pairs at `z+2*p*K`; the flat
+  `_vfft_z_dein/_z_inter` converts are only correct under this layout (no
+  transpose exists); the il2il MT lane-slabs offset `zi+2*k0`. So the
+  interleaved z layout IS the split lane-major layout with (re,im) fused —
+  the convert feeds the split engine with ZERO reshaping; the two flat
+  passes are the entire tax. **Design-history contradiction adjudicated:**
+  interleaved_design.md pitfall #10 committed v1 to transform-major
+  (`dist=N`, the MKL/FFTW default) but the same-day as-built record
+  (il_architecture.md §1/§7) shows the shipped wrapper REFUSED
+  transform-major and served lane-major; the §6 "batch geometry
+  commitment" decision was never recorded. Code wins; vfft.h is the
+  contract doc and it is already correct. Findings that reshape C1/C2:
+  (1) the in-place K≥2 native il2il fold/slab plumbing EXISTS
+  (dispatch vfft.c:4933-4998, slice_K-parameterized) but its codelet
+  population was RETIRED 2026-07-24 (il_execute.h stubs return 0) — today
+  it always falls through to convert; the seam is the natural home for a
+  native candidate. (2) il_me = fused-vs-padded verdict, in-place
+  interleaved, K%8≠0, DEFAULT order only; at K∈{2,3,4} the padded arm
+  pads to Kp=8 (2–4× zero-lane waste) yet may win since the fused tail
+  runs narrow. (3) The bench's existing K=4 rows are SPLIT-plane
+  in-place REAL_REAL — LAYOUT_INTERLEAVED at K≥2 is completely
+  unexercised by the canonical bench. (4) K∈{2,3} have ZERO wisdom cells
+  in either file — the C1 mode must use direct-cell targeting (the
+  --k1nat fallback pattern, bench:2918-2923), not the wisdom walk.
+  (5) 🔴 K's lane-major meaning inside stride plans and the flat converts
+  is shared load-bearing code with 2D/3D column passes and R2C CCE —
+  Phase C routing lives at the vfft.c dispatch level ONLY; never change
+  what K means to the engines.
+- [x] **C1 — MAP MEASURED 2026-08-04** (`--kzb` shipped in the canonical
+  bench: k1z fairness shape, direct-cell dispatch, two MKL arms —
+  mirror = COMPLEX_COMPLEX `NUMBER_OF_TRANSFORMS=K, DISTANCE=1,
+  STRIDES={0,K}`; home = `dist=N` diagnostic; MKL mirror/home
+  self-check via transposed input; cross-engine gate vs mirror. Cells
+  ×3, cell-per-process, pinned, alternated; champions calibrated+banked
+  round 1). **Results (ratio_mirror ranges over 3 runs, ~4e-16 xerr
+  everywhere covered):**
+  - K=2: 256=0.43–0.44 · 512=0.51–0.62 · 1024=0.52–0.57 ·
+    2048=0.49–0.68 · 4096=0.55–0.59 · 8192=**0.39–0.44**
+  - K=3: 256=0.40–0.50 · 512=0.60–0.70 · 1024=0.58–0.59 ·
+    2048=0.44–0.64 · 4096=0.49–0.57 · 8192=0.42–0.50
+  - K=4: 256=**0.31–0.38** · 512=0.46–0.52 · 1024=0.76–1.01 (the one
+    near-parity cell) · 2048=0.65–0.75 · 4096=0.55–0.59 · 8192=0.51–0.66
+  - ratio_home (positioning diagnostic): 0.13–0.46 across the map; MKL
+    itself pays 2–3× on OUR lane-major layout vs its home layout.
+  - 🔴 **COVERAGE HOLE: N ≥ 16384 at K∈{2,3,4} REFUSES natural OOP
+    loudly** ("no natural-order out-of-place C2C champion — the natural
+    kinds are gated on this cell") — every 16384/32768 cell, every K,
+    all 3 rounds. Above 8192 these K have NO natural OOP route at all.
+  **C1 verdict:** the convert route loses ~2× to like-for-like MKL
+  essentially everywhere covered (prior refuted in one direction: it is
+  flat-bad, not small-N-concentrated), and the map ends at a hard
+  coverage wall. The two flat passes + the split interior at tiny K
+  never approach parity.
+- [x] **C2/C3 — DECIDED 2026-08-04 (Tugbars, with the C1 map in hand):
+  the convert bridge is NOT an acceptable end state.** His ruling: the
+  route-level dein → split-engines → inter bridge "is hybrid-ing IL and
+  split with each other just because we do not have a z-consuming
+  engine" — the same disease as the banned il_in/il_out hybrid codelets
+  (🔴🔴🔴 never-build rule), one level up. The C1 escalation condition
+  was met everywhere anyway (~0.4–0.7 flat). VERDICT: charter the
+  native z-consuming K≥2 tier as ITS OWN SPEC'D CAMPAIGN (C3's
+  language). Constraints fixed now:
+  - **PURE IL end-to-end**: z in, z out, no split borrowing anywhere in
+    the engine — codelets from the cil/pure-IL emitter families, NEVER
+    derived from split bodies (the retired 2026-07-24 population was
+    the derived kind; repopulating the seam with derived codelets would
+    recreate the ban).
+  - **The layout is K-across-SIMD-natural**: lane-major means the K
+    lanes of one element are 2K contiguous doubles (K=4 ⇒ exactly 2
+    ymm) — the vector unit spans lanes with NO gather, which is
+    precisely "what MKL runs at small N". Per-lane-strided execution of
+    K=1 kernels is the weaker shape; the campaign spec should start
+    from K-across-SIMD.
+  - The bridge REMAINS the serving mechanism until the native tier
+    races past it per (N,K) cell (coverage never regresses during the
+    campaign; create-time race + bank, plans from machinery).
+  - Small independent item, do first: **close the ≥16384 K∈{2,3,4}
+    natural-OOP refusal** (coverage defect; serve at bridge-class speed
+    now, native later).
+  Campaign spec = next step (kernel shapes, emitter seam, dispatch
+  home, gap-map targets from C1's worst cells); it does NOT start
+  until spec'd and approved.
 
 ## Phase D — OOP natural ≥2048: il2p/il3p vs cascade race (carried from the previous plan)
 

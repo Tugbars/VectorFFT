@@ -708,6 +708,251 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * --kzb : Phase C1 gap map (il_coverage_plan.md) — K∈{2,3,4} INTERLEAVED
+ * batched C2C, ours-as-is vs MKL. C0 pinned the contract: element e of
+ * lane t at z[2*(e*K+t)] (lane-major). Our side: the PUBLIC front door,
+ * OOP + order=NATURAL + layout=INTERLEAVED + howmany=K — today that is
+ * the convert route (flat dein → split champions at K → flat inter);
+ * K∈{2,3,4} have no OOP wisdom cells, so the first create per cell
+ * calibrates champions (VFFT_MEASURE = quick DP) and banks them — create
+ * sits OUTSIDE timing, later processes consume. MKL side, TWO arms:
+ *   mirror = OUR layout exactly (COMPLEX_COMPLEX, NUMBER_OF_TRANSFORMS=K,
+ *            DISTANCE=1, STRIDES={0,K}) — the routing-verdict number;
+ *   home   = MKL's native batched layout (DISTANCE=N, unit stride) — a
+ *            DIAGNOSTIC column for positioning (different memory contract,
+ *            never the verdict input; C0's strawman rule).
+ * Correctness = cross-engine elementwise vs the mirror arm (both natural,
+ * identical layout; roundtrip cannot gate ordering). Fairness = the k1z
+ * shape: warmup 10 / best-of-5 / reps_for, cachebust + cool between
+ * engines, flip order per cell. No routing change anywhere — this mode
+ * only MEASURES (C1's contract).
+ * ════════════════════════════════════════════════════════════════════════ */
+static int g_kzb = 0;
+
+#ifdef VFFT_HAS_MKL
+static double kzb_time_mkl(int N, int K, const double *z0, size_t total,
+                           int home)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1,
+                             (MKL_LONG)N) != DFTI_NO_ERROR)
+        return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    if (home)
+    { /* transform-contiguous: transform k at complex offset k*N */
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N);
+    }
+    else
+    { /* OUR lane-major contract: element n of lane k at complex n*K+k */
+        MKL_LONG st[2] = { 0, (MKL_LONG)K };
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_INPUT_STRIDES, st);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, st);
+    }
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return 0;
+    }
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        DftiComputeForward(d, zi, zo);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            DftiComputeForward(d, zi, zo);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    free_d(zi);
+    free_d(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+
+/* one-shot spectra for the correctness columns (mirror layout + the
+ * home-vs-mirror MKL self-check). Returns 0 on descriptor failure. */
+static int kzb_mkl_ref(int N, int K, const double *z0, size_t total,
+                       int home, double *zout)
+{
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1,
+                             (MKL_LONG)N) != DFTI_NO_ERROR)
+        return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    if (home)
+    {
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N);
+    }
+    else
+    {
+        MKL_LONG st[2] = { 0, (MKL_LONG)K };
+        DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)1);
+        DftiSetValue(d, DFTI_INPUT_STRIDES, st);
+        DftiSetValue(d, DFTI_OUTPUT_STRIDES, st);
+    }
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return 0;
+    }
+    double *zi = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    DftiComputeForward(d, zi, zout);
+    free_d(zi);
+    DftiFreeDescriptor(&d);
+    return 1;
+}
+#endif
+
+static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
+{
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8d K=%-3d   SKIP (front-door bundle unavailable)\n", N, K);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE; /* C1: the story starts OOP */
+    cfg.rigor = VFFT_MEASURE;        /* quick DP on the calibrate-on-miss */
+    cfg.dims = 1;
+    cfg.n[0] = N;
+    cfg.howmany = (size_t)K;
+    cfg.order = VFFT_ORDER_NATURAL; /* MKL is natural; cross-engine gate */
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads = 1;
+    cfg.wisdom = W;
+    vfft_plan h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%-8d K=%-3d   vfft_create FAILED\n", N, K);
+        return;
+    }
+
+    size_t total = (size_t)N * (size_t)K;
+    double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total);
+    srand(42 + N + K);
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (double)rand() / RAND_MAX - 0.5;
+
+    double rel = -1.0;
+#ifdef VFFT_HAS_MKL
+    { /* cross-engine gate vs the MIRROR arm (identical layout, both
+       * natural) + MKL home-vs-mirror self-check (re-indexed): guards the
+       * stride setup itself — a wrong mirror descriptor would make the
+       * timing column measure a different transform. */
+        double *zm = alloc_d(2 * total), *zh = alloc_d(2 * total);
+        if (kzb_mkl_ref(N, K, z0, total, 0, zm))
+        {
+            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            double xe = 0.0, xm = 0.0;
+            for (size_t i = 0; i < 2 * total; i++)
+            {
+                double e = fabs(S[i] - zm[i]), m = fabs(zm[i]);
+                if (e > xe) xe = e;
+                if (m > xm) xm = m;
+            }
+            rel = xm > 0 ? xe / xm : xe;
+            /* home self-check needs the SAME LOGICAL INPUT in home layout:
+             * transpose z0 (lane-major) into transform-major z0h first —
+             * feeding raw z0 to both arms would transform different
+             * logical vectors and the compare would be meaningless. */
+            double *z0h = alloc_d(2 * total);
+            for (int k = 0; k < K; k++)
+                for (int n = 0; n < N; n++)
+                {
+                    size_t im = 2 * ((size_t)n * K + k);
+                    size_t ih = 2 * ((size_t)k * N + n);
+                    z0h[ih] = z0[im];
+                    z0h[ih + 1] = z0[im + 1];
+                }
+            if (kzb_mkl_ref(N, K, z0h, total, 1, zh))
+            {
+                double se = 0.0, sm = 0.0;
+                for (int k = 0; k < K; k++)
+                    for (int n = 0; n < N; n++)
+                    {
+                        size_t im = 2 * ((size_t)n * K + k);
+                        size_t ih = 2 * ((size_t)k * N + n);
+                        double er = fabs(zm[im] - zh[ih]);
+                        double ei = fabs(zm[im + 1] - zh[ih + 1]);
+                        double e = er > ei ? er : ei;
+                        double m = fabs(zh[ih]);
+                        if (e > se) se = e;
+                        if (m > sm) sm = m;
+                    }
+                if (sm > 0 && se / sm > 1e-10)
+                    fprintf(stderr,
+                            "kzb: MKL mirror/home self-check DIFF %.2e at "
+                            "N=%d K=%d — mirror strides suspect\n",
+                            se / sm, N, K);
+            }
+            free_d(z0h);
+        }
+        free_d(zm);
+        free_d(zh);
+    }
+#endif
+
+    /* A/B/(C) — k1z fairness shape; both MKL arms share MKL's slot */
+    double vns = 0, mns = 0, hns = 0;
+#ifdef VFFT_HAS_MKL
+    if (flip)
+    {
+        mns = kzb_time_mkl(N, K, z0, total, 0);
+        pace(g_trial_pace_ms);
+        hns = kzb_time_mkl(N, K, z0, total, 1);
+        cachebust();
+        pace(cool_ms);
+        vns = k1z_time_vfft(h, z0, S, total);
+    }
+    else
+    {
+        vns = k1z_time_vfft(h, z0, S, total);
+        cachebust();
+        pace(cool_ms);
+        mns = kzb_time_mkl(N, K, z0, total, 0);
+        pace(g_trial_pace_ms);
+        hns = kzb_time_mkl(N, K, z0, total, 1);
+    }
+#else
+    (void)cool_ms;
+    (void)flip;
+    vns = k1z_time_vfft(h, z0, S, total);
+#endif
+    double rmir = (vns > 0 && mns > 0) ? mns / vns : 0;
+    double rhom = (vns > 0 && hns > 0) ? hns / vns : 0;
+    double vgf = (vns > 0) ? 5.0 * total * log2((double)N) / vns : 0;
+    printf("%-8d %-4d %-8s %12.0f %12.0f %12.0f %6.2fx %6.2fx %10.2e\n",
+           N, K, "kzb-oop", vns, mns, hns, rmir, rhom, rel);
+    if (out)
+    {
+        fprintf(out, "%d,%d,conv,kzb-oop,%.0f,%.0f,%.0f,%.3f,%.3f,%.3e\n",
+                N, K, vns, mns, hns, rmir, rhom, rel);
+        fflush(out);
+    }
+    free_d(z0);
+    free_d(S);
+    vfft_destroy(h);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * --oop : out-of-place c2c vs MKL (NOT_INPLACE split). True OOP plans (LEAF /
  * BAILEY2 natural order, MODEB scrambled) from the OOP wisdom (lookup) or
  * dp_best (fallback). Same fairness: order-flip, pace, cachebust, fair layout.
@@ -2175,6 +2420,12 @@ int main(int argc, char **argv)
              * correctness column as --k1nat. */
             g_k1nat = 1; /* g_k1zip stays 0 -> OOP on both engines */
         }
+        else if (strcmp(argv[1], "--kzb") == 0)
+        {
+            /* Phase C1 (il_coverage_plan.md): K∈{2,3,4} interleaved batched
+             * gap map — measure-only, see the run_kzb_cell block. */
+            g_kzb = 1;
+        }
         else if (strncmp(argv[1], "--tcut=", 7) == 0)
         {
             /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
@@ -2214,6 +2465,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : g_kzb             ? "vfft_perf_tuned_1d_kzb.csv"
                       : (g_k1nat && !g_k1zip) ? "vfft_perf_tuned_1d_k1noop.csv"
                       : g_k1nat           ? "vfft_perf_tuned_1d_k1nat.csv"
                       : g_k1zip           ? "vfft_perf_tuned_1d_k1zip.csv"
@@ -2593,10 +2845,48 @@ int main(int argc, char **argv)
     FILE *out = fopen(csv, target_N ? "a" : "w");
     if (out && !target_N)
     {
-        if (oop)
+        if (g_kzb)
+            fprintf(out, "N,K,plan,path,vfft_ns,mkl_mirror_ns,mkl_home_ns,ratio_mirror,ratio_home,xerr\n");
+        else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
             fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    }
+    if (g_kzb)
+    {
+        /* Phase C1 dispatch: direct-cell only — K∈{2,3} have NO wisdom
+         * lines in either file, so the wisdom walk below can never reach
+         * those cells (C0 finding). target_N>0 = one isolated cell per
+         * process (the map protocol); no target = in-process quick-look
+         * over the full K∈{2,3,4} × N grid. */
+        if (!target_N)
+            printf("=== dag (front door, convert route) vs MKL — 1D C2C fwd, "
+                   "K∈{2,3,4} INTERLEAVED lane-major z, OOP natural "
+                   "(pace=%dms) ===\n"
+                   "%-8s %-4s %-8s %12s %12s %12s %7s %7s %10s\n",
+                   pace_ms, "N", "K", "path", "vfft_ns", "mkl_mir_ns",
+                   "mkl_home_ns", "r_mir", "r_home", "xerr");
+        if (target_N)
+            run_kzb_cell(target_N, (int)target_K, out, cool_ms, flip);
+        else
+        {
+            static const int KZB_K[] = { 2, 3, 4 };
+            static const int KZB_N[] = { 256, 512, 1024, 2048,
+                                         4096, 8192, 16384, 32768 };
+            int cells = 0;
+            for (size_t ki = 0; ki < sizeof KZB_K / sizeof KZB_K[0]; ki++)
+                for (size_t ni = 0; ni < sizeof KZB_N / sizeof KZB_N[0]; ni++)
+                {
+                    run_kzb_cell(KZB_N[ni], KZB_K[ki], out, cool_ms,
+                                 flip ^ (cells & 1));
+                    cells++;
+                    pace(pace_ms);
+                }
+        }
+        if (out)
+            fclose(out);
+        fclose(f);
+        return 0;
     }
 
     if (!target_N)
