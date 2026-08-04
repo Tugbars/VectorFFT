@@ -565,6 +565,11 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     else
         snprintf(plan_s, sizeof plan_s, "z:ilp");
     const char *path = ze ? (ze->zs_route ? "zturn" : "zsplit") : "ilp";
+    if (g_k1nat && !g_k1zip)
+        path = "nat-oop"; /* --k1noop: order=NATURAL OOP never attaches the
+                           * cascade — the kind-4 label would lie; the real
+                           * engine is the K=1 IL route or the convert
+                           * fallback (exactly what D1 measures). */
 
     vfft_wisdom *W = k1z_bundle();
     if (!W)
@@ -641,7 +646,13 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                 memcpy(zm, z0, 2 * total * sizeof(double));
                 memcpy(zv, z0, 2 * total * sizeof(double));
                 DftiComputeForward(d, zm);
-                vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+                if (g_k1zip)
+                    vfft_execute(h, VFFT_FORWARD, zv, NULL, zv, NULL);
+                else
+                { /* --k1noop: OOP handle — aliased calls are not its
+                   * contract; run z0 -> zv through the OOP signature. */
+                    vfft_execute(h, VFFT_FORWARD, z0, NULL, zv, NULL);
+                }
                 double xe = 0.0, xm = 0.0;
                 for (size_t i = 0; i < 2 * total; i++)
                 {
@@ -2153,6 +2164,17 @@ int main(int argc, char **argv)
             g_k1zip = 1;
             g_k1nat = 1;
         }
+        else if (strcmp(argv[1], "--k1noop") == 0)
+        {
+            /* Phase D1 (il_coverage_plan.md): natural-vs-natural
+             * OUT-OF-PLACE — the measurement that sizes Phase D. Our side:
+             * order=NATURAL, placement=OUTOFPLACE (today's route = K=1 IL
+             * engines to their reach, convert fallback above — NOT the
+             * cascade; that routing is exactly what Phase D would add).
+             * MKL side: DFTI NOT_INPLACE. Same cross-engine elementwise
+             * correctness column as --k1nat. */
+            g_k1nat = 1; /* g_k1zip stays 0 -> OOP on both engines */
+        }
         else if (strncmp(argv[1], "--tcut=", 7) == 0)
         {
             /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
@@ -2192,6 +2214,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : (g_k1nat && !g_k1zip) ? "vfft_perf_tuned_1d_k1noop.csv"
                       : g_k1nat           ? "vfft_perf_tuned_1d_k1nat.csv"
                       : g_k1zip           ? "vfft_perf_tuned_1d_k1zip.csv"
                       : tcut_mode         ? "vfft_perf_tuned_1d_tcut.csv"
