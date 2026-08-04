@@ -362,6 +362,68 @@ per cell.)*
   (b) only — blocked-analog for the 25.6% ymm spill plane (Tier-B
   spill_re/im[32] PASS1/PASS2), the t2b-shaped MATH restructuring;
   new codelet_oop.ml machinery, spec before build.
+  **SHAPE SPEC'd 2026-08-04** by the large-radix investigation
+  (docs/research/mkl_smalln_campaign/results/large_radix_verdict.md —
+  benchmark-derived summary only in tracked docs). Target census: 73
+  frame slots, 9 write-once/read-once, **59 multi-stored, 27.7% ymm
+  stack** = the most churn-dominated body measured anywhere, worse than
+  the monolithic mid the same lever beat by −9..−21%. Constraints, in
+  order: (1) **split p=8 (the 4·8 form), NOT 2·16** — this body is
+  split-layout at 4 columns/iter (32 legs × 2 planes = 64 ymm live);
+  peak-live max(p,m) puts 2·16 at 32 ymm (still 2× the file) and 4·8 at
+  exactly 16; (2) **race the column unroll (4 vs 2) as a second axis —
+  a 2×2, not one arm**; the 4-column unroll is an independent live-width
+  multiplier blocking does not touch, so a blocked-at-4 null would be
+  uninterpretable; (3) addressing stays untouched. Confounders: the
+  existing 64-store spill plane means the goal is "make the deliberate
+  plane the ONLY plane", and the family's unfolded twiddles are NOT
+  additive with blocking (block first, re-census folding after).
+  m=4 is not bit-identical ⇒ numeric gate, and promotion needs a raced
+  control (placement luck ±9% measured here).
+- [x] **E8 — ANSWERED 2026-08-04: the leaf's pressure is the RADIX, not
+  the corner-turn.** (`docs/research/twmem_campaign/results/
+  e8n1t_cornerturn.md`; static census only, both stripped arms
+  numerically wrong by construction and never built.) Removing the
+  ENTIRE corner-turn from `n1t(32)` — all 32 `vperm2f128`, verified by
+  shuffles 81→49 — left frame slots **IDENTICAL (32→32)** and churn
+  essentially unchanged (**27→25**), share 27.8→24.4%. Blocking on the
+  same axes moved the mid 32 slots/26 churn/21.6% → **24/0/8.1%**. Not
+  the same category of effect. ⇒ **The decision resolves to the CHEAPER
+  option: port `emit_blocked` to the N1T kind** — an implementation gap
+  (emit_blocked writes its own stores and never inspects `kind`), not a
+  store-lattice redesign. The corner-turn rides along inside the blocked
+  stores; this result says that is affordable because it was never the
+  pressure source. Third independent confirmation that addressing form
+  is not the lever: the leg-major arm pushed scalar frame reloads
+  22→51 while vector pressure stayed put.
+- [x] **E9 — REFUTED BEFORE BUILD, 2026-08-05.** E8's positive half was an
+  inference carried from a twiddled MID to an untwiddled LEAF; measured on
+  the closest proxy, it is wrong. A blocked untwiddled r32 leaf already
+  existed in-tree (`radix32_z_n1b_avx2.c`, an untracked orphan referenced
+  by nothing) and is **BITWISE IDENTICAL** to the shipped monolithic leaf —
+  the ideal controlled comparison. It shows t2b's full static signature
+  (churn 43→17 = −60%, spill st/ld 110/66→72/45, slots 53→37,
+  write-once/read-once 5→19) and **no time**: +13.5% at the cleanest cell
+  (count=32, control spread 0.5%), wash at the other clean cell (count=64),
+  no win anywhere. The ~1-day emitter port is saved. Record +
+  probe: `docs/research/twmem_campaign/results/e8n1t_cornerturn.md`
+  (§E9 PREDICTOR), `probes/e8b__gate.c`.
+  🔴 **META-LESSON, now three-for-three: static stack-traffic reduction
+  does NOT predict time in these bodies** — E2(a) cursors (reloads −68%
+  → +16..34% slower), reord (peak live 35→33 → marginal, unpromoted),
+  E9 predictor (churn −60% → +13.5%). The ONE lever that ever translated
+  was `t2b`, whose target was the **twiddled mid**, where restructuring
+  changed what sat on the critical path rather than merely where values
+  lived. **Any future "the census looks bad here" proposal must be raced
+  on a proxy BEFORE emitter work.**
+  🔴 CORRECTION (same day): an earlier note here called `radix32_z_n1b_avx2.c`
+  an untracked orphan and said to delete it — WRONG. It is tracked
+  (42f24533) and one of a whole emitted family (n1b at R = 9,15,16,21,25,
+  27,32,45,49,64, most with bwd twins); the greps behind that claim ran
+  from a drifted cwd and returned false negatives. Do not delete. The
+  measurement stands (bitwise-identical, slower); the disposal advice did
+  not. Separate open question, its own session: whether the n1b family is
+  wired to any route at all.
   *(original charter, for the record:)*
   41.6 % total stack traffic (25.6 % ymm spill + 13.5 % scalar pointer
   reloads) — worse than pure-IL r32 ever was. TWO root causes, ordered:
