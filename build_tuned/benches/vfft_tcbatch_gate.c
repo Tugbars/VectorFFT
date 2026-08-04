@@ -301,6 +301,35 @@ int main(int argc, char **argv)
     if (!run_default_geometry(W, 1024, 4)) fails++;
     if (!run_default_geometry(W, 512, 3)) fails++;
 
+    /* SPLIT is lane-major only: DEFAULT must build (resolving to lane-major),
+     * an EXPLICIT transform-contiguous request must be refused, not ignored. */
+    {
+        vfft_config_t sc;
+        memset(&sc, 0, sizeof sc);
+        sc.transform = VFFT_C2C;
+        sc.placement = VFFT_OUTOFPLACE;
+        sc.rigor = VFFT_MEASURE;
+        sc.dims = 1;
+        sc.n[0] = 1024;
+        sc.howmany = 4;
+        sc.layout = VFFT_LAYOUT_SPLIT;
+        sc.nthreads = 1;
+        sc.wisdom = W;
+        vfft_plan sd = vfft_create(&sc);          /* DEFAULT -> lane-major, OK */
+        sc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+        vfft_plan sr = vfft_create(&sc);          /* must be refused */
+        sc.batch_geom = VFFT_BATCH_LANE_MAJOR;
+        vfft_plan sl = vfft_create(&sc);          /* explicit lane-major, OK */
+        int ok = (sd != NULL) && (sr == NULL) && (sl != NULL);
+        printf("split   K=4   default=%s  contiguous=%s  lane=%s%s\n",
+               sd ? "built" : "FAILED", sr ? "BUILT(!)" : "refused",
+               sl ? "built" : "FAILED", ok ? "" : "   *** FAIL ***");
+        if (sd) vfft_destroy(sd);
+        if (sr) vfft_destroy(sr);
+        if (sl) vfft_destroy(sl);
+        if (!ok) fails++;
+    }
+
     printf("--- K=1 must not wrap ---\n");
     if (!run_k1_identity(W, 1024)) fails++;
     if (!run_k1_identity(W, 256)) fails++;

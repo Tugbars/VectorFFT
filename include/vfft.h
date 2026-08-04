@@ -234,12 +234,18 @@ extern "C"
                              Committed at create; execute enforces the matching
                              pointer signature. Default (0) = SPLIT.            */
 
-    int batch_geom; /* WHERE the K transforms of a batch live, for
-                       layout=INTERLEAVED with howmany>1. The axis MKL spells
-                       DFTI_INPUT_DISTANCE/STRIDES and FFTW spells
-                       idist/istride. 1D C2C only; ignored at K==1 (the two
-                       geometries are identical there) and for SPLIT.
-                       VFFT_BATCH_TRANSFORM_CONTIGUOUS (0, DEFAULT) =
+    int batch_geom; /* WHERE the K transforms of a batch live. The axis MKL
+                       spells DFTI_INPUT_DISTANCE/STRIDES and FFTW spells
+                       idist/istride. Meaningful for 1D C2C layout=INTERLEAVED
+                       with howmany>1; ignored at K==1 (the two geometries
+                       are identical there).
+                       VFFT_BATCH_DEFAULT (0) = this layout's canonical
+                         geometry: transform-contiguous for INTERLEAVED,
+                         lane-major for SPLIT (whose engines have no other
+                         contract — asking SPLIT for transform-contiguous is
+                         refused, not ignored).
+                       VFFT_BATCH_TRANSFORM_CONTIGUOUS (1; the INTERLEAVED
+                         default) =
                          transform t occupies z[2*t*N .. 2*(t+1)*N),
                          elements adjacent inside it — the MKL/FFTW default
                          idiom and the canonical geometry here. Served
@@ -252,9 +258,10 @@ extern "C"
                          lane-major route across K in {2,3,4} x N in
                          {256..8192} (docs/roadmap/il_coverage_plan.md
                          Phase C).
-                       VFFT_BATCH_LANE_MAJOR (1) = element e of transform t
-                         at z[2*(e*K + t)]. The batched SPLIT engines'
-                         native geometry, offered here for callers who
+                       VFFT_BATCH_LANE_MAJOR (2; the SPLIT default and its
+                         only geometry) = element e of transform t at
+                         z[2*(e*K + t)] interleaved, or plane[e*K + t]
+                         split. Offered on INTERLEAVED for callers who
                          genuinely hold interleaved data that way. It is
                          served by converting to split planes and back, so
                          it is the slower path at small K — choose it
@@ -281,21 +288,29 @@ extern "C"
   };
 
   /* Batch geometry axis (vfft_config_t.batch_geom) — see the field comment.
-   * TRANSFORM_CONTIGUOUS is the zero default, matching MKL's and FFTW's own
-   * default idiom and our own measurements. LANE_MAJOR is opt-in: it exists
-   * for callers who genuinely hold data that way (it is the split engines'
-   * native geometry), not as a path anyone should choose for speed.
    *
-   * 🔴 CHANGED 2026-08-04: the default used to be LANE_MAJOR. Code that
-   * zeroes its config, sets layout=INTERLEAVED with howmany>1, and passes
-   * lane-major data must now say batch_geom=VFFT_BATCH_LANE_MAJOR
-   * explicitly — otherwise its buffer is read as transform-contiguous.
-   * Nothing at howmany==1 is affected: the two geometries are identical
-   * there and create never wraps. */
+   * DEFAULT (0) means "this layout's canonical geometry", which is NOT the
+   * same geometry for both layouts and deliberately so:
+   *   INTERLEAVED -> transform-contiguous (the MKL/FFTW idiom, and the one
+   *                  we serve natively as K independent K=1 transforms)
+   *   SPLIT       -> lane-major (the batched split engines' own contract;
+   *                  transform-contiguous split planes are NOT supported)
+   * So a zeroed config always gets the right thing for the layout it asked
+   * for, and neither layout's default is a silent mismatch. The explicit
+   * values exist to say "my data really is shaped the other way".
+   * Requesting TRANSFORM_CONTIGUOUS on SPLIT is refused loudly rather than
+   * silently ignored (no silent-corruption path).
+   *
+   * 🔴 CHANGED 2026-08-04: INTERLEAVED batches used to default to
+   * lane-major. Code that zeroes its config, sets layout=INTERLEAVED with
+   * howmany>1, and passes lane-major data must now say
+   * batch_geom=VFFT_BATCH_LANE_MAJOR explicitly. Nothing at howmany==1 is
+   * affected: the geometries are identical there and create never wraps. */
   enum
   {
-    VFFT_BATCH_TRANSFORM_CONTIGUOUS = 0,
-    VFFT_BATCH_LANE_MAJOR = 1
+    VFFT_BATCH_DEFAULT = 0,
+    VFFT_BATCH_TRANSFORM_CONTIGUOUS = 1,
+    VFFT_BATCH_LANE_MAJOR = 2
   };
 
   typedef struct vfft_plan_s *vfft_plan; /* opaque execute-ready handle */
