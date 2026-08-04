@@ -157,11 +157,21 @@ batching, and where.
   and both default to transform-contiguous; we had inherited lane-major
   from the split engines and applied it to IL at every K, which Tugbars
   called *"a mistake"* to have carried over.
-  - **API**: `config.batch_geom` ∈ {`VFFT_BATCH_LANE_MAJOR` (0,
-    default, unchanged), `VFFT_BATCH_TRANSFORM_CONTIGUOUS` (1)}. 1D C2C
-    INTERLEAVED, K>1. At K==1 the two geometries are the SAME addressing,
-    so create falls through and builds an ordinary K=1 plan (gated
-    bitwise).
+  - **API**: `config.batch_geom` ∈ {`VFFT_BATCH_DEFAULT` (0),
+    `VFFT_BATCH_TRANSFORM_CONTIGUOUS` (1), `VFFT_BATCH_LANE_MAJOR` (2)}.
+    **DEFAULT resolves PER LAYOUT** (Tugbars, 2026-08-04): INTERLEAVED →
+    transform-contiguous, SPLIT → lane-major. That is what makes a zeroed
+    config always correct for the layout it asked for: interleaved callers
+    get the canonical fast geometry, split callers get the only geometry
+    their engines have. An EXPLICIT transform-contiguous request on SPLIT
+    is **refused loudly**, never silently served as lane-major (the
+    padding design's no-silent-corruption rule). At K==1 the geometries
+    are the same addressing, so create never wraps (gated bitwise).
+    🔴 BEHAVIOR CHANGE: INTERLEAVED K>1 used to default to lane-major.
+    Callers who zero their config and pass lane-major data must now say
+    `VFFT_BATCH_LANE_MAJOR`. Exactly one in-tree site was affected — the
+    `--kzb` bridge arm, now explicit (left implicit it would have turned
+    the baseline column into a second loop arm and read 1.0×).
   - **Implementation**: ~40 lines. A TC create builds ONE K=1 handle
     through the same front door and stores it as `h->tcb`; execute runs
     it K times at 2N-double strides. **Zero new kernels, zero layout
@@ -335,7 +345,24 @@ per cell.)*
   (e1msg_emitter_seam.md) is banked should the calculus ever change.
   Records: `e1msg_probe.md` (with correction banner), `e1msg_timing`
   logs, verifier adjudication in the workflow journal.
-- [ ] **E2 — OOP `t1` r32 campaign (the worst body in the tree).**
+- [~] **E2 — OOP `t1` r32 campaign: lever (a) REFUTED 2026-08-04, lever
+  (b) is what remains.** The hand-probe
+  (docs/research/twmem_campaign/results/e2t1_cursor_probe.md) killed the
+  charter's ordering claim: plain cursors are a GCC-canonicalization
+  no-op (E1's trap verbatim), and opaque cursors — bit-identical 7/7,
+  scalar frame reloads −68%, body −11 — race CONSISTENTLY SLOWER
+  (+16..34%, clean LOSS at me=128 outside a 4% control spread). The
+  stack-parked pointers are independent loads the OOO absorbs under an
+  FMA-bound body; a walking cursor trades them for a serial address
+  chain. Static counts are not speed (r64-blocked, E1, now this).
+  MKL's generic strided body independently agrees (per-leg imul, no
+  walk). ⚠ placement luck ±9% measured on this kernel (ship-vs-ship2
+  control) — any future promotion must race with a control.
+  🔴 Do not re-attempt cursor forms on this family. REMAINING: lever
+  (b) only — blocked-analog for the 25.6% ymm spill plane (Tier-B
+  spill_re/im[32] PASS1/PASS2), the t2b-shaped MATH restructuring;
+  new codelet_oop.ml machinery, spec before build.
+  *(original charter, for the record:)*
   41.6 % total stack traffic (25.6 % ymm spill + 13.5 % scalar pointer
   reloads) — worse than pure-IL r32 ever was. TWO root causes, ordered:
   (a) the **pointer zoo** — ~100 stack-parked leg pointers vs cil's one

@@ -2382,7 +2382,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * addressing, so a wrapper would be pure overhead — fall through and
      * let the request build its ordinary K=1 plan. SPLIT is untouched
      * (its batch geometry is the split engines' own contract). */
-    if (cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS &&
+    if ((cfg->batch_geom == VFFT_BATCH_DEFAULT ||
+         cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS) &&
         cfg->transform == VFFT_C2C && cfg->dims < 2 &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob)
     {
@@ -2414,12 +2415,29 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->tcb = inner;
         return h;
     }
-    if (cfg->batch_geom != VFFT_BATCH_LANE_MAJOR &&
+    if (cfg->batch_geom != VFFT_BATCH_DEFAULT &&
+        cfg->batch_geom != VFFT_BATCH_LANE_MAJOR &&
         cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
     {
-        _vfft_warn("vfft_create: invalid batch_geom %d (valid: VFFT_BATCH_LANE_MAJOR, "
-                   "VFFT_BATCH_TRANSFORM_CONTIGUOUS)",
+        _vfft_warn("vfft_create: invalid batch_geom %d (valid: VFFT_BATCH_DEFAULT, "
+                   "VFFT_BATCH_TRANSFORM_CONTIGUOUS, VFFT_BATCH_LANE_MAJOR)",
                    cfg->batch_geom);
+        return NULL;
+    }
+    /* SPLIT has exactly one batch geometry — lane-major (plane[e*K + t]) is
+     * the stride executors' own contract, baked into every group stride, the
+     * K-split MT slicing and the 2D/3D column passes. An EXPLICIT request for
+     * transform-contiguous split planes is refused here rather than silently
+     * served as lane-major: the padding design's rule is that no combination
+     * quietly means something other than what it says. (batch_geom is simply
+     * not applicable at K==1, where both geometries are the same addressing.) */
+    if (cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS &&
+        cfg->layout != VFFT_LAYOUT_INTERLEAVED && K > 1)
+    {
+        _vfft_warn("vfft_create: batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS is not "
+                   "supported for layout=SPLIT (split batches are lane-major: element e "
+                   "of transform t at plane[e*K + t]) — use VFFT_LAYOUT_INTERLEAVED for a "
+                   "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
         return NULL;
     }
     /* In-place real FFT is undefined here (spectrum and real data are separate
