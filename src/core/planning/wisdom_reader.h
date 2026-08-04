@@ -100,6 +100,17 @@ typedef struct {
     vfft_proto_nat_entry_t    *nat;          /* second table, SAME file (@nat lines) */
     size_t                     nat_count;
     size_t                     nat_capacity;
+    /* Third table, SAME file (@natoop lines): the OOP-NATURAL verdict —
+     * same entry shape and (N,K) key as @nat, SEPARATE table because the
+     * two regimes have different incumbents (in-place: tape/ILP/ZCASC;
+     * OOP: the K=1 engine handle vs the natord cascade) and a shared
+     * (N,K) slot would make each regime's bank clobber the other's
+     * (the @nat single-writer rule, extended per-placement). Unknown-@
+     * lines are skipped by every shipped reader, so old binaries ignore
+     * these and simply re-measure — never wrong. */
+    vfft_proto_nat_entry_t    *natoop;
+    size_t                     natoop_count;
+    size_t                     natoop_capacity;
 } vfft_proto_wisdom_t;
 
 /* Load wisdom from path. Returns 0 on success, -1 on file-not-found or
@@ -118,11 +129,14 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
         while (isspace((unsigned char)*p)) p++;
         if (*p == '\0' || *p == '#') continue;
         if (*p == '@') {
-            /* @nat = self-contained natural record (parsed into the SEPARATE nat table); every
+            /* @nat = self-contained natural record (parsed into the SEPARATE nat table);
+             * @natoop = the OOP-NATURAL verdict, same line shape, its own table. Every
              * other @ line (@version / headers) is skipped — exactly as external @/#-skipping
-             * readers do, so @nat lines never reach codegen/python/bootstrap. */
+             * readers do, so @nat/@natoop lines never reach codegen/python/bootstrap. */
             char *nt = strtok(p, " \t\r\n");
-            if (nt && strcmp(nt, "@nat") == 0) {
+            int is_nat = (nt && strcmp(nt, "@nat") == 0);
+            int is_natoop = (nt && strcmp(nt, "@natoop") == 0);
+            if (is_nat || is_natoop) {
                 vfft_proto_nat_entry_t ne;
                 memset(&ne, 0, sizeof(ne));
                 char *t;
@@ -135,11 +149,19 @@ static inline int vfft_proto_wisdom_load(vfft_proto_wisdom_t *wis,
                 for (int i = 0; i < ne.nf; i++) { t = strtok(NULL, " \t\r\n"); if (!t) goto skip; ne.variants[i] = atoi(t); }
                 t = strtok(NULL, " \t\r\n"); if (!t) continue; ne.use_dif = atoi(t);
                 t = strtok(NULL, " \t\r\n"); ne.nat_ns = t ? atof(t) : 0.0;
-                if (wis->nat_count >= wis->nat_capacity) {
-                    wis->nat_capacity = wis->nat_capacity ? wis->nat_capacity * 2 : 32;
-                    wis->nat = realloc(wis->nat, wis->nat_capacity * sizeof(*wis->nat));
+                if (is_nat) {
+                    if (wis->nat_count >= wis->nat_capacity) {
+                        wis->nat_capacity = wis->nat_capacity ? wis->nat_capacity * 2 : 32;
+                        wis->nat = realloc(wis->nat, wis->nat_capacity * sizeof(*wis->nat));
+                    }
+                    wis->nat[wis->nat_count++] = ne;
+                } else {
+                    if (wis->natoop_count >= wis->natoop_capacity) {
+                        wis->natoop_capacity = wis->natoop_capacity ? wis->natoop_capacity * 2 : 32;
+                        wis->natoop = realloc(wis->natoop, wis->natoop_capacity * sizeof(*wis->natoop));
+                    }
+                    wis->natoop[wis->natoop_count++] = ne;
                 }
-                wis->nat[wis->nat_count++] = ne;
             }
             continue;
         }
@@ -311,6 +333,15 @@ static inline int vfft_proto_wisdom_save(const vfft_proto_wisdom_t *wis,
         for (int j = 0; j < n->nf; j++) fprintf(f, " %d", n->variants[j]);
         fprintf(f, " %d %.2f\n", n->use_dif, n->nat_ns);
     }
+    /* OOP-natural table: same line shape under the @natoop tag (skipped by
+     * every pre-@natoop reader, which then just re-measures the verdict). */
+    for (size_t i = 0; i < wis->natoop_count; i++) {
+        const vfft_proto_nat_entry_t *n = &wis->natoop[i];
+        fprintf(f, "@natoop %d %zu %d %d", n->N, n->K, n->mode, n->nf);
+        for (int j = 0; j < n->nf; j++) fprintf(f, " %d", n->factors[j]);
+        for (int j = 0; j < n->nf; j++) fprintf(f, " %d", n->variants[j]);
+        fprintf(f, " %d %.2f\n", n->use_dif, n->nat_ns);
+    }
     fclose(f);
     return 0;
 }
@@ -350,9 +381,43 @@ static inline int vfft_proto_nat_add(vfft_proto_wisdom_t *wis,
     return matches > 0 ? 2 : 1;
 }
 
+/* ── OOP-natural table (order=NATURAL, placement=OUTOFPLACE) lookup/upsert —
+ * the @nat pair re-keyed onto the natoop table. The OOP-natural create path
+ * uses ONLY these (single writer per table, same as @nat). ── */
+static inline const vfft_proto_nat_entry_t *
+vfft_proto_natoop_lookup(const vfft_proto_wisdom_t *wis, int N, size_t K)
+{
+    for (size_t i = 0; i < wis->natoop_count; i++)
+        if (wis->natoop[i].N == N && wis->natoop[i].K == K) return &wis->natoop[i];
+    return NULL;
+}
+
+static inline int vfft_proto_natoop_add(vfft_proto_wisdom_t *wis,
+                                        const vfft_proto_nat_entry_t *e, int overwrite)
+{
+    size_t matches = 0;
+    for (size_t i = 0; i < wis->natoop_count; i++)
+        if (wis->natoop[i].N == e->N && wis->natoop[i].K == e->K) matches++;
+    if (matches > 0 && !overwrite) return 0;
+    if (matches > 0) {
+        size_t w = 0;
+        for (size_t i = 0; i < wis->natoop_count; i++)
+            if (!(wis->natoop[i].N == e->N && wis->natoop[i].K == e->K))
+                wis->natoop[w++] = wis->natoop[i];
+        wis->natoop_count = w;
+    }
+    if (wis->natoop_count >= wis->natoop_capacity) {
+        wis->natoop_capacity = wis->natoop_capacity ? wis->natoop_capacity * 2 : 32;
+        wis->natoop = realloc(wis->natoop, wis->natoop_capacity * sizeof(*wis->natoop));
+    }
+    wis->natoop[wis->natoop_count++] = *e;
+    return matches > 0 ? 2 : 1;
+}
+
 static inline void vfft_proto_wisdom_free(vfft_proto_wisdom_t *wis) {
     free(wis->entries);
     free(wis->nat);
+    free(wis->natoop);
     memset(wis, 0, sizeof(*wis));
 }
 

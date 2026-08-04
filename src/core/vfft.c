@@ -2010,6 +2010,31 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
         vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
 }
 
+/* OOP-NATURAL verdict bank (@natoop sibling table — il_coverage_plan.md
+ * Phase D). Same entry shape as @nat on its own (N,K) table: the two
+ * placements have different incumbents, so a shared slot would let each
+ * regime's bank clobber the other's. Chain fields are INFORMATIONAL here
+ * (mode=ZCASC replays the kind-4 line, mode=FREE keeps the engine handle);
+ * nf=1/factors[0]=N is the "no deployed chain" convention. The in-memory
+ * add alone already makes the verdict process-coherent (the create-race
+ * coherence rule): every later create this process reads the same pick
+ * even if the file save fails. */
+static void _bank_natoop_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode,
+                            double ns)
+{
+    vfft_proto_nat_entry_t nn;
+    memset(&nn, 0, sizeof nn);
+    nn.N = N;
+    nn.K = K;
+    nn.mode = mode;
+    nn.nat_ns = ns;
+    nn.nf = 1;
+    nn.factors[0] = N;
+    vfft_proto_natoop_add(&W->c2c, &nn, 1);
+    if (W->path_c2c[0])
+        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
@@ -3923,6 +3948,149 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             hk->k1_jit = vfft_k1_jit_resolve(N, sR1, sR2, spr0);
                     }
 #endif
+                    /* ── OOP-NATURAL cascade race (il_coverage_plan.md Phase
+                     * D, 2026-08-04). D1 measured what this handle serves at
+                     * order=NATURAL ≥2048: il2p at 2048/4096, the convert
+                     * fallback above — 0.60x..0.17x of the in-place natural
+                     * tier's engine at the same cells, while the natord
+                     * cascade executes zin->zout natively (distinct-buffer is
+                     * zturn2's BASE contract; in-place is the allowed special
+                     * case) and was simply never built for OOP requests. Same
+                     * shape as the in-place B5 race: candidate = kind-4
+                     * replay + set_natord (recal cleared on the copy — the
+                     * NATURAL-OOP verdict is governed here, not by the
+                     * scrambled one), raced END-TO-END against this handle's
+                     * REAL execute path, verdict banked in the @natoop
+                     * sibling table (own table: different incumbents per
+                     * placement; @nat stays single-writer). FREE = keep the
+                     * engine handle as built. Both outcomes bank, so the
+                     * pick is process-coherent (create-race coherence rule:
+                     * the candidates are not bit-identical). Attach rides
+                     * the existing zsplit||zturn-first dispatch — zero
+                     * execute changes. Kill switch: VFFT_NO_NAT_ZCASC
+                     * (shared with in-place: "no natural cascade candidate
+                     * anywhere"); no bank under the switch. */
+                    if (cfg->order == VFFT_ORDER_NATURAL && N >= 2048 &&
+                        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                        !getenv("VFFT_NO_NAT_ZCASC"))
+                    {
+                        const vfft_proto_nat_entry_t *noe =
+                            vfft_proto_natoop_lookup(&W->c2c, N, K);
+                        int nmode = (noe && !cfg->recalibrate)
+                                        ? noe->mode : VFFT_NAT_UNSET;
+                        vfft_zturn2_plan_t *zct = NULL;
+                        if (nmode != VFFT_NAT_FREE)
+                        {
+                            vfft_config_t rcfg = *cfg;
+                            rcfg.recalibrate = 0;
+                            vfft_zsplit_plan_t *zcs = NULL;
+                            int zcr = 0;
+                            if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct,
+                                                   &zcr))
+                            {
+                                if (zcs)
+                                    vfft_zsplit_destroy(zcs);
+                                if (zct && !vfft_zturn2_set_natord(zct, 1))
+                                {
+                                    vfft_zturn2_destroy(zct);
+                                    zct = NULL;
+                                }
+                            }
+                        }
+                        if (nmode == VFFT_NAT_ZCASC)
+                        {
+                            if (zct)
+                            {
+                                hk->zturn = zct;
+                                hk->zroute = 1;
+                                zct = NULL;
+                                if (getenv("VFFT_NAT_LOG"))
+                                    fprintf(stderr, "[natorder] N=%d K=%zu "
+                                            "replay ZCASC-OOP\n", N, K);
+                            }
+                            else /* banked chain vanished/refused: degrade to
+                                  * re-measure — but with no candidate the
+                                  * measure below is a no-op and the handle
+                                  * serves as built (never hard-fail). */
+                                nmode = VFFT_NAT_UNSET;
+                        }
+                        if (nmode == VFFT_NAT_UNSET && zct)
+                        {
+                            /* MEASURE: this handle's real OOP execute vs the
+                             * natord cascade, src->dst distinct (src is
+                             * read-only in OOP fwd — no reseed hazard).
+                             * 5 rounds, alternated order, medians (B5). */
+                            double *rz = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            double *r0 = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            if (rz && r0)
+                            {
+                                for (long i = 0; i < 2L * N; i++)
+                                    r0[i] = (double)rand() / RAND_MAX - 0.5;
+                                const int reps =
+                                    N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
+                                double ti[5], tz[5];
+                                vfft_set_num_threads(hk->nthreads);
+                                for (int r = 0; r < 5; r++)
+                                {
+                                    for (int a = 0; a < 2; a++)
+                                    {
+                                        const int arm = (r & 1) ? 1 - a : a;
+                                        const double t0 = vfft_proto_now_ns();
+                                        for (int i = 0; i < reps; i++)
+                                        {
+                                            if (arm == 0)
+                                                vfft_execute(hk, VFFT_FORWARD,
+                                                             r0, NULL,
+                                                             rz, NULL);
+                                            else
+                                                vfft_zturn2_execute_fwd(
+                                                    zct, r0, rz);
+                                        }
+                                        const double dt =
+                                            (vfft_proto_now_ns() - t0) / reps;
+                                        if (arm == 0) ti[r] = dt;
+                                        else tz[r] = dt;
+                                    }
+                                }
+                                for (int a = 0; a < 2; a++)
+                                {
+                                    double *v = a ? tz : ti;
+                                    for (int i = 1; i < 5; i++)
+                                        for (int j = i;
+                                             j > 0 && v[j] < v[j - 1]; j--)
+                                        {
+                                            double t = v[j];
+                                            v[j] = v[j - 1];
+                                            v[j - 1] = t;
+                                        }
+                                }
+                                if (tz[2] < ti[2])
+                                {
+                                    hk->zturn = zct;
+                                    hk->zroute = 1;
+                                    zct = NULL;
+                                    _bank_natoop_1d(W, N, K, VFFT_NAT_ZCASC,
+                                                    tz[2]);
+                                }
+                                else
+                                    _bank_natoop_1d(W, N, K, VFFT_NAT_FREE,
+                                                    ti[2]);
+                                if (getenv("VFFT_NAT_LOG"))
+                                    fprintf(stderr,
+                                            "[natorder] N=%d K=%zu OOP "
+                                            "zcasc=%.0fns engine=%.0fns -> "
+                                            "%s\n", N, K, tz[2], ti[2],
+                                            hk->zturn ? "ZCASC-OOP"
+                                                      : "engine");
+                            }
+                            free(rz);
+                            free(r0);
+                        }
+                        if (zct)
+                            vfft_zturn2_destroy(zct);
+                    }
                     return hk;
                 }
             }
