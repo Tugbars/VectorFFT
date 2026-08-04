@@ -46,12 +46,16 @@
  *      complex multiply). Verified: mul/fma counts identical to the hand
  *      kernels, reg-reg moves stuck at 2-7. There is no FMA-lift headroom
  *      left to recover.
- *   2. For odd/prime radices algsimp would NOT help anyway: what it
- *      contributes there is Winograd STRUCTURE, which it finds in the REAL
- *      expansion (c*x_a + c*x_b -> c*(x_a+x_b)); packed-complex nodes hide
- *      that structure inside opaque complex atoms. Odd/prime IL therefore
- *      needs a COMPLEX Winograd/Rader math layer — an open item, and the
- *      reason `emit` currently hard-fails on non-pow2 radices.
+ *   2. For odd radices the same discipline is delivered by the
+ *      CONJUGATE-PAIR construction below (dft_cx_odd + cscale_chain: sign
+ *      rides in the opcode, magnitude becomes the FMA constant, 0/±1
+ *      weights collapse) — see the ODD/PRIME section. What does NOT exist,
+ *      on either the IL or the real side, is true Winograd/Rader
+ *      multiplication-minimal structure INSIDE a codelet radix; algsimp
+ *      never discovered it for the real side either (dft_recurse
+ *      hand-builds the same conjugate-pair shape). That remains the open
+ *      math-layer question. (An earlier version of this note claimed emit
+ *      hard-fails on non-pow2 — stale since the odd-IL arc landed.)
  *
  * Acknowledged duplication: `dft_cx` below re-expresses the DIT recursion
  * that dft.ml already has for the real-valued side. ~40 lines, no cleverness,
@@ -1014,73 +1018,137 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
                "        %s;\n"
                (Isa.storeu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))) v)))
     done;
-    (* PASS 2: per j, twiddle by W_R^{i*j} then DFT_m over i *)
-    for j = 0 to p - 1 do
-      emit_pass
-        ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
-        ~nin:m
-        ~load_of:(fun i ->
-          Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))))
-        ~build:(fun ins ->
-          let o =
-            if m = 2
-            then (
-              (* m=2 is a single top-level butterfly, so use the CLASS-aware
-                 form: it turns W^{R/4} into a free rotation and folds the
-                 W^{R/8} pair into FMAs, which a general complex multiply
-                 would not. Keeps the blocked output bit-identical to the
-                 monolithic one. *)
-              let a, b = butterfly_pair ~sign ~n:radix ~k:j ins.(0) ins.(1) in
-              [| a; b |])
-            else (
-              let tw =
-                Array.mapi
-                  (fun i x ->
-                     let e = i * j mod radix in
-                     if e = 0
-                     then x
-                     else if 4 * e = radix
-                     then (if sign = `Fwd then crot x else crotp x)
-                     else (
-                       let a =
-                         sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix
-                       in
-                       ctw (cos a) (sin a) x))
-                  ins
-              in
-              dft_small ~sign m tw)
-          in
-          if post_tw
-          then
+    (* Shared PASS-2 math: twiddle group j by W_R^{i*j}, DFT_m, and (T2 bwd)
+       post-twiddle — factored so the plain and TURNED store paths below run
+       the IDENTICAL dataflow and differ only in the store edge. *)
+    let pass2_math ~(jv : int) (ins : t array) : t array =
+      let o =
+        if m = 2
+        then (
+          (* m=2 is a single top-level butterfly, so use the CLASS-aware
+             form: it turns W^{R/4} into a free rotation and folds the
+             W^{R/8} pair into FMAs, which a general complex multiply
+             would not. Keeps the blocked output bit-identical to the
+             monolithic one. *)
+          let a, b = butterfly_pair ~sign ~n:radix ~k:jv ins.(0) ins.(1) in
+          [| a; b |])
+        else (
+          let tw =
             Array.mapi
-              (fun k2 e ->
-                 let l = j + (p * k2) in
-                 if l > 0 then ctwl l e else e)
-              o
-          else o)
-        ~store:(fun k2 v ->
-          Buffer.add_string
-            body
+              (fun i x ->
+                 let e = i * jv mod radix in
+                 if e = 0
+                 then x
+                 else if 4 * e = radix
+                 then (if sign = `Fwd then crot x else crotp x)
+                 else (
+                   let a = sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix in
+                   ctw (cos a) (sin a) x))
+              ins
+          in
+          dft_small ~sign m tw)
+      in
+      if post_tw
+      then
+        Array.mapi
+          (fun k2 e ->
+             let l = jv + (p * k2) in
+             if l > 0 then ctwl l e else e)
+          o
+      else o
+    in
+    let turned = kind = N1T || !st_turn in
+    if turned && !st_turn_gs
+    then
+      failwith
+        "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) \
+         turn; only the contiguous corner-turn is supported blocked.";
+    if turned && p mod 2 <> 0
+    then
+      failwith
+        (Printf.sprintf
+           "codelet_cil: blocked turned stores pair pass-2 groups (j, j+1), \
+            which needs an EVEN p; split %d.%d has p = %d. Pick an even-p \
+            split."
+           m p p);
+    if not turned
+    then
+      (* PASS 2 (plain leg-major stores): per j, one scheduled group. *)
+      for j = 0 to p - 1 do
+        emit_pass
+          ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
+          ~nin:m
+          ~load_of:(fun i ->
+            Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))))
+          ~build:(fun ins -> pass2_math ~jv:j ins)
+          ~store:(fun k2 v ->
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "        %s;\n"
+                 (Isa.storeu_pd
+                    isa
+                    (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" (j + (p * k2)))
+                    v)))
+      done
+    else
+      (* ─── PASS 2, TURNED (N1T / t2t): the corner-turn pairs ADJACENT legs
+         (l, l+1), but pass 2.j produces legs {j + p*k2} — stride p apart.
+         Adjacent legs live in ADJACENT groups: l = j+p*k2 pairs with
+         (j+1)+p*k2 from group j+1. So emit pass 2 as PASS-PAIRS (j, j+1):
+         one scheduled sub-DAG computes both groups (2m outputs live at the
+         pass tail — fits the file for m <= 4: 2m + temps ~ 12 ymm at 4.8;
+         an m = 8 split would hold 16 + temps and start spilling, which is
+         the caller's split choice, not a guard), then each k2 emits the
+         same paired permute2f128 stores the monolithic N1T edge uses:
+         [c_k legs l,l+1] at zout[2*(k*OLs + l)] (0x20) and the c_{k+1}
+         twin (0x31). j even and p even make every l = j + p*k2 even —
+         exactly the monolithic lattice. Group-A names are stashed by the
+         store callback until their group-B partner arrives. *)
+      for jj = 0 to (p / 2) - 1 do
+        let j = 2 * jj in
+        let a_names : string array = Array.make m "" in
+        let p2f = Isa.intr isa "permute2f128_pd" in
+        emit_pass
+          ~label:
             (Printf.sprintf
-               "        %s;\n"
-               (Isa.storeu_pd
-                  isa
-                  (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" (j + (p * k2)))
-                  v)))
-    done
+               "PASS 2.%d+%d TURNED: S[i*%d+{%d,%d}] -> columns k,k+1"
+               j (j + 1) p j (j + 1))
+          ~nin:(2 * m)
+          ~load_of:(fun idx ->
+            let i = idx mod m
+            and g = idx / m in
+            Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j + g))))
+          ~build:(fun ins ->
+            let ga = Array.sub ins 0 m
+            and gb = Array.sub ins m m in
+            Array.append (pass2_math ~jv:j ga) (pass2_math ~jv:(j + 1) gb))
+          ~store:(fun idx v ->
+            if idx < m
+            then a_names.(idx) <- v
+            else (
+              let k2 = idx - m in
+              let l = j + (p * k2) in
+              let a = a_names.(k2) in
+              Buffer.add_string
+                body
+                (Printf.sprintf
+                   "        %s;\n        %s;\n"
+                   (Isa.storeu_pd
+                      isa
+                      (Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l)
+                      (Printf.sprintf "%s(%s, %s, 0x20)" p2f a v))
+                   (Isa.storeu_pd
+                      isa
+                      (Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" l)
+                      (Printf.sprintf "%s(%s, %s, 0x31)" p2f a v)))))
+      done
   in
-  (* emit_blocked writes its OWN stores (plain leg-major) and never inspects
-     `kind`; the store-edge match below — which is where N1T's corner-turn
-     lives — is skipped entirely when blocked. So --cil-n1t --cil-blocked
-     would emit a kernel NAMED n1t, advertising corner-turned stores, that
-     does not corner-turn: silently wrong output under a correct-looking
-     symbol. Refuse until emit_blocked learns the kind. *)
-  if blocked && kind = N1T
-  then
-    failwith
-      "codelet_cil: --cil-blocked does not implement the N1T corner-turn; \
-       emit_blocked emits plain leg-major stores, so the result would be \
-       mislabelled n1t. Use --cil-n1/--cil-t2 with --cil-blocked.";
+  (* The old refusal ("emit_blocked never inspects kind") is RESOLVED for the
+     contiguous corner-turn: blocked N1T/t2t emit pass-pairs with the paired
+     permute2f128 store edge (2026-08-05, il_coverage_plan.md E9). The
+     leg-strided t2tg turn and odd-p splits still refuse loudly inside
+     emit_blocked itself. *)
   if blocked
   then emit_blocked ()
   else (
