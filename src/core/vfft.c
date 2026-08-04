@@ -1886,6 +1886,101 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     }
     if (iR1)
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
+    /* PAIR-ORDERING race (il_coverage_plan Phase E follow-on, 2026-08-04):
+     * with the blocked mids live, the ORDERING of a heuristic pair now
+     * matters — (R1,R2) and (R2,R1) run different mid kernels (t2b48 vs
+     * t2b16 classes) and the post-t2b pairs race measured 32x16 beating
+     * the balanced pick 16x32 by 4.5% at 512 (above spread). The t2b
+     * pattern one level up: build the swapped ordering too and quick-race
+     * full-plan forward executes at create — runs EVERY create, so there
+     * is no verdict to bank and no replay divergence by construction
+     * (the ILP replay-bug shape the E6 design documented). Wisdom-banked
+     * pairs (ke->il_R1) are trusted as-is — the calibrator owns those.
+     * Kill switch: VFFT_NO_T2B disables (same family of race). Planning
+     * side only. ⚠ the OOP k1 block keeps the bare heuristic — it has no
+     * race home (availability-attach); divergence documented there. */
+    /* Per-process MEMO of the ordering pick, keyed by N: the race must
+     * run at most ONCE per process per cell — without this, the natural
+     * and scrambled handles (and measure vs consume) each re-race, and a
+     * margin near the hysteresis flips on noise, breaking the
+     * bitwise-identity contracts between them (caught by
+     * vfft_ilp_front_gate's scrambled arm at 512, margin 4.5% vs 3%
+     * hysteresis). Planning-side, no locks: worst case a benign double
+     * race on concurrent first creates. */
+    static int _ord_n[8];
+    static signed char _ord_pick[8]; /* 0 = heuristic order, 1 = swapped */
+    int ord_slot = -1, ord_known = -1;
+    for (int ci = 0; ci < 8; ci++)
+    {
+        if (_ord_n[ci] == N) { ord_slot = ci; ord_known = _ord_pick[ci]; }
+        else if (_ord_n[ci] == 0 && ord_slot < 0) ord_slot = ci;
+    }
+    if (ord_known == 1 && *il2p_out && !(ke && ke->il_R1) && iR1 != iR2)
+    {
+        vfft_il2p_plan_t *sw = vfft_il2p_create(N, iR2, iR1);
+        if (sw)
+        {
+            vfft_il2p_destroy(*il2p_out);
+            *il2p_out = sw;
+        }
+    }
+    if (ord_known < 0 && *il2p_out && !(ke && ke->il_R1) && iR1 != iR2 &&
+        !getenv("VFFT_NO_T2B"))
+    {
+        vfft_il2p_plan_t *alt = vfft_il2p_create(N, iR2, iR1);
+        int picked_swap = 0;
+        if (alt)
+        {
+            double *rz = (double *)malloc(2 * (size_t)N * sizeof(double));
+            double *r0 = (double *)malloc(2 * (size_t)N * sizeof(double));
+            if (rz && r0)
+            {
+                for (long i = 0; i < 2L * N; i++)
+                    r0[i] = (double)(i % 17) * 0.0625 - 0.5;
+                const int reps = N <= 256 ? 64 : (N <= 1024 ? 24 : 8);
+                const size_t nb = 2 * (size_t)N * sizeof(double);
+                double ta = 1e30, tb = 1e30;
+                for (int r = 0; r < 5; r++)
+                {
+                    /* reseed per burst: repeated in-place fwd amplifies
+                     * magnitudes toward inf (the ZCASC-race hazard). */
+                    memcpy(rz, r0, nb);
+                    double t0 = vfft_proto_now_ns();
+                    for (int i = 0; i < reps; i++)
+                        vfft_il2p_execute_fwd(*il2p_out, rz, rz);
+                    double d = (vfft_proto_now_ns() - t0) / reps;
+                    if (d < ta) ta = d;
+                    memcpy(rz, r0, nb);
+                    t0 = vfft_proto_now_ns();
+                    for (int i = 0; i < reps; i++)
+                        vfft_il2p_execute_fwd(alt, rz, rz);
+                    d = (vfft_proto_now_ns() - t0) / reps;
+                    if (d < tb) tb = d;
+                }
+                /* 3% hysteresis, incumbent (heuristic) keeps ties —
+                 * the t2q/t2b precedent exactly. */
+                if (tb < ta * 0.97)
+                {
+                    vfft_il2p_destroy(*il2p_out);
+                    *il2p_out = alt;
+                    alt = NULL;
+                    picked_swap = 1;
+                }
+            }
+            free(rz);
+            free(r0);
+            if (alt)
+                vfft_il2p_destroy(alt);
+        }
+        /* record the pick (even when the race could not run — alt-create
+         * failure defaults to heuristic) so every later create in this
+         * process agrees. */
+        if (ord_slot >= 0)
+        {
+            _ord_n[ord_slot] = N;
+            _ord_pick[ord_slot] = (signed char)picked_swap;
+        }
+    }
     if (!*il2p_out)
     {
         int cR2, cA, cB;

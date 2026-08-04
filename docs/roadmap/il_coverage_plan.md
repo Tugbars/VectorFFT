@@ -134,16 +134,22 @@ that governed Phase-E scoping so far governs its execution: MEASURE the
 family first, treat only where the numbers scream, race every treatment
 per cell.)*
 
-- [ ] **E1 — `msg` cascade-mid render fix (the free win, do first).**
-  The dft.ml named-temp twiddle render lets GCC hoist the temps, spill
-  them, and reload from stack staging — **~7 %/iter of pure artifact**
-  measured in `radix8_z_msg`. Fix = the cil-style inline-in-consumer
-  render (single-use loads spliced into the FMA argument slot) for the
-  dft.ml family's twiddle path, opt-in per kind. Mids are ~60 % of
-  cascade time at 32768, so this touches the ≥2048 headline cells.
-  Gates: bit-identity is NOT guaranteed (render change can reorder
-  loads) — expect memcmp where it holds, scalar-DFT tolerance where it
-  does not, speed per family, 4 KB-aliasing check; wisdom untouched.
+- [x] **E1 — CLOSED NULL BY MEASUREMENT 2026-08-04.** Three-layer
+  resolution, each part load-bearing: (1) the planned fix was REFUTED
+  mechanically — GCC canonicalizes named temps and inline load
+  expressions to identical SSA (the hand-inlined variant compiled
+  BYTE-IDENTICAL); cil's immunity is its per-iteration cursor
+  ADDRESSES, not its render. (2) The bounce itself is r8-ONLY (r4
+  register-hoists its 6 halves cleanly) and the "~7 %/iter" figure was
+  a census REGEX BUG (byte-continuation lines counted as instructions):
+  the true delta of the working fix (LICM-defeating opaque cursor,
+  bit-exact at 13 cells) is +4 insns/iter traded for −34/group prologue
+  and 18→0 stack touches. (3) Raced under the full protocol: HONEST
+  NULL — no time win at any production geometry, 3 runs, clean
+  controls. Do not re-open without new evidence; the emitter seam recon
+  (e1msg_emitter_seam.md) is banked should the calculus ever change.
+  Records: `e1msg_probe.md` (with correction banner), `e1msg_timing`
+  logs, verifier adjudication in the workflow journal.
 - [ ] **E2 — OOP `t1` r32 campaign (the worst body in the tree).**
   41.6 % total stack traffic (25.6 % ymm spill + 13.5 % scalar pointer
   reloads) — worse than pure-IL r32 ever was. TWO root causes, ordered:
@@ -151,11 +157,21 @@ per cell.)*
   cursor: cursor-ize the addressing first (its own win, prerequisite for
   anything else); (b) then evaluate a blocked-analog for that emitter
   family (does not exist there yet — new machinery, spec before build).
-- [ ] **E3 — permute-free pass 2 via scratch-layout choice** (carried
-  from the pressure doc's lever list): the pure-IL pipeline still runs
-  12–14 % shuffle share; confining lane surgery to the leaf's stores
-  (the s0t trick) makes the mid permute-free. The largest remaining
-  known lever for the sub-2048 natural cells.
+- [x] **E3 — CLOSED BY ANALYSIS 2026-08-04: already optimal, shuffle-
+  conserved.** The premise was stale: the mid is ALREADY lane-cross-free
+  (all 32 lane-cross ops/iter live in the leaf's turned stores — the
+  reference-optimal placement, delivered long ago by the n1t design) and
+  carries ZERO reint/deint (z interleaved end-to-end, plain contiguous
+  loads AND stores). The residual 12–14 % shuffle share is exactly one
+  in-lane swap per non-trivial complex rotation (31 tw + 29 ±i + 20
+  fixed-root = 80/iter, IDENTICAL across t2/t2b/t2b48 — conserved under
+  restructured math; per-leg identical to the reference design). On AVX2
+  this is the floor for interleaved-in/out; only split planes remove it
+  (the banned hybrid family). Remaining shuffle levers are MATH
+  (fewer-rotation factorizations = the planner's stage-count axis, E6/E7
+  territory), not layout. Verified cell-by-cell. Record:
+  `docs/research/twmem_campaign/results/e3_shuffle_roles.md` +
+  `e3_layout_design.md`.
 - [ ] **E4 — pure-IL leaf question (`n1t(32)`, LOW priority).** 26.7 %
   spill but perfect ns/pt scaling at both N — its spills appear cheap.
   The blocked emitter REFUSES the leaf class today. Open question, only
@@ -164,9 +180,30 @@ per cell.)*
   r16 section (systematic control bias, same sign 3/3 runs — rotate arm
   order / separate arena) so the banked t2b16 win gets a quotable
   number.
-- [ ] **E6 — pow2 il3p at 512-class cells via the planner** (+7.6–8.8 %
-  measured twice; 1024 refutes the same chains — per-cell race, banked,
-  never a rule).
+- [x] **E6 — CLOSED SUBSUMED-BY-T2B 2026-08-04.** The post-promotion
+  re-race (pairs probe rebuilt so its il2p arms inherit the live blocked-
+  mid race) erased il3p's margin: at 512 an il2p pair (32×16, t2b48 mid)
+  took the crown at 383 ns — exactly the old il3p winning time; at 1024
+  the 32×32 heuristic (1047 ns post-t2b48) beats every chain by 38 %+.
+  The 3-stage advantage WAS avoiding the fat spilling mid; t2b fixed the
+  mid in place — the levers do not compose. The E6 routing design (incl.
+  the `VFFT_NAT_ILP3=8` fix for the confirmed engine-agnostic-replay bug
+  risk) is BANKED in `twmem_campaign/results/il3p__routing_design.md`
+  for any future engine-heterogeneous verdict need. SALVAGE SHIPPED
+  instead: **the pair-ORDERING race** in `_k1_il_candidate` — with
+  blocked mids, (32,16) vs (16,32) differ by mid class and the balanced
+  heuristic can't see it (+4.5 % at 512, above spread); raced at create,
+  3 % hysteresis, `VFFT_NO_T2B` kill.
+  🔴 **COHERENCE RULE learned shipping it (two instances, one
+  pre-existing since the t2b promotion): any create-time race with a
+  non-bit-identical candidate MUST memoize its pick per process** — else
+  two handles in one process (natural+scrambled, measure+consume) pick
+  differently and the bitwise-identity contracts break. Both races now
+  carry per-process memos (`_k1_il_candidate` keyed by N;
+  `_vfft_il2p_race_mid_f` keyed by (R1,R2)); `vfft_k1scr_gate` is THE
+  detector (the only gate comparing two independently-created handles
+  byte-for-byte) and belongs in every future promotion's gate set. Both
+  front gates ALL PASS with both memos.
 - [ ] **E7 — TILED il3p (the Bailey-band tcut question).** The span-rule
   verdict, recorded so nobody re-derives it: the 2-stage Bailey (il2p)
   is STRUCTURALLY untileable — a balanced factorization gives every pass

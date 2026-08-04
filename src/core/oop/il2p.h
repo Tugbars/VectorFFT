@@ -372,6 +372,29 @@ static inline void _vfft_il2p_race_mid_f(vfft_il2p_plan_t *p)
     } else
         return;
 
+    /* Per-process MEMO keyed by (R1,R2): the race must pick the SAME mid
+     * for every create of this geometry in one process. Without it, two
+     * handles built back-to-back (natural + scrambled; measure + consume)
+     * can pick differently — with the tolerance-class t2b48 that breaks
+     * the bitwise-identity contracts between them (vfft_k1scr_gate caught
+     * it at 1024: scr==nat DIFF, one handle on t2b48, one not). Picks are
+     * gated before recording, and the probe seed is deterministic, so a
+     * memo hit is exactly a replay of a validated pick. Planning side; a
+     * concurrent first create can double-race harmlessly. */
+    static int _mm_key[8];               /* (R1<<16)|R2, 0 = empty        */
+    static signed char _mm_pick[8];      /* 0=ship 1=cand[0] 2=cand[1]    */
+    const int mkey = (p->R1 << 16) | p->R2;
+    int mslot = -1;
+    for (int ci = 0; ci < 8; ci++)
+    {
+        if (_mm_key[ci] == mkey)
+        {
+            if (_mm_pick[ci] > 0) p->mid_f = cand[_mm_pick[ci] - 1];
+            return;
+        }
+        if (_mm_key[ci] == 0 && mslot < 0) mslot = ci;
+    }
+
     const size_t R2 = (size_t)p->R2;
     const size_t n2 = (size_t)p->N * 2u;
     const size_t sz = n2 * sizeof(double);
@@ -452,6 +475,15 @@ static inline void _vfft_il2p_race_mid_f(vfft_il2p_plan_t *p)
             if (score[a] < score[win]) win = a;
         if (win != 0 && score[win] < score[0] * 0.97)
             p->mid_f = arm[win];
+        /* record the validated pick for this (R1,R2) in this process */
+        if (mslot >= 0)
+        {
+            signed char pick = 0;
+            if (p->mid_f == cand[0]) pick = 1;
+            else if (nc > 1 && p->mid_f == cand[1]) pick = 2;
+            _mm_pick[mslot] = pick;
+            _mm_key[mslot] = mkey;
+        }
         if (getenv("VFFT_ZRACE_VERBOSE"))
             fprintf(stderr,
                     "[zroute] N=%d R1=%d il2p t2b race: arms=%d reps=%d "
