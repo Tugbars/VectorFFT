@@ -206,6 +206,48 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     return ok;
 }
 
+/* THE DEFAULT IS TRANSFORM-CONTIGUOUS (changed 2026-08-04): a config that
+ * never mentions batch_geom must behave exactly like an explicit
+ * TRANSFORM_CONTIGUOUS one — bitwise. This is the arm that would catch a
+ * silent revert of the default, which is the failure mode that would
+ * corrupt every caller's data without an error message. */
+static int run_default_geometry(vfft_wisdom *W, int N, size_t K)
+{
+    const size_t tot = (size_t)N * K;
+    double *x = az(tot), *a = az(tot), *b = az(tot);
+    srand(77 + N + (int)K);
+    for (size_t i = 0; i < 2 * tot; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
+
+    vfft_config_t cfg; /* zeroed: batch_geom never touched */
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1;
+    cfg.n[0] = N;
+    cfg.howmany = K;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads = 1;
+    cfg.wisdom = W;
+    vfft_plan hd = vfft_create(&cfg);
+    vfft_plan ht = mk(W, N, K, 0, 1); /* explicit TRANSFORM_CONTIGUOUS */
+    int ok = 0;
+    if (hd && ht)
+    {
+        vfft_execute(hd, VFFT_FORWARD, x, NULL, a, NULL);
+        vfft_execute(ht, VFFT_FORWARD, x, NULL, b, NULL);
+        ok = memcmp(a, b, 2 * tot * sizeof(double)) == 0;
+    }
+    printf("%-6d K=%-2zu  zeroed config == TRANSFORM_CONTIGUOUS: %s%s\n",
+           N, K, ok ? "EXACT" : "DIFF", ok ? "" : "   *** FAIL ***");
+    if (hd) vfft_destroy(hd);
+    if (ht) vfft_destroy(ht);
+    fz(x); fz(a); fz(b);
+    return ok;
+}
+
 /* K==1 must not wrap: a TC plan at K=1 must be bitwise identical to a plain
  * LANE_MAJOR K=1 plan (same addressing, so same route, same bytes). */
 static int run_k1_identity(vfft_wisdom *W, int N)
@@ -254,6 +296,10 @@ int main(int argc, char **argv)
 
     /* odd-N cell: the geometry must not assume pow2 (K=1 engines serve it) */
     if (!run_cell(W, 96, 3)) fails++;
+
+    printf("--- the DEFAULT geometry is transform-contiguous ---\n");
+    if (!run_default_geometry(W, 1024, 4)) fails++;
+    if (!run_default_geometry(W, 512, 3)) fails++;
 
     printf("--- K=1 must not wrap ---\n");
     if (!run_k1_identity(W, 1024)) fails++;

@@ -868,6 +868,12 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     cfg.howmany = (size_t)K;
     cfg.order = VFFT_ORDER_NATURAL; /* MKL is natural; cross-engine gate */
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    /* EXPLICIT lane-major: this handle IS the lane-major bridge arm — the
+     * baseline the loop arm is measured against. Since 2026-08-04 the
+     * default geometry is transform-contiguous, so leaving this implicit
+     * would silently turn the "vfft" column into a second loop arm and the
+     * speedup would read 1.0x. */
+    cfg.batch_geom = VFFT_BATCH_LANE_MAJOR;
     cfg.nthreads = 1;
     cfg.wisdom = W;
     vfft_plan h = vfft_create(&cfg);
