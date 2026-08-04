@@ -164,8 +164,26 @@ settle THAT design question first, two-writers history applies).
   src-untouched check + @natoop save/load round-trip + N=256 OOP
   no-cascade regression. First cold run: ZCASC won 4096–32768, engine
   (il2p) legitimately won 2048 on the scratch default chain.
-- [ ] **D4** — the OOP natural-vs-natural table vs MKL (`--k1noop` re-run
-  post-wiring) + shipped-wisdom @natoop bank for the headline cells.
+- [x] **D4 — MEASURED 2026-08-04, hole CLOSED.** `--k1noop` post-wiring,
+  same protocol as D1 (cells ×3, cell-per-process, pinned core 2,
+  alternated order, kind-4 vintage verified w1024@48KB). vs MKL
+  OOP-natural, same-run ratios: 2048 = **0.99–1.11** (parity-or-ahead,
+  the competitive cell), 4096 = **0.91–0.94**, 8192 = **0.95–0.98**,
+  16384 = **0.94–0.98**, 32768 = **0.88–0.91**. Against D1 that is
+  1.5×/2.4×/3.0×/3.9×/**5.1×** route speedup; 32768 went 210 µs → 40.5 µs.
+  Cross-engine err ~7e-16 (same spectrum elementwise, natural both).
+  @natoop verdicts banked in shipped wisdom (all ZCASC). Now sits 2–7 %
+  under the in-place natural tier's ratios — consistent with OOP being
+  MKL's strongest ground, no further routing residue.
+- **Bonus fix (2026-08-04, found by this phase's gate work):** the B5
+  in-place ZCASC/ILP race banks read the deployed chain from local `p`
+  AFTER the tape race may have destroyed it (PSWAP/SCR install paths
+  destroy `h->cplan` and swap without updating `p`) — freed-heap garbage
+  was banked into @nat lines (one poisoned 512 ILP line WAS in shipped
+  wisdom; scrubbed) and positive garbage `nf` made the saver's factor
+  loop segfault nondeterministically (ILP gate 3/3 crash repro). Fixed:
+  both banks read `h->cplan`. All three gates re-run green on the fixed
+  tree.
 
 ## Phase E — spill-control extension to the other kernel families
 *(added 2026-08-04 after the t2b promotion; parent record =
