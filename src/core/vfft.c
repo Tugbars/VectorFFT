@@ -3380,10 +3380,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         h->zroute = 1;
                         zct = NULL;
                         h->nat_mode = VFFT_NAT_ZCASC;
-                        /* chain fields informational (replay reads kind-4) */
+                        /* chain fields informational (replay reads kind-4).
+                         * 🔴 Read them from h->cplan, NOT the local p: when
+                         * the tape race installed a PSWAP/SCR plan it
+                         * destroyed the plan p still points at (found
+                         * 2026-08-04 — freed-heap nf made the saver's
+                         * factor loop walk off the entry: nondeterministic
+                         * segfault + garbage @nat lines). h->cplan is the
+                         * live deployed plan on every path. */
                         _bank_nat_1d(W, N, K, VFFT_NAT_ZCASC, tz[2],
-                                     p->factors, p->variants, p->num_stages,
-                                     p->use_dif_forward);
+                                     h->cplan->factors, h->cplan->variants,
+                                     h->cplan->num_stages,
+                                     h->cplan->use_dif_forward);
                         /* NOTE: the tape artifacts (nat_list/nat_cyc_off/
                          * nat_tmp/nat_scr) stay allocated — destroy frees
                          * them; selective freeing here would duplicate
@@ -3460,9 +3468,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         ilc2 = NULL;
                         ilc3 = NULL;
                         h->nat_mode = VFFT_NAT_ILP;
+                        /* h->cplan, not p — same dangling-p hazard as the
+                         * ZCASC bank above (chain is informational here). */
                         _bank_nat_1d(W, N, K, VFFT_NAT_ILP, tz[2],
-                                     p->factors, p->variants, p->num_stages,
-                                     p->use_dif_forward);
+                                     h->cplan->factors, h->cplan->variants,
+                                     h->cplan->num_stages,
+                                     h->cplan->use_dif_forward);
                     }
                     if (getenv("VFFT_NAT_LOG"))
                         fprintf(stderr,
