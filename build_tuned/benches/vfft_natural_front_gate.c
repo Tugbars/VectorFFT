@@ -15,6 +15,20 @@
  *   5. small-N regression: N=256 natural in-place (tape tier, no cascade)
  *      still correct — the ZCASC arm must not perturb the classic path.
  *
+ * Phase D arm (il_coverage_plan.md, 2026-08-04) — order=NATURAL OOP ≥2048:
+ *   6. the NATURAL OOP create must race the natord cascade against the K=1
+ *      engine incumbent END-TO-END, attach on win, bank @natoop; src->dst
+ *      distinct buffers, src must come back UNTOUCHED; fwd/bwd each gate
+ *      against the same independent references as the in-place arm;
+ *   7. OOP CONSUME must replay with NO race, and measure-vs-consume fwd
+ *      outputs must be BITWISE identical (create-race coherence rule: the
+ *      candidates are not bit-identical, the banked verdict is the memo);
+ *   8. round-trip: free+reload the wisdom (exercising the @natoop save/load
+ *      cycle) — both the in-place @nat and the OOP @natoop verdicts must
+ *      still consume silently;
+ *   9. small-N OOP regression: N=256 natural OOP (native il2p tier, no
+ *      cascade) still correct.
+ *
  * Run:   vfft_natural_front_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_natural_front_gate.c --vfft --compile
  */
@@ -190,6 +204,70 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
     return ok;
 }
 
+/* Phase D cell: NATURAL OOP through the front door. expect:
+ *   0 = no-cascade tier (sub-2048), correctness only;
+ *   1 = MEASURE, the [natorder] OOP race must RUN, either winner is legal
+ *       (competitive cells: the per-cell winner is the race's business);
+ *   3 = MEASURE, race must run AND ZCASC must win (≥4096: D1 measured the
+ *       incumbent at 0.39x..0.17x of the cascade's class — an engine win
+ *       there is a wiring bug, not a race outcome);
+ *   2 = CONSUME, no race + "replay ZCASC-OOP" required;
+ *   4 = CONSUME, no race required, banked FREE serving the engine is legal
+ *       (the measure/consume bitwise memcmp in main covers identity).
+ * fwd_out (optional): receives the fwd spectrum bytes for that check. */
+static int run_cell_oop(vfft_wisdom *W, int N, const double *x,
+                        const double *X, int expect, const char *tag,
+                        double *fwd_out)
+{
+    vfft_plan hn = mk(W, N, /*inplace*/ 0, /*natural*/ 1);
+    const char *log = err_tap_read();
+    if (!hn)
+    {
+        printf("%-7d %-8s OOP create FAILED\n", N, tag);
+        return 0;
+    }
+    const int raced = strstr(log, "OOP zcasc=") != NULL;
+    const int zwon = strstr(log, "-> ZCASC-OOP") != NULL;
+    const int replayed = strstr(log, "replay ZCASC-OOP") != NULL;
+
+    double *s = az((size_t)N), *d = az((size_t)N);
+    memcpy(s, x, 2 * (size_t)N * sizeof(double));
+    vfft_execute(hn, VFFT_FORWARD, s, NULL, d, NULL);
+    const double ef = relerr(d, X, 2L * N);
+    const int src_ok =
+        memcmp(s, x, 2 * (size_t)N * sizeof(double)) == 0;
+    if (fwd_out)
+        memcpy(fwd_out, d, 2 * (size_t)N * sizeof(double));
+
+    memcpy(s, X, 2 * (size_t)N * sizeof(double));
+    vfft_execute(hn, VFFT_BACKWARD, s, NULL, d, NULL);
+    double *nx = az((size_t)N);
+    for (long i = 0; i < 2L * N; i++) nx[i] = (double)N * x[i];
+    const double eb = relerr(d, nx, 2L * N);
+    fz(nx);
+    fz(d);
+    fz(s);
+    vfft_destroy(hn);
+
+    int ok = ef < 1e-9 && eb < 1e-9 && src_ok;
+    const char *eng = "engine";
+    if (expect == 1 || expect == 3)
+    {
+        ok = ok && raced && (expect == 1 || zwon);
+        eng = zwon ? "ZCASC(raced)" : (raced ? "engine(raced)" : "NO RACE");
+    }
+    else if (expect == 2 || expect == 4)
+    {
+        ok = ok && !raced && (expect == 4 || replayed);
+        eng = raced ? "RACED(!)"
+                    : (replayed ? "ZCASC(replay)" : "engine(free)");
+    }
+    printf("%-7d %-8s fwd=%.1e bwd=%.1e  %-13s%s%s\n",
+           N, tag, ef, eb, eng, src_ok ? "" : " SRC-CLOBBERED",
+           ok ? "" : "   *** FAIL ***");
+    return ok;
+}
+
 int main(int argc, char **argv)
 {
     const char *wisdir = NULL;
@@ -228,6 +306,23 @@ int main(int argc, char **argv)
         if (!run_cell(W, N, x, X, /*MEASURE*/ 1, "measure")) fails++;
         if (!run_cell(W, N, x, X, /*CONSUME*/ 2, "consume")) fails++;
 
+        /* Phase D: same references, NATURAL OOP. Measure races + banks
+         * @natoop; consume replays; the two fwd spectra must be BITWISE
+         * identical (the banked verdict is the coherence memo). */
+        double *f1 = az((size_t)N), *f2 = az((size_t)N);
+        /* 2048 is the one competitive cell (native il2p 32x64 incumbent) —
+         * either winner is legal there; ≥4096 an engine win = wiring bug. */
+        const int em = (N >= 4096) ? 3 : 1, ec = (N >= 4096) ? 2 : 4;
+        if (!run_cell_oop(W, N, x, X, em, "oop-meas", f1)) fails++;
+        if (!run_cell_oop(W, N, x, X, ec, "oop-cons", f2)) fails++;
+        if (memcmp(f1, f2, 2 * (size_t)N * sizeof(double)) != 0)
+        {
+            printf("%-7d oop measure/consume fwd DIFF (coherence)   *** FAIL ***\n", N);
+            fails++;
+        }
+        fz(f1);
+        fz(f2);
+
         fz(x);
         fz(X);
     }
@@ -241,6 +336,29 @@ int main(int argc, char **argv)
             x[j] = (double)rand() / RAND_MAX - 0.5;
         naive_dft(x, X, N);
         if (!run_cell(W, N, x, X, /*tape tier*/ 0, "smallN")) fails++;
+        /* small-N OOP: native il2p tier, NO cascade race may fire */
+        if (!run_cell_oop(W, N, x, X, /*no cascade*/ 0, "smallN-o", NULL))
+            fails++;
+        fz(x);
+        fz(X);
+    }
+
+    /* round-trip: free + reload the wisdom — the @nat AND @natoop verdicts
+     * must survive the save/load cycle (the saver now emits @natoop lines;
+     * a parse regression would surface here as a RACED(!) consume). */
+    {
+        vfft_wisdom_free(W);
+        W = vfft_wisdom_load(wisdir);
+        if (!W) { printf("wisdom RELOAD FAILED\n"); return 2; }
+        const int N = 4096;
+        srand(515 + N);
+        double *x = az((size_t)N), *X = az((size_t)N);
+        for (long j = 0; j < 2L * N; j++)
+            x[j] = (double)rand() / RAND_MAX - 0.5;
+        naive_dft(x, X, N);
+        printf("--- reload round-trip ---\n");
+        if (!run_cell(W, N, x, X, /*CONSUME*/ 2, "rt-ip")) fails++;
+        if (!run_cell_oop(W, N, x, X, /*CONSUME*/ 2, "rt-oop", NULL)) fails++;
         fz(x);
         fz(X);
     }
