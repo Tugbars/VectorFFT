@@ -818,6 +818,38 @@ static int kzb_mkl_ref(int N, int K, const double *z0, size_t total,
 }
 #endif
 
+/* LOOP arm: K sequential K=1 transforms over a TRANSFORM-CONTIGUOUS buffer
+ * (transform k occupies [k*2N, (k+1)*2N) doubles) — "batching is an outer
+ * loop", served by the shipped K=1 IL engines with ZERO new kernels and no
+ * API change (each call is an ordinary K=1 call on a sub-buffer). This is
+ * the honest like-for-like against MKL's HOME arm: both engines see the
+ * same transform-contiguous memory. */
+static double kzb_time_loop(vfft_plan h1, int N, int K, double *z0h,
+                            double *S, size_t total)
+{
+    const size_t tn = 2 * (size_t)N;
+    for (int w = 0; w < 10; w++)
+        for (int k = 0; k < K; k++)
+            vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, NULL,
+                         S + (size_t)k * tn, NULL);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            for (int k = 0; k < K; k++)
+                vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn, NULL,
+                             S + (size_t)k * tn, NULL);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    return best;
+}
+
 static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
 {
     vfft_wisdom *W = k1z_bundle();
@@ -845,13 +877,30 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
         return;
     }
 
+    /* K=1 handle for the LOOP arm (same front door, howmany=1) — the
+     * transform-contiguous story needs no batched plan at all. */
+    vfft_config_t c1 = cfg;
+    c1.howmany = 1;
+    vfft_plan h1 = vfft_create(&c1);
+
     size_t total = (size_t)N * (size_t)K;
     double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total);
     srand(42 + N + K);
     for (size_t i = 0; i < 2 * total; i++)
         z0[i] = (double)rand() / RAND_MAX - 0.5;
 
-    double rel = -1.0;
+    /* the SAME logical batch, transform-contiguous: transform k at k*2N */
+    double *z0h = alloc_d(2 * total);
+    for (int k = 0; k < K; k++)
+        for (int n = 0; n < N; n++)
+        {
+            size_t im = 2 * ((size_t)n * K + k);
+            size_t ih = 2 * ((size_t)k * N + n);
+            z0h[ih] = z0[im];
+            z0h[ih + 1] = z0[im + 1];
+        }
+
+    double rel = -1.0, lrel = -1.0;
 #ifdef VFFT_HAS_MKL
     { /* cross-engine gate vs the MIRROR arm (identical layout, both
        * natural) + MKL home-vs-mirror self-check (re-indexed): guards the
@@ -869,19 +918,10 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
                 if (m > xm) xm = m;
             }
             rel = xm > 0 ? xe / xm : xe;
-            /* home self-check needs the SAME LOGICAL INPUT in home layout:
-             * transpose z0 (lane-major) into transform-major z0h first —
-             * feeding raw z0 to both arms would transform different
-             * logical vectors and the compare would be meaningless. */
-            double *z0h = alloc_d(2 * total);
-            for (int k = 0; k < K; k++)
-                for (int n = 0; n < N; n++)
-                {
-                    size_t im = 2 * ((size_t)n * K + k);
-                    size_t ih = 2 * ((size_t)k * N + n);
-                    z0h[ih] = z0[im];
-                    z0h[ih + 1] = z0[im + 1];
-                }
+            /* home self-check uses the SAME LOGICAL INPUT in home layout
+             * (z0h, built above) — feeding raw z0 to both arms would
+             * transform different logical vectors and the compare would be
+             * meaningless. zh also gates the LOOP arm below. */
             if (kzb_mkl_ref(N, K, z0h, total, 1, zh))
             {
                 double se = 0.0, sm = 0.0;
@@ -902,16 +942,34 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
                             "kzb: MKL mirror/home self-check DIFF %.2e at "
                             "N=%d K=%d — mirror strides suspect\n",
                             se / sm, N, K);
+                /* LOOP-arm gate: K sequential K=1 transforms over the
+                 * transform-contiguous buffer must reproduce MKL's home
+                 * spectrum elementwise (both natural, same layout). */
+                if (h1)
+                {
+                    const size_t tn = 2 * (size_t)N;
+                    for (int k = 0; k < K; k++)
+                        vfft_execute(h1, VFFT_FORWARD, z0h + (size_t)k * tn,
+                                     NULL, S + (size_t)k * tn, NULL);
+                    double le = 0.0, lm = 0.0;
+                    for (size_t i = 0; i < 2 * total; i++)
+                    {
+                        double e = fabs(S[i] - zh[i]), m = fabs(zh[i]);
+                        if (e > le) le = e;
+                        if (m > lm) lm = m;
+                    }
+                    lrel = lm > 0 ? le / lm : le;
+                }
             }
-            free_d(z0h);
         }
         free_d(zm);
         free_d(zh);
     }
 #endif
 
-    /* A/B/(C) — k1z fairness shape; both MKL arms share MKL's slot */
-    double vns = 0, mns = 0, hns = 0;
+    /* ARMS — k1z fairness shape; the two MKL arms share MKL's slot, the
+     * LOOP arm shares ours (it is our engine, different geometry). */
+    double vns = 0, mns = 0, hns = 0, lns = 0;
 #ifdef VFFT_HAS_MKL
     if (flip)
     {
@@ -921,10 +979,20 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
         cachebust();
         pace(cool_ms);
         vns = k1z_time_vfft(h, z0, S, total);
+        if (h1)
+        {
+            pace(g_trial_pace_ms);
+            lns = kzb_time_loop(h1, N, K, z0h, S, total);
+        }
     }
     else
     {
         vns = k1z_time_vfft(h, z0, S, total);
+        if (h1)
+        {
+            pace(g_trial_pace_ms);
+            lns = kzb_time_loop(h1, N, K, z0h, S, total);
+        }
         cachebust();
         pace(cool_ms);
         mns = kzb_time_mkl(N, K, z0, total, 0);
@@ -935,20 +1003,26 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
     (void)cool_ms;
     (void)flip;
     vns = k1z_time_vfft(h, z0, S, total);
+    if (h1) lns = kzb_time_loop(h1, N, K, z0h, S, total);
 #endif
     double rmir = (vns > 0 && mns > 0) ? mns / vns : 0;
     double rhom = (vns > 0 && hns > 0) ? hns / vns : 0;
-    double vgf = (vns > 0) ? 5.0 * total * log2((double)N) / vns : 0;
-    printf("%-8d %-4d %-8s %12.0f %12.0f %12.0f %6.2fx %6.2fx %10.2e\n",
-           N, K, "kzb-oop", vns, mns, hns, rmir, rhom, rel);
+    /* THE number this arm exists for: our loop-over-K=1 on transform-
+     * contiguous data vs MKL batched on the SAME layout. */
+    double rloop = (lns > 0 && hns > 0) ? hns / lns : 0;
+    printf("%-8d %-4d %-8s %11.0f %11.0f %11.0f %11.0f %6.2fx %6.2fx %7.2fx %9.2e %9.2e\n",
+           N, K, "kzb-oop", vns, lns, mns, hns, rmir, rhom, rloop, rel, lrel);
     if (out)
     {
-        fprintf(out, "%d,%d,conv,kzb-oop,%.0f,%.0f,%.0f,%.3f,%.3f,%.3e\n",
-                N, K, vns, mns, hns, rmir, rhom, rel);
+        fprintf(out, "%d,%d,conv,kzb-oop,%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.3e,%.3e\n",
+                N, K, vns, lns, mns, hns, rmir, rhom, rloop, rel, lrel);
         fflush(out);
     }
     free_d(z0);
+    free_d(z0h);
     free_d(S);
+    if (h1)
+        vfft_destroy(h1);
     vfft_destroy(h);
 }
 
@@ -2846,7 +2920,8 @@ int main(int argc, char **argv)
     if (out && !target_N)
     {
         if (g_kzb)
-            fprintf(out, "N,K,plan,path,vfft_ns,mkl_mirror_ns,mkl_home_ns,ratio_mirror,ratio_home,xerr\n");
+            fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
+                         "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr\n");
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
@@ -2860,12 +2935,16 @@ int main(int argc, char **argv)
          * process (the map protocol); no target = in-process quick-look
          * over the full K∈{2,3,4} × N grid. */
         if (!target_N)
-            printf("=== dag (front door, convert route) vs MKL — 1D C2C fwd, "
-                   "K∈{2,3,4} INTERLEAVED lane-major z, OOP natural "
+            printf("=== dag vs MKL — 1D C2C fwd batched, OOP natural "
                    "(pace=%dms) ===\n"
-                   "%-8s %-4s %-8s %12s %12s %12s %7s %7s %10s\n",
-                   pace_ms, "N", "K", "path", "vfft_ns", "mkl_mir_ns",
-                   "mkl_home_ns", "r_mir", "r_home", "xerr");
+                   "# vfft = lane-major convert bridge | loop = K sequential "
+                   "K=1 on transform-contiguous\n"
+                   "# mkl_mir = MKL on OUR lane-major | mkl_home = MKL "
+                   "transform-contiguous | r_loop = loop vs mkl_home\n"
+                   "%-8s %-4s %-8s %11s %11s %11s %11s %7s %7s %8s %9s %9s\n",
+                   pace_ms, "N", "K", "path", "vfft_ns", "loop_ns",
+                   "mkl_mir_ns", "mkl_home_ns", "r_mir", "r_home", "r_loop",
+                   "xerr", "loop_err");
         if (target_N)
             run_kzb_cell(target_N, (int)target_K, out, cool_ms, flip);
         else
