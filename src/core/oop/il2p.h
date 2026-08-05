@@ -325,46 +325,43 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * The old `R2 < 8` bound was exactly such an accident: it had no structural
  * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
  * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
-/* ── BLOCKED-KERNEL VARIANT SELECTORS — declarative, NO TIMING ───────────
- * 2026-08-05, Tugbars: the library does not race. It exposes which kernel
- * to install; the FRONT DOOR does the measuring, the way every other
- * comparison in bench_1d_vs_mkl.c does it — build handles through
- * vfft_create, time them through vfft_execute, compare. That keeps
- * timing loops, probe buffers and hysteresis rules out of production
- * create entirely.
+/* ── BLOCKED-KERNEL VARIANT REGISTRY ─────────────────────────────────────
+ * 2026-08-05. Same role as vfft_il2p_leaf_fn / vfft_il2p_mid_fn above:
+ * a pure (radix, variant) -> symbol lookup. NO selection policy, NO env,
+ * NO timing. The VERDICT lives in wisdom (kind-3 `il_kv`, packed
+ * mid | leaf<<4) and is applied by the front door after create; the
+ * measurement that produced it is the bench's job.
  *
- *   VFFT_IL2P_MID  = t2 | t2b | t2b48        (default t2, the registry mid)
- *   VFFT_IL2P_LEAF = n1t | n1tb | n1tb48     (default n1t, registry leaf)
+ * variant: 0 = monolithic registry kernel (return 0 -> caller keeps it)
+ *          1 = blocked 2·16   2 = blocked 4·8
+ * Returns 0 for any (radix, variant) with no emitted kernel, so an
+ * unsupported verdict degrades to the monolithic kernel — always correct.
  *
- * CONTRACT (why a pick can be silently declined): blocked kernels carry NO
- * odd-count tail. The mid runs at count = R2, the leaf at count = R1 — so
- * a blocked mid needs even R2, a blocked leaf even R1. Radix coverage so
- * far: mid 16/32, leaf 32. Anything outside keeps the registry kernel,
- * which is always correct.
- *
- * 🔴 BEHAVIOR CHANGE vs c60d84bb..167c7fdc: create no longer auto-installs
- * a blocked mid. Default is the monolithic registry kernel again, so the
- * front-door numbers those commits earned need the selector set — or the
- * per-cell verdict wired through wisdom (the t2q precedent: searched
- * offline, banked, replayed at create). That wiring is the follow-up. */
-static inline vfft_il2p_fn _vfft_il2p_mid_pick(vfft_il2p_fn mf, int R1, int R2)
+ * CONTRACT: blocked kernels carry NO odd-count tail. The mid runs at
+ * count = R2 and the leaf at count = R1, so the caller must refuse a
+ * blocked mid for odd R2 and a blocked leaf for odd R1 — the `count_ok`
+ * argument makes that explicit at the call site rather than implicit. */
+static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
-    const char *v = getenv("VFFT_IL2P_MID");
-    if (!v || !*v || (R2 & 1)) return mf;
-    if (R1 == 16 && strcmp(v, "t2b") == 0)   return radix16_z_t2b_fwd_avx2;
-    if (R1 == 32 && strcmp(v, "t2b") == 0)   return radix32_z_t2b_fwd_avx2;
-    if (R1 == 32 && strcmp(v, "t2b48") == 0) return radix32_z_t2b48_fwd_avx2;
-    return mf;
+    if (!variant || !count_ok) return 0;
+    if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
+    if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
+    if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
+    return 0;
 }
 
-static inline vfft_il2p_fn _vfft_il2p_leaf_pick(vfft_il2p_fn lf, int R1, int R2)
+static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
-    const char *v = getenv("VFFT_IL2P_LEAF");
-    if (!v || !*v || R2 != 32 || (R1 & 1)) return lf;
-    if (strcmp(v, "n1tb") == 0)   return radix32_z_n1tb_fwd_avx2;
-    if (strcmp(v, "n1tb48") == 0) return radix32_z_n1tb48_fwd_avx2;
-    return lf;
+    if (!variant || !count_ok) return 0;
+    if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
+    if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
+    return 0;
 }
+
+/* kind-3 wisdom packing: il_kv = mid | leaf<<4 */
+#define VFFT_IL_KV_MID(kv)   ((kv) & 0xf)
+#define VFFT_IL_KV_LEAF(kv)  (((kv) >> 4) & 0xf)
+#define VFFT_IL_KV_PACK(m,l) (((m) & 0xf) | (((l) & 0xf) << 4))
 
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
@@ -386,10 +383,7 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     vfft_il2p_plan_t *p = (vfft_il2p_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
     p->N = N; p->R1 = R1; p->R2 = R2;
-    p->leaf_f = _vfft_il2p_leaf_pick(lf, R1, R2);
-    p->leaf_b = lb;
-    p->mid_f  = _vfft_il2p_mid_pick(mf, R1, R2);
-    p->mid_b  = mb;
+    p->leaf_f = lf; p->leaf_b = lb; p->mid_f = mf; p->mid_b = mb;
     p->n1_b = nb;
     p->t2t_b = tt;
     p->n1_b_r2 = nb2;
