@@ -52,28 +52,6 @@
 #include <string.h>
 #include <math.h>
 
-/* Self-contained timer for the create-time t2b race below (same guarded
- * pattern as dp_planner_il.h / bluestein_calibrator.h — QPC on Windows,
- * CLOCK_MONOTONIC elsewhere, per the repo timing convention). */
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <time.h>
-#endif
-static inline double _vfft_il2p_now_ns(void)
-{
-#if defined(_WIN32)
-    LARGE_INTEGER f, c;
-    QueryPerformanceFrequency(&f);
-    QueryPerformanceCounter(&c);
-    return 1e9 * (double)c.QuadPart / (double)f.QuadPart;
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec * 1e9 + (double)ts.tv_nsec;
-#endif
-}
-
 #ifndef VFFT_IL2P_PI
 #define VFFT_IL2P_PI 3.14159265358979323846
 #endif
@@ -114,10 +92,10 @@ VFFT_IL2P_DECL(32) VFFT_IL2P_DECL(64)
  * sessions. Side-finding: blocked kernels are immune to the per-process
  * stack-ASLR/4KB-alias tail-risk that inflates the spilling monolith.
  *
- * The winner is NEVER hand-set (sterm/sterm2 placement-luck lesson):
- * vfft_il2p_create races the available variants against the shipped t2 on
- * the plan's own tables and installs the winner as mid_f — see
- * _vfft_il2p_race_mid_f below. FWD-ONLY by design: execute_fwd is mid_f's
+ * The winner is NEVER hand-set (sterm/sterm2 placement-luck lesson) — it
+ * is MEASURED AT THE FRONT DOOR (bench_1d_vs_mkl.c builds handles per
+ * variant and times them) and selected here via VFFT_IL2P_MID; create
+ * itself does no timing. FWD-ONLY by design: execute_fwd is mid_f's
  * only consumer; the bwd path standardizes on t2t/F-DIAG and never reads a
  * mid twin (--cil-blocked could emit a bwd, but it would be an un-raced
  * orphan). CONTRACT: count % 2 == 0 — blocked kernels carry NO odd-count
@@ -347,318 +325,45 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * The old `R2 < 8` bound was exactly such an accident: it had no structural
  * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
  * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
-/* ── t2b create-time race (t2q precedent: create-time, measured on the
- * installed binary, no wisdom-format change) ─────────────────────────────
- * Called at the END of create, when the plan is fully built: races the
- * shipped t2 mid against the blocked candidate(s) on the plan's OWN tw
- * table, with the real (Ls,OLs,count) = (R2,R2,R2) mid-call shape, and
- * installs the winner as p->mid_f. mid_b is untouched (no bwd consumer).
+/* ── BLOCKED-KERNEL VARIANT SELECTORS — declarative, NO TIMING ───────────
+ * 2026-08-05, Tugbars: the library does not race. It exposes which kernel
+ * to install; the FRONT DOOR does the measuring, the way every other
+ * comparison in bench_1d_vs_mkl.c does it — build handles through
+ * vfft_create, time them through vfft_execute, compare. That keeps
+ * timing loops, probe buffers and hysteresis rules out of production
+ * create entirely.
  *
- * CORRECTNESS BEFORE SPEED — per candidate, on one probe buffer, vs the
- * SHIPPED kernel output:
- *   exact  (t2b 2·16, t2b16 2·8 — m=2 uses the class-aware butterfly_pair,
- *           bit-identical by construction): memcmp must be 0, else REFUSE;
- *   toler. (t2b48 4·8 — general ctw W_R^{ij}, genuinely restructured math,
- *           relmax 3.1e-16 vs shipped offline; scalar-DFT anchor gated it
- *           in r32exp_blocked.md §3): 1e-12 RELATIVE on the probe, else
- *           REFUSE.  A refused candidate leaves shipped installed.
+ *   VFFT_IL2P_MID  = t2 | t2b | t2b48        (default t2, the registry mid)
+ *   VFFT_IL2P_LEAF = n1t | n1tb | n1tb48     (default n1t, registry leaf)
  *
- * TIMING (t2q shape): ~50us bursts, 7 rounds, arm order alternating per
- * round, per-arm median of rounds. A candidate displaces shipped only on a
- * >3% median win (hysteresis — the incumbent keeps ties, t2q precedent).
- * Between surviving candidates the faster median wins (per-cell measured
- * pick — 2·16 vs 4·8 is placement-luck territory, never hand-set). */
-static inline void _vfft_il2p_race_mid_f(vfft_il2p_plan_t *p)
+ * CONTRACT (why a pick can be silently declined): blocked kernels carry NO
+ * odd-count tail. The mid runs at count = R2, the leaf at count = R1 — so
+ * a blocked mid needs even R2, a blocked leaf even R1. Radix coverage so
+ * far: mid 16/32, leaf 32. Anything outside keeps the registry kernel,
+ * which is always correct.
+ *
+ * 🔴 BEHAVIOR CHANGE vs c60d84bb..167c7fdc: create no longer auto-installs
+ * a blocked mid. Default is the monolithic registry kernel again, so the
+ * front-door numbers those commits earned need the selector set — or the
+ * per-cell verdict wired through wisdom (the t2q precedent: searched
+ * offline, banked, replayed at create). That wiring is the follow-up. */
+static inline vfft_il2p_fn _vfft_il2p_mid_pick(vfft_il2p_fn mf, int R1, int R2)
 {
-    if (getenv("VFFT_NO_T2B")) return;
-    if (p->R2 & 1) return;   /* blocked contract: count % 2 == 0, NO tail */
-    vfft_il2p_fn cand[2] = { 0, 0 };
-    int exact[2] = { 0, 0 };
-    int nc = 0;
-    if (p->R1 == 16) {
-        cand[0] = radix16_z_t2b_fwd_avx2;   exact[0] = 1; nc = 1;
-    } else if (p->R1 == 32) {
-        cand[0] = radix32_z_t2b_fwd_avx2;   exact[0] = 1;
-        cand[1] = radix32_z_t2b48_fwd_avx2; exact[1] = 0; nc = 2;
-    } else
-        return;
-
-    /* Per-process MEMO keyed by (R1,R2): the race must pick the SAME mid
-     * for every create of this geometry in one process. Without it, two
-     * handles built back-to-back (natural + scrambled; measure + consume)
-     * can pick differently — with the tolerance-class t2b48 that breaks
-     * the bitwise-identity contracts between them (vfft_k1scr_gate caught
-     * it at 1024: scr==nat DIFF, one handle on t2b48, one not). Picks are
-     * gated before recording, and the probe seed is deterministic, so a
-     * memo hit is exactly a replay of a validated pick. Planning side; a
-     * concurrent first create can double-race harmlessly. */
-    static int _mm_key[8];               /* (R1<<16)|R2, 0 = empty        */
-    static signed char _mm_pick[8];      /* 0=ship 1=cand[0] 2=cand[1]    */
-    const int mkey = (p->R1 << 16) | p->R2;
-    int mslot = -1;
-    for (int ci = 0; ci < 8; ci++)
-    {
-        if (_mm_key[ci] == mkey)
-        {
-            if (_mm_pick[ci] > 0) p->mid_f = cand[_mm_pick[ci] - 1];
-            return;
-        }
-        if (_mm_key[ci] == 0 && mslot < 0) mslot = ci;
-    }
-
-    const size_t R2 = (size_t)p->R2;
-    const size_t n2 = (size_t)p->N * 2u;
-    const size_t sz = n2 * sizeof(double);
-    double *zi = (double *)VFFT_IL2P_ALLOC(sz);
-    double *zs = (double *)VFFT_IL2P_ALLOC(sz);
-    double *zv = (double *)VFFT_IL2P_ALLOC(sz);
-    if (!zi || !zs || !zv) goto done;   /* OOM: keep shipped, no race */
-    {
-        unsigned s = 2463534242u ^ (unsigned)p->N;  /* xorshift32, determin. */
-        for (size_t i = 0; i < n2; i++) {
-            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-            zi[i] = (double)(s & 0xffffu) / 65536.0 - 0.5;
-        }
-    }
-    {
-        /* correctness gate vs shipped output on the probe buffer */
-        p->mid_f(zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
-        double smax = 0.0;
-        for (size_t i = 0; i < n2; i++) {
-            double a = fabs(zs[i]);
-            if (a > smax) smax = a;
-        }
-        int keep[2] = { 0, 0 };
-        for (int c = 0; c < nc; c++) {
-            cand[c](zi, 0, zv, 0, p->tw, 0, R2, 0, R2, 0, R2);
-            if (exact[c])
-                keep[c] = (memcmp(zs, zv, sz) == 0);
-            else {
-                double dmax = 0.0;
-                for (size_t i = 0; i < n2; i++) {
-                    double d = fabs(zv[i] - zs[i]);
-                    if (d > dmax) dmax = d;
-                }
-                keep[c] = (smax > 0.0 && dmax <= 1e-12 * smax);
-            }
-        }
-
-        vfft_il2p_fn arm[3];
-        arm[0] = p->mid_f;
-        int na = 1;
-        for (int c = 0; c < nc; c++)
-            if (keep[c]) arm[na++] = cand[c];
-        if (na == 1) goto done;         /* every candidate refused */
-
-        /* reps for a ~50us burst per arm visit */
-        double t0 = _vfft_il2p_now_ns();
-        p->mid_f(zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
-        double est = _vfft_il2p_now_ns() - t0;
-        if (est < 1.0) est = 1.0;
-        int reps = (int)(50000.0 / est);
-        if (reps < 4)   reps = 4;
-        if (reps > 256) reps = 256;
-
-        enum { RR = 7 };
-        double lap[3][RR];
-        for (int r = 0; r < RR; r++)
-            for (int j = 0; j < na; j++) {
-                int a = (r & 1) ? (na - 1 - j) : j;  /* alternate order */
-                t0 = _vfft_il2p_now_ns();
-                for (int i = 0; i < reps; i++)
-                    arm[a](zi, 0, zs, 0, p->tw, 0, R2, 0, R2, 0, R2);
-                lap[a][r] = (_vfft_il2p_now_ns() - t0) / (double)reps;
-            }
-        double score[3];
-        for (int a = 0; a < na; a++) {   /* median of RR rounds */
-            double v[RR];
-            memcpy(v, lap[a], sizeof v);
-            for (int i = 1; i < RR; i++) {
-                double x = v[i];
-                int j = i;
-                while (j > 0 && v[j - 1] > x) { v[j] = v[j - 1]; j--; }
-                v[j] = x;
-            }
-            score[a] = v[RR / 2];
-        }
-        int win = 0;
-        for (int a = 1; a < na; a++)
-            if (score[a] < score[win]) win = a;
-        if (win != 0 && score[win] < score[0] * 0.97)
-            p->mid_f = arm[win];
-        /* record the validated pick for this (R1,R2) in this process */
-        if (mslot >= 0)
-        {
-            signed char pick = 0;
-            if (p->mid_f == cand[0]) pick = 1;
-            else if (nc > 1 && p->mid_f == cand[1]) pick = 2;
-            _mm_pick[mslot] = pick;
-            _mm_key[mslot] = mkey;
-        }
-        if (getenv("VFFT_ZRACE_VERBOSE"))
-            fprintf(stderr,
-                    "[zroute] N=%d R1=%d il2p t2b race: arms=%d reps=%d "
-                    "burst~50us hyst=3%% alt-order median | ship=%.0f "
-                    "c0=%.0f c1=%.0f -> %s\n",
-                    p->N, p->R1, na, reps, score[0],
-                    na > 1 ? score[1] : -1.0, na > 2 ? score[2] : -1.0,
-                    p->mid_f == arm[0] ? "ship"
-                                       : (p->mid_f == cand[0] ? "t2b" : "t2b48"));
-    }
-done:
-    VFFT_IL2P_FREE(zi);
-    VFFT_IL2P_FREE(zs);
-    VFFT_IL2P_FREE(zv);
+    const char *v = getenv("VFFT_IL2P_MID");
+    if (!v || !*v || (R2 & 1)) return mf;
+    if (R1 == 16 && strcmp(v, "t2b") == 0)   return radix16_z_t2b_fwd_avx2;
+    if (R1 == 32 && strcmp(v, "t2b") == 0)   return radix32_z_t2b_fwd_avx2;
+    if (R1 == 32 && strcmp(v, "t2b48") == 0) return radix32_z_t2b48_fwd_avx2;
+    return mf;
 }
 
-/* ── LEAF race (E9, 2026-08-05): blocked n1t candidates vs the shipped
- * monolithic leaf — `_vfft_il2p_race_mid_f`'s exact protocol with the
- * leaf's own geometry. THREE deliberate differences, each load-bearing:
- *   1. the guard is `R1 & 1` — the leaf runs at count = R1 (execute:
- *      leaf_f(zin,0,mid,0,0,0,R1,0,R2,0,R1)) and blocked kernels carry the
- *      even-count contract with NO tail; the mid race's R2 guard would be
- *      the WRONG axis here;
- *   2. candidates key on R2 — the LEAF's radix (n1t(R2)); R1 keys the mid;
- *   3. its own memo arrays and kill switch (VFFT_NO_N1TB) — one blocked
- *      family's verdict must not alias another's (coherence rule: the
- *      tolerance-class n1tb48 on one handle but not another would break
- *      the bitwise contracts between natural/scrambled handles exactly as
- *      the mid case did at 1024).
- * FWD-ONLY like the mid race: leaf_f's consumers are il2p/il3p
- * execute_fwd; leaf_b serves only the F-DIAG fallback and never races. */
-static inline void _vfft_il2p_race_leaf_f(vfft_il2p_plan_t *p)
+static inline vfft_il2p_fn _vfft_il2p_leaf_pick(vfft_il2p_fn lf, int R1, int R2)
 {
-    /* 🔴 OPT-IN (unlike the promoted mid race): the blocked-leaf candidates
-     * are PROBE-STAGE — not yet campaign-promoted. Default create behavior
-     * is byte-for-byte the shipped path; set VFFT_N1TB=1 to engage the
-     * race (measurement sessions only). Promotion — flipping this to
-     * default-on with a kill switch — is a reviewed decision, not a probe
-     * side effect. */
-    if (!getenv("VFFT_N1TB")) return;
-    if (p->R1 & 1) return;   /* leaf count = R1; blocked has NO odd tail */
-    vfft_il2p_fn cand[2] = { 0, 0 };
-    int exact[2] = { 0, 0 };
-    int nc = 0;
-    if (p->R2 == 32) {
-        cand[0] = radix32_z_n1tb_fwd_avx2;   exact[0] = 1;
-        cand[1] = radix32_z_n1tb48_fwd_avx2; exact[1] = 0; nc = 2;
-    } else
-        return;
-
-    static int _lm_key[8];               /* (R1<<16)|R2, 0 = empty        */
-    static signed char _lm_pick[8];      /* 0=ship 1=cand[0] 2=cand[1]    */
-    const int lkey = (p->R1 << 16) | p->R2;
-    int lslot = -1;
-    for (int ci = 0; ci < 8; ci++)
-    {
-        if (_lm_key[ci] == lkey)
-        {
-            if (_lm_pick[ci] > 0) p->leaf_f = cand[_lm_pick[ci] - 1];
-            return;
-        }
-        if (_lm_key[ci] == 0 && lslot < 0) lslot = ci;
-    }
-
-    const size_t R1s = (size_t)p->R1, R2s = (size_t)p->R2;
-    const size_t n2 = (size_t)p->N * 2u;
-    const size_t sz = n2 * sizeof(double);
-    double *zi = (double *)VFFT_IL2P_ALLOC(sz);
-    double *zs = (double *)VFFT_IL2P_ALLOC(sz);
-    double *zv = (double *)VFFT_IL2P_ALLOC(sz);
-    if (!zi || !zs || !zv) goto done;
-    {
-        unsigned s = 2463534242u ^ (unsigned)(p->N * 31 + 7); /* distinct from the mid probe */
-        for (size_t i = 0; i < n2; i++) {
-            s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-            zi[i] = (double)(s & 0xffffu) / 65536.0 - 0.5;
-        }
-    }
-    {
-        p->leaf_f(zi, 0, zs, 0, 0, 0, R1s, 0, R2s, 0, R1s);
-        double smax = 0.0;
-        for (size_t i = 0; i < n2; i++) {
-            double a = fabs(zs[i]);
-            if (a > smax) smax = a;
-        }
-        int keep[2] = { 0, 0 };
-        for (int c = 0; c < nc; c++) {
-            cand[c](zi, 0, zv, 0, 0, 0, R1s, 0, R2s, 0, R1s);
-            if (exact[c])
-                keep[c] = (memcmp(zs, zv, sz) == 0);
-            else {
-                double dmax = 0.0;
-                for (size_t i = 0; i < n2; i++) {
-                    double d = fabs(zv[i] - zs[i]);
-                    if (d > dmax) dmax = d;
-                }
-                keep[c] = (smax > 0.0 && dmax <= 1e-12 * smax);
-            }
-        }
-
-        vfft_il2p_fn arm[3];
-        arm[0] = p->leaf_f;
-        int na = 1;
-        for (int c = 0; c < nc; c++)
-            if (keep[c]) arm[na++] = cand[c];
-        if (na == 1) goto done;
-
-        double t0 = _vfft_il2p_now_ns();
-        p->leaf_f(zi, 0, zs, 0, 0, 0, R1s, 0, R2s, 0, R1s);
-        double est = _vfft_il2p_now_ns() - t0;
-        if (est < 1.0) est = 1.0;
-        int reps = (int)(50000.0 / est);
-        if (reps < 4)   reps = 4;
-        if (reps > 256) reps = 256;
-
-        enum { RR = 7 };
-        double lap[3][RR];
-        for (int r = 0; r < RR; r++)
-            for (int j = 0; j < na; j++) {
-                int a = (r & 1) ? (na - 1 - j) : j;
-                t0 = _vfft_il2p_now_ns();
-                for (int i = 0; i < reps; i++)
-                    arm[a](zi, 0, zs, 0, 0, 0, R1s, 0, R2s, 0, R1s);
-                lap[a][r] = (_vfft_il2p_now_ns() - t0) / (double)reps;
-            }
-        double score[3];
-        for (int a = 0; a < na; a++) {
-            double v[RR];
-            memcpy(v, lap[a], sizeof v);
-            for (int i = 1; i < RR; i++) {
-                double x = v[i];
-                int j = i;
-                while (j > 0 && v[j - 1] > x) { v[j] = v[j - 1]; j--; }
-                v[j] = x;
-            }
-            score[a] = v[RR / 2];
-        }
-        int win = 0;
-        for (int a = 1; a < na; a++)
-            if (score[a] < score[win]) win = a;
-        if (win != 0 && score[win] < score[0] * 0.97)
-            p->leaf_f = arm[win];
-        if (lslot >= 0)
-        {
-            signed char pick = 0;
-            if (p->leaf_f == cand[0]) pick = 1;
-            else if (nc > 1 && p->leaf_f == cand[1]) pick = 2;
-            _lm_pick[lslot] = pick;
-            _lm_key[lslot] = lkey;
-        }
-        if (getenv("VFFT_ZRACE_VERBOSE"))
-            fprintf(stderr,
-                    "[zroute] N=%d R2=%d il2p n1tb race: arms=%d reps=%d "
-                    "burst~50us hyst=3%% alt-order median | ship=%.0f "
-                    "c0=%.0f c1=%.0f -> %s\n",
-                    p->N, p->R2, na, reps, score[0],
-                    na > 1 ? score[1] : -1.0, na > 2 ? score[2] : -1.0,
-                    p->leaf_f == arm[0] ? "ship"
-                                        : (p->leaf_f == cand[0] ? "n1tb" : "n1tb48"));
-    }
-done:
-    VFFT_IL2P_FREE(zi);
-    VFFT_IL2P_FREE(zs);
-    VFFT_IL2P_FREE(zv);
+    const char *v = getenv("VFFT_IL2P_LEAF");
+    if (!v || !*v || R2 != 32 || (R1 & 1)) return lf;
+    if (strcmp(v, "n1tb") == 0)   return radix32_z_n1tb_fwd_avx2;
+    if (strcmp(v, "n1tb48") == 0) return radix32_z_n1tb48_fwd_avx2;
+    return lf;
 }
 
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
@@ -681,7 +386,10 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     vfft_il2p_plan_t *p = (vfft_il2p_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
     p->N = N; p->R1 = R1; p->R2 = R2;
-    p->leaf_f = lf; p->leaf_b = lb; p->mid_f = mf; p->mid_b = mb;
+    p->leaf_f = _vfft_il2p_leaf_pick(lf, R1, R2);
+    p->leaf_b = lb;
+    p->mid_f  = _vfft_il2p_mid_pick(mf, R1, R2);
+    p->mid_b  = mb;
     p->n1_b = nb;
     p->t2t_b = tt;
     p->n1_b_r2 = nb2;
@@ -713,13 +421,6 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
                 rb[4 + 2 * j] = s;  rb[4 + 2 * j + 1] = -s;
             }
         }
-    /* plan fully built — race the blocked t2 candidates for mid_f (no-op
-     * unless R1 is 16/32 with even R2; VFFT_NO_T2B kills it) */
-    _vfft_il2p_race_mid_f(p);
-    /* ...and the blocked n1t candidates for leaf_f — OPT-IN, probe stage:
-     * inert unless VFFT_N1TB=1 (and then only R2==32 with even R1).
-     * Promotion to default-on is a reviewed decision. E9, 2026-08-05. */
-    _vfft_il2p_race_leaf_f(p);
     return p;
 }
 
