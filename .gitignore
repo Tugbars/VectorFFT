@@ -101,3 +101,6 @@ docs/roadmap/cascade_natural_inplace_plan.md
 build_tuned/benches/smallre_mkl_probe.c
 build_tuned/benches/smallre_pairs_probe.c
 build_tuned/benches/smallre_split_probe.c
+
+# personal living dashboard (session-maintained, not a tracked doc)
+IL_SUPPORT_MATRIX.md
