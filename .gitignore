@@ -104,3 +104,4 @@ build_tuned/benches/smallre_split_probe.c
 
 # personal living dashboard (session-maintained, not a tracked doc)
 IL_SUPPORT_MATRIX.md
+CODELET_TAXONOMY.md
