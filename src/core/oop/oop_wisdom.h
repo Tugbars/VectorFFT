@@ -53,6 +53,19 @@ typedef struct {
      * BOTH axes because the buffer layout is an EXECUTE-time contract
      * (sim==dim==NULL => interleaved), unknown at plan create. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
+    /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
+     * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
+     *   mid : 0 = registry t2 (monolithic), 1 = t2b [2·16], 2 = t2b48 [4·8]
+     *   leaf: 0 = registry n1t (monolithic), 1 = n1tb [2·16], 2 = n1tb48
+     * Same back-compat story as kind-4's zt_tw: **0 means the monolithic
+     * registry kernel**, so every line banked before this axis existed
+     * replays as exactly today's behavior — no sentinel to forget.
+     * The verdict is MEASURED at the front door (blocked kernels are
+     * placement-luck sensitive, so it is re-measured per binary like t2q)
+     * and consumed by vfft.c, which installs the kernels after create.
+     * il2p.h stays a pure engine: it publishes the variant REGISTRY
+     * (vfft_il2p_mid_v_fn / vfft_il2p_leaf_v_fn) and does no selection. */
+    int    il_kv;
     /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
      * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
      * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
@@ -164,6 +177,13 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
         if (!ok) continue;
         tok = strtok(NULL, " \t\n\r");          /* ns (optional) */
         e->ns = tok ? atof(tok) : 0.0;
+        /* kind-3 IL kernel-variant axis: OPTIONAL trailing il_kv after ns.
+         * Absent -> 0 -> monolithic registry kernels, i.e. exactly the
+         * behavior of every line banked before this axis existed. */
+        if (e->kind == VFFT_OOP_KIND_BAILEY2V && tok) {
+            tok = strtok(NULL, " \t\n\r");
+            e->il_kv = tok ? atoi(tok) : 0;
+        }
         /* kind-4 route axis: OPTIONAL trailing "zs_route zt_t2q" after ns.
          * Old-format lines end at ns -> both stay 0 = legacy zsplit route
          * with the stf pick — backward compatible by construction. */
@@ -345,6 +365,11 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
     else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
         fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);
     fprintf(f, " %.1f", e->ns);
+    /* kind-3 variant verdict: emitted ONLY when non-zero, so a cell that
+     * never measured the blocked axis re-banks in the exact pre-axis
+     * format (banked files and diffs stay byte-stable). */
+    if (e->kind == VFFT_OOP_KIND_BAILEY2V && e->il_kv)
+        fprintf(f, " %d", e->il_kv);
     /* kind-4 route axis: trailing "zs_route zt_t2q" AFTER ns, and only for
      * route!=0 — a legacy verdict re-banks in the exact pre-route format
      * (old readers, diffs, and banked files stay byte-stable). */

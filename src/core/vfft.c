@@ -1850,6 +1850,33 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
 static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                                   const double *z_in, double *z_out);
 
+/* Apply the banked IL kernel-variant verdict (kind-3 `il_kv`) to a freshly
+ * created il2p plan. The VERDICT comes from wisdom; the MEASUREMENT that
+ * produced it is the front door's job (bench_1d_vs_mkl.c builds a handle
+ * per variant and times them, like every other comparison there). Nothing
+ * here measures, and il2p.h stays a pure engine — it only publishes the
+ * (radix, variant) registry.
+ *
+ * il_kv == 0 (every line banked before this axis existed, and every cell
+ * that never measured it) => both lookups return 0 => the plan keeps the
+ * monolithic registry kernels. No sentinel, no migration.
+ *
+ * COUNT CONTRACT: blocked kernels have no odd-count tail. The mid runs at
+ * count = R2, the leaf at count = R1 — hence the parity guards, passed
+ * explicitly so the rule is visible at the call site. */
+static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
+                              const vfft_oop_wisdom_entry_t *ke)
+{
+    if (!p || !ke || !ke->il_kv)
+        return;
+    vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, VFFT_IL_KV_MID(ke->il_kv),
+                                        (p->R2 & 1) == 0);
+    if (m) p->mid_f = m;
+    vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, VFFT_IL_KV_LEAF(ke->il_kv),
+                                         (p->R1 & 1) == 0);
+    if (l) p->leaf_f = l;
+}
+
 /* ── K=1 IL-engine candidate for the IN-PLACE tiers (il_coverage_plan.md
  * Phase B). Resolves N to exactly one of il2p/il3p (or neither): kind-3
  * pair when banked, else the balanced-pair heuristic, else the il3p chain
@@ -1895,6 +1922,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     }
     if (iR1)
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
+        _k1_il2p_apply_kv(*il2p_out, ke);   /* banked variant verdict */
     /* PAIR-ORDERING race (il_coverage_plan Phase E follow-on, 2026-08-04):
      * with the blocked mids live, the ORDERING of a heuristic pair now
      * matters — (R1,R2) and (R2,R1) run different mid kernels (t2b48 vs
@@ -3911,6 +3939,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             {
                 if (iR1 && !getenv("VFFT_NO_IL2P"))
                     il2p = vfft_il2p_create(N, iR1, iR2);
+                    _k1_il2p_apply_kv(il2p, ke);   /* banked variant verdict */
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
             /* 3-STAGE CHAIN (route 6): the odd·2^k cells the pair search can
