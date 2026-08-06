@@ -293,7 +293,7 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
   128         0.91 †              ▢          (= NAT bits)
   256       0.75–0.77             ▢          (= NAT bits)
   512       0.76–0.79 ▲           ▢          (= NAT bits)
-  1024      0.83–0.84 ▲           ▢          (= NAT bits)
+  1024      0.82–0.94 ⚡          ▢          (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
