@@ -220,8 +220,11 @@ batching, and where.
   `_tc_clone_equiv` (a clone must match the primary's attach + chain +
   natord + exact kernel pointers, else it is destroyed — one batch must
   never mix two scrambled combs), and the `VFFT_NO_TCMT` kill switch.
-  Engage floor N·K ≥ 4096 (⚠ hand-set; measured crossover belongs in
-  wisdom — open). Gate arm 7 (`vfft_tcbatch_gate.c`): MT(8)==ST
+  Engage floor N·K ≥ **2048, MEASURED** (`--ilmt` with `VFFT_TCMT_FLOOR=1`
+  mapped the crossover: 1024 ⇒ MT 0.82× = HURTS, 2048 ⇒ 1.52–1.62×,
+  4096 ⇒ 3.0×; lowering 4096→2048 flips 512×4 and 256×8 from losing to
+  MKL to winning). Still a scalar default from one machine — the per-cell
+  banked pick remains the end state. Gate arm 7 (`vfft_tcbatch_gate.c`): MT(8)==ST
   BITWISE fwd/bwd/in-place at 8 cells incl. mono, Bailey, cascade,
   chain3 ragged-K, below-floor serial — ALL PASS; `mt_c2c_gate`
   re-run clean (split MT untouched). Engagement probe

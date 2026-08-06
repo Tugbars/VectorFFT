@@ -3221,7 +3221,8 @@ int main(int argc, char **argv)
     {
         if (g_ilmt)
             fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
-                         "ratio_vs_mkl,scale_ours,scale_mkl,ctl_spread,xerr,mt_ne_st\n");
+                         "ratio_vs_mkl_best,ratio_vs_mkl_mt,scale_ours,scale_mkl,"
+                         "ctl_spread,xerr,mt_ne_st\n");
         else if (g_kzb)
             fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr\n");
@@ -3252,18 +3253,21 @@ int main(int argc, char **argv)
                    "cool=%dms) ===\n"
                    "# identical memory on both sides: DFTI howmany=K "
                    "distance=N IS our transform-contiguous geometry\n"
-                   "# r_mkl>1 = WE WIN. scale = own ST/MT (8.00 = perfect). "
-                   "ctl = repeat-arm spread; a delta under it is NOT a result\n"
-                   "%-7s %-4s %10s %10s %10s %10s | %7s %7s %7s %7s %9s\n",
+                   "# r_best = ours_mt vs MKL's FASTER config (its MT is a net "
+                   "loss at most cells, so that is usually its ST) — the "
+                   "honest headline\n"
+                   "# scale = own ST/MT (8.00 = perfect). ctl = repeat-arm "
+                   "spread; a delta under it is NOT a result\n"
+                   "%-7s %-4s %10s %10s %10s %10s | %8s %7s %6s %6s %6s %9s\n",
                    g_mt, pace_ms, cool_ms, "N", "K", "ours_mt", "ours_st",
-                   "mkl_mt", "mkl_st", "r_mkl", "sc_us", "sc_mkl", "ctl",
-                   "xerr");
+                   "mkl_mt", "mkl_st", "r_best", "r_mklmt", "sc_us", "sc_mkl",
+                   "ctl", "xerr");
         if (target_N)
             run_ilmt_cell(target_N, (int)target_K, out, cool_ms, flip);
         else
         {
-            static const int ILMT_N[] = { 256, 1024, 4096, 16384 };
-            static const int ILMT_K[] = { 8, 32 };
+            static const int ILMT_N[] = { 256, 512, 1024, 4096, 16384, 65536 };
+            static const int ILMT_K[] = { 4, 8, 32 };
             int cells = 0;
             for (size_t ki = 0; ki < sizeof ILMT_K / sizeof ILMT_K[0]; ki++)
                 for (size_t ni = 0; ni < sizeof ILMT_N / sizeof ILMT_N[0]; ni++)
