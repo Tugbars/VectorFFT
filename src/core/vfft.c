@@ -245,11 +245,26 @@ struct vfft_plan_s
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.
      * Non-NULL <=> this is a wrapper handle, and then NOTHING else on the
-     * struct is live except transform/placement/layout/N/K. Owned; destroy
-     * frees it. Serving a batch as K independent transforms is why this
-     * geometry needs no batched machinery, no layout conversion, and
-     * inherits every K=1 improvement for free. */
+     * struct is live except transform/placement/layout/N/K/nthreads and the
+     * clone set below. Owned; destroy frees it. Serving a batch as K
+     * independent transforms is why this geometry needs no batched
+     * machinery, no layout conversion, and inherits every K=1 improvement
+     * for free. */
     struct vfft_plan_s *tcb;
+    /* TC MT (split's per-lane trick, one level up: per-TRANSFORM). The K=1
+     * IL engines are NOT reentrant — il2p/il3p own `mid` scratch, zturn owns
+     * its sectioned `plane` — so worker t runs its slab of transforms on its
+     * OWN identically-created K=1 handle, never on a shared one. Clones are
+     * built at create ONLY when the inner route is provably pool-free both
+     * directions (_tc_inner_mt_safe) and each clone is verified
+     * output-equivalent to the primary (_tc_clone_equiv) — a wisdom-absent
+     * cascade cell can re-race at create, and two clones with different
+     * chains would emit different scrambled combs inside ONE batch. A clone
+     * that fails the check is destroyed and the worker set stops growing
+     * (degrade = fewer workers / serial, never a mixed batch). tcbw_n == 0
+     * <=> tcbw == NULL <=> serial loop (today's path, byte-identical). */
+    struct vfft_plan_s **tcbw;
+    int tcbw_n;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -2287,6 +2302,113 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     return 1;
 }
 
+/* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
+ * A TC worker calls vfft_execute on its clone from a POOL THREAD, so the
+ * clone's whole execute path must be pool-free: it may never call
+ * vfft_set_num_threads (pool create/destroy from a worker) nor dispatch to
+ * _stride_workers (a worker dispatching to itself deadlocks the wait).
+ * The native K=1 IL engines qualify — mono is stateless, il2p/il3p/ilprime
+ * and both cascade routes are pure plan-plus-scratch calls. What does NOT
+ * qualify is every convert/fallback arm: _exec_c2c_interleaved and
+ * _exec_c2c_oop_convert both re-assert the pool and slab work across it.
+ * The predicate is therefore conservative PER DIRECTION: a route whose bwd
+ * can break to the convert fallback (il2p with no resolvable bwd arm) is
+ * unsafe even though its fwd is fine — execute takes either dir. */
+static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
+{
+    if (g->zsplit || g->zturn)
+        return 1; /* _exec_zcascade: pure engine calls, both placements */
+    if (g->placement == VFFT_INPLACE)
+        /* in-place interleaved: k1il2p/k1il3p arms are engine-pure; the
+         * else-arm is _exec_c2c_interleaved (pool-touching). */
+        return (g->k1il2p || g->k1il3p) ? 1 : 0;
+    if (!g->k1_on)
+        return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
+    switch (g->k1_il_route)
+    {
+    case VFFT_K1_IL_MONO:
+        return g->k1_mono_ilf && g->k1_mono_ilb;
+    case VFFT_K1_IL_2P_PURE:
+        /* bwd must resolve INSIDE il2p (t2t arm or F-DIAG) or execute
+         * breaks to the convert fallback. Same availability logic as
+         * vfft_il2p_execute_bwd's own arms. */
+        return g->k1il2p &&
+               ((g->k1il2p->t2t_b && g->k1il2p->n1_b_r2) || g->k1il2p->n1_b);
+    case VFFT_K1_IL_CHAIN3:
+        return g->k1il3p != NULL;
+    case VFFT_K1_IL_PRIME:
+        return g->k1ilpr != NULL;
+    default:
+        return 0; /* no IL route -> convert fallback */
+    }
+}
+
+/* Clones are built by RE-RUNNING create, and create is only deterministic
+ * when every verdict it needs is banked: a wisdom-absent cascade cell
+ * re-races per create and can pick a DIFFERENT chain — whose scrambled comb
+ * is a different output permutation. One batch must never mix them, and the
+ * MT==ST gate must hold BITWISE, so a clone is accepted only if everything
+ * that determines output bits matches the primary: the attach pattern, the
+ * cascade chain + natord, and the exact kernel pointers (il_kv blocked
+ * variants n1tb48/t2b48 are ~e-16 different bits, so fn identity matters).
+ * Deliberately NOT compared: t2q/thonest (bit-identical pairs by design),
+ * tiled/tw (memcmp-identical to untiled, P0a-gated). */
+static int _tc_clone_equiv(const struct vfft_plan_s *a,
+                           const struct vfft_plan_s *b)
+{
+    if (a->zroute != b->zroute ||
+        !a->zturn != !b->zturn || !a->zsplit != !b->zsplit ||
+        !a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
+        !a->k1ilpr != !b->k1ilpr ||
+        a->k1_on != b->k1_on || a->k1_il_route != b->k1_il_route)
+        return 0;
+    if (a->zturn)
+    {
+        const vfft_zturn2_plan_t *x = a->zturn, *y = b->zturn;
+        if (x->nf != y->nf || x->natord != y->natord)
+            return 0;
+        for (int s = 0; s < x->nf; s++)
+            if (x->chain[s] != y->chain[s])
+                return 0;
+    }
+    if (a->zsplit)
+    {
+        const vfft_zsplit_plan_t *x = a->zsplit, *y = b->zsplit;
+        if (x->nf != y->nf)
+            return 0;
+        for (int s = 0; s < x->nf; s++)
+            if (x->chain[s] != y->chain[s])
+                return 0;
+    }
+    if (a->k1il2p)
+    {
+        const vfft_il2p_plan_t *x = a->k1il2p, *y = b->k1il2p;
+        if (x->R1 != y->R1 || x->R2 != y->R2 ||
+            x->leaf_f != y->leaf_f || x->mid_f != y->mid_f ||
+            x->leaf_b != y->leaf_b || x->mid_b != y->mid_b ||
+            x->t2t_b != y->t2t_b || x->n1_b_r2 != y->n1_b_r2 ||
+            x->n1_b != y->n1_b)
+            return 0;
+    }
+    if (a->k1il3p)
+    {
+        const vfft_il3p_plan_t *x = a->k1il3p, *y = b->k1il3p;
+        if (x->R2 != y->R2 || x->A != y->A || x->B != y->B ||
+            x->leaf_f != y->leaf_f || x->tA_f != y->tA_f ||
+            x->tB_f != y->tB_f || x->tA_b != y->tA_b ||
+            x->tBg_b != y->tBg_b || x->n1_b != y->n1_b)
+            return 0;
+    }
+    if (a->k1ilpr &&
+        (a->k1ilpr->method != b->k1ilpr->method ||
+         a->k1ilpr->M != b->k1ilpr->M))
+        return 0;
+    if (a->k1_on && a->k1_il_route == VFFT_K1_IL_MONO &&
+        (a->k1_mono_ilf != b->k1_mono_ilf || a->k1_mono_ilb != b->k1_mono_ilb))
+        return 0;
+    return 1;
+}
+
 static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 {
     if (!cfg)
@@ -2441,6 +2563,49 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tcb = inner;
+        /* MT worker clones (struct comment at tcbw). Built only when the
+         * pool exists AND the inner route is pool-free (_tc_inner_mt_safe).
+         * The inner create above already applied cfg->nthreads to the global
+         * pool (the K=1 path's own snapshot-before-build), so h->nthreads
+         * and the clone count see the requested value, not a stale one.
+         * Clone creates replay the SAME banked wisdom the primary just used
+         * (any create-time race banks in-process on the first create), so
+         * the equivalence check is an invariant, not a coin flip — but it is
+         * what turns a nondeterministic-create bug into fewer workers
+         * instead of a mixed-permutation batch. */
+        if (h->nthreads > 1 && !getenv("VFFT_NO_TCMT") &&
+            _tc_inner_mt_safe(inner))
+        { /* VFFT_NO_TCMT: create-time kill switch (VFFT_NO_ZTURN precedent)
+           * — no clones => execute is the serial loop, the pre-MT behavior.
+           * Also the bench's A/B hook through the front door. */
+            int nw = h->nthreads - 1;
+            if ((size_t)nw > K - 1)
+                nw = (int)(K - 1);
+            if (nw > 63)
+                nw = 63; /* pool dispatch arrays are a[64] tree-wide */
+            if (nw > 0)
+                h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
+                                                        sizeof *h->tcbw);
+            if (h->tcbw)
+                for (int t = 0; t < nw; t++)
+                {
+                    struct vfft_plan_s *c = vfft_create(&c1);
+                    if (!c)
+                        break;
+                    if (!_tc_clone_equiv(inner, c))
+                    {
+                        vfft_destroy(c);
+                        break;
+                    }
+                    h->tcbw[t] = c;
+                    h->tcbw_n = t + 1;
+                }
+            if (h->tcbw && h->tcbw_n == 0)
+            {
+                free(h->tcbw);
+                h->tcbw = NULL;
+            }
+        }
         return h;
     }
     if (cfg->batch_geom != VFFT_BATCH_DEFAULT &&
@@ -4685,6 +4850,26 @@ static void _zc_tramp(void *v)
                       a->es);
 }
 
+/* TRANSFORM-CONTIGUOUS batch MT: worker t runs transforms [t0, t0+tc) of
+ * the batch through vfft_execute on its OWN clone handle (tcbw comment on
+ * the struct) — full independence, no barriers, disjoint blocks. The clone's
+ * route is pool-free by _tc_inner_mt_safe, so this re-entry into
+ * vfft_execute from a pool thread can never touch the pool. */
+typedef struct
+{
+    struct vfft_plan_s *p;
+    vfft_dir_t dir;
+    double *s, *d;
+    size_t t0, tc, tn;
+} _tc_mt_arg;
+static void _tc_mt_tramp(void *v)
+{
+    _tc_mt_arg *a = (_tc_mt_arg *)v;
+    for (size_t t = 0; t < a->tc; t++)
+        vfft_execute(a->p, a->dir, a->s + (a->t0 + t) * a->tn, NULL,
+                     a->d + (a->t0 + t) * a->tn, NULL);
+}
+
 /* §6a57: explicit-intrinsic z<->split converts. Measured parity with gcc
  * -O2's auto-vectorization (bench_il_convert_vec: hand -3.4%); applied
  * anyway for COMPILER INDEPENDENCE — other toolchains / -O1 builds are
@@ -5502,9 +5687,55 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
        * real route, placement and order; this loop only walks the blocks.
        * The INTERLEAVED C2C signature check above guarantees sre and dre are
        * both non-NULL (in-place is spelled (z,NULL,z,NULL), i.e. dre==sre),
-       * so the two pointers need no normalization here. */
+       * so the two pointers need no normalization here.
+       *
+       * MT = the split path's per-lane trick at transform granularity:
+       * contiguous slabs of ceil(K/T) transforms, worker t on clone t-1,
+       * caller on slab 0, one wait — no barriers, and MT==ST bitwise by
+       * construction (same kernels, same per-block data, disjoint writes).
+       * tcbw_n==0 (no pool at create / route not pool-free / clone
+       * mismatch) means T==1 and this is byte-for-byte the old serial
+       * loop. */
         double *d = dre;
         const size_t tn = 2 * (size_t)h->N;
+        int T = 1 + h->tcbw_n;
+        if (T > 1 && (size_t)h->N * h->K >= 4096)
+        { /* engage floor: total work in complex points, mirroring the
+           * converts' NK floor. ⚠ Hand-set starting point — the measured
+           * crossover belongs in wisdom once the bench maps it. */
+            vfft_set_num_threads(h->nthreads); /* re-assert snapshot pool */
+            if (T > _stride_pool_size + 1)
+                T = _stride_pool_size + 1;
+        }
+        else
+            T = 1;
+        if (T > 1)
+        {
+            const size_t S = (h->K + (size_t)T - 1) / (size_t)T;
+            _tc_mt_arg a[64];
+            int nd = 0;
+            for (int t = 1; t < T; t++)
+            {
+                size_t t0 = (size_t)t * S;
+                if (t0 >= h->K)
+                    break;
+                size_t te = t0 + S;
+                if (te > h->K)
+                    te = h->K;
+                a[nd] = (_tc_mt_arg){h->tcbw[t - 1], dir, sre, d,
+                                     t0, te - t0, tn};
+                _stride_pool_dispatch(&_stride_workers[nd], _tc_mt_tramp,
+                                      &a[nd]);
+                nd++;
+            }
+            size_t s0 = S < h->K ? S : h->K;
+            for (size_t t = 0; t < s0; t++)
+                vfft_execute(h->tcb, dir, sre + t * tn, NULL,
+                             d + t * tn, NULL);
+            if (nd)
+                _stride_pool_wait_all();
+            return;
+        }
         for (size_t t = 0; t < h->K; t++)
             vfft_execute(h->tcb, dir, sre + t * tn, NULL, d + t * tn, NULL);
         return;
@@ -5852,6 +6083,12 @@ void vfft_destroy(vfft_plan h)
         vfft_zsplit_destroy(h->zsplit);
     if (h->tcb)
         vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
+    if (h->tcbw)
+    { /* ...and its MT worker clones (depth-1 recursion: clones have no tcb) */
+        for (int t = 0; t < h->tcbw_n; t++)
+            vfft_destroy(h->tcbw[t]);
+        free(h->tcbw);
+    }
     if (h->zturn)
         vfft_zturn2_destroy(h->zturn);
     vfft_il2p_destroy(h->k1il2p);
