@@ -133,6 +133,73 @@ as the single-thread table above. Source: `bench_1d_vs_mkl.c --mt` → `vfft_per
 > scales poorly at modest N. These use the **generic** executor — a conservative floor (JIT is wired
 > and bit-exact again post-core-move; re-running with `--jit` widens the margin).
 
+### Multi-threaded — INTERLEAVED transform-contiguous batch at T=8
+
+A second batch geometry, and the fairest MT cell in this document: DFTI with
+`DFTI_NUMBER_OF_TRANSFORMS=K, DFTI_INPUT_DISTANCE=N` **is** our transform-contiguous
+layout, so both engines read byte-identical memory and compute the same natural-order
+spectrum — the correctness column is a cross-engine elementwise compare (~1e-16 every
+cell), not a roundtrip proxy. The whole process is confined to the **8 distinct P-cores**
+(affinity mask `0x5555`; logical 0,2,…,14) before any MKL/OpenMP initialization, so
+neither engine can borrow E-cores or HT siblings. Source: `bench_1d_vs_mkl.c --ilmt`
+→ `vfft_perf_tuned_1d_ilmt.csv`.
+
+Four timed arms per cell — ours at T=8 and T=1, MKL at T=8 and T=1 — plus a repeat of
+arm 1 as a control. Our pool is torn down before every MKL arm (our workers spin and
+would otherwise steal cores), and MKL gets ≥300 ms to park its threads before ours.
+
+```
+ N      K    ours-T8   ours-T1    MKL-T8    MKL-T1 | vs MKL best  our scale  MKL scale
+────────────────────────────────────────────────────────────────────────────────────
+ 256    4        729       736     4,798       567 |     0.78×      1.01×      0.12×
+ 512    4      1,144     1,783     6,304     1,396 |     1.22×      1.56×      0.22×
+ 1024   4      2,025     5,208     8,428     3,411 |     1.68×      2.57×      0.40×
+ 4096   4      4,880    16,098    34,275    15,147 |     3.10×      3.30×      0.44×
+ 16384  4     20,403    81,577   120,537    93,213 |     4.57×      4.00×      0.77×
+ 65536  4    113,650   478,037   533,762   511,900 |     4.50×      4.21×      0.96×
+ 256    8        960     1,488    18,828     1,216 |     1.27×      1.55×      0.06×
+ 512    8      1,211     3,497    20,745     2,827 |     2.33×      2.89×      0.14×
+ 1024   8      2,893    10,184    24,959     6,537 |     2.26×      3.52×      0.26×
+ 4096   8      5,259    33,308    47,869    30,185 |     5.74×      6.33×      0.63×
+ 16384  8     21,520   173,373   231,527   210,680 |     9.79×      8.06×      0.91×
+ 65536  8    116,487   973,900 1,081,600 1,048,062 |     9.00×      8.36×      0.97×
+ 256    32     1,634     5,920    23,009     5,000 |     3.06×      3.62×      0.22×
+ 512    32     3,629    14,163    28,527    11,180 |     3.08×      3.90×      0.39×
+ 1024   32     9,146    40,174    45,374    27,289 |     2.98×      4.39×      0.60×
+ 4096   32    17,880   149,507   184,660   164,240 |     9.19×      8.36×      0.89×
+ 16384  32    85,475   703,463   854,637   825,612 |     9.66×      8.23×      0.97×
+ 65536  32   951,800 4,253,488 7,385,125 7,381,413 |     7.76×      4.47×      1.00×
+────────────────────────────────────────────────────────────────────────────────────
+ns/call. "scale" = that engine's OWN T1/T8 (8.00 = perfect on 8 cores).
+```
+
+> **17 of 18 cells win, median 3.09×, up to 9.79× at 16384×8. Our own scaling reaches
+> 8.36× on 8 cores (4096×32, 65536×8) — near-linear.**
+
+**We compare against MKL's *faster* configuration, which is almost always its serial one.**
+That is the finding this table exists to record: **MKL's threaded arm never beats its own
+serial arm at any cell measured** — its scale column runs 0.06×–1.00×, capping exactly at
+parity. This is not a mis-measurement. `MKL_VERBOSE=1` confirms the threading layer is
+`intel_thread` and that the calls run at `NThr:8`; it was re-checked under three affinity
+masks (`0x5555`, `0xFFFF`, unmasked) with the same result. MKL threads the work correctly
+and simply loses doing so at these granularities: at 256×8 its threaded arm costs 18,828 ns
+against 1,216 ns serial, 15× slower for identical math. Scoring against MKL's T=8 column
+instead would inflate every ratio (median 8.25× vs the honest 3.09×) by crediting us for an
+option MKL's own users would not select.
+
+Three caveats stated plainly:
+
+- **This is a threading-architecture win, not a kernel win.** Compare the two T=1 columns —
+  that is the kernel-vs-kernel fight with threading removed. MKL leads at N ≤ 1024
+  (1.18×–1.56×, worst for us at 1024); we lead from 4096 up (1.06×–1.74×). The sub-2048
+  serial gap is real and is tracked separately.
+- **Our workers never park.** Dispatch is cheap precisely because the pool spins rather than
+  sleeping, which costs idle CPU and power. MKL's threads sleep after `KMP_BLOCKTIME`, which
+  is better behaviour inside a host application doing other work. On this benchmark the trade
+  is pure upside for us; in production it is a real cost.
+- **Two cells are noise-dominated** — 256×8 (9.2% control spread) and 4096×8 (7.8%). Every
+  multi-× result sits far outside its own control spread; anything inside it is not a result.
+
 ### Natural order — in-place (single-thread)
 
 In-place c2c natively emits **digit-scrambled** order (the convolution contract — §1 headline). The
