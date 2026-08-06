@@ -208,35 +208,6 @@ Both inherit ESTIMATE/MEASURE from the inner mixed-radix FFT.
 
 ---
 
-## Quick Start
-
-_Soon to be updated._
-
----
-
-## Roadmap
-
-### Near-term
-- **ILP optimization for large power-of-2** -- VTune profiling shows MKL achieves better instruction-level parallelism on large pow2 at K=4 (our closest margin: 1.02x at N=16384). Codelet scheduling improvements to increase FMA port saturation.
-- **Natural-order DFT output** (`vfft_permute`) -- expose the digit-reversal permutation table so users can inspect individual frequency bins without roundtrip
-- **R=9 codelet** -- unlocks 3^N sizes (3^10 = 59049, 3^12 = 531441) that currently exceed the max stage depth with R=3 alone. Fits AVX2's 16 YMMs.
-- **Strided-batch codelets for 2D** -- eliminate transpose entirely by allowing non-unit batch stride in codelets. Estimated 1.27x over MKL at 256x256 (currently 1.14x with tiled transpose).
-- **K=1 scalar fallback** -- AVX2 codelets currently require K>=4 (SIMD width). Add scalar path for single-transform use cases.
-- **Native interleaved C2C** -- dedicated codelets for interleaved complex layout (re+im adjacent), avoiding deinterleave overhead for users with packed data.
-
-### Medium-term
-- **1D Bailey 4-step** -- natural-order output for large 1D transforms using transpose + twiddle infrastructure (already built and benchmarked)
-- **3D FFT** -- extend tiled 2D approach to three dimensions
-- **ARM NEON / SVE codelets** -- port codelet generators to ARM SIMD targets
-- **Single-precision (float32)** support -- separate codelet set with 8-wide AVX2 / 16-wide AVX-512
-
-### Long-term
-- **GPU backend** (Vulkan compute / CUDA) -- VkFFT-style GPU execution sharing the same planner and wisdom infrastructure
-- **Distributed FFT** (MPI) -- multi-node decomposition for very large transforms
-- **White paper** -- microarchitectural profiling (PMU counters, spill analysis, roofline) documenting why VectorFFT beats MKL at the instruction level
-
----
-
 ## Acknowledgments
 
 - [FFTW](http://www.fftw.org/) by Matteo Frigo and Steven G. Johnson -- the gold standard for decades. VectorFFT's prime-radix butterflies (R=11, 13, 17, 19) are derived from FFTW's genfft algebraic output, then re-scheduled using Sethi-Ullman register allocation with explicit spill management to minimize register pressure on AVX2 (16 YMM) and AVX-512 (32 ZMM).
