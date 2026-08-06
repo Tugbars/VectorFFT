@@ -4855,6 +4855,22 @@ static void _zc_tramp(void *v)
  * the struct) — full independence, no barriers, disjoint blocks. The clone's
  * route is pool-free by _tc_inner_mt_safe, so this re-entry into
  * vfft_execute from a pool thread can never touch the pool. */
+/* Engage floor in complex points (N*K). Default 4096 mirrors the converts'
+ * NK floor; VFFT_TCMT_FLOOR exists so the bench can MAP the crossover
+ * instead of us guessing it (the measured verdict belongs in wisdom — see
+ * il_coverage_plan.md). Read once: this is on the execute path. */
+static size_t _tc_mt_floor(void)
+{
+    static size_t f = 0;
+    if (!f)
+    {
+        const char *e = getenv("VFFT_TCMT_FLOOR");
+        long v = e ? atol(e) : 0;
+        f = (v > 0) ? (size_t)v : 4096;
+    }
+    return f;
+}
+
 typedef struct
 {
     struct vfft_plan_s *p;
@@ -5699,7 +5715,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         double *d = dre;
         const size_t tn = 2 * (size_t)h->N;
         int T = 1 + h->tcbw_n;
-        if (T > 1 && (size_t)h->N * h->K >= 4096)
+        if (T > 1 && (size_t)h->N * h->K >= _tc_mt_floor())
         { /* engage floor: total work in complex points, mirroring the
            * converts' NK floor. ⚠ Hand-set starting point — the measured
            * crossover belongs in wisdom once the bench maps it. */
