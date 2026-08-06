@@ -316,17 +316,20 @@ choice dominates form choice here.
 
 Reading it honestly:
 
-- **Sub-2048 is where we still trail** (0.75–0.84 natural). The ▲ cells run the blocked
+- **Sub-2048 is where we still trail** (0.78–0.95 natural). The ▲ cells run the blocked
   R≥32 kernels as the shipped default — a structural rule (a monolithic R≥32 body holds
   ~40–64 live values against AVX2's 16 registers and spills ~27% of its stream; blocked
   construction is the only body shape that fits, the same tier the split emitters apply
   at generation time), not a measured per-cell pick. A side observation from the A/B
   worth keeping: the monolithic arm's own spread at 1024 was 36% between two runs while
   the blocked arm's pair agreed to 0.5% — a spill-bound body is at the mercy of ambient
-  load in a way a register-resident one is not. 256 stays at 0.76 because its (16,16)
-  pair has no R≥32 slot: its remaining levers are the pair/stage-count axis (3-stage
-  chains measured +7.6–8.8% over every 2-stage pair at 512, not yet banked) and R=64
-  blocked kernels, which do not exist yet.
+  load in a way a register-resident one is not. 256 moved 0.76→0.85 only once the
+  calibrator replaced its heuristic (16,16) pair with the measured (8,32) — the pair
+  verdict is what put an R≥32 body in a slot the blocked rule could act on, so neither
+  half would have delivered it alone. Remaining levers, in order of measured promise:
+  the stage-count axis (3-stage chains beat every 2-stage pair at 512 by +7.6–8.8%,
+  measured twice, not yet banked), and R=64 blocked kernels, which do not exist yet —
+  R=32 and R=16 are now both covered, so R=64 is the last structural gap.
 - **≥2048 is parity-or-win** on every row except natural-OOP at 4096/32768.
 - **The SCRAMBLED row leads everywhere ≥2048, and the reason is structural rather than
   a kernel advantage**: setting `DFTI_ORDERING` to `DFTI_BACKWARD_SCRAMBLED` does not
