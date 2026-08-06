@@ -1888,24 +1888,11 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
      * forces the monolithic kernel back — required since blocked became
      * the R>=32 default, so a platform where blocked measures slower
      * stays expressible as a verdict rather than only as an env. */
-    if (!p || !ke || !ke->il_kv)
+    if (!p || !ke)
         return;
-    const int mv = VFFT_IL_KV_MID(ke->il_kv);
-    const int lv = VFFT_IL_KV_LEAF(ke->il_kv);
-    if (mv == VFFT_IL_KV_MONO)
-        p->mid_f = vfft_il2p_mid_fn(p->R1, 0);
-    else
-    {
-        vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, mv, (p->R2 & 1) == 0);
-        if (m) p->mid_f = m;
-    }
-    if (lv == VFFT_IL_KV_MONO)
-        p->leaf_f = vfft_il2p_leaf_fn(p->R2, 0);
-    else
-    {
-        vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, lv, (p->R1 & 1) == 0);
-        if (l) p->leaf_f = l;
-    }
+    vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
+                                             * one definition (il2p.h),
+                                             * planner uses the same fn */
 }
 
 /* ── K=1 IL-engine candidate for the IN-PLACE tiers (il_coverage_plan.md
@@ -2126,6 +2113,18 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
                               vfft_zsplit_plan_t **zs_out,
                               vfft_zturn2_plan_t **zt_out, int *zroute_out)
 {
+    /* The cascade is the ≥2048 tier, period. A kind-4 row BELOW that is a
+     * wrong-slot verdict (the sub-2048 SCRAMBLED champion is the identity
+     * ILP engine — Phase A doctrine, k1scr-gated) and replaying it would
+     * flip explicit-SCRAMBLED cells onto a cascade comb, silently breaking
+     * the scr==nat identity contract while every correctness column stays
+     * green — exactly how it was caught (2026-08-06): calibrate_k1's
+     * plan_and_bank side-banked sub-2048 kind-4 rows and the k1scr gate
+     * went DIFF at 128..1024 with the cascade 2.2× SLOWER than the engine
+     * it displaced. The driver no longer banks them; this guard makes any
+     * such row in a user's wisdom file inert as well. */
+    if (N < 2048)
+        return 0;
     vfft_zsplit_plan_t *zs_pending = NULL;
     vfft_zturn2_plan_t *zt_pending = NULL;
     int zroute_pending = 0;

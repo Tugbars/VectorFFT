@@ -411,6 +411,31 @@ static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
     }
 }
 
+/* Apply an explicit il_kv FORM verdict onto a built plan — the ONE
+ * definition of the nibble semantics, shared by vfft.c's wisdom apply and
+ * the DP planner's variant-axis candidates (two copies of this logic is
+ * the drift bug again). Deterministic, env-free. Nibble 0 = leave the
+ * slot as create resolved it (structural default); VFFT_IL_KV_MONO (0xF)
+ * = force the monolithic kernel back; else = the registry variant, parity
+ * gated exactly like the default. */
+static inline void vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
+{
+    if (!p || !kv) return;
+    const int mv = VFFT_IL_KV_MID(kv), lv = VFFT_IL_KV_LEAF(kv);
+    if (mv == VFFT_IL_KV_MONO)
+        p->mid_f = vfft_il2p_mid_fn(p->R1, 0);
+    else if (mv) {
+        vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, mv, (p->R2 & 1) == 0);
+        if (m) p->mid_f = m;
+    }
+    if (lv == VFFT_IL_KV_MONO)
+        p->leaf_f = vfft_il2p_leaf_fn(p->R2, 0);
+    else if (lv) {
+        vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, lv, (p->R1 & 1) == 0);
+        if (l) p->leaf_f = l;
+    }
+}
+
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
     if (N <= 0 || R1 < 3 || R2 < 3 || (long)R1 * (long)R2 != (long)N) return 0;
