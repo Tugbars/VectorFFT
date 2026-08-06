@@ -1,9 +1,54 @@
 # The cil optimizer gap — `codelet_cil.ml` never enters the shared pipeline
 
-**Status:** diagnosis complete, fix not started. 2026-08-06.
+**Status:** structural diagnosis stands; the PERFORMANCE thesis below was
+partly REFUTED the same day — read §0 first. 2026-08-06.
 **One line:** the pure-IL emitter builds its bodies directly instead of through
 `Dft.dft_expand*`, so it runs **none** of the DAG optimization sequence —
 no CSE, no factoring, no FMA lifting — while both sibling emitters do.
+
+---
+
+## 0. 🔴 CORRECTION (2026-08-06, same day) — read before acting
+
+The N=512 RE campaign (`docs/research/mkl512_gap_campaign/CONCLUSIONS.md`)
+measured the op mix directly and **refuted the FMA framing** this document
+was originally built on. Per-transform vector-ALU classes at N=512:
+
+| class | ports | ours | MKL | delta |
+|---|---|---|---|---|
+| FMA + MUL | {p0,p1} | 1264 | 1344 | **−80 — we are 6% BELOW MKL** |
+| FADD/SUB/ADDSUB | {p1,p5} | 2144 | 1776 | +368 |
+| **in-lane SHUFFLE** | {p1,p5} | **912** | **472** | **+440 — the largest class** |
+| LOGIC (`vxorpd`) | {p0,p1,p5} | 440 | 232 | +208 |
+| **{p1,p5} cluster** | | **3312** | **2504** | **+808 = 90% of the 79 ns deficit** |
+
+**What survives:** the structural finding (§1–§2) — cil is genuinely off the
+pipeline, uniquely among the three emitters. That is a fact about the code.
+
+**What died:** "our FMA density is the problem." We already issue *fewer*
+FMA+MUL ops than MKL; the campaign lists *"Our FMA scheme is expensive"* as
+**sign-reversed**. So `fma_lift` is **not** the lever, and §5's original
+ordering advice (CSE first because it feeds FMA) had the wrong destination
+even though the ordering happened to be right.
+
+**Where the excess actually is:** almost entirely the **twiddled mid**. Our
+untwiddled leaf issues 1984 vALU ops and MKL's untwiddled pass issues
+**1984 — an exact tie**. 100% of the +936 excess is one stage, and the
+biggest single class in it is **in-lane shuffles, nearly 2× MKL's**.
+
+**Revised lever ranking** — the passes that remove *adds* and *shared
+sub-expressions* (`dedup_sub_pairs`, `share_subsums`, `collect_m`,
+`deep_collect`) target the +368 FADD term; nothing in the pipeline obviously
+removes the +440 shuffle term, which prior work
+(`il_register_pressure.md`) called the AVX2 floor for interleaved-in/out
+compute — yet MKL does it with half as many, so that claim needs re-testing.
+**The shuffle question is now the highest-value open item, not FMA.**
+
+⚠ **The campaign's own port-floor model is self-flagged as unreliable for
+ranking candidates** (its §7 D9): it mispredicted two form races — one 8×
+low, one backwards — while raw instruction count predicted both to 1–2%.
+Use the class table above as evidence of *where* the excess is, not as a
+predictor of what a given change will buy. VTune counters have not been run.
 
 ---
 
