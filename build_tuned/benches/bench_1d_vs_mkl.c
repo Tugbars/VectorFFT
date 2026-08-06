@@ -1033,6 +1033,281 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * --ilmt : TRANSFORM-CONTIGUOUS batch MULTITHREADED vs MKL batched MT.
+ *
+ * The apples-to-apples MT cell: DFTI with NUMBER_OF_TRANSFORMS=K and
+ * DISTANCE=N *is* our transform-contiguous geometry, so both engines see
+ * byte-identical memory and compute the same natural-order spectrum (the
+ * correctness column is a cross-engine elementwise compare, not a proxy).
+ *
+ * FOUR arms per cell + a control:
+ *   ours MT (nthreads=8) · ours ST (1) · MKL MT (8) · MKL ST (1) · ours MT again
+ * so one line carries the headline ratio AND both engines' own scaling AND
+ * the noise floor that says whether the headline is real.
+ *
+ * 🔴 THREAD HYGIENE — the two traps that would silently invalidate this:
+ *  (a) OUR pool workers spin on _mm_pause FOREVER (threads.h has no blocktime),
+ *      so 7 live workers would steal 7 P-cores from any MKL arm timed while
+ *      they exist. Every MKL arm is therefore preceded by
+ *      stride_set_num_threads(1) — a real teardown, not a flag.
+ *  (b) MKL's OpenMP threads spin for KMP_BLOCKTIME (default 200 ms) after a
+ *      compute before parking, so our arms need >=300 ms of cool AFTER an MKL
+ *      arm. cool_ms is floored at 300 in this mode for exactly that reason.
+ * Both are silent-corruption hazards: they cost time, never correctness, so
+ * nothing in the output would look wrong.
+ *
+ * PINNING: mask 0x5555 = logical 0,2,..,14 = the 8 DISTINCT P-cores of a
+ * 14900KF (0-15 are 8 P-cores x 2 HT, 16-31 are E-cores). Applied
+ * PROCESS-wide before any MKL/OpenMP init so BOTH engines get the same 8
+ * cores: our pool already pins caller->0 and workers->2,4,..,14 (threads.h
+ * stride 2), and Intel OpenMP respects the process mask at init. Without it
+ * MKL would spread across 32 logical CPUs including E-cores and HT siblings
+ * and no ratio here would mean anything.
+ * ════════════════════════════════════════════════════════════════════════ */
+static int g_ilmt = 0;
+
+/* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
+static void ilmt_pin_pcores(void)
+{
+#ifdef _WIN32
+    const char *e = getenv("VFFT_PCORE_MASK");
+    DWORD_PTR mask = e ? (DWORD_PTR)strtoull(e, NULL, 0) : (DWORD_PTR)0x5555;
+    if (mask == 0)
+    { /* 0 = DO NOT mask: the control for "did the mask itself distort a
+       * threaded engine?" — a sparse mask can defeat OpenMP topology
+       * detection, which would silently handicap MKL. */
+        printf("# process affinity UNSET (VFFT_PCORE_MASK=0) — threads float "
+               "over all 32 logical CPUs incl. E-cores\n");
+        return;
+    }
+    if (!SetProcessAffinityMask(GetCurrentProcess(), mask))
+        fprintf(stderr, "ilmt: SetProcessAffinityMask(0x%llx) FAILED — "
+                        "MKL may land on E-cores; ratios NOT comparable\n",
+                (unsigned long long)mask);
+    else
+        printf("# process affinity = 0x%llx (8 distinct P-cores: logical "
+               "0,2,..,14); both engines confined to the same cores\n",
+               (unsigned long long)mask);
+#else
+    fprintf(stderr, "ilmt: P-core pinning is Win32-only here; "
+                    "set taskset/OMP_PLACES externally\n");
+#endif
+}
+
+/* ours: transform-contiguous batch through the FRONT DOOR (one handle, one
+ * vfft_execute per rep — the MT slabbing is the library's, not the bench's). */
+static double ilmt_time_ours(vfft_plan h, double *z0, double *S, size_t total)
+{
+    for (int w = 0; w < 10; w++)
+        vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    return best;
+}
+
+#ifdef VFFT_HAS_MKL
+/* MKL batched, transform-contiguous, at `threads` threads. The thread count
+ * is set BEFORE create+commit because DFTI bakes its threading decision at
+ * COMMIT time — setting it after would time a descriptor planned for the
+ * previous count. Our pool is torn down by the caller first (trap (a)). */
+static double ilmt_time_mkl(int N, int K, const double *z0, size_t total,
+                            int threads)
+{
+    mkl_set_num_threads(threads);
+    DFTI_DESCRIPTOR_HANDLE d = NULL;
+    if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1,
+                             (MKL_LONG)N) != DFTI_NO_ERROR)
+        return 0;
+    DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+    DftiSetValue(d, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+    DftiSetValue(d, DFTI_INPUT_DISTANCE, (MKL_LONG)N);
+    DftiSetValue(d, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N);
+    if (DftiCommitDescriptor(d) != DFTI_NO_ERROR)
+    {
+        DftiFreeDescriptor(&d);
+        return 0;
+    }
+    double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
+    memcpy(zi, z0, 2 * total * sizeof(double));
+    for (int w = 0; w < 10; w++)
+        DftiComputeForward(d, zi, zo);
+    int reps = reps_for(total);
+    double best = 1e18;
+    for (int t = 0; t < 5; t++)
+    {
+        if (t)
+            pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            DftiComputeForward(d, zi, zo);
+        double ns = (vfft_proto_now_ns() - t0) / reps;
+        if (ns < best)
+            best = ns;
+    }
+    free_d(zi);
+    free_d(zo);
+    DftiFreeDescriptor(&d);
+    return best;
+}
+#endif
+
+static void run_ilmt_cell(int N, int K, FILE *out, int cool_ms, int flip)
+{
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8d K=%-3d   SKIP (front-door bundle unavailable)\n", N, K);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1;
+    cfg.n[0] = N;
+    cfg.howmany = (size_t)K;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS; /* explicit: the axis
+                                                       * under test */
+    cfg.wisdom = W;
+    /* Create the MT handle FIRST (mt_c2c_gate discipline: an MT-first create
+     * is what exposed the 2026-07-06 lazily-built-shared-state race). Note
+     * each create calls vfft_set_num_threads(cfg.nthreads) internally, so the
+     * ST create below TEARS DOWN the pool — harmless, because the TC execute
+     * re-asserts h->nthreads before it fans out. */
+    cfg.nthreads = g_mt;
+    vfft_plan hmt = vfft_create(&cfg);
+    cfg.nthreads = 1;
+    vfft_plan hst = vfft_create(&cfg);
+    if (!hmt || !hst)
+    {
+        printf("%-8d K=%-3d   vfft_create FAILED\n", N, K);
+        if (hmt) vfft_destroy(hmt);
+        if (hst) vfft_destroy(hst);
+        return;
+    }
+
+    size_t total = (size_t)N * (size_t)K;
+    double *z0 = alloc_d(2 * total), *S = alloc_d(2 * total);
+    srand(1729 + N + K);
+    for (size_t i = 0; i < 2 * total; i++)
+        z0[i] = (double)rand() / RAND_MAX - 0.5;
+
+    double rel = -1.0, mtst = -1.0;
+#ifdef VFFT_HAS_MKL
+    { /* cross-engine correctness on the SAME layout, both natural. Also
+       * MT-vs-ST bitwise on our side — the shipped gate's arm 7, re-checked
+       * here on the exact buffers being timed. */
+        double *zh = alloc_d(2 * total), *Sst = alloc_d(2 * total);
+        mkl_set_num_threads(1);
+        if (kzb_mkl_ref(N, K, z0, total, 1, zh))
+        {
+            vfft_execute(hmt, VFFT_FORWARD, z0, NULL, S, NULL);
+            vfft_execute(hst, VFFT_FORWARD, z0, NULL, Sst, NULL);
+            double xe = 0.0, xm = 0.0;
+            for (size_t i = 0; i < 2 * total; i++)
+            {
+                double e = fabs(S[i] - zh[i]), m = fabs(zh[i]);
+                if (e > xe) xe = e;
+                if (m > xm) xm = m;
+            }
+            rel = xm > 0 ? xe / xm : xe;
+            mtst = memcmp(S, Sst, 2 * total * sizeof(double)) == 0 ? 0.0 : 1.0;
+            if (mtst != 0.0)
+                fprintf(stderr, "ilmt: MT != ST BITWISE at N=%d K=%d — "
+                                "timing columns are not comparable\n", N, K);
+        }
+        free_d(zh);
+        free_d(Sst);
+    }
+#endif
+
+    /* ARMS. Order flips per cell; our pool is town down before every MKL arm
+     * (trap (a)) and MKL gets cool_ms>=300 to park before ours (trap (b)). */
+    double omt = 0, ost = 0, mmt = 0, mst = 0, octl = 0;
+#ifdef VFFT_HAS_MKL
+    if (flip)
+    {
+        stride_set_num_threads(1);
+        mmt = ilmt_time_mkl(N, K, z0, total, g_mt);
+        pace(g_trial_pace_ms);
+        mst = ilmt_time_mkl(N, K, z0, total, 1);
+        cachebust();
+        pace(cool_ms);
+        omt = ilmt_time_ours(hmt, z0, S, total);
+        pace(g_trial_pace_ms);
+        stride_set_num_threads(1); /* no spinners during the ST arm */
+        ost = ilmt_time_ours(hst, z0, S, total);
+        pace(g_trial_pace_ms);
+        octl = ilmt_time_ours(hmt, z0, S, total); /* control: repeat arm 1 */
+    }
+    else
+    {
+        omt = ilmt_time_ours(hmt, z0, S, total);
+        pace(g_trial_pace_ms);
+        stride_set_num_threads(1);
+        ost = ilmt_time_ours(hst, z0, S, total);
+        cachebust();
+        pace(cool_ms);
+        mmt = ilmt_time_mkl(N, K, z0, total, g_mt);
+        pace(g_trial_pace_ms);
+        mst = ilmt_time_mkl(N, K, z0, total, 1);
+        cachebust();
+        pace(cool_ms);
+        octl = ilmt_time_ours(hmt, z0, S, total); /* control: repeat arm 1 */
+    }
+#else
+    (void)cool_ms; (void)flip;
+    omt = ilmt_time_ours(hmt, z0, S, total);
+    stride_set_num_threads(1);
+    ost = ilmt_time_ours(hst, z0, S, total);
+    octl = ilmt_time_ours(hmt, z0, S, total);
+#endif
+    double r_mkl = (omt > 0 && mmt > 0) ? mmt / omt : 0;   /* >1 = we win  */
+    double sc_us = (omt > 0 && ost > 0) ? ost / omt : 0;   /* our scaling  */
+    double sc_mk = (mmt > 0 && mst > 0) ? mst / mmt : 0;   /* MKL scaling  */
+    /* 🔴 THE HONEST HEADLINE. MKL's MT is a NET LOSS at every cell measured
+     * so far (sc_mkl < 1) — its per-call OpenMP fork/join costs ~20us while
+     * our spin-pool wakes in ~10ns — so comparing our MT against MKL's MT
+     * would be scoring against an option MKL's own users would not pick.
+     * Compare against whichever MKL configuration is FASTER. */
+    double mbest = (mmt > 0 && mst > 0) ? (mmt < mst ? mmt : mst)
+                                        : (mmt > 0 ? mmt : mst);
+    double r_best = (omt > 0 && mbest > 0) ? mbest / omt : 0;
+    /* control spread: two identical arms, same cell, non-adjacent. A headline
+     * delta SMALLER than this is not a result (thermal protocol). */
+    double ctl = (omt > 0 && octl > 0)
+                     ? fabs(octl - omt) / (omt < octl ? omt : octl) : 0;
+    printf("%-7d %-4d %10.0f %10.0f %10.0f %10.0f | %7.2fx %6.2fx %6.2fx %6.2fx %5.1f%% %9.2e %s\n",
+           N, K, omt, ost, mmt, mst, r_best, r_mkl, sc_us, sc_mk,
+           100.0 * ctl, rel, mtst == 0.0 ? "" : "MT!=ST");
+    if (out)
+    {
+        fprintf(out, "%d,%d,ilmt,%d,%.0f,%.0f,%.0f,%.0f,%.3f,%.3f,%.3f,%.3f,%.4f,%.3e,%.0f\n",
+                N, K, g_mt, omt, ost, mmt, mst, r_best, r_mkl, sc_us, sc_mk,
+                ctl, rel, mtst);
+        fflush(out);
+    }
+    free_d(z0);
+    free_d(S);
+    vfft_destroy(hmt);
+    vfft_destroy(hst);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * --oop : out-of-place c2c vs MKL (NOT_INPLACE split). True OOP plans (LEAF /
  * BAILEY2 natural order, MODEB scrambled) from the OOP wisdom (lookup) or
  * dp_best (fallback). Same fairness: order-flip, pace, cachebust, fair layout.
@@ -2506,6 +2781,15 @@ int main(int argc, char **argv)
              * gap map — measure-only, see the run_kzb_cell block. */
             g_kzb = 1;
         }
+        else if (strcmp(argv[1], "--ilmt") == 0)
+        {
+            /* TC-batch MT vs MKL batched MT (2026-08-06). Implies the MT
+             * thread count; see the run_ilmt_cell block for the arm shape,
+             * the P-core mask and the two thread-hygiene traps. */
+            g_ilmt = 1;
+            const char *e = getenv("VFFT_MT");
+            g_mt = (e && atoi(e) > 0) ? atoi(e) : 8;
+        }
         else if (strncmp(argv[1], "--tcut=", 7) == 0)
         {
             /* MODE: TILED MID STAGES for the K=1 ZTURN-S cascade
@@ -2545,6 +2829,7 @@ int main(int argc, char **argv)
     const char *wpath = (argc >= 2) ? argv[1]
                                     : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv = (argc >= 3)         ? argv[2]
+                      : g_ilmt            ? "vfft_perf_tuned_1d_ilmt.csv"
                       : g_kzb             ? "vfft_perf_tuned_1d_kzb.csv"
                       : (g_k1nat && !g_k1zip) ? "vfft_perf_tuned_1d_k1noop.csv"
                       : g_k1nat           ? "vfft_perf_tuned_1d_k1nat.csv"
@@ -2582,13 +2867,22 @@ int main(int argc, char **argv)
         target_N = 0; /* MT = full in-process sweep; OOP honors isolation (target_N,target_K) */
 
     stride_env_init();
+    /* --ilmt: confine the PROCESS to the 8 distinct P-cores before any MKL /
+     * OpenMP initialization (Intel OpenMP reads the mask at init), then pin
+     * the caller to logical 0 — the core threads.h reserves for it. */
+    if (g_ilmt)
+    {
+        ilmt_pin_pcores();
+        if (core < 0)
+            core = 0;
+    }
     if (core >= 0 && stride_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
     if (mt)
         stride_set_num_threads(g_mt); /* size the worker pool for K-split */
 
 #ifdef VFFT_HAS_MKL
-    mkl_set_num_threads(mt ? g_mt : 1);
+    mkl_set_num_threads(mt ? g_mt : 1); /* --ilmt sets it per arm instead */
 #endif
     vfft_proto_registry_t reg;
     vfft_proto_registry_init(&reg);
@@ -2925,13 +3219,65 @@ int main(int argc, char **argv)
     FILE *out = fopen(csv, target_N ? "a" : "w");
     if (out && !target_N)
     {
-        if (g_kzb)
+        if (g_ilmt)
+            fprintf(out, "N,K,path,threads,ours_mt_ns,ours_st_ns,mkl_mt_ns,mkl_st_ns,"
+                         "ratio_vs_mkl,scale_ours,scale_mkl,ctl_spread,xerr,mt_ne_st\n");
+        else if (g_kzb)
             fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr\n");
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
             fprintf(out, "N,K,plan,path,vfft_ns,mkl_ns,vfft_gflops,ratio_vs_mkl,rt_err\n");
+    }
+    if (g_ilmt)
+    {
+        if (cool_ms < 300)
+            cool_ms = 300; /* trap (b): MKL's OpenMP spins KMP_BLOCKTIME
+                            * (default 200 ms) before parking */
+#ifdef VFFT_HAS_MKL
+        { /* does MKL actually ACCEPT the thread count under this affinity
+           * mask? A sparse mask can defeat OpenMP topology detection, and a
+           * silently-1-thread MKL would read as a huge fake win for us. */
+            mkl_set_num_threads(g_mt);
+            int got = mkl_get_max_threads();
+            printf("# MKL: requested %d threads, mkl_get_max_threads()=%d%s\n",
+                   g_mt, got,
+                   got == g_mt ? "" : "   <-- MISMATCH, MKL arm is HANDICAPPED");
+        }
+#endif
+        if (!target_N)
+            printf("=== dag vs MKL — 1D C2C fwd, TRANSFORM-CONTIGUOUS BATCH, "
+                   "MULTITHREADED (%d threads both engines; pace=%dms "
+                   "cool=%dms) ===\n"
+                   "# identical memory on both sides: DFTI howmany=K "
+                   "distance=N IS our transform-contiguous geometry\n"
+                   "# r_mkl>1 = WE WIN. scale = own ST/MT (8.00 = perfect). "
+                   "ctl = repeat-arm spread; a delta under it is NOT a result\n"
+                   "%-7s %-4s %10s %10s %10s %10s | %7s %7s %7s %7s %9s\n",
+                   g_mt, pace_ms, cool_ms, "N", "K", "ours_mt", "ours_st",
+                   "mkl_mt", "mkl_st", "r_mkl", "sc_us", "sc_mkl", "ctl",
+                   "xerr");
+        if (target_N)
+            run_ilmt_cell(target_N, (int)target_K, out, cool_ms, flip);
+        else
+        {
+            static const int ILMT_N[] = { 256, 1024, 4096, 16384 };
+            static const int ILMT_K[] = { 8, 32 };
+            int cells = 0;
+            for (size_t ki = 0; ki < sizeof ILMT_K / sizeof ILMT_K[0]; ki++)
+                for (size_t ni = 0; ni < sizeof ILMT_N / sizeof ILMT_N[0]; ni++)
+                {
+                    run_ilmt_cell(ILMT_N[ni], ILMT_K[ki], out, cool_ms,
+                                  flip ^ (cells & 1));
+                    cells++;
+                    pace(pace_ms);
+                }
+        }
+        if (out)
+            fclose(out);
+        fclose(f);
+        return 0;
     }
     if (g_kzb)
     {
