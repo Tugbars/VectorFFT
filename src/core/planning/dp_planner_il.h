@@ -862,7 +862,7 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * an explicit nibble, which serves identically to 0;
                      * only the (default,default) combo IS the base
                      * candidate and is skipped. */
-                    int msv[2], lsv[2], nm = 0, nl = 0, dm, dl;
+                    int msv[2], lsv[4], nm = 0, nl = 0, dm, dl;
                     if (R1 == 32 && (R2 & 1) == 0)
                     { dm = 2; msv[nm++] = 2; msv[nm++] = 1; }
                     else if (R1 == 16 && (R2 & 1) == 0)
@@ -870,6 +870,20 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     else { dm = 0; msv[nm++] = 0; }
                     if (R2 == 32 && (R1 & 1) == 0)
                     { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; }
+                    else if (R2 == 16 && (R1 & 1) == 0)
+                    {   /* R=16 leaf: ONE candidate, the raced winner
+                         * (variant 1 = 4·4; see il2p.h for the 24-arm
+                         * ranking that eliminated 2·8 and 8·2). Only the
+                         * winner is admitted on purpose — 3 leaf forms
+                         * would multiply against the mid forms on EVERY
+                         * pair, and _il_dp_push REFUSES a cell outright
+                         * past VFFT_IL_DP_MAX_CAND rather than truncating
+                         * (a truncated pool is a BIASED pool). Default
+                         * stays MONOLITHIC (dl = 0): R=16 fits the file,
+                         * so the blocked form must win per cell, not by
+                         * structural rule. */
+                        dl = 0; lsv[nl++] = 0; lsv[nl++] = 1;
+                    }
                     else { dl = 0; lsv[nl++] = 0; }
                     for (int mi = 0; mi < nm; mi++)
                         for (int li = 0; li < nl; li++)
