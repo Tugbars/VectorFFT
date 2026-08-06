@@ -358,10 +358,58 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
     return 0;
 }
 
-/* kind-3 wisdom packing: il_kv = mid | leaf<<4 */
+/* kind-3 wisdom packing: il_kv = mid | leaf<<4.
+ * Nibble 0xF = FORCE MONOLITHIC — needed since the structural default below
+ * made blocked the R>=32 default: a platform where blocked measures slower
+ * must stay expressible as a banked verdict (the pool stays full in BOTH
+ * directions; this box is not the last word). */
 #define VFFT_IL_KV_MID(kv)   ((kv) & 0xf)
 #define VFFT_IL_KV_LEAF(kv)  (((kv) >> 4) & 0xf)
 #define VFFT_IL_KV_PACK(m,l) (((m) & 0xf) | (((l) & 0xf) << 4))
+#define VFFT_IL_KV_MONO      0xf
+
+/* ── STRUCTURAL DEFAULT: blocked kernels ARE the R>=32 forward kernels ───
+ * (2026-08-06). A monolithic R>=32 body holds ~40-64 live values against
+ * AVX2's 16 registers and spills ~27% of its instruction stream
+ * (il_register_pressure.md census); blocked construction is not a rival to
+ * race per cell but the only body shape that fits the file — the same tier
+ * rule the split emitters apply at GENERATION time (codelet_oop.ml: Tier A
+ * monolithic R<=16 / Tier B blocked, gated on isa.vec_regs). Until the cil
+ * emitter grows the same tier (the select_expansion extraction), the rule
+ * lives here, next to the registry, applied at create so EVERY creator —
+ * vfft.c routes, il_prime inners, dp_planner candidates, gates — serves and
+ * MEASURES the same kernels (a per-call-site rule is the drift bug
+ * codelet_oop.ml's own header warns about).
+ *
+ * Scope: FORWARD only (no blocked bwd twins exist yet) and even counts only
+ * (blocked kernels carry NO odd-count tail — the monolithic kernel, which
+ * does, remains the odd-count fallback). 4·8 forms preferred over 2·16:
+ * measured dominant on the mid (pipeline -11..-21%, the only arm that
+ * reproduced in every valid section of every run) and the register
+ * arithmetic agrees (peak-live max(p,m): 4·8 < 2·16); 2·16 is the fallback
+ * when no 4·8 form exists. R=16 is deliberately NOT in the rule — it fits
+ * the register file (8.6% spill, the census control class); any r16 win is
+ * cell-local and belongs to wisdom.
+ *
+ * VFFT_NO_ILBLK: create-time kill switch (VFFT_NO_ZTURN idiom) + the
+ * bench's A/B hook through the front door. A boolean availability gate, not
+ * a picker: no measurement, no timer, no verdict — the banned class stays
+ * banned here. Wisdom il_kv OVERRIDES this default (vfft.c apply_kv runs
+ * after create; 0xF forces monolithic). */
+static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
+{
+    if (!p || getenv("VFFT_NO_ILBLK")) return;
+    if (p->R1 >= 32 && (p->R2 & 1) == 0) {
+        vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, 2, 1);   /* 4·8  */
+        if (!m) m = vfft_il2p_mid_v_fn(p->R1, 1, 1);        /* 2·16 */
+        if (m) p->mid_f = m;
+    }
+    if (p->R2 >= 32 && (p->R1 & 1) == 0) {
+        vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, 2, 1);  /* 4·8  */
+        if (!l) l = vfft_il2p_leaf_v_fn(p->R2, 1, 1);       /* 2·16 */
+        if (l) p->leaf_f = l;
+    }
+}
 
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
@@ -415,6 +463,7 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
                 rb[4 + 2 * j] = s;  rb[4 + 2 * j + 1] = -s;
             }
         }
+    vfft_il2p_apply_blocked_default(p);
     return p;
 }
 
@@ -715,6 +764,16 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     if (!p->mid1 || !p->mid2 || !p->twB || !p->twA || !p->twAc || !p->twBc) {
         vfft_il3p_destroy(p);
         return 0;
+    }
+    /* Structural blocked default, LEAF only (same rule + kill switch as
+     * vfft_il2p_apply_blocked_default; R1 = A*B is even by the count-
+     * contract guard above, so the leaf's count parity is guaranteed).
+     * The mids run radices A,B — small cofactors the registry has no
+     * blocked twins for; nothing to select there. */
+    if (!getenv("VFFT_NO_ILBLK") && R2 >= 32) {
+        vfft_il2p_fn bl = vfft_il2p_leaf_v_fn(R2, 2, 1);    /* 4·8  */
+        if (!bl) bl = vfft_il2p_leaf_v_fn(R2, 1, 1);        /* 2·16 */
+        if (bl) p->leaf_f = bl;
     }
     return p;
 }

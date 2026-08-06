@@ -219,6 +219,13 @@ typedef struct
 {
     int    route;                            /* VFFT_K1_IL_{MONO,2P,3P,CASCADE} */
     int    R1, R2;                           /* 2P/3P only, else 0              */
+    /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
+     * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
+     * kernels, i.e. exactly pre-axis behavior — so every existing candidate
+     * path keeps meaning what it meant. This is the axis that makes the
+     * emitted blocked kernels (t2b/t2b48/n1tb/n1tb48) REACHABLE: without a
+     * banked non-zero value every sub-2048 cell runs monolithic. */
+    int    il_kv;
     int    chain[VFFT_ZSPLIT_MAX_NF];        /* CASCADE only                    */
     int    nf;                               /* CASCADE only, else 0            */
     int    t2q;                              /* CASCADE terminator schedule
@@ -1163,11 +1170,26 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
 
     if (nat && nat->cost_ns < 1e17 && sp_route >= 0)
     {
-        fprintf(f, "%d 1 %d %d %d %d %d %d %d %.1f\n",
-                N, VFFT_OOP_KIND_BAILEY2V,
-                sp_route, sp_R1, sp_R2,
-                nat->route, nat->R1, nat->R2,
-                nat->cost_ns);
+        /* 🔴 SHIPPED WRITER, never a hand fprintf — the same lesson the kind-4
+         * branch below already learned. The hand-printed form here could not
+         * carry `il_kv` at all (the blocked-kernel variant verdict, added
+         * 2026-08-05), so the field was structurally unemittable and every
+         * banked kind-3 line silently meant "monolithic". One definition of
+         * the format = a new field cannot be half-adopted. */
+        vfft_oop_wisdom_entry_t e;
+        memset(&e, 0, sizeof e);
+        e.N = N;
+        e.K = 1;
+        e.kind = VFFT_OOP_KIND_BAILEY2V;
+        e.k1_sp_route = sp_route;
+        e.R1 = sp_R1;
+        e.R2 = sp_R2;
+        e.k1_il_route = nat->route;
+        e.il_R1 = nat->R1;
+        e.il_R2 = nat->R2;
+        e.il_kv = nat->il_kv;   /* 0 until the variant axis is raced */
+        e.ns = nat->cost_ns;
+        vfft_oop_wisdom_write_entry(f, &e);
         lines++;
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)

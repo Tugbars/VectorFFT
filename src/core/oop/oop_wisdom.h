@@ -63,8 +63,12 @@ typedef struct {
      * The verdict is MEASURED at the front door (blocked kernels are
      * placement-luck sensitive, so it is re-measured per binary like t2q)
      * and consumed by vfft.c, which installs the kernels after create.
-     * il2p.h stays a pure engine: it publishes the variant REGISTRY
-     * (vfft_il2p_mid_v_fn / vfft_il2p_leaf_v_fn) and does no selection. */
+     * il2p.h publishes the variant REGISTRY (vfft_il2p_mid_v_fn /
+     * vfft_il2p_leaf_v_fn) plus the STRUCTURAL R>=32 blocked default
+     * (2026-08-06, applied inside create — register-file arithmetic, not a
+     * measured pick); this banked verdict OVERRIDES that default, and the
+     * nibble value 0xF (VFFT_IL_KV_MONO) forces the monolithic kernel so a
+     * platform where blocked loses stays expressible as a verdict. */
     int    il_kv;
     /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
      * (vfft_k1_cc_chain_encode; one extra token before ns on the line).

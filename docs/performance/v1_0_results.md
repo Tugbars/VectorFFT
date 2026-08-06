@@ -261,6 +261,70 @@ fairness as §1 (best-of-5 min, cachebust + cool + order-flip, P-core-pinned). O
 > calibrated but not yet benched vs MKL DFTI 2D. Roundtrip / convolution consumers keep the faster
 > scrambled default.
 
+### Order × placement — the K=1 INTERLEAVED grid
+
+The tables above are the split lane-batched path. This one is the **K=1 interleaved**
+(`layout=INTERLEAVED`) story, and it differs in a way worth stating explicitly: **above
+2048, natural order is a different terminator, not a reorder pass.** The `stfn` cascade
+writes natural order directly from the last stage, so there is no `PURE`/`PSWAP` permutation
+pass to pay — unlike the reorder methodology described immediately above, which is the
+split path's mechanism. Measured through the public API, MKL has no reorder pass here
+either; this is the matching design, not a divergence.
+
+Every order × placement combination is served by a **native** engine. No convert fallback
+remains anywhere in this grid — the last hole (OOP-natural ≥2048, which read 0.17× through
+the convert bridge) closed 2026-08-04.
+
+| order × placement | sub-2048 (mono ≤64 · il2p/il3p 128–1024) | ≥2048 (cascade tier) |
+|---|---|---|
+| **NATURAL · in-place** | native — `VFFT_NAT_ILP`: il2p/il3p aliased, raced vs convert at create, banked `@nat` | native — `VFFT_NAT_ZCASC`: `stfn` natural-terminator cascade, **no reorder pass**, raced vs tape, banked `@nat` |
+| **NATURAL · OOP** | native — same IL engines, `z_in → z_out` | native — natord cascade via `@natoop` verdict + create race |
+| **SCRAMBLED · in-place** | native — **identity rule**: served by the natural-native engines (the identity permutation is contract-legal; bits identical to natural, gated `IDENT`) | native — ZTURN-S digit-scrambled comb (kind-4 verdict); the comb is a REAL permutation (A3-gated) |
+| **SCRAMBLED · OOP** | native — identity rule, same engines (`scr==nat` EXACT, gated) | native — kind-4 cascade attaches to the OOP handle, matched-permutation roundtrip |
+
+**DEFAULT order** = engine-native everywhere (fastest, order-agnostic): resolves to the
+scrambled-native path in-place, the calibrated winner OOP.
+
+Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win):
+
+```
+  N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
+──────────────────────────────────────────────────────────────
+  128         0.91 †              ▢          (= NAT bits)
+  256       0.76–0.79 †           ▢          (= NAT bits)
+  512       0.70–0.73 †           ▢          (= NAT bits)
+  1024      0.82–0.94 ⚡          ▢          (= NAT bits)
+  2048      1.09–1.16       0.99–1.11         1.15–1.18
+  4096      0.96–0.99       0.91–0.94         1.02–1.04
+  8192      1.00–1.03       0.95–0.98         1.05–1.06
+  16384     1.02–1.03       0.94–0.98         1.05–1.08
+  32768     0.94–0.97       0.88–0.91         1.00–1.02
+──────────────────────────────────────────────────────────────
+† vintage 2026-08-04, predates the blocked leaf   ⚡ blocked-leaf result,
+opt-in (VFFT_N1TB=1), warm machine — not yet shipped-default
+▢ engine serves it; no banked table yet    (= NAT bits) identity rule
+```
+
+Reading it honestly:
+
+- **Sub-2048 is where we still trail** (0.70–0.94 natural). The ⚡ 1024 cell is the one
+  measured with the blocked leaf enabled, which is still opt-in rather than
+  shipped-default; the 256–512 numbers predate it. The leaf accounts for roughly all of
+  the 512 deficit, so those cells are the expected movers when that race is promoted —
+  they have not been re-measured yet, and the table says so rather than projecting.
+- **≥2048 is parity-or-win** on every row except natural-OOP at 4096/32768.
+- **The SCRAMBLED row leads everywhere ≥2048, and the reason is structural rather than
+  a kernel advantage**: setting `DFTI_ORDERING` to `DFTI_BACKWARD_SCRAMBLED` does not
+  change MKL's output ordering (the setting reads back as applied, but the spectrum is
+  unchanged — verified through the public API), so MKL has no scrambled mode. That row
+  therefore races our structurally cheaper path against their only path. It is a fair
+  comparison of what each library can actually deliver for a scrambled-order consumer,
+  not a like-for-like kernel comparison.
+
+Batching rides this grid unchanged: the canonical `VFFT_BATCH_TRANSFORM_CONTIGUOUS`
+geometry runs K independent K=1 transforms, so every cell above applies per transform at
+every K, with no batch tail, no padding and no even-K constraint.
+
 ### Out-of-place — vs MKL (single-thread)
 
 dag OOP c2c vs MKL `DFTI_NOT_INPLACE` split-complex, **identical layout**, order-neutralized + paced
