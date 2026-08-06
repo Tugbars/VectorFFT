@@ -8,6 +8,64 @@ no CSE, no factoring, no FMA lifting — while both sibling emitters do.
 
 ---
 
+## 0a. NEXT SESSION — VTune is staged and ready
+
+**State as of 2026-08-07.** The harness is **already ported, built, and
+passing its sanity gate on the three cells that matter.** Do not re-port it.
+
+- Reference copy (tracked, verbatim from the recovered commit):
+  `build_tuned/VtuneHarness/` — see its `RESTORED.md`.
+- **Working copy, ported to the current API and already built:**
+  `docs/research/mkl512_gap_campaign/vtune/bench_vtune.exe`, built by
+  `vtune/build_vtune.py` (build.py could not express the ITT include/lib
+  flags). Wisdom is read from `vtune/wisdom_scratch/` — a copy, never the
+  shipped dir.
+- Sanity gate, floors, twin-arm disagreement 0.00–0.75%:
+
+  | N | ours | MKL | ratio | want | |
+  |---|---|---|---|---|---|
+  | 256 | 159.8 | 136.3 | 0.853 | 0.85 | PASS |
+  | 512 | 361.7 | 291.0 | **0.805** | 0.81 | PASS |
+  | 1024 | 876.2 | 812.5 | 0.927 | 0.92 | PASS |
+  | 2048 | 1894.5 | 2663.7 | 1.406 | 1.11 | **FAIL** |
+
+  It also prints the resolved plans, confirming the shipped forms:
+  512 = pair (32,16), leaf `radix16_z_n1tb44` (4·4), mid `radix32_z_t2b48`.
+
+⚠ **The 2048 failure is on MKL's arm, not ours** (our 1894 ns is right;
+MKL reads 2663 vs the canonical bench's ~2170). Prime suspect: the rep loop
+runs in-place forwards **without reseeding**, so magnitudes amplify toward
+inf over ~2 s of reps — the hazard `vfft.c`'s ordering race documents
+("reseed per burst"). We flush denormals via FTZ/DAZ in `stride_env_init`;
+if MKL's path does not, it takes the denormal assist. **Fix = reseed the
+buffer each burst.** 2048 is only the cross-emitter control — 256/512/1024
+are sufficient to answer the port question, so do not let it block.
+
+**Run:** VTune 2025.10 at
+`C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\vtune.exe`,
+`-collect uarch-exploration`, pinned core 2 / HIGH priority. ITT tasks are
+named `VFFT_N{N}_K{K}_*` / `MKL_N{N}_K{K}_*` so the task view side-by-sides
+the engines per cell.
+
+**The four questions to answer** (the campaign's predictions, §0 below):
+1. Are both engines at ~82% of their own port floor — i.e. neither stalling
+   more than the other?
+2. Is our excess on **p1/p5** (add + in-lane shuffle) rather than p0?
+3. Are we *not* latency/dependence bound?
+4. Are we *not* spill/memory bound (we spill 9.1% vs MKL's 13.2%)?
+
+🔴 **And the discriminator:** does any measured counter track the
+non-monotonic curve **0.853 / 0.805 / 0.927**? A mechanism that does not
+reproduce that shape is not the mechanism.
+
+⚠ The campaign self-flagged its port-floor model as **unreliable for
+ranking candidates** (it mispredicted two of its own form races, one 8×
+low, one backwards, while raw instruction count predicted both to 1–2%).
+VTune measuring occupancy directly is what settles it — so treat this as a
+test of the model, not a confirmation exercise.
+
+---
+
 ## 0. 🔴 CORRECTION (2026-08-06, same day) — read before acting
 
 The N=512 RE campaign (`docs/research/mkl512_gap_campaign/CONCLUSIONS.md`)
