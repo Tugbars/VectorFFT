@@ -417,7 +417,13 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
     if (c->route == VFFT_K1_IL_2P_PURE)
     {
         b->ip = vfft_il2p_create(N, c->R1, c->R2);
-        return b->ip ? 0 : -1;
+        if (!b->ip) return -1;
+        /* Variant-axis candidate: create resolved the structural blocked
+         * default; a nonzero il_kv re-forms the slots (shared nibble
+         * semantics, il2p.h) so the planner MEASURES exactly what a banked
+         * verdict would serve. kv == 0 is the default-form candidate. */
+        vfft_il2p_apply_kv_forms(b->ip, c->il_kv);
+        return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
     {
@@ -839,6 +845,42 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
             {
                 c.route = VFFT_K1_IL_2P_PURE;
                 _il_dp_push(s, &c);
+                /* BLOCKED-FORM axis (il_kv, 2026-08-06): the base candidate
+                 * above measures the structural default create resolves
+                 * (R>=32 slots get the 4·8 forms). The within-blocked form
+                 * pick (2·16 vs 4·8) and the cell-local r16 mid are
+                 * placement-luck-sized — machine-dependent by nature — so
+                 * every OTHER expressible form combination enters the pool
+                 * and the measurement decides; the winner banks as il_kv.
+                 * Monolithic forms are deliberately NOT enumerated at
+                 * R>=32 (register-file arithmetic, settled structurally;
+                 * 0xF stays a wisdom-side escape only). */
+                {
+                    /* Enumerate in SERVED-form space (what the plan will
+                     * actually run), then map to kv — duplicates are
+                     * impossible by construction. served==default maps to
+                     * an explicit nibble, which serves identically to 0;
+                     * only the (default,default) combo IS the base
+                     * candidate and is skipped. */
+                    int msv[2], lsv[2], nm = 0, nl = 0, dm, dl;
+                    if (R1 == 32 && (R2 & 1) == 0)
+                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; }
+                    else if (R1 == 16 && (R2 & 1) == 0)
+                    { dm = 0; msv[nm++] = 0; msv[nm++] = 1; } /* t2b(16) */
+                    else { dm = 0; msv[nm++] = 0; }
+                    if (R2 == 32 && (R1 & 1) == 0)
+                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; }
+                    else { dl = 0; lsv[nl++] = 0; }
+                    for (int mi = 0; mi < nm; mi++)
+                        for (int li = 0; li < nl; li++)
+                        {
+                            if (msv[mi] == dm && lsv[li] == dl)
+                                continue;           /* = the base candidate */
+                            c.il_kv = VFFT_IL_KV_PACK(msv[mi], lsv[li]);
+                            _il_dp_push(s, &c);
+                        }
+                    c.il_kv = 0;
+                }
             }
         }
         return;
