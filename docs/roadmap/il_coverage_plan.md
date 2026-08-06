@@ -209,6 +209,31 @@ batching, and where.
     no contiguous support and an explicit contiguous request on SPLIT is
     refused loudly). Gated: zeroed-config == explicit
     TRANSFORM_CONTIGUOUS bitwise (`run_default_geometry`).
+- [x] **STRUCTURAL BLOCKED DEFAULT (2026-08-06)** — the emitted blocked
+  kernels are now THE R≥32 forward kernels: `vfft_il2p_apply_blocked_default`
+  (il2p.h, beside the registry) runs inside `vfft_il2p_create`, with a
+  leaf-only analog inside `vfft_il3p_create` — one choke point, so every
+  creator (vfft.c routes, il_prime inners, dp_planner candidates, gates)
+  serves and measures the same kernels. Rationale: a monolithic R≥32 body
+  holds ~40–64 live values against AVX2's 16 registers (~27% ymm spill,
+  il_register_pressure.md) — the same tier rule the split emitters apply at
+  generation time (codelet_oop.ml Tier A/B on `isa.vec_regs`); not a
+  per-cell race. Scope: forward only (no blocked bwd twins), even counts
+  only (monolithic keeps the odd-count tail duty), 4·8 preferred / 2·16
+  fallback, R=16 deliberately excluded (fits the file — census control
+  class). `VFFT_NO_ILBLK` create-time kill switch = the bench A/B hook;
+  wisdom `il_kv` overrides the default, with new nibble 0xF
+  (`VFFT_IL_KV_MONO`) forcing monolithic so a platform where blocked loses
+  banks it as a VERDICT. Gates: ilp-front / k1scr / tcbatch PASS (⚠
+  ilp-front + natural-front need an EMPTY scratch wisdir — they assert the
+  race RAN; a populated copy reads "NO RACE" on every measure pass).
+  - ⏸ OPEN: **R=64 blocked does not exist** — no files, despite (16,64)/
+    (32,64)-class pairs placing monolithic R=64 bodies (the worst spillers)
+    at 1024/2048. Emitter work; do the `Dft.select_expansion` extraction
+    first (codelet_oop.ml's own drift warning), then the cil tier can move
+    to emit time and this create-time rule collapses into it.
+  - ⏸ OPEN: blocked **bwd** twins (t2t/n1 classes) — until they exist,
+    backward keeps the monolithic spill profile.
 - [x] **TC-batch MT (2026-08-06)** — the transform-contiguous path now
   slabs its K transforms over the stride pool: worker t runs its slab
   through `vfft_execute` on its OWN identically-created K=1 clone

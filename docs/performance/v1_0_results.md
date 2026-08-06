@@ -291,27 +291,35 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
   N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
 ──────────────────────────────────────────────────────────────
   128         0.91 †              ▢          (= NAT bits)
-  256       0.76–0.79 †           ▢          (= NAT bits)
-  512       0.70–0.73 †           ▢          (= NAT bits)
-  1024      0.82–0.94 ⚡          ▢          (= NAT bits)
+  256       0.75–0.77             ▢          (= NAT bits)
+  512       0.76–0.79 ▲           ▢          (= NAT bits)
+  1024      0.83–0.84 ▲           ▢          (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
   16384     1.02–1.03       0.94–0.98         1.05–1.08
   32768     0.94–0.97       0.88–0.91         1.00–1.02
 ──────────────────────────────────────────────────────────────
-† vintage 2026-08-04, predates the blocked leaf   ⚡ blocked-leaf result,
-opt-in (VFFT_N1TB=1), warm machine — not yet shipped-default
+† vintage 2026-08-04   ▲ 2026-08-06: blocked R≥32 kernels SHIPPED-DEFAULT
+(structural, register-file rule — not a per-cell race); same-run A/B vs the
+monolithic arm at these cells: 1024 −27% (0.60→0.83), 512 −8% (0.70→0.78);
+256 (16×16 pair, no R≥32 slot) and 4096 (cascade) are the unchanged controls
 ▢ engine serves it; no banked table yet    (= NAT bits) identity rule
 ```
 
 Reading it honestly:
 
-- **Sub-2048 is where we still trail** (0.70–0.94 natural). The ⚡ 1024 cell is the one
-  measured with the blocked leaf enabled, which is still opt-in rather than
-  shipped-default; the 256–512 numbers predate it. The leaf accounts for roughly all of
-  the 512 deficit, so those cells are the expected movers when that race is promoted —
-  they have not been re-measured yet, and the table says so rather than projecting.
+- **Sub-2048 is where we still trail** (0.75–0.84 natural). The ▲ cells run the blocked
+  R≥32 kernels as the shipped default — a structural rule (a monolithic R≥32 body holds
+  ~40–64 live values against AVX2's 16 registers and spills ~27% of its stream; blocked
+  construction is the only body shape that fits, the same tier the split emitters apply
+  at generation time), not a measured per-cell pick. A side observation from the A/B
+  worth keeping: the monolithic arm's own spread at 1024 was 36% between two runs while
+  the blocked arm's pair agreed to 0.5% — a spill-bound body is at the mercy of ambient
+  load in a way a register-resident one is not. 256 stays at 0.76 because its (16,16)
+  pair has no R≥32 slot: its remaining levers are the pair/stage-count axis (3-stage
+  chains measured +7.6–8.8% over every 2-stage pair at 512, not yet banked) and R=64
+  blocked kernels, which do not exist yet.
 - **≥2048 is parity-or-win** on every row except natural-OOP at 4096/32768.
 - **The SCRAMBLED row leads everywhere ≥2048, and the reason is structural rather than
   a kernel advantage**: setting `DFTI_ORDERING` to `DFTI_BACKWARD_SCRAMBLED` does not
