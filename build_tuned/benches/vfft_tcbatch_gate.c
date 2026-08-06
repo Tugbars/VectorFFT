@@ -21,6 +21,16 @@
  *      checked by bitwise equality with a plain LANE_MAJOR K=1 plan.
  *   6. LANE_MAJOR at the same (N,K) still works — the default path is
  *      untouched by the new axis.
+ *   7. MT == ST, BITWISE, both directions and both placements: a plan
+ *      created with nthreads=8 slabs the batch over per-worker CLONE
+ *      handles; its output must be byte-identical to the nthreads=1 plan.
+ *      MT executes FIRST (mt_c2c_gate discipline — a stale-pool or shared-
+ *      scratch bug must show before any ST execute has run). Cells below
+ *      the NK engage floor exercise the serial arm of the same plan shape;
+ *      cells whose route is not pool-free (predicate-refused) must degrade
+ *      to serial and STILL be bitwise. Every block carries different data,
+ *      so a worker running the wrong slab (or two workers sharing scratch)
+ *      cannot cancel out.
  *
  * Run:   vfft_tcbatch_gate.exe --wisdir <scratch dir>
  * Build: python build.py --src benches/vfft_tcbatch_gate.c --vfft --compile
@@ -206,6 +216,77 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     return ok;
 }
 
+/* arm 7: MT == ST bitwise. Same config as mk() plus an nthreads knob. */
+static vfft_plan mkt(vfft_wisdom *W, int N, size_t K, int inplace, int nth)
+{
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = inplace ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1;
+    cfg.n[0] = N;
+    cfg.howmany = K;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+    cfg.nthreads = nth;
+    cfg.wisdom = W;
+    return vfft_create(&cfg);
+}
+
+static int run_mt_cell(vfft_wisdom *W, int N, size_t K)
+{
+    const size_t tot = (size_t)N * K;
+    double *x = az(tot), *zmt = az(tot), *zst = az(tot);
+    double *bmt = az(tot), *bst = az(tot);
+    srand(1301 + N + (int)K);
+    for (size_t i = 0; i < 2 * tot; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
+
+    /* ---- OOP: MT plan first, MT executes first ---- */
+    vfft_plan hmt = mkt(W, N, K, 0, 8);
+    vfft_plan hst = mkt(W, N, K, 0, 1);
+    int f_ok = 0, b_ok = 0;
+    if (hmt && hst)
+    {
+        vfft_execute(hmt, VFFT_FORWARD, x, NULL, zmt, NULL);
+        vfft_execute(hmt, VFFT_BACKWARD, zmt, NULL, bmt, NULL);
+        vfft_execute(hst, VFFT_FORWARD, x, NULL, zst, NULL);
+        vfft_execute(hst, VFFT_BACKWARD, zmt, NULL, bst, NULL);
+        f_ok = memcmp(zmt, zst, 2 * tot * sizeof(double)) == 0;
+        b_ok = memcmp(bmt, bst, 2 * tot * sizeof(double)) == 0;
+    }
+    if (hmt) vfft_destroy(hmt);
+    if (hst) vfft_destroy(hst);
+
+    /* ---- IN-PLACE pair, same discipline ---- */
+    vfft_plan pmt = mkt(W, N, K, 1, 8);
+    vfft_plan pst = mkt(W, N, K, 1, 1);
+    int ip_ok = 0;
+    if (pmt && pst)
+    {
+        memcpy(zmt, x, 2 * tot * sizeof(double));
+        vfft_execute(pmt, VFFT_FORWARD, zmt, NULL, zmt, NULL);
+        vfft_execute(pmt, VFFT_BACKWARD, zmt, NULL, zmt, NULL);
+        memcpy(zst, x, 2 * tot * sizeof(double));
+        vfft_execute(pst, VFFT_FORWARD, zst, NULL, zst, NULL);
+        vfft_execute(pst, VFFT_BACKWARD, zst, NULL, zst, NULL);
+        ip_ok = memcmp(zmt, zst, 2 * tot * sizeof(double)) == 0;
+    }
+    if (pmt) vfft_destroy(pmt);
+    if (pst) vfft_destroy(pst);
+
+    int ok = f_ok && b_ok && ip_ok;
+    printf("%-6d K=%-3zu %s %s %s%s\n", N, K,
+           f_ok ? "fwd=BITID" : "fwd=DIFF ",
+           b_ok ? "bwd=BITID" : "bwd=DIFF ",
+           ip_ok ? "ip=BITID" : "ip=DIFF ",
+           ok ? "" : "   *** FAIL ***");
+    fz(x); fz(zmt); fz(zst); fz(bmt); fz(bst);
+    return ok;
+}
+
 /* THE DEFAULT IS TRANSFORM-CONTIGUOUS (changed 2026-08-04): a config that
  * never mentions batch_geom must behave exactly like an explicit
  * TRANSFORM_CONTIGUOUS one — bitwise. This is the arm that would catch a
@@ -300,6 +381,16 @@ int main(int argc, char **argv)
     printf("--- the DEFAULT geometry is transform-contiguous ---\n");
     if (!run_default_geometry(W, 1024, 4)) fails++;
     if (!run_default_geometry(W, 512, 3)) fails++;
+
+    printf("--- MT (nthreads=8, per-worker clones) == ST, bitwise ---\n");
+    if (!run_mt_cell(W, 64, 64)) fails++;   /* mono; NK == the engage floor  */
+    if (!run_mt_cell(W, 256, 16)) fails++;  /* Bailey il2p                   */
+    if (!run_mt_cell(W, 1024, 8)) fails++;  /* Bailey band top               */
+    if (!run_mt_cell(W, 2048, 8)) fails++;  /* cascade                       */
+    if (!run_mt_cell(W, 4096, 4)) fails++;  /* cascade, K < workers          */
+    if (!run_mt_cell(W, 96, 43)) fails++;   /* chain3 odd N; ragged K slabs  */
+    if (!run_mt_cell(W, 512, 5)) fails++;   /* K-1 < workers -> 4 clones     */
+    if (!run_mt_cell(W, 256, 2)) fails++;   /* below the floor: serial arm   */
 
     /* SPLIT is lane-major only: DEFAULT must build (resolving to lane-major),
      * an EXPLICIT transform-contiguous request must be refused, not ignored. */

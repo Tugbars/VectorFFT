@@ -204,10 +204,31 @@ batching, and where.
     completion" — served by the existing bridge, no further
     optimization investment. Mirrors MKL's own architecture (tuned path
     for the sensible layout, generic path for the strided one).
-  - ⏸ OPEN: should `batch_geom`'s DEFAULT flip to transform-contiguous?
-    Canonical-should-be-default argues yes and matches MKL/FFTW; but a
-    flip silently reinterprets any existing lane-major K>1 caller's
-    buffer → wrong results with no error. Tugbars' call.
+  - [x] RESOLVED (2026-08-04, his call): the DEFAULT resolves PER LAYOUT
+    — INTERLEAVED → transform-contiguous, SPLIT → lane-major (SPLIT has
+    no contiguous support and an explicit contiguous request on SPLIT is
+    refused loudly). Gated: zeroed-config == explicit
+    TRANSFORM_CONTIGUOUS bitwise (`run_default_geometry`).
+- [x] **TC-batch MT (2026-08-06)** — the transform-contiguous path now
+  slabs its K transforms over the stride pool: worker t runs its slab
+  through `vfft_execute` on its OWN identically-created K=1 clone
+  handle (`h->tcbw[]`), caller takes slab 0, no barriers. Clones exist
+  because the K=1 IL engines are not reentrant (il2p/il3p `mid`
+  scratch, zturn `plane`). Three guards, all create-time in vfft.c:
+  `_tc_inner_mt_safe` (clones only for pool-free routes — a
+  convert-fallback route would mutate the pool from a worker),
+  `_tc_clone_equiv` (a clone must match the primary's attach + chain +
+  natord + exact kernel pointers, else it is destroyed — one batch must
+  never mix two scrambled combs), and the `VFFT_NO_TCMT` kill switch.
+  Engage floor N·K ≥ 4096 (⚠ hand-set; measured crossover belongs in
+  wisdom — open). Gate arm 7 (`vfft_tcbatch_gate.c`): MT(8)==ST
+  BITWISE fwd/bwd/in-place at 8 cells incl. mono, Bailey, cascade,
+  chain3 ragged-K, below-floor serial — ALL PASS; `mt_c2c_gate`
+  re-run clean (split MT untouched). Engagement probe
+  (`docs/research/mkl_kbatch_campaign/probes/tcmt__engage.c`, ratios
+  same-run, not bankable): ST/MT 4.85×@256×64 → 7.24×@8192×8.
+  K=1 single-transform MT (cascade tile-parallel) is deliberately NOT
+  this item — separate probe-first campaign.
 - [x] **The K-across-SIMD campaign (chartered earlier the same day) is
   CLOSED UNBUILT.** Its premise — that K≥2 interleaved needs its own
   kernel family — was false. Once each transform saturates the vector
