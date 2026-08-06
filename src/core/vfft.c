@@ -4855,10 +4855,19 @@ static void _zc_tramp(void *v)
  * the struct) — full independence, no barriers, disjoint blocks. The clone's
  * route is pool-free by _tc_inner_mt_safe, so this re-entry into
  * vfft_execute from a pool thread can never touch the pool. */
-/* Engage floor in complex points (N*K). Default 4096 mirrors the converts'
- * NK floor; VFFT_TCMT_FLOOR exists so the bench can MAP the crossover
- * instead of us guessing it (the measured verdict belongs in wisdom — see
- * il_coverage_plan.md). Read once: this is on the execute path. */
+/* Engage floor in complex points (N*K). 2048 is MEASURED, not guessed:
+ * bench_1d_vs_mkl --ilmt with VFFT_TCMT_FLOOR=1 mapped the crossover on
+ * 8 P-cores (2026-08-06) —
+ *     N*K = 1024 (256x4):  MT 0.82x vs our own ST  -> MT HURTS
+ *     N*K = 2048 (512x4):  1.55x   |  (256x8): 1.52x  |  (1024x2): 1.62x
+ *     N*K = 4096 (1024x4): 3.01x
+ * and engaging at 2048 flips two cells from LOSING to MKL's best config
+ * (512x4 0.68x -> 1.23x, 256x8 0.83x -> 1.47x). Below 2048 the slab
+ * dispatch costs more than the work it hands off.
+ * ⚠ ONE MACHINE, ONE THREAD COUNT: this is a scalar default, not a wisdom
+ * verdict. The per-cell banked pick is still the right end state (see
+ * il_coverage_plan.md); VFFT_TCMT_FLOOR keeps the crossover re-mappable.
+ * Read once — this is on the execute path. */
 static size_t _tc_mt_floor(void)
 {
     static size_t f = 0;
@@ -4866,7 +4875,7 @@ static size_t _tc_mt_floor(void)
     {
         const char *e = getenv("VFFT_TCMT_FLOOR");
         long v = e ? atol(e) : 0;
-        f = (v > 0) ? (size_t)v : 4096;
+        f = (v > 0) ? (size_t)v : 2048;
     }
     return f;
 }
@@ -5716,9 +5725,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         const size_t tn = 2 * (size_t)h->N;
         int T = 1 + h->tcbw_n;
         if (T > 1 && (size_t)h->N * h->K >= _tc_mt_floor())
-        { /* engage floor: total work in complex points, mirroring the
-           * converts' NK floor. ⚠ Hand-set starting point — the measured
-           * crossover belongs in wisdom once the bench maps it. */
+        { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
             vfft_set_num_threads(h->nthreads); /* re-assert snapshot pool */
             if (T > _stride_pool_size + 1)
                 T = _stride_pool_size + 1;
@@ -5727,6 +5734,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             T = 1;
         if (T > 1)
         {
+            /* 🔴 NO TAIL, BY CONSTRUCTION — and note the contrast with the
+             * lane-major arm right below (_il_mt_arg), whose slab size is
+             * `(ceil(K/T) + 7) & ~7`: there a slab is a set of SIMD LANES,
+             * so it must stay a whole multiple of the vector width and the
+             * leftover lanes need padded/SSE2 tail machinery. Here the unit
+             * of work is ONE WHOLE K=1 TRANSFORM, so ceil(K/T) needs no
+             * rounding at all: a ragged K just gives the last worker fewer
+             * complete transforms, each running the identical kernel. This
+             * is the "loop the K=1 solution for any K" contract — no `me`,
+             * no partial-lane count, no padding, nothing to get wrong.
+             * Gated at K=43 over 8 threads (slabs 6,6,6,6,6,6,6,1). */
             const size_t S = (h->K + (size_t)T - 1) / (size_t)T;
             _tc_mt_arg a[64];
             int nd = 0;
