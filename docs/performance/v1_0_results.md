@@ -291,19 +291,26 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
   N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
 ──────────────────────────────────────────────────────────────
   128         0.91 †              ▢          (= NAT bits)
-  256       0.75–0.77             ▢          (= NAT bits)
-  512       0.76–0.79 ▲           ▢          (= NAT bits)
-  1024      0.82–0.94 ⚡          ▢          (= NAT bits)
+  256       0.85–0.86 ▲◆          ▢          (= NAT bits)
+  512       0.78–0.80 ▲           ▢          (= NAT bits)
+  1024      0.91–0.95 ▲           ▢          (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
   16384     1.02–1.03       0.94–0.98         1.05–1.08
   32768     0.94–0.97       0.88–0.91         1.00–1.02
 ──────────────────────────────────────────────────────────────
-† vintage 2026-08-04   ▲ 2026-08-06: blocked R≥32 kernels SHIPPED-DEFAULT
-(structural, register-file rule — not a per-cell race); same-run A/B vs the
-monolithic arm at these cells: 1024 −27% (0.60→0.83), 512 −8% (0.70→0.78);
-256 (16×16 pair, no R≥32 slot) and 4096 (cascade) are the unchanged controls
+† vintage 2026-08-04 (not re-measured)
+▲ 2026-08-06: blocked R≥32 kernels are the SHIPPED DEFAULT — a structural
+register-file rule (a monolithic R≥32 body holds ~40–64 live values against
+AVX2's 16 registers), not a per-cell race. Same-run A/B against the
+monolithic arm, pair pinned by wisdom so only the kernels vary, 8 alternating
+arms on a pinned core: 1024 −27% (0.65→0.92), 512 −8% (0.70→0.78).
+◆ 256's gain needed BOTH halves and neither alone: the calibrator replaced
+the heuristic balanced pair (16,16) with the measured (8,32), which puts
+R=32 in the leaf slot, which the structural rule then blocks — 0.76→0.85.
+Fully blocking a (16,16) pair instead was raced and LOST by 4.4%, so radix
+choice dominates form choice here.
 ▢ engine serves it; no banked table yet    (= NAT bits) identity rule
 ```
 
