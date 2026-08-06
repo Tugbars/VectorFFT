@@ -350,11 +350,32 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
     return 0;
 }
 
+/* R=16 blocked leaf, 4·4 — the RACED winner (2026-08-06). All three splits
+ * were emitted and benched against each other and against monolithic at
+ * N=512 (pair 32x16, mid held at 4·8, 24 arms, alternating, core 2):
+ *   4·4 = 362 ns  <  2·8 = 367  <  mono = 373  <  8·2 = 376  (medians)
+ * 4·4's WORST arm (366) beats monolithic's BEST (371) — non-overlapping.
+ * The two losers were deleted rather than kept as dead registry entries;
+ * this header is the record. 🔴 8·2 is SLOWER THAN MONOLITHIC: the same
+ * factorization transposed differs by 2.4%, which is why the split shape
+ * is raced per ISA and never reasoned from the factorization alone.
+ *
+ * NOT a structural default: R=16 FITS the register file (8.6% ymm spill,
+ * the census CONTROL class), so unlike R>=32 this is a wisdom-selected
+ * pool candidate and MONOLITHIC n1t(16) remains the fallback. Its purpose
+ * is to remove a real confound — blocked forms covered R=32 in both slots
+ * but R=16 in the MID only, so the (16,32)-vs-(32,16) ordering race was
+ * comparing orderings with different form coverage on each side. */
+extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
     if (!variant || !count_ok) return 0;
     if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
     if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
+    if (R2 == 16 && variant == 1) return radix16_z_n1tb44_fwd_avx2; /* 4·4 */
     return 0;
 }
 
