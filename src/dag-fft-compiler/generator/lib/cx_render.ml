@@ -93,6 +93,7 @@ let addr_str (a : caddr) : string =
   | AP i -> Printf.sprintf "P[%d]" i
   | AZinAbs i -> Printf.sprintf "zin[%d]" i
   | AZoutAbs i -> Printf.sprintf "zout[%d]" i
+  | ATw i -> Printf.sprintf "twp[%d]" i
 ;;
 
 (* A store node as a C statement (no trailing ';'). The value operand is the
@@ -157,8 +158,8 @@ let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : stri
       then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
         let off = (leg - 1) * 2 * twv in
-        ( Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)
-        , Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + twv)) ))
+        ( Isa.loadu_pd isa (addr_str (ATw off))
+        , Isa.loadu_pd isa (addr_str (ATw (off + twv))) ))
     in
     Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
 ;;
@@ -220,11 +221,11 @@ let emit_log3_prologue
            buf
            (Printf.sprintf
               "        %s\n        %s\n"
-              (Isa.const_decl isa cj (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)))
+              (Isa.const_decl isa cj (Isa.loadu_pd isa (addr_str (ATw off))))
               (Isa.const_decl
                  isa
                  sj
-                 (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + vw)))))
+                 (Isa.loadu_pd isa (addr_str (ATw (off + vw))))))
        | Some (p, q) ->
          let cp = Printf.sprintf "_wc%d%s" p msuf
          and sp = Printf.sprintf "_ws%d%s" p msuf
