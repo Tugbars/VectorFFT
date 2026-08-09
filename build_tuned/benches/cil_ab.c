@@ -185,7 +185,11 @@ int main(int argc, char **argv)
         else { printf("unknown arg %s\n", argv[i]); return 2; }
     }
     int is_leaf = !strcmp(slot, "leaf");
-    if (!is_leaf && strcmp(slot, "mid")) { printf("--slot must be leaf|mid\n"); return 2; }
+    int is_both = !strcmp(slot, "both");
+    if (!is_leaf && !is_both && strcmp(slot, "mid")) {
+        printf("--slot must be leaf|mid|both\n");
+        return 2;
+    }
     if (rounds < 15) { printf("house protocol: >=15 rounds\n"); return 2; }
 
     QueryPerformanceFrequency(&qf);
@@ -239,24 +243,47 @@ int main(int argc, char **argv)
     printf("route=IL2P pair(R1=%d,R2=%d) leaf=%s mid=%s\n",
            q->R1, q->R2, symname(q->leaf_f), symname(q->mid_f));
 
-    int slot_radix = is_leaf ? q->R2 : q->R1;
-    vfft_il2p_fn baseline = is_leaf ? q->leaf_f : q->mid_f;
-    vfft_il2p_fn *slot_p  = is_leaf ? &q->leaf_f : &q->mid_f;
+    vfft_il2p_fn orig_leaf = q->leaf_f, orig_mid = q->mid_f;
 
-    /* admit arms */
-    const arm_t *arm[N_ARMS]; int n_arm = 0;
-    for (int i = 0; i < N_ARMS; i++) {
-        if (strcmp(ARMS[i].slot, slot)) continue;
-        if (only_arm && strcmp(ARMS[i].name, only_arm)) continue;
-        if (ARMS[i].radix != slot_radix) {
-            printf("skip arm '%s': radix %d != plan %s radix %d\n",
-                   ARMS[i].name, ARMS[i].radix, slot, slot_radix);
-            continue;
+    /* Each lane is a (leaf, mid) PAIR; single-slot modes hold the other slot
+     * at the original. --slot both pairs arms BY NAME (a name must supply
+     * both a leaf-radix and a mid-radix row) and swaps the WHOLE PLAN —
+     * old kernels vs new kernels end-to-end. */
+    typedef struct { vfft_il2p_fn lf, mf; const char *name; int exact; } lane_arm_t;
+    lane_arm_t arm[N_ARMS]; int n_arm = 0;
+    if (is_both) {
+        for (int i = 0; i < N_ARMS; i++) {
+            if (strcmp(ARMS[i].slot, "leaf") || ARMS[i].radix != q->R2) continue;
+            if (only_arm && strcmp(ARMS[i].name, only_arm)) continue;
+            for (int j = 0; j < N_ARMS; j++) {
+                if (strcmp(ARMS[j].slot, "mid") || ARMS[j].radix != q->R1) continue;
+                if (strcmp(ARMS[i].name, ARMS[j].name)) continue;
+                arm[n_arm].lf = ARMS[i].fn;
+                arm[n_arm].mf = ARMS[j].fn;
+                arm[n_arm].name = ARMS[i].name;
+                arm[n_arm].exact = ARMS[i].exact && ARMS[j].exact;
+                n_arm++;
+            }
         }
-        arm[n_arm++] = &ARMS[i];
+    } else {
+        int slot_radix = is_leaf ? q->R2 : q->R1;
+        for (int i = 0; i < N_ARMS; i++) {
+            if (strcmp(ARMS[i].slot, slot)) continue;
+            if (only_arm && strcmp(ARMS[i].name, only_arm)) continue;
+            if (ARMS[i].radix != slot_radix) {
+                printf("skip arm '%s': radix %d != plan %s radix %d\n",
+                       ARMS[i].name, ARMS[i].radix, slot, slot_radix);
+                continue;
+            }
+            arm[n_arm].lf = is_leaf ? ARMS[i].fn : orig_leaf;
+            arm[n_arm].mf = is_leaf ? orig_mid : ARMS[i].fn;
+            arm[n_arm].name = ARMS[i].name;
+            arm[n_arm].exact = ARMS[i].exact;
+            n_arm++;
+        }
     }
-    if (!n_arm) { printf("ABORT: no admissible arms for slot=%s radix=%d\n",
-                         slot, slot_radix); return 3; }
+    if (!n_arm) { printf("ABORT: no admissible arms for slot=%s\n", slot); return 3; }
+#define SET_LANE(lf_, mf_) do { q->leaf_f = (lf_); q->mid_f = (mf_); } while (0)
 
     int N2 = 2 * N;
     size_t nb = (size_t)N2 * sizeof(double);
@@ -274,7 +301,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < N2; i++) x[i] = rnd01();
     naive_dft(x, ref, N);
 
-    *slot_p = baseline;
+    SET_LANE(orig_leaf, orig_mid);
     memcpy(z, x, nb);
     vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
     memcpy(outA, z, nb);
@@ -283,17 +310,17 @@ int main(int argc, char **argv)
 
     int gate_fail = 0;
     for (int a = 0; a < n_arm; a++) {
-        *slot_p = arm[a]->fn;
+        SET_LANE(arm[a].lf, arm[a].mf);
         memcpy(z, x, nb);
         vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
         memcpy(outB, z, nb);
-        *slot_p = baseline;
+        SET_LANE(orig_leaf, orig_mid);
 
         double errB  = rel_err(outB, ref, N2);
         int    bitid = !memcmp(outA, outB, nb);
-        int    pass  = arm[a]->exact ? bitid : (errB <= 4.0 * errA + 1e-300);
+        int    pass  = arm[a].exact ? bitid : (errB <= 4.0 * errA + 1e-300);
         printf("  %-18s vs naive %.3e  vs baseline %s  %s\n",
-               arm[a]->name, errB,
+               arm[a].name, errB,
                bitid ? "BITID" : "differs",
                pass ? "PASS" : "FAIL");
         if (!pass) gate_fail = 1;
@@ -308,9 +335,10 @@ int main(int argc, char **argv)
     for (int r = 0; r < rounds; r++) {
         for (int li = 0; li < lanes; li++) {
             int lane = (r & 1) ? (lanes - 1 - li) : li;   /* alternate order */
-            vfft_il2p_fn f = (lane == 0 || lane == lanes - 1)
-                             ? baseline : arm[lane - 1]->fn;
-            *slot_p = f;
+            if (lane == 0 || lane == lanes - 1)
+                SET_LANE(orig_leaf, orig_mid);
+            else
+                SET_LANE(arm[lane - 1].lf, arm[lane - 1].mf);
             /* untimed warmup block: after any pause the core has downclocked;
              * timing the first block would charge the ramp to the arm */
             memcpy(z, gold, nb);
@@ -321,7 +349,7 @@ int main(int argc, char **argv)
             for (int b = 0; b < BLOCK; b++)
                 vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
             samp[lane * rounds + r] = (now_ns() - t0) / (double)BLOCK;
-            *slot_p = baseline;
+            SET_LANE(orig_leaf, orig_mid);
             /* spin-pace (busy) so the core never sleeps into a downclock */
             { double until = now_ns() + PACE_MS * 1e6;
               while (now_ns() < until) _mm_pause(); }
@@ -344,7 +372,7 @@ int main(int argc, char **argv)
            "arm", "floor_ns", "med_ns", "spread", "d_med");
     for (int lane = 0; lane < lanes; lane++) {
         const char *nm = lane == 0 ? "baseline"
-                       : lane == lanes - 1 ? "baseline(2nd)" : arm[lane - 1]->name;
+                       : lane == lanes - 1 ? "baseline(2nd)" : arm[lane - 1].name;
         double d = (med[lane] - base_med) / base_med;
         char verdict[64] = "";
         if (lane > 0 && lane < lanes - 1)
