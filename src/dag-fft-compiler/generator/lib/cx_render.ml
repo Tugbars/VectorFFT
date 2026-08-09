@@ -76,6 +76,31 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
   Buffer.contents b
 ;;
 
+(* ── Symbolic address -> C expression (complete-IR arc, 2026-08-09).
+ * Width-independent: the strings are double-array indexing, identical for
+ * the wide body and the SSE2 tail. These MUST reproduce the historical
+ * hand-edge strings byte-for-byte — they are the byte-identity contract. *)
+let addr_str (a : caddr) : string =
+  match a with
+  | AZinLeg l -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
+  | AZoutLeg l -> Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l
+  | AZoutTurn (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l
+  | AZoutTurn (l, _) -> Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" l
+  | AZoutTurnG (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + (size_t)%d*OGs)]" l
+  | AZoutTurnG (l, _) ->
+    Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)]" l
+  | AS i -> Printf.sprintf "S[%d]" i
+  | AP i -> Printf.sprintf "P[%d]" i
+  | AZinAbs i -> Printf.sprintf "zin[%d]" i
+  | AZoutAbs i -> Printf.sprintf "zout[%d]" i
+;;
+
+(* A store node as a C statement (no trailing ';'). The value operand is the
+ * def name of the sunk node — same convention as `render`'s operands. *)
+let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
+  Isa.storeu_pd isa (addr_str a) v
+;;
+
 (* Render one scheduled node as a C initializer expression.
    ?tw_vw — the vec_width the runtime VTW2 TABLE was built for. Defaults to
    the render ISA's own width (byte-identical for every existing call). The
@@ -90,6 +115,13 @@ let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : stri
   let v (x : t) = Printf.sprintf "z%d" x.tag in
   match e.node with
   | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
+  | CLoad a -> Isa.loadu_pd isa (addr_str a)
+  | CStore _ ->
+    failwith "codelet_cil.render: CStore is a statement — use render_store"
+  | CTurn (a, b, imm) ->
+    Printf.sprintf "%s(%s, %s, 0x%x)" (Isa.intr isa "permute2f128_pd") (v a) (v b) imm
+  | CLo a -> Printf.sprintf "_mm256_castpd256_pd128(%s)" (v a)
+  | CHi a -> Printf.sprintf "_mm256_extractf128_pd(%s, 1)" (v a)
   | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
   | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
   (* complex negation: flip both lanes' signs — same rendering the real side

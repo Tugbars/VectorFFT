@@ -35,9 +35,11 @@ open Cx_ir
 
 let children (e : t) : t list =
   match e.node with
-  | CIn _ -> []
-  | CNeg a | CRotNI a | CRotPI a -> [ a ]
+  | CIn _ | CLoad _ -> []
+  | CNeg a | CRotNI a | CRotPI a | CLo a | CHi a -> [ a ]
+  | CStore (_, v) -> [ v ]
   | CAdd (a, b) | CSub (a, b) -> [ a; b ]
+  | CTurn (a, b, _) -> [ a; b ]
   | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
   | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
 ;;
@@ -96,10 +98,14 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
           | Some canon -> cneg (rw canon)
           | None ->
             (match e.node with
-             | CIn _ -> e
+             | CIn _ | CLoad _ -> e
              | CNeg a -> cneg (rw a)
              | CRotNI a -> crot (rw a)
              | CRotPI a -> crotp (rw a)
+             | CLo a -> clo (rw a)
+             | CHi a -> chi (rw a)
+             | CStore (a, v) -> cstore a (rw v)
+             | CTurn (a, b, imm) -> cturn (rw a) (rw b) imm
              | CAdd (a, b) -> cadd (rw a) (rw b)
              | CSub (a, b) -> csub (rw a) (rw b)
              | CFmaC (c, x, acc) -> cfma c (rw x) (rw acc)
@@ -114,8 +120,30 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
     List.map (fun (lbl, e) -> lbl, rw e) assigns, Hashtbl.length victim)
 ;;
 
+(* ── critical path (cycles) of the DAG under the shared latency table ────
+ * Longest latency-weighted path from any input to any output, using the
+ * SAME Cx_sched.Node.latency the SR scheduler uses. This is the serial
+ * floor of one pass: no schedule, no port count, no compiler can go below
+ * it — the discriminator between "chain-bound" and "resource-bound". *)
+let critical_path (uarch : Uarch.t) (roots : t list) : int =
+  let memo : (int, int) Hashtbl.t = Hashtbl.create 256 in
+  let rec cp (e : t) : int =
+    match Hashtbl.find_opt memo e.tag with
+    | Some v -> v
+    | None ->
+      let v =
+        Cx_sched.Node.latency uarch e
+        + List.fold_left (fun acc c -> max acc (cp c)) 0 (children e)
+      in
+      Hashtbl.replace memo e.tag v;
+      v
+  in
+  List.fold_left (fun acc r -> max acc (cp r)) 0 roots
+;;
+
 (* ── stats (VFFT_CX_STATS=1): per-codelet DAG census to stderr ─────────── *)
-let print_stats (who : string) (assigns : (Expr.elem_ref * t) list) : unit =
+let print_stats ?(uarch : Uarch.t option) (who : string)
+      (assigns : (Expr.elem_ref * t) list) : unit =
   let n_in = ref 0
   and n_add = ref 0
   and n_sub = ref 0
@@ -124,20 +152,28 @@ let print_stats (who : string) (assigns : (Expr.elem_ref * t) list) : unit =
   and n_fma = ref 0
   and n_tw = ref 0
   and n_all = ref 0 in
+  let n_st = ref 0 in
   iter_reachable (List.map snd assigns) (fun e ->
     incr n_all;
     match e.node with
-    | CIn _ -> incr n_in
+    | CIn _ | CLoad _ -> incr n_in
+    | CStore _ -> incr n_st
     | CAdd _ -> incr n_add
     | CSub _ -> incr n_sub
     | CNeg _ -> incr n_neg
-    | CRotNI _ | CRotPI _ -> incr n_rot
+    | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> incr n_rot
     | CFmaC _ | CFnmaC _ -> incr n_fma
     | CTwC _ | CTwV _ | CTwL _ -> incr n_tw);
+  let cp_str =
+    match uarch with
+    | Some u ->
+      Printf.sprintf ", cp %dc" (critical_path u (List.map snd assigns))
+    | None -> ""
+  in
   Printf.eprintf
-    "[cx_pipeline] %s: nodes %d (in %d, add %d, sub %d, neg %d, rot %d, fma %d, tw %d), outs %d\n%!"
-    who !n_all !n_in !n_add !n_sub !n_neg !n_rot !n_fma !n_tw
-    (List.length assigns)
+    "[cx_pipeline] %s: nodes %d (in %d, add %d, sub %d, neg %d, rot %d, fma %d, tw %d, st %d), outs %d%s\n%!"
+    who !n_all !n_in !n_add !n_sub !n_neg !n_rot !n_fma !n_tw !n_st
+    (List.length assigns) cp_str
 ;;
 
 (* ── THE ENTRY POINT ──────────────────────────────────────────────────────
@@ -145,7 +181,8 @@ let print_stats (who : string) (assigns : (Expr.elem_ref * t) list) : unit =
  * pass) hands its labeled assigns through here before scheduling. Default
  * env = every existing kernel byte-identical (the cascade's passes find
  * zero sites on the current builders; kill switches skip them outright). *)
-let prepare_codelet ?(who = "cil") (assigns : (Expr.elem_ref * t) list)
+let prepare_codelet ?(who = "cil") ?(uarch : Uarch.t option)
+      (assigns : (Expr.elem_ref * t) list)
   : (Expr.elem_ref * t) list
   =
   let assigns, ndedup =
@@ -155,6 +192,6 @@ let prepare_codelet ?(who = "cil") (assigns : (Expr.elem_ref * t) list)
   in
   if ndedup > 0
   then Printf.eprintf "[cx_pipeline] %s: dedup_sub_pairs rewrote %d mirror(s)\n%!" who ndedup;
-  if Sys.getenv_opt "VFFT_CX_STATS" = Some "1" then print_stats who assigns;
+  if Sys.getenv_opt "VFFT_CX_STATS" = Some "1" then print_stats ?uarch who assigns;
   assigns
 ;;

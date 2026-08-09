@@ -189,11 +189,15 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
   let pre_tw = kind = T2 && (dir = Fwd || !tw_pre) in
   let post_tw = kind = T2 && dir = Bwd && not !tw_pre in
+  (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
+     their symbolic address — the load edge prints FROM the DAG instead of
+     inventing the string. Created in the same order cin was, so every tag
+     (= every zN name) is unchanged: byte-identity by construction. *)
   let inputs =
     Array.init radix (fun i ->
       (* T2 fwd PRE-twiddles legs 1..R-1 from the streamed table; leg 0 is
          untwiddled (w^0 = 1), which is why records start at leg 1. *)
-      if pre_tw && i > 0 then ctwl i (cin i) else cin i)
+      if pre_tw && i > 0 then ctwl i (cload (AZinLeg i)) else cload (AZinLeg i))
   in
   let outs = dft_small ~sign radix inputs in
   (* T2 bwd POST-twiddles: conj(w) (.) IDFT(y). Same BYTW2 apply, same table
@@ -206,7 +210,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
   (* THE PIPELINE SEAM: every cil body flows through the cx pass cascade
      between construction and scheduling — cil is pipeline-hosted. *)
-  let assigns = Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind)) assigns in
+  let assigns = Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind)) ~uarch assigns in
   let scheduled = Sched.su_schedule uarch assigns in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
@@ -235,7 +239,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     let assigns =
       Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
     in
-    let assigns = Cx_pipeline.prepare_codelet ~who:label assigns in
+    let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = Sched.su_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     Array.iteri
@@ -250,7 +254,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     List.iter
       (fun ((_ : Expr.elem_ref option), (e : t)) ->
          match e.node with
-         | CIn _ -> ()
+         | CIn _ | CLoad _ -> ()
          | _ ->
            if not (Hashtbl.mem seen e.tag)
            then (
@@ -492,7 +496,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   List.iter
     (fun ((_ : Expr.elem_ref option), (e : t)) ->
        match e.node with
-       | CIn _ -> () (* materialized by the load edge *)
+       | CIn _ | CLoad _ -> () (* materialized by the load edge *)
        | _ ->
          if not (Hashtbl.mem seen e.tag)
          then (
@@ -537,14 +541,14 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
            "        %s\n"
            (Isa.const_decl
               nisa
-              (Printf.sprintf "z%d" (cin l).tag)
-              (Isa.loadu_pd nisa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
+              (Printf.sprintf "z%d" (cload (AZinLeg l)).tag)
+              (Isa.loadu_pd nisa (addr_str (AZinLeg l)))))
     done;
     let seen_n : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
       (fun ((_ : Expr.elem_ref option), (e : t)) ->
          match e.node with
-         | CIn _ -> ()
+         | CIn _ | CLoad _ -> ()
          | _ ->
            if not (Hashtbl.mem seen_n e.tag)
            then (
@@ -560,16 +564,15 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       scheduled;
     match (if !st_turn then N1T else kind) with
     | N1 | T2 ->
+      (* the wide edge below creates the CStore node; the tail prints the
+         same address form at narrow width *)
       Array.iteri
         (fun l (e : t) ->
            Buffer.add_string
              body_n
              (Printf.sprintf
                 "        %s;\n"
-                (Isa.storeu_pd
-                   nisa
-                   (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l)
-                   (Printf.sprintf "z%d" e.tag))))
+                (render_store nisa (AZoutLeg l) (Printf.sprintf "z%d" e.tag))))
         outs
     | N1T ->
       (* one complex per leg: the corner-turn (and the t2tg leg stride) is
@@ -717,8 +720,8 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
            "        %s\n"
            (Isa.const_decl
               isa
-              (Printf.sprintf "z%d" (cin l).tag)
-              (Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l))))
+              (Printf.sprintf "z%d" (cload (AZinLeg l)).tag)
+              (Isa.loadu_pd isa (addr_str (AZinLeg l)))))
     done;
   Buffer.add_buffer buf body;
   (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
@@ -726,17 +729,18 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   if not blocked then
   (match (if !st_turn then N1T else kind) with
    | N1 | T2 ->
-     (* leg-major: leg l's `per` columns stay contiguous *)
+     (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
+        store is a CStore NODE (address in the DAG); built post-schedule so
+        no existing tag shifts, printed via render_store (addr_str carries
+        the byte-identity contract). *)
      Array.iteri
        (fun l (e : t) ->
+          let (_ : t) = cstore (AZoutLeg l) e in
           Buffer.add_string
             buf
             (Printf.sprintf
                "        %s;\n"
-               (Isa.storeu_pd
-                  isa
-                  (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l)
-                  (Printf.sprintf "z%d" e.tag))))
+               (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag))))
        outs
    | N1T ->
      if !st_turn_gs
@@ -916,7 +920,7 @@ let emit_k1
     let ins = Array.init nin cin in
     let outs = build ins in
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
-    let assigns = Cx_pipeline.prepare_codelet ~who:label assigns in
+    let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = Sched.su_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
     pre ();
@@ -932,7 +936,7 @@ let emit_k1
     List.iter
       (fun ((_ : Expr.elem_ref option), (e : t)) ->
          match e.node with
-         | CIn _ -> ()
+         | CIn _ | CLoad _ -> ()
          | _ ->
            if not (Hashtbl.mem seen e.tag)
            then (

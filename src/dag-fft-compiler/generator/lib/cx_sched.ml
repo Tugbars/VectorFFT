@@ -20,9 +20,11 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
 
   let preds (e : t) : t list =
     match e.node with
-    | CIn _ -> []
-    | CNeg a | CRotNI a | CRotPI a -> [ a ]
+    | CIn _ | CLoad _ -> []
+    | CNeg a | CRotNI a | CRotPI a | CLo a | CHi a -> [ a ]
+    | CStore (_, v) -> [ v ]
     | CAdd (a, b) | CSub (a, b) -> [ a; b ]
+    | CTurn (a, b, _) -> [ a; b ]
     | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
     | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
   ;;
@@ -33,10 +35,14 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
      mul + fma chain, dominated by fma latency, exactly like NK_Cmul*. *)
   let latency (uarch : Uarch.t) (e : t) : int =
     match e.node with
-    | CIn _ -> uarch.load_l1_latency
+    | CIn _ | CLoad _ -> uarch.load_l1_latency
+    | CStore _ -> uarch.store_latency
     | CAdd _ | CSub _ -> uarch.add_latency
     (* CNeg is one xor — charged like NK_Neg on the real side. *)
     | CNeg _ -> uarch.add_latency
+    (* CTurn = one permute2f128; CLo is a free cast, CHi one extract —
+       charged like the other lane ops. *)
+    | CTurn _ | CLo _ | CHi _ -> uarch.add_latency
     | CRotNI _ | CRotPI _ -> uarch.add_latency
     | CFmaC _ | CFnmaC _ -> uarch.fma_latency
     | CTwC _ | CTwV _ -> uarch.fma_latency
@@ -48,13 +54,18 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
 
   let is_load (e : t) =
     match e.node with
-    | CIn _ -> true
+    | CIn _ | CLoad _ -> true
     | _ -> false
   ;;
 
-  (* No store node kind in the complex IR either: stores are the assigns
-     list (B2's SCHED_NODE store accessor — trivially false here). *)
-  let is_store (_ : t) = false
+  (* CStore made this hook LIVE (2026-08-09, complete-IR arc) — the B2
+     accessor is no longer trivially false. Whether stores are scheduled is
+     the emitter's placement policy; the IR and scheduler now support it. *)
+  let is_store (e : t) =
+    match e.node with
+    | CStore _ -> true
+    | _ -> false
+  ;;
 
   (* No standalone const nodes: real coefficients ride inside CFmaC/CTwC as
      emit-time set1/VLIT operands, so there is nothing for the lookahead
@@ -63,8 +74,10 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
 
   let kind_char (e : t) =
     match e.node with
-    | CIn _ -> 'L'
+    | CIn _ | CLoad _ -> 'L'
+    | CStore _ -> 'S'
     | CAdd _ | CSub _ | CNeg _ -> 'A'
+    | CTurn _ | CLo _ | CHi _ -> 'R'
     | CRotNI _ | CRotPI _ -> 'R'
     | CFmaC _ | CFnmaC _ -> 'F'
     | CTwC _ | CTwV _ -> 'X'
