@@ -25,6 +25,8 @@ let rec eval (env : Complex.t array) (e : t) : Complex.t =
   | CFnmaC (c, x, acc) -> add (mul { re = -.c; im = 0.0 } (eval env x)) (eval env acc)
   | CTwC (c, s, x) -> mul { re = c; im = s } (eval env x)
   | CTwV _ | CTwL _ -> failwith "cx_pipeline_test: eval does not model table twiddles"
+  | CLoad _ | CStore _ | CTurn _ | CLo _ | CHi _ ->
+    failwith "cx_pipeline_test: eval does not model memory/lane nodes"
 ;;
 
 let ceq a b =

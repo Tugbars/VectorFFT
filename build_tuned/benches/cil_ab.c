@@ -71,6 +71,8 @@ DECL(radix16_z_n1tb44_sdb_fwd_avx2);       /* Leg 0: 2-way rotated S plane   */
 DECL(radix16_z_n1tb44_sdb4_fwd_avx2);      /* Leg 0: 4-way rotated S plane   */
 DECL(radix16_z_n1tb44_npl_fwd_avx2);       /* NEW pipeline-hosted generator  */
 DECL(radix32_z_t2b48_npl_fwd_avx2);        /* NEW pipeline-hosted generator  */
+DECL(radix16_z_n1tb44_brd_fwd_avx2);       /* BRAIDED scopes (window test)   */
+DECL(radix32_z_t2b48_brd_fwd_avx2);        /* BRAIDED scopes (window test)   */
 #undef DECL
 
 typedef struct {
@@ -91,6 +93,10 @@ static const arm_t ARMS[] = {
       "emitted by the NEW pipeline-hosted generator — expects BITID + ~0 delta" },
     { "npl",  "mid",  32, radix32_z_t2b48_npl_fwd_avx2, 1,
       "emitted by the NEW pipeline-hosted generator — expects BITID + ~0 delta" },
+    { "brd",  "leaf", 16, radix16_z_n1tb44_brd_fwd_avx2, 1,
+      "BRAIDED pass groups (4+2) — buys window-width with registers" },
+    { "brd",  "mid",  32, radix32_z_t2b48_brd_fwd_avx2, 1,
+      "BRAIDED pass groups (4+8) — buys window-width with registers" },
 };
 #define N_ARMS ((int)(sizeof ARMS / sizeof ARMS[0]))
 
@@ -107,6 +113,8 @@ static const symrow_t SYMS[] = {
     { radix16_z_n1tb44_sdb4_fwd_avx2, "n1tb44_SDB4"   },
     { radix16_z_n1tb44_npl_fwd_avx2, "n1tb44_NPL"     },
     { radix32_z_t2b48_npl_fwd_avx2,  "t2b48_NPL"      },
+    { radix16_z_n1tb44_brd_fwd_avx2, "n1tb44_BRD"     },
+    { radix32_z_t2b48_brd_fwd_avx2,  "t2b48_BRD"      },
 };
 static const char *symname(vfft_il2p_fn f)
 {

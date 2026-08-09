@@ -16,8 +16,38 @@
  *  THE COMPLEX IR
  * ═══════════════════════════════════════════════════════════════ *)
 
+(* ── Symbolic addresses — the memory world, as DATA ─────────────────────
+ * One constructor per address FORM the cil family emits. The runtime names
+ * (k, Ls, OLs, OGs, twp) are fixed by the frozen z ABI, so a form + its
+ * compile-time ints IS the address; rendering to a C string is cx_render's
+ * job. `col` on the turned forms selects column k (0) or k+1 (1) — the
+ * corner-turn writes two columns per iteration. *)
+type caddr =
+  | AZinLeg of int (* zin [2*((size_t)l*Ls  + k)]                  *)
+  | AZoutLeg of int (* zout[2*((size_t)l*OLs + k)]                  *)
+  | AZoutTurn of int * int (* (l, col)  zout[2*(((size_t)k+c)*OLs + l)]     *)
+  | AZoutTurnG of int * int (* (l, col)  ... + (size_t)l*OGs)]  t2tg scatter  *)
+  | AS of int (* S[i]  — the blocked spill plane, flat doubles *)
+  | AP of int (* P[i]  — emit_k1's stage plane                 *)
+  | AZinAbs of int (* zin [i] — emit_k1 absolute (no k)             *)
+  | AZoutAbs of int (* zout[i] — emit_k1 absolute                    *)
+
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)
+  | CLoad of caddr
+  (* a load with its ADDRESS in the DAG — the complete-IR replacement for
+     CIn + the hand load edge. Same is_load/latency treatment as CIn. *)
+  | CStore of caddr * t
+  (* a store node: address + the value it sinks. First-class so the
+     scheduler CAN see stores (Node.is_store, the B2 hook) — whether it
+     SCHEDULES them is the placement policy's choice, not the IR's. *)
+  | CTurn of t * t * int
+  (* permute2f128(a, b, imm) — the corner-turn lane regroup (0x20/0x31).
+     In the DAG so turned stores are data, not a hand-printed edge. *)
+  | CLo of t
+  | CHi of t
+  (* 128-bit halves (castpd256_pd128 / extractf128 1) — the odd-leg and
+     leg-strided scatter halves. *)
   | CAdd of t * t
   | CSub of t * t
   | CNeg of t
@@ -122,6 +152,11 @@ let mk (nk : cx_kind) : t =
 ;;
 
 let cin i = mk (CIn i)
+let cload a = mk (CLoad a)
+let cstore a v = mk (CStore (a, v))
+let cturn a b imm = mk (CTurn (a, b, imm))
+let clo a = mk (CLo a)
+let chi a = mk (CHi a)
 let cadd a b = mk (CAdd (a, b))
 let csub a b = mk (CSub (a, b))
 let cneg a = mk (CNeg a)
