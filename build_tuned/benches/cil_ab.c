@@ -73,6 +73,7 @@ DECL(radix16_z_n1tb44_npl_fwd_avx2);       /* NEW pipeline-hosted generator  */
 DECL(radix32_z_t2b48_npl_fwd_avx2);        /* NEW pipeline-hosted generator  */
 DECL(radix16_z_n1tb44_brd_fwd_avx2);       /* BRAIDED scopes (window test)   */
 DECL(radix32_z_t2b48_brd_fwd_avx2);        /* BRAIDED scopes (window test)   */
+DECL(radix32_z_t2b48_wsp_fwd_avx2);        /* P1: window-split two-loop mid  */
 #undef DECL
 
 typedef struct {
@@ -97,6 +98,8 @@ static const arm_t ARMS[] = {
       "BRAIDED pass groups (4+2) — buys window-width with registers" },
     { "brd",  "mid",  32, radix32_z_t2b48_brd_fwd_avx2, 1,
       "BRAIDED pass groups (4+8) — buys window-width with registers" },
+    { "wsp",  "mid",  32, radix32_z_t2b48_wsp_fwd_avx2, 1,
+      "P1: window-split two-loop mid — 593-node body -> ~190/~160, full S plane" },
 };
 #define N_ARMS ((int)(sizeof ARMS / sizeof ARMS[0]))
 
@@ -115,6 +118,7 @@ static const symrow_t SYMS[] = {
     { radix32_z_t2b48_npl_fwd_avx2,  "t2b48_NPL"      },
     { radix16_z_n1tb44_brd_fwd_avx2, "n1tb44_BRD"     },
     { radix32_z_t2b48_brd_fwd_avx2,  "t2b48_BRD"      },
+    { radix32_z_t2b48_wsp_fwd_avx2,  "t2b48_WSP"      },
 };
 static const char *symname(vfft_il2p_fn f)
 {
@@ -356,14 +360,17 @@ int main(int argc, char **argv)
         }
     }
 
-    /* stats first (control noise must exist before any verdict is printed) */
+    /* stats first (control noise must exist before any verdict is printed).
+     * Sort a COPY — the raw per-round samples keep their round pairing for
+     * the paired-delta analysis below. */
     double flr[16], med[16], spread[16];
+    double *sorted = (double *)malloc((size_t)rounds * sizeof(double));
     for (int lane = 0; lane < lanes; lane++) {
-        double *s = samp + (size_t)lane * rounds;
-        qsort(s, rounds, sizeof(double), cmp_d);
-        flr[lane]    = s[0];
-        med[lane]    = s[rounds / 2];
-        spread[lane] = (s[rounds - 1] - s[0]) / s[0];
+        memcpy(sorted, samp + (size_t)lane * rounds, (size_t)rounds * sizeof(double));
+        qsort(sorted, rounds, sizeof(double), cmp_d);
+        flr[lane]    = sorted[0];
+        med[lane]    = sorted[rounds / 2];
+        spread[lane] = (sorted[rounds - 1] - sorted[0]) / sorted[0];
     }
     double base_med   = med[0];
     double ctl_noise  = fabs(med[lanes - 1] - base_med) / base_med;
@@ -383,6 +390,27 @@ int main(int argc, char **argv)
     }
     printf("\ntwin-arm control disagreement %.2f%% — deltas inside this are noise.\n",
            ctl_noise * 100.0);
+
+    /* ── paired same-round deltas — the small-effect instrument ──────────
+     * Arm and baseline run seconds apart within one round, so slow thermal
+     * drift cancels in the per-round subtraction. Median-of-deltas resolves
+     * effects far below the median table's ±2-4% noise. The same statistic
+     * for baseline(2nd) is the paired NOISE FLOOR. */
+    printf("\npaired same-round deltas vs baseline (median of %d rounds):\n", rounds);
+    for (int lane = 1; lane < lanes; lane++) {
+        double *d = sorted;   /* reuse the scratch buffer */
+        int wins = 0;
+        for (int r = 0; r < rounds; r++) {
+            d[r] = samp[(size_t)lane * rounds + r] - samp[r];
+            if (d[r] < 0.0) wins++;
+        }
+        qsort(d, rounds, sizeof(double), cmp_d);
+        double dm = d[rounds / 2];
+        const char *nm = lane == lanes - 1 ? "baseline(2nd)" : arm[lane - 1].name;
+        printf("  %-14s %+7.2f ns (%+6.2f%%)   beats baseline %2d/%d rounds%s\n",
+               nm, dm, dm / base_med * 100.0, wins, rounds,
+               lane == lanes - 1 ? "   <- paired noise floor" : "");
+    }
     vfft_destroy(p);
     return 0;
 }
