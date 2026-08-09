@@ -89,16 +89,684 @@
  * POSITION moves (pre-butterfly fwd, post-butterfly bwd).
  * ------------------------------------------------------------------ *)
 
-(* Phase 0 decomposition (2026-08-09, byte-identity gated): the IR, the
- * scheduler instance, the math builders, and the renderer now live in
- * cx_ir.ml / cx_sched.ml / cx_math.ml / cx_render.ml. This module keeps the
- * public surface (kinds, emit, emit_k1) and the emission orchestration.
- * The seam for optimizer passes is between the DAG build (Cx_math.dft_small / dft_chain)
- * and Sched.su_schedule below — a cx pass slots there (cx_passes.ml). *)
-open Cx_ir
-open Cx_math
-open Cx_render
-module Sched = Cx_sched.Sched
+(* ═══════════════════════════════════════════════════════════════
+ *  THE COMPLEX IR
+ * ═══════════════════════════════════════════════════════════════ *)
+
+type cx_kind =
+  | CIn of int (* input leg i (a packed-complex load) *)
+  | CAdd of t * t
+  | CSub of t * t
+  | CRotNI of t (* x * (-i) : cflip then negate the IM lane *)
+  | CRotPI of t
+  (* x * (+i) : cflip then negate the RE lane. The backward twin of
+     CRotNI — an inverse transform's quarter-turn goes the other way.
+     (a+bi)*(+i) = -b + ai, so from cflip = [b,a] we negate lane 0. *)
+  | CFmaC of float * t * t (* c*x + e,  real scalar c *)
+  | CFnmaC of float * t * t (* -c*x + e, real scalar c *)
+  | CTwC of float * float * t (* x * (c + i*s), emit-time constants *)
+  | CTwV of (float * float) array * t
+  (* x * w, with a DIFFERENT emit-time constant per complex lane. The K=1
+     fused kernel needs this: one vector holds two DIFFERENT output indices
+     k1 of the same transform, so their twiddles w_N^{k1*j2} differ. Still
+     zero runtime cost — the whole [c,c,c',c'][-s,+s,-s',+s'] pair is a
+     file-scope VLIT, exactly like CTwC's. Array length = vec_width/2. *)
+  | CTwL of int * t
+  (* x * w[leg], w LOADED from the streamed VTW2 table — the bailey2 t2
+     mid. Same BYTW2 shape as CTwC, but cvec/svec come from the runtime
+     cursor `twp` instead of file-scope VLIT constants. The int is the
+     LEG index; the record offset is (leg-1)*2*VW because leg 0 is
+     untwiddled and each record is [c×VW][s×VW] (cos-first, sign-folded
+     — one data-side shuffle, zero table-side work). *)
+
+and t =
+  { tag : int
+  ; node : cx_kind
+  }
+
+(* Hash-consing: structural equality becomes tag equality, which is what
+ * gives us CSE for free (the shared ±i rotations and repeated subsums in a
+ * radix-8 body dedup automatically). Mirrors Ir.hashcons. *)
+(* Twiddle-sourcing policy for the streamed VTW2 table, consulted by the
+   CTwL renderer. A ref rather than a threaded parameter because it is
+   emission state, not IR state — the DAG is identical either way; only how
+   each leg's record is OBTAINED changes. Default false keeps every existing
+   kernel byte-identical. *)
+let tw_log3 = ref false
+
+(* PRE-TWIDDLE ON A BACKWARD T2 (the "T2P" kind).
+   Twiddle POSITION is normally derived from DIRECTION: forward pre-twiddles
+   (w . x, then DFT), backward post-twiddles (IDFT, then conj(w) . y). Those
+   are the only two combinations the emitter could express.
+
+   The pure-IL two-pass INVERSE needs the third: PRE-twiddle with a BACKWARD
+   butterfly. Without it the diagonal has to run as a separate scalar sweep
+   over the whole scratch plane, which measures 26-56% of the backward's total
+   time (build_tuned/benches/il2p_bwd_gate.c). Fusing it here does not remove
+   the multiply -- it removes the extra read+write of the plane and does the
+   arithmetic in-register, vectorized.
+
+   Position and direction are INDEPENDENT properties of the kernel; tying them
+   to `dir` was the accident. Default false keeps every existing kernel
+   byte-identical. *)
+let tw_pre = ref false
+
+(* CORNER-TURNED STORE ON A T2 (the "T2T" kind).
+   Store FORM is normally derived from KIND: N1/T2 store leg-major (straight),
+   N1T fuses the four-step transpose into its stores. Like twiddle position,
+   that coupling is an accident — the two are independent.
+
+   The pure-IL inverse decomposition (transform R1 first, then R2) needs
+   a kernel that carries the twiddle AND turns on store — t2t, THE canonical
+   backward flat codelet. Default false keeps every existing kernel
+   byte-identical. *)
+let st_turn = ref false
+
+(* LEG-STRIDED TURNED STORE (the "T2TG" kind, symbol tag `g`).
+   The plain turned store hard-codes legs at stride 1: (leg p, col k) ->
+   zout[2*(k*OLs + p)]. The 3-STAGE odd-chain BACKWARD (docs/roadmap/
+   il_odd_chain.md) needs its middle stage to interleave leg groups from
+   DIFFERENT calls: the clean l' = e + A*f split forces legs at stride A,
+   i.e. zout[2*(k*OLs + p*OGs)] — so the g variant wires the otherwise
+   `(void)`'d OGs argument as the turned store's LEG STRIDE. OGs=1
+   reproduces t2t's addressing (but t2t stays its own emission — this flag
+   emits a SEPARATE symbol precisely so every existing kernel remains
+   byte-identical). Implies st_turn. *)
+let st_turn_gs = ref false
+
+let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
+let next_tag = ref 0
+
+let reset () =
+  Hashtbl.reset hcons;
+  next_tag := 0
+;;
+
+let mk (nk : cx_kind) : t =
+  match Hashtbl.find_opt hcons nk with
+  | Some e -> e
+  | None ->
+    let e = { tag = !next_tag; node = nk } in
+    incr next_tag;
+    Hashtbl.add hcons nk e;
+    e
+;;
+
+let cin i = mk (CIn i)
+let cadd a b = mk (CAdd (a, b))
+let csub a b = mk (CSub (a, b))
+let crot a = mk (CRotNI a)
+let crotp a = mk (CRotPI a)
+let cfma c x e = mk (CFmaC (c, x, e))
+let cfnma c x e = mk (CFnmaC (c, x, e))
+let ctw c s x = mk (CTwC (c, s, x))
+let ctwv w x = mk (CTwV (w, x))
+let ctwl leg x = mk (CTwL (leg, x))
+
+(* ═══════════════════════════════════════════════════════════════
+ *  SCHEDULER INSTANTIATION — the shared SR scheduler over this IR
+ * ═══════════════════════════════════════════════════════════════ *)
+
+module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = struct
+  type payload = cx_kind
+
+  type nonrec t = t =
+    { tag : int
+    ; node : payload
+    }
+
+  let preds (e : t) : t list =
+    match e.node with
+    | CIn _ -> []
+    | CRotNI a | CRotPI a -> [ a ]
+    | CAdd (a, b) | CSub (a, b) -> [ a; b ]
+    | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
+    | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
+  ;;
+
+  (* Cycle costs, same convention as schedule.ml's real-valued table.
+     CRotNI is a shuffle + xor (both ~1c, dependent) — charged as add
+     latency, matching how NK_Neg (a sign-flip xor) is charged. CTwC is a
+     mul + fma chain, dominated by fma latency, exactly like NK_Cmul*. *)
+  let latency (uarch : Uarch.t) (e : t) : int =
+    match e.node with
+    | CIn _ -> uarch.load_l1_latency
+    | CAdd _ | CSub _ -> uarch.add_latency
+    | CRotNI _ | CRotPI _ -> uarch.add_latency
+    | CFmaC _ | CFnmaC _ -> uarch.fma_latency
+    | CTwC _ | CTwV _ -> uarch.fma_latency
+    | CTwL _ ->
+      (* table load feeds the same mul+fma chain; the load is off the
+         critical path in steady state, so charge the arithmetic. *)
+      uarch.fma_latency
+  ;;
+
+  let is_load (e : t) =
+    match e.node with
+    | CIn _ -> true
+    | _ -> false
+  ;;
+
+  (* No store node kind in the complex IR either: stores are the assigns
+     list (B2's SCHED_NODE store accessor — trivially false here). *)
+  let is_store (_ : t) = false
+
+  (* No standalone const nodes: real coefficients ride inside CFmaC/CTwC as
+     emit-time set1/VLIT operands, so there is nothing for the lookahead
+     leaf policy to defer. *)
+  let is_const (_ : t) = false
+
+  let kind_char (e : t) =
+    match e.node with
+    | CIn _ -> 'L'
+    | CAdd _ | CSub _ -> 'A'
+    | CRotNI _ | CRotPI _ -> 'R'
+    | CFmaC _ | CFnmaC _ -> 'F'
+    | CTwC _ | CTwV _ -> 'X'
+    | CTwL _ -> 'T'
+  ;;
+end
+
+module Sched = Schedule.Make (Node)
+
+(* ═══════════════════════════════════════════════════════════════
+ *  MATH LAYER — DIT-2 recursion over packed complex
+ *
+ * Forward sign e^{-2πik/n}, natural order in and out. The twiddle class is
+ * chosen per k so the common rotations never cost a general complex
+ * multiply (this is the arithmetic the hand emitter established and the
+ * race oracle verified):
+ *     k=0        -> plain butterfly
+ *     4k=n       -> ×(-i)          : CRotNI (shuffle+xor, no multiply)
+ *     8k=n       -> (1-i)/√2       : fold √½ into the butterfly via FMA
+ *     8k=3n      -> -(1+i)/√2      : same fold, mirrored
+ *     otherwise  -> general constant twiddle (BYTW2 with VLIT constants)
+ * ═══════════════════════════════════════════════════════════════ *)
+
+let sqh = 0.70710678118654752440
+
+(* ~sign: `Fwd = e^{-2πik/n} (the analysis transform), `Bwd = e^{+2πik/n}
+   (the UNNORMALIZED inverse — no 1/N, matching the rest of the library:
+   bwd(fwd(x)) = N·x). Every twiddle class flips with the sign:
+     w_k = e^{sgn·2πik/n}
+     4k=n  -> w = sgn·i        : CRotNI (fwd) / CRotPI (bwd)
+     8k=n  -> w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e
+     8k=3n -> w = (-1 + sgn·i)/√2: x = rot(o) - o, same fold
+     else  -> general constant twiddle, s = sgn·sin
+   so the ONLY structural difference is which quarter-turn node is used;
+   the butterfly shape and op counts are identical in both directions. *)
+(* ONE radix-2 butterfly of an n-point DIT stage: combine the k-th outputs of
+   the even half (ek) and odd half (ok) into outputs k and k+n/2. The twiddle
+   CLASS selection lives here so the monolithic recursion and the BLOCKED
+   construction below share exactly one copy of it — they must agree, or the
+   two forms would not be numerically interchangeable. *)
+let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok : t)
+  : t * t
+  =
+  let pi = 4.0 *. atan 1.0 in
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let sgn = if sign = `Fwd then -1.0 else 1.0 in
+  if k = 0
+  then cadd ek ok, csub ek ok
+  else if 4 * k = n
+  then (
+    let t = rot ok in
+    cadd ek t, csub ek t)
+  else if 8 * k = n
+  then (
+    (* w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e *)
+    let x = cadd ok (rot ok) in
+    cfma sqh x ek, cfnma sqh x ek)
+  else if 8 * k = 3 * n
+  then (
+    (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
+    let x = csub (rot ok) ok in
+    cfma sqh x ek, cfnma sqh x ek)
+  else (
+    let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
+    and s = sgn *. sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
+    let t = ctw c s ok in
+    cadd ek t, csub ek t)
+;;
+
+(* Unwrap a fully-assigned output array. The Option is not decoration: the
+   ORIGINAL `Array.make n xs.(0)` pre-filled every slot with INPUT LEG 0, so a
+   construction that failed to write a slot emitted plausible-looking code that
+   silently returned an input as an output (the r3 signature). With Option the
+   same mistake is a generation-time failure instead. Pow2 output is unchanged —
+   the unwrapped values are the same nodes. *)
+let unwrap_legs (who : string) (out : t option array) : t array =
+  Array.mapi
+    (fun i o ->
+       match o with
+       | Some e -> e
+       | None -> failwith (Printf.sprintf "%s: output leg %d never assigned" who i))
+    out
+;;
+
+let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+  if n = 1
+  then xs
+  else (
+    let h = n / 2 in
+    let e = dft_cx ~sign h (Array.init h (fun i -> xs.(2 * i)))
+    and o = dft_cx ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
+    let out = Array.make n None in
+    for k = 0 to h - 1 do
+      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      out.(k) <- Some a;
+      out.(k + h) <- Some b
+    done;
+    unwrap_legs "dft_cx" out)
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+ *  ODD / PRIME RADICES — the CONJUGATE-PAIR construction
+ *
+ * dft_cx above is a DIT radix-2 recursion and is valid ONLY for powers of two.
+ * Odd radices use the conjugate-pair symmetry instead. With H = (n-1)/2:
+ *
+ *     S_j = x_j + x_{n-j}          D_j = x_j - x_{n-j}        j = 1..H
+ *     X[0]   = x0 + SUM_j S_j
+ *     P_m    = x0 + SUM_j cos(2pi*j*m/n) * S_j       (REAL scalar weights)
+ *     Q_m    =      SUM_j sin(2pi*j*m/n) * D_j       (REAL scalar weights)
+ *     X[m]   = P_m + sigma*i*Q_m,   X[n-m] = P_m - sigma*i*Q_m
+ *                                    sigma = -1 (Fwd), +1 (Bwd)
+ *
+ * This is the SAME construction the real/split side hand-builds in
+ * dft_recurse.ml (:327-468) — it is NOT discovered by algsimp there (which
+ * this module never runs anyway), so quality here is delivered BY
+ * CONSTRUCTION, exactly as it is on the split side.
+ *
+ * THREE MOVES make it fit the existing packed-complex primitives, with NO new
+ * node kind:
+ *
+ *  1. PRE-ROTATE the differences. sigma*i is linear over real scalars, so push
+ *     it inside the sum: R_j = rot(D_j) once per j (H rotations for the whole
+ *     codelet, hash-consed and shared by every output), instead of one rotation
+ *     per output. A Fwd kernel then contains only CRotNI and a Bwd kernel only
+ *     CRotPI, which keeps the one-mask-per-direction preamble correct.
+ *
+ *  2. MAX-MAGNITUDE NORMALIZATION. Seeding the Q chain on the term with the
+ *     LARGEST |sin| lets the leading coefficient be absorbed into the output
+ *     FMA, so no bare "real scalar times x" node is needed (there is none in
+ *     cx_kind). It is also better conditioned: every remaining ratio is <= 1 in
+ *     magnitude, whereas seeding at j=1 would divide by the smallest sine.
+ *
+ *  3. DEGENERATE-COEFFICIENT LADDER (cscale_chain): weights of 0 / +1 / -1 —
+ *     which occur for odd COMPOSITES, e.g. n=9 at j=3,m=3 gives cos=1, sin=0 —
+ *     collapse to nothing / cadd / csub instead of emitting a multiply.
+ *
+ * P_m and Q_m are BIT-IDENTICAL between Fwd and Bwd: every weight is the same
+ * and no sign flips anywhere. The only difference between the two kernels is
+ * which quarter-turn node is used, so BOTH DIRECTIONS come out at the same op
+ * count and the same DAG shape.
+ * ═══════════════════════════════════════════════════════════════ *)
+
+let cx_eps = 1e-14
+
+(* Weighted sum over packed complex with REAL scalar weights, folded into an
+   FMA chain. The SIGN rides in the OPCODE (cfma vs cfnma) and only the
+   magnitude becomes a constant — the same convention dft_recurse.ml uses, and
+   the reason no fma-lift pass is needed afterwards. *)
+let cscale_chain ~(seed : t) (terms : (float * t) list) : t =
+  List.fold_left
+    (fun acc (c, x) ->
+       if abs_float c < cx_eps
+       then acc
+       else if abs_float (c -. 1.0) < cx_eps
+       then cadd acc x
+       else if abs_float (c +. 1.0) < cx_eps
+       then csub acc x
+       else if c > 0.0
+       then cfma c x acc
+       else cfnma (-.c) x acc)
+    seed
+    terms
+;;
+
+let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+  if n < 3 || n mod 2 = 0
+  then failwith (Printf.sprintf "dft_cx_odd: needs an ODD n >= 3, got %d" n);
+  let pi = 4.0 *. atan 1.0 in
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let h = (n - 1) / 2 in
+  (* conjugate pairs, shared by every output leg *)
+  let s = Array.init h (fun i -> cadd xs.(i + 1) xs.(n - i - 1)) in
+  let r = Array.init h (fun i -> rot (csub xs.(i + 1) xs.(n - i - 1))) in
+  let out = Array.make n None in
+  let acc = ref xs.(0) in
+  for i = 0 to h - 1 do
+    acc := cadd !acc s.(i)
+  done;
+  out.(0) <- Some !acc;
+  for m = 1 to h do
+    let cf j = cos (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
+    let sf j = sin (2.0 *. pi *. float_of_int (j * m) /. float_of_int n) in
+    let p = cscale_chain ~seed:xs.(0) (List.init h (fun i -> cf (i + 1), s.(i))) in
+    (* seed the Q chain on the largest |sin| (move 2) *)
+    let jstar = ref 0 in
+    for i = 1 to h - 1 do
+      if abs_float (sf (i + 1)) > abs_float (sf (!jstar + 1)) then jstar := i
+    done;
+    let cstar = sf (!jstar + 1) in
+    (* |sin(2pi*m/n)| > 0 for 1 <= m <= h, and cstar is the max, so this cannot
+       fire; keep it as a loud guard rather than dividing by zero silently. *)
+    if abs_float cstar < cx_eps
+    then failwith (Printf.sprintf "dft_cx_odd: degenerate sine row at n=%d m=%d" n m);
+    let qh =
+      cscale_chain
+        ~seed:r.(!jstar)
+        (List.filteri
+           (fun i _ -> i <> !jstar)
+           (List.init h (fun i -> sf (i + 1) /. cstar, r.(i))))
+    in
+    let a, b =
+      if cstar > 0.0
+      then cfma cstar qh p, cfnma cstar qh p
+      else cfnma (-.cstar) qh p, cfma (-.cstar) qh p
+    in
+    out.(m) <- Some a;
+    out.(n - m) <- Some b
+  done;
+  unwrap_legs "dft_cx_odd" out
+;;
+
+(* Leaf dispatcher: pow2 -> radix-2 DIT, odd -> conjugate pair, EVEN
+   COMPOSITE (6, 10, 12, ...) -> radix-2 DIT splits whose halves
+   RE-DISPATCH here, so the odd part bottoms out in the conjugate-pair
+   builder instead of dropping legs (dft_cx recursing into an odd half was
+   the hazard the old refusal guarded). butterfly_pair is the ONE shared
+   copy, general-twiddle arm included, so the mixed recursion is the same
+   numeric family — pow2 and odd radices take their old paths untouched
+   (byte-identity preserved). Unlocks the 2-stage IL pairs at 4·odd² N
+   (100 = 10x10, 36 = 6x6) and even-composite chain mids (200 = 4·(5·10)),
+   per Tugbars 2026-07-29. *)
+let rec dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+  if n = 1
+  then xs
+  else if n land (n - 1) = 0
+  then dft_cx ~sign n xs
+  else if n mod 2 = 1
+  then dft_cx_odd ~sign n xs
+  else (
+    let h = n / 2 in
+    let e = dft_small ~sign h (Array.init h (fun i -> xs.(2 * i)))
+    and o = dft_small ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
+    let out = Array.make n None in
+    for k = 0 to h - 1 do
+      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      out.(k) <- Some a;
+      out.(k + h) <- Some b
+    done;
+    unwrap_legs "dft_small" out)
+;;
+
+(* Mixed-radix four-step over the complex IR: `chain` says how the transform is
+   FACTORED, and dft_cx (pure radix-2) is only the leaf.
+
+   Why this exists. dft_cx hardwires 2.2.2.2.2.2 for a 64-point stage — a plan
+   decision baked into an emitter, one level below the one already removed from
+   emit_k1. The IL chain race measured what it costs: with the stage COUNT
+   pinned at two, stage radices grow as sqrt(N), so by N=1024 both stages are
+   fully-unrolled DFT_32/DFT_64 that spill, and no choice of two-stage split
+   recovers more than 5%. Letting the chain reach inside a stage hands that
+   factorization back to the planner.
+
+   Index algebra (standard four-step). With j = j1*n2 + j2 and k = k2*r0 + k1,
+   the cross term j1*n2*k2*r0 is a multiple of N and drops, leaving
+     X[k2*r0 + k1] = DFT_n2 over j2 of ( DFT_r0(column j2)[k1] * w_N^{j2*k1} )
+   so the output lands transposed at k2*r0 + k1, which is why the caller's
+   store index is (k2 * n1 + k1) and no output permutation is ever needed. *)
+let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(chain : int list) (xs : t array)
+  : t array
+  =
+  let n = Array.length xs in
+  let prod = List.fold_left ( * ) 1 chain in
+  if prod <> n
+  then
+    failwith
+      (Printf.sprintf
+         "codelet_cil: dft_chain got %d inputs but the chain multiplies to %d"
+         n
+         prod);
+  match chain with
+  | [] | [ _ ] -> dft_cx ~sign n xs
+  | r0 :: rest ->
+    let n2 = n / r0 in
+    let sgn = if sign = `Fwd then -1.0 else 1.0 in
+    let pi = 4.0 *. atan 1.0 in
+    let cols =
+      Array.init n2 (fun j2 ->
+        dft_cx ~sign r0 (Array.init r0 (fun j1 -> xs.((j1 * n2) + j2))))
+    in
+    let out = Array.make n xs.(0) in
+    for k1 = 0 to r0 - 1 do
+      let row =
+        Array.init n2 (fun j2 ->
+          let v = cols.(j2).(k1) in
+          if k1 = 0 || j2 = 0
+          then v
+          else (
+            let a = sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n in
+            ctw (cos a) (sin a) v))
+      in
+      let r = dft_chain ~sign ~chain:rest row in
+      for k2 = 0 to n2 - 1 do
+        out.((k2 * r0) + k1) <- r.(k2)
+      done
+    done;
+    out
+;;
+
+(* ═══════════════════════════════════════════════════════════════
+ *  EMISSION
+ * ═══════════════════════════════════════════════════════════════ *)
+
+(* Distinct CTwC constants become file-scope VLIT vectors (cos-broadcast +
+ * sign-folded sin), so a general twiddle costs no runtime broadcast: the
+ * BYTW2 shape is fmadd(_ZWn_c, x, mul(_ZWn_s, cflip x)). *)
+(* A VLIT twiddle constant: one (cos, sin) per complex lane. A broadcast
+   constant (CTwC) is just the degenerate case where every lane matches. *)
+type consts = (string, string * (float * float) array) Hashtbl.t
+
+let const_name_v (tbl : consts) (w : (float * float) array) : string =
+  let key =
+    String.concat "_" (Array.to_list (Array.map (fun (c, s) -> Printf.sprintf "%.17g:%.17g" c s) w))
+  in
+  match Hashtbl.find_opt tbl key with
+  | Some (n, _) -> n
+  | None ->
+    let n = Printf.sprintf "_ZW%d" (Hashtbl.length tbl) in
+    Hashtbl.add tbl key (n, w);
+    n
+;;
+
+let const_name (tbl : consts) (lanes : int) (c : float) (s : float) : string =
+  const_name_v tbl (Array.make lanes (c, s))
+;;
+
+let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
+  let b = Buffer.create 256 in
+  let items =
+    Hashtbl.fold (fun _ v acc -> v :: acc) tbl []
+    |> List.sort (fun (a, _) (b, _) -> compare a b)
+  in
+  List.iter
+    (fun (n, w) ->
+       (* cos duplicated across each complex; sin sign-folded as [-s, +s] per
+          complex so the cflip'd product lands with the right signs for
+          (a+bi)(c+is). One (c,s) PER LANE — a broadcast constant is just the
+          case where every lane is equal. The C TYPE is chosen PER ENTRY from
+          the lane count: the odd-count tail renders the same DAG at
+          Isa.sse2, whose 1-lane constants land in this same table (distinct
+          keys) and must declare as __m128d. Wide-only files are unchanged. *)
+       let ty =
+         if Array.length w * 2 = isa.Isa.vec_width
+         then isa.Isa.vec_type
+         else Isa.sse2.Isa.vec_type
+       in
+       let cos_lanes =
+         String.concat
+           ", "
+           (Array.to_list (Array.map (fun (c, _) -> Printf.sprintf "%.17g, %.17g" c c) w))
+       in
+       let sin_lanes =
+         String.concat
+           ", "
+           (Array.to_list
+              (Array.map (fun (_, s) -> Printf.sprintf "%.17g, %.17g" (-.s) s) w))
+       in
+       Buffer.add_string
+         b
+         (Printf.sprintf "static const %s %s_c = { %s };\n" ty n cos_lanes);
+       Buffer.add_string
+         b
+         (Printf.sprintf "static const %s %s_s = { %s };\n" ty n sin_lanes))
+    items;
+  Buffer.contents b
+;;
+
+(* Render one scheduled node as a C initializer expression.
+   ?tw_vw — the vec_width the runtime VTW2 TABLE was built for. Defaults to
+   the render ISA's own width (byte-identical for every existing call). The
+   odd-count tail renders at Isa.sse2 against a table laid out for the WIDE
+   width, so it passes the wide width here: the record is already
+   narrow-readable ([c,c] at off, [-s,+s] at off+tw_vw) — ONLY the address
+   arithmetic must not shrink with the render width.
+   ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
+   narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
+let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : string =
+  let twv = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
+  let v (x : t) = Printf.sprintf "z%d" x.tag in
+  match e.node with
+  | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
+  | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
+  | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
+  | CRotNI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_IM" ^ msuf)
+  | CRotPI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_RE" ^ msuf)
+  | CFmaC (c, x, acc) ->
+    Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
+  | CFnmaC (c, x, acc) ->
+    Isa.fnmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
+  | CTwC (c, s, x) ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) c s in
+    Isa.fmadd_pd
+      isa
+      (w ^ "_c")
+      (v x)
+      (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+  | CTwV (ws, x) ->
+    let w = const_name_v tbl ws in
+    Isa.fmadd_pd
+      isa
+      (w ^ "_c")
+      (v x)
+      (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+  | CTwL (leg, x) ->
+    (* BYTW2 against the VTW2 record for this leg. Under FLAT the record is
+       loaded inline from the streamed cursor; under LOG3 it is a name bound
+       by the prologue (loaded for power-of-two legs, DERIVED otherwise), so
+       the flat path emits byte-identically to before. *)
+    let c, s =
+      if !tw_log3
+      then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
+      else (
+        let off = (leg - 1) * 2 * twv in
+        ( Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)
+        , Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + twv)) ))
+    in
+    Isa.fmadd_pd isa c (v x) (Isa.mul_pd isa s (Isa.cflip_pd isa (v x)))
+;;
+
+(* ── LOG3 twiddle sourcing for the streamed VTW2 table ───────────────────
+ *
+ * Mirrors dft.ml's TP_Log3 as a SUBSTITUTION: read only the power-of-two
+ * legs from the table and derive the rest by complex multiplication, with
+ * the SAME slot layout as flat (slot = leg-1), so one table serves both
+ * policies and the kernels stay interchangeable. R=8 reads 3 records
+ * instead of 7; R=64 reads 6 instead of 63.
+ *
+ * Derive-then-apply, never chain-apply: chaining x*W^p then *W^q would put
+ * both multiplies on the DATA critical path. Here the derivation is
+ * loop-invariant per column-group and sits off it entirely.
+ *
+ * THE FOLDED FORMAT DERIVES ITSELF. A VTW2 record is cos-broadcast
+ * cp = [c,c,c,c] and SIGN-FOLDED sin sp = [-s,+s,-s,+s]. Then
+ *   sp*sq = [(-sp)(-sq), (+sp)(+sq), ...] = [sp.sq x4]   -- signs cancel
+ * so with cj = cp.cq - sp.sq and sj = cp.sq + sp.cq:
+ *   _wc_j = cp*cq  - sp*sq     -> [cj x4]              (mul + fnmadd)
+ *   _ws_j = cp*sq  + sp*cq     -> [-sj,+sj,-sj,+sj]    (mul + fmadd)
+ * Four vector ops, NO shuffles, and the fold is preserved automatically —
+ * no unpack/repack of the record is needed. *)
+let log3_plan (radix : int) : (int * (int * int) option) list =
+  let is_pow2 x = x > 0 && x land (x - 1) = 0 in
+  let highest_pow2_le j =
+    let rec go p = if p * 2 > j then p else go (p * 2) in
+    go 1
+  in
+  let out = ref [] in
+  (* Ascending j guarantees dependency order: p and q are both < j. *)
+  for j = 1 to radix - 1 do
+    if is_pow2 j
+    then out := (j, None) :: !out
+    else (
+      let p = highest_pow2_le j in
+      out := (j, Some (p, j - p)) :: !out)
+  done;
+  List.rev !out
+;;
+
+let emit_log3_prologue
+      ?(tw_vw = 0) ?(msuf = "")
+      (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
+  (* ?tw_vw / ?msuf as in `render`: the narrow tail re-binds its own
+     _wc%d_n/_ws%d_n names at Isa.sse2 against the WIDE-geometry table. *)
+  let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
+  let nload = ref 0 in
+  List.iter
+    (fun (j, src) ->
+       let cj = Printf.sprintf "_wc%d%s" j msuf
+       and sj = Printf.sprintf "_ws%d%s" j msuf in
+       match src with
+       | None ->
+         incr nload;
+         let off = (j - 1) * 2 * vw in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl isa cj (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" off)))
+              (Isa.const_decl
+                 isa
+                 sj
+                 (Isa.loadu_pd isa (Printf.sprintf "twp[%d]" (off + vw)))))
+       | Some (p, q) ->
+         let cp = Printf.sprintf "_wc%d%s" p msuf
+         and sp = Printf.sprintf "_ws%d%s" p msuf
+         and cq = Printf.sprintf "_wc%d%s" q msuf
+         and sq = Printf.sprintf "_ws%d%s" q msuf in
+         Buffer.add_string
+           buf
+           (Printf.sprintf
+              "        %s\n        %s\n"
+              (Isa.const_decl
+                 isa
+                 cj
+                 (Isa.fnmadd_pd isa sp sq (Isa.mul_pd isa cp cq)))
+              (Isa.const_decl
+                 isa
+                 sj
+                 (Isa.fmadd_pd isa cp sq (Isa.mul_pd isa sp cq)))))
+    (log3_plan radix);
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "        /* log3: %d of %d VTW2 records loaded, %d derived */\n"
+       !nload
+       (radix - 1)
+       (radix - 1 - !nload))
+;;
 
 (* ═══════════════════════════════════════════════════════════════
  *  KINDS
@@ -204,9 +872,6 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   (* Label outputs with Expr.elem_ref so the shared scheduler can identify
      sinks; only the index is meaningful here (one complex output per leg). *)
   let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
-  (* THE PIPELINE SEAM: every cil body flows through the cx pass cascade
-     between construction and scheduling — cil is pipeline-hosted. *)
-  let assigns = Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind)) assigns in
   let scheduled = Sched.su_schedule uarch assigns in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
@@ -235,7 +900,6 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     let assigns =
       Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
     in
-    let assigns = Cx_pipeline.prepare_codelet ~who:label assigns in
     let sch = Sched.su_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     Array.iteri
@@ -916,7 +1580,6 @@ let emit_k1
     let ins = Array.init nin cin in
     let outs = build ins in
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
-    let assigns = Cx_pipeline.prepare_codelet ~who:label assigns in
     let sch = Sched.su_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
     pre ();
