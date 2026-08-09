@@ -1,3 +1,23 @@
+(* ═══════════════════ OBSOLETE — DO NOT USE, DO NOT CITE ═══════════════════
+ * Pre-decomposition monolith, archived 2026-08-09 for browsability only
+ * (same convention as old-lib/codelet_zil.ml and old-lib/schedule.ml).
+ * NOT built, NOT maintained, NOT the source of truth for anything.
+ *
+ * Its logic is handled by generator/lib/:
+ *   cx_ir.ml       — packed-complex IR, hash-consing (CSE), state refs
+ *   cx_sched.ml    — shared SR scheduler instance (Schedule.Make over cx)
+ *   cx_math.ml     — DAG builders: butterfly_pair, dft_cx, dft_cx_odd,
+ *                    dft_small, dft_chain, cscale_chain
+ *   cx_pipeline.ml — optimizer pass cascade (prepare_codelet; NEW — did
+ *                    not exist in this monolith)
+ *   cx_render.ml   — constants interning, node -> C rendering, log3
+ *   codelet_cil.ml — kinds, emit, emit_k1 (the public surface)
+ *
+ * Anyone — human or Claude — reading THIS file to answer a question about
+ * the current emitter is reading the wrong file: line numbers, seams and
+ * pass behavior have all moved. Read the lib/ modules above instead.
+ * ═══════════════════════════════════════════════════════════════════════ *)
+
 (* codelet_cil.ml — pipeline-hosted INTERLEAVED-COMPLEX (full-IL) codelets.
  *
  * Full IL is THE mainstream layout, not an alternative: MKL and FFTW both
