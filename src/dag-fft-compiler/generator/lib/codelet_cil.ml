@@ -228,13 +228,17 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   let emit_pass
         ~(label : string)
         ~(nin : int)
-        ~(load_of : int -> string)
+        ~(laddr_of : int -> caddr)
         ~(build : t array -> t array)
-        ~(store : int -> string -> unit)
+        ~(store : int -> t -> unit)
     : unit
     =
     reset ();
-    let ins = Array.init nin cin in
+    (* COMPLETE-IR: pass inputs are CLoad nodes carrying their address
+       (same creation order cin had ⇒ same tags ⇒ same zN names). The
+       store callback receives the output NODE so edges can build
+       CStore/CTurn nodes instead of strings. *)
+    let ins = Array.init nin (fun i -> cload (laddr_of i)) in
     let outs = build ins in
     let assigns =
       Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
@@ -248,7 +252,10 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
            body
            (Printf.sprintf
               "        %s\n"
-              (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (load_of i))))
+              (Isa.const_decl
+                 isa
+                 (Printf.sprintf "z%d" e.tag)
+                 (Isa.loadu_pd isa (addr_str (laddr_of i))))))
       ins;
     let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
@@ -265,7 +272,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
                   "        %s\n"
                   (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
       sch;
-    Array.iteri (fun i (e : t) -> store i (Printf.sprintf "z%d" e.tag)) outs;
+    Array.iteri (fun i (e : t) -> store i e) outs;
     Buffer.add_string body "        }\n"
   in
   (* ─── BLOCKED (2-pass) construction ──────────────────────────────
@@ -329,7 +336,6 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     if m * p <> radix then failwith "codelet_cil: blocked split must multiply to radix";
     let pi = 4.0 *. atan 1.0 in
     let sgn = if dir = Fwd then -1.0 else 1.0 in
-    let leg_load l = Isa.loadu_pd isa (Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l) in
     (* PASS 1: sub-DFT i over legs { a*m + i } *)
     for i = 0 to m - 1 do
       emit_pass
@@ -338,7 +344,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
              "PASS 1.%d: legs {a*%d+%d} -> S[%d..%d]"
              i m i (i * p) ((i * p) + p - 1))
         ~nin:p
-        ~load_of:(fun a -> leg_load ((a * m) + i))
+        ~laddr_of:(fun a -> AZinLeg ((a * m) + i))
         ~build:(fun ins ->
           let ins =
             if pre_tw
@@ -351,12 +357,14 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
             else ins
           in
           dft_small ~sign p ins)
-        ~store:(fun j v ->
+        ~store:(fun j e ->
+          let ad = AS (vw * ((i * p) + j)) in
+          let (_ : t) = cstore ad e in
           Buffer.add_string
             body
             (Printf.sprintf
                "        %s;\n"
-               (Isa.storeu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))) v)))
+               (render_store isa ad (Printf.sprintf "z%d" e.tag))))
     done;
     (* Shared PASS-2 math: twiddle group j by W_R^{i*j}, DFT_m, and (T2 bwd)
        post-twiddle — factored so the plain and TURNED store paths below run
@@ -418,18 +426,16 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
         emit_pass
           ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
           ~nin:m
-          ~load_of:(fun i ->
-            Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j))))
+          ~laddr_of:(fun i -> AS (vw * ((i * p) + j)))
           ~build:(fun ins -> pass2_math ~jv:j ins)
-          ~store:(fun k2 v ->
+          ~store:(fun k2 e ->
+            let ad = AZoutLeg (j + (p * k2)) in
+            let (_ : t) = cstore ad e in
             Buffer.add_string
               body
               (Printf.sprintf
                  "        %s;\n"
-                 (Isa.storeu_pd
-                    isa
-                    (Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" (j + (p * k2)))
-                    v)))
+                 (render_store isa ad (Printf.sprintf "z%d" e.tag))))
       done
     else
       (* ─── PASS 2, TURNED (N1T / t2t): the corner-turn pairs ADJACENT legs
@@ -447,41 +453,45 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
          store callback until their group-B partner arrives. *)
       for jj = 0 to (p / 2) - 1 do
         let j = 2 * jj in
-        let a_names : string array = Array.make m "" in
-        let p2f = Isa.intr isa "permute2f128_pd" in
+        (* Group-A NODES stashed until the group-B partner arrives; the
+           regroup is then CTurn nodes + CStore at AZoutTurn — same DATA
+           form as the monolithic corner-turn edge. *)
+        let a_nodes : t option array = Array.make m None in
         emit_pass
           ~label:
             (Printf.sprintf
                "PASS 2.%d+%d TURNED: S[i*%d+{%d,%d}] -> columns k,k+1"
                j (j + 1) p j (j + 1))
           ~nin:(2 * m)
-          ~load_of:(fun idx ->
+          ~laddr_of:(fun idx ->
             let i = idx mod m
             and g = idx / m in
-            Isa.loadu_pd isa (Printf.sprintf "S[%d]" (vw * ((i * p) + j + g))))
+            AS (vw * ((i * p) + j + g)))
           ~build:(fun ins ->
             let ga = Array.sub ins 0 m
             and gb = Array.sub ins m m in
             Array.append (pass2_math ~jv:j ga) (pass2_math ~jv:(j + 1) gb))
-          ~store:(fun idx v ->
+          ~store:(fun idx e ->
             if idx < m
-            then a_names.(idx) <- v
+            then a_nodes.(idx) <- Some e
             else (
               let k2 = idx - m in
               let l = j + (p * k2) in
-              let a = a_names.(k2) in
+              let a =
+                match a_nodes.(k2) with
+                | Some a -> a
+                | None -> failwith "codelet_cil: turned pass-pair stash miss"
+              in
+              let ta = cturn a e 0x20
+              and tb = cturn a e 0x31 in
+              let (_ : t) = cstore (AZoutTurn (l, 0)) ta
+              and (_ : t) = cstore (AZoutTurn (l, 1)) tb in
               Buffer.add_string
                 body
                 (Printf.sprintf
                    "        %s;\n        %s;\n"
-                   (Isa.storeu_pd
-                      isa
-                      (Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l)
-                      (Printf.sprintf "%s(%s, %s, 0x20)" p2f a v))
-                   (Isa.storeu_pd
-                      isa
-                      (Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" l)
-                      (Printf.sprintf "%s(%s, %s, 0x31)" p2f a v)))))
+                   (render_store isa (AZoutTurn (l, 0)) (render isa tbl ta))
+                   (render_store isa (AZoutTurn (l, 1)) (render isa tbl tb)))))
       done
   in
   (* The old refusal ("emit_blocked never inspects kind") is RESOLVED for the
@@ -576,22 +586,16 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
         outs
     | N1T ->
       (* one complex per leg: the corner-turn (and the t2tg leg stride) is
-         pure addressing at this width — no permutes, no pairing. *)
+         pure addressing at this width — no permutes, no pairing. The wide
+         edge below owns the CStore nodes; the tail prints the col-0 form. *)
       Array.iteri
         (fun l (e : t) ->
-           let leg_off =
-             if !st_turn_gs
-             then Printf.sprintf "(size_t)%d*OGs" l
-             else string_of_int l
-           in
+           let a = if !st_turn_gs then AZoutTurnG (l, 0) else AZoutTurn (l, 0) in
            Buffer.add_string
              body_n
              (Printf.sprintf
                 "        %s;\n"
-                (Isa.storeu_pd
-                   nisa
-                   (Printf.sprintf "zout[2*((size_t)k*OLs + %s)]" leg_off)
-                   (Printf.sprintf "z%d" e.tag))))
+                (render_store nisa a (Printf.sprintf "z%d" e.tag))))
         outs);
   let buf = Buffer.create 8192 in
   Buffer.add_string
@@ -752,19 +756,20 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
           (leg p, col k) -> zout[2*(k*OLs + p*OGs)]. Costs 2R narrow stores
           vs R wide — the price of the chain-bwd middle stage; measured at
           the plan level, not assumed away. *)
+       (* COMPLETE-IR: the halves are CLo/CHi nodes, the scatters CStore
+          nodes at AZoutTurnG — rendered narrow, byte-identical strings. *)
        Array.iteri
          (fun l (e : t) ->
+            let lo = clo e
+            and hi = chi e in
+            let (_ : t) = cstore (AZoutTurnG (l, 0)) lo
+            and (_ : t) = cstore (AZoutTurnG (l, 1)) hi in
             Buffer.add_string
               buf
               (Printf.sprintf
-                 "        _mm_storeu_pd(&zout[2*((size_t)k*OLs + (size_t)%d*OGs)], \
-                  _mm256_castpd256_pd128(z%d));\n\
-                 \        _mm_storeu_pd(&zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)], \
-                  _mm256_extractf128_pd(z%d, 1));\n"
-                 l
-                 e.tag
-                 l
-                 e.tag))
+                 "        %s;\n        %s;\n"
+                 (render_store Isa.sse2 (AZoutTurnG (l, 0)) (render Isa.sse2 tbl lo))
+                 (render_store Isa.sse2 (AZoutTurnG (l, 1)) (render Isa.sse2 tbl hi))))
          outs
      else (
      (* CORNER-TURN (the four-step transpose, fused into the stores).
@@ -773,25 +778,22 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
         [leg p, leg p+1] of ONE column — so column k's legs land
         contiguously at zout[2*(k*OLs + p)]. Two stores per leg-pair, both
         full-width: no scalar tail, no separate transpose pass. *)
-     let p2f = Isa.intr isa "permute2f128_pd" in
      let n = Array.length outs in
      let l = ref 0 in
-     (* pairs of legs: one permute2f128 per store, both full width *)
+     (* pairs of legs: one permute2f128 per store, both full width.
+        COMPLETE-IR: the lane regroups are CTurn nodes, the paired writes
+        CStore nodes at AZoutTurn — the four-step transpose is DATA now. *)
      while !l + 1 < n do
-       let a = Printf.sprintf "z%d" outs.(!l).tag
-       and b = Printf.sprintf "z%d" outs.(!l + 1).tag in
+       let ta = cturn outs.(!l) outs.(!l + 1) 0x20
+       and tb = cturn outs.(!l) outs.(!l + 1) 0x31 in
+       let (_ : t) = cstore (AZoutTurn (!l, 0)) ta
+       and (_ : t) = cstore (AZoutTurn (!l, 1)) tb in
        Buffer.add_string
          buf
          (Printf.sprintf
             "        %s;\n        %s;\n"
-            (Isa.storeu_pd
-               isa
-               (Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" !l)
-               (Printf.sprintf "%s(%s, %s, 0x20)" p2f a b))
-            (Isa.storeu_pd
-               isa
-               (Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" !l)
-               (Printf.sprintf "%s(%s, %s, 0x31)" p2f a b)));
+            (render_store isa (AZoutTurn (!l, 0)) (render isa tbl ta))
+            (render_store isa (AZoutTurn (!l, 1)) (render isa tbl tb)));
        l := !l + 2
      done;
      (* ODD RADIX: the last leg has no partner to swap lanes with, so its two
@@ -800,18 +802,16 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
         (checked above), so a 128-bit half IS exactly one column. *)
      if !l < n
      then (
-       let a = Printf.sprintf "z%d" outs.(!l).tag in
+       let lo = clo outs.(!l)
+       and hi = chi outs.(!l) in
+       let (_ : t) = cstore (AZoutTurn (!l, 0)) lo
+       and (_ : t) = cstore (AZoutTurn (!l, 1)) hi in
        Buffer.add_string
          buf
          (Printf.sprintf
-            "        _mm_storeu_pd(&zout[2*((size_t)k*OLs + %d)], \
-             _mm256_castpd256_pd128(%s));\n\
-            \        _mm_storeu_pd(&zout[2*(((size_t)k + 1)*OLs + %d)], \
-             _mm256_extractf128_pd(%s, 1));\n"
-            !l
-            a
-            !l
-            a))));
+            "        %s;\n        %s;\n"
+            (render_store Isa.sse2 (AZoutTurn (!l, 0)) (render Isa.sse2 tbl lo))
+            (render_store Isa.sse2 (AZoutTurn (!l, 1)) (render Isa.sse2 tbl hi))))));
   Buffer.add_string buf "    }\n";
   (* ─── ODD-COUNT TAIL loop (monolithic only): resumes k after the wide
      bulk. `for (; k < count; ++k)` rather than `if` so it generalises when
@@ -905,38 +905,72 @@ let emit_k1
   let pi = 4.0 *. atan 1.0 in
   let tbl : consts = Hashtbl.create 64 in
   let body = Buffer.create 16384 in
+  (* VFFT_CX_K1DAG=1 (opt-in): stage B's register transpose becomes DAG data
+     — ins are CTurn(CLoad P, CLoad P) nodes, scheduled and rendered like
+     everything else. NOT byte-identical to the legacy _a/_b/_t glue (every
+     def renames), which is why it is a MODE, gated semantically (bitwise
+     output equality) rather than textually. Default = legacy, byte-identical. *)
+  let k1dag = Sys.getenv_opt "VFFT_CX_K1DAG" = Some "1" in
   (* One scheduled sub-DAG. Tags restart per call, so each gets its own C
-     brace scope; `pre` emits glue (the register transpose) inside it. *)
+     brace scope; `pre` emits glue (the legacy register transpose) inside it. *)
   let pass
         ~(label : string)
         ~(nin : int)
         ~(pre : unit -> unit)
-        ~(load_of : int -> string)
+        ~(lsrc_of : int -> [ `Addr of caddr | `Name of string | `Node of t ])
         ~(build : t array -> t array)
-        ~(store : int -> string -> unit)
+        ~(store : int -> t -> unit)
     : unit
     =
     reset ();
-    let ins = Array.init nin cin in
+    (* COMPLETE-IR: `Addr inputs are CLoad nodes (stage A — plane loads);
+       `Name inputs stay CIn aliases of pre()'s transpose locals (legacy
+       stage B); `Node inputs are caller-built subgraphs (K1DAG stage B —
+       the in-DAG transpose). Addr/Name keep cin/cload creation order ⇒
+       same tags ⇒ byte-identical legacy text. *)
+    let ins =
+      Array.init nin (fun i ->
+        match lsrc_of i with
+        | `Addr a -> cload a
+        | `Name _ -> cin i
+        | `Node e -> e)
+    in
     let outs = build ins in
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = Sched.su_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
     pre ();
+    (* Addr/Name ins print here (the load edge) and are pre-marked so the
+       def walk never reprints them; `Node ins render in the def walk with
+       their CLoad children. *)
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     Array.iteri
       (fun i (e : t) ->
-         Buffer.add_string
-           body
-           (Printf.sprintf
-              "    %s\n"
-              (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (load_of i))))
+         match lsrc_of i with
+         | `Node _ -> ()
+         | `Addr a ->
+           Hashtbl.replace seen e.tag ();
+           Buffer.add_string
+             body
+             (Printf.sprintf
+                "    %s\n"
+                (Isa.const_decl
+                   isa
+                   (Printf.sprintf "z%d" e.tag)
+                   (Isa.loadu_pd isa (addr_str a))))
+         | `Name s ->
+           Hashtbl.replace seen e.tag ();
+           Buffer.add_string
+             body
+             (Printf.sprintf
+                "    %s\n"
+                (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) s)))
       ins;
-    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
       (fun ((_ : Expr.elem_ref option), (e : t)) ->
          match e.node with
-         | CIn _ | CLoad _ -> ()
+         | CIn _ -> ()
          | _ ->
            if not (Hashtbl.mem seen e.tag)
            then (
@@ -947,7 +981,7 @@ let emit_k1
                   "    %s\n"
                   (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
       sch;
-    Array.iteri (fun i (e : t) -> store i (Printf.sprintf "z%d" e.tag)) outs;
+    Array.iteri (fun i (e : t) -> store i e) outs;
     Buffer.add_string body "    }\n"
   in
   (* ── stage A: DFT_n1 down each column pair, park to the plane ── *)
@@ -957,15 +991,16 @@ let emit_k1
         (Printf.sprintf "stage A: columns j2=%d,%d -> P[k1][%d]" (2 * c) ((2 * c) + 1) c)
       ~nin:n1
       ~pre:(fun () -> ())
-      ~load_of:(fun j1 ->
-        Isa.loadu_pd isa (Printf.sprintf "zin[%d]" (2 * ((j1 * n2) + (2 * c)))))
+      ~lsrc_of:(fun j1 -> `Addr (AZinAbs (2 * ((j1 * n2) + (2 * c)))))
       ~build:(fun ins -> dft_chain ~sign ~chain:chain_a ins)
-      ~store:(fun k1 v ->
+      ~store:(fun k1 e ->
+        let ad = AP (vw * ((k1 * (n2 / 2)) + c)) in
+        let (_ : t) = cstore ad e in
         Buffer.add_string
           body
           (Printf.sprintf
              "    %s;\n"
-             (Isa.storeu_pd isa (Printf.sprintf "P[%d]" (vw * ((k1 * (n2 / 2)) + c))) v)))
+             (render_store isa ad (Printf.sprintf "z%d" e.tag))))
   done;
   (* ── stage B: register turn + per-lane constant twiddle + DFT_n2 ── *)
   let p2f = Isa.intr isa "permute2f128_pd" in
@@ -980,6 +1015,7 @@ let emit_k1
            (2 * d))
       ~nin:n2
       ~pre:(fun () ->
+        if k1dag then () else
         for c = 0 to (n2 / 2) - 1 do
           Buffer.add_string
             body
@@ -1008,7 +1044,16 @@ let emit_k1
                   (Printf.sprintf "_t%d" ((2 * c) + 1))
                   (Printf.sprintf "%s(_a%d, _b%d, 0x31)" p2f c c)))
         done)
-      ~load_of:(fun j2 -> Printf.sprintf "_t%d" j2)
+      ~lsrc_of:(fun j2 ->
+        if k1dag
+        then (
+          (* in-DAG register turn: _t{j2} = permute2f128(P-load a, P-load b);
+             hash-consing makes the repeated lsrc_of calls hit the same nodes *)
+          let c = j2 / 2 in
+          let a = cload (AP (vw * ((2 * d * (n2 / 2)) + c)))
+          and b = cload (AP (vw * ((((2 * d) + 1) * (n2 / 2)) + c))) in
+          `Node (cturn a b (if j2 land 1 = 0 then 0x20 else 0x31)))
+        else `Name (Printf.sprintf "_t%d" j2))
       ~build:(fun ins ->
         let tw =
           Array.mapi
@@ -1029,15 +1074,14 @@ let emit_k1
             ins
         in
         dft_chain ~sign ~chain:chain_b tw)
-      ~store:(fun k2 v ->
+      ~store:(fun k2 e ->
+        let ad = AZoutAbs (2 * ((k2 * n1) + (2 * d))) in
+        let (_ : t) = cstore ad e in
         Buffer.add_string
           body
           (Printf.sprintf
              "    %s;\n"
-             (Isa.storeu_pd
-                isa
-                (Printf.sprintf "zout[%d]" (2 * ((k2 * n1) + (2 * d))))
-                v)))
+             (render_store isa ad (Printf.sprintf "z%d" e.tag))))
   done;
   let buf = Buffer.create 32768 in
   Buffer.add_string

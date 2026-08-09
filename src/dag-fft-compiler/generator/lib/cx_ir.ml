@@ -31,6 +31,7 @@ type caddr =
   | AP of int (* P[i]  — emit_k1's stage plane                 *)
   | AZinAbs of int (* zin [i] — emit_k1 absolute (no k)             *)
   | AZoutAbs of int (* zout[i] — emit_k1 absolute                    *)
+  | ATw of int (* twp [i] — the T2 streamed VTW2 cursor          *)
 
 type cx_kind =
   | CIn of int (* input leg i (a packed-complex load) *)
