@@ -156,9 +156,114 @@ let unwrap_legs (who : string) (out : t option array) : t array =
     out
 ;;
 
+(* Wing knob: VFFT_CX_WING=1 swaps the n=16 FWD tangent interior for the
+   machine-translated origin construction below (dft_cx16_wing). *)
+let wing_enabled =
+  ref (Sys.getenv_opt "VFFT_CX_WING" = Some "1")
+;;
+
+(* dft_cx16_wing — the origin W-16 interior construction, machine-
+ * translated from the validated dataflow (w16_to_cxml.py; self-gated
+ * against DFT-16 during generation). Rotations act on combination
+ * values (wing pairs) — 3 scalar constants, flips concentrated at +i
+ * sites (crotp, shared by hash-consing). FWD only; inputs = post-
+ * diagonal legs natural order; outputs natural. *)
+let dft_cx16_wing (xs : t array) : t array =
+  if Array.length xs <> 16 then failwith "dft_cx16_wing: needs 16 legs";
+  let w0 = cadd xs.(0) xs.(8) in
+  let w1 = csub xs.(0) xs.(8) in
+  let w2 = cadd xs.(4) xs.(12) in
+  let w3 = csub xs.(4) xs.(12) in
+  let w4 = cadd xs.(6) xs.(14) in
+  let w5 = csub xs.(14) xs.(6) in
+  let w6 = csub xs.(2) xs.(10) in
+  let w7 = cadd xs.(2) xs.(10) in
+  let w8 = cadd w5 w6 in
+  let w9 = csub w5 w6 in
+  let w10 = cadd xs.(1) xs.(9) in
+  let w11 = csub xs.(1) xs.(9) in
+  let w12 = csub xs.(5) xs.(13) in
+  let w13 = cadd xs.(13) xs.(5) in
+  let w14 = csub w10 w13 in
+  let w15 = cadd w10 w13 in
+  let w16 = cfma 0.41421356237309503 w11 w12 in
+  let w17 = cfnma 0.41421356237309503 w12 w11 in
+  let w18 = csub xs.(15) xs.(7) in
+  let w19 = cadd xs.(15) xs.(7) in
+  let w20 = cadd xs.(11) xs.(3) in
+  let w21 = csub xs.(11) xs.(3) in
+  let w22 = cadd w20 w19 in
+  let w23 = csub w19 w20 in
+  let w24 = cfnma 0.41421356237309503 w21 w18 in
+  let w25 = cfma 0.41421356237309503 w18 w21 in
+  let w26 = csub w23 w14 in
+  let w27 = cadd w14 w23 in
+  let w28 = csub w0 w2 in
+  let w29 = cfnma 0.70710678118654757 w27 w28 in
+  let w30 = cfma 0.70710678118654757 w27 w28 in
+  let w31 = csub w4 w7 in
+  let w32 = cfnma 0.70710678118654757 w26 w31 in
+  let w33 = cfma 0.70710678118654757 w26 w31 in
+  let w34 = crot w32 in
+  let w35 = cadd w29 w34 in
+  let w36 = crot w33 in
+  let w37 = csub w30 w36 in
+  let w38 = cadd w2 w0 in
+  let w39 = crot w32 in
+  let w40 = csub w29 w39 in
+  let w41 = crot w33 in
+  let w42 = cadd w30 w41 in
+  let w43 = cadd w7 w4 in
+  let w44 = cfnma 0.70710678118654757 w8 w1 in
+  let w45 = cfma 0.70710678118654757 w8 w1 in
+  let w46 = cadd w25 w16 in
+  let w47 = cfnma 0.92387953251128674 w46 w44 in
+  let w48 = cfma 0.92387953251128674 w46 w44 in
+  let w49 = cfma 0.70710678118654757 w9 w3 in
+  let w50 = csub w24 w17 in
+  let w51 = cfnma 0.92387953251128674 w50 w49 in
+  let w52 = cfma 0.92387953251128674 w50 w49 in
+  let w53 = crot w51 in
+  let w54 = cadd w47 w53 in
+  let w55 = crot w52 in
+  let w56 = cadd w48 w55 in
+  let w57 = csub w16 w25 in
+  let w58 = crot w51 in
+  let w59 = csub w47 w58 in
+  let w60 = cfnma 0.70710678118654757 w9 w3 in
+  let w61 = crot w52 in
+  let w62 = csub w48 w61 in
+  let w63 = cadd w24 w17 in
+  let w64 = cadd w38 w43 in
+  let w65 = csub w38 w43 in
+  let w66 = cadd w15 w22 in
+  let w67 = csub w22 w15 in
+  let w68 = csub w64 w66 in
+  let w69 = crot w67 in
+  let w70 = csub w65 w69 in
+  let w71 = cadd w64 w66 in
+  let w72 = crot w67 in
+  let w73 = cadd w65 w72 in
+  let w74 = cfnma 0.92387953251128674 w63 w45 in
+  let w75 = cfma 0.92387953251128674 w63 w45 in
+  let w76 = cfnma 0.92387953251128674 w57 w60 in
+  let w77 = cfma 0.92387953251128674 w57 w60 in
+  let w78 = crot w76 in
+  let w79 = cadd w74 w78 in
+  let w80 = crot w77 in
+  let w81 = csub w75 w80 in
+  let w82 = crot w76 in
+  let w83 = csub w74 w82 in
+  let w84 = crot w77 in
+  let w85 = cadd w75 w84 in
+  [| w71; w85; w37; w62; w70; w54; w35; w83; w68; w79; w40; w59; w73; w56; w42; w81 |]
+;;
+
 let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
+  else if n = 16 && sign = `Fwd && !tangent && !wing_enabled
+  then dft_cx16_wing xs
   else (
     let h = n / 2 in
     let e = dft_cx ~sign h (Array.init h (fun i -> xs.(2 * i)))
