@@ -130,13 +130,20 @@ kernel tested. Concretely:
 - [ ] **BLOCKED forms**: the blocked builder makes its cross-rotations via
       its own `ctw` calls in codelet_cil.ml, NOT butterfly_pair — tangent
       does not fire there yet. Second patch site (found, not patched).
-- [ ] **v2 render folds** — v1 census: 153 FP uops / bound 51.0 vs hand
-      131 / 43.7 (≈ classic statically). Three named folds close the gap,
-      all idiom-layer, zero math changes:
-      (a) `ctw` c=1 peephole → `fmadd(sign-folded-const, cflip x, x)`
-          (kills the shear xors);
-      (b) √½/±i arms → addsub / mask-folded forms (kills ~6-8 xors);
-      (c) flip sharing across wing outputs (17 interior shufs vs hand 7).
+- [x] **v2 render folds (a)+(b)** (2026-08-11): CTwC c=1 peephole in
+      cx_render (`fmadd(_s, cflip x, x)`, 2 uops, fires only on tangent
+      shears — classic never builds c=1) + shear switched to
+      `ctw 1.0 (sgn·t)` + √½ arms flag-gated to unit-cosine shears
+      (conjugate shear + swapped opcodes for the 3n/8 class). Census:
+      **143 FP / bound 47.7 / CP 79 / spills 4/4** — LOGIC 17→7 (= hand),
+      now statically AHEAD of classic (151/50.3). Gates unchanged
+      (7.8e-14 / 5.1e-14); OFF-determinism re-verified byte-identical.
+- [ ] **v3 (optional, chases hand's 131/43.7)**: multi-level deferral —
+      the hand kernel rides √½ scales through MORE than one butterfly
+      level before absorbing (12-leg-footprint FMAs in the struct dump),
+      merging normalizations; ours defers exactly one level. +addsub use.
+      Price after the v2-vs-hand race says whether the last ~9% static
+      gap matters on hardware.
 - [ ] `tg` naming in emitter (currently sed-rename per house practice)
 - [ ] bwd variants gated
 - [ ] speed gates vs hand kernels + vs classic (DEFERRED: machine noisy

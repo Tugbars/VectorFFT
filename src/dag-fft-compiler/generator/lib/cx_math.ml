@@ -79,15 +79,31 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     let t = rot ok in
     cadd ek t, csub ek t)
   else if 8 * k = n
-  then (
-    (* w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e *)
-    let x = cadd ok (rot ok) in
-    cfma sqh x ek, cfnma sqh x ek)
+  then
+    if !tangent
+    then (
+      (* tangent form of the same fold: the shear x·(1 + sgn·i) as a
+         unit-cosine CTwC (2 uops via the c=1 render peephole — no xor)
+         instead of cadd(o, rot o) (3 uops). fma(±1·a + b) rounds once,
+         value-identical to the add path. *)
+      let x = ctw 1.0 sgn ok in
+      cfma sqh x ek, cfnma sqh x ek)
+    else (
+      (* w = (1 + sgn·i)/√2 : x = o + rot(o), then ±√½·x + e *)
+      let x = cadd ok (rot ok) in
+      cfma sqh x ek, cfnma sqh x ek)
   else if 8 * k = 3 * n
-  then (
-    (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
-    let x = csub (rot ok) ok in
-    cfma sqh x ek, cfnma sqh x ek)
+  then
+    if !tangent
+    then (
+      (* w = (-1 + sgn·i)/√2 = -√½·(o·(1 - sgn·i)): CONJUGATE shear (2
+         uops), minus sign absorbed by swapping the butterfly opcodes. *)
+      let x = ctw 1.0 (-.sgn) ok in
+      cfnma sqh x ek, cfma sqh x ek)
+    else (
+      (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
+      let x = csub (rot ok) ok in
+      cfma sqh x ek, cfnma sqh x ek)
   else if !tangent
   then (
     (* w = e^{sgn·iθ} = cosθ·(1 + sgn·i·tanθ), θ = 2πk/n.
@@ -112,7 +128,11 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
            k
            n
            (abs_float t));
-    let sh = if t >= 0.0 then cfma t (rot ok) ok else cfnma (-.t) (rot ok) ok in
+    (* shear as a unit-cosine CTwC: x·(1 + i·(sgn·t)) — with the c=1 render
+       peephole this is 2 uops (cflip + sign-folded fmadd), no xor, the
+       exact hand-kernel idiom. The tan sign rides in the folded constant;
+       only cos still splits the butterfly opcodes. *)
+    let sh = ctw 1.0 (sgn *. t) ok in
     if c >= 0.0 then cfma c sh ek, cfnma c sh ek else cfnma (-.c) sh ek, cfma (-.c) sh ek)
   else (
     let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
