@@ -14,6 +14,8 @@
 
 #define K(n) void n(const double*,const double*,double*,double*,const double*, \
                     const double*,size_t,size_t,size_t,size_t,size_t)
+K(radix8_z_t2tan_fwd_avx2);
+K(radix8_z_n1ttan_fwd_avx2);
 K(radix16_z_t2tan_fwd_avx2);
 K(radix16_z_n1ttan_fwd_avx2);
 K(radix32_z_t2btan216_fwd_avx2);
@@ -83,21 +85,25 @@ static double gate_leaf(krn fn, int R, int cols){
 }
 
 int main(void){
-    struct { const char *nm; double e; } r[3];
-    r[0].nm = "radix16_z_t2tan_fwd      (R16 mid,  wing full-kernel)";
-    r[0].e  = gate_mid(radix16_z_t2tan_fwd_avx2, 16, 32, -1.0);
-    r[1].nm = "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ";
-    r[1].e  = gate_leaf(radix16_z_n1ttan_fwd_avx2, 16, 16);
-    r[2].nm = "radix32_z_t2btan216_fwd  (R32 mid,  blocked 2.16)    ";
-    r[2].e  = gate_mid(radix32_z_t2btan216_fwd_avx2, 32, 16, -1.0);
+    struct { const char *nm; double e; } r[5];
+    r[0].nm = "radix8_z_t2tan_fwd       (R8  mid,  bit-identical)   ";
+    r[0].e  = gate_mid(radix8_z_t2tan_fwd_avx2, 8, 32, -1.0);
+    r[1].nm = "radix8_z_n1ttan_fwd      (R8  leaf, bit-identical)   ";
+    r[1].e  = gate_leaf(radix8_z_n1ttan_fwd_avx2, 8, 16);
+    r[2].nm = "radix16_z_t2tan_fwd      (R16 mid,  wing full-kernel)";
+    r[2].e  = gate_mid(radix16_z_t2tan_fwd_avx2, 16, 32, -1.0);
+    r[3].nm = "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ";
+    r[3].e  = gate_leaf(radix16_z_n1ttan_fwd_avx2, 16, 16);
+    r[4].nm = "radix32_z_t2btan216_fwd  (R32 mid,  blocked 2.16)    ";
+    r[4].e  = gate_mid(radix32_z_t2btan216_fwd_avx2, 32, 16, -1.0);
 
     int ok = 1;
-    for(int i=0;i<3;i++){
+    for(int i=0;i<5;i++){
         int pass = r[i].e < 1e-10;
         printf("%s  %.3e  %s\n", r[i].nm, r[i].e, pass ? "CORRECT" : "*** WRONG ***");
         ok &= pass;
     }
-    printf("\n%s\n", ok ? "ALL 3 SHIPPED TANGENT CODELETS GATED CORRECT"
+    printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT"
                         : "GATE FAILURE - DO NOT SHIP");
     return ok ? 0 : 1;
 }

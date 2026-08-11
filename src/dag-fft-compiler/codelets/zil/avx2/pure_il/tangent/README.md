@@ -24,9 +24,18 @@ classic form that ships today, on hardware, under the banked paired protocol
 
 | file | slot | correctness | measured vs classic |
 |---|---|--:|---|
-| `radix16_z_t2tan_avx2.c` | R16 mid (t2) | 1.4e-13 | **−25%** vs `t2b44`; **parity with the hand-built kernel** (5/5 runs) |
-| `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | 7.0e-14 | **−19.8%** vs `n1tb44` (57.7 vs 71.9 ns, 32/35, ctrl −0.03%) |
-| `radix32_z_t2btan216_avx2.c` | R32 mid, blocked 2.16 | 3.1e-13 | **−3.2…−3.6%** vs `t2b48` (3/3 runs, ctrl ≤0.09%) |
+| `radix8_z_t2tan_avx2.c` | R8 mid (t2) | **bit-identical** | **−3.1%** (62.8 vs 64.9 ns, 5 runs) |
+| `radix8_z_n1ttan_avx2.c` | R8 leaf (n1t) | **bit-identical** | **−3.9%** (26.5 vs 27.7 ns, 5 runs) |
+| `radix16_z_t2tan_avx2.c` | R16 mid (t2) | 1.5e-13 | **−25%** vs `t2b44`; **parity with the hand-built kernel** (5/5 runs) |
+| `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | 5.7e-14 | **−19.8%** vs `n1tb44` (57.7 vs 71.9 ns, 32/35, ctrl −0.03%) |
+| `radix32_z_t2btan216_avx2.c` | R32 mid, blocked 2.16 | 2.9e-13 | **−3.2…−3.6%** vs `t2b48` (3/3 runs, ctrl ≤0.09%) |
+
+**Radix 8 is the free case.** It has no general-twiddle sites — every angle is
+a quarter turn or the π/4 class — so the construction reduces to one rewrite at
+the two √½ folds (`x + rot(x)` → one FMA, 3 ops → 2). Because the fused
+multiply is by exactly ±1, the result is **bit-for-bit identical** to the
+classic codelet, verified by `memcmp` over full output planes. It is a drop-in
+with no numerical risk and may be gated on bit-identity rather than tolerance.
 
 Re-gate them any time:
 
