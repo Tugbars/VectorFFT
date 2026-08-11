@@ -134,6 +134,15 @@ let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : stri
     Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
     Isa.fnmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
+  | CTwC (c, s, x) when c = 1.0 ->
+    (* Unit-cosine twiddle = a tangent SHEAR x·(1 + i·s). The c-multiply is
+       an exact identity, so fold it away: fmadd(_s, cflip x, x) — 2 uops,
+       no mask, no standalone mul. fma with an exact ±s product rounds the
+       sum once, same as the add it replaces. Serves the tangent variant's
+       shears (cx_math butterfly_pair); classic emissions never build a
+       c=1 CTwC, so flag-off output is untouched. *)
+    let w = const_name tbl (isa.Isa.vec_width / 2) c s in
+    Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)) (v x)
   | CTwC (c, s, x) ->
     let w = const_name tbl (isa.Isa.vec_width / 2) c s in
     Isa.fmadd_pd
