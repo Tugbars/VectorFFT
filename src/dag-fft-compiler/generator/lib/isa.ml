@@ -184,6 +184,14 @@ let sub_pd (isa : t) (a : string) (b : string) : string =
   else Printf.sprintf "%s(%s, %s)" (intr isa "sub_pd") a b
 ;;
 
+let addsub_pd (isa : t) (a : string) (b : string) : string =
+  (* [a0-b0, a1+b1, ...] — exists only at SSE2/AVX2 widths; wider ISAs have
+     no vaddsubpd and the render composes the mask form instead. *)
+  if isa.vec_width = 2 || isa.vec_width = 4
+  then Printf.sprintf "%s(%s, %s)" (intr isa "addsub_pd") a b
+  else failwith "Isa.addsub_pd: no addsub at this width (render must compose)"
+;;
+
 (* CONTRACT: emit_c uses xor_pd only for sign-flip against the -0.0
  * mask (verified: both call sites pair it with set1("-0.0")). The
  * scalar form is therefore plain negation; the mask operand is
