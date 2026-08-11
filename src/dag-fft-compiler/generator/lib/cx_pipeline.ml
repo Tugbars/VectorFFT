@@ -38,7 +38,7 @@ let children (e : t) : t list =
   | CIn _ | CLoad _ -> []
   | CNeg a | CRotNI a | CRotPI a | CLo a | CHi a -> [ a ]
   | CStore (_, v) -> [ v ]
-  | CAdd (a, b) | CSub (a, b) -> [ a; b ]
+  | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
   | CTurn (a, b, _) -> [ a; b ]
   | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
   | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
@@ -108,6 +108,7 @@ let dedup_sub_pairs_cx (assigns : (Expr.elem_ref * t) list)
              | CTurn (a, b, imm) -> cturn (rw a) (rw b) imm
              | CAdd (a, b) -> cadd (rw a) (rw b)
              | CSub (a, b) -> csub (rw a) (rw b)
+             | CRotAdd (a, b) -> crotadd (rw a) (rw b)
              | CFmaC (c, x, acc) -> cfma c (rw x) (rw acc)
              | CFnmaC (c, x, acc) -> cfnma c (rw x) (rw acc)
              | CTwC (c, s, x) -> ctw c s (rw x)
@@ -158,7 +159,7 @@ let print_stats ?(uarch : Uarch.t option) (who : string)
     match e.node with
     | CIn _ | CLoad _ -> incr n_in
     | CStore _ -> incr n_st
-    | CAdd _ -> incr n_add
+    | CAdd _ | CRotAdd _ -> incr n_add
     | CSub _ -> incr n_sub
     | CNeg _ -> incr n_neg
     | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> incr n_rot

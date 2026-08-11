@@ -41,7 +41,7 @@ let port_class (e : t) =
   | CIn _ | CLoad _ -> `LD
   | CStore _ -> `ST
   | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ -> `P01
-  | CAdd _ | CSub _ | CNeg _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> `P15
+  | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> `P15
 ;;
 
 let schedule_asis (assigns : (Expr.elem_ref * t) list)

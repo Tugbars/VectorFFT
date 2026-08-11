@@ -62,6 +62,12 @@ type cx_kind =
   (* x * (+i) : cflip then negate the RE lane. The backward twin of
      CRotNI — an inverse transform's quarter-turn goes the other way.
      (a+bi)*(+i) = -b + ai, so from cflip = [b,a] we negate lane 0. *)
+  | CRotAdd of t * t
+  (* a + i*y in ONE fused step: AVX2/SSE2 render = addsub(a, cflip y) —
+     one shuffle + one vaddsubpd, no mask, legal in FWD kernels. Introduced
+     for the wing construction's +i-side combines (the cadd/crot
+     composition costs one extra uop). Never built by classic math paths,
+     so flag-off emissions stay byte-identical. *)
   | CFmaC of float * t * t (* c*x + e,  real scalar c *)
   | CFnmaC of float * t * t (* -c*x + e, real scalar c *)
   | CTwC of float * float * t (* x * (c + i*s), emit-time constants *)
@@ -163,6 +169,7 @@ let csub a b = mk (CSub (a, b))
 let cneg a = mk (CNeg a)
 let crot a = mk (CRotNI a)
 let crotp a = mk (CRotPI a)
+let crotadd a b = mk (CRotAdd (a, b))
 let cfma c x e = mk (CFmaC (c, x, e))
 let cfnma c x e = mk (CFnmaC (c, x, e))
 let ctw c s x = mk (CTwC (c, s, x))

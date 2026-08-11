@@ -23,7 +23,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     | CIn _ | CLoad _ -> []
     | CNeg a | CRotNI a | CRotPI a | CLo a | CHi a -> [ a ]
     | CStore (_, v) -> [ v ]
-    | CAdd (a, b) | CSub (a, b) -> [ a; b ]
+    | CAdd (a, b) | CSub (a, b) | CRotAdd (a, b) -> [ a; b ]
     | CTurn (a, b, _) -> [ a; b ]
     | CFmaC (_, x, e) | CFnmaC (_, x, e) -> [ x; e ]
     | CTwC (_, _, x) | CTwV (_, x) | CTwL (_, x) -> [ x ]
@@ -37,7 +37,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     match e.node with
     | CIn _ | CLoad _ -> uarch.load_l1_latency
     | CStore _ -> uarch.store_latency
-    | CAdd _ | CSub _ -> uarch.add_latency
+    | CAdd _ | CSub _ | CRotAdd _ -> uarch.add_latency
     (* CNeg is one xor — charged like NK_Neg on the real side. *)
     | CNeg _ -> uarch.add_latency
     (* CTurn = one permute2f128; CLo is a free cast, CHi one extract —
@@ -76,7 +76,7 @@ module Node : Schedule.SCHED_NODE with type payload = cx_kind and type t = t = s
     match e.node with
     | CIn _ | CLoad _ -> 'L'
     | CStore _ -> 'S'
-    | CAdd _ | CSub _ | CNeg _ -> 'A'
+    | CAdd _ | CSub _ | CNeg _ | CRotAdd _ -> 'A'
     | CTurn _ | CLo _ | CHi _ -> 'R'
     | CRotNI _ | CRotPI _ -> 'R'
     | CFmaC _ | CFnmaC _ -> 'F'

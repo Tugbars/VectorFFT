@@ -130,6 +130,13 @@ let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : stri
   | CNeg a -> Isa.xor_mask_pd isa (v a) (Isa.set1_pd_str isa "-0.0")
   | CRotNI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_IM" ^ msuf)
   | CRotPI a -> Isa.xor_mask_pd isa (Isa.cflip_pd isa (v a)) ("_M_RE" ^ msuf)
+  | CRotAdd (a, y) ->
+    (* a + i*y fused: addsub(a, cflip y) — 2 uops, no mask. Wider ISAs
+       compose the value-identical fwd-legal form a - (-i*y). *)
+    if isa.Isa.vec_width <= 4
+    then Isa.addsub_pd isa (v a) (Isa.cflip_pd isa (v y))
+    else
+      Isa.sub_pd isa (v a) (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v y)) ("_M_IM" ^ msuf))
   | CFmaC (c, x, acc) ->
     Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
