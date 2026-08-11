@@ -179,13 +179,7 @@ kernel tested. Concretely:
       codelet through the sched-wisdom mechanism, never a global default.
       Halves progression: classic 194.5 → SR 181.6 → CPL1 168.8 → CPL2
       167.1 → hand 144.4.
-- [ ] **Parity path (remaining +15.7% vs hand)**:
-      ~9 pts = v3 ops — the hand kernel's rotations act on
-      combination-PLANES with shared flips (wing-pair construction in
-      cx_math), not per-value shears; multi-level scale deferral rides
-      along. THE LARGER HALF now — next session's opener.
-      ~7 pts = residual schedule — annealer/sched_wisdom over cx orders,
-      order injection from the hand kernel, cpl tie-break variants.
+- [x] **W
 - [ ] R32 mono-vs-halves race (only if mono spills)
 - [ ] dp re-race + wisdom rebank
 - [ ] sunset banners on out-raced classic files
