@@ -1,9 +1,6 @@
 /* cpu_cache.h — L1 data-cache capacity, discovered once at PLAN time.
  *
- * 🔴 PLANNING ONLY. Nothing here may be called from an execute path. The CPUID
- * instruction is serializing and the discovery is a one-time fact about the
- * machine, so it belongs with plan construction, never inside a transform.
- * build_tuned/exec_purity_audit.py exists to catch a future drift.
+ * 🔴 PLANNING ONLY. Nothing here may be called from an execute path.
  *
  * WHY IT IS DISCOVERED AND NOT HARD-CODED (Tugbars, 2026-08-02): the tcut tile
  * width is the first CACHE-OCCUPANCY quantity the library will bank. A chain or
@@ -23,8 +20,7 @@
  * L1, and overshoot is the failure mode that costs everything at once rather
  * than degrading, so being on the wrong core type is not a rounding error.
  *
- * 🔴 NEVER infer core type from the CPU index. P being 0-15 here is a
- * firmware/OS artifact. Read leaf 0x1A.
+
  */
 #ifndef VFFT_CPU_CACHE_H
 #define VFFT_CPU_CACHE_H

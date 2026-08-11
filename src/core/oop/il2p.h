@@ -390,17 +390,6 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
 #define VFFT_IL_KV_MONO      0xf
 
 /* ── STRUCTURAL DEFAULT: blocked kernels ARE the R>=32 forward kernels ───
- * (2026-08-06). A monolithic R>=32 body holds ~40-64 live values against
- * AVX2's 16 registers and spills ~27% of its instruction stream
- * (il_register_pressure.md census); blocked construction is not a rival to
- * race per cell but the only body shape that fits the file — the same tier
- * rule the split emitters apply at GENERATION time (codelet_oop.ml: Tier A
- * monolithic R<=16 / Tier B blocked, gated on isa.vec_regs). Until the cil
- * emitter grows the same tier (the select_expansion extraction), the rule
- * lives here, next to the registry, applied at create so EVERY creator —
- * vfft.c routes, il_prime inners, dp_planner candidates, gates — serves and
- * MEASURES the same kernels (a per-call-site rule is the drift bug
- * codelet_oop.ml's own header warns about).
  *
  * Scope: FORWARD only (no blocked bwd twins exist yet) and even counts only
  * (blocked kernels carry NO odd-count tail — the monolithic kernel, which
