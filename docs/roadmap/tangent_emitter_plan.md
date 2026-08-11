@@ -170,11 +170,22 @@ kernel tested. Concretely:
       the schedule gap in one shot: hand 144.4 · CPL-halves 168.8 (+17.2%)
       · SR-halves 181.6 (+26.6%) · classic 194.5 (CPL = −13.2% vs
       classic).** Cap sweep 10–16 flat (not binding at R16; default 14).
-- [ ] **Parity path (remaining +17% vs hand, fully priced)**:
-      ~9 pts = v3 multi-level scale deferral (ops 143→131-class);
-      ~8 pts = residual schedule — levers: port-aware tie-breaks in CPL,
-      the existing annealer/sched_wisdom machinery (schedule.ml) applied
-      to cx orders, or direct order injection from the hand kernel.
+- [x] **CPL2 — per-cycle port-slot model** (`VFFT_CX_SCHED=cpl2`, same
+      module: 2×P01 + 2×P15 + 3 LD + 2 ST slots, dispatch = data-ready +
+      slot-free, clock advances when stuck): halves **167.1 ns (+15.7% vs
+      hand, −14% vs classic)** = best emitted. ⚠ cpl2 HURT the mono
+      (+24.8% vs cpl1's +18.4%) — strict slot eligibility over-serializes
+      deep bodies ⇒ scheduler choice is FORM-dependent: resolve per
+      codelet through the sched-wisdom mechanism, never a global default.
+      Halves progression: classic 194.5 → SR 181.6 → CPL1 168.8 → CPL2
+      167.1 → hand 144.4.
+- [ ] **Parity path (remaining +15.7% vs hand)**:
+      ~9 pts = v3 ops — the hand kernel's rotations act on
+      combination-PLANES with shared flips (wing-pair construction in
+      cx_math), not per-value shears; multi-level scale deferral rides
+      along. THE LARGER HALF now — next session's opener.
+      ~7 pts = residual schedule — annealer/sched_wisdom over cx orders,
+      order injection from the hand kernel, cpl tie-break variants.
 - [ ] R32 mono-vs-halves race (only if mono spills)
 - [ ] dp re-race + wisdom rebank
 - [ ] sunset banners on out-raced classic files

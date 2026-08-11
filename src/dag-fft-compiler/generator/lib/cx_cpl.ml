@@ -32,6 +32,18 @@ let cap () =
   | None -> 14
 ;;
 
+(* Port class of a node for the cpl2 slot model (Raptor Cove):
+   `P01 fma/mul units (ports 0/1) · `P15 add/shuffle units (ports 1/5) ·
+   `LD load ports · `ST stores. Port 1 is shared in hardware; modeling the
+   pools as disjoint 2+2 is intentionally conservative. *)
+let port_class (e : t) =
+  match e.node with
+  | CIn _ | CLoad _ -> `LD
+  | CStore _ -> `ST
+  | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ -> `P01
+  | CAdd _ | CSub _ | CNeg _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> `P15
+;;
+
 let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
   : (Expr.elem_ref option * t) list
   =
@@ -117,25 +129,67 @@ let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
       0
       (dedup_preds n)
   in
-  for _ = 1 to total do
-    (* pick best ready node *)
+  (* cpl2: per-cycle port-slot model — dispatch only nodes whose data is
+     ready at the model clock AND whose port pool has a free slot this
+     cycle; advance the clock when nothing dispatches. Produces an order
+     interleaved across port classes by construction. *)
+  let slots = Sys.getenv_opt "VFFT_CX_SCHED" = Some "cpl2" in
+  let clock = ref 0 in
+  let free01 = ref 2
+  and free15 = ref 2
+  and freeld = ref 3
+  and freest = ref 2 in
+  let reset_slots () =
+    free01 := 2;
+    free15 := 2;
+    freeld := 3;
+    freest := 2
+  in
+  let slot_free n =
+    match port_class n with
+    | `P01 -> !free01 > 0
+    | `P15 -> !free15 > 0
+    | `LD -> !freeld > 0
+    | `ST -> !freest > 0
+  in
+  let slot_take n =
+    match port_class n with
+    | `P01 -> decr free01
+    | `P15 -> decr free15
+    | `LD -> decr freeld
+    | `ST -> decr freest
+  in
+  let scheduled_n = ref 0 in
+  while !scheduled_n < total do
+    (* pick best ready node (cpl2: additionally data-ready + slot-free) *)
     let best = ref None in
     Hashtbl.iter
       (fun _ n ->
-         let key =
-           if !live >= capn
-           then (freed n, Hashtbl.find height n.tag, - ready_t n, - n.tag)
-           else (Hashtbl.find height n.tag, freed n, - ready_t n, - n.tag)
+         let eligible =
+           (not slots) || (ready_t n <= !clock && slot_free n)
          in
-         match !best with
-         | None -> best := Some (key, n)
-         | Some (bk, _) -> if key > bk then best := Some (key, n))
+         if eligible
+         then (
+           let key =
+             if !live >= capn
+             then (freed n, Hashtbl.find height n.tag, - ready_t n, - n.tag)
+             else (Hashtbl.find height n.tag, freed n, - ready_t n, - n.tag)
+           in
+           match !best with
+           | None -> best := Some (key, n)
+           | Some (bk, _) -> if key > bk then best := Some (key, n)))
       ready;
     match !best with
-    | None -> failwith "cx_cpl: ready set empty before all nodes scheduled (cycle?)"
+    | None ->
+      if not slots
+      then failwith "cx_cpl: ready set empty before all nodes scheduled (cycle?)";
+      (* nothing dispatchable this model cycle: advance the clock *)
+      incr clock;
+      reset_slots ()
     | Some (_, n) ->
+      if slots then slot_take n;
       Hashtbl.remove ready n.tag;
-      Hashtbl.replace finish n.tag (ready_t n + lat n);
+      Hashtbl.replace finish n.tag (max (ready_t n) !clock + lat n);
       (* liveness: n becomes live if anyone will read it *)
       if Hashtbl.find remaining_users n.tag > 0 then incr live;
       List.iter
@@ -150,6 +204,7 @@ let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
            Hashtbl.replace unsched u.tag c;
            if c = 0 then Hashtbl.add ready u.tag u)
         (users_of n);
+      incr scheduled_n;
       out := (Hashtbl.find_opt refs n.tag, n) :: !out
   done;
   List.rev !out

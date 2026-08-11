@@ -106,7 +106,7 @@ module Sched = Cx_sched.Sched
    bodies. Racing decides per slot; wisdom ships the winner. *)
 let cx_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Cx_ir.t) list) =
   match Sys.getenv_opt "VFFT_CX_SCHED" with
-  | Some "cpl" -> Cx_cpl.schedule uarch assigns
+  | Some "cpl" | Some "cpl2" -> Cx_cpl.schedule uarch assigns
   | _ -> Sched.su_schedule uarch assigns
 ;;
 
