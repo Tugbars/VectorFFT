@@ -107,6 +107,7 @@ module Sched = Cx_sched.Sched
 let cx_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Cx_ir.t) list) =
   match Sys.getenv_opt "VFFT_CX_SCHED" with
   | Some "cpl" | Some "cpl2" -> Cx_cpl.schedule uarch assigns
+  | Some "asis" -> Cx_cpl.schedule_asis assigns
   | _ -> Sched.su_schedule uarch assigns
 ;;
 

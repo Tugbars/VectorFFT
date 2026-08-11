@@ -44,6 +44,27 @@ let port_class (e : t) =
   | CAdd _ | CSub _ | CNeg _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> `P15
 ;;
 
+let schedule_asis (assigns : (Expr.elem_ref * t) list)
+  : (Expr.elem_ref option * t) list
+  =
+  (* construction-order schedule: topological by tag (constructors only
+     reference earlier nodes). For machine-translated constructions the
+     construction order IS the origin's instruction order. *)
+  let seen : (int, t) Hashtbl.t = Hashtbl.create 256 in
+  let rec visit e =
+    if not (Hashtbl.mem seen e.tag)
+    then (
+      Hashtbl.add seen e.tag e;
+      List.iter visit (Cx_sched.Node.preds e))
+  in
+  List.iter (fun (_, e) -> visit e) assigns;
+  let all = Hashtbl.fold (fun _ n acc -> n :: acc) seen [] in
+  let sorted = List.sort (fun a b -> compare a.tag b.tag) all in
+  let refs : (int, Expr.elem_ref) Hashtbl.t = Hashtbl.create 64 in
+  List.iter (fun (r, e) -> Hashtbl.replace refs e.tag r) assigns;
+  List.map (fun n -> Hashtbl.find_opt refs n.tag, n) sorted
+;;
+
 let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
   : (Expr.elem_ref option * t) list
   =
