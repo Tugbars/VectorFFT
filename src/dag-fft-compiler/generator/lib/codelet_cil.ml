@@ -100,6 +100,16 @@ open Cx_math
 open Cx_render
 module Sched = Cx_sched.Sched
 
+(* Scheduler dispatch: default = the shared SR (byte-identity of every
+   shipped emission preserved); VFFT_CX_SCHED=cpl selects the critical-path
+   list scheduler (cx_cpl.ml) — the ILP objective for spill-free tangent
+   bodies. Racing decides per slot; wisdom ships the winner. *)
+let cx_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Cx_ir.t) list) =
+  match Sys.getenv_opt "VFFT_CX_SCHED" with
+  | Some "cpl" -> Cx_cpl.schedule uarch assigns
+  | _ -> Sched.su_schedule uarch assigns
+;;
+
 (* ═══════════════════════════════════════════════════════════════
  *  KINDS
  *
@@ -211,7 +221,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   (* THE PIPELINE SEAM: every cil body flows through the cx pass cascade
      between construction and scheduling — cil is pipeline-hosted. *)
   let assigns = Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind)) ~uarch assigns in
-  let scheduled = Sched.su_schedule uarch assigns in
+  let scheduled = cx_schedule uarch assigns in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
      preamble must declare. *)
@@ -244,7 +254,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
     in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
-    let sch = Sched.su_schedule uarch assigns in
+    let sch = cx_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
     Array.iteri
       (fun i (e : t) ->
@@ -938,7 +948,7 @@ let emit_k1
     let outs = build ins in
     let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
-    let sch = Sched.su_schedule uarch assigns in
+    let sch = cx_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "    { /* %s */\n" label);
     pre ();
     (* Addr/Name ins print here (the load edge) and are pre-marked so the

@@ -160,8 +160,21 @@ kernel tested. Concretely:
       (diagonal by OUTPUT leg, applied after the DFT, table records with
       `+` exponents) — the inverse four-step shape, NOT pre-twiddle with
       either table sign. Blocked/R32 bwd + t2t variants still to gate.
-- [ ] speed gates vs hand kernels + vs classic (DEFERRED: machine noisy
-      2026-08-11 night — correctness/static only until it calms)
+- [x] speed gates vs hand + classic RAN (machine went quiet, controls
+      ±0.03%, R16 mid slot): SR-emitted tangent −6.3% vs classic but +25%
+      behind hand — SR's live-range objective wastes ordering freedom on
+      spill-free bodies.
+- [x] **CPL scheduler** (`lib/cx_cpl.ml`, `VFFT_CX_SCHED=cpl` via the
+      `cx_schedule` dispatcher; default SR, OFF byte-identity verified):
+      critical-path list scheduling with live-set cap. **Recovered ~60% of
+      the schedule gap in one shot: hand 144.4 · CPL-halves 168.8 (+17.2%)
+      · SR-halves 181.6 (+26.6%) · classic 194.5 (CPL = −13.2% vs
+      classic).** Cap sweep 10–16 flat (not binding at R16; default 14).
+- [ ] **Parity path (remaining +17% vs hand, fully priced)**:
+      ~9 pts = v3 multi-level scale deferral (ops 143→131-class);
+      ~8 pts = residual schedule — levers: port-aware tie-breaks in CPL,
+      the existing annealer/sched_wisdom machinery (schedule.ml) applied
+      to cx orders, or direct order injection from the hand kernel.
 - [ ] R32 mono-vs-halves race (only if mono spills)
 - [ ] dp re-race + wisdom rebank
 - [ ] sunset banners on out-raced classic files
