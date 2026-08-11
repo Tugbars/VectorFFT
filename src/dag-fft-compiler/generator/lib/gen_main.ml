@@ -521,6 +521,8 @@ let run (argv : string array) : unit =
       incr i)
     else if arg = "--cil-blocked"
     then cil_blocked := true
+    else if arg = "--cil-tangent"
+    then Cx_math.tangent := true
     else if arg = "--cil-log3"
     then cil_log3 := true
     (* The store-FORM decoupling the pure-IL INVERSE needs: --cil-turnst
