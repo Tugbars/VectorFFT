@@ -179,7 +179,36 @@ kernel tested. Concretely:
       codelet through the sched-wisdom mechanism, never a global default.
       Halves progression: classic 194.5 → SR 181.6 → CPL1 168.8 → CPL2
       167.1 → hand 144.4.
-- [x] **W
-- [ ] R32 mono-vs-halves race (only if mono spills)
+- [x] **v3 WING construction** (`dft_cx16_wing`, machine-translated from
+      the validated origin dataflow by scratchpad `w16_to_cxml.py` with a
+      numeric self-gate during generation; `VFFT_CX_WING=1`, fires at
+      n=16 FWD inside `dft_cx`): **153.6–155.8 ns = +6.5–7.9% vs hand,
+      −21% vs classic.** The construction now dominates the scheduler
+      (SR/CPL/CPL2 land within ~1% of each other). ⚠ fwd kernels are
+      CRotNI-only — the origin's +i rotations must translate as `crot`
+      with consumer sign absorption (cadd↔csub, cfma↔cfnma), never crotp.
+- [x] **CRotAdd fused node** (a + i·y, addsubpd render; IR + all match
+      sites + `Isa.addsub_pd` widths 2/4 + wide-ISA fwd-legal fallback):
+      −7 real uops, gates clean — and **NULL-to-NEGATIVE on time** (ASIS
+      unchanged at +7.7–7.9%; CPL/CPL2 regressed on the perturbed DAG).
+      Static-count trap re-confirmed on the emitter side. Node kept as a
+      pool option; translator can emit either form.
+- [ ] **Parity residual (+6.5–7.9% vs hand): DIAGNOSED as gcc
+      register-allocation luck** (bench audited clean: same-core, 200 ms
+      cooldowns, paired+control, alignment/link-order/table-position all
+      tested null; emitted-ASIS is class-identical to hand at 131/43.7
+      but CP 83 vs 69, spills 6/6 vs 6/4 — spill hops on the chain).
+      The objective is observable, not derivable ⇒ **ANNEALER with the
+      hardware as oracle**: OCaml generates valid topological orders of
+      the verified wing DAG (math constant, correct by construction),
+      short-block ranking + full-protocol confirmation, winner banked as
+      a per-codelet sched_wisdom entry (dagsig'd) — calibration-time
+      search, deterministic shipped artifact.
+      RADICAL ALTERNATIVE (shelf): kill the lottery — an emission mode
+      with
+- [ ] Wing bwd twin (conjugated translation) + wing-in-blocked-R32 races
+      (R32 halves pass-1 calls dft_small(16), so the wing already
+      dispatches there when the knobs are on — unraced).
+- [ ] `tg` naming in emitter (currently sed-rename per house practice)
 - [ ] dp re-race + wisdom rebank
 - [ ] sunset banners on out-raced classic files
