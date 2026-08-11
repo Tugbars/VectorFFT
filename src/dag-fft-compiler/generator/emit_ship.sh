@@ -1,26 +1,48 @@
 #!/bin/sh
-cd /mnt/c/Users/Tugbars/Desktop/highSpeedFFT/src/dag-fft-compiler/generator || exit 1
+# Regenerate the shipped tangent-interior codelets.
+#
+#   src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/
+#
+# Each emitted file is renamed (the emitter tags neither the interior variant
+# nor the split in the symbol) and keeps the fact-sheet header that documents
+# its op counts; re-add that header by hand if you regenerate, or just diff
+# against the committed file to confirm the body is unchanged.
+#
+# Verify afterwards:
+#   gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+#       src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
+#
+# Run from the generator directory (WSL): sh emit_ship.sh
+set -e
 G=./_build/default/bin/gen_radix.exe
-D=../codelets/zil/avx2/pure_il/tangent
+OUT=../codelets/zil/avx2/pure_il/tangent
+TMP=${TMPDIR:-/tmp}/tangent_emit
 U="--isa avx2 --uarch raptor_lake_avx2 --emit-c"
+mkdir -p "$TMP"
 
-# 1. R16 mono T2 — the PARITY kernel (wing full-kernel + origin order + lazy stores)
+# radix 8 — no general-twiddle sites; tangent only rewrites the two sqrt(1/2)
+# folds, and the result is bit-identical to the classic codelet.
+VFFT_CX_LAZYLOAD=1 $G 8  --cil-t2  --cil-tangent $U > "$TMP/r8_t2.c"
+VFFT_CX_LAZYLOAD=1 $G 8  --cil-n1t --cil-tangent $U > "$TMP/r8_n1t.c"
+
+# radix 16 — the wing construction (loads + ingest + butterflies interleaved in
+# construction order) plus interleaved stores; this is the parity kernel.
 VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_SCHED=asis \
-  $G 16 --cil-t2 --cil-tangent $U > $D/_r16_t2.c 2>$D/_e1 || echo "FAIL r16 t2"
-# 2. R16 mono N1T leaf (wing interior; turned stores keep the batched edge by design)
+  $G 16 --cil-t2  --cil-tangent $U > "$TMP/r16_t2.c"
 VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_SCHED=asis \
-  $G 16 --cil-n1t --cil-tangent $U > $D/_r16_n1t.c 2>$D/_e2 || echo "FAIL r16 n1t"
-# 3/4. R16 blocked halves (2.8), SR-scheduled
+  $G 16 --cil-n1t --cil-tangent $U > "$TMP/r16_n1t.c"
+
+# radix 32 — blocked halves (split is m.p, so 2.16 = two 16-point halves whose
+# combine pass uses the tangent butterfly; 16.2 would not).
 VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_LAZYSTORE=1 \
-  $G 16 --cil-t2 --cil-tangent --cil-blocked --cil-split 2.8 $U > $D/_r16_t2b.c 2>$D/_e3 || echo "FAIL r16 t2b"
-VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_LAZYSTORE=1 \
-  $G 16 --cil-n1t --cil-tangent --cil-blocked --cil-split 2.8 $U > $D/_r16_n1tb.c 2>$D/_e4 || echo "FAIL r16 n1tb"
-# 5/6. R32 blocked halves (2.16) — the raced R32 pair
-VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_LAZYSTORE=1 \
-  $G 32 --cil-t2 --cil-tangent --cil-blocked --cil-split 2.16 $U > $D/_r32_t2b.c 2>$D/_e5 || echo "FAIL r32 t2b"
-VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_LAZYSTORE=1 \
-  $G 32 --cil-n1t --cil-tangent --cil-blocked --cil-split 2.16 $U > $D/_r32_n1tb.c 2>$D/_e6 || echo "FAIL r32 n1tb"
-# 7. R16 mono T2 BACKWARD (wing is fwd-only => plain tangent path)
-VFFT_CX_LAZYLOAD=1 \
-  $G 16 --cil-t2 --cil-tangent --cil-bwd $U > $D/_r16_t2_bwd.c 2>$D/_e7 || echo "FAIL r16 t2 bwd"
-wc -l $D/_*.c
+  $G 32 --cil-t2 --cil-tangent --cil-blocked --cil-split 2.16 $U > "$TMP/r32_t2b.c"
+
+ren() { sed "s/$2/$3/g" "$TMP/$1" > "$TMP/$1.ren" && mv "$TMP/$1.ren" "$TMP/$1"; }
+ren r8_t2.c    radix8_z_t2_fwd_avx2    radix8_z_t2tan_fwd_avx2
+ren r8_n1t.c   radix8_z_n1t_fwd_avx2   radix8_z_n1ttan_fwd_avx2
+ren r16_t2.c   radix16_z_t2_fwd_avx2   radix16_z_t2tan_fwd_avx2
+ren r16_n1t.c  radix16_z_n1t_fwd_avx2  radix16_z_n1ttan_fwd_avx2
+ren r32_t2b.c  radix32_z_t2b_fwd_avx2  radix32_z_t2btan216_fwd_avx2
+
+echo "emitted to $TMP — compare against $OUT before overwriting:"
+for f in r8_t2 r8_n1t r16_t2 r16_n1t r32_t2b; do echo "  $TMP/$f.c"; done
