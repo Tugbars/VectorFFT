@@ -1,22 +1,22 @@
-(* cx_math.ml — math-layer DAG builders of the full-IL (cil) family.
+(* cx_math.ml - math-layer DAG builders of the full-IL (cil) family.
  * Split out of codelet_cil.ml (Phase 0, 2026-08-09, byte-identity gated).
  * MODULE CARD
  * ROLE: butterfly_pair (the ONE shared twiddle-class selector) + dft_cx
  * (pow2 DIT) + dft_cx_odd (conjugate-pair) + dft_small (dispatcher) +
  * dft_chain (mixed-radix four-step) + cscale_chain.
- * DEPS: Cx_ir only. Pure DAG construction — no scheduling, no emission. *)
+ * DEPS: Cx_ir only. Pure DAG construction - no scheduling, no emission. *)
 
 open Cx_ir
 
 (* ═══════════════════════════════════════════════════════════════
- *  MATH LAYER — DIT-2 recursion over packed complex
+ *  MATH LAYER - DIT-2 recursion over packed complex
  *
  * Forward sign e^{-2πik/n}, natural order in and out. The twiddle class is
  * chosen per k so the common rotations never cost a general complex
  * multiply (this is the arithmetic the hand emitter established and the
  * race oracle verified):
  *     k=0        -> plain butterfly
- *     4k=n       -> ×(-i)          : CRotNI (shuffle+xor, no multiply)
+ *     4k=n       -> �-(-i)          : CRotNI (shuffle+xor, no multiply)
  *     8k=n       -> (1-i)/√2       : fold √½ into the butterfly via FMA
  *     8k=3n      -> -(1+i)/√2      : same fold, mirrored
  *     otherwise  -> general constant twiddle (BYTW2 with VLIT constants)
@@ -24,7 +24,7 @@ open Cx_ir
 
 let sqh = 0.70710678118654752440
 
-(* ── TANGENT-INTERIOR VARIANT ─────────────────────────────────────────
+(* �-��-� TANGENT-INTERIOR VARIANT �-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-��-�
    docs/roadmap/tangent_emitter_plan.md + docs/performance/
    tangent_scaled_butterflies.md. Default OFF: with the ref false, every
    arm below is byte-identical to the shipped emitter, so the 183-case
@@ -33,16 +33,16 @@ let sqh = 0.70710678118654752440
 
    What it changes: ONLY the general-twiddle arm of butterfly_pair. The
    classic arm materializes the rotation (ctw) and then does NAKED
-   cadd/csub butterflies — adds with no multiply attached, condemned to
+   cadd/csub butterflies - adds with no multiply attached, condemned to
    the FADD ports. The tangent arm factors w = cosθ·(1 + sgn·i·tanθ):
    the shear (ok + tanθ·rot ok) runs un-normalized in ONE fma, and the
-   cosθ normalization is deferred INTO the butterfly fma pair — the adds
+   cosθ normalization is deferred INTO the butterfly fma pair - the adds
    are promoted to the FMA ports and the standalone rotation multiply
    disappears. The k=0 / ±i / √½ arms are already in this form and are
    shared verbatim by both variants.
-   Measured (hand proof kernels, 2026-08-11, paired ±0.3%): R16 mid −25%,
-   R16 leaf −17%, pure-tangent N=256 −20…−24%, N=512 −14…−17%.
-   ⚠ L1-conditional: at N=1024 the HAND kernels invert (+16%) — the win is
+   Measured (hand proof kernels, 2026-08-11, paired ±0.3%): R16 mid �'25%,
+   R16 leaf �'17%, pure-tangent N=256 �'20…�'24%, N=512 �'14…�'17%.
+   ⚠ L1-conditional: at N=1024 the HAND kernels invert (+16%) - the win is
    scoped ≤512-class until blocked-tangent forms are raced. *)
 let tangent =
   ref
@@ -52,7 +52,7 @@ let tangent =
 ;;
 
 (* ~sign: `Fwd = e^{-2πik/n} (the analysis transform), `Bwd = e^{+2πik/n}
-   (the UNNORMALIZED inverse — no 1/N, matching the rest of the library:
+   (the UNNORMALIZED inverse - no 1/N, matching the rest of the library:
    bwd(fwd(x)) = N·x). Every twiddle class flips with the sign:
      w_k = e^{sgn·2πik/n}
      4k=n  -> w = sgn·i        : CRotNI (fwd) / CRotPI (bwd)
@@ -64,7 +64,7 @@ let tangent =
 (* ONE radix-2 butterfly of an n-point DIT stage: combine the k-th outputs of
    the even half (ek) and odd half (ok) into outputs k and k+n/2. The twiddle
    CLASS selection lives here so the monolithic recursion and the BLOCKED
-   construction below share exactly one copy of it — they must agree, or the
+   construction below share exactly one copy of it - they must agree, or the
    two forms would not be numerically interchangeable. *)
 let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok : t)
   : t * t
@@ -83,7 +83,7 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     if !tangent
     then (
       (* tangent form of the same fold: the shear x·(1 + sgn·i) as a
-         unit-cosine CTwC (2 uops via the c=1 render peephole — no xor)
+         unit-cosine CTwC (2 uops via the c=1 render peephole - no xor)
          instead of cadd(o, rot o) (3 uops). fma(±1·a + b) rounds once,
          value-identical to the add path. *)
       let x = ctw 1.0 sgn ok in
@@ -107,15 +107,15 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
   else if !tangent
   then (
     (* w = e^{sgn·iθ} = cosθ·(1 + sgn·i·tanθ), θ = 2πk/n.
-       shear = ok + tanθ·rot(ok)   — one fma; |shear| = |ok|/|cosθ|, a pure
+       shear = ok + tanθ·rot(ok)   - one fma; |shear| = |ok|/|cosθ|, a pure
                                      rotation magnitude, no cancellation
-       out   = ek ± cosθ·shear     — normalization fused into the butterfly
+       out   = ek ± cosθ·shear     - normalization fused into the butterfly
        Signs of tan/cos ride in the OPCODE (cfma vs cfnma), magnitudes in
-       the constants — the cscale_chain convention. θ ∈ (0,π) here (the
+       the constants - the cscale_chain convention. θ ∈ (0,π) here (the
        free/√½ classes are caught above), so t and c go negative past
        π/2; |tan| ≤ tan(7π/16) ≈ 5.03 through R32, gated 3.4e-13 on the
        hand kernels. Loud guard at 8: the first offender is R64's 15π/32
-       site — implement quarter-turn composition before lifting it. *)
+       site - implement quarter-turn composition before lifting it. *)
     let th = 2.0 *. pi *. float_of_int k /. float_of_int n in
     let t = tan th
     and c = cos th in
@@ -123,12 +123,12 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     then
       failwith
         (Printf.sprintf
-           "butterfly_pair: tangent variant |tan(2pi*%d/%d)| = %.3f > 8 — R>=64 \
+           "butterfly_pair: tangent variant |tan(2pi*%d/%d)| = %.3f > 8 - R>=64 \
             site; needs the quarter-turn composition (tangent_emitter_plan.md)"
            k
            n
            (abs_float t));
-    (* shear as a unit-cosine CTwC: x·(1 + i·(sgn·t)) — with the c=1 render
+    (* shear as a unit-cosine CTwC: x·(1 + i·(sgn·t)) - with the c=1 render
        peephole this is 2 uops (cflip + sign-folded fmadd), no xor, the
        exact hand-kernel idiom. The tan sign rides in the folded constant;
        only cos still splits the butterfly opcodes. *)
@@ -145,7 +145,7 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
    ORIGINAL `Array.make n xs.(0)` pre-filled every slot with INPUT LEG 0, so a
    construction that failed to write a slot emitted plausible-looking code that
    silently returned an input as an output (the r3 signature). With Option the
-   same mistake is a generation-time failure instead. Pow2 output is unchanged —
+   same mistake is a generation-time failure instead. Pow2 output is unchanged -
    the unwrapped values are the same nodes. *)
 let unwrap_legs (who : string) (out : t option array) : t array =
   Array.mapi
@@ -162,10 +162,10 @@ let wing_enabled =
   ref (Sys.getenv_opt "VFFT_CX_WING" = Some "1")
 ;;
 
-(* dft_cx16_wing — the origin W-16 interior construction, machine-
+(* dft_cx16_wing - the origin W-16 interior construction, machine-
  * translated from the validated dataflow (w16_to_cxml.py; self-gated
  * against DFT-16 during generation). Rotations act on combination
- * values (wing pairs) — 3 scalar constants, flips concentrated at +i
+ * values (wing pairs) - 3 scalar constants, flips concentrated at +i
  * sites (crotp, shared by hash-consing). FWD only; inputs = post-
  * diagonal legs natural order; outputs natural. *)
 let dft_cx16_wing (xs : t array) : t array =
@@ -252,6 +252,130 @@ let dft_cx16_wing (xs : t array) : t array =
   [| w66; w78; w36; w58; w65; w52; w35; w76; w64; w74; w38; w56; w68; w54; w40; w75 |]
 ;;
 
+(* WING-T2 FULL KERNEL: loads + BYTW2 ingest + wing interior in ORIGIN
+   listing order (machine-translated, self-gated). Used ONLY by the T2
+   emitter under VFFT_CX_WING when tangent+R16+Fwd, so asis reproduces the
+   hand kernel's interleave (peak 15). *)
+(* dft_cx16_wing - the origin W-16 interior construction, machine-
+ * translated from the validated dataflow (w16_to_cxml.py; self-gated
+ * against DFT-16 during generation). Rotations act on combination
+ * values (wing pairs) - 3 scalar constants, flips concentrated at +i
+ * sites (crotp, shared by hash-consing). FWD only; inputs = post-
+ * diagonal legs natural order; outputs natural. *)
+let dft_cx16_wing_t2 () : t array =
+  let w0 = cload (AZinLeg 8) in
+  let w1 = ctwl 8 w0 in
+  let w2 = cload (AZinLeg 0) in
+  let w3 = cadd w2 w1 in
+  let w4 = cload (AZinLeg 4) in
+  let w5 = ctwl 4 w4 in
+  let w6 = cload (AZinLeg 12) in
+  let w7 = csub w2 w1 in
+  let w8 = ctwl 12 w6 in
+  let w9 = cadd w5 w8 in
+  let w10 = cload (AZinLeg 14) in
+  let w11 = ctwl 14 w10 in
+  let w12 = cload (AZinLeg 10) in
+  let w13 = ctwl 10 w12 in
+  let w14 = cload (AZinLeg 6) in
+  let w15 = ctwl 6 w14 in
+  let w16 = cload (AZinLeg 2) in
+  let w17 = ctwl 2 w16 in
+  let w18 = csub w5 w8 in
+  let w19 = cadd w15 w11 in
+  let w20 = csub w11 w15 in
+  let w21 = csub w17 w13 in
+  let w22 = cadd w17 w13 in
+  let w23 = cadd w20 w21 in
+  let w24 = cload (AZinLeg 1) in
+  let w25 = ctwl 1 w24 in
+  let w26 = cload (AZinLeg 13) in
+  let w27 = ctwl 13 w26 in
+  let w28 = cload (AZinLeg 9) in
+  let w29 = ctwl 9 w28 in
+  let w30 = cload (AZinLeg 5) in
+  let w31 = csub w20 w21 in
+  let w32 = ctwl 5 w30 in
+  let w33 = cadd w25 w29 in
+  let w34 = csub w25 w29 in
+  let w35 = csub w32 w27 in
+  let w36 = cload (AZinLeg 15) in
+  let w37 = ctwl 15 w36 in
+  let w38 = cload (AZinLeg 11) in
+  let w39 = cadd w27 w32 in
+  let w40 = ctwl 11 w38 in
+  let w41 = cload (AZinLeg 7) in
+  let w42 = csub w33 w39 in
+  let w43 = cadd w33 w39 in
+  let w44 = ctwl 7 w41 in
+  let w45 = cfma 0.41421356237309503 w34 w35 in
+  let w46 = cload (AZinLeg 3) in
+  let w47 = cfnma 0.41421356237309503 w35 w34 in
+  let w48 = ctwl 3 w46 in
+  let w49 = csub w37 w44 in
+  let w50 = cadd w37 w44 in
+  let w51 = cadd w40 w48 in
+  let w52 = csub w40 w48 in
+  let w53 = cadd w51 w50 in
+  let w54 = csub w50 w51 in
+  let w55 = cfnma 0.41421356237309503 w52 w49 in
+  let w56 = cfma 0.41421356237309503 w49 w52 in
+  let w57 = csub w54 w42 in
+  let w58 = cadd w42 w54 in
+  let w59 = csub w3 w9 in
+  let w60 = cfnma 0.70710678118654757 w58 w59 in
+  let w61 = cfma 0.70710678118654757 w58 w59 in
+  let w62 = csub w19 w22 in
+  let w63 = cfnma 0.70710678118654757 w57 w62 in
+  let w64 = cfma 0.70710678118654757 w57 w62 in
+  let w65 = crot w63 in
+  let w66 = cadd w60 w65 in
+  let w67 = crotadd w61 w64 in
+  let w68 = cadd w9 w3 in
+  let w69 = crotadd w60 w63 in
+  let w70 = crot w64 in
+  let w71 = cadd w61 w70 in
+  let w72 = cadd w22 w19 in
+  let w73 = cfnma 0.70710678118654757 w23 w7 in
+  let w74 = cfma 0.70710678118654757 w23 w7 in
+  let w75 = cadd w56 w45 in
+  let w76 = cfnma 0.92387953251128674 w75 w73 in
+  let w77 = cfma 0.92387953251128674 w75 w73 in
+  let w78 = cfma 0.70710678118654757 w31 w18 in
+  let w79 = csub w55 w47 in
+  let w80 = cfnma 0.92387953251128674 w79 w78 in
+  let w81 = cfma 0.92387953251128674 w79 w78 in
+  let w82 = crot w80 in
+  let w83 = cadd w76 w82 in
+  let w84 = crot w81 in
+  let w85 = cadd w77 w84 in
+  let w86 = csub w45 w56 in
+  let w87 = crotadd w76 w80 in
+  let w88 = cfnma 0.70710678118654757 w31 w18 in
+  let w89 = crotadd w77 w81 in
+  let w90 = cadd w55 w47 in
+  let w91 = cadd w68 w72 in
+  let w92 = csub w68 w72 in
+  let w93 = cadd w43 w53 in
+  let w94 = csub w53 w43 in
+  let w95 = csub w91 w93 in
+  let w96 = crotadd w92 w94 in
+  let w97 = cadd w91 w93 in
+  let w98 = crot w94 in
+  let w99 = cadd w92 w98 in
+  let w100 = cfnma 0.92387953251128674 w90 w74 in
+  let w101 = cfma 0.92387953251128674 w90 w74 in
+  let w102 = cfnma 0.92387953251128674 w86 w88 in
+  let w103 = cfma 0.92387953251128674 w86 w88 in
+  let w104 = crot w102 in
+  let w105 = cadd w100 w104 in
+  let w106 = crotadd w101 w103 in
+  let w107 = crotadd w100 w102 in
+  let w108 = crot w103 in
+  let w109 = cadd w101 w108 in
+  [| w97; w109; w67; w89; w96; w83; w66; w107; w95; w105; w69; w87; w99; w85; w71; w106 |]
+;;
+
 let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
@@ -271,7 +395,7 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
- *  ODD / PRIME RADICES — the CONJUGATE-PAIR construction
+ *  ODD / PRIME RADICES - the CONJUGATE-PAIR construction
  *
  * dft_cx above is a DIT radix-2 recursion and is valid ONLY for powers of two.
  * Odd radices use the conjugate-pair symmetry instead. With H = (n-1)/2:
@@ -284,7 +408,7 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
  *                                    sigma = -1 (Fwd), +1 (Bwd)
  *
  * This is the SAME construction the real/split side hand-builds in
- * dft_recurse.ml (:327-468) — it is NOT discovered by algsimp there (which
+ * dft_recurse.ml (:327-468) - it is NOT discovered by algsimp there (which
  * this module never runs anyway), so quality here is delivered BY
  * CONSTRUCTION, exactly as it is on the split side.
  *
@@ -303,8 +427,8 @@ let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
  *     cx_kind). It is also better conditioned: every remaining ratio is <= 1 in
  *     magnitude, whereas seeding at j=1 would divide by the smallest sine.
  *
- *  3. DEGENERATE-COEFFICIENT LADDER (cscale_chain): weights of 0 / +1 / -1 —
- *     which occur for odd COMPOSITES, e.g. n=9 at j=3,m=3 gives cos=1, sin=0 —
+ *  3. DEGENERATE-COEFFICIENT LADDER (cscale_chain): weights of 0 / +1 / -1 -
+ *     which occur for odd COMPOSITES, e.g. n=9 at j=3,m=3 gives cos=1, sin=0 -
  *     collapse to nothing / cadd / csub instead of emitting a multiply.
  *
  * P_m and Q_m are BIT-IDENTICAL between Fwd and Bwd: every weight is the same
@@ -317,7 +441,7 @@ let cx_eps = 1e-14
 
 (* Weighted sum over packed complex with REAL scalar weights, folded into an
    FMA chain. The SIGN rides in the OPCODE (cfma vs cfnma) and only the
-   magnitude becomes a constant — the same convention dft_recurse.ml uses, and
+   magnitude becomes a constant - the same convention dft_recurse.ml uses, and
    the reason no fma-lift pass is needed afterwards. *)
 let cscale_chain ~(seed : t) (terms : (float * t) list) : t =
   List.fold_left
@@ -388,7 +512,7 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
    builder instead of dropping legs (dft_cx recursing into an odd half was
    the hazard the old refusal guarded). butterfly_pair is the ONE shared
    copy, general-twiddle arm included, so the mixed recursion is the same
-   numeric family — pow2 and odd radices take their old paths untouched
+   numeric family - pow2 and odd radices take their old paths untouched
    (byte-identity preserved). Unlocks the 2-stage IL pairs at 4·odd² N
    (100 = 10x10, 36 = 6x6) and even-composite chain mids (200 = 4·(5·10)),
    per Tugbars 2026-07-29. *)
@@ -415,7 +539,7 @@ let rec dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
 (* Mixed-radix four-step over the complex IR: `chain` says how the transform is
    FACTORED, and dft_cx (pure radix-2) is only the leaf.
 
-   Why this exists. dft_cx hardwires 2.2.2.2.2.2 for a 64-point stage — a plan
+   Why this exists. dft_cx hardwires 2.2.2.2.2.2 for a 64-point stage - a plan
    decision baked into an emitter, one level below the one already removed from
    emit_k1. The IL chain race measured what it costs: with the stage COUNT
    pinned at two, stage radices grow as sqrt(N), so by N=1024 both stages are
