@@ -127,9 +127,18 @@ kernel tested. Concretely:
       construction, OFF-determinism verified byte-identical)
 - [x] R16 MONO × t2/n1t fwd emitted + tolerance-gated (t2tg 7.8e-14,
       n1ttg 5.1e-14 — first build through the full pipeline)
-- [ ] **BLOCKED forms**: the blocked builder makes its cross-rotations via
-      its own `ctw` calls in codelet_cil.ml, NOT butterfly_pair — tangent
-      does not fire there yet. Second patch site (found, not patched).
+- [x] **BLOCKED forms — via the existing `2.p` halves splits, ZERO new
+      emitter code** (2026-08-11): split `2.8` (R16) / `2.16` (R32) routes
+      pass 1 through `dft_small(p)` (tangent-aware) and pass 2 through the
+      m=2 `butterfly_pair` arm (tangent-aware). ⚠ split string order is
+      `m.p` — `8.2` is NOT halves (its pass-2 goes through the classic
+      rotation path at codelet_cil.ml:384, which stays classic by design;
+      m≥4 splits remain classic pool alternatives). Gated: t2btg28
+      1.4e-13, n1tbtg28 6.9e-14, t2btg216 3.1e-13, n1tbtg216 1.5e-13.
+      Census t2btg28: 143 FP / 47.7 / spills 5/5 — same static profile as
+      mono v2, in the L1-exit-viable shape.
+- [x] **R32 mono answered**: 73/73 spills (t2tg32 census) — halves
+      blocked is MANDATORY at R32, as the hand-kernel history predicted.
 - [x] **v2 render folds (a)+(b)** (2026-08-11): CTwC c=1 peephole in
       cx_render (`fmadd(_s, cflip x, x)`, 2 uops, fires only on tangent
       shears — classic never builds c=1) + shear switched to
@@ -145,7 +154,12 @@ kernel tested. Concretely:
       Price after the v2-vs-hand race says whether the last ~9% static
       gap matters on hardware.
 - [ ] `tg` naming in emitter (currently sed-rename per house practice)
-- [ ] bwd variants gated
+- [x] bwd gated (R16 mono: tangent 6.9e-14 ≡ classic 7.0e-14). 🔴 BWD
+      GATE CONVENTION (cost two wrong guesses): the bwd t2 mid is
+      **post-twiddled** — `Y[o] = e^{+2πi·o·k/N} · Σ_l e^{+2πi·ol/R} x_l`
+      (diagonal by OUTPUT leg, applied after the DFT, table records with
+      `+` exponents) — the inverse four-step shape, NOT pre-twiddle with
+      either table sign. Blocked/R32 bwd + t2t variants still to gate.
 - [ ] speed gates vs hand kernels + vs classic (DEFERRED: machine noisy
       2026-08-11 night — correctness/static only until it calms)
 - [ ] R32 mono-vs-halves race (only if mono spills)
