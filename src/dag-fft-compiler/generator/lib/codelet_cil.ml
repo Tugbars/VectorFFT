@@ -204,13 +204,26 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      their symbolic address — the load edge prints FROM the DAG instead of
      inventing the string. Created in the same order cin was, so every tag
      (= every zN name) is unchanged: byte-identity by construction. *)
-  let inputs =
-    Array.init radix (fun i ->
-      (* T2 fwd PRE-twiddles legs 1..R-1 from the streamed table; leg 0 is
-         untwiddled (w^0 = 1), which is why records start at leg 1. *)
-      if pre_tw && i > 0 then ctwl i (cload (AZinLeg i)) else cload (AZinLeg i))
+  (* WING-T2 FULL KERNEL (VFFT_CX_WING + tangent + T2 + R16 + Fwd): the wing
+     construction owns its loads AND the streamed BYTW2 ingest, emitted in the
+     ORIGIN's listing order, so asis reproduces the hand kernel's interleaved
+     load/ingest/butterfly stream (peak 15). Bypasses the normal input+ingest
+     pre-pass, which front-loads all 16 ingests and forces peak 16. *)
+  let use_wing_t2 =
+    kind = T2 && dir = Fwd && radix = 16 && !Cx_math.tangent && !Cx_math.wing_enabled
   in
-  let outs = dft_small ~sign radix inputs in
+  let outs =
+    if use_wing_t2
+    then Cx_math.dft_cx16_wing_t2 ()
+    else (
+      let inputs =
+        Array.init radix (fun i ->
+          (* T2 fwd PRE-twiddles legs 1..R-1 from the streamed table; leg 0 is
+             untwiddled (w^0 = 1), which is why records start at leg 1. *)
+          if pre_tw && i > 0 then ctwl i (cload (AZinLeg i)) else cload (AZinLeg i))
+      in
+      dft_small ~sign radix inputs)
+  in
   (* T2 bwd POST-twiddles: conj(w) (.) IDFT(y). Same BYTW2 apply, same table
      slots, just after the butterfly — see the `dir` note above. *)
   let outs =
@@ -511,6 +524,14 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      leg-strided t2tg turn and odd-p splits still refuse loudly inside
      emit_blocked itself. *)
   mono_spill_slots := 0;
+  (* lazy-store bookkeeping is shared between the mono emit loop (which stores
+     outputs inline) and the store edge (which skips those). Hoisted here so
+     both see it. *)
+  let lazy_stores =
+    (use_wing_t2 || Sys.getenv_opt "VFFT_CX_LAZYSTORE" = Some "1")
+    && not blocked && not !st_turn && (kind = T2 || kind = N1)
+  in
+  let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   if blocked
   then emit_blocked ()
   else (
@@ -526,8 +547,38 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
   let cur_name t = match Hashtbl.find_opt names t with Some s -> s | None -> Printf.sprintf "z%d" t in
   let reload_ctr = ref 0 in
   let sarr slot = Printf.sprintf "S[%d]" (vw * slot) in
+  (* LAZY LOAD MATERIALISATION (VFFT_CX_LAZYLOAD=1, default OFF): the input
+     leg loads are normally emitted ALL up front (the load-edge loop below),
+     which pins radix vectors live from the first instruction — the mono
+     tangent bodies peak at radix live and lose gcc's constant-hoist register.
+     With lazy loads on, each CLoad is emitted just before its first consumer
+     in scheduled order, matching the hand kernel's interleaved load/compute
+     (peak radix -> ~radix-1). OFF keeps every existing kernel byte-identical:
+     the up-front loop still runs and this set stays empty. *)
+  let lazy_loads = Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1" && not blocked in
+  let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+  let emit_load (l : t) =
+    match l.node with
+    | CLoad a when lazy_loads && not (Hashtbl.mem load_emitted l.tag) ->
+      Hashtbl.replace load_emitted l.tag ();
+      Buffer.add_string
+        body
+        (Printf.sprintf
+           "        %s\n"
+           (Isa.const_decl isa (Printf.sprintf "z%d" l.tag) (Isa.loadu_pd isa (addr_str a))))
+    | _ -> ()
+  in
+  (* LAZY STORES (auto-on for the wing-T2 full kernel; also VFFT_CX_LAZYSTORE=1):
+     emit each output's store the moment its value is defined, instead of
+     batching all 16 stores after the body. Batched stores keep every output
+     live to the end, which forces peak pressure and evicts gcc's hoisted
+     loop-invariant constants (measured: rip-const 19 batched -> 4 interleaved,
+     matching the hand kernel). Leg-major T2/N1 store form only (the wing is a
+     T2 fwd); turned/blocked keep the batched edge. Bindings hoisted above. *)
   List.iteri
-    (fun pos ((_ : Expr.elem_ref option), (e : t)) ->
+    (fun pos ((eref : Expr.elem_ref option), (e : t)) ->
+       (* lazy loads: materialise any not-yet-emitted CLoad this node reads *)
+       if lazy_loads then List.iter emit_load (Cx_sched.Node.preds e);
        (* reloads scheduled BEFORE this position: pull each evicted value back
           into a fresh SSA name and repoint its tag *)
        (match spill_plan with
@@ -569,7 +620,20 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
                     (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa (sarr slot) (cur_name t))))
                ss
            | None -> ())
-        | None -> ()))
+        | None -> ());
+       (* lazy store: if this node is an output sink, store it now and free it *)
+       if lazy_stores
+       then
+         (match eref with
+          | Some (Expr.Output (i, _)) ->
+            let (_ : t) = cstore (AZoutLeg i) e in
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "        %s;\n"
+                 (render_store isa (AZoutLeg i) (cur_name e.tag)));
+            Hashtbl.replace stored_inline i ()
+          | _ -> ()))
     scheduled);
   (* ─── ODD-COUNT TAIL body (docs/roadmap/tail_handling/il_odd_count_tail.md
      §3): the SAME scheduled DAG re-rendered at Isa.sse2 — one complex per
@@ -775,8 +839,11 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      critical path. *)
   if kind = T2 && !tw_log3 then emit_log3_prologue buf isa radix;
   (* Blocked carries its own per-pass loads and stores; the monolithic form
-     needs the leg load edge here. *)
-  if not blocked
+     needs the leg load edge here — UNLESS lazy-load materialisation is on
+     (VFFT_CX_LAZYLOAD=1), in which case each load is emitted just before its
+     first consumer in the scheduled body (peak-pressure cap; see the mono
+     emit loop). Default OFF => this loop runs => byte-identical. *)
+  if not blocked && not (Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1")
   then
     for l = 0 to radix - 1 do
       Buffer.add_string
@@ -800,12 +867,14 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
         the byte-identity contract). *)
      Array.iteri
        (fun l (e : t) ->
-          let (_ : t) = cstore (AZoutLeg l) e in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "        %s;\n"
-               (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag))))
+          if not (Hashtbl.mem stored_inline l)
+          then (
+            let (_ : t) = cstore (AZoutLeg l) e in
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "        %s;\n"
+                 (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)))))
        outs
    | N1T ->
      if !st_turn_gs
