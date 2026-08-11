@@ -16,21 +16,43 @@ is the binding limit for L1-resident transforms.
 Full write-up: [`docs/performance/tangent_scaled_butterflies.md`](../../../../../../docs/performance/tangent_scaled_butterflies.md).
 Emitter arc and gate ladder: [`docs/roadmap/tangent_emitter_plan.md`](../../../../../../docs/roadmap/tangent_emitter_plan.md).
 
-## Contents
+## What is here — every file has a measured win
 
-| file | kind | shape | status |
-|---|---|---|---|
-| `radix16_z_t2tan_avx2.c` | R16 mid (t2) | mono, full-kernel wing | **raced: parity with the hand kernel, −25% vs classic** |
-| `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | mono, corner-turn | gated |
-| `radix16_z_t2btan28_avx2.c` | R16 mid | blocked halves 2.8 | gated |
-| `radix16_z_n1tbtan28_avx2.c` | R16 leaf | blocked halves 2.8 | gated |
-| `radix32_z_t2btan216_avx2.c` | R32 mid | blocked halves 2.16 | **raced: −3.2…−3.6% vs classic `t2b48`** |
-| `radix32_z_n1tbtan216_avx2.c` | R32 leaf | blocked halves 2.16 | gated |
-| `radix16_z_t2tan_bwd_avx2.c` | R16 mid, backward | mono | gated |
+Nothing ships on static analysis or on principle. Each file below beat the
+classic form that ships today, on hardware, under the banked paired protocol
+(pinned core 2, warmup, 200 ms pacing, alternating order, control twin).
 
-Every file carries a `PROVENANCE` header with its exact generator command,
-tolerance-gate result, race result (or an explicit "not raced"), and its own
-caveats. Read it before quoting a number.
+| file | slot | correctness | measured vs classic |
+|---|---|--:|---|
+| `radix16_z_t2tan_avx2.c` | R16 mid (t2) | 1.4e-13 | **−25%** vs `t2b44`; **parity with the hand-built kernel** (5/5 runs) |
+| `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | 7.0e-14 | **−19.8%** vs `n1tb44` (57.7 vs 71.9 ns, 32/35, ctrl −0.03%) |
+| `radix32_z_t2btan216_avx2.c` | R32 mid, blocked 2.16 | 3.1e-13 | **−3.2…−3.6%** vs `t2b48` (3/3 runs, ctrl ≤0.09%) |
+
+Re-gate them any time:
+
+```sh
+gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+    src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
+```
+
+## ⚠ NOT WIRED YET
+
+`build_tuned/build.py` globs `pure_il/*.c` **non-recursively**, so this
+subfolder is *not compiled into the library*. These files are candidates for
+the dp re-race, not live kernels. Wiring them means: add the folder to the
+build source list, add registry rows, then re-race the affected cells so
+wisdom selects them. Until that happens, do not assume any plan uses them.
+
+## Killed by measurement — do not regenerate
+
+These were emitted, gated correct, and then **lost their race**. They are
+deleted on purpose; re-deriving them wastes a session.
+
+| variant | why it is gone |
+|---|---|
+| R32 leaf, tangent blocked 2.16 | **+32.4% SLOWER** than classic `n1tb48` (240.1 vs 182.0 ns, 3/35 wins). Note its static census predicted a *win* (LP bound 88.7 vs 116.5) — hardware disagreed by a third. Static bounds do not decide this. |
+| R16 mid/leaf, blocked 2.8 | No slot: R16 mono already fits the register file and reached hand parity, so the blocked shape has nothing to buy. Unraced, no consumer — deleted rather than left to confuse a grep. |
+| R16 mid, backward | Feature coverage only, and incomplete: there is no backward *leaf*, so it cannot form a backward route. Regenerate as a pair when the backward arc is actually built. |
 
 ## Hard-won facts (do not re-derive)
 
@@ -47,7 +69,7 @@ caveats. Read it before quoting a number.
   register-resident, and the kernel reaches hand parity. At R32 the ladder
   needs 14 distinct magnitudes (7 tan + 7 cos) where classic cos/sin needs 7,
   so they cannot be resident on a 16-register file — the R32 win is the port
-  mix alone (LP bound 116.5 → 88.7), not constant hoisting.
+  mix alone, and it is much smaller.
 - **Scope is L1-resident (N ≤ 512-class).** The advantage is port pressure,
   which stops binding once the working set leaves L1: at N=1024 a hand-built
   tangent route *inverted* (+16%) against classic blocked forms. Do not
@@ -55,23 +77,13 @@ caveats. Read it before quoting a number.
 - These are **tolerance-gated, never bit-identity-gated** — the association
   differs from the classic forms by construction.
 
-## Verifying
-
-`build_tuned/benches/tangent_gate.c` re-gates all seven against golden DFTs:
-
-```sh
-gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
-    src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
-```
-
-Last run: all seven correct, worst error 2.9e-13.
-
 ## Regenerating
 
 The generator knobs are **default-off**; every classic emission is
 byte-identical without them. Each file's header carries its exact command.
-The knobs are: `--cil-tangent` (the interior), `VFFT_CX_WING=1` (the
+The knobs: `--cil-tangent` (the interior), `VFFT_CX_WING=1` (the
 machine-translated R16 wing construction), `VFFT_CX_LAZYLOAD=1` /
-`VFFT_CX_LAZYSTORE=1` (interleaved loads/stores, the peak-pressure fix), and
-`VFFT_CX_SCHED=asis|cpl|cpl2` (scheduler choice; `asis` preserves the wing's
-origin order and is what the R16 parity result used).
+`VFFT_CX_LAZYSTORE=1` (interleaved loads/stores — the peak-pressure fix that
+lets gcc keep the loop-invariant constants in registers), and
+`VFFT_CX_SCHED=asis|cpl|cpl2` (scheduler; `asis` preserves the wing's origin
+order and is what the R16 parity result used).
