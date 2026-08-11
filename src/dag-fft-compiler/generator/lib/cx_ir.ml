@@ -140,6 +140,12 @@ let st_turn = ref false
    byte-identical). Implies st_turn. *)
 let st_turn_gs = ref false
 
+(* MONO SPILL SLOTS (cx_spill, VFFT_CX_SPILL=<budget>). Number of S[] scratch
+   slots the Belady spiller allocated for the current MONO codelet; 0 = no
+   spill (default OFF => byte-identical). The preamble declares
+   double S[vw*mono_spill_slots] when > 0. Set by codelet_cil.emit. *)
+let mono_spill_slots = ref 0
+
 let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
 let next_tag = ref 0
 

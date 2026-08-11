@@ -111,9 +111,15 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
    arithmetic must not shrink with the render width.
    ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
    narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
-let render ?(tw_vw = 0) ?(msuf = "") (isa : Isa.t) (tbl : consts) (e : t) : string =
+let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
+  (isa : Isa.t) (tbl : consts) (e : t) : string
+  =
+  (* ?name resolves an operand tag to its CURRENT C variable name. Default is
+     the SSA "z<tag>"; cx_spill overrides it so a reloaded value picks up its
+     fresh reload name for all uses after the reload. Byte-identical when the
+     default resolver is used (every existing caller). *)
   let twv = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
-  let v (x : t) = Printf.sprintf "z%d" x.tag in
+  let v (x : t) = name x.tag in
   match e.node with
   | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
   | CLoad a -> Isa.loadu_pd isa (addr_str a)
