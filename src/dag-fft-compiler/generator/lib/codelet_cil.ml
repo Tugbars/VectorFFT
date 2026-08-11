@@ -249,7 +249,16 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      `zN` variable names) RESTARTS — every pass must therefore be
      emitted inside its own C brace scope, and fully emitted before the
      next pass begins. Same discipline as sterm2's two DAGs. *)
+  (* Per-pass lazy load/store (VFFT_CX_LAZYLOAD / VFFT_CX_LAZYSTORE, default
+     OFF => the up-front loads + batched stores below => byte-identical to
+     every existing blocked kernel). Ports the mono peak-pressure fix into the
+     blocked passes: interleaving each pass's loads with compute and storing
+     its outputs the moment they are ready frees registers so gcc hoists the
+     loop-invariant constants (the R16 lesson: rip-const 27->4). ~lazy_store
+     is opt-in per caller because the corner-turned N1T store pairs groups and
+     must NOT be interleaved per-index. *)
   let emit_pass
+        ~(lazy_store : bool)
         ~(label : string)
         ~(nin : int)
         ~(laddr_of : int -> caddr)
@@ -258,10 +267,10 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     : unit
     =
     reset ();
+    let ll = Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1" in
+    let ls = lazy_store && Sys.getenv_opt "VFFT_CX_LAZYSTORE" = Some "1" in
     (* COMPLETE-IR: pass inputs are CLoad nodes carrying their address
-       (same creation order cin had ⇒ same tags ⇒ same zN names). The
-       store callback receives the output NODE so edges can build
-       CStore/CTurn nodes instead of strings. *)
+       (same creation order cin had ⇒ same tags ⇒ same zN names). *)
     let ins = Array.init nin (fun i -> cload (laddr_of i)) in
     let outs = build ins in
     let assigns =
@@ -270,33 +279,55 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = cx_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
-    Array.iteri
-      (fun i (e : t) ->
-         Buffer.add_string
-           body
-           (Printf.sprintf
-              "        %s\n"
-              (Isa.const_decl
-                 isa
-                 (Printf.sprintf "z%d" e.tag)
-                 (Isa.loadu_pd isa (addr_str (laddr_of i))))))
-      ins;
+    (* up-front loads only when NOT lazy *)
+    if not ll
+    then
+      Array.iteri
+        (fun i (e : t) ->
+           Buffer.add_string
+             body
+             (Printf.sprintf
+                "        %s\n"
+                (Isa.const_decl
+                   isa
+                   (Printf.sprintf "z%d" e.tag)
+                   (Isa.loadu_pd isa (addr_str (laddr_of i))))))
+        ins;
+    let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+    let emit_load_p (l : t) =
+      match l.node with
+      | CLoad a when ll && not (Hashtbl.mem load_emitted l.tag) ->
+        Hashtbl.replace load_emitted l.tag ();
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "        %s\n"
+             (Isa.const_decl isa (Printf.sprintf "z%d" l.tag) (Isa.loadu_pd isa (addr_str a))))
+      | _ -> ()
+    in
+    let stored : (int, unit) Hashtbl.t = Hashtbl.create 32 in
     let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
     List.iter
-      (fun ((_ : Expr.elem_ref option), (e : t)) ->
-         match e.node with
-         | CIn _ | CLoad _ -> ()
-         | _ ->
-           if not (Hashtbl.mem seen e.tag)
-           then (
-             Hashtbl.replace seen e.tag ();
-             Buffer.add_string
-               body
-               (Printf.sprintf
-                  "        %s\n"
-                  (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
+      (fun ((eref : Expr.elem_ref option), (e : t)) ->
+         if ll then List.iter emit_load_p (Cx_sched.Node.preds e);
+         (match e.node with
+          | CIn _ | CLoad _ -> ()
+          | _ ->
+            if not (Hashtbl.mem seen e.tag)
+            then (
+              Hashtbl.replace seen e.tag ();
+              Buffer.add_string
+                body
+                (Printf.sprintf
+                   "        %s\n"
+                   (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))));
+         if ls
+         then
+           (match eref with
+            | Some (Expr.Output (i, _)) -> store i e; Hashtbl.replace stored i ()
+            | _ -> ()))
       sch;
-    Array.iteri (fun i (e : t) -> store i e) outs;
+    Array.iteri (fun i (e : t) -> if not (Hashtbl.mem stored i) then store i e) outs;
     Buffer.add_string body "        }\n"
   in
   (* ─── BLOCKED (2-pass) construction ──────────────────────────────
@@ -363,6 +394,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     (* PASS 1: sub-DFT i over legs { a*m + i } *)
     for i = 0 to m - 1 do
       emit_pass
+        ~lazy_store:true
         ~label:
           (Printf.sprintf
              "PASS 1.%d: legs {a*%d+%d} -> S[%d..%d]"
@@ -448,6 +480,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       (* PASS 2 (plain leg-major stores): per j, one scheduled group. *)
       for j = 0 to p - 1 do
         emit_pass
+          ~lazy_store:true
           ~label:(Printf.sprintf "PASS 2.%d: S[i*%d+%d] -> X[%d + %d*k2]" j p j j p)
           ~nin:m
           ~laddr_of:(fun i -> AS (vw * ((i * p) + j)))
@@ -482,6 +515,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
            form as the monolithic corner-turn edge. *)
         let a_nodes : t option array = Array.make m None in
         emit_pass
+          ~lazy_store:false
           ~label:
             (Printf.sprintf
                "PASS 2.%d+%d TURNED: S[i*%d+{%d,%d}] -> columns k,k+1"
