@@ -24,6 +24,33 @@ open Cx_ir
 
 let sqh = 0.70710678118654752440
 
+(* ── TANGENT-INTERIOR VARIANT ─────────────────────────────────────────
+   docs/roadmap/tangent_emitter_plan.md + docs/performance/
+   tangent_scaled_butterflies.md. Default OFF: with the ref false, every
+   arm below is byte-identical to the shipped emitter, so the 183-case
+   matrix is preserved BY CONSTRUCTION. Enable per process with
+   --cil-tangent (gen_main) or VFFT_CX_TANGENT=1.
+
+   What it changes: ONLY the general-twiddle arm of butterfly_pair. The
+   classic arm materializes the rotation (ctw) and then does NAKED
+   cadd/csub butterflies — adds with no multiply attached, condemned to
+   the FADD ports. The tangent arm factors w = cosθ·(1 + sgn·i·tanθ):
+   the shear (ok + tanθ·rot ok) runs un-normalized in ONE fma, and the
+   cosθ normalization is deferred INTO the butterfly fma pair — the adds
+   are promoted to the FMA ports and the standalone rotation multiply
+   disappears. The k=0 / ±i / √½ arms are already in this form and are
+   shared verbatim by both variants.
+   Measured (hand proof kernels, 2026-08-11, paired ±0.3%): R16 mid −25%,
+   R16 leaf −17%, pure-tangent N=256 −20…−24%, N=512 −14…−17%.
+   ⚠ L1-conditional: at N=1024 the HAND kernels invert (+16%) — the win is
+   scoped ≤512-class until blocked-tangent forms are raced. *)
+let tangent =
+  ref
+    (match Sys.getenv_opt "VFFT_CX_TANGENT" with
+     | Some "1" -> true
+     | _ -> false)
+;;
+
 (* ~sign: `Fwd = e^{-2πik/n} (the analysis transform), `Bwd = e^{+2πik/n}
    (the UNNORMALIZED inverse — no 1/N, matching the rest of the library:
    bwd(fwd(x)) = N·x). Every twiddle class flips with the sign:
@@ -61,6 +88,32 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
     let x = csub (rot ok) ok in
     cfma sqh x ek, cfnma sqh x ek)
+  else if !tangent
+  then (
+    (* w = e^{sgn·iθ} = cosθ·(1 + sgn·i·tanθ), θ = 2πk/n.
+       shear = ok + tanθ·rot(ok)   — one fma; |shear| = |ok|/|cosθ|, a pure
+                                     rotation magnitude, no cancellation
+       out   = ek ± cosθ·shear     — normalization fused into the butterfly
+       Signs of tan/cos ride in the OPCODE (cfma vs cfnma), magnitudes in
+       the constants — the cscale_chain convention. θ ∈ (0,π) here (the
+       free/√½ classes are caught above), so t and c go negative past
+       π/2; |tan| ≤ tan(7π/16) ≈ 5.03 through R32, gated 3.4e-13 on the
+       hand kernels. Loud guard at 8: the first offender is R64's 15π/32
+       site — implement quarter-turn composition before lifting it. *)
+    let th = 2.0 *. pi *. float_of_int k /. float_of_int n in
+    let t = tan th
+    and c = cos th in
+    if abs_float t > 8.0
+    then
+      failwith
+        (Printf.sprintf
+           "butterfly_pair: tangent variant |tan(2pi*%d/%d)| = %.3f > 8 — R>=64 \
+            site; needs the quarter-turn composition (tangent_emitter_plan.md)"
+           k
+           n
+           (abs_float t));
+    let sh = if t >= 0.0 then cfma t (rot ok) ok else cfnma (-.t) (rot ok) ok in
+    if c >= 0.0 then cfma c sh ek, cfnma c sh ek else cfnma (-.c) sh ek, cfma (-.c) sh ek)
   else (
     let c = cos (2.0 *. pi *. float_of_int k /. float_of_int n)
     and s = sgn *. sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
