@@ -510,23 +510,66 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
      permute2f128 store edge (2026-08-05, il_coverage_plan.md E9). The
      leg-strided t2tg turn and odd-p splits still refuse loudly inside
      emit_blocked itself. *)
+  mono_spill_slots := 0;
   if blocked
   then emit_blocked ()
   else (
+  (* cx_spill plan (VFFT_CX_SPILL=<budget>, default OFF => None => the plain
+     byte-identical loop below). When present, an S[] round-trip caps peak
+     register pressure so gcc keeps a free register for constant hoisting.
+     MONO path only — blocked already parks halves to its own S[]. *)
+  let spill_plan = Cx_spill.plan scheduled in
+  mono_spill_slots := (match spill_plan with Some p -> p.Cx_spill.nslots | None -> 0);
   let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-  List.iter
-    (fun ((_ : Expr.elem_ref option), (e : t)) ->
-       match e.node with
-       | CIn _ | CLoad _ -> () (* materialized by the load edge *)
-       | _ ->
-         if not (Hashtbl.mem seen e.tag)
-         then (
-           Hashtbl.replace seen e.tag ();
-           Buffer.add_string
-             body
-             (Printf.sprintf
-                "        %s\n"
-                (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render isa tbl e)))))
+  (* tag -> current C name; reloads install a fresh name that later uses pick up *)
+  let names : (int, string) Hashtbl.t = Hashtbl.create 256 in
+  let cur_name t = match Hashtbl.find_opt names t with Some s -> s | None -> Printf.sprintf "z%d" t in
+  let reload_ctr = ref 0 in
+  let sarr slot = Printf.sprintf "S[%d]" (vw * slot) in
+  List.iteri
+    (fun pos ((_ : Expr.elem_ref option), (e : t)) ->
+       (* reloads scheduled BEFORE this position: pull each evicted value back
+          into a fresh SSA name and repoint its tag *)
+       (match spill_plan with
+        | Some pl ->
+          (match Hashtbl.find_opt pl.Cx_spill.reload_before pos with
+           | Some rs ->
+             List.iter
+               (fun (t, slot) ->
+                  let nm = Printf.sprintf "z%d_r%d" t (let c = !reload_ctr in incr reload_ctr; c) in
+                  Buffer.add_string
+                    body
+                    (Printf.sprintf
+                       "        %s\n"
+                       (Isa.const_decl isa nm (Isa.loadu_pd isa (sarr slot))));
+                  Hashtbl.replace names t nm)
+               rs
+           | None -> ())
+        | None -> ());
+       (match e.node with
+        | CIn _ | CLoad _ -> () (* materialized by the load edge *)
+        | _ ->
+          if not (Hashtbl.mem seen e.tag)
+          then (
+            Hashtbl.replace seen e.tag ();
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "        %s\n"
+                 (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render ~name:cur_name isa tbl e)))));
+       (* spills scheduled AFTER this position: store the value to its slot *)
+       (match spill_plan with
+        | Some pl ->
+          (match Hashtbl.find_opt pl.Cx_spill.spill_after pos with
+           | Some ss ->
+             List.iter
+               (fun (t, slot) ->
+                  Buffer.add_string
+                    body
+                    (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa (sarr slot) (cur_name t))))
+               ss
+           | None -> ())
+        | None -> ()))
     scheduled);
   (* ─── ODD-COUNT TAIL body (docs/roadmap/tail_handling/il_odd_count_tail.md
      §3): the SAME scheduled DAG re-rendered at Isa.sse2 — one complex per
@@ -701,7 +744,14 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       (Printf.sprintf
          "    double S[%d];  /* half-DFT spill: function-scope, L1-hot across \
           iterations */\n"
-         (vw * radix));
+         (vw * radix))
+  else if !mono_spill_slots > 0
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    double S[%d];  /* cx_spill Belady scratch (peak-pressure cap) */\n"
+         (vw * !mono_spill_slots));
   Buffer.add_string
     buf
     (if blocked
