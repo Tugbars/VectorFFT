@@ -13,6 +13,9 @@
 # remain fully browsable/downloadable. The decision-making code (core/ + *.ml)
 # is intentionally NOT excluded so it still counts.
 src/dag-fft-compiler/codelets/**            linguist-generated
+# ...but hand-written docs inside that tree are NOT generated: keep them
+# reviewable in diffs (Markdown does not affect the language bar either way).
+src/dag-fft-compiler/codelets/**/*.md      -linguist-generated
 
 # DAG-compiler generated headers (registries, plan_executors, etc.) — also
 # machine output, not decision-making code. Excluded from the language bar.
@@ -46,3 +49,7 @@ cmake/**                                  linguist-vendored
 include/**                                linguist-vendored
 src/dag-fft-compiler/generator/scripts/** linguist-vendored
 src/dag-fft-compiler/jit/**               linguist-vendored
+
+# Generator-level shell helpers (codelet regeneration / codegen comparison).
+# Tooling, not shipped library code — same rationale as generator/scripts/.
+src/dag-fft-compiler/generator/*.sh        linguist-vendored
