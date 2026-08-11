@@ -41,14 +41,6 @@
  *      bench harness.
  *   5. Return the MEASUREMENT winner.
  *
- * Notes:
- *   - "Slightly more efficient" exhaustive — preserves coverage, cuts
- *     the bench count by ~50×.
- *   - V4-rank is a STRUCTURAL prior, not a measurement. Avoids the
- *     isolated-bench trap that DP and FFTW-recursive fall into.
- *   - When V4 has rank-2 or rank-3 error (rare), M needs to be large
- *     enough to catch it. M=10 is robust on tested cells; raise if
- *     you find a cell where V4 underranks the true winner by >10.
  */
 #ifndef VFFT_PROTO_CORE_EXHAUSTIVE_SCREENED_H
 #define VFFT_PROTO_CORE_EXHAUSTIVE_SCREENED_H

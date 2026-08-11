@@ -3,12 +3,7 @@
  * ONE call to plan a forward real FFT of length N over a K-wide batch.
  * Chooses the faster executor automatically:
  *
- *   PRIMARY:  the rfft path (rfft.h) — FFTW-style real FFT (r2cf leaf +
- *             hc2hc twiddle stages, no pack stage, no separate Hermitian
- *             terminator). Measured ~1.2-1.4x faster than MKL r2c-256 and
- *             ~1.5-1.7x faster than the stride r2c path in matched
- *             conditions (docs/60_rfft_beats_mkl_hc2c_log3.md). This is the
- *             default whenever the rfft codelet set covers the factorization.
+ *   PRIMARY:  the rfft path (rfft.h). 
  *
  *   FALLBACK: the stride r2c path (r2c.h: stride_r2c_plan / stride_execute_r2c)
  *             — pack(real->complex N/2) + c2c-128 + Hermitian fold. Used only

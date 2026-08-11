@@ -28,28 +28,4 @@
 #ifndef VFFT_PROTO_CORE_COMPAT_H
 #define VFFT_PROTO_CORE_COMPAT_H
 
-/* Phase 4 will add either:
- *
- *   (Option B chosen)
- *   static inline void
- *   vfft_proto_n1_call_oop(vfft_proto_codelet_fn n1_fn,
- *                          const double *in_re, const double *in_im,
- *                          double *out_re, double *out_im,
- *                          size_t is, size_t os, size_t vl)
- *   {
- *       // in-place case (in==out): map directly to 6-arg form
- *       if (in_re == out_re && in_im == out_im && is == os) {
- *           n1_fn((double *)in_re, (double *)in_im, NULL, NULL, is, vl);
- *           return;
- *       }
- *       // OOP case: not supported by prototype n1 today.
- *       // Either copy in→out and call in-place, or fall through to
- *       // a stub error. Phase 4 picks one.
- *   }
- *
- *   (Option A chosen — empty file)
- *   // Nothing here; gen_radix.ml emit changed to 7-arg n1, codelets
- *   // are now production-shape directly.
- */
-
 #endif /* VFFT_PROTO_CORE_COMPAT_H */

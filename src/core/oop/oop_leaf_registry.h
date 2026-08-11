@@ -273,7 +273,7 @@ static inline vfft_oop11_fn vfft_k1_mono_alt_fn(int N)
 #endif
 }
 
-/* t1 LOG3 twins (leg-axis twiddle derivation, FFTW-t3 class): load only the
+/* t1 LOG3 twins (leg-axis twiddle derivation): load only the
  * base legs' twiddle VECTORS and derive the rest by vector cmuls — 252->24
  * tw loads at radix-64. SAME Qr/Qi table layout (sparse subset of the same
  * slots), so these are drop-in fn-pointer swaps on the existing plans. Values
