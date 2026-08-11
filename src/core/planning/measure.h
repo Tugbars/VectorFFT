@@ -18,24 +18,6 @@
  *            (FLAT/LOG3/T1S, 3^(nf-1)) x {DIT, DIF}; track the global best
  *            and a top-K-within-threshold pool for the caller to deploy-bench.
  *
- * PORT DECISIONS (with Tugbars, 2026-06-16):
- *   A. variant enumeration — production's registry-driven vfft_variant_iter_*
- *      is replaced by dag's existing variant_count/variant_decode (3^(nf-1))
- *      plus a small vfft_proto_variant_available() that reads dag's GENERATED
- *      registry slots (the OCaml pipeline emits registry_{avx2,avx512}.h; this
- *      header only READS those slots, never edits them). Equivalent in result.
- *   B. measurement — the per-bench FFTW-style adaptive timer is ported
- *      verbatim (it lives in _vfft_proto_dp_bench already); since dag runs on
- *      an UNCAPPED-TURBO box (not clock-locked), a ONE-TIME sustained warmup
- *      is added at the top of dp_plan_measure to reach the steady clock before
- *      any timing (a cold cell catches burst turbo, a hot one throttles).
- *   C. LOG3-aware coarse probe (production "Upgrade F") — PORTED; high-leverage
- *      for prime radixes (5/7/11/13 Winograd +/-30%, no analytic predictor).
- *   D. deploy split — core proposes top-K-within-threshold; the calibrator
- *      deploy-rebenches with the clean protocol and picks the fastest.
- *   - BUF variant: OBSOLETE in dag (no codelet generated) — search is
- *     FLAT/LOG3/T1S only (dag's VARIANT_CHOICES already excludes BUF).
- *
  * Placement: production kept MEASURE in dp_planner.h, but dag's include graph
  * is exhaustive_plan.h -> dp_planner.h (one-way), so MEASURE (needing both)
  * lives here, one level up, including exhaustive_plan.h.

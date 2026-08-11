@@ -1,32 +1,5 @@
 /* twiddle.h — per-stage layout + twiddle compute for 1D C2C plans.
  *
- * Phase 2 port of src/core/executor.h:plan_compute_groups +
- * plan_compute_twiddles_c. Faithfully reproduces production's Method C
- * twiddle generation for the T1S codepath:
- *
- *   group_base[g]    offset into re/im buffer for group g
- *   needs_tw[g]      1 if group requires twiddle multiplication
- *   cf0_re/im[g]     leg-0 common factor (scalar)
- *   tw_scalar_re/im[g]  (R-1) scalar twiddles for legs 1..R-1
- *
- * Method C: cf0 carries the j-independent part; per-leg scalars carry
- * the j-linear part. T1S codelets multiply by these scalars internally
- * via _mm256_set1_pd broadcast.
- *
- * Phase 2 scope (deliberately narrow):
- *   - DIT orientation only (DIF deferred)
- *   - Forward direction only (bwd deferred)
- *   - Method C scalar twiddles only (FLAT grp_tw_re/im / cf_all
- *     populated as NULL — they'd be needed for FLAT/n1_fallback paths,
- *     which Phase 2.5 adds)
- *   - LOG3 not yet wired (it shares the same exponent math but stores
- *     per_leg WITHOUT cf baked in — see commented branch in production)
- *
- * Memory ownership: each stage's per-group arrays are allocated here
- * via calloc. Phase 2.5 will introduce a tw_pool_re/im allocation
- * pattern matching production for memory efficiency; for now each
- * group's (R-1) scalar pair gets its own tiny calloc. The caller is
- * responsible for vfft_proto_plan_destroy() to free.
  */
 #ifndef VFFT_PROTO_CORE_TWIDDLE_H
 #define VFFT_PROTO_CORE_TWIDDLE_H

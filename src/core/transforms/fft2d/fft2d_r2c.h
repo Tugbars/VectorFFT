@@ -1,8 +1,6 @@
 /**
  * fft2d_r2c.h -- 2D Real-to-Complex / Complex-to-Real FFT
  *
- * Two phases (matching FFTW convention: reduce along inner axis):
- *
  *   Forward (R2C 2D):  N1*N2 reals -> N1 * (N2/2+1) complex
  *     Phase 1: tiled R2C row pass — for each tile of B rows, transpose
  *              real input B*N2 -> N2*B, run 1D R2C (N=N2, K=B), transpose
