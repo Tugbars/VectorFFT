@@ -290,9 +290,9 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
 ```
   N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
 ──────────────────────────────────────────────────────────────
-  128         0.91 †              ▢          (= NAT bits)
-  256       0.85–0.86 ▲◆          ▢          (= NAT bits)
-  512       0.78–0.80 ▲           ▢          (= NAT bits)
+  128        0.91 †‡           1.04 ★         (= NAT bits)
+  256       0.85–0.86 ▲◆‡    1.01–1.02 ★      (= NAT bits)
+  512       0.78–0.80 ▲‡     0.87–0.88 ★      (= NAT bits)
   1024      0.91–0.95 ▲           ▢          (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
@@ -311,6 +311,22 @@ the heuristic balanced pair (16,16) with the measured (8,32), which puts
 R=32 in the leaf slot, which the structural rule then blocks — 0.76→0.85.
 Fully blocking a (16,16) pair instead was raced and LOST by 4.4%, so radix
 choice dominates form choice here.
+★ 2026-08-12, TANGENT-SCALED butterflies (`il_kv` variant 3) — see
+[tangent_scaled_butterflies.md](tangent_scaled_butterflies.md). Measured through
+the canonical bench, `--k1noop`, isolated single cell, pinned core, both flip
+orders, MKL number identical across arms. Before → after, same harness:
+128 0.93–0.97 → **1.04** (72 → 66 ns, MKL 68); 256 0.85 → **1.01–1.02**
+(160 → 135 ns, MKL 136–137); 512 0.75–0.78 → **0.87–0.88** (375–387 → 331–335 ns,
+MKL 291–293). 128 and 256 now LEAD MKL. The wins come from the plan search
+picking a pair whose BOTH slots have a tangent form (128 → 8×16, 256 → 16×16);
+512 = 2⁹ cannot form such a pair — every factorization carries an R32 or R64
+pass — which is why it gains but does not cross. A hand-wired fully-tangent 512
+(pair 32×16, `il_kv` 51) was raced and is a WASH (~1%), so the residual there is
+the R32 pass, not the interior arithmetic.
+‡ pre-tangent plan. The banked kind-3 row for this N CHANGED on 2026-08-12, so
+the in-place figure no longer describes what ships. Sub-2048 in-place and OOP
+run the SAME IL engines (see the grid above), so it is expected to track the
+OOP column — but it has not been re-measured, and is not quoted as if it had.
 ▢ engine serves it; no banked table yet    (= NAT bits) identity rule
 ```
 
