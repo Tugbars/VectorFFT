@@ -44,13 +44,47 @@ gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
     src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
 ```
 
-## ⚠ NOT WIRED YET
+## How they are wired
 
-`build_tuned/build.py` globs `pure_il/*.c` **non-recursively**, so this
-subfolder is *not compiled into the library*. These files are candidates for
-the dp re-race, not live kernels. Wiring them means: add the folder to the
-build source list, add registry rows, then re-race the affected cells so
-wisdom selects them. Until that happens, do not assume any plan uses them.
+They ship as **`il_kv` variant 3**, alongside the existing blocked forms
+(1 = blocked 2·16, 2 = blocked 4·8, 0xF = force monolithic):
+
+| layer | file | what it does |
+|---|---|---|
+| registry | `src/core/oop/il2p.h` | `vfft_il2p_mid_v_fn` / `vfft_il2p_leaf_v_fn` return the tangent symbol for variant 3 |
+| plan search | `src/core/planning/dp_planner_il.h` | variant 3 enters the candidate pool wherever a form exists, so the cell can measure it |
+| apply | `src/core/vfft.c` | unchanged — `_k1_il2p_apply_kv` was already generic over the nibble |
+| build | `build_tuned/build.py` | the `tangent/` dir is in the codelet source list |
+
+Two details the registry encodes deliberately:
+
+- The R8/R16 forms are **monolithic** emissions carrying the inline VEX-128
+  odd-count tail, so variant 3 is resolved *before* the even-count gate and
+  stays legal at odd counts (verified at N=240, pair 16×15). Only the R32 mid
+  is blocked and needs the gate.
+- **The R32 tangent leaf is absent on purpose** — it lost its race by 32%.
+- Forward only; there are no backward tangent twins, the same scope the
+  blocked forms already have.
+
+**Wiring is not selection.** The kernels are in the pool and correct, but a
+cell only uses one once the plan search measures it and banks the winning
+`il_kv`. Until those cells are re-raced, plans keep their existing forms.
+
+## Verifying
+
+Two gates, and they check different things:
+
+```sh
+# 1. the codelets in isolation (own twiddle table, direct calls)
+gcc -O2 -static -o tangent_gate build_tuned/benches/tangent_gate.c \
+    src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/*.c -lm && ./tangent_gate
+
+# 2. the WIRED path: il2p's own table + geometry + the il_kv plumbing
+cd build_tuned && python build.py --src benches/il2p_tangent_gate.c
+```
+
+The second is the one that catches wiring bugs — a kernel can be correct
+standalone and still be wrong when driven by il2p's table layout.
 
 ## Killed by measurement — do not regenerate
 
