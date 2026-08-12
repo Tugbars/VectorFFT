@@ -108,11 +108,30 @@ deleted on purpose; re-deriving them wastes a session.
 - **Backward mids are POST-twiddled**: `Y[o] = e^{+2πi·o·k/N} · Σ_l e^{+2πi·o·l/R} x_l`
   — diagonal applied by *output* leg after the DFT, `+`-exponent records. This
   is not pre-twiddle with a flipped table sign; guessing that costs an hour.
-- **R16 ≠ R32.** At R16 the tangent constant set is three scalars, they stay
-  register-resident, and the kernel reaches hand parity. At R32 the ladder
-  needs 14 distinct magnitudes (7 tan + 7 cos) where classic cos/sin needs 7,
-  so they cannot be resident on a 16-register file — the R32 win is the port
-  mix alone, and it is much smaller.
+- **R16 ≠ R32 — and the cause is SPILLS, not port mix.** Measured census
+  (`gcc -O2 -mavx2 -mfma -S`):
+
+  | kernel | spills | movs | fma | naked add+sub | naked share |
+  |---|--:|--:|--:|--:|--:|
+  | R32 classic `t2b48` | 24 st / 21 ld | 11 | 67 | 152 | 56% |
+  | R32 tangent | 33 st / 30 ld | 35 | 113 | 94 | **39%** |
+  | R16 tangent | **6 st / 4 ld** | 9 | 70 | 90 | 47% |
+
+  The lever *works* at R32 — it improves the mix **more** than at R16
+  (56% → 39% naked; R32 tangent's mix is better than R16 tangent's 47%). It
+  still returns only −3.2%, because those 58 add→FMA conversions cost +9 spill
+  stores, +9 spill loads and +24 register moves that R16 never pays. The
+  port-mix win is handed straight back to the load/store ports.
+
+  Root cause: **the R32 form is not an R32 design.** It is the R16 kernel run
+  twice through a memory plane (see its header: two half-DFTs park to `S[]`,
+  then a combine pass), in a `split 2.16` geometry chosen for the *classic*
+  kernel, which was already at the register limit. Tangent's constants pushed
+  it over. Same story for the R32 tangent leaf losing by 32%.
+
+  So a **native** R32 tangent is *open, not refuted* — but the lever there is
+  blocking geometry co-designed with the tangent constant set (fewer live
+  values per block), not more tangent.
 - **Scope is L1-resident (N ≤ 512-class).** The advantage is port pressure,
   which stops binding once the working set leaves L1: at N=1024 a hand-built
   tangent route *inverted* (+16%) against classic blocked forms. Do not

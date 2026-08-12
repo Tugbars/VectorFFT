@@ -69,13 +69,14 @@ static int one(int N)
 int main(void)
 {
     printf("front-door gate: plans built from the re-raced kind-3 wisdom\n"
-           "(256 -> il_kv 51 = tangent mid + tangent leaf;"
+           "(128 -> il_kv 51 = R8 tangent mid + R16 tangent leaf;\n"
+           " 256 -> il_kv 51 = tangent mid + tangent leaf;\n"
            " 512 -> il_kv 35 = tangent mid)\n\n");
     int ok = 1;
+    ok &= one(128);
     ok &= one(256);
     ok &= one(512);
-    /* neighbours that were NOT re-raced — they must be unaffected */
-    ok &= one(128);
+    /* neighbour that was NOT re-raced — it must be unaffected */
     ok &= one(1024);
     printf("\n%s\n", ok ? "FRONT-DOOR GATE: ALL CORRECT"
                         : "FRONT-DOOR GATE: FAILURE");
