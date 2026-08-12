@@ -325,6 +325,37 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * The old `R2 < 8` bound was exactly such an accident: it had no structural
  * reason (R2=4 is even, and ntw = (R2/2)*(R1-1)*8 is well-formed), it simply
  * predated the radix-4 n1t kernel. It left N=16 (pair 4x4) on the hybrid. */
+/* ── TANGENT-INTERIOR KERNELS (variant 3) ────────────────────────────────
+ * 2026-08-11. Same transforms as the classic forms, different interior
+ * arithmetic: rotations factored e^(-i.th) = cos(th)*(1 - i*tan(th)), the
+ * shear left un-normalized and cos folded into the consuming butterfly's FMA
+ * pair, so butterfly adds move off the FP-add ports onto the FMA ports.
+ * Source + measured deltas:
+ *   src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/README.md
+ *
+ * FORWARD ONLY (no backward twins emitted yet) — same scope the blocked
+ * forms already have, so apply_kv_forms/blocked_default, which only touch
+ * mid_f/leaf_f, need no new guard.
+ *
+ * R8/R16 forms are MONOLITHIC emissions and carry the inline VEX-128
+ * odd-count tail, so they are legal at any count; only the R32 mid is
+ * blocked (split 2.16) and needs the even-count gate. */
+extern void radix8_z_t2tan_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix8_z_n1ttan_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix16_z_t2tan_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix32_z_t2btan216_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+
 /* ── BLOCKED-KERNEL VARIANT REGISTRY ─────────────────────────────────────
  * 2026-08-05. Same role as vfft_il2p_leaf_fn / vfft_il2p_mid_fn above:
  * a pure (radix, variant) -> symbol lookup. NO selection policy, NO env,
@@ -333,7 +364,7 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * measurement that produced it is the bench's job.
  *
  * variant: 0 = monolithic registry kernel (return 0 -> caller keeps it)
- *          1 = blocked 2·16   2 = blocked 4·8
+ *          1 = blocked 2·16   2 = blocked 4·8   3 = TANGENT interior
  * Returns 0 for any (radix, variant) with no emitted kernel, so an
  * unsupported verdict degrades to the monolithic kernel — always correct.
  *
@@ -343,7 +374,14 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * argument makes that explicit at the call site rather than implicit. */
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
-    if (!variant || !count_ok) return 0;
+    if (!variant) return 0;
+    if (variant == 3) {                 /* tangent interior */
+        if (R1 == 8)  return radix8_z_t2tan_fwd_avx2;   /* monolithic: has  */
+        if (R1 == 16) return radix16_z_t2tan_fwd_avx2;  /* the odd tail     */
+        if (R1 == 32 && count_ok) return radix32_z_t2btan216_fwd_avx2; /* blocked */
+        return 0;
+    }
+    if (!count_ok) return 0;
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
@@ -372,7 +410,13 @@ extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
 
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
-    if (!variant || !count_ok) return 0;
+    if (!variant) return 0;
+    if (variant == 3) {                 /* tangent interior, monolithic */
+        if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;
+        if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;
+        return 0;                       /* R32 tangent leaf LOST its race */
+    }
+    if (!count_ok) return 0;
     if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
     if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
     if (R2 == 16 && variant == 1) return radix16_z_n1tb44_fwd_avx2; /* 4·4 */

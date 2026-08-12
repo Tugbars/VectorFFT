@@ -862,28 +862,45 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * an explicit nibble, which serves identically to 0;
                      * only the (default,default) combo IS the base
                      * candidate and is skipped. */
-                    int msv[2], lsv[4], nm = 0, nl = 0, dm, dl;
+                    /* variant 3 = TANGENT interior (2026-08-11). Enters the
+                     * pool wherever a form exists, exactly like the blocked
+                     * forms: it measured faster than the classic sibling in
+                     * isolation, but "faster kernel" is not "faster plan", so
+                     * the cell decides. R8/R16 tangent forms are monolithic
+                     * (odd counts legal); the R32 tangent mid is blocked, so
+                     * it is admitted only for even R2. The R32 tangent LEAF is
+                     * deliberately absent — it lost its race (+32%). */
+                    int msv[3], lsv[4], nm = 0, nl = 0, dm, dl;
                     if (R1 == 32 && (R2 & 1) == 0)
-                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; }
-                    else if (R1 == 16 && (R2 & 1) == 0)
-                    { dm = 0; msv[nm++] = 0; msv[nm++] = 1; } /* t2b(16) */
+                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3; }
+                    else if (R1 == 16)
+                    {   dm = 0; msv[nm++] = 0; msv[nm++] = 3;
+                        if ((R2 & 1) == 0) msv[nm++] = 1;     /* t2b(16) */
+                    }
+                    else if (R1 == 8)
+                    { dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
                     else { dm = 0; msv[nm++] = 0; }
                     if (R2 == 32 && (R1 & 1) == 0)
                     { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; }
                     else if (R2 == 16 && (R1 & 1) == 0)
-                    {   /* R=16 leaf: ONE candidate, the raced winner
-                         * (variant 1 = 4·4; see il2p.h for the 24-arm
-                         * ranking that eliminated 2·8 and 8·2). Only the
-                         * winner is admitted on purpose — 3 leaf forms
-                         * would multiply against the mid forms on EVERY
-                         * pair, and _il_dp_push REFUSES a cell outright
-                         * past VFFT_IL_DP_MAX_CAND rather than truncating
-                         * (a truncated pool is a BIASED pool). Default
-                         * stays MONOLITHIC (dl = 0): R=16 fits the file,
-                         * so the blocked form must win per cell, not by
-                         * structural rule. */
-                        dl = 0; lsv[nl++] = 0; lsv[nl++] = 1;
+                    {   /* R=16 leaf: the blocked candidate is the raced
+                         * winner (variant 1 = 4·4; see il2p.h for the 24-arm
+                         * ranking that eliminated 2·8 and 8·2) — the losing
+                         * splits stay out on purpose, because leaf forms
+                         * multiply against the mid forms on EVERY pair and
+                         * _il_dp_push REFUSES a cell outright past
+                         * VFFT_IL_DP_MAX_CAND rather than truncating (a
+                         * truncated pool is a BIASED pool). Variant 3
+                         * (tangent) is admitted alongside it: it beat 4·4 by
+                         * ~20% as a kernel, which earns a seat, not a slot.
+                         * 3 mid x 3 leaf = 9 per pair, far under the cap.
+                         * Default stays MONOLITHIC (dl = 0): R=16 fits the
+                         * file, so a non-monolithic form must win per cell,
+                         * not by structural rule. */
+                        dl = 0; lsv[nl++] = 0; lsv[nl++] = 1; lsv[nl++] = 3;
                     }
+                    else if (R2 == 8)
+                    { dl = 0; lsv[nl++] = 0; lsv[nl++] = 3; }  /* tangent leaf */
                     else { dl = 0; lsv[nl++] = 0; }
                     for (int mi = 0; mi < nm; mi++)
                         for (int li = 0; li < nl; li++)
