@@ -8,18 +8,6 @@
  * at section bitrev2(p mod 4), granule p div 4; lanes = the radix-4
  * butterfly OUTPUT digit).
  *
- * DIFFERENCE FROM src/core/oop/zturn_proto.h (the committed Phase-2
- * prototype, gated memcmp-EXACT vs production zsplit): the four boundary
- * bodies are no longer local static transcriptions — the execute paths call
- * the GENERATED first-class kernels
- *     radix4_z_s0t_r4_{fwd,bwd}_avx2, radix8_z_stf_r4_{fwd,bwd}_avx2
- * (src/dag-fft-compiler/codelets/zil/avx2, codelet_zsplit.ml ZTURN-S kinds
- * s0t/s0tb/stf/stfb), proven bit-identical to the prototype bodies by the
- * Phase-3 GATE0 (zturn_proto_gate.c -DZTURN_GEN_KERNELS, all four cells).
- * The mids remain the byte-identical PRODUCTION msg kernels; only their
- * TABLE CONTENTS repack (lane-varying, x4 section-tiled), so the production
- * arg tuple (Ls = D_s, Gs = G_s, count = D_s) is unchanged.
- *
  * Pipeline:
  *   fwd: radix4_z_s0t_r4_fwd  (fused-turn sectioned ingest, zin -> plane)
  *        -> radix{4,8}_z_msg_fwd (in-place on the plane, per mid stage)

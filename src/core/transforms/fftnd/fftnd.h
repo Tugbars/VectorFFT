@@ -1,6 +1,6 @@
 /**
  * fftnd.h -- rank-general (2..4D) c2c FFT: unfused leading passes + a fused
- * trailing group, per the FFTW rank-geq2 split-point architecture.
+ * trailing group
  *
  * DFT_{N1x...xNd} = PROD_m ( I_{O_m} (x) DFT_{N_m} (x) I_{K_m} ),
  *   O_m = prod_{i<m} N_i (outer count),  K_m = prod_{i>m} N_i (inner lanes).
@@ -12,16 +12,6 @@
  *                     cube and outgrows cache, so blocking is a per-axis
  *                     property here, not a pass-A special)
  *   - last axis     : tiled row pass over O_{d-1} rows (gather/FFT/scatter)
- *
- * THE SPLIT POINT s (FFTW rank-geq2's spltrnk, made a plan parameter):
- *   axes < s run UNFUSED (whole-volume passes, one DRAM sweep each);
- *   axes >= s run FUSED per leading-index block -- for each of the O_s
- *   contiguous sub-volumes of K_{s-1} elements, ALL trailing-axis passes
- *   (including the tiled last axis) execute while the block is
- *   cache-resident. One sweep for (d-s) passes. s = d-1 degenerates to the
- *   fully unfused fft2d/fft3d architecture; s = 1 is maximal fusion
- *   (e.g. rank-3 s=1 = the fft3d "B+C per plane" back-port; rank-4 s=1
- *   fuses B+C+D per cube).
  *
  * FUSION IS BIT-EXACT vs unfused: passes on disjoint axes commute and each
  * element's op sequence is unchanged by interleaving blocks, so fwd output
