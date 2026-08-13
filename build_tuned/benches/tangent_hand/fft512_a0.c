@@ -25,14 +25,20 @@
  * Emitted kernels: the shipped tangent pool under
  *   src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/.
  *
- * Build (cygwin gcc 12.4, from this directory):
- *   /c/tools/cygwin/bin/gcc.exe -O2 -mavx2 -mfma -o fft512_a0.exe fft512_a0.c \
+ * Build — 🔴 MUST use the production toolchain; cygwin gcc FLIPS the verdict
+ * (hand bodies swing 13% on gcc RA luck — see the A-0 result box in the plan):
+ *   /c/mingw152/mingw64/bin/gcc.exe -O3 -mavx2 -mfma -march=native \
+ *     -o fft512_a0_mw.exe fft512_a0.c \
  *     w16tgL_kernel.c w16tg_kernel.c w32tg_kernel.c w32tgL_kernel.c \
+ *     radix32_z_n1tbw32_avx2.c radix32_z_t2bw32_avx2.c \
+ *     radix32_z_t2btan216_avx2.c \
  *     ../../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix16_z_n1tb44_avx2.c \
  *     ../../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/radix32_z_t2b_avx2.c \
  *     ../../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/radix16_z_n1ttan_avx2.c \
- *     ../../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/radix32_z_t2btan216_avx2.c -lm
- *   (do NOT link w16tg_kernel_512.c — same symbol, AVX-512 target, no AVX-512 here)
+ *     ../../../src/dag-fft-compiler/codelets/zil/avx2/pure_il/tangent/radix16_z_t2tan_avx2.c -lm
+ *   (t2btan216 = the pool-sunset 2026-08-13 kernel, preserved HERE as a race
+ *    arm after deletion from the shipped tree. Do NOT link w16tg_kernel_512.c
+ *    — same symbol, AVX-512 target, no AVX-512 on this machine.)
  */
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>

@@ -32,12 +32,8 @@ VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_SCHED=asis \
 VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_SCHED=asis \
   $G 16 --cil-n1t --cil-tangent $U > "$TMP/r16_n1t.c"
 
-# radix 32 — SUPERSEDED 2026-08-13 by the wing32 recipes below (kept for the
-# bannered t2btan216 file until pool-sunset deletes it): blocked halves
-# (split is m.p, so 2.16 = two 16-point halves whose combine pass uses the
-# tangent butterfly; 16.2 would not).
-VFFT_CX_WING=1 VFFT_CX_LAZYLOAD=1 VFFT_CX_LAZYSTORE=1 \
-  $G 32 --cil-t2 --cil-tangent --cil-blocked --cil-split 2.16 $U > "$TMP/r32_t2b.c"
+# (the pre-wing32 t2btan216 recipe was deleted with its file on 2026-08-13 —
+#  pool-sunset after the dp re-race; see the tangent README's killed table.)
 
 # radix 32 wing32 (A-1, docs/roadmap/r32_tangent_parity_plan.md):
 # W32TG = canonical-angle pass-B combine (ulp-twin table collapsed),
@@ -54,9 +50,8 @@ ren r8_t2.c        radix8_z_t2_fwd_avx2    radix8_z_t2tan_fwd_avx2
 ren r8_n1t.c       radix8_z_n1t_fwd_avx2   radix8_z_n1ttan_fwd_avx2
 ren r16_t2.c       radix16_z_t2_fwd_avx2   radix16_z_t2tan_fwd_avx2
 ren r16_n1t.c      radix16_z_n1t_fwd_avx2  radix16_z_n1ttan_fwd_avx2
-ren r32_t2b.c      radix32_z_t2b_fwd_avx2  radix32_z_t2btan216_fwd_avx2
 ren r32_t2bw32.c   radix32_z_t2b_fwd_avx2  radix32_z_t2bw32_fwd_avx2
 ren r32_n1tbw32.c  radix32_z_n1tb_fwd_avx2 radix32_z_n1tbw32_fwd_avx2
 
 echo "emitted to $TMP — compare against $OUT before overwriting:"
-for f in r8_t2 r8_n1t r16_t2 r16_n1t r32_t2b r32_t2bw32 r32_n1tbw32; do echo "  $TMP/$f.c"; done
+for f in r8_t2 r8_n1t r16_t2 r16_n1t r32_t2bw32 r32_n1tbw32; do echo "  $TMP/$f.c"; done
