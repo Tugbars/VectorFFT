@@ -42,6 +42,7 @@
 #define VFFT_RFFT_RANGED 1
 #endif
 #include "r2c_dispatch.h"   /* r2c (real->complex) front-end: rfft / decoupled */
+#include "zr2c.h"           /* §D2: interleaved-CCE real folds (zr2c route) */
 #include "rfft_calibrate.h" /* vfft_rfft_calibrate — rfft factor+variant sweep */
 #if defined(__AVX512F__)
 #include "rfft_registry_avx512.h"
@@ -277,6 +278,19 @@ struct vfft_plan_s
 #endif
     vfft_r2c_plan_t *rplan;    /* r2c fwd (owned)           */
     vfft_c2r_disp_t *c2rdisp;  /* 1D c2r 2-axis: NATURAL/STRIDE (owned) */
+    /* §D2 zr2c (2026-08-13, DESIGN_interleaved_r2c.md Phase 2): 1D
+     * INTERLEAVED-CCE real transforms as reinterpret + CHILD c2c(N/2) +
+     * the zr2c.h fold. zr2c_child != NULL selects this route over
+     * rplan/c2rdisp at execute. route 0 = OOP-IL child (natural OOP c2c);
+     * route 1 = NAT-IP cascade child (natural in-place c2c — MKL's own
+     * regime routing, validated 2026-08-13). Verdicts belong to the
+     * zr2c-owned wisdom kind (owner directive); until the calibrator
+     * lands, create uses the placement-matched STRUCTURAL default and
+     * the VFFT_ZR2C_ROUTE env override (env beats wisdom, house rule). */
+    struct vfft_plan_s *zr2c_child; /* c2c(N/2) plan (owned)              */
+    int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
+    double *zr2c_aff;               /* affS ++ affC (one allocation)      */
+    double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
     vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
@@ -1864,6 +1878,117 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
  * handle through its real execute path, which is defined further down. */
 static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                                   const double *z_in, double *z_out);
+
+/* ════════════════════════════════════════════════════════════════════════
+ * §D2 zr2c — 1D INTERLEAVED-CCE real transforms (Phase 2 of
+ * docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md).
+ * Route: x[N] reinterpreted as z[N/2] -> CHILD c2c(N/2) NATURAL -> zr2c.h
+ * fold; c2r is the exact mirror with the fold leading. Even N, K==1.
+ * route 0 = OOP-IL child · route 1 = NAT-IP cascade child (MKL's own
+ * regime routing, measured 2026-08-13: parity-band both directions).
+ * Verdicts belong to the zr2c-owned wisdom kind (owner directive) — until
+ * that calibrator lands, create uses the placement-matched STRUCTURAL
+ * default, overridable with VFFT_ZR2C_ROUTE=0/1 (env beats wisdom).
+ * ════════════════════════════════════════════════════════════════════════ */
+static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N)
+{
+    const int half = N / 2, top = N / 4;
+    int route;
+    {
+        const char *e = getenv("VFFT_ZR2C_ROUTE");
+        route = e ? (atoi(e) != 0) : (cfg->placement == VFFT_INPLACE ? 1 : 0);
+    }
+    vfft_config_t c2;
+    memset(&c2, 0, sizeof c2);
+    c2.transform = VFFT_C2C;
+    c2.placement = route ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    c2.rigor = cfg->rigor;
+    c2.dims = 1;
+    c2.n[0] = half;
+    c2.howmany = 1;
+    c2.order = VFFT_ORDER_NATURAL;
+    c2.layout = VFFT_LAYOUT_INTERLEAVED;
+    c2.nthreads = cfg->nthreads;
+    c2.wisdom = cfg->wisdom;
+    struct vfft_plan_s *child = (struct vfft_plan_s *)vfft_create(&c2);
+    if (!child)
+    {
+        _vfft_warn("vfft_create: zr2c child c2c(%d) create failed", half);
+        return NULL;
+    }
+    struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+    double *aff = (double *)malloc(sizeof(double) * 2u * (size_t)(top + 1));
+    double *scr = (route == 0)
+                      ? (double *)malloc(sizeof(double) * ((size_t)N + 2))
+                      : NULL;
+    if (!h || !aff || (route == 0 && !scr))
+    {
+        vfft_destroy((vfft_plan)child);
+        free(h);
+        free(aff);
+        free(scr);
+        return NULL;
+    }
+    _zr2c_init_aff(N, aff, aff + top + 1);
+    h->transform = cfg->transform;
+    h->placement = cfg->placement;
+    h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
+    h->N = N;
+    h->K = 1;
+    h->nthreads = stride_get_num_threads();
+    h->zr2c_child = child;
+    h->zr2c_route = route;
+    h->zr2c_aff = aff;
+    h->zr2c_scratch = scr;
+    return h;
+}
+
+/* execute the composite. 2 transforms x 2 placements x 2 routes; the folds
+ * are in-place-safe by construction (zr2c_gate.c), scratch only where a
+ * route-0 shape needs a second plane. */
+static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
+{
+    const int N = h->N, top = N / 4;
+    const double *aS = h->zr2c_aff, *aC = h->zr2c_aff + top + 1;
+    vfft_plan ch = (vfft_plan)h->zr2c_child;
+    size_t xs = (size_t)N + 2;
+    if (h->transform == VFFT_R2C)
+    {
+        if (h->zr2c_route == 0)
+        {
+            if (h->placement == VFFT_OUTOFPLACE)
+            { /* child OOP sre->dre (its z view), fold in place in dre */
+                vfft_execute(ch, VFFT_FORWARD, sre, NULL, dre, NULL);
+                _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
+            }
+            else
+            { /* in place: child OOP plane->scratch, fold scratch->plane */
+                vfft_execute(ch, VFFT_FORWARD, sre, NULL, h->zr2c_scratch, NULL);
+                _zr2c_fold_fwd(h->zr2c_scratch, dre, aS, aC, N, 1, xs, xs);
+            }
+        }
+        else
+        {
+            if (h->placement == VFFT_OUTOFPLACE)
+                memcpy(dre, sre, (size_t)N * sizeof(double));
+            vfft_execute(ch, VFFT_FORWARD, dre, NULL, dre, NULL);
+            _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
+        }
+    }
+    else /* VFFT_C2R: CCE spectrum in sre -> N reals in dre */
+    {
+        if (h->zr2c_route == 0)
+        { /* fold sre->scratch (zhat), child OOP scratch->dre */
+            _zr2c_fold_bwd(sre, h->zr2c_scratch, aS, aC, N, 1, xs, (size_t)N);
+            vfft_execute(ch, VFFT_BACKWARD, h->zr2c_scratch, NULL, dre, NULL);
+        }
+        else
+        { /* fold sre->dre (alias-safe when in place), child in place on dre */
+            _zr2c_fold_bwd(sre, dre, aS, aC, N, 1, xs, (size_t)N);
+            vfft_execute(ch, VFFT_BACKWARD, dre, NULL, dre, NULL);
+        }
+    }
+}
 
 /* Apply the banked IL kernel-variant verdict (kind-3 `il_kv`) to a freshly
  * created il2p plan. The VERDICT comes from wisdom; the MEASUREMENT that
