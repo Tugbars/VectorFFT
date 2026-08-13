@@ -51,11 +51,17 @@ static void judge(const char *what, int N, double err, double tol)
 
 static vfft_wisdom *g_W;
 
+/* route 0/1 force the child route via env (the racing hook); route -1
+ * REMOVES the env (msvcrt: putenv("VAR=") deletes) so create serves the
+ * WISDOM path — banked kind-5 verdict, or the in-context race on a miss
+ * (which banks into the loaded wisdom dir). */
 static void run_cell(int N, int route)
 {
     char lbl[64];
     static char env0[] = "VFFT_ZR2C_ROUTE=0", env1[] = "VFFT_ZR2C_ROUTE=1";
-    putenv(route ? env1 : env0);
+    static char envW[] = "VFFT_ZR2C_ROUTE=";
+    putenv(route < 0 ? envW : (route ? env1 : env0));
+    const char *rt = route < 0 ? "W" : (route ? "1" : "0");
 
     const int half = N/2;
     size_t xs = (size_t)N + 2;
@@ -81,7 +87,7 @@ static void run_cell(int N, int route)
     cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
     vfft_plan p = vfft_create(&cfg);
-    snprintf(lbl, sizeof lbl, "r2c OOP  route=%d", route);
+    snprintf(lbl, sizeof lbl, "r2c OOP  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         memset(X, 0, 8*xs);
@@ -98,7 +104,7 @@ static void run_cell(int N, int route)
     /* ── R2C IN-PLACE (one padded plane) ── */
     cfg.placement = VFFT_INPLACE;
     p = vfft_create(&cfg);
-    snprintf(lbl, sizeof lbl, "r2c IN-PLACE  route=%d", route);
+    snprintf(lbl, sizeof lbl, "r2c IN-PLACE  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         memcpy(pl, x, 8*xs);
@@ -115,7 +121,7 @@ static void run_cell(int N, int route)
     /* ── C2R OOP: naive spectrum in -> must return N*x ── */
     cfg.transform = VFFT_C2R; cfg.placement = VFFT_OUTOFPLACE;
     p = vfft_create(&cfg);
-    snprintf(lbl, sizeof lbl, "c2r OOP  route=%d", route);
+    snprintf(lbl, sizeof lbl, "c2r OOP  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         for (int f = 0; f <= half; f++){ X[2*f] = Xr[f]; X[2*f+1] = Xi[f]; }
@@ -131,7 +137,7 @@ static void run_cell(int N, int route)
     /* ── C2R IN-PLACE ── */
     cfg.placement = VFFT_INPLACE;
     p = vfft_create(&cfg);
-    snprintf(lbl, sizeof lbl, "c2r IN-PLACE  route=%d", route);
+    snprintf(lbl, sizeof lbl, "c2r IN-PLACE  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
     else {
         for (int f = 0; f <= half; f++){ pl[2*f] = Xr[f]; pl[2*f+1] = Xi[f]; }
@@ -180,7 +186,9 @@ static void run_regressions(void)
         }
         free(x); free(X); free(Xr); free(Xi);
     }
-    /* odd N interleaved r2c OOP — must still serve via the old path */
+    /* N=510: EVEN non-pow2 -> the zr2c branch legitimately serves it
+     * (child c2c at the ODD half 255) — covers the odd-half child. The
+     * genuine old-path regression smoke is the K=4 cell above. */
     {
         const int N = 510, half = N/2;
         double *x  = malloc(8*((size_t)N+2));
@@ -193,7 +201,7 @@ static void run_regressions(void)
         cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
         vfft_plan p = vfft_create(&cfg);
-        if (!p) judge("REGRESSION r2c odd N (old path)", N, -1, 1);
+        if (!p) judge("r2c non-pow2 510 (zr2c, half 255)", N, -1, 1);
         else {
             memset(X, 0, 8*((size_t)N+2));
             vfft_execute(p, VFFT_FORWARD, x, NULL, X, NULL);
@@ -203,7 +211,7 @@ static void run_regressions(void)
                 double dr = fabs(X[2*f]   - Xr[f]);
                 double di = fabs(X[2*f+1] - Xi[f]);
                 if (dr > w) w = dr; if (di > w) w = di; }
-            judge("REGRESSION r2c odd N (old path)", N, w/xm, 1e-9);
+            judge("r2c non-pow2 510 (zr2c, half 255)", N, w/xm, 1e-9);
             vfft_destroy(p);
         }
         free(x); free(X); free(Xr); free(Xi);
@@ -212,15 +220,38 @@ static void run_regressions(void)
 
 int main(int argc, char **argv)
 {
-    const char *wdir = (argc >= 2) ? argv[1]
-                                   : "../../src/dag-fft-compiler/generator/generated";
-    g_W = vfft_wisdom_load(wdir);
+    /* CWD-proof wisdom resolution: build.py runs binaries from build_tuned/
+     * while a manual run starts in benches/ — probe both relative roots and
+     * take the one whose oop_wisdom.txt actually opens. vfft_wisdom_load
+     * returns a (valid, EMPTY) bundle on a total miss, so a pointer check
+     * alone would hide the miss — hence the fopen probe + row-count print. */
+    const char *cand[3] = {
+        (argc >= 2) ? argv[1] : NULL,
+        "../src/dag-fft-compiler/generator/generated",    /* from build_tuned */
+        "../../src/dag-fft-compiler/generator/generated", /* from benches */
+    };
+    const char *wdir = NULL;
+    for (int i = 0; i < 3 && !wdir; i++) {
+        if (!cand[i]) continue;
+        char pp[512];
+        snprintf(pp, sizeof pp, "%s/oop_wisdom.txt", cand[i]);
+        FILE *pf = fopen(pp, "r");
+        if (pf) { fclose(pf); wdir = cand[i]; }
+    }
     printf("zr2c FRONT-DOOR gate — public API, both transforms x placements x routes\n");
-    printf("wisdom dir: %s (%s)\n\n", wdir, g_W ? "loaded" : "MISS — create may calibrate");
+    if (!wdir) {
+        printf("wisdom dir: NOT FOUND (probed argv[1] + both relative roots) "
+               "— refusing to gate against empty wisdom\n");
+        return 1;
+    }
+    g_W = vfft_wisdom_load(wdir);
+    printf("wisdom dir: %s\n\n", wdir);
     const int Ns[] = { 512, 2048, 4096 };
     for (size_t i = 0; i < sizeof Ns / sizeof Ns[0]; i++)
         for (int route = 0; route <= 1; route++)
             run_cell(Ns[i], route);
+    for (size_t i = 0; i < sizeof Ns / sizeof Ns[0]; i++)
+        run_cell(Ns[i], -1); /* wisdom pass: race-and-bank on miss */
     run_regressions();
     printf("\n%s\n", g_fail ? "ZR2C FRONT-DOOR GATE: FAILURE"
                             : "ZR2C FRONT-DOOR GATE: ALL CORRECT");

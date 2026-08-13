@@ -148,7 +148,23 @@ typedef enum
      * §4.9993): wisdom-only kind — never a vfft_oop_plan_t; carries the
      * cascade chain (cc_chain codec) + the measured sterm-vs-sterm2
      * terminator pick (zs_t2q). Line: N 1 4 t2q cc_chain ns. */
-    VFFT_OOP_KIND_ZSPLIT = 4
+    VFFT_OOP_KIND_ZSPLIT = 4,
+    /* K=1 INTERLEAVED-CCE real-transform composite (§D2, vfft.c
+     * _zr2c_build): wisdom-only kind — never a vfft_oop_plan_t. N is the
+     * REAL length (the child c2c runs at N/2), so a kind-5 row NEVER
+     * collides with the plain c2c kinds at the same numeric N — it is a
+     * different transform's cell, its own kind-class, consulted only by
+     * the zr2c create path (owner directive 2026-08-13: real-IL verdicts
+     * get their own marked cells). Carries zr_kv, the packed child-route
+     * verdicts: 2 bits per (transform, placement) combo — 0 = UNMEASURED
+     * (structural default applies), 1 = child route 0 (OOP-IL), 2 = child
+     * route 1 (NAT-IP cascade). Line: N 1 5 zr_kv [ns].
+     * zr_kv sits FIRST after the kind ON PURPOSE: a STALE wisdom-writing
+     * binary that predates kind 5 parses the first trailing token as ns
+     * and re-emits "N 1 5 <zr_kv>.0" — the verdict SURVIVES the strip
+     * cycle (only the informational ns is lost), and the kind-5 reader
+     * accepts the ".0" form (atoi stops at the dot). */
+    VFFT_OOP_KIND_ZR2C = 5
 } vfft_oop_kind_t;
 
 typedef struct

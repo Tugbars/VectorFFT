@@ -462,7 +462,9 @@ static struct vfft_wisdom_s *_default_wisdom(void)
  * one: replace-or-append in memory, then rewrite the whole file. */
 
 /* Persistence class of a kind: 0 = MODEB (scrambled champion), 1 = native
- * (LEAF/BAILEY2), 2 = K1 engine (kind 3), 3 = zsplit cascade cell (kind 4).
+ * (LEAF/BAILEY2), 2 = K1 engine (kind 3), 3 = zsplit cascade cell (kind 4),
+ * 4 = zr2c real composite (kind 5 — keyed on the REAL N, its own class so a
+ * bank can never replace the kind-3/kind-4 c2c cells at the same number).
  * One (N,K) cell may hold one entry PER CLASS. */
 static int _oop_kind_class(int kind)
 {
@@ -472,6 +474,8 @@ static int _oop_kind_class(int kind)
         return 2;
     if (kind == VFFT_OOP_KIND_ZSPLIT)
         return 3;
+    if (kind == VFFT_OOP_KIND_ZR2C)
+        return 4;
     return 1;
 }
 
@@ -1886,18 +1890,16 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
  * fold; c2r is the exact mirror with the fold leading. Even N, K==1.
  * route 0 = OOP-IL child · route 1 = NAT-IP cascade child (MKL's own
  * regime routing, measured 2026-08-13: parity-band both directions).
- * Verdicts belong to the zr2c-owned wisdom kind (owner directive) — until
- * that calibrator lands, create uses the placement-matched STRUCTURAL
- * default, overridable with VFFT_ZR2C_ROUTE=0/1 (env beats wisdom).
+ * Route resolution (never-heuristic rule): VFFT_ZR2C_ROUTE env (the racing
+ * hook — beats wisdom, never banks) > banked kind-5 verdict (zr_kv slot
+ * for THIS transform+placement) > MEASURE+ races both routes in-context
+ * through the real execute path and banks the winner > the placement-
+ * matched structural default (ESTIMATE / no wisdom only).
  * ════════════════════════════════════════════════════════════════════════ */
-static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N)
+static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
+                                             int route)
 {
     const int half = N / 2, top = N / 4;
-    int route;
-    {
-        const char *e = getenv("VFFT_ZR2C_ROUTE");
-        route = e ? (atoi(e) != 0) : (cfg->placement == VFFT_INPLACE ? 1 : 0);
-    }
     vfft_config_t c2;
     memset(&c2, 0, sizeof c2);
     c2.transform = VFFT_C2C;
@@ -1988,6 +1990,143 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
             vfft_execute(ch, VFFT_BACKWARD, dre, NULL, dre, NULL);
         }
     }
+}
+
+/* Bank a kind-5 zr2c route verdict: read-modify-write the packed zr_kv so
+ * the other three (transform, placement) slots keep their verdicts, then
+ * replace-or-append via the kind-class dedup + autosave. The in-memory add
+ * alone already makes the verdict process-coherent (create-race coherence
+ * rule); ns = the winner's per-shot median (informational). */
+static void _bank_zr2c(struct vfft_wisdom_s *W, int N, int slot, int route,
+                       double ns)
+{
+    vfft_oop_wisdom_entry_t e;
+    const vfft_oop_wisdom_entry_t *old =
+        vfft_oop_wisdom_lookup_zr2c(&W->oop, N);
+    memset(&e, 0, sizeof e);
+    e.N = N;
+    e.K = 1;
+    e.kind = VFFT_OOP_KIND_ZR2C;
+    e.zr_kv = vfft_zr2c_kv_set(old ? old->zr_kv : 0, slot, route);
+    e.ns = ns;
+    _oop_wisdom_put_and_save(W, &e, W->path_oop);
+}
+
+/* forward decls: the race borrows the §6a59 timer/median helpers, defined
+ * with the IL A/B machinery further down. */
+static double _il_ab_now(void);
+static double _il_ab_med9(double *v);
+
+/* §D2 route resolution + in-context race. Race protocol (house rules): the
+ * FULL composite through _exec_zr2c (child + fold + placement plumbing —
+ * the memcpy/scratch hops are exactly the costs being raced), private junk
+ * planes, junk-reps for the in-place shapes (natarm precedent), ~300 us
+ * bursts, alternating arm order, median-of-9 rounds, 3% hysteresis toward
+ * the structural default. Both arms are gated pipelines (zr2c_fd_gate.c:
+ * 26/26), so the race picks between two CORRECT plans — no in-race
+ * roundtrip gate needed. Budget ~10 ms per unmeasured cell, once. */
+static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
+                                       struct vfft_wisdom_s *W)
+{
+    /* 1. env — the racing hook. Beats wisdom, never banks. */
+    {
+        const char *e = getenv("VFFT_ZR2C_ROUTE");
+        if (e && e[0])
+            return _zr2c_build_route(cfg, N, atoi(e) != 0);
+    }
+    const int slot = vfft_zr2c_kv_slot(cfg->transform == VFFT_C2R,
+                                       cfg->placement == VFFT_INPLACE);
+    const int def = (cfg->placement == VFFT_INPLACE) ? 1 : 0;
+
+    /* 2. banked kind-5 verdict for THIS (transform, placement) slot. */
+    if (W && !cfg->recalibrate)
+    {
+        const vfft_oop_wisdom_entry_t *ke =
+            vfft_oop_wisdom_lookup_zr2c(&W->oop, N);
+        int f = ke ? vfft_zr2c_kv_get(ke->zr_kv, slot) : 0;
+        if (f)
+            return _zr2c_build_route(cfg, N, f - 1);
+    }
+
+    /* 3. no verdict and no wisdom to bank into -> structural default.
+     * With wisdom, every rigor tier races (the library is measured-only —
+     * there is no ESTIMATE tier); a missing cell races once and banks. */
+    if (!W)
+        return _zr2c_build_route(cfg, N, def);
+
+    struct vfft_plan_s *h0 = _zr2c_build_route(cfg, N, 0);
+    struct vfft_plan_s *h1 = _zr2c_build_route(cfg, N, 1);
+    if (!h0 || !h1) /* one route can't build -> the other serves, no bank */
+        return h0 ? h0 : h1;
+
+    size_t xs = (size_t)N + 2;
+    double *a = (double *)STRIDE_ALIGNED_ALLOC(64, (xs * 8 + 63) & ~(size_t)63);
+    double *b = (double *)STRIDE_ALIGNED_ALLOC(64, (xs * 8 + 63) & ~(size_t)63);
+    if (!a || !b)
+    {
+        STRIDE_ALIGNED_FREE(a);
+        STRIDE_ALIGNED_FREE(b);
+        vfft_destroy((vfft_plan)(def ? h0 : h1));
+        return def ? h1 : h0;
+    }
+    unsigned sd = 0x243f6a88u ^ (unsigned)N ^ (unsigned)(slot << 8);
+    for (size_t i = 0; i < xs; i++)
+    {
+        sd = sd * 1664525u + 1013904223u;
+        a[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+        sd = sd * 1664525u + 1013904223u;
+        b[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
+    }
+    const double *s0 = (cfg->placement == VFFT_OUTOFPLACE) ? a : b;
+    /* est shots double as warmup; reps for ~300 us bursts */
+    double t0 = _il_ab_now();
+    _exec_zr2c(h0, s0, b);
+    double e0 = _il_ab_now() - t0;
+    t0 = _il_ab_now();
+    _exec_zr2c(h1, s0, b);
+    double e1 = _il_ab_now() - t0;
+    double est = e0 > e1 ? e0 : e1;
+    int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
+    if (reps < 2)
+        reps = 2;
+    if (reps > 64)
+        reps = 64;
+    double r0[9], r1[9];
+    for (int r = 0; r < 9; r++)
+    {
+        struct vfft_plan_s *first = (r & 1) ? h1 : h0;
+        struct vfft_plan_s *second = (r & 1) ? h0 : h1;
+        t0 = _il_ab_now();
+        for (int i = 0; i < reps; i++)
+            _exec_zr2c(first, s0, b);
+        double tf = (_il_ab_now() - t0) / reps;
+        t0 = _il_ab_now();
+        for (int i = 0; i < reps; i++)
+            _exec_zr2c(second, s0, b);
+        double ts = (_il_ab_now() - t0) / reps;
+        r0[r] = (r & 1) ? ts : tf;
+        r1[r] = (r & 1) ? tf : ts;
+    }
+    STRIDE_ALIGNED_FREE(a);
+    STRIDE_ALIGNED_FREE(b);
+    double n0 = _il_ab_med9(r0), n1 = _il_ab_med9(r1);
+    int win = (def == 0) ? ((n1 < n0 * 0.97) ? 1 : 0)
+                         : ((n0 < n1 * 0.97) ? 0 : 1);
+    if (getenv("VFFT_ZRACE_VERBOSE"))
+        fprintf(stderr, "[zr2c] N=%d %s %s route race: reps=%d hyst=3%% "
+                        "alt-order median | oop-il=%.0f nat-ip=%.0f -> "
+                        "route=%d (bank slot %d)\n",
+                N, cfg->transform == VFFT_C2R ? "c2r" : "r2c",
+                cfg->placement == VFFT_INPLACE ? "ip" : "oop",
+                reps, n0, n1, win, slot);
+    _bank_zr2c(W, N, slot, win, win ? n1 : n0);
+    if (win)
+    {
+        vfft_destroy((vfft_plan)h0);
+        return h1;
+    }
+    vfft_destroy((vfft_plan)h1);
+    return h0;
 }
 
 /* Apply the banked IL kernel-variant verdict (kind-3 `il_kv`) to a freshly
@@ -4702,6 +4841,22 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             bK = b->Kp;
             padded = 1;
         }
+        /* §D2 zr2c route: even N, K==1, INTERLEAVED — reinterpret + child
+         * c2c(N/2) + fold. Also the ONLY in-place real path (the in-place
+         * refusal above admits exactly this combo). K>1 keeps the
+         * split-interior CCE path below; the batched composite is the V9
+         * workstream. This branch runs BEFORE the split-path calibrate-on-
+         * miss blocks below on purpose: a zr2c-served cell must not pay for
+         * (or bank) c2c(N/2, K)/rfft rows it never reads — the child rides
+         * the K=1 engine tables through its own recursive create. Child-
+         * create failure falls through to the split path, which then
+         * calibrates exactly as before. */
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
+        {
+            struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
+            if (hz)
+                return hz;
+        }
         /* The r2c dispatcher rides the c2c wisdom for its decoupled inner FFT and
          * the rfft wisdom for the rfft path; it auto-threads (sub-K block) when the
          * pool is sized >1 at create. Calibrate-on-miss for the inner cell ensures
@@ -4734,17 +4889,6 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_r2c_dispatch_set_wisdom(&W->rfft);
-        /* §D2 zr2c route: even N, K==1, INTERLEAVED — reinterpret + child
-         * c2c(N/2) + fold. Also the ONLY in-place real path (the in-place
-         * refusal above admits exactly this combo). K>1 keeps the
-         * split-interior CCE path below; the batched composite is the V9
-         * workstream. Child-create failure falls through to that path. */
-        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
-        {
-            struct vfft_plan_s *hz = _zr2c_build(cfg, N);
-            if (hz)
-                return hz;
-        }
         /* High rigor in the rfft-competitive zone (K<=64, N even): per-cell bake-off
          * picks rfft-vs-stride by measurement instead of the fixed K=32 threshold.
          * MEASURE / high-K use the (cheap) fixed-threshold dispatch. */
@@ -4811,7 +4955,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * INTERLEAVED CCE input — fold + child c2c(N/2) backward. */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
         {
-            struct vfft_plan_s *hz = _zr2c_build(cfg, N);
+            struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
             if (hz)
                 return hz;
         }
