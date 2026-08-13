@@ -193,6 +193,11 @@ Three caveats stated plainly:
   that is the kernel-vs-kernel fight with threading removed. MKL leads at N ≤ 1024
   (1.18×–1.56×, worst for us at 1024); we lead from 4096 up (1.06×–1.74×). The sub-2048
   serial gap is real and is tracked separately.
+  *(Update 2026-08-12: this table predates the tangent-scaled butterflies. In the K=1
+  natural-order grid below, 128 and 256 have since crossed ahead of MKL and 512 closed
+  most of its gap; 1024 — the worst cell here — is the one that did not move, and the
+  reason is structural: it is R32 in both slots. These batched cells have NOT been
+  re-measured against the tangent pool, so the numbers above stand as-measured.)*
 - **Our workers never park.** Dispatch is cheap precisely because the pool spins rather than
   sleeping, which costs idle CPU and power. MKL's threads sleep after `KMP_BLOCKTIME`, which
   is better behaviour inside a host application doing other work. On this benchmark the trade
@@ -293,7 +298,7 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
   128        0.91 †‡           1.04 ★         (= NAT bits)
   256       0.85–0.86 ▲◆‡    1.01–1.02 ★      (= NAT bits)
   512       0.78–0.80 ▲‡     0.87–0.88 ★      (= NAT bits)
-  1024      0.91–0.95 ▲           ▢          (= NAT bits)
+  1024      0.91–0.95 ▲       0.83–0.90 ✦     (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
@@ -323,6 +328,10 @@ picking a pair whose BOTH slots have a tangent form (128 → 8×16, 256 → 16×
 pass — which is why it gains but does not cross. A hand-wired fully-tangent 512
 (pair 32×16, `il_kv` 51) was raced and is a WASH (~1%), so the residual there is
 the R32 pass, not the interior arithmetic.
+✦ 2026-08-12, 5 reps, as-shipped (NOT re-raced against the tangent pool). This
+cell is NOISY — ours 899/976/1037/1084/1621 ns vs MKL 811/856/865/892/895 —
+so the range is min-to-median, not a tight interval. 0.90 is the minima ratio,
+0.83 the median ratio. Do not quote a third digit here.
 ‡ pre-tangent plan. The banked kind-3 row for this N CHANGED on 2026-08-12, so
 the in-place figure no longer describes what ships. Sub-2048 in-place and OOP
 run the SAME IL engines (see the grid above), so it is expected to track the
@@ -332,7 +341,43 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
 
 Reading it honestly:
 
-- **Sub-2048 is where we still trail** (0.78–0.95 natural). The ▲ cells run the blocked
+- **Sub-2048 no longer trails uniformly — 128 and 256 now LEAD** (1.04 and 1.01–1.02,
+  natural OOP, 2026-08-12), via tangent-scaled butterflies. What remains behind is
+  **512 (0.87–0.88) and 1024 (0.83–0.90)**, and the boundary between the two groups is
+  structural rather than incidental: a cell crosses MKL exactly when its winning
+  factorization has a tangent form in **both** slots. 128 → 8×16 and 256 → 16×16 do;
+  512 = 2⁹ cannot form one (every pair carries an R32 or R64 pass) and 1024 = 32×32 is
+  R32 in both slots. R32 is where the lever stops paying: internally, the tangent R32
+  kernel achieves a *better* port mix than the R16 one (39% vs 47% naked adds) yet
+  returns only −3.2%, because the conversions cost +9 spill stores, +9 spill loads and
+  +24 register moves that R16 never pays — it spends the gain instead of banking it.
+  **But do not read that as the reason MKL leads here.** A like-for-like census against
+  MKL's own 32-point column kernel (`mkl512__col32_fwd_loop.asm`, same work unit: 32 ymm
+  loads → 32 ymm stores, twiddles hoisted as constants) says the opposite of the obvious
+  inference:
+
+  | | MKL col32 | ours `n1tb48` |
+  |---|--:|--:|
+  | instructions | **460** | 563 |
+  | fma / bare mul | **68 / 0** | 36 / 20 |
+  | naked add+sub | 118 (**63%**) | 152 (73%) |
+  | shuffle + xor | **54 + 15** | 82 + 29 |
+  | stack ops | **78 (0.42/fp-op)** | 48 (0.23/fp-op) |
+
+  **MKL spills 1.6× more per arithmetic op than we do and still wins.** It treats stack
+  traffic as cheap and buys instruction count and FMA density with it — 18% fewer
+  instructions, 1.9× the FMAs, *zero* bare multiplies. So "reduce spills" is the wrong
+  lever against MKL; the right ones are instruction count and naked-add/bare-mul
+  elimination, which is the direction the tangent construction already pushes. A second,
+  independent lever is visible in the same table: our interleaved-complex sign/lane
+  handling costs **42 extra shuffle+xor instructions**, roughly 40% of the whole
+  103-instruction gap, and has nothing to do with tangent.
+  ⚠ **Regime matters when quoting these**: this column is the single-transform K=1
+  natural-order cell, the one that has always been hardest. The same N wins comfortably
+  batched — 1024 is 1.57× at K=256 OOP (see the table below) — and the scrambled column
+  leads everywhere ≥2048. Do not read a sub-2048 K=1 number as the library's position.
+- **Historical context for the ▲ cells** (superseded by the above but the mechanism
+  still holds): the ▲ cells run the blocked
   R≥32 kernels as the shipped default — a structural rule (a monolithic R≥32 body holds
   ~40–64 live values against AVX2's 16 registers and spills ~27% of its stream; blocked
   construction is the only body shape that fits, the same tier the split emitters apply
@@ -342,10 +387,16 @@ Reading it honestly:
   load in a way a register-resident one is not. 256 moved 0.76→0.85 only once the
   calibrator replaced its heuristic (16,16) pair with the measured (8,32) — the pair
   verdict is what put an R≥32 body in a slot the blocked rule could act on, so neither
-  half would have delivered it alone. Remaining levers, in order of measured promise:
-  the stage-count axis (3-stage chains beat every 2-stage pair at 512 by +7.6–8.8%,
-  measured twice, not yet banked), and R=64 blocked kernels, which do not exist yet —
-  R=32 and R=16 are now both covered, so R=64 is the last structural gap.
+  half would have delivered it alone.
+- **Remaining levers for the two cells still behind (512, 1024)**, in order of measured
+  promise: (1) an **R32 blocking geometry co-designed with the tangent constant set** —
+  the spill census above localizes the loss precisely, and both remaining cells are the
+  R32-bound ones, so this single lever addresses both; (2) the stage-count axis (3-stage
+  chains beat every 2-stage pair at 512 by +7.6–8.8%, measured twice, not yet banked).
+  Two things are now *closed* rather than open: a hand-wired fully-tangent 512 is a wash
+  (~1%), so more tangent at the current geometry is not the answer; and R=64 is no longer
+  the "last structural gap" — 1024's problem is that it is R32 in *both* slots, which an
+  R=64 kernel does not address.
 - **≥2048 is parity-or-win** on every row except natural-OOP at 4096/32768.
 - **The SCRAMBLED row leads everywhere ≥2048, and the reason is structural rather than
   a kernel advantage**: setting `DFTI_ORDERING` to `DFTI_BACKWARD_SCRAMBLED` does not
