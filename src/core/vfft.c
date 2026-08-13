@@ -2776,14 +2776,19 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "transform-contiguous batch, or VFFT_BATCH_DEFAULT/LANE_MAJOR here");
         return NULL;
     }
-    /* In-place real FFT is undefined here (spectrum and real data are separate
-     * planes; an MKL-style in-place CCE pass is a filed follow-up — note this
-     * is a deliberate divergence from MKL, whose real-FFT default IS in-place). */
+    /* In-place real FFT: SUPPORTED for the 1D INTERLEAVED-CCE zr2c route
+     * (even N, K==1) — one padded plane of 2*(N/2+1) doubles, the MKL
+     * convention, closing the law-(f) hole (2026-08-13, §D2). Every OTHER
+     * real shape still refuses: split spectrum and real data are separate
+     * planes there and an in-place contract would be a lie. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-        cfg->placement == VFFT_INPLACE)
+        cfg->placement == VFFT_INPLACE &&
+        !(cfg->dims == 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+          cfg->howmany == 1 && (cfg->n[0] % 2) == 0))
     {
-        _vfft_warn("vfft_create: in-place %s is not implemented (real plane and spectrum are "
-                   "separate buffers; in-place CCE is a filed follow-up) — use VFFT_OUTOFPLACE",
+        _vfft_warn("vfft_create: in-place %s is supported only for 1D "
+                   "LAYOUT_INTERLEAVED (CCE), howmany==1, even N (the zr2c route; "
+                   "padded 2*(N/2+1)-double plane) — use VFFT_OUTOFPLACE otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
     }
@@ -4729,6 +4734,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_r2c_dispatch_set_wisdom(&W->rfft);
+        /* §D2 zr2c route: even N, K==1, INTERLEAVED — reinterpret + child
+         * c2c(N/2) + fold. Also the ONLY in-place real path (the in-place
+         * refusal above admits exactly this combo). K>1 keeps the
+         * split-interior CCE path below; the batched composite is the V9
+         * workstream. Child-create failure falls through to that path. */
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
+        {
+            struct vfft_plan_s *hz = _zr2c_build(cfg, N);
+            if (hz)
+                return hz;
+        }
         /* High rigor in the rfft-competitive zone (K<=64, N even): per-cell bake-off
          * picks rfft-vs-stride by measurement instead of the fixed K=32 threshold.
          * MEASURE / high-K use the (cheap) fixed-threshold dispatch. */
@@ -4790,6 +4806,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
             bK = b->Kp;
             padded = 1;
+        }
+        /* §D2 zr2c route (mirror of the r2c branch): even N, K==1,
+         * INTERLEAVED CCE input — fold + child c2c(N/2) backward. */
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K == 1 && (N % 2) == 0 && !ob)
+        {
+            struct vfft_plan_s *hz = _zr2c_build(cfg, N);
+            if (hz)
+                return hz;
         }
         /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
          * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
@@ -6170,7 +6194,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * (SPLIT dre/dim planes, or INTERLEAVED packed CCE z in dre — §6a24).
          * MT internal. */
         vfft_set_num_threads(h->nthreads);
-        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        if (h->zr2c_child)
+            _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
+        else if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* dre = packed CCE spectrum */
         else
             vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
@@ -6182,7 +6208,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * INTERLEAVED packed CCE z in sre — §6a24) -> real out (dre). dir
          * ignored. NATURAL or STRIDE per the bakeoff/wisdom. */
         vfft_set_num_threads(h->nthreads);
-        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+        if (h->zr2c_child)
+            _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
+        else if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* sre = packed CCE spectrum in */
         else
             vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
@@ -6277,6 +6305,10 @@ void vfft_destroy(vfft_plan h)
     vfft_ilprime_destroy(h->k1ilpr);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
+    if (h->zr2c_child)
+        vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
+    free(h->zr2c_aff);
+    free(h->zr2c_scratch);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)
