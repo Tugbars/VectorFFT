@@ -2498,6 +2498,10 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
 
     double vfw = 0, vbw = 0, mfw = 0, mbw = 0;
     double xerr = -1, gours = -1, gmkl = -1;
+    /* cascade arm (owner directive #2: halves >= 2048 belong to the cascade) */
+    double cfw = 0, cbw = 0, cxerr = -1, cgours = -1;
+    int conv = -1; /* 0 = DIF digit-reversal matched, 1 = DIT, -1 = n/a */
+    int c4row = 0; /* a kind-4 row exists for the half */
     int reps = reps_for((size_t)N);
     double tf[5], tb[5];
     const double *bsrc = XC;   /* c2r-arm input spectrum (MKL ref if present) */
@@ -2607,6 +2611,98 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         ZR2C_TIME(tmb, DftiComputeBackward(hB, mip2));
         mfw = _zr2c_med5(tmf); mbw = _zr2c_med5(tmb);
     }
+    /* ── CASCADE ARM: scrambled kind-4 interior + the PERM-AWARE fold — no
+     * deinterleave, no ordering conversion. The served chain's digit-reversal
+     * CONVENTION is decided by the cross-engine gate (DIF first — the cascade
+     * is DIF-family — then DIT); if neither matches, the arm reports UNKNOWN
+     * instead of timing garbage (that finding = "needs an order-tape API").
+     * Runs after the flip-ordered main arms; its own gate + medians. */
+    if (half >= 2048 && okF && g_k1z_oopw_loaded)
+    {
+        const vfft_oop_wisdom_entry_t *z4 =
+            vfft_oop_wisdom_lookup_zsplit(&g_k1z_oopw, half);
+        if (z4)
+        {
+            c4row = 1;
+            int ch[8];
+            int nf = vfft_k1_cc_chain_decode(z4->cc_chain, ch);
+            if (nf > 0)
+            {
+                vfft_config_t scf;
+                memset(&scf, 0, sizeof scf);
+                scf.transform = VFFT_C2C;
+                scf.placement = VFFT_OUTOFPLACE;
+                scf.rigor = VFFT_MEASURE;
+                scf.dims = 1;
+                scf.n[0] = half;
+                scf.howmany = 1;
+                scf.order = VFFT_ORDER_SCRAMBLED;
+                scf.layout = VFFT_LAYOUT_INTERLEAVED;
+                scf.nthreads = 1;
+                scf.wisdom = W;
+                vfft_plan hs = vfft_create(&scf);
+                int *ip = (int *)malloc(sizeof(int) * (size_t)half);
+                int *pm = (int *)malloc(sizeof(int) * (size_t)half);
+                double *Zs = alloc_d((size_t)N);
+                if (hs && ip && pm && Zs)
+                {
+                    for (int cv = 0; cv < 2 && conv < 0; cv++)
+                    {
+                        if (cv == 0) _zr2c_perm_dif(ch, nf, half, pm, ip);
+                        else         _zr2c_perm_dit(ch, nf, half, pm, ip);
+                        vfft_execute(hs, VFFT_FORWARD, x, NULL, Zs, NULL);
+                        _zr2c_fold_fwd_perm(Zs, XC, aS, aC, ip, pm, N, 1,
+                                            (size_t)N, (size_t)N + 2);
+                        double w2 = 0, xm2 = 0;
+                        for (int i = 0; i < 2 * (half + 1); i++)
+                        {
+                            double d = fabs(XC[i] - cref[i]);
+                            if (d > w2) w2 = d;
+                            double a = fabs(cref[i]);
+                            if (a > xm2) xm2 = a;
+                        }
+                        double e2 = xm2 > 0 ? w2 / xm2 : w2;
+                        if (e2 < 1e-9) { conv = cv; cxerr = e2; }
+                    }
+                    if (conv >= 0)
+                    {
+                        _zr2c_fold_bwd_perm(cref, Zs, aS, aC, ip, pm, N, 1,
+                                            (size_t)N + 2, (size_t)N);
+                        vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
+                        double gw = 0, gm2 = 0;
+                        for (int i = 0; i < N; i++)
+                        {
+                            double d = fabs(y[i] - (double)N * x[i]);
+                            if (d > gw) gw = d;
+                            double a = fabs(x[i]);
+                            if (a > gm2) gm2 = a;
+                        }
+                        cgours = gm2 > 0 ? gw / ((double)N * gm2) : gw;
+                        if (cgours < 1e-9)
+                        {
+                            double tcf[5], tcb[5];
+                            ZR2C_TIME(tcf, {
+                                vfft_execute(hs, VFFT_FORWARD, x, NULL, Zs, NULL);
+                                _zr2c_fold_fwd_perm(Zs, XC, aS, aC, ip, pm, N, 1,
+                                                    (size_t)N, (size_t)N + 2);
+                            });
+                            ZR2C_TIME(tcb, {
+                                _zr2c_fold_bwd_perm(cref, Zs, aS, aC, ip, pm, N, 1,
+                                                    (size_t)N + 2, (size_t)N);
+                                vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
+                            });
+                            cfw = _zr2c_med5(tcf);
+                            cbw = _zr2c_med5(tcb);
+                        }
+                    }
+                }
+                if (hs) vfft_destroy(hs);
+                free(ip); free(pm);
+                if (Zs) free_d(Zs);
+            }
+        }
+    }
+
     if (hF) DftiFreeDescriptor(&hF);
     if (hB) DftiFreeDescriptor(&hB);
     free_d(mip); free_d(mip2); free_d(cref);
@@ -2617,10 +2713,22 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     printf("%-7d | r2c ours %9.0f  mkl-ip %9.0f  %5.2fx | c2r ours %9.0f  "
            "mkl-ip %9.0f  %5.2fx | xerr %.1e gours %.1e gmkl %.1e\n",
            N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl);
+    if (c4row)
+    {
+        if (conv >= 0 && cfw > 0)
+            printf("        | casc(%s) r2c %8.0f          %5.2fx | casc c2r %8.0f"
+                   "          %5.2fx | xerr %.1e gours %.1e\n",
+                   conv == 0 ? "DIF" : "DIT",
+                   cfw, (mfw > 0 && cfw > 0) ? mfw / cfw : 0,
+                   cbw, (mbw > 0 && cbw > 0) ? mbw / cbw : 0, cxerr, cgours);
+        else
+            printf("        | casc: ORDER CONVENTION UNKNOWN (neither DIF nor DIT "
+                   "chain digit-reversal matched — needs an order-tape API)\n");
+    }
     fflush(stdout);
     if (out)
-        fprintf(out, "%d,1,%.0f,%.0f,%.3f,%.0f,%.0f,%.3f,%.1e,%.1e,%.1e\n",
-                N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl);
+        fprintf(out, "%d,1,%.0f,%.0f,%.3f,%.0f,%.0f,%.3f,%.1e,%.1e,%.1e,%.0f,%.0f,%d\n",
+                N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl, cfw, cbw, conv);
     free_d(x); free_d(Zc); free_d(XC); free_d(y); free_d(aS); free_d(aC);
     vfft_destroy(h);
 }
@@ -3476,7 +3584,8 @@ int main(int argc, char **argv)
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr\n");
         else if (g_zr2c)
             fprintf(out, "N,K,ours_r2c_ns,mkl_r2c_ip_ns,r2c_ratio,ours_c2r_ns,"
-                         "mkl_c2r_ip_ns,c2r_ratio,xerr_fwd,gate_ours_c2r,gate_mkl_c2r\n");
+                         "mkl_c2r_ip_ns,c2r_ratio,xerr_fwd,gate_ours_c2r,gate_mkl_c2r,"
+                         "casc_r2c_ns,casc_c2r_ns,casc_conv\n");
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else

@@ -215,4 +215,134 @@ static void _zr2c_fold_bwd(const double *__restrict__ X_in,
     }
 }
 
+/* Mixed-radix digit-reversal perm builders (self-contained copies of the
+ * r2c.h pair, so the zr2c route never touches split machinery). DIT: factor
+ * order as listed. DIF: factor order REVERSED (a DIF-forward inner emits the
+ * reversed-factor digit reversal — verified in r2c.h's dif_order_probe note).
+ * Contract produced: iperm[slot] = freq, perm[freq] = slot. Which convention
+ * a served cascade plan uses is decided BY THE GATE, never assumed. */
+static void _zr2c_perm_dit(const int *factors, int nf, int N, int *perm, int *iperm)
+{
+    for (int n = 0; n < N; n++)
+    {
+        int idx = n, rev = 0, rp = 1;
+        for (int s = 0; s < nf; s++)
+        {
+            int R = factors[s];
+            rev += (idx % R) * (N / (rp * R));
+            idx /= R; rp *= R;
+        }
+        perm[n] = rev;
+    }
+    for (int n = 0; n < N; n++) iperm[perm[n]] = n;
+}
+static void _zr2c_perm_dif(const int *factors, int nf, int N, int *perm, int *iperm)
+{
+    for (int s = 0; s < N; s++)
+    {
+        int idx = s, rev = 0, rp = 1;
+        for (int k = nf - 1; k >= 0; k--)
+        {
+            int R = factors[k];
+            rev += (idx % R) * (N / (rp * R));
+            idx /= R; rp *= R;
+        }
+        iperm[s] = rev;
+    }
+    for (int s = 0; s < N; s++) perm[iperm[s]] = s;
+}
+
+/* ── PERM-AWARE variants (owner directive #2, 2026-08-13) ────────────────
+ * For halves >= 2048 the interior belongs to the CASCADE; its strongest form
+ * emits SCRAMBLED order. These folds consume/produce the scrambled slot
+ * layout directly — sequential PRIMARY stream over scratch slots, scattered
+ * mirror (exactly `_r2c_postprocess`'s access pattern) — killing BOTH the
+ * deinterleave and the ordering conversion. Contract: iperm[slot] = freq,
+ * perm[freq] = slot, mutually inverse; ANY such pair works (gated with a
+ * random permutation). v1 is SCALAR on purpose: scrambled orders break the
+ * natural folds' contiguous 4-bin blocks, and whether a gathered SIMD form
+ * pays is a RACE question, not an assumption — the natural-stfn + plain-fold
+ * arm is the vectorized competitor in the same pool.
+ *
+ * fwd: Zs (scrambled slots, interleaved) -> X (natural CCE).  NOT in-place
+ * (reads scattered mirrors after writes would collide across slot order).
+ * bwd: X (natural CCE) -> Zs_hat (scrambled slots, x2) for the cascade bwd,
+ * which consumes the same scrambled order its fwd emits.  NOT in-place. */
+static void _zr2c_fold_fwd_perm(const double *__restrict__ zs_in,
+                                double *__restrict__ X_out,
+                                const double *affS, const double *affC,
+                                const int *iperm, const int *perm,
+                                int N, size_t K, size_t zs, size_t xs)
+{
+    const int half = N / 2;
+    for (size_t t = 0; t < K; t++)
+    {
+        const double *z = zs_in + t * zs;
+        double *o = X_out + t * xs;
+        {   /* DC / Nyquist: frequency 0 lives at slot perm[0] */
+            int p0 = perm[0];
+            double z0r = z[2 * p0], z0i = z[2 * p0 + 1];
+            o[0] = z0r + z0i; o[1] = 0.0;
+            o[2 * half] = z0r - z0i; o[2 * half + 1] = 0.0;
+        }
+        for (int p = 0; p < half; p++)
+        {
+            int f = iperm[p];
+            if (f == 0) continue;
+            int m = half - f;
+            if (f > m) continue;                    /* partner already done */
+            double Ar = z[2 * p], Ai = z[2 * p + 1];
+            if (f == m) { o[2 * f] = Ar; o[2 * f + 1] = -Ai; continue; }
+            int q = perm[m];
+            double Br = z[2 * q], Bi = z[2 * q + 1];
+            double S = affS[f], C = affC[f];
+            double t1 = Ar - Br, t2 = Ai + Bi;
+            double xr = S * t1 + C * t2, xi = S * t2 - C * t1;
+            o[2 * f] = Br + xr; o[2 * f + 1] = xi - Bi;
+            o[2 * m] = Ar - xr; o[2 * m + 1] = xi - Ai;
+        }
+    }
+}
+
+static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
+                                double *__restrict__ zs_out,
+                                const double *affS, const double *affC,
+                                const int *iperm, const int *perm,
+                                int N, size_t K, size_t xs, size_t zs)
+{
+    const int half = N / 2;
+    for (size_t t = 0; t < K; t++)
+    {
+        const double *x = X_in + t * xs;
+        double *o = zs_out + t * zs;
+        {   /* DC/Nyquist -> slot perm[0] */
+            int p0 = perm[0];
+            double X0 = x[0], XN = x[2 * half];
+            o[2 * p0] = X0 + XN; o[2 * p0 + 1] = X0 - XN;
+        }
+        for (int p = 0; p < half; p++)
+        {
+            int f = iperm[p];
+            if (f == 0) continue;
+            int m = half - f;
+            if (f > m) continue;
+            if (f == m)
+            {
+                o[2 * p] = 2.0 * x[2 * f]; o[2 * p + 1] = -2.0 * x[2 * f + 1];
+                continue;
+            }
+            int q = perm[m];
+            double Fr = x[2 * f], Fi = x[2 * f + 1];
+            double Mr = x[2 * m], Mi = x[2 * m + 1];
+            double S = affS[f], C = affC[f];
+            double c = 2.0 * C, s = 1.0 - 2.0 * S;
+            double t1 = Fr - Mr, t2 = Fi + Mi;
+            double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
+            double Epr = Fr + Mr, Epi = Fi - Mi;
+            o[2 * p] = Epr - yr; o[2 * p + 1] = Epi + yi;
+            o[2 * q] = Epr + yr; o[2 * q + 1] = yi - Epi;
+        }
+    }
+}
+
 #endif /* VFFT_ZR2C_H */

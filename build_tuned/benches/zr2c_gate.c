@@ -132,6 +132,47 @@ static void run_cell(int N, size_t K)
             if (dr > w) w = dr; if (di > w) w = di; }
     judge("bwd fold IN-PLACE", N, K, w/(2.0*zm), 1e-12);
 
+    /* ── PERM-AWARE variants, gated with a RANDOM permutation (any mutually
+     * inverse iperm/perm must work — stronger than any specific chain) ── */
+    {
+        int *iperm = malloc(sizeof(int)*(size_t)half);
+        int *perm  = malloc(sizeof(int)*(size_t)half);
+        for (int i = 0; i < half; i++) iperm[i] = i;
+        for (int i = half - 1; i > 0; i--){        /* Fisher-Yates via lcg */
+            int j = (int)(lcg % (uint64_t)(i + 1)); rnd();
+            int tswp = iperm[i]; iperm[i] = iperm[j]; iperm[j] = tswp; }
+        for (int i = 0; i < half; i++) perm[iperm[i]] = i;
+        double *zscr = malloc(8*zs*K);
+        for (size_t t = 0; t < K; t++)
+            for (int p = 0; p < half; p++){
+                zscr[t*zs+2*p]   = z[t*zs+2*iperm[p]];
+                zscr[t*zs+2*p+1] = z[t*zs+2*iperm[p]+1]; }
+        memset(out, 0, 8*xs*K);
+        _zr2c_fold_fwd_perm(zscr, out, affS, affC, iperm, perm, N, K, zs, xs);
+        w = 0;
+        for (size_t t = 0; t < K; t++)
+            for (int f = 0; f <= half; f++){
+                double dr = fabs(out[t*xs+2*f]   - Xr[t*(size_t)(half+1)+f]);
+                double di = fabs(out[t*xs+2*f+1] - Xi[t*(size_t)(half+1)+f]);
+                if (dr > w) w = dr; if (di > w) w = di; }
+        judge("fwd fold PERM (random)", N, K, w/xm, 1e-12);
+        /* bwd: fold natural X -> scrambled slots; slot p must hold 2*z[iperm[p]] */
+        for (size_t t = 0; t < K; t++)
+            for (int f = 0; f <= half; f++){
+                io[t*xs+2*f]   = Xr[t*(size_t)(half+1)+f];
+                io[t*xs+2*f+1] = Xi[t*(size_t)(half+1)+f]; }
+        memset(zscr, 0, 8*zs*K);
+        _zr2c_fold_bwd_perm(io, zscr, affS, affC, iperm, perm, N, K, xs, zs);
+        w = 0;
+        for (size_t t = 0; t < K; t++)
+            for (int p = 0; p < half; p++){
+                double dr = fabs(zscr[t*zs+2*p]   - 2.0*z[t*zs+2*iperm[p]]);
+                double di = fabs(zscr[t*zs+2*p+1] - 2.0*z[t*zs+2*iperm[p]+1]);
+                if (dr > w) w = dr; if (di > w) w = di; }
+        judge("bwd fold PERM (random)", N, K, w/(2.0*zm), 1e-12);
+        free(iperm); free(perm); free(zscr);
+    }
+
     free(x); free(z); free(Xr); free(Xi); free(out); free(io);
     free(affS); free(affC);
 }
