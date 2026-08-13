@@ -93,10 +93,16 @@ int main(void)
     ok &= check(64,   8,  8, 0, 3, "R8  leaf");
     ok &= check(128,  8, 16, 0, 3, "R16 leaf");
     ok &= check(256, 16, 16, 0, 3, "R16 leaf");
+    ok &= check(512, 16, 32, 0, 3, "R32 leaf (blocked, TURN128)");
     /* both slots at once — the pure-tangent route */
     ok &= check(64,   8,  8, 3, 3, "R8  mid + R8  leaf");
     ok &= check(256, 16, 16, 3, 3, "R16 mid + R16 leaf");
     ok &= check(512, 32, 16, 3, 3, "R32 mid + R16 leaf");
+    ok &= check(512, 16, 32, 3, 3, "R16 mid + R32 leaf");
+    ok &= check(1024, 32, 32, 3, 3, "R32 mid + R32 leaf");
+    /* blocked R32 leaf carries NO odd tail: with an odd mid radix the
+     * count_ok gate must degrade the leaf to its default, still correct */
+    ok &= check(480, 15, 32, 0, 3, "R32 leaf, ODD R1 (degrades)");
     /* odd count: monolithic tangent forms carry the VEX-128 tail, so a
      * tangent mid must stay correct when R2 is odd */
     ok &= check(240, 16, 15, 3, 0, "R16 mid, ODD count");
