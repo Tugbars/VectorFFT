@@ -283,7 +283,7 @@ static void _r2c_postprocess(
     /* ABLATION (zero-instrument): skip the entire postprocess. The delta in
      * total runtime vs the real postprocess is its TRUE cost, no timers. */
     (void)z_re;(void)z_im;(void)out_re;(void)out_im;(void)tw_re;(void)tw_im;
-    (void)iperm;(void)perm;(void)half_N;(void)K;(void)B;(void)b0(void)zo;
+    (void)iperm;(void)perm;(void)half_N;(void)K;(void)B;(void)b0;(void)zo;
     return;
 #endif
     /* DC (f=0) and Nyquist (f=N/2).

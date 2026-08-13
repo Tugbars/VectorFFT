@@ -1,0 +1,218 @@
+/* zr2c.h — INTERLEAVED (z) real-transform folds: the D2 "MKL-mirror IL" route's
+ * two hand-written passes (docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md,
+ * Phase 0 verdict box 2026-08-13: arm e's shape, validated at MKL-recombine
+ * parity ±15%, −30…−59% vs the shipped K-axis fold).
+ *
+ * THE ROUTE (even N only; rfft keeps odd N — coverage is additive):
+ *   r2c fwd: x[N] ==reinterpret(0 work)==> z[N/2] interleaved
+ *            --(IL c2c(N/2) fwd, NATURAL order, in place or OOP)--> Z
+ *            --(_zr2c_fold_fwd)--> X[0..N/2] CCE interleaved (N+2 doubles)
+ *   c2r bwd: X ==(_zr2c_fold_bwd)==> Zhat[N/2] (scaled 2x)
+ *            --(IL c2c(N/2) bwd, unnormalized N/2)--> N * x pairs, reinterpret.
+ *
+ * LAW CHECK: both passes are z->z (no in_re/in_im anywhere) — clean under the
+ * hybrid ban; the interior is the existing IL c2c pool, zero new codelets.
+ *
+ * FREQUENCY-AXIS SIMD (AVX2): 4 ascending bins + the 4 REVERSED mirror bins per
+ * iteration; table is the affine pre-biased HALVED pair-table, FULLY SPLIT
+ * (plain loads, zero table shuffles); every sign lives in an opcode (zero xor).
+ *   S~[f] = 1/2 - 1/2 sin(2*pi*f/N),   C~[f] = 1/2 cos(2*pi*f/N),  f = 0..N/4
+ * Per pair (f, m=N/2-f), A=Z[f], B=Z[m]:
+ *   t1 = Ar-Br   t2 = Ai+Bi
+ *   xr = S~*t1 + C~*t2          xi = S~*t2 - C~*t1
+ *   X[f] = (Br+xr, xi-Bi)       X[m] = (Ar-xr, xi-Ai)
+ * DC/Nyquist: X[0] = Zr0+Zi0, X[N/2] = Zr0-Zi0, imag parts LITERAL +0.0
+ * (structural zeros written; the backward never reads them).
+ * Center (half even, f=half/2): X[f] = conj(Z[f]).
+ *
+ * BACKWARD (derived from the exact inverse, includes the x2 so that
+ * c2c_bwd(N/2) lands on the library-wide bwd(fwd(x)) = N*x convention;
+ * c = 2*C~, s = 1-2*S~ are derived IN-LOOP — one shared table, no bwd table):
+ *   t1 = Fr-Mr   t2 = Fi+Mi     (F=X[f], M=X[m])
+ *   yr = c*t2 + s*t1            yi = c*t1 - s*t2
+ *   Zhat[f] = (Fr+Mr-yr, Fi-Mi+yi)   Zhat[m] = (Fr+Mr+yr, yi-Fi+Mi)
+ *   DC/Nyq: Zhat[0] = (X0+XN, X0-XN). Center: Zhat[f] = (2*Xr, -2*Xi).
+ *
+ * IN-PLACE SAFE by construction: each pair is fully read before either bin is
+ * written; DC/Nyquist writes only touch bin 0 and the N/2 pad slot. The same
+ * function serves OOP and in-place (X == z requires the caller's plane to
+ * carry the 2*(N/2+1)-double padding — the CONCLUSIONS §2.3 contract).
+ *
+ * BATCH: transform-contiguous. Per transform t the input plane is
+ * z + t*zs (zs >= N doubles) and the output plane X + t*xs (xs >= N+2).
+ * The frequency-axis SIMD is per-transform, so K=1 runs FULL vector width —
+ * the G1 (K=1 scalar) disease of the K-axis codelets does not exist here.
+ */
+#ifndef VFFT_ZR2C_H
+#define VFFT_ZR2C_H
+
+#include <stddef.h>
+#include <math.h>
+#if defined(__AVX2__) || defined(__AVX512F__)
+#include <immintrin.h>
+#endif
+
+#ifndef VFFT_ZR2C_PI
+#define VFFT_ZR2C_PI 3.14159265358979323846
+#endif
+
+/* Affine pair-table, N/4+1 entries each (f = 0..N/4 inclusive covers every
+ * pair index for any even N; entry 0 is never read — kept for direct
+ * indexing). ~4N bytes total, half of a plain (cos,sin)-over-N/2 table. */
+static void _zr2c_init_aff(int N, double *affS, double *affC)
+{
+    int top = N / 4;
+    for (int f = 0; f <= top; f++)
+    {
+        double th = 2.0 * VFFT_ZR2C_PI * (double)f / (double)N;
+        affS[f] = 0.5 - 0.5 * sin(th);
+        affC[f] = 0.5 * cos(th);
+    }
+}
+
+/* forward fold: Z (N/2 complex, natural, interleaved) -> X (CCE, N/2+1
+ * complex, interleaved). X may alias Z (in-place; needs the padded plane). */
+static void _zr2c_fold_fwd(const double *__restrict__ z_in,
+                           double *__restrict__ X_out,
+                           const double *affS, const double *affC,
+                           int N, size_t K, size_t zs, size_t xs)
+{
+    const int half = N / 2;
+    for (size_t t = 0; t < K; t++)
+    {
+        const double *z = z_in + t * zs;
+        double *o = X_out + t * xs;
+        double z0r = z[0], z0i = z[1];
+        int f = 1;
+#if defined(__AVX2__)
+        for (; 2 * (f + 3) < half; f += 4)
+        {
+            int m3 = half - f - 3;
+            __m256d a0 = _mm256_loadu_pd(z + 2 * f);
+            __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
+            __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
+            __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
+            __m256d Ar = _mm256_unpacklo_pd(t0, t1), Ai = _mm256_unpackhi_pd(t0, t1);
+            __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
+            __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
+            __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
+            __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
+            __m256d Br = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
+            __m256d Bi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
+            __m256d S = _mm256_loadu_pd(affS + f);
+            __m256d C = _mm256_loadu_pd(affC + f);
+            __m256d t1v = _mm256_sub_pd(Ar, Br), t2v = _mm256_add_pd(Ai, Bi);
+            __m256d xr = _mm256_fmadd_pd(S, t1v, _mm256_mul_pd(C, t2v));
+            __m256d xi = _mm256_fmsub_pd(S, t2v, _mm256_mul_pd(C, t1v));
+            __m256d Xfr = _mm256_add_pd(Br, xr), Xfi = _mm256_sub_pd(xi, Bi);
+            __m256d Xmr = _mm256_sub_pd(Ar, xr), Xmi = _mm256_sub_pd(xi, Ai);
+            __m256d lo = _mm256_unpacklo_pd(Xfr, Xfi), hi = _mm256_unpackhi_pd(Xfr, Xfi);
+            _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
+            _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+            __m256d Rr = _mm256_permute4x64_pd(Xmr, 0x1B);
+            __m256d Ri = _mm256_permute4x64_pd(Xmi, 0x1B);
+            __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
+            _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
+            _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+        }
+#endif
+        for (; 2 * f < half; f++)
+        {
+            int m = half - f;
+            double Ar = z[2 * f], Ai = z[2 * f + 1];
+            double Br = z[2 * m], Bi = z[2 * m + 1];
+            double S = affS[f], C = affC[f];
+            double t1 = Ar - Br, t2 = Ai + Bi;
+            double xr = S * t1 + C * t2, xi = S * t2 - C * t1;
+            o[2 * f] = Br + xr; o[2 * f + 1] = xi - Bi;
+            o[2 * m] = Ar - xr; o[2 * m + 1] = xi - Ai;
+        }
+        if ((half & 1) == 0)
+        { /* center bin: X = conj(Z) */
+            int cb = half / 2;
+            double cr = z[2 * cb], cim = z[2 * cb + 1];
+            o[2 * cb] = cr; o[2 * cb + 1] = -cim;
+        }
+        /* DC / Nyquist last (in-place: z[0..1] were saved up front) */
+        o[0] = z0r + z0i; o[1] = 0.0;
+        o[2 * half] = z0r - z0i; o[2 * half + 1] = 0.0;
+    }
+}
+
+/* backward fold: X (CCE, N/2+1 complex) -> Zhat (N/2 complex, natural),
+ * scaled 2x so IL c2c_bwd(N/2) (unnormalized, x N/2) lands on N*x.
+ * Zhat may alias X (in-place). X[0].im / X[N/2].im are never read. */
+static void _zr2c_fold_bwd(const double *__restrict__ X_in,
+                           double *__restrict__ z_out,
+                           const double *affS, const double *affC,
+                           int N, size_t K, size_t xs, size_t zs)
+{
+    const int half = N / 2;
+    for (size_t t = 0; t < K; t++)
+    {
+        const double *x = X_in + t * xs;
+        double *o = z_out + t * zs;
+        double X0 = x[0], XN = x[2 * half];
+        int f = 1;
+#if defined(__AVX2__)
+        {
+            const __m256d one = _mm256_set1_pd(1.0), two = _mm256_set1_pd(2.0);
+            for (; 2 * (f + 3) < half; f += 4)
+            {
+                int m3 = half - f - 3;
+                __m256d a0 = _mm256_loadu_pd(x + 2 * f);
+                __m256d a1 = _mm256_loadu_pd(x + 2 * f + 4);
+                __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
+                __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
+                __m256d Fr = _mm256_unpacklo_pd(t0, t1), Fi = _mm256_unpackhi_pd(t0, t1);
+                __m256d b0 = _mm256_loadu_pd(x + 2 * m3);
+                __m256d b1 = _mm256_loadu_pd(x + 2 * m3 + 4);
+                __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
+                __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
+                __m256d Mr = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
+                __m256d Mi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
+                __m256d S = _mm256_loadu_pd(affS + f);
+                __m256d C = _mm256_loadu_pd(affC + f);
+                __m256d c = _mm256_mul_pd(two, C);                    /* 2*C~      */
+                __m256d s = _mm256_fnmadd_pd(two, S, one);            /* 1 - 2*S~  */
+                __m256d t1v = _mm256_sub_pd(Fr, Mr), t2v = _mm256_add_pd(Fi, Mi);
+                __m256d yr = _mm256_fmadd_pd(c, t2v, _mm256_mul_pd(s, t1v));
+                __m256d yi = _mm256_fmsub_pd(c, t1v, _mm256_mul_pd(s, t2v));
+                __m256d Epr = _mm256_add_pd(Fr, Mr), Epi = _mm256_sub_pd(Fi, Mi);
+                __m256d Zfr = _mm256_sub_pd(Epr, yr), Zfi = _mm256_add_pd(Epi, yi);
+                __m256d Zmr = _mm256_add_pd(Epr, yr), Zmi = _mm256_sub_pd(yi, Epi);
+                __m256d lo = _mm256_unpacklo_pd(Zfr, Zfi), hi = _mm256_unpackhi_pd(Zfr, Zfi);
+                _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
+                _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+                __m256d Rr = _mm256_permute4x64_pd(Zmr, 0x1B);
+                __m256d Ri = _mm256_permute4x64_pd(Zmi, 0x1B);
+                __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
+                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
+                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+            }
+        }
+#endif
+        for (; 2 * f < half; f++)
+        {
+            int m = half - f;
+            double Fr = x[2 * f], Fi = x[2 * f + 1];
+            double Mr = x[2 * m], Mi = x[2 * m + 1];
+            double S = affS[f], C = affC[f];
+            double c = 2.0 * C, s = 1.0 - 2.0 * S;
+            double t1 = Fr - Mr, t2 = Fi + Mi;
+            double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
+            double Epr = Fr + Mr, Epi = Fi - Mi;
+            o[2 * f] = Epr - yr; o[2 * f + 1] = Epi + yi;
+            o[2 * m] = Epr + yr; o[2 * m + 1] = yi - Epi;
+        }
+        if ((half & 1) == 0)
+        { /* center: Zhat = 2*conj(X) */
+            int cb = half / 2;
+            double cr = x[2 * cb], cim = x[2 * cb + 1];
+            o[2 * cb] = 2.0 * cr; o[2 * cb + 1] = -2.0 * cim;
+        }
+        o[0] = X0 + XN; o[1] = X0 - XN;   /* DC/Nyq (pads saved up front) */
+    }
+}
+
+#endif /* VFFT_ZR2C_H */
