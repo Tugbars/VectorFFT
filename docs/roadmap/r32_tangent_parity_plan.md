@@ -1,7 +1,47 @@
 # R32 tangent parity plan — the 512 frontier
 
-**Status:** A-0 EXECUTED 2026-08-13 — hand wins, **A-1 opens, scoped to the LEAF
-first** (see the A-0 result box below). Plan below otherwise as proposed.
+**Status:** A-0 + A-1 EXECUTED 2026-08-13 — **the emitted pool now ties the
+hand champion.** Remaining: A-4 (promote + wire + dp re-race + canonical
+verdict). Result boxes below; plan text otherwise as proposed.
+
+> ## ✅ A-1 RESULT (2026-08-13, same day): EMITTED = HAND, parity in one arc
+>
+> The `w32tg_gen.py` read collapsed the translation plan: the hand R32 is the
+> SAME blocked-2.16 shape as the emitted kernel, and its halves ARE our R16
+> wing. Three knob-gated emitter increments closed the rest, all OFF-verified
+> byte-identical (8/8 regen diffs, incl. classic t2b which exercises the
+> edited m=2 arm):
+>
+> 1. **`VFFT_CX_W32TG`** (`cx_math.butterfly_pair_w32`) — pass-B combine with
+>    the angle canonicalized to `k mod 8` (ulp-twins GONE: 23 → 13 literals,
+>    each angle once) and the −i of mirror sites COMPOSED as a rotation node.
+> 2. **`VFFT_CX_ROTFMA`** (`cx_render`) — CAdd/CSub/CFmaC/CFnmaC over a
+>    CRotNI child render as sign-folded `fmadd(w_s, cflip y, acc)` — the hand
+>    `[c,−c]`·flip idiom, bit-exact, zero xors in pass B.
+> 3. **`VFFT_CX_TURN128`** (`codelet_cil` blocked turned store) — per-output
+>    split-128 CLo/CHi stores, no pass-pairing, **no permute2f128**
+>    (port-5-only!), lazy-store legal, even-p restriction lifted.
+>
+> Emitted `radix32_z_n1tbw32` (leaf: 0 permutes, 64×128-bit stores — the hand
+> census exactly) and `radix32_z_t2bw32` (mid). Race (3 runs, controls
+> ≤0.08%, mingw-15.2 recipe, gates all 5.7e-13):
+>
+> - **I = n1tbw32 + t2tan (32,16): floors 301.5–305.4 ns — PARITY with hand
+>   F** (I−F = +0.13 / −0.61 / +1.30%, win counts oscillate) and
+>   **−3.4…−7.6% vs the old emitted pool** (32–34/35).
+> - **J = n1ttan + t2bw32 (16,32): wing32 MID beats t2btan216 by
+>   −3.3…−5.5%** (31–33/35) — the mid upgrade alone nearly closes the shape
+>   gap.
+> - **Killed-leaf postmortem:** the old R32 tangent leaf's +32.4% was the
+>   PAIRED permute2f128 store edge, not the tangent interior.
+>
+> Artifacts: `build_tuned/benches/tangent_hand/` (kernels + `fft512_a0.c`);
+> emit recipes in the session's `a1_emit.sh` (OFF-gate compares code bodies
+> CR-stripped — shipped tangent files carry CRLF + one mojibake'd header).
+> **NEXT = A-4:** fact-sheet headers, promote into `pure_il/tangent/` +
+> `emit_ship.sh`, il_kv wiring (BOTH slot lists), `calibrate_k1` re-race on a
+> wisdir COPY (rebuild writers first), canonical-bench verdict; pool-sunset
+> review for `t2btan216` per slot.
 
 > ## ✅ A-0 RESULT (2026-08-13, 6 clean runs, controls ≤0.10%)
 >

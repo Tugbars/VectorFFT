@@ -16,7 +16,7 @@ open Cx_ir
  * multiply (this is the arithmetic the hand emitter established and the
  * race oracle verified):
  *     k=0        -> plain butterfly
- *     4k=n       -> Ã-(-i)          : CRotNI (shuffle+xor, no multiply)
+ *     4k=n       -> ï¿½-(-i)          : CRotNI (shuffle+xor, no multiply)
  *     8k=n       -> (1-i)/âˆš2       : fold âˆšÂ½ into the butterfly via FMA
  *     8k=3n      -> -(1+i)/âˆš2      : same fold, mirrored
  *     otherwise  -> general constant twiddle (BYTW2 with VLIT constants)
@@ -24,7 +24,7 @@ open Cx_ir
 
 let sqh = 0.70710678118654752440
 
-(* â-€â-€ TANGENT-INTERIOR VARIANT â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€â-€
+(* ï¿½-ï¿½ï¿½-ï¿½ TANGENT-INTERIOR VARIANT ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½ï¿½-ï¿½
    docs/roadmap/tangent_emitter_plan.md + docs/performance/
    tangent_scaled_butterflies.md. Default OFF: with the ref false, every
    arm below is byte-identical to the shipped emitter, so the 183-case
@@ -40,8 +40,8 @@ let sqh = 0.70710678118654752440
    are promoted to the FMA ports and the standalone rotation multiply
    disappears. The k=0 / Â±i / âˆšÂ½ arms are already in this form and are
    shared verbatim by both variants.
-   Measured (hand proof kernels, 2026-08-11, paired Â±0.3%): R16 mid âˆ'25%,
-   R16 leaf âˆ'17%, pure-tangent N=256 âˆ'20â€¦âˆ'24%, N=512 âˆ'14â€¦âˆ'17%.
+   Measured (hand proof kernels, 2026-08-11, paired Â±0.3%): R16 mid ï¿½'25%,
+   R16 leaf ï¿½'17%, pure-tangent N=256 ï¿½'20â€¦ï¿½'24%, N=512 ï¿½'14â€¦ï¿½'17%.
    âš  L1-conditional: at N=1024 the HAND kernels invert (+16%) - the win is
    scoped â‰¤512-class until blocked-tangent forms are raced. *)
 let tangent =
@@ -139,6 +139,50 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     and s = sgn *. sin (2.0 *. pi *. float_of_int k /. float_of_int n) in
     let t = ctw c s ok in
     cadd ek t, csub ek t)
+;;
+
+(* â”€â”€ W32 WING COMBINE (VFFT_CX_W32TG=1, FWD only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+   Pass-B site of the HAND w32tg/w32tgL kernels, per the A-0 verdict
+   (docs/roadmap/r32_tangent_parity_plan.md): the blocked m=2 combine at
+   radix 32 with the angle CANONICALIZED to oe = k mod 8, so mirror sites
+   (k > 8) share the k-8 constants EXACTLY (kills the ulp-twin table
+   entries) and the -i relating them is a composed rotation node that the
+   ROTFMA render fold turns into a sign-folded fmadd ([c,-c]Â·cflip â€” the
+   hand kernel's idiom, zero xors in pass B). oe = 4 uses exact (1, âˆšÂ½).
+   Default OFF: without the knob the blocked combine keeps butterfly_pair
+   and every existing emission is byte-identical. *)
+let w32_combine =
+  ref (Sys.getenv_opt "VFFT_CX_W32TG" = Some "1")
+;;
+
+let butterfly_pair_w32 ~(k : int) (ek : t) (ok : t) : t * t =
+  let pi = 4.0 *. atan 1.0 in
+  if k = 0
+  then cadd ek ok, csub ek ok
+  else if k = 8
+  then (
+    (* W32^8 = -i : rotation composed into the butterfly (ROTFMA folds
+       both consumers to fmadd/fnmadd([1,-1]Â·cflip) â€” 3 uops, no xor). *)
+    let r = crot ok in
+    cadd ek r, csub ek r)
+  else (
+    let oe = k land 7 in
+    let tn, c =
+      if oe = 4
+      then 1.0, sqh
+      else (
+        let th = pi *. float_of_int oe /. 16.0 in
+        tan th, cos th)
+    in
+    (* fwd shear at the CANONICAL angle: e^{-iÎ¸} = cosÎ¸Â·(1 - iÂ·tanÎ¸) *)
+    let sh = ctw 1.0 (-.tn) ok in
+    if k < 8
+    then cfma c sh ek, cfnma c sh ek
+    else (
+      (* W32^k = -iÂ·W32^{k-8}: same shear, rotation composed; ROTFMA
+         renders the pair as fmadd/fnmadd([c,-c]Â·cflip sh) + e. *)
+      let r = crot sh in
+      cfma c r ek, cfnma c r ek))
 ;;
 
 (* Unwrap a fully-assigned output array. The Option is not decoration: the

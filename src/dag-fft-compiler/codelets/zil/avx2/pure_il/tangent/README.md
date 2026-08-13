@@ -28,7 +28,9 @@ classic form that ships today, on hardware, under the banked paired protocol
 | `radix8_z_n1ttan_avx2.c` | R8 leaf (n1t) | **bit-identical** | **−3.9%** (26.5 vs 27.7 ns, 5 runs) |
 | `radix16_z_t2tan_avx2.c` | R16 mid (t2) | 1.5e-13 | **−25%** vs `t2b44`; **parity with the hand-built kernel** (5/5 runs) |
 | `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | 5.7e-14 | **−19.8%** vs `n1tb44` (57.7 vs 71.9 ns, 32/35, ctrl −0.03%) |
-| `radix32_z_t2btan216_avx2.c` | R32 mid, blocked 2.16 | 2.9e-13 | **−3.2…−3.6%** vs `t2b48` (3/3 runs, ctrl ≤0.09%) |
+| `radix32_z_t2bw32_avx2.c` | R32 mid, blocked 2.16 **wing32** | 5.7e-13 (DFT-512 e2e) | **−3.3…−5.5%** vs `t2btan216` in-route (3 runs, ctrl ≤0.08%) — supersedes it |
+| `radix32_z_n1tbw32_avx2.c` | R32 **LEAF**, blocked 2.16 **wing32**, TURNED-128 store | 5.7e-13 (DFT-512 e2e) | route (32,16) = **parity with the hand w32tgL champion** (301.5–305.4 ns @512, ±1.3%, 3 runs) |
+| `radix32_z_t2btan216_avx2.c` | 🔴 SUPERSEDED by `t2bw32` (banner in file) | 2.9e-13 | −3.2…−3.6% vs `t2b48` — pending pool-sunset delete |
 
 **Radix 8 is the free case.** It has no general-twiddle sites — every angle is
 a quarter turn or the π/4 class — so the construction reduces to one rewrite at
@@ -93,7 +95,7 @@ deleted on purpose; re-deriving them wastes a session.
 
 | variant | why it is gone |
 |---|---|
-| R32 leaf, tangent blocked 2.16 | **+32.4% SLOWER** than classic `n1tb48` (240.1 vs 182.0 ns, 3/35 wins). Note its static census predicted a *win* (LP bound 88.7 vs 116.5) — hardware disagreed by a third. Static bounds do not decide this. |
+| R32 leaf, tangent blocked 2.16 (PAIRED-PERMUTE edge) | **+32.4% SLOWER** than classic `n1tb48` (240.1 vs 182.0 ns, 3/35 wins). Static census predicted a *win* — hardware disagreed by a third. **POSTMORTEM 2026-08-13: the tax was the store EDGE, not the interior** — 32 `permute2f128` (port-5-only) from the paired corner-turn. `radix32_z_n1tbw32` re-ships the slot with the TURNED-128 split-store edge and ties the hand champion. The kill stands for the *paired-edge* form only. |
 | R16 mid/leaf, blocked 2.8 | No slot: R16 mono already fits the register file and reached hand parity, so the blocked shape has nothing to buy. Unraced, no consumer — deleted rather than left to confuse a grep. |
 | R16 mid, backward | Feature coverage only, and incomplete: there is no backward *leaf*, so it cannot form a backward route. Regenerate as a pair when the backward arc is actually built. |
 
@@ -158,3 +160,12 @@ machine-translated R16 wing construction), `VFFT_CX_LAZYLOAD=1` /
 lets gcc keep the loop-invariant constants in registers), and
 `VFFT_CX_SCHED=asis|cpl|cpl2` (scheduler; `asis` preserves the wing's origin
 order and is what the R16 parity result used).
+
+wing32 additions (2026-08-13, A-1 — `docs/roadmap/r32_tangent_parity_plan.md`):
+`VFFT_CX_W32TG=1` (radix-32 fwd pass-B combine with CANONICAL angles — kills
+the ulp-twin constant table, 23 → 13 literals), `VFFT_CX_ROTFMA=1` (render
+fold: butterflies over a −i rotation emit sign-folded `[c,−c]·cflip` FMAs —
+bit-exact, zero xors), `VFFT_CX_TURN128=1` (blocked N1T corner-turn as
+per-output split 128-bit stores — no `permute2f128`, lazy-store legal, no
+even-p restriction). All three OFF-verified byte-identical on the whole
+shipped set (8/8, incl. classic `t2b` which runs the edited m=2 arm).

@@ -867,9 +867,13 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * forms: it measured faster than the classic sibling in
                      * isolation, but "faster kernel" is not "faster plan", so
                      * the cell decides. R8/R16 tangent forms are monolithic
-                     * (odd counts legal); the R32 tangent mid is blocked, so
-                     * it is admitted only for even R2. The R32 tangent LEAF is
-                     * deliberately absent — it lost its race (+32%). */
+                     * (odd counts legal); BOTH R32 tangent forms are blocked
+                     * (wing32, 2026-08-13) and admitted only for even
+                     * partner counts. The R32 tangent LEAF is BACK: the old
+                     * +32.4% kill was the paired permute2f128 store edge —
+                     * n1tbw32's TURNED-128 edge fixed it and the (32,16)
+                     * route ties the hand champion (A-1,
+                     * docs/roadmap/r32_tangent_parity_plan.md). */
                     int msv[3], lsv[4], nm = 0, nl = 0, dm, dl;
                     if (R1 == 32 && (R2 & 1) == 0)
                     { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3; }
@@ -881,7 +885,7 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     { dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
                     else { dm = 0; msv[nm++] = 0; }
                     if (R2 == 32 && (R1 & 1) == 0)
-                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; }
+                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3; }
                     else if (R2 == 16 && (R1 & 1) == 0)
                     {   /* R=16 leaf: the blocked candidate is the raced
                          * winner (variant 1 = 4·4; see il2p.h for the 24-arm

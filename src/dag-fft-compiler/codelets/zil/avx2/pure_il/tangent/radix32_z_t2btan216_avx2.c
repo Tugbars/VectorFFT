@@ -1,3 +1,8 @@
+/* 🔴🔴 SUPERSEDED 2026-08-13 by radix32_z_t2bw32_avx2.c (wing32 combine +
+ * ROTFMA: -3.3..-5.5% in both shapes, fft512_a0, 3 runs, ctrl <=0.08%).
+ * il2p.h variant 3 now returns the wing32 symbol. File retained pending the
+ * calibrate_k1 re-race per pool-sunset policy; DELETE once the banked rows
+ * confirm. Do not wire, do not race against, do not regenerate. */
 /* radix32_z_t2btan216_fwd_avx2
  * radix-32 Bailey stage-2 mid, tangent interior, blocked (split 2.16)
  *
