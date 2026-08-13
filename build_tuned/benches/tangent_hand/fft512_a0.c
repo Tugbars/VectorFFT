@@ -60,6 +60,12 @@ void radix16_z_n1ttan_fwd_avx2(const double*,const double*,double*,double*,
     const double*,const double*,size_t,size_t,size_t,size_t,size_t);
 void radix32_z_t2btan216_fwd_avx2(const double*,const double*,double*,double*,
     const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void radix16_z_t2tan_fwd_avx2(const double*,const double*,double*,double*,
+    const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void radix32_z_n1tbw32_fwd_avx2(const double*,const double*,double*,double*,
+    const double*,const double*,size_t,size_t,size_t,size_t,size_t);
+void radix32_z_t2bw32_fwd_avx2(const double*,const double*,double*,double*,
+    const double*,const double*,size_t,size_t,size_t,size_t,size_t);
 
 typedef double _Complex cx;
 static const double PI = 3.14159265358979323846;
@@ -88,6 +94,13 @@ static void gen16_theirs(double *T,int kc){
             r[col*2]=creal(d);r[col*2+1]=creal(d);
             r[4+col*2]=cimag(d);r[4+col*2+1]=-cimag(d);} }
 }
+static void gen16_ours(double *T,int kc){
+    for(int l=1;l<16;l++){double*r=T+(l-1)*8;
+        for(int col=0;col<2;col++){int kk=kc+col;
+            cx d=cexp(-2.0*PI*I*(double)l*kk/512.0);
+            r[col*2]=creal(d);r[col*2+1]=creal(d);
+            r[4+col*2]=-cimag(d);r[4+col*2+1]=cimag(d);} }
+}
 
 static uint64_t lcg=0x9E3779B97F4A7C15ull;
 static double rnd(void){lcg=lcg*6364136223846793005ull+1442695040888963407ull;
@@ -101,10 +114,10 @@ static int cmp_d(const void*a,const void*b){double x=*(const double*)a,y=*(const
 #define BLOCK 1024
 #define ROUNDS 35
 #define PACE_MS 200
-#define NLANE 7           /* A E F G H1 H2 Actrl */
+#define NLANE 6           /* A F G I J Actrl */
 
 static double *S;
-static double *X,*Y,*Tm32,*Tf32,*Tf16,*Tdum;
+static double *X,*Y,*Tm32,*Tf32,*Td16,*Tf16,*Tdum;
 
 /* (16,32): leaf16 32 cols -> S (corner-turn, OLs=16); mid32 over 16 cols */
 static void route_A(void){  /* classic */
@@ -135,14 +148,26 @@ static void route_H2(void){
     radix16_z_w16tgL_fwd_avx2    (X,0,S,0,Tdum,0,32,0,16,0,32);
     radix32_z_t2btan216_fwd_avx2 (S,0,Y,0,Tm32,0,16,0,16,0,16);
 }
+/* A-1 lanes: the emitted wing32 kernels in both shapes.
+ * I = full-emitted (32,16): wing32 LEAF (split-128 turned store) + shipped
+ *     t2tan mid16 ("ours" fold table) — the emitted answer to hand route F.
+ * J = (16,32): shipped n1ttan leaf + wing32 MID — isolates the mid upgrade
+ *     vs G (t2btan216). */
+static void route_I(void){
+    radix32_z_n1tbw32_fwd_avx2(X,0,S,0,Tdum,0,16,0,32,0,16);
+    radix16_z_t2tan_fwd_avx2  (S,0,Y,0,Td16,0,32,0,32,0,32);
+}
+static void route_J(void){
+    radix16_z_n1ttan_fwd_avx2 (X,0,S,0,Tdum,0,32,0,16,0,32);
+    radix32_z_t2bw32_fwd_avx2 (S,0,Y,0,Tm32,0,16,0,16,0,16);
+}
 static void run_lane(int arm){
     switch(arm){
-        case 0: case 6: route_A(); break;
-        case 1: route_E(); break;
-        case 2: route_F(); break;
-        case 3: route_G(); break;
-        case 4: route_H1(); break;
-        default: route_H2(); break;
+        case 0: case 5: route_A(); break;
+        case 1: route_F(); break;
+        case 2: route_G(); break;
+        case 3: route_I(); break;
+        default: route_J(); break;
     }
 }
 
@@ -165,14 +190,15 @@ int main(void){
     Y    = S    + 1024 + 8;
     Tm32 = Y    + 1024 + 8;          /* 8*248  = 1984 */
     Tf32 = Tm32 + 1984 + 8;
-    /* spacer = the original harness's Td16 slot (16*120 = 1920 dbl), kept so
-       Tf16/Tdum land at the SAME arena offsets as the 08-11 fft512_full binary
+    /* Td16 occupies the original harness's slot (16*120 = 1920 dbl) so
+       Tf16/Tdum keep the SAME arena offsets as the 08-11 fft512_full binary
        — the 4KB-alias lottery must not differ between the two harnesses. */
-    Tf16 = Tf32 + 1984 + 8 + 1920 + 8;
+    Td16 = Tf32 + 1984 + 8;          /* "ours" fold, for the t2tan mid16 */
+    Tf16 = Td16 + 1920 + 8;
     Tdum = Tf16 + 1920 + 8;
     for(int i=0;i<1024;i++) X[i]=rnd();
     for(int g=0;g<8;g++){ gen32_ours(Tm32+g*248,2*g); gen32_theirs(Tf32+g*248,2*g); }
-    for(int g=0;g<16;g++){ gen16_theirs(Tf16+g*120,2*g); }
+    for(int g=0;g<16;g++){ gen16_ours(Td16+g*120,2*g); gen16_theirs(Tf16+g*120,2*g); }
     memset(Tdum,0,64);
 
     /* gate every raced arm vs direct DFT-512 */
@@ -181,18 +207,17 @@ int main(void){
     for(int j=0;j<512;j++){ cx s=0;
         for(int nn=0;nn<512;nn++){ cx xv=X[2*nn]+I*X[2*nn+1];
             s+=w[(size_t)j*nn%512]*xv; } ref[j]=s; }
-    const char*nm[6]={"A  n1tb44+t2b     classic (16,32)",
-                      "E  w16tgL+w32tg   HAND tg (16,32)",
+    const char*nm[5]={"A  n1tb44+t2b     classic (16,32)",
                       "F  w32tgL+w16tg   HAND tg (32,16)",
-                      "G  n1ttan+t2btan  EMITTED tg (16,32)",
-                      "H1 n1ttan+w32tg   emL+handM (16,32)",
-                      "H2 w16tgL+t2btan  handL+emM (16,32)"};
-    for(int a=0;a<6;a++){
-        run_lane(a);                 /* lanes 0..5 = A E F G H1 H2 */
+                      "G  n1ttan+t2btan  EMITTED-old (16,32)",
+                      "I  n1tbw32+t2tan  EMITTED-NEW (32,16)",
+                      "J  n1ttan+t2bw32  EMITTED-NEW mid (16,32)"};
+    for(int a=0;a<5;a++){
+        run_lane(a);                 /* lanes 0..4 = A F G I J */
         double e=0;
         for(int j=0;j<512;j++){ cx g=Y[2*j]+I*Y[2*j+1];
             double d=cabs(g-ref[j]); if(d>e)e=d; }
-        printf("gate %-36s %.3e %s\n",nm[a],e,e<1e-9?"OK":"FAIL");
+        printf("gate %-40s %.3e %s\n",nm[a],e,e<1e-9?"OK":"FAIL");
         if(e>=1e-9) return 1;
     }
 
@@ -210,13 +235,13 @@ int main(void){
     }
     double fl[NLANE]; for(int i=0;i<NLANE;i++){fl[i]=1e30;
         for(int r=0;r<ROUNDS;r++) if(sm[i][r]<fl[i]) fl[i]=sm[i][r];}
-    printf("\nN=512 A-0 hand-vs-emitted, block=%d rounds=%d core2 HIGH\n",BLOCK,ROUNDS);
-    printf("floors(ns): A %.1f  E %.1f  F %.1f  G %.1f  H1 %.1f  H2 %.1f  ctrl %.1f\n",
-           fl[0],fl[1],fl[2],fl[3],fl[4],fl[5],fl[6]);
+    printf("\nN=512 A-1 emitted-wing32, block=%d rounds=%d core2 HIGH\n",BLOCK,ROUNDS);
+    printf("floors(ns): A %.1f  F %.1f  G %.1f  I %.1f  J %.1f  ctrl %.1f\n",
+           fl[0],fl[1],fl[2],fl[3],fl[4],fl[5]);
     double mA; { double*t=malloc(ROUNDS*sizeof(double)); memcpy(t,sm[0],ROUNDS*sizeof(double));
         qsort(t,ROUNDS,sizeof(double),cmp_d); mA=t[ROUNDS/2]; free(t); }
-    const char*lbl[NLANE]={"A","E hand(16,32)","F hand(32,16)","G EMITTED",
-                           "H1 emL+handM","H2 handL+emM","ctrl"};
+    const char*lbl[NLANE]={"A","F hand(32,16)","G emitted-old",
+                           "I EMIT(32,16)","J EMIT mid","ctrl"};
     for(int i=1;i<NLANE;i++){
         double d[ROUNDS]; int wn=0;
         for(int r=0;r<ROUNDS;r++){ d[r]=sm[i][r]-sm[0][r]; if(d[r]<0)wn++; }
@@ -225,12 +250,11 @@ int main(void){
                lbl[i],d[ROUNDS/2],d[ROUNDS/2]/mA*100,wn,ROUNDS);
     }
     /* decision contrasts, paired directly (first arm minus second) */
-    struct { int a,b; const char*t; } dc[4]={
-        {3,1,"G-E   emitted vs hand, SAME shape "},
-        {3,2,"G-F   emitted vs hand champion    "},
-        {4,1,"H1-E  LEAF slot: emitted vs hand  "},
-        {5,1,"H2-E  MID  slot: emitted vs hand  "}};
-    for(int k=0;k<4;k++){
+    struct { int a,b; const char*t; } dc[3]={
+        {3,1,"I-F  EMITTED(32,16) vs HAND champion"},
+        {3,2,"I-G  new emitted vs old emitted     "},
+        {4,2,"J-G  wing32 MID vs t2btan216        "}};
+    for(int k=0;k<3;k++){
         double d[ROUNDS]; int wn=0;
         for(int r=0;r<ROUNDS;r++){ d[r]=sm[dc[k].a][r]-sm[dc[k].b][r]; if(d[r]<0)wn++; }
         qsort(d,ROUNDS,sizeof(double),cmp_d);

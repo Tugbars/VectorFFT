@@ -428,14 +428,28 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
     let pass2_math ~(jv : int) (ins : t array) : t array =
       let o =
         if m = 2
-        then (
-          (* m=2 is a single top-level butterfly, so use the CLASS-aware
-             form: it turns W^{R/4} into a free rotation and folds the
-             W^{R/8} pair into FMAs, which a general complex multiply
-             would not. Keeps the blocked output bit-identical to the
-             monolithic one. *)
-          let a, b = butterfly_pair ~sign ~n:radix ~k:jv ins.(0) ins.(1) in
-          [| a; b |])
+        then
+          if !Cx_math.w32_combine
+          then (
+            (* VFFT_CX_W32TG: the hand w32tg pass-B combine — canonical
+               angles + composed -i rotations (see butterfly_pair_w32).
+               Scope = the construction it was validated for. *)
+            if radix <> 32 || dir <> Fwd
+            then
+              failwith
+                "codelet_cil: VFFT_CX_W32TG is the radix-32 FWD wing combine \
+                 (hand w32tg pass-B); other radices/directions keep \
+                 butterfly_pair";
+            let a, b = Cx_math.butterfly_pair_w32 ~k:jv ins.(0) ins.(1) in
+            [| a; b |])
+          else (
+            (* m=2 is a single top-level butterfly, so use the CLASS-aware
+               form: it turns W^{R/4} into a free rotation and folds the
+               W^{R/8} pair into FMAs, which a general complex multiply
+               would not. Keeps the blocked output bit-identical to the
+               monolithic one. *)
+            let a, b = butterfly_pair ~sign ~n:radix ~k:jv ins.(0) ins.(1) in
+            [| a; b |])
         else (
           let tw =
             Array.mapi
@@ -462,12 +476,19 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       else o
     in
     let turned = kind = N1T || !st_turn in
+    (* VFFT_CX_TURN128: the HAND w32tgL store idiom (A-0,
+       docs/roadmap/r32_tangent_parity_plan.md) — each output leg's two
+       columns leave as two 128-bit halves (CLo/CHi) the moment the value
+       is ready. No pass-pairing, no permute2f128 (port-5-only on RPL, and
+       pass 2's wall IS p15), lazy-store legal, and no even-p requirement.
+       Default OFF ⇒ the paired 256-bit edge below stays byte-identical. *)
+    let turn128 = Sys.getenv_opt "VFFT_CX_TURN128" = Some "1" in
     if turned && !st_turn_gs
     then
       failwith
         "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) \
          turn; only the contiguous corner-turn is supported blocked.";
-    if turned && p mod 2 <> 0
+    if turned && (not turn128) && p mod 2 <> 0
     then
       failwith
         (Printf.sprintf
@@ -493,6 +514,34 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
               (Printf.sprintf
                  "        %s;\n"
                  (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+      done
+    else if turn128
+    then
+      (* ─── PASS 2, TURNED-128: per-j passes like the plain path, each
+         output stored as its two column halves immediately. *)
+      for j = 0 to p - 1 do
+        emit_pass
+          ~lazy_store:true
+          ~label:
+            (Printf.sprintf
+               "PASS 2.%d TURNED-128: S[i*%d+%d] -> columns k,k+1" j p j)
+          ~nin:m
+          ~laddr_of:(fun i -> AS (vw * ((i * p) + j)))
+          ~build:(fun ins -> pass2_math ~jv:j ins)
+          ~store:(fun k2 e ->
+            let l = j + (p * k2) in
+            let lo = clo e
+            and hi = chi e in
+            let (_ : t) = cstore (AZoutTurn (l, 0)) lo
+            and (_ : t) = cstore (AZoutTurn (l, 1)) hi in
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "        _mm_storeu_pd(&%s, %s);\n        _mm_storeu_pd(&%s, %s);\n"
+                 (addr_str (AZoutTurn (l, 0)))
+                 (render isa tbl lo)
+                 (addr_str (AZoutTurn (l, 1)))
+                 (render isa tbl hi)))
       done
     else
       (* ─── PASS 2, TURNED (N1T / t2t): the corner-turn pairs ADJACENT legs

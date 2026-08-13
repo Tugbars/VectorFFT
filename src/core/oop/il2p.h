@@ -338,8 +338,16 @@ static inline void vfft_il2p_destroy(vfft_il2p_plan_t *p)
  * mid_f/leaf_f, need no new guard.
  *
  * R8/R16 forms are MONOLITHIC emissions and carry the inline VEX-128
- * odd-count tail, so they are legal at any count; only the R32 mid is
- * blocked (split 2.16) and needs the even-count gate. */
+ * odd-count tail, so they are legal at any count; BOTH R32 forms are
+ * blocked (split 2.16) and need the even-count gate.
+ *
+ * 2026-08-13 wing32 (A-1, docs/roadmap/r32_tangent_parity_plan.md): the
+ * R32 mid is now radix32_z_t2bw32 (canonical-angle combine + ROTFMA;
+ * supersedes t2btan216, -3.3..-5.5% both shapes) and the R32 LEAF EXISTS
+ * again — radix32_z_n1tbw32 with the TURNED-128 store edge. The old
+ * leaf's +32.4% kill was the paired permute2f128 store edge, not the
+ * tangent interior; route (32,16) with this leaf ties the hand champion
+ * (~302-305 ns at N=512, fft512_a0, 3 runs). */
 extern void radix8_z_t2tan_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
@@ -352,7 +360,10 @@ extern void radix16_z_t2tan_fwd_avx2(const double *, const double *,
 extern void radix16_z_n1ttan_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
-extern void radix32_z_t2btan216_fwd_avx2(const double *, const double *,
+extern void radix32_z_t2bw32_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
 
@@ -378,7 +389,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
     if (variant == 3) {                 /* tangent interior */
         if (R1 == 8)  return radix8_z_t2tan_fwd_avx2;   /* monolithic: has  */
         if (R1 == 16) return radix16_z_t2tan_fwd_avx2;  /* the odd tail     */
-        if (R1 == 32 && count_ok) return radix32_z_t2btan216_fwd_avx2; /* blocked */
+        if (R1 == 32 && count_ok) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
         return 0;
     }
     if (!count_ok) return 0;
@@ -411,10 +422,12 @@ extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
     if (!variant) return 0;
-    if (variant == 3) {                 /* tangent interior, monolithic */
-        if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;
-        if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;
-        return 0;                       /* R32 tangent leaf LOST its race */
+    if (variant == 3) {                 /* tangent interior */
+        if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;   /* monolithic   */
+        if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;  /* (odd legal)  */
+        if (R2 == 32 && count_ok) return radix32_z_n1tbw32_fwd_avx2; /* blocked
+            wing32, TURNED-128 store — the old kill was the store edge */
+        return 0;
     }
     if (!count_ok) return 0;
     if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;

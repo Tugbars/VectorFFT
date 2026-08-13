@@ -80,6 +80,16 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
  * Width-independent: the strings are double-array indexing, identical for
  * the wide body and the SSE2 tail. These MUST reproduce the historical
  * hand-edge strings byte-for-byte — they are the byte-identity contract. *)
+(* ROTFMA (VFFT_CX_ROTFMA=1): render-level fold of a -i rotation into its
+   consuming butterfly — CAdd/CSub/CFmaC/CFnmaC over a CRotNI child emit
+   fnmadd/fmadd(w_s, cflip y, acc) where w_s = [-c,+c,...] reuses the
+   (1, c) constant-table pair. BIT-EXACT: the sign moves into an exact
+   constant, one rounding either way (the √½-fold argument). This is the
+   hand w32tg pass-B idiom ([c,-c]·flip, zero xors). Default OFF ⇒ every
+   existing emission is byte-identical. Note: a folded CRotNI def with no
+   other consumer remains as a dead SSA line — gcc DCEs it; asm is clean. *)
+let rotfma = ref (Sys.getenv_opt "VFFT_CX_ROTFMA" = Some "1")
+
 let addr_str (a : caddr) : string =
   match a with
   | AZinLeg l -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
@@ -129,6 +139,13 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
     Printf.sprintf "%s(%s, %s, 0x%x)" (Isa.intr isa "permute2f128_pd") (v a) (v b) imm
   | CLo a -> Printf.sprintf "_mm256_castpd256_pd128(%s)" (v a)
   | CHi a -> Printf.sprintf "_mm256_extractf128_pd(%s, 1)" (v a)
+  | CAdd (a, { node = CRotNI y; _ }) when !rotfma ->
+    (* a + (-i)·y = a - [-1,+1]·cflip y : fnmadd on the (1,1) pair's _s. *)
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
+    Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
+  | CSub (a, { node = CRotNI y; _ }) when !rotfma ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
+    Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
   | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
   | CSub (a, b) -> Isa.sub_pd isa (v a) (v b)
   (* complex negation: flip both lanes' signs — same rendering the real side
@@ -143,6 +160,13 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
     then Isa.addsub_pd isa (v a) (Isa.cflip_pd isa (v y))
     else
       Isa.sub_pd isa (v a) (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v y)) ("_M_IM" ^ msuf))
+  | CFmaC (c, { node = CRotNI y; _ }, acc) when !rotfma ->
+    (* acc + c·(-i·y) = acc - [-c,+c]·cflip y — the [c,-c] hand idiom. *)
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
+    Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
+  | CFnmaC (c, { node = CRotNI y; _ }, acc) when !rotfma ->
+    let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
+    Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
   | CFmaC (c, x, acc) ->
     Isa.fmadd_pd isa (Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)) (v x) (v acc)
   | CFnmaC (c, x, acc) ->
