@@ -2327,10 +2327,10 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     }
     if (xm > 0)
         rel /= (sc * xm);
-    double vns = 0, mns = 0;
+    double vns = 0, mns = 0, mrel = -1;
 #ifdef VFFT_HAS_MKL
-    DFTI_DESCRIPTOR_HANDLE h = 0;
-    int mok = 0;
+    DFTI_DESCRIPTOR_HANDLE h = 0, hb = 0;
+    int mok = 0, mbok = 0;
     double *xtm = alloc_d(total), *cce = alloc_d((size_t)(halfN + 1) * K * 2), *mout = alloc_d(total);
     for (size_t t = 0; t < K; t++)
         for (int n = 0; n < N; n++)
@@ -2344,12 +2344,41 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
         DftiSetValue(h, DFTI_OUTPUT_DISTANCE, (MKL_LONG)(halfN + 1));
         mok = (DftiCommitDescriptor(h) == DFTI_NO_ERROR);
     }
+    /* 🔴 BACKWARD TWIN (fix 2026-08-13). DFTI INPUT/OUTPUT distances are
+     * ARGUMENT-anchored (input = 1st compute arg), so reusing the forward
+     * handle for ComputeBackward read the CCE plane at the REAL-domain
+     * distance (N complex instead of halfN+1) — a heap OOB for every K>1
+     * that VOIDED every c2r-vs-MKL ratio banked before this date. The
+     * backward gets its own descriptor with the distances swapped, and the
+     * mklref gate below proves the semantics on hardware every run. */
+    if (DftiCreateDescriptor(&hb, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR)
+    {
+        DftiSetValue(hb, DFTI_NUMBER_OF_TRANSFORMS, (MKL_LONG)K);
+        DftiSetValue(hb, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+        DftiSetValue(hb, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+        DftiSetValue(hb, DFTI_INPUT_DISTANCE, (MKL_LONG)(halfN + 1));
+        DftiSetValue(hb, DFTI_OUTPUT_DISTANCE, (MKL_LONG)N);
+        mbok = (DftiCommitDescriptor(hb) == DFTI_NO_ERROR);
+    }
     if (mok)
         DftiComputeForward(h, xtm, cce); /* CCE half-spectrum = the c2r input (not timed) */
+    /* MKL c2r correctness gate: the unnormalized backward must return N*xtm. */
+    if (mok && mbok)
+    {
+        DftiComputeBackward(hb, (void *)cce, mout);
+        double me = 0;
+        for (size_t i = 0; i < total; i++)
+        {
+            double e = fabs(mout[i] - (double)N * xtm[i]);
+            if (e > me)
+                me = e;
+        }
+        mrel = (xm > 0) ? me / ((double)N * xm) : me;
+    }
     if (flip)
     {
-        if (mok)
-            mns = bench_mkl_c2r(h, cce, mout, total);
+        if (mok && mbok)
+            mns = bench_mkl_c2r(hb, cce, mout, total);
         cachebust();
         pace(cool_ms);
         vns = time_c2r(p, in_a, in_b, y, total);
@@ -2359,11 +2388,13 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
         vns = time_c2r(p, in_a, in_b, y, total);
         cachebust();
         pace(cool_ms);
-        if (mok)
-            mns = bench_mkl_c2r(h, cce, mout, total);
+        if (mok && mbok)
+            mns = bench_mkl_c2r(hb, cce, mout, total);
     }
     if (h)
         DftiFreeDescriptor(&h);
+    if (hb)
+        DftiFreeDescriptor(&hb);
     free_d(xtm);
     free_d(cce);
     free_d(mout);
@@ -2373,11 +2404,13 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     vns = time_c2r(p, in_a, in_b, y, total);
 #endif
     double sp_ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
-    printf("  N=%-6d K=%-5zu %-6s ref=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s\n",
-           N, K, src, rel, vns, mns, sp_ratio, rel < 1e-9 ? "" : "*** RT FAIL ***");
+    printf("  N=%-6d K=%-5zu %-6s ref=%.1e mklref=%.1e | vfft %11.0f | mkl %11.0f | %.3f  %s%s\n",
+           N, K, src, rel, mrel, vns, mns, sp_ratio,
+           rel < 1e-9 ? "" : "*** RT FAIL ***",
+           (mrel < 0 || mrel < 1e-9) ? "" : " *** MKL GATE FAIL ***");
     fflush(stdout);
     if (out)
-        fprintf(out, "%d,%zu,%s,%.1e,%.0f,%.0f,%.3f\n", N, K, src, rel, vns, mns, sp_ratio);
+        fprintf(out, "%d,%zu,%s,%.1e,%.0f,%.0f,%.3f,%.1e\n", N, K, src, rel, vns, mns, sp_ratio, mrel);
     free_d(x);
     free_d(hc);
     free_d(o_re);
