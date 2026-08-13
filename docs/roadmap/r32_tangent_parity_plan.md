@@ -1,8 +1,32 @@
 # R32 tangent parity plan — the 512 frontier
 
-**Status:** A-0 + A-1 EXECUTED 2026-08-13 — **the emitted pool now ties the
-hand champion.** Remaining: A-4 (promote + wire + dp re-race + canonical
-verdict). Result boxes below; plan text otherwise as proposed.
+**Status:** ✅ **A-0 + A-1 + A-4 ALL EXECUTED 2026-08-13 — SUCCESS CRITERION
+MET: 512 = 0.96× vs MKL on the canonical bench (was 0.87–0.88×).**
+Track B (3-stage chains) remains open as the next lever; 1024 stays out of
+scope. Result boxes below; plan text otherwise as proposed.
+
+> ## ✅ A-4 RESULT (2026-08-13): wired, re-raced, banked, verdict 0.96×
+>
+> - Kernels promoted into `pure_il/tangent/` with fact-sheet headers
+>   (`radix32_z_n1tbw32`, `radix32_z_t2bw32`); recipes in `emit_ship.sh`.
+> - `il2p.h`: mid variant 3 (R32) → `t2bw32`; leaf variant 3 (R32) =
+>   `n1tbw32` behind the even-count gate. `dp_planner_il.h`: R32 leaf pool
+>   gains variant 3 (both slot lists patched — the banked lsv/msv trap).
+> - **Wiring gate 15/15 ALL CORRECT**, including R32-leaf solo, pure-tangent
+>   (16,32), both-R32 at 1024, and the odd-R1 degrade (bitwise-to-base).
+> - **dp re-race** (`calibrate_k1`, wisdir COPY, diff-verified single-row
+>   writeback): `512 1 3 2 8 64 5 16 32 329.2 35` →
+>   **`512 1 3 3 8 64 5 16 32 303.1 51`** — the search independently picked
+>   pure tangent with the wing32 R32 leaf (kv 51 = the A-1 route-I
+>   composition), −26 ns on the banked measurement. Hand-promoted with
+>   CRLF preserved (backups: `oop_wisdom.txt.bak-20260813-a4` + scratchpad).
+> - **Canonical bench `--k1noop`, isolated 512 cell, core 2, cool 250 ms,
+>   both flip orders: ours 304–309 ns vs MKL 291–297 → 0.96–0.98×**
+>   (mode 0.96×, 4 clean samples; 2 interference spikes discarded — machine
+>   in interactive use). Cross-engine correctness 3.08e-16.
+> - **Pool-sunset executed:** `t2btan216` deleted from the shipped tree
+>   (race-arm copy preserved in `build_tuned/benches/tangent_hand/`),
+>   recipe removed, README killed-table entry records the postmortem.
 
 > ## ✅ A-1 RESULT (2026-08-13, same day): EMITTED = HAND, parity in one arc
 >

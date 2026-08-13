@@ -151,30 +151,36 @@ would otherwise steal cores), and MKL gets ≥300 ms to park its threads before 
 ```
  N      K    ours-T8   ours-T1    MKL-T8    MKL-T1 | vs MKL best  our scale  MKL scale
 ────────────────────────────────────────────────────────────────────────────────────
- 256    4        729       736     4,798       567 |     0.78×      1.01×      0.12×
- 512    4      1,144     1,783     6,304     1,396 |     1.22×      1.56×      0.22×
- 1024   4      2,025     5,208     8,428     3,411 |     1.68×      2.57×      0.40×
- 4096   4      4,880    16,098    34,275    15,147 |     3.10×      3.30×      0.44×
- 16384  4     20,403    81,577   120,537    93,213 |     4.57×      4.00×      0.77×
- 65536  4    113,650   478,037   533,762   511,900 |     4.50×      4.21×      0.96×
- 256    8        960     1,488    18,828     1,216 |     1.27×      1.55×      0.06×
- 512    8      1,211     3,497    20,745     2,827 |     2.33×      2.89×      0.14×
- 1024   8      2,893    10,184    24,959     6,537 |     2.26×      3.52×      0.26×
- 4096   8      5,259    33,308    47,869    30,185 |     5.74×      6.33×      0.63×
- 16384  8     21,520   173,373   231,527   210,680 |     9.79×      8.06×      0.91×
- 65536  8    116,487   973,900 1,081,600 1,048,062 |     9.00×      8.36×      0.97×
- 256    32     1,634     5,920    23,009     5,000 |     3.06×      3.62×      0.22×
- 512    32     3,629    14,163    28,527    11,180 |     3.08×      3.90×      0.39×
- 1024   32     9,146    40,174    45,374    27,289 |     2.98×      4.39×      0.60×
- 4096   32    17,880   149,507   184,660   164,240 |     9.19×      8.36×      0.89×
- 16384  32    85,475   703,463   854,637   825,612 |     9.66×      8.23×      0.97×
- 65536  32   951,800 4,253,488 7,385,125 7,381,413 |     7.76×      4.47×      1.00×
+ 256    4        607       614     3,573       673 |     1.11×      1.01×      0.19×
+ 512    4      1,146     2,271     6,626     1,419 |     1.24×      1.98×      0.21×
+ 1024   4      1,667     4,036     8,378     3,415 |     2.05×      2.42×      0.41×
+ 4096   4      4,973    16,199    31,433    15,266 |     3.07×      3.26×      0.49×
+ 16384  4     20,013    80,390   114,647    89,490 |     4.47×      4.02×      0.78×
+ 65536  4    137,438   494,375   568,275   581,750 |     4.13×      3.60×      1.02×
+ 256    8      1,012     1,170    19,933     1,268 |     1.25×      1.16×      0.06×
+ 512    8      1,080     4,879    23,064     2,911 |     2.69×      4.52×      0.13×
+ 1024   8      2,457     8,339    25,125     6,713 |     2.73×      3.39×      0.27×
+ 4096   8      5,138    33,352    60,036    31,823 |     6.19×      6.49×      0.53×
+ 16384  8     20,593   173,900   223,613   203,280 |     9.87×      8.44×      0.91×
+ 65536  8    113,550   919,550 1,127,175 1,042,487 |     9.18×      8.10×      0.92×
+ 256    32     1,673     4,704    25,034     4,991 |     2.98×      2.81×      0.20×
+ 512    32     2,758    17,056    32,020    11,190 |     4.06×      6.18×      0.35×
+ 1024   32     6,449    33,274    46,897    27,995 |     4.34×      5.16×      0.60×
+ 4096   32    18,240   153,947   188,880   170,467 |     9.35×      8.44×      0.90×
+ 16384  32    85,187   757,650   869,825   875,550 |    10.21×      8.89×      1.01×
+ 65536  32 1,182,062 4,126,425 7,977,025 8,091,300 |     6.75×      3.49×      1.01×
 ────────────────────────────────────────────────────────────────────────────────────
 ns/call. "scale" = that engine's OWN T1/T8 (8.00 = perfect on 8 cores).
 ```
 
-> **17 of 18 cells win, median 3.09×, up to 9.79× at 16384×8. Our own scaling reaches
-> 8.36× on 8 cores (4096×32, 65536×8) — near-linear.**
+> **18 of 18 cells win vs MKL-BEST — median 4.10×, up to 10.21× at 16384×32. Our own
+> scaling reaches 8.89× on 8 cores — near-linear.** Measured 2026-08-13,
+> post-tangent/wing32; supersedes the 2026-08-06 table (17/18, median 3.09× — its one
+> loss, 256×4 at 0.78×, is now 1.11×). The movers are the sub-2048 cells the tangent arc
+> rebuilt (all clean ≤2.4% repeat-arm spread); the 65536-row and 256×8/32 cells carried
+> 12–27% spreads (machine in use) — read those within their noise. K=1 1024 was re-raced
+> the same day and the tangent variants LOST (wash) — the batched 1024 gains come through
+> the TC-batch path's shared sub-kernels, not a new 1024 plan.
 
 **We compare against MKL's *faster* configuration, which is almost always its serial one.**
 That is the finding this table exists to record: **MKL's threaded arm never beats its own
@@ -645,6 +651,23 @@ door now runs a natural-vs-stride bake-off (mirror of r2c's), picking per cell; 
 hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
 `bench_1d_vs_mkl.c --c2r [--mt]`.
 
+> ## 🔴 EVERY vs-MKL RATIO IN THIS SECTION IS VOID (found 2026-08-09, fixed 2026-08-13)
+>
+> The `--c2r` MKL arm reused the **forward** descriptor for `DftiComputeBackward`; DFTI
+> distances are argument-anchored, so the backward read the CCE plane at the real-domain
+> distance — a **heap OOB at every K>1** timing aliased garbage. Both tables below keep their
+> **dag-side** numbers (self-scaling, natural-vs-stride uplift), but every dag/MKL column —
+> including the "parity at K=8 (0.92×)" headline — is unusable. **Fix:** a backward-twin
+> descriptor with swapped distances plus a per-run `mklref` correctness gate (unnormalized
+> backward == N·x, printed in every row), so the arm is now proven on hardware each run.
+> First **valid** cells (2026-08-13 smoke, gated 8.9e-16/1.0e-15): **0.366 at 512×4, 0.458 at
+> 1024×16** — materially worse than the void table suggested. Note the comparison is
+> home-layout vs home-layout: our natural path consumes a **split** re/im half-spectrum
+> (lane-major batch) while MKL consumes **interleaved CCE** (transform-major); an
+> interleaved-vs-interleaved like-for-like requires the D2 interleaved c2r route
+> (`docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md`), which does not exist yet.
+> A full re-sweep of this section is pending that work.
+
 #### Single-thread — the packing tax (again)
 ```
  N      K     path      dag/MKL    note
@@ -752,6 +775,11 @@ The inverse — complex (CCE / split) → real 2D, `fft2d_r2c.h`'s c2r path, **P
 single-thread (the c2r backward is **serial** — not yet tile-parallel). Roundtrip
 `r2c+c2r == N1·N2·x` is the gate (all e-14/e-15). Measured **cooled**, median of 3. Source:
 `bench_1d_vs_mkl.c --2dc2r` → `vfft_perf_tuned_2dc2r.csv`.
+
+> ⚠ **UNAUDITED (2026-08-13):** this mode's MKL arm has the same bug *class* that voided the
+> 1D `--c2r` ratios — one 2D handle (default strides) serves both compute directions, and
+> MKL's backward output is never validated. The vs-MKL ratios below stand until audited, but
+> do not build on them; the dag-side numbers are unaffected.
 
 ```
  N1×N2     dag/MKL   order
