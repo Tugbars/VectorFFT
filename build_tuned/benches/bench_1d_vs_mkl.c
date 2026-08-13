@@ -61,6 +61,7 @@
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
 #include "fft2d_r2c_wisdom.h"   /* --2dr2c: calibrated 2D wisdom + wisdom-aware create */
 #include "fft2d_c2c_wisdom.h"   /* --2d: calibrated 2D c2c wisdom + wisdom-aware create */
+#include "zr2c.h"               /* --zr2c: D2 interleaved real folds (zr2c.h, Phase 1) */
 #include "rfft_registry_avx2.h" /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
 #include "c2r_registry_avx2.h"  /* --c2r: c2r_register_all_avx2 (r2cb + hc2hc_dif_bwd) */
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
@@ -1065,6 +1066,7 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
  * and no ratio here would mean anything.
  * ════════════════════════════════════════════════════════════════════════ */
 static int g_ilmt = 0;
+static int g_zr2c = 0;   /* --zr2c: D2 interleaved r2c/c2r vs MKL real-CCE in-place */
 
 /* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
 static void ilmt_pin_pcores(void)
@@ -2419,6 +2421,210 @@ static void run_c2r_cell(int N, size_t K, const rfft_codelets_t *rreg, vfft_prot
     vfft_c2r_disp_destroy(p);
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * --zr2c : Phase 1 of DESIGN_interleaved_r2c.md — the first honest ours/MKL
+ * table for K=1 INTERLEAVED real transforms, both directions.
+ *   OURS (D2): x[N] ==reinterpret(0 work)==> z[N/2] -> front-door IL c2c(N/2)
+ *              NATURAL OOP fwd -> _zr2c_fold_fwd -> CCE.  c2r is the mirror:
+ *              _zr2c_fold_bwd -> c2c(N/2) bwd -> N*x.
+ *   MKL: DFTI_REAL, CCE=COMPLEX_COMPLEX, DFTI_INPLACE — its BEST arm
+ *        (CONCLUSIONS V6, 8-21%% over its OOP), padded N+2 plane; the
+ *        backward gets its own descriptor (same-handle direction reuse is a
+ *        banned shape since the 2026-08-13 --c2r OOB).
+ *   GATES (per direction, never a roundtrip): fwd = cross-engine elementwise
+ *   (both engines emit the same natural CCE — the --k1noop precedent; a naive
+ *   DFT is impractical at 65536); c2r = each engine's backward fed MKL's
+ *   reference spectrum and checked vs N*x elementwise.
+ *   MEDIANS of 5 trials (house law). MKL reps run in place on junk after the
+ *   first rep — dense transforms are data-oblivious; FTZ/DAZ regime. ── */
+static double _zr2c_med5(double t[5])
+{
+    for (int i = 1; i < 5; i++)
+    {
+        double v = t[i]; int j = i - 1;
+        while (j >= 0 && t[j] > v) { t[j + 1] = t[j]; j--; }
+        t[j + 1] = v;
+    }
+    return t[2];
+}
+#define ZR2C_TIME(dst, BODY) do {                                   \
+        for (int w_ = 0; w_ < 3; w_++) { BODY; }                    \
+        for (int t_ = 0; t_ < 5; t_++) {                            \
+            if (t_) pace(g_trial_pace_ms);                          \
+            double t0_ = vfft_proto_now_ns();                       \
+            for (int i_ = 0; i_ < reps; i_++) { BODY; }             \
+            (dst)[t_] = (vfft_proto_now_ns() - t0_) / reps;         \
+        }                                                           \
+    } while (0)
+static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
+{
+    const int half = N / 2, top = N / 4;
+    vfft_wisdom *W = k1z_bundle();
+    if (!W)
+    {
+        printf("%-8d zr2c   SKIP (front-door bundle unavailable)\n", N);
+        return;
+    }
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.dims = 1;
+    cfg.n[0] = half;
+    cfg.howmany = 1;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads = 1;
+    cfg.wisdom = W;
+    vfft_plan h = vfft_create(&cfg);
+    if (!h)
+    {
+        printf("%-8d zr2c   vfft_create(c2c %d natural OOP) FAILED\n", N, half);
+        return;
+    }
+
+    double *x  = alloc_d((size_t)N + 2);   /* real input; its z view IS x    */
+    double *Zc = alloc_d((size_t)N);       /* c2c(N/2) plane (half complex)  */
+    double *XC = alloc_d((size_t)N + 2);   /* our CCE output                 */
+    double *y  = alloc_d((size_t)N);       /* our c2r output (N reals)       */
+    double *aS = alloc_d((size_t)top + 1);
+    double *aC = alloc_d((size_t)top + 1);
+    _zr2c_init_aff(N, aS, aC);
+    srand(31 + N);
+    for (int i = 0; i < N; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
+    x[N] = x[N + 1] = 0.0;
+
+    double vfw = 0, vbw = 0, mfw = 0, mbw = 0;
+    double xerr = -1, gours = -1, gmkl = -1;
+    int reps = reps_for((size_t)N);
+    double tf[5], tb[5];
+    const double *bsrc = XC;   /* c2r-arm input spectrum (MKL ref if present) */
+
+#ifdef VFFT_HAS_MKL
+    DFTI_DESCRIPTOR_HANDLE hF = 0, hB = 0;
+    int okF = 0, okB = 0;
+    double *mip  = alloc_d((size_t)N + 2);
+    double *mip2 = alloc_d((size_t)N + 2);
+    double *cref = alloc_d((size_t)N + 2);
+    if (DftiCreateDescriptor(&hF, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR)
+    {
+        DftiSetValue(hF, DFTI_PLACEMENT, DFTI_INPLACE);
+        DftiSetValue(hF, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+        okF = (DftiCommitDescriptor(hF) == DFTI_NO_ERROR);
+    }
+    if (DftiCreateDescriptor(&hB, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N) == DFTI_NO_ERROR)
+    {
+        DftiSetValue(hB, DFTI_PLACEMENT, DFTI_INPLACE);
+        DftiSetValue(hB, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+        okB = (DftiCommitDescriptor(hB) == DFTI_NO_ERROR);
+    }
+    if (okF)
+    {
+        memcpy(cref, x, ((size_t)N + 2) * 8);
+        DftiComputeForward(hF, cref);          /* the CCE reference spectrum */
+        bsrc = cref;
+    }
+#endif
+
+    /* ── gates, one shot per direction ── */
+    vfft_execute(h, VFFT_FORWARD, x, NULL, Zc, NULL);
+    _zr2c_fold_fwd(Zc, XC, aS, aC, N, 1, (size_t)N, (size_t)N + 2);
+#ifdef VFFT_HAS_MKL
+    if (okF)
+    {
+        double w = 0, xm = 0;
+        for (int i = 0; i < 2 * (half + 1); i++)
+        {
+            double d = fabs(XC[i] - cref[i]);
+            if (d > w) w = d;
+            double a = fabs(cref[i]);
+            if (a > xm) xm = a;
+        }
+        xerr = xm > 0 ? w / xm : w;
+    }
+#endif
+    {   /* ours c2r fed the reference spectrum: must return N*x */
+        _zr2c_fold_bwd(bsrc, Zc, aS, aC, N, 1, (size_t)N + 2, (size_t)N);
+        vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
+        double gw = 0, gm = 0;
+        for (int i = 0; i < N; i++)
+        {
+            double d = fabs(y[i] - (double)N * x[i]);
+            if (d > gw) gw = d;
+            double a = fabs(x[i]);
+            if (a > gm) gm = a;
+        }
+        gours = gm > 0 ? gw / ((double)N * gm) : gw;
+#ifdef VFFT_HAS_MKL
+        if (okF && okB)
+        {
+            memcpy(mip2, cref, ((size_t)N + 2) * 8);
+            DftiComputeBackward(hB, mip2);
+            gw = 0;
+            for (int i = 0; i < N; i++)
+            {
+                double d = fabs(mip2[i] - (double)N * x[i]);
+                if (d > gw) gw = d;
+            }
+            gmkl = gm > 0 ? gw / ((double)N * gm) : gw;
+        }
+#endif
+    }
+
+    /* ── timing (flip-ordered; cachebust + pace between engines) ── */
+#ifdef VFFT_HAS_MKL
+    double tmf[5], tmb[5];
+    if (flip && okF && okB)
+    {
+        memcpy(mip, x, ((size_t)N + 2) * 8);
+        ZR2C_TIME(tmf, DftiComputeForward(hF, mip));
+        memcpy(mip2, cref, ((size_t)N + 2) * 8);
+        ZR2C_TIME(tmb, DftiComputeBackward(hB, mip2));
+        mfw = _zr2c_med5(tmf); mbw = _zr2c_med5(tmb);
+        cachebust();
+        pace(cool_ms);
+    }
+#endif
+    ZR2C_TIME(tf, {
+        vfft_execute(h, VFFT_FORWARD, x, NULL, Zc, NULL);
+        _zr2c_fold_fwd(Zc, XC, aS, aC, N, 1, (size_t)N, (size_t)N + 2);
+    });
+    ZR2C_TIME(tb, {
+        _zr2c_fold_bwd(bsrc, Zc, aS, aC, N, 1, (size_t)N + 2, (size_t)N);
+        vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
+    });
+    vfw = _zr2c_med5(tf); vbw = _zr2c_med5(tb);
+#ifdef VFFT_HAS_MKL
+    if (!flip && okF && okB)
+    {
+        cachebust();
+        pace(cool_ms);
+        memcpy(mip, x, ((size_t)N + 2) * 8);
+        ZR2C_TIME(tmf, DftiComputeForward(hF, mip));
+        memcpy(mip2, cref, ((size_t)N + 2) * 8);
+        ZR2C_TIME(tmb, DftiComputeBackward(hB, mip2));
+        mfw = _zr2c_med5(tmf); mbw = _zr2c_med5(tmb);
+    }
+    if (hF) DftiFreeDescriptor(&hF);
+    if (hB) DftiFreeDescriptor(&hB);
+    free_d(mip); free_d(mip2); free_d(cref);
+#endif
+
+    double rf = (vfw > 0 && mfw > 0) ? mfw / vfw : 0;
+    double rb = (vbw > 0 && mbw > 0) ? mbw / vbw : 0;
+    printf("%-7d | r2c ours %9.0f  mkl-ip %9.0f  %5.2fx | c2r ours %9.0f  "
+           "mkl-ip %9.0f  %5.2fx | xerr %.1e gours %.1e gmkl %.1e\n",
+           N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl);
+    fflush(stdout);
+    if (out)
+        fprintf(out, "%d,1,%.0f,%.0f,%.3f,%.0f,%.0f,%.3f,%.1e,%.1e,%.1e\n",
+                N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl);
+    free_d(x); free_d(Zc); free_d(XC); free_d(y); free_d(aS); free_d(aC);
+    vfft_destroy(h);
+}
+
 /* ── c2r PATH CALIBRATOR: time BOTH dag paths (no MKL — so no high-N*K MKL crash,
  * and both dag paths are ASan-clean) and pick the winner per cell, writing
  * "N K path" to the path wisdom. This is the "planner measures both + picks" that
@@ -2808,6 +3014,14 @@ int main(int argc, char **argv)
              * correctness column as --k1nat. */
             g_k1nat = 1; /* g_k1zip stays 0 -> OOP on both engines */
         }
+        else if (strcmp(argv[1], "--zr2c") == 0)
+        {
+            /* Phase 1 (DESIGN_interleaved_r2c.md): the first honest ours/MKL
+             * table for K=1 INTERLEAVED real transforms. Ours = the D2 route
+             * (front-door IL c2c(N/2) + zr2c.h folds); MKL = REAL CCE
+             * IN-PLACE, its best arm (CONCLUSIONS V6), bwd-twin descriptor. */
+            g_zr2c = 1;
+        }
         else if (strcmp(argv[1], "--kzb") == 0)
         {
             /* Phase C1 (il_coverage_plan.md): K∈{2,3,4} interleaved batched
@@ -2864,6 +3078,7 @@ int main(int argc, char **argv)
     const char *csv = (argc >= 3)         ? argv[2]
                       : g_ilmt            ? "vfft_perf_tuned_1d_ilmt.csv"
                       : g_kzb             ? "vfft_perf_tuned_1d_kzb.csv"
+                      : g_zr2c            ? "vfft_perf_tuned_1d_zr2c.csv"
                       : (g_k1nat && !g_k1zip) ? "vfft_perf_tuned_1d_k1noop.csv"
                       : g_k1nat           ? "vfft_perf_tuned_1d_k1nat.csv"
                       : g_k1zip           ? "vfft_perf_tuned_1d_k1zip.csv"
@@ -3259,6 +3474,9 @@ int main(int argc, char **argv)
         else if (g_kzb)
             fprintf(out, "N,K,plan,path,vfft_ns,loop_ns,mkl_mirror_ns,mkl_home_ns,"
                          "ratio_mirror,ratio_home,ratio_loop_vs_home,xerr,loop_xerr\n");
+        else if (g_zr2c)
+            fprintf(out, "N,K,ours_r2c_ns,mkl_r2c_ip_ns,r2c_ratio,ours_c2r_ns,"
+                         "mkl_c2r_ip_ns,c2r_ratio,xerr_fwd,gate_ours_c2r,gate_mkl_c2r\n");
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
@@ -3310,6 +3528,33 @@ int main(int argc, char **argv)
                     cells++;
                     pace(pace_ms);
                 }
+        }
+        if (out)
+            fclose(out);
+        fclose(f);
+        return 0;
+    }
+    if (g_zr2c)
+    {
+        /* Phase 1 dispatch (DESIGN_interleaved_r2c.md §6): fixed cell list —
+         * no wisdom-walk (the cells are the spec's, not the banked rows).
+         * target_N>0 = one isolated cell per process (the trusted mode). */
+        if (!target_N)
+            printf("=== dag(D2 zr2c) vs MKL — 1D REAL r2c/c2r, K=1, INTERLEAVED CCE (pace=%dms cool=%dms) ===\n"
+                   "# ours = reinterpret + front-door IL c2c(N/2) NATURAL OOP + zr2c fold (OOP arm)\n"
+                   "# MKL  = DFTI_REAL CCE DFTI_INPLACE — its best arm (V6); backward on its own twin descriptor\n"
+                   "# gates: fwd = cross-engine elementwise | c2r = each engine's backward vs N*x. MEDIANS of 5.\n",
+                   pace_ms, cool_ms);
+        if (target_N)
+            run_zr2c_cell(target_N, out, cool_ms, flip);
+        else
+        {
+            static const int ZRN[] = { 512, 2048, 8192, 16384, 65536 };
+            for (size_t ni = 0; ni < sizeof ZRN / sizeof ZRN[0]; ni++)
+            {
+                run_zr2c_cell(ZRN[ni], out, cool_ms, flip ^ ((int)ni & 1));
+                pace(pace_ms);
+            }
         }
         if (out)
             fclose(out);
