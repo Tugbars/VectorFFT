@@ -2709,12 +2709,16 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         }
     }
 
-    /* ── NATORDER-CASCADE IN-PLACE ARM (halves >= 2048): the whole D2 route
+    /* ── NATORDER-CASCADE IN-PLACE ARM (halves >= 1024): the whole D2 route
      * in one padded plane. fwd: x -> plane, c2c(half) natural IN-PLACE, fold
      * IN-PLACE. bwd: CCE -> plane, fold_bwd IN-PLACE, c2c bwd IN-PLACE ->
      * N*x. Timed reps run on junk after rep 1, same convention as the MKL
-     * in-place arms (dense transforms are data-oblivious; FTZ/DAZ). */
-    if (half >= 2048 && okF)
+     * in-place arms (dense transforms are data-oblivious; FTZ/DAZ).
+     * half >= 1024 per the RE: MKL's regime-S real path runs its CASCADE at
+     * EVERY half-length (CONCLUSIONS §3, region-C at every half) — our worst
+     * cell (2048, half 1024) is where we deviate from that; let the race see
+     * the cascade there too. */
+    if (half >= 1024 && okF)
     {
         vfft_config_t ncf;
         memset(&ncf, 0, sizeof ncf);
