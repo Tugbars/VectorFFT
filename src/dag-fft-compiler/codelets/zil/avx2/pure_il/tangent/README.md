@@ -108,7 +108,16 @@ deleted on purpose; re-deriving them wastes a session.
 - **Backward mids are POST-twiddled**: `Y[o] = e^{+2πi·o·k/N} · Σ_l e^{+2πi·o·l/R} x_l`
   — diagonal applied by *output* leg after the DFT, `+`-exponent records. This
   is not pre-twiddle with a flipped table sign; guessing that costs an hour.
-- **R16 ≠ R32 — and the cause is SPILLS, not port mix.** Measured census
+- **R16 ≠ R32 — internally the cause is SPILLS, not port mix.** ⚠ This is an
+  *internal* A/B (our tangent R32 vs our classic R32). It is **not** why MKL
+  leads at R32: a like-for-like census against MKL's own 32-point column kernel
+  shows **MKL spills 1.6× more per arithmetic op than we do and wins anyway**
+  (78 stack ops vs our 48), buying 18% fewer instructions, 1.9× the FMAs and
+  *zero* bare multiplies with that traffic. Against MKL the levers are
+  instruction count and naked-add/bare-mul elimination — the direction this
+  family already pushes — plus the interleaved-complex sign/lane tax
+  (our 82 shuffles + 29 xors vs their 54 + 15). See `v1_0_results.md` §1.
+  Measured census
   (`gcc -O2 -mavx2 -mfma -S`):
 
   | kernel | spills | movs | fma | naked add+sub | naked share |
