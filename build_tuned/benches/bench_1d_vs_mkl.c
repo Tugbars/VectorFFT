@@ -2502,6 +2502,12 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     double cfw = 0, cbw = 0, cxerr = -1, cgours = -1;
     int conv = -1; /* 0 = DIF digit-reversal matched, 1 = DIT, -1 = n/a */
     int c4row = 0; /* a kind-4 row exists for the half */
+    /* NATORDER cascade arm: placement=INPLACE + order=NATURAL reaches the
+     * stfn natural cascade through existing routing (the k1nat machinery) —
+     * no order-tape API needed, and the comparison turns properly symmetric:
+     * ours IN-PLACE vs MKL IN-PLACE, the full law-(f) D2 shape. */
+    double nfw = 0, nbw = 0, nxerr = -1, ngours = -1;
+    int natarm = 0;
     int reps = reps_for((size_t)N);
     double tf[5], tb[5];
     const double *bsrc = XC;   /* c2r-arm input spectrum (MKL ref if present) */
@@ -2703,6 +2709,79 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         }
     }
 
+    /* ── NATORDER-CASCADE IN-PLACE ARM (halves >= 2048): the whole D2 route
+     * in one padded plane. fwd: x -> plane, c2c(half) natural IN-PLACE, fold
+     * IN-PLACE. bwd: CCE -> plane, fold_bwd IN-PLACE, c2c bwd IN-PLACE ->
+     * N*x. Timed reps run on junk after rep 1, same convention as the MKL
+     * in-place arms (dense transforms are data-oblivious; FTZ/DAZ). */
+    if (half >= 2048 && okF)
+    {
+        vfft_config_t ncf;
+        memset(&ncf, 0, sizeof ncf);
+        ncf.transform = VFFT_C2C;
+        ncf.placement = VFFT_INPLACE;
+        ncf.rigor = VFFT_MEASURE;
+        ncf.dims = 1;
+        ncf.n[0] = half;
+        ncf.howmany = 1;
+        ncf.order = VFFT_ORDER_NATURAL;
+        ncf.layout = VFFT_LAYOUT_INTERLEAVED;
+        ncf.nthreads = 1;
+        ncf.wisdom = W;
+        vfft_plan hn = vfft_create(&ncf);
+        if (hn)
+        {
+            natarm = 1;
+            /* fwd gate */
+            memcpy(XC, x, ((size_t)N + 2) * 8);
+            vfft_execute(hn, VFFT_FORWARD, XC, NULL, XC, NULL);
+            _zr2c_fold_fwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+            {
+                double w2 = 0, xm2 = 0;
+                for (int i = 0; i < 2 * (half + 1); i++)
+                {
+                    double d = fabs(XC[i] - cref[i]);
+                    if (d > w2) w2 = d;
+                    double a = fabs(cref[i]);
+                    if (a > xm2) xm2 = a;
+                }
+                nxerr = xm2 > 0 ? w2 / xm2 : w2;
+            }
+            /* bwd gate */
+            memcpy(XC, cref, ((size_t)N + 2) * 8);
+            _zr2c_fold_bwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+            vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
+            {
+                double gw = 0, gm2 = 0;
+                for (int i = 0; i < N; i++)
+                {
+                    double d = fabs(XC[i] - (double)N * x[i]);
+                    if (d > gw) gw = d;
+                    double a = fabs(x[i]);
+                    if (a > gm2) gm2 = a;
+                }
+                ngours = gm2 > 0 ? gw / ((double)N * gm2) : gw;
+            }
+            if (nxerr >= 0 && nxerr < 1e-9 && ngours < 1e-9)
+            {
+                double tnf[5], tnb[5];
+                memcpy(XC, x, ((size_t)N + 2) * 8);
+                ZR2C_TIME(tnf, {
+                    vfft_execute(hn, VFFT_FORWARD, XC, NULL, XC, NULL);
+                    _zr2c_fold_fwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+                });
+                memcpy(XC, cref, ((size_t)N + 2) * 8);
+                ZR2C_TIME(tnb, {
+                    _zr2c_fold_bwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+                    vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
+                });
+                nfw = _zr2c_med5(tnf);
+                nbw = _zr2c_med5(tnb);
+            }
+            vfft_destroy(hn);
+        }
+    }
+
     if (hF) DftiFreeDescriptor(&hF);
     if (hB) DftiFreeDescriptor(&hB);
     free_d(mip); free_d(mip2); free_d(cref);
@@ -2713,6 +2792,17 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     printf("%-7d | r2c ours %9.0f  mkl-ip %9.0f  %5.2fx | c2r ours %9.0f  "
            "mkl-ip %9.0f  %5.2fx | xerr %.1e gours %.1e gmkl %.1e\n",
            N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl);
+    if (natarm)
+    {
+        if (nfw > 0)
+            printf("        | nat-ip casc r2c %8.0f       %5.2fx | c2r %13.0f"
+                   "       %5.2fx | xerr %.1e gours %.1e\n",
+                   nfw, (mfw > 0 && nfw > 0) ? mfw / nfw : 0,
+                   nbw, (mbw > 0 && nbw > 0) ? mbw / nbw : 0, nxerr, ngours);
+        else
+            printf("        | nat-ip casc: GATE FAIL (xerr %.1e gours %.1e) — not timed\n",
+                   nxerr, ngours);
+    }
     if (c4row)
     {
         if (conv >= 0 && cfw > 0)
@@ -2727,8 +2817,8 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     }
     fflush(stdout);
     if (out)
-        fprintf(out, "%d,1,%.0f,%.0f,%.3f,%.0f,%.0f,%.3f,%.1e,%.1e,%.1e,%.0f,%.0f,%d\n",
-                N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl, cfw, cbw, conv);
+        fprintf(out, "%d,1,%.0f,%.0f,%.3f,%.0f,%.0f,%.3f,%.1e,%.1e,%.1e,%.0f,%.0f,%d,%.0f,%.0f\n",
+                N, vfw, mfw, rf, vbw, mbw, rb, xerr, gours, gmkl, cfw, cbw, conv, nfw, nbw);
     free_d(x); free_d(Zc); free_d(XC); free_d(y); free_d(aS); free_d(aC);
     vfft_destroy(h);
 }
@@ -3585,7 +3675,7 @@ int main(int argc, char **argv)
         else if (g_zr2c)
             fprintf(out, "N,K,ours_r2c_ns,mkl_r2c_ip_ns,r2c_ratio,ours_c2r_ns,"
                          "mkl_c2r_ip_ns,c2r_ratio,xerr_fwd,gate_ours_c2r,gate_mkl_c2r,"
-                         "casc_r2c_ns,casc_c2r_ns,casc_conv\n");
+                         "casc_r2c_ns,casc_c2r_ns,casc_conv,natip_r2c_ns,natip_c2r_ns\n");
         else if (oop)
             fprintf(out, "N,K,kind,factorization,gate,order,vfft_ns,mkl_ns,speedup\n");
         else
