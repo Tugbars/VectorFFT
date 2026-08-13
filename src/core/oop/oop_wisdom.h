@@ -116,8 +116,28 @@ typedef struct {
      * fwd-only t2q-race median (informational either way). */
     int    zs_t2q;
     int    zs_route, zt_t2q;
+    /* kind 5 (ZR2C / K=1 INTERLEAVED real composite): packed child-route
+     * verdicts, 2 bits per (transform, placement) combo — codec below
+     * (vfft_zr2c_kv_*). 0-field = UNMEASURED = the structural default,
+     * so every cell that never raced replays exactly today's behavior.
+     * Line: N 1 5 zr_kv [ns] — zr_kv FIRST so it survives a stale-writer
+     * strip cycle in the ns position (see oop_plan.h kind-5 comment). */
+    int    zr_kv;
     double ns;                            /* measured (informational) */
 } vfft_oop_wisdom_entry_t;
+
+/* ── kind-5 zr_kv codec — THE one definition of the packing (vfft.c banks
+ * with it, _zr2c_build reads with it; a bench that wants to inspect a
+ * verdict uses these, never raw shifts).
+ *   slot: 0 = r2c OOP · 1 = r2c IN-PLACE · 2 = c2r OOP · 3 = c2r IN-PLACE
+ *   field: 0 = unmeasured · 1 = child route 0 (OOP-IL) · 2 = route 1
+ *          (NAT-IP cascade). vfft_zr2c_kv_set takes the ROUTE (0/1). */
+static inline int vfft_zr2c_kv_slot(int is_c2r, int is_inplace)
+{ return ((is_c2r ? 1 : 0) << 1) | (is_inplace ? 1 : 0); }
+static inline int vfft_zr2c_kv_get(int kv, int slot)
+{ return (kv >> (2 * slot)) & 3; }
+static inline int vfft_zr2c_kv_set(int kv, int slot, int route)
+{ return (kv & ~(3 << (2 * slot))) | (((route ? 2 : 1)) << (2 * slot)); }
 
 typedef struct {
     vfft_oop_wisdom_entry_t e[VFFT_OOP_WISDOM_MAX];
@@ -176,6 +196,12 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             /* kind 4 = K=1 SCRAMBLED cascade: zs_t2q cc_chain */
             tok = strtok(NULL, " \t\n\r"); if (tok) e->zs_t2q = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->cc_chain = atoi(tok); else ok = 0;
+            if (ok && e->K != 1) ok = 0;
+        } else if (e->kind == VFFT_OOP_KIND_ZR2C) {
+            /* kind 5 = K=1 zr2c composite: one packed token. atoi accepts a
+             * "1234.0" survivor of a stale-writer strip cycle (it stops at
+             * the dot) — that is the whole robustness story of this kind. */
+            tok = strtok(NULL, " \t\n\r"); if (tok) e->zr_kv = atoi(tok); else ok = 0;
             if (ok && e->K != 1) ok = 0;
         }
         if (!ok) continue;
@@ -250,6 +276,19 @@ vfft_oop_wisdom_lookup_zsplit(const vfft_oop_wisdom_t *w, int N)
     return NULL;
 }
 
+/* K=1 zr2c composite lookup: the kind-5 entry for the REAL length N (K==1 by
+ * definition; the child c2c cell at N/2 lives in the ordinary c2c tables). */
+static inline const vfft_oop_wisdom_entry_t *
+vfft_oop_wisdom_lookup_zr2c(const vfft_oop_wisdom_t *w, int N)
+{
+    if (!w) return NULL;
+    for (int i = 0; i < w->count; i++)
+        if (w->e[i].N == N && w->e[i].K == 1 &&
+            w->e[i].kind == VFFT_OOP_KIND_ZR2C)
+            return &w->e[i];
+    return NULL;
+}
+
 /* Output-order class of an OOP kind: 1 = NATURAL (LEAF/BAILEY2), 0 = SCRAMBLED (MODEB). This is
  * what lets one (N,K) cell cache both a natural and a scrambled champion as SEPARATE entries. */
 static inline int vfft_oop_kind_natural(int kind) { return kind != VFFT_OOP_KIND_MODEB; }
@@ -268,6 +307,7 @@ vfft_oop_wisdom_lookup_ord(const vfft_oop_wisdom_t *w, int N, size_t K, int ord)
         if (e->N != N || e->K != K) continue;
         if (e->kind == VFFT_OOP_KIND_BAILEY2V) continue; /* K1 entries: lookup_k1 only */
         if (e->kind == VFFT_OOP_KIND_ZSPLIT) continue;   /* cascade cells: lookup_zsplit only */
+        if (e->kind == VFFT_OOP_KIND_ZR2C) continue;     /* real cells: lookup_zr2c only */
         int nat = vfft_oop_kind_natural(e->kind);
         if (ord == 1 && !nat) continue;                  /* NATURAL wanted; skip MODEB */
         if (ord == 2 && nat)  continue;                  /* SCRAMBLED wanted; skip native */
@@ -368,6 +408,8 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
     }
     else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
         fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);
+    else if (e->kind == VFFT_OOP_KIND_ZR2C)
+        fprintf(f, " %d", e->zr_kv);
     fprintf(f, " %.1f", e->ns);
     /* kind-3 variant verdict: emitted ONLY when non-zero, so a cell that
      * never measured the blocked axis re-banks in the exact pre-axis
