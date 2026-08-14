@@ -1770,8 +1770,8 @@ let run (argv : string array) : unit =
              prod
              n);
       print_string
-        (Codelet_cil.emit_k1
-           ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
+        (C2c_il.emit_k1
+           ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~chain_a
            ~chain_b
            ~isa
@@ -1782,13 +1782,13 @@ let run (argv : string array) : unit =
          Complex IR -> SHARED SR scheduler (Schedule.Make) -> ISA-parametric
          emission. See codelet_cil.ml. *)
       print_string
-        (Codelet_cil.emit
+        (C2c_il.emit
            ~log3:!cil_log3
            ~pretw:!cil_pretw
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs
-           ~kind:(Codelet_cil.kind_of_string !cil_kind)
-           ~dir:(if !cil_bwd then Codelet_cil.Bwd else Codelet_cil.Fwd)
+           ~kind:(C2c_il.kind_of_string !cil_kind)
+           ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~blocked:!cil_blocked
            ~split:
              (if !cil_split = ""
