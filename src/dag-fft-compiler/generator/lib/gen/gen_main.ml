@@ -1998,24 +1998,57 @@ let run (argv : string array) : unit =
       print_string (Codelet_oop.emit_codelet cfg))
     else (
       (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
-      print_string
-        (Emit_body.emit_codelet
-           ~sc
-           ~cfg:ccfg
-           ~in_place:!in_place
-           ~t1s:!t1s
-           ~twidsq:!twidsq
-           ~twidsq_n:(if !twidsq then n else 0)
-           ~strided:!strided
-           ~radix:n
-           ~scheduler
-           ~isa
-           ~gh:!gh
-           ~bb_budget:bb_budget_arg
-           ~spill:spill_info
-           ~is_log3:!log3
-           deduped
-           ~name)))
+      let route_real =
+        ccfg.Emit_render.Cfg.r2cf || ccfg.Emit_render.Cfg.r2cb
+        || ccfg.Emit_render.Cfg.r2c_term || ccfg.Emit_render.Cfg.r2c_term_ls
+        || ccfg.Emit_render.Cfg.hc2c_natural
+        || ccfg.Emit_render.Cfg.hc2c_natural_bwd
+        || ccfg.Emit_render.Cfg.hc_strided || ccfg.Emit_render.Cfg.hc_ranged
+        || ccfg.Emit_render.Cfg.r2r || ccfg.Emit_render.Cfg.strided_r2c
+        || ccfg.Emit_render.Cfg.strided_r2c_bwd
+      in
+      (* M8.3: real-family cells route through Real, which installs the
+         family hooks (the moved r2c/c2r/hc arms); everything else calls
+         the engine directly with no hooks. *)
+      if route_real
+      then
+        print_string
+          (Real.emit_codelet
+             ~sc
+             ~cfg:ccfg
+             ~in_place:!in_place
+             ~t1s:!t1s
+             ~twidsq:!twidsq
+             ~twidsq_n:(if !twidsq then n else 0)
+             ~strided:!strided
+             ~radix:n
+             ~scheduler
+             ~isa
+             ~gh:!gh
+             ~bb_budget:bb_budget_arg
+             ~spill:spill_info
+             ~is_log3:!log3
+             deduped
+             ~name)
+      else
+        print_string
+          (Emit_body.emit_codelet
+             ~sc
+             ~cfg:ccfg
+             ~in_place:!in_place
+             ~t1s:!t1s
+             ~twidsq:!twidsq
+             ~twidsq_n:(if !twidsq then n else 0)
+             ~strided:!strided
+             ~radix:n
+             ~scheduler
+             ~isa
+             ~gh:!gh
+             ~bb_budget:bb_budget_arg
+             ~spill:spill_info
+             ~is_log3:!log3
+             deduped
+             ~name)))
   else (
     let variant = if !log3 then ", log3" else "" in
     let label =
