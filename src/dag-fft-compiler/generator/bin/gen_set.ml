@@ -4,7 +4,7 @@
  * in-process via Gen_main.run, one warm process for the whole tree
  * instead of 753 forks. Per-codelet stdout is captured by dup2-ing the
  * target file over fd 1 around the run; provenance stamps carry the
- * LOGICAL per-codelet command via Emit_c.provenance_argv.
+ * LOGICAL per-codelet command via Emit_render.provenance_argv.
  *
  * Usage:
  *   gen_set.exe [--root DIR] [quadrant ...]      (default: all)

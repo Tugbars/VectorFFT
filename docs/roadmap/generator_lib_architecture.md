@@ -916,7 +916,11 @@ modules and leaving #24 unassigned; the tree is 1–23 kernel, 24–30 cx, **31�
 **Deleted outright:** `emit_state.ml` (34 cells → fields of `Abi.t` / `Render.ctx`) · `emit_c.ml`
 (redistributed) · `gen_main.ml` (**renamed** to `Driver` after redistribution — it is a survivor in the
 38-count, not a deletion; only `emit_state`, `emit_c` and `simd_ir` leave the stanza) · `simd_ir.ml` · `number.ml` (licence check first) ·
-`gen_main.ml.orig`. 🟢 **`generator/old-lib/` — OWNER DECISION 2026-08-14: KEEP IN PLACE. Do not re-propose moving it.**
+`gen_main.ml.orig`. 🟢 **`old-lib/` — OWNER DECISION REVISED (2026-08-14, later the same day): MOVED to
+`src/dag-fft-compiler/archive/old-lib/`** ("you can put the old lib to another folder, so I can
+follow the new files easier") — out of the generator working tree, still tracked, banners + `.ignore`
+travel with it, deletion still scheduled at v1.0. The earlier keep-in-place text below is retained
+for the record:
 An earlier draft of this document recommended moving it out of the tree (3 files, 5,305 lines,
 un-citable by standing law). That recommendation is **withdrawn**: the directory is retained
 deliberately for historical tracking and **will be deleted when v1.0 releases — not before.**
@@ -1569,10 +1573,10 @@ Recipe arms: `genset 1074 · derive 221 · replay 125 · ship 6 · k1 6`.
 
 | # | step | byte-identity | risk / notes |
 |---:|---|:-:|---|
-| **M0** | **Gate hardening + hygiene.** G1–G5 above. Then delete `simd_ir.ml` (+ its stanza line, together, or hard error), `number.ml` (licence check first), `gen_main.ml.orig`; move `old-lib/` out of the tree. Fix `bin_test/dune` so the cx test actually builds. | ✅ **by construction** | **The gate must be tracked and complete BEFORE anything else moves.** Also removes ~5,600 lines of grep poison in a campaign whose central hazard is *"filename ≠ family"*. **Do this Monday regardless of what else is agreed.** |
-| **M1** | **Cut the chains: `include` → `open`, SEVEN one-word edits** (`simplify.ml:32`, `fma_passes.ml:166`, `algsimp.ml:26`, `emit_render.ml:33`, `emit_c.ml:58`, `dft.ml:34`, `dft_recurse.ml:27`), then requalify **~395 refs in `lib/`, ~467 including `bin/`**. | ✅ **but see the hazard** | 🥇 `include` and `open` bring *identical* names into scope with *identical* shadowing — only `include` re-exports. Proved during review that `include` aliases the *same* `ref` cell (`physically_equal = true`) and that there is **0 real shadowing** across all 7 chain links. **⚠ But "compile error, never different bytes" is REFUTED in one configuration:** `emit_render.ml:42` defines its own `topo_sort_reachable` shadowing `Ir`'s, used at **14 sites** inside `emit_codelet`; cutting the chains *forces* new `open`s whose placement decides resolution — and **warnings 44/45 are omitted from dune's warning band, so an open-shadow flip is completely silent.** 🔴 **Mitigation, mandatory: run M1 under `-w +44+45`, and pre-qualify `topo_sort_reachable` at all 14 sites in its own separate commit first.** ⚠ any `:=` grep must be multi-line tolerant (`perl -0777`); a naive grep finds 11 of `gen_main`'s 26 writers. ⚠ never let a rename script near `codelets/` — Git-Bash `sed` strips CRLF and 99 corpus files are CRLF in the worktree. |
-| **M2** | **`.mli` for L0–L2 leaves** (`Isa` `Uarch` `Cnum` `Expr` `Regalloc` `Schedule` `Split_radix` `Pipeline` `Bb`…). | ✅ **by construction** | Generation recipe in §10 (the `-open Vfft_v2__` form does **not** run). **`Ir.t = private` is NOT part of this step** — rejected, §12.3. |
-| **M3** | **`Layout`.** Replace the 8 layout bools with `plane`/`buffers`/`param`. | ⚠️ **partly UNGATEABLE** | 🔴 Zero corpus representatives (§14.1). Compensating control, and it is a **deliverable of this step, not a nice-to-have**: `gates/layout_smoke.sh` invokes all 12 `buffers`/`plane` combinations, compiles with `gcc -c -mavx2 -Werror`, and asserts declared pointers == referenced pointers. *(Effectively prototyped during review: gcc rejects both illegal states with `'out_z' undeclared` and `'rio_re' redeclared`.)* **Weaker than byte-identity — stated, not oversold** — but strictly stronger than today, where `--ip-il-in --ip-il-out` silently produces uncompilable C. **Write `layout.mli` + `abi.mli` and build them scoped FIRST** — the cycle in §10.1 was a real build error and the module count depends on the resolution. |
+| **M0** | **Gate hardening + hygiene.** G1–G5 above. Then delete `simd_ir.ml` (+ its stanza line, together, or hard error), `number.ml` (licence check first), `gen_main.ml.orig`; ⚠ old-lib/ is **NOT moved** — the §9 owner decision (KEEP IN PLACE until v1.0) supersedes this row's earlier text; treatment = `old-lib/.ignore` + STATUS BANNERS. Fix the cx test so it actually builds (G3 builds + RUNS it). 🟢 **EXECUTED 2026-08-14** — gate moved to `generator/gates/`, G3/G4/G5 landed, hygiene done, `cx_pipeline_test` fixed (missing `CRotAdd` eval arm) + ALL PASS freshly built, gate re-run from the tracked home: **GATE PASS 1403/1432, drift 0**. `number.ml` licence check: header says "Ported from FFTW" (copied GPL source, never compiled) — deletion also resolves the licence question. | ✅ **by construction** | **The gate must be tracked and complete BEFORE anything else moves.** Also removes ~5,600 lines of grep poison in a campaign whose central hazard is *"filename ≠ family"*. |
+| **M1** | **Cut the chains: `include` → `open`, SEVEN one-word edits** (`simplify.ml:32`, `fma_passes.ml:166`, `algsimp.ml:26`, `emit_render.ml:33`, `emit_c.ml:58`, `dft.ml:34`, `dft_recurse.ml:27`), then requalify **~395 refs in `lib/`, ~467 including `bin/`**. | ✅ **but see the hazard** | 🥇 `include` and `open` bring *identical* names into scope with *identical* shadowing — only `include` re-exports. Proved during review that `include` aliases the *same* `ref` cell (`physically_equal = true`) and that there is **0 real shadowing** across all 7 chain links. **⚠ But "compile error, never different bytes" is REFUTED in one configuration:** `emit_render.ml:42` defines its own `topo_sort_reachable` shadowing `Ir`'s, used at **14 sites** inside `emit_codelet`; cutting the chains *forces* new `open`s whose placement decides resolution — and **warnings 44/45 are omitted from dune's warning band, so an open-shadow flip is completely silent.** 🔴 **Mitigation, mandatory: run M1 under `-w +44+45`, and pre-qualify `topo_sort_reachable` at all 14 sites in its own separate commit first.** ⚠ any `:=` grep must be multi-line tolerant (`perl -0777`); a naive grep finds 11 of `gen_main`'s 26 writers. ⚠ never let a rename script near `codelets/` — Git-Bash `sed` strips CRLF and 99 corpus files are CRLF in the worktree. 🟢 **EXECUTED 2026-08-14**: topo_sort_reachable pre-qualified ×14 (own gated step, PASS); **522 requalifications** landed via ownership-map rewrite (407 value/type + 115 constructor/field); 7 chains cut; compensating `open Ir` added where the chain had been the only supplier — and warning 33 then PROVED `annotate`, `schedule`, `emit_c` and `test_mk_plus` never used Algsimp bare at all (their `open Algsimp` became unused and was removed — the pass-layer dependency was an include-chain artifact, and the topo_sort_reachable shadow hazard is structurally dead, not just mitigated). All 19 executables build; cx test PASS; **full corpus gate PASS (1403/1432, drift 0)**; a `-w +44+45` rebuild shows ZERO shadow warnings; `generated/` tree-clean throughout. |
+| **M2** | **`.mli` for L0–L2 leaves** (`Isa` `Uarch` `Cnum` `Expr` `Regalloc` `Schedule` `Split_radix` `Pipeline` `Bb`…). | ✅ **by construction** | Generation recipe in §10 (the `-open Vfft_v2__` form does **not** run). **`Ir.t = private` is NOT part of this step** — rejected, §12.3. 🟢 **EXECUTED 2026-08-14**: G8 landed FIRST (`spill_info` + `make_spill_info` moved emit_render→algsimp beside `spill_tag_marker`; consumers requalified in pipeline/codelet_oop/emit_c/gen_main/regalloc; render-side ALGORITHMS over the data stayed put) — the Pipeline(L1)→Render(L3) inversion is gone. Then **11 `.mli`s installed** (isa uarch cnum expr bb annotate schedule regalloc split_radix pipeline ir; 0→11, the tree's first), generated via the §10 `ocamlc -i` recipe + MODULE-CARD headers; `ir.mli` NAMES the reset contract incl. the Algsimp.fresh hcons exemption. 19/19 build, cx test PASS, **full corpus gate PASS (1403/1432, drift 0)**. ⚠ Incident during acceptance: WSL 9p flake produced one phantom-drift scan and one TRUNCATED verdict file (~169/1432 rows reported as "verdicts moved") — both bracketed by clean runs; fix = `wsl --shutdown` + rerun, and the gate now self-checks NV==NBASE and exits 2 (harness error) on an incomplete run. |
+| **M3** | **`Layout`.** Replace the 8 layout bools with `plane`/`buffers`/`param`. | ⚠️ **partly UNGATEABLE** | 🔴 Zero corpus representatives (§14.1). Compensating control, and it is a **deliverable of this step, not a nice-to-have**: `gates/layout_smoke.sh` invokes all 12 `buffers`/`plane` combinations, compiles with `gcc -c -mavx2 -Werror`, and asserts declared pointers == referenced pointers. *(Effectively prototyped during review: gcc rejects both illegal states with `'out_z' undeclared` and `'rio_re' redeclared`.)* **Weaker than byte-identity — stated, not oversold** — but strictly stronger than today, where `--ip-il-in --ip-il-out` silently produces uncompilable C. **Write `layout.mli` + `abi.mli` and build them scoped FIRST** — the cycle in §10.1 was a real build error and the module count depends on the resolution. 🟢 **EXECUTED 2026-08-14**: `lib/layout.ml`+`.mli` landed (12th .mli) — with a plane the sketch missed and the corpus taught: **`Real`** (bare `rio`/`out`, the strided-r2c family), partially answering OQ-1's census. Three printer sites rewired through `Layout.pointers` (codelet_oop signature, emit_c in-place arm, emit_c strided chain) — **byte-identical, full gate PASS**. The law now FIRES: `--ip-il-in --ip-il-out` (previously silent, order-resolved) raises; the oop sw-pair illegal states (previously unguarded) raise; and the demonstrated `strided-il + strided-r2c` broken-C fallthrough is a loud failwith. `gates/layout_smoke.sh` delivered: **17/17** — 13 positive arms (all five zero-representative IL arms emit + gcc-compile, data planes all referenced) + 4 negative arms refused loudly. Harness calibrations recorded in the script: `-Wno-error=incompatible-pointer-types` (pre-existing spill-store idiom, 648 shipped files) and tw_re/tw_im exempt from the referenced-check (declared-unused uniformity convention on no-twiddle kinds). |
 | **M4** | **`Abi`.** The 13-arm ladder (`emit_c.ml:1446-1911`) + the second derivation (`:1885-1936`) + the third (`:428`) become one total `make` + projections; `Render.body_preamble` absorbs the 12 duplicated spill/const blocks; `Abi.z11` replaces the twice-printed z ABI. | ✅ **+ self-differential** | 🥇 **`VFFT_ABI_XCHECK` is a PREREQUISITE, not a mitigation.** Land `Abi` alongside the legacy ladder; emit **both** signatures in-process for every codelet; `assert` string equality. **1,432 independent equality proofs between ladder and match — so divergence localises to a SIGNATURE, not a file.** It is also the diagnostic: if it cannot go clean, the ABI is not a value and M4 re-scopes (§16 R2). ⚠ **Disclosed:** the xcheck inherits M3's blind spot — 0 of 1,432 recipes exercise the five layout arms, so the xcheck proves nothing about them. Delete the legacy arm in the following commit. |
 | **M5** | **`Codelet` + `Knobs`, in the `Driver` only.** Features still read globals; the globals are now *set from the descriptor* in one place. | ✅ | Pure addition. The descriptor is exercised over the whole corpus before anything depends on it, and `to_argv` round-trip fidelity is checkable against the 1,199 recorded argv lines. 🔴 **`to_argv` must reproduce the recorded string, flag order included, or M5 becomes a second baseline regeneration** (up to 1,203 `Generated by:` lines). |
 | **M6** | 🔴 **Thread `Render.ctx`. Delete `emit_state.ml`.** (6a) the 22 config flags; (6b) the ~10 scratch cells. | ✅ at default env **AND** `VFFT_DUP=1` | Cheaper than feared — ~5 functions gain `~ctx` (§11.3). 6b is the semantically load-bearing half: `il_stash`'s correctness depends on the *scheduler* emitting re/im in adjacent order, enforced only by a runtime `failwith` at `emit_c.ml:2004`. **Standing rule if a row moves: "the gate decides, not the argument" — record it as a latent bug the corpus encodes and re-bank with a numeric gate; do not preserve the leak.** (D-2: `current_tw_perpos`/`current_tw_linear`, `codelet_oop.ml:1965-1966`, never cleared, leaking into six later quadrants.) Apply the xcheck pattern to the flag reads. |
@@ -1779,6 +1783,14 @@ absorption gets slower. **If the owner, shown §9.1 and cost 3 together, says ab
 more than a one-file answer to "where is the r2c terminator" — then the smaller footprint (M0–M7) is the
 correct architecture and M8/M12 should be dropped.** That is a values question, not an evidence question,
 and **it should be asked before M3, because M0–M2 are free and correct under either answer.**
+
+> 🟢 **R3 ANSWERED BY THE OWNER (Tugbars, 2026-08-14):** *"there won't be much hand written codelets
+> anymore, the development is about to be finished. the library's math and optimizations are 95%
+> figured out."* — absorption velocity is no longer the operative value; the library is entering its
+> finished/maintenance era, where cold-reader location, reproducibility and silent-failure elimination
+> dominate. **VERDICT: the FULL plan is in scope — M8 proceeds (GO per §22 X3, conditional on the
+> spill-cluster-moves-whole rule) and M12 stays.** The stop-after-M7 fallback remains pre-authorized
+> only as a risk fallback, not as the target.
 
 ---
 
@@ -2046,3 +2058,68 @@ The M8 lexical cut set (R1/X3 — the biggest open risk, unmeasured by anyone); 
 can type all 83 argv shapes (X2); the 221 recovered `pure_il` recipes' totality (OQ-10); cross-host
 determinism (OQ-11); `expr.ml:289-369` liveness (OQ-12, still needs deletion-and-build); the 46–47
 unstamped env vars' effect on emitted bytes; and the C-side blast radius of M10.
+
+---
+
+## 22 · Pre-work results (X1–X6, executed 2026-08-14)
+
+*All six §14.4 experiments ran the day M0 landed. Artifacts: `docs/research/generator_arch/scratch/`
+(`x1_x5/` scratch dune project, `x2.ml` + `x2_shapes.tsv`, `x3.ml`, `x6_cell_ledger.tsv`).*
+
+**X1 — `layout.mli` + `abi.mli` built for real: the module count is 38.** ✅ Layout owning `param`
+resolves the §10.1 cycle; `Abi` builds against `Isa` + `Layout` with both `.mli`s enforced; the `z11`
+value renders the frozen 11-arg ABI (verified against `codelet_cil.ml:866-873`) with derived
+silencers. One finding the sketches omitted: under **wrapped libraries** a feature module writes
+`open Vfft_kernel` (or qualifies) — one open, same discipline as the cx family.
+
+**X5 — the three-library mechanism WORKS (G11 settled).** ✅ With `vfft_cx` a separate library and
+`(implicit_transitive_deps false)`, an executable linking only `vfft_gen` gets `Unbound module
+"Vfft_cx"` (rc=1) while `vfft_gen` uses cx internally. Stronger than needed: the app cannot resolve
+`Vfft_kernel` either (reproduced accidentally by this probe's own harness). **And OQ-1's exploit is
+dead both ways:** the hand-rolled hybrid `param` literal → `Cannot create values of the private type`
+(compile error); `Layout.scalar ~ctype:"const double *"` → `Invalid_argument` with the positive path
+intact. Remaining OQ-1 half: the 23-ABI parameter census (data-plane/twiddle/scalar) — not yet run.
+
+**X2 — OQ-2 settled: `kind` stays a SUM; `Codelet` is not a config record.** ✅ 212/212 normalized
+corpus argv shapes (superset of the 83: 1,199 provenance headers + the 221 derive-arm recipes,
+values abstracted) parse into: **14 top-level kind constructors** carrying 3 small enums (trig 9-way,
+cil-form 3-way, zs-kind 19-way ⇒ 41 leaf selectors ≈ the measured 40), **global `modifiers` = 5
+fields** (`dir`, `dif`, `table`, `t1s`, `su`) — far under the ~12 red line — and **family-scoped
+modifiers as kind-payload records** (oop 7 fields, cil 3, zsplit 2, hc 1): the `zs_kind` precedent
+generalized. The earlier pure-sum failure ("could not name the 32 `*_strided_r2c.c`") dissolves —
+`Strided_r2c` is its own selector. Prototype `of_argv`: `scratch/x2/x2.ml`.
+
+**X3 — the M8 GO/NO-GO: NO-GO as literally pre-committed, GO under one condition the plan already
+mandates.** AST probe (compiler-libs, spine-level scoping, nested shadowing ignored ⇒ overcounts ⇒
+conservative toward NO-GO; `buf` excluded; the six named closures ×3): **weighted 23–25 at every
+candidate boundary ⇒ NO-GO** — but the entire excess is ONE coherent cluster: the spill-engine
+closure family (`record_peak_live:119` … `emit_node_reload_sites:340`, plus `max_pass_peak` and a
+**seventh** mutable-state closure the review's list missed, `install_alloc:242`) and the tail
+machinery (`anyk_tail`/`tail_bound`/`tail_var`/`emit_v_loop_header`, `:419-435`). Modeling the spill
+engine + its closures moving **WHOLE** into `Emit_body` — which §5.3 and the M8 row already mandate
+("it moves whole; it does not decompose") — every boundary drops to **weighted 3–5: GO with wide
+margin**, the residue being the tail machinery plus one or two locals. **Verdict: M8 is GO, with the
+spill-cluster-moves-whole treatment promoted from recommendation to LOAD-BEARING CONDITION** (and
+`install_alloc` added to its manifest). Raw-name counts (11–13) independently confirm the review's
+lexical probe.
+
+**X4 — OQ-6 settled: thread the recipes; no module needs the ambient exception.** ✅ Enclosing-def
+census: `fma_passes` 14 getenv sites in 4 defs, **11 of 14 are `*_TRACE`** ⇒ after the `Trace` split
+exactly **one** byte-affecting knob (`VFFT_FMA_MULTIUSE`) in one def; `schedule` 10 sites / 3 defs
+(byte-affecting: SCHED_ORDER + LOADS/PACE/TIEBREAK/GH_THRESHOLD in `su_schedule{,_subset}`);
+`simplify` 5 / 3 (COLLECT_M, DEEP_COLLECT). **Total: ~6–8 top-level defs gain a recipe parameter
+across all three modules** — nowhere near the >30/module threshold. The nested-lambda sites the doc
+worried about are all Trace keys.
+
+**X6 — the 66-cell ledger exists, per cell (G2/G3 closed).** ✅ `scratch/x6_cell_ledger.tsv`: every
+cell → a named home. Survivors: exactly the **4 `Ir` memos**. Corrections encoded: `strided_ilo_nt`
+→ a `Codelet` store-mode modifier consumed by `Simd` (+ symbol), not an `Abi` fact (G2);
+`current_store_on_compute` and `hoist_consts_enabled` → `Knobs.render_recipe` config, not Scratch
+(G3) — so the Scratch set is 8, not ~10, and §11.4's per-module arithmetic holds with the corrected
+buckets. Bonus: `cx_math.tangent`'s one-way-latch defect dies structurally with the per-emission ctx.
+
+**Net effect on the plan:** every §14.4 gate is green — M1 can start, M3/M4 are de-risked (X1),
+M5's descriptor shape is settled (X2), M8 is GO conditional on the spill-cluster rule (X3), M6's
+ledger is cell-exact (X6), and `Knobs` threading is cheap (X4). The remaining pre-M3 item is the
+**owner's R3 values question** (absorption velocity vs one-place answers), which decides whether
+M8/M12 stay in scope at all.
