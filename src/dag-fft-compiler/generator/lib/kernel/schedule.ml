@@ -154,7 +154,7 @@ let log_injection (s : string) = injection_log := s :: !injection_log
 let resolve_order_source () : string option =
   match !order_source with
   | Some _ as s -> s
-  | None -> Sys.getenv_opt "VFFT_SCHED_ORDER"
+  | None -> Knobs.sched_order ()
 ;;
 
 (* Canonical DAG description: one "tag:pred pred ..." line per node,
@@ -804,14 +804,14 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
    * only by global search, not by these greedy rules. Knobs retained,
    * default strict, so the ledger shows the race. *)
   let load_policy =
-    match Sys.getenv_opt "VFFT_SCHED_LOADS" with
+    match Knobs.sched_loads () with
     | Some "anyorder" -> `Anyorder
     | Some "lookahead" -> `Lookahead
     | Some "nearstarve" -> `Nearstarve
     | _ -> `Strict
   in
   let leaf_pace =
-    match Sys.getenv_opt "VFFT_LOAD_PACE" with
+    match Knobs.load_pace () with
     | Some s ->
       (try max 1 (int_of_string s) with
        | _ -> 4)
@@ -833,7 +833,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
    * NUMBER comment above compute_su_number. Sink bitmask capped at
    * 63; larger DAGs fall back to classic. *)
   let tiebreak =
-    match Sys.getenv_opt "VFFT_SU_TIEBREAK" with
+    match Knobs.su_tiebreak () with
     | Some "cone" -> `Cone
     | Some "affinity" -> `Affinity
     | _ -> `Classic
@@ -1071,7 +1071,7 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
             n.tag, List.map (fun (p : t) -> p.tag) (preds n))
          su_intermediates)
   in
-  (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
+  (match Knobs.Trace.sched_dump () with
    | None -> ()
    | Some file ->
      let oc = open_out file in
@@ -1222,7 +1222,7 @@ let su_schedule_subset
    * region). Same theory as the monolithic knob — see the SU NUMBER
    * header above compute_su_number. Cap 63 sinks per cluster. *)
   let tiebreak_sub =
-    match Sys.getenv_opt "VFFT_SU_TIEBREAK" with
+    match Knobs.su_tiebreak () with
     | Some "cone" -> `Cone
     | Some "affinity" -> `Affinity
     | _ -> `Classic
@@ -1338,7 +1338,7 @@ let su_schedule_subset
    * Lowering it makes GH pressure-mode engage earlier -> frees registers
    * sooner -> fewer stack spills, at a possible latency cost. *)
   let threshold =
-    match Sys.getenv_opt "VFFT_GH_THRESHOLD" with
+    match Knobs.gh_threshold () with
     | Some s ->
       (try int_of_string s with
        | _ -> uarch.Uarch.pressure_threshold)
@@ -1400,14 +1400,14 @@ let su_schedule_subset
   in
   (* Leaf-placement policy bindings (see su_schedule's comment). *)
   let load_policy =
-    match Sys.getenv_opt "VFFT_SCHED_LOADS" with
+    match Knobs.sched_loads () with
     | Some "anyorder" -> `Anyorder
     | Some "lookahead" -> `Lookahead
     | Some "nearstarve" -> `Nearstarve
     | _ -> `Strict
   in
   let leaf_pace =
-    match Sys.getenv_opt "VFFT_LOAD_PACE" with
+    match Knobs.load_pace () with
     | Some s ->
       (try max 1 (int_of_string s) with
        | _ -> 4)
@@ -1722,7 +1722,7 @@ let su_schedule_subset
                 (preds n) ))
          su_order)
   in
-  (match Sys.getenv_opt "VFFT_SCHED_DUMP" with
+  (match Knobs.Trace.sched_dump () with
    | None -> ()
    | Some prefix ->
      let oc = open_out (Printf.sprintf "%s_%d.txt" prefix subset_key) in

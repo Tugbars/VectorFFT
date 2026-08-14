@@ -114,6 +114,11 @@ type kind =
       ; r0 : int option (* --zp-r0 N *)
       ; sink : bool (* --zp-sink *)
       }
+  | K1_mono of
+      { r1 : int option (* --k1-r1 N *)
+      ; il : bool (* --k1-il *)
+      ; sw : bool (* --k1-sw *)
+      } (* Codelet_oop.emit_k1_mono — the 6th emission entry point *)
 
 type t =
   { radix : int
@@ -182,6 +187,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let term_rt = ref false and term_k = ref None and term_ls_r = ref 0 in
   let blocked = ref false and split = ref None and turn = ref None and pre_tw = ref false in
   let zp_r0 = ref None and sink = ref false in
+  let k1_r1 = ref None and k1_il = ref false and k1_sw = ref false in
   let rec go = function
     | [] -> ()
     | n :: tl when !radix = 0 && int_of_string_opt n <> None ->
@@ -256,6 +262,10 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-pretw" :: tl -> pre_tw := true; go tl
     | "--zp-r0" :: v :: tl -> zp_r0 := Some (int_of_string v); go tl
     | "--zp-sink" :: tl -> sink := true; go tl
+    | "--k1-mono" :: tl -> push "k1-mono"; go tl
+    | "--k1-r1" :: v :: tl -> k1_r1 := Some (int_of_string v); go tl
+    | "--k1-il" :: tl -> k1_il := true; go tl
+    | "--k1-sw" :: tl -> k1_sw := true; go tl
     | t :: tl when String.length t > 5 && String.sub t 0 5 = "--zp-" ->
       push ("zp:" ^ String.sub t 5 (String.length t - 5));
       go tl
@@ -313,6 +323,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; turn = !turn
         ; pre_tw = !pre_tw
         }
+    | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
     | [ t ] when String.length t > 3 && String.sub t 0 3 = "zp:" ->
       Zsplit
         { k = zs_of_name (String.sub t 3 (String.length t - 3))
@@ -430,3 +441,7 @@ let to_argv (c : t) : string list =
     @ (match r0 with None -> [] | Some v -> [ "--zp-r0"; string_of_int v ])
     @ g sink "--zp-sink"
     @ isa @ uarch @ emitc
+  | K1_mono { r1; il; sw } ->
+    n @ [ "--k1-mono" ]
+    @ (match r1 with None -> [] | Some v -> [ "--k1-r1"; string_of_int v ])
+    @ g il "--k1-il" @ g sw "--k1-sw" @ isa @ emitc

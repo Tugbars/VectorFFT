@@ -750,44 +750,86 @@ let run (argv : string array) : unit =
      || !hc2hc
      || !hc2c
      || !hc2c_nat;
-  Emit_state.r2cf_signature := !r2cf;
-  Emit_state.r2cb_signature := !r2cb;
-  Emit_state.r2c_term_signature := !r2c_term;
-  Emit_state.r2c_term_rt := !r2c_term_rt;
-  Emit_state.r2c_term_laststage := !r2c_term_ls;
-  if !r2c_term_ls then Emit_state.r2c_term_ls_r := !r2c_term_ls_r;
-  Emit_state.hc_strided := !hc2hc || !hc2c || !hc2c_nat;
-  Emit_state.n1_oop_strided := !oop_strided;
-  Emit_state.strided_il_out := !strided_il_out;
-  Emit_state.strided_r2c := !strided_r2c;
-  Emit_state.strided_r2c_bwd := !strided_r2c && !bwd;
-  Emit_state.ip_il_in := !ip_il_in;
-  Emit_state.ip_il_out := !ip_il_out;
-  Emit_state.strided_il_in := !strided_il_in;
-  Emit_state.strided_ilo_nt := !strided_ilo_nt;
-  (* hc2c-nat forward emits the 2-packed-in/4-split-out terminator ABI; the same
-   * flag with --bwd --dif emits the INVERSE (4-split-in/2-packed-out) c2r natural
-   * initiator. Split the ABI selector on sign; everything else (strided, ranged,
-   * r/sstar, naming sgn_suffix) is shared. *)
-  Emit_state.hc2c_natural := !hc2c_nat && not !bwd;
-  Emit_state.hc2c_natural_bwd := !hc2c_nat && !bwd;
-  Emit_state.hc_ranged := !ranged && (!hc2hc || !hc2c_nat);
-  if !ranged then Emit_state.hc_ranged_r := n;
-  if !hc2c_nat
-  then (
-    Emit_state.hc2c_nat_r := n;
-    Emit_state.hc2c_nat_sstar := if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2);
+  (* ── M5: the config globals are set FROM THE DESCRIPTOR — argv parsed
+     ONCE into Codelet.t (the word for the thing we compile), the globals
+     derived from it in this one place.  The per-flag local projections
+     they replaced are retired; exotic debug variants outside the corpus
+     descriptor (--dct2-trigII) are OR'd from their locals until the driver
+     rewrite retires them too.  Round-trip contract: to_argv (of_argv l) == l
+     verbatim over every live recorded provenance line (1,404/1,404). *)
+  let cdesc = Codelet.of_argv ~strict:false (List.tl (Array.to_list argv)) in
+  let cmods = cdesc.Codelet.mods in
+  let cbwd = cmods.Codelet.dir = Codelet.Bwd in
+  Emit_state.r2cf_signature := (cdesc.Codelet.kind = Codelet.R2cf);
+  Emit_state.r2cb_signature := (cdesc.Codelet.kind = Codelet.R2cb);
+  (match cdesc.Codelet.kind with
+   | Codelet.R2c_term { rt; _ } ->
+     Emit_state.r2c_term_signature := true;
+     Emit_state.r2c_term_rt := rt
+   | _ ->
+     Emit_state.r2c_term_signature := false;
+     Emit_state.r2c_term_rt := false);
+  (match cdesc.Codelet.kind with
+   | Codelet.R2c_term_ls { r } ->
+     Emit_state.r2c_term_laststage := true;
+     Emit_state.r2c_term_ls_r := r
+   | _ -> Emit_state.r2c_term_laststage := false);
+  Emit_state.hc_strided
+  := (match cdesc.Codelet.kind with
+      | Codelet.Hc2hc _ | Codelet.Hc2c | Codelet.Hc2c_nat _ -> true
+      | _ -> false);
+  Emit_state.n1_oop_strided := (cdesc.Codelet.kind = Codelet.N1_oop_strided);
+  (match cdesc.Codelet.kind with
+   | Codelet.Strided { il } ->
+     Emit_state.strided_il_in := (il = `In);
+     Emit_state.strided_il_out := (il = `Out || il = `Out_nt);
+     Emit_state.strided_ilo_nt := (il = `Out_nt);
+     Emit_state.strided_r2c := false;
+     Emit_state.strided_r2c_bwd := false
+   | Codelet.Strided_r2c ->
+     Emit_state.strided_il_in := false;
+     Emit_state.strided_il_out := false;
+     Emit_state.strided_ilo_nt := false;
+     Emit_state.strided_r2c := true;
+     Emit_state.strided_r2c_bwd := cbwd
+   | _ ->
+     Emit_state.strided_il_in := false;
+     Emit_state.strided_il_out := false;
+     Emit_state.strided_ilo_nt := false;
+     Emit_state.strided_r2c := false;
+     Emit_state.strided_r2c_bwd := false);
+  Emit_state.ip_il_in
+  := (match cdesc.Codelet.kind with
+      | Codelet.C2c_inplace_su { il = `In } | Codelet.C2c_inplace_tw { il = `In } -> true
+      | _ -> false);
+  Emit_state.ip_il_out
+  := (match cdesc.Codelet.kind with
+      | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out } ->
+        true
+      | _ -> false);
+  (* hc2c-nat forward = the 2-packed-in/4-split-out terminator; with --bwd
+     --dif = the INVERSE c2r natural initiator (comment carried from the
+     retired projection). *)
+  (match cdesc.Codelet.kind with
+   | Codelet.Hc2c_nat _ ->
+     Emit_state.hc2c_natural := not cbwd;
+     Emit_state.hc2c_natural_bwd := cbwd
+   | _ ->
+     Emit_state.hc2c_natural := false;
+     Emit_state.hc2c_natural_bwd := false);
+  Emit_state.hc_ranged
+  := (match cdesc.Codelet.kind with
+      | Codelet.Hc2hc { ranged } | Codelet.Hc2c_nat { ranged } -> ranged
+      | _ -> false);
+  if !Emit_state.hc_ranged then Emit_state.hc_ranged_r := n;
+  (match cdesc.Codelet.kind with
+   | Codelet.Hc2c_nat _ ->
+     Emit_state.hc2c_nat_r := n;
+     Emit_state.hc2c_nat_sstar := (if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2)
+   | _ -> ());
   Emit_state.r2r_signature
-  := !dct2
-     || !dct2_trigII
-     || !dct3
-     || !dst2
-     || !dst3
-     || !dht
-     || !dct4
-     || !dst4
-     || !dct1
-     || !dst1;
+  := (match cdesc.Codelet.kind with Codelet.Trig _ -> true | _ -> false)
+     || !dct2_trigII;
   let raw, spill_markers, spill_ct =
     if !r2c
     then Dft_r2c.dft_expand_r2c ~sign n, [], None
@@ -1947,16 +1989,21 @@ let run (argv : string array) : unit =
           ; name = cname
           }
       in
-      Codelet_oop.current_tw_log3 := !log3;
-      Codelet_oop.current_post_tw := !post_tw;
-      Codelet_oop.current_oop_strides := !oop_strides;
-      Codelet_oop.current_oop_fuse := !fuse;
-      Codelet_oop.current_oop_store_on_compute := !oop_store_fused;
-      Codelet_oop.current_oop_il_in := !oop_il_in;
-      Codelet_oop.current_oop_il_out := !oop_il_out;
-      Codelet_oop.current_oop_il_in_sw := !oop_il_in_sw;
-      Codelet_oop.current_oop_il_out_sw := !oop_il_out_sw;
-      Codelet_oop.current_oop_tw_linear := !oop_tw_linear;
+      (* M5: the OOP family knobs come from the DESCRIPTOR's C2c_oop payload —
+         the ten bare globals' values now have one source (argv), not ten locals. *)
+      (match cdesc.Codelet.kind with
+       | Codelet.C2c_oop { tw; fuse; store_fused; strides; il_in; il_out; _ } ->
+         Codelet_oop.current_tw_log3 := cdesc.Codelet.mods.Codelet.table = Codelet.Log3;
+         Codelet_oop.current_post_tw := tw = Some Codelet.Post_tw;
+         Codelet_oop.current_oop_strides := strides;
+         Codelet_oop.current_oop_fuse := (match fuse with None -> 0 | Some v -> v);
+         Codelet_oop.current_oop_store_on_compute := store_fused;
+         Codelet_oop.current_oop_il_in := il_in = `Il;
+         Codelet_oop.current_oop_il_out := il_out = `Il;
+         Codelet_oop.current_oop_il_in_sw := il_in = `Il_sw;
+         Codelet_oop.current_oop_il_out_sw := il_out = `Il_sw;
+         Codelet_oop.current_oop_tw_linear := tw = Some Codelet.Tw_linear
+       | _ -> ());
       print_string (Codelet_oop.emit_codelet cfg))
     else (
       Emit_state.current_store_on_compute := !store_on_compute;

@@ -488,7 +488,7 @@ let factor_const_muls
         | Some (ka, xa), Some (kb, xb) when ka.tag = kb.tag ->
           let sa = safe_to_factor a in
           let sb = safe_to_factor b in
-          if Sys.getenv_opt "FACTOR_TRACE" <> None
+          if Knobs.Trace.factor ()
           then
             Printf.eprintf
               "  try_factor(%s, t%d, t%d): const_mul_match=true, safe_a=%b (uses=%d, \
@@ -518,7 +518,7 @@ let factor_const_muls
   in
   (* Iterate to fixed point. Cap at 20 rounds for paranoia. *)
   let max_rounds = 20 in
-  let trace = Sys.getenv_opt "FACTOR_TRACE" <> None in
+  let trace = Knobs.Trace.factor () in
   let rec loop assigns rounds =
     if rounds >= max_rounds
     then (
@@ -549,7 +549,7 @@ let factor_const_muls
           let final_t = chase frozen_orig [] in
           if final_t <> frozen_orig then Hashtbl.add final_remap frozen_orig final_t)
        tbl);
-  if Sys.getenv_opt "FACTOR_TRACE" <> None
+  if Knobs.Trace.factor ()
   then
     Printf.eprintf
       "factor_const_muls: remapped %d frozen tags\n"
@@ -938,7 +938,7 @@ let multi_use_fma_lift
     | Some true -> true
     | _ -> false
   in
-  if Sys.getenv_opt "MULIFT_TRACE" <> None
+  if Knobs.Trace.mulift ()
   then (
     let absorbed = Hashtbl.fold (fun _ v c -> if v then c + 1 else c) mul_status 0 in
     let total = Hashtbl.length mul_status in
@@ -987,7 +987,7 @@ let multi_use_fma_lift
         | NK_Add (a, b) ->
           let a' = rewrite a in
           let b' = rewrite b in
-          let trace = Sys.getenv_opt "MULFMA_TRACE" <> None in
+          let trace = Knobs.Trace.mulfma () in
           if trace
           then (
             let is_m x =
@@ -1022,7 +1022,7 @@ let multi_use_fma_lift
         | NK_Sub (a, b) ->
           let a' = rewrite a in
           let b' = rewrite b in
-          let trace = Sys.getenv_opt "MULFMA_TRACE" <> None in
+          let trace = Knobs.Trace.mulfma () in
           if trace
           then (
             let is_m x =
@@ -1238,7 +1238,7 @@ let fma_addend_factor
       in
       uses > 0 && uses = fuses)
   in
-  if Sys.getenv_opt "FMA_ADDEND_TRACE" <> None
+  if Knobs.Trace.fma_addend ()
   then (
     let n_candidates = ref 0 in
     Hashtbl.iter
@@ -1313,7 +1313,7 @@ let fma_addend_factor
                   | true, false -> mk_mul k (mk_sub_binary y x)
                   | true, true -> mk_neg (mk_mul k (mk_add_binary x y))
                 in
-                if Sys.getenv_opt "FMA_ADDEND_TRACE" <> None
+                if Knobs.Trace.fma_addend ()
                 then
                   Printf.eprintf
                     "[fma_addend] rewrite t%d (Fma nm=%b na=%b na_eff=%b) → t%d  K=t%d \
@@ -1355,7 +1355,7 @@ let fma_addend_factor
   (* Reachability sanity check: walk the new assigns and collect every
    * tag transitively referenced. Any tag this pass produced as an
    * operand of a node we emitted should be in this set. *)
-  if Sys.getenv_opt "FMA_ADDEND_TRACE" <> None
+  if Knobs.Trace.fma_addend ()
   then (
     let reach = Hashtbl.create 256 in
     let rec walk (n : t) =
@@ -1736,7 +1736,7 @@ let flatten_fma_mul_addend
   in
   (* Resolve the gate decision: env override wins; otherwise apply density. *)
   let multiuse_enabled, multiuse_decision_reason =
-    match Sys.getenv_opt "VFFT_FMA_MULTIUSE" with
+    match Knobs.fma_multiuse () with
     | Some "0" -> false, "forced OFF by env"
     | Some "1" -> true, "forced ON by env"
     | _ ->
@@ -1762,7 +1762,7 @@ let flatten_fma_mul_addend
       | None -> false (* No parent info (shouldn't happen for valid Fma-Mul) *)
       | Some kinds -> kinds <> [] && List.for_all is_rewriteable_consumer kinds)
   in
-  if Sys.getenv_opt "FLATTEN_FMA_MUL_TRACE" <> None
+  if Knobs.Trace.flatten_fma_mul ()
   then (
     Printf.eprintf
       "  [parent-scan complete] fma_parents table size = %d\n"
@@ -1824,7 +1824,7 @@ let flatten_fma_mul_addend
         else if not fma_su
         then (
           incr n_blocked_fma_multiuse;
-          if Sys.getenv_opt "FLATTEN_FMA_MUL_TRACE" <> None
+          if Knobs.Trace.flatten_fma_mul ()
           then (
             let uc =
               try Hashtbl.find use_count n.tag with
@@ -1985,7 +1985,7 @@ let flatten_fma_mul_addend
       r
   in
   let new_assigns = List.map (fun (oref, e) -> oref, rewrite e) assigns in
-  if Sys.getenv_opt "FLATTEN_FMA_MUL_TRACE" <> None
+  if Knobs.Trace.flatten_fma_mul ()
   then (
     Printf.eprintf "[flatten_fma_mul_addend] %d rewrites\n" !n_rewrites;
     Printf.eprintf
@@ -2008,7 +2008,7 @@ let flatten_fma_mul_addend
     let all_kinds = ref [] in
     Hashtbl.iter
       (fun fma_tag parent_kinds ->
-         if Sys.getenv_opt "FLATTEN_FMA_MUL_TRACE_VERBOSE" <> None
+         if Knobs.Trace.flatten_fma_mul_verbose ()
          then
            Printf.eprintf
              "    fma_tag=t%d parent_kinds=[%s]\n"
