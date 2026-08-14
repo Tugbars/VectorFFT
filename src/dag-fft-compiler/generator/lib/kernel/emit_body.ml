@@ -1,13 +1,17 @@
-(* emit_c.ml — emit_codelet: the C-emission driver for every in-place
- * codelet family (n1, t1 dit / dif / t1s / log3, twidsq, strided, the
- * whole r2c / c2r / trig signature zoo).
+(* emit_body.ml — M8.2: renamed from emit_c.ml (§9 #23 Emit_body — the
+ * schedule / spill / regalloc / render meeting point).  The M8 family
+ * moves (Real, C2c_split) will thin this file toward the irreducible
+ * core; until each family's arms move, emit_codelet remains the
+ * C-emission driver for every in-place codelet family (n1, t1 dit /
+ * dif / t1s / log3, twidsq, strided, the whole r2c / c2r / trig
+ * signature zoo).
  *
- * Top of the emit chain (Emit_state < Emit_render < Emit_c). Given the
- * simplified assignment DAG plus a scheduler choice and the mode refs
- * set by the driver, emit_codelet:
+ * Top of the emit chain (Emit_render < Emit_body). Given the
+ * simplified assignment DAG plus a scheduler choice and the per-emission
+ * cfg/sc the driver builds (M6), emit_codelet:
  *
  *   1. resolves the signature family (which pointer ABI the function
- *      gets) from the Emit_state flags;
+ *      gets) from cfg via Abi (M4);
  *   2. schedules the DAG — Topological or SU (optionally Goodman-Hsu
  *      pressure-switched, optionally Bb branch-and-bound refined),
  *      plus Annotated variants — monolithic or split per spill pass
@@ -3316,45 +3320,8 @@ let emit_codelet
    registry ABI) are fully implemented inline in codelet_oop.ml and do
    NOT call these, so generating UnitGroup OOP codelets works today.
    These guard the UnitLeg (Bailey 2D strided) path until extracted. *)
-let emit_strided_load_preamble
-      ~isa
-      ~radix
-      ~in_re_name
-      ~in_im_name
-      ~group_stride_name
-      (_buf : Buffer.t)
-  : unit
-  =
-  ignore isa;
-  ignore radix;
-  ignore in_re_name;
-  ignore in_im_name;
-  ignore group_stride_name;
-  failwith
-    "emit_strided_load_preamble: UnitLeg OOP path not yet wired (M2 phase-2 \
-     transpose-helper extraction); use --oop-load UG"
-;;
-
-let emit_strided_store_postamble
-      ~isa
-      ~radix
-      ~out_re_name
-      ~out_im_name
-      ~group_stride_name
-      (_buf : Buffer.t)
-  : unit
-  =
-  ignore isa;
-  ignore radix;
-  ignore out_re_name;
-  ignore out_im_name;
-  ignore group_stride_name;
-  failwith
-    "emit_strided_store_postamble: UnitLeg OOP path not yet wired (M2 phase-2 \
-     transpose-helper extraction); use --oop-store UG"
-;;
-
-(* No-op for UnitGroup codelets; only reached on the UnitLeg path, which
-   guards downstream via emit_strided_*_preamble. Real AVX-512 transpose
-   index emission belongs with the M2 phase-2 UnitLeg extraction. *)
+(* M8.2: the two emit_strided_*_preamble/postamble `failwith` stubs that
+   stood here were DELETED — zero callers repo-wide (the M7 row's corrected
+   finding: 22 UnitLeg codelets ship and reproduce without them).  The no-op
+   below is the one survivor: codelet_oop calls it on the UnitLeg path. *)
 let emit_avx512_transpose_indices (_isa : Isa.t) (_buf : Buffer.t) : unit = ()
