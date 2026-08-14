@@ -193,6 +193,7 @@ let run (argv : string array) : unit =
      No default: a missing chain is an error, not a heuristic. *)
   let cil_chain = ref "" in
   let cil_blocked = ref false in
+  let cil_tangent = ref false in
   (* --cil-log3: source the T2 mid's VTW2 records sparsely (load the
      power-of-two legs, derive the rest). Full-IL, same table layout. *)
   let cil_log3 = ref false in
@@ -522,7 +523,7 @@ let run (argv : string array) : unit =
     else if arg = "--cil-blocked"
     then cil_blocked := true
     else if arg = "--cil-tangent"
-    then Cx_math.tangent := true
+    then cil_tangent := true
     else if arg = "--cil-log3"
     then cil_log3 := true
     (* The store-FORM decoupling the pure-IL INVERSE needs: --cil-turnst
@@ -1268,6 +1269,7 @@ let run (argv : string array) : unit =
              n);
       print_string
         (C2c_il.emit_k1
+           ~tangent:!cil_tangent
            ~dir:(if !cil_bwd then C2c_il.Bwd else C2c_il.Fwd)
            ~chain_a
            ~chain_b
@@ -1280,6 +1282,7 @@ let run (argv : string array) : unit =
          emission. See codelet_cil.ml. *)
       print_string
         (C2c_il.emit
+           ~tangent:!cil_tangent
            ~log3:!cil_log3
            ~pretw:!cil_pretw
            ~turnst:!cil_turnst
