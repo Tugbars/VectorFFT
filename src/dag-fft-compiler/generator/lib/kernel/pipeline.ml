@@ -121,7 +121,29 @@ type prepared =
  *     reloads, no register retention across pass boundary)
  *
  * Returns prepared { assigns; spill_info }. ─ *)
+(* ── M11: the RECIPE — per-caller cascade arms, explicit ──
+ * The two arms that historically existed ONLY in gen_main's inline copy
+ * travel as recipe fields so the unification is byte-identical per
+ * route: the main driver enables both; the family callers (c2c_split,
+ * cascade_z) keep their historical cascade by using default_recipe.
+ * Whether those routes SHOULD adopt the arms (and the VFFT_FORCE_REASSOC
+ * env override) is M11b — an owner decision needing a race, not a diff. *)
+type dup_ctx =
+  { uarch : Uarch.t (* SR schedule for the dup probe placement *)
+  ; barrier_sink : (int, unit) Hashtbl.t (* the driver's Scratch.dup_barrier_tags *)
+  }
+
+type recipe =
+  { butterfly_share : bool
+    (* enable the env-gated (VFFT_BUTTERFLY_SHARE=1) butterfly_share_mul arm *)
+  ; dup : dup_ctx option
+    (* enable the env-gated (VFFT_DUP=1) selective-duplication arm *)
+  }
+
+let default_recipe = { butterfly_share = false; dup = None }
+
 let prepare_codelet
+      ~(recipe : recipe)
       ~(raw_assigns : (Expr.elem_ref * Expr.expr) list)
       ~(spill_markers_raw : Dft.spill_marker list)
       ~(spill_ct : (int * int) option)
@@ -267,7 +289,209 @@ let prepare_codelet
   let deduped, mfl3_tag_remap = step Fma_passes.multi_use_fma_lift deduped in
   let deduped, fma_addend_remap3 = step Fma_passes.fma_addend_factor deduped in
   let deduped, mfl4_tag_remap = step Fma_passes.multi_use_fma_lift deduped in
+  let deduped, bsm_tag_remap =
+    if recipe.butterfly_share
+       && apply_fma_lift
+       && Sys.getenv_opt "VFFT_BUTTERFLY_SHARE" = Some "1"
+    then (
+      let a', remap = Algsimp.butterfly_share_mul ~frozen_tags deduped in
+      extend_frozen remap;
+      a', remap)
+    else deduped, empty_remap ()
+  in
   let deduped, _flatten_tag_remap = step Fma_passes.flatten_fma_mul_addend deduped in
+  (* M11: the selective-duplication arm (doc 65 §8) — moved VERBATIM
+     from gen_main's inline copy; fires only for callers whose recipe
+     carries a dup_ctx AND VFFT_DUP=1.  MUST stay the final DAG
+     transform (clones bypass hashcons); skipped when spill markers
+     are present (dup carries no marker remap). *)
+  let deduped =
+    match recipe.dup with
+    | None -> deduped
+    | Some ctx ->
+      (match Sys.getenv_opt "VFFT_DUP" with
+       | Some "1" when spill_markers_raw = [] ->
+      let geti k d =
+        match Sys.getenv_opt k with
+        | Some v ->
+          (try int_of_string v with
+           | _ -> d)
+        | None -> d
+      in
+      let sched_of asg = List.map snd (Schedule.su_schedule ctx.uarch asg) in
+      (* Freeze the PRE-dup SR schedule. The rebuild re-tags ancestor
+       * cones (and hashcons can MERGE a rebuilt kind into an existing
+       * node), so naive tag-chasing yields duplicate/incomplete order
+       * files the injector refuses. Robust composition: Kahn-sort the
+       * FINAL dag with priority = the node's pre-image position in
+       * sched0 (min over merged pre-images; clones sit just before
+       * their consumer; fresh no-preimage nodes inherit min-user
+       * position). Always complete, always topologically legal,
+       * equal to the frozen probe placement wherever possible. *)
+      let sched0 = sched_of deduped in
+      let a, btags, remap, inserts =
+        Algsimp.duplicate_uncse
+          ~span_s:(geti "VFFT_DUP_S" 30)
+          ~cap:(geti "VFFT_DUP_CAP" 16)
+          ~maxcost:(geti "VFFT_DUP_COST" 1)
+          ~schedule:sched_of
+          deduped
+      in
+      Hashtbl.iter (fun t () -> Hashtbl.replace ctx.barrier_sink t ()) btags;
+      let chase t =
+        let rec go t k =
+          if k > 64
+          then t
+          else (
+            match Hashtbl.find_opt remap t with
+            | Some t' when t' <> t -> go t' (k + 1)
+            | _ -> t)
+        in
+        go t 0
+      in
+      let pos : (int, float) Hashtbl.t = Hashtbl.create 1024 in
+      List.iteri
+        (fun i (n : Ir.t) ->
+           let f = chase n.tag in
+           let p = float_of_int i in
+           match Hashtbl.find_opt pos f with
+           | Some q when q <= p -> ()
+           | _ -> Hashtbl.replace pos f p)
+        sched0;
+      let roots = List.map snd a in
+      let nodes = Ir.topo_sort_reachable roots in
+      let usersd : (int, Ir.t list) Hashtbl.t = Hashtbl.create 1024 in
+      List.iter
+        (fun (n : Ir.t) ->
+           List.iter
+             (fun (p : Ir.t) ->
+                let l =
+                  try Hashtbl.find usersd p.tag with
+                  | Not_found -> []
+                in
+                Hashtbl.replace usersd p.tag (n :: l))
+             (Ir.preds n))
+        nodes;
+      (* Pin each clone to its consumer's DECLARED ANCHOR slot: SU
+       * interleaves sibling fma chains, so an inner chain node's own
+       * sched0 slot is many positions before the line it inlines
+       * into (measured: 224/217/210 for a line at 242) — pinning
+       * there hoists the clone across other groups. The probe pins
+       * to the LINE; the anchor (outermost declared node of the
+       * single-use chain, in the FINAL dag) is the line. Tiny
+       * ascending offsets keep application (span-desc) order within
+       * a block, matching the probe's emission order. *)
+      let roots_set : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+      List.iter
+        (fun ((_, v) : Expr.elem_ref * Ir.t) -> Hashtbl.replace roots_set v.tag ())
+        a;
+      let node_by : (int, Ir.t) Hashtbl.t = Hashtbl.create 1024 in
+      List.iter (fun (n : Ir.t) -> Hashtbl.replace node_by n.tag n) nodes;
+      let declared_f (x : Ir.t) =
+        List.length
+          (try Hashtbl.find usersd x.tag with
+           | Not_found -> [])
+        >= 2
+        || Hashtbl.mem roots_set x.tag
+        || Hashtbl.mem btags x.tag
+      in
+      let rec anch (x : Ir.t) : Ir.t =
+        if declared_f x
+        then x
+        else (
+          match Hashtbl.find_opt usersd x.tag with
+          | Some [ w ] -> anch w
+          | _ -> x)
+      in
+      List.iteri
+        (fun i (c, u) ->
+           let target =
+             match Hashtbl.find_opt node_by (chase u) with
+             | Some nd -> (anch nd).tag
+             | None -> chase u
+           in
+           if Sys.getenv_opt "VFFT_DUP_TRACE" <> None
+           then
+             Printf.eprintf
+               "PIN clone t%d: u=t%d final=t%d anchor=t%d pos=%s\n"
+               c
+               u
+               (chase u)
+               target
+               (match Hashtbl.find_opt pos target with
+                | Some p -> string_of_float p
+                | None -> "MISS");
+           match Hashtbl.find_opt pos target with
+           | Some p -> Hashtbl.replace pos c (p -. 0.5 +. (float_of_int i *. 1e-4))
+           | None -> ())
+        inserts;
+      List.iter
+        (fun (n : Ir.t) ->
+           if not (Hashtbl.mem pos n.tag)
+           then (
+             let up =
+               List.fold_left
+                 (fun acc (u : Ir.t) ->
+                    match Hashtbl.find_opt pos u.tag with
+                    | Some p -> min acc p
+                    | None -> acc)
+                 infinity
+                 (try Hashtbl.find usersd n.tag with
+                  | Not_found -> [])
+             in
+             Hashtbl.replace pos n.tag (if up = infinity then 1e9 else up -. 0.25)))
+        (List.rev nodes);
+      let indeg : (int, int) Hashtbl.t = Hashtbl.create 1024 in
+      List.iter
+        (fun (n : Ir.t) ->
+           Hashtbl.replace indeg n.tag (List.length (Ir.preds n)))
+        nodes;
+      let module PQ = Set.Make (struct
+          type t = float * int
+
+          let compare = compare
+        end)
+      in
+      let node_of : (int, Ir.t) Hashtbl.t = Hashtbl.create 1024 in
+      List.iter (fun (n : Ir.t) -> Hashtbl.replace node_of n.tag n) nodes;
+      let ready = ref PQ.empty in
+      List.iter
+        (fun (n : Ir.t) ->
+           if Hashtbl.find indeg n.tag = 0
+           then ready := PQ.add (Hashtbl.find pos n.tag, n.tag) !ready)
+        nodes;
+      let buf = Buffer.create 4096 in
+      let count = ref 0 in
+      while not (PQ.is_empty !ready) do
+        let ((_, t) as m) = PQ.min_elt !ready in
+        ready := PQ.remove m !ready;
+        Buffer.add_string buf (string_of_int t ^ "\n");
+        incr count;
+        let n = Hashtbl.find node_of t in
+        List.iter
+          (fun (u : Ir.t) ->
+             let d = Hashtbl.find indeg u.tag - 1 in
+             Hashtbl.replace indeg u.tag d;
+             if d = 0 then ready := PQ.add (Hashtbl.find pos u.tag, u.tag) !ready)
+          (try Hashtbl.find usersd n.tag with
+           | Not_found -> [])
+      done;
+      let ord_file = Filename.temp_file "vfft_dup_order" ".txt" in
+      let oc = open_out ord_file in
+      output_string oc (Buffer.contents buf);
+      close_out oc;
+      Unix.putenv "VFFT_SCHED_ORDER" ord_file;
+      Printf.eprintf
+        "duplicate_uncse: %d clones, pinned %d/%d nodes\n%!"
+        (Hashtbl.length btags)
+        !count
+        (List.length nodes);
+      a
+       | Some "1" ->
+         prerr_endline "VFFT_DUP: skipped (spill markers present)";
+         deduped
+       | _ -> deduped)
+  in
   let assigns = deduped in
   (* Build spill_info post-cascade. The remap chain walks each marker
      tag through the 8 remaps in cascade order. flatten_tag_remap is
@@ -295,6 +519,7 @@ let prepare_codelet
         let t = walk mfl3_tag_remap t in
         let t = walk fma_addend_remap3 t in
         let t = walk mfl4_tag_remap t in
+        let t = walk bsm_tag_remap t in
         t
       in
       let tag_markers =

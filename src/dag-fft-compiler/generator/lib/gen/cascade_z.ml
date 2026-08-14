@@ -643,6 +643,7 @@ let emit_codelet ~store_on_compute
     Ir.reset ();
     let pipe : Pipeline.prepared =
       Pipeline.prepare_codelet
+        ~recipe:Pipeline.default_recipe
         ~raw_assigns
         ~spill_markers_raw:[]
         ~spill_ct:None

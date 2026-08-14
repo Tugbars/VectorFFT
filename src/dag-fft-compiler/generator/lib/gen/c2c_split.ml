@@ -1233,6 +1233,7 @@ let prepare_butterfly ~(sc : Emit_render.Scratch.t) (c : config) : prepared_body
   in
   let pipe : Pipeline.prepared =
     Pipeline.prepare_codelet
+      ~recipe:Pipeline.default_recipe
       ~raw_assigns
       ~spill_markers_raw
       ~spill_ct

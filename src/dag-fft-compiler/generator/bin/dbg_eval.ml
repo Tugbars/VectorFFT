@@ -130,5 +130,24 @@ let () =
   let s4 = Simplify.dedup_sub_pairs s3 in
   check_t "dedup_sub_pairs #2" s4;
   let s5 = Simplify.collect_m s4 in
-  check_t "collect_m" s5
+  check_t "collect_m" s5;
+  (* M11: cross-check the per-pass prefix against THE cascade — Pipeline
+     is the sole owner; this probe steps INSIDE it for numeric diagnosis,
+     so it must also verify the unified cascade agrees end-to-end. *)
+  Ir.reset ();
+  let pipe =
+    Pipeline.prepare_codelet
+      ~recipe:Pipeline.default_recipe
+      ~raw_assigns:raw
+      ~spill_markers_raw:[]
+      ~spill_ct:None
+      ~reassoc:false
+      ~aggressive
+      ~algorithm:(Dft_select.pick_algorithm policy_n)
+      ~force_fma_lift:false
+      ~disable_fma_lift:false
+      ~build_spill_info:false
+      ~fuse:0
+  in
+  check_t "Pipeline (sole cascade)" pipe.Pipeline.assigns
 ;;
