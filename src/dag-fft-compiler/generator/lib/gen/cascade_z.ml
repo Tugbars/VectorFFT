@@ -647,7 +647,11 @@ let emit_codelet ~store_on_compute
         ~raw_assigns
         ~spill_markers_raw:[]
         ~spill_ct:None
-        ~reassoc:(Dft_select.needs_reassoc radix)
+        ~reassoc:
+          (match Sys.getenv_opt "VFFT_FORCE_REASSOC" with
+           | Some "0" -> false
+           | Some "1" -> true
+           | _ -> Dft_select.needs_reassoc radix)
         ~aggressive:false
         ~algorithm:(Dft_select.pick_algorithm radix)
         ~force_fma_lift
