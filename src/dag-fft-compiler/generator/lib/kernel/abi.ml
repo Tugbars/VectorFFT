@@ -121,3 +121,21 @@ let signature t =
   Printf.sprintf "__attribute__((target(\"%s\")))\nvoid %s(\n%s)\n{\n"
     t.target_attr t.symbol
     (String.concat ",\n" (List.map line t.params))
+
+(* The frozen 11-arg z ABI — see abi.mli.  A LITERAL, deliberately: the
+   grouping is part of the frozen bytes, and one source replaces the
+   twice-printed divergence risk (zsplit derived its silencers, cil
+   hardcoded them — that asymmetry stays caller-side and out of scope). *)
+let z11_signature ~symbol ~target_attr =
+  String.concat
+    ""
+    [ Printf.sprintf "__attribute__((target(\"%s\")))\n" target_attr
+    ; Printf.sprintf "void %s(\n" symbol
+    ; "    const double * __restrict__ zin,\n"
+    ; "    const double * __restrict__ zin_unused,\n"
+    ; "    double       * __restrict__ zout,\n"
+    ; "    double       * __restrict__ zout_unused,\n"
+    ; "    const double * tw_re, const double * tw_im,\n"
+    ; "    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n"
+    ; "{\n"
+    ]

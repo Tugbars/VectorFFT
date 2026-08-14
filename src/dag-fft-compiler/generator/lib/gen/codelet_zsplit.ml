@@ -1532,22 +1532,13 @@ let emit_codelet
             ]))
   in
   let emit_signature () =
+    (* M4 phase 3: the FROZEN z ABI from Abi.z11_signature — one source (was
+       one of three byte-identical hand prints); the DERIVED silencer list
+       (plain_voids) stays this family's own. *)
     Buffer.add_string
       buf
-      (Printf.sprintf
-         "__attribute__((target(\"%s\")))\n\
-          void %s(\n\
-         \    const double * __restrict__ zin,\n\
-         \    const double * __restrict__ zin_unused,\n\
-         \    double       * __restrict__ zout,\n\
-         \    double       * __restrict__ zout_unused,\n\
-         \    const double * tw_re, const double * tw_im,\n\
-         \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-          {\n\
-         \    %s\n"
-         isa.Isa.target_attr
-         fname
-         plain_voids)
+      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr);
+    Buffer.add_string buf (Printf.sprintf "    %s\n" plain_voids)
   in
   (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the tr4_str precedent — bodies
         the col-loop IR cannot express). Every value in the 18-op turn

@@ -1490,18 +1490,7 @@ let emit_codelet
           "    const __m512i _il_po = _mm512_setr_epi64(4,12,5,13,6,14,7,15);\n";
         Buffer.add_string buf "    (void)_il_pe; (void)_il_po;\n"));
     (* Spill array decl, OUTSIDE the for loop so it's allocated once *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
       (* Hoist k so it stays live for the remainder block after the bulk loop. *)
@@ -1526,15 +1515,7 @@ let emit_codelet
      *   V is the loop bound; vec_width lanes processed per iteration.
      *)
     (* M4: signature emission deleted — Abi.signature is the one printer (twidsq). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ());
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t v = 0; v < V; v += %d) {\n" isa.vec_width))
@@ -1546,18 +1527,7 @@ let emit_codelet
      * purely real so there is no out_im. Same stride/loop shape as r2cf
      * (is input stride, os_re output stride, vl lanes). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2cb_signature). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2cf_signature
   then (
@@ -1568,18 +1538,7 @@ let emit_codelet
      * out_im based one-past the region. P1's stride_n1_fn-shaped v1
      * is withdrawn — composition beats typedef aesthetics. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2cf_signature). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2c_term_laststage
   then (
@@ -1589,18 +1548,7 @@ let emit_codelet
      * strided by is_leg within each column; the two columns are at separate
      * base pointers in_k / in_m (the executor passes the two physical rows). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_laststage). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2c_term_signature
   then (
@@ -1609,36 +1557,14 @@ let emit_codelet
      * sequentially (the executor supplies them in natural order, no scatter).
      * Output(0) -> Xp pair (X[k]); Output(1) -> Xm pair (X[m]). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_signature). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !hc2c_natural
   then (
     (* D2 natural terminator (section 69): four output pointers,
      * boundary baked at generation time. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !hc2c_natural_bwd
@@ -1649,18 +1575,7 @@ let emit_codelet
      * (out_re/out_im). isp/ism = split input row strides; os = packed output
      * stride. The forward's 6-pointer ABI, flipped. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural_bwd). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !hc_strided
@@ -1670,18 +1585,7 @@ let emit_codelet
      * (slot strides are Q*K-multiples and out != in stride). Twiddles
      * replicate per vl lanes, slot 0 never loaded. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc_strided). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !n1_oop_strided
@@ -1692,34 +1596,12 @@ let emit_codelet
      * executor always passes B, a vec-width multiple). No tw params:
      * n1 DAGs carry no Twiddle refs. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!n1_oop_strided). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2r_signature
   then (
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2r_signature). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
       Buffer.add_string buf "    size_t k = 0;
@@ -1738,18 +1620,7 @@ let emit_codelet
 " isa.vec_width))
   else (
     (* M4: signature emission deleted — Abi.signature is the one printer (oop_generic). *)
-    (match spill with
-     | None -> ()
-     | Some sp ->
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_re[%d];\n" isa.vec_type sp.num_slots);
-       Buffer.add_string
-         buf
-         (Printf.sprintf "    %s spill_im[%d];\n" isa.vec_type sp.num_slots));
-    Buffer.add_string
-      buf
-      (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
+    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n" isa.vec_width));
