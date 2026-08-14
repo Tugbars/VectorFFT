@@ -1,4 +1,3 @@
-
 let () =
   Printf.printf "=== M2 sanity check: hand-built schedules ===\n\n";
   (* Use mk_load with distinct refs to avoid constant folding by mk_add. *)

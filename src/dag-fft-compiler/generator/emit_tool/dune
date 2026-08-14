@@ -1,1 +1,3 @@
-(executable (name emit_executor_h) (libraries vfft_gen vfft_kernel vfft_cx unix))
+(executable
+ (name emit_executor_h)
+ (libraries vfft_gen vfft_kernel vfft_cx unix))

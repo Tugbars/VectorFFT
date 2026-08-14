@@ -10,8 +10,13 @@
    The 16 orphaned rfft/avx512_regen files are excluded: dead-era flag
    order, 0/16 in the gate, pool-sunset candidates. *)
 
-type direction = Fwd | Bwd
-type tw_table = Flat | Log3
+type direction =
+  | Fwd
+  | Bwd
+
+type tw_table =
+  | Flat
+  | Log3
 
 type modifiers =
   { dir : direction
@@ -21,25 +26,68 @@ type modifiers =
   ; su : bool
   }
 
-type il3 = [ `None | `In | `Out ]
-type sw3 = [ `No | `Il | `Il_sw ]
-type oop_edge = UG | UL
-type oop_tw = Tw_group | Tw_pos | Post_tw | Tw_linear
+type il3 =
+  [ `None
+  | `In
+  | `Out
+  ]
+
+type sw3 =
+  [ `No
+  | `Il
+  | `Il_sw
+  ]
+
+type oop_edge =
+  | UG
+  | UL
+
+type oop_tw =
+  | Tw_group
+  | Tw_pos
+  | Post_tw
+  | Tw_linear
 
 type trig8 =
-  | Dct1 | Dct2 | Dct3 | Dct4
-  | Dst1 | Dst2 | Dst3 | Dst4
+  | Dct1
+  | Dct2
+  | Dct3
+  | Dct4
+  | Dst1
+  | Dst2
+  | Dst3
+  | Dst4
   | Dht
 
-type cil_form = Cil_n1 | Cil_n1t | Cil_t2
-type cil_turn = Turnst | Turnst_gs
+type cil_form =
+  | Cil_n1
+  | Cil_n1t
+  | Cil_t2
+
+type cil_turn =
+  | Turnst
+  | Turnst_gs
 
 type zs_kind =
-  | Dts | Dtsn | Dtso | Dtt
-  | Msd | Msg | Msgb
-  | S0s | S0sb | S0t | S0tb
-  | Stf | Stf2 | Stfb | Stfbn | Stfn
-  | Sterm | Sterm2 | Stermb
+  | Dts
+  | Dtsn
+  | Dtso
+  | Dtt
+  | Msd
+  | Msg
+  | Msgb
+  | S0s
+  | S0sb
+  | S0t
+  | S0tb
+  | Stf
+  | Stf2
+  | Stfb
+  | Stfbn
+  | Stfn
+  | Sterm
+  | Sterm2
+  | Stermb
 
 type kind =
   | C2c_inplace_su of { il : il3 }
@@ -60,7 +108,10 @@ type kind =
   | Hc2hc of { ranged : bool }
   | Hc2c
   | Hc2c_nat of { ranged : bool }
-  | R2c_term of { rt : bool; k : int option }
+  | R2c_term of
+      { rt : bool
+      ; k : int option
+      }
   | R2c_term_ls of { r : int }
   | Trig of trig8
   | Strided of { il : [ `No | `In | `Out | `Out_nt ] }
@@ -73,8 +124,16 @@ type kind =
       ; turn : cil_turn option
       ; pre_tw : bool
       }
-  | Zsplit of { k : zs_kind; r0 : int option; sink : bool }
-  | K1_mono of { r1 : int option; il : bool; sw : bool }
+  | Zsplit of
+      { k : zs_kind
+      ; r0 : int option
+      ; sink : bool
+      }
+  | K1_mono of
+      { r1 : int option
+      ; il : bool
+      ; sw : bool
+      }
 
 type t =
   { radix : int
@@ -87,15 +146,15 @@ type t =
 
 exception Parse_error of string
 
-val of_argv : ?strict:bool -> string list -> t
 (** Order-insensitive parse over the corpus flag surface.  [strict] (default
     true) raises [Parse_error] on an unknown flag; [~strict:false] skips
     unknown tokens — the Driver's mode, since gen_main's full CLI carries
     knobs orthogonal to the descriptor. Validates the measured invariants
     (in-place su (+) twiddled; hc2c-nat bwd <=> dif). *)
+val of_argv : ?strict:bool -> string list -> t
 
-val to_argv : t -> string list
 (** The canonical per-kind flag sequence — reproduces recorded provenance
     lines verbatim.  provenance == coverage == regen recipe, one fact. *)
+val to_argv : t -> string list
 
 val validate : t -> t

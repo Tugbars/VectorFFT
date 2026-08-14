@@ -143,8 +143,12 @@ let critical_path (uarch : Uarch.t) (roots : t list) : int =
 ;;
 
 (* ── stats (VFFT_CX_STATS=1): per-codelet DAG census to stderr ─────────── *)
-let print_stats ?(uarch : Uarch.t option) (who : string)
-      (assigns : (Expr.elem_ref * t) list) : unit =
+let print_stats
+      ?(uarch : Uarch.t option)
+      (who : string)
+      (assigns : (Expr.elem_ref * t) list)
+  : unit
+  =
   let n_in = ref 0
   and n_add = ref 0
   and n_sub = ref 0
@@ -167,14 +171,25 @@ let print_stats ?(uarch : Uarch.t option) (who : string)
     | CTwC _ | CTwV _ | CTwL _ -> incr n_tw);
   let cp_str =
     match uarch with
-    | Some u ->
-      Printf.sprintf ", cp %dc" (critical_path u (List.map snd assigns))
+    | Some u -> Printf.sprintf ", cp %dc" (critical_path u (List.map snd assigns))
     | None -> ""
   in
   Printf.eprintf
-    "[cx_pipeline] %s: nodes %d (in %d, add %d, sub %d, neg %d, rot %d, fma %d, tw %d, st %d), outs %d%s\n%!"
-    who !n_all !n_in !n_add !n_sub !n_neg !n_rot !n_fma !n_tw !n_st
-    (List.length assigns) cp_str
+    "[cx_pipeline] %s: nodes %d (in %d, add %d, sub %d, neg %d, rot %d, fma %d, tw %d, \
+     st %d), outs %d%s\n\
+     %!"
+    who
+    !n_all
+    !n_in
+    !n_add
+    !n_sub
+    !n_neg
+    !n_rot
+    !n_fma
+    !n_tw
+    !n_st
+    (List.length assigns)
+    cp_str
 ;;
 
 (* ── THE ENTRY POINT ──────────────────────────────────────────────────────
@@ -182,7 +197,9 @@ let print_stats ?(uarch : Uarch.t option) (who : string)
  * pass) hands its labeled assigns through here before scheduling. Default
  * env = every existing kernel byte-identical (the cascade's passes find
  * zero sites on the current builders; kill switches skip them outright). *)
-let prepare_codelet ?(who = "cil") ?(uarch : Uarch.t option)
+let prepare_codelet
+      ?(who = "cil")
+      ?(uarch : Uarch.t option)
       (assigns : (Expr.elem_ref * t) list)
   : (Expr.elem_ref * t) list
   =
@@ -192,7 +209,8 @@ let prepare_codelet ?(who = "cil") ?(uarch : Uarch.t option)
     else dedup_sub_pairs_cx assigns
   in
   if ndedup > 0
-  then Printf.eprintf "[cx_pipeline] %s: dedup_sub_pairs rewrote %d mirror(s)\n%!" who ndedup;
+  then
+    Printf.eprintf "[cx_pipeline] %s: dedup_sub_pairs rewrote %d mirror(s)\n%!" who ndedup;
   if Sys.getenv_opt "VFFT_CX_STATS" = Some "1" then print_stats ?uarch who assigns;
   assigns
 ;;

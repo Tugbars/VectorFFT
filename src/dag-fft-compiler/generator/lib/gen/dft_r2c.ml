@@ -1382,7 +1382,9 @@ let dft_hc2hc_dif
   let in_im = Array.init n input_im in
   let s1_re, s1_im = sym1_arr n in_re in_im in
   let s2i_re, s2i_im = sym2i_arr n s1_re s1_im in
-  let re_arr, im_arr = Dft_recurse.dft ~sign n (fun k -> s2i_re.(k)) (fun k -> s2i_im.(k)) in
+  let re_arr, im_arr =
+    Dft_recurse.dft ~sign n (fun k -> s2i_re.(k)) (fun k -> s2i_im.(k))
+  in
   let out_re = Array.make n (Const 0.0) in
   let out_im = Array.make n (Const 0.0) in
   out_re.(0) <- re_arr.(0);

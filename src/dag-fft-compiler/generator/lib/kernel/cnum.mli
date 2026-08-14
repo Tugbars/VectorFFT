@@ -2,7 +2,11 @@
    MODULE CARD. Exact complex constants.
    Generated from the inferred signature; trim = later per-module work. *)
 
-type cnum = { re : Expr.expr; im : Expr.expr; }
+type cnum =
+  { re : Expr.expr
+  ; im : Expr.expr
+  }
+
 val cnum : Expr.expr -> Expr.expr -> cnum
 val czero : cnum
 val cone : cnum

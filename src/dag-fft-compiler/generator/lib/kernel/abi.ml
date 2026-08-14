@@ -3,7 +3,10 @@
    by VFFT_ABI_XCHECK over every emission before the ladder is deleted. *)
 
 type shape =
-  | Strided of { il : [ `None | `In | `Out ]; r2c : [ `No | `Fwd | `Bwd ] }
+  | Strided of
+      { il : [ `None | `In | `Out ]
+      ; r2c : [ `No | `Fwd | `Bwd ]
+      }
   | In_place of { il : [ `None | `In | `Out ] }
   | Twidsq
   | R2cb
@@ -61,66 +64,110 @@ let params_of_shape = function
     in
     data @ tw @ sc "size_t" "ios" @ sc "size_t" "me"
   | Twidsq ->
-    split_in "in" @ split_out "out" @ tw
-    @ sc "size_t" "is" @ sc "size_t" "os" @ sc "size_t" "V"
+    split_in "in"
+    @ split_out "out"
+    @ tw
+    @ sc "size_t" "is"
+    @ sc "size_t" "os"
+    @ sc "size_t" "V"
   | R2cb ->
-    split_in "in" @ real_out "out_re"
-    @ sc "ptrdiff_t" "is_re" @ sc "ptrdiff_t" "is_im" @ sc "ptrdiff_t" "os_re"
+    split_in "in"
+    @ real_out "out_re"
+    @ sc "ptrdiff_t" "is_re"
+    @ sc "ptrdiff_t" "is_im"
+    @ sc "ptrdiff_t" "os_re"
     @ sc "size_t" "vl"
   | R2cf ->
-    real_in "in_re" @ real_out "out_re" @ real_out "out_im"
-    @ sc "ptrdiff_t" "is" @ sc "ptrdiff_t" "os_re" @ sc "ptrdiff_t" "os_im"
+    real_in "in_re"
+    @ real_out "out_re"
+    @ real_out "out_im"
+    @ sc "ptrdiff_t" "is"
+    @ sc "ptrdiff_t" "os_re"
+    @ sc "ptrdiff_t" "os_im"
     @ sc "size_t" "vl"
   | R2c_term_ls ->
-    split_in "ink" @ split_in "inm" @ split_out "Xp" @ split_out "Xm" @ tw
-    @ sc "ptrdiff_t" "is_leg" @ sc "ptrdiff_t" "osp" @ sc "ptrdiff_t" "osm"
+    split_in "ink"
+    @ split_in "inm"
+    @ split_out "Xp"
+    @ split_out "Xm"
+    @ tw
+    @ sc "ptrdiff_t" "is_leg"
+    @ sc "ptrdiff_t" "osp"
+    @ sc "ptrdiff_t" "osm"
     @ sc "size_t" "vl"
   | R2c_term { rt } ->
-    split_in "in" @ split_out "Xp" @ split_out "Xm"
+    split_in "in"
+    @ split_out "Xp"
+    @ split_out "Xm"
     @ (if rt then tw else [])
-    @ sc "ptrdiff_t" "is" @ sc "size_t" "vl"
+    @ sc "ptrdiff_t" "is"
+    @ sc "size_t" "vl"
   | Hc2c_nat { ranged } ->
     split_in "in"
-    @ real_out "Rp" @ real_out "Ip" @ real_out "Rm" @ real_out "Im"
+    @ real_out "Rp"
+    @ real_out "Ip"
+    @ real_out "Rm"
+    @ real_out "Im"
     @ tw
-    @ sc "ptrdiff_t" "is" @ sc "ptrdiff_t" "osp" @ sc "ptrdiff_t" "osm"
+    @ sc "ptrdiff_t" "is"
+    @ sc "ptrdiff_t" "osp"
+    @ sc "ptrdiff_t" "osm"
     @ (if ranged
        then sc "ptrdiff_t" "cs_in" @ sc "ptrdiff_t" "cs_out" @ sc "int" "kcount"
        else [])
     @ sc "size_t" "vl"
   | Hc2c_nat_bwd { ranged } ->
-    real_in "Rp" @ real_in "Ip" @ real_in "Rm" @ real_in "Im"
-    @ split_out "out" @ tw
-    @ sc "ptrdiff_t" "isp" @ sc "ptrdiff_t" "ism" @ sc "ptrdiff_t" "os"
+    real_in "Rp"
+    @ real_in "Ip"
+    @ real_in "Rm"
+    @ real_in "Im"
+    @ split_out "out"
+    @ tw
+    @ sc "ptrdiff_t" "isp"
+    @ sc "ptrdiff_t" "ism"
+    @ sc "ptrdiff_t" "os"
     @ (if ranged
        then sc "ptrdiff_t" "cs_in" @ sc "ptrdiff_t" "cs_out" @ sc "int" "kcount"
        else [])
     @ sc "size_t" "vl"
   | Hc_strided { ranged } ->
-    split_in "in" @ split_out "out" @ tw
-    @ sc "ptrdiff_t" "is" @ sc "ptrdiff_t" "os"
+    split_in "in"
+    @ split_out "out"
+    @ tw
+    @ sc "ptrdiff_t" "is"
+    @ sc "ptrdiff_t" "os"
     @ (if ranged
        then sc "ptrdiff_t" "cs_in" @ sc "ptrdiff_t" "cs_out" @ sc "int" "kcount"
        else [])
     @ sc "size_t" "vl"
   | N1_oop_strided ->
-    split_in "in" @ split_out "out"
-    @ sc "size_t" "is" @ sc "size_t" "os" @ sc "size_t" "vl"
+    split_in "in"
+    @ split_out "out"
+    @ sc "size_t" "is"
+    @ sc "size_t" "os"
+    @ sc "size_t" "vl"
   | R2r -> real_in "in" @ real_out "out" @ sc "size_t" "K"
   | Oop_generic -> split_in "in" @ split_out "out" @ tw @ sc "size_t" "K"
+;;
 
 let make ~symbol ~target_attr shape =
   { symbol; target_attr; params = params_of_shape shape }
+;;
 
 let signature t =
   let line (p : Layout.param) =
-    Printf.sprintf "    %s%s%s" p.Layout.ctype
+    Printf.sprintf
+      "    %s%s%s"
+      p.Layout.ctype
       (if p.Layout.restrict_ then "__restrict__ " else "")
       p.Layout.name
   in
-  Printf.sprintf "__attribute__((target(\"%s\")))\nvoid %s(\n%s)\n{\n"
-    t.target_attr t.symbol
+  Printf.sprintf
+    "__attribute__((target(\"%s\")))\nvoid %s(\n%s)\n{\n"
+    t.target_attr
+    t.symbol
     (String.concat ",\n" (List.map line t.params))
+;;
 
 (* The frozen 11-arg z ABI — see abi.mli.  A LITERAL, deliberately: the
    grouping is part of the frozen bytes, and one source replaces the
@@ -139,3 +186,4 @@ let z11_signature ~symbol ~target_attr =
     ; "    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n"
     ; "{\n"
     ]
+;;

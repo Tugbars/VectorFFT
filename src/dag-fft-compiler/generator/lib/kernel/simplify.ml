@@ -29,7 +29,8 @@
  * ------------------------------------------------------------------
  *)
 
-open Ir  (* M1: was `include` — Ir is no longer re-exported through Simplify *)
+open Ir
+(* M1: was `include` — Ir is no longer re-exported through Simplify *)
 (* === SUB-PAIR DEDUPLICATION PASS ===
  *
  * After reassociation, we may have both `Sub(a, b)` and `Sub(b, a)` in
@@ -258,9 +259,7 @@ let extract_coefficient (t : t) : float * t =
 ;;
 
 let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
-  if
-    not (Knobs.collect_m () = Some "1")
-    && not (Knobs.deep_collect () = Some "1")
+  if (not (Knobs.collect_m () = Some "1")) && not (Knobs.deep_collect () = Some "1")
   then assigns
   else (
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in

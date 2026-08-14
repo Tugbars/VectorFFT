@@ -10,7 +10,7 @@
  * test framework set up; this is a standalone executable. When we land
  * proper testing infrastructure, the assertions migrate to that. *)
 
-open Ir  (* M1: names formerly re-exported through Algsimp *)
+open Ir (* M1: names formerly re-exported through Algsimp *)
 open Expr
 
 let tests_run = ref 0

@@ -6,7 +6,6 @@
  * "raw_scheduled" list with intentional duplicates, and verify the prep
  * dedupes them. *)
 
-
 let () = Ir.reset ()
 
 (* Tiny synthetic IR — use mk_const / mk_add. *)

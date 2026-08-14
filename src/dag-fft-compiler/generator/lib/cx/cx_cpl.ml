@@ -28,7 +28,9 @@ open Cx_ir
 
 let cap () =
   match Sys.getenv_opt "VFFT_CX_CPL_CAP" with
-  | Some s -> (try int_of_string s with _ -> 14)
+  | Some s ->
+    (try int_of_string s with
+     | _ -> 14)
   | None -> 14
 ;;
 
@@ -41,12 +43,11 @@ let port_class (e : t) =
   | CIn _ | CLoad _ -> `LD
   | CStore _ -> `ST
   | CFmaC _ | CFnmaC _ | CTwC _ | CTwV _ | CTwL _ -> `P01
-  | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _ -> `P15
+  | CAdd _ | CSub _ | CNeg _ | CRotAdd _ | CRotNI _ | CRotPI _ | CTurn _ | CLo _ | CHi _
+    -> `P15
 ;;
 
-let schedule_asis (assigns : (Expr.elem_ref * t) list)
-  : (Expr.elem_ref option * t) list
-  =
+let schedule_asis (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref option * t) list =
   (* construction-order schedule: topological by tag (constructors only
      reference earlier nodes). For machine-translated constructions the
      construction order IS the origin's instruction order. *)
@@ -97,11 +98,17 @@ let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
     (fun n ->
        List.iter
          (fun p ->
-            let cur = try Hashtbl.find users p.tag with Not_found -> [] in
+            let cur =
+              try Hashtbl.find users p.tag with
+              | Not_found -> []
+            in
             Hashtbl.replace users p.tag (n :: cur))
          (dedup_preds n))
     all;
-  let users_of n = try Hashtbl.find users n.tag with Not_found -> [] in
+  let users_of n =
+    try Hashtbl.find users n.tag with
+    | Not_found -> []
+  in
   (* height by memoized DFS toward sinks *)
   let height : (int, int) Hashtbl.t = Hashtbl.create 256 in
   let rec h n =
@@ -128,19 +135,23 @@ let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
   let unsched : (int, int) Hashtbl.t = Hashtbl.create 256 in
   List.iter (fun n -> Hashtbl.add unsched n.tag (List.length (dedup_preds n))) all;
   let remaining_users : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  List.iter
-    (fun n -> Hashtbl.add remaining_users n.tag (List.length (users_of n)))
-    all;
+  List.iter (fun n -> Hashtbl.add remaining_users n.tag (List.length (users_of n))) all;
   let finish : (int, int) Hashtbl.t = Hashtbl.create 256 in
   let ready : (int, t) Hashtbl.t = Hashtbl.create 64 in
-  List.iter (fun n -> if Hashtbl.find unsched n.tag = 0 then Hashtbl.add ready n.tag n) all;
+  List.iter
+    (fun n -> if Hashtbl.find unsched n.tag = 0 then Hashtbl.add ready n.tag n)
+    all;
   let live = ref 0 in
   let capn = cap () in
   let out = ref [] in
   let total = List.length all in
   let ready_t n =
     List.fold_left
-      (fun a p -> max a (try Hashtbl.find finish p.tag with Not_found -> 0))
+      (fun a p ->
+         max
+           a
+           (try Hashtbl.find finish p.tag with
+            | Not_found -> 0))
       0
       (preds n)
   in
@@ -186,15 +197,13 @@ let schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
     let best = ref None in
     Hashtbl.iter
       (fun _ n ->
-         let eligible =
-           (not slots) || (ready_t n <= !clock && slot_free n)
-         in
+         let eligible = (not slots) || (ready_t n <= !clock && slot_free n) in
          if eligible
          then (
            let key =
              if !live >= capn
-             then (freed n, Hashtbl.find height n.tag, - ready_t n, - n.tag)
-             else (Hashtbl.find height n.tag, freed n, - ready_t n, - n.tag)
+             then freed n, Hashtbl.find height n.tag, -ready_t n, -n.tag
+             else Hashtbl.find height n.tag, freed n, -ready_t n, -n.tag
            in
            match !best with
            | None -> best := Some (key, n)

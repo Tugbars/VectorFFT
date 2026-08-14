@@ -51,10 +51,7 @@
 let preds_of = Ir.preds
 
 (* Compute peak-live for an existing schedule. *)
-let compute_peak_live
-      ~(subset : Ir.t list)
-      ~(sinks : Ir.t list)
-      (schedule : Ir.t list)
+let compute_peak_live ~(subset : Ir.t list) ~(sinks : Ir.t list) (schedule : Ir.t list)
   : int
   =
   let in_subset : (int, unit) Hashtbl.t = Hashtbl.create 64 in

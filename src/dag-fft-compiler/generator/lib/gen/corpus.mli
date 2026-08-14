@@ -13,9 +13,9 @@ val quadrants : string list
 val dir_of_quadrant : string -> string
 val ip_radices : int list
 
-val cells : string -> cell list
 (** Typed corpus of one quadrant; forces the laws on first use. *)
+val cells : string -> cell list
 
-val files : string -> (string * string list) list
 (** (filename, argv_tail sans --emit-c) — DERIVED via Codelet.to_argv;
     byte-equal to the historical Coverage.files by the round-trip law. *)
+val files : string -> (string * string list) list

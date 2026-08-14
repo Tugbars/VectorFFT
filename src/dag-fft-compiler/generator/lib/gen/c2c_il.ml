@@ -162,11 +162,19 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
-let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
+let emit
+      ~(log3 : bool)
+      ~(pretw : bool)
+      ~(tangent : bool)
+      ~(turnst : bool)
       ~(turnst_gs : bool)
       ~(kind : kind)
-      ~(dir : dir) ~(blocked : bool) ~(split : (int * int) option)
-      ~(radix : int) ~(isa : Isa.t) ~(uarch : Uarch.t)
+      ~(dir : dir)
+      ~(blocked : bool)
+      ~(split : (int * int) option)
+      ~(radix : int)
+      ~(isa : Isa.t)
+      ~(uarch : Uarch.t)
   : string
   =
   (* Required, not optional: an optional arg here cannot be erased (OCaml
@@ -176,11 +184,15 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
   if log3 && kind <> T2
   then
     failwith
-      "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing \
-       policy for the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
+      "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing policy for \
+       the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
   let ctx =
-    make_ctx ~tw_log3:log3 ~tw_pre:pretw ~st_turn:(turnst || turnst_gs)
-      ~st_turn_gs:turnst_gs ~tangent
+    make_ctx
+      ~tw_log3:log3
+      ~tw_pre:pretw
+      ~st_turn:(turnst || turnst_gs)
+      ~st_turn_gs:turnst_gs
+      ~tangent
   in
   let vw = isa.Isa.vec_width in
   if vw mod 2 <> 0 then failwith "codelet_cil: interleaved needs an even vec_width";
@@ -238,7 +250,12 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
   let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
   (* THE PIPELINE SEAM: every cil body flows through the cx pass cascade
      between construction and scheduling — cil is pipeline-hosted. *)
-  let assigns = Cx_pipeline.prepare_codelet ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind)) ~uarch assigns in
+  let assigns =
+    Cx_pipeline.prepare_codelet
+      ~who:(Printf.sprintf "r%d_%s" radix (kind_name kind))
+      ~uarch
+      assigns
+  in
   let scheduled = cx_schedule uarch assigns in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
@@ -277,9 +294,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
        (same creation order cin had ⇒ same tags ⇒ same zN names). *)
     let ins = Array.init nin (fun i -> cload (laddr_of i)) in
     let outs = build ins in
-    let assigns =
-      Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs)
-    in
+    let assigns = Array.to_list (Array.mapi (fun i e -> Expr.Output (i, true), e) outs) in
     let assigns = Cx_pipeline.prepare_codelet ~who:label ~uarch assigns in
     let sch = cx_schedule uarch assigns in
     Buffer.add_string body (Printf.sprintf "        { /* %s */\n" label);
@@ -306,7 +321,10 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
           body
           (Printf.sprintf
              "        %s\n"
-             (Isa.const_decl isa (Printf.sprintf "z%d" l.tag) (Isa.loadu_pd isa (addr_str a))))
+             (Isa.const_decl
+                isa
+                (Printf.sprintf "z%d" l.tag)
+                (Isa.loadu_pd isa (addr_str a))))
       | _ -> ()
     in
     let stored : (int, unit) Hashtbl.t = Hashtbl.create 32 in
@@ -324,12 +342,17 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
                 body
                 (Printf.sprintf
                    "        %s\n"
-                   (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render ~ctx isa tbl e)))));
+                   (Isa.const_decl
+                      isa
+                      (Printf.sprintf "z%d" e.tag)
+                      (render ~ctx isa tbl e)))));
          if ls
-         then
-           (match eref with
-            | Some (Expr.Output (i, _)) -> store i e; Hashtbl.replace stored i ()
-            | _ -> ()))
+         then (
+           match eref with
+           | Some (Expr.Output (i, _)) ->
+             store i e;
+             Hashtbl.replace stored i ()
+           | _ -> ()))
       sch;
     Array.iteri (fun i (e : t) -> if not (Hashtbl.mem stored i) then store i e) outs;
     Buffer.add_string body "        }\n"
@@ -372,8 +395,8 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
         then
           failwith
             (Printf.sprintf
-               "codelet_cil: --cil-split %d.%d does not factor radix %d (need \
-                m,p >= 2 and m*p = radix)"
+               "codelet_cil: --cil-split %d.%d does not factor radix %d (need m,p >= 2 \
+                and m*p = radix)"
                sm
                sp
                radix);
@@ -383,10 +406,9 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
         then
           failwith
             (Printf.sprintf
-               "codelet_cil: --cil-blocked at radix %d needs an explicit \
-                --cil-split m.p. There is no defensible default for a non-pow2 \
-                radix, and the factorization is a PLAN input, not an emitter \
-                decision."
+               "codelet_cil: --cil-blocked at radix %d needs an explicit --cil-split \
+                m.p. There is no defensible default for a non-pow2 radix, and the \
+                factorization is a PLAN input, not an emitter decision."
                radix)
         else (
           let m = if radix >= 64 then 8 else 2 in
@@ -402,7 +424,11 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
         ~label:
           (Printf.sprintf
              "PASS 1.%d: legs {a*%d+%d} -> S[%d..%d]"
-             i m i (i * p) ((i * p) + p - 1))
+             i
+             m
+             i
+             (i * p)
+             ((i * p) + p - 1))
         ~nin:p
         ~laddr_of:(fun a -> AZinLeg ((a * m) + i))
         ~build:(fun ins ->
@@ -441,9 +467,8 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
             if radix <> 32 || dir <> Fwd
             then
               failwith
-                "codelet_cil: VFFT_CX_W32TG is the radix-32 FWD wing combine \
-                 (hand w32tg pass-B); other radices/directions keep \
-                 butterfly_pair";
+                "codelet_cil: VFFT_CX_W32TG is the radix-32 FWD wing combine (hand w32tg \
+                 pass-B); other radices/directions keep butterfly_pair";
             let a, b = Cx_math.butterfly_pair_w32 ~k:jv ins.(0) ins.(1) in
             [| a; b |])
           else (
@@ -462,7 +487,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
                  if e = 0
                  then x
                  else if 4 * e = radix
-                 then (if sign = `Fwd then crot x else crotp x)
+                 then if sign = `Fwd then crot x else crotp x
                  else (
                    let a = sgn *. 2.0 *. pi *. float_of_int e /. float_of_int radix in
                    ctw (cos a) (sin a) x))
@@ -490,16 +515,17 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
     if turned && ctx.st_turn_gs
     then
       failwith
-        "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) \
-         turn; only the contiguous corner-turn is supported blocked.";
+        "codelet_cil: --cil-blocked does not implement the leg-strided (t2tg) turn; only \
+         the contiguous corner-turn is supported blocked.";
     if turned && (not turn128) && p mod 2 <> 0
     then
       failwith
         (Printf.sprintf
-           "codelet_cil: blocked turned stores pair pass-2 groups (j, j+1), \
-            which needs an EVEN p; split %d.%d has p = %d. Pick an even-p \
-            split."
-           m p p);
+           "codelet_cil: blocked turned stores pair pass-2 groups (j, j+1), which needs \
+            an EVEN p; split %d.%d has p = %d. Pick an even-p split."
+           m
+           p
+           p);
     if not turned
     then
       (* PASS 2 (plain leg-major stores): per j, one scheduled group. *)
@@ -527,8 +553,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
         emit_pass
           ~lazy_store:true
           ~label:
-            (Printf.sprintf
-               "PASS 2.%d TURNED-128: S[i*%d+%d] -> columns k,k+1" j p j)
+            (Printf.sprintf "PASS 2.%d TURNED-128: S[i*%d+%d] -> columns k,k+1" j p j)
           ~nin:m
           ~laddr_of:(fun i -> AS (vw * ((i * p) + j)))
           ~build:(fun ins -> pass2_math ~jv:j ins)
@@ -572,7 +597,11 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
           ~label:
             (Printf.sprintf
                "PASS 2.%d+%d TURNED: S[i*%d+{%d,%d}] -> columns k,k+1"
-               j (j + 1) p j (j + 1))
+               j
+               (j + 1)
+               p
+               j
+               (j + 1))
           ~nin:(2 * m)
           ~laddr_of:(fun idx ->
             let i = idx mod m
@@ -616,25 +645,34 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
      both see it. *)
   let lazy_stores =
     (use_wing_t2 || Sys.getenv_opt "VFFT_CX_LAZYSTORE" = Some "1")
-    && not blocked && not ctx.st_turn && (kind = T2 || kind = N1)
+    && (not blocked)
+    && (not ctx.st_turn)
+    && (kind = T2 || kind = N1)
   in
   let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   if blocked
   then emit_blocked ()
   else (
-  (* cx_spill plan (VFFT_CX_SPILL=<budget>, default OFF => None => the plain
+    (* cx_spill plan (VFFT_CX_SPILL=<budget>, default OFF => None => the plain
      byte-identical loop below). When present, an S[] round-trip caps peak
      register pressure so gcc keeps a free register for constant hoisting.
      MONO path only — blocked already parks halves to its own S[]. *)
-  let spill_plan = Cx_spill.plan scheduled in
-  ctx.mono_spill_slots <- (match spill_plan with Some p -> p.Cx_spill.nslots | None -> 0);
-  let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-  (* tag -> current C name; reloads install a fresh name that later uses pick up *)
-  let names : (int, string) Hashtbl.t = Hashtbl.create 256 in
-  let cur_name t = match Hashtbl.find_opt names t with Some s -> s | None -> Printf.sprintf "z%d" t in
-  let reload_ctr = ref 0 in
-  let sarr slot = Printf.sprintf "S[%d]" (vw * slot) in
-  (* LAZY LOAD MATERIALISATION (VFFT_CX_LAZYLOAD=1, default OFF): the input
+    let spill_plan = Cx_spill.plan scheduled in
+    ctx.mono_spill_slots
+    <- (match spill_plan with
+        | Some p -> p.Cx_spill.nslots
+        | None -> 0);
+    let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    (* tag -> current C name; reloads install a fresh name that later uses pick up *)
+    let names : (int, string) Hashtbl.t = Hashtbl.create 256 in
+    let cur_name t =
+      match Hashtbl.find_opt names t with
+      | Some s -> s
+      | None -> Printf.sprintf "z%d" t
+    in
+    let reload_ctr = ref 0 in
+    let sarr slot = Printf.sprintf "S[%d]" (vw * slot) in
+    (* LAZY LOAD MATERIALISATION (VFFT_CX_LAZYLOAD=1, default OFF): the input
      leg loads are normally emitted ALL up front (the load-edge loop below),
      which pins radix vectors live from the first instruction — the mono
      tangent bodies peak at radix live and lose gcc's constant-hoist register.
@@ -642,86 +680,101 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
      in scheduled order, matching the hand kernel's interleaved load/compute
      (peak radix -> ~radix-1). OFF keeps every existing kernel byte-identical:
      the up-front loop still runs and this set stays empty. *)
-  let lazy_loads = Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1" && not blocked in
-  let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
-  let emit_load (l : t) =
-    match l.node with
-    | CLoad a when lazy_loads && not (Hashtbl.mem load_emitted l.tag) ->
-      Hashtbl.replace load_emitted l.tag ();
-      Buffer.add_string
-        body
-        (Printf.sprintf
-           "        %s\n"
-           (Isa.const_decl isa (Printf.sprintf "z%d" l.tag) (Isa.loadu_pd isa (addr_str a))))
-    | _ -> ()
-  in
-  (* LAZY STORES (auto-on for the wing-T2 full kernel; also VFFT_CX_LAZYSTORE=1):
+    let lazy_loads = Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1" && not blocked in
+    let load_emitted : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+    let emit_load (l : t) =
+      match l.node with
+      | CLoad a when lazy_loads && not (Hashtbl.mem load_emitted l.tag) ->
+        Hashtbl.replace load_emitted l.tag ();
+        Buffer.add_string
+          body
+          (Printf.sprintf
+             "        %s\n"
+             (Isa.const_decl
+                isa
+                (Printf.sprintf "z%d" l.tag)
+                (Isa.loadu_pd isa (addr_str a))))
+      | _ -> ()
+    in
+    (* LAZY STORES (auto-on for the wing-T2 full kernel; also VFFT_CX_LAZYSTORE=1):
      emit each output's store the moment its value is defined, instead of
      batching all 16 stores after the body. Batched stores keep every output
      live to the end, which forces peak pressure and evicts gcc's hoisted
      loop-invariant constants (measured: rip-const 19 batched -> 4 interleaved,
      matching the hand kernel). Leg-major T2/N1 store form only (the wing is a
      T2 fwd); turned/blocked keep the batched edge. Bindings hoisted above. *)
-  List.iteri
-    (fun pos ((eref : Expr.elem_ref option), (e : t)) ->
-       (* lazy loads: materialise any not-yet-emitted CLoad this node reads *)
-       if lazy_loads then List.iter emit_load (Cx_sched.Node.preds e);
-       (* reloads scheduled BEFORE this position: pull each evicted value back
+    List.iteri
+      (fun pos ((eref : Expr.elem_ref option), (e : t)) ->
+         (* lazy loads: materialise any not-yet-emitted CLoad this node reads *)
+         if lazy_loads then List.iter emit_load (Cx_sched.Node.preds e);
+         (* reloads scheduled BEFORE this position: pull each evicted value back
           into a fresh SSA name and repoint its tag *)
-       (match spill_plan with
-        | Some pl ->
-          (match Hashtbl.find_opt pl.Cx_spill.reload_before pos with
-           | Some rs ->
-             List.iter
-               (fun (t, slot) ->
-                  let nm = Printf.sprintf "z%d_r%d" t (let c = !reload_ctr in incr reload_ctr; c) in
-                  Buffer.add_string
-                    body
-                    (Printf.sprintf
-                       "        %s\n"
-                       (Isa.const_decl isa nm (Isa.loadu_pd isa (sarr slot))));
-                  Hashtbl.replace names t nm)
-               rs
-           | None -> ())
-        | None -> ());
-       (match e.node with
-        | CIn _ | CLoad _ -> () (* materialized by the load edge *)
-        | _ ->
-          if not (Hashtbl.mem seen e.tag)
-          then (
-            Hashtbl.replace seen e.tag ();
-            Buffer.add_string
-              body
-              (Printf.sprintf
-                 "        %s\n"
-                 (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render ~ctx ~name:cur_name isa tbl e)))));
-       (* spills scheduled AFTER this position: store the value to its slot *)
-       (match spill_plan with
-        | Some pl ->
-          (match Hashtbl.find_opt pl.Cx_spill.spill_after pos with
-           | Some ss ->
-             List.iter
-               (fun (t, slot) ->
-                  Buffer.add_string
-                    body
-                    (Printf.sprintf "        %s;\n" (Isa.storeu_pd isa (sarr slot) (cur_name t))))
-               ss
-           | None -> ())
-        | None -> ());
-       (* lazy store: if this node is an output sink, store it now and free it *)
-       if lazy_stores
-       then
-         (match eref with
-          | Some (Expr.Output (i, _)) ->
-            let (_ : t) = cstore (AZoutLeg i) e in
-            Buffer.add_string
-              body
-              (Printf.sprintf
-                 "        %s;\n"
-                 (render_store isa (AZoutLeg i) (cur_name e.tag)));
-            Hashtbl.replace stored_inline i ()
-          | _ -> ()))
-    scheduled);
+         (match spill_plan with
+          | Some pl ->
+            (match Hashtbl.find_opt pl.Cx_spill.reload_before pos with
+             | Some rs ->
+               List.iter
+                 (fun (t, slot) ->
+                    let nm =
+                      Printf.sprintf
+                        "z%d_r%d"
+                        t
+                        (let c = !reload_ctr in
+                         incr reload_ctr;
+                         c)
+                    in
+                    Buffer.add_string
+                      body
+                      (Printf.sprintf
+                         "        %s\n"
+                         (Isa.const_decl isa nm (Isa.loadu_pd isa (sarr slot))));
+                    Hashtbl.replace names t nm)
+                 rs
+             | None -> ())
+          | None -> ());
+         (match e.node with
+          | CIn _ | CLoad _ -> () (* materialized by the load edge *)
+          | _ ->
+            if not (Hashtbl.mem seen e.tag)
+            then (
+              Hashtbl.replace seen e.tag ();
+              Buffer.add_string
+                body
+                (Printf.sprintf
+                   "        %s\n"
+                   (Isa.const_decl
+                      isa
+                      (Printf.sprintf "z%d" e.tag)
+                      (render ~ctx ~name:cur_name isa tbl e)))));
+         (* spills scheduled AFTER this position: store the value to its slot *)
+         (match spill_plan with
+          | Some pl ->
+            (match Hashtbl.find_opt pl.Cx_spill.spill_after pos with
+             | Some ss ->
+               List.iter
+                 (fun (t, slot) ->
+                    Buffer.add_string
+                      body
+                      (Printf.sprintf
+                         "        %s;\n"
+                         (Isa.storeu_pd isa (sarr slot) (cur_name t))))
+                 ss
+             | None -> ())
+          | None -> ());
+         (* lazy store: if this node is an output sink, store it now and free it *)
+         if lazy_stores
+         then (
+           match eref with
+           | Some (Expr.Output (i, _)) ->
+             let (_ : t) = cstore (AZoutLeg i) e in
+             Buffer.add_string
+               body
+               (Printf.sprintf
+                  "        %s;\n"
+                  (render_store isa (AZoutLeg i) (cur_name e.tag)));
+             Hashtbl.replace stored_inline i ()
+           | _ -> ()))
+      scheduled);
   (* ─── ODD-COUNT TAIL body (docs/roadmap/tail_handling/il_odd_count_tail.md
      §3): the SAME scheduled DAG re-rendered at Isa.sse2 — one complex per
      iteration, emitted INLINE in the enclosing avx2,fma function (VEX-128,
@@ -777,7 +830,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
                      (Printf.sprintf "z%d" e.tag)
                      (render ~ctx ~tw_vw:vw ~msuf:"_n" nisa tbl e)))))
       scheduled;
-    match (if ctx.st_turn then N1T else kind) with
+    match if ctx.st_turn then N1T else kind with
     | N1 | T2 ->
       (* the wide edge below creates the CStore node; the tail prints the
          same address form at narrow width *)
@@ -836,7 +889,8 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
             vw
             ((radix - 1) * 2 * vw))
        (if blocked
-        then Printf.sprintf "CONTRACT: count %% %d == 0 (%d columns per iteration)." per per
+        then
+          Printf.sprintf "CONTRACT: count %% %d == 0 (%d columns per iteration)." per per
         else
           Printf.sprintf
             "count: ANY >= 1 — %d columns per wide iteration, inline VEX-128\n\
@@ -893,8 +947,8 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
     Buffer.add_string
       buf
       (Printf.sprintf
-         "    double S[%d];  /* half-DFT spill: function-scope, L1-hot across \
-          iterations */\n"
+         "    double S[%d];  /* half-DFT spill: function-scope, L1-hot across iterations \
+          */\n"
          (vw * radix))
   else if ctx.mono_spill_slots > 0
   then
@@ -910,7 +964,10 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
      else
        (* k hoisted so the tail loop below resumes it; blocked keeps the old
           form (no tail there) and stays byte-identical. *)
-       Printf.sprintf "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n" per per);
+       Printf.sprintf
+         "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
+         per
+         per);
   (* T2's streamed cursor: one record-set per column-group. *)
   if kind = T2
   then
@@ -930,7 +987,7 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
      (VFFT_CX_LAZYLOAD=1), in which case each load is emitted just before its
      first consumer in the scheduled body (peak-pressure cap; see the mono
      emit loop). Default OFF => this loop runs => byte-identical. *)
-  if not blocked && not (Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1")
+  if (not blocked) && not (Sys.getenv_opt "VFFT_CX_LAZYLOAD" = Some "1")
   then
     for l = 0 to radix - 1 do
       Buffer.add_string
@@ -945,90 +1002,97 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(tangent : bool) ~(turnst : bool)
   Buffer.add_buffer buf body;
   (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
      FORM, not the kind: `--cil-turnst` gives a T2 the corner-turned store. *)
-  if not blocked then
-  (match (if ctx.st_turn then N1T else kind) with
-   | N1 | T2 ->
-     (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
+  if not blocked
+  then (
+    match if ctx.st_turn then N1T else kind with
+    | N1 | T2 ->
+      (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
         store is a CStore NODE (address in the DAG); built post-schedule so
         no existing tag shifts, printed via render_store (addr_str carries
         the byte-identity contract). *)
-     Array.iteri
-       (fun l (e : t) ->
-          if not (Hashtbl.mem stored_inline l)
-          then (
-            let (_ : t) = cstore (AZoutLeg l) e in
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "        %s;\n"
-                 (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)))))
-       outs
-   | N1T ->
-     if ctx.st_turn_gs
-     then
-       (* LEG-STRIDED turn (T2TG): legs sit at stride OGs, so they are NOT
+      Array.iteri
+        (fun l (e : t) ->
+           if not (Hashtbl.mem stored_inline l)
+           then (
+             let (_ : t) = cstore (AZoutLeg l) e in
+             Buffer.add_string
+               buf
+               (Printf.sprintf
+                  "        %s;\n"
+                  (render_store isa (AZoutLeg l) (Printf.sprintf "z%d" e.tag)))))
+        outs
+    | N1T ->
+      if ctx.st_turn_gs
+      then
+        (* LEG-STRIDED turn (T2TG): legs sit at stride OGs, so they are NOT
           contiguous and the paired full-width store below would interleave
           the wrong legs. Every leg's two columns scatter as two 128-bit
           halves instead (the odd-tail pattern applied to all legs):
           (leg p, col k) -> zout[2*(k*OLs + p*OGs)]. Costs 2R narrow stores
           vs R wide — the price of the chain-bwd middle stage; measured at
           the plan level, not assumed away. *)
-       (* COMPLETE-IR: the halves are CLo/CHi nodes, the scatters CStore
+        (* COMPLETE-IR: the halves are CLo/CHi nodes, the scatters CStore
           nodes at AZoutTurnG — rendered narrow, byte-identical strings. *)
-       Array.iteri
-         (fun l (e : t) ->
-            let lo = clo e
-            and hi = chi e in
-            let (_ : t) = cstore (AZoutTurnG (l, 0)) lo
-            and (_ : t) = cstore (AZoutTurnG (l, 1)) hi in
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "        %s;\n        %s;\n"
-                 (render_store Isa.sse2 (AZoutTurnG (l, 0)) (render ~ctx Isa.sse2 tbl lo))
-                 (render_store Isa.sse2 (AZoutTurnG (l, 1)) (render ~ctx Isa.sse2 tbl hi))))
-         outs
-     else (
-     (* CORNER-TURN (the four-step transpose, fused into the stores).
+        Array.iteri
+          (fun l (e : t) ->
+             let lo = clo e
+             and hi = chi e in
+             let (_ : t) = cstore (AZoutTurnG (l, 0)) lo
+             and (_ : t) = cstore (AZoutTurnG (l, 1)) hi in
+             Buffer.add_string
+               buf
+               (Printf.sprintf
+                  "        %s;\n        %s;\n"
+                  (render_store
+                     Isa.sse2
+                     (AZoutTurnG (l, 0))
+                     (render ~ctx Isa.sse2 tbl lo))
+                  (render_store
+                     Isa.sse2
+                     (AZoutTurnG (l, 1))
+                     (render ~ctx Isa.sse2 tbl hi))))
+          outs
+      else (
+        (* CORNER-TURN (the four-step transpose, fused into the stores).
         Each output vector holds one leg's 2 columns: out_p = [c_k, c_{k+1}].
         Pairing legs p,p+1 and swapping 128-bit lanes regroups them into
         [leg p, leg p+1] of ONE column — so column k's legs land
         contiguously at zout[2*(k*OLs + p)]. Two stores per leg-pair, both
         full-width: no scalar tail, no separate transpose pass. *)
-     let n = Array.length outs in
-     let l = ref 0 in
-     (* pairs of legs: one permute2f128 per store, both full width.
+        let n = Array.length outs in
+        let l = ref 0 in
+        (* pairs of legs: one permute2f128 per store, both full width.
         COMPLETE-IR: the lane regroups are CTurn nodes, the paired writes
         CStore nodes at AZoutTurn — the four-step transpose is DATA now. *)
-     while !l + 1 < n do
-       let ta = cturn outs.(!l) outs.(!l + 1) 0x20
-       and tb = cturn outs.(!l) outs.(!l + 1) 0x31 in
-       let (_ : t) = cstore (AZoutTurn (!l, 0)) ta
-       and (_ : t) = cstore (AZoutTurn (!l, 1)) tb in
-       Buffer.add_string
-         buf
-         (Printf.sprintf
-            "        %s;\n        %s;\n"
-            (render_store isa (AZoutTurn (!l, 0)) (render ~ctx isa tbl ta))
-            (render_store isa (AZoutTurn (!l, 1)) (render ~ctx isa tbl tb)));
-       l := !l + 2
-     done;
-     (* ODD RADIX: the last leg has no partner to swap lanes with, so its two
+        while !l + 1 < n do
+          let ta = cturn outs.(!l) outs.(!l + 1) 0x20
+          and tb = cturn outs.(!l) outs.(!l + 1) 0x31 in
+          let (_ : t) = cstore (AZoutTurn (!l, 0)) ta
+          and (_ : t) = cstore (AZoutTurn (!l, 1)) tb in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        %s;\n        %s;\n"
+               (render_store isa (AZoutTurn (!l, 0)) (render ~ctx isa tbl ta))
+               (render_store isa (AZoutTurn (!l, 1)) (render ~ctx isa tbl tb)));
+          l := !l + 2
+        done;
+        (* ODD RADIX: the last leg has no partner to swap lanes with, so its two
         columns are scattered as two 128-bit stores instead of one paired
         permute2f128. N1T already refuses anything but 2 complex/vector
         (checked above), so a 128-bit half IS exactly one column. *)
-     if !l < n
-     then (
-       let lo = clo outs.(!l)
-       and hi = chi outs.(!l) in
-       let (_ : t) = cstore (AZoutTurn (!l, 0)) lo
-       and (_ : t) = cstore (AZoutTurn (!l, 1)) hi in
-       Buffer.add_string
-         buf
-         (Printf.sprintf
-            "        %s;\n        %s;\n"
-            (render_store Isa.sse2 (AZoutTurn (!l, 0)) (render ~ctx Isa.sse2 tbl lo))
-            (render_store Isa.sse2 (AZoutTurn (!l, 1)) (render ~ctx Isa.sse2 tbl hi))))));
+        if !l < n
+        then (
+          let lo = clo outs.(!l)
+          and hi = chi outs.(!l) in
+          let (_ : t) = cstore (AZoutTurn (!l, 0)) lo
+          and (_ : t) = cstore (AZoutTurn (!l, 1)) hi in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        %s;\n        %s;\n"
+               (render_store Isa.sse2 (AZoutTurn (!l, 0)) (render ~ctx Isa.sse2 tbl lo))
+               (render_store Isa.sse2 (AZoutTurn (!l, 1)) (render ~ctx Isa.sse2 tbl hi))))));
   Buffer.add_string buf "    }\n";
   (* ─── ODD-COUNT TAIL loop (monolithic only): resumes k after the wide
      bulk. `for (; k < count; ++k)` rather than `if` so it generalises when
@@ -1097,13 +1161,11 @@ let emit_k1
   : string
   =
   let ctx =
-    make_ctx ~tw_log3:false ~tw_pre:false ~st_turn:false ~st_turn_gs:false
-      ~tangent
+    make_ctx ~tw_log3:false ~tw_pre:false ~st_turn:false ~st_turn_gs:false ~tangent
   in
   ignore ctx.mono_spill_slots;
   let vw = isa.Isa.vec_width in
-  if vw <> 4
-  then failwith "codelet_cil: fused K=1 is written for 2 complex/vector (avx2)";
+  if vw <> 4 then failwith "codelet_cil: fused K=1 is written for 2 complex/vector (avx2)";
   if chain_a = [] || chain_b = []
   then failwith "codelet_cil: emit_k1 needs a factorization for BOTH passes";
   List.iter
@@ -1202,7 +1264,10 @@ let emit_k1
                body
                (Printf.sprintf
                   "    %s\n"
-                  (Isa.const_decl isa (Printf.sprintf "z%d" e.tag) (render ~ctx isa tbl e)))))
+                  (Isa.const_decl
+                     isa
+                     (Printf.sprintf "z%d" e.tag)
+                     (render ~ctx isa tbl e)))))
       sch;
     Array.iteri (fun i (e : t) -> store i e) outs;
     Buffer.add_string body "    }\n"
@@ -1221,9 +1286,7 @@ let emit_k1
         let (_ : t) = cstore ad e in
         Buffer.add_string
           body
-          (Printf.sprintf
-             "    %s;\n"
-             (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+          (Printf.sprintf "    %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag))))
   done;
   (* ── stage B: register turn + per-lane constant twiddle + DFT_n2 ── *)
   let p2f = Isa.intr isa "permute2f128_pd" in
@@ -1238,35 +1301,39 @@ let emit_k1
            (2 * d))
       ~nin:n2
       ~pre:(fun () ->
-        if k1dag then () else
-        for c = 0 to (n2 / 2) - 1 do
-          Buffer.add_string
-            body
-            (Printf.sprintf
-               "    %s\n    %s\n"
-               (Isa.const_decl
-                  isa
-                  (Printf.sprintf "_a%d" c)
-                  (Isa.loadu_pd isa (Printf.sprintf "P[%d]" (vw * ((2 * d * (n2 / 2)) + c)))))
-               (Isa.const_decl
-                  isa
-                  (Printf.sprintf "_b%d" c)
-                  (Isa.loadu_pd
-                     isa
-                     (Printf.sprintf "P[%d]" (vw * ((((2 * d) + 1) * (n2 / 2)) + c))))));
-          Buffer.add_string
-            body
-            (Printf.sprintf
-               "    %s\n    %s\n"
-               (Isa.const_decl
-                  isa
-                  (Printf.sprintf "_t%d" (2 * c))
-                  (Printf.sprintf "%s(_a%d, _b%d, 0x20)" p2f c c))
-               (Isa.const_decl
-                  isa
-                  (Printf.sprintf "_t%d" ((2 * c) + 1))
-                  (Printf.sprintf "%s(_a%d, _b%d, 0x31)" p2f c c)))
-        done)
+        if k1dag
+        then ()
+        else
+          for c = 0 to (n2 / 2) - 1 do
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "    %s\n    %s\n"
+                 (Isa.const_decl
+                    isa
+                    (Printf.sprintf "_a%d" c)
+                    (Isa.loadu_pd
+                       isa
+                       (Printf.sprintf "P[%d]" (vw * ((2 * d * (n2 / 2)) + c)))))
+                 (Isa.const_decl
+                    isa
+                    (Printf.sprintf "_b%d" c)
+                    (Isa.loadu_pd
+                       isa
+                       (Printf.sprintf "P[%d]" (vw * ((((2 * d) + 1) * (n2 / 2)) + c))))));
+            Buffer.add_string
+              body
+              (Printf.sprintf
+                 "    %s\n    %s\n"
+                 (Isa.const_decl
+                    isa
+                    (Printf.sprintf "_t%d" (2 * c))
+                    (Printf.sprintf "%s(_a%d, _b%d, 0x20)" p2f c c))
+                 (Isa.const_decl
+                    isa
+                    (Printf.sprintf "_t%d" ((2 * c) + 1))
+                    (Printf.sprintf "%s(_a%d, _b%d, 0x31)" p2f c c)))
+          done)
       ~lsrc_of:(fun j2 ->
         if k1dag
         then (
@@ -1285,14 +1352,12 @@ let emit_k1
                then x
                else
                  ctwv
-                   (Array.init
-                      (vw / 2)
-                      (fun lane ->
-                         let k1 = (2 * d) + lane in
-                         let a =
-                           sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n
-                         in
-                         cos a, sin a))
+                   (Array.init (vw / 2) (fun lane ->
+                      let k1 = (2 * d) + lane in
+                      let a =
+                        sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n
+                      in
+                      cos a, sin a))
                    x)
             ins
         in
@@ -1302,9 +1367,7 @@ let emit_k1
         let (_ : t) = cstore ad e in
         Buffer.add_string
           body
-          (Printf.sprintf
-             "    %s;\n"
-             (render_store isa ad (Printf.sprintf "z%d" e.tag))))
+          (Printf.sprintf "    %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag))))
   done;
   let buf = Buffer.create 32768 in
   Buffer.add_string

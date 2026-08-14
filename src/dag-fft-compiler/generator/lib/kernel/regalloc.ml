@@ -333,9 +333,7 @@ let peak_live_analysis ~(isa : Isa.t) ~(scheduled : Ir.t list) : live_info =
   List.iteri
     (fun i (e : Ir.t) ->
        Hashtbl.replace last_use e.tag i;
-       List.iter
-         (fun (p : Ir.t) -> Hashtbl.replace last_use p.tag i)
-         (Ir.preds e))
+       List.iter (fun (p : Ir.t) -> Hashtbl.replace last_use p.tag i) (Ir.preds e))
     scheduled;
   (* Pass 2: walk schedule forward, track live set. *)
   let live : (int, unit) Hashtbl.t = Hashtbl.create budget in

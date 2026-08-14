@@ -163,7 +163,9 @@
  * ------------------------------------------------------------------
  *)
 
-open Ir  (* M1: was `include Simplify` — nothing of Simplify is used bare here *)
+open Ir
+
+(* M1: was `include Simplify` — nothing of Simplify is used bare here *)
 (* === FMA LIFT PASS ===
  *
  * Recognize Add/Sub-of-Mul patterns where the inner Mul has use_count = 1

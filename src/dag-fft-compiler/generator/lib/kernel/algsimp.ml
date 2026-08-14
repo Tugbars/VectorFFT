@@ -23,7 +23,8 @@
  * ------------------------------------------------------------------
  *)
 
-open Ir  (* M1: was `include Fma_passes` — nothing of Simplify/Fma_passes is used bare here *)
+open
+  Ir (* M1: was `include Fma_passes` — nothing of Simplify/Fma_passes is used bare here *)
 
 (* === SPILL MARKER LIFTING ===
  *
@@ -1001,8 +1002,7 @@ type spill_info =
   ; ct_n2 : int (* PASS 1 sub-FFT size, 0 if not CT-decomposed *)
   }
 
-let make_spill_info ?ct ?(fuse = 0) (markers : spill_tag_marker list) : spill_info
-  =
+let make_spill_info ?ct ?(fuse = 0) (markers : spill_tag_marker list) : spill_info =
   let re_slot = Hashtbl.create 64 in
   let im_slot = Hashtbl.create 64 in
   let max_slot = ref (-1) in

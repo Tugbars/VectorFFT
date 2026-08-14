@@ -116,7 +116,7 @@
 
 (* M1: `open Algsimp` removed — only Ir's names were used here; the
    dependency on the pass layer was an artifact of the include chain. *)
-open Ir  (* M1: names formerly re-exported through the chain *)
+open Ir (* M1: names formerly re-exported through the chain *)
 
 (* ═══════════════════════════════════════════════════════════════
  *  SCHEDULE WISDOM PLUMBING (order-injection provenance + staleness)
@@ -372,8 +372,7 @@ end
 
 (* The real-valued Ir instantiation — restores every existing entry point
  * unchanged via `include Make (Ir_node)` below. *)
-module Ir_node :
-  SCHED_NODE with type payload = Ir.node_kind and type t = Ir.t = struct
+module Ir_node : SCHED_NODE with type payload = Ir.node_kind and type t = Ir.t = struct
   type payload = Ir.node_kind
 
   type t = Ir.t =
@@ -422,57 +421,57 @@ module Make (N : SCHED_NODE) = struct
   let compute_cp_dist (uarch : Uarch.t) (sinks : t list) (all_nodes : t list)
     : (int, int) Hashtbl.t
     =
-  (* Build successor (user) map. *)
-  let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
-  let add_user prod use =
-    let cur =
-      try Hashtbl.find users prod.tag with
-      | Not_found -> []
+    (* Build successor (user) map. *)
+    let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
+    let add_user prod use =
+      let cur =
+        try Hashtbl.find users prod.tag with
+        | Not_found -> []
+      in
+      Hashtbl.replace users prod.tag (use :: cur)
     in
-    Hashtbl.replace users prod.tag (use :: cur)
-  in
-  List.iter (fun n -> List.iter (fun p -> add_user p n) (preds n)) all_nodes;
-  let cp_dist : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  let sink_tags =
-    List.fold_left
-      (fun acc s ->
-         Hashtbl.replace acc s.tag ();
-         acc)
-      (Hashtbl.create 16)
-      sinks
-  in
-  (* Process in tag-descending order. Tag-ascending = topological (children
-   * before parents in our hash-cons), so tag-descending = reverse-topological,
-   * which is what we want for backward DP. *)
-  let sorted_desc = List.sort (fun a b -> compare b.tag a.tag) all_nodes in
-  List.iter
-    (fun n ->
-       let lat = latency uarch n in
-       let user_list =
-         try Hashtbl.find users n.tag with
-         | Not_found -> []
-       in
-       let max_user_cp =
-         List.fold_left
-           (fun acc u ->
-              let u_cp =
-                try Hashtbl.find cp_dist u.tag with
-                | Not_found -> 0
-              in
-              max acc u_cp)
-           0
-           user_list
-       in
-       let cp = if Hashtbl.mem sink_tags n.tag then lat else lat + max_user_cp in
-       Hashtbl.replace cp_dist n.tag cp)
-    sorted_desc;
-  cp_dist
-;;
+    List.iter (fun n -> List.iter (fun p -> add_user p n) (preds n)) all_nodes;
+    let cp_dist : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    let sink_tags =
+      List.fold_left
+        (fun acc s ->
+           Hashtbl.replace acc s.tag ();
+           acc)
+        (Hashtbl.create 16)
+        sinks
+    in
+    (* Process in tag-descending order. Tag-ascending = topological (children
+     * before parents in our hash-cons), so tag-descending = reverse-topological,
+     * which is what we want for backward DP. *)
+    let sorted_desc = List.sort (fun a b -> compare b.tag a.tag) all_nodes in
+    List.iter
+      (fun n ->
+         let lat = latency uarch n in
+         let user_list =
+           try Hashtbl.find users n.tag with
+           | Not_found -> []
+         in
+         let max_user_cp =
+           List.fold_left
+             (fun acc u ->
+                let u_cp =
+                  try Hashtbl.find cp_dist u.tag with
+                  | Not_found -> 0
+                in
+                max acc u_cp)
+             0
+             user_list
+         in
+         let cp = if Hashtbl.mem sink_tags n.tag then lat else lat + max_user_cp in
+         Hashtbl.replace cp_dist n.tag cp)
+      sorted_desc;
+    cp_dist
+  ;;
 
-(* Compute SU number — register-pressure approximation.
- * For trees, classical SU labels are exact. On DAGs (shared subexprs),
- * this over-estimates pressure for shared values, which is a
- * conservative bias toward scheduling them earlier. *)
+  (* Compute SU number — register-pressure approximation.
+   * For trees, classical SU labels are exact. On DAGs (shared subexprs),
+   * this over-estimates pressure for shared values, which is a
+   * conservative bias toward scheduling them earlier. *)
   (* PAYLOAD-GENERIC form. The k-ary label — sort children's SU
      descending, label = max_i (su_i + i) — reproduces every per-kind
      case the hand-written version spelled out, so this is a refactor,
@@ -511,364 +510,377 @@ module Make (N : SCHED_NODE) = struct
     su
   ;;
 
-(* ============================================================
- * STARVE–RETIRE (SR) LIST SCHEDULING — the production scheduler.
- * (Historical flag name: --su. The Sethi–Ullman label survives only
- * as a near-neutral tie-break; the algorithm is bespoke. Named after
- * the two rules the ablation proved load-bearing — see below.)
- *
- * THE TWO RULES
- *   STARVE — starvation-gated load admission (late birth).
- *     Loads never compete with arithmetic. A load is admitted only
- *     when the arithmetic ready-set is EMPTY, and then in source
- *     order. A value is born at the last moment demand forces it.
- *   RETIRE — eager sink retirement (early death).
- *     A ready sink (store root / node with no users) always wins.
- *     Values die at the first legal moment, freeing their registers.
- *   Together: live ranges are compressed from both ends. Intuition
- *   (open conjecture, doc 69 §4): this is the scheduling-side DUAL of
- *   Belady's MIN eviction — Belady evicts the value whose next use is
- *   farthest; SR constructs the order so values are born as late and
- *   die as early as the DAG permits.
- *
- * PRIORITY (lexicographic, arithmetic ready-set):
- *   1. sink-first            — RETIRE
- *   2. cp_dist DESC          — tie-break; ablates to ±2, radix-dep sign
- *   3. su_num ASC            — tie-break; "the reach"; ablates to ~0
- *   4. tag ASC               — determinism
- *   Loads: only on starvation, source order (order among loads is a
- *   no-op given laziness — measured).
- *
- * ABLATION LEDGER (tools/ablate.py: exact replica of this picker,
- * validated 245/245 order match at every radix, then component
- * knockout; model = Belady traffic @16 regs, tools/traffic.py; R=13):
- *   production (all keys)        traffic 30   gcc 446/70
- *   sink-first + lazy loads ONLY traffic 28   gcc 431/68
- *   tag-only + lazy loads        traffic 43   gcc 431/68
- *   load law REMOVED             traffic 230  gcc 502/132  <- ~8x
- * The load law is the algorithm; sink-first is the second factor;
- * everything else is noise kept for determinism and history.
- *
- * CERTIFICATION (docs 67/68/69): at R=13 the SR order's Belady
- * traffic (28–30) sits ~3x below the best of 200,000 random legal
- * orders (87); a 4,000-move hill climb cannot improve it; three
- * literature-grounded successors (Belady-greedy, MRIS lineage
- * sequencing, beam-Belady) raced and lost IN-MODEL (110/98/90).
- * Under the complete objective — cycles on M(R,W,ports,latencies)
- * with Belady-optimal spilling — pressure-first is the operating
- * point for every W >= ~32 (doc 68 sigma*(R,W)); issue-oriented
- * ordering is worth ~1–3% on >=32-entry-window hardware (doc 67) and
- * is deliberately not chased.
- *
- * The remaining deterministic improvement lives in the DAG, not the
- * order: the selective-duplication pass (doc 65). Compiler-specific
- * residue (rematerialization/folding) is measured as a tax, never
- * chased with per-compiler scheduling.
- * ============================================================ *)
+  (* ============================================================
+   * STARVE–RETIRE (SR) LIST SCHEDULING — the production scheduler.
+   * (Historical flag name: --su. The Sethi–Ullman label survives only
+   * as a near-neutral tie-break; the algorithm is bespoke. Named after
+   * the two rules the ablation proved load-bearing — see below.)
+   *
+   * THE TWO RULES
+   *   STARVE — starvation-gated load admission (late birth).
+   *     Loads never compete with arithmetic. A load is admitted only
+   *     when the arithmetic ready-set is EMPTY, and then in source
+   *     order. A value is born at the last moment demand forces it.
+   *   RETIRE — eager sink retirement (early death).
+   *     A ready sink (store root / node with no users) always wins.
+   *     Values die at the first legal moment, freeing their registers.
+   *   Together: live ranges are compressed from both ends. Intuition
+   *   (open conjecture, doc 69 §4): this is the scheduling-side DUAL of
+   *   Belady's MIN eviction — Belady evicts the value whose next use is
+   *   farthest; SR constructs the order so values are born as late and
+   *   die as early as the DAG permits.
+   *
+   * PRIORITY (lexicographic, arithmetic ready-set):
+   *   1. sink-first            — RETIRE
+   *   2. cp_dist DESC          — tie-break; ablates to ±2, radix-dep sign
+   *   3. su_num ASC            — tie-break; "the reach"; ablates to ~0
+   *   4. tag ASC               — determinism
+   *   Loads: only on starvation, source order (order among loads is a
+   *   no-op given laziness — measured).
+   *
+   * ABLATION LEDGER (tools/ablate.py: exact replica of this picker,
+   * validated 245/245 order match at every radix, then component
+   * knockout; model = Belady traffic @16 regs, tools/traffic.py; R=13):
+   *   production (all keys)        traffic 30   gcc 446/70
+   *   sink-first + lazy loads ONLY traffic 28   gcc 431/68
+   *   tag-only + lazy loads        traffic 43   gcc 431/68
+   *   load law REMOVED             traffic 230  gcc 502/132  <- ~8x
+   * The load law is the algorithm; sink-first is the second factor;
+   * everything else is noise kept for determinism and history.
+   *
+   * CERTIFICATION (docs 67/68/69): at R=13 the SR order's Belady
+   * traffic (28–30) sits ~3x below the best of 200,000 random legal
+   * orders (87); a 4,000-move hill climb cannot improve it; three
+   * literature-grounded successors (Belady-greedy, MRIS lineage
+   * sequencing, beam-Belady) raced and lost IN-MODEL (110/98/90).
+   * Under the complete objective — cycles on M(R,W,ports,latencies)
+   * with Belady-optimal spilling — pressure-first is the operating
+   * point for every W >= ~32 (doc 68 sigma*(R,W)); issue-oriented
+   * ordering is worth ~1–3% on >=32-entry-window hardware (doc 67) and
+   * is deliberately not chased.
+   *
+   * The remaining deterministic improvement lives in the DAG, not the
+   * order: the selective-duplication pass (doc 65). Compiler-specific
+   * residue (rematerialization/folding) is measured as a tax, never
+   * chased with per-compiler scheduling.
+   * ============================================================ *)
 
-(* ============================================================
- * EXPERIMENTAL RECORD — what was raced against this scheduler,
- * what was measured, and where the full evidence lives.
- * (Container campaign, 2026-07-02, gcc 13.3 / clang 18 /
- * raptorlake; magnitudes are toolchain-specific, mechanisms are
- * not. Numbers are insns/spills for gcc unless stated. Docs are
- * in src/dag-fft-compiler/docs/ unless pathed.)
- *
- * 1. RIVAL SCHEDULERS, RACED AND LOST (doc 69; tools/ keeps them
- *    as recorded negatives). Model = Belady traffic @16 regs,
- *    R=13; SR scores 30:
- *      Belady-in-the-loop greedy (tools/lineage_sched.py v1) 110
- *      MRIS lineage-continuation (v2)                     98-class
- *      beam-Belady, width 4..64 (tools/beam_sched.py)          90
- *    Root cause of all three: traffic is a CLIFF function (zero
- *    gradient until the file overflows), so one-step keys decide
- *    the damage phase blind; SR's implicit cone traversal never
- *    sees the cliff.
- *
- * 2. FLOORS (docs 67/69): 200,000 random legal orders bottom out
- *    at traffic 87; a 4,000-move hill climb from SR cannot leave
- *    30. In-order-issue exhaustive B&B closed R=3 EXACTLY (18);
- *    even at N=20 there are >2e8 linear extensions, so B&B with
- *    admissible bounds IS the exhaustive method.
- *
- * 3. LEAF-POLICY KNOBS, ALL REGRESSED (kept default-off below as
- *    VFFT_SCHED_LOADS): anyorder / lookahead(p2) / nearstarve
- *    took R=13 from 70 to 114-115 spills. The annealed winner's
- *    "loads travel earlier" pattern is a property of a jointly
- *    optimized solution, not a decision rule. Source order AMONG
- *    loads is a no-op given laziness (ablation: any == src).
- *
- * 4. GH THRESHOLD SWEEP: flat at every value 4..12 (phase-0 doc)
- *    — peak_live is the wrong pressure quantity; TRAFFIC is the
- *    right one (doc 68 F2: anyorder has LOWER MAXLIVE than SR,
- *    30 vs 32, and 3.5x the Belady traffic, 114 vs 32).
- *
- * 5. ISSUE-OPTIMAL ORDERING LOSES WITH REGISTERS IN THE OBJECTIVE
- *    (docs 67/68): the min-in-order order (model 148 vs SR 227)
- *    costs 124 gcc spills / 140 znver3 / 167 clang and 248 Belady
- *    ops — worst-in-class everywhere that has 16 registers. And
- *    hardware refunds SR's in-order deficit: by window 32-64 even
- *    the adversarially WORST order lands within a few % of the
- *    dataflow floor; at Raptor Lake's ~200-entry scheduler,
- *    static ordering's in-core ILP contribution is ~1-3%.
- *
- * 6. THE ANNEALER (doc 66; tools/anneal_linux.py,
- *    blocked_anneal.py; wisdom in generator/sched_wisdom/,
- *    consumed via VFFT_SCHED_WISDOM): R=13 70->51; R=32 blocked
- *    183->168; R=64 blocked 594->585 (pinned = permutation
- *    exhausted, which motivated duplication). Post-duplication
- *    role: retired on primes, sole working lever on blocked pow2,
- *    permanent ceiling instrument + toolchain-transfer tool.
- *
- * 7. MINIMAX ACROSS COMPILERS (doc 68 §5; tools/robust_anneal.py):
- *    a single order at gcc 392/50 AND clang 540/114 — at/below
- *    every per-target floor simultaneously (clang's own dedicated
- *    260-iter search only reached 131; clang is order-insensitive:
- *    misched-off makes things WORSE, allocator sweep greedy 136 /
- *    pbqp 144 / basic 170 / fast 273). Shipped as the R=13 wisdom
- *    entry. Residual clang-vs-gcc = allocator tax, not
- *    order-payable; confined to 16-register targets (znver4-class
- *    EVEX files collapse spills to 27/28/5).
- *
- * 8. DUPLICATION (doc 65) — input-level, not this file: cloning
- *    long-span leaf-fed values beats every ordering result on
- *    primes (R=13: 377/31 from PLAIN SR order, better than the
- *    converged search) and is negative on pow2 in all variants.
- *    The pending OCaml algsimp pass (v5 coverage selector + v4
- *    chained mode, doc 65 §8) is the one remaining deterministic
- *    improvement; it changes the DAG this scheduler orders.
- *
- * 9. SELF-SPILLING FALSIFIED / BLOCKING VINDICATED (docs 70/71):
- *    generator-owned Belady-optimal explicit spilling loses to
- *    the blocked construction IN-PLAN (76-88 vs 52-59 memory ops
- *    at R=16), and compilers erase explicit spill arrays anyway —
- *    including the doc-58 seam itself, which never exists in the
- *    assembly (fully scalarized, both compilers). Blocking wins
- *    by SHAPING: it lowers this DAG's Belady order-floor 3.3-4.7x
- *    (70->21 at R=16, 249->53 at R=32). The realized-vs-floor gap
- *    (+38/+130 under gcc) is allocator tax, bounded ~10%
- *    order-payable by the annealer's direct search — so the
- *    subset comparator below (port-balance / GH keys) stays
- *    UN-ABLATED as accepted, documented debt (doc 71 §4).
- *
- * 10. CONVENTION NOTE: dump-based traffic excludes store sinks as
- *     users (outputs cost nothing); tools/c_traffic.py includes
- *     them. All RELATIVE results above used one convention
- *     throughout; absolute traffic numbers are convention-tagged.
- *
- * 11. TIE-BREAK SLOT RESOLVED (see compute_su_number's header for
- *     the full table): every INPUT-side label (classic SU, two DAG-SU
- *     corrections, kills) is schedule-identical — cp-tied ready nodes
- *     are isomorphic siblings, so pred-cone labels are provably blind
- *     here; only OUTPUT-side keys discriminate. VFFT_SU_TIEBREAK=
- *     affinity (sink-mask overlap with last scheduled) beats classic
- *     at 4/5 primes incl. the never-before-improved R=17 (756/175 ->
- *     741/169), best insns at all five; R=23 spill gate fails by +5.
- *     BLOCKED-PATH EXTENSION (user-priority R=25/32/64): knob wired
- *     into su_schedule_subset (subset-relative masks, per-cluster
- *     last-mask). Affinity wins blocked R=32 (1031/183 -> 1022/181,
- *     bit-exact) but LOSES R=25 (+16 spills) and R=64 (+16 insns) —
- *     construction owns locality on the blocked path, so the slot is
- *     marginal there (doc 71 concurs); annealer wisdom still beats
- *     affinity on pow2 (996/168 at R=32). Classic remains default;
- *     A4 table: affinity {11,13,17,19,32}, classic {23,25,64}.
- *     PER-CODELET DEPLOYMENT: resolved through the EXISTING wisdom
- *     mechanism, not a whitelist — affinity's novel winners ship as
- *     sched_wisdom entries (radix{11,17,19}, provenance-commented,
- *     dagsig'd, bit-exact); R=13 keeps minimax (392/50 < 417/59),
- *     R=32 keeps annealed (996/168 < 1022/181). Wisdom dir = single
- *     per-codelet best-known table across {search, minimax,
- *     affinity}. i9 runtime gate pending; dup-on-affinity spans
- *     unmeasured.
- *
- * Open, honestly: WHY starvation-gated load admission + eager
- * sink retirement minimizes Belady traffic on butterfly DAGs —
- * the theorem this record points at (doc 69 §4).
- * ============================================================ *)
-let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
-  : (Expr.elem_ref option * t) list
-  =
-  (* Collect all reachable nodes. *)
-  let seen : (int, t) Hashtbl.t = Hashtbl.create 256 in
-  let rec visit (e : t) =
-    if not (Hashtbl.mem seen e.tag)
-    then (
-      Hashtbl.add seen e.tag e;
-      List.iter visit (preds e))
-  in
-  List.iter (fun (_, e) -> visit e) assigns;
-  let all_nodes = Hashtbl.fold (fun _ n acc -> n :: acc) seen [] in
-  let sinks = List.map snd assigns in
-  let cp_dist = compute_cp_dist uarch sinks all_nodes in
-  let su_num = compute_su_number all_nodes in
-  (* Successor map for forward propagation when a node becomes scheduled. *)
-  let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
-  List.iter
-    (fun n ->
-       List.iter
-         (fun p ->
-            let cur =
-              try Hashtbl.find users p.tag with
-              | Not_found -> []
-            in
-            Hashtbl.replace users p.tag (n :: cur))
-         (preds n))
-    all_nodes;
-  (* Unscheduled-pred counter per node. *)
-  let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  List.iter (fun n -> Hashtbl.add unsched_count n.tag (List.length (preds n))) all_nodes;
-  (* Ready set: nodes whose predecessors have all been scheduled. *)
-  let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
-  let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
-  let ready : t list ref = ref [] in
-  List.iter
-    (fun n ->
-       if preds n = []
-       then (
-         ready := n :: !ready;
-         Hashtbl.add in_ready n.tag ()))
-    all_nodes;
-  (* Load source-order tracking: only allow the next-required load to fire. *)
-  let load_tags =
-    List.filter_map (fun n -> if is_load n then Some n.tag else None) all_nodes
-    |> List.sort compare
-  in
-  let load_array = Array.of_list load_tags in
-  let load_idx = ref 0 in
-  let next_required_load () : int option =
-    if !load_idx < Array.length load_array then Some load_array.(!load_idx) else None
-  in
-  (* Pick next node from ready set.
+  (* ============================================================
+   * EXPERIMENTAL RECORD — what was raced against this scheduler,
+   * what was measured, and where the full evidence lives.
+   * (Container campaign, 2026-07-02, gcc 13.3 / clang 18 /
+   * raptorlake; magnitudes are toolchain-specific, mechanisms are
+   * not. Numbers are insns/spills for gcc unless stated. Docs are
+   * in src/dag-fft-compiler/docs/ unless pathed.)
    *
-   * Policy:
-   *   1. If ANY non-load instruction is ready, pick from those. Loads stay
-   *      queued.
-   *   2. Within arith-ready, prefer SINK nodes (no in-DAG users) when ready.
-   *      For DIF prime codelets, the cmul post-multiply nodes ARE the
-   *      output assignments — empty user lists, low cp_dist (~4 cycles).
-   *      Without this rule, cp_dist DESC schedules them LAST, after all
-   *      inner DFT nodes. Their inputs (raw DFT outputs) stay alive in
-   *      registers from when the inner DFT produced them until the very
-   *      end, peaking at 22+ live values for R=11. Firing each cmul as
-   *      soon as both raw inputs are scheduled lets the raw values die
-   *      immediately (they have no other consumers), shrinking live set
-   *      by 2 per cmul-pair. Empirically: R=17 t1_dif vmovapd 176→~115,
-   *      matching hand. DIT is unaffected: DIT cmuls are SOURCES (high
-   *      cp_dist, fire early naturally); the actual DIT sinks are post-DFT
-   *      combine nodes that fire late under cp_dist anyway.
-   *   3. Within the same sink/non-sink class, use cp_dist DESC, su_num ASC,
-   *      tag ASC (the original SU heuristic).
-   *   4. Only when no arithmetic is ready, fire the next required load
-   *      (preserves source order so prefetcher sees sequential loads).
+   * 1. RIVAL SCHEDULERS, RACED AND LOST (doc 69; tools/ keeps them
+   *    as recorded negatives). Model = Belady traffic @16 regs,
+   *    R=13; SR scores 30:
+   *      Belady-in-the-loop greedy (tools/lineage_sched.py v1) 110
+   *      MRIS lineage-continuation (v2)                     98-class
+   *      beam-Belady, width 4..64 (tools/beam_sched.py)          90
+   *    Root cause of all three: traffic is a CLIFF function (zero
+   *    gradient until the file overflows), so one-step keys decide
+   *    the damage phase blind; SR's implicit cone traversal never
+   *    sees the cliff.
    *
-   * Sink detection: a node with EMPTY user list in the DAG. Its only role
-   * is to feed an output store. *)
-  let is_sink n =
-    let user_list =
-      try Hashtbl.find users n.tag with
-      | Not_found -> []
+   * 2. FLOORS (docs 67/69): 200,000 random legal orders bottom out
+   *    at traffic 87; a 4,000-move hill climb from SR cannot leave
+   *    30. In-order-issue exhaustive B&B closed R=3 EXACTLY (18);
+   *    even at N=20 there are >2e8 linear extensions, so B&B with
+   *    admissible bounds IS the exhaustive method.
+   *
+   * 3. LEAF-POLICY KNOBS, ALL REGRESSED (kept default-off below as
+   *    VFFT_SCHED_LOADS): anyorder / lookahead(p2) / nearstarve
+   *    took R=13 from 70 to 114-115 spills. The annealed winner's
+   *    "loads travel earlier" pattern is a property of a jointly
+   *    optimized solution, not a decision rule. Source order AMONG
+   *    loads is a no-op given laziness (ablation: any == src).
+   *
+   * 4. GH THRESHOLD SWEEP: flat at every value 4..12 (phase-0 doc)
+   *    — peak_live is the wrong pressure quantity; TRAFFIC is the
+   *    right one (doc 68 F2: anyorder has LOWER MAXLIVE than SR,
+   *    30 vs 32, and 3.5x the Belady traffic, 114 vs 32).
+   *
+   * 5. ISSUE-OPTIMAL ORDERING LOSES WITH REGISTERS IN THE OBJECTIVE
+   *    (docs 67/68): the min-in-order order (model 148 vs SR 227)
+   *    costs 124 gcc spills / 140 znver3 / 167 clang and 248 Belady
+   *    ops — worst-in-class everywhere that has 16 registers. And
+   *    hardware refunds SR's in-order deficit: by window 32-64 even
+   *    the adversarially WORST order lands within a few % of the
+   *    dataflow floor; at Raptor Lake's ~200-entry scheduler,
+   *    static ordering's in-core ILP contribution is ~1-3%.
+   *
+   * 6. THE ANNEALER (doc 66; tools/anneal_linux.py,
+   *    blocked_anneal.py; wisdom in generator/sched_wisdom/,
+   *    consumed via VFFT_SCHED_WISDOM): R=13 70->51; R=32 blocked
+   *    183->168; R=64 blocked 594->585 (pinned = permutation
+   *    exhausted, which motivated duplication). Post-duplication
+   *    role: retired on primes, sole working lever on blocked pow2,
+   *    permanent ceiling instrument + toolchain-transfer tool.
+   *
+   * 7. MINIMAX ACROSS COMPILERS (doc 68 §5; tools/robust_anneal.py):
+   *    a single order at gcc 392/50 AND clang 540/114 — at/below
+   *    every per-target floor simultaneously (clang's own dedicated
+   *    260-iter search only reached 131; clang is order-insensitive:
+   *    misched-off makes things WORSE, allocator sweep greedy 136 /
+   *    pbqp 144 / basic 170 / fast 273). Shipped as the R=13 wisdom
+   *    entry. Residual clang-vs-gcc = allocator tax, not
+   *    order-payable; confined to 16-register targets (znver4-class
+   *    EVEX files collapse spills to 27/28/5).
+   *
+   * 8. DUPLICATION (doc 65) — input-level, not this file: cloning
+   *    long-span leaf-fed values beats every ordering result on
+   *    primes (R=13: 377/31 from PLAIN SR order, better than the
+   *    converged search) and is negative on pow2 in all variants.
+   *    The pending OCaml algsimp pass (v5 coverage selector + v4
+   *    chained mode, doc 65 §8) is the one remaining deterministic
+   *    improvement; it changes the DAG this scheduler orders.
+   *
+   * 9. SELF-SPILLING FALSIFIED / BLOCKING VINDICATED (docs 70/71):
+   *    generator-owned Belady-optimal explicit spilling loses to
+   *    the blocked construction IN-PLAN (76-88 vs 52-59 memory ops
+   *    at R=16), and compilers erase explicit spill arrays anyway —
+   *    including the doc-58 seam itself, which never exists in the
+   *    assembly (fully scalarized, both compilers). Blocking wins
+   *    by SHAPING: it lowers this DAG's Belady order-floor 3.3-4.7x
+   *    (70->21 at R=16, 249->53 at R=32). The realized-vs-floor gap
+   *    (+38/+130 under gcc) is allocator tax, bounded ~10%
+   *    order-payable by the annealer's direct search — so the
+   *    subset comparator below (port-balance / GH keys) stays
+   *    UN-ABLATED as accepted, documented debt (doc 71 §4).
+   *
+   * 10. CONVENTION NOTE: dump-based traffic excludes store sinks as
+   *     users (outputs cost nothing); tools/c_traffic.py includes
+   *     them. All RELATIVE results above used one convention
+   *     throughout; absolute traffic numbers are convention-tagged.
+   *
+   * 11. TIE-BREAK SLOT RESOLVED (see compute_su_number's header for
+   *     the full table): every INPUT-side label (classic SU, two DAG-SU
+   *     corrections, kills) is schedule-identical — cp-tied ready nodes
+   *     are isomorphic siblings, so pred-cone labels are provably blind
+   *     here; only OUTPUT-side keys discriminate. VFFT_SU_TIEBREAK=
+   *     affinity (sink-mask overlap with last scheduled) beats classic
+   *     at 4/5 primes incl. the never-before-improved R=17 (756/175 ->
+   *     741/169), best insns at all five; R=23 spill gate fails by +5.
+   *     BLOCKED-PATH EXTENSION (user-priority R=25/32/64): knob wired
+   *     into su_schedule_subset (subset-relative masks, per-cluster
+   *     last-mask). Affinity wins blocked R=32 (1031/183 -> 1022/181,
+   *     bit-exact) but LOSES R=25 (+16 spills) and R=64 (+16 insns) —
+   *     construction owns locality on the blocked path, so the slot is
+   *     marginal there (doc 71 concurs); annealer wisdom still beats
+   *     affinity on pow2 (996/168 at R=32). Classic remains default;
+   *     A4 table: affinity {11,13,17,19,32}, classic {23,25,64}.
+   *     PER-CODELET DEPLOYMENT: resolved through the EXISTING wisdom
+   *     mechanism, not a whitelist — affinity's novel winners ship as
+   *     sched_wisdom entries (radix{11,17,19}, provenance-commented,
+   *     dagsig'd, bit-exact); R=13 keeps minimax (392/50 < 417/59),
+   *     R=32 keeps annealed (996/168 < 1022/181). Wisdom dir = single
+   *     per-codelet best-known table across {search, minimax,
+   *     affinity}. i9 runtime gate pending; dup-on-affinity spans
+   *     unmeasured.
+   *
+   * Open, honestly: WHY starvation-gated load admission + eager
+   * sink retirement minimizes Belady traffic on butterfly DAGs —
+   * the theorem this record points at (doc 69 §4).
+   * ============================================================ *)
+  let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
+    : (Expr.elem_ref option * t) list
+    =
+    (* Collect all reachable nodes. *)
+    let seen : (int, t) Hashtbl.t = Hashtbl.create 256 in
+    let rec visit (e : t) =
+      if not (Hashtbl.mem seen e.tag)
+      then (
+        Hashtbl.add seen e.tag e;
+        List.iter visit (preds e))
     in
-    user_list = []
-  in
-  (* === LEAF-PLACEMENT POLICY (env-gated; default = unchanged) ===
-   * Annealer forensics on R=13 (docs/performance/schedule_search_phase2):
-   * the search's entire win was LEAF placement, not arithmetic order —
-   * loads moved EARLIER (first-use distance median 1 -> 8, source order
-   * broken in 88/325 pairs) and constants moved LATER (55 -> 21). The
-   * strict policy below is therefore a measured blind spot, in two parts:
-   * loads are maximally lazy (source-order, fire only on starvation), and
-   * NK_Const is NOT a load, so constants compete as arithmetic where
-   * their high cp_dist fires them absurdly early.
-   *
-   * VFFT_SCHED_LOADS=
-   *   unset/strict : the original policy, byte-identical output.
-   *   anyorder     : starvation-only firing kept, but the comparator
-   *                  picks among ALL ready loads (source-order law
-   *                  dropped).
-   *   lookahead    : loads AND NK_Const are deferrable leaves; prefer
-   *                  arithmetic, but after every VFFT_LOAD_PACE (default
-   *                  4) arithmetic picks, fire the best HOT leaf — one
-   *                  that is the last missing operand of some consumer —
-   *                  giving leaves lead time without front-loading.
-   *                  Starvation fires the best ready leaf regardless.
-   *   nearstarve   : fire the best hot LOAD when |arith_ready| <=
-   *                  VFFT_LOAD_PACE (just before starvation).
-   *
-   * RACE VERDICT (container, gcc 13.3, R=13/17/32/64): all three
-   * non-strict modes REGRESS — anyorder R=13 70->115 spills, lookahead
-   * and nearstarve similar or worse; nearstarve T=1 exactly reproduces
-   * anyorder, isolating the damage to the load CHOOSER, not the firing
-   * time. The source-order law is protective under greedy selection.
-   * The leaf-placement headroom is real (annealer: -27% spills at R=13,
-   * first-use distance 1->8, order broken 88/325 pairs) but is reachable
-   * only by global search, not by these greedy rules. Knobs retained,
-   * default strict, so the ledger shows the race. *)
-  let load_policy =
-    match Knobs.sched_loads () with
-    | Some "anyorder" -> `Anyorder
-    | Some "lookahead" -> `Lookahead
-    | Some "nearstarve" -> `Nearstarve
-    | _ -> `Strict
-  in
-  let leaf_pace =
-    match Knobs.load_pace () with
-    | Some s ->
-      (try max 1 (int_of_string s) with
-       | _ -> 4)
-    | None -> 4
-  in
-  let since_leaf = ref 0 in
-  let is_leaf n = is_load n || (load_policy = `Lookahead && is_const n) in
-  let is_hot n =
-    List.exists
-      (fun (u : t) ->
-         (try Hashtbl.find unsched_count u.tag with
-          | Not_found -> 0)
-         = 1)
-      (try Hashtbl.find users n.tag with
-       | Not_found -> [])
-  in
-  (* VFFT_SU_TIEBREAK = cone | affinity (default classic, byte-
-   * identical). Full theory, race table, and verdict: see the SU
-   * NUMBER comment above compute_su_number. Sink bitmask capped at
-   * 63; larger DAGs fall back to classic. *)
-  let tiebreak =
-    match Knobs.su_tiebreak () with
-    | Some "cone" -> `Cone
-    | Some "affinity" -> `Affinity
-    | _ -> `Classic
-  in
-  let cone_mode = tiebreak <> `Classic in
-  let cone_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  let sink_mask : (int, Int64.t) Hashtbl.t = Hashtbl.create 256 in
-  let last_mask : Int64.t ref = ref 0L in
-  if
-    cone_mode
-    && List.length (List.filter (fun (n : t) -> is_sink n) all_nodes) <= 63
-  then (
-    let sink_idx : (int, int) Hashtbl.t = Hashtbl.create 64 in
-    let next = ref 0 in
+    List.iter (fun (_, e) -> visit e) assigns;
+    let all_nodes = Hashtbl.fold (fun _ n acc -> n :: acc) seen [] in
+    let sinks = List.map snd assigns in
+    let cp_dist = compute_cp_dist uarch sinks all_nodes in
+    let su_num = compute_su_number all_nodes in
+    (* Successor map for forward propagation when a node becomes scheduled. *)
+    let users : (int, t list) Hashtbl.t = Hashtbl.create 256 in
     List.iter
-      (fun (n : t) ->
-         if is_sink n
-         then (
-           Hashtbl.add sink_idx n.tag !next;
-           incr next))
+      (fun n ->
+         List.iter
+           (fun p ->
+              let cur =
+                try Hashtbl.find users p.tag with
+                | Not_found -> []
+              in
+              Hashtbl.replace users p.tag (n :: cur))
+           (preds n))
       all_nodes;
-    let masks : (int, Int64.t) Hashtbl.t = Hashtbl.create 256 in
-    let rec mask_of (n : t) : Int64.t =
-      match Hashtbl.find_opt masks n.tag with
-      | Some m -> m
-      | None ->
-        let m =
-          match Hashtbl.find_opt users n.tag with
-          | None | Some [] -> Int64.shift_left 1L (Hashtbl.find sink_idx n.tag)
-          | Some us -> List.fold_left (fun acc u -> Int64.logor acc (mask_of u)) 0L us
-        in
-        Hashtbl.add masks n.tag m;
-        m
+    (* Unscheduled-pred counter per node. *)
+    let unsched_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    List.iter (fun n -> Hashtbl.add unsched_count n.tag (List.length (preds n))) all_nodes;
+    (* Ready set: nodes whose predecessors have all been scheduled. *)
+    let scheduled : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+    let in_ready : (int, unit) Hashtbl.t = Hashtbl.create 64 in
+    let ready : t list ref = ref [] in
+    List.iter
+      (fun n ->
+         if preds n = []
+         then (
+           ready := n :: !ready;
+           Hashtbl.add in_ready n.tag ()))
+      all_nodes;
+    (* Load source-order tracking: only allow the next-required load to fire. *)
+    let load_tags =
+      List.filter_map (fun n -> if is_load n then Some n.tag else None) all_nodes
+      |> List.sort compare
     in
-    let popcount m =
+    let load_array = Array.of_list load_tags in
+    let load_idx = ref 0 in
+    let next_required_load () : int option =
+      if !load_idx < Array.length load_array then Some load_array.(!load_idx) else None
+    in
+    (* Pick next node from ready set.
+     *
+     * Policy:
+     *   1. If ANY non-load instruction is ready, pick from those. Loads stay
+     *      queued.
+     *   2. Within arith-ready, prefer SINK nodes (no in-DAG users) when ready.
+     *      For DIF prime codelets, the cmul post-multiply nodes ARE the
+     *      output assignments — empty user lists, low cp_dist (~4 cycles).
+     *      Without this rule, cp_dist DESC schedules them LAST, after all
+     *      inner DFT nodes. Their inputs (raw DFT outputs) stay alive in
+     *      registers from when the inner DFT produced them until the very
+     *      end, peaking at 22+ live values for R=11. Firing each cmul as
+     *      soon as both raw inputs are scheduled lets the raw values die
+     *      immediately (they have no other consumers), shrinking live set
+     *      by 2 per cmul-pair. Empirically: R=17 t1_dif vmovapd 176→~115,
+     *      matching hand. DIT is unaffected: DIT cmuls are SOURCES (high
+     *      cp_dist, fire early naturally); the actual DIT sinks are post-DFT
+     *      combine nodes that fire late under cp_dist anyway.
+     *   3. Within the same sink/non-sink class, use cp_dist DESC, su_num ASC,
+     *      tag ASC (the original SU heuristic).
+     *   4. Only when no arithmetic is ready, fire the next required load
+     *      (preserves source order so prefetcher sees sequential loads).
+     *
+     * Sink detection: a node with EMPTY user list in the DAG. Its only role
+     * is to feed an output store. *)
+    let is_sink n =
+      let user_list =
+        try Hashtbl.find users n.tag with
+        | Not_found -> []
+      in
+      user_list = []
+    in
+    (* === LEAF-PLACEMENT POLICY (env-gated; default = unchanged) ===
+     * Annealer forensics on R=13 (docs/performance/schedule_search_phase2):
+     * the search's entire win was LEAF placement, not arithmetic order —
+     * loads moved EARLIER (first-use distance median 1 -> 8, source order
+     * broken in 88/325 pairs) and constants moved LATER (55 -> 21). The
+     * strict policy below is therefore a measured blind spot, in two parts:
+     * loads are maximally lazy (source-order, fire only on starvation), and
+     * NK_Const is NOT a load, so constants compete as arithmetic where
+     * their high cp_dist fires them absurdly early.
+     *
+     * VFFT_SCHED_LOADS=
+     *   unset/strict : the original policy, byte-identical output.
+     *   anyorder     : starvation-only firing kept, but the comparator
+     *                  picks among ALL ready loads (source-order law
+     *                  dropped).
+     *   lookahead    : loads AND NK_Const are deferrable leaves; prefer
+     *                  arithmetic, but after every VFFT_LOAD_PACE (default
+     *                  4) arithmetic picks, fire the best HOT leaf — one
+     *                  that is the last missing operand of some consumer —
+     *                  giving leaves lead time without front-loading.
+     *                  Starvation fires the best ready leaf regardless.
+     *   nearstarve   : fire the best hot LOAD when |arith_ready| <=
+     *                  VFFT_LOAD_PACE (just before starvation).
+     *
+     * RACE VERDICT (container, gcc 13.3, R=13/17/32/64): all three
+     * non-strict modes REGRESS — anyorder R=13 70->115 spills, lookahead
+     * and nearstarve similar or worse; nearstarve T=1 exactly reproduces
+     * anyorder, isolating the damage to the load CHOOSER, not the firing
+     * time. The source-order law is protective under greedy selection.
+     * The leaf-placement headroom is real (annealer: -27% spills at R=13,
+     * first-use distance 1->8, order broken 88/325 pairs) but is reachable
+     * only by global search, not by these greedy rules. Knobs retained,
+     * default strict, so the ledger shows the race. *)
+    let load_policy =
+      match Knobs.sched_loads () with
+      | Some "anyorder" -> `Anyorder
+      | Some "lookahead" -> `Lookahead
+      | Some "nearstarve" -> `Nearstarve
+      | _ -> `Strict
+    in
+    let leaf_pace =
+      match Knobs.load_pace () with
+      | Some s ->
+        (try max 1 (int_of_string s) with
+         | _ -> 4)
+      | None -> 4
+    in
+    let since_leaf = ref 0 in
+    let is_leaf n = is_load n || (load_policy = `Lookahead && is_const n) in
+    let is_hot n =
+      List.exists
+        (fun (u : t) ->
+           (try Hashtbl.find unsched_count u.tag with
+            | Not_found -> 0)
+           = 1)
+        (try Hashtbl.find users n.tag with
+         | Not_found -> [])
+    in
+    (* VFFT_SU_TIEBREAK = cone | affinity (default classic, byte-
+     * identical). Full theory, race table, and verdict: see the SU
+     * NUMBER comment above compute_su_number. Sink bitmask capped at
+     * 63; larger DAGs fall back to classic. *)
+    let tiebreak =
+      match Knobs.su_tiebreak () with
+      | Some "cone" -> `Cone
+      | Some "affinity" -> `Affinity
+      | _ -> `Classic
+    in
+    let cone_mode = tiebreak <> `Classic in
+    let cone_count : (int, int) Hashtbl.t = Hashtbl.create 256 in
+    let sink_mask : (int, Int64.t) Hashtbl.t = Hashtbl.create 256 in
+    let last_mask : Int64.t ref = ref 0L in
+    if cone_mode && List.length (List.filter (fun (n : t) -> is_sink n) all_nodes) <= 63
+    then (
+      let sink_idx : (int, int) Hashtbl.t = Hashtbl.create 64 in
+      let next = ref 0 in
+      List.iter
+        (fun (n : t) ->
+           if is_sink n
+           then (
+             Hashtbl.add sink_idx n.tag !next;
+             incr next))
+        all_nodes;
+      let masks : (int, Int64.t) Hashtbl.t = Hashtbl.create 256 in
+      let rec mask_of (n : t) : Int64.t =
+        match Hashtbl.find_opt masks n.tag with
+        | Some m -> m
+        | None ->
+          let m =
+            match Hashtbl.find_opt users n.tag with
+            | None | Some [] -> Int64.shift_left 1L (Hashtbl.find sink_idx n.tag)
+            | Some us -> List.fold_left (fun acc u -> Int64.logor acc (mask_of u)) 0L us
+          in
+          Hashtbl.add masks n.tag m;
+          m
+      in
+      let popcount m =
+        let c = ref 0
+        and x = ref m in
+        while !x <> 0L do
+          c := !c + Int64.to_int (Int64.logand !x 1L);
+          x := Int64.shift_right_logical !x 1
+        done;
+        !c
+      in
+      List.iter
+        (fun (n : t) ->
+           let m = mask_of n in
+           Hashtbl.replace sink_mask n.tag m;
+           Hashtbl.replace cone_count n.tag (popcount m))
+        all_nodes);
+    let pc64 (m : Int64.t) : int =
       let c = ref 0
       and x = ref m in
       while !x <> 0L do
@@ -877,305 +889,289 @@ let su_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * t) list)
       done;
       !c
     in
-    List.iter
-      (fun (n : t) ->
-         let m = mask_of n in
-         Hashtbl.replace sink_mask n.tag m;
-         Hashtbl.replace cone_count n.tag (popcount m))
-      all_nodes);
-  let pc64 (m : Int64.t) : int =
-    let c = ref 0
-    and x = ref m in
-    while !x <> 0L do
-      c := !c + Int64.to_int (Int64.logand !x 1L);
-      x := Int64.shift_right_logical !x 1
-    done;
-    !c
-  in
-  let pick_next () : t option =
-    if !ready = []
-    then None
-    else (
-      let cmp a b =
-        let sa = is_sink a in
-        let sb = is_sink b in
-        if sa <> sb
-        then compare sb sa
-        else (
-          let cpa =
-            try Hashtbl.find cp_dist a.tag with
-            | Not_found -> 0
-          in
-          let cpb =
-            try Hashtbl.find cp_dist b.tag with
-            | Not_found -> 0
-          in
-          if cpa <> cpb
-          then compare cpb cpa (* higher cp_dist first *)
-          else if tiebreak = `Affinity && Hashtbl.length sink_mask > 0
-          then (
-            let ov t =
-              pc64
-                (Int64.logand
-                   !last_mask
-                   (try Hashtbl.find sink_mask t with
-                    | Not_found -> 0L))
-            in
-            let oa = ov a.tag
-            and ob = ov b.tag in
-            if oa <> ob
-            then compare ob oa (* larger overlap with last first *)
-            else compare a.tag b.tag)
-          else if tiebreak = `Cone && Hashtbl.length cone_count > 0
-          then (
-            let ca =
-              try Hashtbl.find cone_count a.tag with
-              | Not_found -> 0
-            in
-            let cb =
-              try Hashtbl.find cone_count b.tag with
-              | Not_found -> 0
-            in
-            if ca <> cb
-            then compare ca cb (* fewer reachable sinks first *)
-            else compare a.tag b.tag)
+    let pick_next () : t option =
+      if !ready = []
+      then None
+      else (
+        let cmp a b =
+          let sa = is_sink a in
+          let sb = is_sink b in
+          if sa <> sb
+          then compare sb sa
           else (
-            let sua =
-              try Hashtbl.find su_num a.tag with
+            let cpa =
+              try Hashtbl.find cp_dist a.tag with
               | Not_found -> 0
             in
-            let sub =
-              try Hashtbl.find su_num b.tag with
+            let cpb =
+              try Hashtbl.find cp_dist b.tag with
               | Not_found -> 0
             in
-            if sua <> sub
-            then compare sua sub (* lower su_num breaks ties *)
-            else compare a.tag b.tag (* stable: tag-ascending *)))
-      in
-      match load_policy with
-      | `Strict ->
-        let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
-        (match arith_ready with
-         | _ :: _ ->
-           (* At least one arithmetic op ready — pick the best one, defer loads. *)
-           Some (List.hd (List.sort cmp arith_ready))
-         | [] ->
-           (* No arithmetic ready — must fire a load to unblock more work.
-            * Fire the next required load (preserves source order). *)
-           let req_load = next_required_load () in
-           let load_candidates =
-             List.filter (fun n -> is_load n && Some n.tag = req_load) !ready
-           in
-           (match load_candidates with
-            | [] -> None (* shouldn't happen if scheduling is making progress *)
-            | _ -> Some (List.hd load_candidates)))
-      | `Anyorder ->
-        let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
-        (match arith_ready with
-         | _ :: _ -> Some (List.hd (List.sort cmp arith_ready))
-         | [] ->
-           (match List.filter is_load !ready with
-            | [] -> None
-            | ls -> Some (List.hd (List.sort cmp ls))))
-      | `Lookahead ->
-        let leaves, arith = List.partition is_leaf !ready in
-        let hot_leaves = List.filter is_hot leaves in
-        if !since_leaf >= leaf_pace && hot_leaves <> []
-        then (
-          since_leaf := 0;
-          Some (List.hd (List.sort cmp hot_leaves)))
-        else (
-          match arith with
-          | _ :: _ ->
-            incr since_leaf;
-            Some (List.hd (List.sort cmp arith))
-          | [] ->
-            since_leaf := 0;
-            (match leaves with
-             | [] -> None
-             | ls -> Some (List.hd (List.sort cmp ls))))
-      | `Nearstarve ->
-        (* Fire the best HOT load when the arithmetic pool is nearly dry
-         * (|arith_ready| <= VFFT_LOAD_PACE) — one to a few slots BEFORE
-         * starvation would force it, instead of at starvation. Loads
-         * only; constants keep their strict (arith-pool) behavior. *)
-        let arith = List.filter (fun n -> not (is_load n)) !ready in
-        let hot_loads = List.filter is_hot (List.filter is_load !ready) in
-        if List.length arith <= leaf_pace && hot_loads <> []
-        then Some (List.hd (List.sort cmp hot_loads))
-        else (
-          match arith with
-          | _ :: _ -> Some (List.hd (List.sort cmp arith))
-          | [] ->
-            (match List.filter is_load !ready with
-             | [] -> None
-             | ls -> Some (List.hd (List.sort cmp ls)))))
-  in
-  let result : (Expr.elem_ref option * t) list ref = ref [] in
-  let rec loop () =
-    match pick_next () with
-    | None -> ()
-    | Some n ->
-      Hashtbl.add scheduled n.tag ();
-      ready := List.filter (fun x -> x.tag <> n.tag) !ready;
-      Hashtbl.remove in_ready n.tag;
-      if is_load n then incr load_idx;
-      result := (None, n) :: !result;
-      (if cone_mode
-       then
-         last_mask
-         := try Hashtbl.find sink_mask n.tag with
-            | Not_found -> !last_mask);
-      let user_list =
-        try Hashtbl.find users n.tag with
-        | Not_found -> []
-      in
-      List.iter
-        (fun u ->
-           let cur =
-             try Hashtbl.find unsched_count u.tag with
-             | Not_found -> 0
-           in
-           let new_count = cur - 1 in
-           Hashtbl.replace unsched_count u.tag new_count;
-           if
-             new_count = 0
-             && (not (Hashtbl.mem in_ready u.tag))
-             && not (Hashtbl.mem scheduled u.tag)
-           then (
-             ready := u :: !ready;
-             Hashtbl.add in_ready u.tag ()))
-        user_list;
-      loop ()
-  in
-  loop ();
-  let su_intermediates = List.rev !result in
-  (* === SCHEDULE-SEARCH KNOBS (experiment; default = unchanged SU output) ===
-   * VFFT_SCHED_DUMP=<file>: write the SU order as "tag:pred_tags..." per line,
-   *   so the annealer knows the DAG and can permute legally.
-   * VFFT_SCHED_ORDER=<file>: emit the intermediates in the explicit tag order
-   *   from the file (one tag per line) instead of SU's order. The order MUST be
-   *   a complete, legal topological order of su_intermediates — the caller
-   *   (annealer) guarantees this; an illegal order yields a use-before-def C
-   *   compile error, which the search treats as an invalid candidate.
-   * Wisdom-grade additions (see SCHEDULE WISDOM PLUMBING above): the dump
-   * carries a #dagsig header; injection resolves through order_source
-   * (emit_c sets it from VFFT_SCHED_WISDOM/<codelet symbol>), verifies the
-   * dagsig, checks completeness, and logs every accept/refuse. The order
-   * source may name the file exactly or omit a ".txt" suffix (the wisdom
-   * directory convention). *)
-  let mono_sig () =
-    dag_signature
-      (List.map
-         (fun (_, (n : t)) ->
-            n.tag, List.map (fun (p : t) -> p.tag) (preds n))
-         su_intermediates)
-  in
-  (match Knobs.Trace.sched_dump () with
-   | None -> ()
-   | Some file ->
-     let oc = open_out file in
-     Printf.fprintf oc "#dagsig %s\n" (mono_sig ());
-     List.iter
-       (fun (_, (n : t)) ->
-          Printf.fprintf
-            oc
-            "%d:%s\n"
-            n.tag
-            (String.concat
-               " "
-               (List.map (fun (p : t) -> string_of_int p.tag) (preds n))))
-       su_intermediates;
-     close_out oc;
-     (* Kinds sidecar for machine-model tooling (ILP-floor searcher):
-      * one "tag KIND" line per node. C const, L load, A add/sub,
-      * N neg, M mul, F fma, X cmul (emits as mul+fma pair: 2 uops on
-      * the mul/fma port class). New file, same env gate; existing
-      * dump consumers are unaffected. *)
-     let kc = open_out (file ^ ".kinds") in
-     List.iter
-       (fun (_, (n : t)) ->
-          let k = kind_char n in
-          Printf.fprintf kc "%d %c\n" n.tag k)
-       su_intermediates;
-     close_out kc);
-  let intermediates =
-    match resolve_order_source () with
-    | None -> su_intermediates
-    | Some base ->
-      let file =
-        if Sys.file_exists base
-        then Some base
-        else if Sys.file_exists (base ^ ".txt")
-        then Some (base ^ ".txt")
-        else None
-      in
-      (match file with
-       | None -> su_intermediates
-       | Some f ->
-         let tags, file_sig = read_order_file f in
-         (match file_sig with
-          | Some s when s <> mono_sig () ->
-            log_injection
-              (Printf.sprintf
-                 "sched order STALE (dagsig mismatch), fell back to su: %s"
-                 f);
-            su_intermediates
-          | _ ->
-            let by_tag : (int, t) Hashtbl.t = Hashtbl.create 256 in
-            List.iter (fun (n : t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
-            let ordered =
-              List.filter_map
-                (fun t ->
-                   match Hashtbl.find_opt by_tag t with
-                   | Some n -> Some (None, n)
-                   | None -> None)
-                tags
-            in
-            if List.length ordered <> List.length su_intermediates
+            if cpa <> cpb
+            then compare cpb cpa (* higher cp_dist first *)
+            else if tiebreak = `Affinity && Hashtbl.length sink_mask > 0
             then (
-              log_injection
-                (Printf.sprintf
-                   "sched order INCOMPLETE (%d of %d nodes), fell back to su: %s"
-                   (List.length ordered)
-                   (List.length su_intermediates)
-                   f);
-              su_intermediates)
+              let ov t =
+                pc64
+                  (Int64.logand
+                     !last_mask
+                     (try Hashtbl.find sink_mask t with
+                      | Not_found -> 0L))
+              in
+              let oa = ov a.tag
+              and ob = ov b.tag in
+              if oa <> ob
+              then compare ob oa (* larger overlap with last first *)
+              else compare a.tag b.tag)
+            else if tiebreak = `Cone && Hashtbl.length cone_count > 0
+            then (
+              let ca =
+                try Hashtbl.find cone_count a.tag with
+                | Not_found -> 0
+              in
+              let cb =
+                try Hashtbl.find cone_count b.tag with
+                | Not_found -> 0
+              in
+              if ca <> cb
+              then compare ca cb (* fewer reachable sinks first *)
+              else compare a.tag b.tag)
             else (
+              let sua =
+                try Hashtbl.find su_num a.tag with
+                | Not_found -> 0
+              in
+              let sub =
+                try Hashtbl.find su_num b.tag with
+                | Not_found -> 0
+              in
+              if sua <> sub
+              then compare sua sub (* lower su_num breaks ties *)
+              else compare a.tag b.tag (* stable: tag-ascending *)))
+        in
+        match load_policy with
+        | `Strict ->
+          let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
+          (match arith_ready with
+           | _ :: _ ->
+             (* At least one arithmetic op ready — pick the best one, defer loads. *)
+             Some (List.hd (List.sort cmp arith_ready))
+           | [] ->
+             (* No arithmetic ready — must fire a load to unblock more work.
+              * Fire the next required load (preserves source order). *)
+             let req_load = next_required_load () in
+             let load_candidates =
+               List.filter (fun n -> is_load n && Some n.tag = req_load) !ready
+             in
+             (match load_candidates with
+              | [] -> None (* shouldn't happen if scheduling is making progress *)
+              | _ -> Some (List.hd load_candidates)))
+        | `Anyorder ->
+          let arith_ready = List.filter (fun n -> not (is_load n)) !ready in
+          (match arith_ready with
+           | _ :: _ -> Some (List.hd (List.sort cmp arith_ready))
+           | [] ->
+             (match List.filter is_load !ready with
+              | [] -> None
+              | ls -> Some (List.hd (List.sort cmp ls))))
+        | `Lookahead ->
+          let leaves, arith = List.partition is_leaf !ready in
+          let hot_leaves = List.filter is_hot leaves in
+          if !since_leaf >= leaf_pace && hot_leaves <> []
+          then (
+            since_leaf := 0;
+            Some (List.hd (List.sort cmp hot_leaves)))
+          else (
+            match arith with
+            | _ :: _ ->
+              incr since_leaf;
+              Some (List.hd (List.sort cmp arith))
+            | [] ->
+              since_leaf := 0;
+              (match leaves with
+               | [] -> None
+               | ls -> Some (List.hd (List.sort cmp ls))))
+        | `Nearstarve ->
+          (* Fire the best HOT load when the arithmetic pool is nearly dry
+           * (|arith_ready| <= VFFT_LOAD_PACE) — one to a few slots BEFORE
+           * starvation would force it, instead of at starvation. Loads
+           * only; constants keep their strict (arith-pool) behavior. *)
+          let arith = List.filter (fun n -> not (is_load n)) !ready in
+          let hot_loads = List.filter is_hot (List.filter is_load !ready) in
+          if List.length arith <= leaf_pace && hot_loads <> []
+          then Some (List.hd (List.sort cmp hot_loads))
+          else (
+            match arith with
+            | _ :: _ -> Some (List.hd (List.sort cmp arith))
+            | [] ->
+              (match List.filter is_load !ready with
+               | [] -> None
+               | ls -> Some (List.hd (List.sort cmp ls)))))
+    in
+    let result : (Expr.elem_ref option * t) list ref = ref [] in
+    let rec loop () =
+      match pick_next () with
+      | None -> ()
+      | Some n ->
+        Hashtbl.add scheduled n.tag ();
+        ready := List.filter (fun x -> x.tag <> n.tag) !ready;
+        Hashtbl.remove in_ready n.tag;
+        if is_load n then incr load_idx;
+        result := (None, n) :: !result;
+        (if cone_mode
+         then
+           last_mask
+           := try Hashtbl.find sink_mask n.tag with
+              | Not_found -> !last_mask);
+        let user_list =
+          try Hashtbl.find users n.tag with
+          | Not_found -> []
+        in
+        List.iter
+          (fun u ->
+             let cur =
+               try Hashtbl.find unsched_count u.tag with
+               | Not_found -> 0
+             in
+             let new_count = cur - 1 in
+             Hashtbl.replace unsched_count u.tag new_count;
+             if
+               new_count = 0
+               && (not (Hashtbl.mem in_ready u.tag))
+               && not (Hashtbl.mem scheduled u.tag)
+             then (
+               ready := u :: !ready;
+               Hashtbl.add in_ready u.tag ()))
+          user_list;
+        loop ()
+    in
+    loop ();
+    let su_intermediates = List.rev !result in
+    (* === SCHEDULE-SEARCH KNOBS (experiment; default = unchanged SU output) ===
+     * VFFT_SCHED_DUMP=<file>: write the SU order as "tag:pred_tags..." per line,
+     *   so the annealer knows the DAG and can permute legally.
+     * VFFT_SCHED_ORDER=<file>: emit the intermediates in the explicit tag order
+     *   from the file (one tag per line) instead of SU's order. The order MUST be
+     *   a complete, legal topological order of su_intermediates — the caller
+     *   (annealer) guarantees this; an illegal order yields a use-before-def C
+     *   compile error, which the search treats as an invalid candidate.
+     * Wisdom-grade additions (see SCHEDULE WISDOM PLUMBING above): the dump
+     * carries a #dagsig header; injection resolves through order_source
+     * (emit_c sets it from VFFT_SCHED_WISDOM/<codelet symbol>), verifies the
+     * dagsig, checks completeness, and logs every accept/refuse. The order
+     * source may name the file exactly or omit a ".txt" suffix (the wisdom
+     * directory convention). *)
+    let mono_sig () =
+      dag_signature
+        (List.map
+           (fun (_, (n : t)) -> n.tag, List.map (fun (p : t) -> p.tag) (preds n))
+           su_intermediates)
+    in
+    (match Knobs.Trace.sched_dump () with
+     | None -> ()
+     | Some file ->
+       let oc = open_out file in
+       Printf.fprintf oc "#dagsig %s\n" (mono_sig ());
+       List.iter
+         (fun (_, (n : t)) ->
+            Printf.fprintf
+              oc
+              "%d:%s\n"
+              n.tag
+              (String.concat
+                 " "
+                 (List.map (fun (p : t) -> string_of_int p.tag) (preds n))))
+         su_intermediates;
+       close_out oc;
+       (* Kinds sidecar for machine-model tooling (ILP-floor searcher):
+        * one "tag KIND" line per node. C const, L load, A add/sub,
+        * N neg, M mul, F fma, X cmul (emits as mul+fma pair: 2 uops on
+        * the mul/fma port class). New file, same env gate; existing
+        * dump consumers are unaffected. *)
+       let kc = open_out (file ^ ".kinds") in
+       List.iter
+         (fun (_, (n : t)) ->
+            let k = kind_char n in
+            Printf.fprintf kc "%d %c\n" n.tag k)
+         su_intermediates;
+       close_out kc);
+    let intermediates =
+      match resolve_order_source () with
+      | None -> su_intermediates
+      | Some base ->
+        let file =
+          if Sys.file_exists base
+          then Some base
+          else if Sys.file_exists (base ^ ".txt")
+          then Some (base ^ ".txt")
+          else None
+        in
+        (match file with
+         | None -> su_intermediates
+         | Some f ->
+           let tags, file_sig = read_order_file f in
+           (match file_sig with
+            | Some s when s <> mono_sig () ->
               log_injection
                 (Printf.sprintf
-                   "sched order injected: %s (nodes=%d, %s)"
-                   f
-                   (List.length ordered)
-                   (match file_sig with
-                    | Some _ -> "dagsig verified"
-                    | None -> "no dagsig, unverified"));
-              ordered)))
-  in
-  let stores = List.map (fun (oref, e) -> Some oref, e) assigns in
-  intermediates @ stores
-;;
+                   "sched order STALE (dagsig mismatch), fell back to su: %s"
+                   f);
+              su_intermediates
+            | _ ->
+              let by_tag : (int, t) Hashtbl.t = Hashtbl.create 256 in
+              List.iter (fun (n : t) -> Hashtbl.replace by_tag n.tag n) all_nodes;
+              let ordered =
+                List.filter_map
+                  (fun t ->
+                     match Hashtbl.find_opt by_tag t with
+                     | Some n -> Some (None, n)
+                     | None -> None)
+                  tags
+              in
+              if List.length ordered <> List.length su_intermediates
+              then (
+                log_injection
+                  (Printf.sprintf
+                     "sched order INCOMPLETE (%d of %d nodes), fell back to su: %s"
+                     (List.length ordered)
+                     (List.length su_intermediates)
+                     f);
+                su_intermediates)
+              else (
+                log_injection
+                  (Printf.sprintf
+                     "sched order injected: %s (nodes=%d, %s)"
+                     f
+                     (List.length ordered)
+                     (match file_sig with
+                      | Some _ -> "dagsig verified"
+                      | None -> "no dagsig, unverified"));
+                ordered)))
+    in
+    let stores = List.map (fun (oref, e) -> Some oref, e) assigns in
+    intermediates @ stores
+  ;;
 
-(* === SU SCHEDULING ON A FIXED SUBSET ===
- *
- * Like su_schedule but operates on a pre-selected subset of nodes
- * (e.g. PASS 1 or PASS 2 alone). Predecessors not in the subset are
- * treated as "already available" (e.g. inputs to PASS 1, reloaded
- * spill values to PASS 2, hoisted constants).
- *
- * Inputs:
- *   - uarch: latency profile
- *   - subset: nodes to schedule
- *   - sinks: nodes whose cp_dist contributes to scheduling priority
- *            (typically PASS 1 spill targets, or PASS 2 output sinks)
- *
- * Returns: subset nodes in scheduled order.
- *
- * Note: load source-order tracking is intentionally simplified here —
- * within a pass, loads are typically twiddle/data loads that the
- * scheduler should issue early. For PASS 1 we still want loads to be
- * deferred behind ready arithmetic; for PASS 2 there are no loads
- * (reloads happen before the pass). *)
+  (* === SU SCHEDULING ON A FIXED SUBSET ===
+   *
+   * Like su_schedule but operates on a pre-selected subset of nodes
+   * (e.g. PASS 1 or PASS 2 alone). Predecessors not in the subset are
+   * treated as "already available" (e.g. inputs to PASS 1, reloaded
+   * spill values to PASS 2, hoisted constants).
+   *
+   * Inputs:
+   *   - uarch: latency profile
+   *   - subset: nodes to schedule
+   *   - sinks: nodes whose cp_dist contributes to scheduling priority
+   *            (typically PASS 1 spill targets, or PASS 2 output sinks)
+   *
+   * Returns: subset nodes in scheduled order.
+   *
+   * Note: load source-order tracking is intentionally simplified here —
+   * within a pass, loads are typically twiddle/data loads that the
+   * scheduler should issue early. For PASS 1 we still want loads to be
+   * deferred behind ready arithmetic; for PASS 2 there are no loads
+   * (reloads happen before the pass). *)
 end
 
 include Make (Ir_node)

@@ -34,7 +34,9 @@ type plan =
 
 let budget () =
   match Sys.getenv_opt "VFFT_CX_SPILL" with
-  | Some s -> (try Some (int_of_string s) with _ -> None)
+  | Some s ->
+    (try Some (int_of_string s) with
+     | _ -> None)
   | None -> None
 ;;
 
@@ -45,18 +47,32 @@ let compute (budget : int) (scheduled : (_ * t) list) : plan =
   let nodes = Array.of_list (List.map snd scheduled) in
   let n = Array.length nodes in
   let pos_of : (int, int) Hashtbl.t = Hashtbl.create 256 in
-  Array.iteri (fun i e -> if not (Hashtbl.mem pos_of e.tag) then Hashtbl.add pos_of e.tag i) nodes;
+  Array.iteri
+    (fun i e -> if not (Hashtbl.mem pos_of e.tag) then Hashtbl.add pos_of e.tag i)
+    nodes;
   (* uses[tag] = sorted positions where tag is read as a pred *)
   let uses : (int, int list) Hashtbl.t = Hashtbl.create 256 in
   let add_use t p =
-    let cur = try Hashtbl.find uses t with Not_found -> [] in
+    let cur =
+      try Hashtbl.find uses t with
+      | Not_found -> []
+    in
     Hashtbl.replace uses t (p :: cur)
   in
   let dedup l =
     let s = Hashtbl.create 4 in
-    List.filter (fun x -> if Hashtbl.mem s x then false else (Hashtbl.add s x (); true)) l
+    List.filter
+      (fun x ->
+         if Hashtbl.mem s x
+         then false
+         else (
+           Hashtbl.add s x ();
+           true))
+      l
   in
-  Array.iteri (fun p e -> List.iter (fun pr -> add_use pr.tag p) (dedup (Cx_sched.Node.preds e))) nodes;
+  Array.iteri
+    (fun p e -> List.iter (fun pr -> add_use pr.tag p) (dedup (Cx_sched.Node.preds e)))
+    nodes;
   let last_use t =
     match Hashtbl.find_opt uses t with
     | Some (u :: _) -> u (* list built by consing => head is the LARGEST pos *)
@@ -71,7 +87,10 @@ let compute (budget : int) (scheduled : (_ * t) list) : plan =
   let spill_after = Hashtbl.create 64 in
   let reload_before = Hashtbl.create 64 in
   let add tbl k v =
-    let cur = try Hashtbl.find tbl k with Not_found -> [] in
+    let cur =
+      try Hashtbl.find tbl k with
+      | Not_found -> []
+    in
     Hashtbl.replace tbl k (v :: cur)
   in
   (* live register set of tags; slot bookkeeping *)
@@ -82,8 +101,13 @@ let compute (budget : int) (scheduled : (_ * t) list) : plan =
   let next_slot = ref 0 in
   let alloc_slot () =
     match !free_slots with
-    | s :: r -> free_slots := r; s
-    | [] -> let s = !next_slot in incr next_slot; s
+    | s :: r ->
+      free_slots := r;
+      s
+    | [] ->
+      let s = !next_slot in
+      incr next_slot;
+      s
   in
   let peak_in = ref 0 in
   let peak_out = ref 0 in
@@ -138,12 +162,23 @@ let compute (budget : int) (scheduled : (_ * t) list) : plan =
       (fun pr -> if last_use pr.tag = p then Hashtbl.remove live pr.tag)
       (dedup (Cx_sched.Node.preds e));
     (* a reloaded value that is used only at its reload position also retires *)
-    (match Hashtbl.find_opt reload_before p with
-     | Some rs ->
-       List.iter (fun (t, slot) -> if last_use t <= p then (Hashtbl.remove live t; free_slots := slot :: !free_slots)) rs
-     | None -> ())
+    match Hashtbl.find_opt reload_before p with
+    | Some rs ->
+      List.iter
+        (fun (t, slot) ->
+           if last_use t <= p
+           then (
+             Hashtbl.remove live t;
+             free_slots := slot :: !free_slots))
+        rs
+    | None -> ()
   done;
-  { nslots = !next_slot; spill_after; reload_before; peak_in = !peak_in; peak_out = !peak_out }
+  { nslots = !next_slot
+  ; spill_after
+  ; reload_before
+  ; peak_in = !peak_in
+  ; peak_out = !peak_out
+  }
 ;;
 
 (* Public entry: returns None when the knob is off or the budget is infeasible

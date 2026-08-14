@@ -21,7 +21,9 @@ type consts = (string, string * (float * float) array) Hashtbl.t
 
 let const_name_v (tbl : consts) (w : (float * float) array) : string =
   let key =
-    String.concat "_" (Array.to_list (Array.map (fun (c, s) -> Printf.sprintf "%.17g:%.17g" c s) w))
+    String.concat
+      "_"
+      (Array.to_list (Array.map (fun (c, s) -> Printf.sprintf "%.17g:%.17g" c s) w))
   in
   match Hashtbl.find_opt tbl key with
   | Some (n, _) -> n
@@ -97,8 +99,7 @@ let addr_str (a : caddr) : string =
   | AZoutTurn (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l
   | AZoutTurn (l, _) -> Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + %d)]" l
   | AZoutTurnG (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + (size_t)%d*OGs)]" l
-  | AZoutTurnG (l, _) ->
-    Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)]" l
+  | AZoutTurnG (l, _) -> Printf.sprintf "zout[2*(((size_t)k + 1)*OLs + (size_t)%d*OGs)]" l
   | AS i -> Printf.sprintf "S[%d]" i
   | AP i -> Printf.sprintf "P[%d]" i
   | AZinAbs i -> Printf.sprintf "zin[%d]" i
@@ -121,8 +122,15 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
    arithmetic must not shrink with the render width.
    ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
    narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
-let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
-  ~(ctx : ctx) (isa : Isa.t) (tbl : consts) (e : t) : string
+let render
+      ?(tw_vw = 0)
+      ?(msuf = "")
+      ?(name = fun t -> Printf.sprintf "z%d" t)
+      ~(ctx : ctx)
+      (isa : Isa.t)
+      (tbl : consts)
+      (e : t)
+  : string
   =
   (* ?name resolves an operand tag to its CURRENT C variable name. Default is
      the SSA "z<tag>"; cx_spill overrides it so a reloaded value picks up its
@@ -133,8 +141,7 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
   match e.node with
   | CIn _ -> failwith "codelet_cil.render: CIn is emitted by the load edge"
   | CLoad a -> Isa.loadu_pd isa (addr_str a)
-  | CStore _ ->
-    failwith "codelet_cil.render: CStore is a statement — use render_store"
+  | CStore _ -> failwith "codelet_cil.render: CStore is a statement — use render_store"
   | CTurn (a, b, imm) ->
     Printf.sprintf "%s(%s, %s, 0x%x)" (Isa.intr isa "permute2f128_pd") (v a) (v b) imm
   | CLo a -> Printf.sprintf "_mm256_castpd256_pd128(%s)" (v a)
@@ -182,18 +189,10 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)) (v x)
   | CTwC (c, s, x) ->
     let w = const_name tbl (isa.Isa.vec_width / 2) c s in
-    Isa.fmadd_pd
-      isa
-      (w ^ "_c")
-      (v x)
-      (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+    Isa.fmadd_pd isa (w ^ "_c") (v x) (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
   | CTwV (ws, x) ->
     let w = const_name_v tbl ws in
-    Isa.fmadd_pd
-      isa
-      (w ^ "_c")
-      (v x)
-      (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
+    Isa.fmadd_pd isa (w ^ "_c") (v x) (Isa.mul_pd isa (w ^ "_s") (Isa.cflip_pd isa (v x)))
   | CTwL (leg, x) ->
     (* BYTW2 against the VTW2 record for this leg. Under FLAT the record is
        loaded inline from the streamed cursor; under LOG3 it is a name bound
@@ -249,8 +248,13 @@ let log3_plan (radix : int) : (int * (int * int) option) list =
 ;;
 
 let emit_log3_prologue
-      ?(tw_vw = 0) ?(msuf = "")
-      (buf : Buffer.t) (isa : Isa.t) (radix : int) : unit =
+      ?(tw_vw = 0)
+      ?(msuf = "")
+      (buf : Buffer.t)
+      (isa : Isa.t)
+      (radix : int)
+  : unit
+  =
   (* ?tw_vw / ?msuf as in `render`: the narrow tail re-binds its own
      _wc%d_n/_ws%d_n names at Isa.sse2 against the WIDE-geometry table. *)
   let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
@@ -268,10 +272,7 @@ let emit_log3_prologue
            (Printf.sprintf
               "        %s\n        %s\n"
               (Isa.const_decl isa cj (Isa.loadu_pd isa (addr_str (ATw off))))
-              (Isa.const_decl
-                 isa
-                 sj
-                 (Isa.loadu_pd isa (addr_str (ATw (off + vw))))))
+              (Isa.const_decl isa sj (Isa.loadu_pd isa (addr_str (ATw (off + vw))))))
        | Some (p, q) ->
          let cp = Printf.sprintf "_wc%d%s" p msuf
          and sp = Printf.sprintf "_ws%d%s" p msuf
@@ -281,14 +282,8 @@ let emit_log3_prologue
            buf
            (Printf.sprintf
               "        %s\n        %s\n"
-              (Isa.const_decl
-                 isa
-                 cj
-                 (Isa.fnmadd_pd isa sp sq (Isa.mul_pd isa cp cq)))
-              (Isa.const_decl
-                 isa
-                 sj
-                 (Isa.fmadd_pd isa cp sq (Isa.mul_pd isa sp cq)))))
+              (Isa.const_decl isa cj (Isa.fnmadd_pd isa sp sq (Isa.mul_pd isa cp cq)))
+              (Isa.const_decl isa sj (Isa.fmadd_pd isa cp sq (Isa.mul_pd isa sp cq)))))
     (log3_plan radix);
   Buffer.add_string
     buf

@@ -14,7 +14,10 @@
    here.  [signature] ends at the opening brace. *)
 
 type shape =
-  | Strided of { il : [ `None | `In | `Out ]; r2c : [ `No | `Fwd | `Bwd ] }
+  | Strided of
+      { il : [ `None | `In | `Out ]
+      ; r2c : [ `No | `Fwd | `Bwd ]
+      }
   | In_place of { il : [ `None | `In | `Out ] }
   | Twidsq
   | R2cb
@@ -34,17 +37,16 @@ type t = private
   ; params : Layout.param list
   }
 
-val make : symbol:string -> target_attr:string -> shape -> t
 (** TOTAL over [shape] — the compiler's warning-8 enforcement replaces the
     ladder's source-order priority spec.  All data-plane params come from
     Layout (the anti-hybrid law holds by construction). *)
+val make : symbol:string -> target_attr:string -> shape -> t
 
-val signature : t -> string
 (** The attribute line, `void <symbol>(`, the parameter list, `)` and the
     opening brace — byte-exact to the historical ladder:
     ["__attribute__((target(\"...\")))\nvoid f(\n    ...,\n    size_t vl)\n{\n"] *)
+val signature : t -> string
 
-val z11_signature : symbol:string -> target_attr:string -> string
 (** THE FROZEN 11-arg z ABI (zin, zin_unused, zout, zout_unused, tw_re, tw_im,
     Ls, Gs, OLs, OGs, count) — historically printed byte-identically on TWO
     compiler stacks (codelet_zsplit twice, codelet_cil once), each with its
@@ -52,3 +54,4 @@ val z11_signature : symbol:string -> target_attr:string -> string
     line, the non-restrict tw pair and the five size_t grouped) is the
     frozen historical layout and must never change — 265 shipped files
     carry it.  Kind-conditional (void) silencers remain caller-side. *)
+val z11_signature : symbol:string -> target_attr:string -> string

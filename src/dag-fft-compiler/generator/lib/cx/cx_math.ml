@@ -61,8 +61,13 @@ let sqh = 0.70710678118654752440
    CLASS selection lives here so the monolithic recursion and the BLOCKED
    construction below share exactly one copy of it - they must agree, or the
    two forms would not be numerically interchangeable. *)
-let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) ~(ctx : ctx)
-      (ek : t) (ok : t)
+let butterfly_pair
+      ~(sign : [ `Fwd | `Bwd ])
+      ~(n : int)
+      ~(k : int)
+      ~(ctx : ctx)
+      (ek : t)
+      (ok : t)
   : t * t
   =
   let pi = 4.0 *. atan 1.0 in
@@ -119,8 +124,8 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) ~(ctx : ctx)
     then
       failwith
         (Printf.sprintf
-           "butterfly_pair: tangent variant |tan(2pi*%d/%d)| = %.3f > 8 - R>=64 \
-            site; needs the quarter-turn composition (tangent_emitter_plan.md)"
+           "butterfly_pair: tangent variant |tan(2pi*%d/%d)| = %.3f > 8 - R>=64 site; \
+            needs the quarter-turn composition (tangent_emitter_plan.md)"
            k
            n
            (abs_float t));
@@ -586,7 +591,11 @@ let rec dft_small ?(sign = `Fwd) ~(ctx : ctx) (n : int) (xs : t array) : t array
      X[k2*r0 + k1] = DFT_n2 over j2 of ( DFT_r0(column j2)[k1] * w_N^{j2*k1} )
    so the output lands transposed at k2*r0 + k1, which is why the caller's
    store index is (k2 * n1 + k1) and no output permutation is ever needed. *)
-let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(ctx : ctx) ~(chain : int list) (xs : t array)
+let rec dft_chain
+          ~(sign : [ `Fwd | `Bwd ])
+          ~(ctx : ctx)
+          ~(chain : int list)
+          (xs : t array)
   : t array
   =
   let n = Array.length xs in
