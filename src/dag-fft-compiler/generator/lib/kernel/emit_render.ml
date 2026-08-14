@@ -23,7 +23,7 @@
  * ROLE: The render toolbox between the mode refs and emit_codelet.
  * PIPELINE: Emit_state modes -> these renderers -> emit_codelet text
  * PUBLIC SURFACE (measured): zero direct Emit_render.X references —
- * reached as Emit_c.X (codelet_oop's render_node_def x5,
+ * reached as Emit_body.X (codelet_oop's render_node_def x5,
  * cluster_split_schedule x5, compute_min_slot_pass1 x4 are the
  * heaviest external uses).
  * DEPS: Emit_state via include; Algsimp (open, +8), Isa(44),

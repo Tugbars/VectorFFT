@@ -2025,7 +2025,7 @@ let emit_codelet (c : config) : string =
      emit_avx512_transpose_indices helper is itself a no-op for AVX2,
      so this call is safe in all cases. *)
   if c.load_pat = UnitLeg || c.store_pat = UnitLeg
-  then Emit_c.emit_avx512_transpose_indices c.isa buf;
+  then Emit_body.emit_avx512_transpose_indices c.isa buf;
   (* Prepare the body: math layer + algsimp pipeline + spill_info
      construction. Done BEFORE the for-loop opens so we know whether
      to emit spill_re/spill_im array declarations at function scope. *)

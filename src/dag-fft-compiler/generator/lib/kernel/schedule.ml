@@ -355,7 +355,7 @@ module type SCHED_NODE = sig
    * real-valued Ir has no store nodes (stores live in `assigns`;
    * su_schedule appends them), so both in-tree instantiations answer
    * `false` everywhere — the accessor is ADDITIVE and provably inert for
-   * them. The zsplit combined-graph instantiation (Codelet_zsplit.ZNode)
+   * them. The zsplit combined-graph instantiation (Cascade_z.ZNode)
    * answers true for its ZStore units. The SR loop itself needs no store
    * rule — an in-graph store is already sink-classed by its empty user
    * set, so RETIRE fires it at readiness — but this accessor is the

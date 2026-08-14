@@ -1,4 +1,7 @@
-(* codelet_zsplit.ml — pipeline-hosted zil BLOCK-SPLIT split family.
+(* cascade_z.ml — M8.1: the Cascade_z feature module (§9 #35), renamed from
+ * codelet_zsplit.ml — content unchanged (the doc's priced expectation: this
+ * sub-step "cuts nothing and carries no risk signal"; zsplit was already the
+ * best-behaved emitter).  Pipeline-hosted zil BLOCK-SPLIT split family.
  *
  * The port of codelet_zil.ml's raw-template split kinds onto the production
  * DAG pipeline (docs/roadmap/zil_pipeline_port.md). Where the legacy module
