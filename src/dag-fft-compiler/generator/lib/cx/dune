@@ -1,0 +1,7 @@
+; vfft_cx -- M9 (§9 library #2): C2c_il's private complex-IR compiler
+; (cx_ir/math/sched/cpl/spill/render/pipeline).  A separate library, not
+; (private_modules) -- §9.2.  State fix lands at M12a.
+(library
+ (name vfft_cx)
+ (wrapped false)
+ (libraries vfft_kernel))

@@ -39,8 +39,8 @@
  * (measured ~1.57x slower than MKL's composed 128). R=128 can be re-added
  * here explicitly if ever needed; it is off by default. *)
 (* Section 39: coverage now comes from THE single source of truth.
- * The literal list this replaced is Vfft_v2.Coverage.ip_radices. *)
-let standard_radixes = Vfft_v2.Coverage.ip_radices
+ * The literal list this replaced is Coverage.ip_radices. *)
+let standard_radixes = Coverage.ip_radices
 
 (* xl_radix retained only so the dead research-only branch in
  * codelet_exists_t1 still type-checks; no radix in any list matches it,

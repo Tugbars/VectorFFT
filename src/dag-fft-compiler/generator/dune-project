@@ -1,1 +1,3 @@
 (lang dune 3.0)
+; M9: T1 becomes a build error -- a library can only see what it lists.
+(implicit_transitive_deps false)

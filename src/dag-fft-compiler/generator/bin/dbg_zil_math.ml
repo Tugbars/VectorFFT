@@ -17,7 +17,6 @@
  *
  * Usage: dune exec bin/dbg_zil_math.exe *)
 
-open Vfft_v2
 open Expr
 
 let pi = 4.0 *. atan 1.0

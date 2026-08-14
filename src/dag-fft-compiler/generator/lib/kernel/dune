@@ -1,0 +1,11 @@
+; vfft_kernel -- M9 (§9 library #1): the transform-agnostic compiler core.
+; Pipeline order (top of pipe to bottom):
+;   Expr > Ir > Simplify/Fma_passes/Algsimp > Uarch > Schedule > Regalloc
+;   > Layout/Abi/Knobs/Simd > Emit_render > Emit_body (the engine)
+;   > Pipeline (pass cascade) + the Dft* math layer.
+; (wrapped false): module names stay global -- every intra-repo reference
+; unchanged by the M9 split; basenames are globally unique by repo law.
+(library
+ (name vfft_kernel)
+ (wrapped false)
+ (libraries unix))

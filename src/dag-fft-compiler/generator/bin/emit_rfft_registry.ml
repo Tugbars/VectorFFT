@@ -1,7 +1,7 @@
 (* emit_rfft_registry.ml — auto-generate the rfft codelet registry.
  *
  * Sibling to emit_registry_h.ml (which does the c2c families). Walks the
- * SAME single source of truth — Vfft_v2.Coverage.files "rfft-<isa>" — so
+ * SAME single source of truth — Coverage.files "rfft-<isa>" — so
  * the registry can never drift from what gen_set actually emits. Adding a
  * codelet to the rfft quadrant in coverage.ml automatically gives it an
  * extern + a populated registry slot here; nothing is hand-written.
@@ -124,7 +124,7 @@ let () =
     "emit_rfft_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "rfft-" ^ isa in
-  let files = Vfft_v2.Coverage.files quadrant in
+  let files = Coverage.files quadrant in
   (* (symbol, slot, radix) for every classifiable, slotted codelet *)
   let entries =
     List.filter_map

@@ -3,7 +3,6 @@
  * Section 56 instrument: locates the first pass whose OUTPUT evaluates
  * wrong. Usage: dune exec bin/dbg_eval.exe -- [N]   (default 9) *)
 
-open Vfft_v2
 
 let n = if Array.length Sys.argv > 1 then int_of_string Sys.argv.(1) else 9
 

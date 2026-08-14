@@ -1,5 +1,4 @@
 (* Dump the IR of a small case to understand what shape we're dealing with. *)
-open Vfft_v2
 
 let () =
   (* Generate R=25 raw assignments. *)

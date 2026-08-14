@@ -2,7 +2,7 @@
  *
  * Seventh application of the coverage-driven registry pattern (after c2c
  * in-place, c2c OOP, rfft, trig, strided, and the rfft forward registry).
- * Walks Vfft_v2.Coverage.files "c2r-<isa>" so the registry can never drift
+ * Walks Coverage.files "c2r-<isa>" so the registry can never drift
  * from what gen_set emits. Fills the c2r slots of rfft_codelets_t (r2cb,
  * hc2hc_dif_bwd, hc2hc_dif_bwd_log3) — the same struct the forward rfft
  * registry fills, since the c2r executor (core/c2r.h) reuses it.
@@ -125,7 +125,7 @@ let () =
     "emit_c2r_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "c2r-" ^ isa in
-  let files = Vfft_v2.Coverage.files quadrant in
+  let files = Coverage.files quadrant in
   let entries =
     List.filter_map
       (fun (fname_c, _argv) ->
