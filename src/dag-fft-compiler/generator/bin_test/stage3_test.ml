@@ -8,18 +8,18 @@
 
 open Vfft_v2
 
-let () = Algsimp.reset ()
+let () = Ir.reset ()
 
 (* Tiny synthetic IR — use mk_const / mk_add. *)
-let t_a = Algsimp.mk_const 1.0
-let t_b = Algsimp.mk_const 2.0
-let t_c = Algsimp.mk_add t_a t_b
-let t_d = Algsimp.mk_add t_c t_a
+let t_a = Ir.mk_const 1.0
+let t_b = Ir.mk_const 2.0
+let t_c = Ir.mk_add t_a t_b
+let t_d = Ir.mk_add t_c t_a
 
 (* Synthetic raw_scheduled with duplicates (as if from SU output:
  * intermediate (None, e) followed by store sink (Some _, e)). *)
 let raw_dup = [ t_a; t_b; t_c; t_d; t_c; t_d ]
-let assigns : (Expr.elem_ref * Algsimp.t) list = []
+let assigns : (Expr.elem_ref * Ir.t) list = []
 
 let () =
   Printf.printf "=== Stage 3 sanity check ===\n";
@@ -32,7 +32,7 @@ let () =
   (* Test 2: I1 — each tag appears at most once. *)
   let seen = Hashtbl.create 8 in
   List.iter
-    (fun (e : Algsimp.t) ->
+    (fun (e : Ir.t) ->
        assert (not (Hashtbl.mem seen e.tag));
        Hashtbl.add seen e.tag ())
     input.scheduled;

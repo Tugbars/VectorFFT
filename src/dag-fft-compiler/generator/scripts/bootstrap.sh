@@ -110,11 +110,16 @@ echo
 echo -e "${C_DIM}[init] ensuring OCaml binaries are built...${C_RESET}"
 T_DUNE=$(now_s)
 eval "$(opam env --switch=5.2.0 --set-switch 2>/dev/null)" 2>/dev/null || true
-if dune build 2>&1 | tail -3; then
+# 🔴 M0/G5 (generator_lib_architecture.md §14.1): the old line here was a BARE
+# `dune build` piped to tail — @default PROMOTES tracked generated/ headers
+# EVEN ON BUILD FAILURE, and `if cmd | tail` tests tail's status, so the
+# failure branch could never fire.  Scoped targets + explicit status only.
+if dune build bin/gen_radix.exe bin/gen_set.exe 2>&1 | tail -3
+   [ "${PIPESTATUS[0]}" -eq 0 ]; then
   dune_t=$(elapsed $T_DUNE)
-  ok "dune build  (${dune_t}s)"
+  ok "dune build (scoped: gen_radix, gen_set)  (${dune_t}s)"
 else
-  fail "dune build"
+  fail "dune build (scoped)"
   exit 1
 fi
 

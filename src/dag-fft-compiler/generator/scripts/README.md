@@ -69,7 +69,9 @@ by `pick_algorithm` and the `aggressive` flag inside the generator.
 
 ```bash
 # One-time: build the generator (requires OCaml + dune)
-dune build
+# 🔴 SCOPED build only — a bare `dune build` (= @default) PROMOTES tracked
+# generated/ headers EVEN IF THE BUILD FAILS (M0/G5). Build named targets.
+dune build bin/gen_radix.exe bin/gen_set.exe
 
 # Generate all production codelets for both ISAs (~3 min)
 ISA=both ./scripts/generate_codelets.sh
@@ -98,7 +100,9 @@ cleanly via apt:
 # Inside WSL
 sudo apt install opam gcc-11
 opam init -y && opam install dune
-dune build
+# 🔴 SCOPED build only — a bare `dune build` (= @default) PROMOTES tracked
+# generated/ headers EVEN IF THE BUILD FAILS (M0/G5). Build named targets.
+dune build bin/gen_radix.exe bin/gen_set.exe
 ISA=both ./scripts/generate_codelets.sh
 ./scripts/compile_codelets.sh
 ```
@@ -121,7 +125,9 @@ PowerShell ports of both scripts live alongside the bash versions
 # 4. Add C:\msys64\mingw64\bin to your Windows PATH
 
 # Build the generator
-dune build
+# 🔴 SCOPED build only — a bare `dune build` (= @default) PROMOTES tracked
+# generated/ headers EVEN IF THE BUILD FAILS (M0/G5). Build named targets.
+dune build bin/gen_radix.exe bin/gen_set.exe
 
 # Generate codelets — same env-var interface as the bash version
 $env:ISA = "both"
@@ -461,11 +467,14 @@ headers consumed by core/:
   registry.h        HAND-WRITTEN ISA dispatcher; bootstrap only checks
                     it exists. Do not regenerate.
 WIRED INTO DUNE (section 38h): generator/generated/dune carries
-(mode promote) rules for all three emitted headers, so a plain
-`dune build` regenerates and writes them into the source tree whenever
-the emitters or spike_wisdom.txt change. Since every generation
-workflow starts with dune build, registries can no longer silently go
-stale against the generator. bootstrap.sh phase 2 still runs the same
+(mode promote) rules for the emitted headers, so building the @default
+alias regenerates and writes them into the source tree whenever the
+emitters or spike_wisdom.txt change. 🔴 M0/G5 caveat (generator_lib_
+architecture.md §14.1): @default PROMOTES EVEN WHEN THE BUILD FAILS
+(reproduced: rc=1 and plan_executors.h rewritten on the failure path) —
+so registry regeneration is a DELIBERATE, tree-clean act
+(`dune build @default` when you intend it), never a side effect of
+"just building"; day-to-day builds use scoped targets only. bootstrap.sh phase 2 still runs the same
 emissions (now redundant but harmless, and it prints the entry/extern
 counts). registry.h (hand-written dispatcher) has no rule and is never
 overwritten. Remaining drift risk: emit_registry_h.ml hardcodes the

@@ -37,33 +37,33 @@ let rec eval_expr (e : Expr.expr) : float =
   | Expr.Mul (a, b) -> eval_expr a *. eval_expr b
 ;;
 
-(* --- evaluator over hash-consed Algsimp.t (memoized by tag) --- *)
-let eval_t (root : Algsimp.t) : float =
+(* --- evaluator over hash-consed Ir.t (memoized by tag) --- *)
+let eval_t (root : Ir.t) : float =
   let memo : (int, float) Hashtbl.t = Hashtbl.create 256 in
-  let rec go (e : Algsimp.t) : float =
-    match Hashtbl.find_opt memo e.Algsimp.tag with
+  let rec go (e : Ir.t) : float =
+    match Hashtbl.find_opt memo e.Ir.tag with
     | Some v -> v
     | None ->
       let v =
-        match e.Algsimp.node with
-        | Algsimp.NK_Const c -> c
-        | Algsimp.NK_Load (Expr.Input (k, true)) -> x.(k)
-        | Algsimp.NK_Load _ -> failwith "eval_t: unexpected load"
-        | Algsimp.NK_Neg a -> -.go a
-        | Algsimp.NK_Add (a, b) -> go a +. go b
-        | Algsimp.NK_Sub (a, b) -> go a -. go b
-        | Algsimp.NK_Mul (a, b) -> go a *. go b
-        | Algsimp.NK_Fma (a, b, c, nm, na) ->
+        match e.Ir.node with
+        | Ir.NK_Const c -> c
+        | Ir.NK_Load (Expr.Input (k, true)) -> x.(k)
+        | Ir.NK_Load _ -> failwith "eval_t: unexpected load"
+        | Ir.NK_Neg a -> -.go a
+        | Ir.NK_Add (a, b) -> go a +. go b
+        | Ir.NK_Sub (a, b) -> go a -. go b
+        | Ir.NK_Mul (a, b) -> go a *. go b
+        | Ir.NK_Fma (a, b, c, nm, na) ->
           let ab = go a *. go b in
           (if nm then -.ab else ab)
           +.
           let cv = go c in
           if na then -.cv else cv
-        | Algsimp.NK_CmulRe (xr, xi, wr, wi) -> (go xr *. go wr) -. (go xi *. go wi)
-        | Algsimp.NK_CmulIm (xr, xi, wr, wi) -> (go xr *. go wi) +. (go xi *. go wr)
-        | Algsimp.NK_Plus _ -> failwith "eval_t: NK_Plus"
+        | Ir.NK_CmulRe (xr, xi, wr, wi) -> (go xr *. go wr) -. (go xi *. go wi)
+        | Ir.NK_CmulIm (xr, xi, wr, wi) -> (go xr *. go wi) +. (go xi *. go wr)
+        | Ir.NK_Plus _ -> failwith "eval_t: NK_Plus"
       in
-      Hashtbl.replace memo e.Algsimp.tag v;
+      Hashtbl.replace memo e.Ir.tag v;
       v
   in
   go root
@@ -87,7 +87,7 @@ let check_expr (label : string) (al : Expr.assignment list) =
     (if !worst < 1e-10 then "PASS" else "FAIL")
 ;;
 
-let check_t (label : string) (al : (Expr.elem_ref * Algsimp.t) list) =
+let check_t (label : string) (al : (Expr.elem_ref * Ir.t) list) =
   let ref_y = brute () in
   let worst = ref 0.0 in
   List.iter
@@ -108,10 +108,10 @@ let check_t (label : string) (al : (Expr.elem_ref * Algsimp.t) list) =
 let () =
   let policy_n = 2 * (n - 1) in
   let aggressive =
-    match Dft.pick_algorithm policy_n with
-    | Dft.Direct -> true
-    | Dft.Cooley_Tukey _ -> false
-    | Dft.Split_radix -> false
+    match Dft_select.pick_algorithm policy_n with
+    | Dft_select.Direct -> true
+    | Dft_select.Cooley_Tukey _ -> false
+    | Dft_select.Split_radix -> false
   in
   Printf.printf
     "=== dct1 N=%d per-pass evaluation (aggressive=%b, as gen_main) ===\n"
@@ -119,17 +119,17 @@ let () =
     aggressive;
   let raw = Dft_r2c.dft_expand_dct1 n in
   check_expr "math layer (Expr)" raw;
-  Algsimp.reset ();
-  let s0 = Algsimp.of_assignments ~reassoc:false raw in
+  Ir.reset ();
+  let s0 = Ir.of_assignments ~reassoc:false raw in
   check_t "of_assignments" s0;
-  let s1 = Algsimp.dedup_sub_pairs s0 in
+  let s1 = Simplify.dedup_sub_pairs s0 in
   check_t "dedup_sub_pairs" s1;
-  let s2 = Algsimp.factor_common_muls ~aggressive s1 in
+  let s2 = Simplify.factor_common_muls ~aggressive s1 in
   check_t "factor_common_muls" s2;
-  let s3 = Algsimp.factor_by_atom ~aggressive s2 in
+  let s3 = Simplify.factor_by_atom ~aggressive s2 in
   check_t "factor_by_atom" s3;
-  let s4 = Algsimp.dedup_sub_pairs s3 in
+  let s4 = Simplify.dedup_sub_pairs s3 in
   check_t "dedup_sub_pairs #2" s4;
-  let s5 = Algsimp.collect_m s4 in
+  let s5 = Simplify.collect_m s4 in
   check_t "collect_m" s5
 ;;

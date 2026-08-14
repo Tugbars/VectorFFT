@@ -1,0 +1,3 @@
+# The gate runs in WSL bash and diffs LF-canonical data: these files must
+# check out LF on every platform (autocrlf would break bash + fake drift).
+* text eol=lf

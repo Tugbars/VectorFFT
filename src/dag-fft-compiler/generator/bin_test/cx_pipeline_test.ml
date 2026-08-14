@@ -21,6 +21,7 @@ let rec eval (env : Complex.t array) (e : t) : Complex.t =
   | CNeg a -> neg (eval env a)
   | CRotNI a -> mul { re = 0.0; im = -1.0 } (eval env a)
   | CRotPI a -> mul { re = 0.0; im = 1.0 } (eval env a)
+  | CRotAdd (a, y) -> add (eval env a) (mul { re = 0.0; im = 1.0 } (eval env y))
   | CFmaC (c, x, acc) -> add (mul { re = c; im = 0.0 } (eval env x)) (eval env acc)
   | CFnmaC (c, x, acc) -> add (mul { re = -.c; im = 0.0 } (eval env x)) (eval env acc)
   | CTwC (c, s, x) -> mul { re = c; im = s } (eval env x)
