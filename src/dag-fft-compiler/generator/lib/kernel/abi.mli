@@ -43,3 +43,12 @@ val signature : t -> string
 (** The attribute line, `void <symbol>(`, the parameter list, `)` and the
     opening brace — byte-exact to the historical ladder:
     ["__attribute__((target(\"...\")))\nvoid f(\n    ...,\n    size_t vl)\n{\n"] *)
+
+val z11_signature : symbol:string -> target_attr:string -> string
+(** THE FROZEN 11-arg z ABI (zin, zin_unused, zout, zout_unused, tw_re, tw_im,
+    Ls, Gs, OLs, OGs, count) — historically printed byte-identically on TWO
+    compiler stacks (codelet_zsplit twice, codelet_cil once), each with its
+    own silencer policy.  ONE source now; the grouping (pointers one per
+    line, the non-restrict tw pair and the five size_t grouped) is the
+    frozen historical layout and must never change — 265 shipped files
+    carry it.  Kind-conditional (void) silencers remain caller-side. *)

@@ -858,30 +858,30 @@ let emit ~(log3 : bool) ~(pretw : bool) ~(turnst : bool) ~(turnst_gs : bool)
       Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
       Buffer.add_string buf "  /* tail twin */\n"));
   Buffer.add_string buf (emit_const_decls isa tbl);
+  (* M4 phase 3: the FROZEN 11-arg z ABI comes from Abi.z11_signature — the
+     one source (this block was one of THREE byte-identical hand prints; the
+     kind-conditional silencers stay here, they are body contract). *)
+  Buffer.add_string buf "\n";
+  Buffer.add_string
+    buf
+    (Abi.z11_signature
+       ~symbol:
+         (Printf.sprintf
+            "radix%d_z_%s_%s_%s"
+            radix
+            (kind_name kind
+             ^ (if blocked then "b" else "")
+             ^ (if !tw_pre && dir = Bwd then "p" else "")
+             ^ (if !st_turn then "t" else "")
+             ^ (if !st_turn_gs then "g" else "")
+             ^ if !tw_log3 then "_log3" else "")
+            (if dir = Fwd then "fwd" else "bwd")
+            isa.Isa.name)
+       ~target_attr:isa.Isa.target_attr);
   Buffer.add_string
     buf
     (Printf.sprintf
-       "\n\
-        __attribute__((target(\"%s\")))\n\
-        void radix%d_z_%s_%s_%s(\n\
-       \    const double * __restrict__ zin,\n\
-       \    const double * __restrict__ zin_unused,\n\
-       \    double       * __restrict__ zout,\n\
-       \    double       * __restrict__ zout_unused,\n\
-       \    const double * tw_re, const double * tw_im,\n\
-       \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-        {\n\
-       \    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs;%s%s\n"
-       isa.Isa.target_attr
-       radix
-       (kind_name kind
-        ^ (if blocked then "b" else "")
-        ^ (if !tw_pre && dir = Bwd then "p" else "")
-        ^ (if !st_turn then "t" else "")
-        ^ (if !st_turn_gs then "g" else "")
-        ^ if !tw_log3 then "_log3" else "")
-       (if dir = Fwd then "fwd" else "bwd")
-       isa.Isa.name
+       "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs;%s%s\n"
        (if !st_turn_gs then "" else " (void)OGs;")
        (if kind = T2 then "" else " (void)tw_re;"));
   if blocked

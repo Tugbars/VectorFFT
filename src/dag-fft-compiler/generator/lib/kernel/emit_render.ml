@@ -1388,3 +1388,29 @@ let render_node_def
   let p = il_take_pending () in
   if p = "" then core else p ^ core
 ;;
+
+(* ── M4 phase 3: THE body preamble — the spill-array declarations plus the
+   hoisted constants, previously the SAME 10-line block copy-pasted 12 times
+   across emit_c's arms (11 of them followed by the same hoisted-consts call;
+   twidsq alone omits the consts).  One definition, called once per arm. *)
+let body_preamble ~isa ~spill ?consts () =
+  let b = Buffer.create 256 in
+  (match spill with
+   | None -> ()
+   | Some sp ->
+     Buffer.add_string
+       b
+       (Printf.sprintf "    %s spill_re[%d];
+" isa.Isa.vec_type sp.num_slots);
+     Buffer.add_string
+       b
+       (Printf.sprintf "    %s spill_im[%d];
+" isa.Isa.vec_type sp.num_slots));
+  (match consts with
+   | None -> ()
+   | Some assigns ->
+     Buffer.add_string
+       b
+       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns))));
+  Buffer.contents b
+;;
