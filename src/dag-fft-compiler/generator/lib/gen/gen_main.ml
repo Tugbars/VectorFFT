@@ -763,76 +763,63 @@ let run (argv : string array) : unit =
   let sc = Emit_render.Scratch.create () in
   let cmods = cdesc.Codelet.mods in
   let cbwd = cmods.Codelet.dir = Codelet.Bwd in
-  Emit_state.r2cf_signature := (cdesc.Codelet.kind = Codelet.R2cf);
-  Emit_state.r2cb_signature := (cdesc.Codelet.kind = Codelet.R2cb);
-  (match cdesc.Codelet.kind with
-   | Codelet.R2c_term { rt; _ } ->
-     Emit_state.r2c_term_signature := true;
-     Emit_state.r2c_term_rt := rt
-   | _ ->
-     Emit_state.r2c_term_signature := false;
-     Emit_state.r2c_term_rt := false);
-  (match cdesc.Codelet.kind with
-   | Codelet.R2c_term_ls { r } ->
-     Emit_state.r2c_term_laststage := true;
-     Emit_state.r2c_term_ls_r := r
-   | _ -> Emit_state.r2c_term_laststage := false);
-  Emit_state.hc_strided
-  := (match cdesc.Codelet.kind with
-      | Codelet.Hc2hc _ | Codelet.Hc2c | Codelet.Hc2c_nat _ -> true
-      | _ -> false);
-  Emit_state.n1_oop_strided := (cdesc.Codelet.kind = Codelet.N1_oop_strided);
-  (match cdesc.Codelet.kind with
-   | Codelet.Strided { il } ->
-     Emit_state.strided_il_in := (il = `In);
-     Emit_state.strided_il_out := (il = `Out || il = `Out_nt);
-     Emit_state.strided_ilo_nt := (il = `Out_nt);
-     Emit_state.strided_r2c := false;
-     Emit_state.strided_r2c_bwd := false
-   | Codelet.Strided_r2c ->
-     Emit_state.strided_il_in := false;
-     Emit_state.strided_il_out := false;
-     Emit_state.strided_ilo_nt := false;
-     Emit_state.strided_r2c := true;
-     Emit_state.strided_r2c_bwd := cbwd
-   | _ ->
-     Emit_state.strided_il_in := false;
-     Emit_state.strided_il_out := false;
-     Emit_state.strided_ilo_nt := false;
-     Emit_state.strided_r2c := false;
-     Emit_state.strided_r2c_bwd := false);
-  Emit_state.ip_il_in
-  := (match cdesc.Codelet.kind with
-      | Codelet.C2c_inplace_su { il = `In } | Codelet.C2c_inplace_tw { il = `In } -> true
-      | _ -> false);
-  Emit_state.ip_il_out
-  := (match cdesc.Codelet.kind with
-      | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out } ->
-        true
-      | _ -> false);
-  (* hc2c-nat forward = the 2-packed-in/4-split-out terminator; with --bwd
-     --dif = the INVERSE c2r natural initiator (comment carried from the
-     retired projection). *)
-  (match cdesc.Codelet.kind with
-   | Codelet.Hc2c_nat _ ->
-     Emit_state.hc2c_natural := not cbwd;
-     Emit_state.hc2c_natural_bwd := cbwd
-   | _ ->
-     Emit_state.hc2c_natural := false;
-     Emit_state.hc2c_natural_bwd := false);
-  Emit_state.hc_ranged
-  := (match cdesc.Codelet.kind with
-      | Codelet.Hc2hc { ranged } | Codelet.Hc2c_nat { ranged } -> ranged
-      | _ -> false);
-  if !Emit_state.hc_ranged then Emit_state.hc_ranged_r := n;
-  (match cdesc.Codelet.kind with
-   | Codelet.Hc2c_nat _ ->
-     Emit_state.hc2c_nat_r := n;
-     Emit_state.hc2c_nat_sstar := (if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2)
-   | _ -> ());
-  Emit_state.r2r_signature
-  := (match cdesc.Codelet.kind with Codelet.Trig _ -> true | _ -> false)
-     || !dct2_trigII;
+  (* ── M6.2: emit_state is DEAD — the config is a VALUE (Emit_render.Cfg.t)
+     built here from the descriptor and passed FORWARD into emit_codelet.
+     The per-cell derivations are the M5 projections, verbatim, as record
+     fields instead of global writes. *)
+  let ccfg =
+    let k = cdesc.Codelet.kind in
+    { Emit_render.Cfg.default with
+      Emit_render.Cfg.r2r =
+        (match k with Codelet.Trig _ -> true | _ -> false) || !dct2_trigII
+    ; r2cf = k = Codelet.R2cf
+    ; r2cb = k = Codelet.R2cb
+    ; hc_strided =
+        (match k with
+         | Codelet.Hc2hc _ | Codelet.Hc2c | Codelet.Hc2c_nat _ -> true
+         | _ -> false)
+    ; n1_oop_strided = k = Codelet.N1_oop_strided
+    ; strided_il_in = (match k with Codelet.Strided { il = `In } -> true | _ -> false)
+    ; strided_il_out =
+        (match k with
+         | Codelet.Strided { il = `Out } | Codelet.Strided { il = `Out_nt } -> true
+         | _ -> false)
+    ; strided_ilo_nt = (match k with Codelet.Strided { il = `Out_nt } -> true | _ -> false)
+    ; strided_r2c = k = Codelet.Strided_r2c
+    ; strided_r2c_bwd = k = Codelet.Strided_r2c && cbwd
+    ; ip_il_in =
+        (match k with
+         | Codelet.C2c_inplace_su { il = `In } | Codelet.C2c_inplace_tw { il = `In } ->
+           true
+         | _ -> false)
+    ; ip_il_out =
+        (match k with
+         | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out }
+           -> true
+         | _ -> false)
+    ; hc2c_natural = (match k with Codelet.Hc2c_nat _ -> not cbwd | _ -> false)
+    ; hc2c_natural_bwd = (match k with Codelet.Hc2c_nat _ -> cbwd | _ -> false)
+    ; r2c_term = (match k with Codelet.R2c_term _ -> true | _ -> false)
+    ; r2c_term_rt = (match k with Codelet.R2c_term { rt; _ } -> rt | _ -> false)
+    ; r2c_term_ls = (match k with Codelet.R2c_term_ls _ -> true | _ -> false)
+    ; r2c_term_ls_r = (match k with Codelet.R2c_term_ls { r } -> r | _ -> 0)
+    ; hc_ranged =
+        (match k with
+         | Codelet.Hc2hc { ranged } | Codelet.Hc2c_nat { ranged } -> ranged
+         | _ -> false)
+    ; hc_ranged_r =
+        (match k with
+         | Codelet.Hc2hc { ranged = true } | Codelet.Hc2c_nat { ranged = true } -> n
+         | _ -> 0)
+    ; hc2c_nat_r = (match k with Codelet.Hc2c_nat _ -> n | _ -> 0)
+    ; hc2c_nat_sstar =
+        (match k with
+         | Codelet.Hc2c_nat _ -> if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2
+         | _ -> 0)
+    ; store_on_compute = !store_on_compute
+    }
+  in
+  ignore cmods;
   let raw, spill_markers, spill_ct =
     if !r2c
     then Dft_r2c.dft_expand_r2c ~sign n, [], None
@@ -1831,6 +1818,7 @@ let run (argv : string array) : unit =
          codelet_zil raw-template branch below. *)
       print_string
         (Codelet_zsplit.emit_codelet
+           ~store_on_compute:!store_on_compute
            ~kind:!zp_kind
            ~radix:n
            ~r0:(if !zp_r0 = 0 then None else Some !zp_r0)
@@ -2009,10 +1997,11 @@ let run (argv : string array) : unit =
        | _ -> ());
       print_string (Codelet_oop.emit_codelet cfg))
     else (
-      Emit_state.current_store_on_compute := !store_on_compute;
+      (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
       print_string
         (Emit_c.emit_codelet
            ~sc
+           ~cfg:ccfg
            ~in_place:!in_place
            ~t1s:!t1s
            ~twidsq:!twidsq

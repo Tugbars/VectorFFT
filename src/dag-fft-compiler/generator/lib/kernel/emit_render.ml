@@ -30,7 +30,8 @@
  * Regalloc(5), Expr(17), Uarch(2), Bb(1).
  * ------------------------------------------------------------------
  *)
-open Emit_state  (* M1: was `include` — Emit_state is no longer re-exported *)
+(* M6.2: `open Emit_state` removed — this module reads NO globals: config
+   arrives as ~cfg (Cfg.t), scratch as ~sc (Scratch.t), both per-emission. *)
 open Algsimp
 open Ir  (* M1: names formerly re-exported through the chain *)
 
@@ -78,6 +79,64 @@ module Scratch = struct
     Buffer.clear sc.il_pending;
     s
 end
+
+(* ── M6.2: the per-emission CONFIG VIEW — the last emit_state cells, now a
+   VALUE that flows FORWARD from the driver/family into the renderers.  The
+   three twiddle cells were the design's flagship BACK-EDGES (a family module
+   writing upstream state so a renderer could read it); [tw] is now simply a
+   field the CALLER sets — codelet_oop passes Tw_perpos/Tw_linear, zsplit
+   passes Tw_zsplit, emit_c passes Tw_default.  Immutable: "this is a
+   decision", per §11.2. *)
+module Cfg = struct
+  type tw_source =
+    | Tw_default
+    | Tw_perpos
+    | Tw_linear of int (* nlegs — the streaming-cursor leg count *)
+    | Tw_zsplit of string (* the [c x VW][s x VW] record offset expr, "" = none *)
+
+  (* projections matching the historical int / string-option read shapes *)
+  let tw_linear_legs = function Tw_linear n -> n | _ -> 0
+  let tw_zsplit_off = function Tw_zsplit off -> Some off | _ -> None
+
+  type t =
+    { r2r : bool
+    ; r2cf : bool
+    ; r2cb : bool
+    ; hc_strided : bool
+    ; n1_oop_strided : bool
+    ; strided_il_in : bool
+    ; strided_il_out : bool
+    ; strided_ilo_nt : bool
+    ; strided_r2c : bool
+    ; strided_r2c_bwd : bool
+    ; ip_il_in : bool
+    ; ip_il_out : bool
+    ; hc2c_natural : bool
+    ; hc2c_natural_bwd : bool
+    ; r2c_term : bool
+    ; r2c_term_rt : bool
+    ; r2c_term_ls : bool
+    ; r2c_term_ls_r : int
+    ; hc_ranged : bool
+    ; hc_ranged_r : int
+    ; hc2c_nat_r : int
+    ; hc2c_nat_sstar : int
+    ; store_on_compute : bool
+    ; tw : tw_source
+    }
+
+  let default =
+    { r2r = false; r2cf = false; r2cb = false; hc_strided = false
+    ; n1_oop_strided = false; strided_il_in = false; strided_il_out = false
+    ; strided_ilo_nt = false; strided_r2c = false; strided_r2c_bwd = false
+    ; ip_il_in = false; ip_il_out = false; hc2c_natural = false
+    ; hc2c_natural_bwd = false; r2c_term = false; r2c_term_rt = false
+    ; r2c_term_ls = false; r2c_term_ls_r = 0; hc_ranged = false
+    ; hc_ranged_r = 0; hc2c_nat_r = 0; hc2c_nat_sstar = 0
+    ; store_on_compute = false; tw = Tw_default
+    }
+end
+
 
 (* === Topological sort of the DAG nodes ===
  *
@@ -249,6 +308,7 @@ let il_in_name ~(sc : Scratch.t) (isa : Isa.t) (j : int) (is_re : bool) : string
 
 let render_load
   ~(sc : Scratch.t)
+  ~(cfg : Cfg.t)
       ~(isa : Isa.t)
       ~(in_place : bool)
       ~(t1s : bool)
@@ -275,7 +335,7 @@ let render_load
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
-      (match !current_tw_zsplit with
+      (match (Cfg.tw_zsplit_off cfg.Cfg.tw) with
        | Some off ->
          (* zsplit record [c×VW][s×VW] in tw_re (tw_im slot dead) — see
             Emit_state.current_tw_zsplit. *)
@@ -286,15 +346,15 @@ let render_load
             then Printf.sprintf "tw_re[%d]" idx
             else Printf.sprintf "tw_re[%s + %d]" off idx)
        | None ->
-      if !current_tw_linear > 0
+      if (Cfg.tw_linear_legs cfg.Cfg.tw) > 0
       then
         (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
              Per quad base = b*NLEGS (each quad consumes NLEGS 4-vectors). *)
         Isa.loadu_pd
           ~mode:sc.ls_mode
           isa
-          (Printf.sprintf "tw_re[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
-      else if !current_tw_perpos
+          (Printf.sprintf "tw_re[b*%d + %d]" (Cfg.tw_linear_legs cfg.Cfg.tw) (j * isa.vec_width))
+      else if (cfg.Cfg.tw = Cfg.Tw_perpos)
       then
         Isa.set1_pd_str
           isa
@@ -307,7 +367,7 @@ let render_load
              are lane-independent and stay unmasked. *)
         Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
     | Expr.Twiddle (j, false) ->
-      (match !current_tw_zsplit with
+      (match (Cfg.tw_zsplit_off cfg.Cfg.tw) with
        | Some off ->
          (* zsplit: the sin half lives at +VW inside the tw_re record. *)
          let idx = (j * 2 * isa.vec_width) + isa.vec_width in
@@ -317,13 +377,13 @@ let render_load
             then Printf.sprintf "tw_re[%d]" idx
             else Printf.sprintf "tw_re[%s + %d]" off idx)
        | None ->
-      if !current_tw_linear > 0
+      if (Cfg.tw_linear_legs cfg.Cfg.tw) > 0
       then
         Isa.loadu_pd
           ~mode:sc.ls_mode
           isa
-          (Printf.sprintf "tw_im[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
-      else if !current_tw_perpos
+          (Printf.sprintf "tw_im[b*%d + %d]" (Cfg.tw_linear_legs cfg.Cfg.tw) (j * isa.vec_width))
+      else if (cfg.Cfg.tw = Cfg.Tw_perpos)
       then
         Isa.set1_pd_str
           isa
@@ -338,7 +398,7 @@ let render_load
       match in_place, is_re with
       | true, true -> "rio_re"
       | true, false -> "rio_im"
-      | false, true -> if !r2r_signature then "in" else "in_re"
+      | false, true -> if cfg.Cfg.r2r then "in" else "in_re"
       | false, false -> "in_im"
     in
     (* For twidsq codelets the OOP path uses a separate input stride `is`
@@ -365,37 +425,37 @@ let render_load
       then "ios"
       else if twidsq
       then "is"
-      else if !r2cf_signature || !r2cb_signature || !hc_strided || !n1_oop_strided
+      else if cfg.Cfg.r2cf || cfg.Cfg.r2cb || cfg.Cfg.hc_strided || cfg.Cfg.n1_oop_strided
       then "is"
       else "K"
     in
     let loop_var =
       if
         twidsq
-        || !r2cf_signature
-        || !r2cb_signature
-        || !hc_strided
-        || !n1_oop_strided
-        || !r2c_term_signature
-        || !r2c_term_laststage
+        || cfg.Cfg.r2cf
+        || cfg.Cfg.r2cb
+        || cfg.Cfg.hc_strided
+        || cfg.Cfg.n1_oop_strided
+        || cfg.Cfg.r2c_term
+        || cfg.Cfg.r2c_term_ls
       then "v"
       else "k"
     in
-    let tw_stride = if in_place then "me" else if !hc_strided then "vl" else "K" in
-    let tw_broadcast = t1s || twidsq || !r2c_term_rt || !r2c_term_laststage in
+    let tw_stride = if in_place then "me" else if cfg.Cfg.hc_strided then "vl" else "K" in
+    let tw_broadcast = t1s || twidsq || cfg.Cfg.r2c_term_rt || cfg.Cfg.r2c_term_ls in
     let render_input_addr j is_re =
       let buf = in_buf is_re in
-      if !r2c_term_laststage
+      if cfg.Cfg.r2c_term_ls
       then (
         (* Input(j) j<r = col k leg j at ink[j*is_leg+v]; Input(r+j) = col m-k leg j
          * at inm[j*is_leg+v]. r is r2c_term_ls_r. *)
-        let r = !r2c_term_ls_r in
+        let r = cfg.Cfg.r2c_term_ls_r in
         let bk = if is_re then "ink_re" else "ink_im" in
         let bm = if is_re then "inm_re" else "inm_im" in
         if j < r
         then Printf.sprintf "%s[%d*is_leg + %s]" bk j loop_var
         else Printf.sprintf "%s[%d*is_leg + %s]" bm (j - r) loop_var)
-      else if !r2c_term_signature
+      else if cfg.Cfg.r2c_term
       then
         (* r2c_term: Input(0)=Z[k] at in_re[v]; Input(1)=Z[m] at in_re[is+v].
          * Two scratch rows, row stride `is`, vectorized over v. *)
@@ -407,19 +467,19 @@ let render_load
         let row = j / twidsq_n in
         let col = j mod twidsq_n in
         Printf.sprintf "%s[%d*%s + %d*V + %s]" buf row stride col loop_var)
-      else if !hc2c_natural_bwd
+      else if cfg.Cfg.hc2c_natural_bwd
       then
         (* c2r natural INITIATOR: read the SPLIT half-spectrum. Slot j<=sstar is
          * a direct row (Rp/Ip + j*isp); j>sstar is a conjugate-mirror row
          * (Rm/Im + (r-1-j)*ism). Exactly the forward terminator's OUTPUT sstar
          * map, but on the INPUT side. *)
-        if j <= !hc2c_nat_sstar
+        if j <= cfg.Cfg.hc2c_nat_sstar
         then Printf.sprintf "%s[%d*isp + %s]" (if is_re then "Rp" else "Ip") j loop_var
         else
           Printf.sprintf
             "%s[%d*ism + %s]"
             (if is_re then "Rm" else "Im")
-            (!hc2c_nat_r - 1 - j)
+            (cfg.Cfg.hc2c_nat_r - 1 - j)
             loop_var
       else (
         (* r2cb (section 62 / c2r cascade): split input strides. The
@@ -427,13 +487,13 @@ let render_load
          * its base, im at NEGATIVE stride from a one-past (+NK) base.
          * A single shared `is` cannot express the sign split. *)
         let stride =
-          if !r2cb_signature then if is_re then "is_re" else "is_im" else stride
+          if cfg.Cfg.r2cb then if is_re then "is_re" else "is_im" else stride
         in
         Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var)
     in
     match r with
-    | Expr.Input (j, true) when !ip_il_in && in_place -> il_in_name ~sc isa j true
-    | Expr.Input (j, false) when !ip_il_in && in_place -> il_in_name ~sc isa j false
+    | Expr.Input (j, true) when cfg.Cfg.ip_il_in && in_place -> il_in_name ~sc isa j true
+    | Expr.Input (j, false) when cfg.Cfg.ip_il_in && in_place -> il_in_name ~sc isa j false
     | Expr.Input (j, true) ->
       Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j true)
     | Expr.Input (j, false) ->
@@ -592,6 +652,7 @@ let render_hoisted_consts ~(sc : Scratch.t) ~(isa : Isa.t) (nodes : t list) : st
 
 let render_node_def_core
   ~(sc : Scratch.t)
+  ~(cfg : Cfg.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -687,7 +748,7 @@ let render_node_def_core
     let body =
       match e.node with
       | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
-      | NK_Load r -> render_load ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
+      | NK_Load r -> render_load ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
       | NK_Neg inner ->
         (* Neg(Const c) is a compile-time constant — emit as a single
          * broadcast of -c rather than a runtime XOR. *)
@@ -1411,6 +1472,7 @@ let provenance_block ~(family : string) (lines : string list) : string =
    own ordering (lazy first-touch). *)
 let render_node_def
   ~(sc : Scratch.t)
+  ~(cfg : Cfg.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -1425,6 +1487,7 @@ let render_node_def
   let core =
     render_node_def_core
       ~sc
+      ~cfg
       ~no_declarator
       ~inline_set
       ~twidsq
