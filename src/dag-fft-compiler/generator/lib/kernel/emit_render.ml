@@ -1462,6 +1462,22 @@ let provenance_env_overrides () : string =
     ; "VFFT_SCHED_WISDOM"
     ; "VFFT_GH_THRESHOLD"
     ; "VFFT_NO_ANYK_TAIL"
+    ; (* M12b: the cil/zsplit + cascade knobs — unset in every baseline
+         run (zero byte impact on the regen), recorded when set so an
+         experimental stamp is distinguishable from stock. *)
+      "VFFT_CX_TANGENT"
+    ; "VFFT_CX_W32TG"
+    ; "VFFT_CX_WING"
+    ; "VFFT_CX_ROTFMA"
+    ; "VFFT_CX_SPILL"
+    ; "VFFT_CX_SCHED"
+    ; "VFFT_CX_CPL_CAP"
+    ; "VFFT_FORCE_REASSOC"
+    ; "VFFT_DUP"
+    ; "VFFT_NO_SUBDEDUP"
+    ; "VFFT_FORCE_FMA_LIFT"
+    ; "VFFT_DISABLE_FMA_LIFT"
+    ; "VFFT_BUTTERFLY_SHARE"
     ]
   in
   let act =
@@ -1487,9 +1503,21 @@ let provenance_block ~(family : string) (lines : string list) : string =
        (String.concat
           " "
           (Array.to_list
-             (match !provenance_argv with
-              | Some a -> a
-              | None -> Sys.argv))));
+             (let a =
+                match !provenance_argv with
+                | Some a -> a
+                | None -> Sys.argv
+              in
+              (* M12b: HERMETIC argv[0] — recorded stamps carried whatever
+                 path the invoking shell (or Gen_main.run's raw argv) used:
+                 123 shipped files held absolute paths, 38 with a username.
+                 The basename is the identity; the path is machine noise.
+                 Normalized on the RESOLVED array — gen_main sets
+                 provenance_argv unconditionally, so a None-arm-only fix
+                 would be dead code. *)
+              let a = Array.copy a in
+              if Array.length a > 0 then a.(0) <- Filename.basename a.(0);
+              a))));
   Buffer.add_string
     b
     (Printf.sprintf " * Env overrides: %s\n" (provenance_env_overrides ()));

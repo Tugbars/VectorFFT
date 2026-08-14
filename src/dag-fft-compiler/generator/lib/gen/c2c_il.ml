@@ -856,6 +856,34 @@ let emit
                 (render_store nisa a (Printf.sprintf "z%d" e.tag))))
         outs);
   let buf = Buffer.create 8192 in
+  (* M12b: the machine-readable regen recipe, IN the artifact — the cil
+     family shipped headerless for its whole life (233 files recovered by
+     derivation in the reproducibility campaign). *)
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:
+         (Printf.sprintf
+            "full-IL (interleaved-complex) %s, radix-%d %s"
+            (kind_name kind)
+            radix
+            (match dir with
+             | Fwd -> "fwd"
+             | Bwd -> "bwd"))
+       [ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ; Printf.sprintf
+           "Form: blocked=%b split=%s turnst=%b turnst_gs=%b pretw=%b log3=%b             tangent=%b"
+           blocked
+           (match split with
+            | Some (a, b) -> Printf.sprintf "%d.%d" a b
+            | None -> "-")
+           turnst
+           turnst_gs
+           pretw
+           log3
+           ctx.tangent
+       ]);
   Buffer.add_string
     buf
     (Printf.sprintf
@@ -1370,6 +1398,21 @@ let emit_k1
           (Printf.sprintf "    %s;\n" (render_store isa ad (Printf.sprintf "z%d" e.tag))))
   done;
   let buf = Buffer.create 32768 in
+  Buffer.add_string
+    buf
+    (Emit_render.provenance_block
+       ~family:
+         (Printf.sprintf
+            "full-IL fused K=1 mono, N=%d (%dx%d four-step, %s)"
+            n
+            n1
+            n2
+            (match dir with
+             | Fwd -> "fwd"
+             | Bwd -> "bwd"))
+       [ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name (vw / 2)
+       ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
+       ]);
   Buffer.add_string
     buf
     (Printf.sprintf
