@@ -20,7 +20,17 @@
 ;   Dft         — c2c twiddle policy + codelet-facing expansion wrappers
 ;                 (include-chained: Dft_select < Dft_recurse < Dft)
 ;   Dft_r2c     — real-to-complex / complex-to-real DFT (Hermitian-symmetric)
+; ── PHYSICAL LAYOUT (owner request 2026-08-14, M9 precursor) ─────────────
+; The library now spans three subdirectories mirroring the target three-
+; library architecture (generator_lib_architecture.md §9):
+;   kernel/  — the feature-blind kernel-to-be (vfft_kernel at M9)
+;   cx/      — the packed-complex compiler   (vfft_cx at M9)
+;   gen/     — families + driver + corpus    (vfft_gen at M9)
+; ONE dune library still — (include_subdirs unqualified) keeps every module
+; name and reference unchanged; M9 converts these folders into enforced
+; library boundaries. New-architecture modules land in their destined home.
+(include_subdirs unqualified)
 (library
  (name vfft_v2)
  (libraries unix)
- (modules layout expr ir simplify fma_passes algsimp cnum split_radix dft_select dft_recurse dft dft_r2c uarch isa schedule annotate regalloc emit_state emit_render emit_c pipeline codelet_oop codelet_zsplit cx_ir cx_sched cx_cpl cx_spill cx_math cx_render cx_pipeline codelet_cil bb coverage gen_main))
+ (modules abi layout expr ir simplify fma_passes algsimp cnum split_radix dft_select dft_recurse dft dft_r2c uarch isa schedule annotate regalloc emit_state emit_render emit_c pipeline codelet_oop codelet_zsplit cx_ir cx_sched cx_cpl cx_spill cx_math cx_render cx_pipeline codelet_cil bb coverage gen_main))
