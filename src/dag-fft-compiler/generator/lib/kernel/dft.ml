@@ -32,7 +32,7 @@
  *)
 
 open Dft_select
-open Dft_recurse  (* M1: was `include` — the chain no longer re-exports *)
+open Dft_recurse (* M1: was `include` — the chain no longer re-exports *)
 open Expr
 
 (* === TWIDDLE POLICY ===

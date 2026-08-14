@@ -3,22 +3,26 @@
    Generated from the inferred signature; trim = later per-module work. *)
 
 type elem_ref =
-    Input of int * bool
+  | Input of int * bool
   | Output of int * bool
   | Twiddle of int * bool
+
 type expr =
-    Const of float
+  | Const of float
   | Load of elem_ref
   | Neg of expr
   | Add of expr * expr
   | Sub of expr * expr
   | Mul of expr * expr
+
 val mk_const : float -> expr
 val mk_neg : expr -> expr
 val mk_mul : expr -> expr -> expr
 val mk_add : expr -> expr -> expr
 val mk_sub : expr -> expr -> expr
+
 type assignment = elem_ref * expr
+
 val string_of_elem_ref : elem_ref -> string
 val string_of_expr_prec : int -> expr -> string
 val string_of_expr : expr -> string

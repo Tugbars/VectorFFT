@@ -33,7 +33,7 @@
 (* M6.2: `open Emit_state` removed — this module reads NO globals: config
    arrives as ~cfg (Cfg.t), scratch as ~sc (Scratch.t), both per-emission. *)
 open Algsimp
-open Ir  (* M1: names formerly re-exported through the chain *)
+open Ir (* M1: names formerly re-exported through the chain *)
 
 (* ── M6.1: the per-emission SCRATCH record (§11.2) — the ~10 genuinely
    mutable short-lived cells, previously process globals with THREE coexisting
@@ -68,16 +68,19 @@ module Scratch = struct
     ; unpin_candidates = None
     ; hoisted_const_tags = Hashtbl.create 64
     }
+  ;;
 
   let il_reset sc =
     Hashtbl.reset sc.il_seen;
     Buffer.clear sc.il_pending;
     sc.il_stash <- None
+  ;;
 
   let il_take_pending sc =
     let s = Buffer.contents sc.il_pending in
     Buffer.clear sc.il_pending;
     s
+  ;;
 end
 
 (* ── M6.2: the per-emission CONFIG VIEW — the last emit_state cells, now a
@@ -95,8 +98,15 @@ module Cfg = struct
     | Tw_zsplit of string (* the [c x VW][s x VW] record offset expr, "" = none *)
 
   (* projections matching the historical int / string-option read shapes *)
-  let tw_linear_legs = function Tw_linear n -> n | _ -> 0
-  let tw_zsplit_off = function Tw_zsplit off -> Some off | _ -> None
+  let tw_linear_legs = function
+    | Tw_linear n -> n
+    | _ -> 0
+  ;;
+
+  let tw_zsplit_off = function
+    | Tw_zsplit off -> Some off
+    | _ -> None
+  ;;
 
   type t =
     { r2r : bool
@@ -126,17 +136,33 @@ module Cfg = struct
     }
 
   let default =
-    { r2r = false; r2cf = false; r2cb = false; hc_strided = false
-    ; n1_oop_strided = false; strided_il_in = false; strided_il_out = false
-    ; strided_ilo_nt = false; strided_r2c = false; strided_r2c_bwd = false
-    ; ip_il_in = false; ip_il_out = false; hc2c_natural = false
-    ; hc2c_natural_bwd = false; r2c_term = false; r2c_term_rt = false
-    ; r2c_term_ls = false; r2c_term_ls_r = 0; hc_ranged = false
-    ; hc_ranged_r = 0; hc2c_nat_r = 0; hc2c_nat_sstar = 0
-    ; store_on_compute = false; tw = Tw_default
+    { r2r = false
+    ; r2cf = false
+    ; r2cb = false
+    ; hc_strided = false
+    ; n1_oop_strided = false
+    ; strided_il_in = false
+    ; strided_il_out = false
+    ; strided_ilo_nt = false
+    ; strided_r2c = false
+    ; strided_r2c_bwd = false
+    ; ip_il_in = false
+    ; ip_il_out = false
+    ; hc2c_natural = false
+    ; hc2c_natural_bwd = false
+    ; r2c_term = false
+    ; r2c_term_rt = false
+    ; r2c_term_ls = false
+    ; r2c_term_ls_r = 0
+    ; hc_ranged = false
+    ; hc_ranged_r = 0
+    ; hc2c_nat_r = 0
+    ; hc2c_nat_sstar = 0
+    ; store_on_compute = false
+    ; tw = Tw_default
     }
+  ;;
 end
-
 
 (* === Topological sort of the DAG nodes ===
  *
@@ -307,8 +333,8 @@ let il_in_name ~(sc : Scratch.t) (isa : Isa.t) (j : int) (is_re : bool) : string
 ;;
 
 let render_load
-  ~(sc : Scratch.t)
-  ~(cfg : Cfg.t)
+      ~(sc : Scratch.t)
+      ~(cfg : Cfg.t)
       ~(isa : Isa.t)
       ~(in_place : bool)
       ~(t1s : bool)
@@ -335,7 +361,7 @@ let render_load
         so load (R-1) scalars with a single broadcast tw_re[j] — no per-batch
         twiddle bandwidth. *)
     | Expr.Twiddle (j, true) ->
-      (match (Cfg.tw_zsplit_off cfg.Cfg.tw) with
+      (match Cfg.tw_zsplit_off cfg.Cfg.tw with
        | Some off ->
          (* zsplit record [c×VW][s×VW] in tw_re (tw_im slot dead) — see
             Emit_state.current_tw_zsplit. *)
@@ -346,28 +372,31 @@ let render_load
             then Printf.sprintf "tw_re[%d]" idx
             else Printf.sprintf "tw_re[%s + %d]" off idx)
        | None ->
-      if (Cfg.tw_linear_legs cfg.Cfg.tw) > 0
-      then
-        (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
+         if Cfg.tw_linear_legs cfg.Cfg.tw > 0
+         then
+           (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
              Per quad base = b*NLEGS (each quad consumes NLEGS 4-vectors). *)
-        Isa.loadu_pd
-          ~mode:sc.ls_mode
-          isa
-          (Printf.sprintf "tw_re[b*%d + %d]" (Cfg.tw_linear_legs cfg.Cfg.tw) (j * isa.vec_width))
-      else if (cfg.Cfg.tw = Cfg.Tw_perpos)
-      then
-        Isa.set1_pd_str
-          isa
-          (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
-      else if t1s
-      then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
-      else
-        (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
+           Isa.loadu_pd
+             ~mode:sc.ls_mode
+             isa
+             (Printf.sprintf
+                "tw_re[b*%d + %d]"
+                (Cfg.tw_linear_legs cfg.Cfg.tw)
+                (j * isa.vec_width))
+         else if cfg.Cfg.tw = Cfg.Tw_perpos
+         then
+           Isa.set1_pd_str
+             isa
+             (Printf.sprintf "tw_re[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
+         else if t1s
+         then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
+         else
+           (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
              in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
              are lane-independent and stay unmasked. *)
-        Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
+           Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
     | Expr.Twiddle (j, false) ->
-      (match (Cfg.tw_zsplit_off cfg.Cfg.tw) with
+      (match Cfg.tw_zsplit_off cfg.Cfg.tw with
        | Some off ->
          (* zsplit: the sin half lives at +VW inside the tw_re record. *)
          let idx = (j * 2 * isa.vec_width) + isa.vec_width in
@@ -377,20 +406,23 @@ let render_load
             then Printf.sprintf "tw_re[%d]" idx
             else Printf.sprintf "tw_re[%s + %d]" off idx)
        | None ->
-      if (Cfg.tw_linear_legs cfg.Cfg.tw) > 0
-      then
-        Isa.loadu_pd
-          ~mode:sc.ls_mode
-          isa
-          (Printf.sprintf "tw_im[b*%d + %d]" (Cfg.tw_linear_legs cfg.Cfg.tw) (j * isa.vec_width))
-      else if (cfg.Cfg.tw = Cfg.Tw_perpos)
-      then
-        Isa.set1_pd_str
-          isa
-          (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
-      else if t1s
-      then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-      else Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
+         if Cfg.tw_linear_legs cfg.Cfg.tw > 0
+         then
+           Isa.loadu_pd
+             ~mode:sc.ls_mode
+             isa
+             (Printf.sprintf
+                "tw_im[b*%d + %d]"
+                (Cfg.tw_linear_legs cfg.Cfg.tw)
+                (j * isa.vec_width))
+         else if cfg.Cfg.tw = Cfg.Tw_perpos
+         then
+           Isa.set1_pd_str
+             isa
+             (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
+         else if t1s
+         then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
+         else Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
     | Expr.Output _ ->
       failwith "render_load: Output ref shouldn't appear as a Load source")
   else (
@@ -493,9 +525,9 @@ let render_load
     in
     match r with
     | Expr.Input (j, true) when cfg.Cfg.ip_il_in && in_place -> il_in_name ~sc isa j true
-    | Expr.Input (j, false) when cfg.Cfg.ip_il_in && in_place -> il_in_name ~sc isa j false
-    | Expr.Input (j, true) ->
-      Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j true)
+    | Expr.Input (j, false) when cfg.Cfg.ip_il_in && in_place ->
+      il_in_name ~sc isa j false
+    | Expr.Input (j, true) -> Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j true)
     | Expr.Input (j, false) ->
       Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j false)
     | Expr.Twiddle (j, true) ->
@@ -651,8 +683,8 @@ let render_hoisted_consts ~(sc : Scratch.t) ~(isa : Isa.t) (nodes : t list) : st
 ;;
 
 let render_node_def_core
-  ~(sc : Scratch.t)
-  ~(cfg : Cfg.t)
+      ~(sc : Scratch.t)
+      ~(cfg : Cfg.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -680,9 +712,7 @@ let render_node_def_core
         match sc.regalloc with
         | None -> default_name ()
         | Some alloc ->
-          (match
-             Hashtbl.find_opt alloc.name_overrides (sc.emit_position, t.tag)
-           with
+          (match Hashtbl.find_opt alloc.name_overrides (sc.emit_position, t.tag) with
            | Some n -> n
            | None -> default_name ()))
     in
@@ -912,7 +942,9 @@ type scheduler =
  * predecessor PLUS 1 if the tag also appears as an output assignment
  * (the store counts as a use).
  *)
-let compute_inline_set ~(sc : Scratch.t) (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
+let compute_inline_set ~(sc : Scratch.t) (assigns : (Expr.elem_ref * t) list)
+  : (int, unit) Hashtbl.t
+  =
   let roots = List.map snd assigns in
   let nodes = topo_sort_reachable roots in
   (* Use count = how many other nodes reference this tag. *)
@@ -1364,7 +1396,7 @@ let classify_passes (sp : spill_info) (nodes : t list)
  * `nodes` is taken as a parameter rather than recomputed so callers that
  * already hold the reachable set don't topo-sort twice. ─ *)
 let filter_inline_set_cross_pass
-  ~(sc : Scratch.t)
+      ~(sc : Scratch.t)
       (assigns : (Expr.elem_ref * t) list)
       (sp : spill_info)
       (nodes : t list)
@@ -1471,8 +1503,8 @@ let provenance_block ~(family : string) (lines : string list) : string =
    lattice statements its expression triggered, placed by the scheduler's
    own ordering (lazy first-touch). *)
 let render_node_def
-  ~(sc : Scratch.t)
-  ~(cfg : Cfg.t)
+      ~(sc : Scratch.t)
+      ~(cfg : Cfg.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -1513,12 +1545,10 @@ let body_preamble ~(sc : Scratch.t) ~isa ~spill ?consts () =
    | Some sp ->
      Buffer.add_string
        b
-       (Printf.sprintf "    %s spill_re[%d];
-" isa.Isa.vec_type sp.num_slots);
+       (Printf.sprintf "    %s spill_re[%d];\n" isa.Isa.vec_type sp.num_slots);
      Buffer.add_string
        b
-       (Printf.sprintf "    %s spill_im[%d];
-" isa.Isa.vec_type sp.num_slots));
+       (Printf.sprintf "    %s spill_im[%d];\n" isa.Isa.vec_type sp.num_slots));
   (match consts with
    | None -> ()
    | Some assigns ->

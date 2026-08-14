@@ -16,59 +16,66 @@
    side, and that remains unconstructible. *)
 
 type plane =
-  | Split      (** two pointers: <p>_re, <p>_im *)
-  | Inter      (** one pointer: <p>_z (pairs re,im); optional silenced twin <p>_unused *)
-  | Inter_sw   (** one pointer, pairs (im,re) — the bwd-swap enabler; prints as Inter *)
-  | Real       (** one REAL-data pointer, bare name <p> (r2c/c2r strided family) *)
+  | Split (** two pointers: <p>_re, <p>_im *)
+  | Inter (** one pointer: <p>_z (pairs re,im); optional silenced twin <p>_unused *)
+  | Inter_sw (** one pointer, pairs (im,re) — the bwd-swap enabler; prints as Inter *)
+  | Real (** one REAL-data pointer, bare name <p> (r2c/c2r strided family) *)
 
 type buffers =
-  | Rio of plane                            (** true in-place: ONE buffer *)
-  | From_z                                  (** in_z -> rio_re, rio_im  (ip_il_in) *)
-  | To_z                                    (** rio_re, rio_im -> out_z (ip_il_out) *)
-  | Oop of { load : plane; store : plane }  (** all 4x4 legal, incl. boundary conversions *)
+  | Rio of plane (** true in-place: ONE buffer *)
+  | From_z (** in_z -> rio_re, rio_im  (ip_il_in) *)
+  | To_z (** rio_re, rio_im -> out_z (ip_il_out) *)
+  | Oop of
+      { load : plane
+      ; store : plane
+      } (** all 4x4 legal, incl. boundary conversions *)
 
 type param = private
-  { ctype : string        (** "const double * " or "double       * " — byte-exact *)
+  { ctype : string (** "const double * " or "double       * " — byte-exact *)
   ; name : string
   ; restrict_ : bool
-  ; silence : bool        (** body must (void) it — the frozen-ABI unused twins *)
+  ; silence : bool (** body must (void) it — the frozen-ABI unused twins *)
   ; comment : string option (** rendered at column 48, e.g. "/* interleaved pairs */" *)
   }
 
+(** THE data-plane constructor.  Total, ONE plane per call; no overload takes
+    two planes, and no other function returns a data-plane [param]. *)
 val pointers
   :  plane
   -> const:bool
   -> prefix:string
-  -> twin:bool                (** add the silenced <p>_unused partner (frozen ABIs) *)
-  -> ?comment:string          (** attached to the plane's FIRST pointer only *)
+  -> twin:bool (** add the silenced <p>_unused partner (frozen ABIs) *)
+  -> ?comment:string (** attached to the plane's FIRST pointer only *)
   -> unit
   -> param list
-(** THE data-plane constructor.  Total, ONE plane per call; no overload takes
-    two planes, and no other function returns a data-plane [param]. *)
 
-val scalar : ctype:string -> name:string -> param
 (** The only other pointer-free constructor; raises [Invalid_argument] unless
     [ctype] is in the closed scalar list (size_t, int, ptrdiff_t, uint32_t,
     double). *)
+val scalar : ctype:string -> name:string -> param
 
-val tw_pair : restrict_:bool -> param list
 (** The twiddle-table pair (tw_re, tw_im) — the third and last legal pointer
     source, distinct from data planes. *)
+val tw_pair : restrict_:bool -> param list
 
-val render : param -> string
 (** One C parameter line, byte-exact to the historical printers:
     ["    const double * __restrict__ in_z,          /* interleaved pairs */\n"] *)
+val render : param -> string
 
-val silencer : param -> string option
 (** ["    (void)in_unused;\n"] for silenced params, [None] otherwise. *)
+val silencer : param -> string option
 
-val buffers_of_oop_bools
-  :  il_in:bool -> il_in_sw:bool -> il_out:bool -> il_out_sw:bool -> buffers
 (** The OOP family's four historical booleans -> one [Oop] value.  Raises
     [Invalid_argument] on il_in && il_in_sw (or the out pair) — the two
     previously UNGUARDED illegal states (§12.1). *)
+val buffers_of_oop_bools
+  :  il_in:bool
+  -> il_in_sw:bool
+  -> il_out:bool
+  -> il_out_sw:bool
+  -> buffers
 
-val ip_buffers_of_bools : il_in:bool -> il_out:bool -> buffers
 (** The in-place pair -> [From_z]/[To_z]/[Rio Split].  Raises
     [Invalid_argument] on both — the banned hybrid combination, previously
     accepted silently and resolved by if/else order in two places. *)
+val ip_buffers_of_bools : il_in:bool -> il_out:bool -> buffers

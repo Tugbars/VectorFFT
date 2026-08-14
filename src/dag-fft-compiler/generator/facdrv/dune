@@ -1,1 +1,3 @@
-(executable (name main) (libraries vfft_gen vfft_kernel vfft_cx))
+(executable
+ (name main)
+ (libraries vfft_gen vfft_kernel vfft_cx))

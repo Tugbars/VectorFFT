@@ -500,8 +500,8 @@ let run (argv : string array) : unit =
     else if arg = "--zp-sched"
     then
       failwith
-        "gen_main: --zp-sched requires a policy argument (legacy | afterdef); \
-         a bare flag must not silently default to a placement"
+        "gen_main: --zp-sched requires a policy argument (legacy | afterdef); a bare \
+         flag must not silently default to a placement"
     else if arg = "--cil-split" && !i + 1 < Array.length arr
     then (
       cil_split := arr.(!i + 1);
@@ -525,8 +525,9 @@ let run (argv : string array) : unit =
     else if arg = "--cil-tangent"
     then cil_tangent := true
     else if arg = "--cil-log3"
-    then cil_log3 := true
-    (* The store-FORM decoupling the pure-IL INVERSE needs: --cil-turnst
+    then
+      cil_log3 := true
+      (* The store-FORM decoupling the pure-IL INVERSE needs: --cil-turnst
        gives a backward T2 the N1T corner-turned store (symbol tag `t`) —
        t2t, THE canonical bwd flat codelet.
        🔴 --cil-pretw (the t2p kind, PRE-twiddle bwd T2) is RETIRED — Tugbars
@@ -539,12 +540,12 @@ let run (argv : string array) : unit =
     else if arg = "--cil-pretw"
     then
       failwith
-        "--cil-pretw (t2p) is RETIRED 2026-07-29 -- t2t is the canonical bwd \
-         semantics tree-wide (see src/core/oop/il2p.h). Deliberate re-enable \
-         only."
+        "--cil-pretw (t2p) is RETIRED 2026-07-29 -- t2t is the canonical bwd semantics \
+         tree-wide (see src/core/oop/il2p.h). Deliberate re-enable only."
     else if arg = "--cil-turnst"
-    then cil_turnst := true
-    (* --cil-turnst-gs: the T2TG kind (symbol tag `tg`) — t2t's turned store
+    then
+      cil_turnst := true
+      (* --cil-turnst-gs: the T2TG kind (symbol tag `tg`) — t2t's turned store
        with the otherwise-(void)'d OGs argument wired as the LEG STRIDE
        ((leg p, col k) -> zout[2*(k*OLs + p*OGs)], every leg scattered as two
        128-bit halves since strided legs are not contiguous). Built for the
@@ -772,7 +773,10 @@ let run (argv : string array) : unit =
     let k = cdesc.Codelet.kind in
     { Emit_render.Cfg.default with
       Emit_render.Cfg.r2r =
-        (match k with Codelet.Trig _ -> true | _ -> false) || !dct2_trigII
+        (match k with
+         | Codelet.Trig _ -> true
+         | _ -> false)
+        || !dct2_trigII
     ; r2cf = k = Codelet.R2cf
     ; r2cb = k = Codelet.R2cb
     ; hc_strided =
@@ -780,12 +784,18 @@ let run (argv : string array) : unit =
          | Codelet.Hc2hc _ | Codelet.Hc2c | Codelet.Hc2c_nat _ -> true
          | _ -> false)
     ; n1_oop_strided = k = Codelet.N1_oop_strided
-    ; strided_il_in = (match k with Codelet.Strided { il = `In } -> true | _ -> false)
+    ; strided_il_in =
+        (match k with
+         | Codelet.Strided { il = `In } -> true
+         | _ -> false)
     ; strided_il_out =
         (match k with
          | Codelet.Strided { il = `Out } | Codelet.Strided { il = `Out_nt } -> true
          | _ -> false)
-    ; strided_ilo_nt = (match k with Codelet.Strided { il = `Out_nt } -> true | _ -> false)
+    ; strided_ilo_nt =
+        (match k with
+         | Codelet.Strided { il = `Out_nt } -> true
+         | _ -> false)
     ; strided_r2c = k = Codelet.Strided_r2c
     ; strided_r2c_bwd = k = Codelet.Strided_r2c && cbwd
     ; ip_il_in =
@@ -795,15 +805,33 @@ let run (argv : string array) : unit =
          | _ -> false)
     ; ip_il_out =
         (match k with
-         | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out }
-           -> true
+         | Codelet.C2c_inplace_su { il = `Out } | Codelet.C2c_inplace_tw { il = `Out } ->
+           true
          | _ -> false)
-    ; hc2c_natural = (match k with Codelet.Hc2c_nat _ -> not cbwd | _ -> false)
-    ; hc2c_natural_bwd = (match k with Codelet.Hc2c_nat _ -> cbwd | _ -> false)
-    ; r2c_term = (match k with Codelet.R2c_term _ -> true | _ -> false)
-    ; r2c_term_rt = (match k with Codelet.R2c_term { rt; _ } -> rt | _ -> false)
-    ; r2c_term_ls = (match k with Codelet.R2c_term_ls _ -> true | _ -> false)
-    ; r2c_term_ls_r = (match k with Codelet.R2c_term_ls { r } -> r | _ -> 0)
+    ; hc2c_natural =
+        (match k with
+         | Codelet.Hc2c_nat _ -> not cbwd
+         | _ -> false)
+    ; hc2c_natural_bwd =
+        (match k with
+         | Codelet.Hc2c_nat _ -> cbwd
+         | _ -> false)
+    ; r2c_term =
+        (match k with
+         | Codelet.R2c_term _ -> true
+         | _ -> false)
+    ; r2c_term_rt =
+        (match k with
+         | Codelet.R2c_term { rt; _ } -> rt
+         | _ -> false)
+    ; r2c_term_ls =
+        (match k with
+         | Codelet.R2c_term_ls _ -> true
+         | _ -> false)
+    ; r2c_term_ls_r =
+        (match k with
+         | Codelet.R2c_term_ls { r } -> r
+         | _ -> 0)
     ; hc_ranged =
         (match k with
          | Codelet.Hc2hc { ranged } | Codelet.Hc2c_nat { ranged } -> ranged
@@ -812,7 +840,10 @@ let run (argv : string array) : unit =
         (match k with
          | Codelet.Hc2hc { ranged = true } | Codelet.Hc2c_nat { ranged = true } -> n
          | _ -> 0)
-    ; hc2c_nat_r = (match k with Codelet.Hc2c_nat _ -> n | _ -> 0)
+    ; hc2c_nat_r =
+        (match k with
+         | Codelet.Hc2c_nat _ -> n
+         | _ -> 0)
     ; hc2c_nat_sstar =
         (match k with
          | Codelet.Hc2c_nat _ -> if n mod 2 = 0 then (n / 2) - 1 else (n - 1) / 2
@@ -986,9 +1017,7 @@ let run (argv : string array) : unit =
         { Pipeline.butterfly_share = true
         ; dup =
             Some
-              { Pipeline.uarch
-              ; barrier_sink = sc.Emit_render.Scratch.dup_barrier_tags
-              }
+              { Pipeline.uarch; barrier_sink = sc.Emit_render.Scratch.dup_barrier_tags }
         }
       ~raw_assigns:raw
       ~spill_markers_raw:spill_markers
@@ -1192,30 +1221,29 @@ let run (argv : string array) : unit =
     if (!cil_kind <> "" || !cil_k1) && (!zp_kind <> "" || !z_native || !k1_mono || !oop)
     then
       failwith
-        "gen_main: --cil-* (interleaved-complex) conflicts with another codelet \
-         family in the same invocation; they emit identical symbol names, so pass \
-         exactly one family per run.";
+        "gen_main: --cil-* (interleaved-complex) conflicts with another codelet family \
+         in the same invocation; they emit identical symbol names, so pass exactly one \
+         family per run.";
     if !zp_kind <> "" && (!z_native || !k1_mono || !oop)
     then
       failwith
         (Printf.sprintf
            "gen_main: --zp-%s (pipeline zsplit) conflicts with a legacy \
-            --z-*/--k1-mono/--oop flag in the same invocation. They emit \
-            identical symbol names; pass exactly one family per run."
+            --z-*/--k1-mono/--oop flag in the same invocation. They emit identical \
+            symbol names; pass exactly one family per run."
            !zp_kind);
     if !zp_sink && !zp_kind = ""
     then
       failwith
-        "gen_main: --zp-sink is a zsplit-pipeline modifier; without a --zp-* \
-         kind it would silently no-op (an A/B script would then time the \
-         UNSUNK kernel under the sunk label), so fail loudly instead.";
+        "gen_main: --zp-sink is a zsplit-pipeline modifier; without a --zp-* kind it \
+         would silently no-op (an A/B script would then time the UNSUNK kernel under the \
+         sunk label), so fail loudly instead.";
     if !zp_sched <> "" && !zp_kind = ""
     then
       failwith
-        "gen_main: --zp-sched is a zsplit-pipeline modifier; without a --zp-* \
-         kind it would silently no-op (the --zp-sink precedent: an A/B script \
-         would then label the pre-B2 emission as the sequence path), so fail \
-         loudly instead.";
+        "gen_main: --zp-sched is a zsplit-pipeline modifier; without a --zp-* kind it \
+         would silently no-op (the --zp-sink precedent: an A/B script would then label \
+         the pre-B2 emission as the sequence path), so fail loudly instead.";
     if !cil_k1
     then (
       (* FUSED full-IL K=1: the whole N-point transform as ONE function,
@@ -1226,8 +1254,8 @@ let run (argv : string array) : unit =
       then
         failwith
           "gen_main: --cil-k1 requires --cil-chain A:B — the fused kernel's \
-           factorization is a planner decision, and this emitter deliberately \
-           has no default (see plans-must-come-from-dp-planner-machinery).";
+           factorization is a planner decision, and this emitter deliberately has no \
+           default (see plans-must-come-from-dp-planner-machinery).";
       (* Syntax: "8.4:8.4" — the colon is the PASS BOUNDARY (the memory plane
          and register turn sit there), and the dot-separated factors on each
          side say how that pass's DFT is itself factored. "32.32" with no colon
@@ -1254,8 +1282,8 @@ let run (argv : string array) : unit =
            | [ a; b ] -> [ a ], [ b ]
            | _ ->
              failwith
-               "gen_main: --cil-chain without a ':' must be exactly two radices \
-                (one per pass); use A:B to factor the passes themselves.")
+               "gen_main: --cil-chain without a ':' must be exactly two radices (one per \
+                pass); use A:B to factor the passes themselves.")
         | _ -> failwith "gen_main: --cil-chain takes at most one ':'"
       in
       let prod = List.fold_left ( * ) 1 (chain_a @ chain_b) in
@@ -1487,7 +1515,10 @@ let run (argv : string array) : unit =
          C2c_split.current_tw_log3 := cdesc.Codelet.mods.Codelet.table = Codelet.Log3;
          C2c_split.current_post_tw := tw = Some Codelet.Post_tw;
          C2c_split.current_oop_strides := strides;
-         C2c_split.current_oop_fuse := (match fuse with None -> 0 | Some v -> v);
+         (C2c_split.current_oop_fuse
+          := match fuse with
+             | None -> 0
+             | Some v -> v);
          C2c_split.current_oop_store_on_compute := store_fused;
          C2c_split.current_oop_il_in := il_in = `Il;
          C2c_split.current_oop_il_out := il_out = `Il;
@@ -1499,12 +1530,16 @@ let run (argv : string array) : unit =
     else (
       (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
       let route_real =
-        ccfg.Emit_render.Cfg.r2cf || ccfg.Emit_render.Cfg.r2cb
-        || ccfg.Emit_render.Cfg.r2c_term || ccfg.Emit_render.Cfg.r2c_term_ls
+        ccfg.Emit_render.Cfg.r2cf
+        || ccfg.Emit_render.Cfg.r2cb
+        || ccfg.Emit_render.Cfg.r2c_term
+        || ccfg.Emit_render.Cfg.r2c_term_ls
         || ccfg.Emit_render.Cfg.hc2c_natural
         || ccfg.Emit_render.Cfg.hc2c_natural_bwd
-        || ccfg.Emit_render.Cfg.hc_strided || ccfg.Emit_render.Cfg.hc_ranged
-        || ccfg.Emit_render.Cfg.r2r || ccfg.Emit_render.Cfg.strided_r2c
+        || ccfg.Emit_render.Cfg.hc_strided
+        || ccfg.Emit_render.Cfg.hc_ranged
+        || ccfg.Emit_render.Cfg.r2r
+        || ccfg.Emit_render.Cfg.strided_r2c
         || ccfg.Emit_render.Cfg.strided_r2c_bwd
       in
       (* M8.3: real-family cells route through Real, which installs the

@@ -51,7 +51,10 @@ let eval_expr (x : (float * float) array) (tw : (float * float) array) (e : expr
 ;;
 
 (* run an assignment list: returns the (re, im) output array *)
-let run_assigns n (x : (float * float) array) (tw : (float * float) array)
+let run_assigns
+      n
+      (x : (float * float) array)
+      (tw : (float * float) array)
       (al : assignment list)
   : (float * float) array
   =
@@ -59,8 +62,8 @@ let run_assigns n (x : (float * float) array) (tw : (float * float) array)
   List.iter
     (fun (r, e) ->
        match r with
-       | Output (k, true) -> out.(k) <- (eval_expr x tw e, snd out.(k))
-       | Output (k, false) -> out.(k) <- (fst out.(k), eval_expr x tw e)
+       | Output (k, true) -> out.(k) <- eval_expr x tw e, snd out.(k)
+       | Output (k, false) -> out.(k) <- fst out.(k), eval_expr x tw e
        | _ -> failwith "run_assigns: non-Output lhs")
     al;
   out
@@ -73,7 +76,7 @@ let direct_fwd n (x : (float * float) array) (w1r, w1i) : (float * float) array 
   and wi = ref 0.0 in
   for l = 0 to n - 1 do
     let ar, ai = x.(l) in
-    xp.(l) <- ((ar *. !wr) -. (ai *. !wi), (ar *. !wi) +. (ai *. !wr));
+    xp.(l) <- (ar *. !wr) -. (ai *. !wi), (ar *. !wi) +. (ai *. !wr);
     let nr = (!wr *. w1r) -. (!wi *. w1i)
     and ni = (!wr *. w1i) +. (!wi *. w1r) in
     wr := nr;
@@ -90,7 +93,7 @@ let direct_fwd n (x : (float * float) array) (w1r, w1i) : (float * float) array 
       sr := !sr +. ((ar *. c) -. (ai *. s));
       si := !si +. ((ar *. s) +. (ai *. c))
     done;
-    (!sr, !si))
+    !sr, !si)
 ;;
 
 let max_err (a : (float * float) array) (b : (float * float) array) : float =
@@ -127,8 +130,8 @@ let check label ok detail =
 let run_radix n =
   Printf.printf "=== R=%d ===\n" n;
   let x = mk_input n in
-  let w1 = (cos w1_angle, sin w1_angle) in
-  let w1c = (cos w1_angle, -.sin w1_angle) in
+  let w1 = cos w1_angle, sin w1_angle in
+  let w1c = cos w1_angle, -.sin w1_angle in
   let tw = [| w1 |] in
   let twc = [| w1c |] in
   let all_ok = ref true in
@@ -145,7 +148,9 @@ let run_radix n =
   let y = run_assigns n x tw fwd in
   let y_ref = direct_fwd n x w1 in
   let e2 = max_err y y_ref in
-  all_ok := check "fwd(TP_PowW1) vs direct DFT" (e2 < 1e-12) (Printf.sprintf "%.3e" e2) && !all_ok;
+  all_ok
+  := check "fwd(TP_PowW1) vs direct DFT" (e2 < 1e-12) (Printf.sprintf "%.3e" e2)
+     && !all_ok;
   (* 3. roundtrip with conj table + table_conj:true *)
   let bwd =
     Dft.dft_expand_twiddled
@@ -163,7 +168,7 @@ let run_radix n =
        (Printf.sprintf "slots=[%s]" (String.concat ";" (List.map string_of_int slots_b)))
      && !all_ok;
   let z = run_assigns n y twc bwd in
-  let scaled = Array.map (fun (r, i) -> (r *. float_of_int n, i *. float_of_int n)) x in
+  let scaled = Array.map (fun (r, i) -> r *. float_of_int n, i *. float_of_int n) x in
   let e3 = max_err z scaled in
   all_ok
   := check "roundtrip bwd(fwd) = N*x (table_conj)" (e3 < 1e-11) (Printf.sprintf "%.3e" e3)

@@ -24,7 +24,7 @@
  * ------------------------------------------------------------------
  *)
 
-open Dft_select  (* M1: was `include` — Dft_select is no longer re-exported *)
+open Dft_select (* M1: was `include` — Dft_select is no longer re-exported *)
 open Expr
 
 (* === COOLEY-TUKEY DIT DECOMPOSITION ===

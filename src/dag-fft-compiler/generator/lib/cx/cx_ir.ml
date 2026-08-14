@@ -78,7 +78,7 @@ type cx_kind =
      zero runtime cost — the whole [c,c,c',c'][-s,+s,-s',+s'] pair is a
      file-scope VLIT, exactly like CTwC's. Array length = vec_width/2. *)
   | CTwL of int * t
-  (* x * w[leg], w LOADED from the streamed VTW2 table — the bailey2 t2
+(* x * w[leg], w LOADED from the streamed VTW2 table — the bailey2 t2
      mid. Same BYTW2 shape as CTwC, but cvec/svec come from the runtime
      cursor `twp` instead of file-scope VLIT constants. The int is the
      LEG index; the record offset is (leg-1)*2*VW because leg 0 is

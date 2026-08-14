@@ -35,7 +35,13 @@ let ceq a b =
   Float.sqrt ((dre *. dre) +. (dim *. dim)) < 1e-15
 ;;
 
-let fail fmt = Printf.ksprintf (fun s -> prerr_endline ("FAIL: " ^ s); exit 1) fmt
+let fail fmt =
+  Printf.ksprintf
+    (fun s ->
+       prerr_endline ("FAIL: " ^ s);
+       exit 1)
+    fmt
+;;
 
 let () =
   reset ();
@@ -47,11 +53,11 @@ let () =
   let o0 = cadd d01 (crot x1) in
   let o1 = cfma 0.75 d10 x0 in
   let o2 = ctw 0.6 0.8 d10 in
-  let assigns = [ Expr.Output (0, true), o0; Expr.Output (1, true), o1; Expr.Output (2, true), o2 ] in
-
+  let assigns =
+    [ Expr.Output (0, true), o0; Expr.Output (1, true), o1; Expr.Output (2, true), o2 ]
+  in
   let rewritten, n = Cx_pipeline.dedup_sub_pairs_cx assigns in
   if n <> 1 then fail "expected exactly 1 mirror rewrite, got %d" n;
-
   (* the mirror must now be CNeg of the SHARED lower-tagged sub *)
   let count_subs, count_negs = ref 0, ref 0 in
   Cx_pipeline.iter_reachable (List.map snd rewritten) (fun e ->
@@ -61,16 +67,15 @@ let () =
     | _ -> ());
   if !count_subs <> 1 then fail "expected 1 shared sub after rewrite, got %d" !count_subs;
   if !count_negs <> 1 then fail "expected 1 neg after rewrite, got %d" !count_negs;
-
   (* numerics preserved exactly (negation is sign-bit-exact) *)
-  let env = [| { Complex.re = 0.8321; im = -1.117 }; { Complex.re = -0.25; im = 2.03 } |] in
+  let env =
+    [| { Complex.re = 0.8321; im = -1.117 }; { Complex.re = -0.25; im = 2.03 } |]
+  in
   List.iter2
     (fun (_, before) (_, after) ->
-       if not (ceq (eval env before) (eval env after))
-       then fail "rewrite changed a value")
+       if not (ceq (eval env before) (eval env after)) then fail "rewrite changed a value")
     assigns
     rewritten;
-
   (* zero-site DAGs must pass through UNTOUCHED (same physical assigns) *)
   reset ();
   let y0 = cin 0
@@ -79,6 +84,6 @@ let () =
   let clean', n0 = Cx_pipeline.dedup_sub_pairs_cx clean in
   if n0 <> 0 then fail "clean DAG reported %d rewrites" n0;
   if not (clean == clean') then fail "clean DAG was rebuilt instead of passed through";
-
-  print_endline "cx_pipeline_test: ALL PASS (mirror rewrite + sharing + numerics + identity path)"
+  print_endline
+    "cx_pipeline_test: ALL PASS (mirror rewrite + sharing + numerics + identity path)"
 ;;

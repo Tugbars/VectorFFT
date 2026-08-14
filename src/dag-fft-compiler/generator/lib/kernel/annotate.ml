@@ -40,7 +40,7 @@
 
 (* M1: `open Algsimp` removed — only Ir's names were used here; the
    dependency on the pass layer was an artifact of the include chain. *)
-open Ir  (* M1: names formerly re-exported through the chain *)
+open Ir (* M1: names formerly re-exported through the chain *)
 
 (* === SCHEDULED ENTRY ===
  *

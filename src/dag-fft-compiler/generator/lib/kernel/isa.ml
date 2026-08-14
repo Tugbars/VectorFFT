@@ -282,9 +282,7 @@ let xor_mask_pd (isa : t) (a : string) (mask : string) : string =
  * Declared once per emitted file by the IL backend's preamble. *)
 let im_mask_decl (isa : t) (name : string) : string =
   let lanes = isa.vec_width / 2 in
-  let body =
-    String.concat ", " (List.init lanes (fun _ -> "0.0, -0.0") |> fun l -> l)
-  in
+  let body = String.concat ", " (List.init lanes (fun _ -> "0.0, -0.0") |> fun l -> l) in
   Printf.sprintf "static const %s %s = { %s };" isa.vec_type name body
 ;;
 

@@ -62,10 +62,12 @@
    Algsimp bare; the historical open-order shadow dance (see the header note
    above) is therefore moot, and topo_sort_reachable is qualified at all 14
    sites anyway. *)
-open Ir  (* M1: names formerly re-exported through the chain *)
+open Ir (* M1: names formerly re-exported through the chain *)
+
 (* M6.2: `open Emit_state` removed — emit_c reads NO globals: config arrives
    as ~cfg, scratch as ~sc, both per-emission from the driver. *)
-open Emit_render  (* M1: was `include`; AFTER `open Algsimp` so the render chain's names keep shadowing Algsimp's (topo_sort_reachable also pre-qualified at all 14 sites) *)
+open Emit_render
+(* M1: was `include`; AFTER `open Algsimp` so the render chain's names keep shadowing Algsimp's (topo_sort_reachable also pre-qualified at all 14 sites) *)
 
 (* M8.3: FAMILY HOOKS — the seam between the shared engine and the
    feature modules (§9: Emit_body serves C2c_split and Real).  Each field
@@ -103,11 +105,12 @@ let no_hooks =
   ; strided_store_il = None
   ; trailer = None
   }
+;;
 
 let emit_codelet
       ?(hooks = no_hooks)
-  ~(sc : Emit_render.Scratch.t)
-  ~(cfg : Emit_render.Cfg.t)
+      ~(sc : Emit_render.Scratch.t)
+      ~(cfg : Emit_render.Cfg.t)
       ?(in_place = false)
       ?(t1s = false)
       ?(twidsq = false)
@@ -580,19 +583,30 @@ let emit_codelet
           "emit_c(strided): --strided-il-in + --strided-il-out is the banned hybrid";
       if (cfg.Cfg.strided_il_in || cfg.Cfg.strided_il_out) && cfg.Cfg.strided_r2c
       then
-        failwith
-          "emit_c(strided): --strided-il-in/out cannot combine with --strided-r2c";
+        failwith "emit_c(strided): --strided-il-in/out cannot combine with --strided-r2c";
       Abi.Strided
         { il =
-            (if cfg.Cfg.strided_il_in then `In else if cfg.Cfg.strided_il_out then `Out else `None)
+            (if cfg.Cfg.strided_il_in
+             then `In
+             else if cfg.Cfg.strided_il_out
+             then `Out
+             else `None)
         ; r2c =
-            (if cfg.Cfg.strided_r2c_bwd then `Bwd else if cfg.Cfg.strided_r2c then `Fwd else `No)
+            (if cfg.Cfg.strided_r2c_bwd
+             then `Bwd
+             else if cfg.Cfg.strided_r2c
+             then `Fwd
+             else `No)
         })
     else if in_place
     then
       Abi.In_place
         { il =
-            (match Layout.ip_buffers_of_bools ~il_in:cfg.Cfg.ip_il_in ~il_out:cfg.Cfg.ip_il_out with
+            (match
+               Layout.ip_buffers_of_bools
+                 ~il_in:cfg.Cfg.ip_il_in
+                 ~il_out:cfg.Cfg.ip_il_out
+             with
              | Layout.From_z -> `In
              | Layout.To_z -> `Out
              | _ -> `None)
@@ -659,11 +673,11 @@ let emit_codelet
         buf
         "    const __m512i _tp_idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);\n";
       (* M8.5: the strided-il index-vector decls moved to C2c_split. *)
-      (match hooks.strided_idx with
-       | Some f -> f buf
-       | None ->
-         if cfg.Cfg.strided_il_out || cfg.Cfg.strided_il_in
-         then failwith "emit_codelet: strided il requires the C2c_split route (M8.5)"));
+      match hooks.strided_idx with
+      | Some f -> f buf
+      | None ->
+        if cfg.Cfg.strided_il_out || cfg.Cfg.strided_il_in
+        then failwith "emit_codelet: strided il requires the C2c_split route (M8.5)");
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n" isa.vec_width);
@@ -704,8 +718,7 @@ let emit_codelet
         match hooks.strided_load with
         | Some f -> f buf
         | None -> failwith "emit_codelet: strided c2r requires the Real route (M8.3)")
-      else
-        Simd.load_transpose_4x4 ~buf ~groups)
+      else Simd.load_transpose_4x4 ~buf ~groups)
     else if isa.vec_width = 8
     then (
       (* AVX-512 8×8 transpose preamble. For each group of 8 consecutive
@@ -734,8 +747,7 @@ let emit_codelet
         match hooks.strided_load with
         | Some f -> f buf
         | None -> failwith "emit_codelet: strided c2r requires the Real route (M8.3)")
-      else
-        Simd.load_transpose_8x8 ~buf ~groups)
+      else Simd.load_transpose_8x8 ~buf ~groups)
     else
       failwith
         (Printf.sprintf
@@ -841,7 +853,8 @@ let emit_codelet
      * boundary baked at generation time. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc2c_natural). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged
+    then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if cfg.Cfg.hc2c_natural_bwd
   then (
@@ -852,7 +865,8 @@ let emit_codelet
      * stride. The forward's 6-pointer ABI, flipped. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc2c_natural_bwd). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged
+    then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if cfg.Cfg.hc_strided
   then (
@@ -862,7 +876,8 @@ let emit_codelet
      * replicate per vl lanes, slot 0 never loaded. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc_strided). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged
+    then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if cfg.Cfg.n1_oop_strided
   then (
@@ -880,20 +895,17 @@ let emit_codelet
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
-      Buffer.add_string buf "    size_t k = 0;
-";
+      Buffer.add_string buf "    size_t k = 0;\n";
       Buffer.add_string
         buf
         (Printf.sprintf
-           "    for (; k + %d <= K; k += %d) {
-"
+           "    for (; k + %d <= K; k += %d) {\n"
            isa.vec_width
            isa.vec_width))
     else
       Buffer.add_string
         buf
-        (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {
-" isa.vec_width))
+        (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n" isa.vec_width))
   else (
     (* M4: signature emission deleted — Abi.signature is the one printer (oop_generic). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
@@ -1406,8 +1418,8 @@ let emit_codelet
              Buffer.add_string
                buf
                (render_node_def
-               ~sc
-               ~cfg
+                  ~sc
+                  ~cfg
                   ~no_declarator
                   ~t1s
                   ~isa
@@ -1935,8 +1947,8 @@ let emit_codelet
              Buffer.add_string
                buf
                (render_node_def
-               ~sc
-               ~cfg
+                  ~sc
+                  ~cfg
                   ~isa
                   ~in_place
                   ~t1s
@@ -2072,7 +2084,16 @@ let emit_codelet
               emit_node_reload_sites buf pos;
               Buffer.add_string
                 buf
-                (render_node_def ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+                (render_node_def
+                   ~sc
+                   ~cfg
+                   ~isa
+                   ~in_place
+                   ~t1s
+                   ~twidsq
+                   ~twidsq_n
+                   ~strided
+                   e);
               Buffer.add_char buf '\n')
            input.scheduled;
          (* End-of-schedule spill/reload emission. force_last_use put
@@ -2155,8 +2176,8 @@ let emit_codelet
                 Buffer.add_string
                   buf
                   (render_node_def
-               ~sc
-               ~cfg
+                     ~sc
+                     ~cfg
                      ~isa
                      ~in_place
                      ~t1s
@@ -2186,8 +2207,8 @@ let emit_codelet
                 Buffer.add_string
                   buf
                   (render_node_def
-               ~sc
-               ~cfg
+                     ~sc
+                     ~cfg
                      ~isa
                      ~in_place
                      ~t1s
@@ -2249,8 +2270,7 @@ let emit_codelet
       match hooks.strided_store with
       | Some f -> f buf
       | None -> failwith "emit_codelet: strided r2c requires the Real route (M8.3)")
-    else
-      Simd.store_transpose_4x4 ~buf ~groups);
+    else Simd.store_transpose_4x4 ~buf ~groups);
   (* Strided postamble: inverse 8×8 transpose + scatter back to matrix
    * (AVX-512 path).
    *
@@ -2277,8 +2297,7 @@ let emit_codelet
       match hooks.strided_store with
       | Some f -> f buf
       | None -> failwith "emit_codelet: strided r2c requires the Real route (M8.3)")
-    else
-      Simd.store_transpose_8x8 ~buf ~groups);
+    else Simd.store_transpose_8x8 ~buf ~groups);
   Buffer.add_string buf "    }\n";
   if anyk_tail
   then (
@@ -2387,53 +2406,56 @@ let emit_codelet
      full corpus (clean, with a sabotage positive-control).  Post-ladder it
      self-checks the buffer's first signature against a fresh Abi render —
      guarding against any future non-Abi signature writer. *)
-  (if Sys.getenv_opt "VFFT_ABI_XCHECK" = Some "1"
-   then (
-     let want =
-       Abi.signature (Abi.make ~symbol:name ~target_attr:isa.target_attr abi_shape)
-     in
-     let text = Buffer.contents buf in
-     let needle = "__attribute__((target" in
-     let nl = String.length needle in
-     let rec find i =
-       if i + nl > String.length text
-       then None
-       else if String.sub text i nl = needle
-       then Some i
-       else find (i + 1)
-     in
-     let got =
-       match find 0 with
-       | None -> None
-       | Some i ->
-         let stop_pat = ")" ^ String.make 1 (Char.chr 10) ^ "{" in
-         let rec fb j =
-           if j + 3 > String.length text
-           then None
-           else if String.sub text j 3 = stop_pat
-           then Some (j + 3)
-           else fb (j + 1)
-         in
-         (match fb i with
-          | None -> None
-          | Some stop ->
-            let stop =
-              if stop < String.length text && text.[stop] = Char.chr 10
-              then stop + 1
-              else stop
-            in
-            Some (String.sub text i (stop - i)))
-     in
-     match got with
-     | Some g when g = want -> ()
-     | Some g ->
-       failwith
-         (Printf.sprintf
-            "VFFT_ABI_XCHECK MISMATCH for %s (non-Abi signature writer?)\n--- buffer ---\n%s--- Abi ---\n%s"
-            name
-            g
-            want)
-     | None -> failwith ("VFFT_ABI_XCHECK: no signature found in output of " ^ name)));
+  if Sys.getenv_opt "VFFT_ABI_XCHECK" = Some "1"
+  then (
+    let want =
+      Abi.signature (Abi.make ~symbol:name ~target_attr:isa.target_attr abi_shape)
+    in
+    let text = Buffer.contents buf in
+    let needle = "__attribute__((target" in
+    let nl = String.length needle in
+    let rec find i =
+      if i + nl > String.length text
+      then None
+      else if String.sub text i nl = needle
+      then Some i
+      else find (i + 1)
+    in
+    let got =
+      match find 0 with
+      | None -> None
+      | Some i ->
+        let stop_pat = ")" ^ String.make 1 (Char.chr 10) ^ "{" in
+        let rec fb j =
+          if j + 3 > String.length text
+          then None
+          else if String.sub text j 3 = stop_pat
+          then Some (j + 3)
+          else fb (j + 1)
+        in
+        (match fb i with
+         | None -> None
+         | Some stop ->
+           let stop =
+             if stop < String.length text && text.[stop] = Char.chr 10
+             then stop + 1
+             else stop
+           in
+           Some (String.sub text i (stop - i)))
+    in
+    match got with
+    | Some g when g = want -> ()
+    | Some g ->
+      failwith
+        (Printf.sprintf
+           "VFFT_ABI_XCHECK MISMATCH for %s (non-Abi signature writer?)\n\
+            --- buffer ---\n\
+            %s--- Abi ---\n\
+            %s"
+           name
+           g
+           want)
+    | None -> failwith ("VFFT_ABI_XCHECK: no signature found in output of " ^ name));
   Buffer.contents buf
 ;;
 

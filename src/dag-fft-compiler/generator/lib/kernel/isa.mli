@@ -2,20 +2,24 @@
    MODULE CARD. ISA record + VALUE intrinsics (all width branches internal) — the model shared module.
    Generated from the inferred signature; trim = later per-module work. *)
 
-type t = {
-  name : string;
-  vec_type : string;
-  vec_width : int;
-  vec_regs : int;
-  intrinsic_prefix : string;
-  target_attr : string;
-  loadu_pd : string;
-  storeu_pd : string;
-  set1_pd : string;
-  maskload_pd : string;
-  maskstore_pd : string;
-}
-type ls_mode = LS_vector | LS_masked of string
+type t =
+  { name : string
+  ; vec_type : string
+  ; vec_width : int
+  ; vec_regs : int
+  ; intrinsic_prefix : string
+  ; target_attr : string
+  ; loadu_pd : string
+  ; storeu_pd : string
+  ; set1_pd : string
+  ; maskload_pd : string
+  ; maskstore_pd : string
+  }
+
+type ls_mode =
+  | LS_vector
+  | LS_masked of string
+
 val avx512 : t
 val avx2 : t
 val scalar : t
