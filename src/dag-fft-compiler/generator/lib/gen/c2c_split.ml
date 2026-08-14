@@ -1217,7 +1217,15 @@ let prepare_butterfly ~(sc : Emit_render.Scratch.t) (c : config) : prepared_body
    *   force/disable_fma_lift   honor env vars same as gen_radix
    *   fuse = 0                 matches gen_main's default fuse ref ─ *)
   Ir.reset ();
-  let reassoc = Dft_select.needs_reassoc c.radix in
+  (* M11b: the VFFT_FORCE_REASSOC override now reaches this route — same
+     triple as the main driver; byte-identical at default env (the policy
+     line is the fallthrough). *)
+  let reassoc =
+    match Sys.getenv_opt "VFFT_FORCE_REASSOC" with
+    | Some "0" -> false
+    | Some "1" -> true
+    | _ -> Dft_select.needs_reassoc c.radix
+  in
   let aggressive =
     match Dft_select.pick_algorithm c.radix with
     | Dft_select.Direct -> true
