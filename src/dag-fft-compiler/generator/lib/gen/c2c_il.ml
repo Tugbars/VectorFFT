@@ -1,4 +1,7 @@
-(* codelet_cil.ml — pipeline-hosted INTERLEAVED-COMPLEX (full-IL) codelets.
+(* c2c_il.ml — M8.4: the C2c_il feature module (§9 #36), renamed from
+ * codelet_cil.ml — content unchanged (a rename by the doc's own pricing:
+ * §9.1 counts C2c_il as a rename, not a decomposition).  Pipeline-hosted
+ * INTERLEAVED-COMPLEX (full-IL) codelets.
  *
  * Full IL is THE mainstream layout, not an alternative: MKL and FFTW both
  * default to interleaved, it is the natural order + the natural K=1 handling
