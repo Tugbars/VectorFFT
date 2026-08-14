@@ -1701,19 +1701,15 @@ let emit_codelet
        ~ninst:1
        dag;
      Buffer.add_string buf "}\n\n";
+     (* M4 phase 3: the driver wrapper's FROZEN z ABI also comes from
+        Abi.z11_signature (the third of the three hand prints). *)
+     Buffer.add_string
+       buf
+       (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr);
      Buffer.add_string
        buf
        (Printf.sprintf
-          "__attribute__((target(\"%s\")))\n\
-           void %s(\n\
-          \    const double * __restrict__ zin,\n\
-          \    const double * __restrict__ zin_unused,\n\
-          \    double       * __restrict__ zout,\n\
-          \    double       * __restrict__ zout_unused,\n\
-          \    const double * tw_re, const double * tw_im,\n\
-          \    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n\
-           {\n\
-          \    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
+          "    (void)zin; (void)zin_unused; (void)zout_unused; (void)tw_im;\n\
           \    (void)OLs; (void)OGs;\n\
           \    double *bp = zout;\n\
           \    const double *twg = tw_re;\n\
@@ -1723,8 +1719,6 @@ let emit_codelet
           \        twg += %d;\n\
           \    }\n\
            }\n"
-          isa.Isa.target_attr
-          fname
           body_name
           radix
           ((radix - 1) * 2 * vw))));

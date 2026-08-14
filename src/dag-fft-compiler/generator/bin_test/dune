@@ -1,3 +1,3 @@
 (executables
- (names m1_test m2_test stage3_test cx_pipeline_test z11probe)
+ (names m1_test m2_test stage3_test cx_pipeline_test z11probe argv_roundtrip)
  (libraries vfft_v2 str))
