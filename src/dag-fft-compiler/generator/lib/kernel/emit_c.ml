@@ -63,6 +63,7 @@ open Emit_state
 open Emit_render  (* M1: was `include`; AFTER `open Algsimp` so the render chain's names keep shadowing Algsimp's (topo_sort_reachable also pre-qualified at all 14 sites) *)
 
 let emit_codelet
+  ~(sc : Emit_render.Scratch.t)
       ?(in_place = false)
       ?(t1s = false)
       ?(twidsq = false)
@@ -243,7 +244,7 @@ let emit_codelet
    *   pin_enabled                  → render_node_def emits pinned form
    *   !pin_enabled && fence_enabled → render_node_def emits fenced form
    *   !pin_enabled && !fence_enabled → render_node_def emits const form *)
-  current_fence_only := fence_enabled && not regalloc_enabled;
+  sc.Scratch.fence_only <- fence_enabled && not regalloc_enabled;
   let install_alloc
         (label : string)
         (scheduled : t list)
@@ -254,13 +255,13 @@ let emit_codelet
     then (
       match Regalloc.allocate ~isa ~scheduled ~inline_set ~force_last_use () with
       | Regalloc.Allocated alloc ->
-        current_regalloc := Some alloc;
-        current_unpin_candidates := Some (compute_unpin_candidates scheduled);
+        sc.Scratch.regalloc <- Some alloc;
+        sc.Scratch.unpin_candidates <- Some (compute_unpin_candidates scheduled);
         let regs, _ = Regalloc.count_bindings alloc in
         Printf.eprintf "[%s:%s] regalloc: %d tags bound\n" name label regs
       | Regalloc.Overflow budget ->
-        current_regalloc := None;
-        current_unpin_candidates := None;
+        sc.Scratch.regalloc <- None;
+        sc.Scratch.unpin_candidates <- None;
         Printf.eprintf
           "[%s:%s] regalloc: OVERFLOW budget=%d, falling back to default\n"
           name
@@ -268,9 +269,9 @@ let emit_codelet
           budget)
   in
   let clear_alloc () =
-    current_regalloc := None;
-    current_unpin_candidates := None;
-    current_fence_only := false
+    sc.Scratch.regalloc <- None;
+    sc.Scratch.unpin_candidates <- None;
+    sc.Scratch.fence_only <- false
   in
   let _ = install_alloc in
   let _ = clear_alloc in
@@ -299,13 +300,13 @@ let emit_codelet
           ()
       with
       | Regalloc.Allocated alloc ->
-        current_regalloc := Some alloc;
-        current_unpin_candidates := Some (compute_unpin_candidates input.scheduled);
+        sc.Scratch.regalloc <- Some alloc;
+        sc.Scratch.unpin_candidates <- Some (compute_unpin_candidates input.scheduled);
         let regs, _ = Regalloc.count_bindings alloc in
         Printf.eprintf "[%s:%s] regalloc: %d tags bound\n" name label regs
       | Regalloc.Overflow budget ->
-        current_regalloc := None;
-        current_unpin_candidates := None;
+        sc.Scratch.regalloc <- None;
+        sc.Scratch.unpin_candidates <- None;
         Printf.eprintf
           "[%s:%s] regalloc: OVERFLOW budget=%d, falling back to default\n"
           name
@@ -314,7 +315,7 @@ let emit_codelet
   in
   let _ = install_alloc_canonical in
   let emit_regalloc_spill_decl (buf : Buffer.t) =
-    match !current_regalloc with
+    match sc.Scratch.regalloc with
     | Some alloc when alloc.num_spill_slots > 0 ->
       Buffer.add_string
         buf
@@ -325,7 +326,7 @@ let emit_codelet
     | _ -> ()
   in
   let emit_node_spill_sites (buf : Buffer.t) (pos : int) =
-    match !current_regalloc with
+    match sc.Scratch.regalloc with
     | Some alloc ->
       (match Hashtbl.find_opt alloc.spill_sites pos with
        | Some spills ->
@@ -343,7 +344,7 @@ let emit_codelet
     | None -> ()
   in
   let emit_node_reload_sites (buf : Buffer.t) (pos : int) =
-    match !current_regalloc with
+    match sc.Scratch.regalloc with
     | Some alloc ->
       (match Hashtbl.find_opt alloc.reload_sites pos with
        | Some reloads ->
@@ -408,7 +409,7 @@ let emit_codelet
    * family (DCT/DST/DHT — signature `(in,out,K)`, loop bound `K`, batched over K,
    * same simple strided in[leg*K+k] -> out[leg*K+k] pattern, no twiddles). The
    * trig family hoists its trig-coefficient consts to function scope (__m256d), so
-   * the tail resets hoisted_const_tags first → the scalar/masked passes re-emit
+   * the tail resets sc.Scratch.hoisted_const_tags first → the scalar/masked passes re-emit
    * the consts inline at the right width (double / __m256d), shadowing the
    * function-scope ones (no-op for the hoist-off c2c tree). *)
   (* Real-FFT cascade families (rfft fwd + c2r bwd): r2cf/r2cb leaves, the hc2hc
@@ -1490,7 +1491,7 @@ let emit_codelet
           "    const __m512i _il_po = _mm512_setr_epi64(4,12,5,13,6,14,7,15);\n";
         Buffer.add_string buf "    (void)_il_pe; (void)_il_po;\n"));
     (* Spill array decl, OUTSIDE the for loop so it's allocated once *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
       (* Hoist k so it stays live for the remainder block after the bulk loop. *)
@@ -1515,7 +1516,7 @@ let emit_codelet
      *   V is the loop bound; vec_width lanes processed per iteration.
      *)
     (* M4: signature emission deleted — Abi.signature is the one printer (twidsq). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ());
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t v = 0; v < V; v += %d) {\n" isa.vec_width))
@@ -1527,7 +1528,7 @@ let emit_codelet
      * purely real so there is no out_im. Same stride/loop shape as r2cf
      * (is input stride, os_re output stride, vl lanes). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2cb_signature). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2cf_signature
   then (
@@ -1538,7 +1539,7 @@ let emit_codelet
      * out_im based one-past the region. P1's stride_n1_fn-shaped v1
      * is withdrawn — composition beats typedef aesthetics. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2cf_signature). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2c_term_laststage
   then (
@@ -1548,7 +1549,7 @@ let emit_codelet
      * strided by is_leg within each column; the two columns are at separate
      * base pointers in_k / in_m (the executor passes the two physical rows). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_laststage). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2c_term_signature
   then (
@@ -1557,14 +1558,14 @@ let emit_codelet
      * sequentially (the executor supplies them in natural order, no scatter).
      * Output(0) -> Xp pair (X[k]); Output(1) -> Xm pair (X[m]). *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_signature). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !hc2c_natural
   then (
     (* D2 natural terminator (section 69): four output pointers,
      * boundary baked at generation time. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !hc2c_natural_bwd
@@ -1575,7 +1576,7 @@ let emit_codelet
      * (out_re/out_im). isp/ism = split input row strides; os = packed output
      * stride. The forward's 6-pointer ABI, flipped. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural_bwd). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !hc_strided
@@ -1585,7 +1586,7 @@ let emit_codelet
      * (slot strides are Q*K-multiples and out != in stride). Twiddles
      * replicate per vl lanes, slot 0 never loaded. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!hc_strided). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
   else if !n1_oop_strided
@@ -1596,12 +1597,12 @@ let emit_codelet
      * executor always passes B, a vec-width multiple). No tw params:
      * n1 DAGs carry no Twiddle refs. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (!n1_oop_strided). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
   else if !r2r_signature
   then (
     (* M4: signature emission deleted — Abi.signature is the one printer (!r2r_signature). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
       Buffer.add_string buf "    size_t k = 0;
@@ -1620,7 +1621,7 @@ let emit_codelet
 " isa.vec_width))
   else (
     (* M4: signature emission deleted — Abi.signature is the one printer (oop_generic). *)
-    Buffer.add_string buf (Emit_render.body_preamble ~isa ~spill ~consts:assigns ());
+    Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n" isa.vec_width));
@@ -1678,7 +1679,7 @@ let emit_codelet
    * that take the tail (so re-rendering is safe and the schedule is computed
    * deterministically each pass — identical order, no re-scheduling hazard). *)
   let emit_body ?(force_mono = false) (isa : Isa.t) () =
-    il_reset ();
+    Scratch.il_reset sc;
     let render_output_addr k is_re =
       if !r2c_term_laststage
       then (* Output(2s) = Xp slot s at Xp[s*osp+v]; Output(2s+1) = Xm slot s. *)
@@ -1733,11 +1734,11 @@ let emit_codelet
        * true, the value_expr is a load intrinsic; we wrap it in the
        * store accordingly. *)
       let value_expr =
-        match !current_regalloc with
+        match sc.Scratch.regalloc with
         | None -> Printf.sprintf "t%d" e.tag
         | Some alloc ->
           (match
-             Hashtbl.find_opt alloc.name_overrides (!current_emit_position, e.tag)
+             Hashtbl.find_opt alloc.name_overrides (sc.Scratch.emit_position, e.tag)
            with
            | Some n -> n
            | None ->
@@ -1758,16 +1759,16 @@ let emit_codelet
           (Printf.sprintf "        out_lane_im_%d = %s;\n" k value_expr)
       | Expr.Output (k, true) when !ip_il_out ->
         (* defer: fused with the adjacent im-store (sink-first pairs) *)
-        il_stash := Some (k, value_expr)
+        sc.Scratch.il_stash <- Some (k, value_expr)
       | Expr.Output (k, false) when !ip_il_out ->
         let vre =
-          match !il_stash with
+          match sc.Scratch.il_stash with
           | Some (k2, vre) when k2 = k -> vre
           | _ -> failwith "ip_il_out: unpaired im store (scheduler contract)"
         in
-        il_stash := None;
+        sc.Scratch.il_stash <- None;
         let ee = Printf.sprintf "%d*ios + k" k in
-        (match isa.vec_width, !current_ls_mode with
+        (match isa.vec_width, sc.Scratch.ls_mode with
          | 1, _ ->
            Buffer.add_string
              buf
@@ -1841,7 +1842,7 @@ let emit_codelet
         Buffer.add_string
           buf
           (Isa.storeu_pd
-             ~mode:!current_ls_mode
+             ~mode:sc.Scratch.ls_mode
              isa
              (render_output_addr k true)
              value_expr);
@@ -1851,7 +1852,7 @@ let emit_codelet
         Buffer.add_string
           buf
           (Isa.storeu_pd
-             ~mode:!current_ls_mode
+             ~mode:sc.Scratch.ls_mode
              isa
              (render_output_addr k false)
              value_expr);
@@ -1884,8 +1885,8 @@ let emit_codelet
        * it has exactly one consumer (compute_inline_set), is not a
        * Load/Const/Cmul, is NOT spilled, and has all consumers in the
        * SAME pass as the producer. Single source of truth shared with
-       * codelet_oop: filter_inline_set_cross_pass (section 37). *)
-      let inline_set = filter_inline_set_cross_pass assigns sp nodes in
+       * codelet_oop: filter_inline_set_cross_pass ~sc (section 37). *)
+      let inline_set = filter_inline_set_cross_pass ~sc assigns sp nodes in
       let is_inlined e = Hashtbl.mem inline_set e.tag in
       (* Constants are leaves (no predecessors) shared across passes via
        * hash-consing — a single NK_Const node may be referenced by both
@@ -1954,7 +1955,7 @@ let emit_codelet
         (fun e ->
            Buffer.add_string
              buf
-             (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+             (render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
            Buffer.add_char buf '\n')
         const_nodes;
       Buffer.add_char buf '\n';
@@ -2062,7 +2063,7 @@ let emit_codelet
       (* M5: declare the regalloc_spill[] scratch array if M5 spilling
        * is active for this pass. The array is pass-local — its slots
        * are only referenced between defs and uses within this pass. *)
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc when alloc.num_spill_slots > 0 ->
          Buffer.add_string
            buf
@@ -2073,7 +2074,7 @@ let emit_codelet
        | _ -> ());
       List.iteri
         (fun pos e ->
-           current_emit_position := pos;
+           sc.Scratch.emit_position <- pos;
            (* M5: emit spill stores for any tags evicted at this position.
             * The eviction was decided by the allocator (pool empty); the
             * store happens BEFORE the new def overwrites the register.
@@ -2083,7 +2084,7 @@ let emit_codelet
             * evicted at p AND T has force_last_use[T] = p), the spill
             * writes T's value to slot S; the reload then reads S. If we
             * reloaded first, the slot would be uninitialized. *)
-           (match !current_regalloc with
+           (match sc.Scratch.regalloc with
             | Some alloc ->
               (match Hashtbl.find_opt alloc.spill_sites pos with
                | Some spills ->
@@ -2102,7 +2103,7 @@ let emit_codelet
            (* M5: emit any reload declarations for this position before the
             * node's own def. Each reload is a fresh register-pinned load
             * from regalloc_spill[slot] into a shadow variable tT_rK. *)
-           (match !current_regalloc with
+           (match sc.Scratch.regalloc with
             | Some alloc ->
               (match Hashtbl.find_opt alloc.reload_sites pos with
                | Some reloads ->
@@ -2130,6 +2131,7 @@ let emit_codelet
              Buffer.add_string
                buf
                (render_node_def
+               ~sc
                   ~no_declarator
                   ~t1s
                   ~isa
@@ -2171,9 +2173,9 @@ let emit_codelet
        * pass1_n (one past last). Reloads registered there. Set
        * current_emit_position so emit_store sees the right overrides. *)
       let pass1_n = List.length pass1_blocked in
-      current_emit_position := pass1_n;
+      sc.Scratch.emit_position <- pass1_n;
       (* M5: spill stores BEFORE reload loads at end-of-pass. *)
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc ->
          (match Hashtbl.find_opt alloc.spill_sites pass1_n with
           | Some spills ->
@@ -2189,7 +2191,7 @@ let emit_codelet
               spills
           | None -> ())
        | None -> ());
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc ->
          (match Hashtbl.find_opt alloc.reload_sites pass1_n with
           | Some reloads ->
@@ -2504,7 +2506,7 @@ let emit_codelet
        * array decl with the correct size. (Earlier I tried emitting this
        * at the top of the pass 2 block, but at that point current_regalloc
        * still held pass 1's allocation, leading to a too-small array.) *)
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc when alloc.num_spill_slots > 0 ->
          Buffer.add_string
            buf
@@ -2606,10 +2608,10 @@ let emit_codelet
       in
       List.iteri
         (fun pos e ->
-           current_emit_position := pos;
+           sc.Scratch.emit_position <- pos;
            (* M5: emit spill stores BEFORE reload loads. See pass 1 for
             * the reasoning (same-position spill+reload sequencing). *)
-           (match !current_regalloc with
+           (match sc.Scratch.regalloc with
             | Some alloc ->
               (match Hashtbl.find_opt alloc.spill_sites pos with
                | Some spills ->
@@ -2626,7 +2628,7 @@ let emit_codelet
                | None -> ())
             | None -> ());
            (* M5: emit reload declarations for this position. *)
-           (match !current_regalloc with
+           (match sc.Scratch.regalloc with
             | Some alloc ->
               (match Hashtbl.find_opt alloc.reload_sites pos with
                | Some reloads ->
@@ -2657,6 +2659,7 @@ let emit_codelet
              Buffer.add_string
                buf
                (render_node_def
+               ~sc
                   ~isa
                   ~in_place
                   ~t1s
@@ -2704,12 +2707,12 @@ let emit_codelet
        * at this virtual position (for spilled output tags in the last
        * cluster or unclustered). *)
       let final_pos = List.length pass2_ordered in
-      current_emit_position := final_pos;
+      sc.Scratch.emit_position <- final_pos;
       (* M5: emit spill stores for any tags evicted AT the final
        * position (i.e., during Step 3's fixed-point or post-iter
        * cascade). These must precede the reload loads so the slot
        * is initialized first. *)
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc ->
          (match Hashtbl.find_opt alloc.spill_sites final_pos with
           | Some spills ->
@@ -2725,7 +2728,7 @@ let emit_codelet
               spills
           | None -> ())
        | None -> ());
-      (match !current_regalloc with
+      (match sc.Scratch.regalloc with
        | Some alloc ->
          (match Hashtbl.find_opt alloc.reload_sites final_pos with
           | Some reloads ->
@@ -2787,12 +2790,12 @@ let emit_codelet
          emit_regalloc_spill_decl buf;
          List.iteri
            (fun pos e ->
-              current_emit_position := pos;
+              sc.Scratch.emit_position <- pos;
               emit_node_spill_sites buf pos;
               emit_node_reload_sites buf pos;
               Buffer.add_string
                 buf
-                (render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+                (render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
               Buffer.add_char buf '\n')
            input.scheduled;
          (* End-of-schedule spill/reload emission. force_last_use put
@@ -2800,7 +2803,7 @@ let emit_codelet
           * allocator may have spill/reload sites at that position.
           * Mirrors the cluster-spill recipe's pass1_n handling. *)
          let n = List.length input.scheduled in
-         current_emit_position := n;
+         sc.Scratch.emit_position <- n;
          emit_node_spill_sites buf n;
          emit_node_reload_sites buf n;
          Buffer.add_char buf '\n';
@@ -2819,7 +2822,7 @@ let emit_codelet
            @ List.map (fun (lhs, e) -> Some lhs, e) assigns
          in
          let render_intermediate e =
-           render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
+           render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
          in
          let render_store oref e =
            let buf2 = Buffer.create 128 in
@@ -2851,7 +2854,7 @@ let emit_codelet
           * the position-space ambiguity that broke M7. *)
          let scheduled_raw = Schedule.su_schedule uarch assigns in
          record_peak_live "su_s1" (List.map snd scheduled_raw);
-         let inline_set = compute_inline_set assigns in
+         let inline_set = compute_inline_set ~sc assigns in
          let input =
            Regalloc.prepare_for_simple_codelet_from_oref
              ~raw_scheduled:scheduled_raw
@@ -2865,7 +2868,7 @@ let emit_codelet
          let is_inlined e = Hashtbl.mem inline_set e.tag in
          List.iteri
            (fun pos (e : t) ->
-              current_emit_position := pos;
+              sc.Scratch.emit_position <- pos;
               emit_node_spill_sites buf pos;
               emit_node_reload_sites buf pos;
               (* Skip emission for inlined values — their consumer will inline. *)
@@ -2875,6 +2878,7 @@ let emit_codelet
                 Buffer.add_string
                   buf
                   (render_node_def
+               ~sc
                      ~isa
                      ~in_place
                      ~t1s
@@ -2887,7 +2891,7 @@ let emit_codelet
            input.scheduled;
          (* End-of-schedule spill/reload emission. *)
          let n = List.length input.scheduled in
-         current_emit_position := n;
+         sc.Scratch.emit_position <- n;
          emit_node_spill_sites buf n;
          emit_node_reload_sites buf n;
          Buffer.add_char buf '\n';
@@ -2904,6 +2908,7 @@ let emit_codelet
                 Buffer.add_string
                   buf
                   (render_node_def
+               ~sc
                      ~isa
                      ~in_place
                      ~t1s
@@ -2934,7 +2939,7 @@ let emit_codelet
              scheduled
          in
          let render_intermediate e =
-           render_node_def ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
+           render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
          in
          let render_store oref e =
            let buf2 = Buffer.create 128 in
@@ -3773,14 +3778,14 @@ let emit_codelet
     (* Hoisted trig consts are at function scope (__m256d); clear the skip-set so the
      * scalar (double) and masked (__m256d) tail passes re-emit them inline at the
      * right width, shadowing the function-scope ones. No-op for the hoist-off c2c
-     * tree (hoisted_const_tags already empty there). *)
-    Hashtbl.reset hoisted_const_tags;
+     * tree (sc.Scratch.hoisted_const_tags already empty there). *)
+    Hashtbl.reset sc.Scratch.hoisted_const_tags;
     Buffer.add_string buf (Printf.sprintf "    if (%s < %s) {\n" tail_var tail_bound);
     Buffer.add_string
       buf
       (Printf.sprintf "        const size_t rem = %s - %s;\n" tail_bound tail_var);
     Buffer.add_string buf "        if (rem == 1) {\n";
-    current_ls_mode := Isa.LS_vector;
+    sc.Scratch.ls_mode <- Isa.LS_vector;
     emit_body ~force_mono:true Isa.scalar ();
     Buffer.add_string buf "        } else {\n";
     if isa.vec_width = 8
@@ -3791,9 +3796,9 @@ let emit_codelet
       Buffer.add_string
         buf
         "            const __mmask8 _m = (__mmask8)((1u << rem) - 1u);\n";
-      current_ls_mode := Isa.LS_masked "_m";
+      sc.Scratch.ls_mode <- Isa.LS_masked "_m";
       emit_body isa ();
-      current_ls_mode := Isa.LS_vector)
+      sc.Scratch.ls_mode <- Isa.LS_vector)
     else (
       (* avx2 SSE2 remainder: width-2 unmasked loop over the rem lanes + a scalar STORE
        * for an odd straggler. Robustly beats masked vmaskmov at BOTH rem=2 (~-35%) and
@@ -3803,7 +3808,7 @@ let emit_codelet
        * monolithically (force_mono) so composite codelets don't reference the __m256d
        * spill at width 2. The straggler MUST be scalar (a 2-wide _mm_storeu_pd would
        * write one lane past `bound`). *)
-      current_ls_mode := Isa.LS_vector;
+      sc.Scratch.ls_mode <- Isa.LS_vector;
       Buffer.add_string
         buf
         (Printf.sprintf
@@ -3811,13 +3816,13 @@ let emit_codelet
            tail_var
            tail_bound
            tail_var);
-      Hashtbl.reset hoisted_const_tags;
+      Hashtbl.reset sc.Scratch.hoisted_const_tags;
       emit_body ~force_mono:true Isa.sse2 ();
       Buffer.add_string buf "            }\n";
       Buffer.add_string
         buf
         (Printf.sprintf "            if (%s < %s) {\n" tail_var tail_bound);
-      Hashtbl.reset hoisted_const_tags;
+      Hashtbl.reset sc.Scratch.hoisted_const_tags;
       emit_body ~force_mono:true Isa.scalar ();
       Buffer.add_string buf "            }\n");
     Buffer.add_string buf "        }\n";
