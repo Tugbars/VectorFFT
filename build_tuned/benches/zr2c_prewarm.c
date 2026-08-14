@@ -6,11 +6,17 @@
  * oop_wisdom.txt (kind 5). Correctness is zr2c_fd_gate.c's job — this only
  * populates verdicts, so big N stays cheap (no O(N^2) reference).
  *
- * Run PINNED per the measurement protocol (core 2, HIGH):
- *   powershell: $p = Start-Process .\benches\zr2c_prewarm.exe -PassThru \
- *               -NoNewWindow; $p.ProcessorAffinity=0x4; $p.PriorityClass='High'
- * Cells already banked replay instantly (rerun-safe); use
- * VFFT_ZRACE_VERBOSE=1 to watch the races.
+ * Run PINNED per the measurement protocol (core 2, HIGH), with output
+ * REDIRECTED TO FILES — never .NET pipes + ReadToEnd (VFFT_ZRACE_VERBOSE
+ * fills the 4 KB stderr pipe and deadlocks both processes; hit 2026-08-13):
+ *   powershell: $p = Start-Process .\benches\zr2c_prewarm.exe -PassThru `
+ *     -NoNewWindow -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+ *   Start-Sleep -m 80; $p.ProcessorAffinity=0x4; $p.PriorityClass='High'
+ * (needs C:\mingw152\mingw64\bin on PATH for the runtime DLLs under
+ * PowerShell). Cells already banked replay instantly (rerun-safe); the
+ * process AUTOSAVES per bank, so a killed run keeps its progress. Quiet-day
+ * re-race = delete the kind-5 lines (PowerShell, never Git-Bash sed — CRLF)
+ * and rerun; note N=510 is banked by zr2c_fd_gate.c, not this cell list.
  *
  * Build (from build_tuned/): python build.py --src benches/zr2c_prewarm.c \
  *   --vfft --compile   (run it pinned yourself; build.py's [run] is unpinned)
