@@ -44,12 +44,7 @@ let sqh = 0.70710678118654752440
    R16 leaf �'17%, pure-tangent N=256 �'20…�'24%, N=512 �'14…�'17%.
    ⚠ L1-conditional: at N=1024 the HAND kernels invert (+16%) - the win is
    scoped ≤512-class until blocked-tangent forms are raced. *)
-let tangent =
-  ref
-    (match Sys.getenv_opt "VFFT_CX_TANGENT" with
-     | Some "1" -> true
-     | _ -> false)
-;;
+(* M12a: tangent/w32_combine/wing_enabled live in Cx_ir.ctx now. *)
 
 (* ~sign: `Fwd = e^{-2πik/n} (the analysis transform), `Bwd = e^{+2πik/n}
    (the UNNORMALIZED inverse - no 1/N, matching the rest of the library:
@@ -66,7 +61,8 @@ let tangent =
    CLASS selection lives here so the monolithic recursion and the BLOCKED
    construction below share exactly one copy of it - they must agree, or the
    two forms would not be numerically interchangeable. *)
-let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok : t)
+let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) ~(ctx : ctx)
+      (ek : t) (ok : t)
   : t * t
   =
   let pi = 4.0 *. atan 1.0 in
@@ -80,7 +76,7 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
     cadd ek t, csub ek t)
   else if 8 * k = n
   then
-    if !tangent
+    if ctx.tangent
     then (
       (* tangent form of the same fold: the shear x·(1 + sgn·i) as a
          unit-cosine CTwC (2 uops via the c=1 render peephole - no xor)
@@ -94,7 +90,7 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
       cfma sqh x ek, cfnma sqh x ek)
   else if 8 * k = 3 * n
   then
-    if !tangent
+    if ctx.tangent
     then (
       (* w = (-1 + sgn·i)/√2 = -√½·(o·(1 - sgn·i)): CONJUGATE shear (2
          uops), minus sign absorbed by swapping the butterfly opcodes. *)
@@ -104,7 +100,7 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
       (* w = (-1 + sgn·i)/√2 = √½·(rot(o) - o) *)
       let x = csub (rot ok) ok in
       cfma sqh x ek, cfnma sqh x ek)
-  else if !tangent
+  else if ctx.tangent
   then (
     (* w = e^{sgn·iθ} = cosθ·(1 + sgn·i·tanθ), θ = 2πk/n.
        shear = ok + tanθ·rot(ok)   - one fma; |shear| = |ok|/|cosθ|, a pure
@@ -151,9 +147,6 @@ let butterfly_pair ~(sign : [ `Fwd | `Bwd ]) ~(n : int) ~(k : int) (ek : t) (ok 
    hand kernel's idiom, zero xors in pass B). oe = 4 uses exact (1, √½).
    Default OFF: without the knob the blocked combine keeps butterfly_pair
    and every existing emission is byte-identical. *)
-let w32_combine =
-  ref (Sys.getenv_opt "VFFT_CX_W32TG" = Some "1")
-;;
 
 let butterfly_pair_w32 ~(k : int) (ek : t) (ok : t) : t * t =
   let pi = 4.0 *. atan 1.0 in
@@ -202,9 +195,6 @@ let unwrap_legs (who : string) (out : t option array) : t array =
 
 (* Wing knob: VFFT_CX_WING=1 swaps the n=16 FWD tangent interior for the
    machine-translated origin construction below (dft_cx16_wing). *)
-let wing_enabled =
-  ref (Sys.getenv_opt "VFFT_CX_WING" = Some "1")
-;;
 
 (* dft_cx16_wing - the origin W-16 interior construction, machine-
  * translated from the validated dataflow (w16_to_cxml.py; self-gated
@@ -420,18 +410,18 @@ let dft_cx16_wing_t2 () : t array =
   [| w97; w109; w67; w89; w96; w83; w66; w107; w95; w105; w69; w87; w99; w85; w71; w106 |]
 ;;
 
-let rec dft_cx ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+let rec dft_cx ?(sign = `Fwd) ~(ctx : ctx) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
-  else if n = 16 && sign = `Fwd && !tangent && !wing_enabled
+  else if n = 16 && sign = `Fwd && ctx.tangent && ctx.wing_enabled
   then dft_cx16_wing xs
   else (
     let h = n / 2 in
-    let e = dft_cx ~sign h (Array.init h (fun i -> xs.(2 * i)))
-    and o = dft_cx ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
+    let e = dft_cx ~sign ~ctx h (Array.init h (fun i -> xs.(2 * i)))
+    and o = dft_cx ~sign ~ctx h (Array.init h (fun i -> xs.((2 * i) + 1))) in
     let out = Array.make n None in
     for k = 0 to h - 1 do
-      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      let a, b = butterfly_pair ~sign ~n ~k ~ctx e.(k) o.(k) in
       out.(k) <- Some a;
       out.(k + h) <- Some b
     done;
@@ -560,20 +550,20 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
    (byte-identity preserved). Unlocks the 2-stage IL pairs at 4·odd² N
    (100 = 10x10, 36 = 6x6) and even-composite chain mids (200 = 4·(5·10)),
    per Tugbars 2026-07-29. *)
-let rec dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
+let rec dft_small ?(sign = `Fwd) ~(ctx : ctx) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
   else if n land (n - 1) = 0
-  then dft_cx ~sign n xs
+  then dft_cx ~sign ~ctx n xs
   else if n mod 2 = 1
   then dft_cx_odd ~sign n xs
   else (
     let h = n / 2 in
-    let e = dft_small ~sign h (Array.init h (fun i -> xs.(2 * i)))
-    and o = dft_small ~sign h (Array.init h (fun i -> xs.((2 * i) + 1))) in
+    let e = dft_small ~sign ~ctx h (Array.init h (fun i -> xs.(2 * i)))
+    and o = dft_small ~sign ~ctx h (Array.init h (fun i -> xs.((2 * i) + 1))) in
     let out = Array.make n None in
     for k = 0 to h - 1 do
-      let a, b = butterfly_pair ~sign ~n ~k e.(k) o.(k) in
+      let a, b = butterfly_pair ~sign ~n ~k ~ctx e.(k) o.(k) in
       out.(k) <- Some a;
       out.(k + h) <- Some b
     done;
@@ -596,7 +586,7 @@ let rec dft_small ?(sign = `Fwd) (n : int) (xs : t array) : t array =
      X[k2*r0 + k1] = DFT_n2 over j2 of ( DFT_r0(column j2)[k1] * w_N^{j2*k1} )
    so the output lands transposed at k2*r0 + k1, which is why the caller's
    store index is (k2 * n1 + k1) and no output permutation is ever needed. *)
-let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(chain : int list) (xs : t array)
+let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(ctx : ctx) ~(chain : int list) (xs : t array)
   : t array
   =
   let n = Array.length xs in
@@ -609,14 +599,14 @@ let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(chain : int list) (xs : t array)
          n
          prod);
   match chain with
-  | [] | [ _ ] -> dft_cx ~sign n xs
+  | [] | [ _ ] -> dft_cx ~sign ~ctx n xs
   | r0 :: rest ->
     let n2 = n / r0 in
     let sgn = if sign = `Fwd then -1.0 else 1.0 in
     let pi = 4.0 *. atan 1.0 in
     let cols =
       Array.init n2 (fun j2 ->
-        dft_cx ~sign r0 (Array.init r0 (fun j1 -> xs.((j1 * n2) + j2))))
+        dft_cx ~sign ~ctx r0 (Array.init r0 (fun j1 -> xs.((j1 * n2) + j2))))
     in
     let out = Array.make n xs.(0) in
     for k1 = 0 to r0 - 1 do
@@ -629,7 +619,7 @@ let rec dft_chain ~(sign : [ `Fwd | `Bwd ]) ~(chain : int list) (xs : t array)
             let a = sgn *. 2.0 *. pi *. float_of_int (k1 * j2) /. float_of_int n in
             ctw (cos a) (sin a) v))
       in
-      let r = dft_chain ~sign ~chain:rest row in
+      let r = dft_chain ~sign ~ctx ~chain:rest row in
       for k2 = 0 to n2 - 1 do
         out.((k2 * r0) + k1) <- r.(k2)
       done

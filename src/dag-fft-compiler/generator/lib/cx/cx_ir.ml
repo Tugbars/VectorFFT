@@ -93,58 +93,46 @@ and t =
 (* Hash-consing: structural equality becomes tag equality, which is what
  * gives us CSE for free (the shared ±i rotations and repeated subsums in a
  * radix-8 body dedup automatically). Mirrors Ir.hashcons. *)
-(* Twiddle-sourcing policy for the streamed VTW2 table, consulted by the
-   CTwL renderer. A ref rather than a threaded parameter because it is
-   emission state, not IR state — the DAG is identical either way; only how
-   each leg's record is OBTAINED changes. Default false keeps every existing
-   kernel byte-identical. *)
-let tw_log3 = ref false
+(* ── M12a: THE PER-EMISSION CONTEXT ──
+   The five emission-POLICY cells that lived here as module refs (tw_log3,
+   tw_pre, st_turn, st_turn_gs, mono_spill_slots) plus the cx_math/
+   cx_render env knobs are now ONE record, created per emission by the
+   driver (C2c_il.emit / emit_k1) and threaded to the readers.  The old
+   refs were set by the driver and NEVER reset — harmless in one-shot
+   gen_radix, a leak the moment cil enters the warm gen_set process (the
+   M12a precondition for the corpus entry).  Field semantics unchanged:
+   tw_log3 = VTW2 sourcing for the CTwL renderer; tw_pre = pre-twiddle on
+   a backward T2 (T2P); st_turn = corner-turned store (T2T); st_turn_gs =
+   leg-strided turned store (T2TG, implies st_turn); mono_spill_slots =
+   Belady S[] slots for the current MONO codelet (mutable — set mid-
+   emission once the spill plan exists).  tangent / w32_combine /
+   wing_enabled / rotfma capture their VFFT_CX_* envs at ctx creation
+   (the kernel Knobs snapshot intent; tangent also ORs the --cil-tangent
+   CLI flag the driver passes). *)
+type ctx =
+  { tw_log3 : bool
+  ; tw_pre : bool
+  ; st_turn : bool
+  ; st_turn_gs : bool
+  ; mutable mono_spill_slots : int
+  ; tangent : bool
+  ; w32_combine : bool
+  ; wing_enabled : bool
+  ; rotfma : bool
+  }
 
-(* PRE-TWIDDLE ON A BACKWARD T2 (the "T2P" kind).
-   Twiddle POSITION is normally derived from DIRECTION: forward pre-twiddles
-   (w . x, then DFT), backward post-twiddles (IDFT, then conj(w) . y). Those
-   are the only two combinations the emitter could express.
-
-   The pure-IL two-pass INVERSE needs the third: PRE-twiddle with a BACKWARD
-   butterfly. Without it the diagonal has to run as a separate scalar sweep
-   over the whole scratch plane, which measures 26-56% of the backward's total
-   time (build_tuned/benches/il2p_bwd_gate.c). Fusing it here does not remove
-   the multiply -- it removes the extra read+write of the plane and does the
-   arithmetic in-register, vectorized.
-
-   Position and direction are INDEPENDENT properties of the kernel; tying them
-   to `dir` was the accident. Default false keeps every existing kernel
-   byte-identical. *)
-let tw_pre = ref false
-
-(* CORNER-TURNED STORE ON A T2 (the "T2T" kind).
-   Store FORM is normally derived from KIND: N1/T2 store leg-major (straight),
-   N1T fuses the four-step transpose into its stores. Like twiddle position,
-   that coupling is an accident — the two are independent.
-
-   The pure-IL inverse decomposition (transform R1 first, then R2) needs
-   a kernel that carries the twiddle AND turns on store — t2t, THE canonical
-   backward flat codelet. Default false keeps every existing kernel
-   byte-identical. *)
-let st_turn = ref false
-
-(* LEG-STRIDED TURNED STORE (the "T2TG" kind, symbol tag `g`).
-   The plain turned store hard-codes legs at stride 1: (leg p, col k) ->
-   zout[2*(k*OLs + p)]. The 3-STAGE odd-chain BACKWARD (docs/roadmap/
-   il_odd_chain.md) needs its middle stage to interleave leg groups from
-   DIFFERENT calls: the clean l' = e + A*f split forces legs at stride A,
-   i.e. zout[2*(k*OLs + p*OGs)] — so the g variant wires the otherwise
-   `(void)`'d OGs argument as the turned store's LEG STRIDE. OGs=1
-   reproduces t2t's addressing (but t2t stays its own emission — this flag
-   emits a SEPARATE symbol precisely so every existing kernel remains
-   byte-identical). Implies st_turn. *)
-let st_turn_gs = ref false
-
-(* MONO SPILL SLOTS (cx_spill, VFFT_CX_SPILL=<budget>). Number of S[] scratch
-   slots the Belady spiller allocated for the current MONO codelet; 0 = no
-   spill (default OFF => byte-identical). The preamble declares
-   double S[vw*mono_spill_slots] when > 0. Set by codelet_cil.emit. *)
-let mono_spill_slots = ref 0
+let make_ctx ~tw_log3 ~tw_pre ~st_turn ~st_turn_gs ~tangent =
+  { tw_log3
+  ; tw_pre
+  ; st_turn
+  ; st_turn_gs
+  ; mono_spill_slots = 0
+  ; tangent = tangent || Sys.getenv_opt "VFFT_CX_TANGENT" = Some "1"
+  ; w32_combine = Sys.getenv_opt "VFFT_CX_W32TG" = Some "1"
+  ; wing_enabled = Sys.getenv_opt "VFFT_CX_WING" = Some "1"
+  ; rotfma = Sys.getenv_opt "VFFT_CX_ROTFMA" = Some "1"
+  }
+;;
 
 let hcons : (cx_kind, t) Hashtbl.t = Hashtbl.create 256
 let next_tag = ref 0

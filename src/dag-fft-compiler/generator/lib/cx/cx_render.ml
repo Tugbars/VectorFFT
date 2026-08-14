@@ -88,7 +88,7 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
    hand w32tg pass-B idiom ([c,-c]·flip, zero xors). Default OFF ⇒ every
    existing emission is byte-identical. Note: a folded CRotNI def with no
    other consumer remains as a dead SSA line — gcc DCEs it; asm is clean. *)
-let rotfma = ref (Sys.getenv_opt "VFFT_CX_ROTFMA" = Some "1")
+(* M12a: rotfma lives in Cx_ir.ctx now. *)
 
 let addr_str (a : caddr) : string =
   match a with
@@ -122,7 +122,7 @@ let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
    ?msuf — suffix for the quarter-turn mask / log3 prologue names, so the
    narrow arm references its own __m128d twins (_M_IM_n / _wc%d_n). *)
 let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
-  (isa : Isa.t) (tbl : consts) (e : t) : string
+  ~(ctx : ctx) (isa : Isa.t) (tbl : consts) (e : t) : string
   =
   (* ?name resolves an operand tag to its CURRENT C variable name. Default is
      the SSA "z<tag>"; cx_spill overrides it so a reloaded value picks up its
@@ -139,11 +139,11 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
     Printf.sprintf "%s(%s, %s, 0x%x)" (Isa.intr isa "permute2f128_pd") (v a) (v b) imm
   | CLo a -> Printf.sprintf "_mm256_castpd256_pd128(%s)" (v a)
   | CHi a -> Printf.sprintf "_mm256_extractf128_pd(%s, 1)" (v a)
-  | CAdd (a, { node = CRotNI y; _ }) when !rotfma ->
+  | CAdd (a, { node = CRotNI y; _ }) when ctx.rotfma ->
     (* a + (-i)·y = a - [-1,+1]·cflip y : fnmadd on the (1,1) pair's _s. *)
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
     Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
-  | CSub (a, { node = CRotNI y; _ }) when !rotfma ->
+  | CSub (a, { node = CRotNI y; _ }) when ctx.rotfma ->
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 1.0 in
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v a)
   | CAdd (a, b) -> Isa.add_pd isa (v a) (v b)
@@ -160,11 +160,11 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
     then Isa.addsub_pd isa (v a) (Isa.cflip_pd isa (v y))
     else
       Isa.sub_pd isa (v a) (Isa.xor_mask_pd isa (Isa.cflip_pd isa (v y)) ("_M_IM" ^ msuf))
-  | CFmaC (c, { node = CRotNI y; _ }, acc) when !rotfma ->
+  | CFmaC (c, { node = CRotNI y; _ }, acc) when ctx.rotfma ->
     (* acc + c·(-i·y) = acc - [-c,+c]·cflip y — the [c,-c] hand idiom. *)
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
     Isa.fnmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
-  | CFnmaC (c, { node = CRotNI y; _ }, acc) when !rotfma ->
+  | CFnmaC (c, { node = CRotNI y; _ }, acc) when ctx.rotfma ->
     let w = const_name tbl (isa.Isa.vec_width / 2) 1.0 c in
     Isa.fmadd_pd isa (w ^ "_s") (Isa.cflip_pd isa (v y)) (v acc)
   | CFmaC (c, x, acc) ->
@@ -200,7 +200,7 @@ let render ?(tw_vw = 0) ?(msuf = "") ?(name = fun t -> Printf.sprintf "z%d" t)
        by the prologue (loaded for power-of-two legs, DERIVED otherwise), so
        the flat path emits byte-identically to before. *)
     let c, s =
-      if !tw_log3
+      if ctx.tw_log3
       then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
         let off = (leg - 1) * 2 * twv in
