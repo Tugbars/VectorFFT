@@ -118,7 +118,7 @@ type kind =
       { r1 : int option (* --k1-r1 N *)
       ; il : bool (* --k1-il *)
       ; sw : bool (* --k1-sw *)
-      } (* Codelet_oop.emit_k1_mono — the 6th emission entry point *)
+      } (* C2c_split.emit_k1_mono — the 6th emission entry point *)
 
 type t =
   { radix : int

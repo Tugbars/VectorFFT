@@ -32,7 +32,7 @@
  *      a semantic change here must be mirrored there until the two
  *      are unified.
  *   5. NAME + EMIT — production symbol naming per family, scheduler
- *      selection, then Codelet_oop.emit_codelet (oop family) or
+ *      selection, then C2c_split.emit_codelet (oop family) or
  *      Emit_body.emit_codelet (everything else); without --emit-c, DAG
  *      stats instead.
  * ------------------------------------------------------------------
@@ -1843,7 +1843,7 @@ let run (argv : string array) : unit =
       (* §12.4 item 3: the whole K=1 four-step as ONE emitted function
          (emit-time rodata twiddles, natural order). N = positional arg. *)
       print_string
-        (Codelet_oop.emit_k1_mono
+        (C2c_split.emit_k1_mono
            ~isa
            ~n
            ~r1_opt:(if !k1_r1 > 0 then Some !k1_r1 else None)
@@ -1852,16 +1852,16 @@ let run (argv : string array) : unit =
     else if !oop
     then (
       (* M2 OOP codelet family path. The DAG construction inside
-         Codelet_oop.emit_codelet is independent of gen_radix's `deduped`
+         C2c_split.emit_codelet is independent of gen_radix's `deduped`
          (it rebuilds the DAG to control the strided=true flag end-to-end);
          we pass only the structural config and the name. The body
          emission path is identical to what Emit_body.emit_codelet does for
          the --strided variant, just with our new edge patterns. *)
       let edge_of_string s =
         match s with
-        | "UL" -> Codelet_oop.UnitLeg
-        | "UG" -> Codelet_oop.UnitGroup
-        | "SF" -> Codelet_oop.StridedFallback
+        | "UL" -> C2c_split.UnitLeg
+        | "UG" -> C2c_split.UnitGroup
+        | "SF" -> C2c_split.StridedFallback
         | _ ->
           failwith
             (Printf.sprintf
@@ -1870,19 +1870,19 @@ let run (argv : string array) : unit =
       in
       let load_pat = edge_of_string !oop_load_pat in
       let store_pat = edge_of_string !oop_store_pat in
-      let buffer = if !oop_buf_oop then Codelet_oop.OutOfPlace else Codelet_oop.InPlace in
+      let buffer = if !oop_buf_oop then C2c_split.OutOfPlace else C2c_split.InPlace in
       let twiddles =
         if !twiddled_pos
-        then Codelet_oop.PerPositionTwiddles
+        then C2c_split.PerPositionTwiddles
         else if !twiddled_scalar
-        then Codelet_oop.BroadcastTwiddles
+        then C2c_split.BroadcastTwiddles
         else if !twiddled
-        then Codelet_oop.PerGroupTwiddles
-        else Codelet_oop.NoTwiddles
+        then C2c_split.PerGroupTwiddles
+        else C2c_split.NoTwiddles
       in
-      let direction = if !bwd then Codelet_oop.Backward else Codelet_oop.Forward in
+      let direction = if !bwd then C2c_split.Backward else C2c_split.Forward in
       let cname =
-        Codelet_oop.canonical_name
+        C2c_split.canonical_name
           ~radix:n
           ~isa
           ~direction
@@ -1893,9 +1893,9 @@ let run (argv : string array) : unit =
       in
       if
         !post_tw
-        && (twiddles <> Codelet_oop.PerGroupTwiddles
-            || direction <> Codelet_oop.Forward
-            || buffer <> Codelet_oop.OutOfPlace)
+        && (twiddles <> C2c_split.PerGroupTwiddles
+            || direction <> C2c_split.Forward
+            || buffer <> C2c_split.OutOfPlace)
       then failwith "--post-tw requires --twiddled (PerGroup) + fwd + --oop-buffer-oop";
       if !oop_il_in && !oop_il_in_sw
       then failwith "--oop-il-in and --oop-il-in-sw are mutually exclusive";
@@ -1903,11 +1903,11 @@ let run (argv : string array) : unit =
       then failwith "--oop-il-out and --oop-il-out-sw are mutually exclusive";
       let any_il_in = !oop_il_in || !oop_il_in_sw in
       let any_il_out = !oop_il_out || !oop_il_out_sw in
-      if any_il_in && load_pat <> Codelet_oop.UnitGroup
+      if any_il_in && load_pat <> C2c_split.UnitGroup
       then failwith "--oop-il-in[-sw] requires --oop-load UG";
-      if any_il_out && store_pat <> Codelet_oop.UnitGroup
+      if any_il_out && store_pat <> C2c_split.UnitGroup
       then failwith "--oop-il-out[-sw] requires --oop-store UG";
-      if (any_il_in || any_il_out) && buffer <> Codelet_oop.OutOfPlace
+      if (any_il_in || any_il_out) && buffer <> C2c_split.OutOfPlace
       then failwith "--oop-il-in[-sw]/--oop-il-out[-sw] require --oop-buffer-oop";
       if (any_il_in || any_il_out) && Isa.(isa.vec_width) <> 4
       then
@@ -1921,7 +1921,7 @@ let run (argv : string array) : unit =
            the paired out_lane re/im registers)";
       if
         !oop_tw_linear
-        && (twiddles <> Codelet_oop.PerGroupTwiddles || load_pat <> Codelet_oop.UnitLeg)
+        && (twiddles <> C2c_split.PerGroupTwiddles || load_pat <> C2c_split.UnitLeg)
       then
         failwith
           "--oop-tw-linear requires --twiddled (PerGroup) + --oop-load UL (UL configs \
@@ -1969,7 +1969,7 @@ let run (argv : string array) : unit =
           else cname ^ "_spec"
       in
       let cfg =
-        Codelet_oop.
+        C2c_split.
           { radix = n
           ; isa
           ; direction
@@ -1984,18 +1984,18 @@ let run (argv : string array) : unit =
          the ten bare globals' values now have one source (argv), not ten locals. *)
       (match cdesc.Codelet.kind with
        | Codelet.C2c_oop { tw; fuse; store_fused; strides; il_in; il_out; _ } ->
-         Codelet_oop.current_tw_log3 := cdesc.Codelet.mods.Codelet.table = Codelet.Log3;
-         Codelet_oop.current_post_tw := tw = Some Codelet.Post_tw;
-         Codelet_oop.current_oop_strides := strides;
-         Codelet_oop.current_oop_fuse := (match fuse with None -> 0 | Some v -> v);
-         Codelet_oop.current_oop_store_on_compute := store_fused;
-         Codelet_oop.current_oop_il_in := il_in = `Il;
-         Codelet_oop.current_oop_il_out := il_out = `Il;
-         Codelet_oop.current_oop_il_in_sw := il_in = `Il_sw;
-         Codelet_oop.current_oop_il_out_sw := il_out = `Il_sw;
-         Codelet_oop.current_oop_tw_linear := tw = Some Codelet.Tw_linear
+         C2c_split.current_tw_log3 := cdesc.Codelet.mods.Codelet.table = Codelet.Log3;
+         C2c_split.current_post_tw := tw = Some Codelet.Post_tw;
+         C2c_split.current_oop_strides := strides;
+         C2c_split.current_oop_fuse := (match fuse with None -> 0 | Some v -> v);
+         C2c_split.current_oop_store_on_compute := store_fused;
+         C2c_split.current_oop_il_in := il_in = `Il;
+         C2c_split.current_oop_il_out := il_out = `Il;
+         C2c_split.current_oop_il_in_sw := il_in = `Il_sw;
+         C2c_split.current_oop_il_out_sw := il_out = `Il_sw;
+         C2c_split.current_oop_tw_linear := tw = Some Codelet.Tw_linear
        | _ -> ());
-      print_string (Codelet_oop.emit_codelet cfg))
+      print_string (C2c_split.emit_codelet cfg))
     else (
       (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
       let route_real =
@@ -2009,7 +2009,8 @@ let run (argv : string array) : unit =
       in
       (* M8.3: real-family cells route through Real, which installs the
          family hooks (the moved r2c/c2r/hc arms); everything else calls
-         the engine directly with no hooks. *)
+         the engine via C2c_split.emit_engine (M8.5), which installs
+         the strided-il hooks; Emit_body has no direct caller here now. *)
       if route_real
       then
         print_string
@@ -2032,7 +2033,7 @@ let run (argv : string array) : unit =
              ~name)
       else
         print_string
-          (Emit_body.emit_codelet
+          (C2c_split.emit_engine
              ~sc
              ~cfg:ccfg
              ~in_place:!in_place
