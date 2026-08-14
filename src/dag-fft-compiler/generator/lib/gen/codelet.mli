@@ -74,6 +74,7 @@ type kind =
       ; pre_tw : bool
       }
   | Zsplit of { k : zs_kind; r0 : int option; sink : bool }
+  | K1_mono of { r1 : int option; il : bool; sw : bool }
 
 type t =
   { radix : int

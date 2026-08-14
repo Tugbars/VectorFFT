@@ -259,8 +259,8 @@ let extract_coefficient (t : t) : float * t =
 
 let collect_m (assigns : (Expr.elem_ref * t) list) : (Expr.elem_ref * t) list =
   if
-    Sys.getenv_opt "VFFT_COLLECT_M" <> Some "1"
-    && Sys.getenv_opt "VFFT_DEEP_COLLECT" <> Some "1"
+    not (Knobs.collect_m () = Some "1")
+    && not (Knobs.deep_collect () = Some "1")
   then assigns
   else (
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
@@ -494,7 +494,7 @@ let count_ir_nodes (root : t) : int =
 let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list)
   : (Expr.elem_ref * t) list
   =
-  if Sys.getenv_opt "VFFT_DEEP_COLLECT" <> Some "1"
+  if not (Knobs.deep_collect () = Some "1")
   then assigns
   else (
     let cache : (int, t) Hashtbl.t = Hashtbl.create 256 in
@@ -598,7 +598,7 @@ let deep_collect ?(depth_limit = 5) (assigns : (Expr.elem_ref * t) list)
          * pure expansion-without-merging, which is what caused R=20's
          * regression with the looser check. *)
         let win = n_groups < n_input_terms in
-        if Sys.getenv_opt "VFFT_DEEP_COLLECT_TRACE" = Some "1"
+        if Knobs.Trace.deep_collect ()
         then
           Printf.eprintf
             "deep_collect: in=%d dist=%d groups=%d %s\n"
@@ -791,7 +791,7 @@ let factor_common_muls ?(aggressive = false) (assigns : (Expr.elem_ref * t) list
          * aggressive mode treats all cross-output mul-sharing as factor-eligible
          * because primes' Winograd structure emerges from precisely this. *)
         let factor_terms (terms : (int * t) list) : (int * t) list * bool =
-          if Sys.getenv_opt "FACTOR_TRACE" <> None && List.length terms >= 3
+          if Knobs.Trace.factor () && List.length terms >= 3
           then (
             Printf.eprintf "  factor_terms input (%d): " (List.length terms);
             List.iter
