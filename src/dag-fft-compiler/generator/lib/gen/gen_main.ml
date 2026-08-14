@@ -33,7 +33,7 @@
  *      are unified.
  *   5. NAME + EMIT — production symbol naming per family, scheduler
  *      selection, then Codelet_oop.emit_codelet (oop family) or
- *      Emit_c.emit_codelet (everything else); without --emit-c, DAG
+ *      Emit_body.emit_codelet (everything else); without --emit-c, DAG
  *      stats instead.
  * ------------------------------------------------------------------
  * MODULE CARD (gen_main.ml — grep "MODULE CARD" for the full set)
@@ -1817,7 +1817,7 @@ let run (argv : string array) : unit =
          Emit_c rendering (zil_pipeline_port.md), unlike the legacy
          codelet_zil raw-template branch below. *)
       print_string
-        (Codelet_zsplit.emit_codelet
+        (Cascade_z.emit_codelet
            ~store_on_compute:!store_on_compute
            ~kind:!zp_kind
            ~radix:n
@@ -1855,7 +1855,7 @@ let run (argv : string array) : unit =
          Codelet_oop.emit_codelet is independent of gen_radix's `deduped`
          (it rebuilds the DAG to control the strided=true flag end-to-end);
          we pass only the structural config and the name. The body
-         emission path is identical to what Emit_c.emit_codelet does for
+         emission path is identical to what Emit_body.emit_codelet does for
          the --strided variant, just with our new edge patterns. *)
       let edge_of_string s =
         match s with
@@ -1999,7 +1999,7 @@ let run (argv : string array) : unit =
     else (
       (* M6.2: store_on_compute travels in ccfg / the zsplit call now. *)
       print_string
-        (Emit_c.emit_codelet
+        (Emit_body.emit_codelet
            ~sc
            ~cfg:ccfg
            ~in_place:!in_place
