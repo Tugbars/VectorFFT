@@ -1,6 +1,6 @@
 (* emit_strided_registry.ml — auto-generate the strided (Design C 2D) registry.
  *
- * Sibling emitter. Walks Vfft_v2.Coverage.files "strided-<isa>" and fills
+ * Sibling emitter. Walks Coverage.files "strided-<isa>" and fills
  * strided_codelets_t. One uniform 6-arg in-place ABI; direction (fwd/bwd)
  * selects the slot, radix is the index.
  *
@@ -52,7 +52,7 @@ let () =
     "emit_strided_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "strided-" ^ isa in
-  let files = Vfft_v2.Coverage.files quadrant in
+  let files = Coverage.files quadrant in
   (* (symbol, slot, radix) *)
   let entries =
     List.filter_map

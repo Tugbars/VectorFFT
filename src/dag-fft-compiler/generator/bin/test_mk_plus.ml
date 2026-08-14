@@ -10,8 +10,8 @@
  * test framework set up; this is a standalone executable. When we land
  * proper testing infrastructure, the assertions migrate to that. *)
 
-open Vfft_v2.Ir  (* M1: names formerly re-exported through Algsimp *)
-open Vfft_v2.Expr
+open Ir  (* M1: names formerly re-exported through Algsimp *)
+open Expr
 
 let tests_run = ref 0
 let tests_passed = ref 0
@@ -115,7 +115,7 @@ let () =
      | NK_Plus terms -> List.length terms = 2
      | _ -> false);
   (* Invariant 4: NK_Neg absorbed into sign *)
-  let neg_x = Vfft_v2.Ir.mk_neg x in
+  let neg_x = Ir.mk_neg x in
   let e9 = mk_plus [ 1, neg_x; 1, y ] in
   check
     "(+Neg(x)) + (+y) → Plus[-x, +y]"
@@ -165,10 +165,10 @@ let () =
    * After collect_m: should become Mul(Const(c1+c2), x). *)
   let c2 = of_expr (Const 2.0) in
   let c3 = of_expr (Const 3.0) in
-  let term1 = Vfft_v2.Ir.mk_mul c2 x in
-  let term2 = Vfft_v2.Ir.mk_mul c3 x in
-  let sum = Vfft_v2.Ir.mk_add term1 term2 in
-  let collected = Vfft_v2.Simplify.collect_m [ Output (0, true), sum ] in
+  let term1 = Ir.mk_mul c2 x in
+  let term2 = Ir.mk_mul c3 x in
+  let sum = Ir.mk_add term1 term2 in
+  let collected = Simplify.collect_m [ Output (0, true), sum ] in
   let result = snd (List.hd collected) in
   check
     "2*x + 3*x → 5*x (single Mul)"
@@ -182,9 +182,9 @@ let () =
        Printf.printf "  (got: %s)\n" (describe result);
        false);
   (* Three-way: 2x + 3x - x → 4x *)
-  let term3 = Vfft_v2.Ir.mk_neg x in
-  let sum3 = Vfft_v2.Ir.mk_add sum term3 in
-  let collected3 = Vfft_v2.Simplify.collect_m [ Output (0, true), sum3 ] in
+  let term3 = Ir.mk_neg x in
+  let sum3 = Ir.mk_add sum term3 in
+  let collected3 = Simplify.collect_m [ Output (0, true), sum3 ] in
   let result3 = snd (List.hd collected3) in
   check
     "2*x + 3*x - x → 4*x"
@@ -198,10 +198,10 @@ let () =
        Printf.printf "  (got: %s)\n" (describe result3);
        false);
   (* Cancellation: 2x - 2x → 0 *)
-  let term_pos = Vfft_v2.Ir.mk_mul c2 x in
-  let term_neg = Vfft_v2.Ir.mk_neg (Vfft_v2.Ir.mk_mul c2 x) in
-  let canceling = Vfft_v2.Ir.mk_add term_pos term_neg in
-  let collected_c = Vfft_v2.Simplify.collect_m [ Output (0, true), canceling ] in
+  let term_pos = Ir.mk_mul c2 x in
+  let term_neg = Ir.mk_neg (Ir.mk_mul c2 x) in
+  let canceling = Ir.mk_add term_pos term_neg in
+  let collected_c = Simplify.collect_m [ Output (0, true), canceling ] in
   let result_c = snd (List.hd collected_c) in
   check
     "2*x + (-2*x) → 0"
@@ -209,9 +209,9 @@ let () =
      | NK_Const 0.0 -> true
      | _ -> false);
   (* No mergers: x + y unchanged *)
-  let xy = Vfft_v2.Ir.mk_add x y in
+  let xy = Ir.mk_add x y in
   let xy_tag_before = xy.tag in
-  let collected_xy = Vfft_v2.Simplify.collect_m [ Output (0, true), xy ] in
+  let collected_xy = Simplify.collect_m [ Output (0, true), xy ] in
   let result_xy = snd (List.hd collected_xy) in
   check "x + y → x + y (no collection)" (result_xy.tag = xy_tag_before);
   Printf.printf "\n=== Results ===\n";

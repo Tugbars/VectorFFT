@@ -6,7 +6,6 @@
  * "raw_scheduled" list with intentional duplicates, and verify the prep
  * dedupes them. *)
 
-open Vfft_v2
 
 let () = Ir.reset ()
 

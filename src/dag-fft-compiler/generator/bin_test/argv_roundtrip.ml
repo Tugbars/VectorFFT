@@ -21,11 +21,11 @@ let () =
          let argv =
            String.split_on_char ' ' line |> List.filter (fun s -> s <> "")
          in
-         match Vfft_v2.Codelet.of_argv argv with
-         | exception Vfft_v2.Codelet.Parse_error m ->
+         match Codelet.of_argv argv with
+         | exception Codelet.Parse_error m ->
            parse_fail := (line, m) :: !parse_fail
          | c ->
-           let back = String.concat " " (Vfft_v2.Codelet.to_argv c) in
+           let back = String.concat " " (Codelet.to_argv c) in
            if back = line then incr ok else rt_fail := (line, back) :: !rt_fail)
      done
    with End_of_file -> ());

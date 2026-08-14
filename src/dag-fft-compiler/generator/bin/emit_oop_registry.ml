@@ -1,6 +1,6 @@
 (* emit_oop_registry.ml — auto-generate the OOP codelet registry.
  *
- * Sibling to emit_rfft_registry.ml. Walks Vfft_v2.Coverage.files "oop-<isa>"
+ * Sibling to emit_rfft_registry.ml. Walks Coverage.files "oop-<isa>"
  * (the single source of truth) and emits an ABI-typed registrar that fills
  * oop_codelets_t. Adding an OOP codelet to coverage auto-populates a slot.
  *
@@ -104,7 +104,7 @@ let () =
     "emit_oop_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "oop-" ^ isa in
-  let files = Vfft_v2.Coverage.files quadrant in
+  let files = Coverage.files quadrant in
   (* (symbol, slot, radix), skipping unclassifiable entries *)
   let entries =
     List.filter_map

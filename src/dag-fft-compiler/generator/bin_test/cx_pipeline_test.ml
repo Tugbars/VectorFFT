@@ -8,7 +8,6 @@
  *
  * Run:  dune build bin_test/cx_pipeline_test.exe && ./_build/default/bin_test/cx_pipeline_test.exe *)
 
-open Vfft_v2
 open Cx_ir
 
 (* Tiny evaluator over packed complex (one lane suffices for semantics). *)

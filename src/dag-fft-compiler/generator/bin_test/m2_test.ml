@@ -1,4 +1,3 @@
-open Vfft_v2
 
 let () =
   Printf.printf "=== M2 sanity check: hand-built schedules ===\n\n";

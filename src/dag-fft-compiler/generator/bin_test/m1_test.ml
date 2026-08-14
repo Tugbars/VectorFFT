@@ -1,5 +1,4 @@
 (* Quick M1 sanity check: instantiate the types, exercise the stub. *)
-open Vfft_v2
 
 let () =
   Printf.printf "=== M1 sanity check ===\n";

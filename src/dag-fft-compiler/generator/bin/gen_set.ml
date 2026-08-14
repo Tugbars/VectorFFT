@@ -33,7 +33,7 @@ let emit_one (path : string) (argv_tail : string list) : unit =
       flush stdout;
       Unix.dup2 saved Unix.stdout;
       Unix.close saved)
-    (fun () -> Vfft_v2.Gen_main.run argv)
+    (fun () -> Gen_main.run argv)
 ;;
 
 let () =
@@ -53,14 +53,14 @@ let () =
   ignore (parse 1);
   let targets =
     match List.rev !targets with
-    | [] | [ "all" ] -> Vfft_v2.Coverage.quadrants
+    | [] | [ "all" ] -> Coverage.quadrants
     | l -> l
   in
   let total = ref 0 in
   List.iter
     (fun q ->
-       let files = Vfft_v2.Coverage.files q in
-       let dir = Filename.concat !root (Vfft_v2.Coverage.dir_of_quadrant q) in
+       let files = Coverage.files q in
+       let dir = Filename.concat !root (Coverage.dir_of_quadrant q) in
        mkdir_p dir;
        List.iter
          (fun (name, tail) ->

@@ -1,7 +1,7 @@
 (* emit_trig_registry.ml — auto-generate the trig (real-to-real) registry.
  *
  * Sibling to emit_rfft_registry.ml / emit_oop_registry.ml. Walks
- * Vfft_v2.Coverage.files "trig-<isa>" and emits a registrar filling
+ * Coverage.files "trig-<isa>" and emits a registrar filling
  * trig_codelets_t. One uniform 3-arg ABI for the whole family, so every
  * slot is the same fn type; the kind selects WHICH slot, the size is the
  * radix index.
@@ -55,7 +55,7 @@ let () =
     "emit_trig_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "trig-" ^ isa in
-  let files = Vfft_v2.Coverage.files quadrant in
+  let files = Coverage.files quadrant in
   (* (symbol, slot=kind, radix) *)
   let entries =
     List.filter_map

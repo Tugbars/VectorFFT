@@ -1,5 +1,4 @@
 let () =
-  let open Vfft_v2 in
   List.iter
     (fun n ->
        match Dft_select.pick_algorithm n with
