@@ -539,50 +539,7 @@ let emit_codelet
      *
      * For v1 only n1 (no-twiddle) is supported; tw_re/tw_im are passed for
      * signature uniformity but unused. *)
-    (* M3: the strided family's five data-plane shapes go through Layout —
-       including the corpus-taught Real plane (bare `rio`/`out`, the r2c
-       family).  strided_il_* + strided_r2c together previously emitted
-       UNCOMPILABLE C (an undeclared `rio` reference, the demonstrated
-       §12.1/P6 bug); it now fails loudly at emission instead. *)
-    (let emit_side ps = List.iter (fun p -> Buffer.add_string buf (Layout.render p)) ps in
-     if (!strided_il_in || !strided_il_out) && !strided_r2c
-     then
-       failwith
-         "emit_c(strided): --strided-il-in/out cannot combine with --strided-r2c";
-     if !strided_il_in && !strided_il_out
-     then
-       failwith
-         "emit_c(strided): --strided-il-in + --strided-il-out is the banned hybrid";
-     if !strided_il_in
-     then (
-       emit_side (Layout.pointers Layout.Inter ~const:true ~prefix:"in" ~twin:false ());
-       emit_side (Layout.pointers Layout.Split ~const:false ~prefix:"rio" ~twin:false ()))
-     else if !strided_il_out
-     then (
-       emit_side (Layout.pointers Layout.Split ~const:true ~prefix:"rio" ~twin:false ());
-       emit_side (Layout.pointers Layout.Inter ~const:false ~prefix:"out" ~twin:false ()))
-     else if !strided_r2c && not !strided_r2c_bwd
-     then (
-       emit_side (Layout.pointers Layout.Real ~const:true ~prefix:"rio" ~twin:false ());
-       emit_side (Layout.pointers Layout.Split ~const:false ~prefix:"out" ~twin:false ()))
-     else if !strided_r2c_bwd
-     then (
-       emit_side (Layout.pointers Layout.Split ~const:true ~prefix:"in" ~twin:false ());
-       emit_side (Layout.pointers Layout.Real ~const:false ~prefix:"out" ~twin:false ()))
-     else emit_side (Layout.pointers Layout.Split ~const:false ~prefix:"rio" ~twin:false ()));
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    if !strided_r2c_bwd
-    then (
-      Buffer.add_string buf "    size_t in_stride,\n";
-      Buffer.add_string buf "    size_t row_stride_in,\n")
-    else if !strided_r2c
-    then (
-      Buffer.add_string buf "    size_t row_stride_in,\n";
-      Buffer.add_string buf "    size_t out_stride,\n")
-    else Buffer.add_string buf "    size_t row_stride,\n";
-    Buffer.add_string buf "    size_t me)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (strided). *)
     Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n";
     if !strided_r2c_bwd
     then (
@@ -1458,24 +1415,7 @@ let emit_codelet
     Buffer.add_string buf "\n")
   else if in_place
   then (
-    (* M3: the in-place layout choice goes through Layout — ip_il_in+ip_il_out
-       together (the banned hybrid, previously accepted silently and resolved
-       by if/else order) now raises loudly inside ip_buffers_of_bools. *)
-    (let emit_side ps = List.iter (fun p -> Buffer.add_string buf (Layout.render p)) ps in
-     match Layout.ip_buffers_of_bools ~il_in:!ip_il_in ~il_out:!ip_il_out with
-     | Layout.From_z ->
-       emit_side (Layout.pointers Layout.Inter ~const:true ~prefix:"in" ~twin:false ());
-       emit_side (Layout.pointers Layout.Split ~const:false ~prefix:"rio" ~twin:false ())
-     | Layout.To_z ->
-       emit_side (Layout.pointers Layout.Split ~const:true ~prefix:"rio" ~twin:false ());
-       emit_side (Layout.pointers Layout.Inter ~const:false ~prefix:"out" ~twin:false ())
-     | _ ->
-       emit_side (Layout.pointers Layout.Split ~const:false ~prefix:"rio" ~twin:false ()));
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    size_t ios,\n";
-    Buffer.add_string buf "    size_t me)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (in_place). *)
     if isa.vec_width = 8 && (!ip_il_in || !ip_il_out)
     then (
       if !ip_il_in
@@ -1532,16 +1472,7 @@ let emit_codelet
      *   Twiddles broadcast across V lanes (uniform across batches).
      *   V is the loop bound; vec_width lanes processed per iteration.
      *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    size_t is,\n";
-    Buffer.add_string buf "    size_t os,\n";
-    Buffer.add_string buf "    size_t V)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (twidsq). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1561,14 +1492,7 @@ let emit_codelet
      * spectrum from the packed half and runs a backward DFT; the result is
      * purely real so there is no out_im. Same stride/loop shape as r2cf
      * (is input stride, os_re output stride, vl lanes). *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    ptrdiff_t is_re,\n";
-    Buffer.add_string buf "    ptrdiff_t is_im,\n";
-    Buffer.add_string buf "    ptrdiff_t os_re,\n";
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!r2cb_signature). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1590,14 +1514,7 @@ let emit_codelet
      * signed and split per parity. The executor passes os_im < 0 with
      * out_im based one-past the region. P1's stride_n1_fn-shaped v1
      * is withdrawn — composition beats typedef aesthetics. *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    ptrdiff_t is,\n";
-    Buffer.add_string buf "    ptrdiff_t os_re,\n";
-    Buffer.add_string buf "    ptrdiff_t os_im,\n";
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!r2cf_signature). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1618,24 +1535,7 @@ let emit_codelet
      * Input(j) for j<r = col k leg j; Input(r+j) = col m-k leg j. Legs are
      * strided by is_leg within each column; the two columns are at separate
      * base pointers in_k / in_m (the executor passes the two physical rows). *)
-    Buffer.add_string buf "    const double * __restrict__ ink_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ ink_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ inm_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ inm_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xp_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xp_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xm_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xm_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    ptrdiff_t is_leg,\n";
-    (* stride between legs within a column *)
-    Buffer.add_string buf "    ptrdiff_t osp,\n";
-    (* stride between Xp output slots *)
-    Buffer.add_string buf "    ptrdiff_t osm,\n";
-    (* stride between Xm output slots *)
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_laststage). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1655,20 +1555,7 @@ let emit_codelet
      * vectorized over vl lanes. Reads scratch rows for the column pair
      * sequentially (the executor supplies them in natural order, no scatter).
      * Output(0) -> Xp pair (X[k]); Output(1) -> Xm pair (X[m]). *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xp_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xp_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xm_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ Xm_im,\n";
-    if !r2c_term_rt
-    then (
-      Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-      Buffer.add_string buf "    const double * __restrict__ tw_im,\n");
-    Buffer.add_string buf "    ptrdiff_t is,\n";
-    (* row stride between Z[k] and Z[m] inputs *)
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_signature). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1686,24 +1573,7 @@ let emit_codelet
   then (
     (* D2 natural terminator (section 69): four output pointers,
      * boundary baked at generation time. *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ Rp,\n";
-    Buffer.add_string buf "    double       * __restrict__ Ip,\n";
-    Buffer.add_string buf "    double       * __restrict__ Rm,\n";
-    Buffer.add_string buf "    double       * __restrict__ Im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    ptrdiff_t is,\n";
-    Buffer.add_string buf "    ptrdiff_t osp,\n";
-    Buffer.add_string buf "    ptrdiff_t osm,\n";
-    if !hc_ranged
-    then (
-      Buffer.add_string buf "    ptrdiff_t cs_in,\n";
-      Buffer.add_string buf "    ptrdiff_t cs_out,\n";
-      Buffer.add_string buf "    int kcount,\n");
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1725,24 +1595,7 @@ let emit_codelet
      * the forward but on the INPUT side) -> two PACKED cascade columns
      * (out_re/out_im). isp/ism = split input row strides; os = packed output
      * stride. The forward's 6-pointer ABI, flipped. *)
-    Buffer.add_string buf "    const double * __restrict__ Rp,\n";
-    Buffer.add_string buf "    const double * __restrict__ Ip,\n";
-    Buffer.add_string buf "    const double * __restrict__ Rm,\n";
-    Buffer.add_string buf "    const double * __restrict__ Im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    ptrdiff_t isp,\n";
-    Buffer.add_string buf "    ptrdiff_t ism,\n";
-    Buffer.add_string buf "    ptrdiff_t os,\n";
-    if !hc_ranged
-    then (
-      Buffer.add_string buf "    ptrdiff_t cs_in,\n";
-      Buffer.add_string buf "    ptrdiff_t cs_out,\n";
-      Buffer.add_string buf "    int kcount,\n");
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural_bwd). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1763,21 +1616,7 @@ let emit_codelet
      * hardcoded slot stride K cannot address middle cascade stages
      * (slot strides are Q*K-multiples and out != in stride). Twiddles
      * replicate per vl lanes, slot 0 never loaded. *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    ptrdiff_t is,\n";
-    Buffer.add_string buf "    ptrdiff_t os,\n";
-    if !hc_ranged
-    then (
-      Buffer.add_string buf "    ptrdiff_t cs_in,\n";
-      Buffer.add_string buf "    ptrdiff_t cs_out,\n";
-      Buffer.add_string buf "    int kcount,\n");
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!hc_strided). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1799,14 +1638,7 @@ let emit_codelet
      * byte-for-byte; vl assumed a multiple of the vector width (the r2c
      * executor always passes B, a vec-width multiple). No tw params:
      * n1 DAGs carry no Twiddle refs. *)
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    size_t is,\n";
-    Buffer.add_string buf "    size_t os,\n";
-    Buffer.add_string buf "    size_t vl)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!n1_oop_strided). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1822,10 +1654,7 @@ let emit_codelet
     emit_v_loop_header "vl")
   else if !r2r_signature
   then (
-    Buffer.add_string buf "    const double * __restrict__ in,\n";
-    Buffer.add_string buf "    double       * __restrict__ out,\n";
-    Buffer.add_string buf "    size_t K)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (!r2r_signature). *)
     (match spill with
      | None -> ()
      | Some sp ->
@@ -1840,26 +1669,7 @@ let emit_codelet
       (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
     if anyk_tail
     then (
-      Buffer.add_string buf "    size_t k = 0;\n";
-      Buffer.add_string
-        buf
-        (Printf.sprintf
-           "    for (; k + %d <= K; k += %d) {\n"
-           isa.vec_width
-           isa.vec_width))
-    else
-      Buffer.add_string
-        buf
-        (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {\n" isa.vec_width))
-  else (
-    Buffer.add_string buf "    const double * __restrict__ in_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ in_im,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_re,\n";
-    Buffer.add_string buf "    double       * __restrict__ out_im,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_re,\n";
-    Buffer.add_string buf "    const double * __restrict__ tw_im,\n";
-    Buffer.add_string buf "    size_t K)\n";
-    Buffer.add_string buf "{\n";
+    (* M4: signature emission deleted — Abi.signature is the one printer (oop_generic). *)
     (match spill with
      | None -> ()
      | Some sp ->
