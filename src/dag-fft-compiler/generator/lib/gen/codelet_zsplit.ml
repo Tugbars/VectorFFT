@@ -417,6 +417,8 @@ let emit_codelet
       ~(uarch : Uarch.t)
   : string
   =
+  (* M6.1: per-emission scratch — this family's own instance *)
+  let sc = Emit_render.Scratch.create () in
   let k = kind_of_string kind in
   (* ── --zp-sink admission gate (the r0_dep-gate precedent: fail loudly,
         never silently emit the unsunk shape under the sunk name). Only a
@@ -648,7 +650,7 @@ let emit_codelet
     in
     let assigns = pipe.Pipeline.assigns in
     let scheduled = Schedule.su_schedule uarch assigns in
-    let inline_set = Emit_render.compute_inline_set assigns in
+    let inline_set = Emit_render.compute_inline_set ~sc assigns in
     assigns, scheduled, inline_set
   in
   (* ─── emit ────────────────────────────────────────────────────────── *)
@@ -1294,6 +1296,7 @@ let emit_codelet
                    Buffer.add_string
                      buf
                      (Emit_render.render_node_def
+                        ~sc
                         ~isa
                         ~in_place:false
                         ~t1s:false
@@ -1495,6 +1498,7 @@ let emit_codelet
                        Buffer.add_string
                          buf
                          (Emit_render.render_node_def
+                            ~sc
                             ~isa
                             ~in_place:false
                             ~t1s:false

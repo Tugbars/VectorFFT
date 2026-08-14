@@ -2,7 +2,7 @@
  *
  * Everything emit_codelet composes but does not itself define:
  *   - topo_sort_reachable (tag order IS topological order here — the
- *     hashcons assigns tags bottom-up) and render_load / render_node_def,
+ *     hashcons assigns tags bottom-up) and render_load ~sc / render_node_def,
  *     the per-node C renderers with Cmul -> mul+fma lowering and the
  *     single-use inlining machinery;
  *   - selective pinning (which NK_Mul tags to unpin so gcc can
@@ -33,6 +33,51 @@
 open Emit_state  (* M1: was `include` — Emit_state is no longer re-exported *)
 open Algsimp
 open Ir  (* M1: names formerly re-exported through the chain *)
+
+(* ── M6.1: the per-emission SCRATCH record (§11.2) — the ~10 genuinely
+   mutable short-lived cells, previously process globals with THREE coexisting
+   reset disciplines and a hand-maintained 9-of-66 reset list.  A FRESH one is
+   created per emission by each driver, so nothing can leak across codelets in
+   a warm gen_set process: all eight recorded temporal defects (D-1..D-8)
+   become unrepresentable.  NOT `private` (reviewed: field assignment must
+   compile; the guarantee is create-per-emission, not immutability). *)
+module Scratch = struct
+  type t =
+    { mutable ls_mode : Isa.ls_mode
+    ; mutable regalloc : Regalloc.allocation option
+    ; mutable emit_position : int
+    ; mutable fence_only : bool
+    ; il_seen : (int, unit) Hashtbl.t
+    ; il_pending : Buffer.t
+    ; mutable il_stash : (int * string) option
+    ; dup_barrier_tags : (int, unit) Hashtbl.t
+    ; mutable unpin_candidates : (int, unit) Hashtbl.t option
+    ; hoisted_const_tags : (int, unit) Hashtbl.t
+    }
+
+  let create () =
+    { ls_mode = Isa.LS_vector
+    ; regalloc = None
+    ; emit_position = 0
+    ; fence_only = false
+    ; il_seen = Hashtbl.create 64
+    ; il_pending = Buffer.create 256
+    ; il_stash = None
+    ; dup_barrier_tags = Hashtbl.create 16
+    ; unpin_candidates = None
+    ; hoisted_const_tags = Hashtbl.create 64
+    }
+
+  let il_reset sc =
+    Hashtbl.reset sc.il_seen;
+    Buffer.clear sc.il_pending;
+    sc.il_stash <- None
+
+  let il_take_pending sc =
+    let s = Buffer.contents sc.il_pending in
+    Buffer.clear sc.il_pending;
+    s
+end
 
 (* === Topological sort of the DAG nodes ===
  *
@@ -92,17 +137,17 @@ let topo_sort_reachable (roots : t list) : t list =
       (unpack + permute4x64 0xD8), 2 (unpack pair), 1 (direct pair indexing,
       no memo). Masked pass (LS_masked m): maskz z loads under the
       pdep-expanded column mask. *)
-let il_in_name (isa : Isa.t) (j : int) (is_re : bool) : string =
+let il_in_name ~(sc : Scratch.t) (isa : Isa.t) (j : int) (is_re : bool) : string =
   let w = isa.vec_width in
   if w = 1
   then Printf.sprintf "in_z[2*(%d*ios + k)%s]" j (if is_re then "" else " + 1")
   else (
-    if not (Hashtbl.mem il_seen j)
+    if not (Hashtbl.mem sc.il_seen j)
     then (
-      Hashtbl.add il_seen j ();
+      Hashtbl.add sc.il_seen j ();
       let e = Printf.sprintf "%d*ios + k" j in
-      let b = il_pending in
-      (match w, !current_ls_mode with
+      let b = sc.il_pending in
+      (match w, sc.ls_mode with
        | 8, Isa.LS_vector ->
          Buffer.add_string
            b
@@ -203,6 +248,7 @@ let il_in_name (isa : Isa.t) (j : int) (is_re : bool) : string =
 ;;
 
 let render_load
+  ~(sc : Scratch.t)
       ~(isa : Isa.t)
       ~(in_place : bool)
       ~(t1s : bool)
@@ -245,7 +291,7 @@ let render_load
         (* LINEAR layout (§12.4 4a): consumption-order stream, one cursor.
              Per quad base = b*NLEGS (each quad consumes NLEGS 4-vectors). *)
         Isa.loadu_pd
-          ~mode:!current_ls_mode
+          ~mode:sc.ls_mode
           isa
           (Printf.sprintf "tw_re[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
       else if !current_tw_perpos
@@ -259,7 +305,7 @@ let render_load
         (* PerGroupTwiddles: per-lane, indexed by the group var b -> maskable
              in the arbitrary-K tail (current_ls_mode). The set1 broadcasts above
              are lane-independent and stay unmasked. *)
-        Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
+        Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_re[%d*me + b]" j))
     | Expr.Twiddle (j, false) ->
       (match !current_tw_zsplit with
        | Some off ->
@@ -274,7 +320,7 @@ let render_load
       if !current_tw_linear > 0
       then
         Isa.loadu_pd
-          ~mode:!current_ls_mode
+          ~mode:sc.ls_mode
           isa
           (Printf.sprintf "tw_im[b*%d + %d]" !current_tw_linear (j * isa.vec_width))
       else if !current_tw_perpos
@@ -284,7 +330,7 @@ let render_load
           (Printf.sprintf "tw_im[%d*(me/%d) + b/%d]" j isa.vec_width isa.vec_width)
       else if t1s
       then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
-      else Isa.loadu_pd ~mode:!current_ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
+      else Isa.loadu_pd ~mode:sc.ls_mode isa (Printf.sprintf "tw_im[%d*me + b]" j))
     | Expr.Output _ ->
       failwith "render_load: Output ref shouldn't appear as a Load source")
   else (
@@ -386,18 +432,18 @@ let render_load
         Printf.sprintf "%s[%d*%s + %s]" buf j stride loop_var)
     in
     match r with
-    | Expr.Input (j, true) when !ip_il_in && in_place -> il_in_name isa j true
-    | Expr.Input (j, false) when !ip_il_in && in_place -> il_in_name isa j false
+    | Expr.Input (j, true) when !ip_il_in && in_place -> il_in_name ~sc isa j true
+    | Expr.Input (j, false) when !ip_il_in && in_place -> il_in_name ~sc isa j false
     | Expr.Input (j, true) ->
-      Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j true)
+      Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j true)
     | Expr.Input (j, false) ->
-      Isa.loadu_pd ~mode:!current_ls_mode isa (render_input_addr j false)
+      Isa.loadu_pd ~mode:sc.ls_mode isa (render_input_addr j false)
     | Expr.Twiddle (j, true) ->
       if tw_broadcast
       then Isa.set1_pd_str isa (Printf.sprintf "tw_re[%d]" j)
       else
         Isa.loadu_pd
-          ~mode:!current_ls_mode
+          ~mode:sc.ls_mode
           isa
           (Printf.sprintf "tw_re[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Twiddle (j, false) ->
@@ -405,7 +451,7 @@ let render_load
       then Isa.set1_pd_str isa (Printf.sprintf "tw_im[%d]" j)
       else
         Isa.loadu_pd
-          ~mode:!current_ls_mode
+          ~mode:sc.ls_mode
           isa
           (Printf.sprintf "tw_im[%d*%s + %s]" j tw_stride loop_var)
     | Expr.Output _ ->
@@ -476,7 +522,7 @@ let inline_max_depth = 32
  * for A/B testing and as a safety belt.
  *
  * Threading: same single-threaded assumption as current_regalloc. *)
-let current_unpin_candidates : (int, unit) Hashtbl.t option ref = ref None
+(* M6.1: cell moved into Scratch *)
 
 (* Walk the scheduled DAG and identify NK_Mul tags that have at least
  * one direct Add/Sub consumer. Single-pass; O(nodes + edges). *)
@@ -511,7 +557,7 @@ let compute_unpin_candidates (scheduled : t list) : (int, unit) Hashtbl.t =
  * BEFORE the k-loop; record the tag here so the in-loop renderers
  * emit nothing for it. Names (tN) are unchanged, arithmetic order is
  * unchanged, so outputs stay bit-exact. *)
-let hoisted_const_tags : (int, unit) Hashtbl.t = Hashtbl.create 64
+(* M6.1: cell moved into Scratch *)
 
 (* Gate: hoisting helps loop-dominated r2r/trig codelets (won the N=8
  * race vs the hand codelet) but TAXES spill-bound DFT kernels ~2%
@@ -520,8 +566,8 @@ let hoisted_const_tags : (int, unit) Hashtbl.t = Hashtbl.create 64
  * default false keeps the DFT tree byte-identical. *)
 let hoist_consts_enabled : bool ref = ref false
 
-let render_hoisted_consts ~(isa : Isa.t) (nodes : t list) : string =
-  Hashtbl.reset hoisted_const_tags;
+let render_hoisted_consts ~(sc : Scratch.t) ~(isa : Isa.t) (nodes : t list) : string =
+  Hashtbl.reset sc.hoisted_const_tags;
   if not !hoist_consts_enabled
   then ""
   else (
@@ -530,7 +576,7 @@ let render_hoisted_consts ~(isa : Isa.t) (nodes : t list) : string =
       (fun e ->
          match e.node with
          | NK_Const c ->
-           Hashtbl.replace hoisted_const_tags e.tag ();
+           Hashtbl.replace sc.hoisted_const_tags e.tag ();
            Buffer.add_string
              b
              (Printf.sprintf
@@ -545,6 +591,7 @@ let render_hoisted_consts ~(isa : Isa.t) (nodes : t list) : string =
 ;;
 
 let render_node_def_core
+  ~(sc : Scratch.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -556,7 +603,7 @@ let render_node_def_core
       (e : t)
   : string
   =
-  if Hashtbl.mem hoisted_const_tags e.tag
+  if Hashtbl.mem sc.hoisted_const_tags e.tag
   then ""
   else (
     (* Name renderer: usually returns "t<tag>", but if M5 has installed a
@@ -569,11 +616,11 @@ let render_node_def_core
       if t.tag = e.tag
       then default_name () (* LHS: never override *)
       else (
-        match !current_regalloc with
+        match sc.regalloc with
         | None -> default_name ()
         | Some alloc ->
           (match
-             Hashtbl.find_opt alloc.name_overrides (!current_emit_position, t.tag)
+             Hashtbl.find_opt alloc.name_overrides (sc.emit_position, t.tag)
            with
            | Some n -> n
            | None -> default_name ()))
@@ -640,7 +687,7 @@ let render_node_def_core
     let body =
       match e.node with
       | NK_Const c -> Isa.set1_pd_str isa (Printf.sprintf "%.17g" c)
-      | NK_Load r -> render_load ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
+      | NK_Load r -> render_load ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided r
       | NK_Neg inner ->
         (* Neg(Const c) is a compile-time constant — emit as a single
          * broadcast of -c rather than a runtime XOR. *)
@@ -709,14 +756,14 @@ let render_node_def_core
         if selective_pin_disabled
         then false
         else (
-          match !current_unpin_candidates with
+          match sc.unpin_candidates with
           | None -> false
           | Some tbl -> Hashtbl.mem tbl e.tag)
       in
       (* Helper: in fence-only mode emit `register ... = expr; asm volatile(...)`;
        * otherwise emit the plain `const ... = expr;` form. *)
       let non_pinned_decl name body =
-        if Hashtbl.mem !dup_barrier_tags e.tag
+        if Hashtbl.mem sc.dup_barrier_tags e.tag
         then
           (* duplication clone (doc 65 §8): non-const + "+x" barrier or
            * gcc re-CSEs the clone back into the original at -O3. *)
@@ -726,11 +773,11 @@ let render_node_def_core
             name
             body
             name
-        else if !current_fence_only
+        else if sc.fence_only
         then Isa.fenced_decl isa name body
         else Isa.const_decl isa name body
       in
-      match !current_regalloc with
+      match sc.regalloc with
       | Some alloc when not is_unpin_candidate ->
         (match Regalloc.lookup alloc e.tag with
          | Regalloc.Reg reg_name ->
@@ -804,7 +851,7 @@ type scheduler =
  * predecessor PLUS 1 if the tag also appears as an output assignment
  * (the store counts as a use).
  *)
-let compute_inline_set (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
+let compute_inline_set ~(sc : Scratch.t) (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtbl.t =
   let roots = List.map snd assigns in
   let nodes = topo_sort_reachable roots in
   (* Use count = how many other nodes reference this tag. *)
@@ -860,7 +907,7 @@ let compute_inline_set (assigns : (Expr.elem_ref * t) list) : (int, unit) Hashtb
          count = 1
          && (not is_sink)
          && kind_inlinable
-         && not (Hashtbl.mem !dup_barrier_tags n.tag)
+         && not (Hashtbl.mem sc.dup_barrier_tags n.tag)
          (* duplication clones MUST be declared: the "+x" barrier that
           * stops gcc re-CSEing them attaches to the declaration
           * (doc 65 §8); inlining them makes the clone a no-op. *)
@@ -1256,13 +1303,14 @@ let classify_passes (sp : spill_info) (nodes : t list)
  * `nodes` is taken as a parameter rather than recomputed so callers that
  * already hold the reachable set don't topo-sort twice. ─ *)
 let filter_inline_set_cross_pass
+  ~(sc : Scratch.t)
       (assigns : (Expr.elem_ref * t) list)
       (sp : spill_info)
       (nodes : t list)
   : (int, unit) Hashtbl.t
   =
   let cls = classify_passes sp nodes in
-  let all = compute_inline_set assigns in
+  let all = compute_inline_set ~sc assigns in
   let consumers : (int, t list) Hashtbl.t = Hashtbl.create 256 in
   List.iter
     (fun e ->
@@ -1362,6 +1410,7 @@ let provenance_block ~(family : string) (lines : string list) : string =
    lattice statements its expression triggered, placed by the scheduler's
    own ordering (lazy first-touch). *)
 let render_node_def
+  ~(sc : Scratch.t)
       ?(no_declarator = false)
       ?(inline_set : (int, unit) Hashtbl.t option = None)
       ?(twidsq = false)
@@ -1375,6 +1424,7 @@ let render_node_def
   =
   let core =
     render_node_def_core
+      ~sc
       ~no_declarator
       ~inline_set
       ~twidsq
@@ -1385,7 +1435,7 @@ let render_node_def
       ~t1s
       e
   in
-  let p = il_take_pending () in
+  let p = Scratch.il_take_pending sc in
   if p = "" then core else p ^ core
 ;;
 
@@ -1393,7 +1443,7 @@ let render_node_def
    hoisted constants, previously the SAME 10-line block copy-pasted 12 times
    across emit_c's arms (11 of them followed by the same hoisted-consts call;
    twidsq alone omits the consts).  One definition, called once per arm. *)
-let body_preamble ~isa ~spill ?consts () =
+let body_preamble ~(sc : Scratch.t) ~isa ~spill ?consts () =
   let b = Buffer.create 256 in
   (match spill with
    | None -> ()
@@ -1411,6 +1461,6 @@ let body_preamble ~isa ~spill ?consts () =
    | Some assigns ->
      Buffer.add_string
        b
-       (render_hoisted_consts ~isa (topo_sort_reachable (List.map snd assigns))));
+       (render_hoisted_consts ~sc ~isa (topo_sort_reachable (List.map snd assigns))));
   Buffer.contents b
 ;;

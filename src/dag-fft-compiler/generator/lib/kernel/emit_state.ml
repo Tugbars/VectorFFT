@@ -104,21 +104,13 @@ let ip_il_out : bool ref = ref false
 
 (* memo: per-emit_body-pass. il_pending accumulates lattice statements to be
    flushed as a prefix of the next rendered node definition. *)
-let il_seen : (int, unit) Hashtbl.t = Hashtbl.create 64
-let il_pending : Buffer.t = Buffer.create 256
-let il_stash : (int * string) option ref = ref None
+(* M6.1: il_seen moved into Emit_render.Scratch (per-emission). *)
+(* M6.1: il_pending moved into Emit_render.Scratch (per-emission). *)
+(* M6.1: il_stash moved into Emit_render.Scratch (per-emission). *)
 
-let il_reset () =
-  Hashtbl.reset il_seen;
-  Buffer.clear il_pending;
-  il_stash := None
-;;
+(* M6.1: il_reset moved into Emit_render.Scratch (per-emission). *)
 
-let il_take_pending () =
-  let s = Buffer.contents il_pending in
-  Buffer.clear il_pending;
-  s
-;;
+(* M6.1: il_take_pending moved into Emit_render.Scratch (per-emission). *)
 
 (* D2 (section 69): hc2c NATURAL-split terminator. Sub-mode of
  * hc_strided (inputs/twiddles identical); overrides the signature
@@ -173,7 +165,7 @@ let hc2c_nat_r : int ref = ref 0
  * c2c tail sets this to (LS_masked m) around the masked remainder pass; it is
  * read by render_load (rio + per-lane twiddle loads) and emit_store. Broadcast
  * twiddles / constants go through set1_pd_str and are never masked. *)
-let current_ls_mode : Isa.ls_mode ref = ref Isa.LS_vector
+(* M6.1: current_ls_mode moved into Emit_render.Scratch (per-emission). *)
 
 (* === M3a regalloc consumption point ===
  *
@@ -191,7 +183,7 @@ let current_ls_mode : Isa.ls_mode ref = ref Isa.LS_vector
  * Threading note: ocaml refs are not thread-safe. Codelet generation
  * is single-threaded (gen_radix emits one codelet at a time), so this
  * is fine in practice. Documented limitation. *)
-let current_regalloc : Regalloc.allocation option ref = ref None
+(* M6.1: current_regalloc moved into Emit_render.Scratch (per-emission). *)
 
 (* === Fence-only emission mode ===
  *
@@ -205,14 +197,14 @@ let current_regalloc : Regalloc.allocation option ref = ref None
  * Set per-codelet at the top of emit_codelet based on the fence/pin
  * policy. See `docs/fence_pin_decomposition.md` for the empirical
  * basis. *)
-let current_fence_only : bool ref = ref false
+(* M6.1: current_fence_only moved into Emit_render.Scratch (per-emission). *)
 
 (* Duplication-clone barrier set (doc 65 §8): tags of un-CSE clones
  * produced by Algsimp.duplicate_uncse. The render layer must emit each
  * as a NON-const declaration with a "+x" compiler barrier (or gcc
  * re-CSEs the clone back into the original at -O3) and must never
  * inline them. Set by gen_main when VFFT_DUP=1; empty by default. *)
-let dup_barrier_tags : (int, unit) Hashtbl.t ref = ref (Hashtbl.create 0)
+(* M6.1: dup_barrier_tags moved into Emit_render.Scratch (per-emission). *)
 
 (* Store-on-compute (in-place 2-pass path). When true, each PASS 2 output
  * is stored to the output buffer the moment its value node is emitted,
@@ -230,4 +222,4 @@ let current_store_on_compute : bool ref = ref false
  * render_node_def. Set by the pass walkers in emit_c just before each
  * render_node_def call. Used by `v` (operand name renderer) to look
  * up name_overrides for reloaded values. *)
-let current_emit_position : int ref = ref 0
+(* M6.1: current_emit_position moved into Emit_render.Scratch (per-emission). *)

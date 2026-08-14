@@ -758,6 +758,9 @@ let run (argv : string array) : unit =
      rewrite retires them too.  Round-trip contract: to_argv (of_argv l) == l
      verbatim over every live recorded provenance line (1,404/1,404). *)
   let cdesc = Codelet.of_argv ~strict:false (List.tl (Array.to_list argv)) in
+  (* M6.1: the per-emission Scratch — created by the DRIVER, one per
+     codelet, so nothing leaks across emissions in a warm gen_set process. *)
+  let sc = Emit_render.Scratch.create () in
   let cmods = cdesc.Codelet.mods in
   let cbwd = cmods.Codelet.dir = Codelet.Bwd in
   Emit_state.r2cf_signature := (cdesc.Codelet.kind = Codelet.R2cf);
@@ -1291,7 +1294,7 @@ let run (argv : string array) : unit =
           ~schedule:sched_of
           deduped
       in
-      Emit_state.dup_barrier_tags := btags;
+      Hashtbl.iter (fun t () -> Hashtbl.replace sc.Emit_render.Scratch.dup_barrier_tags t ()) btags;
       let chase t =
         let rec go t k =
           if k > 64
@@ -2009,6 +2012,7 @@ let run (argv : string array) : unit =
       Emit_state.current_store_on_compute := !store_on_compute;
       print_string
         (Emit_c.emit_codelet
+           ~sc
            ~in_place:!in_place
            ~t1s:!t1s
            ~twidsq:!twidsq
