@@ -663,10 +663,10 @@ hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
 > First **valid** cells (2026-08-13 smoke, gated 8.9e-16/1.0e-15): **0.366 at 512×4, 0.458 at
 > 1024×16** — materially worse than the void table suggested. Note the comparison is
 > home-layout vs home-layout: our natural path consumes a **split** re/im half-spectrum
-> (lane-major batch) while MKL consumes **interleaved CCE** (transform-major); an
-> interleaved-vs-interleaved like-for-like requires the D2 interleaved c2r route
-> (`docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md`), which does not exist yet.
-> A full re-sweep of this section is pending that work.
+> (lane-major batch) while MKL consumes **interleaved CCE** (transform-major); the
+> interleaved-vs-interleaved like-for-like is the D2 zr2c route — **shipped 2026-08-13,
+> measured in the subsection below**. A full re-sweep of the split cells above is still
+> pending.
 
 #### Single-thread — the packing tax (again)
 ```
@@ -705,6 +705,40 @@ hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
 > K-batch where the work is), so the dag/MKL-T8 ratios at low K are inflated by MKL's thread
 > overhead — the honest number is dag's own **2.8× self-scaling at high K**. Same trade as r2c:
 > the layout that taxes us single-thread is exactly the multithreading edge.
+
+### 1D INTERLEAVED r2c/c2r, K=1 — the D2 zr2c route (like-for-like vs MKL's home layout)
+
+The first **interleaved-vs-interleaved** real-transform comparison — both engines consume/produce
+the packed CCE plane, no layout excuse on either side. Ours = the D2 composite (`vfft.c` zr2c
+route, shipped 2026-08-13): reinterpret x[N] as z[N/2] (zero work) → child c2c(N/2) NATURAL →
+z→z Hermitian fold; c2r is the mirror with the fold leading. Two child routes, raced and banked
+per cell in `oop_wisdom.txt` kind-5 rows: **OOP-IL** (IL c2c engine) and **cascade** (natural
+in-place cascade). MKL = DFTI_REAL CCE **DFTI_INPLACE** — its best real arm (V6), backward on
+its own twin descriptor with the per-run `mklref` gate. Gates: cross-engine fwd elementwise
+(~5e-16) + each engine's backward vs N·x (~1e-15). Medians of 5, pinned core 2, pace 300 ms.
+Source: `bench_1d_vs_mkl.c --zr2c` → `zr2c_quietday_20260813.csv`. Ratio = MKL/ours: >1 we win.
+
+```
+ N       r2c OOP-IL  r2c cascade  r2c BEST | c2r OOP-IL  c2r cascade  c2r BEST
+────────────────────────────────────────────────────────────────────────────────
+ 512       0.84×        —          0.84×   |   0.91×        —          0.91×
+ 2048      0.79×       0.86×       0.86×   |   0.54×       0.55×       0.55×
+ 8192      1.00×       0.96×       1.00×   |   0.99×       0.96×       0.99×
+ 16384     1.01×       1.06×       1.06×   |   0.92×       0.83×       0.92×
+ 65536     0.89×       1.12×       1.12×   |   0.83×       0.84×       0.84×
+────────────────────────────────────────────────────────────────────────────────
+ r2c: parity-to-winning at 8192–65536 (65536 = the cascade child, 1.12×).
+ c2r: trails r2c at every N; 2048 is the hole (0.55× — BOTH arms tie there).
+```
+
+> **r2c reaches the parity band mid-N and wins at 65536 (1.12×, cascade child); the small end
+> trails ~0.85×.** The c2r column is the open problem, and the 2048 cell shows exactly where:
+> MKL's backward costs **the same as its forward** (1198 vs 1200 ns), while ours pays **~+50%
+> over our own forward** (r2c ~1400–1500 ns → c2r ~2200 ns) — in **both** child routes, so no
+> route pick fixes it. The fold is direction-symmetric; the entire penalty is the child's
+> **natural c2c backward** (IL bwd / backward cascade), a c2c-side workstream — fixing it moves
+> the whole c2r column, 2048 (0.55×) first. Day-to-day ratio drift on this host is up to ~0.2
+> per cell (thermal); quote the **shape**, not one day's third digit.
 
 ## 4. vs MKL — 2D R2C
 
