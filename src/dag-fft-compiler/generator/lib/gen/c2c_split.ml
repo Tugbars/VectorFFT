@@ -1,4 +1,12 @@
-(* codelet_oop.ml — M2 codelet family: out-of-place with heterogeneous stride patterns
+(* c2c_split.ml — M8.5: the C2c_split feature module (§9 #32), renamed
+ * from codelet_oop.ml — the split-complex c2c family: in-place · OOP
+ * edges · strided/batched (849 files, 59.3% of the corpus).  ⚠ G6,
+ * recorded: emit_body_spill below (578 lines) is a private body/spill
+ * emitter DUPLICATING the kernel engine's — SURVIVING DUPLICATION by
+ * the M8.5 owner decision (merging it is a byte-risk numerical-campaign
+ * job, not a structural one).
+ *
+ * (was: codelet_oop.ml — M2 codelet family: out-of-place with heterogeneous stride patterns
  *
  * SCOPE
  * ─────
@@ -2562,4 +2570,441 @@ let emit_k1_mono
   current_oop_il_out := false;
   current_oop_il_out_sw := false;
   Buffer.contents buf
+;;
+
+(* ═════════════════════════════════════════════════════════════════
+ * M8.5 — THE ENGINE ROUTE.  gen_main sends every remaining
+ * Emit_body.emit_codelet family here (split-complex c2c: in-place,
+ * twidsq, oop-generic, strided plain/il, n1_oop_strided).  The closures
+ * are the family's strided-il lattice arms, moved VERBATIM from
+ * emit_body.ml — the last family content in the engine.  Real owns the
+ * r2c/c2r/hc/trig route; Emit_body fails loudly if either family's arm
+ * is reached unhooked.  The plain strided lattice stays engine-side as
+ * Simd calls (M7); the ip-il index decls stay engine-side too — their
+ * uses are woven through the engine's store renderer (emit_store), which
+ * the doc mandates moves whole or not at all.
+ * ═════════════════════════════════════════════════════════════════ *)
+
+module Cfg = Emit_render.Cfg
+
+let emit_engine
+      ~sc
+      ~(cfg : Emit_render.Cfg.t)
+      ~in_place
+      ~t1s
+      ~twidsq
+      ~twidsq_n
+      ~strided
+      ~radix
+      ~scheduler
+      ~(isa : Isa.t)
+      ~gh
+      ~bb_budget
+      ~spill
+      ~is_log3
+      deduped
+      ~name
+  =
+  let hooks =
+    { Emit_body.no_hooks with
+      Emit_body.strided_idx =
+        Some
+          (fun buf ->
+      if cfg.Cfg.strided_il_out
+      then (
+        Buffer.add_string
+          buf
+          "    const __m512i _il_idx_e = _mm512_set_epi64(11, 3, 10, 2, 9, 1, 8, 0);\n";
+        Buffer.add_string
+          buf
+          "    const __m512i _il_idx_o = _mm512_set_epi64(15, 7, 14, 6, 13, 5, 12, 4);\n");
+      if cfg.Cfg.strided_il_in
+      then (
+        Buffer.add_string
+          buf
+          "    const __m512i _il_idx_de = _mm512_set_epi64(14, 12, 10, 8, 6, 4, 2, 0);\n";
+        Buffer.add_string
+          buf
+          "    const __m512i _il_idx_do = _mm512_set_epi64(15, 13, 11, 9, 7, 5, 3, 1);\n")
+)
+    ; strided_load_il =
+        Some
+          (fun buf ->
+            if isa.Isa.vec_width = 4
+            then (
+              let groups = radix / 4 in
+        for g = 0 to groups - 1 do
+          let j0 = g * 4 in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        {  /* 4x4 transpose group (il_in): fft_idx %d..%d */\n"
+               j0
+               (j0 + 3));
+          for r = 0 to 3 do
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m256d _zv0_%d = \
+                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
+                 r
+                 r
+                 j0);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m256d _zv1_%d = \
+                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 4]);\n"
+                 r
+                 r
+                 j0);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m256d _row_re_%d = \
+                  _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zv0_%d, _zv1_%d), 0xD8);\n"
+                 r
+                 r
+                 r);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m256d _row_im_%d = \
+                  _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zv0_%d, _zv1_%d), 0xD8);\n"
+                 r
+                 r
+                 r)
+          done;
+          List.iter
+            (fun suf ->
+               for k = 0 to 3 do
+                 let base = k / 2 * 2 in
+                 let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                 Buffer.add_string
+                   buf
+                   (Printf.sprintf
+                      "            const __m256d _t%d_%s = _mm256_%s_pd(_row_%s_%d, \
+                       _row_%s_%d);\n"
+                      k
+                      suf
+                      op
+                      suf
+                      base
+                      suf
+                      (base + 1))
+               done;
+               for i = 0 to 3 do
+                 let ta = i mod 2 in
+                 let tb = 2 + (i mod 2) in
+                 let imm = if i < 2 then "0x20" else "0x31" in
+                 Buffer.add_string
+                   buf
+                   (Printf.sprintf
+                      "            lane_%s_%d = _mm256_permute2f128_pd(_t%d_%s, _t%d_%s, \
+                       %s);\n"
+                      suf
+                      (j0 + i)
+                      ta
+                      suf
+                      tb
+                      suf
+                      imm)
+               done)
+            [ "re"; "im" ];
+          Buffer.add_string buf "        }\n"
+        done
+)
+            else (
+              let groups = radix / 8 in
+        for g = 0 to groups - 1 do
+          let j0 = g * 8 in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "        {  /* 8x8 transpose group (il_in): fft_idx %d..%d */\n"
+               j0
+               (j0 + 7));
+          for r = 0 to 7 do
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m512d _zv0_%d = \
+                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
+                 r
+                 r
+                 j0);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m512d _zv1_%d = \
+                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 8]);\n"
+                 r
+                 r
+                 j0);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m512d _row_re_%d = _mm512_permutex2var_pd(_zv0_%d, \
+                  _il_idx_de, _zv1_%d);\n"
+                 r
+                 r
+                 r);
+            Buffer.add_string
+              buf
+              (Printf.sprintf
+                 "            const __m512d _row_im_%d = _mm512_permutex2var_pd(_zv0_%d, \
+                  _il_idx_do, _zv1_%d);\n"
+                 r
+                 r
+                 r)
+          done;
+          List.iter
+            (fun suf ->
+               for k = 0 to 7 do
+                 let base = k / 2 * 2 in
+                 let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+                 Buffer.add_string
+                   buf
+                   (Printf.sprintf
+                      "            const __m512d _t%d_%s = _mm512_%s_pd(_row_%s_%d, \
+                       _row_%s_%d);\n"
+                      k
+                      suf
+                      op
+                      suf
+                      base
+                      suf
+                      (base + 1))
+               done;
+               for k = 0 to 7 do
+                 let ua = (k mod 4 mod 2) + (k / 4 * 4) in
+                 let ub = ua + 2 in
+                 let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+                 Buffer.add_string
+                   buf
+                   (Printf.sprintf
+                      "            const __m512d _x%d_%s = \
+                       _mm512_permutex2var_pd(_t%d_%s, %s, _t%d_%s);\n"
+                      k
+                      suf
+                      ua
+                      suf
+                      idx
+                      ub
+                      suf)
+               done;
+               for i = 0 to 7 do
+                 let va = if i < 4 then i else i - 4 in
+                 let vb = if i < 4 then i + 4 else i in
+                 let imm = if i < 4 then "0x44" else "0xEE" in
+                 Buffer.add_string
+                   buf
+                   (Printf.sprintf
+                      "            lane_%s_%d = _mm512_shuffle_f64x2(_x%d_%s, _x%d_%s, \
+                       %s);\n"
+                      suf
+                      (j0 + i)
+                      va
+                      suf
+                      vb
+                      suf
+                      imm)
+               done)
+            [ "re"; "im" ];
+          Buffer.add_string buf "        }\n"
+        done
+))
+    ; strided_store_il =
+        Some
+          (fun buf ->
+            if isa.Isa.vec_width = 4
+            then (
+              let groups = radix / 4 in
+      for g = 0 to groups - 1 do
+        let j0 = g * 4 in
+        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm256_stream_pd" else "_mm256_storeu_pd" in
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        {  /* inverse 4x4 transpose + interleave: fft_idx %d..%d */\n"
+             j0
+             (j0 + 3));
+        List.iter
+          (fun suf ->
+             for k = 0 to 3 do
+               let base = j0 + (k / 2 * 2) in
+               let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "            const __m256d _u%d_%s = _mm256_%s_pd(out_lane_%s_%d, \
+                     out_lane_%s_%d);\n"
+                    k
+                    suf
+                    op
+                    suf
+                    base
+                    suf
+                    (base + 1))
+             done)
+          [ "re"; "im" ];
+        for k = 0 to 3 do
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            const __m256d _p%d_lo = _mm256_unpacklo_pd(_u%d_re, _u%d_im);\n"
+               k
+               k
+               k);
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            const __m256d _p%d_hi = _mm256_unpackhi_pd(_u%d_re, _u%d_im);\n"
+               k
+               k
+               k)
+        done;
+        for i = 0 to 3 do
+          let pa = i mod 2 in
+          let pb = 2 + (i mod 2) in
+          let imm = if i < 2 then "0x20" else "0x31" in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 0], \
+                _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
+               stfn
+               i
+               j0
+               pa
+               pa
+               imm);
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 4], \
+                _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
+               stfn
+               i
+               j0
+               pb
+               pb
+               imm)
+        done;
+        Buffer.add_string buf "        }\n"
+      done
+)
+            else (
+              let groups = radix / 8 in
+      for g = 0 to groups - 1 do
+        let j0 = g * 8 in
+        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm512_stream_pd" else "_mm512_storeu_pd" in
+        Buffer.add_string
+          buf
+          (Printf.sprintf
+             "        {  /* inverse 8x8 transpose + interleave: fft_idx %d..%d */\n"
+             j0
+             (j0 + 7));
+        List.iter
+          (fun suf ->
+             for k = 0 to 7 do
+               let base = j0 + (k / 2 * 2) in
+               let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "            const __m512d _u%d_%s = _mm512_%s_pd(out_lane_%s_%d, \
+                     out_lane_%s_%d);\n"
+                    k
+                    suf
+                    op
+                    suf
+                    base
+                    suf
+                    (base + 1))
+             done;
+             for k = 0 to 7 do
+               let ua = (k mod 4 mod 2) + (k / 4 * 4) in
+               let ub = ua + 2 in
+               let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
+               Buffer.add_string
+                 buf
+                 (Printf.sprintf
+                    "            const __m512d _v%d_%s = _mm512_permutex2var_pd(_u%d_%s, \
+                     %s, _u%d_%s);\n"
+                    k
+                    suf
+                    ua
+                    suf
+                    idx
+                    ub
+                    suf)
+             done)
+          [ "re"; "im" ];
+        for i = 0 to 7 do
+          let va = if i < 4 then i else i - 4 in
+          let vb = if i < 4 then i + 4 else i in
+          let imm = if i < 4 then "0x44" else "0xEE" in
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            const __m512d _r%d_re = _mm512_shuffle_f64x2(_v%d_re, \
+                _v%d_re, %s);\n"
+               i
+               va
+               vb
+               imm);
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            const __m512d _r%d_im = _mm512_shuffle_f64x2(_v%d_im, \
+                _v%d_im, %s);\n"
+               i
+               va
+               vb
+               imm);
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 0], \
+                _mm512_permutex2var_pd(_r%d_re, _il_idx_e, _r%d_im));\n"
+               stfn
+               i
+               j0
+               i
+               i);
+          Buffer.add_string
+            buf
+            (Printf.sprintf
+               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 8], \
+                _mm512_permutex2var_pd(_r%d_re, _il_idx_o, _r%d_im));\n"
+               stfn
+               i
+               j0
+               i
+               i)
+        done;
+        Buffer.add_string buf "        }\n"
+      done
+))
+    }
+  in
+  Emit_body.emit_codelet
+    ~hooks
+    ~sc
+    ~cfg
+    ~in_place
+    ~t1s
+    ~twidsq
+    ~twidsq_n
+    ~strided
+    ~radix
+    ~scheduler
+    ~isa
+    ~gh
+    ~bb_budget
+    ~spill
+    ~is_log3
+    deduped
+    ~name
 ;;

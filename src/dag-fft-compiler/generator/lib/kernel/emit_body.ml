@@ -83,6 +83,12 @@ type family_hooks =
     (* the load-lattice family arm (c2r merge prologue) *)
   ; strided_store : (Buffer.t -> unit) option
     (* the store-lattice family arm (r2c fused conjugate split) *)
+  ; strided_idx : (Buffer.t -> unit) option
+    (* vw=8 strided prologue: the il permute index-vector decls *)
+  ; strided_load_il : (Buffer.t -> unit) option
+    (* the load-lattice il_in arm (deinterleave loads) *)
+  ; strided_store_il : (Buffer.t -> unit) option
+    (* the store-lattice il_out arm (interleave stores) *)
   ; trailer : (Buffer.t -> unit) option
     (* after the tail region: the hc_ranged pointer-advance closer *)
   }
@@ -92,6 +98,9 @@ let no_hooks =
   ; strided_locals = None
   ; strided_load = None
   ; strided_store = None
+  ; strided_idx = None
+  ; strided_load_il = None
+  ; strided_store_il = None
   ; trailer = None
   }
 
@@ -649,22 +658,12 @@ let emit_codelet
       Buffer.add_string
         buf
         "    const __m512i _tp_idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);\n";
-      if cfg.Cfg.strided_il_out
-      then (
-        Buffer.add_string
-          buf
-          "    const __m512i _il_idx_e = _mm512_set_epi64(11, 3, 10, 2, 9, 1, 8, 0);\n";
-        Buffer.add_string
-          buf
-          "    const __m512i _il_idx_o = _mm512_set_epi64(15, 7, 14, 6, 13, 5, 12, 4);\n");
-      if cfg.Cfg.strided_il_in
-      then (
-        Buffer.add_string
-          buf
-          "    const __m512i _il_idx_de = _mm512_set_epi64(14, 12, 10, 8, 6, 4, 2, 0);\n";
-        Buffer.add_string
-          buf
-          "    const __m512i _il_idx_do = _mm512_set_epi64(15, 13, 11, 9, 7, 5, 3, 1);\n"));
+      (* M8.5: the strided-il index-vector decls moved to C2c_split. *)
+      (match hooks.strided_idx with
+       | Some f -> f buf
+       | None ->
+         if cfg.Cfg.strided_il_out || cfg.Cfg.strided_il_in
+         then failwith "emit_codelet: strided il requires the C2c_split route (M8.5)"));
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t b = 0; b < me; b += %d) {\n" isa.vec_width);
@@ -694,87 +693,11 @@ let emit_codelet
     then (
       let groups = radix / 4 in
       if cfg.Cfg.strided_il_in
-      then
-        for g = 0 to groups - 1 do
-          let j0 = g * 4 in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "        {  /* 4x4 transpose group (il_in): fft_idx %d..%d */\n"
-               j0
-               (j0 + 3));
-          for r = 0 to 3 do
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m256d _zv0_%d = \
-                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
-                 r
-                 r
-                 j0);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m256d _zv1_%d = \
-                  _mm256_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 4]);\n"
-                 r
-                 r
-                 j0);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m256d _row_re_%d = \
-                  _mm256_permute4x64_pd(_mm256_unpacklo_pd(_zv0_%d, _zv1_%d), 0xD8);\n"
-                 r
-                 r
-                 r);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m256d _row_im_%d = \
-                  _mm256_permute4x64_pd(_mm256_unpackhi_pd(_zv0_%d, _zv1_%d), 0xD8);\n"
-                 r
-                 r
-                 r)
-          done;
-          List.iter
-            (fun suf ->
-               for k = 0 to 3 do
-                 let base = k / 2 * 2 in
-                 let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
-                 Buffer.add_string
-                   buf
-                   (Printf.sprintf
-                      "            const __m256d _t%d_%s = _mm256_%s_pd(_row_%s_%d, \
-                       _row_%s_%d);\n"
-                      k
-                      suf
-                      op
-                      suf
-                      base
-                      suf
-                      (base + 1))
-               done;
-               for i = 0 to 3 do
-                 let ta = i mod 2 in
-                 let tb = 2 + (i mod 2) in
-                 let imm = if i < 2 then "0x20" else "0x31" in
-                 Buffer.add_string
-                   buf
-                   (Printf.sprintf
-                      "            lane_%s_%d = _mm256_permute2f128_pd(_t%d_%s, _t%d_%s, \
-                       %s);\n"
-                      suf
-                      (j0 + i)
-                      ta
-                      suf
-                      tb
-                      suf
-                      imm)
-               done)
-            [ "re"; "im" ];
-          Buffer.add_string buf "        }\n"
-        done
+      then (
+        (* M8.5: the il_in deinterleave-load lattice moved to C2c_split. *)
+        match hooks.strided_load_il with
+        | Some f -> f buf
+        | None -> failwith "emit_codelet: strided il requires the C2c_split route (M8.5)")
       else if cfg.Cfg.strided_r2c_bwd
       then (
         (* M8.3: the merge-load lattice moved to Real (family hook). *)
@@ -800,104 +723,11 @@ let emit_codelet
        * collision — the `{ ... }` block scope makes that safe. *)
       let groups = radix / 8 in
       if cfg.Cfg.strided_il_in
-      then
-        for g = 0 to groups - 1 do
-          let j0 = g * 8 in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "        {  /* 8x8 transpose group (il_in): fft_idx %d..%d */\n"
-               j0
-               (j0 + 7));
-          for r = 0 to 7 do
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m512d _zv0_%d = \
-                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 0]);\n"
-                 r
-                 r
-                 j0);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m512d _zv1_%d = \
-                  _mm512_loadu_pd(&in_z[2*((b+%d)*row_stride + %d) + 8]);\n"
-                 r
-                 r
-                 j0);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m512d _row_re_%d = _mm512_permutex2var_pd(_zv0_%d, \
-                  _il_idx_de, _zv1_%d);\n"
-                 r
-                 r
-                 r);
-            Buffer.add_string
-              buf
-              (Printf.sprintf
-                 "            const __m512d _row_im_%d = _mm512_permutex2var_pd(_zv0_%d, \
-                  _il_idx_do, _zv1_%d);\n"
-                 r
-                 r
-                 r)
-          done;
-          List.iter
-            (fun suf ->
-               for k = 0 to 7 do
-                 let base = k / 2 * 2 in
-                 let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
-                 Buffer.add_string
-                   buf
-                   (Printf.sprintf
-                      "            const __m512d _t%d_%s = _mm512_%s_pd(_row_%s_%d, \
-                       _row_%s_%d);\n"
-                      k
-                      suf
-                      op
-                      suf
-                      base
-                      suf
-                      (base + 1))
-               done;
-               for k = 0 to 7 do
-                 let ua = (k mod 4 mod 2) + (k / 4 * 4) in
-                 let ub = ua + 2 in
-                 let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
-                 Buffer.add_string
-                   buf
-                   (Printf.sprintf
-                      "            const __m512d _x%d_%s = \
-                       _mm512_permutex2var_pd(_t%d_%s, %s, _t%d_%s);\n"
-                      k
-                      suf
-                      ua
-                      suf
-                      idx
-                      ub
-                      suf)
-               done;
-               for i = 0 to 7 do
-                 let va = if i < 4 then i else i - 4 in
-                 let vb = if i < 4 then i + 4 else i in
-                 let imm = if i < 4 then "0x44" else "0xEE" in
-                 Buffer.add_string
-                   buf
-                   (Printf.sprintf
-                      "            lane_%s_%d = _mm512_shuffle_f64x2(_x%d_%s, _x%d_%s, \
-                       %s);\n"
-                      suf
-                      (j0 + i)
-                      va
-                      suf
-                      vb
-                      suf
-                      imm)
-               done)
-            [ "re"; "im" ];
-          Buffer.add_string buf "        }\n"
-        done
+      then (
+        (* M8.5: the il_in deinterleave-load lattice moved to C2c_split. *)
+        match hooks.strided_load_il with
+        | Some f -> f buf
+        | None -> failwith "emit_codelet: strided il requires the C2c_split route (M8.5)")
       else if cfg.Cfg.strided_r2c_bwd
       then (
         (* M8.3: the merge-load lattice moved to Real (family hook). *)
@@ -2408,80 +2238,11 @@ let emit_codelet
     Buffer.add_string buf "\n";
     let groups = radix / 4 in
     if cfg.Cfg.strided_il_out
-    then
-      for g = 0 to groups - 1 do
-        let j0 = g * 4 in
-        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm256_stream_pd" else "_mm256_storeu_pd" in
-        Buffer.add_string
-          buf
-          (Printf.sprintf
-             "        {  /* inverse 4x4 transpose + interleave: fft_idx %d..%d */\n"
-             j0
-             (j0 + 3));
-        List.iter
-          (fun suf ->
-             for k = 0 to 3 do
-               let base = j0 + (k / 2 * 2) in
-               let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
-               Buffer.add_string
-                 buf
-                 (Printf.sprintf
-                    "            const __m256d _u%d_%s = _mm256_%s_pd(out_lane_%s_%d, \
-                     out_lane_%s_%d);\n"
-                    k
-                    suf
-                    op
-                    suf
-                    base
-                    suf
-                    (base + 1))
-             done)
-          [ "re"; "im" ];
-        for k = 0 to 3 do
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            const __m256d _p%d_lo = _mm256_unpacklo_pd(_u%d_re, _u%d_im);\n"
-               k
-               k
-               k);
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            const __m256d _p%d_hi = _mm256_unpackhi_pd(_u%d_re, _u%d_im);\n"
-               k
-               k
-               k)
-        done;
-        for i = 0 to 3 do
-          let pa = i mod 2 in
-          let pb = 2 + (i mod 2) in
-          let imm = if i < 2 then "0x20" else "0x31" in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 0], \
-                _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
-               stfn
-               i
-               j0
-               pa
-               pa
-               imm);
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 4], \
-                _mm256_permute2f128_pd(_p%d_lo, _p%d_hi, %s));\n"
-               stfn
-               i
-               j0
-               pb
-               pb
-               imm)
-        done;
-        Buffer.add_string buf "        }\n"
-      done
+    then (
+      (* M8.5: the il_out interleave-store lattice moved to C2c_split. *)
+      match hooks.strided_store_il with
+      | Some f -> f buf
+      | None -> failwith "emit_codelet: strided il requires the C2c_split route (M8.5)")
     else if cfg.Cfg.strided_r2c && not cfg.Cfg.strided_r2c_bwd
     then (
       (* M8.3: the fused conjugate-split store moved to Real (family hook). *)
@@ -2505,97 +2266,11 @@ let emit_codelet
     Buffer.add_string buf "\n";
     let groups = radix / 8 in
     if cfg.Cfg.strided_il_out
-    then
-      for g = 0 to groups - 1 do
-        let j0 = g * 8 in
-        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm512_stream_pd" else "_mm512_storeu_pd" in
-        Buffer.add_string
-          buf
-          (Printf.sprintf
-             "        {  /* inverse 8x8 transpose + interleave: fft_idx %d..%d */\n"
-             j0
-             (j0 + 7));
-        List.iter
-          (fun suf ->
-             for k = 0 to 7 do
-               let base = j0 + (k / 2 * 2) in
-               let op = if k mod 2 = 0 then "unpacklo" else "unpackhi" in
-               Buffer.add_string
-                 buf
-                 (Printf.sprintf
-                    "            const __m512d _u%d_%s = _mm512_%s_pd(out_lane_%s_%d, \
-                     out_lane_%s_%d);\n"
-                    k
-                    suf
-                    op
-                    suf
-                    base
-                    suf
-                    (base + 1))
-             done;
-             for k = 0 to 7 do
-               let ua = (k mod 4 mod 2) + (k / 4 * 4) in
-               let ub = ua + 2 in
-               let idx = if k mod 4 < 2 then "_tp_idx_lo" else "_tp_idx_hi" in
-               Buffer.add_string
-                 buf
-                 (Printf.sprintf
-                    "            const __m512d _v%d_%s = _mm512_permutex2var_pd(_u%d_%s, \
-                     %s, _u%d_%s);\n"
-                    k
-                    suf
-                    ua
-                    suf
-                    idx
-                    ub
-                    suf)
-             done)
-          [ "re"; "im" ];
-        for i = 0 to 7 do
-          let va = if i < 4 then i else i - 4 in
-          let vb = if i < 4 then i + 4 else i in
-          let imm = if i < 4 then "0x44" else "0xEE" in
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            const __m512d _r%d_re = _mm512_shuffle_f64x2(_v%d_re, \
-                _v%d_re, %s);\n"
-               i
-               va
-               vb
-               imm);
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            const __m512d _r%d_im = _mm512_shuffle_f64x2(_v%d_im, \
-                _v%d_im, %s);\n"
-               i
-               va
-               vb
-               imm);
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 0], \
-                _mm512_permutex2var_pd(_r%d_re, _il_idx_e, _r%d_im));\n"
-               stfn
-               i
-               j0
-               i
-               i);
-          Buffer.add_string
-            buf
-            (Printf.sprintf
-               "            %s(&out_z[2*((b+%d)*row_stride + %d) + 8], \
-                _mm512_permutex2var_pd(_r%d_re, _il_idx_o, _r%d_im));\n"
-               stfn
-               i
-               j0
-               i
-               i)
-        done;
-        Buffer.add_string buf "        }\n"
-      done
+    then (
+      (* M8.5: the il_out interleave-store lattice moved to C2c_split. *)
+      match hooks.strided_store_il with
+      | Some f -> f buf
+      | None -> failwith "emit_codelet: strided il requires the C2c_split route (M8.5)")
     else if cfg.Cfg.strided_r2c && not cfg.Cfg.strided_r2c_bwd
     then (
       (* M8.3: the fused conjugate-split store moved to Real (family hook). *)

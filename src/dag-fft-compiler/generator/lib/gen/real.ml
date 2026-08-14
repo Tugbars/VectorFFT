@@ -37,7 +37,8 @@ let emit_codelet
       ~name
   =
   let hooks =
-    { Emit_body.strided_prologue =
+    { Emit_body.no_hooks with
+      Emit_body.strided_prologue =
         Some
           (fun buf ->
     if cfg.Cfg.strided_r2c_bwd
