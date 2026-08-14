@@ -1,31 +1,29 @@
-(* coverage.ml — THE single source of truth for codelet coverage.
+(* corpus.ml — M10: THE CORPUS, TYPED (§9 #37) — coverage.ml inverted.
  *
- * Section 39: radix coverage used to be defined three times (bash in
- * regen_codelets.sh / generate_codelets.sh, OCaml in emit_registry_h),
- * with dune unable to watch the bash side. This module is now the only
- * definition; consumers:
- *   - bin/gen_set.ml      (the in-process tree generator / driver)
- *   - bin/emit_registry_h (registry coverage)
- *   - scripts             (thin invokers of gen_set; carry no lists)
+ * The family matrices below (moved verbatim from coverage.ml) still
+ * CONSTRUCT the per-quadrant (filename, argv_tail) pairs — but they are
+ * now the PRIVATE scaffold.  The public surface derives through the
+ * Codelet descriptor, with TWO LAWS enforced lazily at first use:
  *
- * Each quadrant maps to (filename, argv_tail) pairs where argv_tail is
- * the exact gen_radix CLI the codelet is generated with (sans exe name
- * and sans --emit-c, which the driver appends). Structure rules that
- * are CODE, not coverage — the 18-family matrix, the spec stride
- * formula RV = R*8, strided's single-stage restriction — live here as
- * functions, not as data to keep in sync.
- * ------------------------------------------------------------------
- * MODULE CARD (coverage.ml — grep "MODULE CARD" for the full set)
- * ROLE: The radix / family / quadrant coverage lists and the per-file
- * gen_radix argv for every codelet in the tree, plus expected_counts.
- * PIPELINE: walked by gen_set (tree regen) and the registry emitters.
- * PUBLIC SURFACE (measured): gen_set(3): quadrants, files,
- * dir_of_quadrant; each bin/emit_*_registry(3): files; and
- * emit_registry_h(2): ip_radices.
- * DEPS: none — pure data + shape functions.
- * GOTCHA: a coverage edit changes what "all" regenerates AND what the
- * registries declare; regen + registry emit must ship together.
- * ------------------------------------------------------------------
+ *   ROUND-TRIP LAW   Codelet.of_argv (tail @ ["--emit-c"]) must
+ *                    to_argv back VERBATIM — provenance == coverage ==
+ *                    regen recipe becomes a CHECKED fact, one identity
+ *                    per codelet (codelet.mli's M5 contract, now load-
+ *                    bearing for the tree and the registries).
+ *   UNIQUENESS LAW   no two cells share dir/filename; no two cells in
+ *                    the whole corpus share a canonical argv.
+ *
+ * A violation fails LOUDLY in gen_set / the registry emitters — the
+ * tree and registry writers refuse to run on a lawless corpus.  The
+ * laws never run inside gen_radix itself (lazy: single-codelet
+ * emission pays nothing).
+ *
+ * Consumers: gen_set (tree regen), the six registry emitters (files),
+ * emit_registry_h (ip_radices).  ⚠ The emitted registry headers still
+ * SAY "Coverage.files" in their comment banner — kept byte-identical
+ * deliberately at M10; the wording updates with the first REAL registry
+ * change (a coverage raise), never as a rename side effect.
+ * cil/zil enter the corpus at M12a (state fix first), never before.
  *)
 
 let ip_radices = [ 2; 3; 4; 5; 6; 7; 8; 10; 11; 12; 13; 16; 17; 19; 20; 25; 32; 64 ]
@@ -79,7 +77,7 @@ let oop_base (isa : string) : string list =
 
 (* (filename, argv_tail) pairs per quadrant. argv_tail excludes the exe
  * name and --emit-c. Filenames match the committed tree exactly. *)
-let files (quadrant : string) : (string * string list) list =
+let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
   | "inplace-avx2" | "inplace-avx512" ->
     let isa = if quadrant = "inplace-avx2" then "avx2" else "avx512" in
@@ -334,7 +332,7 @@ let files (quadrant : string) : (string * string list) list =
                ] )
            ])
         radices
-  | q -> failwith ("Coverage.files: unknown quadrant " ^ q)
+  | q -> failwith ("Corpus.files: unknown quadrant " ^ q)
 ;;
 
 let quadrants =
@@ -357,9 +355,94 @@ let quadrants =
 let dir_of_quadrant (q : string) : string =
   match String.split_on_char '-' q with
   | [ fam; isa ] -> fam ^ "/" ^ isa
-  | _ -> failwith ("Coverage.dir_of_quadrant: " ^ q)
+  | _ -> failwith ("Corpus.dir_of_quadrant: " ^ q)
 ;;
 
-let expected_counts : (string * int) list =
-  List.map (fun q -> q, List.length (files q)) quadrants
+(* expected_counts: DELETED at M10 — zero consumers repo-wide. *)
+
+(* ── M10: the typed layer — the corpus AS Codelet.t values ── *)
+
+type cell =
+  { file : string
+  ; c : Codelet.t
+  }
+
+let strip_emit_c (argv : string list) : string list =
+  match List.rev argv with
+  | "--emit-c" :: rest -> List.rev rest
+  | _ -> failwith "Corpus: canonical argv does not end with --emit-c"
+;;
+
+let cells_of_quadrant (q : string) : cell list =
+  List.map
+    (fun (file, tail) ->
+       let full = tail @ [ "--emit-c" ] in
+       let c =
+         try Codelet.of_argv full with
+         | Codelet.Parse_error m ->
+           failwith (Printf.sprintf "Corpus law (%s/%s): does not parse: %s" q file m)
+       in
+       let rt = Codelet.to_argv c in
+       if rt <> full
+       then
+         failwith
+           (Printf.sprintf
+              "Corpus law (%s/%s): round-trip drift.\n  matrix: %s\n  to_argv: %s"
+              q
+              file
+              (String.concat " " full)
+              (String.concat " " rt));
+       { file; c })
+    (matrix_files q)
+;;
+
+(* One lazy block: construct every quadrant, then the uniqueness law.
+ * Forced by cells/files — i.e. by gen_set and the registry emitters,
+ * never by single-codelet gen_radix runs. *)
+let corpus : (string * cell list) list Lazy.t =
+  lazy
+    (let per_q = List.map (fun q -> q, cells_of_quadrant q) quadrants in
+     let seen_file = Hashtbl.create 1201 in
+     let seen_argv = Hashtbl.create 1201 in
+     List.iter
+       (fun (q, cs) ->
+          let dir = dir_of_quadrant q in
+          List.iter
+            (fun { file; c } ->
+               let path = dir ^ "/" ^ file in
+               (match Hashtbl.find_opt seen_file path with
+                | Some q0 ->
+                  failwith
+                    (Printf.sprintf
+                       "Corpus law: duplicate file %s (quadrants %s and %s)"
+                       path
+                       q0
+                       q)
+                | None -> Hashtbl.add seen_file path q);
+               let key = String.concat " " (Codelet.to_argv c) in
+               match Hashtbl.find_opt seen_argv key with
+               | Some f0 ->
+                 failwith
+                   (Printf.sprintf
+                      "Corpus law: %s and %s share one canonical argv: %s"
+                      f0
+                      path
+                      key)
+               | None -> Hashtbl.add seen_argv key path)
+            cs)
+       per_q;
+     per_q)
+;;
+
+let cells (q : string) : cell list =
+  match List.assoc_opt q (Lazy.force corpus) with
+  | Some cs -> cs
+  | None -> failwith ("Corpus.cells: unknown quadrant " ^ q)
+;;
+
+(* The public files: DERIVED from the descriptor (to_argv), not from the
+ * matrix — the descriptor is the source of truth; the round-trip law
+ * makes this byte-equal to the matrix output. *)
+let files (q : string) : (string * string list) list =
+  List.map (fun { file; c } -> file, strip_emit_c (Codelet.to_argv c)) (cells q)
 ;;

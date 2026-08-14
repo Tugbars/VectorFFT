@@ -55,7 +55,7 @@ let () =
     "emit_trig_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "trig-" ^ isa in
-  let files = Coverage.files quadrant in
+  let files = Corpus.files quadrant in
   (* (symbol, slot=kind, radix) *)
   let entries =
     List.filter_map

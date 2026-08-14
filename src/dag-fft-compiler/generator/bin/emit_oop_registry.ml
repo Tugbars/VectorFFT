@@ -104,7 +104,7 @@ let () =
     "emit_oop_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "oop-" ^ isa in
-  let files = Coverage.files quadrant in
+  let files = Corpus.files quadrant in
   (* (symbol, slot, radix), skipping unclassifiable entries *)
   let entries =
     List.filter_map

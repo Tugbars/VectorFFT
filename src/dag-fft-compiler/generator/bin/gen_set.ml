@@ -53,14 +53,14 @@ let () =
   ignore (parse 1);
   let targets =
     match List.rev !targets with
-    | [] | [ "all" ] -> Coverage.quadrants
+    | [] | [ "all" ] -> Corpus.quadrants
     | l -> l
   in
   let total = ref 0 in
   List.iter
     (fun q ->
-       let files = Coverage.files q in
-       let dir = Filename.concat !root (Coverage.dir_of_quadrant q) in
+       let files = Corpus.files q in
+       let dir = Filename.concat !root (Corpus.dir_of_quadrant q) in
        mkdir_p dir;
        List.iter
          (fun (name, tail) ->

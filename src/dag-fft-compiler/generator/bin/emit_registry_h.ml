@@ -40,7 +40,7 @@
  * here explicitly if ever needed; it is off by default. *)
 (* Section 39: coverage now comes from THE single source of truth.
  * The literal list this replaced is Coverage.ip_radices. *)
-let standard_radixes = Coverage.ip_radices
+let standard_radixes = Corpus.ip_radices
 
 (* xl_radix retained only so the dead research-only branch in
  * codelet_exists_t1 still type-checks; no radix in any list matches it,
