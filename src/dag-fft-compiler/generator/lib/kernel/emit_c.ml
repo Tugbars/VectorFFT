@@ -520,10 +520,63 @@ let emit_codelet
     Buffer.add_string
       buf
       "static inline void vfft_scalar_store(double *p, double v) { *p = v; }\n\n");
+  (* ── M4 phase 2: THE signature comes from Abi — one total constructor over
+     the kind shape (proven byte-equivalent to the historical 13-arm ladder by
+     the VFFT_ABI_XCHECK dual-emission pass over the full corpus before the
+     ladder arms were deleted).  The chain below keeps only per-kind BODY
+     content.  Shape derivation mirrors the historical arm ORDER; the M3
+     legality guards live on here. *)
+  let abi_shape : Abi.shape =
+    if strided
+    then (
+      if !strided_il_in && !strided_il_out
+      then
+        failwith
+          "emit_c(strided): --strided-il-in + --strided-il-out is the banned hybrid";
+      if (!strided_il_in || !strided_il_out) && !strided_r2c
+      then
+        failwith
+          "emit_c(strided): --strided-il-in/out cannot combine with --strided-r2c";
+      Abi.Strided
+        { il =
+            (if !strided_il_in then `In else if !strided_il_out then `Out else `None)
+        ; r2c =
+            (if !strided_r2c_bwd then `Bwd else if !strided_r2c then `Fwd else `No)
+        })
+    else if in_place
+    then
+      Abi.In_place
+        { il =
+            (match Layout.ip_buffers_of_bools ~il_in:!ip_il_in ~il_out:!ip_il_out with
+             | Layout.From_z -> `In
+             | Layout.To_z -> `Out
+             | _ -> `None)
+        }
+    else if twidsq
+    then Abi.Twidsq
+    else if !r2cb_signature
+    then Abi.R2cb
+    else if !r2cf_signature
+    then Abi.R2cf
+    else if !r2c_term_laststage
+    then Abi.R2c_term_ls
+    else if !r2c_term_signature
+    then Abi.R2c_term { rt = !r2c_term_rt }
+    else if !hc2c_natural
+    then Abi.Hc2c_nat { ranged = !hc_ranged }
+    else if !hc2c_natural_bwd
+    then Abi.Hc2c_nat_bwd { ranged = !hc_ranged }
+    else if !hc_strided
+    then Abi.Hc_strided { ranged = !hc_ranged }
+    else if !n1_oop_strided
+    then Abi.N1_oop_strided
+    else if !r2r_signature
+    then Abi.R2r
+    else Abi.Oop_generic
+  in
   Buffer.add_string
     buf
-    (Printf.sprintf "__attribute__((target(\"%s\")))\n" isa.target_attr);
-  Buffer.add_string buf (Printf.sprintf "void %s(\n" name);
+    (Abi.signature (Abi.make ~symbol:name ~target_attr:isa.target_attr abi_shape));
   if strided
   then (
     (* Strided-batch codelet (Design C for 2D row FFT).
@@ -1669,6 +1722,21 @@ let emit_codelet
       (render_hoisted_consts ~isa (Emit_render.topo_sort_reachable (List.map snd assigns)));
     if anyk_tail
     then (
+      Buffer.add_string buf "    size_t k = 0;
+";
+      Buffer.add_string
+        buf
+        (Printf.sprintf
+           "    for (; k + %d <= K; k += %d) {
+"
+           isa.vec_width
+           isa.vec_width))
+    else
+      Buffer.add_string
+        buf
+        (Printf.sprintf "    for (size_t k = 0; k < K; k += %d) {
+" isa.vec_width))
+  else (
     (* M4: signature emission deleted — Abi.signature is the one printer (oop_generic). *)
     (match spill with
      | None -> ()
@@ -3934,6 +4002,58 @@ let emit_codelet
      Buffer.add_string
        buf
        " * ====================================================== */\n");
+  (* M4: VFFT_ABI_XCHECK=1 — retained as a permanent debug env.  During
+     phase 1 this compared the LEGACY ladder's emission against Abi over the
+     full corpus (clean, with a sabotage positive-control).  Post-ladder it
+     self-checks the buffer's first signature against a fresh Abi render —
+     guarding against any future non-Abi signature writer. *)
+  (if Sys.getenv_opt "VFFT_ABI_XCHECK" = Some "1"
+   then (
+     let want =
+       Abi.signature (Abi.make ~symbol:name ~target_attr:isa.target_attr abi_shape)
+     in
+     let text = Buffer.contents buf in
+     let needle = "__attribute__((target" in
+     let nl = String.length needle in
+     let rec find i =
+       if i + nl > String.length text
+       then None
+       else if String.sub text i nl = needle
+       then Some i
+       else find (i + 1)
+     in
+     let got =
+       match find 0 with
+       | None -> None
+       | Some i ->
+         let stop_pat = ")" ^ String.make 1 (Char.chr 10) ^ "{" in
+         let rec fb j =
+           if j + 3 > String.length text
+           then None
+           else if String.sub text j 3 = stop_pat
+           then Some (j + 3)
+           else fb (j + 1)
+         in
+         (match fb i with
+          | None -> None
+          | Some stop ->
+            let stop =
+              if stop < String.length text && text.[stop] = Char.chr 10
+              then stop + 1
+              else stop
+            in
+            Some (String.sub text i (stop - i)))
+     in
+     match got with
+     | Some g when g = want -> ()
+     | Some g ->
+       failwith
+         (Printf.sprintf
+            "VFFT_ABI_XCHECK MISMATCH for %s (non-Abi signature writer?)\n--- buffer ---\n%s--- Abi ---\n%s"
+            name
+            g
+            want)
+     | None -> failwith ("VFFT_ABI_XCHECK: no signature found in output of " ^ name)));
   Buffer.contents buf
 ;;
 
