@@ -125,7 +125,7 @@ let () =
     "emit_c2r_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "c2r-" ^ isa in
-  let files = Coverage.files quadrant in
+  let files = Corpus.files quadrant in
   let entries =
     List.filter_map
       (fun (fname_c, _argv) ->

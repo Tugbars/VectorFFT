@@ -124,7 +124,7 @@ let () =
     "emit_rfft_registry --isa <avx2|avx512>";
   let isa = !isa in
   let quadrant = "rfft-" ^ isa in
-  let files = Coverage.files quadrant in
+  let files = Corpus.files quadrant in
   (* (symbol, slot, radix) for every classifiable, slotted codelet *)
   let entries =
     List.filter_map
