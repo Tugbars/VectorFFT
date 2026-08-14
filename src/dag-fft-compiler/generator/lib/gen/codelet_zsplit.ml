@@ -407,7 +407,7 @@ module ZSched = Schedule.Make (ZNode)
 
 (* ─── emission ────────────────────────────────────────────────────── *)
 
-let emit_codelet
+let emit_codelet ~store_on_compute
       ~(kind : string)
       ~(radix : int)
       ~(r0 : int option)
@@ -419,6 +419,9 @@ let emit_codelet
   =
   (* M6.1: per-emission scratch — this family's own instance *)
   let sc = Emit_render.Scratch.create () in
+  (* M6.2: this family's config view — tw is FORWARD-passed, not a back-edge;
+     the Tw_zsplit payload is set at the point the record offset is known. *)
+  let cfg = ref { Emit_render.Cfg.default with Emit_render.Cfg.store_on_compute } in
   let k = kind_of_string kind in
   (* ── --zp-sink admission gate (the r0_dep-gate precedent: fail loudly,
         never silently emit the unsunk shape under the sunk name). Only a
@@ -1281,9 +1284,9 @@ let emit_codelet
              behavior (gate G-3). ══ *)
        Buffer.add_string buf body_hdr;
        Fun.protect
-         ~finally:(fun () -> Emit_state.current_tw_zsplit := None)
+         ~finally:(fun () -> cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_default })
          (fun () ->
-            Emit_state.current_tw_zsplit := Some k.tw_off;
+            cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off };
             let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
             List.iter
               (fun ((_ : Expr.elem_ref option), (e : Ir.t)) ->
@@ -1297,6 +1300,7 @@ let emit_codelet
                      buf
                      (Emit_render.render_node_def
                         ~sc
+                        ~cfg:!cfg
                         ~isa
                         ~in_place:false
                         ~t1s:false
@@ -1449,9 +1453,9 @@ let emit_codelet
        and body_hdr_fired = ref false
        and store_hdr_fired = ref false in
        Fun.protect
-         ~finally:(fun () -> Emit_state.current_tw_zsplit := None)
+         ~finally:(fun () -> cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_default })
          (fun () ->
-            Emit_state.current_tw_zsplit := Some k.tw_off;
+            cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off };
             List.iter
               (fun (zn : ZNode.t) ->
                  if ZNode.is_store zn
@@ -1499,6 +1503,7 @@ let emit_codelet
                          buf
                          (Emit_render.render_node_def
                             ~sc
+                            ~cfg:!cfg
                             ~isa
                             ~in_place:false
                             ~t1s:false

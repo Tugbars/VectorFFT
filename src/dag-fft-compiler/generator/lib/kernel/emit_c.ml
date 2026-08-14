@@ -59,11 +59,13 @@
    above) is therefore moot, and topo_sort_reachable is qualified at all 14
    sites anyway. *)
 open Ir  (* M1: names formerly re-exported through the chain *)
-open Emit_state
+(* M6.2: `open Emit_state` removed — emit_c reads NO globals: config arrives
+   as ~cfg, scratch as ~sc, both per-emission from the driver. *)
 open Emit_render  (* M1: was `include`; AFTER `open Algsimp` so the render chain's names keep shadowing Algsimp's (topo_sort_reachable also pre-qualified at all 14 sites) *)
 
 let emit_codelet
   ~(sc : Emit_render.Scratch.t)
+  ~(cfg : Emit_render.Cfg.t)
       ?(in_place = false)
       ?(t1s = false)
       ?(twidsq = false)
@@ -421,9 +423,9 @@ let emit_codelet
    * EXCLUDED: transpose tail = phase-2 (masked transpose); stride inner never needs it;
    * r2c_term = separate fusion phase, wire later. Odd K must route to THIS cascade, not
    * the stride path (front-door selective-guard relax, src/core/transforms/real). *)
-  let real_fft_sig = !r2cf_signature || !r2cb_signature || !hc_strided in
+  let real_fft_sig = cfg.Cfg.r2cf || cfg.Cfg.r2cb || cfg.Cfg.hc_strided in
   let anyk_tail =
-    (in_place || !r2r_signature || real_fft_sig)
+    (in_place || cfg.Cfg.r2r || real_fft_sig)
     &&
     match Sys.getenv_opt "VFFT_NO_ANYK_TAIL" with
     | Some _ -> false
@@ -431,7 +433,7 @@ let emit_codelet
   in
   (* tail loop bound: in-place uses `me`; the r2r/trig signature uses `K`; the
    * real-FFT cascade uses `vl`. *)
-  let tail_bound = if !r2r_signature then "K" else if real_fft_sig then "vl" else "me" in
+  let tail_bound = if cfg.Cfg.r2r then "K" else if real_fft_sig then "vl" else "me" in
   (* tail loop var: must match render_load's loop_var — `v` for the real-FFT
    * cascade, `k` for in-place + r2r/trig. *)
   let tail_var = if real_fft_sig then "v" else "k" in
@@ -530,48 +532,48 @@ let emit_codelet
   let abi_shape : Abi.shape =
     if strided
     then (
-      if !strided_il_in && !strided_il_out
+      if cfg.Cfg.strided_il_in && cfg.Cfg.strided_il_out
       then
         failwith
           "emit_c(strided): --strided-il-in + --strided-il-out is the banned hybrid";
-      if (!strided_il_in || !strided_il_out) && !strided_r2c
+      if (cfg.Cfg.strided_il_in || cfg.Cfg.strided_il_out) && cfg.Cfg.strided_r2c
       then
         failwith
           "emit_c(strided): --strided-il-in/out cannot combine with --strided-r2c";
       Abi.Strided
         { il =
-            (if !strided_il_in then `In else if !strided_il_out then `Out else `None)
+            (if cfg.Cfg.strided_il_in then `In else if cfg.Cfg.strided_il_out then `Out else `None)
         ; r2c =
-            (if !strided_r2c_bwd then `Bwd else if !strided_r2c then `Fwd else `No)
+            (if cfg.Cfg.strided_r2c_bwd then `Bwd else if cfg.Cfg.strided_r2c then `Fwd else `No)
         })
     else if in_place
     then
       Abi.In_place
         { il =
-            (match Layout.ip_buffers_of_bools ~il_in:!ip_il_in ~il_out:!ip_il_out with
+            (match Layout.ip_buffers_of_bools ~il_in:cfg.Cfg.ip_il_in ~il_out:cfg.Cfg.ip_il_out with
              | Layout.From_z -> `In
              | Layout.To_z -> `Out
              | _ -> `None)
         }
     else if twidsq
     then Abi.Twidsq
-    else if !r2cb_signature
+    else if cfg.Cfg.r2cb
     then Abi.R2cb
-    else if !r2cf_signature
+    else if cfg.Cfg.r2cf
     then Abi.R2cf
-    else if !r2c_term_laststage
+    else if cfg.Cfg.r2c_term_ls
     then Abi.R2c_term_ls
-    else if !r2c_term_signature
-    then Abi.R2c_term { rt = !r2c_term_rt }
-    else if !hc2c_natural
-    then Abi.Hc2c_nat { ranged = !hc_ranged }
-    else if !hc2c_natural_bwd
-    then Abi.Hc2c_nat_bwd { ranged = !hc_ranged }
-    else if !hc_strided
-    then Abi.Hc_strided { ranged = !hc_ranged }
-    else if !n1_oop_strided
+    else if cfg.Cfg.r2c_term
+    then Abi.R2c_term { rt = cfg.Cfg.r2c_term_rt }
+    else if cfg.Cfg.hc2c_natural
+    then Abi.Hc2c_nat { ranged = cfg.Cfg.hc_ranged }
+    else if cfg.Cfg.hc2c_natural_bwd
+    then Abi.Hc2c_nat_bwd { ranged = cfg.Cfg.hc_ranged }
+    else if cfg.Cfg.hc_strided
+    then Abi.Hc_strided { ranged = cfg.Cfg.hc_ranged }
+    else if cfg.Cfg.n1_oop_strided
     then Abi.N1_oop_strided
-    else if !r2r_signature
+    else if cfg.Cfg.r2r
     then Abi.R2r
     else Abi.Oop_generic
   in
@@ -595,7 +597,7 @@ let emit_codelet
      * signature uniformity but unused. *)
     (* M4: signature emission deleted — Abi.signature is the one printer (strided). *)
     Buffer.add_string buf "    (void)tw_re; (void)tw_im;\n";
-    if !strided_r2c_bwd
+    if cfg.Cfg.strided_r2c_bwd
     then (
       Buffer.add_string
         buf
@@ -609,7 +611,7 @@ let emit_codelet
         buf
         "    double       * __restrict__ rio_im = out + row_stride_in;\n";
       Buffer.add_string buf "    const size_t row_stride = 2 * row_stride_in;\n")
-    else if !strided_r2c
+    else if cfg.Cfg.strided_r2c
     then (
       Buffer.add_string
         buf
@@ -635,7 +637,7 @@ let emit_codelet
       Buffer.add_string
         buf
         "    const __m512i _tp_idx_hi = _mm512_set_epi64(15, 14, 7, 6, 11, 10, 3, 2);\n";
-      if !strided_il_out
+      if cfg.Cfg.strided_il_out
       then (
         Buffer.add_string
           buf
@@ -643,7 +645,7 @@ let emit_codelet
         Buffer.add_string
           buf
           "    const __m512i _il_idx_o = _mm512_set_epi64(15, 7, 14, 6, 13, 5, 12, 4);\n");
-      if !strided_il_in
+      if cfg.Cfg.strided_il_in
       then (
         Buffer.add_string
           buf
@@ -657,7 +659,7 @@ let emit_codelet
     (* Per-iteration locals: lane_re_0..radix-1 (inputs after transpose),
        out_lane_re_0..radix-1 (outputs before inverse transpose). Plus
        _im versions. *)
-    if !strided_r2c_bwd
+    if cfg.Cfg.strided_r2c_bwd
     then
       for j = 0 to radix / 2 do
         Buffer.add_string
@@ -686,7 +688,7 @@ let emit_codelet
     if isa.vec_width = 4
     then (
       let groups = radix / 4 in
-      if !strided_il_in
+      if cfg.Cfg.strided_il_in
       then
         for g = 0 to groups - 1 do
           let j0 = g * 4 in
@@ -768,7 +770,7 @@ let emit_codelet
             [ "re"; "im" ];
           Buffer.add_string buf "        }\n"
         done
-      else if !strided_r2c_bwd
+      else if cfg.Cfg.strided_r2c_bwd
       then (
         (* \xc2\xa76a38 merge prologue: transposing-load the four half-plane
            bin-blocks (X1 = even rows, X2 = odd; re/im planes), then
@@ -1006,7 +1008,7 @@ let emit_codelet
        * names so the same identifiers are reused across groups without
        * collision — the `{ ... }` block scope makes that safe. *)
       let groups = radix / 8 in
-      if !strided_il_in
+      if cfg.Cfg.strided_il_in
       then
         for g = 0 to groups - 1 do
           let j0 = g * 8 in
@@ -1105,7 +1107,7 @@ let emit_codelet
             [ "re"; "im" ];
           Buffer.add_string buf "        }\n"
         done
-      else if !strided_r2c_bwd
+      else if cfg.Cfg.strided_r2c_bwd
       then (
         (* \xc2\xa76a45: avx512 merge prologue — 8x8 transposing loads of the
            four half-planes, then Z = X1 + i*X2 with Hermitian mirrors. *)
@@ -1470,9 +1472,9 @@ let emit_codelet
   else if in_place
   then (
     (* M4: signature emission deleted — Abi.signature is the one printer (in_place). *)
-    if isa.vec_width = 8 && (!ip_il_in || !ip_il_out)
+    if isa.vec_width = 8 && (cfg.Cfg.ip_il_in || cfg.Cfg.ip_il_out)
     then (
-      if !ip_il_in
+      if cfg.Cfg.ip_il_in
       then (
         Buffer.add_string
           buf
@@ -1481,7 +1483,7 @@ let emit_codelet
           buf
           "    const __m512i _il_do = _mm512_setr_epi64(1,3,5,7,9,11,13,15);\n";
         Buffer.add_string buf "    (void)_il_de; (void)_il_do;\n");
-      if !ip_il_out
+      if cfg.Cfg.ip_il_out
       then (
         Buffer.add_string
           buf
@@ -1520,17 +1522,17 @@ let emit_codelet
     Buffer.add_string
       buf
       (Printf.sprintf "    for (size_t v = 0; v < V; v += %d) {\n" isa.vec_width))
-  else if !r2cb_signature
+  else if cfg.Cfg.r2cb
   then (
     (* r2cb backward real leaf (section 62): halfcomplex INPUT (in_re, in_im)
      * -> real OUTPUT (out_re). The body reconstructs the conjugate-symmetric
      * spectrum from the packed half and runs a backward DFT; the result is
      * purely real so there is no out_im. Same stride/loop shape as r2cf
      * (is input stride, os_re output stride, vl lanes). *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!r2cb_signature). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.r2cb). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
-  else if !r2cf_signature
+  else if cfg.Cfg.r2cf
   then (
     (* r2cf leaf v2 (section 62): the composition algebra forces a
      * REVERSED im output stream (packed im slot for k lands at
@@ -1538,70 +1540,70 @@ let emit_codelet
      * signed and split per parity. The executor passes os_im < 0 with
      * out_im based one-past the region. P1's stride_n1_fn-shaped v1
      * is withdrawn — composition beats typedef aesthetics. *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!r2cf_signature). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.r2cf). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
-  else if !r2c_term_laststage
+  else if cfg.Cfg.r2c_term_ls
   then (
     (* model (b): fused last-stage terminator. Two columns of r complex legs +
      * packed twiddle table (3r slots) -> 2r outputs (Xp[s], Xm[s]).
      * Input(j) for j<r = col k leg j; Input(r+j) = col m-k leg j. Legs are
      * strided by is_leg within each column; the two columns are at separate
      * base pointers in_k / in_m (the executor passes the two physical rows). *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_laststage). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.r2c_term_ls). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
-  else if !r2c_term_signature
+  else if cfg.Cfg.r2c_term
   then (
     (* r2c_term (step-2 fusion): 2 inputs (Z[k], Z[m]) -> 2 outputs (X[k], X[m]),
      * vectorized over vl lanes. Reads scratch rows for the column pair
      * sequentially (the executor supplies them in natural order, no scatter).
      * Output(0) -> Xp pair (X[k]); Output(1) -> Xm pair (X[m]). *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!r2c_term_signature). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.r2c_term). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
-  else if !hc2c_natural
+  else if cfg.Cfg.hc2c_natural
   then (
     (* D2 natural terminator (section 69): four output pointers,
      * boundary baked at generation time. *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc2c_natural). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
-  else if !hc2c_natural_bwd
+  else if cfg.Cfg.hc2c_natural_bwd
   then (
     (* c2r natural INITIATOR (inverse of hc2c_natural): four SPLIT const inputs
      * (Rp/Ip direct rows + Rm/Im conjugate-mirror rows, the same sstar map as
      * the forward but on the INPUT side) -> two PACKED cascade columns
      * (out_re/out_im). isp/ism = split input row strides; os = packed output
      * stride. The forward's 6-pointer ABI, flipped. *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!hc2c_natural_bwd). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc2c_natural_bwd). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
-  else if !hc_strided
+  else if cfg.Cfg.hc_strided
   then (
     (* hc2hc / hc2c strided variant (section 62): the generic ABI's
      * hardcoded slot stride K cannot address middle cascade stages
      * (slot strides are Q*K-multiples and out != in stride). Twiddles
      * replicate per vl lanes, slot 0 never loaded. *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!hc_strided). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.hc_strided). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
-    if !hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
+    if cfg.Cfg.hc_ranged then Buffer.add_string buf "    for (int kc = 0; kc < kcount; kc++) {\n";
     emit_v_loop_header "vl")
-  else if !n1_oop_strided
+  else if cfg.Cfg.n1_oop_strided
   then (
     (* strided-OOP n1: ABI = vfft_proto_n1_fn (registry n1 slot shape).
      * size_t strides (not ptrdiff_t) to match the fn-pointer type
      * byte-for-byte; vl assumed a multiple of the vector width (the r2c
      * executor always passes B, a vec-width multiple). No tw params:
      * n1 DAGs carry no Twiddle refs. *)
-    (* M4: signature emission deleted — Abi.signature is the one printer (!n1_oop_strided). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.n1_oop_strided). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     emit_v_loop_header "vl")
-  else if !r2r_signature
+  else if cfg.Cfg.r2r
   then (
-    (* M4: signature emission deleted — Abi.signature is the one printer (!r2r_signature). *)
+    (* M4: signature emission deleted — Abi.signature is the one printer (cfg.Cfg.r2r). *)
     Buffer.add_string buf (Emit_render.body_preamble ~sc ~isa ~spill ~consts:assigns ());
     if anyk_tail
     then (
@@ -1629,7 +1631,7 @@ let emit_codelet
     match in_place, is_re with
     | true, true -> "rio_re"
     | true, false -> "rio_im"
-    | false, true -> if !r2r_signature then "out" else "out_re"
+    | false, true -> if cfg.Cfg.r2r then "out" else "out_re"
     | false, false -> "out_im"
   in
   (* Output stride and loop variable depend on the codelet kind:
@@ -1647,26 +1649,26 @@ let emit_codelet
     then "ios"
     else if twidsq
     then "os"
-    else if !hc_strided || !n1_oop_strided
+    else if cfg.Cfg.hc_strided || cfg.Cfg.n1_oop_strided
     then "os"
     else "K"
   in
   let out_stride_for is_re =
-    if !r2cf_signature
+    if cfg.Cfg.r2cf
     then if is_re then "os_re" else "os_im"
-    else if !r2cb_signature
+    else if cfg.Cfg.r2cb
     then "os_re"
     else out_stride
   in
   let loop_var =
     if
       twidsq
-      || !r2cf_signature
-      || !r2cb_signature
-      || !hc_strided
-      || !n1_oop_strided
-      || !r2c_term_signature
-      || !r2c_term_laststage
+      || cfg.Cfg.r2cf
+      || cfg.Cfg.r2cb
+      || cfg.Cfg.hc_strided
+      || cfg.Cfg.n1_oop_strided
+      || cfg.Cfg.r2c_term
+      || cfg.Cfg.r2c_term_ls
     then "v"
     else "k"
   in
@@ -1681,7 +1683,7 @@ let emit_codelet
   let emit_body ?(force_mono = false) (isa : Isa.t) () =
     Scratch.il_reset sc;
     let render_output_addr k is_re =
-      if !r2c_term_laststage
+      if cfg.Cfg.r2c_term_ls
       then (* Output(2s) = Xp slot s at Xp[s*osp+v]; Output(2s+1) = Xm slot s. *)
         if k land 1 = 0
         then
@@ -1696,20 +1698,20 @@ let emit_codelet
             (if is_re then "Xm_re" else "Xm_im")
             (k / 2)
             loop_var
-      else if !r2c_term_signature
+      else if cfg.Cfg.r2c_term
       then (* Output(0)=X[k]->Xp pair; Output(1)=X[m]->Xm pair, over v lanes. *)
         if k = 0
         then Printf.sprintf "%s[%s]" (if is_re then "Xp_re" else "Xp_im") loop_var
         else Printf.sprintf "%s[%s]" (if is_re then "Xm_re" else "Xm_im") loop_var
-      else if !hc2c_natural
+      else if cfg.Cfg.hc2c_natural
       then
-        if k <= !hc2c_nat_sstar
+        if k <= cfg.Cfg.hc2c_nat_sstar
         then Printf.sprintf "%s[%d*osp + %s]" (if is_re then "Rp" else "Ip") k loop_var
         else
           Printf.sprintf
             "%s[%d*osm + %s]"
             (if is_re then "Rm" else "Im")
-            (!hc2c_nat_r - 1 - k)
+            (cfg.Cfg.hc2c_nat_r - 1 - k)
             loop_var
       else (
         let buf = out_buf is_re in
@@ -1757,10 +1759,10 @@ let emit_codelet
         Buffer.add_string
           buf
           (Printf.sprintf "        out_lane_im_%d = %s;\n" k value_expr)
-      | Expr.Output (k, true) when !ip_il_out ->
+      | Expr.Output (k, true) when cfg.Cfg.ip_il_out ->
         (* defer: fused with the adjacent im-store (sink-first pairs) *)
         sc.Scratch.il_stash <- Some (k, value_expr)
-      | Expr.Output (k, false) when !ip_il_out ->
+      | Expr.Output (k, false) when cfg.Cfg.ip_il_out ->
         let vre =
           match sc.Scratch.il_stash with
           | Some (k2, vre) when k2 = k -> vre
@@ -1955,7 +1957,7 @@ let emit_codelet
         (fun e ->
            Buffer.add_string
              buf
-             (render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+             (render_node_def ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
            Buffer.add_char buf '\n')
         const_nodes;
       Buffer.add_char buf '\n';
@@ -2132,6 +2134,7 @@ let emit_codelet
                buf
                (render_node_def
                ~sc
+               ~cfg
                   ~no_declarator
                   ~t1s
                   ~isa
@@ -2480,7 +2483,7 @@ let emit_codelet
       List.iteri (fun i (e : t) -> Hashtbl.replace pass2_pos_of_tag e.tag i) pass2_ordered;
       List.iter
         (fun (_, e) ->
-           if !current_store_on_compute && Hashtbl.mem pass2_pos_of_tag e.tag
+           if cfg.Cfg.store_on_compute && Hashtbl.mem pass2_pos_of_tag e.tag
            then
              (* Store-on-compute: last use is the inline store at the def. *)
              Hashtbl.replace
@@ -2582,7 +2585,7 @@ let emit_codelet
       let soc_assigns_by_tag : (int, (Expr.elem_ref * t) list) Hashtbl.t =
         Hashtbl.create 64
       in
-      if !current_store_on_compute
+      if cfg.Cfg.store_on_compute
       then
         List.iter
           (fun ((_, e) as a) ->
@@ -2660,6 +2663,7 @@ let emit_codelet
                buf
                (render_node_def
                ~sc
+               ~cfg
                   ~isa
                   ~in_place
                   ~t1s
@@ -2674,7 +2678,7 @@ let emit_codelet
             * (e is a sink, never inlined), and force_last_use was set to this
             * position so the register frees immediately. Marked in soc_stored
             * so cluster flush / safety net skip it. *)
-           if !current_store_on_compute
+           if cfg.Cfg.store_on_compute
            then (
              match Hashtbl.find_opt soc_assigns_by_tag e.tag with
              | Some alist ->
@@ -2795,7 +2799,7 @@ let emit_codelet
               emit_node_reload_sites buf pos;
               Buffer.add_string
                 buf
-                (render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
+                (render_node_def ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e);
               Buffer.add_char buf '\n')
            input.scheduled;
          (* End-of-schedule spill/reload emission. force_last_use put
@@ -2822,7 +2826,7 @@ let emit_codelet
            @ List.map (fun (lhs, e) -> Some lhs, e) assigns
          in
          let render_intermediate e =
-           render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
+           render_node_def ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
          in
          let render_store oref e =
            let buf2 = Buffer.create 128 in
@@ -2879,6 +2883,7 @@ let emit_codelet
                   buf
                   (render_node_def
                ~sc
+               ~cfg
                      ~isa
                      ~in_place
                      ~t1s
@@ -2909,6 +2914,7 @@ let emit_codelet
                   buf
                   (render_node_def
                ~sc
+               ~cfg
                      ~isa
                      ~in_place
                      ~t1s
@@ -2939,7 +2945,7 @@ let emit_codelet
              scheduled
          in
          let render_intermediate e =
-           render_node_def ~sc ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
+           render_node_def ~sc ~cfg ~isa ~in_place ~t1s ~twidsq ~twidsq_n ~strided e
          in
          let render_store oref e =
            let buf2 = Buffer.create 128 in
@@ -2958,11 +2964,11 @@ let emit_codelet
   then (
     Buffer.add_string buf "\n";
     let groups = radix / 4 in
-    if !strided_il_out
+    if cfg.Cfg.strided_il_out
     then
       for g = 0 to groups - 1 do
         let j0 = g * 4 in
-        let stfn = if !strided_ilo_nt then "_mm256_stream_pd" else "_mm256_storeu_pd" in
+        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm256_stream_pd" else "_mm256_storeu_pd" in
         Buffer.add_string
           buf
           (Printf.sprintf
@@ -3033,7 +3039,7 @@ let emit_codelet
         done;
         Buffer.add_string buf "        }\n"
       done
-    else if !strided_r2c && not !strided_r2c_bwd
+    else if cfg.Cfg.strided_r2c && not cfg.Cfg.strided_r2c_bwd
     then (
       (* \xc2\xa76a36 emission: fused two-for-one conjugate split. x1 = even
          row's half-spectrum, x2 = odd row's; mirror g=(n-f) mod n makes
@@ -3277,11 +3283,11 @@ let emit_codelet
   then (
     Buffer.add_string buf "\n";
     let groups = radix / 8 in
-    if !strided_il_out
+    if cfg.Cfg.strided_il_out
     then
       for g = 0 to groups - 1 do
         let j0 = g * 8 in
-        let stfn = if !strided_ilo_nt then "_mm512_stream_pd" else "_mm512_storeu_pd" in
+        let stfn = if cfg.Cfg.strided_ilo_nt then "_mm512_stream_pd" else "_mm512_storeu_pd" in
         Buffer.add_string
           buf
           (Printf.sprintf
@@ -3369,7 +3375,7 @@ let emit_codelet
         done;
         Buffer.add_string buf "        }\n"
       done
-    else if !strided_r2c && not !strided_r2c_bwd
+    else if cfg.Cfg.strided_r2c && not cfg.Cfg.strided_r2c_bwd
     then (
       (* \xc2\xa76a45: avx512 r2c split postamble. Same formulas as the avx2
          edition on __m512d lane vectors (8 lanes = 8 PAIRS = 16 rows per
@@ -3827,10 +3833,10 @@ let emit_codelet
       Buffer.add_string buf "            }\n");
     Buffer.add_string buf "        }\n";
     Buffer.add_string buf "    }\n");
-  if !hc_ranged
+  if cfg.Cfg.hc_ranged
   then (
-    let r = !hc_ranged_r in
-    if !hc2c_natural_bwd
+    let r = cfg.Cfg.hc_ranged_r in
+    if cfg.Cfg.hc2c_natural_bwd
     then (
       (* mirror of the forward natural advance: the 4 SPLIT inputs walk like the
        * forward's split outputs (direct +, mirror -), the 2 PACKED outputs walk
@@ -3839,7 +3845,7 @@ let emit_codelet
       Buffer.add_string buf "    Rm -= cs_in; Im -= cs_in;\n";
       Buffer.add_string buf "    out_re += cs_out; out_im -= cs_out;\n";
       Buffer.add_string buf (Printf.sprintf "    tw_re += %d; tw_im += %d;\n" r r))
-    else if !hc2c_natural
+    else if cfg.Cfg.hc2c_natural
     then (
       Buffer.add_string buf "    in_re += cs_in; in_im -= cs_in;\n";
       Buffer.add_string buf "    Rp += cs_out; Ip += cs_out;\n";
@@ -3850,7 +3856,7 @@ let emit_codelet
       Buffer.add_string buf "    out_re += cs_out; out_im -= cs_out;\n";
       Buffer.add_string buf (Printf.sprintf "    tw_re += %d; tw_im += %d;\n" r r));
     Buffer.add_string buf "    }\n");
-  if strided && !strided_ilo_nt then Buffer.add_string buf "    _mm_sfence();\n";
+  if strided && cfg.Cfg.strided_ilo_nt then Buffer.add_string buf "    _mm_sfence();\n";
   Buffer.add_string buf "}\n";
   Buffer.add_string
     buf

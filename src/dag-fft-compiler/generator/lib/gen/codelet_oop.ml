@@ -1073,7 +1073,7 @@ let emit_store_edge ~(sc : Emit_render.Scratch.t) (buf : Buffer.t) (c : config) 
  *
  * Fence emission is wired (prep.fence_enabled, two-rule policy). Tier-C
  * cluster-local SU scheduling is wired on the spill path (see
- * emit_body_spill ~sc / Emit_render.cluster_split_schedule). Register allocation
+ * emit_body_spill ~sc ~cfg / Emit_render.cluster_split_schedule). Register allocation
  * (pinning) is NOT emitted on the OOP path — that is the render-convention
  * blocker, genuinely deferred; do not read this as "no scheduling". gcc
  * still does the final instruction scheduling and register allocation.
@@ -1299,7 +1299,7 @@ let prepare_butterfly ~(sc : Emit_render.Scratch.t) (c : config) : prepared_body
  * gcc handles allocation. This is the existing Tier-A behavior,
  * unchanged from the previous wiring.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_body_monolithic ~(sc : Emit_render.Scratch.t) (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
+let emit_body_monolithic ~(sc : Emit_render.Scratch.t) ~(cfg : Emit_render.Cfg.t) (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
   Buffer.add_string buf "\n";
   Buffer.add_string buf "        /* === BUTTERFLY BODY (monolithic) ===\n";
   Buffer.add_string
@@ -1315,6 +1315,7 @@ let emit_body_monolithic ~(sc : Emit_render.Scratch.t) (buf : Buffer.t) (c : con
            buf
            (Emit_render.render_node_def
          ~sc
+         ~cfg
               ~isa:c.isa
               ~in_place:(c.buffer = InPlace)
               ~t1s:tw_broadcast
@@ -1366,7 +1367,7 @@ let emit_body_monolithic ~(sc : Emit_render.Scratch.t) (buf : Buffer.t) (c : con
  * Caller has already declared spill_re[N] / spill_im[N] at function
  * scope (outside the for-loop), visible across both pass scopes.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_body_spill ~(sc : Emit_render.Scratch.t)
+let emit_body_spill ~(sc : Emit_render.Scratch.t) ~(cfg : Emit_render.Cfg.t)
       (buf : Buffer.t)
       (c : config)
       (prep : prepared_body)
@@ -1426,6 +1427,7 @@ let emit_body_spill ~(sc : Emit_render.Scratch.t)
          buf
          (Emit_render.render_node_def
          ~sc
+         ~cfg
             ~isa:c.isa
             ~in_place:(c.buffer = InPlace)
             ~t1s:tw_broadcast
@@ -1526,6 +1528,7 @@ let emit_body_spill ~(sc : Emit_render.Scratch.t)
              buf
              (Emit_render.render_node_def
          ~sc
+         ~cfg
                 ~no_declarator:true
                 ~isa:c.isa
                 ~in_place:(c.buffer = InPlace)
@@ -1540,6 +1543,7 @@ let emit_body_spill ~(sc : Emit_render.Scratch.t)
              buf
              (Emit_render.render_node_def
          ~sc
+         ~cfg
                 ~isa:c.isa
                 ~in_place:(c.buffer = InPlace)
                 ~t1s:tw_broadcast
@@ -1915,6 +1919,7 @@ let emit_body_spill ~(sc : Emit_render.Scratch.t)
            buf
            (Emit_render.render_node_def
          ~sc
+         ~cfg
               ~isa:c.isa
               ~in_place:(c.buffer = InPlace)
               ~t1s:tw_broadcast
@@ -1948,14 +1953,14 @@ let emit_body_spill ~(sc : Emit_render.Scratch.t)
  * prep.spill_info. Uses Fun.protect to ensure the fence ref resets
  * even on exception.
  * ─────────────────────────────────────────────────────────────────── *)
-let emit_butterfly_body ~(sc : Emit_render.Scratch.t) (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
+let emit_butterfly_body ~(sc : Emit_render.Scratch.t) ~(cfg : Emit_render.Cfg.t) (buf : Buffer.t) (c : config) (prep : prepared_body) : unit =
   (* M6.1: the historical save/Fun.protect/restore dance around the fence ref
      is RETIRED — sc is created fresh per emission, so nothing can leak into a
      later codelet; a plain field write is the whole protocol now. *)
   sc.Emit_render.Scratch.fence_only <- prep.fence_enabled;
   match prep.spill_info with
-  | None -> emit_body_monolithic ~sc buf c prep
-  | Some sp -> emit_body_spill ~sc buf c prep sp
+  | None -> emit_body_monolithic ~sc ~cfg buf c prep
+  | Some sp -> emit_body_spill ~sc ~cfg buf c prep sp
 ;;
 
 (* ═══════════════════════════════════════════════════════════════
@@ -1969,8 +1974,19 @@ let emit_codelet (c : config) : string =
   (* M6.1: per-emission scratch — this entry's own instance *)
   let sc = Emit_render.Scratch.create () in
   validate c;
-  Emit_state.current_tw_perpos := c.twiddles = PerPositionTwiddles;
-  Emit_state.current_tw_linear := if !current_oop_tw_linear then c.radix - 1 else 0;
+  (* M6.2: the D-2 back-edge writes are DEAD — the twiddle source now flows
+     FORWARD as a field of this family's own config view. *)
+  let cfg =
+    { Emit_render.Cfg.default with
+      Emit_render.Cfg.tw =
+        (if c.twiddles = PerPositionTwiddles
+         then Emit_render.Cfg.Tw_perpos
+         else if !current_oop_tw_linear
+         then Emit_render.Cfg.Tw_linear (c.radix - 1)
+         else Emit_render.Cfg.Tw_default)
+    ; store_on_compute = !current_oop_store_on_compute
+    }
+  in
   let buf = Buffer.create 4096 in
   (* Arbitrary-K rem-aware tail (docs/performance/arbitrary_k_tail_handling.md).
      UnitGroup edges, loop bound me = group count. Masks the in/out group
@@ -2033,7 +2049,7 @@ let emit_codelet (c : config) : string =
   let emit_inner () =
     emit_lane_decls buf c;
     emit_load_edge ~sc buf c;
-    emit_butterfly_body ~sc buf c prep;
+    emit_butterfly_body ~sc ~cfg buf c prep;
     emit_store_edge ~sc buf c
   in
   if anyk_tail
@@ -2042,7 +2058,7 @@ let emit_codelet (c : config) : string =
        bulk full-vector loop, then for the 1..VW-1 leftover batch lanes
          rem == 1 -> ONE scalar single lane (monolithic, width-1 ISA)
          rem >= 2 -> ONE masked vector pass (mask in/out group loads/stores).
-       The scalar pass renders MONOLITHICALLY at width 1 (emit_body_monolithic ~sc with
+       The scalar pass renders MONOLITHICALLY at width 1 (emit_body_monolithic ~sc ~cfg with
        a scalar config): a single lane has no ymm/zmm register pressure, so the CT
        spill split is unnecessary, and the lane locals come out `double` with no
        __m256d clash. me = group count. *)
@@ -2060,7 +2076,7 @@ let emit_codelet (c : config) : string =
     sc.Emit_render.Scratch.ls_mode <- Isa.LS_vector;
     emit_lane_decls buf c_scalar;
     emit_load_edge ~sc buf c_scalar;
-    emit_body_monolithic ~sc buf c_scalar prep;
+    emit_body_monolithic ~sc ~cfg buf c_scalar prep;
     emit_store_edge ~sc buf c_scalar;
     Buffer.add_string buf "        } else {\n";
     if vw = 8
@@ -2083,13 +2099,13 @@ let emit_codelet (c : config) : string =
       Buffer.add_string buf "            for (; b + 2 <= me; b += 2) {\n";
       emit_lane_decls buf c_sse2;
       emit_load_edge ~sc buf c_sse2;
-      emit_body_monolithic ~sc buf c_sse2 prep;
+      emit_body_monolithic ~sc ~cfg buf c_sse2 prep;
       emit_store_edge ~sc buf c_sse2;
       Buffer.add_string buf "            }\n";
       Buffer.add_string buf "            if (b < me) {\n";
       emit_lane_decls buf c_scalar;
       emit_load_edge ~sc buf c_scalar;
-      emit_body_monolithic ~sc buf c_scalar prep;
+      emit_body_monolithic ~sc ~cfg buf c_scalar prep;
       emit_store_edge ~sc buf c_scalar;
       Buffer.add_string buf "            }\n");
     Buffer.add_string buf "        }\n";
@@ -2256,8 +2272,8 @@ let emit_k1_mono
   then failwith "--k1-mono: R1 and R2 must be multiples of 4";
   (* neutralize every mode ref that could leak from a prior emission *)
   sc.Emit_render.Scratch.ls_mode <- Isa.LS_vector;
-  Emit_state.current_tw_perpos := false;
-  Emit_state.current_tw_linear := 0;
+  (* M6.2: the hand "neutralize" writes are DEAD — fresh per-emission cfg. *)
+  let cfg = Emit_render.Cfg.default in
   current_post_tw := false;
   current_oop_store_on_compute := false;
   current_oop_strides := None;
@@ -2291,7 +2307,7 @@ let emit_k1_mono
   in
   (* two per-stage configs/preps: columns are radix-R2, rows radix-R1. Bodies
      render MONOLITHICALLY even when prepare_butterfly ~sc chose the blocked
-     construction (radix 16): emit_body_monolithic ~sc ignores spill markers —
+     construction (radix 16): emit_body_monolithic ~sc ~cfg ignores spill markers —
      the same precedent the SSE2/scalar tails ship on. *)
   let cfg_col = mk_cfg r2
   and cfg_row = mk_cfg r1 in
@@ -2416,7 +2432,7 @@ let emit_k1_mono
            r1);
     emit_lane_decls buf cfg_col;
     emit_load_edge ~sc buf cfg_col;
-    emit_body_monolithic ~sc buf cfg_col prep_col;
+    emit_body_monolithic ~sc ~cfg buf cfg_col prep_col;
     Buffer.add_string
       buf
       (Printf.sprintf
@@ -2509,7 +2525,7 @@ let emit_k1_mono
                 ((4 * h) + 3)))
         [ "re"; "im" ]
     done;
-    emit_body_monolithic ~sc buf cfg_row prep_row;
+    emit_body_monolithic ~sc ~cfg buf cfg_row prep_row;
     current_oop_il_in := false;
     current_oop_il_in_sw := false;
     current_oop_il_out := il && not sw;
