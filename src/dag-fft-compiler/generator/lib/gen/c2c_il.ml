@@ -873,7 +873,8 @@ let emit
        [ Printf.sprintf "ISA: %s; %d complex per vector" isa.Isa.name per
        ; Printf.sprintf "Uarch: %s" uarch.Uarch.name
        ; Printf.sprintf
-           "Form: blocked=%b split=%s turnst=%b turnst_gs=%b pretw=%b log3=%b             tangent=%b"
+           "Form: blocked=%b split=%s turnst=%b turnst_gs=%b pretw=%b \
+            log3=%b             tangent=%b"
            blocked
            (match split with
             | Some (a, b) -> Printf.sprintf "%d.%d" a b
