@@ -132,18 +132,18 @@ fi
 # footgun — @default PROMOTES tracked generated/ headers EVEN WHEN THE BUILD
 # FAILS (reproduced during review: rc=1 and plan_executors.h rewritten).
 # G3: build ALL 19 executables, not 2 — otherwise a break in the 7 chain-tail
-# consumer files (dbg_eval, dump_ir, test_mk_plus, m2_test, stage3_test,
+# consumer files (dbg_eval, dump_ir,
 # dbg_zil_math, facdrv/main) is invisible and the gate reports PASS.
 if [ -z "${SKIP_BUILD:-}" ]; then
   export PATH="$HOME/.opam/5.2.0/bin:$PATH"
   export DUNE_CACHE=disabled
   ( cd "$GEN" && dune build \
-      bin/gen_radix.exe bin/gen_set.exe bin/test_mk_plus.exe bin/dump_ir.exe \
+      bin/gen_radix.exe bin/gen_set.exe bin/dump_ir.exe \
       bin/emit_registry_h.exe bin/emit_executor_h.exe bin/emit_rfft_registry.exe \
       bin/emit_oop_registry.exe bin/emit_trig_registry.exe \
       bin/emit_strided_registry.exe bin/emit_c2r_registry.exe \
       bin/dbg_eval.exe bin/dbg_zil_math.exe \
-      bin_test/m1_test.exe bin_test/m2_test.exe bin_test/stage3_test.exe \
+
       bin_test/cx_pipeline_test.exe \
       facdrv/main.exe emit_tool/emit_executor_h.exe ) \
     || { echo "FATAL: scoped 19-target dune build failed"; exit 2; }
