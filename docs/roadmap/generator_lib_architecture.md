@@ -2168,3 +2168,80 @@ re-races and *rewrites* wisdom in that directory. A first run pointed at the rea
 `generated/` rewrote 22 rows of `oop_wisdom.txt` with numbers measured on a build-loaded
 machine (4096: 53936 → 94489) — reverted. **Always point `--wisdir` at a scratch copy, and
 `git status generated/` after any C gate run.**
+
+## 24 - Post-campaign hygiene CLOSED (2026-08-15)
+
+The three items M10b listed as "remaining adjacent hygiene" are done. All three
+were committed separately.
+
+### 24.1 `layout_smoke` back to 17/17 - the silent-pick fix (`1abd53e0`)
+
+The compensating gate had gone RED at 14/3 (see `gates/README.md` for the full
+status block). Since M5 each IL axis is ONE three-way field, so a second,
+DISAGREEING flag was last-flag-wins: `of_argv` dropped the loser BEFORE either
+`Layout`'s anti-hybrid law or `emit_body`'s strided guards could see it. The
+hybrid stayed unemittable, but "refuse loudly" had degraded to "silently pick
+one", and the provenance header still stamped both flags.
+
+**Fix:** the exclusivity check moved UP to `Codelet.of_argv`, where the conflict
+is still visible. It raises `Parse_error` naming both sides; repeating the SAME
+flag stays legal. Four axes (ip / strided / oop-il-in / oop-il-out) plus the
+cross-family `--strided-il-* + --strided-r2c` pair. Verified safe before
+landing: 0 conflicts across all 1,433 recipe rows, and no Corpus matrix emits
+those flags. Gates: layout_smoke 17/17, corpus gate 1403/1432 drift 0.
+
+⚠ Error strings are deliberately ASCII - OCaml's uncaught-exception printer
+escapes non-ASCII, so an em-dash reaches the user as `\226\128\148`.
+
+### 24.2 `plan_executors.h` re-promoted (`0352c6ed`)
+
+Full record in `docs/roadmap/plan_executors_repromotion.md` (now CLOSED).
+Summary: `dune build @default` rc=0; **exactly one file changed**, all 12
+registry headers byte-identical; CR-normalized **+1024 / -0, purely additive**
+(48 K=1 plan-shaped executor specializations + dispatch arms + the radix17/19
+`t1_dit` externs). C-side gate green: `zr2c_fd_gate` ALL CORRECT,
+`mt_c2c_gate` ALL PASS, `k1z_inplace_gate` ALL PASS (memcmp-EXACT 2048-32768 -
+the exact K=1 range the additions cover), bench `--zr2c` resolves at xerr
+4.1e-16. No perf claim attached: the machine was compiling throughout.
+
+### 24.3 The CMake-598 vs build.py-863 gap RESOLVED (`e575c2ca`)
+
+The discrepancy was never mysterious once counted, and it was **not** the
+`codelets/il/` glob (that dir is retired and globs to zero, contributing
+nothing). The root `CMakeLists.txt` iterates `<fam>/<isa>`, but the zil family
+sits one level DEEPER, so it was simply absent:
+
+| dir | files |
+|---|---:|
+| `zil/avx2/pure_il` | 227 |
+| `zil/avx2/pure_il/tangent` | 6 |
+| `zil/avx2/boundary_split` | 32 |
+| **absent from CMake** | **265** |
+
+598 + 265 = 863, exactly.
+
+🔴 **The audit turned up a bigger defect than the count: the CMake build was
+BROKEN.** It never compiled `src/core/vfft.c`, so `bench_1d_vs_mkl` failed to
+link with undefined `vfft_create` / `vfft_execute` / `vfft_destroy` /
+`vfft_wisdom_load`. (The IL symbols did NOT surface as undefined, because it is
+`vfft.c` - the file that was not being built - that references them. Fixing only
+the glob would have left the build red; fixing only `vfft.c` would have turned
+the failure into 253 undefined IL symbols. Both were needed.)
+
+**Fix:** added the three zil dirs to the codelet glob and `${DAG_CORE}/vfft.c`
+to the bench target, mirroring `build.py`'s `dag_codelet_srcs()` and its
+`--vfft` flag - which is what the root CMakeLists says it is a mirror of.
+**Verified: configure reports 863, build exits 0 with ZERO undefined
+references, and the resulting binary runs at `xerr 4.1e-16 / gours 1.0e-15 /
+gmkl 7.2e-16` - identical error figures to the build.py-built binary.**
+
+⚠ **Open, owner's call: two ORPHANED CMake files.** `src/CMakeLists.txt` and
+`examples/CMakeLists.txt` are unreachable - there is no `add_subdirectory`
+anywhere in the repo. `src/CMakeLists.txt` is a fossil of the retired v1.0
+production lib: every path it names is GONE (`src/vfft.c`,
+`src/vectorfft_tune/generated/r*`, `src/vectorfft_tune/generated/dct8`,
+`src/stride-fft/codelets/scalar`), and `examples/CMakeLists.txt` links a `vfft`
+target that only that orphan defines. They cost nothing at build time but they
+are exactly the "attracts future work to the wrong files" hazard the pool-sunset
+policy names. Recommend deleting both (the retired root CMake is already
+preserved as `CMakeLists.old.txt`).
