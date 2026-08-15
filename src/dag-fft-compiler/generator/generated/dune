@@ -11,6 +11,15 @@
    plan_executors.h
    (run %{exe:../bin/emit_executor_h.exe} --wisdom %{dep:spike_wisdom.txt}))))
 
+; IL (interleaved-complex) registry: extern decls + radix X-macro lists for
+; the 253 corpus-covered IL cells, consumed by src/core/oop/il2p.h.
+(rule
+ (targets il_registry_avx2.h)
+ (deps %{exe:../bin/emit_il_registry.exe})
+ (mode promote)
+ (action
+  (with-stdout-to il_registry_avx2.h
+   (run %{exe:../bin/emit_il_registry.exe}))))
 (rule
  (targets registry_avx2.h)
  (deps %{exe:../bin/emit_registry_h.exe})
