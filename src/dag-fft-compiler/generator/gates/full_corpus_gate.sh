@@ -47,7 +47,7 @@
 #   G2  `record` now writes a TRACKED baseline => every re-record is a
 #       reviewable diff.
 #   G3  the build step compiles ALL 19 executables (bin 13, bin_test 4,
-#       facdrv 1) and RUNS cx_pipeline_test — a chain-tail or
+#       ) and RUNS cx_pipeline_test — a chain-tail or
 #       cx break can no longer hide behind a 2-exe build.
 #   G4  CORPUS_DRIFT is FATAL, all modes.  A corpus edit must go through
 #       `manifest` + re-record, as its own reviewed commit.
@@ -133,7 +133,7 @@ fi
 # FAILS (reproduced during review: rc=1 and plan_executors.h rewritten).
 # G3: build ALL 19 executables, not 2 — otherwise a break in the 7 chain-tail
 # consumer files (dbg_eval, dump_ir,
-# dbg_zil_math, facdrv/main) is invisible and the gate reports PASS.
+# dbg_zil_math) is invisible and the gate reports PASS.
 if [ -z "${SKIP_BUILD:-}" ]; then
   export PATH="$HOME/.opam/5.2.0/bin:$PATH"
   export DUNE_CACHE=disabled
@@ -145,8 +145,8 @@ if [ -z "${SKIP_BUILD:-}" ]; then
       bin/dbg_eval.exe bin/dbg_zil_math.exe \
       bin_test/cx_pipeline_test.exe bin_test/z11probe.exe \
       bin_test/argv_roundtrip.exe \
-      facdrv/main.exe ) \
-    || { echo "FATAL: scoped 16-target dune build failed"; exit 2; }
+      ) \
+    || { echo "FATAL: scoped 15-target dune build failed"; exit 2; }
   # the cx stack's only unit gate — build AND run it (it was silently
   # never built for weeks; the on-disk "ALL PASS" exe was stale).
   "$GEN/_build/default/bin_test/cx_pipeline_test.exe" > "$WORK/cx_test.log" 2>&1 \

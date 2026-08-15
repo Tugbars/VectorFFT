@@ -113,14 +113,14 @@ VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
 /* n1t declarations: GENERATED (VFFT_IL_N1T_{FWD,BWD,PAIR}_RADICES).
  * The groups below are kept as PROSE -- why each radix class exists -- but
  * the list itself is no longer written here.
- *   pow2: 4 8 16 32 64
+ *   pow2: 4 8 16 32 64 */
 /* even-composite leaves (2026-07-29, emitted via dft_small's mixed
  * recursion): unlock 2-stage pairs at 4·odd² N — 36=6x6, 100=10x10,
- * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)). */
- *   even composites: 6 10 12
+ * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)).
+ *   even composites: 6 10 12 */
 /* odd leaves (2026-07-29, with the odd-count tail): all-odd pairs —
  * 45 = 9x5, 225 = 15x15, 675 = 27x25. Both stage counts go odd; the
- * inline VEX-128 tail carries them. */
+ * inline VEX-128 tail carries them.
  *   odd: 3 5 7 9 11 13 15 17 19 21 25 27 */
 /* BLOCKED leaves (E9, 2026-08-05): the n1t corner-turn carried through
  * emit_blocked's pass-pairs. FWD-ONLY (leaf_b's only consumer is the F-DIAG
