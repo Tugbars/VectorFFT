@@ -190,6 +190,16 @@ endif()
 # to ZERO is a FATAL ERROR unless it is declared retired below.
 set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2026-07-24
 
+# Families that legitimately have NO tree for a given ISA, DECLARED per ISA.
+# This is deliberately a declaration and not a discovery: an absence nobody
+# wrote down is a hard error below. zil (interleaved-complex) is avx2-only
+# today and AVX-512 support is planned -- when those kernels land, delete the
+# zil entries from VFFT_ABSENT_avx512 and the guard immediately starts
+# protecting them, with no other edit needed.
+set(VFFT_ABSENT_avx2)                      # avx2 carries the full corpus
+set(VFFT_ABSENT_avx512
+    zil/pure_il zil/pure_il/tangent zil/boundary_split)
+
 set(VFFT_CODELET_SRCS)
 
 # label, dir. Appends to VFFT_CODELET_SRCS in the caller's scope (macro, not
@@ -202,15 +212,38 @@ macro(vfft_add_codelet_dir _label _dir)
     list(LENGTH _g _n)
 
     list(FIND VFFT_RETIRED_FAMILIES "${_label}" _retired_idx)
-    if(_n EQUAL 0 AND _retired_idx EQUAL -1)
-        message(FATAL_ERROR
-            "codelet family '${_label}' matched 0 files under\n"
-            "    ${_dir}\n"
-            "  A family silently globbing to zero is exactly the defect that hid the\n"
-            "  CMake-598 vs build.py-863 gap (265 zil files absent behind a plausible\n"
-            "  total). If this family is intentionally retired, add it to\n"
-            "  VFFT_RETIRED_FAMILIES; otherwise the tree layout moved and this glob\n"
-            "  needs updating to match build_tuned/build.py dag_codelet_srcs().")
+    set(_note "")
+    if(_retired_idx GREATER -1)
+        set(_note "   (RETIRED -- kept for build.py parity)")
+    elseif(_n EQUAL 0)
+        if(EXISTS "${_dir}")
+            # The directory is THERE and empty: the tree layout moved, or a
+            # population was dropped without updating this glob. That is a
+            # regression, not a configuration -- fail loudly.
+            message(FATAL_ERROR
+                "codelet family '${_label}' exists but matched 0 .c files:\n"
+                "    ${_dir}\n"
+                "  The directory is present and EMPTY -- the tree moved or a population\n"
+                "  was dropped. Re-sync this glob with build_tuned/build.py\n"
+                "  dag_codelet_srcs(), or add '${_label}' to VFFT_RETIRED_FAMILIES if it\n"
+                "  is deliberately gone. (A family silently contributing zero is what hid\n"
+                "  the CMake-598 vs build.py-863 gap: 265 zil files absent behind a\n"
+                "  plausible-looking total.)")
+        else()
+            # No such directory for this ISA. Legitimate ONLY if declared.
+            list(FIND VFFT_ABSENT_${VFFT_ISA} "${_label}" _absent_idx)
+            if(_absent_idx EQUAL -1)
+                message(FATAL_ERROR
+                    "codelet family '${_label}' has no ${VFFT_ISA} tree:\n"
+                    "    ${_dir}\n"
+                    "  and it is NOT declared in VFFT_ABSENT_${VFFT_ISA}. Either the family\n"
+                    "  really is unavailable for this ISA -- in which case DECLARE it there,\n"
+                    "  so the omission is written down instead of merely happening -- or the\n"
+                    "  glob is wrong. An undeclared absence is how avx2 shipped 598 of 863\n"
+                    "  codelets for weeks behind a plausible-looking total.")
+            endif()
+            set(_note "   (declared absent for ${VFFT_ISA})")
+        endif()
     endif()
 
     # pad the label so the counts line up in the configure log
@@ -220,11 +253,7 @@ macro(vfft_add_codelet_dir _label _dir)
         set(_padn 1)
     endif()
     string(SUBSTRING "                          " 0 ${_padn} _pad)
-    if(_retired_idx EQUAL -1)
-        message(STATUS "    ${_label}${_pad}${_n}")
-    else()
-        message(STATUS "    ${_label}${_pad}${_n}   (RETIRED -- kept for build.py parity)")
-    endif()
+    message(STATUS "    ${_label}${_pad}${_n}${_note}")
 
     list(APPEND VFFT_CODELET_SRCS ${_g})
 endmacro()
