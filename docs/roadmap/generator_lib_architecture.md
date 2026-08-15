@@ -2126,3 +2126,45 @@ M5's descriptor shape is settled (X2), M8 is GO conditional on the spill-cluster
 ledger is cell-exact (X6), and `Knobs` threading is cheap (X4). The remaining pre-M3 item is the
 **owner's R3 values question** (absorption velocity vs one-place answers), which decides whether
 M8/M12 stay in scope at all.
+
+
+---
+
+## 23 · Post-campaign: the IL registry is generated (2026-08-15)
+
+**The last hand-maintained dispatch surface is gone.** With M0–M12b complete, the corpus
+finally described the IL family (M12a brought in 253 cells, M10b the zr2c/k1/edge cells) —
+and a registry emitter can only walk what the corpus knows. So `emit_il_registry.ml` became
+writable for the first time, and was written.
+
+| before | after |
+|---|---|
+| `src/core/oop/il2p.h` carried ~253 extern declarations and five radix lists by hand, as `VFFT_IL2P_DECL_LEAF(4) … (27)` macro runs and `C(4) C(8) … C(27)` switch-case runs | `generated/il_registry_avx2.h` (15.5 KB, promote rule) carries them, derived from `Corpus.files "zil-boundary" + "zil-pure"` |
+| add a kernel ⇒ remember to touch two blocks in two files; a forgotten entry is **silent** (the codelet ships and is never selected) | add a kernel ⇒ it appears in the header on the next `dune build @default` |
+
+**What it emits.** `extern void` declarations on the frozen 11-arg z ABI, plus X-macro radix
+lists per (kind, direction): `VFFT_IL_<KIND>_{FWD,BWD,PAIR}_RADICES(X)`. The **PAIR** list
+carries only radices where *both* directions exist — so a `bwd ? x_bwd : x_fwd` resolver
+cannot reference a missing one-sided kernel. All five resolvers in `il2p.h` (`leaf_fn`,
+`mid_fn`, `t2tg_bwd_fn`, `n1_bwd_fn`, `t2t_bwd_fn`) now expand these lists.
+
+**Equivalence was proven before the swap**, not after: each hand-written list was extracted
+and compared against the generated one — identical, 20 radices each
+(3 4 5 6 7 8 9 10 11 12 13 15 16 17 19 21 25 27 32 64). The hand-written registry was
+correct; it is now also *derivable*.
+
+⚠ **12 symbols stay hand-declared**, recorded in the header comment: the 6 tangent kernels
+(`t2tan`/`n1ttan` at 8,16; `t2bw32`/`n1tbw32` at 32) and 6 blocked / sed-renamed variants
+(`t2b` 16,32 · `t2b48` 32 · `n1tb` 32 · `n1tb48` 32 · `n1tb44` 16). These sit outside the
+corpus pending pool sunset and an emitter suffix knob; they join automatically when they do.
+
+**Gates, all green:** C library compiles and **links** (every generated extern resolves) ·
+`k1z_inplace_gate` ALL PASS (fwd+bwd memcmp-EXACT, 2048–32768) · `zr2c_fd_gate` ALL CORRECT
+(~1e-14) · `mt_c2c_gate` ALL PASS (MT==ST bitwise) · full corpus gate PASS · banked wisdom
+verified untouched (md5 unchanged).
+
+🔴 **Standing hazard learned here: C gates can BANK.** `k1z_inplace_gate --wisdir <dir>`
+re-races and *rewrites* wisdom in that directory. A first run pointed at the real
+`generated/` rewrote 22 rows of `oop_wisdom.txt` with numbers measured on a build-loaded
+machine (4096: 53936 → 94489) — reverted. **Always point `--wisdir` at a scratch copy, and
+`git status generated/` after any C gate run.**
