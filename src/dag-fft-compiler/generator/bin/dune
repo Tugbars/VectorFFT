@@ -3,6 +3,7 @@
   gen_radix
   dump_ir
   emit_registry_h
+  emit_il_registry
   emit_executor_h
   emit_rfft_registry
   emit_oop_registry
