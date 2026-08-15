@@ -107,10 +107,29 @@ let addr_str (a : caddr) : string =
   | ATw i -> Printf.sprintf "twp[%d]" i
 ;;
 
+(* VFFT_CX_STORE128 — the M-128 store edge (TURNED-axis, mid slot): each
+   leg-major OUTPUT store leaves as two contiguous 128-bit halves instead of
+   one 256-bit store. A 16B store at complex granularity can never straddle a
+   cache line, so this deletes the strided-odd-offset split stores (11.8%
+   measured on the R16 tangent mid, VTune 2026-08-15) at the price of one
+   extractf128 + one extra store uop per output. Scoped to AZoutLeg on the
+   256-bit ISA only — the S plane, turn stores, and the VEX-128 odd-count
+   tail (whose values are __m128d) are untouched. Default OFF ⇒ byte-identical. *)
+let store128 = ref (Sys.getenv_opt "VFFT_CX_STORE128" = Some "1")
+
 (* A store node as a C statement (no trailing ';'). The value operand is the
  * def name of the sunk node — same convention as `render`'s operands. *)
 let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
-  Isa.storeu_pd isa (addr_str a) v
+  match a with
+  | AZoutLeg _ when !store128 && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm_storeu_pd(&%s, _mm256_castpd256_pd128(%s)); _mm_storeu_pd(&%s + 2, \
+       _mm256_extractf128_pd(%s, 1))"
+      (addr_str a)
+      v
+      (addr_str a)
+      v
+  | _ -> Isa.storeu_pd isa (addr_str a) v
 ;;
 
 (* Render one scheduled node as a C initializer expression.

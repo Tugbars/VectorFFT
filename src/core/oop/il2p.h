@@ -331,6 +331,22 @@ extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
  * count = R2 and the leaf at count = R1, so the caller must refuse a
  * blocked mid for odd R2 and a blocked leaf for odd R1 — the `count_ok`
  * argument makes that explicit at the call site rather than implicit. */
+
+/* TURNED-axis edge variants (owner directive 2026-08-15): same tangent
+ * interior, different STORE EDGE, raced per cell like every other form —
+ * the 512/1024 flip proved edge choice is regime-dependent.
+ *   leaf variant 4 = wing32 + T256 (paired-permute wide stores). WON the
+ *   2026-08-16 dp race at BOTH raceable cells (128: pair 4x32 kv 64,
+ *   63.6 ns; 512: 16x32 kv 67, 301.1 ns) — the T128-vs-T256 verdict is
+ *   per-cell, which is the axis's whole point.
+ *   (mid variant 4 = tangent + M-128 half stores was raced the same night
+ *   and LOST every cell it can serve — codelets SUNSET per pool policy;
+ *   regenerate with VFFT_CX_STORE128=1 if a future cell wants the arm.
+ *   The resolver returns 0 for mid v4, degrading to the created default.) */
+extern void radix32_z_n1tbw32t256_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
     if (!variant) return 0;
@@ -340,6 +356,10 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         if (R1 == 32 && count_ok) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
         return 0;
     }
+    /* mid variant 4 (M-128 edge): raced 2026-08-16, LOST every raceable
+     * cell, codelets sunset — returns 0 so a banked verdict degrades to
+     * the created default. See the TURNED-axis note above the externs. */
+    if (variant == 4) return 0;
     if (!count_ok) return 0;
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
@@ -375,6 +395,10 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
         if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;  /* (odd legal)  */
         if (R2 == 32 && count_ok) return radix32_z_n1tbw32_fwd_avx2; /* blocked
             wing32, TURNED-128 store — the old kill was the store edge */
+        return 0;
+    }
+    if (variant == 4) {                 /* tangent interior, T256 edge */
+        if (R2 == 32 && count_ok) return radix32_z_n1tbw32t256_fwd_avx2;
         return 0;
     }
     if (!count_ok) return 0;
