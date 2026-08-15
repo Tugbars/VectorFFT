@@ -44,9 +44,9 @@ both show up as "bytes differ" downstream, and only this phase can tell them
 apart. **Drift here is fatal in every mode**, including `record` — you cannot
 accidentally bless a corpus edit by re-recording.
 
-**2. Scoped build (G3).** Builds all 16 executables — not just `gen_radix` — and
+**2. Scoped build (G3).** Builds all 15 executables — not just `gen_radix` — and
 then *runs* `cx_pipeline_test`. Without this, a break in a chain-tail consumer
-(`dbg_eval`, `dump_ir`, `facdrv`) or in the cx stack is invisible and the gate
+(`dbg_eval`, `dump_ir`, `dbg_zil_math`) or in the cx stack is invisible and the gate
 reports PASS on a broken tree. Scoped targets only; see the `dune build` hazard
 below.
 
