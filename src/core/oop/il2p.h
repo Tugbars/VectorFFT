@@ -346,6 +346,12 @@ extern void radix32_z_n1tbw32_fwd_avx2(const double *, const double *,
 extern void radix32_z_n1tbw32t256_fwd_avx2(const double *, const double *,
     double *, double *, const double *, const double *,
     size_t, size_t, size_t, size_t, size_t);
+extern void radix16_z_t2tanm128_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
+extern void radix32_z_t2bw32m128_fwd_avx2(const double *, const double *,
+    double *, double *, const double *, const double *,
+    size_t, size_t, size_t, size_t, size_t);
 
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
@@ -356,10 +362,14 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         if (R1 == 32 && count_ok) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
         return 0;
     }
-    /* mid variant 4 (M-128 edge): raced 2026-08-16, LOST every raceable
-     * cell, codelets sunset — returns 0 so a banked verdict degrades to
-     * the created default. See the TURNED-axis note above the externs. */
-    if (variant == 4) return 0;
+    if (variant == 4) {                 /* tangent interior, M-128 edge.
+        * Loses every raceable cell on the i9 (2026-08-16 dp race) but
+        * stays in the pool per owner policy — a distinct construction
+        * may win on other platforms; shared wisdom re-races locally. */
+        if (R1 == 16) return radix16_z_t2tanm128_fwd_avx2; /* mono, odd tail */
+        if (R1 == 32 && count_ok) return radix32_z_t2bw32m128_fwd_avx2;
+        return 0;
+    }
     if (!count_ok) return 0;
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
