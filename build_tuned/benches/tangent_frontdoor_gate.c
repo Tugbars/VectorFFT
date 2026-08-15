@@ -69,9 +69,10 @@ static int one(int N)
 int main(void)
 {
     printf("front-door gate: plans built from the re-raced kind-3 wisdom\n"
-           "(128 -> il_kv 51 = R8 tangent mid + R16 tangent leaf;\n"
-           " 256 -> il_kv 51 = tangent mid + tangent leaf;\n"
-           " 512 -> il_kv 35 = tangent mid)\n\n");
+           "(TURNED-axis era, 2026-08-16:\n"
+           " 128 -> pair 4x32,  il_kv 64 = mono mid + T256 wing32 leaf;\n"
+           " 256 -> pair 16x16, il_kv 51 = tangent mid + tangent leaf;\n"
+           " 512 -> pair 16x32, il_kv 67 = tangent mid + T256 wing32 leaf)\n\n");
     int ok = 1;
     ok &= one(128);
     ok &= one(256);

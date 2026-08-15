@@ -874,7 +874,15 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * n1tbw32's TURNED-128 edge fixed it and the (32,16)
                      * route ties the hand champion (A-1,
                      * docs/roadmap/r32_tangent_parity_plan.md). */
-                    int msv[3], lsv[4], nm = 0, nl = 0, dm, dl;
+                    /* Leaf variant 4 = the TURNED-axis T256 edge (owner
+                     * directive 2026-08-15): wing32 interior, paired-wide
+                     * stores. Edge choice flipped sign between 512 and 1024,
+                     * so it is a raced axis, never a default — and the
+                     * 2026-08-16 race PROMOTED it at both raceable cells
+                     * (128 kv 64, 512 kv 67). The mid-side M-128 edge was
+                     * raced the same night, lost everywhere, and its
+                     * codelets were sunset per pool policy — no msv entry. */
+                    int msv[4], lsv[5], nm = 0, nl = 0, dm, dl;
                     if (R1 == 32 && (R2 & 1) == 0)
                     { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3; }
                     else if (R1 == 16)
@@ -885,7 +893,8 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     { dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
                     else { dm = 0; msv[nm++] = 0; }
                     if (R2 == 32 && (R1 & 1) == 0)
-                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3; }
+                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3;
+                      lsv[nl++] = 4; }                    /* n1tbw32 T256  */
                     else if (R2 == 16 && (R1 & 1) == 0)
                     {   /* R=16 leaf: the blocked candidate is the raced
                          * winner (variant 1 = 4·4; see il2p.h for the 24-arm

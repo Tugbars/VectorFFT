@@ -18,7 +18,8 @@ K(radix8_z_t2tan_fwd_avx2);
 K(radix8_z_n1ttan_fwd_avx2);
 K(radix16_z_t2tan_fwd_avx2);
 K(radix16_z_n1ttan_fwd_avx2);
-K(radix32_z_t2btan216_fwd_avx2);
+K(radix32_z_t2bw32_fwd_avx2);
+K(radix32_z_n1tbw32_fwd_avx2);
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
 
@@ -94,8 +95,8 @@ int main(void){
     r[2].e  = gate_mid(radix16_z_t2tan_fwd_avx2, 16, 32, -1.0);
     r[3].nm = "radix16_z_n1ttan_fwd     (R16 leaf, corner-turn)     ";
     r[3].e  = gate_leaf(radix16_z_n1ttan_fwd_avx2, 16, 16);
-    r[4].nm = "radix32_z_t2btan216_fwd  (R32 mid,  blocked 2.16)    ";
-    r[4].e  = gate_mid(radix32_z_t2btan216_fwd_avx2, 32, 16, -1.0);
+    r[4].nm = "radix32_z_t2bw32_fwd     (R32 mid,  wing32 2.16)     ";
+    r[4].e  = gate_mid(radix32_z_t2bw32_fwd_avx2, 32, 16, -1.0);
 
     int ok = 1;
     for(int i=0;i<5;i++){

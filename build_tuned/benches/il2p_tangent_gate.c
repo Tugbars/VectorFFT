@@ -106,6 +106,17 @@ int main(void)
     /* odd count: monolithic tangent forms carry the VEX-128 tail, so a
      * tangent mid must stay correct when R2 is odd */
     ok &= check(240, 16, 15, 3, 0, "R16 mid, ODD count");
+    /* ── TURNED-axis edge variant (leaf variant 4 = T256) ──────────────
+     * Same wing32 interior, paired-wide store edge. PROMOTED at 128 (kv 64)
+     * and 512 (kv 67) by the 2026-08-16 race. The mid-side M-128 edge lost
+     * that race and was sunset; its nibble must now DEGRADE bitwise. */
+    ok &= check(512, 16, 32, 0, 4, "R32 leaf T256");
+    ok &= check(128,  4, 32, 0, 4, "R32 leaf T256 (the kv-64 pair)");
+    ok &= check(512, 16, 32, 3, 4, "tangent mid + T256 leaf (kv 67)");
+    /* sunset / absent forms: must DEGRADE bitwise to base */
+    ok &= check(256, 16, 16, 4, 0, "R16 mid v4 (sunset, degrades)");
+    ok &= check(512, 32, 16, 4, 0, "R32 mid v4 (sunset, degrades)");
+    ok &= check(256, 16, 16, 0, 4, "R16 leaf v4 (degrades)");
 
     printf("\n%s\n", ok ? "TANGENT WIRING GATE: ALL CORRECT"
                         : "TANGENT WIRING GATE: FAILURE");

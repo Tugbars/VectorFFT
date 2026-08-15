@@ -30,6 +30,7 @@ classic form that ships today, on hardware, under the banked paired protocol
 | `radix16_z_n1ttan_avx2.c` | R16 leaf (n1t) | 5.7e-14 | **−19.8%** vs `n1tb44` (57.7 vs 71.9 ns, 32/35, ctrl −0.03%) |
 | `radix32_z_t2bw32_avx2.c` | R32 mid, blocked 2.16 **wing32** | 5.7e-13 (DFT-512 e2e) | **−3.3…−5.5%** vs `t2btan216` in-route (3 runs, ctrl ≤0.08%) — supersedes it |
 | `radix32_z_n1tbw32_avx2.c` | R32 **LEAF**, blocked 2.16 **wing32**, TURNED-128 store | 5.7e-13 (DFT-512 e2e) | route (32,16) = **parity with the hand w32tgL champion** (301.5–305.4 ns @512, ±1.3%, 3 runs) |
+| `radix32_z_n1tbw32t256_avx2.c` | R32 **LEAF**, wing32, **T256 store edge** (TURNED axis, leaf variant 4) | gate 2.2e-14/1.8e-13 | **dp-PROMOTED 2026-08-16 at BOTH raceable cells**: 128 → pair 4×32 kv 64 (63.6 ns; front door 65 ns = 1.04–1.05× vs MKL) and 512 → kv 67 (301.1 ns; front door 304 ns = 0.94–0.98×). Same interior as `n1tbw32`; only the edge differs (16 `vperm2f128`+16 `vinsertf128`+32 wide stores vs 32 extracts + 64 halves). |
 
 **Radix 8 is the free case.** It has no general-twiddle sites — every angle is
 a quarter turn or the π/4 class — so the construction reduces to one rewrite at
@@ -97,6 +98,7 @@ deleted on purpose; re-deriving them wastes a session.
 | `radix32_z_t2btan216` (R32 mid, per-site angles) | **POOL-SUNSET 2026-08-13**: superseded by `t2bw32` (wing32 combine + ROTFMA, −3.3…−5.5% in both shapes, 3 runs) and the dp re-race banked kv 51 with the wing32 forms (`512 1 3 … 303.1 51`; canonical bench 0.96× vs MKL, was 0.87–0.88×). Race-arm copy preserved in `build_tuned/benches/tangent_hand/`. Its 23-literal ulp-twin constant table is the recorded counter-example the canonical-angle combine fixes. |
 | R32 leaf, tangent blocked 2.16 (PAIRED-PERMUTE edge) | **+32.4% SLOWER** than classic `n1tb48` (240.1 vs 182.0 ns, 3/35 wins). Static census predicted a *win* — hardware disagreed by a third. **POSTMORTEM 2026-08-13: the tax was the store EDGE, not the interior** — 32 `permute2f128` (port-5-only) from the paired corner-turn. `radix32_z_n1tbw32` re-ships the slot with the TURNED-128 split-store edge and ties the hand champion. The kill stands for the *paired-edge* form only. |
 | R16 mid/leaf, blocked 2.8 | No slot: R16 mono already fits the register file and reached hand parity, so the blocked shape has nothing to buy. Unraced, no consumer — deleted rather than left to confuse a grep. |
+| M-128 mids (`t2tanm128`, `t2bw32m128`) — TURNED-axis mid edge | **LOST the 2026-08-16 dp race at every cell they can serve** (128/256/512; 1024 is owner-locked). The split stores they delete are cosmetic (`bound-on-stores` ≤0.037 — same verdict as the refuted S[]-align lever); the extra store uop bought nothing. Sunset per pool policy; mid variant 4 resolver returns 0 (degrades). Regenerate with `VFFT_CX_STORE128=1` if a future cell wants the arm — the knob stays in the emitter. |
 | R16 mid, backward | Feature coverage only, and incomplete: there is no backward *leaf*, so it cannot form a backward route. Regenerate as a pair when the backward arc is actually built. |
 
 ## Hard-won facts (do not re-derive)
