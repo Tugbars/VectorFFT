@@ -13,8 +13,12 @@ ride along with unrelated work.
 | `generated/plan_executors.h` (the output) | 2026-07-22 | `40c48156` — "new dag integration" |
 
 Re-running the promote rule (`emit_executor_h.exe --wisdom spike_wisdom.txt`)
-produces **+1172 / −52 lines** of executor-table change — the zr2c/kind-5-era
-wisdom rows never made it into the emitted table.
+produces **+1120 lines, 0 removals** — the change is **PURELY ADDITIVE**
+(measured 2026-08-15 with CR-normalized diff; the earlier “+1172/−52” reading
+came from `git diff --stat` pairing lines across the CRLF boundary and
+overstated the risk — nothing is deleted or rewritten). The additions are
+extern declarations + dispatch arms for codelets that exist in the tree but
+are undeclared in the shipped header (radix17/19-class t1_dit among them).
 
 It was re-promoted and **deliberately reverted** during M10a: the corpus
 inversion's discipline is that no tracked-file byte change rides a structural
