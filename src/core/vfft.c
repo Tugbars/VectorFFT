@@ -85,6 +85,32 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+/* Minimum N at which the NATURAL cascade (ZCASC) is offered as a candidate.
+ * Production value is 2048 — the tier boundary where the cascade was measured
+ * to win (below it, Bailey il2p/il3p serves K=1 IL). This is a TEST HOOK in the
+ * VFFT_FORCE_ZROUTE spirit: it exists so the boundary itself can be RACED
+ * rather than assumed, because a gate that is never crossed can never be shown
+ * to be in the right place.
+ *
+ * Set VFFT_NAT_ZCASC_MINN=1024 to let the cascade compete at 1024 — the child
+ * size of the zr2c N=2048 cell, whose c2r arm is the outlier (0.55x vs MKL).
+ * Crossing the gate is necessary but NOT sufficient: vfft_zsplit_default_chain
+ * must also seed a chain for that N, or the create-time race has nothing to
+ * build and the candidate stays NULL.
+ *
+ * Default is unchanged, so this read is inert in production. */
+static int _vfft_zcasc_min_n(void)
+{
+    static int cached = 0;
+    if (!cached)
+    {
+        const char *e = getenv("VFFT_NAT_ZCASC_MINN");
+        int v = e ? atoi(e) : 0;
+        cached = (v >= 8) ? v : 2048;
+    }
+    return cached;
+}
+
 /* 🔴 CHAIN-CAP COHERENCE (P2, 2026-07-29). vfft_k1_cc_chain_decode writes up
  * to VFFT_K1_CC_MAX_NF ints into caller arrays that are sized by EITHER that
  * macro (ccf/ccf_ here, cc_chain in the plan) or by VFFT_ZSPLIT_MAX_NF (zwch
@@ -3596,7 +3622,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * Kill switch: VFFT_NO_NAT_ZCASC (VFFT_NO_ZTURN precedent). */
             vfft_zturn2_plan_t *zct = NULL;
             if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                N >= 2048 && !getenv("VFFT_NO_NAT_ZCASC"))
+                N >= _vfft_zcasc_min_n() && !getenv("VFFT_NO_NAT_ZCASC"))
             {
                 vfft_config_t rcfg = *cfg;
                 rcfg.recalibrate = 0;
@@ -4548,7 +4574,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                      * execute changes. Kill switch: VFFT_NO_NAT_ZCASC
                      * (shared with in-place: "no natural cascade candidate
                      * anywhere"); no bank under the switch. */
-                    if (cfg->order == VFFT_ORDER_NATURAL && N >= 2048 &&
+                    if (cfg->order == VFFT_ORDER_NATURAL &&
+                        N >= _vfft_zcasc_min_n() &&
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {
