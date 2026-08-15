@@ -26,7 +26,7 @@ every re-record is a reviewable diff.
 | `recipes.tsv` | data | 1,432 rows: how to regenerate each file, and what its bytes must be. |
 | `baseline_manifest.tsv` | data | sha256 of every shipped file — detects hand edits to the corpus. |
 | `baseline_verdicts.tsv` | data | the expected *verdict class* per file — the pass/fail reference. |
-| `layout_smoke.sh` | compensating gate | 17 cases over the IL-layout arms the corpus cannot see. 🔴 currently RED (14/3) — see below. |
+| `layout_smoke.sh` | compensating gate | 17 cases over the IL-layout arms the corpus cannot see. **17/17 green** — see below. |
 | `cil_matrix.sh` | tool | the 183-case cx emission matrix (~10 s). Exercises off-default `VFFT_CX_*` knobs. |
 | `regen_cil.sh` | tool (legacy) | in-place regen of cil-owned files. Superseded by `gen_set --root codelets zil-pure`. |
 | `.gitattributes` | config | forces LF in this folder on every platform. Three lines that prevent a whole class of false failures. |
@@ -124,23 +124,35 @@ combinations must fail *loudly* at emission (the anti-hybrid law raises) rather
 than silently emitting uncompilable C. 17 cases. Weaker than byte-identity —
 stated plainly, not oversold — but it is the only net over the error paths.
 
-> 🔴 **STATUS 2026-08-15: RED — 14 ok, 3 failed.** `neg_ip_both`,
-> `neg_strided_both` and `neg_il_plus_r2c` (e.g. `--strided-il-in
-> --strided-il-out` together) are **emitted silently instead of refused**.
-> Cause: since M5, the illegal pair is *structurally unrepresentable* — the
-> `Codelet` descriptor carries one three-way `il` field, not two booleans — so
-> `of_argv` takes the last flag and the other is dropped before the Layout law
-> can see it. The hybrid is therefore still impossible to emit (the law's
-> purpose holds), but **"refuse loudly" degraded to "silently pick one"**,
-> which is the exact silent-acceptance class this repo hunts. No production
-> impact: nothing in the corpus, the registries, or either C build passes both
-> flags, and all 1,432 files reproduce. Fix belongs in `Codelet.of_argv`
-> validation (raise when a second, conflicting `il` flag is seen).
+> 🟢 **STATUS 2026-08-15: 17/17 GREEN** — restored the same day it went red.
 >
-> **The process lesson is bigger than the bug.** The corpus gate ran after
-> every campaign step; this smoke did not run once between M3 and 2026-08-15.
-> A compensating gate covers the blind spot *by construction* — which means the
-> main gate can never tell you it has gone red. **Run both.**
+> It had been RED at 14/3: `neg_ip_both`, `neg_strided_both` and
+> `neg_il_plus_r2c` (e.g. `--strided-il-in --strided-il-out` together) were
+> **emitted silently instead of refused**. Cause: since M5 the illegal pair is
+> *structurally unrepresentable* — the `Codelet` descriptor carries one
+> three-way `il` field per axis, not two booleans — so `of_argv` took the last
+> flag and dropped the other **before** the Layout law or `emit_body`'s strided
+> guards could ever see it. The hybrid stayed impossible to emit (the law's
+> purpose held), but **"refuse loudly" had degraded to "silently pick one"** —
+> the exact silent-acceptance class this repo hunts — and the provenance header
+> still stamped both flags, so the artifact misrepresented itself.
+>
+> **Fix:** the exclusivity check moved UP to where the conflict is still
+> visible. `Codelet.of_argv` now raises `Parse_error` when a second,
+> *disagreeing* flag claims an axis that is already set, naming both sides
+> (`--ip-il-in and --ip-il-out are mutually exclusive: …`); repeating the same
+> flag stays legal. All four axes are covered (ip / strided / oop-il-in /
+> oop-il-out) plus the cross-family `--strided-il-* + --strided-r2c` pair.
+> Verified safe first: 0 conflicts across all 1,433 recipe rows and no Corpus
+> matrix emits these flags — and the corpus gate re-ran green at 1403/1432,
+> drift 0. Error strings are deliberately **ASCII**: OCaml's uncaught-exception
+> printer escapes non-ASCII bytes, so an em-dash reaches the user as
+> `\226\128\148`.
+>
+> **The process lesson is bigger than the bug, and it stands.** The corpus gate
+> ran after every campaign step; this smoke did not run once between M3 and
+> 2026-08-15. A compensating gate covers the blind spot *by construction* —
+> which means the main gate can never tell you it has gone red. **Run both.**
 
 ---
 

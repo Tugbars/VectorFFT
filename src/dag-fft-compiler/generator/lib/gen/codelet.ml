@@ -264,17 +264,17 @@ let of_argv ?(strict = true) (argv : string list) : t =
      legal; only a genuine disagreement raises.  [name_of] renders whichever
      flag already claimed the axis, so the message names both sides. *)
   let excl r ~axis ~name_of ~v ~flag =
-    (if !r <> v
-     then (
-       match name_of !r with
-       | "" -> ()
-       | prev ->
-         fail
-           "%s and %s are mutually exclusive — the banned hybrid %s layout (a \
-            codelet carries ONE plane)"
-           prev
-           flag
-           axis));
+    if !r <> v
+    then (
+      match name_of !r with
+      | "" -> ()
+      | prev ->
+        fail
+          "%s and %s are mutually exclusive: the banned hybrid %s layout (a codelet \
+           carries ONE plane)"
+          prev
+          flag
+          axis);
     r := v
   in
   let set_ip_il v flag =
@@ -570,8 +570,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
       if !str_il <> `No
       then
         fail
-          "--strided-il-in/out cannot combine with --strided-r2c — the banned \
-           hybrid (an interleaved-complex plane and a real plane in one codelet)";
+          "--strided-il-in/out cannot combine with --strided-r2c: the banned hybrid (an \
+           interleaved-complex plane and a real plane in one codelet)";
       Strided_r2c
     | [ "oop-strided" ] -> N1_oop_strided
     | [ t ]
