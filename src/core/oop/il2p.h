@@ -167,9 +167,7 @@ static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 {
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_t2_bwd_avx2 : radix##R##_z_t2_fwd_avx2;
-    C(4) C(8) C(16) C(32) C(64)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
-    C(6) C(10) C(12)
+    VFFT_IL_T2_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
