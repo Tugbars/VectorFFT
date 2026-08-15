@@ -874,19 +874,20 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * n1tbw32's TURNED-128 edge fixed it and the (32,16)
                      * route ties the hand champion (A-1,
                      * docs/roadmap/r32_tangent_parity_plan.md). */
-                    /* Leaf variant 4 = the TURNED-axis T256 edge (owner
-                     * directive 2026-08-15): wing32 interior, paired-wide
-                     * stores. Edge choice flipped sign between 512 and 1024,
-                     * so it is a raced axis, never a default — and the
-                     * 2026-08-16 race PROMOTED it at both raceable cells
-                     * (128 kv 64, 512 kv 67). The mid-side M-128 edge was
-                     * raced the same night, lost everywhere, and its
-                     * codelets were sunset per pool policy — no msv entry. */
-                    int msv[4], lsv[5], nm = 0, nl = 0, dm, dl;
+                    /* Variant 4 = the TURNED-axis edge forms (owner directive
+                     * 2026-08-15): tangent interior with the OTHER store edge.
+                     * Leaf T256 was PROMOTED 2026-08-16 at both raceable
+                     * cells (128 kv 64, 512 kv 67); the mid M-128 loses every
+                     * cell on THIS machine but stays enumerated per owner
+                     * policy — a distinct construction may win on other
+                     * platforms, and the race (not a rule) decides per cell. */
+                    int msv[5], lsv[5], nm = 0, nl = 0, dm, dl;
                     if (R1 == 32 && (R2 & 1) == 0)
-                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3; }
+                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3;
+                      msv[nm++] = 4; }                    /* t2bw32 M-128  */
                     else if (R1 == 16)
                     {   dm = 0; msv[nm++] = 0; msv[nm++] = 3;
+                        msv[nm++] = 4;                    /* t2tan M-128   */
                         if ((R2 & 1) == 0) msv[nm++] = 1;     /* t2b(16) */
                     }
                     else if (R1 == 8)

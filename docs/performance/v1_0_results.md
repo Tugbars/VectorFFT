@@ -199,11 +199,11 @@ Three caveats stated plainly:
   that is the kernel-vs-kernel fight with threading removed. MKL leads at N ≤ 1024
   (1.18×–1.56×, worst for us at 1024); we lead from 4096 up (1.06×–1.74×). The sub-2048
   serial gap is real and is tracked separately.
-  *(Update 2026-08-12: this table predates the tangent-scaled butterflies. In the K=1
-  natural-order grid below, 128 and 256 have since crossed ahead of MKL and 512 closed
-  most of its gap; 1024 — the worst cell here — is the one that did not move, and the
-  reason is structural: it is R32 in both slots. These batched cells have NOT been
-  re-measured against the tangent pool, so the numbers above stand as-measured.)*
+  *(Update 2026-08-16: this table predates the tangent/wing32/TURNED campaign. In the
+  K=1 natural-order grid below, the serial sub-2048 gap has since closed to parity —
+  128 = 1.05×, 256 = 1.00×, 512 = 0.98–1.00×, 1024 ≈ 0.95-to-parity. These batched
+  cells have NOT been re-measured against the new pool, so the numbers above stand
+  as-measured.)*
 - **Our workers never park.** Dispatch is cheap precisely because the pool spins rather than
   sleeping, which costs idle CPU and power. MKL's threads sleep after `KMP_BLOCKTIME`, which
   is better behaviour inside a host application doing other work. On this benchmark the trade
@@ -301,10 +301,10 @@ Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win
 ```
   N       NATURAL in-place   NATURAL OOP   SCRAMBLED in-place
 ──────────────────────────────────────────────────────────────
-  128        0.91 †‡           1.04 ★         (= NAT bits)
-  256       0.85–0.86 ▲◆‡    1.01–1.02 ★      (= NAT bits)
-  512       0.78–0.80 ▲‡     0.87–0.88 ★      (= NAT bits)
-  1024      0.91–0.95 ▲       0.83–0.90 ✦     (= NAT bits)
+  128        0.91 †‡           1.05 ★★        (= NAT bits)
+  256       0.85–0.86 ▲◆‡      1.00 ★★        (= NAT bits)
+  512       0.78–0.80 ▲‡     0.98–1.00 ★★     (= NAT bits)
+  1024      0.91–0.95 ▲     ~0.95–parity ✦    (= NAT bits)
   2048      1.09–1.16       0.99–1.11         1.15–1.18
   4096      0.96–0.99       0.91–0.94         1.02–1.04
   8192      1.00–1.03       0.95–0.98         1.05–1.06
@@ -322,22 +322,30 @@ the heuristic balanced pair (16,16) with the measured (8,32), which puts
 R=32 in the leaf slot, which the structural rule then blocks — 0.76→0.85.
 Fully blocking a (16,16) pair instead was raced and LOST by 4.4%, so radix
 choice dominates form choice here.
-★ 2026-08-12, TANGENT-SCALED butterflies (`il_kv` variant 3) — see
-[tangent_scaled_butterflies.md](tangent_scaled_butterflies.md). Measured through
-the canonical bench, `--k1noop`, isolated single cell, pinned core, both flip
-orders, MKL number identical across arms. Before → after, same harness:
-128 0.93–0.97 → **1.04** (72 → 66 ns, MKL 68); 256 0.85 → **1.01–1.02**
-(160 → 135 ns, MKL 136–137); 512 0.75–0.78 → **0.87–0.88** (375–387 → 331–335 ns,
-MKL 291–293). 128 and 256 now LEAD MKL. The wins come from the plan search
-picking a pair whose BOTH slots have a tangent form (128 → 8×16, 256 → 16×16);
-512 = 2⁹ cannot form such a pair — every factorization carries an R32 or R64
-pass — which is why it gains but does not cross. A hand-wired fully-tangent 512
-(pair 32×16, `il_kv` 51) was raced and is a WASH (~1%), so the residual there is
-the R32 pass, not the interior arithmetic.
-✦ 2026-08-12, 5 reps, as-shipped (NOT re-raced against the tangent pool). This
-cell is NOISY — ours 899/976/1037/1084/1621 ns vs MKL 811/856/865/892/895 —
-so the range is min-to-median, not a tight interval. 0.90 is the minima ratio,
-0.83 the median ratio. Do not quote a third digit here.
+★★ 2026-08-16, the CLOSED sub-2048 campaign: tangent interiors
+([tangent_scaled_butterflies.md](tangent_scaled_butterflies.md)) + the wing32
+R32 forms + the TURNED store-edge axis, all dp-raced (`calibrate_k1` over the
+full form pool; verdicts banked as pair + `il_kv`). Winning rows: 128 = pair
+4×32, kv 64 (mono mid + T256 wing32 leaf, 65 ns vs MKL 69); 256 = 16×16, kv 51
+(tangent both slots, 136 vs 136); 512 = 16×32, kv 67 (tangent mid + T256 wing32
+leaf, 296–297 vs 291–295). Canonical bench `--k1noop`, both flip orders,
+cross-engine correctness 3–4e-16. The 2026-08-12 era below (★-history) first
+crossed 128/256 with tangent-only forms; the wing32 leaf then solved the R32
+slot (the old "+32% killed leaf" was an edge×interior interaction, not the
+tangent construction) and the TURNED axis picked the store edge per cell.
+Historical ★ numbers: 128 1.04 (8×16, kv 51) · 256 1.01–1.02 · 512 0.87–0.88
+(kv 35, pre-wing32) — superseded by the rows above.
+✦ 2026-08-16, 6 reps, both flip orders, canonical bench: ours
+848/889/893/901/978/987 ns vs MKL 833/841/854/860/864/873 — **median ratio
+0.96, best-vs-best 0.98, one rep at 1.02**. The route is CLASSIC blocked 32×32
+**re-raced against the complete form pool** (tangent, wing32, both TURNED
+edges) and re-confirmed by the dp with the nearest challenger +4.5% behind:
+1024's regime is memory (L1 pending misses ~19× the 512 level, store-latency
+bound), where the tangent family's port/instruction levers buy nothing. The
+cell's variance is dominated by MKL's own in-place shadow-plane placement
+(its floor alone spans 833–873 here; historically 812–905), so the honest
+datum is **~0.95-to-parity** — do not quote a third digit. (The 2026-08-12
+figure 0.83–0.90 came from a noisier 5-rep set on the same route.)
 ‡ pre-tangent plan. The banked kind-3 row for this N CHANGED on 2026-08-12, so
 the in-place figure no longer describes what ships. Sub-2048 in-place and OOP
 run the SAME IL engines (see the grid above), so it is expected to track the
@@ -347,17 +355,19 @@ OOP column — but it has not been re-measured, and is not quoted as if it had.
 
 Reading it honestly:
 
-- **Sub-2048 no longer trails uniformly — 128 and 256 now LEAD** (1.04 and 1.01–1.02,
-  natural OOP, 2026-08-12), via tangent-scaled butterflies. What remains behind is
-  **512 (0.87–0.88) and 1024 (0.83–0.90)**, and the boundary between the two groups is
-  structural rather than incidental: a cell crosses MKL exactly when its winning
-  factorization has a tangent form in **both** slots. 128 → 8×16 and 256 → 16×16 do;
-  512 = 2⁹ cannot form one (every pair carries an R32 or R64 pass) and 1024 = 32×32 is
-  R32 in both slots. R32 is where the lever stops paying: internally, the tangent R32
-  kernel achieves a *better* port mix than the R16 one (39% vs 47% naked adds) yet
-  returns only −3.2%, because the conversions cost +9 spill stores, +9 spill loads and
-  +24 register moves that R16 never pays — it spends the gain instead of banking it.
-  **But do not read that as the reason MKL leads here.** A like-for-like census against
+- **Sub-2048 K=1 natural is AT PARITY — the campaign is closed (2026-08-16).**
+  128 = 1.05×, 256 = 1.00×, 512 = 0.98–1.00×; 1024 sits at ~0.95-to-parity with its
+  variance dominated by MKL's own in-place shadow-plane placement (see ✦). The tier's
+  final architecture: **tangent/wing interiors own the L1-resident cells, classic
+  blocked owns the memory-bound cell (1024 — re-raced against the full pool, classic
+  won by 4.5%), and the store edge (TURNED-128 vs -256) is a per-cell raced axis, not
+  a default** — T256 won at 128/512 on this machine, and the losing forms stay in the
+  pool as inventory for other platforms. Remaining known headroom, parked at the
+  owner's wrap: 3-stage chains (+7.6–8.8% at 512, measured twice, never banked).
+  *(The paragraphs below record the mid-campaign analysis that got here — the R32
+  census and its levers. Historical: the wing32 forms subsequently solved the R32
+  slot and the "cannot form a both-slots pair at 512" constraint dissolved.)*
+  A like-for-like census against
   MKL's own 32-point column kernel (`mkl512__col32_fwd_loop.asm`, same work unit: 32 ymm
   loads → 32 ymm stores, twiddles hoisted as constants) says the opposite of the obvious
   inference:
