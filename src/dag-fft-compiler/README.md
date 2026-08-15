@@ -1,211 +1,394 @@
-# VectorFFT — recursive blocked out-of-place engine (natural order)
+# dag-fft-compiler — the OCaml codelet compiler
 
-A reference out-of-place (input-preserving), natural-order FFT engine for
-**N = 1024**, batched over K transforms, built from VectorFFT's AVX-512 OOP
-codelets. This bundle contains the engine, the codelets it uses, and every
-investigation harness behind the performance conclusions.
+This tree is a **compiler**, not a library. It takes a description of one FFT
+kernel — a radix, a direction, a memory layout, a twiddle policy — and emits a
+single straight-line C function with the SIMD intrinsics already scheduled and
+register-allocated. The 1,432 `.c` files under `codelets/` are its output, and
+the C runtime in `src/core/` is the thing that links and dispatches them.
 
-The goal of the work was to make natural-order OOP a first-class, FFTW-competitive
-feature rather than a slow fallback. The short version: **at scale it reaches
-FFTW parity, the leaf codelets individually beat FFTW, and the only residual
-gap is FFTW's recursive-composition advantage in the cache-resident regime.**
+Everything downstream depends on one property: **the emitter is deterministic
+and its output is byte-reproducible.** 1,403 of the 1,432 shipped files
+regenerate byte-for-byte from their recorded recipes (97.97%; 99.93% counting
+code bodies only), and the gate in `generator/gates/` exists to keep it that
+way. That is what makes it safe to refactor a compiler whose output nobody
+reads line by line.
+
+```text
+codelets/     the product — 1,432 emitted .c files (see codelets/README.md)
+generator/    the compiler itself (dune project) — this document is mostly about this
+jit/          runtime codegen: emit_*.py + prelude/runtime headers for JIT plans
+tools/        research harnesses (schedulers, ablations, probes) — not in the build
+archive/      old-lib/, the pre-restructure monolith. Reference only; deleted at v1.0
+build.sh      convenience build
+```
+
+> 🔴 **Never run a bare `dune build` in `generator/`.** The `@default` alias
+> promotes tracked headers into `generated/` **even when the build fails**.
+> Always name a target: `dune build bin/gen_radix.exe`. The generator is also
+> **WSL/opam only** (`~/.opam/5.2.0`, dune 3.23, `DUNE_CACHE=disabled`).
 
 ---
 
-## Documentation
+## Part I — Architecture
 
-Two design documents live in `docs/`:
+### Three libraries, and the law between them
 
-* `docs/OOP_DESIGN.md` explains the out-of-place design: the FFTW-like codelet
-  model (the no-twiddle leaf and the in-place twiddle stages), the four-stride
-  codelet ABI, the in-place-twiddle data flow that deletes the work buffer, the
-  vector blocking, and the OCaml generator.
-* `docs/SUPPORTED.md` describes the two output-ordering modes (natural and
-  scrambled/permuted), their measured performance and maturity, when to use
-  each, and how MKL and FFTW expose the same ordering trade.
+`generator/lib/` is three dune libraries with enforced dependencies. This is not
+organisational taste; it is a compile-time law.
 
-Note on this README: the engine described below is the original 64x16
-work-buffer structure (two out-of-place moves). Two later structures supersede it,
-both documented in `docs/OOP_DESIGN.md`:
-`engine/engine_natural_oop_inplace_twiddle.c` (the FFTW-method in-place-twiddle
-form, about 1.17 to 1.20x faster, deletes the second shuffle and work buffer), and
-`engine/engine_natural_oop_onecall.c` (the fastest: each twiddle stage is a single
-`t1p` call over the whole block, the balanced 32x32 split with a log3 twiddle stage
-runs ~1.03 to 1.12x FFTW in natural order, beating 16x64 and the flat 32x32). The
-32x32 log3 one-call engine is the recommended structure.
+| library | modules | may depend on | the rule it enforces |
+|---|---:|---|---|
+| `vfft_kernel` | 23 | unix | **cannot name a family.** No `Codelet`, no `Real`, no `C2c_il` |
+| `vfft_cx` | 7 | kernel | the packed-complex (IL) sub-engine |
+| `vfft_gen` | 8 | kernel, cx, unix | families, the descriptor, the driver |
+
+All three are `(wrapped false)`, so module names stay global and references
+never carry a library prefix; `(implicit_transitive_deps false)` in
+`dune-project` makes an accidental edge a build error rather than a habit.
+
+The point of the kernel boundary: **the engine is feature-blind.** It knows
+about expressions, scheduling, registers, ABIs and C text. It does not know
+that r2c exists. When a family needs to inject family-specific text into the
+middle of the engine's output, it does so through a declared seam
+(`family_hooks`, below) — never by the engine testing a family flag it defined
+itself.
+
+### The data that flows
+
+Four representations, in order:
+
+```text
+Expr.expr        pure symbolic arithmetic — what the FFT algebra produces
+   │             (Expr / Cnum: complex numbers as symbolic pairs)
+   ▼  Ir.of_assignments + hash-consing
+Ir.t             the shared DAG — CSE'd, hash-consed, the thing passes rewrite
+   │             (Algsimp, Fma_passes, Simplify operate here)
+   ▼  Schedule / Regalloc
+scheduled IR     an ordered list with register/spill decisions attached
+   │
+   ▼  Emit_render + Emit_body + Isa
+C text           intrinsics, one straight-line function
+```
+
+`Ir` owns the only surviving mutable state in the kernel — four memoisation
+tables. Everything else that used to be a global was eliminated during the
+restructure: 66 globals went to 4, and `emit_state.ml` (a buffer for *backward*
+dependency edges between passes) was deleted outright. This matters because
+`gen_set` emits the whole corpus **in one warm process** — any state that
+survives between emissions is a correctness bug waiting for a specific ordering.
+
+### The keystone: `Codelet.t`
+
+[`lib/gen/codelet.ml`](generator/lib/gen/codelet.ml) is the word for the thing
+being compiled:
+
+```ocaml
+type t =
+  { radix  : int
+  ; isa    : string option
+  ; uarch  : string option
+  ; kind   : kind        (* 17 constructors — one per family shape *)
+  ; mods   : modifiers   (* the FIVE global modifiers: dir dif table t1s su *)
+  ; emit_c : bool }
+```
+
+The shape was **measured, not designed**: every shipped codelet carries exactly
+one kind selector; exactly five modifiers are global; everything else is
+family-scoped and lives in the kind's payload record. So `Trig of trig8` is one
+constructor covering nine transforms, and `C2c_oop of { load; store; tw; fuse;
+… }` carries the oop family's nine knobs. The rule that keeps this from
+sprawling: **a family earns a module only when it has its own emission
+strategy; a variant is a record field.**
+
+`of_argv` / `to_argv` round-trip the recorded command lines **verbatim, flag
+order included** — checked against 1,410 recorded argv lines. That identity is
+what lets provenance headers, the corpus, and the regeneration recipes all be
+the same fact rather than three that can drift.
+
+⚠ Flag order is discovered from the corpus, not chosen. `--isa` sits
+mid-sequence and its position differs per family; `--log3` hugs its twiddle
+token; `r2c-term-ls` records `--isa` *after* `--emit-c`.
+
+### The signature side: `Layout` and `Abi`
+
+A codelet's parameter list is derived, not printed by hand.
+
+[`Layout`](generator/lib/kernel/layout.mli) models where complex data lives:
+
+| plane | pointers |
+|---|---|
+| `Split` | `p_re`, `p_im` — two arrays |
+| `Inter` | `p_z` — one array of (re,im) pairs |
+| `Inter_sw` | one array of (im,re) pairs — the backward-swap enabler |
+| `Real` | one bare real pointer — the r2c/c2r strided family |
+
+The **anti-hybrid law** lives here and is expressed as a type: `param` is
+private, and pointers are *total on one plane*. A codelet that reads split and
+writes interleaved is therefore not a bug to be caught — it is unrepresentable.
+
+[`Abi`](generator/lib/kernel/abi.mli) turns a kind into a signature:
+`Abi.shape` is a 13-arm total variant, `Abi.signature` renders it. Before the
+old hand-written 13-arm ladder was deleted, both were emitted in-process for
+every one of the 1,432 codelets and asserted equal — 1,432 independent proofs.
+That cross-check survives as a permanent debug env, `VFFT_ABI_XCHECK=1`.
+
+### The pass cascade: `Pipeline`
+
+[`Pipeline.prepare_codelet`](generator/lib/kernel/pipeline.mli) is the **sole**
+cascade — a ~555-line inline copy in the driver was deleted once it was proven
+byte-equivalent across a 7-cell environment matrix.
+
+```ocaml
+type recipe = { butterfly_share : bool; dup : dup_ctx option }
+val prepare_codelet : recipe:recipe -> … -> prepared
+```
+
+`~recipe` is **required**, not optional: every route must *declare* which arms
+it runs. The main driver enables both; the split and cascade families pass
+`default_recipe`. Inside: `Ir.reset`, `of_assignments`, dedup, the aggressive
+prime passes, then the FMA cascade with frozen-tag threading and the spill
+marker remap chain.
+
+One knob is worth knowing about because it is a trap: `VFFT_FORCE_REASSOC`
+looks like a free win — it cuts 17–23% of vector ops on power-of-two Cooley-Tukey
+shapes. It was raced and **refuted 10/10**: reassociation flattens butterfly FMA
+chains and costs ILP. Static op-count has now failed to predict runtime four
+times in a row here. It stays wired as a diagnostic only.
+
+### The `cx` sub-engine (packed complex / IL)
+
+The interleaved-complex family has enough of its own algebra to justify a
+parallel stack in [`lib/cx/`](generator/lib/cx/):
+
+| module | role |
+|---|---|
+| `cx_ir` | the packed-complex IR + `ctx`, the per-emission context |
+| `cx_math` | math-layer DAG builders |
+| `cx_sched` | SR (Starve-Retire) scheduler |
+| `cx_cpl` | CPL (Critical-Path List) scheduler — the ILP-objective alternative |
+| `cx_spill` | Belady spill planner for mono emission |
+| `cx_render` | C-text rendering of scheduled cx nodes |
+| `cx_pipeline` | the one optimizer entry point every cil emission runs through |
+
+`Cx_ir.ctx` is a record threaded per emission (twiddle policy, store mode,
+spill slots, and the `VFFT_CX_*` knobs captured at creation). It replaced nine
+module-level refs that the driver set and never reset — harmless in one-shot
+`gen_radix`, a leak the moment cil entered the warm `gen_set` process.
+
+### The families
+
+[`lib/gen/`](generator/lib/gen/) — each owns an emission strategy, and each
+installs `Emit_body.family_hooks`:
+
+| module | covers |
+|---|---|
+| `real.ml` | r2cf, r2cb, r2c_term*, hc2c*, hc_ranged, r2r, strided_r2c |
+| `c2c_split.ml` | in-place, oop, twidsq, strided, k1_mono — and hosts `emit_engine` |
+| `cascade_z.ml` | the N≥2048 boundary-split cascade |
+| `c2c_il.ml` | pure IL, driving the `cx` stack |
+| `dft_r2c.ml` | the real-input math layer |
+| `corpus.ml` | the typed corpus (below) |
+| `gen_main.ml` | the driver |
+
+`family_hooks` is 8 positional `(Buffer.t -> unit) option` slots plus
+`no_hooks`. The engine keeps its own dispatch tests and **`failwith`s loudly**
+if a family-owned arm is reached with no hook installed — a missing hook is a
+crash, never silently-wrong C.
 
 ---
 
-## What's here
+## Part II — Life of a codelet
 
-```
-engine/engine_natural_oop.c     the recommended engine (verify + benchmark built in)
-codelets/                        AVX-512 leaves emitted by the OCaml DAG compiler
-generator/                       the OCaml DAG compiler itself (dune project) that emits the codelets
-core/                            existing C executive + planning layer (planners, dispatch, stride executor, demos)
-benchmarks/                      8 harnesses, one per hypothesis tested
-build.sh                         builds everything (point it at your FFTW)
+`gen_radix.exe 16 --cil-t2 --isa avx2 --uarch raptor_lake_avx2 --emit-c`:
+
+```text
+argv
+ └─ Codelet.of_argv ────────────────► Codelet.t {radix; isa; uarch; kind; mods}
+     │                                 raises on conflicting layout flags
+     └─ gen_main projects it into Emit_render.Cfg   (config flows FORWARD only)
+         │
+         ├─ MATH   Dft.* / Dft_recurse / Dft_select   (c2c)
+         │         Dft_r2c.*                          (real-input)
+         │         Cx_math.*                          (packed complex)
+         │                    ──────────────────────► (elem_ref * Ir.t) list
+         │
+         └─ Pipeline.prepare_codelet ~recipe ───────► simplified · scheduled ·
+             │                                        register-allocated IR
+             └─ ROUTE BY FAMILY        (gen_main.ml:1532)
+                  Real.emit_codelet        real family
+                  C2c_split.emit_engine    everything else
+                  C2c_split.emit_codelet   oop proper
+                  Cascade_z.emit_codelet   boundary-split cascade
+                  C2c_il.emit / emit_k1    pure IL (via lib/cx)
+                  C2c_split.emit_k1_mono   k1 mono
+                    each installs family_hooks, then calls…
+                 └─ Emit_body.emit_codelet ── THE ENGINE
+                      Abi.signature ← Layout        the function signature
+                      Emit_render.body_preamble     spill decls, hoisted consts
+                      Simd.load/store_transpose_*   feature-blind lattices
+                      the 8 hooks at their seams
+                                          ──────────► C text on stdout
 ```
 
-`core/` is the prior C planning/execution layer (DP/estimate/exhaustive/patient
-planners, dispatch, the full Method-C stride executor, twiddle/r2c/rader/threads,
-and demos). It was **not modified** in the work that produced this bundle; it is
-the layer the new recursive engine in `engine/` replaces. See `core/NOTE.md`.
-
-### Generator (the OCaml DAG compiler)
-`generator/` is the complete dune project that produced every codelet in
-`codelets/`. It builds with a standard OCaml toolchain:
-```
-cd generator && dune build
-# binary at generator/_build/default/bin/gen_radix.exe
-```
-`lib/` is the compiler (expressions -> CSE/algsimp -> scheduling -> register
-allocation -> C emission): `dft.ml`/`split_radix.ml` (FFT algebra),
-`codelet_oop.ml` (the out-of-place codelet family used here), `schedule.ml`,
-`regalloc.ml`, `emit_c.ml`, `simd_ir.ml`/`isa.ml` (AVX2/AVX-512 backend),
-`uarch.ml` (cost model). `bin/gen_radix.ml` is the CLI driver. The exact
-invocations that emit the five codelets are below.
-
-### Codelets and how they were generated
-Generated by the VectorFFT OCaml DAG compiler (`gen_radix`). Commands:
-```
-# size-16 no-twiddle OOP leaf  (radix16_n1_oop_fwd_avx512_UG_UG)
-gen_radix 16 --oop --oop-buffer-oop --oop-load UG --oop-store UG --emit-c --isa avx512
-# size-16 twiddle OOP leaf      (radix16_t1s_oop_fwd_avx512_UG_UG)
-gen_radix 16 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-scalar --emit-c --isa avx512
-# size-64 no-twiddle OOP leaf   (radix64_n1_oop_fwd_avx512_UG_UG)
-gen_radix 64 --oop --oop-buffer-oop --oop-load UG --oop-store UG --emit-c --isa avx512
-# size-64 twiddle OOP leaf      (radix64_t1s_oop_fwd_avx512_UG_UG)
-gen_radix 64 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-scalar --emit-c --isa avx512
-# size-64 in-place leaf (floor reference for the spill test)
-gen_radix 64 --in-place --emit-c --isa avx512
-# t1p (per-position broadcast) twiddle codelets for the one-call engine.
-# Broadcasts one scalar per (leg, position) across the V batch lanes: one call
-# covers all positions, compact (R-1)*(me/V) table. Used by engine_onecall.
-gen_radix 4  --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-pos --emit-c --isa avx512
-gen_radix 16 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-pos --emit-c --isa avx512
-gen_radix 64 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-pos --emit-c --isa avx512
-# radix-32 leaf + twiddle for the recommended balanced 32x32 one-call engine:
-gen_radix 32 --oop --oop-buffer-oop --oop-load UG --oop-store UG --emit-c --isa avx512
-gen_radix 32 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-pos --emit-c --isa avx512
-# log3 twiddle stage (loads 5 base twiddles, derives the rest): ~2-4% over flat at R=32:
-gen_radix 32 --oop --oop-buffer-oop --oop-load UG --oop-store UG --twiddled-pos --log3 --emit-c --isa avx512
-```
-`UG_UG` = unit group stride on both sides (batch contiguous, element-major SIMD).
-The OOP leaf ABI takes separate in/out pointers and four strides
-(`in_leg, in_group, out_leg, out_group`), richer than FFTW's kdft, so the same
-codelet drops into leaf, transposed, or twiddle-step positions by stride alone.
+`gen_radix` emits one codelet to stdout. `gen_set` emits the whole tree from
+`Corpus` in a single warm process — which is exactly why per-emission state has
+to be threaded rather than global.
 
 ---
 
-## Architecture
+## Part III — How a codelet becomes reachable from C
 
-N = 1024 = N1 x N2 = 64 x 16, decimation-in-time:
-- index map `n = N2*n1 + n2`
-- **inner stage** (no twiddle): N2 sub-DFTs of size N1=64 over n1
-- twiddle `W_N^{n2*k1}`
-- **outer stage** (twiddle): N1 groups, size-N2=16 DFT over n2
-- output `X[k1 + N1*k2]` placed at element `(k1 + N1*k2)` — natural order
+Emitting a `.c` file is only half of shipping one. The other half is dispatch.
 
-**Blocking is the single biggest lever (~3x).** The K transforms run in blocks
-of V=8 (one AVX-512 vector). Layout is block-local element-major
-`buf[block*N*V + element*V + lane]`. A block is V*N*16 = 128 KB and stays in L2,
-so the inner write and outer read of the intermediate are L2 hits. The only
-DRAM traffic is the input block read and the output block write, each once.
-The naive unblocked recursion scatters the intermediate across the whole working
-set and runs at ~0.21x of FFTW; blocking alone brings it to parity at scale.
+```text
+Corpus.cells / Corpus.files          18 typed quadrants over Codelet.t
+   │                                 two LAWS enforced lazily at first use:
+   │                                   1. round-trip verbatim
+   │                                   2. uniqueness (per-dir file, global argv)
+   ├──► bin/gen_set.exe              emits the codelet tree
+   └──► bin/emit_*_registry.ml       7 registry emitters + the executor table
+            │                        (oop, rfft, trig, strided, c2r, il, c2c)
+            ▼
+        generated/dune (mode promote)
+            │
+            ▼
+        tracked headers in generator/generated/    ← the C build's input
+            │
+            ▼
+        src/core/ includes them (e.g. oop/il2p.h)
+```
 
-**Natural order** is produced directly: the outer stage writes legs at
-`out_leg_stride = N1*V`, no separate digit-reversal pass.
+The two corpus laws turn "the codelet exists", "the coverage matrix lists it"
+and "the recipe rebuilds it" into a single checked fact. They fire in `gen_set`
+and the registry emitters — the writers of tracked files refuse a lawless
+corpus — but never in `gen_radix`, so one-off emission pays nothing.
+
+🔴 **Which quadrant you add to decides your blast radius.** The 2026-08-15
+coverage raise added 75 cells with *zero* registry churn, because the four new
+quadrants are named by **no registry emitter** — those kernels dispatch through
+wisdom and `il2p.h` instead. Put the same cells in an existing quadrant and they
+land in the oop/strided registries, changing ABI slots and dragging the C
+dispatcher along. The IL family is the counter-example worth studying:
+`bin/emit_il_registry.ml` derives 253 extern declarations *and* the radix
+X-macro lists that `il2p.h`'s resolvers expand, so "the codelet exists" and "a
+resolver can reach it" cannot drift apart.
+
+> ⚠ **filename ≠ symbol.** `radixR_z_KIND_avx2.c` defines
+> `radixR_z_KIND_**fwd**_avx2` — forward is *implicit* in the filename and
+> *explicit* in the symbol. `_bwd` files keep `_bwd` in both. And the family a
+> file belongs to is decided by its **provenance header**, not its name.
 
 ---
 
-## Headline findings
+## Part IV — Adding a new codelet type
 
-### Is FFTW using Stockham or 6-step Bailey?
-**Neither. It is recursive cache-oblivious Cooley-Tukey.** From FFTW's own plan
-dump (`benchmarks/07`), out-of-place, PATIENT:
+First decide which of two things you are doing.
 
-```
-N=1024 K=512:                       N=1024 K=2048:
-(dft-ct-dit/64                      (dft-ct-dit/4
-  (dftw-direct-64 "t2fv_64")          (dftw-direct-4 "t1fv_4")
-  (dft-vrank>=1                       (dft-vrank>=1
-    (dft-direct-16 "n2fv_16")))         (dft-ct-dit/16
-                                          (dftw-direct-16 "t1fv_16")
-                                          (dft-vrank>=1
-                                            (dft-direct-16 "n2fv_16")))))
-```
-The tree *is* the recursion; leaves are genfft straight-line codelets; the
-decomposition is planner-selected per size (64x16 at K=512, 4x16x16 at K=2048).
-No iterative ping-pong (not Stockham). No `dft-transpose`/`dft-indirect` node
-(not Bailey). Natural order comes from the recursion's iodim input/output
-strides. FFTW *can* express Bailey (indirect/transpose solvers) for out-of-cache
-sizes but does not choose it for N=1024.
+### A. A new *variant* of an existing kind — the common case
 
-### Performance (virtualized SPR/EMR Xeon, gcc-13, FFTW PATIENT, this engine vs FFTW-oop)
-| K     | regime        | engine vs FFTW-oop |
-|-------|---------------|--------------------|
-| 2048  | DRAM-bound    | ~0.93 – 0.99x (parity) |
-| 512   | L3-resident   | ~0.77 – 0.82x |
+A new store mode, a new twiddle placement, a new interior form. Three edits:
 
-Measurement caveats: this is a noisy single-vCPU VM with occasional 2x
-descheduling spikes, and FFTW_MEASURE picks wildly varying plans (10M–35M cyc),
-so all final numbers use FFTW **PATIENT** for a stable plan and min-of-many,
-back-to-back. The 14900KF (the real deployment target) is AVX2-only, where none
-of these AVX-512 codelets run and the comparison is entirely different.
+1. add a field to that kind's payload record in `codelet.ml`
+2. handle the flag in `of_argv` **and** `to_argv` (order matters)
+3. branch on it inside the owning family module
 
-### The gap analysis (what the benchmarks ruled out)
-The aim was to find one fixable lever. Every candidate was killed:
+No new module, no ABI change, no registry change. Gate with
+`bin_test/argv_roundtrip.exe` and the corpus gate.
 
-| # | hypothesis | result | verdict |
-|---|------------|--------|---------|
-| 01 | radix-64 OOP leaf **spill** (258 refs) is the cost | OOP leaf is 1.07–1.18x the at-floor in-place leaf | refuted, spills hidden in L1 |
-| 02 | natural-order **transpose scatter** | 1.8x in isolation, but it is **L1 set aliasing** (stride 512 dbl = 4 KB = L1 set stride), washed out by DRAM at scale | refuted at scale |
-| 03 | 64 per-group **call fragmentation** | 64 calls ≈ 1 call (0.89–0.95x) | refuted, me=8 is exactly one ZMM |
-| 04 | **leaf codelet quality** | VFFT leaves **beat** FFTW (size-16: 1.1–1.2x faster; size-64: even) | refuted, leaves are better |
-| 05 | **twiddle** multiply overhead | sub-noise | refuted |
-| 06 | **block width / ILP** (me=8 starves the outer) | widening V makes it worse (0.77→0.67→0.60x); V=8 optimal | refuted, cache beats ILP |
+### B. A genuinely new kind — the full ladder
 
-**Conclusion:** there is no single component gap. Every piece is competitive or
-better. The residual is purely compositional and only in the L3-resident regime:
-at K=2048 both are bandwidth-bound and at parity; at K=512 FFTW's recursive
-composition threads data through the same 64x16 decomposition ~1.3x more
-efficiently. That is the integral of FFTW's planner/recursion tuning, not a
-pointable defect.
+Walk it in dependency order. Each row has a gate that catches you if you skip it.
 
-### A dead end worth recording
-Removing the L1 aliasing by writing the transpose to a padded (stride-520)
-scratch and de-padding to natural order **loses**: the extra serialized pass
-costs more than the aliasing it removes (the isolated 1.8x was a reused-buffer
-micro-benchmark artifact that evaporates under real bandwidth). The
-direct-write engine in `engine/` is the one to ship. See `benchmarks/08`
-(`eng_aliased` vs `eng_padded`).
+| # | where | what you add | what catches a mistake |
+|---|---|---|---|
+| 1 | `kernel/dft.ml`, `dft_recurse.ml`, `dft_select.ml`, or `gen/dft_r2c.ml` | the expansion producing assignments | `bin/dbg_eval.exe` (per-pass numeric prober), `bin/dump_ir.exe` |
+| 2 | `kernel/layout.ml` | plane + pointer set, if the data layout is new | `gates/layout_smoke.sh` |
+| 3 | `kernel/abi.ml` | an `Abi.shape` arm + its params | `VFFT_ABI_XCHECK=1`, `layout_smoke.sh` |
+| 4 | `gen/codelet.ml` (+`.mli`) | `kind` constructor, `of_argv` flags, selector-set match, `to_argv`, `validate` | `bin_test/argv_roundtrip.exe` — **verbatim** |
+| 5 | `Emit_render.Cfg` + `gen_main` | a config field, projected from the descriptor | build error if the kernel names `Codelet` |
+| 6 | a family in `gen/` | a branch, or a new module installing `family_hooks` + a route | the engine `failwith`s if an arm is unhooked |
+| 7 | `gen/corpus.ml` | cells, in a chosen quadrant | the two corpus laws |
+| 8 | `bin/emit_*_registry.ml` + `generated/dune` | dispatch header, if C must reach it | link failure; registry byte-diff |
+| 9 | `gates/` | `manifest` → `record` → `verify`, **own commit** | the corpus gate |
+
+Steps 2–3 deserve emphasis: **the corpus contains zero representatives of the
+five IL-layout arms**, so byte-identity proves nothing about them.
+`layout_smoke.sh` is the only net over that space, and it also tests the
+*negative* space — illegal flag combinations must be refused loudly at
+emission.
 
 ---
 
-## Build & run
+## Part V — The gates
 
-```
-# point at your AVX-512 FFTW build (defaults assume /home/claude/fftw-3.3.10)
-FFTW_INC=/path/to/fftw/api FFTW_LIB=/path/to/libfftw3.a ./build.sh
+`generator/gates/` (see its own README for detail):
 
-bin/engine 2048                    # verify (machine precision) + bench at K=2048
-bin/engine 512
-bin/07_fftw_plan_dump 512          # FFTW's actual plan tree
-bin/08_compare_vs_fftw_patient 2048
-```
+| gate | what it proves | cost |
+|---|---|---|
+| `full_corpus_gate.sh` | every one of 1,432 files still regenerates to its **recorded verdict class** | ~60 s |
+| `layout_smoke.sh` | 13 layout shapes emit + compile under `gcc -Werror` with every declared pointer referenced; 4 illegal combinations refused loudly | seconds |
+| `cil_matrix.sh` | the 183-case cx emission matrix over off-default `VFFT_CX_*` knobs | ~10 s |
+| `bin_test/cx_pipeline_test` | the cx stack's unit gate (built **and run** by the corpus gate) | instant |
+| `bin_test/argv_roundtrip` | descriptor ↔ argv fidelity | instant |
 
-Benchmarks map 1:1 to the table above (01..06), 07 dumps the FFTW plan, 08 is
-the definitive PATIENT comparison of the aliased vs padded engines.
+The corpus gate does **not** demand every file be identical. 29 files
+legitimately do not reproduce (dead-era orphans, sunset copies, drifted
+bodies); demanding perfection would mean a permanently red gate, which trains
+everyone to ignore it. Instead each file is pinned to its recorded verdict
+class and the gate fails if any file moves **in either direction** — a
+non-reproducer that suddenly starts matching is as much a signal as the reverse.
+
+**Run both `full_corpus_gate.sh` and `layout_smoke.sh`.** A compensating gate
+covers, by construction, exactly what the main gate cannot see — so the main
+gate can never tell you the other one went red. That is not hypothetical: the
+smoke sat unrun from M3 to 2026-08-15 and was red for most of it, while the
+corpus gate was green after every single step.
 
 ---
 
-## Status
+## Part VI — Working rules
 
-The natural-order OOP feature is **complete and competitive**: correct to
-machine precision, input-preserving, natural-order, FFTW parity at scale, with
-leaves faster than FFTW's. Closing the last cache-regime gap means making the
-*composition* recursive and cache-oblivious like FFTW's (a real planner), with
-diminishing returns and no bearing on the AVX2 target. This engine is an
-N=1024-specific reference that proves the architecture and pins the story.
+- 🔴 **No bare `dune build`** — `@default` promotes tracked headers even on
+  failure. Name your target.
+- 🔴 **WSL/opam only** for the generator. A Windows-only session cannot land a
+  generator change.
+- 🔴 **Comparisons use LF-canonical bytes** (`git cat-file`), never worktree
+  bytes — `core.autocrlf` leaves ~99 corpus files CRLF, and comparing raw bytes
+  measures your checkout, not the emitter. Never let a `sed` rename script near
+  `codelets/`.
+- 🔴 **C gates can bank.** Several gate binaries re-race and *rewrite* the
+  wisdom directory they are pointed at. Always pass a **scratch copy**, and run
+  `git status generated/` afterwards.
+- **A gate failure is a question, not a verdict.** Read the transition matrix
+  before concluding: one announced regen moved 329 files, and every one was a
+  comment header.
+- **Static op-count does not predict time** — 4-for-4 against, here. Race it.
+- Emission is deterministic *by design*: `Date`, randomness and ambient state
+  are all absent from the emitters, which is what makes byte-identity a usable
+  acceptance criterion at all.
+
+---
+
+## Historical note
+
+An earlier version of this README documented an **N=1024, AVX-512,
+out-of-place natural-order reference engine** and its benchmark suite
+(`engine/`, `benchmarks/`, `docs/OOP_DESIGN.md`). Those directories no longer
+exist in this tree; the engine they described was superseded by the planner and
+executor now in `src/core/`. The measured conclusions are worth preserving:
+
+- FFTW at N=1024 is **neither Stockham nor 6-step Bailey** — it is recursive
+  cache-oblivious Cooley-Tukey, confirmed from its own plan dump; the tree *is*
+  the recursion and the decomposition is planner-selected per size.
+- Blocking the batch into one-vector-wide blocks was worth ~3×, the single
+  largest lever.
+- Six candidate explanations for the residual gap vs FFTW were each tested and
+  **refuted**: leaf spills, transpose scatter, call fragmentation, leaf codelet
+  quality (ours were *faster*), twiddle overhead, and block width. The residual
+  was compositional, not a pointable defect — and only in the L3-resident regime.
+- A padded-transpose fix for L1 set aliasing **lost**: the extra serialized pass
+  cost more than the aliasing it removed. The isolated 1.8× was a reused-buffer
+  micro-benchmark artifact.
+
+Those numbers were taken on a virtualized AVX-512 Xeon. The deployment target
+is an AVX2-only 14900KF, where none of those codelets run.
