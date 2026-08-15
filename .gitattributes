@@ -6,7 +6,11 @@
 *.ipynb -diff
 
 # Auto-generated headers — collapse in GitHub diff views, do not hand-edit.
-# src/core/generated/* linguist-generated
+# (the old `src/core/generated/*` rule was dead: that directory does not exist.)
+# The python-generated trig tables under src/core/transforms/trig/ ARE generated
+# (scripts/reference/gen_dct*.py) and self-declare it in their header comment.
+src/core/transforms/trig/dct2_n8_avx2.h linguist-generated
+src/core/transforms/trig/dct3_n8_avx2.h linguist-generated
 
 # DAG-compiler output: ~350k lines of machine-generated codelets.
 # Excluded from GitHub's language-percentage bar; files stay in the repo and
@@ -53,3 +57,8 @@ src/dag-fft-compiler/jit/**               linguist-vendored
 # Generator-level shell helpers (codelet regeneration / codegen comparison).
 # Tooling, not shipped library code — same rationale as generator/scripts/.
 src/dag-fft-compiler/generator/*.sh        linguist-vendored
+
+# Research notes, roadmaps, wisdom records and performance ledgers. These are
+# the project's written record, not its product — counted as documentation so
+# the language bar reflects CODE (README.md and in-tree .md stay counted).
+docs/** linguist-documentation
