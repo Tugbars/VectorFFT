@@ -173,7 +173,12 @@ else()
 endif()
 
 # ── Codelet static lib (inplace=c2c, rfft/c2r=real-FFT, oop=LEAF/BAILEY2,
-#     strided=6a35-45 row engines, il=interleaved-layout folds, trig=DCT/DST) ──
+#     strided=6a35-45 row engines, zil=interleaved-complex (pure IL + the
+#     N>=2048 boundary-split cascade), trig=DCT/DST) ──
+# NOTE `il` below is RETIRED (its derived population was deleted 2026-07-24;
+# the dir is kept only as the once-home) and globs to nothing. It stays in the
+# list purely for parity with build.py's dag_codelet_srcs(). The LIVE
+# interleaved family is `zil`, handled by the second loop.
 # *_emit.c are generator bit-gate twins of the hand codelets (same symbol names);
 # linking both would collide — the gates compile them standalone. Mirrors
 # build_tuned/build.py dag_codelet_srcs().
@@ -182,6 +187,18 @@ foreach(_fam inplace rfft c2r oop strided il trig)
     list(FILTER _g EXCLUDE REGEX "_emit\\.c$")
     list(APPEND VFFT_CODELET_SRCS ${_g})
 endforeach()
+# The zil family sits one level DEEPER (zil/<isa>/{pure_il, pure_il/tangent,
+# boundary_split}), so it never matched the <fam>/<isa> pattern above and was
+# simply ABSENT. That omission IS the historical "CMake 598 vs build.py 863"
+# discrepancy: exactly 265 files (227 pure_il + 6 tangent + 32 boundary_split).
+# Without them every IL kernel is missing at link. Globs are non-recursive, so
+# pure_il and pure_il/tangent are listed separately (build.py does the same).
+foreach(_zdir pure_il pure_il/tangent boundary_split)
+    file(GLOB _g "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}/*.c")
+    list(FILTER _g EXCLUDE REGEX "_emit[.]c$")
+    list(APPEND VFFT_CODELET_SRCS ${_g})
+endforeach()
+
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)
 if(_ncodelets EQUAL 0)
     message(FATAL_ERROR "no codelet .c found under ${DAG_CODELETS}/*/${VFFT_ISA}/")
@@ -193,7 +210,15 @@ target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
 target_compile_options(dagcodelets PRIVATE ${VFFT_CODE_FLAGS})
 
 # ── The benchmark (the ONLY driver wired) ───────────────────────────────────
-add_executable(bench_1d_vs_mkl "${CMAKE_SOURCE_DIR}/build_tuned/benches/bench_1d_vs_mkl.c")
+# src/core/vfft.c is the unified public API (vfft_create/execute/destroy/
+# wisdom_load). The core is otherwise header-only, so this is the ONE runtime
+# .c that must be compiled in; without it the bench fails to link with
+# undefined vfft_* symbols. build.py does the same behind its --vfft flag
+# (the retired src/vfft.c this replaced is what the orphaned src/CMakeLists.txt
+# still names).
+add_executable(bench_1d_vs_mkl
+    "${CMAKE_SOURCE_DIR}/build_tuned/benches/bench_1d_vs_mkl.c"
+    "${DAG_CORE}/vfft.c")
 target_include_directories(bench_1d_vs_mkl PRIVATE ${VFFT_INCLUDE_DIRS} "${MKL_INCLUDE_DIR}")
 target_compile_definitions(bench_1d_vs_mkl PRIVATE ${VFFT_MKL_DEFS} _CRT_SECURE_NO_WARNINGS)
 target_compile_options(bench_1d_vs_mkl PRIVATE ${VFFT_C_FLAGS})
