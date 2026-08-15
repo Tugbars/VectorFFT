@@ -182,28 +182,75 @@ endif()
 # *_emit.c are generator bit-gate twins of the hand codelets (same symbol names);
 # linking both would collide — the gates compile them standalone. Mirrors
 # build_tuned/build.py dag_codelet_srcs().
-foreach(_fam inplace rfft c2r oop strided il trig)
-    file(GLOB _g "${DAG_CODELETS}/${_fam}/${VFFT_ISA}/*.c")
-    list(FILTER _g EXCLUDE REGEX "_emit\\.c$")
+# Families are discovered ONE AT A TIME and each REPORTS ITS OWN COUNT.
+# Rationale, learned the hard way on 2026-08-15: this file globbed 7 families
+# and printed a single plausible-looking "codelets: 598", while the three zil
+# dirs (265 files) were absent for weeks -- one aggregate number cannot show
+# you a family that is missing. So: per-family counts, and a family that globs
+# to ZERO is a FATAL ERROR unless it is declared retired below.
+set(VFFT_RETIRED_FAMILIES il)  # dir kept as the once-home; population deleted 2026-07-24
+
+set(VFFT_CODELET_SRCS)
+
+# label, dir. Appends to VFFT_CODELET_SRCS in the caller's scope (macro, not
+# function -- a function would need PARENT_SCOPE gymnastics for every append).
+macro(vfft_add_codelet_dir _label _dir)
+    file(GLOB _g "${_dir}/*.c")
+    # *_emit.c are generator bit-gate twins of the hand codelets (same symbol
+    # names); linking both would collide, so the gates compile them standalone.
+    list(FILTER _g EXCLUDE REGEX "_emit[.]c$")
+    list(LENGTH _g _n)
+
+    list(FIND VFFT_RETIRED_FAMILIES "${_label}" _retired_idx)
+    if(_n EQUAL 0 AND _retired_idx EQUAL -1)
+        message(FATAL_ERROR
+            "codelet family '${_label}' matched 0 files under\n"
+            "    ${_dir}\n"
+            "  A family silently globbing to zero is exactly the defect that hid the\n"
+            "  CMake-598 vs build.py-863 gap (265 zil files absent behind a plausible\n"
+            "  total). If this family is intentionally retired, add it to\n"
+            "  VFFT_RETIRED_FAMILIES; otherwise the tree layout moved and this glob\n"
+            "  needs updating to match build_tuned/build.py dag_codelet_srcs().")
+    endif()
+
+    # pad the label so the counts line up in the configure log
+    string(LENGTH "${_label}" _ll)
+    math(EXPR _padn "24 - ${_ll}")
+    if(_padn LESS 1)
+        set(_padn 1)
+    endif()
+    string(SUBSTRING "                          " 0 ${_padn} _pad)
+    if(_retired_idx EQUAL -1)
+        message(STATUS "    ${_label}${_pad}${_n}")
+    else()
+        message(STATUS "    ${_label}${_pad}${_n}   (RETIRED -- kept for build.py parity)")
+    endif()
+
     list(APPEND VFFT_CODELET_SRCS ${_g})
+endmacro()
+
+message(STATUS "codelet families (${VFFT_ISA}):")
+foreach(_fam inplace rfft c2r oop strided il trig)
+    vfft_add_codelet_dir("${_fam}" "${DAG_CODELETS}/${_fam}/${VFFT_ISA}")
 endforeach()
 # The zil family sits one level DEEPER (zil/<isa>/{pure_il, pure_il/tangent,
 # boundary_split}), so it never matched the <fam>/<isa> pattern above and was
-# simply ABSENT. That omission IS the historical "CMake 598 vs build.py 863"
-# discrepancy: exactly 265 files (227 pure_il + 6 tangent + 32 boundary_split).
-# Without them every IL kernel is missing at link. Globs are non-recursive, so
-# pure_il and pure_il/tangent are listed separately (build.py does the same).
+# simply ABSENT -- THE 598-vs-863 gap, exactly 265 files. Globs are
+# non-recursive, so pure_il and pure_il/tangent are listed separately
+# (build.py does the same).
 foreach(_zdir pure_il pure_il/tangent boundary_split)
-    file(GLOB _g "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}/*.c")
-    list(FILTER _g EXCLUDE REGEX "_emit[.]c$")
-    list(APPEND VFFT_CODELET_SRCS ${_g})
+    vfft_add_codelet_dir("zil/${_zdir}" "${DAG_CODELETS}/zil/${VFFT_ISA}/${_zdir}")
 endforeach()
 
 list(LENGTH VFFT_CODELET_SRCS _ncodelets)
 if(_ncodelets EQUAL 0)
     message(FATAL_ERROR "no codelet .c found under ${DAG_CODELETS}/*/${VFFT_ISA}/")
 endif()
-message(STATUS "codelets:    ${_ncodelets} .c (${VFFT_ISA})")
+message(STATUS "    ----------------------------")
+message(STATUS "    TOTAL                   ${_ncodelets}")
+message(STATUS "  (must equal build_tuned/build.py's '[codelets] cached lib (N codelets)';")
+message(STATUS "   the two build systems share one corpus -- a mismatch is a real defect)")
+message(STATUS "  runtime source:  ${DAG_CORE}/vfft.c  (the ONE non-header .c in the core)")
 
 add_library(dagcodelets STATIC ${VFFT_CODELET_SRCS})
 target_include_directories(dagcodelets PRIVATE ${VFFT_INCLUDE_DIRS})
