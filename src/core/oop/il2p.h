@@ -69,16 +69,16 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
                              const double *, const double *,
                              size_t, size_t, size_t, size_t, size_t);
 
-#define VFFT_IL2P_DECL(R) \
-  extern void radix##R##_z_t2_fwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_z_t2_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_IL2P_DECL(4) VFFT_IL2P_DECL(8) VFFT_IL2P_DECL(16)
-VFFT_IL2P_DECL(32) VFFT_IL2P_DECL(64)
-#undef VFFT_IL2P_DECL
+/* GENERATED REGISTRY (bin/emit_il_registry.ml -> generated/il_registry_avx2.h):
+ * extern declarations for all 253 corpus-covered IL cells, plus the radix
+ * X-macro lists the resolvers below expand.  Derived from Corpus, so "the
+ * codelet exists" and "a resolver can reach it" cannot drift apart.
+ * NOT covered, still declared by hand below: the 6 tangent kernels and the
+ * blocked / sed-renamed variants (t2b, n1tb, n1tb44, t2b48, n1tb48) -- they
+ * sit outside the corpus pending pool sunset / an emitter suffix knob. */
+#include "il_registry_avx2.h"
+
+/* t2 declarations: GENERATED (VFFT_IL_T2_{FWD,BWD}_RADICES). */
 
 /* ── BLOCKED t2 mids (`--cil-blocked`, symbol tag `b`) — RACED CANDIDATES ─
  * Promoted 2026-08-03 from the twmem r32exp campaign (docs/research/
@@ -110,28 +110,18 @@ VFFT_IL2P_DECL_T2B(radix32_z_t2b_fwd_avx2)
 VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
 #undef VFFT_IL2P_DECL_T2B
 
-#define VFFT_IL2P_DECL_LEAF(R) \
-  extern void radix##R##_z_n1t_fwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_z_n1t_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_IL2P_DECL_LEAF(4)
-VFFT_IL2P_DECL_LEAF(8) VFFT_IL2P_DECL_LEAF(16)
-VFFT_IL2P_DECL_LEAF(32) VFFT_IL2P_DECL_LEAF(64)
+/* n1t declarations: GENERATED (VFFT_IL_N1T_{FWD,BWD,PAIR}_RADICES).
+ * The groups below are kept as PROSE -- why each radix class exists -- but
+ * the list itself is no longer written here.
+ *   pow2: 4 8 16 32 64
 /* even-composite leaves (2026-07-29, emitted via dft_small's mixed
  * recursion): unlock 2-stage pairs at 4·odd² N — 36=6x6, 100=10x10,
  * 144=12x12 — and even-composite chain leaves (300 = 6·(5·10)). */
-VFFT_IL2P_DECL_LEAF(6) VFFT_IL2P_DECL_LEAF(10) VFFT_IL2P_DECL_LEAF(12)
+ *   even composites: 6 10 12
 /* odd leaves (2026-07-29, with the odd-count tail): all-odd pairs —
  * 45 = 9x5, 225 = 15x15, 675 = 27x25. Both stage counts go odd; the
  * inline VEX-128 tail carries them. */
-VFFT_IL2P_DECL_LEAF(3)  VFFT_IL2P_DECL_LEAF(5)  VFFT_IL2P_DECL_LEAF(7)
-VFFT_IL2P_DECL_LEAF(9)  VFFT_IL2P_DECL_LEAF(11) VFFT_IL2P_DECL_LEAF(13)
-VFFT_IL2P_DECL_LEAF(15) VFFT_IL2P_DECL_LEAF(17) VFFT_IL2P_DECL_LEAF(19)
-VFFT_IL2P_DECL_LEAF(21) VFFT_IL2P_DECL_LEAF(25) VFFT_IL2P_DECL_LEAF(27)
-#undef VFFT_IL2P_DECL_LEAF
+ *   odd: 3 5 7 9 11 13 15 17 19 21 25 27 */
 /* BLOCKED leaves (E9, 2026-08-05): the n1t corner-turn carried through
  * emit_blocked's pass-pairs. FWD-ONLY (leaf_b's only consumer is the F-DIAG
  * fallback) and radix-32 only for now — raced per cell at create like the
@@ -160,9 +150,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
 {
     switch (R) {
 #define C(R) case R: return bwd ? radix##R##_z_n1t_bwd_avx2 : radix##R##_z_n1t_fwd_avx2;
-    C(4) C(8) C(16) C(32) C(64)
-    C(6) C(10) C(12)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    VFFT_IL_N1T_PAIR_RADICES(C)
 #undef C
     default: return 0;
     }
@@ -173,19 +161,7 @@ static inline vfft_il2p_fn vfft_il2p_leaf_fn(int R, int bwd)
  * chain, docs/roadmap/il_odd_chain.md). The classic 2-stage pair search
  * never selects them (it requires both factors % 4 == 0), so extending
  * this registry does not change any pow2 route. */
-#define VFFT_IL2P_DECL_ODD_T2(R) \
-  extern void radix##R##_z_t2_fwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t); \
-  extern void radix##R##_z_t2_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_IL2P_DECL_ODD_T2(3)  VFFT_IL2P_DECL_ODD_T2(5)  VFFT_IL2P_DECL_ODD_T2(7)
-VFFT_IL2P_DECL_ODD_T2(9)  VFFT_IL2P_DECL_ODD_T2(11) VFFT_IL2P_DECL_ODD_T2(13)
-VFFT_IL2P_DECL_ODD_T2(15) VFFT_IL2P_DECL_ODD_T2(17) VFFT_IL2P_DECL_ODD_T2(19)
-VFFT_IL2P_DECL_ODD_T2(21) VFFT_IL2P_DECL_ODD_T2(25) VFFT_IL2P_DECL_ODD_T2(27)
-VFFT_IL2P_DECL_ODD_T2(6)  VFFT_IL2P_DECL_ODD_T2(10) VFFT_IL2P_DECL_ODD_T2(12)
-#undef VFFT_IL2P_DECL_ODD_T2
+/* odd / even-composite t2 declarations: GENERATED. */
 
 static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 {
@@ -202,25 +178,13 @@ static inline vfft_il2p_fn vfft_il2p_mid_fn(int R, int bwd)
 /* t2tg — t2t's turned store with OGs wired as the LEG STRIDE (symbol tag
  * `tg`, emitted by `--cil-turnst-gs`): the chain BACKWARD's middle stage,
  * where leg groups from different calls interleave at stride A. */
-#define VFFT_IL2P_DECL_T2TG(R) \
-  extern void radix##R##_z_t2tg_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-VFFT_IL2P_DECL_T2TG(3)  VFFT_IL2P_DECL_T2TG(4)  VFFT_IL2P_DECL_T2TG(5)
-VFFT_IL2P_DECL_T2TG(7)  VFFT_IL2P_DECL_T2TG(8)  VFFT_IL2P_DECL_T2TG(9)
-VFFT_IL2P_DECL_T2TG(11) VFFT_IL2P_DECL_T2TG(13) VFFT_IL2P_DECL_T2TG(15)
-VFFT_IL2P_DECL_T2TG(16) VFFT_IL2P_DECL_T2TG(17) VFFT_IL2P_DECL_T2TG(19)
-VFFT_IL2P_DECL_T2TG(21) VFFT_IL2P_DECL_T2TG(25) VFFT_IL2P_DECL_T2TG(27)
-VFFT_IL2P_DECL_T2TG(32) VFFT_IL2P_DECL_T2TG(64)
-VFFT_IL2P_DECL_T2TG(6)  VFFT_IL2P_DECL_T2TG(10) VFFT_IL2P_DECL_T2TG(12)
-#undef VFFT_IL2P_DECL_T2TG
+/* t2tg declarations: GENERATED (VFFT_IL_T2TG_BWD_RADICES). */
 
 static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
 {
     switch (R) {
 #define C(R) case R: return radix##R##_z_t2tg_bwd_avx2;
-    C(3) C(4) C(5) C(7) C(8) C(9) C(11) C(13) C(15) C(16) C(17) C(19)
-    C(21) C(25) C(27) C(32) C(64) C(6) C(10) C(12)
+    VFFT_IL_T2TG_BWD_RADICES(C)
 #undef C
     default: return 0;
     }
@@ -230,20 +194,13 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
  * F-DIAG backward decomposition below. Distinct from leaf_fn (n1t, which fuses
  * the corner-turn into its stores) and from mid_fn (t2, which carries the
  * streamed VTW2 twiddle). */
-#define C(R) \
-  extern void radix##R##_z_n1_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
-#undef C
+/* n1 bwd declarations: GENERATED (VFFT_IL_N1_BWD_RADICES). */
 
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
 {
     switch (R) {
 #define C(R) case R: return radix##R##_z_n1_bwd_avx2;
-    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    VFFT_IL_N1_BWD_RADICES(C)
 #undef C
     default: return 0;
     }
@@ -267,20 +224,13 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
  * inexpressible.
  * All three of POST / TURNED / (Ls,OLs,count) below are FORCED by the
  * derivation, not chosen — perturbing any one gives O(1) error. */
-#define C(R) \
-  extern void radix##R##_z_t2t_bwd_avx2( \
-      const double *, const double *, double *, double *, \
-      const double *, const double *, size_t, size_t, size_t, size_t, size_t);
-    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
-#undef C
+/* t2t bwd declarations: GENERATED (VFFT_IL_T2T_BWD_RADICES). */
 
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_fn(int R)
 {
     switch (R) {
 #define C(R) case R: return radix##R##_z_t2t_bwd_avx2;
-    C(4) C(8) C(16) C(32) C(64) C(6) C(10) C(12)
-    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
+    VFFT_IL_T2T_BWD_RADICES(C)
 #undef C
     default: return 0;
     }
