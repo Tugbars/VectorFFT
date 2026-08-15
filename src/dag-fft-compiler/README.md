@@ -19,8 +19,12 @@ generator/    the compiler itself (dune project) — this document is mostly abo
 jit/          runtime codegen: emit_*.py + prelude/runtime headers for JIT plans
 tools/        research harnesses (schedulers, ablations, probes) — not in the build
 archive/      old-lib/, the pre-restructure monolith. Reference only; deleted at v1.0
-build.sh      convenience build
 ```
+
+The C side is built from outside this tree: `build_tuned/build.py` (add `--vfft`
+to link the runtime) or the root `CMakeLists.txt`. Both compile the same corpus
+— if their codelet counts ever disagree, that is a real defect, not a
+configuration difference.
 
 > 🔴 **Never run a bare `dune build` in `generator/`.** The `@default` alias
 > promotes tracked headers into `generated/` **even when the build fails**.
