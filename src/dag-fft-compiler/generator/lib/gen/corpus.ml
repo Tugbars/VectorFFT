@@ -1476,8 +1476,118 @@ let zil_pure_cells : (string * string list) list =
   ]
 ;;
 
+(* ── M10b: THE COVERAGE RAISE — the 75 reproducing replay/k1 cells ──
+   Four REGISTRY-INVISIBLE quadrants (no registry emitter names them, so
+   the registries stay byte-identical — these families dispatch via
+   wisdom/il2p, never via registry slots): the zr2c strided-r2c pairs,
+   and the oop edge/variant cells (post-tw · UL/UGUL edges · spec
+   extras) plus the six k1_mono champions.  LITERAL cells from recorded
+   provenance, same law and entry-gate treatment as the M12a zil
+   quadrants (75/75 byte-identical at entry).  Excluded, with cause:
+   the non-reproducing 29 (orphans / tangent / stale — pool-sunset or
+   announced-numeric-event material); the 9 sed-renamed zil variants
+   (need an emitter suffix knob); and radix256_r2c_term_ls_r8_avx512 —
+   its recorded argv carries --isa AFTER --emit-c (the M5 placement
+   quirk), which emit_one's append-last convention cannot reproduce;
+   it enters when that family's argv order is normalized (naturally
+   alongside its known ULP defect, codelet_corpus_reproducibility). *)
+let oop_edges_avx2_cells : (string * string list) list =
+    [ "radix10_t1_dif_oop_avx2.c", [ "10"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
+    ; "radix16_n1_oop_ugul_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
+    ; "radix16_t1_oop_ugug_log3_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix16_t1_oop_ul_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
+    ; "radix16_t1_oop_ul_log3_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix16_t1_oop_ul_twl_avx2.c", [ "16"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
+    ; "radix20_t1_dif_oop_avx2.c", [ "20"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
+    ; "radix25_t1_dif_oop_avx2.c", [ "25"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
+    ; "radix32_n1_oop_ugul_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
+    ; "radix32_n1_oop_ugul_spec1024_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2"; "--oop-strides"; "32,1,1,32"; "--oop-spec-named" ]
+    ; "radix32_t1_oop_spec1024_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-strides"; "32,1,32,1"; "--oop-spec-named" ]
+    ; "radix32_t1_oop_ugug_log3_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix32_t1_oop_ul_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
+    ; "radix32_t1_oop_ul_log3_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix32_t1_oop_ul_twl_avx2.c", [ "32"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
+    ; "radix4_n1_oop_ugul_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
+    ; "radix4_t1_oop_ugug_log3_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix4_t1_oop_ul_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
+    ; "radix4_t1_oop_ul_log3_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix4_t1_oop_ul_twl_avx2.c", [ "4"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
+    ; "radix5_t1_dif_oop_avx2.c", [ "5"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2" ]
+    ; "radix64_n1_oop_spec4096_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--oop-strides"; "64,1,64,1"; "--oop-spec-named" ]
+    ; "radix64_n1_oop_ugul_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
+    ; "radix64_t1_oop_ugug_log3_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix64_t1_oop_ul_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
+    ; "radix64_t1_oop_ul_log3_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix64_t1_oop_ul_log3_spec4096_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3"; "--oop-strides"; "1,64,64,1"; "--oop-spec-named" ]
+    ; "radix64_t1_oop_ul_twl_avx2.c", [ "64"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
+    ; "radix8_n1_oop_ugul_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UL"; "--isa"; "avx2" ]
+    ; "radix8_t1_oop_ugug_log3_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix8_t1_oop_ul_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled" ]
+    ; "radix8_t1_oop_ul_log3_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--log3" ]
+    ; "radix8_t1_oop_ul_twl_avx2.c", [ "8"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UL"; "--oop-store"; "UG"; "--isa"; "avx2"; "--twiddled"; "--oop-tw-linear" ]
+    ; "vfft_k1_mono128_16x8_avx2.c", [ "128"; "--k1-mono"; "--k1-r1"; "16"; "--isa"; "avx2" ]
+    ; "vfft_k1_mono128_8x16_avx2.c", [ "128"; "--k1-mono"; "--k1-r1"; "8"; "--isa"; "avx2" ]
+    ; "vfft_k1_mono256_16x16_avx2.c", [ "256"; "--k1-mono"; "--k1-r1"; "16"; "--isa"; "avx2" ]
+    ; "vfft_k1_mono64_avx2.c", [ "64"; "--k1-mono"; "--isa"; "avx2" ]
+    ; "vfft_k1_mono64_il_bwd_avx2.c", [ "64"; "--k1-mono"; "--k1-il"; "--k1-sw"; "--isa"; "avx2" ]
+    ; "vfft_k1_mono64_il_fwd_avx2.c", [ "64"; "--k1-mono"; "--k1-il"; "--isa"; "avx2" ]
+    ]
+;;
+
+let oop_edges_avx512_cells : (string * string list) list =
+    [ "radix10_t1_dif_oop_avx512.c", [ "10"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
+    ; "radix20_t1_dif_oop_avx512.c", [ "20"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
+    ; "radix25_t1_dif_oop_avx512.c", [ "25"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
+    ; "radix5_t1_dif_oop_avx512.c", [ "5"; "--twiddled"; "--post-tw"; "--oop"; "--oop-buffer-oop"; "--oop-load"; "UG"; "--oop-store"; "UG"; "--isa"; "avx512" ]
+    ]
+;;
+
+let strided_r2c_avx2_cells : (string * string list) list =
+    [ "r128_n1_bwd_strided_r2c.c", [ "128"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r128_n1_fwd_strided_r2c.c", [ "128"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r12_n1_bwd_strided_r2c.c", [ "12"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r12_n1_fwd_strided_r2c.c", [ "12"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r16_n1_bwd_strided_r2c.c", [ "16"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r16_n1_fwd_strided_r2c.c", [ "16"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r20_n1_bwd_strided_r2c.c", [ "20"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r20_n1_fwd_strided_r2c.c", [ "20"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r256_n1_bwd_strided_r2c.c", [ "256"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r256_n1_fwd_strided_r2c.c", [ "256"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r32_n1_bwd_strided_r2c.c", [ "32"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r32_n1_fwd_strided_r2c.c", [ "32"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r512_n1_bwd_strided_r2c.c", [ "512"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r512_n1_fwd_strided_r2c.c", [ "512"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r64_n1_bwd_strided_r2c.c", [ "64"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r64_n1_fwd_strided_r2c.c", [ "64"; "--strided-r2c"; "--isa"; "avx2" ]
+    ; "r8_n1_bwd_strided_r2c.c", [ "8"; "--strided-r2c"; "--bwd"; "--isa"; "avx2" ]
+    ; "r8_n1_fwd_strided_r2c.c", [ "8"; "--strided-r2c"; "--isa"; "avx2" ]
+    ]
+;;
+
+let strided_r2c_avx512_cells : (string * string list) list =
+    [ "r128_n1_bwd_strided_r2c.c", [ "128"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r128_n1_fwd_strided_r2c.c", [ "128"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r16_n1_bwd_strided_r2c.c", [ "16"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r16_n1_fwd_strided_r2c.c", [ "16"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r256_n1_bwd_strided_r2c.c", [ "256"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r256_n1_fwd_strided_r2c.c", [ "256"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r32_n1_bwd_strided_r2c.c", [ "32"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r32_n1_fwd_strided_r2c.c", [ "32"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r512_n1_bwd_strided_r2c.c", [ "512"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r512_n1_fwd_strided_r2c.c", [ "512"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r64_n1_bwd_strided_r2c.c", [ "64"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r64_n1_fwd_strided_r2c.c", [ "64"; "--strided-r2c"; "--isa"; "avx512" ]
+    ; "r8_n1_bwd_strided_r2c.c", [ "8"; "--strided-r2c"; "--bwd"; "--isa"; "avx512" ]
+    ; "r8_n1_fwd_strided_r2c.c", [ "8"; "--strided-r2c"; "--isa"; "avx512" ]
+    ]
+;;
+
 let matrix_files (quadrant : string) : (string * string list) list =
   match quadrant with
+  | "oop-edges-avx2" -> oop_edges_avx2_cells
+  | "oop-edges-avx512" -> oop_edges_avx512_cells
+  | "strided-r2c-avx2" -> strided_r2c_avx2_cells
+  | "strided-r2c-avx512" -> strided_r2c_avx512_cells
   | "zil-boundary" -> zil_boundary_cells
   | "zil-pure" -> zil_pure_cells
   | "inplace-avx2" | "inplace-avx512" ->
@@ -1749,6 +1859,10 @@ let quadrants =
   ; "rfft-avx512"
   ; "c2r-avx2"
   ; "c2r-avx512"
+  ; "oop-edges-avx2"
+  ; "oop-edges-avx512"
+  ; "strided-r2c-avx2"
+  ; "strided-r2c-avx512"
   ; "zil-boundary"
   ; "zil-pure"
   ]
@@ -1757,6 +1871,10 @@ let quadrants =
 (* directory under codelets/ for each quadrant *)
 let dir_of_quadrant (q : string) : string =
   match q with
+  | "oop-edges-avx2" -> "oop/avx2"
+  | "oop-edges-avx512" -> "oop/avx512"
+  | "strided-r2c-avx2" -> "strided/avx2"
+  | "strided-r2c-avx512" -> "strided/avx512"
   | "zil-boundary" -> "zil/avx2/boundary_split"
   | "zil-pure" -> "zil/avx2/pure_il"
   | _ ->
