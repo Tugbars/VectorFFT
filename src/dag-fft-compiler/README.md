@@ -3,18 +3,18 @@
 This tree is a **compiler**, not a library. It takes a description of one FFT
 kernel — a radix, a direction, a memory layout, a twiddle policy — and emits a
 single straight-line C function with the SIMD intrinsics already scheduled and
-register-allocated. The 1,432 `.c` files under `codelets/` are its output, and
+register-allocated. The 1,431 `.c` files under `codelets/` are its output, and
 the C runtime in `src/core/` is the thing that links and dispatches them.
 
 Everything downstream depends on one property: **the emitter is deterministic
-and its output is byte-reproducible.** 1,403 of the 1,432 shipped files
-regenerate byte-for-byte from their recorded recipes (97.97%; 99.93% counting
+and its output is byte-reproducible.** 1,403 of the 1,431 shipped files
+regenerate byte-for-byte from their recorded recipes (98.04%; 99.93% counting
 code bodies only), and the gate in `generator/gates/` exists to keep it that
 way. That is what makes it safe to refactor a compiler whose output nobody
 reads line by line.
 
 ```text
-codelets/     the product — 1,432 emitted .c files (see codelets/README.md)
+codelets/     the product — 1,431 emitted .c files (see codelets/README.md)
 generator/    the compiler itself (dune project) — this document is mostly about this
 jit/          runtime codegen: emit_*.py + prelude/runtime headers for JIT plans
 tools/        research harnesses (schedulers, ablations, probes) — not in the build
@@ -133,8 +133,8 @@ writes interleaved is therefore not a bug to be caught — it is unrepresentable
 [`Abi`](generator/lib/kernel/abi.mli) turns a kind into a signature:
 `Abi.shape` is a 13-arm total variant, `Abi.signature` renders it. Before the
 old hand-written 13-arm ladder was deleted, both were emitted in-process for
-every one of the 1,432 codelets and asserted equal — 1,432 independent proofs.
-That cross-check survives as a permanent debug env, `VFFT_ABI_XCHECK=1`.
+every codelet in the corpus and asserted equal — 1,432 independent proofs at the
+time. That cross-check survives as a permanent debug env, `VFFT_ABI_XCHECK=1`.
 
 ### The pass cascade: `Pipeline`
 
@@ -329,13 +329,13 @@ emission.
 
 | gate | what it proves | cost |
 |---|---|---|
-| `full_corpus_gate.sh` | every one of 1,432 files still regenerates to its **recorded verdict class** | ~60 s |
+| `full_corpus_gate.sh` | every one of 1,431 files still regenerates to its **recorded verdict class** | ~60 s |
 | `layout_smoke.sh` | 13 layout shapes emit + compile under `gcc -Werror` with every declared pointer referenced; 4 illegal combinations refused loudly | seconds |
 | `cil_matrix.sh` | the 183-case cx emission matrix over off-default `VFFT_CX_*` knobs | ~10 s |
 | `bin_test/cx_pipeline_test` | the cx stack's unit gate (built **and run** by the corpus gate) | instant |
 | `bin_test/argv_roundtrip` | descriptor ↔ argv fidelity | instant |
 
-The corpus gate does **not** demand every file be identical. 29 files
+The corpus gate does **not** demand every file be identical. 28 files
 legitimately do not reproduce (dead-era orphans, sunset copies, drifted
 bodies); demanding perfection would mean a permanently red gate, which trains
 everyone to ignore it. Instead each file is pinned to its recorded verdict

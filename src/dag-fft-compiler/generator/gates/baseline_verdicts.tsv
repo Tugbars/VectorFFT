@@ -902,7 +902,6 @@ rfft/avx2/radix16_hc2hc_dit_fwd_avx2.c	genset	IDENTICAL	-
 rfft/avx2/radix16_hc2hc_dit_log3_fwd_avx2.c	genset	IDENTICAL	-
 rfft/avx2/radix16_hc2hc_dit_rng_fwd_avx2.c	genset	IDENTICAL	-
 rfft/avx2/radix16_r2cf_avx2.c	genset	IDENTICAL	-
-rfft/avx2/radix256_r2c_term_ls_r8_avx2.c	replay	BODY_DIFFERS	4
 rfft/avx2/radix2_hc2c_dit_fwd_avx2.c	genset	IDENTICAL	-
 rfft/avx2/radix2_hc2c_nat_fwd_avx2.c	genset	IDENTICAL	-
 rfft/avx2/radix2_hc2c_nat_log3_fwd_avx2.c	genset	IDENTICAL	-

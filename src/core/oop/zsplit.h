@@ -88,6 +88,13 @@ typedef struct {
 static inline int vfft_zsplit_default_chain(int N, int *chain)
 {
     switch (N) {
+    case 1024:  /* cold-start seed ONLY — below the production ZCASC gate
+                 * (2048), so unreachable unless VFFT_NAT_ZCASC_MINN lowers it.
+                 * Exists so the tier boundary can be RACED: 1024 is the child
+                 * of the zr2c N=2048 cell whose c2r arm is the outlier.
+                 * Legacy-legal (last==8) so both routes can build it; a
+                 * calibrated better chain would arrive via wisdom replay. */
+        chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=8; return 4;
     case 2048:  chain[0]=4; chain[1]=8; chain[2]=8; chain[3]=8; return 4;
     case 4096:  chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=8; chain[4]=8; return 5;
     case 8192:  chain[0]=4; chain[1]=4; chain[2]=8; chain[3]=8; chain[4]=8; return 5;
