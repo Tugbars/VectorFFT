@@ -254,6 +254,74 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let spec_named = ref false in
   let oop_il_in = ref `No
   and oop_il_out = ref `No in
+  (* ── CONFLICTING-FLAG DETECTION — the layout law, hoisted to the descriptor.
+     Since M5 each IL axis is ONE three-way field, so a second, DISAGREEING
+     flag was silently last-flag-wins: gen_radix emitted a codelet nobody
+     asked for and stamped a provenance header naming BOTH flags.  Neither
+     Layout's anti-hybrid law nor emit_body's strided guards could fire — the
+     conflict was resolved away before either was consulted (layout_smoke.sh
+     saw exactly this as 3 red negatives).  Repeating the SAME flag stays
+     legal; only a genuine disagreement raises.  [name_of] renders whichever
+     flag already claimed the axis, so the message names both sides. *)
+  let excl r ~axis ~name_of ~v ~flag =
+    (if !r <> v
+     then (
+       match name_of !r with
+       | "" -> ()
+       | prev ->
+         fail
+           "%s and %s are mutually exclusive — the banned hybrid %s layout (a \
+            codelet carries ONE plane)"
+           prev
+           flag
+           axis));
+    r := v
+  in
+  let set_ip_il v flag =
+    excl
+      ip_il
+      ~axis:"in-place IL"
+      ~name_of:(function
+        | `In -> "--ip-il-in"
+        | `Out -> "--ip-il-out"
+        | `None -> "")
+      ~v
+      ~flag
+  in
+  let set_str_il v flag =
+    excl
+      str_il
+      ~axis:"strided IL"
+      ~name_of:(function
+        | `In -> "--strided-il-in"
+        | `Out -> "--strided-il-out"
+        | `Out_nt -> "--strided-il-out-nt"
+        | `No -> "")
+      ~v
+      ~flag
+  in
+  let set_oop_il_in v flag =
+    excl
+      oop_il_in
+      ~axis:"oop IL-in"
+      ~name_of:(function
+        | `Il -> "--oop-il-in"
+        | `Il_sw -> "--oop-il-in-sw"
+        | `No -> "")
+      ~v
+      ~flag
+  in
+  let set_oop_il_out v flag =
+    excl
+      oop_il_out
+      ~axis:"oop IL-out"
+      ~name_of:(function
+        | `Il -> "--oop-il-out"
+        | `Il_sw -> "--oop-il-out-sw"
+        | `No -> "")
+      ~v
+      ~flag
+  in
   let ranged = ref false in
   let term_rt = ref false
   and term_k = ref None
@@ -306,10 +374,10 @@ let of_argv ?(strict = true) (argv : string list) : t =
       push "twiddled";
       go tl
     | "--ip-il-in" :: tl ->
-      ip_il := `In;
+      set_ip_il `In "--ip-il-in";
       go tl
     | "--ip-il-out" :: tl ->
-      ip_il := `Out;
+      set_ip_il `Out "--ip-il-out";
       go tl
     | "--oop" :: tl ->
       push "oop";
@@ -345,16 +413,16 @@ let of_argv ?(strict = true) (argv : string list) : t =
       spec_named := true;
       go tl
     | "--oop-il-in" :: tl ->
-      oop_il_in := `Il;
+      set_oop_il_in `Il "--oop-il-in";
       go tl
     | "--oop-il-in-sw" :: tl ->
-      oop_il_in := `Il_sw;
+      set_oop_il_in `Il_sw "--oop-il-in-sw";
       go tl
     | "--oop-il-out" :: tl ->
-      oop_il_out := `Il;
+      set_oop_il_out `Il "--oop-il-out";
       go tl
     | "--oop-il-out-sw" :: tl ->
-      oop_il_out := `Il_sw;
+      set_oop_il_out `Il_sw "--oop-il-out-sw";
       go tl
     | "--r2cf" :: tl ->
       push "r2cf";
@@ -391,13 +459,13 @@ let of_argv ?(strict = true) (argv : string list) : t =
       push "strided";
       go tl
     | "--strided-il-in" :: tl ->
-      str_il := `In;
+      set_str_il `In "--strided-il-in";
       go tl
     | "--strided-il-out" :: tl ->
-      str_il := `Out;
+      set_str_il `Out "--strided-il-out";
       go tl
     | "--strided-il-out-nt" :: tl ->
-      str_il := `Out_nt;
+      set_str_il `Out_nt "--strided-il-out-nt";
       go tl
     | "--strided-r2c" :: tl ->
       push "strided-r2c";
@@ -495,7 +563,16 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | [ "r2c-term" ] -> R2c_term { rt = !term_rt; k = !term_k }
     | [ "r2c-term-ls" ] -> R2c_term_ls { r = !term_ls_r }
     | [ "strided" ] -> Strided { il = !str_il }
-    | [ "strided"; "strided-r2c" ] | [ "strided-r2c" ] -> Strided_r2c
+    | [ "strided"; "strided-r2c" ] | [ "strided-r2c" ] ->
+      (* cross-family twin of the axis check above: --strided-r2c selects the
+         Real plane, so an interleaved-complex plane cannot also be asked for.
+         emit_body's guard for this (the strided arm) was equally unreachable. *)
+      if !str_il <> `No
+      then
+        fail
+          "--strided-il-in/out cannot combine with --strided-r2c — the banned \
+           hybrid (an interleaved-complex plane and a real plane in one codelet)";
+      Strided_r2c
     | [ "oop-strided" ] -> N1_oop_strided
     | [ t ]
       when List.mem
