@@ -14,6 +14,7 @@ which issue on the FMA ports. That rebalances execution-port pressure, which
 is the binding limit for L1-resident transforms.
 
 Full write-up: [`docs/performance/tangent_scaled_butterflies.md`](../../../../../../docs/performance/tangent_scaled_butterflies.md).
+Store-edge naming (T128/T256/M-128 — the TURNED axis): [`docs/performance/store_edge_taxonomy.md`](../../../../../../docs/performance/store_edge_taxonomy.md).
 Emitter arc and gate ladder: [`docs/roadmap/tangent_emitter_plan.md`](../../../../../../docs/roadmap/tangent_emitter_plan.md).
 
 ## What is here — every file has a measured win
@@ -87,6 +88,12 @@ cd build_tuned && python build.py --src benches/il2p_tangent_gate.c
 
 The second is the one that catches wiring bugs — a kernel can be correct
 standalone and still be wrong when driven by il2p's table layout.
+
+## Present but unraced
+
+`radix{6,10,12}_z_t2tan` / `_n1ttan` — even-composite tangent forms, gated
+correct, no il_kv variant selects them. Generation command, census and status
+are in each file header.
 
 ## Killed by measurement — do not regenerate
 

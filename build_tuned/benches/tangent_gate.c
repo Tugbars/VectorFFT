@@ -20,6 +20,9 @@ K(radix16_z_t2tan_fwd_avx2);
 K(radix16_z_n1ttan_fwd_avx2);
 K(radix32_z_t2bw32_fwd_avx2);
 K(radix32_z_n1tbw32_fwd_avx2);
+K(radix6_z_t2tan_fwd_avx2);   K(radix6_z_n1ttan_fwd_avx2);
+K(radix10_z_t2tan_fwd_avx2);  K(radix10_z_n1ttan_fwd_avx2);
+K(radix12_z_t2tan_fwd_avx2);  K(radix12_z_n1ttan_fwd_avx2);
 typedef void (*krn)(const double*,const double*,double*,double*,const double*,
                     const double*,size_t,size_t,size_t,size_t,size_t);
 
@@ -86,7 +89,7 @@ static double gate_leaf(krn fn, int R, int cols){
 }
 
 int main(void){
-    struct { const char *nm; double e; } r[5];
+    struct { const char *nm; double e; } r[11];
     r[0].nm = "radix8_z_t2tan_fwd       (R8  mid,  bit-identical)   ";
     r[0].e  = gate_mid(radix8_z_t2tan_fwd_avx2, 8, 32, -1.0);
     r[1].nm = "radix8_z_n1ttan_fwd      (R8  leaf, bit-identical)   ";
@@ -97,14 +100,26 @@ int main(void){
     r[3].e  = gate_leaf(radix16_z_n1ttan_fwd_avx2, 16, 16);
     r[4].nm = "radix32_z_t2bw32_fwd     (R32 mid,  wing32 2.16)     ";
     r[4].e  = gate_mid(radix32_z_t2bw32_fwd_avx2, 32, 16, -1.0);
+    r[5].nm  = "radix6_z_t2tan_fwd       (R6  mid,  even-comp)     ";
+    r[5].e   = gate_mid(radix6_z_t2tan_fwd_avx2, 6, 32, -1.0);
+    r[6].nm  = "radix6_z_n1ttan_fwd      (R6  leaf, even-comp)     ";
+    r[6].e   = gate_leaf(radix6_z_n1ttan_fwd_avx2, 6, 16);
+    r[7].nm  = "radix10_z_t2tan_fwd      (R10 mid,  even-comp)     ";
+    r[7].e   = gate_mid(radix10_z_t2tan_fwd_avx2, 10, 32, -1.0);
+    r[8].nm  = "radix10_z_n1ttan_fwd     (R10 leaf, even-comp)     ";
+    r[8].e   = gate_leaf(radix10_z_n1ttan_fwd_avx2, 10, 16);
+    r[9].nm  = "radix12_z_t2tan_fwd      (R12 mid,  even-comp)     ";
+    r[9].e   = gate_mid(radix12_z_t2tan_fwd_avx2, 12, 32, -1.0);
+    r[10].nm = "radix12_z_n1ttan_fwd     (R12 leaf, even-comp)     ";
+    r[10].e  = gate_leaf(radix12_z_n1ttan_fwd_avx2, 12, 16);
 
     int ok = 1;
-    for(int i=0;i<5;i++){
+    for(int i=0;i<11;i++){
         int pass = r[i].e < 1e-10;
         printf("%s  %.3e  %s\n", r[i].nm, r[i].e, pass ? "CORRECT" : "*** WRONG ***");
         ok &= pass;
     }
-    printf("\n%s\n", ok ? "ALL 5 SHIPPED TANGENT CODELETS GATED CORRECT"
+    printf("\n%s\n", ok ? "ALL 11 SHIPPED TANGENT CODELETS GATED CORRECT"
                         : "GATE FAILURE - DO NOT SHIP");
     return ok ? 0 : 1;
 }

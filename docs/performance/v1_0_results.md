@@ -324,7 +324,9 @@ Fully blocking a (16,16) pair instead was raced and LOST by 4.4%, so radix
 choice dominates form choice here.
 ★★ 2026-08-16, the CLOSED sub-2048 campaign: tangent interiors
 ([tangent_scaled_butterflies.md](tangent_scaled_butterflies.md)) + the wing32
-R32 forms + the TURNED store-edge axis, all dp-raced (`calibrate_k1` over the
+R32 forms + the TURNED store-edge axis
+([store_edge_taxonomy.md](store_edge_taxonomy.md) defines T128/T256/M-128 and
+the full set), all dp-raced (`calibrate_k1` over the
 full form pool; verdicts banked as pair + `il_kv`). Winning rows: 128 = pair
 4×32, kv 64 (mono mid + T256 wing32 leaf, 65 ns vs MKL 69); 256 = 16×16, kv 51
 (tangent both slots, 136 vs 136); 512 = 16×32, kv 67 (tangent mid + T256 wing32
