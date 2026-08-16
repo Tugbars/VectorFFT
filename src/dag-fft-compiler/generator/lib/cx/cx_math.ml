@@ -498,9 +498,47 @@ let cscale_chain ~(seed : t) (terms : (float * t) list) : t =
     terms
 ;;
 
+(* Winograd-5 on packed complex — port of dft_recurse.ml's
+   dft_winograd5_cnum (owner pointer 2026-08-16: "see how odds/primes were
+   wired for split layout"). Same conventions as dft_cx_odd: magnitudes ride
+   in FMA constants, sigma*i is PRE-rotated so a Fwd kernel carries only
+   CRotNI and a Bwd kernel only CRotPI, and both directions share one DAG
+   shape. Constant set: { 1/4, sqrt5/4, (sqrt5-1)/2, sin(2pi/5) }.
+   Gated VFFT_CX_WINOGRAD, default OFF = byte-identical trees. *)
+let winograd_enabled = ref (Sys.getenv_opt "VFFT_CX_WINOGRAD" = Some "1")
+
+let dft_cx_winograd5 ?(sign = `Fwd) (xs : t array) : t array =
+  let rot x = if sign = `Fwd then crot x else crotp x in
+  let s5 = sqrt 5.0 in
+  let k_sin = sin (2.0 *. (4.0 *. atan 1.0) /. 5.0) in
+  let s1 = cadd xs.(1) xs.(4)
+  and d1 = csub xs.(1) xs.(4)
+  and s2 = cadd xs.(2) xs.(3)
+  and d2 = csub xs.(2) xs.(3) in
+  let sg = cadd s1 s2 in
+  let a = cfnma 0.25 sg xs.(0) in
+  let bd = csub s1 s2 in
+  let tb = cfma (s5 /. 4.0) bd a
+  and tj = cfnma (s5 /. 4.0) bd a in
+  let phi = (s5 -. 1.0) /. 2.0 in
+  let u = cfma phi d2 d1
+  and v = cfnma phi d1 d2 in
+  let ru = rot u
+  and rv = rot v in
+  [| cadd xs.(0) sg
+   ; cfma k_sin ru tb
+   ; cfnma k_sin rv tj
+   ; cfma k_sin rv tj
+   ; cfnma k_sin ru tb
+  |]
+;;
+
 let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
   if n < 3 || n mod 2 = 0
   then failwith (Printf.sprintf "dft_cx_odd: needs an ODD n >= 3, got %d" n);
+  if n = 5 && !winograd_enabled
+  then dft_cx_winograd5 ~sign xs
+  else begin
   let pi = 4.0 *. atan 1.0 in
   let rot x = if sign = `Fwd then crot x else crotp x in
   let h = (n - 1) / 2 in
@@ -543,6 +581,7 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
     out.(n - m) <- Some b
   done;
   unwrap_legs "dft_cx_odd" out
+  end
 ;;
 
 (* Leaf dispatcher: pow2 -> radix-2 DIT, odd -> conjugate pair, EVEN
