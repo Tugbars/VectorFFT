@@ -1,6 +1,30 @@
-/* dp_planner_sp.h — the K=1 SPLIT-axis planner (kind-3 sp fields).
+/* dp_planner_split_oop.h — the SPLIT-OOP-engine planner (kind-3 sp fields).
  *
- * Sibling of dp_planner_il.h. This header OWNS the split planning phase:
+ * NAMING (owner terminology, 2026-08-18). "K4" is the MATH view of this
+ * engine: split-layout SIMD has no intra-complex parallelism to exploit
+ * without shuffles, so its 4 AVX2 lanes must hold 4 independent same-shaped
+ * problems. This engine serves ONE caller transform per call by
+ * MANUFACTURING that lane-batch from its own decomposition — the four-step
+ * splits N = R1×R2 into R1 independent length-R2 sub-DFTs and runs 4 of
+ * them per iteration (GROUPW; 8 on a future AVX-512 port). So: one
+ * transform per call at the API, 4 batched sub-FFTs in one go in the math.
+ * The wisdom cell key stays (N, K=1) — K in the wisdom counts CALLER
+ * transforms, and the caller handed us one. CCOL is this same idea taken
+ * wholesale: reshape the one transform into an explicit K=R1 column batch
+ * and hand it to the batched engine below.
+ *
+ * The planner family, by engine:
+ *   dp_planner.h          — the split CALLER-BATCHED proto stride engine
+ *                           (lanes = the caller's own transforms, K ≡ 0
+ *                           mod 8; recursive memoized DP; also the INNER
+ *                           tuner the CCOL axis below delegates to);
+ *   dp_planner_il.h       — the single-transform INTERLEAVED engines
+ *                           (il2p + zturn cascade);
+ *   dp_planner_split_oop.h — this file: the single-transform SPLIT engine
+ *                           (lane-batch of its own sub-problems;
+ *                           natural-order; mono/3P/2PA/2PB/TWL/L3/CCOL).
+ *
+ * This header OWNS the split planning phase:
  * candidate enumeration (route × pair × CCOL R1 × column chain × column
  * variants), the correctness gate, the order-rotated timing discipline,
  * winner selection, and banking through the SHIPPED writers. Bench
@@ -36,8 +60,8 @@
  * The %4-only pair filter and pow2 CCOL chains below are the CURRENT
  * scope, not the design boundary. Add those routes here, never in a bench.
  */
-#ifndef VFFT_DP_PLANNER_SP_H
-#define VFFT_DP_PLANNER_SP_H
+#ifndef VFFT_DP_PLANNER_SPLIT_OOP_H
+#define VFFT_DP_PLANNER_SPLIT_OOP_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -262,45 +286,48 @@ static int _sp_cc_encodable(const int *f, int nf)
     return nf >= 1 && nf <= VFFT_K1_CC_MAX_NF;
 }
 
-static vfft_proto_wisdom_t _sp_spike; /* large; static, not stack */
-
 static void _sp_spike_bank(const char *wisdir, int R2, int R1,
                            const int *factors, const int *variants, int nf,
                            double ns)
 {
     char spath[600];
     snprintf(spath, sizeof spath, "%s/spike_wisdom.txt", wisdir);
-    memset(&_sp_spike, 0, sizeof _sp_spike);
-    (void)vfft_proto_wisdom_load(&_sp_spike, spath);
-    int idx = -1, dups = 0;
-    for (int i = 0; i < _sp_spike.count; i++)
-        if (_sp_spike.e[i].N == R2 && _sp_spike.e[i].K == (size_t)R1) {
-            if (idx < 0) idx = i; else dups++;
+    vfft_proto_wisdom_t wis;
+    (void)vfft_proto_wisdom_load(&wis, spath); /* memsets on entry; absent file = empty table */
+    const vfft_proto_wisdom_entry_t *hit = NULL;
+    size_t dups = 0;
+    for (size_t i = 0; i < wis.count; i++)
+        if (wis.entries[i].N == R2 && wis.entries[i].K == (size_t)R1) {
+            if (!hit) hit = &wis.entries[i]; else dups++;
         }
-    if (dups)
-        printf("#   spike: %d duplicate (%d,%d) row(s) — first-match rule, "
-               "extras left untouched\n", dups, R2, R1);
-    if (idx >= 0) {
-        if (_sp_spike.e[idx].use_dif_forward) {
+    if (hit) {
+        if (hit->use_dif_forward) {
             printf("#   spike (%d,%d): existing line is DIF-tuned (batched "
                    "verdict) — NOT overwritten\n", R2, R1);
+            vfft_proto_wisdom_free(&wis);
             return;
         }
-        if (_sp_spike.e[idx].best_ns > 0 && _sp_spike.e[idx].best_ns <= ns)
+        if (hit->best_ns > 0 && hit->best_ns <= ns) {
+            vfft_proto_wisdom_free(&wis);
             return; /* existing DIT line is at least as good */
-    } else {
-        if (_sp_spike.count >= VFFT_PROTO_WISDOM_MAX) return;
-        idx = _sp_spike.count++;
+        }
     }
-    vfft_proto_wisdom_entry_t *e = &_sp_spike.e[idx];
-    memset(e, 0, sizeof *e);
-    e->N = R2;
-    e->K = (size_t)R1;
-    e->nf = nf;
-    for (int s = 0; s < nf; s++) { e->factors[s] = factors[s]; e->variants[s] = variants[s]; }
-    e->use_dif_forward = 0;
-    e->best_ns = ns;
-    (void)vfft_proto_wisdom_save(&_sp_spike, spath);
+    vfft_proto_wisdom_entry_t e;
+    memset(&e, 0, sizeof e);
+    e.N = R2;
+    e.K = (size_t)R1;
+    e.nf = nf;
+    for (int s = 0; s < nf; s++) { e.factors[s] = factors[s]; e.variants[s] = variants[s]; }
+    e.use_dif_forward = 0;
+    e.best_ns = ns;
+    /* overwrite=1 collapses any stale duplicate (N,K) rows to this single
+     * entry — the shipped reader's own reconciliation semantics. */
+    (void)vfft_proto_wisdom_add(&wis, &e, /*overwrite=*/1);
+    if (dups)
+        printf("#   spike (%d,%d): %zu stale duplicate row(s) collapsed\n",
+               R2, R1, dups);
+    (void)vfft_proto_wisdom_save(&wis, spath);
+    vfft_proto_wisdom_free(&wis);
 }
 
 static int _sp_ccol_inner(const vfft_proto_registry_t *reg, const char *wisdir,
@@ -592,4 +619,4 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
     return merged;
 }
 
-#endif /* VFFT_DP_PLANNER_SP_H */
+#endif /* VFFT_DP_PLANNER_SPLIT_OOP_H */

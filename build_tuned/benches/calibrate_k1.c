@@ -5,11 +5,11 @@
  * phase — candidate enumeration (route × pair × CCOL R1 × chain × column
  * variants), gate-before-time, order-rotated trials, winner selection, the
  * spike write policy, and banking through the shipped writers — lives in
- * src/core/planning/dp_planner_sp.h (vfft_sp_dp_plan_and_bank), which
+ * src/core/planning/dp_planner_split_oop.h (vfft_sp_dp_plan_and_bank), which
  * delegates the IL axis WHOLE to dp_planner_il.h exactly as v2 did. This
  * file parses arguments, pins the core, and calls in. Nothing else.
  *
- * v2's split race was migrated into dp_planner_sp.h verbatim (same
+ * v2's split race was migrated into dp_planner_split_oop.h verbatim (same
  * candidate table, discipline, and stdout format — `cand,N,route,R1,R2,ns`
  * lines and winner summaries are unchanged for log comparability). v2's
  * in-file logic history is preserved in that header's provenance block.
@@ -30,7 +30,7 @@
 #include <windows.h>
 #endif
 
-#include "dp_planner_sp.h"
+#include "dp_planner_split_oop.h"
 
 int main(int argc, char **argv)
 {
