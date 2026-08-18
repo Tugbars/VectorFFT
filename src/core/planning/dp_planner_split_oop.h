@@ -293,9 +293,37 @@ static int _sp_cc_encodable(const int *f, int nf)
  * carries exactly the chain+variants the raced candidate was built with,
  * and create rebuilds from that line alone. */
 
-static int _sp_ccol_inner(const vfft_proto_registry_t *reg,
-                          int R2, int R1, int chain_out[], int var_out[],
-                          int verbose)
+/* B2.3 (2026-08-19, owner's OoO-context principle): isolated sub-plan
+ * timings make PROPOSALS, never decisions — prepending a stage changes the
+ * program (L1/L3 residency, seam distances), so the inner DP's job is only
+ * to nominate plausible recipes. It returns up to VFFT_SP_CC_PROPOSALS
+ * distinct DIT cc-encodable (chain, variants) recipes per (R2, R1); every
+ * one is built as a COMPLETE CCOL candidate and the end-to-end race
+ * decides everything, including the chain. This is exactly how the split
+ * machinery already works for scrambled in-place (measure.h's top-K →
+ * refine → whole-plan bench). */
+#define VFFT_SP_CC_PROPOSALS 3
+
+typedef struct {
+    int nf;
+    int chain[VFFT_K1_CC_MAX_NF];
+    int vars[VFFT_K1_CC_MAX_NF];
+    double inner_ns; /* proposer's isolated estimate — NEVER banked */
+} _sp_cc_prop_t;
+
+static int _sp_cc_prop_same(const _sp_cc_prop_t *a,
+                            const vfft_proto_plan_decision_t *d)
+{
+    if (a->nf != d->nf) return 0;
+    for (int s = 0; s < a->nf; s++)
+        if (a->chain[s] != d->factors[s] || a->vars[s] != d->variants[s])
+            return 0;
+    return 1;
+}
+
+static int _sp_ccol_proposals(const vfft_proto_registry_t *reg,
+                              int R2, int R1, _sp_cc_prop_t *props, int maxp,
+                              int verbose)
 {
     static vfft_proto_dp_context_t dctx; /* large buffers; static, reused */
     static int dctx_live = 0;
@@ -309,45 +337,49 @@ static int _sp_ccol_inner(const vfft_proto_registry_t *reg,
                                            verbose > 1);
     if (ns >= 1e17) return 0;
 
-    /* DIT-pin: prefer the best cc-encodable DIT entry from the pool; the
-     * pool is sorted best-first. Fall back to a DIT variant search on the
-     * winner's factors when the pool is DIF-only. */
-    const vfft_proto_plan_decision_t *pick = NULL;
-    if (best.use_dif_forward == 0 && _sp_cc_encodable(best.factors, best.nf))
-        pick = &best;
-    for (int i = 0; !pick && i < npool; i++)
-        if (pool[i].use_dif_forward == 0 && _sp_cc_encodable(pool[i].factors, pool[i].nf))
-            pick = &pool[i];
-    vfft_proto_plan_decision_t dit;
-    if (!pick && _sp_cc_encodable(best.factors, best.nf)) {
+    int np = 0;
+    /* the pool is sorted best-first; take distinct DIT cc-encodable recipes
+     * (the overall best, when DIT+encodable, is in the pool too) */
+    for (int i = 0; i < npool && np < maxp; i++) {
+        if (pool[i].use_dif_forward || !_sp_cc_encodable(pool[i].factors, pool[i].nf))
+            continue;
+        int dup = 0;
+        for (int j = 0; j < np && !dup; j++)
+            dup = _sp_cc_prop_same(&props[j], &pool[i]);
+        if (dup) continue;
+        props[np].nf = pool[i].nf;
+        memcpy(props[np].chain, pool[i].factors, pool[i].nf * sizeof(int));
+        memcpy(props[np].vars, pool[i].variants, pool[i].nf * sizeof(int));
+        props[np].inner_ns = pool[i].cost_ns;
+        np++;
+    }
+    /* pool DIF-only (or empty): DIT variant search on the winner's factors */
+    if (np == 0 && _sp_cc_encodable(best.factors, best.nf)) {
         int vout[STRIDE_MAX_STAGES];
         double dns = _vfft_proto_dp_variant_search(&dctx, R2, best.factors,
                         best.nf, /*use_dif=*/0, dctx.K, reg, vout,
                         NULL, NULL, 0, 0);
         if (dns < 1e17) {
-            dit.nf = best.nf;
-            memcpy(dit.factors, best.factors, best.nf * sizeof(int));
-            memcpy(dit.variants, vout, best.nf * sizeof(int));
-            dit.use_dif_forward = 0;
-            dit.cost_ns = dns;
-            pick = &dit;
+            props[0].nf = best.nf;
+            memcpy(props[0].chain, best.factors, best.nf * sizeof(int));
+            memcpy(props[0].vars, vout, best.nf * sizeof(int));
+            props[0].inner_ns = dns;
+            np = 1;
         }
     }
-    if (!pick) {
-        if (verbose)
+    if (verbose) {
+        if (!np)
             printf("#   ccol inner (%d,%d): no DIT-usable plan — arm skipped\n",
                    R2, R1);
-        return 0;
+        for (int i = 0; i < np; i++) {
+            printf("#   ccol proposal %d/%d (%d,%d) DIT: ", i + 1, np, R2, R1);
+            for (int s = 0; s < props[i].nf; s++)
+                printf("%s%d", s ? "x" : "", props[i].chain[s]);
+            printf(" = %.1f ns/col-pass (isolated — informational)\n",
+                   props[i].inner_ns);
+        }
     }
-    memcpy(chain_out, pick->factors, pick->nf * sizeof(int));
-    memcpy(var_out, pick->variants, pick->nf * sizeof(int));
-    if (verbose) {
-        printf("#   ccol inner (%d,%d) DIT: ", R2, R1);
-        for (int s = 0; s < pick->nf; s++)
-            printf("%s%d", s ? "x" : "", chain_out[s]);
-        printf(" = %.1f ns/col-pass\n", pick->cost_ns);
-    }
-    return pick->nf;
+    return np;
 }
 
 /* ── the split race for one cell ───────────────────────────────────
@@ -425,18 +457,24 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
         int R2 = N / R1;
         if ((R2 % 4) || R2 < 16) continue;
         if (!vfft_oop_t1_fn(R1)) continue;
-        if (np >= VFFT_SP_MAX_PLANS - 1 || nc >= VFFT_SP_MAX_CAND - 3) break;
-        int ccf[VFFT_K1_CC_MAX_NF], ccv[STRIDE_MAX_STAGES];
-        int ccn = _sp_ccol_inner(reg, R2, R1, ccf, ccv, verbose);
-        if (!ccn) continue;
-        vfft_oop_plan_t *pc =
-            vfft_oop_plan_create_k1_cc_v(N, R1, ccf, ccn, ccv, reg);
-        if (!pc) continue;
-        plans[np++] = pc;
-        vfft_sp_cand_t t = { VFFT_SP_R_CCOL, R1, R2,
-                             vfft_k1_cc_chain_encode(ccf, ccn),
-                             vfft_k1_cc_vars_encode(ccv, ccn), pc, 1e18, 0 };
-        cand[nc++] = t;
+        if (np >= VFFT_SP_MAX_PLANS - VFFT_SP_CC_PROPOSALS ||
+            nc >= VFFT_SP_MAX_CAND - VFFT_SP_CC_PROPOSALS - 2) break;
+        _sp_cc_prop_t props[VFFT_SP_CC_PROPOSALS];
+        int nprop = _sp_ccol_proposals(reg, R2, R1, props,
+                                       VFFT_SP_CC_PROPOSALS, verbose);
+        for (int pi = 0; pi < nprop; pi++) {
+            if (np >= VFFT_SP_MAX_PLANS - 1 || nc >= VFFT_SP_MAX_CAND - 2)
+                break;
+            vfft_oop_plan_t *pc = vfft_oop_plan_create_k1_cc_v(
+                N, R1, props[pi].chain, props[pi].nf, props[pi].vars, reg);
+            if (!pc) continue;
+            plans[np++] = pc;
+            vfft_sp_cand_t t = { VFFT_SP_R_CCOL, R1, R2,
+                                 vfft_k1_cc_chain_encode(props[pi].chain, props[pi].nf),
+                                 vfft_k1_cc_vars_encode(props[pi].vars, props[pi].nf),
+                                 pc, 1e18, 0 };
+            cand[nc++] = t;
+        }
     }
 
     if (vfft_k1_mono_fn(N) && nc < VFFT_SP_MAX_CAND)
@@ -491,6 +529,31 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
 static void vfft_sp_dp_release(vfft_oop_plan_t **plans, int np)
 {
     for (int i = 0; i < np; i++) vfft_oop_plan_destroy(plans[i]);
+}
+
+/* ── B5 decode-gate comparator (production logic; gates are thin drivers).
+ * Does the BUILT plan serve exactly what the kind-3 CCOL line banked?
+ * Chain: compared stage-for-stage against the decoded cc_chain. Variants:
+ * cc_vars must decode against the same nf — create passes the decoded
+ * array straight into the column-plan create (a single line of custody),
+ * so a successful decode + chain/pair match IS the variants guarantee. */
+static int vfft_sp_ccol_line_served(const vfft_oop_wisdom_entry_t *ke,
+                                    const vfft_oop_plan_t *p)
+{
+    int ccf[VFFT_K1_CC_MAX_NF], ccv[VFFT_K1_CC_MAX_NF];
+    if (!ke || !p) return 0;
+    if (ke->k1_sp_route != VFFT_K1_SP_CCOL) return 0;
+    int nf = vfft_k1_cc_chain_decode(ke->cc_chain, ccf);
+    if (!nf) return 0;
+    if (ke->cc_vars && !vfft_k1_cc_vars_decode(ke->cc_vars, nf, ccv))
+        return 0;                         /* banked variants must decode  */
+    if (p->kind != VFFT_OOP_KIND_BAILEY2V || !p->colp || !p->cc_perm)
+        return 0;                         /* must be a CCOL-shaped plan   */
+    if (p->R1 != ke->R1 || p->R2 != ke->R2) return 0;
+    if (p->cc_nf != nf) return 0;
+    for (int s = 0; s < nf; s++)
+        if (p->cc_chain[s] != ccf[s]) return 0;
+    return 1;
 }
 
 /* ── merge lines emitted by plan_and_bank into <wisdir>/oop_wisdom.txt

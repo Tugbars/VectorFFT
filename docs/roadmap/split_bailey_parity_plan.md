@@ -206,6 +206,97 @@ was interleaved); whether zturn's tcut tiling advantage survives when the
 competitor is CCOL's 3-sweep four-step rather than an untiled cascade —
 measurement, not prior.
 
+### 5b · Chartered discussion — tiling + natural order for the split cascade
+(owner 2026-08-19: "CT cascade can use tiled methods like IL axis does")
+
+**How IL's tcut tiling works (the mechanism to port):** copy-free — the
+cascade's butterfly spans SHRINK stage by stage, so the LAST mids are
+closed within a width-w window; the tiled tail (stages tcut+1..nf−2) runs
+tile-at-a-time while the tile + its twiddle records stay L1-hot (working
+set ≈ 2× tile). Operating rules from the tcut campaign: width is THE knob
+(cut derived); occupancy = FILTER, clock = CHOOSER (passes-fused can beat
+occupancy); the untiled arm always stays raced (2048 = real no-win);
+banked width carries an L1 stamp + replay fence; explicit env beats
+wisdom. Measured −16…−21% at ≥4096; flipped 8192/16384 vs MKL; all 8
+kind-4 cells banked tiled.
+
+**The old split NO-GO does not block this.** The killed buffered-tiling
+executor (2026-06-18) COPIED K-tiles to scratch — copies never amortized
+because mid-cascade DIT legs span all rows. tcut never copies; it uses
+end-of-cascade natural locality. The verdict stands against the
+copy-based mechanism only; the geometric precondition (monotone spans)
+exists in the split cascade too.
+
+**Two roads (compose, don't compete):**
+- 6b road: split-plane zturn edges → tiling + natord + chains + t2q come
+  free; K=1 only.
+- Native road: teach the proto engine a tcut-style tail walker → benefits
+  EVERY batched split cell at big N **and CCOL's own column pass**
+  (a batched cascade at (R2≤8192, K=8..64)). Needs the span/divisibility
+  analysis in the proto stage geometry + per-stage twiddle windows.
+🔴 tcut lesson to carry in: every axis added there failed twice the same
+way — "added to the mechanism but not to every writer and every log
+line." Wisdom field, both writers, verbose log, replay diagnostic move
+together on day one.
+
+**Natural order — verified zero-tax on IL, and split's mirror status:**
+IL folds the reorder permutation into a mandatory data pass at every band
+(sub-2048: transpose fused into `n1t` stores — natural IS the native
+order, the identity rule; ≥2048: one kernel swap `stf`→`stfn`, rho-table
+digit reversal in the terminator's LOAD addressing, stores contiguous —
+no reorder pass; natord pins tfuse=0 + t2q, both practical no-ops).
+Split already mirrors it: split_oop is natural by construction (turn
+fused in 2PA loads / 2PB stores; only the never-winning 3P pays a sweep),
+and **CCOL's permuted transpose absorbs the column cascade's digit
+reversal into the mandatory transpose pass — the stfn principle**. The
+only real split natural tax is the BATCHED engine's @nat tape/cycle
+machinery (K>1, outside this campaign). A 6b split `stfn` twin inherits
+natord free and cheaper (plane stores, no REINT lattice).
+
+### 5c · Phase D/E menu — codelet-level upgrades for split (the full list)
+
+Ordered by expected value; every item enters the sp_kv (or route) pool
+and races per cell — never replaces.
+
+1. **Register-fitting blocked interiors** — `t1_oop@32`, `n1_oop_ugul@32`
+   (the live R32 bodies; the measured 2.7–4.3 stack-ops/pt is the 12–24%
+   gap) AND R64 (`t1_oop@64`/`n1_oop@64` — both families are monolithic
+   there; 4 of 6 cells' hot radix). IL evidence: b48 forms cut R32 stack
+   3×.
+2. **Wing/tangent butterfly SHAPE** — deferred-cos FMA conversion on the
+   already-tangent-factored constants (naked add+sub 1.63–1.88/pt → ~1.2,
+   FMA share 36%→52%). `dft.ml` apply-form change; cx `butterfly_pair` is
+   the template. L1-resident scope caveat travels with it.
+3. **`[c,tan]` runtime-twiddle records** — kills the 30/62 bare muls/iter
+   at t1 sites + converts downstream adds; split needs NO cflip shuffle
+   (cheaper host than IL). Max-component normalization (one exact −i slot
+   per table, max|t|≈N/2π); two apply sites (DAG render + the post-tw
+   string postamble).
+4. **Linear twiddle streams beyond TWL** — the single-cursor
+   consumption-order trick (measured sld 83→54 / 179→118) extended to a
+   flat `t1_twl` UG twin and to CCOL's combine mid. Plus the ulp-twin
+   literal dedup (two tan(π/8) constants) as hygiene.
+5. **Lazy-load discipline** — no `VFFT_CX_LAZYLOAD` analog on the oop
+   path (bodies load all 2R lanes up front); emitter option, raced.
+6. **Store-at-def + `--fuse` beyond the _spec bakes** — flags exist;
+   make them raced arms for the live kernels.
+7. **Scheduler alternatives** — CPL/CPL2 orders through the
+   already-reachable `VFFT_SCHED_ORDER` injection on the oop spill path
+   (external scheduler first; emitter knob if it wins).
+8. **CCOL combine-mid selection** — race the UL/TWL/log3 twins for the
+   combine pass (today: flat `t1_oop` only).
+9. **Split-plane zturn edge kinds (6b)** — new ingest + `stf`/`stfn`
+   terminator twins over `E_split_planes` (z11 dead slots carry the im
+   plane); brings the tiled+natord interior wholesale.
+10. **Odd/prime split kernels** — Winograd interiors (real-side hand
+    `dft_winograd5/7` in `dft_recurse.ml` — verify whether the odd
+    `n1_oop/t1_oop` radices already inherit them) + the chartered native
+    split Rader/Bluestein routes (planner-header charter).
+
+Adjacent (executor-level, not codelet bodies, listed for completeness):
+the native tcut tail walker for the proto engine (§5b), and the sp_kv
+axis itself (Phase C) that makes 1–3 raceable per cell.
+
 ## 6 · Hazards
 
 - **JIT bypass:** `--jit` builds serve split routes from a baked kernel
@@ -345,9 +436,15 @@ wisdom into fn pointers/args on the handle; execute never reads wisdom.
       wisdom, so the planner's reach past R2=1024 is automatic; the
       `cc_default_chain` table now only bounds UNCALIBRATED fallback (B3's
       residual scope).
-- [ ] B5. Frontdoor decode gate (banked line → served chain/variants);
-      rebuild all wisdom-writing binaries; wisdom diff reviewed before
-      commit.
+- [x] B5. **DECODE GATE ALL PASS 2026-08-19** — `benches/
+      sp_ccol_decode_gate.c` (thin driver) over the production comparator
+      `vfft_sp_ccol_line_served` (dp_planner_split_oop.h): each banked
+      CCOL line → real front door create (SPLIT/OOP/NATURAL, wisdom from
+      the scratch dir) → served route+pair+chain assert → forward execute
+      vs the scalar reference. 4/4 cells PASS at ≤7.7e-16 (8192 CCOL
+      8×1024 · 16384 8×2048 · 32768 8×4096 · 65536 32×2048). Remaining
+      B5 residue folds into B6: rebuild-all wisdom writers + the wisdom
+      diff review at promotion.
 - [ ] B6. Bank winners 8192–65536 (+ extended reach cells); verify each vs
       the split baseline / the 8192 heuristic pair. No cross-layout
       scoreboard — split improvements are measured against split.
