@@ -74,6 +74,15 @@ typedef struct {
      * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
      * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
     int    cc_chain;
+    /* kind 3, sp_route == CCOL only (B2.2, 2026-08-18): encoded column-plan
+     * per-stage VARIANTS (vfft_k1_cc_vars_encode — one digit per chain
+     * stage, digit = variant+1). Second CCOL token, right after cc_chain,
+     * still before ns. This makes the CCOL verdict SELF-CONTAINED in the
+     * OOP wisdom (an OOP operation never reads the in-place spike file at
+     * create). 0 = no verdict = NULL/T1S column defaults. The reader is
+     * tolerant of the short-lived pre-cc_vars form (an ns float in this
+     * position is recognized by its '.'), so no banked file migrates. */
+    int    cc_vars;
     /* kind 4, tcut WIDTH axis (2026-08-02). OPTIONAL trailing pair AFTER
      * "zs_route zt_t2q":
      *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q [zt_tw zt_l1]]
@@ -158,6 +167,7 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
         if (w->count >= VFFT_OOP_WISDOM_MAX) break;
         vfft_oop_wisdom_entry_t *e = &w->e[w->count];
         memset(e, 0, sizeof *e);
+        char *carry = NULL; /* lookahead carried into the shared ns read */
         char *tok = strtok(s, " \t\n\r");      if (!tok) continue; e->N = atoi(tok);
         tok = strtok(NULL, " \t\n\r");          if (!tok) continue; e->K = (size_t)strtoull(tok, NULL, 10);
         tok = strtok(NULL, " \t\n\r");          if (!tok) continue; e->kind = atoi(tok);
@@ -186,10 +196,18 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             tok = strtok(NULL, " \t\n\r"); if (tok) e->k1_il_route = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R1 = atoi(tok); else ok = 0;
             tok = strtok(NULL, " \t\n\r"); if (tok) e->il_R2 = atoi(tok); else ok = 0;
-            /* CCOL lines carry the encoded column chain before ns */
+            /* CCOL lines carry the encoded column chain (+ column-variant
+             * code, B2.2) before ns. Tolerance: an integer after cc_chain
+             * is cc_vars; a token with a '.' is already ns (pre-cc_vars
+             * form) and is carried into the shared ns read below. */
             if (ok && e->k1_sp_route == VFFT_K1_SP_CCOL) {
                 tok = strtok(NULL, " \t\n\r");
                 if (tok) e->cc_chain = atoi(tok); else ok = 0;
+                if (ok) {
+                    char *t2 = strtok(NULL, " \t\n\r");
+                    if (t2 && !strchr(t2, '.')) e->cc_vars = atoi(t2);
+                    else carry = t2;
+                }
             }
             if (ok && e->K != 1) ok = 0;
         } else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
@@ -205,7 +223,7 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
             if (ok && e->K != 1) ok = 0;
         }
         if (!ok) continue;
-        tok = strtok(NULL, " \t\n\r");          /* ns (optional) */
+        tok = carry ? carry : strtok(NULL, " \t\n\r");   /* ns (optional) */
         e->ns = tok ? atof(tok) : 0.0;
         /* kind-3 IL kernel-variant axis: OPTIONAL trailing il_kv after ns.
          * Absent -> 0 -> monolithic registry kernels, i.e. exactly the
@@ -403,8 +421,11 @@ static inline void vfft_oop_wisdom_write_entry(FILE *f,
     else if (e->kind == VFFT_OOP_KIND_BAILEY2V) {
         fprintf(f, " %d %d %d %d %d %d", e->k1_sp_route, e->R1, e->R2,
                 e->k1_il_route, e->il_R1, e->il_R2);
+        /* CCOL: chain + column-variant code, always both (an explicit
+         * cc_vars 0 keeps the position an unambiguous integer for the
+         * tolerant reader). */
         if (e->k1_sp_route == VFFT_K1_SP_CCOL)
-            fprintf(f, " %d", e->cc_chain);
+            fprintf(f, " %d %d", e->cc_chain, e->cc_vars);
     }
     else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
         fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);

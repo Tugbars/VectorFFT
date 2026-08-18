@@ -1249,15 +1249,26 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 static int vfft_il_dp_emit_wisdom(FILE *f, int N,
                                   const vfft_il_cand_t *nat,
                                   int sp_route, int sp_R1, int sp_R2,
-                                  int sp_cc_chain,
+                                  int sp_cc_chain, int sp_cc_vars,
+                                  double sp_ns,
                                   const vfft_il_cand_t *scr,
                                   const vfft_il_cand_t *scr_leg)
 {
     int lines = 0;
     if (!f) return 0;
 
-    if (nat && nat->cost_ns < 1e17 && sp_route >= 0)
+    /* sp_route < 0 still refuses the whole line (never zero-filled — 0 is
+     * a valid route). What CHANGED (B2.1, 2026-08-18): the IL natural arm
+     * may be structurally empty (il2p's pair space tops out at 4096; the
+     * split-only band above it is served by CCOL) — a valid split winner
+     * banks anyway, with il_route = IL_NONE and zeroed IL fields. Before
+     * this, every split-only cell's verdict was silently dropped by the
+     * nat guard. ns semantics: the IL natural arm's cost; when the IL arm
+     * is ABSENT, the split winner's cost — token count unchanged. */
     {
+        int il_ok = (nat && nat->cost_ns < 1e17);
+        if (sp_route >= 0)
+        {
         /* 🔴 SHIPPED WRITER, never a hand fprintf — the same lesson the kind-4
          * branch below already learned. The hand-printed form here could not
          * carry `il_kv` at all (the blocked-kernel variant verdict, added
@@ -1269,19 +1280,21 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         e.N = N;
         e.K = 1;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
-        e.k1_sp_route = sp_route;
+        e.k1_sp_route = sp_route >= 0 ? sp_route : 0;
         e.R1 = sp_R1;
         e.R2 = sp_R2;
-        e.k1_il_route = nat->route;
-        e.il_R1 = nat->R1;
-        e.il_R2 = nat->R2;
-        e.il_kv = nat->il_kv;   /* 0 until the variant axis is raced */
+        e.k1_il_route = il_ok ? nat->route : VFFT_K1_IL_NONE;
+        e.il_R1 = il_ok ? nat->R1 : 0;
+        e.il_R2 = il_ok ? nat->R2 : 0;
+        e.il_kv = il_ok ? nat->il_kv : 0; /* 0 until the variant axis is raced */
         /* a CCOL split winner's chain rides the kind-3 line (B2 2026-08-18;
          * the grammar carries cc_chain only when sp_route == CCOL) */
         e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
-        e.ns = nat->cost_ns;
+        e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
+        e.ns = il_ok ? nat->cost_ns : sp_ns;
         vfft_oop_wisdom_write_entry(f, &e);
         lines++;
+        }
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)
     {
@@ -1337,8 +1350,8 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
  * ZTURN-winner line still carries the fallback route's terminator pick. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
                                     int sp_route, int sp_R1, int sp_R2,
-                                    int sp_cc_chain,
-                                    int verbose)
+                                    int sp_cc_chain, int sp_cc_vars,
+                                    double sp_ns, int verbose)
 {
     vfft_il_cand_t nat, scr;
     double nns = vfft_il_dp_plan(ctx, N, VFFT_IL_ORD_NATURAL,   &nat, verbose);
@@ -1356,7 +1369,7 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
                     leg = &e->top[i];
     }
     return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2,
-                                  sp_cc_chain, &scr, leg);
+                                  sp_cc_chain, sp_cc_vars, sp_ns, &scr, leg);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */
