@@ -117,7 +117,7 @@ static const int VFFT_SP_SPMAP[VFFT_SP_R_NROUTES] = {
     VFFT_K1_SP_MONO, VFFT_K1_SP_MONO, VFFT_K1_SP_CCOL };
 
 typedef struct {
-    int route, R1, R2, cc_code;
+    int route, R1, R2, cc_code, cc_vcode;
     vfft_oop_plan_t *p;
     double best;
     int gated;
@@ -286,51 +286,14 @@ static int _sp_cc_encodable(const int *f, int nf)
     return nf >= 1 && nf <= VFFT_K1_CC_MAX_NF;
 }
 
-static void _sp_spike_bank(const char *wisdir, int R2, int R1,
-                           const int *factors, const int *variants, int nf,
-                           double ns)
-{
-    char spath[600];
-    snprintf(spath, sizeof spath, "%s/spike_wisdom.txt", wisdir);
-    vfft_proto_wisdom_t wis;
-    (void)vfft_proto_wisdom_load(&wis, spath); /* memsets on entry; absent file = empty table */
-    const vfft_proto_wisdom_entry_t *hit = NULL;
-    size_t dups = 0;
-    for (size_t i = 0; i < wis.count; i++)
-        if (wis.entries[i].N == R2 && wis.entries[i].K == (size_t)R1) {
-            if (!hit) hit = &wis.entries[i]; else dups++;
-        }
-    if (hit) {
-        if (hit->use_dif_forward) {
-            printf("#   spike (%d,%d): existing line is DIF-tuned (batched "
-                   "verdict) — NOT overwritten\n", R2, R1);
-            vfft_proto_wisdom_free(&wis);
-            return;
-        }
-        if (hit->best_ns > 0 && hit->best_ns <= ns) {
-            vfft_proto_wisdom_free(&wis);
-            return; /* existing DIT line is at least as good */
-        }
-    }
-    vfft_proto_wisdom_entry_t e;
-    memset(&e, 0, sizeof e);
-    e.N = R2;
-    e.K = (size_t)R1;
-    e.nf = nf;
-    for (int s = 0; s < nf; s++) { e.factors[s] = factors[s]; e.variants[s] = variants[s]; }
-    e.use_dif_forward = 0;
-    e.best_ns = ns;
-    /* overwrite=1 collapses any stale duplicate (N,K) rows to this single
-     * entry — the shipped reader's own reconciliation semantics. */
-    (void)vfft_proto_wisdom_add(&wis, &e, /*overwrite=*/1);
-    if (dups)
-        printf("#   spike (%d,%d): %zu stale duplicate row(s) collapsed\n",
-               R2, R1, dups);
-    (void)vfft_proto_wisdom_save(&wis, spath);
-    vfft_proto_wisdom_free(&wis);
-}
+/* B2.2 (2026-08-18): the CCOL verdict is SELF-CONTAINED in the kind-3
+ * line (cc_chain + cc_vars) — this planner neither reads nor writes the
+ * in-place engine's spike file. One engine, one wisdom file (the MODEB
+ * kind-2 precedent). Raced == served is structural: the banked line
+ * carries exactly the chain+variants the raced candidate was built with,
+ * and create rebuilds from that line alone. */
 
-static int _sp_ccol_inner(const vfft_proto_registry_t *reg, const char *wisdir,
+static int _sp_ccol_inner(const vfft_proto_registry_t *reg,
                           int R2, int R1, int chain_out[], int var_out[],
                           int verbose)
 {
@@ -378,12 +341,10 @@ static int _sp_ccol_inner(const vfft_proto_registry_t *reg, const char *wisdir,
     }
     memcpy(chain_out, pick->factors, pick->nf * sizeof(int));
     memcpy(var_out, pick->variants, pick->nf * sizeof(int));
-    if (wisdir)
-        _sp_spike_bank(wisdir, R2, R1, pick->factors, pick->variants,
-                       pick->nf, pick->cost_ns);
     if (verbose) {
         printf("#   ccol inner (%d,%d) DIT: ", R2, R1);
-        for (int s = 0; s < pick->nf; s++) printf("%s%d", s ? "x" : "", pick->factors[s]);
+        for (int s = 0; s < pick->nf; s++)
+            printf("%s%d", s ? "x" : "", chain_out[s]);
         printf(" = %.1f ns/col-pass\n", pick->cost_ns);
     }
     return pick->nf;
@@ -401,6 +362,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
                            int *win_ip, int *win_oop, int verbose)
 {
     int trials = rigor ? 5 : 3;
+    (void)wisdir; /* B2.2: spike decoupled — kept for signature stability */
     _sp_bench_t b;
     memset(&b, 0, sizeof b);
     b.N = N;
@@ -433,7 +395,7 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
         };
         for (int i = 0; i < 5 && nc < VFFT_SP_MAX_CAND - 8; i++)
             if (rs[i].avail) {
-                vfft_sp_cand_t t = { rs[i].route, R1, R2, 0, p, 1e18, 0 };
+                vfft_sp_cand_t t = { rs[i].route, R1, R2, 0, 0, p, 1e18, 0 };
                 cand[nc++] = t;
             }
         if ((p->t1_l3 || p->t1_ul_l3) && np < VFFT_SP_MAX_PLANS - 2 &&
@@ -443,12 +405,12 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
                 plans[np++] = pl;
                 if (pl->t1_l3) {
                     pl->t1p = pl->t1_l3;
-                    vfft_sp_cand_t t = { VFFT_SP_R_3PL3_IP, R1, R2, 0, pl, 1e18, 0 };
+                    vfft_sp_cand_t t = { VFFT_SP_R_3PL3_IP, R1, R2, 0, 0, pl, 1e18, 0 };
                     cand[nc++] = t;
                 }
                 if (pl->t1_ul_l3 && nc < VFFT_SP_MAX_CAND - 8) {
                     pl->t1_ul = pl->t1_ul_l3;
-                    vfft_sp_cand_t t = { VFFT_SP_R_2PAL3_IP, R1, R2, 0, pl, 1e18, 0 };
+                    vfft_sp_cand_t t = { VFFT_SP_R_2PAL3_IP, R1, R2, 0, 0, pl, 1e18, 0 };
                     cand[nc++] = t;
                 }
             }
@@ -465,21 +427,22 @@ static int vfft_sp_dp_plan(const vfft_proto_registry_t *reg,
         if (!vfft_oop_t1_fn(R1)) continue;
         if (np >= VFFT_SP_MAX_PLANS - 1 || nc >= VFFT_SP_MAX_CAND - 3) break;
         int ccf[VFFT_K1_CC_MAX_NF], ccv[STRIDE_MAX_STAGES];
-        int ccn = _sp_ccol_inner(reg, wisdir, R2, R1, ccf, ccv, verbose);
+        int ccn = _sp_ccol_inner(reg, R2, R1, ccf, ccv, verbose);
         if (!ccn) continue;
         vfft_oop_plan_t *pc =
             vfft_oop_plan_create_k1_cc_v(N, R1, ccf, ccn, ccv, reg);
         if (!pc) continue;
         plans[np++] = pc;
         vfft_sp_cand_t t = { VFFT_SP_R_CCOL, R1, R2,
-                             vfft_k1_cc_chain_encode(ccf, ccn), pc, 1e18, 0 };
+                             vfft_k1_cc_chain_encode(ccf, ccn),
+                             vfft_k1_cc_vars_encode(ccv, ccn), pc, 1e18, 0 };
         cand[nc++] = t;
     }
 
     if (vfft_k1_mono_fn(N) && nc < VFFT_SP_MAX_CAND)
-    { vfft_sp_cand_t t = { VFFT_SP_R_MONO, 0, 0, 0, NULL, 1e18, 0 }; cand[nc++] = t; }
+    { vfft_sp_cand_t t = { VFFT_SP_R_MONO, 0, 0, 0, 0, NULL, 1e18, 0 }; cand[nc++] = t; }
     if (vfft_k1_mono_alt_fn(N) && nc < VFFT_SP_MAX_CAND)
-    { vfft_sp_cand_t t = { VFFT_SP_R_MONO_ALT, 0, 0, 0, NULL, 1e18, 0 }; cand[nc++] = t; }
+    { vfft_sp_cand_t t = { VFFT_SP_R_MONO_ALT, 0, 0, 0, 0, NULL, 1e18, 0 }; cand[nc++] = t; }
 
     int ngated = 0;
     for (int k = 0; k < nc; k++) ngated += _sp_gate(&b, &cand[k]);
@@ -583,11 +546,12 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
                              &win_ip, &win_oop, verbose);
     if (nc < 0) return -1;
 
-    int spr = -1, sR1 = 0, sR2 = 0, scc = 0;
+    int spr = -1, sR1 = 0, sR2 = 0, scc = 0, scv = 0;
     if (win_ip >= 0) {
         spr = VFFT_SP_SPMAP[cand[win_ip].route];
         sR1 = cand[win_ip].R1; sR2 = cand[win_ip].R2;
         scc = cand[win_ip].cc_code;
+        scv = cand[win_ip].cc_vcode;
         if (cand[win_ip].route == VFFT_SP_R_MONO_ALT) { sR1 = 8; sR2 = N / 8; }
         if (verbose)
             printf("# N=%d SPLIT-IP winner: %s %dx%d %.1f ns"
@@ -607,8 +571,9 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
     int merged = 0;
     FILE *tf = fopen(tpath, "w");
     if (tf) {
+        double sp_ns = (win_ip >= 0) ? cand[win_ip].best : 1e18;
         int lines = vfft_il_dp_plan_and_bank(ilctx, tf, N, spr, sR1, sR2, scc,
-                                             verbose);
+                                             scv, sp_ns, verbose);
         fclose(tf);
         merged = _sp_merge_bank(wpath, tpath);
         if (verbose)

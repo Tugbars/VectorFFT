@@ -4393,23 +4393,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 int ccf[VFFT_K1_CC_MAX_NF];
                 int ccn = ke ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
                              : vfft_k1_cc_default_chain(N / sR1, ccf);
-                /* B4 (2026-08-18): column-plan VARIANTS from the spike line
-                 * at (R2, K=R1) — dp_planner_split_oop banks the inner
-                 * tuning there. Accept only a DIT line whose factors equal
-                 * the decoded chain (variants are chain-shaped; the OOP
-                 * boundary is DIT-only). Anything else => NULL = the T1S
-                 * default, the pre-B4 behavior. First-match lookup is safe:
-                 * the planner's spike write collapses duplicate (N,K) rows. */
+                /* B4/B2.2 (2026-08-18): column-plan VARIANTS from the
+                 * kind-3 line's own cc_vars token — the CCOL verdict is
+                 * SELF-CONTAINED in OOP wisdom (an OOP operation never
+                 * reads the in-place spike file at create). Decode must
+                 * match the chain's nf; absent/mismatch => NULL = the T1S
+                 * default. */
                 const int *ccv = NULL;
-                if (ccn)
-                {
-                    const vfft_proto_wisdom_entry_t *se =
-                        vfft_proto_wisdom_lookup(&W->c2c, N / sR1,
-                                                 (size_t)sR1);
-                    if (se && !se->use_dif_forward && se->nf == ccn &&
-                        !memcmp(se->factors, ccf, (size_t)ccn * sizeof(int)))
-                        ccv = se->variants;
-                }
+                int ccv_[VFFT_K1_CC_MAX_NF];
+                if (ccn && ke && ke->cc_vars &&
+                    vfft_k1_cc_vars_decode(ke->cc_vars, ccn, ccv_))
+                    ccv = ccv_;
                 if (ccn)
                     psp = vfft_oop_plan_create_k1_cc_v(N, sR1, ccf, ccn, ccv,
                                                        _registry());

@@ -477,6 +477,35 @@ static inline int vfft_k1_cc_chain_encode(const int *chain, int nf)
     }
     return code;
 }
+/* CCOL column-VARIANT codec (B2.2): one decimal digit per chain stage,
+ * digit = variant+1 (1=FLAT 2=LOG3 3=T1S) so a leading FLAT survives the
+ * round-trip. code 0 = no verdict = NULL/T1S defaults. The digit count
+ * MUST equal the chain's nf — mismatch refuses (returns 0) rather than
+ * guessing. Same array/loop-bound coupling rule as the chain codec. */
+static inline int vfft_k1_cc_vars_encode(const int *vars, int nf)
+{
+    int code = 0;
+    for (int s = 0; s < nf; s++) {
+        int d = vars[s] + 1;
+        if (d < 1 || d > 3) return 0;
+        code = code * 10 + d;
+    }
+    return code;
+}
+static inline int vfft_k1_cc_vars_decode(int code, int nf, int *vars)
+{
+    int digs[VFFT_K1_CC_MAX_NF], nd = 0;
+    if (nf < 1 || nf > VFFT_K1_CC_MAX_NF) return 0;
+    while (code > 0 && nd < VFFT_K1_CC_MAX_NF) { digs[nd++] = code % 10; code /= 10; }
+    if (nd != nf || code) return 0;
+    for (int s = 0; s < nf; s++) {
+        int d = digs[nf - 1 - s];
+        if (d < 1 || d > 3) return 0;
+        vars[s] = d - 1;
+    }
+    return 1;
+}
+
 static inline int vfft_k1_cc_chain_decode(int code, int *chain)
 {
     /* callers pass int[VFFT_K1_CC_MAX_NF]; reject longer codes outright.

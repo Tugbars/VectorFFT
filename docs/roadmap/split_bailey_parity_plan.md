@@ -243,6 +243,19 @@ rebuild every wisdom-writing consumer after any format/registry change.
       fields only at 128/256/512/4096, IL fields untouched, 2048 skipped
       (noise-sized), CRLF-safe edit, 4-line git diff verified, backup
       `oop_wisdom.txt.bak-20260818-a1`.
+- [x] B2.1 **(found by the first band run, fixed 2026-08-18):** the shared
+      kind-3 writer required a valid IL NATURAL candidate to emit the line
+      at all — il2p tops out at 4096, so every split-only verdict ≥8192 was
+      silently dropped (the "banked 1 line" was the kind-4 side-emit). Fix
+      in `vfft_il_dp_emit_wisdom`: a valid split winner banks with
+      `il_route = IL_NONE` + zeroed IL fields; `ns` carries the IL arm's
+      cost, or the SPLIT winner's cost when the IL arm is absent (token
+      count unchanged; `sp_route < 0` still refuses the whole line).
+      First band results (rigor 1, all gated): 8192 → CCOL 8×1024 @19.9µs
+      (beat the 64×128 pair arms); 16384 → CCOL 64×256 @51.0µs;
+      32768 → CCOL 8×4096 @93.9µs; 65536 → CCOL 32×2048 @243.8µs. Three
+      distinct winning R1 values; 32768/65536 reach past the old
+      cc_default_chain ceiling via wisdom-driven chains.
 - [x] A2. **PASS** — shipped wisdom sha256-verified byte-unchanged.
 - [x] A3. Note in the log: calibrator = v2 four-axis, a NON-JIT binary — under
       `--jit` builds the front door serves a different executor than the one
@@ -254,7 +267,32 @@ rebuild every wisdom-writing consumer after any format/registry change.
 Principle (library invariant): planning races and banks; create resolves
 wisdom into fn pointers/args on the handle; execute never reads wisdom.
 
+- [x] B2.2 **(owner principle, 2026-08-18/19 — SUPERSEDES B1's spike
+      composition): one engine, one wisdom file.** OOP verdicts never read
+      the in-place spike file at create (the MODEB kind-2 precedent). The
+      CCOL verdict is now SELF-CONTAINED in the kind-3 line: new `cc_vars`
+      token (second CCOL token after `cc_chain`, before `ns`; one digit per
+      stage, digit = variant+1; 0 = T1S defaults; reader tolerant of the
+      short-lived pre-cc_vars form via the '.'-in-ns test). The split_oop
+      planner has ZERO spike coupling — no reads, no writes, no DIF
+      policy, no adoption logic; raced == served is structural (the banked
+      line IS the raced build recipe). Codec `vfft_k1_cc_vars_encode/
+      decode` beside the chain codec; emit/plan_and_bank grew `sp_cc_vars`;
+      create decodes `cc_vars` with an nf-match refusal. Front-door gate
+      ALL CORRECT. The B1 spike write policy is RETIRED (its shared-slot
+      conflicts — DIF protection, adoption, servability — all vanish with
+      the coupling).
+- [ ] B2.3 **(chartered 2026-08-19, owner's OoO-context principle):
+      isolated sub-plan timings must not make DECISIONS, only proposals.**
+      Prepending a stage changes the program (L1/L3 residency, seam
+      distances) — so the inner proto-DP is demoted fully to proposer:
+      take its top-K (2–3) chains per R1, build each as a complete CCOL
+      candidate, and let the END-TO-END race decide everything including
+      the chain. Runs after B5; one final band pass with the wider pool.
 - [x] B1. **DECIDED 2026-08-18 — spike composition, two-level.**
+      **⚠ SUPERSEDED by B2.2 above** (owner: OOP cells must not read
+      in-place wisdom; the DIF-slot conflict was the symptom). Kept for the
+      record:
       **Outer** (R1 ∈ {8,16,32,64} × chain, whole-route): raced in
       calibrate_k1, banked kind-3 `sp_R1` + `cc_chain` (tokens exist; replay
       already wired, `vfft.c:4388-4397`). **Inner** (column-plan variants):
