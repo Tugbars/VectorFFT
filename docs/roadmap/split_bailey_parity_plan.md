@@ -297,6 +297,51 @@ Adjacent (executor-level, not codelet bodies, listed for completeness):
 the native tcut tail walker for the proto engine (§5b), and the sp_kv
 axis itself (Phase C) that makes 1–3 raceable per cell.
 
+### 5d · Chartered future — THROUGHPUT WISDOM (owner, 2026-08-19)
+
+**Framing (owner):** the fundamental object is the WORKLOAD — "4 FFTs" —
+and the engines are DELIVERY MECHANISMS for it: contiguous IL delivers it
+sequentially (4 passes of one stream), lane-major split delivers it
+spatially (4 streams through the SIMD lanes of one pass). Layout and K
+are properties of the delivery, not the demand. CCOL is the same move
+reversed — it manufactures a batch out of ONE transform's sub-problems —
+so component planners answer "best way to run this arrangement" and
+throughput wisdom answers "best arrangement for this demand."
+
+A quantity-keyed table: cell = (N, HOWMANY transforms the caller wants
+delivered); per cell the planner races every STRATEGY that can deliver
+that quantity — split batched at native K, the IL single-transform engine
+LOOPED howmany times, split_oop looped, hybrids — each timed END-TO-END
+at the actual quantity (never quantity × a K=1 ns: loop-vs-batch cache
+behavior is exactly what the race must measure; the OoO-context
+principle). Existing cells become COMPONENTS: kind-3 lines describe loop
+bodies, spike lines describe the batched strategy's internals; the
+throughput verdict banks which strategy won + resolves internals from
+each engine's own wisdom (one concern, one file). **Design question RESOLVED by owner (2026-08-19): layout is an OUTPUT of
+planning.** Performance-first users will MOLD their structs to whatever
+layout wins the cell — so the primary throughput race is CONVERSION-FREE:
+every arm runs in its own native layout (no conversion tax on any arm,
+because the user adopts the winner rather than converting into it). The
+verdict doubles as design-time advice ("for (N, howmany): SPLIT, this
+plan"). Surface implications: a layout=BEST-style create mode and/or an
+advise query; `owned_buffers=1` = the runtime embodiment (library
+allocates the winning shape). A conversion-PAYING race survives only as
+the secondary mode for drop-in callers who cannot restructure.
+**Foundations held NOW (owner, 2026-08-19 — throughput is later, the
+key discipline is immediate):** (1) every cell key is
+**(N, quantity, order)** — `10000 K=4`, `10000 K=8`, and `@nat 10000
+K=8` are three distinct cells with independently raced plans (already
+the spike/@nat convention: e.g. shipped `100 4 → 10×10` vs
+`100 32 → 20×5`, and @nat rows coexist with scrambled rows at the same
+(N,K)); (2) **layout is NEVER part of a cell key** — it is a strategy
+property, an output; (3) order stays EXPLICIT in every new record
+(@nat-style), never implied; (4) component planners remain callable
+per-arm production entry points (vfft_sp_dp_plan_and_bank is the
+pattern) so the future throughput racer drives them as strategies.
+Throughput then adds only the strategy axis on top — no re-keying.
+Sequenced AFTER sp_kv + the §5c menu — every component improvement
+raises the arms this table will race.
+
 ## 6 · Hazards
 
 - **JIT bypass:** `--jit` builds serve split routes from a baked kernel
@@ -445,9 +490,19 @@ wisdom into fn pointers/args on the handle; execute never reads wisdom.
       8×1024 · 16384 8×2048 · 32768 8×4096 · 65536 32×2048). Remaining
       B5 residue folds into B6: rebuild-all wisdom writers + the wisdom
       diff review at promotion.
-- [ ] B6. Bank winners 8192–65536 (+ extended reach cells); verify each vs
-      the split baseline / the 8192 heuristic pair. No cross-layout
-      scoreboard — split improvements are measured against split.
+- [x] B6. **PROMOTED 2026-08-19.** Four NEW kind-3 CCOL lines appended to
+      the shipped oop_wisdom.txt (CRLF-safe; git diff = exactly 4
+      insertions; backup `oop_wisdom.txt.bak-20260819-b6`): 8192 8×1024
+      chain 334/133 @19.3µs · 16384 64×256 224/133 @52.2µs · 32768 8×4096
+      3243/1333 @83.7µs · 65536 64×1024 2224/1333 @245.1µs. Decode gate
+      re-run AGAINST THE SHIPPED FILE: 4/4 PASS (≤7.5e-16); no side-writes
+      (git status clean modulo the 4 lines). 8192 beat every pair arm in
+      all 3 rigor-1 runs; 8192/32768 winners stable ×3; 16384/65536 are
+      close races between two CCOL arms (same-run winners banked; optional
+      second-day confirm noted). B2.3 validated in the data: 16384's
+      winning chain was the isolated proposer's LAST-ranked proposal.
+      Writer-fleet rebuild (stale-binary rule; ~16 binaries) executed at
+      promotion. **PHASE B COMPLETE.**
 
 ### Phase C — sp_kv axis (enabler for body variants)
 
