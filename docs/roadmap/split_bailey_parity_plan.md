@@ -275,7 +275,7 @@ wisdom into fn pointers/args on the handle; execute never reads wisdom.
       (which of two same-key rows wins on load).
 - [ ] B2. **Architecture rule (owner, 2026-08-18): calibrators hold NO
       planning logic — thin drivers only.** So B2 = a PRODUCTION planning
-      entry point `vfft_sp_dp_plan_and_bank` (new `dp_planner_sp.h`,
+      entry point `vfft_sp_dp_plan_and_bank` (new `dp_planner_split_oop.h`,
       sibling of `dp_planner_il.h`) that owns the whole split axis:
       (a) the existing route × pair race MIGRATED out of calibrate_k1.c;
       (b) the CCOL axes — R1 ∈ {8,16,32,64} × chain, inner variants via the
@@ -283,11 +283,30 @@ wisdom into fn pointers/args on the handle; execute never reads wisdom.
       pacing, winner selection, banking through the shipped writer.
       calibrate_k1.c shrinks to arg-parse + call + print. Cells extended to
       8192–65536 (+ reach cells).
+      **CODE COMPLETE + GATED 2026-08-18**: `dp_planner_split_oop.h` shipped
+      (charter incl. future odd/prime/Rader/Bluestein routes);
+      `calibrate_k1.c` v3 = 80-line thin driver; `create_k1_cc_v` variants
+      plug; `emit_wisdom`/`plan_and_bank` carry `sp_cc_chain`. Migration
+      gate PASSED (36-candidate roster identical to A1 line-for-line; only
+      additions = the new CCOL arms). Spike policy verified live: DIF-tuned
+      `(32,8)` protected, absent `(16,16)` DIT line banked. ⚠ ORDER: run
+      B4 (create-side spike-variants resolution) BEFORE promoting any
+      banked CCOL winner — until then a replayed CCOL line would serve
+      T1S-default variants, not the raced tuning. Extended-band run
+      (8192–65536) pending.
 - [ ] B3. Reach: wisdom-driven chains at create with `cc_default_chain` as
       the uncalibrated fallback; extend past R2=1024. 🔴 `VFFT_K1_CC_MAX_NF`
       array and decode-loop bound move together (`oop_plan.h:482-487`).
-- [ ] B4. Create-time replay verified: banked kind-3 CCOL line (+ column
-      variants source per B1) → `create_k1_cc` args; execute path untouched.
+- [x] B4. **WIRED + GATED 2026-08-18.** The CCOL replay in `vfft.c` now
+      resolves column variants from the spike line at `(R2, K=R1)` via the
+      shipped `vfft_proto_wisdom_lookup` on the in-memory bundle (`W->c2c`),
+      accepting only DIT lines whose factors equal the decoded `cc_chain`;
+      else NULL → T1S default (pre-B4 behavior). First-match lookup is safe
+      (the planner's spike write collapses duplicates). Front-door gate
+      re-run: ALL CORRECT. Note: calibrated cells replay chains from
+      wisdom, so the planner's reach past R2=1024 is automatic; the
+      `cc_default_chain` table now only bounds UNCALIBRATED fallback (B3's
+      residual scope).
 - [ ] B5. Frontdoor decode gate (banked line → served chain/variants);
       rebuild all wisdom-writing binaries; wisdom diff reviewed before
       commit.

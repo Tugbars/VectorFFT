@@ -4393,9 +4393,26 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 int ccf[VFFT_K1_CC_MAX_NF];
                 int ccn = ke ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
                              : vfft_k1_cc_default_chain(N / sR1, ccf);
+                /* B4 (2026-08-18): column-plan VARIANTS from the spike line
+                 * at (R2, K=R1) — dp_planner_split_oop banks the inner
+                 * tuning there. Accept only a DIT line whose factors equal
+                 * the decoded chain (variants are chain-shaped; the OOP
+                 * boundary is DIT-only). Anything else => NULL = the T1S
+                 * default, the pre-B4 behavior. First-match lookup is safe:
+                 * the planner's spike write collapses duplicate (N,K) rows. */
+                const int *ccv = NULL;
                 if (ccn)
-                    psp = vfft_oop_plan_create_k1_cc(N, sR1, ccf, ccn,
-                                                     _registry());
+                {
+                    const vfft_proto_wisdom_entry_t *se =
+                        vfft_proto_wisdom_lookup(&W->c2c, N / sR1,
+                                                 (size_t)sR1);
+                    if (se && !se->use_dif_forward && se->nf == ccn &&
+                        !memcmp(se->factors, ccf, (size_t)ccn * sizeof(int)))
+                        ccv = se->variants;
+                }
+                if (ccn)
+                    psp = vfft_oop_plan_create_k1_cc_v(N, sR1, ccf, ccn, ccv,
+                                                       _registry());
             }
             else if (spr != VFFT_K1_SP_MONO && sR1)
                 psp = vfft_oop_plan_create_k1(N, sR1, sR2);

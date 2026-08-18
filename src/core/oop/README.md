@@ -14,6 +14,11 @@ it **beats MKL 1.46×–2.64×** across all 10 calibrated cells (`docs/oop_c2c_e
 
 ---
 
+> This section family covers the **caller-batched** lanes (kinds 0–2,
+> `K ≡ 0 mod 8`). The **single-transform split lane** (kind-3 `sp_*` axis —
+> one caller FFT, lane-batched internally) is documented in **"The
+> split_oop search space"** section below.
+
 ## The 2 axes and 3 kinds
 
 A plan is a tagged union (`vfft_oop_plan_t`) over three execution **kinds**, and
@@ -123,6 +128,86 @@ runs `dp_best` over a grid → writes `oop_wisdom.txt`; the runtime
 `N K kind [params] ns` (0=LEAF; 1=BAILEY2 `R1 R2`; 2=MODEB `nf f0..`).
 
 ---
+
+## The split_oop search space (kind-3, one caller transform)
+
+The **split_oop engine** serves a caller who asks for **one** split-layout FFT
+of length N. Terminology: "split" implies the SIMD **lane batch** — split
+layout has no intra-complex parallelism, so the 4 AVX2 lanes (8 on a future
+AVX-512 port) always hold 4 independent same-shaped problems. Here those are
+the **decomposition's own sub-DFTs** (four-step: N = R1·R2 → R1 independent
+R2-point DFTs, GROUPW of them per iteration) — versus the caller-batched
+kinds above, where the lanes are the caller's own transforms (hence their
+`K % 8` contract, which this lane exists to not need). The wisdom cell key is
+`(N, K=1)`: K in wisdom counts **caller** transforms.
+
+Planner: `core/planning/dp_planner_split_oop.h` (`vfft_sp_dp_plan_and_bank`;
+`benches/calibrate_k1.c` is a thin driver — calibrators hold no planning
+logic). Verdicts bank on the kind-3 line's `sp_*` fields (+ `cc_chain` when
+CCOL wins); create resolves wisdom into plan arguments; execute reads nothing.
+
+### The searched axes
+
+```mermaid
+flowchart TB
+    A["route × pair<br/><i>10 arms · R1,R2 ∈ [4,128], %4, registry-gated</i>"]
+    B["CCOL axis<br/><i>R1 ∈ {8,16,32,64} — column batch K=R1 ≡ 0 mod 8</i>"]
+    C["column chain<br/><i>ordered pow2 factorizations of R2=N/R1,<br/>factors 4..64, nf ≤ 7 — proto-DP coarse</i>"]
+    D["per-stage variants<br/><i>FLAT | LOG3 | T1S per twiddled stage,<br/>DIT-pinned — proto-DP refine</i>"]
+    A --- B
+    B --> C --> D
+```
+
+**Route × pair** (kernel binding: leaf = radix **R2** run R1 times; mid =
+radix **R1** over R2 columns):
+
+| route | kernels |
+|---|---|
+| `3P` / `3P-ip` | `n1_oop(R2)` → SIMD transpose sweep → flat `t1_oop(R1)` |
+| `2PA` | `n1_oop(R2)` → `t1_oop_ul(R1)` (transpose in the mid's load lattice) |
+| `2PB` | `n1_oop_ugul(R2)` (transpose in the leaf's stores) → flat `t1_oop(R1)` |
+| `TWL` | 2PA with the linear consumption-order twiddle stream (`t1_oop_ul_twl`) |
+| `3P-L3` / `2PA-L3` | log3 mid twins swapped in at create |
+| `MONO` / `MONO-ALT` | whole-N emitted kernel (`mono64/128_16x8/128_8x16/256_16x16`) — no leaf/mid |
+| `CCOL` | the nested space below |
+
+**CCOL** — the only route with no leaf-radix ceiling; one candidate =
+`t1_oop(R1)` mid + an entire **proto-engine column plan** at `(R2, K=R1)`,
+i.e. the caller-batched engine above used as a component:
+
+1. **R1 ∈ {8,16,32,64}** — picks the flat mid and the column batch width
+   (R1=4 violates the column engine's `K % 8`; `t1_oop@128` does not exist).
+2. **Column chain** — ordered pow2 factorizations of R2 (factors 4–64,
+   `nf ≤ VFFT_K1_CC_MAX_NF = 7`; the `cc_chain` wisdom token encodes digits
+   2–6). Stage 0 = `n1` (the fused OOP boundary, `oop_execute.h`); coarse
+   search + top-K by the proto DP (`measure.h`).
+3. **Per-stage variants** — {FLAT `t1_dit`, LOG3 `t1_dit_log3`, T1S
+   `t1s_dit`} per twiddled stage, **DIT-pinned** (the OOP boundary rejects
+   DIF). Refine = the variant cartesian on each surviving chain.
+
+The winning inner tuning banks as an ordinary spike-wisdom line keyed
+`(R2, K=R1)` — shared with genuinely batched callers at the same key. Write
+policy: a DIF-tuned shared line is **never overwritten** (different
+objective); write only when the cell is absent or an existing DIT line is
+beaten. At create, the CCOL replay accepts the spike line's variants only
+when it is DIT and its factors equal the decoded `cc_chain`; otherwise the
+column plan falls back to T1S defaults.
+
+### Outside the space (current scope, not design limits)
+
+- **No kernel-variant (`sp_kv`) axis yet** — one interior per radix; the
+  raced diversity is route-encoded (UL/ugul/TWL/L3). Chartered:
+  `docs/roadmap/split_bailey_parity_plan.md`.
+- `t1p`/`t1p_log3` broadcast mids are unreachable at caller-K=1 (the
+  per-block alignment gate never holds) — they belong to the batched kinds.
+- `t1_dif_oop` (post-twiddle DIF mids) — no K=1 route selects them.
+- The CCOL combine pass races only the **flat** `t1_oop`; its UL/TWL/log3
+  twins are a possible future extension.
+- Under `--jit` builds the split routes are served by whole-route bakes
+  keyed `(N,R1,R2,route)` — verdicts raced here are measured on the non-JIT
+  executors.
+- Odd/prime N (native split Rader/Bluestein routes) are chartered future
+  members of this enumeration — see the planner header.
 
 ## Results & gotchas
 
