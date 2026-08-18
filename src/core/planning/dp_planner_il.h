@@ -1278,7 +1278,12 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         vfft_oop_wisdom_entry_t e;
         memset(&e, 0, sizeof e);
         e.N = N;
-        e.K = 1;
+        /* owner rule 2026-08-19: K = the batch count of the run that
+         * produced the banked ns — never a caller-transform count. A dual
+         * line banks the IL natural champion's time (one interleaved
+         * transform → 1); a split-only line banks the lane-batch verdict
+         * (VFFT_OOP_GROUPW: 4 on AVX2, 8 on AVX-512). */
+        e.K = il_ok ? 1 : VFFT_OOP_GROUPW;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
         e.k1_sp_route = sp_route >= 0 ? sp_route : 0;
         e.R1 = sp_R1;

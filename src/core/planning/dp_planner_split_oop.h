@@ -576,8 +576,11 @@ static int _sp_merge_bank(const char *main_path, const char *tmp_path)
         int idx = -1;
         for (int j = 0; j < _sp_wmain.count; j++)
             if (_sp_wmain.e[j].N == _sp_wnew.e[i].N &&
-                _sp_wmain.e[j].K == _sp_wnew.e[i].K &&
-                _sp_wmain.e[j].kind == _sp_wnew.e[i].kind) { idx = j; break; }
+                _sp_wmain.e[j].kind == _sp_wnew.e[i].kind &&
+                /* kind-3: one cell per N — a batch-count re-bank replaces a
+                 * legacy K=1 row rather than duplicating it (owner K rule) */
+                (_sp_wmain.e[j].kind == VFFT_OOP_KIND_BAILEY2V ||
+                 _sp_wmain.e[j].K == _sp_wnew.e[i].K)) { idx = j; break; }
         if (idx < 0) {
             if (_sp_wmain.count >= VFFT_OOP_WISDOM_MAX) continue;
             idx = _sp_wmain.count++;
