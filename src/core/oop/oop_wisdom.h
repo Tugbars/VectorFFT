@@ -56,7 +56,9 @@ typedef struct {
      * rule 2026-08-19), never a caller-transform count: a dual line banks
      * the IL champion's single-transform time (K=1); a split-only line
      * banks the lane-batch verdict (K=VFFT_OOP_GROUPW: 4 AVX2 / 8
-     * AVX-512). Lookup is K-agnostic — one kind-3 row per N. */
+     * AVX-512). Only IL can run a single transform — the split engine
+     * always fills its lanes — so K=1 unambiguously identifies an
+     * IL-timed line. Lookup is K-agnostic — one kind-3 row per N. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
     /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
      * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.

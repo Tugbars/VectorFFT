@@ -503,6 +503,17 @@ wisdom into fn pointers/args on the handle; execute never reads wisdom.
       winning chain was the isolated proposer's LAST-ranked proposal.
       Writer-fleet rebuild (stale-binary rule; ~16 binaries) executed at
       promotion. **PHASE B COMPLETE.**
+- [x] B7. **Kind-3 K semantics (owner rule, 2026-08-19).** K = the batch
+      count of the run that produced the banked ns, never a
+      caller-transform count: a dual line (sp+il halves) banks the IL
+      champion's single-transform time → K=1; a split-only line
+      (il_route=0) banks the lane-batch verdict → K=VFFT_OOP_GROUPW
+      (4 AVX2 / 8 AVX-512). Banker emits `il_ok ? 1 : GROUPW`; reader
+      accepts K∈{1,4,8}; lookup and merge match kind-3 by (N,kind) —
+      one row per N, K-agnostic. Shipped file: the four CCOL lines carry
+      K=4; the six dual lines keep their genuine K=1 (their ns/il_kv are
+      the tangent-campaign single-FFT verdicts). Decode gate 4/4 +
+      front-door gate ALL CORRECT on the shipped file; fleet rebuilt.
 
 ### Phase C — sp_kv axis (enabler for body variants)
 
