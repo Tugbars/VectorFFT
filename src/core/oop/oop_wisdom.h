@@ -47,11 +47,16 @@ typedef struct {
     int    nf;                            /* MODEB */
     int    factors[STRIDE_MAX_STAGES];    /* MODEB */
     int    variants[STRIDE_MAX_STAGES];   /* MODEB per-stage 0=FLAT 1=LOG3 2=T1S */
-    /* kind 3 (BAILEY2V / K=1 engine): per-axis verdicts. Line format:
-     *   N 1 3 sp_route sp_R1 sp_R2 il_route il_R1 il_R2 ns
+    /* kind 3 (BAILEY2V): per-axis verdicts. Line format:
+     *   N K 3 sp_route sp_R1 sp_R2 il_route il_R1 il_R2 ns
      * routes = VFFT_K1_SP_* / VFFT_K1_IL_* (oop_plan.h). One entry carries
      * BOTH axes because the buffer layout is an EXECUTE-time contract
-     * (sim==dim==NULL => interleaved), unknown at plan create. */
+     * (sim==dim==NULL => interleaved), unknown at plan create.
+     * K = the batch count of the run that produced the banked ns (owner
+     * rule 2026-08-19), never a caller-transform count: a dual line banks
+     * the IL champion's single-transform time (K=1); a split-only line
+     * banks the lane-batch verdict (K=VFFT_OOP_GROUPW: 4 AVX2 / 8
+     * AVX-512). Lookup is K-agnostic — one kind-3 row per N. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
     /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
      * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
@@ -209,7 +214,11 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
                     else carry = t2;
                 }
             }
-            if (ok && e->K != 1) ok = 0;
+            /* K semantics (owner rule, 2026-08-19): the banker banks the
+             * BATCH COUNT the split verdict runs — the lane width
+             * (VFFT_OOP_GROUPW: 4 on AVX2, 8 on AVX-512) — never "how many
+             * caller transforms". Legacy lines carry 1 and stay readable. */
+            if (ok && e->K != 1 && e->K != 4 && e->K != 8) ok = 0;
         } else if (e->kind == VFFT_OOP_KIND_ZSPLIT) {
             /* kind 4 = K=1 SCRAMBLED cascade: zs_t2q cc_chain */
             tok = strtok(NULL, " \t\n\r"); if (tok) e->zs_t2q = atoi(tok); else ok = 0;
@@ -270,13 +279,15 @@ vfft_oop_wisdom_lookup(const vfft_oop_wisdom_t *w, int N, size_t K)
     return NULL;
 }
 
-/* K=1 engine lookup: the kind-3 entry for N (K==1 by definition). */
+/* Single-transform engine lookup: the kind-3 entry for N. The K column is
+ * the split verdict's BATCH COUNT (owner rule 2026-08-19: lane width, 4/8;
+ * legacy lines carry 1) — kind-3 has one cell per N regardless. */
 static inline const vfft_oop_wisdom_entry_t *
 vfft_oop_wisdom_lookup_k1(const vfft_oop_wisdom_t *w, int N)
 {
     if (!w) return NULL;
     for (int i = 0; i < w->count; i++)
-        if (w->e[i].N == N && w->e[i].K == 1 &&
+        if (w->e[i].N == N &&
             w->e[i].kind == VFFT_OOP_KIND_BAILEY2V)
             return &w->e[i];
     return NULL;
