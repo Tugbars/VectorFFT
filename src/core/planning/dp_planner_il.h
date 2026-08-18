@@ -1249,6 +1249,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 static int vfft_il_dp_emit_wisdom(FILE *f, int N,
                                   const vfft_il_cand_t *nat,
                                   int sp_route, int sp_R1, int sp_R2,
+                                  int sp_cc_chain,
                                   const vfft_il_cand_t *scr,
                                   const vfft_il_cand_t *scr_leg)
 {
@@ -1275,6 +1276,9 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         e.il_R1 = nat->R1;
         e.il_R2 = nat->R2;
         e.il_kv = nat->il_kv;   /* 0 until the variant axis is raced */
+        /* a CCOL split winner's chain rides the kind-3 line (B2 2026-08-18;
+         * the grammar carries cc_chain only when sp_route == CCOL) */
+        e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
         e.ns = nat->cost_ns;
         vfft_oop_wisdom_write_entry(f, &e);
         lines++;
@@ -1333,6 +1337,7 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
  * ZTURN-winner line still carries the fallback route's terminator pick. */
 static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
                                     int sp_route, int sp_R1, int sp_R2,
+                                    int sp_cc_chain,
                                     int verbose)
 {
     vfft_il_cand_t nat, scr;
@@ -1350,8 +1355,8 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
                     e->top[i].zroute == 0)
                     leg = &e->top[i];
     }
-    return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2, &scr,
-                                  leg);
+    return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2,
+                                  sp_cc_chain, &scr, leg);
 }
 
 /* Ranked rows for a deploy pool / wisdom writer. Returns how many were filled. */

@@ -508,8 +508,11 @@ static inline int vfft_k1_cc_chain_decode(int code, int *chain)
  *
  * The plan carries NO leaf and serves ONLY vfft_oop_execute_fwd_ccol (split
  * axis; bwd = the caller's pointer-swap identity, same as every split route). */
-static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
-    int N, int R1, const int *chain, int nf,
+/* _v: per-stage column-plan variants (FLAT/LOG3/T1S codes, wisdom-sourced;
+ * NULL = T1S default — the pre-B2 behavior). The plain create below is the
+ * NULL wrapper so every existing caller is byte-identical. */
+static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc_v(
+    int N, int R1, const int *chain, int nf, const int *variants,
     const vfft_proto_registry_t *reg)
 {
     if (R1 <= 0 || (R1 % 4) || (N % R1) || nf < 1 || nf > VFFT_K1_CC_MAX_NF)
@@ -539,7 +542,7 @@ static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
     p->cc_nf = nf;
     for (int s = 0; s < nf; s++) p->cc_chain[s] = chain[s];
 
-    p->colp = vfft_proto_plan_create(R2, (size_t)R1, chain, NULL, nf, reg);
+    p->colp = vfft_proto_plan_create(R2, (size_t)R1, chain, variants, nf, reg);
     p->cc_perm = (int *)malloc((size_t)R2 * sizeof(int));
     p->col_re = (double *)malloc((size_t)N * 8);
     p->col_im = (double *)malloc((size_t)N * 8);
@@ -622,6 +625,13 @@ fail:
     free(p->Qr); free(p->Qi);
     free(p);
     return NULL;
+}
+
+static inline vfft_oop_plan_t *vfft_oop_plan_create_k1_cc(
+    int N, int R1, const int *chain, int nf,
+    const vfft_proto_registry_t *reg)
+{
+    return vfft_oop_plan_create_k1_cc_v(N, R1, chain, nf, NULL, reg);
 }
 
 /* Build a MODEB plan (general-N OOP via the stride engine). The SINGLE owner
