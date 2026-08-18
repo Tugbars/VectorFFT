@@ -254,13 +254,35 @@ rebuild every wisdom-writing consumer after any format/registry change.
 Principle (library invariant): planning races and banks; create resolves
 wisdom into fn pointers/args on the handle; execute never reads wisdom.
 
-- [ ] B1. Design decision: bank column-plan variants via spike_wisdom keyed
-      `(N=R2, K=R1)` (existing v8 format, zero grammar change — preferred)
-      vs extending the kind-3 line. Chain stays in the existing `cc_chain`
-      token either way.
-- [ ] B2. `calibrate_k1`: enumerate CCOL chain × per-stage variants × R1
-      (R1 ∈ {8,16,32,64} — column engine needs K=R1 ≡ 0 mod 8) at
-      8192–65536; correctness gate (1e-9 vs naive DFT) before any timing.
+- [x] B1. **DECIDED 2026-08-18 — spike composition, two-level.**
+      **Outer** (R1 ∈ {8,16,32,64} × chain, whole-route): raced in
+      calibrate_k1, banked kind-3 `sp_R1` + `cc_chain` (tokens exist; replay
+      already wired, `vfft.c:4388-4397`). **Inner** (column-plan variants):
+      raced by the EXISTING proto DP (`measure.h`) with **use_dif pinned 0**
+      (the OOP boundary is DIT-only), banked as spike v8 lines keyed
+      `(R2, K=R1)`; `create_k1_cc`'s `variants=NULL` arg is the plug point.
+      **Read policy at create**: accept the spike line only if
+      `use_dif==0` AND its factors equal the decoded `cc_chain` (variants
+      are chain-shaped); else `variants=NULL` (today's T1S default).
+      **Write policy** (shared-cell rule — the `(R2,64)` namespace is
+      ALREADY populated: 2026-07-23 spike-era rows incl. duplicates and
+      `ns=0.00` placeholders, plus genuine batched cells, and `(256,64)` is
+      DIF-tuned): CCOL calibration never overwrites a DIF-tuned line — it
+      writes only when the cell is absent or an existing DIT line is beaten.
+      **Reach**: `VFFT_K1_CC_MAX_NF=7` already covers N ≤ 64·4⁷ — no
+      constant change; the default-chain table becomes the calibrated-miss
+      fallback only. B2 must also pin the reader's duplicate-line semantics
+      (which of two same-key rows wins on load).
+- [ ] B2. **Architecture rule (owner, 2026-08-18): calibrators hold NO
+      planning logic — thin drivers only.** So B2 = a PRODUCTION planning
+      entry point `vfft_sp_dp_plan_and_bank` (new `dp_planner_sp.h`,
+      sibling of `dp_planner_il.h`) that owns the whole split axis:
+      (a) the existing route × pair race MIGRATED out of calibrate_k1.c;
+      (b) the CCOL axes — R1 ∈ {8,16,32,64} × chain, inner variants via the
+      DIT-pinned proto DP, spike write policy per B1; (c) gate-before-time,
+      pacing, winner selection, banking through the shipped writer.
+      calibrate_k1.c shrinks to arg-parse + call + print. Cells extended to
+      8192–65536 (+ reach cells).
 - [ ] B3. Reach: wisdom-driven chains at create with `cc_default_chain` as
       the uncalibrated fallback; extend past R2=1024. 🔴 `VFFT_K1_CC_MAX_NF`
       array and decode-loop bound move together (`oop_plan.h:482-487`).
