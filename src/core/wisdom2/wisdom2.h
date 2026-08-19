@@ -194,11 +194,15 @@ static const vw2_field_t vw2_fields[] = {
     { "path",    VW2_FC_STRUCTURAL }, { "b",       VW2_FC_STRUCTURAL },
     { "k_pad",   VW2_FC_STRUCTURAL }, { "m",       VW2_FC_STRUCTURAL },
     { "pad_me",  VW2_FC_STRUCTURAL }, { "il_me",   VW2_FC_STRUCTURAL },
+    { "sp_route",VW2_FC_STRUCTURAL }, { "sp_pair", VW2_FC_STRUCTURAL },
+    { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
+    { "t1p",     VW2_FC_STRUCTURAL },
     /* the kv family is placement-luck, machine-tied: re-race on host
      * mismatch, never port (README §4.3; zr_kv included — it is a kernel
      * variant selector like its siblings). */
     { "zr_kv",   VW2_FC_LOCAL },
-    { "t2q",     VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
+    { "t2q",     VW2_FC_LOCAL }, { "zs_t2q", VW2_FC_LOCAL },
+    { "zt_t2q",  VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
     { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
     { "ran",     VW2_FC_INFO }, { "ns",   VW2_FC_INFO }, { "metric", VW2_FC_INFO },
@@ -854,6 +858,15 @@ static inline void vw2_close(vw2_store_t *s)
 static inline void vw2_set_meta(vw2_store_t *s, const char *meta)
 {
     snprintf(s->meta, sizeof s->meta, "%s", meta ? meta : "");
+}
+
+/* The measurement-mode guard, togglable by the owner of the store (the
+ * create path applies the config guard here; tools pass writable at open).
+ * Never overrides the unset-env forcing at open — callers that were forced
+ * read-only for the wrong-cwd reason stay read-only. */
+static inline void vw2_set_writable(vw2_store_t *s, int on)
+{
+    s->writable = (uint8_t)(on ? 1 : 0);
 }
 
 /* ---------------------------------------------------------------- lookup */

@@ -67,3 +67,10 @@ docs/** linguist-documentation
 # this pin kills the Git-Bash-sed CRLF trap at the root). See
 # src/core/wisdom2/README.md §2.3.
 src/dag-fft-compiler/generator/generated/wisdom2_*.txt text eol=lf
+
+# wisdom2 TRANSITIONAL tooling — the one-shot migrator and the writer
+# registry die with the legacy wisdom files (campaign wave 5 / v1.0).
+# Excluded from the language bar; the permanent module (wisdom2.h, the
+# reader, selftest, README) stays counted as shipped library code.
+src/core/wisdom2/wisdom2_migrate.h linguist-vendored
+tools/wisdom_migrate/**           linguist-vendored
