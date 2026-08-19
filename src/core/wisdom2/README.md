@@ -42,14 +42,17 @@ src/dag-fft-compiler/generator/generated/
 
 All files share one grammar and one module.
 
-**Read model:** lookup always consults the UNION of every `wisdom2_*.txt`
-present in the wisdom directory — the per-family split is a write-side
-sharding choice only. **Write model:** the module owns one key→file routing
-table (by transform, rank of `n=`, and placement; the prime shard
-additionally routes on the engine field — sharding may peek at payload,
-semantics never do). **Family identity lives in the record's key, never in
-the filename**; the shards can be collapsed into one file at any time
-without a format change.
+**Read model:** lookup consults the union of the module's shard table (the
+files above) — the per-family split is a write-side sharding choice only.
+**Write model:** the module owns one key→file routing table (by transform,
+rank of `n=`, and placement; the prime shard additionally routes on the
+engine field — sharding may peek at payload, semantics never do). New banks
+route by the table; **save emits every record into the shard it resides
+in** — a record only moves when a re-bank re-routes it, and then the module
+marks both shards dirty and scrubs the stale copy from the old file.
+**Family identity lives in the record's key, never in the filename**; the
+one-file collapse is a one-line edit of the shard table — the format needs
+no change.
 
 Any other `*wisdom*.txt` in that folder is a frozen legacy store: read-only
 history. Never edit one, never add fields to one; new axes land here.
@@ -90,11 +93,14 @@ save can never clobber a file the reader could not understand. A wisdom file
 is never silently empty.
 
 **Lexical rules:** tokens are whitespace-separated `key=value` pairs; values
-are bare (no whitespace, no quotes, no escapes). Sections are separated by
-`" | "` (pipe with one space each side); pipes never appear in values. The
-single exception: `raw=` in `@quarantined` records is always the LAST token
-and its value runs to end-of-line (escape-free, so any legacy line survives
-verbatim).
+are bare (no whitespace, no quotes, no escapes) — the writer refuses
+violations at the API. Sections are separated by `" | "` (pipe with one
+space each side); pipes never appear in values; an empty section is written
+as the single marker token `-`. A line the parser cannot fully own — a bare
+token, a duplicated token name — is carried opaque as a whole, never
+truncated. Lines have no length limit. The single lexical exception: `raw=`
+in `@quarantined` records is always the LAST token and its value runs to
+end-of-line (escape-free, so any legacy line survives verbatim).
 
 ```text
 @vw2 1.0
@@ -221,15 +227,28 @@ exposes them as race PROPOSALS only.
 
 ### 4.2 Banking and saving
 
-- ONE dedup: upsert on the full key tuple. Merge rank: `race`/`migrated` >
-  `env:*` > `seed`; among equal rank, newer date wins; cross-metric
-  replacement refused.
+- ONE dedup: upsert on the full key tuple. The merge law, rank-first:
+  `race`/`migrated` > `env:*` > `seed` > unknown src values (a future source
+  kind read by an old binary can never displace raced data). A HIGHER rank
+  replaces unconditionally — a real race always displaces an env or seed
+  verdict, whatever its metric. At EQUAL rank: newer date wins, a dated
+  incumbent refuses a dateless challenger, and metric/units mismatch — or a
+  measure-less challenger against a measured incumbent — is refused
+  (never compare across metrics). A same-rank replacement that changes the
+  engine logs one loud line (the migrator's dual-fold signal). Absent `src=`
+  means a fresh bank (`race`).
 - Saves are dirty-only and merge-on-save (the on-disk file is re-read and
   this process's delta upserted, so concurrent sessions banking different
-  cells both survive), then atomic: write `.tmp`, flush,
-  `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` on Windows / `rename()` on POSIX.
-  Stale `.tmp` files are swept on load. Tables are dynamic; exhaustion is
-  loud.
+  cells both survive), then atomic: write a pid-suffixed `.tmp`, flush and
+  sync with every write CHECKED — any failure removes the tmp and leaves the
+  old file intact — then `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` on Windows
+  / `rename()` on POSIX. (Do NOT copy adopt_wisdom.h's bare `rename()` — it
+  fails over an existing target on Windows CRTs.) Stale tmps are swept at
+  OPEN only, never during a save's merge re-read. Tables are dynamic;
+  exhaustion is loud. Duplicate keys discovered across shards at load (the
+  legacy of an old re-route) resolve by the merge law; the loser's shard is
+  scrubbed on the next writable save. The quarantine file is append-only,
+  honors the write guard, and carries the version header.
 - One constructor per verdict shape builds records from plans; hand-formatted
   lines do not exist. Field-scoped promotion is a supported API call —
   never line surgery on a wisdom file.
@@ -239,9 +258,10 @@ exposes them as race PROPOSALS only.
 Every payload field is registered with a class:
 
 - **STRUCTURAL** — ports across machines (routes, chains).
-- **LOCAL** — placement-luck, machine-tied (`t2q`, `kv`, `il_kv`, `sp_kv`,
-  tile widths): on a host/L1 mismatch that FIELD degrades to re-race while
-  the structural rest of the record still serves.
+- **LOCAL** — placement-luck, machine-tied (`t2q`, `kv`, `il_kv`, `zr_kv`,
+  `sp_kv`, tile widths — the whole kv family): on a host/L1 mismatch that
+  FIELD degrades to re-race while the structural rest of the record still
+  serves.
 - **INFO** — never decision-load-bearing.
 
 Adding a field = one registry line + the producer stamp + the consumer read.

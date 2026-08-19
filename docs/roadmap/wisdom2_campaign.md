@@ -48,28 +48,44 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       LOCAL.
 - [x] 0.7 **DONE 2026-08-19.** .gitattributes eol=lf pin + .gitignore
       explicit negation landed.
-- [x] 0.8 **G0 ALL PASS 2026-08-19 — 55/55 checks** (wisdom2_g0_gate.exe,
-      thin driver over module-owned `wisdom2_selftest.h` per the thin-driver
-      law): round-trip · idempotent re-save byte-stable · header/legend
-      byte-identity · carry-unknown (token + record + directive survive a
-      stale-writer resave) · version-refuse + per-file poison + bytes
-      untouched · stale-.tmp sweep · two-store merge-on-save (both cells
-      survive) · merge-rank + date tie-break · cross-metric refusal ·
-      wildcard law (fresh refused, migrated accepted, exact beats wildcard)
-      · seeds never served · read-only guard · ref= parse (partial refused)
-      · quarantine raw-to-EOL. Lint leg: zero `@cell` emitters outside
-      src/core/wisdom2/.
+- [x] 0.8 **G0 ALL PASS 2026-08-20 — 113 checks** (wisdom2_g0_gate.exe, thin
+      driver over module-owned `wisdom2_selftest.h`). The first 55-check
+      green was then adversarially reviewed by a 3-lens workflow
+      (spec-fidelity with a compiled probe, C/memory safety, grammar edges)
+      which found 2 blockers + 8 bugs + gaps — ALL fixed and gated: save
+      emits by RESIDENCY (re-route scrubs the old shard; update_field never
+      re-routes; cross-shard duplicate keys dedup at load); every write
+      checked (a failed emit can no longer rename a truncated tmp over a
+      good file); pid-suffixed tmps swept at OPEN only; merge law reordered
+      RANK-FIRST (a real race always displaces env/seed; metric refusal
+      applies at equal rank; dated beats dateless; measure-less challengers
+      refused; unknown src ranks lowest); seeds excluded from BOTH lookup
+      tiers; empty sections carry the `-` marker (round-trip corruption
+      fixed); wildcard tier prefers q=*-only; dangling ref ⇒ loud MISS in
+      lookup; request wildcards refused; growing line reader (no 4096-byte
+      split); bare/duplicate tokens ⇒ whole-line opaque carry; lexical law
+      enforced at the write API; n=/q= overflow + dangling-'x' rejected;
+      zero-byte/headerless file ⇒ poison; @meta round-trips (+ setter);
+      quarantine guarded + versioned; zr_kv reclassified LOCAL. Coverage
+      added: routing (prime/trig), unknown KEY token carry, minor-version
+      accept, CRLF, update_field, re-route migration, 6KB lines. Lint leg
+      green. 🔴 TOOLCHAIN TRAP found en route: mingw15.2 at the repo's race
+      flags miscompiles `va_start` after a BY-VALUE STRUCT parameter —
+      never put an aggregate before `...` (fixed by pass-by-pointer;
+      repro'd, minimal case isolated).
 - [ ] 0.9 Migrator skeleton linking the FROZEN legacy parsers verbatim;
       row-conservation accounting (migrated + quarantined + skipped ==
       source, machine-checked); idempotency harness; quarantine emitter.
 - [ ] 0.10 Plan-equivalence gate harness: both stacks in one binary; diff by
       executor registry id + args (chains, variants, t2q, kv, widths, routes,
       pad geometry), never raw fn pointers across binaries.
-- [ ] 0.11 `WRITER_REGISTRY.md` checked in: the complete per-family fleet
-      list (census risk-2 list + writer-symbol grep; includes the front-door
-      bankers: zr2c_prewarm, zr2c_fd_gate, natural/ilp front gates,
-      bench modes --kzb/--k1nat/--k1z/--c2rcalib, calibrate_k1,
-      calibrate_zchain, width gate, cil_ab).
+- [x] 0.11 **DONE 2026-08-20.** `tools/wisdom_migrate/WRITER_REGISTRY.md`
+      checked in — agent-authored, every entry verified against source
+      (file:line cited): 4 direct writers + 16 front-door bankers + library
+      banking sites by family + read-only consumers + per-wave rebuild
+      checklists. Corrections vs older lists: zr2c_gate is NOT a writer;
+      calibrate_k1's spike banner and zr2c_fd_gate's never-persists comment
+      are stale; the bench flag is `--c2rcalib`.
 - [ ] 0.12 Gate stderr taps (`_*.log`) repointed out of wisdom dirs.
 
 ## Wave 1 — oop family (APPROVED TO START; unblocks Phase C / sp_kv)
