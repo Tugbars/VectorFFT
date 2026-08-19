@@ -12,17 +12,30 @@
  * wisdom-directory resolution at open.
  *
  * Grammar invariants enforced here (per README §3):
- *   - version header checked: bad magic / major > supported => file refused,
- *     one loud stderr line, per-file POISON (banking/saving disabled so a
- *     save can never clobber a file we could not read). Never silently empty.
- *   - unknown tokens and unknown records are carried VERBATIM through
- *     load -> bank -> save (no code path parses-and-truncates).
+ *   - version header checked: bad magic / major > supported / MISSING
+ *     header (zero-byte or truncated file) => file refused, one loud stderr
+ *     line, per-file POISON (banking/saving disabled so a save can never
+ *     clobber a file we could not read). Never silently empty.
+ *   - unknown tokens, unknown records, and unknown directives are carried
+ *     VERBATIM through load -> bank -> save. A line this parser cannot
+ *     fully OWN (unknown transform, unknown key token, bare or duplicate
+ *     payload token) is carried opaque as a whole — no code path
+ *     parses-and-truncates. Lines have no length limit (growing reader).
  *   - wildcards (q=* / ord=* / place=*) are legal only on migrated records
- *     (from= required); the writer refuses a fresh wildcard bank.
- *   - one dedup (full key tuple), merge rank race/migrated > env > seed,
- *     newer date among equals, cross-metric replacement refused.
- *   - saves are dirty-only, merge-on-save, atomic (tmp + MoveFileEx /
- *     rename). Stale .tmp swept at load.
+ *     (from= required); the writer refuses a fresh wildcard bank. Requests
+ *     never carry wildcards (lookup refuses them loudly).
+ *   - one dedup (full key tuple), merge law rank-first:
+ *     race/migrated > env > seed > unknown-src; higher rank replaces
+ *     unconditionally; at equal rank newer date wins, dated beats dateless,
+ *     and cross-metric (or asymmetric metric/units presence when the
+ *     incumbent is measured) replacement is refused.
+ *   - records are EMITTED BY RESIDENCY: save writes a record into the shard
+ *     file it lives in. Only vw2_bank re-routes (and then marks both the
+ *     old and new shard dirty and scrubs the stale disk copy on save).
+ *   - saves are dirty-only, merge-on-save, atomic (pid-suffixed tmp +
+ *     MoveFileEx / rename), with every write checked — a failed emit
+ *     removes the tmp and leaves the old file intact. Stale tmps are swept
+ *     at OPEN only (never during a save's merge re-read).
  */
 #ifndef VFFT_WISDOM2_H
 #define VFFT_WISDOM2_H
@@ -31,12 +44,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <errno.h>
+#include <limits.h>
 
 #if defined(_WIN32)
 #  include <windows.h>
 #  include <io.h>
+#  include <direct.h>
+#  include <process.h>
+#  define VW2__GETPID() _getpid()
 #else
 #  include <unistd.h>
+#  include <dirent.h>
+#  define VW2__GETPID() getpid()
 #endif
 
 /* ---------------------------------------------------------------- version */
@@ -60,10 +80,10 @@ typedef enum { VW2_ORD_ANY = -1, VW2_ORD_NAT = 0, VW2_ORD_SCR = 1 } vw2_ord_t;
 typedef enum { VW2_PL_ANY  = -1, VW2_PL_IP   = 0, VW2_PL_OOP  = 1 } vw2_pl_t;
 typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
 
-/* src= provenance rank (merge law, README §4.2): race/migrated > env > seed.
- * migrated serves like race (the number WAS raced); a fresh same-metric race
- * outranks it via the tie-break below. */
-typedef enum { VW2_SRC_SEED = 0, VW2_SRC_ENV = 1, VW2_SRC_MIGRATED = 2,
+/* src= merge rank (README §3.4/§4.2). Absent src = race (a fresh bank).
+ * An UNKNOWN src value ranks LOWEST (refuse-don't-guess: a future source
+ * kind read by this binary must not displace raced verdicts). */
+typedef enum { VW2_SRC_UNKNOWN = 0, VW2_SRC_SEED = 1, VW2_SRC_ENV = 2,
                VW2_SRC_RACE = 3 } vw2_src_t;
 
 /* Field portability classes (README §4.3). */
@@ -73,15 +93,16 @@ typedef enum { VW2_FC_STRUCTURAL = 0, VW2_FC_LOCAL = 1, VW2_FC_INFO = 2 } vw2_fc
 enum {
     VW2_OK = 0,
     VW2_EOPEN      = -1,  /* cannot open for read (missing file is NOT an error) */
-    VW2_EVERSION   = -2,  /* bad magic / unsupported major -> file poisoned      */
+    VW2_EVERSION   = -2,  /* bad/missing magic or major -> file poisoned         */
     VW2_EREADONLY  = -3,  /* bank/save refused: store not writable               */
     VW2_EPOISON    = -4,  /* bank/save refused: file failed to load              */
     VW2_EWILDCARD  = -5,  /* fresh bank carried a wildcard without from=         */
     VW2_EMETRIC    = -6,  /* cross-metric/units replacement refused              */
-    VW2_ERANK      = -7,  /* lower-rank record refused to replace incumbent      */
-    VW2_EKEY       = -8,  /* malformed key                                       */
+    VW2_ERANK      = -7,  /* lower-rank/older record refused                     */
+    VW2_EKEY       = -8,  /* malformed key / no such record                      */
     VW2_EIO        = -9,  /* write/replace failure (old file left intact)        */
-    VW2_ENOMEM     = -10
+    VW2_ENOMEM     = -10,
+    VW2_EVALUE     = -11  /* token name/value violates the lexical rules         */
 };
 
 /* ------------------------------------------------------------------ key */
@@ -95,22 +116,20 @@ typedef struct {
     int64_t q;                    /* requested quantity; -1 = '*' (migrated)  */
     int8_t  ord;                  /* vw2_ord_t; -1 = '*'                      */
     int8_t  pl;                   /* vw2_pl_t;  -1 = '*'                      */
-    uint8_t dir;                  /* vw2_dir_t; 0 = absent (reserved axis)    */
+    uint8_t dir;                  /* vw2_dir_t; 0 = absent (reserved axis).
+                                     dir matches by EQUALITY everywhere: an
+                                     absent-dir record serves absent-dir
+                                     requests only (README §3.1).            */
 } vw2_key_t;
 
 /* --------------------------------------------------------------- record */
 
-/* A record keeps its payload+measure+provenance as ordered (name,value)
- * string tokens. Known-ness matters only to the field registry; unknown
- * tokens ride along verbatim (strip-cycle armor). Records the parser cannot
- * OWN (unknown t=, unknown key token, unknown @-directive) are kept as
- * opaque raw lines and re-emitted untouched. */
 typedef struct { char *name; char *val; uint8_t sect; /* 1=payload 2=meas */ } vw2_tok_t;
 
 typedef struct {
     vw2_key_t  key;
     vw2_tok_t *tok;  int ntok, captok;
-    int        shard;            /* which wisdom2_*.txt it lives in          */
+    int        shard;            /* RESIDENCY: which file it lives in        */
 } vw2_rec_t;
 
 /* ------------------------------------------------------------------ store */
@@ -122,7 +141,9 @@ typedef struct {
 #define VW2_SHARD_2D     4
 #define VW2_SHARD_3D     5
 #define VW2_NSHARDS      6
-/* wisdom2_quarantine.txt is append-only and never loaded into the table. */
+/* wisdom2_quarantine.txt is append-only and never loaded into the table.
+ * The reader consults exactly this shard table; the one-file collapse is a
+ * one-table edit (the FORMAT needs no change) — README §2.1. */
 
 static const char *vw2_shard_name[VW2_NSHARDS] = {
     "wisdom2_oop.txt", "wisdom2_stride.txt", "wisdom2_real.txt",
@@ -137,7 +158,8 @@ typedef struct {
     uint8_t    dirty[VW2_NSHARDS];
     uint8_t    present[VW2_NSHARDS];   /* file existed at load               */
     uint8_t    writable;               /* the write guard (README §2.2)      */
-    char       meta[256];              /* "host=... isa=... l1d=..." or ""   */
+    char       meta[256];              /* @meta payload; captured at load,
+                                          settable via vw2_set_meta          */
 } vw2_store_t;
 
 /* ------------------------------------------------------- string tables */
@@ -162,8 +184,7 @@ static const char *vw2_legend[] = {
 
 /* Field registry (README §4.3): name -> portability class. Unregistered
  * fields default to INFO (safe: never decision-load-bearing until
- * registered). Retired names are never reused; dead env names live in the
- * env table below. */
+ * registered). Retired names are never reused. */
 typedef struct { const char *name; uint8_t fclass; } vw2_field_t;
 static const vw2_field_t vw2_fields[] = {
     { "eng",     VW2_FC_STRUCTURAL }, { "route",   VW2_FC_STRUCTURAL },
@@ -173,7 +194,10 @@ static const vw2_field_t vw2_fields[] = {
     { "path",    VW2_FC_STRUCTURAL }, { "b",       VW2_FC_STRUCTURAL },
     { "k_pad",   VW2_FC_STRUCTURAL }, { "m",       VW2_FC_STRUCTURAL },
     { "pad_me",  VW2_FC_STRUCTURAL }, { "il_me",   VW2_FC_STRUCTURAL },
-    { "zr_kv",   VW2_FC_STRUCTURAL },
+    /* the kv family is placement-luck, machine-tied: re-race on host
+     * mismatch, never port (README §4.3; zr_kv included — it is a kernel
+     * variant selector like its siblings). */
+    { "zr_kv",   VW2_FC_LOCAL },
     { "t2q",     VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
     { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
@@ -220,8 +244,12 @@ static inline char *vw2__strdup(const char *s)
     return p;
 }
 
-/* self-contained tokenizer (strtok_r is not portably declared on mingw):
- * splits *sp on spaces/tabs, NUL-terminates the token, advances *sp. */
+static inline void vw2__oom(void)
+{
+    fprintf(stderr, "[wisdom2] OUT OF MEMORY — store operation aborted\n");
+}
+
+/* whitespace-splitting tokenizer (strtok_r is not portably declared) */
 static inline char *vw2__tok(char **sp)
 {
     char *s = *sp, *t;
@@ -234,11 +262,6 @@ static inline char *vw2__tok(char **sp)
     return t;
 }
 
-static inline void vw2__oom(void)
-{
-    fprintf(stderr, "[wisdom2] OUT OF MEMORY — store operation aborted\n");
-}
-
 static inline int vw2__t_parse(const char *s)
 {
     int i;
@@ -247,31 +270,38 @@ static inline int vw2__t_parse(const char *s)
     return VW2_T_NONE;
 }
 
-/* n= parse: "1024" / "64x64" / "32x32x32" / "AxBxCxD". */
+/* n= parse: "1024" / "64x64" / ... Rejects a dangling 'x', non-digit tails,
+ * zero/negative extents, overflow past INT32_MAX, and rank > 4. */
 static inline int vw2__n_parse(const char *s, vw2_key_t *k)
 {
     int rank = 0;
     const char *p = s;
-    while (*p) {
+    for (;;) {
         char *end;
-        long v = strtol(p, &end, 10);
-        if (end == p || v <= 0 || rank >= VW2_MAX_DIMS) return 0;
+        long long v;
+        if (*p < '0' || *p > '9') return 0;        /* digit required here    */
+        errno = 0;
+        v = strtoll(p, &end, 10);
+        if (errno == ERANGE || v <= 0 || v > INT32_MAX) return 0;
+        if (rank >= VW2_MAX_DIMS) return 0;
         k->n[rank++] = (int32_t)v;
-        if (*end == 'x') p = end + 1;
-        else if (*end == '\0') { p = end; }
-        else return 0;
+        if (*end == '\0') break;
+        if (*end != 'x') return 0;
+        p = end + 1;                               /* loop re-requires digit */
     }
-    if (!rank) return 0;
     k->rank = (uint8_t)rank;
     return 1;
 }
 
 static inline void vw2__n_format(const vw2_key_t *k, char *out, size_t cap)
 {
-    size_t off = 0; int i;
+    size_t off = 0; int i, r;
     out[0] = 0;
-    for (i = 0; i < k->rank; i++)
-        off += (size_t)snprintf(out + off, cap - off, "%s%d", i ? "x" : "", k->n[i]);
+    for (i = 0; i < k->rank; i++) {
+        r = snprintf(out + off, cap - off, "%s%d", i ? "x" : "", k->n[i]);
+        if (r < 0 || (size_t)r >= cap - off) return;   /* truncation-safe    */
+        off += (size_t)r;
+    }
 }
 
 static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
@@ -283,7 +313,8 @@ static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
 }
 
 /* Does record key R serve request key REQ, allowing R's wildcards?
- * (A request never carries wildcards.) */
+ * dir matches by strict equality (README §3.1). Requests never carry
+ * wildcards — vw2_lookup enforces that. */
 static inline int vw2_key_serves(const vw2_key_t *r, const vw2_key_t *req)
 {
     int i;
@@ -292,13 +323,20 @@ static inline int vw2_key_serves(const vw2_key_t *r, const vw2_key_t *req)
     if (r->q   != -1 && r->q   != req->q)   return 0;
     if (r->ord != -1 && r->ord != req->ord) return 0;
     if (r->pl  != -1 && r->pl  != req->pl)  return 0;
-    if (r->dir != 0  && r->dir != req->dir) return 0;
+    if (r->dir != req->dir) return 0;
     return 1;
 }
 
 static inline int vw2_key_has_wildcard(const vw2_key_t *k)
 {
     return k->q == -1 || k->ord == -1 || k->pl == -1;
+}
+
+/* wildcard-tier precedence (README §4.1): q=*-only records outrank records
+ * wildcarding ord/place. */
+static inline int vw2__wild_q_only(const vw2_key_t *k)
+{
+    return k->q == -1 && k->ord != VW2_ORD_ANY && k->pl != VW2_PL_ANY;
 }
 
 /* ------------------------------------------------------ record helpers */
@@ -311,12 +349,31 @@ static inline const char *vw2_rec_get(const vw2_rec_t *r, const char *name)
     return NULL;
 }
 
+/* Lexical law (README §3): names/values are bare tokens — no whitespace,
+ * no pipes, no '=' in names, non-empty. */
+static inline int vw2__lex_ok(const char *name, const char *val)
+{
+    const char *p;
+    if (!name || !name[0] || !val || !val[0]) return 0;
+    for (p = name; *p; p++)
+        if (*p == ' ' || *p == '\t' || *p == '|' || *p == '=') return 0;
+    for (p = val; *p; p++)
+        if (*p == ' ' || *p == '\t' || *p == '|') return 0;
+    return 1;
+}
+
 static inline int vw2_rec_set(vw2_rec_t *r, int sect, const char *name, const char *val)
 {
     int i;
+    char *nn, *nv;
+    if (!vw2__lex_ok(name, val)) {
+        fprintf(stderr, "[wisdom2] token refused: '%s=%s' violates the lexical rules "
+                        "(bare tokens only)\n", name ? name : "?", val ? val : "?");
+        return VW2_EVALUE;
+    }
     for (i = 0; i < r->ntok; i++)
         if (!strcmp(r->tok[i].name, name)) {
-            char *nv = vw2__strdup(val);
+            nv = vw2__strdup(val);
             if (!nv) { vw2__oom(); return VW2_ENOMEM; }
             free(r->tok[i].val);
             r->tok[i].val = nv;
@@ -328,10 +385,12 @@ static inline int vw2_rec_set(vw2_rec_t *r, int sect, const char *name, const ch
         if (!nt) { vw2__oom(); return VW2_ENOMEM; }
         r->tok = nt; r->captok = nc;
     }
-    r->tok[r->ntok].name = vw2__strdup(name);
-    r->tok[r->ntok].val  = vw2__strdup(val);
+    nn = vw2__strdup(name);
+    nv = vw2__strdup(val);
+    if (!nn || !nv) { free(nn); free(nv); vw2__oom(); return VW2_ENOMEM; }
+    r->tok[r->ntok].name = nn;
+    r->tok[r->ntok].val  = nv;
     r->tok[r->ntok].sect = (uint8_t)sect;
-    if (!r->tok[r->ntok].name || !r->tok[r->ntok].val) { vw2__oom(); return VW2_ENOMEM; }
     r->ntok++;
     return VW2_OK;
 }
@@ -348,24 +407,47 @@ static inline int vw2__src_rank(const vw2_rec_t *r)
 {
     const char *s = vw2_rec_get(r, "src");
     if (!s) return VW2_SRC_RACE;              /* absent = fresh bank = race  */
-    if (!strncmp(s, "env", 3))       return VW2_SRC_ENV;
-    if (!strcmp(s, "seed"))          return VW2_SRC_SEED;
-    if (!strcmp(s, "migrated"))      return VW2_SRC_MIGRATED;
-    return VW2_SRC_RACE;
+    if (!strcmp(s, "race") || !strcmp(s, "migrated")) return VW2_SRC_RACE;
+    if (!strcmp(s, "env") || !strncmp(s, "env:", 4))  return VW2_SRC_ENV;
+    if (!strcmp(s, "seed"))                            return VW2_SRC_SEED;
+    return VW2_SRC_UNKNOWN;   /* future src kinds never displace raced data */
 }
 
-/* Serving rank: race and migrated serve as equals (README §3.4). */
-static inline int vw2__merge_rank(const vw2_rec_t *r)
+static inline int vw2__is_seed(const vw2_rec_t *r)
 {
-    int s = vw2__src_rank(r);
-    return (s == VW2_SRC_MIGRATED) ? VW2_SRC_RACE : s;
+    const char *s = vw2_rec_get(r, "src");
+    return s && !strcmp(s, "seed");
+}
+
+/* Merge law (README §4.2), rank-first. Returns VW2_OK when `nw` may replace
+ * `inc`, else the governing refusal code. */
+static inline int vw2__merge_allows(const vw2_rec_t *inc, const vw2_rec_t *nw)
+{
+    int ri = vw2__src_rank(inc), rn = vw2__src_rank(nw);
+    if (rn < ri) return VW2_ERANK;
+    if (rn > ri) return VW2_OK;      /* higher rank replaces unconditionally */
+    {
+        /* equal rank: date rule — newer wins, dated beats dateless          */
+        const char *id = vw2_rec_get(inc, "date"), *nd = vw2_rec_get(nw, "date");
+        if (id && !nd) return VW2_ERANK;
+        if (id && nd && strcmp(nd, id) < 0) return VW2_ERANK;
+    }
+    {
+        /* equal rank: metric identity — mismatch or asymmetric presence
+         * against a MEASURED incumbent is refused (README §3.4)             */
+        const char *im = vw2_rec_get(inc, "metric"), *nm = vw2_rec_get(nw, "metric");
+        const char *iu = vw2_rec_get(inc, "units"),  *nu = vw2_rec_get(nw, "units");
+        if (im && (!nm || strcmp(im, nm))) return VW2_EMETRIC;
+        if (iu && (!nu || strcmp(iu, nu))) return VW2_EMETRIC;
+    }
+    return VW2_OK;
 }
 
 /* ------------------------------------------------------- key parse/emit */
 
-/* Parses the KEY section tokens. Returns 1 = owned, 0 = record must be
- * carried opaque (unknown t= or unknown key token: refuse-don't-guess,
- * README §3.1), -1 = malformed (also opaque). */
+/* 1 = owned; 0 = carry the whole line opaque (unknown transform, unknown
+ * key token — refuse-don't-guess, README §3.1); -1 = malformed (also
+ * carried opaque by the caller). */
 static inline int vw2__key_parse(char *sect, vw2_key_t *k)
 {
     char *tok, *p = sect;
@@ -387,7 +469,12 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 have_n = 1;
             } else if (!strcmp(tok, "q")) {
                 if (!strcmp(v, "*")) k->q = -1;
-                else { k->q = strtoll(v, NULL, 10); if (k->q <= 0) return -1; }
+                else {
+                    char *end;
+                    errno = 0;
+                    k->q = strtoll(v, &end, 10);
+                    if (errno == ERANGE || end == v || *end != '\0' || k->q <= 0) return -1;
+                }
                 have_q = 1;
             } else if (!strcmp(tok, "ord")) {
                 if (!strcmp(v, "*")) k->ord = VW2_ORD_ANY;
@@ -406,7 +493,7 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 else if (!strcmp(v, "bwd")) k->dir = VW2_DIR_BWD;
                 else return -1;
             } else {
-                return 0;   /* unknown KEY token => invisible to lookup */
+                return 0;   /* unknown KEY token => invisible + opaque carry */
             }
         }
     }
@@ -416,17 +503,18 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
 static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
 {
     char nb[64];
-    size_t off;
+    size_t off = 0; int r;
     vw2__n_format(k, nb, sizeof nb);
-    off = (size_t)snprintf(out, cap, "t=%s n=%s ", vw2_t_name[k->t], nb);
-    if (k->q == -1) off += (size_t)snprintf(out + off, cap - off, "q=* ");
-    else            off += (size_t)snprintf(out + off, cap - off, "q=%lld ", (long long)k->q);
-    off += (size_t)snprintf(out + off, cap - off, "ord=%s ",
-                            k->ord == VW2_ORD_ANY ? "*" : (k->ord == VW2_ORD_NAT ? "nat" : "scr"));
-    off += (size_t)snprintf(out + off, cap - off, "place=%s",
-                            k->pl == VW2_PL_ANY ? "*" : (k->pl == VW2_PL_IP ? "ip" : "oop"));
+#define VW2__CAT(...) do { r = snprintf(out + off, cap - off, __VA_ARGS__); \
+    if (r < 0 || (size_t)r >= cap - off) { return; } off += (size_t)r; } while (0)
+    VW2__CAT("t=%s n=%s ", vw2_t_name[k->t], nb);
+    if (k->q == -1) VW2__CAT("q=* ");
+    else            VW2__CAT("q=%lld ", (long long)k->q);
+    VW2__CAT("ord=%s ", k->ord == VW2_ORD_ANY ? "*" : (k->ord == VW2_ORD_NAT ? "nat" : "scr"));
+    VW2__CAT("place=%s", k->pl == VW2_PL_ANY ? "*" : (k->pl == VW2_PL_IP ? "ip" : "oop"));
     if (k->dir != VW2_DIR_NONE)
-        snprintf(out + off, cap - off, " dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
+        VW2__CAT(" dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
+#undef VW2__CAT
 }
 
 /* ref= helper (README §3.3): "cell(t=c2c,n=4096,q=1,ord=scr,place=oop)".
@@ -445,9 +533,9 @@ static inline int vw2_ref_parse(const char *val, vw2_key_t *k)
 
 /* --------------------------------------------------------- shard routing */
 
-/* key -> file. Sharding is a WRITE-side choice only (lookup reads the union
- * of all shards); it may peek at the eng= payload for the prime shard —
- * sharding is never semantics (README §2.1). */
+/* key -> file, for NEW banks. Sharding is a WRITE-side choice only; it may
+ * peek at eng= for the prime shard — sharding is never semantics
+ * (README §2.1). Save emits by RESIDENCY, never by re-routing. */
 static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
 {
     if (k->rank == 2) return VW2_SHARD_2D;
@@ -477,8 +565,10 @@ static inline int vw2__opaque_push(vw2_store_t *s, int shard, const char *line)
 
 /* ------------------------------------------------------------ line parse */
 
-/* Parses one @cell line into rec (which the caller zeroed). Sections are
- * separated by " | " exactly; the KEY may refuse ownership (opaque carry). */
+/* 1 = owned; 0 = carry opaque; VW2_ENOMEM on allocation failure.
+ * The literal token "-" is the empty-section marker (emitted by this
+ * module, skipped here). Any other bare token, or a duplicated token name,
+ * refuses ownership of the whole line — verbatim carry, never truncate. */
 static inline int vw2__cell_parse(const char *line, vw2_rec_t *rec)
 {
     char *body = vw2__strdup(line + 6);            /* skip "@cell "          */
@@ -492,81 +582,131 @@ static inline int vw2__cell_parse(const char *line, vw2_rec_t *rec)
     if (p2) *p2 = 0;
 
     owned = vw2__key_parse(body, &rec->key);
-    if (owned != 1) { free(body); return 0; }
+    if (owned != 1) { free(body); vw2_rec_free(rec); return 0; }
 
     for (sectid = 1; sectid <= 2; sectid++) {
         sect = (sectid == 1) ? p1 + 3 : (p2 ? p2 + 3 : NULL);
         if (!sect) break;
         while ((tok = vw2__tok(&sect)) != NULL) {
             char *eq = strchr(tok, '=');
-            if (!eq) continue;                     /* tolerate, keep going    */
+            int rc;
+            if (!eq) {
+                if (!strcmp(tok, "-")) continue;   /* empty-section marker   */
+                free(body); vw2_rec_free(rec); return 0;   /* bare token     */
+            }
             *eq = 0;
-            if (vw2_rec_set(rec, sectid, tok, eq + 1) != VW2_OK) { free(body); return VW2_ENOMEM; }
+            if (vw2_rec_get(rec, tok)) {           /* duplicate name         */
+                free(body); vw2_rec_free(rec); return 0;
+            }
+            rc = vw2_rec_set(rec, sectid, tok, eq + 1);
+            if (rc == VW2_EVALUE) { free(body); vw2_rec_free(rec); return 0; }
+            if (rc != VW2_OK)     { free(body); vw2_rec_free(rec); return VW2_ENOMEM; }
         }
     }
     free(body);
     return 1;
 }
 
-static inline void vw2__cell_emit(FILE *f, const vw2_rec_t *r)
+/* Emit one record. Empty sections carry the "-" marker so the section
+ * structure round-trips byte-stably (README §3 lexical rules). Returns 0
+ * on success, VW2_EIO on any write error. */
+static inline int vw2__cell_emit(FILE *f, const vw2_rec_t *r)
 {
     char kb[192];
     int i, first;
     vw2__key_format(&r->key, kb, sizeof kb);
-    fprintf(f, "@cell %s", kb);
+    if (fprintf(f, "@cell %s", kb) < 0) return VW2_EIO;
     for (i = 0, first = 1; i < r->ntok; i++)
-        if (r->tok[i].sect == 1) { fprintf(f, first ? " | %s=%s" : " %s=%s", r->tok[i].name, r->tok[i].val); first = 0; }
-    if (first) fprintf(f, " |");
+        if (r->tok[i].sect == 1) {
+            if (fprintf(f, first ? " | %s=%s" : " %s=%s", r->tok[i].name, r->tok[i].val) < 0)
+                return VW2_EIO;
+            first = 0;
+        }
+    if (first && fprintf(f, " | -") < 0) return VW2_EIO;
     for (i = 0, first = 1; i < r->ntok; i++)
-        if (r->tok[i].sect == 2) { fprintf(f, first ? " | %s=%s" : " %s=%s", r->tok[i].name, r->tok[i].val); first = 0; }
-    if (first) fprintf(f, " |");
-    fputc('\n', f);
+        if (r->tok[i].sect == 2) {
+            if (fprintf(f, first ? " | %s=%s" : " %s=%s", r->tok[i].name, r->tok[i].val) < 0)
+                return VW2_EIO;
+            first = 0;
+        }
+    if (first && fprintf(f, " | -") < 0) return VW2_EIO;
+    if (fputc('\n', f) == EOF) return VW2_EIO;
+    return 0;
 }
 
-/* ------------------------------------------------------------------ load */
+/* ---------------------------------------------------------------- load */
 
 static inline void vw2__path(const vw2_store_t *s, int shard, char *out, size_t cap)
 {
     snprintf(out, cap, "%s/%s", s->dir, vw2_shard_name[shard]);
 }
 
-/* Loads one shard file into the store (records + opaque). Returns VW2_OK,
- * VW2_EVERSION (poisoned), or VW2_OK with present=0 when missing. */
+/* growing line reader: no length limit (README: no parse-and-truncate).
+ * Returns the line (caller frees) without the trailing newline, or NULL at
+ * EOF / OOM (*oom set). */
+static inline char *vw2__readline(FILE *f, int *oom)
+{
+    size_t cap = 4096, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) { *oom = 1; return NULL; }
+    for (;;) {
+        if (!fgets(buf + len, (int)(cap - len), f)) {
+            if (len == 0) { free(buf); return NULL; }
+            break;
+        }
+        len += strlen(buf + len);
+        if (len && buf[len - 1] == '\n') break;
+        if (cap - len < 2) {
+            char *nb = (char *)realloc(buf, cap *= 2);
+            if (!nb) { free(buf); *oom = 1; return NULL; }
+            buf = nb;
+        }
+    }
+    while (len && (buf[len - 1] == '\n' || buf[len - 1] == '\r')) buf[--len] = 0;
+    return buf;
+}
+
+/* Loads one shard file into the store. VW2_OK, VW2_EVERSION (poisoned),
+ * VW2_ENOMEM; a missing file is VW2_OK with present=0. Never touches tmps
+ * (sweeping happens at open only). */
 static inline int vw2__load_shard(vw2_store_t *s, int shard)
 {
-    char path[640], tmp[700];
-    char line[4096];
+    char path[640];
+    char *line;
     FILE *f;
-    int first = 1;
+    int first = 1, oom = 0, rc = VW2_OK;
 
     vw2__path(s, shard, path, sizeof path);
-    snprintf(tmp, sizeof tmp, "%s.tmp", path);
-    remove(tmp);                                    /* sweep stale .tmp       */
-
     f = fopen(path, "rb");
     if (!f) return VW2_OK;                          /* missing = empty, fine  */
     s->present[shard] = 1;
 
-    while (fgets(line, sizeof line, f)) {
-        size_t n = strlen(line);
-        while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
+    while ((line = vw2__readline(f, &oom)) != NULL) {
         if (first) {
             int maj = -1, min = -1;
             first = 0;
-            if (sscanf(line, VW2_MAGIC " %d.%d", &maj, &min) != 2 || maj != VW2_MAJOR) {
+            if (strncmp(line, VW2_MAGIC " ", sizeof VW2_MAGIC) != 0 ||
+                sscanf(line + sizeof VW2_MAGIC, "%d.%d", &maj, &min) != 2 ||
+                maj != VW2_MAJOR) {
                 fprintf(stderr, "[wisdom2] REFUSED %s: bad or unsupported header '%s' "
                                 "(want " VW2_MAGIC " %d.x) — file poisoned, no banking/saving to it\n",
                         path, line, VW2_MAJOR);
                 s->poisoned[shard] = 1;
+                free(line);
                 fclose(f);
                 return VW2_EVERSION;
             }
+            free(line);
             continue;
         }
-        if (!line[0]) continue;
-        if (line[0] == '#') continue;               /* comments not preserved: the
-                                                       writer re-emits the header */
-        if (!strncmp(line, "@legend", 7) || !strncmp(line, "@meta", 5)) continue;
+        if (!line[0] || line[0] == '#') { free(line); continue; }
+        if (!strncmp(line, "@legend", 7) && (line[7] == ' ' || line[7] == '\0')) { free(line); continue; }
+        if (!strncmp(line, "@meta", 5) && (line[5] == ' ' || line[5] == '\0')) {
+            if (!s->meta[0] && line[5] == ' ')
+                snprintf(s->meta, sizeof s->meta, "%s", line + 6);
+            free(line);
+            continue;
+        }
         if (!strncmp(line, "@cell ", 6)) {
             vw2_rec_t rec;
             int r;
@@ -576,29 +716,93 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
                 if (s->nrec == s->caprec) {
                     int nc = s->caprec ? s->caprec * 2 : 64;
                     vw2_rec_t *nr = (vw2_rec_t *)realloc(s->rec, (size_t)nc * sizeof *nr);
-                    if (!nr) { vw2__oom(); vw2_rec_free(&rec); fclose(f); return VW2_ENOMEM; }
+                    if (!nr) { vw2__oom(); vw2_rec_free(&rec); free(line); fclose(f); return VW2_ENOMEM; }
                     s->rec = nr; s->caprec = nc;
                 }
                 rec.shard = shard;
                 s->rec[s->nrec++] = rec;
             } else if (r == 0) {
-                vw2_rec_free(&rec);
-                if (vw2__opaque_push(s, shard, line) != VW2_OK) { fclose(f); return VW2_ENOMEM; }
-            } else { vw2_rec_free(&rec); fclose(f); return VW2_ENOMEM; }
+                if (vw2__opaque_push(s, shard, line) != VW2_OK) { free(line); fclose(f); return VW2_ENOMEM; }
+            } else { free(line); fclose(f); return VW2_ENOMEM; }
         } else {
             /* unknown @-directive / future record kind: opaque carry */
-            if (vw2__opaque_push(s, shard, line) != VW2_OK) { fclose(f); return VW2_ENOMEM; }
+            if (vw2__opaque_push(s, shard, line) != VW2_OK) { free(line); fclose(f); return VW2_ENOMEM; }
         }
+        free(line);
     }
     fclose(f);
-    return VW2_OK;
+    if (oom) return VW2_ENOMEM;
+    if (first) {
+        /* file existed but had NO header line (zero-byte / crash-truncated):
+         * never silently empty (README §3) */
+        fprintf(stderr, "[wisdom2] REFUSED %s: empty or headerless file — poisoned, "
+                        "no banking/saving to it\n", path);
+        s->poisoned[shard] = 1;
+        return VW2_EVERSION;
+    }
+    return rc;
+}
+
+/* stale-tmp sweep at OPEN only (never during a save's merge re-read):
+ * removes every "<shard>.tmp*" left by crashed writers. */
+static inline void vw2__sweep_tmps(const char *dir)
+{
+#if defined(_WIN32)
+    char pat[640], full[900];
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    snprintf(pat, sizeof pat, "%s/wisdom2_*.txt.tmp*", dir);
+    h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        snprintf(full, sizeof full, "%s/%s", dir, fd.cFileName);
+        remove(full);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d = opendir(dir);
+    struct dirent *e;
+    char full[900];
+    if (!d) return;
+    while ((e = readdir(d)) != NULL) {
+        const char *n = e->d_name;
+        if (!strncmp(n, "wisdom2_", 8) && strstr(n, ".txt.tmp")) {
+            snprintf(full, sizeof full, "%s/%s", dir, n);
+            remove(full);
+        }
+    }
+    closedir(d);
+#endif
+}
+
+/* load-time cross-shard dedup: duplicate full keys (the legacy of an old
+ * re-route) resolve by the merge law; the loser is dropped from memory and
+ * its shard marked dirty so the next writable save scrubs the stale line. */
+static inline void vw2__dedup_loaded(vw2_store_t *s)
+{
+    int i, j;
+    for (i = 0; i < s->nrec; i++)
+        for (j = i + 1; j < s->nrec; j++) {
+            int loser;
+            if (!vw2_key_eq(&s->rec[i].key, &s->rec[j].key)) continue;
+            loser = (vw2__merge_allows(&s->rec[i], &s->rec[j]) == VW2_OK) ? i : j;
+            fprintf(stderr, "[wisdom2] duplicate key across shards (%s vs %s) — "
+                            "keeping the merge-law winner, shard marked for scrub\n",
+                    vw2_shard_name[s->rec[i].shard], vw2_shard_name[s->rec[j].shard]);
+            s->dirty[s->rec[loser].shard] = 1;
+            vw2_rec_free(&s->rec[loser]);
+            s->rec[loser] = s->rec[s->nrec - 1];
+            s->nrec--;
+            i--;                                    /* re-scan the moved slot */
+            break;
+        }
 }
 
 /* Open the store. dir==NULL resolves $VFFT_WISDOM_DIR else "." — and an
  * unset env FORCES read-only (the wrong-cwd colony killer, README §2.2).
- * `writable` is the measurement-mode guard: tools pass 1 deliberately.
- * (The config-field/env shape of the guard is an OPEN owner decision; until
- * pinned, this explicit flag is the only switch.) */
+ * `writable` is the measurement-mode guard (README: exact config/env shape
+ * of the guard is an OPEN owner decision; this explicit flag is the only
+ * switch until then). */
 static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
 {
     int i, worst = VW2_OK;
@@ -615,12 +819,19 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
             }
         }
     }
+    if (strlen(dir) >= sizeof s->dir) {
+        fprintf(stderr, "[wisdom2] wisdom dir path too long — store opened READ-ONLY on '.'\n");
+        dir = ".";
+        writable = 0;
+    }
     snprintf(s->dir, sizeof s->dir, "%s", dir);
     s->writable = (uint8_t)(writable ? 1 : 0);
+    vw2__sweep_tmps(s->dir);
     for (i = 0; i < VW2_NSHARDS; i++) {
         int r = vw2__load_shard(s, i);
         if (r != VW2_OK && worst == VW2_OK) worst = r;
     }
+    vw2__dedup_loaded(s);
     fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s\n", s->dir, s->nrec,
             s->writable ? ", writable" : ", read-only",
             worst == VW2_EVERSION ? ", SOME FILES POISONED" : "");
@@ -639,21 +850,59 @@ static inline void vw2_close(vw2_store_t *s)
     memset(s, 0, sizeof *s);
 }
 
+/* host/isa/l1d stamp for the header; also captured from files at load. */
+static inline void vw2_set_meta(vw2_store_t *s, const char *meta)
+{
+    snprintf(s->meta, sizeof s->meta, "%s", meta ? meta : "");
+}
+
 /* ---------------------------------------------------------------- lookup */
 
+/* dangling-ref rule (README §3.3): a hit whose ref= target is absent from
+ * the union (or unparseable) is a MISS — loud, then the normal miss path. */
+static inline int vw2__ref_ok(const vw2_store_t *s, const vw2_rec_t *r)
+{
+    const char *v = vw2_rec_get(r, "ref");
+    vw2_key_t tk;
+    int i;
+    if (!v) return 1;
+    if (!vw2_ref_parse(v, &tk)) {
+        fprintf(stderr, "[wisdom2] dangling ref (unparseable '%s') — verdict treated as MISS\n", v);
+        return 0;
+    }
+    for (i = 0; i < s->nrec; i++)
+        if (vw2_key_eq(&s->rec[i].key, &tk)) return 1;
+    fprintf(stderr, "[wisdom2] dangling ref (target absent) — verdict treated as MISS\n");
+    return 0;
+}
+
 /* Resolution (README §4.1 steps 1-2). Force-shaped env preemption is the
- * CALLER's step 0 — this module stores, it does not decide routes. */
+ * CALLER's step 0 — this module stores, it does not decide routes.
+ * Seeds are never served from either tier; requests never carry wildcards;
+ * wildcard tier prefers q=*-only records over ord/place wildcards. */
 static inline const vw2_rec_t *vw2_lookup(const vw2_store_t *s, const vw2_key_t *req)
 {
-    int i;
+    int i, pass;
+    if (vw2_key_has_wildcard(req)) {
+        fprintf(stderr, "[wisdom2] lookup refused: request key carries a wildcard\n");
+        return NULL;
+    }
     for (i = 0; i < s->nrec; i++)                          /* 1: exact       */
-        if (!vw2_key_has_wildcard(&s->rec[i].key) && vw2_key_eq(&s->rec[i].key, req))
+        if (!vw2_key_has_wildcard(&s->rec[i].key) && vw2_key_eq(&s->rec[i].key, req)) {
+            if (vw2__is_seed(&s->rec[i])) continue;
+            if (!vw2__ref_ok(s, &s->rec[i])) continue;
             return &s->rec[i];
-    for (i = 0; i < s->nrec; i++)                          /* 2: wildcard    */
-        if (vw2_key_has_wildcard(&s->rec[i].key) && vw2_key_serves(&s->rec[i].key, req)) {
-            const char *src = vw2_rec_get(&s->rec[i], "src");
-            if (src && !strcmp(src, "seed")) continue;     /* seeds never serve */
-            return &s->rec[i];
+        }
+    for (pass = 0; pass < 2; pass++)                       /* 2: wildcards   */
+        for (i = 0; i < s->nrec; i++) {
+            const vw2_rec_t *r = &s->rec[i];
+            if (!vw2_key_has_wildcard(&r->key)) continue;
+            if (pass == 0 && !vw2__wild_q_only(&r->key)) continue;
+            if (pass == 1 &&  vw2__wild_q_only(&r->key)) continue;
+            if (!vw2_key_serves(&r->key, req)) continue;
+            if (vw2__is_seed(r)) continue;
+            if (!vw2__ref_ok(s, r)) continue;
+            return r;
         }
     return NULL;                                           /* 3: MISS        */
 }
@@ -668,49 +917,26 @@ static inline const vw2_rec_t *vw2_scan(const vw2_store_t *s, int *cursor)
 
 /* ------------------------------------------------------------------ bank */
 
-/* Upsert by full key tuple. Enforces: write guard, poison, the wildcard law,
- * merge rank, date tie-break, cross-metric refusal. On success the record's
- * tokens are MOVED into the store (caller must not free rec's tokens). */
-static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
+/* internal upsert with a PINNED shard (used by save's merge; no guard or
+ * wildcard checks — those belong to the public entry). Merge law applies.
+ * On success the record's tokens are MOVED into the store. */
+static inline int vw2__bank_pinned(vw2_store_t *s, vw2_rec_t *rec, int shard)
 {
-    int i, shard;
-    if (!s->writable) { fprintf(stderr, "[wisdom2] bank refused: store is read-only\n"); return VW2_EREADONLY; }
-    if (vw2_key_has_wildcard(&rec->key) && !vw2_rec_get(rec, "from")) {
-        fprintf(stderr, "[wisdom2] bank refused: wildcard key without from= "
-                        "(wildcards are migration-vintage only)\n");
-        return VW2_EWILDCARD;
-    }
-    shard = vw2_shard_route(&rec->key, vw2_rec_get(rec, "eng"));
-    if (s->poisoned[shard]) {
-        fprintf(stderr, "[wisdom2] bank refused: %s is poisoned (unreadable header)\n",
-                vw2_shard_name[shard]);
-        return VW2_EPOISON;
-    }
+    int i;
     for (i = 0; i < s->nrec; i++) {
+        int rc;
         if (!vw2_key_eq(&s->rec[i].key, &rec->key)) continue;
+        rc = vw2__merge_allows(&s->rec[i], rec);
+        if (rc != VW2_OK) return rc;
         {
-            const vw2_rec_t *inc = &s->rec[i];
-            const char *im = vw2_rec_get(inc, "metric"), *iu = vw2_rec_get(inc, "units");
-            const char *nm = vw2_rec_get(rec, "metric"), *nu = vw2_rec_get(rec, "units");
-            if (im && nm && (strcmp(im, nm) || (iu && nu && strcmp(iu, nu)))) {
-                fprintf(stderr, "[wisdom2] bank refused: metric/units mismatch vs incumbent "
-                                "(%s/%s vs %s/%s) — never compare across metrics\n",
-                        im, iu ? iu : "?", nm, nu ? nu : "?");
-                return VW2_EMETRIC;
-            }
-            if (vw2__merge_rank(rec) < vw2__merge_rank(inc)) {
-                fprintf(stderr, "[wisdom2] bank refused: lower-rank source would replace "
-                                "a raced verdict\n");
-                return VW2_ERANK;
-            }
-            if (vw2__merge_rank(rec) == vw2__merge_rank(inc)) {
-                const char *id = vw2_rec_get(inc, "date"), *nd = vw2_rec_get(rec, "date");
-                if (id && nd && strcmp(nd, id) < 0) {
-                    fprintf(stderr, "[wisdom2] bank refused: older record (date %s < %s)\n", nd, id);
-                    return VW2_ERANK;
-                }
-            }
+            /* loud when a same-rank replacement changes the engine — the
+             * migrator's dual-fold signal (README §4.2) */
+            const char *ie = vw2_rec_get(&s->rec[i], "eng"), *ne = vw2_rec_get(rec, "eng");
+            if (ie && ne && strcmp(ie, ne))
+                fprintf(stderr, "[wisdom2] note: replacement changes eng=%s -> eng=%s "
+                                "on an existing cell\n", ie, ne);
         }
+        if (s->rec[i].shard != shard) s->dirty[s->rec[i].shard] = 1;  /* scrub old */
         vw2_rec_free(&s->rec[i]);
         s->rec[i] = *rec;
         s->rec[i].shard = shard;
@@ -731,8 +957,28 @@ static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
     return VW2_OK;
 }
 
+/* Public bank: guard + wildcard law + routing, then the pinned upsert.
+ * On success the record's tokens are MOVED (caller must not free them). */
+static inline int vw2_bank(vw2_store_t *s, vw2_rec_t *rec)
+{
+    int shard;
+    if (!s->writable) { fprintf(stderr, "[wisdom2] bank refused: store is read-only\n"); return VW2_EREADONLY; }
+    if (vw2_key_has_wildcard(&rec->key) && !vw2_rec_get(rec, "from")) {
+        fprintf(stderr, "[wisdom2] bank refused: wildcard key without from= "
+                        "(wildcards are migration-vintage only)\n");
+        return VW2_EWILDCARD;
+    }
+    shard = vw2_shard_route(&rec->key, vw2_rec_get(rec, "eng"));
+    if (s->poisoned[shard]) {
+        fprintf(stderr, "[wisdom2] bank refused: %s is poisoned (unreadable header)\n",
+                vw2_shard_name[shard]);
+        return VW2_EPOISON;
+    }
+    return vw2__bank_pinned(s, rec, shard);
+}
+
 /* Field-scoped promotion (README §4.2): set one payload field on the record
- * at `key`. Replaces wisdom-file line surgery. */
+ * at `key`. Residency is sticky — promotion never re-routes a record. */
 static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
                                    const char *name, const char *val)
 {
@@ -740,7 +986,9 @@ static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
     if (!s->writable) { fprintf(stderr, "[wisdom2] update refused: read-only\n"); return VW2_EREADONLY; }
     for (i = 0; i < s->nrec; i++)
         if (vw2_key_eq(&s->rec[i].key, key)) {
-            int r = vw2_rec_set(&s->rec[i], 1, name, val);
+            int r;
+            if (s->poisoned[s->rec[i].shard]) return VW2_EPOISON;
+            r = vw2_rec_set(&s->rec[i], 1, name, val);
             if (r == VW2_OK) s->dirty[s->rec[i].shard] = 1;
             return r;
         }
@@ -749,12 +997,14 @@ static inline int vw2_update_field(vw2_store_t *s, const vw2_key_t *key,
 
 /* ------------------------------------------------------------------ save */
 
-static inline void vw2__emit_header(FILE *f, const vw2_store_t *s)
+static inline int vw2__emit_header(FILE *f, const vw2_store_t *s)
 {
     int i;
-    fprintf(f, VW2_MAGIC " %d.%d\n", VW2_MAJOR, VW2_MINOR);
-    for (i = 0; i < VW2_NLEGEND; i++) fprintf(f, "@legend %s\n", vw2_legend[i]);
-    if (s->meta[0]) fprintf(f, "@meta %s\n", s->meta);
+    if (fprintf(f, VW2_MAGIC " %d.%d\n", VW2_MAJOR, VW2_MINOR) < 0) return VW2_EIO;
+    for (i = 0; i < VW2_NLEGEND; i++)
+        if (fprintf(f, "@legend %s\n", vw2_legend[i]) < 0) return VW2_EIO;
+    if (s->meta[0] && fprintf(f, "@meta %s\n", s->meta) < 0) return VW2_EIO;
+    return 0;
 }
 
 static inline int vw2__replace_file(const char *tmp, const char *path)
@@ -767,18 +1017,20 @@ static inline int vw2__replace_file(const char *tmp, const char *path)
     return VW2_OK;
 }
 
-/* Dirty-only, merge-on-save, atomic (README §4.2). Merge-on-save: the disk
- * file is re-read into a fresh store and THIS store's records for the shard
- * are upserted over it under the same merge law — two processes banking
- * different cells both survive; same-cell collisions resolve by rank/date. */
+/* Dirty-only, merge-on-save, atomic, RESIDENCY-emitted (README §4.2).
+ * Every write is checked: any failure removes the tmp and leaves the old
+ * file intact. Records this store holds in a DIFFERENT shard are scrubbed
+ * from this shard's disk copy (the re-route cleanup). */
 static inline int vw2_save(vw2_store_t *s)
 {
-    int shard, i, rc = VW2_OK;
+    int shard, i, j, rc = VW2_OK;
     if (!s->writable) { fprintf(stderr, "[wisdom2] save refused: read-only\n"); return VW2_EREADONLY; }
     for (shard = 0; shard < VW2_NSHARDS; shard++) {
-        char path[640], tmp[700];
+        char path[640], tmp[720];
         FILE *f;
         vw2_store_t disk;
+        int err = 0, lrc;
+
         if (!s->dirty[shard]) continue;
         if (s->poisoned[shard]) { rc = VW2_EPOISON; continue; }
 
@@ -786,44 +1038,61 @@ static inline int vw2_save(vw2_store_t *s)
         memset(&disk, 0, sizeof disk);
         snprintf(disk.dir, sizeof disk.dir, "%s", s->dir);
         disk.writable = 1;
-        if (vw2__load_shard(&disk, shard) == VW2_EVERSION) { vw2_close(&disk); rc = VW2_EPOISON; continue; }
-        for (i = 0; i < s->nrec; i++) {
+        lrc = vw2__load_shard(&disk, shard);
+        if (lrc != VW2_OK) { vw2_close(&disk); rc = (lrc == VW2_EVERSION) ? VW2_EPOISON : lrc; continue; }
+
+        /* scrub: disk records whose key THIS store holds in another shard */
+        for (j = 0; j < disk.nrec; j++)
+            for (i = 0; i < s->nrec; i++)
+                if (s->rec[i].shard != shard &&
+                    vw2_key_eq(&s->rec[i].key, &disk.rec[j].key)) {
+                    vw2_rec_free(&disk.rec[j]);
+                    disk.rec[j] = disk.rec[disk.nrec - 1];
+                    disk.nrec--;
+                    j--;
+                    break;
+                }
+
+        /* upsert my residents over the merge base (pinned: no re-route) */
+        for (i = 0; i < s->nrec && !err; i++) {
+            vw2_rec_t cp; int t, copy_ok = 1;
             if (s->rec[i].shard != shard) continue;
-            {
-                /* deep-copy my record into the merge base via bank() */
-                vw2_rec_t cp; int j;
-                memset(&cp, 0, sizeof cp);
-                cp.key = s->rec[i].key;
-                for (j = 0; j < s->rec[i].ntok; j++)
-                    if (vw2_rec_set(&cp, s->rec[i].tok[j].sect, s->rec[i].tok[j].name,
-                                    s->rec[i].tok[j].val) != VW2_OK) { vw2_rec_free(&cp); break; }
-                if (vw2_bank(&disk, &cp) != VW2_OK) vw2_rec_free(&cp);
-            }
+            memset(&cp, 0, sizeof cp);
+            cp.key = s->rec[i].key;
+            for (t = 0; t < s->rec[i].ntok; t++)
+                if (vw2_rec_set(&cp, s->rec[i].tok[t].sect, s->rec[i].tok[t].name,
+                                s->rec[i].tok[t].val) != VW2_OK) { copy_ok = 0; break; }
+            if (!copy_ok) { vw2_rec_free(&cp); err = 1; break; }
+            if (vw2__bank_pinned(&disk, &cp, shard) != VW2_OK) vw2_rec_free(&cp);
         }
-        /* my opaque lines for this shard ride along (disk's own were loaded) */
-        for (i = 0; i < s->nopq[shard]; i++) {
-            int dup = 0, j;
+        /* my opaque lines ride along (disk's own were loaded) */
+        for (i = 0; i < s->nopq[shard] && !err; i++) {
+            int dup = 0;
             for (j = 0; j < disk.nopq[shard]; j++)
                 if (!strcmp(disk.opaque[shard][j], s->opaque[shard][i])) { dup = 1; break; }
-            if (!dup) vw2__opaque_push(&disk, shard, s->opaque[shard][i]);
+            if (!dup && vw2__opaque_push(&disk, shard, s->opaque[shard][i]) != VW2_OK) err = 1;
         }
+        if (err) { vw2_close(&disk); rc = VW2_ENOMEM; continue; }
+
+        if (!disk.meta[0] && s->meta[0]) snprintf(disk.meta, sizeof disk.meta, "%s", s->meta);
 
         vw2__path(s, shard, path, sizeof path);
-        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        snprintf(tmp, sizeof tmp, "%s.tmp.%d", path, (int)VW2__GETPID());
         f = fopen(tmp, "wb");
         if (!f) { vw2_close(&disk); rc = VW2_EIO; continue; }
-        vw2__emit_header(f, s);
-        for (i = 0; i < disk.nrec; i++)
-            if (disk.rec[i].shard == shard) vw2__cell_emit(f, &disk.rec[i]);
-        for (i = 0; i < disk.nopq[shard]; i++) fprintf(f, "%s\n", disk.opaque[shard][i]);
-        fflush(f);
+        if (vw2__emit_header(f, &disk) != 0) err = 1;
+        for (i = 0; i < disk.nrec && !err; i++)
+            if (disk.rec[i].shard == shard && vw2__cell_emit(f, &disk.rec[i]) != 0) err = 1;
+        for (i = 0; i < disk.nopq[shard] && !err; i++)
+            if (fprintf(f, "%s\n", disk.opaque[shard][i]) < 0) err = 1;
+        if (!err && (ferror(f) || fflush(f) != 0)) err = 1;
 #if defined(_WIN32)
-        _commit(_fileno(f));
+        if (!err && _commit(_fileno(f)) != 0) err = 1;
 #else
-        fsync(fileno(f));
+        if (!err && fsync(fileno(f)) != 0) err = 1;
 #endif
-        fclose(f);
-        if (vw2__replace_file(tmp, path) != VW2_OK) {
+        if (fclose(f) != 0) err = 1;
+        if (err || vw2__replace_file(tmp, path) != VW2_OK) {
             fprintf(stderr, "[wisdom2] save FAILED for %s (old file left intact)\n", path);
             remove(tmp);
             rc = VW2_EIO;
@@ -837,22 +1106,37 @@ static inline int vw2_save(vw2_store_t *s)
 
 /* ------------------------------------------------------------ quarantine */
 
-/* Append-only by design: quarantined rows are kept forever with reasons
- * (README §2.1); raw= is the LAST token and runs to end-of-line. */
-static inline int vw2_quarantine_append(const char *dir, const char *reason,
+/* Append-only by design (quarantined rows are kept forever with reasons —
+ * README §2.1). Honors the write guard; reason/from obey the lexical rules;
+ * raw= is the LAST token and runs to end-of-line (CR/LF stripped). */
+static inline int vw2_quarantine_append(vw2_store_t *s, const char *reason,
                                         const char *from, const char *raw)
 {
     char path[640];
+    char rawbuf[8192];
     FILE *f;
-    long sz = 0;
-    snprintf(path, sizeof path, "%s/wisdom2_quarantine.txt", dir);
+    long sz;
+    size_t n;
+    if (!s->writable) {
+        fprintf(stderr, "[wisdom2] quarantine refused: store is read-only\n");
+        return VW2_EREADONLY;
+    }
+    if (!vw2__lex_ok("reason", reason) || !vw2__lex_ok("from", from)) {
+        fprintf(stderr, "[wisdom2] quarantine refused: reason/from must be bare tokens\n");
+        return VW2_EVALUE;
+    }
+    n = strlen(raw);
+    if (n >= sizeof rawbuf) n = sizeof rawbuf - 1;
+    memcpy(rawbuf, raw, n);
+    rawbuf[n] = 0;
+    { char *c; for (c = rawbuf; *c; c++) if (*c == '\n' || *c == '\r') *c = ' '; }
+    snprintf(path, sizeof path, "%s/wisdom2_quarantine.txt", s->dir);
     f = fopen(path, "ab");
     if (!f) return VW2_EIO;
-    fseek(f, 0, SEEK_END);
-    sz = ftell(f);
-    if (sz == 0) fprintf(f, VW2_MAGIC " %d.%d\n", VW2_MAJOR, VW2_MINOR);
-    fprintf(f, "@quarantined reason=%s from=%s raw=%s\n", reason, from, raw);
-    fclose(f);
+    if (fseek(f, 0, SEEK_END) != 0 || (sz = ftell(f)) < 0) { fclose(f); return VW2_EIO; }
+    if (sz == 0 && fprintf(f, VW2_MAGIC " %d.%d\n", VW2_MAJOR, VW2_MINOR) < 0) { fclose(f); return VW2_EIO; }
+    if (fprintf(f, "@quarantined reason=%s from=%s raw=%s\n", reason, from, rawbuf) < 0) { fclose(f); return VW2_EIO; }
+    if (fclose(f) != 0) return VW2_EIO;
     return VW2_OK;
 }
 
