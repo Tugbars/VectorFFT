@@ -62,3 +62,8 @@ src/dag-fft-compiler/generator/*.sh        linguist-vendored
 # the project's written record, not its product — counted as documentation so
 # the language bar reflects CODE (README.md and in-tree .md stay counted).
 docs/** linguist-documentation
+
+# wisdom2 store: LF everywhere — in repo AND on disk (writers emit "wb"/LF;
+# this pin kills the Git-Bash-sed CRLF trap at the root). See
+# src/core/wisdom2/README.md §2.3.
+src/dag-fft-compiler/generator/generated/wisdom2_*.txt text eol=lf
