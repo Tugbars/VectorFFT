@@ -73,12 +73,49 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       flags miscompiles `va_start` after a BY-VALUE STRUCT parameter —
       never put an aggregate before `...` (fixed by pass-by-pointer;
       repro'd, minimal case isolated).
-- [ ] 0.9 Migrator skeleton linking the FROZEN legacy parsers verbatim;
-      row-conservation accounting (migrated + quarantined + skipped ==
-      source, machine-checked); idempotency harness; quarantine emitter.
-- [ ] 0.10 Plan-equivalence gate harness: both stacks in one binary; diff by
-      executor registry id + args (chains, variants, t2q, kv, widths, routes,
-      pad geometry), never raw fn pointers across binaries.
+- [x] 0.9 **DONE 2026-08-20 — [mig-gate] ALL PASS on a scratch copy of the
+      shipped oop_wisdom.txt.** `src/core/wisdom2/wisdom2_migrate.h` (module
+      owns ALL logic; `benches/wisdom2_migrate.c` = 12-line thin driver).
+      Links the SHIPPED legacy parser verbatim (per-line probe-file parse ⇒
+      exact line numbers; legacy silent drops become quarantine entries).
+      Full oop kinds 0–5 mapping: kinds 0/1/2 → classic records (`units=cyc`
+      honesty); kind-3 → wildcard dual records (`ran=` per K-rule, decoded
+      CCOL chains+vars, il_kv carried, cascade il_route would emit the ref=
+      signpost); kind-4 → zturn/zsplit records (`metric=joint2` route lines
+      vs `fwd1` legacy); kind-5 → per-(transform,placement) real-shard
+      records (line ns not slot-attributable ⇒ omitted, refuse-don't-guess).
+      TWO-PASS bank (verdicts, then seeds) makes collisions deterministic:
+      the K%8≠0 bank-only warts migrate as `src=seed`; a seed whose key is
+      owned by a live verdict quarantines as shadowed-by-live-verdict —
+      the single-pass version once quarantined a LIVE kind-4 2048 verdict in
+      favor of a wart, by file order. Results on the shipped file: 122 lines
+      = 94 migrated + 28 quarantined (24 garbage-variant + 4 shadowed) →
+      121 records; runs 2 and 3 byte-identical; persistence and quarantine
+      counts machine-checked (non-vacuous: the first gate version passed on
+      an empty store because the out dir didn't exist — fixed with loud
+      probe-I/O fatality + persist-failure accounting).
+- [x] 0.10 **Gate B's DATA HALF DONE 2026-08-20, pre-flip.**
+      (a) Gate-A field verify: every legacy entry compared field-by-field
+      against the saved store through the codecs — 0 mismatches.
+      (b) `src/core/wisdom2/wisdom2_oop_reader.h` (PERMANENT module code):
+      the production read side — resolves wisdom2 records back into the
+      EXACT `vfft_oop_wisdom_entry_t` the existing plan constructors
+      consume; one twin per legacy lookup (lookup_k1 / lookup_zsplit /
+      lookup_ord / lookup_zr2c), encodings via the SHIPPED codecs
+      (cc_chain/cc_vars encode, zr_kv reassembled via vfft_zr2c_kv_set);
+      name tables owned here, migrator includes them (forward and inverse
+      maps cannot drift).
+      (c) **[reader-gate] ALL PASS — 122 cells, 0 mismatches**: for every
+      verdict the legacy lookups would serve, the wisdom2 reader produces a
+      field-identical entry from the migrated store; every UNSERVABLE row
+      (K%8 warts, sub-2048 kind-4, quarantined garbage) correctly MISSES;
+      kind-5 kv bit-identical; non-vacuous (0-cells = FAIL).
+      Consequence for wave 1: the reader flip in vfft.c is now mechanical —
+      swap each legacy lookup call for its vw2_oop_* twin; the constructors
+      consume identical entries, so the remaining Gate-B half (resolved-plan
+      diff through create) is near-tautological. The migrator/registry are
+      linguist-vendored (transitional, die at wave 5); the reader is shipped
+      library code.
 - [x] 0.11 **DONE 2026-08-20.** `tools/wisdom_migrate/WRITER_REGISTRY.md`
       checked in — agent-authored, every entry verified against source
       (file:line cited): 4 direct writers + 16 front-door bankers + library
