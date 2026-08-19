@@ -556,50 +556,18 @@ static int vfft_sp_ccol_line_served(const vfft_oop_wisdom_entry_t *ke,
     return 1;
 }
 
-/* ── merge lines emitted by plan_and_bank into <wisdir>/oop_wisdom.txt
- * (MIGRATED from v2 verbatim, incl. the sub-2048 kind-4 wrong-slot filter
- * — see the 2026-08-06 note in the v2 header). Shipped reader/writer only. */
-static vfft_oop_wisdom_t _sp_wmain, _sp_wnew; /* large; static, not stack */
-static int _sp_merge_bank(const char *main_path, const char *tmp_path)
-{
-    memset(&_sp_wmain, 0, sizeof _sp_wmain);
-    (void)vfft_oop_wisdom_load(&_sp_wmain, main_path);
-    memset(&_sp_wnew, 0, sizeof _sp_wnew);
-    if (vfft_oop_wisdom_load(&_sp_wnew, tmp_path) != 0) return 0;
-    int merged = 0;
-    for (int i = 0; i < _sp_wnew.count; i++) {
-        if (_sp_wnew.e[i].kind == VFFT_OOP_KIND_ZSPLIT && _sp_wnew.e[i].N < 2048) {
-            printf("#   skip sub-2048 kind-4 row (N=%d) — wrong-slot verdict\n",
-                   _sp_wnew.e[i].N);
-            continue;
-        }
-        int idx = -1;
-        for (int j = 0; j < _sp_wmain.count; j++)
-            if (_sp_wmain.e[j].N == _sp_wnew.e[i].N &&
-                _sp_wmain.e[j].kind == _sp_wnew.e[i].kind &&
-                /* kind-3: one cell per N — a batch-count re-bank replaces a
-                 * legacy K=1 row rather than duplicating it (owner K rule) */
-                (_sp_wmain.e[j].kind == VFFT_OOP_KIND_BAILEY2V ||
-                 _sp_wmain.e[j].K == _sp_wnew.e[i].K)) { idx = j; break; }
-        if (idx < 0) {
-            if (_sp_wmain.count >= VFFT_OOP_WISDOM_MAX) continue;
-            idx = _sp_wmain.count++;
-        }
-        _sp_wmain.e[idx] = _sp_wnew.e[i];
-        merged++;
-    }
-    FILE *f = fopen(main_path, "w");
-    if (!f) return -1;
-    for (int j = 0; j < _sp_wmain.count; j++)
-        vfft_oop_wisdom_write_entry(f, &_sp_wmain.e[j]);
-    fclose(f);
-    return merged;
-}
+/* _sp_merge_bank + the k1_bank_tmp.txt intermediate: DELETED at the wisdom2
+ * wave-1 flip (2026-08-20). oop_wisdom.txt is FROZEN — nothing may rewrite
+ * it again. Verdicts bank straight into the wisdom2 store through the ONE
+ * family constructor (dp_planner_il's emit → vw2_oop_bank_entry); its
+ * dedup/replace policy lives on as the wisdom2 full-key upsert, and the
+ * sub-2048 kind-4 wrong-slot filter is enforced by the family codec
+ * (vw2_oop_rec_from_entry refuses those). See src/core/wisdom2/README.md. */
 
 /* ── the whole calibrate-and-record step for one cell ──────────────
  * Split race (this header) + IL race (delegated WHOLE to dp_planner_il)
- * + kind-3/kind-4 banking through the shipped writer. Returns lines
- * merged into <wisdir>/oop_wisdom.txt, or -1 on a poisoned cell. */
+ * + kind-3/kind-4 banking into the wisdom2 store at <wisdir>. Returns
+ * verdicts banked, or -1 on a poisoned cell. */
 static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
                                     const vfft_proto_registry_t *reg,
                                     const char *wisdir, int N, int rigor,
@@ -630,24 +598,22 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
         printf("# N=%d NO gated split candidate — kind-3 line will be "
                "SKIPPED (sp_route<0 refusal, not zero-filled)\n", N);
 
-    char wpath[600], tpath[600];
-    snprintf(wpath, sizeof wpath, "%s/oop_wisdom.txt", wisdir);
-    snprintf(tpath, sizeof tpath, "%s/k1_bank_tmp.txt", wisdir);
-
-    int merged = 0;
-    FILE *tf = fopen(tpath, "w");
-    if (tf) {
+    int banked = 0;
+    {
+        vw2_store_t st;
         double sp_ns = (win_ip >= 0) ? cand[win_ip].best : 1e18;
-        int lines = vfft_il_dp_plan_and_bank(ilctx, tf, N, spr, sR1, sR2, scc,
-                                             scv, sp_ns, verbose);
-        fclose(tf);
-        merged = _sp_merge_bank(wpath, tpath);
+        vw2_open(&st, wisdir, 1);   /* explicit dir from the driver = writable */
+        banked = vfft_il_dp_plan_and_bank(ilctx, &st, N, spr, sR1, sR2, scc,
+                                          scv, sp_ns, verbose);
+        if (banked > 0)
+            vw2_save(&st);
+        vw2_close(&st);
         if (verbose)
-            printf("# N=%d banked %d line(s) (merged %d into %s)\n",
-                   N, lines, merged, wpath);
+            printf("# N=%d banked %d verdict(s) into the wisdom2 store at %s\n",
+                   N, banked, wisdir);
     }
     vfft_sp_dp_release(plans, np);
-    return merged;
+    return banked;
 }
 
 #endif /* VFFT_DP_PLANNER_SPLIT_OOP_H */

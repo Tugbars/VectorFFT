@@ -105,18 +105,28 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
 
 /* --------------------------------------------------------- kind-3 (k1) */
 
-/* Mirrors legacy lookup_k1: one k1-engine row per N, axis-agnostic.
- * Returns 1 + fills e, or 0 on miss. */
+/* Mirrors legacy lookup_k1: one k1-engine verdict per N, axis-agnostic.
+ * Exact-beats-wildcard applies here too: a fresh race (concrete canonical
+ * axes) outranks a migrated wildcard record at the same N — the wildcard
+ * sunsets naturally as cells re-race. Returns 1 + fills e, or 0 on miss. */
 static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
                                     vfft_oop_wisdom_entry_t *e)
 {
-    int i;
-    for (i = 0; i < s->nrec; i++) {
-        const vw2_rec_t *r = &s->rec[i];
+    int i, pass;
+    const vw2_rec_t *r = NULL;
+    for (pass = 0; pass < 2 && !r; pass++)
+        for (i = 0; i < s->nrec; i++) {
+            const vw2_rec_t *c = &s->rec[i];
+            if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
+            if (strcmp(vw2__oop_eng(c), "k1")) continue;
+            if (vw2__is_seed(c)) continue;
+            if ((pass == 0) == vw2_key_has_wildcard(&c->key)) continue;
+            r = c;
+            break;
+        }
+    {
         int pair[2], np;
-        if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.n[0] != N) continue;
-        if (strcmp(vw2__oop_eng(r), "k1")) continue;
-        if (vw2__is_seed(r)) continue;
+        if (!r) return 0;
         memset(e, 0, sizeof *e);
         e->kind = VFFT_OOP_KIND_BAILEY2V;
         e->N = N;
