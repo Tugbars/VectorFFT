@@ -101,6 +101,11 @@
 #include <math.h>
 
 #include "oop_plan.h"   /* IL plans, VFFT_K1_IL_* routes, il availability fns */
+#include "../wisdom2/wisdom2_oop_reader.h" /* wisdom2 banking (wave-1 flip):
+                                              verdicts bank through the ONE
+                                              family constructor into the
+                                              store — the frozen legacy file
+                                              is never written again */
 #include "zsplit.h"     /* the CT cascade, LEGACY route: create / execute     */
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
@@ -1245,8 +1250,9 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
  * the chain. The kind-3 grammar only carries cc_chain when sp_route == CCOL,
  * so there is deliberately no attempt to smuggle an IL chain into it.
  *
- * Returns the number of lines written. */
-static int vfft_il_dp_emit_wisdom(FILE *f, int N,
+ * Returns the number of verdicts banked (into the wisdom2 store — the
+ * wave-1 flip; the caller owns opening/saving the store). */
+static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                                   const vfft_il_cand_t *nat,
                                   int sp_route, int sp_R1, int sp_R2,
                                   int sp_cc_chain, int sp_cc_vars,
@@ -1255,7 +1261,7 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
                                   const vfft_il_cand_t *scr_leg)
 {
     int lines = 0;
-    if (!f) return 0;
+    if (!st) return 0;
 
     /* sp_route < 0 still refuses the whole line (never zero-filled — 0 is
      * a valid route). What CHANGED (B2.1, 2026-08-18): the IL natural arm
@@ -1297,8 +1303,8 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
         e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
         e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
         e.ns = il_ok ? nat->cost_ns : sp_ns;
-        vfft_oop_wisdom_write_entry(f, &e);
-        lines++;
+        if (vw2_oop_bank_entry(st, &e) == VW2_OK)
+            lines++;
         }
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)
@@ -1341,8 +1347,8 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
             }
             else
                 e.zs_t2q = scr->t2q;
-            vfft_oop_wisdom_write_entry(f, &e);
-            lines++;
+            if (vw2_oop_bank_entry(st, &e) == VW2_OK)
+                lines++;
         }
     }
     return lines;
@@ -1353,7 +1359,7 @@ static int vfft_il_dp_emit_wisdom(FILE *f, int N,
  * best LEGACY-engine cascade candidate is pulled from the stored top-K
  * (route diversity guarantees it is there whenever one survived) so a
  * ZTURN-winner line still carries the fallback route's terminator pick. */
-static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, FILE *f, int N,
+static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, int N,
                                     int sp_route, int sp_R1, int sp_R2,
                                     int sp_cc_chain, int sp_cc_vars,
                                     double sp_ns, int verbose)
