@@ -1379,7 +1379,7 @@ static int vfft_il_dp_plan_and_bank(vfft_il_dp_context_t *ctx, vw2_store_t *st, 
                     e->top[i].zroute == 0)
                     leg = &e->top[i];
     }
-    return vfft_il_dp_emit_wisdom(f, N, &nat, sp_route, sp_R1, sp_R2,
+    return vfft_il_dp_emit_wisdom(st, N, &nat, sp_route, sp_R1, sp_R2,
                                   sp_cc_chain, sp_cc_vars, sp_ns, &scr, leg);
 }
 
@@ -1394,6 +1394,25 @@ static int vfft_il_dp_rank(vfft_il_dp_context_t *ctx, int N, int ord,
     int n = e->n_top < max_out ? e->n_top : max_out;
     for (int i = 0; i < n; i++) out[i] = e->top[i];
     return n;
+}
+
+/* Bank a SCRAMBLED ranking's winner (top[0]) as the cell's kind-4 verdict —
+ * the calibrate_zchain entry point (drivers stay thin: the entry is built
+ * HERE, by the same emit path every other banker uses). zs_t2q rides from
+ * the best legacy-route candidate in the same ranking (0 = compiled default
+ * when none survived — valid either way, the twins are bit-identical).
+ * Returns verdicts banked (0 also when top[0] is not a cascade winner). */
+static int vfft_il_dp_bank_scr_top(vw2_store_t *st, int N,
+                                   const vfft_il_cand_t *top, int ntop)
+{
+    const vfft_il_cand_t *leg = NULL;
+    int i;
+    if (!st || ntop <= 0) return 0;
+    for (i = 0; i < ntop && !leg; i++)
+        if (top[i].route == VFFT_K1_IL_CASCADE && !top[i].zroute)
+            leg = &top[i];
+    return vfft_il_dp_emit_wisdom(st, N, NULL, -1, 0, 0, 0, 0, 0.0,
+                                  &top[0], leg);
 }
 
 #endif /* VFFT_DP_PLANNER_IL_H */

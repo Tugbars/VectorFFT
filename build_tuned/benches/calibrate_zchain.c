@@ -1,10 +1,10 @@
 /* calibrate_zchain.c — kind-4 (K=1 SCRAMBLED cascade) CHAIN + ROUTE
  * calibration driver: the dp-planner-based whole-plan measured search
  * (src/core/planning/dp_planner_il.h, route axis) per cell, banked into
- * <wisdir>/oop_wisdom.txt through the SHIPPED oop_wisdom.h reader/writer
- * (replace-or-append by (N, K=1, kind-4) — the same dedup class vfft.c's
- * _oop_wisdom_put_and_save uses, so the rest of the file is preserved
- * byte-for-byte modulo the writer's canonical formatting).
+ * <wisdir>/wisdom2_oop.txt through the planner's own emit path
+ * (vfft_il_dp_bank_scr_top -> vfft_il_dp_emit_wisdom -> the wisdom2 store).
+ * The driver is THIN: it calls the search and the banker; every entry
+ * field is built by the module, not here.
  *
  * WHAT IS SEARCHED (dp_planner_il.h `_il_dp_enumerate`, SCRAMBLED class):
  *   engine  in {legacy zsplit, ZTURN-S}     (each chain validated by ITS OWN
@@ -46,37 +46,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "dp_planner_il.h"   /* the measured search (route axis)             */
-#include "oop_wisdom.h"      /* shipped reader/writer for oop_wisdom.txt     */
+#include "dp_planner_il.h"   /* the measured search + the wisdom2 banker     */
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-static vfft_oop_wisdom_t WIS;    /* file image (large; static, not stack)    */
-
-static int bank(const char *path, const vfft_oop_wisdom_entry_t *ne)
-{
-    memset(&WIS, 0, sizeof WIS);
-    (void)vfft_oop_wisdom_load(&WIS, path);   /* missing file -> empty table */
-    int idx = -1;
-    for (int i = 0; i < WIS.count; i++)
-        if (WIS.e[i].N == ne->N && WIS.e[i].K == ne->K &&
-            WIS.e[i].kind == VFFT_OOP_KIND_ZSPLIT)
-        { idx = i; break; }
-    if (idx < 0)
-    {
-        if (WIS.count >= VFFT_OOP_WISDOM_MAX) return -1;
-        idx = WIS.count++;
-    }
-    WIS.e[idx] = *ne;
-    FILE *f = fopen(path, "w");
-    if (!f) return -1;
-    for (int i = 0; i < WIS.count; i++)
-        vfft_oop_wisdom_write_entry(f, &WIS.e[i]);
-    fclose(f);
-    return 0;
-}
 
 static void chain_str(const vfft_il_cand_t *c, char *buf, size_t sz)
 {
@@ -115,10 +89,11 @@ int main(int argc, char **argv)
     for (int i = 0; i < nc; i++)
         if (cells[i] > max_N) max_N = cells[i];
 
-    char path[600];
-    snprintf(path, sizeof path, "%s/oop_wisdom.txt", wisdir);
-    printf("# calibrate_zchain: %d cell(s), rigor=%s, wisdom=%s\n",
-           nc, rigor ? "PATIENT" : "MEASURE", path);
+    printf("# calibrate_zchain: %d cell(s), rigor=%s, wisdom2 store=%s\n",
+           nc, rigor ? "PATIENT" : "MEASURE", wisdir);
+
+    vw2_store_t st;
+    vw2_open(&st, wisdir, 1);    /* explicit dir from the driver = writable */
 
     vfft_il_dp_context_t ctx;
     vfft_il_dp_init(&ctx, max_N);
@@ -144,7 +119,6 @@ int main(int argc, char **argv)
             fail = 1;
             continue;
         }
-        const vfft_il_cand_t *w = &top[0];
 
         char ch[32];
         printf("# N=%d final top-%d (benches=%d):\n", N, ntop,
@@ -157,44 +131,21 @@ int main(int argc, char **argv)
                    top[t].cost_ns);
         }
 
-        vfft_oop_wisdom_entry_t ne;
-        memset(&ne, 0, sizeof ne);
-        ne.N = N;
-        ne.K = 1;
-        ne.kind = VFFT_OOP_KIND_ZSPLIT;
-        ne.cc_chain = vfft_k1_cc_chain_encode(w->chain, w->nf);
-        ne.ns = w->cost_ns;
-        if (w->zroute)
+        if (vfft_il_dp_bank_scr_top(&st, N, top, ntop) < 1 ||
+            vw2_save(&st) != VW2_OK)
         {
-            ne.zs_route = 1;
-            ne.zt_t2q = w->t2q;
-            ne.zs_t2q = 0;               /* fallback-route pick, from top-K */
-            for (int t = 0; t < ntop; t++)
-                if (!top[t].zroute) { ne.zs_t2q = top[t].t2q; break; }
-            /* 🔴 tcut WIDTH + the cache it was tuned against. This driver banks
-             * through the oop_wisdom.h writer directly, NOT through
-             * vfft_il_dp_emit_wisdom, so the width has to be carried here too —
-             * patching only the emitter left this path silently dropping the
-             * width and banking a tiled winner as untiled. */
-            ne.zt_tw = w->zt_tw;
-            ne.zt_l1 = w->zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-        }
-        else
-            ne.zs_t2q = w->t2q;
-        if (!ne.cc_chain || bank(path, &ne) != 0)
-        {
-            printf("FAIL   N=%d: could not bank (cc=%d path=%s)\n",
-                   N, ne.cc_chain, path);
+            printf("FAIL   N=%d: could not bank into %s\n", N, wisdir);
             fail = 1;
             continue;
         }
-        chain_str(w, ch, sizeof ch);
-        printf("OK     N=%d winner eng=%s chain=%s -> banked: ", N,
-               w->zroute ? "zturn" : "zsplit", ch);
-        vfft_oop_wisdom_write_entry(stdout, &ne);
+        chain_str(&top[0], ch, sizeof ch);
+        printf("OK     N=%d winner eng=%s chain=%s t2q=%d %9.1f ns -> banked\n",
+               N, top[0].zroute ? "zturn" : "zsplit", ch, top[0].t2q,
+               top[0].cost_ns);
     }
     const int nbench = ctx.n_benchmarks;
     vfft_il_dp_destroy(&ctx);
+    vw2_close(&st);
     printf("calibrate_zchain %s (%d benchmarks total)\n",
            fail ? "FAIL" : "DONE", nbench);
     return fail;
