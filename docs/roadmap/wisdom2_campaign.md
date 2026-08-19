@@ -9,47 +9,56 @@ an out-of-date README is a gate failure.
 
 **The per-wave ritual** (applies to waves 1–4, referenced below as RITUAL):
 enumerate the wave's writer fleet from the registry → git tag + snapshot →
-migrate (Gate A: lossless accounting + idempotency) → Gate B: plan-equivalence
-over the full consumer matrix → flip readers behind kill switch
+migrate (Gate A: lossless accounting + idempotency; "skipped" counts ONLY
+non-record lines — comments/banners/blanks; every data row is migrated or
+quarantined, no third bucket) → **owner reviews the quarantine** → Gate B:
+plan-equivalence over the full consumer matrix (for RE-KEYED records — trig —
+the gate resolves old-key-via-old-path vs new-key-via-wisdom2 using the
+migrator's key map) → flip readers behind kill switch
 `VFFT_WISDOM2_OFF=<family>` → rebuild EVERY consumer exe on the fleet list →
 flip writers + delete old writer paths → sentinel-canary gate → freeze-stamp
 the old file(s) + baseline checksums → bake window with freeze watch →
 update README status ledger → close wave, remove kill switch.
+Meanwhile rule: until a family's wave closes, its legacy reader/writer path
+stays live and untouched; the only cross-cutting rule from wave 0 on is D9
+(no new field/axis ever lands in a legacy file).
 
 ---
 
 ## Wave 0 — infrastructure (no runtime behavior change)
 
-- [ ] 0.1 Fold the README-verification workflow findings into
-      `src/core/wisdom2/README.md` (workflow running at design sign-off).
-- [ ] 0.2 `wisdom2.h` codec: `@vw2` header parse/emit with REAL version check
-      (refuse + poison-no-save on bad magic/major, one loud stderr line);
-      writer-emitted `@legend` from the module's rule tables; `@meta`;
-      `@cell KEY | PAYLOAD | PROVENANCE`; `@quarantined`; unknown-token AND
-      unknown-record opaque carry; absent-token=legacy.
-- [ ] 0.3 Store API: load / lookup (exact → migration wildcard → miss; env
-      and default spine live in the caller) / seed-scan (proposals only) /
-      bank (full-key dedup; merge rank race > env > seed; cross-metric
-      replace refused) / save (dirty-only; merge-on-save; tmp + fsync +
-      MoveFileEx(REPLACE_EXISTING) on Win32, rename() POSIX; stale .tmp
-      sweep) / field-scoped update (retires wisdom-file line surgery).
-- [ ] 0.4 Write guard: serving mode default (hits served, misses race
-      in-memory, disk untouched); measurement mode = explicit opt-in (config
-      field + env, config wins — pin exact names with owner); banking into
-      an unset-env "." refused loudly.
-- [ ] 0.5 Env-law table in-module (the four shapes as decided):
-      FORCE_ZROUTE/NO_ZTURN demoted to force-never-bank debug switches;
-      TCUT = the one bank-under-force, stamped `arm=env`; il_kv inversion
-      documented; `VFFT_SP_ROUTE` added; dead-name blacklist.
-- [ ] 0.6 Field registry (STRUCTURAL | LOCAL | INFO classes); `sp_kv`
-      reserved; retired-name blacklist.
-- [ ] 0.7 Repo contracts: `.gitattributes` `wisdom2_*.txt text eol=lf`;
-      `.gitignore` explicit negation + comment; writers "wb"/LF.
-- [ ] 0.8 **G0 unit gates**: codec round-trip byte-stable · carry-unknown
-      (future token survives resave) · version-refuse · atomic-replace crash
-      injection · Windows replace-over-existing · two-process merge-on-save
-      interleave · merge-rank · cross-metric refusal · lint (no `@cell`
-      emitter outside src/core/wisdom2/).
+- [x] 0.1 **DONE 2026-08-19.** README-verification workflow (4 adversarial
+      lenses) folded in: illegal flagship example fixed (was N=8192 data
+      labeled n=512 with fresh-race wildcards), env-preemption added to the
+      lookup order, bluestein removed from the t= vocabulary (route never a
+      key), lexical rules + ref= failure semantics + dir= reservation +
+      legend format pinned, adopt sidecar scoped out, guard mechanism marked
+      OPEN (owner), header evolution-rules block added.
+- [x] 0.2 **DONE 2026-08-19.** `wisdom2.h` codec shipped as specified.
+- [x] 0.3 **DONE 2026-08-19.** Store API shipped: open/lookup/scan/bank/
+      save/update_field/quarantine_append; bank MOVES the record on success.
+- [x] 0.4 **DONE (module half) 2026-08-19.** Explicit writable flag at open;
+      unset-env "." forces read-only with one loud line. ⏳ The config-field/
+      env shape of the guard = OPEN owner decision (README §2.2); wiring
+      lands with wave 1's vfft.c integration.
+- [x] 0.5 **DONE 2026-08-19.** Env-law table as data in-module (four shapes,
+      VFFT_SP_ROUTE row, dead-name blacklist comment). Enforcement lives in
+      the create path at wave 1+.
+- [x] 0.6 **DONE 2026-08-19.** Field registry with classes; `sp_kv` reserved
+      LOCAL.
+- [x] 0.7 **DONE 2026-08-19.** .gitattributes eol=lf pin + .gitignore
+      explicit negation landed.
+- [x] 0.8 **G0 ALL PASS 2026-08-19 — 55/55 checks** (wisdom2_g0_gate.exe,
+      thin driver over module-owned `wisdom2_selftest.h` per the thin-driver
+      law): round-trip · idempotent re-save byte-stable · header/legend
+      byte-identity · carry-unknown (token + record + directive survive a
+      stale-writer resave) · version-refuse + per-file poison + bytes
+      untouched · stale-.tmp sweep · two-store merge-on-save (both cells
+      survive) · merge-rank + date tie-break · cross-metric refusal ·
+      wildcard law (fresh refused, migrated accepted, exact beats wildcard)
+      · seeds never served · read-only guard · ref= parse (partial refused)
+      · quarantine raw-to-EOL. Lint leg: zero `@cell` emitters outside
+      src/core/wisdom2/.
 - [ ] 0.9 Migrator skeleton linking the FROZEN legacy parsers verbatim;
       row-conservation accounting (migrated + quarantined + skipped ==
       source, machine-checked); idempotency harness; quarantine emitter.
@@ -70,11 +79,13 @@ update README status ledger → close wave, remove kill switch.
       wildcard records, `ran=` from the K column (owner K-rule),
       `metric=fwd1`, il_kv carried, `sp_kv` slot ready; kind-4 `metric=joint2`
       with route/t2q/zt_tw/zt_l1, sub-2048 inert law enforced at lookup;
-      kind-5 zr_kv split into per-(transform,placement) records.
+      kind-5 zr_kv split into per-(transform,placement) records — these are
+      t=r2c/c2r keys, so they ROUTE to wisdom2_real.txt (created in wave 1,
+      extended in wave 2; the key decides the shard, never the wave).
       ⚠ kind-5's CONSUMER flip touches the r2c/c2r create's storage calls
-      only (4 sites, zero route logic) — included here so the file freezes
-      whole; owner confirms alongside #5b, else kind-5 flip defers to wave 2
-      with oop_wisdom.txt in partial freeze (flagged, not preferred).
+      only (4 sites, zero route logic) — included here so oop_wisdom.txt
+      freezes whole; owner confirms alongside #5b, else kind-5 flip defers to
+      wave 2 with oop_wisdom.txt in partial freeze (flagged, not preferred).
 - [ ] 1.2 Quarantine: N-garbage MODEB variant rows (~24), duplicates
       (first-match copy migrates), junk rows — owner reviews before flip.
 - [ ] 1.3 Flip readers: lookup_ord path (vfft.c:4745 region), lookup_k1's
@@ -124,7 +135,9 @@ update README status ledger → close wave, remove kill switch.
       fft3d grammar never materializes on disk; `n=AxBxCxD` stays reserved.
 - [ ] 3.3 Flip _build_2d lookups/banks; dirty-only saves end the
       unconditional per-create rewrites; 2D helper 1D c2c cells remain plain
-      c2c records with `from=` provenance (owner default).
+      c2c records with `from=` provenance (design default, owner informed and
+      did not override — unlike trig N±1 rows these are genuinely servable
+      c2c cells a 1D caller may share).
 - [ ] 3.4 adopt_wisdom.h: explicitly untouched (healthy sidecar).
 - [ ] 3.5 RITUAL: Gate B over all (N1,N2) cells incl. @nat2d; freeze-stamp
       the three fft2d files; fleet (bench 2D read modes may keep reading
@@ -180,5 +193,15 @@ update README status ledger → close wave, remove kill switch.
       schema (chartered after wave 1, listed here for the ledger).
 - [ ] 5.5 ONE-FILE COLLAPSE (owner end state): concatenate per-family files,
       bind one path — mechanical by construction; owner picks the moment.
-- [ ] 5.6 Throughput table: `(n, q, ord)` keys + strategy `ref=`s — separate
-      chartered campaign (§5d), lands on this schema with no re-keying.
+- [ ] 5.6 Throughput table: `(n, q, ord)` keys + strategy `ref=`s to
+      component records — its OWN record kind in its OWN file (one concern,
+      one file — owner law; the record-kind separation survives the eventual
+      one-file collapse). Separate chartered campaign (§5d); lands on this
+      schema with no re-keying.
+
+Freeze schedule per legacy file (a file freezes only when its LAST writer
+cuts over): oop_wisdom.txt = wave 1 · c2r_path.txt + vfft_bluestein_wisdom.txt
+= wave 2 (c2r_wisdom.txt deleted, not frozen) · fft2d_*_wisdom.txt = wave 3 ·
+spike_wisdom.txt + rfft_wisdom.txt = wave 4 TOGETHER (shared v8 writer —
+rfft cannot freeze earlier) · spike_wisdom_padded.txt = already dead,
+stamped in wave 4.
