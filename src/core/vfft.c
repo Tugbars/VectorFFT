@@ -25,6 +25,9 @@
 #include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "oop_wisdom.h"         /* OOP wisdom load/lookup/create + entry_from_plan */
+#include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
+                                           the vw2_oop_* twins, banks via the shared
+                                           family codec. See src/core/wisdom2/README.md */
 #include "natorder_perm.h"      /* ORDER_NATURAL: perm/orientation-detect/cycle tape */
 #include "natorder_exec.h"      /* ORDER_NATURAL: cycle/pair reorder passes          */
 #include "il_execute.h"         /* interleaved z<->z folded adapters (6a16/6a17) */
@@ -199,6 +202,17 @@ struct vfft_wisdom_s
      * 1=stride). Loaded into the file-static _vfft_c2r_paths table (c2r_dispatch.h)
      * for the non-bakeoff (MEASURE / high-K) dispatch; high rigor measures instead. */
     char path_c2r_path[640]; /* c2r_path.txt */
+
+    /* wisdom2 (the new store, src/core/wisdom2/README.md). Wave 1 flips the
+     * OOP family here: reads via the vw2_oop_* twins, banks via
+     * vw2_oop_bank_entry (memory) + guarded vw2_save (config.wisdom_write).
+     * Legacy oop_wisdom.txt stays loaded ONLY as the kill-switch fallback
+     * (VFFT_WISDOM2_OFF containing "oop" flips READS back to it during the
+     * bake window; writes go to wisdom2 either way — banking never mutates
+     * a frozen file). */
+    vw2_store_t vw2;
+    int vw2_off_oop;   /* kill switch, cached at bundle load */
+    char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
 };
 
 struct vfft_plan_s
@@ -455,11 +469,12 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
     snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
     snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", d);
+    snprintf(W->dir, sizeof W->dir, "%s", d);
 }
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
-    vfft_oop_wisdom_load(&W->oop, W->path_oop);
+    vfft_oop_wisdom_load(&W->oop, W->path_oop); /* kill-switch fallback only */
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
     vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
     vfft_fft3d_wisdom_load(&W->fft3d_c2c, W->path_3d_c2c);
@@ -468,6 +483,23 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
     vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
+    /* wisdom2 (the live oop-family store since the wave-1 flip). Opened
+     * writable so create-time races can bank IN MEMORY (process coherence);
+     * DISK persistence is separately gated by config.wisdom_write. The
+     * unset-env case still forces read-only inside vw2_open (colony law). */
+    {
+        const char *off = getenv("VFFT_WISDOM2_OFF");
+        /* colony law: a bundle that fell back to "." with no env is never
+         * writable — vw2_open(NULL) re-resolves and forces read-only with
+         * its own loud line; an explicit directory opens writable (memory
+         * banking; disk persistence stays behind config.wisdom_write). */
+        int dir_known = (strcmp(W->dir, ".") != 0) || (getenv("VFFT_WISDOM_DIR") != NULL);
+        W->vw2_off_oop = (off && strstr(off, "oop")) ? 1 : 0;
+        if (W->vw2_off_oop)
+            fprintf(stderr, "[wisdom2] KILL SWITCH: oop-family READS fall back to the "
+                            "legacy file for this process (writes still go to wisdom2)\n");
+        vw2_open(&W->vw2, dir_known ? W->dir : NULL, 1);
+    }
 }
 
 static struct vfft_wisdom_s _def;
@@ -505,35 +537,12 @@ static int _oop_kind_class(int kind)
     return 1;
 }
 
-static void _oop_wisdom_put_and_save(struct vfft_wisdom_s *W,
-                                     const vfft_oop_wisdom_entry_t *e, const char *path)
-{
-    int idx = -1;
-    /* Dedup by (N, K, kind-class) — NOT just (N,K) — so a cell keeps its natural (LEAF/BAILEY2),
-     * scrambled (MODEB), K1 and zsplit champions as SEPARATE entries. Overwriting by (N,K)
-     * alone would collapse them. */
-    for (int i = 0; i < W->oop.count; i++)
-        if (W->oop.e[i].N == e->N && W->oop.e[i].K == e->K &&
-            _oop_kind_class(W->oop.e[i].kind) == _oop_kind_class(e->kind))
-        {
-            idx = i;
-            break;
-        }
-    if (idx < 0 && W->oop.count < VFFT_OOP_WISDOM_MAX)
-        idx = W->oop.count++;
-    if (idx >= 0)
-        W->oop.e[idx] = *e;
-    if (path && path[0])
-    {
-        FILE *f = fopen(path, "w");
-        if (f)
-        {
-            for (int i = 0; i < W->oop.count; i++)
-                vfft_oop_wisdom_write_entry(f, &W->oop.e[i]);
-            fclose(f);
-        }
-    }
-}
+/* _oop_wisdom_put_and_save: DELETED at the wisdom2 wave-1 flip (2026-08-20).
+ * oop_wisdom.txt is FROZEN — nothing may rewrite it again. Banks go through
+ * vw2_oop_bank_entry (the ONE family constructor, wisdom2_oop_reader.h) into
+ * the wisdom2 store, persisted under the config.wisdom_write guard via
+ * _vw2_persist. Its (N,K,kind-class) dedup policy lives on as the wisdom2
+ * full-key upsert. See src/core/wisdom2/README.md. */
 
 /* ════════════════════════════════════════════════════════════════════════
  * CALIBRATION — rigor -> measured sweep (full search; slow first-create is fine,
@@ -2018,24 +2027,35 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
     }
 }
 
-/* Bank a kind-5 zr2c route verdict: read-modify-write the packed zr_kv so
- * the other three (transform, placement) slots keep their verdicts, then
- * replace-or-append via the kind-class dedup + autosave. The in-memory add
- * alone already makes the verdict process-coherent (create-race coherence
- * rule); ns = the winner's per-shot median (informational). */
-static void _bank_zr2c(struct vfft_wisdom_s *W, int N, int slot, int route,
-                       double ns)
+/* Serving-mode/measurement-mode persistence seam (README §2.2): banks are
+ * always in-memory (process coherence); DISK writes happen only under
+ * config.wisdom_write. Loud ONCE per process when a verdict stays
+ * memory-only so a calibration run with the guard forgotten is visible. */
+static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 {
-    vfft_oop_wisdom_entry_t e;
-    const vfft_oop_wisdom_entry_t *old =
-        vfft_oop_wisdom_lookup_zr2c(&W->oop, N);
-    memset(&e, 0, sizeof e);
-    e.N = N;
-    e.K = 1;
-    e.kind = VFFT_OOP_KIND_ZR2C;
-    e.zr_kv = vfft_zr2c_kv_set(old ? old->zr_kv : 0, slot, route);
-    e.ns = ns;
-    _oop_wisdom_put_and_save(W, &e, W->path_oop);
+    static int warned;
+    if (cfg && cfg->wisdom_write)
+    {
+        vw2_save(&W->vw2);
+        return;
+    }
+    if (!warned)
+    {
+        warned = 1;
+        fprintf(stderr, "[wisdom2] verdict raced and held in memory; NOT persisted "
+                        "(serving mode — set config.wisdom_write=1 to bank)\n");
+    }
+}
+
+/* Bank a kind-5 zr2c route verdict: one per-(transform,placement) record in
+ * the wisdom2 real shard — no packed read-modify-write needed, the other
+ * slots' records are untouched by construction. The in-memory bank alone
+ * makes the verdict process-coherent; ns = the winner's per-shot median. */
+static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                       int N, int slot, int route, double ns)
+{
+    vw2_oop_bank_zr2c_slot(&W->vw2, N, (slot >> 1) & 1, slot & 1, route, ns);
+    _vw2_persist(W, cfg);
 }
 
 /* forward decls: the race borrows the §6a59 timer/median helpers, defined
@@ -2067,9 +2087,19 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
     /* 2. banked kind-5 verdict for THIS (transform, placement) slot. */
     if (W && !cfg->recalibrate)
     {
-        const vfft_oop_wisdom_entry_t *ke =
-            vfft_oop_wisdom_lookup_zr2c(&W->oop, N);
-        int f = ke ? vfft_zr2c_kv_get(ke->zr_kv, slot) : 0;
+        int f = 0;
+        if (W->vw2_off_oop)
+        {
+            const vfft_oop_wisdom_entry_t *ke =
+                vfft_oop_wisdom_lookup_zr2c(&W->oop, N);
+            f = ke ? vfft_zr2c_kv_get(ke->zr_kv, slot) : 0;
+        }
+        else
+        {
+            int kv;
+            if (vw2_oop_lookup_zr2c(&W->vw2, N, &kv))
+                f = vfft_zr2c_kv_get(kv, slot);
+        }
         if (f)
             return _zr2c_build_route(cfg, N, f - 1);
     }
@@ -2145,7 +2175,7 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                 N, cfg->transform == VFFT_C2R ? "c2r" : "r2c",
                 cfg->placement == VFFT_INPLACE ? "ip" : "oop",
                 reps, n0, n1, win, slot);
-    _bank_zr2c(W, N, slot, win, win ? n1 : n0);
+    _bank_zr2c(W, cfg, N, slot, win, win ? n1 : n0);
     if (win)
     {
         vfft_destroy((vfft_plan)h0);
@@ -2204,7 +2234,10 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
-    const vfft_oop_wisdom_entry_t *ke = vfft_oop_wisdom_lookup_k1(&W->oop, N);
+    vfft_oop_wisdom_entry_t keb;
+    const vfft_oop_wisdom_entry_t *ke =
+        W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
+                       : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
     if (ke && ke->il_R1)
     {
         iR1 = ke->il_R1;
@@ -2420,8 +2453,10 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     int zroute_pending = 0;
     int zch[VFFT_ZSPLIT_MAX_NF];
     int znf = 0;
+    vfft_oop_wisdom_entry_t zeb;
     const vfft_oop_wisdom_entry_t *ze =
-        vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
+        W->vw2_off_oop ? vfft_oop_wisdom_lookup_zsplit(&W->oop, N)
+                       : (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb) ? &zeb : NULL);
     int ze_hit = (ze && !cfg->recalibrate);
     /* Route forcing, read at CREATE (both directions follow — the
      * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
@@ -4236,7 +4271,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                        ? (int)zt_pending->tw : 0;
                         ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
                         ne.ns = zns;
-                        _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+                        vw2_oop_bank_entry(&W->vw2, &ne);
+                        _vw2_persist(W, cfg);
                     }
                     /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
                      * survives to the handle — the loser dies here, before the
@@ -4275,8 +4311,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
+            vfft_oop_wisdom_entry_t keb;
             const vfft_oop_wisdom_entry_t *ke =
-                vfft_oop_wisdom_lookup_k1(&W->oop, N);
+                W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
+                               : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
             if (ke)
             {
                 spr = ke->k1_sp_route;
@@ -4742,7 +4780,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
         /* Order-aware lookup: the cell can hold BOTH a natural and a MODEB champion as separate
          * (N,K,kind-class) entries, so the requested order is served straight from wisdom. */
-        const vfft_oop_wisdom_entry_t *e = vfft_oop_wisdom_lookup_ord(&W->oop, N, bK, ord);
+        vfft_oop_wisdom_entry_t eb;
+        const vfft_oop_wisdom_entry_t *e =
+            W->vw2_off_oop ? vfft_oop_wisdom_lookup_ord(&W->oop, N, bK, ord)
+                           : (vw2_oop_lookup_ord(&W->vw2, N, bK, ord, &eb) ? &eb : NULL);
         if (e && !cfg->recalibrate)
             op = vfft_oop_plan_from_entry(e, reg); /* the cached champion of the requested class */
         if (!op)
@@ -4763,14 +4804,16 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             {
                 vfft_oop_wisdom_entry_t ne;
                 vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
-                _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+                vw2_oop_bank_entry(&W->vw2, &ne);
             }
             if (mb)
             {
                 vfft_oop_wisdom_entry_t ne;
                 vfft_oop_wisdom_entry_from_plan(&ne, mb, N, bK, mns);
-                _oop_wisdom_put_and_save(W, &ne, W->path_oop);
+                vw2_oop_bank_entry(&W->vw2, &ne);
             }
+            if (nat || mb)
+                _vw2_persist(W, cfg);
             if (ord == VFFT_ORDER_NATURAL)
             {
                 op = nat;
@@ -6908,12 +6951,17 @@ int vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
         _bundle_paths(&tmp, dir);
     int rc = vfft_proto_wisdom_save(&w->c2c, tmp.path_c2c);
     vfft_proto_wisdom_save(&w->rfft, tmp.path_rfft);
-    FILE *f = fopen(tmp.path_oop, "w");
-    if (f)
+    /* oop family: FROZEN legacy file is never rewritten — the explicit-save
+     * API persists the wisdom2 store instead (all shards, atomically). The
+     * local copy aliases w's records read-only; dirty flags are ours. */
     {
-        for (int i = 0; i < w->oop.count; i++)
-            vfft_oop_wisdom_write_entry(f, &w->oop.e[i]);
-        fclose(f);
+        int i;
+        if (dir && dir[0])
+            vw2_repoint(&tmp.vw2, dir);
+        for (i = 0; i < VW2_NSHARDS; i++)
+            if (!tmp.vw2.poisoned[i])
+                tmp.vw2.dirty[i] = 1;
+        vw2_save(&tmp.vw2);
     }
     /* 6a22 parity: persist the full loaded set. c2r_path persists at
      * decision time via its own writer and is not owned by w. */
@@ -6937,6 +6985,7 @@ void vfft_wisdom_free(vfft_wisdom *w)
     vfft_fft2d_r2c_wisdom_free(&w->fft2d_c2r);
     vfft_fft3d_wisdom_free(&w->fft3d_c2c);
     /* bluestein table is fixed-size, no free */
+    vw2_close(&w->vw2);
     free(w);
 }
 

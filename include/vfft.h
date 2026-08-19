@@ -275,6 +275,15 @@ extern "C"
     vfft_wisdom *wisdom; /* NULL = library-managed (auto load+save);
                             non-NULL = use this, ignore the default   */
     int recalibrate;     /* 0 = use existing entry; 1 = re-measure + overwrite */
+    int wisdom_write;    /* the wisdom2 write guard (owner rule: the library
+                            DEFAULT is read-only wisdom). 0 = serving mode:
+                            hits are served, a miss races in memory for this
+                            process but writes NOTHING to disk. 1 =
+                            measurement mode: calibrate-on-miss persists.
+                            Calibrators, benches, and gates set this;
+                            applications never bank by accident. Applies to
+                            the wisdom2 store; legacy wisdom files are
+                            frozen regardless. */
   } vfft_config_t;
 
   /* Output-order axis (vfft_config_t.order). 1D C2C: DEFAULT=fastest/native, SCRAMBLED=force the

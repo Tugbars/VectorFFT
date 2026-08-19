@@ -141,9 +141,25 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       wave 2 with oop_wisdom.txt in partial freeze (flagged, not preferred).
 - [ ] 1.2 Quarantine: N-garbage MODEB variant rows (~24), duplicates
       (first-match copy migrates), junk rows — owner reviews before flip.
-- [ ] 1.3 Flip readers: lookup_ord path (vfft.c:4745 region), lookup_k1's
-      four consumer sites, kind-4 replay, kind-5 route resolution;
-      `q=*` rule serves the kind-3 fan-out.
+- [x] 1.3 **READ+BANK FLIP LANDED 2026-08-20, behind the kill switch.**
+      All five lookup sites flipped to the vw2_oop_* twins (lookup_k1 ×2,
+      lookup_zsplit, lookup_zr2c, lookup_ord), guarded by
+      `VFFT_WISDOM2_OFF=oop` (reads fall back to the legacy table for the
+      bake window; writes go to wisdom2 either way). All four bank sites
+      rewired through the ONE family constructor (`vw2_oop_bank_entry` /
+      the per-slot zr2c bank — the packed RMW is gone); persistence behind
+      the owner's guard: **`config.wisdom_write` field added to
+      vfft_config_t** (default 0 = serving mode: banks stay in memory, one
+      loud line per process; 1 = measurement mode persists). Colony law
+      intact (a "."-defaulted bundle opens the store read-only).
+      `_oop_wisdom_put_and_save` DELETED with a tombstone; vfft_wisdom_save
+      persists the wisdom2 store (repoint + all-dirty) instead of rewriting
+      the frozen file; vfft_wisdom_free closes the store.
+      **SMOKE GREEN (dual scratch: legacy + migrated files):**
+      sp_ccol_decode_gate 4/4 PASS with legacy-line expectations vs
+      wisdom2-served plans (relerr ≤7.5e-16); tangent_frontdoor_gate ALL
+      CORRECT on BOTH arms with bit-identical worst-error values
+      (wisdom2 reads ≡ kill-switch legacy reads).
 - [ ] 1.4 Collapse the drift surface: ONE `from_plan` constructor replaces
       the four kind-4 builders; ONE dedup replaces the three; delete
       `_sp_merge_bank` (+ k1_bank_tmp.txt dance), calibrate_zchain `bank()`,
