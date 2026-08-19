@@ -869,6 +869,22 @@ static inline void vw2_set_writable(vw2_store_t *s, int on)
     s->writable = (uint8_t)(on ? 1 : 0);
 }
 
+/* Repoint the store at a different directory for an explicit save-to-dir
+ * (the vfft_wisdom_save(w, dir) API): every shard is marked dirty so the
+ * whole in-memory table lands at the new location. Read state (records)
+ * is kept; the old directory is not touched again. */
+static inline void vw2_repoint(vw2_store_t *s, const char *dir)
+{
+    int i;
+    if (!dir || !dir[0] || strlen(dir) >= sizeof s->dir) return;
+    snprintf(s->dir, sizeof s->dir, "%s", dir);
+    s->writable = 1;
+    for (i = 0; i < VW2_NSHARDS; i++) {
+        s->poisoned[i] = 0;      /* new dir: poison state belongs to old files */
+        s->dirty[i] = 1;
+    }
+}
+
 /* ---------------------------------------------------------------- lookup */
 
 /* dangling-ref rule (README §3.3): a hit whose ref= target is absent from

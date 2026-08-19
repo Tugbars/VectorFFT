@@ -69,13 +69,16 @@ droppings, not wisdom — never migration inputs.
   directory.
 - **The library default is read-only wisdom.** In serving mode (default),
   hits are served, and a miss races in memory for process coherence but
-  writes nothing to disk. In measurement mode — an explicit opt-in guard —
-  calibrate-on-miss persists. Calibrators, benches, and gates set the guard;
-  an application can never accidentally bank. Banking with the env unset is
-  refused with one loud stderr line.
-- ⏳ OPEN (owner decision pending): the guard's concrete shape — config
-  field, env variable, or both, and which wins. Until pinned, the module
-  exposes an explicit writable flag at open; tools pass it deliberately.
+  writes nothing to disk (one loud line per process notes the unpersisted
+  verdict). In measurement mode — `config.wisdom_write = 1`, the guard the
+  owner placed in the build config — calibrate-on-miss persists.
+  Calibrators, benches, and gates set the field; an application can never
+  accidentally bank. Banking with the env unset is refused with one loud
+  stderr line regardless (the wrong-cwd colony law).
+- Tools that own their store directly (the migrator, offline planners) pass
+  an explicit writable flag at open instead. ⏳ Optional extension (open):
+  an env twin for the config field — not implemented; add only on owner
+  request.
 
 ### 2.3 Text contract
 

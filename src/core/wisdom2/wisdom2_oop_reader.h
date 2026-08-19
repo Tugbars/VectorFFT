@@ -518,7 +518,7 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
             vw2__oop_stamp_date(&slots[i]);
             if (vw2_bank(s, &slots[i]) != VW2_OK) vw2_rec_free(&slots[i]);
         }
-        return vw2_save(s);
+        return VW2_OK;
     }
     if (vw2_oop_rec_from_entry(&r, e, "race", NULL, &why) != VW2_OK) {
         fprintf(stderr, "[wisdom2] oop bank refused (%s)\n", why ? why : "?");
@@ -527,20 +527,40 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
-    return vw2_save(s);
+    return VW2_OK;
 }
 
 /* zr2c slot bank (replaces the legacy packed read-modify-write): banks ONE
- * (transform, placement) slot verdict directly. */
+ * (transform, placement) slot verdict directly — per-slot records need no
+ * RMW, the other slots' records are untouched by construction. ns = the
+ * slot's own race median (attributable here, unlike the legacy packed
+ * line); <= 0 omits the measurement. */
 static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
-                                         int is_c2r, int is_inplace, int route)
+                                         int is_c2r, int is_inplace, int route,
+                                         double ns)
 {
-    vfft_oop_wisdom_entry_t e;
-    memset(&e, 0, sizeof e);
-    e.kind = VFFT_OOP_KIND_ZR2C;
-    e.N = realN; e.K = 1;
-    e.zr_kv = vfft_zr2c_kv_set(0, vfft_zr2c_kv_slot(is_c2r, is_inplace), route);
-    return vw2_oop_bank_entry(s, &e);
+    vw2_rec_t r;
+    char b[48];
+    int rc;
+    memset(&r, 0, sizeof r);
+    r.key.t = is_c2r ? VW2_T_C2R : VW2_T_R2C;
+    r.key.rank = 1; r.key.n[0] = realN;
+    r.key.q = 1; r.key.ord = VW2_ORD_NAT;
+    r.key.pl = is_inplace ? VW2_PL_IP : VW2_PL_OOP;
+    if (vw2_rec_set(&r, 1, "eng", "zr2c") != VW2_OK ||
+        vw2_rec_set(&r, 1, "route", route ? "child_nat_ip" : "child_oop_il") != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    if (ns > 0.0) {
+        snprintf(b, sizeof b, "%.1f", ns);
+        if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
+            vw2_rec_set(&r, 2, "metric", "fwd1") != VW2_OK ||
+            vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
 }
 
 /* ------------------------------------------------------- kind-5 (zr2c) */
