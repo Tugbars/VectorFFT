@@ -156,60 +156,11 @@ vfft_fft2d_c2c_wisdom_lookup(const vfft_fft2d_c2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-static inline int vfft_fft2d_c2c_wisdom_add(vfft_fft2d_c2c_wisdom_t *w,
-                                            const vfft_fft2d_c2c_wisdom_entry_t *e,
-                                            int overwrite)
-{
-    for (size_t i = 0; i < w->count; i++) {
-        if (w->entries[i].N1 == e->N1 && w->entries[i].N2 == e->N2) {
-            if (!overwrite) return 0;
-            w->entries[i] = *e;
-            return 2;
-        }
-    }
-    if (w->count >= w->capacity) {
-        w->capacity = w->capacity ? w->capacity * 2 : 32;
-        w->entries = (vfft_fft2d_c2c_wisdom_entry_t *)realloc(
-            w->entries, w->capacity * sizeof(*w->entries));
-    }
-    w->entries[w->count++] = *e;
-    return 1;
-}
-
-static inline int vfft_fft2d_c2c_wisdom_save(const vfft_fft2d_c2c_wisdom_t *w,
-                                             const char *path)
-{
-    FILE *f = fopen(path, "w");
-    if (!f) return -1;
-    fprintf(f, "@fft2d_c2c_version %d\n", VFFT_FFT2D_C2C_WISDOM_VERSION);
-    fprintf(f, "# scrambled: N1 N2 B | row: nf factors.. variants.. dif | "
-               "col: nf factors.. variants.. dif | best_ns\n");
-    fprintf(f, "# natural (self-contained, @nat2d-tagged -> invisible to @/#-skipping readers): "
-               "@nat2d N1 N2 nat_B | row.. | col.. | nat_ns\n");
-    for (size_t i = 0; i < w->count; i++) {
-        const vfft_fft2d_c2c_wisdom_entry_t *e = &w->entries[i];
-        fprintf(f, "%d %d %d  %d", e->N1, e->N2, e->B, e->row_nf);
-        for (int s = 0; s < e->row_nf; s++) fprintf(f, " %d", e->row_factors[s]);
-        for (int s = 0; s < e->row_nf; s++) fprintf(f, " %d", e->row_variants[s]);
-        fprintf(f, " %d  %d", e->row_use_dif, e->col_nf);
-        for (int s = 0; s < e->col_nf; s++) fprintf(f, " %d", e->col_factors[s]);
-        for (int s = 0; s < e->col_nf; s++) fprintf(f, " %d", e->col_variants[s]);
-        fprintf(f, " %d  %.1f\n", e->col_use_dif, e->best_ns);
-    }
-    /* Natural table: one self-contained @nat2d line per entry. */
-    for (size_t i = 0; i < w->nat_count; i++) {
-        const vfft_fft2d_c2c_nat_entry_t *n = &w->nat[i];
-        fprintf(f, "@nat2d %d %d %d  %d", n->N1, n->N2, n->nat_B, n->row_nf);
-        for (int s = 0; s < n->row_nf; s++) fprintf(f, " %d", n->row_factors[s]);
-        for (int s = 0; s < n->row_nf; s++) fprintf(f, " %d", n->row_variants[s]);
-        fprintf(f, " %d  %d", n->row_use_dif, n->col_nf);
-        for (int s = 0; s < n->col_nf; s++) fprintf(f, " %d", n->col_factors[s]);
-        for (int s = 0; s < n->col_nf; s++) fprintf(f, " %d", n->col_variants[s]);
-        fprintf(f, " %d  %.1f\n", n->col_use_dif, n->nat_ns);
-    }
-    fclose(f);
-    return 0;
-}
+/* vfft_fft2d_c2c_wisdom_add / _wisdom_save: DELETED at the wisdom2 wave-3
+ * close (2026-08-20). fft2d_c2c_wisdom.txt is FROZEN — banks go through
+ * vw2_2d_c2c_bank_entry/_bank_nat into the wisdom2 store (the ONE family
+ * codec, wisdom2_2d_reader.h); this loader survives for the kill-switch
+ * bake window, then migrator-only until v1.0. */
 
 /* ── Natural table (order=VFFT_ORDER_NATURAL) lookup/upsert — keyed (N1,N2) on the SEPARATE nat table. ── */
 static inline const vfft_fft2d_c2c_nat_entry_t *
@@ -221,20 +172,8 @@ vfft_fft2d_c2c_nat_lookup(const vfft_fft2d_c2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-static inline int vfft_fft2d_c2c_nat_add(vfft_fft2d_c2c_wisdom_t *w,
-                                         const vfft_fft2d_c2c_nat_entry_t *e, int overwrite)
-{
-    for (size_t i = 0; i < w->nat_count; i++)
-        if (w->nat[i].N1 == e->N1 && w->nat[i].N2 == e->N2) {
-            if (!overwrite) return 0;
-            w->nat[i] = *e; return 2;
-        }
-    if (w->nat_count >= w->nat_capacity) {
-        w->nat_capacity = w->nat_capacity ? w->nat_capacity * 2 : 32;
-        w->nat = (vfft_fft2d_c2c_nat_entry_t *)realloc(w->nat, w->nat_capacity * sizeof(*w->nat));
-    }
-    w->nat[w->nat_count++] = *e; return 1;
-}
+/* vfft_fft2d_c2c_nat_add: DELETED at the wisdom2 wave-3 close (2026-08-20)
+ * — natural verdicts bank via vw2_2d_c2c_bank_nat. */
 
 static inline void vfft_fft2d_c2c_wisdom_free(vfft_fft2d_c2c_wisdom_t *w)
 {

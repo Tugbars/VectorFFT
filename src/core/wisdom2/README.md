@@ -112,7 +112,7 @@ end-of-line (escape-free, so any legacy line survives verbatim).
 
 @cell t=c2c n=8192 q=* ord=* place=* | eng=split_oop sp_route=ccol chain=8.32.32 vars=t1s.flat.log3 | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=oop_wisdom.txt:119
 @cell t=c2c n=4096 q=1 ord=nat place=ip | mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) | ran=1 ns=8891.0 metric=fwd1 units=ns arms=2 src=race bin=vfft_create@ce40f78d date=2026-08-19
-@cell t=c2c n=64x64 q=1 ord=nat place=oop | rowplan=4.16 colplan=2.16.2 b=8 | ran=1 ns=7485.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:19
+@cell t=c2c n=64x64 q=1 ord=nat place=* | rowplan=4.16 rowvars=log3.flat rowdif=1 colplan=2.16.2 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=7485.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:19
 @quarantined reason=garbage-variant-token from=oop_wisdom.txt:45 raw=4096 1 2 3 32 16 8 690 -1435841587 32761 81219.0
 ```
 

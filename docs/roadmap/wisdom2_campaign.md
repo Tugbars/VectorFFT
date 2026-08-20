@@ -265,17 +265,33 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
 
 ## Wave 3 — 2D/3D
 
-- [ ] 3.1 Migrate fft2d c2c (+@nat2d) / r2c / c2r → `wisdom2_2d.txt`:
-      `n=N1xN2`, ordered extents, `q=1` explicit, `k_pad=` named (both
-      pad-to-4 vintage and pad-to-8 legal), per-direction records replace the
-      shared-version-tag file pair.
-- [ ] 3.2 3D binds natively → `wisdom2_3d.txt` (`n=N1xN2xN3`); the legacy
-      fft3d grammar never materializes on disk; `n=AxBxCxD` stays reserved.
-- [ ] 3.3 Flip _build_2d lookups/banks; dirty-only saves end the
-      unconditional per-create rewrites; 2D helper 1D c2c cells remain plain
-      c2c records with `from=` provenance (design default, owner informed and
-      did not override — unlike trig N±1 rows these are genuinely servable
-      c2c cells a 1D caller may share).
+- [x] 3.1 MIGRATED 2026-08-20: --2d migrator leg (probe-parse via the three
+      shipped loaders; @nat2d = data, other @ = headers). [mig-gate-2d]
+      ALL PASS: 41 lines = 7 skipped + 34 migrated + 0 quarantined → 34
+      records in wisdom2_2d.txt; byte-idempotent ×3; [reader-gate-2d]
+      34/34 field-identical incl. every vars/dif field.
+- [x] 3.2 3D BORN IN WISDOM2 2026-08-20: store-first lookup at the dims=3
+      create; the legacy creator runs greedy+extract against an in-process
+      SCRATCH table (no load, no save, no path — disk contact removed);
+      extraction harvested via vw2_3d_bank_entry (measure-less src=race);
+      guarded persist. [3d-born-gate] PASS: 16³ create banked → persisted
+      → re-served bitwise from a fresh load.
+- [x] 3.3 FLIP LANDED 2026-08-20: wisdom2_2d_reader.h (4 twins + 4 bank
+      constructors; canonical-key law place=oop / real ord=nat dissolves
+      design Q1 — no plumbing, no duplicate calibration); from-entry
+      builders extracted in all three legacy headers (pure refactor);
+      vfft.c c2c scr/nat lookups + post-bank re-serves + r2c/c2r lookup +
+      bank flipped; kill switch VFFT_WISDOM2_OFF=2d; the
+      save-even-on-FAILED-create rewrites deleted (persist = guarded,
+      success-only); explicit-save 2D/3D lines dropped from
+      vfft_wisdom_save (vw2_save covers). [2d-flip-gate]: c2c scr/nat ×4 +
+      r2c ×2 + c2r ×2 all arms-bitwise-identical + naive-DFT-anchored;
+      freeze held on all three files through every run.
+      🔴 GATE-HARNESS LESSON: compare only the transform-DEFINED output
+      region — beyond it live padding lanes whose garbage is plan-shaped
+      (an r2c 128x128 "failure" was the comparison window covering
+      padding, not a real divergence; window fixed to halfcomplex/real
+      plane per direction).
 - [ ] 3.4 adopt_wisdom.h: explicitly untouched (healthy sidecar).
 - [ ] 3.5 RITUAL: Gate B over all (N1,N2) cells incl. @nat2d; freeze-stamp
       the three fft2d files; fleet (bench 2D read modes may keep reading

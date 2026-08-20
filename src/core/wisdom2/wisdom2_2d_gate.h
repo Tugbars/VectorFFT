@@ -191,18 +191,31 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
         static const struct { int N1, N2, t; const char *tag; } RC[] = {
             { 64, 64, VFFT_R2C, "r2c 64x64" },
             { 128, 128, VFFT_R2C, "r2c 128x128" },
+            /* c2r: random bytes as the "spectrum" — the arms-bitwise
+             * verdict needs identical inputs, not a valid one (both arms
+             * run the same deterministic construction). */
+            { 64, 64, VFFT_C2R, "c2r 64x64" },
+            { 128, 128, VFFT_C2R, "c2r 128x128" },
         };
         int i;
         for (i = 0; i < (int)(sizeof RC / sizeof RC[0]); i++) {
             const int N1 = RC[i].N1, N2 = RC[i].N2;
-            const size_t nin = (size_t)N1 * N2;
-            const size_t nout = (size_t)2 * N1 * N2 + 64; /* >= any halfcomplex/padded layout */
+            /* both buffers >= any real/halfcomplex/padded layout, either
+             * direction (c2r READS a padded halfcomplex plane); the arms
+             * comparison covers ONLY the DEFINED output region — beyond it
+             * live padding lanes whose garbage is plan-shaped, not
+             * transform-defined (r2c: halfcomplex plane; c2r: real plane). */
+            const size_t nin = (size_t)2 * N1 * N2 + 64;
+            const size_t nout = (size_t)2 * N1 * N2 + 64;
+            const size_t ncmp = (RC[i].t == VFFT_R2C)
+                                    ? (size_t)2 * N1 * (N2 / 2 + 1)
+                                    : (size_t)N1 * N2;
             double *x = _g2d_az(nin), *A = _g2d_az(nout), *B = _g2d_az(nout);
             size_t j;
             int ok;
             for (j = 0; j < nin; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
             ok = _g2d_both_arms(wisdir, RC[i].t, VFFT_ORDER_DEFAULT, N1, N2, x, A, B, nout);
-            if (ok && memcmp(A, B, nout * sizeof(double)) != 0) ok = 0;
+            if (ok && memcmp(A, B, ncmp * sizeof(double)) != 0) ok = 0;
             printf("  %-16s %s\n", RC[i].tag, ok ? "PASS (arms bitwise-identical)"
                                                  : "*** FAIL ***");
             if (!ok) fails++;

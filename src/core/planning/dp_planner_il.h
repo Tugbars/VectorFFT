@@ -1315,7 +1315,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             /* 🔴 GO THROUGH THE SHIPPED WRITER, never fprintf the line here.
              *
              * This used to hand-print the kind-4 line, which meant TWO places
-             * knew the format — this one and vfft_oop_wisdom_write_entry. When
+             * knew the format — this one and the legacy line encoder. When
              * the tcut width field was added, only one of them learned about
              * it, and a run banked a TILED winner as UNTILED with nothing
              * complaining. Building the entry and handing it to the shipped
