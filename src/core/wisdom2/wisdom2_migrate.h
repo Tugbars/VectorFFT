@@ -1371,4 +1371,224 @@ static inline int vw2_migrate_rekey_k1role(const char *dir)
     return n;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * WAVE 4.5 — THE EXPORTER. Reconstructs a legacy v8 spike/rfft file FROM
+ * the wisdom2 store, through the SHIPPED writer verbatim
+ * (vfft_proto_wisdom_save) and the SHIPPED read twins — one decode path,
+ * no second decoder to drift.
+ *
+ * WHY: spike_wisdom.txt is a dune BUILD INPUT (generated/dune's
+ * plan_executors.h promote rule deps on it by bare filename, inside the
+ * dune workspace). Freezing the live file — and later moving live wisdom
+ * out of the generator tree — requires the build to depend on an EXPORTED
+ * SNAPSHOT instead of on live wisdom. This produces that snapshot.
+ *
+ * ORDER: rows are emitted in their ORIGINAL file order, recovered from the
+ * `from=<file>:<line>` provenance every migrated record carries; records
+ * with no provenance (freshly raced cells) sort last, deterministically by
+ * (N,K). That makes the export diffable against the original file.
+ *
+ * NOT byte-identical to the original by construction: quarantined rows
+ * (junk cells, intra-file duplicates the legacy first-match reader could
+ * never serve) are absent. The information a first-match reader sees is
+ * identical — which is what the export gate asserts.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    long line;                        /* from= line; LONG_MAX = no provenance */
+    int  kind;                        /* 0=scr c2c 1=scr rfft 2=@nat 3=@natoop */
+    int  N; size_t K;
+    vfft_proto_wisdom_entry_t e;
+    vfft_proto_nat_entry_t    ne;
+} vw2__exp_row_t;
+
+static int vw2__exp_cmp(const void *a, const void *b)
+{
+    const vw2__exp_row_t *x = (const vw2__exp_row_t *)a;
+    const vw2__exp_row_t *y = (const vw2__exp_row_t *)b;
+    if (x->line != y->line) return x->line < y->line ? -1 : 1;
+    if (x->N != y->N) return x->N < y->N ? -1 : 1;
+    if (x->K != y->K) return x->K < y->K ? -1 : 1;
+    return 0;
+}
+
+/* from=<basename>:<line> -> line, or LONG_MAX when absent/unparseable */
+static inline long vw2__exp_line(const vw2_rec_t *r)
+{
+    const char *f = vw2_rec_get(r, "from");
+    const char *c;
+    if (!f) return LONG_MAX;
+    c = strrchr(f, ':');
+    if (!c || !c[1]) return LONG_MAX;
+    return atol(c + 1);
+}
+
+/* Export the stride family. spike_out / rfft_out may be NULL to skip.
+ * Returns rows written, or -1. */
+static inline int vw2_export_stride(const char *store_dir,
+                                    const char *spike_out, const char *rfft_out)
+{
+    vw2_store_t st;
+    vfft_proto_wisdom_t spike, rfft;
+    vw2__exp_row_t *rows = NULL;
+    int nrows = 0, caprows = 0, i, cursor = 0, written = 0;
+    const vw2_rec_t *r;
+
+    memset(&spike, 0, sizeof spike);
+    memset(&rfft, 0, sizeof rfft);
+    vw2_open(&st, store_dir, 0);
+
+    while ((r = vw2_scan(&st, &cursor)) != NULL) {
+        const char *eng = vw2_rec_get(r, "eng");
+        vw2__exp_row_t row;
+        int ok = 0;
+        if (!eng || strcmp(eng, "stride")) continue;
+        if (r->key.rank != 1) continue;
+        memset(&row, 0, sizeof row);
+        row.line = vw2__exp_line(r);
+        row.N = r->key.n[0];
+        row.K = (size_t)r->key.q;
+        if (r->key.ord == VW2_ORD_SCR && r->key.pl == VW2_PL_IP) {
+            if (r->key.t == VW2_T_C2C) {
+                row.kind = 0;
+                ok = vw2_stride_lookup(&st, 0, row.N, row.K, &row.e);
+            } else if (r->key.t == VW2_T_R2C) {
+                row.kind = 1;
+                ok = vw2_stride_lookup(&st, 1, row.N, row.K, &row.e);
+            }
+        } else if (r->key.ord == VW2_ORD_NAT && r->key.t == VW2_T_C2C) {
+            if (r->key.pl == VW2_PL_IP) {
+                row.kind = 2;
+                ok = vw2_stride_lookup_nat(&st, row.N, row.K, &row.ne);
+            } else if (r->key.pl == VW2_PL_OOP) {
+                row.kind = 3;
+                ok = vw2_stride_lookup_natoop(&st, row.N, row.K, &row.ne);
+            }
+        }
+        if (!ok) continue;                    /* unservable: not exportable */
+        if (nrows >= caprows) {
+            int nc = caprows ? caprows * 2 : 128;
+            void *p = realloc(rows, (size_t)nc * sizeof *rows);
+            if (!p) { free(rows); vw2_close(&st); return -1; }
+            rows = (vw2__exp_row_t *)p; caprows = nc;
+        }
+        rows[nrows++] = row;
+    }
+    vw2_close(&st);
+
+    qsort(rows, (size_t)nrows, sizeof *rows, vw2__exp_cmp);
+    for (i = 0; i < nrows; i++) {
+        switch (rows[i].kind) {
+        case 0: vfft_proto_wisdom_add(&spike, &rows[i].e, 1); break;
+        case 1: vfft_proto_wisdom_add(&rfft,  &rows[i].e, 1); break;
+        case 2: vfft_proto_nat_add(&spike, &rows[i].ne, 1); break;
+        case 3: vfft_proto_natoop_add(&spike, &rows[i].ne, 1); break;
+        }
+        written++;
+    }
+    free(rows);
+
+    if (spike_out && vfft_proto_wisdom_save(&spike, spike_out) != 0) written = -1;
+    if (written >= 0 && rfft_out && vfft_proto_wisdom_save(&rfft, rfft_out) != 0) written = -1;
+    fprintf(stderr, "[wisdom2_export] stride: %d row(s) -> %s%s%s\n",
+            nrows, spike_out ? spike_out : "(none)",
+            rfft_out ? " + " : "", rfft_out ? rfft_out : "");
+    vfft_proto_wisdom_free(&spike);
+    vfft_proto_wisdom_free(&rfft);
+    return written;
+}
+
+/* EXPORT GATE: every cell the ORIGINAL file would serve (first-match law)
+ * must resolve field-identical from the EXPORTED file, in both tables, and
+ * the export must be byte-reproducible. Proves the snapshot carries every
+ * bit of information a legacy reader can see — the cutover's losslessness
+ * claim, checkable without the OCaml toolchain. */
+static inline int vw2_export_stride_gate(const char *store_dir,
+                                         const char *orig_spike,
+                                         const char *orig_rfft,
+                                         const char *out_dir)
+{
+    char sp[640], rf[640], sp2[640];
+    vfft_proto_wisdom_t o, x;
+    int fail = 0, cells = 0, bad = 0;
+    size_t i;
+
+    VW2__MIG_MKDIR(out_dir);
+    snprintf(sp, sizeof sp, "%s/spike_wisdom_frozen.txt", out_dir);
+    snprintf(rf, sizeof rf, "%s/rfft_wisdom_frozen.txt", out_dir);
+    snprintf(sp2, sizeof sp2, "%s/spike_wisdom_frozen.2.txt", out_dir);
+
+    if (vw2_export_stride(store_dir, sp, rf) < 0) {
+        fprintf(stderr, "[export-gate] export FAILED\n");
+        return 1;
+    }
+    /* byte reproducibility: a second export must be identical */
+    {
+        char rf2[640];
+        char b1[262144], b2[262144];
+        long n1 = 0, n2 = 0;
+        FILE *f;
+        snprintf(rf2, sizeof rf2, "%s/rfft_wisdom_frozen.2.txt", out_dir);
+        if (vw2_export_stride(store_dir, sp2, rf2) < 0) fail++;
+        f = fopen(sp, "rb");  if (f) { n1 = (long)fread(b1, 1, sizeof b1, f); fclose(f); }
+        f = fopen(sp2, "rb"); if (f) { n2 = (long)fread(b2, 1, sizeof b2, f); fclose(f); }
+        if (n1 != n2 || memcmp(b1, b2, (size_t)n1)) {
+            fprintf(stderr, "[export-gate] EXPORT NOT REPRODUCIBLE\n");
+            fail++;
+        }
+        remove(sp2); remove(rf2);
+    }
+    /* information equivalence, per table, first-match law */
+    {
+        const char *pairs[2][2] = { { orig_spike, sp }, { orig_rfft, rf } };
+        int t;
+        for (t = 0; t < 2; t++) {
+            if (!pairs[t][0]) continue;
+            if (vfft_proto_wisdom_load(&o, pairs[t][0]) != 0) continue;
+            if (vfft_proto_wisdom_load(&x, pairs[t][1]) != 0) { vfft_proto_wisdom_free(&o); fail++; continue; }
+            for (i = 0; i < o.count; i++) {
+                const vfft_proto_wisdom_entry_t *want =
+                    vfft_proto_wisdom_lookup(&o, o.entries[i].N, o.entries[i].K);
+                const vfft_proto_wisdom_entry_t *got =
+                    vfft_proto_wisdom_lookup(&x, o.entries[i].N, o.entries[i].K);
+                if (want->N < 2 || want->K < 1) continue;   /* junk: dropped by design */
+                cells++;
+                if (!got || memcmp(got, want, sizeof *got)) {
+                    fprintf(stderr, "[export-gate] %s N=%d K=%zu mismatch\n",
+                            t ? "rfft" : "scr", want->N, want->K);
+                    bad++;
+                }
+            }
+            for (i = 0; i < o.nat_count; i++) {
+                const vfft_proto_nat_entry_t *want =
+                    vfft_proto_nat_lookup(&o, o.nat[i].N, o.nat[i].K);
+                const vfft_proto_nat_entry_t *got =
+                    vfft_proto_nat_lookup(&x, o.nat[i].N, o.nat[i].K);
+                cells++;
+                if (!got || memcmp(got, want, sizeof *got)) {
+                    fprintf(stderr, "[export-gate] nat N=%d K=%zu mismatch\n", want->N, want->K);
+                    bad++;
+                }
+            }
+            for (i = 0; i < o.natoop_count; i++) {
+                const vfft_proto_nat_entry_t *want =
+                    vfft_proto_natoop_lookup(&o, o.natoop[i].N, o.natoop[i].K);
+                const vfft_proto_nat_entry_t *got =
+                    vfft_proto_natoop_lookup(&x, o.natoop[i].N, o.natoop[i].K);
+                cells++;
+                if (!got || memcmp(got, want, sizeof *got)) {
+                    fprintf(stderr, "[export-gate] natoop N=%d K=%zu mismatch\n", want->N, want->K);
+                    bad++;
+                }
+            }
+            vfft_proto_wisdom_free(&o);
+            vfft_proto_wisdom_free(&x);
+        }
+    }
+    if (cells == 0) { fprintf(stderr, "[export-gate] VACUOUS (0 cells) — FAIL\n"); return 1; }
+    fprintf(stderr, "[export-gate] %d cell(s) checked, %d mismatch(es) — %s\n",
+            cells, bad, (bad || fail) ? "FAIL" : "ALL PASS");
+    return (bad || fail) ? 1 : 0;
+}
+
 #endif /* VFFT_WISDOM2_MIGRATE_H */
