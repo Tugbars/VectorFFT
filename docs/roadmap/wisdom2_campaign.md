@@ -693,3 +693,56 @@ be regenerated, hand-edited, or deleted to tidy up.
 
 KEPT (still referenced): `c2r_wisdom.txt` — `bench_1d_vs_mkl.c:3592` reads
 it; it dies in wave 2 with the c2r work, per owner decision #10.
+
+## Kill switches RETIRED + five legacy files DELETED (owner go, 2026-08-20)
+
+Owner's argument, accepted: the reader gates already proved old and new
+serve IDENTICAL values (122 oop + 34 2D + 338 stride cells, zero
+mismatches, plus bitwise-identical front-door output), so the fallback
+carried no information the store does not carry.
+
+DELETED: `oop_wisdom.txt`, `rfft_wisdom.txt`, `fft2d_{c2c,r2c,c2r}_wisdom.txt`
+(+ `spike_wisdom_padded.txt`, the fossil, deleted earlier the same day).
+`generated/` now holds four live shards, `spike_wisdom.txt` (build input),
+and the three not-yet-migrated wave-2 files.
+
+Switches and files went TOGETHER — deleting files while the branches
+remained would make `VFFT_WISDOM2_OFF` silently serve an EMPTY table, which
+is worse than having no switch. Removed from vfft.c: the env parse, the
+five legacy loads, the five dead path fields. The env NAME stays RESERVED
+and now prints one line saying it is retired and ignored.
+
+### 🔴 DEFECT FOUND IN OUR OWN VERIFICATION (same day)
+
+`vw2_off_stride` was NEVER ASSIGNED — an earlier scripted edit silently did
+not match and was not checked. Consequences, stated plainly:
+
+- `VFFT_WISDOM2_OFF=stride` never worked; the stride family had no kill
+  switch from the wave-4 flip onward.
+- The "stride kill switch reads the stamped spike file" check was VACUOUS
+  (it ran the wisdom2 path twice and compared it to itself).
+- The 4.2 TRIG GATE was VACUOUS for the same reason — both "arms" took the
+  same path, so its bitwise-identical result proved nothing.
+
+REPLACEMENT GATE (real, and stronger than what it replaces): forward then
+backward through each trig handle must return the input scaled by ONE
+constant, the constant read off the data so no convention is assumed. A
+wrong inner plan cannot produce a uniform scale.
+
+    DCT-I  N=257  scale=512.0  uniform to 5.14e-16   PASS
+    DST-I  N=255  scale=512.0  uniform to 4.44e-16   PASS
+    DCT-II  N=256 scale=512.0  uniform to 6.67e-16   PASS
+    DCT-III N=256 scale=512.0  uniform to 1.00e-15   PASS
+    DCT-IV  N=256 scale=512.0  uniform to 5.55e-16   PASS
+    DHT     N=256 scale=256.0  uniform to 6.67e-16   PASS
+
+The SCALE VALUES are the real result: 2N for the DCT/DST family, N for the
+Hartley — and for the two collision cells, 2(N-1) at DCT-I 257 and 2(N+1)
+at DST-I 255. Those constants independently pin the inner-size derivation
+(`vw2_stride_trig_inner_n`) the whole re-key depends on; a sign error there
+could not produce them.
+
+LESSON (banked): a scripted source edit MUST assert its match count. An
+unchecked `replace()` that silently no-ops produces a feature that looks
+present (the struct field, the branches, the env name) and is never
+exercised — and any gate built on it passes vacuously.

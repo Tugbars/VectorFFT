@@ -179,8 +179,6 @@ static const char *_vfft_tname(int t)
 struct vfft_wisdom_s
 {
     char path_c2c[640];       /* spike_wisdom.txt   */
-    char path_oop[640];       /* oop_wisdom.txt     */
-    char path_rfft[640];      /* rfft_wisdom.txt    */
     vfft_proto_wisdom_t c2c;  /* c2c inner / decoupled-r2c inner format. Also holds the padded
                                * pad-vs-tail verdict per cell in each entry's exec_me field, and
                                * the aligned (N,Kp) entries pad reuses — no separate padded file. */
@@ -189,9 +187,6 @@ struct vfft_wisdom_s
     /* Dedicated 2D wisdom (end-to-end-2D measured, independent of 1D c2c). One
      * entry per (N1,N2), two sub-plans each. r2c and c2r have separate tables
      * (different optima, same bidirectional plan structure). */
-    char path_2d_c2c[640]; /* fft2d_c2c_wisdom.txt */
-    char path_2d_r2c[640]; /* fft2d_r2c_wisdom.txt */
-    char path_2d_c2r[640]; /* fft2d_c2r_wisdom.txt */
     vfft_fft2d_c2c_wisdom_t fft2d_c2c;
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
     vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
@@ -465,11 +460,6 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 {
     const char *d = (dir && dir[0]) ? dir : ".";
     snprintf(W->path_c2c, sizeof W->path_c2c, "%s/spike_wisdom.txt", d);
-    snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
-    snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
-    snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
-    snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
-    snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
     snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
     snprintf(W->path_c2r_path, sizeof W->path_c2r_path, "%s/c2r_path.txt", d);
     snprintf(W->dir, sizeof W->dir, "%s", d);
@@ -477,14 +467,9 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
 static void _bundle_load(struct vfft_wisdom_s *W)
 { /* missing files -> empty tables */
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
-    vfft_oop_wisdom_load(&W->oop, W->path_oop); /* kill-switch fallback only */
-    vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
-    vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c); /* kill-switch fallback only (frozen) */
     /* fft3d: NO load — the file never existed on any tree; the table is a
      * pure in-process scratch for the greedy creator's extraction (wave 3:
      * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
-    vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c); /* kill-switch fallback only (frozen) */
-    vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r); /* kill-switch fallback only (frozen) */
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
     vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
@@ -493,20 +478,20 @@ static void _bundle_load(struct vfft_wisdom_s *W)
      * DISK persistence is separately gated by config.wisdom_write. The
      * unset-env case still forces read-only inside vw2_open (colony law). */
     {
-        const char *off = getenv("VFFT_WISDOM2_OFF");
         /* colony law: a bundle that fell back to "." with no env is never
          * writable — vw2_open(NULL) re-resolves and forces read-only with
          * its own loud line; an explicit directory opens writable (memory
          * banking; disk persistence stays behind config.wisdom_write). */
         int dir_known = (strcmp(W->dir, ".") != 0) || (getenv("VFFT_WISDOM_DIR") != NULL);
-        W->vw2_off_oop = (off && strstr(off, "oop")) ? 1 : 0;
-        if (W->vw2_off_oop)
-            fprintf(stderr, "[wisdom2] KILL SWITCH: oop-family READS fall back to the "
-                            "legacy file for this process (writes still go to wisdom2)\n");
-        W->vw2_off_2d = (off && strstr(off, "2d")) ? 1 : 0;
-        if (W->vw2_off_2d)
-            fprintf(stderr, "[wisdom2] KILL SWITCH: 2D-family READS fall back to the "
-                            "legacy tables for this process (writes still go to wisdom2)\n");
+        /* KILL SWITCHES RETIRED 2026-08-20 together with the legacy files
+         * they read. Equivalence was machine-proven first: every cell the
+         * legacy readers could serve resolved field-identical from the
+         * store (122 oop + 34 2D + 338 stride cells, 0 mismatches) and the
+         * front door produced bitwise-identical output on both arms. The
+         * env name stays RESERVED — never reuse it for another meaning. */
+        if (getenv("VFFT_WISDOM2_OFF"))
+            fprintf(stderr, "[wisdom2] VFFT_WISDOM2_OFF is RETIRED and ignored — "
+                            "the legacy wisdom files it selected are deleted\n");
         vw2_open(&W->vw2, dir_known ? W->dir : NULL, 1);
     }
 }
