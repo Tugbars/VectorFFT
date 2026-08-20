@@ -2327,11 +2327,25 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
      * forces the monolithic kernel back — required since blocked became
      * the R>=32 default, so a platform where blocked measures slower
      * stays expressible as a verdict rather than only as an env. */
-    if (!p || !ke)
+    if (!p)
         return;
-    vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
-                                             * one definition (il2p.h),
-                                             * planner uses the same fn */
+    if (ke)
+        vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
+                                                 * one definition (il2p.h),
+                                                 * planner uses the same fn */
+    /* BACKWARD arm (2026-08-21). No banked backward verdict exists yet:
+     * wisdom2 reserves `dir=` as a KEY token, so a bwd verdict is its own
+     * CELL rather than more il_kv bits. VFFT_IL_BKV is the racing hook in
+     * the VFFT_FORCE_ZROUTE spirit — it makes the arm reachable and
+     * testable NOW, and is the ONE line the planner replaces when it banks
+     * a dir=bwd verdict. Deliberately outside the `ke` guard: the backward
+     * pick does not depend on a forward wisdom hit. Unset => no-op, and
+     * il2p.h's apply_blocked_default_bwd structural pick stands. */
+    {
+        const char *e = getenv("VFFT_IL_BKV");
+        if (e && e[0])
+            vfft_il2p_apply_kv_forms_bwd(p, (int)strtol(e, NULL, 0));
+    }
 }
 
 /* ── K=1 IL-engine candidate for the IN-PLACE tiers (il_coverage_plan.md
