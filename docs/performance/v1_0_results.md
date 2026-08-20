@@ -733,16 +733,28 @@ Source: `bench_1d_vs_mkl.c --zr2c` → `zr2c_quietday_20260813.csv`. Ratio = MKL
 ```
  N       r2c OOP-IL  r2c cascade  r2c BEST | c2r OOP-IL  c2r cascade  c2r BEST
 ────────────────────────────────────────────────────────────────────────────────
- 512       1.06×        —          1.06×   |   0.93×        —          0.93×
- 2048      0.88×       0.92×       0.92×   |   0.94×       0.92×       0.94×
- 8192      1.08×       0.96×       1.08×   |   0.99×       0.96×       0.99×
- 16384     1.08×       1.06×       1.08×   |   0.94×       0.83×       0.94×
+ 512       1.35×        —          1.35×   |   1.06×        —          1.06×
+ 1024      1.08×        —          1.08×   |   0.95×        —          0.95×
+ 2048      0.88×       1.09×       1.09×   |   0.95×       1.07×       1.07×
+ 4096      0.97×        —          0.97×   |   0.80×        —          0.80×
+ 8192      1.09×       0.96×       1.09×   |   0.96×       0.96×       0.96×
+ 16384     1.17×       1.06×       1.17×   |   0.93×       0.83×       0.93×
  65536     0.89×       1.12×       1.12×   |   0.83×       0.84×       0.84×
 ────────────────────────────────────────────────────────────────────────────────
  r2c: parity-to-winning at 8192–65536 (65536 = the cascade child, 1.12×).
- c2r: 2026-08-21 — the 2048 hole (was 0.55×) is CLOSED: the zr2c child ran
- BLOCKED codelets fwd and MONOLITHIC bwd; eight blocked bwd twins now ship.
- 65536 not re-measured. Medians of 5.
+ 2026-08-21, medians of 5. TWO fixes landed: (1) the 2048 c2r hole (was
+ 0.55×) is CLOSED — the zr2c child ran BLOCKED codelets fwd and MONOLITHIC
+ bwd; eight blocked bwd twins now ship. (2) the Hermitian fold is
+ INTERLEAVED-NATIVE — 20 port-5 shuffles/iter down to 10, helping BOTH
+ directions (512 and 16384 r2c gained most; 2048 could not be resolved —
+ its ~14.6% cell spread exceeds the fold saving, deferred to VTune).
+ OOP-IL columns are freshly measured. Cascade: 2048 re-measured clean
+ (median of 7, no order warning) and it WINS both directions there;
+ 512/1024/4096 have no usable cascade figure and 8192/16384 keep the
+ 08-13 vintage — at N>=4096 the arm now raises "ORDER CONVENTION
+ UNKNOWN" and reads 0.24-0.34×, i.e. the bench can no longer verify the
+ ordering it is timing. That is a HARNESS regression to fix (order-tape
+ API), not a 3× loss — do not quote those numbers. 65536 not re-measured.
 ```
 
 > **r2c reaches the parity band mid-N and wins at 65536 (1.12×, cascade child); the small end
