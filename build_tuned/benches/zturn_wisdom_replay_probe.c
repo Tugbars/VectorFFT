@@ -28,7 +28,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "%s/_replay_probe_stderr.log", dir);
+    snprintf(g_errpath, sizeof g_errpath, "_replay_probe_stderr.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -76,6 +76,7 @@ static probe_t probe(vfft_wisdom *W, int N, const char *tcut_env)
     cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.order = VFFT_ORDER_SCRAMBLED; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1; cfg.wisdom = W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     (void)err_tap_read();
     vfft_plan h = vfft_create(&cfg);
     const char *log = err_tap_read();

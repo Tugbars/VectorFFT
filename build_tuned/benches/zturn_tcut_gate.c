@@ -54,7 +54,7 @@ static long g_errpos = 0;
 
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "%s/_tcut_gate_stderr.log", dir);
+    snprintf(g_errpath, sizeof g_errpath, "_tcut_gate_stderr.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -130,6 +130,7 @@ static int make_arm(int N, vfft_wisdom *W, const arm_t *a, armplan_t *out)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;    /* the committed z contract */
     cfg.nthreads = 1;
     cfg.wisdom = W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     (void)err_tap_read();                    /* drop anything queued */
     out->h = vfft_create(&cfg);
     const char *log = err_tap_read();
