@@ -119,10 +119,14 @@ type kind =
   | N1_oop_strided
   | Cil of
       { form : cil_form
+      ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
       ; blocked : bool
       ; split : (int * int) option
       ; turn : cil_turn option
       ; pre_tw : bool
+      ; form_tag : bool
+        (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
+           tangent / wing variant is distinguishable without a post-emit sed *)
       }
   | Zsplit of
       { k : zs_kind
