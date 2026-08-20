@@ -243,6 +243,53 @@ static inline void vfft_fft2d_c2c_wisdom_free(vfft_fft2d_c2c_wisdom_t *w)
     memset(w, 0, sizeof(*w));
 }
 
+/* Build straight from ONE entry (the shared body of both creators; also
+ * the wisdom2 flip's constructor — the vw2 twins fill entries, this turns
+ * them into plans). NULL on any build failure; the caller owns fallback. */
+static inline stride_plan_t *vfft_fft2d_c2c_plan_from_fields(
+    int N1, int N2, int B,
+    const int *rf, const int *rv, int rnf, int rdif,
+    const int *cf, const int *cv, int cnf, int cdif,
+    const vfft_proto_registry_t *reg)
+{
+    size_t eB = (size_t)B;
+    if (rnf <= 0 || cnf <= 0 || eB < 1 || eB > (size_t)N1) return NULL;
+    {
+        stride_plan_t *plan_row = vfft_proto_plan_create_ex(
+            N2, eB, rf, rv, rnf, rdif, reg);
+        if (plan_row) {
+            stride_plan_t *plan_col = vfft_proto_plan_create_ex(
+                N1, (size_t)N2, cf, cv, cnf, cdif, reg);
+            if (plan_col) {
+                stride_plan_t *p = stride_plan_2d_from(
+                    N1, N2, eB, plan_col, plan_row); /* owns both */
+                if (p) return p;
+            } else {
+                stride_plan_destroy(plan_row);
+            }
+        }
+    }
+    return NULL;
+}
+
+static inline stride_plan_t *vfft_fft2d_c2c_plan_from_entry(
+    const vfft_fft2d_c2c_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
+{
+    return vfft_fft2d_c2c_plan_from_fields(
+        e->N1, e->N2, e->B,
+        e->row_factors, e->row_variants, e->row_nf, e->row_use_dif,
+        e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
+}
+
+static inline stride_plan_t *vfft_fft2d_c2c_plan_from_nat_entry(
+    const vfft_fft2d_c2c_nat_entry_t *e, const vfft_proto_registry_t *reg)
+{
+    return vfft_fft2d_c2c_plan_from_fields(
+        e->N1, e->N2, e->nat_B,
+        e->row_factors, e->row_variants, e->row_nf, e->row_use_dif,
+        e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
+}
+
 /* Wisdom-aware create. Calibrated plan if present, else the greedy default
  * (stride_plan_2d, which does its own exhaustive/auto inner search). */
 static inline stride_plan_t *vfft_fft2d_c2c_plan_create_wisdom(
@@ -250,23 +297,9 @@ static inline stride_plan_t *vfft_fft2d_c2c_plan_create_wisdom(
     const vfft_proto_registry_t *reg)
 {
     const vfft_fft2d_c2c_wisdom_entry_t *e = vfft_fft2d_c2c_wisdom_lookup(w, N1, N2);
-    if (e && e->row_nf > 0 && e->col_nf > 0) {
-        size_t eB = (size_t)e->B;
-        if (eB >= 1 && eB <= (size_t)N1) {
-            stride_plan_t *plan_row = vfft_proto_plan_create_ex(
-                N2, eB, e->row_factors, e->row_variants, e->row_nf, e->row_use_dif, reg);
-            if (plan_row) {
-                stride_plan_t *plan_col = vfft_proto_plan_create_ex(
-                    N1, (size_t)N2, e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
-                if (plan_col) {
-                    stride_plan_t *p = stride_plan_2d_from(
-                        N1, N2, eB, plan_col, plan_row); /* owns both */
-                    if (p) return p;
-                } else {
-                    stride_plan_destroy(plan_row);
-                }
-            }
-        }
+    if (e) {
+        stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(e, reg);
+        if (p) return p;
     }
     /* greedy fallback (exhaustive/auto inner search inside stride_plan_2d) */
     return stride_plan_2d(N1, N2, reg);
@@ -280,22 +313,9 @@ static inline stride_plan_t *vfft_fft2d_c2c_plan_create_wisdom_natural(
     const vfft_proto_registry_t *reg)
 {
     const vfft_fft2d_c2c_nat_entry_t *e = vfft_fft2d_c2c_nat_lookup(w, N1, N2);
-    if (e && e->row_nf > 0 && e->col_nf > 0) {
-        size_t eB = (size_t)e->nat_B;
-        if (eB >= 1 && eB <= (size_t)N1) {
-            stride_plan_t *plan_row = vfft_proto_plan_create_ex(
-                N2, eB, e->row_factors, e->row_variants, e->row_nf, e->row_use_dif, reg);
-            if (plan_row) {
-                stride_plan_t *plan_col = vfft_proto_plan_create_ex(
-                    N1, (size_t)N2, e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
-                if (plan_col) {
-                    stride_plan_t *p = stride_plan_2d_from(N1, N2, eB, plan_col, plan_row);
-                    if (p) return p;
-                } else {
-                    stride_plan_destroy(plan_row);
-                }
-            }
-        }
+    if (e) {
+        stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(e, reg);
+        if (p) return p;
     }
     return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, w, reg);   /* no natural record -> scrambled chain */
 }

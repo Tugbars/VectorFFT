@@ -733,4 +733,294 @@ static inline int vw2_migrate_oop_gate(const char *legacy_path, const char *outd
     return fail;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * WAVE 3 — the 2D families (fft2d c2c incl. @nat2d, r2c, c2r).
+ * Same machinery: probe-parse every data line through the SHIPPED loaders
+ * (exact line attribution; legacy silent drops become quarantine rows),
+ * records built by the SHARED family codec (wisdom2_2d_reader.h), banked
+ * through the generic seen-set/merge law. No seed class in this family;
+ * fft3d migrates NOTHING (born in wisdom2 — zero disk instances).
+ * Line classing: blank/'#' = skipped; '@'-lines are HEADERS unless they
+ * begin with "@nat2d" (the natural table's data rows).
+ * ══════════════════════════════════════════════════════════════════════ */
+
+#include "wisdom2_2d_reader.h"
+
+/* probe-parse one fft2d_c2c line. 1 = scrambled entry (*e), 2 = natural
+ * entry (*ne), 0 = legacy loader dropped it, -1 = probe IO failure. */
+static inline int vw2__mig2d_parse_c2c(const char *outdir, const char *line,
+                                       vfft_fft2d_c2c_wisdom_entry_t *e,
+                                       vfft_fft2d_c2c_nat_entry_t *ne)
+{
+    char probe[640];
+    FILE *f;
+    vfft_fft2d_c2c_wisdom_t w;
+    int rc = 0;
+    snprintf(probe, sizeof probe, "%s/mig_probe.tmp", outdir);
+    f = fopen(probe, "wb");
+    if (!f) return -1;
+    if (fprintf(f, "%s\n", line) < 0) { fclose(f); remove(probe); return -1; }
+    if (fclose(f) != 0) { remove(probe); return -1; }
+    if (vfft_fft2d_c2c_wisdom_load(&w, probe) != 0) { remove(probe); return -1; }
+    remove(probe);
+    if (w.count == 1)          { *e  = w.entries[0]; rc = 1; }
+    else if (w.nat_count == 1) { *ne = w.nat[0];     rc = 2; }
+    vfft_fft2d_c2c_wisdom_free(&w);
+    return rc;
+}
+
+/* probe-parse one fft2d_r2c/c2r line. 1 = entry, 0 = dropped, -1 = IO. */
+static inline int vw2__mig2d_parse_r2c(const char *outdir, const char *line,
+                                       vfft_fft2d_r2c_wisdom_entry_t *e)
+{
+    char probe[640];
+    FILE *f;
+    vfft_fft2d_r2c_wisdom_t w;
+    int rc = 0;
+    snprintf(probe, sizeof probe, "%s/mig_probe.tmp", outdir);
+    f = fopen(probe, "wb");
+    if (!f) return -1;
+    if (fprintf(f, "%s\n", line) < 0) { fclose(f); remove(probe); return -1; }
+    if (fclose(f) != 0) { remove(probe); return -1; }
+    if (vfft_fft2d_r2c_wisdom_load(&w, probe) != 0) { remove(probe); return -1; }
+    remove(probe);
+    if (w.count == 1) { *e = w.entries[0]; rc = 1; }
+    vfft_fft2d_r2c_wisdom_free(&w);
+    return rc;
+}
+
+/* skipped = blank, '#', or an '@' header that is not @nat2d data */
+static inline int vw2__mig2d_skipped(const char *line)
+{
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0' || *p == '\n' || *p == '\r' || *p == '#') return 1;
+    if (*p == '@') return strncmp(p, "@nat2d", 6) != 0;
+    return 0;
+}
+
+/* migrate ONE 2D file. kind: 0 = c2c (both tables), 1 = r2c, 2 = c2r. */
+static inline int vw2__mig2d_file(vw2_store_t *st, vw2__mig_seen_t *seen,
+                                  vw2_mig_stats_t *stats,
+                                  const char *legacy_path, int kind,
+                                  const char *outdir, int verbose)
+{
+    FILE *f = fopen(legacy_path, "rb");
+    char line[4096], base[128];
+    int lineno = 0;
+    const char *bn = strrchr(legacy_path, '/');
+    const char *bn2 = strrchr(legacy_path, '\\');
+    if (bn2 > bn) bn = bn2;
+    snprintf(base, sizeof base, "%s", bn ? bn + 1 : legacy_path);
+    if (!f) {
+        fprintf(stderr, "[wisdom2_migrate] cannot open %s\n", legacy_path);
+        return -1;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char from[192];
+        const char *why = NULL;
+        vw2_rec_t rec;
+        int pr;
+        size_t L = strlen(line);
+        lineno++;
+        while (L && (line[L-1] == '\n' || line[L-1] == '\r')) line[--L] = 0;
+        if (vw2__mig2d_skipped(line)) { stats->skipped++; continue; }
+        snprintf(from, sizeof from, "%s:%d", base, lineno);
+        if (kind == 0) {
+            vfft_fft2d_c2c_wisdom_entry_t e;
+            vfft_fft2d_c2c_nat_entry_t ne;
+            pr = vw2__mig2d_parse_c2c(outdir, line, &e, &ne);
+            if (pr < 0) { fclose(f); return -1; }             /* IO = FATAL */
+            if (pr == 0) {
+                if (vw2__mig_quar(st, stats, "legacy-silent-drop", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+            if (pr == 1) {
+                if (vw2_2d_c2c_rec_from_entry(&rec, &e, "migrated", from, &why)) {
+                    if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
+                    continue;
+                }
+            } else {
+                if (vw2_2d_c2c_rec_from_nat(&rec, &ne, "migrated", from, &why)) {
+                    if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
+                    continue;
+                }
+            }
+        } else {
+            vfft_fft2d_r2c_wisdom_entry_t e;
+            pr = vw2__mig2d_parse_r2c(outdir, line, &e);
+            if (pr < 0) { fclose(f); return -1; }
+            if (pr == 0) {
+                if (vw2__mig_quar(st, stats, "legacy-silent-drop", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+            if (vw2_2d_r2c_rec_from_entry(&rec, &e, kind == 2, "migrated", from, &why)) {
+                if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+        }
+        {
+            int b = vw2__mig_bank(st, seen, &rec, &why);
+            if (b < 0) {
+                if (vw2__mig_quar(st, stats, why ? why : "bank-refused", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+            if (b > 0) stats->records_out++;
+            stats->migrated++;
+            if (verbose)
+                fprintf(stderr, "[wisdom2_migrate] %s migrated\n", from);
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Migrate the three 2D files into outdir's store. Any path may be NULL
+ * (file absent on a tree = zero lines, not an error). */
+static inline int vw2_migrate_2d(const char *c2c_path, const char *r2c_path,
+                                 const char *c2r_path, const char *outdir,
+                                 vw2_mig_stats_t *stats, int verbose)
+{
+    vw2_store_t st;
+    vw2__mig_seen_t seen;
+    int rc = 0;
+    memset(stats, 0, sizeof *stats);
+    memset(&seen, 0, sizeof seen);
+    VW2__MIG_MKDIR(outdir);
+    vw2_open(&st, outdir, 1);
+    if (c2c_path && vw2__mig2d_file(&st, &seen, stats, c2c_path, 0, outdir, verbose)) rc = -1;
+    if (!rc && r2c_path && vw2__mig2d_file(&st, &seen, stats, r2c_path, 1, outdir, verbose)) rc = -1;
+    if (!rc && c2r_path && vw2__mig2d_file(&st, &seen, stats, c2r_path, 2, outdir, verbose)) rc = -1;
+    if (!rc && vw2_save(&st) != VW2_OK) { stats->io_errors++; rc = -1; }
+    vw2_close(&st);
+    free(seen.k);
+    fprintf(stderr, "[wisdom2_migrate] 2d: %d skipped + %d migrated + %d quarantined"
+                    " -> %d new record(s)\n",
+            stats->skipped, stats->migrated, stats->quarantined, stats->records_out);
+    return rc;
+}
+
+/* Reader gate, twin-level: every legacy-servable 2D cell resolves
+ * FIELD-IDENTICAL through the vw2 twins (both structs memset -> whole-
+ * struct memcmp is padding-safe). Non-vacuous: zero cells = FAIL. */
+static inline int vw2_migrate_2d_reader_gate(const char *c2c_path,
+                                             const char *r2c_path,
+                                             const char *c2r_path,
+                                             const char *outdir)
+{
+    vw2_store_t st;
+    int cells = 0, bad = 0;
+    vw2_open(&st, outdir, 0);
+    if (c2c_path) {
+        vfft_fft2d_c2c_wisdom_t w;
+        size_t i;
+        if (vfft_fft2d_c2c_wisdom_load(&w, c2c_path) == 0) {
+            for (i = 0; i < w.count; i++) {
+                vfft_fft2d_c2c_wisdom_entry_t got;
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (!vw2_2d_c2c_lookup_scr(&st, w.entries[i].N1, w.entries[i].N2, &got) ||
+                    memcmp(&got, &w.entries[i], sizeof got)) {
+                    fprintf(stderr, "[reader-gate-2d] c2c scr %dx%d mismatch\n",
+                            w.entries[i].N1, w.entries[i].N2);
+                    bad++;
+                }
+            }
+            for (i = 0; i < w.nat_count; i++) {
+                vfft_fft2d_c2c_nat_entry_t got;
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (!vw2_2d_c2c_lookup_nat(&st, w.nat[i].N1, w.nat[i].N2, &got) ||
+                    memcmp(&got, &w.nat[i], sizeof got)) {
+                    fprintf(stderr, "[reader-gate-2d] c2c nat %dx%d mismatch\n",
+                            w.nat[i].N1, w.nat[i].N2);
+                    bad++;
+                }
+            }
+            vfft_fft2d_c2c_wisdom_free(&w);
+        }
+    }
+    {
+        const char *rp[2]; int isc2r;
+        rp[0] = r2c_path; rp[1] = c2r_path;
+        for (isc2r = 0; isc2r < 2; isc2r++) {
+            vfft_fft2d_r2c_wisdom_t w;
+            size_t i;
+            if (!rp[isc2r]) continue;
+            if (vfft_fft2d_r2c_wisdom_load(&w, rp[isc2r]) != 0) continue;
+            for (i = 0; i < w.count; i++) {
+                vfft_fft2d_r2c_wisdom_entry_t got;
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (!vw2_2d_r2c_lookup(&st, isc2r, w.entries[i].N1, w.entries[i].N2, &got) ||
+                    memcmp(&got, &w.entries[i], sizeof got)) {
+                    fprintf(stderr, "[reader-gate-2d] %s %dx%d mismatch\n",
+                            isc2r ? "c2r" : "r2c", w.entries[i].N1, w.entries[i].N2);
+                    bad++;
+                }
+            }
+            vfft_fft2d_r2c_wisdom_free(&w);
+        }
+    }
+    vw2_close(&st);
+    if (cells == 0) { fprintf(stderr, "[reader-gate-2d] VACUOUS (0 cells) — FAIL\n"); return 1; }
+    fprintf(stderr, "[reader-gate-2d] %d cell(s) checked, %d mismatch(es) — %s\n",
+            cells, bad, bad ? "FAIL" : "ALL PASS");
+    return bad ? 1 : 0;
+}
+
+/* Full 2D migration gate: accounting + persisted counts + byte
+ * idempotency x3 + the reader gate. */
+static inline int vw2_migrate_2d_gate(const char *c2c_path, const char *r2c_path,
+                                      const char *c2r_path, const char *outdir)
+{
+    vw2_mig_stats_t st1, st2, st3;
+    int fail = 0;
+    long base_nrec;
+    {
+        vw2_store_t s;
+        vw2_open(&s, outdir, 0);
+        base_nrec = s.nrec;
+        vw2_close(&s);
+    }
+    if (vw2_migrate_2d(c2c_path, r2c_path, c2r_path, outdir, &st1, 0)) fail++;
+    {   /* persisted count: reload and require base + records_out */
+        vw2_store_t s;
+        vw2_open(&s, outdir, 0);
+        if (s.nrec != base_nrec + st1.records_out) {
+            fprintf(stderr, "[mig-gate-2d] PERSISTED COUNT %d != %ld+%d\n",
+                    s.nrec, base_nrec, st1.records_out);
+            fail++;
+        }
+        vw2_close(&s);
+    }
+    {   /* byte idempotency x3 on the 2d shard */
+        char path[640], b1[65536], b2[65536];
+        long n1 = 0, n2;
+        FILE *f;
+        int r;
+        snprintf(path, sizeof path, "%s/%s", outdir, vw2_shard_name[VW2_SHARD_2D]);
+        f = fopen(path, "rb");
+        if (f) { n1 = (long)fread(b1, 1, sizeof b1 - 1, f); fclose(f); }
+        for (r = 0; r < 2; r++) {
+            vw2_mig_stats_t *s = r ? &st3 : &st2;
+            if (vw2_migrate_2d(c2c_path, r2c_path, c2r_path, outdir, s, 0)) fail++;
+            if (s->migrated != st1.migrated || s->quarantined != st1.quarantined) {
+                fprintf(stderr, "[mig-gate-2d] RUN %d ACCOUNTING DRIFT\n", r + 2);
+                fail++;
+            }
+            f = fopen(path, "rb");
+            if (!f) { fail++; continue; }
+            n2 = (long)fread(b2, 1, sizeof b2 - 1, f); fclose(f);
+            if (n2 != n1 || memcmp(b1, b2, (size_t)n2)) {
+                fprintf(stderr, "[mig-gate-2d] BYTE IDEMPOTENCY FAILED (run %d)\n", r + 2);
+                fail++;
+            }
+        }
+    }
+    if (vw2_migrate_2d_reader_gate(c2c_path, r2c_path, c2r_path, outdir)) fail++;
+    fprintf(stderr, "[mig-gate-2d] %s\n", fail ? "FAIL" : "ALL PASS");
+    return fail;
+}
+
 #endif /* VFFT_WISDOM2_MIGRATE_H */

@@ -25,6 +25,7 @@
 #include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "oop_wisdom.h"         /* OOP wisdom load/lookup/create + entry_from_plan */
+#include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
@@ -194,7 +195,6 @@ struct vfft_wisdom_s
     vfft_fft2d_c2c_wisdom_t fft2d_c2c;
     vfft_fft2d_r2c_wisdom_t fft2d_r2c;
     vfft_fft2d_r2c_wisdom_t fft2d_c2r; /* shared struct, c2r-tuned plans */
-    char path_3d_c2c[640];             /* fft3d_c2c_wisdom.txt */
     vfft_fft3d_wisdom_t fft3d_c2c;     /* dedicated 3D table (B + a_block + 3 axis chains) */
     char path_bluestein[640];          /* bluestein_wisdom.txt */
     bluestein_wisdom_t bluestein;      /* prime-N (M,B) for Bluestein cells (Rader needs none) */
@@ -212,6 +212,9 @@ struct vfft_wisdom_s
      * a frozen file). */
     vw2_store_t vw2;
     int vw2_off_oop;   /* kill switch, cached at bundle load */
+    int vw2_off_2d;    /* kill switch: 2D reads fall back to the legacy
+                          tables (3D has no legacy fallback — born in
+                          wisdom2) */
     char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
 };
 
@@ -464,7 +467,6 @@ static void _bundle_paths(struct vfft_wisdom_s *W, const char *dir)
     snprintf(W->path_oop, sizeof W->path_oop, "%s/oop_wisdom.txt", d);
     snprintf(W->path_rfft, sizeof W->path_rfft, "%s/rfft_wisdom.txt", d);
     snprintf(W->path_2d_c2c, sizeof W->path_2d_c2c, "%s/fft2d_c2c_wisdom.txt", d);
-    snprintf(W->path_3d_c2c, sizeof W->path_3d_c2c, "%s/fft3d_c2c_wisdom.txt", d);
     snprintf(W->path_2d_r2c, sizeof W->path_2d_r2c, "%s/fft2d_r2c_wisdom.txt", d);
     snprintf(W->path_2d_c2r, sizeof W->path_2d_c2r, "%s/fft2d_c2r_wisdom.txt", d);
     snprintf(W->path_bluestein, sizeof W->path_bluestein, "%s/bluestein_wisdom.txt", d);
@@ -476,10 +478,12 @@ static void _bundle_load(struct vfft_wisdom_s *W)
     vfft_proto_wisdom_load(&W->c2c, W->path_c2c);
     vfft_oop_wisdom_load(&W->oop, W->path_oop); /* kill-switch fallback only */
     vfft_proto_wisdom_load(&W->rfft, W->path_rfft);
-    vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c);
-    vfft_fft3d_wisdom_load(&W->fft3d_c2c, W->path_3d_c2c);
-    vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c);
-    vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r);
+    vfft_fft2d_c2c_wisdom_load(&W->fft2d_c2c, W->path_2d_c2c); /* kill-switch fallback only (frozen) */
+    /* fft3d: NO load — the file never existed on any tree; the table is a
+     * pure in-process scratch for the greedy creator's extraction (wave 3:
+     * 3D is born in wisdom2). memset(0) from calloc/init is its state. */
+    vfft_fft2d_r2c_wisdom_load(&W->fft2d_r2c, W->path_2d_r2c); /* kill-switch fallback only (frozen) */
+    vfft_fft2d_r2c_wisdom_load(&W->fft2d_c2r, W->path_2d_c2r); /* kill-switch fallback only (frozen) */
     bluestein_wisdom_init(&W->bluestein);
     bluestein_wisdom_load(&W->bluestein, W->path_bluestein);
     vfft_c2r_path_load(W->path_c2r_path); /* c2r NATURAL/STRIDE per-cell path table */
@@ -498,6 +502,10 @@ static void _bundle_load(struct vfft_wisdom_s *W)
         if (W->vw2_off_oop)
             fprintf(stderr, "[wisdom2] KILL SWITCH: oop-family READS fall back to the "
                             "legacy file for this process (writes still go to wisdom2)\n");
+        W->vw2_off_2d = (off && strstr(off, "2d")) ? 1 : 0;
+        if (W->vw2_off_2d)
+            fprintf(stderr, "[wisdom2] KILL SWITCH: 2D-family READS fall back to the "
+                            "legacy tables for this process (writes still go to wisdom2)\n");
         vw2_open(&W->vw2, dir_known ? W->dir : NULL, 1);
     }
 }
@@ -1345,13 +1353,35 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
          * inner path below (calibrate-on-miss at rigor). */
         if (!recalib)
         {
-            if (nat)
+            /* wave-3 flip: serve from the wisdom2 store (twins fill the
+             * legacy entry, the from-entry builders construct); the kill
+             * switch falls back to the legacy tables. Fallback semantics
+             * preserved exactly: nat build-fail -> scrambled chain ->
+             * greedy; scr build-fail -> greedy. */
+            vfft_fft2d_c2c_wisdom_entry_t seb;
+            vfft_fft2d_c2c_nat_entry_t neb;
+            if (W->vw2_off_2d)
             {
-                if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
-                    return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
+                if (nat)
+                {
+                    if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
+                        return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
+                }
+                else if (vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
+                    return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
             }
-            else if (vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
-                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+            else if (nat && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, &neb))
+            {
+                stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb, reg);
+                if (!p && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb))
+                    p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
+                return p ? p : stride_plan_2d(N1, N2, reg);
+            }
+            else if (!nat && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb))
+            {
+                stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
+                return p ? p : stride_plan_2d(N1, N2, reg);
+            }
         }
 
         /* Build the fallback (1D-wisdom inners). A PRIME dimension has no CT factorization —
@@ -1402,22 +1432,31 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                  * scrambled cell (overwrite=0 appends when absent) but must NEVER clobber a warm one — else a
                  * read-only-intent natural create silently degrades the user's calibrated scrambled 2D wisdom
                  * (e.g. downgrades a PATIENT entry to a MEASURE one). DEFAULT keeps overwrite=1. */
-                vfft_fft2d_c2c_wisdom_add(&W->fft2d_c2c, &cal, nat ? 0 : 1);
+                vw2_2d_c2c_bank_entry(&W->vw2, &cal, /*fill_only=*/nat ? 1 : 0);
             if (nat && cal_nat.row_nf > 0)
-                vfft_fft2d_c2c_nat_add(&W->fft2d_c2c, &cal_nat, 1); /* natural: J_nat sweep winner, decoupled */
+                vw2_2d_c2c_bank_nat(&W->vw2, &cal_nat); /* natural: J_nat sweep winner, decoupled */
             if (nat)
             {
-                if (vfft_fft2d_c2c_nat_lookup(&W->fft2d_c2c, N1, N2))
+                /* post-bank re-serve from the store's memory bank (under
+                 * the kill switch the bank is invisible to legacy reads —
+                 * fb serves, same wave-1 bake-window semantics). */
+                vfft_fft2d_c2c_nat_entry_t neb2;
+                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, &neb2))
                 {
-                    stride_plan_destroy(fb);
-                    return vfft_fft2d_c2c_plan_create_wisdom_natural(N1, N2, &W->fft2d_c2c, reg);
+                    stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb2, reg);
+                    if (p) { stride_plan_destroy(fb); return p; }
                 }
                 return fb; /* no natural record -> fb (scrambled chain + downstream bolt-on reorder) */
             }
             if (scr_won)
             {
-                stride_plan_destroy(fb);
-                return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
+                vfft_fft2d_c2c_wisdom_entry_t seb2;
+                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb2))
+                {
+                    stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb2, reg);
+                    if (p) { stride_plan_destroy(fb); return p; }
+                }
+                return fb;
             }
         }
         return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
@@ -1430,8 +1469,25 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
          * bidirectional plan). Pick the table by direction; wisdom-first, else the
          * 1D-wisdom inner path. */
         vfft_fft2d_r2c_wisdom_t *rw = (t == VFFT_C2R) ? &W->fft2d_c2r : &W->fft2d_r2c;
-        if (!recalib && vfft_fft2d_r2c_wisdom_lookup(rw, N1, N2))
-            return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+        if (!recalib)
+        {
+            /* wave-3 flip: direction is the transform tag in wisdom2 (the
+             * legacy encoding was file membership). Twin-hit + build-fail
+             * degrades through the legacy creator (same entry via the
+             * frozen table, then its greedy tail) — legacy-identical. */
+            vfft_fft2d_r2c_wisdom_entry_t reb;
+            if (W->vw2_off_2d)
+            {
+                if (vfft_fft2d_r2c_wisdom_lookup(rw, N1, N2))
+                    return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+            }
+            else if (vw2_2d_r2c_lookup(&W->vw2, t == VFFT_C2R, N1, N2, &reb))
+            {
+                stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&reb, reg);
+                if (p) return p;
+                return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+            }
+        }
 
         size_t B = 8;
         if (B > (size_t)N1)
@@ -1467,9 +1523,11 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                                            : _vfft_measure_2d_r2c(fb, N1, N2);
             if (cal_ns < fb_ns)
             {
-                vfft_fft2d_r2c_wisdom_add(rw, &cal, 1); /* calibrated wins -> bank */
-                stride_plan_destroy(fb);
-                return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
+                vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R); /* calibrated wins -> bank */
+                {
+                    stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&cal, reg);
+                    if (p) { stride_plan_destroy(fb); return p; }
+                }
             }
         }
         return fb; /* fallback wins (or calibration failed) — keep it, don't bank */
@@ -3137,12 +3195,33 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
         int banked = 0;
-        stride_plan_t *tp =
-            vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg, &banked);
-        if (banked && W->path_3d_c2c[0])
-            vfft_fft3d_wisdom_save(&W->fft3d_c2c, W->path_3d_c2c);
+        stride_plan_t *tp = NULL;
+        /* wave-3: 3D is BORN in wisdom2 (the legacy file never existed on
+         * any tree). Serve from the store; on miss the legacy creator runs
+         * its greedy+extract path against the in-process SCRATCH table and
+         * the extraction is harvested into the store (measure-less
+         * src=race — the extraction never measured; prime-axis cells bank
+         * nothing, unchanged). No kill switch: nothing to fall back to. */
+        {
+            vfft_fft3d_wisdom_entry_t e3;
+            if (vw2_3d_lookup(&W->vw2, N1, N2, N3, &e3))
+                tp = vfft_fft3d_plan_from_entry(&e3, reg);
+        }
+        if (!tp)
+        {
+            tp = vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg, &banked);
+            if (banked)
+            {
+                const vfft_fft3d_wisdom_entry_t *ne =
+                    vfft_fft3d_wisdom_lookup(&W->fft3d_c2c, N1, N2, N3);
+                if (ne)
+                    vw2_3d_bank_entry(&W->vw2, ne);
+            }
+        }
         if (!tp)
             return NULL;
+        if (banked)
+            _vw2_persist(W, cfg);
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -3178,16 +3257,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int N1 = cfg->n[0], N2 = cfg->n[1];
         stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
         if (W->path_c2c[0])
-            vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* inner-cell calibrate-on-miss */
-        /* persist the dedicated 2D table that _build_2d may have banked, by direction. */
-        if (cfg->transform == VFFT_C2C && W->path_2d_c2c[0])
-            vfft_fft2d_c2c_wisdom_save(&W->fft2d_c2c, W->path_2d_c2c);
-        else if (cfg->transform == VFFT_R2C && W->path_2d_r2c[0])
-            vfft_fft2d_r2c_wisdom_save(&W->fft2d_r2c, W->path_2d_r2c);
-        else if (cfg->transform == VFFT_C2R && W->path_2d_c2r[0])
-            vfft_fft2d_r2c_wisdom_save(&W->fft2d_c2r, W->path_2d_c2r);
+            vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* inner-cell calibrate-on-miss
+                                                           * (SPIKE family — wave 4, stays) */
         if (!tp)
             return NULL;
+        /* wave-3 flip: the legacy per-create unconditional rewrites of the
+         * three fft2d files are GONE (they ran even when the create FAILED,
+         * and clobber-rewrote on pure warm hits — those files are frozen
+         * now). _build_2d banked into the wisdom2 store's memory; disk
+         * persistence is the guarded save, and only after a SUCCESSFUL
+         * create. */
+        _vw2_persist(W, cfg);
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
@@ -6980,11 +7060,11 @@ int vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
         vw2_save(&tmp.vw2);
     }
     /* 6a22 parity: persist the full loaded set. c2r_path persists at
-     * decision time via its own writer and is not owned by w. */
-    vfft_fft2d_c2c_wisdom_save(&w->fft2d_c2c, tmp.path_2d_c2c);
-    vfft_fft2d_r2c_wisdom_save(&w->fft2d_r2c, tmp.path_2d_r2c);
-    vfft_fft2d_r2c_wisdom_save(&w->fft2d_c2r, tmp.path_2d_c2r);
-    vfft_fft3d_wisdom_save(&w->fft3d_c2c, tmp.path_3d_c2c);
+     * decision time via its own writer and is not owned by w.
+     * Wave-3 flip: the three fft2d files are FROZEN and the 3D file never
+     * existed — their records live in the wisdom2 store, persisted by the
+     * vw2_save above. The legacy 2D tables remain loaded read-only for the
+     * kill-switch bake window. */
     bluestein_wisdom_save(&w->bluestein, tmp.path_bluestein);
     return rc;
 }

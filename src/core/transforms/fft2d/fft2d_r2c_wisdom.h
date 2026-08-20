@@ -170,39 +170,55 @@ static inline void vfft_fft2d_r2c_wisdom_free(vfft_fft2d_r2c_wisdom_t *w)
  * otherwise fall back to the greedy auto_plan path (current default behavior —
  * estimate-mode is experimental/unwired, so the fallback is plain greedy).
  * Returns NULL only if even the fallback can't build. */
+/* Build straight from ONE entry (the creator's body; also the wisdom2
+ * flip's constructor — the vw2 twin fills an entry, this turns it into a
+ * plan). NULL on invalid knobs or any build failure; caller owns fallback. */
+static inline stride_plan_t *vfft_fft2d_r2c_plan_from_entry(
+    const vfft_fft2d_r2c_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
+{
+    const int N1 = e->N1, N2 = e->N2;
+    const size_t hp1 = (size_t)(N2 / 2 + 1);
+    size_t eB = (size_t)e->B, eKpad = (size_t)e->K_pad;
+    if (e->row_nf <= 0 || e->col_nf <= 0) return NULL;
+    /* validate the stored knobs against the 2D-create invariants */
+    if (!(eB >= 2 && eB <= (size_t)N1 && (eKpad & 3) == 0 && eKpad >= hp1))
+        return NULL;
+    {
+        stride_plan_t *inner = vfft_proto_plan_create_ex(
+            N2 / 2, eB, e->row_factors, e->row_variants, e->row_nf, e->row_use_dif, reg);
+        if (inner) {
+            stride_plan_t *plan_r2c = stride_r2c_plan(N2, eB, eB, inner); /* owns inner */
+            if (plan_r2c) {
+                stride_plan_t *plan_col = vfft_proto_plan_create_ex(
+                    N1, eKpad, e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
+                if (plan_col) {
+                    stride_plan_t *p = stride_plan_2d_r2c_from(
+                        N1, N2, eB, eKpad, plan_r2c, plan_col); /* owns both */
+                    if (p) return p;
+                    /* on failure stride_plan_2d_r2c_from already freed both */
+                } else {
+                    stride_plan_destroy(plan_r2c); /* frees inner too */
+                }
+            }
+            /* plan_r2c NULL => stride_r2c_plan already freed inner */
+        }
+    }
+    return NULL;
+}
+
 static inline stride_plan_t *vfft_fft2d_r2c_plan_create_wisdom(
     int N1, int N2, const vfft_fft2d_r2c_wisdom_t *w,
     const vfft_proto_registry_t *reg)
 {
-    const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       B     = 8; if (B > (size_t)N1) B = (size_t)N1;
+    const size_t hp1   = (size_t)(N2 / 2 + 1);
     size_t       K_pad = ((hp1 + 7) / 8) * 8;  /* §6a54: pad-to-8 — avx512 col pass full-width, no anyk tail (tail_handling doctrine) */
 
     const vfft_fft2d_r2c_wisdom_entry_t *e = vfft_fft2d_r2c_wisdom_lookup(w, N1, N2);
-    if (e && e->row_nf > 0 && e->col_nf > 0) {
-        size_t eB = (size_t)e->B, eKpad = (size_t)e->K_pad;
-        /* validate the stored knobs against the 2D-create invariants */
-        if (eB >= 2 && eB <= (size_t)N1 && (eKpad & 3) == 0 && eKpad >= hp1) {
-            stride_plan_t *inner = vfft_proto_plan_create_ex(
-                N2 / 2, eB, e->row_factors, e->row_variants, e->row_nf, e->row_use_dif, reg);
-            if (inner) {
-                stride_plan_t *plan_r2c = stride_r2c_plan(N2, eB, eB, inner); /* owns inner */
-                if (plan_r2c) {
-                    stride_plan_t *plan_col = vfft_proto_plan_create_ex(
-                        N1, eKpad, e->col_factors, e->col_variants, e->col_nf, e->col_use_dif, reg);
-                    if (plan_col) {
-                        stride_plan_t *p = stride_plan_2d_r2c_from(
-                            N1, N2, eB, eKpad, plan_r2c, plan_col); /* owns both */
-                        if (p) return p;
-                        /* on failure stride_plan_2d_r2c_from already freed both */
-                    } else {
-                        stride_plan_destroy(plan_r2c); /* frees inner too */
-                    }
-                }
-                /* plan_r2c NULL => stride_r2c_plan already freed inner */
-            }
-            /* any failure above => fall through to greedy fallback */
-        }
+    if (e) {
+        stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(e, reg);
+        if (p) return p;
+        /* any failure above => fall through to greedy fallback */
     }
 
     /* greedy fallback (no calibrated wisdom for this cell) */
