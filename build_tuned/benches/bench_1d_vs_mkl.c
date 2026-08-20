@@ -3849,6 +3849,45 @@ int main(int argc, char **argv)
 
     char line[1024];
     int benched = 0, skipped = 0;
+
+    /* ── K=1 kind-4 pass, enumerated FROM THE STORE ──────────────────────
+     * The cells to visit come from the live store, not from a wisdom file:
+     * the legacy enumeration source (oop_wisdom.txt) is deleted, and a
+     * re-raced or newly-added cell has to be visible to the bench without
+     * a file to re-parse. Each record is resolved through the PRODUCTION
+     * twin, so what is measured and labelled is what the front door
+     * serves. */
+    if (!oop && g_k1z_oopw_loaded)
+    {
+        int cursor = 0, done[128], ndone = 0;
+        const vw2_rec_t *r;
+        while ((r = vw2_scan(&g_k1z_store, &cursor)) != NULL)
+        {
+            const char *eng = vw2_rec_get(r, "eng");
+            vfft_oop_wisdom_entry_t ze;
+            int N4 = r->key.n[0], d, dup = 0;
+            if (r->key.t != VW2_T_C2C || r->key.rank != 1 || r->key.q != 1)
+                continue;
+            if (!eng || (strcmp(eng, "zturn") && strcmp(eng, "zsplit")))
+                continue;                       /* kind-4 = the cascade */
+            if (target_N && N4 != target_N)
+                continue;
+            for (d = 0; d < ndone; d++)
+                if (done[d] == N4)
+                    dup = 1;
+            if (dup || ndone >= 128)
+                continue;
+            done[ndone++] = N4;
+            if (!vw2_oop_lookup_zsplit(&g_k1z_store, N4, &ze))
+            {
+                skipped++;
+                continue;
+            }
+            run_k1z_cell(N4, &ze, out, cool_ms, flip ^ (benched & 1));
+            benched++;
+            pace(pace_ms);
+        }
+    }
     while (fgets(line, sizeof line, f))
     {
         if (line[0] == '#' || line[0] == '@' || line[0] == '\n')
@@ -3907,23 +3946,12 @@ int main(int argc, char **argv)
              * FRONT DOOR (the banked route+chain verdict being served is
              * exactly what the cell measures); every other K=1 line is
              * consumed silently. */
-            tok = strtok_r(NULL, " \t\n", &save);
-            if (tok && atoi(tok) == VFFT_OOP_KIND_ZSPLIT && g_k1z_oopw_loaded)
-            {
-                vfft_oop_wisdom_entry_t zebuf;
-                const vfft_oop_wisdom_entry_t *ze =
-                    vw2_oop_lookup_zsplit(&g_k1z_store, N, &zebuf) ? &zebuf : NULL;
-                if (ze)
-                {
-                    run_k1z_cell(N, ze, out, cool_ms, flip);
-                    benched++;
-                    pace(pace_ms);
-                }
-                else
-                    skipped++;
-            }
-            else
-                skipped++;
+            /* K=1 cells are NOT enumerated from this file any more — the
+             * store is (see the k1z pass before the loop). The legacy
+             * enumeration died with oop_wisdom.txt; enumerating kind-4
+             * cells from the live store is also what makes a re-raced or
+             * newly-added cell visible to the bench at all. */
+            skipped++;
             continue;
         }
         tok = strtok_r(NULL, " \t\n", &save);
