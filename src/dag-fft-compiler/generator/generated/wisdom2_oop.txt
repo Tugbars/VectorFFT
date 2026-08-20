@@ -1,9 +1,10 @@
-@vw2 1.0
+@vw2 1.1
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
 @legend key: layout (split/il) is never a key token - it is a strategy output in the payload
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
 @cell t=c2c n=1024 q=128 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.4 vars=flat.t1s.t1s.t1s.t1s | ran=128 ns=181911.5 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:1
@@ -45,28 +46,28 @@
 @cell t=c2c n=262144 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.8.4.4.8 zs_t2q=0 zt_t2q=1 zt_tw=1024 zt_l1=49152 | ran=1 ns=1091900.0 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:98
 @cell t=c2c n=2048 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.8.4 zs_t2q=0 zt_t2q=0 | ran=1 ns=4179.1 metric=joint2 units=ns src=race date=2026-08-20
 @cell t=c2c n=4096 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=8363.3 metric=joint2 units=ns src=race date=2026-08-20
-@cell t=c2c n=128 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=4.32 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.6 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:103
-@cell t=c2c n=256 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=8.32 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:104
-@cell t=c2c n=1024 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=32.32 il_route=2p il_pair=32.32 | ran=1 ns=874.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:105
-@cell t=c2c n=2048 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=32.64 il_route=2p il_pair=32.64 il_kv=1 | ran=1 ns=3390.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:106
-@cell t=c2c n=4096 q=* ord=* place=* | eng=k1 sp_route=2pa_l3 sp_pair=64.64 il_route=2p il_pair=64.64 | ran=1 ns=9735.5 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:107
-@cell t=c2c n=512 q=* ord=* place=* | eng=k1 sp_route=2pa sp_pair=64.8 il_route=2p il_pair=16.32 il_kv=67 | ran=1 ns=301.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:108
-@cell t=c2c n=8192 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=8.1024 chain=8.8.16 vars=flat.t1s.t1s | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:119
-@cell t=c2c n=16384 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=64.256 chain=4.4.16 vars=flat.t1s.t1s | ran=4 ns=52241.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:120
-@cell t=c2c n=32768 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=8.4096 chain=8.4.16.8 vars=flat.t1s.t1s.t1s | ran=4 ns=83711.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:121
-@cell t=c2c n=65536 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=64.1024 chain=4.4.4.16 vars=flat.t1s.t1s.t1s | ran=4 ns=245145.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:122
-@cell t=c2c n=512 q=1 ord=nat place=oop | eng=k1 sp_route=twl sp_pair=8.64 il_route=2p il_pair=16.32 il_kv=51 | ran=1 ns=330.7 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=128 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=4.32 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.6 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:103
+@cell t=c2c n=256 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=8.32 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:104
+@cell t=c2c n=1024 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=32.32 il_route=2p il_pair=32.32 | ran=1 ns=874.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:105
+@cell t=c2c n=2048 q=* ord=* place=* role=comp | eng=k1 sp_route=2pb sp_pair=32.64 il_route=2p il_pair=32.64 il_kv=1 | ran=1 ns=3390.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:106
+@cell t=c2c n=4096 q=* ord=* place=* role=comp | eng=k1 sp_route=2pa_l3 sp_pair=64.64 il_route=2p il_pair=64.64 | ran=1 ns=9735.5 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:107
+@cell t=c2c n=512 q=* ord=* place=* role=comp | eng=k1 sp_route=2pa sp_pair=64.8 il_route=2p il_pair=16.32 il_kv=67 | ran=1 ns=301.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:108
+@cell t=c2c n=8192 q=* ord=* place=* role=comp | eng=k1 sp_route=ccol sp_pair=8.1024 chain=8.8.16 vars=flat.t1s.t1s | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:119
+@cell t=c2c n=16384 q=* ord=* place=* role=comp | eng=k1 sp_route=ccol sp_pair=64.256 chain=4.4.16 vars=flat.t1s.t1s | ran=4 ns=52241.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:120
+@cell t=c2c n=32768 q=* ord=* place=* role=comp | eng=k1 sp_route=ccol sp_pair=8.4096 chain=8.4.16.8 vars=flat.t1s.t1s.t1s | ran=4 ns=83711.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:121
+@cell t=c2c n=65536 q=* ord=* place=* role=comp | eng=k1 sp_route=ccol sp_pair=64.1024 chain=4.4.4.16 vars=flat.t1s.t1s.t1s | ran=4 ns=245145.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:122
+@cell t=c2c n=512 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=twl sp_pair=8.64 il_route=2p il_pair=16.32 il_kv=51 | ran=1 ns=330.7 metric=fwd1 units=ns src=race date=2026-08-20
 @cell t=c2c n=512 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.16 vars=flat.flat | ran=1 ns=9581.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:35
 @cell t=c2c n=768 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.12 t1p=log3 | ran=1 ns=5020.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:36
 @cell t=c2c n=768 q=1 ord=scr place=oop | eng=classic route=modeb chain=64.12 vars=flat.flat | ran=1 ns=14521.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:37
-@cell t=c2c n=1024 q=1 ord=nat place=oop | eng=k1 sp_route=2pb sp_pair=16.64 il_route=2p il_pair=32.32 | ran=1 ns=1024.3 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=1024 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=2pb sp_pair=16.64 il_route=2p il_pair=32.32 | ran=1 ns=1024.3 metric=fwd1 units=ns src=race date=2026-08-20
 @cell t=c2c n=1024 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.32 vars=flat.flat | ran=1 ns=24281.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:39
 @cell t=c2c n=1536 q=1 ord=scr place=oop | eng=classic route=modeb chain=12.16.8 vars=flat.flat.flat | ran=1 ns=37812.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:40
-@cell t=c2c n=2048 q=1 ord=nat place=oop | eng=k1 sp_route=2pb sp_pair=32.64 il_route=2p il_pair=64.32 | ran=1 ns=2736.5 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=2048 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=2pb sp_pair=32.64 il_route=2p il_pair=64.32 | ran=1 ns=2736.5 metric=fwd1 units=ns src=race date=2026-08-20
 @cell t=c2c n=3072 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.8.12 vars=flat.flat.flat | ran=1 ns=67114.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:43
-@cell t=c2c n=4096 q=1 ord=nat place=oop | eng=k1 sp_route=2pb sp_pair=64.64 il_route=2p il_pair=64.64 | ran=1 ns=10158.2 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=4096 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=2pb sp_pair=64.64 il_route=2p il_pair=64.64 | ran=1 ns=10158.2 metric=fwd1 units=ns src=race date=2026-08-20
 @cell t=c2c n=6144 q=1 ord=scr place=oop | eng=classic route=modeb chain=64.16.6 vars=flat.flat.flat | ran=1 ns=144424.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:46
-@cell t=c2c n=8192 q=1 ord=nat place=oop | eng=k1 sp_route=twl sp_pair=64.128 | ran=4 ns=19303.7 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=8192 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=twl sp_pair=64.128 | ran=4 ns=19303.7 metric=fwd1 units=ns src=race date=2026-08-20
 @cell t=c2c n=12288 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.6.16.4 vars=flat.flat.flat.flat | ran=1 ns=351290.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:49
 @cell t=c2c n=24576 q=1 ord=scr place=oop | eng=classic route=modeb chain=8.6.8.8.8 vars=flat.flat.flat.flat.flat | ran=1 ns=861736.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:51
 @cell t=c2c n=1024 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=16.64 t1p=flat | ran=4 ns=21495.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:54
@@ -90,6 +91,6 @@
 @cell t=c2c n=4096 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=64.64 t1p=flat | ran=4 ns=99845.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:90
 @cell t=c2c n=8192 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=64.128 t1p=flat | ran=4 ns=303223.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:92
 @cell t=c2c n=32768 q=4 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.2.4.4.4.4 vars=flat.flat.flat.flat.flat.flat.flat.flat | ran=4 ns=1833926.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:95
-@cell t=c2c n=128 q=1 ord=nat place=oop | eng=k1 sp_route=mono sp_pair=8.16 il_route=2p il_pair=8.16 il_kv=51 | ran=1 ns=64.5 metric=fwd1 units=ns src=race date=2026-08-20
-@cell t=c2c n=256 q=1 ord=nat place=oop | eng=k1 sp_route=2pb sp_pair=4.64 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.5 metric=fwd1 units=ns src=race date=2026-08-20
-@cell t=c2c n=16384 q=1 ord=nat place=oop | eng=k1 sp_route=ccol sp_pair=8.2048 chain=4.4.8.16 vars=flat.t1s.t1s.t1s | ran=4 ns=44856.6 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=128 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=mono sp_pair=8.16 il_route=2p il_pair=8.16 il_kv=51 | ran=1 ns=64.5 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=256 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=2pb sp_pair=4.64 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.5 metric=fwd1 units=ns src=race date=2026-08-20
+@cell t=c2c n=16384 q=1 ord=nat place=oop role=comp | eng=k1 sp_route=ccol sp_pair=8.2048 chain=4.4.8.16 vars=flat.t1s.t1s.t1s | ran=4 ns=44856.6 metric=fwd1 units=ns src=race date=2026-08-20

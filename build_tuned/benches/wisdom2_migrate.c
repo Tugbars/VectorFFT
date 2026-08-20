@@ -18,6 +18,28 @@
 int main(int argc, char **argv)
 {
     vw2_mig_stats_t st;
+    if (argc > 1 && !strcmp(argv[1], "--rekey-k1role")) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: wisdom2_migrate --rekey-k1role <store_dir>\n");
+            return 2;
+        }
+        return vw2_migrate_rekey_k1role(argv[2]) < 0 ? 1 : 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--stride")) {
+        const char *spike, *rfft, *padded, *out;
+        if (argc < 6) {
+            fprintf(stderr, "usage: wisdom2_migrate --stride <spike> <rfft> "
+                            "<padded_fossil> <out_dir> [--gate]  (- = absent file)\n");
+            return 2;
+        }
+        spike = strcmp(argv[2], "-") ? argv[2] : NULL;
+        rfft = strcmp(argv[3], "-") ? argv[3] : NULL;
+        padded = strcmp(argv[4], "-") ? argv[4] : NULL;
+        out = argv[5];
+        if (argc > 6 && !strcmp(argv[6], "--gate"))
+            return vw2_migrate_stride_gate(spike, rfft, padded, out) ? 1 : 0;
+        return vw2_migrate_stride(spike, rfft, padded, out, &st, 1) == 0 ? 0 : 1;
+    }
     if (argc > 1 && !strcmp(argv[1], "--2d")) {
         const char *c2c, *r2c, *c2r, *out;
         if (argc < 6) {

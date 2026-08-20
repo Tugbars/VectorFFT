@@ -26,6 +26,7 @@
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
 #include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
+#include "wisdom2/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
@@ -214,6 +215,7 @@ struct vfft_wisdom_s
     int vw2_off_2d;    /* kill switch: 2D reads fall back to the legacy
                           tables (3D has no legacy fallback — born in
                           wisdom2) */
+    int vw2_off_stride;/* kill switch: stride/spike reads fall back */
     char dir[512];     /* the bundle's directory (wisdom2 opens from it) */
 };
 
@@ -1184,15 +1186,30 @@ static vfft_c2r_disp_t *_c2r_bakeoff(int N, size_t K, const vfft_proto_registry_
  * (an r2c plan, or a half-N complex FFT for DCT-IV). The inner c2c cell rides
  * the c2c wisdom table (calibrate-on-miss at rigor, like r2c/c2r).
  * ════════════════════════════════════════════════════════════════════════ */
-static stride_plan_t *_inner_c2c(int innerN, size_t K, vfft_rigor_t rigor,
+static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
+                                 int innerN, size_t K, vfft_rigor_t rigor,
                                  const vfft_proto_registry_t *reg,
                                  vfft_proto_wisdom_t *cw, int recalib)
 {
-    if (recalib || !vfft_proto_wisdom_lookup(cw, innerN, K))
+    /* wave-4 flip: the STORE is the source of truth; the legacy in-memory
+     * table survives as auto_plan's PROCESS CACHE (auto_plan walks it
+     * internally to pick chains) — a store hit is seeded into it, a miss
+     * calibrates then banks BOTH (table for this process, store for the
+     * world; persistence is the caller's guarded save). */
+    vfft_proto_wisdom_entry_t ne;
+    int have = !recalib &&
+        (W->vw2_off_stride
+             ? (vfft_proto_wisdom_lookup(cw, innerN, K) != NULL)
+             : vw2_stride_lookup(&W->vw2, /*is_rfft=*/0, innerN, K, &ne));
+    if (have && !W->vw2_off_stride)
+        vfft_proto_wisdom_set(cw, &ne);
+    if (!have)
     {
-        vfft_proto_wisdom_entry_t ne;
         if (_calibrate_c2c(innerN, K, rigor, reg, &ne) == 0)
+        {
             vfft_proto_wisdom_add(cw, &ne, 1); /* miss falls back to greedy in auto_plan */
+            vw2_stride_bank_entry(&W->vw2, &ne, /*is_rfft=*/0);
+        }
     }
     return vfft_proto_auto_plan(innerN, K, reg, cw);
 }
@@ -1216,13 +1233,14 @@ static inline void _trig_r2c_set_inner_jit(stride_plan_t *r, stride_plan_t *ic)
 /* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy).
  * The inner real-FFT (r2c) / complex-FFT (DCT-IV) rides the c2c wisdom (calibrate-on-
  * miss) AND, when JIT is compiled in, its inner c2c runs the JIT'd executor. */
-static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
+static stride_plan_t *_build_trig(struct vfft_wisdom_s *W,
+                                  vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
                                   const vfft_proto_registry_t *reg,
                                   vfft_proto_wisdom_t *cw, int recalib)
 {
     if (t == VFFT_DCT4)
     { /* inner = half-N complex FFT (driven backward) */
-        stride_plan_t *c2c = _inner_c2c(N / 2, K, rigor, reg, cw, recalib);
+        stride_plan_t *c2c = _inner_c2c(W, N / 2, K, rigor, reg, cw, recalib);
         if (!c2c)
             return NULL;
         stride_plan_t *dp = stride_dct4_plan(N, K, c2c);
@@ -1235,7 +1253,7 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
     if (t == VFFT_DCT1 || t == VFFT_DST1)
     { /* boundary r2c of M */
         int M = (t == VFFT_DCT1) ? 2 * (N - 1) : 2 * (N + 1);
-        stride_plan_t *ic = _inner_c2c(M / 2, K, rigor, reg, cw, recalib);
+        stride_plan_t *ic = _inner_c2c(W, M / 2, K, rigor, reg, cw, recalib);
         stride_plan_t *r = ic ? stride_r2c_plan(M, K, K, ic) : NULL;
         if (!r)
             return NULL;
@@ -1243,7 +1261,7 @@ static stride_plan_t *_build_trig(vfft_transform_t t, int N, size_t K, vfft_rigo
         return (t == VFFT_DCT1) ? stride_dct1_plan(N, K, r) : stride_dst1_plan(N, K, r);
     }
     /* DCT-II/III, DST-II/III, DHT — all start from an N-point r2c plan. */
-    stride_plan_t *ic = _inner_c2c(N / 2, K, rigor, reg, cw, recalib);
+    stride_plan_t *ic = _inner_c2c(W, N / 2, K, rigor, reg, cw, recalib);
     stride_plan_t *r = ic ? stride_r2c_plan(N, K, K, ic) : NULL;
     if (!r)
         return NULL;
@@ -1389,10 +1407,10 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
          * (contiguous K=N2 batch) and the row FFT (transposed K=B tiles). */
         vfft_proto_dispatch_set_bluestein_wisdom(&W->bluestein);
         size_t B = _fft2d_choose_tile(N2, N1);
-        stride_plan_t *col = _inner_c2c(N1, (size_t)N2, rigor, reg, cw, recalib);
+        stride_plan_t *col = _inner_c2c(W, N1, (size_t)N2, rigor, reg, cw, recalib);
         if (!col)
             col = vfft_proto_auto_plan_dispatch(N1, (size_t)N2, reg, cw);
-        stride_plan_t *row = _inner_c2c(N2, B, rigor, reg, cw, recalib);
+        stride_plan_t *row = _inner_c2c(W, N2, B, rigor, reg, cw, recalib);
         if (!row)
             row = vfft_proto_auto_plan_dispatch(N2, B, reg, cw);
         if (!col || !row)
@@ -1492,9 +1510,9 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         if (B > (size_t)N1)
             B = (size_t)N1;
         size_t hp1 = (size_t)(N2 / 2 + 1), K_pad = ((hp1 + 3) / 4) * 4;
-        stride_plan_t *inner = _inner_c2c(N2 / 2, B, rigor, reg, cw, recalib);
+        stride_plan_t *inner = _inner_c2c(W, N2 / 2, B, rigor, reg, cw, recalib);
         stride_plan_t *pr2c = inner ? stride_r2c_plan(N2, B, B, inner) : NULL;
-        stride_plan_t *pcol = _inner_c2c(N1, K_pad, rigor, reg, cw, recalib);
+        stride_plan_t *pcol = _inner_c2c(W, N1, K_pad, rigor, reg, cw, recalib);
         if (!pr2c || !pcol)
         {
             if (pr2c)
@@ -1974,6 +1992,9 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
  * handle through its real execute path, which is defined further down. */
 static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                                   const double *z_in, double *z_out);
+/* forward decl: the D6 create-time il_me decide (defined by the exec). */
+static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                          struct vfft_plan_s *h);
 
 /* ════════════════════════════════════════════════════════════════════════
  * §D2 zr2c — 1D INTERLEAVED-CCE real transforms (Phase 2 of
@@ -2427,7 +2448,8 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     }
 }
 
-static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, double ns,
+static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                         int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
 {
     vfft_proto_nat_entry_t nn;
@@ -2443,9 +2465,10 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
         nn.factors[s] = fac[s];
         nn.variants[s] = var[s];
     }
-    vfft_proto_nat_add(&W->c2c, &nn, 1);
-    if (W->path_c2c[0])
-        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+    /* wave-4 flip: @nat verdicts bank into the wisdom2 store (memory;
+     * persistence behind config.wisdom_write). spike_wisdom.txt freezes. */
+    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0);
+    _vw2_persist(W, cfg);
 }
 
 /* OOP-NATURAL verdict bank (@natoop sibling table — il_coverage_plan.md
@@ -2457,8 +2480,8 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode, dou
  * add alone already makes the verdict process-coherent (the create-race
  * coherence rule): every later create this process reads the same pick
  * even if the file save fails. */
-static void _bank_natoop_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode,
-                            double ns)
+static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                            int N, size_t K, int mode, double ns)
 {
     vfft_proto_nat_entry_t nn;
     memset(&nn, 0, sizeof nn);
@@ -2468,9 +2491,10 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, int N, size_t K, int mode,
     nn.nat_ns = ns;
     nn.nf = 1;
     nn.factors[0] = N;
-    vfft_proto_natoop_add(&W->c2c, &nn, 1);
-    if (W->path_c2c[0])
-        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+    /* wave-4 flip: the dummy-chain shape becomes the ref= SIGNPOST record
+     * in the store (the family codec detects nf==1 && factors[0]==N). */
+    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1);
+    _vw2_persist(W, cfg);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -3255,9 +3279,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
         stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
-        if (W->path_c2c[0])
-            vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* inner-cell calibrate-on-miss
-                                                           * (SPIKE family — wave 4, stays) */
+        /* wave-4: the inner-cell spike save is GONE — _inner_c2c banks into
+         * the wisdom2 store; the guarded _vw2_persist below covers disk. */
         if (!tp)
             return NULL;
         /* wave-3 flip: the legacy per-create unconditional rewrites of the
@@ -3491,6 +3514,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);  /* tail leg = factK  */
         const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp); /* pad leg = aligned (N,Kp) */
         int misaligned = (Kp != K);
+        /* wave-4: seed the process cache from the STORE (both legs); te/ae
+         * re-looked-up after every set (wisdom_set may realloc). */
+        if (!W->vw2_off_stride)
+        {
+            /* store-hit OVERWRITES the table (the frozen-file preload may
+             * be stale vs post-freeze store rows — the store wins) */
+            vfft_proto_wisdom_entry_t sb;
+            if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
+                vfft_proto_wisdom_set(&W->c2c, &sb);
+            if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
+                vfft_proto_wisdom_set(&W->c2c, &sb);
+            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+            ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+        }
 
         /* CALIBRATE-ON-MISS (planner primitive). Ensure the (N,K) tight cell is calibrated
          * (tail leg / — for aligned K — the plan itself). Same on-miss contract as tight c2c. */
@@ -3500,8 +3537,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
             {
                 vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                if (W->path_c2c[0])
-                    vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                vw2_stride_bank_entry(&W->vw2, &ne, 0);
+                _vw2_persist(W, cfg);
                 te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
             }
         }
@@ -3523,6 +3560,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
                 {
                     vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                    vw2_stride_bank_entry(&W->vw2, &ne, 0);
                     dirty = 1;
                 }
             }
@@ -3536,13 +3574,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
                     upd.exec_me = verdict;
                     vfft_proto_wisdom_add(&W->c2c, &upd, 1);
+                    vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
                     dirty = 1;
                     te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
                     ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
                 }
             }
-            if (dirty && W->path_c2c[0])
-                vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+            if (dirty)
+                _vw2_persist(W, cfg);
         }
 
         /* Select: PAD verdict -> the aligned (N,Kp) factorization @me=Kp ; else the (N,K) tight
@@ -3656,14 +3695,25 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * floor rides the STABLE banked scrambled chain, not a noisy fresh re-measure. order=DEFAULT/
              * SCRAMBLED keeps the old recalibrate-overwrites semantics. */
             int scr_recalib = cfg->recalibrate && cfg->order != VFFT_ORDER_NATURAL;
+            /* wave-4: store-first; the in-memory table stays the process
+             * cache auto_plan_dispatch walks below. */
+            {
+                vfft_proto_wisdom_entry_t seb;
+                if (!scr_recalib && !W->vw2_off_stride &&
+                    vw2_stride_lookup(&W->vw2, 0, N, K, &seb))
+                {
+                    vfft_proto_wisdom_set(&W->c2c, &seb); /* store wins */
+                    e = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+                }
+            }
             if (!e || scr_recalib)
             {
                 vfft_proto_wisdom_entry_t ne;
                 if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
                 {
                     vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                    if (W->path_c2c[0])
-                        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                    vw2_stride_bank_entry(&W->vw2, &ne, 0);
+                    _vw2_persist(W, cfg);
                 }
             }
         }
@@ -3720,7 +3770,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * untouched — byte-identical kill switch. */
         if (cfg->order == VFFT_ORDER_NATURAL)
         {
-            const vfft_proto_nat_entry_t *ne = vfft_proto_nat_lookup(&W->c2c, N, K);
+            vfft_proto_nat_entry_t neb;
+            const vfft_proto_nat_entry_t *ne =
+                W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
+                                  : (vw2_stride_lookup_nat(&W->vw2, N, K, &neb) ? &neb : NULL);
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
@@ -3939,7 +3992,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                 free(h->nat_list);
                                 h->nat_list = opp; /* deployed plan p unchanged */
                                 mode = VFFT_NAT_PSWAP;
-                                _bank_nat_1d(W, N, K, mode, 0.0, dfac, dvar, dnf, ddif);
+                                _bank_nat_1d(W, cfg, N, K, mode, 0.0, dfac, dvar, dnf, ddif);
                             }
                             else
                             {
@@ -3967,7 +4020,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                         fac2[s] = v.factors[s];
                                         var2[s] = s ? v.prof : 0;
                                     }
-                                    _bank_nat_1d(W, N, K, mode, v.ns, fac2, var2, v.nf, 0);
+                                    _bank_nat_1d(W, cfg, N, K, mode, v.ns, fac2, var2, v.nf, 0);
                                 }
                                 else if (mode == VFFT_NAT_SCR)
                                 {
@@ -3991,10 +4044,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 #ifdef VFFT_USE_JIT
                                     h->exec_bwd = vfft_proto_plan_jit_bwd(h->cplan);
 #endif
-                                    _bank_nat_1d(W, N, K, mode, v.ns, dfac, dvar, dnf, ddif); /* the DIT base chain */
+                                    _bank_nat_1d(W, cfg, N, K, mode, v.ns, dfac, dvar, dnf, ddif); /* the DIT base chain */
                                 }
                                 else /* PURE floor: deployed = p, bank p's chain */
-                                    _bank_nat_1d(W, N, K, VFFT_NAT_PURE_CYCLE, v.ns, dfac, dvar, dnf, ddif);
+                                    _bank_nat_1d(W, cfg, N, K, VFFT_NAT_PURE_CYCLE, v.ns, dfac, dvar, dnf, ddif);
                             }
                         }
                     }
@@ -4090,7 +4143,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                          * factor loop walk off the entry: nondeterministic
                          * segfault + garbage @nat lines). h->cplan is the
                          * live deployed plan on every path. */
-                        _bank_nat_1d(W, N, K, VFFT_NAT_ZCASC, tz[2],
+                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ZCASC, tz[2],
                                      h->cplan->factors, h->cplan->variants,
                                      h->cplan->num_stages,
                                      h->cplan->use_dif_forward);
@@ -4172,7 +4225,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         h->nat_mode = VFFT_NAT_ILP;
                         /* h->cplan, not p — same dangling-p hazard as the
                          * ZCASC bank above (chain is informational here). */
-                        _bank_nat_1d(W, N, K, VFFT_NAT_ILP, tz[2],
+                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ILP, tz[2],
                                      h->cplan->factors, h->cplan->variants,
                                      h->cplan->num_stages,
                                      h->cplan->use_dif_forward);
@@ -4234,12 +4287,16 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             if (!h->zsplit && !h->zturn && N < 2048 &&
                 !getenv("VFFT_NO_NAT_ILP"))
             {
+                vfft_proto_nat_entry_t nieb;
                 const vfft_proto_nat_entry_t *nie =
-                    vfft_proto_nat_lookup(&W->c2c, N, K);
+                    W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
+                                      : (vw2_stride_lookup_nat(&W->vw2, N, K, &nieb) ? &nieb : NULL);
                 if (nie && !cfg->recalibrate && nie->mode == VFFT_NAT_ILP)
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
             }
         }
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1)
+            _il_me_decide(W, cfg, h); /* D6: the fused-vs-padded A/B at create */
         return h;
     }
 
@@ -4714,8 +4771,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                         !getenv("VFFT_NO_NAT_ZCASC"))
                     {
+                        vfft_proto_nat_entry_t noeb;
                         const vfft_proto_nat_entry_t *noe =
-                            vfft_proto_natoop_lookup(&W->c2c, N, K);
+                            W->vw2_off_stride ? vfft_proto_natoop_lookup(&W->c2c, N, K)
+                                              : (vw2_stride_lookup_natoop(&W->vw2, N, K, &noeb) ? &noeb : NULL);
                         int nmode = (noe && !cfg->recalibrate)
                                         ? noe->mode : VFFT_NAT_UNSET;
                         vfft_zturn2_plan_t *zct = NULL;
@@ -4811,11 +4870,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                     hk->zturn = zct;
                                     hk->zroute = 1;
                                     zct = NULL;
-                                    _bank_natoop_1d(W, N, K, VFFT_NAT_ZCASC,
+                                    _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_ZCASC,
                                                     tz[2]);
                                 }
                                 else
-                                    _bank_natoop_1d(W, N, K, VFFT_NAT_FREE,
+                                    _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_FREE,
                                                     ti[2]);
                                 if (getenv("VFFT_NAT_LOG"))
                                     fprintf(stderr,
@@ -5037,14 +5096,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * the rfft wisdom for the rfft path; it auto-threads (sub-K block) when the
          * pool is sized >1 at create. Calibrate-on-miss for the inner cell ensures
          * `rigor` reaches the dominant work (the inner c2c). */
-        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK))
         {
-            vfft_proto_wisdom_entry_t ne;
-            if ((N % 2) == 0 && _calibrate_c2c(N / 2, bK, cfg->rigor, reg, &ne) == 0)
+            vfft_proto_wisdom_entry_t neb;
+            int have = !cfg->recalibrate &&
+                (W->vw2_off_stride
+                     ? (vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK) != NULL)
+                     : vw2_stride_lookup(&W->vw2, 0, N / 2, bK, &neb));
+            if (have && !W->vw2_off_stride)
+                vfft_proto_wisdom_set(&W->c2c, &neb);
+            if (!have && (N % 2) == 0 &&
+                _calibrate_c2c(N / 2, bK, cfg->rigor, reg, &neb) == 0)
             {
-                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                if (W->path_c2c[0])
-                    vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                vfft_proto_wisdom_add(&W->c2c, &neb, 1);
+                vw2_stride_bank_entry(&W->vw2, &neb, 0);
+                _vw2_persist(W, cfg);
             }
         }
         /* rfft axis: the rfft PATH (low K, and odd/prime/fallback cells) picks a
@@ -5053,14 +5118,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * regime (K at/below the decouple crossover); the stride path owns high K and
          * ignores rfft wisdom. The rfft search space is small → the sweep is exhaustive
          * + fast at any rigor (it's the calibrate-at-all that closes the gap). */
-        if (bK <= 64 && (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->rfft, N, bK)))
+        if (bK <= 64)
         {
             vfft_proto_wisdom_entry_t rfe;
-            if (vfft_rfft_calibrate(N, bK, _rfft_registry(), &rfe) == 0)
+            int have = !cfg->recalibrate &&
+                (W->vw2_off_stride
+                     ? (vfft_proto_wisdom_lookup(&W->rfft, N, bK) != NULL)
+                     : vw2_stride_lookup(&W->vw2, /*is_rfft=*/1, N, bK, &rfe));
+            if (have && !W->vw2_off_stride)
+                vfft_proto_wisdom_set(&W->rfft, &rfe);
+            if (!have && vfft_rfft_calibrate(N, bK, _rfft_registry(), &rfe) == 0)
             {
                 vfft_proto_wisdom_add(&W->rfft, &rfe, 1);
-                if (W->path_rfft[0])
-                    vfft_proto_wisdom_save(&W->rfft, W->path_rfft);
+                vw2_stride_bank_entry(&W->vw2, &rfe, /*is_rfft=*/1);
+                _vw2_persist(W, cfg);
             }
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
@@ -5137,14 +5208,19 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
          * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
-        if (cfg->recalibrate || !vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK))
         {
-            vfft_proto_wisdom_entry_t ne;
-            if (_calibrate_c2c(N / 2, bK, cfg->rigor, reg, &ne) == 0)
+            vfft_proto_wisdom_entry_t neb;
+            int have = !cfg->recalibrate &&
+                (W->vw2_off_stride
+                     ? (vfft_proto_wisdom_lookup(&W->c2c, N / 2, bK) != NULL)
+                     : vw2_stride_lookup(&W->vw2, 0, N / 2, bK, &neb));
+            if (have && !W->vw2_off_stride)
+                vfft_proto_wisdom_set(&W->c2c, &neb);
+            if (!have && _calibrate_c2c(N / 2, bK, cfg->rigor, reg, &neb) == 0)
             {
-                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                if (W->path_c2c[0])
-                    vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+                vfft_proto_wisdom_add(&W->c2c, &neb, 1);
+                vw2_stride_bank_entry(&W->vw2, &neb, 0);
+                _vw2_persist(W, cfg);
             }
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
@@ -5204,10 +5280,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * through its explicit-pack fallback (rem-aware codelet tail + scalar unpack) instead
          * of the crashing fused stage — see _r2c_worker_fwd/_bwd in r2c.h. (Padded builds at
          * VW-aligned Kp regardless.) */
-        stride_plan_t *tp = _build_trig(cfg->transform, N, bK, cfg->rigor, reg,
+        stride_plan_t *tp = _build_trig(W, cfg->transform, N, bK, cfg->rigor, reg,
                                         &W->c2c, cfg->recalibrate);
         if (W->path_c2c[0])
-            vfft_proto_wisdom_save(&W->c2c, W->path_c2c); /* persist inner cells */
+            _vw2_persist(W, cfg); /* persist inner cells (guarded, wave-4) */
         if (!tp)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -5628,75 +5704,104 @@ static void _il_pad_inter(const double *wr, const double *wi, double *z,
                       z + 2 * (size_t)p * K, K);
 }
 
+/* §6a59 / D6 (owner-approved): the IL fused-vs-padded A/B runs at CREATE —
+ * the cost moves to create, and the verdict finally PERSISTS (the old
+ * first-execute stamp died with the process and reached through
+ * _default_wisdom(), bypassing custom bundles). Reads/banks go through the
+ * HANDLE'S bundle: store twin first (kill switch falls back to the legacy
+ * table), verdict re-banked on the (N,K) record (il_me= rides it) under
+ * the config.wisdom_write guard. env VFFT_IL_PAD stays force-never-bank. */
+static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                          struct vfft_plan_s *h)
+{
+    const size_t Kd = h->K, Kp = ((Kd + 7) / 8) * 8;
+    int me = (int)Kd;
+    vfft_proto_wisdom_entry_t teb;
+    int have_te = 0;
+    if (h->il_me)
+        return;
+    if (Kp != Kd && h->nat_mode == 0)
+    {
+        const char *fv = getenv("VFFT_IL_PAD");
+        if (fv)
+            me = atoi(fv) ? (int)Kp : (int)Kd;
+        else
+        {
+            const vfft_proto_wisdom_entry_t *lt;
+            if (W->vw2_off_stride)
+            {
+                lt = vfft_proto_wisdom_lookup(&W->c2c, h->N, Kd);
+                if (lt) { teb = *lt; have_te = 1; }
+            }
+            else
+                have_te = vw2_stride_lookup(&W->vw2, 0, h->N, Kd, &teb);
+            if (have_te && (teb.il_me == (int)Kd || teb.il_me == (int)Kp))
+                me = teb.il_me;
+            else
+            {
+                me = (int)Kp;
+                h->il_race = 1;
+            }
+        }
+    }
+    if (me == (int)Kp && Kp != Kd)
+    {
+        vfft_proto_wisdom_entry_t aeb;
+        int have_ae = 0;
+        const vfft_proto_wisdom_entry_t *la;
+        if (W->vw2_off_stride)
+        {
+            la = vfft_proto_wisdom_lookup(&W->c2c, h->N, Kp);
+            if (la) { aeb = *la; have_ae = 1; }
+        }
+        else
+            have_ae = vw2_stride_lookup(&W->vw2, 0, h->N, Kp, &aeb);
+        h->cplan_il = (have_ae && aeb.nf > 0)
+                          ? vfft_proto_plan_create_ex(h->N, Kp, aeb.factors,
+                                                      aeb.variants, aeb.nf,
+                                                      aeb.use_dif_forward, _registry())
+                          : vfft_proto_auto_plan_dispatch(h->N, Kp, _registry(), NULL);
+        if (!h->cplan_il)
+            me = (int)Kd; /* fail-safe: tight arm */
+#ifdef VFFT_USE_JIT
+        if (h->cplan_il)
+        {
+            h->il_pf = vfft_proto_plan_jit_fwd(h->cplan_il);
+            h->il_pb = vfft_proto_plan_jit_bwd(h->cplan_il);
+        }
+#endif
+        if (h->il_race)
+        {
+            h->il_race = 0;
+            me = h->cplan_il ? _il_ab_race(h, Kd, Kp) : (int)Kd;
+            if (have_te)
+            {
+                vfft_proto_wisdom_entry_t upd = teb;
+                upd.il_me = me;
+                vfft_proto_wisdom_set(&W->c2c, &upd);       /* process cache */
+                vw2_stride_bank_entry(&W->vw2, &upd, 0);    /* il_me= rides  */
+                _vw2_persist(W, cfg);
+            }
+            if (me == (int)Kd && h->cplan_il)
+            {
+                stride_plan_destroy(h->cplan_il);
+                h->cplan_il = NULL;
+                h->il_pf = NULL;
+                h->il_pb = NULL;
+            }
+        }
+    }
+    h->il_me = me;
+}
+
 static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                                   const double *z_in, double *z_out)
 {
     const size_t NK = (size_t)h->N * h->K;
     if (!h->il_me)
-    {
-        /* §6a55 decision, once (read-only on wisdom; stamping stays owned
-         * by the padded batch planner). */
-        const size_t Kd = h->K, Kp = ((Kd + 7) / 8) * 8;
-        int me = (int)Kd;
-        if (Kp != Kd && h->nat_mode == 0)
-        {
-            const char *fv = getenv("VFFT_IL_PAD");
-            if (fv)
-                me = atoi(fv) ? (int)Kp : (int)Kd;
-            else
-            {
-                /* §6a59: the IL-specific verdict. Stamped -> use it;
-                 * unmeasured -> tentatively Kp so cplan_il gets built,
-                 * then the A/B decides and stamps. (exec_me is NOT read
-                 * here — §6a55/§6a41: cross-context.) */
-                vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(
-                    &_default_wisdom()->c2c, h->N, Kd);
-                if (te && (te->il_me == (int)Kd || te->il_me == (int)Kp))
-                    me = te->il_me;
-                else
-                {
-                    me = (int)Kp;
-                    h->il_race = 1;
-                }
-            }
-        }
-        if (me == (int)Kp && Kp != Kd)
-        {
-            vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(
-                &_default_wisdom()->c2c, h->N, Kp);
-            h->cplan_il = (ae && ae->nf > 0)
-                              ? vfft_proto_plan_create_ex(h->N, Kp, ae->factors,
-                                                          ae->variants, ae->nf,
-                                                          ae->use_dif_forward, _registry())
-                              : vfft_proto_auto_plan_dispatch(h->N, Kp, _registry(), NULL);
-            if (!h->cplan_il)
-                me = (int)Kd; /* fail-safe: tight arm */
-#ifdef VFFT_USE_JIT
-            if (h->cplan_il)
-            {
-                h->il_pf = vfft_proto_plan_jit_fwd(h->cplan_il);
-                h->il_pb = vfft_proto_plan_jit_bwd(h->cplan_il);
-            }
-#endif
-            if (h->il_race)
-            {
-                h->il_race = 0;
-                me = h->cplan_il ? _il_ab_race(h, Kd, Kp) : (int)Kd;
-                vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(
-                    &_default_wisdom()->c2c, h->N, Kd);
-                if (te)
-                    te->il_me = me;
-                if (me == (int)Kd && h->cplan_il)
-                {
-                    stride_plan_destroy(h->cplan_il);
-                    h->cplan_il = NULL;
-                    h->il_pf = NULL;
-                    h->il_pb = NULL;
-                }
-            }
-        }
-        h->il_me = me;
-    }
+        h->il_me = (int)h->K; /* D6: decided at CREATE (_il_me_decide);
+                               * this is the tight fail-safe for handles
+                               * that never ran the decide (always safe). */
     if (!h->il_wr)
     {
         const size_t Kw = (size_t)h->il_me;
@@ -6793,6 +6898,17 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
     const vfft_proto_registry_t *reg = _registry();
     const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+    /* wave-4: seed the process cache from the STORE (both legs) */
+    if (!W->vw2_off_stride)
+    {
+        /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
+        vfft_proto_wisdom_entry_t sb;
+        if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
+            vfft_proto_wisdom_set(&W->c2c, &sb);
+        if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
+            vfft_proto_wisdom_set(&W->c2c, &sb);
+        te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+    }
     if (te && !cfg->recalibrate)
     {
         if (te->exec_me == (int)K)
@@ -6808,6 +6924,7 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
         if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
         {
             vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            vw2_stride_bank_entry(&W->vw2, &ne, 0);
             dirty = 1;
         }
     }
@@ -6818,6 +6935,7 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
         if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
         {
             vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            vw2_stride_bank_entry(&W->vw2, &ne, 0);
             dirty = 1;
         }
     }
@@ -6832,12 +6950,13 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
             vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
             upd.exec_me = verdict;
             vfft_proto_wisdom_add(&W->c2c, &upd, 1);
+            vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
             dirty = 1;
             stride = (size_t)verdict;
         }
     }
-    if (dirty && W->path_c2c[0])
-        vfft_proto_wisdom_save(&W->c2c, W->path_c2c);
+    if (dirty)
+        _vw2_persist(W, cfg);
     return stride;
 }
 
@@ -7044,8 +7163,9 @@ int vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
     struct vfft_wisdom_s tmp = *w; /* repoint paths if dir given */
     if (dir && dir[0])
         _bundle_paths(&tmp, dir);
-    int rc = vfft_proto_wisdom_save(&w->c2c, tmp.path_c2c);
-    vfft_proto_wisdom_save(&w->rfft, tmp.path_rfft);
+    int rc = 0;
+    /* wave-4: spike_wisdom.txt + rfft_wisdom.txt are FROZEN — the
+     * explicit-save API persists the wisdom2 store below instead. */
     /* oop family: FROZEN legacy file is never rewritten — the explicit-save
      * API persists the wisdom2 store instead (all shards, atomically). The
      * local copy aliases w's records read-only; dirty flags are ours. */
@@ -7056,7 +7176,7 @@ int vfft_wisdom_save(const vfft_wisdom *w, const char *dir)
         for (i = 0; i < VW2_NSHARDS; i++)
             if (!tmp.vw2.poisoned[i])
                 tmp.vw2.dirty[i] = 1;
-        vw2_save(&tmp.vw2);
+        rc = vw2_save(&tmp.vw2) == VW2_OK ? 0 : -1;
     }
     /* 6a22 parity: persist the full loaded set. c2r_path persists at
      * decision time via its own writer and is not owned by w.
