@@ -4295,6 +4295,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
             }
         }
+        if (getenv("VFFT_D6_TRACE"))
+            fprintf(stderr, "[d6] hook reached: layout=%d K=%zu\n", (int)cfg->layout, K);
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1)
             _il_me_decide(W, cfg, h); /* D6: the fused-vs-padded A/B at create */
         return h;
@@ -5718,6 +5720,9 @@ static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     int me = (int)Kd;
     vfft_proto_wisdom_entry_t teb;
     int have_te = 0;
+    if (getenv("VFFT_D6_TRACE"))
+        fprintf(stderr, "[d6] enter N=%d Kd=%zu Kp=%zu il_me=%d nat_mode=%d\n",
+                h->N, Kd, Kp, h->il_me, h->nat_mode);
     if (h->il_me)
         return;
     if (Kp != Kd && h->nat_mode == 0)
@@ -5774,13 +5779,26 @@ static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         {
             h->il_race = 0;
             me = h->cplan_il ? _il_ab_race(h, Kd, Kp) : (int)Kd;
-            if (have_te)
+            /* RE-READ before stamping: on a cold cell teb was empty, but the
+             * scrambled (N,Kd) calibrate earlier in THIS create has since
+             * banked the record — without this the verdict would be dropped
+             * exactly where it was most expensive to earn (D6's whole point
+             * is that it persists). */
             {
-                vfft_proto_wisdom_entry_t upd = teb;
-                upd.il_me = me;
-                vfft_proto_wisdom_set(&W->c2c, &upd);       /* process cache */
-                vw2_stride_bank_entry(&W->vw2, &upd, 0);    /* il_me= rides  */
-                _vw2_persist(W, cfg);
+                vfft_proto_wisdom_entry_t cur;
+                int got = W->vw2_off_stride
+                              ? (vfft_proto_wisdom_lookup(&W->c2c, h->N, Kd)
+                                     ? (cur = *vfft_proto_wisdom_lookup(&W->c2c, h->N, Kd), 1)
+                                     : 0)
+                              : vw2_stride_lookup(&W->vw2, 0, h->N, Kd, &cur);
+                if (!got && have_te) { cur = teb; got = 1; }
+                if (got)
+                {
+                    cur.il_me = me;
+                    vfft_proto_wisdom_set(&W->c2c, &cur);      /* process cache */
+                    vw2_stride_bank_entry(&W->vw2, &cur, 0);   /* il_me= rides  */
+                    _vw2_persist(W, cfg);
+                }
             }
             if (me == (int)Kd && h->cplan_il)
             {

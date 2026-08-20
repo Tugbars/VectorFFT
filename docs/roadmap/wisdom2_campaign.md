@@ -427,6 +427,41 @@ OWNER QUESTIONS (recommended defaults in parentheses):
 
 ## Wave 4 — stride/spike LAST (the triple-role file)
 
+### 🔴 4.5 PLAN CORRECTED 2026-08-20 — the dune input is the FROZEN FILE,
+### not an export (found by reading emit_executor_h.ml, pre-empting the
+### byte-oracle)
+
+`emit_executor_h.ml:125-145` dedups on the WHOLE PLAN TUPLE
+`(n, k, factors, variants, use_dif_forward)` — NOT on `(N,K)`. So rows the
+legacy READER can never serve (intra-file duplicates shadowed by
+first-match) are NOT duplicates to the emitter: it emits a separate
+specialized executor for each. Verified in the shipped header: cell
+(64,64) has three shapes `164_v02 / 88_v02 / 416_v10` from its three
+duplicate rows; (64,4096) three; (128,32) and (128,64) two each.
+
+Consequence: exporting from the store and regenerating would SILENTLY DROP
+6 specialized executors — the store legitimately holds one record per key,
+so the shadowed rows are gone. Executors are matched by plan SHAPE, so a
+greedy/inner-cell plan of that shape would lose its specialization
+(slower, never wrong).
+
+THEREFORE: at the wave-4 freeze the dune rule keeps depending on the
+FROZEN `spike_wisdom.txt` itself — byte-identical `plan_executors.h` by
+construction, zero risk, and an immutable file is the right shape for a
+build input. The EXPORTER is the FORWARD bridge: when new cells are
+calibrated into the store and codegen should see them, export + regenerate
+(and then plan_executors.h SHOULD change; the 6 shadowed shapes drop out
+as a documented, deliberate cleanup).
+
+EXPORTER SHIPPED + GATED 2026-08-20: `vw2_export_stride` (store -> legacy
+v8 via the SHIPPED writer + the SHIPPED twins; rows re-ordered into
+ORIGINAL FILE ORDER from the `from=<file>:<line>` provenance, no-provenance
+rows last by (N,K)). `[export-gate] ALL PASS`: 336 cells first-match
+field-identical across all three tables, byte-reproducible x2. Diff vs the
+original: exactly the 8 unservable rows (6 shadowed duplicates + 2 junk
+N=0/N=2 cells) + the header count line; the 62 natural entries and every
+surviving row keep their ORIGINAL LINE POSITION.
+
 ### Wave-4 DESIGN NOTES (2026-08-20, first-hand codec read)
 
 Source of truth: `src/core/planning/wisdom_reader.h` (v8; THREE tables in
