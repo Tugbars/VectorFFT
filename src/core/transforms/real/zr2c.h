@@ -15,7 +15,18 @@
  *
  * FREQUENCY-AXIS SIMD (AVX2): 4 ascending bins + the 4 REVERSED mirror bins per
  * iteration; table is the affine pre-biased HALVED pair-table, FULLY SPLIT
- * (plain loads, zero table shuffles); every sign lives in an opcode (zero xor).
+ * (plain loads, zero table shuffles).  INTERLEAVED-NATIVE since 2026-08-21:
+ * the loop no longer de-interleaves to Ar/Ai/Br/Bi -- the math is one complex
+ * multiply, so it runs on packed pairs and the un/re-interleave shuffles are
+ * gone.  MEASURED: the old form was 20.1 cyc/iter at EVERY N (flat => pure
+ * issue-port cost); ALL 20 of its shuffles are port-5 on Raptor Cove, in-lane
+ * vunpck*pd ymm included.  The new form runs 10 shuffles/iter -> 10.6 (fwd) /
+ * 12.4 (bwd) cyc/iter below the L1 cliff: -48%/-38% at N<=2048, tapering to
+ * ~3-9% at N>=4096 where the z+X working set exceeds L1 and memory binds.
+ * TRADE ACCEPTED: signs are now explicit vxorpd (the old "zero xor" boast is
+ * retired) -- they issue on p0/p1/p5 instead of piling onto the saturated p5,
+ * which is exactly why it is faster.  fwd stays BITWISE vs the old kernel;
+ * bwd differs at rel ~1.3e-16 (the s=1-2S~ / c=2C~ derivation reassociates).
  *   S~[f] = 1/2 - 1/2 sin(2*pi*f/N),   C~[f] = 1/2 cos(2*pi*f/N),  f = 0..N/4
  * Per pair (f, m=N/2-f), A=Z[f], B=Z[m]:
  *   t1 = Ar-Br   t2 = Ai+Bi
@@ -85,35 +96,43 @@ static void _zr2c_fold_fwd(const double *__restrict__ z_in,
         double z0r = z[0], z0i = z[1];
         int f = 1;
 #if defined(__AVX2__)
-        for (; 2 * (f + 3) < half; f += 4)
         {
-            int m3 = half - f - 3;
-            __m256d a0 = _mm256_loadu_pd(z + 2 * f);
-            __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
-            __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
-            __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
-            __m256d Ar = _mm256_unpacklo_pd(t0, t1), Ai = _mm256_unpackhi_pd(t0, t1);
-            __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
-            __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
-            __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
-            __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
-            __m256d Br = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
-            __m256d Bi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
-            __m256d S = _mm256_loadu_pd(affS + f);
-            __m256d C = _mm256_loadu_pd(affC + f);
-            __m256d t1v = _mm256_sub_pd(Ar, Br), t2v = _mm256_add_pd(Ai, Bi);
-            __m256d xr = _mm256_fmadd_pd(S, t1v, _mm256_mul_pd(C, t2v));
-            __m256d xi = _mm256_fmsub_pd(S, t2v, _mm256_mul_pd(C, t1v));
-            __m256d Xfr = _mm256_add_pd(Br, xr), Xfi = _mm256_sub_pd(xi, Bi);
-            __m256d Xmr = _mm256_sub_pd(Ar, xr), Xmi = _mm256_sub_pd(xi, Ai);
-            __m256d lo = _mm256_unpacklo_pd(Xfr, Xfi), hi = _mm256_unpackhi_pd(Xfr, Xfi);
-            _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
-            _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
-            __m256d Rr = _mm256_permute4x64_pd(Xmr, 0x1B);
-            __m256d Ri = _mm256_permute4x64_pd(Xmi, 0x1B);
-            __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
-            _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
-            _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+            const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
+            for (; 2 * (f + 3) < half; f += 4)
+            {
+                int m3 = half - f - 3;
+                /* A: bins f..f+3, already interleaved -- ZERO shuffles. */
+                __m256d a0 = _mm256_loadu_pd(z + 2 * f);
+                __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
+                /* B: mirror bins, needed REVERSED so each pairs with its
+                 * partner.  4-complex reverse over two ymm = a register swap
+                 * (free, renaming) plus one lane swap each. */
+                __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
+                __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
+                __m256d cb0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
+                __m256d cb1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
+                __m256d t0 = _mm256_sub_pd(a0, cb0);      /* t = A - conj(B) */
+                __m256d t1 = _mm256_sub_pd(a1, cb1);
+                __m256d S4 = _mm256_loadu_pd(affS + f);
+                __m256d C4 = _mm256_loadu_pd(affC + f);
+                __m256d nC4 = _mm256_sub_pd(_mm256_setzero_pd(), C4);
+                __m256d wr0 = _mm256_permute4x64_pd(S4, 0x50);
+                __m256d wr1 = _mm256_permute4x64_pd(S4, 0xFA);
+                __m256d wi0 = _mm256_permute4x64_pd(nC4, 0x50);
+                __m256d wi1 = _mm256_permute4x64_pd(nC4, 0xFA);
+                __m256d ts0 = _mm256_permute_pd(t0, 0x5);
+                __m256d ts1 = _mm256_permute_pd(t1, 0x5);
+                __m256d x0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
+                __m256d x1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
+                /* X[f] = conj(B) + x -- stores straight out, no shuffle. */
+                _mm256_storeu_pd(o + 2 * f,     _mm256_add_pd(cb0, x0));
+                _mm256_storeu_pd(o + 2 * f + 4, _mm256_add_pd(cb1, x1));
+                /* X[m] = conj(A - x), reversed back to memory order. */
+                __m256d m0 = _mm256_xor_pd(_mm256_sub_pd(a0, x0), CONJ);
+                __m256d m1 = _mm256_xor_pd(_mm256_sub_pd(a1, x1), CONJ);
+                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(m1, m1, 0x01));
+                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(m0, m0, 0x01));
+            }
         }
 #endif
         for (; 2 * f < half; f++)
@@ -156,39 +175,43 @@ static void _zr2c_fold_bwd(const double *__restrict__ X_in,
         int f = 1;
 #if defined(__AVX2__)
         {
+            const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
             const __m256d one = _mm256_set1_pd(1.0), two = _mm256_set1_pd(2.0);
             for (; 2 * (f + 3) < half; f += 4)
             {
                 int m3 = half - f - 3;
-                __m256d a0 = _mm256_loadu_pd(x + 2 * f);
+                __m256d a0 = _mm256_loadu_pd(x + 2 * f);        /* F */
                 __m256d a1 = _mm256_loadu_pd(x + 2 * f + 4);
-                __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
-                __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
-                __m256d Fr = _mm256_unpacklo_pd(t0, t1), Fi = _mm256_unpackhi_pd(t0, t1);
-                __m256d b0 = _mm256_loadu_pd(x + 2 * m3);
+                __m256d b0 = _mm256_loadu_pd(x + 2 * m3);       /* M, reversed */
                 __m256d b1 = _mm256_loadu_pd(x + 2 * m3 + 4);
-                __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
-                __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
-                __m256d Mr = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
-                __m256d Mi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
-                __m256d S = _mm256_loadu_pd(affS + f);
-                __m256d C = _mm256_loadu_pd(affC + f);
-                __m256d c = _mm256_mul_pd(two, C);                    /* 2*C~      */
-                __m256d s = _mm256_fnmadd_pd(two, S, one);            /* 1 - 2*S~  */
-                __m256d t1v = _mm256_sub_pd(Fr, Mr), t2v = _mm256_add_pd(Fi, Mi);
-                __m256d yr = _mm256_fmadd_pd(c, t2v, _mm256_mul_pd(s, t1v));
-                __m256d yi = _mm256_fmsub_pd(c, t1v, _mm256_mul_pd(s, t2v));
-                __m256d Epr = _mm256_add_pd(Fr, Mr), Epi = _mm256_sub_pd(Fi, Mi);
-                __m256d Zfr = _mm256_sub_pd(Epr, yr), Zfi = _mm256_add_pd(Epi, yi);
-                __m256d Zmr = _mm256_add_pd(Epr, yr), Zmi = _mm256_sub_pd(yi, Epi);
-                __m256d lo = _mm256_unpacklo_pd(Zfr, Zfi), hi = _mm256_unpackhi_pd(Zfr, Zfi);
-                _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
-                _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
-                __m256d Rr = _mm256_permute4x64_pd(Zmr, 0x1B);
-                __m256d Ri = _mm256_permute4x64_pd(Zmi, 0x1B);
-                __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
-                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
-                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+                __m256d cm0 = _mm256_xor_pd(_mm256_permute2f128_pd(b1, b1, 0x01), CONJ);
+                __m256d cm1 = _mm256_xor_pd(_mm256_permute2f128_pd(b0, b0, 0x01), CONJ);
+                __m256d t0 = _mm256_sub_pd(a0, cm0);     /* t  = F - conj(M) */
+                __m256d t1 = _mm256_sub_pd(a1, cm1);
+                __m256d e0 = _mm256_add_pd(a0, cm0);     /* Ep = F + conj(M) */
+                __m256d e1 = _mm256_add_pd(a1, cm1);
+                __m256d tb0 = _mm256_xor_pd(t0, CONJ);   /* conj(t) */
+                __m256d tb1 = _mm256_xor_pd(t1, CONJ);
+                __m256d S4 = _mm256_loadu_pd(affS + f);
+                __m256d C4 = _mm256_loadu_pd(affC + f);
+                __m256d s4 = _mm256_fnmadd_pd(two, S4, one);   /* 1 - 2*S~ */
+                __m256d c4 = _mm256_mul_pd(two, C4);           /* 2*C~     */
+                __m256d wr0 = _mm256_permute4x64_pd(s4, 0x50);
+                __m256d wr1 = _mm256_permute4x64_pd(s4, 0xFA);
+                __m256d wi0 = _mm256_permute4x64_pd(c4, 0x50);
+                __m256d wi1 = _mm256_permute4x64_pd(c4, 0xFA);
+                __m256d ts0 = _mm256_permute_pd(tb0, 0x5);
+                __m256d ts1 = _mm256_permute_pd(tb1, 0x5);
+                __m256d y0 = _mm256_fmaddsub_pd(wr0, tb0, _mm256_mul_pd(wi0, ts0));
+                __m256d y1 = _mm256_fmaddsub_pd(wr1, tb1, _mm256_mul_pd(wi1, ts1));
+                __m256d cy0 = _mm256_xor_pd(y0, CONJ);   /* conj(y) */
+                __m256d cy1 = _mm256_xor_pd(y1, CONJ);
+                _mm256_storeu_pd(o + 2 * f,     _mm256_sub_pd(e0, cy0));
+                _mm256_storeu_pd(o + 2 * f + 4, _mm256_sub_pd(e1, cy1));
+                __m256d zm0 = _mm256_xor_pd(_mm256_add_pd(e0, cy0), CONJ);
+                __m256d zm1 = _mm256_xor_pd(_mm256_add_pd(e1, cy1), CONJ);
+                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(zm1, zm1, 0x01));
+                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(zm0, zm0, 0x01));
             }
         }
 #endif
@@ -344,5 +367,104 @@ static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
         }
     }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * SUPERSEDED 2026-08-21 — the DE-INTERLEAVING folds, kept as a reminder.
+ *
+ * These are the kernels the interleaved-native versions above replaced.
+ * They split each packed pair into Ar/Ai/Br/Bi, computed on separated
+ * planes, then re-interleaved to store.
+ *
+ * WHY THEY LOST (measured, not reasoned):
+ *   - 20 shuffles per 4-bin iteration, and ALL of them issue on port 5 of
+ *     Raptor Cove — in-lane vunpcklpd/vunpckhpd ymm included.  That was the
+ *     surprise: an earlier model assumed only the 12 lane-crossing ones were
+ *     p5-bound and predicted 12 cyc/iter.
+ *   - Measured 20.1 cyc/iter at N=256 through N=16384 — DEAD FLAT, which is
+ *     the signature of an issue-port limit rather than a cache effect.
+ *   - The interleaved form needs 10 (it pays 6 shuffles at the complex
+ *     multiply but saves 16 on the un/re-interleave), giving -48% fwd /
+ *     -38% bwd below the L1 cliff, ~3-9% above it where memory binds.
+ *
+ * KEEP THIS BLOCK.  It is the reference for the two things that are easy to
+ * get wrong if the fold is ever rewritten again: (1) the exact bin/mirror
+ * pairing and the 0x1B reversal convention, and (2) that "fewer lane-crossing
+ * shuffles" is the WRONG objective on this uarch — total shuffle count is.
+ * ═══════════════════════════════════════════════════════════════════════ */
+#if 0
+/* ---- forward fold, de-interleaving form (superseded) ---- */
+#if defined(__AVX2__)
+        for (; 2 * (f + 3) < half; f += 4)
+        {
+            int m3 = half - f - 3;
+            __m256d a0 = _mm256_loadu_pd(z + 2 * f);
+            __m256d a1 = _mm256_loadu_pd(z + 2 * f + 4);
+            __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
+            __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
+            __m256d Ar = _mm256_unpacklo_pd(t0, t1), Ai = _mm256_unpackhi_pd(t0, t1);
+            __m256d b0 = _mm256_loadu_pd(z + 2 * m3);
+            __m256d b1 = _mm256_loadu_pd(z + 2 * m3 + 4);
+            __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
+            __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
+            __m256d Br = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
+            __m256d Bi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
+            __m256d S = _mm256_loadu_pd(affS + f);
+            __m256d C = _mm256_loadu_pd(affC + f);
+            __m256d t1v = _mm256_sub_pd(Ar, Br), t2v = _mm256_add_pd(Ai, Bi);
+            __m256d xr = _mm256_fmadd_pd(S, t1v, _mm256_mul_pd(C, t2v));
+            __m256d xi = _mm256_fmsub_pd(S, t2v, _mm256_mul_pd(C, t1v));
+            __m256d Xfr = _mm256_add_pd(Br, xr), Xfi = _mm256_sub_pd(xi, Bi);
+            __m256d Xmr = _mm256_sub_pd(Ar, xr), Xmi = _mm256_sub_pd(xi, Ai);
+            __m256d lo = _mm256_unpacklo_pd(Xfr, Xfi), hi = _mm256_unpackhi_pd(Xfr, Xfi);
+            _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
+            _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+            __m256d Rr = _mm256_permute4x64_pd(Xmr, 0x1B);
+            __m256d Ri = _mm256_permute4x64_pd(Xmi, 0x1B);
+            __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
+            _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
+            _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+        }
+#endif
+/* ---- backward fold, de-interleaving form (superseded) ---- */
+#if defined(__AVX2__)
+        {
+            const __m256d one = _mm256_set1_pd(1.0), two = _mm256_set1_pd(2.0);
+            for (; 2 * (f + 3) < half; f += 4)
+            {
+                int m3 = half - f - 3;
+                __m256d a0 = _mm256_loadu_pd(x + 2 * f);
+                __m256d a1 = _mm256_loadu_pd(x + 2 * f + 4);
+                __m256d t0 = _mm256_permute2f128_pd(a0, a1, 0x20);
+                __m256d t1 = _mm256_permute2f128_pd(a0, a1, 0x31);
+                __m256d Fr = _mm256_unpacklo_pd(t0, t1), Fi = _mm256_unpackhi_pd(t0, t1);
+                __m256d b0 = _mm256_loadu_pd(x + 2 * m3);
+                __m256d b1 = _mm256_loadu_pd(x + 2 * m3 + 4);
+                __m256d u0 = _mm256_permute2f128_pd(b0, b1, 0x20);
+                __m256d u1 = _mm256_permute2f128_pd(b0, b1, 0x31);
+                __m256d Mr = _mm256_permute4x64_pd(_mm256_unpacklo_pd(u0, u1), 0x1B);
+                __m256d Mi = _mm256_permute4x64_pd(_mm256_unpackhi_pd(u0, u1), 0x1B);
+                __m256d S = _mm256_loadu_pd(affS + f);
+                __m256d C = _mm256_loadu_pd(affC + f);
+                __m256d c = _mm256_mul_pd(two, C);                    /* 2*C~      */
+                __m256d s = _mm256_fnmadd_pd(two, S, one);            /* 1 - 2*S~  */
+                __m256d t1v = _mm256_sub_pd(Fr, Mr), t2v = _mm256_add_pd(Fi, Mi);
+                __m256d yr = _mm256_fmadd_pd(c, t2v, _mm256_mul_pd(s, t1v));
+                __m256d yi = _mm256_fmsub_pd(c, t1v, _mm256_mul_pd(s, t2v));
+                __m256d Epr = _mm256_add_pd(Fr, Mr), Epi = _mm256_sub_pd(Fi, Mi);
+                __m256d Zfr = _mm256_sub_pd(Epr, yr), Zfi = _mm256_add_pd(Epi, yi);
+                __m256d Zmr = _mm256_add_pd(Epr, yr), Zmi = _mm256_sub_pd(yi, Epi);
+                __m256d lo = _mm256_unpacklo_pd(Zfr, Zfi), hi = _mm256_unpackhi_pd(Zfr, Zfi);
+                _mm256_storeu_pd(o + 2 * f,     _mm256_permute2f128_pd(lo, hi, 0x20));
+                _mm256_storeu_pd(o + 2 * f + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
+                __m256d Rr = _mm256_permute4x64_pd(Zmr, 0x1B);
+                __m256d Ri = _mm256_permute4x64_pd(Zmi, 0x1B);
+                __m256d ml = _mm256_unpacklo_pd(Rr, Ri), mh = _mm256_unpackhi_pd(Rr, Ri);
+                _mm256_storeu_pd(o + 2 * m3,     _mm256_permute2f128_pd(ml, mh, 0x20));
+                _mm256_storeu_pd(o + 2 * m3 + 4, _mm256_permute2f128_pd(ml, mh, 0x31));
+            }
+        }
+#endif
+#endif /* 0 — superseded de-interleaving folds */
 
 #endif /* VFFT_ZR2C_H */

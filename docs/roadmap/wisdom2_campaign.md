@@ -244,9 +244,9 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       IL–split campaign. (Commit of the promoted files left to the owner,
       who is committing this campaign's work themselves.)
 
-## Wave 2 — minis 🔴 PARKED (owner 2026-08-20: c2r IL session still live
-## in the create seams — "skip it and I will tell you when it is done";
-## wave 3 runs BEFORE wave 2)
+## Wave 2 — minis ✅ UNBLOCKED 2026-08-21 (owner: "r2c/c2r wired
+## completely, it is ready for wisdom") — the parallel c2r-IL session is
+## finished, so the create seams are free. Waves 3 and 4 ran first.
 
 - [ ] 2.1 Bluestein: migrate the 40 orphaned rows → `wisdom2_prime.txt`;
       flip vfft.c sites; prime-N creates now HIT (structurally impossible
