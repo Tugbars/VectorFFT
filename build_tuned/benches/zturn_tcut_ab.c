@@ -128,7 +128,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "%s/_tcut_ab_stderr.log", dir);
+    snprintf(g_errpath, sizeof g_errpath, "_tcut_ab_stderr.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -257,6 +257,7 @@ int main(int argc, char **argv)
         cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
         cfg.order = VFFT_ORDER_SCRAMBLED; cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.nthreads = 1; cfg.wisdom = arms[a].bundle ? W2 : W;
+        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
         arms[a].h = vfft_create(&cfg);
         arms[a].engaged = arms[a].h != NULL;
         {

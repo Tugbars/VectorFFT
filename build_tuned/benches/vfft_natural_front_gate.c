@@ -47,7 +47,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "%s/_nat_front_gate.log", dir);
+    snprintf(g_errpath, sizeof g_errpath, "_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -110,6 +110,7 @@ static vfft_plan mk(vfft_wisdom *W, int N, int inplace, int natural)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
     cfg.wisdom = W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 

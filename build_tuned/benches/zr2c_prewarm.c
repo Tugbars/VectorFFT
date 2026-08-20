@@ -44,6 +44,7 @@ static void prewarm(int N)
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
             cfg.nthreads = 1;
             cfg.wisdom = g_W;
+            cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
             vfft_plan h = vfft_create(&cfg);
             printf("  N=%-6d %s %-3s : %s\n", N,
                    t ? "c2r" : "r2c", p ? "ip" : "oop",

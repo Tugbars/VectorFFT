@@ -86,6 +86,7 @@ static void run_cell(int N, int route)
     cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
     cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     vfft_plan p = vfft_create(&cfg);
     snprintf(lbl, sizeof lbl, "r2c OOP  route=%s", rt);
     if (!p) { judge(lbl, N, -1, 1); }
@@ -166,6 +167,7 @@ static void run_regressions(void)
         cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
         cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
+        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
         if (!p) judge("REGRESSION r2c K=4 (old path)", N, -1, 1);
         else {
@@ -200,6 +202,7 @@ static void run_regressions(void)
         cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
         cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
         cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = g_W;
+        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
         vfft_plan p = vfft_create(&cfg);
         if (!p) judge("r2c non-pow2 510 (zr2c, half 255)", N, -1, 1);
         else {

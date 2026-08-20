@@ -33,7 +33,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "%s/_ilp_gate.log", dir);
+    snprintf(g_errpath, sizeof g_errpath, "_ilp_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     return 1;
@@ -94,6 +94,7 @@ static vfft_plan mk(vfft_wisdom *W, int N, int order /*0=nat 1=scr*/)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
     cfg.wisdom = W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 
@@ -250,6 +251,7 @@ int main(int argc, char **argv)
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         cfg.nthreads = 1;
         cfg.wisdom = W;
+        cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
         vfft_plan ho = vfft_create(&cfg);
         if (ho) vfft_destroy(ho);
         (void)err_tap_read();

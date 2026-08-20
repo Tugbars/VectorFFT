@@ -93,6 +93,7 @@ static vfft_plan mk(vfft_wisdom *W, int N, int scrambled)
     cfg.layout = VFFT_LAYOUT_INTERLEAVED;
     cfg.nthreads = 1;
     cfg.wisdom = W;
+    cfg.wisdom_write = 1;  /* measurement gate: banks must persist */
     return vfft_create(&cfg);
 }
 
