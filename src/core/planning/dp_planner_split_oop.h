@@ -76,7 +76,7 @@
 #include "executor.h"
 #include "planner.h"
 #include "oop_plan.h"
-#include "oop_wisdom.h"
+#include "wisdom2_oop.h"
 #include "dp_planner.h"
 #include "measure.h"
 #include "wisdom_reader.h"

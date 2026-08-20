@@ -110,7 +110,7 @@
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
-#include "oop_wisdom.h" /* THE kind-4 line format — one definition, one writer */
+#include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
 #if defined(_WIN32)
 #include <windows.h>

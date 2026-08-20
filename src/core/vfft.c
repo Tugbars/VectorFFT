@@ -24,7 +24,7 @@
 #include "measure.h"            /* vfft_proto_dp_plan_measure (variant-aware sweep)*/
 #include "oop_auto.h"           /* OOP plan + leaf/t1p slices                      */
 #include "oop_dp.h"             /* vfft_oop_plan_create_dp_best (calibration)      */
-#include "oop_wisdom.h"         /* OOP wisdom load/lookup/create + entry_from_plan */
+#include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
