@@ -1,11 +1,33 @@
 # generator/generated/
 
-Auto-emitted headers, regenerated and promoted into the source tree by
-`dune build` (the `(mode promote)` rules in `dune`). **Do not edit these by
-hand** — they are overwritten on the next build. Each one is emitted from
-`generator/lib/coverage.ml` (the single source of truth for codelet coverage),
-so a coverage change re-emits the matching registry automatically. The one
-exception is `registry.h`, which is hand-written (see below).
+This directory holds **two kinds of file with opposite recovery stories**.
+Read which one you are touching before you touch it.
+
+**`*.h` — auto-emitted headers.** Regenerated and promoted into the source
+tree by `dune build` (the `(mode promote)` rules in `dune`). **Do not edit
+these by hand** — they are overwritten on the next build. Each one is
+emitted from `generator/lib/coverage.ml` (the single source of truth for
+codelet coverage), so a coverage change re-emits the matching registry
+automatically. The one exception is `registry.h`, which is hand-written
+(see below). Deleting one is harmless: rebuild and it returns identical.
+
+**`*.txt` — wisdom. NOT generated.** These are measured verdicts, produced
+by races on a specific machine and not reproducible on demand. Deleting one
+costs hours of measurement and cannot be undone by a build.
+
+- `wisdom2_*.txt` — the LIVE store, the only files the library serves from.
+  See `src/core/wisdom2/README.md` for the format and its laws.
+- `spike_wisdom.txt`, `rfft_wisdom.txt`, `oop_wisdom.txt`,
+  `fft2d_{c2c,r2c,c2r}_wisdom.txt`, `spike_wisdom_padded.txt` — **FROZEN**,
+  each carrying a `# FROZEN` stamp as its last-ever write. Kept because
+  `spike_wisdom.txt` is a deliberate BUILD INPUT (the `plan_executors.h`
+  rule in `dune`, and `scripts/bootstrap.sh`), because the
+  `VFFT_WISDOM2_OFF=<family>` kill switches read them during a bake, and
+  because they are the migrator's input until v1.0.
+- `c2r_path.txt`, `vfft_bluestein_wisdom.txt` — not yet migrated.
+
+A wisdom file must never be regenerated, hand-edited, or deleted to "clean
+up" this directory.
 
 The norm across all registries: **one ABI-typed slot per codelet identity**
 (kind × variant × direction × ISA). The slot's function-pointer type *is* that

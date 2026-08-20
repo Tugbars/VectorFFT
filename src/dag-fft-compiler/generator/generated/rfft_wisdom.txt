@@ -1,3 +1,9 @@
+# FROZEN 2026-08-20 (wisdom2 wave 4). This file is never written again.
+# Live verdicts: wisdom2_stride.txt / wisdom2_real.txt
+#   (see src/core/wisdom2/README.md).
+# Still a BUILD INPUT: generated/dune's plan_executors.h rule and
+#   scripts/bootstrap.sh read this frozen snapshot on purpose.
+# Readers of this file survive only inside the migrator tool until v1.0.
 @version 8
 # VectorFFT stride wisdom: 13 scrambled + 0 natural entries
 # scrambled: N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes... exec_me (v=0:FLAT 1:LOG3 2:T1S 3:BUF)

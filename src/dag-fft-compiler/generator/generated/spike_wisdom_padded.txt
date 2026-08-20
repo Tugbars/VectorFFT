@@ -1,3 +1,6 @@
+# FROZEN 2026-08-20 (wisdom2 wave 4) — SUPERSEDED FOSSIL (@version 6).
+# Never migrated: every row is quarantined as `superseded-fossil`.
+# Live verdicts: wisdom2_stride.txt (see src/core/wisdom2/README.md).
 @version 6
 # VectorFFT stride wisdom: 25 entries
 # N K nf factors... best_ns use_blocked split_stage block_groups use_dif_forward variant_codes... exec_me (v=0:FLAT 1:LOG3 2:T1S 3:BUF)
