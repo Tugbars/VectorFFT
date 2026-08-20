@@ -19,9 +19,8 @@
  *   cells default to 128 256 512 1024 2048 4096 (the BAILEY2V band);
  *   the CCOL axis extends the useful range to 8192+ — pass those cells
  *   explicitly (e.g. 8192 16384 32768 65536).
- *   🔴 <wisdir> is WRITTEN (oop_wisdom.txt AND spike_wisdom.txt — the CCOL
- *   inner tunings bank there) — run against a SCRATCH COPY, promote after
- *   gates.
+ *   🔴 <wisdir> is WRITTEN (wisdom2_oop.txt via the wisdom2 store; spike is
+ *   decoupled since B2.2) — run against a SCRATCH COPY, promote after gates.
  * Build: python build.py --src benches/calibrate_k1.c --compile
  */
 #include <stdio.h>
@@ -41,7 +40,7 @@ int main(int argc, char **argv)
 #endif
     if (argc < 3) {
         printf("usage: calibrate_k1.exe <wisdir> <rigor 0|1> [N...]\n"
-               "🔴 wisdir is WRITTEN (oop + spike wisdom) — use a scratch "
+               "🔴 wisdir is WRITTEN (wisdom2_oop.txt) — use a scratch "
                "copy, promote after gates\n");
         return 2;
     }

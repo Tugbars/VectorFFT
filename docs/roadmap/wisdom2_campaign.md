@@ -160,13 +160,40 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       wisdom2-served plans (relerr ≤7.5e-16); tangent_frontdoor_gate ALL
       CORRECT on BOTH arms with bit-identical worst-error values
       (wisdom2 reads ≡ kill-switch legacy reads).
-- [ ] 1.4 Collapse the drift surface: ONE `from_plan` constructor replaces
-      the four kind-4 builders; ONE dedup replaces the three; delete
-      `_sp_merge_bank` (+ k1_bank_tmp.txt dance), calibrate_zchain `bank()`,
-      width-gate sscanf/snprintf surgery (→ field-update API),
-      `_oop_wisdom_put_and_save`, vfft_wisdom_save's raw oop rewrite.
-- [ ] 1.5 dp_planner_il emit + dp_planner_split_oop bank → wisdom2 API
-      (thin-driver law intact; calibrate_k1 unchanged as driver).
+- [x] 1.4 **DRIFT SURFACE COLLAPSED 2026-08-20.** All four kind-4 builders
+      gone: `_sp_merge_bank` (+ k1_bank_tmp.txt dance) deleted with a
+      tombstone; calibrate_zchain's `bank()` + hand-built entry deleted
+      (thin driver → `vfft_il_dp_bank_scr_top`, new planner-owned banker);
+      width-gate line surgery deleted (logic moved to module-owned
+      `src/core/oop/oop_width_gate.h`; injections via `vw2_oop_bank_entry`,
+      store byte-snapshot/restored — 6/6 PASS); `_oop_wisdom_put_and_save`
+      + vfft_wisdom_save's raw oop rewrite already dead per 1.3.
+      **Found by the width gate — kind-4 METRIC LAW fixed:** metric was
+      route-inferred (zturn→joint2, zsplit→fwd1), which mislabeled fresh
+      dp verdicts (the dp races BOTH routes joint) and let a zturn incumbent
+      refuse a fresh zsplit winner under metric identity. Now: measured
+      kind-4 = always `joint2` (only the dp banks measured kind-4);
+      `fwd1` survives only as migrated vintage (route-inference kept for
+      src=migrated → migration stays byte-idempotent, gates re-verified);
+      the create-time t2q race banks MEASURE-LESS (ns=0 — its fwd-only
+      median is placement luck, and a measure-less row can always be
+      replaced by the planner's measured verdict, never the reverse).
+      **Wart sunset:** the champions bank site now skips `bK%8 != 0`
+      cells (they could never replay — `vfft_oop_plan_from_entry` hard-
+      gates K%8; legacy wrote them as the write-only garbage rows the
+      migration quarantined, incl. the uninitialized-variants K=1 MODEB
+      class the codec refuses).
+- [x] 1.5 dp_planner_il emit + dp_planner_split_oop bank → wisdom2 API
+      (2026-08-20): `vfft_il_dp_emit_wisdom(vw2_store_t*, ...)` banks via
+      `vw2_oop_bank_entry`; `vfft_sp_dp_plan_and_bank` opens/saves/closes
+      the store itself (no FILE*, no tmp). Thin-driver law intact;
+      calibrate_k1 unchanged as driver (stale spike banner fixed).
+      lookup_k1 twin gained exact-beats-wildcard (a fresh concrete race
+      verdict outranks the migrated wildcard at the same N — probe-verified;
+      migrated wildcards sunset naturally as cells re-race).
+      Smoke: calibrate_k1 128 + calibrate_zchain 2048 on the dual scratch —
+      legacy oop_wisdom.txt md5-unchanged through BOTH full runs (freeze
+      proof), fresh verdicts banked (concrete kind-3 key; kind-4 joint2).
 - [ ] 1.6 **Gate B**: full kind-3 consumer matrix (4 consumers × layouts ×
       placements × 3 orders), kind-4 four caller configs × both routes,
       kind-5 four slots, kinds 0/1/2 lookup_ord classes — zero diffs.
