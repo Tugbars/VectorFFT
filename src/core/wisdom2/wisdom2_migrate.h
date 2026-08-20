@@ -31,7 +31,7 @@
                                     side this migrator must round-trip with
                                     (one definition — forward and inverse
                                     maps cannot drift) */
-#include "../oop/oop_wisdom.h"   /* THE legacy reader + codecs, verbatim */
+#include "wisdom2_oop.h"         /* THE legacy reader + codecs, verbatim */
 
 #define vw2__mig_sp_name  vw2_oop_sp_name
 #define vw2__mig_il_name  vw2_oop_il_name

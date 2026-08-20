@@ -56,7 +56,7 @@
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
-#include "oop_wisdom.h"         /* --oop: oop wisdom load + create_wisdom (lookup) */
+#include "wisdom2_oop.h"        /* --oop: oop wisdom load + create_wisdom (lookup) */
 #include "fft2d.h"              /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
 #include "wisdom2_fftnd.h"      /* --2d/--2dr2c: rank>=2 wisdom structs + legacy loaders */

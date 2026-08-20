@@ -27,7 +27,7 @@
 
 #include <time.h>
 #include "wisdom2.h"
-#include "../oop/oop_wisdom.h"   /* entry struct + THE codecs, verbatim */
+#include "wisdom2_oop.h"         /* entry struct + THE codecs, verbatim */
 
 /* ------------------------------------------------------------ name maps */
 

@@ -86,10 +86,13 @@ static void _g2d_naive(const double *x, double *X, int N1, int N2)
 }
 
 /* one front-door create+execute; out must hold the transform's output.
+ * When rt != NULL, additionally executes BACKWARD(out) -> rt (the
+ * roundtrip product: fully DEFINED output — the forward half-spectrum's
+ * padding lanes carry plan-scratch heap noise and must never be compared).
  * Returns 1 ok, 0 create/exec failure. */
 static int _g2d_run(const char *wisdir, int transform, int order,
                     int N1, int N2, const double *in, double *out,
-                    size_t out_doubles, int wisdom_write)
+                    size_t out_doubles, double *rt, int wisdom_write)
 {
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
     vfft_config_t cfg;
@@ -110,16 +113,22 @@ static int _g2d_run(const char *wisdir, int transform, int order,
     if (!h) { vfft_wisdom_free(W); return 0; }
     memset(out, 0, out_doubles * sizeof(double));
     vfft_execute(h, VFFT_FORWARD, (double *)in, NULL, out, NULL);
+    if (rt) {
+        memset(rt, 0, out_doubles * sizeof(double));
+        vfft_execute(h, VFFT_BACKWARD, out, NULL, rt, NULL);
+    }
     vfft_destroy(h);
     vfft_wisdom_free(W);
     return 1;
 }
 
 /* run the same cell on both read arms; fills a (arm wisdom2) and b (arm
- * legacy). The kill switch is env-scoped around the second run. */
+ * legacy), and the roundtrip products when rta/rtb are given. The kill
+ * switch is env-scoped around the second run. */
 static int _g2d_both_arms(const char *wisdir, int transform, int order,
                           int N1, int N2, const double *in,
-                          double *a, double *b, size_t out_doubles)
+                          double *a, double *b, size_t out_doubles,
+                          double *rta, double *rtb)
 {
     int ok;
 #ifdef _WIN32
@@ -127,13 +136,13 @@ static int _g2d_both_arms(const char *wisdir, int transform, int order,
 #else
     unsetenv("VFFT_WISDOM2_OFF");
 #endif
-    ok = _g2d_run(wisdir, transform, order, N1, N2, in, a, out_doubles, 0);
+    ok = _g2d_run(wisdir, transform, order, N1, N2, in, a, out_doubles, rta, 0);
 #ifdef _WIN32
     _putenv("VFFT_WISDOM2_OFF=2d");
 #else
     setenv("VFFT_WISDOM2_OFF", "2d", 1);
 #endif
-    ok = ok && _g2d_run(wisdir, transform, order, N1, N2, in, b, out_doubles, 0);
+    ok = ok && _g2d_run(wisdir, transform, order, N1, N2, in, b, out_doubles, rtb, 0);
 #ifdef _WIN32
     _putenv("VFFT_WISDOM2_OFF=");
 #else
@@ -167,7 +176,8 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             size_t j;
             int ok;
             for (j = 0; j < nd; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
-            ok = _g2d_both_arms(wisdir, VFFT_C2C, CC[i].order, N1, N2, x, A, B, nd);
+            ok = _g2d_both_arms(wisdir, VFFT_C2C, CC[i].order, N1, N2, x, A, B, nd,
+                                NULL, NULL);
             if (ok && CC[i].order == VFFT_ORDER_NATURAL) {
                 /* natural output is IN ORDER: anchor to the naive DFT */
                 double m = 0, e = 0;
