@@ -116,6 +116,22 @@ VFFT_IL_DECL(radix49_z_n1b_bwd_avx2)
 #define VFFT_IL_N1B_BWD_RADICES(X) X(9) X(15) X(21) X(25) X(27) X(45) X(49)
 #define VFFT_IL_N1B_PAIR_RADICES(X) X(9) X(15) X(21) X(25) X(27) X(45) X(49)
 
+/* ── n1b216 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix32_z_n1b216_bwd_avx2)
+#define VFFT_IL_N1B216_BWD_RADICES(X) X(32)
+
+/* ── n1b416 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix64_z_n1b416_bwd_avx2)
+#define VFFT_IL_N1B416_BWD_RADICES(X) X(64)
+
+/* ── n1b48 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix32_z_n1b48_bwd_avx2)
+#define VFFT_IL_N1B48_BWD_RADICES(X) X(32)
+
+/* ── n1b88 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix64_z_n1b88_bwd_avx2)
+#define VFFT_IL_N1B88_BWD_RADICES(X) X(64)
+
 /* ── n1t ── fwd 20 · bwd 20 · pair 20 */
 VFFT_IL_DECL(radix3_z_n1t_fwd_avx2)
 VFFT_IL_DECL(radix4_z_n1t_fwd_avx2)
@@ -326,6 +342,22 @@ VFFT_IL_DECL(radix49_z_t2b_log3_bwd_avx2)
 #define VFFT_IL_T2B_LOG3_BWD_RADICES(X) X(9) X(15) X(21) X(25) X(27) X(45) X(49)
 #define VFFT_IL_T2B_LOG3_PAIR_RADICES(X) X(9) X(15) X(21) X(25) X(27) X(45) X(49)
 
+/* ── t2bt216 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix32_z_t2bt216_bwd_avx2)
+#define VFFT_IL_T2BT216_BWD_RADICES(X) X(32)
+
+/* ── t2bt416 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix64_z_t2bt416_bwd_avx2)
+#define VFFT_IL_T2BT416_BWD_RADICES(X) X(64)
+
+/* ── t2bt48 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix32_z_t2bt48_bwd_avx2)
+#define VFFT_IL_T2BT48_BWD_RADICES(X) X(32)
+
+/* ── t2bt88 ── fwd 0 · bwd 1 · pair 0 */
+VFFT_IL_DECL(radix64_z_t2bt88_bwd_avx2)
+#define VFFT_IL_T2BT88_BWD_RADICES(X) X(64)
+
 /* ── t2t ── fwd 0 · bwd 20 · pair 0 */
 VFFT_IL_DECL(radix3_z_t2t_bwd_avx2)
 VFFT_IL_DECL(radix4_z_t2t_bwd_avx2)
@@ -372,6 +404,6 @@ VFFT_IL_DECL(radix32_z_t2tg_bwd_avx2)
 VFFT_IL_DECL(radix64_z_t2tg_bwd_avx2)
 #define VFFT_IL_T2TG_BWD_RADICES(X) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27) X(32) X(64)
 
-/* 253 declarations over 23 kinds */
+/* 261 declarations over 31 kinds */
 
 #endif
