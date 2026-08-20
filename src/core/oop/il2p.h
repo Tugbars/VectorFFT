@@ -445,6 +445,65 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
  * a picker: no measurement, no timer, no verdict — the banned class stays
  * banned here. Wisdom il_kv OVERRIDES this default (vfft.c apply_kv runs
  * after create; 0xF forces monolithic). */
+/* ── BACKWARD form variants (2026-08-21) ──────────────────────────────────
+ * The backward twins of mid_v_fn / leaf_v_fn.  Until now the backward had NO
+ * variant axis at all -- n1_bwd_fn/t2t_bwd_fn took only R -- which is exactly
+ * why the forward ran BLOCKED codelets while the backward ran MONOLITHIC ones
+ * at the same cell.
+ *
+ * MEASURED cost of that asymmetry (2026-08-21, --k1dir, N=1024 K=1 IL
+ * in-place): forcing the forward monolithic with VFFT_NO_ILBLK costs +45%
+ * (858 -> 1251 ns, ranges DISJOINT, ~4% spread each), and fwd(monolithic)
+ * then lands on bwd -- the kernel class was the whole gap, not the direction.
+ *
+ * Variant numbering MIRRORS the forward exactly: 1 = 2.16 (R64: 4.16),
+ * 2 = 4.8 (R64: 8.8).  count_ok is the same even-partner-count contract
+ * (blocked forms carry no odd-count tail).  Externs come from the generated
+ * il_registry_avx2.h.  Gated correctness: every form was A/B'd against its
+ * shipped monolithic twin, 12/12, rel ~1e-16 (the 2.16 splits BITWISE). */
+static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_ok)
+{
+    if (!variant || !count_ok) return 0;
+    if (R == 32 && variant == 1) return radix32_z_t2bt216_bwd_avx2;
+    if (R == 32 && variant == 2) return radix32_z_t2bt48_bwd_avx2;
+    if (R == 64 && variant == 1) return radix64_z_t2bt416_bwd_avx2;
+    if (R == 64 && variant == 2) return radix64_z_t2bt88_bwd_avx2;
+    return 0;
+}
+
+static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_ok)
+{
+    if (!variant || !count_ok) return 0;
+    if (R == 32 && variant == 1) return radix32_z_n1b216_bwd_avx2;
+    if (R == 32 && variant == 2) return radix32_z_n1b48_bwd_avx2;
+    if (R == 64 && variant == 1) return radix64_z_n1b416_bwd_avx2;
+    if (R == 64 && variant == 2) return radix64_z_n1b88_bwd_avx2;
+    return 0;
+}
+
+/* The backward mirror of apply_blocked_default, with the SAME justification:
+ * at R>=32 the monolithic form spills hard (the backward pair carries 350 ymm
+ * frame moves vs the blocked pair's 46), so blocked is a STRUCTURAL default,
+ * not a per-cell taste.  R=16 is deliberately excluded on both sides -- it
+ * fits the register file.  Shares VFFT_NO_ILBLK so the A/B hook moves both
+ * directions together, and honours the same even-partner-count gates as the
+ * forward.  A banked backward variant (the dir= key axis wisdom2 reserves)
+ * will override this the moment the planner races one. */
+static inline void vfft_il2p_apply_blocked_default_bwd(vfft_il2p_plan_t *p)
+{
+    if (!p || getenv("VFFT_NO_ILBLK")) return;
+    if (p->R1 >= 32 && (p->R2 & 1) == 0) {
+        vfft_il2p_fn t = vfft_il2p_t2t_bwd_v_fn(p->R1, 2, 1);   /* 4.8  */
+        if (!t) t = vfft_il2p_t2t_bwd_v_fn(p->R1, 1, 1);        /* 2.16 */
+        if (t) p->t2t_b = t;
+    }
+    if (p->R2 >= 32 && (p->R1 & 1) == 0) {
+        vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, 2, 1);    /* 4.8  */
+        if (!n) n = vfft_il2p_n1_bwd_v_fn(p->R2, 1, 1);         /* 2.16 */
+        if (n) p->n1_b_r2 = n;
+    }
+}
+
 static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
 {
     if (!p || getenv("VFFT_NO_ILBLK")) return;
@@ -538,6 +597,7 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
             }
         }
     vfft_il2p_apply_blocked_default(p);
+    vfft_il2p_apply_blocked_default_bwd(p);
     return p;
 }
 
