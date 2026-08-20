@@ -56,7 +56,10 @@
 #include "generator/generated/registry.h"
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
-#include "wisdom2_oop.h"        /* --oop: oop wisdom load + create_wisdom (lookup) */
+#include "wisdom2_oop.h"        /* --oop: entry struct + plan_from_entry */
+#include "wisdom2_oop_reader.h" /* the PRODUCTION read twins (the store is what
+                                 * the front door serves — the bench must
+                                 * measure and label from the same source) */
 #include "fft2d.h"              /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
 #include "wisdom2_fftnd.h"      /* --2d/--2dr2c: rank>=2 wisdom structs + legacy loaders */
@@ -426,16 +429,43 @@ static int g_k1nat = 0;              /* --k1nat (B6): --k1zip discipline +
                                       * ENGINE elementwise compare (stronger
                                       * than roundtrip, which cannot gate
                                       * ordering). Implies g_k1zip. */
-static vfft_oop_wisdom_t g_k1z_oopw; /* shipped-reader view of the positional wisdom file */
+static vw2_store_t g_k1z_store;      /* the LIVE store — what the front door serves */
 static int g_k1z_oopw_loaded = 0;
 static const char *g_k1z_wpath = NULL;
 
-/* Caller-owned front-door bundle rooted at the positional wisdom file's
- * directory. The front door reads kind-4 lines from <dir>/oop_wisdom.txt
- * (vfft.c _bundle_paths), so the positional file must BE that file — then
- * create's pure read serves exactly the lines this process just parsed. Any
- * other basename would make the bundle read a DIFFERENT file (or miss ->
- * create-time race + re-bank), silently measuring something else. */
+/* The bundle directory: the positional wisdom argument's parent (the file
+ * itself is only a locator now — the store lives beside it, and the front
+ * door resolves the same directory). */
+static const char *k1z_dir(void)
+{
+    static char dir[600];
+    static int done = 0;
+    const char *b1, *b2, *base;
+    if (done) return dir;
+    done = 1;
+    snprintf(dir, sizeof dir, ".");
+    if (!g_k1z_wpath) return dir;
+    b1 = strrchr(g_k1z_wpath, '/');
+    b2 = strrchr(g_k1z_wpath, '\\');
+    base = b1 ? b1 : b2;
+    if (b1 && b2) base = (b1 > b2) ? b1 : b2;
+    if (base)
+    {
+        size_t dl = (size_t)(base - g_k1z_wpath); /* dir WITHOUT the separator */
+        if (dl == 0) dl = 1;                      /* "/oop_wisdom.txt" -> "/"  */
+        if (dl >= sizeof dir) dl = sizeof dir - 1;
+        memcpy(dir, g_k1z_wpath, dl);
+        dir[dl] = 0;
+    }
+    return dir;
+}
+
+/* Caller-owned front-door bundle rooted at the wisdom argument's directory.
+ * The old basename contract (the file HAD to be named oop_wisdom.txt so the
+ * bundle would read the very lines this process parsed) is GONE: the front
+ * door now serves the wisdom2 store in that directory, and this bench reads
+ * its verdicts from the same store — so bundle and bench agree by
+ * construction rather than by filename coincidence. */
 static vfft_wisdom *k1z_bundle(void)
 {
     static vfft_wisdom *W = NULL;
@@ -443,36 +473,9 @@ static vfft_wisdom *k1z_bundle(void)
     if (tried || !g_k1z_wpath)
         return W;
     tried = 1;
-    const char *b1 = strrchr(g_k1z_wpath, '/');
-    const char *b2 = strrchr(g_k1z_wpath, '\\');
-    const char *base = b1 ? b1 : b2;
-    if (b1 && b2)
-        base = (b1 > b2) ? b1 : b2;
-    const char *fname = base ? base + 1 : g_k1z_wpath;
-    if (strcmp(fname, "oop_wisdom.txt") != 0)
-    {
-        fprintf(stderr,
-                "k1z: K=1 kind-4 cells need the wisdom file to be the bundle's "
-                "oop_wisdom.txt (front-door contract); got '%s' — cells skipped\n",
-                fname);
-        return NULL;
-    }
-    char dir[600];
-    if (!base)
-        snprintf(dir, sizeof dir, ".");
-    else
-    {
-        size_t dl = (size_t)(base - g_k1z_wpath); /* dir WITHOUT the separator */
-        if (dl == 0)
-            dl = 1; /* "/oop_wisdom.txt" -> "/" */
-        if (dl >= sizeof dir)
-            dl = sizeof dir - 1;
-        memcpy(dir, g_k1z_wpath, dl);
-        dir[dl] = 0;
-    }
-    W = vfft_wisdom_load(dir);
+    W = vfft_wisdom_load(k1z_dir());
     if (!W)
-        fprintf(stderr, "k1z: vfft_wisdom_load(%s) failed — cells skipped\n", dir);
+        fprintf(stderr, "k1z: vfft_wisdom_load(%s) failed — cells skipped\n", k1z_dir());
     return W;
 }
 
@@ -1457,10 +1460,20 @@ static double time_oop(const vfft_oop_plan_t *p, const double *sr, const double 
     return best;
 }
 static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
-                         const vfft_oop_wisdom_t *oopw, FILE *out, int cool_ms, int flip)
+                         const vw2_store_t *store, FILE *out, int cool_ms, int flip)
 {
     size_t total = (size_t)N * K;
-    vfft_oop_plan_t *p = oopw ? vfft_oop_plan_create_wisdom(N, K, oopw, reg) : NULL;
+    /* Serve the champion the FRONT DOOR would serve: the store's ord-aware
+     * verdict, built by the shipped constructor. (Was a pure lookup in the
+     * frozen legacy table, which diverges from production the moment a cell
+     * is re-raced.) */
+    vfft_oop_plan_t *p = NULL;
+    if (store)
+    {
+        vfft_oop_wisdom_entry_t eb;
+        if (vw2_oop_lookup_ord(store, N, K, 0 /* DEFAULT: best of the classes */, &eb))
+            p = vfft_oop_plan_from_entry(&eb, reg);
+    }
     int used_dp = 0;
     vfft_proto_dp_context_t ctx;
     if (!p)
@@ -2624,8 +2637,9 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
      * Runs after the flip-ordered main arms; its own gate + medians. */
     if (half >= 2048 && okF && g_k1z_oopw_loaded)
     {
+        vfft_oop_wisdom_entry_t z4buf;
         const vfft_oop_wisdom_entry_t *z4 =
-            vfft_oop_wisdom_lookup_zsplit(&g_k1z_oopw, half);
+            vw2_oop_lookup_zsplit(&g_k1z_store, half, &z4buf) ? &z4buf : NULL;
         if (z4)
         {
             c4row = 1;
@@ -3640,14 +3654,19 @@ int main(int argc, char **argv)
     }
 
     /* --oop: load the OOP wisdom (pure-lookup build); miss -> dp_best per cell. */
-    vfft_oop_wisdom_t oopw;
+    vw2_store_t oopw;
     int have_oopw = 0;
     if (oop)
     {
+        /* $VFFT_OOP_WIS may still name a FILE (back-compat); the live store
+         * sits in its directory, and that is what the front door serves. */
         const char *op = getenv("VFFT_OOP_WIS");
         if (!op)
             op = "../../src/dag-fft-compiler/generator/generated/oop_wisdom.txt";
-        have_oopw = (vfft_oop_wisdom_load(&oopw, op) == 0);
+        g_k1z_wpath = op;
+        vw2_open(&oopw, k1z_dir(), 0);   /* read-only: a bench never banks */
+        have_oopw = (oopw.nrec > 0);
+        op = k1z_dir();
         printf("# OOP wisdom: %s (%s)\n", op, have_oopw ? "loaded" : "MISS -> dp_best per cell");
     }
 
@@ -3657,7 +3676,10 @@ int main(int argc, char **argv)
      * instead of the local c2c factor walk (see run_k1z_cell). */
     g_k1z_wpath = wpath;
     if (!oop)
-        g_k1z_oopw_loaded = (vfft_oop_wisdom_load(&g_k1z_oopw, wpath) == 0);
+    {
+        vw2_open(&g_k1z_store, k1z_dir(), 0);   /* read-only: a bench never banks */
+        g_k1z_oopw_loaded = (g_k1z_store.nrec > 0);
+    }
 
     FILE *f = fopen(wpath, "r");
     if (!f)
@@ -3887,8 +3909,9 @@ int main(int argc, char **argv)
             tok = strtok_r(NULL, " \t\n", &save);
             if (tok && atoi(tok) == VFFT_OOP_KIND_ZSPLIT && g_k1z_oopw_loaded)
             {
+                vfft_oop_wisdom_entry_t zebuf;
                 const vfft_oop_wisdom_entry_t *ze =
-                    vfft_oop_wisdom_lookup_zsplit(&g_k1z_oopw, N);
+                    vw2_oop_lookup_zsplit(&g_k1z_store, N, &zebuf) ? &zebuf : NULL;
                 if (ze)
                 {
                     run_k1z_cell(N, ze, out, cool_ms, flip);

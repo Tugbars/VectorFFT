@@ -427,6 +427,31 @@ OWNER QUESTIONS (recommended defaults in parentheses):
 
 ## Wave 4 — stride/spike LAST (the triple-role file)
 
+
+### 4.5 REPOINT SURVEY DONE 2026-08-20 — almost nothing to repoint
+
+Consequence of keeping the FROZEN file as the build input (the correction
+above): the external consumers need no changes at all.
+
+- `scripts/bootstrap.sh:173-178` regenerates plan_executors.h from
+  `generated/spike_wisdom.txt` and sanity-counts its rows — reading a
+  frozen, immutable snapshot is exactly right; the count still matches.
+- `build_tuned/run_bench.py:38` reads the same file to ENUMERATE cells to
+  bench. Read-only and correct; it enumerates freeze-time cells, the same
+  documented limitation as bench_1d_vs_mkl's wisdom-view arms, and the
+  exporter is the forward path when it should see live cells.
+- `build_tuned/build.py:44` only names the path in a comment.
+
+🔴 DEAD TOOLING FOUND: `build_tuned/calibrate.py` orchestrates
+`src/dag-fft-compiler/calibrator/calibrate.exe` — that directory does not
+exist (removed in an earlier restructure) — and passes the wisdom path via
+`VFFT_PROTO_WIS`, which has NO reader anywhere in the tree (it is on
+wisdom2.h's dead-env-name list, correctly). The script cannot run. It is
+not a freeze hazard, but it is a trap for a future session that tries to
+calibrate with it. Recommend deletion (owner's call — it is their
+orchestration tooling, and the powercfg/thermal discipline in its header
+is worth preserving somewhere if the driver is ever rebuilt).
+
 ### 🔴 4.5 PLAN CORRECTED 2026-08-20 — the dune input is the FROZEN FILE,
 ### not an export (found by reading emit_executor_h.ml, pre-empting the
 ### byte-oracle)
