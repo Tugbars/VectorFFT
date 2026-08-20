@@ -417,6 +417,19 @@ static void measure_ab(double *vns_out, double *mns_out,
  * storage is the batched paths' contract, not K=1 z's; zsplit_api_gate.c
  * precedent).
  * ════════════════════════════════════════════════════════════════════════ */
+static int g_k1dir = 0;              /* --k1dir: time K=1 IL in-place BOTH
+                                      * directions in ONE process. The falsifier
+                                      * for "the backward is slow because it runs
+                                      * MONOLITHIC codelets while the forward runs
+                                      * BLOCKED ones": VFFT_NO_ILBLK forces the
+                                      * FORWARD monolithic and touches only
+                                      * mid_f/leaf_f, so the backward column is an
+                                      * unchanged CONTROL by construction. If
+                                      * fwd(NO_ILBLK) ~= bwd, the kernel class is
+                                      * the whole story. Implies --k1zip/--k1nat.
+                                      * NOTE wisdom2 section 5: a banked il_kv
+                                      * BEATS VFFT_NO_ILBLK, so this is valid only
+                                      * on a cell with none (n=1024 has none). */
 static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
@@ -480,15 +493,16 @@ static vfft_wisdom *k1z_bundle(void)
     return W;
 }
 
-static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
+static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
+                              int dir)
 {
     /* --k1zip: aliased interleaved form (S, NULL, S, NULL) on the evolving
      * buffer — mirrors the MKL in-place arm's discipline exactly. */
     if (g_k1zip)
         memcpy(S, z0, 2 * total * sizeof(double));
     for (int w = 0; w < 10; w++)
-        g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
-                : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+        g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
+                : vfft_execute(h, dir, z0, NULL, S, NULL);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -497,13 +511,18 @@ static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
             pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            g_k1zip ? vfft_execute(h, VFFT_FORWARD, S, NULL, S, NULL)
-                    : vfft_execute(h, VFFT_FORWARD, z0, NULL, S, NULL);
+            g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
+                    : vfft_execute(h, dir, z0, NULL, S, NULL);
         double ns = (vfft_proto_now_ns() - t0) / reps;
         if (ns < best)
             best = ns;
     }
     return best;
+}
+
+static double k1z_time_vfft(vfft_plan h, double *z0, double *S, size_t total)
+{
+    return k1z_time_vfft_d(h, z0, S, total, VFFT_FORWARD);
 }
 
 #ifdef VFFT_HAS_MKL
@@ -695,10 +714,21 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     (void)flip;
     vns = k1z_time_vfft(h, z0, S, total);
 #endif
+    /* --k1dir: same cell, backward, same process/buffers/discipline. bwd/fwd
+     * is the number that matters -- it is INTERNAL to one run, so it survives
+     * the thermal drift that makes cross-run ns incomparable on this host. */
+    double bns = 0;
+    if (g_k1dir)
+        bns = k1z_time_vfft_d(h, z0, S, total, VFFT_BACKWARD);
     double ratio = (vns > 0 && mns > 0) ? mns / vns : 0;
     double vgf = (vns > 0) ? 5.0 * N * log2((double)N) / vns : 0;
     printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
            N, plan_s, path, vns, mns, vgf, ratio, rel);
+    if (g_k1dir)
+        printf("         k1dir N=%-6d fwd %10.0f  bwd %10.0f  bwd/fwd %6.3f  "
+               "NO_ILBLK=%s\n",
+               N, vns, bns, (vns > 0) ? bns / vns : 0.0,
+               getenv("VFFT_NO_ILBLK") ? "1" : "0");
     if (out)
     {
         fprintf(out, "%d,%d,%s,%s,%.0f,%.0f,%.3f,%.3f,%.3e\n",
@@ -3199,6 +3229,12 @@ int main(int argc, char **argv)
             pad = 1; /* 1D c2c padding: aligned Kp plan vs SSE2 tail vs MKL */
         else if (strcmp(argv[1], "--padr2c") == 0)
             padr2c = 1; /* 1D r2c padding: aligned Kp rfft plan vs rem-aware tail vs MKL */
+        else if (strcmp(argv[1], "--k1dir") == 0)
+        {   /* K=1 IL in-place, natural, BOTH directions (see g_k1dir). */
+            g_k1zip = 1;
+            g_k1nat = 1;
+            g_k1dir = 1;
+        }
         else if (strcmp(argv[1], "--k1zip") == 0)
         {
             /* K=1 kind-4 cells IN-PLACE on BOTH engines — the true
