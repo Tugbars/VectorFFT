@@ -543,6 +543,43 @@ static inline void vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
         if (l) p->leaf_f = l;
     }
 }
+/* ── THE BACKWARD ARM (2026-08-21) ────────────────────────────────────────
+ * apply_kv_forms above is the ONLY translator from a banked verdict to a
+ * running codelet, and until now it assigned mid_f/leaf_f and nothing else.
+ * That is why a backward verdict had nowhere to land: the backward pair was
+ * reachable ONLY through the structural default, un-overridable by wisdom.
+ *
+ * Same two-nibble codec, because the backward runs the SAME (R1,R2) split:
+ *   LOW  nibble -> stage 1, t2t at R1   (executed with count = R2)
+ *   HIGH nibble -> stage 2, n1  at R2   (executed with count = R1)
+ * so the even-count gates are the partner's parity, exactly as the forward's
+ * are.  0xF forces monolithic, mirroring VFFT_IL_KV_MONO.
+ *
+ * SOURCE OF THE VERDICT: there is no banked backward kv yet.  wisdom2
+ * reserves `dir=` as a KEY token (wisdom2/README.md section 3.1), so a
+ * backward verdict is a separate CELL rather than more bits in il_kv --
+ * which is the right shape, since the forward and backward pick
+ * independently.  Until the planner races one, callers pass the
+ * VFFT_IL_BKV test hook or 0; at 0 this is a no-op and
+ * apply_blocked_default_bwd's structural pick stands. */
+static inline void vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
+{
+    if (!p || !bkv) return;
+    const int s1 = VFFT_IL_KV_MID(bkv), s2 = VFFT_IL_KV_LEAF(bkv);
+    if (s1 == VFFT_IL_KV_MONO)
+        p->t2t_b = vfft_il2p_t2t_bwd_fn(p->R1);
+    else if (s1) {
+        vfft_il2p_fn t = vfft_il2p_t2t_bwd_v_fn(p->R1, s1, (p->R2 & 1) == 0);
+        if (t) p->t2t_b = t;
+    }
+    if (s2 == VFFT_IL_KV_MONO)
+        p->n1_b_r2 = vfft_il2p_n1_bwd_fn(p->R2);
+    else if (s2) {
+        vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, s2, (p->R1 & 1) == 0);
+        if (n) p->n1_b_r2 = n;
+    }
+}
+
 
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
