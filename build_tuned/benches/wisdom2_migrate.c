@@ -18,6 +18,21 @@
 int main(int argc, char **argv)
 {
     vw2_mig_stats_t st;
+    if (argc > 1 && !strcmp(argv[1], "--export-stride")) {
+        if (argc < 4) {
+            fprintf(stderr, "usage: wisdom2_migrate --export-stride <store_dir> <out_dir>"
+                            " [--gate <orig_spike> <orig_rfft>]\n");
+            return 2;
+        }
+        if (argc > 6 && !strcmp(argv[4], "--gate"))
+            return vw2_export_stride_gate(argv[2], argv[5], argv[6], argv[3]) ? 1 : 0;
+        {
+            char sp[640], rf[640];
+            snprintf(sp, sizeof sp, "%s/spike_wisdom_frozen.txt", argv[3]);
+            snprintf(rf, sizeof rf, "%s/rfft_wisdom_frozen.txt", argv[3]);
+            return vw2_export_stride(argv[2], sp, rf) < 0 ? 1 : 0;
+        }
+    }
     if (argc > 1 && !strcmp(argv[1], "--rekey-k1role")) {
         if (argc < 3) {
             fprintf(stderr, "usage: wisdom2_migrate --rekey-k1role <store_dir>\n");
