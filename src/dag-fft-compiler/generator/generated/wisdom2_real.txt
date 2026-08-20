@@ -1,9 +1,10 @@
-@vw2 1.0
+@vw2 1.1
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
 @legend key: layout (split/il) is never a key token - it is a strategy output in the payload
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
 @cell t=r2c n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:109
@@ -43,3 +44,16 @@
 @cell t=c2r n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
 @cell t=c2r n=8192 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
 @cell t=r2c n=510 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:118
+@cell t=r2c n=256 q=8 ord=scr place=ip | eng=stride chain=8.32 vars=log3.flat dif=0 | ran=8 ns=853.07 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:5
+@cell t=r2c n=512 q=8 ord=scr place=ip | eng=stride chain=16.32 vars=flat.flat dif=0 | ran=8 ns=2555.12 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:6
+@cell t=r2c n=1024 q=8 ord=scr place=ip | eng=stride chain=4.8.32 vars=t1s.log3.flat dif=0 | ran=8 ns=7263.52 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:7
+@cell t=r2c n=256 q=16 ord=scr place=ip | eng=stride chain=8.32 vars=t1s.flat dif=0 | ran=16 ns=2170.29 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:8
+@cell t=r2c n=512 q=1 ord=scr place=ip | eng=stride chain=8.4.4.4 vars=t1s.flat.log3.flat dif=0 | ran=1 ns=841.48 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:9
+@cell t=r2c n=2048 q=1 ord=scr place=ip | eng=stride chain=4.8.16.4 vars=t1s.t1s.log3.flat dif=0 | ran=1 ns=4980.64 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:10
+@cell t=r2c n=4096 q=1 ord=scr place=ip | eng=stride chain=8.16.4.8 vars=t1s.flat.t1s.flat dif=0 | ran=1 ns=10096.31 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:11
+@cell t=r2c n=512 q=4 ord=scr place=ip | eng=stride chain=8.2.4.8 vars=t1s.log3.flat.flat dif=0 | ran=4 ns=1857.07 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:12
+@cell t=r2c n=256 q=1 ord=scr place=ip | eng=stride chain=4.8.8 vars=t1s.log3.flat dif=0 | ran=1 ns=416.09 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:13
+@cell t=r2c n=1024 q=1 ord=scr place=ip | eng=stride chain=8.4.4.8 vars=t1s.t1s.flat.flat dif=0 | ran=1 ns=1604.00 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:14
+@cell t=r2c n=8192 q=1 ord=scr place=ip | eng=stride chain=8.8.16.8 vars=t1s.flat.t1s.flat dif=0 | ran=1 ns=20799.59 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:15
+@cell t=r2c n=16384 q=1 ord=scr place=ip | eng=stride chain=8.16.16.8 vars=t1s.flat.flat.flat dif=0 | ran=1 ns=43067.21 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:16
+@cell t=r2c n=32768 q=1 ord=scr place=ip | eng=stride chain=16.16.16.8 vars=log3.flat.flat.flat dif=0 | ran=1 ns=138998.36 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:17
