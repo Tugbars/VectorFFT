@@ -1326,6 +1326,8 @@ zil/avx2/pure_il/radix27_z_t2b_log3_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix27_z_t2t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix27_z_t2tg_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_n1_bwd_avx2.c	derive	IDENTICAL	-
+zil/avx2/pure_il/radix32_z_n1b216_bwd_avx2.c	replay	IDENTICAL	-
+zil/avx2/pure_il/radix32_z_n1b48_bwd_avx2.c	replay	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_n1t_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_n1t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_n1tb48_avx2.c	replay	PROLOGUE_ONLY	11
@@ -1334,6 +1336,8 @@ zil/avx2/pure_il/radix32_z_t2_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_t2_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_t2b48_avx2.c	replay	PROLOGUE_ONLY	22
 zil/avx2/pure_il/radix32_z_t2b_avx2.c	replay	PROLOGUE_ONLY	18
+zil/avx2/pure_il/radix32_z_t2bt216_bwd_avx2.c	replay	IDENTICAL	-
+zil/avx2/pure_il/radix32_z_t2bt48_bwd_avx2.c	replay	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_t2t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix32_z_t2tg_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix3_z_n1_avx2.c	derive	IDENTICAL	-
@@ -1376,10 +1380,14 @@ zil/avx2/pure_il/radix5_z_t2_log3_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix5_z_t2t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix5_z_t2tg_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_n1_bwd_avx2.c	derive	IDENTICAL	-
+zil/avx2/pure_il/radix64_z_n1b416_bwd_avx2.c	replay	IDENTICAL	-
+zil/avx2/pure_il/radix64_z_n1b88_bwd_avx2.c	replay	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_n1t_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_n1t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_t2_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_t2_bwd_avx2.c	derive	IDENTICAL	-
+zil/avx2/pure_il/radix64_z_t2bt416_bwd_avx2.c	replay	IDENTICAL	-
+zil/avx2/pure_il/radix64_z_t2bt88_bwd_avx2.c	replay	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_t2t_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix64_z_t2tg_bwd_avx2.c	derive	IDENTICAL	-
 zil/avx2/pure_il/radix6_z_n1_avx2.c	derive	IDENTICAL	-
