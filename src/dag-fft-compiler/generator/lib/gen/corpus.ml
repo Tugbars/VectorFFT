@@ -1473,6 +1473,22 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix32_z_t2bt48_bwd_avx2.c"
+    , [ "32"; "--cil-t2"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1b48_bwd_avx2.c"
+    , [ "32"; "--cil-n1"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_t2bt216_bwd_avx2.c"
+    , [ "32"; "--cil-t2"; "--cil-blocked"; "--cil-split"; "2.16"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1b216_bwd_avx2.c"
+    , [ "32"; "--cil-n1"; "--cil-blocked"; "--cil-split"; "2.16"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2bt88_bwd_avx2.c"
+    , [ "64"; "--cil-t2"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1b88_bwd_avx2.c"
+    , [ "64"; "--cil-n1"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2bt416_bwd_avx2.c"
+    , [ "64"; "--cil-t2"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-turnst"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1b416_bwd_avx2.c"
+    , [ "64"; "--cil-n1"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ]
 ;;
 
