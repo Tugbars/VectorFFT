@@ -229,6 +229,8 @@ static const vw2_field_t vw2_fields[] = {
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
     /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */
     { "ablock",  VW2_FC_LOCAL },
+    /* pad-vs-tail winners in words (derived from pad_me/il_me vs q) */
+    { "pad_arm", VW2_FC_INFO }, { "il_arm", VW2_FC_INFO },
     { "ran",     VW2_FC_INFO }, { "ns",   VW2_FC_INFO }, { "metric", VW2_FC_INFO },
     { "units",   VW2_FC_INFO }, { "arms", VW2_FC_INFO }, { "src",    VW2_FC_INFO },
     { "bin",     VW2_FC_INFO }, { "date", VW2_FC_INFO }, { "host",   VW2_FC_INFO },

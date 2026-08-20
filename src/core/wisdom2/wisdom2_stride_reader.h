@@ -292,13 +292,20 @@ static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
         snprintf(b, sizeof b, "%d", e->block_groups);
         VW2__SB_SET(1, "bgroups", b);
     }
+    /* pad-vs-tail verdicts. The NUMBER is what executes (K = run as-is with
+     * the narrow lane filler; Kp = pad up so every lane is full width). The
+     * `_arm` token names the winner in words, so a banked line reads back as
+     * a verdict instead of a number you have to decode against q= — INFO
+     * class, derived, never decision-load-bearing. */
     if (e->exec_me) {
         snprintf(b, sizeof b, "%d", e->exec_me);
         VW2__SB_SET(1, "pad_me", b);
+        VW2__SB_SET(2, "pad_arm", e->exec_me == (int)e->K ? "tail" : "pad");
     }
     if (e->il_me) {
         snprintf(b, sizeof b, "%d", e->il_me);
         VW2__SB_SET(1, "il_me", b);
+        VW2__SB_SET(2, "il_arm", e->il_me == (int)e->K ? "tail" : "pad");
     }
     return vw2__stride_tail(r, e->K, e->best_ns, src, from, why);
 }
