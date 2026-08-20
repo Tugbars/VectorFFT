@@ -57,9 +57,10 @@
 #include "prime_dispatch.h"     /* vfft_proto_auto_plan_dispatch (Rader) + bridge */
 #include "oop_dp.h"             /* --oop: vfft_oop_plan_create_dp_best (fallback) */
 #include "wisdom2_oop.h"        /* --oop: entry struct + plan_from_entry */
-#include "wisdom2_oop_reader.h" /* the PRODUCTION read twins (the store is what
-                                 * the front door serves — the bench must
-                                 * measure and label from the same source) */
+#include "wisdom2_oop_reader.h"    /* the PRODUCTION read twins (the store is what
+                                    * the front door serves — the bench must
+                                    * measure and label from the same source) */
+#include "wisdom2_stride_reader.h" /* stride (spike) verdicts for the c2c arm */
 #include "fft2d.h"              /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
 #include "wisdom2_fftnd.h"      /* --2d/--2dr2c: rank>=2 wisdom structs + legacy loaders */
@@ -3968,6 +3969,27 @@ int main(int argc, char **argv)
         }
 
         size_t K = mt ? (size_t)Kl : (size_t)(target_N ? target_K : BENCH_K); /* MT: cell's own K */
+
+        /* BENCH WHAT PRODUCTION SERVES. The wisdom file is a frozen
+         * ENUMERATION source (which cells exist); the verdict itself comes
+         * from the live store, so a re-raced cell is measured with its
+         * current chain instead of its pre-freeze one. A cell the store
+         * does not carry falls back to the row as parsed (old behavior). */
+        if (g_k1z_oopw_loaded)
+        {
+            vfft_proto_wisdom_entry_t se;
+            if (vw2_stride_lookup(&g_k1z_store, 0, N, K, &se) && se.nf > 0)
+            {
+                nf = se.nf;
+                for (int i = 0; i < nf; i++)
+                {
+                    factors[i] = se.factors[i];
+                    variants[i] = se.variants[i];
+                }
+                use_dif = se.use_dif_forward;
+            }
+        }
+
         char plan_s[64];
         format_plan(plan_s, sizeof plan_s, factors, nf, use_dif);
 

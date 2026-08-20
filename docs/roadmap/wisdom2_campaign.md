@@ -428,6 +428,33 @@ OWNER QUESTIONS (recommended defaults in parentheses):
 ## Wave 4 — stride/spike LAST (the triple-role file)
 
 
+### 4.4 BENCH RE-HOSTED 2026-08-20 — the divergence is gone
+
+`bench_1d_vs_mkl` no longer serves verdicts from the frozen files. All four
+sites now read the LIVE store, so what the bench measures and labels is
+what the front door serves:
+
+- `--oop` arm: `run_oop_cell` takes a `vw2_store_t *` and builds via
+  `vw2_oop_lookup_ord` + the shipped `vfft_oop_plan_from_entry` (was a pure
+  lookup in the frozen legacy table).
+- k1z kind-4 arm and the `--zr2c` cascade arm: `vw2_oop_lookup_zsplit`.
+- The main strided c2c arm: the row's factorization is REPLACED by the
+  store's verdict for that cell when present (fallback to the parsed row
+  when the store does not carry it, so coverage never shrinks).
+- 🔴 THE BASENAME CONTRACT IS DELETED. It existed so the bundle would read
+  the very file the bench parsed; bundle and bench now agree by
+  construction (same store, same directory), not by filename coincidence.
+
+HONEST SCOPE NOTE (registry said "raw spike strtok walk DELETED"): the walk
+SURVIVES, demoted to pure ENUMERATION — "which cells exist to visit". It no
+longer supplies a single verdict. Enumerating from a frozen file yields
+freeze-time cells, the same benign limitation `run_bench.py` has, and the
+exporter is the forward path if it should ever enumerate live cells.
+
+SMOKE: N=4096 K=1 prints `z:4x4x4x4x4x4/R1 zturn` (matches the store's
+kind-4 record) and N=1024 K=4 prints `64x16/DIT` (matches `chain=64.16
+dif=0`), both with ~8e-16 roundtrip error.
+
 ### 4.5 REPOINT SURVEY DONE 2026-08-20 — almost nothing to repoint
 
 Consequence of keeping the FROZEN file as the build input (the correction
@@ -574,6 +601,32 @@ KEY/PAYLOAD MAPPING (all `eng=stride`):
 - [ ] Scratch-wisdir law for every unported writer; promotions field-scoped
       with dated backups + exact git diff.
 
+### WAVE-4 FREEZE DONE 2026-08-20 + CHECKSUM BASELINE
+
+`spike_wisdom.txt` and `rfft_wisdom.txt` took their one-time LAST-EVER
+write (the `# FROZEN` stamp, naming the live shards and recording that the
+file is STILL a deliberate build input); `spike_wisdom_padded.txt` is
+stamped as the superseded @version-6 fossil it always was.
+
+Row count across the stamp: **258 before, 258 after** — `bootstrap.sh`'s
+`grep -cE "^[0-9]"` check, the legacy loaders, and the OCaml emitter all
+skip `#` lines, so `plan_executors.h` is unaffected by construction.
+
+FROZEN BASELINE (every legacy family, all four waves):
+
+| file | md5 |
+|---|---|
+| oop_wisdom.txt | cc529724e140bcbaefa5264426771bb5 |
+| fft2d_c2c_wisdom.txt | 021829d0476e7a4514ebcfc60e841693 |
+| fft2d_r2c_wisdom.txt | 480447c1ed8f26458c1a8287ded61c0d |
+| fft2d_c2r_wisdom.txt | 0e2aa3be2f834e4e5e9a91ba4f93d5b6 |
+| spike_wisdom.txt | 976a18a7770344935a04b92989f903c6 |
+| rfft_wisdom.txt | ebc7b983506c974858cd3193a7a58105 |
+| spike_wisdom_padded.txt | 3957a85d4f3b118b1af1a4ad7020548d |
+
+LIVE STORE: wisdom2_oop 27d946c1 · wisdom2_stride f9328cdf ·
+wisdom2_real 1d7a8b72 · wisdom2_2d d6b0fbba · wisdom2_3d born on first bank.
+
 ## Wave 5 — post-cutover (hygiene + chartered follow-ups, not correctness)
 
 - [ ] 5.1 Delete legacy reader/writer code paths per pool-sunset (legacy
@@ -599,3 +652,44 @@ cuts over): oop_wisdom.txt = wave 1 · c2r_path.txt + vfft_bluestein_wisdom.txt
 spike_wisdom.txt + rfft_wisdom.txt = wave 4 TOGETHER (shared v8 writer —
 rfft cannot freeze earlier) · spike_wisdom_padded.txt = already dead,
 stamped in wave 4.
+
+## Repo-root `wisdom/` move — SEQUENCING CORRECTED 2026-08-20
+
+Owner approved the destination. An earlier note here claimed the move was
+unblocked once the dune rule stayed on the frozen file. **That was wrong**,
+and two facts contradict it:
+
+1. `vfft.c:467-510` resolves the WHOLE bundle from ONE directory `d`:
+   `path_c2c = d/spike_wisdom.txt` … and `vw2_open(&W->vw2, d)`. While any
+   `VFFT_WISDOM2_OFF=<family>` kill switch exists, the store and its legacy
+   fallbacks MUST be co-located.
+2. `spike_wisdom.txt` cannot leave `generated/`: it is a dune dep declared
+   by bare filename, and the dune workspace root is
+   `src/dag-fft-compiler/generator/` — a repo-root `wisdom/` is outside it,
+   and dune refuses deps outside its root.
+
+Together: moving the store alone breaks the kill switches; moving both is
+impossible while spike is a build dep. **So the move waits for the bakes to
+close and the kill switches (with their legacy loads) to be deleted.** At
+that point the store moves alone and the frozen files stay in `generated/`
+as build input plus archive — which is where a build input belongs anyway.
+
+Order of operations, once bakes are clean:
+1. delete each family's `VFFT_WISDOM2_OFF` branch + its legacy load;
+2. `git mv` the `wisdom2_*.txt` shards to repo-root `wisdom/`;
+3. change the ONE default in `_bundle_paths` (the library already takes the
+   directory as a parameter, so this is a one-line default);
+4. repoint the bench/gate scratch-dir probes;
+5. re-run the sweep; the frozen files never move.
+
+### Dead weight removed 2026-08-20
+
+`build_tuned/calibrate.py` (orchestrated a driver whose directory no longer
+exists, via an env nothing reads), 5 `.bak`/`.pre-il` snapshots of wisdom
+files (git history is the archive), and a stray `calibrate_nat_grid.log`
+tap output. `generated/README.md` now states that the directory holds two
+kinds of file with opposite recovery stories, and that a `.txt` must never
+be regenerated, hand-edited, or deleted to tidy up.
+
+KEPT (still referenced): `c2r_wisdom.txt` — `bench_1d_vs_mkl.c:3592` reads
+it; it dies in wave 2 with the c2r work, per owner decision #10.
