@@ -194,6 +194,7 @@ let run (argv : string array) : unit =
   let cil_chain = ref "" in
   let cil_blocked = ref false in
   let cil_tangent = ref false in
+  let cil_form_tag = ref false in
   (* --cil-log3: source the T2 mid's VTW2 records sparsely (load the
      power-of-two legs, derive the rest). Full-IL, same table layout. *)
   let cil_log3 = ref false in
@@ -524,6 +525,8 @@ let run (argv : string array) : unit =
     then cil_blocked := true
     else if arg = "--cil-tangent"
     then cil_tangent := true
+    else if arg = "--cil-form-tag"
+    then cil_form_tag := true
     else if arg = "--cil-log3"
     then
       cil_log3 := true
@@ -1311,6 +1314,7 @@ let run (argv : string array) : unit =
       print_string
         (C2c_il.emit
            ~tangent:!cil_tangent
+           ~form_tag:!cil_form_tag
            ~log3:!cil_log3
            ~pretw:!cil_pretw
            ~turnst:!cil_turnst

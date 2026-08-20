@@ -162,10 +162,47 @@ type dir =
 (* Emit a solo (monolithic, twiddle-free) interleaved n1 codelet.
    ABI: the frozen 11-arg z ABI shared with codelet_zil, so emitted files
    are drop-in against the same benches/drivers. *)
+(* FORM TAG (2026-08-20) — make the emitted SYMBOL name the FORM, not just the
+   kind.  Without it `--cil-split 4.8` and `--cil-split 2.16` emit the SAME
+   symbol, which is why nine shipped codelets carry a post-emit `sed` rename in
+   their recipe and are corpus-EXCLUDED for it (a sed step cannot round-trip
+   through Codelet.to_argv, so the cell can never be a corpus cell, so the
+   generated registry cannot declare it either).  It is also what blocks a
+   blocked BACKWARD family: t2bt at 4.8 and at 2.16 would collide.
+
+   The tag names the FORM, not the individual flags:
+     blocked, not tangent  -> the split digits   (4.8 -> "48", 4.4 -> "44")
+     tangent, not blocked  -> "tan"
+     tangent AND blocked   -> "w32"              (the wing32 form)
+
+   Placement is AFTER the b/p/t/g letters and BEFORE _log3 — that ordering
+   reproduces all nine hand-sed names EXACTLY, which is the acceptance test.
+
+   DEFAULT OFF: every existing emission is byte-identical without the flag, so
+   this cannot move the corpus until a recipe opts in. *)
+let form_tag_of ~(on : bool) ~(blocked : bool) ~(tangent : bool)
+      ~(split : (int * int) option)
+  : string
+  =
+  if not on
+  then ""
+  else if tangent && blocked
+  then "w32"
+  else if tangent
+  then "tan"
+  else if blocked
+  then (
+    match split with
+    | Some (m, p) -> Printf.sprintf "%d%d" m p
+    | None -> "")
+  else ""
+;;
+
 let emit
       ~(log3 : bool)
       ~(pretw : bool)
       ~(tangent : bool)
+      ~(form_tag : bool)
       ~(turnst : bool)
       ~(turnst_gs : bool)
       ~(kind : kind)
@@ -961,6 +998,7 @@ let emit
              ^ (if ctx.tw_pre && dir = Bwd then "p" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
+             ^ form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")
             isa.Isa.name)

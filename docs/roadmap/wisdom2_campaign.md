@@ -746,3 +746,26 @@ LESSON (banked): a scripted source edit MUST assert its match count. An
 unchecked `replace()` that silently no-ops produces a feature that looks
 present (the struct field, the branches, the env name) and is never
 exercised — and any gate built on it passes vacuously.
+
+### 4.4 AMENDED — k1z enumeration moved to the store (2026-08-20)
+
+Deleting `oop_wisdom.txt` exposed the half of 4.4 that had been deferred:
+the bench SERVED from the store but still ENUMERATED kind-4 cells by
+walking that file, so with the file gone the k1z arm benched 0 cells.
+
+Fixed properly rather than by restoring the file: a store-driven pass
+(`vw2_scan` over kind-4 records, each resolved through the production twin
+`vw2_oop_lookup_zsplit`) now enumerates the cells to visit, honouring the
+`target_N` filter. The file walk keeps its K=1 lines SKIPPED — that guard
+must stay, it is what prevents the historical out-of-bounds parse of
+kind-lines-as-factors.
+
+Strictly better than the file enumeration it replaces: a re-raced or newly
+banked cell is visible to the bench with no file to re-parse. VERIFIED:
+single cell N=4096 restored, and a full pass enumerates all 8 cascade cells
+(2048 · 4096 · 8192 · 16384 · 32768 · 65536 · 131072 · 262144), 91 cells
+benched total, roundtrip errors 7e-16 … 1.8e-15.
+
+LESSON: re-hosting a consumer's SERVING path without its ENUMERATION path
+leaves a dependency that only fails when the old file is finally removed —
+and it fails silently, as "0 cells benched".
