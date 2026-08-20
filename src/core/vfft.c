@@ -4295,8 +4295,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
             }
         }
-        if (getenv("VFFT_D6_TRACE"))
-            fprintf(stderr, "[d6] hook reached: layout=%d K=%zu\n", (int)cfg->layout, K);
+        /* The pad-vs-tail decision serves the LANE-MAJOR interleaved batch;
+         * the transform-contiguous geometry wraps a K=1 plan instead
+         * (vfft.c ~2962) and never arrives here with K>1. */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1)
             _il_me_decide(W, cfg, h); /* D6: the fused-vs-padded A/B at create */
         return h;
@@ -5720,9 +5721,6 @@ static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     int me = (int)Kd;
     vfft_proto_wisdom_entry_t teb;
     int have_te = 0;
-    if (getenv("VFFT_D6_TRACE"))
-        fprintf(stderr, "[d6] enter N=%d Kd=%zu Kp=%zu il_me=%d nat_mode=%d\n",
-                h->N, Kd, Kp, h->il_me, h->nat_mode);
     if (h->il_me)
         return;
     if (Kp != Kd && h->nat_mode == 0)
