@@ -1,0 +1,45 @@
+@vw2 1.0
+@legend signpost: a verdict references its component recipe (ref=), never copies it
+@legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
+@legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
+@legend key: layout (split/il) is never a key token - it is a strategy output in the payload
+@legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
+@legend see src/core/wisdom2/README.md
+@cell t=r2c n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:109
+@cell t=r2c n=16384 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:109
+@cell t=c2r n=16384 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:109
+@cell t=c2r n=16384 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:109
+@cell t=r2c n=32768 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:110
+@cell t=r2c n=32768 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:110
+@cell t=c2r n=32768 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:110
+@cell t=c2r n=32768 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:110
+@cell t=r2c n=65536 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:111
+@cell t=r2c n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:111
+@cell t=c2r n=65536 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:111
+@cell t=c2r n=65536 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:111
+@cell t=r2c n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:112
+@cell t=r2c n=256 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:112
+@cell t=c2r n=256 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:112
+@cell t=c2r n=256 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:112
+@cell t=r2c n=512 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:113
+@cell t=r2c n=512 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:113
+@cell t=c2r n=512 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:113
+@cell t=c2r n=512 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:113
+@cell t=r2c n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:114
+@cell t=r2c n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:114
+@cell t=c2r n=1024 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:114
+@cell t=c2r n=1024 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:114
+@cell t=r2c n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:115
+@cell t=r2c n=2048 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:115
+@cell t=c2r n=2048 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:115
+@cell t=c2r n=2048 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:115
+@cell t=r2c n=4096 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:116
+@cell t=r2c n=4096 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:116
+@cell t=c2r n=4096 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:116
+@cell t=c2r n=4096 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:116
+@cell t=r2c n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
+@cell t=r2c n=8192 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
+@cell t=c2r n=8192 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
+@cell t=c2r n=8192 q=1 ord=nat place=ip | eng=zr2c route=child_nat_ip | ran=1 src=migrated from=legacy_oop_wisdom.txt:117
+@cell t=r2c n=510 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=migrated from=legacy_oop_wisdom.txt:118

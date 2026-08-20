@@ -139,8 +139,15 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       only (4 sites, zero route logic) — included here so oop_wisdom.txt
       freezes whole; owner confirms alongside #5b, else kind-5 flip defers to
       wave 2 with oop_wisdom.txt in partial freeze (flagged, not preferred).
-- [ ] 1.2 Quarantine: N-garbage MODEB variant rows (~24), duplicates
-      (first-match copy migrates), junk rows — owner reviews before flip.
+- [x] 1.2 Quarantine REVIEWED BY OWNER 2026-08-20 — verdict: DISPOSE.
+      28 rows = 24 garbage-variant-token (kind-2 MODEB, uninitialized
+      variant ints; source found + closed same day: champions bank skips
+      bK%8!=0, codec refuses the class) + 4 shadowed-by-live-verdict (K=1
+      classic rows at 2048/16384/131072/262144, double-dead: K%8-unservable
+      AND cascade-owned keys). Owner: "you can get rid of them, I will run
+      most of the IL/ModeB cells again" ⇒ wisdom2_quarantine.txt is NOT
+      promoted into generated/ (git history of the frozen legacy file is
+      the archive); promotion set = wisdom2_oop.txt + wisdom2_real.txt.
 - [x] 1.3 **READ+BANK FLIP LANDED 2026-08-20, behind the kill switch.**
       All five lookup sites flipped to the vw2_oop_* twins (lookup_k1 ×2,
       lookup_zsplit, lookup_zr2c, lookup_ord), guarded by
@@ -194,15 +201,48 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       Smoke: calibrate_k1 128 + calibrate_zchain 2048 on the dual scratch —
       legacy oop_wisdom.txt md5-unchanged through BOTH full runs (freeze
       proof), fresh verdicts banked (concrete kind-3 key; kind-4 joint2).
-- [ ] 1.6 **Gate B**: full kind-3 consumer matrix (4 consumers × layouts ×
-      placements × 3 orders), kind-4 four caller configs × both routes,
-      kind-5 four slots, kinds 0/1/2 lookup_ord classes — zero diffs.
-- [ ] 1.7 RITUAL remainder: fleet rebuild (registry list), sentinel canary,
-      freeze-stamp oop_wisdom.txt (last-ever write) + checksum baseline,
-      bake, existing gates rerun (sp_ccol_decode_gate, tangent_frontdoor_gate
-      re-hosted on wisdom2; oop_wisdom_roundtrip_gate retired→G0 twin),
-      README ledger.
-- [ ] 1.8 CLOSE → Phase C (sp_kv) may start in the IL–split campaign.
+- [x] 1.6 **Gate B SWEEP GREEN 2026-08-20** (dual scratch for hit/replay
+      gates; EMPTY scratch for the cold-start race+bank gates — their
+      documented shape; a populated store correctly yields NO-RACE rows):
+      sp_ccol_decode 4/4 · tangent front door ALL CORRECT on BOTH read arms
+      (bit-identical) · k1z_inplace ALL PASS · width gate 6/6 ·
+      replay probe PASS · zturn_tcut 63 PASS / 0 FAIL / 17 refused-by-fence
+      (spec F2) · zr2c front door ALL CORRECT · natural_front COLD ALL PASS
+      (fresh bank → save/reload → bitwise replay through wisdom2) ·
+      ilp_front COLD ALL PASS.
+      **Known-fail, PRE-EXISTING (not a flip regression): k1scr arm-1 at
+      N=1024** — fwd(scr) vs fwd(nat) bitwise DIFF, both individually
+      correct (1.78e-15 / 9.99e-16), deterministic across six runs spanning
+      {cold, dirty, populated} × {wisdom2 reads, kill-switch legacy reads}.
+      Identical behavior in BOTH read worlds = the plan-equivalence law
+      holds; the Phase-A identity contract at 1024 broke engine-side after
+      the gate shipped (1024 is the owner-locked contested cell). Filed for
+      the owner's planned IL/ModeB re-race; 128/256/512 + the 4096 A3
+      non-identity arm all PASS.
+- [x] 1.7 RITUAL DONE 2026-08-20. Fleet rebuilt (15 front-door + 3 direct
+      writers + module gates; traps: sp_ccol_decode_gate + cil_ab include
+      vfft.c wholesale → build WITHOUT --vfft; cil_ab only via
+      benches/build_cil_ab.py). Sentinel canary PASSED: a future payload
+      token (zz_future=canary7 on an untouched record) and a whole
+      unknown-key @cell line (zfut=7) survived every store rewrite of the
+      sweep — carry-unknown-forward proven through the real fleet.
+      oop_wisdom_roundtrip_gate.c DELETED (retired → G0 twin). Final
+      reruns: G0 113 / mig-gate / reader-gate ALL PASS; migration output
+      REPRODUCED byte-identical from the frozen file.
+      **PROMOTED + FROZEN**: generated/wisdom2_oop.txt
+      (md5 9992355517a08abd3121fbd632e6f1ec) + wisdom2_real.txt
+      (e2388397d06bbc543ba7971ee932e171) from the pristine migration;
+      oop_wisdom.txt freeze-stamped as its LAST-EVER write —
+      pre-stamp md5 40ea35f3f298bb615e317c680057b1e5 (byte-identical
+      through the whole campaign), FROZEN baseline
+      cc529724e140bcbaefa5264426771bb5. Post-promotion serving verified on
+      a copy: probe + sp_ccol 4/4 + tangent ALL CORRECT on BOTH read arms
+      (the stamp is invisible to the legacy reader, as designed).
+- [ ] 1.8 CLOSE — **BAKE WINDOW OPEN since 2026-08-20**: reads run on
+      wisdom2; `VFFT_WISDOM2_OFF=oop` flips reads back losslessly. Close
+      after normal work bakes clean → Phase C (sp_kv) starts in the
+      IL–split campaign. (Commit of the promoted files left to the owner,
+      who is committing this campaign's work themselves.)
 
 ## Wave 2 — minis 🔴 BLOCKED on #5b (c2r boundary handshake, owner)
 

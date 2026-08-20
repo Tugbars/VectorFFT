@@ -148,8 +148,8 @@ int main(int argc, char **argv)
     }
     vfft_wisdom_free(W);
 
-    printf("\n  compare the left column against the banked lines:\n"
-           "    grep ' 1 4 ' <wisdir>/oop_wisdom.txt\n"
+    printf("\n  compare the left column against the banked records:\n"
+           "    grep 'eng=zturn\\|eng=zsplit' <wisdir>/wisdom2_oop.txt\n"
            "  a banked width that shows 'untiled' on the left did NOT replay.\n");
     printf("  === %s ===\n", fails ? "*** FAIL ***" : "PASS");
     return fails ? 1 : 0;
