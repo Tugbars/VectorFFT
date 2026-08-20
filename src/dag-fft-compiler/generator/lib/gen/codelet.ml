@@ -124,10 +124,14 @@ type kind =
   | N1_oop_strided (* --oop-strided *)
   | Cil of
       { form : cil_form
+      ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
       ; blocked : bool (* --cil-blocked *)
       ; split : (int * int) option (* --cil-split A.B *)
       ; turn : cil_turn option
       ; pre_tw : bool (* --cil-pretw (bwd pre-twiddle) *)
+      ; form_tag : bool
+        (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
+           tangent / wing variant is distinguishable without a post-emit sed *)
       }
   | Zsplit of
       { k : zs_kind
@@ -326,6 +330,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let term_rt = ref false
   and term_k = ref None
   and term_ls_r = ref 0 in
+  let cil_tangent = ref false
+  and cil_form_tag = ref false in
   let blocked = ref false
   and split = ref None
   and turn = ref None
@@ -491,6 +497,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1t"; "--cil-t2" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
+    | "--cil-tangent" :: tl ->
+      cil_tangent := true;
+      go tl
+    | "--cil-form-tag" :: tl ->
+      cil_form_tag := true;
+      go tl
     | "--cil-blocked" :: tl ->
       blocked := true;
       go tl
@@ -593,10 +605,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
       Cil
         { form =
             (if t = "cil-n1" then Cil_n1 else if t = "cil-n1t" then Cil_n1t else Cil_t2)
+        ; tangent = !cil_tangent
         ; blocked = !blocked
         ; split = !split
         ; turn = !turn
         ; pre_tw = !pre_tw
+        ; form_tag = !cil_form_tag
         }
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
     | [ t ] when String.length t > 3 && String.sub t 0 3 = "zp:" ->
@@ -745,13 +759,14 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; blocked; split; turn; pre_tw } ->
+  | Cil { form; tangent; blocked; split; turn; pre_tw; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
          | Cil_n1t -> "--cil-n1t"
          | Cil_t2 -> "--cil-t2")
       ]
+    @ g tangent "--cil-tangent"
     @ g blocked "--cil-blocked"
     @ (match split with
        | None -> []
@@ -762,6 +777,7 @@ let to_argv (c : t) : string list =
        | Some Turnst_gs -> [ "--cil-turnst-gs" ])
     @ g (m.table = Log3) "--cil-log3"
     @ g pre_tw "--cil-pretw"
+    @ g form_tag "--cil-form-tag"
     @ g (m.dir = Bwd) "--cil-bwd"
     @ isa
     @ uarch
