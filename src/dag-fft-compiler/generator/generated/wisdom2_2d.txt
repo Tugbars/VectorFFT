@@ -1,0 +1,42 @@
+@vw2 1.0
+@legend signpost: a verdict references its component recipe (ref=), never copies it
+@legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
+@legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
+@legend key: layout (split/il) is never a key token - it is a strategy output in the payload
+@legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
+@legend see src/core/wisdom2/README.md
+@cell t=c2c n=128x128 q=1 ord=scr place=* | rowplan=8.16 rowvars=flat.flat rowdif=1 colplan=4.4.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=24643.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:4
+@cell t=c2c n=256x256 q=1 ord=scr place=* | rowplan=16.16 rowvars=flat.t1s rowdif=0 colplan=4.4.4.4 colvars=flat.t1s.t1s.log3 coldif=0 b=8 | ran=1 ns=118836.7 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:5
+@cell t=c2c n=512x512 q=1 ord=scr place=* | rowplan=32.16 rowvars=flat.t1s rowdif=0 colplan=4.4.4.4.2 colvars=flat.t1s.t1s.t1s.t1s coldif=0 b=8 | ran=1 ns=773775.0 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:6
+@cell t=c2c n=64x64 q=1 ord=scr place=* | rowplan=4.16 rowvars=flat.flat rowdif=1 colplan=4.16 colvars=flat.t1s coldif=0 b=8 | ran=1 ns=4518.6 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:7
+@cell t=c2c n=128x64 q=1 ord=scr place=* | rowplan=4.16 rowvars=flat.flat rowdif=1 colplan=4.32 colvars=flat.t1s coldif=0 b=8 | ran=1 ns=10296.7 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:8
+@cell t=c2c n=64x16 q=1 ord=scr place=* | rowplan=16 rowvars=flat rowdif=1 colplan=4.16 colvars=flat.flat coldif=1 b=8 | ran=1 ns=853.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:9
+@cell t=c2c n=128x16 q=1 ord=scr place=* | rowplan=16 rowvars=flat rowdif=1 colplan=8.16 colvars=flat.t1s coldif=0 b=8 | ran=1 ns=1842.6 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:10
+@cell t=c2c n=256x16 q=1 ord=scr place=* | rowplan=16 rowvars=flat rowdif=1 colplan=32.8 colvars=flat.flat coldif=1 b=8 | ran=1 ns=4905.1 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:11
+@cell t=c2c n=128x32 q=1 ord=scr place=* | rowplan=32 rowvars=flat rowdif=1 colplan=4.8.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=4897.3 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:12
+@cell t=c2c n=512x16 q=1 ord=scr place=* | rowplan=16 rowvars=flat rowdif=1 colplan=8.8.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=9986.9 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:13
+@cell t=c2c n=256x32 q=1 ord=scr place=* | rowplan=32 rowvars=flat rowdif=1 colplan=4.8.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=10639.8 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:14
+@cell t=c2c n=256x64 q=1 ord=scr place=* | rowplan=8.8 rowvars=log3.flat rowdif=1 colplan=4.16.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=22486.1 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:15
+@cell t=c2c n=512x64 q=1 ord=scr place=* | rowplan=4.16 rowvars=flat.flat rowdif=1 colplan=4.4.32 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=46875.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:16
+@cell t=c2c n=64x16 q=1 ord=nat place=* | rowplan=16 rowvars=flat rowdif=1 colplan=64 colvars=flat coldif=1 b=8 | ran=1 ns=871.7 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:17
+@cell t=c2c n=128x16 q=1 ord=nat place=* | rowplan=16 rowvars=flat rowdif=1 colplan=4.8.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=2184.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:18
+@cell t=c2c n=64x64 q=1 ord=nat place=* | rowplan=4.16 rowvars=log3.flat rowdif=1 colplan=2.16.2 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=7485.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:19
+@cell t=c2c n=256x16 q=1 ord=nat place=* | rowplan=16 rowvars=flat rowdif=1 colplan=4.16.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=5609.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:20
+@cell t=c2c n=128x32 q=1 ord=nat place=* | rowplan=32 rowvars=flat rowdif=1 colplan=2.32.2 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=5746.3 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:21
+@cell t=c2c n=128x64 q=1 ord=nat place=* | rowplan=64 rowvars=flat rowdif=1 colplan=4.8.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=11857.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:22
+@cell t=c2c n=512x16 q=1 ord=nat place=* | rowplan=16 rowvars=flat rowdif=1 colplan=8.8.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=10852.0 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:23
+@cell t=c2c n=256x32 q=1 ord=nat place=* | rowplan=32 rowvars=flat rowdif=1 colplan=4.16.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=12277.5 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:24
+@cell t=c2c n=128x128 q=1 ord=nat place=* | rowplan=16.8 rowvars=flat.t1s rowdif=0 colplan=4.4.8 colvars=log3.log3.flat coldif=1 b=8 | ran=1 ns=33479.5 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:25
+@cell t=c2c n=256x64 q=1 ord=nat place=* | rowplan=4.16 rowvars=log3.flat rowdif=1 colplan=4.16.4 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=33175.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:26
+@cell t=c2c n=512x64 q=1 ord=nat place=* | rowplan=64 rowvars=flat rowdif=1 colplan=4.4.32 colvars=log3.log3.flat coldif=1 b=8 | ran=1 ns=55867.2 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:27
+@cell t=r2c n=256x256 q=1 ord=* place=* | rowplan=8.16 rowvars=log3.flat rowdif=1 colplan=8.32 colvars=flat.t1s coldif=0 b=8 k_pad=132 | ran=1 ns=105126.7 metric=fwd1 units=ns src=migrated from=fft2d_r2c_wisdom.txt:3
+@cell t=r2c n=64x64 q=1 ord=* place=* | rowplan=32 rowvars=flat rowdif=1 colplan=8.8 colvars=flat.flat coldif=1 b=8 k_pad=36 | ran=1 ns=5480.3 metric=fwd1 units=ns src=migrated from=fft2d_r2c_wisdom.txt:4
+@cell t=r2c n=128x128 q=1 ord=* place=* | rowplan=8.8 rowvars=log3.flat rowdif=1 colplan=8.16 colvars=flat.t1s coldif=0 b=8 k_pad=68 | ran=1 ns=22133.6 metric=fwd1 units=ns src=migrated from=fft2d_r2c_wisdom.txt:5
+@cell t=r2c n=512x512 q=1 ord=* place=* | rowplan=16.16 rowvars=flat.t1s rowdif=0 colplan=16.32 colvars=flat.t1s coldif=0 b=8 k_pad=260 | ran=1 ns=565275.0 metric=fwd1 units=ns src=migrated from=fft2d_r2c_wisdom.txt:6
+@cell t=r2c n=128x64 q=1 ord=* place=* | rowplan=4.8 rowvars=log3.flat rowdif=1 colplan=8.16 colvars=log3.flat coldif=1 b=8 k_pad=36 | ran=1 ns=10882.8 metric=fwd1 units=ns src=migrated from=fft2d_r2c_wisdom.txt:7
+@cell t=c2r n=64x64 q=1 ord=* place=* | rowplan=32 rowvars=flat rowdif=1 colplan=8.8 colvars=flat.flat coldif=1 b=8 k_pad=36 | ran=1 ns=4608.8 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:3
+@cell t=c2r n=128x128 q=1 ord=* place=* | rowplan=4.16 rowvars=log3.flat rowdif=1 colplan=8.16 colvars=flat.flat coldif=1 b=8 k_pad=68 | ran=1 ns=19949.2 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:4
+@cell t=c2r n=256x256 q=1 ord=* place=* | rowplan=16.8 rowvars=flat.flat rowdif=1 colplan=8.32 colvars=log3.flat coldif=1 b=8 k_pad=132 | ran=1 ns=100650.0 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:5
+@cell t=c2r n=512x512 q=1 ord=* place=* | rowplan=16.16 rowvars=flat.t1s rowdif=0 colplan=16.32 colvars=flat.t1s coldif=0 b=8 k_pad=260 | ran=1 ns=567687.5 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:6
+@cell t=c2r n=128x64 q=1 ord=* place=* | rowplan=32 rowvars=flat rowdif=1 colplan=8.16 colvars=flat.t1s coldif=0 b=8 k_pad=36 | ran=1 ns=9773.0 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:7

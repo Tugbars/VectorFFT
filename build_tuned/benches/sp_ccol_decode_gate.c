@@ -1,16 +1,20 @@
 /* sp_ccol_decode_gate.c — B5: the CCOL decode gate (THIN DRIVER).
  *
- * Closes the loop "calibrator banked it -> file holds it -> create serves
- * it": for every kind-3 CCOL line in <wisdir>, drive the REAL front door
- * (vfft_create, layout=SPLIT, placement=OOP, order=NATURAL) with that
- * wisdom, then (a) assert the served route is CCOL, (b) assert the built
- * plan matches the banked line via the PRODUCTION comparator
- * (vfft_sp_ccol_line_served, dp_planner_split_oop.h — gates hold no
- * logic), and (c) execute forward and check against the scalar reference
- * to 1e-9. Exit 0 = ALL PASS.
+ * Closes the loop "calibrator banked it -> the STORE holds it -> create
+ * serves it": for every kind-3 CCOL record in <wisdir>'s wisdom2 store
+ * (enumerated via vw2_scan, each cell resolved through the PRODUCTION
+ * twin vw2_oop_lookup_k1 — so the expectation IS what create will serve,
+ * exact-beats-wildcard included), drive the REAL front door (vfft_create,
+ * layout=SPLIT, placement=OOP, order=NATURAL), then (a) assert the served
+ * route is CCOL, (b) assert the built plan matches the banked record via
+ * the PRODUCTION comparator (vfft_sp_ccol_line_served,
+ * dp_planner_split_oop.h — gates hold no logic), and (c) execute forward
+ * and check against the scalar reference to 1e-9. Exit 0 = ALL PASS.
+ * (Re-hosted on wisdom2 at the wave-3 close — the legacy oop_wisdom.txt
+ * is FROZEN and no longer what the front door serves.)
  *
  * Usage: sp_ccol_decode_gate.exe <wisdir> [N...]
- *   cells default to every kind-3 CCOL line found in <wisdir>.
+ *   cells default to every kind-3 CCOL record found in the store.
  * Build: python build.py --src benches/sp_ccol_decode_gate.c
  */
 #include <stdio.h>
@@ -93,38 +97,49 @@ static int gate_cell(const vfft_oop_wisdom_entry_t *ke)
     return ok ? 0 : 1;
 }
 
-static vfft_oop_wisdom_t GW; /* large; static, not stack */
-
 int main(int argc, char **argv)
 {
     if (argc < 2) {
         printf("usage: sp_ccol_decode_gate.exe <wisdir> [N...]\n");
         return 2;
     }
-    char env[700], wpath[600];
+    char env[700];
     snprintf(env, sizeof env, "VFFT_WISDOM_DIR=%s", argv[1]);
     _putenv(env); /* before the first create — the bundle loads from here */
-    snprintf(wpath, sizeof wpath, "%s/oop_wisdom.txt", argv[1]);
 
-    memset(&GW, 0, sizeof GW);
-    if (vfft_oop_wisdom_load(&GW, wpath) != 0) {
-        printf("cannot load %s\n", wpath);
-        return 2;
-    }
+    /* enumerate the LIVE store; resolve each CCOL cell through the
+     * production twin so the expectation is exactly what create serves */
+    vw2_store_t st;
+    vw2_open(&st, argv[1], 0);
     int fails = 0, cells = 0;
-    for (int i = 0; i < GW.count; i++) {
-        const vfft_oop_wisdom_entry_t *ke = &GW.e[i];
-        if (ke->kind != VFFT_OOP_KIND_BAILEY2V ||
-            ke->k1_sp_route != VFFT_K1_SP_CCOL)
-            continue;
+    int done[128], ndone = 0;
+    int cursor = 0;
+    const vw2_rec_t *r;
+    while ((r = vw2_scan(&st, &cursor)) != NULL) {
+        const char *spr = vw2_rec_get(r, "sp_route");
+        vfft_oop_wisdom_entry_t ke;
+        int N, d, dup = 0;
+        if (r->key.t != VW2_T_C2C || r->key.rank != 1) continue;
+        if (!spr || strcmp(spr, "ccol")) continue;
+        N = r->key.n[0];
+        for (d = 0; d < ndone; d++) if (done[d] == N) dup = 1;
+        if (dup) continue;
         if (argc > 2) {
             int want = 0;
             for (int a = 2; a < argc; a++)
-                if (atoi(argv[a]) == ke->N) want = 1;
+                if (atoi(argv[a]) == N) want = 1;
             if (!want) continue;
         }
+        if (!vw2_oop_lookup_k1(&st, N, &ke)) continue; /* seed/unservable */
+        if (ke.k1_sp_route != VFFT_K1_SP_CCOL) continue; /* served row != ccol */
+        if (ndone < 128) done[ndone++] = N;
         cells++;
-        fails += gate_cell(ke);
+        fails += gate_cell(&ke);
+    }
+    vw2_close(&st);
+    if (cells == 0) {
+        printf("DECODE GATE VACUOUS: no CCOL cells in the store — FAIL\n");
+        return 1;
     }
     printf("%s: %d CCOL cell(s), %d failure(s)\n",
            fails ? "DECODE GATE FAIL" : "DECODE GATE ALL PASS", cells, fails);

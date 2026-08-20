@@ -292,6 +292,27 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       (an r2c 128x128 "failure" was the comparison window covering
       padding, not a real divergence; window fixed to halfcomplex/real
       plane per direction).
+- [x] 3.x OWNER-REQUESTED TOUCH-POINT AUDIT (2026-08-20, 18-agent
+      sweep+verify): **library CLEAN — zero missed flips, zero live
+      writers, zero broken paths in the IL/split machinery** (both
+      planners, oop_dp, il2p, zsplit, zturn, every K=1 engine arm read via
+      vw2 or behind the kill switch). 14 candidates → 3 real
+      stale-consumers, all out-of-front-door tools: (1)
+      sp_ccol_decode_gate enumerated cells from the FROZEN file — FIXED
+      (re-hosted: vw2_scan enumeration + production-twin resolve, vacuity
+      guard); (2) zr2c_prewarm + zr2c_fd_gate dir probes keyed on the
+      frozen filename — FIXED (probe wisdom2_oop.txt); (3)
+      bench_1d_vs_mkl --oop / k1z-view / --zr2c-fold arms read the frozen
+      snapshot as if live — WAVE-4 debt per the registry, ACCEPTED for the
+      bake with a 🔴 CAVEAT: after any recalibration lands fresh wisdom2
+      verdicts, those bench arms show freeze-time data (labels/cell
+      selection/fold permutations) until the wave-4 re-host; do not quote
+      their wisdom-view columns against post-freeze banks.
+      WRITER SWEEP same day: 8 orphaned legacy writers deleted with
+      tombstones (oop line encoder; 2D saves/adds; 3D save/load) — zero
+      callers verified, 7/7 consumer classes compile, full regression
+      battery green (G0 · mig-gate 122 · mig-gate-2d 34 · sp_ccol ·
+      tangent both arms · 2d flip gate ALL PASS).
 - [ ] 3.4 adopt_wisdom.h: explicitly untouched (healthy sidecar).
 - [ ] 3.5 RITUAL: Gate B over all (N1,N2) cells incl. @nat2d; freeze-stamp
       the three fft2d files; fleet (bench 2D read modes may keep reading

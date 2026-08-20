@@ -1,3 +1,6 @@
+# FROZEN 2026-08-20 (wisdom2 wave 3). This file is never written again.
+# Live verdicts: wisdom2_2d.txt (see src/core/wisdom2/README.md).
+# Readers of this file survive only inside the migrator tool until v1.0.
 @fft2d_c2c_version 3
 # scrambled: N1 N2 B | row: nf factors.. variants.. dif | col: nf factors.. variants.. dif | best_ns
 # natural (self-contained, @nat2d-tagged -> invisible to @/#-skipping readers): @nat2d N1 N2 nat_B | row.. | col.. | nat_ns
