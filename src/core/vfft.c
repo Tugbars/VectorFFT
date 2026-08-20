@@ -4270,7 +4270,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
                                        ? (int)zt_pending->tw : 0;
                         ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-                        ne.ns = zns;
+                        /* MEASURE-LESS bank (ns=0): this race's median is
+                         * fwd-only placement luck (§4.9993), not the cell's
+                         * joint2 verdict — kind-4 carries ns only from the
+                         * dp planner. A measure-less row can always be
+                         * replaced by the planner's measured one; the
+                         * reverse is refused by the merge law, exactly the
+                         * intended authority order. */
+                        ne.ns = 0.0;
                         vw2_oop_bank_entry(&W->vw2, &ne);
                         _vw2_persist(W, cfg);
                     }
@@ -4800,20 +4807,29 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             double nns = 1e30, mns = 1e30;
             vfft_oop_plan_create_champions(N, bK, &ctx, reg, &nat, &nns, &mb, &mns);
             vfft_proto_dp_destroy(&ctx);
-            if (nat)
+            /* Bank only servable cells: vfft_oop_plan_from_entry hard-gates
+             * K%8, so a K%8!=0 champion row could never replay — legacy
+             * banked those anyway (the write-only "wart" lines, quarantined
+             * as garbage at migration) and this guard is their sunset. It
+             * also skips the K=1 MODEB champion, whose plan carries
+             * unraced variant slots the wisdom2 codec would refuse. */
+            if (bK > 0 && (bK % 8u) == 0)
             {
-                vfft_oop_wisdom_entry_t ne;
-                vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
-                vw2_oop_bank_entry(&W->vw2, &ne);
+                if (nat)
+                {
+                    vfft_oop_wisdom_entry_t ne;
+                    vfft_oop_wisdom_entry_from_plan(&ne, nat, N, bK, nns);
+                    vw2_oop_bank_entry(&W->vw2, &ne);
+                }
+                if (mb)
+                {
+                    vfft_oop_wisdom_entry_t ne;
+                    vfft_oop_wisdom_entry_from_plan(&ne, mb, N, bK, mns);
+                    vw2_oop_bank_entry(&W->vw2, &ne);
+                }
+                if (nat || mb)
+                    _vw2_persist(W, cfg);
             }
-            if (mb)
-            {
-                vfft_oop_wisdom_entry_t ne;
-                vfft_oop_wisdom_entry_from_plan(&ne, mb, N, bK, mns);
-                vw2_oop_bank_entry(&W->vw2, &ne);
-            }
-            if (nat || mb)
-                _vw2_persist(W, cfg);
             if (ord == VFFT_ORDER_NATURAL)
             {
                 op = nat;

@@ -444,8 +444,21 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
         }
         VW2__OB_SET(2, "ran", "1");
         if (e->ns > 0.0) {
+            /* Kind-4 metric law: a MEASURED kind-4 verdict is joint2 — the
+             * dp planner (the family's only measured-kind-4 banker) races
+             * BOTH routes whole-plan joint fwd+bwd, so the label must not
+             * depend on which route won (route-inferred fwd1 once made a
+             * fresh zsplit winner unable to replace a zturn incumbent under
+             * the metric-identity law). The fwd1 label survives ONLY as
+             * migrated vintage: plain pre-route legacy lines were banked by
+             * the fwd-only racer, and route-inference is exactly right for
+             * that corpus (keeps migration idempotent). The create-time t2q
+             * race is fwd-only and banks MEASURE-LESS (ns=0 skips this
+             * block) — its median is placement luck, not a cell verdict. */
             VW2__OB_SET(2, "ns", nsbuf);
-            VW2__OB_SET(2, "metric", e->zs_route == 1 ? "joint2" : "fwd1");
+            VW2__OB_SET(2, "metric",
+                        (src && !strcmp(src, "migrated") && e->zs_route != 1)
+                            ? "fwd1" : "joint2");
             VW2__OB_SET(2, "units", "ns");
         }
     }
