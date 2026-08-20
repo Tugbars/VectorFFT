@@ -59,8 +59,7 @@
 #include "oop_wisdom.h"         /* --oop: oop wisdom load + create_wisdom (lookup) */
 #include "fft2d.h"              /* --2d: 2D c2c plan + execute (stride_plan_2d) */
 #include "fft2d_r2c.h"          /* --2dr2c: 2D real plan + execute (stride_plan_2d_r2c_from) */
-#include "fft2d_r2c_wisdom.h"   /* --2dr2c: calibrated 2D wisdom + wisdom-aware create */
-#include "fft2d_c2c_wisdom.h"   /* --2d: calibrated 2D c2c wisdom + wisdom-aware create */
+#include "wisdom2_fftnd.h"      /* --2d/--2dr2c: rank>=2 wisdom structs + legacy loaders */
 #include "zr2c.h"               /* --zr2c: D2 interleaved real folds (zr2c.h, Phase 1) */
 #include "rfft_registry_avx2.h" /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
 #include "c2r_registry_avx2.h"  /* --c2r: c2r_register_all_avx2 (r2cb + hc2hc_dif_bwd) */
