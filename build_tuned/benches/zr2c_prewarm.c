@@ -66,7 +66,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < 3 && !wdir; i++) {
         if (!cand[i]) continue;
         char pp[512];
-        snprintf(pp, sizeof pp, "%s/oop_wisdom.txt", cand[i]);
+        snprintf(pp, sizeof pp, "%s/wisdom2_oop.txt", cand[i]); /* dir marker = the LIVE store (legacy file is frozen) */
         FILE *pf = fopen(pp, "r");
         if (pf) { fclose(pf); wdir = cand[i]; }
     }
