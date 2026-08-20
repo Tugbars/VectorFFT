@@ -23,7 +23,7 @@
 #include <string.h>
 #include <math.h>
 #include "measure.h"
-#include "fft2d_c2c_wisdom.h"   /* entry struct + (transitively) fft2d.h, planner.h */
+#include "../../wisdom2/wisdom2_fftnd.h" /* entry struct + (transitively) fft2d.h, planner.h */
 #include "natorder_2d.h"        /* vfft_natorder_2d_build_axis + (transitively) reorder passes */
 
 /* Natural-order STABILIZATION (mirrors the 1D race's VFFT_NATORDER_MARGIN): a candidate wins the natural

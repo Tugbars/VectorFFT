@@ -69,9 +69,8 @@
 #include "fft2d.h"
 #include "transforms/fftnd/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
 #include "fft2d_r2c.h"                                                     /* 2D r2c / c2r                                    */
-#include "fft2d_c2c_wisdom.h"                                              /* dedicated 2D c2c wisdom (lookup + calibrated create) */
-#include "fft3d_wisdom.h"                                                  /* dedicated 3D (N1,N2,N3) table — hit -> stride_plan_3d_from */
-#include "fft2d_r2c_wisdom.h"                                              /* dedicated 2D r2c/c2r wisdom (shared struct)          */
+/* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
+ * wisdom2_2d_reader.h include above — owner folder-structure directive) */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h"    /* vfft_proto_plan_jit_fwd/bwd — transparent JIT/baked resolve at create.
                                * (r2c/c2r/2D dispatchers self-resolve internally under the same flag.) */

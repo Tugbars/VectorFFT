@@ -313,6 +313,19 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       callers verified, 7/7 consumer classes compile, full regression
       battery green (G0 · mig-gate 122 · mig-gate-2d 34 · sp_ccol ·
       tangent both arms · 2d flip gate ALL PASS).
+- [x] 3.y FOLDER CONSOLIDATION (owner directive 2026-08-20: "well ordered
+      folder structure" — wisdom code lives under wisdom2/):
+      fft2d_c2c_wisdom.h + fft2d_r2c_wisdom.h + fft3d_wisdom.h DELETED
+      from the transform folders; ALL contents consolidated into
+      **src/core/wisdom2/wisdom2_fftnd.h**, sectioned by LIFETIME TIER
+      (PERMANENT: entry structs + plan_from_entry builders + the 3D
+      scratch/extract/create · LEGACY: fft2d loaders/lookups/creators —
+      die with the =2d kill switch at bake close, then migrator-only).
+      Named wisdom2_fftnd.h not fftnd_wisdom.h: transforms/fftnd owns a
+      live same-named header (ND module, wave-2 scope) and bare includes
+      would ambiguate. Rewired: wisdom2_2d_reader.h, vfft.c (3 includes),
+      both fft2d planner headers, bench_1d_vs_mkl. Transform folders are
+      now wisdom-free for the shipped families.
 - [ ] 3.4 adopt_wisdom.h: explicitly untouched (healthy sidecar).
 - [ ] 3.5 RITUAL: Gate B over all (N1,N2) cells incl. @nat2d; freeze-stamp
       the three fft2d files; fleet (bench 2D read modes may keep reading

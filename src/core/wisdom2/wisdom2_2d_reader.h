@@ -33,9 +33,7 @@
 
 #include <time.h>
 #include "wisdom2.h"
-#include "../transforms/fft2d/fft2d_c2c_wisdom.h"
-#include "../transforms/fft2d/fft2d_r2c_wisdom.h"
-#include "../transforms/fft3d/fft3d_wisdom.h"
+#include "wisdom2_fftnd.h"   /* rank>=2 entry structs + builders (+ legacy tier) */
 
 /* ------------------------------------------------------------ name maps */
 

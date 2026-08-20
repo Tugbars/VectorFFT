@@ -28,7 +28,7 @@
 #include <string.h>
 #include <math.h>
 #include "measure.h"            /* dp_plan_measure, dp_init/destroy/set_patient, decision, now_ns */
-#include "fft2d_r2c_wisdom.h"   /* entry struct + (transitively) fft2d_r2c.h, planner.h, r2c.h */
+#include "../../wisdom2/wisdom2_fftnd.h" /* entry struct + (transitively) fft2d_r2c.h, planner.h, r2c.h */
 
 typedef enum {
     VFFT_FFT2D_R2C_MEASURE = 0,
