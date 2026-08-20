@@ -63,7 +63,7 @@
 
 #define VW2_MAGIC        "@vw2"
 #define VW2_MAJOR        1
-#define VW2_MINOR        0
+#define VW2_MINOR        1   /* 1.1: the role= key axis (2026-08-20) */
 
 /* ------------------------------------------------------------ enumerations */
 
@@ -79,6 +79,13 @@ typedef enum { /* transforms: the KEY vocabulary. Never a route (README §3.1). 
 typedef enum { VW2_ORD_ANY = -1, VW2_ORD_NAT = 0, VW2_ORD_SCR = 1 } vw2_ord_t;
 typedef enum { VW2_PL_ANY  = -1, VW2_PL_IP   = 0, VW2_PL_OOP  = 1 } vw2_pl_t;
 typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
+/* role= (v1.1): component recipes vs problem verdicts share problem-shaped
+ * keys otherwise — the axis that keeps an ENGINE-INTERNAL recipe (the K=1
+ * engine's kind-3 rows) from colliding with the PROBLEM verdict at the
+ * same (t,n,q,ord,place) (the @natoop pick). Absent = problem verdict
+ * (the default, every pre-1.1 row); matches by EQUALITY everywhere, like
+ * dir. Signpost ref= targets are problem-space unless they carry role=. */
+typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
 
 /* src= merge rank (README §3.4/§4.2). Absent src = race (a fresh bank).
  * An UNKNOWN src value ranks LOWEST (refuse-don't-guess: a future source
@@ -120,6 +127,8 @@ typedef struct {
                                      dir matches by EQUALITY everywhere: an
                                      absent-dir record serves absent-dir
                                      requests only (README §3.1).            */
+    uint8_t role;                 /* vw2_role_t; 0 = absent = problem
+                                     verdict. Equality-matched like dir.    */
 } vw2_key_t;
 
 /* --------------------------------------------------------------- record */
@@ -177,6 +186,7 @@ static const char *vw2_legend[] = {
     "metric: ns= is comparable only within identical metric= and units=; absent ns = informational",
     "key: layout (split/il) is never a key token - it is a strategy output in the payload",
     "wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes",
+    "role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)",
     "evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv",
     "see src/core/wisdom2/README.md",
 };
@@ -197,6 +207,10 @@ static const vw2_field_t vw2_fields[] = {
     { "sp_route",VW2_FC_STRUCTURAL }, { "sp_pair", VW2_FC_STRUCTURAL },
     { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
     { "t1p",     VW2_FC_STRUCTURAL },
+    /* stride family (wave 4): chain orientation + the blocked-execution
+     * triple (emitted only when blocked). */
+    { "dif",     VW2_FC_STRUCTURAL }, { "blocked", VW2_FC_STRUCTURAL },
+    { "bsplit",  VW2_FC_STRUCTURAL }, { "bgroups", VW2_FC_STRUCTURAL },
     /* rank≥2 composite chains (wave 3): per-axis variant/orientation
      * fields ride beside rowplan/colplan; 3D adds the ax0/ax1 axes and
      * reuses row* for the innermost pass. */
@@ -323,7 +337,8 @@ static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
     int i;
     if (a->t != b->t || a->rank != b->rank) return 0;
     for (i = 0; i < a->rank; i++) if (a->n[i] != b->n[i]) return 0;
-    return a->q == b->q && a->ord == b->ord && a->pl == b->pl && a->dir == b->dir;
+    return a->q == b->q && a->ord == b->ord && a->pl == b->pl &&
+           a->dir == b->dir && a->role == b->role;
 }
 
 /* Does record key R serve request key REQ, allowing R's wildcards?
@@ -338,6 +353,7 @@ static inline int vw2_key_serves(const vw2_key_t *r, const vw2_key_t *req)
     if (r->ord != -1 && r->ord != req->ord) return 0;
     if (r->pl  != -1 && r->pl  != req->pl)  return 0;
     if (r->dir != req->dir) return 0;
+    if (r->role != req->role) return 0;
     return 1;
 }
 
@@ -506,6 +522,9 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
                 if (!strcmp(v, "fwd")) k->dir = VW2_DIR_FWD;
                 else if (!strcmp(v, "bwd")) k->dir = VW2_DIR_BWD;
                 else return -1;
+            } else if (!strcmp(tok, "role")) {
+                if (!strcmp(v, "comp")) k->role = VW2_ROLE_COMP;
+                else return 0;  /* future role values: opaque carry          */
             } else {
                 return 0;   /* unknown KEY token => invisible + opaque carry */
             }
@@ -528,6 +547,8 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
     VW2__CAT("place=%s", k->pl == VW2_PL_ANY ? "*" : (k->pl == VW2_PL_IP ? "ip" : "oop"));
     if (k->dir != VW2_DIR_NONE)
         VW2__CAT(" dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
+    if (k->role != VW2_ROLE_NONE)
+        VW2__CAT(" role=comp");
 #undef VW2__CAT
 }
 

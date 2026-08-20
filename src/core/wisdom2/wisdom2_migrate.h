@@ -1023,4 +1023,352 @@ static inline int vw2_migrate_2d_gate(const char *c2c_path, const char *r2c_path
     return fail;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+ * WAVE 4 — the stride family (spike_wisdom.txt: THREE tables; rfft file;
+ * the @version-6 padded fossil quarantined whole). Probe-parse through the
+ * SHIPPED v8 loader; records via the SHARED family codec
+ * (wisdom2_stride_reader.h). Line classing: blank/'#' skipped; '@'-lines
+ * are headers unless they begin "@nat" / "@natoop".
+ * ══════════════════════════════════════════════════════════════════════ */
+
+#include "wisdom2_stride_reader.h"
+
+/* probe-parse one spike/rfft line. 1 = scrambled (*e), 2 = @nat (*ne),
+ * 3 = @natoop (*ne), 0 = legacy loader dropped it, -1 = probe IO. */
+static inline int vw2__migst_parse(const char *outdir, const char *line,
+                                   vfft_proto_wisdom_entry_t *e,
+                                   vfft_proto_nat_entry_t *ne)
+{
+    char probe[640];
+    FILE *f;
+    vfft_proto_wisdom_t w;
+    int rc = 0;
+    snprintf(probe, sizeof probe, "%s/mig_probe.tmp", outdir);
+    f = fopen(probe, "wb");
+    if (!f) return -1;
+    if (fprintf(f, "%s\n", line) < 0) { fclose(f); remove(probe); return -1; }
+    if (fclose(f) != 0) { remove(probe); return -1; }
+    if (vfft_proto_wisdom_load(&w, probe) != 0) { remove(probe); return -1; }
+    remove(probe);
+    if (w.count == 1)             { *e  = w.entries[0]; rc = 1; }
+    else if (w.nat_count == 1)    { *ne = w.nat[0];     rc = 2; }
+    else if (w.natoop_count == 1) { *ne = w.natoop[0];  rc = 3; }
+    vfft_proto_wisdom_free(&w);
+    return rc;
+}
+
+static inline int vw2__migst_skipped(const char *line)
+{
+    const char *p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0' || *p == '\n' || *p == '\r' || *p == '#') return 1;
+    if (*p == '@')
+        return strncmp(p, "@nat", 4) != 0;   /* covers @nat AND @natoop */
+    return 0;
+}
+
+/* migrate ONE stride file. is_rfft keys scrambled rows t=r2c. */
+static inline int vw2__migst_file(vw2_store_t *st, vw2__mig_seen_t *seen,
+                                  vw2_mig_stats_t *stats,
+                                  const char *legacy_path, int is_rfft,
+                                  const char *outdir, int verbose)
+{
+    FILE *f = fopen(legacy_path, "rb");
+    char line[4096], base[128];
+    int lineno = 0;
+    const char *bn = strrchr(legacy_path, '/');
+    const char *bn2 = strrchr(legacy_path, '\\');
+    if (bn2 > bn) bn = bn2;
+    snprintf(base, sizeof base, "%s", bn ? bn + 1 : legacy_path);
+    if (!f) {
+        fprintf(stderr, "[wisdom2_migrate] cannot open %s\n", legacy_path);
+        return -1;
+    }
+    while (fgets(line, sizeof line, f)) {
+        char from[192];
+        const char *why = NULL;
+        vw2_rec_t rec;
+        vfft_proto_wisdom_entry_t e;
+        vfft_proto_nat_entry_t ne;
+        int pr, b;
+        size_t L = strlen(line);
+        lineno++;
+        while (L && (line[L-1] == '\n' || line[L-1] == '\r')) line[--L] = 0;
+        if (vw2__migst_skipped(line)) { stats->skipped++; continue; }
+        snprintf(from, sizeof from, "%s:%d", base, lineno);
+        pr = vw2__migst_parse(outdir, line, &e, &ne);
+        if (pr < 0) { fclose(f); return -1; }               /* IO = FATAL */
+        if (pr == 0) {
+            if (vw2__mig_quar(st, stats, "legacy-silent-drop", from, line)) { fclose(f); return -1; }
+            continue;
+        }
+        if (pr == 1) {
+            if (vw2_stride_rec_from_entry(&rec, &e, is_rfft, "migrated", from, &why)) {
+                if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+        } else {
+            if (vw2_stride_rec_from_nat(&rec, &ne,
+                                        pr == 3 ? VW2_PL_OOP : VW2_PL_IP,
+                                        "migrated", from, &why)) {
+                if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
+                continue;
+            }
+        }
+        b = vw2__mig_bank(st, seen, &rec, &why);
+        if (b < 0) {
+            if (vw2__mig_quar(st, stats, why ? why : "bank-refused", from, line)) { fclose(f); return -1; }
+            continue;
+        }
+        if (b > 0) stats->records_out++;
+        stats->migrated++;
+        if (verbose)
+            fprintf(stderr, "[wisdom2_migrate] %s migrated\n", from);
+    }
+    fclose(f);
+    return 0;
+}
+
+/* quarantine EVERY data line of a fossil file (never parsed for records) */
+static inline int vw2__migst_fossil(vw2_store_t *st, vw2_mig_stats_t *stats,
+                                    const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    char line[4096], base[128], from[192];
+    int lineno = 0;
+    const char *bn = strrchr(path, '/');
+    const char *bn2 = strrchr(path, '\\');
+    if (bn2 > bn) bn = bn2;
+    snprintf(base, sizeof base, "%s", bn ? bn + 1 : path);
+    if (!f) return 0;                        /* absent fossil: nothing owed */
+    while (fgets(line, sizeof line, f)) {
+        size_t L = strlen(line);
+        lineno++;
+        while (L && (line[L-1] == '\n' || line[L-1] == '\r')) line[--L] = 0;
+        if (vw2__migst_skipped(line)) { stats->skipped++; continue; }
+        snprintf(from, sizeof from, "%s:%d", base, lineno);
+        if (vw2__mig_quar(st, stats, "superseded-fossil", from, line)) { fclose(f); return -1; }
+    }
+    fclose(f);
+    return 0;
+}
+
+/* Migrate spike + rfft (+ the padded fossil, quarantined). NULL = absent. */
+static inline int vw2_migrate_stride(const char *spike_path, const char *rfft_path,
+                                     const char *padded_path, const char *outdir,
+                                     vw2_mig_stats_t *stats, int verbose)
+{
+    vw2_store_t st;
+    vw2__mig_seen_t seen;
+    int rc = 0;
+    memset(stats, 0, sizeof *stats);
+    memset(&seen, 0, sizeof seen);
+    VW2__MIG_MKDIR(outdir);
+    vw2_open(&st, outdir, 1);
+    if (spike_path && vw2__migst_file(&st, &seen, stats, spike_path, 0, outdir, verbose)) rc = -1;
+    if (!rc && rfft_path && vw2__migst_file(&st, &seen, stats, rfft_path, 1, outdir, verbose)) rc = -1;
+    if (!rc && padded_path && vw2__migst_fossil(&st, stats, padded_path)) rc = -1;
+    if (!rc && vw2_save(&st) != VW2_OK) { stats->io_errors++; rc = -1; }
+    vw2_close(&st);
+    free(seen.k);
+    fprintf(stderr, "[wisdom2_migrate] stride: %d skipped + %d migrated + %d quarantined"
+                    " -> %d new record(s)\n",
+            stats->skipped, stats->migrated, stats->quarantined, stats->records_out);
+    return rc;
+}
+
+/* Reader gate: every legacy-servable stride cell resolves FIELD-IDENTICAL
+ * through the vw2 twins (memset both sides -> whole-struct memcmp). */
+static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
+                                                 const char *rfft_path,
+                                                 const char *outdir)
+{
+    vw2_store_t st;
+    int cells = 0, bad = 0;
+    vw2_open(&st, outdir, 0);
+    {
+        const char *fp[2]; int is_rfft;
+        fp[0] = spike_path; fp[1] = rfft_path;
+        for (is_rfft = 0; is_rfft < 2; is_rfft++) {
+            vfft_proto_wisdom_t w;
+            size_t i;
+            if (!fp[is_rfft]) continue;
+            if (vfft_proto_wisdom_load(&w, fp[is_rfft]) != 0) continue;
+            /* THE LAW (wave-1 precedent): the twin must equal what LEGACY
+             * WOULD SERVE — the first-match lookup, never the raw table
+             * row (spike carries intra-file duplicates); codec-refused
+             * rows (junk cells) must MISS. */
+            for (i = 0; i < w.count; i++) {
+                vfft_proto_wisdom_entry_t got;
+                const vfft_proto_wisdom_entry_t *served =
+                    vfft_proto_wisdom_lookup(&w, w.entries[i].N, w.entries[i].K);
+                vw2_rec_t rtmp;
+                const char *why = NULL;
+                int refused =
+                    vw2_stride_rec_from_entry(&rtmp, served, is_rfft,
+                                              "migrated", "gate", &why) != 0;
+                if (!refused) vw2_rec_free(&rtmp);
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (refused) {
+                    if (vw2_stride_lookup(&st, is_rfft, served->N, served->K, &got)) {
+                        fprintf(stderr, "[reader-gate-stride] %s N=%d K=%zu: refused row RESOLVED\n",
+                                is_rfft ? "rfft" : "scr", served->N, served->K);
+                        bad++;
+                    }
+                    continue;
+                }
+                if (!vw2_stride_lookup(&st, is_rfft, served->N, served->K, &got) ||
+                    memcmp(&got, served, sizeof got)) {
+                    fprintf(stderr, "[reader-gate-stride] %s N=%d K=%zu mismatch\n",
+                            is_rfft ? "rfft" : "scr", served->N, served->K);
+                    bad++;
+                }
+            }
+            for (i = 0; i < w.nat_count; i++) {
+                vfft_proto_nat_entry_t got;
+                const vfft_proto_nat_entry_t *served =
+                    vfft_proto_nat_lookup(&w, w.nat[i].N, w.nat[i].K);
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (!vw2_stride_lookup_nat(&st, served->N, served->K, &got) ||
+                    memcmp(&got, served, sizeof got)) {
+                    fprintf(stderr, "[reader-gate-stride] nat N=%d K=%zu mismatch\n",
+                            served->N, served->K);
+                    bad++;
+                }
+            }
+            for (i = 0; i < w.natoop_count; i++) {
+                vfft_proto_nat_entry_t got;
+                const vfft_proto_nat_entry_t *served =
+                    vfft_proto_natoop_lookup(&w, w.natoop[i].N, w.natoop[i].K);
+                memset(&got, 0, sizeof got);
+                cells++;
+                if (!vw2_stride_lookup_natoop(&st, served->N, served->K, &got) ||
+                    memcmp(&got, served, sizeof got)) {
+                    fprintf(stderr, "[reader-gate-stride] natoop N=%d K=%zu mismatch\n",
+                            served->N, served->K);
+                    bad++;
+                }
+            }
+            vfft_proto_wisdom_free(&w);
+        }
+    }
+    vw2_close(&st);
+    if (cells == 0) { fprintf(stderr, "[reader-gate-stride] VACUOUS (0 cells) — FAIL\n"); return 1; }
+    fprintf(stderr, "[reader-gate-stride] %d cell(s) checked, %d mismatch(es) — %s\n",
+            cells, bad, bad ? "FAIL" : "ALL PASS");
+    return bad ? 1 : 0;
+}
+
+/* Full stride migration gate: accounting + persisted counts + byte
+ * idempotency x3 + the reader gate (both touched shards watched). */
+static inline int vw2_migrate_stride_gate(const char *spike_path, const char *rfft_path,
+                                          const char *padded_path, const char *outdir)
+{
+    vw2_mig_stats_t st1, st2, st3;
+    int fail = 0;
+    long base_nrec;
+    {
+        vw2_store_t s;
+        vw2_open(&s, outdir, 0);
+        base_nrec = s.nrec;
+        vw2_close(&s);
+    }
+    if (vw2_migrate_stride(spike_path, rfft_path, padded_path, outdir, &st1, 0)) fail++;
+    {
+        vw2_store_t s;
+        vw2_open(&s, outdir, 0);
+        if (s.nrec != base_nrec + st1.records_out) {
+            fprintf(stderr, "[mig-gate-stride] PERSISTED COUNT %d != %ld+%d\n",
+                    s.nrec, base_nrec, st1.records_out);
+            fail++;
+        }
+        vw2_close(&s);
+    }
+    {
+        char p1[640], p2[640], b1[262144], b2[262144];
+        long n1a = 0, n1b = 0, n2;
+        FILE *f;
+        int r;
+        snprintf(p1, sizeof p1, "%s/%s", outdir, vw2_shard_name[VW2_SHARD_STRIDE]);
+        snprintf(p2, sizeof p2, "%s/%s", outdir, vw2_shard_name[VW2_SHARD_REAL]);
+        f = fopen(p1, "rb");
+        if (f) { n1a = (long)fread(b1, 1, sizeof b1 / 2, f); fclose(f); }
+        f = fopen(p2, "rb");
+        if (f) { n1b = (long)fread(b1 + n1a, 1, sizeof b1 / 2, f); fclose(f); }
+        for (r = 0; r < 2; r++) {
+            vw2_mig_stats_t *sr = r ? &st3 : &st2;
+            long m1 = 0, m2 = 0;
+            if (vw2_migrate_stride(spike_path, rfft_path, padded_path, outdir, sr, 0)) fail++;
+            if (sr->migrated != st1.migrated || sr->quarantined != st1.quarantined) {
+                fprintf(stderr, "[mig-gate-stride] RUN %d ACCOUNTING DRIFT\n", r + 2);
+                fail++;
+            }
+            f = fopen(p1, "rb");
+            if (f) { m1 = (long)fread(b2, 1, sizeof b2 / 2, f); fclose(f); }
+            f = fopen(p2, "rb");
+            if (f) { m2 = (long)fread(b2 + m1, 1, sizeof b2 / 2, f); fclose(f); }
+            n2 = m1 + m2;
+            if (n2 != n1a + n1b || memcmp(b1, b2, (size_t)n2)) {
+                fprintf(stderr, "[mig-gate-stride] BYTE IDEMPOTENCY FAILED (run %d)\n", r + 2);
+                fail++;
+            }
+        }
+    }
+    if (vw2_migrate_stride_reader_gate(spike_path, rfft_path, outdir)) fail++;
+    fprintf(stderr, "[mig-gate-stride] %s\n", fail ? "FAIL" : "ALL PASS");
+    return fail;
+}
+
+/* One-shot v1.0 -> v1.1 re-key: every kind-3 record (eng=k1) moves to
+ * role=comp (owner decision A, 2026-08-20 — kind-3 is the K=1 engine's
+ * component recipe; its old role-absent key collided with the stride
+ * family's @natoop problem verdict). Idempotent: already-role=comp rows
+ * are untouched. Returns the number re-keyed, or -1. */
+static inline int vw2_migrate_rekey_k1role(const char *dir)
+{
+    vw2_store_t st;
+    char path[640], bak[720];
+    int i, n = 0, rc;
+    vw2_open(&st, dir, 1);
+    for (i = 0; i < st.nrec; i++) {
+        const char *eng = vw2_rec_get(&st.rec[i], "eng");
+        if (!eng || strcmp(eng, "k1")) continue;
+        if (st.rec[i].key.role == VW2_ROLE_COMP) continue;
+        st.rec[i].key.role = VW2_ROLE_COMP;
+        st.dirty[st.rec[i].shard] = 1;
+        n++;
+    }
+    if (!n) {
+        vw2_close(&st);
+        fprintf(stderr, "[wisdom2_migrate] rekey-k1role: nothing to re-key in %s\n", dir);
+        return 0;
+    }
+    /* A rekey moves record IDENTITY, which merge-on-save cannot see (the
+     * old-key disk row would be carried back in beside the new one). One-
+     * shot discipline: back the shard up, remove it so the merge base is
+     * empty, save pure memory state (atomic tmp+rename), then drop the
+     * backup — or restore it on any failure. */
+    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
+    snprintf(bak, sizeof bak, "%s.rekey.bak", path);
+    remove(bak);
+    if (rename(path, bak) != 0) { vw2_close(&st); return -1; }
+    st.dirty[VW2_SHARD_OOP] = 1;
+    rc = vw2_save(&st);
+    if (rc != VW2_OK) {
+        remove(path);
+        if (rename(bak, path) != 0)
+            fprintf(stderr, "[wisdom2_migrate] rekey-k1role: RESTORE FAILED — "
+                            "recover %s manually\n", bak);
+        vw2_close(&st);
+        return -1;
+    }
+    remove(bak);
+    vw2_close(&st);
+    fprintf(stderr, "[wisdom2_migrate] rekey-k1role: %d record(s) -> role=comp in %s\n",
+            n, dir);
+    return n;
+}
+
 #endif /* VFFT_WISDOM2_MIGRATE_H */

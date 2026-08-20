@@ -348,6 +348,11 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
         r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
         if (from) { r->key.q = -1; r->key.ord = VW2_ORD_ANY; r->key.pl = VW2_PL_ANY; }
         else      { r->key.q = 1;  r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP; }
+        /* v1.1: kind-3 is the K=1 ENGINE'S COMPONENT RECIPE (deliberately
+         * order-agnostic) — role=comp keeps it off the problem-verdict key
+         * the stride family's @natoop pick owns (owner decision A,
+         * 2026-08-20). */
+        r->key.role = VW2_ROLE_COMP;
         VW2__OB_SET(1, "eng", "k1");
         if (e->k1_sp_route < 0 || e->k1_sp_route > 7) { vw2_rec_free(r); *why = "sp-route-out-of-range"; return -1; }
         VW2__OB_SET(1, "sp_route", vw2_oop_sp_name[e->k1_sp_route]);

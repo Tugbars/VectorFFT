@@ -427,6 +427,43 @@ OWNER QUESTIONS (recommended defaults in parentheses):
 
 ## Wave 4 — stride/spike LAST (the triple-role file)
 
+### Wave-4 DESIGN NOTES (2026-08-20, first-hand codec read)
+
+Source of truth: `src/core/planning/wisdom_reader.h` (v8; THREE tables in
+one file) + samples read from the shipped spike/rfft files.
+
+KEY/PAYLOAD MAPPING (all `eng=stride`):
+- scrambled row `N K nf f.. ns blocked split groups dif v.. exec_me il_me`
+  → `t=c2c n=N q=K ord=scr place=ip | eng=stride chain= vars= dif=
+  [blocked= bsplit= bgroups=] [pad_me=] [il_me=] | ran=K ns= metric=fwd1
+  units=ns` — the blocked triple only when use_blocked!=0; pad_me/il_me
+  only when nonzero (absent = unmeasured, the "absent = legacy behavior"
+  law; exec_me's wisdom2 name is pad_me per the registry).
+- `@nat N K mode nf f.. v.. dif ns` → same key `ord=nat place=ip` +
+  `mode=` (name table free/leafip/scr/pcyc/pswap/zcasc/ilp; leafip retired
+  but files may carry it — migrate verbatim, never reuse). Chain carried
+  VERBATIM for every row EXCEPT the dummy-chain shape (nf==1 &&
+  factors[0]==N — the @natoop zcasc placeholder): the dummy is dropped and
+  the record carries `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop)` instead
+  (the README flagship; the reader twin reconstructs the dummy when
+  filling the legacy struct — deterministic, reader-gate-checkable).
+  Mode census on the shipped file: pcyc×34 pswap×18 zcasc×5 ilp×5.
+- `@natoop` → same as @nat with `place=oop`.
+- rfft rows (same v8 grammar, own file) → `t=r2c n=N q=K ord=scr place=ip`
+  — the ROUTER puts them in wisdom2_real.txt (the key decides the shard;
+  the old "rfft → wisdom2_stride.txt" line in 4.1 is superseded by the
+  router law, exactly the kind-5 precedent).
+- spike_wisdom_padded.txt (@version 6 fossil, 25 rows) → quarantined
+  `reason=superseded-fossil` at migration, never parsed for records.
+- Canonical fresh keys: place=ip (the stride family identity; @natoop
+  banks place=oop). K semantics: ran=K verbatim (the batch that ran).
+- New registry rows: `dif blocked bsplit bgroups` STRUCTURAL (pad_me/
+  il_me/mode already registered).
+- TRIG RE-KEY identification (4.2) comes from the trig creates' inner-cell
+  geometry (three classes: DCT2/3 → inner r2c cells; DCT4 → inner c2c at
+  N/2; DCT1/DST1 → N±1 c2c) — enumerated from vfft.c at the flip step;
+  the t= vocabulary already carries dct1-4/dst1-4/dht (wave-0 foresight).
+
 - [ ] 4.1 Migrate spike scrambled + @nat + @natoop + rfft →
       `wisdom2_stride.txt`: pad verdicts as named `pad_me=`/`il_me=` fields;
       @nat/@natoop as `ord=nat` records with SIGNPOST `ref=` to component
