@@ -1,0 +1,92 @@
+@vw2 1.0
+@legend signpost: a verdict references its component recipe (ref=), never copies it
+@legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
+@legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
+@legend key: layout (split/il) is never a key token - it is a strategy output in the payload
+@legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
+@legend see src/core/wisdom2/README.md
+@cell t=c2c n=1024 q=128 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.4 vars=flat.t1s.t1s.t1s.t1s | ran=128 ns=181911.5 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:1
+@cell t=c2c n=8 q=32 ord=nat place=oop | eng=classic route=leaf | ran=32 ns=44.4 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:2
+@cell t=c2c n=16 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=4.4 t1p=flat | ran=32 ns=111.9 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:3
+@cell t=c2c n=32 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=4.8 t1p=flat | ran=32 ns=288.6 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:4
+@cell t=c2c n=64 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=8.8 t1p=flat | ran=32 ns=1169.6 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:5
+@cell t=c2c n=128 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=4.32 t1p=flat | ran=32 ns=2488.1 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:6
+@cell t=c2c n=256 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=4.64 t1p=log3 | ran=32 ns=6606.6 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:7
+@cell t=c2c n=512 q=32 ord=nat place=oop | eng=classic route=bailey2 chain=8.64 t1p=log3 | ran=32 ns=21374.6 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:8
+@cell t=c2c n=1024 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.8.8 vars=flat.t1s.t1s.t1s | ran=32 ns=32603.7 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:9
+@cell t=c2c n=2048 q=32 ord=scr place=oop | eng=classic route=modeb chain=8.4.8.8 vars=flat.t1s.t1s.t1s | ran=32 ns=74149.2 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:10
+@cell t=c2c n=4096 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.8.8 vars=flat.t1s.t1s.t1s.t1s | ran=32 ns=209895.1 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:11
+@cell t=c2c n=8192 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.32 vars=flat.t1s.t1s.t1s.t1s | ran=32 ns=529253.3 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:12
+@cell t=c2c n=16384 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.64 vars=flat.t1s.t1s.t1s.t1s | ran=32 ns=1229540.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:13
+@cell t=c2c n=32768 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.2.16.4 vars=flat.t1s.t1s.t1s.t1s.t1s.t1s | ran=32 ns=3679870.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:14
+@cell t=c2c n=65536 q=32 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.4.4.16 vars=flat.t1s.t1s.t1s.t1s.t1s.t1s | ran=32 ns=9740020.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:15
+@cell t=c2c n=131072 q=32 ord=scr place=oop | eng=classic route=modeb chain=16.4.4.4.4.32 vars=flat.t1s.flat.t1s.t1s.t1s | ran=32 ns=23420205.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:16
+@cell t=c2c n=8 q=256 ord=scr place=oop | eng=classic route=modeb chain=8 vars=flat | ran=256 ns=607.5 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:17
+@cell t=c2c n=16 q=256 ord=nat place=oop | eng=classic route=bailey2 chain=4.4 t1p=flat | ran=256 ns=2058.2 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:18
+@cell t=c2c n=32 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.8 vars=flat.t1s | ran=256 ns=4778.7 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:19
+@cell t=c2c n=64 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4 vars=flat.t1s.t1s | ran=256 ns=12285.7 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:20
+@cell t=c2c n=128 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.8 vars=flat.t1s.t1s | ran=256 ns=23565.6 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:21
+@cell t=c2c n=256 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.16 vars=flat.t1s.t1s | ran=256 ns=94527.9 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:22
+@cell t=c2c n=512 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.8 vars=flat.t1s.t1s.t1s | ran=256 ns=158321.3 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:23
+@cell t=c2c n=1024 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.4 vars=flat.t1s.t1s.t1s.t1s | ran=256 ns=493166.7 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:24
+@cell t=c2c n=2048 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.8 vars=flat.t1s.t1s.t1s.t1s | ran=256 ns=952825.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:25
+@cell t=c2c n=4096 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.64 vars=flat.t1s.t1s.t1s | ran=256 ns=2742180.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:26
+@cell t=c2c n=8192 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.32 vars=flat.t1s.t1s.t1s.t1s | ran=256 ns=7250960.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:27
+@cell t=c2c n=16384 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.4.64 vars=flat.t1s.t1s.t1s.t1s | ran=256 ns=16275430.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:28
+@cell t=c2c n=32768 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.16.16.32 vars=flat.t1s.t1s.t1s | ran=256 ns=37452035.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:29
+@cell t=c2c n=65536 q=256 ord=scr place=oop | eng=classic route=modeb chain=4.4.8.16.32 vars=flat.t1s.t1s.flat.t1s | ran=256 ns=87478040.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:30
+@cell t=c2c n=128 q=1024 ord=scr place=oop | eng=classic route=modeb chain=2.4.4.4 vars=flat.t1s.t1s.t1s | ran=1024 ns=157282.0 metric=fwd1 units=cyc src=migrated from=legacy_oop_wisdom.txt:31
+@cell t=c2c n=8192 q=1 ord=scr place=oop | eng=zturn chain=4.4.8.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=18220.3 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:32
+@cell t=c2c n=16384 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=38468.8 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:33
+@cell t=c2c n=32768 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=83503.1 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:53
+@cell t=c2c n=65536 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.4.8.8 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=205075.0 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:96
+@cell t=c2c n=131072 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.8.8.8 zs_t2q=1 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=498912.5 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:97
+@cell t=c2c n=262144 q=1 ord=scr place=oop | eng=zturn chain=4.8.8.8.4.4.8 zs_t2q=0 zt_t2q=1 zt_tw=1024 zt_l1=49152 | ran=1 ns=1091900.0 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:98
+@cell t=c2c n=2048 q=1 ord=scr place=oop | eng=zturn chain=4.8.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=512 zt_l1=49152 | ran=1 ns=4104.7 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:101
+@cell t=c2c n=4096 q=1 ord=scr place=oop | eng=zturn chain=4.4.4.4.4.4 zs_t2q=0 zt_t2q=0 zt_tw=1024 zt_l1=49152 | ran=1 ns=8379.3 metric=joint2 units=ns src=migrated from=legacy_oop_wisdom.txt:102
+@cell t=c2c n=128 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=4.32 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.6 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:103
+@cell t=c2c n=256 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=8.32 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:104
+@cell t=c2c n=1024 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=32.32 il_route=2p il_pair=32.32 | ran=1 ns=874.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:105
+@cell t=c2c n=2048 q=* ord=* place=* | eng=k1 sp_route=2pb sp_pair=32.64 il_route=2p il_pair=32.64 il_kv=1 | ran=1 ns=3390.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:106
+@cell t=c2c n=4096 q=* ord=* place=* | eng=k1 sp_route=2pa_l3 sp_pair=64.64 il_route=2p il_pair=64.64 | ran=1 ns=9735.5 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:107
+@cell t=c2c n=512 q=* ord=* place=* | eng=k1 sp_route=2pa sp_pair=64.8 il_route=2p il_pair=16.32 il_kv=67 | ran=1 ns=301.1 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:108
+@cell t=c2c n=8192 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=8.1024 chain=8.8.16 vars=flat.t1s.t1s | ran=4 ns=19289.3 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:119
+@cell t=c2c n=16384 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=64.256 chain=4.4.16 vars=flat.t1s.t1s | ran=4 ns=52241.8 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:120
+@cell t=c2c n=32768 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=8.4096 chain=8.4.16.8 vars=flat.t1s.t1s.t1s | ran=4 ns=83711.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:121
+@cell t=c2c n=65536 q=* ord=* place=* | eng=k1 sp_route=ccol sp_pair=64.1024 chain=4.4.4.16 vars=flat.t1s.t1s.t1s | ran=4 ns=245145.0 metric=fwd1 units=ns src=migrated from=legacy_oop_wisdom.txt:122
+@cell t=c2c n=512 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.8 t1p=log3 | ran=1 ns=2883.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:34
+@cell t=c2c n=512 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.16 vars=flat.flat | ran=1 ns=9581.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:35
+@cell t=c2c n=768 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.12 t1p=log3 | ran=1 ns=5020.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:36
+@cell t=c2c n=768 q=1 ord=scr place=oop | eng=classic route=modeb chain=64.12 vars=flat.flat | ran=1 ns=14521.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:37
+@cell t=c2c n=1024 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.16 t1p=log3 | ran=1 ns=8332.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:38
+@cell t=c2c n=1024 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.32 vars=flat.flat | ran=1 ns=24281.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:39
+@cell t=c2c n=1536 q=1 ord=scr place=oop | eng=classic route=modeb chain=12.16.8 vars=flat.flat.flat | ran=1 ns=37812.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:40
+@cell t=c2c n=2048 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.32 t1p=flat | ran=1 ns=23074.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:41
+@cell t=c2c n=3072 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.8.12 vars=flat.flat.flat | ran=1 ns=67114.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:43
+@cell t=c2c n=4096 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.64 t1p=log3 | ran=1 ns=53936.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:44
+@cell t=c2c n=6144 q=1 ord=scr place=oop | eng=classic route=modeb chain=64.16.6 vars=flat.flat.flat | ran=1 ns=144424.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:46
+@cell t=c2c n=8192 q=1 ord=nat place=oop | eng=classic route=bailey2 chain=64.128 t1p=log3 | ran=1 ns=179071.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:47
+@cell t=c2c n=12288 q=1 ord=scr place=oop | eng=classic route=modeb chain=32.6.16.4 vars=flat.flat.flat.flat | ran=1 ns=351290.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:49
+@cell t=c2c n=24576 q=1 ord=scr place=oop | eng=classic route=modeb chain=8.6.8.8.8 vars=flat.flat.flat.flat.flat | ran=1 ns=861736.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:51
+@cell t=c2c n=1024 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=16.64 t1p=flat | ran=4 ns=21495.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:54
+@cell t=c2c n=256 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=64.4 t1p=log3 | ran=2 ns=1642.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:56
+@cell t=c2c n=256 q=2 ord=scr place=oop | eng=classic route=modeb chain=16.16 vars=flat.flat | ran=2 ns=4276.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:57
+@cell t=c2c n=512 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=64.8 t1p=log3 | ran=2 ns=4891.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:58
+@cell t=c2c n=1024 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=32.32 t1p=log3 | ran=2 ns=13375.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:60
+@cell t=c2c n=2048 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=32.64 t1p=log3 | ran=2 ns=29240.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:62
+@cell t=c2c n=4096 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=64.64 t1p=log3 | ran=2 ns=73997.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:64
+@cell t=c2c n=8192 q=2 ord=nat place=oop | eng=classic route=bailey2 chain=64.128 t1p=flat | ran=2 ns=232017.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:66
+@cell t=c2c n=256 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=64.4 t1p=log3 | ran=3 ns=2899.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:70
+@cell t=c2c n=256 q=3 ord=scr place=oop | eng=classic route=modeb chain=32.8 vars=flat.flat | ran=3 ns=7118.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:71
+@cell t=c2c n=512 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=64.8 t1p=log3 | ran=3 ns=9187.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:72
+@cell t=c2c n=1024 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=32.32 t1p=log3 | ran=3 ns=24214.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:74
+@cell t=c2c n=2048 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=64.32 t1p=log3 | ran=3 ns=54402.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:76
+@cell t=c2c n=4096 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=64.64 t1p=log3 | ran=3 ns=145877.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:78
+@cell t=c2c n=8192 q=3 ord=nat place=oop | eng=classic route=bailey2 chain=64.128 t1p=log3 | ran=3 ns=408335.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:80
+@cell t=c2c n=256 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=32.8 t1p=flat | ran=4 ns=2305.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:84
+@cell t=c2c n=512 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=8.64 t1p=flat | ran=4 ns=5998.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:86
+@cell t=c2c n=2048 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=64.32 t1p=flat | ran=4 ns=45962.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:88
+@cell t=c2c n=4096 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=64.64 t1p=flat | ran=4 ns=99845.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:90
+@cell t=c2c n=8192 q=4 ord=nat place=oop | eng=classic route=bailey2 chain=64.128 t1p=flat | ran=4 ns=303223.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:92
+@cell t=c2c n=32768 q=4 ord=scr place=oop | eng=classic route=modeb chain=4.4.4.2.4.4.4.4 vars=flat.flat.flat.flat.flat.flat.flat.flat | ran=4 ns=1833926.0 metric=fwd1 units=cyc src=seed from=legacy_oop_wisdom.txt:95
