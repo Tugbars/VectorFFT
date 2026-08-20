@@ -504,10 +504,25 @@ KEY/PAYLOAD MAPPING (all `eng=stride`):
       @nat/@natoop as `ord=nat` records with SIGNPOST `ref=` to component
       records (never inlined); duplicates/junk to quarantine;
       spike_wisdom_padded.txt fossil → quarantine as `superseded`.
-- [ ] 4.2 ❗ TRIG RE-KEY (owner override): DCT1/DST1 (N±1) and sibling helper
-      rows re-keyed under their owning transform; the trig creates' inner
-      lookups flip IN THIS WAVE; Gate B covers trig cells explicitly
-      (old (N±1,K) c2c path vs new trig-key path → identical plans).
+- [x] 4.2 TRIG RE-KEY DONE 2026-08-20 (owner override #8). Trig helper
+      cells are now keyed under their OWNING transform at the OUTER size
+      (`t=dct1 n=1025 q=4`), not as plain c2c cells. Inner-size derivation
+      lives in ONE place (`vw2_stride_trig_inner_n`: DCT1 -> N-1,
+      DST1 -> N+1, else N/2) and is used by read and write, and the write
+      side REFUSES a key whose derived inner size disagrees with the entry
+      being banked (`trig-inner-size-mismatch`).
+      🔴 THE COLLISION, CONCRETELY: DCT-I at 1025 and DST-I at 1023 BOTH
+      drive an inner c2c of 1024 — and 1024 is one of the most common
+      genuine c2c cells. Under the old scheme those three verdicts shared
+      one slot; now they are three keys.
+      NO MIGRATION IS POSSIBLE for these rows: on disk a helper row and a
+      genuine c2c row at the same (N,K) are indistinguishable, so the trig
+      cells start cold under the new keys and re-race (small, cheap).
+      Under `VFFT_WISDOM2_OFF=stride` the old behavior is exact (inner
+      looked up as a plain c2c cell in the legacy table).
+      GATE: DCT1@1025, DST1@1023, DCT2@1024 — records land under
+      t=dct1/dst1/dct2, and the wisdom2 arm vs the kill-switch arm are
+      BITWISE-IDENTICAL on all three (plan equivalence).
 - [ ] 4.3 il_me RELOCATION (D6, approved): the fused-vs-padded A/B moves
       into create, banks immediately into the plan's OWN bundle; the
       execute-time stamp is deleted; exec-purity audit goes fully green.

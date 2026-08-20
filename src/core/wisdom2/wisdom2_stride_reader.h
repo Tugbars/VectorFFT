@@ -117,21 +117,43 @@ static inline void vw2__stride_key(vw2_key_t *k, int t, int N, size_t K,
 
 /* ================================================================ READ */
 
-/* scrambled row (spike: t=c2c, rfft: t=r2c). 1 + fills e, or 0 on miss. */
-static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
-                                    int N, size_t K,
-                                    vfft_proto_wisdom_entry_t *e)
+/* TRIG HELPER CELLS (owner override 2026-08-19): a trig transform's inner
+ * complex FFT is keyed under its OWNING transform, not as a plain c2c —
+ * a DCT-I of N drives an inner c2c of N-1, which would otherwise collide
+ * with a genuine c2c request at N-1. The record's n= is the OUTER size;
+ * the inner size is derived HERE, in one place, so the read and write
+ * sides cannot drift. Returns 0 for non-trig tags. */
+static inline int vw2_stride_trig_inner_n(int t, int N)
+{
+    switch (t) {
+    case VW2_T_DCT1: return N - 1;
+    case VW2_T_DST1: return N + 1;
+    case VW2_T_DCT2: case VW2_T_DCT3: case VW2_T_DCT4:
+    case VW2_T_DST2: case VW2_T_DST3: case VW2_T_DHT:
+        return N / 2;
+    default: return 0;
+    }
+}
+
+/* scrambled row for ANY transform tag: c2c = spike, r2c = rfft, a trig tag
+ * = that transform's inner-cell verdict. 1 + fills e, or 0 on miss.
+ * For a trig tag, e->N is the INNER size (what the plan is built for) while
+ * the KEY carries the outer size. */
+static inline int vw2_stride_lookup_t(const vw2_store_t *s, int t,
+                                      int N, size_t K,
+                                      vfft_proto_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__stride_key(&k, is_rfft ? VW2_T_R2C : VW2_T_C2C, N, K,
-                    VW2_ORD_SCR, VW2_PL_IP);
+    const int inner = vw2_stride_trig_inner_n(t, N);
+    vw2__stride_key(&k, t, N, K, VW2_ORD_SCR, VW2_PL_IP);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     if (!vw2_rec_get(r, "eng") || strcmp(vw2_rec_get(r, "eng"), "stride"))
         return 0;
     memset(e, 0, sizeof *e);
-    e->N = N; e->K = K;
+    e->N = inner ? inner : N;   /* trig: the plan is for the INNER size */
+    e->K = K;
     e->nf = vw2__stride_split_ints(vw2_rec_get(r, "chain"), e->factors,
                                    STRIDE_MAX_STAGES);
     if (e->nf <= 0 || e->nf >= STRIDE_MAX_STAGES) return 0;
@@ -151,6 +173,14 @@ static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
         e->best_ns = ns ? atof(ns) : 0.0;
     }
     return 1;
+}
+
+/* the two long-standing callers: spike (c2c) and rfft (r2c) */
+static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
+                                    int N, size_t K,
+                                    vfft_proto_wisdom_entry_t *e)
+{
+    return vw2_stride_lookup_t(s, is_rfft ? VW2_T_R2C : VW2_T_C2C, N, K, e);
 }
 
 /* natural row (@nat: place=ip; @natoop: place=oop). Shared body. */
@@ -266,12 +296,14 @@ static inline int vw2__stride_tail(vw2_rec_t *r, size_t ran, double ns,
     return 0;
 }
 
-/* scrambled entry -> record. is_rfft keys t=r2c. */
-static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
-                                            const vfft_proto_wisdom_entry_t *e,
-                                            int is_rfft,
-                                            const char *src, const char *from,
-                                            const char **why)
+/* scrambled entry -> record, for ANY transform tag. For a TRIG tag the
+ * caller passes the OUTER size in key_n (the entry itself describes the
+ * inner plan); for c2c/r2c key_n is just e->N. */
+static inline int vw2_stride_rec_from_entry_t(vw2_rec_t *r,
+                                              const vfft_proto_wisdom_entry_t *e,
+                                              int t, int key_n,
+                                              const char *src, const char *from,
+                                              const char **why)
 {
     char b[32];
     *why = NULL;
@@ -279,9 +311,14 @@ static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
     /* the shipped files carry N=0/N=2,K=0 junk rows (wave-0 census) —
      * unservable garbage, refused here so migration quarantines them and
      * a fresh bank can never create the class */
-    if (e->N < 2 || e->K < 1) { *why = "junk-cell"; return -1; }
-    vw2__stride_key(&r->key, is_rfft ? VW2_T_R2C : VW2_T_C2C, e->N, e->K,
-                    VW2_ORD_SCR, VW2_PL_IP);
+    if (e->N < 2 || e->K < 1 || key_n < 2) { *why = "junk-cell"; return -1; }
+    /* a trig key must describe THIS entry: the derived inner size has to
+     * match the plan we are banking, or the pair is incoherent */
+    {
+        int inner = vw2_stride_trig_inner_n(t, key_n);
+        if (inner && inner != e->N) { *why = "trig-inner-size-mismatch"; return -1; }
+    }
+    vw2__stride_key(&r->key, t, key_n, e->K, VW2_ORD_SCR, VW2_PL_IP);
     VW2__SB_SET(1, "eng", "stride");
     if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     VW2__SB_SET(1, "dif", e->use_dif_forward ? "1" : "0");
@@ -308,6 +345,16 @@ static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
         VW2__SB_SET(2, "il_arm", e->il_me == (int)e->K ? "tail" : "pad");
     }
     return vw2__stride_tail(r, e->K, e->best_ns, src, from, why);
+}
+
+static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
+                                            const vfft_proto_wisdom_entry_t *e,
+                                            int is_rfft,
+                                            const char *src, const char *from,
+                                            const char **why)
+{
+    return vw2_stride_rec_from_entry_t(r, e, is_rfft ? VW2_T_R2C : VW2_T_C2C,
+                                       e->N, src, from, why);
 }
 
 /* natural entry -> record. pl selects @nat (ip) vs @natoop (oop). */
@@ -349,17 +396,24 @@ static inline int vw2__stride_bank(vw2_store_t *st, vw2_rec_t *rec)
     return rc;
 }
 
-static inline int vw2_stride_bank_entry(vw2_store_t *st,
-                                        const vfft_proto_wisdom_entry_t *e,
-                                        int is_rfft)
+static inline int vw2_stride_bank_entry_t(vw2_store_t *st,
+                                          const vfft_proto_wisdom_entry_t *e,
+                                          int t, int key_n)
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_stride_rec_from_entry(&rec, e, is_rfft, "race", NULL, &why)) {
+    if (vw2_stride_rec_from_entry_t(&rec, e, t, key_n, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] stride bank refused (%s)\n", why ? why : "?");
         return -1;
     }
     return vw2__stride_bank(st, &rec);
+}
+
+static inline int vw2_stride_bank_entry(vw2_store_t *st,
+                                        const vfft_proto_wisdom_entry_t *e,
+                                        int is_rfft)
+{
+    return vw2_stride_bank_entry_t(st, e, is_rfft ? VW2_T_R2C : VW2_T_C2C, e->N);
 }
 
 static inline int vw2_stride_bank_nat(vw2_store_t *st,
