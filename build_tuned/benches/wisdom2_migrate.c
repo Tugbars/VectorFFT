@@ -3,14 +3,13 @@
  * holds no logic: it parses arguments and calls in.
  *
  * Usage:
- *   wisdom2_migrate <legacy_oop_wisdom.txt> <out_dir>            one-shot migrate
- *   wisdom2_migrate <legacy_oop_wisdom.txt> <out_dir> --gate     migrate + Gate A
- *                                                                (accounting,
- *                                                                idempotency,
- *                                                                field verify)
+ *   wisdom2_migrate <legacy_oop_wisdom.txt> <out_dir> [--gate]
+ *       wave-1 oop migration (+ Gate A: accounting, idempotency, verify)
+ *   wisdom2_migrate --2d <fft2d_c2c> <fft2d_r2c> <fft2d_c2r> <out_dir> [--gate]
+ *       wave-3 2D migration (all three files; pass - for an absent file)
  *
- * NEVER point out_dir at the shipped generated/ tree during wave 0 —
- * scratch-wisdir law. The legacy file is never written.
+ * NEVER point out_dir at the shipped generated/ tree before promotion —
+ * scratch-wisdir law. The legacy files are never written.
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,8 +18,24 @@
 int main(int argc, char **argv)
 {
     vw2_mig_stats_t st;
+    if (argc > 1 && !strcmp(argv[1], "--2d")) {
+        const char *c2c, *r2c, *c2r, *out;
+        if (argc < 6) {
+            fprintf(stderr, "usage: wisdom2_migrate --2d <fft2d_c2c> <fft2d_r2c> "
+                            "<fft2d_c2r> <out_dir> [--gate]  (- = absent file)\n");
+            return 2;
+        }
+        c2c = strcmp(argv[2], "-") ? argv[2] : NULL;
+        r2c = strcmp(argv[3], "-") ? argv[3] : NULL;
+        c2r = strcmp(argv[4], "-") ? argv[4] : NULL;
+        out = argv[5];
+        if (argc > 6 && !strcmp(argv[6], "--gate"))
+            return vw2_migrate_2d_gate(c2c, r2c, c2r, out) ? 1 : 0;
+        return vw2_migrate_2d(c2c, r2c, c2r, out, &st, 1) == 0 ? 0 : 1;
+    }
     if (argc < 3) {
-        fprintf(stderr, "usage: wisdom2_migrate <legacy_oop_wisdom.txt> <out_dir> [--gate]\n");
+        fprintf(stderr, "usage: wisdom2_migrate <legacy_oop_wisdom.txt> <out_dir> [--gate]\n"
+                        "       wisdom2_migrate --2d <c2c> <r2c> <c2r> <out_dir> [--gate]\n");
         return 2;
     }
     if (argc > 3 && !strcmp(argv[3], "--gate"))

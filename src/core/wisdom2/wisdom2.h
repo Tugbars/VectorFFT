@@ -197,6 +197,14 @@ static const vw2_field_t vw2_fields[] = {
     { "sp_route",VW2_FC_STRUCTURAL }, { "sp_pair", VW2_FC_STRUCTURAL },
     { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
     { "t1p",     VW2_FC_STRUCTURAL },
+    /* rank≥2 composite chains (wave 3): per-axis variant/orientation
+     * fields ride beside rowplan/colplan; 3D adds the ax0/ax1 axes and
+     * reuses row* for the innermost pass. */
+    { "rowvars", VW2_FC_STRUCTURAL }, { "rowdif",  VW2_FC_STRUCTURAL },
+    { "colvars", VW2_FC_STRUCTURAL }, { "coldif",  VW2_FC_STRUCTURAL },
+    { "ax0plan", VW2_FC_STRUCTURAL }, { "ax0vars", VW2_FC_STRUCTURAL },
+    { "ax0dif",  VW2_FC_STRUCTURAL }, { "ax1plan", VW2_FC_STRUCTURAL },
+    { "ax1vars", VW2_FC_STRUCTURAL }, { "ax1dif",  VW2_FC_STRUCTURAL },
     /* the kv family is placement-luck, machine-tied: re-race on host
      * mismatch, never port (README §4.3; zr_kv included — it is a kernel
      * variant selector like its siblings). */
@@ -205,6 +213,8 @@ static const vw2_field_t vw2_fields[] = {
     { "zt_t2q",  VW2_FC_LOCAL }, { "kv",     VW2_FC_LOCAL },
     { "il_kv",   VW2_FC_LOCAL }, { "sp_kv",  VW2_FC_LOCAL }, /* reserved (D9) */
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
+    /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */
+    { "ablock",  VW2_FC_LOCAL },
     { "ran",     VW2_FC_INFO }, { "ns",   VW2_FC_INFO }, { "metric", VW2_FC_INFO },
     { "units",   VW2_FC_INFO }, { "arms", VW2_FC_INFO }, { "src",    VW2_FC_INFO },
     { "bin",     VW2_FC_INFO }, { "date", VW2_FC_INFO }, { "host",   VW2_FC_INFO },

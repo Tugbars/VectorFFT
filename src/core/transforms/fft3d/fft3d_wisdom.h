@@ -149,13 +149,15 @@ static inline int _vfft_fft3d_extract(const stride_plan_t *p,
 /* Wisdom-aware create. HIT -> create_ex x3 + stride_plan_3d_from (fast, the
  * fft3d.h-requested path). MISS -> replicate the greedy per-axis exhaustive
  * search with the inners VISIBLE, bank what is expressible, then _from. */
-static inline stride_plan_t *vfft_fft3d_plan_create_wisdom(
-    int N1, int N2, int N3, vfft_fft3d_wisdom_t *w,
-    const vfft_proto_registry_t *reg, int *banked)
+/* Build straight from ONE entry (the creator's body; also the wisdom2
+ * flip's constructor). NULL on invalid/incompatible entry or build fail. */
+static inline stride_plan_t *vfft_fft3d_plan_from_entry(
+    const vfft_fft3d_wisdom_entry_t *e, const vfft_proto_registry_t *reg)
 {
-    if (banked) *banked = 0;
-    const vfft_fft3d_wisdom_entry_t *e = vfft_fft3d_wisdom_lookup(w, N1, N2, N3);
-    if (e && e->ax0_nf > 0 && e->ax1_nf > 0 && e->row_nf > 0 && e->B >= 1) {
+    const int N1 = e->N1, N2 = e->N2, N3 = e->N3;
+    if (!(e->ax0_nf > 0 && e->ax1_nf > 0 && e->row_nf > 0 && e->B >= 1))
+        return NULL;
+    {
         stride_plan_t *p0 = vfft_proto_plan_create_ex(
             N1, (size_t)N2 * (size_t)N3, e->ax0_factors, e->ax0_variants,
             e->ax0_nf, e->ax0_dif, reg);
@@ -176,6 +178,19 @@ static inline stride_plan_t *vfft_fft3d_plan_create_wisdom(
         if (pr) stride_plan_destroy(pr);
         if (p1) stride_plan_destroy(p1);
         if (p0) stride_plan_destroy(p0);
+    }
+    return NULL;
+}
+
+static inline stride_plan_t *vfft_fft3d_plan_create_wisdom(
+    int N1, int N2, int N3, vfft_fft3d_wisdom_t *w,
+    const vfft_proto_registry_t *reg, int *banked)
+{
+    if (banked) *banked = 0;
+    const vfft_fft3d_wisdom_entry_t *e = vfft_fft3d_wisdom_lookup(w, N1, N2, N3);
+    if (e) {
+        stride_plan_t *p = vfft_fft3d_plan_from_entry(e, reg);
+        if (p) return p;
         /* corrupt/incompatible entry: fall through to greedy */
     }
     /* greedy (stride_plan_3d body, inners kept visible for banking) */

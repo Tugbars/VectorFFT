@@ -244,7 +244,9 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
       IL–split campaign. (Commit of the promoted files left to the owner,
       who is committing this campaign's work themselves.)
 
-## Wave 2 — minis 🔴 BLOCKED on #5b (c2r boundary handshake, owner)
+## Wave 2 — minis 🔴 PARKED (owner 2026-08-20: c2r IL session still live
+## in the create seams — "skip it and I will tell you when it is done";
+## wave 3 runs BEFORE wave 2)
 
 - [ ] 2.1 Bluestein: migrate the 40 orphaned rows → `wisdom2_prime.txt`;
       flip vfft.c sites; prime-N creates now HIT (structurally impossible
@@ -278,6 +280,100 @@ stays live and untouched; the only cross-cutting rule from wave 0 on is D9
 - [ ] 3.5 RITUAL: Gate B over all (N1,N2) cells incl. @nat2d; freeze-stamp
       the three fft2d files; fleet (bench 2D read modes may keep reading
       frozen copies until ported — read-only is safe); README.
+
+### Wave-3 DESIGN OF RECORD (2026-08-20 — 5-agent recon, load-bearing
+### claims independently re-verified: placement-blind `_build_2d` signature,
+### save-before-`!tp`-check at vfft.c:3183-3189, lossy README:115 example)
+
+Key mapping: 2D c2c scrambled table → `t=c2c n=N1xN2 q=1 ord=scr place=*`
+(migration wildcard — the legacy row genuinely served both placements;
+`_build_2d` takes no placement); @nat2d table → same key `ord=nat`.
+Real 2D → `t=r2c` / `t=c2r` keyed by which FILE the row lived in (the c2r
+file self-stamps the r2c version tag — direction exists only as file
+membership; it becomes the transform tag, no dir= token), `ord=*` (the
+real-2D branch never reads order). 3D → `t=c2c n=N1xN2xN3`, born in
+wisdom2: fresh concrete banks only, MEASURE-LESS (`best_ns` is a dead
+always-0.000 field — never encode ns=0).
+
+Payload tokens: `rowplan= rowvars= rowdif= colplan= colvars= coldif= b=
+k_pad=` (2D); 3D adds `ax0plan/ax0vars/ax0dif ax1plan/ax1vars/ax1dif` and
+reuses row* ; `ablock=` LOCAL, absent when -1/heuristic. Variant names
+flat/log3/t1s/buf (the 2D vocabulary has BUF=3 that 1D kind-2 lacks).
+`k_pad=` stored VERBATIM never re-derived (three pad conventions coexist);
+serve-side validation stays `(k_pad&3)==0 && >=hp1`. ns= metric=fwd1
+units=ns on all migrated rows ("per call of the keyed transform" — the c2r
+column's backward-measure trap dissolves into the t= split). All 34 data
+rows parse clean: expected quarantine count 0 (classes defensive only:
+truncated-row, chain-too-long, v2-trailing-tokens).
+
+Helper-cell law: NO ref= from composites to 1D cells ever — composite
+chains are verdicts measured in the 2D memory regime (dedicated 2D
+planner), not copies; they stay inline. The `_inner_c2c` miss-path banks
+SPIKE cells (vfft.c:1363-1368, 1440-1442, saved :3180-3181) — wave-4
+family, untouched and live through wave 3 (meanwhile rule; the freeze
+watch must ignore spike churn). Kind-5/zr2c coupling: none. Checklist
+3.3's "helper cells remain plain c2c records" clause EXECUTES AT WAVE 4
+with the spike migration, not here.
+
+Migration: probe-parse through the shipped loaders (c2c loader parses both
+tables; the r2c loader runs twice, direction stamped into t= at migrate
+time). Accounting: 27 = 3 skipped + 24 migrated (13 scr + 11 nat);
+7 = 2 + 5; 7 = 2 + 5 → 34 records, all → wisdom2_2d.txt; wisdom2_3d.txt
+created empty by the first 3D bank. No two-pass needed (no seeds; scr/nat
+split by ord=). fft3d flips instead of migrating: lookup/bank inside
+vfft_fft3d_plan_create_wisdom → vw2 twins; banked-flag save →
+vw2_save under config.wisdom_write; explicit-save line :6987 dropped;
+NO kill-switch value for 3d (nothing to fall back to); 3D's
+ignore-recalibrate behavior preserved (flip ≠ behavior change);
+prime-axis 3D cells stay unbanked-by-design.
+
+Flip plan: reader twins in src/core/wisdom2/wisdom2_2d_reader.h
+(vw2_2d_c2c_lookup_scr/_nat → exact legacy entry structs;
+vw2_2d_r2c_lookup(t); vw2_3d_lookup) + bank constructors
+(vw2_2d_c2c_bank_entry with the overwrite=0 nat regime-separation as a
+constructor flag; vw2_2d_r2c_bank_entry(t); vw2_3d_bank_entry). Call
+sites: lookups vfft.c:1350/:1353/:1410/:1433; banks :1405/:1407/:1470 +
+fft3d via :3141. The cal_ns<fb_ns speed gates and natural-decoupling rule
+are upstream of banking and stay verbatim. Kill switch: extend
+VFFT_WISDOM2_OFF vocabulary with `2d`. Dirty-flag save: DELETE the
+unconditional rewrites :3183-3188 (today they run even when the create
+FAILED — before the !tp check); persistence = dirty shards + vw2_save
+under config.wisdom_write. Fleet = the standing 15 front-door exes (no
+direct writers this wave).
+
+Gates: [mig-gate-2d] (accounting + byte-idempotency ×3) and
+[reader-gate-2d] (34/34 field-identical incl. every vars/dif field — the
+exact lossiness the README:115 prototype had) ride the existing migrator
+driver; [2d-flip-gate] = NEW thin driver wisdom2_2d_gate.exe over
+module-owned logic (dual-scratch, both kill-switch arms, bit-identical
+errors + identical served-plan identity; serving mode writes nothing) —
+needed because the bench 2D modes bypass vfft_create and cannot drive
+Gate B; [3d-born-gate] = same driver, 3D leg (first create banks
+measure-less src=race, second re-serves plan-identical, prime-axis banks
+nothing); sentinel canary through the fleet; [bench-2d-continuity]
+(bench --2d modes still read their frozen copies); freeze watch ignores
+spike churn + _*.log taps.
+
+Freeze list: the three fft2d files (27/7/7 lines) stamp + checksum at
+wave close; nothing to freeze for 3D (no file ever existed — the
+path_3d_c2c stamp dies at flip); strided_adopt.wis machinery untouched by
+declaration; registry line-number drift corrections land with the wave.
+
+OWNER QUESTIONS (recommended defaults in parentheses):
+- Q1 placement stamping for FRESH rank≥2 banks — wildcards are
+  migration-only, but the 2D plan is placement-blind; stamping the
+  creating cfg's placement means the other placement re-pays calibration
+  once. (Recommended: stamp concrete, accept the one-time duplicate; a
+  "rank≥2 does not key placement" module rule is cleaner but is an
+  owner-only grammar change.)
+- Q2 README:115 + selftest worked example are lossy (drop vars/dif) and
+  stamp place=oop — update both to this design's shape. (Recommended: yes.)
+- Q3 bench 2D read modes keep frozen copies until wave 4. (Recommended:
+  yes — registry-sanctioned read-only-safe.)
+- Q4 b= stays STRUCTURAL this wave (degenerate 8 everywhere on disk).
+- Q5 prime-axis 3D cells stay unbanked. Q6 3D keeps ignoring
+  cfg->recalibrate at flip (honoring it = separate follow-up). Q7
+  quarantine disposal same as wave 1 (expected count 0 anyway).
 
 ## Wave 4 — stride/spike LAST (the triple-role file)
 
