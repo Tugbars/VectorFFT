@@ -1214,6 +1214,62 @@ static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
     return vfft_proto_auto_plan(innerN, K, reg, cw);
 }
 
+/* TRIG HELPER CELLS (owner override 2026-08-19, wave 4): a trig transform's
+ * inner complex FFT is keyed under its OWNING transform at the OUTER size,
+ * not as a plain c2c cell — a DCT-I of N drives an inner c2c of N-1, and
+ * banking that as c2c(N-1) collides with a genuine user request at N-1
+ * (their optima differ: the inner runs inside the trig wrapper's access
+ * pattern). The inner SIZE derivation lives in the codec
+ * (vw2_stride_trig_inner_n), used by both read and write.
+ *
+ * Legacy files cannot be migrated into these keys: a helper row and a
+ * genuine c2c row at the same (N,K) are indistinguishable on disk, so the
+ * trig cells simply start cold under their new keys and re-race (they are
+ * small and cheap). Under VFFT_WISDOM2_OFF=stride the old behavior is
+ * exact: look the inner up as a plain c2c cell in the legacy table. */
+static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
+
+static int _vw2_t_of_trig(vfft_transform_t t)
+{
+    switch (t) {
+    case VFFT_DCT1: return VW2_T_DCT1;
+    case VFFT_DCT2: return VW2_T_DCT2;
+    case VFFT_DCT3: return VW2_T_DCT3;
+    case VFFT_DCT4: return VW2_T_DCT4;
+    case VFFT_DST1: return VW2_T_DST1;
+    case VFFT_DST2: return VW2_T_DST2;
+    case VFFT_DST3: return VW2_T_DST3;
+    case VFFT_DHT:  return VW2_T_DHT;
+    default:        return VW2_T_NONE;
+    }
+}
+
+/* The trig-owned twin of _inner_c2c: same calibrate-on-miss contract, but
+ * the verdict is keyed (owning transform, OUTER N, K). */
+static stride_plan_t *_inner_c2c_trig(struct vfft_wisdom_s *W,
+                                      const vfft_config_t *cfg,
+                                      vfft_transform_t owner, int outerN,
+                                      int innerN, size_t K, vfft_rigor_t rigor,
+                                      const vfft_proto_registry_t *reg,
+                                      vfft_proto_wisdom_t *cw, int recalib)
+{
+    const int wt = _vw2_t_of_trig(owner);
+    vfft_proto_wisdom_entry_t ne;
+    int have;
+    if (wt == VW2_T_NONE || W->vw2_off_stride)
+        return _inner_c2c(W, innerN, K, rigor, reg, cw, recalib); /* old path */
+    have = !recalib && vw2_stride_lookup_t(&W->vw2, wt, outerN, K, &ne);
+    if (have)
+        vfft_proto_wisdom_set(cw, &ne);      /* seed auto_plan's process cache */
+    else if (_calibrate_c2c(innerN, K, rigor, reg, &ne) == 0)
+    {
+        vfft_proto_wisdom_add(cw, &ne, 1);
+        vw2_stride_bank_entry_t(&W->vw2, &ne, wt, outerN);
+        _vw2_persist(W, cfg);
+    }
+    return vfft_proto_auto_plan(innerN, K, reg, cw);
+}
+
 /* JIT the inner c2c of a trig stride-r2c plan: resolve the inner's JIT fwd/bwd and
  * wire them in (the trig forward drives the inner via the r2c forward, so inner_jit_fwd
  * is what runs; bwd set for completeness). NULL-safe / no-op without VFFT_USE_JIT —
@@ -1233,14 +1289,14 @@ static inline void _trig_r2c_set_inner_jit(stride_plan_t *r, stride_plan_t *ic)
 /* Build the trig stride_plan_t. Owns its inner plans (freed via stride_plan_destroy).
  * The inner real-FFT (r2c) / complex-FFT (DCT-IV) rides the c2c wisdom (calibrate-on-
  * miss) AND, when JIT is compiled in, its inner c2c runs the JIT'd executor. */
-static stride_plan_t *_build_trig(struct vfft_wisdom_s *W,
+static stride_plan_t *_build_trig(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                   vfft_transform_t t, int N, size_t K, vfft_rigor_t rigor,
                                   const vfft_proto_registry_t *reg,
                                   vfft_proto_wisdom_t *cw, int recalib)
 {
     if (t == VFFT_DCT4)
     { /* inner = half-N complex FFT (driven backward) */
-        stride_plan_t *c2c = _inner_c2c(W, N / 2, K, rigor, reg, cw, recalib);
+        stride_plan_t *c2c = _inner_c2c_trig(W, cfg, t, N, N / 2, K, rigor, reg, cw, recalib);
         if (!c2c)
             return NULL;
         stride_plan_t *dp = stride_dct4_plan(N, K, c2c);
@@ -1253,7 +1309,7 @@ static stride_plan_t *_build_trig(struct vfft_wisdom_s *W,
     if (t == VFFT_DCT1 || t == VFFT_DST1)
     { /* boundary r2c of M */
         int M = (t == VFFT_DCT1) ? 2 * (N - 1) : 2 * (N + 1);
-        stride_plan_t *ic = _inner_c2c(W, M / 2, K, rigor, reg, cw, recalib);
+        stride_plan_t *ic = _inner_c2c_trig(W, cfg, t, N, M / 2, K, rigor, reg, cw, recalib);
         stride_plan_t *r = ic ? stride_r2c_plan(M, K, K, ic) : NULL;
         if (!r)
             return NULL;
@@ -1261,7 +1317,7 @@ static stride_plan_t *_build_trig(struct vfft_wisdom_s *W,
         return (t == VFFT_DCT1) ? stride_dct1_plan(N, K, r) : stride_dst1_plan(N, K, r);
     }
     /* DCT-II/III, DST-II/III, DHT — all start from an N-point r2c plan. */
-    stride_plan_t *ic = _inner_c2c(W, N / 2, K, rigor, reg, cw, recalib);
+    stride_plan_t *ic = _inner_c2c_trig(W, cfg, t, N, N / 2, K, rigor, reg, cw, recalib);
     stride_plan_t *r = ic ? stride_r2c_plan(N, K, K, ic) : NULL;
     if (!r)
         return NULL;
@@ -5283,7 +5339,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * through its explicit-pack fallback (rem-aware codelet tail + scalar unpack) instead
          * of the crashing fused stage — see _r2c_worker_fwd/_bwd in r2c.h. (Padded builds at
          * VW-aligned Kp regardless.) */
-        stride_plan_t *tp = _build_trig(W, cfg->transform, N, bK, cfg->rigor, reg,
+        stride_plan_t *tp = _build_trig(W, cfg, cfg->transform, N, bK, cfg->rigor, reg,
                                         &W->c2c, cfg->recalibrate);
         if (W->path_c2c[0])
             _vw2_persist(W, cfg); /* persist inner cells (guarded, wave-4) */
