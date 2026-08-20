@@ -113,50 +113,11 @@ vfft_fft2d_r2c_wisdom_lookup(const vfft_fft2d_r2c_wisdom_t *w, int N1, int N2)
     return NULL;
 }
 
-/* Insert or replace (overwrite!=0) the (N1,N2) entry. Returns 1 (new), 2
- * (replaced), 0 (skipped — existing kept when overwrite==0). */
-static inline int vfft_fft2d_r2c_wisdom_add(vfft_fft2d_r2c_wisdom_t *w,
-                                            const vfft_fft2d_r2c_wisdom_entry_t *e,
-                                            int overwrite)
-{
-    for (size_t i = 0; i < w->count; i++) {
-        if (w->entries[i].N1 == e->N1 && w->entries[i].N2 == e->N2) {
-            if (!overwrite) return 0;
-            w->entries[i] = *e;
-            return 2;
-        }
-    }
-    if (w->count >= w->capacity) {
-        w->capacity = w->capacity ? w->capacity * 2 : 32;
-        w->entries = (vfft_fft2d_r2c_wisdom_entry_t *)realloc(
-            w->entries, w->capacity * sizeof(*w->entries));
-    }
-    w->entries[w->count++] = *e;
-    return 1;
-}
-
-/* Write to path (v1 format, round-trips with load). Returns 0 / -1. */
-static inline int vfft_fft2d_r2c_wisdom_save(const vfft_fft2d_r2c_wisdom_t *w,
-                                             const char *path)
-{
-    FILE *f = fopen(path, "w");
-    if (!f) return -1;
-    fprintf(f, "@fft2d_r2c_version %d\n", VFFT_FFT2D_R2C_WISDOM_VERSION);
-    fprintf(f, "# N1 N2 B K_pad | row: nf factors.. variants.. dif | "
-               "col: nf factors.. variants.. dif | best_ns\n");
-    for (size_t i = 0; i < w->count; i++) {
-        const vfft_fft2d_r2c_wisdom_entry_t *e = &w->entries[i];
-        fprintf(f, "%d %d %d %d  %d", e->N1, e->N2, e->B, e->K_pad, e->row_nf);
-        for (int s = 0; s < e->row_nf; s++) fprintf(f, " %d", e->row_factors[s]);
-        for (int s = 0; s < e->row_nf; s++) fprintf(f, " %d", e->row_variants[s]);
-        fprintf(f, " %d  %d", e->row_use_dif, e->col_nf);
-        for (int s = 0; s < e->col_nf; s++) fprintf(f, " %d", e->col_factors[s]);
-        for (int s = 0; s < e->col_nf; s++) fprintf(f, " %d", e->col_variants[s]);
-        fprintf(f, " %d  %.1f\n", e->col_use_dif, e->best_ns);
-    }
-    fclose(f);
-    return 0;
-}
+/* vfft_fft2d_r2c_wisdom_add / _wisdom_save: DELETED at the wisdom2 wave-3
+ * close (2026-08-20). Both fft2d real files are FROZEN — banks go through
+ * vw2_2d_r2c_bank_entry (direction = the t= key, wisdom2_2d_reader.h);
+ * this loader survives for the kill-switch bake window, then
+ * migrator-only until v1.0. */
 
 static inline void vfft_fft2d_r2c_wisdom_free(vfft_fft2d_r2c_wisdom_t *w)
 {

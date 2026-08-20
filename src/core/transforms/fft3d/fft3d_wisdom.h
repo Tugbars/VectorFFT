@@ -76,59 +76,11 @@ static inline void vfft_fft3d_wisdom_free(vfft_fft3d_wisdom_t *w)
     memset(w, 0, sizeof(*w));
 }
 
-/* One line per entry:
- *   N1 N2 N3 B a_block  nf f.. v.. dif  nf f.. v.. dif  nf f.. v.. dif  best_ns
- * '#' comment lines skipped; "@fft3dv" version guard first. */
-static inline int vfft_fft3d_wisdom_save(const vfft_fft3d_wisdom_t *w, const char *path)
-{
-    FILE *f = fopen(path, "w");
-    if (!f) return -1;
-    fprintf(f, "@fft3dv %d\n", VFFT_FFT3D_WISDOM_VERSION);
-    for (int i = 0; i < w->count; i++) {
-        const vfft_fft3d_wisdom_entry_t *e = &w->entries[i];
-        fprintf(f, "%d %d %d %d %d", e->N1, e->N2, e->N3, e->B, e->a_block);
-        #define _W3AX(pre) do { \
-            fprintf(f, "  %d", e->pre##_nf); \
-            for (int j = 0; j < e->pre##_nf; j++) fprintf(f, " %d", e->pre##_factors[j]); \
-            for (int j = 0; j < e->pre##_nf; j++) fprintf(f, " %d", e->pre##_variants[j]); \
-            fprintf(f, " %d", e->pre##_dif); } while (0)
-        _W3AX(ax0); _W3AX(ax1); _W3AX(row);
-        #undef _W3AX
-        fprintf(f, "  %.3f\n", e->best_ns);
-    }
-    fclose(f);
-    return 0;
-}
-
-static inline int vfft_fft3d_wisdom_load(vfft_fft3d_wisdom_t *w, const char *path)
-{
-    FILE *f = fopen(path, "r");
-    if (!f) return -1;
-    char line[2048];
-    while (fgets(line, sizeof line, f)) {
-        if (line[0] == '#' || line[0] == '\n') continue;
-        if (line[0] == '@') continue;           /* version guard (v1: tolerant) */
-        vfft_fft3d_wisdom_entry_t e; memset(&e, 0, sizeof e);
-        char *t = strtok(line, " \t\r\n");
-        #define _R3(dst) do { if (!t) goto skip; (dst) = atoi(t); t = strtok(NULL, " \t\r\n"); } while (0)
-        _R3(e.N1); _R3(e.N2); _R3(e.N3); _R3(e.B); _R3(e.a_block);
-        #define _R3AX(pre) do { \
-            _R3(e.pre##_nf); \
-            if (e.pre##_nf < 1 || e.pre##_nf > STRIDE_MAX_STAGES) goto skip; \
-            for (int j = 0; j < e.pre##_nf; j++) _R3(e.pre##_factors[j]); \
-            for (int j = 0; j < e.pre##_nf; j++) _R3(e.pre##_variants[j]); \
-            _R3(e.pre##_dif); } while (0)
-        _R3AX(ax0); _R3AX(ax1); _R3AX(row);
-        #undef _R3AX
-        if (t) e.best_ns = atof(t);
-        #undef _R3
-        vfft_fft3d_wisdom_put(w, &e);
-        continue;
-    skip:;
-    }
-    fclose(f);
-    return 0;
-}
+/* vfft_fft3d_wisdom_save / _wisdom_load: DELETED at the wisdom2 wave-3
+ * close (2026-08-20). The legacy 3D grammar NEVER materialized on disk —
+ * 3D is born in wisdom2 (wisdom2_3d.txt via vw2_3d_bank_entry). This
+ * table survives only as the in-process scratch the greedy creator's
+ * extraction lands in before the harvest (vfft.c dims=3). */
 
 /* Extract a bankable record from a built (non-override) stride plan. Returns
  * 0 on success, -1 for override/oversized chains (caller skips banking). */

@@ -420,50 +420,10 @@ static inline void vfft_oop_wisdom_entry_from_plan(vfft_oop_wisdom_entry_t *e,
     }
 }
 
-static inline void vfft_oop_wisdom_write_entry(FILE *f,
-                                               const vfft_oop_wisdom_entry_t *e)
-{
-    fprintf(f, "%d %zu %d", e->N, e->K, e->kind);
-    if (e->kind == VFFT_OOP_KIND_BAILEY2)
-        fprintf(f, " %d %d %d", e->R1, e->R2, e->t1p_variant);
-    else if (e->kind == VFFT_OOP_KIND_MODEB) {
-        fprintf(f, " %d", e->nf);
-        for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->factors[s]);
-        for (int s = 0; s < e->nf; s++) fprintf(f, " %d", e->variants[s]);
-    }
-    else if (e->kind == VFFT_OOP_KIND_BAILEY2V) {
-        fprintf(f, " %d %d %d %d %d %d", e->k1_sp_route, e->R1, e->R2,
-                e->k1_il_route, e->il_R1, e->il_R2);
-        /* CCOL: chain + column-variant code, always both (an explicit
-         * cc_vars 0 keeps the position an unambiguous integer for the
-         * tolerant reader). */
-        if (e->k1_sp_route == VFFT_K1_SP_CCOL)
-            fprintf(f, " %d %d", e->cc_chain, e->cc_vars);
-    }
-    else if (e->kind == VFFT_OOP_KIND_ZSPLIT)
-        fprintf(f, " %d %d", e->zs_t2q, e->cc_chain);
-    else if (e->kind == VFFT_OOP_KIND_ZR2C)
-        fprintf(f, " %d", e->zr_kv);
-    fprintf(f, " %.1f", e->ns);
-    /* kind-3 variant verdict: emitted ONLY when non-zero, so a cell that
-     * never measured the blocked axis re-banks in the exact pre-axis
-     * format (banked files and diffs stay byte-stable). */
-    if (e->kind == VFFT_OOP_KIND_BAILEY2V && e->il_kv)
-        fprintf(f, " %d", e->il_kv);
-    /* kind-4 route axis: trailing "zs_route zt_t2q" AFTER ns, and only for
-     * route!=0 — a legacy verdict re-banks in the exact pre-route format
-     * (old readers, diffs, and banked files stay byte-stable). */
-    if (e->kind == VFFT_OOP_KIND_ZSPLIT && e->zs_route) {
-        fprintf(f, " %d %d", e->zs_route, e->zt_t2q);
-        /* Width pair only when a width was actually banked, so a verdict that
-         * did not use tiling re-banks byte-identically to the pre-width format.
-         * The width is a ZTURN-only concept, so it can never appear without
-         * zs_route — that is why it nests inside this branch rather than
-         * beside it. */
-        if (e->zt_tw > 0)
-            fprintf(f, " %d %d", e->zt_tw, e->zt_l1);
-    }
-    fprintf(f, "\n");
-}
+/* vfft_oop_wisdom_write_entry (the ONE legacy line encoder): DELETED at
+ * the wisdom2 wave-1 close (2026-08-20). oop_wisdom.txt is FROZEN — all
+ * banks go through vw2_oop_rec_from_entry (wisdom2_oop_reader.h). The
+ * loader above survives for the kill-switch bake window, then
+ * migrator-only until v1.0; entry structs and codecs never die. */
 
 #endif /* VFFT_OOP_WISDOM_H */
