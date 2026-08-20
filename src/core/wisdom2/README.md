@@ -269,6 +269,49 @@ Every payload field is registered with a class:
 
 Adding a field = one registry line + the producer stamp + the consumer read.
 
+### 4.4 Family surfaces — the folder's file map and the serving flow
+
+Every wisdom-touching file lives in this folder. Per family, three layers:
+
+| file | role | lifetime |
+|---|---|---|
+| `wisdom2.h` | THE grammar parser/writer + the store (shards, merge law, guard) | permanent |
+| `wisdom2_oop.h` | oop family: entry struct, the chain/vars/zr2c-kv codecs, `entry_from_plan`, recipe→plan builders; plus the frozen-file loader/lookups | structs/codecs/builders permanent; loader = kill-switch tier |
+| `wisdom2_oop_reader.h` | oop codec: records ↔ entry structs (`vw2_oop_lookup_*` twins, bank constructors, canonical keys, name tables) | permanent |
+| `wisdom2_fftnd.h` | rank≥2 (2D/3D) family: entry structs, recipe→plan builders (`*_plan_from_entry`), the 3D extraction scratch; plus the frozen-file loaders/lookups/creators | same split: builders permanent; loaders = kill-switch tier |
+| `wisdom2_2d_reader.h` | rank≥2 codec: `vw2_2d_*`/`vw2_3d_*` twins + bank constructors | permanent |
+| `wisdom2_selftest.h`, `wisdom2_2d_gate.h` | module-owned gates (benches are thin drivers) | permanent |
+| `wisdom2_migrate.h` | legacy-file migration + its gates | transitional (vendored, dies at v1.0) |
+
+**Serving flow** (every family, one shape): the create path asks the
+family's codec twin → the twin resolves a record (exact → wildcard tier)
+and fills the family's entry struct → the family's `plan_from_entry`
+builder turns the recipe into a plan. **Banking**: the race fills the same
+entry struct → the family's bank constructor emits the record into the
+store's memory → the guarded save persists it.
+
+**Rank≥2 specifics** (the fftnd family):
+
+- Keys are `n=N1xN2` / `n=N1xN2xN3` with ORDERED extents. Fresh banks
+  stamp the canonical concrete key: `place=oop` always (the 2D/3D plan is
+  placement-blind — one row serves both placements), and `ord=nat` for the
+  order-blind real families; migrated wildcard rows serve the canonical
+  request through the wildcard tier and sunset as cells re-race.
+- Payload: `rowplan= rowvars= rowdif= colplan= colvars= coldif= b=`; the
+  real families add `k_pad=` (stored VERBATIM, never re-derived — pad
+  conventions differ by vintage; serve-side validation stays the plan
+  builder's); rank-3 adds `ax0plan/ax0vars/ax0dif ax1plan/ax1vars/ax1dif`
+  and reuses `row*` for the innermost pass, plus `ablock=` (LOCAL; absent
+  = builder heuristic). Variant vocabulary: `flat/log3/t1s/buf`.
+- `ns= metric=fwd1 units=ns` means one call of the KEYED transform (a
+  `t=c2r` row's ns is a c2r call). 3D extraction banks are MEASURE-LESS
+  (no ns token): the store serves the recipe; a measured verdict can
+  always replace it, never the reverse.
+- 3D is store-first: hit → build from the record; miss → the greedy
+  per-axis search runs, its chains are extracted into the in-process
+  scratch table and banked `src=race` (prime-axis cells bank nothing —
+  override chains are not expressible as factor lists).
+
 ## 5 · Env law
 
 One table in the module defines every override. The four shapes:

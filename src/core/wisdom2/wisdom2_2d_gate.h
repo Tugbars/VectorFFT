@@ -210,11 +210,15 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
         int i;
         for (i = 0; i < (int)(sizeof RC / sizeof RC[0]); i++) {
             const int N1 = RC[i].N1, N2 = RC[i].N2;
-            /* both buffers >= any real/halfcomplex/padded layout, either
-             * direction (c2r READS a padded halfcomplex plane); the arms
-             * comparison covers ONLY the DEFINED output region — beyond it
-             * live padding lanes whose garbage is plan-shaped, not
-             * transform-defined (r2c: halfcomplex plane; c2r: real plane). */
+            /* buffers >= any real/halfcomplex/padded layout, either
+             * direction (c2r READS a padded halfcomplex plane).
+             * Compare windows are the transform-DEFINED outputs, both
+             * PROVEN exactly defined by the delta-input pitch probe
+             * (2026-08-20): the r2c forward plane is CONTIGUOUS
+             * N1 x (N2/2+1) complex — no padding lanes inside the window;
+             * c2r's real plane is N1*N2 doubles. (An r2c handle does NOT
+             * execute BACKWARD — c2r is its own transform — so a one-
+             * handle roundtrip verdict is invalid here.) */
             const size_t nin = (size_t)2 * N1 * N2 + 64;
             const size_t nout = (size_t)2 * N1 * N2 + 64;
             const size_t ncmp = (RC[i].t == VFFT_R2C)
@@ -224,11 +228,21 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             size_t j;
             int ok;
             for (j = 0; j < nin; j++) x[j] = (double)rand() / RAND_MAX - 0.5;
-            ok = _g2d_both_arms(wisdir, RC[i].t, VFFT_ORDER_DEFAULT, N1, N2, x, A, B, nout);
-            if (ok && memcmp(A, B, ncmp * sizeof(double)) != 0) ok = 0;
-            printf("  %-16s %s\n", RC[i].tag, ok ? "PASS (arms bitwise-identical)"
-                                                 : "*** FAIL ***");
-            if (!ok) fails++;
+            ok = _g2d_both_arms(wisdir, RC[i].t, VFFT_ORDER_DEFAULT, N1, N2,
+                                x, A, B, nout, NULL, NULL);
+            if (ok && memcmp(A, B, ncmp * sizeof(double)) != 0) {
+                /* name the first divergent double — evidence for any
+                 * future flake, never a silent verdict */
+                for (j = 0; j < ncmp; j++)
+                    if (A[j] != B[j]) break;
+                printf("  %-16s *** FAIL *** (first diff at double %zu: %a vs %a)\n",
+                       RC[i].tag, j, A[j], B[j]);
+                fails++;
+            } else {
+                printf("  %-16s %s\n", RC[i].tag,
+                       ok ? "PASS (arms bitwise-identical)" : "*** FAIL ***");
+                if (!ok) fails++;
+            }
             _g2d_fz(x); _g2d_fz(A); _g2d_fz(B);
         }
     }
