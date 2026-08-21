@@ -17,16 +17,52 @@ Kernel registry of record: `src/core/oop/il2p.h`.
 
 ---
 
-## 1 — Two order classes, two disjoint enumerators
+## 1 — Order is a CONTRACT, not an optimization axis
 
-`ord` is a key, not a ranking axis, and the two classes do not share a
-candidate shape. `_il_dp_enumerate` branches on it and returns.
+Callers choose the output order, and the library must deliver what was asked
+for. Some uses require natural order; some are fine with scrambled. So a race
+may only choose among plans that HONOUR the requested order — the fastest plan
+across both orders is not a legal answer to a request for one of them.
+
+This is why `ord` is a key. Lookups never cross order classes, with one
+legitimate exception: `cfg->order` has a DEFAULT value (0) meaning the caller
+made no promise, and only then does `vw2_oop_lookup_ord` fetch both the
+natural and scrambled records and take the faster. `ord=1` (NATURAL) and
+`ord=2` (SCRAMBLED) never cross.
+
+### How natural order is delivered: at the BOUNDARY
+
+The ordering is NOT a property of the interior codelets. `chain[]` and every
+interior kernel are order-agnostic and identical in both classes. What changes
+is the terminator: `vfft_zturn2_set_natord` builds the rho permutation tables
+(`ntf`/`ntb`) that the terminator reads through, and the boundary absorbs the
+reordering with no separate pass.
+
+That is why the natural cascade REPLAYS the scrambled cascade's chain verdict
+rather than re-searching it — the chain is order-agnostic plan data, and only
+the boundary differs. It is banked as its own natural verdict, because the
+regimes are separate even though the interior is shared.
+
+🔴 The natural contract is not free: `set_natord` forces `tfuse = 0`,
+because rho spans the section and a per-tile terminator becomes illegal. The
+scrambled path keeps that fusion. So the two orders are not the same plan at
+two speeds — one gives up an optimization the other has, which is a second
+reason a cross-order race would be meaningless.
+
+### What each class enumerates
 
 | | NATURAL | SCRAMBLED |
 |---|---|---|
-| routes | MONO, 2P_PURE | CASCADE only |
+| routes | MONO, 2P_PURE, **and the cascade with a natural terminator** | CASCADE |
 | shape | radix pair + kernel forms | factor chain + engine + terminator + tile |
 | metric | `fwd1` | `joint2` |
+
+🔴 `_il_dp_enumerate` produces only the MONO and 2P_PURE candidates for
+NATURAL. The natural CASCADE candidate is built elsewhere (`vfft.c`, the
+ZCASC-natural arm) by replaying the scrambled verdict and setting natord, so
+it never appears in this enumerator's counts. That is why §6 shows 0 natural
+candidates at N >= 8192 while the front-door gate races ZCASC at those cells.
+Both are correct; they count different things.
 
 The metric differs because the verdicts differ in kind. A 2P plan is measured
 forward-only. A cascade route verdict cuts over atomically for both
@@ -232,7 +268,7 @@ today, 9 once tangent backward exists.
 **Natural IL candidates collapse with N** — 23, 8, 1, 0. At 4096 the only
 legal pair is 64×64, and above that no pair of powers of two both `<= 64` can
 multiply to `N`, so the pair axis cannot cover the cell and the cascade owns
-it. This is the three-tier rule falling out of the enumerator rather than
+it (via the ZCASC-natural arm in `vfft.c`, not this enumerator — §1). This is the three-tier rule falling out of the enumerator rather than
 being asserted. A corollary worth knowing: at 4096 natural the FORWARD search
 has no choice to make, so the backward axis is the only thing left to search
 at that cell.
