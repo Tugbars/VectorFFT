@@ -701,6 +701,12 @@ static inline int vw2_oop_lookup_zr2c(const vw2_store_t *s, int realN, int *zr_k
         r = vw2_lookup(s, &k);
         if (!r) continue;
         if (strcmp(vw2__oop_eng(r), "zr2c")) continue;
+        /* SEED SKIP (2026-08-21) — the law vw2_oop_lookup_k1 already applies,
+         * missing here. It matters more for zr2c than for k1: _zr2c_build
+         * RETURNS on any banked verdict, so a bank-only row makes the racer
+         * at step 3 permanently unreachable at that cell. A seed is a row
+         * nothing measured; it must not preempt the measurement. */
+        if (vw2__is_seed(r)) continue;
         {
             const char *route = vw2_rec_get(r, "route");
             if (!route) continue;

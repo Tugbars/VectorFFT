@@ -33,6 +33,13 @@ int main(int argc, char **argv)
             return vw2_export_stride(argv[2], sp, rf) < 0 ? 1 : 0;
         }
     }
+    if (argc > 1 && !strcmp(argv[1], "--seed-zr2c")) {
+        if (argc < 3) {
+            fprintf(stderr, "usage: wisdom2_migrate --seed-zr2c <store_dir>\n");
+            return 2;
+        }
+        return vw2_migrate_seed_unraced_zr2c(argv[2]) < 0 ? 1 : 0;
+    }
     if (argc > 1 && !strcmp(argv[1], "--rekey-k1role")) {
         if (argc < 3) {
             fprintf(stderr, "usage: wisdom2_migrate --rekey-k1role <store_dir>\n");
