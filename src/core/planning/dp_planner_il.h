@@ -501,8 +501,12 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b)
 {
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
-    vfft_il2p_execute_bwd(b->ip, ctx->z_in, ctx->z_out);
-    return 0;
+    /* 🔴 PROPAGATE, never discard. vfft_il2p_execute_bwd returns -1 and
+     * leaves zout UNTOUCHED when neither the t2t composition nor the fdiag
+     * fallback is available. Swallowing that turns a refusal into a timed
+     * empty call: the arm posts a near-zero time, wins the race, and banks
+     * a verdict for kernels that never ran. */
+    return vfft_il2p_execute_bwd(b->ip, ctx->z_in, ctx->z_out);
 }
 
 /* Execute a built CASCADE candidate JOINT: fwd z_in -> z_out, then bwd
@@ -785,6 +789,30 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
     if (_il_dp_exec_dir(ctx, c, &b, bwd) != 0)
     { _il_dp_free(&b); return 1e18; }
+    /* BACKWARD arms are correctness-checked HERE, because nothing else
+     * checks them: the candidate loop's gate-before-time runs the FORWARD
+     * (_il_dp_gate_err), so without this a backward variant that is fast and
+     * WRONG would win its race unopposed. The forward plan is already gated
+     * by the time this runs, so a roundtrip failure isolates to the backward
+     * slots. It also subsumes the no-op case above - a backward that does
+     * nothing cannot reproduce N*z. */
+    if (bwd)
+    {
+        double worst = 0.0;
+        long i;
+        if (_il_dp_exec(ctx, c, &b) != 0) { _il_dp_free(&b); return 1e18; }
+        /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
+         * stage 2 reads mid into zout, so the input is fully consumed. */
+        if (vfft_il2p_execute_bwd(b.ip, ctx->z_out, ctx->z_out) != 0)
+        { _il_dp_free(&b); return 1e18; }
+        for (i = 0; i < 2L * N; i++)
+        {
+            double d = fabs(ctx->z_out[i] / (double)N - ctx->z_orig[i]);
+            if (!(d < 1e300)) { worst = 1e30; break; }   /* NaN/Inf -> refuse */
+            if (d > worst) worst = d;
+        }
+        if (worst > 1e-11) { _il_dp_free(&b); return 1e18; }
+    }
     if (joint)
     {
         double worst = 0.0;
