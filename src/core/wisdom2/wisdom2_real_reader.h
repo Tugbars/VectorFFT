@@ -29,13 +29,34 @@
  * METRIC: one whole-plan execute in the transform's own direction, single
  * threaded — fwd1 for r2c, bwd1 for c2r. arms= records BOTH timings so a
  * banked line reads back as a race, not just a name.
+ *
+ * DIR: absent on both tags, deliberately. c2r IS the backward transform, but
+ * its direction is already carried by t=c2r — dir= exists to separate
+ * DIRECTIONAL SIBLINGS sharing one cell (as t=c2c does, where forward and
+ * backward pick independently at the same key). r2c and c2r are distinct tags
+ * with no sibling, so stamping dir=bwd on c2r would key a cell nothing ever
+ * requests. The bwd1 metric label is the direction record here; dir= is not.
+ * Both scanners below go through vw2_key_serves, which equality-matches dir
+ * and role, so a directional sibling in this shard can never be matched by
+ * accident — the hazard that hand-rolled field-by-field scans carry.
  */
 #ifndef VFFT_WISDOM2_REAL_READER_H
 #define VFFT_WISDOM2_REAL_READER_H
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "wisdom2.h"
+
+/* Family-local, matching the stride/2d codecs — there is no shared stamp. */
+static inline void vw2__real_stamp_date(vw2_rec_t *r)
+{
+    char d[16];
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    if (tm && strftime(d, sizeof d, "%Y-%m-%d", tm))
+        vw2_rec_set(r, 2, "date", d);
+}
 
 typedef enum {
     VW2_RROUTE_NONE    = 0,
@@ -168,7 +189,7 @@ static inline int vw2_real_rec_from_route(vw2_rec_t *r, int t, int N, size_t K,
     }
     VW2__RB_SET(2, "src", src);
     if (from) VW2__RB_SET(2, "from", from);
-    else vw2_rec_stamp_date(r);
+    else vw2__real_stamp_date(r);
     return 0;
 }
 

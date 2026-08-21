@@ -27,6 +27,7 @@
 #include "wisdom2_oop.h"        /* OOP wisdom structs/codecs + legacy loader (wisdom2 folder) */
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
 #include "wisdom2/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
+#include "wisdom2/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
@@ -1011,11 +1012,48 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
  * (N,K), time them, and keep the winner. Closes the "decouple threshold" axis:
  * the K=32 default is the N=256 crossover, but the true crossover shifts per N.
  * ════════════════════════════════════════════════════════════════════════ */
-/* time vfft_r2c_execute_fwd best-of-5 on deterministic scratch; ns (1e18 on OOM). */
-static double _r2c_time_fwd(const vfft_r2c_plan_t *p, int N, size_t K)
+/* ════════════════════════════════════════════════════════════════════════
+ * §W2 R2C / C2R ROUTE VERDICTS (wisdom2 wave 2, 2026-08-21)
+ *
+ * Both routes were always RACED and the verdict was always DISCARDED, so a
+ * high-rigor create re-raced every time and every other create fell back to
+ * a constant (the decouple_min_k threshold). These decides bank the race.
+ * Precedence is _zr2c_build's law, verbatim — one route decision, one shape:
+ *
+ *   env racing hook (beats wisdom, never banks)
+ *     > banked route verdict (wisdom2_real_reader.h, eng=route)
+ *       > race both arms and BANK the winner
+ *         > the structural default (the decouple_min_k threshold)
+ *
+ * The race alternates arm order across 9 rounds and takes the median. The
+ * old bake-off timed arm A to completion and then arm B, which puts the two
+ * arms in different thermal windows; that order bias was tolerable while the
+ * verdict died with the process, but it must not be frozen into a record.
+ * ════════════════════════════════════════════════════════════════════════ */
+static double _il_ab_med9(double *v);
+static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
+
+/* Build exactly one r2c arm: the rfft cascade, or the decoupled stride. */
+static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
+                                       const vfft_proto_registry_t *reg)
+{
+    size_t saved = vfft_r2c_dispatch_get_decouple_min_k();
+    vfft_r2c_dispatch_set_decouple_min_k(stride_arm ? 0 : (size_t)-1);
+    vfft_r2c_plan_t *p = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(),
+                                              NULL, (vfft_proto_registry_t *)reg);
+    vfft_r2c_dispatch_set_decouple_min_k(saved);
+    return p;
+}
+
+/* Alternating-order median-of-9 A/B on ONE buffer set (both arms share the
+ * same split re/im I/O contract). 0 on success. */
+static int _r2c_race_arms(const vfft_r2c_plan_t *pr, const vfft_r2c_plan_t *ps,
+                          int N, size_t K, double *n_rfft, double *n_stride)
 {
     size_t insz = (size_t)N * K, outsz = (size_t)(N / 2 + 1) * K;
     double *x = NULL, *orr = NULL, *oii = NULL;
+    double a[9], b[9];
+    int reps, r;
     if (vfft_proto_posix_memalign((void **)&x, 64, insz * sizeof(double)) ||
         vfft_proto_posix_memalign((void **)&orr, 64, outsz * sizeof(double)) ||
         vfft_proto_posix_memalign((void **)&oii, 64, outsz * sizeof(double)))
@@ -1023,65 +1061,110 @@ static double _r2c_time_fwd(const vfft_r2c_plan_t *p, int N, size_t K)
         vfft_proto_aligned_free(x);
         vfft_proto_aligned_free(orr);
         vfft_proto_aligned_free(oii);
-        return 1e18;
+        return -1;
     }
     for (size_t i = 0; i < insz; i++)
         x[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
     for (int w = 0; w < 5; w++)
-        vfft_r2c_execute_fwd(p, x, orr, oii);
-    int reps = (int)(2e6 / (double)(insz + 1));
+    {
+        vfft_r2c_execute_fwd(pr, x, orr, oii);
+        vfft_r2c_execute_fwd(ps, x, orr, oii);
+    }
+    reps = (int)(2e6 / (double)(insz + 1));
     if (reps < 20)
         reps = 20;
     if (reps > 100000)
         reps = 100000;
-    double best = 1e18;
-    for (int t = 0; t < 5; t++)
+    for (r = 0; r < 9; r++)
     {
+        const vfft_r2c_plan_t *first = (r & 1) ? ps : pr;
+        const vfft_r2c_plan_t *second = (r & 1) ? pr : ps;
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_r2c_execute_fwd(p, x, orr, oii);
-        double e = (vfft_proto_now_ns() - t0) / reps;
-        if (e < best)
-            best = e;
+            vfft_r2c_execute_fwd(first, x, orr, oii);
+        double tf = (vfft_proto_now_ns() - t0) / reps;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_r2c_execute_fwd(second, x, orr, oii);
+        double tsc = (vfft_proto_now_ns() - t0) / reps;
+        a[r] = (r & 1) ? tsc : tf;  /* rfft   */
+        b[r] = (r & 1) ? tf : tsc;  /* stride */
     }
     vfft_proto_aligned_free(x);
     vfft_proto_aligned_free(orr);
     vfft_proto_aligned_free(oii);
-    return best;
+    *n_rfft = _il_ab_med9(a);
+    *n_stride = _il_ab_med9(b);
+    return 0;
 }
-/* Build rfft + decoupled-stride for (N,K), time single-thread, return the faster.
- * (ST decision: rfft never threads while stride does, so ST is conservative — if
- * stride wins ST it wins harder MT; rfft only wins at tiny K where threading is moot.) */
-static vfft_r2c_plan_t *_r2c_bakeoff(int N, size_t K, const vfft_proto_registry_t *reg)
+
+/* may_race gates only step 3 — a BANKED verdict is honoured at every rigor
+ * tier, which is the point of banking it. */
+static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
+                                          const vfft_config_t *cfg,
+                                          int N, size_t K,
+                                          const vfft_proto_registry_t *reg,
+                                          int may_race)
 {
-    size_t saved = vfft_r2c_dispatch_get_decouple_min_k();
-    vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* force rfft */
-    vfft_r2c_plan_t *pr = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
-                                               (vfft_proto_registry_t *)reg);
-    vfft_r2c_dispatch_set_decouple_min_k(0); /* force decoupled stride */
-    vfft_r2c_plan_t *ps = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
-                                               (vfft_proto_registry_t *)reg);
-    vfft_r2c_dispatch_set_decouple_min_k(saved); /* restore */
+    const int pl = (cfg->placement == VFFT_INPLACE) ? VW2_PL_IP : VW2_PL_OOP;
+    vfft_r2c_plan_t *pr, *ps;
+    double nr = 0.0, ns = 0.0;
+    int pick_rfft;
+
+    /* 1. env — the racing hook. Beats wisdom, never banks. */
+    {
+        const char *e = getenv("VFFT_R2C_ROUTE");
+        if (e && e[0])
+            return _r2c_build_arm(N, K, atoi(e) != 0, reg);
+    }
+    /* 2. banked verdict for THIS (N, K, placement). */
+    if (W && !cfg->recalibrate)
+    {
+        int v = vw2_real_route_lookup(&W->vw2, VW2_T_R2C, N, K, pl);
+        if (v)
+            return _r2c_build_arm(N, K, v == VW2_RROUTE_STRIDE, reg);
+    }
+    /* 3. outside the race window, or nothing to bank into -> structural
+     * default (the decouple_min_k threshold picks). */
+    if (!may_race || !W)
+        return vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
+                                    (vfft_proto_registry_t *)reg);
+
+    pr = _r2c_build_arm(N, K, 0, reg);
+    ps = _r2c_build_arm(N, K, 1, reg);
     if (!pr)
         return ps;
     if (!ps)
         return pr;
     if (pr->path == ps->path)
     {
+        /* rfft uncovered at this cell: both arms resolved to the same path,
+         * so no race happened and there is NO verdict to bank. */
         vfft_r2c_plan_destroy(ps);
         return pr;
-    } /* same path (rfft uncovered) */
-    int T = stride_get_num_threads();
-    stride_set_num_threads(1);
-    double tr = _r2c_time_fwd(pr, N, K), ts = _r2c_time_fwd(ps, N, K);
-    stride_set_num_threads(T);
+    }
+    {
+        int T = stride_get_num_threads();
+        stride_set_num_threads(1);
+        if (_r2c_race_arms(pr, ps, N, K, &nr, &ns) != 0)
+        {
+            stride_set_num_threads(T);
+            vfft_r2c_plan_destroy(pr);
+            return ps;  /* OOM in the racer: serve, do not bank a guess */
+        }
+        stride_set_num_threads(T);
+    }
     /* Hysteresis toward stride: pick rfft only if clearly faster (>3%). Stride is the
      * structural high-K winner and the only path that threads, so on a near-tie (where
      * calibration timing noise lives) prefer it — a noisy run can't flip a tie to rfft. */
-    int pick_rfft = (tr < ts * 0.97);
+    pick_rfft = (nr < ns * 0.97);
     if (getenv("VFFT_BAKEOFF_DBG"))
-        fprintf(stderr, "[bakeoff] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
-                N, (size_t)K, tr, ts, pick_rfft ? "rfft" : "STRIDE");
+        fprintf(stderr, "[r2c route] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
+                N, (size_t)K, nr, ns, pick_rfft ? "rfft" : "STRIDE");
+    vw2_real_route_bank(&W->vw2, VW2_T_R2C, N, K, pl,
+                        pick_rfft ? VW2_RROUTE_RFFT : VW2_RROUTE_STRIDE,
+                        pick_rfft ? nr : ns, pick_rfft ? ns : nr);
+    _vw2_persist(W, cfg);
     if (pick_rfft)
     {
         vfft_r2c_plan_destroy(ps);
@@ -1091,11 +1174,20 @@ static vfft_r2c_plan_t *_r2c_bakeoff(int N, size_t K, const vfft_proto_registry_
     return ps;
 }
 
-/* Time a c2r dispatcher (NATURAL or STRIDE) on a split half-spectrum, ST. */
-static double _c2r_time(const vfft_c2r_disp_t *p, int N, size_t K)
+/* Build NATURAL + STRIDE c2r for (N,K), time ST, return the faster. The c2r analog
+ * of _r2c_bakeoff: BOTH consume split re/im (same caller I/O contract), so the pick
+ * is transparent. NATURAL = the fast packed cascade on split input (no repack, the
+ * low/mid-K winner); STRIDE = the decoupled high-K path that also threads. Hysteresis
+ * toward stride on a near-tie (it threads and owns high K; calibration noise can't
+ * flip a tie to natural). */
+/* Alternating-order median-of-9 A/B, c2r twin of _r2c_race_arms. */
+static int _c2r_race_arms(const vfft_c2r_disp_t *pn, const vfft_c2r_disp_t *ps,
+                          int N, size_t K, double *n_nat, double *n_split)
 {
     size_t outsz = (size_t)N * K, hcsz = (size_t)(N / 2 + 1) * K;
     double *re = NULL, *im = NULL, *y = NULL;
+    double a[9], b[9];
+    int reps, r;
     if (vfft_proto_posix_memalign((void **)&re, 64, hcsz * sizeof(double)) ||
         vfft_proto_posix_memalign((void **)&im, 64, hcsz * sizeof(double)) ||
         vfft_proto_posix_memalign((void **)&y, 64, outsz * sizeof(double)))
@@ -1103,7 +1195,7 @@ static double _c2r_time(const vfft_c2r_disp_t *p, int N, size_t K)
         vfft_proto_aligned_free(re);
         vfft_proto_aligned_free(im);
         vfft_proto_aligned_free(y);
-        return 1e18;
+        return -1;
     }
     for (size_t i = 0; i < hcsz; i++)
     {
@@ -1111,52 +1203,101 @@ static double _c2r_time(const vfft_c2r_disp_t *p, int N, size_t K)
         im[i] = (double)((i * 40503u) & 0xffff) / 65536.0 - 0.5;
     }
     for (int w = 0; w < 5; w++)
-        vfft_c2r_disp_execute(p, re, im, y);
-    int reps = (int)(2e6 / (double)(outsz + 1));
+    {
+        vfft_c2r_disp_execute(pn, re, im, y);
+        vfft_c2r_disp_execute(ps, re, im, y);
+    }
+    reps = (int)(2e6 / (double)(outsz + 1));
     if (reps < 20)
         reps = 20;
     if (reps > 100000)
         reps = 100000;
-    double best = 1e18;
-    for (int t = 0; t < 5; t++)
+    for (r = 0; r < 9; r++)
     {
+        const vfft_c2r_disp_t *first = (r & 1) ? ps : pn;
+        const vfft_c2r_disp_t *second = (r & 1) ? pn : ps;
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_c2r_disp_execute(p, re, im, y);
-        double e = (vfft_proto_now_ns() - t0) / reps;
-        if (e < best)
-            best = e;
+            vfft_c2r_disp_execute(first, re, im, y);
+        double tf = (vfft_proto_now_ns() - t0) / reps;
+        t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+            vfft_c2r_disp_execute(second, re, im, y);
+        double tsc = (vfft_proto_now_ns() - t0) / reps;
+        a[r] = (r & 1) ? tsc : tf;  /* natural */
+        b[r] = (r & 1) ? tf : tsc;  /* split   */
     }
     vfft_proto_aligned_free(re);
     vfft_proto_aligned_free(im);
     vfft_proto_aligned_free(y);
-    return best;
+    *n_nat = _il_ab_med9(a);
+    *n_split = _il_ab_med9(b);
+    return 0;
 }
 
-/* Build NATURAL + STRIDE c2r for (N,K), time ST, return the faster. The c2r analog
- * of _r2c_bakeoff: BOTH consume split re/im (same caller I/O contract), so the pick
- * is transparent. NATURAL = the fast packed cascade on split input (no repack, the
- * low/mid-K winner); STRIDE = the decoupled high-K path that also threads. Hysteresis
- * toward stride on a near-tie (it threads and owns high K; calibration noise can't
- * flip a tie to natural). */
-static vfft_c2r_disp_t *_c2r_bakeoff(int N, size_t K, const vfft_proto_registry_t *reg)
+/* §W2 c2r twin of _r2c_route_decide — same precedence law. */
+static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
+                                          const vfft_config_t *cfg,
+                                          int N, size_t K,
+                                          const vfft_proto_registry_t *reg,
+                                          int may_race)
 {
-    vfft_c2r_disp_t *pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
-                                               _rfft_registry(), (vfft_proto_registry_t *)reg);
-    vfft_c2r_disp_t *ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
-                                               _rfft_registry(), (vfft_proto_registry_t *)reg);
+    const int pl = (cfg->placement == VFFT_INPLACE) ? VW2_PL_IP : VW2_PL_OOP;
+    vfft_c2r_disp_t *pn, *ps;
+    double nn = 0.0, ns = 0.0;
+    int pick_nat;
+
+    /* 1. env — the racing hook. Beats wisdom, never banks. */
+    {
+        const char *e = getenv("VFFT_C2R_ROUTE");
+        if (e && e[0])
+            return vfft_c2r_disp_create(N, K,
+                                        atoi(e) ? VFFT_C2R_SPLIT : VFFT_C2R_NATURAL,
+                                        _rfft_registry(), (vfft_proto_registry_t *)reg);
+    }
+    /* 2. banked verdict for THIS (N, K, placement). */
+    if (W && !cfg->recalibrate)
+    {
+        int v = vw2_real_route_lookup(&W->vw2, VW2_T_C2R, N, K, pl);
+        if (v)
+            return vfft_c2r_disp_create(N, K,
+                                        v == VW2_RROUTE_SPLIT ? VFFT_C2R_SPLIT
+                                                              : VFFT_C2R_NATURAL,
+                                        _rfft_registry(), (vfft_proto_registry_t *)reg);
+    }
+    /* 3. outside the race window, or nothing to bank into -> the legacy
+     * c2r_path table then the vfft_c2r_best_layout threshold. */
+    if (!may_race || !W)
+        return vfft_c2r_disp_create_auto(N, K, _rfft_registry(),
+                                         (vfft_proto_registry_t *)reg);
+
+    pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
+                              _rfft_registry(), (vfft_proto_registry_t *)reg);
+    ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
+                              _rfft_registry(), (vfft_proto_registry_t *)reg);
     if (!pn)
         return ps;
     if (!ps)
         return pn;
-    int T = stride_get_num_threads();
-    stride_set_num_threads(1);
-    double tn = _c2r_time(pn, N, K), ts = _c2r_time(ps, N, K);
-    stride_set_num_threads(T);
-    int pick_nat = (tn < ts * 0.97);
+    {
+        int T = stride_get_num_threads();
+        stride_set_num_threads(1);
+        if (_c2r_race_arms(pn, ps, N, K, &nn, &ns) != 0)
+        {
+            stride_set_num_threads(T);
+            vfft_c2r_disp_destroy(pn);
+            return ps;  /* OOM in the racer: serve, do not bank a guess */
+        }
+        stride_set_num_threads(T);
+    }
+    pick_nat = (nn < ns * 0.97);
     if (getenv("VFFT_BAKEOFF_DBG"))
-        fprintf(stderr, "[c2r bakeoff] N=%d K=%zu natural=%.0f ns stride=%.0f ns -> %s\n",
-                N, (size_t)K, tn, ts, pick_nat ? "natural" : "STRIDE");
+        fprintf(stderr, "[c2r route] N=%d K=%zu natural=%.0f ns stride=%.0f ns -> %s\n",
+                N, (size_t)K, nn, ns, pick_nat ? "natural" : "STRIDE");
+    vw2_real_route_bank(&W->vw2, VW2_T_C2R, N, K, pl,
+                        pick_nat ? VW2_RROUTE_NATURAL : VW2_RROUTE_SPLIT,
+                        pick_nat ? nn : ns, pick_nat ? ns : nn);
+    _vw2_persist(W, cfg);
     if (pick_nat)
     {
         vfft_c2r_disp_destroy(ps);
@@ -5213,15 +5354,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
         vfft_r2c_dispatch_set_wisdom(&W->rfft);
-        /* High rigor in the rfft-competitive zone (K<=64, N even): per-cell bake-off
-         * picks rfft-vs-stride by measurement instead of the fixed K=32 threshold.
-         * MEASURE / high-K use the (cheap) fixed-threshold dispatch. */
-        vfft_r2c_plan_t *rp;
-        if (cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && bK <= 64)
-            rp = _r2c_bakeoff(N, bK, reg);
-        else
-            rp = vfft_r2c_plan_create(N, bK, VFFT_R2C_SPLIT,
-                                      _rfft_registry(), NULL, (vfft_proto_registry_t *)reg);
+        /* Route axis (§W2). A BANKED verdict serves at every rigor tier; the
+         * race that produces one is confined to the rfft-competitive zone
+         * (K<=64, N even, not MEASURE), and MEASURE / high-K fall through to
+         * the fixed-threshold dispatch exactly as before. */
+        vfft_r2c_plan_t *rp =
+            _r2c_route_decide(W, cfg, N, bK, reg,
+                              cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && bK <= 64);
         if (!rp)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -5301,11 +5440,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
         }
         vfft_r2c_dispatch_set_c2c_wisdom(&W->c2c);
-        vfft_c2r_disp_t *cd;
-        if (cfg->rigor != VFFT_MEASURE && bK <= 128)
-            cd = _c2r_bakeoff(N, bK, reg);
-        else
-            cd = vfft_c2r_disp_create_auto(N, bK, _rfft_registry(), (vfft_proto_registry_t *)reg);
+        /* Route axis (§W2) — see the r2c site. A banked verdict serves at
+         * every rigor tier; only the race is window-confined. */
+        vfft_c2r_disp_t *cd =
+            _c2r_route_decide(W, cfg, N, bK, reg,
+                              cfg->rigor != VFFT_MEASURE && bK <= 128);
         if (!cd)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);

@@ -1444,6 +1444,16 @@ static inline int vw2_export_stride(const char *store_dir,
         int ok = 0;
         if (!eng || strcmp(eng, "stride")) continue;
         if (r->key.rank != 1) continue;
+        /* DIRECTIONAL/COMPONENT SIBLINGS (2026-08-21). This scan matches on
+         * eng= and (ord,pl,t), then re-resolves through vw2_stride_lookup,
+         * which builds a dir-absent role-absent key. A directional or
+         * component stride sibling would therefore be SEEN here and then
+         * resolved to the forward/problem row's content — exporting a silent
+         * DUPLICATE rather than failing. Every family scanner that gains such
+         * a sibling needs this guard; the k1 family took the same fix in
+         * wisdom2_oop_reader.h when it became the first directional writer. */
+        if (r->key.dir != VW2_DIR_NONE) continue;
+        if (r->key.role != VW2_ROLE_NONE) continue;
         memset(&row, 0, sizeof row);
         row.line = vw2__exp_line(r);
         row.N = r->key.n[0];
