@@ -10,6 +10,12 @@ narrower question: **given a cell, what are the arms?**
 
 ## Documents
 
+- [consistency_il_c2c_vs_real.md](consistency_il_c2c_vs_real.md) — cross-engine
+  consistency audit (2026-08-22): IL C2C vs IL r2c/c2r, with split as the
+  maturity benchmark. 6 independent dimension audits, each adversarially
+  verified. Headline: the composite is arithmetically sound; what is behind is
+  everything downstream of the create-time decision. Also finds IL real AHEAD
+  of both siblings on wisdom lookup discipline.
 - [parity_plan.md](parity_plan.md) — the plan to bring the BACKWARD space up
   to the forward one, and r2c/c2r up to IL C2C. Phased, with the unmeasured
   assumption isolated into its own gating falsifier.

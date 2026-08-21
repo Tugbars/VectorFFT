@@ -27,6 +27,17 @@ Recorded first, so no phase re-litigates it.
   `src=migrated`, no `ns=`), not the machinery.
 - **r2c consumes the forward verdict; c2r consumes the `dir=bwd` sibling.**
   One c2c cell serves both real transforms.
+- **The interleaved real path is NATURAL-ONLY, structurally.** The child is
+  created `order = VFFT_ORDER_NATURAL` unconditionally and every kind-5 cell
+  keys `ord=nat`. This is not a gap to close: the Hermitian fold pairs each
+  bin with its MIRROR (`X[f]` against `X[m]`), so a scrambled spectrum breaks
+  the fold's index arithmetic outright. Scrambled real output is served by the
+  SPLIT/stride path instead, which does carry `ord=scr` cells
+  (`t=r2c ... ord=scr place=ip | eng=stride`).
+
+  **So "parity with IL C2C" for r2c/c2r means parity with its NATURAL half
+  only.** The scrambled half is not missing from the real path; it is
+  unreachable by construction, and the split engine owns that contract.
 
 ### Reach of any kernel-form work
 
