@@ -1,0 +1,15 @@
+[wisdom2] C:\Users\Tugbars\AppData\Local\Temp/bkv2: 8 record(s) loaded, writable
+[natorder] N=2048 K=1 replay ZCASC
+[natorder] N=2048 K=1 replay ZCASC
+[natorder] N=4096 K=1 zcasc=18438ns incumbent=74600ns -> ZCASC
+[natorder] N=4096 K=1 replay ZCASC
+[natorder] N=4096 K=1 OOP zcasc=17446ns engine=26292ns -> ZCASC-OOP
+[natorder] N=4096 K=1 replay ZCASC-OOP
+[natorder] N=8192 K=1 zcasc=12490ns incumbent=66800ns -> ZCASC
+[natorder] N=8192 K=1 replay ZCASC
+[natorder] N=8192 K=1 OOP zcasc=12830ns engine=25750ns -> ZCASC-OOP
+[natorder] N=8192 K=1 replay ZCASC-OOP
+[natorder] N=16384 K=1 zcasc=33670ns incumbent=180680ns -> ZCASC
+[natorder] N=16384 K=1 replay ZCASC
+[natorder] N=16384 K=1 OOP zcasc=26910ns engine=62940ns -> ZCASC-OOP
+[natorder] N=16384 K=1 replay ZCASC-OOP

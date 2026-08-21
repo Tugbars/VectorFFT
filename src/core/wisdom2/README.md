@@ -132,7 +132,7 @@ The key states what the caller asked for, never how it was served
 | `q=` | the REQUESTED quantity (howmany) — the caller's number, never the executed width. |
 | `ord=` | `nat` \| `scr` — explicit in EVERY record. Order is a key, never a ranking axis; lookups never cross order classes. |
 | `place=` | `ip` \| `oop`. |
-| `dir=` | reserved. No transform keys direction today (every verdict serves both directions from one plan; what a number measured is stated by `metric=`, §3.4). If a future transform needs per-direction verdicts, `dir=fwd`/`dir=bwd` becomes a key token for that transform via the module's rule table. |
+| `dir=` | `fwd` \| `bwd`. Absent = the verdict serves both directions from one plan, which is still the case for almost every cell. Present = this record is a per-direction verdict and is addressed separately. IN USE by the K=1 engine (`eng=k1`): the blocked kernel-variant verdict is directional, because the forward and backward slots are different kernels and measurably disagree, so the backward pick is a `dir=bwd` sibling of the forward cell rather than more `il_kv` bits. A reader that does not ask for a direction must skip records that carry one — a directional sibling shares every other key component, so an unguarded scan matches it by accident. |
 
 **Wildcards:** `q=*`, `ord=*`, `place=*` mark an axis-agnostic record. They
 are legal ONLY on migrated records (`from=` required) — an explicit statement
@@ -177,7 +177,7 @@ default.
 | token | meaning |
 |---|---|
 | `ran=` | the EXECUTED batch geometry of the run that produced the number — e.g. `q=1` served by the split engine runs a 4-lane batch ⇒ `ran=4`; an interleaved single transform ⇒ `ran=1`. Never conflated with `q`. |
-| `ns=` `metric=` `units=` | the number with EXPLICIT identity: `metric=fwd1` (forward-only per call) \| `joint2` (joint fwd+bwd); `units=ns` \| `cyc`. Numbers with different metric/units are never compared or converted — the module's compare helper refuses. Informational records carry no `ns=` token (absent ≠ 0.0). |
+| `ns=` `metric=` `units=` | the number with EXPLICIT identity: `metric=fwd1` (forward-only per call) \| `bwd1` (backward-only per call) \| `joint2` (joint fwd+bwd); `units=ns` \| `cyc`. Numbers with different metric/units are never compared or converted — the module's compare helper refuses. Informational records carry no `ns=` token (absent ≠ 0.0). |
 | `arms=` | how many arms the race had. `arms=1` + `src=env:<VAR>` marks an env-shaped one-armed verdict; a later real race outranks it at merge. |
 | `src=` | `race` \| `env:<VAR>` \| `migrated` \| `seed` (a seed proposes candidates for a future race and is never served as a verdict). `migrated` serves like `race` (the number WAS raced); a fresh same-metric race outranks it. |
 | `bin= date= host= l1d= from=` | writer binary + vintage, date (migrated records keep the original race date when known), host stamps, and lineage (`from=<file>:<line>` for records carried in from legacy stores). |
