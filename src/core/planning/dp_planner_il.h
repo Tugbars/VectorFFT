@@ -445,9 +445,11 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * default; a nonzero il_kv re-forms the slots (shared nibble
          * semantics, il2p.h) so the planner MEASURES exactly what a banked
          * verdict would serve. kv == 0 is the default-form candidate. */
-        vfft_il2p_apply_kv_forms(b->ip, c->il_kv);
-        /* -1 = a requested backward nibble has no emitted kernel. Refuse the
-         * candidate rather than measure the default under another name. */
+        /* -1 = a requested nibble has no emitted kernel. Refuse the candidate
+         * rather than measure the default under another name - otherwise the
+         * race banks a verdict for a kernel that never ran. Both directions,
+         * same contract. */
+        if (vfft_il2p_apply_kv_forms(b->ip, c->il_kv) != 0) return -1;
         if (vfft_il2p_apply_kv_forms_bwd(b->ip, c->il_bkv) != 0) return -1;
         return 0;
     }
