@@ -231,6 +231,24 @@ typedef struct
      * emitted blocked kernels (t2b/t2b48/n1tb/n1tb48) REACHABLE: without a
      * banked non-zero value every sub-2048 cell runs monolithic. */
     int    il_kv;
+    /* BACKWARD twin of il_kv, same nibble codec, raced on its OWN pass rather
+     * than cross-producted with il_kv (see _il_dp_race_bwd). 0 = the forms
+     * vfft_il2p_create installed, i.e. pre-axis behavior.
+     *
+     * 🔴 This is DIRECTIONAL, not joint. The cascade races fwd+bwd together
+     * (_il_dp_exec_joint) because its route verdict cuts over atomically for
+     * both directions. The 2P variant axis does not: the zr2c child that
+     * motivated this runs exactly ONE direction per handle, so a summed
+     * metric would optimize a cost no caller pays. Measured at N=1024 K=1:
+     * the 2*16 mid costs +23% over 4*8 on the backward while the two are
+     * within noise on the forward — the directions genuinely disagree, which
+     * is precisely why a summed verdict would split the difference and serve
+     * neither. */
+    int    il_bkv;
+    /* ns/iter of the BACKWARD alone at il_bkv. Banked as metric=bwd1, never
+     * mixed with cost_ns (which is the forward/joint metric) - the wisdom2
+     * compare helper refuses across metrics for exactly this reason. */
+    double il_bkv_ns;
     int    chain[VFFT_ZSPLIT_MAX_NF];        /* CASCADE only                    */
     int    nf;                               /* CASCADE only, else 0            */
     int    t2q;                              /* CASCADE terminator schedule
@@ -428,6 +446,9 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * semantics, il2p.h) so the planner MEASURES exactly what a banked
          * verdict would serve. kv == 0 is the default-form candidate. */
         vfft_il2p_apply_kv_forms(b->ip, c->il_kv);
+        /* -1 = a requested backward nibble has no emitted kernel. Refuse the
+         * candidate rather than measure the default under another name. */
+        if (vfft_il2p_apply_kv_forms_bwd(b->ip, c->il_bkv) != 0) return -1;
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
@@ -469,6 +490,19 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
         return 0;
     }
     return -1; /* unknown/retired route — _il_dp_build already refused it */
+}
+
+/* Execute a built 2P candidate BACKWARD: z_in -> z_out.
+ *
+ * Only the 2P route has a directional variant axis, so this deliberately
+ * refuses everything else rather than growing a second joint path. The
+ * cascade's own both-directions metric stays _il_dp_exec_joint. */
+static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
+                           const _il_dp_built_t *b)
+{
+    if (c->route != VFFT_K1_IL_2P_PURE) return -1;
+    vfft_il2p_execute_bwd(b->ip, ctx->z_in, ctx->z_out);
+    return 0;
 }
 
 /* Execute a built CASCADE candidate JOINT: fwd z_in -> z_out, then bwd
@@ -724,16 +758,32 @@ static double _il_dp_gate_err(vfft_il_dp_context_t *ctx, int N,
  * band (vfft.c _calibrate_zroute joint sanity), else the candidate is
  * REFUSED — the fwd-only reference gate upstream cannot see a broken bwd,
  * and a plan that cannot invert must never be ranked, let alone banked. */
-static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
-                           const vfft_il_cand_t *c)
+/* One timed iteration of whatever metric `bwd` selects.
+ *
+ *   bwd == 0 : the shipped metric — joint fwd+bwd for the cascade (its route
+ *              verdict cuts over atomically), forward alone otherwise.
+ *   bwd == 1 : the backward alone, 2P only. Not a roundtrip: the backward
+ *              variant axis is raced against the backward's OWN cost, because
+ *              the caller that needs it (the zr2c child) pays only that. */
+static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
+                           const _il_dp_built_t *b, int bwd)
 {
-    const int joint = (c->route == VFFT_K1_IL_CASCADE);
+    if (bwd) return _il_dp_exec_bwd(ctx, c, b);
+    if (c->route == VFFT_K1_IL_CASCADE) return _il_dp_exec_joint(ctx, c, b);
+    return _il_dp_exec(ctx, c, b);
+}
+
+static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
+                               const vfft_il_cand_t *c, int bwd)
+{
+    /* the roundtrip refusal below only makes sense for the joint metric */
+    const int joint = (!bwd && c->route == VFFT_K1_IL_CASCADE);
     _il_dp_built_t b;
     if (_il_dp_build(N, c, &b) != 0) return 1e18;
 
     /* warmup (+ joint roundtrip refusal for cascades) */
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
-    if ((joint ? _il_dp_exec_joint(ctx, c, &b) : _il_dp_exec(ctx, c, &b)) != 0)
+    if (_il_dp_exec_dir(ctx, c, &b, bwd) != 0)
     { _il_dp_free(&b); return 1e18; }
     if (joint)
     {
@@ -759,8 +809,7 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
             memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
             double t0 = _il_dp_now_ns();
             for (int i = 0; i < reps; i++)
-                (void)(joint ? _il_dp_exec_joint(ctx, c, &b)
-                             : _il_dp_exec(ctx, c, &b));
+                (void)_il_dp_exec_dir(ctx, c, &b, bwd);
             double trial = _il_dp_now_ns() - t0;
             if (trial < tmin) tmin = trial;
             elapsed += trial;
@@ -785,6 +834,81 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
     ctx->n_benchmarks++;
     _il_dp_maybe_pace(ctx, N);
     return best;
+}
+
+/* The shipped entry point: unchanged forward/joint metric. Every existing
+ * caller keeps measuring exactly what it measured before the axis landed. */
+static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
+                           const vfft_il_cand_t *c)
+{
+    return _il_dp_bench_dir(ctx, N, c, 0);
+}
+
+/* ── the BACKWARD variant pass ─────────────────────────────────────────── */
+
+/* Race the backward form axis on an ALREADY-CHOSEN plan and write the winner
+ * into w->il_bkv. Returns the winning backward ns (1e18 if nothing ran).
+ *
+ * A SECOND PASS, not a third dimension of the main enumeration. Two reasons,
+ * both load-bearing:
+ *
+ *   1. Cap. The forward pool already reaches 4 mid x 4 leaf per (R1,R2) pair,
+ *      and _il_dp_push REFUSES a cell outright past VFFT_IL_DP_MAX_CAND
+ *      rather than truncating. Cross-producing a backward axis onto that is
+ *      how a cell stops being searchable at all.
+ *   2. Independence. The forward and backward slots are DIFFERENT function
+ *      pointers; changing il_bkv cannot move the forward cost and vice versa.
+ *      A separable objective does not need a joint search, and searching it
+ *      jointly would only spend the budget re-measuring the forward winner
+ *      once per backward form.
+ *
+ * The nibble space is walked WHOLE (0, variants 1-4, MONO) rather than
+ * mirroring the forward pool: backward kernels are sparser, and _il_dp_build
+ * refuses an unresolved nibble, so a combination that has no emitted twin
+ * costs one create/destroy and never reaches the timer. That also means new
+ * backward codelets become raceable the day they land, with no edit here. */
+#define VFFT_IL_DP_BKV_MAX_ARMS 24
+
+static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
+                              vfft_il_cand_t *w, int verbose)
+{
+    if (!w || w->route != VFFT_K1_IL_2P_PURE) return 1e18;
+
+    static const int NIB[] = { 0, 1, 2, 3, 4, VFFT_IL_KV_MONO };
+    const int nnib = (int)(sizeof NIB / sizeof NIB[0]);
+
+    vfft_il_cand_t t = *w;
+    int    best_bkv = 0, arms = 0, dropped = 0;
+    double best_ns  = 1e18;
+
+    for (int mi = 0; mi < nnib; mi++)
+        for (int li = 0; li < nnib; li++)
+        {
+            const int bkv = VFFT_IL_KV_PACK(NIB[mi], NIB[li]);
+            if (arms >= VFFT_IL_DP_BKV_MAX_ARMS) { dropped++; continue; }
+            t.il_bkv = bkv;
+            double ns = _il_dp_bench_dir(ctx, N, &t, 1);
+            if (ns > 1e17) continue;      /* no such backward twin — not an arm */
+            arms++;
+            if (verbose)
+                fprintf(stderr, "  [il-dp] N=%d bwd %dx%d bkv=0x%02x -> %.1f ns\n",
+                        N, w->R1, w->R2, bkv, ns);
+            if (ns < best_ns) { best_ns = ns; best_bkv = bkv; }
+        }
+
+    /* NO SILENT CAPS: a bounded race that does not say what it bounded reads
+     * downstream as an exhaustive one. */
+    if (dropped)
+        fprintf(stderr, "  [il-dp] N=%d bwd race CAPPED at %d arms, %d combos"
+                " unmeasured\n", N, VFFT_IL_DP_BKV_MAX_ARMS, dropped);
+
+    if (best_ns > 1e17) return 1e18;      /* leave il_bkv at 0 = the default */
+    w->il_bkv    = best_bkv;
+    w->il_bkv_ns = best_ns;
+    if (verbose)
+        fprintf(stderr, "  [il-dp] N=%d bwd WINNER bkv=0x%02x %.1f ns"
+                " (%d arms)\n", N, best_bkv, best_ns, arms);
+    return best_ns;
 }
 
 /* ── candidate enumeration (THE pluggable piece) ───────────────────────── */
@@ -1171,6 +1295,12 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
 
     qsort(cand, (size_t)ncand, sizeof(cand[0]), _il_dp_cand_cmp);
 
+    /* The backward axis rides on the FORWARD winner, chosen above. It cannot
+     * reorder cand[] — the sort key is cost_ns, which stays the forward/joint
+     * metric — so this only fills in the second half of the winning plan. */
+    if (cand[0].route == VFFT_K1_IL_2P_PURE)
+        (void)_il_dp_race_bwd(ctx, N, &cand[0], verbose);
+
     if (!e) e = _il_dp_insert(ctx, N, ord);
     if (e)
     {
@@ -1305,6 +1435,30 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
         e.ns = il_ok ? nat->cost_ns : sp_ns;
         if (vw2_oop_bank_entry(st, &e) == VW2_OK)
             lines++;
+
+        /* The dir=bwd SIBLING (2026-08-21). Its own cell, not more bits on
+         * the line above: wisdom2 keys direction and does not key kernel
+         * forms, so the backward verdict is addressed by `dir=bwd` and the
+         * forward record stays byte-identical to what it was before this
+         * axis existed. Banked only when the race actually produced a
+         * verdict - 🔴 an unraced axis must leave NO record at all, because
+         * a zero-filled one would assert a measurement that never happened
+         * (the same lie the sp_route < 0 skip above exists to prevent). */
+        if (il_ok && nat->il_bkv && nat->route == VFFT_K1_IL_2P_PURE)
+        {
+            vw2_rec_t br;
+            const char *why = NULL;
+            if (vw2_oop_rec_k1_bwd(&br, N, nat->route, nat->R1, nat->R2,
+                                   nat->il_bkv, nat->il_bkv_ns, "race",
+                                   &why) == VW2_OK)
+            {
+                if (vw2_bank(st, &br) == VW2_OK) lines++;
+                else                             vw2_rec_free(&br);
+            }
+            else
+                fprintf(stderr, "  [il-dp] N=%d bwd bank REFUSED: %s\n",
+                        N, why ? why : "?");
+        }
         }
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)

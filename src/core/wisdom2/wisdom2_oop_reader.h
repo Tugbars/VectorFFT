@@ -119,6 +119,14 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
+            /* 🔴 The kind-3 family now has a dir=bwd SIBLING (the backward
+             * kernel-variant verdict). It shares eng=k1 and the cell key, so
+             * without this guard it matches here, fails the sp_route decode
+             * below, and returns 0 - silently ERASING the forward verdict for
+             * that cell. The forward record is the dir-less one by
+             * construction; anything directional belongs to its own reader
+             * (vw2_oop_lookup_k1_bwd). */
+            if (c->key.dir != VW2_DIR_NONE) continue;
             if (vw2__is_seed(c)) continue;
             if ((pass == 0) == vw2_key_has_wildcard(&c->key)) continue;
             r = c;
@@ -160,6 +168,43 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
         return 1;
     }
     return 0;
+}
+
+/* kind-3 BACKWARD sibling (dir=bwd, 2026-08-21).
+ *
+ * The backward kernel-variant verdict is its OWN CELL rather than more il_kv
+ * bits, because wisdom2 keys direction (`dir=`) and does not key kernel
+ * forms. Same cell as the forward verdict in every other component, so the
+ * two travel together and a reader that does not know about the backward
+ * axis simply never asks for it.
+ *
+ * Returns the packed variant code (0 = no verdict / nothing to apply) and,
+ * when non-zero, writes the pair the verdict was MEASURED ON into *R1/*R2.
+ * The caller must check that pair against the plan it actually built: a
+ * variant code is only meaningful for the radix pair it was raced at, and
+ * the forward winner can move without this record being re-raced. */
+static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
+                                        int *R1, int *R2)
+{
+    int i, pair[2], np, kv;
+    const vw2_rec_t *r = NULL;
+    for (i = 0; i < s->nrec; i++) {
+        const vw2_rec_t *c = &s->rec[i];
+        if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
+        if (c->key.dir != VW2_DIR_BWD) continue;
+        if (strcmp(vw2__oop_eng(c), "k1")) continue;
+        if (vw2__is_seed(c)) continue;
+        r = c;
+        break;
+    }
+    if (!r) return 0;
+    kv = vw2__oop_geti(r, "il_kv", 0);
+    if (!kv) return 0;
+    np = vw2__oop_split_ints(vw2_rec_get(r, "il_pair"), pair, 2);
+    if (np != 2) return 0;          /* unusable without the pair it was raced at */
+    if (R1) *R1 = pair[0];
+    if (R2) *R2 = pair[1];
+    return kv;
 }
 
 /* ------------------------------------------------------ kind-4 (cascade) */
@@ -475,6 +520,53 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
     VW2__OB_SET(2, "src", src);
     if (from) VW2__OB_SET(2, "from", from);
 #undef VW2__OB_SET
+    return VW2_OK;
+}
+
+/* Build the kind-3 BACKWARD record (dir=bwd). Wisdom2-NATIVE, like the
+ * kind-5 builder below and unlike vw2_oop_rec_from_entry: there is no legacy
+ * text line that can carry a backward variant verdict, so routing it through
+ * the legacy entry struct would only widen a format that is being retired.
+ *
+ * Payload is deliberately minimal - the plan identity (il_route, il_pair)
+ * plus the verdict (il_kv). Everything else about the cell is stated by the
+ * forward record it shares a key with. */
+static inline int vw2_oop_rec_k1_bwd(vw2_rec_t *r, int N, int il_route,
+                                     int R1, int R2, int kv, double ns,
+                                     const char *src, const char **why)
+{
+    char pair[48], kvb[16], nsbuf[48];
+    *why = NULL;
+    memset(r, 0, sizeof *r);
+    if (kv == 0)                      { *why = "no-bwd-verdict";        return -1; }
+    if (il_route < 0 || il_route > 7) { *why = "il-route-out-of-range"; return -1; }
+    if (R1 <= 0 || R2 <= 0)           { *why = "bwd-pair-missing";      return -1; }
+
+    r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = N;
+    r->key.q = 1; r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP;
+    r->key.role = VW2_ROLE_COMP;
+    r->key.dir  = VW2_DIR_BWD;       /* the ONE component that separates this
+                                      * record from the forward verdict */
+    snprintf(pair, sizeof pair, "%d.%d", R1, R2);
+    snprintf(kvb,  sizeof kvb,  "%d", kv);
+    snprintf(nsbuf, sizeof nsbuf, "%.1f", ns);
+    if (vw2_rec_set(r, 1, "eng", "k1") != VW2_OK ||
+        vw2_rec_set(r, 1, "il_route", vw2_oop_il_name[il_route]) != VW2_OK ||
+        vw2_rec_set(r, 1, "il_pair", pair) != VW2_OK ||
+        vw2_rec_set(r, 1, "il_kv", kvb) != VW2_OK ||
+        vw2_rec_set(r, 2, "ran", "1") != VW2_OK ||
+        (ns > 0.0 &&
+         (vw2_rec_set(r, 2, "ns", nsbuf) != VW2_OK ||
+          /* a THIRD metric identity: neither fwd1 nor joint2. The compare
+           * helper refuses across metrics, which is exactly right here - a
+           * backward-only number must never be ranked against a forward one. */
+          vw2_rec_set(r, 2, "metric", "bwd1") != VW2_OK ||
+          vw2_rec_set(r, 2, "units", "ns") != VW2_OK)) ||
+        vw2_rec_set(r, 2, "src", src) != VW2_OK) {
+        vw2_rec_free(r);
+        *why = "token-refused";
+        return -1;
+    }
     return VW2_OK;
 }
 
