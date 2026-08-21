@@ -897,22 +897,84 @@ static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
  * backward codelets become raceable the day they land, with no edit here. */
 #define VFFT_IL_DP_BKV_MAX_ARMS 24
 
+/* Which variant vfft_il2p_create INSTALLED in this slot, i.e. what bkv=0
+ * already measures. MUST track vfft_il2p_apply_blocked_default_bwd exactly:
+ * blocked only from R >= 32 and only for an even partner count, preferring
+ * variant 2 (4.8) and falling back to 1 (2.16). Below R=32 the monolithic
+ * kernel is left in place, so the default IS monolithic and variant 0 races
+ * it - which is why MONO never needs to be an arm.
+ *
+ * is_mid selects the slot's registry: the mid runs t2t, the leaf runs n1. */
+static int _il_bwd_default_variant(int R, int partner_even, int is_mid)
+{
+    if (R < 32 || !partner_even) return 0;      /* monolithic stays = variant 0 */
+    if (is_mid)
+    {
+        if (vfft_il2p_t2t_bwd_v_fn(R, 2, 1)) return 2;
+        if (vfft_il2p_t2t_bwd_v_fn(R, 1, 1)) return 1;
+    }
+    else
+    {
+        if (vfft_il2p_n1_bwd_v_fn(R, 2, 1)) return 2;
+        if (vfft_il2p_n1_bwd_v_fn(R, 1, 1)) return 1;
+    }
+    return 0;                                    /* no blocked twin: default is mono */
+}
+
 static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
                               vfft_il_cand_t *w, int verbose)
 {
     if (!w || w->route != VFFT_K1_IL_2P_PURE) return 1e18;
 
-    static const int NIB[] = { 0, 1, 2, 3, 4, VFFT_IL_KV_MONO };
-    const int nnib = (int)(sizeof NIB / sizeof NIB[0]);
+    /* The variant pool, per slot. Mirrors the FORWARD enumerator's two
+     * disciplines, both of which the first cut of this pass dropped:
+     *
+     * 1. 🔴 ELIMINATE THE DEFAULT'S TWIN. At R >= 32 with an even partner
+     *    count, create installs variant 2 (or 1 if 2 is absent) as the
+     *    STRUCTURAL default, so bkv=0 and bkv=PACK(2,2) build the SAME plan.
+     *    The blind grid timed that kernel twice under two labels and let the
+     *    two "compete": measured at 32x32, 0x00 -> 914.2 ns and 0x22 -> 876.4
+     *    ns, a 4% win by one kernel over itself. 7 of the 16 arms were
+     *    duplicates of another arm. The forward has always skipped this
+     *    (msv[mi] == dm && lsv[li] == dl).
+     *
+     * 2. 🔴 MONO IS NOT A PERFORMANCE ARM. It is the odd-count coverage
+     *    fallback - blocked kernels have no odd tail, which is what the
+     *    count_ok guards encode - and that coverage is already automatic: an
+     *    odd partner makes the blocked lookups return NULL and create simply
+     *    leaves the monolithic kernel in place. Where monolithic genuinely
+     *    COMPETES is R <= 16, because it fits the 16 ymm registers, and there
+     *    it is ALREADY variant 0 (create only overrides at R >= 32). So the
+     *    forward pools never enumerate VFFT_IL_KV_MONO and neither does this.
+     *    It stays expressible as a banked verdict for a platform where
+     *    blocked loses - that is what the code is for - just not as an arm.
+     *
+     * Variants 1-4 are still walked BLIND rather than per-radix, so a newly
+     * emitted backward codelet becomes raceable with no edit here; a variant
+     * with no twin is refused at build and never reaches the timer. */
+    /* Canonical pools: 0 = "whatever create installed", plus every variant
+     * that is NOT the one create installed. Canonicalizing this way makes
+     * every (mid, leaf) pair a DISTINCT plan by construction, with no skip
+     * logic and no twin to dedupe. */
+    int msv[5], lsv[5], nm = 0, nl = 0, v;
+    const int mid_def  = _il_bwd_default_variant(w->R1, (w->R2 & 1) == 0, 1);
+    const int leaf_def = _il_bwd_default_variant(w->R2, (w->R1 & 1) == 0, 0);
+    msv[nm++] = 0;
+    lsv[nl++] = 0;
+    for (v = 1; v <= 4; v++)
+    {
+        if (v != mid_def)  msv[nm++] = v;
+        if (v != leaf_def) lsv[nl++] = v;
+    }
 
     vfft_il_cand_t t = *w;
     int    best_bkv = 0, arms = 0, dropped = 0;
     double best_ns  = 1e18;
 
-    for (int mi = 0; mi < nnib; mi++)
-        for (int li = 0; li < nnib; li++)
+    for (int mi = 0; mi < nm; mi++)
+        for (int li = 0; li < nl; li++)
         {
-            const int bkv = VFFT_IL_KV_PACK(NIB[mi], NIB[li]);
+            const int bkv = VFFT_IL_KV_PACK(msv[mi], lsv[li]);
             if (arms >= VFFT_IL_DP_BKV_MAX_ARMS) { dropped++; continue; }
             t.il_bkv = bkv;
             double ns = _il_dp_bench_dir(ctx, N, &t, 1);

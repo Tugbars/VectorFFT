@@ -66,6 +66,9 @@ If a doc disagrees with the code, the code wins. Open an issue.
 
 ## Sibling docs
 
+- [docs/search_space/](../search_space/) — what each engine RACES: axes,
+  legal values, measured candidate counts, and what has no search at all.
+  This folder covers the pipelines; that one covers the arms.
 - [docs/cost_model/](../cost_model/) — the closed-form cost model used by
   `VFFT_ESTIMATE`. Wisdom is the high-quality alternative when measured
   numbers are available.

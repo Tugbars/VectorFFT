@@ -1326,6 +1326,83 @@ static inline int vw2_migrate_stride_gate(const char *spike_path, const char *rf
  * component recipe; its old role-absent key collided with the stride
  * family's @natoop problem verdict). Idempotent: already-role=comp rows
  * are untouched. Returns the number re-keyed, or -1. */
+/* ── SEED THE UNRACED zr2c ROUTE ROWS (2026-08-21) ───────────────────────
+ * _zr2c_build RETURNS on any banked verdict, so a bank-only row makes its
+ * step-3 racer permanently unreachable at that cell. Every zr2c route row in
+ * the shipped store is src=migrated with NO ns= — nothing was ever measured;
+ * a structural rule was written down once and then outranked the measurement
+ * that would have checked it.
+ *
+ * Only rows that are MECHANICALLY REPRODUCIBLE are seeded — those matching
+ * _zr2c_build's own fallback (place=oop -> child_oop_il, place=ip ->
+ * child_nat_ip). Seeding those is lossless: the racer fires and banks a real
+ * number, and if racing is impossible the fallback reproduces the identical
+ * pick. Rows that CONTRADICT the fallback are left authoritative and listed
+ * for an explicit race — they assert something the code does not, and
+ * silently dropping that claim would change live behaviour.
+ *
+ * Uses the rekey backup discipline for a different reason: this is a
+ * DOWNGRADE (migrated outranks seed in the merge law), so a surviving disk
+ * row would out-rank the new one and revert it on save. */
+static inline int vw2_migrate_seed_unraced_zr2c(const char *dir)
+{
+    vw2_store_t st;
+    char path[640], bak[720];
+    int i, n = 0, kept = 0, rc;
+    vw2_open(&st, dir, 1);
+    for (i = 0; i < st.nrec; i++) {
+        vw2_rec_t *r = &st.rec[i];
+        const char *eng = vw2_rec_get(r, "eng");
+        const char *route, *want;
+        if (!eng || strcmp(eng, "zr2c")) continue;
+        if (vw2_rec_get(r, "ns")) continue;          /* measured: never touch */
+        if (vw2__is_seed(r)) continue;               /* already seeded        */
+        route = vw2_rec_get(r, "route");
+        if (!route) continue;
+        want = (r->key.pl == VW2_PL_OOP) ? "child_oop_il" : "child_nat_ip";
+        if (strcmp(route, want)) {
+            /* contradicts the structural fallback — an unverifiable CLAIM */
+            fprintf(stderr, "[wisdom2_migrate] seed-zr2c: KEEPING out-of-pattern "
+                            "t=%s n=%d place=%s route=%s (race this explicitly)\n",
+                    r->key.t == VW2_T_C2R ? "c2r" : "r2c", r->key.n[0],
+                    r->key.pl == VW2_PL_OOP ? "oop" : "ip", route);
+            kept++;
+            continue;
+        }
+        if (vw2_rec_set(r, 2, "src", "seed") != VW2_OK) {
+            vw2_close(&st);
+            return -1;
+        }
+        st.dirty[r->shard] = 1;
+        n++;
+    }
+    if (!n) {
+        vw2_close(&st);
+        fprintf(stderr, "[wisdom2_migrate] seed-zr2c: nothing to seed in %s "
+                        "(%d out-of-pattern kept)\n", dir, kept);
+        return 0;
+    }
+    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_REAL]);
+    snprintf(bak, sizeof bak, "%s.seed.bak", path);
+    remove(bak);
+    if (rename(path, bak) != 0) { vw2_close(&st); return -1; }
+    st.dirty[VW2_SHARD_REAL] = 1;
+    rc = vw2_save(&st);
+    if (rc != VW2_OK) {
+        remove(path);
+        if (rename(bak, path) != 0)
+            fprintf(stderr, "[wisdom2_migrate] seed-zr2c: RESTORE FAILED — "
+                            "recover %s manually\n", bak);
+        vw2_close(&st);
+        return -1;
+    }
+    remove(bak);
+    vw2_close(&st);
+    fprintf(stderr, "[wisdom2_migrate] seed-zr2c: %d row(s) -> src=seed, "
+                    "%d out-of-pattern kept, in %s\n", n, kept, dir);
+    return n;
+}
+
 static inline int vw2_migrate_rekey_k1role(const char *dir)
 {
     vw2_store_t st;
