@@ -526,22 +526,52 @@ static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
  * slot as create resolved it (structural default); VFFT_IL_KV_MONO (0xF)
  * = force the monolithic kernel back; else = the registry variant, parity
  * gated exactly like the default. */
-static inline void vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
+/* Returns 0 when EVERY requested nibble resolved to a real kernel, -1 when
+ * one did not (the plan is still runnable - the unresolved slot keeps
+ * whatever create installed).
+ *
+ * 🔴 The return value is what keeps a banked verdict HONEST. Silently
+ * keeping the default made a candidate labelled "variant 3" MEASURE the
+ * default, so a race could bank il_kv=3 for a kernel that never executed.
+ * The output stayed correct and the record did not: a reader believes
+ * variant 3 won, and on a build where variant 3 DOES exist that same line
+ * installs a kernel nobody timed there. Latent while the enumerator's pools
+ * and this registry agree, but they are two hand-maintained lists.
+ * The backward twin (apply_kv_forms_bwd) has worked this way since
+ * 2026-08-21; this is the same contract.
+ *
+ * The MONO branches are guarded for the same reason and one worse one: they
+ * used to assign UNCONDITIONALLY, so a miss NULLed the slot outright. The
+ * planner never enumerates MONO, but a banked verdict reaches this path
+ * straight off a wisdom line - a null function pointer at execute, not a
+ * mislabelled measurement. */
+static inline int vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
 {
-    if (!p || !kv) return;
+    if (!p) return -1;
+    if (!kv) return 0;                        /* 0 = "leave the default" */
     const int mv = VFFT_IL_KV_MID(kv), lv = VFFT_IL_KV_LEAF(kv);
+    int ok = 0;
     if (mv == VFFT_IL_KV_MONO)
-        p->mid_f = vfft_il2p_mid_fn(p->R1, 0);
-    else if (mv) {
+    {
+        vfft_il2p_fn m = vfft_il2p_mid_fn(p->R1, 0);
+        if (m) p->mid_f = m; else ok = -1;
+    }
+    else if (mv)
+    {
         vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, mv, (p->R2 & 1) == 0);
-        if (m) p->mid_f = m;
+        if (m) p->mid_f = m; else ok = -1;
     }
     if (lv == VFFT_IL_KV_MONO)
-        p->leaf_f = vfft_il2p_leaf_fn(p->R2, 0);
-    else if (lv) {
-        vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, lv, (p->R1 & 1) == 0);
-        if (l) p->leaf_f = l;
+    {
+        vfft_il2p_fn l = vfft_il2p_leaf_fn(p->R2, 0);
+        if (l) p->leaf_f = l; else ok = -1;
     }
+    else if (lv)
+    {
+        vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, lv, (p->R1 & 1) == 0);
+        if (l) p->leaf_f = l; else ok = -1;
+    }
+    return ok;
 }
 /* ── THE BACKWARD ARM (2026-08-21) ────────────────────────────────────────
  * apply_kv_forms above is the ONLY translator from a banked verdict to a
