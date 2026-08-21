@@ -2319,7 +2319,8 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
  * count = R2, the leaf at count = R1 — hence the parity guards, passed
  * explicitly so the rule is visible at the call site. */
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
-                              const vfft_oop_wisdom_entry_t *ke)
+                              const vfft_oop_wisdom_entry_t *ke,
+                              const vw2_store_t *st, int N)
 {
     /* Wisdom variant verdict — runs AFTER create, so it OVERRIDES the
      * structural blocked default (il2p.h): a banked per-cell measurement
@@ -2333,14 +2334,32 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
         vfft_il2p_apply_kv_forms(p, ke->il_kv); /* shared nibble semantics —
                                                  * one definition (il2p.h),
                                                  * planner uses the same fn */
-    /* BACKWARD arm (2026-08-21). No banked backward verdict exists yet:
-     * wisdom2 reserves `dir=` as a KEY token, so a bwd verdict is its own
-     * CELL rather than more il_kv bits. VFFT_IL_BKV is the racing hook in
-     * the VFFT_FORCE_ZROUTE spirit — it makes the arm reachable and
-     * testable NOW, and is the ONE line the planner replaces when it banks
-     * a dir=bwd verdict. Deliberately outside the `ke` guard: the backward
-     * pick does not depend on a forward wisdom hit. Unset => no-op, and
-     * il2p.h's apply_blocked_default_bwd structural pick stands. */
+    /* BACKWARD arm (2026-08-21). The backward kernel-variant verdict is its
+     * OWN CELL, keyed `dir=bwd`, rather than more il_kv bits: wisdom2 keys
+     * DIRECTION and does not key kernel forms. Deliberately outside the `ke`
+     * guard - the backward pick does not depend on a forward wisdom hit. No
+     * record => no-op, and il2p.h's apply_blocked_default_bwd structural
+     * pick stands.
+     *
+     * The two directions genuinely disagree, which is why this is a separate
+     * verdict and not a shared one: at N=1024 the raced forward and backward
+     * winners for the same 32.32 plan are different variant codes. */
+    if (st)
+    {
+        /* 🔴 PAIR CHECK, not just a lookup. A variant code names kernels
+         * for ONE radix pair; the forward winner can move (a re-race, a
+         * different machine, a hand-edited line) without this record being
+         * re-raced, and applying a 32x32 verdict to a 64x16 plan would
+         * install kernels whose counts do not match the plan's slots.
+         * Mismatch => ignore the record and keep the structural default,
+         * which is always correct if slower. */
+        int bR1 = 0, bR2 = 0;
+        int bkv = vw2_oop_lookup_k1_bwd(st, N, &bR1, &bR2);
+        if (bkv && bR1 == p->R1 && bR2 == p->R2)
+            vfft_il2p_apply_kv_forms_bwd(p, bkv);
+    }
+    /* ENV OVERRIDE, applied LAST so it beats the banked verdict (the tcut
+     * precedent: env BEATS wisdom), and still the racing hook. */
     {
         const char *e = getenv("VFFT_IL_BKV");
         if (e && e[0])
@@ -2398,7 +2417,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     {   /* braces load-bearing (same latent trap fixed at the OOP site):
          * apply_kv must not run when the pair axis was skipped. */
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
-        _k1_il2p_apply_kv(*il2p_out, ke);   /* wisdom verdict > default */
+        _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N);   /* wisdom verdict > default */
     }
     /* PAIR-ORDERING race (il_coverage_plan Phase E follow-on, 2026-08-04):
      * with the blocked mids live, the ORDERING of a heuristic pair now
@@ -4670,7 +4689,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                      * pair axis was skipped (it survived unbraced only because
                      * it null-checks — a latent trap, not a working shortcut) */
                     il2p = vfft_il2p_create(N, iR1, iR2);
-                    _k1_il2p_apply_kv(il2p, ke);   /* banked variant verdict */
+                    _k1_il2p_apply_kv(il2p, ke, &W->vw2, N);   /* banked variant verdict */
                 }
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }

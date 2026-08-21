@@ -562,22 +562,43 @@ static inline void vfft_il2p_apply_kv_forms(vfft_il2p_plan_t *p, int kv)
  * independently.  Until the planner races one, callers pass the
  * VFFT_IL_BKV test hook or 0; at 0 this is a no-op and
  * apply_blocked_default_bwd's structural pick stands. */
-static inline void vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
+/* Returns 0 when EVERY requested nibble resolved to a real kernel, -1 when
+ * one did not (the plan is still left runnable — the unresolved slot keeps
+ * whatever create() installed).
+ *
+ * 🔴 The return value is what makes this raceable. Backward variants are
+ * sparser than forward ones: not every (R, variant) pair has an emitted
+ * blocked twin. Silently keeping the default would make two DISTINCT bkv
+ * values build the SAME plan, so the race would "measure" a variant it never
+ * ran and bank a verdict naming a kernel that does not exist. The planner
+ * refuses a candidate on -1 instead. */
+static inline int vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
 {
-    if (!p || !bkv) return;
+    if (!p) return -1;
+    if (!bkv) return 0;                       /* 0 = "leave the default" */
     const int s1 = VFFT_IL_KV_MID(bkv), s2 = VFFT_IL_KV_LEAF(bkv);
+    int ok = 0;
     if (s1 == VFFT_IL_KV_MONO)
-        p->t2t_b = vfft_il2p_t2t_bwd_fn(p->R1);
-    else if (s1) {
+    {
+        vfft_il2p_fn t = vfft_il2p_t2t_bwd_fn(p->R1);
+        if (t) p->t2t_b = t; else ok = -1;
+    }
+    else if (s1)
+    {
         vfft_il2p_fn t = vfft_il2p_t2t_bwd_v_fn(p->R1, s1, (p->R2 & 1) == 0);
-        if (t) p->t2t_b = t;
+        if (t) p->t2t_b = t; else ok = -1;
     }
     if (s2 == VFFT_IL_KV_MONO)
-        p->n1_b_r2 = vfft_il2p_n1_bwd_fn(p->R2);
-    else if (s2) {
-        vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, s2, (p->R1 & 1) == 0);
-        if (n) p->n1_b_r2 = n;
+    {
+        vfft_il2p_fn n = vfft_il2p_n1_bwd_fn(p->R2);
+        if (n) p->n1_b_r2 = n; else ok = -1;
     }
+    else if (s2)
+    {
+        vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, s2, (p->R1 & 1) == 0);
+        if (n) p->n1_b_r2 = n; else ok = -1;
+    }
+    return ok;
 }
 
 
