@@ -164,7 +164,7 @@ static void run_cell(int N, size_t K)
                 io[t*xs+2*f]   = Xr[t*(size_t)(half+1)+f];
                 io[t*xs+2*f+1] = Xi[t*(size_t)(half+1)+f]; }
         memset(zscr, 0, 8*zs*K);
-        _zr2c_fold_bwd_perm(io, zscr, affS, affC, iperm, perm, N, K, xs, zs);
+        _zr2c_fold_bwd_perm(io, zscr, bwdS, bwdC, iperm, perm, N, K, xs, zs);
         w = 0;
         for (size_t t = 0; t < K; t++)
             for (int p = 0; p < half; p++){

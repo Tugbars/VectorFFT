@@ -90,8 +90,14 @@ static void _zr2c_init_aff(int N, double *affS, double *affC,
         double sn = sin(th), cs = cos(th);
         affS[f] = 0.5 - 0.5 * sn;   /* forward: the affine encoding */
         affC[f] = 0.5 * cs;
-        bwdS[f] = sn;               /* backward: the raw twiddles   */
-        bwdC[f] = cs;
+        /* 🔴 bwdC holds -cos, the CONJUGATED coefficient. The backward
+         * needs cy = conj(conj(t)*w), and conj(conj(t)*w) == t*conj(w), so
+         * multiplying t by conj(w) = (sin, -cos) produces cy DIRECTLY -- no
+         * conj(t) before the multiply and no conj(y) after it. Banking the
+         * sign makes that free; computing it would cost an op per iteration,
+         * which is the encoding mistake this table exists to stop repeating. */
+        bwdS[f] = sn;               /* backward: raw sin          */
+        bwdC[f] = -cs;              /* backward: -cos == conj(w)  */
     }
 }
 
@@ -215,21 +221,19 @@ static void _zr2c_fold_bwd(const double *X_in,
                 __m256d t1 = _mm256_sub_pd(a1, cm1);
                 __m256d e0 = _mm256_add_pd(a0, cm0);     /* Ep = F + conj(M) */
                 __m256d e1 = _mm256_add_pd(a1, cm1);
-                __m256d tb0 = _mm256_xor_pd(t0, CONJ);   /* conj(t) */
-                __m256d tb1 = _mm256_xor_pd(t1, CONJ);
-                /* raw sin/cos, banked at create -- no reconstruction */
+                /* conj(w) = (sin, -cos), banked at create. cy = t*conj(w)
+                 * is exactly conj(conj(t)*w), so BOTH conjugations fall out
+                 * of the loop -- same products, same signs, bitwise equal. */
                 __m256d s4 = _mm256_loadu_pd(bwdS + f);
                 __m256d c4 = _mm256_loadu_pd(bwdC + f);
                 __m256d wr0 = _mm256_permute4x64_pd(s4, 0x50);
                 __m256d wr1 = _mm256_permute4x64_pd(s4, 0xFA);
                 __m256d wi0 = _mm256_permute4x64_pd(c4, 0x50);
                 __m256d wi1 = _mm256_permute4x64_pd(c4, 0xFA);
-                __m256d ts0 = _mm256_permute_pd(tb0, 0x5);
-                __m256d ts1 = _mm256_permute_pd(tb1, 0x5);
-                __m256d y0 = _mm256_fmaddsub_pd(wr0, tb0, _mm256_mul_pd(wi0, ts0));
-                __m256d y1 = _mm256_fmaddsub_pd(wr1, tb1, _mm256_mul_pd(wi1, ts1));
-                __m256d cy0 = _mm256_xor_pd(y0, CONJ);   /* conj(y) */
-                __m256d cy1 = _mm256_xor_pd(y1, CONJ);
+                __m256d ts0 = _mm256_permute_pd(t0, 0x5);
+                __m256d ts1 = _mm256_permute_pd(t1, 0x5);
+                __m256d cy0 = _mm256_fmaddsub_pd(wr0, t0, _mm256_mul_pd(wi0, ts0));
+                __m256d cy1 = _mm256_fmaddsub_pd(wr1, t1, _mm256_mul_pd(wi1, ts1));
                 _mm256_storeu_pd(o + 2 * f,     _mm256_sub_pd(e0, cy0));
                 _mm256_storeu_pd(o + 2 * f + 4, _mm256_sub_pd(e1, cy1));
                 __m256d zm0 = _mm256_xor_pd(_mm256_add_pd(e0, cy0), CONJ);
@@ -244,7 +248,7 @@ static void _zr2c_fold_bwd(const double *X_in,
             int m = half - f;
             double Fr = x[2 * f], Fi = x[2 * f + 1];
             double Mr = x[2 * m], Mi = x[2 * m + 1];
-            double s = bwdS[f], c = bwdC[f];
+            double s = bwdS[f], c = -bwdC[f];   /* bwdC banks -cos */
             double t1 = Fr - Mr, t2 = Fi + Mi;
             double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
             double Epr = Fr + Mr, Epi = Fi - Mi;
@@ -380,7 +384,7 @@ static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
             int q = perm[m];
             double Fr = x[2 * f], Fi = x[2 * f + 1];
             double Mr = x[2 * m], Mi = x[2 * m + 1];
-            double s = bwdS[f], c = bwdC[f];
+            double s = bwdS[f], c = -bwdC[f];   /* bwdC banks -cos */
             double t1 = Fr - Mr, t2 = Fi + Mi;
             double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
             double Epr = Fr + Mr, Epi = Fi - Mi;
