@@ -2761,7 +2761,9 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     double *y  = alloc_d((size_t)N);       /* our c2r output (N reals)       */
     double *aS = alloc_d((size_t)top + 1);
     double *aC = alloc_d((size_t)top + 1);
-    _zr2c_init_aff(N, aS, aC);
+    double *bS = alloc_d((size_t)top + 1);   /* raw sin/cos for the backward */
+    double *bC = alloc_d((size_t)top + 1);
+    _zr2c_init_aff(N, aS, aC, bS, bC);
     srand(31 + N);
     for (int i = 0; i < N; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
@@ -2827,7 +2829,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
     }
 #endif
     {   /* ours c2r fed the reference spectrum: must return N*x */
-        _zr2c_fold_bwd(bsrc, Zc, aS, aC, N, 1, (size_t)N + 2, (size_t)N);
+        _zr2c_fold_bwd(bsrc, Zc, bS, bC, N, 1, (size_t)N + 2, (size_t)N);
         vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
         double gw = 0, gm = 0;
         for (int i = 0; i < N; i++)
@@ -2873,7 +2875,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
         _zr2c_fold_fwd(Zc, XC, aS, aC, N, 1, (size_t)N, (size_t)N + 2);
     });
     ZR2C_TIME(tb, {
-        _zr2c_fold_bwd(bsrc, Zc, aS, aC, N, 1, (size_t)N + 2, (size_t)N);
+        _zr2c_fold_bwd(bsrc, Zc, bS, bC, N, 1, (size_t)N + 2, (size_t)N);
         vfft_execute(h, VFFT_BACKWARD, Zc, NULL, y, NULL);
     });
     vfw = _zr2c_med5(tf); vbw = _zr2c_med5(tb);
@@ -3025,7 +3027,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
             }
             /* bwd gate */
             memcpy(XC, cref, ((size_t)N + 2) * 8);
-            _zr2c_fold_bwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+            _zr2c_fold_bwd(XC, XC, bS, bC, N, 1, (size_t)N + 2, (size_t)N + 2);
             vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
             {
                 double gw = 0, gm2 = 0;
@@ -3048,7 +3050,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                 });
                 memcpy(XC, cref, ((size_t)N + 2) * 8);
                 ZR2C_TIME(tnb, {
-                    _zr2c_fold_bwd(XC, XC, aS, aC, N, 1, (size_t)N + 2, (size_t)N + 2);
+                    _zr2c_fold_bwd(XC, XC, bS, bC, N, 1, (size_t)N + 2, (size_t)N + 2);
                     vfft_execute(hn, VFFT_BACKWARD, XC, NULL, XC, NULL);
                 });
                 nfw = _zr2c_med5(tnf);
