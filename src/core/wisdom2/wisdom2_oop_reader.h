@@ -655,6 +655,34 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
  * RMW, the other slots' records are untouched by construction. ns = the
  * slot's own race median (attributable here, unlike the legacy packed
  * line); <= 0 omits the measurement. */
+/* 1 when this problem cell is already owned by a DIFFERENT engine (today:
+ * the split family's eng=route). The reciprocal of vw2_real_cell_taken.
+ *
+ * 🔴 The zr2c slot key {t=r2c|c2r, rank=1, n=N, q=1, ord=nat, place} is
+ * BYTE-IDENTICAL to the split route key at K=1, and vw2__bank_pinned upserts
+ * on key equality alone with eng a mere payload token. The split side guarded
+ * both directions; this side guarded NEITHER -- on read it skipped a foreign
+ * record silently, on write it clobbered one. Reachable on the DEFAULT config
+ * (layout SPLIT + K=1 + even N + rigor != MEASURE banks eng=route at q=1),
+ * and the 37 shipped rows mask it only at their own N. */
+static inline int vw2_oop_zr2c_cell_taken(const vw2_store_t *s, int realN,
+                                          int is_c2r, int is_inplace)
+{
+    vw2_key_t req;
+    int i;
+    memset(&req, 0, sizeof req);
+    req.t = is_c2r ? VW2_T_C2R : VW2_T_R2C;
+    req.rank = 1; req.n[0] = realN;
+    req.q = 1; req.ord = VW2_ORD_NAT;
+    req.pl = is_inplace ? VW2_PL_IP : VW2_PL_OOP;
+    for (i = 0; i < s->nrec; i++) {
+        const vw2_rec_t *c = &s->rec[i];
+        if (!vw2_key_serves(&c->key, &req)) continue;
+        if (strcmp(vw2__oop_eng(c), "zr2c")) return 1;
+    }
+    return 0;
+}
+
 static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
                                          int is_c2r, int is_inplace, int route,
                                          double ns)
@@ -662,6 +690,12 @@ static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
     vw2_rec_t r;
     char b[48];
     int rc;
+    if (vw2_oop_zr2c_cell_taken(s, realN, is_c2r, is_inplace)) {
+        fprintf(stderr, "[wisdom2] zr2c bank refused: t=%s n=%d place=%s is owned "
+                        "by another engine\n",
+                is_c2r ? "c2r" : "r2c", realN, is_inplace ? "ip" : "oop");
+        return 0;                      /* not an error: the cell is not ours */
+    }
     memset(&r, 0, sizeof r);
     r.key.t = is_c2r ? VW2_T_C2R : VW2_T_R2C;
     r.key.rank = 1; r.key.n[0] = realN;
@@ -674,7 +708,16 @@ static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
     if (ns > 0.0) {
         snprintf(b, sizeof b, "%.1f", ns);
         if (vw2_rec_set(&r, 2, "ns", b) != VW2_OK ||
-            vw2_rec_set(&r, 2, "metric", "fwd1") != VW2_OK ||
+            /* 🔴 The c2r race times a BACKWARD composite (fold_bwd then the
+             * child run backward), so a c2r slot must not claim fwd1. Two
+             * harms from the unconditional label: the row asserted
+             * comparability with forward numbers against the store's metric
+             * law, and against a correctly-stamped bwd1 incumbent the merge
+             * refused with VW2_EMETRIC -- invisibly, because the caller
+             * discards the return -- so the cell re-raced on every create,
+             * forever. No migration needed: no shipped zr2c row carries a
+             * metric= token at all. */
+            vw2_rec_set(&r, 2, "metric", is_c2r ? "bwd1" : "fwd1") != VW2_OK ||
             vw2_rec_set(&r, 2, "units", "ns") != VW2_OK) { vw2_rec_free(&r); return -1; }
     }
     vw2__oop_stamp_date(&r);
@@ -700,7 +743,17 @@ static inline int vw2_oop_lookup_zr2c(const vw2_store_t *s, int realN, int *zr_k
         k.pl = (slot & 1) ? VW2_PL_IP : VW2_PL_OOP;
         r = vw2_lookup(s, &k);
         if (!r) continue;
-        if (strcmp(vw2__oop_eng(r), "zr2c")) continue;
+        if (strcmp(vw2__oop_eng(r), "zr2c")) {
+            /* Foreign engine owns this cell. Fall through to the route race
+             * rather than pretend there is no verdict -- but SAY so, because
+             * a silent skip here and a silent clobber on the write side is
+             * how two engines quietly fight over one key. */
+            fprintf(stderr, "[wisdom2] zr2c: cell t=%s n=%d place=%s owned by eng=%s "
+                            "-- ignoring for the zr2c route pick\n",
+                    (slot >> 1) ? "c2r" : "r2c", realN,
+                    (slot & 1) ? "ip" : "oop", vw2__oop_eng(r));
+            continue;
+        }
         /* SEED SKIP (2026-08-21) — the law vw2_oop_lookup_k1 already applies,
          * missing here. It matters more for zr2c than for k1: _zr2c_build
          * RETURNS on any banked verdict, so a bank-only row makes the racer

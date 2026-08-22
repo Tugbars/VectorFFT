@@ -21,8 +21,8 @@
  * ── WHAT EACH TRANSFORM SUPPORTS (at a glance) ──────────────────────────────
  *   transform    dims    placement       layout             order            howmany  MT   padded batch
  *   C2C          1–4     IP + OOP        SPLIT + INTERLVD*  DEF/SCR/NAT**    any K*** yes  IP + OOP
- *   R2C          1–4     OOP (IP: refused for now)  split | CCE spectrum  natural  any K  yes  pad-only
- *   C2R          1–4     OOP (IP: refused for now)  split | CCE spectrum  natural  any K  yes  pad-only
+ *   R2C          1–4     OOP; IP: 1D CCE only^ split | CCE spectrum  natural  any K  yes  pad-only
+ *   C2R          1–4     OOP; IP: 1D CCE only^ split | CCE spectrum  natural  any K  yes  pad-only
  *   DCT-I..IV    1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
  *   DST-I..III   1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
  *   DHT          1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
@@ -351,9 +351,19 @@ extern "C"
    *   R2C (fwd)  INTERLEAVED  real_in    NULL       z_CCE_out  NULL
    *                           dre = packed CCE half-spectrum, (N/2+1)*K pairs
    *                           at dre[2*(f*K+t)] (§6a24).
+   *   R2C (fwd)  INTERLEAVED  z_plane    NULL       z_plane    NULL
+   *              IN-PLACE     dre == sre REQUIRED (a distinct dre is refused;
+   *                           NULL is NOT accepted as "same as sre"). ONE
+   *                           plane of 2*(N/2+1) doubles: N reals in, the
+   *                           N/2+1 CCE bins written over them. 1D, K==1,
+   *                           EVEN N only.
    *   C2R (bwd)  SPLIT        in.re      in.im      real_out   NULL
    *   C2R (bwd)  INTERLEAVED  z_CCE_in   NULL       real_out   NULL
    *                           sre = the CCE spectrum (same packing as R2C out).
+   *   C2R (bwd)  INTERLEAVED  z_plane    NULL       z_plane    NULL
+   *              IN-PLACE     the mirror of in-place R2C: same single padded
+   *                           plane of 2*(N/2+1) doubles, dre == sre
+   *                           REQUIRED, 1D / K==1 / EVEN N only.
    *   DCT/DST/DHT (SPLIT)     real_in    NULL       real_out   NULL
    *                           real->real; INTERLEAVED rejected at create.
    *
@@ -375,8 +385,21 @@ extern "C"
    *       IN-PLACE only (the prime dispatch is not wired into the OOP kinds);
    *       create with placement=VFFT_INPLACE.
    *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D §6a30 +
-   *       3D/4D §6a47). Placement must be OUT-OF-PLACE (in-place real FFT is
-   *       REJECTED loudly until an MKL-style in-place CCE path exists).
+   *       3D/4D §6a47). OUT-OF-PLACE always. IN-PLACE is supported for
+   *       exactly ONE shape (^, §D2 2026-08-13): 1D, LAYOUT_INTERLEAVED,
+   *       howmany == 1, EVEN N. Every other in-place real shape is REJECTED
+   *       loudly: with a split spectrum the real data and the spectrum are
+   *       separate planes, so an in-place contract there would be a lie.
+   *
+   *       THE IN-PLACE REAL CONTRACT (the only place it is stated):
+   *         - ONE padded plane of 2*(N/2 + 1) doubles, the MKL CCE
+   *           convention. The caller allocates that, not N.
+   *         - R2C reads N reals from the front of the plane and writes the
+   *           N/2 + 1 CCE bins over it; C2R is the mirror.
+   *         - vfft_execute MUST be called fully aliased: dre == sre, both
+   *           non-NULL. Unlike in-place 1D C2C, dre == NULL is NOT accepted
+   *           as "same as sre" here, and a distinct dre is REFUSED (it used
+   *           to be silently miscomputed on one of the two internal routes).
    *   2D..4D C2C        x INTERLEAVED: CONVERT-around (§6a61), both
    *       placements, 2D NATURAL included.
    *   TRIG              x INTERLEAVED: REJECT (no complex layout).
