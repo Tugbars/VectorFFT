@@ -393,7 +393,12 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
         rfft_execute_fwd_natural(rp, x, o_re, o_im, zo);
         return;
     }
-    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    /* CEIL, not floor: total coverage is T*S, so a floor slab whose
+     * floor(K/T) is already a multiple of 8 leaves the top K - T*S lanes
+     * assigned to NO worker and silently unwritten (K=17,T=2 dropped lane
+     * 16; benches/mt_lane_drop_probe.c). Same fix, same reason, as the
+     * three sizers in vfft.c (:1869, :2012, :2153). */
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0)
         S = 8;
     _rfft_nat_mt_arg a[64];

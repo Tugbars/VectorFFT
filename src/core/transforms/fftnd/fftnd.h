@@ -216,7 +216,11 @@ static void _fftnd_axis_mt_win(stride_fftnd_data_t *d, int m,
         size_t max_ls = Km / 8;
         if (ls > max_ls) ls = max_ls ? max_ls : 1;
     }
-    size_t Ls = ls > 1 ? (((Km / ls) + 7) & ~(size_t)7) : Km;
+    /* CEIL, not floor: _fftnd_axis_item_range covers lanes
+     * [li*Ls, min(li*Ls+Ls, Km)) for li < ls, i.e. min(ls*Ls, Km) in
+     * total, so ls*Ls < Km silently drops the top lanes (Km=17, ls=2
+     * gave Ls=8 and covered 16). Same defect as the real dispatchers. */
+    size_t Ls = ls > 1 ? ((((Km + ls - 1) / ls) + 7) & ~(size_t)7) : Km;
     if (Ls == 0) { ls = 1; Ls = Km; }
     size_t total = O * ls;
 

@@ -481,7 +481,10 @@ static void _fft3d_axis0_mt(stride_fft3d_data_t *d,
 
     /* Contiguous lane ranges, rounded to multiples of 8 (SIMD width for
      * doubles; matches the production K-split rounding). */
-    const size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    /* CEIL, not floor: K here is the axis-0 column count N2*N3, and a
+     * floor slab drops the top columns silently -- the same defect the
+     * real dispatchers had. */
+    const size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     _fft3d_lane_arg_t args[FFT3D_MAX_THREADS];
     int n_dispatch = 0;
 
