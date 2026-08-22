@@ -173,15 +173,26 @@ let signature t =
    grouping is part of the frozen bytes, and one source replaces the
    twice-printed divergence risk (zsplit derived its silencers, cil
    hardcoded them — that asymmetry stays caller-side and out of scope). *)
-let z11_signature ~symbol ~target_attr =
+let z11_signature ?(alias_tolerant = false) ~symbol ~target_attr () =
+  (* alias_tolerant: OMIT __restrict__ on the four plane pointers. Required
+     for the kernels il2p calls with zin == zout on its out-of-place fast
+     path (forward T2, backward N1): passing one pointer to two
+     restrict-qualified parameters is undefined behaviour, however benign it
+     looks at one compiler vintage.  Everything else KEEPS the qualifier --
+     measured 2026-08-22, dropping it globally changes codegen for about a
+     third of the zil corpus (boundary_split dts/msd/msg/s0t, il3p t2tg, T2
+     backward), while for the aliased set it is free: 87 of 89 byte-identical
+     assembly, the other 2 differing only in scheduling at identical
+     instruction counts. *)
+  let r = if alias_tolerant then "            " else " __restrict__ " in
   String.concat
     ""
     [ Printf.sprintf "__attribute__((target(\"%s\")))\n" target_attr
     ; Printf.sprintf "void %s(\n" symbol
-    ; "    const double * __restrict__ zin,\n"
-    ; "    const double * __restrict__ zin_unused,\n"
-    ; "    double       * __restrict__ zout,\n"
-    ; "    double       * __restrict__ zout_unused,\n"
+    ; "    const double *" ^ r ^ "zin,\n"
+    ; "    const double *" ^ r ^ "zin_unused,\n"
+    ; "    double       *" ^ r ^ "zout,\n"
+    ; "    double       *" ^ r ^ "zout_unused,\n"
     ; "    const double * tw_re, const double * tw_im,\n"
     ; "    size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)\n"
     ; "{\n"
