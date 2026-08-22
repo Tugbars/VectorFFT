@@ -167,7 +167,9 @@ static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const d
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
     if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out, zi); return; }
-    size_t S = ((K / (size_t)T) + 7) & ~(size_t)7;
+    /* CEIL, not floor -- see the r2c twin in r2c_dispatch.h. Proven to
+     * drop lanes: c2r N=512 K=25 T=3 left lane 24 unwritten. */
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0) S = 8;
     _c2r_nat_mt_arg a[64];
     int nd = 0;
