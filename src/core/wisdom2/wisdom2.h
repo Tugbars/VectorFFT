@@ -109,7 +109,8 @@ enum {
     VW2_EKEY       = -8,  /* malformed key / no such record                      */
     VW2_EIO        = -9,  /* write/replace failure (old file left intact)        */
     VW2_ENOMEM     = -10,
-    VW2_EVALUE     = -11  /* token name/value violates the lexical rules         */
+    VW2_EVALUE     = -11, /* token name/value violates the lexical rules         */
+    VW2_EOWNED     = -12  /* bank refused: the cell belongs to another engine     */
 };
 
 /* ------------------------------------------------------------------ key */
