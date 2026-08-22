@@ -251,6 +251,182 @@ static void run_regressions(void)
     }
 }
 
+/* == TRANSFORM-CONTIGUOUS REAL BATCH (2026-08-22) =========================
+ * K>1 interleaved r2c/c2r asked for by name. This is the ONLY geometry the
+ * zr2c route can serve at K>1 -- the route reinterprets a transform's N
+ * contiguous reals as N/2 complex points, and under lane-major the two halves
+ * of one complex sample sit K apart, so the reinterpret is not expressible
+ * there at all. Served as K independent K=1 transforms end to end, which is
+ * the same wrapper the interleaved C2C batch has used since 2026-08-04.
+ *
+ * What each check is FOR:
+ *   fwd      every transform independently correct vs a naive DFT, and
+ *            correct AT ITS OWN OFFSET -- the failure this catches is a
+ *            stride bug that computes K right answers in K wrong places, so
+ *            each transform is seeded with DIFFERENT data (a shared seed
+ *            would pass with every block aliased onto one another).
+ *   bwd      the c2r mirror. The strides differ per direction (r2c reads N
+ *            and writes N+2; c2r is the reverse), so this is NOT redundant
+ *            with fwd -- it exercises the other stride pair.
+ *   in-place ONE padded plane per transform, dre == sre. New capability:
+ *            before this the in-place real contract was K==1 only.
+ *   MT==ST   BITWISE. The wrapper's MT runs each worker on its own plan
+ *            CLONE, so a clone that resolved to a different kernel would give
+ *            a numerically fine but bit-different batch. Bitwise is the only
+ *            assertion that catches that, and it is the same rule the C2C
+ *            wrapper is held to.
+ */
+static void tc_batch_fwd(int N, size_t K, int nthreads, double *out)
+{
+    const size_t nb = (size_t)N/2 + 1;
+    double *x = (double *)malloc(8*(size_t)N*K);
+    vfft_config_t cfg; memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+    cfg.nthreads = nthreads; cfg.wisdom = g_W; cfg.wisdom_write = 1;
+    /* per-transform data: block t is seeded from a t-dependent stream, so a
+     * stride bug cannot pass by aliasing the blocks together.
+     *
+     * RESEED FIRST. rnd() is a FILE-GLOBAL LCG, so two calls to this function
+     * draw two different input sets -- and the MT==ST check below compares the
+     * outputs of two calls. Without this line that check compares transforms
+     * of different data and reports DIFFERS every time, which is a defect in
+     * the gate that looks exactly like a defect in the library. */
+    lcg = 0x243F6A8885A308D3ull;
+    for (size_t t = 0; t < K; t++)
+        for (int e = 0; e < N; e++) x[t*(size_t)N + e] = rnd() + 0.25*(double)t;
+    vfft_plan p = vfft_create(&cfg);
+    if (!p) { free(x); out[0] = -1.0; return; }
+    memset(out+1, 0, 8*2*nb*K);
+    vfft_execute(p, VFFT_FORWARD, x, NULL, out+1, NULL);
+    {
+        double *Xr = (double *)malloc(8*nb), *Xi = (double *)malloc(8*nb);
+        double w = 0, xm = 0;
+        size_t t, f;
+        for (t = 0; t < K; t++) {
+            naive_real_dft(x + t*(size_t)N, N, Xr, Xi);
+            for (f = 0; f < nb; f++) {
+                double a = fabs(Xr[f]) + fabs(Xi[f]); if (a > xm) xm = a;
+                {
+                    double dr = fabs(out[1 + t*2*nb + 2*f]     - Xr[f]);
+                    double di = fabs(out[1 + t*2*nb + 2*f + 1] - Xi[f]);
+                    if (dr > w) w = dr; if (di > w) w = di;
+                }
+            }
+        }
+        out[0] = w/xm;
+        free(Xr); free(Xi);
+    }
+    free(x); vfft_destroy(p);
+}
+
+static void run_tc_batch(void)
+{
+    const int Ns[2] = { 512, 2048 };
+    const size_t K = 4;
+    size_t i;
+    for (i = 0; i < 2; i++) {
+        const int N = Ns[i];
+        const size_t nb = (size_t)N/2 + 1;
+
+        /* forward, single-threaded */
+        double *a = (double *)malloc(8*(1 + 2*nb*K));
+        double *b = (double *)malloc(8*(1 + 2*nb*K));
+        tc_batch_fwd(N, K, 1, a);
+        judge("TC batch r2c K=4 fwd (vs naive)", N, a[0], 1e-9);
+
+        /* MT == ST, BITWISE */
+        tc_batch_fwd(N, K, 4, b);
+        if (a[0] < 0 || b[0] < 0) judge("TC batch r2c K=4 MT==ST", N, -1, 1);
+        else {
+            int same = (memcmp(a+1, b+1, 8*2*nb*K) == 0);
+            printf("  %-38s N=%-6d %-9s %s\n", "TC batch r2c K=4 MT==ST (bitwise)",
+                   N, same ? "identical" : "DIFFERS", same ? "OK" : "*** FAIL ***");
+            if (!same) g_fail = 1;
+        }
+        free(a); free(b);
+
+        /* backward (c2r): the OTHER stride pair */
+        {
+            double *X  = (double *)malloc(8*2*nb*K);
+            double *y  = (double *)malloc(8*(size_t)N*K);
+            double *x0 = (double *)malloc(8*(size_t)N*K);
+            vfft_config_t cf, cb; vfft_plan pf, pb;
+            size_t j;
+            memset(&cf, 0, sizeof cf);
+            cf.transform = VFFT_R2C; cf.placement = VFFT_OUTOFPLACE;
+            cf.rigor = VFFT_MEASURE; cf.dims = 1; cf.n[0] = N; cf.howmany = K;
+            cf.layout = VFFT_LAYOUT_INTERLEAVED;
+            cf.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+            cf.nthreads = 1; cf.wisdom = g_W; cf.wisdom_write = 1;
+            cb = cf; cb.transform = VFFT_C2R;
+            for (j = 0; j < (size_t)N*K; j++) x0[j] = rnd();
+            pf = vfft_create(&cf); pb = vfft_create(&cb);
+            if (!pf || !pb) judge("TC batch c2r K=4 roundtrip", N, -1, 1);
+            else {
+                double w = 0, xm = 0;
+                vfft_execute(pf, VFFT_FORWARD,  x0, NULL, X, NULL);
+                vfft_execute(pb, VFFT_BACKWARD, X,  NULL, y, NULL);
+                for (j = 0; j < (size_t)N*K; j++) {
+                    double d = fabs(y[j]/(double)N - x0[j]);
+                    if (d > w) w = d;
+                    if (fabs(x0[j]) > xm) xm = fabs(x0[j]);
+                }
+                judge("TC batch c2r K=4 roundtrip", N, w/xm, 1e-12);
+            }
+            if (pf) vfft_destroy(pf);
+            if (pb) vfft_destroy(pb);
+            free(X); free(y); free(x0);
+        }
+
+        /* IN-PLACE, K>1: one padded plane per transform */
+        {
+            double *z   = (double *)malloc(8*2*nb*K);
+            double *ref = (double *)malloc(8*(size_t)N*K);
+            double *Xr  = (double *)malloc(8*nb);
+            double *Xi  = (double *)malloc(8*nb);
+            vfft_config_t cfg; vfft_plan p;
+            size_t t; int e;
+            memset(&cfg, 0, sizeof cfg);
+            cfg.transform = VFFT_R2C; cfg.placement = VFFT_INPLACE;
+            cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = K;
+            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+            cfg.nthreads = 1; cfg.wisdom = g_W; cfg.wisdom_write = 1;
+            memset(z, 0, 8*2*nb*K);
+            for (t = 0; t < K; t++)
+                for (e = 0; e < N; e++) {
+                    double v = rnd();
+                    ref[t*(size_t)N + (size_t)e] = v;
+                    z[t*2*nb + (size_t)e] = v;   /* reals at the front of the plane */
+                }
+            p = vfft_create(&cfg);
+            if (!p) judge("TC batch r2c K=4 IN-PLACE", N, -1, 1);
+            else {
+                double w = 0, xm = 0;
+                size_t f;
+                vfft_execute(p, VFFT_FORWARD, z, NULL, z, NULL);
+                for (t = 0; t < K; t++) {
+                    naive_real_dft(ref + t*(size_t)N, N, Xr, Xi);
+                    for (f = 0; f < nb; f++) {
+                        double m = fabs(Xr[f]) + fabs(Xi[f]); if (m > xm) xm = m;
+                        {
+                            double dr = fabs(z[t*2*nb + 2*f]     - Xr[f]);
+                            double di = fabs(z[t*2*nb + 2*f + 1] - Xi[f]);
+                            if (dr > w) w = dr; if (di > w) w = di;
+                        }
+                    }
+                }
+                judge("TC batch r2c K=4 IN-PLACE (vs naive)", N, w/xm, 1e-9);
+                vfft_destroy(p);
+            }
+            free(z); free(ref); free(Xr); free(Xi);
+        }
+    }
+}
+
 /* ── COLD -> REPLAY: the route axis' own lifecycle ────────────────────────
  * 🔴 The route bit is the ONLY verdict kind-5 wisdom owns, and nothing in
  * the tree asserted that it is ever actually RACED, or that a banked verdict
@@ -344,6 +520,7 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < sizeof Ns / sizeof Ns[0]; i++)
         run_cell(Ns[i], -1); /* wisdom pass: race-and-bank on miss */
     run_regressions();
+    run_tc_batch();
     /* the tap must be open BEFORE the first cold create, and only now --
      * redirecting earlier would swallow the diagnostics the passes above
      * rely on a human seeing. */

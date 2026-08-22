@@ -306,6 +306,13 @@ struct vfft_plan_s
      * <=> tcbw == NULL <=> serial loop (today's path, byte-identical). */
     struct vfft_plan_s **tcbw;
     int tcbw_n;
+    /* Per-transform block strides IN DOUBLES for the wrapper loop. C2C has
+     * one stride (2*N both ends), but the REAL transforms do NOT: r2c reads
+     * N reals and writes 2*(N/2+1) CCE doubles, c2r is the mirror, and the
+     * in-place real shape is 2*(N/2+1) at BOTH ends. So the stride is a
+     * property of (transform, placement), computed once at create and stored
+     * -- never re-derived at execute, and never assumed equal. */
+    size_t tcb_sn, tcb_dn;
     vfft_oop11_fn k1_mono, k1_mono_ilf, k1_mono_ilb;
 #ifdef VFFT_USE_JIT
     /* K=1 stride-baking JIT (§13.3): the winner split route compiled at plan
@@ -3023,6 +3030,14 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
  * unsafe even though its fwd is fine — execute takes either dir. */
 static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 {
+    if (g->zr2c_child)
+        /* §D2 real composite: _exec_zr2c is a fold (pure, serial, no pool)
+         * plus vfft_execute on the child, and the R2C/C2R execute branches
+         * skip the pool re-assert on this path precisely so it stays clean.
+         * So the whole question reduces to the CHILD's route -- ask it the
+         * same question. Depth is 1 by construction: a zr2c child is a plain
+         * c2c(N/2) and never itself carries a zr2c_child. */
+        return _tc_inner_mt_safe(g->zr2c_child);
     if (g->zsplit || g->zturn)
         return 1; /* _exec_zcascade: pure engine calls, both placements */
     if (g->placement == VFFT_INPLACE)
@@ -3063,6 +3078,20 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b)
 {
+    if (!a->zr2c_child != !b->zr2c_child)
+        return 0;
+    if (a->zr2c_child)
+    {
+        /* §D2 real composite. Everything that decides output bits lives in
+         * the CHILD (pair, il_kv, dir=bwd form, natoop mode), so compare it
+         * recursively. zr2c_route is compared too: child_oop_il and
+         * child_nat_ip are numerically equivalent but reach the child through
+         * different placements, and a batch must not mix routes -- the same
+         * rule as the cascade chain above. */
+        if (a->zr2c_route != b->zr2c_route)
+            return 0;
+        return _tc_clone_equiv(a->zr2c_child, b->zr2c_child);
+    }
     if (a->zroute != b->zroute ||
         !a->zturn != !b->zturn || !a->zsplit != !b->zsplit ||
         !a->k1il2p != !b->k1il2p || !a->k1il3p != !b->k1il3p ||
@@ -3235,13 +3264,37 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * 2.5-5x faster across K in {2,3,4} x N in {256..8192}.
      *
      * Scope gates (anything else falls through to the normal paths):
-     * 1D C2C, INTERLEAVED, K>1. At K==1 the two geometries are the SAME
+     * 1D INTERLEAVED, K>1. At K==1 the two geometries are the SAME
      * addressing, so a wrapper would be pure overhead — fall through and
      * let the request build its ordinary K=1 plan. SPLIT is untouched
-     * (its batch geometry is the split engines' own contract). */
-    if ((cfg->batch_geom == VFFT_BATCH_DEFAULT ||
-         cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS) &&
-        cfg->transform == VFFT_C2C && cfg->dims < 2 &&
+     * (its batch geometry is the split engines' own contract).
+     *
+     * ── R2C/C2R (2026-08-22) ──
+     * The real transforms join this wrapper, and for them it is the ONLY way
+     * to reach the §D2 zr2c route at K>1: zr2c works by REINTERPRETING a
+     * transform's N contiguous reals as N/2 complex points, which requires
+     * the transform's reals to BE contiguous. Under lane-major the real and
+     * imaginary halves of one complex sample sit K apart, so the reinterpret
+     * is not expressible there at any price -- it is a structural property of
+     * the route, not a gap in the implementation.
+     *
+     * 🔴 REAL IS ADMITTED ON THE **EXPLICIT** FLAG ONLY, not on DEFAULT.
+     * vfft.h's layout law says INTERLEAVED DEFAULT means transform-contiguous
+     * (the 2026-08-04 flip), and by that law real should be here on DEFAULT
+     * too. It is not, YET, because the shipping interleaved real path is
+     * lane-major (r2c_dispatch.h writes z[2*(f*K+t)]) and an in-tree gate
+     * asserts that addressing on a zeroed config. Flipping the default is a
+     * public contract change and is gated on the SAME evidence that justified
+     * the C2C flip: a measured race of this route against the lane-major CCE
+     * path. Until that race is banked, DEFAULT keeps its current meaning for
+     * real and callers opt in by name. */
+    {
+    const int tc_c2c = (cfg->transform == VFFT_C2C) &&
+                       (cfg->batch_geom == VFFT_BATCH_DEFAULT ||
+                        cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS);
+    const int tc_real = (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+                        cfg->batch_geom == VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+    if ((tc_c2c || tc_real) && cfg->dims < 2 &&
         cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1 && !ob)
     {
         vfft_config_t c1 = *cfg;
@@ -3263,13 +3316,44 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             vfft_destroy(inner);
             return NULL;
         }
-        h->transform = VFFT_C2C;
+        h->transform = cfg->transform;
         h->placement = cfg->placement;
         h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tcb = inner;
+        /* Per-transform block strides, in doubles. Derived HERE, from the
+         * committed (transform, placement), so the execute loop never has to
+         * infer them:
+         *   C2C            2*N in, 2*N out
+         *   R2C  OOP       N reals in, 2*(N/2+1) CCE doubles out
+         *   C2R  OOP       the mirror
+         *   R2C/C2R IN-PLACE   2*(N/2+1) at BOTH ends -- ONE padded plane per
+         *                      transform, which is exactly the documented
+         *                      in-place real contract replicated K times.
+         * Odd N is handled by the same expression: N/2+1 bins is the CCE bin
+         * count for either parity (zr2c itself needs even N, but the inner
+         * K=1 create decides that for itself and an odd-N inner simply lands
+         * on the CCE path instead). */
+        {
+            const size_t cce = 2u * ((size_t)N / 2u + 1u);
+            const size_t re = (size_t)N;
+            if (cfg->transform == VFFT_C2C)
+                h->tcb_sn = h->tcb_dn = 2u * (size_t)N;
+            else if (cfg->placement == VFFT_INPLACE)
+                h->tcb_sn = h->tcb_dn = cce;
+            else if (cfg->transform == VFFT_R2C)
+            {
+                h->tcb_sn = re;
+                h->tcb_dn = cce;
+            }
+            else
+            {
+                h->tcb_sn = cce;
+                h->tcb_dn = re;
+            }
+        }
         /* MT worker clones (struct comment at tcbw). Built only when the
          * pool exists AND the inner route is pool-free (_tc_inner_mt_safe).
          * The inner create above already applied cfg->nthreads to the global
@@ -3315,6 +3399,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         }
         return h;
     }
+    }
     if (cfg->batch_geom != VFFT_BATCH_DEFAULT &&
         cfg->batch_geom != VFFT_BATCH_LANE_MAJOR &&
         cfg->batch_geom != VFFT_BATCH_TRANSFORM_CONTIGUOUS)
@@ -3344,7 +3429,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * (even N, K==1) — one padded plane of 2*(N/2+1) doubles, the MKL
      * convention, closing the law-(f) hole (2026-08-13, §D2). Every OTHER
      * real shape still refuses: split spectrum and real data are separate
-     * planes there and an in-place contract would be a lie. */
+     * planes there and an in-place contract would be a lie.
+     *
+     * K>1 IS REACHABLE, AND DELIBERATELY NOT BY WIDENING THIS TEST. The
+     * TRANSFORM-CONTIGUOUS wrapper returns above this point, so an in-place
+     * real batch asked for by name (batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS)
+     * is served as K INDEPENDENT in-place K=1 transforms, each on its own
+     * padded 2*(N/2+1)-double plane -- the contract below, replicated, with
+     * the inner create passing this very test. What still refuses here is the
+     * shape that has no meaning: an in-place real batch in the LANE-MAJOR
+     * geometry, where the reals and the CCE bins of one transform are
+     * interleaved with every other transform's and no single-plane
+     * overwrite exists. Widening the test would have admitted that too. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->placement == VFFT_INPLACE &&
         /* 🔴 dims <= 1, not dims == 1: 0 IS the documented spelling of 1D
@@ -3360,7 +3456,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     {
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
                    "LAYOUT_INTERLEAVED (CCE), howmany==1, even N (the zr2c route; "
-                   "padded 2*(N/2+1)-double plane) — use VFFT_OUTOFPLACE otherwise",
+                   "padded 2*(N/2+1)-double plane), or howmany>1 with "
+                   "batch_geom=VFFT_BATCH_TRANSFORM_CONTIGUOUS (that plane per "
+                   "transform, end to end) — use VFFT_OUTOFPLACE otherwise",
                    _vfft_tname(cfg->transform));
         return NULL;
     }
@@ -5780,14 +5878,16 @@ typedef struct
     struct vfft_plan_s *p;
     vfft_dir_t dir;
     double *s, *d;
-    size_t t0, tc, tn;
+    size_t t0, tc, sn, dn; /* sn/dn: source and destination block strides --
+                            * EQUAL for C2C, DIFFERENT for r2c/c2r (see
+                            * h->tcb_sn/tcb_dn at create) */
 } _tc_mt_arg;
 static void _tc_mt_tramp(void *v)
 {
     _tc_mt_arg *a = (_tc_mt_arg *)v;
     for (size_t t = 0; t < a->tc; t++)
-        vfft_execute(a->p, a->dir, a->s + (a->t0 + t) * a->tn, NULL,
-                     a->d + (a->t0 + t) * a->tn, NULL);
+        vfft_execute(a->p, a->dir, a->s + (a->t0 + t) * a->sn, NULL,
+                     a->d + (a->t0 + t) * a->dn, NULL);
 }
 
 /* §6a57: explicit-intrinsic z<->split converts. Measured parity with gcc
@@ -6695,7 +6795,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
        * mismatch) means T==1 and this is byte-for-byte the old serial
        * loop. */
         double *d = dre;
-        const size_t tn = 2 * (size_t)h->N;
+        const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
         if (T > 1 && (size_t)h->N * h->K >= _tc_mt_floor())
         { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
@@ -6730,21 +6830,21 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 if (te > h->K)
                     te = h->K;
                 a[nd] = (_tc_mt_arg){h->tcbw[t - 1], dir, sre, d,
-                                     t0, te - t0, tn};
+                                     t0, te - t0, sn, dn};
                 _stride_pool_dispatch(&_stride_workers[nd], _tc_mt_tramp,
                                       &a[nd]);
                 nd++;
             }
             size_t s0 = S < h->K ? S : h->K;
             for (size_t t = 0; t < s0; t++)
-                vfft_execute(h->tcb, dir, sre + t * tn, NULL,
-                             d + t * tn, NULL);
+                vfft_execute(h->tcb, dir, sre + t * sn, NULL,
+                             d + t * dn, NULL);
             if (nd)
                 _stride_pool_wait_all();
             return;
         }
         for (size_t t = 0; t < h->K; t++)
-            vfft_execute(h->tcb, dir, sre + t * tn, NULL, d + t * tn, NULL);
+            vfft_execute(h->tcb, dir, sre + t * sn, NULL, d + t * dn, NULL);
         return;
     }
     if (h->N2 > 0)
@@ -6994,11 +7094,25 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     {
         /* forward only: real in (sre); spectrum out per the committed layout
          * (SPLIT dre/dim planes, or INTERLEAVED packed CCE z in dre — §6a24).
-         * MT internal. */
-        vfft_set_num_threads(h->nthreads);
+         * MT internal.
+         *
+         * 🔴 THE ZR2C COMPOSITE IS POOL-FREE, AND MUST STAY THAT WAY.
+         * The pool re-assert below is deliberately AFTER the zr2c branch, not
+         * before it. _exec_zr2c is a pure fold plus vfft_execute on the child,
+         * and the child was created with c2.nthreads = cfg->nthreads, so it
+         * re-asserts the identical snapshot itself -- the outer call was pure
+         * duplication. Removing it is what lets a zr2c plan serve as a
+         * TRANSFORM-CONTIGUOUS worker clone (_tc_inner_mt_safe): a clone runs
+         * on a POOL THREAD, and vfft_set_num_threads from a worker
+         * creates/destroys the very pool it is running on. Same edit in the
+         * C2R branch below; keep the two in step. */
         if (h->zr2c_child)
+        {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
-        else if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            return;
+        }
+        vfft_set_num_threads(h->nthreads);
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* dre = packed CCE spectrum */
         else
             vfft_r2c_execute_fwd(h->rplan, sre, dre, dim); /* split out */
@@ -7008,11 +7122,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     {
         /* the inverse: spectrum in per the committed layout (SPLIT sre/sim, or
          * INTERLEAVED packed CCE z in sre — §6a24) -> real out (dre). dir
-         * ignored. NATURAL or STRIDE per the bakeoff/wisdom. */
-        vfft_set_num_threads(h->nthreads);
+         * ignored. NATURAL or STRIDE per the bakeoff/wisdom.
+         *
+         * 🔴 Pool-free zr2c: the mirror of the R2C branch above -- read
+         * that comment before moving either call. */
         if (h->zr2c_child)
+        {
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
-        else if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+            return;
+        }
+        vfft_set_num_threads(h->nthreads);
+        if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* sre = packed CCE spectrum in */
         else
             vfft_c2r_disp_execute(h->c2rdisp, sre, sim, dre);
