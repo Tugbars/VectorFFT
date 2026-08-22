@@ -70,14 +70,28 @@
 /* Affine pair-table, N/4+1 entries each (f = 0..N/4 inclusive covers every
  * pair index for any even N; entry 0 is never read — kept for direct
  * indexing). ~4N bytes total, half of a plain (cos,sin)-over-N/2 table. */
-static void _zr2c_init_aff(int N, double *affS, double *affC)
+/* FOUR tables, not two.
+ *
+ * 🔴 The affine pair (0.5 - 0.5 sin, 0.5 cos) is a FORWARD convenience:
+ * the forward fold consumes it almost directly (one negate for -C). The
+ * BACKWARD's coefficients are the RAW twiddles -- work the algebra through
+ * and 1 - 2*(0.5 - 0.5 sin) = sin, 2*(0.5 cos) = cos -- so the backward was
+ * UNDOING the encoding on every iteration, four lanes at a time, forever:
+ * an fnmadd and a mul plus two live constant registers in the vector body,
+ * and the same two ops again in the scalar tail. Bank them instead. Cost:
+ * N/4 doubles per plan, paid once at create. */
+static void _zr2c_init_aff(int N, double *affS, double *affC,
+                           double *bwdS, double *bwdC)
 {
     int top = N / 4;
     for (int f = 0; f <= top; f++)
     {
         double th = 2.0 * VFFT_ZR2C_PI * (double)f / (double)N;
-        affS[f] = 0.5 - 0.5 * sin(th);
-        affC[f] = 0.5 * cos(th);
+        double sn = sin(th), cs = cos(th);
+        affS[f] = 0.5 - 0.5 * sn;   /* forward: the affine encoding */
+        affC[f] = 0.5 * cs;
+        bwdS[f] = sn;               /* backward: the raw twiddles   */
+        bwdC[f] = cs;
     }
 }
 
@@ -175,7 +189,7 @@ static void _zr2c_fold_fwd(const double *z_in,
  * dre == sre on every in-place c2r, so no __restrict__ on the data planes. */
 static void _zr2c_fold_bwd(const double *X_in,
                            double *z_out,
-                           const double *affS, const double *affC,
+                           const double *bwdS, const double *bwdC,
                            int N, size_t K, size_t xs, size_t zs)
 {
     const int half = N / 2;
@@ -188,7 +202,6 @@ static void _zr2c_fold_bwd(const double *X_in,
 #if defined(__AVX2__)
         {
             const __m256d CONJ = _mm256_setr_pd(0.0, -0.0, 0.0, -0.0);
-            const __m256d one = _mm256_set1_pd(1.0), two = _mm256_set1_pd(2.0);
             for (; 2 * (f + 3) < half; f += 4)
             {
                 int m3 = half - f - 3;
@@ -204,10 +217,9 @@ static void _zr2c_fold_bwd(const double *X_in,
                 __m256d e1 = _mm256_add_pd(a1, cm1);
                 __m256d tb0 = _mm256_xor_pd(t0, CONJ);   /* conj(t) */
                 __m256d tb1 = _mm256_xor_pd(t1, CONJ);
-                __m256d S4 = _mm256_loadu_pd(affS + f);
-                __m256d C4 = _mm256_loadu_pd(affC + f);
-                __m256d s4 = _mm256_fnmadd_pd(two, S4, one);   /* 1 - 2*S~ */
-                __m256d c4 = _mm256_mul_pd(two, C4);           /* 2*C~     */
+                /* raw sin/cos, banked at create -- no reconstruction */
+                __m256d s4 = _mm256_loadu_pd(bwdS + f);
+                __m256d c4 = _mm256_loadu_pd(bwdC + f);
                 __m256d wr0 = _mm256_permute4x64_pd(s4, 0x50);
                 __m256d wr1 = _mm256_permute4x64_pd(s4, 0xFA);
                 __m256d wi0 = _mm256_permute4x64_pd(c4, 0x50);
@@ -232,8 +244,7 @@ static void _zr2c_fold_bwd(const double *X_in,
             int m = half - f;
             double Fr = x[2 * f], Fi = x[2 * f + 1];
             double Mr = x[2 * m], Mi = x[2 * m + 1];
-            double S = affS[f], C = affC[f];
-            double c = 2.0 * C, s = 1.0 - 2.0 * S;
+            double s = bwdS[f], c = bwdC[f];
             double t1 = Fr - Mr, t2 = Fi + Mi;
             double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
             double Epr = Fr + Mr, Epi = Fi - Mi;
@@ -341,7 +352,7 @@ static void _zr2c_fold_fwd_perm(const double *__restrict__ zs_in,
 
 static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
                                 double *__restrict__ zs_out,
-                                const double *affS, const double *affC,
+                                const double *bwdS, const double *bwdC,
                                 const int *iperm, const int *perm,
                                 int N, size_t K, size_t xs, size_t zs)
 {
@@ -369,8 +380,7 @@ static void _zr2c_fold_bwd_perm(const double *__restrict__ X_in,
             int q = perm[m];
             double Fr = x[2 * f], Fi = x[2 * f + 1];
             double Mr = x[2 * m], Mi = x[2 * m + 1];
-            double S = affS[f], C = affC[f];
-            double c = 2.0 * C, s = 1.0 - 2.0 * S;
+            double s = bwdS[f], c = bwdC[f];
             double t1 = Fr - Mr, t2 = Fi + Mi;
             double yr = c * t2 + s * t1, yi = c * t1 - s * t2;
             double Epr = Fr + Mr, Epi = Fi - Mi;

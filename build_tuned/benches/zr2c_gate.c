@@ -66,7 +66,9 @@ static void run_cell(int N, size_t K)
     double *io  = malloc(8*xs*K);
     double *affS = malloc(8*(size_t)(top+1));
     double *affC = malloc(8*(size_t)(top+1));
-    _zr2c_init_aff(N, affS, affC);
+    double *bwdS = malloc(8*(size_t)(top+1));   /* raw sin/cos: the backward */
+    double *bwdC = malloc(8*(size_t)(top+1));   /* fold's own coefficients   */
+    _zr2c_init_aff(N, affS, affC, bwdS, bwdC);
     for (size_t t = 0; t < K; t++)
         for (int i = 0; i < N; i++) x[t*(size_t)N + i] = rnd();
     for (size_t t = 0; t < K; t++){
@@ -111,7 +113,7 @@ static void run_cell(int N, size_t K)
             io[t*xs+2*f]   = Xr[t*(size_t)(half+1)+f];
             io[t*xs+2*f+1] = Xi[t*(size_t)(half+1)+f]; }
     memset(out, 0, 8*xs*K);
-    _zr2c_fold_bwd(io, out, affS, affC, N, K, xs, xs);
+    _zr2c_fold_bwd(io, out, bwdS, bwdC, N, K, xs, xs);
     double zm = 0; w = 0;
     for (size_t t = 0; t < K; t++)
         for (int p = 0; p < half; p++){
@@ -123,7 +125,7 @@ static void run_cell(int N, size_t K)
     judge("bwd fold OOP", N, K, w/(2.0*zm), 1e-12);
 
     /* ── bwd IN-PLACE ── */
-    _zr2c_fold_bwd(io, io, affS, affC, N, K, xs, xs);
+    _zr2c_fold_bwd(io, io, bwdS, bwdC, N, K, xs, xs);
     w = 0;
     for (size_t t = 0; t < K; t++)
         for (int p = 0; p < half; p++){
@@ -174,7 +176,7 @@ static void run_cell(int N, size_t K)
     }
 
     free(x); free(z); free(Xr); free(Xi); free(out); free(io);
-    free(affS); free(affC);
+    free(affS); free(affC); free(bwdS); free(bwdC);
 }
 
 int main(void)

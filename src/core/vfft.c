@@ -2244,7 +2244,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
      * is exact across all four arms. */
     double *aff = NULL, *scr = NULL;
     if (vfft_proto_posix_memalign((void **)&aff, 64,
-                                  sizeof(double) * 2u * (size_t)(top + 1)) != 0)
+                                  sizeof(double) * 4u * (size_t)(top + 1)) != 0)
         aff = NULL;
     if (route == 0 &&
         vfft_proto_posix_memalign((void **)&scr, 64,
@@ -2258,7 +2258,10 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
         vfft_proto_aligned_free(scr);
         return NULL;
     }
-    _zr2c_init_aff(N, aff, aff + top + 1);
+    /* four tables: [affS | affC | bwdS | bwdC] in one allocation. The
+     * backward pair is the RAW sin/cos -- see _zr2c_init_aff. */
+    _zr2c_init_aff(N, aff, aff + (top + 1), aff + 2 * (top + 1),
+                   aff + 3 * (top + 1));
     h->transform = cfg->transform;
     h->placement = cfg->placement;
     h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
@@ -2278,7 +2281,9 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
 static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
 {
     const int N = h->N, top = N / 4;
-    const double *aS = h->zr2c_aff, *aC = h->zr2c_aff + top + 1;
+    const double *aS = h->zr2c_aff, *aC = h->zr2c_aff + (top + 1);
+    const double *bS = h->zr2c_aff + 2 * (top + 1);
+    const double *bC = h->zr2c_aff + 3 * (top + 1);
     vfft_plan ch = (vfft_plan)h->zr2c_child;
     size_t xs = (size_t)N + 2;
     if (h->transform == VFFT_R2C)
@@ -2316,12 +2321,12 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
     {
         if (h->zr2c_route == 0)
         { /* fold sre->scratch (zhat), child OOP scratch->dre */
-            _zr2c_fold_bwd(sre, h->zr2c_scratch, aS, aC, N, 1, xs, (size_t)N);
+            _zr2c_fold_bwd(sre, h->zr2c_scratch, bS, bC, N, 1, xs, (size_t)N);
             vfft_execute(ch, VFFT_BACKWARD, h->zr2c_scratch, NULL, dre, NULL);
         }
         else
         { /* fold sre->dre (alias-safe when in place), child in place on dre */
-            _zr2c_fold_bwd(sre, dre, aS, aC, N, 1, xs, (size_t)N);
+            _zr2c_fold_bwd(sre, dre, bS, bC, N, 1, xs, (size_t)N);
             vfft_execute(ch, VFFT_BACKWARD, dre, NULL, dre, NULL);
         }
     }
