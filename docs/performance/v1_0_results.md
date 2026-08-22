@@ -720,51 +720,65 @@ hardcode is gone. Roundtrip `c2r(r2c(x))==N·x` is the gate (all e-14). Source:
 
 ### 1D INTERLEAVED r2c/c2r, K=1 — the D2 zr2c route (like-for-like vs MKL's home layout)
 
-The first **interleaved-vs-interleaved** real-transform comparison — both engines consume/produce
+The first **interleaved-vs-interleaved** real-transform comparison - both engines consume/produce
 the packed CCE plane, no layout excuse on either side. Ours = the D2 composite (`vfft.c` zr2c
-route, shipped 2026-08-13): reinterpret x[N] as z[N/2] (zero work) → child c2c(N/2) NATURAL →
-z→z Hermitian fold; c2r is the mirror with the fold leading. Two child routes, raced and banked
-per cell in `oop_wisdom.txt` kind-5 rows: **OOP-IL** (IL c2c engine) and **cascade** (natural
-in-place cascade). MKL = DFTI_REAL CCE **DFTI_INPLACE** — its best real arm (V6), backward on
-its own twin descriptor with the per-run `mklref` gate. Gates: cross-engine fwd elementwise
-(~5e-16) + each engine's backward vs N·x (~1e-15). Medians of 5, pinned core 2, pace 300 ms.
-Source: `bench_1d_vs_mkl.c --zr2c` → `zr2c_quietday_20260813.csv`. Ratio = MKL/ours: >1 we win.
+route, shipped 2026-08-13): reinterpret x[N] as z[N/2] (zero work) -> child c2c(N/2) NATURAL ->
+z->z Hermitian fold; c2r is the mirror with the fold leading. Two child routes: **route 0** =
+OOP-IL child, **route 1** = natural in-place cascade child. MKL = DFTI_REAL CCE **DFTI_INPLACE**
+- its best real arm (V6), backward on its own twin descriptor. Gates: cross-engine fwd
+elementwise + each engine's backward vs N.x (all cells 3.7e-16..1.4e-15). Medians of 5, pinned
+core 2, pace 300 ms. Ratio = MKL/ours: >1 we win.
+
+**2026-08-22: these numbers come from the FRONT DOOR** - `vfft_create(VFFT_R2C/VFFT_C2R)` -
+which is what the library actually runs. Every earlier figure in this section was measured by a
+bench that hand-assembled the composite (a C2C plan at N/2 plus direct fold calls) and compared
+that OUT-OF-PLACE shape against MKL IN-PLACE. Two consequences, both correcting DOWNWARD-biased
+old numbers: the hand shape used three buffers where the executor uses two, and the placement
+axis was mismatched. The in-place column below is the like-for-like comparison and had never
+been measured before - the in-place real path shipped 2026-08-13 and no bench built one.
+Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 
 ```
- N       r2c OOP-IL  r2c cascade  r2c BEST | c2r OOP-IL  c2r cascade  c2r BEST
-────────────────────────────────────────────────────────────────────────────────
- 512       1.35×        —          1.35×   |   1.06×        —          1.06×
- 1024      1.08×        —          1.08×   |   0.95×        —          0.95×
- 2048      0.88×       1.09×       1.09×   |   0.95×       1.07×       1.07×
- 4096      0.97×        —          0.97×   |   0.80×        —          0.80×
- 8192      1.09×       0.96×       1.09×   |   0.96×       0.96×       0.96×
- 16384     1.17×       1.06×       1.17×   |   0.93×       0.83×       0.93×
- 65536     0.89×       1.12×       1.12×   |   0.83×       0.84×       0.84×
-────────────────────────────────────────────────────────────────────────────────
- r2c: parity-to-winning at 8192–65536 (65536 = the cascade child, 1.12×).
- 2026-08-21, medians of 5. TWO fixes landed: (1) the 2048 c2r hole (was
- 0.55×) is CLOSED — the zr2c child ran BLOCKED codelets fwd and MONOLITHIC
- bwd; eight blocked bwd twins now ship. (2) the Hermitian fold is
- INTERLEAVED-NATIVE — 20 port-5 shuffles/iter down to 10, helping BOTH
- directions (512 and 16384 r2c gained most; 2048 could not be resolved —
- its ~14.6% cell spread exceeds the fold saving, deferred to VTune).
- OOP-IL columns are freshly measured. Cascade: 2048 re-measured clean
- (median of 7, no order warning) and it WINS both directions there;
- 512/1024/4096 have no usable cascade figure and 8192/16384 keep the
- 08-13 vintage — at N>=4096 the arm now raises "ORDER CONVENTION
- UNKNOWN" and reads 0.24-0.34×, i.e. the bench can no longer verify the
- ordering it is timing. That is a HARNESS regression to fix (order-tape
- API), not a 3× loss — do not quote those numbers. 65536 not re-measured.
+ N        r2c OOP   r2c IN-PLACE | c2r OOP   c2r IN-PLACE   <- as SHIPPED (wisdom picks the route)
+--------------------------------------------------------------------------------
+ 512       1.40x       1.50x     |  1.30x       1.49x
+ 1024      1.22x       1.24x     |  1.03x       1.03x
+ 2048      1.21x       1.32x     |  0.97x       1.02x
+ 4096      1.08x       1.04x     |  0.66x       0.94x
+ 8192      1.20x       1.21x     |  0.81x       1.10x
+ 16384     1.23x       1.24x     |  0.93x       1.06x
+ 65536     1.01x       1.06x     |  0.88x       1.05x
+--------------------------------------------------------------------------------
+ r2c WINS EVERY CELL, both placements. In-place >= out-of-place everywhere
+ except 4096. c2r wins at the small end and in-place from 8192 up.
+
+ THE c2r OOP COLUMN IS A KNOWN-BAD ROUTE PICK, not an engine result. All 37
+ shipped kind-5 route rows are src=migrated with no ns= - nothing was ever
+ raced; a structural rule (place=oop -> route 0) was written down once. Where
+ the race disagrees, forcing route 1 gives:
+     2048   0.97x -> 1.12x      4096   0.66x -> 0.82x
+     8192   0.81x -> 1.01x      65536  0.88x -> 0.88x
+ i.e. the banked pick costs up to 27-35% on c2r OOP. Seeding those rows and
+ re-racing is the open item (audit G3); until then read the c2r OOP column as
+ "what the stale verdict serves", not as the engine's reach.
+
+ UNRESOLVED: front-door route-0 OOP c2r runs ~22% slower than the identically
+ shaped hand-built arm (2048: ~1680 vs ~1373 ns, reproducible). Same algorithm
+ on paper, so the difference is buffer placement - the plan's internal scratch
+ vs the bench's, or 4KB aliasing. Do not bank a front-door c2r OOP number
+ until that is explained.
 ```
 
-> **r2c reaches the parity band mid-N and wins at 65536 (1.12×, cascade child); the small end
-> trails ~0.85×.** The c2r column is the open problem, and the 2048 cell shows exactly where:
-> MKL's backward costs **the same as its forward** (1198 vs 1200 ns), while ours pays **~+50%
-> over our own forward** (r2c ~1400–1500 ns → c2r ~2200 ns) — in **both** child routes, so no
-> route pick fixes it. The fold is direction-symmetric; the entire penalty is the child's
-> **natural c2c backward** (IL bwd / backward cascade), a c2c-side workstream — fixing it moves
-> the whole c2r column, 2048 (0.55×) first. Day-to-day ratio drift on this host is up to ~0.2
-> per cell (thermal); quote the **shape**, not one day's third digit.
+> **r2c wins every cell in both placements (1.01x-1.50x), and in-place is the stronger
+> placement almost everywhere.** The c2r column is no longer an engine problem: measured
+> in-place, c2r wins at 512-2048 and from 8192 up, and our backward now costs only ~2-16%
+> over our own forward (2048: r2c 1145 vs c2r 1279 ns; 65536: 54647 vs 56020) where it once
+> paid ~+50%. Two 2026-08-21 fixes account for that - eight blocked backward twins for the
+> zr2c child, and the interleaved-native Hermitian fold (20 port-5 shuffles/iter down to 10,
+> helping both directions). What remains in the c2r OOP column is a STALE ROUTE VERDICT, not
+> a kernel deficit: see the route-1 deltas in the block above. Day-to-day ratio drift on this
+> host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
+> quote the **shape**, not one day's third digit.
 
 ## 4. vs MKL — 2D R2C
 
