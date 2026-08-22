@@ -310,6 +310,12 @@ extern "C"
    * Requesting TRANSFORM_CONTIGUOUS on SPLIT is refused loudly rather than
    * silently ignored (no silent-corruption path).
    *
+   * ⚠ REAL TRANSFORMS ARE THE ONE EXCEPTION to the DEFAULT rule above:
+   * interleaved R2C/C2R still defaults to LANE-MAJOR. The flip below was
+   * justified by a measured race (2.2-5.7x) that has not yet been run for the
+   * real path, which only acquired a transform-contiguous route on 2026-08-22.
+   * Ask for it by name until it has.
+   *
    * 🔴 CHANGED 2026-08-04: INTERLEAVED batches used to default to
    * lane-major. Code that zeroes its config, sets layout=INTERLEAVED with
    * howmany>1, and passes lane-major data must now say
@@ -349,21 +355,34 @@ extern "C"
    *                           dre may equal sre (in-place) or not.
    *   R2C (fwd)  SPLIT        real_in    NULL       out.re     out.im
    *   R2C (fwd)  INTERLEAVED  real_in    NULL       z_CCE_out  NULL
-   *                           dre = packed CCE half-spectrum, (N/2+1)*K pairs
-   *                           at dre[2*(f*K+t)] (§6a24).
+   *                           dre = packed CCE half-spectrum. WHERE the K
+   *                           transforms sit is config.batch_geom:
+   *                             DEFAULT / LANE_MAJOR  (N/2+1)*K pairs, bin f
+   *                               of transform t at dre[2*(f*K+t)] (§6a24),
+   *                               and sre likewise at sre[e*K+t];
+   *                             TRANSFORM_CONTIGUOUS  transform t owns the
+   *                               block sre[t*N ..) -> dre[t*2*(N/2+1) ..),
+   *                               K independent transforms end to end.
+   *                           ⚠ INTERLEAVED DEFAULT means transform-contiguous
+   *                           for C2C but LANE-MAJOR here — the real path
+   *                           predates the 2026-08-04 flip and keeps its
+   *                           geometry until the same race is run for it.
    *   R2C (fwd)  INTERLEAVED  z_plane    NULL       z_plane    NULL
    *              IN-PLACE     dre == sre REQUIRED (a distinct dre is refused;
    *                           NULL is NOT accepted as "same as sre"). ONE
    *                           plane of 2*(N/2+1) doubles: N reals in, the
-   *                           N/2+1 CCE bins written over them. 1D, K==1,
-   *                           EVEN N only.
+   *                           N/2+1 CCE bins written over them. 1D, EVEN N.
+   *                           K==1, or K>1 with batch_geom =
+   *                           TRANSFORM_CONTIGUOUS (that plane per transform,
+   *                           end to end, at a 2*(N/2+1)-double stride).
    *   C2R (bwd)  SPLIT        in.re      in.im      real_out   NULL
    *   C2R (bwd)  INTERLEAVED  z_CCE_in   NULL       real_out   NULL
-   *                           sre = the CCE spectrum (same packing as R2C out).
+   *                           sre = the CCE spectrum (same packing as R2C out,
+   *                           batch_geom included — the roles swap ends).
    *   C2R (bwd)  INTERLEAVED  z_plane    NULL       z_plane    NULL
    *              IN-PLACE     the mirror of in-place R2C: same single padded
    *                           plane of 2*(N/2+1) doubles, dre == sre
-   *                           REQUIRED, 1D / K==1 / EVEN N only.
+   *                           REQUIRED, same 1D / EVEN N / K rule.
    *   DCT/DST/DHT (SPLIT)     real_in    NULL       real_out   NULL
    *                           real->real; INTERLEAVED rejected at create.
    *
@@ -385,11 +404,21 @@ extern "C"
    *       IN-PLACE only (the prime dispatch is not wired into the OOP kinds);
    *       create with placement=VFFT_INPLACE.
    *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D §6a30 +
-   *       3D/4D §6a47). OUT-OF-PLACE always. IN-PLACE is supported for
-   *       exactly ONE shape (^, §D2 2026-08-13): 1D, LAYOUT_INTERLEAVED,
-   *       howmany == 1, EVEN N. Every other in-place real shape is REJECTED
-   *       loudly: with a split spectrum the real data and the spectrum are
-   *       separate planes, so an in-place contract there would be a lie.
+   *       3D/4D §6a47), lane-major. 1D K>1 with batch_geom =
+   *       TRANSFORM_CONTIGUOUS is served instead as K independent K=1
+   *       transforms end to end (the same wrapper 1D C2C uses), which is the
+   *       only geometry that reaches the §D2 zr2c route at K>1: that route
+   *       REINTERPRETS a transform's N contiguous reals as N/2 complex points,
+   *       and under lane-major the two halves of one complex sample are K
+   *       apart. That wrapper is also where real batches thread — one plan
+   *       clone per worker, a slab of whole transforms each.
+   *       IN-PLACE (^, §D2 2026-08-13): 1D, LAYOUT_INTERLEAVED, EVEN N, and
+   *       either howmany == 1 or TRANSFORM_CONTIGUOUS. Every other in-place
+   *       real shape is REJECTED loudly: with a split spectrum the real data
+   *       and the spectrum are separate planes, so an in-place contract there
+   *       would be a lie — and in the lane-major batch geometry the reals and
+   *       bins of one transform interleave with every other transform's, so no
+   *       single-plane overwrite exists.
    *
    *       THE IN-PLACE REAL CONTRACT (the only place it is stated):
    *         - ONE padded plane of 2*(N/2 + 1) doubles, the MKL CCE
@@ -411,6 +440,20 @@ extern "C"
                     double *sre, double *sim, double *dre, double *dim);
 
   void vfft_destroy(vfft_plan p);
+
+  /* DIAGNOSTIC — how many WORKER threads this plan's transform-contiguous
+   * batch wrapper actually built, or -1 if the plan is not such a wrapper.
+   * 0 means the wrapper exists but executes its batch serially.
+   *
+   * Exists because clone-building is conditional (pool size, whether the
+   * inner route is pool-free, whether each clone came out output-equivalent)
+   * and every one of those can quietly reduce the count to zero. A serial
+   * wrapper still returns correct results, so a correctness test — including
+   * an MT-equals-ST bitwise comparison — passes just as happily when no
+   * thread ever ran. Tests that mean to assert THREADING must assert on this,
+   * and benches should report it rather than assume the thread count they
+   * asked for is the thread count they got. */
+  int vfft_plan_tc_workers(vfft_plan p);
 
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
