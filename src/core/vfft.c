@@ -3397,6 +3397,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 h->tcbw = NULL;
             }
         }
+        /* VFFT_TCMT_VERBOSE: report the worker count on stderr (the
+         * VFFT_ZRACE_VERBOSE precedent). Clone building is CONDITIONAL --
+         * pool size, the inner route's pool-freedom, and clone equivalence
+         * can each silently reduce it to zero -- and a wrapper with zero
+         * workers runs the serial loop, which makes an MT==ST check pass
+         * without ever having threaded. Gates assert this line is > 0 so a
+         * green result cannot mean "MT never ran". */
+        if (getenv("VFFT_TCMT_VERBOSE"))
+            fprintf(stderr, "[tcmt] %s N=%d K=%zu nthreads=%d workers=%d\n",
+                    _vfft_tname(h->transform), h->N, h->K, h->nthreads,
+                    h->tcbw_n);
         return h;
     }
     }
@@ -6797,7 +6808,26 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         double *d = dre;
         const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
-        if (T > 1 && (size_t)h->N * h->K >= _tc_mt_floor())
+        /* Engage floor is in COMPLEX POINTS, and h->N is not always that.
+         * For C2C, N IS the complex length. For R2C/C2R, N counts REAL
+         * samples and the transform actually performed is the N/2-point
+         * complex child plus a linear fold -- so testing N*K engages
+         * threading at HALF the work the floor was calibrated on.
+         *
+         * Measured 2026-08-22 (8 threads, P-cores, medians of 7), the cells
+         * that sit exactly in that gap -- N*K == 2048 real points but only
+         * 1024 complex -- all LOSE:
+         *     r2c 256x8  0.80x    c2r 256x8  0.74x
+         *     r2c 512x4  0.89x    c2r 512x4  0.95x
+         * while every cell at 2048 genuine complex points wins (r2c 512x8
+         * 1.51x, r2c 1024x4 1.61x, c2r 512x8 1.41x). Converting to complex
+         * points turns each of those losses back into the serial path, which
+         * is what the floor exists to do. */
+        {
+        const size_t work = (h->transform == VFFT_C2C)
+                                ? (size_t)h->N * h->K
+                                : ((size_t)h->N / 2u) * h->K;
+        if (T > 1 && work >= _tc_mt_floor())
         { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
             vfft_set_num_threads(h->nthreads); /* re-assert snapshot pool */
             if (T > _stride_pool_size + 1)
@@ -6805,6 +6835,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         }
         else
             T = 1;
+        }
         if (T > 1)
         {
             /* 🔴 NO TAIL, BY CONSTRUCTION — and note the contrast with the
@@ -7707,6 +7738,13 @@ void vfft_set_num_threads(int n)
     stride_set_num_threads(n);
     if (n > 1)
         stride_pin_thread(0); /* pool pins workers to 1..n-1; caller=0 */
+}
+int vfft_plan_tc_workers(vfft_plan p)
+{
+    const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
+    if (!h || !h->tcb)
+        return -1; /* not a transform-contiguous wrapper handle */
+    return h->tcbw_n;
 }
 int vfft_get_num_threads(void) { return stride_get_num_threads(); }
 const char *vfft_isa(void) { return STRIDE_ISA_NAME; }

@@ -276,6 +276,8 @@ static void run_regressions(void)
  *            assertion that catches that, and it is the same rule the C2C
  *            wrapper is held to.
  */
+static int g_tc_workers = -1;   /* worker count of the LAST plan built */
+
 static void tc_batch_fwd(int N, size_t K, int nthreads, double *out)
 {
     const size_t nb = (size_t)N/2 + 1;
@@ -299,6 +301,7 @@ static void tc_batch_fwd(int N, size_t K, int nthreads, double *out)
         for (int e = 0; e < N; e++) x[t*(size_t)N + e] = rnd() + 0.25*(double)t;
     vfft_plan p = vfft_create(&cfg);
     if (!p) { free(x); out[0] = -1.0; return; }
+    g_tc_workers = vfft_plan_tc_workers(p);   /* see the MT==ST check below */
     memset(out+1, 0, 8*2*nb*K);
     vfft_execute(p, VFFT_FORWARD, x, NULL, out+1, NULL);
     {
@@ -337,8 +340,23 @@ static void run_tc_batch(void)
         tc_batch_fwd(N, K, 1, a);
         judge("TC batch r2c K=4 fwd (vs naive)", N, a[0], 1e-9);
 
-        /* MT == ST, BITWISE */
+        /* MT == ST, BITWISE.
+         *
+         * ASSERT THE THREADING HAPPENED FIRST. Clone building is conditional,
+         * and a wrapper that built ZERO workers runs the serial loop -- so a
+         * bitwise MT==ST check passes perfectly while proving nothing at all.
+         * That is not a hypothetical: it is the default outcome whenever the
+         * inner route is not pool-free. vfft_plan_tc_workers exists to make
+         * the distinction observable, and this is the check that uses it. */
         tc_batch_fwd(N, K, 4, b);
+        {
+            int nw = g_tc_workers;
+            printf("  %-38s N=%-6d workers=%-3d %s\n",
+                   "TC batch r2c K=4 MT engaged", N, nw,
+                   nw > 0 ? "OK (floor forced to 1 in main)"
+                          : "*** FAIL -- serial; the MT==ST check below is vacuous ***");
+            if (nw <= 0) g_fail = 1;
+        }
         if (a[0] < 0 || b[0] < 0) judge("TC batch r2c K=4 MT==ST", N, -1, 1);
         else {
             int same = (memcmp(a+1, b+1, 8*2*nb*K) == 0);
@@ -487,6 +505,22 @@ static void run_cold_replay(int N)
 
 int main(int argc, char **argv)
 {
+    /* FORCE THE MT DISPATCH TO ENGAGE, or the TC batch leg gates nothing.
+     *
+     * Two separate things must both be true for a batch to actually thread,
+     * and they are decided in different places:
+     *   at CREATE   clones are built (vfft_plan_tc_workers > 0)
+     *   at EXECUTE  the work exceeds _tc_mt_floor(), else the wrapper runs
+     *               its serial loop no matter how many clones it owns
+     * The leg below asserts the first. Without this line the second silently
+     * fails at its smaller cell -- N=512 K=4 is 1024 complex points against a
+     * 2048 floor -- so the MT==ST comparison would compare the serial path
+     * with itself and pass while proving nothing. A correctness gate wants
+     * every arm threaded, so drop the floor to 1 here. This is the knob's
+     * documented purpose (see _tc_mt_floor); performance work must NOT do
+     * this, because the floor is a measured crossover. Set before any plan is
+     * created: the floor is read once into a static. */
+    _putenv("VFFT_TCMT_FLOOR=1");
     /* CWD-proof wisdom resolution: build.py runs binaries from build_tuned/
      * while a manual run starts in benches/ — probe both relative roots and
      * take the one whose oop_wisdom.txt actually opens. vfft_wisdom_load
