@@ -1673,7 +1673,19 @@ let emit_codelet
        (plain_voids) stays this family's own. *)
     Buffer.add_string
       buf
-      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr ());
+      (Abi.z11_signature
+         (* 🔴 msg/msd are the cascade's IN-PLACE mid stages: zturn.h and
+            zsplit.h call them f(plane, 0, plane, 0, ...) -- the SAME pointer
+            for input and output -- so they must not promise the compiler
+            their planes are disjoint. Measured 2026-08-22, dropping the
+            qualifier on these is not merely safe but BETTER: radix8 msg
+            260->237 insns and 50->26 stack spills, msd 272->241 and 60->29,
+            because __restrict__ was licensing the compiler to hoist every
+            load above the stores and blow register pressure. *)
+         ~alias_tolerant:(k.base = "msg" || k.base = "msd")
+         ~symbol:fname
+         ~target_attr:isa.Isa.target_attr
+         ());
     Buffer.add_string buf (Printf.sprintf "    %s\n" plain_voids)
   in
   (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the tr4_str precedent — bodies
@@ -1826,10 +1838,17 @@ let emit_codelet
       buf
       (Printf.sprintf
          "static __attribute__((always_inline)) inline void %s(\n\
-         \    const double * __restrict__ zin, double * __restrict__ zout,\n\
+         \    const double *%szin, double *%szout,\n\
          \    const double *tw_re, size_t Ls, size_t count)\n\
           {\n"
-         body_name);
+         body_name
+         (* 🔴 The helper is ALWAYS_INLINE, so its qualifiers apply to the
+            inlined code regardless of what the wrapper says -- de-restricting
+            only the z11 signature would leave the promise intact here and the
+            fix would be cosmetic. zturn/zsplit call msg/msd as
+            f(plane, 0, plane, 0, ...), so BOTH levels must drop it. *)
+         (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ ")
+         (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ "));
     let dag = prepare ~two_inst:false in
     emit_col_loop
       ~open_line:
@@ -1841,7 +1860,19 @@ let emit_codelet
         Abi.z11_signature (the third of the three hand prints). *)
     Buffer.add_string
       buf
-      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr ());
+      (Abi.z11_signature
+         (* 🔴 msg/msd are the cascade's IN-PLACE mid stages: zturn.h and
+            zsplit.h call them f(plane, 0, plane, 0, ...) -- the SAME pointer
+            for input and output -- so they must not promise the compiler
+            their planes are disjoint. Measured 2026-08-22, dropping the
+            qualifier on these is not merely safe but BETTER: radix8 msg
+            260->237 insns and 50->26 stack spills, msd 272->241 and 60->29,
+            because __restrict__ was licensing the compiler to hoist every
+            load above the stores and blow register pressure. *)
+         ~alias_tolerant:(k.base = "msg" || k.base = "msd")
+         ~symbol:fname
+         ~target_attr:isa.Isa.target_attr
+         ());
     Buffer.add_string
       buf
       (Printf.sprintf

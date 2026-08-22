@@ -178,12 +178,17 @@ let z11_signature ?(alias_tolerant = false) ~symbol ~target_attr () =
      for the kernels il2p calls with zin == zout on its out-of-place fast
      path (forward T2, backward N1): passing one pointer to two
      restrict-qualified parameters is undefined behaviour, however benign it
-     looks at one compiler vintage.  Everything else KEEPS the qualifier --
-     measured 2026-08-22, dropping it globally changes codegen for about a
-     third of the zil corpus (boundary_split dts/msd/msg/s0t, il3p t2tg, T2
-     backward), while for the aliased set it is free: 87 of 89 byte-identical
-     assembly, the other 2 differing only in scheduling at identical
-     instruction counts. *)
+     looks at one compiler vintage.  Also the cascade's in-place mid stages
+     (msg, msd), which zturn/zsplit call f(plane, 0, plane, 0, ...).
+
+     Measured 2026-08-22, the qualifier buys these DAGs nothing and sometimes
+     costs: of a 38-file sweep, 25 are byte-identical without it and 9 differ
+     in scheduling at IDENTICAL instruction counts; on msg/msd it is a net
+     WIN (radix8 msg 260->237 insns, 50->26 spills; msd 272->241, 60->29),
+     because restrict licenses hoisting every load above the stores and blows
+     register pressure.  It stays the DEFAULT only because the sweep is a
+     sample, not the whole corpus -- opt in per kind, do not flip the
+     default without measuring the rest. *)
   let r = if alias_tolerant then "            " else " __restrict__ " in
   String.concat
     ""

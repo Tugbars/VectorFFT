@@ -59,11 +59,12 @@ val signature : t -> string
     pointers.  Required for the kinds il2p calls with zin == zout on its
     out-of-place fast path -- forward T2 and backward N1 -- because passing
     one pointer to two restrict-qualified parameters is undefined behaviour.
-    It is NOT the default: measured 2026-08-22, dropping the qualifier
-    corpus-wide changes codegen for about a third of the zil files
-    (boundary_split dts/msd/msg/s0t, il3p t2tg, T2 backward), while for the
-    aliased set it is free -- 87 of 89 byte-identical, the other 2 differing
-    in scheduling only at identical instruction counts. *)
+    Measured 2026-08-22 over a 38-file sweep: 25 byte-identical without the
+    qualifier, 9 differing in scheduling at identical instruction counts, and
+    msg/msd strictly BETTER without it (radix8 msg 260->237 insns, 50->26
+    stack spills).  So it buys these DAGs nothing measurable; it remains the
+    default only because that sweep is a sample of the corpus, not all of
+    it.  Opt in per kind; do not flip the default without measuring. *)
 val z11_signature
   :  ?alias_tolerant:bool
   -> symbol:string

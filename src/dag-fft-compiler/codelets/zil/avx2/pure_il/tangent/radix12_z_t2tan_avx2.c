@@ -54,10 +54,10 @@ static const __m128d _ZW7_s = { -0.57735026918962573, 0.57735026918962573 };
 
 __attribute__((target("avx2,fma")))
 void radix12_z_t2tan_fwd_avx2(
-    const double * __restrict__ zin,
-    const double * __restrict__ zin_unused,
-    double       * __restrict__ zout,
-    double       * __restrict__ zout_unused,
+    const double *            zin,
+    const double *            zin_unused,
+    double       *            zout,
+    double       *            zout_unused,
     const double * tw_re, const double * tw_im,
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
