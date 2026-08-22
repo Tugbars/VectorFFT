@@ -689,6 +689,21 @@ static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
     return p;
 }
 
+/* Exactly-disjoint test for the scratch-skip fast path.
+ *
+ * 🔴 NOT `zin != zout`. The fast path has stage 1 READ zin while WRITING
+ * zout, so it needs the planes to be fully disjoint -- inequality does not
+ * exclude PARTIAL overlap, which would corrupt silently. Under the old
+ * staging this could not happen: stage 1 wrote p->mid, so a partially
+ * overlapping pair was harmless. The optimization introduced the hazard, so
+ * the predicate has to carry it. A partial overlap falls back to the scratch
+ * path, which is always correct. */
+static inline int vfft_il2p_planes_disjoint(const double *zin, const double *zout,
+                                            size_t N)
+{
+    return (zout + 2u * N <= zin) || (zin + 2u * N <= zout);
+}
+
 static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
                                          const double *zin, double *zout)
 {
@@ -718,7 +733,7 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
      * compares both stagings BITWISE over every (R1,R2) pair x form variant
      * x direction (237 arms) and carries a negative control proving the
      * comparison detects an injected fault. */
-    if (zin != zout)
+    if (vfft_il2p_planes_disjoint(zin, zout, R1 * R2))
     {
         p->leaf_f(zin,  0, zout, 0, 0,     0, R1, 0, R2, 0, R1);
         p->mid_f (zout, 0, zout, 0, p->tw, 0, R2, 0, R2, 0, R2);
@@ -835,7 +850,7 @@ static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
     /* Same structure as the forward (see vfft_il2p_execute_fwd): t2t is the
      * turned -- i.e. scattering -- pass and needs a distinct destination;
      * n1_b is the identity map (Ls == OLs == R1) and can run in place. */
-    if (zin != zout)
+    if (vfft_il2p_planes_disjoint(zin, zout, R1 * R2))
     {
         p->t2t_b  (zin,  0, zout, 0, p->twb, 0, R2, 0, R1, 0, R2);
         p->n1_b_r2(zout, 0, zout, 0, 0,      0, R1, 0, R1, 0, R1);
