@@ -2214,16 +2214,33 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
         return NULL;
     }
     struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
-    double *aff = (double *)malloc(sizeof(double) * 2u * (size_t)(top + 1));
-    double *scr = (route == 0)
-                      ? (double *)malloc(sizeof(double) * ((size_t)N + 2))
-                      : NULL;
+    /* 🔴 64-BYTE ALIGNED, not plain malloc. Both buffers are streamed by
+     * AVX2 kernels: the fold reads aff and writes scr, then the child reads
+     * scr end to end. malloc gives 16 bytes on this toolchain, so every
+     * 32-byte access that straddles a 64-byte line costs an extra line touch.
+     * The kernels use loadu/storeu so this was never a CORRECTNESS issue,
+     * which is why it survived -- it is pure throughput.
+     *
+     * Measured, N=2048, front-door arms: every route-0 arm that TOUCHES the
+     * scratch ran slow (r2c IP 1469-1528 ns, c2r OOP 1374-1688, c2r IP
+     * 1414-1674) while the one route-0 arm that does NOT touch it (r2c OOP,
+     * which folds in place in dre) ran 1134-1221 -- and route 1, which
+     * allocates no scratch at all, ran 1137-1261 everywhere. The correlation
+     * is exact across all four arms. */
+    double *aff = NULL, *scr = NULL;
+    if (vfft_proto_posix_memalign((void **)&aff, 64,
+                                  sizeof(double) * 2u * (size_t)(top + 1)) != 0)
+        aff = NULL;
+    if (route == 0 &&
+        vfft_proto_posix_memalign((void **)&scr, 64,
+                                  sizeof(double) * ((size_t)N + 2)) != 0)
+        scr = NULL;
     if (!h || !aff || (route == 0 && !scr))
     {
         vfft_destroy((vfft_plan)child);
         free(h);
-        free(aff);
-        free(scr);
+        vfft_proto_aligned_free(aff);
+        vfft_proto_aligned_free(scr);
         return NULL;
     }
     _zr2c_init_aff(N, aff, aff + top + 1);
@@ -7049,8 +7066,8 @@ void vfft_destroy(vfft_plan h)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->zr2c_child)
         vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
-    free(h->zr2c_aff);
-    free(h->zr2c_scratch);
+    vfft_proto_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
+    vfft_proto_aligned_free(h->zr2c_scratch);
     if (h->rplan)
         vfft_r2c_plan_destroy(h->rplan);
     if (h->c2rdisp)
