@@ -2,3 +2,4 @@
 [wisdom2] verdict raced and held in memory; NOT persisted (serving mode — set config.wisdom_write=1 to bank)
 [zr2c] N=1024 r2c oop route race: reps=55 hyst=3% alt-order median | oop-il=1693 nat-ip=1765 -> route=0 (bank slot 0)
 [wisdom2] _zr2c_cold_gate_no_such_dir: 0 record(s) loaded, writable
+[zr2c] N=2048 r2c oop route race: reps=31 hyst=3% alt-order median | oop-il=3668 nat-ip=4013 -> route=0 (bank slot 0)
