@@ -43,7 +43,7 @@ changes what P5 costs.
 
 `bench_1d_vs_mkl.c` keeps its name, its file boundary and its 8 positional arguments, and
 gains one **modifier flag `--ref=mkl|fftw|both`**. The reference library sits behind a
-small vtable (`refbackend/ref.h` + `ref_time.h` + `ref_mkl.h` + `ref_fftw.h` — headers, not
+small vtable (`core/support/ref.h` + `ref_time.h` + `ref_mkl.h` + `ref_fftw.h` — headers, not
 translation units, see §5.0) so that one timing core replaces the 21 hand-copied
 warmup-10/best-of-5 idioms and every arm — ours, MKL's, FFTW's — is the same C shape.
 **FFTW is bound at runtime** (`LoadLibraryA` + `GetProcAddress`, no `fftw3.lib` on the link
@@ -148,10 +148,13 @@ floor; `--padr2c`) · **3 conditional** (`--2d`, `--2dr2c`, `--2dc2r` — and `-
 all) · **4 not armed** (`--mt`+combos, `--ilmt`'s MT column, `--c2rcalib`, `--zr2c` 9b).
 Publish that partition, not "15 armed", the first time an FFTW table ships.
 
-🔴 **The `max_NK` ceiling is an undefined coverage hole, not just a cost knob.** It converts
-rows 1a, 2 and 10 from *armed* to *armed for whichever cells fall under it* — and since 92 of
-the 190 default cells were never planned (§3.2), **nobody currently knows what fraction of the
-biggest mode the FFTW column will actually cover.** Pin the ceiling with a number before P5.
+🟢 **`max_NK` — RESOLVED BY OWNER RULING 2026-08-15: THERE IS NO CEILING.** Tugbars:
+*"I know, but we take it as is — this is what FFT planning is like. We know this and we go
+with it."* ⇒ **every cell is planned, the wall time is accepted, and no cell ever prints
+`fftw_ns=n/a reason=plan-cost` for cost reasons.** The coverage hole the critic flagged is
+therefore closed by decision rather than by measurement: rows 1a, 2 and 10 are **fully armed**,
+not "armed for whichever cells fall under a ceiling", and the 92-of-190 unplanned figure is a
+statement about what this campaign measured, not about what the bench will cover.
 
 🔴 **"Armed" is not "cheap".** After §3.2, the largest `N·K` cells of default/`--oop`/`--pad`
 cost minutes of `FFTW_MEASURE` planning each — a single measured cell at N=60060 K=256 took
@@ -313,7 +316,7 @@ two planes are contiguous where ours are not — and one open experiment (§6.2)
 contiguous planes roll different 4 KB dice than independent ones.
 
 ```c
-/* refbackend/ref_fftw.h — the FFTW arm's own planes, per cell */
+/* benches/ref_fftw.h — the FFTW arm's own planes, per cell */
 static size_t ref_plane_stride(size_t bytes)          /* deterministic, size-derived */
 {   return ((bytes + 4095) & ~(size_t)4095) + 64; }   /* 4 KB pitch + the house 64 B skew */
 
@@ -407,10 +410,23 @@ more likely low than high. `run_bench.py:114-117` `p.wait()`s with no timeout, s
 presents as a hang — the house law *"long create LOOKS LIKE A HANG — log on entry"* applies
 to FFTW here exactly as it does to our own planner.
 
-**Ruling:** (a) §3.1's deterministic planes so wisdom actually pins these plans and the cost
-is paid **once**; and (b) a published, wisdom-primed `max_NK` ceiling above which the FFTW
-column prints `fftw_ns=n/a reason=plan-cost` — an honest empty cell, in the same spirit as
-the threads `n/a`. 🔴 **`fftw_set_timelimit` is explicitly rejected as the lever for MEASURE**:
+**Ruling — OWNER RULING 2026-08-15 supersedes clause (b).** Tugbars: *"I know, but we take it
+as is — this is what FFT planning is like. We know this and we go with it."*
+(a) §3.1's deterministic planes so wisdom actually pins these plans and the cost is paid
+**once** — retained, and now **load-bearing rather than merely desirable** (see below).
+(b) ~~a published `max_NK` ceiling~~ — **WITHDRAWN.** Plan every cell; accept the wall time.
+
+🔴 **What the ruling makes conditional.** "Paid once" is a claim about WISDOM, not about
+planning. Cold cost is unavoidable and now accepted; *recurring* cost is not, and the
+difference is entirely §3.1. Without deterministic planes the split wisdom key misses 6/6, so
+you pay the full sweep **every launch** — and worse, you get a different plan each time
+(5 distinct plans / 9.4 % drift over 8 launches, §3.1), which makes cross-launch numbers
+**non-comparable**, not merely slow. ⇒ **P0.75 is no longer "the campaign's real gate" for
+coverage; it is the precondition that turns an accepted one-time cost into an actual one-time
+cost.** If P0.75 fails, the honest report is "FFTW planning is re-paid per launch and the
+plan is unstable", NOT a ceiling.
+
+🔴 **`fftw_set_timelimit` is explicitly rejected as the lever for MEASURE**:
 it makes the chosen plan a function of how fast the machine was at plan time, on a box whose
 first memory law is *THERMALLY NOISY*. That converts a 10-minute stall into a
 thermally-correlated plan lottery — worse than the disease.

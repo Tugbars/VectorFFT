@@ -2292,12 +2292,20 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
         {
             if (h->placement == VFFT_OUTOFPLACE)
             { /* child OOP sre->dre (its z view), fold in place in dre */
-                vfft_execute(ch, VFFT_FORWARD, sre, NULL, dre, NULL);
+                /* 🔴 EXPLICIT cast, not an implicit discard. vfft_execute's
+                 * public signature takes double* for sre because in-place
+                 * plans legitimately write it; THIS child is out-of-place
+                 * (route child_oop_il), so it only reads. Casting here says
+                 * that deliberately instead of letting the compiler drop the
+                 * qualifier silently -- the warning was real, the behaviour
+                 * was not. */
+                vfft_execute(ch, VFFT_FORWARD, (double *)sre, NULL, dre, NULL);
                 _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
             }
             else
             { /* in place: child OOP plane->scratch, fold scratch->plane */
-                vfft_execute(ch, VFFT_FORWARD, sre, NULL, h->zr2c_scratch, NULL);
+                vfft_execute(ch, VFFT_FORWARD, (double *)sre, NULL,
+                             h->zr2c_scratch, NULL);   /* OOP child: reads only */
                 _zr2c_fold_fwd(h->zr2c_scratch, dre, aS, aC, N, 1, xs, xs);
             }
         }
