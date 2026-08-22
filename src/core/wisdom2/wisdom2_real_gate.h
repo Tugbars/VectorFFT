@@ -25,6 +25,7 @@
 #include <string.h>
 #include "wisdom2.h"
 #include "wisdom2_real_reader.h"
+#include "wisdom2_oop_reader.h"   /* checks 3b + 7: the zr2c (kind-5) side */
 
 #define VW2RG_CHECK(cond, ...)                                   \
     do {                                                         \
@@ -156,6 +157,33 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         printf("  [3] engine isolation (zr2c cell intact, not misread)\n");
     }
 
+    /* ---- 3b. the SYMMETRIC direction: a route cell must survive zr2c ----
+     * The split side guarded both directions from the start; the zr2c side
+     * guarded NEITHER until 2026-08-22 -- on read it skipped a foreign record
+     * silently, on write it clobbered one. The two keys are byte-identical at
+     * K=1, so this is reachable on the DEFAULT config. */
+    {
+        int kv = 0;
+        /* vw2_real_route_bank returns VW2_OK both when it banks and when it
+         * declines -- the caller does not care -- so the LOOKUP below is what
+         * proves the cell was actually staged. */
+        (void)vw2_real_route_bank(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP,
+                                  VW2_RROUTE_STRIDE, 100.0, 200.0);
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP)
+                        == VW2_RROUTE_STRIDE,
+                    "could not stage an eng=route cell at 4096");
+        VW2RG_CHECK(vw2_oop_zr2c_cell_taken(&st, 4096, 0, 0) == 1,
+                    "a route cell must report as taken to the zr2c side");
+        VW2RG_CHECK(vw2_oop_bank_zr2c_slot(&st, 4096, 0, 0, 1, 123.0) == VW2_EOWNED,
+                    "zr2c bank into a route cell must decline with VW2_EOWNED");
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP)
+                        == VW2_RROUTE_STRIDE,
+                    "the route cell was CLOBBERED by the zr2c banker");
+        VW2RG_CHECK(vw2_oop_lookup_zr2c(&st, 4096, &kv) == 0,
+                    "a route cell must NOT read as a zr2c verdict");
+        printf("  [3b] engine isolation, symmetric (route cell intact)\n");
+    }
+
     /* ---- 4. sibling isolation: dir / role must never be matched --------- */
     {
         vw2_rec_t d;
@@ -216,6 +244,58 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         printf("  *** FAIL *** second vw2_save failed\n");
         fails++;
     }
+    /* ---- 7. KIND-5 CODEC: the four-slot fan-in ------------------------
+     * 🔴 The route bit is the ONLY thing kind-5 wisdom stores, and it had
+     * no coverage in either direction: the bank/lookup pair was referenced
+     * only from vfft.c and the migrator's verify leg. The codec reassembles
+     * one packed kv from FOUR independent per-slot records, so a mis-keyed
+     * slot (c2r/ip answering an r2c/oop query) serves the wrong route with no
+     * symptom -- and because both routes are correctness-gated, the only
+     * observable consequence is speed, which nothing measures either.
+     *
+     * Distinct routes per slot on purpose: an all-same pattern would pass
+     * even if every slot collapsed onto one record. */
+    {
+        int kv = 0, got, slot;
+        const int want[4] = { 0, 1, 1, 0 };   /* r2c/oop r2c/ip c2r/oop c2r/ip */
+        for (slot = 0; slot < 4; slot++)
+            VW2RG_CHECK(vw2_oop_bank_zr2c_slot(&st, 8192, (slot >> 1) & 1,
+                                               slot & 1, want[slot],
+                                               100.0 + slot) == VW2_OK,
+                        "kind-5 slot %d failed to bank", slot);
+        /* banking is MEMORY-ONLY by design (README 2.2); persistence is the
+         * caller's explicit step, so a save must precede the reopen. */
+        if (vw2_save(&st) != VW2_OK) {
+            printf("  *** FAIL *** save after kind-5 bank failed\n");
+            fails++;
+        }
+        vw2_close(&st);
+        if (vw2_open(&st, dir, 1) != VW2_OK) {
+            printf("  *** FAIL *** reopen after kind-5 bank failed\n");
+            return -1;
+        }
+        VW2RG_CHECK(vw2_oop_lookup_zr2c(&st, 8192, &kv) == 1,
+                    "kind-5 verdict lost across save/reopen");
+        /* 🔴 kv_get returns the ENCODED field, not the route: kv_set stores
+         * (route ? 2 : 1) so that 0 can mean UNMEASURED. Asserting against
+         * the raw route is an off-by-one that reads as a mis-keyed slot --
+         * pinned here precisely so the next reader does not repeat it. */
+        for (slot = 0; slot < 4; slot++) {
+            got = vfft_zr2c_kv_get(kv, slot);
+            VW2RG_CHECK(got == (want[slot] ? 2 : 1),
+                        "kind-5 slot %d: encoded %d != %d (route %d) -- mis-keyed slot",
+                        slot, got, want[slot] ? 2 : 1, want[slot]);
+        }
+        /* and the slot map itself: (is_c2r << 1) | is_inplace */
+        VW2RG_CHECK(vfft_zr2c_kv_slot(0, 0) == 0 && vfft_zr2c_kv_slot(0, 1) == 1 &&
+                        vfft_zr2c_kv_slot(1, 0) == 2 && vfft_zr2c_kv_slot(1, 1) == 3,
+                    "vfft_zr2c_kv_slot map changed");
+        kv = 0;
+        VW2RG_CHECK(vw2_oop_lookup_zr2c(&st, 8190, &kv) == 0,
+                    "kind-5 lookup at an unbanked N returned a verdict");
+        printf("  [7] kind-5 four-slot codec (distinct routes survive roundtrip)\n");
+    }
+
     {
         int n_before = st.nrec;
         vw2_close(&st);

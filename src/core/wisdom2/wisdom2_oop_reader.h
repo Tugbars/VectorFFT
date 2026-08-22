@@ -694,7 +694,9 @@ static inline int vw2_oop_bank_zr2c_slot(vw2_store_t *s, int realN,
         fprintf(stderr, "[wisdom2] zr2c bank refused: t=%s n=%d place=%s is owned "
                         "by another engine\n",
                 is_c2r ? "c2r" : "r2c", realN, is_inplace ? "ip" : "oop");
-        return 0;                      /* not an error: the cell is not ours */
+        /* 🔴 NOT 0: VW2_OK == 0, so returning 0 here would make "declined"
+         * indistinguishable from "banked" to every caller and to the gate. */
+        return VW2_EOWNED;
     }
     memset(&r, 0, sizeof r);
     r.key.t = is_c2r ? VW2_T_C2R : VW2_T_R2C;
