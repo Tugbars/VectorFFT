@@ -253,6 +253,9 @@ static inline vw2_fclass_t vw2_field_class(const char *name)
 typedef struct { const char *env; int shape; const char *field; } vw2_envlaw_t;
 static const vw2_envlaw_t vw2_env_law[] = {
     { "VFFT_ZR2C_ROUTE",  1, "route" },
+    { "VFFT_R2C_ROUTE",   1, "route" },  /* §W2 r2c route racing hook       */
+    { "VFFT_C2R_ROUTE",   1, "route" },  /* §W2 c2r route racing hook       */
+    { "VFFT_IL_BKV",      1, "il_bkv" }, /* dir=bwd kernel-form racing hook */
     { "VFFT_IL_PAD",      1, "il_me" },
     { "VFFT_SP_ROUTE",    1, "route" },
     { "VFFT_FORCE_ZROUTE",1, "route" },  /* demoted to debug switch (owner) */
