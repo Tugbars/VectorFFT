@@ -3585,8 +3585,12 @@ int main(int argc, char **argv)
     long target_K = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms = (argc >= 7) ? atoi(argv[6]) : 0; /* inter-engine idle (order-bias fix) */
     int flip = (argc >= 8) ? atoi(argv[7]) : 0;    /* 1 = MKL first (alternate per cell) */
-    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || r2c || r2c2d || r2c2d_bwd || c2r1d) ? 2
-                                                                                                           : -1); /* MT->0, OOP/2D/R2C->P-core 2 */
+    /* 🔴 g_zr2c belongs in this disjunction: a bare --zr2c ran UNPINNED
+     * while docs/performance/v1_0_results.md described its numbers as
+     * "pinned core 2". An explicit core argument always wins; this only
+     * fixes the default. */
+    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || r2c || r2c2d || r2c2d_bwd || c2r1d || g_zr2c) ? 2
+                                                                                                           : -1); /* MT->0, OOP/2D/R2C/zr2c->P-core 2 */
     {
         const char *tp = getenv("VFFT_TRIAL_PACE_MS");
         g_trial_pace_ms = tp ? atoi(tp) : 0;

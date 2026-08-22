@@ -83,8 +83,18 @@ static void _zr2c_init_aff(int N, double *affS, double *affC)
 
 /* forward fold: Z (N/2 complex, natural, interleaved) -> X (CCE, N/2+1
  * complex, interleaved). X may alias Z (in-place; needs the padded plane). */
-static void _zr2c_fold_fwd(const double *__restrict__ z_in,
-                           double *__restrict__ X_out,
+/* 🔴 NO __restrict__ ON THE DATA PLANES. Both of these folds are called
+ * with the SAME pointer for input and output -- vfft.c:2291 and :2312 pass
+ * (dre, dre), and :2324 passes (sre, dre) which alias whenever the plan is
+ * in-place. __restrict__ is a promise to the compiler that the two do not
+ * alias; making that promise and then breaking it is undefined behaviour
+ * even though this loop happens to be safe (each iteration loads bin f and
+ * its mirror m before storing either, and the indices never revisit). The
+ * promise is removed rather than the aliasing, because in-place IS the
+ * shipped contract. affS/affC keep theirs: the twiddle tables are plan-owned
+ * and never alias a data plane. */
+static void _zr2c_fold_fwd(const double *z_in,
+                           double *X_out,
                            const double *affS, const double *affC,
                            int N, size_t K, size_t zs, size_t xs)
 {
@@ -161,8 +171,10 @@ static void _zr2c_fold_fwd(const double *__restrict__ z_in,
 /* backward fold: X (CCE, N/2+1 complex) -> Zhat (N/2 complex, natural),
  * scaled 2x so IL c2c_bwd(N/2) (unnormalized, x N/2) lands on N*x.
  * Zhat may alias X (in-place). X[0].im / X[N/2].im are never read. */
-static void _zr2c_fold_bwd(const double *__restrict__ X_in,
-                           double *__restrict__ z_out,
+/* Same aliasing contract as _zr2c_fold_fwd above: called (sre, dre) with
+ * dre == sre on every in-place c2r, so no __restrict__ on the data planes. */
+static void _zr2c_fold_bwd(const double *X_in,
+                           double *z_out,
                            const double *affS, const double *affC,
                            int N, size_t K, size_t xs, size_t zs)
 {

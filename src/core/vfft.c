@@ -2207,6 +2207,21 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
     c2.layout = VFFT_LAYOUT_INTERLEAVED;
     c2.nthreads = cfg->nthreads;
     c2.wisdom = cfg->wisdom;
+    /* 🔴 PASS THE WISDOM-LIFECYCLE FIELDS THROUGH. The child does almost
+     * all of the work in this composite -- the pair, il_kv, the dir=bwd
+     * verdict and the @natoop mode all live in ITS cell, not in the route
+     * bit. Dropping these narrowed two documented public contracts to the
+     * route bit alone:
+     *   recalibrate  ("1 = re-measure + overwrite", vfft.h:277) re-raced only
+     *                the route, while every child verdict silently replayed.
+     *   wisdom_write (the write guard, vfft.h:278) never reached the child,
+     *                so a caller who asked for persistence got the route bit
+     *                banked and nothing else.
+     * Narrowing a user-visible capability is a contract violation, not a
+     * tuning choice. Note the cost is real and intended: a recalibrate now
+     * re-plans the child on BOTH arms of the route race. */
+    c2.recalibrate = cfg->recalibrate;
+    c2.wisdom_write = cfg->wisdom_write;
     struct vfft_plan_s *child = (struct vfft_plan_s *)vfft_create(&c2);
     if (!child)
     {
@@ -2339,7 +2354,20 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                        int N, int slot, int route, double ns)
 {
-    vw2_oop_bank_zr2c_slot(&W->vw2, N, (slot >> 1) & 1, slot & 1, route, ns);
+    /* 🔴 CHECK THE RETURN. The banker can decline (VW2_EOWNED: the cell
+     * belongs to another engine) or fail the codec, and it says so. Firing
+     * the persistence seam anyway wrote a file for a bank that never
+     * happened, and hid the decline -- which is exactly how two engines end
+     * up quietly fighting over one key. */
+    int rc = vw2_oop_bank_zr2c_slot(&W->vw2, N, (slot >> 1) & 1, slot & 1,
+                                    route, ns);
+    if (rc != VW2_OK)
+    {
+        fprintf(stderr, "vfft: zr2c route verdict NOT banked at N=%d slot=%d "
+                        "(rc=%d) -- the cell will re-race on the next create\n",
+                N, slot, rc);
+        return;
+    }
     _vw2_persist(W, cfg);
 }
 
@@ -2353,9 +2381,11 @@ static double _il_ab_med9(double *v);
  * the memcpy/scratch hops are exactly the costs being raced), private junk
  * planes, junk-reps for the in-place shapes (natarm precedent), ~300 us
  * bursts, alternating arm order, median-of-9 rounds, 3% hysteresis toward
- * the structural default. Both arms are gated pipelines (zr2c_fd_gate.c:
- * 26/26), so the race picks between two CORRECT plans — no in-race
- * roundtrip gate needed. Budget ~10 ms per unmeasured cell, once. */
+ * the structural default. Both arms are gated pipelines (zr2c_fd_gate.c
+ * covers every transform x placement x route cell plus a cold->replay leg;
+ * it reports its own leg count -- do not restate a number here, the last
+ * one went stale the moment the gate grew), so the race picks between two
+ * CORRECT plans — no in-race roundtrip gate needed. Budget ~10 ms per unmeasured cell, once. */
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {

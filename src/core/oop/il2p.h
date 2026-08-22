@@ -693,6 +693,37 @@ static inline void vfft_il2p_execute_fwd(const vfft_il2p_plan_t *p,
                                          const double *zin, double *zout)
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
+    /* OUT-OF-PLACE SKIPS THE SCRATCH (2026-08-22).
+     *
+     * Only ONE of the two passes scatters. Stage 1 is a corner turn -- it
+     * loads zin[2*(j*Ls+k)] and stores zout[2*(k*OLs+j)], indices transposed
+     * -- so it needs a destination distinct from its source. Stage 2 does
+     * NOT: it loads zin[2*(j*Ls+k)] and stores zout[2*(j*OLs+k)], and is
+     * called with Ls == OLs, an identity map on the lattice, so it can run
+     * in place on whatever stage 1 produced.
+     *
+     * So when zin != zout the caller has already handed us a second plane
+     * and p->mid is pure overhead: one extra 2N-double buffer written and
+     * read for nothing. Removing it from the OUT-OF-PLACE path drops the
+     * resident set from in+mid+out to in+out -- about 16 KB at N=2048,
+     * against this machine's 48 KB L1d, which is the fence that caps this
+     * tier at N=1024.
+     *
+     * 🔴 zin == zout still needs the scratch: stage 1 cannot scatter into
+     * its own source. That is what p->mid is actually for -- it is required
+     * by the IN-PLACE contract, not by the four-step shape.
+     *
+     * Verified two ways before landing: an index-shape audit of every mid
+     * codelet family, and build_tuned/benches/il2p_alias_gate.c, which
+     * compares both stagings BITWISE over every (R1,R2) pair x form variant
+     * x direction (237 arms) and carries a negative control proving the
+     * comparison detects an injected fault. */
+    if (zin != zout)
+    {
+        p->leaf_f(zin,  0, zout, 0, 0,     0, R1, 0, R2, 0, R1);
+        p->mid_f (zout, 0, zout, 0, p->tw, 0, R2, 0, R2, 0, R2);
+        return;
+    }
     p->leaf_f(zin, 0, p->mid, 0, 0, 0, R1, 0, R2, 0, R1);
     p->mid_f(p->mid, 0, zout, 0, p->tw, 0, R2, 0, R2, 0, R2);
 }
@@ -801,6 +832,15 @@ static inline int vfft_il2p_execute_bwd_t2t(const vfft_il2p_plan_t *p,
 {
     const size_t R1 = (size_t)p->R1, R2 = (size_t)p->R2;
     if (!p->t2t_b || !p->n1_b_r2) return -1;
+    /* Same structure as the forward (see vfft_il2p_execute_fwd): t2t is the
+     * turned -- i.e. scattering -- pass and needs a distinct destination;
+     * n1_b is the identity map (Ls == OLs == R1) and can run in place. */
+    if (zin != zout)
+    {
+        p->t2t_b  (zin,  0, zout, 0, p->twb, 0, R2, 0, R1, 0, R2);
+        p->n1_b_r2(zout, 0, zout, 0, 0,      0, R1, 0, R1, 0, R1);
+        return 0;
+    }
     p->t2t_b(zin, 0, p->mid, 0, p->twb, 0, R2, 0, R1, 0, R2);
     p->n1_b_r2(p->mid, 0, zout, 0, 0, 0, R1, 0, R1, 0, R1);
     return 0;
