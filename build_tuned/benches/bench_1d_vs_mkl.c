@@ -2499,6 +2499,234 @@ static double _zr2c_med5(double t[5])
             (dst)[t_] = (vfft_proto_now_ns() - t0_) / reps;         \
         }                                                           \
     } while (0)
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * FRONT-DOOR zr2c ARMS (audit finding G2, 2026-08-22)
+ *
+ * 🔴 Until now NO mode in this bench ever set cfg.transform to VFFT_R2C or
+ * VFFT_C2R. run_zr2c_cell above hand-assembles the composite: it creates a
+ * C2C plan at N/2 and calls _zr2c_fold_fwd/_bwd itself. Three consequences:
+ * the route-1 memcpy and the route-0 scratch hop were never timed, a wrong
+ * route verdict had no observable effect anywhere in the bench, and the
+ * IN-PLACE real shapes -- the library's only in-place real FFT -- had never
+ * been timed at all.
+ *
+ * This block is ADDITIVE on purpose. The hand-built arms above stay, because
+ * running both in the same process is the sanity check: route-0 OOP c2r here
+ * should land near the hand arm's c2r, since that hand shape already equals
+ * what the executor does. If it does not, this code is wrong, not the old
+ * number. Deleting the old arms would have thrown that check away.
+ *
+ * Arms: {r2c, c2r} x {OOP, IN-PLACE} x {route 0, route 1, wisdom} = 12.
+ * Route is a CREATE-TIME decision (vfft.c reads VFFT_ZR2C_ROUTE at the top of
+ * _zr2c_build), so the env is set before vfft_create, never inside a timed
+ * body -- and no vfft_create is ever inside one.
+ *
+ * Own CSV, own filename: the columns differ from the 16-column zr2c schema,
+ * and appending a different width into the banked file would corrupt it.
+ * ═════════════════════════════════════════════════════════════════════════ */
+
+typedef struct {
+    double ns;       /* median-of-5; 0 = NOT TIMED                          */
+    double err;      /* gate rel err; -1 = ungated (no MKL reference)        */
+    int    built;    /* vfft_create succeeded                               */
+    int    refused;  /* execute left the destination untouched              */
+} zr_arm_t;
+
+/* route index: 0 = force child route 0, 1 = force route 1, 2 = wisdom picks.
+ * 🔴 Static NON-const: POSIX putenv keeps the caller's pointer. And only
+ * ever "0", "1" or the empty form -- _zr2c_build tests `e && e[0]` then
+ * atoi(), so a word like "w" would silently read as route 0. */
+static void zr_route_env(int ri)
+{
+    static char e0[] = "VFFT_ZR2C_ROUTE=0";
+    static char e1[] = "VFFT_ZR2C_ROUTE=1";
+    static char eW[] = "VFFT_ZR2C_ROUTE=";
+    putenv(ri == 0 ? e0 : (ri == 1 ? e1 : eW));
+}
+static const char *ZR_RT[3] = { "r0", "r1", "W " };
+
+/* One front-door arm, gated then timed.
+ *
+ * REFUSAL DETECTION. vfft_execute returns void, so there is no status to
+ * check: a refused call is indistinguishable from a completed one except
+ * that it leaves the destination UNTOUCHED. So seed the destination with a
+ * known pattern and compare after -- an in-place plan called wrongly, or any
+ * signature refusal, shows up as "destination never changed" instead of as a
+ * suspiciously fast timing. Gate-before-time catches it a second way.
+ *
+ * The parameter MUST be named `reps`: ZR2C_TIME captures it by name. */
+static void zr_fd_arm(zr_arm_t *a, int N, vfft_wisdom *W, int is_c2r, int ip,
+                      int ri, const double *x, const double *bsrc,
+                      int haveref, double *dst, int reps)
+{
+    const size_t xs = (size_t)N + 2;
+    const int half = N / 2;
+    const double *src = is_c2r ? bsrc : x;
+    vfft_config_t cfg;
+    vfft_plan p;
+    size_t i;
+
+    a->ns = 0; a->err = -1; a->built = 0; a->refused = 0;
+    if (is_c2r && !bsrc) return;
+
+    zr_route_env(ri);                      /* create-time, outside all timing */
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = is_c2r ? VFFT_C2R : VFFT_R2C;
+    cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE;
+    cfg.rigor     = VFFT_MEASURE;
+    cfg.dims      = 1;
+    cfg.n[0]      = N;                     /* the REAL N, not half */
+    cfg.howmany   = 1;
+    cfg.layout    = VFFT_LAYOUT_INTERLEAVED;
+    cfg.nthreads  = 1;
+    cfg.wisdom    = W;
+    /* cfg.order left 0: real spectra are natural by definition.
+     * cfg.wisdom_write left 0: A BENCH NEVER BANKS. */
+    p = vfft_create(&cfg);
+    if (!p) return;                        /* built stays 0 -> named sentinel */
+    a->built = 1;
+
+    /* ---- gate, one shot, BEFORE any timing ---- */
+    if (ip) {
+        memcpy(dst, src, 8 * xs);
+        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
+                     dst, NULL, dst, NULL);
+        /* refusal shows as "never moved" */
+        a->refused = (memcmp(dst, src, 8 * xs) == 0);
+    } else {
+        for (i = 0; i < xs; i++) dst[i] = -1.0e300;   /* poison */
+        vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
+                     (double *)src, NULL, dst, NULL);
+        a->refused = (dst[0] == -1.0e300);
+    }
+    if (a->refused) { vfft_destroy(p); return; }
+
+    if (haveref) {
+        double w = 0, m = 0;
+        if (is_c2r) {                      /* backward vs N*x, never a roundtrip */
+            for (i = 0; i < (size_t)N; i++) {
+                double d = fabs(dst[i] - (double)N * x[i]);
+                double q = fabs(x[i]);
+                if (d > w) w = d;
+                if (q > m) m = q;
+            }
+            a->err = m > 0 ? w / ((double)N * m) : w;
+        } else {                           /* forward vs the CCE reference */
+            for (i = 0; i < (size_t)(2 * (half + 1)); i++) {
+                double d = fabs(dst[i] - bsrc[i]);
+                double q = fabs(bsrc[i]);
+                if (d > w) w = d;
+                if (q > m) m = q;
+            }
+            a->err = m > 0 ? w / m : w;
+        }
+        if (!(a->err < 1e-9)) { vfft_destroy(p); return; }  /* gate fail: ns=0 */
+    }
+
+    /* ---- time. Seed ONCE, outside the macro: a per-rep memcpy would tax
+     * this arm and nothing else in the file (the MKL arms seed outside too). */
+    {
+        double t[5];
+        if (ip) {
+            memcpy(dst, src, 8 * xs);
+            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
+                                      dst, NULL, dst, NULL));
+        } else {
+            ZR2C_TIME(t, vfft_execute(p, is_c2r ? VFFT_BACKWARD : VFFT_FORWARD,
+                                      (double *)src, NULL, dst, NULL));
+        }
+        a->ns = _zr2c_med5(t);
+    }
+    vfft_destroy(p);
+}
+
+/* The 12-arm front-door cell. `rot` rotates the visiting order: with 12 arms
+ * a fixed order always leaves the same arm hottest, and `flip` only rotates
+ * ENGINES, not arms. rot is printed so the order is visible, not implicit. */
+static void run_zr2c_fd_cell(int N, FILE *out, int cool_ms, int rot)
+{
+    const size_t xs = (size_t)N + 2;
+    const int half = N / 2;
+    vfft_wisdom *W = k1z_bundle();
+    double *x, *dst[2][2];
+    const double *bsrc = NULL;
+    double *crefbuf = NULL;
+    int reps = reps_for((size_t)N);
+    zr_arm_t A[2][2][3];
+    int c, ipx, ri, k;
+
+    if (!W) { printf("%-8d zr2c-fd SKIP (front-door bundle unavailable)\n", N); return; }
+
+    x = alloc_d(xs);
+    dst[0][0] = alloc_d(xs); dst[0][1] = alloc_d(xs);   /* r2c oop / r2c ip */
+    dst[1][0] = alloc_d(xs); dst[1][1] = alloc_d(xs);   /* c2r oop / c2r ip */
+    /* the SAME seed as the hand arm, so the two are comparable in one run */
+    srand(31 + N);
+    for (int i = 0; i < N; i++) x[i] = (double)rand() / RAND_MAX - 0.5;
+    x[N] = x[N + 1] = 0.0;
+    memset(A, 0, sizeof A);
+
+#ifdef VFFT_HAS_MKL
+    {
+        DFTI_DESCRIPTOR_HANDLE hF = NULL;
+        crefbuf = alloc_d(xs);
+        if (DftiCreateDescriptor(&hF, DFTI_DOUBLE, DFTI_REAL, 1, (MKL_LONG)N)
+                == DFTI_NO_ERROR) {
+            DftiSetValue(hF, DFTI_PLACEMENT, DFTI_INPLACE);
+            DftiSetValue(hF, DFTI_CONJUGATE_EVEN_STORAGE, DFTI_COMPLEX_COMPLEX);
+            if (DftiCommitDescriptor(hF) == DFTI_NO_ERROR) {
+                memcpy(crefbuf, x, 8 * xs);
+                DftiComputeForward(hF, crefbuf);
+                bsrc = crefbuf;            /* the CCE reference AND c2r input */
+            }
+            DftiFreeDescriptor(&hF);
+        }
+    }
+#endif
+
+    for (k = 0; k < 12; k++) {
+        int idx = (k + rot) % 12;
+        c   = idx / 6;               /* 0 = r2c, 1 = c2r */
+        ipx = (idx / 3) % 2;         /* 0 = OOP, 1 = in-place */
+        ri  = idx % 3;               /* route */
+        zr_fd_arm(&A[c][ipx][ri], N, W, c, ipx, ri, x, bsrc,
+                  bsrc != NULL, dst[c][ipx], reps);
+        cachebust();
+        pace(cool_ms);
+    }
+
+    for (c = 0; c < 2; c++)
+        for (ipx = 0; ipx < 2; ipx++) {
+            printf("%-7d | %s %-3s |", N, c ? "c2r" : "r2c", ipx ? "IP" : "OOP");
+            for (ri = 0; ri < 3; ri++) {
+                zr_arm_t *a = &A[c][ipx][ri];
+                if (!a->built)        printf(" %s CREATE-FAIL |", ZR_RT[ri]);
+                else if (a->refused)  printf(" %s REFUSED     |", ZR_RT[ri]);
+                else if (a->ns == 0)  printf(" %s GATE-FAIL   |", ZR_RT[ri]);
+                else                  printf(" %s %8.0f ns |", ZR_RT[ri], a->ns);
+            }
+            printf(" gate %s\n",
+                   bsrc ? "cross-engine" : "UNGATED (no MKL reference)");
+        }
+
+    if (out)
+        for (c = 0; c < 2; c++)
+            for (ipx = 0; ipx < 2; ipx++)
+                for (ri = 0; ri < 3; ri++)
+                    fprintf(out, "%d,1,%s,%s,%s,%.0f,%.3e,%d,%d,%d\n",
+                            N, c ? "c2r" : "r2c", ipx ? "ip" : "oop",
+                            ri == 0 ? "r0" : (ri == 1 ? "r1" : "W"),
+                            A[c][ipx][ri].ns, A[c][ipx][ri].err,
+                            A[c][ipx][ri].built, A[c][ipx][ri].refused, rot);
+
+    /* alloc_d is posix_memalign-backed: plain free() corrupts the heap here. */
+    free_d(x);
+    free_d(dst[0][0]); free_d(dst[0][1]);
+    free_d(dst[1][0]); free_d(dst[1][1]);
+    if (crefbuf) free_d(crefbuf);
+}
+
 static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
 {
     const int half = N / 2, top = N / 4;
@@ -3806,8 +4034,22 @@ int main(int argc, char **argv)
                    "# MKL  = DFTI_REAL CCE DFTI_INPLACE — its best arm (V6); backward on its own twin descriptor\n"
                    "# gates: fwd = cross-engine elementwise | c2r = each engine's backward vs N*x. MEDIANS of 5.\n",
                    pace_ms, cool_ms);
+        /* FRONT-DOOR arms get their OWN csv: the column set differs from the
+         * 16-column zr2c schema above, and appending a different width into
+         * the banked file would corrupt it. */
+        FILE *fdout = fopen("vfft_perf_tuned_1d_zr2c_fd.csv", "w");
+        if (fdout)
+            fprintf(fdout, "N,K,transform,placement,route,ns,relerr,built,refused,rot\n");
+        printf("\n# FRONT-DOOR arms: vfft_create(R2C/C2R) x {OOP,IP} x {route0,route1,wisdom}\n"
+               "# these are the honest composite numbers -- the hand-built arms above\n"
+               "# never timed the route-1 memcpy, the route-0 scratch hop, or ANY in-place shape.\n"
+               "# both run in one process on purpose: route-0 OOP c2r here should land near\n"
+               "# the hand arm's c2r, since that hand shape already equals what the executor does.\n");
         if (target_N)
+        {
             run_zr2c_cell(target_N, out, cool_ms, flip);
+            run_zr2c_fd_cell(target_N, fdout, cool_ms, 0);
+        }
         else
         {
             static const int ZRN[] = { 512, 2048, 8192, 16384, 65536 };
@@ -3815,8 +4057,12 @@ int main(int argc, char **argv)
             {
                 run_zr2c_cell(ZRN[ni], out, cool_ms, flip ^ ((int)ni & 1));
                 pace(pace_ms);
+                run_zr2c_fd_cell(ZRN[ni], fdout, cool_ms, (int)ni);
+                pace(pace_ms);
             }
         }
+        if (fdout)
+            fclose(fdout);
         if (out)
             fclose(out);
         fclose(f);
