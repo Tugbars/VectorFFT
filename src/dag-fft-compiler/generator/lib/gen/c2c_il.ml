@@ -989,6 +989,11 @@ let emit
   Buffer.add_string
     buf
     (Abi.z11_signature
+       (* il2p calls the forward T2 and the backward N1 with zin == zout on
+          its out-of-place fast path (il2p.h), so those two must not promise
+          the compiler their planes are disjoint. Every other kind keeps
+          __restrict__ -- it is load-bearing for them. *)
+       ~alias_tolerant:((kind = T2 && dir = Fwd) || (kind = N1 && dir = Bwd))
        ~symbol:
          (Printf.sprintf
             "radix%d_z_%s_%s_%s"
@@ -1002,7 +1007,8 @@ let emit
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")
             isa.Isa.name)
-       ~target_attr:isa.Isa.target_attr);
+       ~target_attr:isa.Isa.target_attr
+       ());
   Buffer.add_string
     buf
     (Printf.sprintf

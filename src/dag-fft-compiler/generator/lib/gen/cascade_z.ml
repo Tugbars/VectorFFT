@@ -1673,7 +1673,7 @@ let emit_codelet
        (plain_voids) stays this family's own. *)
     Buffer.add_string
       buf
-      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr);
+      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr ());
     Buffer.add_string buf (Printf.sprintf "    %s\n" plain_voids)
   in
   (* ── s0t fwd body: CLOSED-FORM TEMPLATE (the tr4_str precedent — bodies
@@ -1841,7 +1841,7 @@ let emit_codelet
         Abi.z11_signature (the third of the three hand prints). *)
     Buffer.add_string
       buf
-      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr);
+      (Abi.z11_signature ~symbol:fname ~target_attr:isa.Isa.target_attr ());
     Buffer.add_string
       buf
       (Printf.sprintf

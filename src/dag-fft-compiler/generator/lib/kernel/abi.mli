@@ -53,5 +53,20 @@ val signature : t -> string
     own silencer policy.  ONE source now; the grouping (pointers one per
     line, the non-restrict tw pair and the five size_t grouped) is the
     frozen historical layout and must never change — 265 shipped files
-    carry it.  Kind-conditional (void) silencers remain caller-side. *)
-val z11_signature : symbol:string -> target_attr:string -> string
+    carry it.  Kind-conditional (void) silencers remain caller-side.
+
+    [alias_tolerant] (default false) omits __restrict__ on the four plane
+    pointers.  Required for the kinds il2p calls with zin == zout on its
+    out-of-place fast path -- forward T2 and backward N1 -- because passing
+    one pointer to two restrict-qualified parameters is undefined behaviour.
+    It is NOT the default: measured 2026-08-22, dropping the qualifier
+    corpus-wide changes codegen for about a third of the zil files
+    (boundary_split dts/msd/msg/s0t, il3p t2tg, T2 backward), while for the
+    aliased set it is free -- 87 of 89 byte-identical, the other 2 differing
+    in scheduling only at identical instruction counts. *)
+val z11_signature
+  :  ?alias_tolerant:bool
+  -> symbol:string
+  -> target_attr:string
+  -> unit
+  -> string
