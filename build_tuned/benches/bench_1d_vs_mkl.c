@@ -2946,7 +2946,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                     }
                     if (conv >= 0)
                     {
-                        _zr2c_fold_bwd_perm(cref, Zs, aS, aC, ip, pm, N, 1,
+                        _zr2c_fold_bwd_perm(cref, Zs, bS, bC, ip, pm, N, 1,
                                             (size_t)N + 2, (size_t)N);
                         vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
                         double gw = 0, gm2 = 0;
@@ -2967,7 +2967,7 @@ static void run_zr2c_cell(int N, FILE *out, int cool_ms, int flip)
                                                     (size_t)N, (size_t)N + 2);
                             });
                             ZR2C_TIME(tcb, {
-                                _zr2c_fold_bwd_perm(cref, Zs, aS, aC, ip, pm, N, 1,
+                                _zr2c_fold_bwd_perm(cref, Zs, bS, bC, ip, pm, N, 1,
                                                     (size_t)N + 2, (size_t)N);
                                 vfft_execute(hs, VFFT_BACKWARD, Zs, NULL, y, NULL);
                             });
