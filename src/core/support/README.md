@@ -9,6 +9,7 @@ math here — this is the floor the engine stands on.
 | `env.h` | CPU/runtime setup (FTZ-DAZ, aligned + huge-page alloc, ISA/CPU query, core pinning) **+** env-overridable search-tuning knobs |
 | `threads.h` | the **from-scratch** spin-based thread pool (K-split parallelism; no OpenMP/TBB) |
 | `strided_codelets.h` | ABI-typed registry struct for the 2D Design-C "strided" row-FFT codelets |
+| `ref.h` | **declarations-only** vtable type for the benchmark **reference backends** (MKL / FFTW) + the reference-independent helpers: role/regime enums, `ref_shape_t`, `ref_caps_t`, the N-arm order-neutralising scheduler, `ref_race_check`, `ref_ratio`, `csv_for`. Implementations (`ref_mkl.h`, `ref_fftw.h`) live in `build_tuned/benches/` — they pull in `mkl_dfti.h` / bind `fftw3.dll`, which core must not |
 
 ---
 
