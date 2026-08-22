@@ -1,0 +1,5 @@
+[wisdom2] _zr2c_cold_gate_no_such_dir: 0 record(s) loaded, writable
+[wisdom2] verdict raced and held in memory; NOT persisted (serving mode — set config.wisdom_write=1 to bank)
+[zr2c] N=1024 r2c oop route race: reps=29 hyst=3% alt-order median | oop-il=1759 nat-ip=1759 -> route=0 (bank slot 0)
+[wisdom2] _zr2c_cold_gate_no_such_dir: 0 record(s) loaded, writable
+[zr2c] N=2048 r2c oop route race: reps=50 hyst=3% alt-order median | oop-il=1278 nat-ip=1324 -> route=0 (bank slot 0)

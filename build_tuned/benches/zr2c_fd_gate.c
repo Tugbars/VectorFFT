@@ -51,6 +51,36 @@ static void judge(const char *what, int N, double err, double tol)
 
 static vfft_wisdom *g_W;
 
+/* ── stderr tap (the k1z_inplace_gate / natural-front-gate pattern) ────────
+ * The route race announces itself on stderr under VFFT_ZRACE_VERBOSE, so the
+ * only way to assert "a race actually happened" from the public API is to
+ * read it back. Log lives in the CWD, never inside a wisdom dir. */
+static char g_errpath[512];
+static long g_errpos = 0;
+static int err_tap_open(void)
+{
+    snprintf(g_errpath, sizeof g_errpath, "_zr2c_fd_gate.log");
+    if (!freopen(g_errpath, "w", stderr)) return 0;
+    setvbuf(stderr, NULL, _IONBF, 0);
+    g_errpos = 0;
+    return 1;
+}
+static const char *err_tap_read(void)
+{
+    static char buf[16384];
+    buf[0] = 0;
+    fflush(stderr);
+    FILE *f = fopen(g_errpath, "rb");
+    if (!f) return buf;
+    if (fseek(f, g_errpos, SEEK_SET) == 0) {
+        size_t n = fread(buf, 1, sizeof buf - 1, f);
+        buf[n] = 0;
+        g_errpos += (long)n;
+    }
+    fclose(f);
+    return buf;
+}
+
 /* route 0/1 force the child route via env (the racing hook); route -1
  * REMOVES the env (msvcrt: putenv("VAR=") deletes) so create serves the
  * WISDOM path — banked kind-5 verdict, or the in-context race on a miss
@@ -221,6 +251,64 @@ static void run_regressions(void)
     }
 }
 
+/* ── COLD -> REPLAY: the route axis' own lifecycle ────────────────────────
+ * 🔴 The route bit is the ONLY verdict kind-5 wisdom owns, and nothing in
+ * the tree asserted that it is ever actually RACED, or that a banked verdict
+ * is then REPLAYED rather than re-raced. Both halves matter: a cell that
+ * never races has no verdict, and a cell that re-races on every create has a
+ * verdict nobody reads.
+ *
+ * A wisdom handle loaded from a path that does not exist is a valid EMPTY
+ * bundle (documented at the resolution site below), which is exactly a cold
+ * store -- and it can never touch the shipped one.
+ *
+ * ZERO timing assertions: this checks THAT a race ran and that replay is
+ * byte-identical, never how fast anything was. Safe on a noisy machine. */
+static void run_cold_replay(int N)
+{
+    static char envW[] = "VFFT_ZR2C_ROUTE=";
+    static char envV[] = "VFFT_ZRACE_VERBOSE=1";
+    putenv(envW);                       /* wisdom decides, not the env hook */
+    putenv(envV);
+
+    vfft_wisdom *W = vfft_wisdom_load("_zr2c_cold_gate_no_such_dir");
+    size_t xs = (size_t)N + 2;
+    double *x = (double *)malloc(8 * xs);
+    double *A = (double *)malloc(8 * xs);
+    double *B = (double *)malloc(8 * xs);
+    if (!x || !A || !B) { free(x); free(A); free(B); return; }
+    for (int i = 0; i < N; i++) x[i] = rnd();
+    x[N] = x[N + 1] = 0.0;
+
+    vfft_config_t cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_R2C; cfg.placement = VFFT_OUTOFPLACE;
+    cfg.rigor = VFFT_MEASURE; cfg.dims = 1; cfg.n[0] = N; cfg.howmany = 1;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1; cfg.wisdom = W;
+
+    (void)err_tap_read();               /* drop anything already buffered */
+
+    vfft_plan p1 = vfft_create(&cfg);
+    if (p1) { vfft_execute(p1, VFFT_FORWARD, x, NULL, A, NULL); vfft_destroy(p1); }
+    int raced1 = strstr(err_tap_read(), "route race") != NULL;
+
+    vfft_plan p2 = vfft_create(&cfg);   /* SAME handle: the verdict is banked */
+    if (p2) { vfft_execute(p2, VFFT_FORWARD, x, NULL, B, NULL); vfft_destroy(p2); }
+    int raced2 = strstr(err_tap_read(), "route race") != NULL;
+
+    int same = (p1 && p2) &&
+               memcmp(A, B, (size_t)(2 * (N / 2 + 1)) * sizeof(double)) == 0;
+
+    printf("  cold->replay N=%-6d  built=%d/%d  raced=%d/%d  replay %s   %s\n",
+           N, p1 ? 1 : 0, p2 ? 1 : 0, raced1, raced2,
+           same ? "byte-identical" : "DIFFERS",
+           (p1 && p2 && raced1 && !raced2 && same) ? "OK" : "*** FAIL ***");
+    if (!(p1 && p2 && raced1 && !raced2 && same)) g_fail = 1;
+
+    if (W) vfft_wisdom_free(W);
+    free(x); free(A); free(B);
+}
+
 int main(int argc, char **argv)
 {
     /* CWD-proof wisdom resolution: build.py runs binaries from build_tuned/
@@ -256,6 +344,15 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < sizeof Ns / sizeof Ns[0]; i++)
         run_cell(Ns[i], -1); /* wisdom pass: race-and-bank on miss */
     run_regressions();
+    /* the tap must be open BEFORE the first cold create, and only now --
+     * redirecting earlier would swallow the diagnostics the passes above
+     * rely on a human seeing. */
+    if (!err_tap_open())
+        printf("  cold->replay SKIPPED: stderr tap failed\n");
+    else {
+        run_cold_replay(1024);
+        run_cold_replay(2048);
+    }
     printf("\n%s\n", g_fail ? "ZR2C FRONT-DOOR GATE: FAILURE"
                             : "ZR2C FRONT-DOOR GATE: ALL CORRECT");
     if (g_W) vfft_wisdom_free(g_W);
