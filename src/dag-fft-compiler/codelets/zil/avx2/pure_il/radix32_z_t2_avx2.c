@@ -73,10 +73,10 @@ static const __m256d _ZW9_s = { 0.83146961230254546, -0.83146961230254546, 0.831
 
 __attribute__((target("avx2,fma")))
 void radix32_z_t2_fwd_avx2(
-    const double * __restrict__ zin,
-    const double * __restrict__ zin_unused,
-    double       * __restrict__ zout,
-    double       * __restrict__ zout_unused,
+    const double *            zin,
+    const double *            zin_unused,
+    double       *            zout,
+    double       *            zout_unused,
     const double * tw_re, const double * tw_im,
     size_t Ls, size_t Gs, size_t OLs, size_t OGs, size_t count)
 {
