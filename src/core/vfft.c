@@ -2266,7 +2266,15 @@ static void _exec_zr2c(struct vfft_plan_s *h, const double *sre, double *dre)
         }
         else
         {
-            if (h->placement == VFFT_OUTOFPLACE)
+            /* 🔴 `dre != sre`, NOT `placement == OUTOFPLACE`. Route 1 runs
+             * the child on dre, so gating the copy on PLACEMENT meant an
+             * in-place plan called with a distinct dre transformed whatever
+             * was already in dre and never read sre at all -- measured
+             * relerr 1.000, silently. Route 0 reads sre and is correct under
+             * the identical call. Keying on the POINTERS makes the two
+             * routes behave the same way, so which one a cell banked can no
+             * longer change the answer. */
+            if (dre != sre)
                 memcpy(dre, sre, (size_t)N * sizeof(double));
             vfft_execute(ch, VFFT_FORWARD, dre, NULL, dre, NULL);
             _zr2c_fold_fwd(dre, dre, aS, aC, N, 1, xs, xs);
@@ -3279,7 +3287,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * planes there and an in-place contract would be a lie. */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         cfg->placement == VFFT_INPLACE &&
-        !(cfg->dims == 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+        /* 🔴 dims <= 1, not dims == 1: 0 IS the documented spelling of 1D
+         * (":3097" range check, and nd = cfg->dims < 1 ? 1 : cfg->dims just
+         * below), and every other rank test in this function uses dims < 2.
+         * Testing == 1 refused a zeroed config -- the header's own QUICK
+         * START shape -- with a message saying in-place is supported for 1D,
+         * which is exactly what the caller asked for. The OOP zr2c branches
+         * have no dims test at all, so the same feature accepted dims==0
+         * out-of-place and rejected it in-place. */
+        !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
           cfg->howmany == 1 && (cfg->n[0] % 2) == 0))
     {
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
@@ -5309,6 +5325,24 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
             if (hz)
                 return hz;
+            /* 🔴 NO SILENT DEGRADE TO OUT-OF-PLACE. The in-place refusal
+             * above ADMITTED this shape, so falling through would stamp
+             * h->placement = INPLACE onto a handle whose executor is the OOP
+             * CCE path -- engines that stream an N-double real plane into an
+             * N+2-double CCE plane and were never gated for aliasing. The
+             * caller then makes the documented (z,NULL,z,NULL) call and gets
+             * an out-of-place executor whose source aliases its destination.
+             * zr2c is the ONLY in-place real path, so if it could not be
+             * built there is no in-place plan to give: refuse loudly.
+             * Out-of-place callers keep the fall-through unchanged. */
+            if (cfg->placement == VFFT_INPLACE)
+            {
+                _vfft_warn("vfft_create: in-place %s N=%d could not build the zr2c route "
+                           "(the only in-place real path); no out-of-place fallback exists "
+                           "for an in-place plan -- use VFFT_OUTOFPLACE",
+                           _vfft_tname(cfg->transform), N);
+                return NULL;
+            }
         }
         /* The r2c dispatcher rides the c2c wisdom for its decoupled inner FFT and
          * the rfft wisdom for the rfft path; it auto-threads (sub-K block) when the
@@ -5421,6 +5455,24 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
             if (hz)
                 return hz;
+            /* 🔴 NO SILENT DEGRADE TO OUT-OF-PLACE. The in-place refusal
+             * above ADMITTED this shape, so falling through would stamp
+             * h->placement = INPLACE onto a handle whose executor is the OOP
+             * CCE path -- engines that stream an N-double real plane into an
+             * N+2-double CCE plane and were never gated for aliasing. The
+             * caller then makes the documented (z,NULL,z,NULL) call and gets
+             * an out-of-place executor whose source aliases its destination.
+             * zr2c is the ONLY in-place real path, so if it could not be
+             * built there is no in-place plan to give: refuse loudly.
+             * Out-of-place callers keep the fall-through unchanged. */
+            if (cfg->placement == VFFT_INPLACE)
+            {
+                _vfft_warn("vfft_create: in-place %s N=%d could not build the zr2c route "
+                           "(the only in-place real path); no out-of-place fallback exists "
+                           "for an in-place plan -- use VFFT_OUTOFPLACE",
+                           _vfft_tname(cfg->transform), N);
+                return NULL;
+            }
         }
         /* the STRIDE inner is a c2c(N/2): calibrate-on-miss so it rides c2c wisdom
          * (NATURAL uses the rfft/c2r codelets directly — no inner c2c). */
@@ -6377,6 +6429,24 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
                        il ? "z_CCE_out" : "spectrum re");
             return 1;
         }
+        /* 🔴 PLACEMENT IS A COMMITMENT. An in-place real plan owns ONE
+         * padded plane: 2*(N/2+1) doubles, dre == sre. Passing a distinct
+         * dre is undocumented misuse that used to be ACCEPTED and silently
+         * miscomputed, and which of the two zr2c routes served the call --
+         * i.e. a MEASURED wisdom verdict -- decided whether the result was
+         * right. Refuse it here instead, mirroring the split-C2C rule.
+         *
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
+         * deliberately NOT refused: it currently works on both routes and on
+         * c2r, and turning working behaviour into an error is a separate
+         * decision from closing a miscomputation. */
+        if (h->placement == VFFT_INPLACE && dre != sre)
+        {
+            _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
+                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "distinct pointers -- nothing executed", tn);
+            return 1;
+        }
         if (il && dim)
         {
             _vfft_warn("vfft_execute: this R2C plan is committed to layout=INTERLEAVED "
@@ -6416,6 +6486,24 @@ static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
             _vfft_warn("vfft_execute: C2R needs sre=%s and dre=real_out non-NULL — "
                        "nothing executed",
                        il ? "z_CCE_in" : "spectrum re");
+            return 1;
+        }
+        /* 🔴 PLACEMENT IS A COMMITMENT. An in-place real plan owns ONE
+         * padded plane: 2*(N/2+1) doubles, dre == sre. Passing a distinct
+         * dre is undocumented misuse that used to be ACCEPTED and silently
+         * miscomputed, and which of the two zr2c routes served the call --
+         * i.e. a MEASURED wisdom verdict -- decided whether the result was
+         * right. Refuse it here instead, mirroring the split-C2C rule.
+         *
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
+         * deliberately NOT refused: it currently works on both routes and on
+         * c2r, and turning working behaviour into an error is a separate
+         * decision from closing a miscomputation. */
+        if (h->placement == VFFT_INPLACE && dre != sre)
+        {
+            _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
+                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "distinct pointers -- nothing executed", tn);
             return 1;
         }
         if (il && sim)
