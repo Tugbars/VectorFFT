@@ -280,8 +280,14 @@ static int _sp_gate(_sp_bench_t *b, vfft_sp_cand_t *c)
  * usable DIT plan). Applies the B1 spike write policy when wisdir != NULL. */
 static int _sp_cc_encodable(const int *f, int nf)
 {
+    /* ASK THE CODEC, do not restate its rule. This used to hardcode
+       "pow2 in [4,64]", which was the codec's alphabet at the time -- so when
+       the alphabet gained 3/5/7/11 (2026-08-23) the planner would have gone on
+       refusing chains the wisdom line can now carry perfectly well. One source
+       of truth: if vfft_k1_cc_chain_encode can represent it, the racer may
+       propose it. */
     for (int s = 0; s < nf; s++)
-        if (f[s] < 4 || f[s] > 64 || (f[s] & (f[s] - 1)))
+        if (vfft_k1_cc_digit_of(f[s]) < 0)
             return 0;
     return nf >= 1 && nf <= VFFT_K1_CC_MAX_NF;
 }
