@@ -69,6 +69,49 @@ optimising *reachable* code, not expansion.
 The split changes no codegen: the linked exe is byte-identical to the old
 single-command path except two PE-header timestamp bytes.
 
+## The CMake mirror
+
+The root `CMakeLists.txt` builds the same corpus into the same exe and is the
+second build system of record. It models codelets as a per-object target, so
+it parallelises and does incremental correctly on its own:
+
+```
+cmake -S . -B build-ninja -G Ninja ^
+  -DCMAKE_MAKE_PROGRAM=C:/mingw152/mingw64/bin/ninja.exe ^
+  -DCMAKE_C_COMPILER=C:/mingw152/mingw64/bin/gcc.exe ^
+  -DCMAKE_BUILD_TYPE=Release -DVFFT_ISA=avx2
+cmake --build build-ninja
+```
+
+`cmake.exe` is not on PATH; it lives under `C:/Program Files/CMake/bin`.
+Ninja ships with mingw as `C:/mingw152/mingw64/bin/ninja.exe`. Ninja
+parallelises by default; MinGW Makefiles needs an explicit `-j`. Both build
+systems emit an exe of the identical size.
+
+| | build.py | cmake + ninja |
+|---|---|---|
+| nothing changed | 0.4s | 0.1s |
+| one codelet | 1.2s | 1.6s |
+| one core header | only the dependent TU | only the dependent TU |
+| clean | ~120s | ~105s |
+
+Two properties are structural to both and are NOT bugs to go fix:
+
+- **Clean builds serialise codelets, then drivers.** The driver TUs do not
+  depend on `libdagcodelets.a` to *compile*, only to link, so in principle they
+  could start at t=0 and the clean build would be bounded by the slowest single
+  TU (~75s). Ninja still finishes them last. Declaring the exe target before
+  the library in `CMakeLists.txt` does NOT change this — measured, refuted,
+  reverted: Ninja schedules from the target dependency graph, not declaration
+  order.
+- **`vfft.c` alone is the floor.** One 7751-line TU at 72-100s sets the cost of
+  any core-header edit in either build system. The only lever left that does
+  not touch `-O` is splitting that TU.
+
+CMake `Release` adds `-DNDEBUG`, which `build.py` does not. Today that is inert
+(the only assert in the core is a `_Static_assert` in `support/ref.h`, which
+`NDEBUG` does not affect), but the two build systems are not flag-identical.
+
 ## Knobs
 
 | | |

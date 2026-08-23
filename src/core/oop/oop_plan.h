@@ -466,13 +466,47 @@ static inline int vfft_k1_cc_default_chain(int R2, int *chain)
 /* CCOL chain <-> wisdom int code: decimal digits are log2 of the factors,
  * first factor = leading digit ([8,4] -> 32, [8,16] -> 34, [8,8,4] -> 332).
  * Factors are 4..64 (digits 2..6, never 0) so the round-trip is unambiguous. */
+/* cc_chain DIGIT ALPHABET (extended 2026-08-23).
+ *
+ *   digit  2  3   4   5   6  |  7  8  9   1
+ *   factor 4  8  16  32  64  |  3  5  7  11
+ *
+ * Digits 2..6 are the original log2 encoding and are untouched, so every
+ * previously banked chain decodes bit-identically. Digits 1,7,8,9 were HARD
+ * REJECTS before this, so no old code can be reinterpreted by the new table.
+ *
+ * 🔴 DIGIT 0 IS RESERVED AND MUST STAY UNUSED IN THE LEADING POSITION.
+ * cc_chain is a decimal integer: a leading zero is not stored, so a chain
+ * beginning with a 0-coded factor would come back one stage shorter with no
+ * error. If 0 is ever claimed, it must be for a factor that cannot appear
+ * first, or the codec must gain an explicit length. */
+static inline int vfft_k1_cc_digit_of(int factor)
+{
+    switch (factor) {
+    case 4: return 2; case 8: return 3; case 16: return 4;
+    case 32: return 5; case 64: return 6;
+    case 3: return 7; case 5: return 8; case 7: return 9;
+    case 11: return 1;
+    default: return -1;                 /* not representable */
+    }
+}
+static inline int vfft_k1_cc_factor_of(int digit)
+{
+    switch (digit) {
+    case 2: return 4; case 3: return 8; case 4: return 16;
+    case 5: return 32; case 6: return 64;
+    case 7: return 3; case 8: return 5; case 9: return 7;
+    case 1: return 11;
+    default: return 0;                  /* 0 reserved; see the note above */
+    }
+}
+
 static inline int vfft_k1_cc_chain_encode(const int *chain, int nf)
 {
     int code = 0;
     for (int s = 0; s < nf; s++) {
-        int d = 0, v = chain[s];
-        while (v > 1) { v >>= 1; d++; }
-        if ((1 << d) != chain[s] || d < 2 || d > 6) return 0;
+        int d = vfft_k1_cc_digit_of(chain[s]);
+        if (d < 0) return 0;            /* factor outside the alphabet */
         code = code * 10 + d;
     }
     return code;
@@ -516,9 +550,9 @@ static inline int vfft_k1_cc_chain_decode(int code, int *chain)
     while (code > 0 && nd < VFFT_K1_CC_MAX_NF) { digs[nd++] = code % 10; code /= 10; }
     if (!nd || code) return 0;
     for (int s = 0; s < nd; s++) {
-        int d = digs[nd - 1 - s];
-        if (d < 2 || d > 6) return 0;
-        chain[s] = 1 << d;
+        int f = vfft_k1_cc_factor_of(digs[nd - 1 - s]);
+        if (!f) return 0;               /* digit 0, or any unassigned code */
+        chain[s] = f;
     }
     return nd;
 }
