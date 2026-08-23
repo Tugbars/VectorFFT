@@ -40,16 +40,22 @@
 #include <math.h>
 #include <stdint.h>
 
-#define R      32          /* radix under test */
 #define GUARD  64          /* doubles of guard band on each side */
 #define CANARY (-9.87654321e300)
 
-void radix32_z_n1tb_fwd_avx2(const double *, const double *, double *, double *,
-                             const double *, const double *,
-                             size_t, size_t, size_t, size_t, size_t);
-void radix32_z_n1t_fwd_avx2 (const double *, const double *, double *, double *,
-                             const double *, const double *,
-                             size_t, size_t, size_t, size_t, size_t);
+typedef void (*kfn)(const double *, const double *, double *, double *,
+                    const double *, const double *,
+                    size_t, size_t, size_t, size_t, size_t);
+
+#define DECL(SYM) void SYM(const double *, const double *, double *, double *, \
+                           const double *, const double *,                     \
+                           size_t, size_t, size_t, size_t, size_t);
+DECL(radix32_z_n1tb_fwd_avx2)    DECL(radix32_z_n1t_fwd_avx2)
+DECL(radix64_z_n1tb88_fwd_avx2)  DECL(radix64_z_n1tb416_fwd_avx2)
+DECL(radix64_z_n1t_fwd_avx2)
+DECL(radix64_z_t2b88_fwd_avx2)   DECL(radix64_z_t2b416_fwd_avx2)
+DECL(radix64_z_t2_fwd_avx2)
+#undef DECL
 
 static uint64_t lcg = 0x243F6A8885A308D3ull;
 static double rnd(void)
@@ -58,28 +64,46 @@ static double rnd(void)
 
 static int g_fail = 0;
 
-static void arm(size_t count)
+static void arm(const char *what, int R, kfn blk, kfn mono, int inplace,
+                size_t count)
 {
-    /* n1t is a corner turn: reads zin[2*(l*Ls + k)] for l<R, k<count and
-     * writes zout[2*(k*OLs + l)]. Size both planes generously and guard them. */
-    const size_t Ls = count, OLs = R;
-    const size_t nin  = 2 * R * Ls;
-    const size_t nout = 2 * count * OLs;
+    /* leaf n1t: OOP corner turn — reads zin[2*(l*Ls + k)] for l<R, k<count,
+     *           writes zout[2*(k*OLs + l)], Ls = count, OLs = R.
+     * mid  t2 : IN-PLACE, Ls = OLs = count, and it streams twiddles. */
+    const size_t Ls = count, OLs = inplace ? count : (size_t)R;
+    const size_t nin  = 2 * (size_t)R * count;
+    const size_t nout = inplace ? nin : 2 * count * OLs;
+    const size_t ntw  = ((count + 1) / 2) * (size_t)(R - 1) * 8u + 64u;
     double *zin = (double *)malloc((nin + 16) * sizeof(double));
+    double *tw  = (double *)malloc(ntw * sizeof(double));
     double *ob  = (double *)malloc((nout + 2*GUARD) * sizeof(double));
     double *om  = (double *)malloc((nout + 2*GUARD) * sizeof(double));
     size_t i, stale = 0, guard_hit = 0;
     double worst = 0.0, mag = 0.0;
 
     for (i = 0; i < nin; i++) zin[i] = rnd();
+    for (i = 0; i < ntw; i++) { double th = 0.37*(double)i;
+                                tw[i] = ((i>>2)&1) ? sin(th) : cos(th); }
     for (i = 0; i < nout + 2*GUARD; i++) ob[i] = om[i] = CANARY;
 
-    radix32_z_n1tb_fwd_avx2(zin, 0, ob + GUARD, 0, 0, 0, Ls, 0, OLs, 0, count);
-    radix32_z_n1t_fwd_avx2 (zin, 0, om + GUARD, 0, 0, 0, Ls, 0, OLs, 0, count);
+    if (inplace) {
+        /* in-place: the canary cannot survive where the kernel copies input,
+         * so seed BOTH buffers with the same input and let the guard bands
+         * carry the out-of-region check. */
+        memcpy(ob + GUARD, zin, nout * sizeof(double));
+        memcpy(om + GUARD, zin, nout * sizeof(double));
+        blk (ob + GUARD, 0, ob + GUARD, 0, tw, 0, Ls, 0, OLs, 0, count);
+        mono(om + GUARD, 0, om + GUARD, 0, tw, 0, Ls, 0, OLs, 0, count);
+    } else {
+        blk (zin, 0, ob + GUARD, 0, tw, 0, Ls, 0, OLs, 0, count);
+        mono(zin, 0, om + GUARD, 0, tw, 0, Ls, 0, OLs, 0, count);
+    }
 
-    /* 1. every output slot written? */
-    for (i = 0; i < nout; i++)
-        if (ob[GUARD + i] == CANARY) stale++;
+    /* 1. every output slot written? (OOP only — an in-place kernel is
+     *    seeded with its own input, so there is no canary left to survive) */
+    if (!inplace)
+        for (i = 0; i < nout; i++)
+            if (ob[GUARD + i] == CANARY) stale++;
     /* 2. guards intact? */
     for (i = 0; i < GUARD; i++) {
         if (ob[i] != CANARY) guard_hit++;
@@ -94,23 +118,42 @@ static void arm(size_t count)
     {
         double rel = mag > 0 ? worst / mag : worst;
         int ok = (stale == 0) && (guard_hit == 0) && (rel < 1e-12);
-        printf("  count=%-2zu  %s  unwritten=%-3zu guard_hits=%-3zu rel=%.2e  %s\n",
-               count, (count & 1) ? "ODD " : "even", stale, guard_hit, rel,
+        printf("  %-18s count=%-2zu %s unwritten=%-3zu guard_hits=%-3zu rel=%.2e  %s\n",
+               what, count, (count & 1) ? "ODD " : "even", stale, guard_hit, rel,
                ok ? "OK" : "*** FAIL ***");
         if (!ok) g_fail = 1;
     }
-    free(zin); free(ob); free(om);
+    free(zin); free(tw); free(ob); free(om);
 }
 
 int main(void)
 {
     size_t c;
     setvbuf(stdout, NULL, _IONBF, 0);
-    printf("blocked cil odd-count tail gate — radix32 n1t, blocked(4.8) vs monolithic\n");
+    printf("blocked cil odd-count tail gate — blocked vs monolithic twin\n");
     printf("  canary prefill: an UNWRITTEN column is proof the tail is missing\n");
     printf("  guard bands: a hit is proof it wrote outside its output region\n\n");
-    for (c = 1; c <= 9; c++) arm(c);
+    for (c = 1; c <= 9; c++)
+        arm("r32 leaf 2.16", 32, radix32_z_n1tb_fwd_avx2,
+            radix32_z_n1t_fwd_avx2, 0, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r64 leaf 8.8", 64, radix64_z_n1tb88_fwd_avx2,
+            radix64_z_n1t_fwd_avx2, 0, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r64 leaf 4.16", 64, radix64_z_n1tb416_fwd_avx2,
+            radix64_z_n1t_fwd_avx2, 0, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r64 mid 8.8", 64, radix64_z_t2b88_fwd_avx2,
+            radix64_z_t2_fwd_avx2, 1, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r64 mid 4.16", 64, radix64_z_t2b416_fwd_avx2,
+            radix64_z_t2_fwd_avx2, 1, c);
     printf("\n%s\n", g_fail ? "*** BLOCKED TAIL: NOT CORRECT ***"
-                            : "BLOCKED TAIL: correct at every count 1..9");
+                            : "BLOCKED TAIL: correct at every count 1..9, "
+                              "r32 and r64, leaf and mid");
     return g_fail;
 }
