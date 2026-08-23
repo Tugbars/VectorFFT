@@ -1023,7 +1023,7 @@ let emit
              ^ (if !odd_ct_enabled
                    && radix mod 2 = 1
                    && odd_spf radix <> radix
-                then "ct"
+                then "_ct"
                 else "")
              ^ form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split
              ^ if ctx.tw_log3 then "_log3" else "")

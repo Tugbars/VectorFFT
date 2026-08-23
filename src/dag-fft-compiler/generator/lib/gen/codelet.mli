@@ -121,6 +121,7 @@ type kind =
       { form : cil_form
       ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
       ; blocked : bool
+      ; oddct : bool
       ; split : (int * int) option
       ; turn : cil_turn option
       ; pre_tw : bool
