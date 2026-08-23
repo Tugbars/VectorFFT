@@ -521,6 +521,12 @@ let run (argv : string array) : unit =
     then (
       cil_chain := arr.(!i + 1);
       incr i)
+    else if arg = "--cil-oddct"
+    then
+      (* factor odd COMPOSITE radices (9->3x3, 25->5x5, 27->3x9) instead of
+         dft_cx_odd's direct form; symbol gains a "ct" tag so both can coexist
+         and be raced. Odd primes and every even radix are unaffected. *)
+      Cx_math.odd_ct_enabled := true
     else if arg = "--cil-blocked"
     then cil_blocked := true
     else if arg = "--cil-tangent"

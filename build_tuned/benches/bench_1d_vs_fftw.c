@@ -648,9 +648,34 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     const int halfN = N / 2;
     const size_t total = (size_t)N * K, outsz = (size_t)(halfN + 1) * K;
 
-    vfft_r2c_plan_t *p = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
-    if (!p) { printf("  N=%-6d K=%-5zu r2c plan NULL\n", N, K); return; }
-    const char *path = (p->path == VFFT_R2C_PATH_RFFT) ? "rfft" : "stride";
+    /* 🔴 RACE BOTH METHODS — do not take the threshold's word for it.
+     * vfft_r2c_plan_create picks by a HARD-CODED gate (_vfft_r2c_decouple_min_k
+     * = 32, r2c_dispatch.h:97/:280), not by measurement: below K=32 it always
+     * returns rfft, above it always returns decoupled-stride. Its own comment
+     * says "rfft loses badly at high K (~0.47x MKL) while decoupled-r2c hits
+     * ~0.91x; the reverse holds at low K" — so a cell benched at the default
+     * publishes whichever path the threshold happened to hand out, which at
+     * K in {7,8,15,16,17} is ALWAYS rfft regardless of merit.
+     * We force each path in turn (the same lever _r2c_bakeoff uses), time
+     * both, and report the WINNER as the vfft column plus both arms and the
+     * margin — so the vs-FFTW verdict is against our best method, and the
+     * threshold's choice is visible rather than assumed. */
+    size_t saved_min_k = vfft_r2c_dispatch_get_decouple_min_k();
+    vfft_r2c_dispatch_set_decouple_min_k((size_t)-1);            /* force rfft */
+    vfft_r2c_plan_t *p_rfft = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
+    vfft_r2c_dispatch_set_decouple_min_k(0);                     /* force stride */
+    vfft_r2c_plan_t *p_str = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
+    vfft_r2c_dispatch_set_decouple_min_k(saved_min_k);
+    /* what the SHIPPED threshold would have served, for the "thr=" column */
+    const char *thr_path = ((size_t)K >= saved_min_k && (N % 2) == 0) ? "stride" : "rfft";
+    if (p_rfft && p_rfft->path != VFFT_R2C_PATH_RFFT)
+    { vfft_r2c_plan_destroy(p_rfft); p_rfft = NULL; }            /* forcing failed */
+    if (p_str && p_str->path != VFFT_R2C_PATH_STRIDE)
+    { vfft_r2c_plan_destroy(p_str); p_str = NULL; }
+    if (!p_rfft && !p_str)
+    { printf("  N=%-6d K=%-5zu r2c plan NULL (both paths)\n", N, K); return; }
+    vfft_r2c_plan_t *p = p_rfft ? p_rfft : p_str;   /* provisional; re-picked after timing */
+    const char *path = "raced";
 
     /* ---- FFTW plans, before the input exists ---- */
     /* VERDICT: home = TC real in -> interleaved CCE out (MKL's exact deal) */
@@ -700,7 +725,31 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
             hin[t * (size_t)N + n] = x[(size_t)n * K + t];
     memcpy(sx, x, total * sizeof(double));
 
-    /* ---- gates: elementwise vs naive, all three arms ---- */
+    /* ---- race the two vfft methods (untimed warm + timed), pick the winner ---- */
+    stat5_t vr, vst; vr.min = vr.med = vst.min = vst.med = 0;
+#define TIME_R2C_PLAN(PL, DST) do {                                        \
+        if (PL) {                                                          \
+          for (int w = 0; w < 10; w++) vfft_r2c_execute_fwd(PL, x, o_re, o_im); \
+          int reps = reps_for(total);                                      \
+          for (int t = 0; t < 5; t++)                                      \
+          { if (t) pace(g_trial_pace_ms);                                  \
+            double tt = vfft_proto_now_ns();                               \
+            for (int i = 0; i < reps; i++) vfft_r2c_execute_fwd(PL, x, o_re, o_im); \
+            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                 \
+          DST = stat5(g_t5); } } while (0)
+    TIME_R2C_PLAN(p_rfft, vr);
+    if (p_str) { cachebust(); pace(cool_ms); }
+    TIME_R2C_PLAN(p_str, vst);
+    int rfft_won = (p_rfft && (!p_str || vr.med <= vst.med));
+    p    = rfft_won ? p_rfft : p_str;
+    path = rfft_won ? "rfft" : "stride";
+    stat5_t vs = rfft_won ? vr : vst;
+    /* margin of the winner over the loser; >1 means the winner is that much faster */
+    double race_margin = (vr.med > 0 && vst.med > 0)
+                       ? (rfft_won ? vst.med / vr.med : vr.med / vst.med) : 0;
+    int thr_agrees = (strcmp(thr_path, path) == 0);
+
+    /* ---- gates: elementwise vs naive, winner + both FFTW arms ---- */
     int lanes = r2c_lane_budget(N, K);
     double *hr = alloc_d((size_t)halfN + 1), *hi = alloc_d((size_t)halfN + 1);
     vfft_r2c_execute_fwd(p, x, o_re, o_im);
