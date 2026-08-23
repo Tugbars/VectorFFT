@@ -1,0 +1,1 @@
+mode,N,K,plan,path,vns_min,vns_med,fsplit_min,fsplit_med,fil_min,fil_med,ctrl_min,ratio_split,ratio_il,vgate,vgate_class,fgate,fgate_class,split_plan_ms,il_plan_ms,split_plan_id,verdict_arm,flip,reps,delta
