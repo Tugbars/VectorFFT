@@ -1103,21 +1103,33 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * policy — a distinct construction may win on other
                      * platforms, and the race (not a rule) decides per cell. */
                     int msv[5], lsv[5], nm = 0, nl = 0, dm, dl;
-                    if (R1 == 32 && (R2 & 1) == 0)
+                    /* the (partner & 1) == 0 gates are GONE (2026-08-23):
+                     * blocked kernels carry the odd-count narrow tail, so
+                     * parity is no longer a correctness axis. */
+                    if (R1 == 32)
                     { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3;
                       msv[nm++] = 4; }                    /* t2bw32 M-128  */
                     else if (R1 == 16)
                     {   dm = 0; msv[nm++] = 0; msv[nm++] = 3;
                         msv[nm++] = 4;                    /* t2tan M-128   */
-                        if ((R2 & 1) == 0) msv[nm++] = 1;     /* t2b(16) */
+                        msv[nm++] = 1;                        /* t2b(16) */
                     }
                     else if (R1 == 8)
                     { dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
-                    else { dm = 0; msv[nm++] = 0; }
-                    if (R2 == 32 && (R1 & 1) == 0)
+                    else
+                    {   dm = 0; msv[nm++] = 0;
+                        /* _ct: odd-composite Cooley-Tukey mid. Asked of the
+                         * RESOLVER rather than matched against a duplicated
+                         * radix list -- no kernel, no candidate. R=9 loses
+                         * this race and R=25/27 win it by ~2.5x, which is
+                         * exactly why it is enumerated and not defaulted. */
+                        if ((R1 & 1) && vfft_il2p_mid_v_fn(R1, 5, 1))
+                            msv[nm++] = 5;
+                    }
+                    if (R2 == 32)
                     { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3;
                       lsv[nl++] = 4; }                    /* n1tbw32 T256  */
-                    else if (R2 == 16 && (R1 & 1) == 0)
+                    else if (R2 == 16)
                     {   /* R=16 leaf: the blocked candidate is the raced
                          * winner (variant 1 = 4·4; see il2p.h for the 24-arm
                          * ranking that eliminated 2·8 and 8·2) — the losing
@@ -1136,7 +1148,11 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     }
                     else if (R2 == 8)
                     { dl = 0; lsv[nl++] = 0; lsv[nl++] = 3; }  /* tangent leaf */
-                    else { dl = 0; lsv[nl++] = 0; }
+                    else
+                    {   dl = 0; lsv[nl++] = 0;
+                        if ((R2 & 1) && vfft_il2p_leaf_v_fn(R2, 5, 1))
+                            lsv[nl++] = 5;                /* _ct leaf */
+                    }
                     for (int mi = 0; mi < nm; mi++)
                         for (int li = 0; li < nl; li++)
                         {
