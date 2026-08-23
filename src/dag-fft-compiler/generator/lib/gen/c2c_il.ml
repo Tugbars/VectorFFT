@@ -294,6 +294,18 @@ let emit
       assigns
   in
   let scheduled = cx_schedule uarch assigns in
+  (* LEG-LOAD TAGS FOR THE NARROW TAIL, captured HERE and not at the tail.
+     The tail body renders `scheduled` at VEX-128 and must name the same zN
+     variables it does. On the BLOCKED path emit_blocked runs first, and each
+     of its emit_pass calls does `reset ()` -- which clears the hashcons AND
+     sets next_tag back to 0 -- so a `cload (AZinLeg l)` issued down there
+     would mint fresh tags that collide with the ones already inside
+     `scheduled`. Capturing before the fork is the whole difficulty of giving
+     blocked a tail.
+     On the MONOLITHIC path nothing has reset, so this is a hashcons hit and
+     the tag is identical to what the tail computed inline before -- the
+     existing monolithic files stay byte-identical. *)
+  let leg_tags = Array.init radix (fun l -> (cload (AZinLeg l)).tag) in
   let tbl : consts = Hashtbl.create 16 in
   (* Render the body first: it populates the constant table that the file
      preamble must declare. *)
@@ -826,8 +838,7 @@ let emit
      geometry, hence ~tw_vw below. Own C block + own constants = the RA
      mitigation emit_c.ml §4052/4058 uses (hot loop must stay unchanged). *)
   let body_n = Buffer.create 2048 in
-  if not blocked
-  then (
+  (
     let nisa = Isa.sse2 in
     if kind = T2
     then
@@ -846,7 +857,7 @@ let emit
            "        %s\n"
            (Isa.const_decl
               nisa
-              (Printf.sprintf "z%d" (cload (AZinLeg l)).tag)
+              (Printf.sprintf "z%d" leg_tags.(l))
               (Isa.loadu_pd nisa (addr_str (AZinLeg l)))))
     done;
     let seen_n : (int, unit) Hashtbl.t = Hashtbl.create 256 in
@@ -1032,15 +1043,13 @@ let emit
          (vw * ctx.mono_spill_slots));
   Buffer.add_string
     buf
-    (if blocked
-     then Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" per per
-     else
-       (* k hoisted so the tail loop below resumes it; blocked keeps the old
-          form (no tail there) and stays byte-identical. *)
-       Printf.sprintf
-         "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
-         per
-         per);
+    (* k is hoisted for EVERY form so the tail loop below can resume it.
+       Blocked used to keep a self-contained `for (size_t k = 0; ...)` because
+       it had no tail to resume. *)
+    (Printf.sprintf
+       "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
+       per
+       per);
   (* T2's streamed cursor: one record-set per column-group. *)
   if kind = T2
   then
@@ -1172,8 +1181,15 @@ let emit
      per > 2; at per = 2 it runs at most once and predicts perfectly, and a
      count < per call skips the wide loop entirely (the low-trip bypass for
      free). *)
-  if not blocked
-  then (
+  (* Emitted for BLOCKED too since 2026-08-23. Note what the tail computes:
+     the bulk of a blocked kernel runs the blocked construction, while the
+     tail runs the MONOLITHIC one at narrow width. Both compute the same DFT;
+     they differ at the ~1e-16 level, which is the same magnitude every
+     blocked form already differs from its monolithic twin (they were A/B'd
+     12/12 at rel ~1e-16 when introduced). The alternative -- rendering the
+     blocked passes at narrow width -- would need its own reset/tag
+     management for no numerical gain. *)
+  (
     Buffer.add_string
       buf
       "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
