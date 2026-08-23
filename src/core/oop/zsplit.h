@@ -111,6 +111,33 @@ static inline int vfft_zsplit_default_chain(int N, int *chain)
     }
 }
 
+/* CASCADE TIER GATE — the single definition, consulted by the runtime
+ * (vfft.c), the plan search (dp_planner_il.h) and, in spirit, the wisdom
+ * writer's kind-4 slot floor.
+ *
+ * Default 2048. VFFT_NAT_ZCASC_MINN=1024 lets the cascade compete at 1024 —
+ * the child size of the zr2c N=2048 cell whose c2r arm is the outlier — so
+ * the boundary can be RACED rather than assumed. Crossing the gate is
+ * NECESSARY BUT NOT SUFFICIENT: vfft_zsplit_default_chain must also seed a
+ * chain for that N, or the race has nothing to build.
+ *
+ * 🔴 Racing a sub-2048 cascade win does NOT make it bankable. The kind-4
+ * wisdom slot floor is 2048 independently (wisdom2_oop_reader.h,
+ * "sub2048-wrong-slot"), so such a verdict can be measured and used within
+ * the process, never persisted. Lower this gate for an experiment, not to
+ * ship a cell. */
+static inline int _vfft_zcasc_min_n(void)
+{
+    static int cached = 0;
+    if (!cached)
+    {
+        const char *e = getenv("VFFT_NAT_ZCASC_MINN");
+        int v = e ? atoi(e) : 0;
+        cached = (v >= 8) ? v : 2048;
+    }
+    return cached;
+}
+
 static inline long _vfft_zs_brev(long g, int s, const int *r)
 {
     long f[VFFT_ZSPLIT_MAX_NF];

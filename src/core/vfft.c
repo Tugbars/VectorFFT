@@ -104,17 +104,11 @@
  * build and the candidate stays NULL.
  *
  * Default is unchanged, so this read is inert in production. */
-static int _vfft_zcasc_min_n(void)
-{
-    static int cached = 0;
-    if (!cached)
-    {
-        const char *e = getenv("VFFT_NAT_ZCASC_MINN");
-        int v = e ? atoi(e) : 0;
-        cached = (v >= 8) ? v : 2048;
-    }
-    return cached;
-}
+/* _vfft_zcasc_min_n() now lives in oop/zsplit.h, beside the chain seeds
+ * it gates, so the PLANNER can consult the same gate the runtime does.
+ * It used to sit here, after the include block, which is exactly why
+ * dp_planner_il.h could not see it and enumerated cascade candidates at
+ * N=1024 that neither this file nor the wisdom writer would accept. */
 
 /* 🔴 CHAIN-CAP COHERENCE (P2, 2026-07-29). vfft_k1_cc_chain_decode writes up
  * to VFFT_K1_CC_MAX_NF ints into caller arrays that are sized by EITHER that
