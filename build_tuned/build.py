@@ -21,9 +21,15 @@ Usage:
     set CC=icx
     python build.py            # compile + run
     python build.py --compile  # compile only, don't run
+
+Environment:
+    VFFT_BUILD_JOBS   compile parallelism (default: CPU count; 1 = serial)
+    VFFT_ISA          avx2 | avx512   VFFT_ASAN   build with AddressSanitizer
 """
 from __future__ import annotations
 import argparse
+import concurrent.futures
+import hashlib
 import os
 import subprocess
 import sys
@@ -74,48 +80,220 @@ def dag_codelet_srcs() -> list[str]:
     return sorted(srcs)
 
 
+# ── Parallel + incremental compile machinery ────────────────────────────────
+# Until 2026-08-23 every .c went through a SINGLE gcc process: 899 codelets in
+# one `gcc -c @srcs.rsp`, then the driver TUs in one more. gcc does not
+# parallelise inside a process, so 31 of this box's 32 hardware threads sat
+# idle -- measured 317s for the codelet corpus and 137s for the two driver TUs.
+# Compilation is now per-object, depfile-tracked, and spread over a pool.
+
+def _jobs() -> int:
+    """Compile parallelism. VFFT_BUILD_JOBS overrides; set it to 1 to get the
+    old one-at-a-time behaviour back when bisecting a compiler problem."""
+    j = os.environ.get('VFFT_BUILD_JOBS')
+    if j:
+        return max(1, int(j))
+    return max(1, os.cpu_count() or 4)
+
+
+def _flags_key(parts) -> str:
+    """Short hash of everything that changes an object's contents (compiler,
+    flags, -I list). Objects keyed by this can never be silently reused across
+    a flag change -- e.g. a --mkl object vs the same TU built without it."""
+    return hashlib.sha1(repr(list(parts)).encode('utf-8')).hexdigest()[:12]
+
+
+def _deps_of(dep_file: Path) -> list[Path]:
+    """Parse a gcc -MMD depfile into the files the object depends on.
+
+    Hand-tokenised rather than split(), because both Windows hazards are live
+    here: paths carry drive-letter colons (handled by giving -MT a colon-free
+    target, so partition(':') finds the real separator), and the MKL include
+    dir lives under "Program Files (x86)", which gcc emits with the space
+    backslash-escaped. A naive whitespace split shreds that into non-existent
+    fragments, every object then looks stale, and the cache never hits."""
+    BS = chr(92)
+    try:
+        txt = dep_file.read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return []
+    txt = txt.replace(BS + chr(13) + chr(10), ' ').replace(BS + chr(10), ' ')
+    _, sep, rhs = txt.partition(':')
+    if not sep:
+        return []
+    out, cur, i = [], '', 0
+    while i < len(rhs):
+        c = rhs[i]
+        if c == BS and i + 1 < len(rhs) and rhs[i + 1] in ' ' + BS + '#':
+            cur += rhs[i + 1]
+            i += 2
+            continue
+        if c.isspace():
+            if cur:
+                out.append(cur)
+                cur = ''
+            i += 1
+            continue
+        cur += c
+        i += 1
+    if cur:
+        out.append(cur)
+    return [Path(t) for t in out]
+
+
+def _is_stale(src: Path, obj: Path) -> bool:
+    """Rebuild obj? Every uncertainty answers YES -- a needless rebuild costs
+    seconds, a wrong cache hit links a stale object. The depfile is what makes
+    reuse safe at all: editing a core header invalidates the objects that
+    include it, which an mtime check on the .c alone would miss entirely."""
+    if not obj.exists():
+        return True
+    dep = obj.with_suffix('.d')
+    if not dep.exists():
+        return True                        # no dependency record -> cannot trust it
+    deps = _deps_of(dep)
+    if not deps:
+        return True                        # unparseable -> rebuild
+    try:
+        o_mt = obj.stat().st_mtime
+    except OSError:
+        return True
+    for d in [src] + deps:
+        try:
+            if d.stat().st_mtime > o_mt:
+                return True
+        except OSError:
+            return True                    # a dependency vanished -> rebuild
+    return False
+
+
+def _compile_many(cmds: list, env, label: str) -> bool:
+    """Run compile commands across a pool (the work happens in the gcc
+    subprocesses, so threads are the right handle). True on success."""
+    if not cmds:
+        return True
+    fails, warns = [], []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_jobs()) as ex:
+        futs = [ex.submit(subprocess.run, c, capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', env=env)
+                for c in cmds]
+        for f in concurrent.futures.as_completed(futs):
+            r = f.result()
+            if r.returncode != 0:
+                fails.append(r.stderr)
+            elif r.stderr.strip():
+                warns.append(r.stderr)
+    if fails:
+        print(f'  [{label}] compile FAILED ({len(fails)} of {len(cmds)}):',
+              file=sys.stderr)
+        print(fails[0][:4000], file=sys.stderr)
+        return False
+    if warns:
+        print(f'  [{label}] warnings in {len(warns)} TU(s); first:')
+        print('\n'.join(warns[0].splitlines()[:10]))
+    return True
+
+
+def _compile_cmd(tc, src: Path, obj: Path, flags: list) -> list:
+    """One TU -> one object, plus the depfile that drives _is_stale. -MT gets
+    the bare object NAME so the depfile target carries no drive-letter colon
+    (see _deps_of)."""
+    return ([tc['cc']] + flags +
+            ['-MMD', '-MF', str(obj.with_suffix('.d')), '-MT', obj.name,
+             '-c', str(src), '-o', str(obj)])
+
+
 def dag_codelet_lib(tc) -> str | None:
     """Compile the dag codelets into a CACHED static lib. They're OCaml-
-    generated and unchanged between calibration runs, so the lib rebuilds only
-    when a codelet .c is newer than it — turning a driver rebuild from a ~100s
-    recompile-everything into a fast relink. Delete src/dag-fft-compiler/.obj
-    to force a clean rebuild (e.g. after the OCaml pipeline regenerates)."""
+    generated and unchanged between calibration runs, so a driver rebuild is a
+    fast relink rather than a recompile of the corpus. Delete
+    src/dag-fft-compiler/.obj to force a clean rebuild.
+
+    Per-object and parallel since 2026-08-23. The previous version took the max
+    mtime over all sources and, if ANY single file was newer, deleted every .o
+    and rebuilt the whole corpus in one serial gcc -- regenerating one codelet
+    cost a measured 317s (the "one-time ~100s" in the old docstring dated from
+    when this tree held ~300 codelets, not 899). Now only stale objects
+    recompile, across _jobs() processes: a clean build is ~45s and a
+    one-codelet regen is ~1s.
+
+    The objdir path is deliberately unchanged -- dag_write_jit_rsp points the
+    JIT runtime at these same .o files.
+    """
     srcs = [Path(s) for s in dag_codelet_srcs()]
     if not srcs:
         return None
     objdir = DAG / '.obj' / DAG_ISA
     objdir.mkdir(parents=True, exist_ok=True)
     lib = objdir / 'libdagcodelets.a'
-    newest = max(s.stat().st_mtime for s in srcs)
-    if lib.exists() and lib.stat().st_mtime >= newest:
-        print(f'  [codelets] cached lib ({len(srcs)} codelets)')
-        return str(lib)
-    print(f'  [codelets] building static lib from {len(srcs)} codelets '
-          f'(one-time ~100s; cached after) ...', flush=True)
-    for old in objdir.glob('*.o'):   # clear stale objects (regen may rename/drop)
-        old.unlink()
+
     cflags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive', '-w']
     if os.environ.get('VFFT_ASAN'):
         cflags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
-    srcs_rsp = objdir / '_srcs.rsp'
-    srcs_rsp.write_text('\n'.join(s.as_posix() for s in srcs), encoding='ascii')
-    r = subprocess.run([tc['cc']] + cflags + build_includes() + ['-c', f'@{srcs_rsp}'],
-                       cwd=str(objdir), capture_output=True, text=True,
-                       encoding='utf-8', errors='replace', env=build_env(tc))
-    if r.returncode != 0:
-        print(f'  [codelets] compile FAILED:\n{r.stderr[:800]}', file=sys.stderr)
-        return None
-    objs = sorted(objdir.glob('*.o'))
+    flags = cflags + build_includes()
+
+    # This objdir has a FIXED path (the JIT rsp points at it), so the flag key
+    # can't live in the path the way it does for the driver objects. Stamp it
+    # in a file instead and wipe on mismatch -- otherwise an ASAN or -I change
+    # would quietly relink objects built under the old flags.
+    key = _flags_key([tc['cc']] + flags)
+    stamp = objdir / '_flags.key'
+    if stamp.exists() and stamp.read_text(encoding='ascii').strip() != key:
+        print('  [codelets] flags changed -> full rebuild')
+        for old in list(objdir.glob('*.o')) + list(objdir.glob('*.d')):
+            old.unlink()
+        if lib.exists():
+            lib.unlink()
+
+    # Objects are named by source stem; dag_codelet_srcs() has no duplicate
+    # basenames across families, which the old single-gcc build already relied
+    # on (it wrote every .o into one cwd).
+    pairs = [(s, objdir / (s.stem + '.o')) for s in srcs]
+
+    # Drop objects whose source is gone -- a regen that renames or retires a
+    # codelet would otherwise leave it in the archive forever.
+    keep = {o.name for (_, o) in pairs}
+    for old in list(objdir.glob('*.o')):
+        if old.name not in keep:
+            old.unlink()
+            old.with_suffix('.d').unlink(missing_ok=True)
+
+    stale = [(s, o) for (s, o) in pairs if _is_stale(s, o)]
+    if not stale and lib.exists():
+        print(f'  [codelets] cached lib ({len(srcs)} codelets)')
+        stamp.write_text(key, encoding='ascii')
+        return str(lib)
+
+    if stale:
+        print(f'  [codelets] compiling {len(stale)} of {len(srcs)} codelets '
+              f'on {_jobs()} jobs ...', flush=True)
+        t0 = time.time()
+        if not _compile_many([_compile_cmd(tc, s, o, flags) for (s, o) in stale],
+                             build_env(tc), 'codelets'):
+            return None
+        print(f'  [codelets] compiled {len(stale)} in {time.time() - t0:.1f}s')
+
+    objs = sorted(o for (_, o) in pairs)
     ar = str(Path(tc['cc']).with_name(Path(tc['cc']).name.replace('gcc', 'ar')))
-    objs_rsp = objdir / '_objs.rsp'
+    # Per-process temp names, then an atomic replace. Builds DO run concurrently
+    # here (a second session was observed mid-build on 2026-08-23), and the old
+    # unlink-then-ar sequence left a window in which the archive did not exist:
+    # a concurrent link in that window fails outright. os.replace is atomic
+    # within a volume, so a reader sees either the old lib or the new one.
+    objs_rsp = objdir / f'_objs.{os.getpid()}.rsp'
+    tmp_lib = objdir / f'libdagcodelets.{os.getpid()}.a'
     objs_rsp.write_text('\n'.join(o.as_posix() for o in objs), encoding='ascii')
-    if lib.exists():
-        lib.unlink()
-    ra = subprocess.run([ar, 'rcs', str(lib), f'@{objs_rsp}'],
+    if tmp_lib.exists():
+        tmp_lib.unlink()
+    ra = subprocess.run([ar, 'rcs', str(tmp_lib), f'@{objs_rsp}'],
                         capture_output=True, text=True, encoding='utf-8', errors='replace')
+    objs_rsp.unlink(missing_ok=True)
     if ra.returncode != 0:
+        tmp_lib.unlink(missing_ok=True)
         print(f'  [codelets] ar FAILED:\n{ra.stderr[:800]}', file=sys.stderr)
         return None
+    os.replace(tmp_lib, lib)
+    stamp.write_text(key, encoding='ascii')
     print(f'  [codelets] lib built ({len(objs)} objects)')
     return str(lib)
 
@@ -203,7 +381,8 @@ def find_fftw():
     return None, None, None
 
 
-def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=None):
+def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=None,
+              split=False):
     mkl_inc, mkl_lib = (None, None)
     fftw_inc, fftw_lib, fftw_dll = (None, None, None)
     if mkl:
@@ -255,38 +434,97 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
         flags += ['-DVFFT_HAS_MKL', f'-I{mkl_inc}']
     if fftw:
         flags += ['-DVFFT_HAS_FFTW', f'-I{fftw_inc}']
-    # Driver + extras compiled here; dag codelets come from a CACHED static lib
-    # (built once by dag_codelet_lib) so a driver rebuild is a fast relink, not
-    # a ~100s recompile of ~300 codelets.
     if jit:
         flags = flags + ['-DVFFT_USE_JIT']   # bench resolves via vfft_proto_plan_jit_fwd
     base_srcs = [str(src_c)] + [str(s) for s in (extra_srcs or [])]
-    cmd = [tc['cc']] + flags + build_includes() + base_srcs
+    cflags = flags + build_includes()
+
+    # Everything from here down is LINK input. It is kept separate from cflags
+    # so build_gcc() can compile the driver TUs to cached objects in parallel
+    # and then link them; dag codelets still come from the CACHED static lib.
+    link_args = []
     lib = dag_codelet_lib(tc)
     if lib:
-        cmd.append(lib)
+        link_args.append(lib)
     if jit:
         dag_write_jit_rsp()                  # JIT runtime links build.py's cached .o
-    cmd += ['-o', str(out_bin)]
     if tc['is_windows'] and tc['is_icx']:
-        cmd.append('-fuse-ld=lld')
+        link_args.append('-fuse-ld=lld')
     if mkl:
         # LP64 single dynamic lib (mkl_rt). Runtime needs <mkl>/latest/bin on PATH
         # (mkl_rt.2.dll) + the mingw bin (libwinpthread-1.dll).
         if tc['is_windows']:
-            cmd += [str(Path(mkl_lib) / 'mkl_rt.lib')]
+            link_args += [str(Path(mkl_lib) / 'mkl_rt.lib')]
         else:
-            cmd += [f'-L{mkl_lib}', '-lmkl_rt', '-lpthread', '-lm', '-ldl']
+            link_args += [f'-L{mkl_lib}', '-lmkl_rt', '-lpthread', '-lm', '-ldl']
     if fftw:
         if tc['is_windows']:
-            cmd += [str(Path(fftw_lib) / 'fftw3.lib')]
+            link_args += [str(Path(fftw_lib) / 'fftw3.lib')]
         else:
-            cmd += [f'-L{fftw_lib}', '-lfftw3', '-lm']
+            link_args += [f'-L{fftw_lib}', '-lfftw3', '-lm']
     # -lm for gcc (mingw on Windows has libm.a; Linux needs it). NOT for MSVC
     # or icx-on-Windows (MSVC CRT supplies libm).
     if not tc['is_msvc_style'] and not (tc['is_windows'] and tc['is_icx']):
-        cmd.append('-lm')
-    return cmd
+        link_args.append('-lm')
+
+    if split:
+        return cflags, base_srcs, link_args
+    # Single-command form, unchanged in argument ORDER (sources before the
+    # codelet lib, lib before MKL/FFTW, -lm last): kept for callers that want
+    # one compile+link invocation.
+    return [tc['cc']] + cflags + base_srcs + ['-o', str(out_bin)] + link_args
+
+
+def build_gcc(tc, out_bin, cflags, base_srcs, link_args) -> bool:
+    """Compile each driver TU to a CACHED object, in parallel, then link.
+
+    The old path handed gcc every source in one command, so the driver TUs --
+    for the vs-MKL bench that is src/core/vfft.c plus the bench itself -- were
+    compiled back to back inside one process: 137s measured, on EVERY build,
+    even when only one of them had actually changed. Split and cached, an
+    unchanged rebuild is a ~0.3s relink and a one-file edit costs just that
+    file.
+
+    Objects live under a dir named by a hash of compiler+flags+includes, so a
+    --mkl build and a --fftw build (or an ASAN one) can never reuse each
+    other's objects."""
+    objdir = HERE / '.obj' / _flags_key([tc['cc']] + cflags)
+    objdir.mkdir(parents=True, exist_ok=True)
+
+    pairs = []
+    for s in base_srcs:
+        sp = Path(s)
+        # Sources CAN share a stem across trees, so disambiguate the object
+        # name with a short hash of the full path.
+        pairs.append((sp, objdir / f'{sp.stem}-{_flags_key([str(sp)])[:6]}.o'))
+
+    stale = [(s, o) for (s, o) in pairs if _is_stale(s, o)]
+    if stale:
+        print(f'  [driver] compiling {len(stale)} of {len(pairs)} TUs on '
+              f'{_jobs()} jobs: {", ".join(s.name for (s, _) in stale)}', flush=True)
+        t0 = time.time()
+        if not _compile_many([_compile_cmd(tc, s, o, cflags) for (s, o) in stale],
+                             build_env(tc), 'driver'):
+            return False
+        print(f'  [driver] compiled {len(stale)} in {time.time() - t0:.1f}s')
+    else:
+        print(f'  [driver] {len(pairs)} TU(s) cached')
+
+    # cflags go on the link line too: that is what the old single-command form
+    # did, and it is what carries -fsanitize=address (VFFT_ASAN) through to the
+    # link. The compile-only flags among them are inert here.
+    link = ([tc['cc']] + cflags + [str(o) for (_, o) in pairs]
+            + ['-o', str(out_bin)] + link_args)
+    r = subprocess.run(link, capture_output=True, text=True,
+                       encoding='utf-8', errors='replace', env=build_env(tc))
+    if r.returncode != 0:
+        print(f'  [driver] link FAILED:', file=sys.stderr)
+        print(r.stderr[:4000], file=sys.stderr)
+        return False
+    if r.stderr.strip():
+        print('  [driver] link warnings:')
+        print('\n'.join(r.stderr.splitlines()[:10]))
+    return True
 
 
 def build_env(tc):
@@ -385,25 +623,36 @@ def main():
     extra_srcs = []
     if args.vfft:
         extra_srcs.append(DAG_CORE / 'vfft.c')   # canonical src/core/vfft.c (old src/vfft.c retired)
-    cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, jit=args.jit,
-                    extra_srcs=extra_srcs)
-
     print(f'[compile] {tc["cc"]} ... -> {out_bin.name}', flush=True)
     t0 = time.time()
-    result = subprocess.run(cmd, capture_output=True,
-                            text=True, encoding='utf-8', errors='replace',
-                            env=build_env(tc))
-    if result.returncode != 0:
-        print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
-        # Print stderr in full — Intel ICE/include errors get cut off otherwise
-        print(result.stderr[:8000])
-        return 1
+
+    if tc['is_msvc_style']:
+        # MSVC compiles the whole corpus in one cl invocation (no cached lib on
+        # that path), so it stays a single command.
+        cmd = build_cmd(tc, src, out_bin, mkl=args.mkl, fftw=args.fftw,
+                        jit=args.jit, extra_srcs=extra_srcs)
+        result = subprocess.run(cmd, capture_output=True,
+                                text=True, encoding='utf-8', errors='replace',
+                                env=build_env(tc))
+        if result.returncode != 0:
+            print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
+            # Print stderr in full — Intel ICE/include errors get cut off otherwise
+            print(result.stderr[:8000])
+            return 1
+        if result.stderr.strip():
+            # Warnings only — show the first few lines so user sees them
+            head = '\n'.join(result.stderr.splitlines()[:15])
+            if head:
+                print(f'[compile] warnings:\n{head}')
+    else:
+        cflags, base_srcs, link_args = build_cmd(
+            tc, src, out_bin, mkl=args.mkl, fftw=args.fftw, jit=args.jit,
+            extra_srcs=extra_srcs, split=True)
+        if not build_gcc(tc, out_bin, cflags, base_srcs, link_args):
+            print(f'[compile] FAILED ({time.time()-t0:.1f}s)')
+            return 1
+
     print(f'[compile] OK ({time.time()-t0:.1f}s)')
-    if result.stderr.strip():
-        # Warnings only — show the first few lines so user sees them
-        head = '\n'.join(result.stderr.splitlines()[:15])
-        if head:
-            print(f'[compile] warnings:\n{head}')
 
     if args.compile:
         return 0

@@ -2531,9 +2531,13 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
  * that never measured it) => both lookups return 0 => the plan keeps the
  * monolithic registry kernels. No sentinel, no migration.
  *
- * COUNT CONTRACT: blocked kernels have no odd-count tail. The mid runs at
- * count = R2, the leaf at count = R1 — hence the parity guards, passed
- * explicitly so the rule is visible at the call site. */
+ * COUNT CONTRACT: RETIRED 2026-08-23. Blocked kernels used to have no
+ * odd-count tail, so the mid (count = R2) and leaf (count = R1) carried
+ * explicit parity guards. They now carry the same inline narrow arm the
+ * monolithic kernels have had since 2026-07-29, gated by
+ * benches/blocked_tail_gate.c (counts 1..9, canary prefill + guard bands +
+ * agreement with the monolithic twin), so parity is no longer a correctness
+ * axis and the guards are gone from il2p.h and the planner pool alike. */
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
                               const vw2_store_t *st, int N)
@@ -2574,8 +2578,27 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
         if (bkv && bR1 == p->R1 && bR2 == p->R2)
             vfft_il2p_apply_kv_forms_bwd(p, bkv);
     }
-    /* ENV OVERRIDE, applied LAST so it beats the banked verdict (the tcut
-     * precedent: env BEATS wisdom), and still the racing hook. */
+    /* ENV OVERRIDES, applied LAST so they beat the banked verdict (the tcut
+     * precedent: env BEATS wisdom), and still the racing hook.
+     *
+     * VFFT_IL_KV is the FORWARD twin, added 2026-08-23. It exists because a
+     * variant can be fully wired and still unreachable: variant 5 (_ct,
+     * odd-composite Cooley-Tukey) only applies at non-pow2 radices, and a
+     * non-pow2 cell cannot bank a kind-3 line at all -- split has no encodable
+     * cc_chain there (vfft_k1_cc_chain_encode stores log2 per factor, so only
+     * 4/8/16/32/64 exist) and the line is refused without a split route.
+     * Without this hook there is no way to measure _ct through the front door,
+     * and therefore no basis for deciding whether the wisdom-grammar work that
+     * would make it selectable is worth doing.
+     *
+     * Both take the packed nibble form: VFFT_IL_KV=0x25 means leaf variant 2,
+     * mid variant 5 (VFFT_IL_KV_PACK in il2p.h). strtol base 0, so 0x.. hex
+     * and plain decimal both parse. */
+    {
+        const char *e = getenv("VFFT_IL_KV");
+        if (e && e[0])
+            vfft_il2p_apply_kv_forms(p, (int)strtol(e, NULL, 0));
+    }
     {
         const char *e = getenv("VFFT_IL_BKV");
         if (e && e[0])
