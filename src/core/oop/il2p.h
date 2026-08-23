@@ -375,6 +375,23 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         if (R1 == 32) return radix32_z_t2bw32m128_fwd_avx2;
         return 0;
     }
+    if (variant == 5)
+    {
+        /* ODD-COMPOSITE COOLEY-TUKEY: dft_small factors the radix
+         * (9->3x3, 15->3x5, 21->3x7, 25->5x5, 27->3x9) instead of taking
+         * dft_cx_odd's direct O(n^2/2) conjugate-pair form. Only odd
+         * COMPOSITES have a _ct twin -- pow2, even and odd-PRIME radices
+         * emit an identical body either way, so the registry list is
+         * exactly {9,15,21,25,27}. See the header note: R=9 LOSES this
+         * race, which is why it is a variant and not a default. */
+        switch (R1)
+        {
+#define C(R) case R: return radix##R##_z_t2_ct_fwd_avx2;
+            VFFT_IL_T2_CT_FWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+    }
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
@@ -420,7 +437,23 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
         if (R2 == 32) return radix32_z_n1tbw32t256_fwd_avx2;
         return 0;
     }
-    if (!count_ok) return 0;
+    if (variant == 5)
+    {
+        /* ODD-COMPOSITE COOLEY-TUKEY: dft_small factors the radix
+         * (9->3x3, 15->3x5, 21->3x7, 25->5x5, 27->3x9) instead of taking
+         * dft_cx_odd's direct O(n^2/2) conjugate-pair form. Only odd
+         * COMPOSITES have a _ct twin -- pow2, even and odd-PRIME radices
+         * emit an identical body either way, so the registry list is
+         * exactly {9,15,21,25,27}. See the header note: R=9 LOSES this
+         * race, which is why it is a variant and not a default. */
+        switch (R2)
+        {
+#define C(R) case R: return radix##R##_z_n1t_ct_fwd_avx2;
+            VFFT_IL_N1T_CT_FWD_RADICES(C)
+#undef C
+        default: return 0;
+        }
+    }
     if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
     if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
     if (R2 == 16 && variant == 1) return radix16_z_n1tb44_fwd_avx2; /* 4·4 */
