@@ -1156,6 +1156,19 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     if (R1 == 32)
                     { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3;
                       msv[nm++] = 4; }                    /* t2bw32 M-128  */
+                    else if (R1 == 64)
+                    {   /* R64 blocked forward (2026-08-23). Radix 64 is the
+                         * worst spiller in the tree -- the monolithic mid
+                         * burns 41.6% of its bulk loop on stack traffic --
+                         * so blocked is STRUCTURAL here as at R32 and dm = 2
+                         * names the form create already resolves (8.8).
+                         * The 8.8-vs-4.16 pick is what enters the pool: 8.8
+                         * won the mid in 3/3 runs at every count, but a rule
+                         * that has never been raced at a cell is a rule, not
+                         * a verdict. No tangent forms exist at R64, so there
+                         * is nothing else to offer. */
+                        dm = 2; msv[nm++] = 2; msv[nm++] = 1;
+                    }
                     else if (R1 == 16)
                     {   dm = 0; msv[nm++] = 0; msv[nm++] = 3;
                         msv[nm++] = 4;                    /* t2tan M-128   */
@@ -1176,6 +1189,16 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     if (R2 == 32)
                     { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3;
                       lsv[nl++] = 4; }                    /* n1tbw32 T256  */
+                    else if (R2 == 64)
+                    {   /* R64 blocked leaf. Unlike the mid, this one MUST be
+                         * raced: the split verdict flips with the partner
+                         * count -- 4.16 won at count 8 (+19.2% vs +11.6%)
+                         * and count 16 (+16.9% vs +14.8%), 8.8 won at count
+                         * 32 (+61.3% vs +47.3%). Leaving it to
+                         * apply_blocked_default's hardcoded variant-2-first
+                         * order would silently take 4.16's cells. */
+                        dl = 2; lsv[nl++] = 2; lsv[nl++] = 1;
+                    }
                     else if (R2 == 16)
                     {   /* R=16 leaf: the blocked candidate is the raced
                          * winner (variant 1 = 4·4; see il2p.h for the 24-arm
@@ -1223,7 +1246,18 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * zturn candidates — skipped, never force-fit). t2q stays a SEARCHED
      * axis on BOTH engines — sterm/sterm2 and stf/stf2 are placement-order-
      * sensitive twins that must be measured on the installed binary, never
-     * hand-set. */
+     * hand-set.
+     *
+     * TIER GATE (2026-08-23): below _vfft_zcasc_min_n() there is nothing to
+     * enumerate. The route's own create WOULD build a chain at N=1024 —
+     * vfft_zsplit_default_chain carries a cold-start seed there — so
+     * "validator is the law" is not enough on its own here: it admitted
+     * ~20 candidates per scrambled 1024 cell that the runtime refuses to
+     * serve and the kind-4 writer refuses to store ("sub2048-wrong-slot").
+     * Raced, then discarded, on every MEASURE create. Sharing the runtime's
+     * gate keeps the boundary raceable via VFFT_NAT_ZCASC_MINN while costing
+     * nothing by default. */
+    if (N < _vfft_zcasc_min_n()) return;
     {
         int chain[VFFT_ZSPLIT_MAX_NF];
         for (int nf = 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
@@ -1598,7 +1632,23 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
          * axis existed. Banked only when the race actually produced a
          * verdict - 🔴 an unraced axis must leave NO record at all, because
          * a zero-filled one would assert a measurement that never happened
-         * (the same lie the sp_route < 0 skip above exists to prevent). */
+         * (the same lie the sp_route < 0 skip above exists to prevent).
+         *
+         * 🔴 NOTE (2026-08-23): `nat->il_bkv` here is the VERDICT, not
+         * evidence that the race ran -- and bkv == 0 is a legitimate raced
+         * outcome meaning "the default forms won", which the log states
+         * outright ("bwd WINNER bkv=0x00 ... (2 arms)"). So this condition
+         * cannot distinguish "never raced" from "raced, default won", and
+         * silently drops the latter. It is left as-is DELIBERATELY: bkv == 0
+         * IS the structural default, so a banked kv=0 line and an absent one
+         * install the same kernels, and nothing served changes either way.
+         * Fixing it properly is an API change at three sites -- this guard,
+         * vw2_oop_rec_k1_bwd's `kv == 0` refusal, and vw2_oop_lookup_k1_bwd
+         * returning kv as its own found/not-found signal -- because across
+         * this axis 0 is BOTH a valid verdict and the sentinel. The split
+         * side already learned that lesson: sp_route < 0 is its sentinel
+         * precisely because 0 == VFFT_K1_SP_3P is valid. Do that if the
+         * store ever needs to record WHETHER the axis was measured. */
         if (il_ok && nat->il_bkv && nat->route == VFFT_K1_IL_2P_PURE)
         {
             vw2_rec_t br;
