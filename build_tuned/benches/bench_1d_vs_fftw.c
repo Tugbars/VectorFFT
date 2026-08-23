@@ -303,19 +303,22 @@ static stat5_t time_fftw(fftw_arm_t *a, const double *z0, size_t total)
     return stat5(g_t5);
 }
 
-/* control arm: memcpy of the interleaved plane — the noise floor. A delta
- * smaller than this arm's spread is NOT a result. */
-static stat5_t time_ctrl(double *dst, const double *src, size_t total)
+/* control arm: memcpy of n_doubles — the noise floor. A delta smaller than
+ * this arm's spread is NOT a result. 🔴 n_doubles is EXPLICIT because the
+ * buffers differ per mode (k1: one interleaved plane of 2*total; split: two
+ * planes of total each) — an assumed factor of 2 here overran the split
+ * planes and corrupted the heap (crash-at-cleanup, empty CSVs). */
+static stat5_t time_ctrl(double *dst, const double *src, size_t n_doubles)
 {
-    for (int w = 0; w < 10; w++) memcpy(dst, src, 2 * total * sizeof(double));
-    int reps = reps_for(total);
+    for (int w = 0; w < 10; w++) memcpy(dst, src, n_doubles * sizeof(double));
+    int reps = reps_for(n_doubles / 2);
     for (int t = 0; t < 5; t++)
     {
         if (t) pace(g_trial_pace_ms);
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
         {
-            memcpy(dst, src, 2 * total * sizeof(double));
+            memcpy(dst, src, n_doubles * sizeof(double));
             /* defeat dead-store elimination across reps */
             ((volatile double *)dst)[0] = dst[0];
         }
@@ -328,8 +331,9 @@ static stat5_t time_ctrl(double *dst, const double *src, size_t total)
  * The MKL bench's DEFAULT mode, mirrored: split lane-major (re[e*K+lane]),
  * IN-PLACE, wisdom-driven plan through vfft_proto_plan_create_ex + JIT
  * resolve. This is a MIRROR-REGIME mode (the MKL arm races our layout), so
- * the FFTW VERDICT arm is the guru-split MIRROR in our exact layout; the
- * interleaved transform-contiguous HOME arm is the mandatory diagnostic
+ * the VERDICT column is fsplit — FFTW forced into our exact split
+ * lane-major layout via guru split — and fil (FFTW interleaved
+ * transform-contiguous, ITS best layout) is the mandatory diagnostic
  * (prior art: FFTW-interleaved is FFTW's best; FFTW-split is beatable).
  *
  * 🔴 Deterministic planes are LOAD-BEARING here: FFTW hashes (ii-ri) into
@@ -533,21 +537,47 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
         g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
       hs = stat5(g_t5); }
     cachebust(); pace(cool_ms);
-    stat5_t cs = time_ctrl(re, sre, total); /* re is scratch now */
+    /* control: BOTH planes per rep — same 2*total-doubles traffic as the
+     * transforms, on legally-sized buffers (re/im are total doubles EACH;
+     * passing them to a 2*total memcpy was the heap-overrun bug). */
+    stat5_t cs;
+    {
+        for (int w = 0; w < 10; w++)
+        { memcpy(re, sre, total * sizeof(double));
+          memcpy(im, sim, total * sizeof(double)); }
+        int reps = reps_for(total);
+        for (int t = 0; t < 5; t++)
+        {
+            if (t) pace(g_trial_pace_ms);
+            double tt = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++)
+            {
+                memcpy(re, sre, total * sizeof(double));
+                memcpy(im, sim, total * sizeof(double));
+                ((volatile double *)re)[0] = re[0];
+            }
+            g_t5[t] = (vfft_proto_now_ns() - tt) / reps;
+        }
+        cs = stat5(g_t5);
+    }
 
-    double rmir = vs.med > 0 ? ms.med / vs.med : 0;
-    double rhome = vs.med > 0 ? hs.med / vs.med : 0;
+    /* owner naming rule: columns carry the LAYOUT name, not role jargon —
+     * r_split = FFTW forced into our split lane-major layout (the verdict);
+     * r_il    = FFTW in interleaved transform-contiguous, ITS best layout
+     * (the mandatory diagnostic; the gap between them IS the layout effect). */
+    double r_split = vs.med > 0 ? ms.med / vs.med : 0;
+    double r_il    = vs.med > 0 ? hs.med / vs.med : 0;
 
-    printf("%-8d K=%-4zu %-14s %-7s v=%9.0f/%9.0f  fmir=%9.0f/%9.0f  fhome=%9.0f  ctrl=%8.0f  "
-           "r=%5.2f/%5.2f  vgate=%.1e(rt) fgate=%.1e(naive:%dL)  plan=%.0f/%.0fms%s\n",
+    printf("%-8d K=%-4zu %-14s %-7s v=%9.0f/%9.0f  fsplit=%9.0f/%9.0f  fil=%9.0f  ctrl=%8.0f  "
+           "r_split=%5.2f r_il=%5.2f  vgate=%.1e(rt) fgate=%.1e(naive:%dL)  plan=%.0f/%.0fms%s\n",
            N, K, plan_s, path, vs.min, vs.med, ms.min, ms.med, hs.med, cs.min,
-           rmir, rhome, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
+           r_split, r_il, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
            (vgate > 1e-11 || fgate > 1e-8) ? "  *** GATE BAD ***" : "");
     if (out)
         fprintf(out, "split,%d,%zu,%s,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,"
-                     "%.3e,rt,%.3e,naive%d,%.1f,%.1f,%016llx,mir,%d,%d,%llu\n",
+                     "%.3e,rt,%.3e,naive%d,%.1f,%.1f,%016llx,split,%d,%d,%llu\n",
                 N, K, plan_s, path, vs.min, vs.med, ms.min, ms.med, hs.min, hs.med, cs.min,
-                rmir, rhome, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
+                r_split, r_il, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
                 (unsigned long long)mir_id, flip, reps_for(total),
                 (unsigned long long)mp.stride);
 
@@ -654,7 +684,7 @@ static void run_cell(int N, FILE *out, int cool_ms, int flip)
         fs = time_fftw(&fa, z0, total);
     }
     cachebust(); pace(cool_ms);
-    stat5_t cs = time_ctrl(S, z0, total);
+    stat5_t cs = time_ctrl(S, z0, 2 * total);   /* z planes are 2*total doubles */
 
     double ratio_min = vs.min > 0 ? fs.min / vs.min : 0;
     double ratio_med = vs.med > 0 ? fs.med / vs.med : 0;
@@ -756,10 +786,10 @@ int main(int argc, char **argv)
                          "ratio_min,ratio_med,vgate,vgate_class,fgate,fgate_class,"
                          "fftw_plan_ms,fftw_plan_id,ref_role,flip,reps\n");
         else
-            fprintf(out, "mode,N,K,plan,path,vns_min,vns_med,fmir_min,fmir_med,"
-                         "fhome_min,fhome_med,ctrl_min,ratio_mir,ratio_home,"
-                         "vgate,vgate_class,fgate,fgate_class,mir_plan_ms,"
-                         "home_plan_ms,mir_plan_id,ref_role,flip,reps,delta\n");
+            fprintf(out, "mode,N,K,plan,path,vns_min,vns_med,fsplit_min,fsplit_med,"
+                         "fil_min,fil_med,ctrl_min,ratio_split,ratio_il,"
+                         "vgate,vgate_class,fgate,fgate_class,split_plan_ms,"
+                         "il_plan_ms,split_plan_id,verdict_arm,flip,reps,delta\n");
     }
 
     if (k1_mode)
