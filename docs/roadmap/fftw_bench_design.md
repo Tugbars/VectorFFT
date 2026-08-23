@@ -37,7 +37,21 @@ changes what P5 costs.
 
 ---
 
-## 1 · The decision
+## 1 · The decision — ⚠ SUPERSEDED BY OWNER RULING 2026-08-22
+
+> 🔴 **The same-file `--ref=` decision below is OVERRULED.** Owner: *"It's the canonical bench
+> for MKL, not for FFTW. FFTW should have its own file."* The canonical-bench law is
+> **MKL-scoped**, and this is the owner ratification §7's Proposal C said it required.
+> ⇒ **The deliverable is `build_tuned/benches/bench_1d_vs_fftw.c`** — its own file, same mode
+> vocabulary, and the SAME protocol via the shared backend (`core/support/ref.h` +
+> `benches/ref_fftw.h` + the ref_time core), which is what keeps the two files from drifting.
+> `bench_1d_vs_mkl.c` is NOT touched. Everything else in this document — the mode mapping
+> (§2), the hazard rulings (§3), the fairness doctrine (§4), the phasing (§5) — carries over
+> to the sibling unchanged; read "--ref=fftw" as "the FFTW bench" throughout.
+> Cross-file caveat: vfft-vs-MKL and vfft-vs-FFTW are separate same-run comparisons; never
+> compose them into an FFTW-vs-MKL number across runs (thermal law).
+
+## 1-old · The decision (as originally adopted, now superseded)
 
 ### 1.1 One paragraph
 
