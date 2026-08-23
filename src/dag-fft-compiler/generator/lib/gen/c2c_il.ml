@@ -977,21 +977,22 @@ let emit
   (* Only the quarter-turn mask this direction actually uses — emitting both
      would leave an unused static const (warning noise). The monolithic tail
      re-renders the DAG at Isa.sse2 and needs the __m128d twin. *)
+  (* The narrow twin is needed by ANY form that emits a tail, which since
+     2026-08-23 includes blocked. It used to be gated on `not blocked` purely
+     to avoid an unused static const; blocked now renders the same DAG at
+     Isa.sse2 in its tail and references _M_IM_n / _M_RE_n by name, so
+     withholding the declaration is a compile error rather than tidiness. *)
   if dir = Fwd
   then (
     Buffer.add_string buf (Isa.im_mask_decl isa "_M_IM");
     Buffer.add_string buf "  /* negate im lanes: x*(-i) */\n";
-    if not blocked
-    then (
-      Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
-      Buffer.add_string buf "  /* tail twin */\n"))
+    Buffer.add_string buf (Isa.im_mask_decl Isa.sse2 "_M_IM_n");
+    Buffer.add_string buf "  /* tail twin */\n")
   else (
     Buffer.add_string buf (Isa.re_mask_decl isa "_M_RE");
     Buffer.add_string buf "  /* negate re lanes: x*(+i) */\n";
-    if not blocked
-    then (
-      Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
-      Buffer.add_string buf "  /* tail twin */\n"));
+    Buffer.add_string buf (Isa.re_mask_decl Isa.sse2 "_M_RE_n");
+    Buffer.add_string buf "  /* tail twin */\n");
   Buffer.add_string buf (emit_const_decls isa tbl);
   (* M4 phase 3: the FROZEN 11-arg z ABI comes from Abi.z11_signature — the
      one source (this block was one of THREE byte-identical hand prints; the
