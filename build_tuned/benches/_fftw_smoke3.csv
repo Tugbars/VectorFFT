@@ -1,0 +1,2 @@
+mode,N,K,vns_min,vns_med,fns_min,fns_med,ctrl_min,ratio_min,ratio_med,vgate,vgate_class,fgate,fgate_class,fftw_plan_ms,fftw_plan_id,ref_role,flip,reps
+k1nat,512,1,349.7,352.1,392.9,405.7,28.7,1.1236,1.1523,1.478e-13,xnaive,1.479e-13,naive,0.0,464b009bbaca4af8,mir=home,0,3898
