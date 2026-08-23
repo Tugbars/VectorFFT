@@ -1,0 +1,116 @@
+/* blocked_tail_gate.c — does a BLOCKED cil kernel with the new odd-count tail
+ * compute the same thing as its monolithic twin, at EVERY count?
+ *
+ * BACKGROUND. Blocked cil kernels shipped with an even-count contract: their
+ * bulk loop steps `k += per` (per = 2 on AVX2) and there was no residual arm,
+ * so an odd `count` left the last column NEVER WRITTEN. The plan level worked
+ * around it by refusing blocked whenever the partner factor was odd
+ * (`count_ok` in il2p.h), which silently demoted ~20 cells of the form
+ * N = 32*odd / 64*odd to the monolithic kernel.
+ *
+ * 2026-08-23 gave blocked the same inline narrow arm the monolithic kernels
+ * have carried since 2026-07-29. THIS GATE IS THE ACCEPTANCE TEST FOR THAT.
+ *
+ * WHAT IT PROVES, per count in 1..9:
+ *   1. EVERY output column is written  — a canary prefill that survives means
+ *      no store reached that address. That is the exact failure the missing
+ *      tail caused, so it is checked directly rather than inferred from a
+ *      value comparison (a stale column can coincidentally hold a plausible
+ *      number, but it cannot hold the canary and be correct).
+ *   2. NOTHING outside the output region is written — guard bands on both
+ *      sides, checked byte-wise.
+ *   3. The values MATCH the monolithic twin. Note this is a tolerance
+ *      comparison, not bitwise: the bulk runs the BLOCKED construction while
+ *      the tail runs the MONOLITHIC one, and blocked forms already differ
+ *      from their monolithic twins at ~1e-16 (they were A/B'd 12/12 at that
+ *      level when introduced). A tolerance of 1e-12 rel is the same bar
+ *      vfft_il2p_create uses when it races these kernels.
+ *
+ * ODD counts are the point, but EVEN counts are checked too: the change
+ * hoisted `k` out of the bulk loop for blocked, which must not disturb the
+ * even path that every shipping cell uses today.
+ *
+ * Build (from build_tuned/):
+ *   gcc -O3 -mavx2 -mfma -march=native -o benches/blocked_tail_gate.exe \
+ *       benches/blocked_tail_gate.c /tmp/k_blk.c /tmp/k_mono.c -lm
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+
+#define R      32          /* radix under test */
+#define GUARD  64          /* doubles of guard band on each side */
+#define CANARY (-9.87654321e300)
+
+void radix32_z_n1tb_fwd_avx2(const double *, const double *, double *, double *,
+                             const double *, const double *,
+                             size_t, size_t, size_t, size_t, size_t);
+void radix32_z_n1t_fwd_avx2 (const double *, const double *, double *, double *,
+                             const double *, const double *,
+                             size_t, size_t, size_t, size_t, size_t);
+
+static uint64_t lcg = 0x243F6A8885A308D3ull;
+static double rnd(void)
+{ lcg = lcg*6364136223846793005ull + 1442695040888963407ull;
+  return ((double)(int64_t)(lcg>>11))/4503599627370496.0; }
+
+static int g_fail = 0;
+
+static void arm(size_t count)
+{
+    /* n1t is a corner turn: reads zin[2*(l*Ls + k)] for l<R, k<count and
+     * writes zout[2*(k*OLs + l)]. Size both planes generously and guard them. */
+    const size_t Ls = count, OLs = R;
+    const size_t nin  = 2 * R * Ls;
+    const size_t nout = 2 * count * OLs;
+    double *zin = (double *)malloc((nin + 16) * sizeof(double));
+    double *ob  = (double *)malloc((nout + 2*GUARD) * sizeof(double));
+    double *om  = (double *)malloc((nout + 2*GUARD) * sizeof(double));
+    size_t i, stale = 0, guard_hit = 0;
+    double worst = 0.0, mag = 0.0;
+
+    for (i = 0; i < nin; i++) zin[i] = rnd();
+    for (i = 0; i < nout + 2*GUARD; i++) ob[i] = om[i] = CANARY;
+
+    radix32_z_n1tb_fwd_avx2(zin, 0, ob + GUARD, 0, 0, 0, Ls, 0, OLs, 0, count);
+    radix32_z_n1t_fwd_avx2 (zin, 0, om + GUARD, 0, 0, 0, Ls, 0, OLs, 0, count);
+
+    /* 1. every output slot written? */
+    for (i = 0; i < nout; i++)
+        if (ob[GUARD + i] == CANARY) stale++;
+    /* 2. guards intact? */
+    for (i = 0; i < GUARD; i++) {
+        if (ob[i] != CANARY) guard_hit++;
+        if (ob[GUARD + nout + i] != CANARY) guard_hit++;
+    }
+    /* 3. values agree with the monolithic twin */
+    for (i = 0; i < nout; i++) {
+        double d = fabs(ob[GUARD + i] - om[GUARD + i]);
+        if (d > worst) worst = d;
+        if (fabs(om[GUARD + i]) > mag) mag = fabs(om[GUARD + i]);
+    }
+    {
+        double rel = mag > 0 ? worst / mag : worst;
+        int ok = (stale == 0) && (guard_hit == 0) && (rel < 1e-12);
+        printf("  count=%-2zu  %s  unwritten=%-3zu guard_hits=%-3zu rel=%.2e  %s\n",
+               count, (count & 1) ? "ODD " : "even", stale, guard_hit, rel,
+               ok ? "OK" : "*** FAIL ***");
+        if (!ok) g_fail = 1;
+    }
+    free(zin); free(ob); free(om);
+}
+
+int main(void)
+{
+    size_t c;
+    setvbuf(stdout, NULL, _IONBF, 0);
+    printf("blocked cil odd-count tail gate — radix32 n1t, blocked(4.8) vs monolithic\n");
+    printf("  canary prefill: an UNWRITTEN column is proof the tail is missing\n");
+    printf("  guard bands: a hit is proof it wrote outside its output region\n\n");
+    for (c = 1; c <= 9; c++) arm(c);
+    printf("\n%s\n", g_fail ? "*** BLOCKED TAIL: NOT CORRECT ***"
+                            : "BLOCKED TAIL: correct at every count 1..9");
+    return g_fail;
+}

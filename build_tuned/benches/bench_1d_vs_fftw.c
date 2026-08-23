@@ -131,8 +131,50 @@ static stat5_t stat5(double t[5])
 static fftwx_api_t g_fx;               /* the runtime-bound FFTW */
 static int   g_k1zip = 0;              /* in-place discipline on both engines */
 static int   g_k1nat = 0;              /* order=NATURAL on our side */
-static const char *g_wisdir = NULL;    /* vfft wisdom dir */
+static const char *g_wisdir = NULL;    /* vfft wisdom DIR (derived from the file arg) */
 static int   g_verbose = 0;
+static vfft_proto_registry_t g_reg;    /* codelet registry (split-cell plans) */
+static vw2_store_t g_store;            /* live wisdom2 store — read-only */
+static int   g_store_loaded = 0;
+
+/* argv[1] is the wisdom FILE (spike_wisdom.txt), same contract as the MKL
+ * bench; the store and the front door both live in its directory. */
+static const char *dir_of(const char *path)
+{
+    static char dir[600];
+    snprintf(dir, sizeof dir, ".");
+    if (!path) return dir;
+    const char *b1 = strrchr(path, '/'), *b2 = strrchr(path, '\\');
+    const char *base = (b1 && b2) ? (b1 > b2 ? b1 : b2) : (b1 ? b1 : b2);
+    if (base)
+    {
+        size_t dl = (size_t)(base - path);
+        if (dl == 0) dl = 1;
+        if (dl >= sizeof dir) dl = sizeof dir - 1;
+        memcpy(dir, path, dl);
+        dir[dl] = 0;
+    }
+    return dir;
+}
+
+/* [override] label — byte-faithful to the MKL bench's format_plan */
+static void format_plan(char *buf, size_t cap, const int *factors, int nf, int use_dif)
+{
+    if (nf <= 0) { snprintf(buf, cap, "[override]"); return; }
+    size_t p = 0;
+    p += (size_t)snprintf(buf + p, cap - p, "%s", use_dif ? "d" : "t");
+    for (int i = 0; i < nf && p < cap - 6; i++)
+        p += (size_t)snprintf(buf + p, cap - p, "%s%d", i ? "x" : ":", factors[i]);
+}
+
+/* single-thread forward through the resolved executor (the MKL bench's
+ * dag_fwd_mt at g_mt==1) */
+static void st_fwd(vfft_proto_exec_fn fn, const stride_plan_t *plan,
+                   double *re, double *im, size_t K)
+{
+    if (fn) fn((const stride_plan_t *)plan, re, im, K, plan->K, 0);
+    else    vfft_proto_execute_fwd((stride_plan_t *)plan, re, im, K);
+}
 
 static const char *fftw_wis_path(void)
 {
@@ -282,6 +324,241 @@ static stat5_t time_ctrl(double *dst, const double *src, size_t total)
     return stat5(g_t5);
 }
 
+/* ------------------------------------------------------- the split K-cell
+ * The MKL bench's DEFAULT mode, mirrored: split lane-major (re[e*K+lane]),
+ * IN-PLACE, wisdom-driven plan through vfft_proto_plan_create_ex + JIT
+ * resolve. This is a MIRROR-REGIME mode (the MKL arm races our layout), so
+ * the FFTW VERDICT arm is the guru-split MIRROR in our exact layout; the
+ * interleaved transform-contiguous HOME arm is the mandatory diagnostic
+ * (prior art: FFTW-interleaved is FFTW's best; FFTW-split is beatable).
+ *
+ * 🔴 Deterministic planes are LOAD-BEARING here: FFTW hashes (ii-ri) into
+ * the wisdom key, so the mirror planes come from ref_planes_alloc — one
+ * block, size-derived offset — or the plan drifts 9.4% across launches. */
+
+/* naive forward of ONE lane of the split lane-major layout, vs the FFTW
+ * mirror output (natural order). Spot-gating min(K,4) lanes within an op
+ * budget still catches stride/layout errors — a wrong is/os corrupts every
+ * lane — while keeping the O(N^2)-per-lane cost bounded. */
+static double naive_gate_lanes(int N, size_t K, const double *sre, const double *sim,
+                               const double *ore, const double *oim, int *lanes_out)
+{
+    int maxlanes = (int)(K < 4 ? K : 4);
+    double budget = 5e8; /* ~N^2 ops per lane */
+    int lanes = (int)(budget / ((double)N * (double)N));
+    if (lanes < 1) lanes = 1;
+    if (lanes > maxlanes) lanes = maxlanes;
+    *lanes_out = lanes;
+    double worst = 0.0;
+    double *xr = alloc_d((size_t)N), *xi = alloc_d((size_t)N);
+    for (int l = 0; l < lanes; l++)
+    {
+        for (int k = 0; k < N; k++)
+        {
+            double sr = 0.0, si = 0.0;
+            for (int j = 0; j < N; j++)
+            {
+                double th = -2.0 * 3.14159265358979323846 * (double)k * (double)j / (double)N;
+                double c = cos(th), s = sin(th);
+                double re = sre[(size_t)j * K + (size_t)l], im = sim[(size_t)j * K + (size_t)l];
+                sr += re * c - im * s;
+                si += re * s + im * c;
+            }
+            xr[k] = sr; xi[k] = si;
+        }
+        double mag = 1e-300, err = 0.0;
+        for (int k = 0; k < N; k++)
+        {
+            double m = fabs(xr[k]) + fabs(xi[k]); if (m > mag) mag = m;
+            double e = fabs(ore[(size_t)k * K + (size_t)l] - xr[k])
+                     + fabs(oim[(size_t)k * K + (size_t)l] - xi[k]);
+            if (e > err) err = e;
+        }
+        double rel = err / mag;
+        if (rel > worst) worst = rel;
+    }
+    free_d(xr); free_d(xi);
+    return worst;
+}
+
+static stat5_t time_fftw_plan(fftwx_plan pl, double *dst_re, double *dst_im,
+                              const double *sre, const double *sim, size_t total)
+{
+    memcpy(dst_re, sre, total * sizeof(double));
+    memcpy(dst_im, sim, total * sizeof(double));
+    for (int w = 0; w < 10; w++) g_fx.execute(pl);
+    int reps = reps_for(total);
+    for (int t = 0; t < 5; t++)
+    {
+        if (t) pace(g_trial_pace_ms);
+        double t0 = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) g_fx.execute(pl);
+        g_t5[t] = (vfft_proto_now_ns() - t0) / reps;
+    }
+    return stat5(g_t5);
+}
+
+static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
+                           int use_dif, FILE *out, int cool_ms, int flip)
+{
+    char plan_s[64];
+    format_plan(plan_s, sizeof plan_s, factors, nf, use_dif);
+    size_t total = (size_t)N * K;
+
+    /* ---- vfft plan + resolve (before any data) ---- */
+    stride_plan_t *plan = vfft_proto_plan_create_ex(N, K, factors, variants, nf, use_dif, &g_reg);
+    if (!plan) { printf("%-8d K=%-4zu %-16s plan_create FAILED\n", N, K, plan_s); return; }
+    vfft_proto_exec_fn fn = NULL;
+    const char *path = "generic";
+#ifdef VFFT_USE_JIT
+    int baked = (vfft_proto_lookup_fwd_avx2(plan) != NULL);
+    fn = vfft_proto_plan_jit_fwd(plan);
+    path = fn ? (baked ? "baked" : "JIT") : "generic";
+#endif
+
+    /* ---- FFTW plans, BEFORE the input exists (MEASURE scribbles) ---- */
+    /* MIRROR (the verdict): guru split, our lane-major layout, in-place, on
+     * DETERMINISTIC planes. dims {N,K,K}: element stride K doubles; howmany
+     * {K,1,1}: lane l at offset l. */
+    ref_planes_t mp = ref_planes_alloc(total);
+    fftwx_iodim dims = { N, (int)K, (int)K };
+    fftwx_iodim hm   = { (int)K, 1, 1 };
+    double t0 = vfft_proto_now_ns();
+    fftwx_plan fmir = g_fx.plan_guru_split_dft(1, &dims, 1, &hm,
+                                               mp.re, mp.im, mp.re, mp.im, FFTWX_MEASURE);
+    double mir_plan_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    /* HOME (mandatory diagnostic): interleaved transform-contiguous, in-place */
+    double *hz = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
+    int n_arr[1] = { N };
+    t0 = vfft_proto_now_ns();
+    fftwx_plan fhome = hz ? g_fx.plan_many_dft(1, n_arr, (int)K,
+                                               (fftwx_complex *)hz, NULL, 1, N,
+                                               (fftwx_complex *)hz, NULL, 1, N,
+                                               FFTWX_FORWARD, FFTWX_MEASURE) : NULL;
+    double home_plan_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    g_fx.export_wisdom_to_filename(fftw_wis_path());
+    if (!fmir || !fhome)
+    {
+        printf("%-8d K=%-4zu %-16s FFTW plan FAILED (mir=%p home=%p)\n",
+               N, K, plan_s, (void *)fmir, (void *)fhome);
+        if (fmir) g_fx.destroy_plan(fmir);
+        if (fhome) g_fx.destroy_plan(fhome);
+        if (hz) g_fx.ffree(hz);
+        ref_planes_free(&mp);
+        vfft_proto_plan_destroy(plan);
+        return;
+    }
+    uint64_t mir_id = fftwx_plan_id(&g_fx, fmir);
+
+    /* ---- input (after all planning) ---- */
+    double *sre = alloc_d(total), *sim = alloc_d(total);
+    srand(42 + N + (int)K);
+    for (size_t i = 0; i < total; i++)
+    {
+        sre[i] = (double)rand() / RAND_MAX - 0.5;
+        sim[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+
+    /* ---- correctness, untimed ---- */
+    /* vfft: roundtrip (its law — scrambled split output) */
+    double *re = alloc_d(total), *im = alloc_d(total);
+    memcpy(re, sre, total * sizeof(double));
+    memcpy(im, sim, total * sizeof(double));
+    st_fwd(fn, plan, re, im, K);
+    vfft_proto_execute_bwd(plan, re, im, K);
+    double maxerr = 0.0, maxmag = 0.0, inv = 1.0 / (double)N;
+    for (size_t i = 0; i < total; i++)
+    {
+        double er = re[i] * inv - sre[i], ei = im[i] * inv - sim[i];
+        double e = sqrt(er * er + ei * ei);
+        double m = sqrt(sre[i] * sre[i] + sim[i] * sim[i]);
+        if (e > maxerr) maxerr = e;
+        if (m > maxmag) maxmag = m;
+    }
+    double vgate = maxmag > 0 ? maxerr / maxmag : maxerr;
+    /* FFTW mirror: per-direction elementwise vs naive, spot-gated lanes */
+    memcpy(mp.re, sre, total * sizeof(double));
+    memcpy(mp.im, sim, total * sizeof(double));
+    g_fx.execute(fmir);
+    int lanes = 0;
+    double fgate = naive_gate_lanes(N, K, sre, sim, mp.re, mp.im, &lanes);
+
+    /* ---- timing: verdict pair order-neutralised, then home, then control ---- */
+    stat5_t vs, ms;
+    if (flip)
+    {
+        ms = time_fftw_plan(fmir, mp.re, mp.im, sre, sim, total);
+        cachebust(); pace(cool_ms);
+        memcpy(re, sre, total * sizeof(double));
+        memcpy(im, sim, total * sizeof(double));
+        { for (int w = 0; w < 10; w++) st_fwd(fn, plan, re, im, K);
+          int reps = reps_for(total);
+          for (int t = 0; t < 5; t++)
+          { if (t) pace(g_trial_pace_ms);
+            double tt = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++) st_fwd(fn, plan, re, im, K);
+            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+          vs = stat5(g_t5); }
+    }
+    else
+    {
+        memcpy(re, sre, total * sizeof(double));
+        memcpy(im, sim, total * sizeof(double));
+        { for (int w = 0; w < 10; w++) st_fwd(fn, plan, re, im, K);
+          int reps = reps_for(total);
+          for (int t = 0; t < 5; t++)
+          { if (t) pace(g_trial_pace_ms);
+            double tt = vfft_proto_now_ns();
+            for (int i = 0; i < reps; i++) st_fwd(fn, plan, re, im, K);
+            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+          vs = stat5(g_t5); }
+        cachebust(); pace(cool_ms);
+        ms = time_fftw_plan(fmir, mp.re, mp.im, sre, sim, total);
+    }
+    /* home diagnostic: untimed adapter (transpose into TC-interleaved), then time */
+    cachebust(); pace(cool_ms);
+    for (size_t l = 0; l < K; l++)
+        for (int e = 0; e < N; e++)
+        {
+            hz[2 * (l * (size_t)N + (size_t)e)]     = sre[(size_t)e * K + l];
+            hz[2 * (l * (size_t)N + (size_t)e) + 1] = sim[(size_t)e * K + l];
+        }
+    stat5_t hs;
+    { for (int w = 0; w < 10; w++) g_fx.execute(fhome);
+      int reps = reps_for(total);
+      for (int t = 0; t < 5; t++)
+      { if (t) pace(g_trial_pace_ms);
+        double tt = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) g_fx.execute(fhome);
+        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+      hs = stat5(g_t5); }
+    cachebust(); pace(cool_ms);
+    stat5_t cs = time_ctrl(re, sre, total); /* re is scratch now */
+
+    double rmir = vs.med > 0 ? ms.med / vs.med : 0;
+    double rhome = vs.med > 0 ? hs.med / vs.med : 0;
+
+    printf("%-8d K=%-4zu %-14s %-7s v=%9.0f/%9.0f  fmir=%9.0f/%9.0f  fhome=%9.0f  ctrl=%8.0f  "
+           "r=%5.2f/%5.2f  vgate=%.1e(rt) fgate=%.1e(naive:%dL)  plan=%.0f/%.0fms%s\n",
+           N, K, plan_s, path, vs.min, vs.med, ms.min, ms.med, hs.med, cs.min,
+           rmir, rhome, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
+           (vgate > 1e-11 || fgate > 1e-8) ? "  *** GATE BAD ***" : "");
+    if (out)
+        fprintf(out, "split,%d,%zu,%s,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,"
+                     "%.3e,rt,%.3e,naive%d,%.1f,%.1f,%016llx,mir,%d,%d,%llu\n",
+                N, K, plan_s, path, vs.min, vs.med, ms.min, ms.med, hs.min, hs.med, cs.min,
+                rmir, rhome, vgate, fgate, lanes, mir_plan_ms, home_plan_ms,
+                (unsigned long long)mir_id, flip, reps_for(total),
+                (unsigned long long)mp.stride);
+
+    g_fx.destroy_plan(fmir);
+    g_fx.destroy_plan(fhome);
+    g_fx.ffree(hz);
+    ref_planes_free(&mp);
+    free_d(sre); free_d(sim); free_d(re); free_d(im);
+    vfft_proto_plan_destroy(plan);
+}
+
 /* ------------------------------------------------------------ the k1 cell */
 static void run_cell(int N, FILE *out, int cool_ms, int flip)
 {
@@ -415,17 +692,22 @@ int main(int argc, char **argv)
         argv++; argc--;
     }
 
-    g_wisdir              = (argc > 1) ? argv[1] : ".";
+    /* argv contract mirrors the MKL bench: [wisdomFILE] [csv] [pace] [N] [K]
+     * [cool] [flip] [core]. argv[1] is the spike wisdom FILE; the store and
+     * the front door live in its directory. */
+    const char *wpath     = (argc > 1) ? argv[1]
+                          : "../../src/dag-fft-compiler/generator/generated/spike_wisdom.txt";
     const char *csv_path  = (argc > 2) ? argv[2] : NULL;
     int pace_ms           = (argc > 3) ? atoi(argv[3]) : 200;
     int N                 = (argc > 4) ? atoi(argv[4]) : 0;
-    int K                 = (argc > 5) ? atoi(argv[5]) : 1;
+    int K                 = (argc > 5) ? atoi(argv[5]) : (g_k1zip || g_k1nat) ? 1 : 4;
     int cool_ms           = (argc > 6) ? atoi(argv[6]) : 200;
     int flip              = (argc > 7) ? atoi(argv[7]) : 0;
     int core              = (argc > 8) ? atoi(argv[8]) : 2;
+    g_wisdir = dir_of(wpath);
 
-    if (K != 1)
-    { fprintf(stderr, "v1 covers the K=1 tier only (K=%d requested); later phases add K>1 per the design doc\n", K); return 2; }
+    if ((g_k1zip || g_k1nat) && K != 1)
+    { fprintf(stderr, "the --k1* modes are K=1 by definition (K=%d requested)\n", K); return 2; }
 
     const char *e = getenv("VFFT_TRIAL_PACE_MS");
     if (e) g_trial_pace_ms = atoi(e);
@@ -452,32 +734,119 @@ int main(int argc, char **argv)
            g_fx.dll_path, fftw_wis_path(), wis ? "loaded" : "cold", g_wisdir,
            pace_ms, cool_ms, flip, core);
 
+    vfft_proto_registry_init(&g_reg);
+    vw2_open(&g_store, g_wisdir, 0);        /* read-only: a bench never banks */
+    g_store_loaded = (g_store.nrec > 0);
+
     FILE *out = NULL;
     char csv_default[128];
+    int k1_mode = (g_k1zip || g_k1nat || K == 1);
     if (!csv_path)
     {
         const char *mode = g_k1nat ? (g_k1zip ? "k1nat" : "k1noop")
-                                   : (g_k1zip ? "k1zip" : "k1z");
+                                   : (g_k1zip ? "k1zip" : (k1_mode ? "k1z" : "split"));
         snprintf(csv_default, sizeof csv_default, "vfft_vs_fftw_%s.csv", mode);
         csv_path = csv_default;
     }
     out = fopen(csv_path, "w");
     if (out)
-        fprintf(out, "mode,N,K,vns_min,vns_med,fns_min,fns_med,ctrl_min,"
-                     "ratio_min,ratio_med,vgate,vgate_class,fgate,fgate_class,"
-                     "fftw_plan_ms,fftw_plan_id,ref_role,flip,reps\n");
+    {
+        if (k1_mode)
+            fprintf(out, "mode,N,K,vns_min,vns_med,fns_min,fns_med,ctrl_min,"
+                         "ratio_min,ratio_med,vgate,vgate_class,fgate,fgate_class,"
+                         "fftw_plan_ms,fftw_plan_id,ref_role,flip,reps\n");
+        else
+            fprintf(out, "mode,N,K,plan,path,vns_min,vns_med,fmir_min,fmir_med,"
+                         "fhome_min,fhome_med,ctrl_min,ratio_mir,ratio_home,"
+                         "vgate,vgate_class,fgate,fgate_class,mir_plan_ms,"
+                         "home_plan_ms,mir_plan_id,ref_role,flip,reps,delta\n");
+    }
 
-    if (N > 0)
-        run_cell(N, out, cool_ms, flip);     /* ISOLATED — the trusted mode */
+    if (k1_mode)
+    {
+        if (N > 0)
+            run_cell(N, out, cool_ms, flip); /* ISOLATED — the trusted mode */
+        else
+        {
+            printf("QUICK-LOOK K=1 (in-process; trust only isolated runs)\n");
+            static const int band[] = {128, 256, 512, 1024, 2048, 4096, 8192, 16384};
+            for (size_t i = 0; i < sizeof band / sizeof band[0]; i++)
+            {
+                run_cell(band[i], out, cool_ms, (int)(i & 1));
+                cachebust(); pace(pace_ms);
+            }
+        }
+    }
     else
     {
-        printf("QUICK-LOOK (in-process; trust only isolated runs)\n");
-        static const int band[] = {128, 256, 512, 1024, 2048, 4096, 8192, 16384};
-        for (size_t i = 0; i < sizeof band / sizeof band[0]; i++)
+        /* SPLIT mode: wisdom-driven cells, exactly the MKL bench's default
+         * enumeration — the file lists which cells exist; the live store
+         * overrides the verdict (bench what production serves). */
+        FILE *f = fopen(wpath, "r");
+        if (!f) { fprintf(stderr, "cannot open wisdom %s\n", wpath); return 1; }
+        if (N == 0)
+            printf("QUICK-LOOK split K=%d (in-process; trust only isolated runs)\n", K);
+        char line[512];
+        int benched = 0;
+        while (fgets(line, sizeof line, f))
         {
-            run_cell(band[i], out, cool_ms, (int)(i & 1)); /* alternate flip */
-            cachebust(); pace(pace_ms);
+            if (line[0] == '#' || line[0] == '@' || line[0] == '\n') continue;
+            char *save;
+            char *tok = strtok_r(line, " \t\n", &save);
+            if (!tok) continue;
+            int cN = atoi(tok);
+            tok = strtok_r(NULL, " \t\n", &save);
+            if (!tok) continue;
+            long cK = atol(tok);
+            if (cK != K) continue;              /* line K must match target K */
+            if (N > 0 && cN != N) continue;     /* isolated: only this cell */
+            tok = strtok_r(NULL, " \t\n", &save);
+            if (!tok) continue;
+            int nf = atoi(tok);
+            if (nf <= 0 || nf > STRIDE_MAX_STAGES) continue; /* K=1 kind lines etc. */
+            int factors[STRIDE_MAX_STAGES], bad = 0;
+            for (int i = 0; i < nf; i++)
+            {
+                tok = strtok_r(NULL, " \t\n", &save);
+                if (!tok) { bad = 1; break; }
+                factors[i] = atoi(tok);
+            }
+            if (bad) continue;
+            { long prod = 1; for (int i = 0; i < nf; i++) prod *= factors[i];
+              if (prod != cN) continue; }       /* not a c2c factor line */
+            tok = strtok_r(NULL, " \t\n", &save); /* best_ns (ignored) */
+            int use_dif = 0;
+            strtok_r(NULL, " \t\n", &save);       /* use_blocked */
+            strtok_r(NULL, " \t\n", &save);       /* split */
+            strtok_r(NULL, " \t\n", &save);       /* bgroups */
+            if ((tok = strtok_r(NULL, " \t\n", &save))) use_dif = atoi(tok);
+            int variants[STRIDE_MAX_STAGES];
+            for (int i = 0; i < nf; i++)
+            {
+                tok = strtok_r(NULL, " \t\n", &save);
+                variants[i] = tok ? atoi(tok) : 2;
+            }
+            /* live-store override — bench what production serves */
+            if (g_store_loaded)
+            {
+                vfft_proto_wisdom_entry_t se;
+                if (vw2_stride_lookup(&g_store, 0, cN, (size_t)cK, &se) && se.nf > 0)
+                {
+                    nf = se.nf;
+                    for (int i = 0; i < nf; i++)
+                    { factors[i] = se.factors[i]; variants[i] = se.variants[i]; }
+                    use_dif = se.use_dif_forward;
+                }
+            }
+            if ((size_t)cN * (size_t)cK > (size_t)16777216) continue;
+            run_split_cell(cN, (size_t)cK, factors, variants, nf, use_dif,
+                           out, cool_ms, N > 0 ? flip : (benched & 1));
+            benched++;
+            if (N == 0) { cachebust(); pace(pace_ms); }
         }
+        fclose(f);
+        if (!benched)
+            printf("no wisdom cells matched (N=%d K=%d) in %s\n", N, K, wpath);
     }
 
     if (out) fclose(out);
