@@ -52,6 +52,11 @@
  */
 #define _POSIX_C_SOURCE 200809L
 #define _GNU_SOURCE 1
+/* rfft config (must precede rfft.h, pulled by r2c_dispatch.h for --r2c):
+ * allow the radix-32 leaf + ranged hc2hc variants the production r2c path uses.
+ * Same defines as the MKL bench — a mismatch would bench a different engine. */
+#define VFFT_RFFT_MAX_RADIX 32
+#define VFFT_RFFT_RANGED 1
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +75,8 @@
 #include "wisdom2_oop.h"           /* vw2 store types + vfft_oop_plan_from_entry */
 #include "wisdom2_oop_reader.h"    /* vw2_open — read-only; a bench never banks */
 #include "wisdom2_stride_reader.h" /* vw2_stride_lookup — live verdict overrides the file */
+#include "rfft_registry_avx2.h"    /* --r2c: rfft_codelets_t + rfft_register_all_avx2 */
+#include "r2c_dispatch.h"          /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
 #include "vfft.h"       /* public front door (build.py --vfft) */
 
 #include "ref_fftw.h"   /* runtime FFTW binder + plan_id (pulls core/support/ref.h) */
@@ -133,6 +140,7 @@ static fftwx_api_t g_fx;               /* the runtime-bound FFTW */
 static int   g_k1zip = 0;              /* in-place discipline on both engines */
 static int   g_k1nat = 0;              /* order=NATURAL on our side */
 static int   g_oop = 0;                /* --oop: split lane-major OUT-OF-PLACE */
+static int   g_r2c = 0;                /* --r2c: 1D real fwd (HOME-regime: il = verdict) */
 static const char *g_wisdir = NULL;    /* vfft wisdom DIR (derived from the file arg) */
 static int   g_verbose = 0;
 static vfft_proto_registry_t g_reg;    /* codelet registry (split-cell plans) */
@@ -591,6 +599,199 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
     vfft_proto_plan_destroy(plan);
 }
 
+/* --------------------------------------------------------- the r2c cell
+ * 🔴 FIRST HOME-REGIME MODE — the verdict column FLIPS.
+ * In the split/oop modes the MKL bench races MKL in OUR layout, so the
+ * mirror (split) is the verdict. Here run_r2c_cell:2211-2223 transposes our
+ * lane-major input to transform-contiguous OUTSIDE the timed region and gives
+ * MKL its home CCE descriptor, and bench_mkl_r2c:2170 times only the
+ * transform — so MKL's arm already IS a home arm and already IS the verdict
+ * (speedup = mns/vns, :2255). Doctrine: FFTW gets THE SAME DEAL.
+ *   fil    = many_dft_r2c, TC real in -> interleaved CCE out  == THE VERDICT
+ *   fsplit = guru_split_dft_r2c in our lane-major split layout == diagnostic
+ * The adapter (transpose) is untimed for BOTH references, exactly as MKL's is.
+ * 🟢 r2c does NOT destroy its input (only c2r does), so no refill is needed
+ * and ref_race's destructive-arm refusal does not apply to this mode.
+ * Correctness is ELEMENTWISE vs a naive real DFT for every arm — r2c output is
+ * natural order, so the roundtrip crutch is unnecessary here. */
+
+/* naive half-spectrum of one lane of lane-major real input x[n*K+lane] */
+static void naive_r2c_lane(int N, size_t K, const double *x, size_t lane,
+                           double *hr, double *hi)
+{
+    int halfN = N / 2;
+    for (int k = 0; k <= halfN; k++)
+    {
+        double rr = 0, ri = 0;
+        for (int n = 0; n < N; n++)
+        {
+            double xn = x[(size_t)n * K + lane];
+            double a = -2.0 * 3.14159265358979323846 * (double)k * (double)n / (double)N;
+            rr += xn * cos(a);
+            ri += xn * sin(a);
+        }
+        hr[k] = rr; hi[k] = ri;
+    }
+}
+static int r2c_lane_budget(int N, size_t K)
+{
+    int maxlanes = (int)(K < 4 ? K : 4);
+    int lanes = (int)(5e8 / (0.5 * (double)N * (double)N));
+    if (lanes < 1) lanes = 1;
+    if (lanes > maxlanes) lanes = maxlanes;
+    return lanes;
+}
+
+static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
+                              FILE *out, int cool_ms, int flip)
+{
+    const int halfN = N / 2;
+    const size_t total = (size_t)N * K, outsz = (size_t)(halfN + 1) * K;
+
+    vfft_r2c_plan_t *p = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
+    if (!p) { printf("  N=%-6d K=%-5zu r2c plan NULL\n", N, K); return; }
+    const char *path = (p->path == VFFT_R2C_PATH_RFFT) ? "rfft" : "stride";
+
+    /* ---- FFTW plans, before the input exists ---- */
+    /* VERDICT: home = TC real in -> interleaved CCE out (MKL's exact deal) */
+    double *hin  = (double *)g_fx.fmalloc(sizeof(double) * total);
+    double *hcce = (double *)g_fx.fmalloc(sizeof(double) * 2 * outsz);
+    int n_arr[1] = { N };
+    double t0 = vfft_proto_now_ns();
+    fftwx_plan fil = (hin && hcce)
+        ? g_fx.plan_many_dft_r2c(1, n_arr, (int)K,
+                                 hin,  NULL, 1, N,
+                                 (fftwx_complex *)hcce, NULL, 1, halfN + 1,
+                                 FFTWX_MEASURE) : NULL;
+    double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    /* DIAGNOSTIC: our lane-major split layout. real in stride K; split out
+     * stride K on DETERMINISTIC planes (the wisdom key hashes io-ro). */
+    double *sx = alloc_d(total);
+    ref_planes_t sp = ref_planes_alloc(outsz);
+    fftwx_iodim dims = { N, (int)K, (int)K };
+    fftwx_iodim hm   = { (int)K, 1, 1 };
+    t0 = vfft_proto_now_ns();
+    fftwx_plan fsp = g_fx.plan_guru_split_dft_r2c(1, &dims, 1, &hm,
+                                                  sx, sp.re, sp.im, FFTWX_MEASURE);
+    double sp_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    g_fx.export_wisdom_to_filename(fftw_wis_path());
+    if (!fil || !fsp)
+    {
+        printf("  N=%-6d K=%-5zu FFTW r2c plan FAILED (il=%p split=%p)\n",
+               N, K, (void *)fil, (void *)fsp);
+        if (fil) g_fx.destroy_plan(fil);
+        if (fsp) g_fx.destroy_plan(fsp);
+        if (hin) g_fx.ffree(hin);
+        if (hcce) g_fx.ffree(hcce);
+        free_d(sx); ref_planes_free(&sp);
+        vfft_r2c_plan_destroy(p);
+        return;
+    }
+    uint64_t il_id = fftwx_plan_id(&g_fx, fil);
+
+    /* ---- input (lane-major real), then the UNTIMED adapter for the TC arms ---- */
+    double *x = alloc_d(total), *o_re = alloc_d(outsz), *o_im = alloc_d(outsz);
+    srand(7 + N + (int)K);
+    for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
+    memset(o_re, 0, outsz * sizeof(double));
+    memset(o_im, 0, outsz * sizeof(double));
+    for (size_t t = 0; t < K; t++)          /* lane-major -> transform-contiguous */
+        for (int n = 0; n < N; n++)
+            hin[t * (size_t)N + n] = x[(size_t)n * K + t];
+    memcpy(sx, x, total * sizeof(double));
+
+    /* ---- gates: elementwise vs naive, all three arms ---- */
+    int lanes = r2c_lane_budget(N, K);
+    double *hr = alloc_d((size_t)halfN + 1), *hi = alloc_d((size_t)halfN + 1);
+    vfft_r2c_execute_fwd(p, x, o_re, o_im);
+    g_fx.execute(fil);
+    g_fx.execute(fsp);
+    double vgate = 0, gil = 0, gsp = 0;
+    for (int l = 0; l < lanes; l++)
+    {
+        naive_r2c_lane(N, K, x, (size_t)l, hr, hi);
+        double mag = 1e-300;
+        for (int k = 0; k <= halfN; k++)
+        { double m = fabs(hr[k]) + fabs(hi[k]); if (m > mag) mag = m; }
+        for (int k = 0; k <= halfN; k++)
+        {
+            double e;
+            e = fabs(o_re[(size_t)k * K + (size_t)l] - hr[k])
+              + fabs(o_im[(size_t)k * K + (size_t)l] - hi[k]);
+            if (e / mag > vgate) vgate = e / mag;
+            e = fabs(hcce[2 * ((size_t)l * (size_t)(halfN + 1) + (size_t)k)]     - hr[k])
+              + fabs(hcce[2 * ((size_t)l * (size_t)(halfN + 1) + (size_t)k) + 1] - hi[k]);
+            if (e / mag > gil) gil = e / mag;
+            e = fabs(sp.re[(size_t)k * K + (size_t)l] - hr[k])
+              + fabs(sp.im[(size_t)k * K + (size_t)l] - hi[k]);
+            if (e / mag > gsp) gsp = e / mag;
+        }
+    }
+    free_d(hr); free_d(hi);
+
+    /* ---- timing: verdict pair (vfft vs fil) order-flipped; split is extra ---- */
+    stat5_t vs, is_;
+#define R2C_TIME_VFFT() do {                                              \
+        for (int w = 0; w < 10; w++) vfft_r2c_execute_fwd(p, x, o_re, o_im); \
+        int reps = reps_for(total);                                       \
+        for (int t = 0; t < 5; t++)                                       \
+        { if (t) pace(g_trial_pace_ms);                                   \
+          double tt = vfft_proto_now_ns();                                \
+          for (int i = 0; i < reps; i++) vfft_r2c_execute_fwd(p, x, o_re, o_im); \
+          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+        vs = stat5(g_t5); } while (0)
+#define R2C_TIME_PLAN(PL, DST) do {                                       \
+        for (int w = 0; w < 10; w++) g_fx.execute(PL);                    \
+        int reps = reps_for(total);                                       \
+        for (int t = 0; t < 5; t++)                                       \
+        { if (t) pace(g_trial_pace_ms);                                   \
+          double tt = vfft_proto_now_ns();                                \
+          for (int i = 0; i < reps; i++) g_fx.execute(PL);                \
+          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
+        DST = stat5(g_t5); } while (0)
+    if (flip) { R2C_TIME_PLAN(fil, is_); cachebust(); pace(cool_ms); R2C_TIME_VFFT(); }
+    else      { R2C_TIME_VFFT(); cachebust(); pace(cool_ms); R2C_TIME_PLAN(fil, is_); }
+    cachebust(); pace(cool_ms);
+    stat5_t ss; R2C_TIME_PLAN(fsp, ss);
+#undef R2C_TIME_VFFT
+#undef R2C_TIME_PLAN
+    cachebust(); pace(cool_ms);
+    stat5_t cs;
+    { for (int w = 0; w < 10; w++) memcpy(o_re, x, outsz * sizeof(double) < total * sizeof(double)
+                                          ? outsz * sizeof(double) : outsz * sizeof(double));
+      int reps = reps_for(total);
+      for (int t = 0; t < 5; t++)
+      { if (t) pace(g_trial_pace_ms);
+        double tt = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+        { memcpy(o_re, x, outsz * sizeof(double));
+          ((volatile double *)o_re)[0] = o_re[0]; }
+        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+      cs = stat5(g_t5); }
+
+    double r_il    = vs.med > 0 ? is_.med / vs.med : 0;   /* THE VERDICT */
+    double r_split = vs.med > 0 ? ss.med / vs.med : 0;    /* diagnostic  */
+    int bad = (vgate > 1e-9 || gil > 1e-9 || gsp > 1e-9);
+    printf("  N=%-6d K=%-5zu %-7s v=%10.0f/%10.0f  fil=%10.0f/%10.0f  fsplit=%10.0f  ctrl=%8.0f  "
+           "r_il=%5.2f r_split=%5.2f  gates v=%.1e il=%.1e sp=%.1e (naive:%dL)  plan=%.0f/%.0fms%s\n",
+           N, K, path, vs.min, vs.med, is_.min, is_.med, ss.med, cs.min,
+           r_il, r_split, vgate, gil, gsp, lanes, il_ms, sp_ms,
+           bad ? "  *** GATE BAD ***" : "");
+    if (out)
+        fprintf(out, "r2c,%d,%zu,%s,natural,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,"
+                     "%.3e,naive,%.3e,naive%d,%.1f,%.1f,%016llx,il,%d,%d,%llu\n",
+                N, K, path, vs.min, vs.med, is_.min, is_.med, ss.min, ss.med, cs.min,
+                r_il, r_split, vgate, gil, lanes, il_ms, sp_ms,
+                (unsigned long long)il_id, flip, reps_for(total),
+                (unsigned long long)sp.stride);
+
+    g_fx.destroy_plan(fil); g_fx.destroy_plan(fsp);
+    g_fx.ffree(hin); g_fx.ffree(hcce);
+    free_d(sx); ref_planes_free(&sp);
+    free_d(x); free_d(o_re); free_d(o_im);
+    vfft_r2c_plan_destroy(p);
+}
+
 /* ------------------------------------------------------- the OOP K-cell
  * Mirror of the MKL bench's --oop mode: split lane-major OUT-OF-PLACE, the
  * front-door champion (store ord-aware verdict via vfft_oop_plan_from_entry,
@@ -909,6 +1110,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--k1nat") == 0)  { g_k1zip = 1; g_k1nat = 1; }
         else if (strcmp(argv[1], "--k1noop") == 0) g_k1nat = 1; /* zip stays 0 -> OOP */
         else if (strcmp(argv[1], "--oop") == 0)    g_oop = 1;
+        else if (strcmp(argv[1], "--r2c") == 0)    g_r2c = 1;
         else { fprintf(stderr, "unknown flag %s\n", argv[1]); return 2; }
         argv++; argc--;
     }
@@ -958,6 +1160,47 @@ int main(int argc, char **argv)
     vfft_proto_registry_init(&g_reg);
     vw2_open(&g_store, g_wisdir, 0);        /* read-only: a bench never banks */
     g_store_loaded = (g_store.nrec > 0);
+
+    /* ---- --r2c: own registry, wisdoms, cell grid and CSV; returns early ---- */
+    if (g_r2c)
+    {
+        rfft_codelets_t rreg;
+        memset(&rreg, 0, sizeof rreg);
+        rfft_register_all_avx2(&rreg);
+        static vfft_proto_wisdom_t rwis, cwis;
+        char rfw[700];
+        snprintf(rfw, sizeof rfw, "%s/rfft_wisdom.txt", g_wisdir);
+        if (vfft_proto_wisdom_load(&rwis, rfw) == 0)
+            vfft_r2c_dispatch_set_wisdom(&rwis);
+        if (vfft_proto_wisdom_load(&cwis, wpath) == 0)
+            vfft_r2c_dispatch_set_c2c_wisdom(&cwis);
+        FILE *o2 = fopen(csv_path ? csv_path : "vfft_vs_fftw_r2c.csv", "w");
+        if (o2)
+            fprintf(o2, "mode,N,K,path,order,vns_min,vns_med,fil_min,fil_med,"
+                        "fsplit_min,fsplit_med,ctrl_min,ratio_il,ratio_split,"
+                        "vgate,vgate_class,fgate,fgate_class,il_plan_ms,"
+                        "split_plan_ms,il_plan_id,verdict_arm,flip,reps,delta\n");
+        printf("=== vfft vs FFTW — 1D R2C fwd (HOME regime: verdict = fil, FFTW's CCE home;\n"
+               "    fsplit = FFTW forced into our lane-major split = diagnostic; adapter UNTIMED both) ===\n");
+        if (N > 0)
+            run_r2c_fftw_cell(N, (size_t)K, &rreg, o2, cool_ms, flip);
+        else
+        {   /* the canonical --r2c grid: the rfft-regime cells + odd neighbours */
+            int Ns[] = {256, 512, 1024};
+            size_t Ks[] = {7, 8, 15, 16, 17};
+            int benched = 0;
+            for (int ni = 0; ni < 3; ni++)
+                for (int ki = 0; ki < 5; ki++)
+                {
+                    run_r2c_fftw_cell(Ns[ni], Ks[ki], &rreg, o2, cool_ms, flip ^ (benched & 1));
+                    benched++;
+                    cachebust(); pace(pace_ms);
+                }
+            printf("benched %d r2c cells.\n", benched);
+        }
+        if (o2) fclose(o2);
+        return 0;
+    }
 
     FILE *out = NULL;
     char csv_default[128];

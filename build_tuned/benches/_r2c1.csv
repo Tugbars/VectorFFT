@@ -1,0 +1,2 @@
+mode,N,K,path,order,vns_min,vns_med,fil_min,fil_med,fsplit_min,fsplit_med,ctrl_min,ratio_il,ratio_split,vgate,vgate_class,fgate,fgate_class,il_plan_ms,split_plan_ms,il_plan_id,verdict_arm,flip,reps,delta
+r2c,512,8,rfft,natural,5539.3,5953.9,1919.9,1924.8,6592.4,6828.9,55.5,0.3233,1.1470,1.088e-13,naive,1.087e-13,naive4,116.9,48.2,d2c1c4e34851ace8,il,0,488,20544
