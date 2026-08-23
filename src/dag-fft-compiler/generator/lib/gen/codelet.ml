@@ -126,6 +126,13 @@ type kind =
       { form : cil_form
       ; tangent : bool (* --cil-tangent: tangent-scaled butterfly interior *)
       ; blocked : bool (* --cil-blocked *)
+      ; oddct : bool
+        (* --cil-oddct: dft_small FACTORS an odd COMPOSITE radix (9->3x3,
+           25->5x5, 27->3x9) instead of taking dft_cx_odd's direct O(n^2/2)
+           form. Distinct from `blocked`, which also factors but parks the
+           passes in a spill array -- that composite lost its race (+13.5%,
+           the n1b E9 verdict) while the unspilled form wins 2.2-2.6x at
+           R=25/27. Same factorization, different materialization. *)
       ; split : (int * int) option (* --cil-split A.B *)
       ; turn : cil_turn option
       ; pre_tw : bool (* --cil-pretw (bwd pre-twiddle) *)
@@ -333,6 +340,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
   let cil_tangent = ref false
   and cil_form_tag = ref false in
   let blocked = ref false
+  and oddct = ref false
   and split = ref None
   and turn = ref None
   and pre_tw = ref false in
@@ -506,6 +514,9 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | "--cil-blocked" :: tl ->
       blocked := true;
       go tl
+    | "--cil-oddct" :: tl ->
+      oddct := true;
+      go tl
     | "--cil-split" :: v :: tl ->
       (match String.split_on_char '.' v with
        | [ a; b ] -> split := Some (int_of_string a, int_of_string b)
@@ -607,6 +618,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
             (if t = "cil-n1" then Cil_n1 else if t = "cil-n1t" then Cil_n1t else Cil_t2)
         ; tangent = !cil_tangent
         ; blocked = !blocked
+        ; oddct = !oddct
         ; split = !split
         ; turn = !turn
         ; pre_tw = !pre_tw
@@ -759,7 +771,7 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; split; turn; pre_tw; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
@@ -768,6 +780,7 @@ let to_argv (c : t) : string list =
       ]
     @ g tangent "--cil-tangent"
     @ g blocked "--cil-blocked"
+    @ g oddct "--cil-oddct"
     @ (match split with
        | None -> []
        | Some (a, b) -> [ "--cil-split"; Printf.sprintf "%d.%d" a b ])
