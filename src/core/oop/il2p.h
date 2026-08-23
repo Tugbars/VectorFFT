@@ -355,11 +355,16 @@ extern void radix32_z_t2bw32m128_fwd_avx2(const double *, const double *,
 
 static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
 {
+    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
+     * blocked kernels now carry the odd-count narrow tail
+     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
+     * tail-less form has somewhere to be refused. */
+    (void)count_ok;
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
         if (R1 == 8)  return radix8_z_t2tan_fwd_avx2;   /* monolithic: has  */
         if (R1 == 16) return radix16_z_t2tan_fwd_avx2;  /* the odd tail     */
-        if (R1 == 32 && count_ok) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
+        if (R1 == 32) return radix32_z_t2bw32_fwd_avx2; /* blocked wing32 */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, M-128 edge.
@@ -367,10 +372,9 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
         * stays in the pool per owner policy — a distinct construction
         * may win on other platforms; shared wisdom re-races locally. */
         if (R1 == 16) return radix16_z_t2tanm128_fwd_avx2; /* mono, odd tail */
-        if (R1 == 32 && count_ok) return radix32_z_t2bw32m128_fwd_avx2;
+        if (R1 == 32) return radix32_z_t2bw32m128_fwd_avx2;
         return 0;
     }
-    if (!count_ok) return 0;
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
@@ -399,16 +403,21 @@ extern void radix16_z_n1tb44_fwd_avx2(const double *, const double *,
 
 static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok)
 {
+    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
+     * blocked kernels now carry the odd-count narrow tail
+     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
+     * tail-less form has somewhere to be refused. */
+    (void)count_ok;
     if (!variant) return 0;
     if (variant == 3) {                 /* tangent interior */
         if (R2 == 8)  return radix8_z_n1ttan_fwd_avx2;   /* monolithic   */
         if (R2 == 16) return radix16_z_n1ttan_fwd_avx2;  /* (odd legal)  */
-        if (R2 == 32 && count_ok) return radix32_z_n1tbw32_fwd_avx2; /* blocked
+        if (R2 == 32) return radix32_z_n1tbw32_fwd_avx2; /* blocked
             wing32, TURNED-128 store — the old kill was the store edge */
         return 0;
     }
     if (variant == 4) {                 /* tangent interior, T256 edge */
-        if (R2 == 32 && count_ok) return radix32_z_n1tbw32t256_fwd_avx2;
+        if (R2 == 32) return radix32_z_n1tbw32t256_fwd_avx2;
         return 0;
     }
     if (!count_ok) return 0;
@@ -463,7 +472,12 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
  * shipped monolithic twin, 12/12, rel ~1e-16 (the 2.16 splits BITWISE). */
 static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_ok)
 {
-    if (!variant || !count_ok) return 0;
+    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
+     * blocked kernels now carry the odd-count narrow tail
+     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
+     * tail-less form has somewhere to be refused. */
+    (void)count_ok;
+    if (!variant) return 0;
     if (R == 32 && variant == 1) return radix32_z_t2bt216_bwd_avx2;
     if (R == 32 && variant == 2) return radix32_z_t2bt48_bwd_avx2;
     if (R == 64 && variant == 1) return radix64_z_t2bt416_bwd_avx2;
@@ -473,7 +487,12 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
 
 static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_ok)
 {
-    if (!variant || !count_ok) return 0;
+    /* count_ok: the even-partner-count contract, RETIRED 2026-08-23 --
+     * blocked kernels now carry the odd-count narrow tail
+     * (benches/blocked_tail_gate.c). Kept as a parameter so a future
+     * tail-less form has somewhere to be refused. */
+    (void)count_ok;
+    if (!variant) return 0;
     if (R == 32 && variant == 1) return radix32_z_n1b216_bwd_avx2;
     if (R == 32 && variant == 2) return radix32_z_n1b48_bwd_avx2;
     if (R == 64 && variant == 1) return radix64_z_n1b416_bwd_avx2;
@@ -492,12 +511,13 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
 static inline void vfft_il2p_apply_blocked_default_bwd(vfft_il2p_plan_t *p)
 {
     if (!p || getenv("VFFT_NO_ILBLK")) return;
-    if (p->R1 >= 32 && (p->R2 & 1) == 0) {
+    /* the (partner & 1) == 0 tests are GONE with the tail (2026-08-23) */
+    if (p->R1 >= 32) {
         vfft_il2p_fn t = vfft_il2p_t2t_bwd_v_fn(p->R1, 2, 1);   /* 4.8  */
         if (!t) t = vfft_il2p_t2t_bwd_v_fn(p->R1, 1, 1);        /* 2.16 */
         if (t) p->t2t_b = t;
     }
-    if (p->R2 >= 32 && (p->R1 & 1) == 0) {
+    if (p->R2 >= 32) {
         vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, 2, 1);    /* 4.8  */
         if (!n) n = vfft_il2p_n1_bwd_v_fn(p->R2, 1, 1);         /* 2.16 */
         if (n) p->n1_b_r2 = n;
@@ -507,12 +527,13 @@ static inline void vfft_il2p_apply_blocked_default_bwd(vfft_il2p_plan_t *p)
 static inline void vfft_il2p_apply_blocked_default(vfft_il2p_plan_t *p)
 {
     if (!p || getenv("VFFT_NO_ILBLK")) return;
-    if (p->R1 >= 32 && (p->R2 & 1) == 0) {
+    /* the (partner & 1) == 0 tests are GONE with the tail (2026-08-23) */
+    if (p->R1 >= 32) {
         vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->R1, 2, 1);   /* 4·8  */
         if (!m) m = vfft_il2p_mid_v_fn(p->R1, 1, 1);        /* 2·16 */
         if (m) p->mid_f = m;
     }
-    if (p->R2 >= 32 && (p->R1 & 1) == 0) {
+    if (p->R2 >= 32) {
         vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, 2, 1);  /* 4·8  */
         if (!l) l = vfft_il2p_leaf_v_fn(p->R2, 1, 1);       /* 2·16 */
         if (l) p->leaf_f = l;

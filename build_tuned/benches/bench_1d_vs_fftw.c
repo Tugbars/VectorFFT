@@ -66,7 +66,8 @@
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd (build.py --jit) */
 #endif
 #include "generator/generated/registry.h"
-#include "wisdom2_oop.h"           /* vw2 store types */
+#include "oop_dp.h"                /* --oop: vfft_oop_plan_create_dp_best (fallback) */
+#include "wisdom2_oop.h"           /* vw2 store types + vfft_oop_plan_from_entry */
 #include "wisdom2_oop_reader.h"    /* vw2_open — read-only; a bench never banks */
 #include "wisdom2_stride_reader.h" /* vw2_stride_lookup — live verdict overrides the file */
 #include "vfft.h"       /* public front door (build.py --vfft) */
@@ -131,6 +132,7 @@ static stat5_t stat5(double t[5])
 static fftwx_api_t g_fx;               /* the runtime-bound FFTW */
 static int   g_k1zip = 0;              /* in-place discipline on both engines */
 static int   g_k1nat = 0;              /* order=NATURAL on our side */
+static int   g_oop = 0;                /* --oop: split lane-major OUT-OF-PLACE */
 static const char *g_wisdir = NULL;    /* vfft wisdom DIR (derived from the file arg) */
 static int   g_verbose = 0;
 static vfft_proto_registry_t g_reg;    /* codelet registry (split-cell plans) */
@@ -589,6 +591,194 @@ static void run_split_cell(int N, size_t K, int *factors, int *variants, int nf,
     vfft_proto_plan_destroy(plan);
 }
 
+/* ------------------------------------------------------- the OOP K-cell
+ * Mirror of the MKL bench's --oop mode: split lane-major OUT-OF-PLACE, the
+ * front-door champion (store ord-aware verdict via vfft_oop_plan_from_entry,
+ * DP fallback), roundtrip gate. FFTW columns as in the split mode: fsplit =
+ * guru split OOP in our layout (verdict), fil = interleaved TC OOP (its best,
+ * the diagnostic). Deterministic plane PAIRS for both fsplit planes — the
+ * wisdom key hashes (ii-ri) and (io-ro). */
+static void run_oop_fftw_cell(int N, size_t K, FILE *out, int cool_ms, int flip)
+{
+    size_t total = (size_t)N * K;
+
+    /* ---- vfft champion (before any data) ---- */
+    vfft_oop_plan_t *p = NULL;
+    if (g_store_loaded)
+    {
+        vfft_oop_wisdom_entry_t eb;
+        if (vw2_oop_lookup_ord(&g_store, N, K, 0 /* best of the classes */, &eb))
+            p = vfft_oop_plan_from_entry(&eb, &g_reg);
+    }
+    int used_dp = 0;
+    vfft_proto_dp_context_t ctx;
+    if (!p)
+    {
+        vfft_proto_dp_init(&ctx, K, N);
+        p = vfft_oop_plan_create_dp_best(N, K, &ctx, &g_reg);
+        used_dp = 1;
+    }
+    if (!p)
+    {
+        printf("  N=%-8d K=%-5zu OOP plan NULL\n", N, K);
+        if (used_dp) vfft_proto_dp_destroy(&ctx);
+        return;
+    }
+    const char *kind = p->kind == VFFT_OOP_KIND_LEAF ? "LEAF"
+                     : p->kind == VFFT_OOP_KIND_BAILEY2 ? "BAILEY2" : "MODEB";
+    char fs[64];
+    if (p->kind == VFFT_OOP_KIND_BAILEY2)
+        snprintf(fs, sizeof fs, "%dx%d", p->R1, p->R2);
+    else if (p->kind == VFFT_OOP_KIND_MODEB && p->mb)
+    {
+        size_t o = 0; fs[0] = '\0';
+        for (int s = 0; s < p->mb->num_stages; s++)
+            o += (size_t)snprintf(fs + o, sizeof fs - o, "%s%d", s ? "," : "", p->mb->factors[s]);
+    }
+    else snprintf(fs, sizeof fs, "%s", kind);
+
+    /* ---- FFTW plans, before the input exists ---- */
+    ref_planes_t pin = ref_planes_alloc(total), pout = ref_planes_alloc(total);
+    fftwx_iodim dims = { N, (int)K, (int)K };
+    fftwx_iodim hm   = { (int)K, 1, 1 };
+    double t0 = vfft_proto_now_ns();
+    fftwx_plan fsp = g_fx.plan_guru_split_dft(1, &dims, 1, &hm,
+                                              pin.re, pin.im, pout.re, pout.im,
+                                              FFTWX_MEASURE);
+    double sp_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    double *hin = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
+    double *hout = (double *)g_fx.fmalloc(sizeof(double) * 2 * total);
+    int n_arr[1] = { N };
+    t0 = vfft_proto_now_ns();
+    fftwx_plan fil = (hin && hout)
+        ? g_fx.plan_many_dft(1, n_arr, (int)K,
+                             (fftwx_complex *)hin, NULL, 1, N,
+                             (fftwx_complex *)hout, NULL, 1, N,
+                             FFTWX_FORWARD, FFTWX_MEASURE) : NULL;
+    double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
+    g_fx.export_wisdom_to_filename(fftw_wis_path());
+    if (!fsp || !fil)
+    {
+        printf("  N=%-8d K=%-5zu FFTW oop plan FAILED\n", N, K);
+        if (fsp) g_fx.destroy_plan(fsp);
+        if (fil) g_fx.destroy_plan(fil);
+        if (hin) g_fx.ffree(hin);
+        if (hout) g_fx.ffree(hout);
+        ref_planes_free(&pin); ref_planes_free(&pout);
+        if (used_dp) vfft_proto_dp_destroy(&ctx);
+        vfft_oop_plan_destroy(p);
+        return;
+    }
+    uint64_t sp_id = fftwx_plan_id(&g_fx, fsp);
+
+    /* ---- input ---- */
+    double *sr = alloc_d(total), *si = alloc_d(total);
+    double *dr = alloc_d(total), *di = alloc_d(total);
+    srand(42 + N + (int)K);
+    for (size_t i = 0; i < total; i++)
+    {
+        sr[i] = (double)rand() / RAND_MAX - 0.5;
+        si[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+
+    /* ---- gates ---- */
+    double *er = alloc_d(total), *ei = alloc_d(total);
+    vfft_oop_execute_fwd(p, sr, si, dr, di);
+    vfft_oop_execute_bwd(p, dr, di, er, ei);
+    double vgate = 0;
+    for (size_t i = 0; i < total; i++)
+    {
+        double a = fabs(er[i] / (double)N - sr[i]), b = fabs(ei[i] / (double)N - si[i]);
+        if (a > vgate) vgate = a;
+        if (b > vgate) vgate = b;
+    }
+    free_d(er); free_d(ei);
+    memcpy(pin.re, sr, total * sizeof(double));
+    memcpy(pin.im, si, total * sizeof(double));
+    g_fx.execute(fsp);
+    int lanes = 0;
+    double fgate = naive_gate_lanes(N, K, sr, si, pout.re, pout.im, &lanes);
+
+    /* ---- timing: verdict pair flip, then fil, then control ---- */
+    stat5_t vs, ms;
+#define OOP_TIME_VFFT() do {                                            \
+        for (int w = 0; w < 10; w++) vfft_oop_execute_fwd(p, sr, si, dr, di); \
+        int reps = reps_for(total);                                     \
+        for (int t = 0; t < 5; t++)                                     \
+        { if (t) pace(g_trial_pace_ms);                                 \
+          double tt = vfft_proto_now_ns();                              \
+          for (int i = 0; i < reps; i++) vfft_oop_execute_fwd(p, sr, si, dr, di); \
+          g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                \
+        vs = stat5(g_t5); } while (0)
+    if (flip)
+    {
+        ms = time_fftw_plan(fsp, pin.re, pin.im, sr, si, total);
+        cachebust(); pace(cool_ms);
+        OOP_TIME_VFFT();
+    }
+    else
+    {
+        OOP_TIME_VFFT();
+        cachebust(); pace(cool_ms);
+        ms = time_fftw_plan(fsp, pin.re, pin.im, sr, si, total);
+    }
+#undef OOP_TIME_VFFT
+    cachebust(); pace(cool_ms);
+    for (size_t l = 0; l < K; l++)
+        for (int e = 0; e < N; e++)
+        {
+            hin[2 * (l * (size_t)N + (size_t)e)]     = sr[(size_t)e * K + l];
+            hin[2 * (l * (size_t)N + (size_t)e) + 1] = si[(size_t)e * K + l];
+        }
+    stat5_t hs;
+    { for (int w = 0; w < 10; w++) g_fx.execute(fil);
+      int reps = reps_for(total);
+      for (int t = 0; t < 5; t++)
+      { if (t) pace(g_trial_pace_ms);
+        double tt = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++) g_fx.execute(fil);
+        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+      hs = stat5(g_t5); }
+    cachebust(); pace(cool_ms);
+    stat5_t cs;
+    { for (int w = 0; w < 10; w++)
+      { memcpy(dr, sr, total * sizeof(double));
+        memcpy(di, si, total * sizeof(double)); }
+      int reps = reps_for(total);
+      for (int t = 0; t < 5; t++)
+      { if (t) pace(g_trial_pace_ms);
+        double tt = vfft_proto_now_ns();
+        for (int i = 0; i < reps; i++)
+        { memcpy(dr, sr, total * sizeof(double));
+          memcpy(di, si, total * sizeof(double));
+          ((volatile double *)dr)[0] = dr[0]; }
+        g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }
+      cs = stat5(g_t5); }
+
+    double r_split = vs.med > 0 ? ms.med / vs.med : 0;
+    double r_il    = vs.med > 0 ? hs.med / vs.med : 0;
+    printf("  N=%-8d K=%-5zu %-7s %-12s v=%9.0f/%9.0f  fsplit=%9.0f/%9.0f  fil=%9.0f  ctrl=%8.0f  "
+           "r_split=%5.2f r_il=%5.2f  vgate=%.1e(rt) fgate=%.1e(naive:%dL)  plan=%.0f/%.0fms%s\n",
+           N, K, kind, fs, vs.min, vs.med, ms.min, ms.med, hs.med, cs.min,
+           r_split, r_il, vgate, fgate, lanes, sp_ms, il_ms,
+           (vgate > 1e-11 || fgate > 1e-8) ? "  *** GATE BAD ***" : "");
+    if (out)
+        fprintf(out, "oop,%d,%zu,%s/%s,frontdoor,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,"
+                     "%.3e,rt,%.3e,naive%d,%.1f,%.1f,%016llx,split,%d,%d,%llu\n",
+                N, K, kind, fs, vs.min, vs.med, ms.min, ms.med, hs.min, hs.med, cs.min,
+                r_split, r_il, vgate, fgate, lanes, sp_ms, il_ms,
+                (unsigned long long)sp_id, flip, reps_for(total),
+                (unsigned long long)pin.stride);
+
+    g_fx.destroy_plan(fsp);
+    g_fx.destroy_plan(fil);
+    g_fx.ffree(hin); g_fx.ffree(hout);
+    ref_planes_free(&pin); ref_planes_free(&pout);
+    free_d(sr); free_d(si); free_d(dr); free_d(di);
+    if (used_dp) vfft_proto_dp_destroy(&ctx);
+    vfft_oop_plan_destroy(p);
+}
+
 /* ------------------------------------------------------------ the k1 cell */
 static void run_cell(int N, FILE *out, int cool_ms, int flip)
 {
@@ -718,6 +908,7 @@ int main(int argc, char **argv)
         if      (strcmp(argv[1], "--k1zip") == 0)  g_k1zip = 1;
         else if (strcmp(argv[1], "--k1nat") == 0)  { g_k1zip = 1; g_k1nat = 1; }
         else if (strcmp(argv[1], "--k1noop") == 0) g_k1nat = 1; /* zip stays 0 -> OOP */
+        else if (strcmp(argv[1], "--oop") == 0)    g_oop = 1;
         else { fprintf(stderr, "unknown flag %s\n", argv[1]); return 2; }
         argv++; argc--;
     }
@@ -770,10 +961,11 @@ int main(int argc, char **argv)
 
     FILE *out = NULL;
     char csv_default[128];
-    int k1_mode = (g_k1zip || g_k1nat || K == 1);
+    int k1_mode = !g_oop && (g_k1zip || g_k1nat || K == 1);
     if (!csv_path)
     {
-        const char *mode = g_k1nat ? (g_k1zip ? "k1nat" : "k1noop")
+        const char *mode = g_oop   ? "oop"
+                         : g_k1nat ? (g_k1zip ? "k1nat" : "k1noop")
                                    : (g_k1zip ? "k1zip" : (k1_mode ? "k1z" : "split"));
         snprintf(csv_default, sizeof csv_default, "vfft_vs_fftw_%s.csv", mode);
         csv_path = csv_default;
@@ -828,8 +1020,26 @@ int main(int argc, char **argv)
             tok = strtok_r(NULL, " \t\n", &save);
             if (!tok) continue;
             long cK = atol(tok);
-            if (cK != K) continue;              /* line K must match target K */
-            if (N > 0 && cN != N) continue;     /* isolated: only this cell */
+            if (g_oop)
+            {   /* canonical --oop filter: pow2 N >= 8, K%8 == 0; isolated
+                 * matches (N, K), quick-look takes every qualifying line. */
+                if (!(cN >= 8 && (cN & (cN - 1)) == 0) || (cK % 8) != 0) continue;
+                if (N > 0 && (cN != N || cK != (long)K)) continue;
+            }
+            else
+            {
+                if (cK != K) continue;          /* line K must match target K */
+                if (N > 0 && cN != N) continue; /* isolated: only this cell */
+            }
+            if (g_oop)
+            {
+                if ((size_t)cN * (size_t)cK > (size_t)16777216) continue;
+                run_oop_fftw_cell(cN, (size_t)cK, out, cool_ms,
+                                  N > 0 ? flip : (benched & 1));
+                benched++;
+                if (N == 0) { cachebust(); pace(pace_ms); }
+                continue;
+            }
             tok = strtok_r(NULL, " \t\n", &save);
             if (!tok) continue;
             int nf = atoi(tok);
