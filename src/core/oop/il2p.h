@@ -98,8 +98,10 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
  * itself does no timing. FWD-ONLY by design: execute_fwd is mid_f's
  * only consumer; the bwd path standardizes on t2t/F-DIAG and never reads a
  * mid twin (--cil-blocked could emit a bwd, but it would be an un-raced
- * orphan). CONTRACT: count % 2 == 0 — blocked kernels carry NO odd-count
- * tail (monolithic-only feature), so the race requires even R2.
+ * orphan). 🔴 The old "CONTRACT: count % 2 == 0 — blocked kernels carry NO
+ * odd-count tail" is RETIRED (2026-08-23): blocked forms now emit the inline
+ * VEX-128 narrow tail, so an odd partner count is legal and the even-R2 race
+ * precondition is gone (benches/blocked_tail_gate.c).
  * Kill switch: VFFT_NO_T2B (VFFT_NO_IL2P precedent). */
 #define VFFT_IL2P_DECL_T2B(SYM) \
   extern void SYM( \
@@ -108,6 +110,12 @@ typedef void (*vfft_il2p_fn)(const double *, const double *, double *, double *,
 VFFT_IL2P_DECL_T2B(radix16_z_t2b_fwd_avx2)
 VFFT_IL2P_DECL_T2B(radix32_z_t2b_fwd_avx2)
 VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
+/* R64 (2026-08-23): the forward twins of the long-shipped backward
+ * t2bt88/t2bt416. Radix 64 is the tree's worst spiller — the monolithic mid
+ * burns 41.6% of its bulk loop on stack traffic — and blocking at 8.8 takes
+ * that to 18.1% while dropping ~25% of the instructions. */
+VFFT_IL2P_DECL_T2B(radix64_z_t2b88_fwd_avx2)
+VFFT_IL2P_DECL_T2B(radix64_z_t2b416_fwd_avx2)
 #undef VFFT_IL2P_DECL_T2B
 
 /* n1t declarations: GENERATED (VFFT_IL_N1T_{FWD,BWD,PAIR}_RADICES).
@@ -124,13 +132,22 @@ VFFT_IL2P_DECL_T2B(radix32_z_t2b48_fwd_avx2)
  *   odd: 3 5 7 9 11 13 15 17 19 21 25 27 */
 /* BLOCKED leaves (E9, 2026-08-05): the n1t corner-turn carried through
  * emit_blocked's pass-pairs. FWD-ONLY (leaf_b's only consumer is the F-DIAG
- * fallback) and radix-32 only for now — raced per cell at create like the
- * blocked mids; n1tb (2·16) is BITWISE-identical to n1t, n1tb48 (4·8) is
- * the tolerance class. */
+ * fallback) — raced per cell at create like the blocked mids; n1tb (2·16)
+ * is BITWISE-identical to n1t, n1tb48 (4·8) is the tolerance class.
+ * R64 added 2026-08-23 (splits 8.8 and 4.16, mirroring the backward
+ * n1b88/n1b416): monolithic n1t spills 44.9% of its bulk loop at radix 64,
+ * the worst in the tree; 8.8 cuts it to 20.3%. Both are tolerance class
+ * (rel ~1e-16), not bitwise. */
 extern void radix32_z_n1tb_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 extern void radix32_z_n1tb48_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void radix64_z_n1tb88_fwd_avx2(
+    const double *, const double *, double *, double *,
+    const double *, const double *, size_t, size_t, size_t, size_t, size_t);
+extern void radix64_z_n1tb416_fwd_avx2(
     const double *, const double *, double *, double *,
     const double *, const double *, size_t, size_t, size_t, size_t, size_t);
 
@@ -395,6 +412,11 @@ static inline vfft_il2p_fn vfft_il2p_mid_v_fn(int R1, int variant, int count_ok)
     if (R1 == 16 && variant == 1) return radix16_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 1) return radix32_z_t2b_fwd_avx2;
     if (R1 == 32 && variant == 2) return radix32_z_t2b48_fwd_avx2;
+    /* R64: variant 1 = 4.16, variant 2 = 8.8 — the SAME mapping the
+     * backward side uses at il2p.h t2t_bwd_v_fn, so an il_kv nibble
+     * means one thing in both directions. 8.8 won the mid in 3/3 runs. */
+    if (R1 == 64 && variant == 1) return radix64_z_t2b416_fwd_avx2;
+    if (R1 == 64 && variant == 2) return radix64_z_t2b88_fwd_avx2;
     return 0;
 }
 
@@ -456,6 +478,11 @@ static inline vfft_il2p_fn vfft_il2p_leaf_v_fn(int R2, int variant, int count_ok
     }
     if (R2 == 32 && variant == 1) return radix32_z_n1tb_fwd_avx2;
     if (R2 == 32 && variant == 2) return radix32_z_n1tb48_fwd_avx2;
+    /* R64: same variant<->split mapping as the mid and as the bwd leaf.
+     * The leaf verdict is genuinely per-cell — 4.16 won at count 8 and
+     * 16, 8.8 won at count 32 — which is why both stay in the pool. */
+    if (R2 == 64 && variant == 1) return radix64_z_n1tb416_fwd_avx2;
+    if (R2 == 64 && variant == 2) return radix64_z_n1tb88_fwd_avx2;
     if (R2 == 16 && variant == 1) return radix16_z_n1tb44_fwd_avx2; /* 4·4 */
     return 0;
 }
