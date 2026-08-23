@@ -594,13 +594,54 @@ let dft_cx_odd ?(sign = `Fwd) (n : int) (xs : t array) : t array =
    (byte-identity preserved). Unlocks the 2-stage IL pairs at 4·odd² N
    (100 = 10x10, 36 = 6x6) and even-composite chain mids (200 = 4·(5·10)),
    per Tugbars 2026-07-29. *)
+(* Factor odd COMPOSITES (VFFT_CX_ODDCT=1) instead of sending them whole to
+   dft_cx_odd's O(n^2/2) direct form. See the block comment on dft_small. *)
+let odd_ct_enabled = ref (Sys.getenv_opt "VFFT_CX_ODDCT" = Some "1")
+
+(* smallest odd prime factor of an odd n, or n itself when n is prime *)
+let odd_spf (n : int) : int =
+  let rec go d = if d * d > n then n else if n mod d = 0 then d else go (d + 2) in
+  go 3
+;;
+
 let rec dft_small ?(sign = `Fwd) ~(ctx : ctx) (n : int) (xs : t array) : t array =
   if n = 1
   then xs
   else if n land (n - 1) = 0
   then dft_cx ~sign ~ctx n xs
   else if n mod 2 = 1
-  then dft_cx_odd ~sign n xs
+  then (
+    let p = if !odd_ct_enabled then odd_spf n else n in
+    if p = n
+    then dft_cx_odd ~sign n xs (* prime (or gate off): nothing to factor *)
+    else (
+      let q = n / p in
+      let sgn = if sign = `Fwd then -1.0 else 1.0 in
+      let pi = 4.0 *. atan 1.0 in
+      (* stage 1: p sub-DFTs of length q over the stride-p sub-sequences *)
+      let ys =
+        Array.init p (fun a ->
+          dft_small ~sign ~ctx q (Array.init q (fun b -> xs.(a + (p * b)))))
+      in
+      let out = Array.make n None in
+      for k2 = 0 to q - 1 do
+        (* stage 2: twiddle by W_n^{a*k2}; stage 3: p-point DFT across a *)
+        let z =
+          Array.init p (fun a ->
+            if a = 0 || k2 = 0
+            then ys.(a).(k2)
+            else (
+              let ang =
+                sgn *. 2.0 *. pi *. float_of_int (a * k2) /. float_of_int n
+              in
+              ctw (cos ang) (sin ang) ys.(a).(k2)))
+        in
+        let w = dft_small ~sign ~ctx p z in
+        for k1 = 0 to p - 1 do
+          out.(k2 + (q * k1)) <- Some w.(k1)
+        done
+      done;
+      unwrap_legs "dft_small" out))
   else (
     let h = n / 2 in
     let e = dft_small ~sign ~ctx h (Array.init h (fun i -> xs.(2 * i)))

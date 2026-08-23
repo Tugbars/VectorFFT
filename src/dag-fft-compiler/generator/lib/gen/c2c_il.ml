@@ -1015,6 +1015,16 @@ let emit
              ^ (if ctx.tw_pre && dir = Bwd then "p" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
+             (* "ct" = dft_small FACTORED this odd composite instead of taking
+                dft_cx_odd's direct O(n^2/2) form. Tagged only where the two
+                constructions actually differ: a pow2/even/odd-PRIME radix
+                emits the identical body either way, and giving that a second
+                name would put a duplicate in the registry. *)
+             ^ (if !odd_ct_enabled
+                   && radix mod 2 = 1
+                   && odd_spf radix <> radix
+                then "ct"
+                else "")
              ^ form_tag_of ~on:form_tag ~blocked ~tangent:ctx.tangent ~split
              ^ if ctx.tw_log3 then "_log3" else "")
             (if dir = Fwd then "fwd" else "bwd")
