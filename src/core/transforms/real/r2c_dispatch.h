@@ -214,7 +214,22 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
      * block_K often lands on a calibrated cell too (e.g. K=256 -> 32 @T8), so the
      * c2c wisdom usually still hits; otherwise it's the factorizer default at block_K. */
     size_t block_K = _vfft_r2c_block_k(K);
-    stride_plan_t *inner = vfft_proto_auto_plan(N / 2, block_K, c2c_reg, _vfft_r2c_c2c_wis);
+    /* THE INNER SIZE IS A FUNCTION OF PARITY, and getting it wrong is silent.
+     * EVEN N uses the half-N embedding, so the inner is an N/2-point complex
+     * FFT. ODD N has no such embedding: stride_r2c_plan routes it to
+     * _r2c_plan_odd, whose contract states "odd: Phase-1 full-N embedding --
+     * inner_plan must then be N-point" (r2c.h:1281). Building N/2 for both
+     * handed the odd path a half-size inner: every component succeeded, the
+     * composition computed the wrong transform, and nothing warned.
+     * Reachable for any odd N the rfft radix set cannot factor -- i.e. the
+     * primes >= 11, since rfft_registry_avx2.h has no radix 11/13/17/19 while
+     * registry_avx2.h does, which is exactly why those N fall through to here.
+     *
+     * Odd is also whole-batch serial ("(void)block_K" in _r2c_plan_odd), so
+     * its inner must carry the FULL K, not a sub-block width. */
+    const int inner_N = (N & 1) ? N : N / 2;
+    const size_t inner_K = (N & 1) ? K : block_K;
+    stride_plan_t *inner = vfft_proto_auto_plan(inner_N, inner_K, c2c_reg, _vfft_r2c_c2c_wis);
     if (!inner)
         return NULL;
     /* Prefer a DIT inner — PERFORMANCE, not correctness. DIF inners are now fully
@@ -231,7 +246,7 @@ static inline stride_plan_t *_vfft_r2c_build_stride(int N, size_t K,
         for (int s = 0; s < nf; s++)
             factors[s] = inner->factors[s];
         stride_plan_destroy(inner);
-        inner = vfft_proto_plan_create_ex(N / 2, block_K, factors, /*variants=*/NULL, nf,
+        inner = vfft_proto_plan_create_ex(inner_N, inner_K, factors, /*variants=*/NULL, nf,
                                           /*use_dif_forward=*/0, c2c_reg);
         if (!inner)
             return NULL;
@@ -478,8 +493,20 @@ static inline void vfft_r2c_execute_fwd_z(
     if (p->path == VFFT_R2C_PATH_STRIDE)
     {
         stride_r2c_data_t *d = (stride_r2c_data_t *)p->stride->override_data;
+        /* DISPATCH ON THE OVERRIDE, exactly as the SPLIT sibling does at
+         * r2c.h:1833. These two functions are two doors into the SAME plan --
+         * same split machinery, same codelets, differing only in the final
+         * write -- so they must agree about which executor a plan wants.
+         * They did not: this entry called the EVEN executor unconditionally,
+         * so an odd plan's _r2c_odd_execute_fwd (installed at r2c.h:1416) was
+         * never reached and the even path ran over tw_re/tw_im that
+         * _r2c_plan_odd allocates but never fills. That read uninitialised
+         * memory, which is why the error varied run to run. */
         d->zo = z;
-        _r2c_execute_fwd_oop(d, real_in, NULL, NULL);
+        if (p->stride->override_fwd == _r2c_execute_fwd)
+            _r2c_execute_fwd_oop(d, real_in, NULL, NULL);
+        else
+            _r2c_odd_execute_fwd_oop(d, real_in, NULL, NULL, z);
         d->zo = NULL;
         return;
     }

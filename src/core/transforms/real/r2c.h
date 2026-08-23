@@ -1300,6 +1300,53 @@ static void _r2c_destroy(void *data)
  * real-split algorithms are Phase 2 (transform_coverage_roadmap).
  * ═══════════════════════════════════════════════════════════════ */
 
+/* ODD-N FORWARD, OUT-OF-PLACE. Writes exactly (N/2+1)*K per plane -- the
+ * public contract (include/vfft.h) -- or the interleaved CCE spectrum when
+ * zo != NULL.
+ *
+ * WHY THIS EXISTS SEPARATELY FROM _r2c_odd_execute_fwd. That one runs the
+ * full-N complex FFT IN the buffers it is handed, so it needs N*K writable at
+ * both re and im. Its out-of-place caller (stride_execute_r2c) passed the
+ * CALLER'S output planes, which the contract sizes at (N/2+1)*K -- so it wrote
+ * (N/2)*K doubles past the end of both, silently for small N and fatally by
+ * N=511. The plan already owns two N*K scratch buffers for exactly this kind
+ * of work; use them, and touch the caller's memory only for the H rows it
+ * actually owns. */
+static void _r2c_odd_execute_fwd_oop(stride_r2c_data_t *d, const double *real_in,
+                                     double *out_re, double *out_im, double *zo)
+{
+    const int N = d->N;
+    const size_t K = d->K;
+    const int H = N / 2 + 1;
+    double *wr = d->scratch_re;   /* N*K, plan-owned */
+    double *wi = d->c2r_im_buf;   /* N*K, plan-owned (backward-only otherwise) */
+    int k;
+    size_t j;
+
+    memcpy(wr, real_in, (size_t)N * K * sizeof(double));
+    memset(wi, 0, (size_t)N * K * sizeof(double));
+    stride_execute_fwd_serial(d->inner, wr, wi);
+
+    /* DFT[k] lives at row perm[k]; the un-permute reads work and writes the
+     * caller, so no scratch third buffer and no clobber hazard. */
+    for (k = 0; k < H; k++)
+    {
+        const double *sr = wr + (size_t)d->perm[k] * K;
+        const double *si = wi + (size_t)d->perm[k] * K;
+        if (zo)
+            for (j = 0; j < K; j++)
+            {
+                zo[2 * ((size_t)k * K + j)]     = sr[j];
+                zo[2 * ((size_t)k * K + j) + 1] = si[j];
+            }
+        else
+        {
+            memcpy(out_re + (size_t)k * K, sr, K * sizeof(double));
+            memcpy(out_im + (size_t)k * K, si, K * sizeof(double));
+        }
+    }
+}
+
 static void _r2c_odd_execute_fwd(void *data, double *re, double *im)
 {
     stride_r2c_data_t *d = (stride_r2c_data_t *)data;
@@ -1834,10 +1881,12 @@ static inline void stride_execute_r2c(const stride_plan_t *plan,
         /* even-N half-complex path: true out-of-place, no pre-copy. */
         _r2c_execute_fwd_oop(plan->override_data, real_in, out_re, out_im);
     } else {
-        /* odd-N (section 57) or other override: copy-then-in-place. */
-        size_t NK = (size_t)plan->N * plan->K;
-        memcpy(out_re, real_in, NK * sizeof(double));
-        plan->override_fwd(plan->override_data, out_re, out_im);
+        /* odd-N (section 57): out-of-place through plan-owned N*K scratch.
+         * The old form memcpy'd N*K doubles into out_re, whose contract size
+         * is (N/2+1)*K -- an overrun of (N/2)*K doubles into the caller's
+         * buffer on EVERY odd-N call. */
+        _r2c_odd_execute_fwd_oop((stride_r2c_data_t *)plan->override_data,
+                                 real_in, out_re, out_im, NULL);
     }
 }
 
