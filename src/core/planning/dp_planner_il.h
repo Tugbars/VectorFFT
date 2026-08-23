@@ -560,6 +560,34 @@ static int _il_dp_run_once(vfft_il_dp_context_t *ctx, int N,
  * (measured against a full O(N^2) DFT below) and the accept band stays wide.
  * O(N log N), so a planner can afford it: a naive O(N^2) reference would cost
  * seconds per cell at N=32768 for no extra rejection power. */
+/* O(N^2) direct DFT -- the reference for NON-POW2 N, where the radix-2
+ * transform below does not apply. Long double accumulators: this is what every
+ * candidate is gated against, so it must not carry more error than the kernels
+ * it judges. Cost is one-time per (N, ord) at plan time. */
+static void _il_dp_ref_dft_direct(double *z, long N)
+{
+    double *out = (double *)malloc((size_t)N * 2u * sizeof(double));
+    long f, n;
+    if (!out) return;                     /* caller's scale check catches it */
+    for (f = 0; f < N; f++)
+    {
+        long double sr = 0.0L, si = 0.0L;
+        for (n = 0; n < N; n++)
+        {
+            long double a =
+                -2.0L * 3.14159265358979323846L * (long double)f * (long double)n
+                / (long double)N;
+            long double c = cosl(a), sn = sinl(a);
+            sr += (long double)z[2 * n] * c - (long double)z[2 * n + 1] * sn;
+            si += (long double)z[2 * n] * sn + (long double)z[2 * n + 1] * c;
+        }
+        out[2 * f] = (double)sr;
+        out[2 * f + 1] = (double)si;
+    }
+    memcpy(z, out, (size_t)N * 2u * sizeof(double));
+    free(out);
+}
+
 static void _il_dp_ref_dft(double *z, long N)
 {
     for (long i = 1, j = 0; i < N; i++)              /* bit reversal */
@@ -608,17 +636,23 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
     if (ctx->ref_N == N) return 0;
     ctx->ref_N = 0;
 
-    /* A radix-2 reference means power-of-two N. Every IL route is pow2 by
-     * construction (cascade chains are products of {4,8}; natural pairs are
-     * pow2 R1*R2, enforced at the enumerator), so this only fires if a future
-     * route widens the space — and then it REFUSES the cell rather than
-     * leaving it ungated. */
-    if (N < 2 || (N & (N - 1))) return -1;
+    /* The radix-2 reference needs a power-of-two N. That USED to be a
+     * refusal, on the stated grounds that "every IL route is pow2 by
+     * construction ... enforced at the enumerator" -- true until the
+     * enumerator was widened to the registry radices (2026-08-23), which is
+     * precisely the "future route widens the space" the old comment
+     * anticipated. Refusing was right while there was no reference to offer;
+     * now there is one, so dispatch on parity instead. The split planner has
+     * carried the same O(N^2) fallback at non-pow2 N all along. */
+    if (N < 2) return -1;
 
     /* the SAME bytes _il_dp_run_once feeds every candidate. If that ever
      * changes, ref_N must be invalidated with it. */
     memcpy(ctx->z_ref, ctx->z_orig, (size_t)N * 2u * sizeof(double));
-    _il_dp_ref_dft(ctx->z_ref, (long)N);
+    if ((N & (N - 1)) == 0)
+        _il_dp_ref_dft(ctx->z_ref, (long)N);
+    else
+        _il_dp_ref_dft_direct(ctx->z_ref, (long)N);
 
     double scale = 0.0;
     for (long m = 0; m < N; m++)
@@ -1053,13 +1087,26 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
          * radix run at count=R1, R1 the row radix run at count=R2), so both
          * orderings are distinct plans and the loop covers them by
          * construction — no permutation pass needed. */
-        static const int RAD[] = { 4, 8, 16, 32, 64 };
+        /* DERIVED from the generated registry, not duplicated: the leaf
+         * resolver serves exactly VFFT_IL_N1T_PAIR_RADICES, so offering any
+         * other R2 could only produce candidates the existence check below
+         * would reject anyway. Widened 2026-08-23 from a hardcoded
+         * {4,8,16,32,64} -- see the block comment on this change. */
+        static const int RAD[] = {
+#define C(R) R,
+            VFFT_IL_N1T_PAIR_RADICES(C)
+#undef C
+        };
         for (int i = 0; i < (int)(sizeof RAD / sizeof RAD[0]); i++)
         {
             int R2 = RAD[i];
             if (N % R2) continue;
             int R1 = N / R2;
-            if (R1 < 4 || R1 > 64 || (R1 & (R1 - 1))) continue;
+            /* NO pow2 test on R1. It was redundant on top of the
+             * leaf_fn/mid_fn existence check below, which is strictly
+             * tighter, and it was what made every non-pow2 cell enumerate
+             * ZERO candidates and therefore never bank a verdict. */
+            if (R1 < 3 || R1 > 64) continue;
             memset(&c, 0, sizeof c);
             c.R1 = R1; c.R2 = R2;
             if (vfft_il2p_leaf_fn(R2, 0) && vfft_il2p_mid_fn(R1, 0))
