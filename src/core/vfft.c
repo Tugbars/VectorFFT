@@ -943,6 +943,17 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
 static double _il_ab_med9(double *v);
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
 
+/* cfg.layout -> the wisdom lay= axis (v1.2). Defined here, ABOVE the
+ * route-race machinery, because both the real route deciders and the
+ * @nat/@natoop bankers stamp it. The @nat story: layout-gated candidates
+ * in a shared cell made alternating-layout callers erase each other's
+ * verdict (audit FD4). The route story: verdicts are timed under the
+ * caller's own execution door, so the label names what was measured. */
+static inline uint8_t _vw2_lay_of(const vfft_config_t *cfg)
+{
+    return cfg->layout == VFFT_LAYOUT_INTERLEAVED ? VW2_LAY_IL : VW2_LAY_SPLIT;
+}
+
 /* Build exactly one r2c arm: the rfft cascade, or the decoupled stride. */
 static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
                                        const vfft_proto_registry_t *reg)
@@ -957,28 +968,42 @@ static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
 
 /* Alternating-order median-of-9 A/B on ONE buffer set (both arms share the
  * same split re/im I/O contract). 0 on success. */
-static int _r2c_race_arms(const vfft_r2c_plan_t *pr, const vfft_r2c_plan_t *ps,
-                          int N, size_t K, double *n_rfft, double *n_stride)
+static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
+                          int N, size_t K, int as_z,
+                          double *n_rfft, double *n_stride)
 {
+    /* as_z: time the arms through the INTERLEAVED z door
+     * (vfft_r2c_execute_fwd_z) — the exact entry an interleaved caller's
+     * execute uses — instead of the split planes. The banked label then
+     * names what was measured (owner directive 2026-08-25: IL races too,
+     * never inherits a split-timed verdict). Both doors wrap the SAME
+     * plan; only the timed I/O contract differs. */
     size_t insz = (size_t)N * K, outsz = (size_t)(N / 2 + 1) * K;
-    double *x = NULL, *orr = NULL, *oii = NULL;
+    double *x = NULL, *orr = NULL, *oii = NULL, *z = NULL;
     double a[9], b[9];
     int reps, r;
     if (vfft_proto_posix_memalign((void **)&x, 64, insz * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&orr, 64, outsz * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&oii, 64, outsz * sizeof(double)))
+        (as_z
+             ? vfft_proto_posix_memalign((void **)&z, 64, 2 * outsz * sizeof(double))
+             : (vfft_proto_posix_memalign((void **)&orr, 64, outsz * sizeof(double)) ||
+                vfft_proto_posix_memalign((void **)&oii, 64, outsz * sizeof(double)))))
     {
         vfft_proto_aligned_free(x);
         vfft_proto_aligned_free(orr);
         vfft_proto_aligned_free(oii);
+        vfft_proto_aligned_free(z);
         return -1;
     }
     for (size_t i = 0; i < insz; i++)
         x[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
+#define VFFT__R2C_ARM(P) do {                                   \
+        if (as_z) vfft_r2c_execute_fwd_z((P), x, z);            \
+        else      vfft_r2c_execute_fwd((P), x, orr, oii);       \
+    } while (0)
     for (int w = 0; w < 5; w++)
     {
-        vfft_r2c_execute_fwd(pr, x, orr, oii);
-        vfft_r2c_execute_fwd(ps, x, orr, oii);
+        VFFT__R2C_ARM(pr);
+        VFFT__R2C_ARM(ps);
     }
     reps = (int)(2e6 / (double)(insz + 1));
     if (reps < 20)
@@ -987,22 +1012,24 @@ static int _r2c_race_arms(const vfft_r2c_plan_t *pr, const vfft_r2c_plan_t *ps,
         reps = 100000;
     for (r = 0; r < 9; r++)
     {
-        const vfft_r2c_plan_t *first = (r & 1) ? ps : pr;
-        const vfft_r2c_plan_t *second = (r & 1) ? pr : ps;
+        vfft_r2c_plan_t *first = (r & 1) ? ps : pr;
+        vfft_r2c_plan_t *second = (r & 1) ? pr : ps;
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_r2c_execute_fwd(first, x, orr, oii);
+            VFFT__R2C_ARM(first);
         double tf = (vfft_proto_now_ns() - t0) / reps;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_r2c_execute_fwd(second, x, orr, oii);
+            VFFT__R2C_ARM(second);
         double tsc = (vfft_proto_now_ns() - t0) / reps;
         a[r] = (r & 1) ? tsc : tf;  /* rfft   */
         b[r] = (r & 1) ? tf : tsc;  /* stride */
     }
+#undef VFFT__R2C_ARM
     vfft_proto_aligned_free(x);
     vfft_proto_aligned_free(orr);
     vfft_proto_aligned_free(oii);
+    vfft_proto_aligned_free(z);
     *n_rfft = _il_ab_med9(a);
     *n_stride = _il_ab_med9(b);
     return 0;
@@ -1030,7 +1057,8 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
     /* 2. banked verdict for THIS (N, K, placement). */
     if (W && !cfg->recalibrate)
     {
-        int v = vw2_real_route_lookup(&W->vw2, VW2_T_R2C, N, K, pl);
+        int v = vw2_real_route_lookup(&W->vw2, VW2_T_R2C, N, K, pl,
+                                      _vw2_lay_of(cfg));
         if (v)
             return _r2c_build_arm(N, K, v == VW2_RROUTE_STRIDE, reg);
     }
@@ -1056,7 +1084,8 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
     {
         int T = stride_get_num_threads();
         stride_set_num_threads(1);
-        if (_r2c_race_arms(pr, ps, N, K, &nr, &ns) != 0)
+        if (_r2c_race_arms(pr, ps, N, K,
+                           _vw2_lay_of(cfg) == VW2_LAY_IL, &nr, &ns) != 0)
         {
             stride_set_num_threads(T);
             vfft_r2c_plan_destroy(pr);
@@ -1071,7 +1100,7 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
     if (getenv("VFFT_BAKEOFF_DBG"))
         fprintf(stderr, "[r2c route] N=%d K=%zu rfft=%.0f ns stride=%.0f ns -> %s\n",
                 N, (size_t)K, nr, ns, pick_rfft ? "rfft" : "STRIDE");
-    vw2_real_route_bank(&W->vw2, VW2_T_R2C, N, K, pl,
+    vw2_real_route_bank(&W->vw2, VW2_T_R2C, N, K, pl, _vw2_lay_of(cfg),
                         pick_rfft ? VW2_RROUTE_RFFT : VW2_RROUTE_STRIDE,
                         pick_rfft ? nr : ns, pick_rfft ? ns : nr);
     _vw2_persist(W, cfg);
@@ -1090,32 +1119,46 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
  * low/mid-K winner); STRIDE = the decoupled high-K path that also threads. Hysteresis
  * toward stride on a near-tie (it threads and owns high K; calibration noise can't
  * flip a tie to natural). */
-/* Alternating-order median-of-9 A/B, c2r twin of _r2c_race_arms. */
-static int _c2r_race_arms(const vfft_c2r_disp_t *pn, const vfft_c2r_disp_t *ps,
-                          int N, size_t K, double *n_nat, double *n_split)
+/* Alternating-order median-of-9 A/B, c2r twin of _r2c_race_arms.
+ * as_z: time through the interleaved-spectrum door (vfft_c2r_disp_execute_z)
+ * — what an interleaved caller's execute runs — instead of split planes. */
+static int _c2r_race_arms(vfft_c2r_disp_t *pn, vfft_c2r_disp_t *ps,
+                          int N, size_t K, int as_z,
+                          double *n_nat, double *n_split)
 {
     size_t outsz = (size_t)N * K, hcsz = (size_t)(N / 2 + 1) * K;
-    double *re = NULL, *im = NULL, *y = NULL;
+    double *re = NULL, *im = NULL, *y = NULL, *z = NULL;
     double a[9], b[9];
     int reps, r;
-    if (vfft_proto_posix_memalign((void **)&re, 64, hcsz * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&im, 64, hcsz * sizeof(double)) ||
-        vfft_proto_posix_memalign((void **)&y, 64, outsz * sizeof(double)))
+    if (vfft_proto_posix_memalign((void **)&y, 64, outsz * sizeof(double)) ||
+        (as_z
+             ? vfft_proto_posix_memalign((void **)&z, 64, 2 * hcsz * sizeof(double))
+             : (vfft_proto_posix_memalign((void **)&re, 64, hcsz * sizeof(double)) ||
+                vfft_proto_posix_memalign((void **)&im, 64, hcsz * sizeof(double)))))
     {
         vfft_proto_aligned_free(re);
         vfft_proto_aligned_free(im);
         vfft_proto_aligned_free(y);
+        vfft_proto_aligned_free(z);
         return -1;
     }
-    for (size_t i = 0; i < hcsz; i++)
-    {
-        re[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
-        im[i] = (double)((i * 40503u) & 0xffff) / 65536.0 - 0.5;
-    }
+    if (as_z)
+        for (size_t i = 0; i < 2 * hcsz; i++)
+            z[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
+    else
+        for (size_t i = 0; i < hcsz; i++)
+        {
+            re[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
+            im[i] = (double)((i * 40503u) & 0xffff) / 65536.0 - 0.5;
+        }
+#define VFFT__C2R_ARM(P) do {                                   \
+        if (as_z) vfft_c2r_disp_execute_z((P), z, y);           \
+        else      vfft_c2r_disp_execute((P), re, im, y);        \
+    } while (0)
     for (int w = 0; w < 5; w++)
     {
-        vfft_c2r_disp_execute(pn, re, im, y);
-        vfft_c2r_disp_execute(ps, re, im, y);
+        VFFT__C2R_ARM(pn);
+        VFFT__C2R_ARM(ps);
     }
     reps = (int)(2e6 / (double)(outsz + 1));
     if (reps < 20)
@@ -1124,19 +1167,20 @@ static int _c2r_race_arms(const vfft_c2r_disp_t *pn, const vfft_c2r_disp_t *ps,
         reps = 100000;
     for (r = 0; r < 9; r++)
     {
-        const vfft_c2r_disp_t *first = (r & 1) ? ps : pn;
-        const vfft_c2r_disp_t *second = (r & 1) ? pn : ps;
+        vfft_c2r_disp_t *first = (r & 1) ? ps : pn;
+        vfft_c2r_disp_t *second = (r & 1) ? pn : ps;
         double t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_c2r_disp_execute(first, re, im, y);
+            VFFT__C2R_ARM(first);
         double tf = (vfft_proto_now_ns() - t0) / reps;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_c2r_disp_execute(second, re, im, y);
+            VFFT__C2R_ARM(second);
         double tsc = (vfft_proto_now_ns() - t0) / reps;
         a[r] = (r & 1) ? tsc : tf;  /* natural */
         b[r] = (r & 1) ? tf : tsc;  /* split   */
     }
+#undef VFFT__C2R_ARM
     vfft_proto_aligned_free(re);
     vfft_proto_aligned_free(im);
     vfft_proto_aligned_free(y);
@@ -1168,7 +1212,8 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
     /* 2. banked verdict for THIS (N, K, placement). */
     if (W && !cfg->recalibrate)
     {
-        int v = vw2_real_route_lookup(&W->vw2, VW2_T_C2R, N, K, pl);
+        int v = vw2_real_route_lookup(&W->vw2, VW2_T_C2R, N, K, pl,
+                                      _vw2_lay_of(cfg));
         if (v)
             return vfft_c2r_disp_create(N, K,
                                         v == VW2_RROUTE_SPLIT ? VFFT_C2R_SPLIT
@@ -1192,7 +1237,8 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
     {
         int T = stride_get_num_threads();
         stride_set_num_threads(1);
-        if (_c2r_race_arms(pn, ps, N, K, &nn, &ns) != 0)
+        if (_c2r_race_arms(pn, ps, N, K,
+                           _vw2_lay_of(cfg) == VW2_LAY_IL, &nn, &ns) != 0)
         {
             stride_set_num_threads(T);
             vfft_c2r_disp_destroy(pn);
@@ -1204,7 +1250,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
     if (getenv("VFFT_BAKEOFF_DBG"))
         fprintf(stderr, "[c2r route] N=%d K=%zu natural=%.0f ns stride=%.0f ns -> %s\n",
                 N, (size_t)K, nn, ns, pick_nat ? "natural" : "STRIDE");
-    vw2_real_route_bank(&W->vw2, VW2_T_C2R, N, K, pl,
+    vw2_real_route_bank(&W->vw2, VW2_T_C2R, N, K, pl, _vw2_lay_of(cfg),
                         pick_nat ? VW2_RROUTE_NATURAL : VW2_RROUTE_SPLIT,
                         pick_nat ? nn : ns, pick_nat ? ns : nn);
     _vw2_persist(W, cfg);
@@ -2595,18 +2641,6 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
         if (vfft_il3p_default_chain(N, &cR2, &cA, &cB))
             *il3p_out = vfft_il3p_create(N, cR2, cA, cB);
     }
-}
-
-/* cfg.layout -> the wisdom lay= axis (v1.2). The @nat/@natoop mode cells
- * hold layout-gated candidates (ZCASC/ILP build only for INTERLEAVED), so
- * each layout races into its OWN cell and replays it thereafter. Pre-fix,
- * both layouts shared one cell: a split caller degrading an IL-banked mode
- * to UNSET re-raced (correctly) and banked OVER the IL verdict (the shared
- * shelf), and the IL side banked back — mutual erasure plus a full
- * re-measure on every layout alternation (audit FD4, the @nat ping-pong). */
-static inline uint8_t _vw2_lay_of(const vfft_config_t *cfg)
-{
-    return cfg->layout == VFFT_LAYOUT_INTERLEAVED ? VW2_LAY_IL : VW2_LAY_SPLIT;
 }
 
 static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
@@ -5365,8 +5399,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * (K<=64, N even, not MEASURE), and MEASURE / high-K fall through to
          * the fixed-threshold dispatch exactly as before. */
         vfft_r2c_plan_t *rp =
+            /* bK > 1: the route race is a LANE-BATCH question and the
+             * split engine has no K=1 batch (owner law 2026-08-24: K counts
+             * the FFTs running; split lanes hold independent FFTs). At K=1
+             * the structural default serves — racing there would re-race on
+             * every create with nowhere legal to bank. q=1 real cells
+             * belong to the interleaved zr2c verdicts alone. */
             _r2c_route_decide(W, cfg, N, bK, reg,
-                              cfg->rigor != VFFT_MEASURE && (N % 2) == 0 && bK <= 64);
+                              cfg->rigor != VFFT_MEASURE && (N % 2) == 0 &&
+                                  bK > 1 && bK <= 64);
         if (!rp)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
@@ -5467,8 +5508,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         /* Route axis (§W2) — see the r2c site. A banked verdict serves at
          * every rigor tier; only the race is window-confined. */
         vfft_c2r_disp_t *cd =
-            _c2r_route_decide(W, cfg, N, bK, reg,
-                              cfg->rigor != VFFT_MEASURE && bK <= 128);
+            _c2r_route_decide(W, cfg, N, bK, reg,   /* bK > 1: same law
+                               * as the r2c window above */
+                              cfg->rigor != VFFT_MEASURE && bK > 1 &&
+                                  bK <= 128);
         if (!cd)
             return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);

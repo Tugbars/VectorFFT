@@ -839,13 +839,17 @@ static inline int vw2_oop_bank_k1_lay(vw2_store_t *s,
 /* 1 when this problem cell is already owned by a DIFFERENT engine (today:
  * the split family's eng=route). The reciprocal of vw2_real_cell_taken.
  *
- * 🔴 The zr2c slot key {t=r2c|c2r, rank=1, n=N, q=1, ord=nat, place} is
- * BYTE-IDENTICAL to the split route key at K=1, and vw2__bank_pinned upserts
- * on key equality alone with eng a mere payload token. The split side guarded
- * both directions; this side guarded NEITHER -- on read it skipped a foreign
- * record silently, on write it clobbered one. Reachable on the DEFAULT config
- * (layout SPLIT + K=1 + even N + rigor != MEASURE banks eng=route at q=1),
- * and the 37 shipped rows mask it only at their own N. */
+ * 🔴 CORRECTED 2026-08-25. An earlier version of this note claimed the
+ * split route banker reaches q=1 on the default config ("banks eng=route
+ * at q=1") — it does not, and the claim cost a wrong fix plan. The owner
+ * law: the route race is a LANE-BATCH race and the split engine's executed
+ * batch is never 1, so q=1 real cells belong to the interleaved zr2c
+ * verdicts ALONE. The race window (vfft.c) excludes K=1 and
+ * vw2_real_route_bank refuses K <= 1 loudly, so the byte-identical-key
+ * collision this guard was built for is now unreachable from the shipped
+ * writers. The guard stays as a belt-and-braces fence against a
+ * hand-written or foreign-vintage row — refusing loudly is still right —
+ * but it is a backstop, not the ownership mechanism. */
 static inline int vw2_oop_zr2c_cell_taken(const vw2_store_t *s, int realN,
                                           int is_c2r, int is_inplace)
 {
