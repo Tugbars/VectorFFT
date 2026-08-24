@@ -15,7 +15,8 @@
  * leg 1..R-1, one 8-double record [c x4][-s,+s ...]. Cursor advances
  * 248 doubles per group; BYTW2 = fmadd(c, x, mul(s, cflip x)) — ONE
  * data-side shuffle, zero table-side work. tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — BLOCKED, 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 

@@ -12,7 +12,8 @@
  * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered
  * through the ISA layer, so the same source emits AVX2 / AVX-512.
  * tw_re/tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — BLOCKED, 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 
