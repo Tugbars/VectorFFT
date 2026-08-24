@@ -1634,14 +1634,18 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
         if (vw2_oop_bank_entry(st, &e) == VW2_OK)
             lines++;
 
-        /* The dir=bwd SIBLING (2026-08-21). Its own cell, not more bits on
-         * the line above: wisdom2 keys direction and does not key kernel
-         * forms, so the backward verdict is addressed by `dir=bwd` and the
-         * forward record stays byte-identical to what it was before this
-         * axis existed. Banked only when the race actually produced a
-         * verdict - 🔴 an unraced axis must leave NO record at all, because
-         * a zero-filled one would assert a measurement that never happened
-         * (the same lie the sp_route < 0 skip above exists to prevent).
+        }
+        /* The dir=bwd SIBLING (2026-08-21) — moved OUTSIDE the sp_route
+         * guard 2026-08-24. It is its OWN cell (keyed dir=bwd) carrying
+         * ONLY interleaved payload; nesting it inside `if (sp_route >= 0)`
+         * made a SPLIT enumeration failure discard a measured IL backward
+         * verdict — the layout-collision class the 2026-08-24 audit
+         * confirmed (N=400: bwd winner bkv=0x50, 344.5 ns, banked 0). The
+         * record builder (vw2_oop_rec_k1_bwd) is IL-only and needs nothing
+         * from the split arm, so split absence is irrelevant here.
+         * Banked only when the race actually produced a verdict — 🔴 an
+         * unraced axis must leave NO record at all, because a zero-filled
+         * one would assert a measurement that never happened.
          *
          * 🔴 NOTE (2026-08-23): `nat->il_bkv` here is the VERDICT, not
          * evidence that the race ran -- and bkv == 0 is a legitimate raced
@@ -1654,10 +1658,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
          * Fixing it properly is an API change at three sites -- this guard,
          * vw2_oop_rec_k1_bwd's `kv == 0` refusal, and vw2_oop_lookup_k1_bwd
          * returning kv as its own found/not-found signal -- because across
-         * this axis 0 is BOTH a valid verdict and the sentinel. The split
-         * side already learned that lesson: sp_route < 0 is its sentinel
-         * precisely because 0 == VFFT_K1_SP_3P is valid. Do that if the
-         * store ever needs to record WHETHER the axis was measured. */
+         * this axis 0 is BOTH a valid verdict and the sentinel. */
         if (il_ok && nat->il_bkv && nat->route == VFFT_K1_IL_2P_PURE)
         {
             vw2_rec_t br;
@@ -1672,7 +1673,6 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             else
                 fprintf(stderr, "  [il-dp] N=%d bwd bank REFUSED: %s\n",
                         N, why ? why : "?");
-        }
         }
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)

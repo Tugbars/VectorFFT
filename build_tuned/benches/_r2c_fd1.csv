@@ -1,0 +1,2 @@
+mode,N,K,vfft_src,served_like,vns_min,vns_med,rfft_med,stride_med,patient_med,fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,vgate,vgate_class,fgate,fgate_class,il_plan_ms,split_plan_ms,il_plan_id,verdict_arm,faster_arm,flip,reps
+r2c,512,8,frontdoor,rfft,3058.2,3070.3,3031.1,3028.3,2988.7,2014.1,2055.9,7004.5,59.2,0.6696,2.2814,1.084e-13,naive,1.087e-13,naive4,0.0,0.0,d2c1c4e34851ace8,il,stride,0,488
