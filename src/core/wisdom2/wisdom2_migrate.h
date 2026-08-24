@@ -836,12 +836,12 @@ static inline int vw2__mig2d_file(vw2_store_t *st, vw2__mig_seen_t *seen,
                 continue;
             }
             if (pr == 1) {
-                if (vw2_2d_c2c_rec_from_entry(&rec, &e, "migrated", from, &why)) {
+                if (vw2_2d_c2c_rec_from_entry(&rec, &e, VW2_LAY_ANY, "migrated", from, &why)) {
                     if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
                     continue;
                 }
             } else {
-                if (vw2_2d_c2c_rec_from_nat(&rec, &ne, "migrated", from, &why)) {
+                if (vw2_2d_c2c_rec_from_nat(&rec, &ne, VW2_LAY_ANY, "migrated", from, &why)) {
                     if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
                     continue;
                 }
@@ -854,7 +854,7 @@ static inline int vw2__mig2d_file(vw2_store_t *st, vw2__mig_seen_t *seen,
                 if (vw2__mig_quar(st, stats, "legacy-silent-drop", from, line)) { fclose(f); return -1; }
                 continue;
             }
-            if (vw2_2d_r2c_rec_from_entry(&rec, &e, kind == 2, "migrated", from, &why)) {
+            if (vw2_2d_r2c_rec_from_entry(&rec, &e, kind == 2, VW2_LAY_ANY, "migrated", from, &why)) {
                 if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
                 continue;
             }
@@ -919,7 +919,8 @@ static inline int vw2_migrate_2d_reader_gate(const char *c2c_path,
                 vfft_fft2d_c2c_wisdom_entry_t got;
                 memset(&got, 0, sizeof got);
                 cells++;
-                if (!vw2_2d_c2c_lookup_scr(&st, w.entries[i].N1, w.entries[i].N2, &got) ||
+                if (!vw2_2d_c2c_lookup_scr(&st, w.entries[i].N1, w.entries[i].N2,
+                                           VW2_LAY_ANY, &got) ||
                     memcmp(&got, &w.entries[i], sizeof got)) {
                     fprintf(stderr, "[reader-gate-2d] c2c scr %dx%d mismatch\n",
                             w.entries[i].N1, w.entries[i].N2);
@@ -930,7 +931,8 @@ static inline int vw2_migrate_2d_reader_gate(const char *c2c_path,
                 vfft_fft2d_c2c_nat_entry_t got;
                 memset(&got, 0, sizeof got);
                 cells++;
-                if (!vw2_2d_c2c_lookup_nat(&st, w.nat[i].N1, w.nat[i].N2, &got) ||
+                if (!vw2_2d_c2c_lookup_nat(&st, w.nat[i].N1, w.nat[i].N2,
+                                           VW2_LAY_ANY, &got) ||
                     memcmp(&got, &w.nat[i], sizeof got)) {
                     fprintf(stderr, "[reader-gate-2d] c2c nat %dx%d mismatch\n",
                             w.nat[i].N1, w.nat[i].N2);
@@ -952,7 +954,8 @@ static inline int vw2_migrate_2d_reader_gate(const char *c2c_path,
                 vfft_fft2d_r2c_wisdom_entry_t got;
                 memset(&got, 0, sizeof got);
                 cells++;
-                if (!vw2_2d_r2c_lookup(&st, isc2r, w.entries[i].N1, w.entries[i].N2, &got) ||
+                if (!vw2_2d_r2c_lookup(&st, isc2r, w.entries[i].N1, w.entries[i].N2,
+                                       VW2_LAY_ANY, &got) ||
                     memcmp(&got, &w.entries[i], sizeof got)) {
                     fprintf(stderr, "[reader-gate-2d] %s %dx%d mismatch\n",
                             isc2r ? "c2r" : "r2c", w.entries[i].N1, w.entries[i].N2);

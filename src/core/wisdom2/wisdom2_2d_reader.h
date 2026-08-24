@@ -106,9 +106,19 @@ static inline int vw2__2d_leg(const vw2_rec_t *r, const char *plan_f,
     return 1;
 }
 
-/* canonical request key (see the header law) */
+/* canonical request key (see the header law)
+ *
+ * lay= (v1.2, 2026-08-25): 2D/3D have ONE engine — the split stride
+ * machinery; the interleaved caller is a convert wrap (c2c) or a fused
+ * output veneer (r2c/c2r z doors, 3D il_out) around the SAME plan, so
+ * every verdict shipped today is the shared interior's recipe and the
+ * WRITERS stamp VW2_LAY_ANY deliberately. REQUESTS carry the CALLER's
+ * layout: when the native IL 2D engine lands (measurement-first
+ * campaign), its racer banks lay=il cells through its own doors and they
+ * serve via lookup phase 1 with zero schema work; the ANY rows remain
+ * serving vintage for both callers. */
 static inline void vw2__2d_key(vw2_key_t *k, int t, int rank,
-                               int n0, int n1, int n2, int ord)
+                               int n0, int n1, int n2, int ord, uint8_t lay)
 {
     memset(k, 0, sizeof *k);
     k->t = (uint8_t)t;
@@ -117,16 +127,18 @@ static inline void vw2__2d_key(vw2_key_t *k, int t, int rank,
     k->q = 1;
     k->ord = (int8_t)ord;
     k->pl = VW2_PL_OOP;                       /* canonical: placement-blind */
+    k->lay = lay;
 }
 
 /* ================================================================ READ */
 
 static inline int vw2_2d_c2c_lookup_scr(const vw2_store_t *s, int N1, int N2,
+                                        uint8_t lay,
                                         vfft_fft2d_c2c_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR);
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR, lay);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -147,11 +159,12 @@ static inline int vw2_2d_c2c_lookup_scr(const vw2_store_t *s, int N1, int N2,
 }
 
 static inline int vw2_2d_c2c_lookup_nat(const vw2_store_t *s, int N1, int N2,
+                                        uint8_t lay,
                                         vfft_fft2d_c2c_nat_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_NAT);
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_NAT, lay);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -172,12 +185,13 @@ static inline int vw2_2d_c2c_lookup_nat(const vw2_store_t *s, int N1, int N2,
 }
 
 static inline int vw2_2d_r2c_lookup(const vw2_store_t *s, int is_c2r,
-                                    int N1, int N2,
+                                    int N1, int N2, uint8_t lay,
                                     vfft_fft2d_r2c_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, is_c2r ? VW2_T_C2R : VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_NAT);
+    vw2__2d_key(&k, is_c2r ? VW2_T_C2R : VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_NAT,
+                lay);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -201,11 +215,12 @@ static inline int vw2_2d_r2c_lookup(const vw2_store_t *s, int is_c2r,
 }
 
 static inline int vw2_3d_lookup(const vw2_store_t *s, int N1, int N2, int N3,
+                                uint8_t lay,
                                 vfft_fft3d_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__2d_key(&k, VW2_T_C2C, 3, N1, N2, N3, VW2_ORD_SCR);
+    vw2__2d_key(&k, VW2_T_C2C, 3, N1, N2, N3, VW2_ORD_SCR, lay);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     memset(e, 0, sizeof *e);
@@ -296,7 +311,7 @@ static inline int vw2__2d_tail(vw2_rec_t *r, double ns, const char *src,
  * keyed (place always; ord too for the order-blind real families). */
 static inline void vw2__2d_rec_key(vw2_rec_t *r, int t, int rank,
                                    int n0, int n1, int n2, int ord,
-                                   int migrated, int ord_blind)
+                                   int migrated, int ord_blind, uint8_t lay)
 {
     memset(&r->key, 0, sizeof r->key);
     r->key.t = (uint8_t)t;
@@ -306,14 +321,17 @@ static inline void vw2__2d_rec_key(vw2_rec_t *r, int t, int rank,
     if (migrated) {
         r->key.ord = ord_blind ? VW2_ORD_ANY : (int8_t)ord;
         r->key.pl = VW2_PL_ANY;
+        /* legacy files never recorded layout: VW2_LAY_ANY vintage */
     } else {
         r->key.ord = (int8_t)ord;             /* canonical concrete */
         r->key.pl = VW2_PL_OOP;
+        r->key.lay = lay;
     }
 }
 
 static inline int vw2_2d_c2c_rec_from_entry(vw2_rec_t *r,
                                             const vfft_fft2d_c2c_wisdom_entry_t *e,
+                                            uint8_t lay,
                                             const char *src, const char *from,
                                             const char **why)
 {
@@ -321,7 +339,8 @@ static inline int vw2_2d_c2c_rec_from_entry(vw2_rec_t *r,
     int migrated = src && !strcmp(src, "migrated");
     *why = NULL;
     memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_SCR, migrated, 0);
+    vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_SCR, migrated, 0,
+                    lay);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -335,6 +354,7 @@ static inline int vw2_2d_c2c_rec_from_entry(vw2_rec_t *r,
 
 static inline int vw2_2d_c2c_rec_from_nat(vw2_rec_t *r,
                                           const vfft_fft2d_c2c_nat_entry_t *e,
+                                          uint8_t lay,
                                           const char *src, const char *from,
                                           const char **why)
 {
@@ -342,7 +362,8 @@ static inline int vw2_2d_c2c_rec_from_nat(vw2_rec_t *r,
     int migrated = src && !strcmp(src, "migrated");
     *why = NULL;
     memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_NAT, migrated, 0);
+    vw2__2d_rec_key(r, VW2_T_C2C, 2, e->N1, e->N2, 0, VW2_ORD_NAT, migrated, 0,
+                    lay);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -356,7 +377,7 @@ static inline int vw2_2d_c2c_rec_from_nat(vw2_rec_t *r,
 
 static inline int vw2_2d_r2c_rec_from_entry(vw2_rec_t *r,
                                             const vfft_fft2d_r2c_wisdom_entry_t *e,
-                                            int is_c2r,
+                                            int is_c2r, uint8_t lay,
                                             const char *src, const char *from,
                                             const char **why)
 {
@@ -365,7 +386,7 @@ static inline int vw2_2d_r2c_rec_from_entry(vw2_rec_t *r,
     *why = NULL;
     memset(r, 0, sizeof *r);
     vw2__2d_rec_key(r, is_c2r ? VW2_T_C2R : VW2_T_R2C, 2, e->N1, e->N2, 0,
-                    VW2_ORD_NAT, migrated, /*ord_blind=*/1);
+                    VW2_ORD_NAT, migrated, /*ord_blind=*/1, lay);
     if (vw2__2d_emit_leg(r, "rowplan", "rowvars", "rowdif",
                          e->row_nf, e->row_factors, e->row_variants,
                          e->row_use_dif, why)) return -1;
@@ -381,6 +402,7 @@ static inline int vw2_2d_r2c_rec_from_entry(vw2_rec_t *r,
 
 static inline int vw2_3d_rec_from_entry(vw2_rec_t *r,
                                         const vfft_fft3d_wisdom_entry_t *e,
+                                        uint8_t lay,
                                         const char *src, const char *from,
                                         const char **why)
 {
@@ -388,7 +410,8 @@ static inline int vw2_3d_rec_from_entry(vw2_rec_t *r,
     int migrated = src && !strcmp(src, "migrated");
     *why = NULL;
     memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_C2C, 3, e->N1, e->N2, e->N3, VW2_ORD_SCR, migrated, 0);
+    vw2__2d_rec_key(r, VW2_T_C2C, 3, e->N1, e->N2, e->N3, VW2_ORD_SCR, migrated,
+                    0, lay);
     if (vw2__2d_emit_leg(r, "ax0plan", "ax0vars", "ax0dif",
                          e->ax0_nf, e->ax0_factors, e->ax0_variants,
                          e->ax0_dif, why)) return -1;
@@ -431,11 +454,11 @@ static inline int vw2__2d_bank(vw2_store_t *st, vw2_rec_t *rec, int fill_only)
 
 static inline int vw2_2d_c2c_bank_entry(vw2_store_t *st,
                                         const vfft_fft2d_c2c_wisdom_entry_t *e,
-                                        int fill_only)
+                                        int fill_only, uint8_t lay)
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_2d_c2c_rec_from_entry(&rec, e, "race", NULL, &why)) {
+    if (vw2_2d_c2c_rec_from_entry(&rec, e, lay, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] 2d bank refused (%s)\n", why ? why : "?");
         return -1;
     }
@@ -443,11 +466,12 @@ static inline int vw2_2d_c2c_bank_entry(vw2_store_t *st,
 }
 
 static inline int vw2_2d_c2c_bank_nat(vw2_store_t *st,
-                                      const vfft_fft2d_c2c_nat_entry_t *e)
+                                      const vfft_fft2d_c2c_nat_entry_t *e,
+                                      uint8_t lay)
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_2d_c2c_rec_from_nat(&rec, e, "race", NULL, &why)) {
+    if (vw2_2d_c2c_rec_from_nat(&rec, e, lay, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] 2d nat bank refused (%s)\n", why ? why : "?");
         return -1;
     }
@@ -456,11 +480,11 @@ static inline int vw2_2d_c2c_bank_nat(vw2_store_t *st,
 
 static inline int vw2_2d_r2c_bank_entry(vw2_store_t *st,
                                         const vfft_fft2d_r2c_wisdom_entry_t *e,
-                                        int is_c2r)
+                                        int is_c2r, uint8_t lay)
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_2d_r2c_rec_from_entry(&rec, e, is_c2r, "race", NULL, &why)) {
+    if (vw2_2d_r2c_rec_from_entry(&rec, e, is_c2r, lay, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] 2d %s bank refused (%s)\n",
                 is_c2r ? "c2r" : "r2c", why ? why : "?");
         return -1;
@@ -469,11 +493,12 @@ static inline int vw2_2d_r2c_bank_entry(vw2_store_t *st,
 }
 
 static inline int vw2_3d_bank_entry(vw2_store_t *st,
-                                    const vfft_fft3d_wisdom_entry_t *e)
+                                    const vfft_fft3d_wisdom_entry_t *e,
+                                    uint8_t lay)
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_3d_rec_from_entry(&rec, e, "race", NULL, &why)) {
+    if (vw2_3d_rec_from_entry(&rec, e, lay, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] 3d bank refused (%s)\n", why ? why : "?");
         return -1;
     }
