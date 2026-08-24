@@ -109,25 +109,34 @@ static inline void vw2__real_key(vw2_key_t *k, int t, int N, size_t K, int ord, 
 
 /* Returns the banked route for (t,N,K,place), or VW2_RROUTE_NONE on a miss.
  * Two-pass: a concrete verdict beats a migrated wildcard row. */
+/* lay (v1.2): route verdicts are timed under the CALLER's execution door
+ * (split planes vs the z door), so each layout owns its own cell. Two
+ * TIERS — the caller's lay cell first, pre-1.2 lay-less vintage second —
+ * never one mixed first-match scan (the bwd-reader shadowing lesson: a
+ * stale legacy row must not outrank a freshly re-raced per-layout cell). */
 static inline int vw2_real_route_lookup(const vw2_store_t *s, int t,
-                                        int N, size_t K, int pl)
+                                        int N, size_t K, int pl, uint8_t lay)
 {
     vw2_key_t req;
-    int i, pass, route;
+    int i, pass, tier, route;
     const vw2_rec_t *r = NULL;
     if (N < 2 || K < 1) return VW2_RROUTE_NONE;      /* junk cell: refuse */
     if (t != VW2_T_R2C && t != VW2_T_C2R) return VW2_RROUTE_NONE;
     vw2__real_key(&req, t, N, K, VW2_ORD_NAT, pl);
-    for (pass = 0; pass < 2 && !r; pass++)
-        for (i = 0; i < s->nrec; i++) {
-            const vw2_rec_t *c = &s->rec[i];
-            if (!vw2_key_serves(&c->key, &req)) continue;
-            if (strcmp(vw2__real_eng(c), "route")) continue;   /* zr2c/other: not ours */
-            if (vw2__is_seed(c)) continue;
-            if ((pass == 0) == vw2_key_has_wildcard(&c->key)) continue;
-            r = c;
-            break;
-        }
+    for (tier = 0; tier < 2 && !r; tier++) {
+        if (tier == 1 && lay == VW2_LAY_ANY) break;  /* tier 0 was already ANY */
+        req.lay = (tier == 0) ? lay : VW2_LAY_ANY;
+        for (pass = 0; pass < 2 && !r; pass++)
+            for (i = 0; i < s->nrec; i++) {
+                const vw2_rec_t *c = &s->rec[i];
+                if (!vw2_key_serves(&c->key, &req)) continue;
+                if (strcmp(vw2__real_eng(c), "route")) continue;   /* zr2c/other: not ours */
+                if (vw2__is_seed(c)) continue;
+                if ((pass == 0) == vw2_key_has_wildcard(&c->key)) continue;
+                r = c;
+                break;
+            }
+    }
     if (!r) return VW2_RROUTE_NONE;
     route = vw2__real_route_idx(vw2_rec_get(r, "route"));
     if (route < 0 || !vw2__real_route_fits(t, route)) return VW2_RROUTE_NONE;
@@ -161,7 +170,7 @@ static inline int vw2_real_cell_taken(const vw2_store_t *s, int t,
  * were actually timed. ord/pl of VW2_*_ANY produce the migration wildcard,
  * which the store refuses without a from=. */
 static inline int vw2_real_rec_from_route(vw2_rec_t *r, int t, int N, size_t K,
-                                          int ord, int pl, int route,
+                                          int ord, int pl, uint8_t lay, int route,
                                           double ns_win, double ns_lose,
                                           const char *src, const char *from,
                                           const char **why)
@@ -172,6 +181,7 @@ static inline int vw2_real_rec_from_route(vw2_rec_t *r, int t, int N, size_t K,
     if (N < 2 || K < 1) { *why = "junk-cell"; return -1; }
     if (!vw2__real_route_fits(t, route)) { *why = "route-not-legal-for-transform"; return -1; }
     vw2__real_key(&r->key, t, N, K, ord, pl);
+    r->key.lay = lay;   /* the caller layout the race was timed under */
     VW2__RB_SET(1, "eng", "route");
     VW2__RB_SET(1, "route", vw2_real_route_name[route]);
     snprintf(b, sizeof b, "%zu", K);
@@ -196,14 +206,26 @@ static inline int vw2_real_rec_from_route(vw2_rec_t *r, int t, int N, size_t K,
 /* Bank a raced route verdict. Declines (quietly, returning 0) when the cell
  * belongs to another engine — that is a correct outcome, not an error. */
 static inline int vw2_real_route_bank(vw2_store_t *st, int t, int N, size_t K,
-                                      int pl, int route,
+                                      int pl, uint8_t lay, int route,
                                       double ns_win, double ns_lose)
 {
     vw2_rec_t rec;
     const char *why = NULL;
     int rc;
+    /* 🔴 STRUCTURAL: no q=1 route verdict can exist — the route race is a
+     * lane-batch race and the split engine's executed batch is never 1
+     * (owner law 2026-08-24). The race window upstream already excludes
+     * K=1; this guard is the write-side backstop, and it is LOUD on
+     * purpose — a silent decline is indistinguishable from a bank (the
+     * zr2c lesson), which is how verdicts vanish invisibly. */
+    if (K <= 1) {
+        fprintf(stderr, "[wisdom2] route bank refused: q=1 real cells belong "
+                        "to the interleaved zr2c verdicts (split has no K=1 "
+                        "batch)\n");
+        return -1;
+    }
     if (vw2_real_cell_taken(st, t, N, K, pl)) return 0;
-    if (vw2_real_rec_from_route(&rec, t, N, K, VW2_ORD_NAT, pl, route,
+    if (vw2_real_rec_from_route(&rec, t, N, K, VW2_ORD_NAT, pl, lay, route,
                                 ns_win, ns_lose, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] route bank refused (%s)\n", why ? why : "?");
         return -1;

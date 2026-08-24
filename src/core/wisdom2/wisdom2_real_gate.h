@@ -45,7 +45,7 @@ static int vw2__rg_bank(vw2_store_t *st, int t, int N, size_t K,
 {
     vw2_rec_t rec;
     const char *why = NULL;
-    if (vw2_real_rec_from_route(&rec, t, N, K, ord, pl, route,
+    if (vw2_real_rec_from_route(&rec, t, N, K, ord, pl, VW2_LAY_ANY, route,
                                 win, lose, src, from, &why)) {
         printf("  *** FAIL *** bank refused (%s) t=%d N=%d K=%zu\n",
                why ? why : "?", t, N, K);
@@ -85,14 +85,14 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         printf("  *** FAIL *** reopen failed\n");
         return -1;
     }
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_OOP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_OOP, VW2_LAY_ANY)
                     == VW2_RROUTE_STRIDE,
                 "r2c 512x4 did not read back as stride");
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 512, 4, VW2_PL_OOP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 512, 4, VW2_PL_OOP, VW2_LAY_ANY)
                     == VW2_RROUTE_NATURAL,
                 "c2r 512x4 did not read back as natural");
     /* placement is a KEY axis: the ip cell is a different, empty cell */
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_IP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_IP, VW2_LAY_ANY)
                     == VW2_RROUTE_NONE,
                 "r2c 512x4 ip must miss — placement is a key axis");
     printf("  [1] codec identity + placement axis\n");
@@ -102,20 +102,20 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
      * rows arrive (wildcards are legal only with a from=). */
     vw2__rg_bank(&st, VW2_T_C2R, 256, 8, VW2_ORD_ANY, VW2_PL_ANY,
                  VW2_RROUTE_SPLIT, 0.0, 0.0, "migrated", "c2r_path.txt");
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_OOP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_OOP, VW2_LAY_ANY)
                     == VW2_RROUTE_SPLIT,
                 "migrated wildcard row must serve a concrete request");
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_IP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_IP, VW2_LAY_ANY)
                     == VW2_RROUTE_SPLIT,
                 "wildcard must serve BOTH placements");
     /* now a real race lands at one concrete placement — it must win there,
      * while the wildcard still serves the placement it has not raced. */
     vw2__rg_bank(&st, VW2_T_C2R, 256, 8, VW2_ORD_NAT, VW2_PL_OOP,
                  VW2_RROUTE_NATURAL, 401.0, 455.5, "race", NULL);
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_OOP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_OOP, VW2_LAY_ANY)
                     == VW2_RROUTE_NATURAL,
                 "concrete verdict must BEAT the migrated wildcard");
-    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_IP)
+    VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 256, 8, VW2_PL_IP, VW2_LAY_ANY)
                     == VW2_RROUTE_SPLIT,
                 "wildcard must survive under the concrete row");
     printf("  [2] wildcard law (exact beats wildcard, wildcard survives)\n");
@@ -134,15 +134,18 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
             fails++;
         }
         (void)why;
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_NONE,
                     "a zr2c cell must NOT read as a route verdict");
         VW2RG_CHECK(vw2_real_cell_taken(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP) == 1,
                     "a zr2c cell must report as taken");
-        /* the banker must decline rather than clobber it */
-        VW2RG_CHECK(vw2_real_route_bank(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP,
-                                        VW2_RROUTE_RFFT, 100.0, 200.0) == 0,
-                    "bank into a zr2c cell must decline cleanly");
+        /* THE q=1 LAW (2026-08-25): the route race is a lane-batch race
+         * and the split engine's executed batch is never 1, so a q=1 route
+         * bank is REFUSED loudly (-1) BEFORE any ownership check -- q=1
+         * real cells belong to the zr2c verdicts alone. */
+        VW2RG_CHECK(vw2_real_route_bank(&st, VW2_T_R2C, 1024, 1, VW2_PL_OOP, VW2_LAY_ANY,
+                                        VW2_RROUTE_RFFT, 100.0, 200.0) == -1,
+                    "a q=1 route bank must be REFUSED (split has no K=1 batch)");
         {
             vw2_key_t k;
             const vw2_rec_t *r;
@@ -158,25 +161,34 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
     }
 
     /* ---- 3b. the SYMMETRIC direction: a route cell must survive zr2c ----
-     * The split side guarded both directions from the start; the zr2c side
-     * guarded NEITHER until 2026-08-22 -- on read it skipped a foreign record
-     * silently, on write it clobbered one. The two keys are byte-identical at
-     * K=1, so this is reachable on the DEFAULT config. */
+     * Since the q=1 law (2026-08-25) no SHIPPED writer can produce an
+     * eng=route row at q=1 -- the byte-identical-key collision is
+     * unreachable from the writers, and the EOWNED fence is a BACKSTOP
+     * against hand-written or foreign-vintage rows. The gate therefore
+     * stages the foreign row exactly as such vintage would arrive: through
+     * the low-level record builder, not the banker. The fence must still
+     * hold: decline with VW2_EOWNED, never clobber, never misread. */
     {
         int kv = 0;
-        /* vw2_real_route_bank returns VW2_OK both when it banks and when it
-         * declines -- the caller does not care -- so the LOOKUP below is what
-         * proves the cell was actually staged. */
-        (void)vw2_real_route_bank(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP,
-                                  VW2_RROUTE_STRIDE, 100.0, 200.0);
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP)
+        vw2_rec_t fr;
+        memset(&fr, 0, sizeof fr);
+        fr.key.t = VW2_T_R2C; fr.key.rank = 1; fr.key.n[0] = 4096;
+        fr.key.q = 1; fr.key.ord = VW2_ORD_NAT; fr.key.pl = VW2_PL_OOP;
+        if (vw2_rec_set(&fr, 1, "eng", "route") != VW2_OK ||
+            vw2_rec_set(&fr, 1, "route", "stride") != VW2_OK ||
+            vw2_rec_set(&fr, 2, "src", "race") != VW2_OK ||
+            vw2_bank(&st, &fr) != VW2_OK) {
+            printf("  *** FAIL *** could not stage a foreign eng=route row\n");
+            fails++;
+        }
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_STRIDE,
                     "could not stage an eng=route cell at 4096");
         VW2RG_CHECK(vw2_oop_zr2c_cell_taken(&st, 4096, 0, 0) == 1,
                     "a route cell must report as taken to the zr2c side");
         VW2RG_CHECK(vw2_oop_bank_zr2c_slot(&st, 4096, 0, 0, 1, 123.0) == VW2_EOWNED,
                     "zr2c bank into a route cell must decline with VW2_EOWNED");
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 4096, 1, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_STRIDE,
                     "the route cell was CLOBBERED by the zr2c banker");
         VW2RG_CHECK(vw2_oop_lookup_zr2c(&st, 4096, &kv) == 0,
@@ -197,7 +209,7 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
             printf("  *** FAIL *** could not stage a dir=bwd sibling\n");
             fails++;
         }
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 2048, 2, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 2048, 2, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_NONE,
                     "a dir=bwd sibling must NOT be matched by a dir-absent request");
     }
@@ -213,7 +225,7 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
             printf("  *** FAIL *** could not stage a role=comp sibling\n");
             fails++;
         }
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 2048, 2, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2R, 2048, 2, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_NONE,
                     "a role=comp sibling must NOT be matched by a problem request");
         printf("  [4] sibling isolation (dir=bwd, role=comp both invisible)\n");
@@ -224,16 +236,16 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         vw2_rec_t r;
         const char *why = NULL;
         VW2RG_CHECK(vw2_real_rec_from_route(&r, VW2_T_R2C, 0, 4, VW2_ORD_NAT,
-                                            VW2_PL_OOP, VW2_RROUTE_RFFT,
+                                            VW2_PL_OOP, VW2_LAY_ANY, VW2_RROUTE_RFFT,
                                             0, 0, "race", NULL, &why) != 0,
                     "N=0 junk cell must be refused");
         why = NULL;
         /* a c2r route on an r2c tag is a category error, not a near-miss */
         VW2RG_CHECK(vw2_real_rec_from_route(&r, VW2_T_R2C, 512, 4, VW2_ORD_NAT,
-                                            VW2_PL_OOP, VW2_RROUTE_SPLIT,
+                                            VW2_PL_OOP, VW2_LAY_ANY, VW2_RROUTE_SPLIT,
                                             0, 0, "race", NULL, &why) != 0,
                     "c2r route on an r2c tag must be refused");
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2C, 512, 4, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_C2C, 512, 4, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_NONE,
                     "a non-real transform tag must never resolve a route");
         printf("  [5] refusals (junk cell, cross-transform route, wrong tag)\n");
@@ -306,7 +318,7 @@ static int vfft_wisdom2_real_gate_run(const char *dir)
         VW2RG_CHECK(st.nrec == n_before,
                     "record count changed across save/load (%d -> %d)",
                     n_before, st.nrec);
-        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_OOP)
+        VW2RG_CHECK(vw2_real_route_lookup(&st, VW2_T_R2C, 512, 4, VW2_PL_OOP, VW2_LAY_ANY)
                         == VW2_RROUTE_STRIDE,
                     "verdict lost across the second roundtrip");
         printf("  [6] save/load roundtrip stable (%d records)\n", st.nrec);
