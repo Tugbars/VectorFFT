@@ -1483,7 +1483,8 @@ static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
  * only if it beats the (1D-wisdom-inner) fallback measured end-to-end — then bank it. */
 static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t rigor,
                                 const vfft_proto_registry_t *reg,
-                                struct vfft_wisdom_s *W, int recalib, int order)
+                                struct vfft_wisdom_s *W, int recalib, int order,
+                                uint8_t lay)
 {
     vfft_proto_wisdom_t *cw = &W->c2c; /* 1D c2c table for the _inner_c2c fallback */
     if (t == VFFT_C2C)
@@ -1514,14 +1515,14 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 else if (vfft_fft2d_c2c_wisdom_lookup(&W->fft2d_c2c, N1, N2))
                     return vfft_fft2d_c2c_plan_create_wisdom(N1, N2, &W->fft2d_c2c, reg);
             }
-            else if (nat && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, &neb))
+            else if (nat && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, lay, &neb))
             {
                 stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb, reg);
-                if (!p && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb))
+                if (!p && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb))
                     p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
                 return p ? p : stride_plan_2d(N1, N2, reg);
             }
-            else if (!nat && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb))
+            else if (!nat && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb))
             {
                 stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb, reg);
                 return p ? p : stride_plan_2d(N1, N2, reg);
@@ -1576,16 +1577,17 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                  * scrambled cell (overwrite=0 appends when absent) but must NEVER clobber a warm one — else a
                  * read-only-intent natural create silently degrades the user's calibrated scrambled 2D wisdom
                  * (e.g. downgrades a PATIENT entry to a MEASURE one). DEFAULT keeps overwrite=1. */
-                vw2_2d_c2c_bank_entry(&W->vw2, &cal, /*fill_only=*/nat ? 1 : 0);
+                vw2_2d_c2c_bank_entry(&W->vw2, &cal, /*fill_only=*/nat ? 1 : 0,
+                                      VW2_LAY_ANY /* one shared split interior — see vw2__2d_key */);
             if (nat && cal_nat.row_nf > 0)
-                vw2_2d_c2c_bank_nat(&W->vw2, &cal_nat); /* natural: J_nat sweep winner, decoupled */
+                vw2_2d_c2c_bank_nat(&W->vw2, &cal_nat, VW2_LAY_ANY); /* natural: J_nat sweep winner, decoupled */
             if (nat)
             {
                 /* post-bank re-serve from the store's memory bank (under
                  * the kill switch the bank is invisible to legacy reads —
                  * fb serves, same wave-1 bake-window semantics). */
                 vfft_fft2d_c2c_nat_entry_t neb2;
-                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, &neb2))
+                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_nat(&W->vw2, N1, N2, lay, &neb2))
                 {
                     stride_plan_t *p = vfft_fft2d_c2c_plan_from_nat_entry(&neb2, reg);
                     if (p) { stride_plan_destroy(fb); return p; }
@@ -1595,7 +1597,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
             if (scr_won)
             {
                 vfft_fft2d_c2c_wisdom_entry_t seb2;
-                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, &seb2))
+                if (!W->vw2_off_2d && vw2_2d_c2c_lookup_scr(&W->vw2, N1, N2, lay, &seb2))
                 {
                     stride_plan_t *p = vfft_fft2d_c2c_plan_from_entry(&seb2, reg);
                     if (p) { stride_plan_destroy(fb); return p; }
@@ -1625,7 +1627,7 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                 if (vfft_fft2d_r2c_wisdom_lookup(rw, N1, N2))
                     return vfft_fft2d_r2c_plan_create_wisdom(N1, N2, rw, reg);
             }
-            else if (vw2_2d_r2c_lookup(&W->vw2, t == VFFT_C2R, N1, N2, &reb))
+            else if (vw2_2d_r2c_lookup(&W->vw2, t == VFFT_C2R, N1, N2, lay, &reb))
             {
                 stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&reb, reg);
                 if (p) return p;
@@ -1667,7 +1669,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
                                            : _vfft_measure_2d_r2c(fb, N1, N2);
             if (cal_ns < fb_ns)
             {
-                vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R); /* calibrated wins -> bank */
+                vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R,
+                                      VW2_LAY_ANY); /* calibrated wins -> bank */
                 {
                     stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&cal, reg);
                     if (p) { stride_plan_destroy(fb); return p; }
@@ -3485,7 +3488,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * nothing, unchanged). No kill switch: nothing to fall back to. */
         {
             vfft_fft3d_wisdom_entry_t e3;
-            if (vw2_3d_lookup(&W->vw2, N1, N2, N3, &e3))
+            if (vw2_3d_lookup(&W->vw2, N1, N2, N3, _vw2_lay_of(cfg), &e3))
                 tp = vfft_fft3d_plan_from_entry(&e3, reg);
         }
         if (!tp)
@@ -3496,7 +3499,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 const vfft_fft3d_wisdom_entry_t *ne =
                     vfft_fft3d_wisdom_lookup(&W->fft3d_c2c, N1, N2, N3);
                 if (ne)
-                    vw2_3d_bank_entry(&W->vw2, ne);
+                    vw2_3d_bank_entry(&W->vw2, ne, VW2_LAY_ANY);
             }
         }
         if (!tp)
@@ -3536,7 +3539,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             return NULL;
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate, cfg->order);
+        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate,
+                                     cfg->order, _vw2_lay_of(cfg));
         /* wave-4: the inner-cell spike save is GONE — _inner_c2c banks into
          * the wisdom2 store; the guarded _vw2_persist below covers disk. */
         if (!tp)
