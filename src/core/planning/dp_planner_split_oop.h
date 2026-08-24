@@ -601,8 +601,8 @@ static int vfft_sp_dp_plan_and_bank(vfft_il_dp_context_t *ilctx,
                    win_oop >= 0 ? VFFT_SP_RNAME[cand[win_oop].route] : "-",
                    win_oop >= 0 ? cand[win_oop].best : 0.0);
     } else if (verbose)
-        printf("# N=%d NO gated split candidate — kind-3 line will be "
-               "SKIPPED (sp_route<0 refusal, not zero-filled)\n", N);
+        printf("# N=%d NO gated split candidate — no lay=split cell banks "
+               "(sp_route<0; the IL cells bank independently since v1.2)\n", N);
 
     int banked = 0;
     {
