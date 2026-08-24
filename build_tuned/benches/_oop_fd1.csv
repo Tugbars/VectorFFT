@@ -1,0 +1,2 @@
+mode,N,K,vfft_src,ord,vns_min,vns_med,fsplit_min,fsplit_med,fil_min,fil_med,ctrl_min,ratio_split,ratio_il,vgate,vgate_class,fgate,fgate_class,split_plan_ms,il_plan_ms,split_plan_id,verdict_arm,flip,reps,delta
+oop,1024,32,frontdoor,scrambled,37386.9,37698.4,141803.3,144114.8,30501.6,30513.1,6752.5,3.8228,0.8094,4.441e-16,rt,3.835e-13,naive4,0.0,0.0,89679a3c364f7a1f,split,0,61,262208

@@ -63,7 +63,8 @@
 
 #define VW2_MAGIC        "@vw2"
 #define VW2_MAJOR        1
-#define VW2_MINOR        1   /* 1.1: the role= key axis (2026-08-20) */
+#define VW2_MINOR        2   /* 1.1: role= key axis (2026-08-20);
+                                1.2: lay= key axis (2026-08-24) */
 
 /* ------------------------------------------------------------ enumerations */
 
@@ -86,6 +87,16 @@ typedef enum { VW2_DIR_NONE = 0, VW2_DIR_FWD = 1, VW2_DIR_BWD = 2 } vw2_dir_t;
  * (the default, every pre-1.1 row); matches by EQUALITY everywhere, like
  * dir. Signpost ref= targets are problem-space unless they carry role=. */
 typedef enum { VW2_ROLE_NONE = 0, VW2_ROLE_COMP = 1 } vw2_role_t;
+/* lay= (v1.2): the CALLER'S complex-data layout — config.layout, the MKL
+ * DFTI_COMPLEX_STORAGE analog — keyed like its sibling placement. Layout
+ * is a caller integration property (AoS/SoA), NEVER a strategy output:
+ * the 2026-08-24 audit traced every split/IL verdict collision (mutual
+ * banking vetoes, cell ownership fights, @nat ping-pong) to its absence
+ * from this key. 0 = absent = every pre-1.2 record AND every un-migrated
+ * request builder (memset-safe by construction). Matches by EQUALITY in
+ * vw2_key_serves; the pre-1.2 fallback lives in vw2_lookup as a second
+ * resolution phase, NOT as a serves wildcard — see vw2_lookup. */
+typedef enum { VW2_LAY_ANY = 0, VW2_LAY_SPLIT = 1, VW2_LAY_IL = 2 } vw2_lay_t;
 
 /* src= merge rank (README §3.4/§4.2). Absent src = race (a fresh bank).
  * An UNKNOWN src value ranks LOWEST (refuse-don't-guess: a future source
@@ -130,6 +141,10 @@ typedef struct {
                                      requests only (README §3.1).            */
     uint8_t role;                 /* vw2_role_t; 0 = absent = problem
                                      verdict. Equality-matched like dir.    */
+    uint8_t lay;                  /* vw2_lay_t; 0 = absent (pre-1.2 vintage
+                                     or un-migrated caller). Equality-matched
+                                     in serves; vw2_lookup adds the lay=ANY
+                                     fallback phase for legacy records.     */
 } vw2_key_t;
 
 /* --------------------------------------------------------------- record */
@@ -185,7 +200,7 @@ static const char *vw2_legend[] = {
     "signpost: a verdict references its component recipe (ref=), never copies it",
     "q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run",
     "metric: ns= is comparable only within identical metric= and units=; absent ns = informational",
-    "key: layout (split/il) is never a key token - it is a strategy output in the payload",
+    "lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier",
     "wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes",
     "role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)",
     "evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv",
@@ -344,7 +359,7 @@ static inline int vw2_key_eq(const vw2_key_t *a, const vw2_key_t *b)
     if (a->t != b->t || a->rank != b->rank) return 0;
     for (i = 0; i < a->rank; i++) if (a->n[i] != b->n[i]) return 0;
     return a->q == b->q && a->ord == b->ord && a->pl == b->pl &&
-           a->dir == b->dir && a->role == b->role;
+           a->dir == b->dir && a->role == b->role && a->lay == b->lay;
 }
 
 /* Does record key R serve request key REQ, allowing R's wildcards?
@@ -360,6 +375,12 @@ static inline int vw2_key_serves(const vw2_key_t *r, const vw2_key_t *req)
     if (r->pl  != -1 && r->pl  != req->pl)  return 0;
     if (r->dir != req->dir) return 0;
     if (r->role != req->role) return 0;
+    /* lay: STRICT equality, like dir/role. A lay-concrete record never
+     * serves a lay=ANY request (an un-migrated reader must keep seeing
+     * exactly the records it saw before v1.2), and a legacy lay=ANY record
+     * serves a concrete request only through vw2_lookup's fallback phase —
+     * never here, so phase-1 precedence stays byte-for-byte pre-1.2. */
+    if (r->lay != req->lay) return 0;
     return 1;
 }
 
@@ -531,6 +552,10 @@ static inline int vw2__key_parse(char *sect, vw2_key_t *k)
             } else if (!strcmp(tok, "role")) {
                 if (!strcmp(v, "comp")) k->role = VW2_ROLE_COMP;
                 else return 0;  /* future role values: opaque carry          */
+            } else if (!strcmp(tok, "lay")) {
+                if      (!strcmp(v, "split")) k->lay = VW2_LAY_SPLIT;
+                else if (!strcmp(v, "il"))    k->lay = VW2_LAY_IL;
+                else return 0;  /* future lay values: opaque carry           */
             } else {
                 return 0;   /* unknown KEY token => invisible + opaque carry */
             }
@@ -555,6 +580,8 @@ static inline void vw2__key_format(const vw2_key_t *k, char *out, size_t cap)
         VW2__CAT(" dir=%s", k->dir == VW2_DIR_FWD ? "fwd" : "bwd");
     if (k->role != VW2_ROLE_NONE)
         VW2__CAT(" role=comp");
+    if (k->lay != VW2_LAY_ANY)
+        VW2__CAT(" lay=%s", k->lay == VW2_LAY_SPLIT ? "split" : "il");
 #undef VW2__CAT
 }
 
@@ -946,13 +973,10 @@ static inline int vw2__ref_ok(const vw2_store_t *s, const vw2_rec_t *r)
  * CALLER's step 0 — this module stores, it does not decide routes.
  * Seeds are never served from either tier; requests never carry wildcards;
  * wildcard tier prefers q=*-only records over ord/place wildcards. */
-static inline const vw2_rec_t *vw2_lookup(const vw2_store_t *s, const vw2_key_t *req)
+static inline const vw2_rec_t *vw2__lookup_phase(const vw2_store_t *s,
+                                                 const vw2_key_t *req)
 {
     int i, pass;
-    if (vw2_key_has_wildcard(req)) {
-        fprintf(stderr, "[wisdom2] lookup refused: request key carries a wildcard\n");
-        return NULL;
-    }
     for (i = 0; i < s->nrec; i++)                          /* 1: exact       */
         if (!vw2_key_has_wildcard(&s->rec[i].key) && vw2_key_eq(&s->rec[i].key, req)) {
             if (vw2__is_seed(&s->rec[i])) continue;
@@ -970,7 +994,32 @@ static inline const vw2_rec_t *vw2_lookup(const vw2_store_t *s, const vw2_key_t 
             if (!vw2__ref_ok(s, r)) continue;
             return r;
         }
-    return NULL;                                           /* 3: MISS        */
+    return NULL;                                           /* MISS           */
+}
+
+static inline const vw2_rec_t *vw2_lookup(const vw2_store_t *s, const vw2_key_t *req)
+{
+    const vw2_rec_t *hit;
+    if (vw2_key_has_wildcard(req)) {
+        fprintf(stderr, "[wisdom2] lookup refused: request key carries a wildcard\n");
+        return NULL;
+    }
+    hit = vw2__lookup_phase(s, req);
+    /* lay fallback (v1.2): a lay-concrete request that missed retries as
+     * lay=ANY, which under strict-equality serves matches ONLY pre-1.2
+     * records. Two phases — never a serves wildcard — so (a) a per-layout
+     * cell strictly outranks the legacy dual row it supersedes, and (b) the
+     * legacy rows keep their own exact-beats-wildcard precedence intact
+     * (the shipped n=512 cell has a concrete row AND a q=* vintage row with
+     * conflicting il_kv; a serves-level wildcard would invert their order).
+     * lay=ANY requests never reach here: phase 1 already IS the pre-1.2
+     * resolution for them, byte-for-byte. */
+    if (!hit && req->lay != VW2_LAY_ANY) {
+        vw2_key_t fb = *req;
+        fb.lay = VW2_LAY_ANY;
+        hit = vw2__lookup_phase(s, &fb);
+    }
+    return hit;
 }
 
 /* Seed iterator: neighbor/seed records as race PROPOSALS only (never
