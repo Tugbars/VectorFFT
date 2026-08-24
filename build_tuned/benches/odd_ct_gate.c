@@ -11,7 +11,7 @@
  * transform?
  *
  * METHOD. Both variants are emitted from the same generator into the same
- * binary (the ON arm sed-renamed to ..._oddct), run on identical input, and
+ * binary (the ON arm is the shipped _ct kernel), run on identical input, and
  * compared against a NAIVE DFT computed in long double. Comparing the two
  * kernels only against EACH OTHER would not catch a shared error in the
  * index algebra -- and the index mapping is exactly what changed, so the
@@ -45,10 +45,10 @@ typedef void (*kfn)(const double *, const double *, double *, double *,
   void radix##R##_z_n1t_fwd_avx2(const double *, const double *, double *,     \
       double *, const double *, const double *,                                \
       size_t, size_t, size_t, size_t, size_t);                                 \
-  void radix##R##_z_n1t_oddct_avx2(const double *, const double *, double *,   \
+  void radix##R##_z_n1t_ct_fwd_avx2(const double *, const double *, double *,  \
       double *, const double *, const double *,                                \
       size_t, size_t, size_t, size_t, size_t);
-DECL(9) DECL(15) DECL(21) DECL(25) DECL(27)
+DECL(15) DECL(21) DECL(25) DECL(27)   /* no DECL(9): radix 9 has no _ct kernel */
 
 static uint64_t lcg = 0x243F6A8885A308D3ull;
 static double rnd(void)
@@ -133,11 +133,14 @@ int main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     printf("odd-composite Cooley-Tukey gate — factored vs direct, both vs a naive DFT\n");
     printf("  the index mapping is what changed, so the reference is INDEPENDENT\n\n");
-    arm(9,  radix9_z_n1t_fwd_avx2,  radix9_z_n1t_oddct_avx2);
-    arm(15, radix15_z_n1t_fwd_avx2, radix15_z_n1t_oddct_avx2);
-    arm(21, radix21_z_n1t_fwd_avx2, radix21_z_n1t_oddct_avx2);
-    arm(25, radix25_z_n1t_fwd_avx2, radix25_z_n1t_oddct_avx2);
-    arm(27, radix27_z_n1t_fwd_avx2, radix27_z_n1t_oddct_avx2);
+    /* Radix 9 is NOT here on purpose: it spills 0.0%, so factoring buys
+     * nothing and _ct measured 0.89-0.94x. Its forward cells were removed
+     * from the corpus, so the arm would not link. The radices below are
+     * exactly those whose monolithic form spills (16.5% .. 39.3%). */
+    arm(15, radix15_z_n1t_fwd_avx2, radix15_z_n1t_ct_fwd_avx2);
+    arm(21, radix21_z_n1t_fwd_avx2, radix21_z_n1t_ct_fwd_avx2);
+    arm(25, radix25_z_n1t_fwd_avx2, radix25_z_n1t_ct_fwd_avx2);
+    arm(27, radix27_z_n1t_fwd_avx2, radix27_z_n1t_ct_fwd_avx2);
     printf("\n%s\n", g_fail ? "*** ODD-CT: INCORRECT ***"
                             : "odd-CT: factored form is correct at every radix and count");
     return g_fail;

@@ -542,6 +542,24 @@ static inline vfft_il2p_fn vfft_il2p_t2t_bwd_v_fn(int R, int variant, int count_
     if (R == 32 && variant == 2) return radix32_z_t2bt48_bwd_avx2;
     if (R == 64 && variant == 1) return radix64_z_t2bt416_bwd_avx2;
     if (R == 64 && variant == 2) return radix64_z_t2bt88_bwd_avx2;
+    /* variant 5 = ODD-COMPOSITE COOLEY-TUKEY, the backward twin of the
+     * forward _ct nibble. Factors the radix (15=3x5, 21=3x7, 25=5x5,
+     * 27=3x9) instead of running one direct conjugate-pair DFT: extra
+     * passes bought with recovered register pressure, so it pays exactly
+     * where the direct form SPILLS. Asked of the generated X-macro rather
+     * than a hand-copied radix list, so "emitted" and "selectable" cannot
+     * diverge -- radix 9 is absent there because it spills 0.0%, gains
+     * nothing, and measured a LOSS. */
+    if (variant == 5)
+    {
+        switch (R) {
+#define C(RR) case RR: return radix##RR##_z_t2t_ct_bwd_avx2;
+            VFFT_IL_T2T_CT_BWD_RADICES(C)
+#undef C
+        default: break;
+        }
+        return 0;
+    }
     return 0;
 }
 
@@ -557,6 +575,24 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_v_fn(int R, int variant, int count_o
     if (R == 32 && variant == 2) return radix32_z_n1b48_bwd_avx2;
     if (R == 64 && variant == 1) return radix64_z_n1b416_bwd_avx2;
     if (R == 64 && variant == 2) return radix64_z_n1b88_bwd_avx2;
+    /* variant 5 = ODD-COMPOSITE COOLEY-TUKEY, the backward twin of the
+     * forward _ct nibble. Factors the radix (15=3x5, 21=3x7, 25=5x5,
+     * 27=3x9) instead of running one direct conjugate-pair DFT: extra
+     * passes bought with recovered register pressure, so it pays exactly
+     * where the direct form SPILLS. Asked of the generated X-macro rather
+     * than a hand-copied radix list, so "emitted" and "selectable" cannot
+     * diverge -- radix 9 is absent there because it spills 0.0%, gains
+     * nothing, and measured a LOSS. */
+    if (variant == 5)
+    {
+        switch (R) {
+#define C(RR) case RR: return radix##RR##_z_n1_ct_bwd_avx2;
+            VFFT_IL_N1_CT_BWD_RADICES(C)
+#undef C
+        default: break;
+        }
+        return 0;
+    }
     return 0;
 }
 

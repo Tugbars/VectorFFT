@@ -992,12 +992,21 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
      * that is NOT the one create installed. Canonicalizing this way makes
      * every (mid, leaf) pair a DISTINCT plan by construction, with no skip
      * logic and no twin to dedupe. */
-    int msv[5], lsv[5], nm = 0, nl = 0, v;
+    /* Sized for 0 plus every variant in the sweep below; grow BOTH together
+     * if the range widens again. */
+    int msv[6], lsv[6], nm = 0, nl = 0, v;
     const int mid_def  = _il_bwd_default_variant(w->R1, (w->R2 & 1) == 0, 1);
     const int leaf_def = _il_bwd_default_variant(w->R2, (w->R1 & 1) == 0, 0);
     msv[nm++] = 0;
     lsv[nl++] = 0;
-    for (v = 1; v <= 4; v++)
+    /* 1..5. Variant 5 = _ct (odd-composite Cooley-Tukey), wired on the LIVE
+     * backward pair 2026-08-23 -- it won all 24 raced cells at radices
+     * 15/21/25/27 (+21.6% to +222.2%). The sweep used to stop at 4, so a
+     * kernel at 5 could be fully wired and still never timed; the header's
+     * "raceable the day they land" only ever held inside the swept range.
+     * Offering a variant with no emitted twin is free: _il_dp_build refuses
+     * the nibble and the combo is skipped before it counts as an arm. */
+    for (v = 1; v <= 5; v++)
     {
         if (v != mid_def)  msv[nm++] = v;
         if (v != leaf_def) lsv[nl++] = v;
