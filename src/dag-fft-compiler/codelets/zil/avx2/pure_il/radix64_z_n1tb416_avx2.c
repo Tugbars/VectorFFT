@@ -14,7 +14,8 @@
  * Stores are corner-turned: output (leg p, column k) -> zout[2*(k*OLs + p)],
  * so stage 2 reads whole columns contiguously and no separate transpose
  * pass is needed. tw_re/tw_im unused.
- * CONTRACT: count % 2 == 0 (2 columns per iteration). */
+ * count: ANY >= 1 — BLOCKED, 2 columns per wide iteration, inline VEX-128
+ * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
 #include <stddef.h>
 
