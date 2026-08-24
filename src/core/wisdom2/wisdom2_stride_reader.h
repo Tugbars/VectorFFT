@@ -183,14 +183,22 @@ static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
     return vw2_stride_lookup_t(s, is_rfft ? VW2_T_R2C : VW2_T_C2C, N, K, e);
 }
 
-/* natural row (@nat: place=ip; @natoop: place=oop). Shared body. */
+/* natural row (@nat: place=ip; @natoop: place=oop). Shared body.
+ * lay (v1.2): the CALLER's layout. The mode payload is layout-gated
+ * (ZCASC/ILP are interleaved-only candidates), so each layout owns its own
+ * cell — the pre-1.2 shared cell made alternating-layout callers re-race
+ * and erase each other's verdict on every flip (the @nat ping-pong).
+ * vw2_lookup's two-phase resolution serves the caller's lay cell first and
+ * falls back to the pre-1.2 lay-less row; VW2_LAY_ANY requests (the
+ * migrate gate) match exactly the lay-less rows, byte-for-byte pre-1.2. */
 static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
-                                          int N, size_t K,
+                                          uint8_t lay, int N, size_t K,
                                           vfft_proto_nat_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     vw2__stride_key(&k, VW2_T_C2C, N, K, VW2_ORD_NAT, pl);
+    k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     if (!vw2_rec_get(r, "eng") || strcmp(vw2_rec_get(r, "eng"), "stride"))
@@ -224,16 +232,18 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     return 1;
 }
 
-static inline int vw2_stride_lookup_nat(const vw2_store_t *s, int N, size_t K,
+static inline int vw2_stride_lookup_nat(const vw2_store_t *s, uint8_t lay,
+                                        int N, size_t K,
                                         vfft_proto_nat_entry_t *e)
 {
-    return vw2__stride_lookup_natx(s, VW2_PL_IP, N, K, e);
+    return vw2__stride_lookup_natx(s, VW2_PL_IP, lay, N, K, e);
 }
 
-static inline int vw2_stride_lookup_natoop(const vw2_store_t *s, int N, size_t K,
+static inline int vw2_stride_lookup_natoop(const vw2_store_t *s, uint8_t lay,
+                                           int N, size_t K,
                                            vfft_proto_nat_entry_t *e)
 {
-    return vw2__stride_lookup_natx(s, VW2_PL_OOP, N, K, e);
+    return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, N, K, e);
 }
 
 /* ================================================================ WRITE */
@@ -357,10 +367,13 @@ static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
                                        e->N, src, from, why);
 }
 
-/* natural entry -> record. pl selects @nat (ip) vs @natoop (oop). */
+/* natural entry -> record. pl selects @nat (ip) vs @natoop (oop); lay is
+ * the CALLER LAYOUT the verdict serves — fresh banks stamp it concrete, so
+ * a bank never lands on (and never erases) the other layout's cell or the
+ * pre-1.2 lay-less row. Migration keeps writing lay-less vintage. */
 static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
                                           const vfft_proto_nat_entry_t *e,
-                                          int pl,
+                                          int pl, uint8_t lay,
                                           const char *src, const char *from,
                                           const char **why)
 {
@@ -369,6 +382,7 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     if (e->N < 2 || e->K < 1) { *why = "junk-cell"; return -1; }
     if (e->mode <= 0 || e->mode >= 8) { *why = "unknown-nat-mode"; return -1; }
     vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, VW2_ORD_NAT, pl);
+    r->key.lay = lay;
     VW2__SB_SET(1, "eng", "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
     if (e->nf == 1 && e->factors[0] == e->N) {
@@ -418,12 +432,12 @@ static inline int vw2_stride_bank_entry(vw2_store_t *st,
 
 static inline int vw2_stride_bank_nat(vw2_store_t *st,
                                       const vfft_proto_nat_entry_t *e,
-                                      int is_oop)
+                                      int is_oop, uint8_t lay)
 {
     vw2_rec_t rec;
     const char *why = NULL;
     if (vw2_stride_rec_from_nat(&rec, e, is_oop ? VW2_PL_OOP : VW2_PL_IP,
-                                "race", NULL, &why)) {
+                                lay, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] stride nat bank refused (%s)\n", why ? why : "?");
         return -1;
     }
