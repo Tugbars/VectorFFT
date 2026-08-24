@@ -1618,6 +1618,223 @@ static void run_oop_cell(int N, size_t K, vfft_proto_registry_t *reg,
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * --2dil : the THREE-ARM interleaved-2D scoping cell (M0a of
+ * docs/roadmap/fft2d_il_c2c_design.md; mkl_2d_campaign IMPLICATIONS phase
+ * 0a — the measurement that decides whether an interleaved 2D problem
+ * exists). FRONT DOOR ONLY (vfft_create/vfft_execute) so O-inter pays the
+ * real convert-around and wisdom serves what production serves. Arms:
+ *   O-split : VFFT_LAYOUT_SPLIT,       INPLACE
+ *   O-inter : VFFT_LAYOUT_INTERLEAVED, INPLACE   (the convert-around, Q2)
+ *   M-inter : MKL rank-2 DFTI_COMPLEX (CCE storage default), DFTI_INPLACE
+ *             — MKL's measured BEST 2D arm (campaign S3: D < A at 60/68)
+ *   M-split : MKL DFTI_REAL_REAL NOT_INPLACE — reproduces the banked
+ *             comparison config in the same run
+ *   ctl     : memcpy of 2T doubles
+ * Per arm: ROUNDS samples (reps_for(T) execs each), arm order REVERSED on
+ * odd rounds, cachebust between arms; median + spread reported; a ratio
+ * whose distance from 1 is below the ctl spread prints '~' = NOT A RESULT.
+ * In-place timing saturates the data toward inf — full AVX2 speed (no
+ * assists) — so correctness is gated BEFORE timing on fresh data
+ * (roundtrip/T sanity; both O arms are shipped paths gated elsewhere).
+ * MKL pinned to 1 thread (the auto-threading law). Wisdom: read-only from
+ * $VFFT_WISDOM_DIR else "." (frontdoor-gate law: point it at a SCRATCH
+ * copy). Prime dims excluded (fft2d prime = deferred, 127x100 defect).
+ * ════════════════════════════════════════════════════════════════════════ */
+static double il2d__med(double *v, int n)
+{
+    double t;
+    int i, j;
+    for (i = 0; i < n; i++)
+        for (j = i + 1; j < n; j++)
+            if (v[j] < v[i]) { t = v[i]; v[i] = v[j]; v[j] = t; }
+    return n & 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+}
+
+static double il2d__spread(const double *v, int n, double med)
+{
+    double lo = v[0], hi = v[0];
+    int i;
+    for (i = 1; i < n; i++) {
+        if (v[i] < lo) lo = v[i];
+        if (v[i] > hi) hi = v[i];
+    }
+    return med > 0 ? 100.0 * (hi - lo) / med : 0.0;
+}
+
+static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
+{
+    size_t T = (size_t)N1 * N2, i;
+    double *sre = alloc_d(T), *simg = alloc_d(T);   /* O-split planes   */
+    double *z = alloc_d(2 * T);                     /* O-inter z        */
+    double *mz = alloc_d(2 * T);                    /* M-inter z        */
+    double *xr = alloc_d(T), *xi = alloc_d(T);      /* M-split input    */
+    double *mr = alloc_d(T), *mi = alloc_d(T);      /* M-split output   */
+    double *cs = alloc_d(2 * T), *cd = alloc_d(2 * T); /* ctl memcpy    */
+    double smp[5][64];
+    double med[5], spr[5];
+    double rts = -1, rti = -1;
+    int have[5] = { 1, 1, 0, 0, 1 }; /* Os, Oi, Mi, Ms, ctl */
+    vfft_plan hs = NULL, hi = NULL;
+    int r, a0, a, k;
+    if (rounds > 64) rounds = 64;
+    fprintf(stderr, "[2dil] %dx%d create (wisdom miss => calibrates here)...\n", N1, N2);
+    srand(11 + N1 + N2);
+    for (i = 0; i < T; i++) {
+        xr[i] = (double)rand() / RAND_MAX - 0.5;
+        xi[i] = (double)rand() / RAND_MAX - 0.5;
+    }
+    for (i = 0; i < 2 * T; i++) cs[i] = (double)rand() / RAND_MAX - 0.5;
+    {
+        vfft_config_t cfg;
+        memset(&cfg, 0, sizeof cfg);
+        cfg.transform = VFFT_C2C;
+        cfg.placement = VFFT_INPLACE;
+        cfg.rigor = VFFT_MEASURE;
+        cfg.dims = 2;
+        cfg.n[0] = N1;
+        cfg.n[1] = N2;
+        cfg.howmany = 1;
+        cfg.order = VFFT_ORDER_DEFAULT;
+        cfg.nthreads = 1;
+        cfg.wisdom = W;
+        cfg.wisdom_write = 0; /* benches never mutate the store */
+        cfg.layout = VFFT_LAYOUT_SPLIT;
+        hs = vfft_create(&cfg);
+        cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+        hi = vfft_create(&cfg);
+    }
+    if (!hs || !hi) {
+        printf("  %5dx%-5d  create FAIL (hs=%p hi=%p)\n", N1, N2,
+               (void *)hs, (void *)hi);
+        if (hs) vfft_destroy(hs);
+        if (hi) vfft_destroy(hi);
+        return;
+    }
+    fprintf(stderr, "[2dil] %dx%d created; gating + timing %d rounds...\n", N1, N2, rounds);
+    /* correctness pre-gate, fresh data: roundtrip/T (shipped paths;
+     * forward elementwise gates live in the 2D gate battery) */
+    memcpy(sre, xr, T * 8);
+    memcpy(simg, xi, T * 8);
+    vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg);
+    vfft_execute(hs, VFFT_BACKWARD, sre, simg, sre, simg);
+    rts = 0;
+    for (i = 0; i < T; i++) {
+        double a1 = fabs(sre[i] / (double)T - xr[i]);
+        double b1 = fabs(simg[i] / (double)T - xi[i]);
+        if (a1 > rts) rts = a1;
+        if (b1 > rts) rts = b1;
+    }
+    for (i = 0; i < T; i++) { z[2 * i] = xr[i]; z[2 * i + 1] = xi[i]; }
+    vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+    vfft_execute(hi, VFFT_BACKWARD, z, NULL, z, NULL);
+    rti = 0;
+    for (i = 0; i < T; i++) {
+        double a1 = fabs(z[2 * i] / (double)T - xr[i]);
+        double b1 = fabs(z[2 * i + 1] / (double)T - xi[i]);
+        if (a1 > rti) rti = a1;
+        if (b1 > rti) rti = b1;
+    }
+#ifdef VFFT_HAS_MKL
+    {
+        DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
+        MKL_LONG dims[2];
+        dims[0] = N1;
+        dims[1] = N2;
+        if (DftiCreateDescriptor(&hMi, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims)
+                == DFTI_NO_ERROR) {
+            DftiSetValue(hMi, DFTI_PLACEMENT, DFTI_INPLACE);
+            have[2] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
+        }
+        if (DftiCreateDescriptor(&hMs, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims)
+                == DFTI_NO_ERROR) {
+            DftiSetValue(hMs, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+            DftiSetValue(hMs, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+            have[3] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
+        }
+        for (i = 0; i < 2 * T; i++) mz[i] = cs[i];
+        for (r = 0; r < rounds; r++) {
+            for (a0 = 0; a0 < 5; a0++) {
+                int reps = reps_for(T);
+                double t0, ns;
+                a = (r & 1) ? 4 - a0 : a0;
+                if (!have[a]) continue;
+                cachebust();
+                t0 = vfft_proto_now_ns();
+                for (k = 0; k < reps; k++) {
+                    switch (a) {
+                    case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
+                    case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
+                    case 2: DftiComputeForward(hMi, mz); break;
+                    case 3: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+                    case 4: memcpy(cd, cs, 2 * T * 8); break;
+                    }
+                }
+                ns = (vfft_proto_now_ns() - t0) / reps;
+                smp[a][r] = ns;
+            }
+        }
+        if (hMi) DftiFreeDescriptor(&hMi);
+        if (hMs) DftiFreeDescriptor(&hMs);
+    }
+#else
+    for (r = 0; r < rounds; r++) {
+        for (a0 = 0; a0 < 5; a0++) {
+            int reps = reps_for(T);
+            double t0, ns;
+            a = (r & 1) ? 4 - a0 : a0;
+            if (!have[a]) continue;
+            cachebust();
+            t0 = vfft_proto_now_ns();
+            for (k = 0; k < reps; k++) {
+                switch (a) {
+                case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
+                case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
+                case 4: memcpy(cd, cs, 2 * T * 8); break;
+                }
+            }
+            ns = (vfft_proto_now_ns() - t0) / reps;
+            smp[a][r] = ns;
+        }
+    }
+#endif
+    for (a = 0; a < 5; a++) {
+        if (!have[a]) { med[a] = 0; spr[a] = 0; continue; }
+        med[a] = il2d__med(smp[a], rounds); /* sorts in place */
+        spr[a] = il2d__spread(smp[a], rounds, med[a]);
+    }
+    {
+        const double cspr = spr[4]; /* ctl spread %, the noise floor */
+        printf("  %5dx%-5d rt %.1e/%.1e | ctl %9.0f (%4.1f%%) | "
+               "O-split %10.0f (%4.1f%%) | O-inter %10.0f (%4.1f%%)",
+               N1, N2, rts, rti, med[4], spr[4],
+               med[0], spr[0], med[1], spr[1]);
+#ifdef VFFT_HAS_MKL
+        printf(" | M-inter %10.0f (%4.1f%%) | M-split %10.0f (%4.1f%%)\n",
+               med[2], spr[2], med[3], spr[3]);
+        if (med[1] > 0 && med[2] > 0) {
+            double q1 = med[2] / med[1]; /* O-inter xMKLcce: >1 = we win */
+            double q2 = med[1] / med[0]; /* the convert-around tax        */
+            double q3 = med[3] / med[2]; /* banked-config vs MKL's best   */
+            double q4 = med[2] / med[0]; /* O-split xMKLcce               */
+            printf("        O-inter xMKLcce %.2f%s | wrap tax O-inter/O-split "
+                   "%.2f%s | O-split xMKLcce %.2f | M-split/M-inter %.2f\n",
+                   q1, fabs(1 - q1) * 100 < cspr ? "~" : "",
+                   q2, fabs(1 - q2) * 100 < cspr ? "~" : "", q4, q3);
+        }
+#else
+        printf("  (no MKL)\n");
+        if (med[0] > 0)
+            printf("        wrap tax O-inter/O-split %.2f\n", med[1] / med[0]);
+#endif
+    }
+    vfft_destroy(hs);
+    vfft_destroy(hi);
+    free_d(sre); free_d(simg); free_d(z); free_d(mz);
+    free_d(xr); free_d(xi); free_d(mr); free_d(mi);
+    free_d(cs); free_d(cd);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * --2d : 2D c2c (fft2d.h, tiled) vs MKL DFTI 2D. Same fairness as the 1D paths:
  * identical split NOT_INPLACE layout, per-cell order-flip, cachebust + pace, ns
  * timing, best-of-5. 2D forward output is SCRAMBLED order (dag DIT), so the
@@ -3412,7 +3629,7 @@ int main(int argc, char **argv)
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
+    int mt = 0, oop = 0, twod = 0, il2d = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
     int tcut_mode = 0; /* --tcut=... seen: forces a DISTINCT default csv so a
                         * tiling probe can never overwrite a banked baseline. */
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
@@ -3445,6 +3662,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--2dc2r") == 0)
         {
             r2c2d_bwd = 1;
+        }
+        else if (strcmp(argv[1], "--2dil") == 0)
+        {
+            il2d = 1; /* three-arm interleaved-2D scoping cell (M0a) */
         }
         else if (strcmp(argv[1], "--c2r") == 0)
         {
@@ -3658,6 +3879,47 @@ int main(int argc, char **argv)
         return 0;
     }
 #endif
+
+    /* --2dil: the three-arm interleaved-2D scoping cell (M0a), then done. */
+    if (il2d)
+    {
+        const char *wd = getenv("VFFT_WISDOM_DIR");
+        vfft_wisdom *W;
+        int rounds;
+        const char *re_ = getenv("VFFT_2DIL_ROUNDS");
+        rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
+        if (!wd) wd = ".";
+        setvbuf(stdout, NULL, _IONBF, 0); /* live lines even when redirected */
+        W = vfft_wisdom_load(wd);
+#ifdef VFFT_HAS_MKL
+        mkl_set_num_threads(1);
+#endif
+        printf("=== 2DIL three-arm scoping cell (front door; wisdom=%s %s; "
+               "rounds=%d, core%d) ===\n",
+               wd, W ? "loaded" : "MISSING", rounds, core);
+        printf("# arms: O-split/O-inter = vfft INPLACE by layout; M-inter = "
+               "DFTI CCE INPLACE (MKL best); M-split = banked REAL_REAL "
+               "config; ctl = memcpy. '~' = delta below ctl spread (NOT A "
+               "RESULT).\n");
+        {
+            int cells[][2] = { { 64, 64 },   { 128, 128 }, { 256, 256 },
+                               { 512, 512 }, { 100, 100 }, { 1024, 1024 },
+                               { 16, 4096 }, { 4096, 16 } };
+            int nc = (int)(sizeof cells / sizeof cells[0]), ci;
+            const char *cf = getenv("VFFT_2DIL_CELLS"); /* "64x64,256x256" filter */
+            for (ci = 0; ci < nc; ci++) {
+                if (cf) {
+                    char tag[32];
+                    snprintf(tag, sizeof tag, "%dx%d", cells[ci][0], cells[ci][1]);
+                    if (!strstr(cf, tag)) continue;
+                }
+                run_2dil_cell(cells[ci][0], cells[ci][1], rounds, W);
+                pace(pace_ms);
+            }
+        }
+        if (W) vfft_wisdom_free(W);
+        return 0;
+    }
 
     /* --2d: self-contained 2D c2c sweep (own cell grid + CSV schema), then done. */
     if (twod)
