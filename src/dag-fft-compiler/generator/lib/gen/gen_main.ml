@@ -51,6 +51,16 @@
 
 let run (argv : string array) : unit =
   Emit_render.provenance_argv := Some argv;
+  (* PER-EMISSION RESET. Every other flag below is a fresh `ref` scoped to
+     this call; Cx_math.odd_ct_enabled is module-global, so without this a
+     batch emitter (gen_set.exe runs a whole quadrant in ONE process) carries
+     --cil-oddct from the first _ct cell into every later odd-radix codelet
+     and silently emits the FACTORED form in place of dft_cx_odd's direct
+     one. That showed up as 87 odd-radix bodies differing from the shipped
+     tree under gen_set while gen_radix -- one process per codelet --
+     reproduced them exactly. Reset to the ENV default, not to false, so
+     VFFT_CX_ODDCT=1 still works as a global override. *)
+  Cx_math.odd_ct_enabled := (Sys.getenv_opt "VFFT_CX_ODDCT" = Some "1");
   let n = ref 4 in
   let twiddled = ref false in
   let twiddled_scalar = ref false in
