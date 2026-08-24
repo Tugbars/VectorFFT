@@ -642,55 +642,86 @@ static int r2c_lane_budget(int N, size_t K)
     return lanes;
 }
 
+/* set/clear the library's own r2c route hook (vfft.c:1121-1125). It is read
+ * INSIDE vfft_create, ahead of the banked lookup, and never banks. This is the
+ * documented way to obtain a specific arm — the bench must never select a path
+ * itself. NULL / "" clears it, restoring the production verdict. */
+static void r2c_route_env(const char *v)
+{
+#ifdef _WIN32
+    _putenv_s("VFFT_R2C_ROUTE", (v && *v) ? v : "");
+#else
+    if (v && *v) setenv("VFFT_R2C_ROUTE", v, 1);
+    else         unsetenv("VFFT_R2C_ROUTE");
+#endif
+}
+
 static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
                               FILE *out, int cool_ms, int flip)
 {
     const int halfN = N / 2;
     const size_t total = (size_t)N * K, outsz = (size_t)(halfN + 1) * K;
+    (void)rreg;   /* the FRONT DOOR owns the rfft registry AND its wisdom (F1) */
 
-    /* 🔴 RACE BOTH METHODS — do not take the threshold's word for it.
-     * vfft_r2c_plan_create picks by a HARD-CODED gate (_vfft_r2c_decouple_min_k
-     * = 32, r2c_dispatch.h:97/:280), not by measurement: below K=32 it always
-     * returns rfft, above it always returns decoupled-stride. Its own comment
-     * says "rfft loses badly at high K (~0.47x MKL) while decoupled-r2c hits
-     * ~0.91x; the reverse holds at low K" — so a cell benched at the default
-     * publishes whichever path the threshold happened to hand out, which at
-     * K in {7,8,15,16,17} is ALWAYS rfft regardless of merit.
-     * We force each path in turn (the same lever _r2c_bakeoff uses), time
-     * both, and report the WINNER as the vfft column plus both arms and the
-     * margin — so the vs-FFTW verdict is against our best method, and the
-     * threshold's choice is visible rather than assumed. */
-    size_t saved_min_k = vfft_r2c_dispatch_get_decouple_min_k();
-    vfft_r2c_dispatch_set_decouple_min_k((size_t)-1);            /* force rfft */
-    vfft_r2c_plan_t *p_rfft = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
-    vfft_r2c_dispatch_set_decouple_min_k(0);                     /* force stride */
-    vfft_r2c_plan_t *p_str = vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, rreg, NULL, &g_reg);
-    vfft_r2c_dispatch_set_decouple_min_k(saved_min_k);
-    /* what the SHIPPED threshold would have served, for the "thr=" column */
-    const char *thr_path = ((size_t)K >= saved_min_k && (N % 2) == 0) ? "stride" : "rfft";
-    if (p_rfft && p_rfft->path != VFFT_R2C_PATH_RFFT)
-    { vfft_r2c_plan_destroy(p_rfft); p_rfft = NULL; }            /* forcing failed */
-    if (p_str && p_str->path != VFFT_R2C_PATH_STRIDE)
-    { vfft_r2c_plan_destroy(p_str); p_str = NULL; }
-    if (!p_rfft && !p_str)
-    { printf("  N=%-6d K=%-5zu r2c plan NULL (both paths)\n", N, K); return; }
-    vfft_r2c_plan_t *p = p_rfft ? p_rfft : p_str;   /* provisional; re-picked after timing */
-    const char *path = "raced";
+    /* ---- vfft: THE FRONT DOOR. No bench-side path logic, no manual wisdom. ----
+     * Audit: docs/research/fftw_bench/audit/{audit/C_r2c.md,verify/VERIFY_comparability.md}.
+     * The previous version called vfft_r2c_plan_create directly, which
+     *   (a) picks by the HARD-CODED threshold _vfft_r2c_decouple_min_k = 32
+     *       (r2c_dispatch.h:97/:280) rather than the library route law, and
+     *   (b) F1: loaded <wisdir>/rfft_wisdom.txt, a file DELETED at bfe3ade4 whose rows
+     *       migrated into wisdom2_real.txt. The load failed silently, so the rfft arm ran
+     *       a HEURISTIC plan where production runs a CALIBRATED one - worth up to 2.3x.
+     *       The front door calibrates rfft on miss at vfft.c:5542-5556 and that path is
+     *       NOT rigor-gated, so simply calling vfft_create fixes it. This correction is
+     *       therefore mostly DELETION.
+     * rigor = VFFT_MEASURE is deliberate and is WHAT PRODUCTION SERVES: may_race is
+     * (rigor != MEASURE) at vfft.c:5566, so MEASURE takes the banked verdict or the
+     * threshold, exactly what a real caller gets. VFFT_PATIENT opens the route race but
+     * appears nowhere in the tree outside its enum, so a PATIENT verdict column would
+     * measure a configuration nothing ships; it is carried below as a DIAGNOSTIC. */
+    vfft_config_t c;
+    memset(&c, 0, sizeof c);
+    c.transform    = VFFT_R2C;
+    c.placement    = VFFT_OUTOFPLACE;       /* split spectrum: in-place is REFUSED */
+    c.dims         = 1;
+    c.n[0]         = N;
+    c.howmany      = K;
+    c.layout       = VFFT_LAYOUT_SPLIT;
+    c.order        = VFFT_ORDER_DEFAULT;    /* non-DEFAULT is REFUSED for R2C */
+    c.nthreads     = 1;                     /* NOT 0 */
+    c.rigor        = VFFT_MEASURE;          /* == what production serves */
+    c.wisdom       = bundle();
+    c.wisdom_write = 0;                     /* A BENCH NEVER BANKS */
 
-    /* ---- FFTW plans, before the input exists ---- */
-    /* VERDICT: home = TC real in -> interleaved CCE out (MKL's exact deal) */
+    vfft_plan h_fd = NULL, h_rf = NULL, h_st = NULL, h_pat = NULL;
+    r2c_route_env(NULL);  h_fd = vfft_create(&c);    /* production verdict */
+    r2c_route_env("0");   h_rf = vfft_create(&c);    /* rfft   diagnostic  */
+    r2c_route_env("1");   h_st = vfft_create(&c);    /* stride diagnostic  */
+    r2c_route_env(NULL);
+    c.rigor = VFFT_PATIENT; h_pat = vfft_create(&c); /* what the RACE would pick */
+    c.rigor = VFFT_MEASURE;
+    if (!h_fd)
+    {
+        printf("  N=%-6d K=%-5zu r2c vfft_create FAILED\n", N, K);
+        if (h_rf) vfft_destroy(h_rf);
+        if (h_st) vfft_destroy(h_st);
+        if (h_pat) vfft_destroy(h_pat);
+        return;
+    }
+
+    /* ---- FFTW plans, before the input exists (MEASURE scribbles its arrays) ----
+     * HOME-REGIME MODE: run_r2c_cell:2211-2255 transposes to transform-contiguous
+     * OUTSIDE the timed region and makes MKL CCE the verdict, so FFTW gets the same
+     * deal: fil = VERDICT, fsplit = diagnostic. Adapter untimed for both. */
     double *hin  = (double *)g_fx.fmalloc(sizeof(double) * total);
     double *hcce = (double *)g_fx.fmalloc(sizeof(double) * 2 * outsz);
     int n_arr[1] = { N };
     double t0 = vfft_proto_now_ns();
     fftwx_plan fil = (hin && hcce)
-        ? g_fx.plan_many_dft_r2c(1, n_arr, (int)K,
-                                 hin,  NULL, 1, N,
+        ? g_fx.plan_many_dft_r2c(1, n_arr, (int)K, hin, NULL, 1, N,
                                  (fftwx_complex *)hcce, NULL, 1, halfN + 1,
                                  FFTWX_MEASURE) : NULL;
     double il_ms = (vfft_proto_now_ns() - t0) / 1e6;
-    /* DIAGNOSTIC: our lane-major split layout. real in stride K; split out
-     * stride K on DETERMINISTIC planes (the wisdom key hashes io-ro). */
     double *sx = alloc_d(total);
     ref_planes_t sp = ref_planes_alloc(outsz);
     fftwx_iodim dims = { N, (int)K, (int)K };
@@ -709,50 +740,29 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
         if (hin) g_fx.ffree(hin);
         if (hcce) g_fx.ffree(hcce);
         free_d(sx); ref_planes_free(&sp);
-        vfft_r2c_plan_destroy(p);
+        vfft_destroy(h_fd);
+        if (h_rf) vfft_destroy(h_rf);
+        if (h_st) vfft_destroy(h_st);
+        if (h_pat) vfft_destroy(h_pat);
         return;
     }
     uint64_t il_id = fftwx_plan_id(&g_fx, fil);
 
-    /* ---- input (lane-major real), then the UNTIMED adapter for the TC arms ---- */
+    /* ---- input (lane-major real), then the UNTIMED adapter for the TC arm ---- */
     double *x = alloc_d(total), *o_re = alloc_d(outsz), *o_im = alloc_d(outsz);
     srand(7 + N + (int)K);
     for (size_t i = 0; i < total; i++) x[i] = (double)rand() / RAND_MAX * 2 - 1;
     memset(o_re, 0, outsz * sizeof(double));
     memset(o_im, 0, outsz * sizeof(double));
-    for (size_t t = 0; t < K; t++)          /* lane-major -> transform-contiguous */
+    for (size_t t = 0; t < K; t++)
         for (int n = 0; n < N; n++)
             hin[t * (size_t)N + n] = x[(size_t)n * K + t];
     memcpy(sx, x, total * sizeof(double));
 
-    /* ---- race the two vfft methods (untimed warm + timed), pick the winner ---- */
-    stat5_t vr, vst; vr.min = vr.med = vst.min = vst.med = 0;
-#define TIME_R2C_PLAN(PL, DST) do {                                        \
-        if (PL) {                                                          \
-          for (int w = 0; w < 10; w++) vfft_r2c_execute_fwd(PL, x, o_re, o_im); \
-          int reps = reps_for(total);                                      \
-          for (int t = 0; t < 5; t++)                                      \
-          { if (t) pace(g_trial_pace_ms);                                  \
-            double tt = vfft_proto_now_ns();                               \
-            for (int i = 0; i < reps; i++) vfft_r2c_execute_fwd(PL, x, o_re, o_im); \
-            g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                 \
-          DST = stat5(g_t5); } } while (0)
-    TIME_R2C_PLAN(p_rfft, vr);
-    if (p_str) { cachebust(); pace(cool_ms); }
-    TIME_R2C_PLAN(p_str, vst);
-    int rfft_won = (p_rfft && (!p_str || vr.med <= vst.med));
-    p    = rfft_won ? p_rfft : p_str;
-    path = rfft_won ? "rfft" : "stride";
-    stat5_t vs = rfft_won ? vr : vst;
-    /* margin of the winner over the loser; >1 means the winner is that much faster */
-    double race_margin = (vr.med > 0 && vst.med > 0)
-                       ? (rfft_won ? vst.med / vr.med : vr.med / vst.med) : 0;
-    int thr_agrees = (strcmp(thr_path, path) == 0);
-
-    /* ---- gates: elementwise vs naive, winner + both FFTW arms ---- */
+    /* ---- gates: ELEMENTWISE vs naive for every arm (r2c output is natural) ---- */
     int lanes = r2c_lane_budget(N, K);
     double *hr = alloc_d((size_t)halfN + 1), *hi = alloc_d((size_t)halfN + 1);
-    vfft_r2c_execute_fwd(p, x, o_re, o_im);
+    vfft_execute(h_fd, VFFT_FORWARD, x, NULL, o_re, o_im);
     g_fx.execute(fil);
     g_fx.execute(fsp);
     double vgate = 0, gil = 0, gsp = 0;
@@ -778,18 +788,16 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
     }
     free_d(hr); free_d(hi);
 
-    /* ---- timing: verdict pair (vfft vs fil) order-flipped; split is extra ---- */
-    stat5_t vs, is_;
-#define R2C_TIME_VFFT() do {                                              \
-        for (int w = 0; w < 10; w++) vfft_r2c_execute_fwd(p, x, o_re, o_im); \
+#define TIME_FD(H, DST) do { if (H) {                                     \
+        for (int w = 0; w < 10; w++) vfft_execute(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
         { if (t) pace(g_trial_pace_ms);                                   \
           double tt = vfft_proto_now_ns();                                \
-          for (int i = 0; i < reps; i++) vfft_r2c_execute_fwd(p, x, o_re, o_im); \
+          for (int i = 0; i < reps; i++) vfft_execute(H, VFFT_FORWARD, x, NULL, o_re, o_im); \
           g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
-        vs = stat5(g_t5); } while (0)
-#define R2C_TIME_PLAN(PL, DST) do {                                       \
+        DST = stat5(g_t5); } } while (0)
+#define TIME_FFTW(PL, DST) do {                                           \
         for (int w = 0; w < 10; w++) g_fx.execute(PL);                    \
         int reps = reps_for(total);                                       \
         for (int t = 0; t < 5; t++)                                       \
@@ -798,16 +806,22 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
           for (int i = 0; i < reps; i++) g_fx.execute(PL);                \
           g_t5[t] = (vfft_proto_now_ns() - tt) / reps; }                  \
         DST = stat5(g_t5); } while (0)
-    if (flip) { R2C_TIME_PLAN(fil, is_); cachebust(); pace(cool_ms); R2C_TIME_VFFT(); }
-    else      { R2C_TIME_VFFT(); cachebust(); pace(cool_ms); R2C_TIME_PLAN(fil, is_); }
-    cachebust(); pace(cool_ms);
-    stat5_t ss; R2C_TIME_PLAN(fsp, ss);
-#undef R2C_TIME_VFFT
-#undef R2C_TIME_PLAN
+
+    /* verdict pair (vfft front door vs FFTW home) order-flipped; the rest are extra */
+    stat5_t vs, is_;
+    if (flip) { TIME_FFTW(fil, is_); cachebust(); pace(cool_ms); TIME_FD(h_fd, vs); }
+    else      { TIME_FD(h_fd, vs); cachebust(); pace(cool_ms); TIME_FFTW(fil, is_); }
+    stat5_t ss;  cachebust(); pace(cool_ms); TIME_FFTW(fsp, ss);
+    stat5_t rf, st, pt;
+    rf.min = rf.med = st.min = st.med = pt.min = pt.med = 0;
+    cachebust(); pace(cool_ms); TIME_FD(h_rf, rf);
+    cachebust(); pace(cool_ms); TIME_FD(h_st, st);
+    cachebust(); pace(cool_ms); TIME_FD(h_pat, pt);
+#undef TIME_FD
+#undef TIME_FFTW
     cachebust(); pace(cool_ms);
     stat5_t cs;
-    { for (int w = 0; w < 10; w++) memcpy(o_re, x, outsz * sizeof(double) < total * sizeof(double)
-                                          ? outsz * sizeof(double) : outsz * sizeof(double));
+    { for (int w = 0; w < 10; w++) memcpy(o_re, x, outsz * sizeof(double));
       int reps = reps_for(total);
       for (int t = 0; t < 5; t++)
       { if (t) pace(g_trial_pace_ms);
@@ -820,25 +834,36 @@ static void run_r2c_fftw_cell(int N, size_t K, const rfft_codelets_t *rreg,
 
     double r_il    = vs.med > 0 ? is_.med / vs.med : 0;   /* THE VERDICT */
     double r_split = vs.med > 0 ? ss.med / vs.med : 0;    /* diagnostic  */
+    /* labels only, never a decision: which arm the served verdict resembles, and
+     * which arm is actually faster (i.e. what a race would have picked). */
+    const char *served = "?";
+    if (rf.med > 0 && st.med > 0)
+        served = (fabs(vs.med - rf.med) <= fabs(vs.med - st.med)) ? "rfft" : "stride";
+    const char *faster = (rf.med > 0 && st.med > 0)
+                       ? (rf.med <= st.med ? "rfft" : "stride") : "?";
     int bad = (vgate > 1e-9 || gil > 1e-9 || gsp > 1e-9);
-    printf("  N=%-6d K=%-5zu %-7s v=%10.0f/%10.0f  fil=%10.0f/%10.0f  fsplit=%10.0f  ctrl=%8.0f  "
-           "r_il=%5.2f r_split=%5.2f  gates v=%.1e il=%.1e sp=%.1e (naive:%dL)  plan=%.0f/%.0fms%s\n",
-           N, K, path, vs.min, vs.med, is_.min, is_.med, ss.med, cs.min,
-           r_il, r_split, vgate, gil, gsp, lanes, il_ms, sp_ms,
-           bad ? "  *** GATE BAD ***" : "");
+    printf("  N=%-6d K=%-5zu fd=%9.0f/%9.0f[~%-6s] rfft=%9.0f stride=%9.0f pat=%9.0f | "
+           "fil=%9.0f fsplit=%9.0f ctrl=%7.0f | r_il=%5.2f r_split=%5.2f | faster=%-6s | "
+           "g v=%.1e il=%.1e sp=%.1e (%dL) plan=%.0f/%.0fms%s\n",
+           N, K, vs.min, vs.med, served, rf.med, st.med, pt.med,
+           is_.med, ss.med, cs.min, r_il, r_split, faster,
+           vgate, gil, gsp, lanes, il_ms, sp_ms, bad ? "  *** GATE BAD ***" : "");
     if (out)
-        fprintf(out, "r2c,%d,%zu,%s,natural,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.4f,%.4f,"
-                     "%.3e,naive,%.3e,naive%d,%.1f,%.1f,%016llx,il,%d,%d,%llu\n",
-                N, K, path, vs.min, vs.med, is_.min, is_.med, ss.min, ss.med, cs.min,
-                r_il, r_split, vgate, gil, lanes, il_ms, sp_ms,
-                (unsigned long long)il_id, flip, reps_for(total),
-                (unsigned long long)sp.stride);
+        fprintf(out, "r2c,%d,%zu,frontdoor,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,"
+                     "%.4f,%.4f,%.3e,naive,%.3e,naive%d,%.1f,%.1f,%016llx,il,%s,%d,%d\n",
+                N, K, served, vs.min, vs.med, rf.med, st.med, pt.med,
+                is_.min, is_.med, ss.med, cs.min, r_il, r_split,
+                vgate, gil, lanes, il_ms, sp_ms, (unsigned long long)il_id,
+                faster, flip, reps_for(total));
 
     g_fx.destroy_plan(fil); g_fx.destroy_plan(fsp);
     g_fx.ffree(hin); g_fx.ffree(hcce);
     free_d(sx); ref_planes_free(&sp);
     free_d(x); free_d(o_re); free_d(o_im);
-    vfft_r2c_plan_destroy(p);
+    vfft_destroy(h_fd);
+    if (h_rf) vfft_destroy(h_rf);
+    if (h_st) vfft_destroy(h_st);
+    if (h_pat) vfft_destroy(h_pat);
 }
 
 /* ------------------------------------------------------- the OOP K-cell
@@ -1213,35 +1238,37 @@ int main(int argc, char **argv)
     /* ---- --r2c: own registry, wisdoms, cell grid and CSV; returns early ---- */
     if (g_r2c)
     {
-        rfft_codelets_t rreg;
-        memset(&rreg, 0, sizeof rreg);
-        rfft_register_all_avx2(&rreg);
-        static vfft_proto_wisdom_t rwis, cwis;
-        char rfw[700];
-        snprintf(rfw, sizeof rfw, "%s/rfft_wisdom.txt", g_wisdir);
-        if (vfft_proto_wisdom_load(&rwis, rfw) == 0)
-            vfft_r2c_dispatch_set_wisdom(&rwis);
-        if (vfft_proto_wisdom_load(&cwis, wpath) == 0)
-            vfft_r2c_dispatch_set_c2c_wisdom(&cwis);
+        /* 🔴 NO manual rfft/c2c wisdom load here. The front door owns both
+         * (vfft.c:5542-5559) and calibrates rfft on miss. The removed code loaded
+         * <wisdir>/rfft_wisdom.txt — DELETED at bfe3ade4, rows migrated into
+         * wisdom2_real.txt — so the load failed silently and the rfft arm ran a
+         * heuristic plan (F1, up to 2.3x). Deleting it IS the fix. */
         FILE *o2 = fopen(csv_path ? csv_path : "vfft_vs_fftw_r2c.csv", "w");
         if (o2)
-            fprintf(o2, "mode,N,K,path,order,vns_min,vns_med,fil_min,fil_med,"
-                        "fsplit_min,fsplit_med,ctrl_min,ratio_il,ratio_split,"
-                        "vgate,vgate_class,fgate,fgate_class,il_plan_ms,"
-                        "split_plan_ms,il_plan_id,verdict_arm,flip,reps,delta\n");
-        printf("=== vfft vs FFTW — 1D R2C fwd (HOME regime: verdict = fil, FFTW's CCE home;\n"
-               "    fsplit = FFTW forced into our lane-major split = diagnostic; adapter UNTIMED both) ===\n");
+            fprintf(o2, "mode,N,K,vfft_src,served_like,vns_min,vns_med,rfft_med,stride_med,"
+                        "patient_med,fil_min,fil_med,fsplit_med,ctrl_min,ratio_il,ratio_split,"
+                        "vgate,vgate_class,fgate,fgate_class,il_plan_ms,split_plan_ms,"
+                        "il_plan_id,verdict_arm,faster_arm,flip,reps\n");
+        printf("=== vfft vs FFTW — 1D R2C fwd ===\n"
+               "  vfft = THE FRONT DOOR at rigor=MEASURE (what production serves).\n"
+               "  rfft/stride = the library's own arms via VFFT_R2C_ROUTE; pat = rigor=PATIENT\n"
+               "  (what the route RACE would pick). All four are library decisions, not the bench's.\n"
+               "  HOME regime: verdict = fil (FFTW CCE home, adapter UNTIMED, mirrors MKL's deal);\n"
+               "  fsplit = FFTW forced into our lane-major split = diagnostic.\n");
         if (N > 0)
-            run_r2c_fftw_cell(N, (size_t)K, &rreg, o2, cool_ms, flip);
+            run_r2c_fftw_cell(N, (size_t)K, NULL, o2, cool_ms, flip);
         else
-        {   /* the canonical --r2c grid: the rfft-regime cells + odd neighbours */
+        {   /* the BANKED r2c grid (v1_0_results.md §3): K spans the K=32 threshold
+             * so both routes are exercised. K=8,16 sit below it AND inside the
+             * K<=64 race window; K=256 is above BOTH — it can never race, which is
+             * itself the point of including it. */
             int Ns[] = {256, 512, 1024};
-            size_t Ks[] = {7, 8, 15, 16, 17};
+            size_t Ks[] = {8, 16, 256};
             int benched = 0;
             for (int ni = 0; ni < 3; ni++)
-                for (int ki = 0; ki < 5; ki++)
+                for (int ki = 0; ki < 3; ki++)
                 {
-                    run_r2c_fftw_cell(Ns[ni], Ks[ki], &rreg, o2, cool_ms, flip ^ (benched & 1));
+                    run_r2c_fftw_cell(Ns[ni], Ks[ki], NULL, o2, cool_ms, flip ^ (benched & 1));
                     benched++;
                     cachebust(); pace(pace_ms);
                 }
