@@ -1591,49 +1591,55 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
     int lines = 0;
     if (!st) return 0;
 
-    /* sp_route < 0 still refuses the whole line (never zero-filled — 0 is
-     * a valid route). What CHANGED (B2.1, 2026-08-18): the IL natural arm
-     * may be structurally empty (il2p's pair space tops out at 4096; the
-     * split-only band above it is served by CCOL) — a valid split winner
-     * banks anyway, with il_route = IL_NONE and zeroed IL fields. Before
-     * this, every split-only cell's verdict was silently dropped by the
-     * nat guard. ns semantics: the IL natural arm's cost; when the IL arm
-     * is ABSENT, the split winner's cost — token count unchanged. */
+    /* PER-LAYOUT CELLS (v1.2, 2026-08-24). The kind-3 verdict banks as two
+     * INDEPENDENT records — lay=split and lay=il — each on its own
+     * evidence. The old dual line's `sp_route >= 0` whole-line refusal is
+     * GONE for the IL side: it discarded measured IL verdicts whenever
+     * split could not plan (structural at non-pow2 N — the %4 pair gate
+     * plus the t1 registry; N=400 repro: a raced 1.5-2x IL backward win
+     * banked 0). The owner's rule: split and IL are CALLER LAYOUTS
+     * (AoS/SoA), never optimization directions — one layout's absence must
+     * not veto the other's verdict, and one layout's re-race must not
+     * erase the other's cell. B2.1's mirror fix (split-only cells bank) is
+     * subsumed: each side now simply banks when IT raced.
+     * ns/ran are per-record and honest: the split record carries the split
+     * lane-batch verdict (ran = VFFT_OOP_GROUPW), the il record the IL
+     * natural champion (ran = 1) — the pre-1.2 dual line could only carry
+     * one of the two numbers. */
     {
         int il_ok = (nat && nat->cost_ns < 1e17);
         if (sp_route >= 0)
         {
-        /* 🔴 SHIPPED WRITER, never a hand fprintf — the same lesson the kind-4
-         * branch below already learned. The hand-printed form here could not
-         * carry `il_kv` at all (the blocked-kernel variant verdict, added
-         * 2026-08-05), so the field was structurally unemittable and every
-         * banked kind-3 line silently meant "monolithic". One definition of
-         * the format = a new field cannot be half-adopted. */
-        vfft_oop_wisdom_entry_t e;
-        memset(&e, 0, sizeof e);
-        e.N = N;
-        /* owner rule 2026-08-19: K = the batch count of the run that
-         * produced the banked ns — never a caller-transform count. A dual
-         * line banks the IL natural champion's time (one interleaved
-         * transform → 1); a split-only line banks the lane-batch verdict
-         * (VFFT_OOP_GROUPW: 4 on AVX2, 8 on AVX-512). */
-        e.K = il_ok ? 1 : VFFT_OOP_GROUPW;
-        e.kind = VFFT_OOP_KIND_BAILEY2V;
-        e.k1_sp_route = sp_route >= 0 ? sp_route : 0;
-        e.R1 = sp_R1;
-        e.R2 = sp_R2;
-        e.k1_il_route = il_ok ? nat->route : VFFT_K1_IL_NONE;
-        e.il_R1 = il_ok ? nat->R1 : 0;
-        e.il_R2 = il_ok ? nat->R2 : 0;
-        e.il_kv = il_ok ? nat->il_kv : 0; /* 0 until the variant axis is raced */
-        /* a CCOL split winner's chain rides the kind-3 line (B2 2026-08-18;
-         * the grammar carries cc_chain only when sp_route == CCOL) */
-        e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
-        e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
-        e.ns = il_ok ? nat->cost_ns : sp_ns;
-        if (vw2_oop_bank_entry(st, &e) == VW2_OK)
-            lines++;
-
+            vfft_oop_wisdom_entry_t e;
+            memset(&e, 0, sizeof e);
+            e.N = N;
+            e.K = VFFT_OOP_GROUPW;     /* the split lane-batch run count   */
+            e.kind = VFFT_OOP_KIND_BAILEY2V;
+            e.k1_sp_route = sp_route;
+            e.R1 = sp_R1;
+            e.R2 = sp_R2;
+            e.k1_il_route = VFFT_K1_IL_NONE;   /* il lives in its own cell */
+            e.cc_chain = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_chain : 0;
+            e.cc_vars  = (sp_route == VFFT_K1_SP_CCOL) ? sp_cc_vars  : 0;
+            e.ns = sp_ns;
+            if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_SPLIT) == VW2_OK)
+                lines++;
+        }
+        if (il_ok)
+        {
+            vfft_oop_wisdom_entry_t e;
+            memset(&e, 0, sizeof e);
+            e.N = N;
+            e.K = 1;                   /* one interleaved transform         */
+            e.kind = VFFT_OOP_KIND_BAILEY2V;
+            e.k1_sp_route = -1;        /* split lives in its own cell       */
+            e.k1_il_route = nat->route;
+            e.il_R1 = nat->R1;
+            e.il_R2 = nat->R2;
+            e.il_kv = nat->il_kv;      /* 0 until the variant axis is raced */
+            e.ns = nat->cost_ns;
+            if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
+                lines++;
         }
         /* The dir=bwd SIBLING (2026-08-21) — moved OUTSIDE the sp_route
          * guard 2026-08-24. It is its OWN cell (keyed dir=bwd) carrying

@@ -4878,16 +4878,26 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             const vfft_oop_wisdom_entry_t *ke =
                 W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                                : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
-            if (ke)
+            /* Per-layout wisdom (v1.2, 2026-08-24): each axis is taken
+             * from the store INDEPENDENTLY. A cell with only an IL verdict
+             * (k1_sp_route < 0 — e.g. non-pow2 N, where split cannot
+             * factor) keeps the banked IL route while the split side runs
+             * the same heuristic an unbanked cell always ran; neither
+             * layout's absence degrades the other. */
+            const int sp_banked = (ke && ke->k1_sp_route >= 0);
+            if (sp_banked)
             {
                 spr = ke->k1_sp_route;
                 sR1 = ke->R1;
                 sR2 = ke->R2;
+            }
+            if (ke)
+            {
                 ilr = ke->k1_il_route;
                 iR1 = ke->il_R1;
                 iR2 = ke->il_R2;
             }
-            else
+            if (!sp_banked)
             {
                 /* heuristic default (uncalibrated cell): mono when emitted,
                  * else 2pb on the most balanced valid pair. The offline
@@ -4922,6 +4932,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         sR2 = N / 64;
                     }
                 }
+            }
+            if (!ke)
+            {
                 /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
                  *
                  * Two independent reasons, both measured:
@@ -4992,8 +5005,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * else the per-R2 default. Create is self-validating (perm
                  * discovery); failure falls through to the classic path. */
                 int ccf[VFFT_K1_CC_MAX_NF];
-                int ccn = ke ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
-                             : vfft_k1_cc_default_chain(N / sR1, ccf);
+                int ccn = (ke && ke->cc_chain)
+                              ? vfft_k1_cc_chain_decode(ke->cc_chain, ccf)
+                              : vfft_k1_cc_default_chain(N / sR1, ccf);
                 /* B4/B2.2 (2026-08-18): column-plan VARIANTS from the
                  * kind-3 line's own cc_vars token — the CCOL verdict is
                  * SELF-CONTAINED in OOP wisdom (an OOP operation never

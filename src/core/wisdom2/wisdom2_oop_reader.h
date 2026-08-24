@@ -105,69 +105,98 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
 
 /* --------------------------------------------------------- kind-3 (k1) */
 
-/* Mirrors legacy lookup_k1: one k1-engine verdict per N, axis-agnostic.
- * Exact-beats-wildcard applies here too: a fresh race (concrete canonical
- * axes) outranks a migrated wildcard record at the same N — the wildcard
- * sunsets naturally as cells re-race. Returns 1 + fills e, or 0 on miss. */
-static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
-                                    vfft_oop_wisdom_entry_t *e)
+/* kind-3 K=1 lookup — PER-LAYOUT since v1.2 (2026-08-24). The verdict may
+ * live in three record shapes:
+ *   lay=il     the interleaved caller's own cell (il_route/il_pair/il_kv)
+ *   lay=split  the split caller's own cell       (sp_route/sp_pair/chain)
+ *   lay-less   the pre-1.2 dual row — the fallback tier
+ * Each axis composes INDEPENDENTLY: per-layout cell first, legacy row
+ * second, absent third. sp-absent is k1_sp_route = -1 — an EXPLICIT
+ * sentinel, because 0 is a VALID route (VFFT_K1_SP_3P); il-absent is
+ * IL_NONE. A decode failure on one axis refuses ONLY that axis — the old
+ * whole-row refusal let one layout's unknown token silently erase the
+ * other layout's banked verdict. Exact-beats-wildcard is preserved inside
+ * each tier. Returns 1 + fills e when ANY axis was found. */
+static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N,
+                                                uint8_t lay)
 {
     int i, pass;
-    const vw2_rec_t *r = NULL;
-    for (pass = 0; pass < 2 && !r; pass++)
+    for (pass = 0; pass < 2; pass++)
         for (i = 0; i < s->nrec; i++) {
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
+            if (c->key.lay != lay) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
-            /* 🔴 The kind-3 family now has a dir=bwd SIBLING (the backward
-             * kernel-variant verdict). It shares eng=k1 and the cell key, so
-             * without this guard it matches here, fails the sp_route decode
-             * below, and returns 0 - silently ERASING the forward verdict for
-             * that cell. The forward record is the dir-less one by
-             * construction; anything directional belongs to its own reader
+            /* 🔴 The kind-3 family has a dir=bwd SIBLING (the backward
+             * kernel-variant verdict). It shares eng=k1 and the cell key;
+             * anything directional belongs to its own reader
              * (vw2_oop_lookup_k1_bwd). */
             if (c->key.dir != VW2_DIR_NONE) continue;
             if (vw2__is_seed(c)) continue;
             if ((pass == 0) == vw2_key_has_wildcard(&c->key)) continue;
-            r = c;
-            break;
+            return c;
         }
-    {
-        int pair[2], np;
-        if (!r) return 0;
-        memset(e, 0, sizeof *e);
-        e->kind = VFFT_OOP_KIND_BAILEY2V;
-        e->N = N;
-        e->K = (size_t)vw2__oop_geti(r, "ran", 1);
-        e->k1_sp_route = vw2__oop_name_idx(vw2_oop_sp_name, 8, vw2_rec_get(r, "sp_route"));
-        if (e->k1_sp_route < 0) return 0;          /* unknown route: refuse  */
-        np = vw2__oop_split_ints(vw2_rec_get(r, "sp_pair"), pair, 2);
-        if (np == 2) { e->R1 = pair[0]; e->R2 = pair[1]; }
-        {
-            const char *il = vw2_rec_get(r, "il_route");
-            e->k1_il_route = il ? vw2__oop_name_idx(vw2_oop_il_name, 8, il) : VFFT_K1_IL_NONE;
-            if (e->k1_il_route < 0) return 0;
-        }
-        np = vw2__oop_split_ints(vw2_rec_get(r, "il_pair"), pair, 2);
-        if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
-        e->il_kv = vw2__oop_geti(r, "il_kv", 0);
-        {
+    return NULL;
+}
+
+static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
+                                    vfft_oop_wisdom_entry_t *e)
+{
+    const vw2_rec_t *ril = vw2__oop_k1_scan(s, N, VW2_LAY_IL);
+    const vw2_rec_t *rsp = vw2__oop_k1_scan(s, N, VW2_LAY_SPLIT);
+    const vw2_rec_t *rlg = (ril && rsp) ? NULL : vw2__oop_k1_scan(s, N, VW2_LAY_ANY);
+    const vw2_rec_t *ri = ril ? ril : rlg;     /* il-axis source            */
+    const vw2_rec_t *rs = rsp ? rsp : rlg;     /* split-axis source         */
+    int pair[2], np, got = 0;
+    memset(e, 0, sizeof *e);
+    e->kind = VFFT_OOP_KIND_BAILEY2V;
+    e->N = N;
+    e->K = 1;
+    e->k1_sp_route = -1;                       /* absent — 0 is VALID (3P)  */
+    e->k1_il_route = VFFT_K1_IL_NONE;
+    if (rs) {
+        int spr = vw2__oop_name_idx(vw2_oop_sp_name, 8, vw2_rec_get(rs, "sp_route"));
+        int sp_ok = (spr >= 0);
+        if (sp_ok) {
             int ch[VFFT_K1_CC_MAX_NF], cv[VFFT_K1_CC_MAX_NF], nf, nv;
-            nf = vw2__oop_split_ints(vw2_rec_get(r, "chain"), ch, VFFT_K1_CC_MAX_NF);
+            nf = vw2__oop_split_ints(vw2_rec_get(rs, "chain"), ch, VFFT_K1_CC_MAX_NF);
             if (nf > 0) {
                 e->cc_chain = vfft_k1_cc_chain_encode(ch, nf);
-                nv = vw2__oop_split_vars(vw2_rec_get(r, "vars"), cv, VFFT_K1_CC_MAX_NF);
+                nv = vw2__oop_split_vars(vw2_rec_get(rs, "vars"), cv, VFFT_K1_CC_MAX_NF);
                 if (nv == nf) e->cc_vars = vfft_k1_cc_vars_encode(cv, nv);
-                else if (nv != 0) return 0;        /* vars/chain nf mismatch */
+                else if (nv != 0) sp_ok = 0;   /* vars/chain nf mismatch:
+                                                * refuse THIS axis only     */
             }
+            if (sp_ok) {
+                e->k1_sp_route = spr;
+                np = vw2__oop_split_ints(vw2_rec_get(rs, "sp_pair"), pair, 2);
+                if (np == 2) { e->R1 = pair[0]; e->R2 = pair[1]; }
+                e->K = (size_t)vw2__oop_geti(rs, "ran", 1);
+                { const char *ns = vw2_rec_get(rs, "ns"); e->ns = ns ? atof(ns) : 0.0; }
+                got = 1;
+            } else { e->cc_chain = 0; e->cc_vars = 0; }
         }
-        {
-            const char *ns = vw2_rec_get(r, "ns");
-            e->ns = ns ? atof(ns) : 0.0;
-        }
-        return 1;
     }
-    return 0;
+    if (ri) {
+        const char *il = vw2_rec_get(ri, "il_route");
+        int ilr = il ? vw2__oop_name_idx(vw2_oop_il_name, 8, il) : VFFT_K1_IL_NONE;
+        if (ilr > VFFT_K1_IL_NONE) {
+            e->k1_il_route = ilr;
+            np = vw2__oop_split_ints(vw2_rec_get(ri, "il_pair"), pair, 2);
+            if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
+            e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
+            /* K/ns keep the pre-1.2 dual-line convention: when an IL
+             * verdict is present they are the IL natural champion's
+             * numbers (ran=1); a split-only fill above already set the
+             * lane-batch pair. */
+            e->K = (size_t)vw2__oop_geti(ri, "ran", 1);
+            { const char *ns = vw2_rec_get(ri, "ns"); e->ns = ns ? atof(ns) : 0.0; }
+            got = 1;
+        }
+        /* an il CELL always carries a route (builder law), so ilr <= NONE
+         * here can only be a legacy row with no il verdict — nothing to do */
+    }
+    return got;
 }
 
 /* kind-3 BACKWARD sibling (dir=bwd, 2026-08-21).
@@ -192,6 +221,10 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
         const vw2_rec_t *c = &s->rec[i];
         if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
         if (c->key.dir != VW2_DIR_BWD) continue;
+        /* v1.2: this reader owns the IL backward verdict — accept the
+         * lay=il cell and pre-1.2 lay-less vintage; a future lay=split
+         * backward cell belongs to a split-side reader, not here. */
+        if (c->key.lay != VW2_LAY_ANY && c->key.lay != VW2_LAY_IL) continue;
         if (strcmp(vw2__oop_eng(c), "k1")) continue;
         if (vw2__is_seed(c)) continue;
         r = c;
@@ -545,8 +578,14 @@ static inline int vw2_oop_rec_k1_bwd(vw2_rec_t *r, int N, int il_route,
     r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = N;
     r->key.q = 1; r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP;
     r->key.role = VW2_ROLE_COMP;
-    r->key.dir  = VW2_DIR_BWD;       /* the ONE component that separates this
-                                      * record from the forward verdict */
+    r->key.dir  = VW2_DIR_BWD;       /* separates this record from the
+                                      * forward verdict */
+    r->key.lay  = VW2_LAY_IL;        /* v1.2: the backward variant verdict is
+                                      * INTERLEAVED-only payload (il_route/
+                                      * il_kv), so it carries the IL tag —
+                                      * a split backward verdict, if one ever
+                                      * exists, gets its own lay=split cell
+                                      * instead of colliding here. */
     snprintf(pair, sizeof pair, "%d.%d", R1, R2);
     snprintf(kvb,  sizeof kvb,  "%d", kv);
     snprintf(nsbuf, sizeof nsbuf, "%.1f", ns);
@@ -642,6 +681,121 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
     }
     if (vw2_oop_rec_from_entry(&r, e, "race", NULL, &why) != VW2_OK) {
         fprintf(stderr, "[wisdom2] oop bank refused (%s)\n", why ? why : "?");
+        return -1;
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+
+/* ---------------------------------------------- kind-3 per-layout (v1.2) */
+
+/* Build ONE per-layout kind-3 record. Wisdom2-NATIVE, like the bwd builder:
+ * fresh banks only — no legacy text line has per-layout shape. lay names
+ * the CALLER LAYOUT this verdict serves (the owner's rule: layout is an
+ * integration property, AoS/SoA, never a strategy output). Each record
+ * carries ONLY its own layout's fields, so neither layout's re-race can
+ * erase the other's verdict, and neither layout's planning failure can veto
+ * the other's bank — the two collision classes the 2026-08-24 audit
+ * confirmed on the pre-1.2 dual line. */
+static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
+                                     const vfft_oop_wisdom_entry_t *e,
+                                     uint8_t lay, const char **why)
+{
+    char nsbuf[48], pair[48], chain[192], vars[192];
+    int i;
+    *why = NULL;
+    memset(r, 0, sizeof *r);
+    snprintf(nsbuf, sizeof nsbuf, "%.1f", e->ns);
+    r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
+    r->key.q = 1; r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP;
+    r->key.role = VW2_ROLE_COMP;
+    r->key.lay  = lay;
+#define VW2__OB_SET(sect, n, v) do { \
+    if (vw2_rec_set(r, sect, n, v) != VW2_OK) { vw2_rec_free(r); *why = "token-refused"; return -1; } \
+} while (0)
+    VW2__OB_SET(1, "eng", "k1");
+    if (lay == VW2_LAY_SPLIT) {
+        if (e->k1_sp_route < 0 || e->k1_sp_route > 7) { vw2_rec_free(r); *why = "sp-route-out-of-range"; return -1; }
+        VW2__OB_SET(1, "sp_route", vw2_oop_sp_name[e->k1_sp_route]);
+        snprintf(pair, sizeof pair, "%d.%d", e->R1, e->R2);
+        VW2__OB_SET(1, "sp_pair", pair);
+        if (e->k1_sp_route == VFFT_K1_SP_CCOL && e->cc_chain) {
+            int ch[VFFT_K1_CC_MAX_NF], nf;
+            nf = vfft_k1_cc_chain_decode(e->cc_chain, ch);
+            if (nf <= 0) { vw2_rec_free(r); *why = "ccchain-decode-refused"; return -1; }
+            {
+                size_t off = 0;
+                for (i = 0; i < nf; i++) {
+                    int rr = snprintf(chain + off, sizeof chain - off, "%s%d", i ? "." : "", ch[i]);
+                    if (rr < 0 || (size_t)rr >= sizeof chain - off) break;
+                    off += (size_t)rr;
+                }
+            }
+            VW2__OB_SET(1, "chain", chain);
+            if (e->cc_vars) {
+                int cv[VFFT_K1_CC_MAX_NF];
+                size_t off = 0;
+                if (!vfft_k1_cc_vars_decode(e->cc_vars, nf, cv)) {
+                    vw2_rec_free(r); *why = "ccvars-decode-refused"; return -1;
+                }
+                for (i = 0; i < nf; i++) {
+                    int rr = snprintf(vars + off, sizeof vars - off, "%s%s", i ? "." : "",
+                                      vw2_oop_var_name[cv[i]]);
+                    if (rr < 0 || (size_t)rr >= sizeof vars - off) break;
+                    off += (size_t)rr;
+                }
+                VW2__OB_SET(1, "vars", vars);
+            }
+        }
+    } else if (lay == VW2_LAY_IL) {
+        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 7) {
+            vw2_rec_free(r); *why = "no-il-verdict"; return -1;
+        }
+        VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
+        if (e->il_R1 || e->il_R2) {
+            snprintf(pair, sizeof pair, "%d.%d", e->il_R1, e->il_R2);
+            VW2__OB_SET(1, "il_pair", pair);
+        }
+        if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
+            char ref[96];   /* the signpost: recipe lives in the cascade cell */
+            snprintf(ref, sizeof ref, "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
+            VW2__OB_SET(1, "ref", ref);
+        }
+        if (e->il_kv) {
+            char kvb[16];
+            snprintf(kvb, sizeof kvb, "%d", e->il_kv);
+            VW2__OB_SET(1, "il_kv", kvb);
+        }
+    } else {
+        vw2_rec_free(r); *why = "lay-any-refused"; return -1;
+    }
+    {
+        char ranb[24];
+        snprintf(ranb, sizeof ranb, "%lld", (long long)e->K);
+        VW2__OB_SET(2, "ran", ranb);
+    }
+    if (e->ns > 0.0) {
+        VW2__OB_SET(2, "ns", nsbuf);
+        VW2__OB_SET(2, "metric", "fwd1");
+        VW2__OB_SET(2, "units", "ns");
+    }
+    VW2__OB_SET(2, "src", "race");
+#undef VW2__OB_SET
+    return VW2_OK;
+}
+
+static inline int vw2_oop_bank_k1_lay(vw2_store_t *s,
+                                      const vfft_oop_wisdom_entry_t *e,
+                                      uint8_t lay)
+{
+    vw2_rec_t r;
+    const char *why = NULL;
+    int rc;
+    if (vw2_oop_rec_k1_lay(&r, e, lay, &why) != VW2_OK) {
+        fprintf(stderr, "[wisdom2] oop k1 %s bank refused (%s)\n",
+                lay == VW2_LAY_SPLIT ? "lay=split" : "lay=il", why ? why : "?");
         return -1;
     }
     vw2__oop_stamp_date(&r);
