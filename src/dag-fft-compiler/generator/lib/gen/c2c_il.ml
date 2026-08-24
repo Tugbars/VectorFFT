@@ -978,14 +978,17 @@ let emit
             (2 * vw)
             vw
             ((radix - 1) * 2 * vw))
-       (if blocked
-        then
-          Printf.sprintf "CONTRACT: count %% %d == 0 (%d columns per iteration)." per per
-        else
-          Printf.sprintf
-            "count: ANY >= 1 — %d columns per wide iteration, inline VEX-128\n\
-            \ * odd-count tail for the leftover (il_odd_count_tail.md §3)."
-            per));
+       (* Both forms carry the inline VEX-128 narrow arm (il_odd_count_tail.md
+          §3); blocked gained it alongside the monolithic family, gated at
+          counts 1..9 by benches/blocked_tail_gate.c. The only difference the
+          contract states is the word BLOCKED, which is load-bearing:
+          CODELET_TAXONOMY.md reads this line to tell the two apart, because
+          blocked-ness is invisible in every other descriptive line. *)
+       (Printf.sprintf
+          "count: ANY >= 1 — %s%d columns per wide iteration, inline VEX-128\n\
+          \ * odd-count tail for the leftover (il_odd_count_tail.md §3)."
+          (if blocked then "BLOCKED, " else "")
+          per));
   Buffer.add_string buf "#include <immintrin.h>\n#include <stddef.h>\n\n";
   (* Only the quarter-turn mask this direction actually uses — emitting both
      would leave an unused static const (warning noise). The monolithic tail

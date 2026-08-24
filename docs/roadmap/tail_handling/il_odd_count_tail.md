@@ -141,7 +141,7 @@ AVX-512 keeps a masked tail because `vmaskz` is full-rate; AVX2's `vmaskmov` is 
 Needs buffer slack the caller may not have, and writes outside the caller's logical batch — the
 same class of out-of-bounds write the padded-batch work already hit.
 
-### 4d. Keep the even-count contract for `blocked` — ⚠️ PROBABLY NOT NECESSARY
+### 4d. Keep the even-count contract for `blocked` — ❌ REJECTED, RACED AND LOST (2026-08-23)
 Earlier reasoning: `blocked` cil kernels (`n1b`, `t2b`, `t2b_log3`) carry their own per-pass
 load/store edges, so there is "no single body to re-render at narrow width."
 
@@ -151,6 +151,45 @@ precisely so *"composite codelets don't reference the `__m256d` spill at width 2
 contract comment states the tail *"holds for EVERY codelet, monolithic AND composite."*
 A single narrow lane has no register pressure, so the CT spill scratch is simply not referenced
 and there is no `__m256d`-vs-`double` clash.
+
+---
+
+#### SETTLED. Blocked has the tail; the demotion lost.
+
+The earlier reasoning was indeed wrong, and the alternative was raced rather than argued.
+
+**What the two options actually were.** Keeping the even-count contract did not mean
+"refuse odd counts" — it meant **demote to the monolithic twin** whenever the partner
+factor was odd, which is what `il2p.h`'s `count_ok` gates did. That silently cost roughly
+20 cells of the form `N = 32·odd` / `64·odd` their blocked kernel. The alternative was to
+give the blocked forms their own inline narrow arm.
+
+**Why this reaches past c2c.** The interleaved REAL route is `x[N]` reinterpreted as
+`z[N/2]` → child `c2c(N/2)` → the `zr2c.h` fold (`vfft.c:2185`, route 0 = OOP-IL child).
+When `N/2` lands on `32·odd` or `64·odd`, that child hands its `il2p` codelets an **odd
+partner count**. So R2C/C2R is a first-class producer of exactly the case the demotion hit
+— this is not a c2c-only question.
+
+**Measured — blocked+tail vs the monolithic demotion**, one process, arms alternated,
+correctness re-checked before timing:
+
+| radix | monolithic spill | counts | blocked+tail wins by |
+|---|---|---|---|
+| 32 | 26.5% | 7 … 32 | **+6 … +26%** (`blocked_vs_mono_race.c`) |
+| 64 | **44.9%** | 8 / 16 / 32 | **+13 … +155%** (`r64_blocked_race.c`) |
+
+The spread tracks spill, which is the same law that governs blocking itself: at radix 64
+the monolithic form burns 44.9% of its bulk loop on stack traffic, so the demotion was
+giving away up to ~2.5× at the largest counts. At radix 32 it is a steady but modest win.
+The monolithic arm is also the noisy one — its floor moves run to run while the blocked
+arm's is stable — which is what heavy spill traffic looks like.
+
+**Correctness of the shipped form** is gated by `benches/blocked_tail_gate.c`: 81 arms over
+r32, r64 and the wing32 tangent forms at counts 1..9, each with a canary prefill (an
+unwritten column cannot hold the canary and be correct) and guard bands on both sides.
+
+🔴 The `count_ok` parameter still exists in `il2p.h`'s resolvers, deliberately — kept so a
+future tail-less form has somewhere to be refused. It is `(void)`-ed today.
 ⇒ Blocked cil kernels should be re-examined with `force_mono` before being excluded. Treat the
 even-count contract on blocked as an open question, not a decision.
 
