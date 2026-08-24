@@ -462,6 +462,93 @@ in `gen_main` needs a matching change here.
 
 The cascade has no odd-count exposure at all; it is a refusal, not a tail.
 
+### 🔴 `Isa.sse2` is a WIDTH, not an encoding
+
+The narrow arm is built from the emitter's `Isa.sse2` record — `__m128d`, `_mm_*`
+intrinsics, `vec_width = 2`. That names **one complex per iteration**, and nothing more.
+The record carries `target_attr = "sse2,fma"`, but `isa.ml` calls that field *cosmetic*
+and the record is **never emitted standalone**: the tail is emitted **inline inside the
+enclosing `__attribute__((target("avx2,fma")))` function**, so GCC VEX-encodes every one
+of those intrinsics.
+
+Measured from object code rather than trusted from the comment — the tail loop of each:
+
+| codelet | tail loop |
+|---|---|
+| `radix25_z_n1t` (monolithic) | 950 VEX, **0 legacy SSE** |
+| `radix32_z_n1tb` (blocked) | 546 VEX, **0** |
+| `radix64_z_n1tb88` (blocked) | 1427 VEX, **0** |
+| `radix32_z_n1tbw32` (tangent) | 521 VEX, **0** |
+
+And corpus-wide the only target attributes that exist are `avx2,fma` (894 files) and
+`avx512f` (569) — no file is ever compiled as `sse2`.
+
+**Why it matters — and the transition penalty is NOT the main reason.** Counting the tail
+loop's own instructions:
+
+| codelet (tail loop) | insns | **FMA** | 3-operand | reg-copies |
+|---|---|---|---|---|
+| `radix25_z_n1t` | 1030 | **284** | 72 | 123 |
+| `radix15_z_t2` | 434 | **103** | 75 | 32 |
+| `radix32_z_n1tb` | 658 | **48** | 244 | 20 |
+| `radix32_z_n1tbw32` | 617 | **98** | 121 | 53 |
+
+1. **FMA has no legacy-SSE encoding.** `vfmadd*` is VEX/EVEX only. A genuinely-SSE2 tail
+   could not fuse at all — every one of those 284 FMAs would split into `mulpd` + `addpd`,
+   costing the instructions *and* changing the arithmetic (one rounding becomes two). This
+   is why the record reads `target_attr = "sse2,fma"`: the `fma` half is load-bearing, and
+   FMA implies VEX.
+2. **Three-operand, non-destructive form.** SSE's `addpd a,b` overwrites `a`, so preserving
+   an input needs a `movapd` copy; VEX's `vaddpd a,b,c` writes a third register. Every
+   3-operand op is a copy that never had to be emitted.
+3. **Then the transition.** VEX zeroes bits 128+; legacy SSE preserves them, which is the
+   mechanism. On Sandy Bridge–Broadwell that was an explicit ~70-cycle save/restore per
+   transition; on Raptor Lake it is a dirty-upper-state flag giving later 256-bit ops a
+   false dependency and a blend µop. Real, but smaller than losing FMA.
+
+So the ordering is **FMA availability > instruction count > transition stall**. The tail is
+not "SSE2 that dodges a stall" — it is the same AVX2+FMA instruction set at half width.
+Splitting it into its own `sse2`-target function would make the label accurate and the code
+substantially worse.
+
+One complex is exactly one `__m128d`, so IL's tail consumes the remainder exactly. (The
+split family needs a width-1 `scalar` ISA for its straggler *lane*; IL never does, because
+its lane granularity is the complex number.)
+
+### How the tail is generated
+
+```c
+size_t k = 0;
+for (; k + per <= count; k += per) { ...wide body, unchanged...        }
+for (; k < count;      ++k      ) { ...same DAG at VEX-128, 1 complex... }
+```
+
+* **The DAG is not re-derived** — the *same* `scheduled` list is re-rendered at half width,
+  so the tail cannot drift from the body it backs.
+* **`k` is hoisted** out of the wide loop so the tail resumes it, and the tail is written as
+  a `for`, not an `if`, so it generalises when `per > 2` (AVX-512). A `count < per` call
+  skips the wide loop entirely — the low-trip bypass falls out for free.
+* **Leg tags are captured before the blocked fork.** The tail must name the same `zN`
+  variables the body does, but on the blocked path `emit_blocked` runs first and each
+  `emit_pass` calls `reset ()`, which clears the hashcons *and* rewinds `next_tag` to 0 — a
+  `cload` issued down in the tail would mint colliding tags. Capturing up front is, in the
+  emitter's own words, *"the whole difficulty of giving blocked a tail."* On the monolithic
+  path nothing has reset, so the capture is a hashcons hit and those files stayed
+  byte-identical when blocked gained its tail.
+* **A blocked kernel's tail runs the MONOLITHIC construction** at narrow width. Both compute
+  the same DFT and differ at ~1e-16 — the same magnitude blocked already differs from its
+  monolithic twin. Rendering the blocked passes narrow would need its own reset/tag
+  management for no numerical gain.
+* **T2 keeps the wide twiddle geometry.** At `per = 2` the leftover is exactly one column
+  and its index is **even**, so the `(k / per)` group arithmetic and record lane 0 hold
+  unchanged; the VTW2 record is already narrow-readable. Only the *addressing* stays wide.
+
+⚠ **Shipped headers under-report this.** 60 blocked codelets still declare
+`CONTRACT: count % 2 == 0` while carrying a working tail, and the hand-written provenance in
+`radix32_z_n1tbw32_avx2.c` says `(blocked, no odd tail)` outright. The code is right in every
+case — `blocked_tail_gate.c` runs 81 arms over r32/r64/wing32 at counts 1..9 with canary
+prefill and guard bands — but read the gate, not the header.
+
 ---
 
 ## 6. Dead weight worth knowing about

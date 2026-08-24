@@ -829,8 +829,21 @@ let emit
      iteration, emitted INLINE in the enclosing avx2,fma function (VEX-128,
      no AVX↔SSE transition), no scratch, no call, no duplicated column.
      Rendered BEFORE the preamble is assembled so its 1-lane constants land
-     in `tbl` (declared per-entry as __m128d). MONOLITHIC kernels only —
-     blocked keeps its even-count contract (doc §4d, open question).
+     in `tbl` (declared per-entry as __m128d).
+
+     EVERY form, blocked included, since 2026-08-23 (see the emission site
+     below); benches/blocked_tail_gate.c gates it at counts 1..9 over r32,
+     r64 and the wing32 tangent arms. The note that used to sit here said
+     "MONOLITHIC kernels only" and was simply missed when blocked gained the
+     tail.
+
+     🔴 Isa.sse2 names the WIDTH and intrinsic family (__m128d, _mm_*, one
+     complex per iteration), NOT the encoding. Its target_attr is cosmetic
+     and the record is never emitted standalone, so these intrinsics are
+     VEX-encoded by the enclosing avx2,fma function — measured from object
+     code: 0 legacy-SSE instructions in any tail loop. That is what keeps
+     the loop boundary free of an AVX↔SSE transition stall; emitting the
+     tail as a separate sse2-target function would reintroduce it.
      At per = 2 the leftover is exactly ONE column whose index is EVEN, so
      the T2 cursor's (k / per) group arithmetic and record lane 0 hold
      unchanged; the VTW2 record is already narrow-readable ([c,c] at off,
