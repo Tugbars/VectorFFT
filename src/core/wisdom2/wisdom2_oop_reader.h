@@ -126,6 +126,10 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N,
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.lay != lay) continue;
+            /* pin the axes this scan relies on (the vw2_key_serves law:
+             * a hand scan silently mis-scopes on axes it does not name) —
+             * every kind-3 writer stamps role=comp, fresh and migrated */
+            if (c->key.role != VW2_ROLE_COMP) continue;
             if (strcmp(vw2__oop_eng(c), "k1")) continue;
             /* 🔴 The kind-3 family has a dir=bwd SIBLING (the backward
              * kernel-variant verdict). It shares eng=k1 and the cell key;
@@ -144,57 +148,74 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
 {
     const vw2_rec_t *ril = vw2__oop_k1_scan(s, N, VW2_LAY_IL);
     const vw2_rec_t *rsp = vw2__oop_k1_scan(s, N, VW2_LAY_SPLIT);
-    const vw2_rec_t *rlg = (ril && rsp) ? NULL : vw2__oop_k1_scan(s, N, VW2_LAY_ANY);
-    const vw2_rec_t *ri = ril ? ril : rlg;     /* il-axis source            */
-    const vw2_rec_t *rs = rsp ? rsp : rlg;     /* split-axis source         */
-    int pair[2], np, got = 0;
+    const vw2_rec_t *rlg = vw2__oop_k1_scan(s, N, VW2_LAY_ANY);
+    int pair[2], np, got = 0, si;
     memset(e, 0, sizeof *e);
     e->kind = VFFT_OOP_KIND_BAILEY2V;
     e->N = N;
     e->K = 1;
-    e->k1_sp_route = -1;                       /* absent — 0 is VALID (3P)  */
-    e->k1_il_route = VFFT_K1_IL_NONE;
-    if (rs) {
-        int spr = vw2__oop_name_idx(vw2_oop_sp_name, 8, vw2_rec_get(rs, "sp_route"));
-        int sp_ok = (spr >= 0);
-        if (sp_ok) {
-            int ch[VFFT_K1_CC_MAX_NF], cv[VFFT_K1_CC_MAX_NF], nf, nv;
-            nf = vw2__oop_split_ints(vw2_rec_get(rs, "chain"), ch, VFFT_K1_CC_MAX_NF);
-            if (nf > 0) {
-                e->cc_chain = vfft_k1_cc_chain_encode(ch, nf);
-                nv = vw2__oop_split_vars(vw2_rec_get(rs, "vars"), cv, VFFT_K1_CC_MAX_NF);
-                if (nv == nf) e->cc_vars = vfft_k1_cc_vars_encode(cv, nv);
-                else if (nv != 0) sp_ok = 0;   /* vars/chain nf mismatch:
-                                                * refuse THIS axis only     */
-            }
-            if (sp_ok) {
-                e->k1_sp_route = spr;
-                np = vw2__oop_split_ints(vw2_rec_get(rs, "sp_pair"), pair, 2);
-                if (np == 2) { e->R1 = pair[0]; e->R2 = pair[1]; }
-                e->K = (size_t)vw2__oop_geti(rs, "ran", 1);
-                { const char *ns = vw2_rec_get(rs, "ns"); e->ns = ns ? atof(ns) : 0.0; }
-                got = 1;
-            } else { e->cc_chain = 0; e->cc_vars = 0; }
+    e->k1_sp_route = -1;                       /* UNRACED — 0 is VALID (3P) */
+    e->k1_il_route = -1;                       /* UNRACED — distinct from
+                                                * IL_NONE = "raced: none
+                                                * available" (B2.1)         */
+    /* SP axis: per-layout cell first, legacy row second — and the tier is
+     * decided by DECODE SUCCESS, not record presence (review finding: a
+     * present-but-undecodable cell — a future route token, a vars/chain
+     * mismatch — must not shadow a still-decodable legacy verdict).
+     * Decode into locals; commit only on full success. */
+    for (si = 0; si < 2 && e->k1_sp_route < 0; si++) {
+        const vw2_rec_t *rs = (si == 0) ? rsp : rlg;
+        int spr, ccch = 0, ccv = 0;
+        int ch[VFFT_K1_CC_MAX_NF], cv[VFFT_K1_CC_MAX_NF], nf, nv;
+        if (!rs) continue;
+        spr = vw2__oop_name_idx(vw2_oop_sp_name, 8, vw2_rec_get(rs, "sp_route"));
+        if (spr < 0) continue;                 /* undecodable: next tier    */
+        nf = vw2__oop_split_ints(vw2_rec_get(rs, "chain"), ch, VFFT_K1_CC_MAX_NF);
+        if (nf > 0) {
+            ccch = vfft_k1_cc_chain_encode(ch, nf);
+            nv = vw2__oop_split_vars(vw2_rec_get(rs, "vars"), cv, VFFT_K1_CC_MAX_NF);
+            if (nv == nf) ccv = vfft_k1_cc_vars_encode(cv, nv);
+            else if (nv != 0) continue;        /* vars/chain nf mismatch    */
         }
+        e->k1_sp_route = spr;
+        e->cc_chain = ccch;
+        e->cc_vars = ccv;
+        np = vw2__oop_split_ints(vw2_rec_get(rs, "sp_pair"), pair, 2);
+        if (np == 2) { e->R1 = pair[0]; e->R2 = pair[1]; }
+        e->K = (size_t)vw2__oop_geti(rs, "ran", 1);
+        { const char *ns = vw2_rec_get(rs, "ns"); e->ns = ns ? atof(ns) : 0.0; }
+        got = 1;
     }
-    if (ri) {
-        const char *il = vw2_rec_get(ri, "il_route");
-        int ilr = il ? vw2__oop_name_idx(vw2_oop_il_name, 8, il) : VFFT_K1_IL_NONE;
+    /* IL axis, same tiering. THREE outcomes per source: a decoded route
+     * (> NONE) commits; a legacy row WITHOUT an il_route token is the B2.1
+     * raced-none verdict (IL_NONE — that is what its writer meant); an
+     * undecodable token falls to the next tier. Absent from every source
+     * leaves -1 = unraced, so the consumer can run its IL heuristic
+     * instead of mistaking absence for a NONE verdict. */
+    for (si = 0; si < 2 && e->k1_il_route < 0; si++) {
+        const vw2_rec_t *ri = (si == 0) ? ril : rlg;
+        const char *il;
+        int ilr;
+        if (!ri) continue;
+        il = vw2_rec_get(ri, "il_route");
+        if (!il) {
+            if (si == 1) { e->k1_il_route = VFFT_K1_IL_NONE; got = 1; }
+            continue;                          /* il CELLS always carry one */
+        }
+        ilr = vw2__oop_name_idx(vw2_oop_il_name, 8, il);
+        if (ilr < 0) continue;                 /* undecodable: next tier    */
+        e->k1_il_route = ilr;
         if (ilr > VFFT_K1_IL_NONE) {
-            e->k1_il_route = ilr;
             np = vw2__oop_split_ints(vw2_rec_get(ri, "il_pair"), pair, 2);
             if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
             e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
             /* K/ns keep the pre-1.2 dual-line convention: when an IL
              * verdict is present they are the IL natural champion's
-             * numbers (ran=1); a split-only fill above already set the
-             * lane-batch pair. */
+             * numbers (ran=1). */
             e->K = (size_t)vw2__oop_geti(ri, "ran", 1);
             { const char *ns = vw2_rec_get(ri, "ns"); e->ns = ns ? atof(ns) : 0.0; }
-            got = 1;
         }
-        /* an il CELL always carries a route (builder law), so ilr <= NONE
-         * here can only be a legacy row with no il verdict — nothing to do */
+        got = 1;
     }
     return got;
 }
@@ -215,21 +236,27 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
 static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
                                         int *R1, int *R2)
 {
-    int i, pair[2], np, kv;
+    int i, pair[2], np, kv, tier;
     const vw2_rec_t *r = NULL;
-    for (i = 0; i < s->nrec; i++) {
-        const vw2_rec_t *c = &s->rec[i];
-        if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
-        if (c->key.dir != VW2_DIR_BWD) continue;
-        /* v1.2: this reader owns the IL backward verdict — accept the
-         * lay=il cell and pre-1.2 lay-less vintage; a future lay=split
-         * backward cell belongs to a split-side reader, not here. */
-        if (c->key.lay != VW2_LAY_ANY && c->key.lay != VW2_LAY_IL) continue;
-        if (strcmp(vw2__oop_eng(c), "k1")) continue;
-        if (vw2__is_seed(c)) continue;
-        r = c;
-        break;
-    }
+    /* v1.2: this reader owns the IL backward verdict. TWO TIERS, lay=il
+     * before lay-less vintage — the same cell-before-legacy precedence the
+     * forward reader implements. A single mixed first-match scan was the
+     * review's confirmed bug: eq now compares lay, so a re-raced verdict
+     * banks as a NEW lay=il record that a pre-1.2 row (loaded earlier)
+     * would shadow forever — banked, persisted, never served. A future
+     * lay=split backward cell belongs to a split-side reader, not here. */
+    for (tier = 0; tier < 2 && !r; tier++)
+        for (i = 0; i < s->nrec; i++) {
+            const vw2_rec_t *c = &s->rec[i];
+            if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
+            if (c->key.dir != VW2_DIR_BWD) continue;
+            if (c->key.role != VW2_ROLE_COMP) continue;
+            if (c->key.lay != (tier == 0 ? VW2_LAY_IL : VW2_LAY_ANY)) continue;
+            if (strcmp(vw2__oop_eng(c), "k1")) continue;
+            if (vw2__is_seed(c)) continue;
+            r = c;
+            break;
+        }
     if (!r) return 0;
     kv = vw2__oop_geti(r, "il_kv", 0);
     if (!kv) return 0;

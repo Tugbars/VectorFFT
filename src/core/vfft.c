@@ -1,18 +1,6 @@
-/* vfft.c — VectorFFT unified API implementation (the descriptor front door).
- *
- * Productionizes planning/plan_orchestrator.h into a dispatch-by-transform
- * vfft_create. WIRED: c2c in-place + c2c out-of-place. Other transforms land
- * incrementally on this same shape (resolve wisdom -> calibrate-on-miss at the
- * chosen rigor -> build -> MT execute).
- *
- * Wisdom is a BUNDLE: one vfft_wisdom holds every feature's table (c2c spike +
- * OOP 2-axis today; rfft/c2r/bluestein as features land), loaded from / saved to
- * a directory. Default (config.wisdom==NULL) = a library-managed bundle from
- * $VFFT_WISDOM_DIR (else "."), auto-saved on calibrate.
- *
- * MT execute is a pool K-split over the per-slice executors (same as the MT
- * benches); we don't include stride_executor.h (it redefines executor symbols).
- */
+/* vfft.c — the vfft_create / vfft_execute front door: resolve wisdom -> calibrate-on-miss
+ * at the chosen rigor -> build -> execute. Feature coverage: src/core/README.md.
+ * See docs/design/vfft_front_door.md. */
 #include "vfft.h"
 
 #include "env.h"                /* stride_env_init, ISA/version, pinning           */
@@ -90,20 +78,6 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-/* Minimum N at which the NATURAL cascade (ZCASC) is offered as a candidate.
- * Production value is 2048 — the tier boundary where the cascade was measured
- * to win (below it, Bailey il2p/il3p serves K=1 IL). This is a TEST HOOK in the
- * VFFT_FORCE_ZROUTE spirit: it exists so the boundary itself can be RACED
- * rather than assumed, because a gate that is never crossed can never be shown
- * to be in the right place.
- *
- * Set VFFT_NAT_ZCASC_MINN=1024 to let the cascade compete at 1024 — the child
- * size of the zr2c N=2048 cell, whose c2r arm is the outlier (0.55x vs MKL).
- * Crossing the gate is necessary but NOT sufficient: vfft_zsplit_default_chain
- * must also seed a chain for that N, or the create-time race has nothing to
- * build and the candidate stays NULL.
- *
- * Default is unchanged, so this read is inert in production. */
 /* _vfft_zcasc_min_n() now lives in oop/zsplit.h, beside the chain seeds
  * it gates, so the PLANNER can consult the same gate the runtime does.
  * It used to sit here, after the include block, which is exactly why
@@ -540,15 +514,9 @@ static int _oop_kind_class(int kind)
  * _vw2_persist. Its (N,K,kind-class) dedup policy lives on as the wisdom2
  * full-key upsert. See src/core/wisdom2/README.md. */
 
-/* ════════════════════════════════════════════════════════════════════════
- * CALIBRATION — rigor -> measured sweep (full search; slow first-create is fine,
- * the result is cached to wisdom).
- *   MEASURE:    DP-default coarse + variant refine (beam search).
- *   PATIENT:    DP set_patient (wider beam + re-measure top-K).
- *   EXHAUSTIVE: the true exhaustive search (every factorization × permutation ×
- *               per-stage variant) via vfft_proto_exhaustive_search. May be very
- *               slow at large N — run it once offline; the wisdom is banked.
- * ════════════════════════════════════════════════════════════════════════ */
+/* rigor -> planner entry: MEASURE/PATIENT -> vfft_proto_dp_plan_measure (patient widens the
+ * beam + re-measures top-K); EXHAUSTIVE -> vfft_proto_exhaustive_search, DP-patient on failure.
+ * See docs/design/vfft_front_door.md. */
 static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
                           const vfft_proto_registry_t *reg, vfft_proto_wisdom_entry_t *out)
 {
@@ -597,47 +565,8 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
     return 0;
 }
 
-/* ════════════════════════════════════════════════════════════════════════
- * TIGHT-vs-PADDED A/B (the planner primitive; a bakeoff like _r2c_bakeoff).
- * Decides, for a misaligned-K cell, WHICH BUFFER SHAPE the batch allocator
- * should hand back:
- *
- *   TIGHT  (arm A): te's factorization built at stride K,  run me=K  on an
- *                   N*K  buffer — no waste, rows land unaligned, the leftover
- *                   lanes go through the narrow tail path.
- *   PADDED (arm B): ae's factorization built at stride Kp, run me=Kp on an
- *                   N*Kp buffer — every row aligned, no leftovers, at the cost
- *                   of computing (Kp-K) lanes of waste at every stage.
- *
- * Returns Kp (allocate padded) or K (allocate tight), 0 on failure -> caller
- * falls back to tight. Interleaved-median, 3% hysteresis toward TIGHT (the
- * drop-in default), roundtrip-gate the winner at its own stride.
- *
- * 🔴 WHY NOT THE OLD RACE (replaced 2026-07-28, Tugbars): it timed
- * padded-run-Kp-lanes against padded-run-K-lanes — BOTH on the same Kp buffer.
- * Those are near-identical: same cache lines touched (a Kp row is one line), and
- * per row 8 lanes = two 4-wide ops vs 6 lanes = one 4-wide + one 2-wide op — the
- * same instruction count. It never raced either against a genuinely TIGHT
- * buffer, which is the only comparison that answers "should we pad at all".
- * Every shipped misaligned cell had exec_me=0 (unmeasured), so no migration.
- *
- * MEASUREMENT DISCIPLINE (Tugbars): allocation and plan-build are PLANNING costs,
- * amortized over every execute — they stay OUTSIDE the timed region. But the
- * FOOTPRINT difference (N*K vs N*Kp) is a real cache/TLB effect of execution, so
- * the tight arm gets a genuinely K-sized region, never a K-strided view of a
- * Kp-sized one. Both regions live in ONE arena with a 64B skew between them
- * (two separately page-aligned buffers caused 4KB aliasing + bimodal timings
- * twice in this campaign). Both arms get a JIT executor when one exists —
- * the pre-2026-07-28 race gave the padded arm a baked kernel and the other the
- * generic path, which silently favoured padding.
- *
- * UNIFIED wisdom (no separate padded file): the verdict is stamped into the (N,K)
- * entry's exec_me, and the pad plan IS the aligned (N,Kp) entry — so both `te` and
- * `ae` are ordinary c2c cells the caller has already calibrated (via _calibrate_c2c).
- * This is CALIBRATION (picking the best of our own plans), NOT vs-MKL benchmarking;
- * the bulk grid sweep + the vs-MKL bench are SEPARATE dev/user tools. `rigor` only
- * sizes the A/B round count.
- * ════════════════════════════════════════════════════════════════════════ */
+/* TIGHT-vs-PADDED A/B for misaligned K: race te at stride K (me=K) against ae at stride Kp
+ * (me=Kp), alternating order + median; returns Kp/K (3% toward K), or 0 if the winner fails roundtrip. */
 #define _VFFT_PADVW 4
 static int _pad_dcmp(const void *a, const void *b)
 {
@@ -895,14 +824,9 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
     return win ? n1 : n0;
 }
 
-/* ZTURN TERMINATOR PICK — the stf vs stf2 analog of the sterm/sterm2 race
- * above, SAME mechanics verbatim (bit-identical-pair sanity, ~0.3 ms bursts
- * sized from one estimated exec, alternating arm order per round, median-of-
- * rounds, 3% hysteresis toward the compiled default). fwd-only, like t2q
- * (stf2 mirrors sterm2's fwd-only scope). Returns the winner's median fwd ns
- * (0.0 on OOM/sanity failure; zt->t2q holds the verdict either way).
- * Since the 2026-07-27 ZTURN-only cutover this IS the kind-4 miss race —
- * the whole of it (the engine race is offline-only, dp_planner_il.h). */
+/* stf/stf2 twin of _calibrate_zsplit_t2q — same mechanics, fwd-only. This is the cascade's
+ * create-time miss race; engine (zsplit vs zturn) and chain are searched offline, not here.
+ * See docs/design/vfft_front_door.md. */
 static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
 {
     /* last==4 chains (radix-4 terminator) have NO stf2 twin — zturn.h's
@@ -1013,24 +937,9 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
  * (N,K), time them, and keep the winner. Closes the "decouple threshold" axis:
  * the K=32 default is the N=256 crossover, but the true crossover shifts per N.
  * ════════════════════════════════════════════════════════════════════════ */
-/* ════════════════════════════════════════════════════════════════════════
- * §W2 R2C / C2R ROUTE VERDICTS (wisdom2 wave 2, 2026-08-21)
- *
- * Both routes were always RACED and the verdict was always DISCARDED, so a
- * high-rigor create re-raced every time and every other create fell back to
- * a constant (the decouple_min_k threshold). These decides bank the race.
- * Precedence is _zr2c_build's law, verbatim — one route decision, one shape:
- *
- *   env racing hook (beats wisdom, never banks)
- *     > banked route verdict (wisdom2_real_reader.h, eng=route)
- *       > race both arms and BANK the winner
- *         > the structural default (the decouple_min_k threshold)
- *
- * The race alternates arm order across 9 rounds and takes the median. The
- * old bake-off timed arm A to completion and then arm B, which puts the two
- * arms in different thermal windows; that order bias was tolerable while the
- * verdict died with the process, but it must not be frozen into a record.
- * ════════════════════════════════════════════════════════════════════════ */
+/* Route pick, same law as _zr2c_build: VFFT_R2C_ROUTE env (never banks) > banked eng=route verdict
+ * > race both arms and bank the winner > decouple_min_k default. may_race gates only the race.
+ * See docs/design/vfft_front_door.md. */
 static double _il_ab_med9(double *v);
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
 
@@ -1341,19 +1250,8 @@ static stride_plan_t *_inner_c2c(struct vfft_wisdom_s *W,
     return vfft_proto_auto_plan(innerN, K, reg, cw);
 }
 
-/* TRIG HELPER CELLS (owner override 2026-08-19, wave 4): a trig transform's
- * inner complex FFT is keyed under its OWNING transform at the OUTER size,
- * not as a plain c2c cell — a DCT-I of N drives an inner c2c of N-1, and
- * banking that as c2c(N-1) collides with a genuine user request at N-1
- * (their optima differ: the inner runs inside the trig wrapper's access
- * pattern). The inner SIZE derivation lives in the codec
- * (vw2_stride_trig_inner_n), used by both read and write.
- *
- * Legacy files cannot be migrated into these keys: a helper row and a
- * genuine c2c row at the same (N,K) are indistinguishable on disk, so the
- * trig cells simply start cold under their new keys and re-race (they are
- * small and cheap). Under VFFT_WISDOM2_OFF=stride the old behavior is
- * exact: look the inner up as a plain c2c cell in the legacy table. */
+/* A trig inner c2c is keyed (owning transform, OUTER N, K) — never as c2c(innerN), which would
+ * collide with a genuine request there. Inner size derives from vw2_stride_trig_inner_n. */
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
 
 static int _vw2_t_of_trig(vfft_transform_t t)
@@ -2179,19 +2077,9 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
 static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                           struct vfft_plan_s *h);
 
-/* ════════════════════════════════════════════════════════════════════════
- * §D2 zr2c — 1D INTERLEAVED-CCE real transforms (Phase 2 of
- * docs/research/mkl_r2c_campaign/DESIGN_interleaved_r2c.md).
- * Route: x[N] reinterpreted as z[N/2] -> CHILD c2c(N/2) NATURAL -> zr2c.h
- * fold; c2r is the exact mirror with the fold leading. Even N, K==1.
- * route 0 = OOP-IL child · route 1 = NAT-IP cascade child (MKL's own
- * regime routing, measured 2026-08-13: parity-band both directions).
- * Route resolution (never-heuristic rule): VFFT_ZR2C_ROUTE env (the racing
- * hook — beats wisdom, never banks) > banked kind-5 verdict (zr_kv slot
- * for THIS transform+placement) > MEASURE+ races both routes in-context
- * through the real execute path and banks the winner > the placement-
- * matched structural default (ESTIMATE / no wisdom only).
- * ════════════════════════════════════════════════════════════════════════ */
+/* zr2c (even N, K==1, INTERLEAVED): x[N] read as z[N/2] -> child c2c(N/2) NATURAL -> zr2c.h fold;
+ * c2r mirrors it with the fold leading. route 0 = child_oop_il, route 1 = child_nat_ip.
+ * See docs/design/vfft_front_door.md. */
 static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
                                              int route)
 {
@@ -2390,16 +2278,9 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 static double _il_ab_now(void);
 static double _il_ab_med9(double *v);
 
-/* §D2 route resolution + in-context race. Race protocol (house rules): the
- * FULL composite through _exec_zr2c (child + fold + placement plumbing —
- * the memcpy/scratch hops are exactly the costs being raced), private junk
- * planes, junk-reps for the in-place shapes (natarm precedent), ~300 us
- * bursts, alternating arm order, median-of-9 rounds, 3% hysteresis toward
- * the structural default. Both arms are gated pipelines (zr2c_fd_gate.c
- * covers every transform x placement x route cell plus a cold->replay leg;
- * it reports its own leg count -- do not restate a number here, the last
- * one went stale the moment the gate grew), so the race picks between two
- * CORRECT plans — no in-race roundtrip gate needed. Budget ~10 ms per unmeasured cell, once. */
+/* Race the FULL composite through _exec_zr2c; 3% hysteresis toward the
+ * structural default. Both arms are gated correct (zr2c_fd_gate.c).
+ * See docs/design/vfft_front_door.md. */
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {
@@ -2514,24 +2395,8 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
     return h0;
 }
 
-/* Apply the banked IL kernel-variant verdict (kind-3 `il_kv`) to a freshly
- * created il2p plan. The VERDICT comes from wisdom; the MEASUREMENT that
- * produced it is the front door's job (bench_1d_vs_mkl.c builds a handle
- * per variant and times them, like every other comparison there). Nothing
- * here measures, and il2p.h stays a pure engine — it only publishes the
- * (radix, variant) registry.
- *
- * il_kv == 0 (every line banked before this axis existed, and every cell
- * that never measured it) => both lookups return 0 => the plan keeps the
- * monolithic registry kernels. No sentinel, no migration.
- *
- * COUNT CONTRACT: RETIRED 2026-08-23. Blocked kernels used to have no
- * odd-count tail, so the mid (count = R2) and leaf (count = R1) carried
- * explicit parity guards. They now carry the same inline narrow arm the
- * monolithic kernels have had since 2026-07-29, gated by
- * benches/blocked_tail_gate.c (counts 1..9, canary prefill + guard bands +
- * agreement with the monolithic twin), so parity is no longer a correctness
- * axis and the guards are gone from il2p.h and the planner pool alike. */
+/* Applies a banked kind-3 il_kv verdict; measures nothing (dp_planner_il.h
+ * owns that race). il_kv==0 keeps create's default — blocked at R>=32. */
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
                               const vw2_store_t *st, int N)
@@ -2572,22 +2437,9 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
         if (bkv && bR1 == p->R1 && bR2 == p->R2)
             vfft_il2p_apply_kv_forms_bwd(p, bkv);
     }
-    /* ENV OVERRIDES, applied LAST so they beat the banked verdict (the tcut
-     * precedent: env BEATS wisdom), and still the racing hook.
-     *
-     * VFFT_IL_KV is the FORWARD twin, added 2026-08-23. It exists because a
-     * variant can be fully wired and still unreachable: variant 5 (_ct,
-     * odd-composite Cooley-Tukey) only applies at non-pow2 radices, and a
-     * non-pow2 cell cannot bank a kind-3 line at all -- split has no encodable
-     * cc_chain there (vfft_k1_cc_chain_encode stores log2 per factor, so only
-     * 4/8/16/32/64 exist) and the line is refused without a split route.
-     * Without this hook there is no way to measure _ct through the front door,
-     * and therefore no basis for deciding whether the wisdom-grammar work that
-     * would make it selectable is worth doing.
-     *
-     * Both take the packed nibble form: VFFT_IL_KV=0x25 means leaf variant 2,
-     * mid variant 5 (VFFT_IL_KV_PACK in il2p.h). strtol base 0, so 0x.. hex
-     * and plain decimal both parse. */
+    /* Env applied LAST — it beats the banked verdict (racing hook). Packed
+     * nibbles: VFFT_IL_KV=0x25 => mid 5, leaf 2 (VFFT_IL_KV_PACK, il2p.h).
+     * See docs/design/vfft_front_door.md. */
     {
         const char *e = getenv("VFFT_IL_KV");
         if (e && e[0])
@@ -2652,19 +2504,9 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
         *il2p_out = vfft_il2p_create(N, iR1, iR2);
         _k1_il2p_apply_kv(*il2p_out, ke, &W->vw2, N);   /* wisdom verdict > default */
     }
-    /* PAIR-ORDERING race (il_coverage_plan Phase E follow-on, 2026-08-04):
-     * with the blocked mids live, the ORDERING of a heuristic pair now
-     * matters — (R1,R2) and (R2,R1) run different mid kernels (t2b48 vs
-     * t2b16 classes) and the post-t2b pairs race measured 32x16 beating
-     * the balanced pick 16x32 by 4.5% at 512 (above spread). The t2b
-     * pattern one level up: build the swapped ordering too and quick-race
-     * full-plan forward executes at create — runs EVERY create, so there
-     * is no verdict to bank and no replay divergence by construction
-     * (the ILP replay-bug shape the E6 design documented). Wisdom-banked
-     * pairs (ke->il_R1) are trusted as-is — the calibrator owns those.
-     * Kill switch: VFFT_NO_T2B disables (same family of race). Planning
-     * side only. ⚠ the OOP k1 block keeps the bare heuristic — it has no
-     * race home (availability-attach); divergence documented there. */
+    /* Ordering is a measured axis: (R1,R2) and (R2,R1) install different mid
+     * kernels. Heuristic pairs only — a wisdom pair is the calibrator's.
+     * See docs/design/vfft_front_door.md. */
     /* Per-process MEMO of the ordering pick, keyed by N: the race must
      * run at most ONCE per process per cell — without this, the natural
      * and scrambled handles (and measure vs consume) each re-race, and a
@@ -2778,15 +2620,9 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
-/* OOP-NATURAL verdict bank (@natoop sibling table — il_coverage_plan.md
- * Phase D). Same entry shape as @nat on its own (N,K) table: the two
- * placements have different incumbents, so a shared slot would let each
- * regime's bank clobber the other's. Chain fields are INFORMATIONAL here
- * (mode=ZCASC replays the kind-4 line, mode=FREE keeps the engine handle);
- * nf=1/factors[0]=N is the "no deployed chain" convention. The in-memory
- * add alone already makes the verdict process-coherent (the create-race
- * coherence rule): every later create this process reads the same pick
- * even if the file save fails. */
+/* OOP-natural verdict: same (N,K) cell as @nat but keyed place=oop, so the
+ * placements cannot clobber each other. nf=1/factors[0]=N => ref= signpost.
+ * See docs/design/vfft_front_door.md. */
 static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                             int N, size_t K, int mode, double ns)
 {
@@ -3270,41 +3106,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    "vfft_plan_planes() to fill the execute arguments");
         return NULL;
     }
-    /* ── TRANSFORM-CONTIGUOUS BATCH (config.batch_geom; il_coverage_plan.md
-     * Phase C). The batch is K independent K=1 transforms laid end to end,
-     * so SERVE it that way: build ONE K=1 handle through this same front
-     * door (inheriting every K=1 route, wisdom verdict and race) and run it
-     * K times at 2*N-double strides. No batched plan, no layout conversion,
-     * no new kernels — and every future K=1 gain lands here automatically.
-     *
-     * Measured against the lane-major conversion route it replaces:
-     * 2.5-5x faster across K in {2,3,4} x N in {256..8192}.
-     *
-     * Scope gates (anything else falls through to the normal paths):
-     * 1D INTERLEAVED, K>1. At K==1 the two geometries are the SAME
-     * addressing, so a wrapper would be pure overhead — fall through and
-     * let the request build its ordinary K=1 plan. SPLIT is untouched
-     * (its batch geometry is the split engines' own contract).
-     *
-     * ── R2C/C2R (2026-08-22) ──
-     * The real transforms join this wrapper, and for them it is the ONLY way
-     * to reach the §D2 zr2c route at K>1: zr2c works by REINTERPRETING a
-     * transform's N contiguous reals as N/2 complex points, which requires
-     * the transform's reals to BE contiguous. Under lane-major the real and
-     * imaginary halves of one complex sample sit K apart, so the reinterpret
-     * is not expressible there at any price -- it is a structural property of
-     * the route, not a gap in the implementation.
-     *
-     * 🔴 REAL IS ADMITTED ON THE **EXPLICIT** FLAG ONLY, not on DEFAULT.
-     * vfft.h's layout law says INTERLEAVED DEFAULT means transform-contiguous
-     * (the 2026-08-04 flip), and by that law real should be here on DEFAULT
-     * too. It is not, YET, because the shipping interleaved real path is
-     * lane-major (r2c_dispatch.h writes z[2*(f*K+t)]) and an in-tree gate
-     * asserts that addressing on a zeroed config. Flipping the default is a
-     * public contract change and is gated on the SAME evidence that justified
-     * the C2C flip: a measured race of this route against the lane-major CCE
-     * path. Until that race is banked, DEFAULT keeps its current meaning for
-     * real and callers opt in by name. */
+    /* TRANSFORM-CONTIGUOUS BATCH: one K=1 handle through this same front door, run K times at the per-transform block
+     * strides derived below. Gate: 1D INTERLEAVED K>1; C2C on DEFAULT-or-explicit, real on the EXPLICIT flag only.
+     * See docs/design/vfft_front_door.md. */
     {
     const int tc_c2c = (cfg->transform == VFFT_C2C) &&
                        (cfg->batch_geom == VFFT_BATCH_DEFAULT ||
@@ -3340,19 +3144,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tcb = inner;
-        /* Per-transform block strides, in doubles. Derived HERE, from the
-         * committed (transform, placement), so the execute loop never has to
-         * infer them:
-         *   C2C            2*N in, 2*N out
-         *   R2C  OOP       N reals in, 2*(N/2+1) CCE doubles out
-         *   C2R  OOP       the mirror
-         *   R2C/C2R IN-PLACE   2*(N/2+1) at BOTH ends -- ONE padded plane per
-         *                      transform, which is exactly the documented
-         *                      in-place real contract replicated K times.
-         * Odd N is handled by the same expression: N/2+1 bins is the CCE bin
-         * count for either parity (zr2c itself needs even N, but the inner
-         * K=1 create decides that for itself and an odd-N inner simply lands
-         * on the CCE path instead). */
+        /* Block strides in doubles from the committed (transform, placement). N/2+1 is the
+         * CCE bin count for either parity; even-N is the inner K=1 create's gate, not this one. */
         {
             const size_t cce = 2u * ((size_t)N / 2u + 1u);
             const size_t re = (size_t)N;
@@ -4194,16 +3987,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
-            /* ── ZCASC candidate (B5): the K=1 interleaved cascade with the
-             * stfn NATURAL terminator — natural output with NO reorder pass
-             * (B4 falsifier: +2.5–5.7% over scrambled where the tape pays
-             * +13–27%). Built here as a CANDIDATE in this race, never a
-             * parallel path. The chain replays the kind-4 scrambled cascade
-             * verdict (order-agnostic plan data; recalibrate cleared on the
-             * copy — natural recalibrate governs the NATURAL verdict, not
-             * the scrambled one: regime separation, line ~2766). Legacy
-             * zsplit routes have no natural mode — candidate skipped.
-             * Kill switch: VFFT_NO_NAT_ZCASC (VFFT_NO_ZTURN precedent). */
+            /* Natural-terminator cascade, built as a CANDIDATE for the race below from the kind-4
+             * chain with recalibrate cleared. Kill switch: VFFT_NO_NAT_ZCASC.
+             * See docs/design/vfft_front_door.md. */
             vfft_zturn2_plan_t *zct = NULL;
             if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                 N >= _vfft_zcasc_min_n() && !getenv("VFFT_NO_NAT_ZCASC"))
@@ -4736,24 +4522,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int zroute_pending = 0; /* 0 = legacy zsplit, 1 = ZTURN-S */
         if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED)
         {
-            /* SCRAMBLED K=1: the block-split cascade owns the interleaved
-             * z->z contract at the covered cells (matched-permutation
-             * roundtrip, gated). Classic create still runs below — it keeps
-             * serving the split-plane contract and every uncovered N; the
-             * cascade plan is attached to the classic handle at the end.
-             *
-             * Wisdom (kind-4 oop_wisdom line, §4.9993 + route axis §6.4):
-             * hit -> pure read of chain + ROUTE + per-route terminator pick
-             * — the READER honors everything: an old-format line has no
-             * route tokens -> banked LEGACY verdict, SERVED as legacy (user
-             * files keep meaning what they said); a route-1 line replays its
-             * zturn chain through vfft_zturn2_create_chain.
-             * miss/recalibrate -> ZTURN default (2026-07-27 cutover): the
-             * stf/stf2 t2q race on the default chain, banked as a route-1
-             * line (engine race offline-only, dp_planner_il.h). Picks MUST
-             * be measured on the installed binary: sterm/sterm2 (and
-             * stf/stf2) are bit-identical and their delta is
-             * code-placement-order. */
+            /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
+             * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
+             * See docs/design/vfft_front_door.md. */
             int zch[VFFT_ZSPLIT_MAX_NF];
             int znf = 0;
             if (!_k1z_wisdom_replay(cfg, W, N, &zs_pending, &zt_pending,
@@ -4885,13 +4656,19 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * the same heuristic an unbanked cell always ran; neither
              * layout's absence degrades the other. */
             const int sp_banked = (ke && ke->k1_sp_route >= 0);
+            /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
+             * means the IL axis was never raced at this cell — run the IL
+             * heuristic, exactly as an unbanked cell would. IL_NONE (0) is
+             * a VERDICT ("raced: no IL route available", the B2.1 meaning)
+             * and is consumed as one. */
+            const int il_banked = (ke && ke->k1_il_route >= 0);
             if (sp_banked)
             {
                 spr = ke->k1_sp_route;
                 sR1 = ke->R1;
                 sR2 = ke->R2;
             }
-            if (ke)
+            if (il_banked)
             {
                 ilr = ke->k1_il_route;
                 iR1 = ke->il_R1;
@@ -4933,7 +4710,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     }
                 }
             }
-            if (!ke)
+            if (!il_banked)
             {
                 /* IL runs its OWN pair search — it must NOT inherit sR1/sR2.
                  *
@@ -5178,28 +4955,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             hk->k1_jit = vfft_k1_jit_resolve(N, sR1, sR2, spr0);
                     }
 #endif
-                    /* ── OOP-NATURAL cascade race (il_coverage_plan.md Phase
-                     * D, 2026-08-04). D1 measured what this handle serves at
-                     * order=NATURAL ≥2048: il2p at 2048/4096, the convert
-                     * fallback above — 0.60x..0.17x of the in-place natural
-                     * tier's engine at the same cells, while the natord
-                     * cascade executes zin->zout natively (distinct-buffer is
-                     * zturn2's BASE contract; in-place is the allowed special
-                     * case) and was simply never built for OOP requests. Same
-                     * shape as the in-place B5 race: candidate = kind-4
-                     * replay + set_natord (recal cleared on the copy — the
-                     * NATURAL-OOP verdict is governed here, not by the
-                     * scrambled one), raced END-TO-END against this handle's
-                     * REAL execute path, verdict banked in the @natoop
-                     * sibling table (own table: different incumbents per
-                     * placement; @nat stays single-writer). FREE = keep the
-                     * engine handle as built. Both outcomes bank, so the
-                     * pick is process-coherent (create-race coherence rule:
-                     * the candidates are not bit-identical). Attach rides
-                     * the existing zsplit||zturn-first dispatch — zero
-                     * execute changes. Kill switch: VFFT_NO_NAT_ZCASC
-                     * (shared with in-place: "no natural cascade candidate
-                     * anywhere"); no bank under the switch. */
+                    /* OOP order=NATURAL at N >= _vfft_zcasc_min_n(): race this handle's real execute against a natord zturn cascade candidate; the winner attaches via hk->zturn on the existing zsplit||zturn-first dispatch.
+                     * Both outcomes bank to @natoop, its own table — @nat stays the in-place single writer. Kill switch VFFT_NO_NAT_ZCASC; under it nothing is banked.
+                     * See docs/design/vfft_front_door.md. */
                     if (cfg->order == VFFT_ORDER_NATURAL &&
                         N >= _vfft_zcasc_min_n() &&
                         cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
@@ -5823,26 +5581,15 @@ static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
         _natorder_mt(h, re, im, 1);
 }
 
-/* INTERLEAVED z contract (vfft.h buffer table): 1D tight in-place C2C plans
- * committed to layout=INTERLEAVED — sre/dre are interleaved complex (2*N*K
- * doubles, element e of lane t at [2*(e*K+t)]; dre may equal sre). Fast path =
- * the folded z->z adapters under the 6a17 tier rule (fwd -> core; bwd -> DIT
- * jit fused-t1s, DIF core), taken when order=DEFAULT and the pool is
- * single-threaded. Everything else (NATURAL, MT, prime overrides, <2 stages,
- * resolver misses) falls back to convert -> _exec_c2c_inplace -> convert:
- * always correct, never silent. Padded batches are excluded at create
- * (batch + INTERLEAVED is a loud reject; z is tight-only). */
+/* INTERLEAVED z contract (vfft.h buffer table): lane-major z, 2*N*K doubles, element e of lane t
+ * at [2*(e*K+t)]; dre may equal sre. Route selection lives in _exec_c2c_interleaved.
+ * See docs/design/vfft_front_door.md. */
 static void _vfft_z_dein(const double *, double *, double *, size_t);
 static void _vfft_z_inter(const double *, const double *, double *, size_t);
 
-/* §6a58 / Target C: MT for the interleaved path.
- * C2: il2il lane-slab dispatch (the _c2c_mt pattern verbatim — S =
- * ceil(K/T) rounded to 8, main thread slab 0, offsets are pure base
- * adds in the lane-major layout). Resolvability is PRE-FLIGHTED once
- * (plan-deterministic, not slab-dependent) so dispatch is all-or-
- * nothing. mt_unsafe routes to the fallback (same stage-codelet hazard
- * class as _c2c_mt). C1: the fallback's converts slab over flat element
- * ranges with barriers around the MT inplace. */
+/* il2il MT arg. A slab here is a set of SIMD LANES, so its size must stay a multiple of 8
+ * (see _exec_c2c_interleaved, which also pre-flights fold resolvability before any dispatch).
+ * See docs/design/vfft_front_door.md. */
 typedef struct
 {
     const stride_plan_t *p;
@@ -5890,19 +5637,8 @@ static void _zc_tramp(void *v)
  * the struct) — full independence, no barriers, disjoint blocks. The clone's
  * route is pool-free by _tc_inner_mt_safe, so this re-entry into
  * vfft_execute from a pool thread can never touch the pool. */
-/* Engage floor in complex points (N*K). 2048 is MEASURED, not guessed:
- * bench_1d_vs_mkl --ilmt with VFFT_TCMT_FLOOR=1 mapped the crossover on
- * 8 P-cores (2026-08-06) —
- *     N*K = 1024 (256x4):  MT 0.82x vs our own ST  -> MT HURTS
- *     N*K = 2048 (512x4):  1.55x   |  (256x8): 1.52x  |  (1024x2): 1.62x
- *     N*K = 4096 (1024x4): 3.01x
- * and engaging at 2048 flips two cells from LOSING to MKL's best config
- * (512x4 0.68x -> 1.23x, 256x8 0.83x -> 1.47x). Below 2048 the slab
- * dispatch costs more than the work it hands off.
- * ⚠ ONE MACHINE, ONE THREAD COUNT: this is a scalar default, not a wisdom
- * verdict. The per-cell banked pick is still the right end state (see
- * il_coverage_plan.md); VFFT_TCMT_FLOOR keeps the crossover re-mappable.
- * Read once — this is on the execute path. */
+/* MT engage floor, in COMPLEX POINTS (callers convert; h->N is not always that).
+ * A scalar default, not a wisdom verdict — VFFT_TCMT_FLOOR re-maps the crossover. */
 static size_t _tc_mt_floor(void)
 {
     static size_t f = 0;
@@ -5932,14 +5668,9 @@ static void _tc_mt_tramp(void *v)
                      a->d + (a->t0 + t) * a->dn, NULL);
 }
 
-/* §6a57: explicit-intrinsic z<->split converts. Measured parity with gcc
- * -O2's auto-vectorization (bench_il_convert_vec: hand -3.4%); applied
- * anyway for COMPILER INDEPENDENCE — other toolchains / -O1 builds are
- * not guaranteed the auto-vec. AVX-512: 8 complex / iter via
- * permutex2var (the tree's own IL-store vocabulary); AVX2: 4 complex via
- * unpack+perm2f128; plain-C floor otherwise. Scalar epilogue, NO masks
- * (tail_handling doctrine). BIT-identical to the scalar loops by
- * construction and by gate. */
+/* z<->split converts: pure data movement, bit-identical to the scalar epilogue by construction.
+ * Hand intrinsics for compiler independence (8 cx/iter AVX-512, 4 AVX2); scalar tail, no masks.
+ * See docs/design/vfft_front_door.md. */
 static void _vfft_z_dein(const double *z, double *re, double *im, size_t n)
 {
     size_t i = 0;
@@ -6009,14 +5740,8 @@ static void _il_pad_inter(const double *, const double *, double *, int,
 
 static int _il_ab_runs; /* §6a59 gate hook */
 
-/* §6a59: per-cell fused-vs-padded A/B, the exec_me lifecycle mirrored for
- * IL. Runs ONCE per unmeasured misaligned cell at the first-execute
- * decision point, on PRIVATE scratch (user buffers untouched). Alternating
- * arm order per round, medians, 3% hysteresis toward the FUSED incumbent,
- * winner roundtrip-gated (failure -> K, always-safe). A cold aligned chain
- * simply LOSES the race and the cell stamps K — the §6a55 +86% hazard
- * becomes a measured outcome. Stamps te->il_me in-memory; persists with
- * the bundle save (v7 trailing field). Race budget ~10 ms. */
+/* Fused-vs-padded A/B on private scratch: alternating arms, median of 9, 3% hysteresis toward
+ * the tight (K) arm. Any roundtrip failure returns K — the always-safe arm. */
 static double _il_ab_now(void)
 {
     struct timespec t;
@@ -6465,14 +6190,8 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
-/* K=1 SCRAMBLED cascade dispatch — the ONE consumer of h->zroute for BOTH
- * directions (cutover atomicity, cascade_load_path_restructure §6.4): the
- * route flips fwd+bwd together by construction. Only the winning route's
- * plan exists on the handle (create destroys the loser), so even a dispatch
- * bug could not pair fwd of one route with bwd of the other — the other
- * plan pointer is NULL. §2.6: the two routes emit different (both
- * SCRAMBLED-legal) output permutations; each route's bwd inverts its OWN
- * fwd comb, which this single-field dispatch guarantees. */
+/* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
+ * Invariant and route axis are documented at the zroute field. */
 static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
                            const double *sre, double *dre)
 {
@@ -6822,20 +6541,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
     if (h->tcb)
-    { /* ── TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms, each
-       * its own contiguous 2*N-double block. The inner handle carries the
-       * real route, placement and order; this loop only walks the blocks.
-       * The INTERLEAVED C2C signature check above guarantees sre and dre are
-       * both non-NULL (in-place is spelled (z,NULL,z,NULL), i.e. dre==sre),
-       * so the two pointers need no normalization here.
-       *
-       * MT = the split path's per-lane trick at transform granularity:
-       * contiguous slabs of ceil(K/T) transforms, worker t on clone t-1,
-       * caller on slab 0, one wait — no barriers, and MT==ST bitwise by
-       * construction (same kernels, same per-block data, disjoint writes).
-       * tcbw_n==0 (no pool at create / route not pool-free / clone
-       * mismatch) means T==1 and this is byte-for-byte the old serial
-       * loop. */
+        { /* TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms. Block strides are h->tcb_sn/tcb_dn
+     * (equal for C2C, different for r2c/c2r); the inner handle carries route, placement and order.
+     * See docs/design/vfft_front_door.md. */
         double *d = dre;
         const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
@@ -7067,29 +6775,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                             0, 0, 0, 0, 0, 0, 0);
                     return;
                 case VFFT_K1_IL_2P_PURE:
-                    /* PURE IL, BOTH DIRECTIONS (bwd solved 2026-07-29).
-                     *
-                     * The long-standing diagnosis that il2p's backward
-                     * composition was "unsolved -- no pairing of the n1t twins
-                     * inverts the turn" was WRONG: it holds only for the
-                     * operator-inverse route. The shipped composition keeps
-                     * the turn where the forward put it and needs no un-turn.
-                     * What was actually missing was a kernel the EMITTER could
-                     * not express, because twiddle POSITION was hard-wired to
-                     * DIRECTION.
-                     *
-                     * bwd runs t2t (POST-twiddle + backward butterfly + TURNED
-                     * store) then n1_bwd at radix R2, gated on real hardware
-                     * at 12 cells incl. 8 non-square in both orders
-                     * (build_tuned/benches/il2p_bwd_gate.c). il2p.h picks the
-                     * arm by AVAILABILITY; the per-cell speed pick belongs in
-                     * wisdom, not here.
-                     *
-                     * Route truthfulness (create) guarantees k1il2p != NULL
-                     * here; the bwd availability check is defensive — a build
-                     * without the bwd twins degrades to the convert fallback
-                     * below, never to silence. (The il_in/il_out hybrid arms
-                     * that used to catch this were deleted 2026-07-29.) */
+                    /* Route truthfulness at create makes k1il2p non-NULL for this route; the guard
+                     * is defensive — an unresolvable bwd arm breaks to convert, never to silence. */
                     if (h->k1il2p)
                     {
                         if (fwd)
@@ -7432,20 +7119,9 @@ static void _own_batch_free(vfft_batch b)
  * by construction and the Kp rule (VW=4 tight vs OOP 8) is an internal detail
  * keyed off placement. Loud rejection on every unsupported combination —
  * same voice as vfft_create. */
-/* ════════════════════════════════════════════════════════════════════════
- * BATCH STRIDE DECISION (1D C2C in-place) — the MEASURED tight-vs-padded
- * verdict, never a formula. Returns the stride to allocate at: K (tight —
- * padding lost) or Kp (padded — padding won).
- *
- * Calibrate-on-miss, the same contract vfft_create follows: a wisdom HIT is
- * instant; a MISS races once (_calibrate_pad), banks the verdict, and every
- * later allocation of that cell is instant. So allocation can pause ONCE per
- * (N,K) — documented in vfft.h.
- *
- * Only 1D C2C has this verdict: _calibrate_pad is a c2c bakeoff, and the
- * real/trig batches are pad-only by construction (padding is their only
- * full-SIMD path for misaligned K), so they keep the roundup default.
- * ════════════════════════════════════════════════════════════════════════ */
+/* Returns the stride to ALLOCATE at: K (tight won) or Kp (padded won). Wisdom
+ * hit is instant; a miss races _calibrate_pad and banks only a nonzero verdict.
+ * See docs/design/vfft_front_door.md. */
 static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
 {
     const size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
@@ -7629,18 +7305,9 @@ static void _own_batch_planes(vfft_batch b, double **sre, double **sim,
 
 static size_t _own_batch_stride(vfft_batch b) { return b ? b->Kp : 0; }
 
-/* ════════════════════════════════════════════════════════════════════════
- * PUBLIC CREATE — the plan and its buffers are ONE object (2026-07-28).
- *
- * config.owned_buffers = 0 (default): the caller brings tight buffers; this is
- * a straight pass-through and allocates nothing extra.
- * config.owned_buffers = 1: allocate the planes HERE, at a stride chosen by the
- * measured pad-vs-tight verdict, hand them to the inner create as the batch,
- * and attach them to the plan so vfft_destroy frees them. Because the batch is
- * built from the SAME config the plan is, the two cannot disagree — the
- * descriptor cross-checks inside the inner create are now unreachable
- * invariants rather than a user-facing failure mode.
- * ════════════════════════════════════════════════════════════════════════ */
+/* owned_buffers=1: the plan owns its planes, built from the SAME cfg — so the
+ * inner create's batch cross-checks are invariants, and vfft_destroy frees them.
+ * See docs/design/vfft_front_door.md. */
 vfft_plan vfft_create(const vfft_config_t *cfg)
 {
     if (!cfg)
