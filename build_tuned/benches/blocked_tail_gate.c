@@ -51,6 +51,15 @@ typedef void (*kfn)(const double *, const double *, double *, double *,
                            const double *, const double *,                     \
                            size_t, size_t, size_t, size_t, size_t);
 DECL(radix32_z_n1tb_fwd_avx2)    DECL(radix32_z_n1t_fwd_avx2)
+/* TANGENT / wing32 forms. These gained the tail in 4b34dcd8 (a commit whose
+   message is about FFTW bench metrics) and were never covered here, while
+   il2p.h's count_ok gates were lifted for variants 3 and 4 too -- so an odd
+   partner count can now reach them. Their own headers still claim
+   "count %% 2 == 0 (blocked, no odd tail)", which is what makes verifying
+   the CODE rather than the comment the point. */
+DECL(radix32_z_n1tbw32_fwd_avx2)     DECL(radix32_z_n1tbw32t256_fwd_avx2)
+DECL(radix32_z_t2bw32_fwd_avx2)      DECL(radix32_z_t2bw32m128_fwd_avx2)
+DECL(radix32_z_t2_fwd_avx2)
 DECL(radix64_z_n1tb88_fwd_avx2)  DECL(radix64_z_n1tb416_fwd_avx2)
 DECL(radix64_z_n1t_fwd_avx2)
 DECL(radix64_z_t2b88_fwd_avx2)   DECL(radix64_z_t2b416_fwd_avx2)
@@ -152,6 +161,22 @@ int main(void)
     for (c = 1; c <= 9; c++)
         arm("r64 mid 4.16", 64, radix64_z_t2b416_fwd_avx2,
             radix64_z_t2_fwd_avx2, 1, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r32 wing leaf", 32, radix32_z_n1tbw32_fwd_avx2,
+            radix32_z_n1t_fwd_avx2, 0, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r32 wing T256", 32, radix32_z_n1tbw32t256_fwd_avx2,
+            radix32_z_n1t_fwd_avx2, 0, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r32 wing mid", 32, radix32_z_t2bw32_fwd_avx2,
+            radix32_z_t2_fwd_avx2, 1, c);
+    printf("\n");
+    for (c = 1; c <= 9; c++)
+        arm("r32 wing M128", 32, radix32_z_t2bw32m128_fwd_avx2,
+            radix32_z_t2_fwd_avx2, 1, c);
     printf("\n%s\n", g_fail ? "*** BLOCKED TAIL: NOT CORRECT ***"
                             : "BLOCKED TAIL: correct at every count 1..9, "
                               "r32 and r64, leaf and mid");
