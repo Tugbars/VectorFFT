@@ -2597,6 +2597,18 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     }
 }
 
+/* cfg.layout -> the wisdom lay= axis (v1.2). The @nat/@natoop mode cells
+ * hold layout-gated candidates (ZCASC/ILP build only for INTERLEAVED), so
+ * each layout races into its OWN cell and replays it thereafter. Pre-fix,
+ * both layouts shared one cell: a split caller degrading an IL-banked mode
+ * to UNSET re-raced (correctly) and banked OVER the IL verdict (the shared
+ * shelf), and the IL side banked back — mutual erasure plus a full
+ * re-measure on every layout alternation (audit FD4, the @nat ping-pong). */
+static inline uint8_t _vw2_lay_of(const vfft_config_t *cfg)
+{
+    return cfg->layout == VFFT_LAYOUT_INTERLEAVED ? VW2_LAY_IL : VW2_LAY_SPLIT;
+}
+
 static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                          int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
@@ -2616,12 +2628,14 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     /* wave-4 flip: @nat verdicts bank into the wisdom2 store (memory;
      * persistence behind config.wisdom_write). spike_wisdom.txt freezes. */
-    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0);
+    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     _vw2_persist(W, cfg);
 }
 
 /* OOP-natural verdict: same (N,K) cell as @nat but keyed place=oop, so the
- * placements cannot clobber each other. nf=1/factors[0]=N => ref= signpost.
+ * placements cannot clobber each other — and keyed lay= (v1.2) so the
+ * LAYOUTS cannot either, for exactly the same reason the placement split
+ * existed. nf=1/factors[0]=N => ref= signpost.
  * See docs/design/vfft_front_door.md. */
 static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                             int N, size_t K, int mode, double ns)
@@ -2636,7 +2650,7 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.factors[0] = N;
     /* wave-4 flip: the dummy-chain shape becomes the ref= SIGNPOST record
      * in the store (the family codec detects nf==1 && factors[0]==N). */
-    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1);
+    vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/1, _vw2_lay_of(cfg));
     _vw2_persist(W, cfg);
 }
 
@@ -3983,7 +3997,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             vfft_proto_nat_entry_t neb;
             const vfft_proto_nat_entry_t *ne =
                 W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
-                                  : (vw2_stride_lookup_nat(&W->vw2, N, K, &neb) ? &neb : NULL);
+                                  : (vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, K, &neb) ? &neb : NULL);
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
@@ -4493,7 +4507,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 vfft_proto_nat_entry_t nieb;
                 const vfft_proto_nat_entry_t *nie =
                     W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
-                                      : (vw2_stride_lookup_nat(&W->vw2, N, K, &nieb) ? &nieb : NULL);
+                                      : (vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, K, &nieb) ? &nieb : NULL);
                 if (nie && !cfg->recalibrate && nie->mode == VFFT_NAT_ILP)
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
             }
@@ -4966,7 +4980,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         vfft_proto_nat_entry_t noeb;
                         const vfft_proto_nat_entry_t *noe =
                             W->vw2_off_stride ? vfft_proto_natoop_lookup(&W->c2c, N, K)
-                                              : (vw2_stride_lookup_natoop(&W->vw2, N, K, &noeb) ? &noeb : NULL);
+                                              : (vw2_stride_lookup_natoop(&W->vw2, _vw2_lay_of(cfg), N, K, &noeb) ? &noeb : NULL);
                         int nmode = (noe && !cfg->recalibrate)
                                         ? noe->mode : VFFT_NAT_UNSET;
                         vfft_zturn2_plan_t *zct = NULL;

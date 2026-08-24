@@ -1108,8 +1108,14 @@ static inline int vw2__migst_file(vw2_store_t *st, vw2__mig_seen_t *seen,
                 continue;
             }
         } else {
+            /* migration writes LAY-LESS VINTAGE (VW2_LAY_ANY): the legacy
+             * spike file never recorded which layout raced the row, and a
+             * lay-less record serves BOTH layouts through the fallback tier
+             * until each re-races into its own cell. Stamping a guess here
+             * would assert a measurement context that never existed. */
             if (vw2_stride_rec_from_nat(&rec, &ne,
                                         pr == 3 ? VW2_PL_OOP : VW2_PL_IP,
+                                        VW2_LAY_ANY,
                                         "migrated", from, &why)) {
                 if (vw2__mig_quar(st, stats, why ? why : "codec-refused", from, line)) { fclose(f); return -1; }
                 continue;
@@ -1231,7 +1237,10 @@ static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
                     vfft_proto_nat_lookup(&w, w.nat[i].N, w.nat[i].K);
                 memset(&got, 0, sizeof got);
                 cells++;
-                if (!vw2_stride_lookup_nat(&st, served->N, served->K, &got) ||
+                /* VW2_LAY_ANY: the gate round-trips PRE-1.2 rows; a lay=ANY request
+                 * matches exactly the lay-less vintage (strict-equality
+                 * serves), byte-for-byte the pre-1.2 resolution. */
+                if (!vw2_stride_lookup_nat(&st, VW2_LAY_ANY, served->N, served->K, &got) ||
                     memcmp(&got, served, sizeof got)) {
                     fprintf(stderr, "[reader-gate-stride] nat N=%d K=%zu mismatch\n",
                             served->N, served->K);
@@ -1244,7 +1253,7 @@ static inline int vw2_migrate_stride_reader_gate(const char *spike_path,
                     vfft_proto_natoop_lookup(&w, w.natoop[i].N, w.natoop[i].K);
                 memset(&got, 0, sizeof got);
                 cells++;
-                if (!vw2_stride_lookup_natoop(&st, served->N, served->K, &got) ||
+                if (!vw2_stride_lookup_natoop(&st, VW2_LAY_ANY, served->N, served->K, &got) ||
                     memcmp(&got, served, sizeof got)) {
                     fprintf(stderr, "[reader-gate-stride] natoop N=%d K=%zu mismatch\n",
                             served->N, served->K);
@@ -1546,10 +1555,10 @@ static inline int vw2_export_stride(const char *store_dir,
         } else if (r->key.ord == VW2_ORD_NAT && r->key.t == VW2_T_C2C) {
             if (r->key.pl == VW2_PL_IP) {
                 row.kind = 2;
-                ok = vw2_stride_lookup_nat(&st, row.N, row.K, &row.ne);
+                ok = vw2_stride_lookup_nat(&st, VW2_LAY_ANY, row.N, row.K, &row.ne);
             } else if (r->key.pl == VW2_PL_OOP) {
                 row.kind = 3;
-                ok = vw2_stride_lookup_natoop(&st, row.N, row.K, &row.ne);
+                ok = vw2_stride_lookup_natoop(&st, VW2_LAY_ANY, row.N, row.K, &row.ne);
             }
         }
         if (!ok) continue;                    /* unservable: not exportable */
