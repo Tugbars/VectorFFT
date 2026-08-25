@@ -1670,11 +1670,12 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     double *xr = alloc_d(T), *xi = alloc_d(T);      /* M-split input    */
     double *mr = alloc_d(T), *mi = alloc_d(T);      /* M-split output   */
     double *cs = alloc_d(2 * T), *cd = alloc_d(2 * T); /* ctl memcpy    */
-    double smp[5][64];
-    double med[5], spr[5];
+    double *zn = alloc_d(2 * T);                    /* O-native z       */
+    double smp[6][64];
+    double med[6], spr[6];
     double rts = -1, rti = -1;
-    int have[5] = { 1, 1, 0, 0, 1 }; /* Os, Oi, Mi, Ms, ctl */
-    vfft_plan hs = NULL, hi = NULL;
+    int have[6] = { 1, 1, 0, 0, 0, 1 }; /* Os, Oi, On, Mi, Ms, ctl */
+    vfft_plan hs = NULL, hi = NULL, hn = NULL;
     int r, a0, a, k;
     if (rounds > 64) rounds = 64;
     fprintf(stderr, "[2dil] %dx%d create (wisdom miss => calibrates here)...\n", N1, N2);
@@ -1702,6 +1703,19 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         hs = vfft_create(&cfg);
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         hi = vfft_create(&cfg);
+        /* O-native: same caller contract, native tier opted in for THIS
+         * create only. Engagement is verified below, not assumed. */
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_NATIVE=1");
+#else
+        putenv("VFFT_IL2D_NATIVE=1");
+#endif
+        hn = vfft_create(&cfg);
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_NATIVE=");
+#else
+        putenv("VFFT_IL2D_NATIVE=0");
+#endif
     }
     if (!hs || !hi) {
         printf("  %5dx%-5d  create FAIL (hs=%p hi=%p)\n", N1, N2,
@@ -1734,6 +1748,22 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         if (a1 > rti) rti = a1;
         if (b1 > rti) rti = b1;
     }
+    /* O-native engagement proof (mt_results_need_engagement_proof adapted):
+     * the native tier serves NATURAL, the wrapper serves SCRAMBLED — one
+     * fwd on each, identical outputs => NOT engaged => arm absent. */
+    if (hn) {
+        double dmax = 0.0;
+        for (i = 0; i < T; i++) { zn[2 * i] = xr[i]; zn[2 * i + 1] = xi[i]; }
+        vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL);
+        for (i = 0; i < T; i++) { z[2 * i] = xr[i]; z[2 * i + 1] = xi[i]; }
+        vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL);
+        for (i = 0; i < 2 * T; i++) {
+            double d = fabs(zn[i] - z[i]);
+            if (d > dmax) dmax = d;
+        }
+        have[2] = (dmax > 0.0);
+        if (!have[2]) { vfft_destroy(hn); hn = NULL; }
+    }
 #ifdef VFFT_HAS_MKL
     {
         DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
@@ -1743,20 +1773,20 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         if (DftiCreateDescriptor(&hMi, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims)
                 == DFTI_NO_ERROR) {
             DftiSetValue(hMi, DFTI_PLACEMENT, DFTI_INPLACE);
-            have[2] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
+            have[3] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
         }
         if (DftiCreateDescriptor(&hMs, DFTI_DOUBLE, DFTI_COMPLEX, 2, dims)
                 == DFTI_NO_ERROR) {
             DftiSetValue(hMs, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
             DftiSetValue(hMs, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
-            have[3] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
+            have[4] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
         }
         for (i = 0; i < 2 * T; i++) mz[i] = cs[i];
         for (r = 0; r < rounds; r++) {
-            for (a0 = 0; a0 < 5; a0++) {
+            for (a0 = 0; a0 < 6; a0++) {
                 int reps = reps_for(T);
                 double t0, ns;
-                a = (r & 1) ? 4 - a0 : a0;
+                a = (r & 1) ? 5 - a0 : a0;
                 if (!have[a]) continue;
                 cachebust();
                 t0 = vfft_proto_now_ns();
@@ -1764,9 +1794,10 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     switch (a) {
                     case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
                     case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
-                    case 2: DftiComputeForward(hMi, mz); break;
-                    case 3: DftiComputeForward(hMs, xr, xi, mr, mi); break;
-                    case 4: memcpy(cd, cs, 2 * T * 8); break;
+                    case 2: vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL); break;
+                    case 3: DftiComputeForward(hMi, mz); break;
+                    case 4: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+                    case 5: memcpy(cd, cs, 2 * T * 8); break;
                     }
                 }
                 ns = (vfft_proto_now_ns() - t0) / reps;
@@ -1778,10 +1809,10 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     }
 #else
     for (r = 0; r < rounds; r++) {
-        for (a0 = 0; a0 < 5; a0++) {
+        for (a0 = 0; a0 < 6; a0++) {
             int reps = reps_for(T);
             double t0, ns;
-            a = (r & 1) ? 4 - a0 : a0;
+            a = (r & 1) ? 5 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
             t0 = vfft_proto_now_ns();
@@ -1789,7 +1820,8 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 switch (a) {
                 case 0: vfft_execute(hs, VFFT_FORWARD, sre, simg, sre, simg); break;
                 case 1: vfft_execute(hi, VFFT_FORWARD, z, NULL, z, NULL); break;
-                case 4: memcpy(cd, cs, 2 * T * 8); break;
+                case 2: vfft_execute(hn, VFFT_FORWARD, zn, NULL, zn, NULL); break;
+                case 5: memcpy(cd, cs, 2 * T * 8); break;
                 }
             }
             ns = (vfft_proto_now_ns() - t0) / reps;
@@ -1797,39 +1829,55 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         }
     }
 #endif
-    for (a = 0; a < 5; a++) {
+    for (a = 0; a < 6; a++) {
         if (!have[a]) { med[a] = 0; spr[a] = 0; continue; }
         med[a] = il2d__med(smp[a], rounds); /* sorts in place */
         spr[a] = il2d__spread(smp[a], rounds, med[a]);
     }
     {
-        const double cspr = spr[4]; /* ctl spread %, the noise floor */
+        const double cspr = spr[5]; /* ctl spread %, the noise floor */
         printf("  %5dx%-5d rt %.1e/%.1e | ctl %9.0f (%4.1f%%) | "
                "O-split %10.0f (%4.1f%%) | O-inter %10.0f (%4.1f%%)",
-               N1, N2, rts, rti, med[4], spr[4],
+               N1, N2, rts, rti, med[5], spr[5],
                med[0], spr[0], med[1], spr[1]);
+        if (have[2])
+            printf(" | O-NATIVE %10.0f (%4.1f%%)", med[2], spr[2]);
+        else
+            printf(" | O-NATIVE     absent");
 #ifdef VFFT_HAS_MKL
         printf(" | M-inter %10.0f (%4.1f%%) | M-split %10.0f (%4.1f%%)\n",
-               med[2], spr[2], med[3], spr[3]);
-        if (med[1] > 0 && med[2] > 0) {
-            double q1 = med[2] / med[1]; /* O-inter xMKLcce: >1 = we win */
+               med[3], spr[3], med[4], spr[4]);
+        if (med[1] > 0 && med[3] > 0) {
+            double q1 = med[3] / med[1]; /* O-inter xMKLcce: >1 = we win */
             double q2 = med[1] / med[0]; /* the convert-around tax        */
-            double q3 = med[3] / med[2]; /* banked-config vs MKL's best   */
-            double q4 = med[2] / med[0]; /* O-split xMKLcce               */
+            double q3 = med[4] / med[3]; /* banked-config vs MKL's best   */
+            double q4 = med[3] / med[0]; /* O-split xMKLcce               */
             printf("        O-inter xMKLcce %.2f%s | wrap tax O-inter/O-split "
-                   "%.2f%s | O-split xMKLcce %.2f | M-split/M-inter %.2f\n",
+                   "%.2f%s | O-split xMKLcce %.2f | M-split/M-inter %.2f",
                    q1, fabs(1 - q1) * 100 < cspr ? "~" : "",
                    q2, fabs(1 - q2) * 100 < cspr ? "~" : "", q4, q3);
+            if (have[2] && med[2] > 0)
+                printf(" | O-NATIVE xMKLcce %.2f%s, native uplift %.2f%s",
+                       med[3] / med[2],
+                       fabs(1 - med[3] / med[2]) * 100 < cspr ? "~" : "",
+                       med[1] / med[2],
+                       fabs(1 - med[1] / med[2]) * 100 < cspr ? "~" : "");
+            printf("\n");
         }
 #else
         printf("  (no MKL)\n");
-        if (med[0] > 0)
-            printf("        wrap tax O-inter/O-split %.2f\n", med[1] / med[0]);
+        if (med[0] > 0) {
+            printf("        wrap tax O-inter/O-split %.2f", med[1] / med[0]);
+            if (have[2] && med[2] > 0)
+                printf(" | native uplift O-inter/O-NATIVE %.2f", med[1] / med[2]);
+            printf("\n");
+        }
 #endif
     }
     vfft_destroy(hs);
     vfft_destroy(hi);
-    free_d(sre); free_d(simg); free_d(z); free_d(mz);
+    if (hn) vfft_destroy(hn);
+    free_d(sre); free_d(simg); free_d(z); free_d(mz); free_d(zn);
     free_d(xr); free_d(xi); free_d(mr); free_d(mi);
     free_d(cs); free_d(cd);
 }
@@ -3904,7 +3952,8 @@ int main(int argc, char **argv)
         {
             int cells[][2] = { { 64, 64 },   { 128, 128 }, { 256, 256 },
                                { 512, 512 }, { 100, 100 }, { 1024, 1024 },
-                               { 16, 4096 }, { 4096, 16 } };
+                               { 16, 4096 }, { 4096, 16 }, { 32, 1024 },
+                               { 64, 256 } };
             int nc = (int)(sizeof cells / sizeof cells[0]), ci;
             const char *cf = getenv("VFFT_2DIL_CELLS"); /* "64x64,256x256" filter */
             for (ci = 0; ci < nc; ci++) {
