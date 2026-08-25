@@ -296,6 +296,27 @@ the convert bridge) closed 2026-08-04.
 **DEFAULT order** = engine-native everywhere (fastest, order-agnostic): resolves to the
 scrambled-native path in-place, the calibrated winner OOP.
 
+> **2026-08-25 — the DEFAULT-order in-place hole, closed.** Until this date the
+> paragraph above was not true sub-2048: the ILP-attach consult was gated on
+> *explicit* `VFFT_ORDER_SCRAMBLED`, so a `VFFT_ORDER_DEFAULT` in-place IL create
+> (the common spelling) never reached the IL engines and served the
+> dein→split→inter convert instead — a measured 1.8–6.1× tax (same-run three-arm
+> probes). Fixed: the create now races ILP vs its own convert incumbent, banks the
+> verdict in its own `ord=scr` mode cell (`mode=ilp` | `mode=conv`), and serves it;
+> the fixed arm lands on the natural reference at every probed size.
+>
+> What that moves vs MKL, **derived from multiple runs — not a toe-to-toe
+> same-run competition** (the post-fix column is the ★★/✦ OOP data above applied
+> through the grid's own "sub-2048 in-place and OOP run the SAME IL engines" rule;
+> the pre-fix column divides it by the same-run convert tax measured 2026-08-25):
+>
+> | N | pre-fix serving (convert) vs MKL | post-fix serving (il2p/il3p) vs MKL | MKL abs (vintage) | MKL column source |
+> |---|---|---|---|---|
+> | 128 | ~0.2–0.3× (derived) | ≈1.05× expected (65 vs 69 ns) | 69 ns | OOP row, 2026-08-16 ★★ |
+> | 256 | ~0.2–0.3× (derived) | ≈1.00× expected (136 vs 136 ns) | 136 ns | OOP row, 2026-08-16 ★★ |
+> | 512 | ~0.2–0.3× (derived) | ≈0.94–0.98× expected (296–297 vs 291–295 ns) | 291–295 ns | OOP row, 2026-08-16 ★★ |
+> | 1024 | ~0.25–0.35× (derived) | ~0.95-to-parity expected (848+ vs 833+ ns) | 833–873 ns | ✦ 6-rep, 2026-08-16 |
+
 Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win):
 
 ```

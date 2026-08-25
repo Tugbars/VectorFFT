@@ -72,7 +72,13 @@ enum { VFFT_NAT_UNSET = 0, VFFT_NAT_FREE = 1, VFFT_NAT_LEAF_IP = 2,
         * SCRAMBLED in-place create attaches HIT-ONLY on this verdict
         * (identity permutation — same contract note as Phase A; hit-only
         * keeps @nat single-writer). Old binaries re-measure, never wrong. */
-       VFFT_NAT_ILP = 7 };
+       VFFT_NAT_ILP = 7,
+       /* CONV (2026-08-25): the banked LOSS of the scrambled in-place IL
+        * race — "raced, the convert incumbent won" — in the ord=scr mode
+        * cell only (the @nat natural cells never carry it). Exists so a
+        * losing race is not re-run on every create (the kind-3 IL_NONE
+        * law). Old binaries: unknown mode -> re-measure, never wrong. */
+       VFFT_NAT_CONV = 8 };
 
 /* ── SELF-CONTAINED natural-order record (order=VFFT_ORDER_NATURAL). Its own DEPLOYED FFT
  * chain (nf/factors/variants/use_dif — the plan the reorder tape follows and that runs

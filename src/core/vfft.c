@@ -338,12 +338,11 @@ struct vfft_plan_s
      * the default table — decision quality only, both arms correct).
      * VFFT_IL_PAD=0/1 forces the arm (gates + same-process benches). */
     int il_me;
-    /* ── native IL 2D c2c tier (M1, docs/roadmap/fft2d_il_c2c_design.md):
-     * single-stage n1c column pass (legs = plane rows, Ls = N2; order
-     * along i = IDENTITY, simulator-proven) + per-row K=1 IL child at
-     * order NATURAL. il2d_row != NULL selects the tier at execute; the
-     * convert wrapper stays the fallback. Opt-in: VFFT_IL2D_NATIVE=1 (env
-     * pre-wisdom lever; the route race + lay=il banking is M3/M4). */
+    /* ── native IL 2D c2c tier (docs/roadmap/fft2d_il_c2c_design.md):
+     * n1c/t2c column chain + per-row K=1 IL child (order NATURAL). THE
+     * serving for IL 2D c2c — OWNER LAW 2026-08-25: split is NOT a
+     * fallback of IL, the convert wrapper is GONE; inexpressible cells
+     * REFUSE at create. Cold cells race + bank (lay=il) + serve. */
     struct vfft_plan_s *il2d_row;
     /* the column chain: stage s has radix il2d_R[s] over sub-length
      * il2d_L[s] (D = L/R); stages 0..nst-2 are t2c with driver-built
@@ -3213,6 +3212,32 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
+/* the ord=scr mode-cell bank (the ILP-attach fix, 2026-08-25): the
+ * scrambled in-place IL race's verdict — mode=ILP (win) or mode=CONV
+ * (the banked loss, so a losing race never re-runs). Chain informational,
+ * like _bank_nat_1d. */
+static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
+                             const vfft_config_t *cfg, int N, size_t K,
+                             int mode, double ns, const int *fac,
+                             const int *var, int nf, int use_dif)
+{
+    vfft_proto_nat_entry_t nn;
+    memset(&nn, 0, sizeof nn);
+    nn.N = N;
+    nn.K = K;
+    nn.mode = mode;
+    nn.nat_ns = ns;
+    nn.nf = nf;
+    nn.use_dif = use_dif;
+    for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
+    {
+        nn.factors[s] = fac[s];
+        nn.variants[s] = var[s];
+    }
+    vw2_stride_bank_scrmode(&W->vw2, &nn, _vw2_lay_of(cfg));
+    _vw2_persist(W, cfg);
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API
  * ════════════════════════════════════════════════════════════════════════ */
@@ -4061,14 +4086,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             return NULL;
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        /* ── native IL 2D c2c tier (M1, fft2d_il_c2c_design.md) — attempted
-         * FIRST: when it engages, the split tplan (which the native execute
-         * never touches) is not built at all, skipping a full 2D
-         * calibration per cold create. Serves natural x natural (legal for
-         * ORDER_DEFAULT, a bonus for ORDER_NATURAL). Opt-in via
-         * VFFT_IL2D_NATIVE=1; any miss — env off, no n1c radix at N1, row
-         * child create failure — falls through to _build_2d and the
-         * convert wrapper exactly as before. */
+        /* ── native IL 2D c2c tier — THE serving for IL callers (OWNER
+         * LAW 2026-08-25: no convert wrapper, split is not a fallback of
+         * IL). Cold cells race the chain + axes and bank the lay=il
+         * verdict; inexpressible cells (no chain; natural at multi-stage
+         * until the rho tables; child failure) REFUSE loudly. The split
+         * tplan below is built ONLY for split-layout callers. */
         struct vfft_plan_s *il2d_row = NULL;
         int il2d_nst = 0;
         int il2d_wc = 0;
@@ -4085,9 +4108,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         if (cfg->transform == VFFT_C2C &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
-            const char *e = getenv("VFFT_IL2D_NATIVE");
             int chain_ok = 0;
-            if (e && atoi(e) == 1)
             {
                 /* chain precedence: env > banked lay=il verdict > RACE
                  * the full composition pool (multi-stage cells only;
@@ -4136,7 +4157,25 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                                      il2d_b, &il2d_nst);
                 }
             }
-            if (chain_ok)
+            if (!chain_ok)
+            {
+                /* OWNER LAW: split is NOT a fallback of IL — no convert
+                 * wrapper. An inexpressible N1 refuses loudly. */
+                _vfft_warn("vfft_create: IL 2D c2c %dx%d — N1 has no "
+                           "native column chain (radices 4..64, no "
+                           "leftover factor); unsupported for now",
+                           N1, N2);
+                return NULL;
+            }
+            if (cfg->order == VFFT_ORDER_NATURAL && il2d_nst > 1)
+            {
+                _vfft_warn("vfft_create: IL 2D c2c %dx%d order=NATURAL "
+                           "needs the multi-stage natural-i tapes (rho "
+                           "tables, M4) — unsupported for now; "
+                           "single-stage cells (N1 <= 64) serve natural",
+                           N1, N2);
+                return NULL;
+            }
             {
                 vfft_config_t rc;
                 memset(&rc, 0, sizeof rc);
@@ -4158,6 +4197,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 {
                     vfft_destroy(il2d_row);
                     il2d_row = NULL;
+                }
+                if (!il2d_row)
+                {
+                    _vfft_warn("vfft_create: IL 2D c2c %dx%d — native "
+                               "row child / stage tables failed; "
+                               "unsupported (no wrapper by owner law)",
+                               N1, N2);
+                    return NULL;
                 }
                 /* column-tile width: env override (raced axis; wisdom
                  * banking follows the falsifier run — tcut precedent:
@@ -5334,33 +5381,151 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * handle would be dead weight. Mono/Bailey IL tiers stay OOP-only
          * until their alias-safety is verified per family (A3) — the classic
          * path keeps serving their in-place cells as today. */
-        if (K == 1 && !ob && cfg->order == VFFT_ORDER_SCRAMBLED &&
+        if (K == 1 && !ob &&
+            (cfg->order == VFFT_ORDER_SCRAMBLED ||
+             cfg->order == VFFT_ORDER_DEFAULT) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
+            /* The cascade replay stays explicit-SCRAMBLED (its kind-4 cells
+             * were raced under that contract); the ILP race below serves
+             * BOTH spellings — DEFAULT-order in-place IL is the same
+             * scrambled-output contract, and it was the caller eating the
+             * convert tax. */
             vfft_zsplit_plan_t *ipzs = NULL;
             vfft_zturn2_plan_t *ipzt = NULL;
             int ipzr = 0;
-            if (_k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt, &ipzr))
+            if (cfg->order == VFFT_ORDER_SCRAMBLED &&
+                _k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt, &ipzr))
             {
                 h->zsplit = ipzs; /* exactly one non-NULL (route atomicity) */
                 h->zturn = ipzt;
                 h->zroute = ipzr;
             }
-            /* Phase B3 (il_coverage_plan.md): sub-2048 explicit-SCRAMBLED
-             * in-place rides the @nat ILP verdict HIT-ONLY — the IL engines
-             * are natural-native and identity is contract-legal (Phase A);
-             * hit-only keeps @nat single-writer (only NATURAL creates
-             * measure/bank). A miss serves the classic convert path exactly
-             * as before — strictly additive. */
+            /* THE ILP-ATTACH FIX (owner law 2026-08-25: everything is
+             * measured — a scrambled caller never waits on a natural
+             * caller to have raced first). The old design served the
+             * @nat verdict HIT-ONLY ("single @nat writer"): a
+             * scrambled-only user fell to convert FOREVER, a measured
+             * 4-5.5x tax with the native engines one attach away. Now:
+             * consult the caller's OWN ord=scr mode cell; on a miss RUN
+             * THE RACE (the natural race's exact protocol, against THIS
+             * caller's convert incumbent) and bank BOTH outcomes
+             * (mode=ilp | mode=conv — the banked loss, no re-race). */
             if (!h->zsplit && !h->zturn && N < 2048 &&
                 !getenv("VFFT_NO_NAT_ILP"))
             {
                 vfft_proto_nat_entry_t nieb;
                 const vfft_proto_nat_entry_t *nie =
-                    W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
-                                      : (vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, K, &nieb) ? &nieb : NULL);
-                if (nie && !cfg->recalibrate && nie->mode == VFFT_NAT_ILP)
+                    W->vw2_off_stride
+                        ? NULL
+                        : (vw2_stride_lookup_scrmode(
+                               &W->vw2, _vw2_lay_of(cfg), N, K, &nieb)
+                               ? &nieb
+                               : NULL);
+                if (nie && !cfg->recalibrate &&
+                    nie->mode == VFFT_NAT_ILP)
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
+                else if ((!nie || cfg->recalibrate) &&
+                         !W->vw2_off_stride)
+                {
+                    vfft_il2p_plan_t *ilc2 = NULL;
+                    vfft_il3p_plan_t *ilc3 = NULL;
+                    _k1_il_candidate(W, N, &ilc2, &ilc3);
+                    if (ilc2 || ilc3)
+                    {
+                        double *rz = (double *)malloc(
+                            2 * (size_t)N * sizeof(double));
+                        double *r0 = (double *)malloc(
+                            2 * (size_t)N * sizeof(double));
+                        if (rz && r0)
+                        {
+                            const int reps =
+                                N <= 256 ? 200
+                                         : (N <= 1024 ? 80 : 32);
+                            double ti[5], tz[5];
+                            for (long i2 = 0; i2 < 2L * N; i2++)
+                                r0[i2] = (double)rand() / RAND_MAX - 0.5;
+                            vfft_set_num_threads(h->nthreads);
+                            for (int r = 0; r < 5; r++)
+                                for (int a = 0; a < 2; a++)
+                                {
+                                    const int arm = (r & 1) ? 1 - a : a;
+                                    double t0, dt;
+                                    memcpy(rz, r0,
+                                           2 * (size_t)N
+                                               * sizeof(double));
+                                    t0 = vfft_proto_now_ns();
+                                    for (int i2 = 0; i2 < reps; i2++)
+                                    {
+                                        if (arm == 0)
+                                            _exec_c2c_interleaved(
+                                                h, VFFT_FORWARD, rz, rz);
+                                        else if (ilc2)
+                                            vfft_il2p_execute_fwd(ilc2,
+                                                                  rz,
+                                                                  rz);
+                                        else
+                                            vfft_il3p_execute_fwd(ilc3,
+                                                                  rz,
+                                                                  rz);
+                                    }
+                                    dt = (vfft_proto_now_ns() - t0)
+                                         / reps;
+                                    if (arm == 0)
+                                        ti[r] = dt;
+                                    else
+                                        tz[r] = dt;
+                                }
+                            for (int a = 0; a < 2; a++)
+                            {
+                                double *v = a ? tz : ti;
+                                for (int i2 = 1; i2 < 5; i2++)
+                                    for (int j2 = i2;
+                                         j2 > 0 && v[j2] < v[j2 - 1];
+                                         j2--)
+                                    {
+                                        double tt = v[j2];
+                                        v[j2] = v[j2 - 1];
+                                        v[j2 - 1] = tt;
+                                    }
+                            }
+                            if (getenv("VFFT_NAT_LOG"))
+                                fprintf(stderr,
+                                        "[scrmode] N=%d K=%zu conv=%.0fns "
+                                        "ilp=%.0fns -> %s\n",
+                                        N, K, ti[2], tz[2],
+                                        tz[2] < ti[2] ? "ILP" : "conv");
+                            if (tz[2] < ti[2])
+                            {
+                                h->k1il2p = ilc2;
+                                h->k1il3p = ilc3;
+                                ilc2 = NULL;
+                                ilc3 = NULL;
+                                _bank_scrmode_1d(
+                                    W, cfg, N, K, VFFT_NAT_ILP, tz[2],
+                                    h->cplan->factors,
+                                    h->cplan->variants,
+                                    h->cplan->num_stages,
+                                    h->cplan->use_dif_forward);
+                            }
+                            else
+                                _bank_scrmode_1d(
+                                    W, cfg, N, K, VFFT_NAT_CONV, ti[2],
+                                    h->cplan->factors,
+                                    h->cplan->variants,
+                                    h->cplan->num_stages,
+                                    h->cplan->use_dif_forward);
+                        }
+                        free(rz);
+                        free(r0);
+                        if (ilc2)
+                            vfft_il2p_destroy(ilc2);
+                        if (ilc3)
+                            vfft_il3p_destroy(ilc3);
+                    }
+                }
+                /* mode==CONV: the banked loss — convert serves, no
+                 * re-race. */
             }
         }
         /* The pad-vs-tail decision serves the LANE-MAJOR interleaved batch;
@@ -6997,6 +7162,13 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
             }
         }
     }
+    if (getenv("VFFT_CONV_LOG"))
+        fprintf(stderr,
+                "[conv] ip N=%d K=%zu dir=%s nat_mode=%d mtunsafe=%d "
+                "nstages=%d\n",
+                h->N, h->K, dir == VFFT_FORWARD ? "fwd" : "bwd",
+                h->nat_mode, h->mt_unsafe,
+                h->cplan ? h->cplan->num_stages : -1);
     { /* §6a58/C1: slab the converts across the pool (barriered). */
         int Tc = stride_get_num_threads();
         if (Tc > _stride_pool_size + 1)
@@ -7135,6 +7307,10 @@ static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
 {
     const size_t NK = (size_t)h->N * h->K;
     const size_t bytes = (NK * 8 + 63) & ~(size_t)63;
+    if (getenv("VFFT_CONV_LOG"))
+        fprintf(stderr, "[conv] oop N=%d K=%zu dir=%s k1=%d route=%d\n",
+                h->N, h->K, dir == VFFT_FORWARD ? "fwd" : "bwd", h->k1_on,
+                h->k1_il_route);
     if (!h->il_wr)
     {
         h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
@@ -7617,29 +7793,11 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
                     return;
                 }
-                if (!h->il_wr)
-                {
-                    h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
-                                                              (plane * 8 + 63) & ~(size_t)63);
-                    h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64,
-                                                              (plane * 8 + 63) & ~(size_t)63);
-                    if (!h->il_wr || !h->il_wi)
-                        return;
-                }
-                _vfft_z_dein(sre, h->il_wr, h->il_wi, plane);
-                if (dir == VFFT_FORWARD)
-                {
-                    stride_execute_fwd(h->tplan, h->il_wr, h->il_wi);
-                    if (h->nat2d)
-                        _natorder_2d(h, h->il_wr, h->il_wi, 0);
-                }
-                else
-                {
-                    if (h->nat2d)
-                        _natorder_2d(h, h->il_wr, h->il_wi, 1);
-                    stride_execute_bwd(h->tplan, h->il_wr, h->il_wi);
-                }
-                _vfft_z_inter(h->il_wr, h->il_wi, dre, plane);
+                /* OWNER LAW (2026-08-25): the convert wrapper is
+                 * GONE — an IL 2D c2c plan is native or was refused at
+                 * create; reaching here without il2d_row is a bug. */
+                _vfft_warn("vfft_execute: IL 2D c2c plan without the "
+                           "native tier — create/execute wiring bug");
                 return;
             }
             if (!dre && !dim)

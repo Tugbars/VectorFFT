@@ -1116,7 +1116,7 @@ static inline int vw2__migst_file(vw2_store_t *st, vw2__mig_seen_t *seen,
              * lay-less record serves BOTH layouts through the fallback tier
              * until each re-races into its own cell. Stamping a guess here
              * would assert a measurement context that never existed. */
-            if (vw2_stride_rec_from_nat(&rec, &ne,
+            if (vw2_stride_rec_from_nat_mig(&rec, &ne,
                                         pr == 3 ? VW2_PL_OOP : VW2_PL_IP,
                                         VW2_LAY_ANY,
                                         "migrated", from, &why)) {
