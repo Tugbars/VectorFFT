@@ -240,12 +240,13 @@ let emit
     failwith
       "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing policy for \
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
-  if kind = T2C && (blocked || turnst || turnst_gs || tangent || pretw)
+  if kind = T2C && (turnst || turnst_gs || pretw)
   then
     failwith
-      "codelet_cil: t2c v1 is monolithic plain-store post-twiddle only \
-       (blocked / turned / tangent([c,tan] records) / pretw variants are M3 \
-       races — fft2d_il_c2c_design.md)";
+      "codelet_cil: t2c takes no turned store (2D has no corner turn) and \
+       no pretw flag (t2c placement is STRUCTURAL: post at fwd, pre at bwd \
+       — the Hermitian-transpose stage). blocked and tangent are the \
+       raced body variants (fft2d_il_c2c_design.md 2a).";
   let ctx =
     make_ctx
       ~tw_group:(kind = T2C)

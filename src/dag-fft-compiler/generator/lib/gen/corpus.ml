@@ -1559,6 +1559,50 @@ let zil_pure_cells : (string * string list) list =
     , [ "64"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_t2c_bwd_avx2.c"
     , [ "64"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_t2cb48_avx2.c"
+    , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_t2cb48_bwd_avx2.c"
+    , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_t2cb84_avx2.c"
+    , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "8.4"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_t2cb84_bwd_avx2.c"
+    , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "8.4"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2cb88_avx2.c"
+    , [ "64"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2cb88_bwd_avx2.c"
+    , [ "64"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2cb416_avx2.c"
+    , [ "64"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_t2cb416_bwd_avx2.c"
+    , [ "64"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1cb48_avx2.c"
+    , [ "32"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1cb48_bwd_avx2.c"
+    , [ "32"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1cb84_avx2.c"
+    , [ "32"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.4"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix32_z_n1cb84_bwd_avx2.c"
+    , [ "32"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.4"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1cb88_avx2.c"
+    , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1cb88_bwd_avx2.c"
+    , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "8.8"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1cb416_avx2.c"
+    , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix64_z_n1cb416_bwd_avx2.c"
+    , [ "64"; "--cil-n1c"; "--cil-blocked"; "--cil-split"; "4.16"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2ctan_avx2.c"
+    , [ "8"; "--cil-t2c"; "--cil-tangent"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2ctan_bwd_avx2.c"
+    , [ "8"; "--cil-t2c"; "--cil-tangent"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2ctan_avx2.c"
+    , [ "16"; "--cil-t2c"; "--cil-tangent"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2ctan_bwd_avx2.c"
+    , [ "16"; "--cil-t2c"; "--cil-tangent"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1ctan_avx2.c"
+    , [ "16"; "--cil-n1c"; "--cil-tangent"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_n1ctan_bwd_avx2.c"
+    , [ "16"; "--cil-n1c"; "--cil-tangent"; "--cil-form-tag"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ]
 ;;
 
