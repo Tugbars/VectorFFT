@@ -1,8 +1,8 @@
-@vw2 1.1
+@vw2 1.2
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
-@legend key: layout (split/il) is never a key token - it is a strategy output in the payload
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
@@ -319,3 +319,8 @@
 @cell t=c2c n=1024 q=1 ord=nat place=ip | eng=stride mode=ilp chain=32.32 vars=flat.t1s dif=0 | ran=1 ns=1202.50 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:322
 @cell t=c2c n=255 q=1 ord=nat place=ip | eng=stride mode=ilp chain=3.5.17 vars=flat.log3.flat dif=0 | ran=1 ns=849.50 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:323
 @cell t=c2c n=512 q=1 ord=nat place=ip | eng=stride mode=ilp chain=8.8.8 vars=flat.t1s.t1s dif=0 | ran=1 ns=308.75 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:324
+@cell t=c2c n=64 q=1 ord=scr place=ip | eng=stride chain=4.16 vars=log3.flat dif=1 | ran=1 ns=240.42 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=64 q=1 ord=nat place=ip lay=il | eng=stride mode=ilp ref=cell(t=c2c,n=64,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=100.00 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=64 q=1 ord=scr place=ip lay=il | eng=stride mode=ilp dif=0 | ran=1 ns=101.00 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=16 q=1 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=1 ns=62.64 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=16 q=1 ord=scr place=ip lay=il | eng=stride mode=ilp dif=0 | ran=1 ns=23.00 metric=fwd1 units=ns src=race date=2026-08-25

@@ -655,6 +655,20 @@ N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
 196% on one native arm) — the ratios there are sign-reliable, not
 two-decimal quotable; the square cells ran at 6–25% spreads.
 
+**Huge-column cells + the L2 cascade widths (2026-08-25, same-day
+addendum).** Long-column cells added to the `--2dil` ladder: band
+residency needs `wl ≤ L2/(16·N1)`, so the static width pool (max 256)
+pinned the cut deep at N1 ≥ 16384 and multiple wide stages streamed the
+full plane (measured: per-point 1.9× off the memcpy floor at 32768×64
+while the floor itself moved 1.3×). Fix: the stage spans `L[s]` join the
+width race when `w·N2·16 ≤ vfft_cpu_l2_bytes()` (live CPUID via
+`cpu_cache.h`, the hardware-derived gate — never a platform constant,
+never a full dual-architecture search). The race picked `wl=1024` at
+32768×64 (`chain=32.32.32 tf=1`), gate bitwise-green, and the knee cells
+moved to **16384×64 = 1.37×, 32768×64 = 1.66× vs MKL CCE** (both outside
+noise; MKL's CCE arm itself loses to its own REAL_REAL there, 0.76–0.79).
+Derived from separate same-run ladders, not one toe-to-toe run.
+
 > **The native interleaved tier beats MKL's best interleaved arm on all 6
 > cells — median ~1.75×, up to 2.08× at 1024² — and delivers ~2.0–2.4×
 > over what interleaved callers previously received** (the convert

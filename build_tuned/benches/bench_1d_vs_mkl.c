@@ -3953,7 +3953,15 @@ int main(int argc, char **argv)
             int cells[][2] = { { 64, 64 },   { 128, 128 }, { 256, 256 },
                                { 512, 512 }, { 100, 100 }, { 1024, 1024 },
                                { 16, 4096 }, { 4096, 16 }, { 32, 1024 },
-                               { 64, 256 } };
+                               { 64, 256 },
+                               /* the L2 band-threshold ladder (2026-08-25):
+                                * band residency needs wl <= L2/(16*N1) —
+                                * on 2 MB P-core L2 that pins wl at the
+                                * kernel minimum (8) by N1=16384 and goes
+                                * infeasible at 32768. Long columns, cheap
+                                * rows, to isolate the column pass. */
+                               { 4096, 64 }, { 8192, 64 }, { 16384, 64 },
+                               { 32768, 64 } };
             int nc = (int)(sizeof cells / sizeof cells[0]), ci;
             const char *cf = getenv("VFFT_2DIL_CELLS"); /* "64x64,256x256" filter */
             for (ci = 0; ci < nc; ci++) {

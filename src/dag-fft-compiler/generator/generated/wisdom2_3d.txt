@@ -1,0 +1,9 @@
+@vw2 1.2
+@legend signpost: a verdict references its component recipe (ref=), never copies it
+@legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
+@legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
+@legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
+@legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
+@legend see src/core/wisdom2/README.md
