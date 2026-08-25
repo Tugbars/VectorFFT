@@ -50,16 +50,27 @@ static inline int _vfft_fft2d_r2c_reps(size_t total) {
 }
 
 /* Deploy-quality end-to-end 2D r2c timing: best-of-TRIALS min over reps after a
- * short warmup. Times the REAL public path (stride_execute_2d_r2c). */
+ * short warmup. Times the REAL public path — z != NULL times the INTERLEAVED
+ * door (stride_execute_2d_r2c_z), else the split door. Measured-serving law
+ * (owner 2026-08-25): the planner times the door the caller will be served
+ * by; the two doors differ by the fused pack shape, so verdicts may
+ * diverge per layout. */
 static double vfft_fft2d_r2c_bench_min(const stride_plan_t *p, int N1, int N2,
-                                       const double *x, double *o_re, double *o_im) {
+                                       const double *x, double *o_re, double *o_im,
+                                       double *z) {
     size_t total = (size_t)N1 * (size_t)N2;
-    for (int w = 0; w < 10; w++) stride_execute_2d_r2c(p, x, o_re, o_im);
+    for (int w = 0; w < 10; w++) {
+        if (z) stride_execute_2d_r2c_z(p, x, z);
+        else   stride_execute_2d_r2c(p, x, o_re, o_im);
+    }
     int reps = _vfft_fft2d_r2c_reps(total);
     double best = 1e18;
     for (int t = 0; t < VFFT_FFT2D_R2C_BENCH_TRIALS; t++) {
         double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++) stride_execute_2d_r2c(p, x, o_re, o_im);
+        for (int i = 0; i < reps; i++) {
+            if (z) stride_execute_2d_r2c_z(p, x, z);
+            else   stride_execute_2d_r2c(p, x, o_re, o_im);
+        }
         double ns = (vfft_proto_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
@@ -95,7 +106,7 @@ static int _vfft_fft2d_r2c_axis_candidates(int N, size_t K, int patient,
  * the MT path reuses it). */
 static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
         const vfft_proto_registry_t *reg, vfft_fft2d_r2c_mode_t mode,
-        vfft_fft2d_r2c_wisdom_entry_t *out, int verbose) {
+        vfft_fft2d_r2c_wisdom_entry_t *out, int verbose, int il) {
     if (N1 < 2 || N2 < 2 || (N2 & 1)) return 1e18;   /* N2 must be even */
     int patient = (mode == VFFT_FFT2D_R2C_PATIENT);
 
@@ -125,9 +136,11 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
     double *ore = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
     double *oim = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
     double *xr  = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
-    if (!x || !ore || !oim || !xr) {
+    double *z   = il ? (double *)STRIDE_ALIGNED_ALLOC(64, 2 * CN * sizeof(double)) : NULL;
+    if (!x || !ore || !oim || !xr || (il && !z)) {
         STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
         STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+        STRIDE_ALIGNED_FREE(z);
         return 1e18;
     }
     srand(17 + N1 + N2);
@@ -158,7 +171,7 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
             for (size_t i = 0; i < RN; i++) { double a = fabs(xr[i] / sc - x[i]); if (a > rt) rt = a; }
             if (rt < 1e-7) {
                 gated++;
-                double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
+                double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim, z);
                 if (ns < best) { best = ns; best_r = r; best_c = c; }
             } else if (verbose) {
                 printf("  [2d-planner]   row#%d x col#%d GATE FAIL rt=%.1e (skipped)\n", r, c, rt);
@@ -169,6 +182,7 @@ static double vfft_fft2d_r2c_plan_measure(int N1, int N2,
 
     STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
     STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
+    STRIDE_ALIGNED_FREE(z);
 
     if (best_r < 0) { if (verbose) printf("  [2d-planner] no candidate passed the gate\n"); return 1e18; }
 

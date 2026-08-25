@@ -1473,53 +1473,59 @@ static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
 }
 
 /* Measure a 2D r2c forward plan end-to-end (OOP), for the calibrate-on-miss win-gate. */
-static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
+static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2, int il)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
     double *x = (double *)malloc(RN * sizeof(double));
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
-    if (!x || !ore || !oim)
+    double *z = il ? (double *)malloc(2 * CN * sizeof(double)) : NULL;
+    if (!x || !ore || !oim || (il && !z))
     {
         free(x);
         free(ore);
         free(oim);
+        free(z);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
-    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
+    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim, z);
     free(x);
     free(ore);
     free(oim);
+    free(z);
     return ns;
 }
 
 /* Measure a 2D c2r backward plan end-to-end (OOP): produce the half-spectrum via r2c
  * first (the c2r input), then time c2r. */
-static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
+static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2, int il)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
     double *x = (double *)malloc(RN * sizeof(double));
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
     double *xr = (double *)malloc(RN * sizeof(double));
-    if (!x || !ore || !oim || !xr)
+    double *z = il ? (double *)malloc(2 * CN * sizeof(double)) : NULL;
+    if (!x || !ore || !oim || !xr || (il && !z))
     {
         free(x);
         free(ore);
         free(oim);
         free(xr);
+        free(z);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     stride_execute_2d_r2c(p, x, ore, oim); /* valid half-spectrum for c2r input */
-    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
+    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr, z);
     free(x);
     free(ore);
     free(oim);
     free(xr);
+    free(z);
     return ns;
 }
 
@@ -1708,17 +1714,23 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         vfft_fft2d_r2c_wisdom_entry_t cal;
         vfft_fft2d_r2c_mode_t mode =
             (rigor == VFFT_MEASURE) ? VFFT_FFT2D_R2C_MEASURE : VFFT_FFT2D_R2C_PATIENT;
+        /* Per-layout measurement (owner 2026-08-25): time the DOOR this
+         * caller is served by — the z door fuses the pack differently, so
+         * verdicts may diverge — and bank lay-concrete. Legacy lay=ANY
+         * rows keep serving both layouts through vw2_lookup's fallback
+         * tier until a concrete verdict lands. */
+        const int il2 = (lay == VW2_LAY_IL);
         double cal_ns = (t == VFFT_C2R)
-                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0)
-                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0);
+                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0, il2)
+                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0, il2);
         if (cal_ns < 1e17)
         {
-            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2)
-                                           : _vfft_measure_2d_r2c(fb, N1, N2);
+            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2, il2)
+                                           : _vfft_measure_2d_r2c(fb, N1, N2, il2);
             if (cal_ns < fb_ns)
             {
                 vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R,
-                                      VW2_LAY_ANY); /* calibrated wins -> bank */
+                                      lay); /* calibrated wins -> bank */
                 {
                     stride_plan_t *p = vfft_fft2d_r2c_plan_from_entry(&cal, reg);
                     if (p) { stride_plan_destroy(fb); return p; }

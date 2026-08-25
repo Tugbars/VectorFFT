@@ -429,8 +429,13 @@ extern "C"
    *           non-NULL. Unlike in-place 1D C2C, dre == NULL is NOT accepted
    *           as "same as sre" here, and a distinct dre is REFUSED (it used
    *           to be silently miscomputed on one of the two internal routes).
-   *   2D..4D C2C        x INTERLEAVED: CONVERT-around (§6a61), both
-   *       placements, 2D NATURAL included.
+   *   2D C2C            x INTERLEAVED: NATIVE tier (n1c/t2c column chain +
+   *       K=1 IL row pass, per-cell raced + banked lay=il; owner law
+   *       2026-08-25: the convert wrapper is DELETED — inexpressible
+   *       cells REFUSE at create; ORDER_NATURAL multi-stage N1 refused
+   *       until the rho tapes).
+   *   3D..4D C2C        x INTERLEAVED: CONVERT-around (§6a61), both
+   *       placements.
    *   TRIG              x INTERLEAVED: REJECT (no complex layout).
    *   any batch         x INTERLEAVED: REJECT (padded planes are split).
    *
