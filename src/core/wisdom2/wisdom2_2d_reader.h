@@ -517,7 +517,8 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
  * rowplan/colplan, never chain=). Old binaries: cells invisible + opaque
  * carry (v1.2 architecture, proven). */
 static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
-                                         int N2, int *Rs, int *nst)
+                                         int N2, int *Rs, int *nst,
+                                         int *wl, int *tf, int *ro)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -528,6 +529,10 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
     if (!cv) return 0;                       /* an ANY/split row: refuse */
+    /* the axis verdicts; ABSENT = -1 (chain-only vintage / unraced) */
+    if (wl) { const char *v = vw2_rec_get(r, "wl"); *wl = v ? atoi(v) : -1; }
+    if (tf) { const char *v = vw2_rec_get(r, "tf"); *tf = v ? atoi(v) : -1; }
+    if (ro) { const char *v = vw2_rec_get(r, "ro"); *ro = v ? atoi(v) : -1; }
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -543,7 +548,8 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
 }
 
 static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
-                                       const int *Rs, int nst, double ns)
+                                       const int *Rs, int nst,
+                                       int wl, int tf, int ro, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -559,6 +565,25 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
+        return -1;
+    }
+    /* the axis verdicts (negative = unraced: token not emitted) */
+    if (wl >= 0) {
+        snprintf(b, sizeof b, "%d", wl);
+        if (vw2_rec_set(r, 1, "wl", b) != VW2_OK) goto tokfail;
+    }
+    if (tf >= 0) {
+        snprintf(b, sizeof b, "%d", tf);
+        if (vw2_rec_set(r, 1, "tf", b) != VW2_OK) goto tokfail;
+    }
+    if (ro >= 0) {
+        snprintf(b, sizeof b, "%d", ro);
+        if (vw2_rec_set(r, 1, "ro", b) != VW2_OK) goto tokfail;
+    }
+    if (0) {
+    tokfail:
+        vw2_rec_free(r);
+        fprintf(stderr, "[wisdom2] il2d axis bank refused (token)\n");
         return -1;
     }
     if (vw2__2d_tail(r, ns, "race", NULL, &why)) {
