@@ -218,7 +218,7 @@ let render
        by the prologue (loaded for power-of-two legs, DERIVED otherwise), so
        the flat path emits byte-identically to before. *)
     let c, s =
-      if ctx.tw_log3
+      if ctx.tw_log3 || ctx.tw_group
       then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
         let off = (leg - 1) * 2 * twv in
@@ -311,4 +311,34 @@ let emit_log3_prologue
        !nload
        (radix - 1)
        (radix - 1 - !nload))
+;;
+
+(* ── GROUP twiddle prologue (t2c) ────────────────────────────────────────
+ * Load EVERY leg's record into the _wc/_ws names — per-(d,leg) records
+ * hoisted out of the column loop and reused across the whole tile (the
+ * z-T1S broadcast sourcing, il_native_design.md §6c, consumed by the 2D
+ * column stage). Same record format and slot layout as flat/log3
+ * (slot = leg-1, [c x vw][sign-folded s x vw]), no derivation. ?tw_vw /
+ * ?msuf as in emit_log3_prologue: the narrow tail re-binds _wc%d_n names
+ * at Isa.sse2 against the WIDE-geometry table. *)
+let emit_group_prologue
+      ?(tw_vw = 0)
+      ?(msuf = "")
+      (buf : Buffer.t)
+      (isa : Isa.t)
+      (radix : int)
+  : unit
+  =
+  let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
+  for j = 1 to radix - 1 do
+    let cj = Printf.sprintf "_wc%d%s" j msuf
+    and sj = Printf.sprintf "_ws%d%s" j msuf in
+    let off = (j - 1) * 2 * vw in
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "        %s\n        %s\n"
+         (Isa.const_decl isa cj (Isa.loadu_pd isa (addr_str (ATw off))))
+         (Isa.const_decl isa sj (Isa.loadu_pd isa (addr_str (ATw (off + vw))))))
+  done
 ;;

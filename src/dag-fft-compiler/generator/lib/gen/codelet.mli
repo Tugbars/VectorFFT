@@ -62,6 +62,7 @@ type trig8 =
 type cil_form =
   | Cil_n1
   | Cil_n1c
+  | Cil_t2c
   | Cil_n1t
   | Cil_t2
 

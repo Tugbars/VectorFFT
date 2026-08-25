@@ -237,6 +237,20 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
     }
 }
 
+/* t2c — the 2D column-stage MID pair (fft2d_il_c2c_design.md §3): same-slot
+ * in-place DIF stage, per-(d,leg) broadcast records hoisted in-kernel (the
+ * z-T1S/6c sourcing). Ls = D*N2, Gs = N2 row pitch, OGs = D; the table is
+ * DRIVER-built, d-major, bwd = conjugated table (same kernel shape). */
+static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
+{
+    switch (R) {
+#define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
+    VFFT_IL_T2C_PAIR_RADICES(C)
+#undef C
+    default: return 0;
+    }
+}
+
 /* 🔴 t2p IS RETIRED — Tugbars, 2026-07-29: "disable t2p ... the whole tree
  * standardizes on t2t semantics." The t2p kind (PRE-twiddle + backward
  * butterfly + straight store, route A / conj-of-forward) lost the bwd race

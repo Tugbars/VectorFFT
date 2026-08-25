@@ -134,14 +134,24 @@ type kind =
            (docs/roadmap/fft2d_il_c2c_design.md §3) *)
   | N1T
   | T2
+  | T2C (* 2D column-stage MID: same-slot in-place DIF stage along the
+           column axis (fft2d_il_c2c_design.md §3). Legs at Ls = D*N2;
+           Gs = N2 row pitch (the in-kernel d-advance); OGs = D digit
+           count; one call = one stage over ONE block (driver loops
+           blocks). Twiddle W_L^{d*r} applied POST-butterfly BOTH
+           directions (DIF; bwd = conjugated driver-built table), records
+           per (d, leg) HOISTED out of the k loop — the z-T1S broadcast
+           sourcing (6c). *)
 
 let kind_of_string = function
   | "n1" -> N1
   | "n1c" -> N1C
   | "n1t" -> N1T
   | "t2" -> T2
+  | "t2c" -> T2C
   | s ->
-    failwith (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1c | n1t | t2)" s)
+    failwith
+      (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1c | n1t | t2 | t2c)" s)
 ;;
 
 let kind_name = function
@@ -149,6 +159,7 @@ let kind_name = function
   | N1C -> "n1c"
   | N1T -> "n1t"
   | T2 -> "t2"
+  | T2C -> "t2c"
 ;;
 
 (* DIRECTION.
@@ -229,8 +240,15 @@ let emit
     failwith
       "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing policy for \
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
+  if kind = T2C && (blocked || turnst || turnst_gs || tangent || pretw)
+  then
+    failwith
+      "codelet_cil: t2c v1 is monolithic plain-store post-twiddle only \
+       (blocked / turned / tangent([c,tan] records) / pretw variants are M3 \
+       races — fft2d_il_c2c_design.md)";
   let ctx =
     make_ctx
+      ~tw_group:(kind = T2C)
       ~tw_log3:log3
       ~tw_pre:pretw
       ~st_turn:(turnst || turnst_gs)
@@ -258,7 +276,10 @@ let emit
   (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
      PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
   let pre_tw = kind = T2 && (dir = Fwd || ctx.tw_pre) in
-  let post_tw = kind = T2 && dir = Bwd && not ctx.tw_pre in
+  (* T2C is DIF: the stage twiddle W_L^{d*r} sits AFTER the butterfly in
+     BOTH directions; the bwd table is conjugated by the DRIVER at build
+     time (table-side conj, never text derivation). *)
+  let post_tw = (kind = T2 && dir = Bwd && not ctx.tw_pre) || kind = T2C in
   (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
      their symbolic address — the load edge prints FROM the DAG instead of
      inventing the string. Created in the same order cin was, so every tag
@@ -702,7 +723,7 @@ let emit
     (use_wing_t2 || Sys.getenv_opt "VFFT_CX_LAZYSTORE" = Some "1")
     && (not blocked)
     && (not ctx.st_turn)
-    && (kind = T2 || kind = N1 || kind = N1C)
+    && (kind = T2 || kind = N1 || kind = N1C || kind = T2C)
   in
   let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   if blocked
@@ -869,6 +890,7 @@ let emit
            ((radix - 1) * 2 * vw));
     if kind = T2 && ctx.tw_log3
     then emit_log3_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
+    if kind = T2C then emit_group_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
     for l = 0 to radix - 1 do
       Buffer.add_string
         body_n
@@ -898,7 +920,7 @@ let emit
                      (render ~ctx ~tw_vw:vw ~msuf:"_n" nisa tbl e)))))
       scheduled;
     match if ctx.st_turn then N1T else kind with
-    | N1 | N1C | T2 ->
+    | N1 | N1C | T2 | T2C ->
       (* the wide edge below creates the CStore node; the tail prints the
          same address form at narrow width *)
       Array.iteri
@@ -969,11 +991,19 @@ let emit
           "2D column-stage leaf n1c (n1 math; count = adjacent plane columns, \
            in-place same-slot)"
         | N1T -> "bailey2 stage-1 leaf n1t (four-step TRANSPOSE fused into the stores)"
-        | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)")
+        | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)"
+        | T2C ->
+          "2D column-stage mid t2c (same-slot DIF stage; per-(d,leg) broadcast \
+           records hoisted out of the column loop — z-T1S/6c)")
        per
        (vw * 64)
        (match kind with
         | N1 | N1C -> "tw_re/tw_im unused."
+        | T2C ->
+          "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
+           1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built (bwd = \
+           conjugated table, same kernel shape). Ls = D*N2, Gs = N2 row pitch, \
+           OGs = D; one call = one stage over one block. tw_im unused."
         | N1T ->
           "Stores are corner-turned: output (leg p, column k) -> zout[2*(k*OLs + p)],\n\
           \ * so stage 2 reads whole columns contiguously and no separate transpose\n\
@@ -1031,7 +1061,10 @@ let emit
           the compiler their planes are disjoint. Every other kind keeps
           __restrict__ -- it is load-bearing for them. *)
        ~alias_tolerant:
-         ((kind = T2 && dir = Fwd) || (kind = N1 && dir = Bwd) || kind = N1C)
+         ((kind = T2 && dir = Fwd)
+          || (kind = N1 && dir = Bwd)
+          || kind = N1C
+          || kind = T2C)
        ~symbol:
          (Printf.sprintf
             "radix%d_z_%s_%s_%s"
@@ -1060,9 +1093,10 @@ let emit
   Buffer.add_string
     buf
     (Printf.sprintf
-       "    (void)zin_unused; (void)zout_unused; (void)tw_im; (void)Gs;%s%s\n"
-       (if ctx.st_turn_gs then "" else " (void)OGs;")
-       (if kind = T2 then "" else " (void)tw_re;"));
+       "    (void)zin_unused; (void)zout_unused; (void)tw_im;%s%s%s\n"
+       (if kind = T2C then "" else " (void)Gs;")
+       (if ctx.st_turn_gs || kind = T2C then "" else " (void)OGs;")
+       (if kind = T2 || kind = T2C then "" else " (void)tw_re;"));
   if blocked
   then
     Buffer.add_string
@@ -1078,6 +1112,13 @@ let emit
       (Printf.sprintf
          "    double S[%d];  /* cx_spill Belady scratch (peak-pressure cap) */\n"
          (vw * ctx.mono_spill_slots));
+  if kind = T2C
+  then (
+    Buffer.add_string buf "    const double *twp = tw_re;\n";
+    Buffer.add_string buf "    for (size_t d = 0; d < OGs; d++) {\n";
+    (* per-(d,leg) records, hoisted: loop-invariant across the whole column
+       tile — the broadcast sourcing the kind exists for. *)
+    emit_group_prologue buf isa radix);
   Buffer.add_string
     buf
     (* k is hoisted for EVERY form so the tail loop below can resume it.
@@ -1124,7 +1165,7 @@ let emit
   if not blocked
   then (
     match if ctx.st_turn then N1T else kind with
-    | N1 | N1C | T2 ->
+    | N1 | N1C | T2 | T2C ->
       (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
         store is a CStore NODE (address in the DAG); built post-schedule so
         no existing tag shifts, printed via render_store (addr_str carries
@@ -1233,6 +1274,14 @@ let emit
     Buffer.add_string buf "    for (; k < count; ++k) {\n";
     Buffer.add_buffer buf body_n;
     Buffer.add_string buf "    }\n");
+  if kind = T2C
+  then (
+    Buffer.add_string
+      buf
+      (Printf.sprintf "    twp += %d;\n" ((radix - 1) * 2 * vw));
+    Buffer.add_string buf "    zin += 2 * Gs;\n";
+    Buffer.add_string buf "    zout += 2 * Gs;\n";
+    Buffer.add_string buf "    }\n");
   Buffer.add_string buf "}\n";
   Buffer.contents buf
 ;;
@@ -1287,7 +1336,13 @@ let emit_k1
   : string
   =
   let ctx =
-    make_ctx ~tw_log3:false ~tw_pre:false ~st_turn:false ~st_turn_gs:false ~tangent
+    make_ctx
+      ~tw_group:false
+      ~tw_log3:false
+      ~tw_pre:false
+      ~st_turn:false
+      ~st_turn_gs:false
+      ~tangent
   in
   ignore ctx.mono_spill_slots;
   let vw = isa.Isa.vec_width in
