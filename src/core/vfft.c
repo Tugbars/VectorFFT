@@ -360,6 +360,13 @@ struct vfft_plan_s
      * PASS per band (the terminator analog). F0 law: banding changes only
      * loop order + base pointers — output memcmp-identical to unbanded. */
     int il2d_wl, il2d_cut, il2d_tfuse;
+    /* row route (the small-N2 lever): 0 = in-place NATURAL child (the
+     * default; pays the 1D in-place service floor ~180ns/row at tiny N);
+     * 1 = OOP NATURAL child + L1-hot row scratch + memcpy back (the mono
+     * route). Env-raced (VFFT_IL2D_ROWOOP=1); banked with §10. */
+    int il2d_rowoop;
+    struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
+    double *il2d_rowscr;           /* 2*N2 doubles */
     int il2d_R[8], il2d_L[8];
     vfft_il2p_fn il2d_f[8], il2d_b[8];
     double *il2d_tf[8], *il2d_tb[8];
@@ -2230,6 +2237,22 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
  * PRE-twiddle conj stage (the t2c bwd kernels), CONSUMING the comb and
  * producing natural — the matched-roundtrip law (bwd eats the SAME
  * route's comb; any chain roundtrips, palindromic or not). */
+/* one row of the row pass, by the plan's row route: in-place child
+ * (default) or OOP child into the L1-hot scratch + copy back (the
+ * small-N2 lever — the in-place K=1 IL service floor is ~6x the mono
+ * math at tiny N). */
+static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
+                           double *row, size_t rn)
+{
+    if (h->il2d_rowoop)
+    {
+        vfft_execute(h->il2d_rowo, dir, row, NULL, h->il2d_rowscr, NULL);
+        memcpy(row, h->il2d_rowscr, 2 * rn * sizeof(double));
+    }
+    else
+        vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
+}
+
 /* run stages [s_lo, s_hi) over a ROW RANGE of nrows rows starting at the
  * given base pointers (nrows = N1 for the wide walk, = the band width for
  * the banded walk; every block of a stage in [s_lo,s_hi) fits the range
@@ -3892,6 +3915,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int il2d_nst = 0;
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
+        int il2d_rowoop = 0;
+        struct vfft_plan_s *il2d_rowo = NULL;
+        double *il2d_rowscr = NULL;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -3979,6 +4005,40 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                   ? atoi(wce)
                                   : 0;
                 }
+                /* row route: VFFT_IL2D_ROWOOP=1 swaps the per-row
+                 * child for an OOP NATURAL one + scratch (the mono
+                 * route). Falls back to the in-place child if the OOP
+                 * create or the scratch fails. */
+                if (il2d_row && getenv("VFFT_IL2D_ROWOOP") &&
+                    atoi(getenv("VFFT_IL2D_ROWOOP")) == 1)
+                {
+                    vfft_config_t ro;
+                    memset(&ro, 0, sizeof ro);
+                    ro.transform = VFFT_C2C;
+                    ro.placement = VFFT_OUTOFPLACE;
+                    ro.rigor = cfg->rigor;
+                    ro.dims = 1;
+                    ro.n[0] = N2;
+                    ro.howmany = 1;
+                    ro.order = VFFT_ORDER_NATURAL;
+                    ro.layout = VFFT_LAYOUT_INTERLEAVED;
+                    ro.nthreads = 1;
+                    ro.wisdom = cfg->wisdom;
+                    ro.wisdom_write = cfg->wisdom_write;
+                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&ro);
+                    if (il2d_rowo)
+                    {
+                        il2d_rowscr = (double *)malloc(
+                            2 * (size_t)N2 * sizeof(double));
+                        if (il2d_rowscr)
+                            il2d_rowoop = 1;
+                        else
+                        {
+                            vfft_destroy(il2d_rowo);
+                            il2d_rowo = NULL;
+                        }
+                    }
+                }
                 /* banded walk: VFFT_IL2D_WL = band width in ROWS (the
                  * width is the INPUT, the cut is DERIVED — the tcut law).
                  * Legal iff wl | N1 and some suffix stage has L_s | wl;
@@ -4059,6 +4119,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_wl = il2d_wl;
         h->il2d_cut = il2d_cut;
         h->il2d_tfuse = il2d_tfuse;
+        h->il2d_rowoop = il2d_rowoop;
+        h->il2d_rowo = il2d_rowo;
+        h->il2d_rowscr = il2d_rowscr;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
@@ -7253,9 +7316,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                              fns, tabs, !fwd);
                             if (h->il2d_tfuse)
                                 for (i = 0; i < wl; i++)
-                                    vfft_execute(h->il2d_row, dir,
-                                                 bd + 2 * i * rn, NULL,
-                                                 bd + 2 * i * rn, NULL);
+                                    _il2d_row_exec(h, dir,
+                                                   bd + 2 * i * rn, rn);
                         }
                         if (!fwd && cut > 0)
                             _il2d_col_stages(dre, dre, h->N, rn, 0, cut,
@@ -7263,9 +7325,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                              tabs, 1);
                         if (!h->il2d_tfuse)
                             for (i = 0; i < (size_t)h->N; i++)
-                                vfft_execute(h->il2d_row, dir,
-                                             dre + 2 * i * rn, NULL,
-                                             dre + 2 * i * rn, NULL);
+                                _il2d_row_exec(h, dir, dre + 2 * i * rn,
+                                               rn);
                         return;
                     }
                     _il2d_col_pass(sre, dre, h->N, rn, wc,
@@ -7274,9 +7335,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                    fwd ? h->il2d_tf : h->il2d_tb,
                                    /*reverse=*/!fwd);
                     for (i = 0; i < (size_t)h->N; i++)
-                        vfft_execute(h->il2d_row, dir,
-                                     dre + 2 * i * rn, NULL,
-                                     dre + 2 * i * rn, NULL);
+                        _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
                     return;
                 }
                 if (!h->il_wr)
@@ -7607,6 +7666,9 @@ void vfft_destroy(vfft_plan h)
         {
             int s2;
             vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
+            if (h->il2d_rowo)
+                vfft_destroy(h->il2d_rowo);
+            free(h->il2d_rowscr);
             for (s2 = 0; s2 < h->il2d_nst; s2++)
             {
                 free(h->il2d_tf[s2]);
