@@ -229,9 +229,17 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
  * populated). */
 static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
 {
+    /* CONSTRUCTION TABLE (raced 2026-08-25, il2d_kv_race, both regimes;
+     * radix-determined per the 1D law — owner: r32/r64 NEVER monolithic):
+     * r4/r8/r16 monolithic (r16 raced, mono holds) · r32 b48 (+13-24%)
+     * · r64 b88 (+48-51%). */
     switch (R) {
+    case 32: return bwd ? radix32_z_n1cb48_bwd_avx2
+                        : radix32_z_n1cb48_fwd_avx2;
+    case 64: return bwd ? radix64_z_n1cb88_bwd_avx2
+                        : radix64_z_n1cb88_fwd_avx2;
 #define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
-    VFFT_IL_N1C_PAIR_RADICES(C)
+    C(4) C(8) C(16)
 #undef C
     default: return 0;
     }
@@ -243,9 +251,18 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
  * DRIVER-built, d-major, bwd = conjugated table (same kernel shape). */
 static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
 {
+    /* CONSTRUCTION TABLE (same race): r4/r8/r16 monolithic · r32 b48
+     * (+20-24%) · r64 b88 (+28-54%, beats b416 both regimes — the 8x8
+     * law). Tangent interiors raced NOT-ADOPTED under the SR scheduler
+     * (±1-4%); the wing-class forms (cpl scheduler, blocked-tangent,
+     * [c,tan] records) are the open tangent levers. */
     switch (R) {
+    case 32: return bwd ? radix32_z_t2cb48_bwd_avx2
+                        : radix32_z_t2cb48_fwd_avx2;
+    case 64: return bwd ? radix64_z_t2cb88_bwd_avx2
+                        : radix64_z_t2cb88_fwd_avx2;
 #define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
-    VFFT_IL_T2C_PAIR_RADICES(C)
+    C(4) C(8) C(16)
 #undef C
     default: return 0;
     }

@@ -353,6 +353,13 @@ struct vfft_plan_s
      * the chain (the scrambled contract; natural = M4 rho tables). */
     int il2d_nst;
     int il2d_wc; /* column-tile width (complex); 0 = full N2 (untiled) */
+    /* banded walk (the cascade's tcut mapped to 2D — zturn.h §TILING AXIS):
+     * il2d_wl = band width in ROWS (0 = unbanded); il2d_cut = DERIVED
+     * (stages cut..nst-1 run depth-first per band — the suffix whose
+     * L_s | wl; wide prefix stages run first); il2d_tfuse folds the ROW
+     * PASS per band (the terminator analog). F0 law: banding changes only
+     * loop order + base pointers — output memcmp-identical to unbanded. */
+    int il2d_wl, il2d_cut, il2d_tfuse;
     int il2d_R[8], il2d_L[8];
     vfft_il2p_fn il2d_f[8], il2d_b[8];
     double *il2d_tf[8], *il2d_tb[8];
@@ -2223,6 +2230,37 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
  * PRE-twiddle conj stage (the t2c bwd kernels), CONSUMING the comb and
  * producing natural — the matched-roundtrip law (bwd eats the SAME
  * route's comb; any chain roundtrips, palindromic or not). */
+/* run stages [s_lo, s_hi) over a ROW RANGE of nrows rows starting at the
+ * given base pointers (nrows = N1 for the wide walk, = the band width for
+ * the banded walk; every block of a stage in [s_lo,s_hi) fits the range
+ * by the cut derivation L_s | wl). reverse = the Hermitian bwd order. */
+static void _il2d_col_stages(const double *src, double *dst, int nrows,
+                             size_t rn, int s_lo, int s_hi,
+                             const int *Rst, const int *Lst,
+                             vfft_il2p_fn const *fns, double *const *tabs,
+                             int reverse)
+{
+    int si;
+    for (si = s_lo; si < s_hi; si++)
+    {
+        const int s = reverse ? s_hi - 1 - (si - s_lo) : si;
+        const int R = Rst[s], D = Lst[s] / R;
+        const double *s0 = (si == s_lo) ? src : dst;
+        int b;
+        for (b = 0; b < nrows / Lst[s]; b++)
+        {
+            const size_t off = 2 * (size_t)b * Lst[s] * rn;
+            if (D == 1)
+                fns[s](s0 + off, NULL, dst + off, NULL, NULL, NULL,
+                       rn, 0, rn, 0, rn);
+            else
+                fns[s](s0 + off, NULL, dst + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
+                       rn);
+        }
+    }
+}
+
 static void _il2d_col_pass(const double *src, double *dst, int N1,
                            size_t rn, size_t wc, int nst, const int *Rst,
                            const int *Lst, vfft_il2p_fn const *fns,
@@ -3853,6 +3891,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         struct vfft_plan_s *il2d_row = NULL;
         int il2d_nst = 0;
         int il2d_wc = 0;
+        int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -3940,6 +3979,43 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                   ? atoi(wce)
                                   : 0;
                 }
+                /* banded walk: VFFT_IL2D_WL = band width in ROWS (the
+                 * width is the INPUT, the cut is DERIVED — the tcut law).
+                 * Legal iff wl | N1 and some suffix stage has L_s | wl;
+                 * anything else warns and stays unbanded. VFFT_IL2D_TFUSE
+                 * =0 opts out of the per-band row pass (default ON when
+                 * banded — the fusion is the point). */
+                if (il2d_row)
+                {
+                    const char *we = getenv("VFFT_IL2D_WL");
+                    const char *tfe = getenv("VFFT_IL2D_TFUSE");
+                    int wl = we ? atoi(we) : 0;
+                    il2d_wl = 0;
+                    il2d_cut = 0;
+                    il2d_tfuse = 0;
+                    if (wl > 0)
+                    {
+                        int cut = -1, s2;
+                        if (wl <= N1 && N1 % wl == 0)
+                            for (s2 = 0; s2 < il2d_nst; s2++)
+                                if (wl % il2d_L[s2] == 0)
+                                {
+                                    cut = s2;
+                                    break;
+                                }
+                        if (cut < 0)
+                            _vfft_warn("VFFT_IL2D_WL=%d illegal at %dx%d "
+                                       "(needs wl | N1 and a stage with "
+                                       "L_s | wl) — unbanded",
+                                       wl, N1, N2);
+                        else
+                        {
+                            il2d_wl = wl;
+                            il2d_cut = cut;
+                            il2d_tfuse = !(tfe && atoi(tfe) == 0);
+                        }
+                    }
+                }
             }
         }
         stride_plan_t *tp = NULL;
@@ -3980,6 +4056,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_row = il2d_row;
         h->il2d_nst = il2d_nst;
         h->il2d_wc = il2d_wc;
+        h->il2d_wl = il2d_wl;
+        h->il2d_cut = il2d_cut;
+        h->il2d_tfuse = il2d_tfuse;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
@@ -7133,6 +7212,62 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * because columns are independent within the column
                      * pass; Gs stays the FULL row pitch. wc = rn is the
                      * untiled M2 walk, path-identical. */
+                    if (h->il2d_wl > 0)
+                    {
+                        /* ── BANDED walk (the cascade's tcut, 2D form):
+                         * fwd = wide prefix stages 0..cut-1, then per
+                         * band of wl rows the stage SUFFIX depth-first
+                         * (+ tfuse: that band's row pass, while hot).
+                         * bwd mirrors the Hermitian chain: per band
+                         * rows-bwd then the REVERSED suffix, then the
+                         * reversed wide prefix. Same kernel calls, same
+                         * tables, same count — only loop order and base
+                         * pointers differ (F0: memcmp-identical). */
+                        /* Rows commute with every column stage (disjoint
+                         * axes), so BOTH directions keep rows LAST in the
+                         * band: the band's first op is the OOP-capable
+                         * suffix kernel — no copy for OOP bwd. Execution:
+                         * fwd = prefix wide, then per band [suffix fwd,
+                         * rows]; bwd = per band [suffix REVERSED (the
+                         * Hermitian chain), rows-bwd], then prefix
+                         * reversed wide (in place on dre by then). */
+                        const int cut = h->il2d_cut, nst = h->il2d_nst;
+                        const size_t wl = (size_t)h->il2d_wl;
+                        vfft_il2p_fn const *fns = fwd ? h->il2d_f
+                                                      : h->il2d_b;
+                        double *const *tabs = fwd ? h->il2d_tf
+                                                  : h->il2d_tb;
+                        size_t b0;
+                        if (fwd && cut > 0)
+                            _il2d_col_stages(sre, dre, h->N, rn, 0, cut,
+                                             h->il2d_R, h->il2d_L, fns,
+                                             tabs, 0);
+                        for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+                        {
+                            const double *bs =
+                                (fwd && cut > 0) ? dre + 2 * b0 * rn
+                                                 : sre + 2 * b0 * rn;
+                            double *bd = dre + 2 * b0 * rn;
+                            _il2d_col_stages(bs, bd, (int)wl, rn, cut,
+                                             nst, h->il2d_R, h->il2d_L,
+                                             fns, tabs, !fwd);
+                            if (h->il2d_tfuse)
+                                for (i = 0; i < wl; i++)
+                                    vfft_execute(h->il2d_row, dir,
+                                                 bd + 2 * i * rn, NULL,
+                                                 bd + 2 * i * rn, NULL);
+                        }
+                        if (!fwd && cut > 0)
+                            _il2d_col_stages(dre, dre, h->N, rn, 0, cut,
+                                             h->il2d_R, h->il2d_L, fns,
+                                             tabs, 1);
+                        if (!h->il2d_tfuse)
+                            for (i = 0; i < (size_t)h->N; i++)
+                                vfft_execute(h->il2d_row, dir,
+                                             dre + 2 * i * rn, NULL,
+                                             dre + 2 * i * rn, NULL);
+                        return;
+                    }
                     _il2d_col_pass(sre, dre, h->N, rn, wc,
                                    h->il2d_nst, h->il2d_R, h->il2d_L,
                                    fwd ? h->il2d_f : h->il2d_b,

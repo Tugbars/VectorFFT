@@ -137,6 +137,41 @@ VFFT_IL_DECL(radix64_z_n1c_bwd_avx2)
 #define VFFT_IL_N1C_BWD_RADICES(X) X(4) X(8) X(16) X(32) X(64)
 #define VFFT_IL_N1C_PAIR_RADICES(X) X(4) X(8) X(16) X(32) X(64)
 
+/* ── n1cb416 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_n1cb416_fwd_avx2)
+VFFT_IL_DECL(radix64_z_n1cb416_bwd_avx2)
+#define VFFT_IL_N1CB416_FWD_RADICES(X) X(64)
+#define VFFT_IL_N1CB416_BWD_RADICES(X) X(64)
+#define VFFT_IL_N1CB416_PAIR_RADICES(X) X(64)
+
+/* ── n1cb48 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_n1cb48_fwd_avx2)
+VFFT_IL_DECL(radix32_z_n1cb48_bwd_avx2)
+#define VFFT_IL_N1CB48_FWD_RADICES(X) X(32)
+#define VFFT_IL_N1CB48_BWD_RADICES(X) X(32)
+#define VFFT_IL_N1CB48_PAIR_RADICES(X) X(32)
+
+/* ── n1cb84 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_n1cb84_fwd_avx2)
+VFFT_IL_DECL(radix32_z_n1cb84_bwd_avx2)
+#define VFFT_IL_N1CB84_FWD_RADICES(X) X(32)
+#define VFFT_IL_N1CB84_BWD_RADICES(X) X(32)
+#define VFFT_IL_N1CB84_PAIR_RADICES(X) X(32)
+
+/* ── n1cb88 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_n1cb88_fwd_avx2)
+VFFT_IL_DECL(radix64_z_n1cb88_bwd_avx2)
+#define VFFT_IL_N1CB88_FWD_RADICES(X) X(64)
+#define VFFT_IL_N1CB88_BWD_RADICES(X) X(64)
+#define VFFT_IL_N1CB88_PAIR_RADICES(X) X(64)
+
+/* ── n1ctan ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix16_z_n1ctan_fwd_avx2)
+VFFT_IL_DECL(radix16_z_n1ctan_bwd_avx2)
+#define VFFT_IL_N1CTAN_FWD_RADICES(X) X(16)
+#define VFFT_IL_N1CTAN_BWD_RADICES(X) X(16)
+#define VFFT_IL_N1CTAN_PAIR_RADICES(X) X(16)
+
 /* ── n1t ── fwd 20 · bwd 20 · pair 20 */
 VFFT_IL_DECL(radix3_z_n1t_fwd_avx2)
 VFFT_IL_DECL(radix4_z_n1t_fwd_avx2)
@@ -422,6 +457,43 @@ VFFT_IL_DECL(radix64_z_t2c_bwd_avx2)
 #define VFFT_IL_T2C_BWD_RADICES(X) X(4) X(8) X(16) X(32) X(64)
 #define VFFT_IL_T2C_PAIR_RADICES(X) X(4) X(8) X(16) X(32) X(64)
 
+/* ── t2cb416 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_t2cb416_fwd_avx2)
+VFFT_IL_DECL(radix64_z_t2cb416_bwd_avx2)
+#define VFFT_IL_T2CB416_FWD_RADICES(X) X(64)
+#define VFFT_IL_T2CB416_BWD_RADICES(X) X(64)
+#define VFFT_IL_T2CB416_PAIR_RADICES(X) X(64)
+
+/* ── t2cb48 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_t2cb48_fwd_avx2)
+VFFT_IL_DECL(radix32_z_t2cb48_bwd_avx2)
+#define VFFT_IL_T2CB48_FWD_RADICES(X) X(32)
+#define VFFT_IL_T2CB48_BWD_RADICES(X) X(32)
+#define VFFT_IL_T2CB48_PAIR_RADICES(X) X(32)
+
+/* ── t2cb84 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix32_z_t2cb84_fwd_avx2)
+VFFT_IL_DECL(radix32_z_t2cb84_bwd_avx2)
+#define VFFT_IL_T2CB84_FWD_RADICES(X) X(32)
+#define VFFT_IL_T2CB84_BWD_RADICES(X) X(32)
+#define VFFT_IL_T2CB84_PAIR_RADICES(X) X(32)
+
+/* ── t2cb88 ── fwd 1 · bwd 1 · pair 1 */
+VFFT_IL_DECL(radix64_z_t2cb88_fwd_avx2)
+VFFT_IL_DECL(radix64_z_t2cb88_bwd_avx2)
+#define VFFT_IL_T2CB88_FWD_RADICES(X) X(64)
+#define VFFT_IL_T2CB88_BWD_RADICES(X) X(64)
+#define VFFT_IL_T2CB88_PAIR_RADICES(X) X(64)
+
+/* ── t2ctan ── fwd 2 · bwd 2 · pair 2 */
+VFFT_IL_DECL(radix8_z_t2ctan_fwd_avx2)
+VFFT_IL_DECL(radix16_z_t2ctan_fwd_avx2)
+VFFT_IL_DECL(radix8_z_t2ctan_bwd_avx2)
+VFFT_IL_DECL(radix16_z_t2ctan_bwd_avx2)
+#define VFFT_IL_T2CTAN_FWD_RADICES(X) X(8) X(16)
+#define VFFT_IL_T2CTAN_BWD_RADICES(X) X(8) X(16)
+#define VFFT_IL_T2CTAN_PAIR_RADICES(X) X(8) X(16)
+
 /* ── t2t ── fwd 0 · bwd 20 · pair 0 */
 VFFT_IL_DECL(radix3_z_t2t_bwd_avx2)
 VFFT_IL_DECL(radix4_z_t2t_bwd_avx2)
@@ -475,6 +547,6 @@ VFFT_IL_DECL(radix32_z_t2tg_bwd_avx2)
 VFFT_IL_DECL(radix64_z_t2tg_bwd_avx2)
 #define VFFT_IL_T2TG_BWD_RADICES(X) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27) X(32) X(64)
 
-/* 296 declarations over 41 kinds */
+/* 318 declarations over 51 kinds */
 
 #endif
