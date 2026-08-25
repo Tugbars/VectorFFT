@@ -59,6 +59,41 @@ static void naive_axis_j(const double *in, double *out, int N1, int N2,
         }
 }
 
+/* the driver's greedy chain (MIRRORED — the binding is the v1 structural
+ * default in _il2d_build_chain; M3 makes the chain a raced wisdom axis and
+ * this gate will read it from the plan instead) + the DIF output map: the
+ * FIRST stage's digit is the MOST significant position digit
+ * (il2d_proto.h derivation, simulator-proven). nf==1 -> identity (M1). */
+static int chain_of(int N1, int *Rs)
+{
+    static const int POOL[] = { 64, 32, 16, 8, 4 };
+    int L = N1, m = 0;
+    while (L > 1) {
+        int p, R = 0;
+        if (m >= 8) return 0;
+        for (p = 0; p < 5; p++)
+            if (L % POOL[p] == 0 && (L / POOL[p] == 1 || L / POOL[p] >= 4)) {
+                R = POOL[p];
+                break;
+            }
+        if (!R) return 0;
+        Rs[m++] = R;
+        L /= R;
+    }
+    return m;
+}
+
+static int row_pos(int k, int N1, const int *Rs, int nf)
+{
+    int pos = 0, w = N1, s;
+    for (s = 0; s < nf; s++) {
+        w /= Rs[s];
+        pos += (k % Rs[s]) * w;
+        k /= Rs[s];
+    }
+    return pos;
+}
+
 /* can the row child exist? probe the exact plan the driver builds */
 static int row_child_ok(vfft_wisdom *W, int N2)
 {
@@ -86,6 +121,10 @@ int main(int argc, char **argv)
     static const int CELLS[][2] = {
         { 4, 16 },  { 8, 64 },   { 16, 16 },  { 16, 100 }, { 32, 64 },
         { 64, 64 }, { 64, 256 }, { 32, 5 },   { 64, 100 },
+        /* M2 multi-stage chains (t2c mids + n1c leaf); output along i is
+         * digit-reversed by the driver's chain — row_pos below mirrors it */
+        { 128, 64 }, { 256, 64 }, { 512, 32 }, { 1024, 16 }, { 4096, 8 },
+        { 128, 100 },
     };
     const char *wisdir = argc > 1 ? argv[1] : ".";
     int fails = 0, skips = 0, ci, dir, oop;
@@ -157,11 +196,16 @@ int main(int argc, char **argv)
                 }
                 {
                     const double *got = oop ? oz : z;
-                    for (i = 0; i < 2 * T; i++) {
-                        double d = fabs(got[i] - ref[i]);
-                        double m = fabs(ref[i]);
-                        if (d > maxe) maxe = d;
-                        if (m > maxr) maxr = m;
+                    int Rs[8], nf = chain_of(N1, Rs), ki, kj;
+                    for (ki = 0; ki < N1; ki++) {
+                        const int p_ = row_pos(ki, N1, Rs, nf);
+                        for (kj = 0; kj < 2 * N2; kj++) {
+                            double d = fabs(got[2 * (size_t)p_ * N2 + kj]
+                                            - ref[2 * (size_t)ki * N2 + kj]);
+                            double m = fabs(ref[2 * (size_t)ki * N2 + kj]);
+                            if (d > maxe) maxe = d;
+                            if (m > maxr) maxr = m;
+                        }
                     }
                 }
                 rel = maxe / (maxr > 0 ? maxr : 1.0);

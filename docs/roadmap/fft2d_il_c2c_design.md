@@ -164,9 +164,12 @@ separable naive DFT — roundtrip can never gate a permuted transform.
   `lay=il` banking (M3/M4). Gate: forward elementwise per
   direction; race vs convert-wrapper, split 2D, MKL CCE at the same cells.
   This alone serves every cell with N1 <= 64 natively.
-- **M2 — `t2c` + the multi-stage column chain.** Broadcast-record kind,
-  in-place DIF stages, in-kernel group loop; N1 to 4096-class. Bit-gate vs
-  the M0 simulator; speed-gate per cell.
+- **M2 — `t2c` + the multi-stage column chain. [DONE 2026-08-25]**
+  Broadcast-record kind (per-(d,leg) hoisted records, `emit_group_prologue`
+  / `ctx.tw_group`), same-slot DIF stages both directions (bwd = conjugated
+  driver-built table), greedy chain default (a wisdom axis at M3), gate ALL
+  PASS first emission through N1=4096; race: beats the wrapper at every
+  square cell (1.14-1.24) at MKL-CCE-parity-band ratios.
 - **M3 — variant races.** Blocked bodies per the construction table;
   tangent/[c,tan] records; direct vs staged route + Wc + pitch skew; uj2;
   store-sinking. Bank winners as il-2D kv codes in `lay=il` cells.

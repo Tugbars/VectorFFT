@@ -345,7 +345,16 @@ struct vfft_plan_s
      * convert wrapper stays the fallback. Opt-in: VFFT_IL2D_NATIVE=1 (env
      * pre-wisdom lever; the route race + lay=il banking is M3/M4). */
     struct vfft_plan_s *il2d_row;
-    vfft_il2p_fn il2d_col_f, il2d_col_b;
+    /* the column chain: stage s has radix il2d_R[s] over sub-length
+     * il2d_L[s] (D = L/R); stages 0..nst-2 are t2c with driver-built
+     * d-major record tables (il2d_tf fwd / il2d_tb conjugated bwd), the
+     * last stage is the twiddle-free n1c. nst == 1 = the M1 single-stage
+     * tier (identity order along i); nst > 1 leaves i digit-reversed by
+     * the chain (the scrambled contract; natural = M4 rho tables). */
+    int il2d_nst;
+    int il2d_R[8], il2d_L[8];
+    vfft_il2p_fn il2d_f[8], il2d_b[8];
+    double *il2d_tf[8], *il2d_tb[8];
     int il_race; /* §6a59: A/B pending flag (decision-scoped) */
     stride_plan_t *cplan_il;
     vfft_proto_exec_fn il_pf, il_pb; /* §6a55: jit tier on cplan_il */
@@ -2134,6 +2143,107 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
 static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                           struct vfft_plan_s *h);
 
+/* ── native IL 2D c2c: column-chain builders (fft2d_il_c2c_design.md).
+ * _il2d_build_chain: factor N1 greedy-largest over the t2c/n1c radix set;
+ * stages 0..m-2 resolve t2c pairs, the last resolves the n1c pair. v1
+ * STRUCTURAL default — the chain is a lay=il wisdom axis at M3 (raced,
+ * never a shipped constant). Returns 0 if N1 is not expressible.
+ * _il2d_build_tables: per t2c stage, the d-major record table — per digit
+ * d in [0,D), per leg r in 1..R-1, [c x4][-s,+s,-s,+s] for
+ * w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
+ * kernels are shape-identical, conj is table-side, never text
+ * derivation). Algebra simulator-proven: src/core/oop/il2d_proto.h. */
+static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
+                             vfft_il2p_fn *fb, int *nst)
+{
+    static const int POOL[] = { 64, 32, 16, 8, 4 };
+    int L = N1, m = 0;
+    while (L > 1)
+    {
+        int p, R = 0;
+        if (m >= 8)
+            return 0;
+        for (p = 0; p < 5; p++)
+        {
+            const int r = POOL[p];
+            if (L % r == 0 && (L / r == 1 || L / r >= 4))
+            {
+                R = r;
+                break;
+            }
+        }
+        if (!R)
+            return 0; /* leftover factor (2, odd) — tier not expressible */
+        Rs[m++] = R;
+        L /= R;
+    }
+    if (m == 0)
+        return 0;
+    {
+        int s;
+        for (s = 0; s < m; s++)
+        {
+            const int last = (s == m - 1);
+            ff[s] = last ? vfft_il2p_n1c_fn(Rs[s], 0)
+                         : vfft_il2p_t2c_fn(Rs[s], 0);
+            fb[s] = last ? vfft_il2p_n1c_fn(Rs[s], 1)
+                         : vfft_il2p_t2c_fn(Rs[s], 1);
+            if (!ff[s] || !fb[s])
+                return 0;
+        }
+    }
+    *nst = m;
+    return 1;
+}
+
+static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
+                              double **tf, double **tb)
+{
+    const double pi = 3.14159265358979323846;
+    int s, L = N1;
+    for (s = 0; s < nst; s++)
+    {
+        const int R = Rs[s], D = L / R;
+        Ls[s] = L;
+        tf[s] = NULL;
+        tb[s] = NULL;
+        if (D > 1) /* the n1c leaf carries no table */
+        {
+            const size_t nrec = (size_t)D * (R - 1);
+            double *f = (double *)malloc(nrec * 8 * sizeof(double));
+            double *bt = (double *)malloc(nrec * 8 * sizeof(double));
+            int d, r, lane;
+            if (!f || !bt)
+            {
+                free(f);
+                free(bt);
+                return -1;
+            }
+            for (d = 0; d < D; d++)
+                for (r = 1; r < R; r++)
+                {
+                    const double a =
+                        -2.0 * pi * (double)((size_t)d * r % (size_t)L)
+                        / (double)L;
+                    const double c = cos(a), si = sin(a);
+                    double *rf = f + ((size_t)d * (R - 1) + (r - 1)) * 8;
+                    double *rb = bt + ((size_t)d * (R - 1) + (r - 1)) * 8;
+                    for (lane = 0; lane < 4; lane++)
+                    {
+                        rf[lane] = c;
+                        rb[lane] = c;
+                        rf[4 + lane] = (lane & 1) ? si : -si;
+                        rb[4 + lane] = (lane & 1) ? -si : si; /* conj */
+                    }
+                }
+            tf[s] = f;
+            tb[s] = bt;
+        }
+        L /= R;
+    }
+    return 0;
+}
+
 /* zr2c (even N, K==1, INTERLEAVED): x[N] read as z[N/2] -> child c2c(N/2) NATURAL -> zr2c.h fold;
  * c2r mirrors it with the fold leading. route 0 = child_oop_il, route 1 = child_nat_ip.
  * See docs/design/vfft_front_door.md. */
@@ -3556,36 +3666,37 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * child create failure — falls through to _build_2d and the
          * convert wrapper exactly as before. */
         struct vfft_plan_s *il2d_row = NULL;
-        vfft_il2p_fn il2d_cf = NULL, il2d_cb = NULL;
+        int il2d_nst = 0;
+        int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
+        vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
+        double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
         if (cfg->transform == VFFT_C2C &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
             const char *e = getenv("VFFT_IL2D_NATIVE");
-            if (e && atoi(e) == 1)
+            if (e && atoi(e) == 1 &&
+                _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b, &il2d_nst))
             {
-                il2d_cf = vfft_il2p_n1c_fn(N1, 0);
-                il2d_cb = vfft_il2p_n1c_fn(N1, 1);
-                if (il2d_cf && il2d_cb)
+                vfft_config_t rc;
+                memset(&rc, 0, sizeof rc);
+                rc.transform = VFFT_C2C;
+                rc.placement = VFFT_INPLACE;
+                rc.rigor = cfg->rigor;
+                rc.dims = 1;
+                rc.n[0] = N2;
+                rc.howmany = 1;
+                rc.order = VFFT_ORDER_NATURAL;
+                rc.layout = VFFT_LAYOUT_INTERLEAVED;
+                rc.nthreads = 1;
+                rc.wisdom = cfg->wisdom;
+                rc.wisdom_write = cfg->wisdom_write;
+                il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+                if (il2d_row &&
+                    _il2d_build_tables(N1, il2d_nst, il2d_R,
+                                       il2d_L, il2d_tf, il2d_tb))
                 {
-                    vfft_config_t rc;
-                    memset(&rc, 0, sizeof rc);
-                    rc.transform = VFFT_C2C;
-                    rc.placement = VFFT_INPLACE;
-                    rc.rigor = cfg->rigor;
-                    rc.dims = 1;
-                    rc.n[0] = N2;
-                    rc.howmany = 1;
-                    rc.order = VFFT_ORDER_NATURAL;
-                    rc.layout = VFFT_LAYOUT_INTERLEAVED;
-                    rc.nthreads = 1;
-                    rc.wisdom = cfg->wisdom;
-                    rc.wisdom_write = cfg->wisdom_write;
-                    il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
-                }
-                if (!il2d_row)
-                {
-                    il2d_cf = NULL;
-                    il2d_cb = NULL;
+                    vfft_destroy(il2d_row);
+                    il2d_row = NULL;
                 }
             }
         }
@@ -3625,8 +3736,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->nthreads = stride_get_num_threads();
         h->tplan = tp; /* NULL when the native IL 2D tier engaged */
         h->il2d_row = il2d_row;
-        h->il2d_col_f = il2d_cf;
-        h->il2d_col_b = il2d_cb;
+        h->il2d_nst = il2d_nst;
+        memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
+        memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
+        memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
+        memcpy(h->il2d_b, il2d_b, sizeof il2d_b);
+        memcpy(h->il2d_tf, il2d_tf, sizeof il2d_tf);
+        memcpy(h->il2d_tb, il2d_tb, sizeof il2d_tb);
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
@@ -6751,21 +6867,45 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             {
                 if (h->il2d_row)
                 {
-                    /* ── native IL 2D tier (M1): column pass = one
-                     * radix-N1 n1c stage (legs = plane rows at Ls = N2),
-                     * then per-row K=1 IL children. The two passes COMMUTE
-                     * (no inter-pass twiddle), so BWD runs the same order
-                     * with the bwd pair. OOP: the column pass performs the
-                     * src->dst move (n1c is alias-tolerant both ways). */
+                    /* ── native IL 2D tier (M1/M2): the column chain —
+                     * t2c stages then the n1c leaf, block-looped, same
+                     * slots (simulator-proven maps, il2d_proto.h) — then
+                     * per-row K=1 IL children. The column and row passes
+                     * COMMUTE (no inter-pass twiddle) so BWD runs the same
+                     * stage order with the bwd pair + conjugated tables.
+                     * OOP: stage 0 performs the src->dst move (the kinds
+                     * are alias-tolerant both ways). nst == 1 leaves i in
+                     * natural order; nst > 1 leaves i digit-reversed by
+                     * the chain (the scrambled contract). */
+                    const int fwd = (dir == VFFT_FORWARD);
                     size_t i, rn = (size_t)h->N2;
+                    int s, L = h->N;
                     if (!dre)
                         dre = sre; /* in-place convenience */
-                    if (dir == VFFT_FORWARD)
-                        h->il2d_col_f(sre, NULL, dre, NULL, NULL, NULL,
-                                      rn, 0, rn, 0, rn);
-                    else
-                        h->il2d_col_b(sre, NULL, dre, NULL, NULL, NULL,
-                                      rn, 0, rn, 0, rn);
+                    for (s = 0; s < h->il2d_nst; s++)
+                    {
+                        const int R = h->il2d_R[s], D = h->il2d_L[s] / R;
+                        const vfft_il2p_fn fn = fwd ? h->il2d_f[s]
+                                                    : h->il2d_b[s];
+                        const double *tab = fwd ? h->il2d_tf[s]
+                                                : h->il2d_tb[s];
+                        const double *src0 = (s == 0) ? sre : dre;
+                        int b;
+                        for (b = 0; b < h->N / h->il2d_L[s]; b++)
+                        {
+                            const size_t off =
+                                2 * (size_t)b * h->il2d_L[s] * rn;
+                            if (D == 1) /* the n1c leaf (twiddle-free) */
+                                fn(src0 + off, NULL, dre + off, NULL,
+                                   NULL, NULL, rn, 0, rn, 0, rn);
+                            else        /* t2c mid */
+                                fn(src0 + off, NULL, dre + off, NULL,
+                                   tab, NULL, (size_t)D * rn, rn,
+                                   (size_t)D * rn, (size_t)D, rn);
+                        }
+                        L /= R;
+                    }
+                    (void)L;
                     for (i = 0; i < (size_t)h->N; i++)
                         vfft_execute(h->il2d_row, dir,
                                      dre + 2 * i * rn, NULL,
@@ -7097,7 +7237,15 @@ void vfft_destroy(vfft_plan h)
         STRIDE_ALIGNED_FREE(h->il_wr2);
         STRIDE_ALIGNED_FREE(h->il_wi2);
         if (h->il2d_row)
+        {
+            int s2;
             vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
+            for (s2 = 0; s2 < h->il2d_nst; s2++)
+            {
+                free(h->il2d_tf[s2]);
+                free(h->il2d_tb[s2]);
+            }
+        }
     }
     if (!h)
         return;

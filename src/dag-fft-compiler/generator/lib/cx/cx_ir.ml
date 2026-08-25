@@ -111,6 +111,11 @@ and t =
    CLI flag the driver passes). *)
 type ctx =
   { tw_log3 : bool
+  ; tw_group : bool
+    (* t2c: CTwL sources from the _wc/_ws names a GROUP prologue binds
+       (per-(d,leg) records hoisted out of the column loop — the z-T1S
+       broadcast strategy, il_native_design.md §6c). Same naming as log3,
+       no derivation; the two are mutually exclusive by construction. *)
   ; tw_pre : bool
   ; st_turn : bool
   ; st_turn_gs : bool
@@ -121,8 +126,9 @@ type ctx =
   ; rotfma : bool
   }
 
-let make_ctx ~tw_log3 ~tw_pre ~st_turn ~st_turn_gs ~tangent =
+let make_ctx ~tw_group ~tw_log3 ~tw_pre ~st_turn ~st_turn_gs ~tangent =
   { tw_log3
+  ; tw_group
   ; tw_pre
   ; st_turn
   ; st_turn_gs
