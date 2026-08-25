@@ -1,9 +1,10 @@
-@vw2 1.0
+@vw2 1.2
 @legend signpost: a verdict references its component recipe (ref=), never copies it
 @legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
 @legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
-@legend key: layout (split/il) is never a key token - it is a strategy output in the payload
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier
 @legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
 @cell t=c2c n=128x128 q=1 ord=scr place=* | rowplan=8.16 rowvars=flat.flat rowdif=1 colplan=4.4.8 colvars=flat.t1s.t1s coldif=0 b=8 | ran=1 ns=24643.4 metric=fwd1 units=ns src=migrated from=fft2d_c2c_wisdom.txt:4
@@ -40,3 +41,16 @@
 @cell t=c2r n=256x256 q=1 ord=* place=* | rowplan=16.8 rowvars=flat.flat rowdif=1 colplan=8.32 colvars=log3.flat coldif=1 b=8 k_pad=132 | ran=1 ns=100650.0 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:5
 @cell t=c2r n=512x512 q=1 ord=* place=* | rowplan=16.16 rowvars=flat.t1s rowdif=0 colplan=16.32 colvars=flat.t1s coldif=0 b=8 k_pad=260 | ran=1 ns=567687.5 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:6
 @cell t=c2r n=128x64 q=1 ord=* place=* | rowplan=32 rowvars=flat rowdif=1 colplan=8.16 colvars=flat.t1s coldif=0 b=8 k_pad=36 | ran=1 ns=9773.0 metric=fwd1 units=ns src=migrated from=fft2d_c2r_wisdom.txt:7
+@cell t=c2c n=64x64 q=1 ord=scr place=oop lay=il | chain=8.8 wl=8 tf=1 ro=0 | ran=1 ns=13268.9 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=128x128 q=1 ord=scr place=oop lay=il | chain=4.4.8 wl=128 tf=1 ro=0 | ran=1 ns=58234.4 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=256x256 q=1 ord=scr place=oop lay=il | chain=4.4.4.4 wl=256 tf=1 ro=0 | ran=1 ns=83760.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=512x512 q=1 ord=scr place=oop lay=il | chain=8.4.4.4 wl=128 tf=1 ro=0 | ran=1 ns=1163800.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=1024x1024 q=1 ord=scr place=oop lay=il | chain=4.8.4.8 wl=16 tf=1 ro=0 | ran=1 ns=6646250.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=16x4096 q=1 ord=scr place=oop lay=il | chain=4.4 wl=16 tf=1 ro=0 | ran=1 ns=302186.7 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=4096x16 q=1 ord=scr place=oop lay=il | chain=8.64.8 wl=16 tf=1 ro=0 | ran=1 ns=356353.3 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=32x1024 q=1 ord=scr place=oop lay=il | chain=8.4 wl=8 tf=1 ro=0 | ran=1 ns=134643.3 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=64x256 q=1 ord=scr place=oop lay=il | chain=4.4.4 wl=8 tf=1 ro=0 | ran=1 ns=54555.7 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=4096x64 q=1 ord=scr place=oop lay=il | chain=32.4.4.8 wl=32 tf=1 ro=0 | ran=1 ns=1420700.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=8192x64 q=1 ord=scr place=oop lay=il | chain=64.4.32 wl=256 tf=1 ro=0 | ran=1 ns=3301200.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=16384x64 q=1 ord=scr place=oop lay=il | chain=32.16.32 wl=32 tf=1 ro=1 | ran=1 ns=6377950.0 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=32768x64 q=1 ord=scr place=oop lay=il | chain=64.16.32 wl=32 tf=1 ro=0 | ran=1 ns=18285200.0 metric=fwd1 units=ns src=race date=2026-08-25

@@ -72,11 +72,26 @@ static inline void _vfft_cpuid(unsigned leaf, unsigned sub, unsigned r[4])
 #define VFFT_L1D_DISCOVER 0
 #endif
 
+/* L2 (2026-08-25, the 2D band-threshold fence and any future L2-sized
+ * decision). Same discipline as L1d: PINNED for our own measurement runs,
+ * discovery under the SAME opt-in knob (one switch governs cache
+ * discovery, not one per level). The E-core caveat is sharper here: a
+ * Gracemont module's 4 MB L2 is SHARED by 4 cores, so sizing a private-L2
+ * decision off an E-core read overshoots by up to 4x — the refuse rule
+ * below treats it exactly like the L1 case. Fallback = the P-core private
+ * size, the smaller effective figure on this hybrid. */
+#ifndef VFFT_L2_PCORE_BYTES
+#define VFFT_L2_PCORE_BYTES (2 * 1024 * 1024)
+#endif
+#define VFFT_L2_FALLBACK_BYTES (1024 * 1024) /* undershoot degrades gracefully */
+
 typedef struct {
     long     l1d_used;      /* what sizing decisions MUST use, and what gets
                              * stamped into wisdom                           */
     long     l1d_seen;      /* what CPUID reported here, 0 if unavailable    */
     long     l1d_ways;
+    long     l2_used;       /* the L2 sizing value (same contract as l1d)    */
+    long     l2_seen;       /* CPUID level-2 unified/data size, 0 if none    */
     unsigned core_type;     /* VFFT_CPU_TYPE_*, 0 = not hybrid / unknown     */
     int      is_pcore;
     int      discovered;    /* 1 = l1d_used came from CPUID                  */
@@ -88,6 +103,7 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
     unsigned r[4];
     o->l1d_seen = 0; o->l1d_ways = 0; o->core_type = 0;
     o->is_pcore = 0; o->discovered = 0; o->geometry_ok = 1;
+    o->l2_seen = 0;
 
 #if VFFT_CPU_HAVE_CPUID
     _vfft_cpuid(0, 0, r);
@@ -103,7 +119,7 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
     if (maxleaf >= 4) {
         for (unsigned sub = 0; sub < 16u; sub++) {
             _vfft_cpuid(4, sub, r);
-            const int ctype = (int)(r[0] & 0x1F);        /* 1 = data       */
+            const int ctype = (int)(r[0] & 0x1F);        /* 1=data 3=unified */
             const int level = (int)((r[0] >> 5) & 0x7);
             if (ctype == 0) break;
             if (level == 1 && ctype == 1) {
@@ -113,7 +129,13 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
                 const long sets  = (long)(r[2] + 1);
                 o->l1d_seen = ways * parts * line * sets;
                 o->l1d_ways = ways;
-                break;
+            }
+            if (level == 2 && (ctype == 1 || ctype == 3)) {
+                const long ways  = (long)(((r[1] >> 22) & 0x3FF) + 1);
+                const long parts = (long)(((r[1] >> 12) & 0x3FF) + 1);
+                const long line  = (long)((r[1] & 0xFFF) + 1);
+                const long sets  = (long)(r[2] + 1);
+                o->l2_seen = ways * parts * line * sets;
             }
         }
     }
@@ -135,8 +157,14 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
         o->l1d_used = VFFT_L1D_FALLBACK_BYTES;   /* refuse to size off an
                                                   * E-core or a bad read   */
     }
+    if (o->l2_seen > 0 && o->is_pcore && o->geometry_ok)
+        o->l2_used = o->l2_seen;
+    else
+        o->l2_used = VFFT_L2_FALLBACK_BYTES;     /* same refuse rule; the
+                                                  * E-core L2 is SHARED    */
 #else
     o->l1d_used = VFFT_L1D_PCORE_BYTES;          /* pinned for our own runs */
+    o->l2_used = VFFT_L2_PCORE_BYTES;
 #endif
 }
 
@@ -153,6 +181,16 @@ static inline const vfft_cpu_cache_t *vfft_cpu_cache(void)
 /* The capacity every cache-sizing decision must use, and the value that gets
  * stamped into a wisdom record beside the width it produced. */
 static inline long vfft_cpu_l1d_bytes(void) { return vfft_cpu_cache()->l1d_used; }
+
+/* The L2 twin (2026-08-25): the capacity every L2-sized decision must use
+ * (first consumer: the 2D band-threshold fence N1_max = L2/(16*wl_min)),
+ * and the value stamped beside any banked verdict that depended on it. */
+static inline long vfft_cpu_l2_bytes(void) { return vfft_cpu_cache()->l2_used; }
+
+static inline int vfft_cpu_l2_matches(long stamped)
+{
+    return stamped <= 0 || stamped == vfft_cpu_l2_bytes();
+}
 
 /* Replay check: a banked width is only valid on a machine with the same L1. */
 static inline int vfft_cpu_l1d_matches(long stamped)

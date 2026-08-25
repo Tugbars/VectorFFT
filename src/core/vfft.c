@@ -2528,7 +2528,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     double *z = (double *)malloc(2 * T * sizeof(double));
     struct vfft_plan_s *rowo = NULL;
     double *rowscr = NULL;
-    int wlc[6], nwl = 1, wi, ro, bwl = 0, bro = 0;
+    int wlc[14], nwl = 1, wi, ro, bwl = 0, bro = 0;
     double best = 1e300;
     size_t i;
     int reps = (int)(1e6 / (double)(T + 1));
@@ -2542,7 +2542,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     {
         static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
         int p, s2;
-        for (p = 0; p < 6 && nwl < 6; p++)
+        for (p = 0; p < 6 && nwl < 14; p++)
         {
             const int w = WPOOL[p];
             int cut = -1;
@@ -2555,6 +2555,31 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                     break;
                 }
             if (cut >= 0)
+                wlc[nwl++] = w;
+        }
+        /* the CASCADE widths (2026-08-25, owner-funded 2D cascade arc):
+         * at huge N1 the static pool tops out at 256, pinning cut deep —
+         * MULTIPLE wide stages stream the full plane per execute (the
+         * measured L2 knee: per-point 1.9x off the memory floor at
+         * 32768x64 while the memcpy floor moved 1.3x). The stage spans
+         * L[s] themselves are the natural band widths: wl == L[s] pulls
+         * every stage below s into the L2-resident depth-first suffix,
+         * leaving s wide passes. Gate = live band residency
+         * (w * N2 * 16 <= vfft_cpu_l2_bytes(), the hardware-derived
+         * fence — never a platform-baked constant), and the RACE still
+         * decides: these are candidates, not defaults. */
+        for (s2 = 1; s2 < h->il2d_nst && nwl < 14; s2++)
+        {
+            const int w = h->il2d_L[s2];
+            int dup = 0, p2;
+            if (w > N1 || N1 % w || w < 8)
+                continue;
+            if ((long)w * N2 * 16 > vfft_cpu_l2_bytes())
+                continue;
+            for (p2 = 0; p2 < nwl; p2++)
+                if (wlc[p2] == w)
+                    dup = 1;
+            if (!dup)
                 wlc[nwl++] = w;
         }
     }
@@ -5048,7 +5073,16 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 rcfg.recalibrate = 0;
                 vfft_zsplit_plan_t *zcs = NULL;
                 int zcr = 0;
-                if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
+                /* COLD-STORE candidate (census tail, 2026-08-25): with no
+                 * kind-4 row banked yet the replay misses and the natural
+                 * race used to run WITHOUT its cascade arm — the tape won
+                 * by default (the same single-writer disease, natural
+                 * flavor). Build the candidate instead: aliased t2q
+                 * timing, no kind-4 bank (ip=1) — the race below still
+                 * decides, and only its verdict banks (@nat). */
+                if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr) ||
+                    _k1z_race_and_bank(&rcfg, W, N, /*ip=*/1, &zcs, &zct,
+                                       &zcr))
                 {
                     if (zcs)
                         vfft_zsplit_destroy(zcs);
