@@ -113,6 +113,13 @@ typedef struct {
      * this CPU is hybrid, P-core L1d 48 KB vs E-core 32 KB. */
     int    zt_tw;
     int    zt_l1;
+    /* kind-4 PLACEMENT (2026-08-25): 1 = this verdict was raced with the
+     * ALIASED in-place call form and banks/serves the place=ip twin row;
+     * 0 = the classic place=oop row. In-place has its own memory-access
+     * structure, so the two placements race and bank independently (the
+     * kind-3 per-layout precedent) — neither can erase the other. memset-0
+     * construction keeps every existing caller on the oop row. */
+    int    inplace;
     /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
      * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
      *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]
