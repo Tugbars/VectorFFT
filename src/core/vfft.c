@@ -776,7 +776,14 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
  * VFFT_FORCE_ZROUTE=legacy, or as the degrade when the zturn create/race
  * fails for this N (fallback intact; hygiene rule: reachable-under-kill-
  * switch legacy paths stay). */
-static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
+/* aliased=1 times the IN-PLACE call form (dst==src; alias-safety is the
+ * P0a memcmp-proven contract, data saturating to inf is the house-accepted
+ * in-place timing mode) — the in-place caller's own memory-access
+ * structure, not the OOP one (owner, 2026-08-25: in-place creates its own
+ * plans; verdicts can differ by placement). The bit-identity sanity check
+ * stays OOP-buffered (it needs the preserved input). */
+static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs,
+                                    vfft_rigor_t rigor, int aliased)
 {
     const int N = zs->N;
     const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
@@ -811,8 +818,9 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
     }
 
     /* size bursts to ~0.3 ms from one estimated exec */
+    double *zd = aliased ? zi : zo; /* the timed call form's destination */
     double t0 = vfft_proto_now_ns();
-    vfft_zsplit_execute_fwd(zs, zi, zo);
+    vfft_zsplit_execute_fwd(zs, zi, zd);
     double est = vfft_proto_now_ns() - t0;
     if (est < 1.0)
         est = 1.0;
@@ -833,12 +841,12 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
         zs->t2q = first;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_zsplit_execute_fwd(zs, zi, zo);
+            vfft_zsplit_execute_fwd(zs, zi, zd);
         a = (vfft_proto_now_ns() - t0) / reps;
         zs->t2q = !first;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_zsplit_execute_fwd(zs, zi, zo);
+            vfft_zsplit_execute_fwd(zs, zi, zd);
         b = (vfft_proto_now_ns() - t0) / reps;
         m0[r] = first ? a : b;
         m1[r] = first ? b : a;
@@ -863,8 +871,10 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs, vfft_rigor_t rigor)
 
 /* stf/stf2 twin of _calibrate_zsplit_t2q — same mechanics, fwd-only. This is the cascade's
  * create-time miss race; engine (zsplit vs zturn) and chain are searched offline, not here.
+ * aliased: same contract as the zsplit twin (in-place call-form timing).
  * See docs/design/vfft_front_door.md. */
-static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
+static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
+                                   int aliased)
 {
     /* last==4 chains (radix-4 terminator) have NO stf2 twin — zturn.h's
      * create forces t2q=0 and the execute dispatch is structural about it —
@@ -911,8 +921,9 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
         return 0.0;
     }
 
+    double *zd = aliased ? zi : zo; /* the timed call form's destination */
     double t0 = vfft_proto_now_ns();
-    vfft_zturn2_execute_fwd(zt, zi, zo);
+    vfft_zturn2_execute_fwd(zt, zi, zd);
     double est = vfft_proto_now_ns() - t0;
     if (est < 1.0)
         est = 1.0;
@@ -933,12 +944,12 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor)
         zt->t2q = first;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_zturn2_execute_fwd(zt, zi, zo);
+            vfft_zturn2_execute_fwd(zt, zi, zd);
         a = (vfft_proto_now_ns() - t0) / reps;
         zt->t2q = !first;
         t0 = vfft_proto_now_ns();
         for (int i = 0; i < reps; i++)
-            vfft_zturn2_execute_fwd(zt, zi, zo);
+            vfft_zturn2_execute_fwd(zt, zi, zd);
         b = (vfft_proto_now_ns() - t0) / reps;
         m0[r] = first ? a : b;
         m1[r] = first ? b : a;
@@ -3254,10 +3265,16 @@ static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
  * decides what a miss means (OOP: race + bank; in-place: classic path).
  * PLANNING side only; the exec purity audit watches this. */
 static int _k1z_wisdom_replay(const vfft_config_t *cfg,
-                              struct vfft_wisdom_s *W, int N,
+                              struct vfft_wisdom_s *W, int N, int ip,
                               vfft_zsplit_plan_t **zs_out,
                               vfft_zturn2_plan_t **zt_out, int *zroute_out)
 {
+    /* ip=1 reads the place=ip kind-4 twin row (the in-place caller's own
+     * raced verdict, 2026-08-25); ip=0 reads the classic place=oop row.
+     * Each call site states its cell explicitly — no inference from cfg,
+     * because the natural-order site deliberately reads the oop row as a
+     * candidate-recipe source for its own race. No cross-placement
+     * borrowing: a miss means the caller races its own placement. */
     /* The cascade is the ≥2048 tier, period. A kind-4 row BELOW that is a
      * wrong-slot verdict (the sub-2048 SCRAMBLED champion is the identity
      * ILP engine — Phase A doctrine, k1scr-gated) and replaying it would
@@ -3277,8 +3294,13 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     int znf = 0;
     vfft_oop_wisdom_entry_t zeb;
     const vfft_oop_wisdom_entry_t *ze =
-        W->vw2_off_oop ? vfft_oop_wisdom_lookup_zsplit(&W->oop, N)
-                       : (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb) ? &zeb : NULL);
+        W->vw2_off_oop
+            ? (ip ? NULL /* legacy files never carried an ip row */
+                  : vfft_oop_wisdom_lookup_zsplit(&W->oop, N))
+            : (vw2__oop_lookup_zsplit_pl(&W->vw2, N,
+                                         ip ? VW2_PL_IP : VW2_PL_OOP, &zeb)
+                   ? &zeb
+                   : NULL);
     int ze_hit = (ze && !cfg->recalibrate);
     /* Route forcing, read at CREATE (both directions follow — the
      * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
@@ -3461,6 +3483,129 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     if (!zs_pending && !zt_pending)
         return 0;   /* route-1 create failed and no legacy escort — a miss */
     (void)znf;
+    *zs_out = zs_pending;
+    *zt_out = zt_pending;
+    *zroute_out = zroute_pending;
+    return 1;
+}
+
+/* K=1 SCRAMBLED-contract cascade MISS race (>=2048): default chain + the
+ * stf/stf2 t2q race + bank kind-4 + route atomicity. THE single definition,
+ * factored out of the OOP create (2026-08-25) so the IN-PLACE create can
+ * run it too — before this, only the OOP create raced/banked and an
+ * in-place caller on a cold store replayed nothing and fell to convert
+ * forever (the same hit-only disease the ord=scr ILP fix cured sub-2048;
+ * convert-arm census class 3). t2q picks must be MEASURED on the installed
+ * binary — stf/stf2 are bit-identical, so the delta is code-placement
+ * order, never a hand-set constant. See docs/design/vfft_front_door.md.
+ * Returns 1 with exactly one plan attached (route atomicity), 0 = no
+ * cascade for this N (caller keeps its previous serving).
+ * ip=1: the IN-PLACE caller's race — times the ALIASED call form (its own
+ * memory-access structure; verdicts can differ by placement) and banks the
+ * place=ip kind-4 twin row, so neither placement's re-race can erase the
+ * other's verdict (the kind-3 per-layout precedent). */
+static int _k1z_race_and_bank(const vfft_config_t *cfg,
+                              struct vfft_wisdom_s *W, int N, int ip,
+                              vfft_zsplit_plan_t **zs_out,
+                              vfft_zturn2_plan_t **zt_out, int *zroute_out)
+{
+    vfft_zsplit_plan_t *zs_pending = NULL;
+    vfft_zturn2_plan_t *zt_pending = NULL;
+    int zroute_pending = 0;
+    int zch[VFFT_ZSPLIT_MAX_NF];
+    int znf;
+    if (N < 2048)
+        return 0; /* the cascade tier boundary — same guard as replay */
+    znf = vfft_zsplit_default_chain(N, zch);
+    /* Route forcing for the MISS race (the HIT path reads it inside
+     * _k1z_wisdom_replay): VFFT_NO_ZTURN pins legacy,
+     * VFFT_FORCE_ZROUTE=legacy|zturn is the test hook. An env PARSE is
+     * not replay semantics, so this small read may live in both places
+     * without the two-writers hazard. */
+    int zforce = 0;
+    {
+        const char *fz = getenv("VFFT_FORCE_ZROUTE");
+        if (fz && fz[0])
+            zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1') ? 2 : 1;
+        if (getenv("VFFT_NO_ZTURN"))
+            zforce = 1;
+    }
+    if (znf)
+        zs_pending = vfft_zsplit_create(N, zch, znf);
+    if (!zs_pending)
+        return 0;
+    {
+        double zns = 0.0;
+        if (zforce != 1)
+            zt_pending = vfft_zturn2_create(N);
+        if (zt_pending)
+        {
+            zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
+            if (zns > 0.0)
+                zroute_pending = 1;
+        }
+        if (!zroute_pending)
+            zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor, ip);
+        if (zns > 0.0)
+        {
+            vfft_oop_wisdom_entry_t ne;
+            memset(&ne, 0, sizeof ne);
+            ne.N = N;
+            ne.K = 1;
+            ne.kind = VFFT_OOP_KIND_ZSPLIT;
+            ne.zs_t2q = zs_pending->t2q;
+            /* cc_chain = the WINNING route's chain (the reader contract).
+             * At this create-time race both routes still run the same
+             * default chain, so the encode is byte-identical either way
+             * today — the chain-searched winners come from the offline
+             * planner (dp_planner_il.h route axis / the calibrate_zchain
+             * driver), not this race. */
+            if (zroute_pending && zt_pending)
+                ne.cc_chain = vfft_k1_cc_chain_encode(zt_pending->chain,
+                                                      zt_pending->nf);
+            else
+                ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
+                                                      zs_pending->nf);
+            ne.zs_route = zroute_pending;
+            ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
+            /* tcut width + the cache it was tuned against. 0 when untiled,
+             * which keeps the banked line byte-identical to the pre-width
+             * format. This race does not SEARCH widths (that is the
+             * planner's job); it records whatever width the plan is
+             * carrying so a verdict is never banked as untiled when it
+             * was not. */
+            ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
+                           ? (int)zt_pending->tw : 0;
+            ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
+            ne.inplace = ip; /* the place=ip twin row (0 = today's oop row) */
+            /* MEASURE-LESS bank (ns=0): this race's median is fwd-only
+             * placement luck (§4.9993), not the cell's joint2 verdict —
+             * kind-4 carries ns only from the dp planner. A measure-less
+             * row can always be replaced by the planner's measured one;
+             * the reverse is refused by the merge law, exactly the
+             * intended authority order. */
+            ne.ns = 0.0;
+            vw2_oop_bank_entry(&W->vw2, &ne);
+            _vw2_persist(W, cfg);
+        }
+        /* ROUTE ATOMICITY (structural): exactly ONE cascade plan survives
+         * to the handle — the loser dies here, before the handle exists —
+         * so fwd and bwd cannot pair across routes. */
+        if (zroute_pending && zt_pending)
+        {
+            vfft_zsplit_destroy(zs_pending);
+            zs_pending = NULL;
+        }
+        else
+        {
+            zroute_pending = 0;
+            if (zt_pending)
+            {
+                vfft_zturn2_destroy(zt_pending);
+                zt_pending = NULL;
+            }
+        }
+    }
     *zs_out = zs_pending;
     *zt_out = zt_pending;
     *zroute_out = zroute_pending;
@@ -4910,7 +5055,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 rcfg.recalibrate = 0;
                 vfft_zsplit_plan_t *zcs = NULL;
                 int zcr = 0;
-                if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
+                if (_k1z_wisdom_replay(&rcfg, W, N, /*ip=*/0, &zcs,
+                                       &zct, &zcr))
                 {
                     if (zcs)
                         vfft_zsplit_destroy(zcs);
@@ -5386,16 +5532,22 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              cfg->order == VFFT_ORDER_DEFAULT) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
-            /* The cascade replay stays explicit-SCRAMBLED (its kind-4 cells
-             * were raced under that contract); the ILP race below serves
-             * BOTH spellings — DEFAULT-order in-place IL is the same
-             * scrambled-output contract, and it was the caller eating the
-             * convert tax. */
+            /* >=2048: replay the kind-4 cascade verdict — and on a MISS,
+             * RACE AND BANK it (convert-arm census class 3, owner-approved
+             * fix 2026-08-25: only the OOP create raced; an in-place
+             * caller on a cold store fell to convert forever — the same
+             * hit-only disease as the sub-2048 ILP gap). BOTH spellings:
+             * DEFAULT-order in-place is the scrambled-output contract
+             * (identity rule), and the kind-4 verdict is the measured
+             * serving for it. The cascade is alias-safe in==out (P0a,
+             * memcmp-proven both directions). */
             vfft_zsplit_plan_t *ipzs = NULL;
             vfft_zturn2_plan_t *ipzt = NULL;
             int ipzr = 0;
-            if (cfg->order == VFFT_ORDER_SCRAMBLED &&
-                _k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt, &ipzr))
+            if (_k1z_wisdom_replay(cfg, W, N, /*ip=*/1, &ipzs, &ipzt,
+                                   &ipzr) ||
+                _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs, &ipzt,
+                                   &ipzr))
             {
                 h->zsplit = ipzs; /* exactly one non-NULL (route atomicity) */
                 h->zturn = ipzt;
@@ -5555,107 +5707,16 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
              * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
              * See docs/design/vfft_front_door.md. */
-            int zch[VFFT_ZSPLIT_MAX_NF];
-            int znf = 0;
-            if (!_k1z_wisdom_replay(cfg, W, N, &zs_pending, &zt_pending,
-                                    &zroute_pending))
+            if (!_k1z_wisdom_replay(cfg, W, N, /*ip=*/0, &zs_pending,
+                                    &zt_pending, &zroute_pending))
             {
-                /* MISS / recalibrate -> default chain + the create-time t2q
-                 * race + bank (unchanged). The HIT path above is the shared
-                 * single definition of replay semantics. */
-                int zch[VFFT_ZSPLIT_MAX_NF];
-                int znf = vfft_zsplit_default_chain(N, zch);
-                /* Route forcing for the MISS race (the HIT path reads it
-                 * inside _k1z_wisdom_replay): VFFT_NO_ZTURN pins legacy,
-                 * VFFT_FORCE_ZROUTE=legacy|zturn is the test hook. An env
-                 * PARSE is not replay semantics, so this small read may live
-                 * in both places without the two-writers hazard. */
-                int zforce = 0;
-                {
-                    const char *fz = getenv("VFFT_FORCE_ZROUTE");
-                    if (fz && fz[0])
-                        zforce = (fz[0] == 'z' || fz[0] == 'Z' || fz[0] == '1')
-                                     ? 2
-                                     : 1;
-                    if (getenv("VFFT_NO_ZTURN"))
-                        zforce = 1;
-                }
-                if (znf)
-                    zs_pending = vfft_zsplit_create(N, zch, znf);
-                if (zs_pending)
-                {
-                    double zns = 0.0;
-                    if (zforce != 1)
-                        zt_pending = vfft_zturn2_create(N);
-                    if (zt_pending)
-                    {
-                        zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor);
-                        if (zns > 0.0)
-                            zroute_pending = 1;
-                    }
-                    if (!zroute_pending)
-                        zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor);
-                    if (zns > 0.0)
-                    {
-                        vfft_oop_wisdom_entry_t ne;
-                        memset(&ne, 0, sizeof ne);
-                        ne.N = N;
-                        ne.K = 1;
-                        ne.kind = VFFT_OOP_KIND_ZSPLIT;
-                        ne.zs_t2q = zs_pending->t2q;
-                        /* cc_chain = the WINNING route's chain (the reader
-                         * contract above). At this create-time race both
-                         * routes still run the same default chain, so the
-                         * encode is byte-identical either way today — the
-                         * chain-searched winners come from the offline
-                         * planner (dp_planner_il.h route axis / the
-                         * calibrate_zchain driver), not this race. */
-                        if (zroute_pending && zt_pending)
-                            ne.cc_chain = vfft_k1_cc_chain_encode(
-                                zt_pending->chain, zt_pending->nf);
-                        else
-                            ne.cc_chain = vfft_k1_cc_chain_encode(
-                                zs_pending->chain, zs_pending->nf);
-                        ne.zs_route = zroute_pending;
-                        ne.zt_t2q = zt_pending ? zt_pending->t2q : 0;
-                        /* tcut width + the cache it was tuned against. 0 when
-                         * untiled, which keeps the banked line byte-identical
-                         * to the pre-width format. This race does not SEARCH
-                         * widths (that is the planner's job); it records
-                         * whatever width the plan is carrying so a verdict is
-                         * never banked as untiled when it was not. */
-                        ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
-                                       ? (int)zt_pending->tw : 0;
-                        ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-                        /* MEASURE-LESS bank (ns=0): this race's median is
-                         * fwd-only placement luck (§4.9993), not the cell's
-                         * joint2 verdict — kind-4 carries ns only from the
-                         * dp planner. A measure-less row can always be
-                         * replaced by the planner's measured one; the
-                         * reverse is refused by the merge law, exactly the
-                         * intended authority order. */
-                        ne.ns = 0.0;
-                        vw2_oop_bank_entry(&W->vw2, &ne);
-                        _vw2_persist(W, cfg);
-                    }
-                    /* ROUTE ATOMICITY (structural): exactly ONE cascade plan
-                     * survives to the handle — the loser dies here, before the
-                     * handle exists — so fwd and bwd cannot pair across routes. */
-                    if (zroute_pending && zt_pending)
-                    {
-                        vfft_zsplit_destroy(zs_pending);
-                        zs_pending = NULL;
-                    }
-                    else
-                    {
-                        zroute_pending = 0;
-                        if (zt_pending)
-                        {
-                            vfft_zturn2_destroy(zt_pending);
-                            zt_pending = NULL;
-                        }
-                    }
-                }
+                /* MISS / recalibrate -> _k1z_race_and_bank (the single
+                 * definition, shared with the IN-PLACE create). The HIT
+                 * path above is the shared definition of replay
+                 * semantics. */
+                (void)_k1z_race_and_bank(cfg, W, N, /*ip=*/0,
+                                         &zs_pending, &zt_pending,
+                                         &zroute_pending);
             }
         }
         /* K=1 engine admission (il_coverage_plan.md Phase A, 2026-08-03):
@@ -6006,7 +6067,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             rcfg.recalibrate = 0;
                             vfft_zsplit_plan_t *zcs = NULL;
                             int zcr = 0;
-                            if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct,
+                            if (_k1z_wisdom_replay(&rcfg, W, N,
+                                                   /*ip=*/0, &zcs, &zct,
                                                    &zcr))
                             {
                                 if (zcs)
