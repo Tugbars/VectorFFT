@@ -135,6 +135,17 @@ Tile width Wc is a raced wisdom axis in both routes (the campaign's own
 recommendation A: the tile of a 2D pass is a first-class raced parameter;
 borrow the axis, never MKL's constant 4).
 
+## 5b. The bwd contract (fixed 2026-08-25)
+
+The tier obeys the matched-roundtrip law (the cascade's: fwd natural ->
+comb; bwd consumes the SAME comb -> N*natural). bwd is the HERMITIAN
+TRANSPOSE of the forward chain: stages in REVERSE order, each with the
+conjugated table applied PRE-butterfly ((S_m...S_1)^H = S_1^H...S_m^H).
+The t2c bwd kernels are emitted in that shape; same-order conj bwd is
+per-direction correct but breaks roundtrip for every multi-stage chain
+(P does not commute with the DFT — a palindromic pool does NOT fix it;
+measured and retracted same day).
+
 ## 6. Ordering contract
 
 Same-slot DIF stages leave each column scrambled along i; the row pass

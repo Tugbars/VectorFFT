@@ -352,6 +352,7 @@ struct vfft_plan_s
      * tier (identity order along i); nst > 1 leaves i digit-reversed by
      * the chain (the scrambled contract; natural = M4 rho tables). */
     int il2d_nst;
+    int il2d_wc; /* column-tile width (complex); 0 = full N2 (untiled) */
     int il2d_R[8], il2d_L[8];
     vfft_il2p_fn il2d_f[8], il2d_b[8];
     double *il2d_tf[8], *il2d_tb[8];
@@ -2153,11 +2154,208 @@ static void _il_me_decide(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * w = e^{sgn*2*pi*i*(d*r)/L} (fwd sgn=-1; bwd table CONJUGATED — the
  * kernels are shape-identical, conj is table-side, never text
  * derivation). Algebra simulator-proven: src/core/oop/il2d_proto.h. */
+static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
+                              double **tf, double **tb);
+
+static long _il2d_chain_prod(const int *Rs, int m)
+{
+    long p = 1;
+    int i;
+    for (i = 0; i < m; i++)
+        p *= Rs[i];
+    return p;
+}
+
+/* resolve a chain's kernel pairs: mids = t2c, last = n1c. */
+static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff,
+                         vfft_il2p_fn *fb)
+{
+    int s;
+    for (s = 0; s < m; s++)
+    {
+        const int last = (s == m - 1);
+        ff[s] = last ? vfft_il2p_n1c_fn(Rs[s], 0) : vfft_il2p_t2c_fn(Rs[s], 0);
+        fb[s] = last ? vfft_il2p_n1c_fn(Rs[s], 1) : vfft_il2p_t2c_fn(Rs[s], 1);
+        if (!ff[s] || !fb[s])
+            return 0;
+    }
+    return 1;
+}
+
+/* ordered compositions of N1 over the codelet radices, depth <= 4,
+ * capped at 24 (no-silent-caps law: the cap is LOGGED when it bites). */
+#define VFFT_IL2D_MAXCAND 24
+static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
+                           int *lens, int *n, int *dropped)
+{
+    static const int POOL[] = { 64, 32, 16, 8, 4 };
+    int p;
+    if (L == 1)
+    {
+        if (depth == 0)
+            return;
+        if (*n >= VFFT_IL2D_MAXCAND)
+        {
+            (*dropped)++;
+            return;
+        }
+        memcpy(out[*n], cur, 8 * sizeof(int));
+        lens[*n] = depth;
+        (*n)++;
+        return;
+    }
+    if (depth >= 4)
+        return;
+    for (p = 0; p < 5; p++)
+        if (L % POOL[p] == 0)
+        {
+            cur[depth] = POOL[p];
+            _il2d_enum_rec(L / POOL[p], depth + 1, cur, out, lens, n,
+                           dropped);
+        }
+}
+
+/* the column pass, shared by execute and the create-time chain race
+ * (component-pinned timing: the race times exactly this). */
+/* the column pass, shared by execute and the create-time chain race.
+ * fwd: stages 0..nst-1 (DIF, natural -> chain-digit-reversed comb).
+ * bwd (reverse != 0): the HERMITIAN TRANSPOSE — stages nst-1..0, each a
+ * PRE-twiddle conj stage (the t2c bwd kernels), CONSUMING the comb and
+ * producing natural — the matched-roundtrip law (bwd eats the SAME
+ * route's comb; any chain roundtrips, palindromic or not). */
+static void _il2d_col_pass(const double *src, double *dst, int N1,
+                           size_t rn, size_t wc, int nst, const int *Rst,
+                           const int *Lst, vfft_il2p_fn const *fns,
+                           double *const *tabs, int reverse)
+{
+    size_t k0;
+    int si;
+    if (wc == 0 || wc > rn)
+        wc = rn;
+    for (k0 = 0; k0 < rn; k0 += wc)
+    {
+        const size_t w = (rn - k0 < wc) ? rn - k0 : wc;
+        for (si = 0; si < nst; si++)
+        {
+            const int s = reverse ? nst - 1 - si : si;
+            const int R = Rst[s], D = Lst[s] / R;
+            const double *s0 = (si == 0) ? src : dst;
+            int b;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * ((size_t)b * Lst[s] * rn + k0);
+                if (D == 1)
+                    fns[s](s0 + off, NULL, dst + off, NULL, NULL, NULL,
+                           rn, 0, rn, 0, w);
+                else
+                    fns[s](s0 + off, NULL, dst + off, NULL, tabs[s], NULL,
+                           (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
+                           w);
+            }
+        }
+    }
+}
+
+/* the chain RACE: time every candidate's column pass on scratch (min of
+ * 3 passes), return the winner's index. -1 = race impossible. */
+static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
+                             const int *lens, double *best_ns)
+{
+    const size_t T = (size_t)N1 * N2;
+    double *z = (double *)malloc(2 * T * sizeof(double));
+    int ci, win = -1;
+    double wns = 1e300;
+    size_t i;
+    if (!z)
+        return -1;
+    for (i = 0; i < 2 * T; i++)
+        z[i] = 1.0 + 1e-6 * (double)(i & 1023);
+    for (ci = 0; ci < ncand; ci++)
+    {
+        vfft_il2p_fn ff[8], fb[8];
+        int Ls[8];
+        double *tf[8], *tb[8];
+        double ns = 1e300;
+        int p, s2;
+        if (!_il2d_resolve(cand[ci], lens[ci], ff, fb))
+            continue;
+        if (_il2d_build_tables(N1, lens[ci], cand[ci], Ls, tf, tb))
+            continue;
+        for (p = 0; p < 3; p++)
+        {
+            struct timespec t0, t1;
+            double d;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            _il2d_col_pass(z, z, N1, (size_t)N2, 0, lens[ci], cand[ci],
+                           Ls, ff, tf, /*reverse=*/0);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            d = (t1.tv_sec - t0.tv_sec) * 1e9
+                + (t1.tv_nsec - t0.tv_nsec);
+            if (d < ns)
+                ns = d;
+        }
+        for (s2 = 0; s2 < lens[ci]; s2++)
+        {
+            free(tf[s2]);
+            free(tb[s2]);
+        }
+        if (ns < wns)
+        {
+            wns = ns;
+            win = ci;
+        }
+    }
+    free(z);
+    *best_ns = wns;
+    return win;
+}
+
 static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
                              vfft_il2p_fn *fb, int *nst)
 {
     static const int POOL[] = { 64, 32, 16, 8, 4 };
     int L = N1, m = 0;
+    /* env override first: VFFT_IL2D_CHAIN="64.16" (dot-separated radices,
+     * product must equal N1) — the raced-axis escape hatch, env BEATS the
+     * structural default (and, later, wisdom). Invalid spec: warn LOUDLY
+     * and fall through to greedy — never a silent reinterpretation. */
+    {
+        const char *ce = getenv("VFFT_IL2D_CHAIN");
+        if (ce && *ce)
+        {
+            const char *p = ce;
+            long prod = 1;
+            m = 0;
+            while (*p && m < 8)
+            {
+                char *end;
+                long r = strtol(p, &end, 10);
+                if (end == p || r < 2)
+                    break;
+                Rs[m++] = (int)r;
+                prod *= r;
+                p = (*end == '.') ? end + 1 : end;
+                if (*end != '.' && *end != '\0')
+                    break;
+                if (*end == '\0')
+                {
+                    p = end;
+                    break;
+                }
+            }
+            if (*p == '\0' && m > 0 && prod == N1
+                && _il2d_resolve(Rs, m, ff, fb))
+            {
+                *nst = m;
+                return 1;
+            }
+            _vfft_warn("VFFT_IL2D_CHAIN=\"%s\" invalid for N1=%d "
+                       "(product/radix mismatch) — greedy default used",
+                       ce, N1);
+            m = 0;
+            L = N1;
+        }
+    }
     while (L > 1)
     {
         int p, R = 0;
@@ -2177,21 +2375,8 @@ static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
         Rs[m++] = R;
         L /= R;
     }
-    if (m == 0)
+    if (m == 0 || !_il2d_resolve(Rs, m, ff, fb))
         return 0;
-    {
-        int s;
-        for (s = 0; s < m; s++)
-        {
-            const int last = (s == m - 1);
-            ff[s] = last ? vfft_il2p_n1c_fn(Rs[s], 0)
-                         : vfft_il2p_t2c_fn(Rs[s], 0);
-            fb[s] = last ? vfft_il2p_n1c_fn(Rs[s], 1)
-                         : vfft_il2p_t2c_fn(Rs[s], 1);
-            if (!ff[s] || !fb[s])
-                return 0;
-        }
-    }
     *nst = m;
     return 1;
 }
@@ -3667,6 +3852,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * convert wrapper exactly as before. */
         struct vfft_plan_s *il2d_row = NULL;
         int il2d_nst = 0;
+        int il2d_wc = 0;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -3674,8 +3860,55 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
             const char *e = getenv("VFFT_IL2D_NATIVE");
-            if (e && atoi(e) == 1 &&
-                _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b, &il2d_nst))
+            int chain_ok = 0;
+            if (e && atoi(e) == 1)
+            {
+                /* chain precedence: env > banked lay=il verdict > RACE
+                 * the full composition pool (multi-stage cells only;
+                 * component-pinned: the race times the column pass, the
+                 * only thing the axis changes) > greedy. */
+                if (getenv("VFFT_IL2D_CHAIN"))
+                    chain_ok = _il2d_build_chain(N1, il2d_R, il2d_f,
+                                                 il2d_b, &il2d_nst);
+                else if (vw2_2d_il_chain_lookup(&W->vw2, N1, N2, il2d_R,
+                                                &il2d_nst) &&
+                         _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
+                         _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
+                    chain_ok = 1;
+                else
+                {
+                    int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+                    int cur[8], ncand = 0, dropped = 0;
+                    _il2d_enum_rec(N1, 0, cur, cand, lens, &ncand,
+                                   &dropped);
+                    if (dropped)
+                        _vfft_warn("il2d chain race: pool capped at %d "
+                                   "(%d candidate(s) dropped) at %dx%d",
+                                   VFFT_IL2D_MAXCAND, dropped, N1, N2);
+                    if (ncand > 1)
+                    {
+                        double bns = 0;
+                        int win = _il2d_race_chains(N1, N2, ncand, cand,
+                                                    lens, &bns);
+                        if (win >= 0 &&
+                            _il2d_resolve(cand[win], lens[win], il2d_f,
+                                          il2d_b))
+                        {
+                            memcpy(il2d_R, cand[win],
+                                   sizeof cand[win]);
+                            il2d_nst = lens[win];
+                            chain_ok = 1;
+                            vw2_2d_il_chain_bank(&W->vw2, N1, N2,
+                                                 il2d_R, il2d_nst, bns);
+                            _vw2_persist(W, cfg);
+                        }
+                    }
+                    if (!chain_ok)
+                        chain_ok = _il2d_build_chain(N1, il2d_R, il2d_f,
+                                                     il2d_b, &il2d_nst);
+                }
+            }
+            if (chain_ok)
             {
                 vfft_config_t rc;
                 memset(&rc, 0, sizeof rc);
@@ -3697,6 +3930,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 {
                     vfft_destroy(il2d_row);
                     il2d_row = NULL;
+                }
+                /* column-tile width: env override (raced axis; wisdom
+                 * banking follows the falsifier run — tcut precedent:
+                 * env BEATS wisdom). 0/absent/invalid = untiled. */
+                {
+                    const char *wce = getenv("VFFT_IL2D_WC");
+                    il2d_wc = (wce && atoi(wce) > 0 && atoi(wce) < N2)
+                                  ? atoi(wce)
+                                  : 0;
                 }
             }
         }
@@ -3737,6 +3979,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->tplan = tp; /* NULL when the native IL 2D tier engaged */
         h->il2d_row = il2d_row;
         h->il2d_nst = il2d_nst;
+        h->il2d_wc = il2d_wc;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
@@ -6879,33 +7122,22 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * the chain (the scrambled contract). */
                     const int fwd = (dir == VFFT_FORWARD);
                     size_t i, rn = (size_t)h->N2;
-                    int s, L = h->N;
+                    const size_t wc = (h->il2d_wc > 0)
+                                          ? (size_t)h->il2d_wc
+                                          : rn;
                     if (!dre)
                         dre = sre; /* in-place convenience */
-                    for (s = 0; s < h->il2d_nst; s++)
-                    {
-                        const int R = h->il2d_R[s], D = h->il2d_L[s] / R;
-                        const vfft_il2p_fn fn = fwd ? h->il2d_f[s]
-                                                    : h->il2d_b[s];
-                        const double *tab = fwd ? h->il2d_tf[s]
-                                                : h->il2d_tb[s];
-                        const double *src0 = (s == 0) ? sre : dre;
-                        int b;
-                        for (b = 0; b < h->N / h->il2d_L[s]; b++)
-                        {
-                            const size_t off =
-                                2 * (size_t)b * h->il2d_L[s] * rn;
-                            if (D == 1) /* the n1c leaf (twiddle-free) */
-                                fn(src0 + off, NULL, dre + off, NULL,
-                                   NULL, NULL, rn, 0, rn, 0, rn);
-                            else        /* t2c mid */
-                                fn(src0 + off, NULL, dre + off, NULL,
-                                   tab, NULL, (size_t)D * rn, rn,
-                                   (size_t)D * rn, (size_t)D, rn);
-                        }
-                        L /= R;
-                    }
-                    (void)L;
+                    /* strip loop-interchange: all stages depth-first per
+                     * column strip — the strip stays cache-resident
+                     * across stages (one DRAM sweep, not nst). Legal
+                     * because columns are independent within the column
+                     * pass; Gs stays the FULL row pitch. wc = rn is the
+                     * untiled M2 walk, path-identical. */
+                    _il2d_col_pass(sre, dre, h->N, rn, wc,
+                                   h->il2d_nst, h->il2d_R, h->il2d_L,
+                                   fwd ? h->il2d_f : h->il2d_b,
+                                   fwd ? h->il2d_tf : h->il2d_tb,
+                                   /*reverse=*/!fwd);
                     for (i = 0; i < (size_t)h->N; i++)
                         vfft_execute(h->il2d_row, dir,
                                      dre + 2 * i * rn, NULL,

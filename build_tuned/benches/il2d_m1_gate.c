@@ -157,10 +157,36 @@ int main(int argc, char **argv)
         }
         for (i = 0; i < 2 * T; i++)
             x[i] = (double)rand() / RAND_MAX - 0.5;
+        /* M3: the driver RACES the chain at create when env/wisdom give
+         * none — the winner's digit-reversal need not match the mirrored
+         * greedy map below. PIN the chain via env (env > race) so the
+         * elementwise map is known; the race path itself is gated by the
+         * race/replay section after the cell loop. */
+        {
+            int Rs[8], nf = chain_of(N1, Rs);
+            char cb[80];
+            int s_, o_;
+            if (nf == 0) { Rs[0] = N1; nf = 1; }
+            o_ = snprintf(cb, sizeof cb, "VFFT_IL2D_CHAIN=");
+            for (s_ = 0; s_ < nf; s_++)
+                o_ += snprintf(cb + o_, sizeof cb - o_, "%s%d",
+                               s_ ? "." : "", Rs[s_]);
+#ifdef _WIN32
+            _putenv(cb);
+#else
+            putenv(strdup(cb));
+#endif
+        }
+        /* dir 0: FORWARD elementwise vs naive through the chain map.
+         * dir 1: the PAIR contract — bwd CONSUMES the plan's own fwd
+         * output (the comb) and must return N*x; fwd is independently
+         * proven by dir 0, so this isolates bwd (the matched-roundtrip
+         * law: the tier's bwd is the Hermitian-transpose chain). */
         for (dir = 0; dir < 2; dir++) {
-            const double sgn = dir ? 1.0 : -1.0;
-            naive_axis_i(x, t1, N1, N2, sgn);
-            naive_axis_j(t1, ref, N1, N2, sgn);
+            if (dir == 0) {
+                naive_axis_i(x, t1, N1, N2, -1.0);
+                naive_axis_j(t1, ref, N1, N2, -1.0);
+            }
             for (oop = 0; oop < 2; oop++) {
                 vfft_config_t cfg;
                 vfft_plan h;
@@ -186,26 +212,43 @@ int main(int argc, char **argv)
                     continue;
                 }
                 memcpy(z, x, 2 * T * 8);
-                if (oop) {
-                    memset(oz, 0, 2 * T * 8);
-                    vfft_execute(h, dir ? VFFT_BACKWARD : VFFT_FORWARD,
-                                 z, NULL, oz, NULL);
-                } else {
-                    vfft_execute(h, dir ? VFFT_BACKWARD : VFFT_FORWARD,
-                                 z, NULL, z, NULL);
-                }
-                {
-                    const double *got = oop ? oz : z;
-                    int Rs[8], nf = chain_of(N1, Rs), ki, kj;
-                    for (ki = 0; ki < N1; ki++) {
-                        const int p_ = row_pos(ki, N1, Rs, nf);
-                        for (kj = 0; kj < 2 * N2; kj++) {
-                            double d = fabs(got[2 * (size_t)p_ * N2 + kj]
-                                            - ref[2 * (size_t)ki * N2 + kj]);
-                            double m = fabs(ref[2 * (size_t)ki * N2 + kj]);
-                            if (d > maxe) maxe = d;
-                            if (m > maxr) maxr = m;
+                if (dir == 0) {
+                    if (oop) {
+                        memset(oz, 0, 2 * T * 8);
+                        vfft_execute(h, VFFT_FORWARD, z, NULL, oz, NULL);
+                    } else {
+                        vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL);
+                    }
+                    {
+                        const double *got = oop ? oz : z;
+                        int Rs[8], nf = chain_of(N1, Rs), ki, kj;
+                        for (ki = 0; ki < N1; ki++) {
+                            const int p_ = row_pos(ki, N1, Rs, nf);
+                            for (kj = 0; kj < 2 * N2; kj++) {
+                                double d =
+                                    fabs(got[2 * (size_t)p_ * N2 + kj]
+                                         - ref[2 * (size_t)ki * N2 + kj]);
+                                double m =
+                                    fabs(ref[2 * (size_t)ki * N2 + kj]);
+                                if (d > maxe) maxe = d;
+                                if (m > maxr) maxr = m;
+                            }
                         }
+                    }
+                } else {
+                    if (oop) {
+                        memset(oz, 0, 2 * T * 8);
+                        vfft_execute(h, VFFT_FORWARD, z, NULL, oz, NULL);
+                        vfft_execute(h, VFFT_BACKWARD, oz, NULL, z, NULL);
+                    } else {
+                        vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL);
+                        vfft_execute(h, VFFT_BACKWARD, z, NULL, z, NULL);
+                    }
+                    for (i = 0; i < 2 * T; i++) {
+                        double d = fabs(z[i] / (double)T - x[i]);
+                        double m = fabs(x[i]);
+                        if (d > maxe) maxe = d;
+                        if (m > maxr) maxr = m;
                     }
                 }
                 rel = maxe / (maxr > 0 ? maxr : 1.0);
@@ -217,6 +260,74 @@ int main(int argc, char **argv)
             }
         }
         free(x); free(z); free(oz); free(t1); free(ref);
+    }
+    /* ── M3 race/replay probe: with NO env chain, the first create RACES
+     * the composition pool and banks the winner (memory; wisdom_write=0);
+     * the second create must SERVE that verdict — proven by bitwise-equal
+     * forward outputs (serve == race winner, deterministic replay), plus
+     * a roundtrip sanity on the raced plan. */
+#ifdef _WIN32
+    _putenv("VFFT_IL2D_CHAIN=");
+#else
+    unsetenv("VFFT_IL2D_CHAIN");
+#endif
+    {
+        static const int RC[][2] = { { 256, 64 }, { 1024, 16 } };
+        int rc_;
+        for (rc_ = 0; rc_ < 2; rc_++) {
+            const int N1 = RC[rc_][0], N2 = RC[rc_][1];
+            const size_t T = (size_t)N1 * N2;
+            double *x = malloc(2 * T * 8), *za = malloc(2 * T * 8);
+            double *zb = malloc(2 * T * 8);
+            vfft_config_t cfg;
+            vfft_plan ha, hb;
+            size_t i;
+            double rt = 0;
+            for (i = 0; i < 2 * T; i++)
+                x[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&cfg, 0, sizeof cfg);
+            cfg.transform = VFFT_C2C;
+            cfg.placement = VFFT_INPLACE;
+            cfg.rigor = VFFT_MEASURE;
+            cfg.dims = 2;
+            cfg.n[0] = N1;
+            cfg.n[1] = N2;
+            cfg.howmany = 1;
+            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.nthreads = 1;
+            cfg.wisdom = W;
+            cfg.wisdom_write = 0;
+            ha = vfft_create(&cfg); /* races + banks (memory) */
+            hb = vfft_create(&cfg); /* must SERVE the banked verdict */
+            if (!ha || !hb) {
+                printf("  race/replay %dx%d create FAIL\n", N1, N2);
+                fails++;
+            } else {
+                memcpy(za, x, 2 * T * 8);
+                vfft_execute(ha, VFFT_FORWARD, za, NULL, za, NULL);
+                memcpy(zb, x, 2 * T * 8);
+                vfft_execute(hb, VFFT_FORWARD, zb, NULL, zb, NULL);
+                if (memcmp(za, zb, 2 * T * 8) != 0) {
+                    printf("  race/replay %dx%d: serve != race winner "
+                           "*** FAIL ***\n", N1, N2);
+                    fails++;
+                } else {
+                    vfft_execute(ha, VFFT_BACKWARD, za, NULL, za, NULL);
+                    for (i = 0; i < 2 * T; i++) {
+                        double d = fabs(za[i] / (double)T - x[i]);
+                        if (d > rt) rt = d;
+                    }
+                    printf("  race/replay %dx%d: serve==race bitwise, rt "
+                           "%.1e  %s\n", N1, N2, rt,
+                           rt < 1e-10 ? "PASS" : "*** FAIL ***");
+                    if (rt >= 1e-10) fails++;
+                }
+            }
+            if (ha) vfft_destroy(ha);
+            if (hb) vfft_destroy(hb);
+            free(x); free(za); free(zb);
+        }
     }
     if (W) vfft_wisdom_free(W);
     printf("\n%s (%d fail, %d skip)\n",

@@ -275,11 +275,17 @@ let emit
   let sign = if dir = Fwd then `Fwd else `Bwd in
   (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
      PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
-  let pre_tw = kind = T2 && (dir = Fwd || ctx.tw_pre) in
-  (* T2C is DIF: the stage twiddle W_L^{d*r} sits AFTER the butterfly in
-     BOTH directions; the bwd table is conjugated by the DRIVER at build
-     time (table-side conj, never text derivation). *)
-  let post_tw = (kind = T2 && dir = Bwd && not ctx.tw_pre) || kind = T2C in
+  let pre_tw =
+    (kind = T2 && (dir = Fwd || ctx.tw_pre)) || (kind = T2C && dir = Bwd)
+  in
+  (* T2C fwd is DIF: butterfly THEN stage twiddle W_L^{d*r}. T2C bwd is
+     the HERMITIAN TRANSPOSE stage (the matched-roundtrip law — bwd
+     consumes fwd's comb): conjugated table (DRIVER-side, never text
+     derivation) applied PRE-butterfly; the driver runs the stages in
+     REVERSE order. *)
+  let post_tw =
+    (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && dir = Fwd)
+  in
   (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
      their symbolic address — the load edge prints FROM the DAG instead of
      inventing the string. Created in the same order cin was, so every tag
@@ -1001,9 +1007,12 @@ let emit
         | N1 | N1C -> "tw_re/tw_im unused."
         | T2C ->
           "tw_re = the stage table, d-major: per digit d in [0,OGs), per leg \
-           1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built (bwd = \
-           conjugated table, same kernel shape). Ls = D*N2, Gs = N2 row pitch, \
-           OGs = D; one call = one stage over one block. tw_im unused."
+           1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built. fwd \
+           applies it POST-butterfly (DIF); bwd is the HERMITIAN-TRANSPOSE \
+           stage — conjugated table applied PRE-butterfly, stages run in \
+           REVERSE order by the driver (bwd consumes fwd's comb: matched \
+           roundtrip). Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one \
+           stage over one block. tw_im unused."
         | N1T ->
           "Stores are corner-turned: output (leg p, column k) -> zout[2*(k*OLs + p)],\n\
           \ * so stage 2 reads whole columns contiguously and no separate transpose\n\
