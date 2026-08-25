@@ -505,4 +505,69 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
     return vw2__2d_bank(st, &rec, 0);
 }
 
+/* ═══ native IL 2D c2c tier cells (lay=il — fft2d_il_c2c_design.md M3) ═══
+ * The tier's raced verdicts live in their OWN lay=il cells: key {t=c2c
+ * rank=2 n=N1xN2 q=1 ord=scr pl=OOP lay=il}, payload chain= (dot-separated
+ * radices, the COLUMN-pass factorization — measured ALIVE 2026-08-25:
+ * 1.30x at 4096x64, 1.18x at 1024x1024 over the greedy default). ord=scr:
+ * the multi-stage tier serves i digit-reversed, and the verdict is
+ * order-independent (the chain feeds both directions). The lookup goes
+ * through vw2_lookup, so a lay-less/split row can come back on the ANY
+ * fallback phase — the chain-token check refuses it (split rows carry
+ * rowplan/colplan, never chain=). Old binaries: cells invisible + opaque
+ * carry (v1.2 architecture, proven). */
+static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
+                                         int N2, int *Rs, int *nst)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *cv;
+    int m = 0;
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR, VW2_LAY_IL);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    cv = vw2_rec_get(r, "chain");
+    if (!cv) return 0;                       /* an ANY/split row: refuse */
+    while (*cv && m < 8) {
+        int v = 0;
+        if (*cv < '0' || *cv > '9') return 0;
+        while (*cv >= '0' && *cv <= '9') v = v * 10 + (*cv++ - '0');
+        if (v < 2) return 0;
+        Rs[m++] = v;
+        if (*cv == '.') cv++;
+        else break;
+    }
+    if (!m || *cv) return 0;
+    *nst = m;
+    return 1;
+}
+
+static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
+                                       const int *Rs, int nst, double ns)
+{
+    vw2_rec_t rec;
+    vw2_rec_t *r = &rec;
+    const char *why = NULL;
+    char b[64];
+    int i, off = 0;
+    memset(r, 0, sizeof *r);
+    vw2__2d_rec_key(r, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR,
+                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
+    for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
+        off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
+                        Rs[i]);
+    if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
+        vw2_rec_free(r);
+        fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
+        return -1;
+    }
+    if (vw2__2d_tail(r, ns, "race", NULL, &why)) {
+        fprintf(stderr, "[wisdom2] il2d chain bank refused (%s)\n",
+                why ? why : "?");
+        return -1;
+    }
+    return vw2__2d_bank(st, r, 0);
+}
+
+
 #endif /* VFFT_WISDOM2_2D_READER_H */

@@ -11,7 +11,7 @@
  * radix-4 2D column-stage mid t2c (same-slot DIF stage; per-(d,leg) broadcast records hoisted out of the column loop — z-T1S/6c): 2 complex per 256-bit vector. Body scheduled by the
  * SHARED SR scheduler (Schedule.Make over the complex IR) and rendered
  * through the ISA layer, so the same source emits AVX2 / AVX-512.
- * tw_re = the stage table, d-major: per digit d in [0,OGs), per leg 1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built (bwd = conjugated table, same kernel shape). Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one stage over one block. tw_im unused.
+ * tw_re = the stage table, d-major: per digit d in [0,OGs), per leg 1..R-1 one record [c x VW][sign-folded s x VW], DRIVER-built. fwd applies it POST-butterfly (DIF); bwd is the HERMITIAN-TRANSPOSE stage — conjugated table applied PRE-butterfly, stages run in REVERSE order by the driver (bwd consumes fwd's comb: matched roundtrip). Ls = D*N2, Gs = N2 row pitch, OGs = D; one call = one stage over one block. tw_im unused.
  * count: ANY >= 1 — 2 columns per wide iteration, inline VEX-128
  * odd-count tail for the leftover (il_odd_count_tail.md §3). */
 #include <immintrin.h>
@@ -42,24 +42,24 @@ void radix4_z_t2c_bwd_avx2(
     for (; k + 2 <= count; k += 2) {
         const __m256d z0 = _mm256_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m256d z1 = _mm256_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
-        const __m256d z2 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
-        const __m256d z3 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
-        const __m256d z4 = _mm256_sub_pd(z0, z2);
-        const __m256d z5 = _mm256_add_pd(z0, z2);
-        const __m256d z6 = _mm256_sub_pd(z1, z3);
-        const __m256d z7 = _mm256_add_pd(z1, z3);
-        const __m256d z9 = _mm256_add_pd(z5, z7);
-        const __m256d z10 = _mm256_xor_pd(_mm256_permute_pd(z6, 0x5), _M_RE);
-        const __m256d z8 = _mm256_sub_pd(z5, z7);
-        const __m256d z14 = _mm256_fmadd_pd(_wc2, z8, _mm256_mul_pd(_ws2, _mm256_permute_pd(z8, 0x5)));
-        const __m256d z11 = _mm256_sub_pd(z4, z10);
-        const __m256d z15 = _mm256_fmadd_pd(_wc3, z11, _mm256_mul_pd(_ws3, _mm256_permute_pd(z11, 0x5)));
-        const __m256d z12 = _mm256_add_pd(z4, z10);
-        const __m256d z13 = _mm256_fmadd_pd(_wc1, z12, _mm256_mul_pd(_ws1, _mm256_permute_pd(z12, 0x5)));
-        _mm256_storeu_pd(&zout[2*((size_t)0*OLs + k)], z9);
-        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], z13);
-        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], z14);
-        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], z15);
+        const __m256d z3 = _mm256_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m256d z5 = _mm256_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m256d z2 = _mm256_fmadd_pd(_wc1, z1, _mm256_mul_pd(_ws1, _mm256_permute_pd(z1, 0x5)));
+        const __m256d z4 = _mm256_fmadd_pd(_wc2, z3, _mm256_mul_pd(_ws2, _mm256_permute_pd(z3, 0x5)));
+        const __m256d z7 = _mm256_sub_pd(z0, z4);
+        const __m256d z8 = _mm256_add_pd(z0, z4);
+        const __m256d z6 = _mm256_fmadd_pd(_wc3, z5, _mm256_mul_pd(_ws3, _mm256_permute_pd(z5, 0x5)));
+        const __m256d z9 = _mm256_sub_pd(z2, z6);
+        const __m256d z10 = _mm256_add_pd(z2, z6);
+        const __m256d z11 = _mm256_sub_pd(z8, z10);
+        const __m256d z12 = _mm256_add_pd(z8, z10);
+        const __m256d z13 = _mm256_xor_pd(_mm256_permute_pd(z9, 0x5), _M_RE);
+        const __m256d z14 = _mm256_sub_pd(z7, z13);
+        const __m256d z15 = _mm256_add_pd(z7, z13);
+        _mm256_storeu_pd(&zout[2*((size_t)0*OLs + k)], z12);
+        _mm256_storeu_pd(&zout[2*((size_t)1*OLs + k)], z15);
+        _mm256_storeu_pd(&zout[2*((size_t)2*OLs + k)], z11);
+        _mm256_storeu_pd(&zout[2*((size_t)3*OLs + k)], z14);
     }
     /* odd-count tail: same DAG at VEX-128, one complex per iteration */
     for (; k < count; ++k) {
@@ -71,24 +71,24 @@ void radix4_z_t2c_bwd_avx2(
         const __m128d _ws3_n = _mm_loadu_pd(&twp[20]);
         const __m128d z0 = _mm_loadu_pd(&zin[2*((size_t)0*Ls + k)]);
         const __m128d z1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
-        const __m128d z2 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
-        const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
-        const __m128d z4 = _mm_sub_pd(z0, z2);
-        const __m128d z5 = _mm_add_pd(z0, z2);
-        const __m128d z6 = _mm_sub_pd(z1, z3);
-        const __m128d z7 = _mm_add_pd(z1, z3);
-        const __m128d z9 = _mm_add_pd(z5, z7);
-        const __m128d z10 = _mm_xor_pd(_mm_permute_pd(z6, 0x1), _M_RE_n);
-        const __m128d z8 = _mm_sub_pd(z5, z7);
-        const __m128d z14 = _mm_fmadd_pd(_wc2_n, z8, _mm_mul_pd(_ws2_n, _mm_permute_pd(z8, 0x1)));
-        const __m128d z11 = _mm_sub_pd(z4, z10);
-        const __m128d z15 = _mm_fmadd_pd(_wc3_n, z11, _mm_mul_pd(_ws3_n, _mm_permute_pd(z11, 0x1)));
-        const __m128d z12 = _mm_add_pd(z4, z10);
-        const __m128d z13 = _mm_fmadd_pd(_wc1_n, z12, _mm_mul_pd(_ws1_n, _mm_permute_pd(z12, 0x1)));
-        _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z9);
-        _mm_storeu_pd(&zout[2*((size_t)1*OLs + k)], z13);
-        _mm_storeu_pd(&zout[2*((size_t)2*OLs + k)], z14);
-        _mm_storeu_pd(&zout[2*((size_t)3*OLs + k)], z15);
+        const __m128d z3 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m128d z5 = _mm_loadu_pd(&zin[2*((size_t)3*Ls + k)]);
+        const __m128d z2 = _mm_fmadd_pd(_wc1_n, z1, _mm_mul_pd(_ws1_n, _mm_permute_pd(z1, 0x1)));
+        const __m128d z4 = _mm_fmadd_pd(_wc2_n, z3, _mm_mul_pd(_ws2_n, _mm_permute_pd(z3, 0x1)));
+        const __m128d z7 = _mm_sub_pd(z0, z4);
+        const __m128d z8 = _mm_add_pd(z0, z4);
+        const __m128d z6 = _mm_fmadd_pd(_wc3_n, z5, _mm_mul_pd(_ws3_n, _mm_permute_pd(z5, 0x1)));
+        const __m128d z9 = _mm_sub_pd(z2, z6);
+        const __m128d z10 = _mm_add_pd(z2, z6);
+        const __m128d z11 = _mm_sub_pd(z8, z10);
+        const __m128d z12 = _mm_add_pd(z8, z10);
+        const __m128d z13 = _mm_xor_pd(_mm_permute_pd(z9, 0x1), _M_RE_n);
+        const __m128d z14 = _mm_sub_pd(z7, z13);
+        const __m128d z15 = _mm_add_pd(z7, z13);
+        _mm_storeu_pd(&zout[2*((size_t)0*OLs + k)], z12);
+        _mm_storeu_pd(&zout[2*((size_t)1*OLs + k)], z15);
+        _mm_storeu_pd(&zout[2*((size_t)2*OLs + k)], z11);
+        _mm_storeu_pd(&zout[2*((size_t)3*OLs + k)], z14);
     }
     twp += 24;
     zin += 2 * Gs;
