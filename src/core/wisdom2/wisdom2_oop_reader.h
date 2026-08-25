@@ -269,19 +269,14 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
 
 /* ------------------------------------------------------ kind-4 (cascade) */
 
-/* pl-parametric internal: the kind-4 cascade cell now has a place=ip twin
- * (2026-08-25) — the in-place caller's own raced verdict. Each placement
- * reads ONLY its own row (no cross-placement borrowing: in-place creates
- * its own plans). */
-static inline int vw2__oop_lookup_zsplit_pl(const vw2_store_t *s, int N,
-                                            int pl,
-                                            vfft_oop_wisdom_entry_t *e)
+static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
+                                        vfft_oop_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     memset(&k, 0, sizeof k);
     k.t = VW2_T_C2C; k.rank = 1; k.n[0] = N;
-    k.q = 1; k.ord = VW2_ORD_SCR; k.pl = pl;
+    k.q = 1; k.ord = VW2_ORD_SCR; k.pl = VW2_PL_OOP;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     {
@@ -308,21 +303,8 @@ static inline int vw2__oop_lookup_zsplit_pl(const vw2_store_t *s, int N,
             const char *ns = vw2_rec_get(r, "ns");
             e->ns = ns ? atof(ns) : 0.0;
         }
-        e->inplace = (pl == VW2_PL_IP);
     }
     return 1;
-}
-
-static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
-                                        vfft_oop_wisdom_entry_t *e)
-{
-    return vw2__oop_lookup_zsplit_pl(s, N, VW2_PL_OOP, e);
-}
-
-static inline int vw2_oop_lookup_zsplit_ip(const vw2_store_t *s, int N,
-                                           vfft_oop_wisdom_entry_t *e)
-{
-    return vw2__oop_lookup_zsplit_pl(s, N, VW2_PL_IP, e);
 }
 
 /* --------------------------------------------------- kinds 0/1/2 (classic) */
@@ -542,10 +524,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
         int ch[VFFT_K1_CC_MAX_NF], nf;
         if (e->N < 2048) { *why = "sub2048-wrong-slot"; return -1; }
         r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
-        r->key.q = 1; r->key.ord = VW2_ORD_SCR;
-        /* place=ip twin (2026-08-25): the in-place caller's own raced
-         * verdict; 0 keeps the classic oop row byte-identical. */
-        r->key.pl = e->inplace ? VW2_PL_IP : VW2_PL_OOP;
+        r->key.q = 1; r->key.ord = VW2_ORD_SCR; r->key.pl = VW2_PL_OOP;
         VW2__OB_SET(1, "eng", e->zs_route == 1 ? "zturn" : "zsplit");
         nf = vfft_k1_cc_chain_decode(e->cc_chain, ch);
         if (nf <= 0) { vw2_rec_free(r); *why = "ccchain-decode-refused"; return -1; }
