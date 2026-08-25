@@ -367,6 +367,12 @@ struct vfft_plan_s
     int il2d_rowoop;
     struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
     double *il2d_rowscr;           /* 2*N2 doubles */
+    /* staged band route (§10b): copy each band into scratch at il2d_pitch
+     * (skew-selected so every suffix-stage leg stride and the leaf stride
+     * are non-0 mod 4096 — the priced 2.4-3x aliasing cure), run the
+     * suffix + rows there, copy back. Requires il2d_wl > 0. */
+    int il2d_staged, il2d_pitch;
+    double *il2d_bandscr;          /* 2 * wl * pitch doubles */
     int il2d_R[8], il2d_L[8];
     vfft_il2p_fn il2d_f[8], il2d_b[8];
     double *il2d_tf[8], *il2d_tb[8];
@@ -2257,11 +2263,11 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
  * given base pointers (nrows = N1 for the wide walk, = the band width for
  * the banded walk; every block of a stage in [s_lo,s_hi) fits the range
  * by the cut derivation L_s | wl). reverse = the Hermitian bwd order. */
-static void _il2d_col_stages(const double *src, double *dst, int nrows,
-                             size_t rn, int s_lo, int s_hi,
-                             const int *Rst, const int *Lst,
-                             vfft_il2p_fn const *fns, double *const *tabs,
-                             int reverse)
+static void _il2d_col_stages2(const double *src, double *dst, int nrows,
+                              size_t pitch, size_t cnt, int s_lo,
+                              int s_hi, const int *Rst, const int *Lst,
+                              vfft_il2p_fn const *fns,
+                              double *const *tabs, int reverse)
 {
     int si;
     for (si = s_lo; si < s_hi; si++)
@@ -2272,16 +2278,26 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows,
         int b;
         for (b = 0; b < nrows / Lst[s]; b++)
         {
-            const size_t off = 2 * (size_t)b * Lst[s] * rn;
+            const size_t off = 2 * (size_t)b * Lst[s] * pitch;
             if (D == 1)
                 fns[s](s0 + off, NULL, dst + off, NULL, NULL, NULL,
-                       rn, 0, rn, 0, rn);
+                       pitch, 0, pitch, 0, cnt);
             else
                 fns[s](s0 + off, NULL, dst + off, NULL, tabs[s], NULL,
-                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
-                       rn);
+                       (size_t)D * pitch, pitch, (size_t)D * pitch,
+                       (size_t)D, cnt);
         }
     }
+}
+
+static void _il2d_col_stages(const double *src, double *dst, int nrows,
+                             size_t rn, int s_lo, int s_hi,
+                             const int *Rst, const int *Lst,
+                             vfft_il2p_fn const *fns, double *const *tabs,
+                             int reverse)
+{
+    _il2d_col_stages2(src, dst, nrows, rn, rn, s_lo, s_hi, Rst, Lst, fns,
+                      tabs, reverse);
 }
 
 static void _il2d_col_pass(const double *src, double *dst, int N1,
@@ -2488,6 +2504,148 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
         L /= R;
     }
     return 0;
+}
+
+/* the §10a axis race: time the FULL execute (column chain + rows) over
+ * the wl candidates x the row routes, set the winner on the plan, bank
+ * chain+wl+tf+ro as one lay=il verdict. Falsifier-grounded: wl wins
+ * +15-21% at some cells and LOSES at others; rowoop wins 1.6-2x at
+ * N2<=64 and loses at large N2 — per-cell only, never defaults. */
+static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
+                            const vfft_config_t *cfg, int N1, int N2)
+{
+    const size_t T = (size_t)N1 * N2;
+    double *z = (double *)malloc(2 * T * sizeof(double));
+    struct vfft_plan_s *rowo = NULL;
+    double *rowscr = NULL;
+    int wlc[6], nwl = 1, wi, ro, bwl = 0, bro = 0;
+    double best = 1e300;
+    size_t i;
+    int reps = (int)(1e6 / (double)(T + 1));
+    if (reps < 2) reps = 2;
+    if (!z)
+        return;
+    for (i = 0; i < 2 * T; i++)
+        z[i] = 1.0 + 1e-6 * (double)(i & 1023);
+    /* wl candidates: 0 (unbanded) + legal widths */
+    wlc[0] = 0;
+    {
+        static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
+        int p, s2;
+        for (p = 0; p < 6 && nwl < 6; p++)
+        {
+            const int w = WPOOL[p];
+            int cut = -1;
+            if (w > N1 || N1 % w)
+                continue;
+            for (s2 = 0; s2 < h->il2d_nst; s2++)
+                if (w % h->il2d_L[s2] == 0)
+                {
+                    cut = s2;
+                    break;
+                }
+            if (cut >= 0)
+                wlc[nwl++] = w;
+        }
+    }
+    /* the OOP row child for the rowoop arms (kept only if it wins) */
+    {
+        vfft_config_t rc;
+        memset(&rc, 0, sizeof rc);
+        rc.transform = VFFT_C2C;
+        rc.placement = VFFT_OUTOFPLACE;
+        rc.rigor = cfg->rigor;
+        rc.dims = 1;
+        rc.n[0] = N2;
+        rc.howmany = 1;
+        rc.order = VFFT_ORDER_NATURAL;
+        rc.layout = VFFT_LAYOUT_INTERLEAVED;
+        rc.nthreads = 1;
+        rc.wisdom = cfg->wisdom;
+        rc.wisdom_write = cfg->wisdom_write;
+        rowo = (struct vfft_plan_s *)vfft_create(&rc);
+        if (rowo)
+        {
+            rowscr = (double *)malloc(2 * (size_t)N2 * sizeof(double));
+            if (!rowscr)
+            {
+                vfft_destroy(rowo);
+                rowo = NULL;
+            }
+        }
+    }
+    for (ro = 0; ro <= (rowo ? 1 : 0); ro++)
+        for (wi = 0; wi < nwl; wi++)
+        {
+            double ns = 1e300;
+            int p2, s2, cut = 0;
+            const int w = wlc[wi];
+            if (w > 0)
+                for (s2 = 0; s2 < h->il2d_nst; s2++)
+                    if (w % h->il2d_L[s2] == 0)
+                    {
+                        cut = s2;
+                        break;
+                    }
+            h->il2d_wl = w;
+            h->il2d_cut = cut;
+            h->il2d_tfuse = (w > 0);
+            h->il2d_rowoop = ro;
+            h->il2d_rowo = ro ? rowo : NULL;
+            h->il2d_rowscr = ro ? rowscr : NULL;
+            for (p2 = 0; p2 < 2; p2++)
+            {
+                struct timespec t0, t1;
+                double d;
+                int k;
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+                for (k = 0; k < reps; k++)
+                    vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL);
+                clock_gettime(CLOCK_MONOTONIC, &t1);
+                d = ((t1.tv_sec - t0.tv_sec) * 1e9
+                     + (t1.tv_nsec - t0.tv_nsec)) / reps;
+                if (d < ns)
+                    ns = d;
+            }
+            if (ns < best)
+            {
+                best = ns;
+                bwl = w;
+                bro = ro;
+            }
+        }
+    /* set the winner, keep or drop the OOP child */
+    {
+        int s2, cut = 0;
+        if (bwl > 0)
+            for (s2 = 0; s2 < h->il2d_nst; s2++)
+                if (bwl % h->il2d_L[s2] == 0)
+                {
+                    cut = s2;
+                    break;
+                }
+        h->il2d_wl = bwl;
+        h->il2d_cut = cut;
+        h->il2d_tfuse = (bwl > 0);
+        h->il2d_rowoop = bro;
+        if (bro && rowo)
+        {
+            h->il2d_rowo = rowo;
+            h->il2d_rowscr = rowscr;
+        }
+        else
+        {
+            h->il2d_rowo = NULL;
+            h->il2d_rowscr = NULL;
+            if (rowo)
+                vfft_destroy(rowo);
+            free(rowscr);
+        }
+    }
+    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
+                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop, best);
+    _vw2_persist(W, cfg);
+    free(z);
 }
 
 /* zr2c (even N, K==1, INTERLEAVED): x[N] read as z[N/2] -> child c2c(N/2) NATURAL -> zr2c.h fold;
@@ -3918,6 +4076,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int il2d_rowoop = 0;
         struct vfft_plan_s *il2d_rowo = NULL;
         double *il2d_rowscr = NULL;
+        int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
+        int il2d_staged = 0, il2d_pitch = 0;
+        double *il2d_bandscr = NULL;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -3936,7 +4097,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     chain_ok = _il2d_build_chain(N1, il2d_R, il2d_f,
                                                  il2d_b, &il2d_nst);
                 else if (vw2_2d_il_chain_lookup(&W->vw2, N1, N2, il2d_R,
-                                                &il2d_nst) &&
+                                                &il2d_nst, &il2d_bwl,
+                                                &il2d_btf, &il2d_bro) &&
                          _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
                     chain_ok = 1;
@@ -3964,7 +4126,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             il2d_nst = lens[win];
                             chain_ok = 1;
                             vw2_2d_il_chain_bank(&W->vw2, N1, N2,
-                                                 il2d_R, il2d_nst, bns);
+                                                 il2d_R, il2d_nst,
+                                                 -1, -1, -1, bns);
                             _vw2_persist(W, cfg);
                         }
                     }
@@ -4009,6 +4172,38 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * child for an OOP NATURAL one + scratch (the mono
                  * route). Falls back to the in-place child if the OOP
                  * create or the scratch fails. */
+                if (il2d_row && !getenv("VFFT_IL2D_ROWOOP") &&
+                    il2d_bro == 1)
+                {
+                    /* banked row-route verdict (env silent): build the
+                     * OOP child; on failure fall back to in-place. */
+                    vfft_config_t ro;
+                    memset(&ro, 0, sizeof ro);
+                    ro.transform = VFFT_C2C;
+                    ro.placement = VFFT_OUTOFPLACE;
+                    ro.rigor = cfg->rigor;
+                    ro.dims = 1;
+                    ro.n[0] = N2;
+                    ro.howmany = 1;
+                    ro.order = VFFT_ORDER_NATURAL;
+                    ro.layout = VFFT_LAYOUT_INTERLEAVED;
+                    ro.nthreads = 1;
+                    ro.wisdom = cfg->wisdom;
+                    ro.wisdom_write = cfg->wisdom_write;
+                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&ro);
+                    if (il2d_rowo)
+                    {
+                        il2d_rowscr = (double *)malloc(
+                            2 * (size_t)N2 * sizeof(double));
+                        if (il2d_rowscr)
+                            il2d_rowoop = 1;
+                        else
+                        {
+                            vfft_destroy(il2d_rowo);
+                            il2d_rowo = NULL;
+                        }
+                    }
+                }
                 if (il2d_row && getenv("VFFT_IL2D_ROWOOP") &&
                     atoi(getenv("VFFT_IL2D_ROWOOP")) == 1)
                 {
@@ -4039,6 +4234,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         }
                     }
                 }
+                /* staged band route: VFFT_IL2D_STAGED=1 (needs a
+                 * band; checked after the wl parse below). */
                 /* banded walk: VFFT_IL2D_WL = band width in ROWS (the
                  * width is the INPUT, the cut is DERIVED — the tcut law).
                  * Legal iff wl | N1 and some suffix stage has L_s | wl;
@@ -4049,7 +4246,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 {
                     const char *we = getenv("VFFT_IL2D_WL");
                     const char *tfe = getenv("VFFT_IL2D_TFUSE");
-                    int wl = we ? atoi(we) : 0;
+                    int wl = we ? atoi(we) : (il2d_bwl > 0 ? il2d_bwl : 0);
                     il2d_wl = 0;
                     il2d_cut = 0;
                     il2d_tfuse = 0;
@@ -4074,6 +4271,47 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             il2d_cut = cut;
                             il2d_tfuse = !(tfe && atoi(tfe) == 0);
                         }
+                    }
+                    if (il2d_wl > 0 && getenv("VFFT_IL2D_STAGED") &&
+                        atoi(getenv("VFFT_IL2D_STAGED")) == 1)
+                    {
+                        /* skew selection: smallest even pad where every
+                         * suffix stage's leg stride 16*D*pitch AND the
+                         * leaf stride 16*pitch are non-0 mod 4096. */
+                        int sk;
+                        for (sk = 2; sk <= 32; sk += 2)
+                        {
+                            const int pit = N2 + sk;
+                            int s3, ok2 = ((16 * (size_t)pit) % 4096) != 0;
+                            for (s3 = il2d_cut;
+                                 ok2 && s3 < il2d_nst; s3++)
+                            {
+                                const int Dv =
+                                    il2d_L[s3] / il2d_R[s3];
+                                if (Dv > 1 &&
+                                    ((16 * (size_t)Dv * pit) % 4096) == 0)
+                                    ok2 = 0;
+                            }
+                            if (ok2)
+                            {
+                                il2d_pitch = pit;
+                                break;
+                            }
+                        }
+                        if (il2d_pitch > 0)
+                        {
+                            il2d_bandscr = (double *)malloc(
+                                2 * (size_t)il2d_wl * il2d_pitch
+                                * sizeof(double));
+                            if (il2d_bandscr)
+                                il2d_staged = 1;
+                            else
+                                il2d_pitch = 0;
+                        }
+                        else
+                            _vfft_warn("VFFT_IL2D_STAGED: no skew <=32 "
+                                       "de-aliases every stage at %dx%d "
+                                       "— staying direct", N1, N2);
                     }
                 }
             }
@@ -4122,12 +4360,24 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_rowoop = il2d_rowoop;
         h->il2d_rowo = il2d_rowo;
         h->il2d_rowscr = il2d_rowscr;
+        h->il2d_staged = il2d_staged;
+        h->il2d_pitch = il2d_pitch;
+        h->il2d_bandscr = il2d_bandscr;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
         memcpy(h->il2d_b, il2d_b, sizeof il2d_b);
         memcpy(h->il2d_tf, il2d_tf, sizeof il2d_tf);
         memcpy(h->il2d_tb, il2d_tb, sizeof il2d_tb);
+        /* ── the AXIS RACE (§10a): wl and rowoop timed on the FULL
+         * execute (they involve the rows), the winner set on the plan
+         * and banked WITH the chain as one verdict. Runs only when the
+         * axes are unknown: no env override and no banked verdict.
+         * MUST sit AFTER the stage-array commits above — it executes h. */
+        if (h->il2d_row && !getenv("VFFT_IL2D_WL") &&
+            !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
+            (il2d_bwl < 0 || il2d_bro < 0))
+            _il2d_axis_race(h, W, cfg, N1, N2);
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
@@ -7311,6 +7561,35 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                 (fwd && cut > 0) ? dre + 2 * b0 * rn
                                                  : sre + 2 * b0 * rn;
                             double *bd = dre + 2 * b0 * rn;
+                            if (h->il2d_staged)
+                            {
+                                /* §10b staged: band -> skewed scratch
+                                 * (kills the 4KB set-group aliasing,
+                                 * priced 2.4-3x on wide stages), suffix
+                                 * + rows there, copy back. count stays
+                                 * rn: identical arithmetic (F0). */
+                                const size_t pit =
+                                    (size_t)h->il2d_pitch;
+                                double *sc = h->il2d_bandscr;
+                                for (i = 0; i < wl; i++)
+                                    memcpy(sc + 2 * i * pit,
+                                           bs + 2 * i * rn,
+                                           2 * rn * sizeof(double));
+                                _il2d_col_stages2(sc, sc, (int)wl,
+                                                  pit, rn, cut, nst,
+                                                  h->il2d_R, h->il2d_L,
+                                                  fns, tabs, !fwd);
+                                if (h->il2d_tfuse)
+                                    for (i = 0; i < wl; i++)
+                                        _il2d_row_exec(h, dir,
+                                                       sc + 2 * i * pit,
+                                                       rn);
+                                for (i = 0; i < wl; i++)
+                                    memcpy(bd + 2 * i * rn,
+                                           sc + 2 * i * pit,
+                                           2 * rn * sizeof(double));
+                                continue;
+                            }
                             _il2d_col_stages(bs, bd, (int)wl, rn, cut,
                                              nst, h->il2d_R, h->il2d_L,
                                              fns, tabs, !fwd);
@@ -7669,6 +7948,7 @@ void vfft_destroy(vfft_plan h)
             if (h->il2d_rowo)
                 vfft_destroy(h->il2d_rowo);
             free(h->il2d_rowscr);
+            free(h->il2d_bandscr);
             for (s2 = 0; s2 < h->il2d_nst; s2++)
             {
                 free(h->il2d_tf[s2]);
