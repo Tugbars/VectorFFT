@@ -316,6 +316,25 @@ scrambled-native path in-place, the calibrated winner OOP.
 > | 256 | ~0.2–0.3× (derived) | ≈1.00× expected (136 vs 136 ns) | 136 ns | OOP row, 2026-08-16 ★★ |
 > | 512 | ~0.2–0.3× (derived) | ≈0.94–0.98× expected (296–297 vs 291–295 ns) | 291–295 ns | OOP row, 2026-08-16 ★★ |
 > | 1024 | ~0.25–0.35× (derived) | ~0.95-to-parity expected (848+ vs 833+ ns) | 833–873 ns | ✦ 6-rep, 2026-08-16 |
+>
+> **The full in-place IL closure (same day).** A convert-arm census
+> (1152 executes: both placements × three orders × K∈{1,2,4,8} × 24 Ns ×
+> both directions, `VFFT_CONV_LOG` instrumentation) found and closed
+> every convert-served cell class; 96/1152 remain — all N=8/9, the
+> raced-and-settled mono boundary. Each class now races its native
+> engine against the convert incumbent at create and banks the verdict
+> in its own `ord=scr lay=il` mode cell (`mode=ilp|zcasc|conv`):
+>
+> | cell class | native engine | measured vs its own convert serving | vs MKL |
+> |---|---|---|---|
+> | DEFAULT/SCR, N<2048 | il2p/il3p (mode=ilp) | 1.8–6.1× | ≈0.95–1.05× (the ★★ band, derived) |
+> | ≥2048 in-place, cold store | cascade (mode=zcasc, aliased-timed) | 3.8–4.7× | 1.00–1.18× (the cascade band, derived) |
+> | primes 7/11/13/127 in-place | ilprime (zin==zout contracted safe) | 8–43× | no separate MKL datum |
+> | NATURAL ≥2048 in-place, cold | ZCASC race arm now built on miss | 4.6–4.8× over the tape | as the cascade band |
+>
+> The vs-MKL column is vintage data mapped through the "same engines
+> serve these cells" rule — not a fresh toe-to-toe; the per-class
+> multipliers are same-run measurements (2026-08-25).
 
 Measured vs MKL, like-for-like order and placement, same-run ratios (>1 = we win):
 
@@ -647,9 +666,19 @@ N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
  1024×1024     2,747,300     5,725,600      2.08×          2.01×
  16×4096         102,410       153,247      1.50×*         2.44×
  64×256           18,457        35,268      1.91×*         2.21×
+ 4096×64         646,288       904,375      1.40×            —
+ 8192×64       1,650,375     2,066,875      1.25×*           —
+ 16384×64      3,704,962     5,062,325      1.37×            —
+ 32768×64      9,140,738    15,197,088      1.66×            —
 ────────────────────────────────────────────────────────────────────────
- median                                    ~1.75×         ~2.18×  (6/6 win)
+                                    10/10 win, median ~1.55×
 ```
+
+The bottom four rows are the L2 band-threshold ladder (same-day addendum
+below: measured with the cascade widths in the race; no "old serving"
+column — the convert wrapper was already deleted when these cells were
+first measured). 16384/32768 are outside-noise results; at 32768 MKL's
+CCE arm loses even to its own REAL_REAL configuration (0.76).
 
 *aspect-cell arm spreads were wide in this run (up to 56% on the MKL arm,
 196% on one native arm) — the ratios there are sign-reliable, not
@@ -668,6 +697,12 @@ never a full dual-architecture search). The race picked `wl=1024` at
 moved to **16384×64 = 1.37×, 32768×64 = 1.66× vs MKL CCE** (both outside
 noise; MKL's CCE arm itself loses to its own REAL_REAL there, 0.76–0.79).
 Derived from separate same-run ladders, not one toe-to-toe run.
+
+The ladder rows are merged into the main table above (the four ×64
+cells). The banked verdicts (13 `lay=il` cells incl.
+`32768x64 chain=64.16.32 wl=1024`) now ship in
+`generated/wisdom2_2d.txt` — a fresh install serves them without
+re-calibrating.
 
 > **The native interleaved tier beats MKL's best interleaved arm on all 6
 > cells — median ~1.75×, up to 2.08× at 1024² — and delivers ~2.0–2.4×

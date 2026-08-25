@@ -1661,6 +1661,263 @@ static double il2d__spread(const double *v, int n, double med)
     return med > 0 ? 100.0 * (hi - lo) / med : 0.0;
 }
 
+/* ── --2dreal M0 (2026-08-25): the 2D real DOOR comparison. Arms, one
+ * process, alternate order per round, medians: O-z = the interleaved door
+ * (front door, layout=IL — first-ever measurement of the _z veneer);
+ * O-split = the split door (front door, layout=SPLIT); M-cce = MKL DFTI
+ * REAL 2D with CONJUGATE_EVEN_STORAGE=COMPLEX_COMPLEX (the like-for-like
+ * CCE arm the published §4 numbers never used). Forward (r2c) only —
+ * the c2r mirror is the follow-up. ESTIMATE rigor: both doors serve the
+ * same plan family, isolating the DOOR gap; calibrated-plan ratios are
+ * a separate question. */
+static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
+{
+    size_t RN = (size_t)N1 * N2, hp1 = (size_t)(N2 / 2 + 1);
+    size_t CN = (size_t)N1 * hp1, i;
+    double *x = alloc_d(RN), *ore = alloc_d(CN), *oim = alloc_d(CN);
+    double *z = alloc_d(2 * CN), *ctl = alloc_d(RN);
+    double tz[64], ts[64], tm[64], tc[64];
+    int r, nz = 0, ns_ = 0, nm = 0, nc = 0;
+    vfft_plan pz = NULL, ps = NULL;
+    vfft_config_t c;
+    if (!x || !ore || !oim || !z || !ctl)
+        return;
+    srand(17 + N1 + N2);
+    for (i = 0; i < RN; i++)
+        x[i] = (double)rand() / RAND_MAX - 0.5;
+    memset(&c, 0, sizeof c);
+    c.transform = VFFT_R2C;
+    c.placement = VFFT_OUTOFPLACE;
+    c.rigor = VFFT_MEASURE; /* VFFT_ESTIMATE is a planned tier only */
+    c.dims = 2; c.n[0] = N1; c.n[1] = N2;
+    c.howmany = 1; c.nthreads = 1; c.wisdom = W;
+    c.layout = VFFT_LAYOUT_INTERLEAVED;
+    pz = vfft_create(&c);
+    c.layout = VFFT_LAYOUT_SPLIT;
+    ps = vfft_create(&c);
+    if (!pz || !ps)
+    {
+        printf("  %4dx%-4d  create FAIL (z=%p split=%p)\n", N1, N2,
+               (void *)pz, (void *)ps);
+        goto done;
+    }
+    /* correctness: the two doors must agree elementwise (same interior) */
+    vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
+    vfft_execute(pz, VFFT_FORWARD, x, NULL, z, NULL);
+    {
+        double d = 0;
+        for (i = 0; i < CN; i++)
+        {
+            double a = fabs(z[2 * i] - ore[i]), b = fabs(z[2 * i + 1] - oim[i]);
+            if (a > d) d = a;
+            if (b > d) d = b;
+        }
+        if (d > 1e-9)
+        {
+            printf("  %4dx%-4d  DOOR MISMATCH %.1e\n", N1, N2, d);
+            goto done;
+        }
+    }
+#ifdef VFFT_HAS_MKL
+    {
+        DFTI_DESCRIPTOR_HANDLE h = 0;
+        MKL_LONG dims[2] = { N1, N2 };
+        double *cce = alloc_d(RN * 2);
+        int mok = 0;
+        if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_REAL, 2, dims) ==
+            DFTI_NO_ERROR)
+        {
+            DftiSetValue(h, DFTI_CONJUGATE_EVEN_STORAGE,
+                         DFTI_COMPLEX_COMPLEX);
+            DftiSetValue(h, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+            mok = (DftiCommitDescriptor(h) == DFTI_NO_ERROR);
+        }
+        for (r = 0; r < rounds && r < 64; r++)
+        {
+            int a, order[4] = { 0, 1, 2, 3 };
+            if (r & 1)
+            {
+                order[0] = 3; order[1] = 2; order[2] = 1; order[3] = 0;
+            }
+            for (a = 0; a < 4; a++)
+            {
+                const int arm = order[a];
+                size_t reps = 1 + (size_t)(2e5 / (double)(RN + 1));
+                double t0, dt;
+                size_t k;
+                cachebust();
+                t0 = vfft_proto_now_ns();
+                for (k = 0; k < reps; k++)
+                {
+                    if (arm == 0)
+                        vfft_execute(pz, VFFT_FORWARD, x, NULL, z, NULL);
+                    else if (arm == 1)
+                        vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
+                    else if (arm == 2 && mok)
+                        DftiComputeForward(h, (void *)x, cce);
+                    else if (arm == 3)
+                        memcpy(ctl, x, RN * 8);
+                }
+                dt = (vfft_proto_now_ns() - t0) / (double)reps;
+                if (arm == 0) tz[nz++] = dt;
+                else if (arm == 1) ts[ns_++] = dt;
+                else if (arm == 2 && mok) tm[nm++] = dt;
+                else if (arm == 3) tc[nc++] = dt;
+            }
+        }
+        if (h)
+            DftiFreeDescriptor(&h);
+        free_d(cce);
+    }
+#else
+    (void)r;
+#endif
+    {
+        double mz = il2d__med(tz, nz), ms = il2d__med(ts, ns_);
+        double mm = nm ? il2d__med(tm, nm) : 0, mc = il2d__med(tc, nc);
+        printf("  %4dx%-4d  r2c  ctl %9.0f (%4.1f%%) | O-z %10.0f (%4.1f%%) | "
+               "O-split %10.0f (%4.1f%%) | M-cce %10.0f | z/split %.2f | "
+               "z xMKLcce %.2f\n",
+               N1, N2, mc, il2d__spread(tc, nc, mc), mz, il2d__spread(tz, nz, mz),
+               ms, il2d__spread(ts, ns_, ms), mm, ms > 0 ? mz / ms : 0,
+               mm > 0 ? mm / mz : 0);
+    }
+    /* ── the c2r MIRROR: backward through both doors, input = the fwd
+     * run's own spectra. C2R plans are backward-only (VFFT_BACKWARD). */
+    {
+        double *xr = alloc_d(RN);
+        vfft_plan pzc = NULL, psc = NULL;
+        double bz[64], bs[64], bm[64];
+        int bnz = 0, bns = 0, bnm = 0;
+        if (!xr)
+            goto done;
+        c.transform = VFFT_C2R;
+        c.layout = VFFT_LAYOUT_INTERLEAVED;
+        pzc = vfft_create(&c);
+        c.layout = VFFT_LAYOUT_SPLIT;
+        psc = vfft_create(&c);
+        if (!pzc || !psc)
+        {
+            printf("  %4dx%-4d  c2r create FAIL\n", N1, N2);
+            free_d(xr);
+            if (pzc) vfft_destroy(pzc);
+            if (psc) vfft_destroy(psc);
+            goto done;
+        }
+        /* correctness: both doors must invert to N1*N2*x */
+        {
+            double d = 0, sc2 = (double)N1 * N2;
+            vfft_execute(pzc, VFFT_BACKWARD, z, NULL, xr, NULL);
+            for (i = 0; i < RN; i++)
+            {
+                double a2 = fabs(xr[i] / sc2 - x[i]);
+                if (a2 > d) d = a2;
+            }
+            vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr, NULL);
+            for (i = 0; i < RN; i++)
+            {
+                double a2 = fabs(xr[i] / sc2 - x[i]);
+                if (a2 > d) d = a2;
+            }
+            if (d > 1e-9)
+            {
+                printf("  %4dx%-4d  c2r RT FAIL %.1e\n", N1, N2, d);
+                free_d(xr);
+                vfft_destroy(pzc);
+                vfft_destroy(psc);
+                goto done;
+            }
+        }
+#ifdef VFFT_HAS_MKL
+        {
+            DFTI_DESCRIPTOR_HANDLE hb = 0;
+            MKL_LONG dims2[2] = { N1, N2 };
+            double *cce2 = alloc_d(RN * 2);
+            int mok2 = 0;
+            if (DftiCreateDescriptor(&hb, DFTI_DOUBLE, DFTI_REAL, 2,
+                                     dims2) == DFTI_NO_ERROR)
+            {
+                DftiSetValue(hb, DFTI_CONJUGATE_EVEN_STORAGE,
+                             DFTI_COMPLEX_COMPLEX);
+                DftiSetValue(hb, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+                mok2 = (DftiCommitDescriptor(hb) == DFTI_NO_ERROR);
+            }
+            if (mok2 && cce2)
+            {
+                /* MKL bwd VALIDATION (the --2dc2r audit-gap class): its
+                 * own fwd fills cce2, its bwd must invert to N1*N2*x. */
+                double d = 0, sc2 = (double)N1 * N2;
+                DftiComputeForward(hb, (void *)x, cce2);
+                DftiComputeBackward(hb, cce2, xr);
+                for (i = 0; i < RN; i++)
+                {
+                    double a2 = fabs(xr[i] / sc2 - x[i]);
+                    if (a2 > d) d = a2;
+                }
+                if (d > 1e-9)
+                {
+                    printf("  %4dx%-4d  MKL bwd INVALID %.1e — arm "
+                           "dropped\n", N1, N2, d);
+                    mok2 = 0;
+                }
+            }
+            for (r = 0; r < rounds && r < 64; r++)
+            {
+                int a2, order2[3] = { 0, 1, 2 };
+                if (r & 1)
+                {
+                    order2[0] = 2; order2[1] = 1; order2[2] = 0;
+                }
+                for (a2 = 0; a2 < 3; a2++)
+                {
+                    const int arm = order2[a2];
+                    size_t reps = 1 + (size_t)(2e5 / (double)(RN + 1));
+                    double t0, dt;
+                    size_t k;
+                    cachebust();
+                    t0 = vfft_proto_now_ns();
+                    for (k = 0; k < reps; k++)
+                    {
+                        if (arm == 0)
+                            vfft_execute(pzc, VFFT_BACKWARD, z, NULL, xr,
+                                         NULL);
+                        else if (arm == 1)
+                            vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr,
+                                         NULL);
+                        else if (arm == 2 && mok2)
+                            DftiComputeBackward(hb, cce2, xr);
+                    }
+                    dt = (vfft_proto_now_ns() - t0) / (double)reps;
+                    if (arm == 0) bz[bnz++] = dt;
+                    else if (arm == 1) bs[bns++] = dt;
+                    else if (arm == 2 && mok2) bm[bnm++] = dt;
+                }
+            }
+            if (hb)
+                DftiFreeDescriptor(&hb);
+            free_d(cce2);
+        }
+#endif
+        {
+            double mz2 = il2d__med(bz, bnz), ms2 = il2d__med(bs, bns);
+            double mm2 = bnm ? il2d__med(bm, bnm) : 0;
+            printf("  %4dx%-4d  c2r  O-z %10.0f (%4.1f%%) | O-split %10.0f "
+                   "(%4.1f%%) | M-cce %10.0f | z/split %.2f | z xMKLcce "
+                   "%.2f\n",
+                   N1, N2, mz2, il2d__spread(bz, bnz, mz2), ms2,
+                   il2d__spread(bs, bns, ms2), mm2,
+                   ms2 > 0 ? mz2 / ms2 : 0, mm2 > 0 ? mm2 / mz2 : 0);
+        }
+        free_d(xr);
+        vfft_destroy(pzc);
+        vfft_destroy(psc);
+    }
+done:
+    if (pz) vfft_destroy(pz);
+    if (ps) vfft_destroy(ps);
+    free_d(x); free_d(ore); free_d(oim); free_d(z); free_d(ctl);
+}
+
 static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
 {
     size_t T = (size_t)N1 * N2, i;
@@ -3677,7 +3934,7 @@ int main(int argc, char **argv)
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, il2d = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
+    int mt = 0, oop = 0, twod = 0, il2d = 0, real2d = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
     int tcut_mode = 0; /* --tcut=... seen: forces a DISTINCT default csv so a
                         * tiling probe can never overwrite a banked baseline. */
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
@@ -3714,6 +3971,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--2dil") == 0)
         {
             il2d = 1; /* three-arm interleaved-2D scoping cell (M0a) */
+        }
+        else if (strcmp(argv[1], "--2dreal") == 0)
+        {
+            real2d = 1; /* 2D real DOOR race: z door vs split door vs MKL CCE */
         }
         else if (strcmp(argv[1], "--c2r") == 0)
         {
@@ -3973,6 +4234,42 @@ int main(int argc, char **argv)
                 run_2dil_cell(cells[ci][0], cells[ci][1], rounds, W);
                 pace(pace_ms);
             }
+        }
+        if (W) vfft_wisdom_free(W);
+        return 0;
+    }
+
+    /* --2dreal: the 2D real DOOR race (M0), then done. */
+    if (real2d)
+    {
+        const char *wd = getenv("VFFT_WISDOM_DIR");
+        vfft_wisdom *W;
+        int rounds;
+        const char *re_ = getenv("VFFT_2DIL_ROUNDS");
+        rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
+        if (!wd) wd = ".";
+        setvbuf(stdout, NULL, _IONBF, 0);
+        W = vfft_wisdom_load(wd);
+#ifdef VFFT_HAS_MKL
+        mkl_set_num_threads(1);
+#endif
+        printf("=== 2DREAL door race (r2c fwd + c2r bwd; wisdom=%s %s; "
+               "rounds=%d) ===\n",
+               wd, W ? "loaded" : "MISSING", rounds);
+        printf("# O-z = interleaved door | O-split = split door | M-cce = MKL "
+               "DFTI REAL 2D CCE | MEASURE-rigor creates (per-door race)\n");
+        {
+            /* squares AND the aspect set — the regimes live at the aspects
+             * (owner 2026-08-25: never judge a door on squares alone;
+             * long columns stress the un-banded column pass, long rows
+             * stress the row pack). N2 must be even (r2c contract). */
+            int cells[][2] = { { 64, 64 },   { 256, 256 }, { 512, 512 },
+                               { 1024, 1024 },
+                               { 16, 4096 }, { 4096, 16 }, { 32, 1024 },
+                               { 64, 256 },  { 4096, 64 }, { 8192, 64 } };
+            int nc2 = (int)(sizeof cells / sizeof cells[0]), ci;
+            for (ci = 0; ci < nc2; ci++)
+                run_2dreal_cell(cells[ci][0], cells[ci][1], rounds, W);
         }
         if (W) vfft_wisdom_free(W);
         return 0;
