@@ -3265,16 +3265,10 @@ static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
  * decides what a miss means (OOP: race + bank; in-place: classic path).
  * PLANNING side only; the exec purity audit watches this. */
 static int _k1z_wisdom_replay(const vfft_config_t *cfg,
-                              struct vfft_wisdom_s *W, int N, int ip,
+                              struct vfft_wisdom_s *W, int N,
                               vfft_zsplit_plan_t **zs_out,
                               vfft_zturn2_plan_t **zt_out, int *zroute_out)
 {
-    /* ip=1 reads the place=ip kind-4 twin row (the in-place caller's own
-     * raced verdict, 2026-08-25); ip=0 reads the classic place=oop row.
-     * Each call site states its cell explicitly — no inference from cfg,
-     * because the natural-order site deliberately reads the oop row as a
-     * candidate-recipe source for its own race. No cross-placement
-     * borrowing: a miss means the caller races its own placement. */
     /* The cascade is the ≥2048 tier, period. A kind-4 row BELOW that is a
      * wrong-slot verdict (the sub-2048 SCRAMBLED champion is the identity
      * ILP engine — Phase A doctrine, k1scr-gated) and replaying it would
@@ -3294,13 +3288,8 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     int znf = 0;
     vfft_oop_wisdom_entry_t zeb;
     const vfft_oop_wisdom_entry_t *ze =
-        W->vw2_off_oop
-            ? (ip ? NULL /* legacy files never carried an ip row */
-                  : vfft_oop_wisdom_lookup_zsplit(&W->oop, N))
-            : (vw2__oop_lookup_zsplit_pl(&W->vw2, N,
-                                         ip ? VW2_PL_IP : VW2_PL_OOP, &zeb)
-                   ? &zeb
-                   : NULL);
+        W->vw2_off_oop ? vfft_oop_wisdom_lookup_zsplit(&W->oop, N)
+                       : (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb) ? &zeb : NULL);
     int ze_hit = (ze && !cfg->recalibrate);
     /* Route forcing, read at CREATE (both directions follow — the
      * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
@@ -3500,10 +3489,12 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
  * order, never a hand-set constant. See docs/design/vfft_front_door.md.
  * Returns 1 with exactly one plan attached (route atomicity), 0 = no
  * cascade for this N (caller keeps its previous serving).
- * ip=1: the IN-PLACE caller's race — times the ALIASED call form (its own
- * memory-access structure; verdicts can differ by placement) and banks the
- * place=ip kind-4 twin row, so neither placement's re-race can erase the
- * other's verdict (the kind-3 per-layout precedent). */
+ * ip=1: the IN-PLACE caller's CANDIDATE build — the t2q pick is timed on
+ * the ALIASED call form (in-place has its own memory-access structure;
+ * owner 2026-08-25), and the kind-4 cell is NOT banked: that cell is the
+ * OOP create's verdict (single writer). The in-place verdict lives in the
+ * ord=scr lay=il MODE cell (mode=zcasc|conv), banked by the caller after
+ * its cascade-vs-convert race. */
 static int _k1z_race_and_bank(const vfft_config_t *cfg,
                               struct vfft_wisdom_s *W, int N, int ip,
                               vfft_zsplit_plan_t **zs_out,
@@ -3577,7 +3568,6 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
             ne.zt_tw = (zt_pending && zt_pending->tiled == 1)
                            ? (int)zt_pending->tw : 0;
             ne.zt_l1 = ne.zt_tw ? (int)vfft_cpu_l1d_bytes() : 0;
-            ne.inplace = ip; /* the place=ip twin row (0 = today's oop row) */
             /* MEASURE-LESS bank (ns=0): this race's median is fwd-only
              * placement luck (§4.9993), not the cell's joint2 verdict —
              * kind-4 carries ns only from the dp planner. A measure-less
@@ -3585,8 +3575,11 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
              * the reverse is refused by the merge law, exactly the
              * intended authority order. */
             ne.ns = 0.0;
-            vw2_oop_bank_entry(&W->vw2, &ne);
-            _vw2_persist(W, cfg);
+            if (!ip) /* kind-4 = the OOP create's cell; single writer */
+            {
+                vw2_oop_bank_entry(&W->vw2, &ne);
+                _vw2_persist(W, cfg);
+            }
         }
         /* ROUTE ATOMICITY (structural): exactly ONE cascade plan survives
          * to the handle — the loser dies here, before the handle exists —
@@ -5055,8 +5048,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 rcfg.recalibrate = 0;
                 vfft_zsplit_plan_t *zcs = NULL;
                 int zcr = 0;
-                if (_k1z_wisdom_replay(&rcfg, W, N, /*ip=*/0, &zcs,
-                                       &zct, &zcr))
+                if (_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
                 {
                     if (zcs)
                         vfft_zsplit_destroy(zcs);
@@ -5532,26 +5524,138 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              cfg->order == VFFT_ORDER_DEFAULT) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
-            /* >=2048: replay the kind-4 cascade verdict — and on a MISS,
-             * RACE AND BANK it (convert-arm census class 3, owner-approved
-             * fix 2026-08-25: only the OOP create raced; an in-place
-             * caller on a cold store fell to convert forever — the same
-             * hit-only disease as the sub-2048 ILP gap). BOTH spellings:
-             * DEFAULT-order in-place is the scrambled-output contract
-             * (identity rule), and the kind-4 verdict is the measured
-             * serving for it. The cascade is alias-safe in==out (P0a,
-             * memcmp-proven both directions). */
-            vfft_zsplit_plan_t *ipzs = NULL;
-            vfft_zturn2_plan_t *ipzt = NULL;
-            int ipzr = 0;
-            if (_k1z_wisdom_replay(cfg, W, N, /*ip=*/1, &ipzs, &ipzt,
-                                   &ipzr) ||
-                _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs, &ipzt,
-                                   &ipzr))
+            /* >=2048 MODE-CELL flow (owner-approved class-3 fix,
+             * 2026-08-25): the in-place caller consults its OWN
+             * ord=scr lay=il mode cell — the same cell the sub-2048 ILP
+             * race banks into, mode=zcasc as the third verdict. Single
+             * writer per key: sub-2048 writes ilp|conv, >=2048 writes
+             * zcasc|conv, the kind-4 place=oop cell stays the OOP
+             * create's alone (recipe source here). On a MISS the cascade
+             * candidate (aliased t2q pick) races THIS caller's convert
+             * incumbent — the cascade is alias-safe in==out (P0a). BOTH
+             * spellings: DEFAULT-order in-place is the scrambled-output
+             * contract (identity rule). */
+            if (N >= 2048 && !W->vw2_off_stride && h->cplan &&
+                !getenv("VFFT_NO_K1Z_IP"))
             {
-                h->zsplit = ipzs; /* exactly one non-NULL (route atomicity) */
-                h->zturn = ipzt;
-                h->zroute = ipzr;
+                vfft_proto_nat_entry_t zieb;
+                const vfft_proto_nat_entry_t *zie =
+                    vw2_stride_lookup_scrmode(&W->vw2, _vw2_lay_of(cfg), N,
+                                              K, &zieb)
+                        ? &zieb
+                        : NULL;
+                const int zmode = (zie && !cfg->recalibrate)
+                                      ? zie->mode
+                                      : VFFT_NAT_UNSET;
+                vfft_zsplit_plan_t *ipzs = NULL;
+                vfft_zturn2_plan_t *ipzt = NULL;
+                int ipzr = 0;
+                if (zmode == VFFT_NAT_ZCASC)
+                {
+                    /* the banked win: rebuild — recipe from the kind-4
+                     * OOP row when banked, else the default construction
+                     * (aliased t2q pick, no kind-4 bank) */
+                    if (_k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt,
+                                           &ipzr) ||
+                        _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs,
+                                           &ipzt, &ipzr))
+                    {
+                        h->zsplit = ipzs; /* one non-NULL (atomicity) */
+                        h->zturn = ipzt;
+                        h->zroute = ipzr;
+                    }
+                }
+                else if (zmode == VFFT_NAT_UNSET &&
+                         _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs,
+                                            &ipzt, &ipzr))
+                {
+                    /* MISS: cascade vs THIS caller's convert incumbent —
+                     * the ILP race protocol (5 rounds alternated,
+                     * medians, aliased buffer re-seeded per burst). */
+                    double *rz = (double *)malloc(2 * (size_t)N
+                                                  * sizeof(double));
+                    double *r0 = (double *)malloc(2 * (size_t)N
+                                                  * sizeof(double));
+                    if (rz && r0)
+                    {
+                        const int reps = N <= 4096 ? 32 : 8;
+                        double ti[5], tz[5];
+                        for (long i2 = 0; i2 < 2L * N; i2++)
+                            r0[i2] = (double)rand() / RAND_MAX - 0.5;
+                        vfft_set_num_threads(h->nthreads);
+                        for (int r = 0; r < 5; r++)
+                            for (int a = 0; a < 2; a++)
+                            {
+                                const int arm = (r & 1) ? 1 - a : a;
+                                double t0, dt;
+                                memcpy(rz, r0,
+                                       2 * (size_t)N * sizeof(double));
+                                t0 = vfft_proto_now_ns();
+                                for (int i2 = 0; i2 < reps; i2++)
+                                {
+                                    if (arm == 0)
+                                        _exec_c2c_interleaved(
+                                            h, VFFT_FORWARD, rz, rz);
+                                    else if (ipzr)
+                                        vfft_zturn2_execute_fwd(ipzt, rz,
+                                                                rz);
+                                    else
+                                        vfft_zsplit_execute_fwd(ipzs, rz,
+                                                                rz);
+                                }
+                                dt = (vfft_proto_now_ns() - t0) / reps;
+                                if (arm == 0)
+                                    ti[r] = dt;
+                                else
+                                    tz[r] = dt;
+                            }
+                        for (int a = 0; a < 2; a++)
+                        {
+                            double *v = a ? tz : ti;
+                            for (int i2 = 1; i2 < 5; i2++)
+                                for (int j2 = i2;
+                                     j2 > 0 && v[j2] < v[j2 - 1]; j2--)
+                                {
+                                    double tt = v[j2];
+                                    v[j2] = v[j2 - 1];
+                                    v[j2 - 1] = tt;
+                                }
+                        }
+                        if (getenv("VFFT_NAT_LOG"))
+                            fprintf(stderr,
+                                    "[scrmode] N=%d K=%zu conv=%.0fns "
+                                    "zcasc=%.0fns -> %s\n",
+                                    N, K, ti[2], tz[2],
+                                    tz[2] < ti[2] ? "ZCASC" : "conv");
+                        if (tz[2] < ti[2])
+                        {
+                            h->zsplit = ipzs;
+                            h->zturn = ipzt;
+                            h->zroute = ipzr;
+                            ipzs = NULL;
+                            ipzt = NULL;
+                            _bank_scrmode_1d(W, cfg, N, K,
+                                             VFFT_NAT_ZCASC, tz[2],
+                                             h->cplan->factors,
+                                             h->cplan->variants,
+                                             h->cplan->num_stages,
+                                             h->cplan->use_dif_forward);
+                        }
+                        else
+                            _bank_scrmode_1d(W, cfg, N, K, VFFT_NAT_CONV,
+                                             ti[2], h->cplan->factors,
+                                             h->cplan->variants,
+                                             h->cplan->num_stages,
+                                             h->cplan->use_dif_forward);
+                    }
+                    free(rz);
+                    free(r0);
+                    if (ipzs)
+                        vfft_zsplit_destroy(ipzs);
+                    if (ipzt)
+                        vfft_zturn2_destroy(ipzt);
+                }
+                /* zmode == CONV: the banked loss — convert serves. */
             }
             /* THE ILP-ATTACH FIX (owner law 2026-08-25: everything is
              * measured — a scrambled caller never waits on a natural
@@ -5707,8 +5811,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             /* SCRAMBLED K=1: wisdom replay (>=2048 only, _k1z_wisdom_replay) else default chain + the stf/stf2 t2q race; the winning cascade attaches to the classic handle below.
              * t2q picks must be MEASURED on the installed binary — stf/stf2 are bit-identical, so the delta is code-placement order, never a hand-set constant.
              * See docs/design/vfft_front_door.md. */
-            if (!_k1z_wisdom_replay(cfg, W, N, /*ip=*/0, &zs_pending,
-                                    &zt_pending, &zroute_pending))
+            if (!_k1z_wisdom_replay(cfg, W, N, &zs_pending, &zt_pending,
+                                    &zroute_pending))
             {
                 /* MISS / recalibrate -> _k1z_race_and_bank (the single
                  * definition, shared with the IN-PLACE create). The HIT
@@ -5716,7 +5820,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * semantics. */
                 (void)_k1z_race_and_bank(cfg, W, N, /*ip=*/0,
                                          &zs_pending, &zt_pending,
-                                         &zroute_pending);
+                                         &zroute_pending); /* oop: banks kind-4 */
             }
         }
         /* K=1 engine admission (il_coverage_plan.md Phase A, 2026-08-03):
@@ -6067,9 +6171,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             rcfg.recalibrate = 0;
                             vfft_zsplit_plan_t *zcs = NULL;
                             int zcr = 0;
-                            if (_k1z_wisdom_replay(&rcfg, W, N,
-                                                   /*ip=*/0, &zcs, &zct,
-                                                   &zcr))
+                            if (_k1z_wisdom_replay(&rcfg, W, N, &zcs,
+                                                   &zct, &zcr))
                             {
                                 if (zcs)
                                     vfft_zsplit_destroy(zcs);
