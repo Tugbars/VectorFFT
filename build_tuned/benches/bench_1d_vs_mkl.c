@@ -3812,7 +3812,7 @@ int main(int argc, char **argv)
      * while docs/performance/v1_0_results.md described its numbers as
      * "pinned core 2". An explicit core argument always wins; this only
      * fixes the default. */
-    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || r2c || r2c2d || r2c2d_bwd || c2r1d || g_zr2c) ? 2
+    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || il2d || r2c || r2c2d || r2c2d_bwd || c2r1d || g_zr2c) ? 2
                                                                                                            : -1); /* MT->0, OOP/2D/R2C/zr2c->P-core 2 */
     {
         const char *tp = getenv("VFFT_TRIAL_PACE_MS");

@@ -66,9 +66,19 @@ built for lack of a consumer. The 2D column stage is the consumer:
 
 | kind | role | status |
 |---|---|---|
-| `n1` (existing, as-is) | single-layer column pass when N1 <= codelet radix (4..64): one call, `Ls = OLs = N2`, in place | SHIPPED — reuse byte-unchanged |
-| `t2c` (NEW; name provisional) | multi-stage column mid: same-slot in-place DIF stage along the column axis, legs at `D_s*N2`, per-group broadcast twiddle records hoisted out of the k-loop, in-kernel group loop | the one new emission |
+| `n1c` (SHIPPED 2026-08-25) | single-layer column pass when N1 <= codelet radix (4..64): one call, `Ls = OLs = N2`, in place | fwd+bwd pairs emitted for {4,8,16,32,64}; corpus cells + registry lists (`VFFT_IL_N1C_*`) |
+| `t2c` (NEW; name provisional) | multi-stage column mid: same-slot in-place DIF stage along the column axis, legs at `D_s*N2`, per-group broadcast twiddle records hoisted out of the k-loop, in-kernel group loop | the one new emission left |
 | row pass | K=1 IL engine per row | SHIPPED — composition only |
+
+The column leaf is its OWN kind, not a reuse of plain `n1` (owner directive:
+distinct names): plain n1 had NO forward population — only `n1_bwd`, which
+belongs to the 1D F-DIAG chain, and reusing it would have manufactured a
+fake fwd/bwd "pair" spanning two subsystems. `n1c` is n1 math with the 2D
+family's contract stated in the name and in the ABI: alias-tolerant (no
+`__restrict__`) in BOTH directions, because the 2D column pass runs
+`zin == zout` — plain N1 grants that backward only. Emitter delta: kind
+`N1C` in `c2c_il.ml` (+ both edge-dispatch matches), `--cil-n1c` in
+gen_main/codelet scanner+selector+argv, `Cil_n1c` in codelet.ml(i).
 
 `t2c` emission slots into `c2c_il.ml` beside n1/n1t/t2: same cx math layer,
 same schedulers, new twiddle-record edge + group loop. No new backend, no
@@ -138,7 +148,7 @@ separable naive DFT — roundtrip can never gate a permuted transform.
   elementwise vs naive at N1×N2 ∈ {small, pow2, odd} — the il2p scar law:
   eight guessed stride maps once fell in one session; maps are proven by a
   running simulator before any SIMD uses them.
-- **M1 — small-N1 native tier, zero new kernels.** n1 column pass
+- **M1 — small-N1 native tier.** n1c column pass
   (`Ls=N2`, N1 <= 64) + TC row loop. Gate: forward elementwise per
   direction; race vs convert-wrapper, split 2D, MKL CCE at the same cells.
   This alone serves every cell with N1 <= 64 natively.

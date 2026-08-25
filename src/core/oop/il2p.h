@@ -221,6 +221,22 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
     }
 }
 
+/* n1c — the 2D column-stage leaf pair (fft2d_il_c2c_design.md §3): n1
+ * math with the 2D family's contract in the name and the ABI — count axis
+ * = adjacent plane columns, alias-tolerant (no __restrict__) in BOTH
+ * directions because the 2D column pass runs zin == zout. Distinct from
+ * plain n1 (whose bwd is the 1D F-DIAG chain role and whose fwd was never
+ * populated). */
+static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
+{
+    switch (R) {
+#define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
+    VFFT_IL_N1C_PAIR_RADICES(C)
+#undef C
+    default: return 0;
+    }
+}
+
 /* 🔴 t2p IS RETIRED — Tugbars, 2026-07-29: "disable t2p ... the whole tree
  * standardizes on t2t semantics." The t2p kind (PRE-twiddle + backward
  * butterfly + straight store, route A / conj-of-forward) lost the bwd race
