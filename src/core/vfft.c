@@ -3547,47 +3547,25 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             return NULL;
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
-        stride_plan_t *tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate,
-                                     cfg->order, _vw2_lay_of(cfg));
-        /* wave-4: the inner-cell spike save is GONE — _inner_c2c banks into
-         * the wisdom2 store; the guarded _vw2_persist below covers disk. */
-        if (!tp)
-            return NULL;
-        /* wave-3 flip: the legacy per-create unconditional rewrites of the
-         * three fft2d files are GONE (they ran even when the create FAILED,
-         * and clobber-rewrote on pure warm hits — those files are frozen
-         * now). _build_2d banked into the wisdom2 store's memory; disk
-         * persistence is the guarded save, and only after a SUCCESSFUL
-         * create. */
-        _vw2_persist(W, cfg);
-        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
-        if (!h)
-        {
-            stride_plan_destroy(tp);
-            return NULL;
-        }
-        h->transform = cfg->transform;
-        h->placement = cfg->placement;
-        h->layout = (int)cfg->layout;
-        h->N = N1;
-        h->N2 = N2;
-        h->K = K;
-        h->nthreads = stride_get_num_threads();
-        h->tplan = tp;
-        /* ── native IL 2D c2c tier (M1): opt-in via VFFT_IL2D_NATIVE=1.
-         * Serves natural x natural (legal for ORDER_DEFAULT, a bonus for
-         * ORDER_NATURAL). Any miss — env off, no n1c radix at N1, row
-         * child create failure — leaves il2d_row NULL and the convert
-         * wrapper serves exactly as before. */
+        /* ── native IL 2D c2c tier (M1, fft2d_il_c2c_design.md) — attempted
+         * FIRST: when it engages, the split tplan (which the native execute
+         * never touches) is not built at all, skipping a full 2D
+         * calibration per cold create. Serves natural x natural (legal for
+         * ORDER_DEFAULT, a bonus for ORDER_NATURAL). Opt-in via
+         * VFFT_IL2D_NATIVE=1; any miss — env off, no n1c radix at N1, row
+         * child create failure — falls through to _build_2d and the
+         * convert wrapper exactly as before. */
+        struct vfft_plan_s *il2d_row = NULL;
+        vfft_il2p_fn il2d_cf = NULL, il2d_cb = NULL;
         if (cfg->transform == VFFT_C2C &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
             const char *e = getenv("VFFT_IL2D_NATIVE");
             if (e && atoi(e) == 1)
             {
-                vfft_il2p_fn cf = vfft_il2p_n1c_fn(N1, 0);
-                vfft_il2p_fn cb = vfft_il2p_n1c_fn(N1, 1);
-                if (cf && cb)
+                il2d_cf = vfft_il2p_n1c_fn(N1, 0);
+                il2d_cb = vfft_il2p_n1c_fn(N1, 1);
+                if (il2d_cf && il2d_cb)
                 {
                     vfft_config_t rc;
                     memset(&rc, 0, sizeof rc);
@@ -3602,15 +3580,53 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     rc.nthreads = 1;
                     rc.wisdom = cfg->wisdom;
                     rc.wisdom_write = cfg->wisdom_write;
-                    h->il2d_row = vfft_create(&rc);
-                    if (h->il2d_row)
-                    {
-                        h->il2d_col_f = cf;
-                        h->il2d_col_b = cb;
-                    }
+                    il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+                }
+                if (!il2d_row)
+                {
+                    il2d_cf = NULL;
+                    il2d_cb = NULL;
                 }
             }
         }
+        stride_plan_t *tp = NULL;
+        if (!il2d_row)
+        {
+            tp = _build_2d(cfg->transform, N1, N2, cfg->rigor, reg, W, cfg->recalibrate,
+                           cfg->order, _vw2_lay_of(cfg));
+            /* wave-4: the inner-cell spike save is GONE — _inner_c2c banks into
+             * the wisdom2 store; the guarded _vw2_persist below covers disk. */
+            if (!tp)
+                return NULL;
+            /* wave-3 flip: the legacy per-create unconditional rewrites of the
+             * three fft2d files are GONE (they ran even when the create FAILED,
+             * and clobber-rewrote on pure warm hits — those files are frozen
+             * now). _build_2d banked into the wisdom2 store's memory; disk
+             * persistence is the guarded save, and only after a SUCCESSFUL
+             * create. (The native path banks nothing 2D — its row child
+             * persisted its own 1D verdicts inside its create.) */
+            _vw2_persist(W, cfg);
+        }
+        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+        if (!h)
+        {
+            if (tp)
+                stride_plan_destroy(tp);
+            if (il2d_row)
+                vfft_destroy(il2d_row);
+            return NULL;
+        }
+        h->transform = cfg->transform;
+        h->placement = cfg->placement;
+        h->layout = (int)cfg->layout;
+        h->N = N1;
+        h->N2 = N2;
+        h->K = K;
+        h->nthreads = stride_get_num_threads();
+        h->tplan = tp; /* NULL when the native IL 2D tier engaged */
+        h->il2d_row = il2d_row;
+        h->il2d_col_f = il2d_cf;
+        h->il2d_col_b = il2d_cb;
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
@@ -3745,7 +3761,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         /* ORDER_NATURAL (2D c2c): build the two per-axis digit-reversal reorder tapes from the inner
          * plans' chains. SCRAMBLED/DEFAULT leave nat2d==0 (byte-identical scrambled path). Refuse
          * (free + NULL) if orientation detect fails on either multi-stage axis — no silent wrong order. */
-        if (cfg->transform == VFFT_C2C && cfg->order == VFFT_ORDER_NATURAL)
+        if (cfg->transform == VFFT_C2C && cfg->order == VFFT_ORDER_NATURAL &&
+            !h->il2d_row) /* native tier serves natural already; tp is NULL there */
         {
             stride_fft2d_data_t *d = (stride_fft2d_data_t *)tp->override_data;
             int col_is_pairs = 0; /* dim2 runs cycle_pass in fft2d.h scratch -> never a pair tape */

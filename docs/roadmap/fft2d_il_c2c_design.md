@@ -1,6 +1,13 @@
 # fft2d IL c2c — native tier via 2D IL strided codelets
 
-Status: DESIGN (2026-08-25, not started). Predecessors: `il_native_design.md`
+Status: M0 + M1 COMPLETE (2026-08-25) — M0a wrap tax MEASURED 1.33-1.50x
+(the 24-39% inference confirmed) and an IL-2D gap established (O-inter
+0.58-0.98 xMKLcce, noisy-run signs); M0b simulator + gate ALL PASS; M1
+native tier SHIPPED env-gated (VFFT_IL2D_NATIVE=1, native-FIRST create —
+an engaged create never builds the split tplan) and its gate is 36/36
+(9 cells x 2 dirs x 2 placements, elementwise vs naive, natural x natural,
+prime and non-pow2 N2 included). NEXT: M1 race verdict (--2dil O-NATIVE
+arm), then M2 t2c. Predecessors: `il_native_design.md`
 (the cil family + construction laws), `interleaved_design.md` (pitfall #6:
 "1D K=1 as degenerate 2D" — run backward here), `../research/mkl_2d_campaign/
 IMPLICATIONS_for_our_2d.md` (G1 = the convert-around; phase-0 measurement law;
@@ -148,8 +155,13 @@ separable naive DFT — roundtrip can never gate a permuted transform.
   elementwise vs naive at N1×N2 ∈ {small, pow2, odd} — the il2p scar law:
   eight guessed stride maps once fell in one session; maps are proven by a
   running simulator before any SIMD uses them.
-- **M1 — small-N1 native tier.** n1c column pass
-  (`Ls=N2`, N1 <= 64) + TC row loop. Gate: forward elementwise per
+- **M1 — small-N1 native tier. [DONE 2026-08-25]** n1c column pass
+  (`Ls=N2`, N1 <= 64) + per-row K=1 IL NATURAL children; native-first
+  create (an engaged create skips `_build_2d` — gate runtime 15min -> 22s);
+  gate 36/36 elementwise vs naive, both directions and placements,
+  engagement self-proven (natural output; the scrambled wrapper cannot
+  pass). Serving is opt-in (`VFFT_IL2D_NATIVE=1`) until the route race +
+  `lay=il` banking (M3/M4). Gate: forward elementwise per
   direction; race vs convert-wrapper, split 2D, MKL CCE at the same cells.
   This alone serves every cell with N1 <= 64 natively.
 - **M2 — `t2c` + the multi-stage column chain.** Broadcast-record kind,
