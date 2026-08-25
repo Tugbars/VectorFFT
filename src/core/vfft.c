@@ -5521,9 +5521,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * path keeps serving their in-place cells as today. */
         if (K == 1 && !ob &&
             (cfg->order == VFFT_ORDER_SCRAMBLED ||
-             cfg->order == VFFT_ORDER_DEFAULT) &&
+             cfg->order == VFFT_ORDER_DEFAULT ||
+             (cfg->order == VFFT_ORDER_NATURAL && h->cplan &&
+              h->cplan->num_stages <= 1)) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
+            /* NATURAL admission is single-stage/prime ONLY (mode FREE:
+             * the cell is already natural, all three order spellings are
+             * one contract there — census classes 2+4). Multi-stage
+             * NATURAL has its own tape/ZCASC machinery above. */
             /* >=2048 MODE-CELL flow (owner-approved class-3 fix,
              * 2026-08-25): the in-place caller consults its OWN
              * ord=scr lay=il mode cell — the same cell the sub-2048 ILP
@@ -5680,14 +5686,21 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                : NULL);
                 if (nie && !cfg->recalibrate &&
                     nie->mode == VFFT_NAT_ILP)
+                {
                     _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
+                    if (!h->k1il2p && !h->k1il3p)
+                        h->k1ilpr = vfft_ilprime_create(N); /* prime cell */
+                }
                 else if ((!nie || cfg->recalibrate) &&
                          !W->vw2_off_stride)
                 {
                     vfft_il2p_plan_t *ilc2 = NULL;
                     vfft_il3p_plan_t *ilc3 = NULL;
+                    vfft_ilprime_plan_t *ilcp = NULL;
                     _k1_il_candidate(W, N, &ilc2, &ilc3);
-                    if (ilc2 || ilc3)
+                    if (!ilc2 && !ilc3)
+                        ilcp = vfft_ilprime_create(N); /* self-validates */
+                    if (ilc2 || ilc3 || ilcp)
                     {
                         double *rz = (double *)malloc(
                             2 * (size_t)N * sizeof(double));
@@ -5720,10 +5733,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                             vfft_il2p_execute_fwd(ilc2,
                                                                   rz,
                                                                   rz);
-                                        else
+                                        else if (ilc3)
                                             vfft_il3p_execute_fwd(ilc3,
                                                                   rz,
                                                                   rz);
+                                        else
+                                            vfft_ilprime_execute_fwd(
+                                                ilcp, rz, rz);
                                     }
                                     dt = (vfft_proto_now_ns() - t0)
                                          / reps;
@@ -5755,8 +5771,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             {
                                 h->k1il2p = ilc2;
                                 h->k1il3p = ilc3;
+                                h->k1ilpr = ilcp;
                                 ilc2 = NULL;
                                 ilc3 = NULL;
+                                ilcp = NULL;
                                 _bank_scrmode_1d(
                                     W, cfg, N, K, VFFT_NAT_ILP, tz[2],
                                     h->cplan->factors,
@@ -5778,6 +5796,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             vfft_il2p_destroy(ilc2);
                         if (ilc3)
                             vfft_il3p_destroy(ilc3);
+                        if (ilcp)
+                            vfft_ilprime_destroy(ilcp);
                     }
                 }
                 /* mode==CONV: the banked loss — convert serves, no
@@ -8036,12 +8056,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 _exec_zcascade(h, dir, sre, dre ? dre : sre);
                 return;
             }
-            if (h->k1il2p || h->k1il3p)
+            if (h->k1il2p || h->k1il3p || h->k1ilpr)
             { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
                * ALIASED — two-stage engines through internal scratch, zout
-               * written only by the last stage (alias-gated, A3 record).
-               * Attach implies verdict (@nat mode=ILP); both orders land
-               * here (identity permutation under SCRAMBLED — Phase A). */
+               * written only by the last stage (alias-gated, A3 record);
+               * ilprime documents zin==zout safe in both methods.
+               * Attach implies verdict (the ord=scr mode cell, mode=ILP);
+               * all order spellings land here (identity under SCRAMBLED —
+               * Phase A; primes/single-stage are natural = FREE). */
                 double *zo = dre ? dre : (double *)sre;
                 if (h->k1il2p)
                 {
@@ -8050,12 +8072,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     else
                         (void)vfft_il2p_execute_bwd(h->k1il2p, sre, zo);
                 }
-                else
+                else if (h->k1il3p)
                 {
                     if (dir == VFFT_FORWARD)
                         vfft_il3p_execute_fwd(h->k1il3p, sre, zo);
                     else
                         vfft_il3p_execute_bwd(h->k1il3p, sre, zo);
+                }
+                else
+                {
+                    if (dir == VFFT_FORWARD)
+                        vfft_ilprime_execute_fwd(h->k1ilpr, sre, zo);
+                    else
+                        vfft_ilprime_execute_bwd(h->k1ilpr, sre, zo);
                 }
                 return;
             }

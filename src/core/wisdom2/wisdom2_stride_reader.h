@@ -222,6 +222,13 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
         e->nf = 1;
         e->factors[0] = N;
         e->variants[0] = 0;
+    } else if (ord == VW2_ORD_SCR) {
+        /* BARE mode row (ord=scr only): a self-contained verdict — the
+         * prime/no-chain cells whose engine rebuilds from N alone. @nat
+         * rows stay strict below. */
+        e->nf = 1;
+        e->factors[0] = N;
+        e->variants[0] = 0;
     } else {
         return 0;                              /* a nat row needs one or the other */
     }
@@ -401,12 +408,20 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     r->key.lay = lay;
     VW2__SB_SET(1, "eng", "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
-    if (e->nf == 1 && e->factors[0] == e->N) {
-        /* the dummy-chain placeholder: SIGNPOST instead (owner #7) */
+    if (e->nf == 1 && e->factors[0] == e->N && ord == VW2_ORD_NAT) {
+        /* the dummy-chain placeholder: SIGNPOST instead (owner #7) — @nat
+         * rows only, where the referenced kind-4/oop cell exists; ref_ok
+         * keeps the verdict honest if its recipe vanishes. */
         char refbuf[96];
         snprintf(refbuf, sizeof refbuf,
                  "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
         VW2__SB_SET(1, "ref", refbuf);
+    } else if (e->nf == 0 || (e->nf == 1 && e->factors[0] == e->N)) {
+        /* ord=scr MODE cell with no real chain (prime / Rader nf=0): the
+         * verdict is SELF-CONTAINED (the engine rebuilds from N alone) —
+         * emit NEITHER chain nor ref. A dangling signpost here made the
+         * row invisible forever (ref_ok filtered it; the prime cell has
+         * no oop cascade row to point at) — caught 2026-08-25. */
     } else {
         if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     }
