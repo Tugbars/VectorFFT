@@ -338,6 +338,14 @@ struct vfft_plan_s
      * the default table — decision quality only, both arms correct).
      * VFFT_IL_PAD=0/1 forces the arm (gates + same-process benches). */
     int il_me;
+    /* ── native IL 2D c2c tier (M1, docs/roadmap/fft2d_il_c2c_design.md):
+     * single-stage n1c column pass (legs = plane rows, Ls = N2; order
+     * along i = IDENTITY, simulator-proven) + per-row K=1 IL child at
+     * order NATURAL. il2d_row != NULL selects the tier at execute; the
+     * convert wrapper stays the fallback. Opt-in: VFFT_IL2D_NATIVE=1 (env
+     * pre-wisdom lever; the route race + lay=il banking is M3/M4). */
+    struct vfft_plan_s *il2d_row;
+    vfft_il2p_fn il2d_col_f, il2d_col_b;
     int il_race; /* §6a59: A/B pending flag (decision-scoped) */
     stride_plan_t *cplan_il;
     vfft_proto_exec_fn il_pf, il_pb; /* §6a55: jit tier on cplan_il */
@@ -3566,6 +3574,43 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->K = K;
         h->nthreads = stride_get_num_threads();
         h->tplan = tp;
+        /* ── native IL 2D c2c tier (M1): opt-in via VFFT_IL2D_NATIVE=1.
+         * Serves natural x natural (legal for ORDER_DEFAULT, a bonus for
+         * ORDER_NATURAL). Any miss — env off, no n1c radix at N1, row
+         * child create failure — leaves il2d_row NULL and the convert
+         * wrapper serves exactly as before. */
+        if (cfg->transform == VFFT_C2C &&
+            cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+        {
+            const char *e = getenv("VFFT_IL2D_NATIVE");
+            if (e && atoi(e) == 1)
+            {
+                vfft_il2p_fn cf = vfft_il2p_n1c_fn(N1, 0);
+                vfft_il2p_fn cb = vfft_il2p_n1c_fn(N1, 1);
+                if (cf && cb)
+                {
+                    vfft_config_t rc;
+                    memset(&rc, 0, sizeof rc);
+                    rc.transform = VFFT_C2C;
+                    rc.placement = VFFT_INPLACE;
+                    rc.rigor = cfg->rigor;
+                    rc.dims = 1;
+                    rc.n[0] = N2;
+                    rc.howmany = 1;
+                    rc.order = VFFT_ORDER_NATURAL;
+                    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+                    rc.nthreads = 1;
+                    rc.wisdom = cfg->wisdom;
+                    rc.wisdom_write = cfg->wisdom_write;
+                    h->il2d_row = vfft_create(&rc);
+                    if (h->il2d_row)
+                    {
+                        h->il2d_col_f = cf;
+                        h->il2d_col_b = cb;
+                    }
+                }
+            }
+        }
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
@@ -6687,6 +6732,29 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1) * (h->N4 ? (size_t)h->N4 : 1);
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             {
+                if (h->il2d_row)
+                {
+                    /* ── native IL 2D tier (M1): column pass = one
+                     * radix-N1 n1c stage (legs = plane rows at Ls = N2),
+                     * then per-row K=1 IL children. The two passes COMMUTE
+                     * (no inter-pass twiddle), so BWD runs the same order
+                     * with the bwd pair. OOP: the column pass performs the
+                     * src->dst move (n1c is alias-tolerant both ways). */
+                    size_t i, rn = (size_t)h->N2;
+                    if (!dre)
+                        dre = sre; /* in-place convenience */
+                    if (dir == VFFT_FORWARD)
+                        h->il2d_col_f(sre, NULL, dre, NULL, NULL, NULL,
+                                      rn, 0, rn, 0, rn);
+                    else
+                        h->il2d_col_b(sre, NULL, dre, NULL, NULL, NULL,
+                                      rn, 0, rn, 0, rn);
+                    for (i = 0; i < (size_t)h->N; i++)
+                        vfft_execute(h->il2d_row, dir,
+                                     dre + 2 * i * rn, NULL,
+                                     dre + 2 * i * rn, NULL);
+                    return;
+                }
                 if (!h->il_wr)
                 {
                     h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64,
@@ -7011,6 +7079,8 @@ void vfft_destroy(vfft_plan h)
         STRIDE_ALIGNED_FREE(h->il_wi);
         STRIDE_ALIGNED_FREE(h->il_wr2);
         STRIDE_ALIGNED_FREE(h->il_wi2);
+        if (h->il2d_row)
+            vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
     }
     if (!h)
         return;

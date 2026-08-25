@@ -129,18 +129,24 @@ let cx_schedule (uarch : Uarch.t) (assigns : (Expr.elem_ref * Cx_ir.t) list) =
  * ═══════════════════════════════════════════════════════════════ *)
 type kind =
   | N1
+  | N1C (* 2D column-stage leaf: n1 math, count axis = adjacent columns of
+           the plane, in-place same-slot BOTH directions
+           (docs/roadmap/fft2d_il_c2c_design.md §3) *)
   | N1T
   | T2
 
 let kind_of_string = function
   | "n1" -> N1
+  | "n1c" -> N1C
   | "n1t" -> N1T
   | "t2" -> T2
-  | s -> failwith (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1t | t2)" s)
+  | s ->
+    failwith (Printf.sprintf "codelet_cil: unknown kind %s (n1 | n1c | n1t | t2)" s)
 ;;
 
 let kind_name = function
   | N1 -> "n1"
+  | N1C -> "n1c"
   | N1T -> "n1t"
   | T2 -> "t2"
 ;;
@@ -696,7 +702,7 @@ let emit
     (use_wing_t2 || Sys.getenv_opt "VFFT_CX_LAZYSTORE" = Some "1")
     && (not blocked)
     && (not ctx.st_turn)
-    && (kind = T2 || kind = N1)
+    && (kind = T2 || kind = N1 || kind = N1C)
   in
   let stored_inline : (int, unit) Hashtbl.t = Hashtbl.create 32 in
   if blocked
@@ -892,7 +898,7 @@ let emit
                      (render ~ctx ~tw_vw:vw ~msuf:"_n" nisa tbl e)))))
       scheduled;
     match if ctx.st_turn then N1T else kind with
-    | N1 | T2 ->
+    | N1 | N1C | T2 ->
       (* the wide edge below creates the CStore node; the tail prints the
          same address form at narrow width *)
       Array.iteri
@@ -959,12 +965,15 @@ let emit
        radix
        (match kind with
         | N1 -> "solo n1 (natural order in/out, twiddle-free)"
+        | N1C ->
+          "2D column-stage leaf n1c (n1 math; count = adjacent plane columns, \
+           in-place same-slot)"
         | N1T -> "bailey2 stage-1 leaf n1t (four-step TRANSPOSE fused into the stores)"
         | T2 -> "bailey2 stage-2 mid t2 (streamed VTW2 twiddles, BYTW2 apply)")
        per
        (vw * 64)
        (match kind with
-        | N1 -> "tw_re/tw_im unused."
+        | N1 | N1C -> "tw_re/tw_im unused."
         | N1T ->
           "Stores are corner-turned: output (leg p, column k) -> zout[2*(k*OLs + p)],\n\
           \ * so stage 2 reads whole columns contiguously and no separate transpose\n\
@@ -1021,7 +1030,8 @@ let emit
           its out-of-place fast path (il2p.h), so those two must not promise
           the compiler their planes are disjoint. Every other kind keeps
           __restrict__ -- it is load-bearing for them. *)
-       ~alias_tolerant:((kind = T2 && dir = Fwd) || (kind = N1 && dir = Bwd))
+       ~alias_tolerant:
+         ((kind = T2 && dir = Fwd) || (kind = N1 && dir = Bwd) || kind = N1C)
        ~symbol:
          (Printf.sprintf
             "radix%d_z_%s_%s_%s"
@@ -1114,7 +1124,7 @@ let emit
   if not blocked
   then (
     match if ctx.st_turn then N1T else kind with
-    | N1 | T2 ->
+    | N1 | N1C | T2 ->
       (* leg-major: leg l's `per` columns stay contiguous. COMPLETE-IR: the
         store is a CStore NODE (address in the DAG); built post-schedule so
         no existing tag shifts, printed via render_store (addr_str carries

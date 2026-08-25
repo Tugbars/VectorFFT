@@ -66,6 +66,7 @@ type trig8 =
 
 type cil_form =
   | Cil_n1
+  | Cil_n1c
   | Cil_n1t
   | Cil_t2
 
@@ -502,7 +503,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
              ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
-    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1t"; "--cil-t2" ] ->
+    | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
     | "--cil-tangent" :: tl ->
@@ -612,10 +613,16 @@ let of_argv ?(strict = true) (argv : string list) : t =
          | "dst3" -> Dst3
          | "dst4" -> Dst4
          | _ -> Dht)
-    | [ t ] when List.mem t [ "cil-n1"; "cil-n1t"; "cil-t2" ] ->
+    | [ t ] when List.mem t [ "cil-n1"; "cil-n1c"; "cil-n1t"; "cil-t2" ] ->
       Cil
         { form =
-            (if t = "cil-n1" then Cil_n1 else if t = "cil-n1t" then Cil_n1t else Cil_t2)
+            (if t = "cil-n1"
+             then Cil_n1
+             else if t = "cil-n1c"
+             then Cil_n1c
+             else if t = "cil-n1t"
+             then Cil_n1t
+             else Cil_t2)
         ; tangent = !cil_tangent
         ; blocked = !blocked
         ; oddct = !oddct
@@ -775,6 +782,7 @@ let to_argv (c : t) : string list =
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
+         | Cil_n1c -> "--cil-n1c"
          | Cil_n1t -> "--cil-n1t"
          | Cil_t2 -> "--cil-t2")
       ]

@@ -519,6 +519,8 @@ let run (argv : string array) : unit =
       incr i)
     else if arg = "--cil-n1"
     then cil_kind := "n1"
+    else if arg = "--cil-n1c"
+    then cil_kind := "n1c"
     else if arg = "--cil-n1t"
     then cil_kind := "n1t"
     else if arg = "--cil-t2"
