@@ -375,6 +375,15 @@ struct vfft_plan_s
     int il2d_R[8], il2d_L[8];
     vfft_il2p_fn il2d_f[8], il2d_b[8];
     double *il2d_tf[8], *il2d_tb[8];
+    /* native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md): the
+     * same il2d_* chain machinery over hp1 = N2/2+1 columns; il2d_row =
+     * the TC K=N1 batched zr2c row door (one plan, one dispatch per
+     * plane). il2d_rscr = the OOP c2r column-inverse plane (§2.6
+     * input-preserving contract), 2*N1*hp1 doubles; NULL for r2c.
+     * wl/tfuse/rowoop/staged stay 0 for real — the Hermitian fold does
+     * not commute with the column stages (§2.5), rows sit OUTSIDE any
+     * banded walk. */
+    double *il2d_rscr;
     int il_race; /* §6a59: A/B pending flag (decision-scoped) */
     stride_plan_t *cplan_il;
     vfft_proto_exec_fn il_pf, il_pb; /* §6a55: jit tier on cplan_il */
@@ -4277,6 +4286,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1; /* banked axes */
         int il2d_staged = 0, il2d_pitch = 0;
         double *il2d_bandscr = NULL;
+        double *il2d_rscr = NULL;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -4538,6 +4548,116 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 }
             }
         }
+        /* ── native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md)
+         * — M1: env-gated correctness spike (VFFT_IL2D_REAL=1; the §6a30
+         * veneer stays THE serving until M3, so every refusal here FALLS
+         * THROUGH, never returns NULL). Pure IL end-to-end: rows = ONE
+         * TC K=N1 batched zr2c execute on the bare hp1-pitch plane (§1 —
+         * one dispatch per plane, the banked K-batch door), columns = the
+         * n1c/t2c chain over hp1 = N2/2+1 columns. Two-phase law (§2.5):
+         * the Hermitian fold is R-linear and does not commute with the
+         * column stages — fwd rows complete before column stage 0, bwd
+         * rows follow the last column stage; no banded walk, no tfuse,
+         * and the c2c cells' banked wl/tf verdicts do not port. OOP only
+         * (2D real in-place is refused above; the in-place door needs the
+         * padded-pitch caller contract, §2.7). Chain = env/greedy for M1
+         * (racing + lay=il real banking is M3). */
+        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+            cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+            cfg->placement == VFFT_OUTOFPLACE && getenv("VFFT_IL2D_REAL") &&
+            atoi(getenv("VFFT_IL2D_REAL")) == 1)
+        {
+            int rok = 1;
+            if ((N2 % 2) != 0)
+            {
+                _vfft_warn("VFFT_IL2D_REAL: %dx%d needs even N2 (the zr2c "
+                           "row door) — the veneer serves this cell",
+                           N1, N2);
+                rok = 0;
+            }
+            if (rok && cfg->order == VFFT_ORDER_NATURAL)
+            {
+                /* multi-stage natural waits on the rho tapes (M4); M1
+                 * gates only the scrambled contract. */
+                _vfft_warn("VFFT_IL2D_REAL: order=NATURAL unsupported "
+                           "(M1) at %dx%d — the veneer serves this cell",
+                           N1, N2);
+                rok = 0;
+            }
+            if (rok)
+                rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
+                                        &il2d_nst);
+            if (rok && _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
+                                          il2d_tf, il2d_tb))
+                rok = 0;
+            if (rok)
+            {
+                vfft_config_t rc;
+                memset(&rc, 0, sizeof rc);
+                rc.transform = cfg->transform;
+                rc.placement = VFFT_OUTOFPLACE;
+                rc.rigor = cfg->rigor;
+                rc.dims = 1;
+                rc.n[0] = N2;
+                rc.howmany = (size_t)N1;
+                rc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
+                rc.layout = VFFT_LAYOUT_INTERLEAVED;
+                rc.nthreads = 1;
+                rc.wisdom = cfg->wisdom;
+                rc.wisdom_write = cfg->wisdom_write;
+                il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+                /* PURITY GATE: the TC inner must be the zr2c composite —
+                 * the 1D OOP real create quietly falls through to the
+                 * split-interior CCE path when the zr2c child fails, and
+                 * serving that here would rebuild the veneer under a
+                 * native flag (never_build_hybrid_il_split_codelets,
+                 * route level). */
+                if (il2d_row &&
+                    !(il2d_row->tcb && il2d_row->tcb->zr2c_child))
+                {
+                    _vfft_warn("VFFT_IL2D_REAL: %dx%d row door at N2=%d "
+                               "is not the zr2c route — the veneer "
+                               "serves this cell",
+                               N1, N2, N2);
+                    vfft_destroy(il2d_row);
+                    il2d_row = NULL;
+                }
+                if (il2d_row && cfg->transform == VFFT_C2R)
+                {
+                    /* §2.6 contract: input-preserving OOP c2r — the
+                     * reversed column chain's first executed stage moves
+                     * the caller's z into this plane; the rows read it
+                     * and write the caller's real dst. */
+                    il2d_rscr = (double *)malloc(
+                        2 * (size_t)N1 * ((size_t)N2 / 2 + 1)
+                        * sizeof(double));
+                    if (!il2d_rscr)
+                    {
+                        vfft_destroy(il2d_row);
+                        il2d_row = NULL;
+                    }
+                }
+                if (!il2d_row)
+                    rok = 0;
+            }
+            if (!rok && il2d_nst)
+            {
+                /* tables built for a cell that then fell through */
+                int s2;
+                for (s2 = 0; s2 < il2d_nst; s2++)
+                {
+                    free(il2d_tf[s2]);
+                    free(il2d_tb[s2]);
+                    il2d_tf[s2] = il2d_tb[s2] = NULL;
+                }
+                il2d_nst = 0;
+            }
+            if (il2d_row && getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d-real] native %s %dx%d nst=%d "
+                                "engaged\n",
+                        cfg->transform == VFFT_C2R ? "c2r" : "r2c",
+                        N1, N2, il2d_nst);
+        }
         stride_plan_t *tp = NULL;
         if (!il2d_row)
         {
@@ -4563,6 +4683,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 stride_plan_destroy(tp);
             if (il2d_row)
                 vfft_destroy(il2d_row);
+            free(il2d_rscr);
             return NULL;
         }
         h->transform = cfg->transform;
@@ -4585,6 +4706,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_staged = il2d_staged;
         h->il2d_pitch = il2d_pitch;
         h->il2d_bandscr = il2d_bandscr;
+        h->il2d_rscr = il2d_rscr;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
@@ -4595,15 +4717,19 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * execute (they involve the rows), the winner set on the plan
          * and banked WITH the chain as one verdict. Runs only when the
          * axes are unknown: no env override and no banked verdict.
-         * MUST sit AFTER the stage-array commits above — it executes h. */
-        if (h->il2d_row && !getenv("VFFT_IL2D_WL") &&
+         * MUST sit AFTER the stage-array commits above — it executes h.
+         * c2c ONLY: the real tier has no banded walk / row route to race
+         * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
+        if (h->transform == VFFT_C2C && h->il2d_row &&
+            !getenv("VFFT_IL2D_WL") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
             _il2d_axis_race(h, W, cfg, N1, N2);
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
-         * dispatch; adopt only if it landed (RFFT path, split, plan bound). */
-        if (cfg->transform == VFFT_R2C)
+         * dispatch; adopt only if it landed (RFFT path, split, plan bound).
+         * tp guard: the native IL real tier leaves tp NULL — veneer only. */
+        if (cfg->transform == VFFT_R2C && tp)
         {
             stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
             size_t saved2 = vfft_r2c_dispatch_get_decouple_min_k();
@@ -4669,8 +4795,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
         }
         /* §6a32: bwd twin — c2r natural-engine row inner for the C2R 2D
-         * plan, measured-adopted exactly like the fwd gate. */
-        if (cfg->transform == VFFT_C2R)
+         * plan, measured-adopted exactly like the fwd gate. tp guard as
+         * §6a31: the native IL real tier leaves tp NULL. */
+        if (cfg->transform == VFFT_C2R && tp)
         {
             stride_fft2d_r2c_data_t *d2 = (stride_fft2d_r2c_data_t *)tp->override_data;
             h->c2r_row = vfft_c2r_disp_create(N2, d2->B, VFFT_C2R_NATURAL,
@@ -8073,6 +8200,42 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 _fndr_axis_mt(d3, m, 1);
             _fndr_rows_mt(d3, NULL, dre, 1);
         }
+        else if (h->transform == VFFT_R2C && h->il2d_row)
+        {
+            /* ── native IL 2D REAL fwd (fft2d_real_il_design.md): the
+             * batched TC K=N1 zr2c row door does the OOP move (real rows
+             * at pitch N2 -> CCE half-spectrum plane at pitch hp1), then
+             * the column chain runs IN PLACE over the hp1 columns.
+             * Two-phase law (§2.5): the Hermitian fold is R-linear and
+             * does not commute with the column stages — ALL rows fold
+             * before column stage 0. nst>1 leaves the N1 axis
+             * digit-reversed (the scrambled contract); rows (CCE bins)
+             * stay natural. dir is ignored (r2c = forward math, the 1D
+             * contract). */
+            const size_t hp1 = (size_t)h->N2 / 2 + 1;
+            vfft_execute(h->il2d_row, VFFT_FORWARD, sre, NULL, dre, NULL);
+            _il2d_col_pass(dre, dre, h->N, hp1, 0, h->il2d_nst,
+                           h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_tf,
+                           /*reverse=*/0);
+        }
+        else if (h->transform == VFFT_C2R && h->il2d_row)
+        {
+            /* ── native IL 2D REAL bwd: the reversed column chain (the
+             * Hermitian-transpose pair — conjugated tables pre-butterfly,
+             * consuming the r2c pair's scrambled-N1 comb) moves the
+             * caller's z into the il2d_rscr plane on its FIRST executed
+             * stage (§2.6 input-preserving contract; FFTW destroys its
+             * input here — we don't), then the batched TC K=N1 c2r row
+             * door folds rows scratch -> the caller's real plane. dir is
+             * ignored (c2r = inverse math, unnormalized: caller divides
+             * by N1*N2). */
+            const size_t hp1 = (size_t)h->N2 / 2 + 1;
+            _il2d_col_pass(sre, h->il2d_rscr, h->N, hp1, 0, h->il2d_nst,
+                           h->il2d_R, h->il2d_L, h->il2d_b, h->il2d_tb,
+                           /*reverse=*/1);
+            vfft_execute(h->il2d_row, VFFT_BACKWARD, h->il2d_rscr, NULL,
+                         dre, NULL);
+        }
         else if (h->transform == VFFT_R2C)
         {
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
@@ -8347,6 +8510,7 @@ void vfft_destroy(vfft_plan h)
                 vfft_destroy(h->il2d_rowo);
             free(h->il2d_rowscr);
             free(h->il2d_bandscr);
+            free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             for (s2 = 0; s2 < h->il2d_nst; s2++)
             {
                 free(h->il2d_tf[s2]);

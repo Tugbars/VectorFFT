@@ -37,7 +37,7 @@ static const char *vw2_stride_var_name[4] = { "flat", "log3", "t1s", "buf" };
 /* @nat mode names, indexed by VFFT_NAT_* (0 = unset, never emitted).
  * leafip is RETIRED but old files may carry it — migrated verbatim,
  * never reused for a new meaning. */
-static const char *vw2_stride_mode_name[8] = {
+static const char *vw2_stride_mode_name[9] = {
     "unset", "free", "leafip", "scr", "pcyc", "pswap", "zcasc", "ilp", "conv"
 };
 
