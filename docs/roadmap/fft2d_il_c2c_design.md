@@ -83,13 +83,18 @@ stream (which has NO role in a pure 2D stage).
   1D verdict (t2c bodies differ from 1D t2: the hoisted broadcast records
   add R-1 register-resident constant pairs the streamed 1D form never
   held live).
-- 🔴 **Tangent interiors are a MUST-HAVE** — battle-tested ILP lever (1D
-  wings: −14…−24% in exactly the <=512-class radices the column stages
-  use). Scope v1: tangent CLASS-CONSTANT interiors (the emit-time
-  butterfly constants — the same scope the 1D wing-t2 tangents, keeping
-  BYTW2 for the runtime records); the full `[c,tan]` RECORD form (runtime
-  normalization folding) remains the parked follow-up lever
-  (roadmap_post_tangent_levers #1).
+- **Tangent: RACED AND CLOSED for this tier (2026-08-25).** Interior-
+  tangent twins under BOTH schedulers (SR and cpl) came in 0.96–1.08x of
+  the shipped form at t2c r8/r16 + n1c r16, two regimes — sunset per pool
+  policy. Structural reason: these are the family's LIGHTEST bodies
+  (spill-free, hoisted records, FMA-bound, near-zero port-5 pressure) —
+  the pressure profile the 1D wings relieved does not exist here. The
+  `[c,tan]` RECORD form is PARKED-PENDING-EVIDENCE, not queued: its 1D
+  rationale kills bare diagonal multiplies, an op pattern t2c does not
+  have (BYTW2 is already 1 shuffle + 1 mul + 1 fma, zero table-side
+  work; the normalization has nowhere free to fold across mixed legs).
+  It re-enters only if a profile shows the record apply as a cost
+  center.
 - Sequencing: **optimize the kernel bodies FIRST; only then wire the
   whole optimization search space into planning and the wisdom
   machinery** (the axes below stay env-raced falsifiers until the bodies
@@ -207,8 +212,8 @@ verdicts add 15–50% where alive (per cell).
 
 1. **Blocked t2c** — r32/r64 blocked constructions emitted + adopted
    statically (§2a); r16 monolithic-vs-blocked RACED.
-2. **Tangent t2c/n1c interiors** — must-have; race the twins, adopt per
-   the 1D wing scoping; `[c,tan]` records = the follow-up lever.
+2. ~~Tangent~~ — DONE, closed negative (§2a): interiors sunset;
+   `[c,tan]` records parked-pending-evidence.
 3. Small-N2 row lever (OOP-natural-mono child + copy-back, raceable) —
    flips the one losing cell.
 4. **Then** wire the whole search space (chain, wl, tfuse, body variants,
@@ -217,7 +222,7 @@ verdicts add 15–50% where alive (per cell).
    `VFFT_IL2D_NATIVE` demotes to force-override).
 5. Later: 1D ILP-attach gap (lifts every scrambled in-place IL caller);
    MT over bands (the banded walk IS the parallel decomposition;
-   engagement-proof discipline); `[c,tan]` records; natural-order-i via
+   engagement-proof discipline); natural-order-i via
    ρ tables (M4).
 
 ## 10. Final optimization research angle (owner, 2026-08-25)

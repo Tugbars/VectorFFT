@@ -596,6 +596,56 @@ the **column pass stays serial** — that's the 2D self-scaling ceiling. Source:
 > is ~6× *slower* than MKL-T1 (8,494 ns) — pure threading overhead — so dag wins 8.6×. Lifting
 > the ceiling (parallel column pass / full-plane tiling) is the 2D-MT follow-up.
 
+### 2D C2C — the NATIVE INTERLEAVED tier vs MKL CCE (2026-08-25)
+
+The native interleaved 2D tier (`docs/roadmap/fft2d_il_c2c_design.md`:
+n1c/t2c column chain + K=1 IL row pass, per-cell raced chain, blocked
+r32/r64 bodies; served here via `VFFT_IL2D_NATIVE=1`, single-thread).
+⚠ **Scope note:** this is the first section measured against **MKL's BEST
+2D arm** — rank-2 `DFTI_COMPLEX_COMPLEX`, in-place (its measured-fastest
+configuration). The §2 tables above compare against `DFTI_REAL_REAL`
+split, which the same runs measured **1.1–1.3× slower than MKL's CCE arm**
+(`M-split/M-inter` column) — quote them with that scoping.
+
+Arms (one process, `bench_1d_vs_mkl.c --2dil`, front door only, 9 rounds
+with reversed arm order, cachebust between arms, medians; engagement of
+the native tier VERIFIED per cell by output-order comparison): O-NATIVE =
+the native tier; O-inter = the previous serving (deinterleave → split 2D →
+reinterleave); O-split = our split 2D engine; M-inter = MKL CCE in-place.
+Correctness behind the numbers: forward ELEMENTWISE vs a naive separable
+DFT per direction, the pair contract (bwd consumes the plan's own comb →
+N·x), and race→bank→serve replay bitwise with roundtrip ~5e-16 — the
+`il2d_m1_gate` battery, ALL PASS.
+
+```
+ N1×N2      O-NATIVE (ns)  MKL-CCE (ns)  vs MKL-CCE  uplift vs old serving
+────────────────────────────────────────────────────────────────────────
+ 128×128          19,849        31,538      1.59×          1.98×
+ 256×256          85,603       130,823      1.53×          2.15×
+ 512×512         528,700     1,007,650      1.91×          2.21×
+ 1024×1024     2,747,300     5,725,600      2.08×          2.01×
+ 16×4096         102,410       153,247      1.50×*         2.44×
+ 64×256           18,457        35,268      1.91×*         2.21×
+────────────────────────────────────────────────────────────────────────
+ median                                    ~1.75×         ~2.18×  (6/6 win)
+```
+
+*aspect-cell arm spreads were wide in this run (up to 56% on the MKL arm,
+196% on one native arm) — the ratios there are sign-reliable, not
+two-decimal quotable; the square cells ran at 6–25% spreads.
+
+> **The native interleaved tier beats MKL's best interleaved arm on all 6
+> cells — median ~1.75×, up to 2.08× at 1024² — and delivers ~2.0–2.4×
+> over what interleaved callers previously received** (the convert
+> wrapper, whose measured tax was 1.33–1.50×). It also outruns our own
+> split 2D engine by ~1.4–1.5× at the squares (single memory stream, no
+> transpose anywhere, per-cell raced column chains, blocked bodies).
+> Output is scrambled-along-N1 for multi-stage chains (natural for
+> N1 ≤ 64), natural along N2; matched-permutation roundtrip holds for
+> every chain. Single-thread; banding (`+15–21%` where it wins) and the
+> small-N2 row route (`1.6–2×` at N2 ≤ 64) are measured but env-only
+> pending wisdom banking; MT over bands is the queued multiplier.
+
 ## 3. vs MKL — 1D R2C
 
 R2C is the clearest embodiment of the split-layout trade: the **packing tax** that costs
