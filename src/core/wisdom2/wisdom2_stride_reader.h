@@ -38,14 +38,14 @@ static const char *vw2_stride_var_name[4] = { "flat", "log3", "t1s", "buf" };
  * leafip is RETIRED but old files may carry it — migrated verbatim,
  * never reused for a new meaning. */
 static const char *vw2_stride_mode_name[8] = {
-    "unset", "free", "leafip", "scr", "pcyc", "pswap", "zcasc", "ilp"
+    "unset", "free", "leafip", "scr", "pcyc", "pswap", "zcasc", "ilp", "conv"
 };
 
 static inline int vw2__stride_mode_idx(const char *v)
 {
     int i;
     if (!v) return -1;
-    for (i = 1; i < 8; i++)
+    for (i = 1; i < 9; i++)
         if (!strcmp(vw2_stride_mode_name[i], v)) return i;
     return -1;
 }
@@ -192,12 +192,13 @@ static inline int vw2_stride_lookup(const vw2_store_t *s, int is_rfft,
  * falls back to the pre-1.2 lay-less row; VW2_LAY_ANY requests (the
  * migrate gate) match exactly the lay-less rows, byte-for-byte pre-1.2. */
 static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
-                                          uint8_t lay, int N, size_t K,
+                                          uint8_t lay, int ord, int N,
+                                          size_t K,
                                           vfft_proto_nat_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    vw2__stride_key(&k, VW2_T_C2C, N, K, VW2_ORD_NAT, pl);
+    vw2__stride_key(&k, VW2_T_C2C, N, K, ord, pl);
     k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
@@ -236,14 +237,29 @@ static inline int vw2_stride_lookup_nat(const vw2_store_t *s, uint8_t lay,
                                         int N, size_t K,
                                         vfft_proto_nat_entry_t *e)
 {
-    return vw2__stride_lookup_natx(s, VW2_PL_IP, lay, N, K, e);
+    return vw2__stride_lookup_natx(s, VW2_PL_IP, lay, VW2_ORD_NAT, N, K,
+                                   e);
 }
 
 static inline int vw2_stride_lookup_natoop(const vw2_store_t *s, uint8_t lay,
                                            int N, size_t K,
                                            vfft_proto_nat_entry_t *e)
 {
-    return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, N, K, e);
+    return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, VW2_ORD_NAT, N, K,
+                                   e);
+}
+
+/* the SCRAMBLED in-place mode cell — the ord=scr twin of @nat (2026-08-25,
+ * the ILP-attach fix): a DEFAULT-order in-place IL create races ILP vs
+ * ITS OWN convert incumbent and banks here (mode=ilp | mode=conv, the
+ * banked loss). Its OWN key (ord differs from @nat) because the race
+ * incumbents differ by order — verdicts CAN diverge. */
+static inline int vw2_stride_lookup_scrmode(const vw2_store_t *s,
+                                            uint8_t lay, int N, size_t K,
+                                            vfft_proto_nat_entry_t *e)
+{
+    return vw2__stride_lookup_natx(s, VW2_PL_IP, lay, VW2_ORD_SCR, N, K,
+                                   e);
 }
 
 /* ================================================================ WRITE */
@@ -373,15 +389,15 @@ static inline int vw2_stride_rec_from_entry(vw2_rec_t *r,
  * pre-1.2 lay-less row. Migration keeps writing lay-less vintage. */
 static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
                                           const vfft_proto_nat_entry_t *e,
-                                          int pl, uint8_t lay,
+                                          int pl, uint8_t lay, int ord,
                                           const char *src, const char *from,
                                           const char **why)
 {
     *why = NULL;
     memset(r, 0, sizeof *r);
     if (e->N < 2 || e->K < 1) { *why = "junk-cell"; return -1; }
-    if (e->mode <= 0 || e->mode >= 8) { *why = "unknown-nat-mode"; return -1; }
-    vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, VW2_ORD_NAT, pl);
+    if (e->mode <= 0 || e->mode >= 9) { *why = "unknown-nat-mode"; return -1; }
+    vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, ord, pl);
     r->key.lay = lay;
     VW2__SB_SET(1, "eng", "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
@@ -437,8 +453,35 @@ static inline int vw2_stride_bank_nat(vw2_store_t *st,
     vw2_rec_t rec;
     const char *why = NULL;
     if (vw2_stride_rec_from_nat(&rec, e, is_oop ? VW2_PL_OOP : VW2_PL_IP,
-                                lay, "race", NULL, &why)) {
+                                lay, VW2_ORD_NAT, "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] stride nat bank refused (%s)\n", why ? why : "?");
+        return -1;
+    }
+    return vw2__stride_bank(st, &rec);
+}
+
+/* migration alias: legacy @nat lines are ORD_NAT by definition */
+static inline int vw2_stride_rec_from_nat_mig(vw2_rec_t *r,
+                                              const vfft_proto_nat_entry_t *e,
+                                              int pl, uint8_t lay,
+                                              const char *src,
+                                              const char *from,
+                                              const char **why)
+{
+    return vw2_stride_rec_from_nat(r, e, pl, lay, VW2_ORD_NAT, src, from,
+                                   why);
+}
+
+static inline int vw2_stride_bank_scrmode(vw2_store_t *st,
+                                          const vfft_proto_nat_entry_t *e,
+                                          uint8_t lay)
+{
+    vw2_rec_t rec;
+    const char *why = NULL;
+    if (vw2_stride_rec_from_nat(&rec, e, VW2_PL_IP, lay, VW2_ORD_SCR,
+                                "race", NULL, &why)) {
+        fprintf(stderr, "[wisdom2] stride scrmode bank refused (%s)\n",
+                why ? why : "?");
         return -1;
     }
     return vw2__stride_bank(st, &rec);

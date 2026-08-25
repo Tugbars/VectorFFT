@@ -12,7 +12,13 @@ mkl_2d_campaign/IMPLICATIONS_for_our_2d.md` (G1; the measurement-first
 law; candidate C parked on premises that dissolved when the cil family
 shipped).
 
-Laws respected: pure IL end-to-end (`never_build_hybrid_il_split_codelets`);
+Laws respected: 🔴 NO CROSS-LAYOUT SERVING (owner, 2026-08-25): split is
+NOT a fallback of IL — the convert wrapper is DELETED; an IL caller gets
+a native plan (cold = race + bank + serve) or a LOUD refusal
+(inexpressible N1; ORDER_NATURAL at multi-stage until the ρ tables;
+child failure). The future max-throughput mode (race IL vs SPLIT as
+whole plans on request) is an explicit LAST feature, never a fallback.
+Pure IL end-to-end (`never_build_hybrid_il_split_codelets`);
 a NEW driver, the split `fft2d.h` untouched
 (`dont_retrofit_il_onto_split_machinery`); every tunable below is a raced
 wisdom axis in the `lay=il` 2D cells, never a shipped constant
@@ -216,10 +222,9 @@ verdicts add 15–50% where alive (per cell).
    `[c,tan]` records parked-pending-evidence.
 3. Small-N2 row lever (OOP-natural-mono child + copy-back, raceable) —
    flips the one losing cell.
-4. **Then** wire the whole search space (chain, wl, tfuse, body variants,
-   row route) into planning + the wisdom machinery (`lay=il` cells;
-   il2dkv-style variant codes; route default-on where the race says so;
-   `VFFT_IL2D_NATIVE` demotes to force-override).
+4. ~~route default-on~~ — SUPERSEDED by the no-cross-layout-serving law:
+   the wrapper is deleted, native IS the serving (done). Remaining wiring:
+   il2dkv-style body-variant codes when body variants return.
 5. Later: 1D ILP-attach gap (lifts every scrambled in-place IL caller);
    MT over bands (the banded walk IS the parallel decomposition;
    engagement-proof discipline); natural-order-i via
