@@ -92,6 +92,12 @@ typedef struct {
     long     l1d_ways;
     long     l2_used;       /* the L2 sizing value (same contract as l1d)    */
     long     l2_seen;       /* CPUID level-2 unified/data size, 0 if none    */
+    long     l3_seen;       /* CPUID level-3 unified size, 0 if none. SHARED
+                             * by every core — the only legitimate use is an
+                             * AGGREGATE budget (e.g. "do T concurrent
+                             * working sets fit?"), never per-core sizing.  */
+    int      smt;           /* logical processors per physical core (CPUID
+                             * leaf 0xB level-0), 1 = no SMT, 0 = unknown   */
     unsigned core_type;     /* VFFT_CPU_TYPE_*, 0 = not hybrid / unknown     */
     int      is_pcore;
     int      discovered;    /* 1 = l1d_used came from CPUID                  */
@@ -137,6 +143,28 @@ static inline void _vfft_cpu_cache_fill(vfft_cpu_cache_t *o)
                 const long sets  = (long)(r[2] + 1);
                 o->l2_seen = ways * parts * line * sets;
             }
+            if (level == 3 && ctype == 3) {
+                const long ways  = (long)(((r[1] >> 22) & 0x3FF) + 1);
+                const long parts = (long)(((r[1] >> 12) & 0x3FF) + 1);
+                const long line  = (long)((r[1] & 0xFFF) + 1);
+                const long sets  = (long)(r[2] + 1);
+                o->l3_seen = ways * parts * line * sets;
+            }
+        }
+    }
+    /* SMT width: leaf 0xB level type 1 (SMT), EBX[15:0] = logical procs at
+     * that level. Decides the pool's pin STRIDE — a hard-coded stride of 2
+     * silently skips half the cores (or leaves workers unpinned) on a
+     * non-SMT or SMT-disabled part, voiding every cache-privacy argument
+     * the threading design rests on. */
+    if (maxleaf >= 0xB) {
+        for (unsigned sub = 0; sub < 4u; sub++) {
+            _vfft_cpuid(0xB, sub, r);
+            if ((((r[2] >> 8) & 0xFF) == 1) && (r[1] & 0xFFFF)) {
+                o->smt = (int)(r[1] & 0xFFFF);
+                break;
+            }
+            if (((r[2] >> 8) & 0xFF) == 0) break; /* level type invalid */
         }
     }
 
@@ -186,6 +214,15 @@ static inline long vfft_cpu_l1d_bytes(void) { return vfft_cpu_cache()->l1d_used;
  * (first consumer: the 2D band-threshold fence N1_max = L2/(16*wl_min)),
  * and the value stamped beside any banked verdict that depended on it. */
 static inline long vfft_cpu_l2_bytes(void) { return vfft_cpu_cache()->l2_used; }
+
+/* SHARED-L3 budget. 0 = unknown (caller must then refuse to use it as a
+ * gate, the same discipline as the l2 refuse rule). Never a per-core
+ * sizing input — only "do T concurrent working sets fit?" questions. */
+static inline long vfft_cpu_l3_bytes(void) { return vfft_cpu_cache()->l3_seen; }
+
+/* Logical processors per physical core; 0 = unknown. The pool's pin
+ * stride is derived from this, never hard-coded. */
+static inline int vfft_cpu_smt(void) { return vfft_cpu_cache()->smt; }
 
 static inline int vfft_cpu_l2_matches(long stamped)
 {

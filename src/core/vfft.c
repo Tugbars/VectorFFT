@@ -142,6 +142,42 @@ static const char *_vfft_tname(int t)
     }
 }
 
+/* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
+ * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
+ * tier builds inner plans with `nthreads = 1` (the house spelling of
+ * "this child is serial"), create asserts that count on the GLOBAL pool,
+ * and stride_set_num_threads(n<=1) DESTROYS the pool (threads.h). So
+ * creating ONE 2D real IL plan tore the pool down for the WHOLE PROCESS
+ * — verbatim: pool 8 -> 1 after the create, 8 -> 1 again after every
+ * execute, leaving other tiers' plans holding clone workers that could
+ * never be dispatched (their dispatch clamps to _stride_pool_size+1).
+ *
+ * The fix is these two helpers, applied at every plan create/execute
+ * assert. Shrinking the pool stays available to the CALLER through the
+ * public vfft_set_num_threads(); a plan simply never does it, because a
+ * plan does not need an empty pool to run serially — every engine clamps
+ * its worker count by its OWN plan-time snapshot (below). */
+static void _vfft_pool_arm(int n)
+{
+    if (n > stride_get_num_threads())
+    {
+        stride_set_num_threads(n);
+        stride_pin_thread(0); /* pool pins workers 1..n-1; caller = 0 */
+    }
+}
+
+/* The count a plan RECORDS: an explicitly requested smaller budget wins
+ * over the live pool, so a child asked for 1 stays serial while the pool
+ * it was created under survives untouched. cfg == NULL / nthreads <= 0
+ * keeps the historical "inherit the pool" behaviour exactly. */
+static int _vfft_plan_threads(const vfft_config_t *cfg)
+{
+    const int pool = stride_get_num_threads();
+    if (cfg && cfg->nthreads > 0 && cfg->nthreads < pool)
+        return cfg->nthreads;
+    return pool;
+}
+
 /* ════════════════════════════════════════════════════════════════════════
  * OPAQUE TYPES
  * ════════════════════════════════════════════════════════════════════════ */
@@ -3194,7 +3230,7 @@ static struct vfft_plan_s *_zr2c_build_route(const vfft_config_t *cfg, int N,
     h->layout = (int)VFFT_LAYOUT_INTERLEAVED;
     h->N = N;
     h->K = 1;
-    h->nthreads = stride_get_num_threads();
+    h->nthreads = _vfft_plan_threads(cfg);
     h->zr2c_child = child;
     h->zr2c_route = route;
     h->zr2c_aff = aff;
@@ -4335,7 +4371,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->tcb = inner;
         /* Block strides in doubles from the committed (transform, placement). N/2+1 is the
          * CCE bin count for either parity; even-N is the inner K=1 create's gate, not this one. */
@@ -4495,7 +4531,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         return NULL;
     }
     if (cfg->nthreads > 0)
-        vfft_set_num_threads(cfg->nthreads); /* snapshot before build */
+        _vfft_pool_arm(cfg->nthreads); /* grow-only: a child asking for 1
+                                        * must not destroy the caller's
+                                        * pool (see _vfft_pool_arm) */
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
 
     /* ── 2D (dims==2): n[0]=N1, n[1]=N2. c2c in-place (tiled-row + native-col);
@@ -4547,7 +4585,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             h4->N3 = cfg->n[2];
             h4->N4 = cfg->n[3];
             h4->K = 1;
-            h4->nthreads = stride_get_num_threads();
+            h4->nthreads = _vfft_plan_threads(cfg);
             h4->tplan = tp;
             return h4;
         }
@@ -4576,7 +4614,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h4->N3 = cfg->n[2];
         h4->N4 = cfg->n[3];
         h4->K = 1;
-        h4->nthreads = stride_get_num_threads();
+        h4->nthreads = _vfft_plan_threads(cfg);
         h4->tplan = tp;
         return h4;
     }
@@ -4603,7 +4641,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             h3->N2 = cfg->n[1];
             h3->N3 = cfg->n[2];
             h3->K = 1;
-            h3->nthreads = stride_get_num_threads();
+            h3->nthreads = _vfft_plan_threads(cfg);
             h3->tplan = tp;
             return h3;
         }
@@ -4661,7 +4699,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->N2 = N2;
         h->N3 = N3;
         h->K = 1;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->tplan = tp;
         return h;
     }
@@ -5212,7 +5250,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->N = N1;
         h->N2 = N2;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->tplan = tp; /* NULL when the native IL 2D tier engaged */
         h->il2d_row = il2d_row;
         h->il2d_nst = il2d_nst;
@@ -5600,7 +5638,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout; /* SPLIT by the batch+IL gate above */
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->cplan = p;
         h->padded = 1;
         h->exec_me = exec_me;
@@ -5699,7 +5737,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->cplan = p;
 #ifdef VFFT_USE_JIT
         if (p->num_stages > 0)
@@ -6066,7 +6104,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         r0[i] = (double)rand() / RAND_MAX - 0.5;
                     const int reps = N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                     double ti[5], tz[5];
-                    vfft_set_num_threads(h->nthreads);
+                    _vfft_pool_arm(h->nthreads);
                     for (int r = 0; r < 5; r++)
                     {
                         for (int a = 0; a < 2; a++)
@@ -6152,7 +6190,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         r0[i] = (double)rand() / RAND_MAX - 0.5;
                     const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
                     double ti[5], tz[5];
-                    vfft_set_num_threads(h->nthreads);
+                    _vfft_pool_arm(h->nthreads);
                     for (int r = 0; r < 5; r++)
                     {
                         for (int a = 0; a < 2; a++)
@@ -6301,7 +6339,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         double ti[5], tz[5];
                         for (long i2 = 0; i2 < 2L * N; i2++)
                             r0[i2] = (double)rand() / RAND_MAX - 0.5;
-                        vfft_set_num_threads(h->nthreads);
+                        _vfft_pool_arm(h->nthreads);
                         for (int r = 0; r < 5; r++)
                             for (int a = 0; a < 2; a++)
                             {
@@ -6427,7 +6465,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             double ti[5], tz[5];
                             for (long i2 = 0; i2 < 2L * N; i2++)
                                 r0[i2] = (double)rand() / RAND_MAX - 0.5;
-                            vfft_set_num_threads(h->nthreads);
+                            _vfft_pool_arm(h->nthreads);
                             for (int r = 0; r < 5; r++)
                                 for (int a = 0; a < 2; a++)
                                 {
@@ -6855,7 +6893,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     hk->layout = (int)cfg->layout;
                     hk->N = N;
                     hk->K = 1;
-                    hk->nthreads = stride_get_num_threads();
+                    hk->nthreads = _vfft_plan_threads(cfg);
                     hk->k1_on = 1;
                     hk->k1_sp_route = spr;
                     hk->k1_il_route = ilr;
@@ -7151,7 +7189,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout;
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->oplan = op;
         h->zsplit = zs_pending; /* exactly one of zsplit/zturn is non-NULL */
         h->zturn = zt_pending;
@@ -7301,7 +7339,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout; /* INTERLEAVED == the packed CCE spectrum contract */
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->rplan = rp;
         h->padded = padded;
         h->exec_me = (int)bK; /* informational: the width the plan was built at */
@@ -7405,7 +7443,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout; /* INTERLEAVED == CCE spectrum INPUT contract */
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->c2rdisp = cd;
         h->padded = padded;
         h->exec_me = (int)bK;
@@ -7460,7 +7498,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->layout = (int)cfg->layout; /* SPLIT by the trig+IL gate up front */
         h->N = N;
         h->K = K;
-        h->nthreads = stride_get_num_threads();
+        h->nthreads = _vfft_plan_threads(cfg);
         h->tplan = tp;
         h->padded = padded;
         h->exec_me = (int)bK;
@@ -7477,7 +7515,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 static void _exec_c2c_inplace(struct vfft_plan_s *h, vfft_dir_t dir,
                               double *re, double *im)
 {
-    vfft_set_num_threads(h->nthreads);
+    _vfft_pool_arm(h->nthreads);
     /* Unified MT execute: tight runs p->K lanes; padded runs exec_me (Kp = full-SIMD pad,
      * or K = tail on the Kp-wide buffer). fn (JIT/baked) is resolved at create ONLY for
      * the aligned pad leg (me=Kp); tight staged plans also resolve it; the odd tail leg
@@ -8251,7 +8289,7 @@ static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
                        h->il_wr2, h->il_wi2);
     else
     {
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         _oop_mt(h->oplan, h->il_wr, h->il_wi, h->il_wr2, h->il_wi2,
                 dir == VFFT_FORWARD ? 1 : 0);
     }
@@ -8527,7 +8565,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                 : ((size_t)h->N / 2u) * h->K;
         if (T > 1 && work >= _tc_mt_floor())
         { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
-            vfft_set_num_threads(h->nthreads); /* re-assert snapshot pool */
+            _vfft_pool_arm(h->nthreads); /* re-assert snapshot pool */
             if (T > _stride_pool_size + 1)
                 T = _stride_pool_size + 1;
         }
@@ -8578,7 +8616,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (h->N2 > 0)
     { /* ── 2D (dispatch before the same-named 1D transforms) ── */
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         if (h->transform == VFFT_C2C)
         {
             /* tiled-row + native-col, in-place. OOP = copy src->dst then in-place. */
@@ -8846,7 +8884,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 }
                 return;
             }
-            vfft_set_num_threads(h->nthreads);
+            _vfft_pool_arm(h->nthreads);
             _exec_c2c_interleaved(h, dir, sre, dre);
             return;
         }
@@ -8936,7 +8974,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * whole-batch — see _oop_mt). vfft_oop_execute_fwd/bwd are kind-correct (natural-
          * order swap for LEAF/BAILEY2; in-place DIF-bwd-on-copy for MODEB) and are the
          * single-thread fallback inside _oop_mt. Caller pins core 0 (workers pin 1..T-1). */
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         _oop_mt(h->oplan, sre, sim, dre, dim, dir == VFFT_FORWARD ? 1 : 0);
         return;
     }
@@ -8961,7 +8999,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
             return;
         }
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_r2c_execute_fwd_z(h->rplan, sre, dre); /* dre = packed CCE spectrum */
         else
@@ -8981,7 +9019,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             _exec_zr2c(h, sre, dre); /* §D2 composite (incl. in place) */
             return;
         }
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             vfft_c2r_disp_execute_z(h->c2rdisp, sre, dre); /* sre = packed CCE spectrum in */
         else
@@ -8993,7 +9031,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         /* real in (sre) -> real out (dre). Involutory kinds (DCT-I/IV, DST-I, DHT)
          * ignore `dir`; for II<->III the forward enum picks the matching member and
          * BACKWARD runs its inverse (DCT-III for a DCT-II plan, etc.). */
-        vfft_set_num_threads(h->nthreads);
+        _vfft_pool_arm(h->nthreads);
         const stride_plan_t *p = h->tplan;
         int f = (dir == VFFT_FORWARD);
         switch (h->transform)
