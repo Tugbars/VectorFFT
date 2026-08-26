@@ -464,6 +464,119 @@ int main(int argc, char **argv)
             free(x); free(za); free(zb); free(xa); free(xb);
         }
     }
+    /* ── MT INC-1: the ROW DOOR threads. Two independent engagement
+     * gates (clones BUILT and work DISPATCHED — both have failed
+     * silently in this library before, producing a perfect all-1.00x
+     * table that never threaded), then MT == ST BITWISE. The ST arm is
+     * a plan created with nthreads=1: same route, same chain, no clone
+     * set — _tc_clone_equiv already guarantees clones are output-
+     * equivalent, so any difference here is a threading bug. */
+    /* Pin the PER-ROW door: INC-1 threads THAT route. (A cell whose race
+     * picks ROWSPLIT runs the band loop instead and would show workers>0
+     * with dispatches==0 — real, and exactly what this gate is for, but
+     * not what INC-1 changes; rowsplit band MT is refused by design.)
+     * N2 >= 32 also keeps the row child's zr2c inner on a native IL c2c
+     * — at N2=16 the inner is the convert-served c2c(8), which
+     * _tc_inner_mt_safe rightly refuses to clone. */
+#ifdef _WIN32
+    _putenv("VFFT_IL2D_ROWSPLIT=0");
+    _putenv("VFFT_IL2D_CHAIN=");
+#else
+    putenv("VFFT_IL2D_ROWSPLIT=0");
+    unsetenv("VFFT_IL2D_CHAIN");
+#endif
+    {
+        static const int MC[][2] = { { 512, 32 }, { 128, 64 } };
+        int mi;
+        vfft_set_num_threads(8);
+        for (mi = 0; mi < 2; mi++) {
+            const int N1 = MC[mi][0], N2 = MC[mi][1];
+            const int hp1 = N2 / 2 + 1;
+            const size_t RN = (size_t)N1 * N2, CN = (size_t)N1 * hp1;
+            double *x = malloc(RN * 8), *zs = malloc(2 * CN * 8);
+            double *zm = malloc(2 * CN * 8);
+            double *xs = malloc(RN * 8), *xm = malloc(RN * 8);
+            vfft_config_t cfg;
+            vfft_plan fs, fm, cs, cm;
+            int workers;
+            long d0, d1;
+            size_t i;
+            if (!x || !zs || !zm || !xs || !xm) { printf("OOM\n"); return 2; }
+            for (i = 0; i < RN; i++)
+                x[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&cfg, 0, sizeof cfg);
+            cfg.transform = VFFT_R2C;
+            cfg.placement = VFFT_OUTOFPLACE;
+            cfg.rigor = VFFT_MEASURE;
+            cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+            cfg.howmany = 1;
+            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.wisdom = W; cfg.wisdom_write = 0;
+            cfg.nthreads = 1;
+            fs = vfft_create(&cfg);
+            cfg.transform = VFFT_C2R;
+            cs = vfft_create(&cfg);
+            cfg.nthreads = 8;
+            cfg.transform = VFFT_R2C;
+            fm = vfft_create(&cfg);
+            cfg.transform = VFFT_C2R;
+            cm = vfft_create(&cfg);
+            if (!fs || !fm || !cs || !cm) {
+                printf("  MT %4dx%-3d create FAIL\n", N1, N2);
+                fails++;
+                continue;
+            }
+            /* engagement gate 1: clones BUILT on the threaded plan */
+            workers = vfft_plan_tc_workers(fm);
+            if (workers <= 0) {
+                printf("  MT %4dx%-3d NOT ENGAGED (row-door workers=%d) "
+                       "*** FAIL ***\n", N1, N2, workers);
+                fails++;
+            }
+            /* engagement gate 2: work actually DISPATCHED */
+            d0 = vfft_tc_mt_dispatches();
+            vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
+            d1 = vfft_tc_mt_dispatches();
+            vfft_execute(fs, VFFT_FORWARD, x, NULL, zs, NULL);
+            if (d1 == d0) {
+                printf("  MT %4dx%-3d r2c DISPATCHED NOTHING (under the "
+                       "engage floor) *** FAIL ***\n", N1, N2);
+                fails++;
+            }
+            if (memcmp(zs, zm, 2 * CN * 8) != 0) {
+                printf("  MT %4dx%-3d r2c MT != ST *** FAIL ***\n",
+                       N1, N2);
+                fails++;
+            } else {
+                printf("  MT %4dx%-3d r2c workers=%d dispatches=%ld  "
+                       "MT==ST BITWISE  PASS\n",
+                       N1, N2, workers, d1 - d0);
+            }
+            d0 = vfft_tc_mt_dispatches();
+            vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
+            d1 = vfft_tc_mt_dispatches();
+            vfft_execute(cs, VFFT_BACKWARD, zm, NULL, xs, NULL);
+            if (d1 == d0) {
+                printf("  MT %4dx%-3d c2r DISPATCHED NOTHING "
+                       "*** FAIL ***\n", N1, N2);
+                fails++;
+            }
+            if (memcmp(xs, xm, RN * 8) != 0) {
+                printf("  MT %4dx%-3d c2r MT != ST *** FAIL ***\n",
+                       N1, N2);
+                fails++;
+            } else {
+                printf("  MT %4dx%-3d c2r workers=%d dispatches=%ld  "
+                       "MT==ST BITWISE  PASS\n",
+                       N1, N2, vfft_plan_tc_workers(cm), d1 - d0);
+            }
+            vfft_destroy(fs); vfft_destroy(fm);
+            vfft_destroy(cs); vfft_destroy(cm);
+            free(x); free(zs); free(zm); free(xs); free(xm);
+        }
+        vfft_set_num_threads(1);
+    }
     if (W) vfft_wisdom_free(W);
     printf("\n%s (%d fail, %d skip)\n",
            fails ? "*** FAIL ***" : "=== ALL PASS ===", fails, skips);

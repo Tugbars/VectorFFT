@@ -142,6 +142,15 @@ static const char *_vfft_tname(int t)
     }
 }
 
+/* Engagement counter for the transform-contiguous MT dispatch. Clones
+ * BUILT (vfft_plan_tc_workers) and work DISPATCHED are two independent
+ * gates and both have failed silently here before — a wrapper can own
+ * clones and still run its serial loop because the cell sits under the
+ * engage floor, and an MT==ST check then compares the serial path with
+ * itself and passes perfectly. This counts actual dispatches. */
+static long _vfft_tc_mt_dispatch_count = 0;
+long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
+
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
@@ -5077,7 +5086,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 rc.howmany = (size_t)N1;
                 rc.batch_geom = VFFT_BATCH_TRANSFORM_CONTIGUOUS;
                 rc.layout = VFFT_LAYOUT_INTERLEAVED;
-                rc.nthreads = 1;
+                /* MT INC-1: the row pass IS a transform-contiguous batch of
+                 * N1 whole rows — exactly the shape the TC clone MT already
+                 * threads (clones gated by _tc_inner_mt_safe: the zr2c route
+                 * is pool-free, and _tc_clone_equiv proves each clone
+                 * bit-equivalent). Passing the caller's budget through is the
+                 * whole change; the column pass stays serial until INC-3. */
+                rc.nthreads = cfg->nthreads;
                 rc.wisdom = cfg->wisdom;
                 rc.wisdom_write = cfg->wisdom_write;
                 il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
@@ -8601,6 +8616,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 _stride_pool_dispatch(&_stride_workers[nd], _tc_mt_tramp,
                                       &a[nd]);
                 nd++;
+                _vfft_tc_mt_dispatch_count++; /* engagement, see vfft.h */
             }
             size_t s0 = S < h->K ? S : h->K;
             for (size_t t = 0; t < s0; t++)
@@ -9601,7 +9617,14 @@ void vfft_set_num_threads(int n)
 int vfft_plan_tc_workers(vfft_plan p)
 {
     const struct vfft_plan_s *h = (const struct vfft_plan_s *)p;
-    if (!h || !h->tcb)
+    if (!h)
+        return -1;
+    if (h->il2d_row)
+        /* native IL 2D real: the ROW DOOR is the TC handle, so report its
+         * worker count — that is the number a caller must assert on to
+         * know this tier's row pass actually threaded. */
+        return vfft_plan_tc_workers(h->il2d_row);
+    if (!h->tcb)
         return -1; /* not a transform-contiguous wrapper handle */
     return h->tcbw_n;
 }
