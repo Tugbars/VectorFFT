@@ -91,10 +91,52 @@ chain may differ).
 |---|---|---|---|
 | **0** | pool freeze + honest `nthreads` plumbing; pad the worker struct to 64 B; fix the pin map; add `vfft_cpu_l3_bytes()`; add `nthreads=` to the 2D key (matched only via `vw2_key_serves`) | ~40 lines, 4 files | no speed — fixes a live bug and makes MT legally expressible |
 | **1** | turn on the TC row door's existing clone MT (it is already the right handle shape, safety-gated by `_tc_inner_mt_safe` / `_tc_clone_equiv`) | ~5 lines on top of 0 | **measured 1.47–1.74×** |
-| **2** | *measurement only*: price the row→column exchange (row-range vs orthogonal strips vs single-core control) and re-measure the barrier constant | 2 probes, zero library risk | converts the column plan from modelled to priced; **gates 4 entirely** |
+| **2** ✅ | *measurement only*: price the row→column exchange and the barrier constant (`benches/il2d_exchange_probe.c`) | done | **see the measured verdict below** |
 | **3** | column-pass MT with the partition RACED (row-range ⟷ strip), one dispatch + one internal barrier, engagement counters | one file, existing functions already take (base, nrows, pitch, cnt) separately | unlocks the 55–62% serial remainder: **4–6×** on row-range cells, 2.5–4× on strip cells |
 | **4** | **conditional on 2**: match the row partition to the column partition so the stage-0 exchange is zero (the "sliding seam" — rows and stage 0 become one exchange-free phase, leaving exactly one barrier) | medium; breaks the TC dispatch's no-tail property | ≤20% at 300 GB/s, up to ~90% at 30 GB/s. **If the probe says ≥100 GB/s, do not build it** |
 | **5** | plane-per-core as a documented, gate-tested contract + refcounted read-only tables + a batched-2D wrapper gated by `8 × per-plane WS ≤ L3` | small | throughput only, on the 7% |
+
+## INC-2 measured (2026-08-26) — the barrier is cheap, the exchange is everything
+
+T=8, pinned, min-of-15, on the plane sizes of the banked cells. `W` = 8
+workers each write their own row range; `R1` = each reads **its own**
+rows back; `R2` = each reads a **column strip** (so every worker touches
+every other's dirty lines); `R0` = one core does it all.
+
+```
+ cell        plane KB    W      R1 own    R2 strips   R0 1 core
+ 256x256        516     9500      3100       9200       23100
+ 512x512       2056    33300     11800      32000       92300
+ 1024x1024     8208    38600     46400     109000      368600
+ 4096x64       2112    25900     12100      42800       94800
+ 8192x64       4224    36700     24000      63500      190000
+ 4096x16        576    10600      3500      13800       25800
+      barrier (dispatch 7 + wait_all) = 100 ns
+```
+
+- **Matched partition scales ~8× (R0/R1 = 7.8–7.9×); orthogonal scales
+  ~3× (R0/R2 = 2.9–3.4×).** Reading your own rows out of your private
+  L2 is near-linear; reading columns someone else wrote is not.
+- The exchange (R2−R1) is 6–63 µs = 4–10% of a cell's *single-thread*
+  transform, but **40–60% of its ideal T=8 time** — that is precisely
+  the missing ~2.5× of column scaling.
+- Effective strip bandwidth is 42.7–77.1 GB/s, **below the 100 GB/s
+  line**, so the exchange is worth engineering away.
+- **The barrier costs 100 ns** — ~25× cheaper than the estimate the
+  plan was priced against. Two barriers are ~5% even at 64×64, so the
+  one-barrier "sliding seam" is **not** justified by barrier cost; the
+  create-time pruner it implied prunes nothing and is dropped.
+
+**The structural consequence — INC-3's partition ordering is now
+decided by measurement, not taste:** the row-range column partition
+reads exactly the rows the row pass just wrote, so it is
+**exchange-free by construction** (the ~8× column), while strips pay
+the full exchange (~3×). Race row-range first wherever it exists (the
+six multi-stage cells); strips are the fallback axis for the four
+single-stage cells — which conveniently have hp1 = 33/129/513/2049,
+the benign end (≥64 B per row segment). The pathological strip case
+(hp1 = 9, 16 B per row, 42.7 GB/s) belongs to 4096×16, which *has* a
+row axis and should never take it.
 
 ## Refused (with the reason)
 

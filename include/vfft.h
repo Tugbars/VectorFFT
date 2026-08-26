@@ -467,6 +467,11 @@ extern "C"
    * happened; vfft_plan_tc_workers alone does not. */
   long vfft_tc_mt_dispatches(void);
 
+  /* Same question for the native IL 2D real COLUMN pass: how many
+   * threaded column passes actually ran. Zero after an execute means the
+   * column pass was serial (too few independent units, or no pool). */
+  long vfft_il2d_col_mt_passes(void);
+
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)

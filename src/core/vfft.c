@@ -151,6 +151,11 @@ static const char *_vfft_tname(int t)
 static long _vfft_tc_mt_dispatch_count = 0;
 long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
 
+/* The same engagement question for the native IL 2D real COLUMN pass
+ * (INC-3): counts threaded column passes actually run. */
+static long _vfft_il2d_col_mt_count = 0;
+long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
+
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
@@ -442,6 +447,12 @@ struct vfft_plan_s
      * serving verdicts are M3's route race). */
     struct vfft_plan_s *il2d_rows;
     int il2d_rw;
+    int il2d_colmt;  /* INC-3: the RACED column-MT verdict for this cell
+                      * (1 = thread the column pass, 0 = serial). Never a
+                      * structural default — at 512x32 (hp1=17, so the
+                      * strip arm over 17 columns) threading the columns
+                      * MEASURED SLOWER, and the race banks that "no"
+                      * exactly as it banks a "yes". */
     int il2d_norowz; /* 1 = skip the fused row-mode doors (the staged
                       * 3-pass route serves) — the A/B race knob, read
                       * from VFFT_IL2D_NO_ROWZ at CREATE (env cost never
@@ -2440,6 +2451,11 @@ static void _il2d_col_pass(const double *src, double *dst, int N1,
                            size_t rn, size_t wc, int nst, const int *Rst,
                            const int *Lst, vfft_il2p_fn const *fns,
                            double *const *tabs, int reverse);
+static void _il2d_col_pass_range(const double *src, double *dst, int N1,
+                                 size_t rn, size_t k_lo, size_t k_hi,
+                                 int nst, const int *Rst, const int *Lst,
+                                 vfft_il2p_fn const *fns,
+                                 double *const *tabs, int reverse);
 
 /* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
  * race serve through it — race == serving path). The banded walk is the
@@ -2492,6 +2508,104 @@ static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
     _il2d_col_pass(src, dst, h->N, hp1, 0, h->il2d_nst, h->il2d_R,
                    h->il2d_L, reverse ? h->il2d_b : h->il2d_f,
                    reverse ? h->il2d_tb : h->il2d_tf, reverse);
+}
+
+/* ══ MT column pass (INC-3, docs/design/il2d_real_mt.md) ═════════════
+ * TWO partition arms, both pure loop restrictions of the SERVING loops
+ * above (no arithmetic changes => MT == ST bitwise, gated):
+ *   BAND arm  (wl > 0): workers take disjoint sets of wl-row BANDS of
+ *     the suffix stages. Measured EXCHANGE-FREE (INC-2: reading rows
+ *     you wrote scales 7.8-7.9x) because these are the same rows the
+ *     row pass just produced. The wide prefix stages [0,cut) stay
+ *     serial here — stage 0 spans the whole plane, and splitting it by
+ *     DIGIT is INC-3b.
+ *   STRIP arm (wl == 0): workers take disjoint COLUMN ranges and run
+ *     the whole chain. This is the ONLY axis for single-stage chains
+ *     (L[0] == N1 => one block, no row axis), and it pays the full
+ *     cross-core exchange (INC-2: ~2.9-3.4x, not 8x). Boundaries are
+ *     NOT rounded to cache lines: hp1 is always odd, so a row's start
+ *     rotates and rounding neither removes the split lines nor pays
+ *     for itself (it would collapse hp1=33 from 8 workers to 5). */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    const double *src;
+    double *dst;
+    int reverse;
+    size_t lo, hi;   /* band index range, or column range */
+    int strip;
+} _il2d_cmt_arg;
+
+static void _il2d_cmt_tramp(void *v)
+{
+    _il2d_cmt_arg *a = (_il2d_cmt_arg *)v;
+    struct vfft_plan_s *h = a->h;
+    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    vfft_il2p_fn const *fns = a->reverse ? h->il2d_b : h->il2d_f;
+    double *const *tabs = a->reverse ? h->il2d_tb : h->il2d_tf;
+    if (a->strip)
+    {
+        _il2d_col_pass_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
+                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                             tabs, a->reverse);
+        return;
+    }
+    {
+        const size_t wl = (size_t)h->il2d_wl;
+        size_t b;
+        for (b = a->lo; b < a->hi; b++)
+        {
+            const size_t b0 = b * wl;
+            const double *bs = a->src + 2 * b0 * hp1;
+            _il2d_col_stages(bs, a->dst + 2 * b0 * hp1, (int)wl, hp1,
+                             h->il2d_cut, h->il2d_nst, h->il2d_R,
+                             h->il2d_L, fns, tabs, a->reverse);
+        }
+    }
+}
+
+/* Returns 1 when it ran threaded, 0 when the caller must run serial. */
+static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
+                              double *dst, int reverse, int T)
+{
+    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    const int strip = (h->il2d_wl <= 0);
+    size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_wl);
+    _il2d_cmt_arg a[64];
+    int nd = 0, t;
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64;
+    if (T < 2 || units < (size_t)T)
+        return 0; /* not enough independent units to be worth splitting */
+    /* fwd: the wide prefix must complete before ANY band (stage 0's legs
+     * span the whole plane). bwd: the reversed prefix runs after. */
+    if (!strip && !reverse && h->il2d_cut > 0)
+        _il2d_col_stages(src, dst, h->N, hp1, 0, h->il2d_cut, h->il2d_R,
+                         h->il2d_L, h->il2d_f, h->il2d_tf, 0);
+    for (t = 0; t < T; t++)
+    {
+        a[t].h = h;
+        /* after a fwd prefix the band source IS dst (in place) */
+        a[t].src = (!strip && !reverse && h->il2d_cut > 0) ? dst : src;
+        a[t].dst = dst;
+        a[t].reverse = reverse;
+        a[t].strip = strip;
+        a[t].lo = units * (size_t)t / (size_t)T;
+        a[t].hi = units * (size_t)(t + 1) / (size_t)T;
+    }
+    for (t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_cmt_tramp,
+                              &a[t]);
+    _il2d_cmt_tramp(&a[0]);
+    if (nd)
+        _stride_pool_wait_all();
+    _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
+    if (!strip && reverse && h->il2d_cut > 0)
+        _il2d_col_stages(dst, dst, h->N, hp1, 0, h->il2d_cut, h->il2d_R,
+                         h->il2d_L, h->il2d_b, h->il2d_tb, 1);
+    return 1;
 }
 
 /* derive the banded walk's cut for a wl candidate: the first suffix
@@ -2741,9 +2855,72 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst, bw,
-                       bwl, bestns + cbest);
+                       bwl, -1, -1, bestns + cbest);
         _vw2_persist(W, cfg);
     }
+}
+
+/* ── INC-3: the COLUMN-MT verdict race. Times the column pass SERIAL vs
+ * THREADED through the very functions the execute serves with (race ==
+ * serving path), min-of-3 on a scratch plane, and banks {cmt, cmtt} in
+ * the cell's lay=il real row. There is NO structural default and no
+ * invented floor: at 512x32 (hp1=17 => the strip arm over 17 columns)
+ * threading the column pass MEASURED SLOWER, and that "no" is banked
+ * exactly like a "yes". A verdict is only served back at the SAME
+ * thread count it was raced at (cmtt) — a T=4 verdict never serves a
+ * T=8 request. MUST run after the plan's stage arrays are committed. */
+static void _il2d_real_colmt_race(struct vfft_plan_s *h,
+                                  struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg, int N1,
+                                  int N2)
+{
+    const size_t hp1 = (size_t)N2 / 2 + 1;
+    const size_t CN = (size_t)N1 * hp1;
+    double *z = (double *)malloc((2 * CN + 8) * sizeof(double));
+    double st = 1e300, mt = 1e300;
+    int p;
+    size_t i;
+    if (!z)
+        return;
+    for (i = 0; i < 2 * CN + 8; i++)
+        z[i] = 1.0 + 1e-6 * (double)(i & 511);
+    for (p = 0; p < 3; p++)
+    {
+        struct timespec t0, t1;
+        double d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        _il2d_real_cols(h, z, z, 0);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < st)
+            st = d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        if (!_il2d_real_cols_mt(h, z, z, 0, h->nthreads))
+        {
+            /* the threaded arm cannot even engage on this cell */
+            free(z);
+            h->il2d_colmt = 0;
+            vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
+                           h->il2d_rw, h->il2d_wl, 0, h->nthreads, st);
+            _vw2_persist(W, cfg);
+            return;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < mt)
+            mt = d;
+    }
+    h->il2d_colmt = (mt < st);
+    free(z);
+    if (getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[il2d-real] colmt race %dx%d T=%d: st=%.0f "
+                        "mt=%.0f -> %s\n",
+                N1, N2, h->nthreads, st, mt,
+                h->il2d_colmt ? "THREADED" : "serial");
+    vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst, h->il2d_rw,
+                   h->il2d_wl, h->il2d_colmt, h->nthreads,
+                   h->il2d_colmt ? mt : st);
+    _vw2_persist(W, cfg);
 }
 
 /* run stages [s_lo, s_hi) over a ROW RANGE of nrows rows starting at the
@@ -2785,6 +2962,39 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows,
 {
     _il2d_col_stages2(src, dst, nrows, rn, rn, s_lo, s_hi, Rst, Lst, fns,
                       tabs, reverse);
+}
+
+/* Column sub-range variant: run the whole chain over columns [k_lo,k_hi)
+ * only. Columns are independent across EVERY stage (the strip axis the
+ * single-thread walk already uses), so this is a pure loop restriction —
+ * bit-identical to the full pass, and the unit of the MT strip arm. */
+static void _il2d_col_pass_range(const double *src, double *dst, int N1,
+                                 size_t rn, size_t k_lo, size_t k_hi,
+                                 int nst, const int *Rst, const int *Lst,
+                                 vfft_il2p_fn const *fns,
+                                 double *const *tabs, int reverse)
+{
+    int si;
+    const size_t w = k_hi - k_lo;
+    if (!w)
+        return;
+    for (si = 0; si < nst; si++)
+    {
+        const int s = reverse ? nst - 1 - si : si;
+        const int R = Rst[s], D = Lst[s] / R;
+        const double *s0 = (si == 0) ? src : dst;
+        int b;
+        for (b = 0; b < N1 / Lst[s]; b++)
+        {
+            const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
+            if (D == 1)
+                fns[s](s0 + off, NULL, dst + off, NULL, NULL, NULL,
+                       rn, 0, rn, 0, w);
+            else
+                fns[s](s0 + off, NULL, dst + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D, w);
+        }
+    }
 }
 
 static void _il2d_col_pass(const double *src, double *dst, int N1,
@@ -4748,6 +4958,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         struct vfft_plan_s *il2d_rows = NULL;
         int il2d_rw = 0;
         int il2d_brw = -1; /* banked row-route verdict; -1 = unraced */
+        int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
+                                              * and the T it was raced at */
         double *il2d_lx = NULL, *il2d_lre = NULL, *il2d_lim = NULL;
         double *il2d_tre = NULL, *il2d_tim = NULL;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
@@ -5062,7 +5274,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 else if (!cfg->recalibrate &&
                          vw2_2d_rl_lookup(&W->vw2, N1, N2, il2d_R,
                                           &il2d_nst, &il2d_brw,
-                                          &il2d_bwl) &&
+                                          &il2d_bwl, &il2d_bcmt,
+                                          &il2d_bcmtt) &&
                          _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f,
                                        il2d_b))
@@ -5318,6 +5531,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
             _il2d_real_rowrace(h, W, cfg, N1, N2);
+        /* INC-3: the column-MT verdict. Serve a banked one ONLY when it
+         * was raced at THIS thread count; otherwise race and bank. A
+         * single-threaded plan never threads columns and never races. */
+        if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
+            h->il2d_row && h->nthreads > 1)
+        {
+            const char *ce = getenv("VFFT_IL2D_NO_COLMT");
+            if (ce)
+                h->il2d_colmt = (atoi(ce) == 0);
+            else if (il2d_bcmt >= 0 && il2d_bcmtt == h->nthreads)
+                h->il2d_colmt = il2d_bcmt;
+            else
+                _il2d_real_colmt_race(h, W, cfg, N1, N2);
+        }
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound).
@@ -8818,7 +9045,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * stay natural. dir is ignored (r2c = forward math, the 1D
              * contract). */
             _il2d_real_rows_fwd(h, sre, dre);
-            _il2d_real_cols(h, dre, dre, /*reverse=*/0);
+            /* INC-3: threaded column pass (band or strip arm, both pure
+             * loop restrictions => bitwise identical); falls through to
+             * the serial pass when there is not enough independent work
+             * or the pool is absent. */
+            if (!h->il2d_colmt ||
+                !_il2d_real_cols_mt(h, dre, dre, 0, h->nthreads))
+                _il2d_real_cols(h, dre, dre, /*reverse=*/0);
         }
         else if (h->transform == VFFT_C2R && h->il2d_row)
         {
@@ -8831,7 +9064,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides
              * by N1*N2). */
-            _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);
+            if (!h->il2d_colmt ||
+                !_il2d_real_cols_mt(h, sre, h->il2d_rscr, 1,
+                                    h->nthreads))
+                _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);
             _il2d_real_rows_bwd(h, h->il2d_rscr, dre);
         }
         else if (h->transform == VFFT_R2C)

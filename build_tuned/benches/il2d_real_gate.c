@@ -499,7 +499,7 @@ int main(int argc, char **argv)
             vfft_config_t cfg;
             vfft_plan fs, fm, cs, cm;
             int workers;
-            long d0, d1;
+            long d0, d1, cmt0, cmt1;
             size_t i;
             if (!x || !zs || !zm || !xs || !xm) { printf("OOM\n"); return 2; }
             for (i = 0; i < RN; i++)
@@ -534,10 +534,13 @@ int main(int argc, char **argv)
                        "*** FAIL ***\n", N1, N2, workers);
                 fails++;
             }
-            /* engagement gate 2: work actually DISPATCHED */
+            /* engagement gate 2: work actually DISPATCHED (rows), plus
+             * the INC-3 column-pass engagement counter */
             d0 = vfft_tc_mt_dispatches();
+            cmt0 = vfft_il2d_col_mt_passes();
             vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
             d1 = vfft_tc_mt_dispatches();
+            cmt1 = vfft_il2d_col_mt_passes();
             vfft_execute(fs, VFFT_FORWARD, x, NULL, zs, NULL);
             if (d1 == d0) {
                 printf("  MT %4dx%-3d r2c DISPATCHED NOTHING (under the "
@@ -549,9 +552,9 @@ int main(int argc, char **argv)
                        N1, N2);
                 fails++;
             } else {
-                printf("  MT %4dx%-3d r2c workers=%d dispatches=%ld  "
-                       "MT==ST BITWISE  PASS\n",
-                       N1, N2, workers, d1 - d0);
+                printf("  MT %4dx%-3d r2c workers=%d dispatches=%ld "
+                       "colmt=%ld  MT==ST BITWISE  PASS\n",
+                       N1, N2, workers, d1 - d0, cmt1 - cmt0);
             }
             d0 = vfft_tc_mt_dispatches();
             vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
