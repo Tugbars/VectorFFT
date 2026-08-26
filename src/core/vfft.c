@@ -2536,6 +2536,71 @@ typedef struct
     int strip;
 } _il2d_cmt_arg;
 
+/* ── INC-3b: the DIGIT axis of a wide (prefix) stage ─────────────────
+ * A stage's kernel walks digits itself — per digit it advances
+ * `twp += (R-1)*8` and `zin/zout += 2*Gs` (verified in the emitted
+ * body) — so running only digits [d0, d0+nd) is THREE pointer edits:
+ * base + 2*d0*pitch, table + d0*(R-1)*8, OGs = nd. Digit d owns rows
+ * {b*L + d + j*D}, disjoint across d, WHOLE ROWS, `count` untouched,
+ * and no new codelet. That makes the full-plane prefix stage — the
+ * last serial chunk of the banded column pass — parallel over D. */
+typedef struct
+{
+    const double *src;
+    double *dst;
+    size_t pitch, cnt;
+    int nrows, R, L;
+    vfft_il2p_fn fn;
+    const double *tab;
+    size_t d0, nd;
+} _il2d_dmt_arg;
+
+static void _il2d_dmt_tramp(void *v)
+{
+    _il2d_dmt_arg *a = (_il2d_dmt_arg *)v;
+    const int D = a->L / a->R;
+    int b;
+    for (b = 0; b < a->nrows / a->L; b++)
+    {
+        const size_t off =
+            2 * ((size_t)b * a->L * a->pitch + a->d0 * a->pitch);
+        a->fn(a->src + off, NULL, a->dst + off, NULL,
+              a->tab + a->d0 * (size_t)(a->R - 1) * 8, NULL,
+              (size_t)D * a->pitch, a->pitch, (size_t)D * a->pitch,
+              a->nd, a->cnt);
+    }
+}
+
+/* Run ONE stage with its digits split across T workers. Returns 1 when
+ * it threaded, 0 when the caller must run the stage serially. */
+static int _il2d_stage_digits_mt(const double *src, double *dst,
+                                 int nrows, size_t pitch, size_t cnt,
+                                 int R, int L, vfft_il2p_fn fn,
+                                 const double *tab, int T)
+{
+    const size_t D = (size_t)(L / R);
+    _il2d_dmt_arg a[64];
+    int nd = 0, t;
+    if (!tab || D < (size_t)T || T < 2)
+        return 0; /* D == 1 stages carry no table and no digit axis */
+    for (t = 0; t < T; t++)
+    {
+        a[t].src = src; a[t].dst = dst;
+        a[t].pitch = pitch; a[t].cnt = cnt;
+        a[t].nrows = nrows; a[t].R = R; a[t].L = L;
+        a[t].fn = fn; a[t].tab = tab;
+        a[t].d0 = D * (size_t)t / (size_t)T;
+        a[t].nd = D * (size_t)(t + 1) / (size_t)T - a[t].d0;
+    }
+    for (t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_dmt_tramp,
+                              &a[t]);
+    _il2d_dmt_tramp(&a[0]);
+    if (nd)
+        _stride_pool_wait_all();
+    return 1;
+}
+
 static void _il2d_cmt_tramp(void *v)
 {
     _il2d_cmt_arg *a = (_il2d_cmt_arg *)v;
@@ -2582,8 +2647,24 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     /* fwd: the wide prefix must complete before ANY band (stage 0's legs
      * span the whole plane). bwd: the reversed prefix runs after. */
     if (!strip && !reverse && h->il2d_cut > 0)
-        _il2d_col_stages(src, dst, h->N, hp1, 0, h->il2d_cut, h->il2d_R,
-                         h->il2d_L, h->il2d_f, h->il2d_tf, 0);
+    {
+        /* INC-3b: each prefix stage's DIGITS split over the workers
+         * (whole rows, count untouched); stages stay ordered, one
+         * dispatch each — a dispatch+wait is ~100 ns (INC-2), so the
+         * per-stage join is free at these sizes. A stage that cannot
+         * split (D < T, or the table-free D==1 leaf) runs serial. */
+        int s;
+        for (s = 0; s < h->il2d_cut; s++)
+        {
+            const double *ssrc = (s == 0) ? src : dst;
+            if (!_il2d_stage_digits_mt(ssrc, dst, h->N, hp1, hp1,
+                                       h->il2d_R[s], h->il2d_L[s],
+                                       h->il2d_f[s], h->il2d_tf[s], T))
+                _il2d_col_stages(ssrc, dst, h->N, hp1, s, s + 1,
+                                 h->il2d_R, h->il2d_L, h->il2d_f,
+                                 h->il2d_tf, 0);
+        }
+    }
     for (t = 0; t < T; t++)
     {
         a[t].h = h;
@@ -2603,8 +2684,18 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         _stride_pool_wait_all();
     _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
     if (!strip && reverse && h->il2d_cut > 0)
-        _il2d_col_stages(dst, dst, h->N, hp1, 0, h->il2d_cut, h->il2d_R,
-                         h->il2d_L, h->il2d_b, h->il2d_tb, 1);
+    {
+        /* the Hermitian-transpose chain: prefix stages in REVERSE order,
+         * in place on dst, each digit-split the same way. */
+        int s;
+        for (s = h->il2d_cut - 1; s >= 0; s--)
+            if (!_il2d_stage_digits_mt(dst, dst, h->N, hp1, hp1,
+                                       h->il2d_R[s], h->il2d_L[s],
+                                       h->il2d_b[s], h->il2d_tb[s], T))
+                _il2d_col_stages(dst, dst, h->N, hp1, s, s + 1,
+                                 h->il2d_R, h->il2d_L, h->il2d_b,
+                                 h->il2d_tb, 0);
+    }
     return 1;
 }
 
