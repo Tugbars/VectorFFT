@@ -346,6 +346,100 @@ int main(int argc, char **argv)
         if (h) vfft_destroy(h);
         free(lx); free(lre); free(lim);
     }
+    /* I: the rowz-fusion A/B — fused doors vs the staged 3-pass route,
+     * SAME process, alternated, min-of-20, both directions. Route pinned
+     * via env ROWSPLIT=32 for both arms; the arms differ only by the
+     * create-time VFFT_IL2D_NO_ROWZ knob. */
+    {
+        static const int IC[][2] = { { 4096, 16 }, { 512, 16 } };
+        int ic;
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_REAL=1");
+        _putenv("VFFT_IL2D_ROWSPLIT=32");
+#else
+        putenv("VFFT_IL2D_REAL=1");
+        putenv("VFFT_IL2D_ROWSPLIT=32");
+#endif
+        for (ic = 0; ic < 2; ic++) {
+            const int N1i = IC[ic][0], N2i = IC[ic][1];
+            const size_t hp1i = (size_t)N2i / 2 + 1;
+            const size_t RNi = (size_t)N1i * N2i, CNi = (size_t)N1i * hp1i;
+            double *xi = malloc(RNi * 8), *zi2 = malloc(2 * CNi * 8);
+            double *xo = malloc(RNi * 8);
+            vfft_config_t c2;
+            vfft_plan fA, fB, bA, bB;
+            double tfA = 1e300, tfB = 1e300, tbA = 1e300, tbB = 1e300;
+            double t0;
+            if (!xi || !zi2 || !xo) return 2;
+            for (i = 0; i < RNi; i++)
+                xi[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&c2, 0, sizeof c2);
+            c2.transform = VFFT_R2C;
+            c2.placement = VFFT_OUTOFPLACE;
+            c2.rigor = VFFT_MEASURE;
+            c2.dims = 2; c2.n[0] = N1i; c2.n[1] = N2i;
+            c2.howmany = 1; c2.nthreads = 1; c2.wisdom = W;
+            c2.wisdom_write = 0;
+            c2.layout = VFFT_LAYOUT_INTERLEAVED;
+            fA = vfft_create(&c2);                 /* fused doors */
+            c2.transform = VFFT_C2R;
+            bA = vfft_create(&c2);
+#ifdef _WIN32
+            _putenv("VFFT_IL2D_NO_ROWZ=1");
+#else
+            putenv("VFFT_IL2D_NO_ROWZ=1");
+#endif
+            c2.transform = VFFT_R2C;
+            fB = vfft_create(&c2);                 /* staged route */
+            c2.transform = VFFT_C2R;
+            bB = vfft_create(&c2);
+#ifdef _WIN32
+            _putenv("VFFT_IL2D_NO_ROWZ=");
+#else
+            unsetenv("VFFT_IL2D_NO_ROWZ");
+#endif
+            if (!fA || !fB || !bA || !bB) {
+                printf("I %dx%d create FAIL\n", N1i, N2i);
+                return 2;
+            }
+            /* correctness cross-check: fused == staged BITWISE (pure
+             * data movement) */
+            vfft_execute(fA, VFFT_FORWARD, xi, NULL, zi2, NULL);
+            {
+                double *z2 = malloc(2 * CNi * 8);
+                vfft_execute(fB, VFFT_FORWARD, xi, NULL, z2, NULL);
+                if (memcmp(zi2, z2, 2 * CNi * 8) != 0)
+                    printf("I %dx%d fwd fused != staged *** FAIL ***\n",
+                           N1i, N2i);
+                free(z2);
+            }
+            vfft_execute(bA, VFFT_BACKWARD, zi2, NULL, xo, NULL);
+            for (r = 0; r < 20; r++) {
+                t0 = now_ns();
+                vfft_execute(fA, VFFT_FORWARD, xi, NULL, zi2, NULL);
+                t0 = now_ns() - t0;
+                if (t0 < tfA) tfA = t0;
+                t0 = now_ns();
+                vfft_execute(fB, VFFT_FORWARD, xi, NULL, zi2, NULL);
+                t0 = now_ns() - t0;
+                if (t0 < tfB) tfB = t0;
+                t0 = now_ns();
+                vfft_execute(bA, VFFT_BACKWARD, zi2, NULL, xo, NULL);
+                t0 = now_ns() - t0;
+                if (t0 < tbA) tbA = t0;
+                t0 = now_ns();
+                vfft_execute(bB, VFFT_BACKWARD, zi2, NULL, xo, NULL);
+                t0 = now_ns() - t0;
+                if (t0 < tbB) tbB = t0;
+            }
+            printf("I %4dx%-3d rowz A/B: fwd fused %8.0f vs staged %8.0f"
+                   " (x%.3f) | bwd fused %8.0f vs staged %8.0f (x%.3f)\n",
+                   N1i, N2i, tfA, tfB, tfB / tfA, tbA, tbB, tbB / tbA);
+            vfft_destroy(fA); vfft_destroy(fB);
+            vfft_destroy(bA); vfft_destroy(bB);
+            free(xi); free(zi2); free(xo);
+        }
+    }
     if (W) vfft_wisdom_free(W);
     free(x); free(z); free(xr); free(zr);
     return 0;

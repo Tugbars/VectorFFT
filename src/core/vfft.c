@@ -397,6 +397,11 @@ struct vfft_plan_s
      * serving verdicts are M3's route race). */
     struct vfft_plan_s *il2d_rows;
     int il2d_rw;
+    int il2d_norowz; /* 1 = skip the fused row-mode doors (the staged
+                      * 3-pass route serves) — the A/B race knob, read
+                      * from VFFT_IL2D_NO_ROWZ at CREATE (env cost never
+                      * reaches execute; two plans in one process can
+                      * differ = same-run arms). */
     double *il2d_lx, *il2d_lre, *il2d_lim; /* lane-major: N2*rw, hp1p*rw x2 */
     double *il2d_tre, *il2d_tim;           /* row-major halves: rw*hp1p x2 */
     int il_race; /* §6a59: A/B pending flag (decision-scoped) */
@@ -2317,6 +2322,18 @@ static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
         {
             const double *xb = sre + b * (size_t)W2 * rn2;
             double *zb = dre + b * (size_t)W2 * 2 * hp1;
+            /* fused ROW-MODE door (r2c.h rowsplit fusion): rows in, rows
+             * out, boundaries folded into the engine's own pack/store
+             * passes. -1 = this plan can't serve it (non-stride path) —
+             * the staged transpose route below stays the fallback. */
+            if (!h->il2d_norowz && h->il2d_rows->rplan &&
+                vfft_r2c_execute_fwd_rowz(h->il2d_rows->rplan, xb, rn2,
+                                          zb, 2 * hp1) == 0)
+                continue;
+            if (!h->il2d_norowz && getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d-real] rowz fwd door FELL BACK "
+                                "(staged route) at N2=%d W=%d\n",
+                        rn2, W2);
             _vfft_k1_transpose(xb, h->il2d_lx, W2, rn2);
             vfft_execute(h->il2d_rows, VFFT_FORWARD, h->il2d_lx, NULL,
                          h->il2d_lre, h->il2d_lim);
@@ -2341,6 +2358,17 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
         {
             const double *zs = zsrc + b * (size_t)W2 * 2 * hp1;
             double *xb = dre + b * (size_t)W2 * rn2;
+            /* fused ROW-MODE door (mirror): unzip-once into the plan's
+             * working planes, bwd without the split-door memcpys, hot
+             * per-block transpose out. -1 = staged fallback below. */
+            if (!h->il2d_norowz && h->il2d_rows->c2rdisp &&
+                vfft_c2r_disp_execute_rowz(h->il2d_rows->c2rdisp, zs,
+                                           2 * hp1, xb, rn2) == 0)
+                continue;
+            if (!h->il2d_norowz && getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d-real] rowz bwd door FELL BACK "
+                                "(staged route) at N2=%d W=%d\n",
+                        rn2, W2);
             /* fused de-zip+transpose reads FULL 4-wide e-blocks — legal
              * because zsrc is the tier's over-allocated rscr plane (+8
              * dbl pad at create; the c2r execute passes rscr here). */
@@ -5201,6 +5229,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_rscr = il2d_rscr;
         h->il2d_rows = il2d_rows;
         h->il2d_rw = il2d_rw;
+        /* A/B race knob (struct comment): create-time env read only. */
+        h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
         h->il2d_lx = il2d_lx;
         h->il2d_lre = il2d_lre;
         h->il2d_lim = il2d_lim;
