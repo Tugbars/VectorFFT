@@ -24,29 +24,21 @@
 
 /* Deploy-quality end-to-end 2D c2r timing: best-of-TRIALS over reps after warmup.
  * in_re/in_im = a valid half-spectrum (produced once by r2c from x); real_out is
- * scratch. Times the real public path (stride_execute_2d_c2r). */
+ * scratch. Times the real public path (stride_execute_2d_c2r) — SPLIT door only
+ * (the z-veneer door was DELETED 2026-08-26; interleaved callers are served by
+ * the native IL tier and never reach this planner). */
 static double vfft_fft2d_c2r_bench_min(const stride_plan_t *p, int N1, int N2,
                                        const double *in_re, const double *in_im,
-                                       double *real_out, double *z) {
+                                       double *real_out) {
     size_t total = (size_t)N1 * (size_t)N2;
-    /* z != NULL times the INTERLEAVED door (measured-serving law, owner
-     * 2026-08-25): pack the half-spectrum once, then time the z door. */
-    if (z) {
-        size_t CN = (size_t)N1 * (size_t)(N2 / 2 + 1), i;
-        for (i = 0; i < CN; i++) { z[2 * i] = in_re[i]; z[2 * i + 1] = in_im[i]; }
-    }
-    for (int w = 0; w < 10; w++) {
-        if (z) stride_execute_2d_c2r_z(p, z, real_out);
-        else   stride_execute_2d_c2r(p, in_re, in_im, real_out);
-    }
+    for (int w = 0; w < 10; w++)
+        stride_execute_2d_c2r(p, in_re, in_im, real_out);
     int reps = _vfft_fft2d_r2c_reps(total);
     double best = 1e18;
     for (int t = 0; t < VFFT_FFT2D_C2R_BENCH_TRIALS; t++) {
         double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++) {
-            if (z) stride_execute_2d_c2r_z(p, z, real_out);
-            else   stride_execute_2d_c2r(p, in_re, in_im, real_out);
-        }
+        for (int i = 0; i < reps; i++)
+            stride_execute_2d_c2r(p, in_re, in_im, real_out);
         double ns = (vfft_proto_now_ns() - t0) / (double)reps;
         if (ns < best) best = ns;
     }
@@ -58,7 +50,7 @@ static double vfft_fft2d_c2r_bench_min(const stride_plan_t *p, int N1, int N2,
  * returns the best measured c2r ns (1e18 on failure). N2 must be even. */
 static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
         const vfft_proto_registry_t *reg, vfft_fft2d_r2c_mode_t mode,
-        vfft_fft2d_r2c_wisdom_entry_t *out, int verbose, int il) {
+        vfft_fft2d_r2c_wisdom_entry_t *out, int verbose) {
     if (N1 < 2 || N2 < 2 || (N2 & 1)) return 1e18;
     int patient = (mode == VFFT_FFT2D_R2C_PATIENT);
 
@@ -87,11 +79,9 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
     double *ore = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
     double *oim = (double *)STRIDE_ALIGNED_ALLOC(64, CN * sizeof(double));
     double *xr  = (double *)STRIDE_ALIGNED_ALLOC(64, RN * sizeof(double));
-    double *z   = il ? (double *)STRIDE_ALIGNED_ALLOC(64, 2 * CN * sizeof(double)) : NULL;
-    if (!x || !ore || !oim || !xr || (il && !z)) {
+    if (!x || !ore || !oim || !xr) {
         STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
         STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
-        STRIDE_ALIGNED_FREE(z);
         return 1e18;
     }
     srand(23 + N1 + N2);
@@ -123,7 +113,7 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
             for (size_t i = 0; i < RN; i++) { double a = fabs(xr[i] / sc - x[i]); if (a > rt) rt = a; }
             if (rt < 1e-7) {
                 gated++;
-                double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr, z); /* score the BACKWARD */
+                double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr); /* score the BACKWARD */
                 if (ns < best) { best = ns; best_r = r; best_c = c; }
             } else if (verbose) {
                 printf("  [2d-c2r-planner]   row#%d x col#%d GATE FAIL rt=%.1e\n", r, c, rt);
@@ -134,7 +124,6 @@ static double vfft_fft2d_c2r_plan_measure(int N1, int N2,
 
     STRIDE_ALIGNED_FREE(x); STRIDE_ALIGNED_FREE(ore);
     STRIDE_ALIGNED_FREE(oim); STRIDE_ALIGNED_FREE(xr);
-    STRIDE_ALIGNED_FREE(z);
 
     if (best_r < 0) { if (verbose) printf("  [2d-c2r-planner] no candidate passed the gate\n"); return 1e18; }
 

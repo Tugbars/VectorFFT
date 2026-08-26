@@ -845,11 +845,10 @@ static void _fft2d_r2c_destroy(void *data) {
 
 static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *real_in,
-                                       double *out_re, double *out_im,
-                                       double *z);
+                                       double *out_re, double *out_im);
 static void _fft2d_r2c_execute_bwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *in_re,
-                                       const double *in_im, const double *z,
+                                       const double *in_im,
                                        double *real_out);
 
 static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
@@ -1097,35 +1096,35 @@ aw2d_done:;
             struct timespec t0_, t1_;
             double t_tile, t_str;
             d->stw_on_fwd = 0;
-            _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim, 0);
+            _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
             clock_gettime(CLOCK_MONOTONIC, &t0_);
             for (int rr = 0; rr < 8; rr++)
-                _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim, 0);
+                _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
             clock_gettime(CLOCK_MONOTONIC, &t1_);
             t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
             d->stw_on_fwd = 1;
-            _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim, 0);
+            _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
             clock_gettime(CLOCK_MONOTONIC, &t0_);
             for (int rr = 0; rr < 8; rr++)
-                _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim, 0);
+                _fft2d_r2c_execute_fwd_oop(d, xin, xre, xim);
             clock_gettime(CLOCK_MONOTONIC, &t1_);
             t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
             d->stw_on_fwd = (t_str * 20 < t_tile * 19) ? 1 : 0;
             d->stw_on_bwd = 0;
-            _fft2d_r2c_execute_bwd_oop(d, xre, xim, 0, xin);
+            _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
             clock_gettime(CLOCK_MONOTONIC, &t0_);
             for (int rr = 0; rr < 8; rr++)
-                _fft2d_r2c_execute_bwd_oop(d, xre, xim, 0, xin);
+                _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
             clock_gettime(CLOCK_MONOTONIC, &t1_);
             t_tile = (t1_.tv_sec - t0_.tv_sec) * 1e9
                    + (double)(t1_.tv_nsec - t0_.tv_nsec);
             d->stw_on_bwd = 1;
-            _fft2d_r2c_execute_bwd_oop(d, xre, xim, 0, xin);
+            _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
             clock_gettime(CLOCK_MONOTONIC, &t0_);
             for (int rr = 0; rr < 8; rr++)
-                _fft2d_r2c_execute_bwd_oop(d, xre, xim, 0, xin);
+                _fft2d_r2c_execute_bwd_oop(d, xre, xim, xin);
             clock_gettime(CLOCK_MONOTONIC, &t1_);
             t_str = (t1_.tv_sec - t0_.tv_sec) * 1e9
                   + (double)(t1_.tv_nsec - t0_.tv_nsec);
@@ -1171,29 +1170,13 @@ stw_gate_done: ;
  * in the pad scratch, phase 3 writes the user output. The in-place ABI's
  * single re pointer forced the old wrappers to memcpy a full plane in and a
  * half plane out (measured 14.7% at 256²); these variants are copy-free and
- * bit-identical (same phases, same pad bytes). The _z variants fuse the
- * interleave/deinterleave into the existing perm pack/unpack loops — the 2D
- * z contract goes native and the §6a29 convert-around retires. */
-#if defined(__AVX2__) || defined(__AVX512F__)
-static inline void _f2d_zil4(double *z, size_t idx, const double *re, const double *im) {
-    __m256d r = _mm256_loadu_pd(re), i2 = _mm256_loadu_pd(im);
-    __m256d lo = _mm256_unpacklo_pd(r, i2), hi = _mm256_unpackhi_pd(r, i2);
-    _mm256_storeu_pd(z + 2*idx,     _mm256_permute2f128_pd(lo, hi, 0x20));
-    _mm256_storeu_pd(z + 2*idx + 4, _mm256_permute2f128_pd(lo, hi, 0x31));
-}
-static inline void _f2d_zde4(const double *z, size_t idx, double *re, double *im) {
-    __m256d a2 = _mm256_loadu_pd(z + 2*idx), b2 = _mm256_loadu_pd(z + 2*idx + 4);
-    __m256d lo = _mm256_permute2f128_pd(a2, b2, 0x20);
-    __m256d hi = _mm256_permute2f128_pd(a2, b2, 0x31);
-    _mm256_storeu_pd(re, _mm256_unpacklo_pd(lo, hi));
-    _mm256_storeu_pd(im, _mm256_unpackhi_pd(lo, hi));
-}
-#endif
-
+ * bit-identical (same phases, same pad bytes). SPLIT callers only — the _z
+ * veneer entries (fused interleave into the perm loops) were DELETED
+ * 2026-08-26: interleaved 2D real callers are served by the native IL tier
+ * (fft2d_real_il_design.md M3, no cross-layout serving by owner law). */
 static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *real_in,
-                                       double *out_re, double *out_im,
-                                       double *z /* NULL = split out */)
+                                       double *out_re, double *out_im)
 {
     if (d->strided_fwd) {
         /* §6a39/44/48: one strided sweep (MT full blocks + staged tail). */
@@ -1232,17 +1215,8 @@ static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
             int pp = d->perm[i];
             const double *sr = d->re_pad + (size_t)pp * d->K_pad;
             const double *si = d->im_pad + (size_t)pp * d->K_pad;
-            if (!z) {
-                memcpy(out_re + (size_t)i * hp1, sr, hp1 * sizeof(double));
-                memcpy(out_im + (size_t)i * hp1, si, hp1 * sizeof(double));
-            } else {
-                size_t base = (size_t)i * hp1, v = 0;
-#if defined(__AVX2__) || defined(__AVX512F__)
-                for (; v + 4 <= hp1; v += 4)
-                    _f2d_zil4(z, base + v, sr + v, si + v);
-#endif
-                for (; v < hp1; v++) { z[2*(base+v)] = sr[v]; z[2*(base+v)+1] = si[v]; }
-            }
+            memcpy(out_re + (size_t)i * hp1, sr, hp1 * sizeof(double));
+            memcpy(out_im + (size_t)i * hp1, si, hp1 * sizeof(double));
         }
         _F2D_T1(_f2d_p3);
     }
@@ -1250,7 +1224,6 @@ static void _fft2d_r2c_execute_fwd_oop(stride_fft2d_r2c_data_t *d,
 
 static void _fft2d_r2c_execute_bwd_oop(stride_fft2d_r2c_data_t *d,
                                        const double *in_re, const double *in_im,
-                                       const double *z /* NULL = split in */,
                                        double *real_out)
 {
     const size_t hp1 = (size_t)(d->N2 / 2 + 1);
@@ -1259,17 +1232,8 @@ static void _fft2d_r2c_execute_bwd_oop(stride_fft2d_r2c_data_t *d,
         int pp = d->perm[i];
         double *dr = d->re_pad + (size_t)pp * K_pad;
         double *di = d->im_pad + (size_t)pp * K_pad;
-        if (!z) {
-            memcpy(dr, in_re + (size_t)i * hp1, hp1 * sizeof(double));
-            memcpy(di, in_im + (size_t)i * hp1, hp1 * sizeof(double));
-        } else {
-            size_t base = (size_t)i * hp1, v = 0;
-#if defined(__AVX2__) || defined(__AVX512F__)
-            for (; v + 4 <= hp1; v += 4)
-                _f2d_zde4(z, base + v, dr + v, di + v);
-#endif
-            for (; v < hp1; v++) { dr[v] = z[2*(base+v)]; di[v] = z[2*(base+v)+1]; }
-        }
+        memcpy(dr, in_re + (size_t)i * hp1, hp1 * sizeof(double));
+        memcpy(di, in_im + (size_t)i * hp1, hp1 * sizeof(double));
         for (size_t f = hp1; f < K_pad; f++) { dr[f] = 0.0; di[f] = 0.0; }
     }
     if (d->exec_col_bwd)
@@ -1295,21 +1259,7 @@ static inline void stride_execute_2d_r2c(const stride_plan_t *plan,
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
     /* §6a30: copy-free OOP-native path (the old memcpy-around cost 14.7%;
      * wrapin/wrapout counters now legitimately read zero on this route). */
-    _fft2d_r2c_execute_fwd_oop(d, real_in, out_re, out_im, NULL);
-}
-
-/* §6a30: 2D interleaved-z entries — the pack/unpack loops do the (de)interleave. */
-static inline void stride_execute_2d_r2c_z(const stride_plan_t *plan,
-                                            const double *real_in, double *z)
-{
-    stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
-    _fft2d_r2c_execute_fwd_oop(d, real_in, NULL, NULL, z);
-}
-static inline void stride_execute_2d_c2r_z(const stride_plan_t *plan,
-                                            const double *z, double *real_out)
-{
-    stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
-    _fft2d_r2c_execute_bwd_oop(d, NULL, NULL, z, real_out);
+    _fft2d_r2c_execute_fwd_oop(d, real_in, out_re, out_im);
 }
 
 static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
@@ -1318,7 +1268,7 @@ static inline void stride_execute_2d_c2r(const stride_plan_t *plan,
 {
     stride_fft2d_r2c_data_t *d = (stride_fft2d_r2c_data_t *)plan->override_data;
     /* §6a30: copy-free OOP-native path. */
-    _fft2d_r2c_execute_bwd_oop(d, in_re, in_im, NULL, real_out);
+    _fft2d_r2c_execute_bwd_oop(d, in_re, in_im, real_out);
 }
 
 

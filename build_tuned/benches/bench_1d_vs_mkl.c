@@ -1677,9 +1677,9 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     double *x = alloc_d(RN), *ore = alloc_d(CN), *oim = alloc_d(CN);
     double *z = alloc_d(2 * CN), *ctl = alloc_d(RN);
     double *zn = alloc_d(2 * CN); /* O-nat spectrum (its own comb) */
-    double tz[64], ts[64], tm[64], tc[64], tn[64];
-    int r, nz = 0, ns_ = 0, nm = 0, nc = 0, nn = 0;
-    vfft_plan pz = NULL, ps = NULL, pn = NULL;
+    double ts[64], tm[64], tc[64], tn[64];
+    int r, ns_ = 0, nm = 0, nc = 0, nn = 0;
+    vfft_plan ps = NULL, pn = NULL;
     vfft_config_t c;
     if (!x || !ore || !oim || !z || !ctl || !zn)
         return;
@@ -1692,69 +1692,28 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     c.rigor = VFFT_MEASURE; /* VFFT_ESTIMATE is a planned tier only */
     c.dims = 2; c.n[0] = N1; c.n[1] = N2;
     c.howmany = 1; c.nthreads = 1; c.wisdom = W;
-    c.layout = VFFT_LAYOUT_INTERLEAVED;
-    pz = vfft_create(&c);
     c.layout = VFFT_LAYOUT_SPLIT;
     ps = vfft_create(&c);
-    if (!pz || !ps)
+    if (!ps)
     {
-        printf("  %4dx%-4d  create FAIL (z=%p split=%p)\n", N1, N2,
-               (void *)pz, (void *)ps);
+        printf("  %4dx%-4d  split create FAIL\n", N1, N2);
         goto done;
     }
-    /* correctness: the two doors must agree elementwise (same interior) */
     vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
-    vfft_execute(pz, VFFT_FORWARD, x, NULL, z, NULL);
-    {
-        double d = 0;
-        for (i = 0; i < CN; i++)
-        {
-            double a = fabs(z[2 * i] - ore[i]), b = fabs(z[2 * i + 1] - oim[i]);
-            if (a > d) d = a;
-            if (b > d) d = b;
-        }
-        if (d > 1e-9)
-        {
-            printf("  %4dx%-4d  DOOR MISMATCH %.1e\n", N1, N2, d);
-            goto done;
-        }
-    }
-    /* ── O-nat: the TRUE IL native tier (M1 env gate,
-     * fft2d_real_il_design.md). Its own fwd/bwd pair; output is
-     * scrambled along N1 at nst>1 so it never joins the door-agreement
-     * check — math gated by il2d_real_gate, validated here by the pair
-     * roundtrip (c2r section); engagement = output differs from the
-     * veneer at N1>64 (single-stage N1<=64 is order-blind). */
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_REAL=1");
-#else
-    putenv("VFFT_IL2D_REAL=1");
-#endif
+    /* ── O-nat: the native IL tier — THE interleaved serving since M3
+     * (the z-veneer door is deleted; an interleaved create IS native or
+     * refuses). Math gated by il2d_real_gate; validated here by the
+     * pair roundtrip (c2r section). Output scrambled along N1 at nst>1
+     * (the tier's contract) — never compared elementwise to the split
+     * door. */
     c.transform = VFFT_R2C;
     c.layout = VFFT_LAYOUT_INTERLEAVED;
     pn = vfft_create(&c);
-#ifdef _WIN32
-    _putenv("VFFT_IL2D_REAL=");
-#else
-    unsetenv("VFFT_IL2D_REAL");
-#endif
     if (pn)
-    {
         vfft_execute(pn, VFFT_FORWARD, x, NULL, zn, NULL);
-        if (N1 > 64)
-        {
-            for (i = 0; i < 2 * CN; i++)
-                if (fabs(zn[i] - z[i]) > 1e-9)
-                    break;
-            if (i == 2 * CN)
-            {
-                printf("  %4dx%-4d  O-nat NOT ENGAGED — arm dropped\n",
-                       N1, N2);
-                vfft_destroy(pn);
-                pn = NULL;
-            }
-        }
-    }
+    else
+        printf("  %4dx%-4d  O-nat create REFUSED — arm dropped\n",
+               N1, N2);
 #ifdef VFFT_HAS_MKL
     {
         DFTI_DESCRIPTOR_HANDLE h = 0;
@@ -1771,13 +1730,12 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         }
         for (r = 0; r < rounds && r < 64; r++)
         {
-            int a, order[5] = { 0, 1, 2, 3, 4 };
+            int a, order[4] = { 0, 1, 2, 3 };
             if (r & 1)
             {
-                order[0] = 4; order[1] = 3; order[2] = 2; order[3] = 1;
-                order[4] = 0;
+                order[0] = 3; order[1] = 2; order[2] = 1; order[3] = 0;
             }
-            for (a = 0; a < 5; a++)
+            for (a = 0; a < 4; a++)
             {
                 const int arm = order[a];
                 size_t reps = 1 + (size_t)(2e5 / (double)(RN + 1));
@@ -1788,22 +1746,19 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                 for (k = 0; k < reps; k++)
                 {
                     if (arm == 0)
-                        vfft_execute(pz, VFFT_FORWARD, x, NULL, z, NULL);
-                    else if (arm == 1)
                         vfft_execute(ps, VFFT_FORWARD, x, NULL, ore, oim);
-                    else if (arm == 2 && mok)
+                    else if (arm == 1 && mok)
                         DftiComputeForward(h, (void *)x, cce);
-                    else if (arm == 3)
+                    else if (arm == 2)
                         memcpy(ctl, x, RN * 8);
-                    else if (arm == 4 && pn)
+                    else if (arm == 3 && pn)
                         vfft_execute(pn, VFFT_FORWARD, x, NULL, zn, NULL);
                 }
                 dt = (vfft_proto_now_ns() - t0) / (double)reps;
-                if (arm == 0) tz[nz++] = dt;
-                else if (arm == 1) ts[ns_++] = dt;
-                else if (arm == 2 && mok) tm[nm++] = dt;
-                else if (arm == 3) tc[nc++] = dt;
-                else if (arm == 4 && pn) tn[nn++] = dt;
+                if (arm == 0) ts[ns_++] = dt;
+                else if (arm == 1 && mok) tm[nm++] = dt;
+                else if (arm == 2) tc[nc++] = dt;
+                else if (arm == 3 && pn) tn[nn++] = dt;
             }
         }
         if (h)
@@ -1814,49 +1769,39 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
     (void)r;
 #endif
     {
-        double mz = il2d__med(tz, nz), ms = il2d__med(ts, ns_);
+        double ms = il2d__med(ts, ns_);
         double mm = nm ? il2d__med(tm, nm) : 0, mc = il2d__med(tc, nc);
         double mn = nn ? il2d__med(tn, nn) : 0;
-        printf("  %4dx%-4d  r2c  ctl %8.0f (%4.1f%%) | O-z %9.0f (%4.1f%%) | "
+        printf("  %4dx%-4d  r2c  ctl %8.0f (%4.1f%%) | "
                "O-split %9.0f (%4.1f%%) | O-nat %9.0f (%4.1f%%) | "
-               "M-cce %9.0f | natUp %.2f | nat xMKL %.2f | z xMKL %.2f\n",
-               N1, N2, mc, il2d__spread(tc, nc, mc), mz,
-               il2d__spread(tz, nz, mz), ms, il2d__spread(ts, ns_, ms),
+               "M-cce %9.0f | nat xMKL %.2f | split xMKL %.2f\n",
+               N1, N2, mc, il2d__spread(tc, nc, mc),
+               ms, il2d__spread(ts, ns_, ms),
                mn, nn ? il2d__spread(tn, nn, mn) : 0, mm,
-               mn > 0 ? mz / mn : 0, (mm > 0 && mn > 0) ? mm / mn : 0,
-               mm > 0 ? mm / mz : 0);
+               (mm > 0 && mn > 0) ? mm / mn : 0,
+               (mm > 0 && ms > 0) ? mm / ms : 0);
     }
     /* ── the c2r MIRROR: backward through both doors, input = the fwd
      * run's own spectra. C2R plans are backward-only (VFFT_BACKWARD). */
     {
         double *xr = alloc_d(RN);
-        vfft_plan pzc = NULL, psc = NULL, pnc = NULL;
-        double bz[64], bs[64], bm[64], bn[64];
-        int bnz = 0, bns = 0, bnm = 0, bnn = 0;
+        vfft_plan psc = NULL, pnc = NULL;
+        double bs[64], bm[64], bn[64];
+        int bns = 0, bnm = 0, bnn = 0;
         if (!xr)
             goto done;
         c.transform = VFFT_C2R;
-        c.layout = VFFT_LAYOUT_INTERLEAVED;
-        pzc = vfft_create(&c);
         c.layout = VFFT_LAYOUT_SPLIT;
         psc = vfft_create(&c);
-        if (!pzc || !psc)
+        if (!psc)
         {
-            printf("  %4dx%-4d  c2r create FAIL\n", N1, N2);
+            printf("  %4dx%-4d  c2r split create FAIL\n", N1, N2);
             free_d(xr);
-            if (pzc) vfft_destroy(pzc);
-            if (psc) vfft_destroy(psc);
             goto done;
         }
-        /* correctness: both doors must invert to N1*N2*x */
+        /* correctness: the split door must invert to N1*N2*x */
         {
             double d = 0, sc2 = (double)N1 * N2;
-            vfft_execute(pzc, VFFT_BACKWARD, z, NULL, xr, NULL);
-            for (i = 0; i < RN; i++)
-            {
-                double a2 = fabs(xr[i] / sc2 - x[i]);
-                if (a2 > d) d = a2;
-            }
             vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr, NULL);
             for (i = 0; i < RN; i++)
             {
@@ -1867,7 +1812,6 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
             {
                 printf("  %4dx%-4d  c2r RT FAIL %.1e\n", N1, N2, d);
                 free_d(xr);
-                vfft_destroy(pzc);
                 vfft_destroy(psc);
                 goto done;
             }
@@ -1876,19 +1820,9 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
          * roundtrip IS the validation (fwd proven by il2d_real_gate). */
         if (pn)
         {
-#ifdef _WIN32
-            _putenv("VFFT_IL2D_REAL=1");
-#else
-            putenv("VFFT_IL2D_REAL=1");
-#endif
             c.transform = VFFT_C2R;
             c.layout = VFFT_LAYOUT_INTERLEAVED;
             pnc = vfft_create(&c);
-#ifdef _WIN32
-            _putenv("VFFT_IL2D_REAL=");
-#else
-            unsetenv("VFFT_IL2D_REAL");
-#endif
             if (pnc)
             {
                 double d3 = 0, sc3 = (double)N1 * N2;
@@ -1942,13 +1876,12 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
             }
             for (r = 0; r < rounds && r < 64; r++)
             {
-                int a2, order2[4] = { 0, 1, 2, 3 };
+                int a2, order2[3] = { 0, 1, 2 };
                 if (r & 1)
                 {
-                    order2[0] = 3; order2[1] = 2; order2[2] = 1;
-                    order2[3] = 0;
+                    order2[0] = 2; order2[1] = 1; order2[2] = 0;
                 }
-                for (a2 = 0; a2 < 4; a2++)
+                for (a2 = 0; a2 < 3; a2++)
                 {
                     const int arm = order2[a2];
                     size_t reps = 1 + (size_t)(2e5 / (double)(RN + 1));
@@ -1959,22 +1892,18 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
                     for (k = 0; k < reps; k++)
                     {
                         if (arm == 0)
-                            vfft_execute(pzc, VFFT_BACKWARD, z, NULL, xr,
-                                         NULL);
-                        else if (arm == 1)
                             vfft_execute(psc, VFFT_BACKWARD, ore, oim, xr,
                                          NULL);
-                        else if (arm == 2 && mok2)
+                        else if (arm == 1 && mok2)
                             DftiComputeBackward(hb, cce2, xr);
-                        else if (arm == 3 && pnc)
+                        else if (arm == 2 && pnc)
                             vfft_execute(pnc, VFFT_BACKWARD, zn, NULL, xr,
                                          NULL);
                     }
                     dt = (vfft_proto_now_ns() - t0) / (double)reps;
-                    if (arm == 0) bz[bnz++] = dt;
-                    else if (arm == 1) bs[bns++] = dt;
-                    else if (arm == 2 && mok2) bm[bnm++] = dt;
-                    else if (arm == 3 && pnc) bn[bnn++] = dt;
+                    if (arm == 0) bs[bns++] = dt;
+                    else if (arm == 1 && mok2) bm[bnm++] = dt;
+                    else if (arm == 2 && pnc) bn[bnn++] = dt;
                 }
             }
             if (hb)
@@ -1983,26 +1912,23 @@ static void run_2dreal_cell(int N1, int N2, int rounds, vfft_wisdom *W)
         }
 #endif
         {
-            double mz2 = il2d__med(bz, bnz), ms2 = il2d__med(bs, bns);
+            double ms2 = il2d__med(bs, bns);
             double mm2 = bnm ? il2d__med(bm, bnm) : 0;
             double mn2 = bnn ? il2d__med(bn, bnn) : 0;
-            printf("  %4dx%-4d  c2r  O-z %9.0f (%4.1f%%) | O-split %9.0f "
+            printf("  %4dx%-4d  c2r  O-split %9.0f "
                    "(%4.1f%%) | O-nat %9.0f (%4.1f%%) | M-cce %9.0f | "
-                   "natUp %.2f | nat xMKL %.2f | z xMKL %.2f\n",
-                   N1, N2, mz2, il2d__spread(bz, bnz, mz2), ms2,
+                   "nat xMKL %.2f | split xMKL %.2f\n",
+                   N1, N2, ms2,
                    il2d__spread(bs, bns, ms2), mn2,
                    bnn ? il2d__spread(bn, bnn, mn2) : 0, mm2,
-                   mn2 > 0 ? mz2 / mn2 : 0,
                    (mm2 > 0 && mn2 > 0) ? mm2 / mn2 : 0,
-                   mm2 > 0 ? mm2 / mz2 : 0);
+                   (mm2 > 0 && ms2 > 0) ? mm2 / ms2 : 0);
         }
         free_d(xr);
-        vfft_destroy(pzc);
         vfft_destroy(psc);
         if (pnc) vfft_destroy(pnc);
     }
 done:
-    if (pz) vfft_destroy(pz);
     if (ps) vfft_destroy(ps);
     if (pn) vfft_destroy(pn);
     free_d(x); free_d(ore); free_d(oim); free_d(z); free_d(ctl);
@@ -4347,9 +4273,9 @@ int main(int argc, char **argv)
         printf("=== 2DREAL door race (r2c fwd + c2r bwd; wisdom=%s %s; "
                "rounds=%d) ===\n",
                wd, W ? "loaded" : "MISSING", rounds);
-        printf("# O-z = veneer IL door | O-split = split door | O-nat = "
-               "TRUE IL native tier (M1) | M-cce = MKL DFTI REAL 2D CCE | "
-               "MEASURE-rigor creates (per-door race)\n");
+        printf("# O-split = split door | O-nat = the native IL tier "
+               "(THE interleaved serving) | M-cce = MKL DFTI REAL 2D CCE | "
+               "MEASURE-rigor creates\n");
         {
             /* squares AND the aspect set — the regimes live at the aspects
              * (owner 2026-08-25: never judge a door on squares alone;
