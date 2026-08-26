@@ -1,182 +1,394 @@
-# MT for the native IL 2D real tier — the plan of record
+# Parallelizing a 2D Real FFT on Interleaved Data
+### Architecture, decomposition, and the measurement methodology that selects it
 
-**STATUS: DESIGN 2026-08-26, researched by two independent multi-agent
-passes (an evidence track over FFTW + our own tree + the literature, and
-a five-way design competition judged on correctness / performance /
-cost). This file is the merge. Nothing here is built yet.** Companions:
-`rowsplit_rowmode.md`, `../roadmap/fft2d_real_il_design.md`.
+**Scope.** This paper describes how the native interleaved 2D real
+transform (r2c / c2r) is structured, how it is parallelized on a
+shared-memory multicore, and — the part that generalizes — the
+methodology by which every parallel decision is *selected by
+measurement* rather than by rule. Implementation lives in
+`src/core/vfft.c` and `src/core/transforms/`; companions:
+[`rowsplit_rowmode.md`](rowsplit_rowmode.md),
+[`../roadmap/fft2d_real_il_design.md`](../roadmap/fft2d_real_il_design.md).
 
-## Verdict
+---
 
-**Intra-transform MT is PRIMARY. Plane-per-core is a documented
-concurrency CONTRACT, not the strategy.** Two reasons, both measured
-rather than argued:
+## 1. The problem
 
-- The four cells whose 8-plane working set stays inside L3 are **7.3%
-  of the tier's wall clock**; the cells that break L3 are 92.7%. A
-  primary strategy cannot rest on a premise that holds on 7% of the
-  work and inverts on the rest.
-- Per-core cache residency selects intra-MT unanimously: an
-  intra-transform slice is WS/8 (8 KB … 2.05 MB — fits or grazes a
-  2 MB private L2 on **10/10** cells), while a whole plane per core is
-  WS (fits on 6/10, 5/10 for c2r). The batching argument refutes
-  itself on its own cache premise.
-- And plane-per-core is the one thing callers can already do by hand.
-  Threading one plane is the thing only the library can provide.
+Compute
 
-## 🔴 Correction to an earlier claim in this project
+$$X[k_1,k_2]=\sum_{n_1=0}^{N_1-1}\sum_{n_2=0}^{N_2-1} x[n_1,n_2]\,
+  W_{N_1}^{n_1k_1} W_{N_2}^{n_2k_2},\qquad W_N=e^{-2\pi i/N}$$
 
-"MKL can't usefully thread 2D real, so our serial column pass is fine"
-is **INVALID**. The v1_0 tables showing ~0.78× MT regressions were
-committed *before* the 2026-07-06 pin fix and measured 8 threads on 4
-HT-contended cores. This project's own memory records MKL rank-2
-scaling **2.2–5.6× at T=8** once its team cannot park, and MKL
-documents that all multidimensional transforms on large data are
-threaded. Shipping batch-only MT would invert our 20/20 single-thread
-record at the thread count a customer actually runs.
+for **real** input, with the output held as a half-spectrum
+(`hp1 = N₂/2+1` complex bins per row) in **interleaved** layout —
+`z[2i]` real part, `z[2i+1]` imaginary part — because that is the layout
+the caller's data is already in. The transform must not convert to a
+split (structure-of-arrays) representation internally: cross-layout
+serving is prohibited, so a shape the tier cannot express refuses rather
+than silently converting.
 
-## 🔴 A live bug found by both passes (fix regardless of MT)
+The target is one CPU socket: 8 performance cores, each with a **private
+2 MB L2**, sharing a 36 MB L3 over a ring, AVX2 (no AVX-512).
+Single-threaded, this tier already meets or beats a heavily tuned vendor
+library on every benchmarked cell. Parallelization must therefore add
+scaling *without* surrendering the single-thread advantage — a real risk,
+because that advantage partly comes from cache residency that naive
+threading destroys.
 
-The 2D real tier forces every child plan to `nthreads=1`
-(`vfft.c` rc/sc/ro sites), and `vfft_set_num_threads(1)` **destroys the
-pool**. Measured: pool 8 → 1 after a create, and 8 → 1 again after
-**every execute**. Creating one 2D real IL plan tears down the thread
-pool for the whole process — every other tier included. Fix = a
-create-scoped pool freeze plus honest `nthreads` plumbing.
+---
 
-Two more verified hazards ride along: `_stride_worker_t` is 40 B, so
-workers share 64 B lines and one worker's dispatch write invalidates a
-neighbour's spin line; and the pin stride hard-defaults to 2, so on a
-non-SMT or SMT-disabled part workers pin to cores 2,4,6… or run
-**unpinned**, silently voiding every L2-privacy argument.
+## 2. Architecture of the transform
 
-## Why the columns must be threaded (not just the rows)
+### 2.1 Two passes, and a wall between them
 
-The sibling tier's 1.4–1.7× plateau reproduces on our own tier — but
-the cause is **Amdahl, not pinning**: an engagement-proven, bitwise,
-same-run A/B of the row door alone measured 1.47× / 1.74× / 1.58× /
-1.52×, which back-solves to a threaded fraction of only 0.37–0.49. The
-in-tree probe agrees (at 4096×16: rows ≈ 40 µs of a 104 µs plane). The
-serial column pass is the ceiling, so it is the target.
+The transform separates:
 
-## The partition is chain-determined — and must be RACED
+```mermaid
+flowchart LR
+    A["real plane<br/>N₁ × N₂"] --> R["ROW PASS<br/>N₁ independent real transforms<br/>→ N₁ × hp1 interleaved CCE rows"]
+    R --> W{{"ordering constraint"}}
+    W --> C["COLUMN PASS<br/>hp1 independent complex transforms<br/>of length N₁"]
+    C --> O["N₁ × hp1<br/>interleaved plane"]
+```
+
+For c2r the order reverses: columns, then rows.
+
+### 2.2 Why the passes cannot be interleaved
+
+Each real row of length `N₂` is transformed by *reinterpreting* it as a
+complex sequence of length `N₂/2`, running a complex FFT, and then
+applying a **Hermitian fold** that recovers the real spectrum:
+
+$$X[k]=\tfrac12\Big(Z[k]+\overline{Z[N/2-k]}\Big)
+       -\tfrac{i}{2}W_N^{k}\Big(Z[k]-\overline{Z[N/2-k]}\Big)$$
+
+The conjugation makes the fold **ℝ-linear but not ℂ-linear**. Column
+stages are ℂ-linear. Since $\overline{A\mathbf{z}} \neq A\overline{\mathbf{z}}$
+for complex $A$, the fold does not commute with a column stage: the row
+pass must complete *entirely* before the first column stage (and, for
+c2r, follow the last one).
+
+This has a direct parallel consequence — **exactly one synchronization
+point exists in the whole transform, and it is unavoidable.** Everything
+else is a scheduling choice.
+
+### 2.3 The column pass is a chain of stages
+
+The length-`N₁` column transform is decomposed into stages. Stage *s*
+has radix `R_s` over sub-length `L_s`, with `D_s = L_s / R_s`. Within a
+block of `L_s` rows, the stage partitions rows into `D_s` **digits**;
+digit *d* owns the row set
+
+$$\{\,b\cdot L_s + d + j\cdot D_s \;:\; j=0..R_s-1\,\}$$
+
+and applies an `R_s`-point butterfly to it, using a twiddle record that
+depends **only on** *d* (and the leg index). Adjacent columns are
+contiguous in memory, so a stage is vectorized along the *column* axis
+while its butterfly legs are strided by rows.
+
+---
+
+## 3. The parallel decomposition
+
+### 3.1 What is independent
+
+Three independence facts follow directly from §2, and they are the whole
+basis of the decomposition:
+
+| axis | unit | independent because |
+|---|---|---|
+| **row** | one real row | rows are separate transforms in the row pass |
+| **digit** | one digit *d* of a stage | digit row sets are disjoint; twiddle records are per-digit; no cross-digit data flow *within* a stage |
+| **column** | one column *k* | the column pass is a batch of independent 1D transforms — columns never interact at any stage |
+
+A fourth, derived axis matters in practice: a **band** of `wl`
+consecutive rows is closed under every stage whose span divides `wl`, so
+a *suffix* of the stage chain can run band-by-band.
+
+### 3.2 The three usable partitions
 
 ```mermaid
 flowchart TB
-    C{"banked chain<br/>for this cell"}
-    C -->|"nst ≥ 2<br/>(6 cells)"| RR["ROW-RANGE axis exists<br/>suffix bands N1/wl = 8…64<br/>stage-0 digit split =<br/>3 pointer edits, whole rows,<br/>count untouched, no new codelets"]
-    C -->|"nst = 1, L₀ = N1<br/>(64×64, 16×4096,<br/>32×1024, 64×256)"| ST["NO row axis (width 1)<br/>column STRIPS are the only axis<br/>— and these are the wide-hp1<br/>cells where strips are cheapest"]
-    RR --> R{"raced per cell,<br/>banked under nthreads="}
-    ST --> R
+    S["column pass"] --> P1["DIGIT split<br/>wide (prefix) stages<br/>whole rows, disjoint by d"]
+    S --> P2["BAND split<br/>suffix stages<br/>wl consecutive rows"]
+    S --> P3["STRIP split<br/>entire chain<br/>disjoint column ranges"]
 ```
 
-Neither axis may be fixed. Row-range is unavailable on four cells;
-strips carry a real false-sharing hazard on the others, because
-**hp1 = N2/2+1 is always odd**, so the 16·hp1-byte row pitch is never
-64 B aligned — only 1 row in 4 starts on a line boundary, and a strip
-boundary then splits a line between two workers on 3 rows in 4. Both
-arms go in the racer's pool, or we bank one by default and hit the
-*banked-rule-blocks-its-own-racer* trap.
+Crucially, each is a **restriction of the loop the serial code already
+runs**, not a re-implementation:
 
-**MT == ST bitwise is a theorem here**, not a hope: every column kernel
-is a pure map over (block, digit, column), and the odd-count tail runs
-the same DAG at VEX-128 with the same FMA order — so any partition of
-{block, digit, count} is bit-neutral. The gate must compare *this plan
-at T* against *this plan at 1* (never against the ST-banked plan, whose
-chain may differ).
+- **Digit split.** The kernel walks digits internally, advancing
+  `twp += (R−1)·8` and `zin/zout += 2·Gs` per digit. Running digits
+  `[d₀, d₀+n_d)` is therefore three pointer edits: base `+ 2·d₀·pitch`,
+  table `+ d₀·(R−1)·8`, and `OGs = n_d`. The element `count` is
+  untouched; no new kernel exists.
+- **Band split.** Workers take disjoint band index ranges of the
+  existing per-band loop.
+- **Strip split.** Workers take disjoint column ranges; the stage loop
+  is unchanged apart from its column bounds.
 
-## Increments
+### 3.3 Availability is determined by the factorization
 
-| # | what | cost | expected |
+A cell whose chain is a single stage has `L₀ = N₁`: one block, and no
+usable row axis — for those, **strips are the only partition**.
+Multi-stage cells have both. The decomposition is therefore not a
+preference expressed by the programmer; it is a property of the banked
+factorization for that cell:
+
+```mermaid
+flowchart LR
+    C{"chain length"} -->|"nst ≥ 2"| A["digit + band available<br/>(and strips)"]
+    C -->|"nst = 1"| B["strips only"]
+```
+
+### 3.4 Bit-exactness is a theorem, not a tolerance
+
+Every kernel is a pure map over the index space `(block, digit, column)`,
+and the partial-vector tail executes the same dataflow graph in the same
+FMA order as the full-width path. Consequently **any partition of that
+index space yields bitwise-identical output**. This is stronger than the
+usual "threaded result matches within tolerance", and it is what makes
+the correctness gate exact: threaded output must equal serial output
+*byte for byte*, per cell, per direction.
+
+It also means the race can time the *serving* code path directly — the
+measured arm and the deployed arm are the same function.
+
+---
+
+## 4. The memory-hierarchy argument
+
+### 4.1 Partition matching
+
+The row pass writes the intermediate plane; the column pass reads it.
+If the two passes partition the plane along **different** axes, every
+worker reads lines that another worker's private L2 owns dirty. If they
+partition along the **same** axis, each worker re-reads what it just
+wrote.
+
+```mermaid
+flowchart TB
+    subgraph M["matched — row range then row range"]
+        direction LR
+        A1["worker t writes rows [a,b)"] --> A2["worker t reads rows [a,b)"]
+    end
+    subgraph O["orthogonal — row range then column strip"]
+        direction LR
+        B1["worker t writes rows [a,b)"] --> B2["worker t reads a column strip<br/>= a slice of everyone's rows"]
+    end
+```
+
+### 4.2 Measurement
+
+Writing the plane across 8 cores by row range, then reading it back
+three ways (own rows / column strips / single core), ns:
+
+```
+ cell        plane KB    write   read own   read strips   1-core read
+ 256x256        516       9500      3100        9200         23100
+ 512x512       2056      33300     11800       32000         92300
+ 1024x1024     8208      38600     46400      109000        368600
+ 4096x64       2112      25900     12100       42800         94800
+ 8192x64       4224      36700     24000       63500        190000
+```
+
+Reading your own rows scales **7.8–7.9×**; reading columns another core
+wrote scales **2.9–3.4×**. Separately, a pool dispatch plus join costs
+**100 ns** — negligible against every cell here.
+
+### 4.3 Consequence
+
+Barrier cost is *not* a design driver at these sizes; **data placement
+is**. The band partition is exchange-free by construction because it
+reads precisely the rows the row pass produced. The strip partition —
+mandatory for single-stage cells — pays the full cross-core exchange, and
+its ~3× ceiling is a property of the machine, not of the code.
+
+Two corollaries worth recording:
+
+- Rounding strip boundaries to cache lines does **not** help: `hp1` is
+  always odd, so row starts rotate through line offsets; rounding neither
+  eliminates split lines nor pays for itself, and it reduces parallel
+  width (at `hp1 = 33`, from 8 usable workers to 5).
+- Transposing the plane so columns become rows costs ~4× the streaming
+  traffic of the exchange it removes — dead under any measured bandwidth.
+
+---
+
+## 5. Optimization methodology
+
+This is the part that generalizes beyond this transform.
+
+### 5.1 Measured serving
+
+No performance-relevant choice is made by rule. For each problem cell,
+candidate configurations are **raced at plan-creation time** and the
+winner is **banked** in a persistent store, keyed by the cell. Later
+plans for the same cell serve the banked verdict without re-racing.
+Precedence is: environment override › banked verdict › race › structural
+default. An environment override never writes to the store.
+
+Applied here, the raced axes are the column factorization, the row route,
+the band width, and — added for threading — *whether to thread the column
+pass at all*.
+
+**A banked "no" is a first-class result.** Two cells measured *slower*
+with threaded columns and banked exactly that; a structural rule
+("thread when there are ≥ T units") would have shipped those regressions
+silently.
+
+### 5.2 A verdict is only valid where it was measured
+
+A threading verdict measured at 4 threads says nothing about 8. The
+banked record therefore stores both the decision and the thread count it
+was raced at; a mismatch re-races rather than serving. This is the
+general principle that a verdict's key must include every variable it
+depends on — expressed here as payload plus a validity check, to avoid
+disturbing a key format shared by many readers.
+
+### 5.3 Engagement must be proved, not assumed
+
+Threading can silently fail to happen in two independent ways: worker
+resources are never built (a safety gate declines), or work is never
+dispatched (the problem falls under an engage threshold). Either
+produces plausible timings, and a "threaded equals serial" correctness
+check passes *perfectly* when nothing threaded — it is comparing the
+serial path with itself.
+
+The tier therefore exposes counters for both — workers constructed, and
+dispatches actually taken — and the gate asserts that both moved. This
+caught two real cases immediately: a plan holding 7 worker clones that
+dispatched zero work (its cell had selected a different route), and a
+cell whose workers were *correctly* refused because its inner transform
+was not reentrant.
+
+### 5.4 Parallelism by restriction
+
+Every parallel arm here is a restriction of the serving loop over an
+index range. This buys three properties at once: bitwise equality is
+structural rather than tested-and-hoped; the race times the code that
+will actually run; and no new kernels enter the corpus, so the emitter,
+the codelet registry and their gates are untouched.
+
+Where a restriction is not expressible — as with the row-band route
+whose per-band state is shared plan-level scratch — the honest answer is
+to refuse that arm rather than retrofit locking.
+
+### 5.5 Hardware-derived gates, never tuned constants
+
+Thresholds derived from one machine do not survive another. Where a gate
+is genuinely needed, it is computed from **detected** hardware: cache
+sizes and SMT width come from CPUID at plan time. Two concrete uses:
+band widths are admitted against the measured private-L2 size, and the
+thread pool's core-pinning stride is the *detected* SMT width — a
+hard-coded stride silently leaves workers unpinned on a machine without
+SMT, which voids every cache-locality argument the design rests on.
+
+---
+
+## 6. Implementation
+
+### 6.1 Threading substrate and its invariants
+
+A persistent pool of pinned workers; the calling thread participates as
+worker 0 and must occupy the core the pool reserves for it — a collision
+between the caller and a worker on one core anti-scales by one to two
+orders of magnitude. Dispatch is a lock-free post plus a spin-wait join,
+and each worker's control block occupies its own cache line so that
+posting work to one worker does not invalidate a neighbour's spin
+location.
+
+**A plan may grow the pool but must never shrink it.** This invariant
+exists because a plan builds inner plans, and an inner plan is
+conventionally requested with one thread; if that request were applied to
+the process-wide pool it would tear the pool down for every other
+component. A plan instead records its *own* thread budget, and every
+engine clamps its worker count by that plan-time snapshot — so a
+single-threaded inner runs serially without disturbing anything global.
+
+### 6.2 Per-worker state
+
+Two ownership patterns are used, and choosing between them is a real
+design decision:
+
+| pattern | when | cost |
+|---|---|---|
+| **clone plans** — one plan instance per worker, verified output-equivalent at construction | the unit of work is a whole transform (the row pass) | memory + creation time per clone |
+| **indexed scratch slots** — one shared plan, per-worker scratch indexed by worker id | the unit of work is a range within one transform | slot count fixed at plan time; workers must be capped by it |
+
+Mixing them incorrectly is a silent-wrong-output hazard: any state a
+plan mutates during execution must be either per-worker or provably
+partitioned by the same index the work is partitioned by.
+
+### 6.3 Control flow of one transform
+
+```mermaid
+flowchart TB
+    S["execute"] --> R["ROW PASS<br/>batched route, worker clones,<br/>slabs of whole rows"]
+    R --> B{{"join — the ordering constraint"}}
+    B --> Q{"banked column verdict<br/>for this cell and this T"}
+    Q -->|serial| CS["column pass, one thread"]
+    Q -->|threaded| CP["prefix stages: digits split<br/>(ordered, one join each)<br/>then suffix bands or strips split"]
+```
+
+---
+
+## 7. Results
+
+Speedup at 8 threads over the same plan at one thread, same process,
+alternated arms, minimum of 20 runs, with engagement asserted:
+
+| cell | r2c | c2r | column verdict |
 |---|---|---|---|
-| **0** | pool freeze + honest `nthreads` plumbing; pad the worker struct to 64 B; fix the pin map; add `vfft_cpu_l3_bytes()`; add `nthreads=` to the 2D key (matched only via `vw2_key_serves`) | ~40 lines, 4 files | no speed — fixes a live bug and makes MT legally expressible |
-| **1** | turn on the TC row door's existing clone MT (it is already the right handle shape, safety-gated by `_tc_inner_mt_safe` / `_tc_clone_equiv`) | ~5 lines on top of 0 | **measured 1.47–1.74×** |
-| **2** ✅ | *measurement only*: price the row→column exchange and the barrier constant (`benches/il2d_exchange_probe.c`) | done | **see the measured verdict below** |
-| **3** | column-pass MT with the partition RACED (row-range ⟷ strip), one dispatch + one internal barrier, engagement counters | one file, existing functions already take (base, nrows, pitch, cnt) separately | unlocks the 55–62% serial remainder: **4–6×** on row-range cells, 2.5–4× on strip cells |
-| **4** | **conditional on 2**: match the row partition to the column partition so the stage-0 exchange is zero (the "sliding seam" — rows and stage 0 become one exchange-free phase, leaving exactly one barrier) | medium; breaks the TC dispatch's no-tail property | ≤20% at 300 GB/s, up to ~90% at 30 GB/s. **If the probe says ≥100 GB/s, do not build it** |
-| **5** | plane-per-core as a documented, gate-tested contract + refcounted read-only tables + a batched-2D wrapper gated by `8 × per-plane WS ≤ L3` | small | throughput only, on the 7% |
+| 128×64 | 1.45× | 1.64× | threaded (marginal) |
+| 512×32 | 1.54× | 1.31× | **serial** (raced and banked) |
+| 256×256 | 1.55× | 1.19× | marginal, run-dependent |
+| 512×512 | **4.19×** | **6.34×** | threaded |
+| 1024×1024 | **7.69×** | **7.70×** | threaded |
 
-## INC-2 measured (2026-08-26) — the barrier is cheap, the exchange is everything
+The progression is instructive about where the work actually was:
 
-T=8, pinned, min-of-15, on the plane sizes of the banked cells. `W` = 8
-workers each write their own row range; `R1` = each reads **its own**
-rows back; `R2` = each reads a **column strip** (so every worker touches
-every other's dirty lines); `R0` = one core does it all.
+| configuration | 1024×1024 r2c |
+|---|---|
+| rows threaded only | 1.75× |
+| rows + suffix bands / strips (prefix stage still serial) | 2.82× |
+| **+ prefix stage split on the digit axis** | **7.69×** |
 
-```
- cell        plane KB    W      R1 own    R2 strips   R0 1 core
- 256x256        516     9500      3100       9200       23100
- 512x512       2056    33300     11800      32000       92300
- 1024x1024     8208    38600     46400     109000      368600
- 4096x64       2112    25900     12100      42800       94800
- 8192x64       4224    36700     24000      63500      190000
- 4096x16        576    10600      3500      13800       25800
-      barrier (dispatch 7 + wait_all) = 100 ns
-```
+The full-plane prefix stage was the dominant serial residue; splitting it
+on an axis that already existed inside the kernel — at the cost of three
+pointer edits and no new code — moved the transform from ~3× to ~7.7×.
+The column pass alone went from 796 µs to 113 µs.
 
-- **Matched partition scales ~8× (R0/R1 = 7.8–7.9×); orthogonal scales
-  ~3× (R0/R2 = 2.9–3.4×).** Reading your own rows out of your private
-  L2 is near-linear; reading columns someone else wrote is not.
-- The exchange (R2−R1) is 6–63 µs = 4–10% of a cell's *single-thread*
-  transform, but **40–60% of its ideal T=8 time** — that is precisely
-  the missing ~2.5× of column scaling.
-- Effective strip bandwidth is 42.7–77.1 GB/s, **below the 100 GB/s
-  line**, so the exchange is worth engineering away.
-- **The barrier costs 100 ns** — ~25× cheaper than the estimate the
-  plan was priced against. Two barriers are ~5% even at 64×64, so the
-  one-barrier "sliding seam" is **not** justified by barrier cost; the
-  create-time pruner it implied prunes nothing and is dropped.
+These sit on top of a single-threaded implementation already at or above
+vendor parity on every benchmarked cell.
 
-**The structural consequence — INC-3's partition ordering is now
-decided by measurement, not taste:** the row-range column partition
-reads exactly the rows the row pass just wrote, so it is
-**exchange-free by construction** (the ~8× column), while strips pay
-the full exchange (~3×). Race row-range first wherever it exists (the
-six multi-stage cells); strips are the fallback axis for the four
-single-stage cells — which conveniently have hp1 = 33/129/513/2049,
-the benign end (≥64 B per row segment). The pathological strip case
-(hp1 = 9, 16 B per row, 42.7 GB/s) belongs to 4096×16, which *has* a
-row axis and should never take it.
+---
 
-## Refused (with the reason)
+## 8. Failure modes this methodology is designed to catch
 
-- **Plane-per-core as primary** — cache premise inverted, 7.3% of the
-  wall clock, and callers can already do it themselves.
-- **ROWSPLIT band MT** — a genuine data race (bands share one lazily
-  allocated `rowwork` / `c2r_im_buf` / `rowscr` on the plan), one cell
-  of benefit, and it would unwind the row-mode fusion just shipped.
-- **Any fixed column partition** — strips-always and row-range-always
-  are both refuted; it is a raced axis.
-- **Transposing the plane to turn columns into rows** — 4C of streaming
-  traffic against 0.875C of exchange; dead under any exchange rate the
-  probe could return.
-- **Rounding strip boundaries to 64 B** — does not fix the split lines
-  (the row start rotates because hp1 is odd) *and* collapses parallel
-  width (hp1=33 → 5 workers, hp1=9 → 3).
-- **Padding the complex plane pitch** — breaks the unpadded CCE
-  interop contract the entire vs-MKL record is measured against.
-- **Reusing `_tc_mt_floor`'s 2048 complex points** as a whole-transform
-  gate — calibrated for a one-barrier embarrassingly-parallel batch,
-  ~10× too permissive here (two barriers are 46% of a 3.9 µs 64×64).
-  Equally refused: inventing a replacement constant.
-- **Intra-transform MT at 64×64** — 34 KB, ~4 µs; the barriers cost
-  more than the work.
+| failure | why it is invisible | what catches it |
+|---|---|---|
+| nothing actually threaded | timings look plausible; correctness passes trivially | engagement counters for *both* resource construction and dispatch |
+| a partition raced at one thread count served at another | results are merely suboptimal, never wrong | thread count stored with the verdict; mismatch re-races |
+| a gate that never reaches the code it "covers" | the gate passes green | verify the test cell's geometry actually reaches the branch — a forced-on switch is not coverage |
+| threading a cell that regresses | the average still improves | race per cell and bank the negative result |
+| shared mutable plan state under partitioned work | wrong output, not slow output | per-worker ownership by construction; refuse arms that cannot express it |
+| a global resource mutated by a component | another component silently loses capability | plans may grow shared resources, never shrink them |
 
-## Laws
+---
 
-- **No engage floor is written down.** `nthreads` is a *key axis*: at
-  create with a live pool the cell races {T=1, T=pool × partition arms}
-  and banks the winner under `nthreads=T`. If T=1 wins, the banked row
-  says so and MT never engages for that cell. A measured pruner may
-  skip racing MT arms when `2 × barrier_cost > 0.25 × banked ST`, but
-  that is a create-time economy, never a serving decision.
-- A `T=4` verdict must never serve a `T=8` request.
-- Caller on core 0; workers 1..T−1 (a collision anti-scales 10–100×).
-- Engagement printed and asserted (clones built **and** dispatch taken)
-  — an all-1.00× table that never threaded has happened here before.
-- MT == ST bitwise, same plan, per cell, per direction, T ∈ {2,4,8}.
-- Same-run alternated arms only; never ≥200 ms pacing between threaded
-  arms (the `KMP_BLOCKTIME` parking trap).
-- The row width `rw` must be **re-raced at the threaded row count**: a
-  worker at 1024×1024 with T=8 holds 128 rows, so the banked W=256 is
-  *illegal*, not merely suboptimal.
+## 9. Limitations and open problems
+
+- **Single-stage cells** have no row axis, so their column pass must use
+  strips and inherits the ~3× exchange ceiling. For these, running
+  independent transforms concurrently (a batch queue) is the better
+  answer than partitioning one transform.
+- **Row width verdicts are not yet re-raced at threaded row counts.** A
+  width selected when one worker owned all rows can be *illegal*, not
+  merely suboptimal, when each worker owns a fraction of them.
+- **The exchange itself remains unpaid-for** on strip cells; eliminating
+  it requires making the row pass produce the plane in the order the
+  column pass consumes it, which trades one memory-traffic term for
+  another and has not yet been shown to win.
+- **The engage decision is per-cell but not per-call**: a plan serves one
+  verdict regardless of system load at execution time.
