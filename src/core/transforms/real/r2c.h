@@ -82,6 +82,23 @@ typedef struct
     /* §6a24: interleaved-z boundary mode (set around a z execute; NULL = split) */
     double *zo;        /* fwd: write spectrum interleaved here */
     const double *zi;  /* bwd: read spectrum interleaved from here */
+    /* ROW-MAJOR boundary mode (the 2D real IL tier's rowsplit fusion,
+     * fft2d_real_il_design.md — set around one execute, NULL/0 = off;
+     * same idiom as zo/zi). fwd: rowx = transform t's REAL row at
+     * rowx + t*rowxp (contiguous reals), rowz = its CCE half-spectrum
+     * row at rowz + t*rowzp (interleaved pairs). The worker packs rows
+     * straight into scratch (kills the caller-side transpose AND the
+     * lane-gather pass) and zips the postprocess output to rows while
+     * L1-hot (the §6a26 pattern: same kernels, layout conversion in a
+     * hot store helper). bwd: rowxo = the real OUTPUT row base (the
+     * worker transposes each lane block to rows after the unpack); the
+     * bwd INPUT unzip is driver-level in the rowz door. rowscr_re/im =
+     * lazy (halfN+1)*K planes the row-mode postprocess writes into. */
+    const double *rowx;  size_t rowxp;
+    double *rowz;        size_t rowzp;
+    double *rowxo;       size_t rowxop;
+    double *rowscr_re, *rowscr_im; /* lazy (halfN+1)*K fwd CCE planes */
+    double *rowwork;               /* lazy N*K bwd working re plane   */
     void (*term_fwd)(const double*, const double*, double*, double*,
                      double*, double*, const double*, const double*,
                      ptrdiff_t, size_t);
@@ -809,6 +826,194 @@ static void _r2c_preprocess(
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * ROW-MAJOR boundary movement (the rowsplit fusion — struct comment).
+ * All three are pure data movement (bitwise-neutral routes), SIMD 4x4
+ * blocks with EXACT scalar tails on both axes (sources/destinations
+ * are caller memory — no over-read/-write allowed).
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* rows -> pack scratch: sr[n*B+k] = row_{b0+k}[2n], si = [2n+1]
+ * (the decoupled even/odd split + lane transpose in ONE pass). */
+static inline void _r2c_row_pack(const double *rowx, size_t xp,
+                                 double *sr, double *si, int halfN,
+                                 size_t B, size_t b0)
+{
+    const int nb = halfN & ~3;
+    const size_t kb = B & ~(size_t)3;
+    int n;
+    size_t k;
+#if defined(__AVX2__) || defined(__AVX512F__)
+    for (n = 0; n < nb; n += 4)
+        for (k = 0; k < kb; k += 4)
+        {
+            __m256d e[4], o[4];
+            int q;
+            for (q = 0; q < 4; q++)
+            {
+                const double *s = rowx + (b0 + k + q) * xp + 2 * n;
+                __m256d a = _mm256_loadu_pd(s);
+                __m256d b = _mm256_loadu_pd(s + 4);
+                __m256d lo = _mm256_permute2f128_pd(a, b, 0x20);
+                __m256d hi = _mm256_permute2f128_pd(a, b, 0x31);
+                e[q] = _mm256_unpacklo_pd(lo, hi); /* evens of 4 pairs */
+                o[q] = _mm256_unpackhi_pd(lo, hi); /* odds            */
+            }
+            {   /* transpose rows q -> lanes k */
+                __m256d u0 = _mm256_unpacklo_pd(e[0], e[1]);
+                __m256d u1 = _mm256_unpackhi_pd(e[0], e[1]);
+                __m256d u2 = _mm256_unpacklo_pd(e[2], e[3]);
+                __m256d u3 = _mm256_unpackhi_pd(e[2], e[3]);
+                _mm256_storeu_pd(sr + (size_t)(n + 0) * B + k,
+                                 _mm256_permute2f128_pd(u0, u2, 0x20));
+                _mm256_storeu_pd(sr + (size_t)(n + 1) * B + k,
+                                 _mm256_permute2f128_pd(u1, u3, 0x20));
+                _mm256_storeu_pd(sr + (size_t)(n + 2) * B + k,
+                                 _mm256_permute2f128_pd(u0, u2, 0x31));
+                _mm256_storeu_pd(sr + (size_t)(n + 3) * B + k,
+                                 _mm256_permute2f128_pd(u1, u3, 0x31));
+                u0 = _mm256_unpacklo_pd(o[0], o[1]);
+                u1 = _mm256_unpackhi_pd(o[0], o[1]);
+                u2 = _mm256_unpacklo_pd(o[2], o[3]);
+                u3 = _mm256_unpackhi_pd(o[2], o[3]);
+                _mm256_storeu_pd(si + (size_t)(n + 0) * B + k,
+                                 _mm256_permute2f128_pd(u0, u2, 0x20));
+                _mm256_storeu_pd(si + (size_t)(n + 1) * B + k,
+                                 _mm256_permute2f128_pd(u1, u3, 0x20));
+                _mm256_storeu_pd(si + (size_t)(n + 2) * B + k,
+                                 _mm256_permute2f128_pd(u0, u2, 0x31));
+                _mm256_storeu_pd(si + (size_t)(n + 3) * B + k,
+                                 _mm256_permute2f128_pd(u1, u3, 0x31));
+            }
+        }
+#endif
+    for (n = 0; n < halfN; n++)
+    {
+#if defined(__AVX2__) || defined(__AVX512F__)
+        const size_t k0 = (n < nb) ? kb : 0;
+#else
+        const size_t k0 = 0;
+        (void)nb; (void)kb;
+#endif
+        for (k = k0; k < B; k++)
+        {
+            sr[(size_t)n * B + k] = rowx[(b0 + k) * xp + 2 * n];
+            si[(size_t)n * B + k] = rowx[(b0 + k) * xp + 2 * n + 1];
+        }
+    }
+}
+
+/* postprocess scratch -> interleaved CCE rows:
+ * rowz[(b0+k)*zp + 2f(+1)] = sre/sim[f*K + b0 + k], f = 0..hp1-1. */
+static inline void _r2c_row_zip(const double *sre, const double *sim,
+                                size_t K, size_t b0, size_t B, int hp1,
+                                double *rowz, size_t zp)
+{
+    const int fb = hp1 & ~3;
+    const size_t kb = B & ~(size_t)3;
+    int f;
+    size_t k;
+#if defined(__AVX2__) || defined(__AVX512F__)
+    for (f = 0; f < fb; f += 4)
+        for (k = 0; k < kb; k += 4)
+        {
+            __m256d r0 = _mm256_loadu_pd(sre + (size_t)(f + 0) * K + b0 + k);
+            __m256d r1 = _mm256_loadu_pd(sre + (size_t)(f + 1) * K + b0 + k);
+            __m256d r2 = _mm256_loadu_pd(sre + (size_t)(f + 2) * K + b0 + k);
+            __m256d r3 = _mm256_loadu_pd(sre + (size_t)(f + 3) * K + b0 + k);
+            __m256d i0 = _mm256_loadu_pd(sim + (size_t)(f + 0) * K + b0 + k);
+            __m256d i1 = _mm256_loadu_pd(sim + (size_t)(f + 1) * K + b0 + k);
+            __m256d i2 = _mm256_loadu_pd(sim + (size_t)(f + 2) * K + b0 + k);
+            __m256d i3 = _mm256_loadu_pd(sim + (size_t)(f + 3) * K + b0 + k);
+            __m256d ru0 = _mm256_unpacklo_pd(r0, r1);
+            __m256d ru1 = _mm256_unpackhi_pd(r0, r1);
+            __m256d ru2 = _mm256_unpacklo_pd(r2, r3);
+            __m256d ru3 = _mm256_unpackhi_pd(r2, r3);
+            __m256d iu0 = _mm256_unpacklo_pd(i0, i1);
+            __m256d iu1 = _mm256_unpackhi_pd(i0, i1);
+            __m256d iu2 = _mm256_unpacklo_pd(i2, i3);
+            __m256d iu3 = _mm256_unpackhi_pd(i2, i3);
+            __m256d rt[4], it[4];
+            int q;
+            rt[0] = _mm256_permute2f128_pd(ru0, ru2, 0x20);
+            rt[1] = _mm256_permute2f128_pd(ru1, ru3, 0x20);
+            rt[2] = _mm256_permute2f128_pd(ru0, ru2, 0x31);
+            rt[3] = _mm256_permute2f128_pd(ru1, ru3, 0x31);
+            it[0] = _mm256_permute2f128_pd(iu0, iu2, 0x20);
+            it[1] = _mm256_permute2f128_pd(iu1, iu3, 0x20);
+            it[2] = _mm256_permute2f128_pd(iu0, iu2, 0x31);
+            it[3] = _mm256_permute2f128_pd(iu1, iu3, 0x31);
+            for (q = 0; q < 4; q++)
+            {
+                double *dst = rowz + (b0 + k + q) * zp + 2 * f;
+                __m256d lo = _mm256_unpacklo_pd(rt[q], it[q]);
+                __m256d hi = _mm256_unpackhi_pd(rt[q], it[q]);
+                _mm256_storeu_pd(dst,
+                                 _mm256_permute2f128_pd(lo, hi, 0x20));
+                _mm256_storeu_pd(dst + 4,
+                                 _mm256_permute2f128_pd(lo, hi, 0x31));
+            }
+        }
+#endif
+    for (f = 0; f < hp1; f++)
+    {
+#if defined(__AVX2__) || defined(__AVX512F__)
+        const size_t k0 = (f < fb) ? kb : 0;
+#else
+        const size_t k0 = 0;
+        (void)fb; (void)kb;
+#endif
+        for (k = k0; k < B; k++)
+        {
+            rowz[(b0 + k) * zp + 2 * f] = sre[(size_t)f * K + b0 + k];
+            rowz[(b0 + k) * zp + 2 * f + 1] = sim[(size_t)f * K + b0 + k];
+        }
+    }
+}
+
+/* bwd real output -> rows: rows[(b0+k)*xp + e] = plane[e*K + b0+k]. */
+static inline void _r2c_row_trans(const double *plane, size_t K, size_t b0,
+                                  size_t B, int N, double *rows, size_t xp)
+{
+    const int eb = N & ~3;
+    const size_t kb = B & ~(size_t)3;
+    int e;
+    size_t k;
+#if defined(__AVX2__) || defined(__AVX512F__)
+    for (e = 0; e < eb; e += 4)
+        for (k = 0; k < kb; k += 4)
+        {
+            __m256d a = _mm256_loadu_pd(plane + (size_t)(e + 0) * K + b0 + k);
+            __m256d b = _mm256_loadu_pd(plane + (size_t)(e + 1) * K + b0 + k);
+            __m256d c = _mm256_loadu_pd(plane + (size_t)(e + 2) * K + b0 + k);
+            __m256d d = _mm256_loadu_pd(plane + (size_t)(e + 3) * K + b0 + k);
+            __m256d u0 = _mm256_unpacklo_pd(a, b);
+            __m256d u1 = _mm256_unpackhi_pd(a, b);
+            __m256d u2 = _mm256_unpacklo_pd(c, d);
+            __m256d u3 = _mm256_unpackhi_pd(c, d);
+            _mm256_storeu_pd(rows + (b0 + k + 0) * xp + e,
+                             _mm256_permute2f128_pd(u0, u2, 0x20));
+            _mm256_storeu_pd(rows + (b0 + k + 1) * xp + e,
+                             _mm256_permute2f128_pd(u1, u3, 0x20));
+            _mm256_storeu_pd(rows + (b0 + k + 2) * xp + e,
+                             _mm256_permute2f128_pd(u0, u2, 0x31));
+            _mm256_storeu_pd(rows + (b0 + k + 3) * xp + e,
+                             _mm256_permute2f128_pd(u1, u3, 0x31));
+        }
+#endif
+    for (e = 0; e < N; e++)
+    {
+#if defined(__AVX2__) || defined(__AVX512F__)
+        const size_t k0 = (e < eb) ? kb : 0;
+#else
+        const size_t k0 = 0;
+        (void)eb; (void)kb;
+#endif
+        for (k = k0; k < B; k++)
+            rows[(b0 + k) * xp + e] = plane[(size_t)e * K + b0 + k];
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * EXECUTE -- FORWARD R2C (block-walk)
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -1211,6 +1416,11 @@ static void _r2c_worker_bwd(void *arg) {
                 for (; k < B; k++) { even[k] = 2.0 * src_r[k]; odd[k] = 2.0 * src_i[k]; }
             }
         }
+        if (d->rowxo)
+            /* ROW-MODE real output (rowsplit fusion): the unpack above
+             * wrote lane-major reals into `re`; transpose this lane
+             * block to the caller's rows while L1-hot. */
+            _r2c_row_trans(re, K, b0, B, 2 * halfN, d->rowxo, d->rowxop);
     }
 }
 
@@ -1269,6 +1479,9 @@ static void _r2c_destroy(void *data)
     STRIDE_ALIGNED_FREE(d->scratch_re);
     STRIDE_ALIGNED_FREE(d->scratch_im);
     STRIDE_ALIGNED_FREE(d->c2r_im_buf);
+    free(d->rowscr_re);  /* row-mode lazies (rowsplit fusion) */
+    free(d->rowscr_im);
+    free(d->rowwork);
     if (d->inner)
         stride_plan_destroy(d->inner);
     free(d);
@@ -1618,7 +1831,18 @@ static void _r2c_worker_fwd_oop(void *arg) {
         /* 6a23: the OOP n1 family is rem-aware (generator anyk-tail); the old
          * odd-B guard here was stale and is removed — same as the in-place worker.
          * Odd B takes the fused path; gated in benches/gate_r2c_tail.c. */
-        if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
+        if (d->rowx) {
+            /* ROW-MODE ingest (rowsplit fusion): pack the caller's real
+             * rows straight into scratch — one fused pass replaces the
+             * caller-side lane transpose AND the lane-gather — then run
+             * the WHOLE inner from stage 0 (the pack produced the plain
+             * decoupled layout, not stage-0 butterfly output). */
+            _r2c_row_pack(d->rowx, d->rowxp, sr, si, halfN, B, b0);
+            if (d->inner_jit_fwd)
+                d->inner_jit_fwd(d->inner, sr, si, B, d->inner->K, 0);
+            else
+                stride_execute_fwd_serial(d->inner, sr, si);
+        } else if (d->inner->num_stages > 0 && d->inner->stages[0].n1_fwd
             && !d->inner->use_dif_forward) {
             _r2c_fused_first_stage(d->inner, in, sr, si, K, B, b0);
 #ifdef VFFT_R2C_PROFILE
@@ -1822,6 +2046,12 @@ static void _r2c_worker_fwd_oop(void *arg) {
                              d->tw_re, d->tw_im, d->iperm, d->perm,
                              halfN, K, B, b0, d->zo);
         }
+        if (d->rowz)
+            /* ROW-MODE terminator (rowsplit fusion): a->out_re/im are
+             * the plan's rowscr planes here — zip this lane block to the
+             * caller's interleaved rows while L1-hot (§6a26 pattern). */
+            _r2c_row_zip(a->out_re, a->out_im, K, b0, B, halfN + 1,
+                         d->rowz, d->rowzp);
 #ifdef VFFT_R2C_PROFILE
         { double _t3=_r2c_prof_now(); _r2c_prof_post += _t3-_tp0; }
 #endif

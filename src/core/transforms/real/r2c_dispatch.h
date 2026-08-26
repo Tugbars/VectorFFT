@@ -534,6 +534,42 @@ static inline void vfft_r2c_execute_fwd_z(
     }
 }
 
+/* ── ROW-MODE forward door (the 2D real IL tier's rowsplit fusion,
+ * fft2d_real_il_design.md): transform t's REAL row at xrows + t*xp
+ * (contiguous reals) -> its interleaved CCE row at zrows + t*zp. The
+ * worker packs rows straight into scratch and zips the postprocess
+ * output to rows while L1-hot — one fused pass per boundary instead of
+ * transpose + gather / store + transpose + zip. STRIDE even-N plans
+ * only; returns -1 with NOTHING done otherwise (the caller keeps its
+ * staged route). */
+static inline int vfft_r2c_execute_fwd_rowz(
+    vfft_r2c_plan_t *p, const double *xrows, size_t xp, double *zrows,
+    size_t zp)
+{
+    if (p->path != VFFT_R2C_PATH_STRIDE ||
+        p->stride->override_fwd != _r2c_execute_fwd)
+        return -1;
+    {
+        stride_r2c_data_t *d =
+            (stride_r2c_data_t *)p->stride->override_data;
+        const size_t HK = (size_t)(d->half_N + 1) * d->K;
+        if (!d->rowscr_re)
+            d->rowscr_re = (double *)malloc(HK * sizeof(double));
+        if (!d->rowscr_im)
+            d->rowscr_im = (double *)malloc(HK * sizeof(double));
+        if (!d->rowscr_re || !d->rowscr_im)
+            return -1;
+        d->rowx = xrows;
+        d->rowxp = xp;
+        d->rowz = zrows;
+        d->rowzp = zp;
+        _r2c_execute_fwd_oop(d, NULL, d->rowscr_re, d->rowscr_im);
+        d->rowx = NULL;
+        d->rowz = NULL;
+    }
+    return 0;
+}
+
 static inline void vfft_r2c_plan_destroy(vfft_r2c_plan_t *p)
 {
     if (!p)
