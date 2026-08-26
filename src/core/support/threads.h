@@ -23,6 +23,7 @@
 
 #include <stdlib.h>
 #include <immintrin.h>  /* _mm_pause */
+#include "cpu_cache.h"  /* vfft_cpu_smt() — the pin stride is DETECTED */
 
 #ifdef _WIN32
 #  define WIN32_LEAN_AND_MEAN
@@ -48,6 +49,10 @@ static inline int stride_get_num_threads(void) {
  * WORKER STRUCTURE
  * ===================================================================== */
 
+/* 🔴 PADDED TO A CACHE LINE. The struct is ~40 B, so two workers shared a
+ * 64 B line: posting work to worker i invalidated worker i-1's `done`
+ * spin line, adding a coherence miss to every dispatch and to every spin
+ * iteration of an idle neighbour. Each worker owns its line now. */
 typedef struct {
     void (*func)(void *);
     void *arg;
@@ -59,6 +64,7 @@ typedef struct {
 #elif defined(__linux__)
     pthread_t thread;
 #endif
+    char _pad[64];          /* separation only — never read */
 } _stride_worker_t;
 
 static _stride_worker_t *_stride_workers = NULL;
@@ -154,14 +160,21 @@ static int _stride_ncpu(void) {
     return 1;
 #endif
 }
-/* Pin stride: worker i -> logical core (i+1)*stride, caller stays on core 0. On hybrid Intel (14900KF:
+/* Pin stride: worker i -> logical core (i+1)*stride, caller stays on core 0. On an SMT part (14900KF:
  * logical 0-15 = 8 P-cores x 2 HT, even logical = distinct P-cores) stride 2 puts caller+7 workers on the
  * 8 DISTINCT P-cores (0,2,..,14) instead of HT-contending 4 P-cores (the old i+1 packed 0..7 = 4 P-cores x
- * HT, which made MT ~2x slower). Override with VFFT_PIN_STRIDE (set 1 on a non-hybrid/no-HT CPU). */
+ * HT, which made MT ~2x slower).
+ * 🔴 DERIVED, NOT HARD-CODED (2026-08-26): the stride is the DETECTED SMT width (CPUID leaf 0xB level 0).
+ * A fixed 2 on a non-SMT or SMT-disabled part addresses only even cores — workers past the halfway point
+ * fall off the end and silently run UNPINNED (core_id = -1 below), which voids every cache-privacy
+ * argument the threading design rests on, with no error. Unknown SMT (0) keeps the historical 2.
+ * VFFT_PIN_STRIDE still overrides for experiments. */
 static int _stride_pin_stride(void) {
     const char *e = getenv("VFFT_PIN_STRIDE");
-    int s = e ? atoi(e) : 2;
-    return s < 1 ? 1 : s;
+    int s;
+    if (e) { s = atoi(e); return s < 1 ? 1 : s; }
+    s = vfft_cpu_smt();
+    return s >= 1 ? s : 2;
 }
 static void _stride_pool_create(int n_workers) {
     if (_stride_workers) _stride_pool_destroy();
