@@ -440,6 +440,83 @@ int main(int argc, char **argv)
             free(xi); free(zi2); free(xo);
         }
     }
+    /* J: INC-1 row-door MT — ST vs MT, SAME process, alternated,
+     * min-of-20, both directions. Per-row route pinned (INC-1's scope).
+     * Engagement printed per the two-gate law: clones AND dispatches. */
+    {
+        static const int JC[][2] = { { 128, 64 }, { 512, 32 },
+                                     { 256, 256 }, { 512, 512 },
+                                     { 1024, 1024 } };
+        int jc;
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_REAL=1");
+        _putenv("VFFT_IL2D_ROWSPLIT=0");
+#else
+        putenv("VFFT_IL2D_REAL=1");
+        putenv("VFFT_IL2D_ROWSPLIT=0");
+#endif
+        printf("--- INC-1 row-door MT (per-row route pinned, T=8) ---\n");
+        for (jc = 0; jc < 5; jc++) {
+            const int N1 = JC[jc][0], N2 = JC[jc][1];
+            const size_t hp1j = (size_t)N2 / 2 + 1;
+            const size_t RNj = (size_t)N1 * N2, CNj = (size_t)N1 * hp1j;
+            double *xj = malloc(RNj * 8), *zj = malloc(2 * CNj * 8);
+            double *xo = malloc(RNj * 8);
+            vfft_config_t cj;
+            vfft_plan fs, fm, cs, cm;
+            double ts = 1e300, tm = 1e300, bs = 1e300, bm = 1e300, t0;
+            long d0, d1;
+            if (!xj || !zj || !xo) return 2;
+            for (i = 0; i < RNj; i++)
+                xj[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&cj, 0, sizeof cj);
+            cj.transform = VFFT_R2C;
+            cj.placement = VFFT_OUTOFPLACE;
+            cj.rigor = VFFT_MEASURE;
+            cj.dims = 2; cj.n[0] = N1; cj.n[1] = N2;
+            cj.howmany = 1;
+            cj.layout = VFFT_LAYOUT_INTERLEAVED;
+            cj.wisdom = W; cj.wisdom_write = 0;
+            vfft_set_num_threads(8);
+            cj.nthreads = 1;
+            fs = vfft_create(&cj);
+            cj.transform = VFFT_C2R; cs = vfft_create(&cj);
+            cj.nthreads = 8;
+            cj.transform = VFFT_R2C; fm = vfft_create(&cj);
+            cj.transform = VFFT_C2R; cm = vfft_create(&cj);
+            if (!fs || !fm || !cs || !cm) {
+                printf("J %4dx%-4d create FAIL\n", N1, N2);
+                continue;
+            }
+            vfft_execute(fm, VFFT_FORWARD, xj, NULL, zj, NULL);
+            vfft_execute(cm, VFFT_BACKWARD, zj, NULL, xo, NULL);
+            d0 = vfft_tc_mt_dispatches();
+            for (r = 0; r < 20; r++) {
+                t0 = now_ns();
+                vfft_execute(fs, VFFT_FORWARD, xj, NULL, zj, NULL);
+                t0 = now_ns() - t0; if (t0 < ts) ts = t0;
+                t0 = now_ns();
+                vfft_execute(fm, VFFT_FORWARD, xj, NULL, zj, NULL);
+                t0 = now_ns() - t0; if (t0 < tm) tm = t0;
+                t0 = now_ns();
+                vfft_execute(cs, VFFT_BACKWARD, zj, NULL, xo, NULL);
+                t0 = now_ns() - t0; if (t0 < bs) bs = t0;
+                t0 = now_ns();
+                vfft_execute(cm, VFFT_BACKWARD, zj, NULL, xo, NULL);
+                t0 = now_ns() - t0; if (t0 < bm) bm = t0;
+            }
+            d1 = vfft_tc_mt_dispatches();
+            printf("J %4dx%-4d  r2c ST %9.0f MT %9.0f = %.2fx | "
+                   "c2r ST %9.0f MT %9.0f = %.2fx | workers=%d "
+                   "dispatches=%ld\n",
+                   N1, N2, ts, tm, ts / tm, bs, bm, bs / bm,
+                   vfft_plan_tc_workers(fm), d1 - d0);
+            vfft_destroy(fs); vfft_destroy(fm);
+            vfft_destroy(cs); vfft_destroy(cm);
+            free(xj); free(zj); free(xo);
+        }
+        vfft_set_num_threads(1);
+    }
     if (W) vfft_wisdom_free(W);
     free(x); free(z); free(xr); free(zr);
     return 0;

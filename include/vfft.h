@@ -460,6 +460,13 @@ extern "C"
    * asked for is the thread count they got. */
   int vfft_plan_tc_workers(vfft_plan p);
 
+  /* Process-lifetime count of transform-contiguous MT DISPATCHES. Clones
+   * built and work dispatched are INDEPENDENT gates: a plan can own clones
+   * and still run its serial loop because the cell sits under the engage
+   * floor. Assert this MOVED across an execute to prove threading actually
+   * happened; vfft_plan_tc_workers alone does not. */
+  long vfft_tc_mt_dispatches(void);
+
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)
