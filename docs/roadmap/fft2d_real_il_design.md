@@ -89,6 +89,18 @@ between the row and column passes (2D), column twiddles column-invariant
    row-kind (r2c row with column-friendly turned stores) is NEW OCAML
    EMITTER LOGIC and enters only when a measured gap demands it — the
    c2c tier's construction law.
+   **The ROWSPLIT route (SHIPPED 2026-08-26, owner-directed: "il at the
+   boundary, split inside" — the cascade pattern, not the banned
+   wrapper)**: for the tiny-N2 regime where the per-row toll dominates
+   (~30 ns/row of dispatch around ~15 ns of math), rows run in bands of
+   W — SIMD transpose rows→lane-major, ONE split r2c/c2r front-door
+   execute at (N2, K=W) (the raced lane-batch engine), transpose+zip
+   back into the IL plane. Env `VFFT_IL2D_ROWSPLIT=W`; constraints
+   W%8==0, W|N1, N2%4==0; lane planes padded to hp1p=(hp1+3)&~3 for the
+   4×4 transpose grain. Gated (rs64/rs32 passes, ALL PASS) and raced:
+   flips 4096×16 native (1.12× vs veneer, ~1.09× vs MKL-ST). W and the
+   route-per-cell verdict are M3 wisdom axes; boundary fusion (the
+   s0/terminator style) is the remaining headroom.
 5. **Row/column fusion is ILLEGAL here — tfuse structurally OFF.** The
    c2c banded walk fused rows into bands because rows commute with
    every column stage (both C-linear, disjoint axes). The Hermitian
@@ -153,11 +165,19 @@ per cell, or the cell keeps the veneer — measured serving, no faith.
 - **M2 — the pitch race**: OOP door only — bare hp1 plane vs padded
   pitch (a PERFORMANCE axis — aliasing — legality needs neither; the
   in-place door's padded pitch is contract, §2.7), per cell class.
-- **M3 — serve + bank**: native-first create for IL real callers, lay=il
-  real cells (chain/wl/ro + the real-specific axes; tf structurally 0,
-  §2.5 — wl re-raced fresh, c2c verdicts do not port), refusal for
-  inexpressible cells; the veneer arm retires per cell as coverage lands
-  (the c2c wrapper-deletion pattern).
+- **M3 — SERVING + BANKING DONE (2026-08-26)**: the env gate is GONE —
+  the native tier is THE serving for every interleaved 2D real create
+  (odd N2 / NATURAL order REFUSE loudly; split-layout callers keep the
+  split engine untouched). Verdict cells live in wisdom2_2d.txt:
+  {t=r2c ord=scr lay=il | chain= rw= wl=}, DIRECTION-SHARED (c2r reads
+  the r2c row), raced at create on miss (row route + W pool + banded-wl
+  incl. L2-admitted spans), env(VFFT_IL2D_ROWSPLIT/WL/CHAIN) > banked >
+  race, env never banks. 10 cells banked. The pinned door race: 20/20
+  rows win-or-parity vs MKL CCE (0.9-2.25x; knee cells 1.66-2.20x via
+  the banded walk; 4096x16 parity via ROWSPLIT). STILL M3-OPEN: the
+  chain race (chain= banked as deployed-greedy; re-raced at the
+  pre-release sweep) and deleting the now-unreachable z-door dead code
+  (stride_execute_2d_r2c_z/_c2r_z + the bench's O-z arm).
 - **M4 — levers**: DC/Nyquist symmetry, the deferred cross-row fold
   (§2.5 — restores row fusion AND makes the column count even),
   store-side-only band staging (FFTW `dft/buffered.c` precedent:

@@ -57,3 +57,17 @@
 @cell t=r2c n=8192 q=1 ord=scr place=ip | eng=stride chain=8.8.16.8 vars=t1s.flat.t1s.flat dif=0 | ran=1 ns=20799.59 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:15
 @cell t=r2c n=16384 q=1 ord=scr place=ip | eng=stride chain=8.16.16.8 vars=t1s.flat.flat.flat dif=0 | ran=1 ns=43067.21 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:16
 @cell t=r2c n=32768 q=1 ord=scr place=ip | eng=stride chain=16.16.16.8 vars=log3.flat.flat.flat dif=0 | ran=1 ns=138998.36 metric=fwd1 units=ns src=migrated from=rfft_wisdom.txt:17
+@cell t=r2c n=64 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=40.6 metric=fwd1 units=ns date=2026-08-26
+@cell t=c2r n=64 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=37.5 metric=bwd1 units=ns date=2026-08-26
+@cell t=r2c n=64 q=32 ord=scr place=ip | eng=stride chain=4.16 vars=t1s.flat dif=0 | ran=32 ns=508.71 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=64 q=64 ord=scr place=ip | eng=stride chain=4.16 vars=flat.flat dif=0 | ran=64 ns=1623.98 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=256 q=32 ord=scr place=ip | eng=stride chain=8.4.8 vars=log3.log3.flat dif=0 | ran=32 ns=6102.87 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=256 q=64 ord=scr place=ip | eng=stride chain=8.4.8 vars=log3.t1s.flat dif=0 | ran=64 ns=12363.12 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=512 q=32 ord=scr place=ip | eng=stride chain=4.4.4.8 vars=flat.log3.t1s.flat dif=0 | ran=32 ns=13977.05 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=512 q=64 ord=scr place=ip | eng=stride chain=4.4.4.8 vars=flat.log3.log3.flat dif=0 | ran=64 ns=26429.51 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=1024 q=32 ord=scr place=ip | eng=stride chain=8.4.4.8 vars=log3.flat.t1s.flat dif=0 | ran=32 ns=32378.69 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=1024 q=64 ord=scr place=ip | eng=stride chain=8.4.4.8 vars=log3.t1s.t1s.flat dif=0 | ran=64 ns=66893.33 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=16 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=34.0 metric=fwd1 units=ns date=2026-08-26
+@cell t=r2c n=16 q=32 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=32 ns=44.30 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=r2c n=16 q=64 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=64 ns=81.86 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=c2r n=16 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=25.0 metric=bwd1 units=ns date=2026-08-26

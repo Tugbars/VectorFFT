@@ -59,6 +59,7 @@
 #include "fft2d.h"
 #include "transforms/fftnd/fftnd_r2c.h" /* §6a47/Q1: 3D real transforms */ /* 2D c2c (tiled row + native col; pulls exhaustive_plan) */
 #include "fft2d_r2c.h"                                                     /* 2D r2c / c2r                                    */
+#include "fft2d_real_il.h"                                                 /* native IL 2D real tier kernels                  */
 /* rank>=2 wisdom structs/builders/legacy: wisdom2/wisdom2_fftnd.h (via the
  * wisdom2_2d_reader.h include above — owner folder-structure directive) */
 #ifdef VFFT_USE_JIT
@@ -384,6 +385,20 @@ struct vfft_plan_s
      * not commute with the column stages (§2.5), rows sit OUTSIDE any
      * banded walk. */
     double *il2d_rscr;
+    /* the ROWSPLIT row route (owner 2026-08-26: "il at the boundary,
+     * split inside" — the cascade pattern, NOT the banned wrapper): rows
+     * in bands of il2d_rw; per band = SIMD transpose rows->lanes ->
+     * il2d_rows (the raced SPLIT r2c/c2r engine at (N2, K=rw)) ->
+     * transpose + zip into the IL plane. Kills the per-row dispatch toll
+     * at tiny N2 (priced 7.7 vs 29 ns/row at 4096x16). Lane planes are
+     * padded to hp1p = (hp1+3)&~3 rows (the 4x4 transpose reads whole
+     * quads; the garbage tail lands in rows nothing reads). NULL/0 =
+     * the per-row TC door serves. Env VFFT_IL2D_ROWSPLIT=W (raced arm;
+     * serving verdicts are M3's route race). */
+    struct vfft_plan_s *il2d_rows;
+    int il2d_rw;
+    double *il2d_lx, *il2d_lre, *il2d_lim; /* lane-major: N2*rw, hp1p*rw x2 */
+    double *il2d_tre, *il2d_tim;           /* row-major halves: rw*hp1p x2 */
     int il_race; /* §6a59: A/B pending flag (decision-scoped) */
     stride_plan_t *cplan_il;
     vfft_proto_exec_fn il_pf, il_pb; /* §6a55: jit tier on cplan_il */
@@ -1481,60 +1496,56 @@ static double _vfft_measure_2d_c2c(stride_plan_t *p, int N1, int N2)
     return ns;
 }
 
-/* Measure a 2D r2c forward plan end-to-end (OOP), for the calibrate-on-miss win-gate. */
-static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2, int il)
+/* Measure a 2D r2c forward plan end-to-end (OOP), for the calibrate-on-miss
+ * win-gate. SPLIT door only (the z-veneer door was deleted 2026-08-26;
+ * interleaved callers are served by the native IL tier). */
+static double _vfft_measure_2d_r2c(stride_plan_t *p, int N1, int N2)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
     double *x = (double *)malloc(RN * sizeof(double));
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
-    double *z = il ? (double *)malloc(2 * CN * sizeof(double)) : NULL;
-    if (!x || !ore || !oim || (il && !z))
+    if (!x || !ore || !oim)
     {
         free(x);
         free(ore);
         free(oim);
-        free(z);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
-    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim, z);
+    double ns = vfft_fft2d_r2c_bench_min(p, N1, N2, x, ore, oim);
     free(x);
     free(ore);
     free(oim);
-    free(z);
     return ns;
 }
 
 /* Measure a 2D c2r backward plan end-to-end (OOP): produce the half-spectrum via r2c
  * first (the c2r input), then time c2r. */
-static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2, int il)
+static double _vfft_measure_2d_c2r(stride_plan_t *p, int N1, int N2)
 {
     size_t RN = (size_t)N1 * (size_t)N2, hp1 = (size_t)(N2 / 2 + 1), CN = (size_t)N1 * hp1;
     double *x = (double *)malloc(RN * sizeof(double));
     double *ore = (double *)malloc(CN * sizeof(double));
     double *oim = (double *)malloc(CN * sizeof(double));
     double *xr = (double *)malloc(RN * sizeof(double));
-    double *z = il ? (double *)malloc(2 * CN * sizeof(double)) : NULL;
-    if (!x || !ore || !oim || !xr || (il && !z))
+    if (!x || !ore || !oim || !xr)
     {
         free(x);
         free(ore);
         free(oim);
         free(xr);
-        free(z);
         return 1e18;
     }
     for (size_t i = 0; i < RN; i++)
         x[i] = (double)rand() / RAND_MAX - 0.5;
     stride_execute_2d_r2c(p, x, ore, oim); /* valid half-spectrum for c2r input */
-    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr, z);
+    double ns = vfft_fft2d_c2r_bench_min(p, N1, N2, ore, oim, xr);
     free(x);
     free(ore);
     free(oim);
     free(xr);
-    free(z);
     return ns;
 }
 
@@ -1723,19 +1734,18 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
         vfft_fft2d_r2c_wisdom_entry_t cal;
         vfft_fft2d_r2c_mode_t mode =
             (rigor == VFFT_MEASURE) ? VFFT_FFT2D_R2C_MEASURE : VFFT_FFT2D_R2C_PATIENT;
-        /* Per-layout measurement (owner 2026-08-25): time the DOOR this
-         * caller is served by — the z door fuses the pack differently, so
-         * verdicts may diverge — and bank lay-concrete. Legacy lay=ANY
-         * rows keep serving both layouts through vw2_lookup's fallback
-         * tier until a concrete verdict lands. */
-        const int il2 = (lay == VW2_LAY_IL);
+        /* SPLIT callers only reach this branch (the z-veneer was deleted
+         * 2026-08-26 — interleaved 2D real callers are served by the
+         * native IL tier and refuse/serve before _build_2d). Verdicts
+         * bank lay-concrete; legacy lay=ANY rows keep serving through
+         * vw2_lookup's fallback tier. */
         double cal_ns = (t == VFFT_C2R)
-                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0, il2)
-                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0, il2);
+                            ? vfft_fft2d_c2r_plan_measure(N1, N2, reg, mode, &cal, 0)
+                            : vfft_fft2d_r2c_plan_measure(N1, N2, reg, mode, &cal, 0);
         if (cal_ns < 1e17)
         {
-            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2, il2)
-                                           : _vfft_measure_2d_r2c(fb, N1, N2, il2);
+            double fb_ns = (t == VFFT_C2R) ? _vfft_measure_2d_c2r(fb, N1, N2)
+                                           : _vfft_measure_2d_r2c(fb, N1, N2);
             if (cal_ns < fb_ns)
             {
                 vw2_2d_r2c_bank_entry(&W->vw2, &cal, t == VFFT_C2R,
@@ -2288,6 +2298,379 @@ static void _il2d_row_exec(struct vfft_plan_s *h, vfft_dir_t dir,
     }
     else
         vfft_execute(h->il2d_row, dir, row, NULL, row, NULL);
+}
+
+/* ── native IL 2D REAL row passes (fft2d_real_il_design.md §2.4): ONE
+ * function per direction, used by BOTH the execute and the create-time
+ * row-route race (race == serving path). il2d_rows set = the ROWSPLIT
+ * band route (transpose rows->lanes, split engine at (N2,K=rw),
+ * fused transpose+zip back); NULL = the per-row TC door. */
+static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
+                                double *dre)
+{
+    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_rows)
+    {
+        const int W2 = h->il2d_rw, rn2 = h->N2;
+        size_t b;
+        for (b = 0; b < (size_t)h->N / W2; b++)
+        {
+            const double *xb = sre + b * (size_t)W2 * rn2;
+            double *zb = dre + b * (size_t)W2 * 2 * hp1;
+            _vfft_k1_transpose(xb, h->il2d_lx, W2, rn2);
+            vfft_execute(h->il2d_rows, VFFT_FORWARD, h->il2d_lx, NULL,
+                         h->il2d_lre, h->il2d_lim);
+            _il2d_transpose_zip(h->il2d_lre, h->il2d_lim, zb, W2,
+                                (int)hp1);
+        }
+    }
+    else
+        vfft_execute(h->il2d_row, VFFT_FORWARD, (double *)sre, NULL,
+                     dre, NULL);
+}
+
+static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
+                                double *dre)
+{
+    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_rows)
+    {
+        const int W2 = h->il2d_rw, rn2 = h->N2;
+        size_t b;
+        for (b = 0; b < (size_t)h->N / W2; b++)
+        {
+            const double *zs = zsrc + b * (size_t)W2 * 2 * hp1;
+            double *xb = dre + b * (size_t)W2 * rn2;
+            /* fused de-zip+transpose reads FULL 4-wide e-blocks — legal
+             * because zsrc is the tier's over-allocated rscr plane (+8
+             * dbl pad at create; the c2r execute passes rscr here). */
+            _il2d_unzip_transpose(zs, h->il2d_lre, h->il2d_lim, W2,
+                                  (int)hp1);
+            vfft_execute(h->il2d_rows, VFFT_BACKWARD, h->il2d_lre,
+                         h->il2d_lim, h->il2d_lx, NULL);
+            _vfft_k1_transpose(h->il2d_lx, xb, rn2, W2);
+        }
+    }
+    else
+        vfft_execute(h->il2d_row, VFFT_BACKWARD, (double *)zsrc, NULL,
+                     dre, NULL);
+}
+
+/* forward decls: the column-pass walkers are defined just below the
+ * chain machinery; the real column pass reuses them verbatim. */
+static void _il2d_col_stages(const double *src, double *dst, int nrows,
+                             size_t rn, int s_lo, int s_hi,
+                             const int *Rst, const int *Lst,
+                             vfft_il2p_fn const *fns,
+                             double *const *tabs, int reverse);
+static void _il2d_col_pass(const double *src, double *dst, int N1,
+                           size_t rn, size_t wc, int nst, const int *Rst,
+                           const int *Lst, vfft_il2p_fn const *fns,
+                           double *const *tabs, int reverse);
+
+/* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
+ * race serve through it — race == serving path). The banded walk is the
+ * c2c cascade's column form MINUS the row fusion: §2.5 keeps rows
+ * entirely OUTSIDE (fwd rows complete before any stage; bwd rows follow
+ * the last stage), so a band is pure column loop interchange —
+ * F0-bitwise vs unbanded. fwd = wide prefix 0..cut-1 full-plane, then
+ * per band of wl rows the suffix depth-first; bwd (the Hermitian
+ * transpose chain) = per band the REVERSED suffix (its first executed
+ * stage does the OOP move for c2r's z->rscr), then the reversed prefix
+ * in place on dst. */
+static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
+                            double *dst, int reverse)
+{
+    const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_wl > 0)
+    {
+        const int cut = h->il2d_cut, nst = h->il2d_nst;
+        const size_t wl = (size_t)h->il2d_wl;
+        vfft_il2p_fn const *fns = reverse ? h->il2d_b : h->il2d_f;
+        double *const *tabs = reverse ? h->il2d_tb : h->il2d_tf;
+        size_t b0;
+        if (!reverse)
+        {
+            if (cut > 0)
+                _il2d_col_stages(src, dst, h->N, hp1, 0, cut,
+                                 h->il2d_R, h->il2d_L, fns, tabs, 0);
+            for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+            {
+                const double *bs = (cut > 0) ? dst + 2 * b0 * hp1
+                                             : src + 2 * b0 * hp1;
+                _il2d_col_stages(bs, dst + 2 * b0 * hp1, (int)wl, hp1,
+                                 cut, nst, h->il2d_R, h->il2d_L, fns,
+                                 tabs, 0);
+            }
+        }
+        else
+        {
+            for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+                _il2d_col_stages(src + 2 * b0 * hp1,
+                                 dst + 2 * b0 * hp1, (int)wl, hp1, cut,
+                                 nst, h->il2d_R, h->il2d_L, fns, tabs,
+                                 1);
+            if (cut > 0)
+                _il2d_col_stages(dst, dst, h->N, hp1, 0, cut,
+                                 h->il2d_R, h->il2d_L, fns, tabs, 1);
+        }
+        return;
+    }
+    _il2d_col_pass(src, dst, h->N, hp1, 0, h->il2d_nst, h->il2d_R,
+                   h->il2d_L, reverse ? h->il2d_b : h->il2d_f,
+                   reverse ? h->il2d_tb : h->il2d_tf, reverse);
+}
+
+/* derive the banded walk's cut for a wl candidate: the first suffix
+ * stage whose span divides wl. -1 = illegal (stay unbanded). */
+static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
+{
+    int s2;
+    if (wl <= 0 || wl > h->N || h->N % wl != 0)
+        return -1;
+    for (s2 = 0; s2 < h->il2d_nst; s2++)
+        if (wl % h->il2d_L[s2] == 0)
+            return s2;
+    return -1;
+}
+
+/* build one ROWSPLIT arm's engine + scratch (legality is the caller's:
+ * W%8==0, W|N1, N2%4==0). Returns 1 on success with all six outputs
+ * set; 0 with everything freed/NULL. */
+static int _il2d_rowsplit_build(const vfft_config_t *cfg, int Wb, int N2,
+                                struct vfft_plan_s **rows, double **lx,
+                                double **lre, double **lim, double **tre,
+                                double **tim)
+{
+    const int hp1i = N2 / 2 + 1;
+    const int hp1p = (hp1i + 3) & ~3;
+    vfft_config_t sc;
+    memset(&sc, 0, sizeof sc);
+    sc.transform = cfg->transform;
+    sc.placement = VFFT_OUTOFPLACE;
+    sc.rigor = cfg->rigor;
+    sc.dims = 1;
+    sc.n[0] = N2;
+    sc.howmany = (size_t)Wb;
+    sc.layout = VFFT_LAYOUT_SPLIT;
+    sc.nthreads = 1;
+    sc.wisdom = cfg->wisdom;
+    sc.wisdom_write = cfg->wisdom_write;
+    *rows = (struct vfft_plan_s *)vfft_create(&sc);
+    if (!*rows)
+        return 0;
+    *lx = (double *)malloc((size_t)N2 * Wb * sizeof(double));
+    *lre = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
+    *lim = (double *)malloc((size_t)hp1p * Wb * sizeof(double));
+    *tre = NULL; /* fused boundaries (transpose_zip/unzip_transpose) —  */
+    *tim = NULL; /* the row-major staging halves are GONE               */
+    if (*lx && *lre && *lim)
+    {
+        memset(*lre, 0, (size_t)hp1p * Wb * sizeof(double));
+        memset(*lim, 0, (size_t)hp1p * Wb * sizeof(double));
+        return 1;
+    }
+    vfft_destroy(*rows);
+    free(*lx); free(*lre); free(*lim);
+    *rows = NULL;
+    *lx = *lre = *lim = NULL;
+    return 0;
+}
+
+/* ── the ROW-ROUTE race (owner 2026-08-26): per-row TC door vs ROWSPLIT
+ * over the legal W pool, timed on the SAME row-pass helpers execute
+ * serves with, min-of-3 each on scratch planes (r2c/c2r read-only
+ * inputs — no compounding, no refills). Winner installed on h + banked
+ * (chain + rw) in the direction-shared lay=il real cell. MUST run after
+ * the h-> field commits (it executes h — the axis-race law). */
+static void _il2d_real_rowrace(struct vfft_plan_s *h,
+                               struct vfft_wisdom_s *W,
+                               const vfft_config_t *cfg, int N1, int N2)
+{
+    static const int POOL[] = { 32, 64, 128, 256 };
+    const size_t RN = (size_t)N1 * N2;
+    const size_t CN = (size_t)N1 * ((size_t)N2 / 2 + 1);
+    const int isr = (h->transform == VFFT_R2C);
+    double *a = (double *)malloc(RN * sizeof(double));
+    double *bz = (double *)malloc((2 * CN + 8) * sizeof(double));
+    /* +8: the fused c2r unzip reads past the last row's tail (rscr law) */
+    double bestns = 1e300;
+    int bw = 0, pi, p;
+    size_t i;
+    /* current best's resources (arm 0 = the per-row door: all NULL) */
+    struct vfft_plan_s *brows = NULL;
+    double *blx = NULL, *blre = NULL, *blim = NULL;
+    double *btre = NULL, *btim = NULL;
+    if (!a || !bz)
+    {
+        free(a);
+        free(bz);
+        return;
+    }
+    for (i = 0; i < RN; i++)
+        a[i] = 1.0 + 1e-6 * (double)(i & 1023);
+    for (i = 0; i < 2 * CN + 8; i++)
+        bz[i] = 1.0 + 1e-6 * (double)(i & 511);
+    /* arm 0: the per-row TC door */
+    h->il2d_rows = NULL;
+    h->il2d_rw = 0;
+    for (p = 0; p < 3; p++)
+    {
+        struct timespec t0, t1;
+        double d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        if (isr)
+            _il2d_real_rows_fwd(h, a, bz);
+        else
+            _il2d_real_rows_bwd(h, bz, a);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < bestns)
+            bestns = d;
+    }
+    for (pi = 0; pi < 4; pi++)
+    {
+        const int Wb = POOL[pi];
+        struct vfft_plan_s *rows = NULL;
+        double *lx = NULL, *lre = NULL, *lim = NULL;
+        double *tre = NULL, *tim = NULL;
+        double ns = 1e300;
+        if (Wb > N1 || N1 % Wb != 0 || (N2 % 4) != 0)
+            continue;
+        if (!_il2d_rowsplit_build(cfg, Wb, N2, &rows, &lx, &lre, &lim,
+                                  &tre, &tim))
+            continue;
+        h->il2d_rows = rows;
+        h->il2d_rw = Wb;
+        h->il2d_lx = lx;
+        h->il2d_lre = lre;
+        h->il2d_lim = lim;
+        h->il2d_tre = tre;
+        h->il2d_tim = tim;
+        for (p = 0; p < 3; p++)
+        {
+            struct timespec t0, t1;
+            double d;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            if (isr)
+                _il2d_real_rows_fwd(h, a, bz);
+            else
+                _il2d_real_rows_bwd(h, bz, a);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            d = (t1.tv_sec - t0.tv_sec) * 1e9
+                + (t1.tv_nsec - t0.tv_nsec);
+            if (d < ns)
+                ns = d;
+        }
+        if (ns < bestns)
+        {
+            if (brows)
+            {
+                vfft_destroy(brows);
+                free(blx); free(blre); free(blim);
+                free(btre); free(btim);
+            }
+            bestns = ns;
+            bw = Wb;
+            brows = rows;
+            blx = lx; blre = lre; blim = lim;
+            btre = tre; btim = tim;
+        }
+        else
+        {
+            vfft_destroy(rows);
+            free(lx); free(lre); free(lim); free(tre); free(tim);
+        }
+    }
+    /* install the winner (NULLs = the per-row door) */
+    h->il2d_rows = brows;
+    h->il2d_rw = bw;
+    h->il2d_lx = blx;
+    h->il2d_lre = blre;
+    h->il2d_lim = blim;
+    h->il2d_tre = btre;
+    h->il2d_tim = btim;
+    /* ── the wl axis (the banded column walk; rows stay OUTSIDE per
+     * §2.5): unbanded arm + the static pool + L2-admitted stage spans
+     * (the c2c lever — row width here is hp1 complex), timed on the
+     * column pass alone (the only thing wl changes), min-of-3 in place
+     * on the z scratch (compounding is benign — the c2c chain-race
+     * precedent). */
+    {
+        static const int WPOOL[] = { 8, 16, 32, 64, 128, 256 };
+        const size_t hp1 = (size_t)N2 / 2 + 1;
+        int wlc[14], nwl = 0, wi, s2;
+        double cbest = 1e300;
+        int bwl = 0, bcut = 0;
+        h->il2d_wl = 0;
+        h->il2d_cut = 0;
+        for (p = 0; p < 3; p++)
+        {
+            struct timespec t0, t1;
+            double d;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            _il2d_real_cols(h, bz, bz, 0);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            d = (t1.tv_sec - t0.tv_sec) * 1e9
+                + (t1.tv_nsec - t0.tv_nsec);
+            if (d < cbest)
+                cbest = d;
+        }
+        for (wi = 0; wi < 6 && nwl < 14; wi++)
+            if (_il2d_real_wl_cut(h, WPOOL[wi]) >= 0 && WPOOL[wi] < N1)
+                wlc[nwl++] = WPOOL[wi];
+        for (s2 = 1; s2 < h->il2d_nst && nwl < 14; s2++)
+        {
+            const int w2 = h->il2d_L[s2];
+            int dup = 0;
+            if ((long)w2 * (long)hp1 * 16 > vfft_cpu_l2_bytes())
+                continue;
+            if (_il2d_real_wl_cut(h, w2) < 0 || w2 >= N1)
+                continue;
+            for (wi = 0; wi < nwl; wi++)
+                if (wlc[wi] == w2)
+                    dup = 1;
+            if (!dup)
+                wlc[nwl++] = w2;
+        }
+        for (wi = 0; wi < nwl; wi++)
+        {
+            const int cut = _il2d_real_wl_cut(h, wlc[wi]);
+            double ns = 1e300;
+            h->il2d_wl = wlc[wi];
+            h->il2d_cut = cut;
+            for (p = 0; p < 3; p++)
+            {
+                struct timespec t0, t1;
+                double d;
+                clock_gettime(CLOCK_MONOTONIC, &t0);
+                _il2d_real_cols(h, bz, bz, 0);
+                clock_gettime(CLOCK_MONOTONIC, &t1);
+                d = (t1.tv_sec - t0.tv_sec) * 1e9
+                    + (t1.tv_nsec - t0.tv_nsec);
+                if (d < ns)
+                    ns = d;
+            }
+            if (ns < cbest)
+            {
+                cbest = ns;
+                bwl = wlc[wi];
+                bcut = cut;
+            }
+        }
+        h->il2d_wl = bwl;
+        h->il2d_cut = bcut;
+        free(a);
+        free(bz);
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d-real] rowrace %s %dx%d -> rw=%d "
+                            "wl=%d (%.0f ns rows / %.0f ns cols)\n",
+                    isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
+                    cbest);
+        vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst, bw,
+                       bwl, bestns + cbest);
+        _vw2_persist(W, cfg);
+    }
 }
 
 /* run stages [s_lo, s_hi) over a ROW RANGE of nrows rows starting at the
@@ -4287,6 +4670,11 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         int il2d_staged = 0, il2d_pitch = 0;
         double *il2d_bandscr = NULL;
         double *il2d_rscr = NULL;
+        struct vfft_plan_s *il2d_rows = NULL;
+        int il2d_rw = 0;
+        int il2d_brw = -1; /* banked row-route verdict; -1 = unraced */
+        double *il2d_lx = NULL, *il2d_lre = NULL, *il2d_lim = NULL;
+        double *il2d_tre = NULL, *il2d_tim = NULL;
         int il2d_R[8] = { 0 }, il2d_L[8] = { 0 };
         vfft_il2p_fn il2d_f[8] = { 0 }, il2d_b[8] = { 0 };
         double *il2d_tf[8] = { 0 }, *il2d_tb[8] = { 0 };
@@ -4549,44 +4937,65 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
         }
         /* ── native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md)
-         * — M1: env-gated correctness spike (VFFT_IL2D_REAL=1; the §6a30
-         * veneer stays THE serving until M3, so every refusal here FALLS
-         * THROUGH, never returns NULL). Pure IL end-to-end: rows = ONE
-         * TC K=N1 batched zr2c execute on the bare hp1-pitch plane (§1 —
-         * one dispatch per plane, the banked K-batch door), columns = the
-         * n1c/t2c chain over hp1 = N2/2+1 columns. Two-phase law (§2.5):
-         * the Hermitian fold is R-linear and does not commute with the
-         * column stages — fwd rows complete before column stage 0, bwd
-         * rows follow the last column stage; no banded walk, no tfuse,
-         * and the c2c cells' banked wl/tf verdicts do not port. OOP only
-         * (2D real in-place is refused above; the in-place door needs the
-         * padded-pitch caller contract, §2.7). Chain = env/greedy for M1
-         * (racing + lay=il real banking is M3). */
+         * — M3: THE serving for IL real 2D callers (OWNER LAW: split is
+         * not a fallback of IL — native or LOUD refusal; the env gate is
+         * GONE, the c2c wrapper-deletion pattern). Pure IL end-to-end:
+         * rows = the raced row route (per-row TC door or ROWSPLIT),
+         * columns = the n1c/t2c chain over hp1 = N2/2+1 columns with the
+         * raced banded walk. Two-phase law (§2.5): the Hermitian fold is
+         * R-linear and does not commute with the column stages — fwd
+         * rows complete before column stage 0, bwd rows follow the last
+         * column stage; no tfuse, and the c2c cells' banked wl/tf
+         * verdicts do not port. OOP only (2D real in-place is refused
+         * above; the in-place door needs the padded-pitch caller
+         * contract, §2.7). SPLIT-layout callers keep the split engine
+         * untouched. Inexpressible cells (odd N2 — the zr2c row door is
+         * even-only; NATURAL order — waits on the rho tapes; chain/row
+         * failures) REFUSE loudly. */
         if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-            cfg->placement == VFFT_OUTOFPLACE && getenv("VFFT_IL2D_REAL") &&
-            atoi(getenv("VFFT_IL2D_REAL")) == 1)
+            cfg->placement == VFFT_OUTOFPLACE)
         {
             int rok = 1;
             if ((N2 % 2) != 0)
             {
-                _vfft_warn("VFFT_IL2D_REAL: %dx%d needs even N2 (the zr2c "
-                           "row door) — the veneer serves this cell",
-                           N1, N2);
-                rok = 0;
+                _vfft_warn("vfft_create: IL 2D %s %dx%d — the native "
+                           "tier needs even N2 (the zr2c row door); odd "
+                           "N2 is unsupported for interleaved callers "
+                           "(split layout serves it)",
+                           _vfft_tname(cfg->transform), N1, N2);
+                return NULL;
             }
-            if (rok && cfg->order == VFFT_ORDER_NATURAL)
+            if (cfg->order == VFFT_ORDER_NATURAL)
             {
-                /* multi-stage natural waits on the rho tapes (M4); M1
-                 * gates only the scrambled contract. */
-                _vfft_warn("VFFT_IL2D_REAL: order=NATURAL unsupported "
-                           "(M1) at %dx%d — the veneer serves this cell",
-                           N1, N2);
-                rok = 0;
+                /* multi-stage natural waits on the rho tapes (M4). */
+                _vfft_warn("vfft_create: IL 2D %s %dx%d order=NATURAL "
+                           "needs the natural-i tapes (M4) — unsupported "
+                           "for now; use DEFAULT/SCRAMBLED",
+                           _vfft_tname(cfg->transform), N1, N2);
+                return NULL;
             }
             if (rok)
-                rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
-                                        &il2d_nst);
+            {
+                /* chain precedence: env > the banked lay=il real cell
+                 * (direction-shared, keyed t=r2c ord=scr — the pair law
+                 * requires one chain for both directions) > greedy. The
+                 * banked row also carries rw= (the row-route verdict). */
+                if (getenv("VFFT_IL2D_CHAIN"))
+                    rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
+                                            &il2d_nst);
+                else if (!cfg->recalibrate &&
+                         vw2_2d_rl_lookup(&W->vw2, N1, N2, il2d_R,
+                                          &il2d_nst, &il2d_brw,
+                                          &il2d_bwl) &&
+                         _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
+                         _il2d_resolve(il2d_R, il2d_nst, il2d_f,
+                                       il2d_b))
+                    rok = 1;
+                else
+                    rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
+                                            &il2d_nst);
+            }
             if (rok && _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
                                           il2d_tf, il2d_tb))
                 rok = 0;
@@ -4615,9 +5024,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 if (il2d_row &&
                     !(il2d_row->tcb && il2d_row->tcb->zr2c_child))
                 {
-                    _vfft_warn("VFFT_IL2D_REAL: %dx%d row door at N2=%d "
-                               "is not the zr2c route — the veneer "
-                               "serves this cell",
+                    _vfft_warn("vfft_create: IL 2D real %dx%d — the row "
+                               "door at N2=%d is not the zr2c route "
+                               "(purity gate); the cell refuses",
                                N1, N2, N2);
                     vfft_destroy(il2d_row);
                     il2d_row = NULL;
@@ -4628,8 +5037,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                      * reversed column chain's first executed stage moves
                      * the caller's z into this plane; the rows read it
                      * and write the caller's real dst. */
+                    /* +8 dbl pad: the fused c2r unzip reads full 4-wide
+                     * e-blocks past the last row's tail (benign lanes). */
                     il2d_rscr = (double *)malloc(
-                        2 * (size_t)N1 * ((size_t)N2 / 2 + 1)
+                        (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
                         * sizeof(double));
                     if (!il2d_rscr)
                     {
@@ -4637,12 +5048,82 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         il2d_row = NULL;
                     }
                 }
+                /* ── the ROWSPLIT route (struct comment). Precedence:
+                 * env VFFT_IL2D_ROWSPLIT (0 pins the per-row door,
+                 * W>0 pins rowsplit) > the banked rw= verdict > the
+                 * create-time race (after the commits below).
+                 * Constraints: W%8 (the split engines' lane grain),
+                 * W | N1, N2%4 (the 4x4 transpose grain). Any build
+                 * failure keeps the per-row TC door — never a refusal. */
+                if (il2d_row)
+                {
+                    const char *rse = getenv("VFFT_IL2D_ROWSPLIT");
+                    const int Wb = rse ? atoi(rse)
+                                       : (il2d_brw > 0 ? il2d_brw : 0);
+                    if (Wb > 0)
+                    {
+                        if (Wb >= 8 && Wb % 8 == 0 && Wb <= N1 &&
+                            N1 % Wb == 0 && (N2 % 4) == 0)
+                        {
+                            if (_il2d_rowsplit_build(cfg, Wb, N2,
+                                                     &il2d_rows,
+                                                     &il2d_lx, &il2d_lre,
+                                                     &il2d_lim, &il2d_tre,
+                                                     &il2d_tim))
+                                il2d_rw = Wb;
+                            else
+                                _vfft_warn("il2d rowsplit W=%d: split "
+                                           "row engine unavailable at "
+                                           "%dx%d — per-row door serves",
+                                           Wb, N1, N2);
+                        }
+                        else
+                            _vfft_warn("il2d rowsplit W=%d illegal at "
+                                       "%dx%d (needs W%%8==0, W|N1, "
+                                       "N2%%4==0) — per-row door serves",
+                                       Wb, N1, N2);
+                    }
+                }
+                /* ── the banded column walk's width (env VFFT_IL2D_WL,
+                 * shared name with c2c; 0 pins unbanded) > banked wl= >
+                 * the create-time race. Legality: wl | N1 and a suffix
+                 * stage with L_s | wl (cut derived); illegal warns and
+                 * stays unbanded. Rows are OUTSIDE the walk (§2.5). */
+                if (il2d_row)
+                {
+                    const char *we = getenv("VFFT_IL2D_WL");
+                    const int wlv = we ? atoi(we)
+                                       : (il2d_bwl > 0 ? il2d_bwl : 0);
+                    il2d_wl = 0;
+                    il2d_cut = 0;
+                    if (wlv > 0)
+                    {
+                        int cut = -1, s2;
+                        if (wlv <= N1 && N1 % wlv == 0)
+                            for (s2 = 0; s2 < il2d_nst; s2++)
+                                if (wlv % il2d_L[s2] == 0)
+                                {
+                                    cut = s2;
+                                    break;
+                                }
+                        if (cut < 0)
+                            _vfft_warn("il2d real wl=%d illegal at "
+                                       "%dx%d (needs wl | N1 and a "
+                                       "stage with L_s | wl) — unbanded",
+                                       wlv, N1, N2);
+                        else
+                        {
+                            il2d_wl = wlv;
+                            il2d_cut = cut;
+                        }
+                    }
+                }
                 if (!il2d_row)
                     rok = 0;
             }
             if (!rok && il2d_nst)
             {
-                /* tables built for a cell that then fell through */
+                /* tables built for a cell that then refused */
                 int s2;
                 for (s2 = 0; s2 < il2d_nst; s2++)
                 {
@@ -4651,6 +5132,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     il2d_tf[s2] = il2d_tb[s2] = NULL;
                 }
                 il2d_nst = 0;
+            }
+            if (!rok)
+            {
+                /* OWNER LAW: split is NOT a fallback of IL — no veneer.
+                 * (row door / purity / chain / tables failed; the
+                 * specific cause warned above.) */
+                _vfft_warn("vfft_create: IL 2D %s %dx%d — native tier "
+                           "construction failed; unsupported for now "
+                           "(no split fallback by owner law)",
+                           _vfft_tname(cfg->transform), N1, N2);
+                return NULL;
             }
             if (il2d_row && getenv("VFFT_IL2D_LOG"))
                 fprintf(stderr, "[il2d-real] native %s %dx%d nst=%d "
@@ -4707,6 +5199,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_pitch = il2d_pitch;
         h->il2d_bandscr = il2d_bandscr;
         h->il2d_rscr = il2d_rscr;
+        h->il2d_rows = il2d_rows;
+        h->il2d_rw = il2d_rw;
+        h->il2d_lx = il2d_lx;
+        h->il2d_lre = il2d_lre;
+        h->il2d_lim = il2d_lim;
+        h->il2d_tre = il2d_tre;
+        h->il2d_tim = il2d_tim;
         memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
         memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
         memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
@@ -4725,6 +5224,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
             _il2d_axis_race(h, W, cfg, N1, N2);
+        /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
+         * pool): runs only when env is FULLY silent (an env-pinned chain
+         * skips the banked-row read AND must never bank — env beats
+         * wisdom, never writes it: the tcut law) and the rl cell carries
+         * no rw= verdict; banks chain+rw direction-shared. Same
+         * after-the-commits law as the c2c axis race — it executes h. */
+        if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
+            h->il2d_row && !getenv("VFFT_IL2D_ROWSPLIT") &&
+            !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
+            (il2d_brw < 0 || il2d_bwl < 0))
+            _il2d_real_rowrace(h, W, cfg, N1, N2);
         /* §6a31: rfft-engine row inner for the R2C 2D row pass — the rfft
          * path wins at the tile's low K (−27%/call measured). Force the rfft
          * dispatch; adopt only if it landed (RFFT path, split, plan bound).
@@ -7520,7 +8030,13 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
             }
         }
     }
-    if (getenv("VFFT_CONV_LOG"))
+    /* census knob, cached ONCE: a per-execute getenv is a locked linear
+     * scan of the environment on Windows (~1.3us measured on this box —
+     * it dominated tiny-N convert executes, il2d_real_probe 2026-08-26). */
+    static int _clog_ip = -1;
+    if (_clog_ip < 0)
+        _clog_ip = getenv("VFFT_CONV_LOG") != NULL;
+    if (_clog_ip)
         fprintf(stderr,
                 "[conv] ip N=%d K=%zu dir=%s nat_mode=%d mtunsafe=%d "
                 "nstages=%d\n",
@@ -7665,7 +8181,12 @@ static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
 {
     const size_t NK = (size_t)h->N * h->K;
     const size_t bytes = (NK * 8 + 63) & ~(size_t)63;
-    if (getenv("VFFT_CONV_LOG"))
+    /* census knob, cached ONCE (see the ip-site comment: per-execute
+     * getenv ~1.3us on Windows dominated tiny-N convert executes). */
+    static int _clog_oop = -1;
+    if (_clog_oop < 0)
+        _clog_oop = getenv("VFFT_CONV_LOG") != NULL;
+    if (_clog_oop)
         fprintf(stderr, "[conv] oop N=%d K=%zu dir=%s k1=%d route=%d\n",
                 h->N, h->K, dir == VFFT_FORWARD ? "fwd" : "bwd", h->k1_on,
                 h->k1_il_route);
@@ -8212,11 +8733,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * digit-reversed (the scrambled contract); rows (CCE bins)
              * stay natural. dir is ignored (r2c = forward math, the 1D
              * contract). */
-            const size_t hp1 = (size_t)h->N2 / 2 + 1;
-            vfft_execute(h->il2d_row, VFFT_FORWARD, sre, NULL, dre, NULL);
-            _il2d_col_pass(dre, dre, h->N, hp1, 0, h->il2d_nst,
-                           h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_tf,
-                           /*reverse=*/0);
+            _il2d_real_rows_fwd(h, sre, dre);
+            _il2d_real_cols(h, dre, dre, /*reverse=*/0);
         }
         else if (h->transform == VFFT_C2R && h->il2d_row)
         {
@@ -8229,24 +8747,25 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides
              * by N1*N2). */
-            const size_t hp1 = (size_t)h->N2 / 2 + 1;
-            _il2d_col_pass(sre, h->il2d_rscr, h->N, hp1, 0, h->il2d_nst,
-                           h->il2d_R, h->il2d_L, h->il2d_b, h->il2d_tb,
-                           /*reverse=*/1);
-            vfft_execute(h->il2d_row, VFFT_BACKWARD, h->il2d_rscr, NULL,
-                         dre, NULL);
+            _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);
+            _il2d_real_rows_bwd(h, h->il2d_rscr, dre);
         }
         else if (h->transform == VFFT_R2C)
         {
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-                stride_execute_2d_r2c_z(h->tplan, sre, dre); /* §6a30 native CCE */
+                /* OWNER LAW (M3, 2026-08-26): the §6a30 z-veneer no
+                 * longer serves IL callers — an IL real 2D plan is
+                 * native (il2d_row) or was refused at create. */
+                _vfft_warn("vfft_execute: IL 2D r2c plan without the "
+                           "native tier — create/execute wiring bug");
             else
                 stride_execute_2d_r2c(h->tplan, sre, dre, dim); /* real plane -> split spectrum */
         }
         else if (h->transform == VFFT_C2R)
         {
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-                stride_execute_2d_c2r_z(h->tplan, sre, dre); /* §6a30 native CCE */
+                _vfft_warn("vfft_execute: IL 2D c2r plan without the "
+                           "native tier — create/execute wiring bug");
             else
                 stride_execute_2d_c2r(h->tplan, sre, sim, dre); /* split spectrum -> real plane */
         }
@@ -8511,6 +9030,13 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_rowscr);
             free(h->il2d_bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
+            if (h->il2d_rows)
+                vfft_destroy(h->il2d_rows); /* the rowsplit band engine */
+            free(h->il2d_lx);
+            free(h->il2d_lre);
+            free(h->il2d_lim);
+            free(h->il2d_tre);
+            free(h->il2d_tim);
             for (s2 = 0; s2 < h->il2d_nst; s2++)
             {
                 free(h->il2d_tf[s2]);

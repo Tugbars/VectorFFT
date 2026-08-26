@@ -594,5 +594,90 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
     return vw2__2d_bank(st, r, 0);
 }
 
+/* ═══ native IL 2D REAL tier cells (lay=il ord=scr —
+ * fft2d_real_il_design.md M3). Key {t=r2c rank=2 n=N1xN2 q=1 ord=scr
+ * pl=OOP lay=il} — DIRECTION-SHARED: the c2r create reads the
+ * r2c-keyed row (the pair law requires ONE chain for both directions;
+ * the kind-5 zr_kv REAL-N-keyed precedent). COLLISION-FREE with the
+ * veneer's real cells: those key ord=nat (vw2_2d_r2c_lookup) and carry
+ * rowplan/colplan, never chain= — the chain-token check also refuses
+ * them on any fallback phase. Payload: chain= (the column-pass
+ * factorization, deployed greedy until the M3 chain race) + rw= (the
+ * ROW ROUTE verdict: 0 = the per-row TC door, W>0 = the ROWSPLIT band
+ * width) + wl= (the banded column walk's band width in ROWS; 0 =
+ * unbanded — rows sit OUTSIDE the walk per §2.5, tfuse structurally
+ * absent for real). ABSENT axis -> -1 = unraced. */
+static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
+                                   int *Rs, int *nst, int *rw, int *wl)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *cv;
+    int m = 0;
+    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_SCR, VW2_LAY_IL);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    cv = vw2_rec_get(r, "chain");
+    if (!cv) return 0;                       /* a veneer/ANY row: refuse */
+    if (rw) { const char *v = vw2_rec_get(r, "rw"); *rw = v ? atoi(v) : -1; }
+    if (wl) { const char *v = vw2_rec_get(r, "wl"); *wl = v ? atoi(v) : -1; }
+    while (*cv && m < 8) {
+        int v = 0;
+        if (*cv < '0' || *cv > '9') return 0;
+        while (*cv >= '0' && *cv <= '9') v = v * 10 + (*cv++ - '0');
+        if (v < 2) return 0;
+        Rs[m++] = v;
+        if (*cv == '.') cv++;
+        else break;
+    }
+    if (!m || *cv) return 0;
+    *nst = m;
+    return 1;
+}
+
+static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
+                                 const int *Rs, int nst, int rw, int wl,
+                                 double ns)
+{
+    vw2_rec_t rec;
+    vw2_rec_t *r = &rec;
+    const char *why = NULL;
+    char b[64];
+    int i, off = 0;
+    memset(r, 0, sizeof *r);
+    vw2__2d_rec_key(r, VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_SCR,
+                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
+    for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
+        off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
+                        Rs[i]);
+    if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
+        vw2_rec_free(r);
+        fprintf(stderr, "[wisdom2] il2d real bank refused (token)\n");
+        return -1;
+    }
+    if (rw >= 0) {
+        snprintf(b, sizeof b, "%d", rw);
+        if (vw2_rec_set(r, 1, "rw", b) != VW2_OK) {
+            vw2_rec_free(r);
+            fprintf(stderr, "[wisdom2] il2d real rw bank refused (token)\n");
+            return -1;
+        }
+    }
+    if (wl >= 0) {
+        snprintf(b, sizeof b, "%d", wl);
+        if (vw2_rec_set(r, 1, "wl", b) != VW2_OK) {
+            vw2_rec_free(r);
+            fprintf(stderr, "[wisdom2] il2d real wl bank refused (token)\n");
+            return -1;
+        }
+    }
+    if (vw2__2d_tail(r, ns, "race", NULL, &why)) {
+        fprintf(stderr, "[wisdom2] il2d real bank refused (%s)\n",
+                why ? why : "?");
+        return -1;
+    }
+    return vw2__2d_bank(st, r, 0);
+}
+
 
 #endif /* VFFT_WISDOM2_2D_READER_H */

@@ -1018,7 +1018,52 @@ not a vs-MKL ratio. Cooled, median of 2. Source: `bench_1d_vs_mkl.c --2dc2r --mt
 > row work. Full-arsenal milestone: **every 2D real path now threads** (r2c forward + c2r
 > backward); parallelizing the column passes is the remaining lever.
 
-## 5. vs FFTW3 — single-thread
+### 2D R2C/C2R — the NATIVE INTERLEAVED tier vs MKL CCE (2026-08-26)
+
+The true-IL 2D real tier (`docs/roadmap/fft2d_real_il_design.md`: batched/ROWSPLIT
+zr2c row doors + the n1c/t2c column chain with the L2-banded walk; pure IL end to
+end, no split pads) — since M3 (2026-08-26) **THE serving** for every interleaved
+2D real caller. Verdicts (row route `rw=`, band width `wl=`, chain) are raced at
+create and banked in the direction-shared `lay=il` cells. vs **MKL's real CCE 2D
+arm** (rank-2 `DFTI_REAL`, `CONJUGATE_EVEN_STORAGE=COMPLEX_COMPLEX`, out-of-place,
+single-thread). Same-run 5-arm race, per-round order flip, cachebust, medians of 9
+rounds, core-2-pinned at HIGH priority, all creates warm (banked routes serving).
+Output is scrambled along N1 (the tier's contract) — correctness gates are the
+elementwise naive compare + pair roundtrip in `il2d_real_gate` (e-15/e-16), plus
+each bench cell's own-pair roundtrip. Source: `bench_1d_vs_mkl.c --2dreal`.
+
+```
+ N1×N2        r2c nat/MKL   c2r nat/MKL
+────────────────────────────────────────
+ 64×64           1.46×         1.09×
+ 256×256         1.37×         1.50×
+ 512×512         2.22×         2.18×
+ 1024×1024       1.66×         2.25×
+ 16×4096         1.29×         1.13×
+ 4096×16         1.03×         1.02×
+ 32×1024         1.49×         1.07×
+ 64×256          1.68×         1.33×
+ 4096×64         1.83×         1.66×
+ 8192×64         2.20×         1.90×
+────────────────────────────────────────
+ 20/20 rows ≥ parity vs MKL.
+ Median r2c ~1.5×, c2r ~1.4×.
+```
+
+> **The native IL 2D real tier beats or matches MKL CCE on every cell, both
+> directions — up to 2.2×/2.25×.** Three constructions carry it: (a) zr2c row
+> doors — batched TC per-row at mid/large N2, the ROWSPLIT band route ("IL at
+> the boundary, split inside", fused single-pass boundaries) at tiny N2, raced
+> per cell (`rw=`); (b) the L2-banded column walk (`wl=` raced incl.
+> L2-admitted stage spans; rows stay outside the walk — the Hermitian fold
+> does not commute with column stages) — the knee-cell wins (4096×64, 8192×64)
+> are its; (c) input-preserving OOP c2r via the column-inverse scratch plane —
+> a contract MKL/FFTW don't offer (`FFTW_DESTROY_INPUT`), at no measured cost:
+> c2r now *beats* r2c at the big squares, the exact opposite of the split
+> tier's c2r-trails story above. 4096×16 (4096 16-point rows — the adversarial
+> aspect) is the one parity cell. Single host, thermally noisy (§8 caveats
+> apply); same-run arms only — the MKL column comes from the identical process
+> and rounds.
 
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
