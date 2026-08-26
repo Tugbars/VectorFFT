@@ -608,7 +608,8 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
  * unbanded — rows sit OUTSIDE the walk per §2.5, tfuse structurally
  * absent for real). ABSENT axis -> -1 = unraced. */
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
-                                   int *Rs, int *nst, int *rw, int *wl)
+                                   int *Rs, int *nst, int *rw, int *wl,
+                                   int *cmt, int *cmtt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -621,6 +622,14 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
     if (!cv) return 0;                       /* a veneer/ANY row: refuse */
     if (rw) { const char *v = vw2_rec_get(r, "rw"); *rw = v ? atoi(v) : -1; }
     if (wl) { const char *v = vw2_rec_get(r, "wl"); *wl = v ? atoi(v) : -1; }
+    /* cmt = the COLUMN-PASS MT verdict (1 = thread it, 0 = serial), and
+     * cmtt = the thread count it was RACED AT. A verdict raced at T=4
+     * must never serve a T=8 request, so the caller compares cmtt to its
+     * own pool and re-races on a mismatch (the nthreads key axis
+     * expressed as payload + validity, without disturbing the key
+     * format every reader/writer/gate shares). */
+    if (cmt) { const char *v = vw2_rec_get(r, "cmt"); *cmt = v ? atoi(v) : -1; }
+    if (cmtt) { const char *v = vw2_rec_get(r, "cmtt"); *cmtt = v ? atoi(v) : -1; }
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -637,7 +646,7 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
 
 static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  const int *Rs, int nst, int rw, int wl,
-                                 double ns)
+                                 int cmt, int cmtt, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -668,6 +677,20 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
         if (vw2_rec_set(r, 1, "wl", b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real wl bank refused (token)\n");
+            return -1;
+        }
+    }
+    if (cmt >= 0 && cmtt > 0) {   /* the column-MT verdict + its T */
+        snprintf(b, sizeof b, "%d", cmt);
+        if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) {
+            vw2_rec_free(r);
+            fprintf(stderr, "[wisdom2] il2d real cmt bank refused (token)\n");
+            return -1;
+        }
+        snprintf(b, sizeof b, "%d", cmtt);
+        if (vw2_rec_set(r, 1, "cmtt", b) != VW2_OK) {
+            vw2_rec_free(r);
+            fprintf(stderr, "[wisdom2] il2d real cmtt bank refused (token)\n");
             return -1;
         }
     }
