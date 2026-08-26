@@ -580,6 +580,97 @@ int main(int argc, char **argv)
         }
         vfft_set_num_threads(1);
     }
+    /* ── INC-3b: the BANDED path with the columns FORCED threaded, so
+     * the digit-split prefix + the band arm are deterministically
+     * exercised (the cells above bank colmt=0 honestly, which would
+     * leave this code untested). A banded cell needs wl > 0, so use a
+     * square big enough for the wl race to pick a band. */
+    {
+        static const int BC[][2] = { { 256, 256 } };
+        int bi;
+        vfft_set_num_threads(8);
+        for (bi = 0; bi < 1; bi++) {
+            const int N1 = BC[bi][0], N2 = BC[bi][1];
+            const int hp1 = N2 / 2 + 1;
+            const size_t RN = (size_t)N1 * N2, CN = (size_t)N1 * hp1;
+            double *x = malloc(RN * 8), *zs = malloc(2 * CN * 8);
+            double *zm = malloc(2 * CN * 8), *xs = malloc(RN * 8);
+            double *xm = malloc(RN * 8);
+            vfft_config_t cfg;
+            vfft_plan fs, fm, cs, cm;
+            long c0, c1;
+            size_t i;
+            if (!x || !zs || !zm || !xs || !xm) { printf("OOM\n"); return 2; }
+            for (i = 0; i < RN; i++)
+                x[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&cfg, 0, sizeof cfg);
+            cfg.transform = VFFT_R2C;
+            cfg.placement = VFFT_OUTOFPLACE;
+            cfg.rigor = VFFT_MEASURE;
+            cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+            cfg.howmany = 1;
+            cfg.order = VFFT_ORDER_DEFAULT;
+            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.wisdom = W; cfg.wisdom_write = 0;
+#ifdef _WIN32
+            _putenv("VFFT_IL2D_NO_COLMT=1");   /* columns SERIAL */
+#else
+            putenv("VFFT_IL2D_NO_COLMT=1");
+#endif
+            cfg.nthreads = 8;
+            fs = vfft_create(&cfg);
+            cfg.transform = VFFT_C2R; cs = vfft_create(&cfg);
+#ifdef _WIN32
+            _putenv("VFFT_IL2D_NO_COLMT=0");   /* columns THREADED */
+#else
+            putenv("VFFT_IL2D_NO_COLMT=0");
+#endif
+            cfg.transform = VFFT_R2C; fm = vfft_create(&cfg);
+            cfg.transform = VFFT_C2R; cm = vfft_create(&cfg);
+#ifdef _WIN32
+            _putenv("VFFT_IL2D_NO_COLMT=");
+#else
+            unsetenv("VFFT_IL2D_NO_COLMT");
+#endif
+            if (!fs || !fm || !cs || !cm) {
+                printf("  COLMT %4dx%-4d create FAIL\n", N1, N2);
+                fails++;
+                continue;
+            }
+            c0 = vfft_il2d_col_mt_passes();
+            vfft_execute(fm, VFFT_FORWARD, x, NULL, zm, NULL);
+            c1 = vfft_il2d_col_mt_passes();
+            vfft_execute(fs, VFFT_FORWARD, x, NULL, zs, NULL);
+            if (c1 == c0) {
+                printf("  COLMT %4dx%-4d columns NEVER THREADED "
+                       "*** FAIL ***\n", N1, N2);
+                fails++;
+            }
+            if (memcmp(zs, zm, 2 * CN * 8) != 0) {
+                printf("  COLMT %4dx%-4d r2c threaded != serial "
+                       "*** FAIL ***\n", N1, N2);
+                fails++;
+            } else {
+                printf("  COLMT %4dx%-4d r2c colmt-passes=%ld  "
+                       "threaded==serial BITWISE  PASS\n",
+                       N1, N2, c1 - c0);
+            }
+            vfft_execute(cm, VFFT_BACKWARD, zm, NULL, xm, NULL);
+            vfft_execute(cs, VFFT_BACKWARD, zm, NULL, xs, NULL);
+            if (memcmp(xs, xm, RN * 8) != 0) {
+                printf("  COLMT %4dx%-4d c2r threaded != serial "
+                       "*** FAIL ***\n", N1, N2);
+                fails++;
+            } else {
+                printf("  COLMT %4dx%-4d c2r threaded==serial BITWISE"
+                       "  PASS\n", N1, N2);
+            }
+            vfft_destroy(fs); vfft_destroy(fm);
+            vfft_destroy(cs); vfft_destroy(cm);
+            free(x); free(zs); free(zm); free(xs); free(xm);
+        }
+        vfft_set_num_threads(1);
+    }
     if (W) vfft_wisdom_free(W);
     printf("\n%s (%d fail, %d skip)\n",
            fails ? "*** FAIL ***" : "=== ALL PASS ===", fails, skips);
