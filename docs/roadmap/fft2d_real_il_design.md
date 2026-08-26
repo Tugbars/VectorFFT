@@ -91,7 +91,8 @@ between the row and column passes (2D), column twiddles column-invariant
    c2c tier's construction law.
    **The ROWSPLIT route (SHIPPED 2026-08-26, owner-directed: "il at the
    boundary, split inside" — the cascade pattern, not the banned
-   wrapper)**: for the tiny-N2 regime where the per-row toll dominates
+   wrapper; execution design of record:
+   `docs/design/rowsplit_rowmode.md`)**: for the tiny-N2 regime where the per-row toll dominates
    (~30 ns/row of dispatch around ~15 ns of math), rows run in bands of
    W — SIMD transpose rows→lane-major, ONE split r2c/c2r front-door
    execute at (N2, K=W) (the raced lane-batch engine), transpose+zip
