@@ -581,12 +581,18 @@ int main(int argc, char **argv)
         vfft_set_num_threads(1);
     }
     /* ── INC-3b: the BANDED path with the columns FORCED threaded, so
-     * the digit-split prefix + the band arm are deterministically
-     * exercised (the cells above bank colmt=0 honestly, which would
-     * leave this code untested). A banded cell needs wl > 0, so use a
-     * square big enough for the wl race to pick a band. */
+     * the digit-split prefix AND the band arm are deterministically
+     * exercised. Two pins are needed, and the reason matters:
+     *   - VFFT_IL2D_NO_COLMT=0 forces the column MT on (the cells above
+     *     honestly bank colmt=0, which would leave this untested);
+     *   - VFFT_IL2D_WL forces a BAND, so cut > 0 and a prefix stage
+     *     exists at all.
+     * The cell must also have D = N1/R0 >= T at stage 0 or the digit
+     * split declines and runs serial — 256x256 (chain 64.4 => D=4)
+     * SILENTLY did exactly that, which is why 1024x16 (chain 64.16 =>
+     * D=16, and L1=16 divides wl=64 so cut=1) is the cell here. */
     {
-        static const int BC[][2] = { { 256, 256 } };
+        static const int BC[][2] = { { 1024, 16 } };
         int bi;
         vfft_set_num_threads(8);
         for (bi = 0; bi < 1; bi++) {
@@ -613,8 +619,10 @@ int main(int argc, char **argv)
             cfg.layout = VFFT_LAYOUT_INTERLEAVED;
             cfg.wisdom = W; cfg.wisdom_write = 0;
 #ifdef _WIN32
+            _putenv("VFFT_IL2D_WL=64");        /* force a band => cut>0 */
             _putenv("VFFT_IL2D_NO_COLMT=1");   /* columns SERIAL */
 #else
+            putenv("VFFT_IL2D_WL=64");
             putenv("VFFT_IL2D_NO_COLMT=1");
 #endif
             cfg.nthreads = 8;
@@ -629,8 +637,10 @@ int main(int argc, char **argv)
             cfg.transform = VFFT_C2R; cm = vfft_create(&cfg);
 #ifdef _WIN32
             _putenv("VFFT_IL2D_NO_COLMT=");
+            _putenv("VFFT_IL2D_WL=");
 #else
             unsetenv("VFFT_IL2D_NO_COLMT");
+            unsetenv("VFFT_IL2D_WL");
 #endif
             if (!fs || !fm || !cs || !cm) {
                 printf("  COLMT %4dx%-4d create FAIL\n", N1, N2);
