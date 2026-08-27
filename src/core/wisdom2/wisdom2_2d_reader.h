@@ -518,7 +518,8 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
  * carry (v1.2 architecture, proven). */
 static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
                                          int N2, int *Rs, int *nst,
-                                         int *wl, int *tf, int *ro)
+                                         int *wl, int *tf, int *ro,
+                                         int *cmt, int *cmtt)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -533,6 +534,10 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
     if (wl) { const char *v = vw2_rec_get(r, "wl"); *wl = v ? atoi(v) : -1; }
     if (tf) { const char *v = vw2_rec_get(r, "tf"); *tf = v ? atoi(v) : -1; }
     if (ro) { const char *v = vw2_rec_get(r, "ro"); *ro = v ? atoi(v) : -1; }
+    /* the MT verdict + the thread count it was RACED AT (validity: a
+     * cmtt != the requesting pool re-races — same law as the rl cell) */
+    if (cmt) { const char *v = vw2_rec_get(r, "cmt"); *cmt = v ? atoi(v) : -1; }
+    if (cmtt) { const char *v = vw2_rec_get(r, "cmtt"); *cmtt = v ? atoi(v) : -1; }
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -549,7 +554,8 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
 
 static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
                                        const int *Rs, int nst,
-                                       int wl, int tf, int ro, double ns)
+                                       int wl, int tf, int ro,
+                                       int cmt, int cmtt, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -579,6 +585,12 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
     if (ro >= 0) {
         snprintf(b, sizeof b, "%d", ro);
         if (vw2_rec_set(r, 1, "ro", b) != VW2_OK) goto tokfail;
+    }
+    if (cmt >= 0 && cmtt > 0) {   /* the MT verdict + its raced-at T */
+        snprintf(b, sizeof b, "%d", cmt);
+        if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) goto tokfail;
+        snprintf(b, sizeof b, "%d", cmtt);
+        if (vw2_rec_set(r, 1, "cmtt", b) != VW2_OK) goto tokfail;
     }
     if (0) {
     tokfail:

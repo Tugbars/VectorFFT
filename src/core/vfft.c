@@ -416,6 +416,16 @@ struct vfft_plan_s
      * route). Env-raced (VFFT_IL2D_ROWOOP=1); banked with §10. */
     int il2d_rowoop;
     struct vfft_plan_s *il2d_rowo; /* the OOP child (route 1) */
+    /* ── c2c MT (INC-C, docs/design/il2d_real_mt.md ported): per-worker
+     * row state. The serving row path is ONE shared child through ONE
+     * shared rowscr — two concurrent bands would interleave plan state
+     * and produce garbage, so worker t>0 gets clone slot t-1, verified
+     * route-equivalent at build (_tc_clone_equiv). Worker 0 (the
+     * caller) keeps the primary child/scratch. roww_n == 0 => MT
+     * declines (the engagement counter shows it). */
+    struct vfft_plan_s **il2d_roww; /* clone row children, T-1 slots */
+    int il2d_roww_n;
+    double *il2d_rowscr_w;          /* rowoop: T-1 slots x 2*N2 */
     double *il2d_rowscr;           /* 2*N2 doubles */
     /* staged band route (§10b): copy each band into scratch at il2d_pitch
      * (skew-selected so every suffix-stage leg stride and the leaf stride
@@ -2699,6 +2709,190 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     return 1;
 }
 
+/* ══ c2c MT (INC-C, the real tier's design ported) ═══════════════════
+ * The structural difference from real: rows COMMUTE with column stages
+ * (both C-linear — the same fact that makes tfuse legal here and banned
+ * for real by §2.5). So a banded cell's unit of work is a SELF-CONTAINED
+ * band [suffix stages + its own fused rows]: partition bands across
+ * workers and there is no rows/columns wall and no cross-core exchange
+ * for the fused part. Only the wide prefix needs the digit split.
+ * Row execution mutates shared plan state (one child, one rowscr), so a
+ * worker t > 0 runs its CLONE (il2d_roww[t-1], route-equivalence-checked
+ * at build) and, on the rowoop route, its own rowscr slot. Every arm is
+ * a loop restriction of the serving walk => MT == ST bitwise. */
+static void _il2d_row_exec_t(struct vfft_plan_s *h, int tid,
+                             vfft_dir_t dir, double *row, size_t rn)
+{
+    if (tid <= 0)
+    {
+        _il2d_row_exec(h, dir, row, rn);
+        return;
+    }
+    {
+        struct vfft_plan_s *c = h->il2d_roww[tid - 1];
+        if (h->il2d_rowoop)
+        {
+            double *scr = h->il2d_rowscr_w + 2 * rn * (size_t)(tid - 1);
+            vfft_execute((vfft_plan)c, dir, row, NULL, scr, NULL);
+            memcpy(row, scr, 2 * rn * sizeof(double));
+        }
+        else
+            vfft_execute((vfft_plan)c, dir, row, NULL, row, NULL);
+    }
+}
+
+typedef struct
+{
+    struct vfft_plan_s *h;
+    const double *src;
+    double *dst;
+    vfft_dir_t dir;
+    int fwd;
+    size_t lo, hi; /* band range (mode 0), column range (1), row range (2) */
+    int mode, tid;
+} _il2d_c2c_mt_arg;
+
+static void _il2d_c2c_mt_tramp(void *v)
+{
+    _il2d_c2c_mt_arg *a = (_il2d_c2c_mt_arg *)v;
+    struct vfft_plan_s *h = a->h;
+    const size_t rn = (size_t)h->N2;
+    vfft_il2p_fn const *fns = a->fwd ? h->il2d_f : h->il2d_b;
+    double *const *tabs = a->fwd ? h->il2d_tf : h->il2d_tb;
+    size_t i, b;
+    switch (a->mode)
+    {
+    case 0: /* bands: suffix stages, then (tfuse) the band's rows —
+             * rows LAST in the band in BOTH directions, the serving
+             * order (bwd runs the reversed suffix via !fwd) */
+        for (b = a->lo; b < a->hi; b++)
+        {
+            const size_t b0 = b * (size_t)h->il2d_wl;
+            const double *bs = (a->fwd && h->il2d_cut > 0)
+                                   ? a->dst + 2 * b0 * rn
+                                   : a->src + 2 * b0 * rn;
+            double *bd = a->dst + 2 * b0 * rn;
+            _il2d_col_stages(bs, bd, h->il2d_wl, rn, h->il2d_cut,
+                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                             tabs, !a->fwd);
+            if (h->il2d_tfuse)
+                for (i = 0; i < (size_t)h->il2d_wl; i++)
+                    _il2d_row_exec_t(h, a->tid, a->dir,
+                                     bd + 2 * i * rn, rn);
+        }
+        break;
+    case 1: /* column strip: the whole chain over [lo,hi) columns */
+        _il2d_col_pass_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
+                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                             tabs, !a->fwd);
+        break;
+    default: /* row slab on the destination plane */
+        for (i = a->lo; i < a->hi; i++)
+            _il2d_row_exec_t(h, a->tid, a->dir, a->dst + 2 * i * rn,
+                             rn);
+    }
+}
+
+/* Dispatch one phase across T workers (caller participates as tid 0). */
+static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
+                               double *dst, vfft_dir_t dir, int fwd,
+                               int mode, size_t units, int T)
+{
+    _il2d_c2c_mt_arg a[64];
+    int t, nd = 0;
+    for (t = 0; t < T; t++)
+    {
+        a[t].h = h;
+        a[t].src = src;
+        a[t].dst = dst;
+        a[t].dir = dir;
+        a[t].fwd = fwd;
+        a[t].mode = mode;
+        a[t].tid = t;
+        a[t].lo = units * (size_t)t / (size_t)T;
+        a[t].hi = units * (size_t)(t + 1) / (size_t)T;
+    }
+    for (t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_c2c_mt_tramp,
+                              &a[t]);
+    _il2d_c2c_mt_tramp(&a[0]);
+    if (nd)
+        _stride_pool_wait_all();
+}
+
+/* Returns 1 when it ran threaded, 0 when the caller must run serial. */
+static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
+                        double *dre, vfft_dir_t dir, int T)
+{
+    const size_t rn = (size_t)h->N2;
+    const int fwd = (dir == VFFT_FORWARD);
+    int s;
+    if (h->il2d_staged)
+        return 0; /* env-experimental route: one shared band scratch —
+                   * per-worker slots are not built for it */
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64;
+    if (T < 2 || h->il2d_roww_n < T - 1)
+        return 0; /* every arm here runs rows => clones are mandatory */
+    if (h->il2d_wl > 0)
+    {
+        /* fewer bands than workers is a CLAMP, not a decline: 4 bands
+         * across 4 workers still beats serial, and the prefix digit
+         * split keeps the full T regardless (its axis is D, not nb). */
+        const size_t nb = (size_t)h->N / (size_t)h->il2d_wl;
+        const int Tb = nb < (size_t)T ? (int)nb : T;
+        if (Tb < 2)
+            return 0;
+        if (fwd && h->il2d_cut > 0)
+            for (s = 0; s < h->il2d_cut; s++)
+            {
+                const double *ssrc = (s == 0) ? sre : dre;
+                if (!_il2d_stage_digits_mt(ssrc, dre, h->N, rn, rn,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_f[s], h->il2d_tf[s],
+                                           T))
+                    _il2d_col_stages(ssrc, dre, h->N, rn, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_f,
+                                     h->il2d_tf, 0);
+            }
+        _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 0, nb, Tb);
+        if (!h->il2d_tfuse)
+            _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N,
+                               T);
+        if (!fwd && h->il2d_cut > 0)
+            for (s = h->il2d_cut - 1; s >= 0; s--)
+                if (!_il2d_stage_digits_mt(dre, dre, h->N, rn, rn,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_b[s], h->il2d_tb[s],
+                                           T))
+                    _il2d_col_stages(dre, dre, h->N, rn, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_b,
+                                     h->il2d_tb, 0);
+        _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
+        return 1;
+    }
+    /* unbanded: column strips, then row slabs (rows follow the column
+     * pass in the serving order for BOTH directions — rows commute) */
+    {
+        const int Ts = rn < (size_t)T ? (int)rn : T;
+        const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
+        if (Ts < 2 && Tr < 2)
+            return 0;
+        if (Ts >= 2)
+            _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 1, rn, Ts);
+        else
+            _il2d_col_pass(sre, dre, h->N, rn, rn, h->il2d_nst,
+                           h->il2d_R, h->il2d_L,
+                           fwd ? h->il2d_f : h->il2d_b,
+                           fwd ? h->il2d_tf : h->il2d_tb, !fwd);
+        _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+    }
+    _vfft_il2d_col_mt_count++;
+    return 1;
+}
+
 /* derive the banded walk's cut for a wl candidate: the first suffix
  * stage whose span divides wl. -1 = illegal (stay unbanded). */
 static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
@@ -3456,9 +3650,147 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         }
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
-                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop, best);
+                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
+                         -1, -1, best);
     _vw2_persist(W, cfg);
     free(z);
+}
+
+/* ── c2c MT clones (INC-C). Worker t > 0 needs its own row child: the
+ * serving path runs ONE plan through ONE rowscr, and two concurrent
+ * bands interleaving that state produce garbage, not slowness. Clones
+ * are built for the BANKED route only, verified route-equivalent
+ * against the primary (_tc_clone_equiv — the TC army's structural
+ * check, valid on any K=1 c2c plan), and required pool-free (a K=1
+ * plan owns no TC batch, but the assert keeps the invariant explicit).
+ * Any failure tears the set down: MT then declines and the engagement
+ * counter shows it — never a half-cloned dispatch. */
+static int _tc_clone_equiv(const struct vfft_plan_s *a,
+                           const struct vfft_plan_s *b);
+static void _il2d_c2c_build_clones(struct vfft_plan_s *h,
+                                   const vfft_config_t *cfg, int T)
+{
+    const int n = (T > 64 ? 64 : T) - 1;
+    const struct vfft_plan_s *prim =
+        h->il2d_rowoop ? h->il2d_rowo : h->il2d_row;
+    vfft_config_t rc;
+    int t;
+    if (n <= 0 || h->il2d_roww || !prim)
+        return;
+    memset(&rc, 0, sizeof rc);
+    rc.transform = VFFT_C2C;
+    rc.placement = h->il2d_rowoop ? VFFT_OUTOFPLACE : VFFT_INPLACE;
+    rc.rigor = cfg->rigor;
+    rc.dims = 1;
+    rc.n[0] = h->N2;
+    rc.howmany = 1;
+    rc.order = VFFT_ORDER_NATURAL;
+    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+    rc.nthreads = 1;
+    rc.wisdom = cfg->wisdom;
+    rc.wisdom_write = 0; /* clones read warm wisdom, never bank */
+    h->il2d_roww = (struct vfft_plan_s **)calloc((size_t)n,
+                                                 sizeof *h->il2d_roww);
+    if (!h->il2d_roww)
+        return;
+    if (h->il2d_rowoop)
+    {
+        h->il2d_rowscr_w = (double *)malloc(
+            2 * (size_t)h->N2 * (size_t)n * sizeof(double));
+        if (!h->il2d_rowscr_w)
+        {
+            free(h->il2d_roww);
+            h->il2d_roww = NULL;
+            return;
+        }
+    }
+    for (t = 0; t < n; t++)
+    {
+        struct vfft_plan_s *c =
+            (struct vfft_plan_s *)vfft_create(&rc);
+        h->il2d_roww[t] = c;
+        if (!c || !_tc_clone_equiv(prim, c) || c->tcb || c->tcbw)
+        {
+            int u;
+            _vfft_warn("il2d c2c MT: row clone %d %s at N2=%d — MT "
+                       "declines for this plan",
+                       t, c ? "route-mismatched" : "failed to create",
+                       h->N2);
+            for (u = 0; u <= t; u++)
+                if (h->il2d_roww[u])
+                    vfft_destroy(h->il2d_roww[u]);
+            free(h->il2d_roww);
+            h->il2d_roww = NULL;
+            free(h->il2d_rowscr_w);
+            h->il2d_rowscr_w = NULL;
+            return;
+        }
+    }
+    h->il2d_roww_n = n;
+}
+
+/* ── the c2c MT verdict race (same law as the real tier's): serial vs
+ * threaded FULL walk through the very code execute serves with, min-of-3
+ * alternated on a scratch plane, banked as cmt= + cmtt= (the T raced
+ * at) in the cell's chain row. The "no" is banked exactly like the
+ * "yes". If MT cannot engage at all (no clones, too few units), that IS
+ * the verdict: cmt=0. */
+static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
+                        double *dre, vfft_dir_t dir, int T);
+static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
+                              struct vfft_wisdom_s *W,
+                              const vfft_config_t *cfg, int N1, int N2)
+{
+    const size_t PN = (size_t)N1 * N2;
+    double *z = (double *)malloc(2 * PN * sizeof(double));
+    double st = 1e300, mt = 1e300;
+    int p;
+    size_t i;
+    if (!z)
+        return;
+    for (i = 0; i < 2 * PN; i++)
+        z[i] = 1.0 + 1e-6 * (double)(i & 511);
+    if (!_il2d_c2c_mt(h, z, z, VFFT_FORWARD, h->nthreads))
+    {
+        h->il2d_colmt = 0; /* cannot engage — that IS the verdict */
+        free(z);
+        vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
+                             h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
+                             0, h->nthreads, 0.0);
+        _vw2_persist(W, cfg);
+        return;
+    }
+    for (p = 0; p < 3; p++)
+    {
+        struct timespec t0, t1;
+        double d;
+        h->il2d_colmt = 0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        vfft_execute((vfft_plan)h, VFFT_FORWARD, z, NULL, z, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < st)
+            st = d;
+        h->il2d_colmt = 1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        vfft_execute((vfft_plan)h, VFFT_FORWARD, z, NULL, z, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < mt)
+            mt = d;
+    }
+    h->il2d_colmt = (mt < st);
+    free(z);
+    if (getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[il2d-c2c] colmt race %dx%d T=%d: st=%.0f "
+                        "mt=%.0f -> %s\n",
+                N1, N2, h->nthreads, st, mt,
+                h->il2d_colmt ? "THREADED" : "serial");
+    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
+                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
+                         h->il2d_colmt, h->nthreads,
+                         h->il2d_colmt ? mt : st);
+    _vw2_persist(W, cfg);
 }
 
 /* zr2c (even N, K==1, INTERLEAVED): x[N] read as z[N/2] -> child c2c(N/2) NATURAL -> zr2c.h fold;
@@ -5070,7 +5402,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                                  il2d_b, &il2d_nst);
                 else if (vw2_2d_il_chain_lookup(&W->vw2, N1, N2, il2d_R,
                                                 &il2d_nst, &il2d_bwl,
-                                                &il2d_btf, &il2d_bro) &&
+                                                &il2d_btf, &il2d_bro,
+                                                &il2d_bcmt,
+                                                &il2d_bcmtt) &&
                          _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
                     chain_ok = 1;
@@ -5099,7 +5433,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                             chain_ok = 1;
                             vw2_2d_il_chain_bank(&W->vw2, N1, N2,
                                                  il2d_R, il2d_nst,
-                                                 -1, -1, -1, bns);
+                                                 -1, -1, -1, -1, -1,
+                                                 bns);
                             _vw2_persist(W, cfg);
                         }
                     }
@@ -5611,6 +5946,22 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
             _il2d_axis_race(h, W, cfg, N1, N2);
+        /* INC-C: c2c MT. Build the per-worker row clones (the serving
+         * row path mutates shared plan state), then serve the banked
+         * cmt verdict ONLY at the T it was raced at, else race and
+         * bank. Runs AFTER the axis race — the row route (rowoop) the
+         * clones must match is final only then. */
+        if (h->transform == VFFT_C2C && h->il2d_row && h->nthreads > 1)
+        {
+            const char *ce = getenv("VFFT_IL2D_NO_COLMT");
+            _il2d_c2c_build_clones(h, cfg, h->nthreads);
+            if (ce)
+                h->il2d_colmt = (atoi(ce) == 0);
+            else if (il2d_bcmt >= 0 && il2d_bcmtt == h->nthreads)
+                h->il2d_colmt = il2d_bcmt;
+            else
+                _il2d_c2c_mt_race(h, W, cfg, N1, N2);
+        }
         /* ── the REAL tier's row-route race (per-row door vs ROWSPLIT W
          * pool): runs only when env is FULLY silent (an env-pinned chain
          * skips the banked-row read AND must never bank — env beats
@@ -8976,6 +9327,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                           : rn;
                     if (!dre)
                         dre = sre; /* in-place convenience */
+                    /* INC-C: the raced MT walk (bands are self-contained
+                     * [suffix + fused rows] units because rows commute —
+                     * the same fact that legalizes tfuse). Declines back
+                     * to the serial walk below when it cannot engage. */
+                    if (h->il2d_colmt && h->nthreads > 1 &&
+                        _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
+                        return;
                     /* strip loop-interchange: all stages depth-first per
                      * column strip — the strip stays cache-resident
                      * across stages (one DRAM sweep, not nst). Legal
@@ -9438,6 +9796,10 @@ void vfft_destroy(vfft_plan h)
             vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
             if (h->il2d_rowo)
                 vfft_destroy(h->il2d_rowo);
+            for (s2 = 0; s2 < h->il2d_roww_n; s2++)
+                vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
+            free(h->il2d_roww);
+            free(h->il2d_rowscr_w);
             free(h->il2d_rowscr);
             free(h->il2d_bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
