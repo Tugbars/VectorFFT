@@ -2371,7 +2371,11 @@ static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff,
 static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
                            int *lens, int *n, int *dropped)
 {
-    static const int POOL[] = { 64, 32, 16, 8, 4 };
+    static const int POOL[] = { 64, 32, 16, 8, 4,
+                                /* odd radices (2026-08-27): odd-N1
+                                 * chains — emitted t2c/n1c kinds */
+                                27, 25, 21, 19, 17, 15, 13, 11, 9, 7,
+                                5, 3 };
     int p;
     if (L == 1)
     {
@@ -2389,7 +2393,7 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
     }
     if (depth >= 4)
         return;
-    for (p = 0; p < 5; p++)
+    for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         if (L % POOL[p] == 0)
         {
             cur[depth] = POOL[p];
@@ -3453,7 +3457,9 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
 static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
                              vfft_il2p_fn *fb, int *nst)
 {
-    static const int POOL[] = { 64, 32, 16, 8, 4 };
+    static const int POOL[] = { 64, 32, 16, 8, 4,
+                                27, 25, 21, 19, 17, 15, 13, 11, 9, 7,
+                                5, 3 };
     int L = N1, m = 0;
     /* env override first: VFFT_IL2D_CHAIN="64.16" (dot-separated radices,
      * product must equal N1) — the raced-axis escape hatch, env BEATS the
@@ -3501,7 +3507,7 @@ static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
         int p, R = 0;
         if (m >= 8)
             return 0;
-        for (p = 0; p < 5; p++)
+        for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
         {
             const int r = POOL[p];
             if (L % r == 0 && (L / r == 1 || L / r >= 4))
@@ -3519,6 +3525,123 @@ static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
         return 0;
     *nst = m;
     return 1;
+}
+
+/* ── the COLUMN-AXIS BLUESTEIN, extracted (2026-08-27) so THREE users
+ * share one implementation: the c2c no-chain path, the chain-vs-blu
+ * RACE (the odd chains are now emitted, so both arms exist for odd
+ * N1), and the REAL tier (rn = hp1 there; the pipeline is C-linear
+ * over any count). ─────────────────────────────────────────────── */
+
+/* build the M-chain + tables + chirps + comb-order kernels + scratch
+ * into the CALLER's arrays. Returns M (>0) or 0. rn = the plane's row
+ * width in complex (N2 for c2c, hp1 for real). */
+static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
+                             vfft_il2p_fn *fb, int *nst);
+static void _il2d_col_pass(const double *src, double *dst, int N1,
+                           size_t rn, size_t wc, int nst, const int *Rst,
+                           const int *Lst, vfft_il2p_fn const *fns,
+                           double *const *tabs, int reverse);
+static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
+                              double **tf, double **tb);
+static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
+                           vfft_il2p_fn *ff, vfft_il2p_fn *fb,
+                           double **tf, double **tb, int *nst,
+                           double **chf, double **chb, double **kf,
+                           double **kb, double **scr)
+{
+    int M = 16, s2, ok = 0;
+    double *za = NULL, *zb2 = NULL;
+    while (M < 2 * N1 - 1)
+        M <<= 1;
+    *chf = *chb = *kf = *kb = *scr = NULL;
+    if (!_il2d_build_chain(M, Rs, ff, fb, nst) ||
+        _il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
+        return 0;
+    *chf = (double *)malloc(2 * (size_t)N1 * sizeof(double));
+    *chb = (double *)malloc(2 * (size_t)N1 * sizeof(double));
+    *kf = (double *)malloc(2 * (size_t)M * sizeof(double));
+    *kb = (double *)malloc(2 * (size_t)M * sizeof(double));
+    *scr = (double *)malloc(2 * (size_t)M * rn * sizeof(double));
+    za = (double *)calloc(2 * (size_t)M, sizeof(double));
+    zb2 = (double *)malloc(2 * (size_t)M * sizeof(double));
+    if (*chf && *chb && *kf && *kb && *scr && za && zb2)
+    {
+        int r, d2;
+        for (r = 0; r < N1; r++)
+        {
+            const long long m2 = ((long long)r * r) % (2LL * N1);
+            const double a = -VFFT_IL2P_PI * (double)m2 / (double)N1;
+            (*chf)[2 * r] = cos(a);
+            (*chf)[2 * r + 1] = sin(a);
+            (*chb)[2 * r] = cos(a);
+            (*chb)[2 * r + 1] = -sin(a);
+        }
+        for (d2 = 0; d2 < 2; d2++)
+        {
+            const double *ch = d2 ? *chb : *chf;
+            double *kern = d2 ? *kb : *kf;
+            const double inv = 1.0 / (double)M;
+            memset(za, 0, 2 * (size_t)M * sizeof(double));
+            za[0] = ch[0];
+            za[1] = -ch[1];
+            for (r = 1; r < N1; r++)
+            {
+                za[2 * r] = ch[2 * r];
+                za[2 * r + 1] = -ch[2 * r + 1];
+                za[2 * (M - r)] = ch[2 * r];
+                za[2 * (M - r) + 1] = -ch[2 * r + 1];
+            }
+            _il2d_col_pass(za, zb2, M, 1, 1, *nst, Rs, Ls, ff, tf, 0);
+            for (s2 = 0; s2 < 2 * M; s2++)
+                kern[s2] = zb2[s2] * inv;
+        }
+        ok = 1;
+    }
+    free(za);
+    free(zb2);
+    if (!ok)
+    {
+        free(*chf); free(*chb); free(*kf); free(*kb); free(*scr);
+        *chf = *chb = *kf = *kb = *scr = NULL;
+        for (s2 = 0; s2 < *nst; s2++)
+        {
+            free(tf[s2]); tf[s2] = NULL;
+            free(tb[s2]); tb[s2] = NULL;
+        }
+        return 0;
+    }
+    return M;
+}
+
+/* the blu column pipeline over an N1 x rn plane (explicit args — the
+ * execute branches and the race both serve through THIS). reverse = the
+ * inverse transform (conjugated chirp/kernel, the caller passes them).
+ * src/dst may alias. */
+static void _il2d_blu_cols(const double *src, double *dst, int N1,
+                           size_t rn, int M, int nst, const int *Rs,
+                           const int *Ls, vfft_il2p_fn const *ff,
+                           vfft_il2p_fn const *fb, double *const *tf,
+                           double *const *tb, const double *ch,
+                           const double *kn, double *scr)
+{
+    long r2;
+    memset(scr + 2 * (size_t)N1 * rn, 0,
+           2 * (size_t)(M - N1) * rn * sizeof(double));
+    for (r2 = 0; r2 < N1; r2++)
+        _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
+                       src + 2 * (size_t)r2 * rn, ch[2 * r2],
+                       ch[2 * r2 + 1], rn);
+    _il2d_col_pass(scr, scr, M, rn, rn, nst, Rs, Ls, ff, tf, 0);
+    for (r2 = 0; r2 < M; r2++)
+        _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
+                       scr + 2 * (size_t)r2 * rn, kn[2 * r2],
+                       kn[2 * r2 + 1], rn);
+    _il2d_col_pass(scr, scr, M, rn, rn, nst, Rs, Ls, fb, tb, 1);
+    for (r2 = 0; r2 < N1; r2++)
+        _il2d_row_cmul(dst + 2 * (size_t)r2 * rn,
+                       scr + 2 * (size_t)r2 * rn, ch[2 * r2],
+                       ch[2 * r2 + 1], rn);
 }
 
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
@@ -5654,91 +5777,129 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             }
             if (!chain_ok && cfg->order != VFFT_ORDER_NATURAL)
             {
-                /* ODD/PRIME N1 (2026-08-27, owner "IL needs to support
-                 * primes/odds"): the COLUMN-AXIS BLUESTEIN — struct
-                 * comment at il2d_blu. Build the pow2 M-chain + tables,
-                 * the chirp pair, and the comb-order kernels (each the
-                 * direction's wrapped conj chirp, FFT'd through the
-                 * SAME chain as an M x 1 plane, 1/M baked in). */
-                int M = 16, s2;
-                while (M < 2 * N1 - 1)
-                    M <<= 1;
-                if (_il2d_build_chain(M, il2d_R, il2d_f, il2d_b,
-                                      &il2d_nst) &&
-                    !_il2d_build_tables(M, il2d_nst, il2d_R, il2d_L,
-                                        il2d_tf, il2d_tb))
+                /* ODD/PRIME N1: the COLUMN-AXIS BLUESTEIN (struct
+                 * comment at il2d_blu; _il2d_blu_build). Reached only
+                 * when no chain exists — with the odd t2c/n1c kinds
+                 * emitted, that now means prime / unexpressible N1. */
+                il2d_blu = _il2d_blu_build(N1, (size_t)N2, il2d_R,
+                                           il2d_L, il2d_f, il2d_b,
+                                           il2d_tf, il2d_tb, &il2d_nst,
+                                           &il2d_bluchf, &il2d_bluchb,
+                                           &il2d_blukf, &il2d_blukb,
+                                           &il2d_bluscr);
+                if (il2d_blu)
+                    chain_ok = 1;
+            }
+            else if (chain_ok && cfg->order != VFFT_ORDER_NATURAL &&
+                     !getenv("VFFT_IL2D_CHAIN"))
+            {
+                /* THE RACED CHAIN ARM (owner directive): for a chain
+                 * that carries an ODD radix (the newly emitted kinds),
+                 * race it against the Bluestein column route — the two
+                 * serve DIFFERENT n1 orders (chain = scrambled comb,
+                 * blu = natural), and both are self-consistent, so the
+                 * pick is pure speed. Env VFFT_IL2D_BLU=1 pins blu,
+                 * =0 pins the chain (env never banks); unset = race
+                 * min-of-3 alternated on scratch through the SERVING
+                 * functions. pow2 chains never race (blu is pointless
+                 * there). Verdict plan-local (the wisdom banking of a
+                 * blu marker rides the layout-audit wave). */
+                int hasodd = 0, s3;
+                const char *be = getenv("VFFT_IL2D_BLU");
+                for (s3 = 0; s3 < il2d_nst; s3++)
+                    if (il2d_R[s3] & 1)
+                        hasodd = 1;
+                if (hasodd && (!be || atoi(be) == 1))
                 {
-                    const size_t cb = 2 * (size_t)N1 * sizeof(double);
-                    const size_t kb = 2 * (size_t)M * sizeof(double);
-                    il2d_bluchf = (double *)malloc(cb);
-                    il2d_bluchb = (double *)malloc(cb);
-                    il2d_blukf = (double *)malloc(kb);
-                    il2d_blukb = (double *)malloc(kb);
-                    il2d_bluscr = (double *)malloc(
-                        2 * (size_t)M * (size_t)N2 * sizeof(double));
-                    if (il2d_bluchf && il2d_bluchb && il2d_blukf &&
-                        il2d_blukb && il2d_bluscr)
+                    int bR[8], bL[8], bnst = 0, M2;
+                    vfft_il2p_fn bf[8], bb[8];
+                    double *btf[8], *btb[8];
+                    double *bchf, *bchb, *bkf, *bkb, *bscr;
+                    memset(btf, 0, sizeof btf);
+                    memset(btb, 0, sizeof btb);
+                    M2 = _il2d_blu_build(N1, (size_t)N2, bR, bL, bf, bb,
+                                         btf, btb, &bnst, &bchf, &bchb,
+                                         &bkf, &bkb, &bscr);
+                    if (M2)
                     {
-                        double *za = (double *)calloc(2 * (size_t)M,
-                                                      sizeof(double));
-                        double *zb2 = za ? (double *)malloc(kb) : NULL;
-                        int r, d2, ok = (za && zb2);
-                        for (r = 0; ok && r < N1; r++)
+                        double *sc = (double *)malloc(
+                            2 * (size_t)N1 * N2 * sizeof(double));
+                        double tc = 1e300, tbu = 1e300;
+                        int rr, use_blu = (be != NULL); /* env pin */
+                        size_t i3;
+                        if (sc && !use_blu)
                         {
-                            const long long m2 =
-                                ((long long)r * r) % (2LL * N1);
-                            const double a = -VFFT_IL2P_PI *
-                                             (double)m2 / (double)N1;
-                            il2d_bluchf[2 * r] = cos(a);
-                            il2d_bluchf[2 * r + 1] = sin(a);
-                            il2d_bluchb[2 * r] = cos(a);
-                            il2d_bluchb[2 * r + 1] = -sin(a);
-                        }
-                        for (d2 = 0; ok && d2 < 2; d2++)
-                        {
-                            const double *ch =
-                                d2 ? il2d_bluchb : il2d_bluchf;
-                            double *kern = d2 ? il2d_blukb : il2d_blukf;
-                            const double inv = 1.0 / (double)M;
-                            memset(za, 0, 2 * (size_t)M
-                                              * sizeof(double));
-                            za[0] = ch[0];
-                            za[1] = -ch[1];
-                            for (r = 1; r < N1; r++)
+                            for (i3 = 0; i3 < 2 * (size_t)N1 * N2; i3++)
+                                sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
+                            for (rr = 0; rr < 3; rr++)
                             {
-                                za[2 * r] = ch[2 * r];
-                                za[2 * r + 1] = -ch[2 * r + 1];
-                                za[2 * (M - r)] = ch[2 * r];
-                                za[2 * (M - r) + 1] = -ch[2 * r + 1];
+                                struct timespec t0, t1;
+                                double d;
+                                clock_gettime(CLOCK_MONOTONIC, &t0);
+                                _il2d_col_pass(sc, sc, N1, (size_t)N2,
+                                               (size_t)N2, il2d_nst,
+                                               il2d_R, il2d_L, il2d_f,
+                                               il2d_tf, 0);
+                                clock_gettime(CLOCK_MONOTONIC, &t1);
+                                d = (t1.tv_sec - t0.tv_sec) * 1e9
+                                    + (t1.tv_nsec - t0.tv_nsec);
+                                if (d < tc)
+                                    tc = d;
+                                clock_gettime(CLOCK_MONOTONIC, &t0);
+                                _il2d_blu_cols(sc, sc, N1, (size_t)N2,
+                                               M2, bnst, bR, bL, bf, bb,
+                                               btf, btb, bchf, bkf,
+                                               bscr);
+                                clock_gettime(CLOCK_MONOTONIC, &t1);
+                                d = (t1.tv_sec - t0.tv_sec) * 1e9
+                                    + (t1.tv_nsec - t0.tv_nsec);
+                                if (d < tbu)
+                                    tbu = d;
                             }
-                            _il2d_col_pass(za, zb2, M, 1, 1, il2d_nst,
-                                           il2d_R, il2d_L, il2d_f,
-                                           il2d_tf, 0);
-                            for (s2 = 0; s2 < 2 * M; s2++)
-                                kern[s2] = zb2[s2] * inv;
                         }
-                        free(za);
-                        free(zb2);
-                        if (ok)
+                        free(sc);
+                        if (!use_blu)
+                            use_blu = (tbu < tc);
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[il2d] N1-arm race %dx%d: "
+                                            "chain=%.0f blu=%.0f -> %s\n",
+                                    N1, N2, tc, tbu,
+                                    use_blu ? "BLUESTEIN" : "chain");
+                        if (use_blu)
                         {
-                            il2d_blu = M;
-                            chain_ok = 1;
+                            for (s3 = 0; s3 < il2d_nst; s3++)
+                            {
+                                free(il2d_tf[s3]);
+                                free(il2d_tb[s3]);
+                            }
+                            memcpy(il2d_R, bR, sizeof bR);
+                            memcpy(il2d_L, bL, sizeof bL);
+                            memcpy(il2d_f, bf, sizeof bf);
+                            memcpy(il2d_b, bb, sizeof bb);
+                            memcpy(il2d_tf, btf, sizeof btf);
+                            memcpy(il2d_tb, btb, sizeof btb);
+                            il2d_nst = bnst;
+                            il2d_blu = M2;
+                            il2d_bluchf = bchf;
+                            il2d_bluchb = bchb;
+                            il2d_blukf = bkf;
+                            il2d_blukb = bkb;
+                            il2d_bluscr = bscr;
                         }
-                    }
-                    if (!il2d_blu)
-                    {
-                        free(il2d_bluchf); il2d_bluchf = NULL;
-                        free(il2d_bluchb); il2d_bluchb = NULL;
-                        free(il2d_blukf); il2d_blukf = NULL;
-                        free(il2d_blukb); il2d_blukb = NULL;
-                        free(il2d_bluscr); il2d_bluscr = NULL;
-                        for (s2 = 0; s2 < il2d_nst; s2++)
+                        else
                         {
-                            free(il2d_tf[s2]); il2d_tf[s2] = NULL;
-                            free(il2d_tb[s2]); il2d_tb[s2] = NULL;
+                            for (s3 = 0; s3 < bnst; s3++)
+                            {
+                                free(btf[s3]);
+                                free(btb[s3]);
+                            }
+                            free(bchf); free(bchb);
+                            free(bkf); free(bkb); free(bscr);
                         }
                     }
                 }
+                else if (hasodd && be && atoi(be) == 0)
+                    ; /* env pins the chain: nothing to do */
             }
             if (!chain_ok)
             {
@@ -10242,46 +10403,18 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
                         return;
                     if (h->il2d_blu)
-                    { /* ODD/PRIME N1: the column-axis Bluestein (struct
-                       * comment at il2d_blu). modulate -> fwd M-chain ->
-                       * comb-order kernel multiply -> bwd chain (eats
-                       * the comb, x M; 1/M lives in the kernel) ->
-                       * demodulate; then the rows (commute). n1 is
-                       * NATURAL on this route. Serial v1 — the MT arms
-                       * are the noted follow-up. */
-                        const long M = h->il2d_blu;
-                        double *scr = h->il2d_bluscr;
-                        const double *ch = fwd ? h->il2d_bluchf
-                                              : h->il2d_bluchb;
-                        const double *kn = fwd ? h->il2d_blukf
-                                              : h->il2d_blukb;
-                        long r2;
-                        memset(scr + 2 * (size_t)h->N * rn, 0,
-                               2 * (size_t)(M - h->N) * rn
-                                   * sizeof(double));
-                        for (r2 = 0; r2 < h->N; r2++)
-                            _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
-                                           sre + 2 * (size_t)r2 * rn,
-                                           ch[2 * r2], ch[2 * r2 + 1],
-                                           rn);
-                        _il2d_col_pass(scr, scr, (int)M, rn, rn,
-                                       h->il2d_nst, h->il2d_R,
-                                       h->il2d_L, h->il2d_f, h->il2d_tf,
-                                       0);
-                        for (r2 = 0; r2 < M; r2++)
-                            _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
-                                           scr + 2 * (size_t)r2 * rn,
-                                           kn[2 * r2], kn[2 * r2 + 1],
-                                           rn);
-                        _il2d_col_pass(scr, scr, (int)M, rn, rn,
-                                       h->il2d_nst, h->il2d_R,
-                                       h->il2d_L, h->il2d_b, h->il2d_tb,
-                                       1);
-                        for (r2 = 0; r2 < h->N; r2++)
-                            _il2d_row_cmul(dre + 2 * (size_t)r2 * rn,
-                                           scr + 2 * (size_t)r2 * rn,
-                                           ch[2 * r2], ch[2 * r2 + 1],
-                                           rn);
+                    { /* ODD/PRIME N1: the column-axis Bluestein — the
+                       * shared pipeline (_il2d_blu_cols), then the rows
+                       * (commute). n1 NATURAL on this route. */
+                        _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_blu,
+                                       h->il2d_nst, h->il2d_R, h->il2d_L,
+                                       h->il2d_f, h->il2d_b, h->il2d_tf,
+                                       h->il2d_tb,
+                                       fwd ? h->il2d_bluchf
+                                           : h->il2d_bluchb,
+                                       fwd ? h->il2d_blukf
+                                           : h->il2d_blukb,
+                                       h->il2d_bluscr);
                         for (i = 0; i < (size_t)h->N; i++)
                             _il2d_row_exec(h, dir, dre + 2 * i * rn,
                                            rn);

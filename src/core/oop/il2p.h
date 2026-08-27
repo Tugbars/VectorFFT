@@ -240,6 +240,9 @@ static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
                         : radix64_z_n1cb88_fwd_avx2;
 #define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
     C(4) C(8) C(16)
+    /* ODD radices (2026-08-27, emitted for odd-N1 2D chains — the same
+     * cil kind, one flag; raced against the Bluestein column arm) */
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
     default: return 0;
     }
@@ -263,6 +266,7 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
                         : radix64_z_t2cb88_fwd_avx2;
 #define C(R) case R: return bwd ? radix##R##_z_t2c_bwd_avx2 : radix##R##_z_t2c_fwd_avx2;
     C(4) C(8) C(16)
+    C(3) C(5) C(7) C(9) C(11) C(13) C(15) C(17) C(19) C(21) C(25) C(27)
 #undef C
     default: return 0;
     }
