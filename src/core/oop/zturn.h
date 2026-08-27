@@ -563,6 +563,30 @@ static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
  * vfft.c's wisdom-hit replay) delegate legality to this create, the same
  * "the validator is the law" discipline dp_planner_il.h applies to
  * vfft_zsplit_create. NULL == the chain is outside the ZTURN-S scope. */
+typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
+                                double *, const double *, const double *,
+                                unsigned long long, unsigned long long,
+                                unsigned long long, unsigned long long,
+                                unsigned long long);
+
+/* mid kernel by radix — {4,8} the calibrated pair, {3,5,7,9,15} the odd
+ * mids (2026-08-27). One picker for the untiled loops, the tiled nests
+ * and the MT digit split; an unknown radix returns NULL and the create
+ * refuses (never a silent wrong kernel). */
+static inline _vfft_zt_msg_fn _vfft_zt_msg_pick(int R, int fwd)
+{
+    switch (R) {
+    case 8:  return fwd ? radix8_z_msg_fwd_avx2 : radix8_z_msg_bwd_avx2;
+    case 4:  return fwd ? radix4_z_msg_fwd_avx2 : radix4_z_msg_bwd_avx2;
+    case 3:  return fwd ? radix3_z_msg_fwd_avx2 : radix3_z_msg_bwd_avx2;
+    case 5:  return fwd ? radix5_z_msg_fwd_avx2 : radix5_z_msg_bwd_avx2;
+    case 7:  return fwd ? radix7_z_msg_fwd_avx2 : radix7_z_msg_bwd_avx2;
+    case 9:  return fwd ? radix9_z_msg_fwd_avx2 : radix9_z_msg_bwd_avx2;
+    case 15: return fwd ? radix15_z_msg_fwd_avx2 : radix15_z_msg_bwd_avx2;
+    default: return 0;
+    }
+}
+
 static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
                                                            const int *chain,
                                                            int nf)
@@ -577,7 +601,8 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
     if (chain[nf - 1] != 8 && chain[nf - 1] != 4) return NULL;
     long prod = 1;
     for (int s = 0; s < nf; s++) {
-        if (s >= 1 && s <= nf - 2 && chain[s] != 4 && chain[s] != 8) return NULL;
+        if (s >= 1 && s <= nf - 2 && !_vfft_zt_msg_pick(chain[s], 1))
+            return NULL; /* mids = the emitted msg set {4,8,3,5,7,9,15} */
         prod *= chain[s];
     }
     /* terminator integrality: count = N/r_t must be a whole number of
@@ -674,20 +699,14 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create(int N)
  * execute; NEG term-shift / kappa-half / tw+1 all DIFFER, so the check
  * discriminates). This code is a transcription of that proven nest.
  */
-typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
-                                double *, const double *, const double *,
-                                unsigned long long, unsigned long long,
-                                unsigned long long, unsigned long long,
-                                unsigned long long);
+
 
 /* production msg tuple, in-place on `base`; only Gs and the bases vary */
 static inline void _vfft_zt_msg(const vfft_zturn2_plan_t *p, int s,
                                 double *base, const double *tw, long Gs,
                                 int fwd)
 {
-    const _vfft_zt_msg_fn f = (p->chain[s] == 8)
-        ? (fwd ? radix8_z_msg_fwd_avx2 : radix8_z_msg_bwd_avx2)
-        : (fwd ? radix4_z_msg_fwd_avx2 : radix4_z_msg_bwd_avx2);
+    const _vfft_zt_msg_fn f = _vfft_zt_msg_pick(p->chain[s], fwd);
     f(base, 0, base, 0, tw, 0,
       (unsigned long long)p->D[s], (unsigned long long)Gs,
       0, 0, (unsigned long long)p->D[s]);
@@ -799,8 +818,7 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
                       const double *, const double *, unsigned long long,
                       unsigned long long, unsigned long long,
                       unsigned long long, unsigned long long) =
-                (p->chain[s] == 8) ? radix8_z_msg_fwd_avx2
-                                   : radix4_z_msg_fwd_avx2;
+                _vfft_zt_msg_pick(p->chain[s], 1);
             f(p->plane, 0, p->plane, 0, p->twz[s], 0,
               (unsigned long long)p->D[s], (unsigned long long)p->G[s],
               0, 0, (unsigned long long)p->D[s]);
@@ -916,8 +934,7 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
                       const double *, const double *, unsigned long long,
                       unsigned long long, unsigned long long,
                       unsigned long long, unsigned long long) =
-                (p->chain[s] == 8) ? radix8_z_msg_bwd_avx2
-                                   : radix4_z_msg_bwd_avx2;
+                _vfft_zt_msg_pick(p->chain[s], 0);
             f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
               (unsigned long long)p->D[s], (unsigned long long)p->G[s],
               0, 0, (unsigned long long)p->D[s]);

@@ -45,10 +45,17 @@
     unsigned long long, unsigned long long);
 VFFT_ZS_DECL(radix4_z_s0s_fwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_fwd_avx2)
 VFFT_ZS_DECL(radix4_z_msg_fwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_fwd_avx2)
+/* ODD mids (2026-08-27, the odd-cascade arc: N = 2^a*odd; s0t stays r0=4) */
+VFFT_ZS_DECL(radix3_z_msg_fwd_avx2)  VFFT_ZS_DECL(radix5_z_msg_fwd_avx2)
+VFFT_ZS_DECL(radix7_z_msg_fwd_avx2)  VFFT_ZS_DECL(radix9_z_msg_fwd_avx2)
+VFFT_ZS_DECL(radix15_z_msg_fwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_fwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm2_fwd_avx2)   /* 2-quad unroll-and-jam twin (§4.9993) */
 VFFT_ZS_DECL(radix4_z_s0s_bwd_avx2)  VFFT_ZS_DECL(radix8_z_s0s_bwd_avx2)
 VFFT_ZS_DECL(radix4_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix8_z_msg_bwd_avx2)
+VFFT_ZS_DECL(radix3_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix5_z_msg_bwd_avx2)
+VFFT_ZS_DECL(radix7_z_msg_bwd_avx2)  VFFT_ZS_DECL(radix9_z_msg_bwd_avx2)
+VFFT_ZS_DECL(radix15_z_msg_bwd_avx2)
 VFFT_ZS_DECL(radix8_z_sterm_bwd_avx2)
 #undef VFFT_ZS_DECL
 
@@ -107,7 +114,76 @@ static inline int vfft_zsplit_default_chain(int N, int *chain)
                  * (4.8.4.4.4.4.4) still arrives via wisdom replay. */
         chain[0]=4; chain[1]=4; chain[2]=4; chain[3]=4; chain[4]=4;
         chain[5]=4; chain[6]=8; return 7;
-    default: return 0;
+    default:
+    {
+        /* ODD-FACTOR fallback (2026-08-27): a GENERIC chain for
+         * N = 2^a * odd that the calibrated pow2 table above cannot
+         * seed — chain[0] = 4 (the ZTURN-S turn is r0=4-only), a
+         * radix-4 terminator ((N/4)%4 integrality wants 16 | N), odd
+         * mids greedy over the emitted msg set {15, 9, 7, 5, 3}, and
+         * the leftover 2^k as mids of 8/4 by k mod 3 (k%3==1 takes two
+         * 4s, k%3==2 one — never a remainder 2). Correctness seed
+         * only; the chain race and wisdom own the fast chain. */
+        int m, k = 0, p2, nf2 = 0, rt, mids[VFFT_ZSPLIT_MAX_NF];
+        static const int OP[] = { 15, 9, 7, 5, 3 };
+        if (N < 1024 || (N % 16) != 0)
+            return 0;
+        /* terminator 8 when 32 | N — the t2q calibrator refuses last==4
+         * plans (no stf2 twin), so a last==4 seed would never attach. */
+        rt = ((N % 32) == 0) ? 8 : 4;
+        m = N / (4 * rt); /* chain[0] = 4 x terminator peeled */
+        while ((m & 1) == 0)
+        {
+            m >>= 1;
+            k++;
+        }
+        for (p2 = 0; p2 < (int)(sizeof OP / sizeof OP[0]); p2++)
+            while (m % OP[p2] == 0)
+            {
+                if (nf2 >= VFFT_ZSPLIT_MAX_NF - 2)
+                    return 0;
+                mids[nf2++] = OP[p2];
+                m /= OP[p2];
+            }
+        if (m != 1)
+            return 0; /* an odd factor outside the msg set */
+        if (k % 3 == 1)
+        {
+            if (k < 4)
+            { /* 2^1: no {8,4} product — push a 4 by borrowing? k==1
+               * means N/16 = 2*odd: fold the 2 into... not
+               * expressible; refuse. */
+                if (k != 4)
+                    return 0;
+            }
+            if (nf2 + 2 > VFFT_ZSPLIT_MAX_NF - 2)
+                return 0;
+            mids[nf2++] = 4;
+            mids[nf2++] = 4;
+            k -= 4;
+        }
+        else if (k % 3 == 2)
+        {
+            if (nf2 + 1 > VFFT_ZSPLIT_MAX_NF - 2)
+                return 0;
+            mids[nf2++] = 4;
+            k -= 2;
+        }
+        while (k > 0)
+        {
+            if (nf2 >= VFFT_ZSPLIT_MAX_NF - 2)
+                return 0;
+            mids[nf2++] = 8;
+            k -= 3;
+        }
+        if (nf2 < 1)
+            return 0; /* nf >= 3: ingest + >= 1 mid + terminator */
+        chain[0] = 4;
+        for (p2 = 0; p2 < nf2; p2++)
+            chain[1 + p2] = mids[p2];
+        chain[1 + nf2] = rt;
+        return nf2 + 2;
+    }
     }
 }
 

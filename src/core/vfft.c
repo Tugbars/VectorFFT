@@ -4877,22 +4877,44 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
         if (getenv("VFFT_NO_ZTURN"))
             zforce = 1;
     }
-    if (znf)
-        zs_pending = vfft_zsplit_create(N, zch, znf);
-    if (!zs_pending)
-        return 0;
+    int zodd = 0;
+    {
+        /* ODD-MID chains (2026-08-27): the LEGACY zsplit engine's kind
+         * set is radix 4/8 only, so an odd-factor chain has NO legacy
+         * twin — the cell is ZTURN-ONLY. Skip the legacy build (its
+         * create on an odd chain would refuse anyway) and let the
+         * zturn arm carry the route alone. */
+        int s2;
+        for (s2 = 0; znf && s2 < znf; s2++)
+            if (zch[s2] & 1)
+                zodd = 1;
+        if (znf && !zodd)
+            zs_pending = vfft_zsplit_create(N, zch, znf);
+        if (!zs_pending && (!znf || !zodd))
+            return 0;
+        if (zodd && zforce == 1)
+            return 0; /* legacy pinned, but no legacy twin exists */
+    }
     {
         double zns = 0.0;
         if (zforce != 1)
             zt_pending = vfft_zturn2_create(N);
+        if (zodd && getenv("VFFT_ZT_LOG"))
+            fprintf(stderr, "[zt-odd-dbg] N=%d znf=%d create=%s\n", N,
+                    znf, zt_pending ? "ok" : "NULL");
         if (zt_pending)
         {
             zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
+            if (zodd && getenv("VFFT_ZT_LOG"))
+                fprintf(stderr, "[zt-odd-dbg] N=%d t2q zns=%.0f\n", N,
+                        zns);
             if (zns > 0.0)
                 zroute_pending = 1;
         }
-        if (!zroute_pending)
+        if (!zroute_pending && zs_pending)
             zns = _calibrate_zsplit_t2q(zs_pending, cfg->rigor, ip);
+        else if (!zroute_pending)
+            zns = 0.0; /* zturn-only cell and the zturn arm failed */
         if (zns > 0.0)
         {
             vfft_oop_wisdom_entry_t ne;
@@ -4900,7 +4922,7 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
             ne.N = N;
             ne.K = 1;
             ne.kind = VFFT_OOP_KIND_ZSPLIT;
-            ne.zs_t2q = zs_pending->t2q;
+            ne.zs_t2q = zs_pending ? zs_pending->t2q : 0;
             /* cc_chain = the WINNING route's chain (the reader contract).
              * At this create-time race both routes still run the same
              * default chain, so the encode is byte-identical either way
@@ -4910,7 +4932,7 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
             if (zroute_pending && zt_pending)
                 ne.cc_chain = vfft_k1_cc_chain_encode(zt_pending->chain,
                                                       zt_pending->nf);
-            else
+            else if (zs_pending)
                 ne.cc_chain = vfft_k1_cc_chain_encode(zs_pending->chain,
                                                       zs_pending->nf);
             ne.zs_route = zroute_pending;
@@ -4931,7 +4953,11 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
              * the reverse is refused by the merge law, exactly the
              * intended authority order. */
             ne.ns = 0.0;
-            if (!ip) /* kind-4 = the OOP create's cell; single writer */
+            /* an ODD chain must WIN the commit-site route race (vs the
+             * true incumbent incl. the k1 IL routes) before any banking
+             * — banking here would make replay attach it by fiat. The
+             * sweep owns banking those winners. */
+            if (!ip && !zodd) /* kind-4 = the OOP create's cell */
             {
                 vw2_oop_bank_entry(&W->vw2, &ne);
                 _vw2_persist(W, cfg);
@@ -4958,7 +4984,9 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
     *zs_out = zs_pending;
     *zt_out = zt_pending;
     *zroute_out = zroute_pending;
-    return 1;
+    /* a zturn-only (odd-mid) cell whose zturn arm failed has NOTHING —
+     * the caller must fall through to the classic OOP kinds. */
+    return (zs_pending || zt_pending) ? 1 : 0;
 }
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
@@ -7929,8 +7957,20 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * the native engine — a routing anomaly, nothing more. The
          * no-cascade guard keeps ≥2048 scrambled on the cascade dispatch
          * without building a dead-weight k1 engine beside it. */
+        {
+            /* an ODD-mid cascade candidate must not suppress the k1
+             * admission: it has no fiat attach — it races the finished
+             * handle at the commit, and the k1 routes ARE that
+             * incumbent (without them the race timed the bare op
+             * route, ~3x slower than the true serving — the strawman
+             * caught 2026-08-27). */
+            int ztodd = 0, s2o;
+            if (zt_pending)
+                for (s2o = 0; s2o < zt_pending->nf; s2o++)
+                    if (zt_pending->chain[s2o] & 1)
+                        ztodd = 1;
         if (K == 1 && !ob &&
-            (cfg->order != VFFT_ORDER_SCRAMBLED ||
+            (cfg->order != VFFT_ORDER_SCRAMBLED || ztodd ||
              (!zs_pending && !zt_pending)))
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
@@ -8382,6 +8422,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */
         }
+        } /* ztodd scope (the odd-cascade admission wrapper) */
         /* PADDED (opt-in): build at Kp so the OOP plan strides the caller's Kp-wide 4 planes
          * exactly. Pad-only (OOP bakes K, no runtime me). Kp = the handle's roundup(K,8), which
          * keeps all 3 kinds AND lets the (N,Kp) OOP wisdom cell cache (BAILEY2 + the wisdom
@@ -8520,6 +8561,92 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
+        /* ODD-MID cascades (2026-08-27) attach only by WINNING: the
+         * pow2 fiat attach is backed by calibration history, but the
+         * odd seeds measured ~2x SLOWER than the classic kinds at
+         * 3072-20480 and ~2.3x FASTER at 24576 — so the route is raced
+         * here against the classic plan (min-of-3 alternated on
+         * scratch, the serving execute both arms: zroute toggled).
+         * The loser is destroyed; a banked kind-4 replay (a chain that
+         * already won somewhere) skips this by carrying no odd mid or
+         * by having been banked from this very race's winner. */
+        if (getenv("VFFT_ZT_LOG"))
+            fprintf(stderr, "[zt-odd-dbg2] commit N=%d zroute=%d zt=%p K=%d" + 0, N, h->zroute, (void *)h->zturn, (int)K);
+        if (getenv("VFFT_ZT_LOG"))
+            fputc(10, stderr);
+        if (h->zroute && h->zturn && K == 1)
+        {
+            int s2, zodd = 0;
+            for (s2 = 0; s2 < h->zturn->nf; s2++)
+                if (h->zturn->chain[s2] & 1)
+                    zodd = 1;
+            if (zodd)
+            {
+                double *zi = (double *)malloc(2 * (size_t)N
+                                              * sizeof(double));
+                double *zo = (double *)malloc(2 * (size_t)N
+                                              * sizeof(double));
+                double tz2 = 1e300, tc2 = 1e300;
+                int r2;
+                if (zi && zo)
+                {
+                    size_t i2;
+                    for (i2 = 0; i2 < 2 * (size_t)N; i2++)
+                        zi[i2] = 1.0 + 1e-6 * (double)(i2 & 511);
+                    vfft_execute((vfft_plan)h, VFFT_FORWARD, zi, NULL,
+                                 zo, NULL); /* warm the cascade arm */
+                    h->zroute = 0;
+                    {
+                        vfft_zturn2_plan_t *sav = h->zturn;
+                        h->zturn = NULL;
+                        vfft_execute((vfft_plan)h, VFFT_FORWARD, zi,
+                                     NULL, zo, NULL); /* warm classic */
+                        for (r2 = 0; r2 < 3; r2++)
+                        {
+                            struct timespec t0, t1;
+                            double d;
+                            h->zroute = 1;
+                            h->zturn = sav;
+                            clock_gettime(CLOCK_MONOTONIC, &t0);
+                            vfft_execute((vfft_plan)h, VFFT_FORWARD,
+                                         zi, NULL, zo, NULL);
+                            clock_gettime(CLOCK_MONOTONIC, &t1);
+                            d = (t1.tv_sec - t0.tv_sec) * 1e9
+                                + (t1.tv_nsec - t0.tv_nsec);
+                            if (d < tz2)
+                                tz2 = d;
+                            h->zroute = 0;
+                            h->zturn = NULL;
+                            clock_gettime(CLOCK_MONOTONIC, &t0);
+                            vfft_execute((vfft_plan)h, VFFT_FORWARD,
+                                         zi, NULL, zo, NULL);
+                            clock_gettime(CLOCK_MONOTONIC, &t1);
+                            d = (t1.tv_sec - t0.tv_sec) * 1e9
+                                + (t1.tv_nsec - t0.tv_nsec);
+                            if (d < tc2)
+                                tc2 = d;
+                        }
+                        h->zturn = sav;
+                    }
+                    if (getenv("VFFT_ZT_LOG") || getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr, "[zt-odd] route race N=%d: "
+                                        "cascade=%.0f classic=%.0f -> "
+                                        "%s\n",
+                                N, tz2, tc2,
+                                tz2 < tc2 ? "CASCADE" : "classic");
+                    if (tz2 < tc2)
+                        h->zroute = 1;
+                    else
+                    {
+                        h->zroute = 0;
+                        vfft_zturn2_destroy(h->zturn);
+                        h->zturn = NULL;
+                    }
+                }
+                free(zi);
+                free(zo);
+            }
+        }
         /* INC-Z: race the cascade MT verdict for this cell (K=1 zturn,
          * live pool). Serial default everywhere the race does not run. */
         if (h->zroute && h->zturn && K == 1 && h->nthreads > 1)
