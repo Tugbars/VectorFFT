@@ -163,6 +163,10 @@ static void _zt_mt_race(struct vfft_plan_s *h);
  * called from the dims==2 howmany>1 create branch. */
 static void _pq_mt_race(struct vfft_plan_s *h);
 
+/* the ODD-REAL BRIDGE handle builder — defined after the plan struct
+ * (it sizes it); used by the create gate and the smooth-odd race. */
+static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N);
+
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
@@ -2422,6 +2426,48 @@ static void _il2d_enum_rec(int L, int depth, int *cur, int (*out)[8],
  * PRE-twiddle conj stage (the t2c bwd kernels), CONSUMING the comb and
  * producing natural — the matched-roundtrip law (bwd eats the SAME
  * route's comb; any chain roundtrips, palindromic or not). */
+/* the ODD-REAL BRIDGE handle builder (struct comment at oddr_child):
+ * a self-contained plan - the c2c(N) NATURAL IL child + the row pair
+ * buffer. Used by the direct-serve gate in create AND as the race arm
+ * at the smooth-odd r2c commit. */
+static struct vfft_plan_s *_oddr_build(const vfft_config_t *cfg, int N)
+{
+    vfft_config_t rc;
+    struct vfft_plan_s *hh;
+    memset(&rc, 0, sizeof rc);
+    rc.transform = VFFT_C2C;
+    rc.placement = VFFT_OUTOFPLACE;
+    rc.rigor = cfg->rigor;
+    rc.dims = 1;
+    rc.n[0] = N;
+    rc.howmany = 1;
+    rc.order = VFFT_ORDER_NATURAL; /* the CCE bins must be in order */
+    rc.layout = VFFT_LAYOUT_INTERLEAVED;
+    rc.nthreads = 1;
+    rc.wisdom = cfg->wisdom;
+    rc.wisdom_write = cfg->wisdom_write;
+    hh = (struct vfft_plan_s *)calloc(1, sizeof *hh);
+    if (!hh)
+        return NULL;
+    hh->oddr_child = (struct vfft_plan_s *)vfft_create(&rc);
+    if (hh->oddr_child)
+        hh->oddr_buf = (double *)malloc(4 * (size_t)N * sizeof(double));
+    if (!hh->oddr_child || !hh->oddr_buf)
+    {
+        if (hh->oddr_child)
+            vfft_destroy((vfft_plan)hh->oddr_child);
+        free(hh);
+        return NULL;
+    }
+    hh->transform = cfg->transform;
+    hh->placement = VFFT_OUTOFPLACE;
+    hh->layout = (int)cfg->layout;
+    hh->N = N;
+    hh->K = 1;
+    hh->nthreads = _vfft_plan_threads(cfg);
+    return hh;
+}
+
 /* one row of the row pass, by the plan's row route: in-place child
  * (default) or OOP child into the L1-hot scratch + copy back (the
  * small-N2 lever — the in-place K=1 IL service floor is ~6x the mono
@@ -5009,6 +5055,11 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
  * unsafe even though its fwd is fine — execute takes either dir. */
 static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 {
+    if (g->oddr_child)
+        /* the ODD-REAL BRIDGE (2026-08-27): a wrapper over one pure-IL
+         * c2c child + private buffers — safe iff the child is (il2p/
+         * il3p/ilprime are; a cascade child consults its own arm). */
+        return _tc_inner_mt_safe(g->oddr_child);
     if (g->zr2c_child)
         /* §D2 real composite: _exec_zr2c is a fold (pure, serial, no pool)
          * plus vfft_execute on the child, and the R2C/C2R execute branches
@@ -5057,6 +5108,12 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
 static int _tc_clone_equiv(const struct vfft_plan_s *a,
                            const struct vfft_plan_s *b)
 {
+    if (!a->oddr_child != !b->oddr_child)
+        return 0;
+    if (a->oddr_child)
+        /* odd-real bridge: equivalent iff the c2c children are (the
+         * bridge itself carries only buffers). */
+        return _tc_clone_equiv(a->oddr_child, b->oddr_child);
     if (!a->zr2c_child != !b->zr2c_child)
         return 0;
     if (a->zr2c_child)
@@ -5401,6 +5458,21 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         !(cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
           cfg->howmany == 1 && (cfg->n[0] % 2) == 0))
     {
+        /* ODD N in-place (2026-08-27, (c) of the odd-real list): the
+         * CCE plane contract holds at odd N too — 2*(N/2+1) = N+1
+         * doubles, N reals in front, hp1 bins written over — and the
+         * BRIDGE is aliasing-safe by construction (promote/extend copy
+         * the plane OUT before anything writes back). Serve it. */
+        if (cfg->dims <= 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+            cfg->howmany == 1 && (cfg->n[0] & 1) && cfg->n[0] >= 3)
+        {
+            struct vfft_plan_s *hh = _oddr_build(cfg, cfg->n[0]);
+            if (hh)
+            {
+                hh->placement = VFFT_INPLACE;
+                return hh;
+            }
+        }
         _vfft_warn("vfft_create: in-place %s is supported only for 1D "
                    "LAYOUT_INTERLEAVED (CCE), howmany==1, even N (the zr2c route; "
                    "padded 2*(N/2+1)-double plane), or howmany>1 with "
@@ -8683,53 +8755,21 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     }
 
     /* ── r2c (real -> complex, forward; split output) ── */
-    /* the odd-real bridge builder (struct comment at oddr_child). NULL =
-     * could not build (the caller keeps its refusal, LOUDLY). */
+    /* the odd-real bridge (struct comment at oddr_child): serves
+     * DIRECTLY where nothing else exists (c2r odd; r2c prime/awkward;
+     * VFFT_ODDR_FORCE pins it); for SMOOTH-odd r2c it is the RACE ARM
+     * at the rfft commit below instead (the pricing 2026-08-27 showed
+     * the winner flips per cell: 255 bridge ~3x, 4095 rfft). */
     if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
         K == 1 && (N & 1) && N >= 3 &&
         cfg->placement == VFFT_OUTOFPLACE &&
-        (cfg->transform == VFFT_C2R || !_vfft_is_radix_smooth(N)))
+        (cfg->transform == VFFT_C2R || !_vfft_is_radix_smooth(N) ||
+         getenv("VFFT_ODDR_FORCE") != NULL))
     {
-        vfft_config_t rc;
-        struct vfft_plan_s *hh;
-        memset(&rc, 0, sizeof rc);
-        rc.transform = VFFT_C2C;
-        rc.placement = VFFT_OUTOFPLACE;
-        rc.rigor = cfg->rigor;
-        rc.dims = 1;
-        rc.n[0] = N;
-        rc.howmany = 1;
-        rc.order = VFFT_ORDER_NATURAL; /* the CCE bins must be in order */
-        rc.layout = VFFT_LAYOUT_INTERLEAVED;
-        rc.nthreads = 1;
-        rc.wisdom = cfg->wisdom;
-        rc.wisdom_write = cfg->wisdom_write;
-        hh = (struct vfft_plan_s *)calloc(1, sizeof *hh);
+        struct vfft_plan_s *hh = _oddr_build(cfg, N);
         if (hh)
-        {
-            hh->oddr_child = (struct vfft_plan_s *)vfft_create(&rc);
-            if (hh->oddr_child)
-                hh->oddr_buf = (double *)malloc(
-                    4 * (size_t)N * sizeof(double));
-            if (!hh->oddr_child || !hh->oddr_buf)
-            {
-                if (hh->oddr_child)
-                    vfft_destroy((vfft_plan)hh->oddr_child);
-                free(hh);
-                hh = NULL;
-            }
-        }
-        if (hh)
-        {
-            hh->transform = cfg->transform;
-            hh->placement = VFFT_OUTOFPLACE;
-            hh->layout = (int)cfg->layout;
-            hh->N = N;
-            hh->K = 1;
-            hh->nthreads = _vfft_plan_threads(cfg);
             return hh;
-        }
-        _vfft_warn("vfft_create: %s odd N=%d — the c2c bridge child "
+        _vfft_warn("vfft_create: %s odd N=%d - the c2c bridge child "
                    "could not be built; unsupported",
                    _vfft_tname(cfg->transform), N);
         return NULL;
@@ -8868,6 +8908,70 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->rplan = rp;
         h->padded = padded;
         h->exec_me = (int)bK; /* informational: the width the plan was built at */
+        /* SMOOTH-ODD r2c: race this (rfft-served) handle against the
+         * c2c bridge - both arms FINISHED handles (the strawman law),
+         * min-of-3 alternated, loser destroyed. Winner flips per cell
+         * (the pricing). K==1 OOP IL only; verdict plan-local. */
+        if (K == 1 && (N & 1) && N >= 3 &&
+            cfg->placement == VFFT_OUTOFPLACE &&
+            cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+            !getenv("VFFT_ODDR_NORACE"))
+        {
+            struct vfft_plan_s *hb = _oddr_build(cfg, N);
+            if (hb)
+            {
+                const size_t hp1r = (size_t)N / 2 + 1;
+                double *xr = (double *)malloc((size_t)N
+                                              * sizeof(double));
+                double *zr2 = (double *)calloc(2 * (hp1r + 8),
+                                               sizeof(double));
+                double ta = 1e300, tb2 = 1e300;
+                if (xr && zr2)
+                {
+                    int r2, j2;
+                    for (j2 = 0; j2 < N; j2++)
+                        xr[j2] = 1.0 + 1e-6 * (double)(j2 & 511);
+                    vfft_execute((vfft_plan)h, VFFT_FORWARD, xr, NULL,
+                                 zr2, NULL);
+                    vfft_execute((vfft_plan)hb, VFFT_FORWARD, xr, NULL,
+                                 zr2, NULL);
+                    for (r2 = 0; r2 < 3; r2++)
+                    {
+                        struct timespec t0, t1;
+                        double d;
+                        clock_gettime(CLOCK_MONOTONIC, &t0);
+                        vfft_execute((vfft_plan)h, VFFT_FORWARD, xr,
+                                     NULL, zr2, NULL);
+                        clock_gettime(CLOCK_MONOTONIC, &t1);
+                        d = (t1.tv_sec - t0.tv_sec) * 1e9 +
+                            (t1.tv_nsec - t0.tv_nsec);
+                        if (d < ta)
+                            ta = d;
+                        clock_gettime(CLOCK_MONOTONIC, &t0);
+                        vfft_execute((vfft_plan)hb, VFFT_FORWARD, xr,
+                                     NULL, zr2, NULL);
+                        clock_gettime(CLOCK_MONOTONIC, &t1);
+                        d = (t1.tv_sec - t0.tv_sec) * 1e9 +
+                            (t1.tv_nsec - t0.tv_nsec);
+                        if (d < tb2)
+                            tb2 = d;
+                    }
+                    if (getenv("VFFT_ODDR_LOG"))
+                        fprintf(stderr, "[oddr] race N=%d: rfft=%.0f "
+                                        "bridge=%.0f -> %s\n",
+                                N, ta, tb2,
+                                tb2 < ta ? "BRIDGE" : "rfft");
+                }
+                free(xr);
+                free(zr2);
+                if (tb2 < ta)
+                {
+                    vfft_destroy((vfft_plan)h);
+                    return hb;
+                }
+                vfft_destroy((vfft_plan)hb);
+            }
+        }
         return h;
     }
 
