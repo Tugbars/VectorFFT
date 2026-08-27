@@ -45,6 +45,7 @@
 #define VFFT_IL_PRIME_H
 
 #include "il2p.h"
+#include <time.h> /* clock_gettime — the create-time method race */
 
 #if defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>
@@ -90,15 +91,35 @@ static inline int _ilprime_find_generator(int N)
     return 0; /* unreachable for prime N */
 }
 
-/* ── inner IL plan: il2p pair (pow2) or il3p chain (odd·2^k) ─────────── */
+/* ── inner IL plan: il2p pair (pow2) or il3p chain (odd·2^k), and — for
+ * pow2 M past their 4096 ceiling — the K=1 CASCADE (zturn). The cascade
+ * serves a SCRAMBLED comb, which is exactly enough for a convolution:
+ * the kernel is FFT'd once at create through the SAME forward, so the
+ * pointwise multiply happens in comb order, and the cascade's own bwd
+ * consumes that comb back to natural (the matched-roundtrip law). This
+ * is what lifts the prime band past 2048 (gap 2). Guarded: a TU that
+ * has not included zturn.h simply keeps the old 4096 ceiling. ─────── */
 typedef struct {
     vfft_il2p_plan_t *p2;
     vfft_il3p_plan_t *p3;
+#ifdef VFFT_ZTURN_H
+    vfft_zturn2_plan_t *pz;
+#endif
 } _ilprime_inner_t;
 
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
     in->p2 = 0; in->p3 = 0;
+#ifdef VFFT_ZTURN_H
+    in->pz = 0;
+    if (M > 4096 && (M & (M - 1)) == 0)
+    {
+        in->pz = vfft_zturn2_create(M); /* self-validates its own band */
+        if (in->pz) return 1;
+    }
+#endif
+    if (M > 4096)
+        return 0; /* il2p/il3p ceiling */
     /* balanced il2p pair first (any pair the registries cover — no parity
      * constraint since the odd-count tail; matches the front door), chain
      * second. Rader inners at N-1 = 2·odd (30 = 5x6, 28 = 7x4) resolve
@@ -127,16 +148,26 @@ static inline void _ilprime_inner_free(_ilprime_inner_t *in)
     vfft_il2p_destroy(in->p2);
     vfft_il3p_destroy(in->p3);
     in->p2 = 0; in->p3 = 0;
+#ifdef VFFT_ZTURN_H
+    if (in->pz) vfft_zturn2_destroy(in->pz);
+    in->pz = 0;
+#endif
 }
 static inline void _ilprime_inner_fwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+#ifdef VFFT_ZTURN_H
+    if (in->pz) { vfft_zturn2_execute_fwd(in->pz, zi, zo); return; }
+#endif
     if (in->p2) vfft_il2p_execute_fwd(in->p2, zi, zo);
     else        vfft_il3p_execute_fwd(in->p3, zi, zo);
 }
 static inline void _ilprime_inner_bwd(const _ilprime_inner_t *in,
                                       const double *zi, double *zo)
 {
+#ifdef VFFT_ZTURN_H
+    if (in->pz) { vfft_zturn2_execute_bwd(in->pz, zi, zo); return; }
+#endif
     if (in->p2) (void)vfft_il2p_execute_bwd(in->p2, zi, zo);
     else        vfft_il3p_execute_bwd(in->p3, zi, zo);
 }
@@ -206,12 +237,17 @@ static inline double *_ilprime_alloc(size_t doubles)
 }
 
 /* Bluestein plan: M = next pow2 >= max(16, 2N-1) (16 = il2p's floor pair
- * 4x4). NULL when M would exceed the band (> 4096) or any alloc fails. */
+ * 4x4). VALID FOR ANY N (the chirp uses n^2 mod 2N in integer arithmetic
+ * — nothing here assumes primality); the band is whatever the inner can
+ * construct (il2p/il3p to 4096, the cascade above — self-validating, no
+ * cap of our own). ⚠ M is a FREE parameter and the split engine's
+ * bluestein_wisdom/calibrator prove it is a WISDOM AXIS (smooth non-pow2
+ * M can win); next-pow2 here is availability, and racing M belongs to
+ * that campaign together with the inner-route pick. */
 static inline vfft_ilprime_plan_t *_ilprime_create_bluestein(int N)
 {
     int M = 16;
     while (M < 2 * N - 1) M <<= 1;
-    if (M > 4096) return 0;
 
     vfft_ilprime_plan_t *p = (vfft_ilprime_plan_t *)calloc(1, sizeof(*p));
     if (!p) return 0;
@@ -305,12 +341,91 @@ static inline vfft_ilprime_plan_t *_ilprime_create_rader(int N)
 /* Front door: Rader preferred (shorter convolution; the split engine
  * measured it ~2x over Bluestein), Bluestein otherwise. ⚠ availability
  * preference — the measured per-cell pick belongs in wisdom. */
+/* The front door. Coverage (2026-08-27, gaps 1+2 filled):
+ *   - PRIME N >= 5: Rader when the (N-1) inner is IL-expressible, else
+ *     Bluestein. When BOTH construct, the pick is RACED (min-of-3
+ *     alternated forward walks on scratch, winner kept) — availability
+ *     preference retired per the never-heuristic law. Env override
+ *     VFFT_ILPR_METHOD=rader|blue pins it (env never banks).
+ *   - COMPOSITE N the pair/chain routes cannot express (a prime factor
+ *     past the leaf set — 115 = 5*23, 202 = 2*101): Bluestein, which is
+ *     valid for any N. These sizes were REFUSED EVERYWHERE before this
+ *     (the split engine's dispatch also requires primality — verified
+ *     2026-08-27), so this is the library's first serving of them.
+ *   - N past 2048: the Bluestein inner rides the K=1 cascade (comb-
+ *     order convolution, see _ilprime_inner_make) — band limited only
+ *     by what the inner constructs.
+ * The caller (route 7) still tries il2p/il3p FIRST; this door is only
+ * reached when N has no pair/chain plan. Verdict is plan-local; banking
+ * the method (and Bluestein's free M) is the wisdom campaign's. */
+static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
+                                           const double *zin, double *zout,
+                                           int bwd);
+static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
+                                       const double *zin, double *zout,
+                                       int bwd);
 static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
 {
-    if (!_ilprime_is_prime(N) || N < 5 || N > 2048) return 0;
-    vfft_ilprime_plan_t *p = _ilprime_create_rader(N);
-    if (p) return p;
-    return _ilprime_create_bluestein(N);
+    vfft_ilprime_plan_t *pr, *pb;
+    const char *me;
+    if (N < 5) return 0;
+    if (!_ilprime_is_prime(N))
+        return _ilprime_create_bluestein(N);
+    me = getenv("VFFT_ILPR_METHOD");
+    if (me && me[0] == 'r')
+        return _ilprime_create_rader(N);
+    if (me && me[0] == 'b')
+        return _ilprime_create_bluestein(N);
+    pr = _ilprime_create_rader(N);
+    if (!pr)
+        return _ilprime_create_bluestein(N);
+    pb = _ilprime_create_bluestein(N);
+    if (!pb)
+        return pr;
+    { /* the method race: both constructed — measure, keep the winner */
+        double *zi = _ilprime_alloc((size_t)2 * N);
+        double *zo = _ilprime_alloc((size_t)2 * N);
+        double tr = 1e300, tb = 1e300;
+        int r;
+        if (!zi || !zo)
+        { /* OOM: keep Rader (the measured-on-split ~2x prior) */
+            VFFT_IL2P_FREE(zi); VFFT_IL2P_FREE(zo);
+            vfft_ilprime_destroy(pb);
+            return pr;
+        }
+        for (r = 0; r < 2 * N; r++)
+            zi[r] = 1.0 + 1e-6 * (double)(r & 255);
+        _ilprime_exec_rader(pr, zi, zo, 0);     /* warm both */
+        _ilprime_exec_bluestein(pb, zi, zo, 0);
+        for (r = 0; r < 3; r++)
+        {
+            struct timespec t0, t1;
+            double d;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            _ilprime_exec_rader(pr, zi, zo, 0);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+            if (d < tr) tr = d;
+            clock_gettime(CLOCK_MONOTONIC, &t0);
+            _ilprime_exec_bluestein(pb, zi, zo, 0);
+            clock_gettime(CLOCK_MONOTONIC, &t1);
+            d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+            if (d < tb) tb = d;
+        }
+        VFFT_IL2P_FREE(zi);
+        VFFT_IL2P_FREE(zo);
+        if (getenv("VFFT_ILPR_LOG"))
+            fprintf(stderr, "[ilprime] race N=%d: rader=%.0f blue=%.0f "
+                            "-> %s\n",
+                    N, tr, tb, tr <= tb ? "RADER" : "BLUESTEIN");
+        if (tr <= tb)
+        {
+            vfft_ilprime_destroy(pb);
+            return pr;
+        }
+        vfft_ilprime_destroy(pr);
+        return pb;
+    }
 }
 
 static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,

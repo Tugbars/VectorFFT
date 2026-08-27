@@ -568,6 +568,36 @@ whenever LEAF/BAILEY2 win.
 > used), so they are **directional** — several cells show order-flip spread from thermal noise.
 > The calibrated even-K cells in §1 are the publication reference; the odd-K numbers track them.
 
+### K=1 scrambled cascade — intra-transform MT (2026-08-27)
+
+The single-transform zturn cascade (ord=scr, OOP) threads its own walk:
+ingest and terminator count-split, mid stages group-split (the digit
+axis), tiled cells run their tiles as self-contained units (fused tiles
+carry their own terminator cut). No clones — one read-only plan, the
+sectioned plane partitioned disjointly. **The engage decision is RACED
+per cell at create** and a losing cell serves serial; kill/force
+`VFFT_ZT_NO_MT`, engagement counter `vfft_zt_mt_passes()`.
+
+**Speedup over the SAME plan at one thread** (not a vs-MKL arm — MKL
+auto-threads 1D C2C at N≥8192, and that comparison is a future
+same-run measurement). T=8, same-run alternated, min-of-20, MT == ST
+bitwise gated at every N including forced-on:
+
+```
+ N        fwd      bwd      raced verdict
+──────────────────────────────────────────
+ 2048       —        —      serial (0.84× forced)
+ 4096       —        —      serial (0.72× forced)
+ 8192       —        —      serial (marginal, ~1.1–1.2×)
+ 16384    2.54×    2.16×    threaded
+ 65536    3.89×    4.04×    threaded
+ 262144   5.43×    5.27×    threaded
+──────────────────────────────────────────
+```
+
+The knee sits exactly where the barrier+exchange cost meets the
+transform's work; the race finds it per cell rather than by a constant.
+
 ## 2. vs MKL — 2D C2C
 
 dag tiled 2D (`fft2d.h`, B=8: gather→K=B row FFT→scatter via SIMD transpose, native
@@ -715,6 +745,37 @@ re-calibrating.
 > every chain. Single-thread; banding (`+15–21%` where it wins) and the
 > small-N2 row route (`1.6–2×` at N2 ≤ 64) are measured but env-only
 > pending wisdom banking; MT over bands is the queued multiplier.
+
+### 2D C2C — the native tier MULTITHREADED (2026-08-27)
+
+Both passes of the native IL tier thread. Rows commute with column
+stages in c2c (the same ℂ-linearity that legalizes tfuse), so a banded
+cell's unit of work is a **self-contained band** — its suffix stages
+plus its own fused rows — and workers own disjoint band ranges with no
+rows/columns wall; only the wide prefix stages split on the digit axis
+(three pointer edits per the emitted kernel, zero new codelets).
+Single-stage cells split by column strips then row slabs. The shared
+row child is cloned per worker (route-equivalence-checked at create).
+**The engage decision is raced per cell and banked** (`cmt=` + the
+thread count raced at, `cmtt=`, in the `lay=il` cell — a verdict
+serves only at its own T); kill/force `VFFT_IL2D_NO_COLMT`; engagement
+counter `vfft_il2d_col_mt_passes()`.
+
+**Speedup over the SAME tier at one thread**, T=8, same-run alternated
+min-of-20, MT == ST bitwise gated both directions:
+
+```
+ N1×N2       fwd      bwd      raced verdict
+──────────────────────────────────────────────
+ 256×256    1.02×    1.00×    serial (wl=N1: one band, no MT axis —
+                              wl re-race at T is a sweep item)
+ 512×512    4.04×    3.93×    threaded (4 bands, 4 band-workers)
+ 1024×1024  7.25×    4.89×    threaded
+ 4096×64    5.74×    5.03×    threaded
+ 8192×64    7.73×    7.60×    threaded
+ 64×1024    2.14×    1.93×    threaded (strip+slab shape)
+──────────────────────────────────────────────
+```
 
 ## 3. vs MKL — 1D R2C
 
@@ -1065,6 +1126,42 @@ each bench cell's own-pair roundtrip. Source: `bench_1d_vs_mkl.c --2dreal`.
 > apply); same-run arms only — the MKL column comes from the identical process
 > and rounds.
 
+### 2D R2C/C2R — the native tier MULTITHREADED (2026-08-27)
+
+Both passes of the native IL real tier thread. The row pass rides the
+transform-contiguous clone MT (slabs of whole rows, clones proven
+output-equivalent at create); the column pass distributes with a
+**raced partition** — a band arm over the suffix stages (exchange-free
+by construction: workers re-read exactly the rows they produced) plus a
+digit split of the wide prefix stages (three pointer edits per the
+emitted kernel, zero new codelets), or column strips where a
+single-stage chain has no row axis. The fold's ℝ-linearity keeps the
+rows/columns wall — one join, measured at ~100 ns.
+**The engage decision is raced per cell and banked** (`cmt=`/`cmtt=`
+in the direction-shared `lay=il` cell; a verdict serves only at the
+thread count it was raced at); kill/force `VFFT_IL2D_NO_COLMT`;
+engagement counters `vfft_tc_mt_dispatches()` +
+`vfft_il2d_col_mt_passes()` are public and asserted in the gate.
+
+**Speedup over the SAME tier at one thread** (the vs-MKL-MT head-to-head
+is a separate future same-run arm), T=8, same-run alternated min-of-20,
+MT == ST bitwise gated both directions:
+
+```
+ N1×N2       r2c      c2r      raced column verdict
+────────────────────────────────────────────────────
+ 128×64     1.45×    1.64×    threaded (marginal cell)
+ 512×32     1.54×    1.31×    serial — banked "no"
+ 256×256    1.55×    1.19×    marginal, run-dependent
+ 512×512    4.19×    6.34×    threaded
+ 1024×1024  7.69×    7.70×    threaded
+────────────────────────────────────────────────────
+```
+
+The progression at 1024×1024 r2c locates the work: rows-only 1.75× →
+plus banded/strip columns 2.82× → plus the digit-split prefix **7.69×**
+— the full-plane prefix stage was the entire remaining serial residue.
+
 VectorFFT's calibrated wisdom path measured against FFTW3 with
 `FFTW_MEASURE` planning. FFTW3 split-complex API
 (`fftw_plan_guru_split_dft`) so the layout matches VectorFFT exactly —
@@ -1249,6 +1346,13 @@ comparison is informational, not apples-to-apples). FFTW3 is the
 correct r2r baseline.
 
 ## 6. Multi-threaded scaling
+
+**Native IL intra-transform MT (2026-08-27)** — the single-plan MT for
+the interleaved tiers, every engage decision raced per cell:
+§4 → "the native tier MULTITHREADED" (2D real: **7.69×/7.70×** at
+1024², one plane, one plan) · §2 → same heading (2D c2c: 7.73×/7.60×
+at 8192×64) · §1 → "K=1 scrambled cascade — intra-transform MT"
+(one 1D transform: 5.43× at N=262144).
 
 ### 1D C2C — direct MT vs MKL
 

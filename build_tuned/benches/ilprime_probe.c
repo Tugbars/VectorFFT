@@ -21,6 +21,10 @@ int main(int argc, char **argv)
         { 675,  "odd 27*25" },
         { 121,  "11^2" },         { 115,  "5*23" },
         { 202,  "2*101" },
+        { 8191,  "prime (M=16K)" },
+        { 16381, "prime (M=32K)" },
+        { 32749, "prime (M=64K)" },
+        { 4106,  "2*2053 > 2048" },
     };
     const int NC = (int)(sizeof C / sizeof C[0]);
     const char *wisdir = argc > 1 ? argv[1] : ".";
