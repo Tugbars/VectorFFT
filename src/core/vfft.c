@@ -493,6 +493,27 @@ struct vfft_plan_s
                       * strip arm over 17 columns) threading the columns
                       * MEASURED SLOWER, and the race banks that "no"
                       * exactly as it banks a "yes". */
+    int il2d_oddn2;  /* ODD N2 (2026-08-27): rows ride a K=1 c2c child
+                      * (il2d_row) — promote/extend + transform + take,
+                      * fft2d_real_il.h primitives. hp1 = (N2+1)/2; the
+                      * column machinery is count-agnostic so everything
+                      * past the rows is the even path unchanged. */
+    double *il2d_orbuf; /* 2 x 2*N2 doubles: the odd row's in/out pair */
+    /* ── ODD/PRIME N1 c2c (2026-08-27): the COLUMN-AXIS BLUESTEIN.
+     * When N1 has no native chain, the column transform runs as a
+     * chirp convolution at M = next pow2 >= 2*N1-1, riding the SHIPPED
+     * pow2 chain machinery over an M x N2 scratch plane: modulate rows
+     * by the chirp, fwd chain, pointwise multiply by the kernel (built
+     * at create through the SAME chain => comb order matches), bwd
+     * chain consumes the comb, demodulate. n1 comes out NATURAL. Zero
+     * new codelets. The odd t2c/n1c EMISSION (the corpus has the odd
+     * DFT bodies, radix 3..27 — the column kind was never emitted) is
+     * the future raced arm for smooth-odd N1. il2d_blu = M (0 = off);
+     * il2d_R/L/f/b/tf/tb hold the M-chain. */
+    int il2d_blu;
+    double *il2d_bluchf, *il2d_bluchb; /* chirp, 2*N1 each, fwd/bwd  */
+    double *il2d_blukf, *il2d_blukb;   /* comb-order kernels, 2*M    */
+    double *il2d_bluscr;               /* the M x N2 plane, 2*M*N2   */
     int il2d_norowz; /* 1 = skip the fused row-mode doors (the staged
                       * 3-pass route serves) — the A/B race knob, read
                       * from VFFT_IL2D_NO_ROWZ at CREATE (env cost never
@@ -2410,6 +2431,20 @@ static void _il2d_real_rows_fwd(struct vfft_plan_s *h, const double *sre,
                                 double *dre)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_oddn2)
+    { /* odd N2: promote -> c2c(N2) -> keep the hp1 CCE bins */
+        const size_t rn2 = (size_t)h->N2;
+        double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * rn2;
+        size_t r;
+        for (r = 0; r < (size_t)h->N; r++)
+        {
+            _il2d_row_promote(sre + r * rn2, b1, rn2);
+            vfft_execute((vfft_plan)h->il2d_row, VFFT_FORWARD, b1, NULL,
+                         b2, NULL);
+            memcpy(dre + r * 2 * hp1, b2, 2 * hp1 * sizeof(double));
+        }
+        return;
+    }
     if (h->il2d_rows)
     {
         const int W2 = h->il2d_rw, rn2 = h->N2;
@@ -2446,6 +2481,22 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
                                 double *dre)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_oddn2)
+    { /* odd N2: Hermitian-extend hp1 -> N2 -> inverse c2c -> Re. The
+       * inverse is unnormalized (x N2), matching the even tier's c2r
+       * scale contract. */
+        const size_t rn2 = (size_t)h->N2;
+        double *b1 = h->il2d_orbuf, *b2 = h->il2d_orbuf + 2 * rn2;
+        size_t r;
+        for (r = 0; r < (size_t)h->N; r++)
+        {
+            _il2d_row_extend(zsrc + r * 2 * hp1, b1, rn2, hp1);
+            vfft_execute((vfft_plan)h->il2d_row, VFFT_BACKWARD, b1, NULL,
+                         b2, NULL);
+            _il2d_row_re(b2, dre + r * rn2, rn2);
+        }
+        return;
+    }
     if (h->il2d_rows)
     {
         const int W2 = h->il2d_rw, rn2 = h->N2;
@@ -5532,6 +5583,13 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         struct vfft_plan_s *il2d_rows = NULL;
         int il2d_rw = 0;
         int il2d_brw = -1; /* banked row-route verdict; -1 = unraced */
+        int il2d_oddn2 = 0;        /* odd-N2 real: c2c row child */
+        double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
+        int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
+        int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
+        double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
+        double *il2d_blukf = NULL, *il2d_blukb = NULL;
+        double *il2d_bluscr = NULL;
         int il2d_bcmt = -1, il2d_bcmtt = -1; /* banked column-MT verdict
                                               * and the T it was raced at */
         double *il2d_lx = NULL, *il2d_lre = NULL, *il2d_lim = NULL;
@@ -5594,14 +5652,107 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                                      il2d_b, &il2d_nst);
                 }
             }
+            if (!chain_ok && cfg->order != VFFT_ORDER_NATURAL)
+            {
+                /* ODD/PRIME N1 (2026-08-27, owner "IL needs to support
+                 * primes/odds"): the COLUMN-AXIS BLUESTEIN — struct
+                 * comment at il2d_blu. Build the pow2 M-chain + tables,
+                 * the chirp pair, and the comb-order kernels (each the
+                 * direction's wrapped conj chirp, FFT'd through the
+                 * SAME chain as an M x 1 plane, 1/M baked in). */
+                int M = 16, s2;
+                while (M < 2 * N1 - 1)
+                    M <<= 1;
+                if (_il2d_build_chain(M, il2d_R, il2d_f, il2d_b,
+                                      &il2d_nst) &&
+                    !_il2d_build_tables(M, il2d_nst, il2d_R, il2d_L,
+                                        il2d_tf, il2d_tb))
+                {
+                    const size_t cb = 2 * (size_t)N1 * sizeof(double);
+                    const size_t kb = 2 * (size_t)M * sizeof(double);
+                    il2d_bluchf = (double *)malloc(cb);
+                    il2d_bluchb = (double *)malloc(cb);
+                    il2d_blukf = (double *)malloc(kb);
+                    il2d_blukb = (double *)malloc(kb);
+                    il2d_bluscr = (double *)malloc(
+                        2 * (size_t)M * (size_t)N2 * sizeof(double));
+                    if (il2d_bluchf && il2d_bluchb && il2d_blukf &&
+                        il2d_blukb && il2d_bluscr)
+                    {
+                        double *za = (double *)calloc(2 * (size_t)M,
+                                                      sizeof(double));
+                        double *zb2 = za ? (double *)malloc(kb) : NULL;
+                        int r, d2, ok = (za && zb2);
+                        for (r = 0; ok && r < N1; r++)
+                        {
+                            const long long m2 =
+                                ((long long)r * r) % (2LL * N1);
+                            const double a = -VFFT_IL2P_PI *
+                                             (double)m2 / (double)N1;
+                            il2d_bluchf[2 * r] = cos(a);
+                            il2d_bluchf[2 * r + 1] = sin(a);
+                            il2d_bluchb[2 * r] = cos(a);
+                            il2d_bluchb[2 * r + 1] = -sin(a);
+                        }
+                        for (d2 = 0; ok && d2 < 2; d2++)
+                        {
+                            const double *ch =
+                                d2 ? il2d_bluchb : il2d_bluchf;
+                            double *kern = d2 ? il2d_blukb : il2d_blukf;
+                            const double inv = 1.0 / (double)M;
+                            memset(za, 0, 2 * (size_t)M
+                                              * sizeof(double));
+                            za[0] = ch[0];
+                            za[1] = -ch[1];
+                            for (r = 1; r < N1; r++)
+                            {
+                                za[2 * r] = ch[2 * r];
+                                za[2 * r + 1] = -ch[2 * r + 1];
+                                za[2 * (M - r)] = ch[2 * r];
+                                za[2 * (M - r) + 1] = -ch[2 * r + 1];
+                            }
+                            _il2d_col_pass(za, zb2, M, 1, 1, il2d_nst,
+                                           il2d_R, il2d_L, il2d_f,
+                                           il2d_tf, 0);
+                            for (s2 = 0; s2 < 2 * M; s2++)
+                                kern[s2] = zb2[s2] * inv;
+                        }
+                        free(za);
+                        free(zb2);
+                        if (ok)
+                        {
+                            il2d_blu = M;
+                            chain_ok = 1;
+                        }
+                    }
+                    if (!il2d_blu)
+                    {
+                        free(il2d_bluchf); il2d_bluchf = NULL;
+                        free(il2d_bluchb); il2d_bluchb = NULL;
+                        free(il2d_blukf); il2d_blukf = NULL;
+                        free(il2d_blukb); il2d_blukb = NULL;
+                        free(il2d_bluscr); il2d_bluscr = NULL;
+                        for (s2 = 0; s2 < il2d_nst; s2++)
+                        {
+                            free(il2d_tf[s2]); il2d_tf[s2] = NULL;
+                            free(il2d_tb[s2]); il2d_tb[s2] = NULL;
+                        }
+                    }
+                }
+            }
             if (!chain_ok)
             {
                 /* OWNER LAW: split is NOT a fallback of IL — no convert
                  * wrapper. An inexpressible N1 refuses loudly. */
                 _vfft_warn("vfft_create: IL 2D c2c %dx%d — N1 has no "
                            "native column chain (radices 4..64, no "
-                           "leftover factor); unsupported for now",
-                           N1, N2);
+                           "leftover factor)%s",
+                           N1, N2,
+                           cfg->order == VFFT_ORDER_NATURAL
+                               ? " and the Bluestein column route "
+                                 "serves DEFAULT order only"
+                               : " and the Bluestein column route "
+                                 "could not be built");
                 return NULL;
             }
             if (cfg->order == VFFT_ORDER_NATURAL && il2d_nst > 1)
@@ -5628,7 +5779,37 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 rc.wisdom = cfg->wisdom;
                 rc.wisdom_write = cfg->wisdom_write;
                 il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
-                if (il2d_row &&
+                if (!il2d_row)
+                {
+                    /* no IN-PLACE K=1 route at this N2 (odd/awkward N2
+                     * — 129 = 3*43 serves OOP-only via the prime
+                     * engine): fall back to the tier's OWN rowoop
+                     * mechanism — the OOP child + row scratch + copy-
+                     * back that _il2d_row_exec already serves. il2d_row
+                     * aliases the OOP child as the dispatch sentinel
+                     * (never executed directly when rowoop is set);
+                     * destroy skips the alias. The row route is FORCED
+                     * here, so the axis race must not flip it. */
+                    rc.placement = VFFT_OUTOFPLACE;
+                    il2d_rowo = (struct vfft_plan_s *)vfft_create(&rc);
+                    if (il2d_rowo)
+                    {
+                        il2d_rowscr = (double *)malloc(
+                            2 * (size_t)N2 * sizeof(double));
+                        if (il2d_rowscr)
+                        {
+                            il2d_rowoop = 1;
+                            il2d_rof = 1;
+                            il2d_row = il2d_rowo;
+                        }
+                        else
+                        {
+                            vfft_destroy(il2d_rowo);
+                            il2d_rowo = NULL;
+                        }
+                    }
+                }
+                if (il2d_row && !il2d_blu &&
                     _il2d_build_tables(N1, il2d_nst, il2d_R,
                                        il2d_L, il2d_tf, il2d_tb))
                 {
@@ -5726,7 +5907,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * anything else warns and stays unbanded. VFFT_IL2D_TFUSE
                  * =0 opts out of the per-band row pass (default ON when
                  * banded — the fusion is the point). */
-                if (il2d_row)
+                if (il2d_row && !il2d_blu)
                 {
                     const char *we = getenv("VFFT_IL2D_WL");
                     const char *tfe = getenv("VFFT_IL2D_TFUSE");
@@ -5821,15 +6002,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             cfg->placement == VFFT_OUTOFPLACE)
         {
             int rok = 1;
-            if ((N2 % 2) != 0)
-            {
-                _vfft_warn("vfft_create: IL 2D %s %dx%d — the native "
-                           "tier needs even N2 (the zr2c row door); odd "
-                           "N2 is unsupported for interleaved callers "
-                           "(split layout serves it)",
-                           _vfft_tname(cfg->transform), N1, N2);
-                return NULL;
-            }
+            const int oddn2 = (N2 % 2) != 0;
+            /* ODD N2 (2026-08-27, owner "we can support it and we
+             * should"): the zr2c reinterpret needs even N2, so odd rows
+             * ride a K=1 c2c child instead — promote real -> complex ->
+             * keep hp1 bins fwd; Hermitian-extend -> inverse -> Re bwd.
+             * Any odd N2 (the child covers odd/prime/awkward via the
+             * pair/chain/prime engines). hp1 = N2/2+1 = (N2+1)/2 falls
+             * out of the same integer division, so the column pass and
+             * the rscr sizing below are the even path untouched. */
             if (cfg->order == VFFT_ORDER_NATURAL)
             {
                 /* multi-stage natural waits on the rho tapes (M4). */
@@ -5864,7 +6045,60 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             if (rok && _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
                                           il2d_tf, il2d_tb))
                 rok = 0;
-            if (rok)
+            if (rok && oddn2)
+            {
+                /* the odd row child: K=1 c2c at N2, NATURAL (the CCE
+                 * bins must come out in order), OOP into the row pair
+                 * buffer. Serial — the row loop is plain; threading the
+                 * odd rows via clones is the noted follow-up. */
+                vfft_config_t rc;
+                memset(&rc, 0, sizeof rc);
+                rc.transform = VFFT_C2C;
+                rc.placement = VFFT_OUTOFPLACE;
+                rc.rigor = cfg->rigor;
+                rc.dims = 1;
+                rc.n[0] = N2;
+                rc.howmany = 1;
+                rc.order = VFFT_ORDER_NATURAL;
+                rc.layout = VFFT_LAYOUT_INTERLEAVED;
+                rc.nthreads = 1;
+                rc.wisdom = cfg->wisdom;
+                rc.wisdom_write = cfg->wisdom_write;
+                il2d_row = (struct vfft_plan_s *)vfft_create(&rc);
+                if (il2d_row)
+                {
+                    il2d_orbuf = (double *)malloc(
+                        4 * (size_t)N2 * sizeof(double));
+                    if (!il2d_orbuf)
+                    {
+                        vfft_destroy(il2d_row);
+                        il2d_row = NULL;
+                    }
+                }
+                if (!il2d_row)
+                {
+                    _vfft_warn("vfft_create: IL 2D %s %dx%d — odd N2 "
+                               "row child (c2c %d) failed; the cell "
+                               "refuses (no split fallback by owner "
+                               "law)",
+                               _vfft_tname(cfg->transform), N1, N2, N2);
+                    return NULL;
+                }
+                if (cfg->transform == VFFT_C2R)
+                {
+                    il2d_rscr = (double *)malloc(
+                        (2 * (size_t)N1 * ((size_t)N2 / 2 + 1) + 8)
+                        * sizeof(double));
+                    if (!il2d_rscr)
+                    {
+                        vfft_destroy(il2d_row);
+                        free(il2d_orbuf);
+                        return NULL;
+                    }
+                }
+                il2d_oddn2 = 1;
+            }
+            else if (rok)
             {
                 vfft_config_t rc;
                 memset(&rc, 0, sizeof rc);
@@ -6072,6 +6306,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_rscr = il2d_rscr;
         h->il2d_rows = il2d_rows;
         h->il2d_rw = il2d_rw;
+        h->il2d_oddn2 = il2d_oddn2;
+        h->il2d_orbuf = il2d_orbuf;
+        h->il2d_blu = il2d_blu;
+        h->il2d_bluchf = il2d_bluchf;
+        h->il2d_bluchb = il2d_bluchb;
+        h->il2d_blukf = il2d_blukf;
+        h->il2d_blukb = il2d_blukb;
+        h->il2d_bluscr = il2d_bluscr;
         /* A/B race knob (struct comment): create-time env read only. */
         h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
         h->il2d_lx = il2d_lx;
@@ -6092,7 +6334,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * MUST sit AFTER the stage-array commits above — it executes h.
          * c2c ONLY: the real tier has no banded walk / row route to race
          * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
-        if (h->transform == VFFT_C2C && h->il2d_row &&
+        if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
+            !il2d_rof &&
             !getenv("VFFT_IL2D_WL") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
@@ -6102,7 +6345,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
-        if (h->transform == VFFT_C2C && h->il2d_row && h->nthreads > 1)
+        if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
+            h->nthreads > 1)
         {
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
@@ -6120,7 +6364,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * no rw= verdict; banks chain+rw direction-shared. Same
          * after-the-commits law as the c2c axis race — it executes h. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !getenv("VFFT_IL2D_ROWSPLIT") &&
+            h->il2d_row && !il2d_oddn2 &&
+            !getenv("VFFT_IL2D_ROWSPLIT") &&
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
             _il2d_real_rowrace(h, W, cfg, N1, N2);
@@ -6557,7 +6802,46 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         /* prime-aware: factorable -> CT/wisdom; prime -> Rader/Bluestein (override). */
         stride_plan_t *p = vfft_proto_auto_plan_dispatch(N, K, reg, &W->c2c);
         if (!p)
+        {
+            /* AWKWARD-COMPOSITE coverage (2026-08-27, the last hole in
+             * the K=1 IL grid): CT needs smooth factors and
+             * prime_dispatch requires primality, so an odd N with a
+             * prime factor past the radix set (129 = 3*43) had NO
+             * in-place route at all — and the refusal was SILENT.
+             * il_prime documents zin == zout safe in both methods, so
+             * the K=1 INTERLEAVED cell adopts it directly (the forced-
+             * route precedent: nothing exists to race against). The
+             * handle carries ONLY k1ilpr — execute dispatches it before
+             * any cplan path. Everything else now refuses LOUDLY. */
+            if (K == 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+            {
+                vfft_ilprime_plan_t *ilpr = vfft_ilprime_create(N);
+                if (ilpr)
+                {
+                    struct vfft_plan_s *hh = (struct vfft_plan_s *)
+                        calloc(1, sizeof *hh);
+                    if (!hh)
+                    {
+                        vfft_ilprime_destroy(ilpr);
+                        return NULL;
+                    }
+                    hh->transform = VFFT_C2C;
+                    hh->placement = VFFT_INPLACE;
+                    hh->layout = (int)cfg->layout;
+                    hh->N = N;
+                    hh->K = K;
+                    hh->nthreads = _vfft_plan_threads(cfg);
+                    hh->k1ilpr = ilpr;
+                    return hh;
+                }
+            }
+            _vfft_warn("vfft_create: in-place C2C N=%d K=%zu — no CT "
+                       "factorization, not prime, and the IL "
+                       "prime/Bluestein engine cannot serve it "
+                       "(K==1 INTERLEAVED only)",
+                       N, K);
             return NULL;
+        }
         /* (Self-contained natural design: the old C1 scrambled-entry bank-from-plan is GONE — the natural
          * block below no longer reads the scrambled entry, so it can't hard-fail for want of one. Its base
          * plan is `p` itself, which auto_plan_dispatch always built here.) */
@@ -9957,6 +10241,52 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     if (h->il2d_colmt && h->nthreads > 1 &&
                         _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
                         return;
+                    if (h->il2d_blu)
+                    { /* ODD/PRIME N1: the column-axis Bluestein (struct
+                       * comment at il2d_blu). modulate -> fwd M-chain ->
+                       * comb-order kernel multiply -> bwd chain (eats
+                       * the comb, x M; 1/M lives in the kernel) ->
+                       * demodulate; then the rows (commute). n1 is
+                       * NATURAL on this route. Serial v1 — the MT arms
+                       * are the noted follow-up. */
+                        const long M = h->il2d_blu;
+                        double *scr = h->il2d_bluscr;
+                        const double *ch = fwd ? h->il2d_bluchf
+                                              : h->il2d_bluchb;
+                        const double *kn = fwd ? h->il2d_blukf
+                                              : h->il2d_blukb;
+                        long r2;
+                        memset(scr + 2 * (size_t)h->N * rn, 0,
+                               2 * (size_t)(M - h->N) * rn
+                                   * sizeof(double));
+                        for (r2 = 0; r2 < h->N; r2++)
+                            _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
+                                           sre + 2 * (size_t)r2 * rn,
+                                           ch[2 * r2], ch[2 * r2 + 1],
+                                           rn);
+                        _il2d_col_pass(scr, scr, (int)M, rn, rn,
+                                       h->il2d_nst, h->il2d_R,
+                                       h->il2d_L, h->il2d_f, h->il2d_tf,
+                                       0);
+                        for (r2 = 0; r2 < M; r2++)
+                            _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
+                                           scr + 2 * (size_t)r2 * rn,
+                                           kn[2 * r2], kn[2 * r2 + 1],
+                                           rn);
+                        _il2d_col_pass(scr, scr, (int)M, rn, rn,
+                                       h->il2d_nst, h->il2d_R,
+                                       h->il2d_L, h->il2d_b, h->il2d_tb,
+                                       1);
+                        for (r2 = 0; r2 < h->N; r2++)
+                            _il2d_row_cmul(dre + 2 * (size_t)r2 * rn,
+                                           scr + 2 * (size_t)r2 * rn,
+                                           ch[2 * r2], ch[2 * r2 + 1],
+                                           rn);
+                        for (i = 0; i < (size_t)h->N; i++)
+                            _il2d_row_exec(h, dir, dre + 2 * i * rn,
+                                           rn);
+                        return;
+                    }
                     /* strip loop-interchange: all stages depth-first per
                      * column strip — the strip stays cache-resident
                      * across stages (one DRAM sweep, not nst). Legal
@@ -10426,13 +10756,21 @@ void vfft_destroy(vfft_plan h)
         if (h->il2d_row)
         {
             int s2;
-            vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
+            if (h->il2d_row != h->il2d_rowo)
+                vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
             if (h->il2d_rowo)
-                vfft_destroy(h->il2d_rowo);
+                vfft_destroy(h->il2d_rowo); /* (the forced-oop route aliases
+                                             * il2d_row to rowo — freed once) */
             for (s2 = 0; s2 < h->il2d_roww_n; s2++)
                 vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
             free(h->il2d_roww);
             free(h->il2d_rowscr_w);
+            free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
+            free(h->il2d_bluchf);
+            free(h->il2d_bluchb);
+            free(h->il2d_blukf);
+            free(h->il2d_blukb);
+            free(h->il2d_bluscr);
             free(h->il2d_rowscr);
             free(h->il2d_bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
