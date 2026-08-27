@@ -478,6 +478,13 @@ extern "C"
    * serial walk served. */
   long vfft_zt_mt_passes(void);
 
+  /* And for the 2D plane queue (dims=2, howmany>1): queued (plane-per-
+   * worker) executes actually run. Loop-vs-queue is raced at create
+   * (VFFT_PQ_NO_MT=1 kills, =0 forces); zero after an execute means the
+   * serial plane loop served (which still intra-MTs per the inner
+   * plan's own banked verdicts). */
+  long vfft_pq_mt_passes(void);
+
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)
