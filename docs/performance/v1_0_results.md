@@ -568,6 +568,43 @@ whenever LEAF/BAILEY2 win.
 > used), so they are **directional** — several cells show order-flip spread from thermal noise.
 > The calibrated even-K cells in §1 are the publication reference; the odd-K numbers track them.
 
+### K=1 ODD cascade — N = 2^a·odd vs MKL (2026-08-27)
+
+New coverage: the boundary-split cascade now takes **odd mid stages**
+(radix 3/5/7 msg codelets — the full gauntlet: the s0t turn ingest, the
+shared block-split interior, the stf/stf2 terminators with the t2q bit
+raced at create), so N = 2^a·odd gets a native cascade instead of the
+pair/chain engines. **The route has no fixed tier boundary**: an
+odd-chain cascade attaches only by *winning a create-time race against
+the handle's full serving* (the k1 IL routes included) — the verdict is
+measured per cell, never assumed. Against that incumbent it wins every
+cell at 1.5–2.0×.
+
+vs **MKL DFTI** (1D complex, out-of-place, `mkl_set_num_threads(1)` —
+MKL auto-threads 1D C2C at N≥8192), same process, alternated arms,
+min-of-15. Ours is the scrambled (order-agnostic) contract, MKL's
+natural — the same frame as the §1 tables:
+
+```
+ N          vfft (ns)   MKL (ns)   vs MKL
+──────────────────────────────────────────
+ 3072           3,300      5,300    1.61×
+ 6144           8,100     11,900    1.47×
+ 12288         15,600     25,200    1.62×
+ 20480         30,400     44,300    1.46×
+ 24576         38,400     56,900    1.48×
+──────────────────────────────────────────
+ 4096 (anchor) 13,700     13,200    0.96×
+ 8192          29,700     31,800    1.07×
+ 16384         62,500     60,600    0.97×
+```
+
+The pow2 anchors sit at the known parity, so the odd wins are not a
+measurement artifact: **mixed-radix is MKL's soft spot** (its 12288
+costs nearly its 16384) while the odd cascade scales like the pow2 one.
+Measured on a live host — the pre-release sweep re-races these pinned
+before publication rank.
+
 ### K=1 scrambled cascade — intra-transform MT (2026-08-27)
 
 The single-transform zturn cascade (ord=scr, OOP) threads its own walk:
