@@ -159,6 +159,9 @@ long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
 /* INC-Z: the K=1 cascade MT race, defined with the executor near
  * _exec_zcascade; called from the OOP scrambled commit in create. */
 static void _zt_mt_race(struct vfft_plan_s *h);
+/* the 2D plane queue's loop-vs-queue race, defined with its executor;
+ * called from the dims==2 howmany>1 create branch. */
+static void _pq_mt_race(struct vfft_plan_s *h);
 
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
@@ -5374,18 +5377,139 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     }
     if (cfg->dims == 2)
     {
-        /* §6a50/Q4: howmany is the 1D lane-batched convention; the 2D
-         * executors are K-blind, so K != 1 here would silently process one
-         * plane of a K-plane request (hazard demonstrated). Reject up
-         * front, same contract as 3D. Sequential-plane 2D batching is a
-         * designed feature (own dist convention), not a reinterpretation. */
+        /* §6a50/Q4: the 2D executors are K-blind — howmany > 1 is served
+         * by the PLANE QUEUE (2026-08-27, the designed sequential-plane
+         * batching): a wrapper over one primary howmany=1 plan (loop
+         * mode, keeps its intra-MT verdicts) + serial clones pulled by
+         * an atomic plane counter (queue mode), loop-vs-queue RACED at
+         * create. Contiguous planes only (the canonical dist for each
+         * transform); layouts/transforms the tier cannot express keep
+         * the loud refusal. */
         if (K != 1)
         {
-            _vfft_warn("vfft_create: dims=2 requires howmany==1 (got %zu) — the 2D executors "
-                       "are K-blind and would silently process one plane; batch 2D plans "
-                       "sequentially instead",
-                       K);
-            return NULL;
+            const int N1q = cfg->n[0], N2q = cfg->n[1];
+            const size_t hp1q = (size_t)N2q / 2 + 1;
+            vfft_config_t ic;
+            struct vfft_plan_s *h;
+            if (cfg->layout != VFFT_LAYOUT_INTERLEAVED ||
+                (cfg->transform != VFFT_C2C &&
+                 cfg->transform != VFFT_R2C &&
+                 cfg->transform != VFFT_C2R))
+            {
+                _vfft_warn("vfft_create: dims=2 howmany=%zu is served by "
+                           "the plane queue for INTERLEAVED C2C/R2C/C2R "
+                           "only (got %s, layout=%d) — batch other 2D "
+                           "plans sequentially",
+                           K, _vfft_tname(cfg->transform),
+                           (int)cfg->layout);
+                return NULL;
+            }
+            ic = *cfg;
+            ic.howmany = 1;
+            h = (struct vfft_plan_s *)calloc(1, sizeof *h);
+            if (!h)
+                return NULL;
+            h->pq_inner =
+                (struct vfft_plan_s *)vfft_create(&ic); /* warns itself */
+            if (!h->pq_inner)
+            {
+                free(h);
+                return NULL;
+            }
+            h->transform = cfg->transform;
+            h->placement = cfg->placement;
+            h->layout = (int)cfg->layout;
+            h->N = N1q;
+            h->N2 = N2q;
+            h->K = K;
+            h->nthreads = _vfft_plan_threads(cfg);
+            h->pq_n = K;
+            if (cfg->transform == VFFT_C2C)
+            {
+                h->pq_sdist = 2 * (size_t)N1q * N2q;
+                h->pq_ddist = h->pq_sdist;
+            }
+            else if (cfg->transform == VFFT_R2C)
+            {
+                h->pq_sdist = (size_t)N1q * N2q;
+                h->pq_ddist = 2 * (size_t)N1q * hp1q;
+            }
+            else
+            {
+                h->pq_sdist = 2 * (size_t)N1q * hp1q;
+                h->pq_ddist = (size_t)N1q * N2q;
+            }
+            /* queue clones: SERIAL instances (a queue worker must not
+             * nest-dispatch), wisdom-served from the verdicts the
+             * primary just banked, each BITWISE-verified on a probe
+             * plane — any mismatch tears the set down and the loop
+             * serves. */
+            if (h->nthreads > 1 && K >= 2)
+            {
+                int T = h->nthreads;
+                const vfft_dir_t pd = (cfg->transform == VFFT_C2R)
+                                          ? VFFT_BACKWARD
+                                          : VFFT_FORWARD;
+                double *ps, *p0, *p1;
+                int t, ok = 1;
+                if (T > _stride_pool_size + 1)
+                    T = _stride_pool_size + 1;
+                if (T > 64)
+                    T = 64;
+                if ((size_t)T > K)
+                    T = (int)K;
+                ic.nthreads = 1;
+                ic.wisdom_write = 0;
+                ps = (double *)malloc(h->pq_sdist * sizeof(double));
+                p0 = (double *)malloc(h->pq_ddist * sizeof(double));
+                p1 = (double *)malloc(h->pq_ddist * sizeof(double));
+                h->pq_w = (struct vfft_plan_s **)calloc(
+                    (size_t)T, sizeof *h->pq_w);
+                if (ps && p0 && p1 && h->pq_w && T >= 2)
+                {
+                    size_t i2;
+                    for (i2 = 0; i2 < h->pq_sdist; i2++)
+                        ps[i2] = 1.0 + 1e-6 * (double)(i2 & 511);
+                    vfft_execute((vfft_plan)h->pq_inner, pd, ps, NULL,
+                                 p0, NULL);
+                    for (t = 0; t < T && ok; t++)
+                    {
+                        h->pq_w[t] =
+                            (struct vfft_plan_s *)vfft_create(&ic);
+                        if (!h->pq_w[t])
+                        {
+                            ok = 0;
+                            break;
+                        }
+                        vfft_execute((vfft_plan)h->pq_w[t], pd, ps,
+                                     NULL, p1, NULL);
+                        if (memcmp(p0, p1,
+                                   h->pq_ddist * sizeof(double)) != 0)
+                            ok = 0;
+                    }
+                    if (ok)
+                        h->pq_wn = T;
+                    else
+                    {
+                        _vfft_warn("plane queue %dx%d: clone build/"
+                                   "bitwise probe failed — queue "
+                                   "declines, the serial loop serves",
+                                   N1q, N2q);
+                        for (t = 0; t < T; t++)
+                            if (h->pq_w[t])
+                                vfft_destroy(h->pq_w[t]);
+                        free(h->pq_w);
+                        h->pq_w = NULL;
+                        h->pq_wn = 0;
+                    }
+                }
+                free(ps);
+                free(p0);
+                free(p1);
+                if (h->pq_wn > 0)
+                    _pq_mt_race(h);
+            }
+            return h;
         }
         int N1 = cfg->n[0], N2 = cfg->n[1];
         /* ── native IL 2D c2c tier — THE serving for IL callers (OWNER
@@ -9212,6 +9336,146 @@ static void _zt_mt_race(struct vfft_plan_s *h)
     free(zo);
 }
 
+/* ══ 2D PLANE QUEUE execute (howmany > 1) ════════════════════════════
+ * Serial mode: loop the PRIMARY over the planes (it intra-MTs per its
+ * own verdicts). Queue mode: an atomic plane counter, worker t pulling
+ * planes onto its own SERIAL clone — plane-per-worker, zero barriers,
+ * no nested pool dispatch by construction. */
+static long _vfft_pq_mt_count = 0;
+long vfft_pq_mt_passes(void) { return _vfft_pq_mt_count; }
+
+typedef struct
+{
+    struct vfft_plan_s *plan; /* this worker's serial clone */
+    struct vfft_plan_s *h;    /* the queue handle (dists, count) */
+    vfft_dir_t dir;
+    const double *src;
+    double *dst;
+    volatile long *next;      /* the shared plane counter */
+} _pq_arg;
+
+static void _pq_tramp(void *v)
+{
+    _pq_arg *a = (_pq_arg *)v;
+    const size_t P = a->h->pq_n;
+    for (;;)
+    {
+#ifdef _WIN32
+        const long p = InterlockedIncrement(a->next) - 1;
+#else
+        const long p = __sync_fetch_and_add(a->next, 1);
+#endif
+        if ((size_t)p >= P)
+            return;
+        vfft_execute((vfft_plan)a->plan, a->dir,
+                     a->src + (size_t)p * a->h->pq_sdist, NULL,
+                     a->dst + (size_t)p * a->h->pq_ddist, NULL);
+    }
+}
+
+static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
+                        const double *sre, double *dre)
+{
+    if (!dre)
+        dre = (double *)sre; /* in-place convenience (C2C) */
+    if (h->pq_mt && h->pq_wn > 0)
+    {
+        _pq_arg a[64];
+        volatile long next = 0;
+        int T = h->pq_wn;
+        int t, nd = 0;
+        if ((size_t)T > h->pq_n)
+            T = (int)h->pq_n;
+        for (t = 0; t < T; t++)
+        {
+            a[t].plan = h->pq_w[t];
+            a[t].h = h;
+            a[t].dir = dir;
+            a[t].src = sre;
+            a[t].dst = dre;
+            a[t].next = &next;
+        }
+        for (t = 1; t < T; t++)
+            _stride_pool_dispatch(&_stride_workers[nd++], _pq_tramp,
+                                  &a[t]);
+        _pq_tramp(&a[0]);
+        if (nd)
+            _stride_pool_wait_all();
+        _vfft_pq_mt_count++; /* engagement, see vfft.h */
+        return;
+    }
+    {
+        size_t p;
+        for (p = 0; p < h->pq_n; p++)
+            vfft_execute((vfft_plan)h->pq_inner, dir,
+                         sre + p * h->pq_sdist, NULL,
+                         dre + p * h->pq_ddist, NULL);
+    }
+}
+
+/* ── the loop-vs-queue race (create-time, min-of-3 alternated on
+ * scratch). The queue also self-gates: no pool, no clones, or a clone
+ * failing the BITWISE probe against the primary => pq_mt stays 0 and
+ * the loop serves (the primary keeps its own intra-MT verdicts). */
+static void _pq_mt_race(struct vfft_plan_s *h)
+{
+    const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
+    double *src = (double *)malloc(sb * sizeof(double));
+    double *dst = (double *)malloc(db * sizeof(double));
+    double tl = 1e300, tq = 1e300;
+    const vfft_dir_t dir =
+        (h->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
+    int r;
+    size_t i;
+    const char *ce = getenv("VFFT_PQ_NO_MT");
+    if (ce)
+    {
+        h->pq_mt = (atoi(ce) == 0 && h->pq_wn > 0);
+        free(src);
+        free(dst);
+        return;
+    }
+    if (!src || !dst || h->pq_wn <= 0)
+    {
+        free(src);
+        free(dst);
+        return; /* loop serves */
+    }
+    for (i = 0; i < sb; i++)
+        src[i] = 1.0 + 1e-6 * (double)(i & 511);
+    h->pq_mt = 0;
+    _pq_execute(h, dir, src, dst); /* warm the loop arm */
+    h->pq_mt = 1;
+    _pq_execute(h, dir, src, dst); /* warm the queue arm */
+    for (r = 0; r < 3; r++)
+    {
+        struct timespec t0, t1;
+        double d;
+        h->pq_mt = 0;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        _pq_execute(h, dir, src, dst);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < tl)
+            tl = d;
+        h->pq_mt = 1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        _pq_execute(h, dir, src, dst);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < tq)
+            tq = d;
+    }
+    h->pq_mt = (tq < tl);
+    if (getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[pq] race %dx%d P=%zu T=%d: loop=%.0f "
+                        "queue=%.0f -> %s\n",
+                h->N, h->N2, h->pq_n, h->pq_wn, tl, tq,
+                h->pq_mt ? "QUEUE" : "loop");
+    free(src);
+    free(dst);
+}
+
 /* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
  * Invariant and route axis are documented at the zroute field. */
 static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
@@ -9574,6 +9838,12 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
+    if (h->pq_inner)
+    { /* 2D PLANE QUEUE (howmany > 1): loop or atomic-counter queue per
+       * the raced verdict — see _pq_execute. */
+        _pq_execute(h, dir, sre, dre);
+        return;
+    }
     if (h->tcb)
         { /* TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms. Block strides are h->tcb_sn/tcb_dn
      * (equal for C2C, different for r2c/c2r); the inner handle carries route, placement and order.
@@ -10137,6 +10407,16 @@ void vfft_destroy(vfft_plan h)
 {
     if (h)
     {
+        if (h->pq_inner)
+        { /* plane-queue wrapper: the inner + clones own everything */
+            int t;
+            vfft_destroy((vfft_plan)h->pq_inner);
+            for (t = 0; t < h->pq_wn; t++)
+                vfft_destroy((vfft_plan)h->pq_w[t]);
+            free(h->pq_w);
+            free(h);
+            return;
+        }
         if (h->cplan_il)
             stride_plan_destroy(h->cplan_il);
         STRIDE_ALIGNED_FREE(h->il_wr);
