@@ -329,6 +329,87 @@ int main(int argc, char **argv)
             free(x); free(za); free(zb);
         }
     }
+    /* ── INC-C: c2c MT. Same two-gate law as the real tier: (1) the
+     * engagement counter must MOVE across the threaded execute (clones
+     * built alone is not engagement), (2) MT == ST BITWISE, both dirs.
+     * The ST arm is a plan created with nthreads=1 (same route, no
+     * clones). Cells: one square big enough for a banded chain, one
+     * short-N1 cell (single-stage => the strip+slab shape). Forced on
+     * via VFFT_IL2D_NO_COLMT=0 so the gate is deterministic even where
+     * the race would honestly bank "no". */
+    {
+        static const int MC[][2] = { { 512, 512 }, { 64, 1024 } };
+        int mi;
+        vfft_set_num_threads(8);
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_NO_COLMT=0");
+#else
+        putenv("VFFT_IL2D_NO_COLMT=0");
+#endif
+        for (mi = 0; mi < 2; mi++) {
+            const int N1 = MC[mi][0], N2 = MC[mi][1];
+            const size_t PN = (size_t)N1 * N2;
+            double *x = malloc(2 * PN * 8), *zs = malloc(2 * PN * 8);
+            double *zm = malloc(2 * PN * 8);
+            vfft_config_t cfg;
+            vfft_plan ps, pm;
+            long c0, c1;
+            size_t i;
+            int d2;
+            if (!x || !zs || !zm) { printf("OOM\n"); return 2; }
+            for (i = 0; i < 2 * PN; i++)
+                x[i] = (double)rand() / RAND_MAX - 0.5;
+            memset(&cfg, 0, sizeof cfg);
+            cfg.transform = VFFT_C2C;
+            cfg.placement = VFFT_INPLACE;
+            cfg.rigor = VFFT_MEASURE;
+            cfg.dims = 2; cfg.n[0] = N1; cfg.n[1] = N2;
+            cfg.howmany = 1;
+            cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+            cfg.wisdom = W; cfg.wisdom_write = 0;
+            cfg.nthreads = 1;
+            ps = vfft_create(&cfg);
+            cfg.nthreads = 8;
+            pm = vfft_create(&cfg);
+            if (!ps || !pm) {
+                printf("  MT %4dx%-4d create FAIL\n", N1, N2);
+                fails++;
+                continue;
+            }
+            for (d2 = 0; d2 < 2; d2++) {
+                const vfft_dir_t dd = d2 ? VFFT_BACKWARD : VFFT_FORWARD;
+                memcpy(zs, x, 2 * PN * 8);
+                memcpy(zm, x, 2 * PN * 8);
+                c0 = vfft_il2d_col_mt_passes();
+                vfft_execute(pm, dd, zm, NULL, zm, NULL);
+                c1 = vfft_il2d_col_mt_passes();
+                vfft_execute(ps, dd, zs, NULL, zs, NULL);
+                if (c1 == c0) {
+                    printf("  MT %4dx%-4d %s NEVER THREADED (colmt "
+                           "passes unmoved) *** FAIL ***\n",
+                           N1, N2, d2 ? "bwd" : "fwd");
+                    fails++;
+                }
+                if (memcmp(zs, zm, 2 * PN * 8) != 0) {
+                    printf("  MT %4dx%-4d %s MT != ST *** FAIL ***\n",
+                           N1, N2, d2 ? "bwd" : "fwd");
+                    fails++;
+                } else if (c1 != c0) {
+                    printf("  MT %4dx%-4d %s colmt-passes=%ld  MT==ST "
+                           "BITWISE  PASS\n",
+                           N1, N2, d2 ? "bwd" : "fwd", c1 - c0);
+                }
+            }
+            vfft_destroy(ps); vfft_destroy(pm);
+            free(x); free(zs); free(zm);
+        }
+#ifdef _WIN32
+        _putenv("VFFT_IL2D_NO_COLMT=");
+#else
+        unsetenv("VFFT_IL2D_NO_COLMT");
+#endif
+        vfft_set_num_threads(1);
+    }
     if (W) vfft_wisdom_free(W);
     printf("\n%s (%d fail, %d skip)\n",
            fails ? "*** FAIL ***" : "=== ALL PASS ===", fails, skips);
