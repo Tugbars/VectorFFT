@@ -526,6 +526,27 @@ struct vfft_plan_s
      * DFT bodies, radix 3..27 — the column kind was never emitted) is
      * the future raced arm for smooth-odd N1. il2d_blu = M (0 = off);
      * il2d_R/L/f/b/tf/tb hold the M-chain. */
+    /* ── NATURAL n1 (2026-08-27, "M4-lite"): the leaf-only pitch
+     * theorem (n1c loads legs at Ls, stores at OLs, independent —
+     * verified in the emitted body) makes natural output a DRIVER
+     * redirection: the leaf call for block b writes its R rows at
+     * out-base perm[b*R] with OLs = (N1/R)*pitch — natural n1, zero
+     * new codelets, any chain (pow2 AND odd). bwd mirrors on the
+     * SOURCE side (the leaf runs first in the reversed chain and
+     * gathers its legs from natural positions via Ls). il2d_natperm =
+     * the scr->nat table, block-affine by construction (asserted at
+     * create: perm[bR+r] == perm[bR] + r*(N1/R) — a wrong digit
+     * convention fails the create, never serves silently). Natural
+     * cells pin wl=0 (the leaf scatters across bands) and skip the MT
+     * arms (v1). Single-stage cells stay natural-native as before;
+     * blu cells are natural BY CONSTRUCTION and now accept the order. */
+    int il2d_nat;
+    int *il2d_natperm; /* N1 entries, scr row -> natural row */
+    double *il2d_natscr; /* 2*N1*rn: the pre-leaf plane — the natural
+                          * leaf SCATTERS, so it must never write the
+                          * plane it still reads (block b's natural
+                          * targets can be block b' > b's unread comb
+                          * rows — the clobber the first cut shipped) */
     int il2d_blu;
     double *il2d_bluchf, *il2d_bluchb; /* chirp, 2*N1 each, fwd/bwd  */
     double *il2d_blukf, *il2d_blukb;   /* comb-order kernels, 2*M    */
@@ -2615,6 +2636,11 @@ static void _il2d_blu_cols(const double *src, double *dst, int N1,
                            vfft_il2p_fn const *fb, double *const *tf,
                            double *const *tb, const double *ch,
                            const double *kn, double *scr);
+static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
+                               size_t rn, int nst, const int *Rst,
+                               const int *Lst, vfft_il2p_fn const *fns,
+                               double *const *tabs, int reverse,
+                               const int *perm, double *scr);
 
 /* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
  * race serve through it — race == serving path). The banded walk is the
@@ -2630,6 +2656,16 @@ static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_nat)
+    { /* NATURAL n1 (M4-lite): the leaf-redirected pass, unbanded by
+       * construction (wl pinned 0 at create). */
+        _il2d_col_pass_nat(src, dst, h->N, hp1, h->il2d_nst, h->il2d_R,
+                           h->il2d_L,
+                           reverse ? h->il2d_b : h->il2d_f,
+                           reverse ? h->il2d_tb : h->il2d_tf, reverse,
+                           h->il2d_natperm, h->il2d_natscr);
+        return;
+    }
     if (h->il2d_blu)
     { /* prime N1: the shared Bluestein pipeline over the CCE plane;
        * reverse = the inverse transform (conjugated chirp/kernel). */
@@ -3600,6 +3636,127 @@ static int _il2d_build_chain(int N1, int *Rs, vfft_il2p_fn *ff,
         return 0;
     *nst = m;
     return 1;
+}
+
+/* ── NATURAL n1 (M4-lite, struct comment at il2d_nat) ─────────────────
+ * The perm builder: the chain's comb is the mixed-radix digit reversal;
+ * the exact digit convention is settled EMPIRICALLY at create — both
+ * peel orders are built and the one satisfying the block-affine
+ * property is kept; neither fitting refuses the create LOUDLY. */
+static int *_il2d_nat_perm(const int *Rs, int nst, int N1)
+{
+    /* SAME-SLOT DIF: stage s deposits the frequency digit
+     * f_s = (f / prod_{u<s} R_u) mod R_s at row-weight D_s = L_s/R_s,
+     * so scr row j = sum f_s * D_s, and inverting (the D_s are the
+     * nested mixed-radix weights of j):
+     *     perm[j] = sum_s ((j / D_s) mod R_s) * prod_{u<s} R_u.
+     * The leaf (D=1) contributes (j mod R_leaf) * (N1/R_leaf) — the
+     * block-affine property the OLs redirection needs, asserted below
+     * together with bijectivity (a wrong derivation refuses create,
+     * never serves silently). */
+    int *perm = (int *)malloc((size_t)N1 * sizeof(int));
+    int D[8], W[8];
+    int s2, j, L = N1, w = 1;
+    if (!perm || nst < 2 || nst > 8)
+    {
+        free(perm);
+        return NULL;
+    }
+    for (s2 = 0; s2 < nst; s2++)
+    {
+        D[s2] = L / Rs[s2];
+        W[s2] = w;
+        w *= Rs[s2];
+        L = D[s2];
+    }
+    for (j = 0; j < N1; j++)
+    {
+        int nat = 0;
+        for (s2 = 0; s2 < nst; s2++)
+            nat += ((j / D[s2]) % Rs[s2]) * W[s2];
+        perm[j] = nat;
+    }
+    {
+        const int Rl = Rs[nst - 1], stride = N1 / Rl;
+        char *seen = (char *)calloc((size_t)N1, 1);
+        int ok = (seen != NULL);
+        for (j = 0; j < N1 && ok; j++)
+        {
+            if (perm[j] != perm[j - j % Rl] + (j % Rl) * stride)
+                ok = 0;
+            else if (perm[j] < 0 || perm[j] >= N1 || seen[perm[j]])
+                ok = 0;
+            else
+                seen[perm[j]] = 1;
+        }
+        free(seen);
+        if (!ok)
+        {
+            free(perm);
+            return NULL;
+        }
+    }
+    return perm;
+}
+
+/* the natural column pass: standard stages, the LEAF redirected — fwd
+ * stores block b's rows at perm[b*R] with OLs = (N1/R)*rn; bwd (the
+ * Hermitian transpose, leaf first) GATHERS its legs from the natural
+ * positions via Ls, the exact mirror. Unbanded, full plane. */
+static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
+                               size_t rn, int nst, const int *Rst,
+                               const int *Lst, vfft_il2p_fn const *fns,
+                               double *const *tabs, int reverse,
+                               const int *perm, double *scr)
+{
+    /* fwd: stages 0..nst-2 run src -> scr (stage 0 is the OOP move,
+     * the rest in place on scr); the LEAF reads scr and SCATTERS to
+     * dst (out-base perm[b*R], OLs = (N1/R)*rn). bwd mirrors: the leaf
+     * GATHERS from the natural src into scr's comb, mids run in place,
+     * and stage 0 writes scr -> dst (the kernels take separate bases —
+     * no extra copy pass anywhere). The scatter/gather NEVER shares a
+     * plane with the stages still reading it. */
+    const int Rl = Rst[nst - 1];
+    const size_t nstride = (size_t)(N1 / Rl) * rn;
+    int s, b;
+    if (!reverse)
+    {
+        for (s = 0; s < nst - 1; s++)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            const double *s0 = (s == 0) ? src : scr;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * (size_t)b * Lst[s] * rn;
+                fns[s](s0 + off, NULL, scr + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
+                       rn);
+            }
+        }
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](scr + 2 * (size_t)b * Rl * rn, NULL,
+                         dst + 2 * (size_t)perm[b * Rl] * rn, NULL,
+                         NULL, NULL, rn, 0, nstride, 0, rn);
+    }
+    else
+    {
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](src + 2 * (size_t)perm[b * Rl] * rn, NULL,
+                         scr + 2 * (size_t)b * Rl * rn, NULL, NULL,
+                         NULL, nstride, 0, rn, 0, rn);
+        for (s = nst - 2; s >= 0; s--)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            double *out = (s == 0) ? dst : scr;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * (size_t)b * Lst[s] * rn;
+                fns[s](scr + off, NULL, out + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D,
+                       rn);
+            }
+        }
+    }
 }
 
 /* ── the COLUMN-AXIS BLUESTEIN, extracted (2026-08-27) so THREE users
@@ -5261,7 +5418,14 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * legally and at full speed (il_coverage_plan.md Phase A). Callers must never assume WHICH
      * permutation scrambled output carries; that has been the contract since §2.6. */
     if ((cfg->order == VFFT_ORDER_NATURAL || cfg->order == VFFT_ORDER_SCRAMBLED) &&
-        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !ob))
+        !(cfg->transform == VFFT_C2C && cfg->dims <= 4 && !ob) &&
+        /* 2D REAL grew a caller-visible n1 order axis with the native
+         * IL tier (its multi-stage serving is ord=scr on n1): NATURAL
+         * there = the M4-lite leaf redirection / the blu route, both
+         * wired 2026-08-27. The bins (n2 axis) stay natural always. */
+        !((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+          cfg->dims == 2 && cfg->order == VFFT_ORDER_NATURAL &&
+          cfg->layout == VFFT_LAYOUT_INTERLEAVED && !ob))
     {
         _vfft_warn("vfft_create: order=%s is only wired for C2C plans without a padded batch "
                    "(%s is %s) — r2c/c2r/trig are inherently natural-order and padded batches "
@@ -5833,6 +5997,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
         int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
+        int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
+        int *il2d_natperm = NULL;
+        double *il2d_natscr = NULL;
         int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;
@@ -5899,12 +6066,15 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                                      il2d_b, &il2d_nst);
                 }
             }
-            if (!chain_ok && cfg->order != VFFT_ORDER_NATURAL)
+            if (!chain_ok)
             {
                 /* ODD/PRIME N1: the COLUMN-AXIS BLUESTEIN (struct
                  * comment at il2d_blu; _il2d_blu_build). Reached only
                  * when no chain exists — with the odd t2c/n1c kinds
-                 * emitted, that now means prime / unexpressible N1. */
+                 * emitted, that now means prime / unexpressible N1.
+                 * n1 comes out NATURAL by construction, so ALL order
+                 * spellings are served (M4-lite closed the old
+                 * DEFAULT-only gate 2026-08-27). */
                 il2d_blu = _il2d_blu_build(N1, (size_t)N2, il2d_R,
                                            il2d_L, il2d_f, il2d_b,
                                            il2d_tf, il2d_tb, &il2d_nst,
@@ -6049,14 +6219,29 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                  "could not be built");
                 return NULL;
             }
-            if (cfg->order == VFFT_ORDER_NATURAL && il2d_nst > 1)
+            if (cfg->order == VFFT_ORDER_NATURAL && il2d_nst > 1 &&
+                !il2d_blu)
             {
-                _vfft_warn("vfft_create: IL 2D c2c %dx%d order=NATURAL "
-                           "needs the multi-stage natural-i tapes (rho "
-                           "tables, M4) — unsupported for now; "
-                           "single-stage cells (N1 <= 64) serve natural",
-                           N1, N2);
-                return NULL;
+                /* M4-lite (2026-08-27, struct comment at il2d_nat):
+                 * natural n1 via the LEAF REDIRECTION — driver-only,
+                 * any chain. The perm builder settles the digit
+                 * convention empirically and refuses on any mismatch. */
+                il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
+                if (il2d_natperm)
+                    il2d_natscr = (double *)malloc(
+                        2 * (size_t)N1 * N2 * sizeof(double));
+                if (!il2d_natperm || !il2d_natscr)
+                {
+                    free(il2d_natperm);
+                    il2d_natperm = NULL;
+                    _vfft_warn("vfft_create: IL 2D c2c %dx%d "
+                               "order=NATURAL — the natural leaf "
+                               "permutation could not be built for "
+                               "this chain; unsupported",
+                               N1, N2);
+                    return NULL;
+                }
+                il2d_nat = 1;
             }
             {
                 vfft_config_t rc;
@@ -6201,7 +6386,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                  * anything else warns and stays unbanded. VFFT_IL2D_TFUSE
                  * =0 opts out of the per-band row pass (default ON when
                  * banded — the fusion is the point). */
-                if (il2d_row && !il2d_blu)
+                if (il2d_row && !il2d_blu && !il2d_nat)
                 {
                     const char *we = getenv("VFFT_IL2D_WL");
                     const char *tfe = getenv("VFFT_IL2D_TFUSE");
@@ -6305,15 +6490,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
              * pair/chain/prime engines). hp1 = N2/2+1 = (N2+1)/2 falls
              * out of the same integer division, so the column pass and
              * the rscr sizing below are the even path untouched. */
-            if (cfg->order == VFFT_ORDER_NATURAL)
-            {
-                /* multi-stage natural waits on the rho tapes (M4). */
-                _vfft_warn("vfft_create: IL 2D %s %dx%d order=NATURAL "
-                           "needs the natural-i tapes (M4) — unsupported "
-                           "for now; use DEFAULT/SCRAMBLED",
-                           _vfft_tname(cfg->transform), N1, N2);
-                return NULL;
-            }
+            /* order=NATURAL: single-stage chains are natural-native;
+             * blu is natural by construction; multi-stage chains take
+             * the M4-lite leaf redirection — resolved AFTER the chain
+             * builds (below), never refused up front any more. */
             if (rok)
             {
                 /* chain precedence: env > the banked lay=il real cell
@@ -6356,6 +6536,27 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
                                    il2d_tf, il2d_tb))
                 rok = 0;
+            if (rok && !il2d_blu && il2d_nst > 1 &&
+                cfg->order == VFFT_ORDER_NATURAL)
+            {
+                il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
+                if (il2d_natperm)
+                    il2d_natscr = (double *)malloc(
+                        2 * (size_t)N1 * ((size_t)N2 / 2 + 1)
+                        * sizeof(double));
+                if (!il2d_natperm || !il2d_natscr)
+                {
+                    free(il2d_natperm);
+                    il2d_natperm = NULL;
+                    _vfft_warn("vfft_create: IL 2D %s %dx%d "
+                               "order=NATURAL — the natural leaf "
+                               "permutation could not be built; "
+                               "unsupported",
+                               _vfft_tname(cfg->transform), N1, N2);
+                    return NULL;
+                }
+                il2d_nat = 1;
+            }
             if (rok && oddn2)
             {
                 /* the odd row child: K=1 c2c at N2, NATURAL (the CCE
@@ -6619,6 +6820,9 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->il2d_rw = il2d_rw;
         h->il2d_oddn2 = il2d_oddn2;
         h->il2d_orbuf = il2d_orbuf;
+        h->il2d_nat = il2d_nat;
+        h->il2d_natperm = il2d_natperm;
+        h->il2d_natscr = il2d_natscr;
         h->il2d_blu = il2d_blu;
         h->il2d_bluchf = il2d_bluchf;
         h->il2d_bluchb = il2d_bluchb;
@@ -6646,7 +6850,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * c2c ONLY: the real tier has no banded walk / row route to race
          * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
-            !il2d_rof &&
+            !il2d_rof && !il2d_nat &&
             !getenv("VFFT_IL2D_WL") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))
@@ -6657,7 +6861,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
-            h->nthreads > 1)
+            !il2d_nat && h->nthreads > 1)
         {
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
@@ -6675,7 +6879,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * no rw= verdict; banks chain+rw direction-shared. Same
          * after-the-commits law as the c2c axis race — it executes h. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !il2d_oddn2 && !il2d_blu &&
+            h->il2d_row && !il2d_oddn2 && !il2d_blu && !il2d_nat &&
             !getenv("VFFT_IL2D_ROWSPLIT") &&
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
@@ -6684,7 +6888,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * was raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !il2d_blu && h->nthreads > 1)
+            h->il2d_row && !il2d_blu && !il2d_nat && h->nthreads > 1)
         {
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
@@ -10901,11 +11105,23 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                rn);
                         return;
                     }
-                    _il2d_col_pass(sre, dre, h->N, rn, wc,
-                                   h->il2d_nst, h->il2d_R, h->il2d_L,
-                                   fwd ? h->il2d_f : h->il2d_b,
-                                   fwd ? h->il2d_tf : h->il2d_tb,
-                                   /*reverse=*/!fwd);
+                    if (h->il2d_nat)
+                        _il2d_col_pass_nat(sre, dre, h->N, rn,
+                                           h->il2d_nst, h->il2d_R,
+                                           h->il2d_L,
+                                           fwd ? h->il2d_f : h->il2d_b,
+                                           fwd ? h->il2d_tf
+                                               : h->il2d_tb,
+                                           /*reverse=*/!fwd,
+                                           h->il2d_natperm,
+                                           h->il2d_natscr);
+                    else
+                        _il2d_col_pass(sre, dre, h->N, rn, wc,
+                                       h->il2d_nst, h->il2d_R,
+                                       h->il2d_L,
+                                       fwd ? h->il2d_f : h->il2d_b,
+                                       fwd ? h->il2d_tf : h->il2d_tb,
+                                       /*reverse=*/!fwd);
                     for (i = 0; i < (size_t)h->N; i++)
                         _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
                     return;
@@ -11298,6 +11514,8 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_roww);
             free(h->il2d_rowscr_w);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
+            free(h->il2d_natperm);
+            free(h->il2d_natscr);
             free(h->il2d_bluchf);
             free(h->il2d_bluchb);
             free(h->il2d_blukf);
