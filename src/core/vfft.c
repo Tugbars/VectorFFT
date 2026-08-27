@@ -8955,12 +8955,16 @@ static void _zt_mt_tramp(void *v)
                                      (size_t)p->N / 4, 0, 0, 0,
                                      (size_t)w);
         break;
-    case 1: /* one mid stage, groups [lo,hi) — the digit split */
+    case 1: /* one mid stage, groups [lo,hi) — the digit split. The
+             * emitted wrapper's per-group bumps (VERIFIED in the body,
+             * radix8_z_msg_avx2.c:174): bp += 2*R*Ls (a group owns
+             * R*D[s] complex — the R legs at stride D[s]), twg +=
+             * (R-1)*8. So the range base is 2*g*R*D, NOT 2*g*D. */
     {
         const int s = a->s;
         const double *tbl = a->fwd ? p->twz[s] : p->twzb[s];
         _vfft_zt_msg((vfft_zturn2_plan_t *)p, s,
-                     p->plane + 2 * k0 * p->D[s],
+                     p->plane + 2 * k0 * p->chain[s] * p->D[s],
                      tbl + (size_t)k0 * (p->chain[s] - 1) * 8, w,
                      a->fwd);
         break;
