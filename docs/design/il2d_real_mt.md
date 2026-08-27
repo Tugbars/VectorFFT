@@ -364,25 +364,85 @@ vendor parity on every benchmarked cell.
 
 ---
 
-## 8. Failure modes this methodology is designed to catch
+## 8. Batching many transforms — the plane queue
+
+Partitioning one transform has a floor: a cell whose chain is a single
+stage has no row axis, its strips pay the full exchange, and below a few
+tens of microseconds the joins outweigh the work. For those cells the
+parallelism that *does* exist is across **transforms** — the workload is
+many modest planes — so `howmany > 1` is served by a plane queue rather
+than by partitioning harder.
+
+### 8.1 Architecture
+
+The handle wraps two kinds of plan instance, and the split is the
+design:
+
+- **One primary** plan, built with the caller's full thread budget. The
+  serial serving mode is a loop of the primary over the planes — which
+  therefore still runs intra-transform MT per its own banked verdicts.
+  This is what guarantees the feature can never lose to what a caller
+  could do by hand with a plane loop of their own.
+- **T serial clones** for queue mode. Workers pull plane indices from a
+  single atomic counter and execute their own clone on their own plane:
+  plane-per-worker, zero barriers, and — because every instance a queue
+  worker runs is serial — **no nested pool dispatch by construction**.
+  The caller participates on clone slot 0, never on the primary, for
+  the same reason.
+
+Clones are wisdom-served from the verdicts the primary's creation just
+banked, and each is **bitwise-verified against the primary on a probe
+plane at create**; any mismatch tears the clone set down and the loop
+serves. Loop-vs-queue is itself a **raced verdict** at create, per the
+methodology of §5 — there is no plane-count threshold written anywhere.
+
+### 8.2 Results
+
+T=8 pool, min-of-15 alternated, queue == loop bitwise:
+
+| cell | planes | queue vs loop |
+|---|---|---|
+| 64×64 r2c | 64 | **4.17×** |
+| 64×256 r2c | 32 | 3.83× |
+| 32×1024 r2c | 32 | 2.46× |
+| 16×4096 r2c | 16 | 1.18× |
+| 256×256 r2c | 16 | 3.92× |
+| 256×256 c2c | 16 | **6.94×** |
+
+The last row is the designed payoff: that cell's banked band width
+equals its full row count, so it has **no intra-transform MT axis at
+all** — and it now scales near-linearly through planes. The two
+mechanisms are complements, not competitors: intra-transform MT covers
+the large single plane, the queue covers the many small ones, and the
+raced verdicts choose per cell without a constant anywhere.
+
+## 9. Failure modes this methodology is designed to catch
 
 | failure | why it is invisible | what catches it |
 |---|---|---|
 | nothing actually threaded | timings look plausible; correctness passes trivially | engagement counters for *both* resource construction and dispatch |
 | a partition raced at one thread count served at another | results are merely suboptimal, never wrong | thread count stored with the verdict; mismatch re-races |
 | a gate that never reaches the code it "covers" | the gate passes green | verify the test cell's geometry actually reaches the branch — a forced-on switch is not coverage |
+| an engagement assertion depending on a **live raced axis** | the gate flakes: a raced parameter (a band width equal to the row count) can remove the parallel axis on one run and not the next | the gate pins every raced axis its assertion depends on; env pins never bank |
 | threading a cell that regresses | the average still improves | race per cell and bank the negative result |
 | shared mutable plan state under partitioned work | wrong output, not slow output | per-worker ownership by construction; refuse arms that cannot express it |
 | a global resource mutated by a component | another component silently loses capability | plans may grow shared resources, never shrink them |
 
 ---
 
-## 9. Limitations and open problems
+## 10. Limitations and open problems
 
-- **Single-stage cells** have no row axis, so their column pass must use
-  strips and inherits the ~3× exchange ceiling. For these, running
-  independent transforms concurrently (a batch queue) is the better
-  answer than partitioning one transform.
+- **Single-stage cells running alone** (one plane, `howmany == 1`) keep
+  the strip ceiling of §4 — the plane queue of §8 answers the batched
+  case, but a lone small plane has no second transform to parallelize
+  across.
+- **Loop and queue are the only two batch arms.** A caller with few
+  large planes (say two 1024² planes on eight cores) might want a
+  hybrid — two workers each running a four-thread column pass — which
+  needs a nested thread-budget mechanism the pool does not yet have.
+- **Plane strides are the canonical contiguous defaults**; custom
+  `idist`/`odist` and a pointer-array (`execute_many`) shape are not yet
+  expressible.
 - **Row width verdicts are not yet re-raced at threaded row counts.** A
   width selected when one worker owned all rows can be *illegal*, not
   merely suboptimal, when each worker owns a fraction of them.
