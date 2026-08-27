@@ -4899,15 +4899,9 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
         double zns = 0.0;
         if (zforce != 1)
             zt_pending = vfft_zturn2_create(N);
-        if (zodd && getenv("VFFT_ZT_LOG"))
-            fprintf(stderr, "[zt-odd-dbg] N=%d znf=%d create=%s\n", N,
-                    znf, zt_pending ? "ok" : "NULL");
         if (zt_pending)
         {
             zns = _calibrate_zturn_t2q(zt_pending, cfg->rigor, ip);
-            if (zodd && getenv("VFFT_ZT_LOG"))
-                fprintf(stderr, "[zt-odd-dbg] N=%d t2q zns=%.0f\n", N,
-                        zns);
             if (zns > 0.0)
                 zroute_pending = 1;
         }
@@ -8412,6 +8406,105 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         if (zct)
                             vfft_zturn2_destroy(zct);
                     }
+                    /* ── ODD-MID cascade, SCRAMBLED/DEFAULT (2026-08-27):
+                     * zt_pending (built + t2q'd by the race helper) has
+                     * NO fiat attach — it races THIS handle's real
+                     * serving (the k1 IL routes included; racing the
+                     * bare op route was the strawman caught today) and
+                     * attaches only by winning. min-of-3 alternated on
+                     * scratch; the loser dies here. The pow2 flow is
+                     * untouched (its admission gate keeps it on the
+                     * fiat commit, backed by calibration history). */
+                    if (zt_pending && cfg->order != VFFT_ORDER_NATURAL)
+                    {
+                        int s2o, zodd2 = 0;
+                        for (s2o = 0; s2o < zt_pending->nf; s2o++)
+                            if (zt_pending->chain[s2o] & 1)
+                                zodd2 = 1;
+                        if (zodd2)
+                        {
+                            double *zi2 = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            double *zo2b = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            double tzc = 1e300, tkc = 1e300;
+                            if (zi2 && zo2b)
+                            {
+                                size_t i2;
+                                int r2;
+                                for (i2 = 0; i2 < 2 * (size_t)N; i2++)
+                                    zi2[i2] = 1.0 +
+                                              1e-6 * (double)(i2 & 511);
+                                vfft_execute((vfft_plan)hk,
+                                             VFFT_FORWARD, zi2, NULL,
+                                             zo2b, NULL); /* warm k1 */
+                                hk->zturn = zt_pending;
+                                hk->zroute = 1;
+                                vfft_execute((vfft_plan)hk,
+                                             VFFT_FORWARD, zi2, NULL,
+                                             zo2b, NULL); /* warm zt */
+                                for (r2 = 0; r2 < 3; r2++)
+                                {
+                                    struct timespec t0, t1;
+                                    double d;
+                                    hk->zroute = 1;
+                                    clock_gettime(CLOCK_MONOTONIC, &t0);
+                                    vfft_execute((vfft_plan)hk,
+                                                 VFFT_FORWARD, zi2,
+                                                 NULL, zo2b, NULL);
+                                    clock_gettime(CLOCK_MONOTONIC, &t1);
+                                    d = (t1.tv_sec - t0.tv_sec) * 1e9 +
+                                        (t1.tv_nsec - t0.tv_nsec);
+                                    if (d < tzc)
+                                        tzc = d;
+                                    hk->zroute = 0;
+                                    hk->zturn = NULL;
+                                    clock_gettime(CLOCK_MONOTONIC, &t0);
+                                    vfft_execute((vfft_plan)hk,
+                                                 VFFT_FORWARD, zi2,
+                                                 NULL, zo2b, NULL);
+                                    clock_gettime(CLOCK_MONOTONIC, &t1);
+                                    d = (t1.tv_sec - t0.tv_sec) * 1e9 +
+                                        (t1.tv_nsec - t0.tv_nsec);
+                                    if (d < tkc)
+                                        tkc = d;
+                                    hk->zturn = zt_pending;
+                                }
+                                if (getenv("VFFT_ZT_LOG") ||
+                                    getenv("VFFT_NAT_LOG"))
+                                    fprintf(stderr,
+                                            "[zt-odd] route race N=%d: "
+                                            "cascade=%.0f k1=%.0f -> "
+                                            "%s\n",
+                                            N, tzc, tkc,
+                                            tzc < tkc ? "CASCADE"
+                                                      : "k1");
+                                if (tzc < tkc)
+                                {
+                                    hk->zroute = 1;
+                                    zt_pending = NULL; /* owned by hk */
+                                }
+                                else
+                                {
+                                    hk->zroute = 0;
+                                    hk->zturn = NULL;
+                                }
+                            }
+                            free(zi2);
+                            free(zo2b);
+                        }
+                    }
+                    if (zt_pending)
+                    { /* not attached (lost, pow2-stray, or NATURAL):
+                       * consume — the hk return path used to LEAK it. */
+                        vfft_zturn2_destroy(zt_pending);
+                        zt_pending = NULL;
+                    }
+                    if (zs_pending)
+                    {
+                        vfft_zsplit_destroy(zs_pending);
+                        zs_pending = NULL;
+                    }
                     return hk;
                 }
             }
@@ -8561,92 +8654,6 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
-        /* ODD-MID cascades (2026-08-27) attach only by WINNING: the
-         * pow2 fiat attach is backed by calibration history, but the
-         * odd seeds measured ~2x SLOWER than the classic kinds at
-         * 3072-20480 and ~2.3x FASTER at 24576 — so the route is raced
-         * here against the classic plan (min-of-3 alternated on
-         * scratch, the serving execute both arms: zroute toggled).
-         * The loser is destroyed; a banked kind-4 replay (a chain that
-         * already won somewhere) skips this by carrying no odd mid or
-         * by having been banked from this very race's winner. */
-        if (getenv("VFFT_ZT_LOG"))
-            fprintf(stderr, "[zt-odd-dbg2] commit N=%d zroute=%d zt=%p K=%d" + 0, N, h->zroute, (void *)h->zturn, (int)K);
-        if (getenv("VFFT_ZT_LOG"))
-            fputc(10, stderr);
-        if (h->zroute && h->zturn && K == 1)
-        {
-            int s2, zodd = 0;
-            for (s2 = 0; s2 < h->zturn->nf; s2++)
-                if (h->zturn->chain[s2] & 1)
-                    zodd = 1;
-            if (zodd)
-            {
-                double *zi = (double *)malloc(2 * (size_t)N
-                                              * sizeof(double));
-                double *zo = (double *)malloc(2 * (size_t)N
-                                              * sizeof(double));
-                double tz2 = 1e300, tc2 = 1e300;
-                int r2;
-                if (zi && zo)
-                {
-                    size_t i2;
-                    for (i2 = 0; i2 < 2 * (size_t)N; i2++)
-                        zi[i2] = 1.0 + 1e-6 * (double)(i2 & 511);
-                    vfft_execute((vfft_plan)h, VFFT_FORWARD, zi, NULL,
-                                 zo, NULL); /* warm the cascade arm */
-                    h->zroute = 0;
-                    {
-                        vfft_zturn2_plan_t *sav = h->zturn;
-                        h->zturn = NULL;
-                        vfft_execute((vfft_plan)h, VFFT_FORWARD, zi,
-                                     NULL, zo, NULL); /* warm classic */
-                        for (r2 = 0; r2 < 3; r2++)
-                        {
-                            struct timespec t0, t1;
-                            double d;
-                            h->zroute = 1;
-                            h->zturn = sav;
-                            clock_gettime(CLOCK_MONOTONIC, &t0);
-                            vfft_execute((vfft_plan)h, VFFT_FORWARD,
-                                         zi, NULL, zo, NULL);
-                            clock_gettime(CLOCK_MONOTONIC, &t1);
-                            d = (t1.tv_sec - t0.tv_sec) * 1e9
-                                + (t1.tv_nsec - t0.tv_nsec);
-                            if (d < tz2)
-                                tz2 = d;
-                            h->zroute = 0;
-                            h->zturn = NULL;
-                            clock_gettime(CLOCK_MONOTONIC, &t0);
-                            vfft_execute((vfft_plan)h, VFFT_FORWARD,
-                                         zi, NULL, zo, NULL);
-                            clock_gettime(CLOCK_MONOTONIC, &t1);
-                            d = (t1.tv_sec - t0.tv_sec) * 1e9
-                                + (t1.tv_nsec - t0.tv_nsec);
-                            if (d < tc2)
-                                tc2 = d;
-                        }
-                        h->zturn = sav;
-                    }
-                    if (getenv("VFFT_ZT_LOG") || getenv("VFFT_NAT_LOG"))
-                        fprintf(stderr, "[zt-odd] route race N=%d: "
-                                        "cascade=%.0f classic=%.0f -> "
-                                        "%s\n",
-                                N, tz2, tc2,
-                                tz2 < tc2 ? "CASCADE" : "classic");
-                    if (tz2 < tc2)
-                        h->zroute = 1;
-                    else
-                    {
-                        h->zroute = 0;
-                        vfft_zturn2_destroy(h->zturn);
-                        h->zturn = NULL;
-                    }
-                }
-                free(zi);
-                free(zo);
-            }
-        }
         /* INC-Z: race the cascade MT verdict for this cell (K=1 zturn,
          * live pool). Serial default everywhere the race does not run. */
         if (h->zroute && h->zturn && K == 1 && h->nthreads > 1)

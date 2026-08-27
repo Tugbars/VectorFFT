@@ -125,7 +125,12 @@ static inline int vfft_zsplit_default_chain(int N, int *chain)
          * 4s, k%3==2 one — never a remainder 2). Correctness seed
          * only; the chain race and wisdom own the fast chain. */
         int m, k = 0, p2, nf2 = 0, rt, mids[VFFT_ZSPLIT_MAX_NF];
-        static const int OP[] = { 15, 9, 7, 5, 3 };
+        /* SMALL radices FIRST (il_codelet_design §3: split doubles
+         * live vectors — radix 15 wants 30 planes vs 16 ymm; 3/5/7 fit.
+         * Small radix = many stages = exactly the regime the two
+         * boundary conversions amortize over. 9/15 stay in the pool as
+         * depth-rescue only; with 3 and 5 ahead they never seed.) */
+        static const int OP[] = { 3, 5, 7, 9, 15 };
         if (N < 1024 || (N % 16) != 0)
             return 0;
         /* terminator 8 when 32 | N — the t2q calibrator refuses last==4
