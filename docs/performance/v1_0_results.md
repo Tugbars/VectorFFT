@@ -998,6 +998,58 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
 
+### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
+
+The 1D real transforms now serve **every odd N in both directions and
+both layouts**, through two raced routes:
+
+- the native **rfft** engine (real-arithmetic codelets, radix-smooth odd
+  N — the historical route), and
+- the **c2c bridge**: promote real → complex → c2c(N) → keep the hp1
+  bins forward; Hermitian-extend → inverse c2c → Re backward (odd N has
+  no Nyquist, the mirror is exact). The child rides the pair/chain/prime
+  engines, so prime and awkward N are covered; the bridge is also the
+  only c2r-odd route (the half-spectrum inverse never existed at odd N
+  before this).
+
+**The pick is raced per cell at create** — both arms as finished plans,
+never a rule. It flips both ways: 63/255/4095 serve the bridge,
+1215 keeps rfft.
+
+vs **MKL DFTI real CCE** (1D, `mkl_set_num_threads(1)`, same process,
+alternated min-of-15, spectra cross-checked bin-for-bin at every cell):
+
+```
+ N      class       r2c vs MKL   c2r vs MKL   serving
+────────────────────────────────────────────────────────
+ 101    prime          1.67×        2.00×     bridge
+ 1021   prime          1.27×        1.33×     bridge
+ 129    3·43           0.90×        0.90×     bridge
+ 255    smooth         1.75×        1.60×     bridge (raced in —
+                                              was 0.42× on rfft)
+ 63     smooth         ~par         ~par      bridge (raced in)
+ 1215   3⁵·5           0.67×        0.12×     rfft / bridge-only
+ 4095   smooth         0.30×        0.31×     bridge (raced in)
+────────────────────────────────────────────────────────
+```
+
+**Primes beat MKL outright** — MKL's odd real path is weak while the
+bridge inherits the full c2c prime machinery (Rader/Bluestein with the
+cascade inner). The remaining smooth-odd losses (1215, 4095) are the
+known **rfft-tier quality gap**, a codelet campaign of its own — not a
+layout or coverage issue; c2r 1215 additionally reflects an uncalibrated
+c2c(1215) chain.
+
+Also shipped with the coverage:
+
+- **In-place odd real** — the padded CCE plane contract holds at odd N
+  (2·(N/2+1) = N+1 doubles), and the bridge is aliasing-safe by
+  construction; aliased roundtrips at 63/101/129/255 measure ~5e-16.
+- **Batched MT** — transform-contiguous odd batches thread through the
+  clone machinery (the safety gates recurse into the bridge's child):
+  T=8, K=64, MT == ST bitwise, engagement proven:
+  101 → **4.82×**, 129 → **7.09×**, 1021 → **6.15×**.
+
 ## 4. vs MKL — 2D R2C
 
 dag tiled 2D real-to-complex (`fft2d_r2c.h`: tiled R2C row pass + native column c2c)
