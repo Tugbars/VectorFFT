@@ -351,6 +351,18 @@ int main(int argc, char **argv)
             const size_t PN = (size_t)N1 * N2;
             double *x = malloc(2 * PN * 8), *zs = malloc(2 * PN * 8);
             double *zm = malloc(2 * PN * 8);
+            /* PIN the banded axis per cell: the axis race's wl winner is
+             * run-dependent, and a raced wl == N1 (one whole-plane band)
+             * has NO band axis, so the engagement assertion would flake
+             * (hit 2026-08-27 at 64x1024). 512x512 pins its known
+             * multi-band width (nb=4); 64x1024 pins UNBANDED so the
+             * strip+slab shape is what this cell deterministically
+             * gates. Env wl never banks (the tcut law). */
+#ifdef _WIN32
+            _putenv(mi == 0 ? "VFFT_IL2D_WL=128" : "VFFT_IL2D_WL=0");
+#else
+            putenv(mi == 0 ? "VFFT_IL2D_WL=128" : "VFFT_IL2D_WL=0");
+#endif
             vfft_config_t cfg;
             vfft_plan ps, pm;
             long c0, c1;
@@ -405,8 +417,10 @@ int main(int argc, char **argv)
         }
 #ifdef _WIN32
         _putenv("VFFT_IL2D_NO_COLMT=");
+        _putenv("VFFT_IL2D_WL=");
 #else
         unsetenv("VFFT_IL2D_NO_COLMT");
+        unsetenv("VFFT_IL2D_WL");
 #endif
         vfft_set_num_threads(1);
     }
