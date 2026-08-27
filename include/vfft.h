@@ -472,6 +472,12 @@ extern "C"
    * column pass was serial (too few independent units, or no pool). */
   long vfft_il2d_col_mt_passes(void);
 
+  /* And for the K=1 1D cascade (zturn): threaded cascade walks actually
+   * run. The verdict is raced per cell at create (VFFT_ZT_NO_MT=1 kills,
+   * =0 forces — the A/B hook); zero here after an execute means the
+   * serial walk served. */
+  long vfft_zt_mt_passes(void);
+
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)

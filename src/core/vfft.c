@@ -156,6 +156,10 @@ long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
 static long _vfft_il2d_col_mt_count = 0;
 long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
 
+/* INC-Z: the K=1 cascade MT race, defined with the executor near
+ * _exec_zcascade; called from the OOP scrambled commit in create. */
+static void _zt_mt_race(struct vfft_plan_s *h);
+
 /* ── POOL ARMING: a plan may GROW the process pool, never SHRINK it ──
  * 🔴 MEASURED BUG (2026-08-26, benches/pool_teardown_probe.c): every
  * tier builds inner plans with `nthreads = 1` (the house spelling of
@@ -284,6 +288,12 @@ struct vfft_plan_s
      * VFFT_FORCE_ZROUTE=legacy|zturn is the gate/test forcing hook. */
     int zroute;
     vfft_zturn2_plan_t *zturn;
+    /* K=1 cascade MT verdict (INC-Z, the 2D design ported to 1D): 1 =
+     * thread the zturn walk. RACED at the OOP scrambled commit when the
+     * pool is live (serial default everywhere else — natural/in-place
+     * commits inherit later). The cascade needs NO clones: one read-only
+     * plan, and every phase partitions the sectioned plane disjointly. */
+    int zt_mt;
     /* K=1 NATURAL interleaved z->z, PURE IL (il2p.h): n1t -> z scratch -> t2,
      * no split planes, BOTH directions (bwd = t2t then n1_bwd(R2), solved
      * 2026-07-29). THE IL 2-pass plan — the hybrid it displaced measured
@@ -7880,6 +7890,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
+        /* INC-Z: race the cascade MT verdict for this cell (K=1 zturn,
+         * live pool). Serial default everywhere the race does not run. */
+        if (h->zroute && h->zturn && K == 1 && h->nthreads > 1)
+            _zt_mt_race(h);
 #ifdef VFFT_USE_JIT
         /* MODEB rides a staged inner plan -> JIT it (fwd: stages 1.. at start_stage=1;
          * bwd: whole in-place DIF at start_stage=0). LEAF/BAILEY2 have no staged plan. */
@@ -8862,6 +8876,321 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
     }
 }
 
+/* ══ K=1 cascade MT (INC-Z — the IL 2D design ported to the 1D zturn
+ * walk, docs/design/il2d_real_mt.md §methodology). The cascade already
+ * contains the 2D axes, verified in the emitted bodies:
+ *   INGEST (s0t / s0tb): a pure map over s0t-columns — everything is
+ *     linear in k with no tables => a count range is TWO pointer edits.
+ *   MIDS (msg): one twiddle record per GROUP, table walked linearly at
+ *     (chain-1)*8 doubles/group, group g owning plane[2gD, 2(g+1)D) =>
+ *     a group range is THREE pointer edits (the 2D digit split, 1D
+ *     form). Groups are the atom (powers derive in-register inside).
+ *   TERMINATOR (stf/stf2/stfb): linear in k (plane 4k, zout/tzq 2k) —
+ *     the tcut cut-form (_vfft_zt_term_*) already ships this
+ *     arithmetic; ranges are 8-column-aligned so both quad forms hold.
+ * Stages stay ordered (one join each, ~100 ns per INC-2); every range
+ * is a restriction of the serving loop => MT == ST bitwise. Declines:
+ * tiled (env-experimental driver), natord (rho-order table walks). */
+static long _vfft_zt_mt_count = 0;
+long vfft_zt_mt_passes(void) { return _vfft_zt_mt_count; }
+
+typedef struct
+{
+    const vfft_zturn2_plan_t *p;
+    const double *zin;
+    double *zout;
+    int phase; /* 0 = ingest, 1 = mid stage s, 2 = terminator,
+                * 3 = tile units (tiled suffix mids; the band analog),
+                * 4 = FUSED tile units (suffix mids + the tile's
+                *     terminator cut — t outer, q inner, term last on
+                *     fwd / FIRST on bwd, the documented invariant) */
+    int s, fwd;
+    long lo, hi; /* s0t-column range (0/2), group range (1),
+                  * unit range (3: (q,t) pairs; 4: t) */
+} _zt_mt_arg;
+
+/* the tiled suffix for one tile window (section q, tile t) */
+static void _zt_mt_tile_mids(const vfft_zturn2_plan_t *p, long q, long t,
+                             int fwd)
+{
+    const long SECD = (long)p->N / 2, w = p->tw;
+    double *tile = p->plane + q * SECD + 2 * t * w;
+    int s;
+    if (fwd)
+        for (s = p->tcut + 1; s <= p->nf - 2; s++)
+        {
+            const long span = p->D[s - 1];
+            _vfft_zt_msg((vfft_zturn2_plan_t *)p, s, tile,
+                         _vfft_zt_tw(p, s, q, t * w / span, 1),
+                         w / span, 1);
+        }
+    else
+        for (s = p->nf - 2; s >= p->tcut + 1; s--)
+        {
+            const long span = p->D[s - 1];
+            _vfft_zt_msg((vfft_zturn2_plan_t *)p, s, tile,
+                         _vfft_zt_tw(p, s, q, t * w / span, 0),
+                         w / span, 0);
+        }
+}
+
+static void _zt_mt_tramp(void *v)
+{
+    _zt_mt_arg *a = (_zt_mt_arg *)v;
+    const vfft_zturn2_plan_t *p = a->p;
+    const long k0 = a->lo, w = a->hi - a->lo;
+    if (w <= 0)
+        return;
+    switch (a->phase)
+    {
+    case 0: /* ingest: fwd = s0t zin->plane, bwd = s0tb plane->zout */
+        if (a->fwd)
+            radix4_z_s0t_r4_fwd_avx2(a->zin + 2 * k0, 0,
+                                     p->plane + 2 * k0, 0, 0, 0,
+                                     (size_t)p->N / 4, 0, 0, 0,
+                                     (size_t)w);
+        else
+            radix4_z_s0t_r4_bwd_avx2(p->plane + 2 * k0, 0,
+                                     a->zout + 2 * k0, 0, 0, 0,
+                                     (size_t)p->N / 4, 0, 0, 0,
+                                     (size_t)w);
+        break;
+    case 1: /* one mid stage, groups [lo,hi) — the digit split */
+    {
+        const int s = a->s;
+        const double *tbl = a->fwd ? p->twz[s] : p->twzb[s];
+        _vfft_zt_msg((vfft_zturn2_plan_t *)p, s,
+                     p->plane + 2 * k0 * p->D[s],
+                     tbl + (size_t)k0 * (p->chain[s] - 1) * 8, w,
+                     a->fwd);
+        break;
+    }
+    case 3: /* tiled suffix, units = (q,t) pairs — self-contained */
+    {
+        const long NT = ((long)p->N / 4) / p->tw;
+        long u;
+        for (u = a->lo; u < a->hi; u++)
+            _zt_mt_tile_mids(p, u / NT, u % NT, a->fwd);
+        break;
+    }
+    case 4: /* FUSED tiles: unit = tile t across all 4 sections + its
+             * terminator cut. fwd: mids then term (reads the plane);
+             * bwd: term FIRST (it WRITES the tile window in all four
+             * sections), then mids — hoisting q above t or reordering
+             * term is the documented silently-wrong shape. */
+    {
+        long t, q;
+        for (t = a->lo; t < a->hi; t++)
+        {
+            if (!a->fwd)
+                _vfft_zt_term_bwd(p, a->zin, t, 0, p->tw);
+            for (q = 0; q < 4; q++)
+                _zt_mt_tile_mids(p, q, t, a->fwd);
+            if (a->fwd)
+                _vfft_zt_term_fwd((vfft_zturn2_plan_t *)p, a->zout, t,
+                                  0, p->tw);
+        }
+        break;
+    }
+    default: /* terminator over s0t-columns [lo,hi) — the cut-form
+              * arithmetic of _vfft_zt_term_fwd/bwd with a free base */
+        if (p->chain[p->nf - 1] == 4)
+        {
+            if (a->fwd)
+                radix4_z_stf_r4_fwd_avx2(p->plane + 2 * k0, 0,
+                                         a->zout + 2 * k0, 0,
+                                         p->tzq + 2 * k0, 0, 0, 0,
+                                         (size_t)p->N / 4, 0,
+                                         (size_t)w);
+            else
+                radix4_z_stf_r4_bwd_avx2(a->zin + 2 * k0, 0,
+                                         p->plane + 2 * k0, 0,
+                                         p->tzqb + 2 * k0, 0, 0, 0,
+                                         (size_t)p->N / 4, 0,
+                                         (size_t)w);
+        }
+        else if (a->fwd)
+            (p->t2q ? radix8_z_stf2_r4_fwd_avx2
+                    : radix8_z_stf_r4_fwd_avx2)(
+                p->plane + 2 * k0, 0, a->zout + k0, 0, p->tzq + k0, 0,
+                0, 0, (size_t)p->N / 8, 0, (size_t)w / 2);
+        else
+            radix8_z_stf_r4_bwd_avx2(a->zin + k0, 0, p->plane + 2 * k0,
+                                     0, p->tzqb + k0, 0, 0, 0,
+                                     (size_t)p->N / 8, 0,
+                                     (size_t)w / 2);
+    }
+}
+
+/* one phase across T workers; ranges 8-aligned for the column phases */
+static void _zt_mt_phase(const vfft_zturn2_plan_t *p, const double *zin,
+                         double *zout, int phase, int s, int fwd,
+                         long units, int align8, int T)
+{
+    _zt_mt_arg a[64];
+    int t, nd = 0;
+    for (t = 0; t < T; t++)
+    {
+        a[t].p = p;
+        a[t].zin = zin;
+        a[t].zout = zout;
+        a[t].phase = phase;
+        a[t].s = s;
+        a[t].fwd = fwd;
+        a[t].lo = units * t / T;
+        a[t].hi = units * (t + 1) / T;
+        if (align8)
+        {
+            a[t].lo &= ~7L;
+            a[t].hi = (t == T - 1) ? units : ((units * (t + 1) / T) & ~7L);
+        }
+    }
+    for (t = 1; t < T; t++)
+        _stride_pool_dispatch(&_stride_workers[nd++], _zt_mt_tramp,
+                              &a[t]);
+    _zt_mt_tramp(&a[0]);
+    if (nd)
+        _stride_pool_wait_all();
+}
+
+/* Returns 1 when it ran threaded, 0 = caller runs the serial walk. */
+static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
+                          const double *zin, double *zout, int T)
+{
+    const vfft_zturn2_plan_t *p = h->zturn;
+    const long SEC = (long)p->N / 4;
+    const int fwd = (dir == VFFT_FORWARD);
+    const int smax = p->tiled ? p->tcut : p->nf - 2;
+    int s;
+    if (p->natord || p->tiled == 2)
+        return 0; /* rho-order table walks; A1 = gate-only control arm */
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64;
+    if (T < 2 || SEC < 8 * T)
+        return 0;
+    if (fwd)
+    {
+        _zt_mt_phase(p, zin, zout, 0, 0, 1, SEC, 1, T);
+        for (s = 1; s <= smax; s++)
+        {
+            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
+            _zt_mt_phase(p, zin, zout, 1, s, 1, p->G[s], 0, Ts);
+        }
+        if (!p->tiled)
+            _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
+        else
+        {
+            const long NT = SEC / p->tw;
+            if (!p->tfuse)
+            {
+                const long u = 4 * NT;
+                _zt_mt_phase(p, zin, zout, 3, 0, 1, u,
+                             0, u < T ? (int)u : T);
+                _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
+            }
+            else
+                _zt_mt_phase(p, zin, zout, 4, 0, 1, NT, 0,
+                             NT < T ? (int)NT : T);
+        }
+    }
+    else
+    {
+        if (!p->tiled)
+            _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
+        else
+        {
+            const long NT = SEC / p->tw;
+            if (!p->tfuse)
+            {
+                const long u = 4 * NT;
+                _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
+                _zt_mt_phase(p, zin, zout, 3, 0, 0, u,
+                             0, u < T ? (int)u : T);
+            }
+            else
+                _zt_mt_phase(p, zin, zout, 4, 0, 0, NT, 0,
+                             NT < T ? (int)NT : T);
+        }
+        for (s = smax; s >= 1; s--)
+        {
+            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
+            _zt_mt_phase(p, zin, zout, 1, s, 0, p->G[s], 0, Ts);
+        }
+        _zt_mt_phase(p, zin, zout, 0, 0, 0, SEC, 1, T);
+    }
+    _vfft_zt_mt_count++; /* engagement, see vfft.h */
+    return 1;
+}
+
+/* ── the INC-Z verdict race: serial vs threaded walk through the very
+ * functions execute serves with, min-of-3 alternated on scratch, both
+ * plan-local (the zturn chain's own wisdom rows are pre-wisdom2; the
+ * cmt-style banking of this axis rides the wisdom2 1D wave). A cell
+ * that cannot engage banks the "no" implicitly (zt_mt stays 0). Kill
+ * switch VFFT_ZT_NO_MT (0 forces on — the A/B hook). */
+static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
+                          const double *zin, double *zout, int T);
+static void _zt_mt_race(struct vfft_plan_s *h)
+{
+    const int N = h->zturn->N;
+    double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
+    double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
+    double st = 1e300, mt = 1e300;
+    int p;
+    size_t i;
+    const char *ce = getenv("VFFT_ZT_NO_MT");
+    if (ce)
+    {
+        h->zt_mt = (atoi(ce) == 0);
+        return;
+    }
+    if (!zi || !zo)
+    {
+        free(zi);
+        free(zo);
+        return;
+    }
+    for (i = 0; i < 2 * (size_t)N; i++)
+        zi[i] = 1.0 + 1e-6 * (double)(i & 511);
+    if (!_zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads))
+    {
+        if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[zt-mt] race N=%d T=%d: cannot engage -> "
+                            "serial\n", N, h->nthreads);
+        free(zi);
+        free(zo);
+        return; /* cannot engage: zt_mt stays 0 — the verdict */
+    }
+    vfft_zturn2_execute_fwd(h->zturn, zi, zo); /* warm the serial arm too
+                                                * — both arms hot before
+                                                * the alternated timing */
+    for (p = 0; p < 3; p++)
+    {
+        struct timespec t0, t1;
+        double d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        vfft_zturn2_execute_fwd(h->zturn, zi, zo);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < st)
+            st = d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        _zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < mt)
+            mt = d;
+    }
+    h->zt_mt = (mt < st);
+    if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[zt-mt] race N=%d T=%d: st=%.0f mt=%.0f -> %s\n",
+                N, h->nthreads, st, mt, h->zt_mt ? "THREADED" : "serial");
+    free(zi);
+    free(zo);
+}
+
 /* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
  * Invariant and route axis are documented at the zroute field. */
 static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
@@ -8869,6 +9198,9 @@ static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
 {
     if (h->zroute)
     {
+        if (h->zt_mt && h->nthreads > 1 &&
+            _zt_execute_mt(h, dir, sre, dre, h->nthreads))
+            return;
         if (dir == VFFT_FORWARD)
             vfft_zturn2_execute_fwd(h->zturn, sre, dre);
         else
