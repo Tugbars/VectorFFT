@@ -384,6 +384,18 @@ struct vfft_plan_s
      * lands, create uses the placement-matched STRUCTURAL default and
      * the VFFT_ZR2C_ROUTE env override (env beats wisdom, house rule). */
     struct vfft_plan_s *zr2c_child; /* c2c(N/2) plan (owned)              */
+    /* ── the ODD-REAL BRIDGE (2026-08-27, 1D K==1): real <-> CCE through
+     * the c2c engine — fwd: promote real -> complex, c2c fwd, keep the
+     * hp1 bins; bwd: Hermitian-extend hp1 -> N (no Nyquist at odd N —
+     * the mirror is exact), c2c bwd, take Re. The 2D odd-N2 row
+     * primitives lifted to the 1D front door. Serves BOTH layouts (the
+     * split spellings pack/unpack around the same child). Closes the
+     * two 1D real holes: c2r at ANY odd N (nothing else exists), and
+     * r2c at non-radix-smooth odd N (prime/awkward — the c2c child
+     * rides the pair/chain/prime engines). Smooth-odd r2c keeps its
+     * native rfft route; racing the two is the sweep's. */
+    struct vfft_plan_s *oddr_child; /* c2c(N) K=1 NATURAL OOP IL (owned) */
+    double *oddr_buf;               /* 2 x 2N doubles: the row pair      */
     int zr2c_route;                 /* 0 = OOP-IL child, 1 = NAT-IP child */
     double *zr2c_aff;               /* affS ++ affC (one allocation)      */
     double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
@@ -8671,6 +8683,57 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     }
 
     /* ── r2c (real -> complex, forward; split output) ── */
+    /* the odd-real bridge builder (struct comment at oddr_child). NULL =
+     * could not build (the caller keeps its refusal, LOUDLY). */
+    if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
+        K == 1 && (N & 1) && N >= 3 &&
+        cfg->placement == VFFT_OUTOFPLACE &&
+        (cfg->transform == VFFT_C2R || !_vfft_is_radix_smooth(N)))
+    {
+        vfft_config_t rc;
+        struct vfft_plan_s *hh;
+        memset(&rc, 0, sizeof rc);
+        rc.transform = VFFT_C2C;
+        rc.placement = VFFT_OUTOFPLACE;
+        rc.rigor = cfg->rigor;
+        rc.dims = 1;
+        rc.n[0] = N;
+        rc.howmany = 1;
+        rc.order = VFFT_ORDER_NATURAL; /* the CCE bins must be in order */
+        rc.layout = VFFT_LAYOUT_INTERLEAVED;
+        rc.nthreads = 1;
+        rc.wisdom = cfg->wisdom;
+        rc.wisdom_write = cfg->wisdom_write;
+        hh = (struct vfft_plan_s *)calloc(1, sizeof *hh);
+        if (hh)
+        {
+            hh->oddr_child = (struct vfft_plan_s *)vfft_create(&rc);
+            if (hh->oddr_child)
+                hh->oddr_buf = (double *)malloc(
+                    4 * (size_t)N * sizeof(double));
+            if (!hh->oddr_child || !hh->oddr_buf)
+            {
+                if (hh->oddr_child)
+                    vfft_destroy((vfft_plan)hh->oddr_child);
+                free(hh);
+                hh = NULL;
+            }
+        }
+        if (hh)
+        {
+            hh->transform = cfg->transform;
+            hh->placement = VFFT_OUTOFPLACE;
+            hh->layout = (int)cfg->layout;
+            hh->N = N;
+            hh->K = 1;
+            hh->nthreads = _vfft_plan_threads(cfg);
+            return hh;
+        }
+        _vfft_warn("vfft_create: %s odd N=%d — the c2c bridge child "
+                   "could not be built; unsupported",
+                   _vfft_tname(cfg->transform), N);
+        return NULL;
+    }
     if (cfg->transform == VFFT_R2C)
     {
         /* PADDED (opt-in): a Kp-wide handle -> build the plan at Kp (the ORDINARY aligned
@@ -8819,7 +8882,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
     {
         if ((N % 2) != 0)
         {
-            _vfft_warn("vfft_create: C2R requires even N (half-spectrum inverse); got N=%d", N);
+            _vfft_warn("vfft_create: C2R odd N=%d — served at K==1 "
+                       "OUT-OF-PLACE (the c2c bridge); this shape "
+                       "(K=%zu, placement=%d) is unsupported",
+                       N, K, (int)cfg->placement);
             return NULL;
         }
         /* PADDED (opt-in): build at Kp (ordinary aligned (N,Kp) c2r cell) so the plan strides
@@ -10467,6 +10533,50 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         _pq_execute(h, dir, sre, dre);
         return;
     }
+    if (h->oddr_child)
+    { /* the ODD-REAL BRIDGE (struct comment at oddr_child): 1D K==1
+       * odd-N real transforms through the c2c child. Both layouts —
+       * the split spellings pack/unpack around the same child. */
+        const size_t n = (size_t)h->N, hp1 = n / 2 + 1;
+        double *b1 = h->oddr_buf, *b2 = h->oddr_buf + 2 * n;
+        size_t k;
+        if (h->transform == VFFT_R2C)
+        {
+            _il2d_row_promote(sre, b1, n);
+            vfft_execute((vfft_plan)h->oddr_child, VFFT_FORWARD, b1,
+                         NULL, b2, NULL);
+            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+                memcpy(dre, b2, 2 * hp1 * sizeof(double));
+            else
+                for (k = 0; k < hp1; k++)
+                {
+                    dre[k] = b2[2 * k];
+                    dim[k] = b2[2 * k + 1];
+                }
+        }
+        else
+        {
+            if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
+                _il2d_row_extend(sre, b1, n, hp1);
+            else
+            {
+                for (k = 0; k < hp1; k++)
+                {
+                    b1[2 * k] = sre[k];
+                    b1[2 * k + 1] = sim[k];
+                }
+                for (k = 1; k < hp1; k++)
+                {
+                    b1[2 * (n - k)] = sre[k];
+                    b1[2 * (n - k) + 1] = -sim[k];
+                }
+            }
+            vfft_execute((vfft_plan)h->oddr_child, VFFT_BACKWARD, b1,
+                         NULL, b2, NULL);
+            _il2d_row_re(b2, dre, n);
+        }
+        return;
+    }
     if (h->tcb)
         { /* TRANSFORM-CONTIGUOUS batch: K independent K=1 transforms. Block strides are h->tcb_sn/tcb_dn
      * (equal for C2C, different for r2c/c2r); the inner handle carries route, placement and order.
@@ -11055,6 +11165,13 @@ void vfft_destroy(vfft_plan h)
             for (t = 0; t < h->pq_wn; t++)
                 vfft_destroy((vfft_plan)h->pq_w[t]);
             free(h->pq_w);
+            free(h);
+            return;
+        }
+        if (h->oddr_child)
+        { /* the odd-real bridge: the child + one buffer */
+            vfft_destroy((vfft_plan)h->oddr_child);
+            free(h->oddr_buf);
             free(h);
             return;
         }
