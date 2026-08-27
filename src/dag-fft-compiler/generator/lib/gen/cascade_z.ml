@@ -610,7 +610,13 @@ let emit_codelet
         carry it (provenance stability)"
    | _ -> ());
   if radix <> 4 && radix <> 8
-  then failwith "codelet_zsplit: split family is radix 4/8 only (see TIER GATE)";
+     && not (k.base = "msg" && List.mem radix [ 3; 5; 7; 9; 15 ])
+  then
+    failwith
+      "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
+       MID (msg/msgb), which carries no section geometry and emits odd radices \
+       3/5/7/9/15 (2026-08-27, the odd-cascade arc: N = 2^a*odd mids; s0t stays the \
+       r0=4 turn)";
   if (k.base = "sterm" || k.base = "sterm2") && radix <> 8
   then failwith "codelet_zsplit: sterm/sterm2 are radix-8 only (zsplit.h chain contract)";
   (* stf/stfb emit at radix 8 AND radix 4 (the ZTURN-S radix-4 terminator,

@@ -7,8 +7,10 @@
 int main(int argc, char **argv) {
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     static const int C[][2] = { { 64, 63 }, { 128, 65 }, { 32, 129 },
-                                { 256, 255 }, { 64, 101 } };
-    for (int ci = 0; ci < 5; ci++) {
+                                { 256, 255 }, { 64, 101 },
+                                { 63, 64 }, { 127, 64 }, { 45, 128 },
+                                { 127, 100 }, { 63, 63 } };
+    for (int ci = 0; ci < 10; ci++) {
         const int N1 = C[ci][0], N2 = C[ci][1];
         const size_t hp1 = (size_t)N2 / 2 + 1;
         const size_t RN = (size_t)N1 * N2, CN = (size_t)N1 * hp1;

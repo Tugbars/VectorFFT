@@ -32,8 +32,14 @@ int main(int argc, char **argv) {
                 er += xr*cos(an) - xi*sin(an);
                 ei += xr*sin(an) + xi*cos(an);
             }
-            double d = fabs(z[2*((size_t)k1*N2+k2)] - er)
-                     + fabs(z[2*((size_t)k1*N2+k2)+1] - ei);
+            /* n1 order is route-dependent (chain = scrambled comb,
+             * blu = natural): search the best row (scramble-tolerant) */
+            double d = 1e300;
+            for (int rr = 0; rr < N1; rr++) {
+                double dd = fabs(z[2*((size_t)rr*N2+k2)] - er)
+                          + fabs(z[2*((size_t)rr*N2+k2)+1] - ei);
+                if (dd < d) d = dd;
+            }
             if (d > dfte) dfte = d;
         }
         vfft_execute(p, VFFT_BACKWARD, z, NULL, y, NULL);
