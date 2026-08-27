@@ -286,6 +286,23 @@ struct vfft_plan_s
      * verdicts — including old-format = legacy — are honored). Kill switch:
      * env VFFT_NO_ZTURN at create pins legacy (VFFT_NO_IL2P precedent);
      * VFFT_FORCE_ZROUTE=legacy|zturn is the gate/test forcing hook. */
+    /* ── 2D PLANE QUEUE (howmany > 1, sequential contiguous planes —
+     * the designed 2D batching feature; docs/design/il2d_real_mt.md
+     * increment 5/M6). The handle is a thin wrapper: pq_inner is the
+     * PRIMARY howmany=1 2D plan built with the caller's thread budget
+     * (so the serial plane loop still intra-MTs per its own banked
+     * verdicts — manual batching is never beaten by building this),
+     * and pq_w[0..pq_wn) are SERIAL clone plans for the queue (a queue
+     * worker must not nest-dispatch into the pool; the CALLER also
+     * runs a serial clone in queue mode, slot 0). Loop-vs-queue is
+     * RACED at create (pq_mt); clones are BITWISE-verified against the
+     * primary on a probe plane or the queue declines. */
+    struct vfft_plan_s *pq_inner;
+    struct vfft_plan_s **pq_w;
+    int pq_wn;
+    size_t pq_n;              /* plane count (howmany) */
+    size_t pq_sdist, pq_ddist; /* plane strides, DOUBLES (contiguous) */
+    int pq_mt;                /* raced verdict: 1 = queue, 0 = loop */
     int zroute;
     vfft_zturn2_plan_t *zturn;
     /* K=1 cascade MT verdict (INC-Z, the 2D design ported to 1D): 1 =
