@@ -151,6 +151,26 @@ let zil_boundary_cells : (string * string list) list =
     )
   ; ( "radix8_z_msd_avx2.c"
     , [ "8"; "--zp-msd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_msg_avx2.c"
+    , [ "3"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_msg_bwd_avx2.c"
+    , [ "3"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_msg_avx2.c"
+    , [ "5"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_msg_bwd_avx2.c"
+    , [ "5"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_msg_avx2.c"
+    , [ "7"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_msg_bwd_avx2.c"
+    , [ "7"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_msg_avx2.c"
+    , [ "9"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_msg_bwd_avx2.c"
+    , [ "9"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_msg_avx2.c"
+    , [ "15"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_msg_bwd_avx2.c"
+    , [ "15"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_msg_avx2.c"
     , [ "8"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_msg_bwd_avx2.c"

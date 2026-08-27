@@ -2551,6 +2551,12 @@ static void _il2d_col_pass_range(const double *src, double *dst, int N1,
                                  int nst, const int *Rst, const int *Lst,
                                  vfft_il2p_fn const *fns,
                                  double *const *tabs, int reverse);
+static void _il2d_blu_cols(const double *src, double *dst, int N1,
+                           size_t rn, int M, int nst, const int *Rs,
+                           const int *Ls, vfft_il2p_fn const *ff,
+                           vfft_il2p_fn const *fb, double *const *tf,
+                           double *const *tb, const double *ch,
+                           const double *kn, double *scr);
 
 /* ── native IL 2D REAL column pass (banded-aware; execute AND the wl
  * race serve through it — race == serving path). The banded walk is the
@@ -2566,6 +2572,17 @@ static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
                             double *dst, int reverse)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
+    if (h->il2d_blu)
+    { /* prime N1: the shared Bluestein pipeline over the CCE plane;
+       * reverse = the inverse transform (conjugated chirp/kernel). */
+        _il2d_blu_cols(src, dst, h->N, hp1, h->il2d_blu, h->il2d_nst,
+                       h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_b,
+                       h->il2d_tf, h->il2d_tb,
+                       reverse ? h->il2d_bluchb : h->il2d_bluchf,
+                       reverse ? h->il2d_blukb : h->il2d_blukf,
+                       h->il2d_bluscr);
+        return;
+    }
     if (h->il2d_wl > 0)
     {
         const int cut = h->il2d_cut, nst = h->il2d_nst;
@@ -5710,6 +5727,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
         double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
         int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
+        int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;
         double *il2d_bluscr = NULL;
@@ -5809,8 +5827,17 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                 for (s3 = 0; s3 < il2d_nst; s3++)
                     if (il2d_R[s3] & 1)
                         hasodd = 1;
-                if (hasodd && (!be || atoi(be) == 1))
+                /* the chain arm times the SERVING column pass, so the
+                 * N1 tables must exist BEFORE the race (they are
+                 * otherwise built at the row-child block below — timing
+                 * with empty tabs was a NULL-load crash, caught by the
+                 * cell sweep 2026-08-27). il2d_tbl_done stops the later
+                 * shared build from double-building the winner's. */
+                if (hasodd && (!be || atoi(be) == 1) &&
+                    !_il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
+                                        il2d_tf, il2d_tb))
                 {
+                    il2d_tbl_done = 1;
                     int bR[8], bL[8], bnst = 0, M2;
                     vfft_il2p_fn bf[8], bb[8];
                     double *btf[8], *btb[8];
@@ -5970,7 +5997,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                         }
                     }
                 }
-                if (il2d_row && !il2d_blu &&
+                if (il2d_row && !il2d_blu && !il2d_tbl_done &&
                     _il2d_build_tables(N1, il2d_nst, il2d_R,
                                        il2d_L, il2d_tf, il2d_tb))
                 {
@@ -6203,8 +6230,25 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                     rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
                                             &il2d_nst);
             }
-            if (rok && _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
-                                          il2d_tf, il2d_tb))
+            if (!rok)
+            {
+                /* PRIME/unexpressible N1 for the REAL tier: the same
+                 * column-axis Bluestein, over the hp1-wide CCE plane
+                 * (rn = hp1 — the pipeline is C-linear over any count).
+                 * n1 comes out NATURAL on this route; wl/rw/colmt races
+                 * are skipped (guards below). */
+                il2d_blu = _il2d_blu_build(N1, (size_t)N2 / 2 + 1,
+                                           il2d_R, il2d_L, il2d_f,
+                                           il2d_b, il2d_tf, il2d_tb,
+                                           &il2d_nst, &il2d_bluchf,
+                                           &il2d_bluchb, &il2d_blukf,
+                                           &il2d_blukb, &il2d_bluscr);
+                if (il2d_blu)
+                    rok = 1;
+            }
+            if (rok && !il2d_blu &&
+                _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
+                                   il2d_tf, il2d_tb))
                 rok = 0;
             if (rok && oddn2)
             {
@@ -6525,7 +6569,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * no rw= verdict; banks chain+rw direction-shared. Same
          * after-the-commits law as the c2c axis race — it executes h. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !il2d_oddn2 &&
+            h->il2d_row && !il2d_oddn2 && !il2d_blu &&
             !getenv("VFFT_IL2D_ROWSPLIT") &&
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
@@ -6534,7 +6578,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
          * was raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && h->nthreads > 1)
+            h->il2d_row && !il2d_blu && h->nthreads > 1)
         {
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
