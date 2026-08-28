@@ -36,6 +36,22 @@
 #include <string.h>
 #include "vfft.h"
 
+/* Built with -DVFFT_FINGERPRINT the harness can SELF-VALIDATE: it reads the
+ * create-race counter and refuses to emit a golden digest for any cell whose
+ * create raced. Without the flag it still works, it just cannot police itself.
+ * Prefer the instrumented build for a baseline capture. */
+#ifdef VFFT_FINGERPRINT
+#include "vfft_fingerprint.h"
+static long races_now(void)
+{
+    long c[VFFT__FP_NCOUNTERS];
+    vfft__fp_counters(c);
+    return c[5];
+}
+#else
+static long races_now(void) { return -1; }   /* -1 = cannot tell */
+#endif
+
 /* FNV-1a over raw bytes: the CELL is the triage unit, so a digest is the right
  * instrument here (unlike the plan trace, where a hash would destroy triage). */
 static unsigned long long digest(const double *p, size_t n)
@@ -80,7 +96,16 @@ static const cell_t CELLS[] = {
     {"c2c.split.ip.natural",       VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_NATURAL,   1, 256, 0, 1,  1},
     {"c2c.il.ip.default",          VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_INTERLEAVED, VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
     {"c2c.il.oop.default",         VFFT_C2C, VFFT_OUTOFPLACE, VFFT_LAYOUT_INTERLEAVED, VFFT_ORDER_DEFAULT,   1, 256, 0, 1,  1},
-    {"c2c.split.ip.K8",            VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 8,  1},
+    /* K=4, not K=8. A golden cell MUST be banked in the wisdom store, or create
+     * misses, calls _calibrate_c2c, and RACES - and a race puts the clock inside
+     * the baseline. c2c n=256 has q= 1,4,7,11,15,16,19,23,27,31,32,64,128,256
+     * banked; there is no q=8. That single omission produced four different
+     * digests from four runs, which read as "the transform is nondeterministic"
+     * and cost a long hunt. The transform is bit-exact: repeating the SAME plan
+     * in-process gave 0 of 2048 doubles differing. What varied was which plan
+     * got built. Pick banked cells, and let the purity assert below catch it if
+     * you get one wrong. */
+    {"c2c.split.ip.K4",            VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 4,  1},
     {"c2c.split.ip.K32",           VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 32, 1},
     {"c2c.split.ip.N64",           VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 64,  0, 1,  1},
     {"c2c.split.ip.N1024",         VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 1024,0, 1,  1},
@@ -117,7 +142,7 @@ static void cfg_of(const cell_t *c, vfft_config_t *cfg)
  *   INTERLEAVED -> (z, NULL, zout, NULL), one plane of 2*N*K
  *   in-place    -> destination aliases source, per the documented
  *                  (z, NULL, z, NULL) spelling. */
-static int golden_c2c(const cell_t *c, FILE *out)
+static int golden_c2c(const cell_t *c, FILE *out, long races_at_entry)
 {
     vfft_config_t cfg;
     vfft_plan p;
@@ -127,10 +152,32 @@ static int golden_c2c(const cell_t *c, FILE *out)
     int ip = (c->place == VFFT_INPLACE);
     size_t span = il ? 2 * n : n;
 
+    long r1;
+
     if (c->xf != VFFT_C2C || !c->expect_ok) return 0;
     cfg_of(c, &cfg);
     p = vfft_create(&cfg);
+    r1 = races_now();
     if (!p) { fprintf(out, "golden %-28s CREATE_FAILED\n", c->name); return 1; }
+
+    /* PURITY ASSERT. A cell whose create raced is not a baseline: the clock
+     * chose its plan, so its digest is a coin flip and diffing it measures
+     * thermal noise. Emit the violation INSTEAD of the digest - a loud refusal
+     * beats a plausible-looking number that changes on its own.
+     *
+     * The baseline `races_at_entry` is taken by the CALLER, before any create
+     * for this cell. It cannot be taken here: the refusal check already created
+     * this same config once, that first create absorbed the race, and banking is
+     * always IN-MEMORY first (even at wisdom_write=0), so the create below is a
+     * pure replay. Measuring across only the second create made this assert
+     * inert - it passed a cold-dir negative control that should have failed it. */
+    if (races_at_entry >= 0 && r1 > races_at_entry) {
+        fprintf(out, "golden %-28s NOT_BANKED_RACED races=%ld"
+                     "  (bank this cell or drop it)\n",
+                c->name, r1 - races_at_entry);
+        vfft_destroy(p);
+        return 1;
+    }
 
     a  = (double *)calloc(span, sizeof(double));
     b  = (double *)calloc(il ? 1 : span, sizeof(double));
@@ -182,6 +229,9 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--cell")) only = atoi(argv[i + 1]);
     if (only >= 0 && only < NCELLS) {
         vfft_config_t cfg; vfft_plan p;
+        /* Taken BEFORE the refusal create. That first create is what races, and
+         * it banks in memory, so anything measured after it sees a replay. */
+        long r_entry = races_now();
         cfg_of(&CELLS[only], &cfg);
         p = vfft_create(&cfg);
         fprintf(out, "refuse %-28s %s%s\n", CELLS[only].name,
@@ -189,7 +239,7 @@ int main(int argc, char **argv)
                 ((p != NULL) == (CELLS[only].expect_ok != 0)) ? "" : "  <<< UNEXPECTED");
         if ((p != NULL) != (CELLS[only].expect_ok != 0)) bad++;
         if (p) vfft_destroy(p);
-        bad += golden_c2c(&CELLS[only], out);
+        bad += golden_c2c(&CELLS[only], out, r_entry);
         if (out != stdout) fclose(out);
         return bad ? 1 : 0;
     }
@@ -211,7 +261,10 @@ int main(int argc, char **argv)
     }
 
     fprintf(out, "#\n");
-    for (i = 0; i < NCELLS; i++) bad += golden_c2c(&CELLS[i], out);
+    /* -1 disables the purity assert on the triage path: every cell above has
+     * already created once, so a per-cell entry baseline is meaningless here.
+     * Triage output is not diffable anyway - use --cell for a real capture. */
+    for (i = 0; i < NCELLS; i++) bad += golden_c2c(&CELLS[i], out, -1);
 
     fprintf(out, "#\n# cells=%d unexpected=%d\n", NCELLS, bad);
     if (out != stdout) fclose(out);
