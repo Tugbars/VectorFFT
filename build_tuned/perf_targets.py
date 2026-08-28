@@ -94,6 +94,74 @@ def plans_match(csv_plan, chain, dif):
     return shape.replace("x", ".") == chain and dif == want
 
 
+OOP = os.path.normpath(os.path.join(
+    HERE, "..", "src", "dag-fft-compiler", "generator", "generated",
+    "wisdom2_oop.txt"))
+#          q= may be a migration WILDCARD (q=*), not just a number. Ten of the
+#          oop cells are wildcard rows and a \d+ pattern drops them silently -
+#          including half the eng=k1 IL rows, which are exactly the Bailey cells.
+CELL_ANY = re.compile(r"^@cell t=(\w+) .*?\bn=([\dx]+)\b.*?\bq=(\d+|\*)")
+
+
+def load_il():
+    """The INTERLEAVED family: oop-shard cells, which use different machinery.
+
+    IL is Bailey or the split cascade, and its cells live in the oop shard, not
+    the stride shard. Two facts make this family a SEPARATE corpus rather than
+    more rows in the split one:
+
+    1. UNITS ARE NOT UNIFORM. 61 of the 92 oop cells record units=cyc (the
+       legacy eng=classic rows: bailey2, modeb, leaf) and 31 record units=ns
+       (eng=k1, eng=zturn, eng=stride). wisdom2's own legend says ns= is
+       comparable only within identical metric= and units=, and the merge law
+       refuses a cross-units replacement. So the two are never pooled, and a
+       harness must measure a cell in the unit its target is recorded in.
+
+       Cycles are the BETTER unit on this host, not the worse one: a 5.7 GHz
+       boosting part makes a nanosecond target frequency-dependent, while a
+       cycle target is frequency-invariant.
+
+    2. THERE IS NO SECOND SOURCE. build_tuned/results/ holds only the two 1D
+       split CSVs. Nothing independently re-measured the IL cells, so the
+       corroboration filter that qualifies split targets CANNOT be applied
+       here. Every IL target is single-source by construction.
+
+    That second point is why the archived-binary A/B is not merely preferable
+    for IL - it is the only method available.
+    """
+    out = []
+    if not os.path.exists(OOP):
+        return out
+    for line in open(OOP, encoding="utf-8", errors="replace"):
+        m = CELL_ANY.match(line)
+        if not m:
+            continue
+        ns = re.search(r"\bns=([\d.]+)", line)
+        un = re.search(r"\bunits=(\w+)", line)
+        eng = re.search(r"\beng=(\w+)", line)
+        rt = re.search(r"\broute=(\w+)", line)
+        met = re.search(r"\bmetric=(\w+)", line)
+        if not (ns and un):
+            continue
+        out.append(dict(t=m.group(1), n=m.group(2), q=m.group(3),
+                        ns=float(ns.group(1)), units=un.group(1),
+                        eng=eng.group(1) if eng else "?",
+                        route=rt.group(1) if rt else "-",
+                        metric=met.group(1) if met else "?",
+                        wild=(m.group(3) == "*")))
+
+    # EXACT BEATS WILDCARD, the same law vw2_oop_lookup_k1 applies at runtime:
+    # a q=* row is migration vintage and is superseded by a concrete row at the
+    # same (t, n, eng). Keep the wildcard only when nothing concrete covers it,
+    # so the corpus mirrors what the library would actually serve.
+    concrete = {(c["t"], c["n"], c["eng"]) for c in out if not c["wild"]}
+    kept = [c for c in out
+            if not c["wild"] or (c["t"], c["n"], c["eng"]) not in concrete]
+    for c in kept:
+        c["superseded"] = 0
+    return kept
+
+
 def main():
     band = 0.10
     out_path = None
@@ -150,9 +218,33 @@ def main():
         for (n, kk, c, s, rt, cp, ch, di, err) in sorted(plan_drift):
             add("# drift N=%-8d K=%-5d csv_plan=%-18s store=%s dif=%s"
                 % (n, kk, cp, ch, di))
+    il = load_il()
+    if il:
+        add("#")
+        add("# ================= INTERLEAVED FAMILY (oop shard) =================")
+        add("# Different machinery: Bailey (route=bailey2) or the split cascade")
+        add("# (eng=zturn). SINGLE SOURCE - build_tuned/results/ holds only the two")
+        add("# 1D SPLIT csvs, so nothing independently re-measured these and the")
+        add("# corroboration filter CANNOT be applied. For this family the")
+        add("# archived-binary A/B is the only trustworthy method.")
+        add("#")
+        add("# UNITS ARE NOT UNIFORM and must never be pooled or converted:")
+        for u in sorted({c["units"] for c in il}):
+            grp = [c for c in il if c["units"] == u]
+            engs = ",".join("%s=%d" % (e, sum(1 for c in grp if c["eng"] == e))
+                            for e in sorted({c["eng"] for c in grp}))
+            add("#   units=%-4s %3d cells   %s" % (u, len(grp), engs))
+        add("#")
+        add("# t     n          q     target     units  metric  eng/route")
+        for c in sorted(il, key=lambda x: (x["units"], x["eng"], x["n"], x["q"])):
+            add("il %-5s %-10s %-5s %-10.1f %-6s %-7s %s/%s"
+                % (c["t"], c["n"], c["q"], c["ns"], c["units"], c["metric"],
+                   c["eng"], c["route"]))
+
     add("#")
-    add("# usable=%d excluded=%d plan_drift=%d csv_only=%d store_cells=%d"
+    add("# SPLIT   usable=%d excluded=%d plan_drift=%d csv_only=%d store_cells=%d"
         % (len(good), len(bad), len(plan_drift), only_csv, len(store)))
+    add("# IL      cells=%d  (single-source; no corroboration possible)" % len(il))
 
     text = "\n".join(lines) + "\n"
     if out_path:
