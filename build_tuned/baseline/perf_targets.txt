@@ -201,4 +201,102 @@
 # PLAN DRIFT - the CSV plan no longer matches the banked chain.
 # drift N=128      K=32    csv_plan=4x32/DIF           store=16.8 dif=0
 #
-# usable=132 excluded=57 plan_drift=1 csv_only=48 store_cells=259
+# ================= INTERLEAVED FAMILY (oop shard) =================
+# Different machinery: Bailey (route=bailey2) or the split cascade
+# (eng=zturn). SINGLE SOURCE - build_tuned/results/ holds only the two
+# 1D SPLIT csvs, so nothing independently re-measured these and the
+# corroboration filter CANNOT be applied. For this family the
+# archived-binary A/B is the only trustworthy method.
+#
+# UNITS ARE NOT UNIFORM and must never be pooled or converted:
+#   units=cyc   61 cells   classic=61
+#   units=ns    23 cells   k1=10,stride=5,zturn=8
+#
+# t     n          q     target     units  metric  eng/route
+il c2c   1024       1     24281.0    cyc    fwd1    classic/modeb
+il c2c   1024       128   181911.5   cyc    fwd1    classic/modeb
+il c2c   1024       2     13375.0    cyc    fwd1    classic/bailey2
+il c2c   1024       256   493166.7   cyc    fwd1    classic/modeb
+il c2c   1024       3     24214.0    cyc    fwd1    classic/bailey2
+il c2c   1024       32    32603.7    cyc    fwd1    classic/modeb
+il c2c   1024       4     21495.0    cyc    fwd1    classic/bailey2
+il c2c   12288      1     351290.0   cyc    fwd1    classic/modeb
+il c2c   128        1024  157282.0   cyc    fwd1    classic/modeb
+il c2c   128        256   23565.6    cyc    fwd1    classic/modeb
+il c2c   128        32    2488.1     cyc    fwd1    classic/bailey2
+il c2c   131072     32    23420205.0 cyc    fwd1    classic/modeb
+il c2c   1536       1     37812.0    cyc    fwd1    classic/modeb
+il c2c   16         256   2058.2     cyc    fwd1    classic/bailey2
+il c2c   16         32    111.9      cyc    fwd1    classic/bailey2
+il c2c   16384      256   16275430.0 cyc    fwd1    classic/modeb
+il c2c   16384      32    1229540.0  cyc    fwd1    classic/modeb
+il c2c   2048       2     29240.0    cyc    fwd1    classic/bailey2
+il c2c   2048       256   952825.0   cyc    fwd1    classic/modeb
+il c2c   2048       3     54402.0    cyc    fwd1    classic/bailey2
+il c2c   2048       32    74149.2    cyc    fwd1    classic/modeb
+il c2c   2048       4     45962.0    cyc    fwd1    classic/bailey2
+il c2c   24576      1     861736.0   cyc    fwd1    classic/modeb
+il c2c   256        2     1642.0     cyc    fwd1    classic/bailey2
+il c2c   256        2     4276.0     cyc    fwd1    classic/modeb
+il c2c   256        256   94527.9    cyc    fwd1    classic/modeb
+il c2c   256        3     2899.0     cyc    fwd1    classic/bailey2
+il c2c   256        3     7118.0     cyc    fwd1    classic/modeb
+il c2c   256        32    6606.6     cyc    fwd1    classic/bailey2
+il c2c   256        4     2305.0     cyc    fwd1    classic/bailey2
+il c2c   3072       1     67114.0    cyc    fwd1    classic/modeb
+il c2c   32         256   4778.7     cyc    fwd1    classic/modeb
+il c2c   32         32    288.6      cyc    fwd1    classic/bailey2
+il c2c   32768      256   37452035.0 cyc    fwd1    classic/modeb
+il c2c   32768      32    3679870.0  cyc    fwd1    classic/modeb
+il c2c   32768      4     1833926.0  cyc    fwd1    classic/modeb
+il c2c   4096       2     73997.0    cyc    fwd1    classic/bailey2
+il c2c   4096       256   2742180.0  cyc    fwd1    classic/modeb
+il c2c   4096       3     145877.0   cyc    fwd1    classic/bailey2
+il c2c   4096       32    209895.1   cyc    fwd1    classic/modeb
+il c2c   4096       4     99845.0    cyc    fwd1    classic/bailey2
+il c2c   512        1     9581.0     cyc    fwd1    classic/modeb
+il c2c   512        2     4891.0     cyc    fwd1    classic/bailey2
+il c2c   512        256   158321.3   cyc    fwd1    classic/modeb
+il c2c   512        3     9187.0     cyc    fwd1    classic/bailey2
+il c2c   512        32    21374.6    cyc    fwd1    classic/bailey2
+il c2c   512        4     5998.0     cyc    fwd1    classic/bailey2
+il c2c   6144       1     144424.0   cyc    fwd1    classic/modeb
+il c2c   64         256   12285.7    cyc    fwd1    classic/modeb
+il c2c   64         32    1169.6     cyc    fwd1    classic/bailey2
+il c2c   65536      256   87478040.0 cyc    fwd1    classic/modeb
+il c2c   65536      32    9740020.0  cyc    fwd1    classic/modeb
+il c2c   768        1     5020.0     cyc    fwd1    classic/bailey2
+il c2c   768        1     14521.0    cyc    fwd1    classic/modeb
+il c2c   8          256   607.5      cyc    fwd1    classic/modeb
+il c2c   8          32    44.4       cyc    fwd1    classic/leaf
+il c2c   8192       2     232017.0   cyc    fwd1    classic/bailey2
+il c2c   8192       256   7250960.0  cyc    fwd1    classic/modeb
+il c2c   8192       3     408335.0   cyc    fwd1    classic/bailey2
+il c2c   8192       32    529253.3   cyc    fwd1    classic/modeb
+il c2c   8192       4     303223.0   cyc    fwd1    classic/bailey2
+il c2c   1024       1     1024.3     ns     fwd1    k1/-
+il c2c   128        1     64.5       ns     fwd1    k1/-
+il c2c   16384      1     44856.6    ns     fwd1    k1/-
+il c2c   2048       1     2736.5     ns     fwd1    k1/-
+il c2c   256        1     133.5      ns     fwd1    k1/-
+il c2c   32768      *     83711.0    ns     fwd1    k1/-
+il c2c   4096       1     10158.2    ns     fwd1    k1/-
+il c2c   512        1     330.7      ns     fwd1    k1/-
+il c2c   65536      *     245145.0   ns     fwd1    k1/-
+il c2c   8192       1     19303.7    ns     fwd1    k1/-
+il c2c   16384      1     18610.0    ns     fwd1    stride/-
+il c2c   2048       1     2962.5     ns     fwd1    stride/-
+il c2c   32768      1     44983.3    ns     fwd1    stride/-
+il c2c   4096       1     4912.5     ns     fwd1    stride/-
+il c2c   8192       1     8470.0     ns     fwd1    stride/-
+il c2c   131072     1     498912.5   ns     joint2  zturn/-
+il c2c   16384      1     38075.0    ns     joint2  zturn/-
+il c2c   2048       1     4179.1     ns     joint2  zturn/-
+il c2c   262144     1     1091900.0  ns     joint2  zturn/-
+il c2c   32768      1     83503.1    ns     joint2  zturn/-
+il c2c   4096       1     8363.3     ns     joint2  zturn/-
+il c2c   65536      1     205075.0   ns     joint2  zturn/-
+il c2c   8192       1     18007.0    ns     joint2  zturn/-
+#
+# SPLIT   usable=132 excluded=57 plan_drift=1 csv_only=48 store_cells=259
+# IL      cells=84  (single-source; no corroboration possible)

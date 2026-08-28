@@ -324,6 +324,47 @@ right question; "was the average the same" is not.
 stopped being taken, threading that disengaged, an inliner that lost a hot call. A 2×
 regression cannot hide under a 10% band, and noise cannot fake its way under it.
 
+**When a perf check goes red: re-run the planner before concluding anything.**
+
+A large apparent regression has two very different causes, and the cheap one is far
+more common: a hot or loaded machine. The DP planner selects by measurement, so on a
+contended host it does not merely time badly, it *chooses* badly - a worse plan, then
+a worse number. Distinguish them by re-planning the cell on a quiet machine, several
+times, and taking the minimum.
+
+**Re-plan at PATIENT, not MEASURE.** The two tiers differ in exactly the knob that
+matters here. MEASURE uses beam 3 and *believes* a cached sub-plan cost - the FFTW
+`BELIEVE_PCOST` analog - so a single timing taken during a hot moment is cached and
+trusted for the rest of the search, propagating into every downstream decision.
+PATIENT uses beam 8 and re-measures on every cache hit, so in the planner header's
+own words "variance is re-absorbed on every encounter". Triage numbers taken at
+MEASURE overstate the instability. Re-plan with `cfg.rigor = VFFT_PATIENT`.
+
+Measured example, N=256 K=256 c2c in-place scrambled. Twelve cold replans:
+
+    flat.t1s.t1s      5 runs   min 33,491 ns   chains 8.4.8 / 8.8.4 / 4.8.8
+    seven other families        51,692 - 64,912 ns
+
+Cleanly bimodal, and the run order is the tell - the sweep began right after a
+32-gate build, and the good family was found in 1 of the first 8 runs and 4 of the
+last 4. The planner was not weak; it was measuring on a hot machine. An earlier
+single run under active load reported 123,384 ns, which would have looked like a 3x
+regression and was nothing of the kind.
+
+Two rules fall out:
+
+* **Discard the first runs after any load.** Do not average them in. Minimum-of-N
+  handles this on its own, which is one more reason the statistic is the minimum and
+  never the mean.
+* **An unstable cell is not quarantined, it is investigated.** A cell whose plan
+  moves under recalibration is the one most worth re-planning, not the one to drop
+  from the corpus. Exclusion would discard exactly the cells that carry information.
+
+The same sweep incidentally showed the banked plan for that cell is not the best
+available - `8.4.8` beats the banked `4.4.16` by 18%, and `4.4.16` re-measured at
+64,888 ns against its stored 40,900. That is a wisdom-quality note for the
+pre-release sweep, NOT a reason to re-race during development.
+
 **What it is not.** Proof of no regression. It cannot see 3–5% drift, and it is not a
 re-race — no verdict is banked from it, so it does not violate the racing-budget rule.
 
