@@ -67,6 +67,9 @@ docs/** linguist-documentation
 # this pin kills the Git-Bash-sed CRLF trap at the root). See
 # src/core/wisdom2/README.md §2.3.
 src/dag-fft-compiler/generator/generated/wisdom2_*.txt text eol=lf
+# Refactor baseline artifacts are diffed byte-for-byte across the migration;
+# a CRLF conversion would make every line differ. Pin them the same way.
+build_tuned/baseline/** text eol=lf
 
 # wisdom2 TRANSITIONAL tooling — the one-shot migrator and the writer
 # registry die with the legacy wisdom files (campaign wave 5 / v1.0).

@@ -1,0 +1,9 @@
+# Diagnostics for src/core/vfft.c at the VFFT_WARN key, captured at the baseline SHA.
+# Re-derive: VFFT_WARN=1 build, or the gcc line in README.md.
+# The point of this file: the DEFAULT build key suppresses
+# -Wimplicit-function-declaration and -Wunused-function, the two diagnostics
+# that catch a botched move. Against this 2-line baseline, any new warning
+# during the migration is unmissable.
+#
+# count  diagnostic
+      2 warning: passing argument 3 of 'vfft_execute' discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
