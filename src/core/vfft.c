@@ -16,6 +16,7 @@
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
 #include "wisdom2/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
 #include "wisdom2/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
+#include "support/race_timing.h"        /* the racers' shared clock + median (step 5) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
@@ -9585,24 +9586,9 @@ static int _il_ab_runs; /* §6a59 gate hook */
 
 /* Fused-vs-padded A/B on private scratch: alternating arms, median of 9, 3% hysteresis toward
  * the tight (K) arm. Any roundtrip failure returns K — the always-safe arm. */
-static double _il_ab_now(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
-}
-static double _il_ab_med9(double *v)
-{
-    for (int i = 0; i < 9; i++)
-        for (int j = i + 1; j < 9; j++)
-            if (v[j] < v[i])
-            {
-                double t = v[i];
-                v[i] = v[j];
-                v[j] = t;
-            }
-    return v[4];
-}
+/* _il_ab_now / _il_ab_med9 moved to support/race_timing.h (migration step 5).
+ * _il_ab_runs stays HERE: it is mutable file-scope state, and a static in a
+ * header is one copy per includer. */
 static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
 {
     const int N = h->N;
