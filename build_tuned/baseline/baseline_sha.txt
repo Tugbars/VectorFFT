@@ -1,0 +1,8 @@
+14d366e9c0683cde5824e4101286abc46f436499
+# short: 14d366e9
+# captured: 2026-08-28T17:33:35Z
+# working tree at capture:
+#    M .gitattributes
+#    M .gitignore
+#   ?? build_tuned/baseline/
+#   ?? docs/design/refactor_migration_plan.md
