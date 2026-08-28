@@ -48,8 +48,78 @@ import subprocess
 import sys
 import tempfile
 
+
+def _kill_children_when_i_die():
+    """Put this process in a Windows Job Object that kills its children on close.
+
+    WHY: the per-gate timeout below lives in the PARENT. If the parent is killed
+    - an outer timeout, a Ctrl-C, the harness reaping it - the child gate is
+    ORPHANED and then has no timeout at all. That is not hypothetical: a single
+    orphaned mt_c2c_gate ran unsupervised for 1,674 seconds of CPU, and killing
+    it by name only started the next one, because the parent was still alive
+    spawning them.
+
+    A Job Object with KILL_ON_JOB_CLOSE is the actual guarantee: the handle dies
+    with the process by any means, including SIGKILL, and every child in the job
+    dies with it. atexit and signal handlers do NOT cover the killed case.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _LIMIT(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.POINTER(ctypes.c_ulong)),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _IO(ctypes.Structure):
+            _fields_ = [("ReadOperationCount", ctypes.c_uint64),
+                        ("WriteOperationCount", ctypes.c_uint64),
+                        ("OtherOperationCount", ctypes.c_uint64),
+                        ("ReadTransferCount", ctypes.c_uint64),
+                        ("WriteTransferCount", ctypes.c_uint64),
+                        ("OtherTransferCount", ctypes.c_uint64)]
+
+        class _EXT(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _LIMIT),
+                        ("IoInfo", _IO),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return
+        info = _EXT()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+        if not k32.SetInformationJobObject(job, 9, ctypes.byref(info),
+                                           ctypes.sizeof(info)):
+            return
+        k32.AssignProcessToJobObject(job, k32.GetCurrentProcess())
+        # keep the handle alive for the life of the process, deliberately leaked
+        globals()["_VFFT_JOB"] = job
+    except Exception:
+        pass                      # best effort; the per-gate timeout still applies
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 BENCH = os.path.join(HERE, "benches")
+# Gates run from the REPO ROOT, not from benches/. fftw_bind_gate writes its
+# wisdom to the repo-root-relative path "build_tuned/benches/_fftw_bind_gate.wis";
+# from benches/ that resolves to benches/build_tuned/benches/... which does not
+# exist, so export and import both return 0 and the gate reports a FALSE RED
+# (verified: VERDICT FAIL from benches/, VERDICT PASS from the root). A harness
+# that manufactures reds is worse than none - it teaches you to ignore it.
+ROOT = os.path.dirname(HERE)
 STORE = os.path.normpath(os.path.join(
     HERE, "..", "src", "dag-fft-compiler", "generator", "generated"))
 
@@ -61,26 +131,30 @@ STORE = os.path.normpath(os.path.join(
 #   seeded=False  - a cold, empty scratch dir (the default, and the safe one)
 #   seeded=True   - a scratch COPY of the store, for gates that decode real wisdom
 ARGSTYLE = {
-    "k1z_inplace_gate":        ("flag", False),
-    "mt_c2c_gate":             ("flag", False),
+    "k1z_inplace_gate":        ("flag", True),
+    "mt_c2c_gate":             ("flag", True),
+    # COLD on purpose, same class as vfft_natural_front_gate: it asserts a RACE
+    # OCCURRED. Seeded, it correctly replays the banked verdict and reports
+    # "NO RACE" with accuracy fine (7.8e-16) - a green engine, a red gate.
+    # These two are the whole class: grep "NO RACE" over benches/*gate*.c.
     "vfft_ilp_front_gate":     ("flag", False),
-    "vfft_k1scr_gate":         ("flag", False),
+    "vfft_k1scr_gate":         ("flag", True),
     # COLD on purpose: seeding makes every measure cell report NO RACE, because it
     # correctly replays the banked verdict instead of racing.
     "vfft_natural_front_gate": ("flag", False),
-    "vfft_tcbatch_gate":       ("flag", False),
-    "zturn_wisdom_width_gate": ("flag", False),
+    "vfft_tcbatch_gate":       ("flag", True),
+    "zturn_wisdom_width_gate": ("flag", True),
     # wants a dir containing oop_wisdom.txt -> needs real data, but a COPY
     "zturn_tcut_gate":         ("flag", True),
 
-    "il2d_m1_gate":            ("bare", False),
-    "il2d_real_gate":          ("bare", False),
-    "odd_partner_cells_gate":  ("bare", False),
+    "il2d_m1_gate":            ("bare", True),
+    "il2d_real_gate":          ("bare", True),
+    "odd_partner_cells_gate":  ("bare", True),
     "wisdom2_g0_gate":         ("bare", False),
     # SCRATCH ONLY - see the fixture-collision note in the header
     "wisdom2_real_gate":       ("bare", False),
     "wisdom2_2d_gate":         ("bare", False),
-    "zr2c_store_decode_gate":  ("bare", False),
+    "zr2c_store_decode_gate":  ("bare", True),
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),
     "zr2c_fd_gate":            ("bare", True),
@@ -118,11 +192,24 @@ def run(name, workdir):
     elif style == "bare":
         argv += [scratch]
 
+    # 300s, not 900: with a SEEDED dir a gate replays banked wisdom and finishes
+    # in seconds. A gate that needs minutes is recalibrating, which means either
+    # its dir is wrong or it genuinely races - either way, worth failing loudly
+    # rather than burning half an hour.
+    # A SEEDED gate replays and finishes in seconds; 300s means something is
+    # wrong. A COLD gate races by design - that is its whole purpose - so it is
+    # allowed to take real time. Budget by which one it is, not one flat number.
+    budget = 300 if seeded else 900
     try:
-        r = subprocess.run(argv, cwd=BENCH, capture_output=True, text=True,
-                           timeout=900)
+        r = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
+                           timeout=budget)
     except subprocess.TimeoutExpired:
-        return False, "TIMEOUT after 900s"
+        # subprocess.run kills only the direct child; a gate that spawned its own
+        # children would leave them behind. Kill the whole tree.
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/IM", name + ".exe"],
+                           capture_output=True)
+        return False, "TIMEOUT after %ds (tree killed)" % budget
     out = (r.stdout or "") + (r.stderr or "")
     lines = [l.strip() for l in out.splitlines() if l.strip()]
     # prefer the gate's own verdict line over whatever happened to print last
@@ -148,20 +235,30 @@ def main():
     if only:
         gates = [g for g in gates if only in g]
 
+    _kill_children_when_i_die()
     workdir = tempfile.mkdtemp(prefix="vfft_gates_")
     lines, npass, nfail, nbuild = [], 0, 0, 0
+
+    # Emit each result AS IT COMPLETES, flushed. A run over 32 gates takes ~20
+    # minutes; buffering it all to the end makes a long run indistinguishable
+    # from a hung one, and leaves nothing at all behind if the run is killed -
+    # which is exactly how the first attempt at this baseline was lost.
+    def emit(line):
+        lines.append(line)
+        print(line, flush=True)
+
     for g in gates:
         src = os.path.join("benches", g + ".c")
         mode = build(src, g)
         if mode is None:
-            lines.append("BUILD_FAIL %-28s" % g)
+            emit("BUILD_FAIL %-28s" % g)
             nbuild += 1
             continue
         ok, tail = run(g, workdir)
         style = ARGSTYLE.get(g, ("none", False))
-        lines.append("%-4s %-10s %-6s %-28s %s"
-                     % ("PASS" if ok else "FAIL", mode,
-                        style[0] + ("+seed" if style[1] else ""), g, tail))
+        emit("%-4s %-10s %-6s %-28s %s"
+             % ("PASS" if ok else "FAIL", mode,
+                style[0] + ("+seed" if style[1] else ""), g, tail))
         npass += ok
         nfail += (not ok)
 
@@ -175,7 +272,9 @@ def main():
     text = "\n".join(body) + "\n"
     if out_path:
         open(out_path, "w", encoding="utf-8", newline="\n").write(text)
-    print(text, end="")
+    # The per-gate lines were already printed live by emit(); re-printing the
+    # whole body here would double every row on stdout. Only the summary.
+    print("\n".join(body[-2:]))
 
     if not keep:
         shutil.rmtree(workdir, ignore_errors=True)

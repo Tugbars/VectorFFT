@@ -163,10 +163,35 @@ static int golden_c2c(const cell_t *c, FILE *out)
 int main(int argc, char **argv)
 {
     FILE *out = stdout;
-    int i, bad = 0;
+    int i, bad = 0, only = -1;
     if (argc > 2 && !strcmp(argv[1], "--out")) {
         out = fopen(argv[2], "w");
         if (!out) { printf("cannot open %s\n", argv[2]); return 2; }
+    }
+
+    /* ONE PROCESS PER CELL is the only diffable mode. Several things in the
+     * library are process-lifetime, not per-plan - above all the K=1 pair-order
+     * memo, keyed by N and consulted BEFORE the race. Run every cell in one
+     * process and a later cell inherits whatever an earlier one memoized, so the
+     * artifact becomes order- and history-dependent: reproducible within one
+     * binary, DIFFERENT across builds, for no reason connected to the change
+     * under test. Not hypothetical - it produced a false "step 4 changed output
+     * bits" on exactly two cells and cost a revert scare. A baseline capture MUST
+     * use --cell; the all-cells path below is triage only. */
+    for (i = 1; i + 1 < argc; i++)
+        if (!strcmp(argv[i], "--cell")) only = atoi(argv[i + 1]);
+    if (only >= 0 && only < NCELLS) {
+        vfft_config_t cfg; vfft_plan p;
+        cfg_of(&CELLS[only], &cfg);
+        p = vfft_create(&cfg);
+        fprintf(out, "refuse %-28s %s%s\n", CELLS[only].name,
+                p ? "ACCEPT" : "REFUSE",
+                ((p != NULL) == (CELLS[only].expect_ok != 0)) ? "" : "  <<< UNEXPECTED");
+        if ((p != NULL) != (CELLS[only].expect_ok != 0)) bad++;
+        if (p) vfft_destroy(p);
+        bad += golden_c2c(&CELLS[only], out);
+        if (out != stdout) fclose(out);
+        return bad ? 1 : 0;
     }
 
     fprintf(out, "# golden artifacts - refusal decisions and output-bit digests.\n");

@@ -440,6 +440,14 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     # .obj/ separates it from the identity key that obj_equiv, nm and the golden
     # bits are diffed at. NEVER cross-diff the two keys.
     # docs/design/refactor_migration_plan.md step 2.
+    # VFFT_FINGERPRINT=1 -> the instrumentation build key. Compiles the
+    # create-time plan fingerprint (src/core/vfft_fingerprint.h) and the
+    # snapshot accessor. A SEPARATE flags key is the point: obj_equiv, nm and
+    # the golden bits are all diffed at the IDENTITY key, and the fingerprint
+    # adds two exported symbols, so the two keys must never be cross-diffed.
+    if os.environ.get('VFFT_FINGERPRINT'):
+        flags += ['-DVFFT_FINGERPRINT']
+
     if os.environ.get('VFFT_WARN'):
         flags = [f for f in flags
                  if f not in ('-Wno-implicit-function-declaration',

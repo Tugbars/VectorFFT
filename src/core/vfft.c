@@ -156,6 +156,27 @@ long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
 static long _vfft_il2d_col_mt_count = 0;
 long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
 
+/* ── HARNESS COUNTERS (refactor safety, docs/design/refactor_safety_harness.md)
+ *
+ * TRIG MT had no observable signal at all: a DCT/DST/DHT create sets tplan and
+ * nthreads and never touches tcb, so none of the four exported counters can
+ * move for the whole trig family — an MT==ST bitwise pass there is vacuous,
+ * because it passes just as happily when no thread ever ran. A `long++` next to
+ * an FFT is free.
+ *
+ * CREATE RACES is the REPLAY-PURITY counter. The differential harness replays a
+ * frozen wisdom store and diffs the resulting plans; that is only a valid test
+ * if create is a PURE FUNCTION of the store. A cell that races under replay has
+ * the clock inside its own baseline and will false-diff on the first thermal
+ * wobble. Counting the races converts "no racer fires under replay" from an
+ * assumption into an assertion the sweep can fail on.
+ *
+ * Both are tentative definitions HERE, never `static` in a header: a static in
+ * a header is one copy PER INCLUDER, which would let the accessor read a
+ * different object than the increment writes and silently report zero. */
+long _vfft_trig_mt_count = 0;
+long _vfft_create_race_count = 0;
+
 /* INC-Z: the K=1 cascade MT race, defined with the executor near
  * _exec_zcascade; called from the OOP scrambled commit in create. */
 static void _zt_mt_race(struct vfft_plan_s *h);
@@ -740,6 +761,11 @@ static int _oop_kind_class(int kind)
 static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
                           const vfft_proto_registry_t *reg, vfft_proto_wisdom_entry_t *out)
 {
+    /* HARNESS replay-purity counter. Every call site guards this behind a wisdom
+     * MISS, so reaching here at all means the clock is about to decide something.
+     * Under replay this must never fire; if it does, that cell's "baseline" was
+     * produced by a race and diffing it measures thermal noise, not the code. */
+    _vfft_create_race_count++;
     if (rigor == VFFT_EXHAUSTIVE)
     {
         vfft_proto_factorization_t best;
@@ -823,6 +849,7 @@ static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, do
 static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
                           const vfft_proto_wisdom_entry_t *te, const vfft_proto_wisdom_entry_t *ae)
 {
+    _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
     if (!te || te->nf <= 0 || !ae || ae->nf <= 0)
         return 0;
     size_t Kp = (K + (size_t)(_VFFT_PADVW - 1)) & ~(size_t)(_VFFT_PADVW - 1);
@@ -968,6 +995,7 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
 static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs,
                                     vfft_rigor_t rigor, int aliased)
 {
+    _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
     const int N = zs->N;
     const size_t sz = (size_t)2 * (size_t)N * sizeof(double);
     const int inc = zs->t2q; /* compiled default = incumbent */
@@ -1059,6 +1087,7 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs,
 static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
                                    int aliased)
 {
+    _vfft_create_race_count++;   /* HARNESS: this racer is about to time */
     /* last==4 chains (radix-4 terminator) have NO stf2 twin — zturn.h's
      * create forces t2q=0 and the execute dispatch is structural about it —
      * so a "race" here would time one kernel against itself. Pin the only
@@ -1299,6 +1328,7 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         return vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
                                     (vfft_proto_registry_t *)reg);
 
+    _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
     pr = _r2c_build_arm(N, K, 0, reg);
     ps = _r2c_build_arm(N, K, 1, reg);
     if (!pr)
@@ -1457,6 +1487,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
         return vfft_c2r_disp_create_auto(N, K, _rfft_registry(),
                                          (vfft_proto_registry_t *)reg);
 
+    _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
     pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
                               _rfft_registry(), (vfft_proto_registry_t *)reg);
     ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
@@ -4472,6 +4503,7 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
     if (!W)
         return _zr2c_build_route(cfg, N, def);
 
+    _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
     struct vfft_plan_s *h0 = _zr2c_build_route(cfg, N, 0);
     struct vfft_plan_s *h1 = _zr2c_build_route(cfg, N, 1);
     if (!h0 || !h1) /* one route can't build -> the other serves, no bank */
@@ -11427,6 +11459,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
          * ignore `dir`; for II<->III the forward enum picks the matching member and
          * BACKWARD runs its inverse (DCT-III for a DCT-II plan, etc.). */
         _vfft_pool_arm(h->nthreads);
+        /* HARNESS: the trig family's only engagement signal. A DCT/DST/DHT plan
+         * sets tplan and never touches tcb, so none of the four pre-existing
+         * counters can move for it and an MT==ST bitwise pass here is vacuous -
+         * it passes just as happily when no thread ever ran.
+         *
+         * HONEST LIMIT: this counts trig executes issued with a THREADED POOL,
+         * not work proven dispatched. Dispatch happens inside the
+         * stride_execute_dctN entry points, below this file. Closing that last
+         * gap needs a counter inside the trig executor; until then a non-zero
+         * value proves the pool was armed, which is strictly more than the
+         * nothing that was observable before. */
+        if (h->nthreads > 1)
+            _vfft_trig_mt_count++;
         const stride_plan_t *p = h->tplan;
         int f = (dir == VFFT_FORWARD);
         switch (h->transform)
@@ -12041,3 +12086,125 @@ int vfft_plan_tc_workers(vfft_plan p)
 int vfft_get_num_threads(void) { return stride_get_num_threads(); }
 const char *vfft_isa(void) { return STRIDE_ISA_NAME; }
 const char *vfft_version(void) { return STRIDE_VERSION_STRING; }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * PLAN FINGERPRINT — see src/core/vfft_fingerprint.h for the contract and
+ * for why this is text with named tokens rather than a hash.
+ *
+ * Compiled ONLY under -DVFFT_FINGERPRINT. With the flag off this section is
+ * empty, which is what keeps the identity build byte-identical: obj_equiv
+ * must report EQUIVALENT and the nm census must not move.
+ * ════════════════════════════════════════════════════════════════════════ */
+#ifdef VFFT_FINGERPRINT
+#include "vfft_fingerprint.h"
+
+#define FP__ADD(...)                                                        \
+    do {                                                                    \
+        int _w = snprintf(out + used, used < cap ? cap - used : 0,          \
+                          __VA_ARGS__);                                     \
+        if (_w > 0) used += (size_t)_w;                                     \
+    } while (0)
+
+/* presence, never the address: a pointer value is not reproducible */
+#define FP__P(f) ((h->f) ? 1 : 0)
+
+/* k1_jit exists only under VFFT_USE_JIT. Its bit is emitted UNCONDITIONALLY
+ * anyway: the field set must not depend on build flags, or two artifacts from
+ * differently-configured builds silently stop being comparable and the diff
+ * reflows instead of pointing at what moved. Absent field -> 0, fixed width. */
+#ifdef VFFT_USE_JIT
+#  define FP__JIT ((h->k1_jit) ? 1 : 0)
+#else
+#  define FP__JIT 0
+#endif
+
+static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
+                            char *out, size_t cap, size_t used);
+
+static size_t vfft__fp_child(const struct vfft_plan_s *c, const char *tag,
+                             int depth, char *out, size_t cap, size_t used)
+{
+    if (!c) return used;
+    FP__ADD("@fp d=%d via=%s ", depth, tag);
+    return vfft__fp_node(c, depth, out, cap, used);
+}
+
+static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
+                            char *out, size_t cap, size_t used)
+{
+    if (!h) return used;
+
+    /* 1 — config echo: what the caller asked for */
+    FP__ADD("t=%d place=%d lay=%d n=%d,%d,%d,%d q=%ld nthr=%d "
+            "padded=%d exec_me=%d",
+            (int)h->transform, (int)h->placement, h->layout,
+            h->N, h->N2, h->N3, h->N4, (long)h->K, h->nthreads,
+            h->padded, h->exec_me);
+
+    /* 2 — route selectors: the "chose differently" surface */
+    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d zr2c=%d ilme=%d ilrace=%d",
+            h->k1_on, h->k1_sp_route, h->k1_il_route, h->zroute, h->zt_mt,
+            h->zr2c_route, h->il_me, h->il_race);
+    FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
+            h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
+            h->nat2d_ncyc, h->mt_unsafe);
+    FP__ADD(" tcbw=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
+            h->tcbw_n, (long)h->tcb_sn, (long)h->tcb_dn,
+            h->pq_wn, h->pq_mt, (long)h->pq_n);
+    FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
+            " oddn2=%d nat=%d blu=%d norowz=%d]",
+            h->il2d_nst, h->il2d_wc, h->il2d_wl, h->il2d_cut, h->il2d_tfuse,
+            h->il2d_rowoop, h->il2d_rw, h->il2d_colmt, h->il2d_oddn2,
+            h->il2d_nat, h->il2d_blu, h->il2d_norowz);
+
+    /* 3 — subplan PRESENCE bitmap, in a fixed order */
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+            FP__P(cplan), FP__P(oplan), FP__P(k1sp), FP__P(zsplit),
+            FP__P(zturn), FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr),
+            FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
+            FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
+            FP__P(cplan_il), FP__P(own_batch), FP__JIT);
+    FP__ADD(" il2dhave=%d%d%d%d%d%d\n",
+            FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
+            FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
+
+    /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
+     * TREE; a child that silently changed route is otherwise invisible. */
+    used = vfft__fp_child(h->zr2c_child, "zr2c", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->oddr_child, "oddr", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->tcb, "tcb", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->pq_inner, "pq", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->il2d_row, "il2drow", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->il2d_rowo, "il2drowo", depth + 1, out, cap, used);
+    used = vfft__fp_child(h->il2d_rows, "il2drows", depth + 1, out, cap, used);
+    return used;
+}
+
+size_t vfft__fingerprint(void *hv, char *out, size_t cap)
+{
+    const struct vfft_plan_s *h = (const struct vfft_plan_s *)hv;
+    size_t used = 0;
+    if (!out || cap == 0) return 0;
+    out[0] = '\0';
+    FP__ADD("@fpv 1\n");
+    if (!h) { FP__ADD("@fp NULL\n"); return used; }
+    FP__ADD("@fp d=0 via=root ");
+    used = vfft__fp_node(h, 0, out, cap, used);
+    return used;
+}
+
+void vfft__fp_counters(long *out6)
+{
+    if (!out6) return;
+    out6[0] = _vfft_tc_mt_dispatch_count;
+    out6[1] = _vfft_il2d_col_mt_count;
+    out6[2] = _vfft_zt_mt_count;
+    out6[3] = _vfft_pq_mt_count;
+    out6[4] = _vfft_trig_mt_count;
+    out6[5] = _vfft_create_race_count;
+}
+
+#undef FP__JIT
+#undef FP__P
+#undef FP__ADD
+#endif /* VFFT_FINGERPRINT */
