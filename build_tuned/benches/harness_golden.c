@@ -207,12 +207,31 @@ static int golden_c2c(const cell_t *c, FILE *out, long races_at_entry)
     return 0;
 }
 
+/* BINARY output, both spellings, on purpose.
+ *
+ * In text mode msvcrt rewrites every \n as \r\n. .gitattributes pins everything
+ * under build_tuned/baseline to eol=lf, so a committed artifact comes back LF
+ * while a fresh capture lands CRLF, and the diff then reports EVERY row as
+ * changed on a byte-identical result. An artifact compared byte-for-byte has to
+ * be written byte-for-byte.
+ *
+ * Both spellings matter: --out takes fopen("wb"), but the --cell capture loop
+ * writes to stdout under shell redirection, and that is the path the baseline is
+ * actually built from. Fixing only --out leaves the real capture broken. */
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
+
 int main(int argc, char **argv)
 {
     FILE *out = stdout;
     int i, bad = 0, only = -1;
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     if (argc > 2 && !strcmp(argv[1], "--out")) {
-        out = fopen(argv[2], "w");
+        out = fopen(argv[2], "wb");
         if (!out) { printf("cannot open %s\n", argv[2]); return 2; }
     }
 
@@ -225,8 +244,24 @@ int main(int argc, char **argv)
      * under test. Not hypothetical - it produced a false "step 4 changed output
      * bits" on exactly two cells and cost a revert scare. A baseline capture MUST
      * use --cell; the all-cells path below is triage only. */
+    /* --list exists so the capture driver can ask how many cells there are
+     * instead of guessing. It guessed once: with no --list it fell through to
+     * the all-cells path, read a row count off THAT, and then ran --cell for
+     * indices past the end - where the range check below declines and the
+     * all-cells path runs again, per index. 6 cells became 1268 rows. An
+     * out-of-range --cell is now a hard error for the same reason. */
+    if (argc > 1 && !strcmp(argv[1], "--list")) {
+        for (i = 0; i < NCELLS; i++) fprintf(out, "%2d %s\n", i, CELLS[i].name);
+        return 0;
+    }
     for (i = 1; i + 1 < argc; i++)
-        if (!strcmp(argv[i], "--cell")) only = atoi(argv[i + 1]);
+        if (!strcmp(argv[i], "--cell")) {
+            only = atoi(argv[i + 1]);
+            if (only < 0 || only >= NCELLS) {
+                fprintf(stderr, "cell %d out of range 0..%d\n", only, NCELLS - 1);
+                return 2;
+            }
+        }
     if (only >= 0 && only < NCELLS) {
         vfft_config_t cfg; vfft_plan p;
         /* Taken BEFORE the refusal create. That first create is what races, and

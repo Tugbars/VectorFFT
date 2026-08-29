@@ -7670,6 +7670,18 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                                 /* RACE (PURE vs injected-palindrome/single-leaf PSWAP vs DIT-SCR; 5% margin),
                                  * seeded from the deployed chain dfac (the PLAN object, never the scr entry). */
                                 vfft_natorder_verdict_t v;
+                                /* HARNESS: this racer is about to time. It lives in
+                                 * natorder_calibrate.h, NOT in this file, which is why the
+                                 * original census missed it - that census enumerated clock
+                                 * calls in vfft.c plus their local callers, and a racer
+                                 * DEFINED in another header is invisible to both passes.
+                                 * The cost was concrete: c2c.split.ip.nat has no banked nat
+                                 * entry, so it takes this branch every time and picked
+                                 * nat=5/natcyc=96 in 8 of 10 runs and nat=4/natcyc=34 in the
+                                 * other 2 - while reporting races=0 and therefore claiming to
+                                 * be safe to diff. A fingerprint that flaps 20% of the time
+                                 * under a purity flag is worse than no fingerprint. */
+                                _vfft_create_race_count++;
                                 vfft_natorder_race(N, K, reg, p, h->nat_list, h->nat_tmp, dfac, dnf, &v);
                                 mode = v.mode;
                                 if (mode == VFFT_NAT_PSWAP)
