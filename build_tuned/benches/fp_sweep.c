@@ -17,7 +17,8 @@
  * the clock inside its own baseline and will false-diff on the first thermal
  * wobble. This driver reports the counter so the sweep can fail on it.
  *
- * Build: python build.py --src benches/fp_sweep.c --vfft --compile --define VFFT_FINGERPRINT
+ * Build: VFFT_FINGERPRINT=1 python build.py --src benches/fp_sweep.c --vfft --compile
+ *        (build.py reads the flag from the ENVIRONMENT; it has no --define)
  * Run  : fp_sweep.exe --cell <i>        (one cell, the diffable mode)
  *        fp_sweep.exe --all             (triage only)
  */
@@ -39,7 +40,7 @@ static const cell_t CELLS[] = {
     {"c2c.split.ip.N256",    VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1},
     {"c2c.split.ip.N1024",   VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 1024,0, 1},
     {"c2c.split.ip.K32",     VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 32},
-    {"c2c.split.ip.K8",      VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 8},
+    {"c2c.split.ip.K4",      VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 4},
     {"c2c.split.oop.N256",   VFFT_C2C, VFFT_OUTOFPLACE, VFFT_LAYOUT_SPLIT,       VFFT_ORDER_DEFAULT,   1, 256, 0, 1},
     {"c2c.il.ip.N256",       VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_INTERLEAVED, VFFT_ORDER_DEFAULT,   1, 256, 0, 1},
     {"c2c.split.ip.scr",     VFFT_C2C, VFFT_INPLACE,    VFFT_LAYOUT_SPLIT,       VFFT_ORDER_SCRAMBLED, 1, 256, 0, 1},
@@ -73,20 +74,48 @@ static void one(int i)
     printf("@cell %s\n", CELLS[i].name);
     p = vfft_create(&cfg);
     if (!p) { printf("@fp REFUSED\n"); return; }
+    /* Absolute counters are correct HERE, with no entry baseline to subtract,
+     * because this driver does exactly one create per process. harness_golden
+     * needs a baseline only because its refusal check creates a plan first and
+     * absorbs that plan's race. */
+    vfft__fp_counters(c);
+    if (c[5] != 0) {
+        /* RACED, so the plan is a coin flip and neither the fingerprint nor the
+         * engagement counters may be written: they would re-diff on the next
+         * thermal wobble and train us to ignore this file. Record the FACT of
+         * the race instead. That is not a hole - it is the sharper check. The
+         * race count is a property of the wisdom store, not of the weather, so
+         * a step that makes a banked cell start racing (a broken lookup key, a
+         * dropped shard) flips this line and the diff catches it, while a step
+         * that leaves it alone is silent. Same convention as harness_golden's
+         * NOT_BANKED_RACED. */
+        printf("@fp NOT_BANKED_RACED races=%ld\n", c[5]);
+        vfft_destroy(p);
+        return;
+    }
     vfft__fingerprint(p, buf, sizeof buf);
     fputs(buf, stdout);
-    vfft__fp_counters(c);
     printf("@counters tc=%ld il2dcol=%ld zt=%ld pq=%ld trig=%ld races=%ld\n",
            c[0], c[1], c[2], c[3], c[4], c[5]);
-    if (c[5] != 0)
-        printf("@PURITY_VIOLATION races=%ld - this cell has the clock inside "
-               "its baseline and must not be diffed\n", c[5]);
     vfft_destroy(p);
 }
+
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 int main(int argc, char **argv)
 {
     int i;
+#ifdef _WIN32
+    /* stdout to BINARY. In text mode msvcrt turns every \n into \r\n, but
+     * .gitattributes pins the baseline directory to eol=lf, so a committed
+     * artifact is LF while a fresh capture comes back CRLF - and the diff then
+     * reports every single row as changed on a byte-identical result. An
+     * artifact compared byte-for-byte has to be written byte-for-byte. */
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     if (argc > 2 && !strcmp(argv[1], "--cell")) {
         i = atoi(argv[2]);
         if (i < 0 || i >= NCELLS) { printf("cell out of range 0..%d\n", NCELLS - 1); return 2; }

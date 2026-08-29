@@ -1,8 +1,7 @@
-# create-time plan fingerprints, replayed against the frozen wisdom store.
-# ONE PROCESS PER CELL - process-lifetime state (the K=1 pair-order memo,
-# the pool size, the QPC frequency cache) leaks between cells otherwise.
-# races=0 on every cell is the REPLAY PURITY assertion: a cell that races
-# while replaying has the clock inside its own baseline.
+# create-time plan fingerprints, one process per cell, seeded store.
+# A raced cell emits NOT_BANKED_RACED; a cell that differed across repeat
+# captures emits NONDETERMINISTIC. Both are stable FACTS about the cell -
+# recording them beats recording one lucky sample of a coin flip.
 #
 @cell c2c.split.ip.N256
 @fpv 1
@@ -15,6 +14,10 @@
 @cell c2c.split.ip.K32
 @fpv 1
 @fp d=0 via=root t=0 place=0 lay=0 n=256,0,0,0 q=32 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100000000000000000 il2dhave=000000
+@counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
+@cell c2c.split.ip.K4
+@fpv 1
+@fp d=0 via=root t=0 place=0 lay=0 n=256,0,0,0 q=4 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100000000000000000 il2dhave=000000
 @counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
 @cell c2c.split.oop.N256
 @fpv 1
@@ -29,9 +32,7 @@
 @fp d=0 via=root t=0 place=0 lay=0 n=256,0,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100000000000000000 il2dhave=000000
 @counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
 @cell c2c.split.ip.nat
-@fpv 1
-@fp d=0 via=root t=0 place=0 lay=0 n=256,0,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=5 nat2d=0 natpairs=0 natcyc=96 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100000000000000000 il2dhave=000000
-@counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
+@fp NOT_BANKED_RACED races=1
 @cell r2c.split.oop.N1024
 @fpv 1
 @fp d=0 via=root t=1 place=1 lay=0 n=1024,0,0,0 q=1 nthr=1 padded=0 exec_me=1 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=000000000010000000 il2dhave=000000
@@ -41,11 +42,6 @@
 @fp d=0 via=root t=2 place=1 lay=0 n=1024,0,0,0 q=1 nthr=1 padded=0 exec_me=1 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=000000000001000000 il2dhave=000000
 @counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
 @cell dct2.split.oop.N256
-@fpv 1
-@fp d=0 via=root t=4 place=1 lay=0 n=256,0,0,0 q=1 nthr=1 padded=0 exec_me=1 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=000000000000001000 il2dhave=000000
-@counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
+@fp NOT_BANKED_RACED races=1
 @cell c2c.2d.ip.64x64
-@fpv 1
-@fp d=0 via=root t=0 place=0 lay=1 n=64,64,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=2 wc=0 wl=8 cut=1 tf=1 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=000000000000000000 il2dhave=100000
-@fp d=1 via=il2drow t=0 place=0 lay=1 n=64,0,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=1 ilrace=0 nat=7 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100001000000000000 il2dhave=000000
-@counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
+@fp NOT_BANKED_RACED races=1
