@@ -49,7 +49,25 @@ static long races_now(void)
     return c[5];
 }
 #else
-static long races_now(void) { return -1; }   /* -1 = cannot tell */
+/* NO SILENT DEGRADED MODE.
+ *
+ * This used to be `return -1`, with the purity assert skipped whenever the
+ * count was unavailable. The result was a harness that looked identical, ran
+ * green, and checked NOTHING: build without the flag - which is what plain
+ * `build.py --src benches/harness_golden.c --vfft` does - and every cell was
+ * treated as pure. c2c.split.ip.natural races in natorder_calibrate.h and picks
+ * between radix chains whose outputs differ in the last bits, so it emitted two
+ * different digests across processes, and the assert built to catch exactly
+ * that was compiled out. The digests were BOTH correct (checked against a naive
+ * long-double DFT: rel err 3.0e-16 and 3.1e-16), which is what made it
+ * dangerous - the artifact flapped for a legitimate reason and would have
+ * trained us to shrug at a diff.
+ *
+ * A check that can be silently disabled is worse than no check, so the build
+ * now fails instead. */
+#error "harness_golden requires -DVFFT_FINGERPRINT: without it the purity \
+assert cannot read the race counter and would pass every cell unchecked. \
+Build with: VFFT_FINGERPRINT=1 python build.py --src benches/harness_golden.c --vfft --compile"
 #endif
 
 /* FNV-1a over raw bytes: the CELL is the triage unit, so a digest is the right
