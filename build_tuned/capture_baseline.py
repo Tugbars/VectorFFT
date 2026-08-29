@@ -88,7 +88,27 @@ def run_cell(exe, i, tag):
     return r.stdout.replace("\r\n", "\n").rstrip("\n").splitlines()
 
 
+def build(exe_name):
+    """Build with VFFT_FINGERPRINT=1, always.
+
+    Not a convenience. Both binaries read the create-race counter, which only
+    exists under that flag, and harness_golden USED to fall back to "cannot
+    tell" without it - so a plain build.py invocation produced a harness that
+    ran green while checking nothing, and the golden baseline was captured that
+    way. harness_golden now #errors instead, and the flag is set here so the
+    capture cannot be run against a stale binary built the old way."""
+    env = dict(os.environ, VFFT_FINGERPRINT="1")
+    r = subprocess.run(
+        [sys.executable, "build.py", "--src", "benches/%s.c" % exe_name,
+         "--vfft", "--compile"],
+        cwd=HERE, env=env, capture_output=True, text=True, timeout=1800)
+    if r.returncode != 0:
+        raise SystemExit("build of %s FAILED:\n%s"
+                         % (exe_name, r.stdout[-2000:] + r.stderr[-2000:]))
+
+
 def capture(exe_name, header, out_path, repeat):
+    build(exe_name)
     exe = os.path.join(BENCH, exe_name + ".exe")
     if not os.path.exists(exe):
         raise SystemExit("missing %s - build it first" % exe)

@@ -14,8 +14,7 @@ refuse c2c.split.ip.scrambled       ACCEPT
 golden c2c.split.ip.scrambled       fwd=d25a46c7296c774e dbc7cfae91c70af7
 golden c2c.split.ip.scrambled       bwd=c4088225847f0581 39d463ccf1e38e78
 refuse c2c.split.ip.natural         ACCEPT
-golden c2c.split.ip.natural         fwd=308b11b9a4a82152 f10a4e5d0172c5cd
-golden c2c.split.ip.natural         bwd=8cb3515c45aa03df 3ba33a1d360e17db
+golden c2c.split.ip.natural         NOT_BANKED_RACED races=1  (bank this cell or drop it)
 refuse c2c.il.ip.default            ACCEPT
 golden c2c.il.ip.default            fwd=e4ef4d87f3c65f97 0000000000000000
 golden c2c.il.ip.default            bwd=b05a885b7d937e20 0000000000000000
