@@ -41,10 +41,18 @@ fingerprint emitter and counters (plan step 4). Those are edits, and an edit is 
 
 ## Re-deriving the identity object
 
+Run from the REPO ROOT. The `-I` set in `include_flags.txt` is root-relative, so
+running this from `baseline/` fails on `#include "vfft.h"` before it reaches the
+comparison.
+
 ```
-gcc -c -O2 -mavx2 -mfma $(cat include_flags.txt) ../../src/core/vfft.c -o vfft_new.o
-python ../obj_equiv.py vfft_baseline.o vfft_new.o
+gcc -c -O2 -mavx2 -mfma $(cat build_tuned/baseline/include_flags.txt) src/core/vfft.c -o <scratch>/vfft_new.o
+python build_tuned/obj_equiv.py build_tuned/baseline/vfft_baseline.o <scratch>/vfft_new.o
 ```
+
+Use these flags, not `build.py`'s. The identity object is `-O2 -mavx2 -mfma`; `build.py`
+compiles at a different optimisation level, and comparing across the two reports ~780
+changed bodies that mean nothing.
 
 `obj_equiv.py` proves every emitted symbol body is unchanged. It is **measured blind to
 `.rdata`** — a `0.97 → 0.96` hysteresis change passes it as EQUIVALENT — so it covers code
