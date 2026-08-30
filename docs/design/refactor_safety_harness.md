@@ -239,6 +239,58 @@ to replay and is covered by §2.10 instead.
 
 ---
 
+### 2.11 Capturing the artifacts
+
+`build_tuned/capture_baseline.py` produces both diffable artifacts. Use it rather
+than a shell loop.
+
+```
+python build_tuned/capture_baseline.py --out <scratch>            # per-step compare
+python build_tuned/capture_baseline.py --out build_tuned/baseline --repeat 5
+```
+
+It builds both binaries with `VFFT_FINGERPRINT=1`, runs one process per cell
+against a fresh seeded scratch copy of the store, repeats each cell and writes LF.
+Two independent captures are byte-identical; that is the property every per-step
+comparison rests on, so verify it after changing the harness.
+
+Four things it fixes, each of which had already produced a wrong answer:
+
+**The purity assert can be compiled out.** `races_now()` returned `-1` without
+`VFFT_FINGERPRINT` and the assert was skipped whenever the count was
+unavailable — so a plain `build.py` invocation produced a harness that ran green
+and checked nothing. `harness_golden` now `#error`s instead of degrading, and the
+capture script sets the flag itself. A check that can be silently disabled is
+worse than no check.
+
+**The race counter is a positive signal, not a proof.** It fires only where
+someone added it, and every site is in `vfft.c`; a racer defined in another header
+is invisible to it and to the §2.4 census, which enumerates clock calls in
+`vfft.c` plus their local callers. Nineteen headers under `src/core` call a clock.
+One hole is closed (`vfft_natorder_race`, now counted at its call site); assume
+others remain, which is why cells are captured repeatedly and disagreement is
+recorded rather than sampled.
+
+**Line endings.** Both binaries write stdout in binary mode. In text mode msvcrt
+emits CRLF while `.gitattributes` pins the baseline to LF, so a byte-identical
+result reported all 36 rows as changed.
+
+**Cell counts come from `--list`.** Inferring one from output length made
+`--cell` run past the end, where the range check declines and the all-cells path
+runs again per index: 6 cells became 1268 rows. Out-of-range `--cell` is now an
+error.
+
+#### A nondeterministic cell is a fact to record, not a diff to chase
+
+`c2c.split.ip.natural` has no banked nat entry, so it races and picks between
+radix chains whose outputs differ in the last bits — two digests, roughly 5:3
+across runs. Both are **correct**: checked against a naive long-double DFT, rel
+err 3.0e-16 and 3.1e-16. Recording either one makes the artifact flap for a
+legitimate reason, which trains you to shrug at a real diff. Raced cells are
+therefore written `NOT_BANKED_RACED` and cells that differ across repeats
+`NONDETERMINISTIC`. Those lines are still checks: a cell that starts or stops
+racing changes them.
+
 ## 3. Baseline capture
 
 Nothing in this list may run against a dirty tree.
