@@ -59,6 +59,7 @@ Writes a sorted, diffable census to stdout.
 """
 import hashlib
 import re
+import os
 import sys
 
 CLOCKS = ("vfft_proto_now_ns(", "_il_ab_now(", "clock_gettime(")
@@ -185,8 +186,30 @@ def verdicts(lines):
     return out
 
 
+# The census must FOLLOW THE CODE, not one file.
+#
+# It originally scanned vfft.c alone, which was correct while every racer lived
+# there. The migration moves racers into module headers, and a file-scoped
+# scanner would then report a shrinking census while every racer still existed -
+# drifting to zero and reading as "nothing races here" exactly when the opposite
+# is true. That is the same failure mode as an assert compiled out: it does not
+# fail, it stops testing.
+#
+# So the default set grows with the migration. Each entry is a header a
+# migration step moved timing INTO; adding one is part of that step, and the
+# census is expected to come back UNCHANGED afterwards - same racers, found in
+# their new home. A step that moves a racer and does NOT extend this list will
+# show up as a census shrink, which is the intended alarm.
+_MIGRATED = [
+    "src/core/support/race_timing.h",             # step 5  - the primitives
+    "src/core/transforms/real/real_route_race.h", # step 11 - r2c/c2r racers
+    "src/core/planning/cascade_calibrate.h",      # step 12 - t2q calibrators
+]
+
+
 def main():
-    paths = sys.argv[1:] or ["src/core/vfft.c"]
+    paths = sys.argv[1:] or (["src/core/vfft.c"] +
+                             [q for q in _MIGRATED if os.path.exists(q)])
     rows, vrows = [], []
     for p in paths:
         lines = open(p, encoding="utf-8", errors="replace").read().split("\n")
