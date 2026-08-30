@@ -16,6 +16,7 @@
 #include "wisdom2/wisdom2_2d_reader.h"  /* wisdom2: rank>=2 family codec (wave-3 flip) */
 #include "wisdom2/wisdom2_stride_reader.h" /* wisdom2: stride family codec (wave-4 flip) */
 #include "wisdom2/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
+#include "support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "support/race_timing.h"        /* the racers' shared clock + median (step 5) */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
@@ -97,51 +98,6 @@
 typedef char _vfft_chain_cap_coherent
     [(VFFT_K1_CC_MAX_NF <= VFFT_ZSPLIT_MAX_NF) ? 1 : -1];
 
-/* ── misuse diagnostics (THE DIRECTIVE: a config-space mistake is refused
- * LOUDLY — an actionable one-line stderr message — never a bare NULL and
- * never a silent reinterpretation at execute). Internal build/OOM failures
- * stay quiet NULLs; only user-fixable contract violations speak. ── */
-static void _vfft_warn(const char *fmt, ...)
-{
-    va_list ap;
-    fprintf(stderr, "vfft: ");
-    va_start(ap, fmt);
-    vfprintf(stderr, fmt, ap);
-    va_end(ap);
-    fputc('\n', stderr);
-    fflush(stderr);
-}
-
-static const char *_vfft_tname(int t)
-{
-    switch (t)
-    {
-    case VFFT_C2C:
-        return "C2C";
-    case VFFT_R2C:
-        return "R2C";
-    case VFFT_C2R:
-        return "C2R";
-    case VFFT_DCT1:
-        return "DCT1";
-    case VFFT_DCT2:
-        return "DCT2";
-    case VFFT_DCT3:
-        return "DCT3";
-    case VFFT_DCT4:
-        return "DCT4";
-    case VFFT_DST1:
-        return "DST1";
-    case VFFT_DST2:
-        return "DST2";
-    case VFFT_DST3:
-        return "DST3";
-    case VFFT_DHT:
-        return "DHT";
-    default:
-        return "?";
-    }
-}
 
 /* Engagement counter for the transform-contiguous MT dispatch. Clones
  * BUILT (vfft_plan_tc_workers) and work DISPATCHED are two independent
