@@ -485,6 +485,33 @@ extern "C"
    * plan's own banked verdicts). */
   long vfft_pq_mt_passes(void);
 
+  /* ── CROSS-TU CONFIGURATION HOOKS ─────────────────────────────────────
+   * The r2c/c2r dispatch knobs live as file-scope state in
+   * transforms/real/{r2c,c2r}_dispatch.h, and their setters there are
+   * `static inline`. That is correct for a TU that IS the library, and
+   * silently wrong for anyone else: a bench that includes the header and
+   * links vfft.c separately writes ITS OWN copy, while vfft_create keeps
+   * reading the library's. The write appears to succeed and changes nothing.
+   *
+   * These entry points are compiled INTO vfft.c, so they write the copy
+   * vfft_create actually reads. Any TU outside the library that wants to
+   * configure the real-transform dispatch must go through them.
+   *
+   * (Measured consequence of not having them: bench_1d_vs_mkl's
+   * VFFT_C2R_PACK_ALL / VFFT_C2R_STRIDE_ALL probe arms were INERT - both
+   * forced-route arms measured the same route.) */
+
+  /* Batch-size crossover between the packed rfft cascade (K below) and the
+   * decoupled stride path (K at or above). SIZE_MAX forces packed for every
+   * K; 0 forces stride. Default 32 - which is the N=256 crossover, not a
+   * universal one. */
+  void   vfft_r2c_set_decouple_min_k(size_t k);
+  size_t vfft_r2c_get_decouple_min_k(void);
+
+  /* Load a calibrated per-cell c2r route table. Returns non-zero on success;
+   * on a miss the dispatch falls back to the threshold above. */
+  int    vfft_c2r_load_path(const char *path);
+
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)
    *                    (docs/roadmap/tail_handling/padding_design_decision.md)

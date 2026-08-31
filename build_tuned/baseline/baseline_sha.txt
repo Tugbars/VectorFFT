@@ -1,2 +1,2 @@
-488cd69d2167524a389f5c754ad72f3e3de428d2
-# short: 488cd69d  (re-stamped at 21a: four engagement counters extern-ized)
+a023b31ce44bd88b2df20cb253ab15767b1f3b73
+# short: a023b31c  (re-stamped at 21b: cross-TU config hooks added)

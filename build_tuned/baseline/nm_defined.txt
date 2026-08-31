@@ -768,6 +768,7 @@ R .refptr.vfft_k1_mono256_16x16_fwd_avx2
 R .refptr.vfft_k1_mono64_8x8_il_bwd_avx2
 R .refptr.vfft_k1_mono64_8x8_il_fwd_avx2
 R .refptr.vfft_k1_mono64_fwd_avx2
+T vfft_c2r_load_path
 T vfft_create
 T vfft_destroy
 T vfft_execute
@@ -778,6 +779,8 @@ T vfft_plan_planes
 T vfft_plan_stride
 T vfft_plan_tc_workers
 T vfft_pq_mt_passes
+T vfft_r2c_get_decouple_min_k
+T vfft_r2c_set_decouple_min_k
 T vfft_set_num_threads
 T vfft_tc_mt_dispatches
 T vfft_version
@@ -2487,7 +2490,7 @@ t vfft_adopt_record
 t vfft_c2r_disp_create.constprop.N
 t vfft_c2r_disp_destroy.part.N
 t vfft_c2r_disp_execute_z.part.N
-t vfft_c2r_path_load.isra.N
+t vfft_c2r_path_load
 t vfft_execute.part.N
 t vfft_fft2d_c2c_bench_min
 t vfft_fft2d_c2r_bench_min
