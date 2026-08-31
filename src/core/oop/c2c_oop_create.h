@@ -484,7 +484,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                                 double ti[5], tz[5];
-                                vfft_set_num_threads(hk->nthreads);
+                                /* GROW-ONLY, like the five sibling copies of this
+                                 * race body (c2c_ip_create.h). The public setter
+                                 * SHRINKS: with the house spelling nthreads=1 for
+                                 * "this child is serial" it tore an 8-worker pool
+                                 * down to 1 for the whole process on every IL-2D
+                                 * OOP row child. pool_preserve_gate asserts this. */
+                                _vfft_pool_arm(hk->nthreads);
                                 for (int r = 0; r < 5; r++)
                                 {
                                     for (int a = 0; a < 2; a++)

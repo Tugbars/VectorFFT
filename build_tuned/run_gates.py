@@ -158,6 +158,7 @@ ARGSTYLE = {
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),
     "zr2c_fd_gate":            ("bare", True),
+    "pool_preserve_gate":      ("bare", True),   # SEEDED: the OOP natural race needs a banked K=1 cascade cell to replay into zct
 }
 
 TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
