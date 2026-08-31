@@ -109,7 +109,13 @@ typedef char _vfft_chain_cap_coherent
  * clones and still run its serial loop because the cell sits under the
  * engage floor, and an MT==ST check then compares the serial path with
  * itself and passes perfectly. This counts actual dispatches. */
-static long _vfft_tc_mt_dispatch_count = 0;
+/* EXTERNAL linkage, not static. These engagement counters are incremented
+ * from module headers (the MT executors moved out in steps 17 and 20), and a
+ * static cannot be referenced across translation units. Duplicating one into
+ * a header is worse than useless: each includer would get its own copy and
+ * the public accessor would read a different object than the increment
+ * writes - reporting a confident zero while threading actually ran. */
+long _vfft_tc_mt_dispatch_count = 0;
 long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
 
 /* The same engagement question for the native IL 2D real COLUMN pass
@@ -5827,287 +5833,20 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
  * report a confident zero. Same rule that kept _il_ab_runs behind in step 5.
  * _zt_execute_mt, which increments it and also dereferences vfft_plan_s,
  * stays for both reasons; the racer stays with the wisdom write path. */
-static long _vfft_zt_mt_count = 0;
+long _vfft_zt_mt_count = 0;
 long vfft_zt_mt_passes(void) { return _vfft_zt_mt_count; }
 
 
-/* Returns 1 when it ran threaded, 0 = caller runs the serial walk. */
-static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
-                          const double *zin, double *zout, int T)
-{
-    const vfft_zturn2_plan_t *p = h->zturn;
-    const long SEC = (long)p->N / 4;
-    const int fwd = (dir == VFFT_FORWARD);
-    const int smax = p->tiled ? p->tcut : p->nf - 2;
-    int s;
-    if (p->natord || p->tiled == 2)
-        return 0; /* rho-order table walks; A1 = gate-only control arm */
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64;
-    if (T < 2 || SEC < 8 * T)
-        return 0;
-    if (fwd)
-    {
-        _zt_mt_phase(p, zin, zout, 0, 0, 1, SEC, 1, T);
-        for (s = 1; s <= smax; s++)
-        {
-            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
-            _zt_mt_phase(p, zin, zout, 1, s, 1, p->G[s], 0, Ts);
-        }
-        if (!p->tiled)
-            _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
-        else
-        {
-            const long NT = SEC / p->tw;
-            if (!p->tfuse)
-            {
-                const long u = 4 * NT;
-                _zt_mt_phase(p, zin, zout, 3, 0, 1, u,
-                             0, u < T ? (int)u : T);
-                _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
-            }
-            else
-                _zt_mt_phase(p, zin, zout, 4, 0, 1, NT, 0,
-                             NT < T ? (int)NT : T);
-        }
-    }
-    else
-    {
-        if (!p->tiled)
-            _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
-        else
-        {
-            const long NT = SEC / p->tw;
-            if (!p->tfuse)
-            {
-                const long u = 4 * NT;
-                _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
-                _zt_mt_phase(p, zin, zout, 3, 0, 0, u,
-                             0, u < T ? (int)u : T);
-            }
-            else
-                _zt_mt_phase(p, zin, zout, 4, 0, 0, NT, 0,
-                             NT < T ? (int)NT : T);
-        }
-        for (s = smax; s >= 1; s--)
-        {
-            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
-            _zt_mt_phase(p, zin, zout, 1, s, 0, p->G[s], 0, Ts);
-        }
-        _zt_mt_phase(p, zin, zout, 0, 0, 0, SEC, 1, T);
-    }
-    _vfft_zt_mt_count++; /* engagement, see vfft.h */
-    return 1;
-}
-
-/* ── the INC-Z verdict race: serial vs threaded walk through the very
- * functions execute serves with, min-of-3 alternated on scratch, both
- * plan-local (the zturn chain's own wisdom rows are pre-wisdom2; the
- * cmt-style banking of this axis rides the wisdom2 1D wave). A cell
- * that cannot engage banks the "no" implicitly (zt_mt stays 0). Kill
- * switch VFFT_ZT_NO_MT (0 forces on — the A/B hook). */
-static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
-                          const double *zin, double *zout, int T);
-static void _zt_mt_race(struct vfft_plan_s *h)
-{
-    const int N = h->zturn->N;
-    double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
-    double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
-    double st = 1e300, mt = 1e300;
-    int p;
-    size_t i;
-    const char *ce = getenv("VFFT_ZT_NO_MT");
-    if (ce)
-    {
-        h->zt_mt = (atoi(ce) == 0);
-        return;
-    }
-    if (!zi || !zo)
-    {
-        free(zi);
-        free(zo);
-        return;
-    }
-    for (i = 0; i < 2 * (size_t)N; i++)
-        zi[i] = 1.0 + 1e-6 * (double)(i & 511);
-    if (!_zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads))
-    {
-        if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[zt-mt] race N=%d T=%d: cannot engage -> "
-                            "serial\n", N, h->nthreads);
-        free(zi);
-        free(zo);
-        return; /* cannot engage: zt_mt stays 0 — the verdict */
-    }
-    vfft_zturn2_execute_fwd(h->zturn, zi, zo); /* warm the serial arm too
-                                                * — both arms hot before
-                                                * the alternated timing */
-    for (p = 0; p < 3; p++)
-    {
-        struct timespec t0, t1;
-        double d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        vfft_zturn2_execute_fwd(h->zturn, zi, zo);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < st)
-            st = d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < mt)
-            mt = d;
-    }
-    h->zt_mt = (mt < st);
-    if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[zt-mt] race N=%d T=%d: st=%.0f mt=%.0f -> %s\n",
-                N, h->nthreads, st, mt, h->zt_mt ? "THREADED" : "serial");
-    free(zi);
-    free(zo);
-}
 
 /* ══ 2D PLANE QUEUE execute (howmany > 1) ════════════════════════════
  * Serial mode: loop the PRIMARY over the planes (it intra-MTs per its
  * own verdicts). Queue mode: an atomic plane counter, worker t pulling
  * planes onto its own SERIAL clone — plane-per-worker, zero barriers,
  * no nested pool dispatch by construction. */
-static long _vfft_pq_mt_count = 0;
+long _vfft_pq_mt_count = 0;
 long vfft_pq_mt_passes(void) { return _vfft_pq_mt_count; }
 
-typedef struct
-{
-    struct vfft_plan_s *plan; /* this worker's serial clone */
-    struct vfft_plan_s *h;    /* the queue handle (dists, count) */
-    vfft_dir_t dir;
-    const double *src;
-    double *dst;
-    volatile long *next;      /* the shared plane counter */
-} _pq_arg;
-
-static void _pq_tramp(void *v)
-{
-    _pq_arg *a = (_pq_arg *)v;
-    const size_t P = a->h->pq_n;
-    for (;;)
-    {
-#ifdef _WIN32
-        const long p = InterlockedIncrement(a->next) - 1;
-#else
-        const long p = __sync_fetch_and_add(a->next, 1);
-#endif
-        if ((size_t)p >= P)
-            return;
-        vfft_execute((vfft_plan)a->plan, a->dir,
-                     a->src + (size_t)p * a->h->pq_sdist, NULL,
-                     a->dst + (size_t)p * a->h->pq_ddist, NULL);
-    }
-}
-
-static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
-                        const double *sre, double *dre)
-{
-    if (!dre)
-        dre = (double *)sre; /* in-place convenience (C2C) */
-    if (h->pq_mt && h->pq_wn > 0)
-    {
-        _pq_arg a[64];
-        volatile long next = 0;
-        int T = h->pq_wn;
-        int t, nd = 0;
-        if ((size_t)T > h->pq_n)
-            T = (int)h->pq_n;
-        for (t = 0; t < T; t++)
-        {
-            a[t].plan = h->pq_w[t];
-            a[t].h = h;
-            a[t].dir = dir;
-            a[t].src = sre;
-            a[t].dst = dre;
-            a[t].next = &next;
-        }
-        for (t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[nd++], _pq_tramp,
-                                  &a[t]);
-        _pq_tramp(&a[0]);
-        if (nd)
-            _stride_pool_wait_all();
-        _vfft_pq_mt_count++; /* engagement, see vfft.h */
-        return;
-    }
-    {
-        size_t p;
-        for (p = 0; p < h->pq_n; p++)
-            vfft_execute((vfft_plan)h->pq_inner, dir,
-                         sre + p * h->pq_sdist, NULL,
-                         dre + p * h->pq_ddist, NULL);
-    }
-}
-
-/* ── the loop-vs-queue race (create-time, min-of-3 alternated on
- * scratch). The queue also self-gates: no pool, no clones, or a clone
- * failing the BITWISE probe against the primary => pq_mt stays 0 and
- * the loop serves (the primary keeps its own intra-MT verdicts). */
-static void _pq_mt_race(struct vfft_plan_s *h)
-{
-    const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
-    double *src = (double *)malloc(sb * sizeof(double));
-    double *dst = (double *)malloc(db * sizeof(double));
-    double tl = 1e300, tq = 1e300;
-    const vfft_dir_t dir =
-        (h->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
-    int r;
-    size_t i;
-    const char *ce = getenv("VFFT_PQ_NO_MT");
-    if (ce)
-    {
-        h->pq_mt = (atoi(ce) == 0 && h->pq_wn > 0);
-        free(src);
-        free(dst);
-        return;
-    }
-    if (!src || !dst || h->pq_wn <= 0)
-    {
-        free(src);
-        free(dst);
-        return; /* loop serves */
-    }
-    for (i = 0; i < sb; i++)
-        src[i] = 1.0 + 1e-6 * (double)(i & 511);
-    h->pq_mt = 0;
-    _pq_execute(h, dir, src, dst); /* warm the loop arm */
-    h->pq_mt = 1;
-    _pq_execute(h, dir, src, dst); /* warm the queue arm */
-    for (r = 0; r < 3; r++)
-    {
-        struct timespec t0, t1;
-        double d;
-        h->pq_mt = 0;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _pq_execute(h, dir, src, dst);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < tl)
-            tl = d;
-        h->pq_mt = 1;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _pq_execute(h, dir, src, dst);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < tq)
-            tq = d;
-    }
-    h->pq_mt = (tq < tl);
-    if (getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[pq] race %dx%d P=%zu T=%d: loop=%.0f "
-                        "queue=%.0f -> %s\n",
-                h->N, h->N2, h->pq_n, h->pq_wn, tl, tq,
-                h->pq_mt ? "QUEUE" : "loop");
-    free(src);
-    free(dst);
-}
+#include "transforms/fft2d/plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
 
 /* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
  * Invariant and route axis are documented at the zroute field. */
