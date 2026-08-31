@@ -181,6 +181,9 @@ The two engines and their inners calibrate separately:
 | `r2c.h` | the decoupled/stride engine: `stride_r2c_plan`, `stride_execute_r2c` (fwd, split), `stride_execute_c2r` (bwd, split), in-place variant |
 | `r2c_dispatch.h` | top-level r2c entry — rfft-vs-stride routing, the K-threshold, MT block sizing, the rfft factor chooser |
 | `c2r_dispatch.h` | wisdom-first c2r entry (packed path) |
+| `real_route_race.h` | r2c/c2r route racers. RACERS, not deciders — they measure, the create tier banks |
+| `zr2c_build.h` | the interleaved-CCE real route (kind-5 wisdom), keyed on REAL N |
+| `real_create.h` | the r2c/c2r CREATE tier plus the odd-N bridge (odd/prime real served on a c2c child). 🔴 the NATURAL-vs-STRIDE crossover is on **K**, not N, and is non-monotonic — so it is measured, never thresholded |
 
 Codelet registries (`rfft_registry_{avx2,avx512}.h`, `c2r_registry_{avx2,avx512}.h`) are
 **auto-generated** by the dag pipeline (`emit_rfft_registry.ml` / `emit_c2r_registry.ml`) and live in

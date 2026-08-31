@@ -230,6 +230,8 @@ types, thread-safety) is a later workstream.
 | `estimate_plan.h` | V4 cost-model estimate — zero-measurement plan (dead `prototype/` dep; not wired) |
 | `wisdom_reader.h` | wisdom file format + load/lookup/set/save (closes the calibrate loop) |
 | `plan_orchestrator.h` | unified plan→execute flow (sketch; full `vfft.c/.h` deferred) |
+| `cascade_calibrate.h` | t2q calibrators — the cascade terminator choice, measured per cell (placement luck is ±5%, so it is never hand-set) |
+| `pad_calibrate.h` | pad-vs-tail calibration and the `_VFFT_PADVW` width stamp |
 
 ## Gotchas
 

@@ -24,6 +24,7 @@ multithreading.
 | `twiddle.h` | per-stage group layout + twiddle table computation (Method C, DIT & DIF) |
 | `proto_stride_compat.h` | serial bridge: `stride_execute_fwd` → plan's execute; slice helpers for r2c fused stages |
 | `compat.h` | misc shims |
+| `mt_execute.h` | threaded c2c execute: the in-place trampoline and the MT-safe dispatch (`_c2c_mt`, `_c2c_mt_safe`) |
 
 > The plan **struct** (`stride_plan_t` / `stride_stage_t`) is physically defined in
 > `generated/…/plan_executors.h` (emitted by the compiler) and re-exported through
