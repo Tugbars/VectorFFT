@@ -29,9 +29,10 @@ wisdom, calibrate on a miss at the requested rigor, build the plan, stamp the ex
 the handle. It serves C2C (in-place and out-of-place), R2C, C2R, DCT-I/II/III/IV, DST-I/II/III,
 DHT, and ranks 1 through 4.
 
-The translation unit deliberately does not include `engine/stride_executor.h`, which redefines
-executor symbols ([vfft.c:13](../../src/core/vfft.c#L13)). The shipping split engine is
-`plan_executors.h`, `twiddle.h`, `executor_generic.h` and `executor.h`.
+The shipping split engine is `plan_executors.h`, `twiddle.h`, `executor_generic.h` and
+`executor.h`. (A previous executor generation, `engine/stride_executor.h`, redefined the same
+symbols and was deliberately never included by this translation unit; it was removed on
+2026-09-01 after having zero includers since the 2026-07-22 dag integration.)
 
 ## 2. Wisdom is a bundle
 

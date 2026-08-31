@@ -17,6 +17,7 @@ MISS → greedy per-axis exhaustive with the inners visible, banked through
 |---|---|
 | `fftnd.h` | the rank-general builder (`stride_plan_nd`) and executor |
 | `fftnd_r2c.h` | rank-N real transforms, including the interleaved-pair complex side |
-| `fftnd_planner.h` | per-axis planning; `allow_calibrate = 0` gives the heuristic-shaped fallback |
-| `fftnd_natorder.h` | natural-order maps for rank-N |
+| `fftnd_planner.h` | RETAINED, not yet wired into any TU (owner ruling 2026-09-01) — the planned rank-N planner; `allow_calibrate = 0` gives the heuristic-shaped fallback |
+| `fftnd_wisdom.h` | RETAINED, not yet wired — the rank-N wisdom generation `fftnd_planner.h` consumes |
+| `fftnd_natorder.h` | RETAINED, not yet wired — the rank-3 NATURAL `nat_col_list` follow-up |
 | `fftnd_create.h` | the rank-3 / rank-4 CREATE tier — both dispatcher arms, lifted whole |

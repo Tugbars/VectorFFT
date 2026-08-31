@@ -198,8 +198,8 @@ as the hook, but finishing natural-order output is a follow-up.
 - **MKL 2D r2c CCE buffer** needs the **full N1×N2 complex footprint**, not N1×(N2/2+1) —
   undersizing it segfaults (a bench crash that once looked like a port bug; isolation proved the
   port crash-free).
-- **Slice-helper clash:** including both `stride_executor.h` and `proto_stride_compat.h` redefines
-  `_stride_execute_fwd_slice_from/_until` — use the compat ones (the dag convention).
+- **Slice helpers:** `_stride_execute_fwd_slice_from/_until` come from `proto_stride_compat.h` (the dag
+  convention). The stale `stride_executor.h` that once redefined them was removed 2026-09-01.
 
 ---
 

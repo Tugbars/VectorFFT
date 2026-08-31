@@ -146,7 +146,8 @@ absent at precondition time, **stop and fix the enumerator** — do not move a 2
 blind.
 
 Every step in Phase B is verified struct-free, carries no mutable file-scope state, creates
-no `planning/`↔`wisdom2/` edge, and pulls no `engine/stride_executor.h`.
+no `planning/`↔`wisdom2/` edge, and pulls no `engine/stride_executor.h` (that stale executor
+generation was removed on 2026-09-01, along with the four unreachable `planning/` headers).
 
 ### Phase C — the gate (step 15)
 
