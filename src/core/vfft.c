@@ -1121,6 +1121,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 #include "transforms/real/zr2c_build.h" /* interleaved-CCE real route (step 18) */
 
 #include "oop/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
+#include "transforms/fftnd/fftnd_create.h" /* rank-3/rank-4 create tier (step 22) */
 
 
 /* ── TRANSFORM-CONTIGUOUS MT: clone safety + equivalence ─────────────────
@@ -1608,159 +1609,10 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
                    cfg->dims, _vfft_tname(cfg->transform));
         return NULL;
     }
-    if (cfg->dims == 4)
-    { /* §6a62: rank-4 exposure. The engines were rank-general all along
-       * (FFTND_MAX_RANK=4; fndr's builder takes rank; fftnd's generic
-       * wrap covers c2c) — the dispatch just stopped at 3. Same
-       * contracts as 3D: K==1, order DEFAULT/SCRAMBLED, real = OOP with
-       * even last dim. */
-        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-            !(K == 1 && (cfg->n[3] % 2) == 0))
-        {
-            _vfft_warn("vfft_create: 4D %s requires howmany==1 (got %zu) and an even last "
-                       "dim (got %d)",
-                       _vfft_tname(cfg->transform), K, cfg->n[3]);
-            return NULL;
-        }
-        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-            K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
-            (cfg->n[3] % 2) == 0)
-        {
-            stride_plan_t *tp = stride_plan_nd_r2c(4, cfg->n, reg);
-            if (!tp)
-                return NULL;
-            struct vfft_plan_s *h4 = (struct vfft_plan_s *)calloc(1, sizeof *h4);
-            if (!h4)
-            {
-                stride_plan_destroy(tp);
-                return NULL;
-            }
-            h4->transform = cfg->transform;
-            h4->placement = cfg->placement;
-            h4->layout = (int)cfg->layout;
-            h4->N = cfg->n[0];
-            h4->N2 = cfg->n[1];
-            h4->N3 = cfg->n[2];
-            h4->N4 = cfg->n[3];
-            h4->K = 1;
-            h4->nthreads = _vfft_plan_threads(cfg);
-            h4->tplan = tp;
-            return h4;
-        }
-        if (cfg->transform != VFFT_C2C || K != 1 ||
-            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
-        {
-            _vfft_warn("vfft_create: 4D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) "
-                       "and out-of-place R2C/C2R only (got %s, howmany=%zu, order=%d)",
-                       _vfft_tname(cfg->transform), K, cfg->order);
-            return NULL;
-        }
-        stride_plan_t *tp = stride_plan_nd(4, cfg->n, reg);
-        if (!tp)
-            return NULL;
-        struct vfft_plan_s *h4 = (struct vfft_plan_s *)calloc(1, sizeof *h4);
-        if (!h4)
-        {
-            stride_plan_destroy(tp);
-            return NULL;
-        }
-        h4->transform = VFFT_C2C;
-        h4->placement = cfg->placement;
-        h4->layout = (int)cfg->layout;
-        h4->N = cfg->n[0];
-        h4->N2 = cfg->n[1];
-        h4->N3 = cfg->n[2];
-        h4->N4 = cfg->n[3];
-        h4->K = 1;
-        h4->nthreads = _vfft_plan_threads(cfg);
-        h4->tplan = tp;
-        return h4;
-    }
-    if (cfg->dims == 3)
-    {
-        if ((cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R) &&
-            K == 1 && cfg->placement == VFFT_OUTOFPLACE &&
-            (cfg->n[2] % 2) == 0)
-        { /* §6a47/Q1: 3D real transforms via the ND r2c engine (strided
-           * row engines + measured adoption live inside the builder). */
-            stride_plan_t *tp = stride_plan_nd_r2c(3, cfg->n, reg);
-            if (!tp)
-                return NULL;
-            struct vfft_plan_s *h3 = (struct vfft_plan_s *)calloc(1, sizeof *h3);
-            if (!h3)
-            {
-                stride_plan_destroy(tp);
-                return NULL;
-            }
-            h3->transform = cfg->transform;
-            h3->placement = cfg->placement;
-            h3->layout = (int)cfg->layout;
-            h3->N = cfg->n[0];
-            h3->N2 = cfg->n[1];
-            h3->N3 = cfg->n[2];
-            h3->K = 1;
-            h3->nthreads = _vfft_plan_threads(cfg);
-            h3->tplan = tp;
-            return h3;
-        }
-        if (cfg->transform != VFFT_C2C || K != 1 ||
-            (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
-        {
-            _vfft_warn("vfft_create: 3D supports C2C (howmany==1, order DEFAULT/SCRAMBLED) and "
-                       "out-of-place R2C/C2R with an even last dim only (got %s, howmany=%zu, "
-                       "order=%d%s)",
-                       _vfft_tname(cfg->transform), K, cfg->order,
-                       (cfg->transform == VFFT_R2C || cfg->transform == VFFT_C2R)
-                           ? (cfg->n[2] % 2 ? ", odd n[2]" : ", in-place?")
-                           : "");
-            return NULL;
-        }
-        int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
-        int banked = 0;
-        stride_plan_t *tp = NULL;
-        /* wave-3: 3D is BORN in wisdom2 (the legacy file never existed on
-         * any tree). Serve from the store; on miss the legacy creator runs
-         * its greedy+extract path against the in-process SCRATCH table and
-         * the extraction is harvested into the store (measure-less
-         * src=race — the extraction never measured; prime-axis cells bank
-         * nothing, unchanged). No kill switch: nothing to fall back to. */
-        {
-            vfft_fft3d_wisdom_entry_t e3;
-            if (vw2_3d_lookup(&W->vw2, N1, N2, N3, _vw2_lay_of(cfg), &e3))
-                tp = vfft_fft3d_plan_from_entry(&e3, reg);
-        }
-        if (!tp)
-        {
-            tp = vfft_fft3d_plan_create_wisdom(N1, N2, N3, &W->fft3d_c2c, reg, &banked);
-            if (banked)
-            {
-                const vfft_fft3d_wisdom_entry_t *ne =
-                    vfft_fft3d_wisdom_lookup(&W->fft3d_c2c, N1, N2, N3);
-                if (ne)
-                    vw2_3d_bank_entry(&W->vw2, ne, VW2_LAY_ANY);
-            }
-        }
-        if (!tp)
-            return NULL;
-        if (banked)
-            _vw2_persist(W, cfg);
-        struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
-        if (!h)
-        {
-            stride_plan_destroy(tp);
-            return NULL;
-        }
-        h->transform = VFFT_C2C;
-        h->placement = cfg->placement;
-        h->layout = (int)cfg->layout;
-        h->N = N1;
-        h->N2 = N2;
-        h->N3 = N3;
-        h->K = 1;
-        h->nthreads = _vfft_plan_threads(cfg);
-        h->tplan = tp;
-        return h;
-    }
+    /* rank-3 / rank-4 create: transforms/fftnd/fftnd_create.h (step 22).
+     * Both arms return on every path, so the guard is the whole dispatch. */
+    if (cfg->dims == 3 || cfg->dims == 4)
+        return _vfft_create_rank34(cfg, W, reg, K);
     if (cfg->dims == 2)
     {
         /* §6a50/Q4: the 2D executors are K-blind — howmany > 1 is served
