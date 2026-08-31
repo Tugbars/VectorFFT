@@ -241,6 +241,7 @@ _MIGRATED = [
     "src/core/oop/k1_commit.h",                   # step 19 - K=1 race-and-bank
     "src/core/oop/zturn_mt.h",                    # step 20 - zt_mt_race
     "src/core/transforms/fft2d/plane_queue.h",    # step 20 - pq_mt_race
+    "src/core/transforms/fftnd/fftnd_create.h",   # step 22 - rank-3/4 create (no racer today)
 ]
 
 

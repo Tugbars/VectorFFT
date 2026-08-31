@@ -55,15 +55,46 @@ it with the golden decision trace, which must print the protocol constants
 sufficient; a change that is EQUIVALENT here and byte-identical in the trace
 is what "nothing moved" actually means.
 
+SLICE MODE -- WHOLE-FUNCTION MOVE vs CUTTING A FUNCTION IN TWO
+--------------------------------------------------------------
+The default verdict (EQUIVALENT) is only reachable for a MOVE: the relocated
+body is byte-identical and only its position changes. Cutting a tier OUT of a
+large function can never reach it, and that is not a defect. Splitting changes
+the object two ways at once:
+
+  1. the parent's body changes -- it IS the thing being split;
+  2. the parent shrinks, so GCC's per-function inlining budget frees up and
+     small statics elsewhere in it get inlined and vanish from the symbol
+     table. Measured on the rank-3/4 extraction: 6 statics unrelated to the
+     slice disappeared, and TU total instructions ROSE (273557 -> 273784),
+     which is what inlining looks like and what dropping code does not.
+
+So for a slice the gate becomes SHAPE, not equality. --slice PARENT:HELPER
+requires all of:
+
+  * exactly one changed body, and it is PARENT;
+  * appeared symbols are exactly {HELPER} (a .constprop.N / .part.N suffix is
+    the same function and is accepted);
+  * every symbol present in BOTH objects is byte-identical;
+  * every disappeared symbol is LOCAL (nm class 't'). A disappeared GLOBAL is
+    always a finding: a local can vanish by being inlined, an exported one
+    cannot.
+
+What this does NOT prove is unchanged: slice mode is code-shape only, and
+inherits the .rdata and immediate-value blindness documented above. The golden
+decision trace is the semantic gate for a slice and carries the weight.
+
 USAGE
   python build_tuned/obj_equiv.py before.o after.o [--objdump PATH]
-Exit 0 when equivalent, 1 when not.
+  python build_tuned/obj_equiv.py before.o after.o --slice PARENT:HELPER
+Exit 0 when equivalent (or when the slice shape holds), 1 when not.
 """
 import re
 import subprocess
 import sys
 
 DEFAULT_OBJDUMP = r"C:\mingw152\mingw64\bin\objdump.exe"
+DEFAULT_NM = r"C:\mingw152\mingw64\bin\nm.exe"
 
 _ADDR_PREFIX = re.compile(r"^\s*[0-9a-f]+:")
 _COMMENT = re.compile(r"#.*$")
@@ -133,11 +164,88 @@ def symbol_bodies(path, objdump):
     return bodies
 
 
+def local_symbols(path, nm=DEFAULT_NM):
+    """-> {name} of symbols with nm class 't' (function, LOCAL linkage).
+
+    Slice mode needs the distinction because the two ways a symbol can leave an
+    object are not equally benign: a local can vanish by being inlined into its
+    only caller, an exported one cannot.
+    """
+    out = subprocess.run([nm, "--defined-only", path],
+                         capture_output=True, text=True, check=True).stdout
+    names = set()
+    for line in out.splitlines():
+        p = line.split()
+        if len(p) >= 2 and p[-2] == "t":
+            names.add(p[-1])
+    return names
+
+
+def _same_fn(sym, base):
+    """True when `sym` is `base`, possibly with a GCC clone suffix.
+
+    GCC renames a specialized clone -- _vfft_create_rank34.constprop.0,
+    foo.part.0 -- and the suffix is an arbitrary per-TU counter, so the bare
+    name and any clone of it are the same function for shape purposes.
+    """
+    return sym == base or sym.startswith(base + ".")
+
+
+def check_slice(only_a, only_b, changed, parent, helper, before_obj):
+    """The SHAPE gate for cutting a function in two. -> (ok, [reasons]).
+
+    `before_obj` classifies the DISAPPEARED symbols: they are looked up in the
+    object they vanished FROM, which is the only place they still exist.
+    """
+    bad = []
+    if parent not in changed:
+        bad.append("parent %s did not change - was anything extracted?" % parent)
+    extra = [k for k in changed if k != parent]
+    if extra:
+        bad.append("bodies changed outside the parent: %s" % ", ".join(extra[:10]))
+
+    stray_new = [k for k in only_b if not _same_fn(k, helper)]
+    if stray_new:
+        bad.append("unexpected new symbols: %s" % ", ".join(stray_new[:10]))
+    if not any(_same_fn(k, helper) for k in only_b):
+        bad.append("helper %s never appeared - it was inlined back, which "
+                   "defeats the extraction" % helper)
+
+    if only_a:
+        loc = local_symbols(before_obj)
+        globals_gone = [k for k in only_a if k not in loc]
+        if globals_gone:
+            bad.append("GLOBAL symbols disappeared (a local can vanish by being "
+                       "inlined, an exported one cannot): %s"
+                       % ", ".join(globals_gone[:10]))
+    return (not bad), bad
+
+
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    objdump = DEFAULT_OBJDUMP
-    if "--objdump" in sys.argv:
-        objdump = sys.argv[sys.argv.index("--objdump") + 1]
+    # Both options take a VALUE, so the value must be consumed as well as the
+    # flag. Filtering only on a leading "--" left the value in the positional
+    # list and made every option-bearing invocation print the usage text.
+    _TAKES_VALUE = ("--objdump", "--slice")
+    argv, args, opts = sys.argv[1:], [], {}
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in _TAKES_VALUE:
+            if i + 1 >= len(argv):
+                print("%s wants a value" % a)
+                return 2
+            opts[a] = argv[i + 1]
+            i += 2
+            continue
+        if not a.startswith("--"):
+            args.append(a)
+        i += 1
+
+    objdump = opts.get("--objdump", DEFAULT_OBJDUMP)
+    slice_spec = opts.get("--slice")
+    if slice_spec is not None and ":" not in slice_spec:
+        print("--slice wants PARENT:HELPER")
+        return 2
     if len(args) != 2:
         print(__doc__)
         return 2
@@ -162,6 +270,24 @@ def main():
     if not (only_a or only_b or changed):
         print("\nEQUIVALENT - all %d symbol bodies identical." % len(a))
         return 0
+
+    if slice_spec:
+        parent, helper = slice_spec.split(":", 1)
+        ok, why = check_slice(only_a, only_b, changed, parent, helper, args[0])
+        if ok:
+            print("\nSLICE OK - %s split out of %s." % (helper, parent))
+            print("  the only changed body is the parent being split;")
+            print("  %d local symbol(s) left the object by being inlined into "
+                  "the budget the parent freed;" % len(only_a))
+            print("  every symbol present in both objects is byte-identical.")
+            print("  NOT a semantic proof: the golden decision trace is the "
+                  "gate that carries the weight.")
+            return 0
+        print("\nSLICE SHAPE VIOLATED:")
+        for r in why:
+            print("  - %s" % r)
+        return 1
+
     print("\nNOT EQUIVALENT - %d changed, %d gone, %d new."
           % (len(changed), len(only_a), len(only_b)))
     return 1
