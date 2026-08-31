@@ -18,6 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 
 static void naive_axis_i(const double *in, double *out, int N1, int N2,
                          double sgn)

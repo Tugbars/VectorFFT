@@ -9,6 +9,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 
 #define NT 4
 #define N1 256

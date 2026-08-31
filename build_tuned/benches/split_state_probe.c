@@ -17,6 +17,7 @@
  */
 #include <stdio.h>
 #include "vfft.h"
+#include "real_dispatch_config.h"
 #include "r2c_dispatch.h"   /* the same include the vs-MKL bench uses */
 
 int main(void)

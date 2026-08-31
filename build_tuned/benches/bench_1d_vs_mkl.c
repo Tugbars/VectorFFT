@@ -70,6 +70,7 @@
 #include "r2c_dispatch.h"       /* --r2c: vfft_r2c_plan_create / execute (JIT-wired) */
 #include "c2r_dispatch.h"       /* --c2r: vfft_c2r_plan_create / execute (wisdom + JIT) */
 #include "vfft.h"               /* K=1 kind-4 cascade cells: public front door
+#include "real_dispatch_config.h"
                                  * (vfft_create serves the banked route+chain
                                  * verdict). Requires build.py --vfft. */
 

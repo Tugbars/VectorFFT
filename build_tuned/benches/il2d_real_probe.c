@@ -11,6 +11,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 #ifdef VFFT_HAS_MKL
 #include <mkl_dfti.h>
 #include <mkl_service.h>

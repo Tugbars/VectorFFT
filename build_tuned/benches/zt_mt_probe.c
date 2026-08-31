@@ -8,6 +8,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 
 static double now_ns(void)
 {
