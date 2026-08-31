@@ -110,6 +110,357 @@ static void _tc_mt_tramp(void *v)
                      a->d + (a->t0 + t) * a->dn, NULL);
 }
 
+/* ---- execute-side helpers (migration step 28) ----
+ * These four sat in vfft.c immediately above the point this header is
+ * included, for one reason: vfft_execute calls them. Moving them here puts
+ * them beside their only caller. _exec_c2c_interleaved and _pq_execute did
+ * NOT come with them -- both are also called from the CREATE side
+ * (c2c_ip_create.h measures with _exec_c2c_interleaved at plan time), so
+ * they must stay above this header's include point. */
+/* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
+ * Invariant and route axis are documented at the zroute field. */
+static void _exec_zcascade(struct vfft_plan_s *h, vfft_dir_t dir,
+                           const double *sre, double *dre)
+{
+    if (h->zroute)
+    {
+        if (h->zt_mt && h->nthreads > 1 &&
+            _zt_execute_mt(h, dir, sre, dre, h->nthreads))
+            return;
+        if (dir == VFFT_FORWARD)
+            vfft_zturn2_execute_fwd(h->zturn, sre, dre);
+        else
+            vfft_zturn2_execute_bwd(h->zturn, sre, dre);
+    }
+    else
+    {
+        if (dir == VFFT_FORWARD)
+            vfft_zsplit_execute_fwd(h->zsplit, sre, dre);
+        else
+            vfft_zsplit_execute_bwd(h->zsplit, sre, dre);
+    }
+}
+
+/* K=1 engine, SPLIT-plane side (natural order both directions; split bwd =
+ * the pointer-swap identity on the forward route). Extracted verbatim from
+ * the dispatch so the OOP INTERLEAVED convert fallback can reuse it. */
+static void _exec_k1_split(struct vfft_plan_s *h, int fwd,
+                           double *sre, double *sim, double *dre, double *dim)
+{
+    const double *ar = fwd ? sre : sim, *ai = fwd ? sim : sre;
+    double *br = fwd ? dre : dim, *bi = fwd ? dim : dre;
+#ifdef VFFT_USE_JIT
+    if (h->k1_jit)
+    { /* stride-baked whole-route kernel; bwd rides the same
+       * pointer-swap identity (natural order) */
+        h->k1_jit(ar, ai, br, bi, h->k1sp->col_re, h->k1sp->col_im,
+                  h->k1_jit_qr, h->k1_jit_qi);
+        return;
+    }
+#endif
+    switch (h->k1_sp_route)
+    {
+    case VFFT_K1_SP_MONO:
+        h->k1_mono(ar, ai, br, bi, 0, 0, 0, 0, 0, 0, 0);
+        return;
+    case VFFT_K1_SP_2PA:
+        vfft_oop_execute_fwd_2pa(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_2PB:
+        vfft_oop_execute_fwd_2pb(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_TWL:
+        vfft_oop_execute_fwd_2pa_twl(h->k1sp, ar, ai, br, bi);
+        return;
+    case VFFT_K1_SP_CCOL:
+        vfft_oop_execute_fwd_ccol(h->k1sp, ar, ai, br, bi);
+        return;
+    default:
+        vfft_oop_execute_fwd(h->k1sp, ar, ai, br, bi);
+        return;
+    }
+}
+
+/* OOP INTERLEAVED convert fallback: dein z -> split OOP engines -> inter z.
+ * Serves every OOP cell with NO native z route (K>1; K=1 SCRAMBLED at
+ * cascade-uncovered N; K=1 engine cells whose IL route is NONE; k1-create
+ * fallbacks) — the cells that were historically a NULL-deref or a silent
+ * no-op. Always correct, documented convert cost (vfft.h support matrix). */
+static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
+                                  const double *z_in, double *z_out)
+{
+    const size_t NK = (size_t)h->N * h->K;
+    const size_t bytes = (NK * 8 + 63) & ~(size_t)63;
+    /* census knob, cached ONCE (see the ip-site comment: per-execute
+     * getenv ~1.3us on Windows dominated tiny-N convert executes). */
+    static int _clog_oop = -1;
+    if (_clog_oop < 0)
+        _clog_oop = getenv("VFFT_CONV_LOG") != NULL;
+    if (_clog_oop)
+        fprintf(stderr, "[conv] oop N=%d K=%zu dir=%s k1=%d route=%d\n",
+                h->N, h->K, dir == VFFT_FORWARD ? "fwd" : "bwd", h->k1_on,
+                h->k1_il_route);
+    if (!h->il_wr)
+    {
+        h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+        h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+    }
+    if (!h->il_wr2)
+    {
+        h->il_wr2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+        h->il_wi2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
+    }
+    if (!h->il_wr || !h->il_wi || !h->il_wr2 || !h->il_wi2)
+        return;
+    _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
+    if (h->k1_on && h->k1_sp_route < 0)
+    {
+        /* IL-only K=1 handle (chain cells at odd·2^k N carry NO split
+         * route). Unreachable by construction — the IL switch serves such
+         * handles and its route always names a runnable plan — but if a
+         * future edit breaks that invariant, refuse LOUDLY rather than
+         * dispatch _exec_k1_split on route -1. */
+        _vfft_warn("vfft_execute: IL-only K=1 handle (N=%d) reached the "
+                   "convert fallback — no split route exists; output NOT "
+                   "computed. This is a routing bug; please report.",
+                   h->N);
+        return;
+    }
+    if (h->k1_on)
+        _exec_k1_split(h, dir == VFFT_FORWARD, h->il_wr, h->il_wi,
+                       h->il_wr2, h->il_wi2);
+    else
+    {
+        _vfft_pool_arm(h->nthreads);
+        _oop_mt(h->oplan, h->il_wr, h->il_wi, h->il_wr2, h->il_wi2,
+                dir == VFFT_FORWARD ? 1 : 0);
+    }
+    _vfft_z_inter(h->il_wr2, h->il_wi2, z_out, NK);
+}
+
+/* ── EXECUTE-SIDE SIGNATURE ENFORCEMENT ──
+ * The pointer pattern must MATCH the plan's committed layout; the historical
+ * NULL-pointer inference ("sim==dim==NULL means interleaved") is REMOVED.
+ * Returns 1 (and prints an actionable stderr line) when the call must be
+ * REFUSED — the caller returns without computing ANYTHING, so a mismatch can
+ * never silently reinterpret buffers or produce garbage. */
+static int _vfft_sig_bad(struct vfft_plan_s *h, vfft_dir_t dir, double *sre,
+                         double *sim, double *dre, double *dim)
+{
+    const int il = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
+    const char *tn = _vfft_tname(h->transform);
+    if (_VFFT_IS_TRIG(h->transform))
+    {
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: %s needs sre=real_in and dre=real_out non-NULL "
+                       "(got sre=%s, dre=%s) — nothing executed",
+                       tn, sre ? "ok" : "NULL", dre ? "ok" : "NULL");
+            return 1;
+        }
+        if (sim || dim)
+        {
+            _vfft_warn("vfft_execute: %s is real->real (sre=real_in, dre=real_out); "
+                       "sim/dim must be NULL — nothing executed",
+                       tn);
+            return 1;
+        }
+        return 0;
+    }
+    if (h->transform == VFFT_R2C)
+    {
+        if (dir != VFFT_FORWARD)
+        {
+            _vfft_warn("vfft_execute: R2C plans are forward-only (real -> spectrum); the "
+                       "unnormalized inverse is a separate VFFT_C2R plan (executed with "
+                       "VFFT_BACKWARD) — nothing executed");
+            return 1;
+        }
+        if (sim)
+        {
+            _vfft_warn("vfft_execute: R2C takes real input in sre only; sim must be NULL "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: R2C needs sre=real_in and dre=%s non-NULL — "
+                       "nothing executed",
+                       il ? "z_CCE_out" : "spectrum re");
+            return 1;
+        }
+        /* 🔴 PLACEMENT IS A COMMITMENT. An in-place real plan owns ONE
+         * padded plane: 2*(N/2+1) doubles, dre == sre. Passing a distinct
+         * dre is undocumented misuse that used to be ACCEPTED and silently
+         * miscomputed, and which of the two zr2c routes served the call --
+         * i.e. a MEASURED wisdom verdict -- decided whether the result was
+         * right. Refuse it here instead, mirroring the split-C2C rule.
+         *
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
+         * deliberately NOT refused: it currently works on both routes and on
+         * c2r, and turning working behaviour into an error is a separate
+         * decision from closing a miscomputation. */
+        if (h->placement == VFFT_INPLACE && dre != sre)
+        {
+            _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
+                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "distinct pointers -- nothing executed", tn);
+            return 1;
+        }
+        if (il && dim)
+        {
+            _vfft_warn("vfft_execute: this R2C plan is committed to layout=INTERLEAVED "
+                       "(dre = packed CCE spectrum, dim=NULL) but got a non-NULL dim; for "
+                       "split spectrum output create the plan with layout=VFFT_LAYOUT_SPLIT "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!il && !dim)
+        {
+            _vfft_warn("vfft_execute: this R2C plan is committed to layout=SPLIT "
+                       "(dre/dim = split spectrum planes) but dim is NULL. The old "
+                       "\"dim==NULL means CCE\" inference is REMOVED — create the plan with "
+                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
+                       "executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (h->transform == VFFT_C2R)
+    {
+        if (dir != VFFT_BACKWARD)
+        {
+            _vfft_warn("vfft_execute: C2R plans are backward-only (spectrum -> real, the "
+                       "unnormalized inverse); the forward transform is a separate "
+                       "VFFT_R2C plan (executed with VFFT_FORWARD) — nothing executed");
+            return 1;
+        }
+        if (dim)
+        {
+            _vfft_warn("vfft_execute: C2R writes real output to dre only; dim must be NULL "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: C2R needs sre=%s and dre=real_out non-NULL — "
+                       "nothing executed",
+                       il ? "z_CCE_in" : "spectrum re");
+            return 1;
+        }
+        /* 🔴 PLACEMENT IS A COMMITMENT. An in-place real plan owns ONE
+         * padded plane: 2*(N/2+1) doubles, dre == sre. Passing a distinct
+         * dre is undocumented misuse that used to be ACCEPTED and silently
+         * miscomputed, and which of the two zr2c routes served the call --
+         * i.e. a MEASURED wisdom verdict -- decided whether the result was
+         * right. Refuse it here instead, mirroring the split-C2C rule.
+         *
+         * The OOP-aliased case (dre == sre on an OUT-OF-PLACE plan) is
+         * deliberately NOT refused: it currently works on both routes and on
+         * c2r, and turning working behaviour into an error is a separate
+         * decision from closing a miscomputation. */
+        if (h->placement == VFFT_INPLACE && dre != sre)
+        {
+            _vfft_warn("vfft_execute: this %s plan is IN-PLACE (one padded CCE plane of "
+                       "2*(N/2+1) doubles) and must be called with dre == sre; got "
+                       "distinct pointers -- nothing executed", tn);
+            return 1;
+        }
+        if (il && sim)
+        {
+            _vfft_warn("vfft_execute: this C2R plan is committed to layout=INTERLEAVED "
+                       "(sre = packed CCE spectrum input, sim=NULL) but got a non-NULL sim; "
+                       "for split spectrum input create the plan with layout=VFFT_LAYOUT_SPLIT "
+                       "— nothing executed");
+            return 1;
+        }
+        if (!il && !sim)
+        {
+            _vfft_warn("vfft_execute: this C2R plan is committed to layout=SPLIT "
+                       "(sre/sim = split spectrum planes) but sim is NULL. The old "
+                       "\"sim==NULL means CCE\" inference is REMOVED — create the plan with "
+                       "layout=VFFT_LAYOUT_INTERLEAVED for the packed z spectrum — nothing "
+                       "executed");
+            return 1;
+        }
+        return 0;
+    }
+    /* C2C (1D..4D) */
+    if (il)
+    {
+        if (sim || dim)
+        {
+            _vfft_warn("vfft_execute: this C2C plan is committed to layout=INTERLEAVED "
+                       "(sre=z_in, dre=z_out, sim=dim=NULL) but got non-NULL sim/dim; for "
+                       "split re/im planes create the plan with layout=VFFT_LAYOUT_SPLIT — "
+                       "nothing executed");
+            return 1;
+        }
+        if (!sre || !dre)
+        {
+            _vfft_warn("vfft_execute: INTERLEAVED C2C needs sre=z_in and dre=z_out non-NULL "
+                       "(dre may equal sre) — nothing executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (!sre || !sim)
+    {
+        if (!sim && sre && !dim && dre)
+            _vfft_warn("vfft_execute: this C2C plan is committed to layout=SPLIT (sre/sim + "
+                       "dre/dim planes) but the call passed the interleaved-style signature "
+                       "(sim==dim==NULL). The old NULL-pointer layout inference is REMOVED — "
+                       "create the plan with layout=VFFT_LAYOUT_INTERLEAVED for z buffers — "
+                       "nothing executed");
+        else
+            _vfft_warn("vfft_execute: SPLIT C2C needs sre and sim non-NULL — nothing "
+                       "executed");
+        return 1;
+    }
+    if (h->N2 > 0)
+    { /* 2D..4D: the executor memcpys src->dst when they differ (both
+       * placements); a NULL dst pair means in-place-on-src. */
+        if ((dre == NULL) != (dim == NULL))
+        {
+            _vfft_warn("vfft_execute: 2D+ SPLIT C2C got a half-NULL destination pair "
+                       "(dre=%s, dim=%s) — pass both or neither — nothing executed",
+                       dre ? "ok" : "NULL", dim ? "ok" : "NULL");
+            return 1;
+        }
+        return 0;
+    }
+    if (h->placement == VFFT_INPLACE)
+    { /* in-place engine: the destination arguments are NOT read. Accept the
+       * documented forms only, so an out-of-place-style call cannot silently
+       * leave the result in the source buffers. */
+        if (!(((dre == NULL) && (dim == NULL)) || (dre == sre && dim == sim)))
+        {
+            _vfft_warn("vfft_execute: in-place SPLIT C2C takes dre==sre && dim==sim (or "
+                       "dre=dim=NULL); a different destination is ignored by the in-place "
+                       "engine — for true out-of-place create with "
+                       "placement=VFFT_OUTOFPLACE — nothing executed");
+            return 1;
+        }
+        return 0;
+    }
+    if (!dre || !dim)
+    {
+        _vfft_warn("vfft_execute: out-of-place SPLIT C2C needs dre and dim non-NULL — "
+                   "nothing executed");
+        return 1;
+    }
+    if (dre == sre || dim == sim || dre == sim || dim == sre)
+    {
+        _vfft_warn("vfft_execute: out-of-place SPLIT C2C requires destination planes "
+                   "disjoint from the sources (got an aliased pointer) — the OOP kernels "
+                   "stream the sources while writing the destination, so aliasing corrupts "
+                   "the data; for in-place transforms create the plan with "
+                   "placement=VFFT_INPLACE — nothing executed");
+        return 1;
+    }
+    return 0;
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
@@ -778,6 +1129,127 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         }
         return;
     }
+}
+
+/* ---- destroy (migration step 28) ----
+ * The mirror of create, and it must free EVERY plane the plan owns --
+ * including the owned batch, whose allocator now lives in vfft_batch.h. */
+void vfft_destroy(vfft_plan h)
+{
+    if (h)
+    {
+        if (h->pq_inner)
+        { /* plane-queue wrapper: the inner + clones own everything */
+            int t;
+            vfft_destroy((vfft_plan)h->pq_inner);
+            for (t = 0; t < h->pq_wn; t++)
+                vfft_destroy((vfft_plan)h->pq_w[t]);
+            free(h->pq_w);
+            free(h);
+            return;
+        }
+        if (h->oddr_child)
+        { /* the odd-real bridge: the child + one buffer */
+            vfft_destroy((vfft_plan)h->oddr_child);
+            free(h->oddr_buf);
+            free(h);
+            return;
+        }
+        if (h->cplan_il)
+            stride_plan_destroy(h->cplan_il);
+        STRIDE_ALIGNED_FREE(h->il_wr);
+        STRIDE_ALIGNED_FREE(h->il_wi);
+        STRIDE_ALIGNED_FREE(h->il_wr2);
+        STRIDE_ALIGNED_FREE(h->il_wi2);
+        if (h->il2d_row)
+        {
+            int s2;
+            if (h->il2d_row != h->il2d_rowo)
+                vfft_destroy(h->il2d_row); /* native IL 2D tier owns its row child */
+            if (h->il2d_rowo)
+                vfft_destroy(h->il2d_rowo); /* (the forced-oop route aliases
+                                             * il2d_row to rowo — freed once) */
+            for (s2 = 0; s2 < h->il2d_roww_n; s2++)
+                vfft_destroy(h->il2d_roww[s2]); /* the MT row clones */
+            free(h->il2d_roww);
+            free(h->il2d_rowscr_w);
+            free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
+            free(h->il2d_natperm);
+            free(h->il2d_natscr);
+            free(h->il2d_bluchf);
+            free(h->il2d_bluchb);
+            free(h->il2d_blukf);
+            free(h->il2d_blukb);
+            free(h->il2d_bluscr);
+            free(h->il2d_rowscr);
+            free(h->il2d_bandscr);
+            free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
+            if (h->il2d_rows)
+                vfft_destroy(h->il2d_rows); /* the rowsplit band engine */
+            free(h->il2d_lx);
+            free(h->il2d_lre);
+            free(h->il2d_lim);
+            free(h->il2d_tre);
+            free(h->il2d_tim);
+            for (s2 = 0; s2 < h->il2d_nst; s2++)
+            {
+                free(h->il2d_tf[s2]);
+                free(h->il2d_tb[s2]);
+            }
+        }
+    }
+    if (!h)
+        return;
+    if (h->own_batch)
+        _own_batch_free(h->own_batch); /* config.owned_buffers planes */
+    if (h->cplan)
+        vfft_proto_plan_destroy(h->cplan);
+    if (h->oplan)
+        vfft_oop_plan_destroy(h->oplan);
+    if (h->zsplit)
+        vfft_zsplit_destroy(h->zsplit);
+    if (h->tcb)
+        vfft_destroy(h->tcb); /* transform-contiguous wrapper owns its K=1 plan */
+    if (h->tcbw)
+    { /* ...and its MT worker clones (depth-1 recursion: clones have no tcb) */
+        for (int t = 0; t < h->tcbw_n; t++)
+            vfft_destroy(h->tcbw[t]);
+        free(h->tcbw);
+    }
+    if (h->zturn)
+        vfft_zturn2_destroy(h->zturn);
+    vfft_il2p_destroy(h->k1il2p);
+    vfft_il3p_destroy(h->k1il3p);
+    vfft_ilprime_destroy(h->k1ilpr);
+    if (h->k1sp)
+        vfft_oop_plan_destroy(h->k1sp);
+    if (h->zr2c_child)
+        vfft_destroy((vfft_plan)h->zr2c_child); /* §D2: recursive child */
+    vfft_proto_aligned_free(h->zr2c_aff);      /* posix_memalign-backed */
+    vfft_proto_aligned_free(h->zr2c_scratch);
+    if (h->rplan)
+        vfft_r2c_plan_destroy(h->rplan);
+    if (h->c2rdisp)
+        vfft_c2r_disp_destroy(h->c2rdisp);
+    if (h->rfft_row)
+        vfft_r2c_plan_destroy(h->rfft_row);
+    if (h->c2r_row)
+        vfft_c2r_disp_destroy(h->c2r_row);
+    if (h->tplan)
+        stride_plan_destroy(h->tplan); /* frees inner r2c/c2c via override_destroy */
+    free(h->nat_list);
+    free(h->nat_tmp);
+    free(h->nat_cyc_off);
+    if (h->nat_scr)
+    {
+        natorder_scr_free(h->nat_scr);
+        free(h->nat_scr);
+    }
+    free(h->nat2d_row_list);
+    free(h->nat2d_col_list);
+    free(h->nat2d_tmp);
+    free(h->nat2d_cyc_off);
+    free(h);
 }
 
 #endif /* VFFT_EXECUTE_IMPL */

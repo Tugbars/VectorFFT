@@ -22,11 +22,44 @@
  * ===========================================================================
  */
 
-/* On Windows, stride_print_info() calls __cpuidex. MSVC/ICX expose it via
- * <intrin.h>; MinGW GCC via <cpuid.h> (which <intrin.h> includes). Pull
- * <intrin.h> in so the declaration is visible before the call site. */
+/* On Windows, stride_print_info() reads the CPU brand string via CPUID. The two
+ * toolchains spell that differently, and the spellings COLLIDE:
+ *
+ *   MSVC/ICX  <intrin.h> declares __cpuid / __cpuidex as FUNCTIONS taking an
+ *             int[4] output array.
+ *   MinGW GCC <cpuid.h> defines __cpuid / __cpuid_count as 5-ARGUMENT MACROS
+ *             writing four separate lvalues.
+ *
+ * This header used to include <intrin.h> unconditionally on _WIN32, on the
+ * stated assumption that MinGW reaches the same declaration through it. That
+ * assumption stopped holding at GCC 15.2, where <immintrin.h> transitively
+ * includes <cpuid.h>: __cpuid is then already a macro, and <intrin.h>'s
+ * `void __cpuid(int[4], int)` is expanded through it —
+ *
+ *     error: macro '__cpuid' requires 5 arguments, but only 2 given
+ *
+ * Whether that fires depends only on whether something upstream pulled
+ * <immintrin.h> first. threads.h does, via cpu_cache.h, so `#include
+ * "threads.h"` before this header was enough to break any translation unit —
+ * an include-order landmine rather than a property of either header. Undefining
+ * __cpuid around the include does NOT fix it; the two headers disagree about
+ * more than one name.
+ *
+ * So: give each toolchain its own spelling and never make them meet. GCC-family
+ * builds use <cpuid.h> and never pull <intrin.h>; MSVC/ICX keep <intrin.h>,
+ * having no <cpuid.h> to use. _VFFT_CPUIDEX hides the shape difference. */
 #if defined(_WIN32)
-  #include <intrin.h>
+  #if defined(__GNUC__) && !defined(__INTEL_LLVM_COMPILER) && !defined(_MSC_VER)
+    #include <cpuid.h>
+    /* __cpuid_count is <cpuid.h>'s __cpuidex: same leaf/subleaf, but the four
+     * output registers are separate lvalues instead of an int[4]. */
+    #define _VFFT_CPUIDEX(regs, leaf, sub) \
+        __cpuid_count((leaf), (sub), (regs)[0], (regs)[1], (regs)[2], (regs)[3])
+  #else
+    #include <intrin.h>
+    #define _VFFT_CPUIDEX(regs, leaf, sub) \
+        __cpuidex((int *)(regs), (leaf), (sub))
+  #endif
 #endif
 
 /* ── MSVC compatibility shims ──────────────────────────────────────
@@ -256,9 +289,9 @@ static inline void stride_print_info(void)
         int cpuinfo[4] = {0};
         char brand[49] = {0};
         (void)cpuinfo;
-        __cpuidex((int *)&brand[0], 0x80000002, 0);
-        __cpuidex((int *)&brand[16], 0x80000003, 0);
-        __cpuidex((int *)&brand[32], 0x80000004, 0);
+        _VFFT_CPUIDEX((int *)&brand[0], 0x80000002, 0);
+        _VFFT_CPUIDEX((int *)&brand[16], 0x80000003, 0);
+        _VFFT_CPUIDEX((int *)&brand[32], 0x80000004, 0);
         fprintf(stderr, "[VectorFFT] CPU: %s\n", brand);
     }
 #elif defined(__linux__)

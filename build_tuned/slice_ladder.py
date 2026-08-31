@@ -75,7 +75,12 @@ def main():
     helper = opt("--helper")
     scratch = opt("--scratch")
     repeat = opt("--repeat", "3")
-    if not (parent and helper and scratch):
+    # A step is either a SLICE (--helper: a tier cut out of a parent, gated on
+    # shape) or a MOVE (--move: whole functions relocated, where the stronger
+    # classic EQUIVALENT verdict is reachable and is therefore what we demand).
+    # Step 28 is both, in two parts, so the ladder has to speak both.
+    is_move = "--move" in sys.argv
+    if not scratch or (not is_move and not (parent and helper)):
         print(__doc__)
         return 2
     os.makedirs(scratch, exist_ok=True)
@@ -96,15 +101,19 @@ def main():
     for w in warns:
         print("   warn: " + w.strip())
 
-    # ---- 2. slice shape ---------------------------------------------------
-    r = run([sys.executable, "build_tuned/obj_equiv.py",
-             os.path.join(BASE, "vfft_baseline.o"), obj,
-             "--slice", "%s:%s" % (parent, helper)])
+    # ---- 2. slice shape, or full equivalence for a move -------------------
+    cmd = [sys.executable, "build_tuned/obj_equiv.py",
+           os.path.join(BASE, "vfft_baseline.o"), obj]
+    if not is_move:
+        cmd += ["--slice", "%s:%s" % (parent, helper)]
+    r = run(cmd)
     verdict = [l for l in r.stdout.splitlines()
                if l.startswith("SLICE") or l.startswith("  - ")
-               or l.startswith("NOT EQUIV") or l.startswith("EQUIVALENT")]
-    results.append((True, "obj_equiv --slice", r.returncode == 0,
-                    verdict[0] if verdict else "?"))
+               or l.startswith("NOT EQUIV") or l.startswith("EQUIVALENT")
+               or l.startswith("  DISAPPEARED") or l.startswith("  APPEARED")
+               or l.startswith("  BODY CHANGED")]
+    results.append((True, "obj_equiv " + ("(move)" if is_move else "--slice"),
+                    r.returncode == 0, verdict[0] if verdict else "?"))
     for l in verdict[1:]:
         print("   " + l.strip())
 
@@ -117,7 +126,7 @@ def main():
         with open(out, "wb") as f:
             f.write(r.stdout.replace("\r\n", "\n").encode())
         ok = same(os.path.join(BASE, ref), out)
-        gated = mode != "defined"
+        gated = mode != "defined" or is_move
         detail = "identical" if ok else "DIFFERS (expected on a slice)" \
             if not gated else "DIFFERS"
         results.append((gated, "sym_census --" + mode, ok, detail))
@@ -184,7 +193,8 @@ def main():
         print("\nLADDER FAILED - %d gated rung(s). Stop rule: revert, do not "
               "triage in place." % failed)
         return 1
-    print("\nLADDER GREEN - slice %s is clean." % helper)
+    print("\nLADDER GREEN - %s is clean."
+          % ("move" if is_move else "slice %s" % helper))
 
     if "--restamp" in sys.argv:
         # The reference must advance, or step N+1 is diffed against step N-1
