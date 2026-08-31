@@ -10,6 +10,8 @@ math here — this is the floor the engine stands on.
 | `threads.h` | the **from-scratch** spin-based thread pool (K-split parallelism; no OpenMP/TBB) |
 | `strided_codelets.h` | ABI-typed registry struct for the 2D Design-C "strided" row-FFT codelets |
 | `ref.h` | **declarations-only** vtable type for the benchmark **reference backends** (MKL / FFTW) + the reference-independent helpers: role/regime enums, `ref_shape_t`, `ref_caps_t`, the N-arm order-neutralising scheduler, `ref_race_check`, `ref_ratio`, `csv_for`. Implementations (`ref_mkl.h`, `ref_fftw.h`) live in `build_tuned/benches/` — they pull in `mkl_dfti.h` / bind `fftw3.dll`, which core must not |
+| `diag.h` | loud-refusal helpers `_vfft_warn` / `_vfft_tname` — a config-space mistake is refused with an actionable line on stderr, never a bare NULL |
+| `race_timing.h` | the racers' shared clock and median (`_il_ab_now`, `_il_ab_med9`) — every A/B in the tree times through these, so the protocol is one place |
 
 ---
 

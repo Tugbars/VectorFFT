@@ -155,3 +155,14 @@ header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
 (`zsplit_wis_gate`, `zsplit_api_gate`, `gate_vfft_rz`, `gate_4d`,
 `gate_fndr_q1`, natorder/natmt tests, `regression_vs_mkl`). Run them with
 `VFFT_WISDOM_DIR` pointed at a scratch dir so banked wisdom stays untouched.
+
+## Migration headers at the top level
+
+Three files sit directly in `core/` rather than in a module, because each is
+about the library as a whole rather than about one transform family.
+
+| file | role |
+|---|---|
+| `vfft_internal.h` | the three private structs — `vfft_plan_s`, `vfft_wisdom_s`, `vfft_batch_s`. Lifting these out of `vfft.c` is what let every later module header exist |
+| `vfft_execute.h` | **THE execute entry point — every transform, BOTH layouts**, plus the execute-side helpers and `vfft_destroy`. 🔴 `vfft_execute` has EXTERNAL linkage, so the body is guarded by `VFFT_EXECUTE_IMPL` and exactly one TU defines it |
+| `vfft_batch.h` | the owned-batch allocator behind `config.owned_buffers` / `config.batch`. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |
