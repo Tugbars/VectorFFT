@@ -229,4 +229,161 @@ static void _zt_mt_phase(const vfft_zturn2_plan_t *p, const double *zin,
         _stride_pool_wait_all();
 }
 
+/* -- THE DISPATCHER AND THE RACER (migration step 20) --------------------
+ * Step 10 moved the kernels and left these behind for two reasons, both now
+ * resolved: _zt_execute_mt dereferences vfft_plan_s (step 15 lifted it) and
+ * increments the engagement counter (step 21a gave it external linkage).
+ *
+ * THE RACE IS PLAN-LOCAL, WHICH IS A KNOWN GAP
+ * --------------------------------------------
+ * The verdict is NOT banked: the zturn chain's own wisdom rows predate
+ * wisdom2, so cmt-style banking of this axis rides the wisdom2 1D wave. It
+ * therefore re-races on every create, in every process. A cell that cannot
+ * engage banks its "no" implicitly by leaving zt_mt at 0. Kill/force switch:
+ * VFFT_ZT_NO_MT (0 forces on - the A/B hook).
+ * ----------------------------------------------------------------------- */
+
+/* DEFINED in vfft.c with external linkage. Not here: a static in a header is
+ * one copy per includer, and vfft_zt_mt_passes() would then read a different
+ * object than this increment writes - a confident zero while threading ran. */
+extern long _vfft_zt_mt_count;
+
+/* Returns 1 when it ran threaded, 0 = caller runs the serial walk. */
+static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
+                          const double *zin, double *zout, int T)
+{
+    const vfft_zturn2_plan_t *p = h->zturn;
+    const long SEC = (long)p->N / 4;
+    const int fwd = (dir == VFFT_FORWARD);
+    const int smax = p->tiled ? p->tcut : p->nf - 2;
+    int s;
+    if (p->natord || p->tiled == 2)
+        return 0; /* rho-order table walks; A1 = gate-only control arm */
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (T > 64)
+        T = 64;
+    if (T < 2 || SEC < 8 * T)
+        return 0;
+    if (fwd)
+    {
+        _zt_mt_phase(p, zin, zout, 0, 0, 1, SEC, 1, T);
+        for (s = 1; s <= smax; s++)
+        {
+            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
+            _zt_mt_phase(p, zin, zout, 1, s, 1, p->G[s], 0, Ts);
+        }
+        if (!p->tiled)
+            _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
+        else
+        {
+            const long NT = SEC / p->tw;
+            if (!p->tfuse)
+            {
+                const long u = 4 * NT;
+                _zt_mt_phase(p, zin, zout, 3, 0, 1, u,
+                             0, u < T ? (int)u : T);
+                _zt_mt_phase(p, zin, zout, 2, 0, 1, SEC, 1, T);
+            }
+            else
+                _zt_mt_phase(p, zin, zout, 4, 0, 1, NT, 0,
+                             NT < T ? (int)NT : T);
+        }
+    }
+    else
+    {
+        if (!p->tiled)
+            _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
+        else
+        {
+            const long NT = SEC / p->tw;
+            if (!p->tfuse)
+            {
+                const long u = 4 * NT;
+                _zt_mt_phase(p, zin, zout, 2, 0, 0, SEC, 1, T);
+                _zt_mt_phase(p, zin, zout, 3, 0, 0, u,
+                             0, u < T ? (int)u : T);
+            }
+            else
+                _zt_mt_phase(p, zin, zout, 4, 0, 0, NT, 0,
+                             NT < T ? (int)NT : T);
+        }
+        for (s = smax; s >= 1; s--)
+        {
+            const int Ts = p->G[s] < T ? (int)p->G[s] : T;
+            _zt_mt_phase(p, zin, zout, 1, s, 0, p->G[s], 0, Ts);
+        }
+        _zt_mt_phase(p, zin, zout, 0, 0, 0, SEC, 1, T);
+    }
+    _vfft_zt_mt_count++; /* engagement, see vfft.h */
+    return 1;
+}
+
+/* ── the INC-Z verdict race: serial vs threaded walk through the very
+ * functions execute serves with, min-of-3 alternated on scratch, both
+ * plan-local (the zturn chain's own wisdom rows are pre-wisdom2; the
+ * cmt-style banking of this axis rides the wisdom2 1D wave). A cell
+ * that cannot engage banks the "no" implicitly (zt_mt stays 0). Kill
+ * switch VFFT_ZT_NO_MT (0 forces on — the A/B hook). */
+static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
+                          const double *zin, double *zout, int T);
+static void _zt_mt_race(struct vfft_plan_s *h)
+{
+    const int N = h->zturn->N;
+    double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
+    double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
+    double st = 1e300, mt = 1e300;
+    int p;
+    size_t i;
+    const char *ce = getenv("VFFT_ZT_NO_MT");
+    if (ce)
+    {
+        h->zt_mt = (atoi(ce) == 0);
+        return;
+    }
+    if (!zi || !zo)
+    {
+        free(zi);
+        free(zo);
+        return;
+    }
+    for (i = 0; i < 2 * (size_t)N; i++)
+        zi[i] = 1.0 + 1e-6 * (double)(i & 511);
+    if (!_zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads))
+    {
+        if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[zt-mt] race N=%d T=%d: cannot engage -> "
+                            "serial\n", N, h->nthreads);
+        free(zi);
+        free(zo);
+        return; /* cannot engage: zt_mt stays 0 — the verdict */
+    }
+    vfft_zturn2_execute_fwd(h->zturn, zi, zo); /* warm the serial arm too
+                                                * — both arms hot before
+                                                * the alternated timing */
+    for (p = 0; p < 3; p++)
+    {
+        struct timespec t0, t1;
+        double d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        vfft_zturn2_execute_fwd(h->zturn, zi, zo);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < st)
+            st = d;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        _zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
+        if (d < mt)
+            mt = d;
+    }
+    h->zt_mt = (mt < st);
+    if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
+        fprintf(stderr, "[zt-mt] race N=%d T=%d: st=%.0f mt=%.0f -> %s\n",
+                N, h->nthreads, st, mt, h->zt_mt ? "THREADED" : "serial");
+    free(zi);
+    free(zo);
+}
+
 #endif /* VFFT_OOP_ZTURN_MT_H */

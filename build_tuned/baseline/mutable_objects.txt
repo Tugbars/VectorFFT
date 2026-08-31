@@ -1,6 +1,9 @@
 B _vfft_create_race_count
 B _vfft_il2d_col_mt_count
+B _vfft_pq_mt_count
+B _vfft_tc_mt_dispatch_count
 B _vfft_trig_mt_count
+B _vfft_zt_mt_count
 b .bss
 b _def
 b _def_loaded
@@ -19,11 +22,8 @@ b _vaw_n
 b _vaw_tab
 b _vfft_c2r_paths
 b _vfft_dispatch_blue_wis
-b _vfft_pq_mt_count
 b _vfft_r2c_c2c_wis
 b _vfft_r2c_wis
-b _vfft_tc_mt_dispatch_count
-b _vfft_zt_mt_count
 b c.N
 b cached.N
 b cands.N

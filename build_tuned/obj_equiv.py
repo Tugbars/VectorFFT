@@ -68,6 +68,29 @@ DEFAULT_OBJDUMP = r"C:\mingw152\mingw64\bin\objdump.exe"
 _ADDR_PREFIX = re.compile(r"^\s*[0-9a-f]+:")
 _COMMENT = re.compile(r"#.*$")
 _SYMREF = re.compile(r"<[^>]*\+[^>]*>")
+# A DISPLACEMENT's SIGN IS PART OF THE ADDRESS.
+#
+# `_HEX0X` used to be r"0x[0-9a-f]+", which turns -0x8(%rip) into -HEX(%rip)
+# and 0x8(%rip) into HEX(%rip) - reporting a difference for what is the SAME
+# instruction reaching the same object from the other side of the instruction
+# pointer. Address layout is precisely what this normalizer exists to absorb,
+# so leaking the sign made it a false-positive generator: giving two counters
+# external linkage shifted the BSS layout and "changed" six function bodies
+# whose instruction streams were otherwise identical, line for line.
+#
+# The lookahead confines this to DISPLACEMENTS (a hex immediately followed by
+# an open paren). An IMMEDIATE's sign is NOT normalized - $-0x1 and $0x1 are
+# genuinely different instructions, and collapsing those would blind the gate
+# to a real change.
+#
+# SCOPE NOTE, measured while fixing the above. Because _HEX0X collapses EVERY
+# hex to HEX, this comparison is also blind to IMMEDIATE VALUES: `mov $0x1` and
+# `mov $0x2` normalize equal. That is the same blindness as the .rdata one
+# documented at the top of this file, and it is exactly why the race protocol
+# census exists alongside this check - obj_equiv covers the SHAPE of the code,
+# the census covers the CONSTANTS, and neither alone is sufficient. Immediate
+# SIGNS do still differ, because the minus falls outside the hex match.
+_DISP = re.compile(r"-?0x[0-9a-f]+(?=\()")
 _HEX0X = re.compile(r"0x[0-9a-f]+")
 _HEXBARE = re.compile(r"\b[0-9a-f]{4,}\b")
 _HEADER = re.compile(r"^([0-9a-f]+) <([^>]+)>:$")
@@ -99,6 +122,7 @@ def symbol_bodies(path, objdump):
         # leading "  4a1b:" prevents the anchor from ever matching.
         if _NOP.match(s):             # 3. alignment padding
             continue
+        s = _DISP.sub("HEX", s)      # displacement: sign is address, not value
         s = _HEX0X.sub("HEX", s)
         s = _HEXBARE.sub("ADDR", s)
         s = s.rstrip()
