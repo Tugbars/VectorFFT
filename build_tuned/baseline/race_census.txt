@@ -7,21 +7,21 @@
 0a9f21f5cb n=1 kind=hyst op=< hyst=0.97 rounds=reps reps=- agg=inline alt=0 minmax=1 clock=vfft_proto_now_ns fn=_k1_il_candidate
 0e617a9636 n=3 kind=hyst op=< hyst=0.97 rounds=9/reps reps=(int)(3.0e5 / (est > 1.0 ? est : 1.0))/2/64 agg=_il_ab_med9 alt=1 minmax=1 clock=_il_ab_now fn=_il_ab_race,_zr2c_build
 1dc24e13d4 n=4 kind=hyst op=< hyst=0.97 rounds=RR/reps reps=(int)(300000.0 / est)/2/64 agg=_pad_med alt=1 minmax=1 clock=vfft_proto_now_ns fn=_calibrate_zsplit_t2q,_calibrate_zturn_t2q
-201074c389 n=5 kind=UNMATCHED op=? hyst=? rounds=2/reps reps=- agg=inline alt=0 minmax=0 clock=vfft_proto_now_ns fn=_vfft_create_inner
-3da0baf2e8 n=2 kind=UNMATCHED op=? hyst=? rounds=64 reps=- agg=inline alt=0 minmax=0 clock=clock_gettime fn=_vfft_create_inner
-42c44cfc68 n=3 kind=UNMATCHED op=? hyst=? rounds=- reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_race_chains,_vfft_create_inner
+201074c389 n=5 kind=UNMATCHED op=? hyst=? rounds=2/reps reps=- agg=inline alt=0 minmax=0 clock=vfft_proto_now_ns fn=_vfft_create_c2c_ip,_vfft_create_c2c_oop
+3da0baf2e8 n=2 kind=UNMATCHED op=? hyst=? rounds=64 reps=- agg=inline alt=0 minmax=0 clock=clock_gettime fn=_vfft_create_2d
+42c44cfc68 n=3 kind=UNMATCHED op=? hyst=? rounds=- reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_race_chains,_vfft_create_c2c_oop,_vfft_create_real
 5cebd51204 n=1 kind=UNMATCHED op=? hyst=? rounds=reps reps=- agg=inline alt=0 minmax=0 clock=vfft_proto_now_ns fn=_pad_burst
 7bce3644c0 n=4 kind=bare op=< hyst=NONE rounds=- reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_zt_mt_race
 9c39568c73 n=2 kind=UNMATCHED op=? hyst=? rounds=reps reps=- agg=_il_ab_med9 alt=1 minmax=0 clock=vfft_proto_now_ns fn=_c2r_race_arms,_r2c_race_arms
 c794748e2b n=1 kind=hyst op=< hyst=0.97 rounds=5/RR reps=(int)(8000000ull / szP)/40 agg=_pad_burst/_pad_med alt=1 minmax=1 clock=- fn=_calibrate_pad
 d4cfd11c33 n=1 kind=UNMATCHED op=? hyst=? rounds=reps reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_axis_race
-dbd8019556 n=1 kind=bare op=< hyst=NONE rounds=il2d_nst reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_vfft_create_inner
+dbd8019556 n=1 kind=bare op=< hyst=NONE rounds=il2d_nst reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_vfft_create_2d
 ed40f32f21 n=1 kind=UNMATCHED op=? hyst=? rounds=3/4 reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_real_rowrace
 f3bca11892 n=1 kind=UNMATCHED op=? hyst=? rounds=3/nwl reps=- agg=inline alt=0 minmax=1 clock=clock_gettime fn=_il2d_real_rowrace
 #
 # --- VERDICTS: every comparison that picks an arm, wherever it lives ---
 verdict op=<  hyst=0.97   n=11 fn=_c2r_route_decide,_calibrate_pad,_calibrate_zsplit_t2q,_calibrate_zturn_t2q,_il_ab_race,_k1_il_candidate,_r2c_route_decide,_zr2c_build
-verdict op=<  hyst=NONE   n=5  fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_vfft_create_inner,_zt_mt_race
+verdict op=<  hyst=NONE   n=5  fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_vfft_create_2d,_zt_mt_race
 #
-# timing_regions=30 protocols=14 functions=17 unmatched=16
+# timing_regions=30 protocols=14 functions=20 unmatched=16
 # verdicts=16 distinct=2  (hysteresis literals: 0.97,NONE)

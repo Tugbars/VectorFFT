@@ -1,2 +1,2 @@
-a023b31ce44bd88b2df20cb253ab15767b1f3b73
-# short: a023b31c  (re-stamped at 21b: cross-TU config hooks added)
+f3a266cd7ad45c0560e923e8cec79726a525b679
+# short: f3a266cd  (re-stamped at 27: trig create tier + builders sliced out)

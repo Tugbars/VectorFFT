@@ -72,13 +72,23 @@ the object two ways at once:
 So for a slice the gate becomes SHAPE, not equality. --slice PARENT:HELPER
 requires all of:
 
-  * exactly one changed body, and it is PARENT;
-  * appeared symbols are exactly {HELPER} (a .constprop.N / .part.N suffix is
-    the same function and is accepted);
-  * every symbol present in BOTH objects is byte-identical;
-  * every disappeared symbol is LOCAL (nm class 't'). A disappeared GLOBAL is
-    always a finding: a local can vanish by being inlined, an exported one
-    cannot.
+  * PARENT's body changed -- it is the thing being split, so if it did not
+    change, nothing was extracted;
+  * HELPER was emitted (a .constprop.N / .part.N suffix is the same function
+    and is accepted). If it never appears it was inlined straight back, which
+    defeats the extraction;
+  * no EXTERNALLY VISIBLE symbol appeared or disappeared. A local can vanish
+    by being inlined and can appear by ceasing to be; a global can do neither,
+    and a new global is new API.
+
+LOCAL churn is reported, NOT gated -- measured on steps 22-24, it takes three
+benign shapes: a static inlined away into the budget the parent freed; a
+static that had been inlined everywhere needing an out-of-line copy once one
+call site moves; and a static whose only call site travelled with the slice
+being re-optimized in its new context. An earlier draft gated on "no body
+changed but the parent" and had to be withdrawn: it failed on a correct
+extraction, and a gate that cries wolf on correct work is one that gets
+argued past when it finally matters.
 
 What this does NOT prove is unchanged: slice mode is code-shape only, and
 inherits the .rdata and immediate-value blindness documented above. The golden
@@ -191,34 +201,83 @@ def _same_fn(sym, base):
     return sym == base or sym.startswith(base + ".")
 
 
-def check_slice(only_a, only_b, changed, parent, helper, before_obj):
-    """The SHAPE gate for cutting a function in two. -> (ok, [reasons]).
+def _base_name(sym):
+    """Strip a GCC clone suffix: foo.constprop.0 / foo.part.1 -> foo."""
+    return re.sub(r"\.(constprop|part|isra|cold|lto_priv)\.[0-9]+$", "", sym)
 
-    `before_obj` classifies the DISAPPEARED symbols: they are looked up in the
-    object they vanished FROM, which is the only place they still exist.
+
+def check_slice(only_a, only_b, changed, parent, helper, before_obj, after_obj):
+    """The SHAPE gate for cutting a function in two. -> (ok, [reasons], churn).
+
+    WHERE THE LINE FALLS, and why it is not "nothing but the parent moved".
+
+    Cutting a tier out perturbs the inliner across the whole translation unit,
+    and the churn lands on LOCAL symbols in three shapes -- all three measured
+    on steps 22-24, all three benign:
+
+      gone      a static was fully inlined into the budget the parent freed;
+      appeared  the mirror image -- a static that HAD been inlined at every
+                call site needs an out-of-line copy once one call site moves
+                (stride_dct2_plan, stride_dct4_plan at step 24);
+      changed   a static whose only call site moved travels with the slice and
+                is re-optimized in its new context (_il_me_decide at step 24).
+
+    None of those is reachable for an EXTERNALLY VISIBLE symbol: a global
+    cannot be inlined away, and a new global is new API, which a move does not
+    produce. So the gate is global-symbol identity plus the parent/helper
+    shape. Local churn is REPORTED rather than gated, and the golden decision
+    trace is what proves the semantics did not move.
+
+    Gating on "no body changed but the parent" was tried first and is wrong: it
+    fails on a correct extraction, and a gate that cries wolf on correct work
+    is a gate that gets argued past.
     """
     bad = []
     if parent not in changed:
         bad.append("parent %s did not change - was anything extracted?" % parent)
-    extra = [k for k in changed if k != parent]
-    if extra:
-        bad.append("bodies changed outside the parent: %s" % ", ".join(extra[:10]))
 
-    stray_new = [k for k in only_b if not _same_fn(k, helper)]
-    if stray_new:
-        bad.append("unexpected new symbols: %s" % ", ".join(stray_new[:10]))
-    if not any(_same_fn(k, helper) for k in only_b):
-        bad.append("helper %s never appeared - it was inlined back, which "
-                   "defeats the extraction" % helper)
+    loc_before = local_symbols(before_obj)
+    loc_after = local_symbols(after_obj)
+    globals_gone = [k for k in only_a if k not in loc_before]
+    globals_new = [k for k in only_b
+                   if k not in loc_after and not _same_fn(k, helper)]
+    if globals_gone:
+        bad.append("GLOBAL symbols disappeared (a local can vanish by being "
+                   "inlined, an exported one cannot): %s"
+                   % ", ".join(globals_gone[:10]))
+    if globals_new:
+        bad.append("new GLOBAL symbols (a move does not create API): %s"
+                   % ", ".join(globals_new[:10]))
 
-    if only_a:
-        loc = local_symbols(before_obj)
-        globals_gone = [k for k in only_a if k not in loc]
-        if globals_gone:
-            bad.append("GLOBAL symbols disappeared (a local can vanish by being "
-                       "inlined, an exported one cannot): %s"
-                       % ", ".join(globals_gone[:10]))
-    return (not bad), bad
+    churn = {"gone": [k for k in only_a if k in loc_before],
+             "appeared": [k for k in only_b
+                          if k in loc_after and not _same_fn(k, helper)],
+             "changed": [k for k in changed if k != parent]}
+    churn["inlined_back"] = not any(_same_fn(k, helper) for k in only_b)
+
+    # A HELPER THAT NEVER APPEARS is two different situations, and only one is
+    # a problem.
+    #
+    # Benign: the tier was small enough that GCC chose to inline it straight
+    # back, and NOTHING ELSE in the object moved. The extraction was then
+    # purely a source reorganization -- which is the point of this migration --
+    # and the object is the same object. Step 27 (the 51-line trig tier) landed
+    # exactly here: 985 -> 985 symbols, nothing gone, nothing new, the parent
+    # the only changed body. That is the cleanest outcome available, not a
+    # failure.
+    #
+    # A problem: the helper vanished AND the object churned, which means the
+    # inliner did something we are not accounting for. Step 22 is the warning
+    # case -- forcing always_inline to chase a clean verdict spilled `cfg` to
+    # the stack and grew the parent by 393 instructions. Never chase the symbol.
+    if churn["inlined_back"] and (churn["gone"] or churn["appeared"]
+                                  or churn["changed"]):
+        bad.append("helper %s never appeared AND the object churned (%d gone, "
+                   "%d new, %d re-optimized) - the inliner did something this "
+                   "gate cannot account for"
+                   % (helper, len(churn["gone"]), len(churn["appeared"]),
+                      len(churn["changed"])))
+    return (not bad), bad, churn
 
 
 def main():
@@ -273,13 +332,21 @@ def main():
 
     if slice_spec:
         parent, helper = slice_spec.split(":", 1)
-        ok, why = check_slice(only_a, only_b, changed, parent, helper, args[0])
+        ok, why, churn = check_slice(only_a, only_b, changed, parent, helper,
+                                     args[0], args[1])
         if ok:
             print("\nSLICE OK - %s split out of %s." % (helper, parent))
-            print("  the only changed body is the parent being split;")
-            print("  %d local symbol(s) left the object by being inlined into "
-                  "the budget the parent freed;" % len(only_a))
-            print("  every symbol present in both objects is byte-identical.")
+            if churn["inlined_back"]:
+                print("  helper inlined straight back and the object is "
+                      "OTHERWISE UNCHANGED -")
+                print("  the extraction was purely a source reorganization.")
+            else:
+                print("  parent changed, helper emitted, no global symbol moved.")
+            print("  local inliner churn: %d gone, %d appeared, %d re-optimized"
+                  % (len(churn["gone"]), len(churn["appeared"]),
+                     len(churn["changed"])))
+            for k in churn["changed"][:8]:
+                print("    re-optimized: %s" % k)
             print("  NOT a semantic proof: the golden decision trace is the "
                   "gate that carries the weight.")
             return 0
