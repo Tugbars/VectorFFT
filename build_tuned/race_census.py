@@ -235,6 +235,7 @@ _MIGRATED = [
     "src/core/support/race_timing.h",             # step 5  - the primitives
     "src/core/transforms/real/real_route_race.h", # step 11 - r2c/c2r racers
     "src/core/planning/cascade_calibrate.h",      # step 12 - t2q calibrators
+    "src/core/planning/pad_calibrate.h",          # step 13 - pad-vs-tail
 ]
 
 
