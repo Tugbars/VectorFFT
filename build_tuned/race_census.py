@@ -242,6 +242,11 @@ _MIGRATED = [
     "src/core/oop/zturn_mt.h",                    # step 20 - zt_mt_race
     "src/core/transforms/fft2d/plane_queue.h",    # step 20 - pq_mt_race
     "src/core/transforms/fftnd/fftnd_create.h",   # step 22 - rank-3/4 create (no racer today)
+    "src/core/transforms/fft2d/fft2d_create.h",   # step 23 - 2D tier: 2 races + a verdict
+    "src/core/oop/c2c_ip_create.h",               # step 24 - c2c in-place tier
+    "src/core/oop/c2c_oop_create.h",              # step 25 - c2c out-of-place tier
+    "src/core/transforms/real/real_create.h",     # step 26 - r2c/c2r tier
+    "src/core/transforms/trig/trig_create.h",     # step 27 - trig tier + builders
 ]
 
 
