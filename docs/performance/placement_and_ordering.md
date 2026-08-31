@@ -37,7 +37,7 @@ The answer is not "the layout decides". The answer is one sentence about buffers
 > contract either forbids that buffer or requires it.**
 
 The split (Method-C) engine's founding contract forbids it: one buffer, every stage strides
-differently over it, no stage moves an element (`src/core/engine/stride_executor.h:2-4`).
+differently over it, no stage moves an element (stated in the header of the since-removed `engine/stride_executor.h`; the live split engine is `executor_generic.h` + `proto_stride_compat.h`).
 So in-place and scrambled are not features it supports — they are the only things its
 codelets can express, and natural order and out-of-place are both constructions that end up
 buying a second buffer by other means. The four-step (Bailey) interleaved engine's contract
@@ -922,9 +922,9 @@ A document that teaches "prefer the code" should ship the list. Each of these is
 | `src/core/vfft.c:3998-4000` | *"SCR/LEAF-IP still degrade to PURE until their executors land"* | SCR's executor landed; LEAF-IP was removed. Current statement: `natorder_calibrate.h:1-3` |
 | `src/core/vfft.c:4497-4500` | *"Mono/Bailey IL tiers stay OOP-only until their alias-safety is verified"* | true for MONO only; the next block attaches Bailey in-place (`:4514-4527`) |
 | `src/core/engine/executor.h:10-12` | 5–6 % figure *"per the spike measurements in docs/61"* | `docs/61` does not exist in the tree |
-| six sites in `core/engine/` | point at `src/core/executor.h` | that path does not exist; the file is `engine/stride_executor.h` |
+| six sites in `core/engine/` | point at `src/core/executor.h` | that path does not exist; the file was `engine/stride_executor.h`, removed 2026-09-01 as a zero-includer stale generation |
 
-**Where the doctrine lives.** `src/core/engine/stride_executor.h:2-4` is the clearest statement of
+**Where the doctrine lives.** the header of the since-removed `src/core/engine/stride_executor.h` was the clearest statement of
 the Method-C contract in the tree — and it is **included by nothing**. `src/core/vfft.c:13-14` says
 why: *"we don't include stride_executor.h (it redefines executor symbols)"*. The shipping split
 engine is `plan_executors.h` (the real `stride_plan_t`), `twiddle.h` (layout + Method-C twiddles),
