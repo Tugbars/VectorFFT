@@ -86,16 +86,47 @@ MINMAX = re.compile(r"if\s*\(\s*\w+\s*<\s*\w+\s*\)")
 
 def functions(lines):
     """-> [(name, start, end)] for top-level definitions (column 0, not a decl)."""
-    out, cur, start = [], None, 0
+    # A function ENDS AT ITS CLOSING BRACE, not at the next function's start.
+    #
+    # The original heuristic ran each extent up to the line before the next
+    # definition, which silently attributed every comment, forward declaration
+    # and #include BETWEEN two functions to the earlier one. That was invisible
+    # while the file was densely packed, and became visible the moment the
+    # migration opened gaps: _calibrate_pad started reporting an aggregator
+    # (_il_ab_med9) it does not use, picked up from a forward declaration two
+    # blocks below it. A census that attributes features to the wrong function
+    # is worse than a coarse one - it reads as a real finding.
+    #
+    # This tree closes every top-level definition with a brace in column 0, so
+    # that is the terminator. A function whose brace is never found falls back
+    # to end-of-file, which is the old behaviour and only reachable on
+    # malformed input.
+    out = []
     for i, line in enumerate(lines):
-        if FN_DEF.match(line) and "(" in line and not line.rstrip().endswith(";"):
+        if FN_DEF.match(line) and "(" in line:
             m = FN_NAME.search(line)
-            if m:
-                if cur:
-                    out.append((cur, start, i - 1))
-                cur, start = m.group(1), i
-    if cur:
-        out.append((cur, start, len(lines) - 1))
+            if not m:
+                continue
+            # DEFINITION vs DECLARATION: a definition reaches '{' before ';'.
+            # Testing only whether the FIRST line ends in ';' is not enough -
+            # this tree wraps long parameter lists, so a two-line declaration
+            # looked like a definition, and the brace scan below then ran
+            # forward into the NEXT real function and attributed its timing to
+            # the declaration. Scan until one of the two characters decides it.
+            end, kind = None, None
+            for j in range(i, len(lines)):
+                if kind is None:
+                    if ";" in lines[j] and "{" not in lines[j]:
+                        kind = "decl"
+                        break
+                    if "{" in lines[j]:
+                        kind = "def"
+                if kind == "def" and lines[j] == "}":
+                    end = j
+                    break
+            if kind != "def":
+                continue
+            out.append((m.group(1), i, end if end is not None else len(lines) - 1))
     return out
 
 

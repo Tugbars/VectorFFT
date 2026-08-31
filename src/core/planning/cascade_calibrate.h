@@ -5,12 +5,21 @@
  *
  * WHY A BIT-IDENTICAL PAIR NEEDS A RACE AT ALL
  * -------------------------------------------
- * sterm vs sterm2, and stf vs stf2, are the same schedule emitted two ways -
- * BIT-IDENTICAL by construction, memcmp-gated before either is timed. So the
- * choice cannot be made on numerics, and there is no "better algorithm" to
- * reason about. What differs is roughly 5%, and it is code-placement luck:
- * which one wins depends on how this binary happened to lay out. That is
- * precisely why it is measured on THIS binary at first create and banked,
+ * sterm vs sterm2, and stf vs stf2, are DIFFERENT CODE with IDENTICAL OUTPUT -
+ * not renamed copies. The "2" forms are 2-quad unroll-and-jam: one loop
+ * iteration processes two quads instead of one. That is a real difference in
+ * instruction schedule, register pressure and code size (radix8 sterm is 211
+ * lines, sterm2 is 571).
+ *
+ * What is identical is the RESULT. Unroll-and-jam interleaves two INDEPENDENT
+ * iterations, so no floating-point operation is reordered within a lane and the
+ * output matches bit for bit - which is memcmp-gated here before either arm is
+ * timed. So the choice cannot be made on numerics: there is no more-accurate
+ * arm, and no "better algorithm" to reason about.
+ *
+ * What is left is roughly 5%, and it is code-placement luck - which form wins
+ * depends on how this binary happened to lay out, not on the construction. That
+ * is precisely why it is measured on THIS binary at first create and banked,
  * rather than picked once by a human and frozen into a constant.
  *
  * PROTOCOL
