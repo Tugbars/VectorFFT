@@ -2,6 +2,8 @@
  * at the chosen rigor -> build -> execute. Feature coverage: src/core/README.md.
  * See docs/design/vfft_front_door.md. */
 #include "vfft.h"
+#include "vfft_diagnostics.h"   /* the MT engagement counters this file defines */
+#include "transforms/real/real_dispatch_config.h" /* cross-TU r2c/c2r knobs, defined here */
 
 #include "env.h"                /* stride_env_init, ISA/version, pinning           */
 #include "threads.h"            /* pool: set/get threads, dispatch/wait            */

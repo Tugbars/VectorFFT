@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 #include "cpu_cache.h"   /* the detected SMT / L2 / L3 the pin map now uses */
 
 int main(int argc, char **argv)

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <windows.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 int main(int argc, char **argv) {
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
