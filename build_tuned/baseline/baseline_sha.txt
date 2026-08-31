@@ -1,2 +1,2 @@
-28b91edf6dc837f7b26c3f10634c33de7b9335a6
-# short: 28b91edf
+8a3d5680f09ae9fe5c08ecf187ae286e7984eb2c
+# short: 8a3d5680  (re-stamped at step 17: engagement counter extern-ized)

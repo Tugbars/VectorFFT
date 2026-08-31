@@ -237,6 +237,7 @@ _MIGRATED = [
     "src/core/planning/cascade_calibrate.h",      # step 12 - t2q calibrators
     "src/core/planning/pad_calibrate.h",          # step 13 - pad-vs-tail
     "src/core/transforms/fft2d/il2d_tier.h",      # step 17 - the four il2d racers
+    "src/core/transforms/real/zr2c_build.h",      # step 18 - kind-5 route race
 ]
 
 
