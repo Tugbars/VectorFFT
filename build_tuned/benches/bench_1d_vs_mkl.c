@@ -4501,9 +4501,11 @@ int main(int argc, char **argv)
         if (hc2c)
             vfft_r2c_dispatch_set_c2c_wisdom(&c2cwis); /* SPLIT-path stride inner */
         if (getenv("VFFT_C2R_PACK_ALL"))
-            vfft_r2c_dispatch_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K */
+            vfft_r2c_set_decouple_min_k((size_t)-1); /* probe: force PACKED all K.
+             * The LIBRARY-side hook: the header's static-inline setter would
+             * write this TU's copy and leave vfft_create reading 32. */
         if (getenv("VFFT_C2R_STRIDE_ALL"))
-            vfft_r2c_dispatch_set_decouple_min_k(0); /* probe: force STRIDE all K */
+            vfft_r2c_set_decouple_min_k(0); /* probe: force STRIDE all K (library-side) */
         const char *c2r_pathf = "../../src/dag-fft-compiler/generator/generated/c2r_path.txt";
         if (c2rcalib)
         {
@@ -4527,7 +4529,7 @@ int main(int argc, char **argv)
             printf("c2r path wisdom -> %s\n", c2r_pathf);
             return 0;
         }
-        vfft_c2r_path_load(c2r_pathf); /* vs-MKL bench routes via the calibrated path (miss -> threshold) */
+        vfft_c2r_load_path(c2r_pathf); /* library-side: routes via the calibrated path (miss -> threshold) */
         /* target_N>0 => single-cell (one process per cell) — isolates the MKL-comparison
          * heap interaction that accumulates across cells on Windows at high N*K. */
         FILE *o2 = fopen(csv, target_N > 0 ? "a" : "w");
@@ -4536,7 +4538,7 @@ int main(int argc, char **argv)
         if (target_N == 0)
         {
             printf("=== dag vs MKL — 1D C2R bwd (2-axis: packed K<%zu / stride K>=%zu, vs DFTI real backward, ST, core%d; pace=%dms) ===\n",
-                   _vfft_r2c_decouple_min_k, _vfft_r2c_decouple_min_k, core, pace_ms);
+                   vfft_r2c_get_decouple_min_k(), vfft_r2c_get_decouple_min_k(), core, pace_ms);
             printf("# planner picks packed/stride per cell; roundtrip c2r(r2c(x))==N*x is the gate. speed>1 = dag wins.\n");
         }
         int Ns[] = {256, 512, 1024};

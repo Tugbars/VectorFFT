@@ -5846,6 +5846,23 @@ long vfft_zt_mt_passes(void) { return _vfft_zt_mt_count; }
 long _vfft_pq_mt_count = 0;
 long vfft_pq_mt_passes(void) { return _vfft_pq_mt_count; }
 
+/* Cross-TU configuration hooks (see vfft.h). These exist so a caller outside
+ * this translation unit writes THE LIBRARY's dispatch state rather than its
+ * own copy of the header statics. Thin forwarders on purpose - the policy
+ * lives in the dispatch headers, only the storage identity is fixed here. */
+void vfft_r2c_set_decouple_min_k(size_t k)
+{
+    vfft_r2c_dispatch_set_decouple_min_k(k);
+}
+size_t vfft_r2c_get_decouple_min_k(void)
+{
+    return vfft_r2c_dispatch_get_decouple_min_k();
+}
+int vfft_c2r_load_path(const char *path)
+{
+    return vfft_c2r_path_load(path);
+}
+
 #include "transforms/fft2d/plane_queue.h" /* 2D plane queue, howmany>1 (step 20) */
 
 /* K=1 SCRAMBLED cascade: the single dispatch consumer of h->zroute, both directions.
