@@ -1,8 +1,28 @@
-/* vfft_execute.h - the execute-side c2c dispatch.
+/* vfft_execute.h - THE execute entry point.
  *
  * vfft_execute and the transform-contiguous batch MT it dispatches through.
  * Extracted from vfft.c as migration step 16; see
  * docs/design/refactor_migration_plan.md. Step 28 extends this header.
+ *
+ * SCOPE: EVERYTHING. NOT c2c, NOT interleaved.
+ * --------------------------------------------
+ * The migration plan's table labels this step "execute-side c2c dispatch", and
+ * that label is too narrow - recorded here because it misled once already. This
+ * is the single universal dispatcher behind the public API. It branches on:
+ *
+ *   transform   C2C, R2C, C2R, the trig family (DCT/DST/DHT via _VFFT_IS_TRIG),
+ *               and the rank-3 paths (N3 > 0).
+ *   layout      at essentially every one of those branches. SPLIT IS SERVED
+ *               HERE TOO - it is the fall-through arm of each
+ *               `h->layout == VFFT_LAYOUT_INTERLEAVED` test, which is why the
+ *               token VFFT_LAYOUT_SPLIT never literally appears in this file.
+ *               Reading "no LAYOUT_SPLIT" as "interleaved only" is exactly
+ *               backwards.
+ *   placement   in-place and out-of-place take different arms throughout.
+ *
+ * The two families share no codelets, no planner and no executor (see
+ * docs/design/planning_model.md, Parts II and III) - but they share this one
+ * front door, and the layout test is where they part company.
  *
  * ONE TRANSLATION UNIT MUST OWN THE DEFINITION
  * --------------------------------------------
