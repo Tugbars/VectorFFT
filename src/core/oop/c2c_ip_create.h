@@ -300,7 +300,12 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     int trials = (cfg->rigor == VFFT_MEASURE) ? 2 : 3;
                     bluestein_calibrate_one(&W->bluestein, N, K, reg, &W->c2c,
                                             cre, cim, budget, trials, NULL);
-                    if (W->path_bluestein[0])
+                    /* the create path honours the read-only default like
+                     * every wisdom2 persist (vfft.h: "DEFAULT is read-only
+                     * wisdom"); the verdict stays banked in memory either
+                     * way, and the explicit vfft_wisdom_save API is the
+                     * ungated door — that one IS user intent. */
+                    if (cfg->wisdom_write && W->path_bluestein[0])
                         bluestein_wisdom_save(&W->bluestein, W->path_bluestein);
                 }
                 free(cre);

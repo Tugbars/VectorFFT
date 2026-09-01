@@ -1804,6 +1804,8 @@ t _k1ord_reseed
 t _k1z_race_and_bank
 t _k1z_wisdom_replay.constprop.N
 t _nat_range_tramp
+t _nato_arm_run
+t _nato_reseed
 t _natorder_reorder_mt
 t _oddr_arm_exec
 t _oddr_build
