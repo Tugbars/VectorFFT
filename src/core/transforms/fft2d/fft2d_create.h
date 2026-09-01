@@ -47,6 +47,36 @@
 #ifndef VFFT_TRANSFORMS_FFT2D_CREATE_H
 #define VFFT_TRANSFORMS_FFT2D_CREATE_H
 
+/* the two arms of the N1-arm race: the pow2 chain column pass vs the
+ * Bluestein column pass, both in place on one scratch plane */
+typedef struct
+{
+    double *sc;
+    int N1;
+    size_t N2;
+    int nst;
+    const int *R;
+    int *L;
+    vfft_il2p_fn *f;
+    double **tf;
+    int M2, bnst;
+    int *bR, *bL;
+    vfft_il2p_fn *bf, *bb;
+    double **btf, **btb;
+    double *bchf, *bkf, *bscr;
+} _il2d_n1arm_ctx_t;
+static void _il2d_n1arm_chain(void *v)
+{
+    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    _il2d_col_pass(c->sc, c->sc, c->N1, c->N2, c->N2, c->nst, c->R, c->L,
+                   c->f, c->tf, 0);
+}
+static void _il2d_n1arm_blu(void *v)
+{
+    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    _il2d_blu_cols(c->sc, c->sc, c->N1, c->N2, c->M2, c->bnst, c->bR, c->bL,
+                   c->bf, c->bb, c->btf, c->btb, c->bchf, c->bkf, c->bscr);
+}
 static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                  struct vfft_wisdom_s *W,
                                  const vfft_proto_registry_t *reg,
@@ -350,30 +380,20 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         {
                             for (i3 = 0; i3 < 2 * (size_t)N1 * N2; i3++)
                                 sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
-                            for (rr = 0; rr < 3; rr++)
                             {
-                                struct timespec t0, t1;
-                                double d;
-                                clock_gettime(CLOCK_MONOTONIC, &t0);
-                                _il2d_col_pass(sc, sc, N1, (size_t)N2,
-                                               (size_t)N2, il2d_nst,
-                                               il2d_R, il2d_L, il2d_f,
-                                               il2d_tf, 0);
-                                clock_gettime(CLOCK_MONOTONIC, &t1);
-                                d = (t1.tv_sec - t0.tv_sec) * 1e9
-                                    + (t1.tv_nsec - t0.tv_nsec);
-                                if (d < tc)
-                                    tc = d;
-                                clock_gettime(CLOCK_MONOTONIC, &t0);
-                                _il2d_blu_cols(sc, sc, N1, (size_t)N2,
-                                               M2, bnst, bR, bL, bf, bb,
-                                               btf, btb, bchf, bkf,
-                                               bscr);
-                                clock_gettime(CLOCK_MONOTONIC, &t1);
-                                d = (t1.tv_sec - t0.tv_sec) * 1e9
-                                    + (t1.tv_nsec - t0.tv_nsec);
-                                if (d < tbu)
-                                    tbu = d;
+                                _il2d_n1arm_ctx_t rc = {
+                                    sc, N1, (size_t)N2, il2d_nst, il2d_R,
+                                    il2d_L, il2d_f, il2d_tf, M2, bnst, bR,
+                                    bL, bf, bb, btf, btb, bchf, bkf, bscr };
+                                const vfft_race_arm_t arms[2] = {
+                                    { "chain", _il2d_n1arm_chain, &rc },
+                                    { "bluestein", _il2d_n1arm_blu, &rc } };
+                                const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+                                double ns[2];
+                                (void)rr;
+                                vfft_race_run(&proto, arms, 2, ns);
+                                tc = ns[0];
+                                tbu = ns[1];
                             }
                         }
                         free(sc);

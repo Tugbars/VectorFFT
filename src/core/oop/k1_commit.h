@@ -69,7 +69,7 @@
 #include "planning/cascade_calibrate.h"     /* the t2q terminator calibrators */
 #include "wisdom2/wisdom2_oop_reader.h"     /* the kind-3/kind-4 codecs */
 #include "wisdom2/wisdom2_stride_reader.h"  /* the @nat / @natoop / mode cells */
-#include "support/race_timing.h"            /* the shared clock and median */
+#include "support/race.h"                   /* the shared race body */
 
 /* Applies a banked kind-3 il_kv verdict; measures nothing (dp_planner_il.h
  * owns that race). il_kv==0 keeps create's default — blocked at R>=32. */
@@ -138,6 +138,19 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
  * "IL runs its OWN pair search" rules: il2p registries stop at R=64, no
  * parity constraint since the odd-count tail) — if you touch one, touch
  * both; they are cross-referenced. Planning side only. */
+/* the two arms of the (R1,R2) ordering race: two il2p plans on one
+ * aliased buffer, re-seeded before every burst */
+typedef struct { vfft_il2p_plan_t *p; double *rz, *r0; size_t nb; } _k1ord_arm_t;
+static void _k1ord_arm_run(void *v)
+{
+    _k1ord_arm_t *c = (_k1ord_arm_t *)v;
+    vfft_il2p_execute_fwd(c->p, c->rz, c->rz);
+}
+static void _k1ord_reseed(void *v)
+{
+    _k1ord_arm_t *c = (_k1ord_arm_t *)v;
+    memcpy(c->rz, c->r0, c->nb);
+}
 static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
                              vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out)
@@ -223,27 +236,26 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
                     r0[i] = (double)(i % 17) * 0.0625 - 0.5;
                 const int reps = N <= 256 ? 64 : (N <= 1024 ? 24 : 8);
                 const size_t nb = 2 * (size_t)N * sizeof(double);
-                double ta = 1e30, tb = 1e30;
-                for (int r = 0; r < 5; r++)
+                double ta, tb;
                 {
-                    /* reseed per burst: repeated in-place fwd amplifies
-                     * magnitudes toward inf (the ZCASC-race hazard). */
-                    memcpy(rz, r0, nb);
-                    double t0 = vfft_proto_now_ns();
-                    for (int i = 0; i < reps; i++)
-                        vfft_il2p_execute_fwd(*il2p_out, rz, rz);
-                    double d = (vfft_proto_now_ns() - t0) / reps;
-                    if (d < ta) ta = d;
-                    memcpy(rz, r0, nb);
-                    t0 = vfft_proto_now_ns();
-                    for (int i = 0; i < reps; i++)
-                        vfft_il2p_execute_fwd(alt, rz, rz);
-                    d = (vfft_proto_now_ns() - t0) / reps;
-                    if (d < tb) tb = d;
+                    _k1ord_arm_t ca = { *il2p_out, rz, r0, nb };
+                    _k1ord_arm_t cb = { alt, rz, r0, nb };
+                    const vfft_race_arm_t arms[2] = {
+                        { "heuristic", _k1ord_arm_run, &ca },
+                        { "swapped", _k1ord_arm_run, &cb } };
+                    /* 5 rounds, A then B, min; reseed before every burst:
+                     * repeated in-place fwd amplifies magnitudes toward inf
+                     * (the ZCASC-race hazard) */
+                    const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MIN, 0, 0,
+                                                      _k1ord_reseed, &ca };
+                    double ns[2];
+                    vfft_race_run(&proto, arms, 2, ns);
+                    ta = ns[0];
+                    tb = ns[1];
                 }
                 /* 3% hysteresis, incumbent (heuristic) keeps ties —
                  * the t2q/t2b precedent exactly. */
-                if (tb < ta * 0.97)
+                if (vfft_race_beats(tb, ta, 0.97))
                 {
                     vfft_il2p_destroy(*il2p_out);
                     *il2p_out = alt;

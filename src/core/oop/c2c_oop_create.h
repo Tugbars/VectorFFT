@@ -41,6 +41,24 @@
 #ifndef VFFT_OOP_C2C_OOP_CREATE_H
 #define VFFT_OOP_C2C_OOP_CREATE_H
 
+/* the two arms of the odd-mid route race: one handle, zroute toggled
+ * (the k1 arm runs with the cascade detached) */
+typedef struct { struct vfft_plan_s *hk; vfft_zturn2_plan_t *zt; double *zi, *zo; } _ztodd_arm_t;
+static void _ztodd_arm_cascade(void *v)
+{
+    _ztodd_arm_t *c = (_ztodd_arm_t *)v;
+    c->hk->zroute = 1;
+    c->hk->zturn = c->zt;
+    vfft_execute((vfft_plan)c->hk, VFFT_FORWARD, c->zi, NULL, c->zo, NULL);
+}
+static void _ztodd_arm_k1(void *v)
+{
+    _ztodd_arm_t *c = (_ztodd_arm_t *)v;
+    c->hk->zroute = 0;
+    c->hk->zturn = NULL;
+    vfft_execute((vfft_plan)c->hk, VFFT_FORWARD, c->zi, NULL, c->zo, NULL);
+    c->hk->zturn = c->zt;
+}
 static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                       vfft_batch ob,
                                       struct vfft_wisdom_s *W,
@@ -561,32 +579,17 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 vfft_execute((vfft_plan)hk,
                                              VFFT_FORWARD, zi2, NULL,
                                              zo2b, NULL); /* warm zt */
-                                for (r2 = 0; r2 < 3; r2++)
                                 {
-                                    struct timespec t0, t1;
-                                    double d;
-                                    hk->zroute = 1;
-                                    clock_gettime(CLOCK_MONOTONIC, &t0);
-                                    vfft_execute((vfft_plan)hk,
-                                                 VFFT_FORWARD, zi2,
-                                                 NULL, zo2b, NULL);
-                                    clock_gettime(CLOCK_MONOTONIC, &t1);
-                                    d = (t1.tv_sec - t0.tv_sec) * 1e9 +
-                                        (t1.tv_nsec - t0.tv_nsec);
-                                    if (d < tzc)
-                                        tzc = d;
-                                    hk->zroute = 0;
-                                    hk->zturn = NULL;
-                                    clock_gettime(CLOCK_MONOTONIC, &t0);
-                                    vfft_execute((vfft_plan)hk,
-                                                 VFFT_FORWARD, zi2,
-                                                 NULL, zo2b, NULL);
-                                    clock_gettime(CLOCK_MONOTONIC, &t1);
-                                    d = (t1.tv_sec - t0.tv_sec) * 1e9 +
-                                        (t1.tv_nsec - t0.tv_nsec);
-                                    if (d < tkc)
-                                        tkc = d;
-                                    hk->zturn = zt_pending;
+                                    _ztodd_arm_t c = { hk, zt_pending, zi2, zo2b };
+                                    const vfft_race_arm_t arms[2] = {
+                                        { "cascade", _ztodd_arm_cascade, &c },
+                                        { "k1", _ztodd_arm_k1, &c } };
+                                    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+                                    double ns[2];
+                                    (void)r2;
+                                    vfft_race_run(&proto, arms, 2, ns);
+                                    tzc = ns[0];
+                                    tkc = ns[1];
                                 }
                                 if (getenv("VFFT_ZT_LOG") ||
                                     getenv("VFFT_NAT_LOG"))

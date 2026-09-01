@@ -322,6 +322,18 @@ static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
  * switch VFFT_ZT_NO_MT (0 forces on — the A/B hook). */
 static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
                           const double *zin, double *zout, int T);
+/* the two arms of the zt-mt race: the same functions execute serves with */
+typedef struct { struct vfft_plan_s *h; double *zi, *zo; } _zt_mt_arm_t;
+static void _zt_mt_arm_st(void *v)
+{
+    _zt_mt_arm_t *c = (_zt_mt_arm_t *)v;
+    vfft_zturn2_execute_fwd(c->h->zturn, c->zi, c->zo);
+}
+static void _zt_mt_arm_mt(void *v)
+{
+    _zt_mt_arm_t *c = (_zt_mt_arm_t *)v;
+    _zt_execute_mt(c->h, VFFT_FORWARD, c->zi, c->zo, c->h->nthreads);
+}
 static void _zt_mt_race(struct vfft_plan_s *h)
 {
     const int N = h->zturn->N;
@@ -356,22 +368,16 @@ static void _zt_mt_race(struct vfft_plan_s *h)
     vfft_zturn2_execute_fwd(h->zturn, zi, zo); /* warm the serial arm too
                                                 * — both arms hot before
                                                 * the alternated timing */
-    for (p = 0; p < 3; p++)
     {
-        struct timespec t0, t1;
-        double d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        vfft_zturn2_execute_fwd(h->zturn, zi, zo);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < st)
-            st = d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < mt)
-            mt = d;
+        _zt_mt_arm_t c = { h, zi, zo };
+        const vfft_race_arm_t arms[2] = { { "serial", _zt_mt_arm_st, &c },
+                                          { "threaded", _zt_mt_arm_mt, &c } };
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        double ns[2];
+        (void)p;
+        vfft_race_run(&proto, arms, 2, ns);
+        st = ns[0];
+        mt = ns[1];
     }
     h->zt_mt = (mt < st);
     if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))

@@ -55,7 +55,7 @@
 #include "vfft_internal.h"                 /* struct vfft_plan_s / vfft_wisdom_s */
 #include "zr2c.h"                          /* the Hermitian fold kernels */
 #include "wisdom2/wisdom2_real_reader.h"   /* the kind-5 route codec */
-#include "support/race_timing.h"           /* the shared clock and median */
+#include "support/race.h"                  /* the shared race body */
 
 /* Defined in vfft.c (tentative definition, external linkage). */
 extern long _vfft_create_race_count;
@@ -239,11 +239,17 @@ static void _bank_zr2c(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 /* forward decls: the race borrows the §6a59 timer/median helpers, defined
  * with the IL A/B machinery further down. */
 static double _il_ab_now(void);
-static double _il_ab_med9(double *v);
 
 /* Race the FULL composite through _exec_zr2c; 3% hysteresis toward the
  * structural default. Both arms are gated correct (zr2c_fd_gate.c).
  * See docs/design/vfft_front_door.md. */
+/* the two arms of the zr2c route race: two finished handles */
+typedef struct { struct vfft_plan_s *h; const double *s0; double *b; } _zr2c_arm_t;
+static void _zr2c_arm_run(void *v)
+{
+    _zr2c_arm_t *c = (_zr2c_arm_t *)v;
+    _exec_zr2c(c->h, c->s0, c->b);
+}
 static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
                                        struct vfft_wisdom_s *W)
 {
@@ -321,25 +327,20 @@ static struct vfft_plan_s *_zr2c_build(const vfft_config_t *cfg, int N,
         reps = 2;
     if (reps > 64)
         reps = 64;
-    double r0[9], r1[9];
-    for (int r = 0; r < 9; r++)
+    double n0, n1;
     {
-        struct vfft_plan_s *first = (r & 1) ? h1 : h0;
-        struct vfft_plan_s *second = (r & 1) ? h0 : h1;
-        t0 = _il_ab_now();
-        for (int i = 0; i < reps; i++)
-            _exec_zr2c(first, s0, b);
-        double tf = (_il_ab_now() - t0) / reps;
-        t0 = _il_ab_now();
-        for (int i = 0; i < reps; i++)
-            _exec_zr2c(second, s0, b);
-        double ts = (_il_ab_now() - t0) / reps;
-        r0[r] = (r & 1) ? ts : tf;
-        r1[r] = (r & 1) ? tf : ts;
+        _zr2c_arm_t c0 = { h0, s0, b }, c1 = { h1, s0, b };
+        const vfft_race_arm_t arms[2] = { { "route0", _zr2c_arm_run, &c0 },
+                                          { "route1", _zr2c_arm_run, &c1 } };
+        /* 9 rounds alternated, median (the est shots above were the warm-up) */
+        const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+        double ns[2];
+        vfft_race_run(&proto, arms, 2, ns);
+        n0 = ns[0];
+        n1 = ns[1];
     }
     STRIDE_ALIGNED_FREE(a);
     STRIDE_ALIGNED_FREE(b);
-    double n0 = _il_ab_med9(r0), n1 = _il_ab_med9(r1);
     int win = (def == 0) ? ((n1 < n0 * 0.97) ? 1 : 0)
                          : ((n0 < n1 * 0.97) ? 0 : 1);
     if (getenv("VFFT_ZRACE_VERBOSE"))

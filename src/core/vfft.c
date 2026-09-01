@@ -394,7 +394,6 @@ static int _calibrate_c2c(int N, size_t K, vfft_rigor_t rigor,
 /* Route pick, same law as _zr2c_build: VFFT_R2C_ROUTE env (never banks) > banked eng=route verdict
  * > race both arms and bank the winner > decouple_min_k default. may_race gates only the race.
  * See docs/design/vfft_front_door.md. */
-static double _il_ab_med9(double *v);
 static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg);
 
 /* cfg.layout -> the wisdom lay= axis (v1.2). Defined here, ABOVE the
@@ -1681,6 +1680,30 @@ static int _il_ab_runs; /* §6a59 gate hook */
 /* _il_ab_now / _il_ab_med9 moved to support/race_timing.h (migration step 5).
  * _il_ab_runs stays HERE: it is mutable file-scope state, and a static in a
  * header is one copy per includer. */
+/* the two arms of the fused-vs-padded A/B */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *zi, *zo, *wrF, *wiF, *wrP, *wiP;
+    int N;
+    size_t K, Kp;
+} _il_ab_ctx_t;
+static void _il_ab_fused(void *v)
+{
+    _il_ab_ctx_t *c = (_il_ab_ctx_t *)v;
+    vfft_proto_execute_fwd_il2il_core(c->h->cplan, c->zi, c->wrF, c->wiF,
+                                      c->zo, c->K);
+}
+static void _il_ab_pad(void *v)
+{
+    _il_ab_ctx_t *c = (_il_ab_ctx_t *)v;
+    _il_pad_dein(c->zi, c->wrP, c->wiP, c->N, c->K, c->Kp);
+    if (c->h->il_pf)
+        c->h->il_pf(c->h->cplan_il, c->wrP, c->wiP, c->Kp, c->Kp, 0);
+    else
+        vfft_proto_execute_fwd(c->h->cplan_il, c->wrP, c->wiP, c->Kp);
+    _il_pad_inter(c->wrP, c->wiP, c->zo, c->N, c->K, c->Kp);
+}
 static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
 {
     const int N = h->N;
@@ -1715,24 +1738,13 @@ static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
         zi[i] = (double)(sd >> 8) / (double)(1u << 24) - 0.5;
     }
     _il_ab_runs++;
-#define _IL_AB_FUSED() \
-    vfft_proto_execute_fwd_il2il_core(h->cplan, zi, wrF, wiF, zo, K)
-#define _IL_AB_PAD()                                           \
-    do                                                         \
-    {                                                          \
-        _il_pad_dein(zi, wrP, wiP, N, K, Kp);                  \
-        if (h->il_pf)                                          \
-            h->il_pf(h->cplan_il, wrP, wiP, Kp, Kp, 0);        \
-        else                                                   \
-            vfft_proto_execute_fwd(h->cplan_il, wrP, wiP, Kp); \
-        _il_pad_inter(wrP, wiP, zo, N, K, Kp);                 \
-    } while (0)
-    /* estimate + reps for a ~10 ms budget */
+    _il_ab_ctx_t c = { h, zi, zo, wrF, wiF, wrP, wiP, N, K, Kp };
+    /* estimate + reps for a ~10 ms budget (the est shots double as warm-up) */
     double t0 = _il_ab_now();
-    _IL_AB_FUSED();
+    _il_ab_fused(&c);
     double ef = _il_ab_now() - t0;
     t0 = _il_ab_now();
-    _IL_AB_PAD();
+    _il_ab_pad(&c);
     double ep = _il_ab_now() - t0;
     double est = ef > ep ? ef : ep;
     int reps = (int)(3.0e5 / (est > 1.0 ? est : 1.0));
@@ -1740,42 +1752,19 @@ static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
         reps = 2;
     if (reps > 64)
         reps = 64;
-    double rf[9], rp[9];
-    for (int r = 0; r < 9; r++)
-    {
-        double tf, tp;
-        if (r & 1)
-        {
-            t0 = _il_ab_now();
-            for (int i = 0; i < reps; i++)
-                _IL_AB_FUSED();
-            tf = (_il_ab_now() - t0) / reps;
-            t0 = _il_ab_now();
-            for (int i = 0; i < reps; i++)
-                _IL_AB_PAD();
-            tp = (_il_ab_now() - t0) / reps;
-        }
-        else
-        {
-            t0 = _il_ab_now();
-            for (int i = 0; i < reps; i++)
-                _IL_AB_PAD();
-            tp = (_il_ab_now() - t0) / reps;
-            t0 = _il_ab_now();
-            for (int i = 0; i < reps; i++)
-                _IL_AB_FUSED();
-            tf = (_il_ab_now() - t0) / reps;
-        }
-        rf[r] = tf;
-        rp[r] = tp;
-    }
-    double fn = _il_ab_med9(rf), pn = _il_ab_med9(rp);
-    int verdict = (pn < fn * 0.97) ? (int)Kp : (int)K;
+    /* 9 rounds, padded first on even rounds, median; 3% toward the tight arm */
+    const vfft_race_arm_t arms[2] = { { "padded", _il_ab_pad, &c },
+                                      { "fused", _il_ab_fused, &c } };
+    const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+    double ns[2];
+    vfft_race_run(&proto, arms, 2, ns);
+    double pn = ns[0], fn = ns[1];
+    int verdict = vfft_race_beats(pn, fn, 0.97) ? (int)Kp : (int)K;
     /* roundtrip-gate the winner (fwd through the winner arm, bwd through
      * the matching arm) — failure -> K, the always-safe incumbent. */
     if (verdict == (int)Kp)
     {
-        _IL_AB_PAD();
+        _il_ab_pad(&c);
         _il_pad_dein(zo, wrP, wiP, N, K, Kp);
         if (h->il_pb)
             h->il_pb(h->cplan_il, wrP, wiP, Kp, Kp, 0);
@@ -1794,8 +1783,6 @@ static int _il_ab_race(struct vfft_plan_s *h, size_t K, size_t Kp)
         if (mx > 1e-11)
             verdict = (int)K;
     }
-#undef _IL_AB_FUSED
-#undef _IL_AB_PAD
     STRIDE_ALIGNED_FREE(zi);
     STRIDE_ALIGNED_FREE(zo);
     STRIDE_ALIGNED_FREE(wrF);

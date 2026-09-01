@@ -121,6 +121,20 @@ static void _pq_execute(struct vfft_plan_s *h, vfft_dir_t dir,
  * scratch). The queue also self-gates: no pool, no clones, or a clone
  * failing the BITWISE probe against the primary => pq_mt stays 0 and
  * the loop serves (the primary keeps its own intra-MT verdicts). */
+/* the two arms of the plane-queue race: one handle, pq_mt toggled */
+typedef struct { struct vfft_plan_s *h; vfft_dir_t dir; double *src, *dst; } _pq_mt_arm_t;
+static void _pq_mt_arm_loop(void *v)
+{
+    _pq_mt_arm_t *c = (_pq_mt_arm_t *)v;
+    c->h->pq_mt = 0;
+    _pq_execute(c->h, c->dir, c->src, c->dst);
+}
+static void _pq_mt_arm_queue(void *v)
+{
+    _pq_mt_arm_t *c = (_pq_mt_arm_t *)v;
+    c->h->pq_mt = 1;
+    _pq_execute(c->h, c->dir, c->src, c->dst);
+}
 static void _pq_mt_race(struct vfft_plan_s *h)
 {
     const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
@@ -151,24 +165,16 @@ static void _pq_mt_race(struct vfft_plan_s *h)
     _pq_execute(h, dir, src, dst); /* warm the loop arm */
     h->pq_mt = 1;
     _pq_execute(h, dir, src, dst); /* warm the queue arm */
-    for (r = 0; r < 3; r++)
     {
-        struct timespec t0, t1;
-        double d;
-        h->pq_mt = 0;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _pq_execute(h, dir, src, dst);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < tl)
-            tl = d;
-        h->pq_mt = 1;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _pq_execute(h, dir, src, dst);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < tq)
-            tq = d;
+        _pq_mt_arm_t c = { h, dir, src, dst };
+        const vfft_race_arm_t arms[2] = { { "loop", _pq_mt_arm_loop, &c },
+                                          { "queue", _pq_mt_arm_queue, &c } };
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        double ns[2];
+        (void)r;
+        vfft_race_run(&proto, arms, 2, ns);
+        tl = ns[0];
+        tq = ns[1];
     }
     h->pq_mt = (tq < tl);
     if (getenv("VFFT_IL2D_LOG"))

@@ -57,7 +57,7 @@
 
 #include "planner.h"                /* the proto plan + its create/destroy */
 #include "executor.h"               /* vfft_proto_execute_fwd */
-#include "support/race_timing.h"    /* the shared clock */
+#include "support/race.h"           /* the shared race body */
 
 /* Defined in vfft.c (tentative definition, external linkage). */
 extern long _vfft_create_race_count;
@@ -65,17 +65,6 @@ extern long _vfft_create_race_count;
 /* TIGHT-vs-PADDED A/B for misaligned K: race te at stride K (me=K) against ae at stride Kp
  * (me=Kp), alternating order + median; returns Kp/K (3% toward K), or 0 if the winner fails roundtrip. */
 #define _VFFT_PADVW 4
-static int _pad_dcmp(const void *a, const void *b)
-{
-    double d = *(const double *)a - *(const double *)b;
-    return d < 0 ? -1 : d > 0 ? 1
-                              : 0;
-}
-static double _pad_med(double *v, int n)
-{
-    qsort(v, n, sizeof(double), _pad_dcmp);
-    return n & 1 ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
-}
 static void _pad_fill(double *re, double *im, int N, size_t K, size_t Kp)
 {
     srand(7 + N + (int)K);
@@ -96,6 +85,17 @@ static double _pad_burst(stride_plan_t *p, vfft_proto_exec_fn jf, double *re, do
         for (int i = 0; i < reps; i++)
             vfft_proto_execute_fwd(p, re, im, me);
     return vfft_proto_now_ns() - t0;
+}
+/* the arms of the pad-vs-tight race: one plan each at its own stride, the
+ * baked executor when one exists (given to BOTH arms) */
+typedef struct { stride_plan_t *p; vfft_proto_exec_fn jf; double *re, *im; size_t me; } _pad_arm_t;
+static void _pad_arm_run(void *v)
+{
+    _pad_arm_t *c = (_pad_arm_t *)v;
+    if (c->jf)
+        c->jf(c->p, c->re, c->im, c->me, c->p->K, 0);
+    else
+        vfft_proto_execute_fwd(c->p, c->re, c->im, c->me);
 }
 static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_registry_t *reg,
                           const vfft_proto_wisdom_entry_t *te, const vfft_proto_wisdom_entry_t *ae)
@@ -163,27 +163,19 @@ static int _calibrate_pad(int N, size_t K, vfft_rigor_t rigor, const vfft_proto_
         _pad_burst(pP, jfP, rP, iP, Kp, reps);
     }
     int RR = (rigor == VFFT_MEASURE) ? 31 : 81;
-    double rt[128], rp[128];
-    if (RR > 128)
-        RR = 128;
-    for (int r = 0; r < RR; r++)
+    double tight_ns, pad_ns;
     {
-        double t, p;
-        if (r & 1)
-        {
-            t = _pad_burst(pT, jfT, rT, iT, K, reps);
-            p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
-        }
-        else
-        {
-            p = _pad_burst(pP, jfP, rP, iP, Kp, reps);
-            t = _pad_burst(pT, jfT, rT, iT, K, reps);
-        }
-        rt[r] = t / reps;
-        rp[r] = p / reps;
+        _pad_arm_t cT = { pT, jfT, rT, iT, K }, cP = { pP, jfP, rP, iP, Kp };
+        const vfft_race_arm_t arms[2] = { { "padded", _pad_arm_run, &cP },
+                                          { "tight", _pad_arm_run, &cT } };
+        /* RR rounds, padded first on even rounds, median (warm-up above) */
+        const vfft_race_proto_t proto = { RR, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+        double ns[2];
+        vfft_race_run(&proto, arms, 2, ns);
+        pad_ns = ns[0];
+        tight_ns = ns[1];
     }
-    double tight_ns = _pad_med(rt, RR), pad_ns = _pad_med(rp, RR);
-    int pad_wins = (pad_ns < tight_ns * 0.97); /* 3% hysteresis toward TIGHT */
+    int pad_wins = vfft_race_beats(pad_ns, tight_ns, 0.97); /* 3% hysteresis toward TIGHT */
     int exec_me = pad_wins ? (int)Kp : (int)K;
 
     /* Roundtrip-gate the winner AT ITS OWN STRIDE (recover N*x on the K live
