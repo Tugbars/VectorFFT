@@ -483,7 +483,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                     r0[i] = (double)rand() / RAND_MAX - 0.5;
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
-                                double ti[5], tz[5];
+                                double ns[2]; /* [0] incumbent, [1] zcasc */
+                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, rz, r0,
+                                                        2 * (size_t)N * sizeof(double) };
+                                const vfft_race_arm_t arms[2] = {
+                                    { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
+                                /* 5 rounds, odd rounds reversed, median-of-5; no reseed: src is
+                                 * read-only in OOP fwd (r0 -> rz) */
+                                const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
                                 /* GROW-ONLY, like the five sibling copies of this
                                  * race body (c2c_ip_create.h). The public setter
                                  * SHRINKS: with the house spelling nthreads=1 for
@@ -491,56 +498,23 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                  * down to 1 for the whole process on every IL-2D
                                  * OOP row child. pool_preserve_gate asserts this. */
                                 _vfft_pool_arm(hk->nthreads);
-                                for (int r = 0; r < 5; r++)
-                                {
-                                    for (int a = 0; a < 2; a++)
-                                    {
-                                        const int arm = (r & 1) ? 1 - a : a;
-                                        const double t0 = vfft_proto_now_ns();
-                                        for (int i = 0; i < reps; i++)
-                                        {
-                                            if (arm == 0)
-                                                vfft_execute(hk, VFFT_FORWARD,
-                                                             r0, NULL,
-                                                             rz, NULL);
-                                            else
-                                                vfft_zturn2_execute_fwd(
-                                                    zct, r0, rz);
-                                        }
-                                        const double dt =
-                                            (vfft_proto_now_ns() - t0) / reps;
-                                        if (arm == 0) ti[r] = dt;
-                                        else tz[r] = dt;
-                                    }
-                                }
-                                for (int a = 0; a < 2; a++)
-                                {
-                                    double *v = a ? tz : ti;
-                                    for (int i = 1; i < 5; i++)
-                                        for (int j = i;
-                                             j > 0 && v[j] < v[j - 1]; j--)
-                                        {
-                                            double t = v[j];
-                                            v[j] = v[j - 1];
-                                            v[j - 1] = t;
-                                        }
-                                }
-                                if (tz[2] < ti[2])
+                                vfft_race_run(&proto, arms, 2, ns);
+                                if (ns[1] < ns[0])
                                 {
                                     hk->zturn = zct;
                                     hk->zroute = 1;
                                     zct = NULL;
                                     _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_ZCASC,
-                                                    tz[2]);
+                                                    ns[1]);
                                 }
                                 else
                                     _bank_natoop_1d(W, cfg, N, K, VFFT_NAT_FREE,
-                                                    ti[2]);
+                                                    ns[0]);
                                 if (getenv("VFFT_NAT_LOG"))
                                     fprintf(stderr,
                                             "[natorder] N=%d K=%zu OOP "
                                             "zcasc=%.0fns engine=%.0fns -> "
-                                            "%s\n", N, K, tz[2], ti[2],
+                                            "%s\n", N, K, ns[1], ns[0],
                                             hk->zturn ? "ZCASC-OOP"
                                                       : "engine");
                             }
