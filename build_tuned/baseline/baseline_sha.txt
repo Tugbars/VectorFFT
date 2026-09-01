@@ -1,2 +1,2 @@
-b2e5aaeca15b222aa1d4eb2fa9e86341eabc3892
-# short: b2e5aaec  (re-stamped after Phase-3 item A: _c2c_oop_finish(h, zt_mt) + _real_finish(h) single exits + trig persist-after-success; TWO bodies changed by design (_vfft_create_c2c_oop, _vfft_create_inner), zero symbol churn, ALL censuses identical, golden/fp byte-identical, gates pool_preserve/k1scr/mt_c2c/zr2c_fd/wisdom2_real green)
+404dd4761bb7931b1d9607e001646ab39b62e5ea
+# short: 404dd476  (re-stamped after Phase-3 item B: vfft_natorder_race on support/race.h (25/37 racers) + bluestein create-path save gated by cfg->wisdom_write; THREE bodies changed by design, two arm statics new, race census IDENTICAL, golden/fp byte-identical, gates natorder_scratch/mt_c2c/pool_preserve green)
