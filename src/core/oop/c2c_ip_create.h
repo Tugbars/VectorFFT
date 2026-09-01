@@ -41,6 +41,57 @@
 #ifndef VFFT_OOP_C2C_IP_CREATE_H
 #define VFFT_OOP_C2C_IP_CREATE_H
 
+/* ── the arms of the natural / scr-mode MEASURE races ────────────────
+ * One context serves the five sites (four here, one in c2c_oop_create.h):
+ * the incumbent is THIS handle's real execute (in-place door, or the OOP
+ * door when oop=1); the challenger is whichever candidate the site built —
+ * the natord cascade (zt/zs by zroute) or the IL engine (il2/il3/ilp). The
+ * protocol constants stay at each site (support/race.h). */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    int oop;                    /* 1: vfft_execute(h, FWD, r0 -> rz) */
+    vfft_zturn2_plan_t *zt;     /* cascade challenger, route by zroute */
+    vfft_zsplit_plan_t *zs;
+    int zroute;
+    vfft_il2p_plan_t *il2;      /* IL challenger: first non-NULL serves */
+    vfft_il3p_plan_t *il3;
+    vfft_ilprime_plan_t *ilp;
+    double *rz, *r0;            /* the aliased race buffer and its seed */
+    size_t nb;                  /* bytes to re-seed per burst */
+} _c2c_race_ctx_t;
+static void _c2c_race_inc(void *v)
+{
+    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
+    if (c->oop)
+        vfft_execute(c->h, VFFT_FORWARD, c->r0, NULL, c->rz, NULL);
+    else
+        _exec_c2c_interleaved(c->h, VFFT_FORWARD, c->rz, c->rz);
+}
+static void _c2c_race_chal(void *v)
+{
+    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
+    const double *in = c->oop ? c->r0 : c->rz;
+    if (c->zt || c->zs)
+    {
+        if (c->zroute)
+            vfft_zturn2_execute_fwd(c->zt, in, c->rz);
+        else
+            vfft_zsplit_execute_fwd(c->zs, in, c->rz);
+    }
+    else if (c->il2)
+        vfft_il2p_execute_fwd(c->il2, in, c->rz);
+    else if (c->il3)
+        vfft_il3p_execute_fwd(c->il3, in, c->rz);
+    else
+        vfft_ilprime_execute_fwd(c->ilp, in, c->rz);
+}
+static void _c2c_race_reseed(void *v)
+{
+    _c2c_race_ctx_t *c = (_c2c_race_ctx_t *)v;
+    memcpy(c->rz, c->r0, c->nb);
+}
+
 static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                      vfft_batch ob,
                                      struct vfft_wisdom_s *W,
@@ -709,37 +760,16 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     for (long i = 0; i < 2L * N; i++)
                         r0[i] = (double)rand() / RAND_MAX - 0.5;
                     const int reps = N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
-                    double ti[5], tz[5];
+                    double ns[2]; /* [0] incumbent, [1] zcasc */
+                    _c2c_race_ctx_t rc = { h, 0, zct, NULL, 1, NULL, NULL, NULL, rz, r0,
+                                            2 * (size_t)N * sizeof(double) };
+                    const vfft_race_arm_t arms[2] = {
+                        { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
+                    /* 5 rounds, odd rounds reversed, median-of-5; reseed per burst */
+                    const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, _c2c_race_reseed, &rc };
                     _vfft_pool_arm(h->nthreads);
-                    for (int r = 0; r < 5; r++)
-                    {
-                        for (int a = 0; a < 2; a++)
-                        {
-                            const int arm = (r & 1) ? 1 - a : a;
-                            memcpy(rz, r0, 2 * (size_t)N * sizeof(double));
-                            const double t0 = vfft_proto_now_ns();
-                            for (int i = 0; i < reps; i++)
-                            {
-                                if (arm == 0)
-                                    _exec_c2c_interleaved(h, VFFT_FORWARD,
-                                                          rz, rz);
-                                else
-                                    vfft_zturn2_execute_fwd(zct, rz, rz);
-                            }
-                            const double dt =
-                                (vfft_proto_now_ns() - t0) / reps;
-                            if (arm == 0) ti[r] = dt; else tz[r] = dt;
-                        }
-                    }
-                    /* median of 5 (tiny insertion sort) */
-                    for (int a = 0; a < 2; a++)
-                    {
-                        double *v = a ? tz : ti;
-                        for (int i = 1; i < 5; i++)
-                            for (int j = i; j > 0 && v[j] < v[j - 1]; j--)
-                            { double t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
-                    }
-                    if (tz[2] < ti[2])
+                    vfft_race_run(&proto, arms, 2, ns);
+                    if (ns[1] < ns[0])
                     {
                         h->zturn = zct;
                         h->zroute = 1;
@@ -753,7 +783,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                          * factor loop walk off the entry: nondeterministic
                          * segfault + garbage @nat lines). h->cplan is the
                          * live deployed plan on every path. */
-                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ZCASC, tz[2],
+                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ZCASC, ns[1],
                                      h->cplan->factors, h->cplan->variants,
                                      h->cplan->num_stages,
                                      h->cplan->use_dif_forward);
@@ -767,7 +797,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                         fprintf(stderr,
                                 "[natorder] N=%d K=%zu zcasc=%.0fns "
                                 "incumbent=%.0fns -> %s\n",
-                                N, K, tz[2], ti[2],
+                                N, K, ns[1], ns[0],
                                 h->nat_mode == VFFT_NAT_ZCASC ? "ZCASC"
                                                               : "tape");
                 }
@@ -795,38 +825,16 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     for (long i = 0; i < 2L * N; i++)
                         r0[i] = (double)rand() / RAND_MAX - 0.5;
                     const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
-                    double ti[5], tz[5];
+                    double ns[2]; /* [0] incumbent, [1] ilp */
+                    _c2c_race_ctx_t rc = { h, 0, NULL, NULL, 0, ilc2, ilc3, NULL, rz, r0,
+                                            2 * (size_t)N * sizeof(double) };
+                    const vfft_race_arm_t arms[2] = {
+                        { "incumbent", _c2c_race_inc, &rc }, { "ilp", _c2c_race_chal, &rc } };
+                    /* 5 rounds, odd rounds reversed, median-of-5; reseed per burst */
+                    const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, _c2c_race_reseed, &rc };
                     _vfft_pool_arm(h->nthreads);
-                    for (int r = 0; r < 5; r++)
-                    {
-                        for (int a = 0; a < 2; a++)
-                        {
-                            const int arm = (r & 1) ? 1 - a : a;
-                            memcpy(rz, r0, 2 * (size_t)N * sizeof(double));
-                            const double t0 = vfft_proto_now_ns();
-                            for (int i = 0; i < reps; i++)
-                            {
-                                if (arm == 0)
-                                    _exec_c2c_interleaved(h, VFFT_FORWARD,
-                                                          rz, rz);
-                                else if (ilc2)
-                                    vfft_il2p_execute_fwd(ilc2, rz, rz);
-                                else
-                                    vfft_il3p_execute_fwd(ilc3, rz, rz);
-                            }
-                            const double dt =
-                                (vfft_proto_now_ns() - t0) / reps;
-                            if (arm == 0) ti[r] = dt; else tz[r] = dt;
-                        }
-                    }
-                    for (int a = 0; a < 2; a++)
-                    {
-                        double *v = a ? tz : ti;
-                        for (int i = 1; i < 5; i++)
-                            for (int j = i; j > 0 && v[j] < v[j - 1]; j--)
-                            { double t = v[j]; v[j] = v[j - 1]; v[j - 1] = t; }
-                    }
-                    if (tz[2] < ti[2])
+                    vfft_race_run(&proto, arms, 2, ns);
+                    if (ns[1] < ns[0])
                     {
                         h->k1il2p = ilc2;
                         h->k1il3p = ilc3;
@@ -835,7 +843,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                         h->nat_mode = VFFT_NAT_ILP;
                         /* h->cplan, not p — same dangling-p hazard as the
                          * ZCASC bank above (chain is informational here). */
-                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ILP, tz[2],
+                        _bank_nat_1d(W, cfg, N, K, VFFT_NAT_ILP, ns[1],
                                      h->cplan->factors, h->cplan->variants,
                                      h->cplan->num_stages,
                                      h->cplan->use_dif_forward);
@@ -844,7 +852,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                         fprintf(stderr,
                                 "[natorder] N=%d K=%zu ilp=%.0fns "
                                 "incumbent=%.0fns -> %s\n",
-                                N, K, tz[2], ti[2],
+                                N, K, ns[1], ns[0],
                                 h->nat_mode == VFFT_NAT_ILP ? "ILP" : "tape");
                 }
                 free(rz);
@@ -942,55 +950,24 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     if (rz && r0)
                     {
                         const int reps = N <= 4096 ? 32 : 8;
-                        double ti[5], tz[5];
+                        double ns[2]; /* [0] incumbent, [1] zcasc */
+                        _c2c_race_ctx_t rc = { h, 0, ipzt, ipzs, ipzr, NULL, NULL, NULL, rz, r0,
+                                                2 * (size_t)N * sizeof(double) };
+                        const vfft_race_arm_t arms[2] = {
+                            { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
+                        /* 5 rounds, odd rounds reversed, median-of-5; reseed per burst */
+                        const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, _c2c_race_reseed, &rc };
                         for (long i2 = 0; i2 < 2L * N; i2++)
                             r0[i2] = (double)rand() / RAND_MAX - 0.5;
                         _vfft_pool_arm(h->nthreads);
-                        for (int r = 0; r < 5; r++)
-                            for (int a = 0; a < 2; a++)
-                            {
-                                const int arm = (r & 1) ? 1 - a : a;
-                                double t0, dt;
-                                memcpy(rz, r0,
-                                       2 * (size_t)N * sizeof(double));
-                                t0 = vfft_proto_now_ns();
-                                for (int i2 = 0; i2 < reps; i2++)
-                                {
-                                    if (arm == 0)
-                                        _exec_c2c_interleaved(
-                                            h, VFFT_FORWARD, rz, rz);
-                                    else if (ipzr)
-                                        vfft_zturn2_execute_fwd(ipzt, rz,
-                                                                rz);
-                                    else
-                                        vfft_zsplit_execute_fwd(ipzs, rz,
-                                                                rz);
-                                }
-                                dt = (vfft_proto_now_ns() - t0) / reps;
-                                if (arm == 0)
-                                    ti[r] = dt;
-                                else
-                                    tz[r] = dt;
-                            }
-                        for (int a = 0; a < 2; a++)
-                        {
-                            double *v = a ? tz : ti;
-                            for (int i2 = 1; i2 < 5; i2++)
-                                for (int j2 = i2;
-                                     j2 > 0 && v[j2] < v[j2 - 1]; j2--)
-                                {
-                                    double tt = v[j2];
-                                    v[j2] = v[j2 - 1];
-                                    v[j2 - 1] = tt;
-                                }
-                        }
+                        vfft_race_run(&proto, arms, 2, ns);
                         if (getenv("VFFT_NAT_LOG"))
                             fprintf(stderr,
                                     "[scrmode] N=%d K=%zu conv=%.0fns "
                                     "zcasc=%.0fns -> %s\n",
-                                    N, K, ti[2], tz[2],
-                                    tz[2] < ti[2] ? "ZCASC" : "conv");
-                        if (tz[2] < ti[2])
+                                    N, K, ns[0], ns[1],
+                                    ns[1] < ns[0] ? "ZCASC" : "conv");
+                        if (ns[1] < ns[0])
                         {
                             h->zsplit = ipzs;
                             h->zturn = ipzt;
@@ -998,7 +975,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                             ipzs = NULL;
                             ipzt = NULL;
                             _bank_scrmode_1d(W, cfg, N, K,
-                                             VFFT_NAT_ZCASC, tz[2],
+                                             VFFT_NAT_ZCASC, ns[1],
                                              h->cplan->factors,
                                              h->cplan->variants,
                                              h->cplan->num_stages,
@@ -1006,7 +983,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                         }
                         else
                             _bank_scrmode_1d(W, cfg, N, K, VFFT_NAT_CONV,
-                                             ti[2], h->cplan->factors,
+                                             ns[0], h->cplan->factors,
                                              h->cplan->variants,
                                              h->cplan->num_stages,
                                              h->cplan->use_dif_forward);
@@ -1068,63 +1045,24 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                             const int reps =
                                 N <= 256 ? 200
                                          : (N <= 1024 ? 80 : 32);
-                            double ti[5], tz[5];
+                            double ns[2]; /* [0] incumbent, [1] ilp */
+                            _c2c_race_ctx_t rc = { h, 0, NULL, NULL, 0, ilc2, ilc3, ilcp, rz, r0,
+                                                    2 * (size_t)N * sizeof(double) };
+                            const vfft_race_arm_t arms[2] = {
+                                { "incumbent", _c2c_race_inc, &rc }, { "ilp", _c2c_race_chal, &rc } };
+                            /* 5 rounds, odd rounds reversed, median-of-5; reseed per burst */
+                            const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, _c2c_race_reseed, &rc };
                             for (long i2 = 0; i2 < 2L * N; i2++)
                                 r0[i2] = (double)rand() / RAND_MAX - 0.5;
                             _vfft_pool_arm(h->nthreads);
-                            for (int r = 0; r < 5; r++)
-                                for (int a = 0; a < 2; a++)
-                                {
-                                    const int arm = (r & 1) ? 1 - a : a;
-                                    double t0, dt;
-                                    memcpy(rz, r0,
-                                           2 * (size_t)N
-                                               * sizeof(double));
-                                    t0 = vfft_proto_now_ns();
-                                    for (int i2 = 0; i2 < reps; i2++)
-                                    {
-                                        if (arm == 0)
-                                            _exec_c2c_interleaved(
-                                                h, VFFT_FORWARD, rz, rz);
-                                        else if (ilc2)
-                                            vfft_il2p_execute_fwd(ilc2,
-                                                                  rz,
-                                                                  rz);
-                                        else if (ilc3)
-                                            vfft_il3p_execute_fwd(ilc3,
-                                                                  rz,
-                                                                  rz);
-                                        else
-                                            vfft_ilprime_execute_fwd(
-                                                ilcp, rz, rz);
-                                    }
-                                    dt = (vfft_proto_now_ns() - t0)
-                                         / reps;
-                                    if (arm == 0)
-                                        ti[r] = dt;
-                                    else
-                                        tz[r] = dt;
-                                }
-                            for (int a = 0; a < 2; a++)
-                            {
-                                double *v = a ? tz : ti;
-                                for (int i2 = 1; i2 < 5; i2++)
-                                    for (int j2 = i2;
-                                         j2 > 0 && v[j2] < v[j2 - 1];
-                                         j2--)
-                                    {
-                                        double tt = v[j2];
-                                        v[j2] = v[j2 - 1];
-                                        v[j2 - 1] = tt;
-                                    }
-                            }
+                            vfft_race_run(&proto, arms, 2, ns);
                             if (getenv("VFFT_NAT_LOG"))
                                 fprintf(stderr,
                                         "[scrmode] N=%d K=%zu conv=%.0fns "
                                         "ilp=%.0fns -> %s\n",
-                                        N, K, ti[2], tz[2],
-                                        tz[2] < ti[2] ? "ILP" : "conv");
-                            if (tz[2] < ti[2])
+                                        N, K, ns[0], ns[1],
+                                        ns[1] < ns[0] ? "ILP" : "conv");
+                            if (ns[1] < ns[0])
                             {
                                 h->k1il2p = ilc2;
                                 h->k1il3p = ilc3;
@@ -1133,7 +1071,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                 ilc3 = NULL;
                                 ilcp = NULL;
                                 _bank_scrmode_1d(
-                                    W, cfg, N, K, VFFT_NAT_ILP, tz[2],
+                                    W, cfg, N, K, VFFT_NAT_ILP, ns[1],
                                     h->cplan->factors,
                                     h->cplan->variants,
                                     h->cplan->num_stages,
@@ -1141,7 +1079,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                             }
                             else
                                 _bank_scrmode_1d(
-                                    W, cfg, N, K, VFFT_NAT_CONV, ti[2],
+                                    W, cfg, N, K, VFFT_NAT_CONV, ns[0],
                                     h->cplan->factors,
                                     h->cplan->variants,
                                     h->cplan->num_stages,

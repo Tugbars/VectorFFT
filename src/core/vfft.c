@@ -20,6 +20,7 @@
 #include "wisdom2/wisdom2_real_reader.h" /* wisdom2: r2c/c2r ROUTE verdicts (wave-2 flip) */
 #include "support/diag.h"              /* loud-refusal helpers: _vfft_warn, _vfft_tname (step 6a) */
 #include "support/race_timing.h"        /* the racers' shared clock + median (step 5) */
+#include "support/race.h"               /* the one race body: arms x protocol -> aggregates */
 #include "wisdom2/wisdom2_oop_reader.h" /* wisdom2: THE store (wave-1 flip) — reads via
                                            the vw2_oop_* twins, banks via the shared
                                            family codec. See src/core/wisdom2/README.md */
