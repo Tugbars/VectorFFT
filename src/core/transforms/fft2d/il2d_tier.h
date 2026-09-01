@@ -699,6 +699,67 @@ static int _il2d_rowsplit_build(const vfft_config_t *cfg, int Wb, int N2,
  * inputs — no compounding, no refills). Winner installed on h + banked
  * (chain + rw) in the direction-shared lay=il real cell. MUST run after
  * the h-> field commits (it executes h — the axis-race law). */
+/* ── the arms of the il2d races (support/race.h): one context, the same
+ * functions execute serves with. For the column-MT race the threaded arm
+ * reports whether it could engage; the race runs to completion either way
+ * and the site banks the "no" afterwards. */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *a, *z;          /* real plane / complex scratch (in place) */
+    int isr;                /* rows: r2c fwd (a -> z) or c2r bwd (z -> a) */
+    int ok;                 /* colmt: the threaded arm engaged */
+    /* chain candidate (the chain race) */
+    int N1;
+    size_t N2;
+    int nst;
+    const int *R;
+    int *Ls;
+    vfft_il2p_fn *ff;
+    double **tf;
+} _il2d_race_ctx_t;
+static void _il2d_arm_cols(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    _il2d_real_cols(c->h, c->z, c->z, 0);
+}
+static void _il2d_arm_cols_mt(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    if (c->ok && !_il2d_real_cols_mt(c->h, c->z, c->z, 0, c->h->nthreads))
+        c->ok = 0; /* the threaded arm cannot engage on this cell */
+}
+static void _il2d_arm_rows(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    if (c->isr)
+        _il2d_real_rows_fwd(c->h, c->a, c->z);
+    else
+        _il2d_real_rows_bwd(c->h, c->z, c->a);
+}
+static void _il2d_arm_exec_st(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_colmt = 0;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+static void _il2d_arm_exec_mt(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_colmt = 1;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+static void _il2d_arm_exec(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+static void _il2d_arm_chain(void *v)
+{
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls, c->ff,
+                   c->tf, /*reverse=*/0);
+}
 static void _il2d_real_rowrace(struct vfft_plan_s *h,
                                struct vfft_wisdom_s *W,
                                const vfft_config_t *cfg, int N1, int N2)
@@ -728,22 +789,14 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
     for (i = 0; i < 2 * CN + 8; i++)
         bz[i] = 1.0 + 1e-6 * (double)(i & 511);
     /* arm 0: the per-row TC door */
+    _il2d_race_ctx_t rc = { h, a, bz, isr, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
+    const vfft_race_arm_t rows_arm = { "rows", _il2d_arm_rows, &rc };
+    const vfft_race_arm_t cols_arm = { "cols", _il2d_arm_cols, &rc };
+    const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+    (void)p;
     h->il2d_rows = NULL;
     h->il2d_rw = 0;
-    for (p = 0; p < 3; p++)
-    {
-        struct timespec t0, t1;
-        double d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        if (isr)
-            _il2d_real_rows_fwd(h, a, bz);
-        else
-            _il2d_real_rows_bwd(h, bz, a);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < bestns)
-            bestns = d;
-    }
+    vfft_race_run(&proto, &rows_arm, 1, &bestns);
     for (pi = 0; pi < 4; pi++)
     {
         const int Wb = POOL[pi];
@@ -763,21 +816,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         h->il2d_lim = lim;
         h->il2d_tre = tre;
         h->il2d_tim = tim;
-        for (p = 0; p < 3; p++)
-        {
-            struct timespec t0, t1;
-            double d;
-            clock_gettime(CLOCK_MONOTONIC, &t0);
-            if (isr)
-                _il2d_real_rows_fwd(h, a, bz);
-            else
-                _il2d_real_rows_bwd(h, bz, a);
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            d = (t1.tv_sec - t0.tv_sec) * 1e9
-                + (t1.tv_nsec - t0.tv_nsec);
-            if (d < ns)
-                ns = d;
-        }
+        vfft_race_run(&proto, &rows_arm, 1, &ns);
         if (ns < bestns)
         {
             if (brows)
@@ -820,18 +859,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         int bwl = 0, bcut = 0;
         h->il2d_wl = 0;
         h->il2d_cut = 0;
-        for (p = 0; p < 3; p++)
-        {
-            struct timespec t0, t1;
-            double d;
-            clock_gettime(CLOCK_MONOTONIC, &t0);
-            _il2d_real_cols(h, bz, bz, 0);
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            d = (t1.tv_sec - t0.tv_sec) * 1e9
-                + (t1.tv_nsec - t0.tv_nsec);
-            if (d < cbest)
-                cbest = d;
-        }
+        vfft_race_run(&proto, &cols_arm, 1, &cbest);
         for (wi = 0; wi < 6 && nwl < 14; wi++)
             if (_il2d_real_wl_cut(h, WPOOL[wi]) >= 0 && WPOOL[wi] < N1)
                 wlc[nwl++] = WPOOL[wi];
@@ -855,18 +883,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
             double ns = 1e300;
             h->il2d_wl = wlc[wi];
             h->il2d_cut = cut;
-            for (p = 0; p < 3; p++)
-            {
-                struct timespec t0, t1;
-                double d;
-                clock_gettime(CLOCK_MONOTONIC, &t0);
-                _il2d_real_cols(h, bz, bz, 0);
-                clock_gettime(CLOCK_MONOTONIC, &t1);
-                d = (t1.tv_sec - t0.tv_sec) * 1e9
-                    + (t1.tv_nsec - t0.tv_nsec);
-                if (d < ns)
-                    ns = d;
-            }
+            vfft_race_run(&proto, &cols_arm, 1, &ns);
             if (ns < cbest)
             {
                 cbest = ns;
@@ -913,18 +930,17 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         return;
     for (i = 0; i < 2 * CN + 8; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 511);
-    for (p = 0; p < 3; p++)
     {
-        struct timespec t0, t1;
-        double d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        _il2d_real_cols(h, z, z, 0);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < st)
-            st = d;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        if (!_il2d_real_cols_mt(h, z, z, 0, h->nthreads))
+        _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
+        const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_cols, &rc },
+                                          { "threaded", _il2d_arm_cols_mt, &rc } };
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        double ns[2];
+        (void)p;
+        vfft_race_run(&proto, arms, 2, ns);
+        st = ns[0];
+        mt = ns[1];
+        if (!rc.ok)
         {
             /* the threaded arm cannot even engage on this cell */
             free(z);
@@ -934,10 +950,6 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             _vw2_persist(W, cfg);
             return;
         }
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < mt)
-            mt = d;
     }
     h->il2d_colmt = (mt < st);
     free(z);
@@ -978,18 +990,13 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
             continue;
         if (_il2d_build_tables(N1, lens[ci], cand[ci], Ls, tf, tb))
             continue;
-        for (p = 0; p < 3; p++)
         {
-            struct timespec t0, t1;
-            double d;
-            clock_gettime(CLOCK_MONOTONIC, &t0);
-            _il2d_col_pass(z, z, N1, (size_t)N2, 0, lens[ci], cand[ci],
-                           Ls, ff, tf, /*reverse=*/0);
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            d = (t1.tv_sec - t0.tv_sec) * 1e9
-                + (t1.tv_nsec - t0.tv_nsec);
-            if (d < ns)
-                ns = d;
+            _il2d_race_ctx_t rc = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
+                                    lens[ci], cand[ci], Ls, ff, tf };
+            const vfft_race_arm_t arm = { "chain", _il2d_arm_chain, &rc };
+            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+            (void)p;
+            vfft_race_run(&proto, &arm, 1, &ns);
         }
         for (s2 = 0; s2 < lens[ci]; s2++)
         {
@@ -1121,19 +1128,13 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             h->il2d_rowoop = ro;
             h->il2d_rowo = ro ? rowo : NULL;
             h->il2d_rowscr = ro ? rowscr : NULL;
-            for (p2 = 0; p2 < 2; p2++)
             {
-                struct timespec t0, t1;
-                double d;
-                int k;
-                clock_gettime(CLOCK_MONOTONIC, &t0);
-                for (k = 0; k < reps; k++)
-                    vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL);
-                clock_gettime(CLOCK_MONOTONIC, &t1);
-                d = ((t1.tv_sec - t0.tv_sec) * 1e9
-                     + (t1.tv_nsec - t0.tv_nsec)) / reps;
-                if (d < ns)
-                    ns = d;
+                _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
+                const vfft_race_arm_t arm = { "config", _il2d_arm_exec, &rc };
+                /* min of 2 passes of reps full executes, this configuration */
+                const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 0, 0, NULL, NULL };
+                (void)p2;
+                vfft_race_run(&proto, &arm, 1, &ns);
             }
             if (ns < best)
             {
@@ -1281,24 +1282,16 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         _vw2_persist(W, cfg);
         return;
     }
-    for (p = 0; p < 3; p++)
     {
-        struct timespec t0, t1;
-        double d;
-        h->il2d_colmt = 0;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        vfft_execute((vfft_plan)h, VFFT_FORWARD, z, NULL, z, NULL);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < st)
-            st = d;
-        h->il2d_colmt = 1;
-        clock_gettime(CLOCK_MONOTONIC, &t0);
-        vfft_execute((vfft_plan)h, VFFT_FORWARD, z, NULL, z, NULL);
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-        if (d < mt)
-            mt = d;
+        _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
+        const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_exec_st, &rc },
+                                          { "threaded", _il2d_arm_exec_mt, &rc } };
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        double ns[2];
+        (void)p;
+        vfft_race_run(&proto, arms, 2, ns);
+        st = ns[0];
+        mt = ns[1];
     }
     h->il2d_colmt = (mt < st);
     free(z);

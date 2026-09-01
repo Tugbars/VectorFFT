@@ -89,8 +89,12 @@ ROUND = re.compile(r"for\s*\(\s*(?:int\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=\s*0\s*;\
 REPS = re.compile(r"\breps\s*=\s*(.+?);")
 MINMAX = re.compile(r"if\s*\(\s*\w+\s*<\s*\w+\s*\)")
 # support/race.h: `const vfft_race_proto_t proto = { rounds, reps, VFFT_RACE_AGG, alt, warm, ... }`
-PROTO = re.compile(r"vfft_race_proto_t\s+\w+\s*=\s*\{\s*(\d+)\s*,\s*(\w+)\s*,\s*"
+PROTO = re.compile(r"vfft_race_proto_t\s+\w+\s*=\s*\{\s*(\w+)\s*,\s*(\w+)\s*,\s*"
                    r"VFFT_RACE_(\w+)\s*,\s*(\d)")
+# the hysteresis verdict spelled through the template helper:
+#   vfft_race_beats(challenger_ns, incumbent_ns, 0.97)
+BEATS = re.compile(r"vfft_race_beats\s*\(\s*[A-Za-z_][A-Za-z_0-9\[\]]*\s*,\s*"
+                   r"[A-Za-z_][A-Za-z_0-9\[\]]*\s*,\s*(\d*\.\d+)\s*\)")
 # a template-site verdict on the aggregates: if (ns[1] < ns[0]) / if (ns[1] < ns[0] * 0.97)
 TVERDICT = re.compile(r"\(\s*(ns\[\d\])\s*(<=|<|>=|>)\s*(ns\[\d\])"
                       r"(?:\s*\*\s*(\d*\.\d+))?\s*\)")
@@ -207,6 +211,10 @@ def features(name, body):
                 sites.append(dict(base, kind="hyst" if m.group(4) else "bare",
                                   op=m.group(2), lit=m.group(4) or "NONE"))
                 found = True
+            m = BEATS.search(line)
+            if m:
+                sites.append(dict(base, kind="hyst", op="<", lit=m.group(1)))
+                found = True
         if not found:
             sites.append(dict(base, kind="UNMATCHED", op="?", lit="?"))
     return sites
@@ -249,6 +257,9 @@ def verdicts(lines):
         m = TVERDICT.search(line)
         if m and not HYST.search(line):
             out.append(dict(fn=cur, op=m.group(2), lit=m.group(4) or "NONE"))
+        m = BEATS.search(line)
+        if m:
+            out.append(dict(fn=cur, op="<", lit=m.group(1)))
     return out
 
 

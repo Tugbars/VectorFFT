@@ -364,6 +364,18 @@ static inline void _ilprime_exec_bluestein(const vfft_ilprime_plan_t *p,
 static inline void _ilprime_exec_rader(const vfft_ilprime_plan_t *p,
                                        const double *zin, double *zout,
                                        int bwd);
+/* the two arms of the method race */
+typedef struct { vfft_ilprime_plan_t *pr, *pb; double *zi, *zo; } _ilprime_arm_t;
+static void _ilprime_arm_rader(void *v)
+{
+    _ilprime_arm_t *c = (_ilprime_arm_t *)v;
+    _ilprime_exec_rader(c->pr, c->zi, c->zo, 0);
+}
+static void _ilprime_arm_blue(void *v)
+{
+    _ilprime_arm_t *c = (_ilprime_arm_t *)v;
+    _ilprime_exec_bluestein(c->pb, c->zi, c->zo, 0);
+}
 static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
 {
     vfft_ilprime_plan_t *pr, *pb;
@@ -397,20 +409,15 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
             zi[r] = 1.0 + 1e-6 * (double)(r & 255);
         _ilprime_exec_rader(pr, zi, zo, 0);     /* warm both */
         _ilprime_exec_bluestein(pb, zi, zo, 0);
-        for (r = 0; r < 3; r++)
         {
-            struct timespec t0, t1;
-            double d;
-            clock_gettime(CLOCK_MONOTONIC, &t0);
-            _ilprime_exec_rader(pr, zi, zo, 0);
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-            if (d < tr) tr = d;
-            clock_gettime(CLOCK_MONOTONIC, &t0);
-            _ilprime_exec_bluestein(pb, zi, zo, 0);
-            clock_gettime(CLOCK_MONOTONIC, &t1);
-            d = (t1.tv_sec - t0.tv_sec) * 1e9 + (t1.tv_nsec - t0.tv_nsec);
-            if (d < tb) tb = d;
+            _ilprime_arm_t c = { pr, pb, zi, zo };
+            const vfft_race_arm_t arms[2] = { { "rader", _ilprime_arm_rader, &c },
+                                              { "bluestein", _ilprime_arm_blue, &c } };
+            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+            double ns[2];
+            vfft_race_run(&proto, arms, 2, ns);
+            tr = ns[0];
+            tb = ns[1];
         }
         VFFT_IL2P_FREE(zi);
         VFFT_IL2P_FREE(zo);

@@ -63,7 +63,7 @@
 
 #include "zsplit.h"                 /* vfft_zsplit_plan_t + its execute */
 #include "zturn.h"                  /* vfft_zturn2_plan_t + its execute */
-#include "support/race_timing.h"    /* the shared clock and median */
+#include "support/race.h"           /* the shared race body */
 
 /* Defined in vfft.c (tentative definition, external linkage). See the note
  * above on why this is not a static. */
@@ -88,6 +88,33 @@ extern long _vfft_create_race_count;
  * structure, not the OOP one (owner, 2026-08-25: in-place creates its own
  * plans; verdicts can differ by placement). The bit-identity sanity check
  * stays OOP-buffered (it needs the preserved input). */
+/* the arms of the t2q races: one plan, the terminator pick toggled */
+typedef struct { vfft_zsplit_plan_t *p; double *zi, *zd; } _zs_t2q_arm_t;
+static void _zs_t2q_arm0(void *v)
+{
+    _zs_t2q_arm_t *c = (_zs_t2q_arm_t *)v;
+    c->p->t2q = 0;
+    vfft_zsplit_execute_fwd(c->p, c->zi, c->zd);
+}
+static void _zs_t2q_arm1(void *v)
+{
+    _zs_t2q_arm_t *c = (_zs_t2q_arm_t *)v;
+    c->p->t2q = 1;
+    vfft_zsplit_execute_fwd(c->p, c->zi, c->zd);
+}
+typedef struct { vfft_zturn2_plan_t *p; double *zi, *zd; } _zt_t2q_arm_t;
+static void _zt_t2q_arm0(void *v)
+{
+    _zt_t2q_arm_t *c = (_zt_t2q_arm_t *)v;
+    c->p->t2q = 0;
+    vfft_zturn2_execute_fwd(c->p, c->zi, c->zd);
+}
+static void _zt_t2q_arm1(void *v)
+{
+    _zt_t2q_arm_t *c = (_zt_t2q_arm_t *)v;
+    c->p->t2q = 1;
+    vfft_zturn2_execute_fwd(c->p, c->zi, c->zd);
+}
 static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs,
                                     vfft_rigor_t rigor, int aliased)
 {
@@ -138,27 +165,18 @@ static double _calibrate_zsplit_t2q(vfft_zsplit_plan_t *zs,
         reps = 64;
 
     int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
-    double m0[32], m1[32];
-    if (RR > 32)
-        RR = 32;
-    for (int r = 0; r < RR; r++)
+    double n0, n1;
     {
-        double a, b;
-        int first = r & 1;
-        zs->t2q = first;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            vfft_zsplit_execute_fwd(zs, zi, zd);
-        a = (vfft_proto_now_ns() - t0) / reps;
-        zs->t2q = !first;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            vfft_zsplit_execute_fwd(zs, zi, zd);
-        b = (vfft_proto_now_ns() - t0) / reps;
-        m0[r] = first ? a : b;
-        m1[r] = first ? b : a;
+        _zs_t2q_arm_t c = { zs, zi, zd };
+        const vfft_race_arm_t arms[2] = { { "t2q0", _zs_t2q_arm0, &c },
+                                          { "t2q1", _zs_t2q_arm1, &c } };
+        /* RR rounds alternated, median; the incumbent takes 3% hysteresis below */
+        const vfft_race_proto_t proto = { RR, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+        double ns[2];
+        vfft_race_run(&proto, arms, 2, ns);
+        n0 = ns[0];
+        n1 = ns[1];
     }
-    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
     int win;
     if (inc == 0)
         win = (n1 < n0 * 0.97) ? 1 : 0; /* 3% hysteresis toward the default */
@@ -242,27 +260,18 @@ static double _calibrate_zturn_t2q(vfft_zturn2_plan_t *zt, vfft_rigor_t rigor,
         reps = 64;
 
     int RR = (rigor == VFFT_MEASURE) ? 9 : 21;
-    double m0[32], m1[32];
-    if (RR > 32)
-        RR = 32;
-    for (int r = 0; r < RR; r++)
+    double n0, n1;
     {
-        double a, b;
-        int first = r & 1;
-        zt->t2q = first;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            vfft_zturn2_execute_fwd(zt, zi, zd);
-        a = (vfft_proto_now_ns() - t0) / reps;
-        zt->t2q = !first;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            vfft_zturn2_execute_fwd(zt, zi, zd);
-        b = (vfft_proto_now_ns() - t0) / reps;
-        m0[r] = first ? a : b;
-        m1[r] = first ? b : a;
+        _zt_t2q_arm_t c = { zt, zi, zd };
+        const vfft_race_arm_t arms[2] = { { "t2q0", _zt_t2q_arm0, &c },
+                                          { "t2q1", _zt_t2q_arm1, &c } };
+        /* RR rounds alternated, median; the incumbent takes 3% hysteresis below */
+        const vfft_race_proto_t proto = { RR, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+        double ns[2];
+        vfft_race_run(&proto, arms, 2, ns);
+        n0 = ns[0];
+        n1 = ns[1];
     }
-    double n0 = _pad_med(m0, RR), n1 = _pad_med(m1, RR);
     int win;
     if (inc == 0)
         win = (n1 < n0 * 0.97) ? 1 : 0;

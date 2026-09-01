@@ -92,6 +92,24 @@ static void _c2c_race_reseed(void *v)
     memcpy(c->rz, c->r0, c->nb);
 }
 
+/* ── the tier's ONE exit. Every handle this create returns passes through
+ * here, so a new early exit cannot skip the shared post-step (the audit
+ * found two that did: the padded-batch exit and the IL-prime exit both
+ * shipped mt_unsafe=0 — calloc's default, which spells "proven safe" —
+ * without running the proof). The gate is cheap for ST creates (skipped)
+ * and engine handles (no cplan: nothing K-splits). */
+static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h)
+{
+    /* MT-safety: flag plans whose codelet ignores the partial-lane count (so
+     * _c2c_mt runs them whole-batch instead of K-splitting). Checked once on
+     * the FINAL cplan (after any natural rebuild). Safety net now that the
+     * DIF/LOG3 K-split twiddle bug is fixed at codegen; only MT plans
+     * K-split, so single-threaded creates skip the check and its cost. */
+    if (h->cplan)
+        h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+    return h;
+}
+
 static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                      vfft_batch ob,
                                      struct vfft_wisdom_s *W,
@@ -253,7 +271,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             h->exec_bwd = vfft_proto_plan_jit_bwd(p);
         }
 #endif
-        return h;
+        return _c2c_ip_finish(h);
     }
 
     /* ── c2c IN-PLACE ── */
@@ -353,7 +371,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     hh->K = K;
                     hh->nthreads = _vfft_plan_threads(cfg);
                     hh->k1ilpr = ilpr;
-                    return hh;
+                    return _c2c_ip_finish(hh);
                 }
             }
             _vfft_warn("vfft_create: in-place C2C N=%d K=%zu — no CT "
@@ -863,12 +881,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             if (ilc3)
                 vfft_il3p_destroy(ilc3);
         }
-        /* MT-safety: flag plans whose codelet ignores the partial-lane count (so _c2c_mt runs them whole-
-         * batch instead of K-splitting). Checked once here on the FINAL cplan (after any natural rebuild). */
-        /* Safety net (now that the DIF/LOG3 K-split twiddle bug is fixed at codegen): flag any plan whose
-         * codelet still miscomputes a partial batch so _c2c_mt runs it whole-batch. Only MT plans K-split,
-         * so skip the check (and its cost) for single-threaded creates. */
-        h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+        /* the MT-safety gate moved to _c2c_ip_finish — the tier's one exit —
+         * so the early exits above cannot skip it. */
 
         /* ── K=1 SCRAMBLED interleaved IN-PLACE: attach the cascade on a
          * wisdom HIT (Phase A of docs/roadmap/cascade_natural_inplace_plan.md).
@@ -1104,7 +1118,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
          * (vfft.c ~2962) and never arrives here with K>1. */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1)
             _il_me_decide(W, cfg, h); /* D6: the fused-vs-padded A/B at create */
-        return h;
+        return _c2c_ip_finish(h);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

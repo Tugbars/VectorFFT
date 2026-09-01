@@ -1,0 +1,6 @@
+[wisdom2] C:\Users\Tugbars\AppData\Local\Temp\vfft_gates_91q4wsvd\k1z_inplace_gate: 539 record(s) loaded, writable
+[tcut] N=4096 nf=6 tiled=1 tcut=0 tfuse=0 tw=reset w=1024 NT=1 src=wisdom l1=49152
+[tcut] N=8192 nf=6 tiled=1 tcut=1 tfuse=0 tw=reset w=1024 NT=2 src=wisdom l1=49152
+[tcut] N=16384 nf=7 tiled=1 tcut=1 tfuse=0 tw=reset w=1024 NT=4 src=wisdom l1=49152
+[tcut] N=32768 nf=7 tiled=1 tcut=1 tfuse=0 tw=reset w=1024 NT=8 src=wisdom l1=49152
+[tcut] N=16384: banked width 1024 cplx SUPPRESSED by explicit VFFT_TCUT=off (env override beats wisdom)

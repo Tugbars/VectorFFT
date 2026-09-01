@@ -45,6 +45,13 @@
 #ifndef VFFT_TRANSFORMS_REAL_CREATE_H
 #define VFFT_TRANSFORMS_REAL_CREATE_H
 
+/* the two arms of the smooth-odd bridge race: two finished handles */
+typedef struct { struct vfft_plan_s *h; double *xr, *zr; } _oddr_arm_t;
+static void _oddr_arm_exec(void *v)
+{
+    _oddr_arm_t *c = (_oddr_arm_t *)v;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->xr, NULL, c->zr, NULL);
+}
 static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                                    vfft_batch ob,
                                    struct vfft_wisdom_s *W,
@@ -227,26 +234,17 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                                  zr2, NULL);
                     vfft_execute((vfft_plan)hb, VFFT_FORWARD, xr, NULL,
                                  zr2, NULL);
-                    for (r2 = 0; r2 < 3; r2++)
                     {
-                        struct timespec t0, t1;
-                        double d;
-                        clock_gettime(CLOCK_MONOTONIC, &t0);
-                        vfft_execute((vfft_plan)h, VFFT_FORWARD, xr,
-                                     NULL, zr2, NULL);
-                        clock_gettime(CLOCK_MONOTONIC, &t1);
-                        d = (t1.tv_sec - t0.tv_sec) * 1e9 +
-                            (t1.tv_nsec - t0.tv_nsec);
-                        if (d < ta)
-                            ta = d;
-                        clock_gettime(CLOCK_MONOTONIC, &t0);
-                        vfft_execute((vfft_plan)hb, VFFT_FORWARD, xr,
-                                     NULL, zr2, NULL);
-                        clock_gettime(CLOCK_MONOTONIC, &t1);
-                        d = (t1.tv_sec - t0.tv_sec) * 1e9 +
-                            (t1.tv_nsec - t0.tv_nsec);
-                        if (d < tb2)
-                            tb2 = d;
+                        _oddr_arm_t ca = { h, xr, zr2 }, cb = { hb, xr, zr2 };
+                        const vfft_race_arm_t arms[2] = {
+                            { "rfft", _oddr_arm_exec, &ca },
+                            { "bridge", _oddr_arm_exec, &cb } };
+                        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+                        double ns[2];
+                        (void)r2;
+                        vfft_race_run(&proto, arms, 2, ns);
+                        ta = ns[0];
+                        tb2 = ns[1];
                     }
                     if (getenv("VFFT_ODDR_LOG"))
                         fprintf(stderr, "[oddr] race N=%d: rfft=%.0f "

@@ -48,7 +48,7 @@
 
 #include "r2c.h"                    /* vfft_r2c_plan_t + the dispatch knobs */
 #include "c2r_dispatch.h"           /* vfft_c2r_disp_t and its execute door */
-#include "support/race_timing.h"    /* the shared clock and median-of-9 */
+#include "support/race.h"           /* the shared race body */
 
 /* Build exactly one r2c arm: the rfft cascade, or the decoupled stride. */
 static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
@@ -64,6 +64,26 @@ static vfft_r2c_plan_t *_r2c_build_arm(int N, size_t K, int stride_arm,
 
 /* Alternating-order median-of-9 A/B on ONE buffer set (both arms share the
  * same split re/im I/O contract). 0 on success. */
+/* the arms of the route races: one plan each, timed through the door the
+ * caller's execute uses (as_z = the interleaved door) */
+typedef struct { vfft_r2c_plan_t *p; int as_z; double *x, *z, *orr, *oii; } _r2c_arm_t;
+static void _r2c_arm_run(void *v)
+{
+    _r2c_arm_t *c = (_r2c_arm_t *)v;
+    if (c->as_z)
+        vfft_r2c_execute_fwd_z(c->p, c->x, c->z);
+    else
+        vfft_r2c_execute_fwd(c->p, c->x, c->orr, c->oii);
+}
+typedef struct { vfft_c2r_disp_t *p; int as_z; double *z, *re, *im, *y; } _c2r_arm_t;
+static void _c2r_arm_run(void *v)
+{
+    _c2r_arm_t *c = (_c2r_arm_t *)v;
+    if (c->as_z)
+        vfft_c2r_disp_execute_z(c->p, c->z, c->y);
+    else
+        vfft_c2r_disp_execute(c->p, c->re, c->im, c->y);
+}
 static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
                           int N, size_t K, int as_z,
                           double *n_rfft, double *n_stride)
@@ -92,42 +112,29 @@ static int _r2c_race_arms(vfft_r2c_plan_t *pr, vfft_r2c_plan_t *ps,
     }
     for (size_t i = 0; i < insz; i++)
         x[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
-#define VFFT__R2C_ARM(P) do {                                   \
-        if (as_z) vfft_r2c_execute_fwd_z((P), x, z);            \
-        else      vfft_r2c_execute_fwd((P), x, orr, oii);       \
-    } while (0)
-    for (int w = 0; w < 5; w++)
-    {
-        VFFT__R2C_ARM(pr);
-        VFFT__R2C_ARM(ps);
-    }
     reps = (int)(2e6 / (double)(insz + 1));
     if (reps < 20)
         reps = 20;
     if (reps > 100000)
         reps = 100000;
-    for (r = 0; r < 9; r++)
     {
-        vfft_r2c_plan_t *first = (r & 1) ? ps : pr;
-        vfft_r2c_plan_t *second = (r & 1) ? pr : ps;
-        double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            VFFT__R2C_ARM(first);
-        double tf = (vfft_proto_now_ns() - t0) / reps;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            VFFT__R2C_ARM(second);
-        double tsc = (vfft_proto_now_ns() - t0) / reps;
-        a[r] = (r & 1) ? tsc : tf;  /* rfft   */
-        b[r] = (r & 1) ? tf : tsc;  /* stride */
+        _r2c_arm_t ca = { pr, as_z, x, z, orr, oii }, cb = { ps, as_z, x, z, orr, oii };
+        const vfft_race_arm_t arms[2] = { { "rfft", _r2c_arm_run, &ca },
+                                          { "stride", _r2c_arm_run, &cb } };
+        /* 5 warm passes, 9 rounds alternated, median */
+        const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 5, NULL, NULL };
+        double ns[2];
+        (void)r;
+        (void)a;
+        (void)b;
+        vfft_race_run(&proto, arms, 2, ns);
+        *n_rfft = ns[0];
+        *n_stride = ns[1];
     }
-#undef VFFT__R2C_ARM
     vfft_proto_aligned_free(x);
     vfft_proto_aligned_free(orr);
     vfft_proto_aligned_free(oii);
     vfft_proto_aligned_free(z);
-    *n_rfft = _il_ab_med9(a);
-    *n_stride = _il_ab_med9(b);
     return 0;
 }
 
@@ -169,41 +176,29 @@ static int _c2r_race_arms(vfft_c2r_disp_t *pn, vfft_c2r_disp_t *ps,
             re[i] = (double)((i * 2654435761u) & 0xffff) / 65536.0 - 0.5;
             im[i] = (double)((i * 40503u) & 0xffff) / 65536.0 - 0.5;
         }
-#define VFFT__C2R_ARM(P) do {                                   \
-        if (as_z) vfft_c2r_disp_execute_z((P), z, y);           \
-        else      vfft_c2r_disp_execute((P), re, im, y);        \
-    } while (0)
-    for (int w = 0; w < 5; w++)
-    {
-        VFFT__C2R_ARM(pn);
-        VFFT__C2R_ARM(ps);
-    }
     reps = (int)(2e6 / (double)(outsz + 1));
     if (reps < 20)
         reps = 20;
     if (reps > 100000)
         reps = 100000;
-    for (r = 0; r < 9; r++)
     {
-        vfft_c2r_disp_t *first = (r & 1) ? ps : pn;
-        vfft_c2r_disp_t *second = (r & 1) ? pn : ps;
-        double t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            VFFT__C2R_ARM(first);
-        double tf = (vfft_proto_now_ns() - t0) / reps;
-        t0 = vfft_proto_now_ns();
-        for (int i = 0; i < reps; i++)
-            VFFT__C2R_ARM(second);
-        double tsc = (vfft_proto_now_ns() - t0) / reps;
-        a[r] = (r & 1) ? tsc : tf;  /* natural */
-        b[r] = (r & 1) ? tf : tsc;  /* split   */
+        _c2r_arm_t ca = { pn, as_z, z, re, im, y }, cb = { ps, as_z, z, re, im, y };
+        const vfft_race_arm_t arms[2] = { { "natural", _c2r_arm_run, &ca },
+                                          { "split", _c2r_arm_run, &cb } };
+        /* 5 warm passes, 9 rounds alternated, median */
+        const vfft_race_proto_t proto = { 9, reps, VFFT_RACE_MEDIAN, 1, 5, NULL, NULL };
+        double ns[2];
+        (void)r;
+        (void)a;
+        (void)b;
+        vfft_race_run(&proto, arms, 2, ns);
+        *n_nat = ns[0];
+        *n_split = ns[1];
     }
-#undef VFFT__C2R_ARM
     vfft_proto_aligned_free(re);
     vfft_proto_aligned_free(im);
     vfft_proto_aligned_free(y);
-    *n_nat = _il_ab_med9(a);
-    *n_split = _il_ab_med9(b);
+    vfft_proto_aligned_free(z);
     return 0;
 }
 

@@ -1,6 +1,7 @@
 /* race_timing.h — the measurement floor shared by the in-process racers.
  *
- * A monotonic clock and a fixed-size median. That is deliberately all: this is
+ * A monotonic clock. That is deliberately all (the median it once carried now
+ * lives beside the race body in support/race.h): this is
  * step 5 of docs/design/refactor_migration_plan.md, the PILOT move, sized so
  * that every rung of the safety ladder can be exercised end to end on something
  * that reverts with one `git checkout`.
@@ -52,22 +53,9 @@ static double _il_ab_now(void)
     return (double)t.tv_sec * 1e9 + (double)t.tv_nsec;
 }
 
-/* Median of exactly 9, in place. Insertion-sorts the whole array rather than
- * selecting, which is irrelevant at n=9 and keeps the body obviously correct.
- * Returns v[4]; _pad_med(v, 9) returns the same element by the same rule, so
- * the two are interchangeable at this size - verified before they were ever
- * described as duplicates. */
-static double _il_ab_med9(double *v)
-{
-    for (int i = 0; i < 9; i++)
-        for (int j = i + 1; j < 9; j++)
-            if (v[j] < v[i])
-            {
-                double t = v[i];
-                v[i] = v[j];
-                v[j] = t;
-            }
-    return v[4];
-}
+/* The median moved to support/race.h (vfft_race_median) when the race body
+ * itself was shared: the three implementations it replaced (_il_ab_med9,
+ * _pad_med, the inline median-of-5) all returned the middle element of an
+ * odd-length sample, which is what it returns. */
 
 #endif /* VFFT_SUPPORT_RACE_TIMING_H */
