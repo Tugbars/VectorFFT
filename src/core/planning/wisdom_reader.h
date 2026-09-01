@@ -97,6 +97,13 @@ typedef struct {
     int     variants[STRIDE_MAX_STAGES];
     int     use_dif;
     double  nat_ns;                          /* measured natural total (margin/info) */
+    int     raced;                           /* zr=1: the ZCASC/ILP challenger raced
+                                              * this cell and LOST — do not rebuild the
+                                              * candidate or re-race (the banked-loss
+                                              * law, VFFT_NAT_CONV's comment). Absent
+                                              * on old lines = 0 = race once and mark.
+                                              * wisdom2-only; the legacy reader never
+                                              * sets it (callers zero it on that path). */
 } vfft_proto_nat_entry_t;
 
 typedef struct {

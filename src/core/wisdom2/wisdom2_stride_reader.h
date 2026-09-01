@@ -233,6 +233,7 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
         return 0;                              /* a nat row needs one or the other */
     }
     e->use_dif = vw2__stride_geti(r, "dif", 0);
+    e->raced = vw2__stride_geti(r, "zr", 0); /* banked loss marker (absent = 0) */
     {
         const char *ns = vw2_rec_get(r, "ns");
         e->nat_ns = ns ? atof(ns) : 0.0;
