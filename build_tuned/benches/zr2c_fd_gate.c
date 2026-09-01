@@ -60,7 +60,7 @@ static char g_errpath[512];
 static long g_errpos = 0;
 static int err_tap_open(void)
 {
-    snprintf(g_errpath, sizeof g_errpath, "_zr2c_fd_gate.log");
+    snprintf(g_errpath, sizeof g_errpath, "build_tuned/benches/_zr2c_fd_gate.log");
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;

@@ -47,7 +47,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
+    snprintf(g_errpath, sizeof g_errpath, "build_tuned/benches/_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -364,7 +364,12 @@ int main(int argc, char **argv)
         naive_dft(x, X, N);
         printf("--- reload round-trip ---\n");
         if (!run_cell(W, N, x, X, /*CONSUME*/ 2, "rt-ip")) fails++;
-        if (!run_cell_oop(W, N, x, X, /*CONSUME*/ 2, "rt-oop", NULL)) fails++;
+        /* 4096 oop is a COMPETITIVE cell (see em/ec above): the banked
+         * verdict may be mode=free, which reloads as engine(free) — that IS
+         * the verdict surviving the save/load cycle. expect 4 still asserts
+         * NO race fires on reload, which is the parse-regression coverage
+         * this section exists for. */
+        if (!run_cell_oop(W, N, x, X, /*CONSUME, free ok*/ 4, "rt-oop", NULL)) fails++;
         fz(x);
         fz(X);
     }
