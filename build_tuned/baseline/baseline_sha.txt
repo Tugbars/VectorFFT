@@ -1,2 +1,2 @@
-75e6ee58d0534ef3e9b6ccf81dc63c6e42891c3d
-# short: 75e6ee58  (re-stamped after Phase-2 pool owner: stride_pool_workers_for + stride_pool_run in support/threads.h; 54 bodies changed by design = every dispatch site + the create fns that snapshot T; 3 helpers inlined (_oop_slice_fwd/bwd, _fftnd_axis_item_range); undefined/mutable/race/golden/fp_replay proven identical; gates 29/34 = HEAD's own 29)
+64e541ce88177a1fcfac03e8cd6a723cf9acdaf9
+# short: 64e541ce  (re-stamped after Phase-3 race template: support/race.h is the one race body, 24/37 racers migrated verdict-preserving + _c2c_ip_finish single exit; race_census RE-KEYED BY DESIGN — the census tool was taught the template spelling (vfft_race_run regions, proto initializers, vfft_race_beats verdicts) and every migrated site's rounds/agg/alt/hyst was verified identical to its pre-move row; golden/fp byte-identical, undefined/mutable censuses identical)

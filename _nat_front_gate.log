@@ -1,16 +1,15 @@
-[wisdom2] C:/Users/Tugbars/AppData/Local/Temp/claude/c--Users-Tugbars-Desktop-highSpeedFFT/50ac9b6f-0f27-4074-ba5a-0f4ba5aeb41e/scratchpad/natcold: 0 record(s) loaded, writable
-[natorder] N=2048 K=1 zcasc=8238ns incumbent=22983ns -> ZCASC
+[wisdom2] C:\Users\Tugbars\AppData\Local\Temp\vfft_gates_2zm9yaj_\vfft_natural_front_gate: 0 record(s) loaded, writable
+[natorder] N=2048 K=1 zcasc=7871ns incumbent=23575ns -> ZCASC
 [natorder] N=2048 K=1 replay ZCASC
-[natorder] N=2048 K=1 OOP zcasc=8192ns engine=6512ns -> engine
-[natorder] N=4096 K=1 zcasc=17271ns incumbent=50567ns -> ZCASC
+[natorder] N=2048 K=1 OOP zcasc=7700ns engine=6504ns -> engine
+[natorder] N=4096 K=1 zcasc=19242ns incumbent=56817ns -> ZCASC
 [natorder] N=4096 K=1 replay ZCASC
-[natorder] N=4096 K=1 OOP zcasc=16196ns engine=16592ns -> ZCASC-OOP
-[natorder] N=4096 K=1 replay ZCASC-OOP
-[natorder] N=8192 K=1 zcasc=37360ns incumbent=120840ns -> ZCASC
+[natorder] N=4096 K=1 OOP zcasc=16354ns engine=15271ns -> engine
+[natorder] N=8192 K=1 zcasc=37980ns incumbent=148500ns -> ZCASC
 [natorder] N=8192 K=1 replay ZCASC
-[natorder] N=8192 K=1 OOP zcasc=10540ns engine=53920ns -> ZCASC-OOP
+[natorder] N=8192 K=1 OOP zcasc=35310ns engine=160700ns -> ZCASC-OOP
 [natorder] N=8192 K=1 replay ZCASC-OOP
-[natorder] N=16384 K=1 zcasc=80740ns incumbent=323340ns -> ZCASC
+[natorder] N=16384 K=1 zcasc=27870ns incumbent=125610ns -> ZCASC
 [natorder] N=16384 K=1 replay ZCASC
-[natorder] N=16384 K=1 OOP zcasc=79730ns engine=329070ns -> ZCASC-OOP
+[natorder] N=16384 K=1 OOP zcasc=23540ns engine=141860ns -> ZCASC-OOP
 [natorder] N=16384 K=1 replay ZCASC-OOP
