@@ -417,7 +417,7 @@ struct vfft_plan_s
      * natural_order_inplace_design.md §2e. */
     int nat_mode;
     int *nat_list;           /* PURE/SCR: flattened cycle list; PSWAP: flat pair list        */
-    double *nat_tmp;         /* (pool+1)*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K) */
+    double *nat_tmp;         /* nthreads*2*K: per-worker cycle scratch (slot nd = tmp+nd*2K); sized AND indexed by h->nthreads, never the live pool */
     int nat_ncyc;            /* PURE/SCR: cycle count (backward MT split); PSWAP: pair count */
     int *nat_cyc_off;        /* PURE/SCR: cycle start offsets (ncyc+1); PSWAP: NULL          */
     natorder_scr_t *nat_scr; /* SCR: scatter terminator (forward); backward reuses cycle tape */
@@ -430,7 +430,7 @@ struct vfft_plan_s
     int nat2d_row_is_pairs; /* 1 = row tape is an involution PAIR list (pair_pass, no dep chain, fast);
                              * 0 = cycle list (cycle_pass). PSWAP when the column chain is palindromic. */
     int *nat2d_col_list;    /* dim2 (N2) cycle tape (fft2d scratch pass); NULL = FREE axis */
-    double *nat2d_tmp;      /* (pool+1) slots of 2*N2 doubles: per-worker dim1 cycle scratch (MT) */
+    double *nat2d_tmp;      /* nthreads slots of 2*N2 doubles: per-worker dim1 cycle scratch (MT); sized AND indexed by h->nthreads, never the live pool */
     int nat2d_ncyc;         /* dim1 unit count: cycles (cycle tape) or pairs (pair tape) — MT split */
     int *nat2d_cyc_off;     /* dim1 cycle start offsets (ncyc+1); NULL for a pair tape */
 };

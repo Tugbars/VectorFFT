@@ -8,8 +8,10 @@ BUILD_OK   standalone il2p_tangent_gate
 BUILD_OK   standalone il_dp_overflow_gate
 BUILD_OK   vfft       k1z_inplace_gate
 BUILD_OK   vfft       mt_c2c_gate
+BUILD_OK   vfft       natorder_scratch_gate
 BUILD_OK   standalone odd_ct_gate
 BUILD_OK   vfft       odd_partner_cells_gate
+BUILD_OK   vfft       pool_preserve_gate
 BUILD_OK   standalone r32exp_reorder_gate
 BUILD_OK   textual  sp_ccol_decode_gate
 BUILD_OK   vfft       tangent_frontdoor_gate
@@ -30,4 +32,4 @@ BUILD_OK   standalone zturn_natord_gate
 BUILD_OK   standalone zturn_stfn_gate
 BUILD_OK   vfft       zturn_tcut_gate
 BUILD_OK   vfft       zturn_wisdom_width_gate
-# built=32 failed=0
+# built=34 failed=0
