@@ -201,10 +201,12 @@ static vfft_plan _vfft_create_trig(const vfft_config_t *cfg,
          * VW-aligned Kp regardless.) */
         stride_plan_t *tp = _build_trig(W, cfg, cfg->transform, N, bK, cfg->rigor, reg,
                                         &W->c2c, cfg->recalibrate);
+        if (!tp)
+            return NULL; /* a failed create persists nothing — the inner
+                          * cells it may have banked stay memory-only (the
+                          * persist below used to fire before this check) */
         if (W->path_c2c[0])
             _vw2_persist(W, cfg); /* persist inner cells (guarded, wave-4) */
-        if (!tp)
-            return NULL;
         struct vfft_plan_s *h = (struct vfft_plan_s *)calloc(1, sizeof *h);
         if (!h)
         {
