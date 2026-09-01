@@ -1,7 +1,5 @@
 /* vfft_diagnostics.h - did the threading actually happen?
  *
- * WHY THIS IS A SEPARATE HEADER
- * -----------------------------
  * vfft.h is the transform contract: create, execute, destroy, and the wisdom
  * a plan is built from. Nothing here is needed to compute an FFT, so none of
  * it belongs in that contract. It is still SHIPPED rather than hidden,

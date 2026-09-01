@@ -471,8 +471,13 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                         dvar[s] = p->variants[s];
                     }
                 }
-                /* per-worker cycle scratch: (pool+1) slots of 2*K doubles (MT split). */
-                h->nat_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * K * sizeof(double));
+                /* per-worker cycle scratch: h->nthreads slots of 2*K doubles (MT split).
+                 * Sized by the PLAN'S SNAPSHOT, not the live pool: the pool is grow-only,
+                 * so a live count taken here can be smaller than the one execute sees
+                 * later, and the reorder slices tmp + slot*2*K per worker. The execute
+                 * side clamps by the same h->nthreads (natorder_mt.h), so the two numbers
+                 * cannot disagree. natorder_scratch_gate asserts this. */
+                h->nat_tmp = (double *)malloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * K * sizeof(double));
                 if (!h->nat_tmp)
                 {
                     vfft_destroy(h);

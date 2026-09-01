@@ -905,7 +905,8 @@ static stride_plan_t *_build_2d(vfft_transform_t t, int N1, int N2, vfft_rigor_t
 static void _natorder_mt(struct vfft_plan_s *h, double *re, double *im, int dir)
 {
     _natorder_reorder_mt(re, im, (size_t)h->N, h->K, h->nat_list, h->nat_cyc_off,
-                         h->nat_ncyc, h->nat_mode == VFFT_NAT_PSWAP, h->nat_tmp, dir == 0);
+                         h->nat_ncyc, h->nat_mode == VFFT_NAT_PSWAP, h->nat_tmp, dir == 0,
+                         h->nthreads); /* the snapshot nat_tmp was sized for */
 }
 
 
@@ -933,7 +934,8 @@ static void _natorder_2d(struct vfft_plan_s *h, double *re, double *im, int inv)
      * dim1 tax now scales with the pool instead of running on one core while the 2D FFT is MT. A pair tape
      * is self-inverse (inv ignored); a cycle tape uses the inverse cycle on backward. Caller pins core 0. */
     _natorder_reorder_mt(re, im, (size_t)h->N, (size_t)h->N2, h->nat2d_row_list,
-                         h->nat2d_cyc_off, h->nat2d_ncyc, h->nat2d_row_is_pairs, h->nat2d_tmp, inv);
+                         h->nat2d_cyc_off, h->nat2d_ncyc, h->nat2d_row_is_pairs, h->nat2d_tmp, inv,
+                         h->nthreads); /* the snapshot nat2d_tmp was sized for */
 }
 
 #include "oop/oop_mt.h"  /* OOP c2c lane-slice MT dispatch (migration step 9) */

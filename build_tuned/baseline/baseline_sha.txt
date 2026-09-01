@@ -1,2 +1,2 @@
-f3a266cd7ad45c0560e923e8cec79726a525b679
-# short: f3a266cd  (re-stamped at 27: trig create tier + builders sliced out)
+d92dbe3080b326dd8eee34cd425733f05c13f9b9
+# short: d92dbe30  (re-stamped after Phase-1 fix 2: natorder scratch sized+indexed by the plan snapshot; FIVE bodies changed by design: _natorder_reorder_mt, _vfft_create_c2c_ip, _vfft_create_2d, _exec_c2c_inplace, vfft_execute; gated by natorder_scratch_gate)

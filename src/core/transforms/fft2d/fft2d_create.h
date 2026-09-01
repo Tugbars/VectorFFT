@@ -1285,8 +1285,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     }
                 }
             }
-            /* (pool+1) slots of 2*N2 doubles: one dim1 cycle-scratch slot per worker (+ main). */
-            h->nat2d_tmp = (double *)malloc((size_t)(_stride_pool_size + 1) * 2 * N2 * sizeof(double));
+            /* h->nthreads slots of 2*N2 doubles: one dim1 cycle-scratch slot per worker (+ main).
+             * Sized by the PLAN'S SNAPSHOT, not the live pool -- the pool is grow-only, so
+             * the live count here can be smaller than the one _natorder_2d sees at execute;
+             * that side clamps by the same h->nthreads (natorder_mt.h), so the slot count
+             * and the slot index come from one number. natorder_scratch_gate asserts this. */
+            h->nat2d_tmp = (double *)malloc((size_t)(h->nthreads < 1 ? 1 : h->nthreads) * 2 * N2 * sizeof(double));
             if (!h->nat2d_tmp)
             {
                 vfft_destroy(h);

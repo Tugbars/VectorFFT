@@ -34,6 +34,17 @@
  * ---------------------------
  * Every function here takes its inputs explicitly. No vfft_plan_s, no mutable
  * file-scope state, no wisdom. It does NOT pull engine/stride_executor.h.
+ *
+ * THE WORKER COUNT IS A PARAMETER, NOT A GLOBAL READ (2026-09-01)
+ * ---------------------------------------------------------------
+ * _natorder_reorder_mt takes `nthreads` -- the plan's create-time snapshot
+ * (h->nthreads), the number of per-worker scratch slots `tmp` was sized for --
+ * and clamps its dispatched worker count by it. It used to read only the live
+ * pool, which is grow-only and can therefore be larger at execute than the
+ * scratch allocated at create: T workers sliced a smaller buffer. The result was
+ * a wrong answer on one run and heap corruption at destroy on the next
+ * (natorder_scratch_gate). Every engine in this tree clamps by its own
+ * snapshot; this one now does too.
  */
 #ifndef VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H
 #define VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H
@@ -73,11 +84,20 @@ static void _nat_range_tramp(void *a)
  * inverse cycle (backward), 0 = forward; ignored for a self-inverse pair tape. */
 static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
                                  const int *list, const int *cyc_off, int nunits,
-                                 int is_pairs, double *tmp, int inv)
+                                 int is_pairs, double *tmp, int inv, int nthreads)
 {
     int T = stride_get_num_threads();
     if (T > _stride_pool_size + 1)
         T = _stride_pool_size + 1;
+    /* THE PLAN'S OWN SNAPSHOT IS THE CEILING. `tmp` was sized at create for
+     * exactly `nthreads` per-worker slots (the plan's h->nthreads). The pool is
+     * grow-only, so the live count read above can EXCEED that later, and every
+     * worker slices `tmp + slot*2*K` -- reading the live pool alone therefore
+     * indexed past the buffer (natorder_scratch_gate: wrong output on one run,
+     * heap corruption at destroy on the next). Same rule as every other engine:
+     * clamp by the plan-time snapshot, never by the live pool alone. */
+    if (nthreads >= 1 && T > nthreads)
+        T = nthreads;
     if (T > 64)
         T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
                  * the i9 pool is well below 64, so this is a no-op there). */
