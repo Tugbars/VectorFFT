@@ -97,6 +97,69 @@ static int run_cell(const char *wisdir, int N, int fails)
     return fails + !ok;
 }
 
+/* ── the seeded-loss arm. No cell on this box loses its race naturally
+ * (challengers win 3-8x everywhere probed, 2026-09-02), so the LOSS side
+ * is exercised by munging the gate's OWN scratch store: the banked 4096
+ * @nat line becomes a tape verdict (mode=pcyc) — once WITHOUT zr (the
+ * CONTROL: the create must rebuild the candidate and re-race, which is
+ * exactly the pre-fix disease) and once WITH zr=1 (the TREATMENT: the
+ * banked loss must consume silently, no candidate, no race). */
+static int munge_4096(const char *wisdir, int with_zr)
+{
+    char pb[1024];
+    snprintf(pb, sizeof pb, "%s/wisdom2_stride.txt", wisdir);
+    FILE *f = fopen(pb, "r");
+    if (!f) return 0;
+    static char text[65536];
+    size_t n = fread(text, 1, sizeof text - 1, f);
+    text[n] = 0;
+    fclose(f);
+    char *line = strstr(text, "n=4096 q=1 ord=nat place=ip");
+    char *mode = line ? strstr(line, "mode=zcasc") : NULL;
+    if (!mode) return 0;
+    /* proper splice: "mode=zcasc" (10) -> "mode=pcyc" or "mode=pcyc zr=1"
+     * — a fixed-width overwrite would corrupt the next token */
+    {
+        const char *rep = with_zr ? "mode=pcyc zr=1" : "mode=pcyc";
+        size_t rl = strlen(rep), tail = n - (size_t)(mode - text) - 10;
+        memmove(mode + rl, mode + 10, tail + 1);
+        memcpy(mode, rep, rl);
+        n = n - 10 + rl;
+    }
+    f = fopen(pb, "w");
+    if (!f) return 0;
+    fwrite(text, 1, n, f);
+    fclose(f);
+    return 1;
+}
+static int run_seeded(const char *wisdir, int with_zr, int expect_race, int fails)
+{
+    vfft_wisdom *W = vfft_wisdom_load(wisdir);
+    vfft_config_t cfg;
+    if (!W) { printf("seeded: wisdom load FAILED\n"); return fails + 1; }
+    memset(&cfg, 0, sizeof cfg);
+    cfg.transform = VFFT_C2C;
+    cfg.placement = VFFT_INPLACE;
+    cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+    cfg.order = VFFT_ORDER_NATURAL;
+    cfg.dims = 1;
+    cfg.n[0] = 4096;
+    cfg.howmany = 1;
+    cfg.rigor = VFFT_MEASURE;
+    cfg.wisdom = W;
+    cfg.wisdom_write = 1;
+    vfft_plan p = vfft_create(&cfg);
+    const char *log = err_tap_read();
+    int raced = tap_raced(log);
+    int ok = p && (raced == expect_race);
+    if (p) vfft_destroy(p);
+    vfft_wisdom_free(W);
+    printf("4096    seeded-tape %-8s -> %-9s (expect %s) %s\n",
+           with_zr ? "zr=1" : "no-zr", raced ? "raced" : "silent",
+           expect_race ? "raced" : "silent", ok ? "" : "  *** FAIL ***");
+    return fails + !ok;
+}
+
 int main(int argc, char **argv)
 {
     const char *wisdir = ".";
@@ -110,6 +173,19 @@ int main(int argc, char **argv)
     int fails = 0;
     fails = run_cell(wisdir, 256, fails);  /* the ILP tier */
     fails = run_cell(wisdir, 4096, fails); /* the ZCASC tier */
+    /* the loss side, seeded (see munge_4096): control then treatment.
+     * The control re-banks a fresh ZCASC win, so munge again for the
+     * treatment. */
+    if (!munge_4096(wisdir, /*with_zr=*/0))
+        { printf("seeded-loss munge FAILED\n"); fails++; }
+    else
+    {
+        fails = run_seeded(wisdir, 0, /*expect_race=*/1, fails);
+        if (!munge_4096(wisdir, /*with_zr=*/1))
+            { printf("seeded-loss re-munge FAILED\n"); fails++; }
+        else
+            fails = run_seeded(wisdir, 1, /*expect_race=*/0, fails);
+    }
     printf(fails ? "=== *** FAIL *** ===\n" : "=== ALL PASS ===\n");
     return fails ? 1 : 0;
 }
