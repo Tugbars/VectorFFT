@@ -59,6 +59,19 @@ static void _ztodd_arm_k1(void *v)
     vfft_execute((vfft_plan)c->hk, VFFT_FORWARD, c->zi, NULL, c->zo, NULL);
     c->hk->zturn = c->zt;
 }
+/* ── the tier's ONE exit. Every handle this create returns passes through
+ * here; a shared post-step cannot be skipped by a new early exit without
+ * the skip being spelled at the call. zt_mt says whether this exit races
+ * the cascade MT verdict (INC-Z: K=1 zturn, live pool; serial default
+ * everywhere the race does not run) — the K=1/odd-mid exit passes 0, its
+ * historical behaviour. */
+static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt)
+{
+    if (zt_mt && h->zroute && h->zturn && h->K == 1 && h->nthreads > 1)
+        _zt_mt_race(h);
+    return h;
+}
+
 static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                       vfft_batch ob,
                                       struct vfft_wisdom_s *W,
@@ -626,7 +639,11 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         vfft_zsplit_destroy(zs_pending);
                         zs_pending = NULL;
                     }
-                    return hk;
+                    /* zt_mt=0: an odd-mid cascade attached here has NEVER
+                     * had an MT verdict raced (the historical skip). Racing
+                     * it is a new feature — threaded odd-mid cascades —
+                     * priced separately, not flipped on in a refactor. */
+                    return _c2c_oop_finish(hk, /*zt_mt=*/0);
                 }
             }
             vfft_il2p_destroy(il2p);
@@ -775,10 +792,6 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         h->zroute = zroute_pending;
         h->padded = padded;
         h->exec_me = (int)bK;
-        /* INC-Z: race the cascade MT verdict for this cell (K=1 zturn,
-         * live pool). Serial default everywhere the race does not run. */
-        if (h->zroute && h->zturn && K == 1 && h->nthreads > 1)
-            _zt_mt_race(h);
 #ifdef VFFT_USE_JIT
         /* MODEB rides a staged inner plan -> JIT it (fwd: stages 1.. at start_stage=1;
          * bwd: whole in-place DIF at start_stage=0). LEAF/BAILEY2 have no staged plan. */
@@ -788,7 +801,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             op->mb_jit_bwd = vfft_proto_plan_jit_bwd(op->mb);
         }
 #endif
-        return h;
+        return _c2c_oop_finish(h, /*zt_mt=*/1);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

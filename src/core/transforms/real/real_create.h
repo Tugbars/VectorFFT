@@ -52,6 +52,15 @@ static void _oddr_arm_exec(void *v)
     _oddr_arm_t *c = (_oddr_arm_t *)v;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->xr, NULL, c->zr, NULL);
 }
+/* ── the tier's ONE exit. No shared post-step exists here TODAY (no mt
+ * gate: the real engines thread internally; no pool arm: create-entry owns
+ * it) — the finish exists so the next shared step lands in one place and
+ * so each early serving's skips are spelled at its return, not implied. */
+static vfft_plan _real_finish(struct vfft_plan_s *h)
+{
+    return h;
+}
+
 static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                                    vfft_batch ob,
                                    struct vfft_wisdom_s *W,
@@ -67,7 +76,9 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
     {
         struct vfft_plan_s *hh = _oddr_build(cfg, N);
         if (hh)
-            return hh;
+            return _real_finish(hh); /* odd-real direct: skips every lookup,
+                                      * calibrate and route race below BY
+                                      * DESIGN (self-contained c2c bridge) */
         _vfft_warn("vfft_create: %s odd N=%d - the c2c bridge child "
                    "could not be built; unsupported",
                    _vfft_tname(cfg->transform), N);
@@ -112,7 +123,10 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         {
             struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
             if (hz)
-                return hz;
+                return _real_finish(hz); /* zr2c serving: banks its own
+                                          * kind-5 cell; the split-path
+                                          * calibrates below are for rows it
+                                          * never reads — skipped BY DESIGN */
             /* 🔴 NO SILENT DEGRADE TO OUT-OF-PLACE. The in-place refusal
              * above ADMITTED this shape, so falling through would stamp
              * h->placement = INPLACE onto a handle whose executor is the OOP
@@ -257,12 +271,15 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                 if (tb2 < ta)
                 {
                     vfft_destroy((vfft_plan)h);
-                    return hb;
+                    return _real_finish(hb); /* the bridge won: it replaces
+                                              * the fully-built h at the very
+                                              * end — nothing below is
+                                              * skipped */
                 }
                 vfft_destroy((vfft_plan)hb);
             }
         }
-        return h;
+        return _real_finish(h);
     }
 
     /* ── c2r (complex -> real; the r2c inverse), SPLIT input (sre/sim). 2-axis,
@@ -307,7 +324,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         {
             struct vfft_plan_s *hz = _zr2c_build(cfg, N, W);
             if (hz)
-                return hz;
+                return _real_finish(hz); /* zr2c serving (c2r twin) */
             /* 🔴 NO SILENT DEGRADE TO OUT-OF-PLACE. The in-place refusal
              * above ADMITTED this shape, so falling through would stamp
              * h->placement = INPLACE onto a handle whose executor is the OOP
@@ -369,7 +386,7 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
         h->c2rdisp = cd;
         h->padded = padded;
         h->exec_me = (int)bK;
-        return h;
+        return _real_finish(h);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

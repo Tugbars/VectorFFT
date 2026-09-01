@@ -1,2 +1,2 @@
-64e541ce88177a1fcfac03e8cd6a723cf9acdaf9
-# short: 64e541ce  (re-stamped after Phase-3 race template: support/race.h is the one race body, 24/37 racers migrated verdict-preserving + _c2c_ip_finish single exit; race_census RE-KEYED BY DESIGN — the census tool was taught the template spelling (vfft_race_run regions, proto initializers, vfft_race_beats verdicts) and every migrated site's rounds/agg/alt/hyst was verified identical to its pre-move row; golden/fp byte-identical, undefined/mutable censuses identical)
+b2e5aaeca15b222aa1d4eb2fa9e86341eabc3892
+# short: b2e5aaec  (re-stamped after Phase-3 item A: _c2c_oop_finish(h, zt_mt) + _real_finish(h) single exits + trig persist-after-success; TWO bodies changed by design (_vfft_create_c2c_oop, _vfft_create_inner), zero symbol churn, ALL censuses identical, golden/fp byte-identical, gates pool_preserve/k1scr/mt_c2c/zr2c_fd/wisdom2_real green)
