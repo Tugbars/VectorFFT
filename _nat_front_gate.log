@@ -1,0 +1,16 @@
+[wisdom2] C:\Users\Tugbars\AppData\Local\Temp\vfft_gates_3a8ydskz\vfft_natural_front_gate: 0 record(s) loaded, writable
+[natorder] N=2048 K=1 zcasc=2671ns incumbent=11471ns -> ZCASC
+[natorder] N=2048 K=1 replay ZCASC
+[natorder] N=2048 K=1 OOP zcasc=2571ns engine=2400ns -> engine
+[natorder] N=4096 K=1 zcasc=5571ns incumbent=27583ns -> ZCASC
+[natorder] N=4096 K=1 replay ZCASC
+[natorder] N=4096 K=1 OOP zcasc=5612ns engine=6217ns -> ZCASC-OOP
+[natorder] N=4096 K=1 replay ZCASC-OOP
+[natorder] N=8192 K=1 zcasc=38430ns incumbent=162390ns -> ZCASC
+[natorder] N=8192 K=1 replay ZCASC
+[natorder] N=8192 K=1 OOP zcasc=12580ns engine=54660ns -> ZCASC-OOP
+[natorder] N=8192 K=1 replay ZCASC-OOP
+[natorder] N=16384 K=1 zcasc=89080ns incumbent=473770ns -> ZCASC
+[natorder] N=16384 K=1 replay ZCASC
+[natorder] N=16384 K=1 OOP zcasc=29790ns engine=140700ns -> ZCASC-OOP
+[natorder] N=16384 K=1 replay ZCASC-OOP

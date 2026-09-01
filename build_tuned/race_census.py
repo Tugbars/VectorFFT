@@ -63,12 +63,18 @@ import os
 import sys
 
 CLOCKS = ("vfft_proto_now_ns(", "_il_ab_now(", "clock_gettime(")
-HELPERS = ("_pad_burst(", "_pad_med(", "_il_ab_med9(")
+HELPERS = ("_pad_burst(", "_pad_med(", "_il_ab_med9(",
+           "vfft_race_run(")          # support/race.h: the shared race body
 # timer and aggregation DEFINITIONS are not races; _bank_zr2c only records a number
 NOT_A_RACE = {"_il_ab_now", "vfft_proto_now_ns", "_pad_med", "_il_ab_med9",
-              "_bank_zr2c"}
+              "_bank_zr2c",
+              # support/race.h: the body, its aggregators, the hysteresis helper
+              "vfft_race_run", "vfft_race_median", "vfft_race_aggregate",
+              "vfft_race_beats"}
 GAP = 40          # clock calls further apart than this start a new region
 LOOKAHEAD = 30    # lines past the last clock call to search for the verdict
+LOOKBACK = 16     # lines before a template call: its proto initializer + reps line
+TEMPLATE = "vfft_race_run("   # support/race.h: the shared race body
 
 FN_DEF = re.compile(r"^[A-Za-z_]")
 FN_NAME = re.compile(r"([A-Za-z_][A-Za-z_0-9]*)\s*\(")
@@ -82,6 +88,12 @@ ROUND = re.compile(r"for\s*\(\s*(?:int\s+)?([A-Za-z_][A-Za-z_0-9]*)\s*=\s*0\s*;\
                    r"\1\s*<\s*(\w+)\s*;")
 REPS = re.compile(r"\breps\s*=\s*(.+?);")
 MINMAX = re.compile(r"if\s*\(\s*\w+\s*<\s*\w+\s*\)")
+# support/race.h: `const vfft_race_proto_t proto = { rounds, reps, VFFT_RACE_AGG, alt, warm, ... }`
+PROTO = re.compile(r"vfft_race_proto_t\s+\w+\s*=\s*\{\s*(\d+)\s*,\s*(\w+)\s*,\s*"
+                   r"VFFT_RACE_(\w+)\s*,\s*(\d)")
+# a template-site verdict on the aggregates: if (ns[1] < ns[0]) / if (ns[1] < ns[0] * 0.97)
+TVERDICT = re.compile(r"\(\s*(ns\[\d\])\s*(<=|<|>=|>)\s*(ns\[\d\])"
+                      r"(?:\s*\*\s*(\d*\.\d+))?\s*\)")
 
 
 def functions(lines):
@@ -132,7 +144,10 @@ def functions(lines):
 
 def regions(body):
     """Split one function body into race regions. See REGIONS above."""
-    hits = [i for i, line in enumerate(body) if any(c in line for c in CLOCKS)]
+    # a template call (support/race.h) is a timing site like a clock call:
+    # it clusters on its own, so each site keeps its own region
+    hits = [i for i, line in enumerate(body)
+            if any(c in line for c in CLOCKS) or TEMPLATE in line]
     if not hits:
         joined = "\n".join(body)
         if any(h in joined for h in HELPERS):
@@ -145,7 +160,10 @@ def regions(body):
             start = i
         prev = i
     out.append((start, prev))
-    return [(a, min(len(body) - 1, b + LOOKAHEAD)) for a, b in out]
+    # a template region starts LOOKBACK lines early so the protocol
+    # initializer and the reps line above the call are inside it
+    return [((max(0, a - LOOKBACK) if TEMPLATE in chr(10).join(body[a:b + 1]) else a),
+             min(len(body) - 1, b + LOOKAHEAD)) for a, b in out]
 
 
 def features(name, body):
@@ -166,6 +184,15 @@ def features(name, body):
             alt=("& 1)" in text or "r & 1" in text),
             minmax=bool(MINMAX.search(text)),
         )
+        pm = PROTO.search(text)
+        if pm:
+            # the template site: rounds/aggregate/alternation are the
+            # initializer's constants, the clock is the template's
+            base["rounds"] = sorted(set(base["rounds"]) | {pm.group(1)})
+            base["aggs"] = sorted(set(base["aggs"]) |
+                                  {"vfft_race_run:" + pm.group(3).lower()})
+            base["alt"] = base["alt"] or pm.group(4) == "1"
+            base["clocks"] = sorted(set(base["clocks"]) | {"race.h"})
         found = False
         for line in seg:
             for m in HYST.finditer(line):
@@ -174,6 +201,11 @@ def features(name, body):
             m = BARE.search(line)
             if m and not HYST.search(line):
                 sites.append(dict(base, kind="bare", op=m.group(2), lit="NONE"))
+                found = True
+            m = TVERDICT.search(line)
+            if m and not HYST.search(line):
+                sites.append(dict(base, kind="hyst" if m.group(4) else "bare",
+                                  op=m.group(2), lit=m.group(4) or "NONE"))
                 found = True
         if not found:
             sites.append(dict(base, kind="UNMATCHED", op="?", lit="?"))
@@ -214,6 +246,9 @@ def verdicts(lines):
             a, b = m.group(1), m.group(3)
             if len(a) <= 4 and len(b) <= 4:
                 out.append(dict(fn=cur, op=m.group(2), lit="NONE"))
+        m = TVERDICT.search(line)
+        if m and not HYST.search(line):
+            out.append(dict(fn=cur, op=m.group(2), lit=m.group(4) or "NONE"))
     return out
 
 
