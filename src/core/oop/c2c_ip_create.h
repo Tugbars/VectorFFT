@@ -440,6 +440,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                 W->vw2_off_stride ? vfft_proto_nat_lookup(&W->c2c, N, K)
                                   : (vw2_stride_lookup_nat(&W->vw2, _vw2_lay_of(cfg), N, K, &neb) ? &neb : NULL);
             int mode = (ne && !cfg->recalibrate) ? ne->mode : VFFT_NAT_UNSET;
+            const int nat_raced = (ne && !cfg->recalibrate &&
+                                   !W->vw2_off_stride) ? ne->raced : 0;
             if (p->num_stages <= 1)
                 mode = VFFT_NAT_FREE; /* single-stage / prime override: already natural, no tape */
             /* Natural-terminator cascade, built as a CANDIDATE for the race below from the kind-4
@@ -447,7 +449,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
              * See docs/design/vfft_front_door.md. */
             vfft_zturn2_plan_t *zct = NULL;
             if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                N >= _vfft_zcasc_min_n() && !getenv("VFFT_NO_NAT_ZCASC"))
+                N >= _vfft_zcasc_min_n() && !getenv("VFFT_NO_NAT_ZCASC") &&
+                (mode == VFFT_NAT_ZCASC || !nat_raced))
             {
                 vfft_config_t rcfg = *cfg;
                 rcfg.recalibrate = 0;
@@ -498,7 +501,8 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             vfft_il2p_plan_t *ilc2 = NULL;
             vfft_il3p_plan_t *ilc3 = NULL;
             if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                N < 2048 && !getenv("VFFT_NO_NAT_ILP"))
+                N < 2048 && !getenv("VFFT_NO_NAT_ILP") &&
+                (mode == VFFT_NAT_ILP || !nat_raced))
                 _k1_il_candidate(W, N, &ilc2, &ilc3);
             if (mode == VFFT_NAT_ILP)
             {
@@ -816,6 +820,9 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                          * destroy's invariants for ~O(N) ints of dead
                          * weight. Flagged, accepted for v1. */
                     }
+                    else
+                        _bank_nat_raced(W, cfg, N, K); /* the banked loss:
+                                                        * never re-race */
                     if (getenv("VFFT_NAT_LOG"))
                         fprintf(stderr,
                                 "[natorder] N=%d K=%zu zcasc=%.0fns "
@@ -871,6 +878,9 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                                      h->cplan->num_stages,
                                      h->cplan->use_dif_forward);
                     }
+                    else
+                        _bank_nat_raced(W, cfg, N, K); /* the banked loss:
+                                                        * never re-race */
                     if (getenv("VFFT_NAT_LOG"))
                         fprintf(stderr,
                                 "[natorder] N=%d K=%zu ilp=%.0fns "

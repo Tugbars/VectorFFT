@@ -308,6 +308,26 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
+/* The banked LOSS (2026-09-02): the ZCASC/ILP challenger raced this @nat
+ * cell and the tape won. Mark the EXISTING record with zr=1 in place
+ * (vw2_update_field) — the tape's mode/chain line stays byte-for-byte as
+ * the tape race banked it (re-banking here would re-encode a chain whose
+ * provenance differs by mode — the SCR/dfac subtlety). A later re-bank of
+ * the cell (recalibrate) drops the token: race once, mark again. Without
+ * this, a losing race re-ran on EVERY create, forever — the exact disease
+ * VFFT_NAT_CONV was minted to cure on the ord=scr cell. */
+static void _bank_nat_raced(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                            int N, size_t K)
+{
+    vw2_key_t k;
+    if (W->vw2_off_stride)
+        return; /* kill switch: legacy tables keep the old re-race behaviour */
+    vw2__stride_key(&k, VW2_T_C2C, N, K, VW2_ORD_NAT, VW2_PL_IP);
+    k.lay = _vw2_lay_of(cfg);
+    if (vw2_update_field(&W->vw2, &k, "zr", "1") == VW2_OK)
+        _vw2_persist(W, cfg);
+}
+
 /* OOP-natural verdict: same (N,K) cell as @nat but keyed place=oop, so the
  * placements cannot clobber each other — and keyed lay= (v1.2) so the
  * LAYOUTS cannot either, for exactly the same reason the placement split
