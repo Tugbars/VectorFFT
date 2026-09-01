@@ -154,12 +154,10 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
                     vfft_proto_exec_fn fn, size_t me)
 {
     size_t K = me;
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
-                 * the i9 pool is well below 64, so this is a no-op there). */
+    /* The pool owns the clamp (support/threads.h). This helper has no plan
+     * handle, so no snapshot is passed: the caller's plan decided whether to
+     * come here at all (see _c2c_mt_safe / the create-time engage decision). */
+    int T = stride_pool_workers_for(0);
     if (T <= 1 || K < 8)
     {
         if (fn)
@@ -170,10 +168,13 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
             vfft_proto_execute_bwd(p, re, im, K);
         return;
     }
-    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8: floor dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65) */
-    _ip_arg a[64];
-    int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    /* THE ENGINE'S OWN PART: the slicing. CEIL(K/T) then round to 8: floor
+     * dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65). Slot 0
+     * is the caller's slice by the pool's convention. */
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
+    _ip_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++)
     {
         size_t k0 = (size_t)t * S;
         if (k0 >= K)
@@ -181,19 +182,9 @@ static void _c2c_mt(const stride_plan_t *p, double *re, double *im, int dir,
         size_t ke = k0 + S;
         if (ke > K)
             ke = K;
-        a[nd] = (_ip_arg){p, fn, re, im, k0, ke - k0, dir};
-        _stride_pool_dispatch(&_stride_workers[nd], _ip_tramp, &a[nd]);
-        nd++;
+        a[n++] = (_ip_arg){p, fn, re, im, k0, ke - k0, dir};
     }
-    size_t s0 = S < K ? S : K;
-    if (fn)
-        fn(p, re, im, s0, p->K, 0);
-    else if (dir)
-        vfft_proto_execute_fwd(p, re, im, s0);
-    else
-        vfft_proto_execute_bwd(p, re, im, s0);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _ip_tramp, a, sizeof a[0]);
 }
 
 #endif /* VFFT_ENGINE_MT_EXECUTE_H */

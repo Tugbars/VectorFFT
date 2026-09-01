@@ -68,7 +68,7 @@ static double _f2d_now(void){ struct timespec t; clock_gettime(CLOCK_MONOTONIC,&
 #endif
 
 #ifndef FFT2D_R2C_MAX_THREADS
-#define FFT2D_R2C_MAX_THREADS 64
+#define FFT2D_R2C_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 
@@ -176,59 +176,61 @@ static void _f2d_sr2c_fwd_run(_f2d_sr2c_fwd_fn fn, const double *rio,
                               double *ore, double *oim,
                               size_t rs_in, size_t os, size_t me)
 {
-    int T = stride_get_num_threads();
-    if (T > FFT2D_R2C_MAX_THREADS) T = FFT2D_R2C_MAX_THREADS;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
     if (T <= 1 || me < 16) { fn(rio, ore, oim, 0, 0, rs_in, os, me); return; }
-    _f2d_sr2c_mtf_arg_t args[FFT2D_R2C_MAX_THREADS];
-    int nd = 0;
+    /* 8-aligned proportional ranges, empty ones skipped: the slots are PACKED,
+     * and the caller (slot 0) runs whichever non-empty range comes first --
+     * its own [0,p0_main_end) when that is non-empty, exactly as before. */
+    _f2d_sr2c_mtf_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int m = 0;
     size_t p0_main_end = ((me * 1) / (size_t)T) & ~(size_t)7;
+    if (p0_main_end > 0) {
+        args[m].fn = fn; args[m].rio = rio; args[m].ore = ore; args[m].oim = oim;
+        args[m].rs_in = rs_in; args[m].os = os; args[m].me = p0_main_end;
+        m++;
+    }
     for (int t = 1; t < T; t++) {
         size_t ps = ((me * (size_t)t) / (size_t)T) & ~(size_t)7;
         size_t pe = ((me * (size_t)(t + 1)) / (size_t)T) & ~(size_t)7;
         if (t == T - 1) pe = me;
         if (ps >= pe) continue;
-        args[t].fn = fn;
-        args[t].rio = rio + 2 * ps * rs_in;
-        args[t].ore = ore + 2 * ps * os;
-        args[t].oim = oim + 2 * ps * os;
-        args[t].rs_in = rs_in; args[t].os = os; args[t].me = pe - ps;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _f2d_sr2c_mtf_tramp, &args[t]);
-        nd++;
+        args[m].fn = fn;
+        args[m].rio = rio + 2 * ps * rs_in;
+        args[m].ore = ore + 2 * ps * os;
+        args[m].oim = oim + 2 * ps * os;
+        args[m].rs_in = rs_in; args[m].os = os; args[m].me = pe - ps;
+        m++;
     }
-    if (p0_main_end > 0)
-        fn(rio, ore, oim, 0, 0, rs_in, os, p0_main_end);
-    if (nd > 0) _stride_pool_wait_all();
+    if (m > 0) stride_pool_run(m, _f2d_sr2c_mtf_tramp, args, sizeof args[0]);
 }
 static void _f2d_sr2c_bwd_run(_f2d_sr2c_bwd_fn fn, const double *ire,
                               const double *iim, double *out,
                               size_t is, size_t rs_in, size_t me)
 {
-    int T = stride_get_num_threads();
-    if (T > FFT2D_R2C_MAX_THREADS) T = FFT2D_R2C_MAX_THREADS;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp; no plan handle here */
     if (T <= 1 || me < 16) { fn(ire, iim, out, 0, 0, is, rs_in, me); return; }
-    _f2d_sr2c_mtb_arg_t args[FFT2D_R2C_MAX_THREADS];
-    int nd = 0;
+    /* packed slots, caller = slot 0 (see the forward twin) */
+    _f2d_sr2c_mtb_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int m = 0;
     size_t p0_main_end = ((me * 1) / (size_t)T) & ~(size_t)7;
+    if (p0_main_end > 0) {
+        args[m].fn = fn; args[m].ire = ire; args[m].iim = iim; args[m].out = out;
+        args[m].is = is; args[m].rs_in = rs_in; args[m].me = p0_main_end;
+        m++;
+    }
     for (int t = 1; t < T; t++) {
         size_t ps = ((me * (size_t)t) / (size_t)T) & ~(size_t)7;
         size_t pe = ((me * (size_t)(t + 1)) / (size_t)T) & ~(size_t)7;
         if (t == T - 1) pe = me;
         if (ps >= pe) continue;
-        args[t].fn = fn;
-        args[t].ire = ire + 2 * ps * is;
-        args[t].iim = iim + 2 * ps * is;
-        args[t].out = out + 2 * ps * rs_in;
-        args[t].is = is; args[t].rs_in = rs_in; args[t].me = pe - ps;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _f2d_sr2c_mtb_tramp, &args[t]);
-        nd++;
+        args[m].fn = fn;
+        args[m].ire = ire + 2 * ps * is;
+        args[m].iim = iim + 2 * ps * is;
+        args[m].out = out + 2 * ps * rs_in;
+        args[m].is = is; args[m].rs_in = rs_in; args[m].me = pe - ps;
+        m++;
     }
-    if (p0_main_end > 0)
-        fn(ire, iim, out, 0, 0, is, rs_in, p0_main_end);
-    if (nd > 0) _stride_pool_wait_all();
+    if (m > 0) stride_pool_run(m, _f2d_sr2c_mtb_tramp, args, sizeof args[0]);
 }
 
 /* §6a48/Q2: rows-based, tail-capable entries. Full blocks go through the
@@ -612,15 +614,15 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
                                      double *out_re, double *out_im) {
     const size_t N1 = (size_t)d->N1;
     const size_t B = d->B;
-    int T = stride_get_num_threads();
-    if (T > d->num_scratch) T = d->num_scratch;
-    /* The inner r2c plan uses its own per-slot pack scratch (n_threads slots).
-     * Don't dispatch more tile threads than the inner has scratch slots, or
-     * two threads would collide on an inner slot (garbage output). */
+    /* The plan's snapshot is the SMALLER of its own tile-scratch slots and the
+     * inner r2c plan's pack-scratch slots (two tile threads on one inner slot
+     * would collide: garbage output). The pool's one clamp takes it. */
+    int slots = d->num_scratch;
     {
         stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
-        if (T > rd->n_threads) T = rd->n_threads;
+        if (slots > rd->n_threads) slots = rd->n_threads;
     }
+    int T = stride_pool_workers_for(slots);
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
@@ -630,37 +632,29 @@ static void _fft2d_r2c_tiled_fwd_mt(stride_fft2d_r2c_data_t *d,
         return;
     }
 
-    _fft2d_r2c_tile_arg_t args[FFT2D_R2C_MAX_THREADS];
-    int n_dispatch = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* slot t owns scratch slot t and tid t; slot 0 is the caller */
+    _fft2d_r2c_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
         size_t tiles_end   = (n_tiles * (t + 1)) / T;
         size_t row_start   = tiles_start * B;
         size_t row_end     = tiles_end * B;
         if (row_end > N1) row_end = N1;
-        if (row_start >= N1) break;
+        if (t > 0 && row_start >= N1) break;
 
-        args[t].d = d;
-        args[t].re_in = re_in;
-        args[t].out_re = out_re;
-        args[t].out_im = out_im;
-        args[t].sr = _fft2d_r2c_scratch_re(d, t);
-        args[t].si = _fft2d_r2c_scratch_im(d, t);
-        args[t].row_start = row_start;
-        args[t].row_end = row_end;
-        args[t].tid = t;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft2d_r2c_tile_fwd_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].re_in = re_in;
+        args[n].out_re = out_re;
+        args[n].out_im = out_im;
+        args[n].sr = _fft2d_r2c_scratch_re(d, t);
+        args[n].si = _fft2d_r2c_scratch_im(d, t);
+        args[n].row_start = row_start;
+        args[n].row_end = row_end;
+        args[n].tid = t;
+        n++;
     }
-    {
-        size_t row_end = ((n_tiles * 1) / T) * B;
-        if (row_end > N1) row_end = N1;
-        _fft2d_r2c_tiled_fwd_range(d, re_in, out_re, out_im,
-                                    d->scratch_re, d->scratch_im,
-                                    0, row_end, 0);
-    }
-    if (n_dispatch > 0) _stride_pool_wait_all();
+    stride_pool_run(n, _fft2d_r2c_tile_fwd_trampoline, args, sizeof args[0]);
 }
 
 /* Backward (C2R) tile-parallel — same partition as the forward. Reads padded
@@ -685,14 +679,13 @@ static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
                                      double *re_out) {
     const size_t N1 = (size_t)d->N1;
     const size_t B = d->B;
-    int T = stride_get_num_threads();
-    if (T > d->num_scratch) T = d->num_scratch;
-    /* Same inner-slot cap as the forward: don't dispatch more tile threads than
-     * the inner r2c plan has pack-scratch slots (else two tiles collide). */
+    /* same snapshot rule as the forward: min(tile slots, inner pack slots) */
+    int slots = d->num_scratch;
     {
         stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
-        if (T > rd->n_threads) T = rd->n_threads;
+        if (slots > rd->n_threads) slots = rd->n_threads;
     }
+    int T = stride_pool_workers_for(slots);
 
     size_t n_tiles = (N1 + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
@@ -702,37 +695,28 @@ static void _fft2d_r2c_tiled_bwd_mt(stride_fft2d_r2c_data_t *d,
         return;
     }
 
-    _fft2d_r2c_tile_bwd_arg_t args[FFT2D_R2C_MAX_THREADS];
-    int n_dispatch = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    _fft2d_r2c_tile_bwd_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
         size_t tiles_end   = (n_tiles * (t + 1)) / T;
         size_t row_start   = tiles_start * B;
         size_t row_end     = tiles_end * B;
         if (row_end > N1) row_end = N1;
-        if (row_start >= N1) break;
+        if (t > 0 && row_start >= N1) break;
 
-        args[t].d = d;
-        args[t].in_pad_re = in_pad_re;
-        args[t].in_pad_im = in_pad_im;
-        args[t].re_out = re_out;
-        args[t].sr = _fft2d_r2c_scratch_re(d, t);
-        args[t].si = _fft2d_r2c_scratch_im(d, t);
-        args[t].row_start = row_start;
-        args[t].row_end = row_end;
-        args[t].tid = t;
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft2d_r2c_tile_bwd_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].in_pad_re = in_pad_re;
+        args[n].in_pad_im = in_pad_im;
+        args[n].re_out = re_out;
+        args[n].sr = _fft2d_r2c_scratch_re(d, t);
+        args[n].si = _fft2d_r2c_scratch_im(d, t);
+        args[n].row_start = row_start;
+        args[n].row_end = row_end;
+        args[n].tid = t;
+        n++;
     }
-    {
-        size_t row_end = ((n_tiles * 1) / T) * B;
-        if (row_end > N1) row_end = N1;
-        _fft2d_r2c_tiled_bwd_range(d, in_pad_re, in_pad_im, re_out,
-                                    d->scratch_re, d->scratch_im,
-                                    0, row_end, 0);
-    }
-    if (n_dispatch > 0) _stride_pool_wait_all();
+    stride_pool_run(n, _fft2d_r2c_tile_bwd_trampoline, args, sizeof args[0]);
 }
 
 
@@ -889,9 +873,7 @@ static stride_plan_t *stride_plan_2d_r2c_from(int N1, int N2, size_t B,
      * R2C reuses for input + Re bins. Im just needs hp1*B. */
     d->tile_complex_sz = hp1 * B;
 
-    int T = stride_get_num_threads();
-    if (T > FFT2D_R2C_MAX_THREADS) T = FFT2D_R2C_MAX_THREADS;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
     d->num_scratch = T;
 
     d->scratch_re = (double *)STRIDE_ALIGNED_ALLOC(64,

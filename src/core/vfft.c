@@ -1365,8 +1365,8 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             int nw = h->nthreads - 1;
             if ((size_t)nw > K - 1)
                 nw = (int)(K - 1);
-            if (nw > 63)
-                nw = 63; /* pool dispatch arrays are a[64] tree-wide */
+            if (nw > STRIDE_POOL_MAX_DISPATCH - 1)
+                nw = STRIDE_POOL_MAX_DISPATCH - 1; /* one clone per dispatchable worker */
             if (nw > 0)
                 h->tcbw = (struct vfft_plan_s **)calloc((size_t)nw,
                                                         sizeof *h->tcbw);
@@ -1629,22 +1629,23 @@ typedef struct
     size_t k0, ks;
     int dir, use_dif;
     vfft_proto_exec_range_fn rfb;
+    int rc; /* the executor's return; only slot 0 (the caller) is consulted */
 } _il_mt_arg;
 static void _il_mt_tramp(void *v)
 {
     _il_mt_arg *a = (_il_mt_arg *)v;
     if (a->dir)
-        vfft_proto_execute_fwd_il2il_core(a->p, a->zi + 2 * a->k0,
-                                          a->wr + a->k0, a->wi + a->k0,
-                                          a->zo + 2 * a->k0, a->ks);
+        a->rc = vfft_proto_execute_fwd_il2il_core(a->p, a->zi + 2 * a->k0,
+                                                  a->wr + a->k0, a->wi + a->k0,
+                                                  a->zo + 2 * a->k0, a->ks);
     else if (!a->use_dif)
-        vfft_proto_execute_bwd_il2il_jit(a->p, a->zi + 2 * a->k0,
-                                         a->wr + a->k0, a->wi + a->k0,
-                                         a->zo + 2 * a->k0, a->ks, a->rfb);
+        a->rc = vfft_proto_execute_bwd_il2il_jit(a->p, a->zi + 2 * a->k0,
+                                                 a->wr + a->k0, a->wi + a->k0,
+                                                 a->zo + 2 * a->k0, a->ks, a->rfb);
     else
-        vfft_proto_execute_bwd_il2il_core(a->p, a->zi + 2 * a->k0,
-                                          a->wr + a->k0, a->wi + a->k0,
-                                          a->zo + 2 * a->k0, a->ks);
+        a->rc = vfft_proto_execute_bwd_il2il_core(a->p, a->zi + 2 * a->k0,
+                                                  a->wr + a->k0, a->wi + a->k0,
+                                                  a->zo + 2 * a->k0, a->ks);
 }
 typedef struct
 {
@@ -1972,11 +1973,7 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
         if (resolvable)
         {
             size_t K = h->K;
-            int T = stride_get_num_threads();
-            if (T > _stride_pool_size + 1)
-                T = _stride_pool_size + 1;
-            if (T > 64)
-                T = 64;
+            int T = stride_pool_workers_for(h->nthreads); /* the plan snapshot; the pool clamps */
             if (T <= 1 || K < 8)
             {
                 int rc = dir == VFFT_FORWARD
@@ -1992,10 +1989,12 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
             }
             else
             {
+                /* slabs are SIMD LANES: CEIL(K/T) rounded to 8. Slot 0 is the
+                 * caller; its rc decides the fallback exactly as before. */
                 size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
-                _il_mt_arg a[64];
-                int nd = 0;
-                for (int t = 1; t < T && t <= _stride_pool_size; t++)
+                _il_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+                int n = 0;
+                for (int t = 0; t < T; t++)
                 {
                     size_t k0 = (size_t)t * S;
                     if (k0 >= K)
@@ -2003,27 +2002,14 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                     size_t ke = k0 + S;
                     if (ke > K)
                         ke = K;
-                    a[nd] = (_il_mt_arg){h->cplan, z_in, h->il_wr, h->il_wi,
-                                         z_out, k0, ke - k0,
-                                         dir == VFFT_FORWARD,
-                                         h->cplan->use_dif_forward,
-                                         h->il_rfb};
-                    _stride_pool_dispatch(&_stride_workers[nd], _il_mt_tramp,
-                                          &a[nd]);
-                    nd++;
+                    a[n++] = (_il_mt_arg){h->cplan, z_in, h->il_wr, h->il_wi,
+                                          z_out, k0, ke - k0,
+                                          dir == VFFT_FORWARD,
+                                          h->cplan->use_dif_forward,
+                                          h->il_rfb, 0};
                 }
-                size_t s0 = S < K ? S : K;
-                int rc = dir == VFFT_FORWARD
-                             ? vfft_proto_execute_fwd_il2il_core(h->cplan, z_in,
-                                                                 h->il_wr, h->il_wi, z_out, s0)
-                             : (!h->cplan->use_dif_forward
-                                    ? vfft_proto_execute_bwd_il2il_jit(h->cplan, z_in,
-                                                                       h->il_wr, h->il_wi, z_out, s0, h->il_rfb)
-                                    : vfft_proto_execute_bwd_il2il_core(h->cplan, z_in,
-                                                                        h->il_wr, h->il_wi, z_out, s0));
-                if (nd)
-                    _stride_pool_wait_all();
-                if (rc == 0)
+                stride_pool_run(n, _il_mt_tramp, a, sizeof a[0]);
+                if (a[0].rc == 0)
                     return;
             }
         }
@@ -2042,19 +2028,15 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                 h->nat_mode, h->mt_unsafe,
                 h->cplan ? h->cplan->num_stages : -1);
     { /* §6a58/C1: slab the converts across the pool (barriered). */
-        int Tc = stride_get_num_threads();
-        if (Tc > _stride_pool_size + 1)
-            Tc = _stride_pool_size + 1;
-        if (Tc > 64)
-            Tc = 64;
+        int Tc = stride_pool_workers_for(h->nthreads); /* the plan snapshot; the pool clamps */
         if (Tc <= 1 || NK < 4096)
             _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
         else
         {
             size_t Sc = (((NK + (size_t)Tc - 1) / (size_t)Tc) + 7) & ~(size_t)7;
-            _zc_arg ca[64];
-            int nd = 0;
-            for (int t = 1; t < Tc && t <= _stride_pool_size; t++)
+            _zc_arg ca[STRIDE_POOL_MAX_DISPATCH];
+            int n = 0;
+            for (int t = 0; t < Tc; t++)
             {
                 size_t e0 = (size_t)t * Sc;
                 if (e0 >= NK)
@@ -2062,32 +2044,23 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                 size_t ee = e0 + Sc;
                 if (ee > NK)
                     ee = NK;
-                ca[nd] = (_zc_arg){z_in, h->il_wr, h->il_wi, NULL,
-                                   e0, ee - e0, 1};
-                _stride_pool_dispatch(&_stride_workers[nd], _zc_tramp,
-                                      &ca[nd]);
-                nd++;
+                ca[n++] = (_zc_arg){z_in, h->il_wr, h->il_wi, NULL,
+                                    e0, ee - e0, 1};
             }
-            _vfft_z_dein(z_in, h->il_wr, h->il_wi, Sc < NK ? Sc : NK);
-            if (nd)
-                _stride_pool_wait_all();
+            stride_pool_run(n, _zc_tramp, ca, sizeof ca[0]); /* caller = slot 0 */
         }
     }
     _exec_c2c_inplace(h, dir, h->il_wr, h->il_wi);
     {
-        int Tc = stride_get_num_threads();
-        if (Tc > _stride_pool_size + 1)
-            Tc = _stride_pool_size + 1;
-        if (Tc > 64)
-            Tc = 64;
+        int Tc = stride_pool_workers_for(h->nthreads); /* the plan snapshot; the pool clamps */
         if (Tc <= 1 || NK < 4096)
             _vfft_z_inter(h->il_wr, h->il_wi, z_out, NK);
         else
         {
             size_t Sc = (((NK + (size_t)Tc - 1) / (size_t)Tc) + 7) & ~(size_t)7;
-            _zc_arg ca[64];
-            int nd = 0;
-            for (int t = 1; t < Tc && t <= _stride_pool_size; t++)
+            _zc_arg ca[STRIDE_POOL_MAX_DISPATCH];
+            int n = 0;
+            for (int t = 0; t < Tc; t++)
             {
                 size_t e0 = (size_t)t * Sc;
                 if (e0 >= NK)
@@ -2095,15 +2068,10 @@ static void _exec_c2c_interleaved(struct vfft_plan_s *h, vfft_dir_t dir,
                 size_t ee = e0 + Sc;
                 if (ee > NK)
                     ee = NK;
-                ca[nd] = (_zc_arg){NULL, h->il_wr, h->il_wi, z_out,
-                                   e0, ee - e0, 0};
-                _stride_pool_dispatch(&_stride_workers[nd], _zc_tramp,
-                                      &ca[nd]);
-                nd++;
+                ca[n++] = (_zc_arg){NULL, h->il_wr, h->il_wi, z_out,
+                                    e0, ee - e0, 0};
             }
-            _vfft_z_inter(h->il_wr, h->il_wi, z_out, Sc < NK ? Sc : NK);
-            if (nd)
-                _stride_pool_wait_all();
+            stride_pool_run(n, _zc_tramp, ca, sizeof ca[0]); /* caller = slot 0 */
         }
     }
 }

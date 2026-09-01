@@ -73,10 +73,7 @@ typedef struct
 typedef struct { stride_dct1_data_t *d; double *re; size_t k0, k1; } _dct1_slice_arg_t;
 
 static inline int _dct1_mt_threads(int n_threads_plan, int M, size_t K) {
-    int T = stride_get_num_threads();
-    if (T > n_threads_plan) T = n_threads_plan;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     if (T > 1 && (size_t)M * K < (size_t)8192 * (size_t)T) T = 1;
     return T;
 }
@@ -150,19 +147,15 @@ static void _dct1_execute(void *data, double *re, double *im)
 
     int T = _dct1_mt_threads(d->n_threads, M, K);
     if (T > 1) {
-        _dct1_slice_arg_t args[64];
+        _dct1_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d = d; args[t].re = re;
             args[t].k0 = (K * (size_t)t) / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_pre, &args[t]);
-        _dct1_worker_pre(&args[0]); _stride_pool_wait_all();
+        stride_pool_run(T, _dct1_worker_pre, args, sizeof args[0]); /* caller = args[0] */
         stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);   /* inner threads internally */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_post, &args[t]);
-        _dct1_worker_post(&args[0]); _stride_pool_wait_all();
+        stride_pool_run(T, _dct1_worker_post, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -188,19 +181,15 @@ static void _dst1_execute(void *data, double *re, double *im)
 
     int T = _dct1_mt_threads(d->n_threads, M, K);
     if (T > 1) {
-        _dct1_slice_arg_t args[64];
+        _dct1_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d = d; args[t].re = re;
             args[t].k0 = (K * (size_t)t) / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_pre_dst, &args[t]);
-        _dct1_worker_pre_dst(&args[0]); _stride_pool_wait_all();
+        stride_pool_run(T, _dct1_worker_pre_dst, args, sizeof args[0]); /* caller = args[0] */
         stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);   /* inner threads internally */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1], _dct1_worker_post_dst, &args[t]);
-        _dct1_worker_post_dst(&args[0]); _stride_pool_wait_all();
+        stride_pool_run(T, _dct1_worker_post_dst, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 

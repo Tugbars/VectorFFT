@@ -52,7 +52,7 @@
 #endif
 
 #ifndef FFTND_R2C_MAX_THREADS
-#define FFTND_R2C_MAX_THREADS 64
+#define FFTND_R2C_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 typedef struct {
@@ -203,38 +203,33 @@ static void _fndr_rows_mt(stride_fftnd_r2c_data_t *d,
         return;
     }
     const size_t R = d->R, B = d->B;
-    int T = stride_get_num_threads();
-    if (T > d->num_scratch) T = d->num_scratch;
-    {   /* never exceed the inner r2c plan's pack-slot count */
+    /* the plan's snapshot = min(its tile-scratch slots, the inner r2c plan's
+     * pack-slot count); the pool's one clamp takes it */
+    int slots = d->num_scratch;
+    {
         stride_r2c_data_t *rd = (stride_r2c_data_t *)d->plan_r2c->override_data;
-        if (T > rd->n_threads) T = rd->n_threads;
+        if (slots > rd->n_threads) slots = rd->n_threads;
     }
+    int T = stride_pool_workers_for(slots);
     size_t n_tiles = (R + B - 1) / B;
     if (T <= 1 || n_tiles <= 1) {
         if (is_bwd) _fndr_rows_bwd_range(d, re_out, _fndr_sre(d,0), _fndr_sim(d,0), 0, R, 0);
         else        _fndr_rows_fwd_range(d, re_in,  _fndr_sre(d,0), _fndr_sim(d,0), 0, R, 0);
         return;
     }
-    _fndr_tile_arg_t args[FFTND_R2C_MAX_THREADS];
-    int n_dispatch = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* slot t owns scratch slot t and tid t; slot 0 is the caller */
+    _fndr_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t rs = ((n_tiles * (size_t)t) / (size_t)T) * B;
         size_t re_ = ((n_tiles * (size_t)(t + 1)) / (size_t)T) * B;
         if (re_ > R) re_ = R;
-        if (rs >= R) break;
-        args[t] = (_fndr_tile_arg_t){ d, re_in, re_out,
-                                      _fndr_sre(d,t), _fndr_sim(d,t),
-                                      rs, re_, t, is_bwd };
-        _stride_pool_dispatch(&_stride_workers[t - 1], _fndr_tile_tramp, &args[t]);
-        n_dispatch++;
+        if (t > 0 && rs >= R) break;
+        args[n++] = (_fndr_tile_arg_t){ d, re_in, re_out,
+                                        _fndr_sre(d,t), _fndr_sim(d,t),
+                                        rs, re_, t, is_bwd };
     }
-    {
-        size_t re0 = ((n_tiles * 1) / (size_t)T) * B;
-        if (re0 > R) re0 = R;
-        if (is_bwd) _fndr_rows_bwd_range(d, re_out, _fndr_sre(d,0), _fndr_sim(d,0), 0, re0, 0);
-        else        _fndr_rows_fwd_range(d, re_in,  _fndr_sre(d,0), _fndr_sim(d,0), 0, re0, 0);
-    }
-    if (n_dispatch > 0) _stride_pool_wait_all();
+    stride_pool_run(n, _fndr_tile_tramp, args, sizeof args[0]);
 }
 
 
@@ -278,8 +273,7 @@ static void _fndr_axis_mt(stride_fftnd_r2c_data_t *d, int m, int is_bwd) {
                                          d->pad_im + o * sub,
                                          Kc, d->nat_ax[m], d->nat_rtmp);
     }
-    int T = stride_get_num_threads();
-    if (T > FFTND_R2C_MAX_THREADS) T = FFTND_R2C_MAX_THREADS;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp; no per-slot scratch here */
     if (T <= 1 || O <= 1) {
         _fndr_axis_range(d, m, 0, O, is_bwd);
         if (!is_bwd && d->nat_ax[m]) {
@@ -291,18 +285,17 @@ static void _fndr_axis_mt(stride_fftnd_r2c_data_t *d, int m, int is_bwd) {
         }
         return;
     }
-    _fndr_axis_arg_t args[FFTND_R2C_MAX_THREADS];
-    int n_dispatch = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* slot 0 is the caller's [0, O/T); empty worker ranges skipped (packed) */
+    _fndr_axis_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    args[n++] = (_fndr_axis_arg_t){ d, m, is_bwd, 0, O / (size_t)T };
+    for (int t = 1; t < T; t++) {
         size_t lo = (O * (size_t)t) / (size_t)T;
         size_t hi = (O * (size_t)(t + 1)) / (size_t)T;
         if (lo >= hi) continue;
-        args[t] = (_fndr_axis_arg_t){ d, m, is_bwd, lo, hi };
-        _stride_pool_dispatch(&_stride_workers[t - 1], _fndr_axis_tramp, &args[t]);
-        n_dispatch++;
+        args[n++] = (_fndr_axis_arg_t){ d, m, is_bwd, lo, hi };
     }
-    _fndr_axis_range(d, m, 0, O / (size_t)T, is_bwd);
-    if (n_dispatch > 0) _stride_pool_wait_all();
+    stride_pool_run(n, _fndr_axis_tramp, args, sizeof args[0]);
     if (!is_bwd && d->nat_ax[m]) {
         const size_t Kc = d->Kc[m], sub = (size_t)d->N[m] * Kc;
         for (size_t o = 0; o < O; o++)
@@ -427,9 +420,7 @@ static stride_plan_t *stride_plan_nd_r2c(int rank, const int *N,
         if (!d->cplan[m]) ok = 0;
     }
     if (ok) {
-        int T = stride_get_num_threads();
-        if (T > FFTND_R2C_MAX_THREADS) T = FFTND_R2C_MAX_THREADS;
-        if (T < 1) T = 1;
+        int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
         d->num_scratch = T;
         d->tile_real_sz = (size_t)N[rank-1] * d->B;
         d->tile_cplx_sz = d->hp1 * d->B;

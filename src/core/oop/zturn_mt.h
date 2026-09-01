@@ -203,8 +203,8 @@ static void _zt_mt_phase(const vfft_zturn2_plan_t *p, const double *zin,
                          double *zout, int phase, int s, int fwd,
                          long units, int align8, int T)
 {
-    _zt_mt_arg a[64];
-    int t, nd = 0;
+    _zt_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int t;
     for (t = 0; t < T; t++)
     {
         a[t].p = p;
@@ -221,12 +221,8 @@ static void _zt_mt_phase(const vfft_zturn2_plan_t *p, const double *zin,
             a[t].hi = (t == T - 1) ? units : ((units * (t + 1) / T) & ~7L);
         }
     }
-    for (t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[nd++], _zt_mt_tramp,
-                              &a[t]);
-    _zt_mt_tramp(&a[0]);
-    if (nd)
-        _stride_pool_wait_all();
+    /* the pool's fork-join: workers take a[1..T-1], the caller runs a[0] */
+    stride_pool_run(T, _zt_mt_tramp, a, sizeof a[0]);
 }
 
 /* -- THE DISPATCHER AND THE RACER (migration step 20) --------------------
@@ -259,10 +255,9 @@ static int _zt_execute_mt(struct vfft_plan_s *h, vfft_dir_t dir,
     int s;
     if (p->natord || p->tiled == 2)
         return 0; /* rho-order table walks; A1 = gate-only control arm */
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64;
+    /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
+     * bounds it by the live pool and the arg-array size. */
+    T = stride_pool_workers_for(T);
     if (T < 2 || SEC < 8 * T)
         return 0;
     if (fwd)

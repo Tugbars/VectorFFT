@@ -96,12 +96,9 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
                     double *dr, double *di, int dir)
 {
     size_t K = p->K;
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
-                 * the i9 pool is well below 64, so this is a no-op there). */
+    /* The pool owns the clamp (support/threads.h); the OOP plan carries no
+     * thread snapshot of its own, so none is passed. */
+    int T = stride_pool_workers_for(0);
     if (T <= 1 || K < 8 || p->kind == VFFT_OOP_KIND_BAILEY2)
     {
         if (dir)
@@ -110,10 +107,13 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
             vfft_oop_execute_bwd(p, sr, si, dr, di);
         return;
     }
-    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8: floor dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65) */
-    _oop_mt_arg_t a[64];
-    int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    /* THE ENGINE'S OWN PART: the slicing. CEIL(K/T) then round to 8: floor
+     * dropped the last K%T lanes when floor(K/T)%8==0 (e.g. T=8,K=65). Slot 0
+     * is the caller's slice by the pool's convention. */
+    size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
+    _oop_mt_arg_t a[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++)
     {
         size_t k0 = (size_t)t * S;
         if (k0 >= K)
@@ -121,17 +121,9 @@ static void _oop_mt(const vfft_oop_plan_t *p, const double *sr, const double *si
         size_t ke = k0 + S;
         if (ke > K)
             ke = K;
-        a[nd] = (_oop_mt_arg_t){p, sr, si, dr, di, k0, ke - k0, dir};
-        _stride_pool_dispatch(&_stride_workers[nd], _oop_mt_tramp, &a[nd]);
-        nd++;
+        a[n++] = (_oop_mt_arg_t){p, sr, si, dr, di, k0, ke - k0, dir};
     }
-    size_t s0 = S < K ? S : K;
-    if (dir)
-        _oop_slice_fwd(p, sr, si, dr, di, 0, s0);
-    else
-        _oop_slice_bwd(p, sr, si, dr, di, 0, s0);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _oop_mt_tramp, a, sizeof a[0]);
 }
 
 #endif /* VFFT_OOP_OOP_MT_H */
