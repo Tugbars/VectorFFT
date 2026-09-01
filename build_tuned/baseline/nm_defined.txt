@@ -1720,7 +1720,6 @@ t _fft3d_plane_trampoline
 t _fft3d_tile_trampoline
 t _fft3d_tiled_mt
 t _fft3d_tiled_range
-t _fftnd_axis_item_range
 t _fftnd_axis_mt_win
 t _fftnd_axis_outer_range
 t _fftnd_axis_trampoline
@@ -1791,8 +1790,6 @@ t _natorder_reorder_mt
 t _oddr_build
 t _oop_mt
 t _oop_mt_tramp
-t _oop_slice_bwd
-t _oop_slice_fwd
 t _own_batch_free
 t _pad_dcmp
 t _pad_fill

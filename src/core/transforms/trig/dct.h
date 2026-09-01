@@ -106,10 +106,7 @@ typedef struct {
 /* T calculation shared by DCT-II / DCT-III. Returns 1 to skip MT path
  * (caller falls through to the existing single-threaded code). */
 static inline int _dct2_mt_threads(int n_threads_plan, int N, size_t K) {
-    int T = stride_get_num_threads();
-    if (T > n_threads_plan) T = n_threads_plan;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     /* Per-thread workload threshold: at least ~8K elements per thread,
      * otherwise dispatch+wait_all (~200ns) dominates the work. */
     if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
@@ -283,7 +280,7 @@ static void _dct2_execute_fwd(void *data, double *re, double *im) {
      * thread count, or below the workload threshold). */
     int T = _dct2_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dct2_slice_arg_t args[64];
+        _dct2_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
@@ -292,21 +289,13 @@ static void _dct2_execute_fwd(void *data, double *re, double *im) {
         }
 
         /* Phase 1: pre-permute, T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct2_worker_pre_fwd, &args[t]);
-        _dct2_worker_pre_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct2_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
 
         /* Phase 2: inner R2C — uses its own MT internally on the same pool */
         stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
 
         /* Phase 3: post-process, T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct2_worker_post_fwd, &args[t]);
-        _dct2_worker_post_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct2_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -415,7 +404,7 @@ static void _dct3_execute_fwd(void *data, double *re, double *im) {
     /* MT path: mirror of DCT-II's three-phase dispatch. */
     int T = _dct2_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dct2_slice_arg_t args[64];
+        _dct2_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
@@ -424,21 +413,13 @@ static void _dct3_execute_fwd(void *data, double *re, double *im) {
         }
 
         /* Phase 1: pre-process (twiddle butterfly), T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct2_worker_pre_bwd, &args[t]);
-        _dct2_worker_pre_bwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct2_worker_pre_bwd, args, sizeof args[0]); /* caller = args[0] */
 
         /* Phase 2: inner R2C — uses its own MT internally */
         stride_execute_fwd(d->r2c_plan, d->buf_re, d->buf_im);
 
         /* Phase 3: post-permute, T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct2_worker_post_bwd, &args[t]);
-        _dct2_worker_post_bwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct2_worker_post_bwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 

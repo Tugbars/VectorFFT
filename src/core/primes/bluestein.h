@@ -483,11 +483,11 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
     const size_t K = d->K, B = d->B;
     const size_t n_blocks = (K + B - 1) / B;
 
-    int T = stride_get_num_threads();
-    if (T > d->n_threads) T = d->n_threads;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
+     * it); the pool's one clamp bounds it by the live pool and the arg-array
+     * size, and the block count bounds it below that. */
+    int T = stride_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
-    if (T < 1) T = 1;
 
     if (T == 1) {
         _blue_worker_arg_t a = { d, re, im, 0, K, 0 };
@@ -495,7 +495,8 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
         return;
     }
 
-    _blue_worker_arg_t args[64];
+    /* slot t owns tid t (its scratch slot); slot 0 is the caller */
+    _blue_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -508,11 +509,7 @@ static void _bluestein_execute_fwd(void *data, double *re, double *im) {
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    for (int t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _blue_worker_fwd, &args[t]);
-    _blue_worker_fwd(&args[0]);
-    _stride_pool_wait_all();
+    stride_pool_run(T, _blue_worker_fwd, args, sizeof args[0]);
 }
 
 
@@ -527,11 +524,11 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
     const size_t K = d->K, B = d->B;
     const size_t n_blocks = (K + B - 1) / B;
 
-    int T = stride_get_num_threads();
-    if (T > d->n_threads) T = d->n_threads;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    /* d->n_threads is this plan's snapshot (per-tid scratch was sized for
+     * it); the pool's one clamp bounds it by the live pool and the arg-array
+     * size, and the block count bounds it below that. */
+    int T = stride_pool_workers_for(d->n_threads);
     if (T > (int)n_blocks) T = (int)n_blocks;
-    if (T < 1) T = 1;
 
     if (T == 1) {
         _blue_worker_arg_t a = { d, re, im, 0, K, 0 };
@@ -539,7 +536,8 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
         return;
     }
 
-    _blue_worker_arg_t args[64];
+    /* slot t owns tid t (its scratch slot); slot 0 is the caller */
+    _blue_worker_arg_t args[STRIDE_POOL_MAX_DISPATCH];
     for (int t = 0; t < T; t++) {
         size_t bk_start = (n_blocks * (size_t)t)       / (size_t)T;
         size_t bk_end   = (n_blocks * (size_t)(t + 1)) / (size_t)T;
@@ -552,11 +550,7 @@ static void _bluestein_execute_bwd(void *data, double *re, double *im) {
         args[t].b0_end   = b0_end;
         args[t].tid = t;
     }
-    for (int t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _blue_worker_bwd, &args[t]);
-    _blue_worker_bwd(&args[0]);
-    _stride_pool_wait_all();
+    stride_pool_run(T, _blue_worker_bwd, args, sizeof args[0]);
 }
 
 

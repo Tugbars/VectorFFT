@@ -123,16 +123,16 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
              * serves. */
             if (h->nthreads > 1 && K >= 2)
             {
-                int T = h->nthreads;
+                /* h->nthreads is already <= the live setting
+                 * (_vfft_plan_threads), so the pool's one clamp = the
+                 * plan snapshot bounded by the pool and the dispatch
+                 * array; _pq_execute takes the same clamp on pq_wn. */
+                int T = stride_pool_workers_for(h->nthreads);
                 const vfft_dir_t pd = (cfg->transform == VFFT_C2R)
                                           ? VFFT_BACKWARD
                                           : VFFT_FORWARD;
                 double *ps, *p0, *p1;
                 int t, ok = 1;
-                if (T > _stride_pool_size + 1)
-                    T = _stride_pool_size + 1;
-                if (T > 64)
-                    T = 64;
                 if ((size_t)T > K)
                     T = (int)K;
                 ic.nthreads = 1;

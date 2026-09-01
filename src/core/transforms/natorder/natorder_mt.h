@@ -86,21 +86,13 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
                                  const int *list, const int *cyc_off, int nunits,
                                  int is_pairs, double *tmp, int inv, int nthreads)
 {
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
     /* THE PLAN'S OWN SNAPSHOT IS THE CEILING. `tmp` was sized at create for
      * exactly `nthreads` per-worker slots (the plan's h->nthreads). The pool is
-     * grow-only, so the live count read above can EXCEED that later, and every
-     * worker slices `tmp + slot*2*K` -- reading the live pool alone therefore
-     * indexed past the buffer (natorder_scratch_gate: wrong output on one run,
-     * heap corruption at destroy on the next). Same rule as every other engine:
-     * clamp by the plan-time snapshot, never by the live pool alone. */
-    if (nthreads >= 1 && T > nthreads)
-        T = nthreads;
-    if (T > 64)
-        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
-                 * the i9 pool is well below 64, so this is a no-op there). */
+     * grow-only, so the live count can EXCEED that later, and every worker
+     * slices `tmp + slot*2*K` -- reading the live pool alone indexed past the
+     * buffer (natorder_scratch_gate: wrong output on one run, heap corruption
+     * at destroy on the next). The pool's one clamp takes the snapshot. */
+    int T = stride_pool_workers_for(nthreads);
     if (T <= 1 || nunits < T || N * K < 8192)
     {
         if (is_pairs)
@@ -109,28 +101,24 @@ static void _natorder_reorder_mt(double *re, double *im, size_t N, size_t K,
             vfft_natorder_cycle_range(re, im, K, list, cyc_off, 0, nunits, tmp, inv);
         return;
     }
-    int per = (nunits + T - 1) / T; /* count-balanced (pairs exact; cycles approx) */
-    _nat_arg a[64];
-    int nd = 0, c = per;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    /* THE ENGINE'S OWN PART: count-balanced slicing (pairs exact; cycles
+     * approx). Slot 0 is the caller's [0,per) by the pool's convention; each
+     * slot's scratch is tmp + slot*2*K, so distinct slot indices suffice. */
+    int per = (nunits + T - 1) / T;
+    _nat_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0, c = 0;
+    for (int t = 0; t < T; t++)
     {
         if (c >= nunits)
             break;
         int c1 = c + per;
         if (c1 > nunits)
             c1 = nunits;
-        a[nd] = (_nat_arg){re, im, tmp, list, cyc_off, K, c, c1, nd, inv, is_pairs};
-        _stride_pool_dispatch(&_stride_workers[nd], _nat_range_tramp, &a[nd]);
-        nd++;
+        a[n] = (_nat_arg){re, im, tmp, list, cyc_off, K, c, c1, n, inv, is_pairs};
+        n++;
         c = c1;
     }
-    int m1 = per < nunits ? per : nunits; /* main thread does [0,per) */
-    if (is_pairs)
-        vfft_natorder_pair_range(re, im, K, list, 0, m1);
-    else
-        vfft_natorder_cycle_range(re, im, K, list, cyc_off, 0, m1, tmp + (size_t)nd * 2 * K, inv);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _nat_range_tramp, a, sizeof a[0]);
 }
 
 /* ── SCR forward, MT. Two dependent phases with a barrier between:
@@ -166,22 +154,23 @@ static void _scr_term_tramp(void *a)
 }
 static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
 {
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64; /* a[64] MT arg-array bound: cap dispatched workers to a[..<64] (EPYC-port hardening;
-                 * the i9 pool is well below 64, so this is a no-op there). */
+    /* The pool owns the clamp. The SCR pass has no plan handle here (the
+     * scatter object is per-plan but carries no thread snapshot), so none is
+     * passed. */
+    int T = stride_pool_workers_for(0);
     if (T <= 1 || K < 8 || (size_t)s->N * K < 8192)
     {
         natorder_scr_fwd(s, ur, ui, K);
         return;
     }
-    /* phase 1: OOP scratch-fill, K-split (lanes) */
-    size_t Sv = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7; /* CEIL(K/T) then round to 8 (floor dropped last K%T lanes when floor(K/T)%8==0) */
-    _scr_modeb_arg a1[64];
-    int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    /* phase 1: OOP scratch-fill, K-split (lanes). CEIL(K/T) then round to 8
+     * (floor dropped last K%T lanes when floor(K/T)%8==0). Slot 0 = the caller,
+     * on JIT like the workers (B6: a generic main slice straggled at the
+     * phase-1 barrier). stride_pool_run's wait IS the barrier. */
+    size_t Sv = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
+    _scr_modeb_arg a1[STRIDE_POOL_MAX_DISPATCH];
+    int n1 = 0;
+    for (int t = 0; t < T; t++)
     {
         size_t k0 = (size_t)t * Sv;
         if (k0 >= K)
@@ -189,23 +178,14 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         size_t ke = k0 + Sv;
         if (ke > K)
             ke = K;
-        a1[nd] = (_scr_modeb_arg){s, ur, ui, k0, ke - k0};
-        _stride_pool_dispatch(&_stride_workers[nd], _scr_modeb_tramp, &a1[nd]);
-        nd++;
+        a1[n1++] = (_scr_modeb_arg){s, ur, ui, k0, ke - k0};
     }
-    {
-        size_t s0 = Sv < K ? Sv : K;
-        vfft_proto_execute_fwd_oop_jit(&s->sub, ur, ui, s->scr_re, s->scr_im, s0,
-                                       s->sub_jit_fwd); /* B6: main slice on JIT too (was generic ->
-                                       straggler at the phase-1 barrier); matches workers + ST path. */
-    }
-    if (nd)
-        _stride_pool_wait_all(); /* BARRIER: scratch complete */
-    /* phase 2: terminator, group(q)-split */
+    stride_pool_run(n1, _scr_modeb_tramp, a1, sizeof a1[0]); /* BARRIER: scratch complete */
+    /* phase 2: terminator, group(q)-split; slot 0 = the caller's [0,per) */
     int P = s->P, per = (P + T - 1) / T;
-    _scr_term_arg a2[64];
-    int nd2 = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    _scr_term_arg a2[STRIDE_POOL_MAX_DISPATCH];
+    int n2 = 0;
+    for (int t = 0; t < T; t++)
     {
         int q0 = t * per;
         if (q0 >= P)
@@ -213,13 +193,9 @@ static void _scr_fwd_mt(natorder_scr_t *s, double *ur, double *ui, size_t K)
         int q1 = q0 + per;
         if (q1 > P)
             q1 = P;
-        a2[nd2] = (_scr_term_arg){s, ur, ui, q0, q1};
-        _stride_pool_dispatch(&_stride_workers[nd2], _scr_term_tramp, &a2[nd2]);
-        nd2++;
+        a2[n2++] = (_scr_term_arg){s, ur, ui, q0, q1};
     }
-    natorder_scr_term_range(s, ur, ui, 0, per < P ? per : P);
-    if (nd2)
-        _stride_pool_wait_all();
+    stride_pool_run(n2, _scr_term_tramp, a2, sizeof a2[0]);
 }
 
 #endif /* VFFT_TRANSFORMS_NATORDER_NATORDER_MT_H */

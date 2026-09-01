@@ -350,8 +350,8 @@ static int _il2d_stage_digits_mt(const double *src, double *dst,
                                  const double *tab, int T)
 {
     const size_t D = (size_t)(L / R);
-    _il2d_dmt_arg a[64];
-    int nd = 0, t;
+    _il2d_dmt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int t;
     if (!tab || D < (size_t)T || T < 2)
         return 0; /* D == 1 stages carry no table and no digit axis */
     for (t = 0; t < T; t++)
@@ -363,12 +363,7 @@ static int _il2d_stage_digits_mt(const double *src, double *dst,
         a[t].d0 = D * (size_t)t / (size_t)T;
         a[t].nd = D * (size_t)(t + 1) / (size_t)T - a[t].d0;
     }
-    for (t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_dmt_tramp,
-                              &a[t]);
-    _il2d_dmt_tramp(&a[0]);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(T, _il2d_dmt_tramp, a, sizeof a[0]); /* caller = a[0] */
     return 1;
 }
 
@@ -407,12 +402,11 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     const int strip = (h->il2d_wl <= 0);
     size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_wl);
-    _il2d_cmt_arg a[64];
-    int nd = 0, t;
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64;
+    _il2d_cmt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int t;
+    /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
+     * bounds it by the live pool and the arg-array size. */
+    T = stride_pool_workers_for(T);
     if (T < 2 || units < (size_t)T)
         return 0; /* not enough independent units to be worth splitting */
     /* fwd: the wide prefix must complete before ANY band (stage 0's legs
@@ -447,12 +441,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
-    for (t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_cmt_tramp,
-                              &a[t]);
-    _il2d_cmt_tramp(&a[0]);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(T, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
     _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
     if (!strip && reverse && h->il2d_cut > 0)
     {
@@ -559,8 +548,8 @@ static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
                                double *dst, vfft_dir_t dir, int fwd,
                                int mode, size_t units, int T)
 {
-    _il2d_c2c_mt_arg a[64];
-    int t, nd = 0;
+    _il2d_c2c_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int t;
     for (t = 0; t < T; t++)
     {
         a[t].h = h;
@@ -573,12 +562,7 @@ static void _il2d_c2c_mt_phase(struct vfft_plan_s *h, const double *src,
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
-    for (t = 1; t < T; t++)
-        _stride_pool_dispatch(&_stride_workers[nd++], _il2d_c2c_mt_tramp,
-                              &a[t]);
-    _il2d_c2c_mt_tramp(&a[0]);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(T, _il2d_c2c_mt_tramp, a, sizeof a[0]); /* caller = a[0] (tid 0) */
 }
 
 /* Returns 1 when it ran threaded, 0 when the caller must run serial. */
@@ -591,10 +575,9 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     if (h->il2d_staged)
         return 0; /* env-experimental route: one shared band scratch —
                    * per-worker slots are not built for it */
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
-    if (T > 64)
-        T = 64;
+    /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
+     * bounds it by the live pool and the arg-array size. */
+    T = stride_pool_workers_for(T);
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
     if (h->il2d_wl > 0)

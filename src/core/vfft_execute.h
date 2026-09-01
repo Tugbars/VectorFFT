@@ -558,8 +558,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         if (T > 1 && work >= _tc_mt_floor())
         { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
             _vfft_pool_arm(h->nthreads); /* re-assert snapshot pool */
-            if (T > _stride_pool_size + 1)
-                T = _stride_pool_size + 1;
+            /* T = 1 + clones built at create (the plan's own snapshot); the
+             * pool's one clamp also bounds it by the live pool and the
+             * arg-array size, and never above the clone count. */
+            T = stride_pool_workers_for(T);
         }
         else
             T = 1;
@@ -576,11 +578,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * complete transforms, each running the identical kernel. This
              * is the "loop the K=1 solution for any K" contract — no `me`,
              * no partial-lane count, no padding, nothing to get wrong.
-             * Gated at K=43 over 8 threads (slabs 6,6,6,6,6,6,6,1). */
+             * Gated at K=43 over 8 threads (slabs 6,6,6,6,6,6,6,1).
+             *
+             * Slot 0 is the caller on the PRIMARY plan h->tcb; slot t>=1 is
+             * worker t-1 on its own clone h->tcbw[t-1] (a clone per worker
+             * is what makes the pool-free inner route safe to run
+             * concurrently). The pool's fork-join dispatches exactly that. */
             const size_t S = (h->K + (size_t)T - 1) / (size_t)T;
-            _tc_mt_arg a[64];
-            int nd = 0;
-            for (int t = 1; t < T; t++)
+            _tc_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+            int n = 0;
+            for (int t = 0; t < T; t++)
             {
                 size_t t0 = (size_t)t * S;
                 if (t0 >= h->K)
@@ -588,19 +595,11 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 size_t te = t0 + S;
                 if (te > h->K)
                     te = h->K;
-                a[nd] = (_tc_mt_arg){h->tcbw[t - 1], dir, sre, d,
-                                     t0, te - t0, sn, dn};
-                _stride_pool_dispatch(&_stride_workers[nd], _tc_mt_tramp,
-                                      &a[nd]);
-                nd++;
-                _vfft_tc_mt_dispatch_count++; /* engagement, see vfft.h */
+                a[n++] = (_tc_mt_arg){t == 0 ? h->tcb : h->tcbw[t - 1], dir, sre, d,
+                                      t0, te - t0, sn, dn};
             }
-            size_t s0 = S < h->K ? S : h->K;
-            for (size_t t = 0; t < s0; t++)
-                vfft_execute(h->tcb, dir, sre + t * sn, NULL,
-                             d + t * dn, NULL);
-            if (nd)
-                _stride_pool_wait_all();
+            stride_pool_run(n, _tc_mt_tramp, a, sizeof a[0]);
+            _vfft_tc_mt_dispatch_count += n - 1; /* one per worker dispatched, see vfft.h */
             return;
         }
         for (size_t t = 0; t < h->K; t++)

@@ -1,2 +1,2 @@
-d92dbe3080b326dd8eee34cd425733f05c13f9b9
-# short: d92dbe30  (re-stamped after Phase-1 fix 2: natorder scratch sized+indexed by the plan snapshot; FIVE bodies changed by design: _natorder_reorder_mt, _vfft_create_c2c_ip, _vfft_create_2d, _exec_c2c_inplace, vfft_execute; gated by natorder_scratch_gate)
+75e6ee58d0534ef3e9b6ccf81dc63c6e42891c3d
+# short: 75e6ee58  (re-stamped after Phase-2 pool owner: stride_pool_workers_for + stride_pool_run in support/threads.h; 54 bodies changed by design = every dispatch site + the create fns that snapshot T; 3 helpers inlined (_oop_slice_fwd/bwd, _fftnd_axis_item_range); undefined/mutable/race/golden/fp_replay proven identical; gates 29/34 = HEAD's own 29)
