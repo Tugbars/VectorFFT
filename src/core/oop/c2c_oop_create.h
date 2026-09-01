@@ -639,11 +639,14 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         vfft_zsplit_destroy(zs_pending);
                         zs_pending = NULL;
                     }
-                    /* zt_mt=0: an odd-mid cascade attached here has NEVER
-                     * had an MT verdict raced (the historical skip). Racing
-                     * it is a new feature — threaded odd-mid cascades —
-                     * priced separately, not flipped on in a refactor. */
-                    return _c2c_oop_finish(hk, /*zt_mt=*/0);
+                    /* zt_mt=1 (SHIPPED 2026-09-02 after the priced trial):
+                     * cascades attached at THIS exit historically never got
+                     * an MT verdict — serial at any T. The INC-Z race now
+                     * runs here too; measured T=8, bitwise MT==ST IDENTICAL
+                     * on odd chains: 24576 3.0x, 49152 3.3x, 98304 4.2x
+                     * (MT wins), 3072/6144/12288 -> the race banks serial.
+                     * "Cannot engage" and the race keep small cells serial. */
+                    return _c2c_oop_finish(hk, /*zt_mt=*/1);
                 }
             }
             vfft_il2p_destroy(il2p);

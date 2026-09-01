@@ -1,2 +1,2 @@
-404dd4761bb7931b1d9607e001646ab39b62e5ea
-# short: 404dd476  (re-stamped after Phase-3 item B: vfft_natorder_race on support/race.h (25/37 racers) + bluestein create-path save gated by cfg->wisdom_write; THREE bodies changed by design, two arm statics new, race census IDENTICAL, golden/fp byte-identical, gates natorder_scratch/mt_c2c/pool_preserve green)
+f8a15dc78a7239c72fd7b661c1d9ab7dab5ab857
+# short: f8a15dc7  (re-stamped after bank-on-loss: a lost @nat ZCASC/ILP race marks its cell zr=1 in place (vw2_update_field) and never re-races or rebuilds the candidate; recalibrate=1 re-races; gate nat_bankloss_gate (flag, cold, registered) carries an in-gate control/treatment pair; SIX bodies changed by design, race census identical, golden/fp byte-identical; gates nat_bankloss/k1scr/natorder_scratch/mt_c2c green)

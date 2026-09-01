@@ -142,6 +142,7 @@ ARGSTYLE = {
     # COLD on purpose: seeding makes every measure cell report NO RACE, because it
     # correctly replays the banked verdict instead of racing.
     "vfft_natural_front_gate": ("flag", False),
+    "nat_bankloss_gate": ("flag", False),      # cold: the banked-loss law races on pass 1 by design
     "vfft_tcbatch_gate":       ("flag", True),
     "zturn_wisdom_width_gate": ("flag", True),
     # wants a dir containing oop_wisdom.txt -> needs real data, but a COPY

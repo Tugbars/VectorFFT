@@ -1626,6 +1626,7 @@ r vw2_stride_var_name
 r vw2_t_name
 t .text
 t _bank_nat_1d
+t _bank_nat_raced.part.N
 t _bank_natoop_1d.constprop.N
 t _bank_scrmode_1d.constprop.N
 t _batch_alloc_ex
@@ -1798,6 +1799,7 @@ t _inner_c2c.constprop.N
 t _inner_c2c_trig.constprop.N
 t _ip_tramp
 t _k1_il2p_apply_kv
+t _k1_il_candidate
 t _k1_il_candidate.part.N
 t _k1ord_arm_run
 t _k1ord_reseed
