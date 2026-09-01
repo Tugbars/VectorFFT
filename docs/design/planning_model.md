@@ -176,7 +176,8 @@ while assembling this document.
 ## 4. Anatomy of one tournament
 
 Every race has the same five parts. Learning them once means every axis in the reference
-catalogue reads the same way.
+catalogue reads the same way. ARMS and PROTOCOL are one shared body, `src/core/support/race.h`;
+VERDICT, KEY and BANK belong to the site.
 
 ```mermaid
 flowchart LR

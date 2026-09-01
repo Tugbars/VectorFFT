@@ -106,7 +106,9 @@ Rigor selects a **planner entry point**, not a cost model — the library has no
 
 First create pays the search; the banked entry is replayed by every later create.
 
-**Every in-process race shares one shape**, and it is stated here once rather than at each site:
+**Every in-process race shares one shape**, and it is stated here once rather than at each site
+(the executable form of the ARMS x PROTOCOL half is `src/core/support/race.h`; each site keeps its
+own protocol constants, verdict rule, key and bank):
 
 * arms alternate order across rounds, and the result is a **median** over rounds — an
   A-then-B race puts the two arms in different thermal windows, which is tolerable for a
