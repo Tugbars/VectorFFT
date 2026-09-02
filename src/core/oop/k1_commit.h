@@ -324,17 +324,23 @@ static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
 {
     vw2_key_t k;
     const int T = h->nthreads;
+    const int ip = (h->placement == VFFT_INPLACE);
+    /* one pair per PLACEMENT: the in-place arms are aliased z->z, the OOP
+     * arms z->z', so the two verdicts are different measurements and must
+     * never overwrite each other (2026-09-02, the in-place exit joined). */
+    const char *tok_t = ip ? "zt_mt_ip_t" : "zt_mt_t";
+    const char *tok_v = ip ? "zt_mt_ip"   : "zt_mt";
     const vw2_rec_t *r = NULL;
     if (!getenv("VFFT_ZT_NO_MT") && !cfg->recalibrate &&
         _zt_mt_served_key(W, N, &k) && (r = vw2_lookup(&W->vw2, &k)) != NULL)
     {
-        const int bt = vw2__oop_geti(r, "zt_mt_t", 0);
+        const int bt = vw2__oop_geti(r, tok_t, 0);
         if (bt == T)
         {
-            h->zt_mt = vw2__oop_geti(r, "zt_mt", 0) ? 1 : 0;
+            h->zt_mt = vw2__oop_geti(r, tok_v, 0) ? 1 : 0;
             if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-                fprintf(stderr, "[zt-mt] N=%d T=%d replay zt_mt=%d src=wisdom\n",
-                        N, T, h->zt_mt);
+                fprintf(stderr, "[zt-mt] N=%d T=%d %s replay zt_mt=%d src=wisdom\n",
+                        N, T, ip ? "ip" : "oop", h->zt_mt);
             return;
         }
     }
@@ -343,8 +349,8 @@ static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
     {
         char tb[16];
         snprintf(tb, sizeof tb, "%d", T);
-        if (vw2_update_field(&W->vw2, &k, "zt_mt_t", tb) == VW2_OK &&
-            vw2_update_field(&W->vw2, &k, "zt_mt", h->zt_mt ? "1" : "0") == VW2_OK)
+        if (vw2_update_field(&W->vw2, &k, tok_t, tb) == VW2_OK &&
+            vw2_update_field(&W->vw2, &k, tok_v, h->zt_mt ? "1" : "0") == VW2_OK)
             _vw2_persist(W, cfg);
     }
 }

@@ -334,11 +334,25 @@ static void _zt_mt_arm_mt(void *v)
     _zt_mt_arm_t *c = (_zt_mt_arm_t *)v;
     _zt_execute_mt(c->h, VFFT_FORWARD, c->zi, c->zo, c->h->nthreads);
 }
+/* per-burst reseed for the ALIASED (in-place) arms: each pass transforms
+ * the plane in place, so the input is restored from a pristine copy before
+ * every timed burst — the arms then time exactly what the in-place execute
+ * does (z -> z), never an out-of-place proxy. */
+typedef struct { double *z, *z0; size_t nb; } _zt_mt_reseed_t;
+static void _zt_mt_reseed(void *v)
+{
+    _zt_mt_reseed_t *r = (_zt_mt_reseed_t *)v;
+    memcpy(r->z, r->z0, r->nb);
+}
+
 static void _zt_mt_race(struct vfft_plan_s *h)
 {
     const int N = h->zturn->N;
-    double *zi = (double *)malloc(2 * (size_t)N * sizeof(double));
-    double *zo = (double *)malloc(2 * (size_t)N * sizeof(double));
+    const int ip = (h->placement == VFFT_INPLACE);   /* placement-honest arms */
+    const size_t nb = 2 * (size_t)N * sizeof(double);
+    double *zi = (double *)malloc(nb);
+    double *zo = ip ? zi : (double *)malloc(nb);     /* in-place: aliased z->z */
+    double *z0 = ip ? (double *)malloc(nb) : NULL;   /* pristine copy to reseed */
     double st = 1e300, mt = 1e300;
     int p;
     size_t i;
@@ -346,33 +360,37 @@ static void _zt_mt_race(struct vfft_plan_s *h)
     if (ce)
     {
         h->zt_mt = (atoi(ce) == 0);
+        free(zi); if (!ip) free(zo); free(z0);
         return;
     }
-    if (!zi || !zo)
+    if (!zi || !zo || (ip && !z0))
     {
-        free(zi);
-        free(zo);
+        free(zi); if (!ip) free(zo); free(z0);
         return;
     }
     for (i = 0; i < 2 * (size_t)N; i++)
         zi[i] = 1.0 + 1e-6 * (double)(i & 511);
+    if (ip) memcpy(z0, zi, nb);
     if (!_zt_execute_mt(h, VFFT_FORWARD, zi, zo, h->nthreads))
     {
         if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[zt-mt] race N=%d T=%d: cannot engage -> "
-                            "serial\n", N, h->nthreads);
-        free(zi);
-        free(zo);
+            fprintf(stderr, "[zt-mt] race N=%d T=%d %s: cannot engage -> "
+                            "serial\n", N, h->nthreads, ip ? "ip" : "oop");
+        free(zi); if (!ip) free(zo); free(z0);
         return; /* cannot engage: zt_mt stays 0 — the verdict */
     }
+    if (ip) memcpy(zi, z0, nb);
     vfft_zturn2_execute_fwd(h->zturn, zi, zo); /* warm the serial arm too
                                                 * — both arms hot before
                                                 * the alternated timing */
     {
         _zt_mt_arm_t c = { h, zi, zo };
+        _zt_mt_reseed_t rs = { zi, z0, nb };
         const vfft_race_arm_t arms[2] = { { "serial", _zt_mt_arm_st, &c },
                                           { "threaded", _zt_mt_arm_mt, &c } };
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0,
+                                          ip ? _zt_mt_reseed : NULL,
+                                          ip ? &rs : NULL }; /* min-of-3, A then B */
         double ns[2];
         (void)p;
         vfft_race_run(&proto, arms, 2, ns);
@@ -381,10 +399,10 @@ static void _zt_mt_race(struct vfft_plan_s *h)
     }
     h->zt_mt = (mt < st);
     if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
-        fprintf(stderr, "[zt-mt] race N=%d T=%d: st=%.0f mt=%.0f -> %s\n",
-                N, h->nthreads, st, mt, h->zt_mt ? "THREADED" : "serial");
-    free(zi);
-    free(zo);
+        fprintf(stderr, "[zt-mt] race N=%d T=%d %s: st=%.0f mt=%.0f -> %s\n",
+                N, h->nthreads, ip ? "ip" : "oop", st, mt,
+                h->zt_mt ? "THREADED" : "serial");
+    free(zi); if (!ip) free(zo); free(z0);
 }
 
 #endif /* VFFT_OOP_ZTURN_MT_H */

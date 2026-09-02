@@ -306,6 +306,8 @@ static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
         e->zt_l1  = vw2__oop_geti(r, "zt_l1", 0);
         e->zt_mt_t = vw2__oop_geti(r, "zt_mt_t", 0);
         e->zt_mt   = vw2__oop_geti(r, "zt_mt", 0);
+        e->zt_mt_ip_t = vw2__oop_geti(r, "zt_mt_ip_t", 0);
+        e->zt_mt_ip   = vw2__oop_geti(r, "zt_mt_ip", 0);
         {
             int ch[VFFT_K1_CC_MAX_NF], nf;
             nf = vw2__oop_split_ints(vw2_rec_get(r, "chain"), ch, VFFT_K1_CC_MAX_NF);
@@ -575,6 +577,12 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "zt_mt_t", tb);
                 snprintf(tb, sizeof tb, "%d", e->zt_mt ? 1 : 0);
                 VW2__OB_SET(1, "zt_mt", tb);
+            }
+            if (e->zt_mt_ip_t > 0) {           /* the in-place caller's pair */
+                snprintf(tb, sizeof tb, "%d", e->zt_mt_ip_t);
+                VW2__OB_SET(1, "zt_mt_ip_t", tb);
+                snprintf(tb, sizeof tb, "%d", e->zt_mt_ip ? 1 : 0);
+                VW2__OB_SET(1, "zt_mt_ip", tb);
             }
         }
         VW2__OB_SET(2, "ran", "1");
