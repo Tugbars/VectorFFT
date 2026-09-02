@@ -24,9 +24,12 @@
  * removed entirely (2026-08-02) so that every legal width is benched — an
  * excluded width leaves no trace and a wrong filter would be undetectable — and
  * they moved again to the values below. That change made 256 binding at 65536
- * (93 dropped), which is why the cap is now 1024. */
+ * (93 dropped), which is why the cap is now 1024.
+ * Re-measured 2026-09-02 (il_dp_cand_census, cap 1024): N=1024 scrambled now
+ * enumerates ZERO candidates (the cascade tier starts at 2048; 1024 belongs
+ * to the pair/chain engines) — the row asserts that measured fact. */
 static const struct { int N, total; } EXPECT[] = {
-    { 1024, 35 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
+    { 1024, 0 }, { 2048, 50 }, { 4096, 80 }, { 8192, 117 },
     { 16384, 171 }, { 32768, 253 }, { 65536, 349 }
 };
 

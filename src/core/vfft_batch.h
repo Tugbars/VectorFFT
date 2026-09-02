@@ -78,7 +78,9 @@ static vfft_batch _batch_alloc_ex(vfft_transform_t xform, int N, size_t K,
 {
     int real_side = (xform == VFFT_R2C || xform == VFFT_C2R);
     int trig = _VFFT_IS_TRIG(xform);
-    size_t Kp = Kp_forced ? Kp_forced : ((K + 3u) & ~(size_t)3u); /* roundup(K, VW=4) */
+    size_t Kp = Kp_forced ? Kp_forced
+                          : ((K + (size_t)(_VFFT_PADVW - 1)) &
+                             ~(size_t)(_VFFT_PADVW - 1)); /* roundup(K, _VFFT_PADVW) */
     struct vfft_batch_s *b = (struct vfft_batch_s *)calloc(1, sizeof *b);
     if (!b)
         return NULL;
@@ -178,67 +180,11 @@ static size_t _pad_stride_c2c(int N, size_t K, const vfft_config_t *cfg)
 
     struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
     const vfft_proto_registry_t *reg = _registry();
-    const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-    /* wave-4: seed the process cache from the STORE (both legs) */
-    if (!W->vw2_off_stride)
-    {
-        /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
-        vfft_proto_wisdom_entry_t sb;
-        if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
-            vfft_proto_wisdom_set(&W->c2c, &sb);
-        if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
-            vfft_proto_wisdom_set(&W->c2c, &sb);
-        te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-    }
-    if (te && !cfg->recalibrate)
-    {
-        if (te->exec_me == (int)K)
-            return K;
-        if (te->exec_me == (int)Kp)
-            return Kp;
-    }
-    /* MISS (or recalibrate): ensure both factorizations exist, then race. */
-    int dirty = 0;
-    if (!te || cfg->recalibrate)
-    {
-        vfft_proto_wisdom_entry_t ne;
-        if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
-        {
-            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-            vw2_stride_bank_entry(&W->vw2, &ne, 0);
-            dirty = 1;
-        }
-    }
-    const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-    if (!ae || cfg->recalibrate)
-    {
-        vfft_proto_wisdom_entry_t ne;
-        if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
-        {
-            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-            vw2_stride_bank_entry(&W->vw2, &ne, 0);
-            dirty = 1;
-        }
-    }
-    te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* wisdom_add may realloc */
-    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-    size_t stride = K; /* fall back to tight (the drop-in default) */
-    if (te && ae)
-    {
-        int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
-        if (verdict > 0)
-        {
-            vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
-            upd.exec_me = verdict;
-            vfft_proto_wisdom_add(&W->c2c, &upd, 1);
-            vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
-            dirty = 1;
-            stride = (size_t)verdict;
-        }
-    }
-    if (dirty)
-        _vw2_persist(W, cfg);
-    return stride;
+    /* THE ladder (one body, vfft.c:_pad_ladder — A1): the allocator only
+     * sizes a buffer, so it does not materialise the aligned plan cell on
+     * a verdict hit (ensure_pad_plan=0); the create tier will. */
+    return _pad_ladder(N, K, Kp, cfg, W, reg, /*ensure_pad_plan=*/0,
+                       /*already_measured=*/0, NULL, NULL);
 }
 
 static vfft_batch _own_batch_for(const vfft_config_t *cfg)
