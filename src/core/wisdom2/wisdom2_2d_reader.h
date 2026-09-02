@@ -771,5 +771,34 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     return vw2__2d_bank(st, r, 0);
 }
 
+/* E1.11 per-stage kernel FORMS (2026-09-02) on the IL chain rows - the c2c
+ * chain row (t=c2c ord=scr lay=il) and the direction-shared real row
+ * (t=r2c ord=scr lay=il): forms=<name>.<name>... one per chain stage
+ * ("-" = the stage's single form; r32 b48|b84, r64 b88|b416). Merged onto
+ * the existing row (vw2_update_field) after the chain is banked; a row
+ * without a chain carries no forms. */
+static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
+                                      int N2, char *out, size_t osz)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *v;
+    vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
+                VW2_ORD_SCR, VW2_LAY_IL);
+    r = vw2_lookup(s, &k);
+    if (!r || !vw2_rec_get(r, "chain")) return 0;
+    v = vw2_rec_get(r, "forms");
+    if (!v || !*v) return 0;
+    snprintf(out, osz, "%s", v);
+    return 1;
+}
+static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
+                                    int N2, const char *forms)
+{
+    vw2_key_t k;
+    vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
+                VW2_ORD_SCR, VW2_LAY_IL);
+    return vw2_update_field(s, &k, "forms", forms) == VW2_OK;
+}
 
 #endif /* VFFT_WISDOM2_2D_READER_H */

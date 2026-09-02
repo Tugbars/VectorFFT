@@ -1017,12 +1017,23 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
 static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; int N2; } _il2d_blu_ctx;
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns);
-static int _il2d_blu_m_chain(int M, int *Rs, int *nst)
+static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
+                            vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
+                            size_t fsz);
+static void _il2d_forms_serve(struct vfft_wisdom_s *W,
+                              const vfft_config_t *cfg, int is_real, int N1,
+                              int N2, const int *Rs, int nst,
+                              vfft_il2p_fn *ff, vfft_il2p_fn *fb,
+                              char *forms, size_t fsz);
+static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
+                             size_t fsz)
 {
     struct vfft_wisdom_s *W = _il2d_blu_ctx.W;
     const vfft_config_t *cfg = _il2d_blu_ctx.cfg;
     const int N2 = _il2d_blu_ctx.N2;
     int wl, tf, ro, cmt, cmtt, blu;
+    vfft_il2p_fn ff[8], fb[8];
+    forms[0] = 0;
     if (!W || W->vw2_off_2d || N2 <= 0) return 0;
     if (!cfg->recalibrate &&
         vw2_2d_il_chain_lookup(&W->vw2, M, N2, Rs, nst, &wl, &tf, &ro,
@@ -1031,6 +1042,8 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst)
     {
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
+        if (_il2d_resolve(Rs, *nst, ff, fb))
+            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz);
         return 1;
     }
     {
@@ -1052,7 +1065,153 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst)
                             "winner banked\n", M, N2, ncand);
         vw2_2d_il_chain_bank(&W->vw2, M, N2, Rs, *nst, -1, -1, -1, -1, -1, -1, bns);
         _vw2_persist(W, cfg);
+        if (_il2d_resolve(Rs, *nst, ff, fb))
+            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz);
         return 1;
+    }
+}
+
+/* PER-STAGE FORM RACE (E1.11, 2026-09-02): coordinate descent over the
+ * stages whose radix has rival forms (vfft_il2p_col_forms), each stage's
+ * two arms timed on the WHOLE column pass with the other stages held at
+ * their current pick (the pass is the only thing the form changes; same
+ * harness as the chain race). The construction-table default is the
+ * incumbent and keeps ties; the rival must beat it by 3%. Installs the
+ * winners into ff/fb and spells them into `forms`. Returns 1 when any
+ * stage had a choice, 0 otherwise (forms = ""). */
+static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
+                            vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
+                            size_t fsz)
+{
+    const size_t T = (size_t)N1 * N2;
+    const char *pick[8];
+    int Ls[8], s, any = 0, off = 0;
+    double *tf[8], *tb[8], *z;
+    size_t i;
+    forms[0] = 0;
+    for (s = 0; s < nst; s++)
+    {
+        const char *nm[2];
+        (void)vfft_il2p_col_forms(Rs[s], nm);
+        pick[s] = nm[0];
+        if (nm[1])
+            any = 1;
+    }
+    if (!any)
+        return 0;
+    z = (double *)malloc(2 * T * sizeof(double));
+    if (!z)
+        return 0;
+    for (i = 0; i < 2 * T; i++)
+        z[i] = 1.0 + 1e-6 * (double)(i & 1023);
+    if (_il2d_build_tables(N1, nst, Rs, Ls, tf, tb))
+    {
+        free(z);
+        return 0;
+    }
+    for (s = 0; s < nst; s++)
+    {
+        const char *nm[2];
+        const int last = (s == nst - 1);
+        vfft_il2p_fn ffa[2][8];
+        _il2d_race_ctx_t rc[2];
+        vfft_race_arm_t arm[2];
+        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL };
+        double ns[2] = { 1e300, 1e300 };
+        int a, win;
+        if (vfft_il2p_col_forms(Rs[s], nm) < 2)
+            continue;
+        for (a = 0; a < 2; a++)
+        {
+            memcpy(ffa[a], ff, sizeof ffa[a]);
+            ffa[a][s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[a], 0)
+                             : vfft_il2p_t2c_form_fn(Rs[s], nm[a], 0);
+            if (!ffa[a][s])
+                break;
+            memset(&rc[a], 0, sizeof rc[a]);
+            rc[a].z = z;
+            rc[a].ok = 1;
+            rc[a].N1 = N1;
+            rc[a].N2 = (size_t)N2;
+            rc[a].nst = nst;
+            rc[a].R = Rs;
+            rc[a].Ls = Ls;
+            rc[a].ff = ffa[a];
+            rc[a].tf = tf;
+            arm[a].name = nm[a];
+            arm[a].run = _il2d_arm_chain;
+            arm[a].ctx = &rc[a];
+        }
+        if (a < 2)
+            continue;
+        vfft_race_run(&proto, arm, 2, ns);
+        win = (ns[1] < 0.97 * ns[0]) ? 1 : 0;
+        pick[s] = nm[win];
+        ff[s] = ffa[win][s];
+        fb[s] = last ? vfft_il2p_n1c_form_fn(Rs[s], nm[win], 1)
+                     : vfft_il2p_t2c_form_fn(Rs[s], nm[win], 1);
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] forms %dx%d stage %d r%d: %s %.0f ns vs %s %.0f ns -> %s\n",
+                    N1, N2, s, Rs[s], nm[0], ns[0], nm[1], ns[1], nm[win]);
+    }
+    for (s = 0; s < nst; s++)
+    {
+        free(tf[s]);
+        free(tb[s]);
+    }
+    free(z);
+    for (s = 0; s < nst && off < (int)fsz - 8; s++)
+        off += snprintf(forms + off, fsz - off, "%s%s", s ? "." : "", pick[s]);
+    return 1;
+}
+
+/* the FORM axis at create: env pin > the banked forms= on the chain row >
+ * the per-stage race, banked on that row (wisdom off / no choice: the
+ * construction-table defaults stand). ff/fb come in resolved (defaults). */
+static void _il2d_forms_serve(struct vfft_wisdom_s *W,
+                              const vfft_config_t *cfg, int is_real, int N1,
+                              int N2, const int *Rs, int nst,
+                              vfft_il2p_fn *ff, vfft_il2p_fn *fb,
+                              char *forms, size_t fsz)
+{
+    const char *pin = getenv("VFFT_IL2D_FORMS");
+    int s, any = 0;
+    forms[0] = 0;
+    for (s = 0; s < nst; s++)
+        if (Rs[s] == 32 || Rs[s] == 64)
+            any = 1;
+    if (!any)
+        return;
+    if (pin && *pin)
+    {
+        if (_il2d_apply_forms(Rs, nst, pin, ff, fb))
+            snprintf(forms, fsz, "%s", pin);
+        else
+            _vfft_warn("VFFT_IL2D_FORMS=%s does not fit chain at %dx%d - ignored",
+                       pin, N1, N2);
+        return;
+    }
+    if (!W || W->vw2_off_2d)
+        return;
+    if (!cfg->recalibrate &&
+        vw2_2d_forms_lookup(&W->vw2, is_real, N1, N2, forms, fsz))
+    {
+        if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
+        {
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d] forms %dx%d: replay %s src=wisdom\n", N1, N2, forms);
+            return;
+        }
+        _vfft_warn("banked forms=%s does not fit chain at %dx%d - re-racing",
+                   forms, N1, N2);
+        (void)_il2d_resolve(Rs, nst, ff, fb);
+    }
+    if (_il2d_race_forms(N1, N2, Rs, nst, ff, fb, forms, fsz) && forms[0])
+    {
+        vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms);
+        _vw2_persist(W, cfg);
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, banked\n", N1, N2, forms);
     }
 }
 

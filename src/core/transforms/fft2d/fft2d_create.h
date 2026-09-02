@@ -330,6 +330,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                                      il2d_b, &il2d_nst);
                 }
             }
+            if (chain_ok)
+            {   /* E1.11 per-stage kernel forms (2026-09-02) */
+                char fm[64];
+                _il2d_forms_serve(W, cfg, 0, N1, N2, il2d_R, il2d_nst,
+                                  il2d_f, il2d_b, fm, sizeof fm);
+            }
             if (!chain_ok)
             {
                 /* ODD/PRIME N1: the COLUMN-AXIS BLUESTEIN (struct
@@ -862,6 +868,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 else
                     rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
                                             &il2d_nst);
+            }
+            if (rok)
+            {   /* E1.11 per-stage kernel forms (2026-09-02) */
+                char fm[64];
+                _il2d_forms_serve(W, cfg, 1, N1, N2, il2d_R, il2d_nst,
+                                  il2d_f, il2d_b, fm, sizeof fm);
             }
             if (!rok)
             {

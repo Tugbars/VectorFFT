@@ -272,6 +272,49 @@ static inline vfft_il2p_fn vfft_il2p_t2c_fn(int R, int bwd)
     }
 }
 
+/* PER-STAGE KERNEL FORM (2026-09-02, parity with the 1D il_kv axis): at
+ * r32/r64 the column kinds exist in rival BLOCKED forms and the pick is per
+ * cell per stage - raced at create, banked BY NAME on the 2D chain row
+ * (forms=), replayed through these resolvers. Monolithic is never served at
+ * r32/r64 (standing rule); every other radix has one form, spelled "-".
+ * names[0] is the construction-table default (the race's incumbent). */
+static inline int vfft_il2p_col_forms(int R, const char **names /* [2] */)
+{
+    switch (R) {
+    case 32: names[0] = "b48"; names[1] = "b84";  return 2;
+    case 64: names[0] = "b88"; names[1] = "b416"; return 2;
+    default: names[0] = "-";   names[1] = 0;      return 1;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_n1c_form_fn(int R, const char *form,
+                                                 int bwd)
+{
+    if (!form || !strcmp(form, "-")) return vfft_il2p_n1c_fn(R, bwd);
+    if (R == 32 && !strcmp(form, "b48"))
+        return bwd ? radix32_z_n1cb48_bwd_avx2 : radix32_z_n1cb48_fwd_avx2;
+    if (R == 32 && !strcmp(form, "b84"))
+        return bwd ? radix32_z_n1cb84_bwd_avx2 : radix32_z_n1cb84_fwd_avx2;
+    if (R == 64 && !strcmp(form, "b88"))
+        return bwd ? radix64_z_n1cb88_bwd_avx2 : radix64_z_n1cb88_fwd_avx2;
+    if (R == 64 && !strcmp(form, "b416"))
+        return bwd ? radix64_z_n1cb416_bwd_avx2 : radix64_z_n1cb416_fwd_avx2;
+    return 0;
+}
+static inline vfft_il2p_fn vfft_il2p_t2c_form_fn(int R, const char *form,
+                                                 int bwd)
+{
+    if (!form || !strcmp(form, "-")) return vfft_il2p_t2c_fn(R, bwd);
+    if (R == 32 && !strcmp(form, "b48"))
+        return bwd ? radix32_z_t2cb48_bwd_avx2 : radix32_z_t2cb48_fwd_avx2;
+    if (R == 32 && !strcmp(form, "b84"))
+        return bwd ? radix32_z_t2cb84_bwd_avx2 : radix32_z_t2cb84_fwd_avx2;
+    if (R == 64 && !strcmp(form, "b88"))
+        return bwd ? radix64_z_t2cb88_bwd_avx2 : radix64_z_t2cb88_fwd_avx2;
+    if (R == 64 && !strcmp(form, "b416"))
+        return bwd ? radix64_z_t2cb416_bwd_avx2 : radix64_z_t2cb416_fwd_avx2;
+    return 0;
+}
+
 /* 🔴 t2p IS RETIRED — Tugbars, 2026-07-29: "disable t2p ... the whole tree
  * standardizes on t2t semantics." The t2p kind (PRE-twiddle + backward
  * butterfly + straight store, route A / conj-of-forward) lost the bwd race
