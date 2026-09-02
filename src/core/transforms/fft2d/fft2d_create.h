@@ -330,8 +330,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                                      il2d_b, &il2d_nst);
                 }
             }
-            if (chain_ok)
-            {   /* E1.11 per-stage kernel forms (2026-09-02) */
+            if (chain_ok && il2d_bblu <= 0)
+            {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
+                 * Bluestein cell's forms live on its (M, N2) row */
                 char fm[64];
                 _il2d_forms_serve(W, cfg, 0, N1, N2, il2d_R, il2d_nst,
                                   il2d_f, il2d_b, fm, sizeof fm);
@@ -354,9 +355,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_blu)
                     chain_ok = 1;
             }
-            if (chain_ok && !il2d_blu && il2d_nst > 1 &&
+            if (chain_ok && !il2d_blu && il2d_bblu <= 0 && il2d_nst > 1 &&
                 cfg->order == VFFT_ORDER_NATURAL)
             {
+                /* (il2d_bblu > 0 = a banked Bluestein cell: il2d_R is the
+                 * length-M chain, n1 natural by construction, the perm
+                 * would divide by zero - pre-existing, fixed 2026-09-02) */
                 /* M4-lite (struct comment at il2d_nat): natural n1 via
                  * the LEAF REDIRECTION - driver-only, any chain. Built
                  * BEFORE the N1-arm race below so the chain arm is
@@ -869,8 +873,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
                                             &il2d_nst);
             }
-            if (rok)
-            {   /* E1.11 per-stage kernel forms (2026-09-02) */
+            if (rok && il2d_bblu <= 0)
+            {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
+                 * Bluestein cell's forms live on its (M, N2) row */
                 char fm[64];
                 _il2d_forms_serve(W, cfg, 1, N1, N2, il2d_R, il2d_nst,
                                   il2d_f, il2d_b, fm, sizeof fm);
@@ -895,9 +900,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 _il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
                                    il2d_tf, il2d_tb))
                 rok = 0;
-            if (rok && !il2d_blu && il2d_nst > 1 &&
+            if (rok && !il2d_blu && il2d_bblu <= 0 && il2d_nst > 1 &&
                 cfg->order == VFFT_ORDER_NATURAL)
-            {
+            {   /* (banked Bluestein cells carry the M chain: no perm) */
                 il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
                 if (il2d_natperm)
                     il2d_natscr = (double *)malloc(

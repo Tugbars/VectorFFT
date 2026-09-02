@@ -75,3 +75,5 @@
 @cell t=c2r n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=78.3 metric=bwd1 units=ns date=2026-09-02
 @cell t=r2c n=255 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=bridge | ran=1 src=race date=2026-09-02
 @cell t=r2c n=405 q=1 ord=nat place=oop role=comp lay=il | eng=oddr route=rfft | ran=1 src=race date=2026-09-02
+
+@cell t=r2c n=100 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=154.5 metric=fwd1 units=ns date=2026-09-02

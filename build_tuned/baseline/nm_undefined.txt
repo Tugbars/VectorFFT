@@ -469,6 +469,8 @@ radix32_z_n1b216_bwd_avx2
 radix32_z_n1b48_bwd_avx2
 radix32_z_n1cb48_bwd_avx2
 radix32_z_n1cb48_fwd_avx2
+radix32_z_n1cb84_bwd_avx2
+radix32_z_n1cb84_fwd_avx2
 radix32_z_n1t_bwd_avx2
 radix32_z_n1t_fwd_avx2
 radix32_z_n1tb48_fwd_avx2
@@ -485,6 +487,8 @@ radix32_z_t2bw32_fwd_avx2
 radix32_z_t2bw32m128_fwd_avx2
 radix32_z_t2cb48_bwd_avx2
 radix32_z_t2cb48_fwd_avx2
+radix32_z_t2cb84_bwd_avx2
+radix32_z_t2cb84_fwd_avx2
 radix32_z_t2t_bwd_avx2
 radix32_z_t2tg_bwd_avx2
 radix3_hc2c_nat_bwd_avx2
@@ -681,6 +685,8 @@ radix64_t1s_dit_log3_fwd_avx2
 radix64_z_n1_bwd_avx2
 radix64_z_n1b416_bwd_avx2
 radix64_z_n1b88_bwd_avx2
+radix64_z_n1cb416_bwd_avx2
+radix64_z_n1cb416_fwd_avx2
 radix64_z_n1cb88_bwd_avx2
 radix64_z_n1cb88_fwd_avx2
 radix64_z_n1t_bwd_avx2
@@ -693,6 +699,8 @@ radix64_z_t2b416_fwd_avx2
 radix64_z_t2b88_fwd_avx2
 radix64_z_t2bt416_bwd_avx2
 radix64_z_t2bt88_bwd_avx2
+radix64_z_t2cb416_bwd_avx2
+radix64_z_t2cb416_fwd_avx2
 radix64_z_t2cb88_bwd_avx2
 radix64_z_t2cb88_fwd_avx2
 radix64_z_t2t_bwd_avx2

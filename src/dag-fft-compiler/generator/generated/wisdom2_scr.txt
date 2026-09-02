@@ -298,3 +298,6 @@
 @cell t=c2c n=256 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=256,q=1,ord=nat,place=oop,role=comp) dif=0 | ran=1 ns=135.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=512 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=512,q=1,ord=nat,place=oop,role=comp) dif=0 | ran=1 ns=467.50 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=1024 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=1024,q=1,ord=nat,place=oop,role=comp) dif=0 | ran=1 ns=1096.25 metric=fwd1 units=ns src=race date=2026-09-02
+
+@cell t=c2c n=100 q=1 ord=scr place=ip | eng=stride chain=5.20 vars=flat.t1s dif=0 | ran=1 ns=339.59 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=50 q=1 ord=scr place=ip | eng=stride chain=10.5 vars=flat.t1s dif=0 | ran=1 ns=176.19 metric=fwd1 units=ns src=race date=2026-09-02
