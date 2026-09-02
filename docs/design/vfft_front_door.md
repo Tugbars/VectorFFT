@@ -201,6 +201,11 @@ replays comp first, then the verdict. An OOP caller replays its verdict, and wit
 replay a comp recipe only for an odd chain, because an odd candidate races the finished handle at
 the commit and is never attached by fiat. A cascade mode row (`mode=zcasc`, `place=ip`) never
 carries a chain of its own; it signposts the recipe it served with `ref=` (wisdom2 README §3.3).
+On a cold mode row the scrambled in-place create builds its candidate from the banked recipe
+first and only falls back to the default construction when no recipe exists, so the plan that
+races the convert incumbent is the plan the signpost will serve. The recipe row also carries the
+cascade's per-thread-count MT verdict, one token pair per placement (`zt_mt_t`/`zt_mt` for the
+OOP exit, `zt_mt_ip_t`/`zt_mt_ip` for the in-place exit).
 
 **Only the terminator schedule is raced at create.** `stf` against `stf2` for zturn, `sterm`
 against `sterm2` for legacy zsplit. Both pairs are bit-identical schedules, so the difference is
