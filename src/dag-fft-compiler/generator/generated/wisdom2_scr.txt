@@ -278,8 +278,8 @@
 @cell t=c2c n=7168 q=1 ord=scr place=ip | eng=stride chain=16.64.7 vars=flat.t1s.t1s dif=0 | ran=1 ns=38204.69 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=12288 q=1 ord=scr place=ip | eng=stride chain=32.64.6 vars=flat.t1s.t1s dif=0 | ran=1 ns=62896.87 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=65536 q=1 ord=scr place=ip | eng=stride chain=4.4.4.64.4.4 vars=flat.flat.t1s.t1s.t1s.t1s dif=0 | ran=1 ns=685875.00 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=2048 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc chain=64.32 vars=flat.t1s dif=0 | ran=1 ns=1921.88 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=4096 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc chain=32.16.8 vars=flat.t1s.t1s dif=0 | ran=1 ns=5553.12 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=8192 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc chain=8.32.32 vars=flat.t1s.t1s dif=0 | ran=1 ns=10712.50 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=16384 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc chain=8.64.32 vars=flat.t1s.t1s dif=0 | ran=1 ns=21775.00 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=32768 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc chain=4.4.64.8.4 vars=flat.t1s.t1s.t1s.t1s dif=0 | ran=1 ns=56062.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=2048 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=2048,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=1921.88 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=4096 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=5553.12 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=8192 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=8192,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=10712.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=16384 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=16384,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=21775.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=32768 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=32768,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=56062.50 metric=fwd1 units=ns src=race date=2026-09-02

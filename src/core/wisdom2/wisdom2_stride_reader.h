@@ -14,11 +14,13 @@
  * rfft rows are t=r2c (the router puts them in the REAL shard — the key
  * decides the shard, never the file).
  *
- * SIGNPOST law (owner #7): a dummy-chain natural row (nf==1 &&
- * factors[0]==N — the @natoop zcasc placeholder) carries
- * `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop)` instead of the dummy; the
- * READ twin reconstructs the dummy deterministically when filling the
- * legacy struct. Real chains migrate/bank VERBATIM.
+ * SIGNPOST law (owner #7, scoped 2026-09-02): a mode=zcasc row (every
+ * place=ip one, and the dummy-chain @natoop placeholder) carries
+ * `ref=cell(t=c2c,n=N,q=1,ord=scr,place=oop[,role=comp])` — the kind-4
+ * RECIPE: chain + terminator pick + tcut width + L1 fence — never a chain
+ * of its own; the READ twin reconstructs the dummy deterministically when
+ * filling the legacy struct. mode=ilp rows carry neither (self-contained).
+ * Real chains (mode=conv and the tape modes) migrate/bank VERBATIM.
  *
  * pad_me (legacy exec_me) / il_me: emitted only when nonzero — absent =
  * not measured, exactly the legacy trailing-field law.
@@ -424,27 +426,30 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
                 : e->mode == VFFT_NAT_ILP ? "k1"
                                           : "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
-    if (e->nf == 1 && e->factors[0] == e->N && ord == VW2_ORD_NAT
-        && e->mode == VFFT_NAT_ZCASC) {
-        /* the dummy-chain placeholder: SIGNPOST instead (owner #7) — @nat
-         * CASCADE rows only, the one mode whose recipe lives in the
-         * referenced kind-4/oop cell; ref_ok keeps the verdict honest if
-         * that recipe vanishes. Any other nat mode with a dummy chain
-         * (mode=ilp: the K=1 IL mono/packed tier rebuilds from N alone)
-         * is SELF-CONTAINED and falls to the branch below — a signpost
-         * there pointed at a cell that never exists (n=64 nat ip il,
-         * caught 2026-09-02: permanent MISS, re-raced on every create). */
-        char refbuf[96];
+    if (e->mode == VFFT_NAT_ZCASC
+        && (pl == VW2_PL_IP || (e->nf == 1 && e->factors[0] == e->N))) {
+        /* CASCADE mode row: SIGNPOST to the kind-4 RECIPE (chain, t2q
+         * terminator pick, tcut width, L1 fence) — owner #7, and the
+         * 2026-09-02 rule: a mode row never carries the caller's classic
+         * chain as if it were the served plan (the in-place rows used to
+         * bank the convert INCUMBENT's chain under mode=zcasc). Target:
+         * the role=comp recipe the in-place / odd race banked when one
+         * exists, else the OOP problem verdict. ref_ok keeps the verdict
+         * honest if the recipe vanishes (loud MISS, re-race). */
+        char refbuf[112];
         snprintf(refbuf, sizeof refbuf,
-                 "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
+                 "cell(t=c2c,n=%d,q=1,ord=scr,place=oop%s)", e->N,
+                 e->ref_comp ? ",role=comp" : "");
         VW2__SB_SET(1, "ref", refbuf);
-    } else if (e->nf == 0 || (e->nf == 1 && e->factors[0] == e->N)) {
-        /* MODE cell with no real chain (ord=scr prime / Rader nf=0, or a
-         * non-cascade @nat mode): the verdict is SELF-CONTAINED (the
-         * engine rebuilds from N alone) — emit NEITHER chain nor ref. A
-         * dangling signpost here made the row invisible forever (ref_ok
-         * filtered it; the cell has no oop cascade row to point at) —
-         * caught 2026-08-25 (prime) and 2026-09-02 (nat ilp). */
+    } else if (e->mode == VFFT_NAT_ILP || e->nf == 0
+               || (e->nf == 1 && e->factors[0] == e->N)) {
+        /* SELF-CONTAINED mode cell: mode=ilp (the K=1 IL tier rebuilds
+         * from N alone — its classic chain is the incumbent's, not its
+         * own), ord=scr prime / Rader (nf=0), or any other dummy-chain
+         * mode — emit NEITHER chain nor ref. A dangling signpost here
+         * made the row invisible forever (ref_ok filtered it; the cell
+         * has no oop cascade row to point at) — caught 2026-08-25
+         * (prime) and 2026-09-02 (nat ilp). */
     } else {
         if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     }
