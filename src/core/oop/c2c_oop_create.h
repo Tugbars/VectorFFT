@@ -330,14 +330,28 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * one). Chain = LEGAL DEFAULT for the uncalibrated cell; the
              * measured per-cell pick is the wisdom campaign's job. */
             vfft_il3p_plan_t *il3p = NULL;
-            if (ilr == VFFT_K1_IL_NONE && !il2p && !getenv("VFFT_NO_IL2P") &&
+            /* a banked chain3 row names the route up front (ilr == CHAIN3
+             * from ke): it must reach this block, not the degrade below */
+            if ((ilr == VFFT_K1_IL_NONE || ilr == VFFT_K1_IL_CHAIN3) && !il2p &&
+                !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
                 int cR2, cA, cB;
-                if (vfft_il3p_default_chain(N, &cR2, &cA, &cB))
+                /* the BANKED chain first (the planner races every legal
+                 * 3-stage chain since 2026-09-02 and banks il_chain=R2.A.B);
+                 * the legal default only for an uncalibrated cell */
+                if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
+                {
+                    il3p = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1],
+                                            ke->il_c3[2]);
+                    if (il3p && getenv("VFFT_NAT_LOG"))
+                        fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d "
+                                        "src=wisdom (oop)\n", N, ke->il_c3[0],
+                                ke->il_c3[1], ke->il_c3[2]);
+                }
+                if (!il3p && vfft_il3p_default_chain(N, &cR2, &cA, &cB))
                     il3p = vfft_il3p_create(N, cR2, cA, cB);
-                if (il3p)
-                    ilr = VFFT_K1_IL_CHAIN3;
+                ilr = il3p ? VFFT_K1_IL_CHAIN3 : VFFT_K1_IL_NONE;
             }
             /* PRIME N (route 7): Rader/Bluestein on the IL machinery
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split

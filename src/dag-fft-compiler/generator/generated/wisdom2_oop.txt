@@ -186,3 +186,7 @@
 @cell t=c2c n=126 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=6.21 il_kv=80 | ran=1 ns=110.4 metric=bwd1 units=ns src=race
 @cell t=c2c n=250 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=10.25 il_kv=80 | ran=1 ns=215.9 metric=bwd1 units=ns src=race
 @cell t=c2c n=130 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=13.10 il_kv=0 | ran=1 ns=92.4 metric=bwd1 units=ns src=race
+@cell t=c2c n=1200 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=120.10 il_chain=10.12.10 | ran=1 ns=1301.8 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=1080 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=90.12 il_chain=12.10.9 | ran=1 ns=1151.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=2520 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_chain=12.10.21 | ran=1 ns=3940.6 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=1000 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=100.10 il_chain=10.10.10 | ran=1 ns=1065.2 metric=fwd1 units=ns src=race date=2026-09-02
