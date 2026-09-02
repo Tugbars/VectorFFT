@@ -453,6 +453,13 @@ STATUS     RACED, BANKED (2026-09-02): a component row in the PRIME shard,
            hit, race + bank on a miss); VFFT_ILPR_METHOD pins, never banks.
 ARMS       _ilprime_create_rader(N) vs _ilprime_create_bluestein(N), both fully
            constructed, warmed once each, then min-of-3 ALTERNATED forward executes
+INNER      B4.1 (2026-09-02): the convolution's inner transform at length M
+           (N-1 Rader / pow2 Bluestein) is SERVED by the K=1 IL pair machinery
+           (_k1_il_candidate: kind-3 pair replay with kernel forms, else the
+           pair race + bank) through the engine's inner-provider hook, and the
+           prime row signposts it: ref=cell(t=c2c,n=M,...,role=comp,lay=il).
+           Still structural: an il3p CHAIN inner (no kind-3 chain payload) and
+           the zturn inner above 4096.
 RACE       src/core/oop/il_prime.h:385-428
 NOTE       An earlier claim that the prime METHOD is "never raced" was REFUTED by
            verification - this race is real.

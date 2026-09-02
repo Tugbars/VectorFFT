@@ -283,3 +283,14 @@
 @cell t=c2c n=8192 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=8192,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=10712.50 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=16384 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=16384,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=21775.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=32768 q=1 ord=scr place=ip lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=32768,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=56062.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=192 q=1 ord=scr place=ip | eng=stride chain=32.6 vars=flat.t1s dif=0 | ran=1 ns=603.15 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=192 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=447.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=320 q=1 ord=scr place=ip | eng=stride chain=64.5 vars=flat.t1s dif=0 | ran=1 ns=1880.32 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=320 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=767.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=384 q=1 ord=scr place=ip | eng=stride chain=8.6.8 vars=flat.t1s.t1s dif=0 | ran=1 ns=2873.24 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=384 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=322.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=768 q=1 ord=scr place=ip | eng=stride chain=4.12.16 vars=flat.flat.flat dif=0 | ran=1 ns=3661.33 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=768 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=2316.25 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=127 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=1165.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=131 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=998.50 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=251 q=1 ord=scr place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=2793.50 metric=fwd1 units=ns src=race date=2026-09-02

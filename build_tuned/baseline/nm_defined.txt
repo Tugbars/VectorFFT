@@ -1793,6 +1793,7 @@ t _il_me_decide
 t _il_mt_tramp
 t _ilprime_arm_blue
 t _ilprime_arm_rader
+t _ilprime_create_banked
 t _ilprime_create_bluestein
 t _ilprime_create_rader
 t _ilprime_exec_bluestein
@@ -1801,7 +1802,6 @@ t _inner_c2c.constprop.N
 t _inner_c2c_trig.constprop.N
 t _ip_tramp
 t _k1_il2p_apply_kv
-t _k1_il_candidate
 t _k1_il_candidate.part.N
 t _k1ord_arm_run
 t _k1ord_reseed
@@ -2531,8 +2531,7 @@ t vfft_il3p_create
 t vfft_il3p_default_chain
 t vfft_il3p_execute_bwd
 t vfft_il3p_execute_fwd
-t vfft_ilprime_create
-t vfft_ilprime_create.part.N
+t vfft_ilprime_create_method.part.N
 t vfft_ilprime_destroy.part.N
 t vfft_ilprime_execute_bwd
 t vfft_ilprime_execute_fwd
@@ -2643,6 +2642,7 @@ t vw2_oop_rec_from_entry.constprop.N
 t vw2_real_route_bank.isra.N
 t vw2_real_route_lookup
 t vw2_rec_free
+t vw2_rec_get.isra.N
 t vw2_rec_set
 t vw2_save.part.N
 t vw2_stride_lookup_t
