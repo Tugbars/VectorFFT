@@ -900,7 +900,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                             "wl=%d (%.0f ns rows / %.0f ns cols)\n",
                     isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
                     cbest);
-        vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst, bw,
+        vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_R, h->il2d_nst, bw,
                        bwl, -1, -1, bestns + cbest);
         _vw2_persist(W, cfg);
     }
@@ -945,7 +945,8 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             /* the threaded arm cannot even engage on this cell */
             free(z);
             h->il2d_colmt = 0;
-            vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
+            vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
+                           h->il2d_R, h->il2d_nst,
                            h->il2d_rw, h->il2d_wl, 0, h->nthreads, st);
             _vw2_persist(W, cfg);
             return;
@@ -958,7 +959,8 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                         "mt=%.0f -> %s\n",
                 N1, N2, h->nthreads, st, mt,
                 h->il2d_colmt ? "THREADED" : "serial");
-    vw2_2d_rl_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst, h->il2d_rw,
+    vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
+                   h->il2d_R, h->il2d_nst, h->il2d_rw,
                    h->il2d_wl, h->il2d_colmt, h->nthreads,
                    h->il2d_colmt ? mt : st);
     _vw2_persist(W, cfg);

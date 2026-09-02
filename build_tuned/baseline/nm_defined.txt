@@ -1642,8 +1642,8 @@ t _boundary_plan
 t _build_2d.constprop.N
 t _bundle_load
 t _bundle_paths
+t _c2c_ip_finish
 t _c2c_mt
-t _c2c_mt_safe
 t _c2c_race_chal
 t _c2c_race_inc
 t _c2c_race_reseed
@@ -1783,7 +1783,7 @@ t _il2d_real_rows_fwd
 t _il2d_resolve
 t _il2d_row_exec
 t _il2d_row_exec_t
-t _il2d_rowsplit_build.constprop.N
+t _il2d_rowsplit_build
 t _il2d_stage_digits_mt
 t _il_ab_fused
 t _il_ab_pad
@@ -1906,6 +1906,7 @@ t _zt_mt_arm_mt
 t _zt_mt_arm_st
 t _zt_mt_phase
 t _zt_mt_replay_or_race
+t _zt_mt_reseed
 t _zt_mt_served_key
 t _zt_mt_tile_mids
 t _zt_mt_tramp
