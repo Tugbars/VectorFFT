@@ -257,8 +257,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (*il3p_out)
         {
             if (getenv("VFFT_NAT_LOG"))
-                fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom
-",
+                fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
             return;
         }
