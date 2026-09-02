@@ -119,6 +119,9 @@ typedef struct {
      * T mismatch; 2026-09-02). zt_mt_t == 0 = never raced/banked. */
     int    zt_mt_t;
     int    zt_mt;
+    /* the IN-PLACE caller's own pair: aliased z->z arms, its own T */
+    int    zt_mt_ip_t;
+    int    zt_mt_ip;
     /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
      * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
      *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]

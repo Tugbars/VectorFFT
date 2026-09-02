@@ -98,7 +98,9 @@ static void _c2c_race_reseed(void *v)
  * shipped mt_unsafe=0 — calloc's default, which spells "proven safe" —
  * without running the proof). The gate is cheap for ST creates (skipped)
  * and engine handles (no cplan: nothing K-splits). */
-static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h)
+static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h,
+                                struct vfft_wisdom_s *W,
+                                const vfft_config_t *cfg, int N)
 {
     /* MT-safety: flag plans whose codelet ignores the partial-lane count (so
      * _c2c_mt runs them whole-batch instead of K-splitting). Checked once on
@@ -107,6 +109,13 @@ static vfft_plan _c2c_ip_finish(struct vfft_plan_s *h)
      * K-split, so single-threaded creates skip the check and its cost. */
     if (h->cplan)
         h->mt_unsafe = (h->nthreads > 1) ? !_c2c_mt_safe(h->cplan, h->exec_fwd) : 0;
+    /* the cascade MT verdict (C1.9) for the IN-PLACE cascade too (owner,
+     * 2026-09-02): until now only the OOP exit asked "serial or threaded?",
+     * so an in-place K=1 cascade at T>1 ran on one core. Same replay-or-
+     * race, aliased arms, its own per-T tokens; natord cascades cannot
+     * engage and bank the "no" implicitly. */
+    if (h->zroute && h->zturn && h->K == 1 && h->nthreads > 1)
+        _zt_mt_replay_or_race(h, W, cfg, N);
     return h;
 }
 
@@ -208,7 +217,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             h->exec_bwd = vfft_proto_plan_jit_bwd(p);
         }
 #endif
-        return _c2c_ip_finish(h);
+        return _c2c_ip_finish(h, W, cfg, N);
     }
 
     /* ── c2c IN-PLACE ── */
@@ -313,7 +322,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     hh->K = K;
                     hh->nthreads = _vfft_plan_threads(cfg);
                     hh->k1ilpr = ilpr;
-                    return _c2c_ip_finish(hh);
+                    return _c2c_ip_finish(hh, W, cfg, N);
                 }
             }
             _vfft_warn("vfft_create: in-place C2C N=%d K=%zu — no CT "
@@ -903,10 +912,21 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     }
                 }
                 else if (zmode == VFFT_NAT_UNSET &&
-                         _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs,
-                                            &ipzt, &ipzr))
+                         (_k1z_wisdom_replay(cfg, W, N, &ipzs, &ipzt,
+                                             &ipzr) ||
+                          _k1z_race_and_bank(cfg, W, N, /*ip=*/1, &ipzs,
+                                             &ipzt, &ipzr)))
                 {
-                    /* MISS: cascade vs THIS caller's convert incumbent —
+                    /* MISS of the MODE row: the candidate is the banked
+                     * kind-4 RECIPE when one exists (replay first — the
+                     * natural path always did this; the scrambled path
+                     * built the DEFAULT chain here, raced THAT against the
+                     * convert incumbent, then banked a mode row whose ref
+                     * serves a DIFFERENT recipe on the next create: the
+                     * 65536 in-place T=8 create ran chain 4.4.8.8.8.8
+                     * untiled while its successor ran 4.8.8.4.8.8 tiled —
+                     * caught 2026-09-02 by the in-place MT bitwise probe).
+                     * Cascade vs THIS caller's convert incumbent —
                      * the ILP race protocol (5 rounds alternated,
                      * medians, aliased buffer re-seeded per burst). */
                     double *rz = (double *)malloc(2 * (size_t)N
@@ -1070,7 +1090,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
          * (vfft.c ~2962) and never arrives here with K>1. */
         if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && K > 1)
             _il_me_decide(W, cfg, h); /* D6: the fused-vs-padded A/B at create */
-        return _c2c_ip_finish(h);
+        return _c2c_ip_finish(h, W, cfg, N);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */
