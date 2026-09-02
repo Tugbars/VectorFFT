@@ -342,22 +342,43 @@ static void _fndr_unpack(stride_fftnd_r2c_data_t *d,
  * EXECUTE / DESTROY / BUILD
  * ═══════════════════════════════════════════════════════════════ */
 
-/* fwd: re holds Ntotal reals -> (re, im) hold R*hp1 packed bins. */
-static void _fndr_execute_fwd(void *data, double *re, double *im) {
-    stride_fftnd_r2c_data_t *d = (stride_fftnd_r2c_data_t *)data;
-    _fndr_rows_mt(d, re, NULL, 0);                     /* real -> pad   */
+/* ── THE ND real walk, owned here and nowhere else (2026-09-02: the
+ * driver used to hand-inline this sequence and the two copies diverged in
+ * backward axis order — the driver walked axes FORWARD, this file walked
+ * them in reverse. Separable per-axis inverses commute mathematically but
+ * NOT bitwise (axis order changes rounding), so the DRIVER's live order is
+ * canonical: it is what has always shipped. ndreal_bits_probe verified the
+ * unification byte-identical on 3D and 4D r2c+c2r cells.) */
+
+/* fwd, OOP: `in` holds Ntotal reals -> (out_re, out_im) packed bins. */
+static void _fndr_execute_fwd_oop(stride_fftnd_r2c_data_t *d,
+                                  double *in,
+                                  double *out_re, double *out_im) {
+    _fndr_rows_mt(d, in, NULL, 0);                     /* real -> pad   */
     for (int m = 0; m < d->rank - 1; m++)
         _fndr_axis_mt(d, m, 0);                        /* c2c axes      */
-    _fndr_unpack(d, re, im);                           /* pad -> packed */
+    _fndr_unpack(d, out_re, out_im);                   /* pad -> packed */
 }
 
-/* bwd: (re, im) hold R*hp1 packed bins -> re holds Ntotal reals. */
+/* bwd, OOP: (in_re, in_im) packed bins -> `out` holds Ntotal reals.
+ * Axis order: FORWARD — the live order (see the banner above). */
+static void _fndr_execute_bwd_oop(stride_fftnd_r2c_data_t *d,
+                                  double *in_re, double *in_im,
+                                  double *out) {
+    _fndr_pack(d, in_re, in_im);                       /* packed -> pad */
+    for (int m = 0; m < d->rank - 1; m++)
+        _fndr_axis_mt(d, m, 1);                        /* c2c inverse   */
+    _fndr_rows_mt(d, NULL, out, 1);                    /* pad -> real   */
+}
+
+/* the registered single-buffer ABI (override_fwd/bwd): thin wrappers. */
+static void _fndr_execute_fwd(void *data, double *re, double *im) {
+    stride_fftnd_r2c_data_t *d = (stride_fftnd_r2c_data_t *)data;
+    _fndr_execute_fwd_oop(d, re, re, im);
+}
 static void _fndr_execute_bwd(void *data, double *re, double *im) {
     stride_fftnd_r2c_data_t *d = (stride_fftnd_r2c_data_t *)data;
-    _fndr_pack(d, re, im);                             /* packed -> pad */
-    for (int m = d->rank - 2; m >= 0; m--)
-        _fndr_axis_mt(d, m, 1);                        /* c2c inverse   */
-    _fndr_rows_mt(d, NULL, re, 1);                     /* pad -> real   */
+    _fndr_execute_bwd_oop(d, re, im, re);
 }
 
 static void _fndr_destroy(void *data) {

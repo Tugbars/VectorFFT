@@ -803,20 +803,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
             d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
-            _fndr_rows_mt(d3, sre, NULL, 0);
-            for (int m = 0; m < d3->rank - 1; m++)
-                _fndr_axis_mt(d3, m, 0);
-            _fndr_unpack(d3, dre, dim);
+            _fndr_execute_fwd_oop(d3, sre, dre, dim); /* the module owns
+                                                       * the walk (A2) */
         }
         else if (h->transform == VFFT_C2R && h->N3 > 0)
         {
             stride_fftnd_r2c_data_t *d3 =
                 (stride_fftnd_r2c_data_t *)h->tplan->override_data;
             d3->il_out = (h->layout == (int)VFFT_LAYOUT_INTERLEAVED);
-            _fndr_pack(d3, sre, sim);
-            for (int m = 0; m < d3->rank - 1; m++)
-                _fndr_axis_mt(d3, m, 1);
-            _fndr_rows_mt(d3, NULL, dre, 1);
+            _fndr_execute_bwd_oop(d3, sre, sim, dre); /* the module owns
+                                                       * the walk (A2) */
         }
         else if (h->transform == VFFT_R2C && h->il2d_row)
         {

@@ -1,2 +1,2 @@
-beb16aafaa5401b9577e63b6fb979dc0abad4243
-# short: beb16aaf  (re-stamped after the wisdom shard work: wisdom2_stride.txt renamed wisdom2_scr.txt (legacy-name load fallback) + the nat->oop re-shard (router keys ord=nat to the oop shard, rehome-on-load moves stragglers, 136 rows moved across 3 checked-in stores, G0 selftest asserts the new residency); THREE bodies changed by design, censuses identical, golden/fp byte-identical; gates g0/real/nat_bankloss/zr2c_fd/mt_c2c green)
+ad84a680398ee438fccadbdf31e872f691523791
+# short: ad84a680  (re-stamped after the eng-winner + legend amendments: fresh @nat banks name the WINNING family (zturn|k1|stride), the natx reader accepts vintage eng=stride, the lay legend admits shared-interior recipes; FOUR bodies changed by design, all censuses identical, golden/fp byte-identical, gates g0/real/nat_bankloss/mt_c2c green)
