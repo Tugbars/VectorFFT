@@ -209,6 +209,12 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
             np = vw2__oop_split_ints(vw2_rec_get(ri, "il_pair"), pair, 2);
             if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
             e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
+            {                                  /* chain3 payload (2026-09-02) */
+                int c3[3];
+                if (vw2__oop_split_ints(vw2_rec_get(ri, "il_chain"), c3, 3) == 3) {
+                    e->il_c3[0] = c3[0]; e->il_c3[1] = c3[1]; e->il_c3[2] = c3[2];
+                }
+            }
             /* K/ns keep the pre-1.2 dual-line convention: when an IL
              * verdict is present they are the IL natural champion's
              * numbers (ran=1). */
@@ -520,6 +526,11 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
             if (e->il_R1 || e->il_R2) {
                 snprintf(pair, sizeof pair, "%d.%d", e->il_R1, e->il_R2);
                 VW2__OB_SET(1, "il_pair", pair);
+            }
+            if (e->k1_il_route == VFFT_K1_IL_CHAIN3 && e->il_c3[0]) {
+                char c3b[48];              /* the chain IS the verdict */
+                snprintf(c3b, sizeof c3b, "%d.%d.%d", e->il_c3[0], e->il_c3[1], e->il_c3[2]);
+                VW2__OB_SET(1, "il_chain", c3b);
             }
             if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
                 char ref[96];   /* the signpost: recipe lives in the cascade cell */
@@ -933,6 +944,11 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
         if (e->il_R1 || e->il_R2) {
             snprintf(pair, sizeof pair, "%d.%d", e->il_R1, e->il_R2);
             VW2__OB_SET(1, "il_pair", pair);
+        }
+        if (e->k1_il_route == VFFT_K1_IL_CHAIN3 && e->il_c3[0]) {
+            char c3b[48];              /* the chain IS the verdict (2026-09-02) */
+            snprintf(c3b, sizeof c3b, "%d.%d.%d", e->il_c3[0], e->il_c3[1], e->il_c3[2]);
+            VW2__OB_SET(1, "il_chain", c3b);
         }
         if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
             char ref[96];   /* the signpost: recipe lives in the cascade cell */

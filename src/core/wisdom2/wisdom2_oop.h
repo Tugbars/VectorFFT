@@ -60,6 +60,10 @@ typedef struct {
      * always fills its lanes — so K=1 unambiguously identifies an
      * IL-timed line. Lookup is K-agnostic — one kind-3 row per N. */
     int    k1_sp_route, k1_il_route, il_R1, il_R2;
+    int    il_c3[3];                         /* kind 3, il_route=chain3: the 3-stage
+                                              * chain (leaf R2, mid A, mid B) as
+                                              * il_chain=R2.A.B (2026-09-02); zeros =
+                                              * absent (pre-2026-09-02 rows: default) */
     /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
      * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
      *   mid : 0 = registry t2 (monolithic), 1 = t2b [2·16], 2 = t2b48 [4·8]

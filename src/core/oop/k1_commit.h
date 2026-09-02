@@ -249,6 +249,20 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                        : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
+    /* CHAIN3 verdict (2026-09-02): the banked 3-stage chain replays as
+     * written; a build refusal falls through to the pair/default path */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
+    {
+        *il3p_out = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
+        if (*il3p_out)
+        {
+            if (getenv("VFFT_NAT_LOG"))
+                fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom
+",
+                        N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
+            return;
+        }
+    }
     if (ke && ke->il_R1)
     {
         iR1 = ke->il_R1;
