@@ -376,6 +376,17 @@ static void _il2d_cmt_tramp(void *v)
     double *const *tabs = a->reverse ? h->il2d_tb : h->il2d_tf;
     if (a->strip)
     {
+        if (h->il2d_blu)
+        {   /* Bluestein column axis: the window pipeline (2026-09-02) */
+            _il2d_blu_cols_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
+                                 h->il2d_blu, h->il2d_nst, h->il2d_R,
+                                 h->il2d_L, h->il2d_f, h->il2d_b,
+                                 h->il2d_tf, h->il2d_tb,
+                                 a->reverse ? h->il2d_bluchb : h->il2d_bluchf,
+                                 a->reverse ? h->il2d_blukb : h->il2d_blukf,
+                                 h->il2d_bluscr);
+            return;
+        }
         _il2d_col_pass_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
                              h->il2d_nst, h->il2d_R, h->il2d_L, fns,
                              tabs, a->reverse);
@@ -536,6 +547,14 @@ static void _il2d_c2c_mt_tramp(void *v)
                              h->il2d_nst, h->il2d_R, h->il2d_L, fns,
                              tabs, !a->fwd);
         break;
+    case 3: /* Bluestein column axis: the window pipeline (2026-09-02) */
+        _il2d_blu_cols_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
+                             h->il2d_blu, h->il2d_nst, h->il2d_R, h->il2d_L,
+                             h->il2d_f, h->il2d_b, h->il2d_tf, h->il2d_tb,
+                             a->fwd ? h->il2d_bluchf : h->il2d_bluchb,
+                             a->fwd ? h->il2d_blukf : h->il2d_blukb,
+                             h->il2d_bluscr);
+        break;
     default: /* row slab on the destination plane */
         for (i = a->lo; i < a->hi; i++)
             _il2d_row_exec_t(h, a->tid, a->dir, a->dst + 2 * i * rn,
@@ -580,6 +599,26 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     T = stride_pool_workers_for(T);
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
+    if (h->il2d_blu)
+    {   /* Bluestein column axis (2026-09-02): column windows, then rows —
+         * the same order the unbanded chain walk uses */
+        const int Ts = rn < (size_t)T ? (int)rn : T;
+        const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
+        if (Ts < 2 && Tr < 2)
+            return 0;
+        if (Ts >= 2)
+            _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 3, rn, Ts);
+        else
+            _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_blu, h->il2d_nst,
+                           h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_b,
+                           h->il2d_tf, h->il2d_tb,
+                           fwd ? h->il2d_bluchf : h->il2d_bluchb,
+                           fwd ? h->il2d_blukf : h->il2d_blukb,
+                           h->il2d_bluscr);
+        _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+        _vfft_il2d_col_mt_count++;
+        return 1;
+    }
     if (h->il2d_wl > 0)
     {
         /* fewer bands than workers is a CLAMP, not a decline: 4 bands
@@ -972,6 +1011,51 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
 
 /* the chain RACE: time every candidate's column pass on scratch (min of
  * 3 passes), return the winner's index. -1 = race impossible. */
+/* the Bluestein inner's chain at M: the (M, N2) 2D chain row — replayed
+ * when banked (prod == M), else the E1.1 chain race at (M, N2), banked
+ * there. Context = the create in progress (set at _vfft_create_2d's entry). */
+static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; int N2; } _il2d_blu_ctx;
+static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
+                             const int *lens, double *best_ns);
+static int _il2d_blu_m_chain(int M, int *Rs, int *nst)
+{
+    struct vfft_wisdom_s *W = _il2d_blu_ctx.W;
+    const vfft_config_t *cfg = _il2d_blu_ctx.cfg;
+    const int N2 = _il2d_blu_ctx.N2;
+    int wl, tf, ro, cmt, cmtt, blu;
+    if (!W || W->vw2_off_2d || N2 <= 0) return 0;
+    if (!cfg->recalibrate &&
+        vw2_2d_il_chain_lookup(&W->vw2, M, N2, Rs, nst, &wl, &tf, &ro,
+                               &cmt, &cmtt, &blu) &&
+        _il2d_chain_prod(Rs, *nst) == M)
+    {
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
+        return 1;
+    }
+    {
+        int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+        int cur[8], ncand = 0, dropped = 0, win;
+        double bns = 0;
+        _il2d_enum_rec(M, 0, cur, cand, lens, &ncand, &dropped);
+        if (dropped)
+            _vfft_warn("il2d blu inner chain race: pool capped at %d "
+                       "(%d candidate(s) dropped) at M=%d x %d",
+                       VFFT_IL2D_MAXCAND, dropped, M, N2);
+        if (ncand < 1) return 0;
+        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns) : 0;
+        if (win < 0) return 0;
+        memcpy(Rs, cand[win], sizeof cand[win]);
+        *nst = lens[win];
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] blu inner M=%d x %d: chain race -> %d candidates, "
+                            "winner banked\n", M, N2, ncand);
+        vw2_2d_il_chain_bank(&W->vw2, M, N2, Rs, *nst, -1, -1, -1, -1, -1, -1, bns);
+        _vw2_persist(W, cfg);
+        return 1;
+    }
+}
+
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
                              const int *lens, double *best_ns)
 {
