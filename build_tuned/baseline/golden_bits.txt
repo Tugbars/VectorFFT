@@ -5,8 +5,8 @@
 # plan makes the digest a coin flip. Zero violations here is the contract.
 #
 refuse c2c.split.oop.default.1d     ACCEPT
-golden c2c.split.oop.default.1d     fwd=90ab043f204c7440 845517f6ff28ecee
-golden c2c.split.oop.default.1d     bwd=9e0daf798c707923 9278960c734fccab
+golden c2c.split.oop.default.1d     fwd=33ab06de23aaab12 6624aa0be589d829
+golden c2c.split.oop.default.1d     bwd=90c19f3ae0a08f08 12dfc494ac0a7273
 refuse c2c.split.ip.default.1d      ACCEPT
 golden c2c.split.ip.default.1d      fwd=d25a46c7296c774e dbc7cfae91c70af7
 golden c2c.split.ip.default.1d      bwd=c4088225847f0581 39d463ccf1e38e78

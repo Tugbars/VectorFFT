@@ -791,6 +791,8 @@ T vfft_zt_mt_passes
 b .bss
 b _def
 b _def_loaded
+b _il2d_blu_chain_hook
+b _il2d_blu_ctx
 b _il_ab_runs
 b _ilprime_inner_provider
 b _ilprime_inner_provider_ctx
@@ -1762,9 +1764,9 @@ t _il2d_arm_exec
 t _il2d_arm_exec_mt
 t _il2d_arm_exec_st
 t _il2d_arm_rows
-t _il2d_axis_race
 t _il2d_blu_build
-t _il2d_blu_cols
+t _il2d_blu_cols_range
+t _il2d_blu_m_chain
 t _il2d_build_chain
 t _il2d_build_tables
 t _il2d_c2c_mt
@@ -1780,6 +1782,7 @@ t _il2d_enum_rec
 t _il2d_n1arm_blu
 t _il2d_n1arm_chain
 t _il2d_nat_perm
+t _il2d_race_chains.constprop.N
 t _il2d_real_cols
 t _il2d_real_cols_mt
 t _il2d_real_rowrace
@@ -2622,6 +2625,7 @@ t vfft_zturn2_set_natord.constprop.N
 t vw2_2d_c2c_lookup_nat
 t vw2_2d_c2c_lookup_scr
 t vw2_2d_il_chain_bank.isra.N
+t vw2_2d_il_chain_lookup
 t vw2_2d_rl_bank.isra.N
 t vw2__2d_emit_leg
 t vw2__2d_leg

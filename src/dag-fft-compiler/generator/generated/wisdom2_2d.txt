@@ -71,3 +71,10 @@
 @cell t=r2c n=135x64 q=1 ord=scr place=oop lay=il | chain=27.5 blu=0 rw=0 wl=0 rw_c2r=0 wl_c2r=5 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=256x100 q=1 ord=scr place=oop lay=il | chain=8.4.8 | ran=1 ns=19100.0 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=512x64 q=1 ord=scr place=oop lay=il | chain=4.4.4.8 | ran=1 ns=29300.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=127x100 q=1 ord=scr place=oop lay=il | chain=8.4.8 wl=0 tf=0 ro=0 cmt=0 cmtt=6 blu=256 | ran=1 ns=66400.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=r2c n=127x100 q=1 ord=scr place=oop lay=il | chain=8.4.8 rw=0 wl=0 cmt=0 cmtt=6 blu=256 | ran=1 ns=29300.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=131x64 q=1 ord=scr place=oop lay=il | chain=4.4.4.8 wl=0 tf=0 ro=0 cmt=0 cmtt=6 blu=512 | ran=1 ns=85300.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=2048x512 q=1 ord=scr place=oop lay=il | chain=8.8.4.8 | ran=1 ns=1526100.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=1021x512 q=1 ord=scr place=oop lay=il | chain=8.8.4.8 wl=0 tf=0 ro=0 cmt=1 cmtt=6 blu=2048 | ran=1 ns=1304800.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=r2c n=1021x512 q=1 ord=scr place=oop lay=il | chain=8.8.4.8 rw=0 wl=0 cmt=1 cmtt=6 blu=2048 | ran=1 ns=1828300.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=509x1024 q=1 ord=scr place=oop lay=il | chain=4.8.4.8 wl=0 tf=0 ro=0 cmt=1 cmtt=6 blu=1024 | ran=1 ns=1276300.0 metric=fwd1 units=ns src=race date=2026-09-02

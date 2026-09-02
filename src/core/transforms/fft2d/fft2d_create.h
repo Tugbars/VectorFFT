@@ -407,7 +407,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * tables and adopt, no timing); blu == 0 = the chain won
                  * (nothing to do). Only an unraced cell (-1) or an env
                  * pin runs the race below. */
-                if (hasodd && il2d_bblu > 0 && !be && !cfg->recalibrate)
+                /* blu > 0 REGARDLESS of hasodd (2026-09-02): a banked Bluestein
+                 * row carries the pow2 M chain, which has no odd factor — the
+                 * old guard skipped the adoption for a PRIME N1 and the create
+                 * ran the M chain as the N1 chain (wrong output, caught by the
+                 * naive-DFT probe at 127x100 the day prime rows first banked) */
+                if (il2d_bblu > 0 && !be && !cfg->recalibrate)
                 {
                     int bR[8], bL[8], bnst = 0, M2;
                     vfft_il2p_fn bf[8], bb[8];
@@ -914,7 +919,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         hasodd = 1;
                 /* REPLAY the banked N1-arm verdict (E1.7, 2026-09-02) —
                  * see the c2c tier for the law */
-                if (hasodd && il2d_bblu > 0 && !be && !cfg->recalibrate)
+                /* blu > 0 REGARDLESS of hasodd (2026-09-02): a banked Bluestein
+                 * row carries the pow2 M chain, which has no odd factor — the
+                 * old guard skipped the adoption for a PRIME N1 and the create
+                 * ran the M chain as the N1 chain (wrong output, caught by the
+                 * naive-DFT probe at 127x100 the day prime rows first banked) */
+                if (il2d_bblu > 0 && !be && !cfg->recalibrate)
                 {
                     const size_t rn0 = (size_t)N2 / 2 + 1;
                     int bR[8], bL[8], bnst = 0, M2;

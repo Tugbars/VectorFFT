@@ -171,6 +171,12 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             { 64, 16, VFFT_ORDER_DEFAULT, "c2c 64x16 scr" },
             { 64, 64, VFFT_ORDER_NATURAL, "c2c 64x64 nat" },
             { 128, 64, VFFT_ORDER_NATURAL, "c2c 128x64 nat" },
+            { 127, 100, VFFT_ORDER_NATURAL, "c2c 127x100 nat" }, /* PRIME N1: the
+                                              * column-axis Bluestein, replayed
+                                              * from a blu= row — the naive-DFT
+                                              * anchor is what catches a replay
+                                              * that runs the M chain as N1's
+                                              * (2026-09-02) */
         };
         int i;
         for (i = 0; i < (int)(sizeof CC / sizeof CC[0]); i++) {
