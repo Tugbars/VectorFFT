@@ -186,6 +186,9 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T4: carry-unknown-forward (tokens, records, directives) ------- */
     printf("T4 carry-unknown:\n");
+    /* T4's records are ord=scr/ip -> the STRIDE shard is their home (path
+     * still points at the OOP file from T2 after the 2026-09-02 re-route) */
+    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
     {
         FILE *f = fopen(path, "ab");
         VW2_ST_CHECK(f != NULL, "scratch appendable");
@@ -324,6 +327,13 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T9: cross-metric refusal ---------------------------------------- */
     printf("T9 cross-metric:\n");
+    /* re-establish the fwd1 incumbent at this key: it homes in the OOP
+     * shard since the 2026-09-02 re-route, and T5 deleted that file */
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
+              "mode", 1, "zcasc",
+              "ran", 2, "1", "ns", 2, "8891.0", "metric", 2, "fwd1", "units", 2, "ns",
+              "src", 2, "race", "date", 2, "2026-08-19", NULL);
+    VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "re-establish the fwd1 incumbent");
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
               "mode", 1, "zcasc",
               "ran", 2, "1", "ns", 2, "4400.0", "metric", 2, "joint2", "units", 2, "ns",
