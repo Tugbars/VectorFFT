@@ -403,6 +403,13 @@ BANK       wisdom2_oop | ... dir=bwd ... | metric=bwd1
 FP         none
 NOTE       bkv == 0 ("the defaults won") banks as an explicit il_kv=0 row since
            2026-09-02; the reader's -1 means "no row" (the old KNOWN GAP).
+CHAIN3     since 2026-09-03 the 3-stage chain has its own dir=bwd cell too:
+           only its LEAF slot has backward twins (n1_bwd_v_fn), so the pass
+           races leaf-only arms, packs A=B=0 | leaf<<8, and the row carries
+           il_chain=R2.A.B beside il_pair for the replay's validation
+           (vw2_oop_lookup_k1_bwd_chain). The chain3 create installs the
+           blocked backward leaf at R2 >= 32 as the pair does. The mids
+           (t2 bwd, t2tg) have no rival forms: nothing to race there.
 ```
 
 #### B1.4 pair-order swap

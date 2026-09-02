@@ -77,16 +77,31 @@
  * row overrides the create's structural defaults; env VFFT_IL_KV pins. No
  * backward cell yet (the chain's backward leaf slot is a bwd-axis item). */
 static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
-                              const vfft_oop_wisdom_entry_t *ke)
+                              const vfft_oop_wisdom_entry_t *ke,
+                              const vw2_store_t *st, int N)
 {
     if (!p)
         return;
     if (ke)
         vfft_il3p_apply_kv_forms(p, ke->il_kv);
+    /* the BACKWARD cell (2026-09-03): its own dir=bwd row, validated against
+     * the chain it was raced at; outside the ke guard like the pair's */
+    if (st)
+    {
+        int c3[3] = { 0, 0, 0 };
+        int bkv = vw2_oop_lookup_k1_bwd_chain(st, N, c3);
+        if (bkv >= 0 && c3[0] == p->R2 && c3[1] == p->A && c3[2] == p->B)
+            vfft_il3p_apply_kv_forms_bwd(p, bkv);
+    }
     {
         const char *e = getenv("VFFT_IL_KV");
         if (e && e[0])
             vfft_il3p_apply_kv_forms(p, (int)strtol(e, NULL, 0));
+    }
+    {
+        const char *e = getenv("VFFT_IL_BKV");
+        if (e && e[0])
+            vfft_il3p_apply_kv_forms_bwd(p, (int)strtol(e, NULL, 0));
     }
 }
 
@@ -273,7 +288,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         *il3p_out = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
         if (*il3p_out)
         {
-            _k1_il3p_apply_kv(*il3p_out, ke);   /* banked forms > default */
+            _k1_il3p_apply_kv(*il3p_out, ke, &W->vw2, N);   /* banked forms > default */
             if (getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);

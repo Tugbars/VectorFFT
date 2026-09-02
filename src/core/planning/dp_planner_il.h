@@ -468,6 +468,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         b->i3 = vfft_il3p_create(N, c->R2, c->c3_A, c->c3_B);
         if (!b->i3) return -1;
         if (vfft_il3p_apply_kv_forms(b->i3, c->il_kv) != 0) return -1;
+        if (vfft_il3p_apply_kv_forms_bwd(b->i3, c->il_bkv) != 0) return -1;
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
@@ -525,6 +526,12 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
 static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
                            const _il_dp_built_t *b)
 {
+    if (c->route == VFFT_K1_IL_CHAIN3)
+    {   /* the chain's backward (t2 bwd, t2tg, n1 bwd) - its leaf slot is the
+         * directional form axis (2026-09-03) */
+        vfft_il3p_execute_bwd(b->i3, ctx->z_in, ctx->z_out);
+        return 0;
+    }
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
     /* 🔴 PROPAGATE, never discard. vfft_il2p_execute_bwd returns -1 and
      * leaves zout UNTOUCHED when neither the t2t composition nor the fdiag
@@ -862,8 +869,12 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
         long i;
         if (_il_dp_exec(ctx, c, &b) != 0) { _il_dp_free(&b); return 1e18; }
         /* zin == zout is safe for il2p: stage 1 reads zin into p->mid and
-         * stage 2 reads mid into zout, so the input is fully consumed. */
-        if (vfft_il2p_execute_bwd(b.ip, ctx->z_out, ctx->z_out) != 0)
+         * stage 2 reads mid into zout, so the input is fully consumed. The
+         * chain (il3p) documents the same contract (2026-09-03: this gate
+         * used to call the pair's backward on a chain3 candidate - NULL). */
+        if (c->route == VFFT_K1_IL_CHAIN3)
+            vfft_il3p_execute_bwd(b.i3, ctx->z_out, ctx->z_out);
+        else if (vfft_il2p_execute_bwd(b.ip, ctx->z_out, ctx->z_out) != 0)
         { _il_dp_free(&b); return 1e18; }
         for (i = 0; i < 2L * N; i++)
         {
@@ -984,7 +995,11 @@ static int _il_bwd_default_variant(int R, int partner_even, int is_mid)
 static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
                               vfft_il_cand_t *w, int verbose)
 {
-    if (!w || w->route != VFFT_K1_IL_2P_PURE) return 1e18;
+    if (!w || (w->route != VFFT_K1_IL_2P_PURE && w->route != VFFT_K1_IL_CHAIN3))
+        return 1e18;
+    /* CHAIN3 (2026-09-03): only the leaf slot has backward twins, so the
+     * mid pool is {0} and the code packs as VFFT_IL_C3KV_PACK(0, 0, leaf). */
+    const int c3 = (w->route == VFFT_K1_IL_CHAIN3);
 
     /* The variant pool, per slot. Mirrors the FORWARD enumerator's two
      * disciplines, both of which the first cut of this pass dropped:
@@ -1032,7 +1047,7 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
      * the nibble and the combo is skipped before it counts as an arm. */
     for (v = 1; v <= 5; v++)
     {
-        if (v != mid_def)  msv[nm++] = v;
+        if (!c3 && v != mid_def)  msv[nm++] = v;
         if (v != leaf_def) lsv[nl++] = v;
     }
 
@@ -1043,7 +1058,8 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
     for (int mi = 0; mi < nm; mi++)
         for (int li = 0; li < nl; li++)
         {
-            const int bkv = VFFT_IL_KV_PACK(msv[mi], lsv[li]);
+            const int bkv = c3 ? VFFT_IL_C3KV_PACK(0, 0, lsv[li])
+                               : VFFT_IL_KV_PACK(msv[mi], lsv[li]);
             if (arms >= VFFT_IL_DP_BKV_MAX_ARMS) { dropped++; continue; }
             t.il_bkv = bkv;
             double ns = _il_dp_bench_dir(ctx, N, &t, 1);
@@ -1609,7 +1625,7 @@ static double vfft_il_dp_plan(vfft_il_dp_context_t *ctx, int N, int ord,
     /* The backward axis rides on the FORWARD winner, chosen above. It cannot
      * reorder cand[] — the sort key is cost_ns, which stays the forward/joint
      * metric — so this only fills in the second half of the winning plan. */
-    if (cand[0].route == VFFT_K1_IL_2P_PURE)
+    if (cand[0].route == VFFT_K1_IL_2P_PURE || cand[0].route == VFFT_K1_IL_CHAIN3)
         (void)_il_dp_race_bwd(ctx, N, &cand[0], verbose);
 
     if (!e) e = _il_dp_insert(ctx, N, ord);
@@ -1777,7 +1793,8 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
          * il_kv=0 line, so a sweep can tell a raced cell from an unraced one
          * (the 2026-08-23 ambiguity: the guard, the record builder's kv==0
          * refusal and the reader's found/not-found signal all shared 0). */
-        if (il_ok && nat->il_bkv_raced && nat->route == VFFT_K1_IL_2P_PURE)
+        if (il_ok && nat->il_bkv_raced &&
+            (nat->route == VFFT_K1_IL_2P_PURE || nat->route == VFFT_K1_IL_CHAIN3))
         {
             vw2_rec_t br;
             const char *why = NULL;
@@ -1785,6 +1802,14 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                                    nat->il_bkv, nat->il_bkv_ns, "race",
                                    &why) == VW2_OK)
             {
+                if (nat->route == VFFT_K1_IL_CHAIN3)
+                {   /* the chain the backward verdict was raced at (2026-09-03):
+                     * the replay validates against it, as the pair validates
+                     * against il_pair */
+                    char cb[48];
+                    snprintf(cb, sizeof cb, "%d.%d.%d", nat->R2, nat->c3_A, nat->c3_B);
+                    (void)vw2_rec_set(&br, 1, "il_chain", cb);
+                }
                 if (vw2_bank(st, &br) == VW2_OK) lines++;
                 else                             vw2_rec_free(&br);
             }

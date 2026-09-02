@@ -170,7 +170,7 @@
 @cell t=c2c n=7168 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc ref=cell(t=c2c,n=7168,q=1,ord=scr,place=oop,role=comp) dif=0 | ran=1 ns=34980.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=12288 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc ref=cell(t=c2c,n=12288,q=1,ord=scr,place=oop,role=comp) dif=0 | ran=1 ns=19580.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=65536 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc ref=cell(t=c2c,n=65536,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=391666.67 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=3072 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.8.3.8.4 zs_t2q=0 zt_t2q=0 zt_tw=768 zt_l1=49152 | ran=1 ns=6246.7 metric=joint2 units=ns src=race date=2026-09-02
+@cell t=c2c n=3072 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.3.8.8.4 zs_t2q=0 zt_t2q=0 zt_tw=768 zt_l1=49152 | ran=1 ns=6209.6 metric=joint2 units=ns src=race date=2026-09-03
 @cell t=c2c n=4608 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.3.3.4.4.8 zs_t2q=0 zt_t2q=0 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=5120 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.5.8.8.4 zs_t2q=0 zt_t2q=0 zt_tw=640 zt_l1=49152 | ran=1 ns=10818.8 metric=joint2 units=ns src=race date=2026-09-02
 @cell t=c2c n=6144 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.3.8.8.8 zs_t2q=0 zt_t2q=0 | ran=1 src=race date=2026-09-02
@@ -188,7 +188,7 @@
 @cell t=c2c n=130 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=13.10 il_kv=0 | ran=1 ns=92.4 metric=bwd1 units=ns src=race
 @cell t=c2c n=1200 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=100.12 il_chain=12.10.10 | ran=1 ns=1293.7 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=1080 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=90.12 il_chain=12.10.9 | ran=1 ns=1151.0 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=2520 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_chain=12.10.21 il_kv=80 | ran=1 ns=3435.2 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=2520 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_chain=12.10.21 il_kv=80 | ran=1 ns=3215.0 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=1000 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=100.10 il_chain=10.10.10 | ran=1 ns=1065.2 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=128 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=mono sp_pair=8.16 | ran=4 ns=72.4 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=128 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.8 metric=fwd1 units=ns src=race date=2026-09-02
@@ -207,5 +207,11 @@
 @cell t=c2c n=50 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=5.10 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=50 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp ref=cell(t=c2c,n=50,q=1,ord=nat,place=oop,role=comp,lay=il) dif=0 | ran=1 ns=99.50 metric=fwd1 units=ns src=race date=2026-09-02
 
-@cell t=c2c n=1536 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=ccol sp_pair=32.48 chain=16.3 vars=flat.t1s | ran=4 ns=2167.7 metric=fwd1 units=ns src=race date=2026-09-03
-@cell t=c2c n=1536 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.16 il_chain=16.12.8 il_kv=304 | ran=1 ns=1628.9 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=1536 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=ccol sp_pair=32.48 chain=16.3 vars=flat.t1s | ran=4 ns=2204.4 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=1536 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.16 il_chain=16.12.8 il_kv=256 | ran=1 ns=1599.7 metric=fwd1 units=ns src=race date=2026-09-03
+
+@cell t=c2c n=1536 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.16 il_kv=0 il_chain=16.12.8 | ran=1 ns=1749.3 metric=bwd1 units=ns src=race
+@cell t=c2c n=3072 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=ccol sp_pair=64.48 chain=16.3 vars=flat.t1s | ran=4 ns=5543.9 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=3072 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.32 il_chain=32.16.6 il_kv=516 | ran=1 ns=3719.3 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=3072 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.32 il_kv=0 il_chain=32.16.6 | ran=1 ns=5547.5 metric=bwd1 units=ns src=race
+@cell t=c2c n=2520 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_kv=0 il_chain=12.10.21 | ran=1 ns=5189.1 metric=bwd1 units=ns src=race

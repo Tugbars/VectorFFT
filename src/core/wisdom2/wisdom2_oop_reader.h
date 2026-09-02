@@ -239,10 +239,9 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
  * The caller must check that pair against the plan it actually built: a
  * variant code is only meaningful for the radix pair it was raced at, and
  * the forward winner can move without this record being re-raced. */
-static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
-                                        int *R1, int *R2)
+static inline const vw2_rec_t *vw2__oop_find_k1_bwd(const vw2_store_t *s, int N)
 {
-    int i, pair[2], np, kv, tier;
+    int i, tier;
     const vw2_rec_t *r = NULL;
     /* v1.2: this reader owns the IL backward verdict. TWO TIERS, lay=il
      * before lay-less vintage — the same cell-before-legacy precedence the
@@ -250,7 +249,8 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
      * review's confirmed bug: eq now compares lay, so a re-raced verdict
      * banks as a NEW lay=il record that a pre-1.2 row (loaded earlier)
      * would shadow forever — banked, persisted, never served. A future
-     * lay=split backward cell belongs to a split-side reader, not here. */
+     * lay=split backward cell belongs to a split-side reader, not here.
+     * (the finder, shared with the chain3 reader since 2026-09-03) */
     for (tier = 0; tier < 2 && !r; tier++)
         for (i = 0; i < s->nrec; i++) {
             const vw2_rec_t *c = &s->rec[i];
@@ -263,6 +263,27 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
             r = c;
             break;
         }
+    return r;
+}
+/* the CHAIN3 backward verdict (2026-09-03): the same cell, read through the
+ * chain it was raced at (il_chain=R2.A.B); -1 when the row is absent, has no
+ * verdict, or is a pair row. The three-nibble code is A | B<<4 | leaf<<8. */
+static inline int vw2_oop_lookup_k1_bwd_chain(const vw2_store_t *s, int N,
+                                              int *c3 /* [3] */)
+{
+    const vw2_rec_t *r = vw2__oop_find_k1_bwd(s, N);
+    int ch[3];
+    if (!r) return -1;
+    if (!vw2_rec_get(r, "il_kv")) return -1;
+    if (vw2__oop_split_ints(vw2_rec_get(r, "il_chain"), ch, 3) != 3) return -1;
+    if (c3) { c3[0] = ch[0]; c3[1] = ch[1]; c3[2] = ch[2]; }
+    return vw2__oop_geti(r, "il_kv", 0);
+}
+static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
+                                        int *R1, int *R2)
+{
+    int pair[2], np, kv;
+    const vw2_rec_t *r = vw2__oop_find_k1_bwd(s, N);
     /* returns the banked backward form code (>= 0; 0 = "the defaults won",
      * a real verdict since 2026-09-02) or -1 when no usable row exists */
     if (!r) return -1;
