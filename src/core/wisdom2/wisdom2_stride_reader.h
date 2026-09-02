@@ -202,8 +202,14 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    if (!vw2_rec_get(r, "eng") || strcmp(vw2_rec_get(r, "eng"), "stride"))
-        return 0;
+    {   /* family gate: eng names the winner since 2026-09-02 (zturn = the
+         * cascade, k1 = the IL engines); eng=stride = a tape verdict OR a
+         * pre-change vintage row — both decode identically here. */
+        const char *eng = vw2_rec_get(r, "eng");
+        if (!eng || (strcmp(eng, "stride") && strcmp(eng, "zturn") &&
+                     strcmp(eng, "k1")))
+            return 0;
+    }
     memset(e, 0, sizeof *e);
     e->N = N; e->K = K;
     e->mode = vw2__stride_mode_idx(vw2_rec_get(r, "mode"));
@@ -407,7 +413,15 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     if (e->mode <= 0 || e->mode >= 9) { *why = "unknown-nat-mode"; return -1; }
     vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, ord, pl);
     r->key.lay = lay;
-    VW2__SB_SET(1, "eng", "stride");
+    /* eng= names the WINNING family (owner, 2026-09-02) in the store's own
+     * vocabulary: the cascade's kind-4 token, the IL family's kind-3 token,
+     * and stride for the tape modes (which genuinely run the stride
+     * engine). Pre-change rows carry eng=stride regardless — vintage,
+     * accepted by the reader. */
+    VW2__SB_SET(1, "eng",
+                e->mode == VFFT_NAT_ZCASC ? "zturn"
+                : e->mode == VFFT_NAT_ILP ? "k1"
+                                          : "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
     if (e->nf == 1 && e->factors[0] == e->N && ord == VW2_ORD_NAT) {
         /* the dummy-chain placeholder: SIGNPOST instead (owner #7) — @nat
