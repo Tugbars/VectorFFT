@@ -249,6 +249,10 @@ typedef struct
      * mixed with cost_ns (which is the forward/joint metric) - the wisdom2
      * compare helper refuses across metrics for exactly this reason. */
     double il_bkv_ns;
+    int    il_bkv_raced;                     /* 1 = the backward race RAN: an
+                                              * il_bkv of 0 is then a verdict
+                                              * ("the defaults won"), not the
+                                              * unraced sentinel (2026-09-02) */
     int    chain[VFFT_ZSPLIT_MAX_NF];        /* CASCADE only                    */
     int    nf;                               /* CASCADE only, else 0            */
     int    t2q;                              /* CASCADE terminator schedule
@@ -1040,6 +1044,7 @@ static double _il_dp_race_bwd(vfft_il_dp_context_t *ctx, int N,
     if (best_ns > 1e17) return 1e18;      /* leave il_bkv at 0 = the default */
     w->il_bkv    = best_bkv;
     w->il_bkv_ns = best_ns;
+    w->il_bkv_raced = 1;                   /* 0 is now a verdict, not absence */
     if (verbose)
         fprintf(stderr, "  [il-dp] N=%d bwd WINNER bkv=0x%02x %.1f ns"
                 " (%d arms)\n", N, best_bkv, best_ns, arms);
@@ -1728,19 +1733,12 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
          * unraced axis must leave NO record at all, because a zero-filled
          * one would assert a measurement that never happened.
          *
-         * 🔴 NOTE (2026-08-23): `nat->il_bkv` here is the VERDICT, not
-         * evidence that the race ran -- and bkv == 0 is a legitimate raced
-         * outcome meaning "the default forms won", which the log states
-         * outright ("bwd WINNER bkv=0x00 ... (2 arms)"). So this condition
-         * cannot distinguish "never raced" from "raced, default won", and
-         * silently drops the latter. It is left as-is DELIBERATELY: bkv == 0
-         * IS the structural default, so a banked kv=0 line and an absent one
-         * install the same kernels, and nothing served changes either way.
-         * Fixing it properly is an API change at three sites -- this guard,
-         * vw2_oop_rec_k1_bwd's `kv == 0` refusal, and vw2_oop_lookup_k1_bwd
-         * returning kv as its own found/not-found signal -- because across
-         * this axis 0 is BOTH a valid verdict and the sentinel. */
-        if (il_ok && nat->il_bkv && nat->route == VFFT_K1_IL_2P_PURE)
+         * (2026-09-02) `il_bkv_raced` says the race RAN; `il_bkv` is its
+         * verdict, and 0 = "the default forms won" is banked as an explicit
+         * il_kv=0 line, so a sweep can tell a raced cell from an unraced one
+         * (the 2026-08-23 ambiguity: the guard, the record builder's kv==0
+         * refusal and the reader's found/not-found signal all shared 0). */
+        if (il_ok && nat->il_bkv_raced && nat->route == VFFT_K1_IL_2P_PURE)
         {
             vw2_rec_t br;
             const char *why = NULL;
