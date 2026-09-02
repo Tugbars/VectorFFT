@@ -82,6 +82,44 @@ static int _il2d_resolve(const int *Rs, int m, vfft_il2p_fn *ff,
     return 1;
 }
 
+/* the per-stage FORM list (E1.11, 2026-09-02): "b48.-.b84" = one name per
+ * stage, "-" = the stage's single form; installs the named kernels over the
+ * resolved defaults. A name that is not a form of that stage's radix, or a
+ * list of the wrong length, refuses (the validator is the law). */
+static int _il2d_apply_forms(const int *Rs, int m, const char *forms,
+                             vfft_il2p_fn *ff, vfft_il2p_fn *fb)
+{
+    const char *p = forms;
+    int s;
+    if (!forms || !*forms)
+        return 1;
+    for (s = 0; s < m; s++)
+    {
+        char nm[8];
+        int l = 0;
+        while (*p && *p != '.' && l < 7)
+            nm[l++] = *p++;
+        nm[l] = 0;
+        if (!l || (*p && *p != '.'))
+            return 0;
+        if (*p == '.')
+            p++;
+        if (strcmp(nm, "-"))
+        {
+            const int last = (s == m - 1);
+            vfft_il2p_fn f = last ? vfft_il2p_n1c_form_fn(Rs[s], nm, 0)
+                                  : vfft_il2p_t2c_form_fn(Rs[s], nm, 0);
+            vfft_il2p_fn b = last ? vfft_il2p_n1c_form_fn(Rs[s], nm, 1)
+                                  : vfft_il2p_t2c_form_fn(Rs[s], nm, 1);
+            if (!f || !b)
+                return 0;
+            ff[s] = f;
+            fb[s] = b;
+        }
+    }
+    return *p == 0; /* exactly m names */
+}
+
 /* ordered compositions of N1 over the codelet radices, depth <= 4,
  * capped at 24 (no-silent-caps law: the cap is LOGGED when it bites). */
 #define VFFT_IL2D_MAXCAND 24
@@ -450,7 +488,8 @@ static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
  * chain row, raced and banked there on a miss); NULL, or a provider that
  * declines, leaves the greedy chain in charge. Set once at the 2D create's
  * entry — planning side, one create at a time. */
-typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst);
+typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst, char *forms,
+                                  size_t fsz);
 static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
 
 static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
@@ -461,11 +500,13 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
 {
     int M = 16, s2, ok = 0, served = 0;
     double *za = NULL, *zb2 = NULL;
+    char forms[64] = "";
     while (M < 2 * N1 - 1)
         M <<= 1;
     *chf = *chb = *kf = *kb = *scr = NULL;
-    if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst))
-        served = _il2d_resolve(Rs, *nst, ff, fb);   /* the validator is the law */
+    if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst, forms, sizeof forms))
+        served = _il2d_resolve(Rs, *nst, ff, fb) &&      /* the validator is the law */
+                 _il2d_apply_forms(Rs, *nst, forms, ff, fb);
     if (!served && !_il2d_build_chain(M, Rs, ff, fb, nst))
         return 0;
     if (_il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
