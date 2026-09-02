@@ -1,2 +1,2 @@
-f8a15dc78a7239c72fd7b661c1d9ab7dab5ab857
-# short: f8a15dc7  (re-stamped after bank-on-loss: a lost @nat ZCASC/ILP race marks its cell zr=1 in place (vw2_update_field) and never re-races or rebuilds the candidate; recalibrate=1 re-races; gate nat_bankloss_gate (flag, cold, registered) carries an in-gate control/treatment pair; SIX bodies changed by design, race census identical, golden/fp byte-identical; gates nat_bankloss/k1scr/natorder_scratch/mt_c2c green)
+e250b02d9f9be7bfd8cf823542d55a63ed98b1ea
+# short: e250b02d  (re-stamped after the odd-mid/K=1-exit cascade MT ship (zt_mt=1 at the oop K=1 exit; T=8 bitwise MT==ST identical, 24576 3.0x / 49152 3.3x / 98304 4.2x, race banks serial <=12288) + the natural-verdict banking run into generated/ (+16 store lines, additions only); ONE body changed by design, censuses identical, golden/fp byte-identical, gates mt_c2c/pool_preserve/k1scr green)

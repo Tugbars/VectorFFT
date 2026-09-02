@@ -148,7 +148,7 @@ ARMS       every factorization multiset x every unique permutation, each built a
            timed whole-plan at the caller's K
 GATES      S1.2, S1.3 (both search *within* a chosen chain)
 RACE       src/core/planning/dp_planner.h:450 (_vfft_proto_dp_bench)
-BANK       wisdom2_stride | t=c2c n=N q=K ord=scr place=ip | token chain=
+BANK       wisdom2_scr | t=c2c n=N q=K ord=scr place=ip | token chain=
 CALLER     1D c2c split, any placement
 WITNESS    1d.sp.ip.c2c.256 [measured: replays, races=0, no fp field set]
 FP         none
@@ -189,7 +189,7 @@ STATUS     RACED (genuinely separate from S1.1-S1.3)
 ARMS       TIGHT  = (N,K) executed at me=K, narrow SSE2/scalar tail
            PADDED = aligned (N,Kp) at me=Kp, Kp = roundup(K,8)
 RACE       src/core/vfft.c:841 (_pad_burst); driver _calibrate_pad at :850
-BANK       wisdom2_stride | token pad_me=
+BANK       wisdom2_scr | token pad_me=
 CALLER     K > 1
 FP         padded=
 ```
@@ -281,7 +281,7 @@ ARMS       PURE_CYCLE floor (the deployed chain + its cycle tape) vs up to 5
            injected palindrome chains (uniform T1S, DIT) each with a paired tape;
            plus SCR
 RACE       vfft_natorder_race, src/core/transforms/natorder/natorder_calibrate.h
-BANK       wisdom2_stride | ord=nat, via _bank_nat_1d / _bank_natoop_1d
+BANK       wisdom2_scr | ord=nat, via _bank_nat_1d / _bank_natoop_1d
 WITNESS    1d.sp.ip.c2c.256 order=NATURAL
            [measured: FLAPS - nat=5/natcyc=96 in 8 of 10 runs, nat=4/natcyc=34 in
             2. Both outputs CORRECT: 3.0e-16 and 3.1e-16 rel err vs a naive
@@ -415,7 +415,7 @@ ARMS       arm0 CONVERT incumbent: deinterleave -> split cplan -> reinterleave
            5 rounds, arms alternated per round, median-of-5,
            reps = 200 (N<=256) / 80 (N<=1024) / 32
 RACE       src/core/vfft.c:8156 and :8174; verdict at :8199
-BANK       wisdom2_stride | t=c2c n=N q=K ord=scr place=ip lay=il
+BANK       wisdom2_scr | t=c2c n=N q=K ord=scr place=ip lay=il
            | mode=ilp|conv (N<2048)  or  mode=zcasc|conv (N>=2048)
 CALLER     1D c2c IN-PLACE interleaved, order DEFAULT/SCRAMBLED (or NATURAL with a
            single-stage cplan)

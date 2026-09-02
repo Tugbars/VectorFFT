@@ -343,3 +343,9 @@
 @cell t=c2c n=5120 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=16.20.16 vars=flat.t1s.t1s dif=0 | ran=1 ns=24080.00 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=6144 q=1 ord=scr place=ip | eng=stride chain=64.6.16 vars=flat.t1s.t1s dif=0 | ran=1 ns=30497.66 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=6144 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=64.6.16 vars=flat.t1s.t1s dif=0 | ran=1 ns=29540.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=7168 q=1 ord=scr place=ip | eng=stride chain=16.64.7 vars=flat.t1s.t1s dif=0 | ran=1 ns=38204.69 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=7168 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=32.7.32 vars=flat.t1s.t1s dif=0 | ran=1 ns=34980.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=12288 q=1 ord=scr place=ip | eng=stride chain=32.64.6 vars=flat.t1s.t1s dif=0 | ran=1 ns=62896.87 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=12288 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=32.64.6 vars=flat.t1s.t1s dif=0 | ran=1 ns=19580.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=65536 q=1 ord=scr place=ip | eng=stride chain=4.4.4.64.4.4 vars=flat.flat.t1s.t1s.t1s.t1s dif=0 | ran=1 ns=685875.00 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=65536 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=16.16.16.16 vars=flat.t1s.t1s.t1s dif=0 | ran=1 ns=391666.67 metric=fwd1 units=ns src=race date=2026-09-02

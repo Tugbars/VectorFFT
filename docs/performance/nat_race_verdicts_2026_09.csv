@@ -26,3 +26,10 @@ family,N,challenger,challenger_ns,incumbent_ns,ratio,winner,note
 # @nat = in-place natural (challenger vs the reorder tape); @natoop = OOP natural (zturn cascade vs the K=1 OOP engine).
 # ns are SAME-RUN pairs; cross-run absolute ns swing up to 3x (thermal + cold-DP plan luck) — ratios and verdicts are what reproduced.
 # Tape wins NOWHERE (17 @nat cells incl. every odd-mid) => the bank-on-loss real-writer path is unreachable on this box; nat_bankloss_gate's seeded arms cover it.
+# Odd-mid cascade MT pricing trial (2026-09-02, T=8, bitwise MT==ST IDENTICAL at every cell; shipped: the OOP K=1 exit now races the INC-Z MT verdict):
+oddmid-mt,3072,MT,6400,3700,0.58,serial,race banks serial
+oddmid-mt,6144,MT,10100,7600,0.75,serial,race banks serial
+oddmid-mt,12288,MT,18600,16600,0.89,serial,race banks serial
+oddmid-mt,24576,MT,16800,50400,3.00,MT,execute-level speedup
+oddmid-mt,49152,MT,24100,79600,3.30,MT,execute-level speedup
+oddmid-mt,98304,MT,46500,196900,4.23,MT,execute-level speedup

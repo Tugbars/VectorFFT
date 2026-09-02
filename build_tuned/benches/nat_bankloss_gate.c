@@ -107,8 +107,13 @@ static int run_cell(const char *wisdir, int N, int fails)
 static int munge_4096(const char *wisdir, int with_zr)
 {
     char pb[1024];
-    snprintf(pb, sizeof pb, "%s/wisdom2_stride.txt", wisdir);
+    snprintf(pb, sizeof pb, "%s/wisdom2_scr.txt", wisdir);
     FILE *f = fopen(pb, "r");
+    if (!f)
+    { /* rename compat: a store written by an old binary */
+        snprintf(pb, sizeof pb, "%s/wisdom2_stride.txt", wisdir);
+        f = fopen(pb, "r");
+    }
     if (!f) return 0;
     static char text[65536];
     size_t n = fread(text, 1, sizeof text - 1, f);

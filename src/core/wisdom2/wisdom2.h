@@ -171,8 +171,20 @@ typedef struct {
  * one-table edit (the FORMAT needs no change) — README §2.1. */
 
 static const char *vw2_shard_name[VW2_NSHARDS] = {
-    "wisdom2_oop.txt", "wisdom2_stride.txt", "wisdom2_real.txt",
+    "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_real.txt",
     "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt"
+};
+
+/* one-generation rename compat (2026-09-02): this shard was born
+ * "wisdom2_stride.txt" — a name collision with the stride ENGINE. It is
+ * the ORIGINAL wisdom (the split-layout scrambled-output era, before the
+ * oop shard existed), hence wisdom2_scr.txt: the 1D scrambled chains plus
+ * the @nat/@natoop order verdicts, rfft chains and trig inners that grew
+ * around them. An old-named file still
+ * LOADS (notice below); saves always write the new name, so a store
+ * upgrades on its first write and the legacy file simply goes stale. */
+static const char *vw2_shard_name_legacy[VW2_NSHARDS] = {
+    NULL, "wisdom2_stride.txt", NULL, NULL, NULL, NULL
 };
 
 typedef struct {
@@ -746,6 +758,15 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
 
     vw2__path(s, shard, path, sizeof path);
     f = fopen(path, "rb");
+    if (!f && vw2_shard_name_legacy[shard]) {       /* rename compat (above) */
+        snprintf(path, sizeof path, "%s/%s", s->dir,
+                 vw2_shard_name_legacy[shard]);
+        f = fopen(path, "rb");
+        if (f)
+            fprintf(stderr, "[wisdom2] %s: loaded legacy %s; saves write %s\n",
+                    s->dir, vw2_shard_name_legacy[shard],
+                    vw2_shard_name[shard]);
+    }
     if (!f) return VW2_OK;                          /* missing = empty, fine  */
     s->present[shard] = 1;
 
