@@ -609,6 +609,32 @@ static inline int vw2_g0_selftest(const char *dir)
         VW2_ST_CHECK(vw2_lookup(&st, &q) != NULL, "signpost serves once the target exists");
     }
 
+    /* ---- T22b: a role=comp signpost resolves ONLY against the comp row ------------------ */
+    printf("T22b comp-signpost:\n");
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 12288, 1, VW2_ORD_SCR, VW2_PL_IP),
+              "mode", 1, "zcasc", "ref", 1, "cell(t=c2c,n=12288,q=1,ord=scr,place=oop,role=comp)",
+              "ran", 2, "1", "src", 2, "race", "date", 2, "2026-09-02", NULL);
+    VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank comp signpost with absent target");
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 12288, 1, VW2_ORD_SCR, VW2_PL_OOP),
+              "eng", 1, "zturn", "chain", 1, "8.8.8.8.3", "zt_t2q", 1, "1",
+              "ran", 2, "1", "src", 2, "race", "date", 2, "2026-09-02", NULL);
+    VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank the OOP verdict (role absent)");
+    {
+        vw2_key_t q = vw2__st_key(VW2_T_C2C, 12288, 1, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &q) == NULL, "a verdict row does not satisfy a comp ref (role is equality-matched)");
+    }
+    {
+        vw2_key_t ck = vw2__st_key(VW2_T_C2C, 12288, 1, VW2_ORD_SCR, VW2_PL_OOP);
+        ck.role = VW2_ROLE_COMP;
+        r = vw2__st_rec(&ck, "eng", 1, "zturn", "chain", 1, "8.8.8.8.3", "zt_t2q", 1, "0",
+                  "zt_tw", 1, "1024", "ran", 2, "1", "src", 2, "race", "date", 2, "2026-09-02", NULL);
+        VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank the comp recipe");
+    }
+    {
+        vw2_key_t q = vw2__st_key(VW2_T_C2C, 12288, 1, VW2_ORD_SCR, VW2_PL_IP);
+        VW2_ST_CHECK(vw2_lookup(&st, &q) != NULL, "comp signpost serves once the comp recipe exists");
+    }
+
     /* ---- T23: wildcard precedence (q=*-only beats ord/place wildcards) ------------------- */
     printf("T23 wildcard-precedence:\n");
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 3072, 7, VW2_ORD_ANY, VW2_PL_ANY),

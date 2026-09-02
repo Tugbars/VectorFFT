@@ -193,6 +193,15 @@ fails the fence falls back to the calibrated default rather than being force-fit
 ([vfft.c:2908-2918](../../src/core/vfft.c#L2908-L2918)). A kind-4 row below the cascade tier is a
 wrong-slot verdict and is made inert ([vfft.c:2827-2836](../../src/core/vfft.c#L2827-L2836)).
 
+Two kind-4 rows can exist at one N. The problem VERDICT (`role` absent) is banked only by the
+OOP create's own race, and a hit attaches the cascade for OOP. The COMPONENT recipe
+(`role=comp`) is banked by an in-place or odd-mid race, which must never attach an OOP route by
+fiat; it carries the same fields (chain, terminator pick, tile width, fence). An in-place caller
+replays comp first, then the verdict. An OOP caller replays its verdict, and with no verdict may
+replay a comp recipe only for an odd chain, because an odd candidate races the finished handle at
+the commit and is never attached by fiat. A cascade mode row (`mode=zcasc`, `place=ip`) never
+carries a chain of its own; it signposts the recipe it served with `ref=` (wisdom2 README §3.3).
+
 **Only the terminator schedule is raced at create.** `stf` against `stf2` for zturn, `sterm`
 against `sterm2` for legacy zsplit. Both pairs are bit-identical schedules, so the difference is
 code placement and must be measured on the installed binary, never hand-set. A `last==4` chain

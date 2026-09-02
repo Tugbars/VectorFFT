@@ -285,6 +285,18 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
     }
 }
 
+/* the mode-row RECIPE rule (owner, 2026-09-02): fac/var are the classic
+ * plan of the CALLER (the convert incumbent) — the served recipe only for
+ * mode=conv and the tape modes. A mode=zcasc row must not carry them: the
+ * writer emits a signpost to the kind-4 recipe instead (comp when the
+ * in-place race banked one, else the OOP verdict); mode=ilp emits neither. */
+static int _zcasc_ref_is_comp(struct vfft_wisdom_s *W, int N, int mode)
+{
+    vfft_oop_wisdom_entry_t tmp;
+    return mode == VFFT_NAT_ZCASC && !W->vw2_off_oop &&
+           vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &tmp);
+}
+
 static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                          int N, size_t K, int mode, double ns,
                          const int *fac, const int *var, int nf, int use_dif)
@@ -297,6 +309,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nat_ns = ns;
     nn.nf = nf;
     nn.use_dif = use_dif;
+    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];
@@ -351,9 +364,10 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
 }
 
 /* the ord=scr mode-cell bank (the ILP-attach fix, 2026-08-25): the
- * scrambled in-place IL race's verdict — mode=ILP (win) or mode=CONV
- * (the banked loss, so a losing race never re-runs). Chain informational,
- * like _bank_nat_1d. */
+ * scrambled in-place IL race's verdict — mode=ILP | ZCASC (win) or
+ * mode=CONV (the banked loss, so a losing race never re-runs). The chain
+ * is the caller's classic plan: served recipe for CONV only — see the
+ * mode-row RECIPE rule above _bank_nat_1d. */
 static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
                              const vfft_config_t *cfg, int N, size_t K,
                              int mode, double ns, const int *fac,
@@ -367,6 +381,7 @@ static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
     nn.nat_ns = ns;
     nn.nf = nf;
     nn.use_dif = use_dif;
+    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];
@@ -414,9 +429,36 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     int zch[VFFT_ZSPLIT_MAX_NF];
     int znf = 0;
     vfft_oop_wisdom_entry_t zeb;
-    const vfft_oop_wisdom_entry_t *ze =
-        W->vw2_off_oop ? vfft_oop_wisdom_lookup_zsplit(&W->oop, N)
-                       : (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb) ? &zeb : NULL);
+    /* RECIPE source (owner, 2026-09-02): an in-place caller replays the
+     * role=comp kind-4 row its own race banked (chain + t2q terminator
+     * pick + tcut width + L1 fence, raced IN PLACE), falling back to the
+     * OOP problem verdict. An OOP caller reads its verdict first; with no
+     * verdict it may replay a comp recipe ONLY for an ODD chain — the odd
+     * candidate never attaches by fiat (it races the finished handle at
+     * the commit, the hk block), so the comp row just spares the per-
+     * create t2q re-race. A pow2 comp row came from an in-place race and
+     * must not decide the OOP route. The mode row's ref= names whichever
+     * served. */
+    const int ip_call = (cfg->placement == VFFT_INPLACE);
+    const vfft_oop_wisdom_entry_t *ze = NULL;
+    if (W->vw2_off_oop)
+        ze = vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
+    else if (ip_call &&
+             vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
+        ze = &zeb;
+    else if (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb))
+        ze = &zeb;
+    else if (vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
+    {
+        int cch[VFFT_K1_CC_MAX_NF], cnf = 0, ci, codd = 0;
+        if (zeb.cc_chain)
+            cnf = vfft_k1_cc_chain_decode(zeb.cc_chain, cch);
+        for (ci = 0; ci < cnf; ci++)
+            if (cch[ci] & 1)
+                codd = 1;
+        if (codd)
+            ze = &zeb;
+    }
     int ze_hit = (ze && !cfg->recalibrate);
     /* Route forcing, read at CREATE (both directions follow — the
      * route is one plan field): VFFT_NO_ZTURN pins legacy (kill
@@ -723,10 +765,15 @@ static int _k1z_race_and_bank(const vfft_config_t *cfg,
              * — banking here would make replay attach it by fiat. The
              * sweep owns banking those winners. */
             if (!ip && !zodd) /* kind-4 = the OOP create's cell */
-            {
                 vw2_oop_bank_entry(&W->vw2, &ne);
-                _vw2_persist(W, cfg);
-            }
+            else
+                /* the in-place / odd race's RECIPE, as a COMPONENT row
+                 * (role=comp): the terminator pick and tile width it just
+                 * raced are banked, never re-raced per create, and the
+                 * mode row signposts it (owner, 2026-09-02). Not a
+                 * verdict: the OOP create never replays it. */
+                vw2_oop_bank_entry_role(&W->vw2, &ne, VW2_ROLE_COMP);
+            _vw2_persist(W, cfg);
         }
         /* ROUTE ATOMICITY (structural): exactly ONE cascade plan survives
          * to the handle — the loser dies here, before the handle exists —

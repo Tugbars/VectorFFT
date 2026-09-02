@@ -269,14 +269,19 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
 
 /* ------------------------------------------------------ kind-4 (cascade) */
 
-static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
-                                        vfft_oop_wisdom_entry_t *e)
+/* role: VW2_ROLE_NONE = the OOP create's problem verdict (a hit attaches
+ * the cascade); VW2_ROLE_COMP = the component RECIPE an in-place / odd race
+ * banked (2026-09-02) — same fields, never a route verdict for OOP. */
+static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
+                                             int role,
+                                             vfft_oop_wisdom_entry_t *e)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     memset(&k, 0, sizeof k);
     k.t = VW2_T_C2C; k.rank = 1; k.n[0] = N;
     k.q = 1; k.ord = VW2_ORD_SCR; k.pl = VW2_PL_OOP;
+    k.role = (uint8_t)role;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     {
@@ -305,6 +310,12 @@ static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
         }
     }
     return 1;
+}
+
+static inline int vw2_oop_lookup_zsplit(const vw2_store_t *s, int N,
+                                        vfft_oop_wisdom_entry_t *e)
+{
+    return vw2_oop_lookup_zsplit_role(s, N, VW2_ROLE_NONE, e);
 }
 
 /* --------------------------------------------------- kinds 0/1/2 (classic) */
@@ -710,6 +721,30 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
         fprintf(stderr, "[wisdom2] oop bank refused (%s)\n", why ? why : "?");
         return -1;
     }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }
+    return VW2_OK;
+}
+
+/* kind-4 bank under a role: role=comp = the cascade RECIPE as a component
+ * row (in-place / odd races, 2026-09-02). The OOP problem verdict at the
+ * same key is untouched, so a comp bank can never attach a route by fiat;
+ * the in-place replay reads comp first, then the verdict. */
+static inline int vw2_oop_bank_entry_role(vw2_store_t *s,
+                                          const vfft_oop_wisdom_entry_t *e,
+                                          int role)
+{
+    vw2_rec_t r;
+    const char *why = NULL;
+    int rc;
+    if (e->kind != VFFT_OOP_KIND_ZSPLIT || role == VW2_ROLE_NONE)
+        return vw2_oop_bank_entry(s, e);
+    if (vw2_oop_rec_from_entry(&r, e, "race", NULL, &why) != VW2_OK) {
+        fprintf(stderr, "[wisdom2] oop comp bank refused (%s)\n", why ? why : "?");
+        return -1;
+    }
+    r.key.role = (uint8_t)role;
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);
     if (rc != VW2_OK) { vw2_rec_free(&r); return rc; }

@@ -174,13 +174,22 @@ memory; re-bank in measurement mode). Never a hard error, never a silent
 default.
 
 Emission scope: a writer emits a signpost only where a component record
-exists to point at. In the stride codec that is the `@nat` CASCADE row
-(`mode=zcasc`), whose recipe is the `ord=scr place=oop` kind-4 cell. A
-dummy-chain row of any other mode (prime/Rader `ord=scr`, `@nat mode=ilp`)
-is SELF-CONTAINED — its engine rebuilds from N alone — and carries neither
-`chain=` nor `ref=`; the reader accepts it bare. A signpost at a
-self-contained cell points at a record that never exists and makes the cell
-a permanent MISS (re-raced on every create).
+exists to point at. In the stride codec that is the CASCADE mode row
+(`mode=zcasc`, `place=ip` at either order, and the dummy-chain `@natoop`
+placeholder), whose recipe — chain, terminator pick (`zs_t2q`/`zt_t2q`),
+tile width and fence (`zt_tw`/`zt_l1`) — is the `ord=scr place=oop` kind-4
+cell. Two kind-4 rows can exist at one N: the problem VERDICT (role absent;
+banked by the OOP create's own race, and a hit attaches the cascade for
+OOP) and the COMPONENT recipe (`role=comp`; banked by an in-place or odd
+race, which must never attach an OOP route by fiat). An in-place caller
+replays comp first, then the verdict; its mode row's `ref=` names whichever
+served. A mode row never carries the caller's classic chain as its own —
+that chain is the convert incumbent's plan (the served recipe only for
+`mode=conv` and the tape modes). A dummy-chain row of any other mode
+(prime/Rader `ord=scr`, `mode=ilp`) is SELF-CONTAINED — its engine rebuilds
+from N alone — and carries neither `chain=` nor `ref=`; the reader accepts
+it bare. A signpost at a self-contained cell points at a record that never
+exists and makes the cell a permanent MISS (re-raced on every create).
 
 ### 3.4 MEASURE + PROVENANCE (after the second pipe)
 

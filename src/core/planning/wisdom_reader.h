@@ -104,6 +104,11 @@ typedef struct {
                                               * on old lines = 0 = race once and mark.
                                               * wisdom2-only; the legacy reader never
                                               * sets it (callers zero it on that path). */
+    int     ref_comp;                        /* mode=zcasc bank: 1 = the signpost names
+                                              * the role=comp kind-4 RECIPE (banked by an
+                                              * in-place / odd race); 0 = the OOP problem
+                                              * verdict. The bank helpers set it from what
+                                              * the store holds at bank time. */
 } vfft_proto_nat_entry_t;
 
 typedef struct {
