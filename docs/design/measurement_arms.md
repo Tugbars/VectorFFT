@@ -511,7 +511,12 @@ C1.9 zt_mt serial vs threaded   RACED, BANKED PER-T (2026-09-02): the verdict
                                 zt_mt_t=<T> zt_mt=<0|1>; a T match replays, a
                                 mismatch re-races and re-banks; a re-raced
                                 recipe drops it. VFFT_ZT_NO_MT (env) never
-                                replays and never banks.
+                                replays and never banks. BOTH exits ask: the
+                                in-place exit joined 2026-09-02 with aliased
+                                z->z arms and its own pair (zt_mt_ip_t /
+                                zt_mt_ip), so the two placements' verdicts never
+                                overwrite each other. natord cascades cannot
+                                engage and bank the "no" implicitly.
 ```
 
 WITNESS: `1d.il.ip.c2c.4096` -> `zroute=1`, and it RACES [measured].

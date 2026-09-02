@@ -64,12 +64,22 @@ typedef struct
     vfft_il2p_fn *bf, *bb;
     double **btf, **btb;
     double *bchf, *bkf, *bscr;
+    /* NATURAL cells: the chain arm must be timed under the serving it
+     * will run - the M4-lite leaf-redirected pass (scratch round trip +
+     * strided scatter), never the scrambled pass (a strawman arm). */
+    int nat;
+    const int *perm;
+    double *nscr;
 } _il2d_n1arm_ctx_t;
 static void _il2d_n1arm_chain(void *v)
 {
     _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
-    _il2d_col_pass(c->sc, c->sc, c->N1, c->N2, c->N2, c->nst, c->R, c->L,
-                   c->f, c->tf, 0);
+    if (c->nat)
+        _il2d_col_pass_nat(c->sc, c->sc, c->N1, c->N2, c->nst, c->R, c->L,
+                           c->f, c->tf, 0, c->perm, c->nscr);
+    else
+        _il2d_col_pass(c->sc, c->sc, c->N1, c->N2, c->N2, c->nst, c->R,
+                       c->L, c->f, c->tf, 0);
 }
 static void _il2d_n1arm_blu(void *v)
 {
@@ -330,15 +340,43 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 if (il2d_blu)
                     chain_ok = 1;
             }
-            else if (chain_ok && cfg->order != VFFT_ORDER_NATURAL &&
-                     !getenv("VFFT_IL2D_CHAIN"))
+            if (chain_ok && !il2d_blu && il2d_nst > 1 &&
+                cfg->order == VFFT_ORDER_NATURAL)
+            {
+                /* M4-lite (struct comment at il2d_nat): natural n1 via
+                 * the LEAF REDIRECTION - driver-only, any chain. Built
+                 * BEFORE the N1-arm race below so the chain arm is
+                 * timed under the serving it will actually run. The
+                 * perm builder refuses on any convention mismatch. */
+                il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
+                if (il2d_natperm)
+                    il2d_natscr = (double *)malloc(
+                        2 * (size_t)N1 * N2 * sizeof(double));
+                if (!il2d_natperm || !il2d_natscr)
+                {
+                    free(il2d_natperm);
+                    il2d_natperm = NULL;
+                    _vfft_warn("vfft_create: IL 2D c2c %dx%d "
+                               "order=NATURAL - the natural leaf "
+                               "permutation could not be built for "
+                               "this chain; unsupported",
+                               N1, N2);
+                    return NULL;
+                }
+                il2d_nat = 1;
+            }
+            if (chain_ok && !il2d_blu && !getenv("VFFT_IL2D_CHAIN"))
             {
                 /* THE RACED CHAIN ARM (owner directive): for a chain
                  * that carries an ODD radix (the newly emitted kinds),
-                 * race it against the Bluestein column route — the two
-                 * serve DIFFERENT n1 orders (chain = scrambled comb,
-                 * blu = natural), and both are self-consistent, so the
-                 * pick is pure speed. Env VFFT_IL2D_BLU=1 pins blu,
+                 * race it against the Bluestein column route. DEFAULT
+                 * order: the two serve different n1 orders (chain =
+                 * scrambled comb, blu = natural), both self-consistent.
+                 * NATURAL order (2026-08-28): BOTH arms are natural -
+                 * the chain via the leaf redirection, blu by
+                 * construction - so the race is the only lawful pick;
+                 * the chain arm runs the natural pass. Pick is pure
+                 * speed either way. Env VFFT_IL2D_BLU=1 pins blu,
                  * =0 pins the chain (env never banks); unset = race
                  * min-of-3 alternated on scratch through the SERVING
                  * functions. pow2 chains never race (blu is pointless
@@ -384,7 +422,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                 _il2d_n1arm_ctx_t rc = {
                                     sc, N1, (size_t)N2, il2d_nst, il2d_R,
                                     il2d_L, il2d_f, il2d_tf, M2, bnst, bR,
-                                    bL, bf, bb, btf, btb, bchf, bkf, bscr };
+                                    bL, bf, bb, btf, btb, bchf, bkf, bscr,
+                                    il2d_nat, il2d_natperm, il2d_natscr };
                                 const vfft_race_arm_t arms[2] = {
                                     { "chain", _il2d_n1arm_chain, &rc },
                                     { "bluestein", _il2d_n1arm_blu, &rc } };
@@ -400,9 +439,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         if (!use_blu)
                             use_blu = (tbu < tc);
                         if (getenv("VFFT_IL2D_LOG"))
-                            fprintf(stderr, "[il2d] N1-arm race %dx%d: "
-                                            "chain=%.0f blu=%.0f -> %s\n",
-                                    N1, N2, tc, tbu,
+                            fprintf(stderr, "[il2d] N1-arm race %dx%d "
+                                            "(c2c %s): chain=%.0f blu=%.0f "
+                                            "-> %s\n",
+                                    N1, N2, il2d_nat ? "nat" : "scr",
+                                    tc, tbu,
                                     use_blu ? "BLUESTEIN" : "chain");
                         if (use_blu)
                         {
@@ -424,6 +465,14 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             il2d_blukf = bkf;
                             il2d_blukb = bkb;
                             il2d_bluscr = bscr;
+                            if (il2d_nat)
+                            { /* blu is natural by construction */
+                                free(il2d_natperm);
+                                free(il2d_natscr);
+                                il2d_natperm = NULL;
+                                il2d_natscr = NULL;
+                                il2d_nat = 0;
+                            }
                         }
                         else
                         {
@@ -448,36 +497,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                            "native column chain (radices 4..64, no "
                            "leftover factor)%s",
                            N1, N2,
-                           cfg->order == VFFT_ORDER_NATURAL
-                               ? " and the Bluestein column route "
-                                 "serves DEFAULT order only"
-                               : " and the Bluestein column route "
-                                 "could not be built");
+                           " and the Bluestein column route could "
+                           "not be built");
                 return NULL;
-            }
-            if (cfg->order == VFFT_ORDER_NATURAL && il2d_nst > 1 &&
-                !il2d_blu)
-            {
-                /* M4-lite (2026-08-27, struct comment at il2d_nat):
-                 * natural n1 via the LEAF REDIRECTION — driver-only,
-                 * any chain. The perm builder settles the digit
-                 * convention empirically and refuses on any mismatch. */
-                il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
-                if (il2d_natperm)
-                    il2d_natscr = (double *)malloc(
-                        2 * (size_t)N1 * N2 * sizeof(double));
-                if (!il2d_natperm || !il2d_natscr)
-                {
-                    free(il2d_natperm);
-                    il2d_natperm = NULL;
-                    _vfft_warn("vfft_create: IL 2D c2c %dx%d "
-                               "order=NATURAL — the natural leaf "
-                               "permutation could not be built for "
-                               "this chain; unsupported",
-                               N1, N2);
-                    return NULL;
-                }
-                il2d_nat = 1;
             }
             {
                 vfft_config_t rc;
@@ -792,6 +814,110 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     return NULL;
                 }
                 il2d_nat = 1;
+            }
+            if (rok && !il2d_blu && !getenv("VFFT_IL2D_CHAIN"))
+            {
+                /* THE N1-ARM RACE, real tier (2026-08-28): an odd
+                 * chain vs the column Bluestein over the hp1-wide CCE
+                 * plane - the same two arms as the c2c tier (both
+                 * natural under NATURAL; the chain arm runs the pass it
+                 * will serve). Was a rule (composite -> chain, prime ->
+                 * blu) in every order until now. VFFT_IL2D_BLU pins. */
+                int hasodd = 0, s3;
+                const char *be = getenv("VFFT_IL2D_BLU");
+                for (s3 = 0; s3 < il2d_nst; s3++)
+                    if (il2d_R[s3] & 1)
+                        hasodd = 1;
+                if (hasodd && (!be || atoi(be) == 1))
+                {
+                    const size_t rn = (size_t)N2 / 2 + 1;
+                    int bR[8], bL[8], bnst = 0, M2;
+                    vfft_il2p_fn bf[8], bb[8];
+                    double *btf[8], *btb[8];
+                    double *bchf, *bchb, *bkf, *bkb, *bscr;
+                    memset(btf, 0, sizeof btf);
+                    memset(btb, 0, sizeof btb);
+                    M2 = _il2d_blu_build(N1, rn, bR, bL, bf, bb, btf,
+                                         btb, &bnst, &bchf, &bchb, &bkf,
+                                         &bkb, &bscr);
+                    if (M2)
+                    {
+                        double *sc = (double *)malloc(
+                            2 * (size_t)N1 * rn * sizeof(double));
+                        double tc = 1e300, tbu = 1e300;
+                        int use_blu = (be != NULL);
+                        size_t i3;
+                        if (sc && !use_blu)
+                        {
+                            for (i3 = 0; i3 < 2 * (size_t)N1 * rn; i3++)
+                                sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
+                            {
+                                _il2d_n1arm_ctx_t rc = {
+                                    sc, N1, rn, il2d_nst, il2d_R,
+                                    il2d_L, il2d_f, il2d_tf, M2, bnst, bR,
+                                    bL, bf, bb, btf, btb, bchf, bkf, bscr,
+                                    il2d_nat, il2d_natperm, il2d_natscr };
+                                const vfft_race_arm_t arms[2] = {
+                                    { "chain", _il2d_n1arm_chain, &rc },
+                                    { "bluestein", _il2d_n1arm_blu, &rc } };
+                                const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL };
+                                double ns[2];
+                                vfft_race_run(&proto, arms, 2, ns);
+                                tc = ns[0];
+                                tbu = ns[1];
+                            }
+                        }
+                        free(sc);
+                        if (!use_blu)
+                            use_blu = (tbu < tc);
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[il2d] N1-arm race %dx%d "
+                                            "(real %s): chain=%.0f "
+                                            "blu=%.0f -> %s\n",
+                                    N1, N2, il2d_nat ? "nat" : "scr",
+                                    tc, tbu,
+                                    use_blu ? "BLUESTEIN" : "chain");
+                        if (use_blu)
+                        {
+                            for (s3 = 0; s3 < il2d_nst; s3++)
+                            {
+                                free(il2d_tf[s3]);
+                                free(il2d_tb[s3]);
+                            }
+                            memcpy(il2d_R, bR, sizeof bR);
+                            memcpy(il2d_L, bL, sizeof bL);
+                            memcpy(il2d_f, bf, sizeof bf);
+                            memcpy(il2d_b, bb, sizeof bb);
+                            memcpy(il2d_tf, btf, sizeof btf);
+                            memcpy(il2d_tb, btb, sizeof btb);
+                            il2d_nst = bnst;
+                            il2d_blu = M2;
+                            il2d_bluchf = bchf;
+                            il2d_bluchb = bchb;
+                            il2d_blukf = bkf;
+                            il2d_blukb = bkb;
+                            il2d_bluscr = bscr;
+                            if (il2d_nat)
+                            {
+                                free(il2d_natperm);
+                                free(il2d_natscr);
+                                il2d_natperm = NULL;
+                                il2d_natscr = NULL;
+                                il2d_nat = 0;
+                            }
+                        }
+                        else
+                        {
+                            for (s3 = 0; s3 < bnst; s3++)
+                            {
+                                free(btf[s3]);
+                                free(btb[s3]);
+                            }
+                            free(bchf); free(bchb);
+                            free(bkf); free(bkb); free(bscr);
+                        }
+                    }
+                }
             }
             if (rok && oddn2)
             {
