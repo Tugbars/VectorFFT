@@ -979,7 +979,8 @@ placement). The clone count is whatever passed an equivalence check, not a raced
 
 **Plane queue (`pq`)** — for 2D with `howmany > 1`: either loop the single plan over the
 planes sequentially (each keeping its own intra-transform MT verdicts), or hand planes to
-worker clones from a queue. **Raced but never banked.**
+worker clones from a queue. Raced at create and banked (2026-09-02) on the primary plane's
+own row as `pq=`/`pqn=`/`pqt=`, valid for the plane count and worker count it was raced at.
 
 **`mtunsafe`** — not a timing race at all. A *correctness* self-check: the whole-batch
 reference output versus a sequential replay of every slab size threading might pick. It

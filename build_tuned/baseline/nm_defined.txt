@@ -1778,6 +1778,7 @@ t _il2d_n1arm_chain
 t _il2d_nat_perm
 t _il2d_real_cols
 t _il2d_real_cols_mt
+t _il2d_real_rowrace
 t _il2d_real_rows_bwd
 t _il2d_real_rows_fwd
 t _il2d_resolve
