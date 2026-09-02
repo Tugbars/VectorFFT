@@ -106,6 +106,11 @@ ISA is a per-binary choice (`__AVX512F__` → avx512 + GROUPW=8, else avx2 + GRO
 | `oop_dp.h` | DP-backed MODEB + the **2-axis joint chooser** (`vfft_oop_plan_create_dp_best`) |
 | `oop_wisdom.h` | the separate `oop_wisdom.txt` (2-axis format) + load/lookup + **runtime pure-lookup** constructor |
 | `oop_leaf_registry.h` / `oop_codelets.h` | codelet externs (hand switch) / ABI-typed auto-registry struct |
+| `oop_mt.h` | OOP lane-slice MT — threads over the lane axis of an out-of-place plan |
+| `zturn_mt.h` | cascade MT kernels plus the ZTURN dispatcher and its racer |
+| `k1_commit.h` | K=1 wisdom replay, race-and-bank, and commit — the front door to the three K=1 tiers (mono ≤64, Bailey 128–1024, cascade ≥2048) |
+| `c2c_ip_create.h` | c2c IN-PLACE create tier: the caller-supplied-batch arm and the self-allocating arm. Padded vs unpadded is the `(N,K)` vs aligned `(N,Kp)` wisdom cell, not a branch |
+| `c2c_oop_create.h` | c2c OUT-OF-PLACE create tier — a separate serving with its own wisdom family, not in-place with a copy bolted on |
 
 **The pair tuner (`vfft_oop_tune_pairs`)** is the entire searched residue for BAILEY2:
 it enumerates unmasked divisor pairs (+ the direct LEAF at N≤128), times each finished

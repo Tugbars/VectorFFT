@@ -49,7 +49,7 @@ static char _wg_errpath[1024];
 static long _wg_errpos = 0;
 static int _wg_tap_open(const char *dir)
 {
-    snprintf(_wg_errpath, sizeof _wg_errpath, "_wisdom_width_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
+    snprintf(_wg_errpath, sizeof _wg_errpath, "build_tuned/benches/_wisdom_width_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(_wg_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     _wg_errpos = 0;

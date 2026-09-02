@@ -202,8 +202,14 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
     k.lay = lay;
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    if (!vw2_rec_get(r, "eng") || strcmp(vw2_rec_get(r, "eng"), "stride"))
-        return 0;
+    {   /* family gate: eng names the winner since 2026-09-02 (zturn = the
+         * cascade, k1 = the IL engines); eng=stride = a tape verdict OR a
+         * pre-change vintage row — both decode identically here. */
+        const char *eng = vw2_rec_get(r, "eng");
+        if (!eng || (strcmp(eng, "stride") && strcmp(eng, "zturn") &&
+                     strcmp(eng, "k1")))
+            return 0;
+    }
     memset(e, 0, sizeof *e);
     e->N = N; e->K = K;
     e->mode = vw2__stride_mode_idx(vw2_rec_get(r, "mode"));
@@ -222,10 +228,11 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
         e->nf = 1;
         e->factors[0] = N;
         e->variants[0] = 0;
-    } else if (ord == VW2_ORD_SCR) {
-        /* BARE mode row (ord=scr only): a self-contained verdict — the
-         * prime/no-chain cells whose engine rebuilds from N alone. @nat
-         * rows stay strict below. */
+    } else if (ord == VW2_ORD_SCR || e->mode != VFFT_NAT_ZCASC) {
+        /* BARE mode row: a self-contained verdict — the ord=scr prime/
+         * no-chain cells, and every non-cascade @nat mode (ilp rebuilds
+         * from N alone; 2026-09-02). A @nat CASCADE row stays strict
+         * below: it needs its chain or its signpost. */
         e->nf = 1;
         e->factors[0] = N;
         e->variants[0] = 0;
@@ -233,6 +240,7 @@ static inline int vw2__stride_lookup_natx(const vw2_store_t *s, int pl,
         return 0;                              /* a nat row needs one or the other */
     }
     e->use_dif = vw2__stride_geti(r, "dif", 0);
+    e->raced = vw2__stride_geti(r, "zr", 0); /* banked loss marker (absent = 0) */
     {
         const char *ns = vw2_rec_get(r, "ns");
         e->nat_ns = ns ? atof(ns) : 0.0;
@@ -406,22 +414,37 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
     if (e->mode <= 0 || e->mode >= 9) { *why = "unknown-nat-mode"; return -1; }
     vw2__stride_key(&r->key, VW2_T_C2C, e->N, e->K, ord, pl);
     r->key.lay = lay;
-    VW2__SB_SET(1, "eng", "stride");
+    /* eng= names the WINNING family (owner, 2026-09-02) in the store's own
+     * vocabulary: the cascade's kind-4 token, the IL family's kind-3 token,
+     * and stride for the tape modes (which genuinely run the stride
+     * engine). Pre-change rows carry eng=stride regardless — vintage,
+     * accepted by the reader. */
+    VW2__SB_SET(1, "eng",
+                e->mode == VFFT_NAT_ZCASC ? "zturn"
+                : e->mode == VFFT_NAT_ILP ? "k1"
+                                          : "stride");
     VW2__SB_SET(1, "mode", vw2_stride_mode_name[e->mode]);
-    if (e->nf == 1 && e->factors[0] == e->N && ord == VW2_ORD_NAT) {
+    if (e->nf == 1 && e->factors[0] == e->N && ord == VW2_ORD_NAT
+        && e->mode == VFFT_NAT_ZCASC) {
         /* the dummy-chain placeholder: SIGNPOST instead (owner #7) — @nat
-         * rows only, where the referenced kind-4/oop cell exists; ref_ok
-         * keeps the verdict honest if its recipe vanishes. */
+         * CASCADE rows only, the one mode whose recipe lives in the
+         * referenced kind-4/oop cell; ref_ok keeps the verdict honest if
+         * that recipe vanishes. Any other nat mode with a dummy chain
+         * (mode=ilp: the K=1 IL mono/packed tier rebuilds from N alone)
+         * is SELF-CONTAINED and falls to the branch below — a signpost
+         * there pointed at a cell that never exists (n=64 nat ip il,
+         * caught 2026-09-02: permanent MISS, re-raced on every create). */
         char refbuf[96];
         snprintf(refbuf, sizeof refbuf,
                  "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
         VW2__SB_SET(1, "ref", refbuf);
     } else if (e->nf == 0 || (e->nf == 1 && e->factors[0] == e->N)) {
-        /* ord=scr MODE cell with no real chain (prime / Rader nf=0): the
-         * verdict is SELF-CONTAINED (the engine rebuilds from N alone) —
-         * emit NEITHER chain nor ref. A dangling signpost here made the
-         * row invisible forever (ref_ok filtered it; the prime cell has
-         * no oop cascade row to point at) — caught 2026-08-25. */
+        /* MODE cell with no real chain (ord=scr prime / Rader nf=0, or a
+         * non-cascade @nat mode): the verdict is SELF-CONTAINED (the
+         * engine rebuilds from N alone) — emit NEITHER chain nor ref. A
+         * dangling signpost here made the row invisible forever (ref_ok
+         * filtered it; the cell has no oop cascade row to point at) —
+         * caught 2026-08-25 (prime) and 2026-09-02 (nat ilp). */
     } else {
         if (vw2__stride_emit_chain(r, e->nf, e->factors, e->variants, why)) return -1;
     }

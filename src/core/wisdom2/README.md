@@ -31,8 +31,9 @@ The lifecycle law, with no exceptions:
 
 ```text
 src/dag-fft-compiler/generator/generated/
-  wisdom2_oop.txt         1D c2c out-of-place verdicts
-  wisdom2_stride.txt      1D c2c in-place verdicts + trig (dct/dst/dht) verdicts
+  wisdom2_oop.txt         1D c2c out-of-place verdicts + ALL 1D c2c order
+                          (ord=nat) verdicts, both placements (2026-09-02)
+  wisdom2_scr.txt         1D c2c in-place SCRAMBLED chains + trig (dct/dst/dht) verdicts
   wisdom2_real.txt        1D r2c / c2r verdicts (routes + factorizations)
   wisdom2_prime.txt       Bluestein / Rader engine verdicts
   wisdom2_2d.txt          2D composite verdicts
@@ -171,6 +172,15 @@ ref (target deleted, quarantined, or not yet present) makes the referencing
 verdict a MISS — one loud stderr line, then the normal miss path (re-race in
 memory; re-bank in measurement mode). Never a hard error, never a silent
 default.
+
+Emission scope: a writer emits a signpost only where a component record
+exists to point at. In the stride codec that is the `@nat` CASCADE row
+(`mode=zcasc`), whose recipe is the `ord=scr place=oop` kind-4 cell. A
+dummy-chain row of any other mode (prime/Rader `ord=scr`, `@nat mode=ilp`)
+is SELF-CONTAINED — its engine rebuilds from N alone — and carries neither
+`chain=` nor `ref=`; the reader accepts it bare. A signpost at a
+self-contained cell points at a record that never exists and makes the cell
+a permanent MISS (re-raced on every create).
 
 ### 3.4 MEASURE + PROVENANCE (after the second pipe)
 

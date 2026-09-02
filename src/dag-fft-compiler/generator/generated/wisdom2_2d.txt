@@ -64,3 +64,6 @@
 @cell t=r2c n=4096x16 q=1 ord=scr place=oop lay=il | chain=64.64 rw=64 wl=128 | ran=1 ns=104200.0 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=4096x64 q=1 ord=scr place=oop lay=il | chain=64.64 rw=0 wl=64 | ran=1 ns=395500.0 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=8192x64 q=1 ord=scr place=oop lay=il | chain=64.32.4 rw=0 wl=128 | ran=1 ns=801600.0 metric=fwd1 units=ns src=race date=2026-08-26
+@cell t=c2c n=64x16 q=1 ord=scr place=oop lay=il | chain=4.16 wl=64 tf=1 ro=0 | ran=1 ns=1218.4 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=128x64 q=1 ord=scr place=oop lay=il | chain=4.4.8 | ran=1 ns=5000.0 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=r2c n=128x128 q=1 ord=scr place=oop lay=il | chain=32.4 rw=0 wl=8 | ran=1 ns=17200.0 metric=fwd1 units=ns src=race date=2026-09-02

@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 int main(int argc, char **argv) {
     vfft_wisdom *W = vfft_wisdom_load(argv[1]);
     vfft_config_t c; vfft_plan p;

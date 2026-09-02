@@ -1,0 +1,26 @@
+# RECORD, not a reproducible gate. The digests below were captured
+# against a WARMED SCRATCH FIXTURE (see build_tuned/trig_capture.py):
+# trig has zero banked wisdom, so a cold capture races and dct1.N64 in
+# particular lands on a different verdict per warm run. Reproduce by
+# capturing before AND after against ONE fixture, not by diffing this
+# file against a fresh cold run.
+# trig output digests - REGRESSION, not correctness.
+# Seeded SCRATCH store, one --bank warm run, then 3 runs
+# of ONE PROCESS EACH replaying the banked verdicts.
+# A cell that still disagrees is recorded AS raced, never
+# sampled. See the file header for why.
+#
+trig dct1.N64         fwd=b6d82bb4630448c3
+trig dct2.N64         fwd=faacf6ac560f544a
+trig dct3.N64         fwd=a6207be7c94d92db
+trig dct4.N64         fwd=32293d33c68be9ec
+trig dst1.N64         fwd=ec23146a89f8b085
+trig dst2.N64         fwd=248d64bb2a07609d
+trig dst3.N64         fwd=9d31a9ff8e2b95bb
+trig dht.N64          fwd=520fafd83a6f1797
+trig dct2.N256        fwd=f56122167ce17eaa
+trig dct4.N256        fwd=3502d5f9ba703c5f
+trig dht.N256         fwd=43b9f6654a207922
+trig dct2.N256.K4     fwd=7c76d3cf7ebeb1ee
+trig dct2.N128.K8     fwd=4ba64c36242c4369
+trig dht.N128.K4      fwd=238aa2145db41178

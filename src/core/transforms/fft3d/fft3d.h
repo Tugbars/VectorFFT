@@ -77,7 +77,7 @@
 
 /* Maximum threads for per-thread scratch / dispatch-arg arrays. */
 #ifndef FFT3D_MAX_THREADS
-#define FFT3D_MAX_THREADS 64
+#define FFT3D_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 /* BLOCKED pass A: target split-complex working set per lane block,
@@ -267,9 +267,9 @@ static void _fft3d_tiled_mt(stride_fft3d_data_t *d,
                              double *re, double *im, int is_bwd) {
     const size_t NR = (size_t)d->N1 * (size_t)d->N2;   /* flattened rows */
     const size_t B = d->B;
-    int T = stride_get_num_threads();
-
-    if (T > d->num_scratch) T = d->num_scratch;
+    /* scratch slots allocated at create = this plan's snapshot; the pool's
+     * one clamp bounds T by that, the live pool and the arg-array size */
+    int T = stride_pool_workers_for(d->num_scratch);
 
     size_t n_tiles = (NR + B - 1) / B;
 
@@ -280,42 +280,28 @@ static void _fft3d_tiled_mt(stride_fft3d_data_t *d,
         return;
     }
 
-    _fft3d_tile_arg_t args[FFT3D_MAX_THREADS];
-    int n_dispatch = 0;
-
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* slot t owns scratch slot t; slot 0 is the caller (scratch base) */
+    _fft3d_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * (size_t)t) / (size_t)T;
         size_t tiles_end   = (n_tiles * (size_t)(t + 1)) / (size_t)T;
         size_t row_start   = tiles_start * B;
         size_t row_end     = tiles_end * B;
         if (row_end > NR) row_end = NR;
-        if (row_start >= NR) break;
+        if (t > 0 && row_start >= NR) break;
 
-        args[t].d = d;
-        args[t].re = re;
-        args[t].im = im;
-        args[t].sr = _fft3d_scratch(d->scratch_re, d->tile_sz, t);
-        args[t].si = _fft3d_scratch(d->scratch_im, d->tile_sz, t);
-        args[t].row_start = row_start;
-        args[t].row_end = row_end;
-        args[t].is_bwd = is_bwd;
-
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft3d_tile_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].re = re;
+        args[n].im = im;
+        args[n].sr = _fft3d_scratch(d->scratch_re, d->tile_sz, t);
+        args[n].si = _fft3d_scratch(d->scratch_im, d->tile_sz, t);
+        args[n].row_start = row_start;
+        args[n].row_end = row_end;
+        args[n].is_bwd = is_bwd;
+        n++;
     }
-
-    /* Thread 0 (caller) processes its own share */
-    {
-        size_t row_end = ((n_tiles * 1) / (size_t)T) * B;
-        if (row_end > NR) row_end = NR;
-        _fft3d_tiled_range(d, re, im,
-                           d->scratch_re, d->scratch_im,
-                           0, row_end, is_bwd);
-    }
-
-    if (n_dispatch > 0)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _fft3d_tile_trampoline, args, sizeof args[0]);
 }
 
 
@@ -364,39 +350,34 @@ static void _fft3d_plane_trampoline(void *arg) {
 static void _fft3d_axis1_mt(stride_fft3d_data_t *d,
                              double *re, double *im, int is_bwd) {
     const size_t P = (size_t)d->N1;
-    int T = stride_get_num_threads();
-    if (T > FFT3D_MAX_THREADS) T = FFT3D_MAX_THREADS;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp; no per-slot scratch here */
 
     if (T <= 1 || P <= 1) {
         _fft3d_axis1_range(d, re, im, 0, P, is_bwd);
         return;
     }
 
-    _fft3d_plane_arg_t args[FFT3D_MAX_THREADS];
-    int n_dispatch = 0;
-
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* proportional plane ranges, empty ones skipped (packed slots); slot 0 is
+     * the caller's [0, P/T) exactly as before */
+    _fft3d_plane_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    args[n].d = d; args[n].re = re; args[n].im = im;
+    args[n].p_start = 0; args[n].p_end = P / (size_t)T; args[n].is_bwd = is_bwd;
+    n++;
+    for (int t = 1; t < T; t++) {
         size_t p_start = (P * (size_t)t) / (size_t)T;
         size_t p_end   = (P * (size_t)(t + 1)) / (size_t)T;
         if (p_start >= p_end) continue;
 
-        args[t].d = d;
-        args[t].re = re;
-        args[t].im = im;
-        args[t].p_start = p_start;
-        args[t].p_end = p_end;
-        args[t].is_bwd = is_bwd;
-
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft3d_plane_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].re = re;
+        args[n].im = im;
+        args[n].p_start = p_start;
+        args[n].p_end = p_end;
+        args[n].is_bwd = is_bwd;
+        n++;
     }
-
-    /* Thread 0 (caller) processes its own share */
-    _fft3d_axis1_range(d, re, im, 0, P / (size_t)T, is_bwd);
-
-    if (n_dispatch > 0)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _fft3d_plane_trampoline, args, sizeof args[0]);
 }
 
 
@@ -471,8 +452,7 @@ static void _fft3d_axis0_mt(stride_fft3d_data_t *d,
     }
 
     const size_t K = p->K;
-    int T = stride_get_num_threads();
-    if (T > FFT3D_MAX_THREADS) T = FFT3D_MAX_THREADS;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp; no per-slot scratch here */
 
     if (T <= 1 || K < 8) {
         _fft3d_axis0_lanes(d, re, im, 0, K, is_bwd);
@@ -483,37 +463,25 @@ static void _fft3d_axis0_mt(stride_fft3d_data_t *d,
      * doubles; matches the production K-split rounding). */
     /* CEIL, not floor: K here is the axis-0 column count N2*N3, and a
      * floor slab drops the top columns silently -- the same defect the
-     * real dispatchers had. */
+     * real dispatchers had. Slot 0 is the caller's [0, min(S,K)). */
     const size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
-    _fft3d_lane_arg_t args[FFT3D_MAX_THREADS];
-    int n_dispatch = 0;
-
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    _fft3d_lane_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t lane_start = (size_t)t * S;
         if (lane_start >= K) break;
         size_t lane_end = lane_start + S;
         if (lane_end > K) lane_end = K;
 
-        args[t].d = d;
-        args[t].re = re;
-        args[t].im = im;
-        args[t].lane_start = lane_start;
-        args[t].lane_end = lane_end;
-        args[t].is_bwd = is_bwd;
-
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft3d_lane_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].re = re;
+        args[n].im = im;
+        args[n].lane_start = lane_start;
+        args[n].lane_end = lane_end;
+        args[n].is_bwd = is_bwd;
+        n++;
     }
-
-    /* Thread 0 (caller) processes lanes [0, min(S,K)) */
-    {
-        size_t s0 = S < K ? S : K;
-        _fft3d_axis0_lanes(d, re, im, 0, s0, is_bwd);
-    }
-
-    if (n_dispatch > 0)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _fft3d_lane_trampoline, args, sizeof args[0]);
 }
 
 
@@ -606,9 +574,7 @@ static size_t _fft3d_choose_ablock(int N1, size_t K) {
 /* Allocate per-thread scratch buffers for pass C.
  * Returns number of scratch slots allocated. */
 static int _fft3d_alloc_scratch(stride_fft3d_data_t *d, size_t tile_sz) {
-    int T = stride_get_num_threads();
-    if (T > FFT3D_MAX_THREADS) T = FFT3D_MAX_THREADS;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(0); /* create time: the pool as it is now = this plan's slot count */
 
     d->tile_sz = tile_sz;
     d->num_scratch = T;

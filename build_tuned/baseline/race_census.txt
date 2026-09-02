@@ -1,0 +1,33 @@
+# race protocol census - the constants obj_equiv.py cannot see
+# key = hash of the normalized protocol; fn is an ATTRIBUTE, so a MOVE
+# shows as an fn change on a stable key, not a delete plus an add.
+# UNMATCHED = a timing region whose verdict shape is not recognised;
+# it is still tracked, and its count must not grow silently.
+#
+029047176b n=1 kind=UNMATCHED op=? hyst=? rounds=9 reps=(int)(2e6 / (double)(outsz + 1))/100000/20 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h fn=_c2r_race_arms
+035af8ed17 n=1 kind=UNMATCHED op=? hyst=? rounds=9 reps=(int)(2e6 / (double)(insz + 1))/100000/20 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h fn=_r2c_race_arms
+0463a35870 n=1 kind=UNMATCHED op=? hyst=? rounds=nwl reps=- agg=vfft_race_run alt=0 minmax=1 clock=- fn=_il2d_real_rowrace
+06aceb4e4f n=2 kind=bare op=< hyst=NONE rounds=5 reps=- agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip,_vfft_create_c2c_oop
+16459b8cfa n=2 kind=UNMATCHED op=? hyst=? rounds=3 reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=1 clock=race.h fn=_il2d_race_chains,_vfft_create_c2c_oop
+23901b7d23 n=1 kind=bare op=< hyst=NONE rounds=3/il2d_nst reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=0 clock=race.h fn=_vfft_create_2d
+3da0baf2e8 n=2 kind=UNMATCHED op=? hyst=? rounds=64 reps=- agg=inline alt=0 minmax=0 clock=clock_gettime fn=_vfft_create_2d
+5cebd51204 n=1 kind=UNMATCHED op=? hyst=? rounds=reps reps=- agg=inline alt=0 minmax=0 clock=vfft_proto_now_ns fn=_pad_burst
+743ce388ff n=1 kind=bare op=< hyst=NONE rounds=3/sb reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=0 clock=race.h fn=_pq_mt_race
+79db01acf4 n=3 kind=hyst op=< hyst=0.97 rounds=9 reps=(int)(3.0e5 / (est > 1.0 ? est : 1.0))/2/64 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=_il_ab_now/race.h fn=_il_ab_race,_zr2c_build
+82e79c2fff n=1 kind=bare op=< hyst=NONE rounds=5 reps=N <= 256 ? 200 : (N <= 1024 ? 80 : 32) agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip
+83dcb8c1d3 n=4 kind=hyst op=< hyst=0.97 rounds=RR reps=(int)(300000.0 / est)/2/64 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h/vfft_proto_now_ns fn=_calibrate_zsplit_t2q,_calibrate_zturn_t2q
+980e36d92b n=3 kind=bare op=< hyst=NONE rounds=3 reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=0 clock=race.h fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_zt_mt_race
+b544149efb n=1 kind=UNMATCHED op=? hyst=? rounds=3/N reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=1 clock=race.h fn=_vfft_create_real
+bce47710e0 n=1 kind=UNMATCHED op=? hyst=? rounds=2 reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=1 clock=race.h fn=_il2d_axis_race
+c20fc7fb5c n=1 kind=UNMATCHED op=? hyst=? rounds=3/4/RN reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=1 clock=race.h fn=_il2d_real_rowrace
+d70edd4ef9 n=1 kind=bare op=< hyst=NONE rounds=5 reps=N <= 4096 ? 24 : (N <= 16384 ? 10 : 6) agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip
+e3c9dc5849 n=1 kind=hyst op=< hyst=0.97 rounds=5 reps=N <= 256 ? 64 : (N <= 1024 ? 24 : 8) agg=vfft_race_run/vfft_race_run:min alt=0 minmax=0 clock=race.h fn=_k1_il_candidate
+e9d4a9cf80 n=1 kind=hyst op=< hyst=0.97 rounds=5/RR reps=40 agg=_pad_burst/vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h fn=_calibrate_pad
+ee80344648 n=1 kind=bare op=< hyst=NONE rounds=5 reps=N <= 4096 ? 32 : 8 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip
+#
+# --- VERDICTS: every comparison that picks an arm, wherever it lives ---
+verdict op=<  hyst=0.97   n=11 fn=_c2r_route_decide,_calibrate_pad,_calibrate_zsplit_t2q,_calibrate_zturn_t2q,_il_ab_race,_k1_il_candidate,_r2c_route_decide,_zr2c_build
+verdict op=<  hyst=NONE   n=10 fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_vfft_create_2d,_vfft_create_c2c_ip,_vfft_create_c2c_oop,_zt_mt_race
+#
+# timing_regions=30 protocols=20 functions=20 unmatched=11
+# verdicts=21 distinct=2  (hysteresis literals: 0.97,NONE)

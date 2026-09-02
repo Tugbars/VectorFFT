@@ -198,8 +198,8 @@ as the hook, but finishing natural-order output is a follow-up.
 - **MKL 2D r2c CCE buffer** needs the **full N1×N2 complex footprint**, not N1×(N2/2+1) —
   undersizing it segfaults (a bench crash that once looked like a port bug; isolation proved the
   port crash-free).
-- **Slice-helper clash:** including both `stride_executor.h` and `proto_stride_compat.h` redefines
-  `_stride_execute_fwd_slice_from/_until` — use the compat ones (the dag convention).
+- **Slice helpers:** `_stride_execute_fwd_slice_from/_until` come from `proto_stride_compat.h` (the dag
+  convention). The stale `stride_executor.h` that once redefined them was removed 2026-09-01.
 
 ---
 
@@ -210,6 +210,10 @@ as the hook, but finishing natural-order output is a follow-up.
 | `fft2d.h` | 2D c2c — tiled (default B=8) + Bailey row methods, native column FFT, `stride_plan_2d` |
 | `fft2d_r2c.h` | 2D r2c / c2r — tiled real row pass + padded column c2c + col digit-reversal perm |
 | `transpose.h` | multi-regime SIMD transpose (4×4 / 8×4 AVX2, 8×8 AVX-512), line-filling; beats `mkl_domatcopy` |
+| `il2d_cols.h` | IL 2D column kernels, the chain enumerator, and the twiddle tables |
+| `il2d_tier.h` | IL 2D real/c2c tier — the passes, the MT paths, and the four racers (chain / row-walk / wl / column-MT) |
+| `plane_queue.h` | 2D plane queue for `howmany > 1`: loop mode keeps intra-plane MT, queue mode pulls plane-serial clones off an atomic counter; the two are raced at create |
+| `fft2d_create.h` | the rank-2 CREATE tier — the largest single dispatcher arm; settles the row child, chain and banked axes, then hands off to `il2d_tier.h` |
 
 Benches: `bench_fft2d_vs_mkl.c` (c2c ST), `bench_fft2d_r2c_vs_mkl.c` (r2c ST),
 `bench_fft2d_mt_vs_mkl.c` (c2c dag-T8 vs MKL-T8, §5), `bench_2d_mt.c` (dag MT scaling).

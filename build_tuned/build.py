@@ -426,6 +426,32 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
              '-Wno-deprecated-declarations']
+    # VFFT_WARN=1 -> the REFACTOR-SAFETY build key. The default set above turns
+    # OFF the two diagnostics that catch a botched code move, so the harness
+    # ladder rung 'zero new warnings' cannot fail without this:
+    #   -Wno-implicit-function-declaration: a moved function whose declaration
+    #     no longer reaches its caller is implicitly declared int(...). MEASURED
+    #     with the default flags: the call compiles SILENTLY and returns 1.0
+    #     where the answer is 2.0. Modern gcc makes this an ERROR by default;
+    #     the suppression downgrades it to nothing.
+    #   -Wno-unused-function: a static left orphaned by a move.
+    # Deliberately NARROW -- not -Wall/-Wextra, which would bury the signal
+    # under pre-existing style warnings. The DIFFERENT flags key is the point:
+    # .obj/ separates it from the identity key that obj_equiv, nm and the golden
+    # bits are diffed at. NEVER cross-diff the two keys.
+    # docs/design/refactor_migration_plan.md step 2.
+    # VFFT_FINGERPRINT=1 -> the instrumentation build key. Compiles the
+    # create-time plan fingerprint (src/core/vfft_fingerprint.h) and the
+    # snapshot accessor. A SEPARATE flags key is the point: obj_equiv, nm and
+    # the golden bits are all diffed at the IDENTITY key, and the fingerprint
+    # adds two exported symbols, so the two keys must never be cross-diffed.
+    if os.environ.get('VFFT_FINGERPRINT'):
+        flags += ['-DVFFT_FINGERPRINT']
+
+    if os.environ.get('VFFT_WARN'):
+        flags = [f for f in flags
+                 if f not in ('-Wno-implicit-function-declaration',
+                              '-Wno-unused-function')]
     if os.environ.get('VFFT_ASAN'):
         flags += ['-fsanitize=address', '-g', '-fno-omit-frame-pointer']
     if mkl:

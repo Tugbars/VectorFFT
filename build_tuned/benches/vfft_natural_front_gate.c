@@ -47,7 +47,7 @@ static char g_errpath[1024];
 static long g_errpos = 0;
 static int err_tap_open(const char *dir)
 {
-    snprintf(g_errpath, sizeof g_errpath, "_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
+    snprintf(g_errpath, sizeof g_errpath, "build_tuned/benches/_nat_front_gate.log" /* cwd, 0.12: never inside a wisdom dir */ );
     if (!freopen(g_errpath, "w", stderr)) return 0;
     setvbuf(stderr, NULL, _IONBF, 0);
     g_errpos = 0;
@@ -311,9 +311,14 @@ int main(int argc, char **argv)
          * @natoop; consume replays; the two fwd spectra must be BITWISE
          * identical (the banked verdict is the coherence memo). */
         double *f1 = az((size_t)N), *f2 = az((size_t)N);
-        /* 2048 is the one competitive cell (native il2p 32x64 incumbent) —
-         * either winner is legal there; ≥4096 an engine win = wiring bug. */
-        const int em = (N >= 4096) ? 3 : 1, ec = (N >= 4096) ? 2 : 4;
+        /* 2048 AND 4096 are competitive cells — either winner is legal.
+         * (4096 re-measured 2026-09-01: a 20-sample cold A/B on two library
+         * vintages picked the engine 9/10 and 10/10 with the arms ~1-10%
+         * apart, i.e. the old "≥4096 an engine win = wiring bug" rule was
+         * asserting a race outcome for a cell inside the noise band — the
+         * same class as the two banked-axis gate-flake lessons. ≥8192 the
+         * cascade wins by 3-5x and the rule still bites.) */
+        const int em = (N >= 8192) ? 3 : 1, ec = (N >= 8192) ? 2 : 4;
         if (!run_cell_oop(W, N, x, X, em, "oop-meas", f1)) fails++;
         if (!run_cell_oop(W, N, x, X, ec, "oop-cons", f2)) fails++;
         if (memcmp(f1, f2, 2 * (size_t)N * sizeof(double)) != 0)
@@ -359,7 +364,12 @@ int main(int argc, char **argv)
         naive_dft(x, X, N);
         printf("--- reload round-trip ---\n");
         if (!run_cell(W, N, x, X, /*CONSUME*/ 2, "rt-ip")) fails++;
-        if (!run_cell_oop(W, N, x, X, /*CONSUME*/ 2, "rt-oop", NULL)) fails++;
+        /* 4096 oop is a COMPETITIVE cell (see em/ec above): the banked
+         * verdict may be mode=free, which reloads as engine(free) — that IS
+         * the verdict surviving the save/load cycle. expect 4 still asserts
+         * NO race fires on reload, which is the parse-regression coverage
+         * this section exists for. */
+        if (!run_cell_oop(W, N, x, X, /*CONSUME, free ok*/ 4, "rt-oop", NULL)) fails++;
         fz(x);
         fz(X);
     }

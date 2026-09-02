@@ -48,10 +48,7 @@ typedef struct {
 } _dst_slice_arg_t;
 
 static inline int _dst_mt_threads(int n_threads_plan, int N, size_t K) {
-    int T = stride_get_num_threads();
-    if (T > n_threads_plan) T = n_threads_plan;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
     return T;
 }
@@ -145,26 +142,18 @@ static void _dst2_execute_fwd(void *data, double *re, double *im) {
 
     int T = _dst_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dst_slice_arg_t args[64];
+        _dst_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
             args[t].k0 = (K * (size_t)t)       / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dst2_worker_pre_fwd, &args[t]);
-        _dst2_worker_pre_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dst2_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
 
         d->dct_plan->override_fwd(d->dct_plan->override_data, d->prebuf, NULL);
 
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dst2_worker_post_fwd, &args[t]);
-        _dst2_worker_post_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dst2_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 
@@ -205,26 +194,18 @@ static void _dst3_execute_fwd(void *data, double *re, double *im) {
 
     int T = _dst_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dst_slice_arg_t args[64];
+        _dst_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
             args[t].k0 = (K * (size_t)t)       / (size_t)T;
             args[t].k1 = (K * (size_t)(t + 1)) / (size_t)T;
         }
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dst3_worker_pre_fwd, &args[t]);
-        _dst3_worker_pre_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dst3_worker_pre_fwd, args, sizeof args[0]); /* caller = args[0] */
 
         d->dct_plan->override_bwd(d->dct_plan->override_data, d->prebuf, NULL);
 
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dst3_worker_post_fwd, &args[t]);
-        _dst3_worker_post_fwd(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dst3_worker_post_fwd, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 

@@ -142,7 +142,7 @@ public-API `_calibrate_one` path (and the orchestrator's `_vfft_proto_sweep_prim
 Prime plans execute via override, but the **heavy inner CT FFT can be JIT-specialized** both
 directions — Rader runs its inner forward *and* backward, so `vfft_proto_plan_jit_{fwd,bwd}`
 are wired into the inner via `stride_rader_set_inner_jit` / `stride_bluestein_set_inner_jit`
-(see `planning/plan_orchestrator.h`). The chirp/gather wrappers stay generic; only the
+(the `plan_orchestrator.h` sketch that once described this wiring was removed 2026-09-01; the live wiring is `vfft.c`'s create path). The chirp/gather wrappers stay generic; only the
 dominant inner gets the JIT'd direct-call path.
 
 ---
@@ -169,6 +169,6 @@ dominant inner gets the JIT'd direct-call path.
 - **Bridge include order** — `prime_dispatch.h` must pull `proto_stride_compat.h` between
   `planner.h` and `rader.h`/`bluestein.h` (they use the stride API).
 
-See also: `core/planning/plan_orchestrator.h` (the prime sweep-on-miss + JIT wiring),
+See also:
 `core/engine/README.md` (the CT engine the inner FFT rides), `bluestein.h` header (the full
 performance analysis + optimization leads).

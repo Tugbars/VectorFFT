@@ -18,17 +18,17 @@ the exception — pure model, usable live for cold cells.
 
 ## The fidelity ↔ cost spectrum
 
-Five strategies, from instant-and-modeled to slow-and-exhaustive. They all answer the
+Three strategies are live — DP, MEASURE and flat exhaustive. (Three more — estimate,
+screened exhaustive, patient exhaustive — plus an orchestrator sketch were designed but never
+wired into any translation unit; they were removed 2026-09-01.) They all answer the
 same question (which `(factors, variants, orientation)` is fastest at `(N,K)`) with
 different budgets:
 
 | strategy | file | how it picks | cost | searches variants? |
 |----------|------|--------------|------|:------------------:|
-| **estimate** | `estimate_plan.h` | **V4 cost model only**, no measurement | µs / 0 benches | no (T1S) |
 | **DP** | `dp_planner.h` | recursive measured search + sub-problem **memoization** | ~150 benches | no (T1S/DIT) |
 | **MEASURE** | `measure.h` | DP/exhaustive coarse → **variant + DIT/DIF refine** | ~few hundred | **yes** |
-| **screened exhaustive** | `exhaustive_screened.h` | enumerate all, **V4-rank**, bench the top | mid | (factorization) |
-| **flat / patient exhaustive** | `exhaustive_plan.h`, `exhaustive_patient.h` | bench **every** (multiset × permutation) at parent (N,K) | ~500–1500 / slowest | (factorization) |
+| **flat exhaustive** | `exhaustive_plan.h` | bench **every** (multiset × permutation) at parent (N,K) | ~500–1500 | (factorization) |
 
 The non-obvious split: **DP and exhaustive only search the *factorization* axis** (they
 build every candidate all-T1S/DIT). **MEASURE adds the *variant* axis** (per-stage
@@ -114,7 +114,7 @@ that actually have a codelet. The output is a `vfft_proto_plan_decision_t`
 
 ---
 
-## Exhaustive family (`exhaustive_plan.h`, `exhaustive_patient.h`, `exhaustive_screened.h`)
+## Exhaustive (`exhaustive_plan.h`)
 
 Brute-force the factorization axis, benching at the **real parent (N,K) context** (which
 is what captures the full plan's cache/TLB interaction — the signal isolated sub-plan
@@ -122,45 +122,10 @@ measurement loses):
 
 - **flat** (`exhaustive_plan.h`) — bench **every** `(multiset × permutation)`; 3 warmups,
   best-of-3, a 1.5× quick **pre-screen** to drop obvious losers. ~500–1500 benches/cell.
-- **patient** (`exhaustive_patient.h`) — for when noise matters: **no pre-screen**, 5
-  warmups / best-of-7, configurable **inter-candidate sleep** (default 200 ms) to hold the
-  thermal envelope, and an optional **top-N second-pass re-bench** (default 5) for the
-  final winner. The highest-fidelity, slowest path.
-- **screened** (`exhaustive_screened.h`) — same enumeration as flat, but **rank by the V4
-  cost model first** and only bench the promising candidates. V4 scores the *full* plan at
-  the parent (N,K), so its ranking preserves tail-heavy patterns (`[…,32,16]`) that
-  recursive memoization drops — cheaper than flat without losing the in-context signal.
+- The **patient** and **screened** variants (no-pre-screen thermal-paced, and V4-cost-model
+  pre-ranked) were designed alongside flat but never wired; removed 2026-09-01.
 
 ---
-
-## Estimate (`estimate_plan.h`) — the V4 cost model
-
-The **zero-measurement** path: enumerate every factorization, score each with the V4 model,
-build the lowest-scoring shape. Microseconds, no benching. **This is the intended path for
-users who won't run any calibration** (no DP, no exhaustive) — "estimate-without-calibration."
-
-**V4 per-stage score** = `data_cost + tw_cost + buffer_pass_cost`, summed over stages:
-- **`buffer_pass_cost`** = `2 × total_bytes × cyc_per_byte` — the in-place FFT's one-read +
-  one-write per stage. `cyc_per_byte` comes from the **measured** `radix_memboundness`
-  memcpy-throughput table by cache tier (L1/L2/L3/DRAM), not spec sheets (real AVX2 memcpy
-  is 6–15× faster than spec predicts — streaming stores + HW prefetch).
-- **`data_cost`** = `groups × K × butterfly_CPE(R) × cache_scale` — the codelet work, scaled
-  by a per-tier slowdown (measured `radix_memboundness` factor for `R ≥ 16`; a `{1, 1.4, 2.3,
-  4}` heuristic for small R).
-- **`tw_cost`** — twiddle-load cost, modeled as bandwidth-bound (0.5 cyc/elem in L1, 1.0
-  spilled), because the HW prefetcher hides most of it.
-
-The model is **tuned against measurement**: the comments document terms that were *removed*
-because they broke rankings — the old `dtlb_cost` was **31× off** on a deep N=131072 cell
-(it modeled DTLB page-walks that the 2048-entry STLB + HW prefetch make almost never
-happen), and the `wide_penalty` heuristic was subsumed by the measured `memboundness` table.
-
-> **Status — designed, not yet wired.** V4 needs `factorizer.h` (the `stride_cpu_info_t`,
-> `_radix_butterfly_cost`) and `radix_memboundness.h`, which still `#include` from the
-> **deleted `prototype/` tree**. Re-homing those into `core/` is the one task before
-> estimate builds. The live planning path today is wisdom + DP. *(It does not search the
-> variant axis — V4 picks the min-CPE variant per stage and builds with T1S defaults; a
-> variant-aware plan layers a measurement step on top, which is MEASURE, not this header.)*
 
 ---
 
@@ -180,26 +145,6 @@ wisdom; `set`/`add`/`save` produce it. Each transform family keeps its **own** w
 optima, same format machinery.
 
 ---
-
-## Orchestrator (`plan_orchestrator.h`) — the unified plan→execute (SKETCH)
-
-Ties the pieces into one `plan(N,K) → execute-ready handle` flow (modeled on production's
-`vfft_plan_c2c`):
-
-```
-lookup wisdom (CT + Bluestein)
-  → on MEASURE miss: sweep (CT: dp_plan_measure / prime: bluestein_calibrate) + cache
-  → auto_plan_dispatch (CT / Rader / Bluestein)
-  → JIT-resolve the WINNER (CT: direct fn; primes: wire the inner via set_inner_jit)
-  → handle{plan, exec fn ptrs}
-```
-
-Three flags: **ESTIMATE** (ignore wisdom, factorizer/V4 default), **MEASURE** (wisdom-first,
-sweep + cache on miss), **WISDOM_ONLY** (wisdom-first, fail on miss). The plan-time sweep
-measures candidates **baked-or-generic, not per-candidate JIT** (deliberate — JIT only the
-final winner). **This header is a sketch** — the full opaque public API (a `vfft.c/.h` with
-a wisdom-DB singleton, file-persistence policy, deploy-rebench protocol, R2C/2D/DCT plan
-types, thread-safety) is a later workstream.
 
 ---
 
@@ -225,19 +170,14 @@ types, thread-safety) is a later workstream.
 | `dp_planner.h` | recursive measured DP + memoization (the search core) |
 | `measure.h` | variant-aware (FLAT/LOG3/T1S × DIT/DIF) two-pass on top of the coarse search |
 | `exhaustive_plan.h` | flat exhaustive (every multiset × permutation, parent-context bench) |
-| `exhaustive_patient.h` | high-fidelity exhaustive (no pre-screen, deeper bench, thermal pacing) |
-| `exhaustive_screened.h` | V4-cost-model-ranked exhaustive (bench only the promising) |
-| `estimate_plan.h` | V4 cost-model estimate — zero-measurement plan (dead `prototype/` dep; not wired) |
 | `wisdom_reader.h` | wisdom file format + load/lookup/set/save (closes the calibrate loop) |
-| `plan_orchestrator.h` | unified plan→execute flow (sketch; full `vfft.c/.h` deferred) |
+| `cascade_calibrate.h` | t2q calibrators — the cascade terminator choice, measured per cell (placement luck is ±5%, so it is never hand-set) |
+| `pad_calibrate.h` | pad-vs-tail calibration and the `_VFFT_PADVW` width stamp |
 
 ## Gotchas
 
-- **Everything but `estimate` measures → calibration-time only.** Runtime is a wisdom
+- **Every strategy here measures → calibration-time only.** Runtime is a wisdom
   lookup; never measure on the deploy host's hot path.
-- **`estimate_plan.h` doesn't build yet** — its V4 inputs (`factorizer.h`,
-  `radix_memboundness.h`) live in the deleted `prototype/` tree and need re-homing.
-- **`plan_orchestrator.h` is a sketch** — the production opaque API is a separate workstream.
 - **Cost-model constants are Raptor-Lake / AVX2-specific** (bandwidth tiers @5.7 GHz, DTLB,
   the measured `radix_memboundness` table). Re-probe on other hosts.
 - **DP/exhaustive are factorization-only; MEASURE adds variants+DIF.** Calibrate through

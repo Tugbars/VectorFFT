@@ -92,6 +92,12 @@ build_tuned/benches/mb_256.txt
 # .txt directly in generated/ (never a subfolder). See src/core/wisdom2/README.md.
 !src/dag-fft-compiler/generator/generated/wisdom2_*.txt
 
+# Refactor-safety baseline artifacts are COMMITTED — they are the reference the
+# migration diffs against, so an ignored baseline means the harness reports green
+# on nothing. See docs/design/refactor_safety_harness.md.
+!build_tuned/baseline/
+!build_tuned/baseline/**
+
 # Schedule-search experiment sandbox — local-only, NEVER committed to the repo.
 # Throwaway codelets, benches, and search drivers live here so experiments
 # can't leak into production (see docs/roadmap/schedule_search_plan.md).
