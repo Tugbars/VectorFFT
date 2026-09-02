@@ -112,25 +112,23 @@ typedef struct {
  * forms applied, raced and banked on a miss) for the duration of ONE
  * create; NULL = the structural rule below. Planning side, single-threaded
  * by the same contract as every create-time race. */
-typedef int (*_ilprime_inner_provider_fn)(int M, vfft_il2p_plan_t **p2,
-                                          vfft_il3p_plan_t **p3, void *ctx);
+typedef int (*_ilprime_inner_provider_fn)(int M, _ilprime_inner_t *in, void *ctx);
 static _ilprime_inner_provider_fn _ilprime_inner_provider = 0;
 static void *_ilprime_inner_provider_ctx = 0;
 
 static inline int _ilprime_inner_make(int M, _ilprime_inner_t *in)
 {
     in->p2 = 0; in->p3 = 0;
-    if (_ilprime_inner_provider && M <= 4096)
-    {
-        vfft_il2p_plan_t *p2 = 0;
-        vfft_il3p_plan_t *p3 = 0;
-        if (_ilprime_inner_provider(M, &p2, &p3, _ilprime_inner_provider_ctx)
-            && (p2 || p3))
-        {
-            in->p2 = p2; in->p3 = p3;
 #ifdef VFFT_ZTURN_H
-            in->pz = 0;
+    in->pz = 0;
 #endif
+    if (_ilprime_inner_provider)
+    {
+        _ilprime_inner_t w;
+        memset(&w, 0, sizeof w);
+        if (_ilprime_inner_provider(M, &w, _ilprime_inner_provider_ctx))
+        {
+            *in = w;              /* the provider filled exactly one plan */
             return 1;
         }
     }

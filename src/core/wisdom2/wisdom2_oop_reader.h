@@ -257,11 +257,13 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
             r = c;
             break;
         }
-    if (!r) return 0;
+    /* returns the banked backward form code (>= 0; 0 = "the defaults won",
+     * a real verdict since 2026-09-02) or -1 when no usable row exists */
+    if (!r) return -1;
+    if (!vw2_rec_get(r, "il_kv")) return -1;   /* vintage row without a verdict */
     kv = vw2__oop_geti(r, "il_kv", 0);
-    if (!kv) return 0;
     np = vw2__oop_split_ints(vw2_rec_get(r, "il_pair"), pair, 2);
-    if (np != 2) return 0;          /* unusable without the pair it was raced at */
+    if (np != 2) return -1;         /* unusable without the pair it was raced at */
     if (R1) *R1 = pair[0];
     if (R2) *R2 = pair[1];
     return kv;
@@ -631,7 +633,9 @@ static inline int vw2_oop_rec_k1_bwd(vw2_rec_t *r, int N, int il_route,
     char pair[48], kvb[16], nsbuf[48];
     *why = NULL;
     memset(r, 0, sizeof *r);
-    if (kv == 0)                      { *why = "no-bwd-verdict";        return -1; }
+    if (kv < 0)                       { *why = "no-bwd-verdict";        return -1; }
+    /* kv == 0 is a VERDICT ("the default forms won") and banks as an
+     * explicit il_kv=0 (2026-09-02); only a negative kv means unraced */
     if (il_route < 0 || il_route > 7) { *why = "il-route-out-of-range"; return -1; }
     if (R1 <= 0 || R2 <= 0)           { *why = "bwd-pair-missing";      return -1; }
 
@@ -814,12 +818,21 @@ static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
         vw2_rec_free(&r);
         return -1;
     }
+    /* ref_lay >= 0: the kind-3 pair row at M (its lay spelling);
+     * ref_lay == -2 / -3: the kind-4 CASCADE row at M (verdict / role=comp),
+     * for a prime whose inner is the cascade above 4096 (2026-09-02). */
     if (ref_M > 0 && ref_lay >= 0) {
         char ref[112];
         snprintf(ref, sizeof ref,
                  "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", ref_M,
                  ref_lay == VW2_LAY_IL ? ",lay=il"
                  : ref_lay == VW2_LAY_SPLIT ? ",lay=split" : "");
+        if (vw2_rec_set(&r, 1, "ref", ref) != VW2_OK) { vw2_rec_free(&r); return -1; }
+    } else if (ref_M > 0 && (ref_lay == -2 || ref_lay == -3)) {
+        char ref[112];
+        snprintf(ref, sizeof ref,
+                 "cell(t=c2c,n=%d,q=1,ord=scr,place=oop%s)", ref_M,
+                 ref_lay == -3 ? ",role=comp" : "");
         if (vw2_rec_set(&r, 1, "ref", ref) != VW2_OK) { vw2_rec_free(&r); return -1; }
     }
     vw2__oop_stamp_date(&r);

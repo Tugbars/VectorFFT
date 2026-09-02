@@ -109,8 +109,8 @@ static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
          * Mismatch => ignore the record and keep the structural default,
          * which is always correct if slower. */
         int bR1 = 0, bR2 = 0;
-        int bkv = vw2_oop_lookup_k1_bwd(st, N, &bR1, &bR2);
-        if (bkv && bR1 == p->R1 && bR2 == p->R2)
+        int bkv = vw2_oop_lookup_k1_bwd(st, N, &bR1, &bR2);   /* -1 = no row */
+        if (bkv >= 0 && bR1 == p->R1 && bR2 == p->R2)
             vfft_il2p_apply_kv_forms_bwd(p, bkv);
     }
     /* Env applied LAST — it beats the banked verdict (racing hook). Packed
@@ -160,12 +160,37 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out);   /* defined below */
 typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
-static int _ilprime_inner_from_wisdom(int M, vfft_il2p_plan_t **p2,
-                                      vfft_il3p_plan_t **p3, void *v)
+static int _k1z_wisdom_replay(const vfft_config_t *cfg,
+                              struct vfft_wisdom_s *W, int N,
+                              vfft_zsplit_plan_t **zs_out,
+                              vfft_zturn2_plan_t **zt_out, int *zroute_out);
+static int _zt_mt_served_key(struct vfft_wisdom_s *W, int N, vw2_key_t *k);
+static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
 {
     _ilprime_inner_ctx_t *c = (_ilprime_inner_ctx_t *)v;
-    _k1_il_candidate(c->W, c->cfg, M, p2, p3);
-    return (*p2 || *p3) ? 1 : 0;
+    if (M > 4096)
+    {
+        /* the cascade inner: the banked kind-4 RECIPE (chain, terminator
+         * pick, tile width, fence) instead of the engine's default build;
+         * pow2 only (the cascade tier), zturn route only (the inner's own
+         * executor). A legacy-route or absent verdict leaves the engine's
+         * structural rule in charge. */
+        vfft_zsplit_plan_t *zs = 0;
+        vfft_zturn2_plan_t *zt = 0;
+        int zr = 0;
+        if ((M & (M - 1)) == 0 && c->W && !c->W->vw2_off_oop &&
+            _k1z_wisdom_replay(c->cfg, c->W, M, &zs, &zt, &zr) && zr && zt)
+        {
+            if (zs) vfft_zsplit_destroy(zs);
+            in->pz = zt;
+            return 1;
+        }
+        if (zs) vfft_zsplit_destroy(zs);
+        if (zt) vfft_zturn2_destroy(zt);
+        return 0;
+    }
+    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3);
+    return (in->p2 || in->p3) ? 1 : 0;
 }
 
 /* the prime METHOD, banked (B4): replay the cell's verdict, race only on a
@@ -199,7 +224,12 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
          * banked by the pair race); an il3p chain inner has no row */
         const int ref_lay = p->inner.p2 ? vw2_oop_k1_row_lay(&W->vw2, p->M) : -1;
         const int ref_M = ref_lay >= 0 ? p->M : 0;
-        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2, ref_M, ref_lay) == VW2_OK)
+        vw2_key_t zk;
+        const int ref_z = (!p->inner.p2 && p->inner.pz &&
+                           _zt_mt_served_key(W, p->M, &zk)) ? (zk.role == VW2_ROLE_COMP ? 2 : 1) : 0;
+        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2,
+                                  ref_z ? p->M : ref_M,
+                                  ref_z ? -2 - (ref_z - 1) : ref_lay) == VW2_OK)
             _vw2_persist(W, cfg);
     }
     return p;

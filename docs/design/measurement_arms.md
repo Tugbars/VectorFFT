@@ -390,9 +390,8 @@ NOTE       backward uses a different decomposition: t2t_b at radix R1, then
            n1_b_r2 at radix R2 - NOT R1. Using n1_b there measured 1.1e+00.
 BANK       wisdom2_oop | ... dir=bwd ... | metric=bwd1
 FP         none
-KNOWN GAP  bkv == 0 is BOTH a valid verdict ("the defaults won") and the not-raced
-           sentinel, so that outcome is silently dropped
-           (dp_planner_il.h:1655-1669).
+NOTE       bkv == 0 ("the defaults won") banks as an explicit il_kv=0 row since
+           2026-09-02; the reader's -1 means "no row" (the old KNOWN GAP).
 ```
 
 #### B1.4 pair-order swap
@@ -463,8 +462,9 @@ INNER      B4.1 (2026-09-02): the convolution's inner transform at length M
            every kind-3 row (owner ruling 2026-09-02: the IL convention, not a
            create-time form race). SWEEP ITEM: run calibrate_k1 at N-1 for
            every prime cell in the store and at every Bluestein M it uses.
-           Still structural: an il3p CHAIN inner (no kind-3 chain payload) and
-           the zturn inner above 4096.
+           The cascade inner (pow2 M > 4096) replays the kind-4 recipe through
+           _k1z_wisdom_replay and the prime row signposts that row (2026-09-02).
+           Still structural: an il3p CHAIN inner (no kind-3 chain payload).
 RACE       src/core/oop/il_prime.h:385-428
 NOTE       An earlier claim that the prime METHOD is "never raced" was REFUTED by
            verification - this race is real.
@@ -768,6 +768,8 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
   the same (t, n, q, ord, place) can collide on one key.
 * **`il_kv` / `il_bkv` are invisible to the fingerprint**, so kernel-form changes cannot
   be detected by the migration harness.
-* **`il_bkv == 0` is ambiguous** - both a valid verdict and the not-raced sentinel.
+* **`il_bkv == 0` ambiguity** - closed 2026-09-02: the candidate carries
+  `il_bkv_raced`, a raced "defaults won" banks as an explicit `il_kv=0` backward
+  row, the reader returns -1 for "no row" (B1.3's KNOWN GAP is gone).
 * **UNVERIFIED**: the odd/prime block (B4, E1.7, E2.13, the Bluestein sweeps) lost its
   adversarial verification three times to rate limits. Treat as unchecked.
