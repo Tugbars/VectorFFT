@@ -224,6 +224,9 @@ typedef struct
 {
     int    route;                            /* VFFT_K1_IL_{MONO,2P,3P,CASCADE} */
     int    R1, R2;                           /* 2P/3P only, else 0              */
+    int    c3_A, c3_B;                       /* CHAIN3 only: R1 = A * B (the
+                                              * odd-ish mid A, the pow2/even-
+                                              * composite mid B); 2026-09-02 */
     /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
      * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
      * kernels, i.e. exactly pre-axis behavior — so every existing candidate
@@ -404,6 +407,7 @@ typedef struct
     vfft_zsplit_plan_t *zp;    /* CASCADE, legacy engine  */
     vfft_zturn2_plan_t *zt;    /* CASCADE, ZTURN-S engine */
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
+    vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain, 2026-09-02) */
     vfft_oop11_fn       mono;  /* MONO    */
 } _il_dp_built_t;              /* (the hybrid 2P/3P op arm was deleted
                                 * 2026-07-29 with the il_in/il_out routes) */
@@ -457,6 +461,13 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         if (vfft_il2p_apply_kv_forms_bwd(b->ip, c->il_bkv) != 0) return -1;
         return 0;
     }
+    if (c->route == VFFT_K1_IL_CHAIN3)
+    {
+        /* the validator is the law: kernel existence, parity contracts and
+         * the count rules live in vfft_il3p_create; NULL drops the candidate */
+        b->i3 = vfft_il3p_create(N, c->R2, c->c3_A, c->c3_B);
+        return b->i3 ? 0 : -1;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {
         b->mono = vfft_k1_mono_il_fn(N, 0);
@@ -470,6 +481,7 @@ static void _il_dp_free(_il_dp_built_t *b)
     if (b->zp) vfft_zsplit_destroy(b->zp);
     if (b->zt) vfft_zturn2_destroy(b->zt);
     if (b->ip) vfft_il2p_destroy(b->ip);
+    if (b->i3) vfft_il3p_destroy(b->i3);
     memset(b, 0, sizeof(*b));
 }
 
@@ -488,6 +500,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     if (c->route == VFFT_K1_IL_2P_PURE)
     {
         vfft_il2p_execute_fwd(b->ip, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_CHAIN3)
+    {
+        vfft_il3p_execute_fwd(b->i3, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
@@ -719,6 +736,7 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_2P:
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
+    case VFFT_K1_IL_CHAIN3:
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_CASCADE:
     {
@@ -1398,6 +1416,38 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                 }
             }
         }
+        /* CHAIN3 (2026-09-02): every legal 3-stage IL chain — leaf R2 from
+         * the il3p leaf set, R1 = N/R2 split as (A, B) over every divisor
+         * pair — enters the NATURAL pool beside the pairs and mono, so the
+         * cell decides. Until now the create picked the FIRST legal chain
+         * (vfft_il3p_default_chain) and nothing measured it; the K=1 cells
+         * that only a chain can express (and the prime engine's inner at
+         * such lengths) ran an unmeasured plan. vfft_il3p_create validates
+         * (kernels, parity, counts); an illegal split is refused at build. */
+        {
+            static const int LEAF3[] = { 32, 16, 8, 4, 12, 10, 6 };
+            for (int li = 0; li < (int)(sizeof LEAF3 / sizeof LEAF3[0]); li++)
+            {
+                const int R2 = LEAF3[li];
+                if (N % R2) continue;
+                const int R1 = N / R2;
+                if (R1 < 4 || (R1 & 1)) continue;
+                {
+                    int o = R1;
+                    while ((o & 1) == 0) o >>= 1;
+                    if (o == 1) continue;          /* pure pow2: the pair route's */
+                }
+                for (int A = 3; A <= R1 / 2; A++)
+                {
+                    if (R1 % A) continue;
+                    memset(&c, 0, sizeof c);
+                    c.route = VFFT_K1_IL_CHAIN3;
+                    c.R1 = R1; c.R2 = R2;
+                    c.c3_A = A; c.c3_B = R1 / A;
+                    _il_dp_push(s, &c);
+                }
+            }
+        }
         return;
     }
 
@@ -1717,6 +1767,12 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             e.il_R1 = nat->R1;
             e.il_R2 = nat->R2;
             e.il_kv = nat->il_kv;      /* 0 until the variant axis is raced */
+            if (nat->route == VFFT_K1_IL_CHAIN3)
+            {                          /* the chain IS the verdict (2026-09-02) */
+                e.il_c3[0] = nat->R2;
+                e.il_c3[1] = nat->c3_A;
+                e.il_c3[2] = nat->c3_B;
+            }
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
                 lines++;

@@ -316,7 +316,9 @@ STATUS     RACED, OFFLINE ONLY (calibrate_k1; vfft.c never calls dp_planner_il.h
 ARMS       route enum VFFT_K1_IL_*:
              3 MONO      emitted mono, il edges - exists ONLY at N=64
              5 2P_PURE   the Bailey pair                 <- this tier
-             6 CHAIN3    3-stage chain (odd factors as kernel RADICES)
+             6 CHAIN3    3-stage chain (odd factors as kernel RADICES) —
+                         RACED since 2026-09-02: every legal (R2, A, B)
+                         enters the natural pool; banked as il_chain=R2.A.B
              7 PRIME     ilprime (see B4)
              4 CASCADE   the >= 2048 tier (see C1)
 BANK       wisdom2_oop | t=c2c n=N q=1 ord=nat place=oop role=comp lay=il
@@ -464,7 +466,9 @@ INNER      B4.1 (2026-09-02): the convolution's inner transform at length M
            every prime cell in the store and at every Bluestein M it uses.
            The cascade inner (pow2 M > 4096) replays the kind-4 recipe through
            _k1z_wisdom_replay and the prime row signposts that row (2026-09-02).
-           Still structural: an il3p CHAIN inner (no kind-3 chain payload).
+           A CHAIN3 inner replays the banked il_chain=R2.A.B (B1 route 6, raced
+           by the planner since 2026-09-02). Nothing structural is left in the
+           prime engine's inner except the engine's own fallbacks on a miss.
 RACE       src/core/oop/il_prime.h:385-428
 NOTE       An earlier claim that the prime METHOD is "never raced" was REFUTED by
            verification - this race is real.

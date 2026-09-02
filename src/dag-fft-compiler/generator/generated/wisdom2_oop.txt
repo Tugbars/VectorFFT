@@ -181,7 +181,8 @@
 @cell t=c2c n=384 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=32.12 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=768 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=64.12 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=126 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=6.21 il_kv=80 | ran=1 ns=96.0 metric=fwd1 units=ns src=race date=2026-09-02
-@cell t=c2c n=130 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=10.13 | ran=1 ns=107.9 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=130 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=13.10 | ran=1 ns=102.5 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=250 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=10.25 il_kv=80 | ran=1 ns=205.6 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=126 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=6.21 il_kv=80 | ran=1 ns=110.4 metric=bwd1 units=ns src=race
 @cell t=c2c n=250 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=10.25 il_kv=80 | ran=1 ns=215.9 metric=bwd1 units=ns src=race
+@cell t=c2c n=130 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=13.10 il_kv=0 | ran=1 ns=92.4 metric=bwd1 units=ns src=race
