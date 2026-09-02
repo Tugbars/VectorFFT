@@ -122,9 +122,6 @@ BENCH = os.path.join(HERE, "benches")
 ROOT = os.path.dirname(HERE)
 STORE = os.path.normpath(os.path.join(
     HERE, "..", "src", "dag-fft-compiler", "generator", "generated"))
-# the frozen legacy wisdom files, for gates that compare the wisdom2 read arm
-# against the legacy-table arm (the "dual" fixture)
-DUAL_LEGACY = os.path.join(HERE, "benches", "cil_ab_wis")
 
 # How each gate wants its wisdom directory.
 #   "none"        - takes no argument
@@ -157,7 +154,7 @@ ARGSTYLE = {
     "wisdom2_g0_gate":         ("bare", False),
     # SCRATCH ONLY - see the fixture-collision note in the header
     "wisdom2_real_gate":       ("bare", False),
-    "wisdom2_2d_gate":         ("bare", "dual"),  # DUAL fixture: frozen legacy files + the migrated 2D shard (its legacy-arm comparison needs both)
+    "wisdom2_2d_gate":         ("bare", True),  # SEEDED: create-twice coherence needs the 2D shard; VFFT_WISDOM2_OFF is RETIRED (no legacy arm, no dual fixture)
     "zr2c_store_decode_gate":  ("bare", True),
     # decode real wisdom -> seeded copy
     "sp_ccol_decode_gate":     ("bare", True),
@@ -172,6 +169,8 @@ TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
 # runtime does not fit the flat seeded/cold split belong here.
 BUDGET_OVERRIDE = {
     "vfft_natural_front_gate": 1800,   # cold races at 5 N x 4 passes + reload: 12-18 min on the i9
+    "zturn_tcut_gate":         900,    # 4 cells x (arms + naive-DFT reference per tiled arm): 576 s measured uncapped on a store that already serves its cells (2026-09-02); the time is the correctness work, not recalibration
+    "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
 }
 
 
@@ -192,20 +191,7 @@ def run(name, workdir):
     style, seeded = ARGSTYLE.get(name, ("none", False))
     scratch = os.path.join(workdir, name)
     os.makedirs(scratch, exist_ok=True)
-    if seeded == "dual":
-        # the 2D flip gate compares the wisdom2 read arm against the LEGACY-
-        # table arm (VFFT_WISDOM2_OFF=2d), so its scratch must hold BOTH the
-        # frozen legacy files and the migrated 2D shard; an empty dir makes
-        # the legacy arm serve something else and the bitwise check flips on
-        # whichever cells differ (the "1-2 fail" flakiness, 2026-09-02).
-        for f in os.listdir(DUAL_LEGACY):
-            if f.endswith(".txt"):
-                shutil.copy2(os.path.join(DUAL_LEGACY, f), scratch)
-        for f in ("wisdom2_2d.txt", "wisdom2_3d.txt"):
-            src = os.path.join(STORE, f)
-            if os.path.exists(src):
-                shutil.copy2(src, scratch)
-    elif seeded:
+    if seeded:
         for f in os.listdir(STORE):
             if f.endswith(".txt"):
                 shutil.copy2(os.path.join(STORE, f), scratch)
@@ -224,7 +210,7 @@ def run(name, workdir):
     # A SEEDED gate replays and finishes in seconds; 300s means something is
     # wrong. A COLD gate races by design - that is its whole purpose - so it is
     # allowed to take real time. Budget by which one it is, not one flat number.
-    budget = 300 if seeded else 900   # "dual" counts as seeded (it replays)
+    budget = 300 if seeded else 900
     # per-gate override: a COLD gate whose honest runtime straddles the flat
     # budget on this host (vfft_natural_front: 12-18 min of cold races). The
     # organic replacement (progress watchdog / host-scaled cap) is deferred

@@ -161,7 +161,7 @@
 @cell t=c2c n=1024 q=1 ord=nat place=ip | eng=stride mode=ilp chain=32.32 vars=flat.t1s dif=0 | ran=1 ns=1202.50 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:322
 @cell t=c2c n=255 q=1 ord=nat place=ip | eng=stride mode=ilp chain=3.5.17 vars=flat.log3.flat dif=0 | ran=1 ns=849.50 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:323
 @cell t=c2c n=512 q=1 ord=nat place=ip | eng=stride mode=ilp chain=8.8.8 vars=flat.t1s.t1s dif=0 | ran=1 ns=308.75 metric=fwd1 units=ns src=migrated from=spike_wisdom.txt:324
-@cell t=c2c n=64 q=1 ord=nat place=ip lay=il | eng=stride mode=ilp ref=cell(t=c2c,n=64,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=100.00 metric=fwd1 units=ns src=race date=2026-08-25
+@cell t=c2c n=64 q=1 ord=nat place=ip lay=il | eng=k1 mode=ilp dif=0 | ran=1 ns=43.50 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=1536 q=1 ord=nat place=ip lay=il | eng=stride mode=ilp chain=16.6.16 vars=flat.t1s.t1s dif=0 | ran=1 ns=1937.50 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=3072 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=16.12.16 vars=flat.t1s.t1s dif=0 | ran=1 ns=12570.83 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=4608 q=1 ord=nat place=ip lay=il | eng=stride mode=zcasc chain=12.32.12 vars=flat.t1s.t1s dif=0 | ran=1 ns=6430.00 metric=fwd1 units=ns src=race date=2026-09-02
