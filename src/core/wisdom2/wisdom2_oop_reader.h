@@ -776,7 +776,29 @@ static inline int vw2_prime_method_lookup(const vw2_store_t *s, int N)
     if (!strcmp(eng, "bluestein")) return 2;
     return 0;
 }
-static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method)
+/* ref_M > 0: the inner transform's OWN row (the kind-3 pair verdict at
+ * length M — stages, radices, kernel forms) is signposted, never copied;
+ * a vanished inner row makes this verdict a loud MISS (README §3.3). */
+/* which kind-3 row exists at length M, in the lookup's own precedence
+ * (lay=il, lay=split, lay-less): returns VW2_LAY_IL / VW2_LAY_SPLIT /
+ * VW2_LAY_ANY, or -1 when none — so a signpost names a row that EXISTS. */
+static inline int vw2_oop_k1_row_lay(const vw2_store_t *s, int M)
+{
+    static const int lays[3] = { VW2_LAY_IL, VW2_LAY_SPLIT, VW2_LAY_ANY };
+    int i;
+    for (i = 0; i < 3; i++) {
+        vw2_key_t k;
+        memset(&k, 0, sizeof k);
+        k.t = VW2_T_C2C; k.rank = 1; k.n[0] = M;
+        k.q = 1; k.ord = VW2_ORD_NAT; k.pl = VW2_PL_OOP;
+        k.role = VW2_ROLE_COMP; k.lay = (uint8_t)lays[i];
+        if (vw2_lookup(s, &k)) return lays[i];
+    }
+    return -1;
+}
+
+static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method,
+                                        int ref_M, int ref_lay)
 {
     vw2_rec_t r;
     int rc;
@@ -787,6 +809,14 @@ static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method)
         vw2_rec_set(&r, 2, "src", "race") != VW2_OK) {
         vw2_rec_free(&r);
         return -1;
+    }
+    if (ref_M > 0 && ref_lay >= 0) {
+        char ref[112];
+        snprintf(ref, sizeof ref,
+                 "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", ref_M,
+                 ref_lay == VW2_LAY_IL ? ",lay=il"
+                 : ref_lay == VW2_LAY_SPLIT ? ",lay=split" : "");
+        if (vw2_rec_set(&r, 1, "ref", ref) != VW2_OK) { vw2_rec_free(&r); return -1; }
     }
     vw2__oop_stamp_date(&r);
     rc = vw2_bank(s, &r);

@@ -7,3 +7,6 @@
 @legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
 @legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
 @legend see src/core/wisdom2/README.md
+@cell t=c2c n=127 q=1 ord=scr place=ip role=comp lay=il | eng=rader | ran=1 src=race date=2026-09-02
+@cell t=c2c n=131 q=1 ord=scr place=ip role=comp lay=il | eng=rader | ran=1 src=race date=2026-09-02
+@cell t=c2c n=251 q=1 ord=scr place=ip role=comp lay=il | eng=rader | ran=1 src=race date=2026-09-02

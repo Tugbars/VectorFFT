@@ -176,3 +176,7 @@
 @cell t=c2c n=6144 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.3.8.8.8 zs_t2q=0 zt_t2q=0 | ran=1 src=race date=2026-09-02
 @cell t=c2c n=7168 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.4.4.4.7.4 zs_t2q=0 zt_t2q=0 zt_tw=896 zt_l1=49152 | ran=1 ns=16264.1 metric=joint2 units=ns src=race date=2026-09-02
 @cell t=c2c n=12288 q=1 ord=scr place=oop role=comp | eng=zturn chain=4.3.4.4.8.8 zs_t2q=0 zt_t2q=0 | ran=1 src=race date=2026-09-02
+@cell t=c2c n=192 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=12.16 | ran=1 src=race date=2026-09-02
+@cell t=c2c n=320 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=32.10 | ran=1 src=race date=2026-09-02
+@cell t=c2c n=384 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=32.12 | ran=1 src=race date=2026-09-02
+@cell t=c2c n=768 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=64.12 | ran=1 src=race date=2026-09-02

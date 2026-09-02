@@ -151,13 +151,32 @@ static void _k1ord_reseed(void *v)
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
     memcpy(c->rz, c->r0, c->nb);
 }
+/* the prime engine's INNER transform, served from wisdom (owner,
+ * 2026-09-02: "the Rader plan should have its stages and codelets saved"):
+ * the K=1 IL pair verdict at length M — kind-3 row replayed with its kernel
+ * forms, else the pair race + bank. An il3p chain (no kind-3 payload) and
+ * the zturn inner above 4096 stay the engine's structural rule. */
+static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                             int N, vfft_il2p_plan_t **il2p_out,
+                             vfft_il3p_plan_t **il3p_out);   /* defined below */
+typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
+static int _ilprime_inner_from_wisdom(int M, vfft_il2p_plan_t **p2,
+                                      vfft_il3p_plan_t **p3, void *v)
+{
+    _ilprime_inner_ctx_t *c = (_ilprime_inner_ctx_t *)v;
+    _k1_il_candidate(c->W, c->cfg, M, p2, p3);
+    return (*p2 || *p3) ? 1 : 0;
+}
+
 /* the prime METHOD, banked (B4): replay the cell's verdict, race only on a
- * miss, bank the winner; env pin VFFT_ILPR_METHOD never replays or banks. */
+ * miss, bank the winner with a signpost to the inner's own row; env pin
+ * VFFT_ILPR_METHOD never replays or banks. */
 static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
                                                    const vfft_config_t *cfg,
                                                    int N)
 {
     vfft_ilprime_plan_t *p;
+    _ilprime_inner_ctx_t ic;
     int hint = 0;
     if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD") ||
         !_ilprime_is_prime(N))
@@ -167,10 +186,20 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
     if (hint && getenv("VFFT_ILPR_LOG"))
         fprintf(stderr, "[ilprime] N=%d: replay %s src=wisdom\n", N,
                 hint == 1 ? "RADER" : "BLUESTEIN");
+    ic.W = W; ic.cfg = cfg;
+    _ilprime_inner_provider = _ilprime_inner_from_wisdom;
+    _ilprime_inner_provider_ctx = &ic;
     p = vfft_ilprime_create_method(N, hint);
+    _ilprime_inner_provider = 0;
+    _ilprime_inner_provider_ctx = 0;
     if (p && !hint)
     {
-        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2) == VW2_OK)
+        /* signpost the inner's row when the pair verdict for M exists
+         * (it does whenever the inner is an il2p pair: replayed or just
+         * banked by the pair race); an il3p chain inner has no row */
+        const int ref_lay = p->inner.p2 ? vw2_oop_k1_row_lay(&W->vw2, p->M) : -1;
+        const int ref_M = ref_lay >= 0 ? p->M : 0;
+        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2, ref_M, ref_lay) == VW2_OK)
             _vw2_persist(W, cfg);
     }
     return p;
