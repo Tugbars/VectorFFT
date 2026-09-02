@@ -417,6 +417,11 @@ ARMS       arm0 CONVERT incumbent: deinterleave -> split cplan -> reinterleave
 RACE       src/core/vfft.c:8156 and :8174; verdict at :8199
 BANK       wisdom2_scr | t=c2c n=N q=K ord=scr place=ip lay=il
            | mode=ilp|conv (N<2048)  or  mode=zcasc|conv (N>=2048)
+           A mode=zcasc row carries NO chain of its own: it signposts the kind-4
+           RECIPE (chain, t2q, tcut width, fence) with ref=cell(...ord=scr,place=oop
+           [,role=comp]). role=comp = the recipe an in-place or odd-mid race banked
+           (C1.4/C1.5 for those callers, 2026-09-02); the role-less row is the OOP
+           create's verdict. mode=ilp rows carry neither chain nor ref.
 CALLER     1D c2c IN-PLACE interleaved, order DEFAULT/SCRAMBLED (or NATURAL with a
            single-stage cplan)
 WITNESS    1d.il.ip.c2c.256 -> ilme=1 [measured]
