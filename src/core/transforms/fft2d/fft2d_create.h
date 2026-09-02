@@ -94,6 +94,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
 {
     if (cfg->dims == 2)
     {
+        /* the Bluestein inner chain provider for THIS create (2026-09-02):
+         * the (M, N2) chain row serves the length-M column chain */
+        _il2d_blu_ctx.W = W;
+        _il2d_blu_ctx.cfg = cfg;
+        _il2d_blu_ctx.N2 = cfg->n[1];
+        _il2d_blu_chain_hook = _il2d_blu_m_chain;
         /* §6a50/Q4: the 2D executors are K-blind — howmany > 1 is served
          * by the PLANE QUEUE (2026-08-27, the designed sequential-plane
          * batching): a wrapper over one primary howmany=1 plan (loop
@@ -1375,9 +1381,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * cmt verdict ONLY at the T it was raced at, else race and
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
-        if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
+        if (h->transform == VFFT_C2C && h->il2d_row &&
             !il2d_nat && h->nthreads > 1)
-        {
+        {   /* (Bluestein cells race too since 2026-09-02: the window pipeline) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
             if (ce)
@@ -1403,8 +1409,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * was raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !il2d_blu && !il2d_nat && h->nthreads > 1)
-        {
+            h->il2d_row && !il2d_nat && h->nthreads > 1)
+        {   /* (Bluestein cells race too since 2026-09-02) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
                 h->il2d_colmt = (atoi(ce) == 0);

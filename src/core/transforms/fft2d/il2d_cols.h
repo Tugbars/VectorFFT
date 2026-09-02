@@ -445,19 +445,30 @@ static void _il2d_col_pass(const double *src, double *dst, int N1,
                            double *const *tabs, int reverse);
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,
                               double **tf, double **tb);
+/* BLUESTEIN INNER CHAIN HOOK (2026-09-02): the 2D create installs a
+ * provider that fills the length-M column chain from wisdom (the (M, N2)
+ * chain row, raced and banked there on a miss); NULL, or a provider that
+ * declines, leaves the greedy chain in charge. Set once at the 2D create's
+ * entry — planning side, one create at a time. */
+typedef int (*_il2d_blu_chain_fn)(int M, int *Rs, int *nst);
+static _il2d_blu_chain_fn _il2d_blu_chain_hook = 0;
+
 static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
                            vfft_il2p_fn *ff, vfft_il2p_fn *fb,
                            double **tf, double **tb, int *nst,
                            double **chf, double **chb, double **kf,
                            double **kb, double **scr)
 {
-    int M = 16, s2, ok = 0;
+    int M = 16, s2, ok = 0, served = 0;
     double *za = NULL, *zb2 = NULL;
     while (M < 2 * N1 - 1)
         M <<= 1;
     *chf = *chb = *kf = *kb = *scr = NULL;
-    if (!_il2d_build_chain(M, Rs, ff, fb, nst) ||
-        _il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
+    if (_il2d_blu_chain_hook && _il2d_blu_chain_hook(M, Rs, nst))
+        served = _il2d_resolve(Rs, *nst, ff, fb);   /* the validator is the law */
+    if (!served && !_il2d_build_chain(M, Rs, ff, fb, nst))
+        return 0;
+    if (_il2d_build_tables(M, *nst, Rs, Ls, tf, tb))
         return 0;
     *chf = (double *)malloc(2 * (size_t)N1 * sizeof(double));
     *chb = (double *)malloc(2 * (size_t)N1 * sizeof(double));
@@ -519,6 +530,41 @@ static int _il2d_blu_build(int N1, size_t rn, int *Rs, int *Ls,
  * execute branches and the race both serve through THIS). reverse = the
  * inverse transform (conjugated chirp/kernel, the caller passes them).
  * src/dst may alias. */
+/* the Bluestein pipeline over a column WINDOW [c0, c1) of an rn-wide plane:
+ * every step is column-local (row-wise chirp/kernel multiplies touch each
+ * column independently; the M-chain column passes take a column range), so
+ * a window is an independent unit and windows share `scr` disjointly —
+ * this is what the threaded column walk partitions (2026-09-02). */
+static void _il2d_blu_cols_range(const double *src, double *dst, int N1,
+                                 size_t rn, size_t c0, size_t c1, int M,
+                                 int nst, const int *Rs, const int *Ls,
+                                 vfft_il2p_fn const *ff,
+                                 vfft_il2p_fn const *fb,
+                                 double *const *tf, double *const *tb,
+                                 const double *ch, const double *kn,
+                                 double *scr)
+{
+    const size_t wc = c1 - c0;
+    long r2;
+    if (c1 <= c0) return;
+    for (r2 = N1; r2 < M; r2++)              /* the zero pad, this window */
+        memset(scr + 2 * ((size_t)r2 * rn + c0), 0, 2 * wc * sizeof(double));
+    for (r2 = 0; r2 < N1; r2++)
+        _il2d_row_cmul(scr + 2 * ((size_t)r2 * rn + c0),
+                       src + 2 * ((size_t)r2 * rn + c0), ch[2 * r2],
+                       ch[2 * r2 + 1], wc);
+    _il2d_col_pass_range(scr, scr, M, rn, c0, c1, nst, Rs, Ls, ff, tf, 0);
+    for (r2 = 0; r2 < M; r2++)
+        _il2d_row_cmul(scr + 2 * ((size_t)r2 * rn + c0),
+                       scr + 2 * ((size_t)r2 * rn + c0), kn[2 * r2],
+                       kn[2 * r2 + 1], wc);
+    _il2d_col_pass_range(scr, scr, M, rn, c0, c1, nst, Rs, Ls, fb, tb, 1);
+    for (r2 = 0; r2 < N1; r2++)
+        _il2d_row_cmul(dst + 2 * ((size_t)r2 * rn + c0),
+                       scr + 2 * ((size_t)r2 * rn + c0), ch[2 * r2],
+                       ch[2 * r2 + 1], wc);
+}
+
 static void _il2d_blu_cols(const double *src, double *dst, int N1,
                            size_t rn, int M, int nst, const int *Rs,
                            const int *Ls, vfft_il2p_fn const *ff,
@@ -526,23 +572,8 @@ static void _il2d_blu_cols(const double *src, double *dst, int N1,
                            double *const *tb, const double *ch,
                            const double *kn, double *scr)
 {
-    long r2;
-    memset(scr + 2 * (size_t)N1 * rn, 0,
-           2 * (size_t)(M - N1) * rn * sizeof(double));
-    for (r2 = 0; r2 < N1; r2++)
-        _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
-                       src + 2 * (size_t)r2 * rn, ch[2 * r2],
-                       ch[2 * r2 + 1], rn);
-    _il2d_col_pass(scr, scr, M, rn, rn, nst, Rs, Ls, ff, tf, 0);
-    for (r2 = 0; r2 < M; r2++)
-        _il2d_row_cmul(scr + 2 * (size_t)r2 * rn,
-                       scr + 2 * (size_t)r2 * rn, kn[2 * r2],
-                       kn[2 * r2 + 1], rn);
-    _il2d_col_pass(scr, scr, M, rn, rn, nst, Rs, Ls, fb, tb, 1);
-    for (r2 = 0; r2 < N1; r2++)
-        _il2d_row_cmul(dst + 2 * (size_t)r2 * rn,
-                       scr + 2 * (size_t)r2 * rn, ch[2 * r2],
-                       ch[2 * r2 + 1], rn);
+    _il2d_blu_cols_range(src, dst, N1, rn, 0, rn, M, nst, Rs, Ls, ff, fb,
+                         tf, tb, ch, kn, scr);
 }
 
 static int _il2d_build_tables(int N1, int nst, const int *Rs, int *Ls,

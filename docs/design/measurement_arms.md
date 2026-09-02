@@ -634,6 +634,11 @@ E1.4 tf (tfuse)                       DERIVED; slaved to wl (tfuse = w > 0).
 E1.5 roop - row route                 RACED. in-place per-row K=1 child vs an OOP
                                       child + 2*N2 scratch + copy-back.
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
+                                      Bluestein column axes included since
+                                      2026-09-02 (the column-window pipeline,
+                                      mode 3 of the c2c walk / the real strip);
+                                      the banded walk (E1.2) stays structural
+                                      for them (no chain walk to tile).
 E1.7 N1-arm                      RACED, BANKED (2026-09-02): native odd chain vs
                                  COLUMN-AXIS Bluestein -> sets blu, rewrites
                                  nst/R/L. Verdict token blu= on the lay=il row
@@ -694,6 +699,11 @@ E2.10 oddn2                   STRUCTURAL. Odd N2 real rows ride a K=1 c2c child.
 E2.11 norowz                  ENV only (VFFT_IL2D_NO_ROWZ).
 E2.12 wc / roop               STRUCTURALLY UNREACHABLE for real.
 E2.13 column-axis Bluestein M STRUCTURAL. M = 16, then while (M < 2*N1-1) M <<= 1.
+                              Its INNER chain at M: served from the (M, N2) 2D
+                              chain row — replayed when banked, else the E1.1
+                              chain race at (M, N2) and banked there (both
+                              tiers, 2026-09-02). Was the greedy chain, never
+                              measured.
 ```
 
 **The oddn2 / column-MT guard asymmetry is DELIBERATE.** The row-route race at
