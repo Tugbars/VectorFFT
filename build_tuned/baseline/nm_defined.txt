@@ -1893,6 +1893,7 @@ t _vfft_z_inter
 t _vfft_zt_tw_periodic
 t _vw2_persist
 t _zc_tramp
+t _zcasc_ref_is_comp
 t _zr2c_arm_run
 t _zr2c_build
 t _zr2c_build_route
@@ -1904,7 +1905,8 @@ t _zt_execute_mt.isra.N
 t _zt_mt_arm_mt
 t _zt_mt_arm_st
 t _zt_mt_phase
-t _zt_mt_race
+t _zt_mt_replay_or_race
+t _zt_mt_served_key
 t _zt_mt_tile_mids
 t _zt_mt_tramp
 t _zt_t2q_arm0
