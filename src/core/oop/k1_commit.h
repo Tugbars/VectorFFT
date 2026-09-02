@@ -565,6 +565,10 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     {
         if (zs_pending)
             vfft_zsplit_destroy(zs_pending);
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr, "[zroute] N=%d replay MISS: %s (l1d=%ld)\n", N,
+                    ze ? "recalibrate" : "no kind-4 recipe row (verdict/comp)",
+                    vfft_cpu_l1d_bytes());
         return 0;
     }
     /* 🔴 zs_pending MAY BE NULL past this point, and that is a FIX, not an
@@ -592,7 +596,12 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     if (zs_pending)
         zs_pending->t2q = ze->zs_t2q ? 1 : 0;
     if (!zs_pending && !((ze->zs_route == 1 && zforce != 1) || zforce == 2))
+    {
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr, "[zroute] N=%d replay MISS: legacy verdict with "
+                            "no buildable legacy plan\n", N);
         return 0;   /* legacy verdict with no buildable legacy plan */
+    }
     if ((ze->zs_route == 1 && zforce != 1) || zforce == 2)
     {
         /* replay the BANKED chain (zwch — survives a legacy
@@ -698,7 +707,12 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
         }
     }
     if (!zs_pending && !zt_pending)
+    {
+        if (getenv("VFFT_ZRACE_VERBOSE"))
+            fprintf(stderr, "[zroute] N=%d replay MISS: route-1 create failed "
+                            "and no legacy escort\n", N);
         return 0;   /* route-1 create failed and no legacy escort — a miss */
+    }
     (void)znf;
     *zs_out = zs_pending;
     *zt_out = zt_pending;
