@@ -398,7 +398,11 @@ KNOWN GAP  bkv == 0 is BOTH a valid verdict ("the defaults won") and the not-rac
 #### B1.4 pair-order swap
 
 ```
-STATUS     RACED-NOT-BANKED (re-decides every create)
+STATUS     RACED, BANKED (2026-09-02): the winner IS the pair order, so it
+           banks as the cell's kind-3 lay=il row (il_route=2p il_pair=R1.R2,
+           measure-less) and the existing pair replay (ke->il_R1) serves it;
+           the offline planner's measured row replaces it. Runs only for a
+           cell with NO banked pair; VFFT_NO_T2B pins, never banks.
 WHEN       create
 ARMS       vfft_il2p_execute_fwd on the heuristic (R1,R2) vs on
            vfft_il2p_create(N, R2, R1). 5 bursts, min-of-5, 3% hysteresis
@@ -443,7 +447,10 @@ B3.4 nat-tape opportunistic PSWAP                                    STRUCTURAL
 ### B4. IL prime
 
 ```
-STATUS     RACED-NOT-BANKED
+STATUS     RACED, BANKED (2026-09-02): a component row in the PRIME shard,
+           t=c2c n=N q=1 ord=scr place=ip role=comp lay=il | eng=rader|bluestein;
+           every ilprime create goes through _ilprime_create_banked (replay on a
+           hit, race + bank on a miss); VFFT_ILPR_METHOD pins, never banks.
 ARMS       _ilprime_create_rader(N) vs _ilprime_create_bluestein(N), both fully
            constructed, warmed once each, then min-of-3 ALTERNATED forward executes
 RACE       src/core/oop/il_prime.h:385-428
@@ -552,9 +559,16 @@ R1.1 rfft chain x per-stage variant   RACED. Multisets <= 5 stages, radix <= 16,
                                       the full FLAT/LOG3/T1S cartesian. Low-K side.
 R1.2 inner c2c(N/2) chain             RACED. The high-K side; inherits S1.
 R1.3 zr2c composite route (kind-5)    RACED. child_oop_il vs child_nat_ip.
-R1.4 1D odd-real bridge               RACED-NOT-BANKED. rfft/stride handle vs the
-                                      c2c odd bridge.
-R1.5 smooth-odd r2c                   RACED-NOT-BANKED. rfft vs c2c-bridge.
+R1.4 1D odd-real bridge               RACED, BANKED (2026-09-02): the K=1 OOP IL
+                                      r2c race (rfft handle vs the c2c bridge)
+                                      banks a component row in the real shard,
+                                      t=r2c n=N q=1 ord=nat place=oop role=comp
+                                      lay=il | eng=oddr route=rfft|bridge, and
+                                      replays it; VFFT_ODDR_NORACE pins. c2r odd
+                                      and prime r2c take the bridge by RULE (no
+                                      rfft arm exists): structural, nothing to bank.
+R1.5 smooth-odd r2c                   same race and same row as R1.4 (the site
+                                      does not distinguish smooth from awkward).
 R1.6 c2r packed/natural factorization STRUCTURAL. Raced nowhere, banked nowhere;
                                       wisdom-first off a static pointer.
 ```
@@ -728,13 +742,13 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 
 ## 10. Known gaps
 
-* **MT verdicts are not banked in the shipped store.** All 539 records carry no
-  thread-related field; `cmt` / `cmtt` appear only in records written by a probe. So
-  `zt_mt`, `pq_mt`, the oddr bridge pick and the prime method re-race on every create of
-  every affected cell. This is a **TODO owned by the wisdom wave**, pending the wisdom2
-  1D cell convention - not a policy. Cost: ~6 executes per threaded create, per process.
-  Determinism: an unbanked race can pick different winners across creates within ONE
-  process, which makes clone-equivalence refuse the batch and MT decline.
+* **MT verdicts** - closed 2026-09-02 for the cascade (`zt_mt`/`zt_mt_t`, both
+  placements), the 2D column pass (`cmt`/`cmtt`, both real directions) and the plane
+  queue (`pq`/`pqn`/`pqt`); the shipped store carries them for the seeded cells (T=8),
+  other cells and thread counts race once on first use and bank themselves.
+* **RACED-NOT-BANKED** - none left as of 2026-09-02 (B1.4, B4, R1.4/R1.5 bank now).
+  Cells and thread counts the shipped store has not seen race once on first use and
+  bank themselves.
 * **The create-race counter is blind to MT.** None of `_zt_mt_race`, `_pq_mt_race`,
   `_il2d_real_colmt_race`, `_il2d_c2c_mt_race` increments it, so `races=0` on a threaded
   plan is a FALSE ZERO.

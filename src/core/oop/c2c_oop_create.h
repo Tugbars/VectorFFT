@@ -347,7 +347,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 !getenv("VFFT_NO_IL2P") &&
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
-                ilpr = vfft_ilprime_create(N);
+                ilpr = _ilprime_create_banked(W, cfg, N);
                 if (ilpr)
                     ilr = VFFT_K1_IL_PRIME;
             }

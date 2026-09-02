@@ -1759,6 +1759,7 @@ t _il2d_arm_exec
 t _il2d_arm_exec_mt
 t _il2d_arm_exec_st
 t _il2d_arm_rows
+t _il2d_axis_race
 t _il2d_blu_build
 t _il2d_blu_cols
 t _il2d_build_chain

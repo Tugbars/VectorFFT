@@ -151,7 +151,33 @@ static void _k1ord_reseed(void *v)
     _k1ord_arm_t *c = (_k1ord_arm_t *)v;
     memcpy(c->rz, c->r0, c->nb);
 }
-static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
+/* the prime METHOD, banked (B4): replay the cell's verdict, race only on a
+ * miss, bank the winner; env pin VFFT_ILPR_METHOD never replays or banks. */
+static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
+                                                   const vfft_config_t *cfg,
+                                                   int N)
+{
+    vfft_ilprime_plan_t *p;
+    int hint = 0;
+    if (!W || W->vw2_off_oop || getenv("VFFT_ILPR_METHOD") ||
+        !_ilprime_is_prime(N))
+        return vfft_ilprime_create(N);
+    if (!cfg->recalibrate)
+        hint = vw2_prime_method_lookup(&W->vw2, N);
+    if (hint && getenv("VFFT_ILPR_LOG"))
+        fprintf(stderr, "[ilprime] N=%d: replay %s src=wisdom\n", N,
+                hint == 1 ? "RADER" : "BLUESTEIN");
+    p = vfft_ilprime_create_method(N, hint);
+    if (p && !hint)
+    {
+        if (vw2_prime_method_bank(&W->vw2, N, p->method ? 1 : 2) == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
+    return p;
+}
+
+static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                             int N,
                              vfft_il2p_plan_t **il2p_out,
                              vfft_il3p_plan_t **il3p_out)
 {
@@ -261,6 +287,28 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
                     *il2p_out = alt;
                     alt = NULL;
                     picked_swap = 1;
+                }
+                if (getenv("VFFT_NAT_LOG") || getenv("VFFT_ILPR_LOG"))
+                    fprintf(stderr, "[k1ord] N=%d pair race: heuristic %d.%d=%.0f "
+                                    "swapped %d.%d=%.0f -> %s\n",
+                            N, iR1, iR2, ta, iR2, iR1, tb,
+                            picked_swap ? "SWAPPED" : "heuristic");
+                /* BANK the winner as the cell's kind-3 pair verdict (B1.4,
+                 * 2026-09-02): the pair ORDER is exactly what il_pair= says,
+                 * so the existing replay (ke->il_R1 above) serves it and this
+                 * race never runs again for the cell. Measure-less (ns=0):
+                 * the offline planner's measured row replaces it. */
+                if (W && !W->vw2_off_oop && cfg)
+                {
+                    vfft_oop_wisdom_entry_t ne;
+                    memset(&ne, 0, sizeof ne);
+                    ne.N = N;
+                    ne.K = 1;
+                    ne.k1_il_route = VFFT_K1_IL_2P_PURE;
+                    ne.il_R1 = picked_swap ? iR2 : iR1;
+                    ne.il_R2 = picked_swap ? iR1 : iR2;
+                    if (vw2_oop_bank_k1_lay(&W->vw2, &ne, VW2_LAY_IL) == VW2_OK)
+                        _vw2_persist(W, cfg);
                 }
             }
             free(rz);
