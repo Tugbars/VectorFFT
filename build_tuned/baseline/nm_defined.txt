@@ -1904,6 +1904,7 @@ t _zt_execute_mt.isra.N
 t _zt_mt_arm_mt
 t _zt_mt_arm_st
 t _zt_mt_phase
+t _zt_mt_race
 t _zt_mt_tile_mids
 t _zt_mt_tramp
 t _zt_t2q_arm0

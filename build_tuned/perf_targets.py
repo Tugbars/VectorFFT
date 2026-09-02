@@ -57,7 +57,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = os.path.normpath(os.path.join(
     HERE, "..", "src", "dag-fft-compiler", "generator", "generated",
-    "wisdom2_stride.txt"))
+    "wisdom2_scr.txt"))
 CSVP = os.path.join(HERE, "results", "vfft_perf_tuned_1d.csv")
 
 CELL = re.compile(r"^@cell t=c2c .*?\bn=(\d+)\b.*?\bq=(\d+)\b")
