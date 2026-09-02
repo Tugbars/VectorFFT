@@ -173,6 +173,15 @@ verdict a MISS — one loud stderr line, then the normal miss path (re-race in
 memory; re-bank in measurement mode). Never a hard error, never a silent
 default.
 
+Emission scope: a writer emits a signpost only where a component record
+exists to point at. In the stride codec that is the `@nat` CASCADE row
+(`mode=zcasc`), whose recipe is the `ord=scr place=oop` kind-4 cell. A
+dummy-chain row of any other mode (prime/Rader `ord=scr`, `@nat mode=ilp`)
+is SELF-CONTAINED — its engine rebuilds from N alone — and carries neither
+`chain=` nor `ref=`; the reader accepts it bare. A signpost at a
+self-contained cell points at a record that never exists and makes the cell
+a permanent MISS (re-raced on every create).
+
 ### 3.4 MEASURE + PROVENANCE (after the second pipe)
 
 | token | meaning |

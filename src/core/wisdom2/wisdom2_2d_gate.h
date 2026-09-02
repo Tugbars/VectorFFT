@@ -2,13 +2,18 @@
  * driver, per the bench-purity law).
  *
  * [2d-flip-gate]: for each populated 2D cell, create through the PUBLIC
- * front door on BOTH read arms — wisdom2 (default) and the kill switch
- * (VFFT_WISDOM2_OFF=2d, legacy-table reads) — and require:
+ * front door TWICE, each from a FRESH wisdom load, and require:
  *   - correctness vs an independent naive 2D DFT (c2c) / roundtrip
  *     bwd(fwd(x)) == N1*N2*x (real families, natural-ordered so legal);
- *   - the two arms' forward outputs BITWISE IDENTICAL (same served plan
+ *   - the two creates' forward outputs BITWISE IDENTICAL (same served plan
  *     => same construction => same rounding; this is the plan-equivalence
  *     observable, the tangent-gate precedent).
+ * The second arm was the kill switch (VFFT_WISDOM2_OFF=2d, legacy-table
+ * reads) until 2026-08-20; the switch is RETIRED and ignored, so both arms
+ * now read wisdom2. The gate therefore asserts CREATE-TWICE COHERENCE from
+ * the store: a cell whose raced axes are not banked at the caller's layout
+ * (lay=il) re-races on every create and diverges by plan luck — that is a
+ * store-coverage failure, not noise. Seed the cell, never widen the check.
  *
  * [3d-born-gate]: dims=3 create on a cold cell in MEASUREMENT mode
  * (wisdom_write=1) must persist a record into wisdom2_3d.txt; a second

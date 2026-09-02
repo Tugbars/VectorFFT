@@ -71,3 +71,5 @@
 @cell t=r2c n=16 q=32 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=32 ns=44.30 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=r2c n=16 q=64 ord=scr place=ip | eng=stride chain=16 vars=flat dif=0 | ran=64 ns=81.86 metric=fwd1 units=ns src=race date=2026-08-26
 @cell t=c2r n=16 q=1 ord=nat place=oop | eng=zr2c route=child_oop_il | ran=1 src=race ns=25.0 metric=bwd1 units=ns date=2026-08-26
+@cell t=r2c n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=80.0 metric=fwd1 units=ns date=2026-09-02
+@cell t=c2r n=128 q=1 ord=nat place=oop | eng=zr2c route=child_nat_ip | ran=1 src=race ns=78.3 metric=bwd1 units=ns date=2026-09-02
