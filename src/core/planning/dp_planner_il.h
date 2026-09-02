@@ -466,7 +466,9 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         /* the validator is the law: kernel existence, parity contracts and
          * the count rules live in vfft_il3p_create; NULL drops the candidate */
         b->i3 = vfft_il3p_create(N, c->R2, c->c3_A, c->c3_B);
-        return b->i3 ? 0 : -1;
+        if (!b->i3) return -1;
+        if (vfft_il3p_apply_kv_forms(b->i3, c->il_kv) != 0) return -1;
+        return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
     {
@@ -1330,80 +1332,13 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                      * cell on THIS machine but stays enumerated per owner
                      * policy — a distinct construction may win on other
                      * platforms, and the race (not a rule) decides per cell. */
-                    int msv[5], lsv[5], nm = 0, nl = 0, dm, dl;
-                    /* the (partner & 1) == 0 gates are GONE (2026-08-23):
-                     * blocked kernels carry the odd-count narrow tail, so
-                     * parity is no longer a correctness axis. */
-                    if (R1 == 32)
-                    { dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3;
-                      msv[nm++] = 4; }                    /* t2bw32 M-128  */
-                    else if (R1 == 64)
-                    {   /* R64 blocked forward (2026-08-23). Radix 64 is the
-                         * worst spiller in the tree -- the monolithic mid
-                         * burns 41.6% of its bulk loop on stack traffic --
-                         * so blocked is STRUCTURAL here as at R32 and dm = 2
-                         * names the form create already resolves (8.8).
-                         * The 8.8-vs-4.16 pick is what enters the pool: 8.8
-                         * won the mid in 3/3 runs at every count, but a rule
-                         * that has never been raced at a cell is a rule, not
-                         * a verdict. No tangent forms exist at R64, so there
-                         * is nothing else to offer. */
-                        dm = 2; msv[nm++] = 2; msv[nm++] = 1;
-                    }
-                    else if (R1 == 16)
-                    {   dm = 0; msv[nm++] = 0; msv[nm++] = 3;
-                        msv[nm++] = 4;                    /* t2tan M-128   */
-                        msv[nm++] = 1;                        /* t2b(16) */
-                    }
-                    else if (R1 == 8)
-                    { dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
-                    else
-                    {   dm = 0; msv[nm++] = 0;
-                        /* _ct: odd-composite Cooley-Tukey mid. Asked of the
-                         * RESOLVER rather than matched against a duplicated
-                         * radix list -- no kernel, no candidate. R=9 loses
-                         * this race and R=25/27 win it by ~2.5x, which is
-                         * exactly why it is enumerated and not defaulted. */
-                        if ((R1 & 1) && vfft_il2p_mid_v_fn(R1, 5, 1))
-                            msv[nm++] = 5;
-                    }
-                    if (R2 == 32)
-                    { dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3;
-                      lsv[nl++] = 4; }                    /* n1tbw32 T256  */
-                    else if (R2 == 64)
-                    {   /* R64 blocked leaf. Unlike the mid, this one MUST be
-                         * raced: the split verdict flips with the partner
-                         * count -- 4.16 won at count 8 (+19.2% vs +11.6%)
-                         * and count 16 (+16.9% vs +14.8%), 8.8 won at count
-                         * 32 (+61.3% vs +47.3%). Leaving it to
-                         * apply_blocked_default's hardcoded variant-2-first
-                         * order would silently take 4.16's cells. */
-                        dl = 2; lsv[nl++] = 2; lsv[nl++] = 1;
-                    }
-                    else if (R2 == 16)
-                    {   /* R=16 leaf: the blocked candidate is the raced
-                         * winner (variant 1 = 4·4; see il2p.h for the 24-arm
-                         * ranking that eliminated 2·8 and 8·2) — the losing
-                         * splits stay out on purpose, because leaf forms
-                         * multiply against the mid forms on EVERY pair and
-                         * _il_dp_push REFUSES a cell outright past
-                         * VFFT_IL_DP_MAX_CAND rather than truncating (a
-                         * truncated pool is a BIASED pool). Variant 3
-                         * (tangent) is admitted alongside it: it beat 4·4 by
-                         * ~20% as a kernel, which earns a seat, not a slot.
-                         * 3 mid x 3 leaf = 9 per pair, far under the cap.
-                         * Default stays MONOLITHIC (dl = 0): R=16 fits the
-                         * file, so a non-monolithic form must win per cell,
-                         * not by structural rule. */
-                        dl = 0; lsv[nl++] = 0; lsv[nl++] = 1; lsv[nl++] = 3;
-                    }
-                    else if (R2 == 8)
-                    { dl = 0; lsv[nl++] = 0; lsv[nl++] = 3; }  /* tangent leaf */
-                    else
-                    {   dl = 0; lsv[nl++] = 0;
-                        if ((R2 & 1) && vfft_il2p_leaf_v_fn(R2, 5, 1))
-                            lsv[nl++] = 5;                /* _ct leaf */
-                    }
+                    int msv[5], lsv[5], nm, nl, dm, dl;
+                    /* the per-radix ARM POOLS live in il2p.h since
+                     * 2026-09-03 (vfft_il2p_mid_arm_pool / leaf_arm_pool,
+                     * with the per-radix rationale) -- one source for the
+                     * pair and the 3-stage chain. Same codes, same order. */
+                    nm = vfft_il2p_mid_arm_pool(R1, msv, &dm);
+                    nl = vfft_il2p_leaf_arm_pool(R2, lsv, &dl);
                     for (int mi = 0; mi < nm; mi++)
                         for (int li = 0; li < nl; li++)
                         {
@@ -1445,6 +1380,54 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     c.R1 = R1; c.R2 = R2;
                     c.c3_A = A; c.c3_B = R1 / A;
                     _il_dp_push(s, &c);
+                    /* CHAIN3 FORMS (2026-09-03, parity with the pair's
+                     * il_kv): the same pools, three slots (A | B<<4 |
+                     * leaf<<8). The base candidate is the (default x3)
+                     * combo and is skipped. Full cross product up to 16
+                     * combos; past that one slot varies at a time with the
+                     * others at their default (the cap law: a refused cell
+                     * is worse than a narrower pool). */
+                    {
+                        int av[5], bv[5], lv[5], na, nb, nl3, da, db, dl3;
+                        na  = vfft_il2p_mid_arm_pool(A, av, &da);
+                        nb  = vfft_il2p_mid_arm_pool(R1 / A, bv, &db);
+                        nl3 = vfft_il2p_leaf_arm_pool(R2, lv, &dl3);
+                        if (na * nb * nl3 <= 16)
+                        {
+                            for (int ai = 0; ai < na; ai++)
+                                for (int bi = 0; bi < nb; bi++)
+                                    for (int li2 = 0; li2 < nl3; li2++)
+                                    {
+                                        if (av[ai] == da && bv[bi] == db &&
+                                            lv[li2] == dl3)
+                                            continue;
+                                        c.il_kv = VFFT_IL_C3KV_PACK(av[ai], bv[bi], lv[li2]);
+                                        _il_dp_push(s, &c);
+                                    }
+                        }
+                        else
+                        {
+                            for (int ai = 0; ai < na; ai++)
+                                if (av[ai] != da)
+                                {
+                                    c.il_kv = VFFT_IL_C3KV_PACK(av[ai], db, dl3);
+                                    _il_dp_push(s, &c);
+                                }
+                            for (int bi = 0; bi < nb; bi++)
+                                if (bv[bi] != db)
+                                {
+                                    c.il_kv = VFFT_IL_C3KV_PACK(da, bv[bi], dl3);
+                                    _il_dp_push(s, &c);
+                                }
+                            for (int li2 = 0; li2 < nl3; li2++)
+                                if (lv[li2] != dl3)
+                                {
+                                    c.il_kv = VFFT_IL_C3KV_PACK(da, db, lv[li2]);
+                                    _il_dp_push(s, &c);
+                                }
+                        }
+                        c.il_kv = 0;
+                    }
                 }
             }
         }

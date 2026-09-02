@@ -73,6 +73,23 @@
 
 /* Applies a banked kind-3 il_kv verdict; measures nothing (dp_planner_il.h
  * owns that race). il_kv==0 keeps create's default — blocked at R>=32. */
+/* the CHAIN3 twin (2026-09-03): the banked three-slot il_kv on the chain3
+ * row overrides the create's structural defaults; env VFFT_IL_KV pins. No
+ * backward cell yet (the chain's backward leaf slot is a bwd-axis item). */
+static void _k1_il3p_apply_kv(vfft_il3p_plan_t *p,
+                              const vfft_oop_wisdom_entry_t *ke)
+{
+    if (!p)
+        return;
+    if (ke)
+        vfft_il3p_apply_kv_forms(p, ke->il_kv);
+    {
+        const char *e = getenv("VFFT_IL_KV");
+        if (e && e[0])
+            vfft_il3p_apply_kv_forms(p, (int)strtol(e, NULL, 0));
+    }
+}
+
 static void _k1_il2p_apply_kv(vfft_il2p_plan_t *p,
                               const vfft_oop_wisdom_entry_t *ke,
                               const vw2_store_t *st, int N)
@@ -256,6 +273,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         *il3p_out = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
         if (*il3p_out)
         {
+            _k1_il3p_apply_kv(*il3p_out, ke);   /* banked forms > default */
             if (getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
