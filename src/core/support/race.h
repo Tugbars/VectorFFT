@@ -49,6 +49,8 @@
  */
 #ifndef VFFT_SUPPORT_RACE_H
 #define VFFT_SUPPORT_RACE_H
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <string.h>
 #include "support/race_timing.h" /* _il_ab_now: the shared monotonic clock */
@@ -122,6 +124,14 @@ static inline double vfft_race_aggregate(vfft_race_agg_t agg, double *v, int n)
  * the bare "<" verdict; a site with an incumbent applies vfft_race_beats()
  * to ns[] instead of using the return value. Returns -1 on a malformed
  * protocol (nothing timed, ns[] untouched). */
+/* THE create-race counter (vfft.c; fingerprint field races=). Every race
+ * that runs through this body counts, by construction — until 2026-09-02
+ * only three hand-placed bumps in vfft.c counted, so every extracted race
+ * (cascade, IL attach, natural order, 2D chain/axis/column-MT, zt_mt, plane
+ * queue, prime method, pair order, odd-real bridge) reported races=0: a
+ * false zero that made the harness's replay-purity check blind. */
+extern long _vfft_create_race_count;
+
 static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms,
                          int n, double *ns)
 {
@@ -130,6 +140,14 @@ static int vfft_race_run(const vfft_race_proto_t *p, const vfft_race_arm_t *arms
     if (n < 1 || n > VFFT_RACE_MAX_ARMS || p->rounds < 1 ||
         p->rounds > VFFT_RACE_MAX_ROUNDS)
         return -1;
+    _vfft_create_race_count++;              /* past a wisdom hit: a clock decides */
+    if (getenv("VFFT_RACE_LOG"))            /* name every race that runs */
+    {
+        fprintf(stderr, "[race]");
+        for (int a = 0; a < n; a++)
+            fprintf(stderr, " %s", arms[a].name ? arms[a].name : "?");
+        fprintf(stderr, " (rounds=%d reps=%d)\n", p->rounds, reps);
+    }
     for (int w = 0; w < p->warm; w++)
         for (int a = 0; a < n; a++)
             arms[a].run(arms[a].ctx);

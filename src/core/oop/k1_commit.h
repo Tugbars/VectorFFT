@@ -410,6 +410,20 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * mode=conv and the tape modes. A mode=zcasc row must not carry them: the
  * writer emits a signpost to the kind-4 recipe instead (comp when the
  * in-place race banked one, else the OOP verdict); mode=ilp emits neither. */
+/* the ILP recipe row, AS KEYED: the kind-3 row at N (lay=il / split /
+ * lay-less, exact keys) else the PRIME shard row; 0 = none (mono) */
+static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode)
+{
+    int lay;
+    if (mode != VFFT_NAT_ILP || W->vw2_off_oop) return 0;
+    lay = vw2_oop_k1_row_lay(&W->vw2, N);
+    if (lay == VW2_LAY_IL) return 1;
+    if (lay == VW2_LAY_SPLIT) return 2;
+    if (lay == VW2_LAY_ANY) return 3;
+    if (vw2_prime_method_lookup(&W->vw2, N)) return 4;
+    return 0;
+}
+
 static int _zcasc_ref_is_comp(struct vfft_wisdom_s *W, int N, int mode)
 {
     vfft_oop_wisdom_entry_t tmp;
@@ -488,6 +502,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nf = nf;
     nn.use_dif = use_dif;
     nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
+    nn.ref_ilp = _ilp_ref_of(W, N, mode);
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];
@@ -560,6 +575,7 @@ static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
     nn.nf = nf;
     nn.use_dif = use_dif;
     nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
+    nn.ref_ilp = _ilp_ref_of(W, N, mode);
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];

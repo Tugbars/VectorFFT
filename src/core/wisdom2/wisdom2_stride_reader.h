@@ -441,6 +441,21 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
                  "cell(t=c2c,n=%d,q=1,ord=scr,place=oop%s)", e->N,
                  e->ref_comp ? ",role=comp" : "");
         VW2__SB_SET(1, "ref", refbuf);
+    } else if (e->mode == VFFT_NAT_ILP && e->ref_ilp > 0) {
+        /* ILP mode row: the ROUTE verdict; the engine's RECIPE (pair /
+         * chain3 with kernel forms, or Rader/Bluestein with its inner) is
+         * signposted, never copied (2026-09-02, owner: "no arms on the
+         * ilp rows"). ref_ilp names the row AS KEYED — a signpost spelled
+         * after the request dangles under ref_ok's exact match. */
+        char refbuf[112];
+        if (e->ref_ilp == 4)
+            snprintf(refbuf, sizeof refbuf,
+                     "cell(t=c2c,n=%d,q=1,ord=scr,place=ip,role=comp,lay=il)", e->N);
+        else
+            snprintf(refbuf, sizeof refbuf,
+                     "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", e->N,
+                     e->ref_ilp == 1 ? ",lay=il" : e->ref_ilp == 2 ? ",lay=split" : "");
+        VW2__SB_SET(1, "ref", refbuf);
     } else if (e->mode == VFFT_NAT_ILP || e->nf == 0
                || (e->nf == 1 && e->factors[0] == e->N)) {
         /* SELF-CONTAINED mode cell: mode=ilp (the K=1 IL tier rebuilds
