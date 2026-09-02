@@ -1621,6 +1621,7 @@ r vw2_2d_var_name
 r vw2_legend
 r vw2_real_route_name
 r vw2_shard_name
+r vw2_shard_name_legacy
 r vw2_stride_mode_name
 r vw2_stride_var_name
 r vw2_t_name

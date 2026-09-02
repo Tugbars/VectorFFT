@@ -1,2 +1,2 @@
-e250b02d9f9be7bfd8cf823542d55a63ed98b1ea
-# short: e250b02d  (re-stamped after the odd-mid/K=1-exit cascade MT ship (zt_mt=1 at the oop K=1 exit; T=8 bitwise MT==ST identical, 24576 3.0x / 49152 3.3x / 98304 4.2x, race banks serial <=12288) + the natural-verdict banking run into generated/ (+16 store lines, additions only); ONE body changed by design, censuses identical, golden/fp byte-identical, gates mt_c2c/pool_preserve/k1scr green)
+beb16aafaa5401b9577e63b6fb979dc0abad4243
+# short: beb16aaf  (re-stamped after the wisdom shard work: wisdom2_stride.txt renamed wisdom2_scr.txt (legacy-name load fallback) + the nat->oop re-shard (router keys ord=nat to the oop shard, rehome-on-load moves stragglers, 136 rows moved across 3 checked-in stores, G0 selftest asserts the new residency); THREE bodies changed by design, censuses identical, golden/fp byte-identical; gates g0/real/nat_bankloss/zr2c_fd/mt_c2c green)
