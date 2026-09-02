@@ -293,8 +293,60 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, int N,
 static int _zcasc_ref_is_comp(struct vfft_wisdom_s *W, int N, int mode)
 {
     vfft_oop_wisdom_entry_t tmp;
+    /* the row that SERVES (mirrors _k1z_wisdom_replay's order): the searched
+     * verdict when a cascade engine holds it, else the comp recipe */
     return mode == VFFT_NAT_ZCASC && !W->vw2_off_oop &&
+           !vw2_oop_lookup_zsplit(&W->vw2, N, &tmp) &&
            vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &tmp);
+}
+
+/* ── C1.9 zt_mt: the cascade MT verdict, banked PER THREAD COUNT ──────────
+ * (arm audit 2026-09-02: it was raced on every OOP create and never
+ * persisted). The verdict rides the recipe row that served the cascade —
+ * the searched verdict, else the comp recipe — as zt_mt_t=<T> zt_mt=<0|1>;
+ * a T match replays, a mismatch re-races and re-banks (validity-condition
+ * banking, measurement_arms 'cores sharing one transform'). A re-raced
+ * recipe row is rebuilt fresh, so it drops the MT verdict with the recipe.
+ * VFFT_ZT_NO_MT (env) beats wisdom: the race helper applies it, so an env
+ * pin never replays and never banks (the tcut law). */
+static int _zt_mt_served_key(struct vfft_wisdom_s *W, int N, vw2_key_t *k)
+{
+    vfft_oop_wisdom_entry_t tmp;
+    if (!W || W->vw2_off_oop) return 0;
+    if (vw2_oop_lookup_zsplit(&W->vw2, N, &tmp)) { vw2_oop_zsplit_key(N, VW2_ROLE_NONE, k); return 1; }
+    if (vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &tmp)) { vw2_oop_zsplit_key(N, VW2_ROLE_COMP, k); return 1; }
+    return 0;
+}
+
+static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
+                                  struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg, int N)
+{
+    vw2_key_t k;
+    const int T = h->nthreads;
+    const vw2_rec_t *r = NULL;
+    if (!getenv("VFFT_ZT_NO_MT") && !cfg->recalibrate &&
+        _zt_mt_served_key(W, N, &k) && (r = vw2_lookup(&W->vw2, &k)) != NULL)
+    {
+        const int bt = vw2__oop_geti(r, "zt_mt_t", 0);
+        if (bt == T)
+        {
+            h->zt_mt = vw2__oop_geti(r, "zt_mt", 0) ? 1 : 0;
+            if (getenv("VFFT_ZT_LOG") || getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[zt-mt] N=%d T=%d replay zt_mt=%d src=wisdom\n",
+                        N, T, h->zt_mt);
+            return;
+        }
+    }
+    _zt_mt_race(h);
+    if (!getenv("VFFT_ZT_NO_MT") && _zt_mt_served_key(W, N, &k))
+    {
+        char tb[16];
+        snprintf(tb, sizeof tb, "%d", T);
+        if (vw2_update_field(&W->vw2, &k, "zt_mt_t", tb) == VW2_OK &&
+            vw2_update_field(&W->vw2, &k, "zt_mt", h->zt_mt ? "1" : "0") == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
 }
 
 static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
@@ -443,11 +495,12 @@ static int _k1z_wisdom_replay(const vfft_config_t *cfg,
     const vfft_oop_wisdom_entry_t *ze = NULL;
     if (W->vw2_off_oop)
         ze = vfft_oop_wisdom_lookup_zsplit(&W->oop, N);
+    else if (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb))
+        ze = &zeb;                 /* the SEARCHED verdict (planner / OOP race) */
     else if (ip_call &&
              vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
-        ze = &zeb;
-    else if (vw2_oop_lookup_zsplit(&W->vw2, N, &zeb))
-        ze = &zeb;
+        ze = &zeb;                 /* in-place: the comp recipe (default chain,
+                                    * raced t2q) when nothing searched exists */
     else if (vw2_oop_lookup_zsplit_role(&W->vw2, N, VW2_ROLE_COMP, &zeb))
     {
         int cch[VFFT_K1_CC_MAX_NF], cnf = 0, ci, codd = 0;

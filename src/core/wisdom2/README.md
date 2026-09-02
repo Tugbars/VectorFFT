@@ -181,7 +181,9 @@ tile width and fence (`zt_tw`/`zt_l1`) — is the `ord=scr place=oop` kind-4
 cell. Two kind-4 rows can exist at one N: the problem VERDICT (role absent;
 banked by the OOP create's own race, and a hit attaches the cascade for
 OOP) and the COMPONENT recipe (`role=comp`; banked by an in-place or odd
-race, which must never attach an OOP route by fiat). An in-place caller
+race — and by the offline planner for every odd-mid cell — which must never
+attach an OOP route by fiat). A comp row may also carry the cascade's per-T
+MT verdict (`zt_mt_t=`/`zt_mt=`), as may the verdict row. An in-place caller
 replays comp first, then the verdict; its mode row's `ref=` names whichever
 served. A mode row never carries the caller's classic chain as its own —
 that chain is the convert incumbent's plan (the served recipe only for

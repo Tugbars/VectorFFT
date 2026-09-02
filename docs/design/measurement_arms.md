@@ -483,6 +483,14 @@ C1.1 route zturn vs zsplit      RACED (offline). Runtime is ZTURN-only since the
 C1.2 chain / factorisation      RACED. Ordered {4,8} chains, nf in [3, MAX_NF],
                                 each validated by ITS OWN engine's create.
                                 GATES the terminator family and C1.4.
+                                ODD MIDS (N = 2^a * odd, 2026-09-02): the odd
+                                part decomposed into msg radices {3,5,7,9,15}
+                                at every interior position x ordered {4,8} for
+                                the rest; same validation, same width and t2q
+                                axes (one helper). Banked as the role=comp
+                                recipe: the problem-verdict key at odd N stays
+                                the OOP cell's own winner (an odd cascade races
+                                the finished handle at the commit, never by fiat).
 C1.3 terminator kind            DERIVED from (chain[nf-1], natord). Never an
                                 independent arm.
 C1.4 t2q single vs 2-quad       RACED **only if** last==8 AND not natord.
@@ -490,14 +498,20 @@ C1.4 t2q single vs 2-quad       RACED **only if** last==8 AND not natord.
                                 pure code placement - measured per cell, never
                                 hand-set.
 C1.5 tcut width (zt_tw)         RACED (offline). UNTILED (kept so "tiled" stays
-                                falsifiable) vs every legal width.
+                                falsifiable) vs every legal width. Odd mids
+                                included since 2026-09-02 (C1.2).
 C1.6 tfuse                      DERIVED; FORCED 0 under natord (rho spans the whole
                                 section, so a per-tile cut cannot exist).
 C1.7 thonest                    ENV only (VFFT_TCUT_TW). Bit-identical pair, kept
                                 reachable as F1's discriminator.
 C1.8 natord on/off              Decided by the B5 natorder race, NOT by the env hook
                                 (VFFT_ZT_NATORD is a probe/gate hook).
-C1.9 zt_mt serial vs threaded   RACED-NOT-BANKED.
+C1.9 zt_mt serial vs threaded   RACED, BANKED PER-T (2026-09-02): the verdict
+                                rides the recipe row that served the cascade as
+                                zt_mt_t=<T> zt_mt=<0|1>; a T match replays, a
+                                mismatch re-races and re-banks; a re-raced
+                                recipe drops it. VFFT_ZT_NO_MT (env) never
+                                replays and never banks.
 ```
 
 WITNESS: `1d.il.ip.c2c.4096` -> `zroute=1`, and it RACES [measured].

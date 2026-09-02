@@ -13,6 +13,10 @@
  *   x chain: ordered {4,8}^nf, nf in [3, VFFT_ZSPLIT_MAX_NF], prod == N
  *                                           (ordering-sensitive, every
  *                                            ordering its own candidate)
+ *            + ODD MIDS (2026-09-02): N = 2^a * odd, the odd part as msg
+ *              radices {3,5,7,9,15} at every interior position; the winner
+ *              banks as the role=comp recipe (the verdict key at odd N is
+ *              the OOP cell's own winner; odd cascades race at the commit)
  *     🔴 The cap became 7 on 2026-07-29 (P2). At N=16384 that ADDS exactly
  *     one chain, 4^7 — the all-radix-4 factorization, previously
  *     unreachable — so any 16384 verdict banked before that date was chosen

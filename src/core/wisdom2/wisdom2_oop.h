@@ -113,6 +113,12 @@ typedef struct {
      * this CPU is hybrid, P-core L1d 48 KB vs E-core 32 KB. */
     int    zt_tw;
     int    zt_l1;
+    /* kind 4: the cascade MT verdict (serial vs threaded, _zt_mt_race) with
+     * its validity condition — the thread count it was raced at (the
+     * 'cores sharing one transform' banking class: bank per-T, re-race on a
+     * T mismatch; 2026-09-02). zt_mt_t == 0 = never raced/banked. */
+    int    zt_mt_t;
+    int    zt_mt;
     /* kind 4 (ZSPLIT / K=1 SCRAMBLED cascade): measured fwd terminator pick,
      * 0 = sterm (single-quad), 1 = sterm2 (2-quad unroll-and-jam). Line:
      *   N 1 4 zs_t2q cc_chain ns [zs_route zt_t2q]
