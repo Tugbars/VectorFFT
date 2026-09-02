@@ -435,8 +435,18 @@ ARMS       arm0 CONVERT incumbent: deinterleave -> split cplan -> reinterleave
                         zturn / zsplit cascade  (N >= 2048)
            5 rounds, arms alternated per round, median-of-5,
            reps = 200 (N<=256) / 80 (N<=1024) / 32
-RACE       src/core/vfft.c:8156 and :8174; verdict at :8199
-BANK       wisdom2_scr | t=c2c n=N q=K ord=scr place=ip lay=il
+RACE       src/core/oop/c2c_ip_create.h (the ILP MEASURE race below the
+           natural block; the zcasc race beside it) - K=1 ONLY: the race needs
+           the K=1 IL candidate (_k1_il_candidate), K>1 interleaved rides the
+           transform-contiguous wrapper over a K=1 inner (vfft.c) and never
+           reaches it (errata 2026-09-03: the old q=K claim was wrong)
+DIRECTION  forward executes only; the verdict serves BOTH directions.
+           STRUCTURAL BY MEASUREMENT (2026-09-03 flip probe, 128..8192 in-place
+           IL, 15 rounds alternated, min-of-rounds): the native arm beats the
+           convert incumbent 2.8-5.9x forward AND 2.8-4.8x backward at every
+           cell; no cell's winner flips with direction, so a dir=bwd mode row
+           would bank the same verdict at the cost of keeping both engines alive.
+BANK       wisdom2_scr | t=c2c n=N q=1 ord=scr place=ip lay=il
            | mode=ilp|conv (N<2048)  or  mode=zcasc|conv (N>=2048)
            A mode=zcasc row carries NO chain of its own: it signposts the kind-4
            RECIPE (chain, t2q, tcut width, fence) with ref=cell(...ord=scr,place=oop
@@ -488,6 +498,15 @@ INNER      B4.1 (2026-09-02): the convolution's inner transform at length M
 RACE       src/core/oop/il_prime.h:385-428
 NOTE       An earlier claim that the prime METHOD is "never raced" was REFUTED by
            verification - this race is real.
+DIRECTION  forward executes only; one plan serves both directions. STRUCTURAL
+           BY MEASUREMENT (2026-09-03 flip probe at 127/131/251/4093, banked
+           method vs the other pinned): the fwd and bwd ratios are IDENTICAL to
+           two digits at every cell (the two methods do the same work in both
+           directions - conjugated twiddles, same inner), so no per-direction
+           method row can ever differ from the forward one.
+           ⚠ the probe also read 4093: banked BLUESTEIN loses to a pinned Rader
+           by 7% in both directions - a stale-magnitude concern for the
+           pre-release sweep, not re-raced during development.
 ```
 
 ---
@@ -822,3 +841,10 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
   row, the reader returns -1 for "no row" (B1.3's KNOWN GAP is gone).
 * **UNVERIFIED**: the odd/prime block (B4, E1.7, E2.13, the Bluestein sweeps) lost its
   adversarial verification three times to rate limits. Treat as unchecked.
+* **Backward direction** (audited 2026-09-03): only kernel FORMS have their own
+  backward cells (B1.3, the pair and since 2026-09-03 the chain3 leaf slot). The
+  in-place attach (B2), the prime method (B4) and the cascade recipe (C1: t2q has no
+  backward twin, tw is shared) serve the forward verdict backward. B2 and B4 were
+  measured in both directions (the dirflip probe) and no winner flips: declared
+  structural by measurement, not by ruling. The cascade backward tile width is the one
+  raceable direction axis left unmeasured (no backward-only width exists to pin).
