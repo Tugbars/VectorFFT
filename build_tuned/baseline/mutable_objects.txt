@@ -7,6 +7,8 @@ B _vfft_zt_mt_count
 b .bss
 b _def
 b _def_loaded
+b _il2d_blu_chain_hook
+b _il2d_blu_ctx
 b _il_ab_runs
 b _ilprime_inner_provider
 b _ilprime_inner_provider_ctx

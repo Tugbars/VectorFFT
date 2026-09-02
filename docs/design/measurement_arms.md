@@ -644,7 +644,11 @@ E1.7 N1-arm                      RACED, BANKED (2026-09-02): native odd chain vs
                                  nst/R/L. Verdict token blu= on the lay=il row
                                  (0 = chain, M = Bluestein length; the row's
                                  chain= is the chain that SERVES), direction-
-                                 shared on the real row; replayed by both tiers,
+                                 shared on the real row; replayed by both tiers
+                                 on blu > 0 ALONE (a prime N1's banked chain is
+                                 the pow2 M chain — no odd factor to gate on;
+                                 the hasodd-gated replay ran the M chain as N1's,
+                                 caught by the naive-DFT probe 2026-09-02),
                                  re-raced only unraced or under recalibrate. Env
                                  VFFT_IL2D_BLU pins and never banks. Before this
                                  the race ran on EVERY odd-N1 create.
@@ -652,6 +656,18 @@ E1.8 wc                               ENV only (VFFT_IL2D_WC).
 E1.9 NATURAL n1 (M4-lite)             STRUCTURAL. Closed-form leaf redirection, or
                                       the create REFUSES. No race, no bank.
 E1.10 2D NATURAL per-axis reorder tapes  STRUCTURAL, deterministic.
+E1.11 column-stage KERNEL FORM          STRUCTURAL BY RULING (audited 2026-09-02).
+                                      The column family (t2c mid / n1c leaf) HAS
+                                      rival emitted forms at r32 (mono, b48, b84)
+                                      and r64 (mono, b88, b416); the resolver picks
+                                      ONE per radix from the construction table —
+                                      raced 2026-08-25 by il2d_kv_race in both
+                                      cache regimes, owner ruling: radix-determined
+                                      per the 1D law, r32/r64 never monolithic
+                                      (r32 b48 +13-24%, r64 b88 +48-51%; tangent
+                                      interiors +-1-4%, not adopted). No per-cell
+                                      axis, by that ruling; the rival kernels stay
+                                      emitted so the ruling remains falsifiable.
 ```
 
 **`wl` gates the existence of the MT axis.** `nb = N1/wl`; `nb < 2` means no bands, so
