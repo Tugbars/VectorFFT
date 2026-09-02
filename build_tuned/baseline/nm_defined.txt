@@ -1829,6 +1829,7 @@ t _inner_c2c.constprop.N
 t _inner_c2c_trig.constprop.N
 t _ip_tramp
 t _k1_il2p_apply_kv
+t _k1_il3p_apply_kv
 t _k1_il_candidate
 t _k1ord_arm_run
 t _k1ord_reseed
@@ -2549,11 +2550,11 @@ t vfft_fft2d_c2r_bench_min
 t vfft_fft2d_c2r_plan_measure.constprop.N
 t vfft_fft2d_r2c_bench_min
 t vfft_fft2d_r2c_plan_create_wisdom.constprop.N
-t vfft_il2p_apply_kv_forms.isra.N
 t vfft_il2p_apply_kv_forms_bwd.isra.N
 t vfft_il2p_create
 t vfft_il2p_execute_bwd
 t vfft_il2p_execute_fwd
+t vfft_il3p_apply_kv_forms.isra.N
 t vfft_il3p_create
 t vfft_il3p_default_chain
 t vfft_il3p_execute_bwd

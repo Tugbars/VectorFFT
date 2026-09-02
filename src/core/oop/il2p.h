@@ -843,6 +843,60 @@ static inline int vfft_il2p_apply_kv_forms_bwd(vfft_il2p_plan_t *p, int bkv)
 }
 
 
+/* PER-RADIX FORM ARM POOLS (moved out of dp_planner_il.h 2026-09-03 so the
+ * Bailey pair and the 3-stage chain enumerate the SAME pools): the variant
+ * codes a slot of radix R can serve, in the planner's order, with the
+ * structural default (what create resolves) in *def. Pools are <= 4 long.
+ *
+ * MID: R32 {2 (4.8, default), 1 (2.16), 3 (wing32 tangent), 4 (M-128)};
+ *      R64 {2 (8.8, default), 1 (4.16)} -- blocked is STRUCTURAL at R>=32
+ *      (register-file arithmetic; 0xF stays a wisdom-side escape only);
+ *      R16 {0 (mono, default), 3 (t2tan), 4 (t2tan M-128), 1 (t2b16)};
+ *      R8 {0, 3}; other {0, +5 (_ct) when the resolver has it -- R=9 loses
+ *      that race, R=25/27 win it ~2.5x, which is why it is raced not ruled}.
+ * LEAF: R32 {2, 1, 3, 4 (n1tbw32 T256)}; R64 {2, 1} -- MUST be raced: the
+ *      split verdict flips with the partner count (4.16 at counts 8/16, 8.8
+ *      at 32); R16 {0 (default), 1 (4.4), 3 (tangent)} -- R16 fits the file,
+ *      so a non-monolithic form must WIN per cell; R8 {0, 3}; other {0, +5}.
+ * The (partner & 1) gates are gone since 2026-08-23 (blocked kernels carry
+ * the odd-count narrow tail). */
+static inline int vfft_il2p_mid_arm_pool(int R1, int *msv, int *dm)
+{
+    int nm = 0;
+    if (R1 == 32)
+    { *dm = 2; msv[nm++] = 2; msv[nm++] = 1; msv[nm++] = 3; msv[nm++] = 4; }
+    else if (R1 == 64)
+    { *dm = 2; msv[nm++] = 2; msv[nm++] = 1; }
+    else if (R1 == 16)
+    { *dm = 0; msv[nm++] = 0; msv[nm++] = 3; msv[nm++] = 4; msv[nm++] = 1; }
+    else if (R1 == 8)
+    { *dm = 0; msv[nm++] = 0; msv[nm++] = 3; }
+    else
+    {   *dm = 0; msv[nm++] = 0;
+        if ((R1 & 1) && vfft_il2p_mid_v_fn(R1, 5, 1))
+            msv[nm++] = 5;
+    }
+    return nm;
+}
+static inline int vfft_il2p_leaf_arm_pool(int R2, int *lsv, int *dl)
+{
+    int nl = 0;
+    if (R2 == 32)
+    { *dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; lsv[nl++] = 3; lsv[nl++] = 4; }
+    else if (R2 == 64)
+    { *dl = 2; lsv[nl++] = 2; lsv[nl++] = 1; }
+    else if (R2 == 16)
+    { *dl = 0; lsv[nl++] = 0; lsv[nl++] = 1; lsv[nl++] = 3; }
+    else if (R2 == 8)
+    { *dl = 0; lsv[nl++] = 0; lsv[nl++] = 3; }
+    else
+    {   *dl = 0; lsv[nl++] = 0;
+        if ((R2 & 1) && vfft_il2p_leaf_v_fn(R2, 5, 1))
+            lsv[nl++] = 5;
+    }
+    return nl;
+}
+
 static inline vfft_il2p_plan_t *vfft_il2p_create(int N, int R1, int R2)
 {
     if (N <= 0 || R1 < 3 || R2 < 3 || (long)R1 * (long)R2 != (long)N) return 0;
@@ -1253,17 +1307,63 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
         vfft_il3p_destroy(p);
         return 0;
     }
-    /* Structural blocked default, LEAF only (same rule + kill switch as
-     * vfft_il2p_apply_blocked_default; R1 = A*B is even by the count-
-     * contract guard above, so the leaf's count parity is guaranteed).
-     * The mids run radices A,B — small cofactors the registry has no
-     * blocked twins for; nothing to select there. */
-    if (!getenv("VFFT_NO_ILBLK") && R2 >= 32) {
-        vfft_il2p_fn bl = vfft_il2p_leaf_v_fn(R2, 2, 1);    /* 4·8  */
-        if (!bl) bl = vfft_il2p_leaf_v_fn(R2, 1, 1);        /* 2·16 */
-        if (bl) p->leaf_f = bl;
+    /* Structural blocked default at R >= 32 in EVERY slot (same rule +
+     * kill switch as vfft_il2p_apply_blocked_default; R1 = A*B is even by
+     * the count-contract guard above). Mids joined 2026-09-03: A or B can
+     * be 32/64 at some cells, and the pair's law (blocked is structural at
+     * R >= 32) applies to a slot, not to a route. Wisdom il_kv OVERRIDES
+     * this (vfft_il3p_apply_kv_forms). */
+    if (!getenv("VFFT_NO_ILBLK")) {
+        if (R2 >= 32) {
+            vfft_il2p_fn bl = vfft_il2p_leaf_v_fn(R2, 2, 1);    /* 4·8  */
+            if (!bl) bl = vfft_il2p_leaf_v_fn(R2, 1, 1);        /* 2·16 */
+            if (bl) p->leaf_f = bl;
+        }
+        if (A >= 32) {
+            vfft_il2p_fn m = vfft_il2p_mid_v_fn(A, 2, 1);
+            if (!m) m = vfft_il2p_mid_v_fn(A, 1, 1);
+            if (m) p->tA_f = m;
+        }
+        if (B >= 32) {
+            vfft_il2p_fn m = vfft_il2p_mid_v_fn(B, 2, 1);
+            if (!m) m = vfft_il2p_mid_v_fn(B, 1, 1);
+            if (m) p->tB_f = m;
+        }
     }
     return p;
+}
+
+/* CHAIN3 per-slot kernel FORMS (2026-09-03, parity with the pair's il_kv):
+ * the same nibble codec, three slots -- mid A | mid B << 4 | leaf << 8 --
+ * carried in the chain3 row's il_kv (the row's il_route says which layout
+ * the token has). 0 = leave the default, 0xF = force the monolithic kernel,
+ * else the variant code of vfft_il2p_mid_v_fn / leaf_v_fn. Both mids run
+ * count = R2, the leaf runs count = R1 (see execute_fwd). */
+#define VFFT_IL_C3KV_A(kv)        ((kv) & 0xf)
+#define VFFT_IL_C3KV_B(kv)        (((kv) >> 4) & 0xf)
+#define VFFT_IL_C3KV_LEAF(kv)     (((kv) >> 8) & 0xf)
+#define VFFT_IL_C3KV_PACK(a, b, l) (((a) & 0xf) | (((b) & 0xf) << 4) | (((l) & 0xf) << 8))
+static inline int vfft_il3p_apply_kv_forms(vfft_il3p_plan_t *p, int kv)
+{
+    int ok = 0;
+    if (!p) return -1;
+    if (!kv) return 0;
+    {
+        const int v = VFFT_IL_C3KV_A(kv);
+        if (v == VFFT_IL_KV_MONO) { vfft_il2p_fn m = vfft_il2p_mid_fn(p->A, 0); if (m) p->tA_f = m; else ok = -1; }
+        else if (v) { vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->A, v, (p->R2 & 1) == 0); if (m) p->tA_f = m; else ok = -1; }
+    }
+    {
+        const int v = VFFT_IL_C3KV_B(kv);
+        if (v == VFFT_IL_KV_MONO) { vfft_il2p_fn m = vfft_il2p_mid_fn(p->B, 0); if (m) p->tB_f = m; else ok = -1; }
+        else if (v) { vfft_il2p_fn m = vfft_il2p_mid_v_fn(p->B, v, (p->R2 & 1) == 0); if (m) p->tB_f = m; else ok = -1; }
+    }
+    {
+        const int v = VFFT_IL_C3KV_LEAF(kv);
+        if (v == VFFT_IL_KV_MONO) { vfft_il2p_fn l = vfft_il2p_leaf_fn(p->R2, 0); if (l) p->leaf_f = l; else ok = -1; }
+        else if (v) { vfft_il2p_fn l = vfft_il2p_leaf_v_fn(p->R2, v, ((p->A * p->B) & 1) == 0); if (l) p->leaf_f = l; else ok = -1; }
+    }
+    return ok;
 }
 
 static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,

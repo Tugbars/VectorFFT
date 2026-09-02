@@ -318,7 +318,11 @@ ARMS       route enum VFFT_K1_IL_*:
              5 2P_PURE   the Bailey pair                 <- this tier
              6 CHAIN3    3-stage chain (odd factors as kernel RADICES) —
                          RACED since 2026-09-02: every legal (R2, A, B)
-                         enters the natural pool; banked as il_chain=R2.A.B
+                         enters the natural pool; banked as il_chain=R2.A.B.
+                         Its per-slot kernel FORMS race too since 2026-09-03
+                         (B1.2: the same pools, three nibbles A|B<<4|leaf<<8
+                         in the row's il_kv; replayed by both create sites;
+                         no backward cell yet — see B1.3)
              7 PRIME     ilprime (see B4)
              4 CASCADE   the >= 2048 tier (see C1)
 BANK       wisdom2_oop | t=c2c n=N q=1 ord=nat place=oop role=comp lay=il
@@ -367,7 +371,12 @@ GATED BY   B1.1 - the arm sets are per-radix
 | odd | 0 | 0, 5 (`_ct`) if the resolver has it |
 
 Cross product **minus the (default, default) combo**, which is already the base
-candidate.
+candidate. The per-radix pools are ONE source (il2p.h vfft_il2p_mid_arm_pool /
+leaf_arm_pool since 2026-09-03), shared with the CHAIN3 route: there every legal
+chain enumerates A x B x leaf from the same pools (full cross product up to 16
+combos, else one slot at a time), banks the winner as a three-nibble il_kv on
+its chain3 row, and the chain3 create applies the pair's blocked default to
+every slot at R >= 32 (mids included since 2026-09-03).
 
 ```
 NOTE       R2=64 MUST be raced: 4.16 won at count 8 (+19.2%) and 16 (+16.9%),
