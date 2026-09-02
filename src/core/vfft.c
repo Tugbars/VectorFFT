@@ -1027,6 +1027,97 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 #include "oop/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
 #include "transforms/fftnd/fftnd_create.h" /* rank-3/rank-4 create tier (step 22) */
 #include "transforms/fft2d/fft2d_create.h" /* 2D create tier (step 23) */
+/* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
+ * allocator and the padded-batch create tier used to retype this sequence
+ * (seed both legs from the store, calibrate-on-miss, re-lookup because
+ * wisdom_add may realloc, _calibrate_pad, stamp exec_me, bank, persist) —
+ * comments included. The callers keep their two real differences as
+ * parameters:
+ *   ensure_pad_plan  — the create tier must materialise the aligned (N,Kp)
+ *                      plan cell even on a PAD-verdict HIT (a verdict-only
+ *                      shipped row would otherwise fall silently to the
+ *                      tail); the allocator only sizes a buffer and skips.
+ *   already_measured — owned-buffers runs the allocator's ladder FIRST in
+ *                      the same vfft_create; the create tier passes 1 so
+ *                      recalibrate=1 no longer fires the two most expensive
+ *                      races in the library TWICE per create.
+ * Returns the decided execute width (K or Kp; K when undecided — the
+ * always-correct tail) and hands back both legs. Primes never measure. */
+static size_t _pad_ladder(int N, size_t K, size_t Kp, const vfft_config_t *cfg,
+                          struct vfft_wisdom_s *W,
+                          const vfft_proto_registry_t *reg,
+                          int ensure_pad_plan, int already_measured,
+                          const vfft_proto_wisdom_entry_t **te_out,
+                          const vfft_proto_wisdom_entry_t **ae_out)
+{
+    const int prime = _vfft_is_prime(N);
+    const int recal = cfg->recalibrate && !already_measured;
+    const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+    const vfft_proto_wisdom_entry_t *ae;
+    int dirty = 0;
+    if (!W->vw2_off_stride)
+    {   /* store-hit OVERWRITES the (possibly stale) frozen-file preload */
+        vfft_proto_wisdom_entry_t sb;
+        if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
+            vfft_proto_wisdom_set(&W->c2c, &sb);
+        if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
+            vfft_proto_wisdom_set(&W->c2c, &sb);
+        te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+    }
+    if ((!te || recal) && !prime)
+    {
+        vfft_proto_wisdom_entry_t ne;
+        if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
+        {
+            vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+            vw2_stride_bank_entry(&W->vw2, &ne, 0);
+            dirty = 1;
+            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+        }
+    }
+    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+    size_t stride = K;
+    if (Kp != K && te && !prime)
+    {
+        const int measure = recal || te->exec_me == 0;
+        const int need_aligned = measure ||
+            (ensure_pad_plan && te->exec_me == (int)Kp);
+        if (need_aligned && (!ae || recal))
+        {
+            vfft_proto_wisdom_entry_t ne;
+            if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
+            {
+                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
+                vw2_stride_bank_entry(&W->vw2, &ne, 0);
+                dirty = 1;
+            }
+        }
+        te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* wisdom_add may realloc */
+        ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+        if (measure && te && ae)
+        {
+            int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
+            if (verdict > 0)
+            {
+                vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
+                upd.exec_me = verdict;
+                vfft_proto_wisdom_add(&W->c2c, &upd, 1);
+                vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
+                dirty = 1;
+                te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
+                ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
+            }
+        }
+        if (te && (te->exec_me == (int)K || te->exec_me == (int)Kp))
+            stride = (size_t)te->exec_me;
+    }
+    if (dirty)
+        _vw2_persist(W, cfg);
+    if (te_out) *te_out = te;
+    if (ae_out) *ae_out = ae;
+    return stride;
+}
+
 #include "oop/c2c_ip_create.h" /* c2c in-place create tier (step 24) */
 #include "oop/c2c_oop_create.h" /* c2c out-of-place create tier (step 25) */
 #include "transforms/real/real_create.h" /* r2c/c2r create tier (step 26) */

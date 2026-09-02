@@ -1651,7 +1651,6 @@ t _c2r_arm_run
 t _c2r_nat_mt_tramp
 t _c2r_stage0_zin
 t _calibrate_c2c.constprop.N
-t _calibrate_pad.constprop.N
 t _dct1_destroy
 t _dct1_execute
 t _dct1_worker_post
@@ -1746,8 +1745,8 @@ t _fndr_axis_range
 t _fndr_axis_tramp
 t _fndr_destroy
 t _fndr_execute_bwd
+t _fndr_execute_bwd_oop
 t _fndr_execute_fwd
-t _fndr_pack
 t _fndr_rows_bwd_range
 t _fndr_rows_fwd_range
 t _fndr_rows_mt
@@ -1817,7 +1816,7 @@ t _oop_mt_tramp
 t _own_batch_free
 t _pad_arm_run
 t _pad_fill
-t _pad_stride_c2c
+t _pad_ladder.constprop.N
 t _pq_execute
 t _pq_mt_arm_loop
 t _pq_mt_arm_queue
@@ -2480,7 +2479,6 @@ t exec_n95_k32_519_v10_dif_fwd_avx2
 t exec_n95_k4_519_dif_bwd_avx2
 t exec_n95_k4_519_dif_bwd_avx2.part.N
 t exec_n95_k4_519_v10_dif_fwd_avx2
-t natorder_scr_build
 t natorder_scr_free.part.N
 t natorder_scr_term_range
 t rfft_execute_fwd_natural

@@ -132,78 +132,15 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
 
         /* UNIFIED wisdom (single spike_wisdom.txt): the padded verdict is the (N,K) entry's
          * exec_me, and the pad plan IS the aligned (N,Kp) entry — both ordinary c2c cells. */
-        const vfft_proto_wisdom_entry_t *te = vfft_proto_wisdom_lookup(&W->c2c, N, K);  /* tail leg = factK  */
-        const vfft_proto_wisdom_entry_t *ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp); /* pad leg = aligned (N,Kp) */
+        /* THE ladder is one body now (vfft.c:_pad_ladder — A1): this arm only runs
+         * with an owned batch, whose allocator ALREADY ran the ladder this same
+         * vfft_create, so already_measured=1 (recalibrate fired there; never twice
+         * per create) and ensure_pad_plan=1 (a PAD-verdict hit materialises the
+         * aligned (N,Kp) plan cell that a verdict-only shipped row lacks). */
+        const vfft_proto_wisdom_entry_t *te = NULL, *ae = NULL;
         int misaligned = (Kp != K);
-        /* wave-4: seed the process cache from the STORE (both legs); te/ae
-         * re-looked-up after every set (wisdom_set may realloc). */
-        if (!W->vw2_off_stride)
-        {
-            /* store-hit OVERWRITES the table (the frozen-file preload may
-             * be stale vs post-freeze store rows — the store wins) */
-            vfft_proto_wisdom_entry_t sb;
-            if (vw2_stride_lookup(&W->vw2, 0, N, K, &sb))
-                vfft_proto_wisdom_set(&W->c2c, &sb);
-            if (vw2_stride_lookup(&W->vw2, 0, N, Kp, &sb))
-                vfft_proto_wisdom_set(&W->c2c, &sb);
-            te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-        }
-
-        /* CALIBRATE-ON-MISS (planner primitive). Ensure the (N,K) tight cell is calibrated
-         * (tail leg / — for aligned K — the plan itself). Same on-miss contract as tight c2c. */
-        if ((!te || cfg->recalibrate) && !_vfft_is_prime(N))
-        {
-            vfft_proto_wisdom_entry_t ne;
-            if (_calibrate_c2c(N, K, cfg->rigor, reg, &ne) == 0)
-            {
-                vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                vw2_stride_bank_entry(&W->vw2, &ne, 0);
-                _vw2_persist(W, cfg);
-                te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-            }
-        }
-        /* Misaligned: the aligned (N,Kp) cell IS the pad plan — an ORDINARY c2c cell. Padding
-         * stores ONLY the verdict (exec_me), never a copy of the aligned plan; the plan is
-         * calibrated normally, ON DEMAND. So ensure (N,Kp) exists when we must MEASURE
-         * (unmeasured / recalibrate) OR when the verdict is already PAD (a verdict-only cell —
-         * e.g. shipped wisdom — whose aligned plan isn't present yet would otherwise fall
-         * silently to the tail). When measuring, A/B tail-vs-pad and stamp exec_me. Aligned K
-         * needs no A/B (Kp==K). Prime skips. */
-        if (misaligned && te && !_vfft_is_prime(N))
-        {
-            int measure = (cfg->recalibrate || te->exec_me == 0);
-            int need_aligned = measure || te->exec_me == (int)Kp;
-            int dirty = 0;
-            if (need_aligned && (!ae || cfg->recalibrate))
-            {
-                vfft_proto_wisdom_entry_t ne;
-                if (_calibrate_c2c(N, (size_t)Kp, cfg->rigor, reg, &ne) == 0)
-                {
-                    vfft_proto_wisdom_add(&W->c2c, &ne, 1);
-                    vw2_stride_bank_entry(&W->vw2, &ne, 0);
-                    dirty = 1;
-                }
-            }
-            te = vfft_proto_wisdom_lookup(&W->c2c, N, K); /* re-lookup: wisdom_add may realloc */
-            ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-            if (measure && te && ae)
-            {
-                int verdict = _calibrate_pad(N, K, cfg->rigor, reg, te, ae); /* Kp / K / 0 */
-                if (verdict > 0)
-                {
-                    vfft_proto_wisdom_entry_t upd = *te; /* keep factK, stamp the verdict */
-                    upd.exec_me = verdict;
-                    vfft_proto_wisdom_add(&W->c2c, &upd, 1);
-                    vw2_stride_bank_entry(&W->vw2, &upd, 0); /* pad_me= rides the record */
-                    dirty = 1;
-                    te = vfft_proto_wisdom_lookup(&W->c2c, N, K);
-                    ae = vfft_proto_wisdom_lookup(&W->c2c, N, Kp);
-                }
-            }
-            if (dirty)
-                _vw2_persist(W, cfg);
-        }
+        _pad_ladder(N, K, Kp, cfg, W, reg, /*ensure_pad_plan=*/1,
+                    /*already_measured=*/1, &te, &ae);
 
         /* Select: PAD verdict -> the aligned (N,Kp) factorization @me=Kp ; else the (N,K) tight
          * factorization @me=K (tail on the padded buffer, always correct). */
