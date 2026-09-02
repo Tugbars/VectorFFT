@@ -20,10 +20,10 @@ multithreading.
 | `planner.h` | build a `stride_plan_t` from (N,K): factorize, choose variants, wire codelets, compute twiddles |
 | `executor.h` | single-thread dispatch (`vfft_proto_execute_fwd/bwd`) — Tier-1 lookup → generic fallback |
 | `executor_generic.h` | cold-cell correctness baseline: per-stage function-pointer loop |
-| `stride_executor.h` | the **multithreaded** executor (`stride_execute_fwd/bwd`) — K-split / group-parallel |
 | `twiddle.h` | per-stage group layout + twiddle table computation (Method C, DIT & DIF) |
 | `proto_stride_compat.h` | serial bridge: `stride_execute_fwd` → plan's execute; slice helpers for r2c fused stages |
 | `compat.h` | misc shims |
+| `mt_execute.h` | threaded c2c execute: the in-place trampoline and the MT-safe dispatch (`_c2c_mt`, `_c2c_mt_safe`) |
 
 > The plan **struct** (`stride_plan_t` / `stride_stage_t`) is physically defined in
 > `generated/…/plan_executors.h` (emitted by the compiler) and re-exported through
@@ -82,7 +82,7 @@ which simply walks the stages in reverse).
 - **Minimal memory traffic** — no copy, no transpose buffer; the executor streams the
   plane through cache once per stage (the basis of the memory-bound thesis).
 - **Trivially-correct K-split MT** — lanes are independent and never share a transpose
-  buffer, so threading is a pure pointer-offset split (see `stride_executor.h`).
+  buffer, so threading is a pure pointer-offset split (see `mt_execute.h` and the per-tier MT headers).
 - **Caveat: forward output is digit-reversed (scrambled) order.** Pure c2c roundtrips
   don't care (the inverse un-scrambles). Consumers that need *natural* spectral order
   (2D, r2c, the DCT/DST/DHT family) absorb the reorder inside their own
@@ -199,23 +199,15 @@ translation unit includes one or the other:
 `slice_K ≤ plan->K` lets a caller run the engine on a contiguous lane sub-range —
 this is what the manual K-split MT wrappers and the r2c block path use.
 
-### 2. `stride_executor.h` — the multithreaded executor
-`stride_execute_fwd/bwd(plan, re, im)` (no slice arg; threads internally over `plan->K`).
-Strategy is chosen at execute time on the thread count `T = stride_get_num_threads()`:
-
-- **`K/T ≥ STRIDE_KSPLIT_THRESHOLD` (256) → K-split**: each thread owns a contiguous
-  lane slice (rounded to a multiple of 8 = one cache line → no false sharing). **No
-  barriers, no copies, no per-thread plans** — the embarrassingly-parallel path.
-- **else → group-parallel**: every stage, each thread takes a contiguous slice of *that
-  stage's groups* (`[ng·tid/T, ng·(tid+1)/T)`) and runs them at **full K**, with a
-  **barrier between consecutive stages** (stage s+1's groups depend on s). Better when K
-  is too small for clean K-split — keeps full codelet utilization, no false sharing on K.
-- `T≤1` or `K<4` → serial slice. **DIF runs single-threaded** (v1.1).
-
-Thread pool (`support/threads.h`): persistent workers created by
-`stride_set_num_threads(n)`; worker *i* is pinned to **core i+1**, so the **caller
-must be on core 0** (P-cores 0..7 on the 14900KF). Thread 0 = caller (no dispatch
-overhead). Spin-wait completion; no OpenMP/TBB.
+### 2. The multithreaded executor generation — REMOVED 2026-09-01
+`engine/stride_executor.h` (1,941 lines) held a K-split / group-parallel MT executor under
+the same symbol names as the live serial one. It has had zero includers since the
+2026-07-22 dag integration shadowed it with `proto_stride_compat.h`, and
+`docs/design/vfft_front_door.md` records that the translation unit deliberately excluded
+it. It was deleted as a zero-includer stale generation (`vfft.o` byte-identical before and
+after). Threading today lives in `engine/mt_execute.h` (c2c MT dispatch) and the per-tier
+MT headers (`oop/oop_mt.h`, `oop/zturn_mt.h`, `transforms/natorder/natorder_mt.h`,
+`transforms/fft2d/il2d_tier.h`, `transforms/fft2d/plane_queue.h`).
 
 ---
 
@@ -241,16 +233,12 @@ tape** for Tier-1 lookup. `vfft_proto_plan_destroy` honors `override_destroy` fi
 best one is a separate family of search strategies in `core/planning/`, spanning a
 **fidelity ↔ cost** spectrum. All but `estimate` **measure**, so they're
 **calibration-time** tools: search once, persist the winner to wisdom, and the runtime
-does a pure lookup (`auto_plan`). `estimate` is the model-only exception, usable at
-runtime for cold cells.
+does a pure lookup (`auto_plan`).
 
 | strategy | file | how it picks | cost |
 |----------|------|--------------|------|
-| **estimate** | `estimate_plan.h` | V4 **cost model only**, no measurement — enumerate factorizations, score (fewer-stages + wide-radix-outer penalty + per-stage buffer-pass), pick min | µs, 0 benches |
 | **DP** | `dp_planner.h` | FFTW-style **recursive measured** search: try each radix as first stage, recurse on N/R with **sub-problem memoization**, bench full candidates, permute the winning set | ~150 benches |
-| **screened exhaustive** | `exhaustive_screened.h` | enumerate all (multiset × permutation), **rank by V4 cost model first**, then bench only the promising ones (V4 scores the *full* plan at parent (N,K) → preserves tail-heavy `[…,32,16]` patterns) | mid |
 | **flat exhaustive** | `exhaustive_plan.h` | bench **every** (multiset × permutation) at the real parent (N,K) context; 3 warmups, best-of-3, 1.5× quick pre-screen | ~500–1500 benches |
-| **patient exhaustive** | `exhaustive_patient.h` | flat exhaustive with **no pre-screen**, 5 warmups / best-of-7, **inter-candidate thermal pacing** (~200 ms sleep), optional top-N second-pass re-bench | slowest, highest-fidelity |
 
 Why measured search beats pure recursion/model: a plan's cost is **context-dependent**
 (cache/TLB interactions of the *whole* plan at the real (N,K)), so benching at the

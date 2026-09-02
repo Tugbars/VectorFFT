@@ -185,9 +185,7 @@ static inline int vfft_r2c_choose_rfft_factors(
  * must set stride_set_num_threads() BEFORE plan_create to enable r2c MT. */
 static inline size_t _vfft_r2c_block_k(size_t K)
 {
-    int T = stride_get_num_threads();
-    if (T < 1)
-        T = 1;
+    int T = stride_pool_workers_for(0); /* the same snapshot stride_r2c_plan takes */
     if (T <= 1 || K < 16)
         return K;                                 /* serial: one block */
     size_t target = (K / (size_t)T) & ~(size_t)7; /* round K/T down to mult of 8 */
@@ -400,9 +398,7 @@ static void _rfft_nat_mt_tramp(void *a)
 static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, double *o_re, double *o_im, double *zo)
 {
     size_t K = rp->K;
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1)
-        T = _stride_pool_size + 1;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp */
     if (T <= 1 || K < 16)
     {
         rfft_execute_fwd_natural(rp, x, o_re, o_im, zo);
@@ -416,9 +412,11 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0)
         S = 8;
-    _rfft_nat_mt_arg a[64];
-    int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++)
+    /* slot 0 is the caller's [0, min(S,K)); worker t takes [t*S, ..) */
+    _rfft_nat_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    a[n++] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, 0, S < K ? S : K, zo};
+    for (int t = 1; t < T; t++)
     {
         size_t k0 = (size_t)t * S;
         if (k0 >= K)
@@ -426,14 +424,9 @@ static inline void rfft_natural_mt(const rfft_plan_t *rp, const double *x, doubl
         size_t ke = k0 + S;
         if (ke > K)
             ke = K;
-        a[nd] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, k0, ke - k0, zo};
-        _stride_pool_dispatch(&_stride_workers[nd], _rfft_nat_mt_tramp, &a[nd]);
-        nd++;
+        a[n++] = (_rfft_nat_mt_arg){rp, x, o_re, o_im, k0, ke - k0, zo};
     }
-    size_t s0 = S < K ? S : K;
-    rfft_execute_fwd_natural_range(rp, x, o_re, o_im, 0, s0, zo);
-    if (nd)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _rfft_nat_mt_tramp, a, sizeof a[0]);
 }
 
 /* Execute forward. For PACKED: out is the N x K halfcomplex plane; out_im is

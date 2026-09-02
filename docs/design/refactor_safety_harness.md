@@ -239,6 +239,58 @@ to replay and is covered by §2.10 instead.
 
 ---
 
+### 2.11 Capturing the artifacts
+
+`build_tuned/capture_baseline.py` produces both diffable artifacts. Use it rather
+than a shell loop.
+
+```
+python build_tuned/capture_baseline.py --out <scratch>            # per-step compare
+python build_tuned/capture_baseline.py --out build_tuned/baseline --repeat 5
+```
+
+It builds both binaries with `VFFT_FINGERPRINT=1`, runs one process per cell
+against a fresh seeded scratch copy of the store, repeats each cell and writes LF.
+Two independent captures are byte-identical; that is the property every per-step
+comparison rests on, so verify it after changing the harness.
+
+Four things it fixes, each of which had already produced a wrong answer:
+
+**The purity assert can be compiled out.** `races_now()` returned `-1` without
+`VFFT_FINGERPRINT` and the assert was skipped whenever the count was
+unavailable — so a plain `build.py` invocation produced a harness that ran green
+and checked nothing. `harness_golden` now `#error`s instead of degrading, and the
+capture script sets the flag itself. A check that can be silently disabled is
+worse than no check.
+
+**The race counter is a positive signal, not a proof.** It fires only where
+someone added it, and every site is in `vfft.c`; a racer defined in another header
+is invisible to it and to the §2.4 census, which enumerates clock calls in
+`vfft.c` plus their local callers. Nineteen headers under `src/core` call a clock.
+One hole is closed (`vfft_natorder_race`, now counted at its call site); assume
+others remain, which is why cells are captured repeatedly and disagreement is
+recorded rather than sampled.
+
+**Line endings.** Both binaries write stdout in binary mode. In text mode msvcrt
+emits CRLF while `.gitattributes` pins the baseline to LF, so a byte-identical
+result reported all 36 rows as changed.
+
+**Cell counts come from `--list`.** Inferring one from output length made
+`--cell` run past the end, where the range check declines and the all-cells path
+runs again per index: 6 cells became 1268 rows. Out-of-range `--cell` is now an
+error.
+
+#### A nondeterministic cell is a fact to record, not a diff to chase
+
+`c2c.split.ip.natural` has no banked nat entry, so it races and picks between
+radix chains whose outputs differ in the last bits — two digests, roughly 5:3
+across runs. Both are **correct**: checked against a naive long-double DFT, rel
+err 3.0e-16 and 3.1e-16. Recording either one makes the artifact flap for a
+legitimate reason, which trains you to shrug at a real diff. Raced cells are
+therefore written `NOT_BANKED_RACED` and cells that differ across repeats
+`NONDETERMINISTIC`. Those lines are still checks: a cell that starts or stops
+racing changes them.
+
 ## 3. Baseline capture
 
 Nothing in this list may run against a dirty tree.
@@ -323,6 +375,47 @@ right question; "was the average the same" is not.
 **What it is.** A regression *detector*: it catches structural losses — a route that
 stopped being taken, threading that disengaged, an inliner that lost a hot call. A 2×
 regression cannot hide under a 10% band, and noise cannot fake its way under it.
+
+**When a perf check goes red: re-run the planner before concluding anything.**
+
+A large apparent regression has two very different causes, and the cheap one is far
+more common: a hot or loaded machine. The DP planner selects by measurement, so on a
+contended host it does not merely time badly, it *chooses* badly - a worse plan, then
+a worse number. Distinguish them by re-planning the cell on a quiet machine, several
+times, and taking the minimum.
+
+**Re-plan at PATIENT, not MEASURE.** The two tiers differ in exactly the knob that
+matters here. MEASURE uses beam 3 and *believes* a cached sub-plan cost - the FFTW
+`BELIEVE_PCOST` analog - so a single timing taken during a hot moment is cached and
+trusted for the rest of the search, propagating into every downstream decision.
+PATIENT uses beam 8 and re-measures on every cache hit, so in the planner header's
+own words "variance is re-absorbed on every encounter". Triage numbers taken at
+MEASURE overstate the instability. Re-plan with `cfg.rigor = VFFT_PATIENT`.
+
+Measured example, N=256 K=256 c2c in-place scrambled. Twelve cold replans:
+
+    flat.t1s.t1s      5 runs   min 33,491 ns   chains 8.4.8 / 8.8.4 / 4.8.8
+    seven other families        51,692 - 64,912 ns
+
+Cleanly bimodal, and the run order is the tell - the sweep began right after a
+32-gate build, and the good family was found in 1 of the first 8 runs and 4 of the
+last 4. The planner was not weak; it was measuring on a hot machine. An earlier
+single run under active load reported 123,384 ns, which would have looked like a 3x
+regression and was nothing of the kind.
+
+Two rules fall out:
+
+* **Discard the first runs after any load.** Do not average them in. Minimum-of-N
+  handles this on its own, which is one more reason the statistic is the minimum and
+  never the mean.
+* **An unstable cell is not quarantined, it is investigated.** A cell whose plan
+  moves under recalibration is the one most worth re-planning, not the one to drop
+  from the corpus. Exclusion would discard exactly the cells that carry information.
+
+The same sweep incidentally showed the banked plan for that cell is not the best
+available - `8.4.8` beats the banked `4.4.16` by 18%, and `4.4.16` re-measured at
+64,888 ns against its stored 40,900. That is a wisdom-quality note for the
+pre-release sweep, NOT a reason to re-race during development.
 
 **What it is not.** Proof of no regression. It cannot see 3–5% drift, and it is not a
 re-race — no verdict is banked from it, so it does not violate the racing-budget rule.

@@ -164,27 +164,24 @@ static void _c2r_nat_mt_tramp(void *a)
 static inline void c2r_natural_mt(const c2r_plan_t *p, const double *re, const double *im, double *out, const double *zi)
 {
     size_t K = p->base->K;
-    int T = stride_get_num_threads();
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
+    int T = stride_pool_workers_for(0); /* the pool's one clamp */
     if (T <= 1 || K < 16) { c2r_execute_natural(p, re, im, out, zi); return; }
     /* CEIL, not floor -- see the r2c twin in r2c_dispatch.h. Proven to
      * drop lanes: c2r N=512 K=25 T=3 left lane 24 unwritten. */
     size_t S = (((K + (size_t)T - 1) / (size_t)T) + 7) & ~(size_t)7;
     if (S == 0) S = 8;
-    _c2r_nat_mt_arg a[64];
-    int nd = 0;
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* slot 0 is the caller's [0, min(S,K)); worker t takes [t*S, ..) */
+    _c2r_nat_mt_arg a[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    a[n++] = (_c2r_nat_mt_arg){ p, re, im, out, 0, S < K ? S : K, zi };
+    for (int t = 1; t < T; t++) {
         size_t k0 = (size_t)t * S;
         if (k0 >= K) break;
         size_t ke = k0 + S;
         if (ke > K) ke = K;
-        a[nd] = (_c2r_nat_mt_arg){ p, re, im, out, k0, ke - k0, zi };
-        _stride_pool_dispatch(&_stride_workers[nd], _c2r_nat_mt_tramp, &a[nd]);
-        nd++;
+        a[n++] = (_c2r_nat_mt_arg){ p, re, im, out, k0, ke - k0, zi };
     }
-    size_t s0 = S < K ? S : K;
-    c2r_execute_natural_range(p, re, im, out, 0, s0, zi);
-    if (nd) _stride_pool_wait_all();
+    stride_pool_run(n, _c2r_nat_mt_tramp, a, sizeof a[0]);
 }
 
 /* Execute. PACKED: in_a = packed half-spectrum plane (in_b ignored). NATURAL/SPLIT:

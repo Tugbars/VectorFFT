@@ -171,8 +171,20 @@ typedef struct {
  * one-table edit (the FORMAT needs no change) — README §2.1. */
 
 static const char *vw2_shard_name[VW2_NSHARDS] = {
-    "wisdom2_oop.txt", "wisdom2_stride.txt", "wisdom2_real.txt",
+    "wisdom2_oop.txt", "wisdom2_scr.txt", "wisdom2_real.txt",
     "wisdom2_prime.txt", "wisdom2_2d.txt", "wisdom2_3d.txt"
+};
+
+/* one-generation rename compat (2026-09-02): this shard was born
+ * "wisdom2_stride.txt" — a name collision with the stride ENGINE. It is
+ * the ORIGINAL wisdom (the split-layout scrambled-output era, before the
+ * oop shard existed), hence wisdom2_scr.txt: the 1D scrambled chains plus
+ * the @nat/@natoop order verdicts, rfft chains and trig inners that grew
+ * around them. An old-named file still
+ * LOADS (notice below); saves always write the new name, so a store
+ * upgrades on its first write and the legacy file simply goes stale. */
+static const char *vw2_shard_name_legacy[VW2_NSHARDS] = {
+    NULL, "wisdom2_stride.txt", NULL, NULL, NULL, NULL
 };
 
 typedef struct {
@@ -200,7 +212,8 @@ static const char *vw2_legend[] = {
     "signpost: a verdict references its component recipe (ref=), never copies it",
     "q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run",
     "metric: ns= is comparable only within identical metric= and units=; absent ns = informational",
-    "lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = pre-1.2 record, served to concrete-lay requests only as the fallback tier",
+    "lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = a pre-1.2 record OR a shared-interior recipe (one engine serves both layouts - stamping a layout from the other door's timing would manufacture fake cells), served to concrete-lay requests as the fallback tier",
+    "eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)",
     "wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes",
     "role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)",
     "evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv",
@@ -610,8 +623,14 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
     if (k->rank >= 3) return VW2_SHARD_3D;
     if (eng && (!strcmp(eng, "bluestein") || !strcmp(eng, "rader"))) return VW2_SHARD_PRIME;
     if (k->t == VW2_T_R2C || k->t == VW2_T_C2R) return VW2_SHARD_REAL;
-    if (k->t == VW2_T_C2C)
+    if (k->t == VW2_T_C2C) {
+        /* ORDER verdicts live with the engine wisdom that serves order
+         * (owner, 2026-09-02): every 1D c2c ord=nat row — @nat AND
+         * @natoop — homes in the oop shard. The scr shard holds what its
+         * name says: the scrambled-era chains (plus the trig inners). */
+        if (k->ord == VW2_ORD_NAT) return VW2_SHARD_OOP;
         return (k->pl == VW2_PL_IP) ? VW2_SHARD_STRIDE : VW2_SHARD_OOP;
+    }
     return VW2_SHARD_STRIDE;   /* trig */
 }
 
@@ -746,6 +765,15 @@ static inline int vw2__load_shard(vw2_store_t *s, int shard)
 
     vw2__path(s, shard, path, sizeof path);
     f = fopen(path, "rb");
+    if (!f && vw2_shard_name_legacy[shard]) {       /* rename compat (above) */
+        snprintf(path, sizeof path, "%s/%s", s->dir,
+                 vw2_shard_name_legacy[shard]);
+        f = fopen(path, "rb");
+        if (f)
+            fprintf(stderr, "[wisdom2] %s: loaded legacy %s; saves write %s\n",
+                    s->dir, vw2_shard_name_legacy[shard],
+                    vw2_shard_name[shard]);
+    }
     if (!f) return VW2_OK;                          /* missing = empty, fine  */
     s->present[shard] = 1;
 
@@ -900,6 +928,27 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
         if (r != VW2_OK && worst == VW2_OK) worst = r;
     }
     vw2__dedup_loaded(s);
+    {   /* rehome-on-load (the re-route law): a record residing in a shard
+         * the router no longer maps its key to MOVES — in memory now, on
+         * disk at the next writable save (both shards dirty: the old home
+         * is scrubbed, the new one written). Poisoned shards are left
+         * alone on both ends. */
+        int moved = 0;
+        for (i = 0; i < s->nrec; i++) {
+            int want = vw2_shard_route(&s->rec[i].key,
+                                       vw2_rec_get(&s->rec[i], "eng"));
+            if (want == s->rec[i].shard) continue;
+            if (s->poisoned[want] || s->poisoned[s->rec[i].shard]) continue;
+            s->dirty[s->rec[i].shard] = 1;
+            s->dirty[want] = 1;
+            s->rec[i].shard = want;
+            moved++;
+        }
+        if (moved)
+            fprintf(stderr, "[wisdom2] %s: %d record(s) rehomed to their "
+                            "routed shard (saved on next writable save)\n",
+                    s->dir, moved);
+    }
     fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s\n", s->dir, s->nrec,
             s->writable ? ", writable" : ", read-only",
             worst == VW2_EVERSION ? ", SOME FILES POISONED" : "");

@@ -1,0 +1,35 @@
+family,N,challenger,challenger_ns,incumbent_ns,ratio,winner,note
+@nat,64,ILP,34,185,5.4,ILP,never reaches @nat: routes to the scrmode ILP race (conv incumbent)
+@nat,128,ILP,78,641,8.2,ILP,
+@nat,256,ILP,539,2515,4.7,ILP,from nat_bankloss_gate pass 1
+@nat,512,ILP,374,2432,6.5,ILP,
+@nat,1024,ILP,909,4761,5.2,ILP,
+@nat,1536,ILP,5219,17050,3.3,ILP,
+@nat,2048,ZCASC,8025,24867,3.1,ZCASC,
+@nat,3072,ZCASC,12675,36579,2.9,ZCASC,odd-mid (2^10*3)
+@nat,4096,ZCASC,5983,28346,4.7,ZCASC,cross-run ns swing to 21271/65146; verdict held
+@nat,4608,ZCASC,6700,31450,4.7,ZCASC,odd-mid (2^9*9)
+@nat,5120,ZCASC,7560,32230,4.3,ZCASC,odd-mid (2^10*5)
+@nat,6144,ZCASC,10370,41490,4.0,ZCASC,odd-mid (2^11*3)
+@nat,7168,ZCASC,10170,46880,4.6,ZCASC,odd-mid (2^10*7)
+@nat,8192,ZCASC,13610,79350,5.8,ZCASC,
+@nat,12288,ZCASC,55540,263310,4.7,ZCASC,odd-mid (2^12*3)
+@nat,16384,ZCASC,112020,335250,3.0,ZCASC,
+@nat,32768,ZCASC,171133,766800,4.5,ZCASC,
+@nat,65536,ZCASC,403983,1775783,4.4,ZCASC,
+@natoop,2048,ZCASC,7704,6496,0.84,engine,competitive band; engine 9/10-10/10 over the 20-sample A/B
+@natoop,4096,ZCASC,20358,15642,0.77,engine,THE competitive cell; flips (arms 1-10% apart); gate band widened to 2048+4096
+@natoop,8192,ZCASC,15490,66090,4.3,ZCASC,10/10 over the A/B
+@natoop,16384,ZCASC,29890,143750,4.8,ZCASC,10/10 over the A/B
+@natoop,32768,ZCASC,171800,756367,4.4,ZCASC,5/5
+# Measured 2026-09-01/02 on the i9-14900KF (AVX2), cold creates on fresh stores, one race per cell.
+# @nat = in-place natural (challenger vs the reorder tape); @natoop = OOP natural (zturn cascade vs the K=1 OOP engine).
+# ns are SAME-RUN pairs; cross-run absolute ns swing up to 3x (thermal + cold-DP plan luck) — ratios and verdicts are what reproduced.
+# Tape wins NOWHERE (17 @nat cells incl. every odd-mid) => the bank-on-loss real-writer path is unreachable on this box; nat_bankloss_gate's seeded arms cover it.
+# Odd-mid cascade MT pricing trial (2026-09-02, T=8, bitwise MT==ST IDENTICAL at every cell; shipped: the OOP K=1 exit now races the INC-Z MT verdict):
+oddmid-mt,3072,MT,6400,3700,0.58,serial,race banks serial
+oddmid-mt,6144,MT,10100,7600,0.75,serial,race banks serial
+oddmid-mt,12288,MT,18600,16600,0.89,serial,race banks serial
+oddmid-mt,24576,MT,16800,50400,3.00,MT,execute-level speedup
+oddmid-mt,49152,MT,24100,79600,3.30,MT,execute-level speedup
+oddmid-mt,98304,MT,46500,196900,4.23,MT,execute-level speedup

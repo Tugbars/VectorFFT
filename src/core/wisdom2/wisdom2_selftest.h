@@ -112,6 +112,14 @@ static inline int vw2_g0_selftest(const char *dir)
               "mode", 1, "zcasc", "ref", 1, "cell(t=c2c,n=4096,q=1,ord=scr,place=oop)",
               "ran", 2, "1", "ns", 2, "8891.0", "metric", 2, "fwd1", "units", 2, "ns",
               "arms", 2, "2", "src", 2, "race", "date", 2, "2026-08-19", NULL);
+    VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank oop-homed nat record");
+    /* an ord=scr/ip row so the STRIDE shard file also exists in T1 (the
+     * nat/ip record above homes in the OOP shard since the 2026-09-02
+     * re-route: order verdicts live with the engine wisdom) */
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 8, VW2_ORD_SCR, VW2_PL_IP),
+              "eng", 1, "stride", "chain", 1, "8.8.8.8",
+              "ran", 2, "8", "ns", 2, "9000.0", "metric", 2, "fwd1", "units", 2, "ns",
+              "src", 2, "race", "date", 2, "2026-08-19", NULL);
     VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "bank stride-family record");
     /* its ref target (so lookups on it stay valid across the suite) */
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_SCR, VW2_PL_OOP),
@@ -136,7 +144,7 @@ static inline int vw2_g0_selftest(const char *dir)
     vw2_close(&st);
 
     vw2_open(&st2, dir, 1);
-    VW2_ST_CHECK(st2.nrec == 4, "reload count == 4");
+    VW2_ST_CHECK(st2.nrec == 5, "reload count == 5");
     {
         vw2_key_t q = vw2__st_key(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP);
         const vw2_rec_t *hit = vw2_lookup(&st2, &q);
@@ -153,7 +161,8 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T2: idempotent re-save (equal record replaces, bytes stable) -- */
     printf("T2 idempotency:\n");
-    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
+    /* the nat/ip record homes in the OOP shard (2026-09-02 re-route) */
+    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_OOP]);
     vw2__st_slurp(path, buf, sizeof buf);
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
               "mode", 1, "zcasc", "ref", 1, "cell(t=c2c,n=4096,q=1,ord=scr,place=oop)",
@@ -177,6 +186,9 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T4: carry-unknown-forward (tokens, records, directives) ------- */
     printf("T4 carry-unknown:\n");
+    /* T4's records are ord=scr/ip -> the STRIDE shard is their home (path
+     * still points at the OOP file from T2 after the 2026-09-02 re-route) */
+    snprintf(path, sizeof path, "%s/%s", dir, vw2_shard_name[VW2_SHARD_STRIDE]);
     {
         FILE *f = fopen(path, "ab");
         VW2_ST_CHECK(f != NULL, "scratch appendable");
@@ -315,6 +327,13 @@ static inline int vw2_g0_selftest(const char *dir)
 
     /* ---- T9: cross-metric refusal ---------------------------------------- */
     printf("T9 cross-metric:\n");
+    /* re-establish the fwd1 incumbent at this key: it homes in the OOP
+     * shard since the 2026-09-02 re-route, and T5 deleted that file */
+    r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
+              "mode", 1, "zcasc",
+              "ran", 2, "1", "ns", 2, "8891.0", "metric", 2, "fwd1", "units", 2, "ns",
+              "src", 2, "race", "date", 2, "2026-08-19", NULL);
+    VW2_ST_CHECK(vw2_bank(&st, &r) == VW2_OK, "re-establish the fwd1 incumbent");
     r = vw2__st_rec(vw2__st_keyp(VW2_T_C2C, 4096, 1, VW2_ORD_NAT, VW2_PL_IP),
               "mode", 1, "zcasc",
               "ran", 2, "1", "ns", 2, "4400.0", "metric", 2, "joint2", "units", 2, "ns",

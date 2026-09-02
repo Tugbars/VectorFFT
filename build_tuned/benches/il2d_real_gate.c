@@ -31,6 +31,7 @@
 #include <string.h>
 #include <math.h>
 #include "vfft.h"
+#include "vfft_diagnostics.h"
 
 static void naive_rows_r2c(const double *x, double *t1, int N1, int N2)
 {

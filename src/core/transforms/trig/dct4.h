@@ -82,10 +82,7 @@ typedef struct {
 } _dct4_slice_arg_t;
 
 static inline int _dct4_mt_threads(int n_threads_plan, int N, size_t K) {
-    int T = stride_get_num_threads();
-    if (T > n_threads_plan) T = n_threads_plan;
-    if (T > _stride_pool_size + 1) T = _stride_pool_size + 1;
-    if (T < 1) T = 1;
+    int T = stride_pool_workers_for(n_threads_plan); /* the pool's one clamp: plan snapshot, live pool, array bound */
     if (T > 1 && (size_t)N * K < (size_t)8192 * (size_t)T) T = 1;
     return T;
 }
@@ -163,7 +160,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
     /* MT path: K-split pre/post-twiddle passes, three-phase dispatch. */
     int T = _dct4_mt_threads(d->n_threads, N, K);
     if (T > 1) {
-        _dct4_slice_arg_t args[64];
+        _dct4_slice_arg_t args[STRIDE_POOL_MAX_DISPATCH];
         for (int t = 0; t < T; t++) {
             args[t].d  = d;
             args[t].re = re;
@@ -172,11 +169,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
         }
 
         /* Phase 1: pre-twiddle, T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct4_worker_pre, &args[t]);
-        _dct4_worker_pre(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct4_worker_pre, args, sizeof args[0]); /* caller = args[0] */
 
         /* Phase 2: inner backward N/2-point FFT (JIT'd inner if wired; own MT) */
         if (d->inner_jit_bwd)
@@ -185,11 +178,7 @@ static void _dct4_execute(void *data, double *re, double *im) {
             stride_execute_bwd(d->fft_plan, d->psi_re, d->psi_im);
 
         /* Phase 3: post-twiddle + unpack, T-parallel */
-        for (int t = 1; t < T; t++)
-            _stride_pool_dispatch(&_stride_workers[t - 1],
-                                  _dct4_worker_post, &args[t]);
-        _dct4_worker_post(&args[0]);
-        _stride_pool_wait_all();
+        stride_pool_run(T, _dct4_worker_post, args, sizeof args[0]); /* caller = args[0] */
         return;
     }
 

@@ -29,9 +29,10 @@ wisdom, calibrate on a miss at the requested rigor, build the plan, stamp the ex
 the handle. It serves C2C (in-place and out-of-place), R2C, C2R, DCT-I/II/III/IV, DST-I/II/III,
 DHT, and ranks 1 through 4.
 
-The translation unit deliberately does not include `engine/stride_executor.h`, which redefines
-executor symbols ([vfft.c:13](../../src/core/vfft.c#L13)). The shipping split engine is
-`plan_executors.h`, `twiddle.h`, `executor_generic.h` and `executor.h`.
+The shipping split engine is `plan_executors.h`, `twiddle.h`, `executor_generic.h` and
+`executor.h`. (A previous executor generation, `engine/stride_executor.h`, redefined the same
+symbols and was deliberately never included by this translation unit; it was removed on
+2026-09-01 after having zero includers since the 2026-07-22 dag integration.)
 
 ## 2. Wisdom is a bundle
 
@@ -105,7 +106,9 @@ Rigor selects a **planner entry point**, not a cost model — the library has no
 
 First create pays the search; the banked entry is replayed by every later create.
 
-**Every in-process race shares one shape**, and it is stated here once rather than at each site:
+**Every in-process race shares one shape**, and it is stated here once rather than at each site
+(the executable form of the ARMS x PROTOCOL half is `src/core/support/race.h`; each site keeps its
+own protocol constants, verdict rule, key and bank):
 
 * arms alternate order across rounds, and the result is a **median** over rounds — an
   A-then-B race puts the two arms in different thermal windows, which is tolerable for a

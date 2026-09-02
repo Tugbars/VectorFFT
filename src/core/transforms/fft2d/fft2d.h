@@ -56,7 +56,7 @@
 
 /* Maximum threads for per-thread scratch allocation. */
 #ifndef FFT2D_MAX_THREADS
-#define FFT2D_MAX_THREADS 64
+#define FFT2D_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 
@@ -223,10 +223,10 @@ static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
                              double *re, double *im, int is_bwd) {
     const size_t N1 = (size_t)d->N1;
     const size_t B = d->B;
-    int T = stride_get_num_threads();
-
-    /* Cap threads at available scratch buffers */
-    if (T > d->num_scratch) T = d->num_scratch;
+    /* The scratch slots allocated at create (d->num_scratch) are this plan's
+     * snapshot: a worker without a slot cannot run. The pool's one clamp
+     * bounds T by that, by the live pool and by the arg-array size. */
+    int T = stride_pool_workers_for(d->num_scratch);
 
     /* Total tiles */
     size_t n_tiles = (N1 + B - 1) / B;
@@ -239,45 +239,31 @@ static void _fft2d_tiled_mt(stride_fft2d_data_t *d,
         return;
     }
 
-    /* Distribute tiles across threads.
-     * Round tile boundaries to multiples of B for clean splits. */
-    _fft2d_tile_arg_t args[FFT2D_MAX_THREADS];
-    int n_dispatch = 0;
-
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    /* THE ENGINE'S OWN PART: distribute tiles across threads, boundaries
+     * rounded to multiples of B for clean splits. Slot t owns scratch slot t;
+     * slot 0 is the caller (its scratch is the pool base), by the pool's
+     * convention. */
+    _fft2d_tile_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int n = 0;
+    for (int t = 0; t < T; t++) {
         size_t tiles_start = (n_tiles * t) / T;
         size_t tiles_end   = (n_tiles * (t + 1)) / T;
         size_t row_start   = tiles_start * B;
         size_t row_end     = tiles_end * B;
         if (row_end > N1) row_end = N1;
-        if (row_start >= N1) break;
+        if (t > 0 && row_start >= N1) break;
 
-        args[t].d = d;
-        args[t].re = re;
-        args[t].im = im;
-        args[t].sr = _fft2d_scratch(d->scratch_re, d->tile_sz, t);
-        args[t].si = _fft2d_scratch(d->scratch_im, d->tile_sz, t);
-        args[t].row_start = row_start;
-        args[t].row_end = row_end;
-        args[t].is_bwd = is_bwd;
-
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _fft2d_tile_trampoline, &args[t]);
-        n_dispatch++;
+        args[n].d = d;
+        args[n].re = re;
+        args[n].im = im;
+        args[n].sr = _fft2d_scratch(d->scratch_re, d->tile_sz, t);
+        args[n].si = _fft2d_scratch(d->scratch_im, d->tile_sz, t);
+        args[n].row_start = row_start;
+        args[n].row_end = row_end;
+        args[n].is_bwd = is_bwd;
+        n++;
     }
-
-    /* Thread 0 (caller) processes its own share */
-    {
-        size_t row_end = ((n_tiles * 1) / T) * B;
-        if (row_end > N1) row_end = N1;
-        _fft2d_tiled_range(d, re, im,
-                           d->scratch_re, d->scratch_im,
-                           0, row_end, is_bwd);
-    }
-
-    /* Wait for workers */
-    if (n_dispatch > 0)
-        _stride_pool_wait_all();
+    stride_pool_run(n, _fft2d_tile_trampoline, args, sizeof args[0]);
 }
 
 

@@ -1,0 +1,41 @@
+# golden artifacts - refusal decisions and output-bit digests.
+# ONE PROCESS PER CELL, each against a fresh seeded copy of the store.
+# Built with -DVFFT_FINGERPRINT so the purity assert is live: a cell whose
+# create RACED emits NOT_BANKED_RACED instead of a digest, because a raced
+# plan makes the digest a coin flip. Zero violations here is the contract.
+#
+refuse c2c.split.oop.default.1d     ACCEPT
+golden c2c.split.oop.default.1d     fwd=90ab043f204c7440 845517f6ff28ecee
+golden c2c.split.oop.default.1d     bwd=9e0daf798c707923 9278960c734fccab
+refuse c2c.split.ip.default.1d      ACCEPT
+golden c2c.split.ip.default.1d      fwd=d25a46c7296c774e dbc7cfae91c70af7
+golden c2c.split.ip.default.1d      bwd=c4088225847f0581 39d463ccf1e38e78
+refuse c2c.split.ip.scrambled       ACCEPT
+golden c2c.split.ip.scrambled       fwd=d25a46c7296c774e dbc7cfae91c70af7
+golden c2c.split.ip.scrambled       bwd=c4088225847f0581 39d463ccf1e38e78
+refuse c2c.split.ip.natural         ACCEPT
+golden c2c.split.ip.natural         NOT_BANKED_RACED races=1  (bank this cell or drop it)
+refuse c2c.il.ip.default            ACCEPT
+golden c2c.il.ip.default            fwd=e4ef4d87f3c65f97 0000000000000000
+golden c2c.il.ip.default            bwd=b05a885b7d937e20 0000000000000000
+refuse c2c.il.oop.default           ACCEPT
+golden c2c.il.oop.default           fwd=e4ef4d87f3c65f97 0000000000000000
+golden c2c.il.oop.default           bwd=b05a885b7d937e20 0000000000000000
+refuse c2c.split.ip.K4              ACCEPT
+golden c2c.split.ip.K4              fwd=e9f06cb39ccc4933 7c25afb010f275d4
+golden c2c.split.ip.K4              bwd=7b0d5af8af232afe 012ef3b5dc207e46
+refuse c2c.split.ip.K32             ACCEPT
+golden c2c.split.ip.K32             fwd=50eb6d00072929c9 80b49d3a460d037b
+golden c2c.split.ip.K32             bwd=43be6fff4cb1ad1d a772c98ac2244b31
+refuse c2c.split.ip.N64             ACCEPT
+golden c2c.split.ip.N64             fwd=d85d2b6dddad6bb8 33f49fdd200d6f46
+golden c2c.split.ip.N64             bwd=d587b464ee8a48ac 1a6040a189f40079
+refuse c2c.split.ip.N1024           ACCEPT
+golden c2c.split.ip.N1024           fwd=701f7b4d7b619aa5 021c604772edb7ea
+golden c2c.split.ip.N1024           bwd=95a870dbcf34a32a fefe4b70ca06ee21
+refuse REFUSE.dct2.interleaved      REFUSE
+refuse REFUSE.dct2.2d               REFUSE
+refuse REFUSE.r2c.scrambled         REFUSE
+refuse REFUSE.c2r.natural.order     REFUSE
+refuse REFUSE.dims5                 REFUSE
+refuse REFUSE.N0                    REFUSE

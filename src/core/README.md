@@ -54,7 +54,7 @@ env knobs) · `threads.h` (worker pool + pinning; caller owns core 0) ·
 ### `engine/` — the in-place c2c kernel
 `plan.h` (plan/stage types) · `planner.h` (`vfft_proto_auto_plan`: plan build
 from wisdom/search) · `executor.h` / `executor_generic.h` (the stage walkers) ·
-`stride_executor.h` (strided/ND row engine) · `twiddle.h` (the three measured
+`twiddle.h` (the three measured
 twiddle methods: FLAT / T1S / LOG3, mixed per stage by wisdom) · `compat.h` /
 `proto_stride_compat.h` (bridges between the proto and stride plan worlds) ·
 `il_execute.h` (interleaved z↔z boundary folds over a `stride_plan_t` — lives
@@ -64,12 +64,10 @@ wrapper returns −1 by design, and the fold machinery is kept as the wiring poi
 for a future IL-native family).
 
 ### `planning/` — plan search + wisdom (all MEASURED)
-`plan_orchestrator.h` (rigor → search routing) · `dp_planner.h` (split-plan DP;
+`dp_planner.h` (split-plan DP;
 "DP prunes the search; it never composes costs") · `dp_planner_il.h` (IL
-whole-chain DP + the cascade engine/route axis) · `exhaustive_plan.h` /
-`exhaustive_patient.h` / `exhaustive_screened.h` (the EXHAUSTIVE tiers) ·
-`measure.h` (paced measurement harness) · `estimate_plan.h` (V4 cost model —
-planned ESTIMATE tier, not used for verdicts) · `wisdom_reader.h` (spike v6
+whole-chain DP + the cascade engine/route axis) · `exhaustive_plan.h` (the EXHAUSTIVE tier) ·
+`measure.h` (paced measurement harness) · `wisdom_reader.h` (spike v6
 format) · `adopt_wisdom.h` (`VFFT_ADOPT_WISDOM_DIR` import).
 
 ### `transforms/` — built on the engine
@@ -155,3 +153,14 @@ header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
 (`zsplit_wis_gate`, `zsplit_api_gate`, `gate_vfft_rz`, `gate_4d`,
 `gate_fndr_q1`, natorder/natmt tests, `regression_vs_mkl`). Run them with
 `VFFT_WISDOM_DIR` pointed at a scratch dir so banked wisdom stays untouched.
+
+## Migration headers at the top level
+
+Three files sit directly in `core/` rather than in a module, because each is
+about the library as a whole rather than about one transform family.
+
+| file | role |
+|---|---|
+| `vfft_internal.h` | the three private structs — `vfft_plan_s`, `vfft_wisdom_s`, `vfft_batch_s`. Lifting these out of `vfft.c` is what let every later module header exist |
+| `vfft_execute.h` | **THE execute entry point — every transform, BOTH layouts**, plus the execute-side helpers and `vfft_destroy`. 🔴 `vfft_execute` has EXTERNAL linkage, so the body is guarded by `VFFT_EXECUTE_IMPL` and exactly one TU defines it |
+| `vfft_batch.h` | the owned-batch allocator behind `config.owned_buffers` / `config.batch`. Three descriptor shapes (c2c in-place, real, OOP 4-plane); a mismatched handle is refused, never reinterpreted |

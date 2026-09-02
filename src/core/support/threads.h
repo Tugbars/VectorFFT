@@ -287,4 +287,82 @@ static inline void stride_set_num_threads(int n) {
     _stride_num_threads = n;
 }
 
+/* =====================================================================
+ * THE POOL'S OWNER API — the ONE clamp and the ONE fork-join (2026-09-01)
+ *
+ * Before this section existed, every engine re-implemented the dispatch
+ * idiom by hand: derive T (some from the live pool, some from the plan
+ * snapshot), clamp it against `_stride_pool_size + 1` (that line copied 43
+ * times), clamp it against 64 (done at 9 dispatchers, omitted at 9 others
+ * that still declared a 64-slot array), fill `a[64]`, post to
+ * `_stride_workers[nd++]` or `[t - 1]` (two conventions), run the caller's
+ * own slot, spin on `_stride_pool_wait_all()`. Every property of the pool
+ * — how many workers, how they are indexed, how big the arg array is,
+ * whether the plan's own thread count is honoured — was a per-site
+ * decision, and that is how three live bugs were written (a pool-shrinking
+ * setter in one create race; natorder sizing scratch from the live pool at
+ * create and indexing it from the live pool at execute; T>64 stack overruns
+ * on any host granted 65+ workers).
+ *
+ * So the pool now OWNS its idiom. Engines keep what is genuinely theirs —
+ * the slicing policy (K-split rounded to 8, proportional, count-balanced,
+ * plane-queue pull) and the per-worker argument struct — and stop
+ * re-deciding what is not theirs.
+ *
+ *   STRIDE_POOL_MAX_DISPATCH   the arg-array bound. Size every per-worker
+ *                              arg array with it, never with a literal 64.
+ *   stride_pool_workers_for(n) the ONE clamp: min(live pool count, workers
+ *                              that exist, the plan's snapshot n when n>=1,
+ *                              MAX_DISPATCH), never below 1. Pass the plan's
+ *                              h->nthreads; passing 0 means "no snapshot",
+ *                              which is only correct at plan-CREATE time.
+ *   stride_pool_run(T,fn,a,sz) the ONE fork-join: workers 1..T-1 each run
+ *                              fn(&a[t]) (a is an array of T elements of sz
+ *                              bytes), the CALLER runs fn(&a[0]) itself,
+ *                              then waits. T <= 1 runs fn(&a[0]) inline.
+ *                              a[0] is the caller's slot by convention —
+ *                              an engine that wants the caller to take the
+ *                              remainder puts the remainder in a[0].
+ *
+ * Both are `static inline` in the single translation unit like everything
+ * else here, so they cost exactly what the hand-written copies cost.
+ *
+ * PRIMITIVES STAY. `_stride_pool_dispatch` / `_stride_pool_wait_all` remain
+ * for the two probes outside src/core that use them; no engine should.
+ * ===================================================================== */
+
+#define STRIDE_POOL_MAX_DISPATCH 64
+
+/** The one clamp. `plan_nthreads` is the count the PLAN recorded at create
+ * (h->nthreads); the result never exceeds it, the live pool, the workers
+ * that actually exist, or the arg-array bound, and is never below 1. */
+static inline int stride_pool_workers_for(int plan_nthreads) {
+    int T = stride_get_num_threads();
+    if (T > _stride_pool_size + 1)
+        T = _stride_pool_size + 1;
+    if (plan_nthreads >= 1 && T > plan_nthreads)
+        T = plan_nthreads;
+    if (T > STRIDE_POOL_MAX_DISPATCH)
+        T = STRIDE_POOL_MAX_DISPATCH;
+    return T < 1 ? 1 : T;
+}
+
+/** The one fork-join. `args` is an array of at least T elements, each
+ * `elem` bytes; slot t goes to worker t-1 for t in 1..T-1, slot 0 runs on
+ * the caller. Waits for every dispatched worker before returning. T must
+ * come from stride_pool_workers_for, which is what guarantees the workers
+ * exist and the array is large enough. */
+static inline void stride_pool_run(int T, void (*fn)(void *),
+                                   void *args, size_t elem) {
+    char *base = (char *)args;
+    int nd = 0;
+    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+        _stride_pool_dispatch(&_stride_workers[nd], fn, base + (size_t)t * elem);
+        nd++;
+    }
+    fn(base);
+    if (nd)
+        _stride_pool_wait_all();
+}
+
 #endif /* STRIDE_THREADS_H */

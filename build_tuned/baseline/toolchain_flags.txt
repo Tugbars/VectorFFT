@@ -1,0 +1,6 @@
+gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r7) 15.2.0
+gcc_path=/c/mingw152/mingw64/bin/gcc.exe
+host=MINGW64_NT-10.0-26200 x86_64
+VFFT_ASAN=<unset>
+identity_flags=-O2 -mavx2 -mfma
+# NOTE: -march=native makes this HOST-BOUND. Cross-host comparison is out of contract.

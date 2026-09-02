@@ -51,7 +51,7 @@
 #define CONV_MT_MIN_ELEMS ((size_t)1 << 15)
 #endif
 #ifndef CONV_MAX_THREADS
-#define CONV_MAX_THREADS 64
+#define CONV_MAX_THREADS STRIDE_POOL_MAX_DISPATCH /* the pool's bound, not a second one */
 #endif
 
 typedef struct {
@@ -129,28 +129,26 @@ static void _conv_mul_trampoline(void *arg) {
 static void _conv_mul_mt(double *xr, double *xi,
                          const double *kr, const double *ki,
                          size_t n, int conj_h) {
-    int T = stride_get_num_threads();
-    if (T > CONV_MAX_THREADS) T = CONV_MAX_THREADS;
+    /* the pool's one clamp; no plan handle here, the cap is the array bound */
+    int T = stride_pool_workers_for(CONV_MAX_THREADS);
     if (T <= 1 || n < CONV_MT_MIN_ELEMS) {
         _conv_mul_range(xr, xi, kr, ki, 0, n, conj_h);
         return;
     }
-    _conv_mul_arg_t args[CONV_MAX_THREADS];
-    int n_dispatch = 0;
+    /* THE ENGINE'S OWN PART: 4-aligned proportional ranges; empty ranges are
+     * skipped, so the slots are packed. Slot 0 is the caller's [0, bound0). */
+    _conv_mul_arg_t args[STRIDE_POOL_MAX_DISPATCH];
+    int m = 0;
     size_t bound0 = ((n * 1) / (size_t)T) & ~(size_t)3;   /* caller's end */
-    for (int t = 1; t < T && t <= _stride_pool_size; t++) {
+    args[m++] = (_conv_mul_arg_t){ xr, xi, kr, ki, 0, bound0, conj_h };
+    for (int t = 1; t < T; t++) {
         size_t lo  = ((n * (size_t)t) / (size_t)T) & ~(size_t)3;
         size_t end = (t == T - 1) ? n
                    : (((n * (size_t)(t + 1)) / (size_t)T) & ~(size_t)3);
         if (lo >= end) continue;
-        args[t] = (_conv_mul_arg_t){ xr, xi, kr, ki, lo, end, conj_h };
-        _stride_pool_dispatch(&_stride_workers[t - 1],
-                              _conv_mul_trampoline, &args[t]);
-        n_dispatch++;
+        args[m++] = (_conv_mul_arg_t){ xr, xi, kr, ki, lo, end, conj_h };
     }
-    _conv_mul_range(xr, xi, kr, ki, 0, bound0, conj_h);
-    if (n_dispatch > 0)
-        _stride_pool_wait_all();
+    stride_pool_run(m, _conv_mul_trampoline, args, sizeof args[0]);
 }
 
 

@@ -446,44 +446,11 @@ extern "C"
 
   void vfft_destroy(vfft_plan p);
 
-  /* DIAGNOSTIC — how many WORKER threads this plan's transform-contiguous
-   * batch wrapper actually built, or -1 if the plan is not such a wrapper.
-   * 0 means the wrapper exists but executes its batch serially.
-   *
-   * Exists because clone-building is conditional (pool size, whether the
-   * inner route is pool-free, whether each clone came out output-equivalent)
-   * and every one of those can quietly reduce the count to zero. A serial
-   * wrapper still returns correct results, so a correctness test — including
-   * an MT-equals-ST bitwise comparison — passes just as happily when no
-   * thread ever ran. Tests that mean to assert THREADING must assert on this,
-   * and benches should report it rather than assume the thread count they
-   * asked for is the thread count they got. */
-  int vfft_plan_tc_workers(vfft_plan p);
-
-  /* Process-lifetime count of transform-contiguous MT DISPATCHES. Clones
-   * built and work dispatched are INDEPENDENT gates: a plan can own clones
-   * and still run its serial loop because the cell sits under the engage
-   * floor. Assert this MOVED across an execute to prove threading actually
-   * happened; vfft_plan_tc_workers alone does not. */
-  long vfft_tc_mt_dispatches(void);
-
-  /* Same question for the native IL 2D real COLUMN pass: how many
-   * threaded column passes actually ran. Zero after an execute means the
-   * column pass was serial (too few independent units, or no pool). */
-  long vfft_il2d_col_mt_passes(void);
-
-  /* And for the K=1 1D cascade (zturn): threaded cascade walks actually
-   * run. The verdict is raced per cell at create (VFFT_ZT_NO_MT=1 kills,
-   * =0 forces — the A/B hook); zero here after an execute means the
-   * serial walk served. */
-  long vfft_zt_mt_passes(void);
-
-  /* And for the 2D plane queue (dims=2, howmany>1): queued (plane-per-
-   * worker) executes actually run. Loop-vs-queue is raced at create
-   * (VFFT_PQ_NO_MT=1 kills, =0 forces); zero after an execute means the
-   * serial plane loop served (which still intra-MTs per the inner
-   * plan's own banked verdicts). */
-  long vfft_pq_mt_passes(void);
+  /* Threading diagnostics (did the MT actually engage?) moved to
+   * include/vfft_diagnostics.h; the r2c/c2r dispatch config hooks are
+   * internal, in src/core/transforms/real/real_dispatch_config.h.
+   * Neither is needed to compute a transform, so neither is part of
+   * this header's contract. */
 
   /* ════════════════════════════════════════════════════════════════════════
    * LIBRARY-OWNED BUFFERS  (config.owned_buffers = 1)

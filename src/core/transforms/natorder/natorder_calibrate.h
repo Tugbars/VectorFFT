@@ -107,6 +107,42 @@ static inline double _natorder_scr_sample(natorder_scr_t *scr, double *re, doubl
     return (vfft_proto_now_ns() - t0) / VFFT_NATORDER_CHUNK;
 }
 
+#include "support/race.h" /* the shared race body */
+
+/* one arm of the natorder race: CHUNK fwd(+reorder) passes per timed
+ * sample (reps in the proto); scr set = the fused scatter forward */
+typedef struct
+{
+    stride_plan_t *p;
+    const int *cycles, *pairs;
+    double *re, *im;
+    size_t K;
+    double *tmp;
+    vfft_proto_exec_fn fn;
+    natorder_scr_t *scr;
+    size_t n; /* N*K, for the per-sample refill */
+} _nato_arm_t;
+static void _nato_arm_run(void *v)
+{
+    _nato_arm_t *c = (_nato_arm_t *)v;
+    if (c->scr) {
+        natorder_scr_fwd(c->scr, c->re, c->im, c->K);
+        return;
+    }
+    if (c->fn) c->fn(c->p, c->re, c->im, c->K, c->p->K, 0);
+    else       vfft_proto_execute_fwd(c->p, c->re, c->im, c->K);
+    if (c->cycles)      vfft_natorder_cycle_pass(c->re, c->im, c->K, c->cycles, c->tmp);
+    else if (c->pairs)  vfft_natorder_pair_pass(c->re, c->im, c->K, c->pairs);
+}
+static void _nato_reseed(void *v)
+{
+    _nato_arm_t *c = (_nato_arm_t *)v;
+    for (size_t i = 0; i < c->n; i++) {
+        c->re[i] = (double)((i * 2654435761u) & 1023) / 1024.0 - 0.5;
+        c->im[i] = (double)((i * 40503u) & 1023) / 1024.0 - 0.5;
+    }
+}
+
 /* The race. pA/cyclesA = the PURE candidate (calibrated plan + its cycle tape). scr_chain/scr_nf =
  * the calibrated chain (SCR builds its OWN DIT plan from it — injection, since dp_best may calibrate
  * DIF and SCR needs DIT). Challengers: injected-palindrome PSWAP and the DIT-SCR scatter terminator.
@@ -205,25 +241,40 @@ static inline void vfft_natorder_race(int N, size_t K, const vfft_proto_registry
 #endif
     _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA); /* warm-up */
     {
-        double sA = 0, sB[5] = {0, 0, 0, 0, 0}, sScr = 0;
-        for (int r = 0; r < VFFT_NATORDER_ROUNDS; r++) {
-            sA += _natorder_sample(pA, re, im, K, cyclesA, NULL, tmp2K, fnA);
-            for (int c = 0; c < nc; c++)
-                if (pb[c]) sB[c] += _natorder_sample(pb[c], re, im, K, NULL, prs[c], tmp2K, fnB[c]);
-            if (have_scr) sScr += _natorder_scr_sample(&scr, re, im, K);
-        }
-        v->ns = sA / VFFT_NATORDER_ROUNDS;
-        double bns = v->ns * VFFT_NATORDER_MARGIN; /* challenger must beat PURE by the margin */
-        int bestp = -1, win_scr = 0;
+        /* arms: PURE, then the surviving candidates in order, then SCR —
+         * the original evaluation order, which is also the tie priority.
+         * ROUNDS samples of CHUNK passes, refilled before every sample,
+         * MEAN over rounds — _natorder_sample's exact protocol. */
+        _nato_arm_t ac[7];
+        vfft_race_arm_t arms[7];
+        int idx[7], na = 0;
+        ac[na] = (_nato_arm_t){ pA, cyclesA, NULL, re, im, K, tmp2K, fnA, NULL, n };
+        arms[na] = (vfft_race_arm_t){ "pure", _nato_arm_run, &ac[na] };
+        idx[na++] = -1;
         for (int c = 0; c < nc; c++) {
             if (!pb[c]) continue;
-            double t = sB[c] / VFFT_NATORDER_ROUNDS;
-            if (t < bns) { bns = t; bestp = c; win_scr = 0; }
+            ac[na] = (_nato_arm_t){ pb[c], NULL, prs[c], re, im, K, tmp2K, fnB[c], NULL, n };
+            arms[na] = (vfft_race_arm_t){ "pswap", _nato_arm_run, &ac[na] };
+            idx[na++] = c;
         }
         if (have_scr) {
-            double t = sScr / VFFT_NATORDER_ROUNDS;
-            if (t < bns) { bns = t; win_scr = 1; bestp = -1; }
+            ac[na] = (_nato_arm_t){ NULL, NULL, NULL, re, im, K, NULL, NULL, &scr, n };
+            arms[na] = (vfft_race_arm_t){ "scr", _nato_arm_run, &ac[na] };
+            idx[na++] = -2;
         }
+        const vfft_race_proto_t proto = { VFFT_NATORDER_ROUNDS, VFFT_NATORDER_CHUNK,
+                                          VFFT_RACE_MEAN, 0, 0, _nato_reseed, &ac[0] };
+        double ansr[7];
+        vfft_race_run(&proto, arms, na, ansr);
+        v->ns = ansr[0];
+        double bns = v->ns * VFFT_NATORDER_MARGIN; /* challenger must beat PURE by the margin */
+        int bestp = -1, win_scr = 0;
+        for (int a2 = 1; a2 < na; a2++)
+            if (ansr[a2] < bns) {
+                bns = ansr[a2];
+                win_scr = (idx[a2] == -2);
+                bestp = win_scr ? -1 : idx[a2];
+            }
         if (win_scr) {
             v->mode = VFFT_NAT_SCR;
             v->ns = bns;
