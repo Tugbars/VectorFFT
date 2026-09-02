@@ -2633,6 +2633,7 @@ t vw2_bank
 t vw2_lookup.part.N
 t vw2_oop_bank_entry.part.0.isra.N
 t vw2_oop_lookup_k1
+t vw2_oop_lookup_zsplit_role
 t vw2_oop_rec_from_entry.constprop.N
 t vw2_real_route_bank.isra.N
 t vw2_real_route_lookup

@@ -44,4 +44,7 @@
 @cell dct2.split.oop.N256
 @fp NOT_BANKED_RACED races=1
 @cell c2c.2d.ip.64x64
-@fp NOT_BANKED_RACED races=1
+@fpv 1
+@fp d=0 via=root t=0 place=0 lay=1 n=64,64,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=0 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=2 wc=0 wl=8 cut=1 tf=1 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=000000000000000000 il2dhave=100000
+@fp d=1 via=il2drow t=0 place=0 lay=1 n=64,0,0,0 q=1 nthr=1 padded=0 exec_me=0 | k1=0 sp=0 il=0 zroute=0 ztmt=0 zr2c=0 ilme=0 ilrace=0 nat=7 nat2d=0 natpairs=0 natcyc=0 nat2dcyc=0 mtunsafe=0 tcbw=0 tcbsn=0 tcbdn=0 pqw=0 pqmt=0 pqn=0 il2d=[nst=0 wc=0 wl=0 cut=0 tf=0 roop=0 rw=0 cmt=0 oddn2=0 nat=0 blu=0 norowz=0] | have=100001000000000000 il2dhave=000000
+@counters tc=0 il2dcol=0 zt=0 pq=0 trig=0 races=0
