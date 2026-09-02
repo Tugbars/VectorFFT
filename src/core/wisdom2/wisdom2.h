@@ -622,8 +622,14 @@ static inline int vw2_shard_route(const vw2_key_t *k, const char *eng)
     if (k->rank >= 3) return VW2_SHARD_3D;
     if (eng && (!strcmp(eng, "bluestein") || !strcmp(eng, "rader"))) return VW2_SHARD_PRIME;
     if (k->t == VW2_T_R2C || k->t == VW2_T_C2R) return VW2_SHARD_REAL;
-    if (k->t == VW2_T_C2C)
+    if (k->t == VW2_T_C2C) {
+        /* ORDER verdicts live with the engine wisdom that serves order
+         * (owner, 2026-09-02): every 1D c2c ord=nat row — @nat AND
+         * @natoop — homes in the oop shard. The scr shard holds what its
+         * name says: the scrambled-era chains (plus the trig inners). */
+        if (k->ord == VW2_ORD_NAT) return VW2_SHARD_OOP;
         return (k->pl == VW2_PL_IP) ? VW2_SHARD_STRIDE : VW2_SHARD_OOP;
+    }
     return VW2_SHARD_STRIDE;   /* trig */
 }
 
@@ -921,6 +927,27 @@ static inline int vw2_open(vw2_store_t *s, const char *dir, int writable)
         if (r != VW2_OK && worst == VW2_OK) worst = r;
     }
     vw2__dedup_loaded(s);
+    {   /* rehome-on-load (the re-route law): a record residing in a shard
+         * the router no longer maps its key to MOVES — in memory now, on
+         * disk at the next writable save (both shards dirty: the old home
+         * is scrubbed, the new one written). Poisoned shards are left
+         * alone on both ends. */
+        int moved = 0;
+        for (i = 0; i < s->nrec; i++) {
+            int want = vw2_shard_route(&s->rec[i].key,
+                                       vw2_rec_get(&s->rec[i], "eng"));
+            if (want == s->rec[i].shard) continue;
+            if (s->poisoned[want] || s->poisoned[s->rec[i].shard]) continue;
+            s->dirty[s->rec[i].shard] = 1;
+            s->dirty[want] = 1;
+            s->rec[i].shard = want;
+            moved++;
+        }
+        if (moved)
+            fprintf(stderr, "[wisdom2] %s: %d record(s) rehomed to their "
+                            "routed shard (saved on next writable save)\n",
+                    s->dir, moved);
+    }
     fprintf(stderr, "[wisdom2] %s: %d record(s) loaded%s%s\n", s->dir, s->nrec,
             s->writable ? ", writable" : ", read-only",
             worst == VW2_EVERSION ? ", SOME FILES POISONED" : "");
