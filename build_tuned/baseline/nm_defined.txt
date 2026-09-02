@@ -1794,6 +1794,7 @@ t _il_ab_fused
 t _il_ab_pad
 t _il_me_decide
 t _il_mt_tramp
+t _ilp_ref_of
 t _ilprime_arm_blue
 t _ilprime_arm_rader
 t _ilprime_create_banked
@@ -1806,7 +1807,7 @@ t _inner_c2c.constprop.N
 t _inner_c2c_trig.constprop.N
 t _ip_tramp
 t _k1_il2p_apply_kv
-t _k1_il_candidate.part.N
+t _k1_il_candidate
 t _k1ord_arm_run
 t _k1ord_reseed
 t _k1z_race_and_bank

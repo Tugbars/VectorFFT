@@ -104,6 +104,10 @@ typedef struct {
                                               * on old lines = 0 = race once and mark.
                                               * wisdom2-only; the legacy reader never
                                               * sets it (callers zero it on that path). */
+    int     ref_ilp;                         /* mode=ilp bank: which recipe row the signpost
+                                              * names — 0 none (mono), 1 the kind-3 row
+                                              * lay=il, 2 kind-3 lay=split, 3 kind-3 lay-less,
+                                              * 4 the PRIME shard row (2026-09-02). */
     int     ref_comp;                        /* mode=zcasc bank: 1 = the signpost names
                                               * the role=comp kind-4 RECIPE (banked by an
                                               * in-place / odd race); 0 = the OOP problem

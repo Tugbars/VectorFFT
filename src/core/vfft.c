@@ -448,7 +448,7 @@ static vfft_r2c_plan_t *_r2c_route_decide(struct vfft_wisdom_s *W,
         return vfft_r2c_plan_create(N, K, VFFT_R2C_SPLIT, _rfft_registry(), NULL,
                                     (vfft_proto_registry_t *)reg);
 
-    _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
+    /* (the race body counts this race since 2026-09-02 — no bump here) */
     pr = _r2c_build_arm(N, K, 0, reg);
     ps = _r2c_build_arm(N, K, 1, reg);
     if (!pr)
@@ -532,7 +532,7 @@ static vfft_c2r_disp_t *_c2r_route_decide(struct vfft_wisdom_s *W,
         return vfft_c2r_disp_create_auto(N, K, _rfft_registry(),
                                          (vfft_proto_registry_t *)reg);
 
-    _vfft_create_race_count++;   /* HARNESS: past the wisdom hit, the clock decides */
+    /* (the race body counts this race since 2026-09-02 — no bump here) */
     pn = vfft_c2r_disp_create(N, K, VFFT_C2R_NATURAL,
                               _rfft_registry(), (vfft_proto_registry_t *)reg);
     ps = vfft_c2r_disp_create(N, K, VFFT_C2R_SPLIT,
