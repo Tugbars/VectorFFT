@@ -190,3 +190,15 @@
 @cell t=c2c n=1080 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=90.12 il_chain=12.10.9 | ran=1 ns=1151.0 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=2520 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_chain=12.10.21 | ran=1 ns=3940.6 metric=fwd1 units=ns src=race date=2026-09-02
 @cell t=c2c n=1000 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=100.10 il_chain=10.10.10 | ran=1 ns=1065.2 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=128 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=mono sp_pair=8.16 | ran=4 ns=72.4 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=128 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=4.32 il_kv=64 | ran=1 ns=63.8 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=128 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=4.32 il_kv=0 | ran=1 ns=73.7 metric=bwd1 units=ns src=race
+@cell t=c2c n=256 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=2pa_l3 sp_pair=4.64 | ran=4 ns=154.2 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=256 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=16.16 il_kv=51 | ran=1 ns=133.8 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=256 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=16.16 il_kv=0 | ran=1 ns=164.8 metric=bwd1 units=ns src=race
+@cell t=c2c n=512 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=2pb sp_pair=64.8 | ran=4 ns=373.3 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=512 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=16.32 il_kv=67 | ran=1 ns=295.6 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=512 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=16.32 il_kv=0 | ran=1 ns=370.6 metric=bwd1 units=ns src=race
+@cell t=c2c n=1024 q=1 ord=nat place=oop role=comp lay=split | eng=k1 sp_route=2pa_l3 sp_pair=64.16 | ran=4 ns=901.1 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=1024 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=2p il_pair=32.32 il_kv=67 | ran=1 ns=766.4 metric=fwd1 units=ns src=race date=2026-09-02
+@cell t=c2c n=1024 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=2p il_pair=32.32 il_kv=0 | ran=1 ns=827.8 metric=bwd1 units=ns src=race
