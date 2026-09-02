@@ -107,10 +107,25 @@ static int run_cell(const char *wisdir, int N, int fails)
 static int munge_4096(const char *wisdir, int with_zr)
 {
     char pb[1024];
-    snprintf(pb, sizeof pb, "%s/wisdom2_scr.txt", wisdir);
+    /* ord=nat rows home in the OOP shard (2026-09-02 re-route); older
+     * stores may still hold them under the scr / legacy-stride names */
+    snprintf(pb, sizeof pb, "%s/wisdom2_oop.txt", wisdir);
     FILE *f = fopen(pb, "r");
+    if (f)
+    {
+        char probe[65536];
+        size_t pn = fread(probe, 1, sizeof probe - 1, f);
+        probe[pn] = 0;
+        if (!strstr(probe, "n=4096 q=1 ord=nat place=ip")) { fclose(f); f = NULL; }
+        else { fclose(f); f = fopen(pb, "r"); }
+    }
     if (!f)
-    { /* rename compat: a store written by an old binary */
+    {
+        snprintf(pb, sizeof pb, "%s/wisdom2_scr.txt", wisdir);
+        f = fopen(pb, "r");
+    }
+    if (!f)
+    {
         snprintf(pb, sizeof pb, "%s/wisdom2_stride.txt", wisdir);
         f = fopen(pb, "r");
     }

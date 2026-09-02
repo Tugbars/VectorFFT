@@ -31,8 +31,9 @@ The lifecycle law, with no exceptions:
 
 ```text
 src/dag-fft-compiler/generator/generated/
-  wisdom2_oop.txt         1D c2c out-of-place verdicts
-  wisdom2_scr.txt      1D c2c in-place verdicts + trig (dct/dst/dht) verdicts
+  wisdom2_oop.txt         1D c2c out-of-place verdicts + ALL 1D c2c order
+                          (ord=nat) verdicts, both placements (2026-09-02)
+  wisdom2_scr.txt         1D c2c in-place SCRAMBLED chains + trig (dct/dst/dht) verdicts
   wisdom2_real.txt        1D r2c / c2r verdicts (routes + factorizations)
   wisdom2_prime.txt       Bluestein / Rader engine verdicts
   wisdom2_2d.txt          2D composite verdicts

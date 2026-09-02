@@ -281,7 +281,7 @@ ARMS       PURE_CYCLE floor (the deployed chain + its cycle tape) vs up to 5
            injected palindrome chains (uniform T1S, DIT) each with a paired tape;
            plus SCR
 RACE       vfft_natorder_race, src/core/transforms/natorder/natorder_calibrate.h
-BANK       wisdom2_scr | ord=nat, via _bank_nat_1d / _bank_natoop_1d
+BANK       wisdom2_oop | ord=nat, via _bank_nat_1d / _bank_natoop_1d (rehomed 2026-09-02)
 WITNESS    1d.sp.ip.c2c.256 order=NATURAL
            [measured: FLAPS - nat=5/natcyc=96 in 8 of 10 runs, nat=4/natcyc=34 in
             2. Both outputs CORRECT: 3.0e-16 and 3.1e-16 rel err vs a naive

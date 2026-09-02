@@ -276,8 +276,8 @@ Four shard files under `generator/generated/`:
 
 | shard | holds |
 |---|---|
-| `wisdom2_scr.txt` | split/stride chains and variants; the in-place IL mode verdicts |
-| `wisdom2_oop.txt` | out-of-place K=1 planner verdicts, classic OOP champions |
+| `wisdom2_scr.txt` | the scrambled-era chains and variants (ord=scr; incl. the in-place IL mode cells) |
+| `wisdom2_oop.txt` | out-of-place K=1 planner verdicts, classic OOP champions, and ALL 1D ord=nat verdicts (both placements) |
 | `wisdom2_2d.txt` | the 2D interleaved tier |
 | `wisdom2_real.txt` | 1D real routes and rfft chains |
 
