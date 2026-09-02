@@ -8,6 +8,8 @@ b .bss
 b _def
 b _def_loaded
 b _il_ab_runs
+b _ilprime_inner_provider
+b _ilprime_inner_provider_ctx
 b _ord_n.N
 b _ord_pick.N
 b _r2c_dif_fused_hits

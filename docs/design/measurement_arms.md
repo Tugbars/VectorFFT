@@ -458,6 +458,11 @@ INNER      B4.1 (2026-09-02): the convolution's inner transform at length M
            (_k1_il_candidate: kind-3 pair replay with kernel forms, else the
            pair race + bank) through the engine's inner-provider hook, and the
            prime row signposts it: ref=cell(t=c2c,n=M,...,role=comp,lay=il).
+           The create races the PAIR only; the kernel FORMS (il_kv) and the
+           backward cell come from calibrate_k1 at the inner length, as for
+           every kind-3 row (owner ruling 2026-09-02: the IL convention, not a
+           create-time form race). SWEEP ITEM: run calibrate_k1 at N-1 for
+           every prime cell in the store and at every Bluestein M it uses.
            Still structural: an il3p CHAIN inner (no kind-3 chain payload) and
            the zturn inner above 4096.
 RACE       src/core/oop/il_prime.h:385-428

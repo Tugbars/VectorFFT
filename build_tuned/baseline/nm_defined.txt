@@ -792,6 +792,8 @@ b .bss
 b _def
 b _def_loaded
 b _il_ab_runs
+b _ilprime_inner_provider
+b _ilprime_inner_provider_ctx
 b _ord_n.N
 b _ord_pick.N
 b _r2c_dif_fused_hits
@@ -1612,6 +1614,7 @@ r _BCAL_B_CANDIDATES
 r cand.N
 r cand.N
 r default_have.N
+r lays.N
 r primes.N
 r primes.N
 r primes.N
@@ -1798,6 +1801,7 @@ t _ilprime_create_bluestein
 t _ilprime_create_rader
 t _ilprime_exec_bluestein
 t _ilprime_exec_rader
+t _ilprime_inner_from_wisdom
 t _inner_c2c.constprop.N
 t _inner_c2c_trig.constprop.N
 t _ip_tramp

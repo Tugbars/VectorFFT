@@ -779,20 +779,24 @@ static inline int vw2_prime_method_lookup(const vw2_store_t *s, int N)
 /* ref_M > 0: the inner transform's OWN row (the kind-3 pair verdict at
  * length M — stages, radices, kernel forms) is signposted, never copied;
  * a vanished inner row makes this verdict a loud MISS (README §3.3). */
-/* which kind-3 row exists at length M, in the lookup's own precedence
- * (lay=il, lay=split, lay-less): returns VW2_LAY_IL / VW2_LAY_SPLIT /
- * VW2_LAY_ANY, or -1 when none — so a signpost names a row that EXISTS. */
+/* which kind-3 row exists at length M, AS KEYED (lay=il, lay=split, or
+ * lay-less): returns VW2_LAY_IL / VW2_LAY_SPLIT / VW2_LAY_ANY, or -1 when
+ * none. EXACT key equality on purpose: the serving lookup answers a lay=il
+ * request from a lay-less row (the layout fallback tier), and a signpost
+ * spelled after the REQUEST rather than the ROW dangles under ref_ok's
+ * exact match (caught 2026-09-02 on the Bluestein inner at M=256). */
 static inline int vw2_oop_k1_row_lay(const vw2_store_t *s, int M)
 {
     static const int lays[3] = { VW2_LAY_IL, VW2_LAY_SPLIT, VW2_LAY_ANY };
-    int i;
+    int i, j;
     for (i = 0; i < 3; i++) {
         vw2_key_t k;
         memset(&k, 0, sizeof k);
         k.t = VW2_T_C2C; k.rank = 1; k.n[0] = M;
         k.q = 1; k.ord = VW2_ORD_NAT; k.pl = VW2_PL_OOP;
         k.role = VW2_ROLE_COMP; k.lay = (uint8_t)lays[i];
-        if (vw2_lookup(s, &k)) return lays[i];
+        for (j = 0; j < s->nrec; j++)
+            if (vw2_key_eq(&s->rec[j].key, &k)) return lays[i];
     }
     return -1;
 }
