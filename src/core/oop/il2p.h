@@ -1316,8 +1316,11 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     if (!getenv("VFFT_NO_ILBLK")) {
         if (R2 >= 32) {
             vfft_il2p_fn bl = vfft_il2p_leaf_v_fn(R2, 2, 1);    /* 4·8  */
+            vfft_il2p_fn nb2 = vfft_il2p_n1_bwd_v_fn(R2, 2, 1); /* the bwd leaf twin */
             if (!bl) bl = vfft_il2p_leaf_v_fn(R2, 1, 1);        /* 2·16 */
+            if (!nb2) nb2 = vfft_il2p_n1_bwd_v_fn(R2, 1, 1);
             if (bl) p->leaf_f = bl;
+            if (nb2) p->n1_b = nb2;   /* same rule as apply_blocked_default_bwd (2026-09-03) */
         }
         if (A >= 32) {
             vfft_il2p_fn m = vfft_il2p_mid_v_fn(A, 2, 1);
@@ -1343,6 +1346,20 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
 #define VFFT_IL_C3KV_B(kv)        (((kv) >> 4) & 0xf)
 #define VFFT_IL_C3KV_LEAF(kv)     (((kv) >> 8) & 0xf)
 #define VFFT_IL_C3KV_PACK(a, b, l) (((a) & 0xf) | (((b) & 0xf) << 4) | (((l) & 0xf) << 8))
+/* the BACKWARD twin (2026-09-03): only the leaf slot (n1_b at R2) has form
+ * twins; a nonzero mid nibble names a kernel that does not exist and refuses. */
+static inline int vfft_il3p_apply_kv_forms_bwd(vfft_il3p_plan_t *p, int bkv)
+{
+    if (!p) return -1;
+    if (!bkv) return 0;
+    if (VFFT_IL_C3KV_A(bkv) || VFFT_IL_C3KV_B(bkv)) return -1;
+    {
+        const int v = VFFT_IL_C3KV_LEAF(bkv);
+        if (v == VFFT_IL_KV_MONO) { vfft_il2p_fn n = vfft_il2p_n1_bwd_fn(p->R2); if (!n) return -1; p->n1_b = n; }
+        else if (v) { vfft_il2p_fn n = vfft_il2p_n1_bwd_v_fn(p->R2, v, ((p->A * p->B) & 1) == 0); if (!n) return -1; p->n1_b = n; }
+    }
+    return 0;
+}
 static inline int vfft_il3p_apply_kv_forms(vfft_il3p_plan_t *p, int kv)
 {
     int ok = 0;

@@ -344,7 +344,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 {
                     il3p = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1],
                                             ke->il_c3[2]);
-                    _k1_il3p_apply_kv(il3p, ke);       /* banked forms > default */
+                    _k1_il3p_apply_kv(il3p, ke, &W->vw2, N);   /* banked forms > default */
                     if (il3p && getenv("VFFT_NAT_LOG"))
                         fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d "
                                         "src=wisdom (oop)\n", N, ke->il_c3[0],
