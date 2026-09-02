@@ -224,7 +224,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 free(p0);
                 free(p1);
                 if (h->pq_wn > 0)
-                    _pq_mt_race(h);
+                    _pq_mt_replay_or_race(h, W, cfg); /* banked per (P,T) */
             }
             return h;
         }

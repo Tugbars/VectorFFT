@@ -157,8 +157,12 @@ long _vfft_create_race_count = 0;
  * _exec_zcascade; called from the OOP scrambled commit in create. */
 static void _zt_mt_race(struct vfft_plan_s *h);
 /* the 2D plane queue's loop-vs-queue race, defined with its executor;
- * called from the dims==2 howmany>1 create branch. */
+ * called from the dims==2 howmany>1 create branch through the replay-or-
+ * race wrapper (banked per (P, T) on the primary's row, 2026-09-02). */
 static void _pq_mt_race(struct vfft_plan_s *h);
+static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
+                                  struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg);
 
 /* the ODD-REAL BRIDGE handle builder — defined after the plan struct
  * (it sizes it); used by the create gate and the smooth-odd race. */

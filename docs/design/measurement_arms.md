@@ -681,7 +681,11 @@ WITNESS: `2d.il.oop.r2c.256` -> `nst=2 wl=8 cut=1`, children `[il2drow, tcb, zr2
 ## 8. Cross-cutting
 
 ```
-X1 pqmt - plane queue loop vs queue  RACED-NOT-BANKED. dims=2, howmany>1.
+X1 pqmt - plane queue loop vs queue  RACED, BANKED (2026-09-02). dims=2, howmany>1.
+                                     pq=<0|1> pqn=<P> pqt=<T> on the primary
+                                     plane's own row (IL c2c / IL real / split);
+                                     replays on a (P, T) match, re-races on a
+                                     mismatch; VFFT_PQ_NO_MT pins, never banks.
 X2 pqw / pqn                         STRUCTURAL. pq_n = K unconditionally; pq_wn is
                                      the clone count after clamping.
 X3 tcbw                              STRUCTURAL. The number of clones that built AND

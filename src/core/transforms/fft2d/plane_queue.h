@@ -28,11 +28,16 @@
  * cores SHARE one transform, T decides how the work is cut, and the verdict
  * must carry the T it was raced at (cmt/cmtt).
  *
- * NOT BANKED - A GAP, NOT A POLICY
- * --------------------------------
- * The loop-vs-queue verdict is plan-local and re-races on every create, in
- * every process, pending the wisdom2 1D cell convention. Kill/force switch:
- * VFFT_PQ_NO_MT. Engagement counter: vfft_pq_mt_passes().
+ * BANKED (2026-09-02, the 2D arm audit closed the gap)
+ * ----------------------------------------------------
+ * The loop-vs-queue verdict rides the PRIMARY plane's own wisdom row as
+ * pq=<0|1> pqn=<P> pqt=<T> — the plane count and the worker count it was
+ * raced at are its validity condition (a P or T mismatch re-races and
+ * re-banks). The row is whichever one the inner howmany=1 create banked
+ * (IL c2c, IL real, or the split-tier row), found by lookup and merged
+ * into with vw2_update_field; a cold cell with no row banks nothing (loud
+ * under VFFT_IL2D_LOG). Kill/force switch VFFT_PQ_NO_MT pins and never
+ * replays or banks. Engagement counter: vfft_pq_mt_passes().
  *
  * INCLUSION CONTRACT
  * ------------------
@@ -135,6 +140,92 @@ static void _pq_mt_arm_queue(void *v)
     c->h->pq_mt = 1;
     _pq_execute(c->h, c->dir, c->src, c->dst);
 }
+/* the primary plane's own row: the first key that resolves, in the order
+ * the tiers bank them. NULL-safe: a miss means "nothing to ride". */
+static int _pq_row_key(const struct vfft_plan_s *h, const vfft_config_t *cfg,
+                       const vw2_store_t *st, vw2_key_t *k)
+{
+    const int il = (cfg->layout == (int)VFFT_LAYOUT_INTERLEAVED);
+    const int real = (h->transform != VFFT_C2C);
+    const int nat = (cfg->order == VFFT_ORDER_NATURAL);
+    int i;
+    for (i = 0; i < 4; i++)
+    {
+        memset(k, 0, sizeof *k);
+        switch (i)
+        {
+        case 0: if (!il) continue;            /* the IL rows (lay=il, ord=scr) */
+            vw2__2d_key(k, real ? VW2_T_R2C : VW2_T_C2C, 2, h->N, h->N2, 0,
+                        VW2_ORD_SCR, VW2_LAY_IL);
+            break;
+        case 1:                               /* split c2c, this order */
+            if (real) continue;
+            vw2__2d_key(k, VW2_T_C2C, 2, h->N, h->N2, 0,
+                        nat ? VW2_ORD_NAT : VW2_ORD_SCR, VW2_LAY_ANY);
+            break;
+        case 2:                               /* split real (ord=nat rows) */
+            if (!real) continue;
+            vw2__2d_key(k, h->transform == VFFT_C2R ? VW2_T_C2R : VW2_T_R2C,
+                        2, h->N, h->N2, 0, VW2_ORD_NAT, VW2_LAY_ANY);
+            break;
+        default:
+            continue;
+        }
+        if (vw2_lookup(st, k)) return 1;
+    }
+    return 0;
+}
+
+static void _pq_mt_race(struct vfft_plan_s *h);
+
+/* replay-or-race: the verdict is valid for the (P, T) it was raced at */
+static void _pq_mt_replay_or_race(struct vfft_plan_s *h,
+                                  struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const int have = (W && !getenv("VFFT_PQ_NO_MT") &&
+                      _pq_row_key(h, cfg, &W->vw2, &k));
+    if (have && !cfg->recalibrate && (r = vw2_lookup(&W->vw2, &k)) != NULL)
+    {
+        const char *v = vw2_rec_get(r, "pq");
+        const char *vn = vw2_rec_get(r, "pqn");
+        const char *vt = vw2_rec_get(r, "pqt");
+        if (v && vn && vt && (size_t)atol(vn) == h->pq_n &&
+            atoi(vt) == h->pq_wn)
+        {
+            h->pq_mt = atoi(v) ? 1 : 0;
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[pq] %dx%d P=%zu T=%d: replay %s src=wisdom\n",
+                        h->N, h->N2, h->pq_n, h->pq_wn,
+                        h->pq_mt ? "QUEUE" : "loop");
+            return;
+        }
+    }
+    _pq_mt_race(h);
+    if (have)
+    {
+        char b[24];
+        int rc;
+        snprintf(b, sizeof b, "%zu", h->pq_n);
+        rc = vw2_update_field(&W->vw2, &k, "pqn", b);
+        snprintf(b, sizeof b, "%d", h->pq_wn);
+        rc |= vw2_update_field(&W->vw2, &k, "pqt", b);
+        rc |= vw2_update_field(&W->vw2, &k, "pq", h->pq_mt ? "1" : "0");
+        if (rc == VW2_OK)
+            _vw2_persist(W, cfg);
+        else if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[pq] %dx%d P=%zu T=%d: verdict NOT banked (the "
+                            "primary row is a wildcard/migrated row: no "
+                            "exact key to merge into)\n",
+                    h->N, h->N2, h->pq_n, h->pq_wn);
+    }
+    else if (getenv("VFFT_IL2D_LOG") && !getenv("VFFT_PQ_NO_MT"))
+        fprintf(stderr, "[pq] %dx%d P=%zu T=%d: no primary row to bank the "
+                        "verdict on\n", h->N, h->N2, h->pq_n, h->pq_wn);
+}
+
 static void _pq_mt_race(struct vfft_plan_s *h)
 {
     const size_t sb = h->pq_n * h->pq_sdist, db = h->pq_n * h->pq_ddist;
