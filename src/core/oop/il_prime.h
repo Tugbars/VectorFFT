@@ -376,7 +376,10 @@ static void _ilprime_arm_blue(void *v)
     _ilprime_arm_t *c = (_ilprime_arm_t *)v;
     _ilprime_exec_bluestein(c->pb, c->zi, c->zo, 0);
 }
-static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
+/* hint (2026-09-02, the banked method verdict): 0 = race as always,
+ * 1 = Rader replayed from wisdom, 2 = Bluestein replayed from wisdom. The
+ * env pin VFFT_ILPR_METHOD still wins over a hint (env beats wisdom). */
+static inline vfft_ilprime_plan_t *vfft_ilprime_create_method(int N, int hint)
 {
     vfft_ilprime_plan_t *pr, *pb;
     const char *me;
@@ -387,6 +390,12 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
     if (me && me[0] == 'r')
         return _ilprime_create_rader(N);
     if (me && me[0] == 'b')
+        return _ilprime_create_bluestein(N);
+    if (hint == 1) {
+        pr = _ilprime_create_rader(N);
+        return pr ? pr : _ilprime_create_bluestein(N);
+    }
+    if (hint == 2)
         return _ilprime_create_bluestein(N);
     pr = _ilprime_create_rader(N);
     if (!pr)
@@ -425,6 +434,7 @@ static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
             fprintf(stderr, "[ilprime] race N=%d: rader=%.0f blue=%.0f "
                             "-> %s\n",
                     N, tr, tb, tr <= tb ? "RADER" : "BLUESTEIN");
+        (void)0;
         if (tr <= tb)
         {
             vfft_ilprime_destroy(pb);
@@ -506,6 +516,11 @@ static inline void vfft_ilprime_execute_bwd(const vfft_ilprime_plan_t *p,
 {
     if (p->method) _ilprime_exec_rader(p, zin, zout, 1);
     else           _ilprime_exec_bluestein(p, zin, zout, 1);
+}
+
+static inline vfft_ilprime_plan_t *vfft_ilprime_create(int N)
+{
+    return vfft_ilprime_create_method(N, 0);
 }
 
 #endif /* VFFT_IL_PRIME_H */

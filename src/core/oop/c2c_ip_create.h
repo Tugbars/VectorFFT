@@ -305,7 +305,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
              * any cplan path. Everything else now refuses LOUDLY. */
             if (K == 1 && cfg->layout == VFFT_LAYOUT_INTERLEAVED)
             {
-                vfft_ilprime_plan_t *ilpr = vfft_ilprime_create(N);
+                vfft_ilprime_plan_t *ilpr = _ilprime_create_banked(W, cfg, N);
                 if (ilpr)
                 {
                     struct vfft_plan_s *hh = (struct vfft_plan_s *)
@@ -449,7 +449,7 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
             if (K == 1 && !ob && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
                 N < 2048 && !getenv("VFFT_NO_NAT_ILP") &&
                 (mode == VFFT_NAT_ILP || !nat_raced))
-                _k1_il_candidate(W, N, &ilc2, &ilc3);
+                _k1_il_candidate(W, cfg, N, &ilc2, &ilc3);
             if (mode == VFFT_NAT_ILP)
             {
                 if (ilc2 || ilc3)
@@ -1007,9 +1007,9 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                 if (nie && !cfg->recalibrate &&
                     nie->mode == VFFT_NAT_ILP)
                 {
-                    _k1_il_candidate(W, N, &h->k1il2p, &h->k1il3p);
+                    _k1_il_candidate(W, cfg, N, &h->k1il2p, &h->k1il3p);
                     if (!h->k1il2p && !h->k1il3p)
-                        h->k1ilpr = vfft_ilprime_create(N); /* prime cell */
+                        h->k1ilpr = _ilprime_create_banked(W, cfg, N); /* prime cell */
                 }
                 else if ((!nie || cfg->recalibrate) &&
                          !W->vw2_off_stride)
@@ -1017,9 +1017,9 @@ static vfft_plan _vfft_create_c2c_ip(const vfft_config_t *cfg,
                     vfft_il2p_plan_t *ilc2 = NULL;
                     vfft_il3p_plan_t *ilc3 = NULL;
                     vfft_ilprime_plan_t *ilcp = NULL;
-                    _k1_il_candidate(W, N, &ilc2, &ilc3);
+                    _k1_il_candidate(W, cfg, N, &ilc2, &ilc3);
                     if (!ilc2 && !ilc3)
-                        ilcp = vfft_ilprime_create(N); /* self-validates */
+                        ilcp = _ilprime_create_banked(W, cfg, N); /* self-validates */
                     if (ilc2 || ilc3 || ilcp)
                     {
                         double *rz = (double *)malloc(

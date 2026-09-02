@@ -749,6 +749,51 @@ static inline int vw2_oop_bank_entry(vw2_store_t *s, const vfft_oop_wisdom_entry
     return VW2_OK;
 }
 
+/* ── the IL prime METHOD verdict (B4, banked 2026-09-02) ──────────────────
+ * Rader vs Bluestein for a prime N, raced once per cell instead of on every
+ * create. A COMPONENT row (the ilprime plan is a component of both the
+ * in-place ilp mode and the OOP k1 PRIME route), homed in the PRIME shard
+ * by its eng= token: t=c2c n=N q=1 ord=scr place=ip role=comp lay=il |
+ * eng=rader|bluestein. 0 = no verdict, 1 = Rader, 2 = Bluestein. */
+static inline void vw2__prime_method_key(int N, vw2_key_t *k)
+{
+    memset(k, 0, sizeof *k);
+    k->t = VW2_T_C2C; k->rank = 1; k->n[0] = N;
+    k->q = 1; k->ord = VW2_ORD_SCR; k->pl = VW2_PL_IP;
+    k->role = VW2_ROLE_COMP; k->lay = VW2_LAY_IL;
+}
+static inline int vw2_prime_method_lookup(const vw2_store_t *s, int N)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng;
+    vw2__prime_method_key(N, &k);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng) return 0;
+    if (!strcmp(eng, "rader")) return 1;
+    if (!strcmp(eng, "bluestein")) return 2;
+    return 0;
+}
+static inline int vw2_prime_method_bank(vw2_store_t *s, int N, int method)
+{
+    vw2_rec_t r;
+    int rc;
+    memset(&r, 0, sizeof r);
+    vw2__prime_method_key(N, &r.key);
+    if (vw2_rec_set(&r, 1, "eng", method == 1 ? "rader" : "bluestein") != VW2_OK ||
+        vw2_rec_set(&r, 2, "ran", "1") != VW2_OK ||
+        vw2_rec_set(&r, 2, "src", "race") != VW2_OK) {
+        vw2_rec_free(&r);
+        return -1;
+    }
+    vw2__oop_stamp_date(&r);
+    rc = vw2_bank(s, &r);
+    if (rc != VW2_OK) vw2_rec_free(&r);
+    return rc;
+}
+
 /* kind-4 bank under a role: role=comp = the cascade RECIPE as a component
  * row (in-place / odd races, 2026-09-02). The OOP problem verdict at the
  * same key is untouched, so a comp bank can never attach a route by fiat;

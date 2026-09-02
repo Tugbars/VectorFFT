@@ -230,7 +230,26 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
             cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
             !getenv("VFFT_ODDR_NORACE"))
         {
-            struct vfft_plan_s *hb = _oddr_build(cfg, N);
+            /* REPLAY the banked route (R1.4/R1.5, 2026-09-02): 1 = the
+             * rfft handle serves as built, 2 = the bridge serves; only a
+             * miss (or recalibrate) races. */
+            const int banked = (W && !W->vw2_off_oop && !cfg->recalibrate)
+                                   ? vw2_oddr_route_lookup(&W->vw2, N) : 0;
+            struct vfft_plan_s *hb = NULL;
+            if (banked == 1)
+            {
+                if (getenv("VFFT_ODDR_LOG"))
+                    fprintf(stderr, "[oddr] N=%d: replay rfft src=wisdom\n", N);
+                return _real_finish(h);
+            }
+            hb = _oddr_build(cfg, N);
+            if (hb && banked == 2)
+            {
+                if (getenv("VFFT_ODDR_LOG"))
+                    fprintf(stderr, "[oddr] N=%d: replay bridge src=wisdom\n", N);
+                vfft_destroy((vfft_plan)h);
+                return _real_finish(hb);
+            }
             if (hb)
             {
                 const size_t hp1r = (size_t)N / 2 + 1;
@@ -268,6 +287,11 @@ static vfft_plan _vfft_create_real(const vfft_config_t *cfg,
                 }
                 free(xr);
                 free(zr2);
+                if (xr && zr2 && W && !W->vw2_off_oop)
+                {   /* bank the verdict (the race ran) */
+                    if (vw2_oddr_route_bank(&W->vw2, N, tb2 < ta ? 2 : 1) == VW2_OK)
+                        _vw2_persist(W, cfg);
+                }
                 if (tb2 < ta)
                 {
                     vfft_destroy((vfft_plan)h);

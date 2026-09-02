@@ -1,2 +1,2 @@
-3e717f953eddfca1abdf5a8937c1802912631e00
-# short: 3e717f95  (re-stamped after the 2D arm-audit fixes 1-3, 2026-09-02: real IL row = one token set per direction (rw/wl/cmt/cmtt + *_c2r, merge-bank), column-MT verdicts seeded at T=8 (22 rows), N1-arm verdict banked as blu= and replayed by both tiers (odd-N1 chain cells); obj differs by design (+_il2d_real_rowrace de-inlined); golden_bits + fp_replay byte-identical; race_census identical; gates wisdom2_2d/il2d_m1/il2d_real/il2d_proto/odd_ct green)
+6bc7ec090a784bfe6812865377dfa8296c45da84
+# short: 6bc7ec09  (re-stamped after 2D arm-audit fix 4, 2026-09-02: plane-queue loop-vs-queue verdict banked per (P,T) as pq/pqn/pqt on the primary plane's row, replay-or-race wrapper _pq_mt_replay_or_race; obj differs by design (+_il2d_axis_race de-inlined); golden_bits + fp_replay byte-identical; race_census identical; gates wisdom2_2d/il2d_m1/il2d_real/mt_c2c green)
