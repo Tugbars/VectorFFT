@@ -65,10 +65,12 @@ static void _ztodd_arm_k1(void *v)
  * the cascade MT verdict (INC-Z: K=1 zturn, live pool; serial default
  * everywhere the race does not run) — the K=1/odd-mid exit passes 0, its
  * historical behaviour. */
-static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt)
+static vfft_plan _c2c_oop_finish(struct vfft_plan_s *h, int zt_mt,
+                                 struct vfft_wisdom_s *W,
+                                 const vfft_config_t *cfg, int N)
 {
     if (zt_mt && h->zroute && h->zturn && h->K == 1 && h->nthreads > 1)
-        _zt_mt_race(h);
+        _zt_mt_replay_or_race(h, W, cfg, N);   /* per-T banked (C1.9) */
     return h;
 }
 
@@ -646,7 +648,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * on odd chains: 24576 3.0x, 49152 3.3x, 98304 4.2x
                      * (MT wins), 3072/6144/12288 -> the race banks serial.
                      * "Cannot engage" and the race keep small cells serial. */
-                    return _c2c_oop_finish(hk, /*zt_mt=*/1);
+                    return _c2c_oop_finish(hk, /*zt_mt=*/1, W, cfg, N);
                 }
             }
             vfft_il2p_destroy(il2p);
@@ -804,7 +806,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             op->mb_jit_bwd = vfft_proto_plan_jit_bwd(op->mb);
         }
 #endif
-        return _c2c_oop_finish(h, /*zt_mt=*/1);
+        return _c2c_oop_finish(h, /*zt_mt=*/1, W, cfg, N);
     }
     return NULL; /* unreachable: the one call site guards on the same
                   * condition, and every path in the block above returns. */

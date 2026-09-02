@@ -269,6 +269,15 @@ static inline int vw2_oop_lookup_k1_bwd(const vw2_store_t *s, int N,
 
 /* ------------------------------------------------------ kind-4 (cascade) */
 
+/* the kind-4 key: one builder for lookup, bank and in-place field updates */
+static inline void vw2_oop_zsplit_key(int N, int role, vw2_key_t *k)
+{
+    memset(k, 0, sizeof *k);
+    k->t = VW2_T_C2C; k->rank = 1; k->n[0] = N;
+    k->q = 1; k->ord = VW2_ORD_SCR; k->pl = VW2_PL_OOP;
+    k->role = (uint8_t)role;
+}
+
 /* role: VW2_ROLE_NONE = the OOP create's problem verdict (a hit attaches
  * the cascade); VW2_ROLE_COMP = the component RECIPE an in-place / odd race
  * banked (2026-09-02) — same fields, never a route verdict for OOP. */
@@ -278,10 +287,7 @@ static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
 {
     vw2_key_t k;
     const vw2_rec_t *r;
-    memset(&k, 0, sizeof k);
-    k.t = VW2_T_C2C; k.rank = 1; k.n[0] = N;
-    k.q = 1; k.ord = VW2_ORD_SCR; k.pl = VW2_PL_OOP;
-    k.role = (uint8_t)role;
+    vw2_oop_zsplit_key(N, role, &k);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     {
@@ -298,6 +304,8 @@ static inline int vw2_oop_lookup_zsplit_role(const vw2_store_t *s, int N,
         e->zt_t2q = vw2__oop_geti(r, "zt_t2q", 0);
         e->zt_tw  = vw2__oop_geti(r, "zt_tw", 0);
         e->zt_l1  = vw2__oop_geti(r, "zt_l1", 0);
+        e->zt_mt_t = vw2__oop_geti(r, "zt_mt_t", 0);
+        e->zt_mt   = vw2__oop_geti(r, "zt_mt", 0);
         {
             int ch[VFFT_K1_CC_MAX_NF], nf;
             nf = vw2__oop_split_ints(vw2_rec_get(r, "chain"), ch, VFFT_K1_CC_MAX_NF);
@@ -561,6 +569,12 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "zt_tw", tb);
                 snprintf(tb, sizeof tb, "%d", e->zt_l1);
                 VW2__OB_SET(1, "zt_l1", tb);
+            }
+            if (e->zt_mt_t > 0) {              /* per-T MT verdict (C1.9) */
+                snprintf(tb, sizeof tb, "%d", e->zt_mt_t);
+                VW2__OB_SET(1, "zt_mt_t", tb);
+                snprintf(tb, sizeof tb, "%d", e->zt_mt ? 1 : 0);
+                VW2__OB_SET(1, "zt_mt", tb);
             }
         }
         VW2__OB_SET(2, "ran", "1");

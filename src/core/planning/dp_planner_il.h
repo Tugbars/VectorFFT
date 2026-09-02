@@ -1080,6 +1080,155 @@ static void _il_dp_push(vfft_il_cand_sink_t *s, const vfft_il_cand_t *c)
  *
  * Cascade legality is DELEGATED to vfft_zsplit_create (NULL == illegal) rather
  * than re-implemented here. A second copy of that validator would drift. */
+/* ONE cascade chain -> candidates: both engines' creates validate it (the
+ * validator is the law), ZTURN's legal tile widths are enumerated from the
+ * live plan, and t2q is a searched axis. Shared by the {4,8} generator and
+ * the odd-mid generator (2026-09-02) so a new axis cannot be half-adopted. */
+static void _il_dp_push_cascade_chain(int N, const int *chain, int nf,
+                                      vfft_il_cand_sink_t *s)
+{
+    vfft_il_cand_t c;
+        int eng_ok[2] = { 0, 0 };
+        {
+            vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
+            if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
+        }
+        /* tcut WIDTHS for this chain, ZTURN engine only. The plan is
+         * kept alive long enough to enumerate them, because legality
+         * and the L1 cost are properties of (chain, D[], twiddle
+         * layout) and live in zturn.h — re-deriving them here would be
+         * a second copy that drifts, the same reason cascade legality
+         * is delegated to the create rather than reimplemented. */
+        vfft_zt_tile_cand_t wk[VFFT_IL_DP_TILE_KEEP];
+        int nw = 0;
+        {
+            vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
+            if (p) {
+                eng_ok[1] = 1;
+                vfft_zt_tile_cand_t all[64];
+                int dropped = 0, over = 0;
+                int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
+                /* 🔴 NO FILTER. Every legal width is benched — see the
+                 * decision note in zturn.h. Occupancy is reported,
+                 * never used to narrow the set: a width that is never
+                 * timed leaves no trace, so a wrong filter would be
+                 * undetectable from its own output. Calibration time is
+                 * what this library trades for running well on chips
+                 * nobody tuned for. */
+                nw = vfft_zturn2_tile_all(all, n, VFFT_IL_DP_TILE_KEEP,
+                                          wk, &over);
+                if (dropped)
+                    fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
+                                    "not fit the enumeration array\n",
+                            N, dropped);
+                /* Over-cap is a SIZING BUG. Loud, always. */
+                if (over)
+                    fprintf(stderr, "[il-dp] N=%d nf=%d: %d legal tile "
+                            "widths EXCEEDED VFFT_IL_DP_TILE_KEEP=%d and "
+                            "were NOT benched — raise it\n",
+                            N, nf, over, VFFT_IL_DP_TILE_KEEP);
+                if (nw && getenv("VFFT_IL_DP_VERBOSE"))
+                    fprintf(stderr, "  [il-dp] N=%d nf=%d: %d legal tile "
+                            "widths, all benched (L1 = %ld B)\n",
+                            N, nf, nw, vfft_cpu_l1d_bytes());
+                vfft_zturn2_destroy(p);
+            }
+        }
+        for (int rt = 0; rt < 2; rt++)
+        {
+            if (!eng_ok[rt]) continue;
+            /* last==4 x ZTURN (the radix-4 terminator) has NO
+             * stf2 twin — zturn.h forces t2q=0 — so the q=1
+             * candidate would bench the same binary twice.
+             * (Legacy zsplit never validates last==4, so rt==0
+             * cannot reach here with a last==4 chain.) */
+            const int nq =
+                (rt == 1 && chain[nf - 1] == 4) ? 1 : 2;
+            /* Width axis: ZTURN only (rt==1) — zsplit has no tiled
+             * path. Index -1 is the UNTILED candidate, which must stay
+             * in the search: tiling is a per-cell verdict, not a
+             * default, and 2048 measured a real +3.3% LOSS. Dropping
+             * the untiled arm would make "tiled" unfalsifiable. */
+            const int wlo = -1;
+            const int whi = (rt == 1) ? nw - 1 : -1;
+            for (int q = 0; q < nq; q++)
+            for (int wi = wlo; wi <= whi; wi++)
+            {
+                memset(&c, 0, sizeof c);
+                c.route = VFFT_K1_IL_CASCADE;
+                c.zroute = rt;
+                c.nf = nf;
+                c.t2q = q;
+                c.zt_tw = (wi >= 0) ? (int)wk[wi].w : 0;
+                memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
+                _il_dp_push(s, &c);
+            }
+        }
+}
+
+/* odd-mid chains (2026-09-02, arm audit C1.2/C1.5): N = 2^a * odd, odd > 1.
+ * The odd part is decomposed into the emitted msg radices {15,9,7,5,3}
+ * (largest first, the default chain's own decomposition) and placed at
+ * EVERY interior position (chain[0] is the ingest, chain[nf-1] the
+ * terminator — both power-of-two by construction); the power-of-two slots
+ * walk ordered {4,8} with product N/odd. Legality is still the creates'.
+ * Before this, prod == N never held for an odd N and the cell silently got
+ * vfft_zsplit_default_chain + UNTILED with nothing measured. */
+static void _il_dp_enumerate_odd_mids(int N, vfft_il_cand_sink_t *s)
+{
+    static const int OP[] = { 15, 9, 7, 5, 3 };
+    int mids[VFFT_ZSPLIT_MAX_NF], nm = 0, m = N, p2;
+    long pw;
+    while ((m & 1) == 0) m >>= 1;
+    if (m == 1) return;                        /* pure power of two: not ours */
+    for (p2 = 0; p2 < (int)(sizeof OP / sizeof OP[0]); p2++)
+        while (m % OP[p2] == 0) {
+            if (nm >= VFFT_ZSPLIT_MAX_NF - 2) return;
+            mids[nm++] = OP[p2];
+            m /= OP[p2];
+        }
+    if (m != 1) return;                        /* an odd factor outside msg */
+    pw = (long)N;
+    for (p2 = 0; p2 < nm; p2++) pw /= mids[p2];
+    for (int nf = nm + 3; nf <= VFFT_ZSPLIT_MAX_NF; nf++)
+    {
+        const int np = nf - nm;                /* power-of-two slots        */
+        long combos = 1;
+        for (int i = 0; i < np; i++) combos *= 2;
+        for (long mask = 0; mask < combos; mask++)
+        {
+            int pchain[VFFT_ZSPLIT_MAX_NF];
+            long prod = 1;
+            for (int i = 0; i < np; i++) {
+                pchain[i] = ((mask >> i) & 1) ? 8 : 4;
+                prod *= pchain[i];
+            }
+            if (prod != pw) continue;
+            /* place the mids: ordered positions 1..nf-2, mids in their
+             * decomposition order (identical mids are indistinguishable, so
+             * ordered placement with a strictly increasing position walk is
+             * exactly the set of distinct chains) */
+            int pos[VFFT_ZSPLIT_MAX_NF];
+            for (int i = 0; i < nm; i++) pos[i] = i + 1;
+            for (;;)
+            {
+                int chain[VFFT_ZSPLIT_MAX_NF], pi = 0, mi = 0;
+                for (int i = 0; i < nf; i++) {
+                    if (mi < nm && pos[mi] == i) chain[i] = mids[mi++];
+                    else chain[i] = pchain[pi++];
+                }
+                _il_dp_push_cascade_chain(N, chain, nf, s);
+                /* next combination of positions within [1, nf-2] */
+                int k = nm - 1;
+                while (k >= 0 && pos[k] == nf - 2 - (nm - 1 - k)) k--;
+                if (k < 0) break;
+                pos[k]++;
+                for (int j = k + 1; j < nm; j++) pos[j] = pos[j - 1] + 1;
+            }
+        }
+    }
+}
+
 static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
@@ -1282,84 +1431,10 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                     prod *= chain[i];
                 }
                 if (prod != (long)N) continue;
-                int eng_ok[2] = { 0, 0 };
-                {
-                    vfft_zsplit_plan_t *p = vfft_zsplit_create(N, chain, nf);
-                    if (p) { eng_ok[0] = 1; vfft_zsplit_destroy(p); }
-                }
-                /* tcut WIDTHS for this chain, ZTURN engine only. The plan is
-                 * kept alive long enough to enumerate them, because legality
-                 * and the L1 cost are properties of (chain, D[], twiddle
-                 * layout) and live in zturn.h — re-deriving them here would be
-                 * a second copy that drifts, the same reason cascade legality
-                 * is delegated to the create rather than reimplemented. */
-                vfft_zt_tile_cand_t wk[VFFT_IL_DP_TILE_KEEP];
-                int nw = 0;
-                {
-                    vfft_zturn2_plan_t *p = vfft_zturn2_create_chain(N, chain, nf);
-                    if (p) {
-                        eng_ok[1] = 1;
-                        vfft_zt_tile_cand_t all[64];
-                        int dropped = 0, over = 0;
-                        int n = vfft_zturn2_tile_candidates(p, all, 64, &dropped);
-                        /* 🔴 NO FILTER. Every legal width is benched — see the
-                         * decision note in zturn.h. Occupancy is reported,
-                         * never used to narrow the set: a width that is never
-                         * timed leaves no trace, so a wrong filter would be
-                         * undetectable from its own output. Calibration time is
-                         * what this library trades for running well on chips
-                         * nobody tuned for. */
-                        nw = vfft_zturn2_tile_all(all, n, VFFT_IL_DP_TILE_KEEP,
-                                                  wk, &over);
-                        if (dropped)
-                            fprintf(stderr, "[il-dp] N=%d: %d tile widths did "
-                                            "not fit the enumeration array\n",
-                                    N, dropped);
-                        /* Over-cap is a SIZING BUG. Loud, always. */
-                        if (over)
-                            fprintf(stderr, "[il-dp] N=%d nf=%d: %d legal tile "
-                                    "widths EXCEEDED VFFT_IL_DP_TILE_KEEP=%d and "
-                                    "were NOT benched — raise it\n",
-                                    N, nf, over, VFFT_IL_DP_TILE_KEEP);
-                        if (nw && getenv("VFFT_IL_DP_VERBOSE"))
-                            fprintf(stderr, "  [il-dp] N=%d nf=%d: %d legal tile "
-                                    "widths, all benched (L1 = %ld B)\n",
-                                    N, nf, nw, vfft_cpu_l1d_bytes());
-                        vfft_zturn2_destroy(p);
-                    }
-                }
-                for (int rt = 0; rt < 2; rt++)
-                {
-                    if (!eng_ok[rt]) continue;
-                    /* last==4 x ZTURN (the radix-4 terminator) has NO
-                     * stf2 twin — zturn.h forces t2q=0 — so the q=1
-                     * candidate would bench the same binary twice.
-                     * (Legacy zsplit never validates last==4, so rt==0
-                     * cannot reach here with a last==4 chain.) */
-                    const int nq =
-                        (rt == 1 && chain[nf - 1] == 4) ? 1 : 2;
-                    /* Width axis: ZTURN only (rt==1) — zsplit has no tiled
-                     * path. Index -1 is the UNTILED candidate, which must stay
-                     * in the search: tiling is a per-cell verdict, not a
-                     * default, and 2048 measured a real +3.3% LOSS. Dropping
-                     * the untiled arm would make "tiled" unfalsifiable. */
-                    const int wlo = -1;
-                    const int whi = (rt == 1) ? nw - 1 : -1;
-                    for (int q = 0; q < nq; q++)
-                    for (int wi = wlo; wi <= whi; wi++)
-                    {
-                        memset(&c, 0, sizeof c);
-                        c.route = VFFT_K1_IL_CASCADE;
-                        c.zroute = rt;
-                        c.nf = nf;
-                        c.t2q = q;
-                        c.zt_tw = (wi >= 0) ? (int)wk[wi].w : 0;
-                        memcpy(c.chain, chain, sizeof(int) * (size_t)nf);
-                        _il_dp_push(s, &c);
-                    }
-                }
+                _il_dp_push_cascade_chain(N, chain, nf, s);
             }
         }
+        _il_dp_enumerate_odd_mids(N, s);       /* N = 2^a * odd (2026-09-02) */
     }
 }
 
@@ -1721,8 +1796,22 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             }
             else
                 e.zs_t2q = scr->t2q;
-            if (vw2_oop_bank_entry(st, &e) == VW2_OK)
-                lines++;
+            /* ODD-MID cascade (2026-09-02): bank the searched recipe as a
+             * COMPONENT row (role=comp). The problem-verdict key at odd N
+             * belongs to whichever engine won the OOP cell (a classic modeb
+             * verdict, today) and an odd cascade never attaches by fiat —
+             * it races the finished handle at the commit, so the incumbent's
+             * own verdict must survive here or that race turns into a
+             * strawman (the 2026-08-27 lesson). Every replay path reads the
+             * comp recipe for an odd chain. */
+            {
+                int codd = 0, ci;
+                for (ci = 0; ci < scr->nf; ci++)
+                    if (scr->chain[ci] & 1) codd = 1;
+                if (vw2_oop_bank_entry_role(st, &e, codd ? VW2_ROLE_COMP
+                                                         : VW2_ROLE_NONE) == VW2_OK)
+                    lines++;
+            }
         }
     }
     return lines;
