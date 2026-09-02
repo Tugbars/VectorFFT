@@ -628,9 +628,15 @@ no column-MT race can run. Verified three independent ways:
 ### E2. IL - the REAL tier
 
 ```
-E2.1 rw - the ROW ROUTE       RACED. The per-row TC door (one vfft_execute on the
-                              transform-contiguous batch handle at (N2, K=N1)) vs
-                              ROWSPLIT at width W.
+E2.1 rw - the ROW ROUTE       RACED, PER DIRECTION. The per-row TC door (one
+                              vfft_execute on the transform-contiguous batch
+                              handle at (N2, K=N1)) vs ROWSPLIT at width W.
+                              r2c and c2r race their own rw/wl/cmt and bank them
+                              as separate token sets (c2r: rw_c2r wl_c2r cmt_c2r
+                              cmtt_c2r) on the ONE direction-shared real IL row
+                              (the chain is shared by the pair law). Until
+                              2026-09-02 both directions wrote the same tokens and
+                              c2r replayed r2c's verdicts.
 E2.2 wl - banded column walk  RACED. unbanded vs WPOOL, filtered by
                               _il2d_real_wl_cut >= 0 and wl < N1.
 E2.3 cmt / cmtt               RACED, per-T. serial _il2d_real_cols vs threaded

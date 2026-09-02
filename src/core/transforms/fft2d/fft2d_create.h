@@ -762,7 +762,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
                                             &il2d_nst);
                 else if (!cfg->recalibrate &&
-                         vw2_2d_rl_lookup(&W->vw2, N1, N2, il2d_R,
+                         vw2_2d_rl_lookup(&W->vw2, N1, N2,
+                                          cfg->transform == VFFT_C2R,
+                                          il2d_R,
                                           &il2d_nst, &il2d_brw,
                                           &il2d_bwl, &il2d_bcmt,
                                           &il2d_bcmtt) &&
