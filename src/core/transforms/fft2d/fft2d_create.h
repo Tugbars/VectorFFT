@@ -252,6 +252,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_oddn2 = 0;        /* odd-N2 real: c2c row child */
         double *il2d_orbuf = NULL; /* its 2 x 2*N2 row pair buffer  */
         int il2d_blu = 0;          /* odd/prime N1: column Bluestein M */
+        int il2d_bblu = -1;        /* banked N1-arm verdict; -1 = unraced */
         int il2d_rof = 0;          /* row route FORCED oop (odd N2 c2c) */
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
@@ -283,8 +284,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                                 &il2d_nst, &il2d_bwl,
                                                 &il2d_btf, &il2d_bro,
                                                 &il2d_bcmt,
-                                                &il2d_bcmtt) &&
-                         _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
+                                                &il2d_bcmtt, &il2d_bblu) &&
+                         _il2d_chain_prod(il2d_R, il2d_nst) ==
+                             (il2d_bblu > 0 ? il2d_bblu : N1) &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
                     chain_ok = 1;
                 else
@@ -312,7 +314,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             chain_ok = 1;
                             vw2_2d_il_chain_bank(&W->vw2, N1, N2,
                                                  il2d_R, il2d_nst,
-                                                 -1, -1, -1, -1, -1,
+                                                 -1, -1, -1, -1, -1, -1,
                                                  bns);
                             _vw2_persist(W, cfg);
                         }
@@ -393,6 +395,70 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * with empty tabs was a NULL-load crash, caught by the
                  * cell sweep 2026-08-27). il2d_tbl_done stops the later
                  * shared build from double-building the winner's. */
+                /* REPLAY the banked N1-arm verdict (E1.7, 2026-09-02):
+                 * blu > 0 = Bluestein won (the row's chain IS the M
+                 * chain, already resolved above — build the Bluestein
+                 * tables and adopt, no timing); blu == 0 = the chain won
+                 * (nothing to do). Only an unraced cell (-1) or an env
+                 * pin runs the race below. */
+                if (hasodd && il2d_bblu > 0 && !be && !cfg->recalibrate)
+                {
+                    int bR[8], bL[8], bnst = 0, M2;
+                    vfft_il2p_fn bf[8], bb[8];
+                    double *btf[8], *btb[8];
+                    double *bchf, *bchb, *bkf, *bkb, *bscr;
+                    memset(btf, 0, sizeof btf);
+                    memset(btb, 0, sizeof btb);
+                    M2 = _il2d_blu_build(N1, (size_t)N2, bR, bL, bf, bb,
+                                         btf, btb, &bnst, &bchf, &bchb,
+                                         &bkf, &bkb, &bscr);
+                    if (M2 == il2d_bblu)
+                    {
+                        memcpy(il2d_R, bR, sizeof bR);
+                        memcpy(il2d_L, bL, sizeof bL);
+                        memcpy(il2d_f, bf, sizeof bf);
+                        memcpy(il2d_b, bb, sizeof bb);
+                        memcpy(il2d_tf, btf, sizeof btf);
+                        memcpy(il2d_tb, btb, sizeof btb);
+                        il2d_nst = bnst;
+                        il2d_blu = M2;
+                        il2d_bluchf = bchf;
+                        il2d_bluchb = bchb;
+                        il2d_blukf = bkf;
+                        il2d_blukb = bkb;
+                        il2d_bluscr = bscr;
+                        il2d_tbl_done = 1;
+                        if (il2d_nat)
+                        {
+                            free(il2d_natperm);
+                            free(il2d_natscr);
+                            il2d_natperm = NULL;
+                            il2d_natscr = NULL;
+                            il2d_nat = 0;
+                        }
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[il2d] N1-arm %dx%d (c2c): "
+                                            "replay BLUESTEIN M=%d src=wisdom\n",
+                                    N1, N2, M2);
+                        hasodd = 0;            /* verdict served */
+                    }
+                    else
+                    {
+                        for (s3 = 0; s3 < bnst; s3++)
+                        {
+                            free(btf[s3]);
+                            free(btb[s3]);
+                        }
+                        free(bchf); free(bchb); free(bkf); free(bkb); free(bscr);
+                    }
+                }
+                else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
+                {
+                    if (getenv("VFFT_IL2D_LOG"))
+                        fprintf(stderr, "[il2d] N1-arm %dx%d (c2c): replay "
+                                        "chain src=wisdom\n", N1, N2);
+                    hasodd = 0;                /* the chain won: no race */
+                }
                 if (hasodd && (!be || atoi(be) == 1) &&
                     !_il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
                                         il2d_tf, il2d_tb))
@@ -445,6 +511,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                     N1, N2, il2d_nat ? "nat" : "scr",
                                     tc, tbu,
                                     use_blu ? "BLUESTEIN" : "chain");
+                        if (!be)
+                        {   /* bank the verdict with the chain that SERVES */
+                            vw2_2d_il_chain_bank(&W->vw2, N1, N2,
+                                                 use_blu ? bR : il2d_R,
+                                                 use_blu ? bnst : il2d_nst,
+                                                 -1, -1, -1, -1, -1,
+                                                 use_blu ? M2 : 0, 0.0);
+                            _vw2_persist(W, cfg);
+                        }
                         if (use_blu)
                         {
                             for (s3 = 0; s3 < il2d_nst; s3++)
@@ -767,8 +842,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                           il2d_R,
                                           &il2d_nst, &il2d_brw,
                                           &il2d_bwl, &il2d_bcmt,
-                                          &il2d_bcmtt) &&
-                         _il2d_chain_prod(il2d_R, il2d_nst) == N1 &&
+                                          &il2d_bcmtt, &il2d_bblu) &&
+                         _il2d_chain_prod(il2d_R, il2d_nst) ==
+                             (il2d_bblu > 0 ? il2d_bblu : N1) &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f,
                                        il2d_b))
                     rok = 1;
@@ -830,6 +906,71 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                 for (s3 = 0; s3 < il2d_nst; s3++)
                     if (il2d_R[s3] & 1)
                         hasodd = 1;
+                /* REPLAY the banked N1-arm verdict (E1.7, 2026-09-02) —
+                 * see the c2c tier for the law */
+                if (hasodd && il2d_bblu > 0 && !be && !cfg->recalibrate)
+                {
+                    const size_t rn0 = (size_t)N2 / 2 + 1;
+                    int bR[8], bL[8], bnst = 0, M2;
+                    vfft_il2p_fn bf[8], bb[8];
+                    double *btf[8], *btb[8];
+                    double *bchf, *bchb, *bkf, *bkb, *bscr;
+                    memset(btf, 0, sizeof btf);
+                    memset(btb, 0, sizeof btb);
+                    M2 = _il2d_blu_build(N1, rn0, bR, bL, bf, bb, btf,
+                                         btb, &bnst, &bchf, &bchb, &bkf,
+                                         &bkb, &bscr);
+                    if (M2 == il2d_bblu)
+                    {
+                        for (s3 = 0; s3 < il2d_nst; s3++)
+                        {
+                            free(il2d_tf[s3]);
+                            free(il2d_tb[s3]);
+                        }
+                        memcpy(il2d_R, bR, sizeof bR);
+                        memcpy(il2d_L, bL, sizeof bL);
+                        memcpy(il2d_f, bf, sizeof bf);
+                        memcpy(il2d_b, bb, sizeof bb);
+                        memcpy(il2d_tf, btf, sizeof btf);
+                        memcpy(il2d_tb, btb, sizeof btb);
+                        il2d_nst = bnst;
+                        il2d_blu = M2;
+                        il2d_bluchf = bchf;
+                        il2d_bluchb = bchb;
+                        il2d_blukf = bkf;
+                        il2d_blukb = bkb;
+                        il2d_bluscr = bscr;
+                        if (il2d_nat)
+                        {
+                            free(il2d_natperm);
+                            free(il2d_natscr);
+                            il2d_natperm = NULL;
+                            il2d_natscr = NULL;
+                            il2d_nat = 0;
+                        }
+                        if (getenv("VFFT_IL2D_LOG"))
+                            fprintf(stderr, "[il2d] N1-arm %dx%d (real): "
+                                            "replay BLUESTEIN M=%d src=wisdom\n",
+                                    N1, N2, M2);
+                        hasodd = 0;
+                    }
+                    else
+                    {
+                        for (s3 = 0; s3 < bnst; s3++)
+                        {
+                            free(btf[s3]);
+                            free(btb[s3]);
+                        }
+                        free(bchf); free(bchb); free(bkf); free(bkb); free(bscr);
+                    }
+                }
+                else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
+                {
+                    if (getenv("VFFT_IL2D_LOG"))
+                        fprintf(stderr, "[il2d] N1-arm %dx%d (real): replay "
+                                        "chain src=wisdom\n", N1, N2);
+                    hasodd = 0;
+                }
                 if (hasodd && (!be || atoi(be) == 1))
                 {
                     const size_t rn = (size_t)N2 / 2 + 1;
@@ -879,6 +1020,16 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                     N1, N2, il2d_nat ? "nat" : "scr",
                                     tc, tbu,
                                     use_blu ? "BLUESTEIN" : "chain");
+                        if (!be)
+                        {   /* bank the verdict with the chain that SERVES */
+                            vw2_2d_rl_bank(&W->vw2, N1, N2,
+                                           cfg->transform == VFFT_C2R,
+                                           use_blu ? bR : il2d_R,
+                                           use_blu ? bnst : il2d_nst,
+                                           -1, -1, -1, -1,
+                                           use_blu ? M2 : 0, 0.0);
+                            _vw2_persist(W, cfg);
+                        }
                         if (use_blu)
                         {
                             for (s3 = 0; s3 < il2d_nst; s3++)

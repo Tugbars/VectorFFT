@@ -516,10 +516,13 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
  * fallback phase — the chain-token check refuses it (split rows carry
  * rowplan/colplan, never chain=). Old binaries: cells invisible + opaque
  * carry (v1.2 architecture, proven). */
+/* blu (E1.7, 2026-09-02): the N1-arm verdict — 0 = the odd chain won,
+ * M > 0 = the column-axis Bluestein of length M won (chain= is then the
+ * M chain that serves), absent = -1 = unraced. Same token on the real row. */
 static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
                                          int N2, int *Rs, int *nst,
                                          int *wl, int *tf, int *ro,
-                                         int *cmt, int *cmtt)
+                                         int *cmt, int *cmtt, int *blu)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -538,6 +541,7 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
      * cmtt != the requesting pool re-races — same law as the rl cell) */
     if (cmt) { const char *v = vw2_rec_get(r, "cmt"); *cmt = v ? atoi(v) : -1; }
     if (cmtt) { const char *v = vw2_rec_get(r, "cmtt"); *cmtt = v ? atoi(v) : -1; }
+    if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -555,7 +559,7 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
 static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
                                        const int *Rs, int nst,
                                        int wl, int tf, int ro,
-                                       int cmt, int cmtt, double ns)
+                                       int cmt, int cmtt, int blu, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -591,6 +595,10 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
         if (vw2_rec_set(r, 1, "cmt", b) != VW2_OK) goto tokfail;
         snprintf(b, sizeof b, "%d", cmtt);
         if (vw2_rec_set(r, 1, "cmtt", b) != VW2_OK) goto tokfail;
+    }
+    if (blu >= 0) {               /* the N1-arm verdict (E1.7) */
+        snprintf(b, sizeof b, "%d", blu);
+        if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) goto tokfail;
     }
     if (0) {
     tokfail:
@@ -635,7 +643,7 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
                                    int *Rs, int *nst, int *rw, int *wl,
-                                   int *cmt, int *cmtt)
+                                   int *cmt, int *cmtt, int *blu)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -656,6 +664,7 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
      * format every reader/writer/gate shares). */
     if (cmt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 2)); *cmt = v ? atoi(v) : -1; }
     if (cmtt) { const char *v = vw2_rec_get(r, vw2__rl_tok(is_c2r, 3)); *cmtt = v ? atoi(v) : -1; }
+    if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }  /* direction-shared */
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -673,7 +682,7 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
 static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  int is_c2r,
                                  const int *Rs, int nst, int rw, int wl,
-                                 int cmt, int cmtt, double ns)
+                                 int cmt, int cmtt, int blu, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -701,6 +710,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                 snprintf(v, sizeof v, "%d", cmt);  rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 2), v);
                 snprintf(v, sizeof v, "%d", cmtt); rc |= vw2_update_field(st, &k, vw2__rl_tok(is_c2r, 3), v);
             }
+            if (blu >= 0) { snprintf(v, sizeof v, "%d", blu); rc |= vw2_update_field(st, &k, "blu", v); }
             if (rc != VW2_OK)
                 fprintf(stderr, "[wisdom2] il2d real merge refused (%s)\n",
                         is_c2r ? "c2r" : "r2c");
@@ -742,6 +752,14 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
         if (vw2_rec_set(r, 1, vw2__rl_tok(is_c2r, 3), b) != VW2_OK) {
             vw2_rec_free(r);
             fprintf(stderr, "[wisdom2] il2d real cmtt bank refused (token)\n");
+            return -1;
+        }
+    }
+    if (blu >= 0) {               /* the N1-arm verdict (E1.7), direction-shared */
+        snprintf(b, sizeof b, "%d", blu);
+        if (vw2_rec_set(r, 1, "blu", b) != VW2_OK) {
+            vw2_rec_free(r);
+            fprintf(stderr, "[wisdom2] il2d real blu bank refused (token)\n");
             return -1;
         }
     }

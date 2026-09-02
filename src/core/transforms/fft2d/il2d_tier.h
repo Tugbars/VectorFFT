@@ -901,7 +901,8 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_R, h->il2d_nst, bw,
-                       bwl, -1, -1, bestns + cbest);
+                       bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1,
+                       bestns + cbest);
         _vw2_persist(W, cfg);
     }
 }
@@ -947,7 +948,8 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             h->il2d_colmt = 0;
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_R, h->il2d_nst,
-                           h->il2d_rw, h->il2d_wl, 0, h->nthreads, st);
+                           h->il2d_rw, h->il2d_wl, 0, h->nthreads,
+                           (N1 & (N1 - 1)) ? h->il2d_blu : -1, st);
             _vw2_persist(W, cfg);
             return;
         }
@@ -962,6 +964,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
     vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                    h->il2d_R, h->il2d_nst, h->il2d_rw,
                    h->il2d_wl, h->il2d_colmt, h->nthreads,
+                   (N1 & (N1 - 1)) ? h->il2d_blu : -1,
                    h->il2d_colmt ? mt : st);
     _vw2_persist(W, cfg);
 }
@@ -1175,7 +1178,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                          h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
-                         -1, -1, best);
+                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1, best);
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -1280,7 +1283,8 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         free(z);
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                              h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
-                             0, h->nthreads, 0.0);
+                             0, h->nthreads,
+                             (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0);
         _vw2_persist(W, cfg);
         return;
     }
@@ -1305,6 +1309,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                          h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
                          h->il2d_colmt, h->nthreads,
+                         (N1 & (N1 - 1)) ? h->il2d_blu : -1,
                          h->il2d_colmt ? mt : st);
     _vw2_persist(W, cfg);
 }

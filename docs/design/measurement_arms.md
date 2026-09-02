@@ -604,8 +604,15 @@ E1.4 tf (tfuse)                       DERIVED; slaved to wl (tfuse = w > 0).
 E1.5 roop - row route                 RACED. in-place per-row K=1 child vs an OOP
                                       child + 2*N2 scratch + copy-back.
 E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
-E1.7 N1-arm                           RACED. native odd chain vs COLUMN-AXIS
-                                      Bluestein -> sets blu, rewrites nst/R/L.
+E1.7 N1-arm                      RACED, BANKED (2026-09-02): native odd chain vs
+                                 COLUMN-AXIS Bluestein -> sets blu, rewrites
+                                 nst/R/L. Verdict token blu= on the lay=il row
+                                 (0 = chain, M = Bluestein length; the row's
+                                 chain= is the chain that SERVES), direction-
+                                 shared on the real row; replayed by both tiers,
+                                 re-raced only unraced or under recalibrate. Env
+                                 VFFT_IL2D_BLU pins and never banks. Before this
+                                 the race ran on EVERY odd-N1 create.
 E1.8 wc                               ENV only (VFFT_IL2D_WC).
 E1.9 NATURAL n1 (M4-lite)             STRUCTURAL. Closed-form leaf redirection, or
                                       the create REFUSES. No race, no bank.
