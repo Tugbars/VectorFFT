@@ -545,25 +545,29 @@ falsifiable); `tfuse` (derived; forced 0 under natord because rho spans the whol
 `thonest` (env-only A/B, a bit-identical pair kept reachable as a discriminator); `zt_mt`
 (serial vs threaded walk — raced, never banked).
 
-### II.1d — in-place: the attach race
+### II.1d — in-place: the IL plan race (no split baseline)
 
-For interleaved **in-place** there is a create-time race deciding whether the native
-interleaved engine is used at all:
+For interleaved **in-place** there is no split plan and no convert arm (owner, 2026-09-03).
+The create serves the cell with an IL engine and races only IL plans:
 
-- **arm 0 — CONVERT**: deinterleave to split planes, run the split engine, re-interleave.
-- **arm 1 — NATIVE**: the interleaved engine directly (il2p/il3p/ilprime below 2048; the
-  cascade above).
+- **below 2048** — the IL plan race: every legal pair x its kernel forms, every legal
+  3-stage chain x forms, the order swap and the backward forms (the planner
+  `calibrate_k1` runs offline, now also at create on a kind-3 miss or recalibrate);
+  the verdict is the kind-3 `lay=il` row.
+- **2048 and above** — the cell's K=1 IL engine against the cascade (the kind-4
+  recipe; natord under NATURAL), aliased in place, 5 rounds alternated, median-of-5.
+  Banks `mode=ilp | mode=zcasc` on the cell's own mode row; one arm serves and banks;
+  no arm refuses the create.
 
-5 rounds, arms alternated, median-of-5, reps scaled by size. Banks as `mode=ilp|conv` or
-`mode=zcasc|conv`. The fingerprint field `ilme=1` records that *the race ran*; which arm
-won shows in the subplan presence bits.
+`mode=conv` and the tape modes are not IL verdicts; a row carrying one re-races.
 
 ### II.1e — natural order
 
 Its own tournaments, not a fix-up pass:
 
-- **nat-ilp** — il2p/il3p against the finished natural-*tape* handle.
-- **nat-zcasc** — the natord cascade against the tape handle.
+- **nat-ilp / nat-zcasc** — for an interleaved caller these are the two arms of II.1d
+  under order=NATURAL (il2p/il3p are natural by construction; the natord cascade);
+  the split tape is a SPLIT-caller engine, never an IL arm (2026-09-03).
 - **natoop-zcasc** — the natord cascade against the K=1 out-of-place handle.
 - **scroop-zcasc** — the SCRAMBLED cascade against the K=1 out-of-place handle under
   order=DEFAULT (2026-09-03). DEFAULT is order-agnostic, so the scrambled cascade is a

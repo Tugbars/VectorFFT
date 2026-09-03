@@ -283,7 +283,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
                 cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
                 cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
                 cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-                cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
+                cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* 3D IL is refused until its tier exists (2026-09-03) */
                 cfg.wisdom = W;
                 cfg.wisdom_write = 1;        /* measurement mode: must persist */
                 h = vfft_create(&cfg);
@@ -312,7 +312,7 @@ static int vfft_wisdom2_2d_gate_run(const char *wisdir)
             cfg.rigor = VFFT_MEASURE; cfg.dims = 3;
             cfg.n[0] = N; cfg.n[1] = N; cfg.n[2] = N;
             cfg.howmany = 1; cfg.order = VFFT_ORDER_DEFAULT;
-            cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
+            cfg.layout = VFFT_LAYOUT_SPLIT; cfg.nthreads = 1;   /* 3D IL is refused until its tier exists (2026-09-03) */
             cfg.wisdom = W;
             h = W ? vfft_create(&cfg) : NULL;
             if (!h) ok = 0;

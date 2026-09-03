@@ -267,6 +267,47 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
     return p;
 }
 
+/* ── THE IL PLAN RACE AT CREATE (2026-09-03, owner: "why don't we try
+ * different factorizations for IL and see what wins") ─────────────────────
+ * A kind-3 MISS (or recalibrate) below 2048 runs the IL dp planner — the
+ * same search calibrate_k1 runs offline: every legal pair x its kernel
+ * forms, every legal 3-stage chain x forms, the order swap, the backward
+ * forms — and banks its verdicts (the kind-3 lay=il row, the dir=bwd row)
+ * before the create replays them. There is no heuristic plan any more at
+ * this tier: what serves was measured. A cold cell takes seconds; the
+ * planner logs on entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
+static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
+static int _k1_il_dp_ctx_ready = 0;
+static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
+{
+    vfft_il_cand_t top;
+    int lines;
+    if (!W || W->vw2_off_oop || N < 2 || N >= 2048 || getenv("VFFT_NO_K1PLAN"))
+        return 0;
+    if (!_k1_il_dp_ctx_ready)
+    {
+        vfft_il_dp_init(&_k1_il_dp_ctx, 2048);
+        _k1_il_dp_ctx_ready = 1;
+    }
+    if (cfg->rigor != VFFT_MEASURE)
+        vfft_il_dp_set_patient(&_k1_il_dp_ctx);
+    else
+        _k1_il_dp_ctx.beam = VFFT_IL_DP_BEAM_MEASURE;
+    if (getenv("VFFT_NAT_LOG"))
+        fprintf(stderr, "[k1plan] N=%d: IL plan race (pair x forms, chain3 x forms, "
+                        "bwd forms) — a cold cell takes seconds\n", N);
+    lines = vfft_il_dp_plan_and_bank(&_k1_il_dp_ctx, &W->vw2, N,
+                                     /*sp_route=*/-1, 0, 0, 0, 0, 0.0,
+                                     getenv("VFFT_IL_DP_VERBOSE") != NULL);
+    if (lines > 0)
+        _vw2_persist(W, cfg);
+    if (getenv("VFFT_NAT_LOG") &&
+        vfft_il_dp_rank(&_k1_il_dp_ctx, N, VFFT_IL_ORD_NATURAL, &top, 1) == 1)
+        fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked)\n",
+                N, top.cost_ns, top.route, top.R1, top.R2, lines);
+    return lines;
+}
+
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N,
                              vfft_il2p_plan_t **il2p_out,
@@ -281,6 +322,14 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     const vfft_oop_wisdom_entry_t *ke =
         W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                        : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
+    /* the IL plan race: a MISS (no IL verdict on the row) or recalibrate
+     * below 2048 races the planner's pools and banks, then replays */
+    if (N < 2048 && !W->vw2_off_oop &&
+        (cfg->recalibrate || !ke || (!ke->il_R1 && !(ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0]))))
+    {
+        if (_k1_il_plan_race(W, cfg, N) > 0)
+            ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
+    }
     /* CHAIN3 verdict (2026-09-02): the banked 3-stage chain replays as
      * written; a build refusal falls through to the pair/default path */
     if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
@@ -609,34 +658,6 @@ static void _bank_scrmode_oop_1d(struct vfft_wisdom_s *W,
     _vw2_persist(W, cfg);
 }
 
-/* the ord=scr mode-cell bank (the ILP-attach fix, 2026-08-25): the
- * scrambled in-place IL race's verdict — mode=ILP | ZCASC (win) or
- * mode=CONV (the banked loss, so a losing race never re-runs). The chain
- * is the caller's classic plan: served recipe for CONV only — see the
- * mode-row RECIPE rule above _bank_nat_1d. */
-static void _bank_scrmode_1d(struct vfft_wisdom_s *W,
-                             const vfft_config_t *cfg, int N, size_t K,
-                             int mode, double ns, const int *fac,
-                             const int *var, int nf, int use_dif)
-{
-    vfft_proto_nat_entry_t nn;
-    memset(&nn, 0, sizeof nn);
-    nn.N = N;
-    nn.K = K;
-    nn.mode = mode;
-    nn.nat_ns = ns;
-    nn.nf = nf;
-    nn.use_dif = use_dif;
-    nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
-    nn.ref_ilp = _ilp_ref_of(W, N, mode);
-    for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
-    {
-        nn.factors[s] = fac[s];
-        nn.variants[s] = var[s];
-    }
-    vw2_stride_bank_scrmode(&W->vw2, &nn, _vw2_lay_of(cfg));
-    _vw2_persist(W, cfg);
-}
 
 /* ════════════════════════════════════════════════════════════════════════
  * PUBLIC API

@@ -261,7 +261,8 @@ int main(int argc, char **argv)
                        strstr(log, "replay ZCASC") != NULL;
         const int ilp = strstr(log, "ilp=") != NULL ||
                         strstr(log, "replay ILP") != NULL;
-        const int ok = hn && zc && !ilp;
+        const int ok = hn && zc;   /* 2026-09-03: an ilp ARM is present at 2048 (the
+                                    * IL-vs-IL race); ZCASC must still appear */
         if (!ok) fails++;
         printf("%-7d %-8s | boundary: %s%s\n", N, "zcasc",
                zc ? (ilp ? "ZCASC+ILP(!)" : "ZCASC") : "NO ZCASC(!)",

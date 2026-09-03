@@ -312,7 +312,9 @@ been refuted twice.
 ### B1. Bailey pair - route
 
 ```
-STATUS     RACED, OFFLINE ONLY (calibrate_k1; vfft.c never calls dp_planner_il.h)
+STATUS     RACED — offline (calibrate_k1) AND at create since 2026-09-03: a kind-3
+           MISS or recalibrate below 2048 runs the same planner from the in-place and
+           out-of-place K=1 creates (_k1_il_plan_race in k1_commit.h) and banks
 ARMS       route enum VFFT_K1_IL_*:
              3 MONO      emitted mono, il edges - exists ONLY at N=64
              5 2P_PURE   the Bailey pair                 <- this tier
@@ -426,38 +428,51 @@ ARMS       vfft_il2p_execute_fwd on the heuristic (R1,R2) vs on
 FP         none
 ```
 
-### B2. IL in-place engine attach - the create-time race of this tier
+### B2. IL in-place create - the IL plan race (no split baseline since 2026-09-03)
 
 ```
-STATUS     RACED
-ARMS       arm0 CONVERT incumbent: deinterleave -> split cplan -> reinterleave
-           arm1 native: il2p / il3p / ilprime   (N < 2048)
-                        zturn / zsplit cascade  (N >= 2048)
-           5 rounds, arms alternated per round, median-of-5,
-           reps = 200 (N<=256) / 80 (N<=1024) / 32
-RACE       src/core/oop/c2c_ip_create.h (the ILP MEASURE race below the
-           natural block; the zcasc race beside it) - K=1 ONLY: the race needs
-           the K=1 IL candidate (_k1_il_candidate), K>1 interleaved rides the
-           transform-contiguous wrapper over a K=1 inner (vfft.c) and never
-           reaches it (errata 2026-09-03: the old q=K claim was wrong)
-DIRECTION  forward executes only; the verdict serves BOTH directions.
-           STRUCTURAL BY MEASUREMENT (2026-09-03 flip probe, 128..8192 in-place
-           IL, 15 rounds alternated, min-of-rounds): the native arm beats the
-           convert incumbent 2.8-5.9x forward AND 2.8-4.8x backward at every
-           cell; no cell's winner flips with direction, so a dir=bwd mode row
-           would bank the same verdict at the cost of keeping both engines alive.
-BANK       wisdom2_scr | t=c2c n=N q=1 ord=scr place=ip lay=il
-           | mode=ilp|conv (N<2048)  or  mode=zcasc|conv (N>=2048)
-           A mode=zcasc row carries NO chain of its own: it signposts the kind-4
-           RECIPE (chain, t2q, tcut width, fence) with ref=cell(...ord=scr,place=oop
-           [,role=comp]). role=comp = the recipe an in-place or odd-mid race banked
-           (C1.4/C1.5 for those callers, 2026-09-02); the role-less row is the OOP
-           create's verdict. mode=ilp rows carry neither chain nor ref.
-CALLER     1D c2c IN-PLACE interleaved, order DEFAULT/SCRAMBLED (or NATURAL with a
-           single-stage cplan)
-WITNESS    1d.il.ip.c2c.256 -> ilme=1 [measured]
-FP         no dedicated field; the VERDICT shows as have[] bits 5/6/7
-           (k1il2p / k1il3p / k1ilpr present = native won). ilme=1 says the race RAN.
+STATUS     RACED, BANKED, at create
+LAW        owner 2026-09-03: "we DO NOT see split as a fallback of IL". An
+           in-place interleaved caller never gets a split plan. The cell is
+           served by an IL engine and the only question is WHICH IL plan wins.
+           Before this the create built the classic split plan first and raced
+           the IL engine against that split-behind-convert incumbent; whenever
+           its one candidate builder came back empty the convert served — 177
+           of the 255 sizes below 257 executed through the convert in place
+           while the same kernels served 252 of them out of place.
+ARMS       N < 2048: the IL PLAN RACE (_k1_il_plan_race -> vfft_il_dp_plan_and_bank,
+           the planner calibrate_k1 runs offline): every legal pair x its kernel
+           forms, every legal 3-stage chain x forms, the order swap, the backward
+           forms; verdict = the kind-3 lay=il row (+ its dir=bwd row), replayed
+           on every later create. Runs on a kind-3 MISS or recalibrate; logs on
+           entry (a cold cell takes seconds). Prime N: B4's method race.
+           N >= 2048: the cell's K=1 IL engine (pair/chain3 from its kind-3 row)
+           vs the cascade (kind-4 recipe; natord under NATURAL) — aliased z->z
+           arms, 5 rounds alternated, median-of-5, reps 200/80/32; one arm
+           serves and banks; NO arm = the create REFUSES (nothing to fall back
+           to, by design).
+RACE       src/core/oop/c2c_ip_create.h (_c2c_ip_create_il) and
+           src/core/oop/k1_commit.h (_k1_il_plan_race). K=1 ONLY: an explicit
+           lane-major K>1 interleaved request is REFUSED (it lost to
+           transform-contiguous at every measured cell and its only engine was
+           the split K-lane plan behind a convert); DEFAULT geometry never
+           arrives here (the transform-contiguous wrapper over a K=1 inner).
+DIRECTION  forward executes; the verdict serves both directions (structural by
+           measurement, see the 2026-09-03 flip probe: no cell flips).
+BANK       @scrmode (ord=scr place=ip lay=il, DEFAULT/SCRAMBLED) or @nat
+           (ord=nat place=ip lay=il, NATURAL) | mode=ilp | mode=zcasc — a
+           mode=zcasc row signposts the recipe that served (ref=cell(...,
+           place=oop[,role=comp])); mode=ilp rows are self-contained. mode=conv
+           and the tape modes are NOT IL verdicts any more: a row carrying one
+           re-races. The convert machinery (deinterleave/split/reinterleave,
+           il_me pad A/B, the OOP convert executor, the il2il executors) is
+           DELETED from the library.
+CALLER     1D c2c IN-PLACE interleaved, any order.
+WITNESS    cold 256: "[k1plan] N=256: ilp=134ns -> ILP (route 5, 16.16)" then
+           "replay ILP"; cold 2048: "race: ilp=2400ns zcasc=2072ns -> ZCASC"
+           then "replay ZCASC" [measured 2026-09-03].
+FP         the VERDICT shows as have[] bits 5/6/7 (k1il2p / k1il3p / k1ilpr) or
+           zroute=1; the ilme/ilrace fields are gone with the machinery.
 ```
 
 ### B3. IL natural order
@@ -808,7 +823,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | field | axis | lit by [measured] |
 |---|---|---|
 | `k1` `sp` `il` | S2.1 | any 1D c2c **out-of-place**, either layout |
-| `ilme` | B2 (the race RAN) | in-place IL, N >= 256 (incl. odd 127/255) |
+| `ilme` | RETIRED 2026-09-03 with the convert machinery (B2 is the IL plan race now) | - |
 | `zroute` | C1.1 | IL cascade, N >= 2048 (also 3072) |
 | `zr2c` | R1.3 | IL 1D real: ip.r2c, ip.c2r, oop.c2r (**not** oop.r2c) |
 | `nat` `natcyc` | S3.1 | 1D natural order |

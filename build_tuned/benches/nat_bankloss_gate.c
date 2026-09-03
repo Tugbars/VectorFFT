@@ -106,9 +106,15 @@ static int run_cell(const char *wisdir, int N, int fails)
  * banked loss must consume silently, no candidate, no race). */
 static int munge_4096(const char *wisdir, int with_zr)
 {
+    /* 2026-09-03 (no split baseline for IL): the seeded LOSS is the OTHER IL
+     * verdict on the 4096 @nat row — mode=zcasc becomes mode=ilp (the pair
+     * won, the cascade is the banked loss) and mode=ilp becomes mode=zcasc
+     * with the comp-recipe signpost (the cascade won, the pair is the loss).
+     * Either way the row is a valid IL verdict that must CONSUME SILENTLY.
+     * The old munge seeded a split TAPE (mode=pcyc), which is no IL verdict
+     * any more and would re-race by law. with_zr: 0 = flip to ilp, 1 = flip
+     * to zcasc. */
     char pb[1024];
-    /* ord=nat rows home in the OOP shard (2026-09-02 re-route); older
-     * stores may still hold them under the scr / legacy-stride names */
     snprintf(pb, sizeof pb, "%s/wisdom2_oop.txt", wisdir);
     FILE *f = fopen(pb, "r");
     if (f)
@@ -124,34 +130,49 @@ static int munge_4096(const char *wisdir, int with_zr)
         snprintf(pb, sizeof pb, "%s/wisdom2_scr.txt", wisdir);
         f = fopen(pb, "r");
     }
-    if (!f)
-    {
-        snprintf(pb, sizeof pb, "%s/wisdom2_stride.txt", wisdir);
-        f = fopen(pb, "r");
-    }
     if (!f) return 0;
-    static char text[65536];
+    static char text[65536], out[65536];
     size_t n = fread(text, 1, sizeof text - 1, f);
     text[n] = 0;
     fclose(f);
     char *line = strstr(text, "n=4096 q=1 ord=nat place=ip");
-    char *mode = line ? strstr(line, "mode=zcasc") : NULL;
-    if (!mode) return 0;
-    /* proper splice: "mode=zcasc" (10) -> "mode=pcyc" or "mode=pcyc zr=1"
-     * — a fixed-width overwrite would corrupt the next token */
+    if (!line) return 0;
+    char *eol = strchr(line, '\n');
+    if (!eol) eol = text + n;
+    char *mz = strstr(line, "mode=zcasc"), *mi = strstr(line, "mode=ilp");
+    if (mz && mz > eol) mz = NULL;
+    if (mi && mi > eol) mi = NULL;
+    if (!with_zr && !mz) return 0;   /* flip-to-ilp needs a zcasc row */
+    if (with_zr && !mi) return 0;    /* flip-to-zcasc needs an ilp row */
     {
-        const char *rep = with_zr ? "mode=pcyc zr=1" : "mode=pcyc";
-        size_t rl = strlen(rep), tail = n - (size_t)(mode - text) - 10;
-        memmove(mode + rl, mode + 10, tail + 1);
-        memcpy(mode, rep, rl);
-        n = n - 10 + rl;
+        size_t head = (size_t)(line - text), o = 0;
+        char *tok = with_zr ? mi : mz;
+        const char *tail_from = tok + (with_zr ? 8 : 10);   /* past mode=ilp / mode=zcasc */
+        memcpy(out, text, head); o = head;
+        memcpy(out + o, line, (size_t)(tok - line)); o += (size_t)(tok - line);
+        if (with_zr)
+        {
+            const char *rep = "mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop,role=comp)";
+            memcpy(out + o, rep, strlen(rep)); o += strlen(rep);
+        }
+        else
+        {
+            const char *rep = "mode=ilp";
+            const char *r = strstr(tail_from, " ref=cell(");
+            memcpy(out + o, rep, strlen(rep)); o += strlen(rep);
+            if (r && r < eol) tail_from = strchr(r + 1, ')') + 1;   /* drop the old signpost */
+        }
+        memcpy(out + o, tail_from, (size_t)(text + n - tail_from)); o += (size_t)(text + n - tail_from);
+        out[o] = 0;
+        n = o;
     }
     f = fopen(pb, "w");
     if (!f) return 0;
-    fwrite(text, 1, n, f);
+    fwrite(out, 1, n, f);
     fclose(f);
     return 1;
 }
+
 static int run_seeded(const char *wisdir, int with_zr, int expect_race, int fails)
 {
     vfft_wisdom *W = vfft_wisdom_load(wisdir);
@@ -174,8 +195,8 @@ static int run_seeded(const char *wisdir, int with_zr, int expect_race, int fail
     int ok = p && (raced == expect_race);
     if (p) vfft_destroy(p);
     vfft_wisdom_free(W);
-    printf("4096    seeded-tape %-8s -> %-9s (expect %s) %s\n",
-           with_zr ? "zr=1" : "no-zr", raced ? "raced" : "silent",
+    printf("4096    seeded-%-7s -> %-9s (expect %s) %s\n",
+           with_zr ? "zcasc" : "ilp", raced ? "raced" : "silent",
            expect_race ? "raced" : "silent", ok ? "" : "  *** FAIL ***");
     return fails + !ok;
 }
@@ -196,16 +217,15 @@ int main(int argc, char **argv)
     /* the loss side, seeded (see munge_4096): control then treatment.
      * The control re-banks a fresh ZCASC win, so munge again for the
      * treatment. */
-    if (!munge_4096(wisdir, /*with_zr=*/0))
-        { printf("seeded-loss munge FAILED\n"); fails++; }
+    /* the seeded LOSS (2026-09-03 law): whichever IL verdict the 4096
+     * @nat row holds, flip it to the other one; it must consume silently
+     * (a banked IL verdict never re-races; the loser is implied). */
+    if (munge_4096(wisdir, /*with_zr=*/0))
+        fails = run_seeded(wisdir, 0, /*expect_race=*/0, fails);
+    else if (munge_4096(wisdir, /*with_zr=*/1))
+        fails = run_seeded(wisdir, 1, /*expect_race=*/0, fails);
     else
-    {
-        fails = run_seeded(wisdir, 0, /*expect_race=*/1, fails);
-        if (!munge_4096(wisdir, /*with_zr=*/1))
-            { printf("seeded-loss re-munge FAILED\n"); fails++; }
-        else
-            fails = run_seeded(wisdir, 1, /*expect_race=*/0, fails);
-    }
+        { printf("seeded-loss munge FAILED (no IL verdict on the 4096 @nat row)\n"); fails++; }
     printf(fails ? "=== *** FAIL *** ===\n" : "=== ALL PASS ===\n");
     return fails ? 1 : 0;
 }
