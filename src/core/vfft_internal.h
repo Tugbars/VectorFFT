@@ -203,6 +203,11 @@ struct vfft_plan_s
      * <=> tcbw == NULL <=> serial loop (today's path, byte-identical). */
     struct vfft_plan_s **tcbw;
     int tcbw_n;
+    /* The THREADING verdict for the wrapper: 1 = slabs over the clones,
+     * 0 = the serial loop. Raced at create (serial vs slabs on this cell)
+     * or replayed from its eng=tcb row; T-free (one transform per core).
+     * Without clones it is 0 by construction. See _tc_mt_decide. */
+    int tc_mt;
     /* Per-transform block strides IN DOUBLES for the wrapper loop. C2C has
      * one stride (2*N both ends), but the REAL transforms do NOT: r2c reads
      * N reals and writes 2*(N/2+1) CCE doubles, c2r is the mirror, and the

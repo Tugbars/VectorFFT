@@ -537,6 +537,31 @@ DIRECTION  forward executes only; one plan serves both directions. STRUCTURAL
 
 ---
 
+### B5. K>1 transform-contiguous batch - the THREADING verdict
+
+```
+B5.1 tcmt - serial loop vs slabs   RACED, BANKED (2026-09-04). The K>1
+                                   interleaved tier is a wrapper: K K=1 transforms
+                                   end to end over the store-served K=1 inner (the
+                                   plan comes from the inner's own arms; lane-major
+                                   is REFUSED, so geometry is not an axis). Its one
+                                   arm is threading: the serial loop vs slabs of
+                                   ceil(K/T) transforms over per-worker clones.
+     RACE    src/core/vfft.c (_tc_mt_decide): min-of-R alternated, placement-
+             honest buffers (in-place aliased + reseeded), the batch's own cell.
+             No clones (no pool, inner not pool-free, K=1 workers) => no arm,
+             serial by construction.
+     BANK    the batch's OWN row: t=c2c|r2c|c2r n=N q=K ord=scr|nat place=ip|oop
+             lay=il | eng=tcb tcmt=0|1 tcmtt=<T raced at>. T-FREE: one transform
+             per core, nothing about the plan depends on T (planning_model 'The
+             MT rule'); tcmtt is provenance. eng=tcb fails every natx family gate,
+             so the row can never be served as a plan.
+     ENV     VFFT_TCMT=0|1 pins (never replays, never banks); VFFT_NO_TCMT = no
+             clones at all (kill switch); VFFT_TCMT_LOG / VFFT_TCMT_VERBOSE log.
+     RETIRED the 2048-complex-point scalar floor (an offline 2026-08-22 table,
+             never a verdict) and its VFFT_TCMT_FLOOR knob.
+```
+
 ## 4. 1D C2C - the cascade (N >= 2048)
 
 ### C1. The tournament tree
@@ -809,7 +834,8 @@ X1 pqmt - plane queue loop vs queue  RACED, BANKED (2026-09-02). dims=2, howmany
 X2 pqw / pqn                         STRUCTURAL. pq_n = K unconditionally; pq_wn is
                                      the clone count after clamping.
 X3 tcbw                              STRUCTURAL. The number of clones that built AND
-                                     passed _tc_clone_equiv.
+                                     passed _tc_clone_equiv. Whether they RUN is
+                                     the raced verdict tcmt (B5.1).
 X4 tcbsn / tcbdn                     DERIVED arithmetic from (transform, placement).
 X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not a
                                      timing race. Whole-batch reference vs a
@@ -837,6 +863,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | `il2d.roop` | E1.5 | 2D IL c2c at large N1 (16384x64) |
 | `tcbsn` `tcbdn` | X4 | K=8 + BATCH_TRANSFORM_CONTIGUOUS |
 | `tcbw` | X3 | as above **plus** MT |
+| `tcmt` | B5.1 | as above **plus** MT: the raced serial-vs-slabs verdict (0 = serial) |
 | `pqn` | X2 | 2D howmany > 1 |
 | `pqw` `pqmt` | X1 / X2 | as above **plus** MT |
 | `ztmt` `ilrace` `mtunsafe` `il2d.wc` `il2d.norowz` | C1.9 / - / X5 / E1.8 / E2.11 | **never observed non-zero** in 91 probed configs |

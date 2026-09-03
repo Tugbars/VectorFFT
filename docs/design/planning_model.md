@@ -985,7 +985,9 @@ interleaved-family engine, sharing no code with Part III.
 
 **Transform-contiguous batch (`tcb`)** — when K transforms lie one after another, a batch
 handle processes them with block strides derived arithmetically from (transform,
-placement). The clone count is whatever passed an equivalence check, not a raced value.
+placement). The clone count is whatever passed an equivalence check, not a raced value;
+whether the slabs run is a raced verdict (serial loop vs slabs at create, banked T-free as
+`eng=tcb tcmt=` on the batch's own `q=K` row - one transform per core, see the MT rule).
 
 **Plane queue (`pq`)** — for 2D with `howmany > 1`: either loop the single plan over the
 planes sequentially (each keeping its own intra-transform MT verdicts), or hand planes to

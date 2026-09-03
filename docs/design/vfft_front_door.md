@@ -322,8 +322,9 @@ pre-flighted once per execute, before any dispatch, because it is a property of 
 than of a slab; dispatch is therefore all-or-nothing
 ([vfft.c:5838-5845](../../src/core/vfft.c#L5838-L5845)).
 
-The **engage floor is measured in complex points**, and `h->N` is not always that: for r2c/c2r
-the work is `(N/2)*K` ([vfft.c:6842-6847](../../src/core/vfft.c#L6842-L6847)).
+Whether the slabs run at all is the wrapper's **threading verdict** (`h->tc_mt`): serial loop
+versus slabs raced at create on the batch's own cell and banked T-free as `eng=tcb tcmt=` on its
+`q=K` row (`_tc_mt_decide`, measurement_arms B5). The 2048-complex-point scalar floor is retired.
 
 The K=1 IL engines are **not reentrant**, so a worker runs its own clone
 ([vfft.c:289-300](../../src/core/vfft.c#L289-L300)). A clone is accepted only if everything

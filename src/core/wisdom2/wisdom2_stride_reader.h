@@ -567,4 +567,63 @@ static inline int vw2_stride_bank_scrmode_oop(vw2_store_t *st,
     return vw2__stride_bank(st, &rec);
 }
 
+/* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
+ * The K>1 interleaved tier's one arm (lane-major is refused, so geometry
+ * is not an axis): the serial loop vs slabs over the worker clones, raced
+ * at create on the batch's OWN cell. Key = (t, n=N, q=K, ord, place,
+ * lay=il); payload eng=tcb tcmt=0|1 tcmtt=<T raced at>. One transform per
+ * core => nothing about the plan depends on T => the verdict is T-FREE
+ * (planning_model 'The MT rule') and replays at any thread count; tcmtt is
+ * provenance only. eng=tcb keeps the row out of every natx reader (their
+ * family gate rejects it), so a batch row can never be served as a plan. */
+static inline void vw2__tcmt_key(vw2_key_t *k, int t, int N, size_t K,
+                                 int ord, int pl, uint8_t lay)
+{
+    vw2__stride_key(k, t, N, K, ord, pl);
+    k->lay = lay;
+}
+
+static inline int vw2_stride_lookup_tcmt(const vw2_store_t *s, int t, int N,
+                                         size_t K, int ord, int pl,
+                                         uint8_t lay, int *tcmt, int *tcmtt)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *eng, *v;
+    vw2__tcmt_key(&k, t, N, K, ord, pl, lay);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    eng = vw2_rec_get(r, "eng");
+    if (!eng || strcmp(eng, "tcb")) return 0;
+    v = vw2_rec_get(r, "tcmt");
+    if (!v) return 0;
+    *tcmt = atoi(v) ? 1 : 0;
+    if (tcmtt) { const char *tv = vw2_rec_get(r, "tcmtt"); *tcmtt = tv ? atoi(tv) : 0; }
+    return 1;
+}
+
+static inline int vw2_stride_bank_tcmt(vw2_store_t *st, int t, int N,
+                                       size_t K, int ord, int pl, uint8_t lay,
+                                       int tcmt, int T, double ns)
+{
+    vw2_rec_t rec;
+    char b[32];
+    const char *why = NULL;
+    memset(&rec, 0, sizeof rec);
+    vw2__tcmt_key(&rec.key, t, N, K, ord, pl, lay);
+    snprintf(b, sizeof b, "%d", T);
+    if (vw2_rec_set(&rec, 1, "eng", "tcb") != VW2_OK ||
+        vw2_rec_set(&rec, 1, "tcmt", tcmt ? "1" : "0") != VW2_OK ||
+        vw2_rec_set(&rec, 1, "tcmtt", b) != VW2_OK) {
+        vw2_rec_free(&rec);
+        fprintf(stderr, "[wisdom2] tcmt bank refused (token-refused)\n");
+        return -1;
+    }
+    if (vw2__stride_tail(&rec, K, ns, "race", NULL, &why)) {   /* frees rec */
+        fprintf(stderr, "[wisdom2] tcmt bank refused (%s)\n", why ? why : "?");
+        return -1;
+    }
+    return vw2__stride_bank(st, &rec);
+}
+
 #endif /* VFFT_WISDOM2_STRIDE_READER_H */

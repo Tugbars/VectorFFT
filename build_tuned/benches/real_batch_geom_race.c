@@ -336,10 +336,14 @@ int main(int argc, char **argv)
     if (is_mt && !env_selftest())
         return 1;
     if (is_mt) {
-        const char *fl = getenv("VFFT_TCMT_FLOOR");
-        printf("  MT engage floor = %s complex points (N*K below it runs SERIAL\n"
-               "  by design, so those cells reporting ~1.00x is correct, not a loss)\n",
-               fl ? fl : "2048 (default)");
+        const char *fl = getenv("VFFT_TCMT");
+        printf("  MT engage = the batch's RACED verdict (serial vs slabs at create, banked
+"
+               "  eng=tcb tcmt= on its q=K row; a cell whose verdict is serial reports ~1.00x
+"
+               "  by design, not as a loss)%s%s
+",
+               fl ? "; pinned by VFFT_TCMT=" : "", fl ? fl : "");
     }
     if (GetProcessAffinityMask(GetCurrentProcess(), &pm, &sm))
         printf("  process affinity mask 0x%llX  (P-core logicals only = 0xFFFF on 8P+16E)\n",

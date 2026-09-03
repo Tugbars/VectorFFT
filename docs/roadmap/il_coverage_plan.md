@@ -245,18 +245,9 @@ batching, and where.
   `_tc_clone_equiv` (a clone must match the primary's attach + chain +
   natord + exact kernel pointers, else it is destroyed — one batch must
   never mix two scrambled combs), and the `VFFT_NO_TCMT` kill switch.
-  Engage floor N·K ≥ **2048, MEASURED** (`--ilmt` with `VFFT_TCMT_FLOOR=1`
-  mapped the crossover: 1024 ⇒ MT 0.82× = HURTS, 2048 ⇒ 1.52–1.62×,
-  4096 ⇒ 3.0×; lowering 4096→2048 flips 512×4 and 256×8 from losing to
-  MKL to winning). Still a scalar default from one machine — the per-cell
-  banked pick remains the end state. Gate arm 7 (`vfft_tcbatch_gate.c`): MT(8)==ST
-  BITWISE fwd/bwd/in-place at 8 cells incl. mono, Bailey, cascade,
-  chain3 ragged-K, below-floor serial — ALL PASS; `mt_c2c_gate`
-  re-run clean (split MT untouched). Engagement probe
-  (`docs/research/mkl_kbatch_campaign/probes/tcmt__engage.c`, ratios
-  same-run, not bankable): ST/MT 4.85×@256×64 → 7.24×@8192×8.
-  K=1 single-transform MT (cascade tile-parallel) is deliberately NOT
-  this item — separate probe-first campaign.
+  Engage = the batch's RACED threading verdict (serial vs slabs at create,
+  banked T-free as eng=tcb tcmt= on its q=K row, measurement_arms B5); the
+  2048-point scalar floor and VFFT_TCMT_FLOOR are retired (2026-09-04).
 - [x] **The K-across-SIMD campaign (chartered earlier the same day) is
   CLOSED UNBUILT.** Its premise — that K≥2 interleaved needs its own
   kernel family — was false. Once each transform saturates the vector
