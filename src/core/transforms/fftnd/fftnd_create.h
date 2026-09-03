@@ -52,6 +52,20 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
                     const vfft_proto_registry_t *reg,
                     size_t K)
 {
+    /* 3D/4D INTERLEAVED (owner 2026-09-03): the IL feature-set for rank 3+
+     * (c2c, r2c, c2r) does not exist yet and is a planned campaign. Until
+     * then the front door REFUSES it loudly. Before this, c2c ACCEPTED the
+     * layout and its execute computed nothing (a warning and zeros), and
+     * real ran the split ND engine behind an il_out repack — a silent
+     * convert. No fallback: refuse, never bridge. */
+    if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
+    {
+        _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
+                   "(the rank-3+ interleaved tier is a planned feature); use "
+                   "VFFT_LAYOUT_SPLIT",
+                   cfg->dims, _vfft_tname(cfg->transform));
+        return NULL;
+    }
     if (cfg->dims == 4)
     { /* §6a62: rank-4 exposure. The engines were rank-general all along
        * (FFTND_MAX_RANK=4; fndr's builder takes rank; fftnd's generic

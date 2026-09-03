@@ -1653,6 +1653,7 @@ t _bank_nat_1d
 t _bank_nat_raced.part.N
 t _bank_natoop_1d.constprop.N
 t _bank_scrmode_1d.constprop.N
+t _bank_scrmode_oop_1d.constprop.N
 t _batch_alloc_ex
 t _blue_worker_bwd
 t _blue_worker_fwd
@@ -2573,6 +2574,7 @@ t vfft_natorder_pair_pass
 t vfft_natorder_race.constprop.N
 t vfft_oop_execute_fwd.isra.N
 t vfft_oop_plan_create_champions.constprop.N
+t vfft_oop_plan_create_k1
 t vfft_oop_plan_create_pair_v
 t vfft_oop_plan_destroy.part.N
 t vfft_proto_auto_plan.constprop.N
