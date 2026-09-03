@@ -788,6 +788,23 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             bK = b->Kp;
             padded = 1;
         }
+        if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && !zs_pending && !zt_pending)
+        {   /* (a pending cascade = the explicit-SCRAMBLED pow2 path: it attaches
+             * at this function's exit, an IL engine, so it passes here)
+             * OWNER LAW (2026-09-03): no split champion behind a convert for
+             * an interleaved caller. K=1 arrives here only when the IL route
+             * selection above found no engine; K>1 is the explicit lane-major
+             * batch (DEFAULT geometry is the transform-contiguous wrapper),
+             * which lost to transform-contiguous at every measured cell. */
+            _vfft_warn("vfft_create: out-of-place C2C N=%d howmany=%zu with "
+                       "layout=INTERLEAVED has no interleaved engine (%s); nothing to "
+                       "fall back to by design",
+                       N, bK,
+                       bK > 1 ? "lane-major batches are not an IL route - use "
+                                "VFFT_BATCH_DEFAULT / TRANSFORM_CONTIGUOUS"
+                              : "no mono/pair/chain3/prime kernel serves this N");
+            return NULL;
+        }
         vfft_oop_plan_t *op = NULL;
         int ord = cfg->order; /* 0=DEFAULT 1=NATURAL(LEAF/BAILEY2) 2=SCRAMBLED(MODEB) */
         /* Order-aware lookup: the cell can hold BOTH a natural and a MODEB champion as separate

@@ -181,63 +181,6 @@ static void _exec_k1_split(struct vfft_plan_s *h, int fwd,
     }
 }
 
-/* OOP INTERLEAVED convert fallback: dein z -> split OOP engines -> inter z.
- * Serves every OOP cell with NO native z route (K>1; K=1 SCRAMBLED at
- * cascade-uncovered N; K=1 engine cells whose IL route is NONE; k1-create
- * fallbacks) — the cells that were historically a NULL-deref or a silent
- * no-op. Always correct, documented convert cost (vfft.h support matrix). */
-static void _exec_c2c_oop_convert(struct vfft_plan_s *h, vfft_dir_t dir,
-                                  const double *z_in, double *z_out)
-{
-    const size_t NK = (size_t)h->N * h->K;
-    const size_t bytes = (NK * 8 + 63) & ~(size_t)63;
-    /* census knob, cached ONCE (see the ip-site comment: per-execute
-     * getenv ~1.3us on Windows dominated tiny-N convert executes). */
-    static int _clog_oop = -1;
-    if (_clog_oop < 0)
-        _clog_oop = getenv("VFFT_CONV_LOG") != NULL;
-    if (_clog_oop)
-        fprintf(stderr, "[conv] oop N=%d K=%zu dir=%s k1=%d route=%d\n",
-                h->N, h->K, dir == VFFT_FORWARD ? "fwd" : "bwd", h->k1_on,
-                h->k1_il_route);
-    if (!h->il_wr)
-    {
-        h->il_wr = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
-        h->il_wi = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
-    }
-    if (!h->il_wr2)
-    {
-        h->il_wr2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
-        h->il_wi2 = (double *)STRIDE_ALIGNED_ALLOC(64, bytes);
-    }
-    if (!h->il_wr || !h->il_wi || !h->il_wr2 || !h->il_wi2)
-        return;
-    _vfft_z_dein(z_in, h->il_wr, h->il_wi, NK);
-    if (h->k1_on && h->k1_sp_route < 0)
-    {
-        /* IL-only K=1 handle (chain cells at odd·2^k N carry NO split
-         * route). Unreachable by construction — the IL switch serves such
-         * handles and its route always names a runnable plan — but if a
-         * future edit breaks that invariant, refuse LOUDLY rather than
-         * dispatch _exec_k1_split on route -1. */
-        _vfft_warn("vfft_execute: IL-only K=1 handle (N=%d) reached the "
-                   "convert fallback — no split route exists; output NOT "
-                   "computed. This is a routing bug; please report.",
-                   h->N);
-        return;
-    }
-    if (h->k1_on)
-        _exec_k1_split(h, dir == VFFT_FORWARD, h->il_wr, h->il_wi,
-                       h->il_wr2, h->il_wi2);
-    else
-    {
-        _vfft_pool_arm(h->nthreads);
-        _oop_mt(h->oplan, h->il_wr, h->il_wi, h->il_wr2, h->il_wi2,
-                dir == VFFT_FORWARD ? 1 : 0);
-    }
-    _vfft_z_inter(h->il_wr2, h->il_wi2, z_out, NK);
-}
-
 /* ── EXECUTE-SIDE SIGNATURE ENFORCEMENT ──
  * The pointer pattern must MATCH the plan's committed layout; the historical
  * NULL-pointer inference ("sim==dim==NULL means interleaved") is REMOVED.
@@ -918,8 +861,12 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 }
                 return;
             }
-            _vfft_pool_arm(h->nthreads);
-            _exec_c2c_interleaved(h, dir, sre, dre);
+            /* OWNER LAW (2026-09-03): no split-behind-convert engine for an
+             * interleaved caller. An in-place interleaved handle with none of
+             * the IL engines attached is a create bug, never a slow path. */
+            _vfft_warn("vfft_execute: in-place IL c2c plan (N=%d) without an IL "
+                       "engine — create/execute wiring bug; output NOT computed",
+                       h->N);
             return;
         }
         _exec_c2c_inplace(h, dir, sre, sim);
@@ -989,13 +936,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
                 default:
-                    break; /* no IL route emitted for this N -> convert
+                    break; /* no IL route emitted for this N -> wiring bug below
                             * fallback below (NEVER a silent no-op) */
                 }
             }
             /* No native z route on this cell (K>1, cascade-uncovered N, or
              * no K=1 IL route): convert around the split engines. */
-            _exec_c2c_oop_convert(h, dir, sre, dre);
+            /* OWNER LAW (2026-09-03): the OOP create refuses an interleaved
+             * request with no IL route; reaching here is a wiring bug. */
+            _vfft_warn("vfft_execute: OOP IL c2c plan (N=%d K=%zu) without an IL "
+                       "engine — create/execute wiring bug; output NOT computed",
+                       h->N, h->K);
             return;
         }
         if (h->k1_on)
@@ -1150,12 +1101,6 @@ void vfft_destroy(vfft_plan h)
             free(h);
             return;
         }
-        if (h->cplan_il)
-            stride_plan_destroy(h->cplan_il);
-        STRIDE_ALIGNED_FREE(h->il_wr);
-        STRIDE_ALIGNED_FREE(h->il_wi);
-        STRIDE_ALIGNED_FREE(h->il_wr2);
-        STRIDE_ALIGNED_FREE(h->il_wi2);
         if (h->il2d_row)
         {
             int s2;

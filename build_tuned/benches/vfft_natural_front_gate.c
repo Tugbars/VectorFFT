@@ -170,7 +170,9 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
     }
     const int raced = strstr(log, "zcasc=") != NULL;      /* MEASURE race ran */
     const int zwon = strstr(log, "-> ZCASC") != NULL;     /* ...and ZCASC won */
-    const int replayed = strstr(log, "replay ZCASC") != NULL; /* CONSUME hit  */
+    const int iwon = strstr(log, "-> ILP") != NULL;       /* ...or the IL engine did (2026-09-03: an IL arm) */
+    const int replayed = strstr(log, "replay ZCASC") != NULL || /* CONSUME hit */
+                         strstr(log, "replay ILP") != NULL;
 
     double *a = az((size_t)N);
     memcpy(a, x, 2 * (size_t)N * sizeof(double));
@@ -190,15 +192,17 @@ static int run_cell(vfft_wisdom *W, int N, const double *x, const double *X,
     const char *eng = "tape";
     if (expect == 1)
     {
-        ok = ok && raced && zwon;   /* MEASURE must race and ZCASC must win */
-        eng = zwon ? "ZCASC(raced)" : (raced ? "tape(raced)" : "NO RACE");
+        /* MEASURE must race; the winner is the race's business (2026-09-03:
+         * the in-place IL create races its K=1 engine vs the cascade — no
+         * split tape arm exists any more) */
+        ok = ok && raced && (zwon || iwon);
+        eng = zwon ? "ZCASC(raced)" : (iwon ? "ILP(raced)" : (raced ? "?(raced)" : "NO RACE"));
     }
     else if (expect == 2)
     {
-        /* CONSUME must NOT race AND must have actually attached ZCASC —
-         * the first gate run mislabeled a silent tape replay as ZCASC. */
+        /* CONSUME must NOT race AND must replay the banked IL verdict */
         ok = ok && !raced && replayed;
-        eng = raced ? "RACED(!)" : (replayed ? "ZCASC(replay)" : "tape(!)");
+        eng = raced ? "RACED(!)" : (replayed ? "replay" : "tape(!)");
     }
     printf("%-7d %-8s fwd=%.1e bwd=%.1e  %-13s%s\n",
            N, tag, ef, eb, eng, ok ? "" : "   *** FAIL ***");

@@ -201,9 +201,9 @@ replays comp first, then the verdict. An OOP caller replays its verdict, and wit
 replay a comp recipe only for an odd chain, because an odd candidate races the finished handle at
 the commit and is never attached by fiat. A cascade mode row (`mode=zcasc`, `place=ip`) never
 carries a chain of its own; it signposts the recipe it served with `ref=` (wisdom2 README §3.3).
-On a cold mode row the scrambled in-place create builds its candidate from the banked recipe
-first and only falls back to the default construction when no recipe exists, so the plan that
-races the convert incumbent is the plan the signpost will serve. The recipe row also carries the
+On a cold mode row the in-place create builds its cascade candidate from the banked recipe
+(the kind-4 race on a miss), so the plan that races the cell's K=1 IL engine is the plan the
+signpost will serve (2026-09-03: the race is IL vs IL; there is no convert incumbent). The recipe row also carries the
 cascade's per-thread-count MT verdict, one token pair per placement (`zt_mt_t`/`zt_mt` for the
 OOP exit, `zt_mt_ip_t`/`zt_mt_ip` for the in-place exit).
 
@@ -340,11 +340,11 @@ order, element `e` of lane `t` at `[2*(e*K+t)]`. The destination may alias the s
 
 Three routes, in order:
 
-1. **Padded arm** — when the banked `il_me` verdict differs from `K`: deinterleave into `Kp`-wide
-   split scratch, run the full-width interior, reinterleave.
-2. **Folded `z→z` adapters** — when the plan is order-DEFAULT, not `mt_unsafe`, has at least two
-   stages, has no direction override, and both boundary folds resolve.
-3. **Fallback** — `convert → in-place split execute → convert`. Always correct, never silent.
+1. the cascade (`h->zturn`, both orders; natord under NATURAL);
+2. the K=1 IL engines (`k1il2p` / `k1il3p` / `k1ilpr`);
+3. nothing else: a handle with neither is a create bug and the execute warns and computes
+   nothing. The padded arm, the folded `z->z` adapters and the convert fallback were DELETED
+   on 2026-09-03 (owner: no split baseline for IL).
 
 The converts are hand-written intrinsics rather than auto-vectorized scalar loops: AVX-512 moves
 8 complex per iteration, AVX2 moves 4, and a plain-C loop is the floor. Both end in a scalar
@@ -419,7 +419,7 @@ entries that survived only the first pass are not listed. Each is currently wron
 | `vfft.c:279-287`, `:3277`, `:6825` | transform-contiguous *"runs it K times at 2\*N-double strides"* | true for C2C only; the loop reads `tcb_sn`/`tcb_dn`, which differ for all three real shapes |
 | `vfft.c:279-287` | *"nothing else on the struct is live"* on a wrapper handle | `tcb_sn`/`tcb_dn` are also live |
 | `vfft.c:322-330` | *"until the calibrator lands, create uses the structural default"* | the calibrator is in this same file (`_zr2c_build` races both routes) |
-| `vfft.c:358-365` | `il_me` *"from the SAME c2c exec_me wisdom"*, read via `_default_wisdom()` | it rides its own `il_me` member, and `_il_me_decide` reads and banks exclusively through its `W` parameter |
+| (retired) | `il_me` / `_il_me_decide` | deleted 2026-09-03 with the convert machinery; the row below is kept for history only: it rides its own `il_me` member, and `_il_me_decide` reads and banks exclusively through its `W` parameter |
 | `vfft.c:1355-1356` | describes behaviour under `VFFT_WISDOM2_OFF=stride` | the env is retired and ignored; `vw2_off_stride` is **read at 19 sites and written at zero** |
 | `vfft.c:2517-2534` | il_kv measured by `bench_1d_vs_mkl.c` building a handle per variant | that bench has no such path |
 | `vfft.c:2578-2586` | the chain codec *"stores log2 per factor, so only 4/8/16/32/64 exist"* | `vfft_k1_cc_digit_of` also maps 3, 5, 7 and 11 |

@@ -156,7 +156,7 @@ fields: `eng=` (winning engine/strategy: mono, il2p, il3p, zcasc, zsplit,
 bailey, split_oop, classic, stride, zr2c, bluestein, rader …), `route=`,
 `chain=` (dot-joined factors), `vars=` (dot-joined variants), per-engine
 knobs (`t2q= kv= sp_kv= zt_tw= zt_l1= zr_kv= b= k_pad= path= mode= m=`), and
-the pad verdicts as named fields (`pad_me=`, `il_me=`).
+the pad verdict as a named field (`pad_me=`; `il_me=` retired 2026-09-03).
 
 ### 3.3 The signpost rule (`ref=`)
 
@@ -186,8 +186,9 @@ attach an OOP route by fiat). A comp row may also carry the cascade's per-T
 MT verdict (`zt_mt_t=`/`zt_mt=`), as may the verdict row. An in-place caller
 replays comp first, then the verdict; its mode row's `ref=` names whichever
 served. A mode row never carries the caller's classic chain as its own —
-that chain is the convert incumbent's plan (the served recipe only for
-`mode=conv` and the tape modes). A dummy-chain row of any other mode
+that chain is a SPLIT caller's plan (the served recipe only for the tape
+modes; `mode=conv` is no longer written: an interleaved cell has no convert
+arm since 2026-09-03). A dummy-chain row of any other mode
 (prime/Rader `ord=scr`, `mode=ilp`) is SELF-CONTAINED — its engine rebuilds
 from N alone — and carries neither `chain=` nor `ref=`; the reader accepts
 it bare. A signpost at a self-contained cell points at a record that never
