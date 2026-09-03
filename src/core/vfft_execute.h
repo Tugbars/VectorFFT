@@ -819,8 +819,9 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     if (h->transform == VFFT_C2C && h->placement == VFFT_INPLACE)
     {
         if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
-        { /* interleaved z contract — see _exec_c2c_interleaved. (padded
-           * plans can't get here: batch+INTERLEAVED is rejected at create.) */
+        { /* interleaved z contract: the IL engines only (the convert executor
+           * was deleted 2026-09-03). Padded plans can't get here:
+           * batch+INTERLEAVED is rejected at create. */
             if (h->zsplit || h->zturn)
             { /* K=1 SCRAMBLED cascade, ALIASED in==out — P0a memcmp-proven
                * both directions incl tiled/tfuse. The documented in-place

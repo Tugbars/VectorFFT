@@ -180,8 +180,12 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     }
 
     /* ---- LANE_MAJOR at the same cell still works (default untouched) ---- */
+    /* 2026-09-03 (owner law: no split baseline for IL): an EXPLICIT lane-major
+     * interleaved batch is REFUSED at create — its only engine was the split
+     * K-lane plan behind a convert, and it lost to transform-contiguous at
+     * every measured cell. The arm now asserts the refusal. */
     vfft_plan hl = mk(W, N, K, 0, 0);
-    int lane_ok = 0;
+    int lane_ok = (hl == NULL);
     if (hl)
     {
         double *xl = az(tot), *Xl = az(tot), *zl = az(tot);
@@ -209,7 +213,7 @@ static int run_cell(vfft_wisdom *W, int N, size_t K)
     printf("%-6d K=%-2zu  fwd=%.1e bwd=%.1e ip=%.1e/%.1e  %-9s %-9s%s\n",
            N, K, ef, eb, eip1, eip2,
            bitid ? "BITID" : "NOT-BITID",
-           lane_ok ? "lane-ok" : "LANE-BAD",
+           lane_ok ? "lane-refused" : "LANE-SERVED(!)",
            ok ? "" : "   *** FAIL ***");
     vfft_destroy(h);
     fz(x); fz(X); fz(zv); fz(zr);
