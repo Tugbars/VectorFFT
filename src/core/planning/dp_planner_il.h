@@ -1765,7 +1765,8 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             e.k1_il_route = nat->route;
             e.il_R1 = nat->R1;
             e.il_R2 = nat->R2;
-            e.il_kv = nat->il_kv;      /* 0 until the variant axis is raced */
+            e.il_kv = nat->il_kv;      /* the raced forms verdict (explicit 0 when the defaults won) */
+            e.il_kv_raced = 1;
             if (nat->route == VFFT_K1_IL_CHAIN3)
             {                          /* the chain IS the verdict (2026-09-02) */
                 e.il_c3[0] = nat->R2;

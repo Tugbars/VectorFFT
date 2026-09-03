@@ -81,6 +81,8 @@ typedef struct {
      * nibble value 0xF (VFFT_IL_KV_MONO) forces the monolithic kernel so a
      * platform where blocked loses stays expressible as a verdict. */
     int    il_kv;
+    int    il_kv_raced;   /* 1 = the forward forms were RACED (the row carries il_kv,
+                           * explicit 0 included); 0 = a pair-only row (2026-09-04) */
     /* kind 3, sp_route == VFFT_K1_SP_CCOL only: encoded column chain
      * (vfft_k1_cc_chain_encode; one extra token before ns on the line).
      * kind 4 (ZSPLIT) reuses cc_chain for the cascade chain. */
@@ -255,6 +257,7 @@ static inline int vfft_oop_wisdom_load(vfft_oop_wisdom_t *w, const char *path)
         if (e->kind == VFFT_OOP_KIND_BAILEY2V && tok) {
             tok = strtok(NULL, " \t\n\r");
             e->il_kv = tok ? atoi(tok) : 0;
+            e->il_kv_raced = tok != NULL;
         }
         /* kind-4 route axis: OPTIONAL trailing "zs_route zt_t2q" after ns.
          * Old-format lines end at ns -> both stay 0 = legacy zsplit route

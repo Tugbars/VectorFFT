@@ -209,6 +209,7 @@ static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
             np = vw2__oop_split_ints(vw2_rec_get(ri, "il_pair"), pair, 2);
             if (np == 2) { e->il_R1 = pair[0]; e->il_R2 = pair[1]; }
             e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
+            e->il_kv_raced = vw2_rec_get(ri, "il_kv") != NULL;   /* explicit 0 counts */
             {                                  /* chain3 payload (2026-09-02) */
                 int c3[3];
                 if (vw2__oop_split_ints(vw2_rec_get(ri, "il_chain"), c3, 3) == 3) {
@@ -559,7 +560,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 VW2__OB_SET(1, "ref", ref);
             }
         }
-        if (e->il_kv) {
+        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
             char kvb[16];
             snprintf(kvb, sizeof kvb, "%d", e->il_kv);
             VW2__OB_SET(1, "il_kv", kvb);
@@ -976,7 +977,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             snprintf(ref, sizeof ref, "cell(t=c2c,n=%d,q=1,ord=scr,place=oop)", e->N);
             VW2__OB_SET(1, "ref", ref);
         }
-        if (e->il_kv) {
+        if (e->il_kv || e->il_kv_raced) {   /* a raced verdict emits il_kv even when 0 (2026-09-04) */
             char kvb[16];
             snprintf(kvb, sizeof kvb, "%d", e->il_kv);
             VW2__OB_SET(1, "il_kv", kvb);
