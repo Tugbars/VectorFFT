@@ -6,6 +6,8 @@ __imp_FindFirstFileA
 __imp_FindNextFileA
 __imp_GetCurrentThread
 __imp_GetLargePageMinimum
+__imp_GetLastError
+__imp_GetLogicalProcessorInformationEx
 __imp_GetSystemInfo
 __imp_MoveFileExA
 __imp_QueryPerformanceCounter

@@ -824,9 +824,11 @@ b c.N
 b cached.N
 b cands.N
 b done.N
+b done.N
 b f.N
 b freq.N
 b pool.N
+b tag.N
 b warned.N
 d .data
 d _clog_ip.N
@@ -1944,7 +1946,6 @@ t _zt_t2q_arm0
 t _zt_t2q_arm1
 t _ztodd_arm_cascade
 t _ztodd_arm_k1
-t bluestein_wisdom_load.isra.N
 t bluestein_wisdom_save.isra.N
 t c2r_execute_natural
 t c2r_execute_natural_range

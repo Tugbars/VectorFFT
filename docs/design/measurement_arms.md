@@ -466,6 +466,17 @@ FP         no dedicated field; the VERDICT shows as have[] bits 5/6/7
 B3.1 nat-ilp        il2p/il3p vs the finished natural-TAPE handle    RACED
 B3.2 nat-zcasc      natord cascade vs the tape handle                RACED
 B3.3 natoop-zcasc   natord cascade vs the K=1 OOP handle             RACED
+B3.5 scroop-zcasc   SCRAMBLED cascade vs the K=1 OOP handle, order=  RACED, BANKED
+                    DEFAULT, N >= 2048 (2026-09-03). DEFAULT is order-
+                    agnostic, so the scrambled cascade is a legal arm --
+                    it was never offered (built only for an explicit
+                    SCRAMBLED request): DEFAULT OOP served the pair at
+                    2048/4096 and the classic champion behind a convert
+                    above (4.7x at 8192, 7x at 16384). The pair beats
+                    the cascade at 2048 and loses at 4096, hence a race,
+                    not a rule. Row: t=c2c n=N q=1 ord=scr place=oop
+                    lay=il | mode=zcasc (ref= the kind-4 verdict) |
+                    mode=free (the engine won). VFFT_NO_NAT_ZCASC pins.
 B3.4 nat-tape opportunistic PSWAP                                    STRUCTURAL
      -> no clock at all; a deterministic short-circuit that still BANKS.
         Belongs on a "banks without measuring" list, not among measurement arms.

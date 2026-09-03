@@ -279,6 +279,19 @@ static inline int vw2_stride_lookup_scrmode(const vw2_store_t *s,
                                    e);
 }
 
+/* the OOP twin of the scrambled mode cell (2026-09-03): a DEFAULT-order
+ * out-of-place IL create races ITS OWN K=1 engine against the scrambled
+ * cascade and banks here (mode=zcasc | mode=free, the banked loss). Its own
+ * key (place differs from @scrmode, ord differs from @natoop) because the
+ * incumbents differ: the pair beats the cascade at 2048 and loses at 4096. */
+static inline int vw2_stride_lookup_scrmode_oop(const vw2_store_t *s,
+                                                uint8_t lay, int N, size_t K,
+                                                vfft_proto_nat_entry_t *e)
+{
+    return vw2__stride_lookup_natx(s, VW2_PL_OOP, lay, VW2_ORD_SCR, N, K,
+                                   e);
+}
+
 /* ================================================================ WRITE */
 
 static inline void vw2__stride_stamp_date(vw2_rec_t *r)
@@ -539,6 +552,21 @@ static inline int vw2_stride_bank_scrmode(vw2_store_t *st,
     if (vw2_stride_rec_from_nat(&rec, e, VW2_PL_IP, lay, VW2_ORD_SCR,
                                 "race", NULL, &why)) {
         fprintf(stderr, "[wisdom2] stride scrmode bank refused (%s)\n",
+                why ? why : "?");
+        return -1;
+    }
+    return vw2__stride_bank(st, &rec);
+}
+
+static inline int vw2_stride_bank_scrmode_oop(vw2_store_t *st,
+                                              const vfft_proto_nat_entry_t *e,
+                                              uint8_t lay)
+{
+    vw2_rec_t rec;
+    const char *why = NULL;
+    if (vw2_stride_rec_from_nat(&rec, e, VW2_PL_OOP, lay, VW2_ORD_SCR,
+                                "race", NULL, &why)) {
+        fprintf(stderr, "[wisdom2] stride scrmode-oop bank refused (%s)\n",
                 why ? why : "?");
         return -1;
     }

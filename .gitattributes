@@ -70,6 +70,10 @@ src/dag-fft-compiler/generator/generated/wisdom2_*.txt text eol=lf
 # Refactor baseline artifacts are diffed byte-for-byte across the migration;
 # a CRLF conversion would make every line differ. Pin them the same way.
 build_tuned/baseline/** text eol=lf
+# ...except the identity OBJECT: a binary. Under the text rule autocrlf
+# normalized its bytes at `git add` and every committed vfft_baseline.o was
+# unreadable ("bad string table size") on the next checkout (found 2026-09-03).
+build_tuned/baseline/*.o binary
 
 # wisdom2 TRANSITIONAL tooling — the one-shot migrator and the writer
 # registry die with the legacy wisdom files (campaign wave 5 / v1.0).

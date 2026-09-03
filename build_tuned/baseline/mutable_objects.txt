@@ -32,9 +32,11 @@ b c.N
 b cached.N
 b cands.N
 b done.N
+b done.N
 b f.N
 b freq.N
 b pool.N
+b tag.N
 b warned.N
 d .data
 d _clog_ip.N
