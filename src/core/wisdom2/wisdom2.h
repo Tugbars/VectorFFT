@@ -232,7 +232,7 @@ static const vw2_field_t vw2_fields[] = {
     { "mode",    VW2_FC_STRUCTURAL }, { "ref",     VW2_FC_STRUCTURAL },
     { "path",    VW2_FC_STRUCTURAL }, { "b",       VW2_FC_STRUCTURAL },
     { "k_pad",   VW2_FC_STRUCTURAL }, { "m",       VW2_FC_STRUCTURAL },
-    { "pad_me",  VW2_FC_STRUCTURAL }, { "il_me",   VW2_FC_STRUCTURAL },
+    { "pad_me",  VW2_FC_STRUCTURAL },
     { "sp_route",VW2_FC_STRUCTURAL }, { "sp_pair", VW2_FC_STRUCTURAL },
     { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
     { "t1p",     VW2_FC_STRUCTURAL },
@@ -258,7 +258,7 @@ static const vw2_field_t vw2_fields[] = {
     { "zt_tw",   VW2_FC_LOCAL }, { "zt_l1",  VW2_FC_LOCAL },
     /* 3D pass-A lane block: cache-geometry pick, absent = heuristic. */
     { "ablock",  VW2_FC_LOCAL },
-    /* pad-vs-tail winners in words (derived from pad_me/il_me vs q) */
+    /* pad-vs-tail winners in words (derived from pad_me vs q) */
     { "pad_arm", VW2_FC_INFO }, { "il_arm", VW2_FC_INFO },
     { "ran",     VW2_FC_INFO }, { "ns",   VW2_FC_INFO }, { "metric", VW2_FC_INFO },
     { "units",   VW2_FC_INFO }, { "arms", VW2_FC_INFO }, { "src",    VW2_FC_INFO },
@@ -284,7 +284,6 @@ static const vw2_envlaw_t vw2_env_law[] = {
     { "VFFT_R2C_ROUTE",   1, "route" },  /* §W2 r2c route racing hook       */
     { "VFFT_C2R_ROUTE",   1, "route" },  /* §W2 c2r route racing hook       */
     { "VFFT_IL_BKV",      1, "il_bkv" }, /* dir=bwd kernel-form racing hook */
-    { "VFFT_IL_PAD",      1, "il_me" },
     { "VFFT_SP_ROUTE",    1, "route" },
     { "VFFT_FORCE_ZROUTE",1, "route" },  /* demoted to debug switch (owner) */
     { "VFFT_NO_ZTURN",    1, "route" },  /* demoted to debug switch (owner) */

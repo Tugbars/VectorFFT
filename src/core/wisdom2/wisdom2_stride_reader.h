@@ -22,7 +22,7 @@
  * filling the legacy struct. mode=ilp rows carry neither (self-contained).
  * Real chains (mode=conv and the tape modes) migrate/bank VERBATIM.
  *
- * pad_me (legacy exec_me) / il_me: emitted only when nonzero — absent =
+ * pad_me (legacy exec_me): emitted only when nonzero — absent =
  * not measured, exactly the legacy trailing-field law.
  */
 #ifndef VFFT_WISDOM2_STRIDE_READER_H
@@ -169,7 +169,6 @@ static inline int vw2_stride_lookup_t(const vw2_store_t *s, int t,
     e->split_stage = vw2__stride_geti(r, "bsplit", 0);
     e->block_groups = vw2__stride_geti(r, "bgroups", 0);
     e->exec_me = vw2__stride_geti(r, "pad_me", 0);   /* absent = unmeasured */
-    e->il_me = vw2__stride_geti(r, "il_me", 0);
     {
         const char *ns = vw2_rec_get(r, "ns");
         e->best_ns = ns ? atof(ns) : 0.0;
@@ -394,11 +393,6 @@ static inline int vw2_stride_rec_from_entry_t(vw2_rec_t *r,
         snprintf(b, sizeof b, "%d", e->exec_me);
         VW2__SB_SET(1, "pad_me", b);
         VW2__SB_SET(2, "pad_arm", e->exec_me == (int)e->K ? "tail" : "pad");
-    }
-    if (e->il_me) {
-        snprintf(b, sizeof b, "%d", e->il_me);
-        VW2__SB_SET(1, "il_me", b);
-        VW2__SB_SET(2, "il_arm", e->il_me == (int)e->K ? "tail" : "pad");
     }
     return vw2__stride_tail(r, e->K, e->best_ns, src, from, why);
 }
