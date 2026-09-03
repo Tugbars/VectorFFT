@@ -1984,9 +1984,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->padded, h->exec_me);
 
     /* 2 — route selectors: the "chose differently" surface */
-    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d zr2c=%d ilme=%d ilrace=%d",
+    FP__ADD(" | k1=%d sp=%d il=%d zroute=%d ztmt=%d zr2c=%d",
             h->k1_on, h->k1_sp_route, h->k1_il_route, h->zroute, h->zt_mt,
-            h->zr2c_route, h->il_me, h->il_race);
+            h->zr2c_route); /* ilme/ilrace retired 2026-09-03 with the convert machinery */
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
             h->nat2d_ncyc, h->mt_unsafe);
@@ -2000,12 +2000,12 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_nat, h->il2d_blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
             FP__P(cplan), FP__P(oplan), FP__P(k1sp), FP__P(zsplit),
             FP__P(zturn), FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr),
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
-            FP__P(cplan_il), FP__P(own_batch), FP__JIT);
+            FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
     FP__ADD(" il2dhave=%d%d%d%d%d%d\n",
             FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
