@@ -157,8 +157,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * kept building a form-less pair on the cold create while the
              * replay took the planner's pair WITH forms: different bits). */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && N < 2048 && !W->vw2_off_oop &&
-                (cfg->recalibrate || !ke ||
-                 (!ke->il_R1 && !(ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0]))))
+                (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
                     ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;

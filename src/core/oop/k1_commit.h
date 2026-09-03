@@ -325,7 +325,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     /* the IL plan race: a MISS (no IL verdict on the row) or recalibrate
      * below 2048 races the planner's pools and banks, then replays */
     if (N < 2048 && !W->vw2_off_oop &&
-        (cfg->recalibrate || !ke || (!ke->il_R1 && !(ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0]))))
+        (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)
             ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
