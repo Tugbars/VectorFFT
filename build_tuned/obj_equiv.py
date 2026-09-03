@@ -100,11 +100,14 @@ USAGE
 Exit 0 when equivalent (or when the slice shape holds), 1 when not.
 """
 import re
+import os
 import subprocess
+# env OBJDUMP / NM override the historical mingw152 paths (2026-09-03): the
+# ceremony must run on any host whose binutils live somewhere else.
+DEFAULT_OBJDUMP = os.environ.get("OBJDUMP", "C:/mingw152/mingw64/bin/objdump.exe")
+DEFAULT_NM = os.environ.get("NM", "C:/mingw152/mingw64/bin/nm.exe")
 import sys
 
-DEFAULT_OBJDUMP = r"C:\mingw152\mingw64\bin\objdump.exe"
-DEFAULT_NM = r"C:\mingw152\mingw64\bin\nm.exe"
 
 _ADDR_PREFIX = re.compile(r"^\s*[0-9a-f]+:")
 _COMMENT = re.compile(r"#.*$")

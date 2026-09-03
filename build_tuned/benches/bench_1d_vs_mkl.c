@@ -4014,6 +4014,41 @@ static void run_2dc2r_cell(int N1, int N2, vfft_wisdom *W, FILE *out, int cool_m
     vfft_destroy(p);
 }
 
+/* ── STORE MISS = RACE, NEVER INHERIT (2026-09-03) ──────────────────────────
+ * The wisdom FILE handed to this bench is an ENUMERATION source: which (N,K)
+ * cells exist. Each row also carries a factorization, and the old loop used
+ * that row whenever the live store lacked the cell — so a bench pointed at
+ * another machine's file silently timed THAT machine's plan on this one. A
+ * miss now runs the same PATIENT search the library's own calibrate path runs
+ * (the _calibrate_c2c shape) and, when the store was opened writable (explicit
+ * VFFT_WISDOM_DIR), banks the verdict so the next run is a hit. */
+static int _race_stride_cell(int N, size_t K, vfft_proto_registry_t *reg,
+                             vfft_proto_wisdom_entry_t *ne)
+{
+    vfft_proto_dp_context_t ctx;
+    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
+    int npool = 0, i;
+    double ns;
+    vfft_proto_dp_init(&ctx, K, N);
+    vfft_proto_dp_set_patient(&ctx);
+    ns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
+    vfft_proto_dp_destroy(&ctx);
+    if (ns >= 1e17 || dec.nf <= 0)
+        return -1;
+    memset(ne, 0, sizeof *ne);
+    ne->N = N;
+    ne->K = K;
+    ne->nf = dec.nf;
+    for (i = 0; i < dec.nf; i++)
+    {
+        ne->factors[i] = dec.factors[i];
+        ne->variants[i] = dec.variants[i];
+    }
+    ne->use_dif_forward = dec.use_dif_forward;
+    ne->best_ns = dec.cost_ns;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
@@ -4658,7 +4693,10 @@ int main(int argc, char **argv)
     g_k1z_wpath = wpath;
     if (!oop)
     {
-        vw2_open(&g_k1z_store, k1z_dir(), 0);   /* read-only: a bench never banks */
+        /* writable ONLY under an explicit VFFT_WISDOM_DIR: a bench never banks
+         * by accident, but a store miss now races (_race_stride_cell) and the
+         * verdict must be able to persist into the store it was read from. */
+        vw2_open(&g_k1z_store, k1z_dir(), getenv("VFFT_WISDOM_DIR") != NULL);
         g_k1z_oopw_loaded = (g_k1z_store.nrec > 0);
     }
 
@@ -4998,22 +5036,39 @@ int main(int argc, char **argv)
 
         /* BENCH WHAT PRODUCTION SERVES. The wisdom file is a frozen
          * ENUMERATION source (which cells exist); the verdict itself comes
-         * from the live store, so a re-raced cell is measured with its
-         * current chain instead of its pre-freeze one. A cell the store
-         * does not carry falls back to the row as parsed (old behavior). */
-        if (g_k1z_oopw_loaded)
+         * from the live store. A cell the store does not carry is RACED
+         * here, never inherited from the row: the row's factorization was
+         * measured on whatever machine wrote the file. */
         {
             vfft_proto_wisdom_entry_t se;
-            if (vw2_stride_lookup(&g_k1z_store, 0, N, K, &se) && se.nf > 0)
+            int served = 0;
+            if (g_k1z_oopw_loaded &&
+                vw2_stride_lookup(&g_k1z_store, 0, N, K, &se) && se.nf > 0)
+                served = 1;
+            if (!served)
             {
-                nf = se.nf;
-                for (int i = 0; i < nf; i++)
+                if (_race_stride_cell(N, K, &reg, &se) != 0)
                 {
-                    factors[i] = se.factors[i];
-                    variants[i] = se.variants[i];
+                    printf("%-8d %-16s   SKIP (store miss, race failed)\n", N, "-");
+                    skipped++;
+                    continue;
                 }
-                use_dif = se.use_dif_forward;
+                printf("# N=%d K=%zu: store MISS -> raced (PATIENT)%s\n", N, K,
+                       g_k1z_store.writable ? ", banked" : ", NOT banked (no VFFT_WISDOM_DIR)");
+                if (g_k1z_store.writable)
+                {
+                    vw2_stride_bank_entry(&g_k1z_store, &se, 0);
+                    if (vw2_save(&g_k1z_store) != VW2_OK)
+                        fprintf(stderr, "warn: wisdom save failed after race N=%d K=%zu\n", N, K);
+                }
             }
+            nf = se.nf;
+            for (int i = 0; i < nf; i++)
+            {
+                factors[i] = se.factors[i];
+                variants[i] = se.variants[i];
+            }
+            use_dif = se.use_dif_forward;
         }
 
         char plan_s[64];

@@ -43,6 +43,9 @@
 
 #include "vfft.h"
 #include "../wisdom2/wisdom2_oop_reader.h"
+#include "cpu_cache.h" /* vfft_cpu_l1d_bytes: the CASES table derives its
+                        * native/foreign stamps from the live sizing value
+                        * instead of hardcoding one host's caches */
 
 /* ── stderr tap ────────────────────────────────────────────────────────── */
 static char _wg_errpath[1024];
@@ -195,7 +198,17 @@ static int vfft_oop_width_gate_run(const char *wisdir, int N)
     const int CC = 232223;              /* 4.8.4.4.4.8, the banked 16384 chain */
     int fails = 0, c;
 
-    static const struct {
+    /* Cache stamps are DERIVED, not literal (2026-09-03). The old table
+     * hardcoded 49152/32768, which baked "the host is the 14900KF" into the
+     * EXPECTATIONS: on a 32 KB-L1 host with VFFT_L1D_DISCOVER=1 the fence
+     * answered the other way and three rows failed while the library behaved
+     * correctly — and the illegal-width row stopped testing legality at all
+     * (the fence in front of it fired first). native = this build's live
+     * sizing value; foreign = a real size guaranteed to differ. The gate
+     * asserts BEHAVIOUR (native engages, foreign refused), never a machine. */
+    const int L1_NATIVE  = (int)vfft_cpu_l1d_bytes();
+    const int L1_FOREIGN = (L1_NATIVE == 49152) ? 32768 : 49152;
+    const struct {
         const char *desc;               /* printed row label                 */
         int zroute, zt_t2q, zt_tw, zt_l1;
         const char *want; int want_tiled; long want_w;
@@ -206,16 +219,18 @@ static int vfft_oop_width_gate_run(const char *wisdir, int N)
         /* zturn route, still no width -> untiled                           */
         { "zturn, no width fields",  1, 0, 0,    0,
           "UNTILED (route, no width)",         0, 0 },
-        /* B1a: width + MATCHING L1 -> engages                              */
-        { "zturn tw=1024 l1=48K",    1, 0, 1024, 49152,
+        /* B1a: width + MATCHING (native) L1 -> engages                     */
+        { "zturn tw=1024 l1=native", 1, 0, 1024, L1_NATIVE,
           "TILED w=1024",                      1, 1024 },
-        { "zturn tw=2048 l1=48K",    1, 0, 2048, 49152,
+        { "zturn tw=2048 l1=native", 1, 0, 2048, L1_NATIVE,
           "TILED w=2048",                      1, 2048 },
         /* B1b: width tuned for a DIFFERENT cache -> untiled + loud         */
-        { "zturn tw=1024 l1=32K",    1, 0, 1024, 32768,
+        { "zturn tw=1024 l1=foreign", 1, 0, 1024, L1_FOREIGN,
           "UNTILED (L1 mismatch)",             0, 0 },
-        /* illegal width for this chain (1536 does not divide SEC=4096)     */
-        { "zturn tw=1536 l1=48K",    1, 0, 1536, 49152,
+        /* illegal width for this chain (1536 does not divide SEC=4096) —
+         * NATIVE L1 on purpose, so the LEGALITY check is the one that
+         * fires rather than the fence that sits in front of it            */
+        { "zturn tw=1536 l1=native", 1, 0, 1536, L1_NATIVE,
           "UNTILED (illegal width)",           0, 0 },
     };
     const int nc = (int)(sizeof CASES / sizeof CASES[0]);

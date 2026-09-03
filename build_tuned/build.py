@@ -315,9 +315,34 @@ def dag_write_jit_rsp():
     print(f'  [jit] codelets.rsp -> {len(objs)} cached objects')
 
 
+# Known-good Windows gcc locations, most-preferred first. The historical
+# hardcoded default (mingw 15.2 at C:\mingw152) stays FIRST so a machine that
+# has it keeps byte-identical behaviour; a machine that does not falls through
+# to the next existing candidate instead of failing with a confusing
+# "file not found" on the compiler itself. $CC still overrides everything.
+#
+# 🔴 A gcc that does not know the HOST uarch silently degrades -march=native
+# (gcc 8 on Zen 4 resolves it to a generic x86-64, not znver4), so an old
+# compiler found on PATH is a performance trap, not a fallback. Hence an
+# explicit list, newest toolchains first, rather than bare 'gcc'.
+_WIN_CC_CANDIDATES = [
+    r'C:\mingw152\mingw64\bin\gcc.exe',            # the original dev toolchain
+    r'C:\msys64\ucrt64\bin\gcc.exe',               # MSYS2 UCRT64, system install
+    os.path.expanduser(r'~\msys64\ucrt64\bin\gcc.exe'),  # MSYS2 UCRT64, per-user
+    r'C:\msys64\mingw64\bin\gcc.exe',
+]
+
+
+def _default_windows_cc() -> str:
+    for cand in _WIN_CC_CANDIDATES:
+        if Path(cand).is_file():
+            return cand
+    return _WIN_CC_CANDIDATES[0]   # keep the historical path in the error message
+
+
 def detect_toolchain():
     # dag dev compiler is gcc (mingw 15.2); production used icx. Override via CC.
-    _default_cc = (r'C:\mingw152\mingw64\bin\gcc.exe' if os.name == 'nt' else 'gcc')
+    _default_cc = (_default_windows_cc() if os.name == 'nt' else 'gcc')
     cc = os.environ.get('CC', _default_cc)
     cc_basename = Path(cc).name.lower()
     is_windows = os.name == 'nt'
@@ -422,6 +447,15 @@ def build_cmd(tc, src_c, out_bin, mkl=False, fftw=False, jit=False, extra_srcs=N
     # warnings — they spam thousands of lines and bury real errors.
     flags = ['-O3', '-mavx2', '-mfma', '-march=native', '-fpermissive',
              '-D_CRT_SECURE_NO_WARNINGS',
+             # ── ISA CLAMP. registry.h and a dozen dispatch sites (executor.h,
+             # oop_leaf_registry.h, il_prime.h, …) key on __AVX512F__, while the
+             # codelet LIBRARY is built per VFFT_ISA. On a CPU whose
+             # -march=native implies AVX-512 (Zen 4+), an avx2 codelet lib +
+             # avx512 dispatch = undefined radix*_avx512 references at link.
+             # The lib is the source of truth: mask AVX-512 out of the compiler
+             # ISA surface unless VFFT_ISA=avx512 (native tuning is kept;
+             # -mno-avx512f is a no-op on CPUs without AVX-512).
+             *(['-mno-avx512f'] if DAG_ISA != 'avx512' else []),
              '-Wno-overflow', '-Wno-implicit-function-declaration',
              '-Wno-unused-function', '-Wno-unknown-argument',
              '-Wno-incompatible-pointer-types',  # gcc-15: dag codelets' aligned-store casts
@@ -559,6 +593,16 @@ def build_env(tc):
     libircmt.lib, svml_dispmt.lib, libmmt.lib. setvars.bat normally does
     this; we replicate the minimum needed when called from a plain cmd."""
     env = os.environ.copy()
+    # MinGW gcc's subprocesses (cc1, as, collect2) resolve their DLLs through
+    # PATH, not through gcc.exe's own directory — invoked from a plain shell
+    # without <toolchain>\bin on PATH, EVERY compile dies exit-1 with no
+    # message at all (measured 2026-09-03: 988/988 "FAILED" with empty error
+    # text). Prepending the compiler's bin dir makes the toolchain
+    # self-sufficient regardless of the caller's PATH.
+    if tc['is_windows'] and not tc['is_msvc_style']:
+        cc_dir = str(Path(tc['cc']).parent)
+        if cc_dir and cc_dir != '.':
+            env['PATH'] = cc_dir + os.pathsep + env.get('PATH', '')
     if not tc['is_windows'] or not tc['is_icx']:
         return env
     # Build LIB path covering: oneAPI runtime, MSVC, Windows SDK (um + ucrt).
