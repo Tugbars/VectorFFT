@@ -277,6 +277,27 @@ static void _bundle_load(struct vfft_wisdom_s *W)
             fprintf(stderr, "[wisdom2] VFFT_WISDOM2_OFF is RETIRED and ignored — "
                             "the legacy wisdom files it selected are deleted\n");
         vw2_open(&W->vw2, dir_known ? W->dir : NULL, 1);
+
+        /* @meta host stamp (2026-09-03). No shipped store carried one, so a
+         * store raced on one uarch replayed its placement-luck verdicts on
+         * any other in silence. Unstamped => adopt this host; stamped for
+         * another => say so once. A REPORT, not a refusal: structural
+         * verdicts (routes, chains) do port. Per-field action is README
+         * §4.3's job and stays an owner decision. */
+        {
+            char cur[128];
+            snprintf(cur, sizeof cur, "host=%s isa=%s l1d=%ld",
+                     vfft_cpu_host_tag(), STRIDE_ISA_NAME, vfft_cpu_l1d_bytes());
+            if (!W->vw2.meta[0])
+                vw2_set_meta(&W->vw2, cur);
+            else if (strcmp(W->vw2.meta, cur) != 0)
+                fprintf(stderr,
+                        "[wisdom2] HOST MISMATCH: store '%s' was raced on '%s', "
+                        "this host is '%s' — placement-luck fields (t2q/kv/il_kv/"
+                        "pad) are NOT valid here; recalibrate into a per-host "
+                        "VFFT_WISDOM_DIR for full performance.\n",
+                        W->vw2.dir, W->vw2.meta, cur);
+        }
     }
 }
 

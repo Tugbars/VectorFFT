@@ -1636,6 +1636,153 @@ build_tuned/benches/bench_mt_dct.exe
 ~30 seconds wall. Run with no other significant load on the machine
 for cleanest numbers.
 
+## 10. Zen 4 — a second calibration host (2026-09-03)
+
+Everything above was measured on the i9-14900KF. This section is the
+first set of numbers from a **different microarchitecture**, calibrated
+from scratch into its own per-host wisdom store. It answers one
+question: does the measure-everything design port, or was it tuned to
+one chip?
+
+### 10.1 Host and toolchain
+
+| | Zen 4 host | (14900KF, for reference) |
+|---|---|---|
+| CPU | AMD Ryzen 5 PRO 8640HS, Zen 4 (Phoenix), 6C/12T, **35 W** laptop part | Raptor Lake 8P+16E, 5.7 GHz |
+| L1d / L2 / L3 | 32 KB 8-way / 1 MB / 16 MB shared | 48 KB 12-way / 2 MB / 36 MB |
+| single-core boost | ~4.9 GHz | 5.7 GHz |
+| compiler | GCC 16.2.0 (MSYS2 UCRT64), `-march=native` → `znver4` | GCC 15.2 |
+| library ISA | **avx2** (`VFFT_ISA=avx2`; the IL tier has no AVX-512 registry) | avx2 |
+| FFTW | 3.3.10 built from source, two variants: `--enable-avx2 --enable-fma` and the same `+ --enable-avx512`, both `--with-our-malloc`, bound at runtime via `VFFT_FFTW_DLL` | — |
+| wisdom | `generated/wisdom/Zen4/` — **empty at the start of the day**, no 14900KF verdict reused | `generated/*.txt` |
+| cache discovery | `VFFT_L1D_DISCOVER=0` (pinned 48 KB / 2 MB, the shipping default; see `docs/design/cpu_discovery.md`) | same |
+
+MKL is not installed on this host and would be the wrong yardstick on
+AMD; **all Zen 4 comparisons are against FFTW, avx2 build vs avx2
+build** unless stated. The `@meta` line in every Zen 4 store file reads
+`host=amd-f25m117 isa=avx2 l1d=49152`.
+
+### 10.2 What was calibrated
+
+All racing at `VFFT_PATIENT`, into the Zen 4 store, in this order:
+
+| N | racer | banked |
+|---|---|---|
+| 1024 | `calibrate_k1` (kind-3 pair, route × pair × `il_kv` × bwd form) | `2p 16×64 il_kv=20` fwd (1265.9 ns cal.), `il_kv=0` bwd; split OOP `2pa 16.64` |
+| 1024 | front door, 4 cells | in-place attach `mode=ilp`; natural in-place `mode=ilp` |
+| 4096 | `calibrate_k1` | `2p 64×64` fwd, `il_kv=16` bwd; split `twl 32×128` |
+| 4096 | `calibrate_zchain` (kind-4 cascade, chain × route × `t2q` × every tile width) | **ZTURN `4.4.8.8.4`, `t2q=0`, `zt_tw=1024`**, 15.5 µs joint |
+| 4096 | front door, 4 cells | both natural cells → `mode=zcasc` (cascade beat the 64×64 pair: 9.7 µs vs 12.2 µs cal.) |
+
+Every axis `docs/design/measurement_arms.md` §3 marks RACED at these N
+has a Zen 4 row. The 14900KF chose `4.4.4.4.4.4` for the same 4096
+cascade cell with the same 1024-cplx tile: six radix-4 interior stages
+there, three interior stages with two radix-8 mids here. Same
+architecture, different balance point, both found by the race — this
+is what per-host wisdom is for.
+
+### 10.3 Results — canonical `bench_1d_vs_fftw --k1noop`, isolated cells
+
+K=1, interleaved, out-of-place, natural order, both engines in one
+process, cachebust + 200 ms cool between engines, both flip orders,
+cross-engine elementwise correctness on every row. FFTW planned with
+its own `fftw-wisdom` PATIENT wisdom imported (`VFFT_FFTW_WIS`);
+MEASURE gave the same numbers at 1024 (the Bailey search surface is
+too small for rigor to matter).
+
+| N | order | vfft min / med ns | FFTW avx2 min / med ns | ratio min / med | gate |
+|---|---|---|---|---|---|
+| 1024 | vfft first | 1039.8 / 1043.7 | 1120.6 / 1185.6 | **1.08 / 1.14** | 2.7e-13 |
+| 1024 | FFTW first | 1001.0 / 1020.6 | 1067.5 / 1081.1 | **1.07 / 1.06** | 2.7e-13 |
+| 1024 (FFTW MEASURE) | vfft first | 1028.9 / 1030.0 | 1082.8 / 1136.1 | 1.05 / 1.10 | 2.7e-13 |
+| 1024 (FFTW MEASURE) | FFTW first | 1085.6 / 1120.6 | 1219.8 / 1229.5 | 1.12 / 1.10 | 2.7e-13 |
+| 4096 | vfft first | 5035.7 / 5045.3 | 6041.8 / 6292.6 | **1.20 / 1.25** | 1.5e-12 |
+| 4096 | FFTW first | 4744.5 / 4747.3 | 6520.1 / 6543.9 | **1.37 / 1.38** | 1.5e-12 |
+
+Reading it: **ahead of FFTW on every run at both sizes**, 5–14% in the
+Bailey band and 20–38% in the cascade tier. The margin grows where the
+cascade's two-conversion SoA interior starts to amortize.
+
+### 10.4 FFTW alone, both ISA builds (standalone, PATIENT, same timing shape)
+
+| N | placement | avx2 ns | avx512 ns | FFTW plan |
+|---|---|---:|---:|---|
+| 1024 | OOP fwd | 1010.7 | 926.0 | dit/16 → dit/32 |
+| 1024 | in-place fwd | 1272.0 | 1153.0 | dit/4 → dit/32 |
+| 4096 | OOP fwd | 8559.2 † | 5850.8 | dit/4 → dit/64 |
+| 4096 | in-place fwd | 14862.3 | 9683.6 | dit/8 |
+
+† FFTW's own planner is not deterministic: the standalone PATIENT run
+chose `dit/4` at 8.6 µs while the `fftw-wisdom` tool's PATIENT plan the
+bench imported ran 6.0–6.5 µs in-bench. The bench ratios in 10.3 are
+against FFTW's *better* showing.
+
+AVX-512 buys FFTW 8% at 1024 and **32% at 4096** (a radix-64 leaf on
+interleaved data). The library's avx2 bench time at 4096 (4745–5036 ns)
+is still below FFTW's avx512 standalone (5851 ns), cross-protocol, so
+hold that one loosely — but it says which half of the cascade design
+carries the win: the layout decision (shuffle-free SoA interior), not
+the vector width.
+
+### 10.5 Zen 4 vs 14900KF, same cell (N=1024, K=1 OOP natural)
+
+| | 14900KF (§1, 2026-08-16, 6 reps) | Zen 4 (10.3) | ratio |
+|---|---|---|---|
+| bench, best rep | 848 ns | 1001 ns | 1.18× |
+| bench, median | ~897 ns | ~1054 ns | 1.17× |
+| boost clock | 5.7 GHz | ~4.9 GHz | **1.16×** |
+| **cycles** | **≈ 4,830** | **≈ 4,900** | 1.5% |
+| winning plan | `2p 32×32` blocked, `il_kv=67` | `2p 16×64`, `il_kv=20` | — |
+
+Per clock the two cores execute this transform at the same rate,
+despite Zen 4's 60% smaller ROB, smaller FP register file and 32 KB L1.
+Both have two 256-bit FMA pipes; the desktop's remaining advantage on a
+single L1-resident transform is clock alone, and the planner absorbed
+the smaller register file and cache by choosing a different pair. (No
+bench-protocol 4096 datum exists for the 14900KF; its calibrator
+`ns=` values are not comparable across hosts — see 10.2's note on
+calibrator timing.)
+
+### 10.6 Scope
+
+- Two cells, one host, single-thread, avx2 vs avx2 by decision. The rest
+  of the Bailey band (128..512) and the cascade above 4096 are a few
+  minutes of `calibrate_k1` / `calibrate_zchain` each, into the same
+  folder.
+- Calibrator `ns=` values in the store are search-loop times and must
+  never be quoted as results (Zen 4 4096: 9.7 µs banked vs 4.7–5.0 µs
+  in the bench). Only the canonical bench protocol counts.
+- `VFFT_L1D_DISCOVER` was left at 0, so the store's `l1d=49152` stamp
+  is the pinned value, not the silicon's 32 KB. The Bailey pair is not
+  L1-gated and the tile-width search benches every legal width, so no
+  candidate was excluded by it; the 2D L2 band fence is the one consumer
+  that would see a different candidate set with discovery on.
+- No 14900KF verdict was served at any point: the Zen 4 folder started
+  empty, and the bench's store-miss path now races rather than reading
+  the wisdom file's row (`_race_stride_cell`, 2026-09-03).
+
+### 10.7 Reproducing
+
+```
+# calibrate (writes generated/wisdom/Zen4/)
+set VFFT_WISDOM_DIR=<repo>\src\dag-fft-compiler\generator\generated\wisdom\Zen4
+build_tuned\benches\calibrate_k1.exe     %VFFT_WISDOM_DIR% 1 1024 4096
+build_tuned\benches\calibrate_zchain.exe %VFFT_WISDOM_DIR% 1 4096
+build_tuned\benches\zen4_il_race.exe 1024 & zen4_il_race.exe 4096    # create-time races
+
+# FFTW PATIENT wisdom, then the isolated cell, both orders
+fftw-wisdom.exe -n -o fftw_patient_1024.wis cof1024 cob1024
+set VFFT_FFTW_DLL=C:\...\fftw\avx2\bin\libfftw3-3.dll
+set VFFT_FFTW_WIS=fftw_patient_1024.wis
+bench_1d_vs_fftw.exe --k1noop %VFFT_WISDOM_DIR%\spike_wisdom.txt out.csv 0 1024 1 200 0 2
+bench_1d_vs_fftw.exe --k1noop %VFFT_WISDOM_DIR%\spike_wisdom.txt out.csv 0 1024 1 200 1 2
+```
+
+Build with `CC=C:\Users\<you>\msys64\ucrt64\bin\gcc.exe` (build.py
+now finds it and clamps AVX-512 out of the driver ISA to match the avx2
+codelet library — on Zen 4, `-march=native` alone selects the AVX-512
+registry and the link fails).
+
 ## See also
 
 - [docs/cost_model/](../cost_model/) — how the estimate path achieves 1.20×

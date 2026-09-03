@@ -67,6 +67,7 @@
 #include "env.h"        /* stride_env_init + stride_pin_thread */
 #include "planner.h"
 #include "dp_planner.h" /* vfft_proto_now_ns */
+#include "measure.h"    /* vfft_proto_dp_plan_measure: a store MISS races here */
 #ifdef VFFT_USE_JIT
 #include "jit/jit_runtime.h" /* vfft_proto_plan_jit_fwd (build.py --jit) */
 #endif
@@ -147,6 +148,38 @@ static int   g_verbose = 0;
 static vfft_proto_registry_t g_reg;    /* codelet registry (split-cell plans) */
 static vw2_store_t g_store;            /* live wisdom2 store — read-only */
 static int   g_store_loaded = 0;
+
+/* ── STORE MISS = RACE, NEVER INHERIT (2026-09-03) ──────────────────────────
+ * Twin of bench_1d_vs_mkl.c's helper. The wisdom FILE is an ENUMERATION
+ * source; the factorization on its row belongs to the machine that wrote it.
+ * A store miss runs the library's own PATIENT search and, when the store was
+ * opened writable (explicit VFFT_WISDOM_DIR), banks the verdict. */
+static int _race_stride_cell(int N, size_t K, vfft_proto_registry_t *reg,
+                             vfft_proto_wisdom_entry_t *ne)
+{
+    vfft_proto_dp_context_t ctx;
+    vfft_proto_plan_decision_t dec, pool[VFFT_PROTO_MEASURE_DEPLOY_MAX];
+    int npool = 0, i;
+    double ns;
+    vfft_proto_dp_init(&ctx, K, N);
+    vfft_proto_dp_set_patient(&ctx);
+    ns = vfft_proto_dp_plan_measure(&ctx, N, reg, &dec, pool, &npool, 0);
+    vfft_proto_dp_destroy(&ctx);
+    if (ns >= 1e17 || dec.nf <= 0)
+        return -1;
+    memset(ne, 0, sizeof *ne);
+    ne->N = N;
+    ne->K = K;
+    ne->nf = dec.nf;
+    for (i = 0; i < dec.nf; i++)
+    {
+        ne->factors[i] = dec.factors[i];
+        ne->variants[i] = dec.variants[i];
+    }
+    ne->use_dif_forward = dec.use_dif_forward;
+    ne->best_ns = dec.cost_ns;
+    return 0;
+}
 
 /* argv[1] is the wisdom FILE (spike_wisdom.txt), same contract as the MKL
  * bench; the store and the front door both live in its directory. */
@@ -1527,7 +1560,9 @@ int main(int argc, char **argv)
            pace_ms, cool_ms, flip, core);
 
     vfft_proto_registry_init(&g_reg);
-    vw2_open(&g_store, g_wisdir, 0);        /* read-only: a bench never banks */
+    /* writable ONLY under an explicit VFFT_WISDOM_DIR: never banks by
+     * accident, but a raced store miss must be able to persist. */
+    vw2_open(&g_store, g_wisdir, getenv("VFFT_WISDOM_DIR") != NULL);
     g_store_loaded = (g_store.nrec > 0);
 
     /* ---- --c2r: own cell grid and CSV; returns early ---- */
@@ -1715,17 +1750,35 @@ int main(int argc, char **argv)
                 tok = strtok_r(NULL, " \t\n", &save);
                 variants[i] = tok ? atoi(tok) : 2;
             }
-            /* live-store override — bench what production serves */
-            if (g_store_loaded)
+            /* live-store verdict — bench what production serves. A store MISS
+             * is RACED, never inherited from the row (the row's factorization
+             * belongs to the machine that wrote the file). */
             {
                 vfft_proto_wisdom_entry_t se;
-                if (vw2_stride_lookup(&g_store, 0, cN, (size_t)cK, &se) && se.nf > 0)
+                int served = 0;
+                if (g_store_loaded &&
+                    vw2_stride_lookup(&g_store, 0, cN, (size_t)cK, &se) && se.nf > 0)
+                    served = 1;
+                if (!served)
                 {
-                    nf = se.nf;
-                    for (int i = 0; i < nf; i++)
-                    { factors[i] = se.factors[i]; variants[i] = se.variants[i]; }
-                    use_dif = se.use_dif_forward;
+                    if (_race_stride_cell(cN, (size_t)cK, &g_reg, &se) != 0)
+                    {
+                        printf("N=%d K=%ld: SKIP (store miss, race failed)\n", cN, cK);
+                        continue;
+                    }
+                    printf("# N=%d K=%ld: store MISS -> raced (PATIENT)%s\n", cN, cK,
+                           g_store.writable ? ", banked" : ", NOT banked (no VFFT_WISDOM_DIR)");
+                    if (g_store.writable)
+                    {
+                        vw2_stride_bank_entry(&g_store, &se, 0);
+                        if (vw2_save(&g_store) != VW2_OK)
+                            fprintf(stderr, "warn: wisdom save failed after race N=%d K=%ld\n", cN, cK);
+                    }
                 }
+                nf = se.nf;
+                for (int i = 0; i < nf; i++)
+                { factors[i] = se.factors[i]; variants[i] = se.variants[i]; }
+                use_dif = se.use_dif_forward;
             }
             if ((size_t)cN * (size_t)cK > (size_t)16777216) continue;
             run_split_cell(cN, (size_t)cK, factors, variants, nf, use_dif,

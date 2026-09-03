@@ -40,10 +40,12 @@ USAGE
   python build_tuned/sym_census.py <obj> --mutable     file-scope mutable objects
 """
 import re
+import os
 import subprocess
+# env NM overrides the historical mingw152 path (2026-09-03).
+DEFAULT_NM = os.environ.get("NM", "C:/mingw152/mingw64/bin/nm.exe")
 import sys
 
-DEFAULT_NM = r"C:\mingw152\mingw64\bin\nm.exe"
 TRAILING_NUM = re.compile(r"\.\d+$")
 
 

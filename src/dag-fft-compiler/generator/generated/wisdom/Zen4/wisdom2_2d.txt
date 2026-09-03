@@ -1,0 +1,12 @@
+@vw2 1.2
+@legend signpost: a verdict references its component recipe (ref=), never copies it
+@legend q-vs-ran: q= is the REQUESTED quantity; ran= is the EXECUTED batch of the timing run
+@legend metric: ns= is comparable only within identical metric= and units=; absent ns = informational
+@legend lay: lay=split|il keys the CALLER's data layout (v1.2) - layout is a caller declaration like place=, never a strategy output; absent = a pre-1.2 record OR a shared-interior recipe (one engine serves both layouts - stamping a layout from the other door's timing would manufacture fake cells), served to concrete-lay requests as the fallback tier
+@legend eng-on-nat: on ord=nat rows eng= names the WINNING family (zturn|k1|stride) since 2026-09-02; earlier rows carry eng=stride regardless (vintage, still served)
+@legend wildcards: q=*/ord=*/place=* are migration-vintage only (from= required); fresh banks stamp concrete axes
+@legend role: role=comp marks an engine-internal COMPONENT recipe; absent = the problem verdict at that key (equality-matched)
+@legend evolution: new fields/axes land here as additive minor versions, never in frozen legacy files; reserved: sp_kv
+@legend see src/core/wisdom2/README.md
+@meta host=amd-f25m117 isa=avx2 l1d=49152
+@cell t=c2c n=512x512 q=1 ord=scr place=oop lay=il | chain=4.4.4.8 wl=16 tf=1 ro=0 | ran=1 ns=725466.7 metric=fwd1 units=ns src=race date=2026-09-03
