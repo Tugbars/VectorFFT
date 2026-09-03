@@ -262,23 +262,6 @@ struct vfft_plan_s
      * default; exec_me is then unused (tight runs p->K via _c2c_mt). See padding_design_decision.md. */
     int padded;
     int exec_me;
-    /* INTERLEAVED z execute (layout=INTERLEAVED plans, 1D tight in-place c2c):
-     * lazily-allocated split scratch + the once-resolved DIT bwd range executor
-     * (fused-t1s jit tier; NULL -> core). See _exec_c2c_interleaved. */
-    double *il_wr, *il_wi;
-    /* OOP INTERLEAVED convert fallback (no native z route on the cell):
-     * destination split planes for dein -> split-OOP -> inter. Lazy. */
-    double *il_wr2, *il_wi2;
-    vfft_proto_exec_range_fn il_rfb;
-    /* §6a55: IL padded arm (tail_handling doctrine port). il_me: 0=undecided,
-     * K=tight (today's fused path), Kp=padded — deinterleave into Kp-strided
-     * work (slack zeroed once; linear stages keep zero lanes zero both
-     * directions), full split execute at Kp, interleave-out at true K.
-     * Verdict from the SAME c2c exec_me wisdom the padded batch path uses
-     * (read via _default_wisdom(): a custom cfg->wisdom plan decides from
-     * the default table — decision quality only, both arms correct).
-     * VFFT_IL_PAD=0/1 forces the arm (gates + same-process benches). */
-    int il_me;
     /* ── native IL 2D c2c tier (docs/roadmap/fft2d_il_c2c_design.md):
      * n1c/t2c column chain + per-row K=1 IL child (order NATURAL). THE
      * serving for IL 2D c2c — OWNER LAW 2026-08-25: split is NOT a
@@ -402,9 +385,6 @@ struct vfft_plan_s
                       * differ = same-run arms). */
     double *il2d_lx, *il2d_lre, *il2d_lim; /* lane-major: N2*rw, hp1p*rw x2 */
     double *il2d_tre, *il2d_tim;           /* row-major halves: rw*hp1p x2 */
-    int il_race; /* §6a59: A/B pending flag (decision-scoped) */
-    stride_plan_t *cplan_il;
-    vfft_proto_exec_fn il_pf, il_pb; /* §6a55: jit tier on cplan_il */
     /* 1 = the c2c in-place plan's codelet IGNORES the partial-lane count `me` (processes the full baked K),
      * so a _c2c_mt K-split slab would overrun adjacent lanes -> wrong output. Detected once at create by a
      * whole-vs-split self-check; when set, the FFT runs WHOLE-BATCH under MT (the reorder pass still threads).

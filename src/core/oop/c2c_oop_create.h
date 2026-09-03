@@ -150,6 +150,19 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * factor) keeps the banked IL route while the split side runs
              * the same heuristic an unbanked cell always ran; neither
              * layout's absence degrades the other. */
+            /* the IL PLAN RACE at create (2026-09-03): an interleaved caller's
+             * kind-3 MISS (or recalibrate) below 2048 runs the planner and
+             * banks before this block reads the row — the pair heuristic
+             * below is never the source of a served IL plan any more (it
+             * kept building a form-less pair on the cold create while the
+             * replay took the planner's pair WITH forms: different bits). */
+            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && N < 2048 && !W->vw2_off_oop &&
+                (cfg->recalibrate || !ke ||
+                 (!ke->il_R1 && !(ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0]))))
+            {
+                if (_k1_il_plan_race(W, cfg, N) > 0)
+                    ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
+            }
             const int sp_banked = (ke && ke->k1_sp_route >= 0);
             /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
              * means the IL axis was never raced at this cell — run the IL
