@@ -1208,10 +1208,12 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     }
     if (_il2d_race_forms(N1, N2, Rs, nst, ff, fb, forms, fsz) && forms[0])
     {
-        vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms);
-        _vw2_persist(W, cfg);
+        const int banked = vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms);
+        if (banked)
+            _vw2_persist(W, cfg);
         if (getenv("VFFT_IL2D_LOG"))
-            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, banked\n", N1, N2, forms);
+            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, %s\n", N1, N2, forms,
+                    banked ? "banked" : "NOT banked yet (no chain row; the create re-banks once it lands)");
     }
 }
 

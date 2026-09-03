@@ -48,24 +48,15 @@
  *
  * THE TRAMPOLINES CAME WITH IT, AND _zc_* DID NOT
  * -----------------------------------------------
- * _tc_mt_floor, _tc_mt_arg and _tc_mt_tramp are used ONLY by vfft_execute, so
+ * _tc_mt_arg and _tc_mt_tramp are used ONLY by vfft_execute, so
  * they belong with it. The _zc_* trampoline pair looks similar but serves
  * _exec_c2c_interleaved, which stays in vfft.c - so it stayed too. Grouping by
  * "looks like a trampoline" would have coupled this header to a function that
  * is not moving.
  *
- * A NOTE ON _tc_mt_floor's CACHE
- * ------------------------------
- * It memoises its result in a function-local static. That is one cache per
- * includer rather than one per program - harmless here, because the value is a
- * pure function of the environment and every includer would compute the same
- * number, and moot in practice because the guard above means only one TU
- * instantiates it at all. Recorded because the general rule in this migration is
- * that mutable state does not go in headers, and this is the one place a
- * (benign) exception exists.
- *
- * The floor itself is a SCALAR DEFAULT, not a wisdom verdict - it decides
- * whether threading is worth engaging at all, and VFFT_TCMT_FLOOR re-maps it.
+ * (The 2048-point scalar engage floor that once lived here is retired:
+ * the wrapper now carries a raced, banked verdict, h->tc_mt - see
+ * _tc_mt_decide in vfft.c.)
  */
 #ifndef VFFT_EXECUTE_H
 #define VFFT_EXECUTE_H
@@ -79,20 +70,6 @@
  * the struct) — full independence, no barriers, disjoint blocks. The clone's
  * route is pool-free by _tc_inner_mt_safe, so this re-entry into
  * vfft_execute from a pool thread can never touch the pool. */
-/* MT engage floor, in COMPLEX POINTS (callers convert; h->N is not always that).
- * A scalar default, not a wisdom verdict — VFFT_TCMT_FLOOR re-maps the crossover. */
-static size_t _tc_mt_floor(void)
-{
-    static size_t f = 0;
-    if (!f)
-    {
-        const char *e = getenv("VFFT_TCMT_FLOOR");
-        long v = e ? atol(e) : 0;
-        f = (v > 0) ? (size_t)v : 2048;
-    }
-    return f;
-}
-
 typedef struct
 {
     struct vfft_plan_s *p;
@@ -479,27 +456,11 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         double *d = dre;
         const size_t sn = h->tcb_sn, dn = h->tcb_dn;
         int T = 1 + h->tcbw_n;
-        /* Engage floor is in COMPLEX POINTS, and h->N is not always that.
-         * For C2C, N IS the complex length. For R2C/C2R, N counts REAL
-         * samples and the transform actually performed is the N/2-point
-         * complex child plus a linear fold -- so testing N*K engages
-         * threading at HALF the work the floor was calibrated on.
-         *
-         * Measured 2026-08-22 (8 threads, P-cores, medians of 7), the cells
-         * that sit exactly in that gap -- N*K == 2048 real points but only
-         * 1024 complex -- all LOSE:
-         *     r2c 256x8  0.80x    c2r 256x8  0.74x
-         *     r2c 512x4  0.89x    c2r 512x4  0.95x
-         * while every cell at 2048 genuine complex points wins (r2c 512x8
-         * 1.51x, r2c 1024x4 1.61x, c2r 512x8 1.41x). Converting to complex
-         * points turns each of those losses back into the serial path, which
-         * is what the floor exists to do. */
+        /* The THREADING verdict (h->tc_mt): raced serial-vs-slabs at create
+         * on this cell, or replayed from its eng=tcb row; T-free (one
+         * transform per core). No verdict => the serial loop. */
+        if (T > 1 && h->tc_mt)
         {
-        const size_t work = (h->transform == VFFT_C2C)
-                                ? (size_t)h->N * h->K
-                                : ((size_t)h->N / 2u) * h->K;
-        if (T > 1 && work >= _tc_mt_floor())
-        { /* engage floor in complex points — MEASURED, see _tc_mt_floor. */
             _vfft_pool_arm(h->nthreads); /* re-assert snapshot pool */
             /* T = 1 + clones built at create (the plan's own snapshot); the
              * pool's one clamp also bounds it by the live pool and the
@@ -508,7 +469,6 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
         }
         else
             T = 1;
-        }
         if (T > 1)
         {
             /* 🔴 NO TAIL, BY CONSTRUCTION — and note the contrast with the

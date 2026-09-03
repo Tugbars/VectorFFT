@@ -511,17 +511,16 @@ int main(int argc, char **argv)
      * Two separate things must both be true for a batch to actually thread,
      * and they are decided in different places:
      *   at CREATE   clones are built (vfft_plan_tc_workers > 0)
-     *   at EXECUTE  the work exceeds _tc_mt_floor(), else the wrapper runs
-     *               its serial loop no matter how many clones it owns
-     * The leg below asserts the first. Without this line the second silently
-     * fails at its smaller cell -- N=512 K=4 is 1024 complex points against a
-     * 2048 floor -- so the MT==ST comparison would compare the serial path
-     * with itself and pass while proving nothing. A correctness gate wants
-     * every arm threaded, so drop the floor to 1 here. This is the knob's
-     * documented purpose (see _tc_mt_floor); performance work must NOT do
-     * this, because the floor is a measured crossover. Set before any plan is
-     * created: the floor is read once into a static. */
-    _putenv("VFFT_TCMT_FLOOR=1");
+     *   at EXECUTE  the wrapper's THREADING VERDICT (h->tc_mt, raced serial
+     *               vs slabs at create or replayed from its eng=tcb row)
+     *               says slabs, else the wrapper runs its serial loop no
+     *               matter how many clones it owns
+     * The leg below asserts the first. A correctness gate wants every arm
+     * threaded, so pin the verdict to 1 here (VFFT_TCMT: an env pin never
+     * replays and never banks, the tcut law). Performance work must NOT do
+     * this: the verdict is a measured crossover per cell. Set before any
+     * plan is created. */
+    _putenv("VFFT_TCMT=1");
     /* CWD-proof wisdom resolution: build.py runs binaries from build_tuned/
      * while a manual run starts in benches/ — probe both relative roots and
      * take the one whose oop_wisdom.txt actually opens. vfft_wisdom_load

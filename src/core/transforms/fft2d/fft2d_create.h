@@ -242,6 +242,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * until the rho tables; child failure) REFUSE loudly. The split
          * tplan below is built ONLY for split-layout callers. */
         struct vfft_plan_s *il2d_row = NULL;
+        char il2d_fm[64] = "";   /* the raced per-stage forms (E1.11); re-banked once the chain row lands */
         int il2d_nst = 0;
         int il2d_wc = 0;
         int il2d_wl = 0, il2d_cut = 0, il2d_tfuse = 0;
@@ -333,9 +334,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             if (chain_ok && il2d_bblu <= 0)
             {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
                  * Bluestein cell's forms live on its (M, N2) row */
-                char fm[64];
                 _il2d_forms_serve(W, cfg, 0, N1, N2, il2d_R, il2d_nst,
-                                  il2d_f, il2d_b, fm, sizeof fm);
+                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm);
             }
             if (!chain_ok)
             {
@@ -875,10 +875,13 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             }
             if (rok && il2d_bblu <= 0)
             {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
-                 * Bluestein cell's forms live on its (M, N2) row */
-                char fm[64];
+                 * Bluestein cell's forms live on its (M, N2) row. On a COLD
+                 * real cell the chain row does not exist yet (it is banked
+                 * with the N1-arm verdict below), so the forms bank here
+                 * fails; the re-bank after that row lands is what makes the
+                 * column-MT clones replay the same forms (2026-09-04). */
                 _il2d_forms_serve(W, cfg, 1, N1, N2, il2d_R, il2d_nst,
-                                  il2d_f, il2d_b, fm, sizeof fm);
+                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm);
             }
             if (!rok)
             {
@@ -1061,6 +1064,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                            use_blu ? bnst : il2d_nst,
                                            -1, -1, -1, -1,
                                            use_blu ? M2 : 0, 0.0);
+                            if (!use_blu && il2d_fm[0])   /* the forms raced above, now with a row to land on */
+                                (void)vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
                             _vw2_persist(W, cfg);
                         }
                         if (use_blu)
@@ -1432,6 +1437,20 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             !getenv("VFFT_IL2D_CHAIN") && !getenv("VFFT_IL2D_WL") &&
             (il2d_brw < 0 || il2d_bwl < 0))
             _il2d_real_rowrace(h, W, cfg, N1, N2);
+        /* the raced per-stage forms land on the real chain row HERE (2026-09-04):
+         * on a cold real cell that row is first written by the rowrace's
+         * rl bank above, after the forms step ran — without this re-bank
+         * the next create (a column-MT clone, the replay) re-raced the forms
+         * and could serve different kernels than this handle (MT != ST). */
+        if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
+            il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
+        {
+            if (vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm))
+                _vw2_persist(W, cfg);
+            else if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
+                        N1, N2, il2d_fm);
+        }
         /* INC-3: the column-MT verdict. Serve a banked one ONLY when it
          * was raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */

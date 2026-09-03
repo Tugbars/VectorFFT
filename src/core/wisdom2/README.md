@@ -183,7 +183,11 @@ banked by the OOP create's own race, and a hit attaches the cascade for
 OOP) and the COMPONENT recipe (`role=comp`; banked by an in-place or odd
 race — and by the offline planner for every odd-mid cell — which must never
 attach an OOP route by fiat). A comp row may also carry the cascade's per-T
-MT verdict (`zt_mt_t=`/`zt_mt=`), as may the verdict row. An in-place caller
+MT verdict (`zt_mt_t=`/`zt_mt=`), as may the verdict row. A K>1 interleaved
+batch has its own row at `q=K` (`eng=tcb tcmt=0|1 tcmtt=<T raced at>`): the
+transform-contiguous wrapper's serial-vs-slabs verdict, T-free because each
+core runs a whole transform; `eng=tcb` fails every family gate, so no reader
+can serve it as a plan. An in-place caller
 replays comp first, then the verdict; its mode row's `ref=` names whichever
 served. A mode row never carries the caller's classic chain as its own —
 that chain is a SPLIT caller's plan (the served recipe only for the tape

@@ -1199,6 +1199,118 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     }
 }
 
+/* ── K>1 TRANSFORM-CONTIGUOUS batch: the THREADING verdict (2026-09-04) ──
+ * The one arm of the K>1 interleaved tier (lane-major is refused, so
+ * geometry is not an axis): the SERIAL loop vs SLABS over the worker
+ * clones, raced at create on the batch's own cell and banked as
+ * eng=tcb tcmt= on its q=K row (vw2_stride_bank_tcmt). One transform per
+ * core => nothing about the plan depends on T => the verdict is T-FREE
+ * and replays at any thread count (planning_model 'The MT rule'); tcmtt=
+ * records the T it was raced at. No clones (no pool, inner not pool-free,
+ * K=1 workers) => no arm: serial by construction. VFFT_TCMT=0|1 pins the
+ * verdict (the tcut law: an env pin never replays and never banks);
+ * VFFT_NO_TCMT (no clones at all) stays the create-time kill switch.
+ * This replaces the 2048-complex-point scalar floor, which was an offline
+ * table (2026-08-22) and never a verdict. */
+typedef struct { struct vfft_plan_s *h; vfft_dir_t dir; double *s, *d; int mt; } _tc_mt_race_arm_t;
+static void _tc_mt_race_arm(void *v)
+{
+    _tc_mt_race_arm_t *a = (_tc_mt_race_arm_t *)v;
+    a->h->tc_mt = a->mt;
+    vfft_execute(a->h, a->dir, a->s, NULL, a->d, NULL);
+}
+typedef struct { double *s, *s0; size_t nb; } _tc_mt_reseed_t;
+static void _tc_mt_reseed(void *v)
+{
+    _tc_mt_reseed_t *r = (_tc_mt_reseed_t *)v;
+    memcpy(r->s, r->s0, r->nb);
+}
+static void _tc_mt_decide(struct vfft_plan_s *h, const vfft_config_t *cfg,
+                          int N, size_t K)
+{
+    struct vfft_wisdom_s *W = cfg->wisdom ? cfg->wisdom : _default_wisdom();
+    const int t = cfg->transform == VFFT_C2C ? VW2_T_C2C
+                : cfg->transform == VFFT_R2C ? VW2_T_R2C : VW2_T_C2R;
+    const int ord = cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR;
+    const int pl = cfg->placement == VFFT_INPLACE ? VW2_PL_IP : VW2_PL_OOP;
+    const uint8_t lay = _vw2_lay_of(cfg);
+    const int T = h->nthreads;
+    const int ip = (cfg->placement == VFFT_INPLACE);
+    const int lg = getenv("VFFT_TCMT_VERBOSE") || getenv("VFFT_TCMT_LOG");
+    const char *pin = getenv("VFFT_TCMT");
+    const char *tn = _vfft_tname(h->transform);
+    h->tc_mt = 0;
+    if (h->tcbw_n == 0)
+        return;                                   /* no workers: no arm */
+    if (pin)
+    {
+        h->tc_mt = atoi(pin) ? 1 : 0;
+        if (lg)
+            fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d: pinned tcmt=%d (env; not banked)\n",
+                    tn, N, K, T, h->tc_mt);
+        return;
+    }
+    if (W && !cfg->recalibrate)
+    {
+        int v = 0, vt = 0;
+        if (vw2_stride_lookup_tcmt(&W->vw2, t, N, K, ord, pl, lay, &v, &vt))
+        {
+            h->tc_mt = v;
+            if (lg)
+                fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d: replay tcmt=%d (raced at T=%d) src=wisdom\n",
+                        tn, N, K, T, v, vt);
+            return;
+        }
+    }
+    {   /* the race: serial loop vs slabs, on this cell's own buffers */
+        const vfft_dir_t dir = (cfg->transform == VFFT_C2R) ? VFFT_BACKWARD : VFFT_FORWARD;
+        const size_t ns_ = K * h->tcb_sn, nd_ = K * h->tcb_dn;
+        const size_t nb = ns_ * sizeof(double);
+        double *src = (double *)malloc(nb);
+        double *dst = ip ? src : (double *)malloc(nd_ * sizeof(double));
+        double *s0 = ip ? (double *)malloc(nb) : NULL;
+        double st = 0, mt = 0;
+        size_t i;
+        if (!src || !dst || (ip && !s0))
+        {
+            free(src); if (!ip) free(dst); free(s0);
+            return;                               /* no buffers: serial */
+        }
+        for (i = 0; i < ns_; i++)
+            src[i] = 1.0 + 1e-6 * (double)(i & 511);
+        if (ip) memcpy(s0, src, nb);
+        {
+            _tc_mt_race_arm_t a = { h, dir, src, dst, 0 };
+            _tc_mt_race_arm_t b = { h, dir, src, dst, 1 };
+            _tc_mt_reseed_t rs = { src, s0, nb };
+            const vfft_race_arm_t arms[2] = { { "serial", _tc_mt_race_arm, &a },
+                                              { "slabs", _tc_mt_race_arm, &b } };
+            vfft_race_proto_t proto;
+            double ns[2];
+            const size_t pts = (cfg->transform == VFFT_C2C ? (size_t)N : (size_t)N / 2u) * K;
+            memset(&proto, 0, sizeof proto);
+            proto.rounds = ip ? 9 : 7;
+            proto.reps = ip ? 1 : (int)(32768u / (pts ? pts : 1)) + 1; /* >= ~30 us a sample */
+            proto.agg = VFFT_RACE_MIN;
+            proto.alternate = 1;
+            proto.warm = 1;
+            proto.reset = ip ? _tc_mt_reseed : NULL;
+            proto.reset_ctx = ip ? &rs : NULL;
+            vfft_race_run(&proto, arms, 2, ns);
+            st = ns[0]; mt = ns[1];
+        }
+        h->tc_mt = (mt < st);
+        if (lg)
+            fprintf(stderr, "[tcmt] %s N=%d K=%zu T=%d %s: race serial=%.0f slabs=%.0f -> %s\n",
+                    tn, N, K, T, ip ? "ip" : "oop", st, mt,
+                    h->tc_mt ? "SLABS" : "serial");
+        free(src); if (!ip) free(dst); free(s0);
+        if (W && vw2_stride_bank_tcmt(&W->vw2, t, N, K, ord, pl, lay,
+                                      h->tc_mt, T, h->tc_mt ? mt : st) == VW2_OK)
+            _vw2_persist(W, cfg);
+    }
+}
+
 /* Clones are built by RE-RUNNING create, and create is only deterministic
  * when every verdict it needs is banked: a wisdom-absent cascade cell
  * re-races per create and can pick a DIFFERENT chain — whose scrambled comb
@@ -1512,6 +1624,7 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
             fprintf(stderr, "[tcmt] %s N=%d K=%zu nthreads=%d workers=%d\n",
                     _vfft_tname(h->transform), h->N, h->K, h->nthreads,
                     h->tcbw_n);
+        _tc_mt_decide(h, cfg, N, K);   /* the threading verdict: replay or race */
         return h;
     }
     }
@@ -1990,8 +2103,8 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     FP__ADD(" nat=%d nat2d=%d natpairs=%d natcyc=%d nat2dcyc=%d mtunsafe=%d",
             h->nat_mode, h->nat2d, h->nat2d_row_is_pairs, h->nat_ncyc,
             h->nat2d_ncyc, h->mt_unsafe);
-    FP__ADD(" tcbw=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
-            h->tcbw_n, (long)h->tcb_sn, (long)h->tcb_dn,
+    FP__ADD(" tcbw=%d tcmt=%d tcbsn=%ld tcbdn=%ld pqw=%d pqmt=%d pqn=%ld",
+            h->tcbw_n, h->tc_mt, (long)h->tcb_sn, (long)h->tcb_dn,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
             " oddn2=%d nat=%d blu=%d norowz=%d]",

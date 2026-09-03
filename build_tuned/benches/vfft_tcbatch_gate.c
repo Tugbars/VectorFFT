@@ -25,8 +25,10 @@
  *      created with nthreads=8 slabs the batch over per-worker CLONE
  *      handles; its output must be byte-identical to the nthreads=1 plan.
  *      MT executes FIRST (mt_c2c_gate discipline — a stale-pool or shared-
- *      scratch bug must show before any ST execute has run). Cells below
- *      the NK engage floor exercise the serial arm of the same plan shape;
+ *      scratch bug must show before any ST execute has run). The wrapper's
+ *      THREADING VERDICT is raced at create (serial vs slabs, banked
+ *      eng=tcb tcmt=); a cell whose verdict is serial exercises the serial
+ *      arm of the same plan shape, and either verdict must be bitwise;
  *      cells whose route is not pool-free (predicate-refused) must degrade
  *      to serial and STILL be bitwise. Every block carries different data,
  *      so a worker running the wrong slab (or two workers sharing scratch)
@@ -387,14 +389,14 @@ int main(int argc, char **argv)
     if (!run_default_geometry(W, 512, 3)) fails++;
 
     printf("--- MT (nthreads=8, per-worker clones) == ST, bitwise ---\n");
-    if (!run_mt_cell(W, 64, 64)) fails++;   /* mono; NK == the engage floor  */
+    if (!run_mt_cell(W, 64, 64)) fails++;   /* mono; 4096 points             */
     if (!run_mt_cell(W, 256, 16)) fails++;  /* Bailey il2p                   */
     if (!run_mt_cell(W, 1024, 8)) fails++;  /* Bailey band top               */
     if (!run_mt_cell(W, 2048, 8)) fails++;  /* cascade                       */
     if (!run_mt_cell(W, 4096, 4)) fails++;  /* cascade, K < workers          */
     if (!run_mt_cell(W, 96, 43)) fails++;   /* chain3 odd N; ragged K slabs  */
     if (!run_mt_cell(W, 512, 5)) fails++;   /* K-1 < workers -> 4 clones     */
-    if (!run_mt_cell(W, 256, 2)) fails++;   /* below the floor: serial arm   */
+    if (!run_mt_cell(W, 256, 2)) fails++;   /* tiny batch: the verdict decides */
 
     /* SPLIT is lane-major only: DEFAULT must build (resolving to lane-major),
      * an EXPLICIT transform-contiguous request must be refused, not ignored. */
