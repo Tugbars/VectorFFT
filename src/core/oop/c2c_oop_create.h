@@ -572,6 +572,99 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                         if (zct)
                             vfft_zturn2_destroy(zct);
                     }
+                    /* OOP order=DEFAULT at N >= zcasc_min (2026-09-03). DEFAULT
+                     * is order-agnostic ("engine-native = fastest"), so the
+                     * SCRAMBLED cascade is a legal arm here exactly as the natord
+                     * cascade is for NATURAL above -- but it was never offered:
+                     * the cascade candidate is built only for an explicit
+                     * SCRAMBLED request, so DEFAULT served the pair where one
+                     * exists and the classic split champion behind a convert
+                     * above 4096 (4.7x at 8192, 7x at 16384, pinned). Not a
+                     * rule: the pair beats the cascade at 2048 and loses at
+                     * 4096. So: race THIS handle's real execute against the
+                     * scrambled cascade (the natural race's protocol), bank the
+                     * verdict on the OOP ord=scr mode row, replay it. */
+                    if (cfg->order == VFFT_ORDER_DEFAULT &&
+                        N >= _vfft_zcasc_min_n() &&
+                        cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
+                        !getenv("VFFT_NO_NAT_ZCASC"))
+                    {
+                        vfft_proto_nat_entry_t soeb;
+                        const vfft_proto_nat_entry_t *soe =
+                            W->vw2_off_stride
+                                ? NULL
+                                : (vw2_stride_lookup_scrmode_oop(&W->vw2, _vw2_lay_of(cfg), N, K, &soeb) ? &soeb : NULL);
+                        int smode = (soe && !cfg->recalibrate)
+                                        ? soe->mode : VFFT_NAT_UNSET;
+                        vfft_zturn2_plan_t *zct = NULL;
+                        if (smode != VFFT_NAT_FREE)
+                        {
+                            vfft_config_t rcfg = *cfg;
+                            vfft_zsplit_plan_t *zcs = NULL;
+                            int zcr = 0;
+                            rcfg.recalibrate = 0;
+                            if (!_k1z_wisdom_replay(&rcfg, W, N, &zcs, &zct, &zcr))
+                                (void)_k1z_race_and_bank(&rcfg, W, N, /*ip=*/0,
+                                                         &zcs, &zct, &zcr); /* miss: the kind-4 race, banked */
+                            if (zcs)
+                                vfft_zsplit_destroy(zcs);
+                        }
+                        if (smode == VFFT_NAT_ZCASC)
+                        {
+                            if (zct)
+                            {
+                                hk->zturn = zct;
+                                hk->zroute = 1;
+                                zct = NULL;
+                                if (getenv("VFFT_NAT_LOG"))
+                                    fprintf(stderr, "[scrmode] N=%d K=%zu "
+                                            "replay ZCASC-OOP (default order)\n", N, K);
+                            }
+                            else
+                                smode = VFFT_NAT_UNSET;
+                        }
+                        if (smode == VFFT_NAT_UNSET && zct)
+                        {
+                            double *rz = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            double *r0 = (double *)malloc(
+                                2 * (size_t)N * sizeof(double));
+                            if (rz && r0)
+                            {
+                                for (long i = 0; i < 2L * N; i++)
+                                    r0[i] = (double)rand() / RAND_MAX - 0.5;
+                                const int reps =
+                                    N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
+                                double ns[2]; /* [0] incumbent, [1] zcasc */
+                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, rz, r0,
+                                                        2 * (size_t)N * sizeof(double) };
+                                const vfft_race_arm_t arms[2] = {
+                                    { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
+                                const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };
+                                _vfft_pool_arm(hk->nthreads);
+                                vfft_race_run(&proto, arms, 2, ns);
+                                if (ns[1] < ns[0])
+                                {
+                                    hk->zturn = zct;
+                                    hk->zroute = 1;
+                                    zct = NULL;
+                                    _bank_scrmode_oop_1d(W, cfg, N, K, VFFT_NAT_ZCASC, ns[1]);
+                                }
+                                else
+                                    _bank_scrmode_oop_1d(W, cfg, N, K, VFFT_NAT_FREE, ns[0]);
+                                if (getenv("VFFT_NAT_LOG"))
+                                    fprintf(stderr,
+                                            "[scrmode] N=%d K=%zu OOP default "
+                                            "zcasc=%.0fns engine=%.0fns -> %s\n",
+                                            N, K, ns[1], ns[0],
+                                            hk->zturn ? "ZCASC-OOP" : "engine");
+                            }
+                            free(rz);
+                            free(r0);
+                        }
+                        if (zct)
+                            vfft_zturn2_destroy(zct);
+                    }
                     /* ── ODD-MID cascade, SCRAMBLED/DEFAULT (2026-08-27):
                      * zt_pending (built + t2q'd by the race helper) has
                      * NO fiat attach — it races THIS handle's real

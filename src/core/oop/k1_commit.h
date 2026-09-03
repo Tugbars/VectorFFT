@@ -589,6 +589,26 @@ static void _bank_natoop_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     _vw2_persist(W, cfg);
 }
 
+/* the OOP ord=scr mode cell (2026-09-03): the DEFAULT-order OOP race's
+ * verdict, mode=ZCASC (the scrambled cascade won) | mode=FREE (the handle's
+ * own K=1 engine won; the banked loss). Dummy chain => the ref= signpost to
+ * the kind-4 OOP verdict, exactly as @natoop. */
+static void _bank_scrmode_oop_1d(struct vfft_wisdom_s *W,
+                                 const vfft_config_t *cfg, int N, size_t K,
+                                 int mode, double ns)
+{
+    vfft_proto_nat_entry_t nn;
+    memset(&nn, 0, sizeof nn);
+    nn.N = N;
+    nn.K = K;
+    nn.mode = mode;
+    nn.nat_ns = ns;
+    nn.nf = 1;
+    nn.factors[0] = N;
+    vw2_stride_bank_scrmode_oop(&W->vw2, &nn, _vw2_lay_of(cfg));
+    _vw2_persist(W, cfg);
+}
+
 /* the ord=scr mode-cell bank (the ILP-attach fix, 2026-08-25): the
  * scrambled in-place IL race's verdict — mode=ILP | ZCASC (win) or
  * mode=CONV (the banked loss, so a losing race never re-runs). The chain

@@ -565,6 +565,12 @@ Its own tournaments, not a fix-up pass:
 - **nat-ilp** — il2p/il3p against the finished natural-*tape* handle.
 - **nat-zcasc** — the natord cascade against the tape handle.
 - **natoop-zcasc** — the natord cascade against the K=1 out-of-place handle.
+- **scroop-zcasc** — the SCRAMBLED cascade against the K=1 out-of-place handle under
+  order=DEFAULT (2026-09-03). DEFAULT is order-agnostic, so the scrambled cascade is a
+  legal arm; it was never offered before (built only for an explicit SCRAMBLED request),
+  which left DEFAULT out-of-place on the pair at 2048/4096 and on the classic champion
+  behind a convert above (4.7x at 8192). Banked on the OOP `ord=scr` mode row
+  (`mode=zcasc` with the `ref=` signpost, or `mode=free`), replayed at create.
 - ⚪ **nat-tape opportunistic PSWAP** — no clock at all; a deterministic short-circuit that
   still **banks**. It belongs on a "banks without measuring" list, not among measurement
   arms.
