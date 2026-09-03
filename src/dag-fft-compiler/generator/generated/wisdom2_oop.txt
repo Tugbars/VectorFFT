@@ -215,3 +215,9 @@
 @cell t=c2c n=3072 q=1 ord=nat place=oop role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.32 il_chain=32.16.6 il_kv=516 | ran=1 ns=3719.3 metric=fwd1 units=ns src=race date=2026-09-03
 @cell t=c2c n=3072 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=96.32 il_kv=0 il_chain=32.16.6 | ran=1 ns=5547.5 metric=bwd1 units=ns src=race
 @cell t=c2c n=2520 q=1 ord=nat place=oop dir=bwd role=comp lay=il | eng=k1 il_route=chain3 il_pair=210.12 il_kv=0 il_chain=12.10.21 | ran=1 ns=5189.1 metric=bwd1 units=ns src=race
+
+@cell t=c2c n=2048 q=1 ord=scr place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=2048,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=1820.83 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=4096 q=1 ord=scr place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=4096,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=6150.00 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=8192 q=1 ord=scr place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=8192,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=11500.00 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=16384 q=1 ord=scr place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=16384,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=24590.00 metric=fwd1 units=ns src=race date=2026-09-03
+@cell t=c2c n=32768 q=1 ord=scr place=oop lay=il | eng=zturn mode=zcasc ref=cell(t=c2c,n=32768,q=1,ord=scr,place=oop) dif=0 | ran=1 ns=48050.00 metric=fwd1 units=ns src=race date=2026-09-03

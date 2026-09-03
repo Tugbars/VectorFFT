@@ -7,7 +7,7 @@
 029047176b n=1 kind=UNMATCHED op=? hyst=? rounds=9 reps=(int)(2e6 / (double)(outsz + 1))/100000/20 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h fn=_c2r_race_arms
 035af8ed17 n=1 kind=UNMATCHED op=? hyst=? rounds=9 reps=(int)(2e6 / (double)(insz + 1))/100000/20 agg=vfft_race_run/vfft_race_run:median alt=1 minmax=1 clock=race.h fn=_r2c_race_arms
 0463a35870 n=1 kind=UNMATCHED op=? hyst=? rounds=nwl reps=- agg=vfft_race_run alt=0 minmax=1 clock=- fn=_il2d_real_rowrace
-06aceb4e4f n=2 kind=bare op=< hyst=NONE rounds=5 reps=- agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip,_vfft_create_c2c_oop
+06aceb4e4f n=3 kind=bare op=< hyst=NONE rounds=5 reps=- agg=vfft_race_run/vfft_race_run:median alt=1 minmax=0 clock=race.h fn=_vfft_create_c2c_ip,_vfft_create_c2c_oop
 16459b8cfa n=2 kind=UNMATCHED op=? hyst=? rounds=3 reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=1 clock=race.h fn=_il2d_race_chains,_vfft_create_c2c_oop
 23901b7d23 n=2 kind=bare op=< hyst=NONE rounds=3/il2d_nst reps=- agg=vfft_race_run/vfft_race_run:min alt=0 minmax=0 clock=race.h fn=_vfft_create_2d
 3da0baf2e8 n=2 kind=UNMATCHED op=? hyst=? rounds=64 reps=- agg=inline alt=0 minmax=0 clock=clock_gettime fn=_vfft_create_2d
@@ -28,7 +28,7 @@ ee80344648 n=1 kind=bare op=< hyst=NONE rounds=5 reps=N <= 4096 ? 32 : 8 agg=vff
 #
 # --- VERDICTS: every comparison that picks an arm, wherever it lives ---
 verdict op=<  hyst=0.97   n=11 fn=_c2r_route_decide,_calibrate_pad,_calibrate_zsplit_t2q,_calibrate_zturn_t2q,_il_ab_race,_k1_il_candidate,_r2c_route_decide,_zr2c_build
-verdict op=<  hyst=NONE   n=11 fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_vfft_create_2d,_vfft_create_c2c_ip,_vfft_create_c2c_oop,_zt_mt_race
+verdict op=<  hyst=NONE   n=12 fn=_il2d_c2c_mt_race,_il2d_real_colmt_race,_pq_mt_race,_vfft_create_2d,_vfft_create_c2c_ip,_vfft_create_c2c_oop,_zt_mt_race
 #
-# timing_regions=32 protocols=21 functions=21 unmatched=12
-# verdicts=22 distinct=2  (hysteresis literals: 0.97,NONE)
+# timing_regions=33 protocols=21 functions=21 unmatched=12
+# verdicts=23 distinct=2  (hysteresis literals: 0.97,NONE)
