@@ -1050,6 +1050,41 @@ Also shipped with the coverage:
   T=8, K=64, MT == ST bitwise, engagement proven:
   101 → **4.82×**, 129 → **7.09×**, 1021 → **6.15×**.
 
+### 2D NATURAL order — native tier, both transforms, multithreaded (2026-09-04)
+
+Natural row order on the n1 axis is served natively for the whole IL
+2D family — pow2 and odd chains, prime N1 — with no reorder pass: the
+leaf stage of the column chain writes its rows at their natural
+positions directly (the leaf takes source and destination pitches
+independently, so a digit-reversal permutation becomes a base+stride
+redirection of the last stage). Natural cells race their chain under
+the natural pass (the best chain differs from the scrambled one — the
+leaf radix sets the scatter width), bank on their own `ord=nat` wisdom
+row, race chain-vs-Bluestein on odd N1, and race serial-vs-threaded.
+
+T=8, i9-14900KF, MT == ST bitwise in both directions, spectra checked at
+natural indices, engagement counted:
+
+```
+ cell            transform   ST (µs)   MT (µs)   speedup   verdict
+──────────────────────────────────────────────────────────────────────
+ 1024x256        r2c          381.6      62.5      6.11×    threaded
+ 512x128         r2c           81.7      19.6      4.17×    threaded
+ 256x64          r2c           21.9      14.3      1.53×    threaded
+ 63x64 (odd)     r2c            4.2        —         —      serial (race)
+ 1024x128        c2c          301.4     138.0      2.18×    threaded
+ 256x64          c2c           28.9      16.7      1.73×    threaded
+ 512x64          c2c           71.5      46.5      1.54×    threaded
+──────────────────────────────────────────────────────────────────────
+```
+
+The threaded natural walk is the matched partition of the natural
+pass: digit-split prefix stages, the leaf scatter by block range, then
+row slabs; the band arm is structurally unavailable (the scatter
+crosses bands). The c2c tier scales less than the real tier at equal
+column work because it cannot fuse rows into bands here; the column
+strip arm is the raceable alternative and is the open item.
+
 ## 4. vs MKL — 2D R2C
 
 dag tiled 2D real-to-complex (`fft2d_r2c.h`: tiled R2C row pass + native column c2c)

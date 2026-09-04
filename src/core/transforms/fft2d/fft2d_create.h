@@ -264,6 +264,11 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         int il2d_nat = 0;          /* NATURAL n1 via the leaf redirection */
         int *il2d_natperm = NULL;
         double *il2d_natscr = NULL;
+        /* the wisdom ORDER axis of this cell (2026-09-04): natural cells
+         * race their chain under the natural pass and bank on their own
+         * ord=nat row — never sharing the scr row's chain. */
+        const int il2d_ord = (cfg->order == VFFT_ORDER_NATURAL)
+                                 ? VW2_ORD_NAT : VW2_ORD_SCR;
         int il2d_tbl_done = 0;     /* N1 tables built early (the N1-arm race) */
         double *il2d_bluchf = NULL, *il2d_bluchb = NULL;
         double *il2d_blukf = NULL, *il2d_blukb = NULL;
@@ -291,7 +296,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                                 &il2d_nst, &il2d_bwl,
                                                 &il2d_btf, &il2d_bro,
                                                 &il2d_bcmt,
-                                                &il2d_bcmtt, &il2d_bblu) &&
+                                                &il2d_bcmtt, &il2d_bblu, il2d_ord) &&
                          _il2d_chain_prod(il2d_R, il2d_nst) ==
                              (il2d_bblu > 0 ? il2d_bblu : N1) &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
@@ -310,7 +315,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                     {
                         double bns = 0;
                         int win = _il2d_race_chains(N1, N2, ncand, cand,
-                                                    lens, &bns);
+                                                    lens, &bns, il2d_ord == VW2_ORD_NAT);
                         if (win >= 0 &&
                             _il2d_resolve(cand[win], lens[win], il2d_f,
                                           il2d_b))
@@ -322,7 +327,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             vw2_2d_il_chain_bank(&W->vw2, N1, N2,
                                                  il2d_R, il2d_nst,
                                                  -1, -1, -1, -1, -1, -1,
-                                                 bns);
+                                                 bns, il2d_ord);
                             _vw2_persist(W, cfg);
                         }
                     }
@@ -335,7 +340,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
                  * Bluestein cell's forms live on its (M, N2) row */
                 _il2d_forms_serve(W, cfg, 0, N1, N2, il2d_R, il2d_nst,
-                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm);
+                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm, il2d_ord);
             }
             if (!chain_ok)
             {
@@ -538,7 +543,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                                  use_blu ? bR : il2d_R,
                                                  use_blu ? bnst : il2d_nst,
                                                  -1, -1, -1, -1, -1,
-                                                 use_blu ? M2 : 0, 0.0);
+                                                 use_blu ? M2 : 0, 0.0, il2d_ord);
                             _vw2_persist(W, cfg);
                         }
                         if (use_blu)
@@ -863,12 +868,56 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                           il2d_R,
                                           &il2d_nst, &il2d_brw,
                                           &il2d_bwl, &il2d_bcmt,
-                                          &il2d_bcmtt, &il2d_bblu) &&
+                                          &il2d_bcmtt, &il2d_bblu, il2d_ord) &&
                          _il2d_chain_prod(il2d_R, il2d_nst) ==
                              (il2d_bblu > 0 ? il2d_bblu : N1) &&
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f,
                                        il2d_b))
                     rok = 1;
+                else if (cfg->order == VFFT_ORDER_NATURAL)
+                {
+                    /* NATURAL real cell, no banked ord=nat row
+                     * (2026-09-04): race the composition pool under the
+                     * natural pass over the hp1-wide plane and bank the
+                     * winner on the ord=nat real row — never the greedy
+                     * inheritance of a chain that was never timed under
+                     * this serving. (The scr real tier still takes
+                     * greedy on a miss — its own item.) */
+                    int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+                    int cur[8], ncand = 0, dropped = 0, raced = 0;
+                    _il2d_enum_rec(N1, 0, cur, cand, lens, &ncand,
+                                   &dropped);
+                    if (ncand > 1)
+                    {
+                        double bns = 0;
+                        int win = _il2d_race_chains(
+                            N1, (int)((size_t)N2 / 2 + 1), ncand, cand,
+                            lens, &bns, 1);
+                        if (win >= 0 &&
+                            _il2d_resolve(cand[win], lens[win], il2d_f,
+                                          il2d_b))
+                        {
+                            memcpy(il2d_R, cand[win], sizeof cand[win]);
+                            il2d_nst = lens[win];
+                            raced = 1;
+                            if (getenv("VFFT_IL2D_LOG"))
+                                fprintf(stderr, "[il2d-real] chain race "
+                                                "%dx%d (nat): %d "
+                                                "candidates -> banked\n",
+                                        N1, N2, ncand);
+                            vw2_2d_rl_bank(&W->vw2, N1, N2, 0, il2d_R,
+                                           il2d_nst, -1, -1, -1, -1, -1,
+                                           bns, VW2_ORD_NAT);
+                            _vw2_persist(W, cfg);
+                        }
+                    }
+                    /* rok enters this block already set: the greedy
+                     * fallback must ASSIGN it (a prime N1 has no chain
+                     * and must fall through to the Bluestein build). */
+                    if (!raced)
+                        rok = _il2d_build_chain(N1, il2d_R, il2d_f,
+                                                il2d_b, &il2d_nst);
+                }
                 else
                     rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
                                             &il2d_nst);
@@ -881,7 +930,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * fails; the re-bank after that row lands is what makes the
                  * column-MT clones replay the same forms (2026-09-04). */
                 _il2d_forms_serve(W, cfg, 1, N1, N2, il2d_R, il2d_nst,
-                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm);
+                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm, il2d_ord);
             }
             if (!rok)
             {
@@ -1063,9 +1112,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                            use_blu ? bR : il2d_R,
                                            use_blu ? bnst : il2d_nst,
                                            -1, -1, -1, -1,
-                                           use_blu ? M2 : 0, 0.0);
+                                           use_blu ? M2 : 0, 0.0, il2d_ord);
                             if (!use_blu && il2d_fm[0])   /* the forms raced above, now with a row to land on */
-                                (void)vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
+                                (void)vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
                             _vw2_persist(W, cfg);
                         }
                         if (use_blu)
@@ -1414,7 +1463,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * bank. Runs AFTER the axis race — the row route (rowoop) the
          * clones must match is final only then. */
         if (h->transform == VFFT_C2C && h->il2d_row &&
-            !il2d_nat && h->nthreads > 1)
+            h->nthreads > 1)
         {   /* (Bluestein cells race too since 2026-09-02: the window pipeline) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
@@ -1445,7 +1494,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
             il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
         {
-            int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
+            int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
             if (!ok)
             {   /* no real row yet: the rowrace did not run (an env pin on the
                  * row axis, e.g. a gate's VFFT_IL2D_ROWSPLIT) or refused. The
@@ -1454,20 +1503,20 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * a later rowrace MERGES into this row). */
                 vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                                h->il2d_R, h->il2d_nst, -1, -1, -1, 0,
-                               (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0);
-                ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
+                               (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0, il2d_ord);
+                ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
             }
             if (ok)
                 _vw2_persist(W, cfg);
             else if (getenv("VFFT_IL2D_LOG"))
                 fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",
-                        N1, N2, il2d_fm);
+                        N1, N2, il2d_fm, il2d_ord);
         }
         /* INC-3: the column-MT verdict. Serve a banked one ONLY when it
          * was raced at THIS thread count; otherwise race and bank. A
          * single-threaded plan never threads columns and never races. */
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
-            h->il2d_row && !il2d_nat && h->nthreads > 1)
+            h->il2d_row && h->nthreads > 1)
         {   /* (Bluestein cells race too since 2026-09-02) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)

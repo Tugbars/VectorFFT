@@ -305,6 +305,7 @@ typedef struct
     int reverse;
     size_t lo, hi;   /* band index range, or column range */
     int strip;
+    int natleaf; /* natural x MT: this dispatch is the leaf block range */
 } _il2d_cmt_arg;
 
 /* ── INC-3b: the DIGIT axis of a wide (prefix) stage ─────────────────
@@ -374,6 +375,13 @@ static void _il2d_cmt_tramp(void *v)
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
     vfft_il2p_fn const *fns = a->reverse ? h->il2d_b : h->il2d_f;
     double *const *tabs = a->reverse ? h->il2d_tb : h->il2d_tf;
+    if (a->natleaf)
+    {   /* natural x MT: the leaf scatter/gather over [lo,hi) blocks */
+        _il2d_nat_leaf_range(a->src, a->dst, h->N, hp1,
+                             h->il2d_R[h->il2d_nst - 1], fns[h->il2d_nst - 1],
+                             h->il2d_natperm, a->lo, a->hi, a->reverse);
+        return;
+    }
     if (a->strip)
     {
         if (h->il2d_blu)
@@ -418,6 +426,61 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
     T = stride_pool_workers_for(T);
+    if (T >= 2 && h->il2d_nat)
+    {
+        /* NATURAL x MT (2026-09-04): the matched partition of the
+         * natural pass — prefix stages digit-split (src -> scratch, then
+         * in place), the leaf scatter by BLOCK RANGE (scratch -> dst),
+         * mirrored for bwd (gather first, reversed prefix after, stage 0
+         * scratch -> dst). No band arm: the scatter crosses bands. */
+        const int Rl = h->il2d_R[h->il2d_nst - 1];
+        const size_t nb = (size_t)h->N / (size_t)Rl;
+        const int Tb = nb < (size_t)T ? (int)nb : T;
+        double *scr = h->il2d_natscr;
+        int s;
+        if (Tb < 2 || h->il2d_nst < 2)
+            return 0;
+        if (!reverse)
+        {
+            for (s = 0; s < h->il2d_nst - 1; s++)
+            {
+                const double *ssrc = (s == 0) ? src : scr;
+                if (!_il2d_stage_digits_mt(ssrc, scr, h->N, hp1, hp1,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_f[s], h->il2d_tf[s], T))
+                    _il2d_col_stages(ssrc, scr, h->N, hp1, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_f,
+                                     h->il2d_tf, 0);
+            }
+        }
+        for (t = 0; t < Tb; t++)
+        {
+            a[t].h = h;
+            a[t].src = reverse ? src : scr;
+            a[t].dst = reverse ? scr : dst;
+            a[t].reverse = reverse;
+            a[t].strip = 0;
+            a[t].natleaf = 1;
+            a[t].lo = nb * (size_t)t / (size_t)Tb;
+            a[t].hi = nb * (size_t)(t + 1) / (size_t)Tb;
+        }
+        stride_pool_run(Tb, _il2d_cmt_tramp, a, sizeof a[0]);
+        if (reverse)
+        {
+            for (s = h->il2d_nst - 2; s >= 0; s--)
+            {
+                double *out = (s == 0) ? dst : scr;
+                if (!_il2d_stage_digits_mt(scr, out, h->N, hp1, hp1,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_b[s], h->il2d_tb[s], T))
+                    _il2d_col_stages(scr, out, h->N, hp1, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_b,
+                                     h->il2d_tb, 0);
+            }
+        }
+        _vfft_il2d_col_mt_count++;
+        return 1;
+    }
     if (T < 2 || units < (size_t)T)
         return 0; /* not enough independent units to be worth splitting */
     /* fwd: the wide prefix must complete before ANY band (stage 0's legs
@@ -449,6 +512,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         a[t].dst = dst;
         a[t].reverse = reverse;
         a[t].strip = strip;
+        a[t].natleaf = 0;
         a[t].lo = units * (size_t)t / (size_t)T;
         a[t].hi = units * (size_t)(t + 1) / (size_t)T;
     }
@@ -547,6 +611,13 @@ static void _il2d_c2c_mt_tramp(void *v)
                              h->il2d_nst, h->il2d_R, h->il2d_L, fns,
                              tabs, !a->fwd);
         break;
+    case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
+             * plane) / gather (bwd: src = natural plane, dst = scratch)
+             * over [lo,hi) blocks */
+        _il2d_nat_leaf_range(a->src, a->dst, h->N, rn,
+                             h->il2d_R[h->il2d_nst - 1], fns[h->il2d_nst - 1],
+                             h->il2d_natperm, a->lo, a->hi, !a->fwd);
+        break;
     case 3: /* Bluestein column axis: the window pipeline (2026-09-02) */
         _il2d_blu_cols_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
                              h->il2d_blu, h->il2d_nst, h->il2d_R, h->il2d_L,
@@ -615,6 +686,62 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                            fwd ? h->il2d_bluchf : h->il2d_bluchb,
                            fwd ? h->il2d_blukf : h->il2d_blukb,
                            h->il2d_bluscr);
+        _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+        _vfft_il2d_col_mt_count++;
+        return 1;
+    }
+    if (h->il2d_nat)
+    {
+        /* NATURAL x MT (2026-09-04): digit-split prefix (sre -> scratch,
+         * then in place), the leaf scatter by BLOCK RANGE (mode 4,
+         * scratch -> dre), then row slabs on dre; bwd mirrors (gather
+         * first, reversed prefix, stage 0 scratch -> dre). The band arm
+         * is structurally out (the scatter crosses bands). */
+        const int Rl = h->il2d_R[h->il2d_nst - 1];
+        const size_t nb = (size_t)h->N / (size_t)Rl;
+        const int Tb = nb < (size_t)T ? (int)nb : T;
+        const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
+        double *scr = h->il2d_natscr;
+        if (h->il2d_nst < 2 || (Tb < 2 && Tr < 2))
+            return 0;
+        if (fwd)
+        {
+            for (s = 0; s < h->il2d_nst - 1; s++)
+            {
+                const double *ssrc = (s == 0) ? sre : scr;
+                if (!_il2d_stage_digits_mt(ssrc, scr, h->N, rn, rn,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_f[s], h->il2d_tf[s], T))
+                    _il2d_col_stages(ssrc, scr, h->N, rn, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_f,
+                                     h->il2d_tf, 0);
+            }
+            if (Tb >= 2)
+                _il2d_c2c_mt_phase(h, scr, dre, dir, fwd, 4, nb, Tb);
+            else
+                _il2d_nat_leaf_range(scr, dre, h->N, rn, Rl,
+                                     h->il2d_f[h->il2d_nst - 1],
+                                     h->il2d_natperm, 0, nb, 0);
+        }
+        else
+        {
+            if (Tb >= 2)
+                _il2d_c2c_mt_phase(h, sre, scr, dir, fwd, 4, nb, Tb);
+            else
+                _il2d_nat_leaf_range(sre, scr, h->N, rn, Rl,
+                                     h->il2d_b[h->il2d_nst - 1],
+                                     h->il2d_natperm, 0, nb, 1);
+            for (s = h->il2d_nst - 2; s >= 0; s--)
+            {
+                double *out = (s == 0) ? dre : scr;
+                if (!_il2d_stage_digits_mt(scr, out, h->N, rn, rn,
+                                           h->il2d_R[s], h->il2d_L[s],
+                                           h->il2d_b[s], h->il2d_tb[s], T))
+                    _il2d_col_stages(scr, out, h->N, rn, s, s + 1,
+                                     h->il2d_R, h->il2d_L, h->il2d_b,
+                                     h->il2d_tb, 0);
+            }
+        }
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
         _vfft_il2d_col_mt_count++;
         return 1;
@@ -756,6 +883,14 @@ typedef struct
     int *Ls;
     vfft_il2p_fn *ff;
     double **tf;
+    /* the chain race under NATURAL order (2026-09-04): the candidate is
+     * timed through the M4-lite leaf-redirected pass with ITS OWN perm —
+     * the best chain for scrambled and for natural can differ (the
+     * leaf radix sets the scatter width), so natural cells race under
+     * the pass they serve and bank under their own ord=nat row. */
+    int nat;
+    const int *perm;
+    double *nscr;
 } _il2d_race_ctx_t;
 static void _il2d_arm_cols(void *v)
 {
@@ -796,8 +931,12 @@ static void _il2d_arm_exec(void *v)
 static void _il2d_arm_chain(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls, c->ff,
-                   c->tf, /*reverse=*/0);
+    if (c->nat)
+        _il2d_col_pass_nat(c->z, c->z, c->N1, c->N2, c->nst, c->R, c->Ls,
+                           c->ff, c->tf, /*reverse=*/0, c->perm, c->nscr);
+    else
+        _il2d_col_pass(c->z, c->z, c->N1, c->N2, 0, c->nst, c->R, c->Ls,
+                       c->ff, c->tf, /*reverse=*/0);
 }
 static void _il2d_real_rowrace(struct vfft_plan_s *h,
                                struct vfft_wisdom_s *W,
@@ -941,7 +1080,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_R, h->il2d_nst, bw,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                       bestns + cbest);
+                       bestns + cbest, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
     }
 }
@@ -988,7 +1127,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_R, h->il2d_nst,
                            h->il2d_rw, h->il2d_wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_blu : -1, st);
+                           (N1 & (N1 - 1)) ? h->il2d_blu : -1, st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
             _vw2_persist(W, cfg);
             return;
         }
@@ -1004,7 +1143,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                    h->il2d_R, h->il2d_nst, h->il2d_rw,
                    h->il2d_wl, h->il2d_colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                   h->il2d_colmt ? mt : st);
+                   h->il2d_colmt ? mt : st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 
@@ -1016,7 +1155,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
  * there. Context = the create in progress (set at _vfft_create_2d's entry). */
 static struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; int N2; } _il2d_blu_ctx;
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns);
+                             const int *lens, double *best_ns, int nat);
 static int _il2d_race_forms(int N1, int N2, const int *Rs, int nst,
                             vfft_il2p_fn *ff, vfft_il2p_fn *fb, char *forms,
                             size_t fsz);
@@ -1024,7 +1163,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               const vfft_config_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
-                              char *forms, size_t fsz);
+                              char *forms, size_t fsz, int ord);
 static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
                              size_t fsz)
 {
@@ -1037,13 +1176,13 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
     if (!W || W->vw2_off_2d || N2 <= 0) return 0;
     if (!cfg->recalibrate &&
         vw2_2d_il_chain_lookup(&W->vw2, M, N2, Rs, nst, &wl, &tf, &ro,
-                               &cmt, &cmtt, &blu) &&
+                               &cmt, &cmtt, &blu, VW2_ORD_SCR) &&
         _il2d_chain_prod(Rs, *nst) == M)
     {
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] blu inner M=%d x %d: replay chain src=wisdom\n", M, N2);
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz);
+            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz, VW2_ORD_SCR);
         return 1;
     }
     {
@@ -1056,17 +1195,17 @@ static int _il2d_blu_m_chain(int M, int *Rs, int *nst, char *forms,
                        "(%d candidate(s) dropped) at M=%d x %d",
                        VFFT_IL2D_MAXCAND, dropped, M, N2);
         if (ncand < 1) return 0;
-        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns) : 0;
+        win = (ncand > 1) ? _il2d_race_chains(M, N2, ncand, cand, lens, &bns, 0) : 0;
         if (win < 0) return 0;
         memcpy(Rs, cand[win], sizeof cand[win]);
         *nst = lens[win];
         if (getenv("VFFT_IL2D_LOG"))
             fprintf(stderr, "[il2d] blu inner M=%d x %d: chain race -> %d candidates, "
                             "winner banked\n", M, N2, ncand);
-        vw2_2d_il_chain_bank(&W->vw2, M, N2, Rs, *nst, -1, -1, -1, -1, -1, -1, bns);
+        vw2_2d_il_chain_bank(&W->vw2, M, N2, Rs, *nst, -1, -1, -1, -1, -1, -1, bns, VW2_ORD_SCR);
         _vw2_persist(W, cfg);
         if (_il2d_resolve(Rs, *nst, ff, fb))
-            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz);
+            _il2d_forms_serve(W, cfg, 0, M, N2, Rs, *nst, ff, fb, forms, fsz, VW2_ORD_SCR);
         return 1;
     }
 }
@@ -1172,7 +1311,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
                               const vfft_config_t *cfg, int is_real, int N1,
                               int N2, const int *Rs, int nst,
                               vfft_il2p_fn *ff, vfft_il2p_fn *fb,
-                              char *forms, size_t fsz)
+                              char *forms, size_t fsz, int ord)
 {
     const char *pin = getenv("VFFT_IL2D_FORMS");
     int s, any = 0;
@@ -1194,7 +1333,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     if (!W || W->vw2_off_2d)
         return;
     if (!cfg->recalibrate &&
-        vw2_2d_forms_lookup(&W->vw2, is_real, N1, N2, forms, fsz))
+        vw2_2d_forms_lookup(&W->vw2, is_real, N1, N2, forms, fsz, ord))
     {
         if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
         {
@@ -1208,7 +1347,7 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
     }
     if (_il2d_race_forms(N1, N2, Rs, nst, ff, fb, forms, fsz) && forms[0])
     {
-        const int banked = vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms);
+        const int banked = vw2_2d_forms_bank(&W->vw2, is_real, N1, N2, forms, ord);
         if (banked)
             _vw2_persist(W, cfg);
         if (getenv("VFFT_IL2D_LOG"))
@@ -1218,15 +1357,20 @@ static void _il2d_forms_serve(struct vfft_wisdom_s *W,
 }
 
 static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
-                             const int *lens, double *best_ns)
+                             const int *lens, double *best_ns, int nat)
 {
     const size_t T = (size_t)N1 * N2;
     double *z = (double *)malloc(2 * T * sizeof(double));
+    double *nscr = nat ? (double *)malloc(2 * T * sizeof(double)) : NULL;
     int ci, win = -1;
     double wns = 1e300;
     size_t i;
-    if (!z)
+    if (!z || (nat && !nscr))
+    {
+        free(z);
+        free(nscr);
         return -1;
+    }
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
     for (ci = 0; ci < ncand; ci++)
@@ -1235,14 +1379,25 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         int Ls[8];
         double *tf[8], *tb[8];
         double ns = 1e300;
+        int *perm = NULL;
         int p, s2;
         if (!_il2d_resolve(cand[ci], lens[ci], ff, fb))
             continue;
+        if (nat && lens[ci] > 1)
+        {
+            perm = _il2d_nat_perm(cand[ci], lens[ci], N1);
+            if (!perm)
+                continue; /* no natural leaf for this chain: not a candidate */
+        }
         if (_il2d_build_tables(N1, lens[ci], cand[ci], Ls, tf, tb))
+        {
+            free(perm);
             continue;
+        }
         {
             _il2d_race_ctx_t rc = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
-                                    lens[ci], cand[ci], Ls, ff, tf };
+                                    lens[ci], cand[ci], Ls, ff, tf,
+                                    nat && perm != NULL, perm, nscr };
             const vfft_race_arm_t arm = { "chain", _il2d_arm_chain, &rc };
             const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
             (void)p;
@@ -1253,6 +1408,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
             free(tf[s2]);
             free(tb[s2]);
         }
+        free(perm);
         if (ns < wns)
         {
             wns = ns;
@@ -1260,6 +1416,7 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
         }
     }
     free(z);
+    free(nscr);
     *best_ns = wns;
     return win;
 }
@@ -1423,7 +1580,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                          h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
-                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1, best);
+                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1, best, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -1529,7 +1686,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                              h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
                              0, h->nthreads,
-                             (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0);
+                             (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
         return;
     }
@@ -1555,7 +1712,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                          h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
                          h->il2d_colmt, h->nthreads,
                          (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                         h->il2d_colmt ? mt : st);
+                         h->il2d_colmt ? mt : st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 
