@@ -16,6 +16,32 @@
 #include "../../src/core/oop/il_flatdit.h"
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
+/* --stages: per-stage timing of the flat DIT (seed chain) — where does a
+ * sweep's time go: the leaf, the long-run mids, the short-run tail? */
+static void stage_times(const vfft_ilfd_plan_t *p, const double *zin, double *zout) {
+    const size_t N = (size_t)p->N; double *stg = p->stg;
+    double tl = 1e300, ts[VFFT_ILFD_MAX_K];
+    for (int s = 0; s < p->K; s++) ts[s] = 1e300;
+    for (int r = 0; r < 5; r++) {
+        double t0 = now_ns();
+        p->lf(zin, 0, stg, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
+        t0 = now_ns() - t0; if (t0 < tl) tl = t0;
+        for (int s = 1; s < p->K; s++) {
+            const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
+            const size_t recs_blk = (size_t)(p->R[s] - 1), nstride = N / (size_t)p->R[s];
+            double t1 = now_ns();
+            for (size_t bi = 0; bi < nb; bi++) {
+                const double *blk = stg + 2 * bi * L, *tw = p->tf[s] + bi * recs_blk * 8;
+                if (s < p->K - 1) p->f[s](blk, 0, stg + 2 * bi * L, 0, tw, 0, D, 0, D, 1, D);
+                else p->f[s](blk, 0, zout + 2 * p->natbase[bi], 0, tw, 0, D, 0, nstride, 1, D);
+            }
+            t1 = now_ns() - t1; if (t1 < ts[s]) ts[s] = t1;
+        }
+    }
+    printf("      stages: leaf(R%d,cnt%zu) %.0f", p->R[0], p->D[0], tl);
+    for (int s = 1; s < p->K; s++) printf(" | R%d cnt%zu x%zu: %.0f", p->R[s], p->D[s], p->nblk[s], ts[s]);
+    printf("\n");
+}
 int main(int argc, char **argv) {
     static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 137781 };
     const int n = (int)(sizeof NS / sizeof NS[0]);
@@ -46,6 +72,7 @@ int main(int argc, char **argv) {
         }
         const int ok = (wn < 1e-9 * sqrt((double)N) && dc < 1e-9 * N);
         if (!ok) bad++;
+        if (argc > 1 && !strcmp(argv[1], "--stages")) { printf("%-7d %-14s\n", N, cs); stage_times(p, x, z); }
         /* flat DIT: seed or raced chain */
         double tf = 1e300;
         { vfft_ilfd_plan_t *best = p; int owned = 0;
