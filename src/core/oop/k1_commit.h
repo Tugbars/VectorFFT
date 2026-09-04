@@ -278,15 +278,22 @@ static vfft_ilprime_plan_t *_ilprime_create_banked(struct vfft_wisdom_s *W,
  * planner logs on entry. VFFT_NO_K1PLAN=1 skips it (probe hook). */
 static vfft_il_dp_context_t _k1_il_dp_ctx;      /* planning side, one create at a time */
 static int _k1_il_dp_ctx_ready = 0;
+#ifndef VFFT_K1_IL_PLAN_MAX_N
+#define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch planes of this size */
+#endif
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
     vfft_il_cand_t top;
     int lines;
-    if (!W || W->vw2_off_oop || N < 2 || N >= 2048 || getenv("VFFT_NO_K1PLAN"))
+    /* the Bailey tier's race: every N below 2048, and above it only an N
+     * with no factor of 4 (no cascade route; 2026-09-04) — bounded by the
+     * planner context's scratch (VFFT_K1_IL_PLAN_MAX_N). */
+    if (!W || W->vw2_off_oop || N < 2 || (N >= 2048 && !(N & 3)) ||
+        N > VFFT_K1_IL_PLAN_MAX_N || getenv("VFFT_NO_K1PLAN"))
         return 0;
     if (!_k1_il_dp_ctx_ready)
     {
-        vfft_il_dp_init(&_k1_il_dp_ctx, 2048);
+        vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
         _k1_il_dp_ctx_ready = 1;
     }
     if (cfg->rigor != VFFT_MEASURE)
@@ -324,7 +331,12 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                        : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
     /* the IL plan race: a MISS (no IL verdict on the row) or recalibrate
      * below 2048 races the planner's pools and banks, then replays */
-    if (N < 2048 && !W->vw2_off_oop &&
+    /* ... and ABOVE 2048 for any N without a factor of 4 (2026-09-04):
+     * the cascade's ingest is radix 4, so such an N has no cascade route
+     * and would otherwise fall to Bluestein unraced — the Bailey tier's
+     * race is the only measurement it can get. N with a factor of 4 stay
+     * the cascade's, exactly as before. */
+    if ((N < 2048 || (N & 3)) && !W->vw2_off_oop &&
         (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
     {
         if (_k1_il_plan_race(W, cfg, N) > 0)

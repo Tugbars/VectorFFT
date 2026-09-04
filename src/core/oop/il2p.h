@@ -1213,27 +1213,41 @@ static inline void vfft_il3p_destroy(vfft_il3p_plan_t *p)
     free(p);
 }
 
-/* VTW2 fill, (legs, cols, modulus)-parametric — same record convention as
- * the 2-stage create above: (pair pp, leg l) at (pp*(legs-1)+(l-1))*8,
- * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus. conj flips the sins. */
-static inline double *_vfft_il3p_vtw2(int legs, int cols, int modulus, int conj)
+/* VTW2 fill, (legs, blocks x cols-per-block, modulus)-parametric — the
+ * 2-stage record convention: (pair pp, leg l) at (pp*(legs-1)+(l-1))*8,
+ * [c,c,c,c][-s,+s,-s,+s], angle -2*pi*l*k/modulus, conj flips the sins.
+ * ODD-LEGAL (2026-09-04): records are laid PER BLOCK — a kernel call
+ * pairs columns from ITS OWN base, so with an odd column count a block
+ * boundary falls mid-pair in any global layout; and each block carries a
+ * CEILING pair count so the lone last column of an odd block has its
+ * record (the VEX-128 tail reads its half — the pair engine's exact
+ * rule since 2026-07-29). k = the GLOBAL column index blk*cols + local. */
+static inline size_t _vfft_il3p_vtw2_recs(int cols)
 {
-    size_t nrec = ((size_t)cols / 2u) * (size_t)(legs - 1);
+    return ((size_t)cols + 1u) / 2u;
+}
+static inline double *_vfft_il3p_vtw2(int legs, int blocks, int cols,
+                                      int modulus, int conj)
+{
+    const size_t npair = _vfft_il3p_vtw2_recs(cols);
+    size_t nrec = (size_t)blocks * npair * (size_t)(legs - 1);
     double *tw = (double *)VFFT_IL2P_ALLOC(nrec * 8u * sizeof(double));
     if (!tw) return 0;
-    for (int pp = 0; pp < cols / 2; pp++)
-        for (int l = 1; l < legs; l++) {
-            double *rf = tw + ((size_t)pp * (legs - 1) + (l - 1)) * 8u;
-            for (int j = 0; j < 2; j++) {
-                double k = (double)(2 * pp + j);
-                double a = -2.0 * VFFT_IL2P_PI * (double)l * k / (double)modulus;
-                double s = conj ? sin(a) : -sin(a);
-                rf[2 * j] = cos(a);
-                rf[2 * j + 1] = cos(a);
-                rf[4 + 2 * j] = s;
-                rf[4 + 2 * j + 1] = -s;
+    for (int blk = 0; blk < blocks; blk++)
+        for (size_t pp = 0; pp < npair; pp++)
+            for (int l = 1; l < legs; l++) {
+                double *rf = tw + (((size_t)blk * npair + pp) * (legs - 1)
+                                   + (size_t)(l - 1)) * 8u;
+                for (int j = 0; j < 2; j++) {
+                    double k = (double)blk * cols + (double)(2 * pp + j);
+                    double a = -2.0 * VFFT_IL2P_PI * (double)l * k / (double)modulus;
+                    double s = conj ? sin(a) : -sin(a);
+                    rf[2 * j] = cos(a);
+                    rf[2 * j + 1] = cos(a);
+                    rf[4 + 2 * j] = s;
+                    rf[4 + 2 * j + 1] = -s;
+                }
             }
-        }
     return tw;
 }
 
@@ -1246,17 +1260,34 @@ static inline double *_vfft_il3p_vtw2(int legs, int cols, int modulus, int conj)
  * N — every count odd). */
 static inline int vfft_il3p_default_chain(int N, int *R2, int *A, int *B)
 {
-    static const int LEAF[] = { 32, 16, 8, 4, 12, 10, 6 };
+    /* even leaves first (the historical seed order), then the odd leaves
+     * (2026-09-04, chain3 odd-legal) — this is a SEED for an uncalibrated
+     * cell only; the planner's race decides the served chain. */
+    static const int LEAF[] = { 32, 16, 8, 4, 12, 10, 6,
+                                27, 25, 21, 19, 17, 15, 13, 11, 9, 7, 5, 3 };
     static const int ECB[]  = { 12, 10, 6 };
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < (int)(sizeof LEAF / sizeof LEAF[0]); i++) {
         int r2 = LEAF[i];
         if (N % r2) continue;
         int R1 = N / r2;
-        if (R1 < 4 || (R1 & 1)) continue;
+        if (R1 < 9) continue;              /* A, B >= 3 each */
         int o = R1;
         while ((o & 1) == 0) o >>= 1;      /* odd part */
         int pb = R1 / o;                   /* pow2 part */
         if (o == 1) continue;              /* pure pow2: the pair route owns it */
+        if (pb == 1) {
+            /* ALL-ODD cofactor: split it A x B over the odd mid kernels,
+             * smallest A first (the small-first law). */
+            for (int a = 3; a * a <= R1; a += 2) {
+                int b = R1 / a;
+                if (R1 % a || b < 3) continue;
+                if (!vfft_il2p_mid_fn(a, 0) || !vfft_il2p_mid_fn(a, 1)) continue;
+                if (!vfft_il2p_mid_fn(b, 0) || !vfft_il2p_t2tg_bwd_fn(b)) continue;
+                *R2 = r2; *A = a; *B = b;
+                return 1;
+            }
+            continue;
+        }
         if (pb >= 4 &&
             vfft_il2p_mid_fn(o, 0) && vfft_il2p_mid_fn(o, 1) &&
             vfft_il2p_mid_fn(pb, 0) && vfft_il2p_t2tg_bwd_fn(pb)) {
@@ -1285,7 +1316,10 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
 {
     const int R1 = A * B;
     if (N <= 0 || (long)R1 * (long)R2 != (long)N) return 0;
-    if ((R1 & 1) || (R2 & 1)) return 0;    /* count contracts, both stages */
+    /* (The (R1&1)||(R2&1) refusal is GONE — 2026-09-04, the pair's
+     * 2026-07-29 step applied to the chain: every kernel here carries the
+     * VEX-128 odd-count tail, and the tables are per-block/ceiling below,
+     * so all-odd chains (1215 = 15x9x9) become plans.) */
     vfft_il2p_fn lf  = vfft_il2p_leaf_fn(R2, 0);
     vfft_il2p_fn nb  = vfft_il2p_n1_bwd_fn(R2);
     vfft_il2p_fn af  = vfft_il2p_mid_fn(A, 0), ab = vfft_il2p_mid_fn(A, 1);
@@ -1301,10 +1335,13 @@ static inline vfft_il3p_plan_t *vfft_il3p_create(int N, int R2, int A, int B)
     p->tA_b = ab; p->tBg_b = btg;
     p->mid1 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
     p->mid2 = (double *)VFFT_IL2P_ALLOC((size_t)N * 2u * sizeof(double));
-    p->twB  = _vfft_il3p_vtw2(B, R2, B * R2, 0);
-    p->twA  = _vfft_il3p_vtw2(A, B * R2, N, 0);
-    p->twAc = _vfft_il3p_vtw2(A, B * R2, N, 1);
-    p->twBc = _vfft_il3p_vtw2(B, R2, B * R2, 1);
+    /* stage B: A blocks of R2 columns share ONE block's table (its angle
+     * depends on the local column only: modulus B*R2, k = local);
+     * stage A: B blocks of R2 columns, k global (modulus N). */
+    p->twB  = _vfft_il3p_vtw2(B, 1, R2, B * R2, 0);
+    p->twA  = _vfft_il3p_vtw2(A, B, R2, N, 0);
+    p->twAc = _vfft_il3p_vtw2(A, B, R2, N, 1);
+    p->twBc = _vfft_il3p_vtw2(B, 1, R2, B * R2, 1);
     if (!p->mid1 || !p->mid2 || !p->twB || !p->twA || !p->twAc || !p->twBc) {
         vfft_il3p_destroy(p);
         return 0;
@@ -1396,7 +1433,7 @@ static inline void vfft_il3p_execute_fwd(const vfft_il3p_plan_t *p,
                 p->twB, 0, A * R2, 0, A * R2, 0, R2);
     for (size_t b = 0; b < B; b++)
         p->tA_f(p->mid2 + 2 * b * A * R2, 0, zout + 2 * b * R2, 0,
-                p->twA + (b * R2 / 2u) * (A - 1) * 8u, 0,
+                p->twA + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * 8u, 0,
                 R2, 0, B * R2, 0, R2);
 }
 
@@ -1407,7 +1444,7 @@ static inline void vfft_il3p_execute_bwd(const vfft_il3p_plan_t *p,
     const size_t R1 = A * B;
     for (size_t b = 0; b < B; b++)
         p->tA_b(zin + 2 * b * R2, 0, p->mid2 + 2 * b * A * R2, 0,
-                p->twAc + (b * R2 / 2u) * (A - 1) * 8u, 0,
+                p->twAc + b * _vfft_il3p_vtw2_recs(p->R2) * (A - 1) * 8u, 0,
                 B * R2, 0, R2, 0, R2);
     for (size_t c = 0; c < A; c++)
         p->tBg_b(p->mid2 + 2 * c * R2, 0, p->mid1 + 2 * c, 0,

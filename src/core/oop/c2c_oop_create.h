@@ -156,7 +156,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * below is never the source of a served IL plan any more (it
              * kept building a form-less pair on the cold create while the
              * replay took the planner's pair WITH forms: different bits). */
-            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && N < 2048 && !W->vw2_off_oop &&
+            if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && (N < 2048 || (N & 3)) &&
+                !W->vw2_off_oop &&   /* odd N >= 2048: no cascade route (2026-09-04) */
                 (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
