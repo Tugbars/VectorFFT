@@ -27,18 +27,31 @@
  *   DST-I..III   1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
  *   DHT          1       IP + OOP        real (layout n/a)  natural          any K    yes  pad-only
  *
- *   *   INTERLEAVED is native for 1D C2C (in-place folded z engine; OOP K=1
- *       SCRAMBLED cascade). 2D+ C2C and 2D r2c/c2r serve it via a documented
- *       internal conversion. Other cells are PLANNED — create refuses them
- *       with "not yet implemented (currently …)" so you know to wait, not
- *       rethink. FOR NOW: treat interleaved as a 1D-C2C-first feature.
- *   **  order is a 1D/2D C2C axis (2D NATURAL included). 3D/4D: DEFAULT or
- *       SCRAMBLED only, K must be 1. r2c/c2r/trig outputs are always natural.
- *   *** dims>=2 require howmany==1. DCT-I is present but not yet validated.
- *       2D prime dims are refused at create (not production-safe yet).
- *       Odd 1D sizes are fully supported (odd radixes, odd-K tails); prime /
- *       Rader/Bluestein-class 1D sizes are IN-PLACE only — out-of-place C2C
- *       refuses them loudly (use placement=VFFT_INPLACE).
+ *   *   INTERLEAVED is NATIVE for 1D C2C (both placements, every order, any
+ *       N including prime — Rader/Bluestein on packed z), for 1D r2c/c2r
+ *       (CCE spectrum; odd and prime N through the c2c bridge) and for the
+ *       whole 2D family (C2C and r2c/c2r on the native column-chain tier;
+ *       prime and odd dims through odd chains or the column-axis
+ *       Bluestein). There is NO layout-conversion tier anywhere: a cell
+ *       either serves natively or refuses loudly. 3D/4D INTERLEAVED is not
+ *       wired (refused as a planned feature — use SPLIT); trig transforms
+ *       have no complex layout.
+ *   **  order is a C2C axis in 1D and 2D (NATURAL is native in both, for
+ *       any factorization) and the ROW-order axis of 2D INTERLEAVED
+ *       r2c/c2r (their bins are always natural; NATURAL orders the rows
+ *       too). 3D/4D: DEFAULT or SCRAMBLED only, K must be 1. 1D r2c/c2r and
+ *       trig are inherently natural — an order request there is refused,
+ *       not ignored.
+ *   *** 2D INTERLEAVED C2C/R2C/C2R accept howmany>1 (served as a plane
+ *       queue, threaded per plane); every other dims>=2 cell requires
+ *       howmany==1. DCT-I is present but not yet validated.
+ *       PRIME / AWKWARD N: 1D C2C serves them in both placements under
+ *       INTERLEAVED (verified to 32749) and IN-PLACE only under SPLIT (the
+ *       split OOP kinds need a radix factorization — refused loudly out of
+ *       place); 1D r2c/c2r serve any odd or prime N out of place in both
+ *       layouts and in place under INTERLEAVED; 2D prime/odd dims serve in
+ *       both layouts for C2C and under INTERLEAVED for r2c/c2r (SPLIT 2D
+ *       real at a prime dim refuses).
  *
  * ── YOUR BUFFERS, PER LAYOUT (what to pass to vfft_execute) ─────────────────
  *   layout / transform      sre         sim         dre         dim
@@ -223,10 +236,17 @@ extern "C"
                     native, == DEFAULT; OOP: the MODEB kind). Explicit "I am
                     order-agnostic" — MKL's DFTI_BACKWARD_SCRAMBLED intent.
                   VFFT_ORDER_NATURAL = spectrum in natural bin order, bin-for-bin
-                    MKL/FFTW-comparable (in-place: PURE/PSWAP reorder, per-cell
-                    measured verdict in wisdom; OOP: the LEAF/BAILEY2 kinds).
-                  1D C2C only (in-place + OOP); r2c/c2r/trig are already natural,
-                  2D not wired — natural_order_inplace_design.md §2e.
+                    MKL/FFTW-comparable, served by whichever natural-native
+                    engine wins the cell's race (the natural-writing cascade
+                    terminator at large N, the natural IL kinds below it,
+                    PURE/PSWAP reorders where they win) — a per-cell verdict
+                    in wisdom, never a reorder pass by default.
+                  1D and 2D C2C (in-place + OOP; 2D NATURAL is native for any
+                  factorization — the column chain's leaf writes rows in
+                  natural order); for 2D INTERLEAVED r2c/c2r it is the
+                  row-order axis (bins are always natural). 1D r2c/c2r and
+                  trig are inherently natural: an order request there is
+                  refused. 3D/4D: DEFAULT/SCRAMBLED only.
                   Roundtrip/convolution consumers should keep DEFAULT (order is
                   irrelevant there, and it is the fastest).                     */
 
@@ -286,9 +306,12 @@ extern "C"
                             frozen regardless. */
   } vfft_config_t;
 
-  /* Output-order axis (vfft_config_t.order). 1D C2C: DEFAULT=fastest/native, SCRAMBLED=force the
-   * scrambled path (in-place native / OOP MODEB), NATURAL=force natural (in-place PURE/PSWAP / OOP
-   * LEAF/BAILEY2). Values map 1:1 onto the internal OOP kind constraint (0=any,1=natural,2=scrambled). */
+  /* Output-order axis (vfft_config_t.order), C2C in 1D and 2D (+ the row order of 2D INTERLEAVED
+   * real). DEFAULT = engine-native, fastest, order-agnostic. SCRAMBLED = the order-agnostic
+   * contract stated explicitly (any self-consistent comb; the identity qualifies, so a natural-
+   * native engine may serve it). NATURAL = bin-for-bin natural, served by whichever natural-native
+   * engine wins the cell's race. Values map 1:1 onto the internal OOP kind constraint
+   * (0=any,1=natural,2=scrambled). */
   enum
   {
     VFFT_ORDER_DEFAULT = 0,
@@ -386,57 +409,85 @@ extern "C"
    *   DCT/DST/DHT (SPLIT)     real_in    NULL       real_out   NULL
    *                           real->real; INTERLEAVED rejected at create.
    *
-   * SUPPORT MATRIX (create commits; NATIVE = engine path, CONVERT = internal
-   * layout conversion around the split engines — correct, documented cost;
-   * REJECT = loud create-time refusal):
+   * SUPPORT MATRIX (create commits; NATIVE = a native engine path, REJECT =
+   * loud create-time refusal. There is NO layout-conversion tier: a cell
+   * either serves natively or refuses — owner law, 2026-09-03. The machine
+   * proof of this table is benches/api_matrix_gate.c):
    *
-   *   1D C2C in-place   x INTERLEAVED: NATIVE folded z->z (order DEFAULT/
-   *       SCRAMBLED, single-thread, >=2-stage plans); NATIVE il2il slab under
-   *       MT; everything else (NATURAL / prime overrides / resolver misses)
-   *       CONVERTs. config.batch + INTERLEAVED: REJECT.
-   *   1D C2C OOP        x INTERLEAVED: NATIVE z->z for K=1 (SCRAMBLED: the
-   *       block-split cascade at covered N; DEFAULT/NATURAL: the K=1 engine's
-   *       IL routes where emitted); every other OOP cell (K>1, uncovered N,
-   *       no IL route) CONVERTs around the split champions — the historical
-   *       silent no-op / crash cells are GONE.
-   *   1D C2C OOP with no OOP-kind factorization (prime and other
-   *       Rader/Bluestein-class N): REJECTED loudly — those sizes are served
-   *       IN-PLACE only (the prime dispatch is not wired into the OOP kinds);
-   *       create with placement=VFFT_INPLACE.
-   *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D §6a30 +
-   *       3D/4D §6a47), lane-major. 1D K>1 with batch_geom =
-   *       TRANSFORM_CONTIGUOUS is served instead as K independent K=1
-   *       transforms end to end (the same wrapper 1D C2C uses), which is the
-   *       only geometry that reaches the §D2 zr2c route at K>1: that route
-   *       REINTERPRETS a transform's N contiguous reals as N/2 complex points,
-   *       and under lane-major the two halves of one complex sample are K
-   *       apart. That wrapper is also where real batches thread — one plan
-   *       clone per worker, a slab of whole transforms each.
-   *       IN-PLACE (^, §D2 2026-08-13): 1D, LAYOUT_INTERLEAVED, EVEN N, and
-   *       either howmany == 1 or TRANSFORM_CONTIGUOUS. Every other in-place
-   *       real shape is REJECTED loudly: with a split spectrum the real data
-   *       and the spectrum are separate planes, so an in-place contract there
-   *       would be a lie — and in the lane-major batch geometry the reals and
-   *       bins of one transform interleave with every other transform's, so no
+   *   1D C2C in-place   x INTERLEAVED: NATIVE for every order and any N —
+   *       the folded z->z engine and the natural-order tier (per-cell raced
+   *       verdicts), Rader/Bluestein on packed z for prime and awkward N;
+   *       howmany>1 in the transform-contiguous geometry. config.batch +
+   *       INTERLEAVED: REJECT.
+   *   1D C2C OOP        x INTERLEAVED: NATIVE z->z for K=1 at any N (the
+   *       K=1 IL tiers — mono, pair, chain, Rader/Bluestein, the scrambled
+   *       or natural-writing cascade — all raced per cell) and for K>1 in the
+   *       TRANSFORM_CONTIGUOUS geometry (K independent K=1 transforms; the
+   *       threading verdict is raced and banked T-free). Lane-major
+   *       INTERLEAVED batches: REJECT (not an IL route; nothing to fall
+   *       back to by design).
+   *   1D C2C            x SPLIT: NATIVE. Prime / Rader-Bluestein-class N is
+   *       served IN-PLACE only (the split OOP kinds need a radix
+   *       factorization) — OOP SPLIT at such N: REJECT; create with
+   *       placement=VFFT_INPLACE or layout=INTERLEAVED. TRANSFORM_CONTIGUOUS
+   *       on SPLIT: REJECT (split batches are lane-major by contract).
+   *   R2C/C2R           x INTERLEAVED: NATIVE CCE executors (1D + 2D),
+   *       lane-major. 1D K>1 with batch_geom = TRANSFORM_CONTIGUOUS is served
+   *       instead as K independent K=1 transforms end to end (the same
+   *       wrapper 1D C2C uses), which is the only geometry that reaches the
+   *       §D2 zr2c route at K>1: that route REINTERPRETS a transform's N
+   *       contiguous reals as N/2 complex points, and under lane-major the
+   *       two halves of one complex sample are K apart. That wrapper is also
+   *       where real batches thread — one plan clone per worker, a slab of
+   *       whole transforms each.
+   *       ODD / PRIME N (2026-09-04): c2r at any odd N, and r2c at prime or
+   *       awkward N, serve through the c2c bridge (promote -> c2c(N) -> keep
+   *       the N/2+1 bins; extend -> inverse c2c -> real part) in both
+   *       layouts out of place; smooth-odd r2c races the bridge against the
+   *       native rfft route per cell and serves the winner.
+   *       IN-PLACE (^, §D2 2026-08-13; odd N 2026-09-04): 1D,
+   *       LAYOUT_INTERLEAVED, any N, and either howmany == 1 or — even N —
+   *       TRANSFORM_CONTIGUOUS. Every other in-place real shape is REJECTED
+   *       loudly: with a split spectrum the real data and the spectrum are
+   *       separate planes, so an in-place contract there would be a lie —
+   *       and in the lane-major batch geometry the reals and bins of one
+   *       transform interleave with every other transform's, so no
    *       single-plane overwrite exists.
    *
    *       THE IN-PLACE REAL CONTRACT (the only place it is stated):
    *         - ONE padded plane of 2*(N/2 + 1) doubles, the MKL CCE
-   *           convention. The caller allocates that, not N.
+   *           convention (N+1 doubles at odd N). The caller allocates that,
+   *           not N.
    *         - R2C reads N reals from the front of the plane and writes the
    *           N/2 + 1 CCE bins over it; C2R is the mirror.
    *         - vfft_execute MUST be called fully aliased: dre == sre, both
    *           non-NULL. Unlike in-place 1D C2C, dre == NULL is NOT accepted
    *           as "same as sre" here, and a distinct dre is REFUSED (it used
    *           to be silently miscomputed on one of the two internal routes).
-   *   2D C2C            x INTERLEAVED: NATIVE tier (n1c/t2c column chain +
-   *       K=1 IL row pass, per-cell raced + banked lay=il; owner law
-   *       2026-08-25: the convert wrapper is DELETED — inexpressible
-   *       cells REFUSE at create; ORDER_NATURAL multi-stage N1 refused
-   *       until the rho tapes).
-   *   3D..4D C2C        x INTERLEAVED: CONVERT-around (§6a61), both
-   *       placements.
-   *   TRIG              x INTERLEAVED: REJECT (no complex layout).
+   *   2D C2C            x INTERLEAVED: NATIVE tier, both placements — the
+   *       n1c/t2c column chain (odd radices included) + K=1 IL row pass,
+   *       every axis raced and banked per cell (lay=il rows, keyed by
+   *       order); prime / inexpressible N1 through the column-axis
+   *       Bluestein (raced against an odd chain where one exists); odd or
+   *       prime N2 through the row child. ORDER_NATURAL is native for any
+   *       factorization (the leaf stage writes rows in natural order — no
+   *       reorder pass). Intra-transform MT is raced and banked per cell and
+   *       thread count; howmany>1 is served by the plane queue (raced
+   *       loop-vs-queue, threaded per plane).
+   *   2D R2C/C2R        x INTERLEAVED: NATIVE tier, OUT OF PLACE — the same
+   *       column machinery over the CCE plane; odd/prime N1 and N2,
+   *       ORDER_NATURAL on the row axis, MT, plane queue. In-place 2D real:
+   *       REJECT (the rows/columns wall of the Hermitian fold makes a
+   *       single-plane contract a lie).
+   *   2D C2C / R2C / C2R x SPLIT: NATIVE split 2D engines, howmany == 1
+   *       (howmany>1 on SPLIT 2D: REJECT); SPLIT 2D real at a prime dim:
+   *       REJECT.
+   *   3D..4D            x INTERLEAVED: REJECT ("the rank-3+ interleaved tier
+   *       is a planned feature") — use SPLIT. 3D/4D SPLIT: C2C with
+   *       howmany == 1 and order DEFAULT/SCRAMBLED, and out-of-place R2C/C2R
+   *       with an even last dim; anything else REJECTs.
+   *   TRIG              x INTERLEAVED: REJECT (no complex layout); trig or
+   *       1D real with an order request: REJECT (inherently natural).
    *   any batch         x INTERLEAVED: REJECT (padded planes are split).
    *
    * `dir` selects forward vs the (unnormalized) inverse; for self-inverse trig

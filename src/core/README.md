@@ -32,7 +32,7 @@ against the committed layout/placement/direction and computes NOTHING on a
 mismatch. Never a silent no-op, never silent garbage. The support matrix lives
 in `include/vfft.h` (the capabilities table + the SIGNATURE TABLE /
 SUPPORT MATRIX blocks above `vfft_execute`); the machine proof is the gate
-battery (`gate_api_matrix` / `gate_api_misuse` / `gate_api_example`).
+battery (`api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)).
 
 Wisdom: per-feature files auto-loaded as a bundle; canonical home is
 `src/dag-fft-compiler/generator/generated/` (copies elsewhere are operational
@@ -147,7 +147,7 @@ as linked `.c` files; they include no core headers.
 
 ## Gates
 
-API surface: `gate_api_matrix` / `gate_api_misuse` / `gate_api_example`
+API surface: `api_matrix_gate` (the serve/refuse table, benches/api_matrix_gate.c)
 (session scratchpad; walk the full support matrix + misuse diagnostics + the
 header's compiled QUICK START). Feature gates live in `build_tuned/benches/`
 (`zsplit_wis_gate`, `zsplit_api_gate`, `gate_vfft_rz`, `gate_4d`,

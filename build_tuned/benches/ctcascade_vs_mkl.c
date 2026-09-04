@@ -58,8 +58,23 @@ int main(int argc, char **argv)
     if (R > 64) R = 64;
     const double PACE = 200.0;
 
-    int sizes[] = { 256, 512, 1024, 2048, 4096 };
-    const int NS = (int)(sizeof sizes / sizeof *sizes);
+    /* EXPLICIT chains: vfft_zsplit_default_chain is a hardcoded switch that
+     * only seeds 1024/2048/4096/8192/16384/32768, so 128..512 have no default
+     * -- not a structural limit.  create_chain takes any legal chain:
+     *   chain[0] must be 4 (radix4_z_s0t is the only ingest),
+     *   terminator chain[nf-1] in {4,8}, and D[nf-2] %% 4 == 0. */
+    struct { int N, nf, ch[6]; } cases[] = {
+        { 128,  3, {4,4,8} },
+        { 128,  3, {4,8,4} },
+        { 256,  4, {4,4,4,4} },
+        { 256,  3, {4,8,8} },
+        { 512,  4, {4,4,4,8} },
+        { 512,  4, {4,4,8,4} },
+        { 1024, 5, {4,4,4,4,4} },
+        { 1024, 4, {4,4,8,8} },
+        { 2048, 4, {4,8,8,8} },
+    };
+    const int NS = (int)(sizeof cases / sizeof *cases);
 
     printf("our CT cascade (zturn, natord) vs MKL DFTI — BELOW 2048 the engine\n");
     printf("refuses this route (k1_commit.h:719); here it is driven directly.\n");
@@ -68,15 +83,24 @@ int main(int argc, char **argv)
            "N", "chain", "casc ns", "MKL ns", "MKL/casc", "wins", "casc create", "MKL commit", "max relerr");
 
     for (int si = 0; si < NS; si++) {
-        int N = sizes[si];
+        int N = cases[si].N;
         double *zin  = (double *)_aligned_malloc((size_t)2 * N * sizeof(double), 64);
         double *zc   = (double *)_aligned_malloc((size_t)2 * N * sizeof(double), 64);
         double *zm   = (double *)_aligned_malloc((size_t)2 * N * sizeof(double), 64);
         if (!zin || !zc || !zm) { printf("alloc failed\n"); return 1; }
         for (int i = 0; i < 2 * N; i++) zin[i] = sin(0.001 * (double)i) + 0.3 * cos(0.007 * (double)i);
 
-        vfft_zturn2_plan_t *p = vfft_zturn2_create(N);
-        if (!p) { printf("%-6d  (no cascade chain for this N)\n", N); continue; }
+        vfft_zturn2_plan_t *p =
+            vfft_zturn2_create_chain(N, cases[si].ch, cases[si].nf);
+        if (!p) {
+            char cb[64] = "";
+            for (int s = 0; s < cases[si].nf; s++) {
+                char t[8]; snprintf(t, sizeof t, s ? ".%d" : "%d", cases[si].ch[s]);
+                strncat(cb, t, sizeof cb - strlen(cb) - 1);
+            }
+            printf("%-6d %-16s (chain rejected by create_chain)\n", N, cb);
+            continue;
+        }
         if (!vfft_zturn2_set_natord(p, 1)) {
             printf("%-6d  (natord unavailable — cannot compare to MKL)\n", N);
             vfft_zturn2_destroy(p); continue;
@@ -121,12 +145,31 @@ int main(int argc, char **argv)
         }
         int wins = 0; for (int r = 0; r < R; r++) if (B[r] > A[r]) wins++;
 
+        /* NATORD COST: MKL's output is natively natural, so forcing natord on
+         * our side to get an elementwise compare charges us a permutation MKL
+         * never pays.  stfn is 88 insns vs stf's 74 (same arith/mem, +14 of
+         * pure permute).  Time a SCRAMBLED plan to price it. */
+        double S[64];
+        vfft_zturn2_plan_t *ps =
+            vfft_zturn2_create_chain(N, cases[si].ch, cases[si].nf);
+        double sm = 0.0;
+        if (ps) {
+            for (int r = 0; r < R; r++) {
+                Sleep((DWORD)PACE);
+                double t0 = qpc();
+                for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd(ps, zin, zc);
+                S[r] = (qpc() - t0) * 1e6 / reps;
+            }
+            sm = med(S, R);
+            vfft_zturn2_destroy(ps);
+        }
+
         /* CREATE axis: ours computes the twiddle tables; MKL's are baked */
         double CA[16], CB[16];
         for (int r = 0; r < 9; r++) {
             vfft_zturn2_plan_t *tmp;
             double t0 = qpc();
-            tmp = vfft_zturn2_create(N);
+            tmp = vfft_zturn2_create_chain(N, cases[si].ch, cases[si].nf);
             CA[r] = (qpc() - t0) * 1e6;
             if (tmp) { (void)vfft_zturn2_set_natord(tmp, 1); vfft_zturn2_destroy(tmp); }
             DFTI_DESCRIPTOR_HANDLE hh = NULL;
@@ -138,8 +181,11 @@ int main(int argc, char **argv)
         }
 
         double am = med(A, R), bm = med(B, R);
-        printf("%-6d %-16s %10.0f %10.0f %8.3fx %3d/%-2d | %10.0f %10.0f | %.1e\n",
-               N, chain, am, bm, bm / am, wins, R, med(CA, 9), med(CB, 9), err);
+        printf("%-6d %-14s %8.0f %8.0f %7.3fx %3d/%-2d | scr %8.0f (natord +%4.1f%%) "
+               "-> scr/MKL %6.3fx | %.1e\n",
+               N, chain, am, bm, bm / am, wins, R,
+               sm, sm > 0 ? 100.0 * (am - sm) / sm : 0.0,
+               sm > 0 ? bm / sm : 0.0, err);
         fflush(stdout);
         (void)spr;
         DftiFreeDescriptor(&h);

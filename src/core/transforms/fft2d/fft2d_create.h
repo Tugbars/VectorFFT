@@ -874,15 +874,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                          _il2d_resolve(il2d_R, il2d_nst, il2d_f,
                                        il2d_b))
                     rok = 1;
-                else if (cfg->order == VFFT_ORDER_NATURAL)
+                else
                 {
-                    /* NATURAL real cell, no banked ord=nat row
-                     * (2026-09-04): race the composition pool under the
-                     * natural pass over the hp1-wide plane and bank the
-                     * winner on the ord=nat real row — never the greedy
-                     * inheritance of a chain that was never timed under
-                     * this serving. (The scr real tier still takes
-                     * greedy on a miss — its own item.) */
+                    /* REAL cell, no banked row for this order
+                     * (2026-09-04): race the composition pool over the
+                     * hp1-wide plane — under the natural pass for
+                     * ord=nat, the scrambled pass for ord=scr — and bank
+                     * the winner on this order's real row. Greedy is
+                     * only the fallback when nothing raced (a prime N1
+                     * has no chain and falls through to Bluestein). */
                     int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
                     int cur[8], ncand = 0, dropped = 0, raced = 0;
                     _il2d_enum_rec(N1, 0, cur, cand, lens, &ncand,
@@ -892,7 +892,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         double bns = 0;
                         int win = _il2d_race_chains(
                             N1, (int)((size_t)N2 / 2 + 1), ncand, cand,
-                            lens, &bns, 1);
+                            lens, &bns, il2d_ord == VW2_ORD_NAT);
                         if (win >= 0 &&
                             _il2d_resolve(cand[win], lens[win], il2d_f,
                                           il2d_b))
@@ -902,12 +902,15 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             raced = 1;
                             if (getenv("VFFT_IL2D_LOG"))
                                 fprintf(stderr, "[il2d-real] chain race "
-                                                "%dx%d (nat): %d "
+                                                "%dx%d (%s): %d "
                                                 "candidates -> banked\n",
-                                        N1, N2, ncand);
+                                        N1, N2,
+                                        il2d_ord == VW2_ORD_NAT ? "nat"
+                                                                : "scr",
+                                        ncand);
                             vw2_2d_rl_bank(&W->vw2, N1, N2, 0, il2d_R,
                                            il2d_nst, -1, -1, -1, -1, -1,
-                                           bns, VW2_ORD_NAT);
+                                           bns, il2d_ord);
                             _vw2_persist(W, cfg);
                         }
                     }
@@ -918,9 +921,6 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                         rok = _il2d_build_chain(N1, il2d_R, il2d_f,
                                                 il2d_b, &il2d_nst);
                 }
-                else
-                    rok = _il2d_build_chain(N1, il2d_R, il2d_f, il2d_b,
-                                            &il2d_nst);
             }
             if (rok && il2d_bblu <= 0)
             {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
