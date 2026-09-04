@@ -1445,7 +1445,19 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if ((h->transform == VFFT_R2C || h->transform == VFFT_C2R) &&
             il2d_fm[0] && W && !W->vw2_off_2d && !getenv("VFFT_IL2D_FORMS"))
         {
-            if (vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm))
+            int ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
+            if (!ok)
+            {   /* no real row yet: the rowrace did not run (an env pin on the
+                 * row axis, e.g. a gate's VFFT_IL2D_ROWSPLIT) or refused. The
+                 * forms verdict still has a home — the row with the served
+                 * chain and NO row-axis tokens (rw/wl unraced, never erased:
+                 * a later rowrace MERGES into this row). */
+                vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
+                               h->il2d_R, h->il2d_nst, -1, -1, -1, 0,
+                               (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0);
+                ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm);
+            }
+            if (ok)
                 _vw2_persist(W, cfg);
             else if (getenv("VFFT_IL2D_LOG"))
                 fprintf(stderr, "[il2d] forms %dx%d: %s could not be banked on the real row\n",

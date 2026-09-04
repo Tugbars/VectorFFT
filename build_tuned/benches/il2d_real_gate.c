@@ -271,6 +271,10 @@ int main(int argc, char **argv)
 #ifdef _WIN32
     _putenv("VFFT_IL2D_REAL=1");
     _putenv("VFFT_IL2D_LOG=1");
+    /* the row door's batch THREADING verdict is raced per cell (serial vs slabs,
+     * measurement_arms B5); a correctness gate wants its MT arms threaded, so
+     * pin it (VFFT_TCMT: an env pin never replays and never banks). */
+    _putenv("VFFT_TCMT=1");
 #else
     putenv("VFFT_IL2D_REAL=1");
     putenv("VFFT_IL2D_LOG=1");

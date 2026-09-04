@@ -472,8 +472,8 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         return 0;
     }
     if (c->route == VFFT_K1_IL_MONO)
-    {
-        b->mono = vfft_k1_mono_il_fn(N, 0);
+    {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
+        b->mono = vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
         return b->mono ? 0 : -1;
     }
     return -1; /* unknown/retired route (e.g. legacy 2P/3P) -> not a candidate */
@@ -512,7 +512,7 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     }
     if (c->route == VFFT_K1_IL_MONO)
     {
-        b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 0, 0, 0, 0, 0);
+        b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
         return 0;
     }
     return -1; /* unknown/retired route — _il_dp_build already refused it */
@@ -1276,10 +1276,18 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
 
     if (ord == VFFT_IL_ORD_NATURAL)
     {
-        if (vfft_k1_mono_il_fn(N, 0))
+        /* MONO forms (2026-09-04): every solo kernel the registry has enters
+         * the pool as its own candidate — form 0 = the solo n1 kind at each
+         * N in VFFT_IL_N1_PAIR_RADICES, form 1 = mono64's fused 8x8 (N=64).
+         * The measurement decides between them and against the pairs. */
+        for (int mf = 0; mf < vfft_k1_mono_il_nforms(N); mf++)
         {
+            if (!vfft_k1_mono_il_form_fn(N, mf, 0) ||
+                !vfft_k1_mono_il_form_fn(N, mf, 1))
+                continue;                     /* a form needs both directions */
             memset(&c, 0, sizeof c);
             c.route = VFFT_K1_IL_MONO;
+            c.il_kv = mf;
             _il_dp_push(s, &c);
         }
         /* Ordered pairs: R1 and R2 are NOT interchangeable (R2 is the column

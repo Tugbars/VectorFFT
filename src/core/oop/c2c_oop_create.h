@@ -438,7 +438,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr)
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr ||
+                (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
             {
                 struct vfft_plan_s *hk =
                     (struct vfft_plan_s *)calloc(1, sizeof *hk);
@@ -462,8 +463,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     /* prime route (non-NULL iff ilr==IL_PRIME). */
                     hk->k1ilpr = ilpr;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
-                    hk->k1_mono_ilf = vfft_k1_mono_il_fn(N, 0);
-                    hk->k1_mono_ilb = vfft_k1_mono_il_fn(N, 1);
+                    {   /* MONO form = the banked il_kv on a MONO verdict
+                         * (0 = solo n1, 1 = mono64); form 0 otherwise */
+                        const int mf = (ke && ke->k1_il_route == VFFT_K1_IL_MONO)
+                                           ? ke->il_kv : 0;
+                        hk->k1_mono_ilf = vfft_k1_mono_il_form_fn(N, mf, 0);
+                        hk->k1_mono_ilb = vfft_k1_mono_il_form_fn(N, mf, 1);
+                    }
 #ifdef VFFT_USE_JIT
                     /* stride-baking JIT for the split route (§13.3): compile
                      * cost locked to create, cached on disk forever; NULL ->
@@ -544,7 +550,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                                 double ns[2]; /* [0] incumbent, [1] zcasc */
-                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, rz, r0,
+                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, 0, rz, r0,
                                                         2 * (size_t)N * sizeof(double) };
                                 const vfft_race_arm_t arms[2] = {
                                     { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
@@ -648,7 +654,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                                 double ns[2]; /* [0] incumbent, [1] zcasc */
-                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, rz, r0,
+                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, 0, rz, r0,
                                                         2 * (size_t)N * sizeof(double) };
                                 const vfft_race_arm_t arms[2] = {
                                     { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };

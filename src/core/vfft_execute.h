@@ -790,6 +790,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 _exec_zcascade(h, dir, sre, dre ? dre : sre);
                 return;
             }
+            if (h->k1_mono_ilf)
+            { /* MONO tier in place (2026-09-04): the alias-tolerant n1c solo,
+               * one leg, z -> z legal by construction (no __restrict__). */
+                double *zo = dre ? dre : (double *)sre;
+                (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)
+                    (sre, 0, zo, 0, 0, 0, 1, 0, 1, 0, 1);
+                return;
+            }
             if (h->k1il2p || h->k1il3p || h->k1ilpr)
             { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
                * ALIASED — two-stage engines through internal scratch, zout
@@ -852,8 +860,10 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 switch (h->k1_il_route)
                 {
                 case VFFT_K1_IL_MONO:
+                    /* ONE LEG: Ls = OLs = 1, count = 1 (the solo kernels
+                     * index zin[2*(r*Ls + k)]); mono64 voids every size_t. */
                     (fwd ? h->k1_mono_ilf : h->k1_mono_ilb)(sre, 0, dre, 0,
-                                                            0, 0, 0, 0, 0, 0, 0);
+                                                            0, 0, 1, 0, 1, 0, 1);
                     return;
                 case VFFT_K1_IL_2P_PURE:
                     /* Route truthfulness at create makes k1il2p non-NULL for this route; the guard

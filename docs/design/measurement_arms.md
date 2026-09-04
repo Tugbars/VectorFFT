@@ -299,7 +299,7 @@ IL 1D is **three different engines**, not one with parameters:
 
 | band | engine | contract |
 |---|---|---|
-| N <= 64 | mono, whole-N IL kernel | - |
+| N <= 64 | MONO: the SOLO kernels (one call, natural order), raced against the pairs where both exist | any N in the solo radix set (2..64) |
 | 128..1024 | pure IL Bailey 2-stage pair | interleaved everywhere, count % 2 == 0 |
 | N >= 2048 | boundary-split cascade | z at the boundary, split planes inside, count % 4 == 0 |
 
@@ -309,6 +309,35 @@ That only pays when there are many interior stages to amortize over - which is w
 tier starts at 2048 and the Bailey pair below it stays interleaved. Full-IL interior has
 been refuted twice.
 
+### B0.1. MONO tier - the SOLO kernels and the mono FORM axis
+
+```
+B0.1 mono form            RACED, BANKED (2026-09-04). A solo kernel is the whole
+                          N-point transform in ONE call: the pure-IL n1 kind
+                          (gen_radix R --cil-n1 [--cil-bwd]), natural order in and
+                          out, twiddle-free, one leg (Ls = OLs = 1, count = 1: the
+                          VEX-128 tail IS the transform). Emitted at every radix the
+                          family has: 2 3 4 5 6 7 8 9 10 11 12 13 15 16 17 19 21 25
+                          27 32 64, both directions.
+     FORMS   0 = radixN_z_n1 (every N in the set); 1 = mono64_8x8_il (N = 64).
+             Each form is its own planner candidate (route MONO, il_kv = form)
+             beside the pairs and chain3; the measurement decides.
+     PLACE   out-of-place serves the __restrict__ n1 kernels; IN-PLACE serves the
+             alias-tolerant n1c twins (same math, no restrict, z -> z legal by
+             construction; n1c at 2/6/10/12 was emitted for this door). Both
+             forms map onto n1c in place.
+     BANK    the cell's kind-3 row: il_route=mono il_kv=<form>; in place the mode
+             row (@scrmode/@nat) says mode=ilp and the kind-3 row names mono.
+     VERDICT on this box (cold, 2026-09-04): mono at 2..11, 13, 17, 19 and 9;
+             the pair at 12, 15, 16, 21, 25, 27, 32, 64 (the solo body at 16
+             measured 12.4 ns vs 4x4 8.4 ns). The primes 5/7 left Bluestein
+             (43/76 ns -> 11/10 ns); 6/8/10 left their awkward-composite
+             routes (75/34-78/133 ns -> 12/10/12 ns).
+     REACH   1D c2c K=1 both placements; the zr2c child at N/2 (real N = 4..);
+             the 2D real row door at N2 = 4/6/8 (il2d_real 16x8, 128x8, 4096x8
+             were red until this landed); K>1 batches over the K=1 plan.
+```
+
 ### B1. Bailey pair - route
 
 ```
@@ -316,7 +345,7 @@ STATUS     RACED — offline (calibrate_k1) AND at create since 2026-09-03: a ki
            MISS or recalibrate below 2048 runs the same planner from the in-place and
            out-of-place K=1 creates (_k1_il_plan_race in k1_commit.h) and banks
 ARMS       route enum VFFT_K1_IL_*:
-             3 MONO      emitted mono, il edges - exists ONLY at N=64
+             3 MONO      the SOLO tier (B0.1): radixN_z_n1 at 2..64 + mono64 8x8 (form axis)
              5 2P_PURE   the Bailey pair                 <- this tier
              6 CHAIN3    3-stage chain (odd factors as kernel RADICES) —
                          RACED since 2026-09-02: every legal (R2, A, B)

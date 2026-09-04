@@ -321,6 +321,29 @@ verdict is valid at any thread count. Cores *cooperating* on one transform is di
 the thread count determines how the work is divided, and the best division at 2 threads can
 be the wrong division at 8.
 
+**The MT verdicts, one per site.** Every place the library can thread carries a raced,
+banked verdict; none threads on a rule.
+
+| site | who shares a transform | verdict | class | row |
+|---|---|---|---|---|
+| K>1 transform-contiguous batch | one transform per core | serial loop vs slabs of `ceil(K/T)` transforms over per-worker clones | T-free | the batch's own `q=K` interleaved row: `eng=tcb tcmt=<0 or 1> tcmtt=<T raced at>` |
+| 2D plane queue (`howmany > 1`) | one plane per core | loop the plan vs hand planes to clones | T-free | `pq` tokens on the primary plane's row |
+| 2D column pass | cores share the plane | column bands vs serial | per-T | `cmt cmtt` (r2c and c2r each their own set) |
+| K=1 cascade walk | cores share the transform | threaded walk vs serial | per-T | `zt_mt_t zt_mt` (in-place: `zt_mt_ip_*`) on the kind-4 recipe row |
+
+**The batch verdict in detail.** A K>1 interleaved request is a wrapper over the
+store-served K=1 inner (the plan is the inner's; the wrapper adds no plan of its own).
+When worker clones exist, create races the wrapper's two executions on the cell's own
+buffers, placement-honest (in-place arms are aliased and reseeded before every sample),
+and banks the winner. No clones means no arm: the wrapper runs its serial loop by
+construction, and nothing is banked. A replay at any thread count serves the banked
+verdict; `tcmtt=` is provenance, not a validity key, because each core runs whole
+transforms and the plan never depends on T. `VFFT_TCMT=0|1` pins the verdict for a
+process without replaying or banking; `VFFT_NO_TCMT` builds no clones at all. There is
+no engage floor: the former 2048-complex-point threshold was an offline table, and the
+verdicts it replaced flip it in both directions (a 1024-point out-of-place cell threads,
+a 2048-point in-place cell does not).
+
 ### 🔴 The `lay=` trap
 
 Only 27 of 539 shipped records carry a `lay=` axis; the rest predate it and serve as a
@@ -377,8 +400,15 @@ flowchart LR
 ### II.1a — mono (N ≤ 64)
 
 One emitted kernel computes the whole transform. No decomposition, so no chain, no pair,
-no twiddle-strategy axis. It appears as one *arm* in the route race below, not as a tier
-with its own tournaments.
+no twiddle-strategy axis. It appears as *arms* in the route race below, not as a tier with
+its own tournaments. The kernels are the **solo** kind of the pure-IL family
+(`radixN_z_n1`, natural order in and out, one leg), emitted at every radix the family has,
+2 through 64, so every N in that set has a mono arm; N=64 has a second form, the fused
+8x8 four-step `mono64`. The two forms enter the race as separate candidates (`il_kv` names
+the form on a MONO row). In place, the alias-tolerant `n1c` twin runs instead, so z to z
+needs no scratch. Where no pair exists (2 to 8, 10, 11, 13, 17, 19) mono is the only arm;
+where one does, the measurement decides — on the calibration host mono also took 9, and
+the pairs kept 12, 15, 16, 21, 25, 27, 32 and 64.
 
 ### II.1b — the Bailey pair (128 … 1024)
 
@@ -408,7 +438,7 @@ naming scheme in `codelets/zil/`.
 
 | value | meaning |
 |---|---|
-| `MONO` | one whole-N interleaved kernel — **exists only at N=64** |
+| `MONO` | one whole-N interleaved kernel — the solo kind at 2..64, plus the fused form at 64 (II.1a) |
 | `2P_PURE` | the Bailey 2-stage pair — this tier |
 | `CHAIN3` | a 3-stage chain, for odd factors that must appear as kernel *radices* |
 | `PRIME` | Rader or Bluestein, for prime N |

@@ -330,6 +330,12 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         if (_k1_il_plan_race(W, cfg, N) > 0)
             ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
     }
+    /* MONO verdict (2026-09-04): the cell's plan is ONE solo kernel; no pair
+     * is built here — the caller serves the mono door (the OOP block reads
+     * the form itself; in place, _k1_il_mono_candidate). Without this an
+     * in-place create replayed a MONO row as the balanced pair. */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_MONO && vfft_k1_mono_il_fn(N, 0))
+        return;
     /* CHAIN3 verdict (2026-09-02): the banked 3-stage chain replays as
      * written; a build refusal falls through to the pair/default path */
     if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
@@ -569,6 +575,27 @@ static void _zt_mt_replay_or_race(struct vfft_plan_s *h,
             vw2_update_field(&W->vw2, &k, tok_v, h->zt_mt ? "1" : "0") == VW2_OK)
             _vw2_persist(W, cfg);
     }
+}
+
+/* ── the IN-PLACE mono candidate (2026-09-04) ──
+ * Served when the cell's kind-3 row (already planned by _k1_il_candidate's
+ * race on a miss) says MONO: the alias-tolerant n1c solo, both directions.
+ * The row's form axis names the OOP kernel family (solo n1 vs mono64); in
+ * place both forms map onto the ONE alias-safe solo, n1c(N). Returns 1 and
+ * fills the pair when served, 0 otherwise (nothing built, nothing to free). */
+static int _k1_il_mono_candidate(struct vfft_wisdom_s *W, int N,
+                                 vfft_oop11_fn *ilf, vfft_oop11_fn *ilb)
+{
+    vfft_oop_wisdom_entry_t keb;
+    const vfft_oop_wisdom_entry_t *ke;
+    *ilf = *ilb = 0;
+    if (!W || W->vw2_off_oop) return 0;
+    ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
+    if (!ke || ke->k1_il_route != VFFT_K1_IL_MONO) return 0;
+    *ilf = vfft_k1_mono_ilc_fn(N, 0);
+    *ilb = vfft_k1_mono_ilc_fn(N, 1);
+    if (!*ilf || !*ilb) { *ilf = *ilb = 0; return 0; }
+    return 1;
 }
 
 static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
