@@ -507,6 +507,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
     | t :: tl when List.mem t [ "--cil-n1"; "--cil-n1c"; "--cil-n1t"; "--cil-t2"; "--cil-t2c" ] ->
       push (String.sub t 2 (String.length t - 2));
       go tl
+    | "--cil-t2cp" :: tl ->
+      (* t2c + PRE-twiddle at fwd (2026-09-04): the canonical spelling of
+         that cell — --cil-pretw stays the retired t2p flag. *)
+      push "cil-t2c";
+      pre_tw := true;
+      go tl
     | "--cil-tangent" :: tl ->
       cil_tangent := true;
       go tl
@@ -786,7 +792,7 @@ let to_argv (c : t) : string list =
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
          | Cil_n1c -> "--cil-n1c"
-         | Cil_t2c -> "--cil-t2c"
+         | Cil_t2c -> if pre_tw then "--cil-t2cp" else "--cil-t2c"
          | Cil_n1t -> "--cil-n1t"
          | Cil_t2 -> "--cil-t2")
       ]
@@ -801,7 +807,7 @@ let to_argv (c : t) : string list =
        | Some Turnst -> [ "--cil-turnst" ]
        | Some Turnst_gs -> [ "--cil-turnst-gs" ])
     @ g (m.table = Log3) "--cil-log3"
-    @ g pre_tw "--cil-pretw"
+    @ g (pre_tw && form <> Cil_t2c) "--cil-pretw"
     @ g form_tag "--cil-form-tag"
     @ g (m.dir = Bwd) "--cil-bwd"
     @ isa
