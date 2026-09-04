@@ -493,6 +493,63 @@ static void _il2d_col_pass_nat(const double *src, double *dst, int N1,
     }
 }
 
+/* the natural pass over a COLUMN RANGE [k_lo, k_hi) — the STRIP arm of
+ * natural x MT (2026-09-04). Every stage, the leaf included, is
+ * column-independent, so a strip is a pure loop restriction of
+ * _il2d_col_pass_nat: same bases + 2*k_lo, count = k_hi - k_lo; the
+ * scratch plane is shared but the columns are disjoint. */
+static void _il2d_col_pass_nat_range(const double *src, double *dst,
+                                     int N1, size_t rn, size_t k_lo,
+                                     size_t k_hi, int nst, const int *Rst,
+                                     const int *Lst,
+                                     vfft_il2p_fn const *fns,
+                                     double *const *tabs, int reverse,
+                                     const int *perm, double *scr)
+{
+    const int Rl = Rst[nst - 1];
+    const size_t nstride = (size_t)(N1 / Rl) * rn;
+    const size_t w = k_hi - k_lo;
+    int s, b;
+    if (!w)
+        return;
+    if (!reverse)
+    {
+        for (s = 0; s < nst - 1; s++)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            const double *s0 = (s == 0) ? src : scr;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
+                fns[s](s0 + off, NULL, scr + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D, w);
+            }
+        }
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](scr + 2 * ((size_t)b * Rl * rn + k_lo), NULL,
+                         dst + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
+                         NULL, NULL, NULL, rn, 0, nstride, 0, w);
+    }
+    else
+    {
+        for (b = 0; b < N1 / Rl; b++)
+            fns[nst - 1](src + 2 * ((size_t)perm[b * Rl] * rn + k_lo),
+                         NULL, scr + 2 * ((size_t)b * Rl * rn + k_lo),
+                         NULL, NULL, NULL, nstride, 0, rn, 0, w);
+        for (s = nst - 2; s >= 0; s--)
+        {
+            const int R = Rst[s], D = Lst[s] / R;
+            double *out = (s == 0) ? dst : scr;
+            for (b = 0; b < N1 / Lst[s]; b++)
+            {
+                const size_t off = 2 * ((size_t)b * Lst[s] * rn + k_lo);
+                fns[s](scr + off, NULL, out + off, NULL, tabs[s], NULL,
+                       (size_t)D * rn, rn, (size_t)D * rn, (size_t)D, w);
+            }
+        }
+    }
+}
+
 /* ── the COLUMN-AXIS BLUESTEIN, extracted (2026-08-27) so THREE users
  * share one implementation: the c2c no-chain path, the chain-vs-blu
  * RACE (the odd chains are now emitted, so both arms exist for odd

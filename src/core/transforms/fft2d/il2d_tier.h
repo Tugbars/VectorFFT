@@ -611,6 +611,13 @@ static void _il2d_c2c_mt_tramp(void *v)
                              h->il2d_nst, h->il2d_R, h->il2d_L, fns,
                              tabs, !a->fwd);
         break;
+    case 5: /* natural x MT, the STRIP arm: the whole natural pass over
+             * [lo,hi) columns (shared scratch, disjoint columns) */
+        _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
+                                 h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                                 tabs, !a->fwd, h->il2d_natperm,
+                                 h->il2d_natscr);
+        break;
     case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
              * plane) / gather (bwd: src = natural plane, dst = scratch)
              * over [lo,hi) blocks */
@@ -704,6 +711,23 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         double *scr = h->il2d_natscr;
         if (h->il2d_nst < 2 || (Tb < 2 && Tr < 2))
             return 0;
+        if (h->il2d_natarm == 1)
+        {   /* the STRIP arm (raced against the block arm at create) */
+            const int Ts = rn < (size_t)T ? (int)rn : T;
+            if (Ts < 2 && Tr < 2)
+                return 0;
+            if (Ts >= 2)
+                _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 5, rn, Ts);
+            else
+                _il2d_col_pass_nat(sre, dre, h->N, rn, h->il2d_nst,
+                                   h->il2d_R, h->il2d_L,
+                                   fwd ? h->il2d_f : h->il2d_b,
+                                   fwd ? h->il2d_tf : h->il2d_tb, !fwd,
+                                   h->il2d_natperm, scr);
+            _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
+            _vfft_il2d_col_mt_count++;
+            return 1;
+        }
         if (fwd)
         {
             for (s = 0; s < h->il2d_nst - 1; s++)
@@ -921,6 +945,14 @@ static void _il2d_arm_exec_mt(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
     c->h->il2d_colmt = 1;
+    c->h->il2d_natarm = 0;
+    vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+static void _il2d_arm_exec_mt_strip(void *v)
+{   /* natural cells only: the strip partition of the natural pass */
+    _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
+    c->h->il2d_colmt = 1;
+    c->h->il2d_natarm = 1;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 static void _il2d_arm_exec(void *v)
@@ -1692,22 +1724,37 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
     }
     {
         _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-        const vfft_race_arm_t arms[2] = { { "serial", _il2d_arm_exec_st, &rc },
-                                          { "threaded", _il2d_arm_exec_mt, &rc } };
+        const vfft_race_arm_t arms[3] = { { "serial", _il2d_arm_exec_st, &rc },
+                                          { "threaded", _il2d_arm_exec_mt, &rc },
+                                          { "strips", _il2d_arm_exec_mt_strip, &rc } };
         const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-        double ns[2];
+        double ns[3] = { 1e300, 1e300, 1e300 };
         (void)p;
-        vfft_race_run(&proto, arms, 2, ns);
+        /* natural cells race THREE arms (serial, block, strips — the
+         * natural pass has two legal partitions and no band arm); every
+         * other cell keeps its two. */
+        vfft_race_run(&proto, arms, h->il2d_nat ? 3 : 2, ns);
         st = ns[0];
         mt = ns[1];
+        h->il2d_natarm = 0;
+        if (h->il2d_nat && ns[2] < mt)
+        {
+            mt = ns[2];
+            h->il2d_natarm = 1;
+        }
+        if (getenv("VFFT_IL2D_LOG") && h->il2d_nat)
+            fprintf(stderr, "[il2d-c2c] natural arms %dx%d T=%d: block=%.0f "
+                            "strips=%.0f\n",
+                    N1, N2, h->nthreads, ns[1], ns[2]);
     }
     h->il2d_colmt = (mt < st);
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-c2c] colmt race %dx%d T=%d: st=%.0f "
-                        "mt=%.0f -> %s\n",
+                        "mt=%.0f -> %s%s\n",
                 N1, N2, h->nthreads, st, mt,
-                h->il2d_colmt ? "THREADED" : "serial");
+                h->il2d_colmt ? "THREADED" : "serial",
+                (h->il2d_colmt && h->il2d_natarm) ? " (strips)" : "");
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
                          h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
                          h->il2d_colmt, h->nthreads,

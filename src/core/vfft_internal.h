@@ -373,6 +373,11 @@ struct vfft_plan_s
      * arms (v1). Single-stage cells stay natural-native as before;
      * blu cells are natural BY CONSTRUCTION and now accept the order. */
     int il2d_nat;
+    int il2d_natarm; /* natural x MT partition, RACED at create: 0 = the
+                      * matched arm (digit-split prefix + block-range
+                      * leaf + row slabs), 1 = column STRIPS (the whole
+                      * natural pass over a column range). Plan-local
+                      * (banking rides the wisdom wave). */
     int *il2d_natperm; /* N1 entries, scr row -> natural row */
     double *il2d_natscr; /* 2*N1*rn: the pre-leaf plane — the natural
                           * leaf SCATTERS, so it must never write the
