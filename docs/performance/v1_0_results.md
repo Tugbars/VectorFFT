@@ -1033,6 +1033,40 @@ The consumers inherit it through the front door: the real bridge's
 c2r at 1215 moved from 0.12× to 0.46× of MKL and both real directions
 at 4095 from ~0.3× to ~0.8×, with no change to the real tier itself.
 
+### 1D ODD c2c to 137 781 — the flat odd-N engine, v1 (2026-09-04)
+
+Beyond the three-stage chain's 27³ ceiling, odd N is served by a new
+engine (`src/core/oop/il_flat.h`, standalone in v1): a corner-turned
+leaf over R₀ legs at full lanes, one streaming sweep for the four-step's
+outer twiddle (generated per row from a table of N/R₀ entries), then the
+2D column chain over N/R₀ rows × R₀ lanes to any depth — per-digit
+twiddle tables, natural output by the column chain's leaf scatter, no
+ordering pass. Every kernel is a shipped one. The chain (leaf × interior)
+is raced per cell; the seed (radix 27 first) loses 1.5–2× to the raced
+winners, which avoid 27 altogether.
+
+vs **MKL DFTI complex**, single thread, same run, alternated min-of-9,
+spectra checked against a naive DFT at natural indices:
+
+```
+ N        raced chain      vfft (µs)   MKL (µs)   vs MKL
+──────────────────────────────────────────────────────────
+ 405      9 | 5·9              1.7        1.8      1.06×
+ 1215     9 | 9·3·5            2.0        2.2      1.10×
+ 4095     9 | 7·5·13           9.0        8.5      0.94×
+ 6561     9 | 9·9·9           14.2       15.5      1.09×
+ 19683    9 | 9·3·9·9         46.1       52.4      1.14×
+ 59049    9 | 9·9·9·9        163.1      192.5      1.18×
+ 98415   15 | 9·9·9·9        389.0      373.7      0.96×
+ 137781   9 | 21·9·9·9       548.9      539.1      0.98×
+──────────────────────────────────────────────────────────
+```
+
+Parity to 1.18× across the range with no banding, no threading and no
+front-door integration yet — those are the next levers, in that order,
+together with the two-group interior kinds that retire the leaf turn and
+the rotor sweep.
+
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
 
 The 1D real transforms now serve **every odd N in both directions and
