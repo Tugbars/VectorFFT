@@ -173,7 +173,7 @@ radix **R1** over R2 columns):
 | `2PB` | `n1_oop_ugul(R2)` (transpose in the leaf's stores) → flat `t1_oop(R1)` |
 | `TWL` | 2PA with the linear consumption-order twiddle stream (`t1_oop_ul_twl`) |
 | `3P-L3` / `2PA-L3` | log3 mid twins swapped in at create |
-| `MONO` / `MONO-ALT` | whole-N emitted kernel (`mono64/128_16x8/128_8x16/256_16x16`) — no leaf/mid |
+| `MONO` / `MONO-ALT` | whole-N kernel, no leaf/mid: the SOLO kernels `radixN_z_n1[_bwd]` at every N in 2..64 (form 0; in place the alias-tolerant `n1c` twins) and the fused `mono64_8x8_il` (form 1, N=64) — the planner races the forms against the pairs (`vfft_k1_mono_il_form_fn`, 2026-09-04) |
 | `CCOL` | the nested space below |
 
 **CCOL** — the only route with no leaf-radix ceiling; one candidate =

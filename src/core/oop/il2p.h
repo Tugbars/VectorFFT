@@ -225,8 +225,10 @@ static inline vfft_il2p_fn vfft_il2p_n1_bwd_fn(int R)
  * math with the 2D family's contract in the name and the ABI — count axis
  * = adjacent plane columns, alias-tolerant (no __restrict__) in BOTH
  * directions because the 2D column pass runs zin == zout. Distinct from
- * plain n1 (whose bwd is the 1D F-DIAG chain role and whose fwd was never
- * populated). */
+ * plain n1 (whose bwd is the 1D F-DIAG chain role; its fwd twin was emitted
+ * 2026-09-04 for the MONO tier's SOLO kernels — oop_leaf_registry.h
+ * vfft_k1_mono_il_form_fn — and n1c doubles as that tier's IN-PLACE solo,
+ * vfft_k1_mono_ilc_fn, which is why n1c now exists at 2/6/10/12 too). */
 static inline vfft_il2p_fn vfft_il2p_n1c_fn(int R, int bwd)
 {
     /* CONSTRUCTION TABLE (raced 2026-08-25, il2d_kv_race, both regimes;

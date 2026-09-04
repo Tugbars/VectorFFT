@@ -258,6 +258,12 @@ let zil_pure_cells : (string * string list) list =
     , [ "27"; "--cil-t2"; "--cil-oddct"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix27_z_t2_ct_bwd_avx2.c"
     , [ "27"; "--cil-t2"; "--cil-oddct"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_n1c_avx2.c"
+    , [ "10"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_n1c_bwd_avx2.c"
+    , [ "10"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix10_z_n1_avx2.c"
+    , [ "10"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix10_z_n1_bwd_avx2.c"
     , [ "10"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix10_z_n1t_avx2.c"
@@ -288,6 +294,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix11_z_n1_avx2.c"
+    , [ "11"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix11_z_n1_bwd_avx2.c"
     , [ "11"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix11_z_n1t_avx2.c"
@@ -330,6 +338,12 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix12_z_n1c_avx2.c"
+    , [ "12"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_n1c_bwd_avx2.c"
+    , [ "12"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix12_z_n1_avx2.c"
+    , [ "12"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix12_z_n1_bwd_avx2.c"
     , [ "12"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix12_z_n1t_avx2.c"
@@ -360,6 +374,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix13_z_n1_avx2.c"
+    , [ "13"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_n1_bwd_avx2.c"
     , [ "13"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix13_z_n1t_avx2.c"
@@ -402,6 +418,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix15_z_n1_avx2.c"
+    , [ "15"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_n1_bwd_avx2.c"
     , [ "15"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_n1b_avx2.c"
@@ -515,6 +533,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix16_z_n1_avx2.c"
+    , [ "16"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix16_z_n1_bwd_avx2.c"
     , [ "16"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix16_z_n1t_avx2.c"
@@ -545,6 +565,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix17_z_n1_avx2.c"
+    , [ "17"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_n1_bwd_avx2.c"
     , [ "17"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix17_z_n1t_avx2.c"
@@ -587,6 +609,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix19_z_n1_avx2.c"
+    , [ "19"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix19_z_n1_bwd_avx2.c"
     , [ "19"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix19_z_n1t_avx2.c"
@@ -629,6 +653,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix21_z_n1_avx2.c"
+    , [ "21"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix21_z_n1_bwd_avx2.c"
     , [ "21"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix21_z_n1b_avx2.c"
@@ -742,6 +768,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix25_z_n1_avx2.c"
+    , [ "25"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix25_z_n1_bwd_avx2.c"
     , [ "25"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix25_z_n1b_avx2.c"
@@ -855,6 +883,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix27_z_n1_avx2.c"
+    , [ "27"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix27_z_n1_bwd_avx2.c"
     , [ "27"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix27_z_n1b_avx2.c"
@@ -968,6 +998,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix32_z_n1_avx2.c"
+    , [ "32"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_n1_bwd_avx2.c"
     , [ "32"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_n1t_avx2.c"
@@ -998,6 +1030,16 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix2_z_n1c_avx2.c"
+    , [ "2"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_n1c_bwd_avx2.c"
+    , [ "2"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_n1_avx2.c"
+    , [ "2"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix2_z_n1_bwd_avx2.c"
+    , [ "2"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix3_z_n1_avx2.c"
+    , [ "3"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_n1_bwd_avx2.c"
     , [ "3"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix3_z_n1t_avx2.c"
@@ -1182,6 +1224,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix4_z_n1_avx2.c"
+    , [ "4"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_n1_bwd_avx2.c"
     , [ "4"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix4_z_n1t_avx2.c"
@@ -1212,6 +1256,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix5_z_n1_avx2.c"
+    , [ "5"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix5_z_n1_bwd_avx2.c"
     , [ "5"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix5_z_n1t_avx2.c"
@@ -1254,6 +1300,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix64_z_n1_avx2.c"
+    , [ "64"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_n1_bwd_avx2.c"
     , [ "64"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_n1t_avx2.c"
@@ -1284,6 +1332,12 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix6_z_n1c_avx2.c"
+    , [ "6"; "--cil-n1c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix6_z_n1c_bwd_avx2.c"
+    , [ "6"; "--cil-n1c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix6_z_n1_avx2.c"
+    , [ "6"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix6_z_n1_bwd_avx2.c"
     , [ "6"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix6_z_n1t_avx2.c"
@@ -1314,6 +1368,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix7_z_n1_avx2.c"
+    , [ "7"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix7_z_n1_bwd_avx2.c"
     , [ "7"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix7_z_n1t_avx2.c"
@@ -1356,6 +1412,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix8_z_n1_avx2.c"
+    , [ "8"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_n1_bwd_avx2.c"
     , [ "8"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_n1t_avx2.c"
@@ -1386,6 +1444,8 @@ let zil_pure_cells : (string * string list) list =
       ; "--uarch"
       ; "raptor_lake_avx2"
       ] )
+  ; ( "radix9_z_n1_avx2.c"
+    , [ "9"; "--cil-n1"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix9_z_n1_bwd_avx2.c"
     , [ "9"; "--cil-n1"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix9_z_n1b_avx2.c"

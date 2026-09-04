@@ -349,13 +349,76 @@ static inline vfft_oop11_fn vfft_k1_mono_pair_fn(int N, int R1)
  * the radix{4..64} _ul_ilout[_sw] codelets — was DELETED 2026-07-29 with the
  * rest of the hybrid IL route. il2p.h's t2/t2t kernels are the IL exit now.) */
 
-static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
+/* ── MONO tier (sub-128, K=1 interleaved): the SOLO kernels (2026-09-04) ──
+ * A solo kernel is the whole N-point transform in one call: natural order
+ * in and out, twiddle-free, the pure-IL n1 kind on the 11-arg leg ABI
+ * (one leg: Ls = OLs = 1, count = 1 -> the VEX-128 tail IS the transform).
+ * Emitted at every radix the pure-IL family has (VFFT_IL_N1_PAIR_RADICES,
+ * 2..64) by `gen_radix R --cil-n1 [--cil-bwd]`; the corpus lists them.
+ *
+ * FORMS (the planner's mono axis, banked as il_kv on the MONO row):
+ *   form 0 = radixN_z_n1      the solo kind (every N in the set)
+ *   form 1 = mono64_8x8_il    the fused 8x8 four-step (N = 64 only)
+ * Out-of-place serves the __restrict__ n1 kernels; IN-PLACE serves the
+ * alias-tolerant n1c twins (vfft_k1_mono_ilc_fn), same math, no restrict,
+ * so z -> z is legal by construction (n1c exists at every N in the set:
+ * 2/6/10/12 were emitted for exactly this door). */
+#ifndef VFFT_IL_N1_PAIR_RADICES
+#include "il_registry_avx2.h"   /* the generated radix lists (also pulled by il2p.h) */
+#endif
+static inline int vfft_k1_mono_il_nforms(int N)
 {
 #if VFFT_OOP_GROUPW == 4u
     switch (N)
     {
-    case 64: return bwd ? vfft_k1_mono64_8x8_il_bwd_avx2
-                        : vfft_k1_mono64_8x8_il_fwd_avx2;
+#define C(R) case R:
+    VFFT_IL_N1_PAIR_RADICES(C)
+#undef C
+        return N == 64 ? 2 : 1;
+    default: return 0;
+    }
+#else
+    (void)N;
+    return 0;
+#endif
+}
+
+static inline vfft_oop11_fn vfft_k1_mono_il_form_fn(int N, int form, int bwd)
+{
+#if VFFT_OOP_GROUPW == 4u
+    if (form == 1)
+        return N == 64 ? (bwd ? vfft_k1_mono64_8x8_il_bwd_avx2
+                              : vfft_k1_mono64_8x8_il_fwd_avx2)
+                       : 0;
+    if (form != 0) return 0;
+    switch (N)
+    {
+#define C(R) case R: return bwd ? radix##R##_z_n1_bwd_avx2 : radix##R##_z_n1_fwd_avx2;
+    VFFT_IL_N1_PAIR_RADICES(C)
+#undef C
+    default: return 0;
+    }
+#else
+    (void)N; (void)form; (void)bwd;
+    return 0;
+#endif
+}
+
+/* form 0 — the existence probe every route table and the planner use */
+static inline vfft_oop11_fn vfft_k1_mono_il_fn(int N, int bwd)
+{
+    return vfft_k1_mono_il_form_fn(N, 0, bwd);
+}
+
+/* the IN-PLACE solo: alias-tolerant n1c, both directions */
+static inline vfft_oop11_fn vfft_k1_mono_ilc_fn(int N, int bwd)
+{
+#if VFFT_OOP_GROUPW == 4u
+    switch (N)
+    {
+#define C(R) case R: return bwd ? radix##R##_z_n1c_bwd_avx2 : radix##R##_z_n1c_fwd_avx2;
+    VFFT_IL_N1C_PAIR_RADICES(C)
+#undef C
     default: return 0;
     }
 #else

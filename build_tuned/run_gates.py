@@ -139,6 +139,8 @@ ARGSTYLE = {
     # These two are the whole class: grep "NO RACE" over benches/*gate*.c.
     "vfft_ilp_front_gate":     ("flag", False),
     "vfft_k1scr_gate":         ("flag", True),
+    # COLD: the MONO tier (solo kernels) races once per cell and must land route=mono
+    "il_solo_gate":            ("flag", False),
     # COLD on purpose: seeding makes every measure cell report NO RACE, because it
     # correctly replays the banked verdict instead of racing.
     "vfft_natural_front_gate": ("flag", False),
