@@ -1,10 +1,16 @@
 # Odd high-N: the batch-lane cascade geometry
 
-**STATUS: DESIGN — nothing built.** This describes a third geometry for the
-cascade, distinct from both options in
-[`docs/roadmap/odd_large_n_engine.md`](../roadmap/odd_large_n_engine.md). It has
-not been raced in this tree. Read that roadmap first for the requirement and
-the served state.
+**STATUS: DESIGN — nothing built.** It has not been raced in this tree. Read
+[`docs/roadmap/odd_large_n_engine.md`](../roadmap/odd_large_n_engine.md) first
+for the requirement and the served state.
+
+**Scope, stated up front.** This is a **kernel-level** change that lives *inside*
+chain3/chainK's existing four-step layout. It is not a new layout and not a
+replacement for one. Its only purpose is to lift the radix ceiling — to let a
+per-radix kernel exist for radices that do not divide the vector width. The
+four-step arrangement (leaf, transposing store, constant-count interior,
+transpose back) is the strong part of the current engine and stays exactly as it
+is; see the layout section below before reading anything here as a substitution.
 
 ## The requirement, restated
 
@@ -65,25 +71,56 @@ flowchart TB
     style B4 fill:#1f5f2f,color:#fff
 ```
 
-## What the engine looks like
+## 🔴 Layout: chain3's four-step already solves this — do not replace it
 
-The cascade *shape* is unchanged — ingest, per-factor stages, terminator. Only
-the lane assignment inside the kernels changes.
+An earlier draft of this design put the width cost "at the ingest, with no `r0`
+to match", and a later one moved it to a lane transition in the tail. **Both were
+wrong**, because they described a *flat* single-level cascade, where the group
+length `D[s]` collapses stage by stage and the contiguous run with it.
 
-| piece | role |
+That is not what chain3 does, and not what chainK inherits. The four-step layout:
+
+1. **Leaf first** (radix `R2`, e.g. 9) at `count = N/R2` — a huge run, full
+   lanes. Its store is **transposing** (the `OLs` stride), so everything
+   downstream sees contiguous runs of `R2`. The leaf radix becomes the lane-run
+   width of the whole interior.
+2. **Interior** = a mixed-radix FFT of length `R1 = N/R2`, batched over `R2`
+   lanes. Every stage, however deep, runs at `count = R2`. **The interior's count
+   is constant by construction** — `D[s]` shrinking is a property of a flat
+   chain, not of this arrangement. That is what "unbounded depth" means here:
+   stages 2…K all look alike.
+3. **Last stage writes transposed back** to natural order (il3p's `tA_f` at
+   `OLs = B·R2`; in the 2D-machinery form, the natural leaf scatter).
+
+So the width cost is paid **at the two ends, as strided stores, once each** — not
+as a per-instruction lane tax and not as a tail transition. Its residual is the
+odd-count tail at `count = R2`: ~10% at `R2 = 9`, 3.6% at `R2 = 27`, which is why
+the race prefers a wider odd leaf where one exists. All of that is already inside
+chain3's measured 1.24× at 4095.
+
+**Nothing in this design should change the layout.** The four-step arrangement is
+the strong part of the existing engine. What follows applies *inside* it.
+
+## What the batch-lane idea actually changes
+
+Only the lane assignment inside the per-radix kernels, and only to lift the
+radix ceiling.
+
+| piece | unchanged / changed |
 |---|---|
-| ingest | contiguous load, no turn; there is no `r0` to match |
-| per-radix kernels | one per factor radix: 2, 3, 4, 5, 7, 11, 13, plus a generic kernel above that |
-| stage driver | one full pass per factor of N — chain depth is unbounded |
-| terminator | an output-ordering pass |
+| four-step layout | **unchanged** — leaf, transposing store, batched interior, transpose back |
+| interior count | **unchanged** — constant at `R2` |
+| per-radix kernels | **changed**: radix across registers, lanes from the batch run, so radix need not equal `vw` |
+| chain depth | unbounded, as chainK already provides |
 
-The chain is then just the factorisation of N, to any depth. `3^9`, `3^10`,
-`5^7`, `7^6` are all ordinary chains; nothing is special about three stages.
+The chain is then the factorisation of N to any depth — `3^9`, `3^10`, `5^7`,
+`7^6` are ordinary chains, nothing special about three stages — and the radix set
+is no longer restricted to values that divide the vector width.
 
-**The natural ceiling moves from depth to factor size.** Chain depth stops being
-the limit; the limit becomes the largest radix for which a kernel exists. A
-factor above that bound still needs Bluestein — but the bound is a property of
-the kernel corpus, which is generated, not of the geometry.
+**The ceiling moves from depth to factor size.** chainK removes the depth limit
+with machinery that already exists. Lifting the radix limit is what this design
+adds, and only that. A factor above the largest available radix kernel still
+needs Bluestein.
 
 ## The trade, stated honestly
 
@@ -99,16 +136,25 @@ third option rather than a variant of Option B.
 
 ## Relation to the roadmap's options
 
-| | reach | lane utilisation | new kernels |
-|---|---|---|---|
-| A — chainK | 27⁴ = 531 441 | full | none |
-| B — lane-padded odd cascade | cascade-class at large N | **−25% by construction** | ingest/terminator at r0 ≠ 4 |
-| **this — batch-lane** | unbounded depth; limited by largest radix kernel | **full** | a new interior family |
+These are not three alternatives — A is the plan, and this is a later addition
+on top of it.
 
-A remains the cheapest path to the stated size target and should be measured
-first — it needs no new kernels. This design matters if A's deeper chains lose
-their per-pass efficiency at 59 049 / 98 415, or if the corpus is later asked
-for odd radices that A cannot express.
+| | removes | layout | lane utilisation | new kernels |
+|---|---|---|---|---|
+| A — chainK | the **depth** limit (27³) | four-step, unchanged | full | none |
+| B — lane-padded odd cascade | the radix limit | flat, r0 ≠ 4 | **−25% by construction** | ingest/terminator at r0 ≠ 4 |
+| **this — batch-lane kernels** | the **radix** limit | four-step, **unchanged** | full | a per-radix interior family |
+
+**A is the plan for the stated size target.** It reaches 27⁴ = 531 441 with no
+new kernels, and it keeps the four-step layout that already earns chain3's
+measured 1.24× at 4095. Measure A first.
+
+This design matters only afterwards, and only for one thing: admitting radices
+that do not divide `vw`. It is worth building if A's deeper chains hold their
+per-pass efficiency at 59 049 / 98 415 (so the layout is proven) but the corpus
+is then asked for odd radices A cannot express. **B is superseded** — it accepts
+a −25% interior tax and abandons the four-step layout to buy the same thing this
+buys without either cost.
 
 ## Open questions
 

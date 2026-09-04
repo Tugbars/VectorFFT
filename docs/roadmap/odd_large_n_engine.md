@@ -1,8 +1,39 @@
 # Large fully-odd N: the engine question
 
-**STATUS: PARKED (owner, 2026-09-04) — decision pending.** Nothing here is
-built. The section "What exists today" is the served state; everything
-after it is an option, not a plan.
+**STATUS: v1 ENGINE BUILT AND MEASURED (2026-09-04), not yet in the front
+door.** The owner chose the flat / MKL-shaped direction over the four-step
+("we are in total agreement, we can proceed"). `src/core/oop/il_flat.h`
+serves any odd N to arbitrary depth at parity-to-1.18× vs MKL single-threaded
+(table below); the front-door route, threading, banding and the two-group
+interior kinds are the levers left, in that order. The option analysis below
+is kept as the record of how the design was chosen.
+
+## v1: what was built and what it measures
+
+Structure (every kernel a shipped one): corner-turned leaf (R₀ legs at
+stride N/R₀, full lanes) → one rotor sweep for the outer twiddle
+(AVX2, table of N/R₀ entries) → the 2D column chain over N/R₀ rows ×
+R₀ lanes (per-digit tables, any depth, natural output by the leaf
+scatter; no ordering pass). The truly flat interior with compact tables
+needs the two-group "arrange halves" kinds (MKL's Fact kernels); with
+the per-column-pair `t2` kernels a flat chain would carry ~8N doubles
+of table per stage, so v1 takes this bridge form.
+
+Raced per cell (leaf × interior), single thread, same run vs MKL:
+
+| N | raced chain | vs MKL |
+|---|---|---|
+| 405 | 9 \| 5·9 | 1.06× |
+| 1215 | 9 \| 9·3·5 | 1.10× |
+| 4095 | 9 \| 7·5·13 | 0.94× |
+| 6561 | 9 \| 9·9·9 | 1.09× |
+| 19 683 | 9 \| 9·3·9·9 | 1.14× |
+| 59 049 | 9 \| 9·9·9·9 | 1.18× |
+| 98 415 | 15 \| 9·9·9·9 | 0.96× |
+| 137 781 | 9 \| 21·9·9·9 | 0.98× |
+
+The seed chain (radix 27 first) is 1.5–2× slower than the raced winner
+at every cell: radix 27 is twiddle-load bound, and the winners avoid it.
 
 ## The requirement
 
