@@ -19,31 +19,19 @@ static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for 
 /* --stages: per-stage timing of the flat DIT (seed chain) — where does a
  * sweep's time go: the leaf, the long-run mids, the short-run tail? */
 static void stage_times(const vfft_ilfd_plan_t *p, const double *zin, double *zout) {
-    const size_t N = (size_t)p->N; double *stg = p->stg;
-    double tl = 1e300, ts[VFFT_ILFD_MAX_K];
+    double ts[VFFT_ILFD_MAX_K];
     for (int s = 0; s < p->K; s++) ts[s] = 1e300;
-    for (int r = 0; r < 5; r++) {
-        double t0 = now_ns();
-        p->lf(zin, 0, stg, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
-        t0 = now_ns() - t0; if (t0 < tl) tl = t0;
-        for (int s = 1; s < p->K; s++) {
-            const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
-            const size_t recs_blk = (size_t)(p->R[s] - 1), nstride = N / (size_t)p->R[s];
-            double t1 = now_ns();
-            for (size_t bi = 0; bi < nb; bi++) {
-                const double *blk = stg + 2 * bi * L, *tw = p->tf[s] + bi * recs_blk * 8;
-                if (s < p->K - 1) p->f[s](blk, 0, stg + 2 * bi * L, 0, tw, 0, D, 0, D, 1, D);
-                else p->f[s](blk, 0, zout + 2 * p->natbase[bi], 0, tw, 0, D, 0, nstride, 1, D);
-            }
-            t1 = now_ns() - t1; if (t1 < ts[s]) ts[s] = t1;
+    for (int r = 0; r < 5; r++)
+        for (int s = 0; s < p->K; s++) {
+            double t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
+            if (t0 < ts[s]) ts[s] = t0;
         }
-    }
-    printf("      stages: leaf(R%d,cnt%zu) %.0f", p->R[0], p->D[0], tl);
-    for (int s = 1; s < p->K; s++) printf(" | R%d cnt%zu x%zu: %.0f", p->R[s], p->D[s], p->nblk[s], ts[s]);
-    printf("\n");
+    printf("      stages: leaf(R%d,cnt%zu) %.0f", p->R[0], p->D[0], ts[0]);
+    for (int s = 1; s < p->K; s++) printf(" | R%d cnt%zu x%zu%s: %.0f", p->R[s], p->D[s], p->nblk[s], p->tail[s] ? " t2cs" : "", ts[s]);
+    printf("%s", "\n");
 }
 int main(int argc, char **argv) {
-    static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 137781 };
+    static const int NS[] = { 405, 1215, 3125, 4095, 6561, 15625, 16807, 19683, 59049, 78125, 98415, 117649, 137781 };
     const int n = (int)(sizeof NS / sizeof NS[0]);
     const int race = (argc > 1 && !strcmp(argv[1], "--race"));
     int bad = 0;
@@ -77,6 +65,8 @@ int main(int argc, char **argv) {
         double tf = 1e300;
         { vfft_ilfd_plan_t *best = p; int owned = 0;
           if (race) {
+              vfft_ilfd_execute_fwd(p, x, z);
+              for (int r = 0; r < 3; r++) { double t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tf) tf = t0; }  /* the seed races too */
               int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND], cur[8], nc = 0, dropped = 0;
               _il2d_enum_rec(N, 0, cur, cand, lens, &nc, &dropped);
               for (int c = 0; c < nc; c++) {

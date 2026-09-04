@@ -209,6 +209,8 @@ let run (argv : string array) : unit =
      power-of-two legs, derive the rest). Full-IL, same table layout. *)
   let cil_log3 = ref false in
   let cil_pretw = ref false in
+  let cil_colstride = ref false in
+  let cil_gen2 = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
@@ -523,6 +525,18 @@ let run (argv : string array) : unit =
     then cil_kind := "n1c"
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
+    else if arg = "--cil-t2csg"
+    then (
+      (* t2cs + the GENERATED twiddle stream (gen2, 2026-09-04) *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true)
+    else if arg = "--cil-t2cs"
+    then (
+      (* the column-stride TAIL form of the T2 mid (t2cs, 2026-09-04): the
+         flat chain's short-run stages, lanes from two blocks. *)
+      cil_kind := "t2";
+      cil_colstride := true)
     else if arg = "--cil-t2cp"
     then (
       (* the DELIBERATE, SCOPED re-enable of pre-twiddle placement: t2c at
@@ -1345,6 +1359,8 @@ let run (argv : string array) : unit =
            ~form_tag:!cil_form_tag
            ~log3:!cil_log3
            ~pretw:!cil_pretw
+           ~colstride:!cil_colstride
+           ~gen2:!cil_gen2
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs
            ~kind:(C2c_il.kind_of_string !cil_kind)

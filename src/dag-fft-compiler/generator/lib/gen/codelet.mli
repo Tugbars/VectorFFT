@@ -127,6 +127,8 @@ type kind =
       ; split : (int * int) option
       ; turn : cil_turn option
       ; pre_tw : bool
+      ; colstride : bool (* --cil-t2cs: the column-stride tail form of t2 *)
+      ; gen2 : bool (* --cil-t2csg: t2cs with the generated twiddle stream *)
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)

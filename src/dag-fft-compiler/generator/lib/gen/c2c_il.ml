@@ -218,6 +218,8 @@ let form_tag_of ~(on : bool) ~(blocked : bool) ~(tangent : bool)
 let emit
       ~(log3 : bool)
       ~(pretw : bool)
+      ~(colstride : bool)
+      ~(gen2 : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
       ~(turnst : bool)
@@ -240,6 +242,18 @@ let emit
     failwith
       "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing policy for \
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
+  (* t2cs = the column-stride tail form of the T2 mid, fwd only for now
+     (2026-09-04, il_flatdit.h: the flat chain's D < vw stages). *)
+  if colstride && (kind <> T2 || dir <> Fwd || log3 || blocked || turnst || turnst_gs)
+  then
+    failwith
+      "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing; \
+       no log3/blocked/turn on it (they would be new forms, not this kind)";
+  (* gen2 rides the column-stride tail kind only (t2csg): its two-table
+     stream replaces the per-pair records that kind would otherwise read. *)
+  if gen2 && not colstride
+  then failwith "codelet_cil: --cil-t2csg (gen2) is the t2cs tail kind's twiddle policy";
+  Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
   then
     failwith
@@ -262,6 +276,8 @@ let emit
       ~tw_group:(kind = T2C)
       ~tw_log3:log3
       ~tw_pre:pretw
+      ~tw_gen2:gen2
+      ~colstride
       ~st_turn:(turnst || turnst_gs)
       ~st_turn_gs:turnst_gs
       ~tangent
@@ -904,9 +920,11 @@ let emit
         (Printf.sprintf
            "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
            per
-           ((radix - 1) * 2 * vw));
+           (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw));
     if kind = T2 && ctx.tw_log3
     then emit_log3_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
+    if kind = T2 && ctx.tw_gen2
+    then emit_gen2_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
     if kind = T2C then emit_group_prologue ~tw_vw:vw ~msuf:"_n" body_n nisa radix;
     for l = 0 to radix - 1 do
       Buffer.add_string
@@ -1092,6 +1110,8 @@ let emit
             (kind_name kind
              ^ (if blocked then "b" else "")
              ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) then "p" else "")
+             ^ (if ctx.colstride then "cs" else "")
+             ^ (if ctx.tw_gen2 then "g" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
              (* "ct" = dft_small FACTORED this odd composite instead of taking
@@ -1145,7 +1165,14 @@ let emit
        Blocked used to keep a self-contained `for (size_t k = 0; ...)` because
        it had no tail to resume. *)
     (Printf.sprintf
-       "    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
+       "%s    size_t k = 0;\n    for (; k + %d <= count; k += %d) {\n"
+       (if kind = T2 && ctx.tw_gen2
+        then
+          Printf.sprintf
+            "    %s\n    %s\n"
+            (Isa.const_decl isa "_wgc" (Isa.loadu_pd isa "tw_im[0]"))
+            (Isa.const_decl isa "_wgs" (Isa.loadu_pd isa (Printf.sprintf "tw_im[%d]" vw)))
+        else "")
        per
        per);
   (* T2's streamed cursor: one record-set per column-group. *)
@@ -1156,12 +1183,13 @@ let emit
       (Printf.sprintf
          "        const double *twp = tw_re + (k / %d) * (size_t)%d;\n"
          per
-         ((radix - 1) * 2 * vw));
+         (if ctx.tw_gen2 then 2 * vw else (radix - 1) * 2 * vw));
   (* LOG3 binds every leg's record up front — loaded for power-of-two legs,
      derived for the rest — so the butterflies below reference names instead
      of the table. Loop-invariant per column-group, hence off the data
      critical path. *)
   if kind = T2 && ctx.tw_log3 then emit_log3_prologue buf isa radix;
+  if kind = T2 && ctx.tw_gen2 then emit_gen2_prologue buf isa radix;
   (* Blocked carries its own per-pass loads and stores; the monolithic form
      needs the leg load edge here — UNLESS lazy-load materialisation is on
      (VFFT_CX_LAZYLOAD=1), in which case each load is emitted just before its
@@ -1177,7 +1205,7 @@ let emit
            (Isa.const_decl
               isa
               (Printf.sprintf "z%d" (cload (AZinLeg l)).tag)
-              (Isa.loadu_pd isa (addr_str (AZinLeg l)))))
+              (render_load isa (AZinLeg l))))
     done;
   Buffer.add_buffer buf body;
   (* Store edge (blocked emits its own inside PASS 2). Dispatch on the store
@@ -1291,7 +1319,15 @@ let emit
     Buffer.add_string
       buf
       "    /* odd-count tail: same DAG at VEX-128, one complex per iteration */\n";
-    Buffer.add_string buf "    for (; k < count; ++k) {\n";
+    if kind = T2 && ctx.tw_gen2
+  then
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    %s\n    %s\n"
+         (Isa.const_decl Isa.sse2 "_wgc_n" (Isa.loadu_pd Isa.sse2 "tw_im[0]"))
+         (Isa.const_decl Isa.sse2 "_wgs_n" (Isa.loadu_pd Isa.sse2 (Printf.sprintf "tw_im[%d]" vw))));
+  Buffer.add_string buf "    for (; k < count; ++k) {\n";
     Buffer.add_buffer buf body_n;
     Buffer.add_string buf "    }\n");
   if kind = T2C
@@ -1355,10 +1391,14 @@ let emit_k1
       ~(uarch : Uarch.t)
   : string
   =
+  Cx_render.colstride := false;
+  (* the mono path never column-strides *)
   let ctx =
     make_ctx
       ~tw_group:false
       ~tw_log3:false
+      ~tw_gen2:false
+      ~colstride:false
       ~tw_pre:false
       ~st_turn:false
       ~st_turn_gs:false

@@ -222,6 +222,40 @@ static inline vfft_il2p_fn vfft_il2p_t2cp_fn(int R)
     }
 }
 
+/* t2cs — the COLUMN-STRIDE tail form of the t2 mid (2026-09-04,
+ * il_flatdit.h): a column is one BLOCK; lane j of a vector comes from
+ * block k+j (two 128-bit halves at stride Gs in / OGs out); per-pair
+ * twiddle records (adjacent blocks carry different twiddles). Serves the
+ * flat chain's short-run stages (D < vw) at full lanes. fwd only. */
+static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CS_FWD_RADICES
+#define C(R) case R: return radix##R##_z_t2cs_fwd_avx2;
+    VFFT_IL_T2CS_FWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
+/* t2csg — t2cs with the GENERATED twiddle stream (gen2, 2026-09-04): the
+ * kernel forms W^1 per column pair as T1[pair] (tw_re, the cursor: one
+ * VTW2 pair record per pair) times T2 (tw_im: ONE broadcast record per
+ * call, hoisted) and derives every higher leg in-kernel. The driver hands
+ * it ~2*sqrt(N)-sized tables instead of an N-sized stream. fwd only. */
+static inline vfft_il2p_fn vfft_il2p_t2csg_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSG_FWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csg_fwd_avx2;
+    VFFT_IL_T2CSG_FWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* Plain n1 (natural in/out, TWIDDLE-FREE), radix R1 — the second stage of the
  * F-DIAG backward decomposition below. Distinct from leaf_fn (n1t, which fuses
  * the corner-turn into its stores) and from mid_fn (t2, which carries the
