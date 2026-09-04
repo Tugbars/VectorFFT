@@ -1072,18 +1072,22 @@ natural indices, engagement counted:
  512x128         r2c           81.7      19.6      4.17×    threaded
  256x64          r2c           21.9      14.3      1.53×    threaded
  63x64 (odd)     r2c            4.2        —         —      serial (race)
- 1024x128        c2c          301.4     138.0      2.18×    threaded
- 256x64          c2c           28.9      16.7      1.73×    threaded
- 512x64          c2c           71.5      46.5      1.54×    threaded
+ 1024x128        c2c          302.7     135.3      2.24×    threaded (strips)
+ 256x64          c2c           37.8      15.2      2.49×    threaded (blocks)
+ 63x64 (odd)     c2c            7.8       4.3      1.81×    threaded (strips)
+ 512x64          c2c           61.1      55.0      1.11×    threaded (blocks)
 ──────────────────────────────────────────────────────────────────────
 ```
 
-The threaded natural walk is the matched partition of the natural
-pass: digit-split prefix stages, the leaf scatter by block range, then
-row slabs; the band arm is structurally unavailable (the scatter
-crosses bands). The c2c tier scales less than the real tier at equal
-column work because it cannot fuse rows into bands here; the column
-strip arm is the raceable alternative and is the open item.
+The threaded natural walk has two legal partitions, raced per cell:
+the matched arm (digit-split prefix stages, the leaf scatter by block
+range, then row slabs) and column strips (the whole natural pass over
+a column range); the band arm is structurally unavailable because the
+scatter crosses bands. On the c2c tier both partitions land within a
+few percent of each other, so its smaller speedup relative to the real
+tier at equal column work is not a partition effect; the row-slab
+phase (rows cannot fuse into bands under natural order) is the
+suspect, and a per-phase measurement is the open item.
 
 ## 4. vs MKL — 2D R2C
 
