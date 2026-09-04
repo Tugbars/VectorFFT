@@ -36,8 +36,8 @@ typedef struct {
     size_t D[VFFT_ILFD_MAX_K];        /* leg stride / run at stage s */
     size_t nblk[VFFT_ILFD_MAX_K];     /* blocks at stage s */
     vfft_il2p_fn lf;                  /* n1c fwd: the plain leaf */
-    vfft_il2p_fn f[VFFT_ILFD_MAX_K];  /* t2 fwd (pre-twiddle) */
-    double *tf[VFFT_ILFD_MAX_K];      /* per block: ceil(D/2) x (R-1) records */
+    vfft_il2p_fn f[VFFT_ILFD_MAX_K];  /* t2cp fwd (pre-twiddle, per-digit records) */
+    double *tf[VFFT_ILFD_MAX_K];      /* per block: (R-1) broadcast records */
     size_t *natbase;                  /* last stage: block -> natural index */
     double *stg;                      /* 2N staging plane */
 } vfft_ilfd_plan_t;
@@ -93,12 +93,13 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
              * far INCLUDING this stage = N / D_s (il3p's stage-B convention:
              * B*R2), not the block span R_s*D_s. */
             const size_t L = (size_t)N / D;
-            const size_t npair = (D + 1) / 2;                  /* ceiling pairs */
-            const size_t recs_blk = npair * (size_t)(R[s] - 1);
+            /* t2cp: ONE digit per call => (R-1) broadcast records per block
+             * (the 2D per-digit record: [c x4][sign-folded s x4]) */
+            const size_t recs_blk = (size_t)(R[s] - 1);
             double *tf;
-            size_t bi, pp;
-            int l, j;
-            p->f[s] = vfft_il2p_mid_fn(R[s], 0);               /* t2 fwd: PRE-twiddle */
+            size_t bi;
+            int l, lane;
+            p->f[s] = vfft_il2p_t2cp_fn(R[s]);
             if (!p->f[s]) { vfft_ilfd_destroy(p); return 0; }
             tf = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
             if (!tf) { vfft_ilfd_destroy(p); return 0; }
@@ -107,10 +108,10 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 for (l = 1; l < R[s]; l++) {
                     const double a = -2.0 * VFFT_IL2P_PI * (double)((size_t)l * Q % L) / (double)L;
                     const double c = cos(a), sn = sin(a);
-                    for (pp = 0; pp < npair; pp++) {
-                        double *rf = tf + (bi * recs_blk + pp * (size_t)(R[s] - 1) + (size_t)(l - 1)) * 8;
-                        for (j = 0; j < 4; j++) rf[j] = c;
-                        rf[4] = -sn; rf[5] = sn; rf[6] = -sn; rf[7] = sn;  /* VTW2 sign-folded */
+                    double *rf = tf + (bi * recs_blk + (size_t)(l - 1)) * 8;
+                    for (lane = 0; lane < 4; lane++) {
+                        rf[lane] = c;
+                        rf[4 + lane] = (lane & 1) ? sn : -sn;
                     }
                 }
             }
@@ -137,7 +138,7 @@ static inline int vfft_ilfd_default_chain(int N, int *R, int *K)
     while (rem > 1 && k < VFFT_ILFD_MAX_K) {
         int hit = 0;
         for (i = 0; i < (int)(sizeof POOL / sizeof POOL[0]); i++)
-            if (rem % POOL[i] == 0 && vfft_il2p_mid_fn(POOL[i], 0)) { R[k++] = POOL[i]; rem /= POOL[i]; hit = 1; break; }
+            if (rem % POOL[i] == 0 && vfft_il2p_t2cp_fn(POOL[i])) { R[k++] = POOL[i]; rem /= POOL[i]; hit = 1; break; }
         if (!hit) return 0;
     }
     if (rem != 1 || k < 2) return 0;
@@ -162,16 +163,17 @@ static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
     p->lf(zin, 0, stg, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
     for (s = 1; s < p->K; s++) {
         const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
-        const size_t recs_blk = ((D + 1) / 2) * (size_t)(p->R[s] - 1);
+        const size_t recs_blk = (size_t)(p->R[s] - 1);
         const size_t nstride = N / (size_t)p->R[s];
         size_t bi;
+        /* t2cp call: Ls = D (legs), Gs unused (one digit), OLs, OGs = 1, count = D */
         for (bi = 0; bi < nb; bi++) {
             const double *blk = stg + 2 * bi * L;
             const double *tw = p->tf[s] + bi * recs_blk * 8;
             if (s < p->K - 1)
-                p->f[s](blk, 0, stg + 2 * bi * L, 0, tw, 0, D, 0, D, 0, D);
+                p->f[s](blk, 0, stg + 2 * bi * L, 0, tw, 0, D, 0, D, 1, D);
             else
-                p->f[s](blk, 0, zout + 2 * p->natbase[bi], 0, tw, 0, D, 0, nstride, 0, D);
+                p->f[s](blk, 0, zout + 2 * p->natbase[bi], 0, tw, 0, D, 0, nstride, 1, D);
         }
     }
 }

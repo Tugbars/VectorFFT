@@ -240,13 +240,23 @@ let emit
     failwith
       "codelet_cil: --cil-log3 applies to the T2 mid only (it is a sourcing policy for \
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
-  if kind = T2C && (turnst || turnst_gs || pretw)
+  if kind = T2C && (turnst || turnst_gs)
   then
     failwith
-      "codelet_cil: t2c takes no turned store (2D has no corner turn) and \
-       no pretw flag (t2c placement is STRUCTURAL: post at fwd, pre at bwd \
-       — the Hermitian-transpose stage). blocked and tangent are the \
-       raced body variants (fft2d_il_c2c_design.md 2a).";
+      "codelet_cil: t2c takes no turned store (2D has no corner turn); \
+       blocked and tangent are the raced body variants \
+       (fft2d_il_c2c_design.md 2a).";
+  (* t2c PRE-twiddle at fwd = "t2cp" (2026-09-04, the flat mixed-radix DIT
+     chain, docs/design/odd_n_cascade_geometry.md): the same per-digit
+     broadcast records applied BEFORE the forward butterfly — a stage whose
+     twiddle depends only on the block's slow digits (one digit per call).
+     bwd t2c is pre-twiddle already (the Hermitian transpose), so pretw on
+     the bwd side would emit the same body under a second name: refused. *)
+  if kind = T2C && pretw && dir = Bwd
+  then
+    failwith
+      "codelet_cil: --cil-pretw on t2c is fwd-only (the bwd stage is pre-twiddle \
+       by construction — a second name for the same body is not a kind)";
   let ctx =
     make_ctx
       ~tw_group:(kind = T2C)
@@ -277,7 +287,7 @@ let emit
   (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
      PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
   let pre_tw =
-    (kind = T2 && (dir = Fwd || ctx.tw_pre)) || (kind = T2C && dir = Bwd)
+    (kind = T2 && (dir = Fwd || ctx.tw_pre)) || (kind = T2C && (dir = Bwd || ctx.tw_pre))
   in
   (* T2C fwd is DIF: butterfly THEN stage twiddle W_L^{d*r}. T2C bwd is
      the HERMITIAN TRANSPOSE stage (the matched-roundtrip law — bwd
@@ -285,7 +295,7 @@ let emit
      derivation) applied PRE-butterfly; the driver runs the stages in
      REVERSE order. *)
   let post_tw =
-    (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && dir = Fwd)
+    (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && dir = Fwd && not ctx.tw_pre)
   in
   (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
      their symbolic address — the load edge prints FROM the DAG instead of
@@ -1081,7 +1091,7 @@ let emit
             radix
             (kind_name kind
              ^ (if blocked then "b" else "")
-             ^ (if ctx.tw_pre && dir = Bwd then "p" else "")
+             ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) then "p" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
              (* "ct" = dft_small FACTORED this odd composite instead of taking
