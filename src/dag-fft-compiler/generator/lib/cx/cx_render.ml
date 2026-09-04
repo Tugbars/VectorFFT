@@ -92,8 +92,17 @@ let emit_const_decls (isa : Isa.t) (tbl : consts) : string =
    other consumer remains as a dead SSA line — gcc DCEs it; asm is clean. *)
 (* M12a: rotfma lives in Cx_ir.ctx now. *)
 
+(* t2cs COLUMN-STRIDE mode (set by C2c_il.emit for the kind, reset for every
+   other emission): column k lives at k*Gs (in) / k*OGs (out) instead of k.
+   The narrow (VEX-128, single-column) path renders through addr_str as
+   usual; the wide path goes through render_load / render_store below,
+   which emit two 128-bit halves (columns k and k+1). *)
+let colstride = ref false
+
 let addr_str (a : caddr) : string =
   match a with
+  | AZinLeg l when !colstride -> Printf.sprintf "zin[2*((size_t)%d*Ls + (size_t)k*Gs)]" l
+  | AZoutLeg l when !colstride -> Printf.sprintf "zout[2*((size_t)%d*OLs + (size_t)k*OGs)]" l
   | AZinLeg l -> Printf.sprintf "zin[2*((size_t)%d*Ls + k)]" l
   | AZoutLeg l -> Printf.sprintf "zout[2*((size_t)%d*OLs + k)]" l
   | AZoutTurn (l, 0) -> Printf.sprintf "zout[2*((size_t)k*OLs + %d)]" l
@@ -119,8 +128,29 @@ let store128 = ref (Sys.getenv_opt "VFFT_CX_STORE128" = Some "1")
 
 (* A store node as a C statement (no trailing ';'). The value operand is the
  * def name of the sunk node — same convention as `render`'s operands. *)
+(* A leg LOAD as a C expression: the wide t2cs form gathers columns k and
+   k+1 (two blocks, Gs apart) as two 128-bit halves; every other case is
+   the plain wide load. *)
+let render_load (isa : Isa.t) (a : caddr) : string =
+  match a with
+  | AZinLeg l when !colstride && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_loadu2_m128d(&zin[2*((size_t)%d*Ls + ((size_t)k + 1)*Gs)], \
+       &zin[2*((size_t)%d*Ls + (size_t)k*Gs)])"
+      l
+      l
+  | _ -> Isa.loadu_pd isa (addr_str a)
+;;
+
 let render_store (isa : Isa.t) (a : caddr) (v : string) : string =
   match a with
+  | AZoutLeg l when !colstride && isa.Isa.vec_width = 4 ->
+    Printf.sprintf
+      "_mm256_storeu2_m128d(&zout[2*((size_t)%d*OLs + ((size_t)k + 1)*OGs)], \
+       &zout[2*((size_t)%d*OLs + (size_t)k*OGs)], %s)"
+      l
+      l
+      v
   | AZoutLeg _ when !store128 && isa.Isa.vec_width = 4 ->
     Printf.sprintf
       "_mm_storeu_pd(&%s, _mm256_castpd256_pd128(%s)); _mm_storeu_pd(&%s + 2, \
@@ -218,7 +248,7 @@ let render
        by the prologue (loaded for power-of-two legs, DERIVED otherwise), so
        the flat path emits byte-identically to before. *)
     let c, s =
-      if ctx.tw_log3 || ctx.tw_group
+      if ctx.tw_log3 || ctx.tw_group || ctx.tw_gen2
       then Printf.sprintf "_wc%d%s" leg msuf, Printf.sprintf "_ws%d%s" leg msuf
       else (
         let off = (leg - 1) * 2 * twv in
@@ -311,6 +341,76 @@ let emit_log3_prologue
        !nload
        (radix - 1)
        (radix - 1 - !nload))
+;;
+
+(* ── GEN2 twiddle prologue (t2csg) ───────────────────────────────────────
+ * The stream is generated, not loaded. Per column pair the W^1 record is
+ *   (_wc1, _ws1) = T1[pair] (x) T2            (one record cmul, 4 ops)
+ * with T1 the per-pair record at the cursor (tw_re: [c0,c0,c1,c1]
+ * [-s0,+s0,-s1,+s1] over the pair's two columns) and T2 the per-call
+ * broadcast record hoisted from tw_im into _wgc/_wgs. Every higher leg is
+ * derived from W^1 by the PowW1 plan: W^(2m) = (W^m)^2, W^j = W^p . W^(j-p),
+ * p the highest pow2 <= j — record cmuls, folded format preserved. *)
+let gen2_plan (radix : int) : (int * (int * int)) list =
+  let is_pow2 x = x > 0 && x land (x - 1) = 0 in
+  let highest_pow2_le j =
+    let rec go p = if p * 2 > j then p else go (p * 2) in
+    go 1
+  in
+  let out = ref [] in
+  for j = 2 to radix - 1 do
+    if is_pow2 j
+    then out := (j, (j / 2, j / 2)) :: !out
+    else (
+      let p = highest_pow2_le j in
+      out := (j, (p, j - p)) :: !out)
+  done;
+  List.rev !out
+;;
+
+let emit_gen2_prologue
+      ?(tw_vw = 0)
+      ?(msuf = "")
+      (buf : Buffer.t)
+      (isa : Isa.t)
+      (radix : int)
+  : unit
+  =
+  let vw = if tw_vw = 0 then isa.Isa.vec_width else tw_vw in
+  let nm j = Printf.sprintf "_wc%d%s" j msuf, Printf.sprintf "_ws%d%s" j msuf in
+  let c1, s1 = nm 1 in
+  let tc = Printf.sprintf "_t1c%s" msuf
+  and ts = Printf.sprintf "_t1s%s" msuf
+  and gc = Printf.sprintf "_wgc%s" msuf
+  and gs = Printf.sprintf "_wgs%s" msuf in
+  Buffer.add_string
+    buf
+    (Printf.sprintf
+       "        %s
+        %s
+        %s
+        %s
+"
+       (Isa.const_decl isa tc (Isa.loadu_pd isa (addr_str (ATw 0))))
+       (Isa.const_decl isa ts (Isa.loadu_pd isa (addr_str (ATw vw))))
+       (Isa.const_decl isa c1 (Isa.fnmadd_pd isa ts gs (Isa.mul_pd isa tc gc)))
+       (Isa.const_decl isa s1 (Isa.fmadd_pd isa tc gs (Isa.mul_pd isa ts gc))));
+  List.iter
+    (fun (j, (p, q)) ->
+       let cj, sj = nm j and cp, sp = nm p and cq, sq = nm q in
+       Buffer.add_string
+         buf
+         (Printf.sprintf
+            "        %s
+        %s
+"
+            (Isa.const_decl isa cj (Isa.fnmadd_pd isa sp sq (Isa.mul_pd isa cp cq)))
+            (Isa.const_decl isa sj (Isa.fmadd_pd isa cp sq (Isa.mul_pd isa sp cq)))))
+    (gen2_plan radix);
+  Buffer.add_string
+    buf
+    (Printf.sprintf "        /* gen2: W^1 = T1[pair] x T2, %d legs derived */
+" (radix - 2))
 ;;
 
 (* ── GROUP twiddle prologue (t2c) ────────────────────────────────────────

@@ -117,6 +117,19 @@ type ctx =
        broadcast strategy, il_native_design.md §6c). Same naming as log3,
        no derivation; the two are mutually exclusive by construction. *)
   ; tw_pre : bool
+  ; tw_gen2 : bool
+    (* gen2 (2026-09-04): the twiddle stream is GENERATED — the W^1 pair
+       record is the product of a per-pair T1 record (tw_re, cursor) and a
+       per-call T2 broadcast record (tw_im, hoisted), and every higher leg
+       is derived in-kernel by the PowW1 squaring tree on records. No
+       N-sized table: the flat chain's tail stages read ~2*sqrt(N). *)
+  ; colstride : bool
+    (* t2cs (2026-09-04): the COLUMN-STRIDE form of t2 — a "column" is one
+       BLOCK of the flat mixed-radix chain's short-run tail (D < vw): lane j
+       of a vector comes from block k+j, so every leg load/store is two
+       128-bit halves at stride Gs (in) / OGs (out); per-pair twiddle
+       records (adjacent blocks carry different twiddles). The two-group
+       "arrange halves" kernel MKL's generic-N engine runs its tail on. *)
   ; st_turn : bool
   ; st_turn_gs : bool
   ; mutable mono_spill_slots : int
@@ -126,10 +139,12 @@ type ctx =
   ; rotfma : bool
   }
 
-let make_ctx ~tw_group ~tw_log3 ~tw_pre ~st_turn ~st_turn_gs ~tangent =
+let make_ctx ~tw_group ~tw_log3 ~tw_pre ~tw_gen2 ~colstride ~st_turn ~st_turn_gs ~tangent =
   { tw_log3
   ; tw_group
   ; tw_pre
+  ; tw_gen2
+  ; colstride
   ; st_turn
   ; st_turn_gs
   ; mono_spill_slots = 0
