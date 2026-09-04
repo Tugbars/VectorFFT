@@ -205,6 +205,23 @@ static inline vfft_il2p_fn vfft_il2p_t2tg_bwd_fn(int R)
     }
 }
 
+/* t2cp — t2c with the PRE-twiddle placement at fwd (2026-09-04): the flat
+ * mixed-radix DIT chain's stage kind (il_flatdit.h). Per-DIGIT broadcast
+ * records applied before the forward butterfly; one digit per call (the
+ * block's slow-digit twiddle). fwd only: the bwd t2c is that stage's
+ * Hermitian transpose already. */
+static inline vfft_il2p_fn vfft_il2p_t2cp_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CP_FWD_RADICES
+#define C(R) case R: return radix##R##_z_t2cp_fwd_avx2;
+    VFFT_IL_T2CP_FWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* Plain n1 (natural in/out, TWIDDLE-FREE), radix R1 — the second stage of the
  * F-DIAG backward decomposition below. Distinct from leaf_fn (n1t, which fuses
  * the corner-turn into its stores) and from mid_fn (t2, which carries the

@@ -1735,6 +1735,39 @@ let zil_pure_cells : (string * string list) list =
     , [ "64"; "--cil-t2c"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix64_z_t2c_bwd_avx2.c"
     , [ "64"; "--cil-t2c"; "--cil-bwd"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* t2cp (2026-09-04): t2c with the PRE-twiddle placement at fwd — the
+       flat mixed-radix DIT chain's stage kind (per-block broadcast records,
+       one digit per call). fwd only; the bwd t2c is pre-twiddle already. *)
+  ; ( "radix3_z_t2cp_avx2.c"
+    , [ "3"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_t2cp_avx2.c"
+    , [ "5"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_t2cp_avx2.c"
+    , [ "7"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_t2cp_avx2.c"
+    , [ "9"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_t2cp_avx2.c"
+    , [ "11"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_t2cp_avx2.c"
+    , [ "13"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_t2cp_avx2.c"
+    , [ "15"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_t2cp_avx2.c"
+    , [ "17"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_t2cp_avx2.c"
+    , [ "19"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2cp_avx2.c"
+    , [ "21"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2cp_avx2.c"
+    , [ "25"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2cp_avx2.c"
+    , [ "27"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_t2cp_avx2.c"
+    , [ "4"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2cp_avx2.c"
+    , [ "8"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2cp_avx2.c"
+    , [ "16"; "--cil-t2cp"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2cb48_avx2.c"
     , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2cb48_bwd_avx2.c"

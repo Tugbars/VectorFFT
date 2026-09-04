@@ -523,6 +523,14 @@ let run (argv : string array) : unit =
     then cil_kind := "n1c"
     else if arg = "--cil-t2c"
     then cil_kind := "t2c"
+    else if arg = "--cil-t2cp"
+    then (
+      (* the DELIBERATE, SCOPED re-enable of pre-twiddle placement: t2c at
+         fwd only (t2cp, 2026-09-04 — the flat mixed-radix DIT chain's stage
+         kind, docs/design/odd_n_cascade_geometry.md). --cil-pretw itself
+         stays retired: the t2p bwd twin is not what this is. *)
+      cil_kind := "t2c";
+      cil_pretw := true)
     else if arg = "--cil-n1t"
     then cil_kind := "n1t"
     else if arg = "--cil-t2"
