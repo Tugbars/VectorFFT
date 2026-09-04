@@ -522,13 +522,17 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
 static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
                                          int N2, int *Rs, int *nst,
                                          int *wl, int *tf, int *ro,
-                                         int *cmt, int *cmtt, int *blu)
+                                         int *cmt, int *cmtt, int *blu,
+                                         int ord)
 {
+    /* ord (2026-09-04): VW2_ORD_SCR = the scrambled-comb serving (the
+     * historical row); VW2_ORD_NAT = the M4-lite natural cell — its chain
+     * is raced under the natural pass and MUST NOT share the scr row. */
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
     int m = 0;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR, VW2_LAY_IL);
+    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
@@ -559,7 +563,8 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
 static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
                                        const int *Rs, int nst,
                                        int wl, int tf, int ro,
-                                       int cmt, int cmtt, int blu, double ns)
+                                       int cmt, int cmtt, int blu, double ns,
+                                       int ord)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -567,7 +572,7 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
     char b[64];
     int i, off = 0;
     memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_C2C, 2, N1, N2, 0, VW2_ORD_SCR,
+    vw2__2d_rec_key(r, VW2_T_C2C, 2, N1, N2, 0, ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
     for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
         off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
@@ -643,13 +648,13 @@ static inline const char *vw2__rl_tok(int is_c2r, int which)
 static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
                                    int is_c2r,
                                    int *Rs, int *nst, int *rw, int *wl,
-                                   int *cmt, int *cmtt, int *blu)
+                                   int *cmt, int *cmtt, int *blu, int ord)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
     int m = 0;
-    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_SCR, VW2_LAY_IL);
+    vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
     cv = vw2_rec_get(r, "chain");
@@ -682,7 +687,8 @@ static inline int vw2_2d_rl_lookup(const vw2_store_t *s, int N1, int N2,
 static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
                                  int is_c2r,
                                  const int *Rs, int nst, int rw, int wl,
-                                 int cmt, int cmtt, int blu, double ns)
+                                 int cmt, int cmtt, int blu, double ns,
+                                 int ord)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
@@ -698,7 +704,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
     {
         vw2_key_t k;
         const vw2_rec_t *have;
-        vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_SCR, VW2_LAY_IL);
+        vw2__2d_key(&k, VW2_T_R2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
         have = vw2_lookup(st, &k);
         if (have && vw2_rec_get(have, "chain") &&
             !strcmp(vw2_rec_get(have, "chain"), b)) {
@@ -718,7 +724,7 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
         }
     }
     memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_R2C, 2, N1, N2, 0, VW2_ORD_SCR,
+    vw2__2d_rec_key(r, VW2_T_R2C, 2, N1, N2, 0, ord,
                     /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
@@ -778,13 +784,14 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
  * the existing row (vw2_update_field) after the chain is banked; a row
  * without a chain carries no forms. */
 static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
-                                      int N2, char *out, size_t osz)
+                                      int N2, char *out, size_t osz,
+                                      int ord)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *v;
     vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
-                VW2_ORD_SCR, VW2_LAY_IL);
+                ord, VW2_LAY_IL);
     r = vw2_lookup(s, &k);
     if (!r || !vw2_rec_get(r, "chain")) return 0;
     v = vw2_rec_get(r, "forms");
@@ -793,11 +800,11 @@ static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
     return 1;
 }
 static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
-                                    int N2, const char *forms)
+                                    int N2, const char *forms, int ord)
 {
     vw2_key_t k;
     vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
-                VW2_ORD_SCR, VW2_LAY_IL);
+                ord, VW2_LAY_IL);
     return vw2_update_field(s, &k, "forms", forms) == VW2_OK;
 }
 

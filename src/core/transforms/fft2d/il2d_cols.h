@@ -210,6 +210,33 @@ static void _il2d_col_stages(const double *src, double *dst, int nrows,
  * only. Columns are independent across EVERY stage (the strip axis the
  * single-thread walk already uses), so this is a pure loop restriction —
  * bit-identical to the full pass, and the unit of the MT strip arm. */
+/* the NATURAL leaf over a BLOCK RANGE [blo, bhi) (natural x MT,
+ * 2026-09-04): fwd SCATTERS block b's R rows from the pre-leaf scratch
+ * to natural rows perm[b*R] + r*(N1/R); bwd GATHERS them back into the
+ * scratch's comb. Blocks own disjoint natural row sets (perm is a
+ * bijection), so any block partition is a pure map => MT == ST bitwise.
+ * fwd: from = scratch, to = dst plane; bwd: from = natural src, to =
+ * scratch. */
+static void _il2d_nat_leaf_range(const double *from, double *to, int N1,
+                                 size_t rn, int Rl, vfft_il2p_fn fn,
+                                 const int *perm, size_t blo, size_t bhi,
+                                 int reverse)
+{
+    const size_t nstride = (size_t)(N1 / Rl) * rn;
+    size_t b;
+    for (b = blo; b < bhi; b++)
+    {
+        const size_t coff = 2 * b * (size_t)Rl * rn;
+        const size_t noff = 2 * (size_t)perm[b * (size_t)Rl] * rn;
+        if (!reverse)
+            fn(from + coff, NULL, to + noff, NULL, NULL, NULL, rn, 0,
+               nstride, 0, rn);
+        else
+            fn(from + noff, NULL, to + coff, NULL, NULL, NULL, nstride, 0,
+               rn, 0, rn);
+    }
+}
+
 static void _il2d_col_pass_range(const double *src, double *dst, int N1,
                                  size_t rn, size_t k_lo, size_t k_hi,
                                  int nst, const int *Rst, const int *Lst,
