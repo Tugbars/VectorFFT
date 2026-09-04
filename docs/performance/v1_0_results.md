@@ -998,6 +998,41 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
 
+### 1D ODD c2c — the three-stage chain made odd-legal, raced (2026-09-04)
+
+An all-odd N (1215 = 3⁵·5, 4095 = 3²·5·7·13, 2187, 3645, 6561) has no
+two-factor split with both factors within the emitted kernel range, and
+the three-stage chain refused odd factors — so those cells were served
+by Bluestein at the next power of two, unmeasured. The chain's twiddle
+tables are now laid per block with a ceiling pair count (the kernels'
+odd-count tails do the rest), odd leaves joined the planner's chain
+pool, and the K=1 plan race is admitted above 2048 for any N without a
+factor of 4 (no cascade route exists there). Every cell below raced
+pair × forms against chain × forms and banked its winner.
+
+vs **MKL DFTI complex** (1D, `mkl_set_num_threads(1)`, same run,
+alternated min-of-15, spectra cross-checked bin-for-bin):
+
+```
+ N      before (route)        now (banked chain)      vs MKL
+─────────────────────────────────────────────────────────────
+ 255    0.4 µs  pair 15·17    0.4 µs  pair            2.00×
+ 405    —                     0.5 µs  pair 15·27      1.00×
+ 675    —                     0.9 µs  pair 27·25      1.11×
+ 945    —                     1.3 µs  chain 21·5·9    1.15×
+ 1050   —                     1.8 µs  chain 10·15·7   1.06×
+ 1215   15.1 µs Bluestein     3.7 µs  chain 9·15·9    0.81×
+ 2187   Bluestein             5.3 µs  chain 9·27·9    0.85×
+ 3645   Bluestein             9.8 µs  chain 9·15·27   0.79×
+ 4095   26.9 µs Bluestein     6.8 µs  chain 21·13·15  1.24×
+ 6561   Bluestein            18.1 µs  chain (27 leaf) 0.87×
+─────────────────────────────────────────────────────────────
+```
+
+The consumers inherit it through the front door: the real bridge's
+c2r at 1215 moved from 0.12× to 0.46× of MKL and both real directions
+at 4095 from ~0.3× to ~0.8×, with no change to the real tier itself.
+
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
 
 The 1D real transforms now serve **every odd N in both directions and
