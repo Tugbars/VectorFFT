@@ -1384,13 +1384,23 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
          * such lengths) ran an unmeasured plan. vfft_il3p_create validates
          * (kernels, parity, counts); an illegal split is refused at build. */
         {
-            static const int LEAF3[] = { 32, 16, 8, 4, 12, 10, 6 };
+            /* the chain3 LEAF pool = the pair's whole radix pool (odd
+             * leaves included, 2026-09-04): vfft_il3p_create is odd-legal
+             * now (per-block ceiling tables + the kernels' odd-count
+             * tails), so an all-odd N (1215 = 15x9x9, 4095 = 13x15x21)
+             * enumerates chains instead of falling to Bluestein. The
+             * create still validates every split (kernels, counts). */
+            static const int LEAF3[] = {
+#define C(R) R,
+                VFFT_IL_N1T_PAIR_RADICES(C)
+#undef C
+            };
             for (int li = 0; li < (int)(sizeof LEAF3 / sizeof LEAF3[0]); li++)
             {
                 const int R2 = LEAF3[li];
                 if (N % R2) continue;
                 const int R1 = N / R2;
-                if (R1 < 4 || (R1 & 1)) continue;
+                if (R1 < 9) continue;   /* A, B >= 3 each */
                 {
                     int o = R1;
                     while ((o & 1) == 0) o >>= 1;
