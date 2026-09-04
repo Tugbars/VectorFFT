@@ -105,10 +105,21 @@ VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * tree w^2, w^3. NO stf2 twin. */
 #undef VFFT_ZT_DECL
 
+typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
+                                double *, const double *, const double *,
+                                unsigned long long, unsigned long long,
+                                unsigned long long, unsigned long long,
+                                unsigned long long);
+
 typedef struct {
     int N, nf;
     int chain[VFFT_ZSPLIT_MAX_NF];
     long D[VFFT_ZSPLIT_MAX_NF], G[VFFT_ZSPLIT_MAX_NF];
+    /* mid kernels resolved ONCE at create: chain[] is plan-invariant, so
+     * re-running the radix switch on every stage of every execute was
+     * hot-path work for a constant answer. */
+    _vfft_zt_msg_fn msg_f[VFFT_ZSPLIT_MAX_NF];
+    _vfft_zt_msg_fn msg_b[VFFT_ZSPLIT_MAX_NF];
     double *twz[VFFT_ZSPLIT_MAX_NF];   /* mid tables, lane-varying, fwd     */
     double *twzb[VFFT_ZSPLIT_MAX_NF];  /* mid tables, bwd (sin negated)     */
     double *tzq, *tzqb;                /* terminator per-(k',lane) w^1      */
@@ -563,12 +574,6 @@ static inline void _vfft_zt_apply_env(vfft_zturn2_plan_t *p)
  * vfft.c's wisdom-hit replay) delegate legality to this create, the same
  * "the validator is the law" discipline dp_planner_il.h applies to
  * vfft_zsplit_create. NULL == the chain is outside the ZTURN-S scope. */
-typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
-                                double *, const double *, const double *,
-                                unsigned long long, unsigned long long,
-                                unsigned long long, unsigned long long,
-                                unsigned long long);
-
 /* mid kernel by radix — {4,8} the calibrated pair, {3,5,7,9,15} the odd
  * mids (2026-08-27). One picker for the untiled loops, the tiled nests
  * and the MT digit split; an unknown radix returns NULL and the create
@@ -614,6 +619,10 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
     if (!p) return NULL;
     p->N = N; p->nf = nf;
     for (int s = 0; s < nf; s++) p->chain[s] = chain[s];
+    for (int s = 0; s < nf; s++) {
+        p->msg_f[s] = _vfft_zt_msg_pick(chain[s], 1);
+        p->msg_b[s] = _vfft_zt_msg_pick(chain[s], 0);
+    }
     p->D[nf - 1] = 1;
     for (int i = nf - 2; i >= 0; i--) p->D[i] = p->D[i + 1] * chain[i + 1];
     p->G[0] = 1;
@@ -706,7 +715,7 @@ static inline void _vfft_zt_msg(const vfft_zturn2_plan_t *p, int s,
                                 double *base, const double *tw, long Gs,
                                 int fwd)
 {
-    const _vfft_zt_msg_fn f = _vfft_zt_msg_pick(p->chain[s], fwd);
+    const _vfft_zt_msg_fn f = fwd ? p->msg_f[s] : p->msg_b[s];
     f(base, 0, base, 0, tw, 0,
       (unsigned long long)p->D[s], (unsigned long long)Gs,
       0, 0, (unsigned long long)p->D[s]);
@@ -814,11 +823,7 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
     if (p->tiled == 0) {
         for (int s = 1; s <= p->nf - 2; s++) {
             /* PRODUCTION msg kernels BYTE-FOR-BYTE, production arg tuple */
-            void (*f)(const double *, const double *, double *, double *,
-                      const double *, const double *, unsigned long long,
-                      unsigned long long, unsigned long long,
-                      unsigned long long, unsigned long long) =
-                _vfft_zt_msg_pick(p->chain[s], 1);
+            const _vfft_zt_msg_fn f = p->msg_f[s];
             f(p->plane, 0, p->plane, 0, p->twz[s], 0,
               (unsigned long long)p->D[s], (unsigned long long)p->G[s],
               0, 0, (unsigned long long)p->D[s]);
@@ -930,11 +935,7 @@ static inline void vfft_zturn2_execute_bwd(const vfft_zturn2_plan_t *p,
     }
     if (p->tiled == 0) {
         for (int s = p->nf - 2; s >= 1; s--) {
-            void (*f)(const double *, const double *, double *, double *,
-                      const double *, const double *, unsigned long long,
-                      unsigned long long, unsigned long long,
-                      unsigned long long, unsigned long long) =
-                _vfft_zt_msg_pick(p->chain[s], 0);
+            const _vfft_zt_msg_fn f = p->msg_b[s];
             f(p->plane, 0, p->plane, 0, p->twzb[s], 0,
               (unsigned long long)p->D[s], (unsigned long long)p->G[s],
               0, 0, (unsigned long long)p->D[s]);

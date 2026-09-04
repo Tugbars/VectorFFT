@@ -149,18 +149,36 @@ int main(int argc, char **argv)
          * our side to get an elementwise compare charges us a permutation MKL
          * never pays.  stfn is 88 insns vs stf's 74 (same arith/mem, +14 of
          * pure permute).  Time a SCRAMBLED plan to price it. */
-        double S[64];
+        /* SAME-RUN A/B of the dispatch change: cached msg_f[] vs the old
+         * per-stage radix switch, alternated, scrambled plan on both so the
+         * only difference is the dispatch. */
+        double S[64], Q[64];
         vfft_zturn2_plan_t *ps =
             vfft_zturn2_create_chain(N, cases[si].ch, cases[si].nf);
-        double sm = 0.0;
+        double sm = 0.0, qm = 0.0;
         if (ps) {
             for (int r = 0; r < R; r++) {
-                Sleep((DWORD)PACE);
-                double t0 = qpc();
-                for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd(ps, zin, zc);
-                S[r] = (qpc() - t0) * 1e6 / reps;
+                if (r & 1) {
+                    Sleep((DWORD)PACE);
+                    double t0 = qpc();
+                    for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd_nocache(ps, zin, zc);
+                    Q[r] = (qpc() - t0) * 1e6 / reps;
+                    Sleep((DWORD)PACE);
+                    t0 = qpc();
+                    for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd(ps, zin, zc);
+                    S[r] = (qpc() - t0) * 1e6 / reps;
+                } else {
+                    Sleep((DWORD)PACE);
+                    double t0 = qpc();
+                    for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd(ps, zin, zc);
+                    S[r] = (qpc() - t0) * 1e6 / reps;
+                    Sleep((DWORD)PACE);
+                    t0 = qpc();
+                    for (int q = 0; q < reps; q++) vfft_zturn2_execute_fwd_nocache(ps, zin, zc);
+                    Q[r] = (qpc() - t0) * 1e6 / reps;
+                }
             }
-            sm = med(S, R);
+            sm = med(S, R); qm = med(Q, R);
             vfft_zturn2_destroy(ps);
         }
 
@@ -181,10 +199,10 @@ int main(int argc, char **argv)
         }
 
         double am = med(A, R), bm = med(B, R);
-        printf("%-6d %-14s %8.0f %8.0f %7.3fx %3d/%-2d | scr %8.0f (natord +%4.1f%%) "
-               "-> scr/MKL %6.3fx | %.1e\n",
-               N, chain, am, bm, bm / am, wins, R,
-               sm, sm > 0 ? 100.0 * (am - sm) / sm : 0.0,
+        printf("%-6d %-12s cached %8.0f  switch %8.0f  cache %+6.2f%%"
+               "  | scr/MKL %6.3fx | %.1e\n",
+               N, chain, sm, qm,
+               (qm > 0 && sm > 0) ? 100.0 * (qm - sm) / qm : 0.0,
                sm > 0 ? bm / sm : 0.0, err);
         fflush(stdout);
         (void)spr;
