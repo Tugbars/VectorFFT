@@ -1450,11 +1450,14 @@ static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
     }
 }
 
-static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
+/* The natural-output engines' candidates: mono forms, pairs x forms,
+ * chain3 x forms and (with_flat) the natural flat DIT. The NATURAL pool is
+ * exactly this; the SCRAMBLED pool takes the same engines — natural output
+ * is a legal answer to a scrambled request — beside the flat DIT's
+ * scrambled class (which stands in for the natural flat there). */
+static void _il_dp_enumerate_natural_engines(int N, vfft_il_cand_sink_t *s, int with_flat)
 {
     vfft_il_cand_t c;
-
-    if (ord == VFFT_IL_ORD_NATURAL)
     {
         /* MONO forms (2026-09-04): every solo kernel the registry has enters
          * the pool as its own candidate — form 0 = the solo n1 kind at each
@@ -1649,8 +1652,16 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
          * an N with an odd factor, below 2048 or without a factor of 4 above
          * it (N%4==0 above 2048 stays the cascade's). The pairs, the chain
          * and the flat chains then decide by measurement. */
-        if ((N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
+        if (with_flat && (N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
             _il_dp_enumerate_flat(N, s);
+    }
+}
+
+static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
+{
+    if (ord == VFFT_IL_ORD_NATURAL)
+    {
+        _il_dp_enumerate_natural_engines(N, s, 1);
         return;
     }
 
@@ -1673,11 +1684,18 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * Raced, then discarded, on every MEASURE create. Sharing the runtime's
      * gate keeps the boundary raceable via VFFT_NAT_ZCASC_MINN while costing
      * nothing by default. */
-    /* the flat DIT's SCRAMBLED class (2026-09-05): the same cells the
-     * natural pool offers it — block-order output, transposed backward;
-     * banked on its own ord=scr IL row. The cascade's own gate follows. */
+    /* the K=1 IL tier's SCRAMBLED cell (2026-09-05): every engine that
+     * legally answers a scrambled request competes here — the natural-output
+     * engines (identity is a legal scrambled permutation) and the flat
+     * DIT's SCRAMBLED class (block-order output, transposed backward) — and
+     * the winner banks on the cell's own ord=scr IL row. The natural flat
+     * is left out: its scrambled class is the same plan minus the scatter.
+     * The cascade's own gate follows. */
     if ((N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
+    {
+        _il_dp_enumerate_natural_engines(N, s, 0);
         _il_dp_enumerate_flat_ord(N, s, 1);
+    }
     if (N < _vfft_zcasc_min_n()) return;
     {
         int chain[VFFT_ZSPLIT_MAX_NF];
@@ -2034,19 +2052,34 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                         N, why ? why : "?");
         }
     }
-    if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_FLAT)
-    {   /* the flat DIT's scrambled class: its own kind-3 IL row keyed ord=scr */
+    if (scr && scr->cost_ns < 1e17 && scr->route != VFFT_K1_IL_CASCADE &&
+        scr->route > VFFT_K1_IL_NONE)
+    {   /* the K=1 IL tier's SCRAMBLED cell: its own kind-3 IL row keyed
+         * ord=scr, the winner's full recipe (a natural-output engine, or
+         * the flat DIT's scrambled class) — never merged with ord=nat */
         vfft_oop_wisdom_entry_t e;
         memset(&e, 0, sizeof e);
         e.N = N;
         e.K = 1;
         e.kind = VFFT_OOP_KIND_BAILEY2V;
         e.k1_sp_route = -1;
-        e.k1_il_route = VFFT_K1_IL_FLAT;
+        e.k1_il_route = scr->route;
+        e.il_R1 = scr->R1;
+        e.il_R2 = scr->R2;
+        e.il_kv = scr->il_kv;
         e.il_kv_raced = 1;
-        memcpy(e.il_fl, scr->il_fl, sizeof e.il_fl);
-        e.il_fl_n = scr->il_fl_n;
-        memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
+        if (scr->route == VFFT_K1_IL_CHAIN3)
+        {
+            e.il_c3[0] = scr->R2;
+            e.il_c3[1] = scr->c3_A;
+            e.il_c3[2] = scr->c3_B;
+        }
+        if (scr->route == VFFT_K1_IL_FLAT)
+        {
+            memcpy(e.il_fl, scr->il_fl, sizeof e.il_fl);
+            e.il_fl_n = scr->il_fl_n;
+            memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
+        }
         e.ord_scr = 1;
         e.ns = scr->cost_ns;
         if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)

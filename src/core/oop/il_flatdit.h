@@ -526,6 +526,29 @@ static inline int vfft_ilfd_forms_str(const vfft_ilfd_plan_t *p, char *buf, size
     return 1;
 }
 
+static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms);
+/* Build the SCRAMBLED class from a banked verdict (chain + forms token):
+ * scr = 1 before the forms, a natural-base-order letter ('o') on the last
+ * stage becoming the plain group loop ('n'). NULL when the chain has no
+ * transposed backward or the token refuses. */
+static inline vfft_ilfd_plan_t *vfft_ilfd_create_scr_of(int N, const int *R, int K,
+                                                        const char *forms)
+{
+    vfft_ilfd_plan_t *p = vfft_ilfd_create_chain(N, R, K);
+    char flf[32];
+    size_t i;
+    if (!p) return 0;
+    p->scr = 1;
+    if (!p->bwd_ok || !p->scr_ok) { vfft_ilfd_destroy(p); return 0; }
+    if (forms && *forms) {
+        strncpy(flf, forms, sizeof flf - 1);
+        flf[sizeof flf - 1] = 0;
+        for (i = 0; flf[i]; i++) if (flf[i] == 'o') flf[i] = 'n';
+        if (!vfft_ilfd_apply_forms(p, flf)) { vfft_ilfd_destroy(p); return 0; }
+    }
+    return p;
+}
+
 /* Apply a forms token — the validator is the law: a letter the stage cannot
  * serve, a wrong length or an unknown letter refuses the WHOLE token (0) and
  * leaves the plan's defaults untouched. */

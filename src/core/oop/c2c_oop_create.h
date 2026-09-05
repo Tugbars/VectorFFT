@@ -140,10 +140,19 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
         {
             int spr = VFFT_K1_SP_2PB, ilr = VFFT_K1_IL_2P;
             int sR1 = 0, sR2 = 0, iR1 = 0, iR2 = 0;
-            vfft_oop_wisdom_entry_t keb;
+            vfft_oop_wisdom_entry_t keb, kib;
             const vfft_oop_wisdom_entry_t *ke =
                 W->vw2_off_oop ? vfft_oop_wisdom_lookup_k1(&W->oop, N)
                                : (vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL);
+            /* the IL axis reads the request's ORDER CELL (2026-09-05): an
+             * explicit SCRAMBLED request takes the ord=scr row — the
+             * scrambled pool's own verdict (a natural-output engine, or the
+             * flat DIT's scrambled class) — DEFAULT and NATURAL the ord=nat
+             * row (ke). Two cells, never compared. The split axis keeps ke. */
+            const int scr_req = (cfg->order == VFFT_ORDER_SCRAMBLED &&
+                                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && !W->vw2_off_oop);
+            const vfft_oop_wisdom_entry_t *ki =
+                scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
             /* Per-layout wisdom (v1.2, 2026-08-24): each axis is taken
              * from the store INDEPENDENTLY. A cell with only an IL verdict
              * (k1_sp_route < 0 — e.g. non-pow2 N, where split cannot
@@ -158,10 +167,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * replay took the planner's pair WITH forms: different bits). */
             if (cfg->layout == VFFT_LAYOUT_INTERLEAVED && (N < 2048 || (N & 3)) &&
                 !W->vw2_off_oop &&   /* odd N >= 2048: no cascade route (2026-09-04) */
-                (cfg->recalibrate || !ke || !ke->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
+                (cfg->recalibrate || !ki || !ki->il_kv_raced))   /* a pair-only row (forms unraced) plans too */
             {
                 if (_k1_il_plan_race(W, cfg, N) > 0)
+                {
                     ke = vw2_oop_lookup_k1(&W->vw2, N, &keb) ? &keb : NULL;
+                    ki = scr_req ? (vw2_oop_lookup_k1_scr(&W->vw2, N, &kib) ? &kib : NULL) : ke;
+                }
             }
             const int sp_banked = (ke && ke->k1_sp_route >= 0);
             /* il_banked mirrors sp_banked (review fix): k1_il_route = -1
@@ -169,7 +181,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * heuristic, exactly as an unbanked cell would. IL_NONE (0) is
              * a VERDICT ("raced: no IL route available", the B2.1 meaning)
              * and is consumed as one. */
-            const int il_banked = (ke && ke->k1_il_route >= 0);
+            const int il_banked = (ki && ki->k1_il_route >= 0);
             if (sp_banked)
             {
                 spr = ke->k1_sp_route;
@@ -178,26 +190,9 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             }
             if (il_banked)
             {
-                ilr = ke->k1_il_route;
-                iR1 = ke->il_R1;
-                iR2 = ke->il_R2;
-            }
-            /* SCRAMBLED order (2026-09-05): the flat DIT's scrambled class —
-             * block-order output, the transposed backward — has its own
-             * ord=scr IL row (chain + forms raced under the scrambled
-             * objective). An EXPLICIT SCRAMBLED request takes it when it is
-             * the faster of the two banked verdicts; DEFAULT and NATURAL keep
-             * the natural engines. */
-            vfft_oop_wisdom_entry_t kse;
-            int use_scr = 0;
-            if (cfg->order == VFFT_ORDER_SCRAMBLED && cfg->layout == VFFT_LAYOUT_INTERLEAVED &&
-                !W->vw2_off_oop && vw2_oop_lookup_k1_scr(&W->vw2, N, &kse) &&
-                kse.k1_il_route == VFFT_K1_IL_FLAT && kse.il_fl_n >= 2 &&
-                (!ke || ke->k1_il_route <= VFFT_K1_IL_NONE || !(ke->ns > 0.0) ||
-                 !(kse.ns > 0.0) || kse.ns < ke->ns))
-            {
-                use_scr = 1;
-                ilr = VFFT_K1_IL_FLAT;
+                ilr = ki->k1_il_route;
+                iR1 = ki->il_R1;
+                iR2 = ki->il_R2;
             }
             if (!sp_banked)
             {
@@ -348,7 +343,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                      * pair axis was skipped (it survived unbraced only because
                      * it null-checks — a latent trap, not a working shortcut) */
                     il2p = vfft_il2p_create(N, iR1, iR2);
-                    _k1_il2p_apply_kv(il2p, ke, &W->vw2, N);   /* banked variant verdict */
+                    _k1_il2p_apply_kv(il2p, ki, &W->vw2, N);   /* banked variant verdict */
                 }
                 ilr = il2p ? VFFT_K1_IL_2P_PURE : VFFT_K1_IL_NONE;
             }
@@ -370,15 +365,15 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 /* the BANKED chain first (the planner races every legal
                  * 3-stage chain since 2026-09-02 and banks il_chain=R2.A.B);
                  * the legal default only for an uncalibrated cell */
-                if (ke && ke->k1_il_route == VFFT_K1_IL_CHAIN3 && ke->il_c3[0])
+                if (ki && ki->k1_il_route == VFFT_K1_IL_CHAIN3 && ki->il_c3[0])
                 {
-                    il3p = vfft_il3p_create(N, ke->il_c3[0], ke->il_c3[1],
-                                            ke->il_c3[2]);
-                    _k1_il3p_apply_kv(il3p, ke, &W->vw2, N);   /* banked forms > default */
+                    il3p = vfft_il3p_create(N, ki->il_c3[0], ki->il_c3[1],
+                                            ki->il_c3[2]);
+                    _k1_il3p_apply_kv(il3p, ki, &W->vw2, N);   /* banked forms > default */
                     if (il3p && getenv("VFFT_NAT_LOG"))
                         fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d "
-                                        "src=wisdom (oop)\n", N, ke->il_c3[0],
-                                ke->il_c3[1], ke->il_c3[2]);
+                                        "src=wisdom (oop)\n", N, ki->il_c3[0],
+                                ki->il_c3[1], ki->il_c3[2]);
                 }
                 if (!il3p && vfft_il3p_default_chain(N, &cR2, &cA, &cB))
                     il3p = vfft_il3p_create(N, cR2, cA, cB);
@@ -389,25 +384,26 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * per-stage forms; there is NO default build here — the K=1 plan
              * race above is the only source of a flat plan (never a rule). */
             vfft_ilfd_plan_t *ilfd = NULL;
+            if (ilr == VFFT_K1_IL_FLAT && !il2p && !il3p && !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_fl_n >= 2)
             {
-                const vfft_oop_wisdom_entry_t *kf = use_scr ? &kse : ke;
-                if (ilr == VFFT_K1_IL_FLAT && !il2p && !il3p && !getenv("VFFT_NO_IL2P") &&
-                    cfg->layout == VFFT_LAYOUT_INTERLEAVED && kf && kf->il_fl_n >= 2)
+                if (scr_req)
+                    ilfd = vfft_ilfd_create_scr_of(N, ki->il_fl, ki->il_fl_n, ki->il_flf);
+                else
                 {
-                    ilfd = vfft_ilfd_create_chain(N, kf->il_fl, kf->il_fl_n);
-                    if (ilfd) ilfd->scr = use_scr;
-                    if (ilfd && (!ilfd->bwd_ok || (use_scr && !ilfd->scr_ok) ||
-                                 (kf->il_flf[0] && !vfft_ilfd_apply_forms(ilfd, kf->il_flf))))
+                    ilfd = vfft_ilfd_create_chain(N, ki->il_fl, ki->il_fl_n);
+                    if (ilfd && (!ilfd->bwd_ok ||
+                                 (ki->il_flf[0] && !vfft_ilfd_apply_forms(ilfd, ki->il_flf))))
                     {
                         vfft_ilfd_destroy(ilfd);
                         ilfd = NULL;
                     }
-                    if (ilfd && getenv("VFFT_NAT_LOG"))
-                        fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s, %s) "
-                                        "src=wisdom (oop)\n",
-                                N, kf->il_fl_n, kf->il_flf[0] ? kf->il_flf : "-",
-                                use_scr ? "SCRAMBLED" : "natural");
                 }
+                if (ilfd && getenv("VFFT_NAT_LOG"))
+                    fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s, %s) "
+                                    "src=wisdom (oop)\n",
+                            N, ki->il_fl_n, ki->il_flf[0] ? ki->il_flf : "-",
+                            scr_req ? "SCRAMBLED class" : "natural");
             }
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
@@ -512,8 +508,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     {   /* MONO form = the banked il_kv on a MONO verdict
                          * (0 = solo n1, 1 = mono64); form 0 otherwise */
-                        const int mf = (ke && ke->k1_il_route == VFFT_K1_IL_MONO)
-                                           ? ke->il_kv : 0;
+                        const int mf = (ki && ki->k1_il_route == VFFT_K1_IL_MONO)
+                                           ? ki->il_kv : 0;
                         hk->k1_mono_ilf = vfft_k1_mono_il_form_fn(N, mf, 0);
                         hk->k1_mono_ilb = vfft_k1_mono_il_form_fn(N, mf, 1);
                     }
