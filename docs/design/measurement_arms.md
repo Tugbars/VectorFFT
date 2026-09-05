@@ -741,7 +741,10 @@ E1.1 il2d chain (sets nst, R[], L[])  RACED. Every factorization of N1 over
      24 candidates with the drop LOGGED.
 E1.2 wl - banded column walk width    RACED. {0 unbanded} + WPOOL
      {8,16,32,64,128,256} filtered by (w<=N1, N1%w==0, some stage with w%L[s]==0)
-     + the L2-gated cascade width.
+     + the L2-gated cascade width. NATURAL cells race it too (2026-09-05:
+     the natural banded walk in vfft_execute.h); every (wl, roop)
+     configuration is an ARM of ONE alternated race, never a sequential
+     per-configuration loop.
      GATES E1.3, E1.4, and whether E1.6 EXISTS AT ALL.
 E1.3 cut                              DERIVED from wl (the tcut law: width is the
                                       INPUT, cut is the OUTPUT).

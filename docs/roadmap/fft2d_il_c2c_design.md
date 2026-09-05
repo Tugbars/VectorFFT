@@ -170,6 +170,18 @@ divisibility chain, so:
   unbanded, both directions (verified at every falsifier cell).
 - bwd banded = per band [REVERSED suffix, rows-bwd], then the reversed
   wide prefix (legal by the rows-commute fact).
+- **natural banded** (2026-09-05): the same walk on the pre-leaf scratch
+  plane — wide prefix into the scratch, per band the suffix in place, the
+  band's leaf blocks SCATTERED to their natural rows (perm is block-affine)
+  and (tfuse) exactly those rows transformed while hot; bwd gathers per
+  band, runs the reversed suffix, the reversed prefix wide, rows last
+  (unfused, so bwd stays bitwise with the natural MT partitions). F0 holds
+  in both directions. Natural cells race wl / tfuse / roop and bank them on
+  the ord=nat row. Same-run A/B at odd cells, natural over scrambled:
+  405² 1.38x unbanded -> 1.18x at wl=81, 729² 1.24 -> 1.11, 1215x243
+  1.25 -> 1.11; 243² unchanged at 1.16 (three planes exceed L2 there).
+  The residual is the scratch plane's one cold write of the output —
+  structural to a scratch-plane natural pass.
 
 MEASURED (chains pinned, same-run): +15% (256²), +21% (512², tfuse ~10
 pts of it), +17–18% (4096x64, STACKING on the 1.30x chain win), and
