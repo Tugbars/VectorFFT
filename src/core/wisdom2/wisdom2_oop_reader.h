@@ -977,7 +977,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
         }
     } else if (lay == VW2_LAY_IL) {
-        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 7) {
+        if (e->k1_il_route <= VFFT_K1_IL_NONE || e->k1_il_route > 8) {
             vw2_rec_free(r); *why = "no-il-verdict"; return -1;
         }
         VW2__OB_SET(1, "il_route", vw2_oop_il_name[e->k1_il_route]);
@@ -989,6 +989,17 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             char c3b[48];              /* the chain IS the verdict (2026-09-02) */
             snprintf(c3b, sizeof c3b, "%d.%d.%d", e->il_c3[0], e->il_c3[1], e->il_c3[2]);
             VW2__OB_SET(1, "il_chain", c3b);
+        }
+        if (e->k1_il_route == VFFT_K1_IL_FLAT && e->il_fl_n >= 2) {
+            char flb[64];              /* the flat chain + its per-stage forms ARE the verdict (2026-09-05) */
+            size_t off = 0;
+            for (i = 0; i < e->il_fl_n; i++) {
+                int rr = snprintf(flb + off, sizeof flb - off, "%s%d", i ? "." : "", e->il_fl[i]);
+                if (rr < 0 || (size_t)rr >= sizeof flb - off) break;
+                off += (size_t)rr;
+            }
+            VW2__OB_SET(1, "il_flat", flb);
+            if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
         }
         if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
             char ref[96];   /* the signpost: recipe lives in the cascade cell */
