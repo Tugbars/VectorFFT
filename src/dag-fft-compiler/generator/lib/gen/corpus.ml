@@ -1860,6 +1860,38 @@ let zil_pure_cells : (string * string list) list =
     , [ "8"; "--cil-t2csg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix16_z_t2csg_avx2.c"
     , [ "16"; "--cil-t2csg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* t2csgn (2026-09-05): t2csg with the in-kernel group loop over the
+       natural-base table — the flat DIT's count-1 last stage in one call. *)
+  ; ( "radix3_z_t2csgn_avx2.c"
+    , [ "3"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_t2csgn_avx2.c"
+    , [ "5"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_t2csgn_avx2.c"
+    , [ "7"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_t2csgn_avx2.c"
+    , [ "9"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix11_z_t2csgn_avx2.c"
+    , [ "11"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix13_z_t2csgn_avx2.c"
+    , [ "13"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_t2csgn_avx2.c"
+    , [ "15"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix17_z_t2csgn_avx2.c"
+    , [ "17"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix19_z_t2csgn_avx2.c"
+    , [ "19"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix21_z_t2csgn_avx2.c"
+    , [ "21"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix25_z_t2csgn_avx2.c"
+    , [ "25"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix27_z_t2csgn_avx2.c"
+    , [ "27"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix4_z_t2csgn_avx2.c"
+    , [ "4"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix8_z_t2csgn_avx2.c"
+    , [ "8"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix16_z_t2csgn_avx2.c"
+    , [ "16"; "--cil-t2csgn"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2cb48_avx2.c"
     , [ "32"; "--cil-t2c"; "--cil-blocked"; "--cil-split"; "4.8"; "--cil-form-tag"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix32_z_t2cb48_bwd_avx2.c"

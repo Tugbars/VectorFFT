@@ -171,6 +171,15 @@ type zs_kind =
        count; zturn.h builds the fwd tables at P[j]. Twins s0tu / stfu /
        stf2u stay linkable beside the ordered kinds (A/B side by side);
        msz is unordered by construction. *)
+  ; narrow_arms : bool
+    (* il_odd_count_tail.md §3 for the SPLIT family (2026-09-05): after the
+       VW-column wide loop, the SAME scheduled DAG is re-rendered as two
+       trailing arms — 2 columns at Isa.sse2 (VEX-128: unpacklo/hi of two
+       1-complex loads IS the whole deinterleave) and 1 column at
+       Isa.scalar (re/im loaded directly) — so count becomes ANY >= 1.
+       Twiddle records stay the wide table's (Cfg.tw_vw). E_z kinds only;
+       msz only — the cascade's msg mids keep their byte-identical
+       count % 4 == 0 form. *)
   ; sched : zs_sched
     (* B2 --zp-sched: emit through the combined memory+arith node
        sequence (see zs_sched above). NEVER a kind-table default —
@@ -195,6 +204,7 @@ let kind_of_string (s : string) : zs_kind =
     ; nat_out = false
     ; dif = false
     ; lanes_u = false
+    ; narrow_arms = false
     }
   in
   match s with
@@ -210,7 +220,14 @@ let kind_of_string (s : string) : zs_kind =
        the two 0xD8 permutes of the ordered z edges are skipped (zu_noperm),
        which is what takes the boundary from 2.0 to 1.0 shuffles per point;
        the per-block record-sets are broadcast, so lane order is moot. *)
-    { mid with base = "msz"; group_loop = true; in_edge = E_z "Ls"; out_edge = E_z "Ls"; lanes_u = true }
+    { mid with
+      base = "msz"
+    ; group_loop = true
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_z "Ls"
+    ; lanes_u = true
+    ; narrow_arms = true
+    }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
   | "msd" ->
     (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
@@ -1109,6 +1126,7 @@ let emit_codelet
         open_line is the C for-statement (the uj2 shell shares one
         function-scope k across the main loop and the tail). ── *)
   let emit_col_loop
+        ?(nisa : Isa.t option)
         ~(open_line : string)
         ~(ninst : int)
         ((assigns, scheduled, inline_set) :
@@ -1117,6 +1135,16 @@ let emit_codelet
           * (int, unit) Hashtbl.t)
     : unit
     =
+    (* nisa: render this loop at a NARROWER ISA (the §3 arms). isa/vw are
+       shadowed for the whole loop body; the twiddle records stay the wide
+       table's through Cfg.tw_vw = wide_vw. *)
+    let wide_vw = vw in
+    let isa =
+      match nisa with
+      | Some i -> i
+      | None -> isa
+    in
+    let vw = isa.Isa.vec_width in
     let nslots = ninst * radix in
     Buffer.add_string buf open_line;
     if k.nat_in || k.nat_out
@@ -1186,13 +1214,17 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" sl)
-                 (if !zu_noperm
+                 (if vw = 1
+                  then Printf.sprintf "_zl_%d" sl (* scalar arm: re loaded directly *)
+                  else if !zu_noperm
                   then Printf.sprintf "%s(_zl_%d, _zh_%d)" unlo sl sl
                   else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unlo sl sl))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_im_%d" sl)
-                 (if !zu_noperm
+                 (if vw = 1
+                  then Printf.sprintf "_zh_%d" sl (* scalar arm: im = the +1 double *)
+                  else if !zu_noperm
                   then Printf.sprintf "%s(_zl_%d, _zh_%d)" unhi sl sl
                   else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unhi sl sl)))
        done
@@ -1374,11 +1406,15 @@ let emit_codelet
                   (Isa.storeu_pd
                      isa
                      (leg_addr "zout" leg s colo 0)
-                     (Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
+                     (if vw = 1
+                      then Printf.sprintf "_pr_%d" sl
+                      else Printf.sprintf "%s(_pr_%d, _qi_%d)" unlo sl sl))
                   (Isa.storeu_pd
                      isa
                      (leg_addr "zout" leg s colo vw)
-                     (Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl))
+                     (if vw = 1
+                      then Printf.sprintf "_qi_%d" sl
+                      else Printf.sprintf "%s(_pr_%d, _qi_%d)" unhi sl sl))
             }) )
       | E_blocks ->
         (* ── Block store edge (TR4 back): leg-major result vectors
@@ -1493,7 +1529,11 @@ let emit_codelet
         ~finally:(fun () ->
           cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_default })
         (fun () ->
-           cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off };
+           cfg :=
+             { !cfg with
+               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off
+             ; Emit_render.Cfg.tw_vw = wide_vw
+             };
            let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
            List.iter
              (fun ((_ : Expr.elem_ref option), (e : Ir.t)) ->
@@ -1661,7 +1701,11 @@ let emit_codelet
         ~finally:(fun () ->
           cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_default })
         (fun () ->
-           cfg := { !cfg with Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off };
+           cfg :=
+             { !cfg with
+               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off
+             ; Emit_render.Cfg.tw_vw = wide_vw
+             };
            List.iter
              (fun (zn : ZNode.t) ->
                 if ZNode.is_store zn
@@ -1932,11 +1976,37 @@ let emit_codelet
          (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ ")
          (if k.base = "msg" || k.base = "msd" then " " else " __restrict__ "));
     let dag = prepare ~two_inst:false in
-    emit_col_loop
-      ~open_line:
-        (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw)
-      ~ninst:1
-      dag;
+    if not k.narrow_arms
+    then
+      emit_col_loop
+        ~open_line:
+          (Printf.sprintf "    for (size_t k = 0; k + %d <= count; k += %d) {\n" vw vw)
+        ~ninst:1
+        dag
+    else (
+      (* il_odd_count_tail.md §3 arms: function-scope k, the wide loop,
+         then the SAME DAG at 2 columns (VEX-128) and at 1 column (scalar).
+         A count below VW skips the wide loop at its condition (the §3
+         low-trip bypass; there is no wide prologue to skip). *)
+      Buffer.add_string buf "    size_t k = 0;\n";
+      emit_col_loop
+        ~open_line:(Printf.sprintf "    for (; k + %d <= count; k += %d) {\n" vw vw)
+        ~ninst:1
+        dag;
+      Buffer.add_string
+        buf
+        "    /* odd-count arms (il_odd_count_tail.md §3): 2 columns at VEX-128, then 1 \
+         column scalar */\n";
+      emit_col_loop
+        ~nisa:Isa.sse2
+        ~open_line:"    for (; k + 2 <= count; k += 2) {\n"
+        ~ninst:1
+        dag;
+      emit_col_loop
+        ~nisa:Isa.scalar
+        ~open_line:"    for (; k < count; ++k) {\n"
+        ~ninst:1
+        dag);
     Buffer.add_string buf "}\n\n";
     (* M4 phase 3: the driver wrapper's FROZEN z ABI also comes from
         Abi.z11_signature (the third of the three hand prints). *)

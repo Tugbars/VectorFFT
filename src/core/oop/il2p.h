@@ -260,6 +260,22 @@ static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
     }
 }
 
+/* t2csgn — t2csg with the in-kernel GROUP LOOP over the natural-base table
+ * (2026-09-05): one call per stage; zin_unused = (const size_t *) obase
+ * (one entry per block, the driver's natbase), Gs = the group count, the
+ * rest as t2csg. The flat DIT's count-1 last stage. fwd only. */
+static inline vfft_il2p_fn vfft_il2p_t2csgn_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSGN_FWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csgn_fwd_avx2;
+    VFFT_IL_T2CSGN_FWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* t2csg — t2cs with the GENERATED twiddle stream (gen2, 2026-09-04): the
  * kernel forms W^1 per column pair as T1[pair] (tw_re, the cursor: one
  * VTW2 pair record per pair) times T2 (tw_im: ONE broadcast record per

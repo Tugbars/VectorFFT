@@ -45,9 +45,18 @@ typedef struct {
     vfft_il2p_fn fcs[VFFT_ILFD_MAX_K];/* t2cs / t2csg fwd for the TAIL stages (D <= VFFT_ILFD_TAIL_D) */
     int tail[VFFT_ILFD_MAX_K];        /* 1 = t2cs (per-pair stream), 2 = t2csg (generated) */
     double *t2g[VFFT_ILFD_MAX_K];     /* gen2: per-group broadcast records (T2), 8 doubles each */
+    vfft_il2p_fn fgl[VFFT_ILFD_MAX_K];/* t2csgn fwd: the LAST stage's group loop in-kernel (non-null = available) */
+    int gl[VFFT_ILFD_MAX_K];          /* 1 = run the last stage on t2csgn (default when available;
+                                       * VFFT_ILFD_NO_GL=1 at create turns it off; A/B flips it) */
+    size_t *gorder;                   /* last stage: the groups in ascending natural-base order
+                                       * (t2csgn walks them so consecutive groups fill adjacent
+                                       * output lines); NULL = block order */
+    int gord;                         /* 1 = pass gorder to t2csgn (default; VFFT_ILFD_NO_GORD=1
+                                       * turns it off; A/B flips it) */
     vfft_il2p_fn fz[VFFT_ILFD_MAX_K]; /* msz fwd (split body, IL edges, unordered lanes) */
     double *tz[VFFT_ILFD_MAX_K];      /* msz: per block (R-1) [c x4][s x4] records (plain sin);
-                                       * non-null = the stage is msz-ELIGIBLE (D % 4 == 0, s < K-1) */
+                                       * non-null = the stage is msz-ELIGIBLE (s < K-1; any run
+                                       * since the §3 odd-count arms, 2026-09-05) */
     int msz[VFFT_ILFD_MAX_K];         /* 1 = run the stage on msz (default where eligible;
                                        * VFFT_ILFD_NO_MSZ=1 at create turns it off; A/B flips it) */
     double *tf[VFFT_ILFD_MAX_K];      /* t2cp: per block (R-1) broadcast records;
@@ -61,6 +70,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
     int s;
     if (!p) return;
     for (s = 0; s < VFFT_ILFD_MAX_K; s++) { VFFT_IL2P_FREE(p->tf[s]); VFFT_IL2P_FREE(p->t2g[s]); VFFT_IL2P_FREE(p->tz[s]); }
+    free(p->gorder);
     free(p->natbase);
     VFFT_IL2P_FREE(p->stg);
     free(p);
@@ -111,12 +121,12 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             double *tf;
             size_t bi;
             int l, lane;
-            /* msz (2026-09-05): every non-last stage whose run is a multiple
-             * of 4 can run on the Fact-form kernel; its records are built
-             * alongside the t2cp/tail ones so a probe can A/B the two forms
-             * on ONE plan by flipping p->msz[s]. */
+            /* msz (2026-09-05): every non-last stage can run on the split-body
+             * kernel (its il_odd_count_tail §3 arms take any run); the records
+             * are built alongside the t2cp/tail ones so a probe can A/B the
+             * two forms on ONE plan by flipping p->msz[s]. */
             p->msz[s] = 0;
-            if ((D & 3) == 0 && s < K - 1 && vfft_il2p_msz_fn(R[s])) {
+            if (s < K - 1 && vfft_il2p_msz_fn(R[s])) {
                 double *tz = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 if (!tz) { vfft_ilfd_destroy(p); return 0; }
                 for (bi = 0; bi < nb; bi++) {
@@ -149,6 +159,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 int j;
                 for (j = 0; j < s - 1; j++) W *= (size_t)R[j];
                 p->fcs[s] = vfft_il2p_t2csg_fn(R[s]);
+                p->fgl[s] = (s == K - 1) ? vfft_il2p_t2csgn_fn(R[s]) : 0;
+                p->gl[s] = (p->fgl[s] != 0) && !getenv("VFFT_ILFD_NO_GL");
                 tf = (double *)VFFT_IL2P_ALLOC(npair * 8 * sizeof(double));
                 p->t2g[s] = (double *)VFFT_IL2P_ALLOC(ngrp * 8 * sizeof(double));
                 if (!tf || !p->t2g[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
@@ -226,6 +238,20 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
         p->natbase = (size_t *)malloc(p->nblk[s] * sizeof(size_t));
         if (!p->natbase) { vfft_ilfd_destroy(p); return 0; }
         for (bi = 0; bi < p->nblk[s]; bi++) p->natbase[bi] = _ilfd_block_Q(p, s, bi);
+        /* t2csgn group order = groups sorted by their natural base (a counting
+         * sort over the base values: they are distinct and bounded by N). */
+        if (s >= 1 && p->fgl[s]) {
+            const size_t G = (size_t)p->R[s - 1], ngrp = p->nblk[s] / G;
+            size_t *pos = (size_t *)calloc((size_t)N + 1, sizeof(size_t));
+            size_t g, n;
+            p->gorder = (size_t *)malloc(ngrp * sizeof(size_t));
+            if (!pos || !p->gorder) { free(pos); vfft_ilfd_destroy(p); return 0; }
+            for (g = 0; g < ngrp; g++) pos[p->natbase[g * G] + 1] = 1;
+            for (n = 1; n <= (size_t)N; n++) pos[n] += pos[n - 1];
+            for (g = 0; g < ngrp; g++) p->gorder[pos[p->natbase[g * G]]] = g;
+            free(pos);
+            p->gord = !getenv("VFFT_ILFD_NO_GORD");
+        }
     }
     p->stg = (double *)VFFT_IL2P_ALLOC(2u * (size_t)N * sizeof(double));
     if (!p->stg) { vfft_ilfd_destroy(p); return 0; }
@@ -288,6 +314,14 @@ static inline void vfft_ilfd_stage(const vfft_ilfd_plan_t *p, int s,
             size_t g, c, W = 1;
             int j;
             for (j = 0; j < s - 1; j++) W *= (size_t)p->R[j];
+            if (gen2 && s == p->K - 1 && p->gl[s]) {
+                /* t2csgn: the whole last stage in ONE call — the group loop
+                 * runs in-kernel over natbase (stride G); Gs = the groups. */
+                p->fgl[s](stg, (const double *)p->natbase, zout,
+                          (double *)(p->gord ? p->gorder : 0), p->tf[s], p->t2g[s],
+                          D, ngrp, nstride, W, G);
+                return;
+            }
             for (g = 0; g < ngrp; g++) {
                 const double *tw = gen2 ? p->tf[s] : p->tf[s] + g * recs_grp * 8;
                 const double *t2 = gen2 ? p->t2g[s] + g * 8 : 0;
@@ -319,6 +353,51 @@ static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
 {
     int s;
     for (s = 0; s < p->K; s++) vfft_ilfd_stage(p, s, zin, zout);
+}
+
+/* Per-stage FORM race (2026-09-05): on each msz-eligible stage, time the
+ * t2cp/tail form against msz on real data in pipeline order (a stage's
+ * input is the previous stages' output) and keep the faster in
+ * p->msz[s]. The probes' stand-in for the wisdom axis the front door will
+ * bank; never a rule. Leaves the staging plane transformed (call the
+ * plain execute afterwards for a spectrum). now_ns = the caller's clock. */
+static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
+                                        double *zout, double (*now_ns)(void))
+{
+    int s;
+    vfft_ilfd_stage(p, 0, zin, zout);
+    for (s = 1; s < p->K; s++) {
+        if (p->tz[s]) {
+            double ta = 1e300, tb = 1e300;
+            int r;
+            for (r = 0; r < 3; r++) {
+                double t0;
+                p->msz[s] = 0;
+                t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
+                if (t0 < ta) ta = t0;
+                p->msz[s] = 1;
+                t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
+                if (t0 < tb) tb = t0;
+            }
+            p->msz[s] = (tb < ta);
+        }
+        if (p->fgl[s]) {
+            /* the last stage's three forms: t2csg per group, t2csgn in block
+             * order, t2csgn in natural-base order */
+            double tt[3] = { 1e300, 1e300, 1e300 };
+            int r, arm, best = 0;
+            for (r = 0; r < 7; r++)
+                for (arm = 0; arm < 3; arm++) {
+                    double t0;
+                    p->gl[s] = (arm != 0); p->gord = (arm == 2);
+                    t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
+                    if (t0 < tt[arm]) tt[arm] = t0;
+                }
+            for (arm = 1; arm < 3; arm++) if (tt[arm] < tt[best]) best = arm;
+            p->gl[s] = (best != 0); p->gord = (best == 2);
+        }
+        vfft_ilfd_stage(p, s, zin, zout);
+    }
 }
 
 #endif /* VFFT_IL_FLATDIT_H */

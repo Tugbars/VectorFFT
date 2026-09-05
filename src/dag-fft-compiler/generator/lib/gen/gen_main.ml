@@ -211,6 +211,7 @@ let run (argv : string array) : unit =
   let cil_pretw = ref false in
   let cil_colstride = ref false in
   let cil_gen2 = ref false in
+  let cil_grouploop = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
@@ -539,6 +540,14 @@ let run (argv : string array) : unit =
       cil_kind := "t2";
       cil_colstride := true;
       cil_gen2 := true)
+    else if arg = "--cil-t2csgn"
+    then (
+      (* t2csg + the in-kernel group loop over the natural-base table
+         (2026-09-05): the flat DIT's count-1 last stage in one call *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true;
+      cil_grouploop := true)
     else if arg = "--cil-t2cs"
     then (
       (* the column-stride TAIL form of the T2 mid (t2cs, 2026-09-04): the
@@ -1369,6 +1378,7 @@ let run (argv : string array) : unit =
            ~pretw:!cil_pretw
            ~colstride:!cil_colstride
            ~gen2:!cil_gen2
+           ~grouploop:!cil_grouploop
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs
            ~kind:(C2c_il.kind_of_string !cil_kind)

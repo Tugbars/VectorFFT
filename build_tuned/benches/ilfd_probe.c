@@ -16,6 +16,8 @@
 #include "../../src/core/oop/il_flatdit.h"
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
+/* the plan's chain with an "m" on every stage that races onto msz */
+static void plan_s(const vfft_ilfd_plan_t *p, char *cs, size_t n) { int off = 0; for (int s = 0; s < p->K; s++) off += snprintf(cs + off, n - off, "%s%d%s", s ? "." : "", p->R[s], (s && p->msz[s]) ? "m" : (s == p->K - 1 && p->gl[s]) ? (p->gord ? "o" : "n") : ""); }
 /* --stages: per-stage timing of the flat DIT (seed chain) — where does a
  * sweep's time go: the leaf, the long-run mids, the short-run tail? */
 static void stage_times(const vfft_ilfd_plan_t *p, const double *zin, double *zout) {
@@ -36,7 +38,7 @@ int main(int argc, char **argv) {
     const int race = (argc > 1 && !strcmp(argv[1], "--race"));
     int bad = 0;
     mkl_set_num_threads(1);
-    printf("%-7s %-14s | dft@nat  dc      | %9s | %-14s %9s | %9s %6s %6s\n", "N", "flatDIT chain", "flat(ns)", "4step best", "4step(ns)", "mkl(ns)", "f/mkl", "f/4st");
+    printf("%-7s %-22s | dft@nat  dc      | %9s | %-14s %9s | %9s %6s %6s\n", "N", "flat chain (m=msz,o=ord)", "flat(ns)", "4step best", "4step(ns)", "mkl(ns)", "f/mkl", "f/4st");
     for (int i = 0; i < n; i++) {
         const int N = NS[i];
         vfft_ilfd_plan_t *p = vfft_ilfd_create(N);
@@ -60,11 +62,12 @@ int main(int argc, char **argv) {
         }
         const int ok = (wn < 1e-9 * sqrt((double)N) && dc < 1e-9 * N);
         if (!ok) bad++;
-        if (argc > 1 && !strcmp(argv[1], "--stages")) { printf("%-7d %-14s\n", N, cs); stage_times(p, x, z); }
+        if (argc > 1 && !strcmp(argv[1], "--stages")) { printf("%-7d %-22s\n", N, cs); stage_times(p, x, z); }
         /* flat DIT: seed or raced chain */
         double tf = 1e300;
         { vfft_ilfd_plan_t *best = p; int owned = 0;
           if (race) {
+              vfft_ilfd_race_forms(p, x, z, now_ns);   /* per-stage form race on the seed too */
               vfft_ilfd_execute_fwd(p, x, z);
               for (int r = 0; r < 3; r++) { double t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tf) tf = t0; }  /* the seed races too */
               int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND], cur[8], nc = 0, dropped = 0;
@@ -72,6 +75,7 @@ int main(int argc, char **argv) {
               for (int c = 0; c < nc; c++) {
                   vfft_ilfd_plan_t *q = vfft_ilfd_create_chain(N, cand[c], lens[c]);
                   if (!q) continue;
+                  vfft_ilfd_race_forms(q, x, z, now_ns);
                   vfft_ilfd_execute_fwd(q, x, z);
                   double tq = 1e300;
                   for (int r = 0; r < 3; r++) { double t0 = now_ns(); vfft_ilfd_execute_fwd(q, x, z); t0 = now_ns()-t0; if (t0 < tq) tq = t0; }
@@ -79,7 +83,7 @@ int main(int argc, char **argv) {
                   else vfft_ilfd_destroy(q);
               }
           }
-          chain_s(best->R, best->K, cs, sizeof cs);
+          plan_s(best, cs, sizeof cs);
           /* the four-step bridge's best (same race) for the same cell */
           vfft_ilflat_plan_t *fs = vfft_ilflat_create(N);
           double t4 = 1e300;
@@ -114,7 +118,7 @@ int main(int argc, char **argv) {
               }
               DftiFreeDescriptor(&hm);
           }
-          printf("%-7d %-14s | %.1e %.1e %s | %9.0f | %-14s %9.0f | %9.0f %5.2fx %5.2fx\n",
+          printf("%-7d %-22s | %.1e %.1e %s | %9.0f | %-14s %9.0f | %9.0f %5.2fx %5.2fx\n",
                  N, cs, wn, dc, ok ? "OK " : "BAD", tf, bs, t4, tm, tm/tf, t4/tf);
           fflush(stdout);
           if (owned) vfft_ilfd_destroy(best);

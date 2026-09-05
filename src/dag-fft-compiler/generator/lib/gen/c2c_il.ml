@@ -220,6 +220,7 @@ let emit
       ~(pretw : bool)
       ~(colstride : bool)
       ~(gen2 : bool)
+      ~(grouploop : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
       ~(turnst : bool)
@@ -253,6 +254,13 @@ let emit
      stream replaces the per-pair records that kind would otherwise read. *)
   if gen2 && not colstride
   then failwith "codelet_cil: --cil-t2csg (gen2) is the t2cs tail kind's twiddle policy";
+  (* t2csgn (2026-09-05): t2csg with the in-kernel GROUP LOOP over a
+     natural-base table — the flat DIT's count-1 last stage in ONE call
+     (blocks per call was the lever: ~20-80 ns per t2csg call at one group
+     per call). The body is the t2csg kernel emitted static always_inline;
+     the exported symbol is the wrapper (the msg group-loop precedent). *)
+  if grouploop && not gen2
+  then failwith "codelet_cil: --cil-t2csgn is the t2csg tail kind with the in-kernel group loop";
   Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
   then
@@ -1094,6 +1102,7 @@ let emit
   Buffer.add_string
     buf
     (Abi.z11_signature
+       ~static_inline:grouploop
        (* il2p calls the forward T2 and the backward N1 with zin == zout on
           its out-of-place fast path (il2p.h), so those two must not promise
           the compiler their planes are disjoint. Every other kind keeps
@@ -1104,7 +1113,10 @@ let emit
           || kind = N1C
           || kind = T2C)
        ~symbol:
-         (Printf.sprintf
+         (if grouploop
+          then Printf.sprintf "_t2csgn%d_body" radix
+          else
+            Printf.sprintf
             "radix%d_z_%s_%s_%s"
             radix
             (kind_name kind
@@ -1339,6 +1351,45 @@ let emit
     Buffer.add_string buf "    zout += 2 * Gs;\n";
     Buffer.add_string buf "    }\n");
   Buffer.add_string buf "}\n";
+  if grouploop
+  then (
+    (* ── t2csgn wrapper: the in-kernel group loop over the natural-base
+          table. zin_unused carries obase (a const size_t pointer), indexed
+          g*count (the driver's natbase, one entry per block); group g's
+          blocks start at zin + 2*g*count*R*Ls, its outputs at
+          zout + 2*obase[g*count], its T2 record at tw_im + 2*VW*g; Gs is
+          the GROUP COUNT (the column stride the body wants is R*Ls). ── *)
+    Buffer.add_string buf "\n";
+    Buffer.add_string
+      buf
+      (Abi.z11_signature
+         ~alias_tolerant:true
+         ~symbol:(Printf.sprintf "radix%d_z_t2csgn_fwd_%s" radix isa.Isa.name)
+         ~target_attr:isa.Isa.target_attr
+         ());
+    Buffer.add_string
+      buf
+      (Printf.sprintf
+         "    /* t2csgn: in-kernel group loop over the natural-base table (zin_unused = \
+          obase, stride count); Gs = groups; one call per stage. zout_unused, when \
+          non-null, is the GROUP ORDER (size_t per group): the loop walks the groups in \
+          that order — the driver passes natural-base order so consecutive groups fill \
+          adjacent output lines (one write-allocate per line instead of one per \
+          complex); the input reads scatter instead, one contiguous block each. */\n\
+         \    const size_t *obase = (const size_t *)zin_unused;\n\
+         \    const size_t *gord = (const size_t *)zout_unused;\n\
+         \    for (size_t gq = 0; gq < Gs; gq++) {\n\
+         \        const size_t g = gord ? gord[gq] : gq;\n\
+         \        for (size_t c = 0; c < Ls; c++)\n\
+         \            _t2csgn%d_body(zin + 2 * (g * count * %d * Ls + c), 0,\n\
+         \                           zout + 2 * (obase[g * count] + c), 0,\n\
+         \                           tw_re, tw_im + %d * g, Ls, %d * Ls, OLs, OGs, count);\n\
+         \    }\n\
+          }\n"
+         radix
+         radix
+         (2 * vw)
+         radix));
   Buffer.contents buf
 ;;
 

@@ -144,6 +144,7 @@ type kind =
       ; pre_tw : bool (* --cil-pretw (bwd pre-twiddle) *)
       ; colstride : bool (* --cil-t2cs: the column-stride tail form of t2 *)
       ; gen2 : bool (* --cil-t2csg: t2cs with the generated twiddle stream *)
+      ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)
@@ -361,7 +362,8 @@ let of_argv ?(strict = true) (argv : string list) : t =
   and turn = ref None
   and pre_tw = ref false
   and colstride = ref false
-  and gen2 = ref false in
+  and gen2 = ref false
+  and grouploop = ref false in
   let zp_r0 = ref None
   and sink = ref false in
   let k1_r1 = ref None
@@ -532,6 +534,12 @@ let of_argv ?(strict = true) (argv : string list) : t =
       colstride := true;
       gen2 := true;
       go tl
+    | "--cil-t2csgn" :: tl ->
+      push "cil-t2";
+      colstride := true;
+      gen2 := true;
+      grouploop := true;
+      go tl
     | "--cil-t2cp" :: tl ->
       (* t2c + PRE-twiddle at fwd (2026-09-04): the canonical spelling of
          that cell — --cil-pretw stays the retired t2p flag. *)
@@ -665,6 +673,7 @@ let of_argv ?(strict = true) (argv : string list) : t =
         ; pre_tw = !pre_tw
         ; colstride = !colstride
         ; gen2 = !gen2
+        ; grouploop = !grouploop
         ; form_tag = !cil_form_tag
         }
     | [ "k1-mono" ] -> K1_mono { r1 = !k1_r1; il = !k1_il; sw = !k1_sw }
@@ -814,14 +823,21 @@ let to_argv (c : t) : string list =
     @ emitc
   | Strided_r2c -> n @ [ "--strided-r2c" ] @ g (m.dir = Bwd) "--bwd" @ isa @ emitc
   | N1_oop_strided -> n @ [ "--oop-strided" ] @ isa @ emitc
-  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; form_tag } ->
+  | Cil { form; tangent; blocked; oddct; split; turn; pre_tw; colstride; gen2; grouploop; form_tag } ->
     n
     @ [ (match form with
          | Cil_n1 -> "--cil-n1"
          | Cil_n1c -> "--cil-n1c"
          | Cil_t2c -> if pre_tw then "--cil-t2cp" else "--cil-t2c"
          | Cil_n1t -> "--cil-n1t"
-         | Cil_t2 -> if gen2 then "--cil-t2csg" else if colstride then "--cil-t2cs" else "--cil-t2")
+         | Cil_t2 ->
+           if grouploop
+           then "--cil-t2csgn"
+           else if gen2
+           then "--cil-t2csg"
+           else if colstride
+           then "--cil-t2cs"
+           else "--cil-t2")
       ]
     @ g tangent "--cil-tangent"
     @ g blocked "--cil-blocked"
