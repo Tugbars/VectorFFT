@@ -401,10 +401,16 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     }
                 }
                 if (ilfd && getenv("VFFT_NAT_LOG"))
-                    fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s, %s) "
+                {
+                    char chs[48];
+                    int q, off = 0;
+                    for (q = 0; q < ki->il_fl_n && off < (int)sizeof chs - 4; q++)
+                        off += snprintf(chs + off, sizeof chs - (size_t)off, "%s%d", q ? "." : "", ki->il_fl[q]);
+                    fprintf(stderr, "[k1fd] N=%d: replay flat chain %s (forms %s, tw %d, %s) "
                                     "src=wisdom (oop)\n",
-                            N, ki->il_fl_n, ki->il_flf[0] ? ki->il_flf : "-",
+                            N, chs, ki->il_flf[0] ? ki->il_flf : "-", ki->il_tw,
                             scr_req ? "SCRAMBLED class" : "natural");
+                }
             }
             if (ilr == VFFT_K1_IL_FLAT && !ilfd)
                 ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
