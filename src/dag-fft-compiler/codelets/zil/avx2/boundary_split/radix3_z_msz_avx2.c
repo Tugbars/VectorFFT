@@ -20,7 +20,8 @@ static __attribute__((always_inline)) inline void _zsg3f_body(
     const double * __restrict__ zin, double * __restrict__ zout,
     const double *tw_re, size_t Ls, size_t count)
 {
-    for (size_t k = 0; k + 4 <= count; k += 4) {
+    size_t k = 0;
+    for (; k + 4 <= count; k += 4) {
         /* Z load edge (DEINT) */
         const __m256d _zl_0 = _mm256_loadu_pd(&zin[2*(size_t)k]);
         const __m256d _zh_0 = _mm256_loadu_pd(&zin[2*(size_t)k + 4]);
@@ -76,6 +77,121 @@ static __attribute__((always_inline)) inline void _zsg3f_body(
         const __m256d _qi_2 = t39;
         _mm256_storeu_pd(&zout[2*((size_t)2*Ls + k)], _mm256_unpacklo_pd(_pr_2, _qi_2));
         _mm256_storeu_pd(&zout[2*((size_t)2*Ls + k) + 4], _mm256_unpackhi_pd(_pr_2, _qi_2));
+    }
+    /* odd-count arms (il_odd_count_tail.md §3): 2 columns at VEX-128, then 1 column scalar */
+    for (; k + 2 <= count; k += 2) {
+        /* Z load edge (DEINT) */
+        const __m128d _zl_0 = _mm_loadu_pd(&zin[2*(size_t)k]);
+        const __m128d _zh_0 = _mm_loadu_pd(&zin[2*(size_t)k + 2]);
+        const __m128d lane_re_0 = _mm_unpacklo_pd(_zl_0, _zh_0);
+        const __m128d lane_im_0 = _mm_unpackhi_pd(_zl_0, _zh_0);
+        const __m128d _zl_1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k)]);
+        const __m128d _zh_1 = _mm_loadu_pd(&zin[2*((size_t)1*Ls + k) + 2]);
+        const __m128d lane_re_1 = _mm_unpacklo_pd(_zl_1, _zh_1);
+        const __m128d lane_im_1 = _mm_unpackhi_pd(_zl_1, _zh_1);
+        const __m128d _zl_2 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k)]);
+        const __m128d _zh_2 = _mm_loadu_pd(&zin[2*((size_t)2*Ls + k) + 2]);
+        const __m128d lane_re_2 = _mm_unpacklo_pd(_zl_2, _zh_2);
+        const __m128d lane_im_2 = _mm_unpackhi_pd(_zl_2, _zh_2);
+        /* SU-scheduled body (pipeline) */
+        const __m128d t15 = _mm_set1_pd(0.49999999999999978);
+        const __m128d t0 = _mm_set1_pd(0.86602540378443871);
+        const __m128d t1 = lane_re_2;
+        const __m128d t2 = _mm_loadu_pd(&tw_re[12]);
+        const __m128d t3 = lane_im_2;
+        const __m128d t4 = _mm_loadu_pd(&tw_re[8]);
+        const __m128d t5 = _mm_fnmadd_pd(t3, t2, _mm_mul_pd(t1, t4));
+        const __m128d t6 = _mm_fmadd_pd(t1, t2, _mm_mul_pd(t3, t4));
+        const __m128d t7 = lane_re_1;
+        const __m128d t8 = _mm_loadu_pd(&tw_re[4]);
+        const __m128d t9 = lane_im_1;
+        const __m128d t10 = _mm_loadu_pd(&tw_re[0]);
+        const __m128d t11 = _mm_fnmadd_pd(t9, t8, _mm_mul_pd(t7, t10));
+        const __m128d t12 = _mm_fmadd_pd(t7, t8, _mm_mul_pd(t9, t10));
+        const __m128d t16 = _mm_add_pd(t5, t11);
+        const __m128d t23 = _mm_add_pd(t6, t12);
+        const __m128d t13 = _mm_sub_pd(t12, t6);
+        const __m128d t21 = _mm_sub_pd(t11, t5);
+        const __m128d t18 = lane_re_0;
+        const __m128d t30 = _mm_add_pd(t16, t18);
+        const __m128d t32 = _mm_fnmadd_pd(t15, t16, t18);
+        const __m128d t38 = _mm_fnmadd_pd(t0, t13, t32);
+        const __m128d t40 = _mm_fmadd_pd(t0, t13, t32);
+        const __m128d t25 = lane_im_0;
+        const __m128d t31 = _mm_add_pd(t23, t25);
+        const __m128d t34 = _mm_fnmadd_pd(t15, t23, t25);
+        const __m128d t39 = _mm_fmadd_pd(t0, t21, t34);
+        const __m128d t41 = _mm_fnmadd_pd(t0, t21, t34);
+        /* Z store edge (REINT) */
+        const __m128d _pr_0 = t30;
+        const __m128d _qi_0 = t31;
+        _mm_storeu_pd(&zout[2*(size_t)k], _mm_unpacklo_pd(_pr_0, _qi_0));
+        _mm_storeu_pd(&zout[2*(size_t)k + 2], _mm_unpackhi_pd(_pr_0, _qi_0));
+        const __m128d _pr_1 = t40;
+        const __m128d _qi_1 = t41;
+        _mm_storeu_pd(&zout[2*((size_t)1*Ls + k)], _mm_unpacklo_pd(_pr_1, _qi_1));
+        _mm_storeu_pd(&zout[2*((size_t)1*Ls + k) + 2], _mm_unpackhi_pd(_pr_1, _qi_1));
+        const __m128d _pr_2 = t38;
+        const __m128d _qi_2 = t39;
+        _mm_storeu_pd(&zout[2*((size_t)2*Ls + k)], _mm_unpacklo_pd(_pr_2, _qi_2));
+        _mm_storeu_pd(&zout[2*((size_t)2*Ls + k) + 2], _mm_unpackhi_pd(_pr_2, _qi_2));
+    }
+    for (; k < count; ++k) {
+        /* Z load edge (DEINT) */
+        const double _zl_0 = zin[2*(size_t)k];
+        const double _zh_0 = zin[2*(size_t)k + 1];
+        const double lane_re_0 = _zl_0;
+        const double lane_im_0 = _zh_0;
+        const double _zl_1 = zin[2*((size_t)1*Ls + k)];
+        const double _zh_1 = zin[2*((size_t)1*Ls + k) + 1];
+        const double lane_re_1 = _zl_1;
+        const double lane_im_1 = _zh_1;
+        const double _zl_2 = zin[2*((size_t)2*Ls + k)];
+        const double _zh_2 = zin[2*((size_t)2*Ls + k) + 1];
+        const double lane_re_2 = _zl_2;
+        const double lane_im_2 = _zh_2;
+        /* SU-scheduled body (pipeline) */
+        const double t15 = (0.49999999999999978);
+        const double t0 = (0.86602540378443871);
+        const double t1 = lane_re_2;
+        const double t2 = tw_re[12];
+        const double t3 = lane_im_2;
+        const double t4 = tw_re[8];
+        const double t5 = __builtin_fma(-(t3), t2, (t1 * t4));
+        const double t6 = __builtin_fma(t1, t2, (t3 * t4));
+        const double t7 = lane_re_1;
+        const double t8 = tw_re[4];
+        const double t9 = lane_im_1;
+        const double t10 = tw_re[0];
+        const double t11 = __builtin_fma(-(t9), t8, (t7 * t10));
+        const double t12 = __builtin_fma(t7, t8, (t9 * t10));
+        const double t16 = (t5 + t11);
+        const double t23 = (t6 + t12);
+        const double t13 = (t12 - t6);
+        const double t21 = (t11 - t5);
+        const double t18 = lane_re_0;
+        const double t30 = (t16 + t18);
+        const double t32 = __builtin_fma(-(t15), t16, t18);
+        const double t38 = __builtin_fma(-(t0), t13, t32);
+        const double t40 = __builtin_fma(t0, t13, t32);
+        const double t25 = lane_im_0;
+        const double t31 = (t23 + t25);
+        const double t34 = __builtin_fma(-(t15), t23, t25);
+        const double t39 = __builtin_fma(t0, t21, t34);
+        const double t41 = __builtin_fma(-(t0), t21, t34);
+        /* Z store edge (REINT) */
+        const double _pr_0 = t30;
+        const double _qi_0 = t31;
+        zout[2*(size_t)k] = _pr_0;
+        zout[2*(size_t)k + 1] = _qi_0;
+        const double _pr_1 = t40;
+        const double _qi_1 = t41;
+        zout[2*((size_t)1*Ls + k)] = _pr_1;
+        zout[2*((size_t)1*Ls + k) + 1] = _qi_1;
+        const double _pr_2 = t38;
+        const double _qi_2 = t39;
+        zout[2*((size_t)2*Ls + k)] = _pr_2;
+        zout[2*((size_t)2*Ls + k) + 1] = _qi_2;
     }
 }
 

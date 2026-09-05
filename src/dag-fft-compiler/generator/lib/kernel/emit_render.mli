@@ -56,6 +56,7 @@ module Cfg : sig
     ; hc2c_nat_sstar : int
     ; store_on_compute : bool
     ; tw : tw_source
+    ; tw_vw : int (* zsplit record-width pin for narrow re-renders; 0 = the ISA's width *)
     }
 
   val default : t

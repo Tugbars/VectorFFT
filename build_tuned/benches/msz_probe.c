@@ -21,7 +21,8 @@ static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);Query
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
 static void set_all(vfft_ilfd_plan_t *p, int on) { for (int s = 1; s < p->K; s++) if (p->tz[s]) p->msz[s] = on; }
 int main(int argc, char **argv) {
-    static const int NS[] = { 972, 1372, 2500, 9604, 12500, 26244, 62500, 67228, 78732 };
+    static const int NS[] = { 405, 972, 1215, 1372, 2500, 3125, 4095, 6561, 9604, 12500, 15625, 16807,
+                              19683, 26244, 59049, 62500, 67228, 78125, 78732, 98415, 117649, 137781 };
     const int n = (int)(sizeof NS / sizeof NS[0]);
     int bad = 0;
     (void)argc; (void)argv;
@@ -61,6 +62,24 @@ int main(int argc, char **argv) {
         /* per-stage A/B on the eligible stages */
         for (int s = 1; s < p->K; s++) {
             double ta = 1e300, tb = 1e300;
+            if (!p->tz[s] && p->fgl[s]) {
+                /* the last stage: t2csg (one call per group) vs t2csgn in block
+                 * order vs t2csgn in natural-base order — three arms, rotated */
+                double tc = 1e300;
+                for (int r = 0; r < 9; r++) {
+                    for (int a2 = 0; a2 < 3; a2++) {
+                        const int arm = (a2 + r) % 3;
+                        double t0;
+                        p->gl[s] = (arm != 0); p->gord = (arm == 2);
+                        t0 = now_ns(); vfft_ilfd_stage(p, s, x, z); t0 = now_ns()-t0;
+                        if (arm == 0) { if (t0 < ta) ta = t0; } else if (arm == 1) { if (t0 < tb) tb = t0; } else { if (t0 < tc) tc = t0; }
+                    }
+                }
+                p->gl[s] = 1; p->gord = 1;
+                printf("      R%-2d cnt%-6zu x%-6zu t2csg %7.0f | t2csgn %7.0f | t2csgn+order %7.0f ns | %.2fx %.2fx  (%.2f -> %.2f -> %.2f ns/pt)\n", p->R[s], p->D[s], p->nblk[s],
+                       ta, tb, tc, ta / tb, ta / tc, ta / N, tb / N, tc / N);
+                continue;
+            }
             if (!p->tz[s]) {
                 p->msz[s] = 0;
                 for (int r = 0; r < 7; r++) { double t0 = now_ns(); vfft_ilfd_stage(p, s, x, z); t0 = now_ns()-t0; if (t0 < ta) ta = t0; }

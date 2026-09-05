@@ -133,6 +133,14 @@ module Cfg = struct
     ; hc2c_nat_sstar : int
     ; store_on_compute : bool
     ; tw : tw_source
+    ; tw_vw : int
+      (* zsplit RECORD-WIDTH PIN (2026-09-05, il_odd_count_tail §3 for the
+         split family): 0 = the rendering ISA's width (every existing
+         caller). A NARROW re-render of a body whose table was built for
+         the WIDE width passes that width here, so the [c x VW][s x VW]
+         record offsets keep addressing the table (a 2-lane load of a
+         4-lane broadcast record reads two equal values; a scalar reads
+         one). *)
     }
 
   let default =
@@ -160,6 +168,7 @@ module Cfg = struct
     ; hc2c_nat_sstar = 0
     ; store_on_compute = false
     ; tw = Tw_default
+    ; tw_vw = 0
     }
   ;;
 end
@@ -365,7 +374,8 @@ let render_load
        | Some off ->
          (* zsplit record [c×VW][s×VW] in tw_re (tw_im slot dead) — see
             Emit_state.current_tw_zsplit. *)
-         let idx = j * 2 * isa.vec_width in
+         let w = if cfg.Cfg.tw_vw > 0 then cfg.Cfg.tw_vw else isa.vec_width in
+         let idx = j * 2 * w in
          Isa.loadu_pd
            isa
            (if off = ""
@@ -399,7 +409,8 @@ let render_load
       (match Cfg.tw_zsplit_off cfg.Cfg.tw with
        | Some off ->
          (* zsplit: the sin half lives at +VW inside the tw_re record. *)
-         let idx = (j * 2 * isa.vec_width) + isa.vec_width in
+         let w = if cfg.Cfg.tw_vw > 0 then cfg.Cfg.tw_vw else isa.vec_width in
+         let idx = (j * 2 * w) + w in
          Isa.loadu_pd
            isa
            (if off = ""

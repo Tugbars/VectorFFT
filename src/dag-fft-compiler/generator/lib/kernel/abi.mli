@@ -67,6 +67,7 @@ val signature : t -> string
     it.  Opt in per kind; do not flip the default without measuring. *)
 val z11_signature
   :  ?alias_tolerant:bool
+  -> ?static_inline:bool
   -> symbol:string
   -> target_attr:string
   -> unit
