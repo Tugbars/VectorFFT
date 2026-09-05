@@ -88,8 +88,11 @@ type zs_kind =
   | S0sb
   | S0t
   | S0tb
+  | S0tu
   | Stf
   | Stf2
+  | Stf2u
+  | Stfu
   | Stfb
   | Stfbn
   | Stfn
@@ -201,6 +204,9 @@ let zs_name = function
   | S0sb -> "s0sb"
   | S0t -> "s0t"
   | S0tb -> "s0tb"
+  | S0tu -> "s0tu"
+  | Stfu -> "stfu"
+  | Stf2u -> "stf2u"
   | Stf -> "stf"
   | Stf2 -> "stf2"
   | Stfb -> "stfb"
@@ -224,6 +230,9 @@ let zs_of_name = function
   | "s0sb" -> S0sb
   | "s0t" -> S0t
   | "s0tb" -> S0tb
+  | "s0tu" -> S0tu
+  | "stfu" -> Stfu
+  | "stf2u" -> Stf2u
   | "stf" -> Stf
   | "stf2" -> Stf2
   | "stfb" -> Stfb
