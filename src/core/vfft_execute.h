@@ -798,7 +798,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                     (sre, 0, zo, 0, 0, 0, 1, 0, 1, 0, 1);
                 return;
             }
-            if (h->k1il2p || h->k1il3p || h->k1ilpr)
+            if (h->k1il2p || h->k1il3p || h->k1ilpr || h->k1ilfd)
             { /* Phase B (il_coverage_plan.md): sub-2048 native IL tier,
                * ALIASED — two-stage engines through internal scratch, zout
                * written only by the last stage (alias-gated, A3 record);
@@ -820,6 +820,13 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                         vfft_il3p_execute_fwd(h->k1il3p, sre, zo);
                     else
                         vfft_il3p_execute_bwd(h->k1il3p, sre, zo);
+                }
+                else if (h->k1ilfd)
+                {   /* the flat DIT, z -> z legal (the leaf consumes zin first) */
+                    if (dir == VFFT_FORWARD)
+                        vfft_ilfd_execute_fwd(h->k1ilfd, sre, zo);
+                    else
+                        vfft_ilfd_execute_bwd(h->k1ilfd, sre, zo);
                 }
                 else
                 {
@@ -890,6 +897,19 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                             vfft_il3p_execute_fwd(h->k1il3p, sre, dre);
                         else
                             vfft_il3p_execute_bwd(h->k1il3p, sre, dre);
+                        return;
+                    }
+                    break; /* -> convert fallback (NEVER a silent no-op) */
+                case VFFT_K1_IL_FLAT:
+                    /* the FLAT mixed-radix DIT (odd N): both directions,
+                     * natural order; route truthfulness at create makes
+                     * k1ilfd non-NULL here, the guard is defensive. */
+                    if (h->k1ilfd)
+                    {
+                        if (fwd)
+                            vfft_ilfd_execute_fwd(h->k1ilfd, sre, dre);
+                        else
+                            vfft_ilfd_execute_bwd(h->k1ilfd, sre, dre);
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */
@@ -1132,6 +1152,7 @@ void vfft_destroy(vfft_plan h)
     vfft_il2p_destroy(h->k1il2p);
     vfft_il3p_destroy(h->k1il3p);
     vfft_ilprime_destroy(h->k1ilpr);
+    vfft_ilfd_destroy(h->k1ilfd);
     if (h->k1sp)
         vfft_oop_plan_destroy(h->k1sp);
     if (h->zr2c_child)

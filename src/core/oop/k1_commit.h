@@ -190,7 +190,8 @@ static void _k1ord_reseed(void *v)
  * the zturn inner above 4096 stay the engine's structural rule. */
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N, vfft_il2p_plan_t **il2p_out,
-                             vfft_il3p_plan_t **il3p_out);   /* defined below */
+                             vfft_il3p_plan_t **il3p_out,
+                             vfft_ilfd_plan_t **ilfd_out);   /* defined below */
 typedef struct { struct vfft_wisdom_s *W; const vfft_config_t *cfg; } _ilprime_inner_ctx_t;
 static int _k1z_wisdom_replay(const vfft_config_t *cfg,
                               struct vfft_wisdom_s *W, int N,
@@ -221,7 +222,7 @@ static int _ilprime_inner_from_wisdom(int M, _ilprime_inner_t *in, void *v)
         if (zt) vfft_zturn2_destroy(zt);
         return 0;
     }
-    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3);
+    _k1_il_candidate(c->W, c->cfg, M, &in->p2, &in->p3, NULL);   /* the prime inner takes no flat plan yet */
     return (in->p2 || in->p3) ? 1 : 0;
 }
 
@@ -281,6 +282,10 @@ static int _k1_il_dp_ctx_ready = 0;
 #ifndef VFFT_K1_IL_PLAN_MAX_N
 #define VFFT_K1_IL_PLAN_MAX_N 16384 /* odd N above 2048 race here; 4 scratch planes of this size */
 #endif
+#ifndef VFFT_K1_IL_PLAN_ODD_MAX_N
+#define VFFT_K1_IL_PLAN_ODD_MAX_N 262144 /* the flat DIT's cells (no factor of 4) race up to
+                                          * here; the planner context GROWS to it on demand */
+#endif
 static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, int N)
 {
     vfft_il_cand_t top;
@@ -289,12 +294,19 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
      * with no factor of 4 (no cascade route; 2026-09-04) — bounded by the
      * planner context's scratch (VFFT_K1_IL_PLAN_MAX_N). */
     if (!W || W->vw2_off_oop || N < 2 || (N >= 2048 && !(N & 3)) ||
-        N > VFFT_K1_IL_PLAN_MAX_N || getenv("VFFT_NO_K1PLAN"))
+        N > ((N & 3) ? VFFT_K1_IL_PLAN_ODD_MAX_N : VFFT_K1_IL_PLAN_MAX_N) ||
+        getenv("VFFT_NO_K1PLAN"))
         return 0;
     if (!_k1_il_dp_ctx_ready)
     {
         vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_MAX_N);
         _k1_il_dp_ctx_ready = 1;
+    }
+    if (N > _k1_il_dp_ctx.max_N)
+    {   /* the flat DIT's cells (2026-09-05): grow the scratch planes on
+         * demand — the candidate cache restarts, wisdom is the memory */
+        vfft_il_dp_destroy(&_k1_il_dp_ctx);
+        vfft_il_dp_init(&_k1_il_dp_ctx, VFFT_K1_IL_PLAN_ODD_MAX_N);
     }
     if (cfg->rigor != VFFT_MEASURE)
         vfft_il_dp_set_patient(&_k1_il_dp_ctx);
@@ -318,10 +330,12 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
 static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                              int N,
                              vfft_il2p_plan_t **il2p_out,
-                             vfft_il3p_plan_t **il3p_out)
+                             vfft_il3p_plan_t **il3p_out,
+                             vfft_ilfd_plan_t **ilfd_out)   /* NULL = caller cannot take a flat plan */
 {
     *il2p_out = NULL;
     *il3p_out = NULL;
+    if (ilfd_out) *ilfd_out = NULL;
     if (getenv("VFFT_NO_IL2P"))
         return;
     int iR1 = 0, iR2 = 0;
@@ -359,6 +373,26 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
             if (getenv("VFFT_NAT_LOG"))
                 fprintf(stderr, "[k1c3] N=%d: replay chain %d.%d.%d src=wisdom\n",
                         N, ke->il_c3[0], ke->il_c3[1], ke->il_c3[2]);
+            return;
+        }
+    }
+    /* FLAT DIT verdict (2026-09-05): the banked chain + per-stage forms
+     * replay as written (both validated by the engine's create/apply); a
+     * refusal falls through to the pair/default path */
+    if (ke && ke->k1_il_route == VFFT_K1_IL_FLAT && ke->il_fl_n >= 2 && ilfd_out)
+    {
+        vfft_ilfd_plan_t *fp = vfft_ilfd_create_chain(N, ke->il_fl, ke->il_fl_n);
+        if (fp && (!fp->bwd_ok || (ke->il_flf[0] && !vfft_ilfd_apply_forms(fp, ke->il_flf))))
+        {
+            vfft_ilfd_destroy(fp);
+            fp = NULL;
+        }
+        if (fp)
+        {
+            *ilfd_out = fp;
+            if (getenv("VFFT_NAT_LOG"))
+                fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s) src=wisdom\n",
+                        N, ke->il_fl_n, ke->il_flf[0] ? ke->il_flf : "-");
             return;
         }
     }

@@ -109,6 +109,7 @@
 #include "zsplit.h"     /* the CT cascade, LEGACY route: create / execute     */
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
+#include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine (2026-09-05) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
@@ -227,6 +228,11 @@ typedef struct
     int    c3_A, c3_B;                       /* CHAIN3 only: R1 = A * B (the
                                               * odd-ish mid A, the pow2/even-
                                               * composite mid B); 2026-09-02 */
+    int    il_fl[VFFT_ILFD_MAX_K];           /* FLAT only: the chain (leaf first) */
+    int    il_fl_n;                          /* FLAT only: stages, else 0        */
+    char   il_flf[24];                       /* FLAT only: the per-stage forms
+                                              * the bench raced (il_forms=);
+                                              * empty = unraced yet             */
     /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
      * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
      * kernels, i.e. exactly pre-axis behavior — so every existing candidate
@@ -409,6 +415,7 @@ typedef struct
     vfft_il2p_plan_t   *ip;    /* 2P_PURE (full IL, no split planes) */
     vfft_il3p_plan_t   *i3;    /* CHAIN3 (3-stage IL chain, 2026-09-02) */
     vfft_oop11_fn       mono;  /* MONO    */
+    vfft_ilfd_plan_t   *ifd;   /* FLAT (the flat DIT, 2026-09-05) */
 } _il_dp_built_t;              /* (the hybrid 2P/3P op arm was deleted
                                 * 2026-07-29 with the il_in/il_out routes) */
 
@@ -471,6 +478,17 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         if (vfft_il3p_apply_kv_forms_bwd(b->i3, c->il_bkv) != 0) return -1;
         return 0;
     }
+    if (c->route == VFFT_K1_IL_FLAT)
+    {
+        /* the validator is the law: kernels, counts and both directions live
+         * in vfft_ilfd_create_chain; a plan without its inverse is refused
+         * (the front door serves both directions from one handle) */
+        b->ifd = vfft_ilfd_create_chain(N, c->il_fl, c->il_fl_n);
+        if (!b->ifd) return -1;
+        if (!b->ifd->bwd_ok || (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)))
+        { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
+        return 0;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {   /* il_kv = the mono FORM (0 = solo n1, 1 = mono64 8x8 at N = 64) */
         b->mono = vfft_k1_mono_il_form_fn(N, c->il_kv, 0);
@@ -485,6 +503,7 @@ static void _il_dp_free(_il_dp_built_t *b)
     if (b->zt) vfft_zturn2_destroy(b->zt);
     if (b->ip) vfft_il2p_destroy(b->ip);
     if (b->i3) vfft_il3p_destroy(b->i3);
+    if (b->ifd) vfft_ilfd_destroy(b->ifd);
     memset(b, 0, sizeof(*b));
 }
 
@@ -510,6 +529,11 @@ static int _il_dp_exec(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
         vfft_il3p_execute_fwd(b->i3, ctx->z_in, ctx->z_out);
         return 0;
     }
+    if (c->route == VFFT_K1_IL_FLAT)
+    {
+        vfft_ilfd_execute_fwd(b->ifd, ctx->z_in, ctx->z_out);
+        return 0;
+    }
     if (c->route == VFFT_K1_IL_MONO)
     {
         b->mono(ctx->z_in, 0, ctx->z_out, 0, 0, 0, 1, 0, 1, 0, 1); /* one leg */
@@ -530,6 +554,11 @@ static int _il_dp_exec_bwd(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
     {   /* the chain's backward (t2 bwd, t2tg, n1 bwd) - its leaf slot is the
          * directional form axis (2026-09-03) */
         vfft_il3p_execute_bwd(b->i3, ctx->z_in, ctx->z_out);
+        return 0;
+    }
+    if (c->route == VFFT_K1_IL_FLAT)
+    {   /* the conjugate pipeline: same forms, backward kernels */
+        vfft_ilfd_execute_bwd(b->ifd, ctx->z_in, ctx->z_out);
         return 0;
     }
     if (c->route != VFFT_K1_IL_2P_PURE) return -1;
@@ -618,6 +647,68 @@ static void _il_dp_ref_dft_direct(double *z, long N)
     free(out);
 }
 
+/* O(N * sum of prime factors) mixed-radix scalar DIT in long double, natural
+ * bin order, unnormalized forward — the non-pow2 reference (2026-09-05: the
+ * direct O(N^2) form took minutes at the flat engine's 10^5 cells). Shares
+ * nothing with the candidates (no codelet, no plan, no table); the
+ * REF_PROBES bins below still check it against direct O(N) sums. Results
+ * land in out[0..n); scr[0..n) is clobbered. */
+static void _il_dp_ref_mixed_rec(const long double *ir, const long double *ii,
+                                 long stride, long n,
+                                 long double *outr, long double *outi,
+                                 long double *scr_r, long double *scr_i)
+{
+    long p = 2, q, r, k, m;
+    if (n == 1) { outr[0] = ir[0]; outi[0] = ii[0]; return; }
+    while (n % p) p++;                          /* smallest prime factor */
+    q = n / p;
+    /* the p decimated sub-transforms -> scr[r*q .. r*q+q), each using our
+     * out[] as ITS scratch (written only after every sub-transform is done) */
+    for (r = 0; r < p; r++)
+        _il_dp_ref_mixed_rec(ir + r * stride, ii + r * stride, stride * p, q,
+                             scr_r + r * q, scr_i + r * q, outr, outi);
+    {
+        /* w_n^j for j in [0, n): one table per node */
+        long double *wr = (long double *)malloc((size_t)n * 2u * sizeof(long double));
+        long double *wi = wr ? wr + n : NULL;
+        long j;
+        if (!wr) { for (j = 0; j < n; j++) { outr[j] = 0.0L / 0.0L; outi[j] = outr[j]; } return; }
+        for (j = 0; j < n; j++)
+        {
+            const long double a = -2.0L * 3.14159265358979323846264338327950288L
+                                  * (long double)j / (long double)n;
+            wr[j] = cosl(a); wi[j] = sinl(a);
+        }
+        for (m = 0; m < p; m++)
+            for (k = 0; k < q; k++)
+            {
+                const long f = k + m * q;
+                long double sr = 0.0L, si = 0.0L;
+                for (r = 0; r < p; r++)
+                {
+                    const long j2 = (r * f) % n;
+                    const long double xr = scr_r[r * q + k], xi = scr_i[r * q + k];
+                    sr += xr * wr[j2] - xi * wi[j2];
+                    si += xr * wi[j2] + xi * wr[j2];
+                }
+                outr[f] = sr; outi[f] = si;
+            }
+        free(wr);
+    }
+}
+static void _il_dp_ref_dft_mixed(double *z, long N)
+{
+    long double *buf = (long double *)malloc((size_t)N * 6u * sizeof(long double));
+    long double *ir, *ii, *outr, *outi, *sr, *si;
+    long j;
+    if (!buf) { _il_dp_ref_dft_direct(z, N); return; }   /* the slow exact form */
+    ir = buf; ii = ir + N; outr = ii + N; outi = outr + N; sr = outi + N; si = sr + N;
+    for (j = 0; j < N; j++) { ir[j] = z[2 * j]; ii[j] = z[2 * j + 1]; }
+    _il_dp_ref_mixed_rec(ir, ii, 1, N, outr, outi, sr, si);
+    for (j = 0; j < N; j++) { z[2 * j] = (double)outr[j]; z[2 * j + 1] = (double)outi[j]; }
+    free(buf);
+}
+
 static void _il_dp_ref_dft(double *z, long N)
 {
     for (long i = 1, j = 0; i < N; i++)              /* bit reversal */
@@ -682,7 +773,7 @@ static int _il_dp_ref_build(vfft_il_dp_context_t *ctx, int N)
     if ((N & (N - 1)) == 0)
         _il_dp_ref_dft(ctx->z_ref, (long)N);
     else
-        _il_dp_ref_dft_direct(ctx->z_ref, (long)N);
+        _il_dp_ref_dft_mixed(ctx->z_ref, (long)N);   /* O(N sum p), long double */
 
     double scale = 0.0;
     for (long m = 0; m < N; m++)
@@ -746,6 +837,7 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
     case VFFT_K1_IL_CHAIN3:
+    case VFFT_K1_IL_FLAT:
         return idx;                                  /* natural by contract */
     case VFFT_K1_IL_CASCADE:
     {
@@ -845,12 +937,19 @@ static int _il_dp_exec_dir(vfft_il_dp_context_t *ctx, const vfft_il_cand_t *c,
 }
 
 static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
-                               const vfft_il_cand_t *c, int bwd)
+                               vfft_il_cand_t *c, int bwd)
 {
     /* the roundtrip refusal below only makes sense for the joint metric */
     const int joint = (!bwd && c->route == VFFT_K1_IL_CASCADE);
     _il_dp_built_t b;
     if (_il_dp_build(N, c, &b) != 0) return 1e18;
+    if (c->route == VFFT_K1_IL_FLAT && !bwd)
+    {   /* the flat DIT's per-stage FORM race, on the planner's own data and
+         * clock (real stage inputs, pipeline order); the verdict rides in
+         * the candidate so the cell's winner banks it (il_forms=) */
+        vfft_ilfd_race_forms(b.ifd, ctx->z_in, ctx->z_out, _il_dp_now_ns);
+        (void)vfft_ilfd_forms_str(b.ifd, c->il_flf, sizeof c->il_flf);
+    }
 
     /* warmup (+ joint roundtrip refusal for cascades) */
     memcpy(ctx->z_in, ctx->z_orig, (size_t)N * 2u * sizeof(double));
@@ -938,7 +1037,7 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
 /* The shipped entry point: unchanged forward/joint metric. Every existing
  * caller keeps measuring exactly what it measured before the axis landed. */
 static double _il_dp_bench(vfft_il_dp_context_t *ctx, int N,
-                           const vfft_il_cand_t *c)
+                           vfft_il_cand_t *c)
 {
     return _il_dp_bench_dir(ctx, N, c, 0);
 }
@@ -1270,6 +1369,57 @@ static void _il_dp_enumerate_odd_mids(int N, vfft_il_cand_sink_t *s)
     }
 }
 
+/* FLAT DIT candidates (2026-09-05): ordered compositions of N over the
+ * engine's radix pool in its seed order (so the greedy seed chain comes
+ * first), depth 2..VFFT_ILFD_MAX_K, capped and LOGGED like the 2D tier's
+ * enumerator (no silent caps). Kernel availability, counts and the inverse
+ * are validated at build (vfft_ilfd_create_chain); the per-stage FORMS are
+ * raced at bench time, never enumerated (see _il_dp_bench_dir). */
+#define VFFT_IL_DP_FLAT_MAXCAND 24
+static void _il_dp_flat_rec(int L, int depth, int *cur,
+                            int (*out)[VFFT_ILFD_MAX_K], int *lens,
+                            int *n, int *dropped)
+{
+    static const int POOL[] = { 9, 7, 5, 3, 25, 27, 21, 15, 13, 11, 8, 4, 16 };
+    int p;
+    if (L == 1)
+    {
+        if (depth < 2) return;
+        if (*n >= VFFT_IL_DP_FLAT_MAXCAND) { (*dropped)++; return; }
+        memcpy(out[*n], cur, sizeof(int) * VFFT_ILFD_MAX_K);
+        lens[*n] = depth;
+        (*n)++;
+        return;
+    }
+    if (depth >= VFFT_ILFD_MAX_K) return;
+    for (p = 0; p < (int)(sizeof POOL / sizeof POOL[0]); p++)
+        if (L % POOL[p] == 0)
+        {
+            cur[depth] = POOL[p];
+            _il_dp_flat_rec(L / POOL[p], depth + 1, cur, out, lens, n, dropped);
+        }
+}
+static void _il_dp_enumerate_flat(int N, vfft_il_cand_sink_t *s)
+{
+    int out[VFFT_IL_DP_FLAT_MAXCAND][VFFT_ILFD_MAX_K];
+    int lens[VFFT_IL_DP_FLAT_MAXCAND], cur[VFFT_ILFD_MAX_K];
+    int n = 0, dropped = 0, i;
+    vfft_il_cand_t c;
+    memset(cur, 0, sizeof cur);
+    _il_dp_flat_rec(N, 0, cur, out, lens, &n, &dropped);
+    if (dropped)
+        fprintf(stderr, "[il-dp] N=%d: flat chain pool capped at %d (%d more "
+                        "compositions not raced)\n", N, VFFT_IL_DP_FLAT_MAXCAND, dropped);
+    for (i = 0; i < n; i++)
+    {
+        memset(&c, 0, sizeof c);
+        c.route = VFFT_K1_IL_FLAT;
+        memcpy(c.il_fl, out[i], sizeof(int) * VFFT_ILFD_MAX_K);
+        c.il_fl_n = lens[i];
+        _il_dp_push(s, &c);
+    }
+}
+
 static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
 {
     vfft_il_cand_t c;
@@ -1465,6 +1615,12 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
                 }
             }
         }
+        /* FLAT DIT (2026-09-05): every cell the engine is meant to serve —
+         * an N with an odd factor, below 2048 or without a factor of 4 above
+         * it (N%4==0 above 2048 stays the cascade's). The pairs, the chain
+         * and the flat chains then decide by measurement. */
+        if ((N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
+            _il_dp_enumerate_flat(N, s);
         return;
     }
 
@@ -1790,6 +1946,12 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 e.il_c3[0] = nat->R2;
                 e.il_c3[1] = nat->c3_A;
                 e.il_c3[2] = nat->c3_B;
+            }
+            if (nat->route == VFFT_K1_IL_FLAT)
+            {                          /* the chain + its raced forms ARE the verdict (2026-09-05) */
+                memcpy(e.il_fl, nat->il_fl, sizeof e.il_fl);
+                e.il_fl_n = nat->il_fl_n;
+                memcpy(e.il_flf, nat->il_flf, sizeof e.il_flf);
             }
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
