@@ -31,6 +31,7 @@
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
+#include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -1177,7 +1178,7 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
     if (g->placement == VFFT_INPLACE)
         /* in-place interleaved: k1il2p/k1il3p arms are engine-pure; the
          * else-arm is _exec_c2c_interleaved (pool-touching). */
-        return (g->k1il2p || g->k1il3p) ? 1 : 0;
+        return (g->k1il2p || g->k1il3p || g->k1ilfd) ? 1 : 0;
     if (!g->k1_on)
         return 0; /* OOP classic path: _oop_mt re-asserts + slabs the pool */
     switch (g->k1_il_route)
@@ -1192,6 +1193,8 @@ static int _tc_inner_mt_safe(const struct vfft_plan_s *g)
                ((g->k1il2p->t2t_b && g->k1il2p->n1_b_r2) || g->k1il2p->n1_b);
     case VFFT_K1_IL_CHAIN3:
         return g->k1il3p != NULL;
+    case VFFT_K1_IL_FLAT:
+        return g->k1ilfd != NULL;   /* engine-pure: own staging plane, both dirs */
     case VFFT_K1_IL_PRIME:
         return g->k1ilpr != NULL;
     default:
@@ -1386,6 +1389,16 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
             x->tB_f != y->tB_f || x->tA_b != y->tA_b ||
             x->tBg_b != y->tBg_b || x->n1_b != y->n1_b)
             return 0;
+    }
+    if (a->k1ilfd)
+    {   /* the flat DIT: same chain and the same per-stage forms */
+        const vfft_ilfd_plan_t *x = a->k1ilfd, *y = b->k1ilfd;
+        int s;
+        if (!y || x->K != y->K || x->gord != y->gord)
+            return 0;
+        for (s = 0; s < x->K; s++)
+            if (x->R[s] != y->R[s] || x->msz[s] != y->msz[s] || x->gl[s] != y->gl[s])
+                return 0;
     }
     if (a->k1ilpr &&
         (a->k1ilpr->method != b->k1ilpr->method ||
@@ -2113,9 +2126,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->il2d_nat, h->il2d_blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
-    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
+    FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",
             FP__P(cplan), FP__P(oplan), FP__P(k1sp), FP__P(zsplit),
-            FP__P(zturn), FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr),
+            FP__P(zturn), FP__P(k1il2p), FP__P(k1il3p), FP__P(k1ilpr), FP__P(k1ilfd),
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */

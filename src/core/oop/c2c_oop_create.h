@@ -367,6 +367,28 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     il3p = vfft_il3p_create(N, cR2, cA, cB);
                 ilr = il3p ? VFFT_K1_IL_CHAIN3 : VFFT_K1_IL_NONE;
             }
+            /* FLAT DIT (route 8, 2026-09-05): the odd-N flat mixed-radix DIT
+             * (oop/il_flatdit.h). A banked verdict replays its chain and
+             * per-stage forms; there is NO default build here — the K=1 plan
+             * race above is the only source of a flat plan (never a rule). */
+            vfft_ilfd_plan_t *ilfd = NULL;
+            if (ilr == VFFT_K1_IL_FLAT && !il2p && !il3p && !getenv("VFFT_NO_IL2P") &&
+                cfg->layout == VFFT_LAYOUT_INTERLEAVED && ke && ke->il_fl_n >= 2)
+            {
+                ilfd = vfft_ilfd_create_chain(N, ke->il_fl, ke->il_fl_n);
+                if (ilfd && (!ilfd->bwd_ok ||
+                             (ke->il_flf[0] && !vfft_ilfd_apply_forms(ilfd, ke->il_flf))))
+                {
+                    vfft_ilfd_destroy(ilfd);
+                    ilfd = NULL;
+                }
+                if (ilfd && getenv("VFFT_NAT_LOG"))
+                    fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s) "
+                                    "src=wisdom (oop)\n",
+                            N, ke->il_fl_n, ke->il_flf[0] ? ke->il_flf : "-");
+            }
+            if (ilr == VFFT_K1_IL_FLAT && !ilfd)
+                ilr = VFFT_K1_IL_NONE;      /* truthful: the route names a plan that exists */
             /* PRIME N (route 7): Rader/Bluestein on the IL machinery
              * (il_prime.h) — the OOP INTERLEAVED prime coverage the split
              * OOP path refuses. Same IL-only-handle rules as the chain. */
@@ -439,7 +461,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
              * IL-only handles are INTERLEAVED-committed by construction
              * (every IL attempt above is layout-gated for the spr < 0 case),
              * so the split dispatch never sees k1_sp_route == -1. */
-            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr ||
+            if (spr >= 0 || (il2p && cfg->layout == VFFT_LAYOUT_INTERLEAVED) || il3p || ilpr || ilfd ||
                 (ilr == VFFT_K1_IL_MONO && cfg->layout == VFFT_LAYOUT_INTERLEAVED)) /* the solo tier has no plan object */
             {
                 struct vfft_plan_s *hk =
@@ -463,6 +485,8 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                     hk->k1il3p = il3p;
                     /* prime route (non-NULL iff ilr==IL_PRIME). */
                     hk->k1ilpr = ilpr;
+                    /* flat DIT route (non-NULL iff ilr==IL_FLAT). */
+                    hk->k1ilfd = ilfd;
                     hk->k1_mono = vfft_k1_mono_pair_fn(N, sR1);
                     {   /* MONO form = the banked il_kv on a MONO verdict
                          * (0 = solo n1, 1 = mono64); form 0 otherwise */
@@ -781,6 +805,7 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
             vfft_il2p_destroy(il2p);
             vfft_il3p_destroy(il3p);
             vfft_ilprime_destroy(ilpr);
+            vfft_ilfd_destroy(ilfd);
             if (psp)
                 vfft_oop_plan_destroy(psp);
             /* fall through to the classic OOP path */

@@ -57,6 +57,7 @@ typedef struct
     vfft_il2p_plan_t *il2;      /* IL challenger: first non-NULL serves */
     vfft_il3p_plan_t *il3;
     vfft_ilprime_plan_t *ilp;
+    vfft_ilfd_plan_t *ifd;      /* the flat DIT (2026-09-05) */
     vfft_oop11_fn mono;         /* the alias-tolerant solo (MONO verdict) */
     double *rz, *r0;            /* the aliased race buffer and its seed */
     size_t nb;                  /* bytes to re-seed per burst */
@@ -84,6 +85,8 @@ static void _c2c_race_chal(void *v)
         vfft_il2p_execute_fwd(c->il2, in, c->rz);
     else if (c->il3)
         vfft_il3p_execute_fwd(c->il3, in, c->rz);
+    else if (c->ifd)
+        vfft_ilfd_execute_fwd(c->ifd, in, c->rz);
     else if (c->mono)
         c->mono(in, 0, c->rz, 0, 0, 0, 1, 0, 1, 0, 1);   /* one leg, z -> z legal */
     else
@@ -154,6 +157,7 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
     struct vfft_plan_s *h;
     vfft_il2p_plan_t *il2 = NULL;
     vfft_il3p_plan_t *il3 = NULL;
+    vfft_ilfd_plan_t *ifd = NULL;           /* the flat DIT (2026-09-05) */
     vfft_oop11_fn mono_f = 0, mono_b = 0;   /* the alias-tolerant solo (MONO verdict) */
     vfft_ilprime_plan_t *ilp = NULL;
     vfft_zturn2_plan_t *zt = NULL;
@@ -200,12 +204,12 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
      *    alias-tolerant solo, 2026-09-04), pair, chain3, else prime */
     if (!getenv("VFFT_NO_NAT_ILP") && (mode != VFFT_NAT_ZCASC || N < 2048))
     {
-        _k1_il_candidate(W, cfg, N, &il2, &il3);
-        if (!il2 && !il3)
+        _k1_il_candidate(W, cfg, N, &il2, &il3, &ifd);
+        if (!il2 && !il3 && !ifd)
             (void)_k1_il_mono_candidate(W, N, &mono_f, &mono_b);
-        if (!il2 && !il3 && !mono_f)
+        if (!il2 && !il3 && !ifd && !mono_f)
             ilp = _ilprime_create_banked(W, cfg, N);
-        have_k1 = (il2 || il3 || mono_f || ilp) ? 1 : 0;
+        have_k1 = (il2 || il3 || ifd || mono_f || ilp) ? 1 : 0;
     }
 
     /* 3. the cascade candidate at N >= 2048 (natord under NATURAL) */
@@ -246,9 +250,9 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
             {
                 const int reps = N <= 256 ? 200 : (N <= 1024 ? 80 : 32);
                 double ns[2]; /* [0] K=1 engine, [1] cascade */
-                _c2c_race_ctx_t ca = { h, 0, NULL, NULL, 0, il2, il3, ilp, mono_f, rz, r0,
+                _c2c_race_ctx_t ca = { h, 0, NULL, NULL, 0, il2, il3, ilp, ifd, mono_f, rz, r0,
                                        2 * (size_t)N * sizeof(double) };
-                _c2c_race_ctx_t cb = { h, 0, zt, NULL, 1, NULL, NULL, NULL, 0, rz, r0,
+                _c2c_race_ctx_t cb = { h, 0, zt, NULL, 1, NULL, NULL, NULL, NULL, 0, rz, r0,
                                        2 * (size_t)N * sizeof(double) };
                 const vfft_race_arm_t arms[2] = {
                     { "ilp", _c2c_race_chal, &ca }, { "zcasc", _c2c_race_chal, &cb } };
@@ -295,21 +299,23 @@ static vfft_plan _c2c_ip_create_il(const vfft_config_t *cfg,
         h->k1il2p = il2;
         h->k1il3p = il3;
         h->k1ilpr = ilp;
+        h->k1ilfd = ifd;
         h->k1_mono_ilf = mono_f;
         h->k1_mono_ilb = mono_b;
-        il2 = NULL; il3 = NULL; ilp = NULL;
+        il2 = NULL; il3 = NULL; ilp = NULL; ifd = NULL;
         h->nat_mode = nat ? VFFT_NAT_ILP : 0;
         if (getenv("VFFT_NAT_LOG"))
             fprintf(stderr, "[ipil] N=%d: %s ILP (%s)\n", N,
                     raced_row ? "replay" : "attach",
-                    h->k1il2p ? "il2p" : h->k1il3p ? "il3p"
+                    h->k1il2p ? "il2p" : h->k1il3p ? "il3p" : h->k1ilfd ? "flat"
                               : h->k1_mono_ilf ? "mono" : "ilprime");
     }
     if (il2) vfft_il2p_destroy(il2);
     if (il3) vfft_il3p_destroy(il3);
     if (ilp) vfft_ilprime_destroy(ilp);
+    if (ifd) vfft_ilfd_destroy(ifd);
     if (zt)  vfft_zturn2_destroy(zt);
-    if (!h->zturn && !h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1_mono_ilf)
+    if (!h->zturn && !h->k1il2p && !h->k1il3p && !h->k1ilpr && !h->k1ilfd && !h->k1_mono_ilf)
     {
         _vfft_warn("vfft_create: in-place C2C N=%d with layout=INTERLEAVED has no "
                    "interleaved engine yet (no mono/pair/chain3/prime kernel serves "

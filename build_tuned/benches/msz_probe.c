@@ -15,7 +15,6 @@
 #include <mkl_dfti.h>
 #include <mkl_service.h>
 #include "vfft.h"
-#include "../../src/core/oop/il_flat.h"
 #include "../../src/core/oop/il_flatdit.h"
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }

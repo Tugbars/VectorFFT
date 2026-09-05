@@ -26,7 +26,6 @@
 #define VFFT_IL_FLATDIT_H
 
 #include "il2p.h"
-#include "il2d_cols.h"
 
 #define VFFT_ILFD_MAX_K 10
 /* stages whose run D is at most this many columns run on the column-stride
@@ -115,12 +114,10 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
     if (!p) return 0;
     p->N = N; p->K = K;
     for (s = 0; s < K; s++) p->R[s] = R[s];
-    {   /* the plain leaf: n1c (natural in/out, alias-tolerant) */
-        vfft_il2p_fn ff[1], fb[1];
-        int r1[1]; r1[0] = R[0];
-        if (!_il2d_resolve(r1, 1, ff, fb)) { vfft_ilfd_destroy(p); return 0; }
-        p->lf = ff[0];
-        p->lb = fb[0];
+    {   /* the plain leaf: n1c (natural in/out, alias-tolerant), both directions */
+        p->lf = vfft_il2p_n1c_fn(R[0], 0);
+        p->lb = vfft_il2p_n1c_fn(R[0], 1);
+        if (!p->lf || !p->lb) { vfft_ilfd_destroy(p); return 0; }
     }
     p->bwd_ok = 1;
     D = (size_t)N;
@@ -342,9 +339,9 @@ static inline void _ilfd_stage_dir(const vfft_ilfd_plan_t *p, int s,
     const vfft_il2p_fn fcs = bwd ? p->fcsb[s] : p->fcs[s];
     const vfft_il2p_fn fgl = bwd ? p->fglb[s] : p->fgl[s];
     const vfft_il2p_fn fz = bwd ? p->fzb[s] : p->fz[s];
-    const double *tf = bwd ? p->tfb[s] : tf;
-    const double *t2g = bwd ? p->t2gb[s] : t2g;
-    const double *tz = bwd ? p->tzb[s] : tz;
+    const double *tf = bwd ? p->tfb[s] : p->tf[s];
+    const double *t2g = bwd ? p->t2gb[s] : p->t2g[s];
+    const double *tz = bwd ? p->tzb[s] : p->tz[s];
     if (s == 0) {
         lf(zin, 0, stg, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
         return;
@@ -436,6 +433,51 @@ static inline void vfft_ilfd_execute_bwd(const vfft_ilfd_plan_t *p,
 {
     int s;
     for (s = 0; s < p->K; s++) vfft_ilfd_stage_bwd(p, s, zin, zout);
+}
+
+/* The per-stage FORM verdict as text — the wisdom token il_forms= (one letter
+ * per stage s >= 1, '.'-joined): t = the default column form (t2cp, or the
+ * t2csg tail), m = msz, n = t2csgn in block order, o = t2csgn in natural-base
+ * order (last stage only). */
+static inline int vfft_ilfd_forms_str(const vfft_ilfd_plan_t *p, char *buf, size_t n)
+{
+    size_t off = 0;
+    int s;
+    if (n == 0) return 0;
+    buf[0] = 0;
+    for (s = 1; s < p->K; s++) {
+        const char c = p->msz[s] ? 'm' : p->gl[s] ? ((s == p->K - 1 && p->gord) ? 'o' : 'n') : 't';
+        const int r = snprintf(buf + off, n - off, "%s%c", s > 1 ? "." : "", c);
+        if (r < 0 || (size_t)r >= n - off) return 0;
+        off += (size_t)r;
+    }
+    return 1;
+}
+
+/* Apply a forms token — the validator is the law: a letter the stage cannot
+ * serve, a wrong length or an unknown letter refuses the WHOLE token (0) and
+ * leaves the plan's defaults untouched. */
+static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms)
+{
+    int msz[VFFT_ILFD_MAX_K], gl[VFFT_ILFD_MAX_K], gord = 0, s;
+    const char *q = forms;
+    if (!forms || !*forms) return 1;
+    for (s = 1; s < p->K; s++) {
+        const char c = *q++;
+        msz[s] = 0; gl[s] = 0;
+        switch (c) {
+        case 't': break;
+        case 'm': if (!p->tz[s]) return 0; msz[s] = 1; break;
+        case 'n': if (!p->fgl[s]) return 0; gl[s] = 1; break;
+        case 'o': if (!p->fgl[s] || s != p->K - 1 || !p->gorder) return 0; gl[s] = 1; gord = 1; break;
+        default: return 0;
+        }
+        if (s < p->K - 1) { if (*q != '.') return 0; q++; }
+    }
+    if (*q) return 0;
+    for (s = 1; s < p->K; s++) { p->msz[s] = msz[s]; p->gl[s] = gl[s]; }
+    p->gord = gord;
+    return 1;
 }
 
 /* Per-stage FORM race (2026-09-05): on each msz-eligible stage, time the

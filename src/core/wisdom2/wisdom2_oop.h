@@ -64,6 +64,12 @@ typedef struct {
                                               * chain (leaf R2, mid A, mid B) as
                                               * il_chain=R2.A.B (2026-09-02); zeros =
                                               * absent (pre-2026-09-02 rows: default) */
+    int    il_fl[10];                        /* kind 3, il_route=flat: the flat DIT's
+                                              * chain as il_flat=R0.R1...; il_fl_n
+                                              * stages (0 = absent); il_forms= the
+                                              * per-stage form letters (2026-09-05) */
+    int    il_fl_n;
+    char   il_flf[24];
     /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
      * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
      *   mid : 0 = registry t2 (monolithic), 1 = t2b [2·16], 2 = t2b48 [4·8]

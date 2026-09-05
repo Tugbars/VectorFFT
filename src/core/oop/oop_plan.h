@@ -128,7 +128,16 @@ enum
      * Mirrors primes/prime_dispatch.h, translated to IL, NOT wrapped
      * around the in-place engine. Method pick = availability preference;
      * the measured per-cell pick belongs in wisdom. */
-    VFFT_K1_IL_PRIME = 7
+    VFFT_K1_IL_PRIME = 7,
+    /* 8 = the FLAT mixed-radix DIT (oop/il_flatdit.h, 2026-09-05): the
+     * odd-N engine above the chain's reach and its challenger below it —
+     * un-turned DIT over the registry radices, per-stage kernel FORMS raced
+     * at plan time (t2cp | msz | t2csgn | t2csgn in natural-base order),
+     * natural order by the last stage's redirected stores, both directions
+     * (the inverse is the conjugate pipeline), in place by construction.
+     * Chain + forms are PLAN INPUT from the kind-3 row (il_flat=, il_forms=);
+     * there is no default build — the planner is the only source. */
+    VFFT_K1_IL_FLAT = 8
 };
 
 typedef enum

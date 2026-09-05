@@ -179,6 +179,13 @@ struct vfft_plan_s
      * Rader or Bluestein over il2p/il3p inner plans, both dirs, natural.
      * Same IL-only-handle rules as k1il3p. Owned. */
     vfft_ilprime_plan_t *k1ilpr;
+    /* K=1 NATURAL interleaved z->z on the FLAT mixed-radix DIT (oop/
+     * il_flatdit.h; route VFFT_K1_IL_FLAT, 2026-09-05): the odd-N engine —
+     * chain + per-stage forms replayed from the kind-3 row (il_flat=,
+     * il_forms=), both directions, in place by construction (the leaf
+     * consumes zin before the last stage writes zout). Same IL-only-handle
+     * rules as k1il3p. Owned. */
+    vfft_ilfd_plan_t *k1ilfd;
     /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.
