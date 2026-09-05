@@ -67,13 +67,20 @@ VFFT_IL_DECL(radix15_z_msg_bwd_avx2)
 #define VFFT_IL_MSG_BWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(15)
 #define VFFT_IL_MSG_PAIR_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(15)
 
-/* ── msz ── fwd 5 · bwd 0 · pair 0 */
+/* ── msz ── fwd 5 · bwd 5 · pair 5 */
 VFFT_IL_DECL(radix3_z_msz_fwd_avx2)
 VFFT_IL_DECL(radix5_z_msz_fwd_avx2)
 VFFT_IL_DECL(radix7_z_msz_fwd_avx2)
 VFFT_IL_DECL(radix9_z_msz_fwd_avx2)
 VFFT_IL_DECL(radix15_z_msz_fwd_avx2)
+VFFT_IL_DECL(radix3_z_msz_bwd_avx2)
+VFFT_IL_DECL(radix5_z_msz_bwd_avx2)
+VFFT_IL_DECL(radix7_z_msz_bwd_avx2)
+VFFT_IL_DECL(radix9_z_msz_bwd_avx2)
+VFFT_IL_DECL(radix15_z_msz_bwd_avx2)
 #define VFFT_IL_MSZ_FWD_RADICES(X) X(3) X(5) X(7) X(9) X(15)
+#define VFFT_IL_MSZ_BWD_RADICES(X) X(3) X(5) X(7) X(9) X(15)
+#define VFFT_IL_MSZ_PAIR_RADICES(X) X(3) X(5) X(7) X(9) X(15)
 
 /* ── n1 ── fwd 21 · bwd 21 · pair 21 */
 VFFT_IL_DECL(radix2_z_n1_fwd_avx2)
@@ -625,7 +632,7 @@ VFFT_IL_DECL(radix25_z_t2cs_fwd_avx2)
 VFFT_IL_DECL(radix27_z_t2cs_fwd_avx2)
 #define VFFT_IL_T2CS_FWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
 
-/* ── t2csg ── fwd 15 · bwd 0 · pair 0 */
+/* ── t2csg ── fwd 15 · bwd 15 · pair 15 */
 VFFT_IL_DECL(radix3_z_t2csg_fwd_avx2)
 VFFT_IL_DECL(radix4_z_t2csg_fwd_avx2)
 VFFT_IL_DECL(radix5_z_t2csg_fwd_avx2)
@@ -641,9 +648,26 @@ VFFT_IL_DECL(radix19_z_t2csg_fwd_avx2)
 VFFT_IL_DECL(radix21_z_t2csg_fwd_avx2)
 VFFT_IL_DECL(radix25_z_t2csg_fwd_avx2)
 VFFT_IL_DECL(radix27_z_t2csg_fwd_avx2)
+VFFT_IL_DECL(radix3_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix4_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix5_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix7_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix8_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix9_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix11_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix13_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix15_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix16_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix17_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix19_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix21_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix25_z_t2csg_bwd_avx2)
+VFFT_IL_DECL(radix27_z_t2csg_bwd_avx2)
 #define VFFT_IL_T2CSG_FWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
+#define VFFT_IL_T2CSG_BWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
+#define VFFT_IL_T2CSG_PAIR_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
 
-/* ── t2csgn ── fwd 15 · bwd 0 · pair 0 */
+/* ── t2csgn ── fwd 15 · bwd 15 · pair 15 */
 VFFT_IL_DECL(radix3_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix4_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix5_z_t2csgn_fwd_avx2)
@@ -659,7 +683,24 @@ VFFT_IL_DECL(radix19_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix21_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix25_z_t2csgn_fwd_avx2)
 VFFT_IL_DECL(radix27_z_t2csgn_fwd_avx2)
+VFFT_IL_DECL(radix3_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix4_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix5_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix7_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix8_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix9_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix11_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix13_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix15_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix16_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix17_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix19_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix21_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix25_z_t2csgn_bwd_avx2)
+VFFT_IL_DECL(radix27_z_t2csgn_bwd_avx2)
 #define VFFT_IL_T2CSGN_FWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
+#define VFFT_IL_T2CSGN_BWD_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
+#define VFFT_IL_T2CSGN_PAIR_RADICES(X) X(3) X(4) X(5) X(7) X(8) X(9) X(11) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27)
 
 /* ── t2t ── fwd 0 · bwd 20 · pair 0 */
 VFFT_IL_DECL(radix3_z_t2t_bwd_avx2)
@@ -714,6 +755,6 @@ VFFT_IL_DECL(radix32_z_t2tg_bwd_avx2)
 VFFT_IL_DECL(radix64_z_t2tg_bwd_avx2)
 #define VFFT_IL_T2TG_BWD_RADICES(X) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27) X(32) X(64)
 
-/* 469 declarations over 57 kinds */
+/* 504 declarations over 57 kinds */
 
 #endif

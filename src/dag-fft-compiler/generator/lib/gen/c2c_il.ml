@@ -245,7 +245,7 @@ let emit
        the streamed VTW2 table; n1/n1t carry no runtime twiddles)";
   (* t2cs = the column-stride tail form of the T2 mid, fwd only for now
      (2026-09-04, il_flatdit.h: the flat chain's D < vw stages). *)
-  if colstride && (kind <> T2 || dir <> Fwd || log3 || blocked || turnst || turnst_gs)
+  if colstride && (kind <> T2 || log3 || blocked || turnst || turnst_gs)
   then
     failwith
       "codelet_cil: --cil-t2cs is the plain T2 fwd mid with column-stride addressing; \
@@ -261,6 +261,12 @@ let emit
      the exported symbol is the wrapper (the msg group-loop precedent). *)
   if grouploop && not gen2
   then failwith "codelet_cil: --cil-t2csgn is the t2csg tail kind with the in-kernel group loop";
+  (* BACKWARD tails (2026-09-05): the flat DIT's inverse is the CONJUGATE
+     pipeline (same stage order, conj tables driver-side, IDFT blocks), so a
+     backward tail is PRE-twiddle by definition — the placement --cil-pretw
+     forces on a backward T2 (dft.ml: DIF x Bwd = PRE). Forced here, never
+     spelled on the cell: t2cs/t2csg/t2csgn _bwd carry no "p" tag. *)
+  let pretw = pretw || (colstride && dir = Bwd) in
   Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
   then
@@ -1121,7 +1127,7 @@ let emit
             radix
             (kind_name kind
              ^ (if blocked then "b" else "")
-             ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) then "p" else "")
+             ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) && not ctx.colstride then "p" else "")
              ^ (if ctx.colstride then "cs" else "")
              ^ (if ctx.tw_gen2 then "g" else "")
              ^ (if ctx.st_turn then "t" else "")
@@ -1364,7 +1370,12 @@ let emit
       buf
       (Abi.z11_signature
          ~alias_tolerant:true
-         ~symbol:(Printf.sprintf "radix%d_z_t2csgn_fwd_%s" radix isa.Isa.name)
+         ~symbol:
+           (Printf.sprintf
+              "radix%d_z_t2csgn_%s_%s"
+              radix
+              (if dir = Fwd then "fwd" else "bwd")
+              isa.Isa.name)
          ~target_attr:isa.Isa.target_attr
          ());
     Buffer.add_string
