@@ -18,7 +18,7 @@
 #include "../../src/core/oop/il_flatdit.h"
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
-static void set_all(vfft_ilfd_plan_t *p, int on) { for (int s = 1; s < p->K; s++) if (p->tz[s]) p->msz[s] = on; }
+static void set_all(vfft_ilfd_plan_t *p, int on) { for (int s = 1; s < p->K; s++) if (p->tz[s]) p->msz[s] = on; vfft_ilfd_bind(p); }
 int main(int argc, char **argv) {
     static const int NS[] = { 405, 972, 1215, 1372, 2500, 3125, 4095, 6561, 9604, 12500, 15625, 16807,
                               19683, 26244, 59049, 62500, 67228, 78125, 78732, 98415, 117649, 137781 };
@@ -91,8 +91,8 @@ int main(int argc, char **argv) {
                 {   /* the scrambled output = the mixed-radix digit reversal of the natural spectrum */
                     const size_t R = (size_t)p->R[s], nstride = (size_t)N / R;
                     double mx = 0;
-                    p->scr = 0; vfft_ilfd_execute_fwd(p, x, z);
-                    p->scr = 1; vfft_ilfd_execute_fwd(p, x, y);
+                    p->scr = 0; vfft_ilfd_bind(p); vfft_ilfd_execute_fwd(p, x, z);
+                    p->scr = 1; vfft_ilfd_bind(p); vfft_ilfd_execute_fwd(p, x, y);
                     for (size_t b = 0; b < p->nblk[s]; b++)
                         for (size_t l = 0; l < R; l++) {
                             const size_t ps = b * R + l, pn = p->natbase[b] + l * nstride;
@@ -110,16 +110,16 @@ int main(int argc, char **argv) {
                         printf(" | scr roundtrip %.1e %s\n", rt, !p->scr_ok ? "NO SCR BWD" : rt < 1e-9 * sqrt((double)N) ? "OK" : "BAD");
                         if (!p->scr_ok || !(rt < 1e-9 * sqrt((double)N))) bad++;
                     }
-                    p->scr = 0;
+                    p->scr = 0; vfft_ilfd_bind(p);
                 }
                 {   /* whole transform, natural vs scrambled, alternated */
                     double tn = 1e300, tsc = 1e300;
                     for (int r = 0; r < 9; r++) {
                         double t0;
-                        p->scr = 0; t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tn) tn = t0;
-                        p->scr = 1; t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, y); t0 = now_ns()-t0; if (t0 < tsc) tsc = t0;
+                        p->scr = 0; vfft_ilfd_bind(p); t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tn) tn = t0;
+                        p->scr = 1; vfft_ilfd_bind(p); t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, y); t0 = now_ns()-t0; if (t0 < tsc) tsc = t0;
                     }
-                    p->scr = 0;
+                    p->scr = 0; vfft_ilfd_bind(p);
                     printf("      whole fwd: natural %7.0f | scrambled %7.0f ns | scrambled %.2fx faster\n", tn, tsc, tn / tsc);
                 }
                 continue;

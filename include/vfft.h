@@ -421,8 +421,10 @@ extern "C"
    *       INTERLEAVED: REJECT.
    *   1D C2C OOP        x INTERLEAVED: NATIVE z->z for K=1 at any N (the
    *       K=1 IL tiers — mono, pair, chain, the flat mixed-radix DIT for
-   *       odd N to 2^18, Rader/Bluestein, the scrambled or natural-writing
-   *       cascade — all raced per cell) and for K>1 in the
+   *       odd N to 2^18 in its natural or SCRAMBLED class (the mixed-radix
+   *       digit reversal; each order is its own raced wisdom cell),
+   *       Rader/Bluestein, the scrambled or natural-writing cascade — all
+   *       raced per cell) and for K>1 in the
    *       TRANSFORM_CONTIGUOUS geometry (K independent K=1 transforms; the
    *       threading verdict is raced and banked T-free). Lane-major
    *       INTERLEAVED batches: REJECT (not an IL route; nothing to fall

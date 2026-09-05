@@ -18,7 +18,8 @@ alone.
 
 The engine computes the unnormalized complex DFT of one interleaved
 vector of N points (re, im adjacent), forward and backward, out of place
-or in place, natural order in and out:
+or in place, natural order in; natural order out, or — the SCRAMBLED
+class — the mixed-radix digit reversal (§2.3):
 
     X[k] = Σ_n x[n] · e^(−2πi·nk/N)          (forward)
     x[n] = Σ_k X[k] · e^(+2πi·nk/N)          (backward, N·x on a roundtrip)
@@ -46,7 +47,7 @@ Let N = R₀·R₁·…·R_{K−1}, K ≥ 2, every Rₛ from the pool
 
     { 9, 7, 5, 3, 25, 27, 21, 15, 13, 11, 8, 4, 16 }
 
-(this is also the seed order the planner enumerates in; §8.1). Define
+(this is also the seed order the planner enumerates in; §9.1). Define
 
     Dₛ  = N / (R₀·R₁·…·Rₛ)      the RUN at stage s (D_{K−1} = 1)
     Lₛ  = Rₛ · Dₛ               the BLOCK SPAN at stage s (= D_{s−1})
@@ -104,6 +105,16 @@ writes its results straight to their natural positions,
 
 Only the last stage writes zout. Every earlier stage works in place on
 the staging plane.
+
+**The scrambled class** (`p->scr = 1`). The same plan with the last
+stage's redirection removed: it writes zout in the plane's own block
+order, position b·R_{K−1} + l holding bin natbase[b] + l·nstride — the
+mixed-radix digit reversal of the natural spectrum. No scatter and no
+order table (the identity base table `ipb[K−1]` stands in for
+`natbase`), so the forward is the natural plan minus its one strided
+write pass; its inverse is the transposed pipeline (§6.2). Natural and
+scrambled are two ORDER CLASSES of the same chain: the front door serves
+each from its own wisdom cell (§9.3) and never compares them.
 
 ### 2.4 A worked example, N = 60 = 3·4·5
 
@@ -361,10 +372,13 @@ negated.
 
 ---
 
-## 6. The backward transform: the conjugate pipeline
+## 6. The backward transform: two pipelines
 
-The inverse is NOT the transpose of the forward pipeline run in reverse.
-It is the same pipeline with every stage conjugated:
+### 6.1 The natural class: the conjugate pipeline
+
+The natural class's inverse is NOT the transpose of the forward pipeline
+run in reverse (the natural scatter would have to be un-scattered
+first). It is the same pipeline with every stage conjugated:
 
     IDFT(x) = conj( DFT( conj(x) ) )
 
@@ -380,21 +394,45 @@ conjugated tables:
     n, o      t2csg_bwd, t2csgn_bwd       (the T2 backward with the pre-twiddle placement forced)
 
 No conjugation happens in any kernel; the tables carry it. The
-direction is a parameter of one stage function
-(`_ilfd_stage_dir(p, s, zin, zout, bwd)`) that selects the kernel set
-and the tables; everything else is shared. A plan whose tail stage has
-no backward twin (the plain `t2cs` kind) sets `bwd_ok = 0` and is
+direction picks the kernel set and the tables when the stage's call
+record is bound (§8); everything else is shared. A plan whose tail stage
+has no backward twin (the plain `t2cs` kind) sets `bwd_ok = 0` and is
 refused by the front door, which serves both directions from one
 handle.
+
+### 6.2 The scrambled class: the transposed pipeline
+
+A scrambled forward F = S_{K−1} ··· S_1 · L (leaf L, stages S_s, no
+final scatter) has the inverse N·F⁻¹ = F^H = L^H · S_1^H ··· S_{K−1}^H:
+the stages run in REVERSE order, each replaced by its Hermitian
+transpose, and since a stage is (pre-twiddle T_s, then DFT block B_s),
+its transpose is (IDFT block, then conj-twiddle POST). The last stage's
+transpose consumes the comb first, reading zin in block order into the
+plane; the mids and tails follow in reverse order in place; the leaf's
+transpose writes natural zout last. The kernels are the transposed
+twins, tagged "t" where the natural backward already had the name:
+
+    t         t2cp_bwd                     (IDFT block, POST-twiddle conj: t2cp's placement toggle at bwd)
+    m         mszt_bwd  ("mszt")           (cascade_z kind {msz with bwd}: (DIT, Bwd) places the twiddle POST)
+    n         t2csgt_bwd, t2csgnt_bwd      (the tail kinds transposed: no forced pre-twiddle placement)
+    leaf      n1c_bwd                      (the leaf's transpose is its conjugate)
+
+The conjugated tables are shared with the conjugate pipeline
+(post-multiplying by conj(w) reads the same records). `scr_ok` = every
+stage has its transposed twin; a scrambled plan without it is refused.
+The letter `o` (natural-base group order) has no meaning in this class:
+`vfft_ilfd_create_scr_of` builds the class from a natural token reading
+`o` as `n`, and a `t` last stage writes block order as well.
 
 ---
 
 ## 7. Kernel forms: measured per stage, never ruled
 
 Every stage keeps ALL its forms' tables and kernel pointers in the plan;
-two integers pick the form at execute time: `msz[s]` (1 = form m) and
-`gl[s]` (1 = the in-kernel group loop), plus `gord` for the last stage's
-order. The plan therefore never rebuilds to change form.
+two integers name the form: `msz[s]` (1 = form m) and `gl[s]` (1 = the
+in-kernel group loop), plus `gord` for the last stage's order and `scr`
+for the class. The plan never rebuilds to change form: the fields are
+re-bound into the stage's call record (§8).
 
 `vfft_ilfd_race_forms(p, zin, zout, now_ns)` races them on real data in
 pipeline order: it executes the leaf, then for each stage times the
@@ -427,9 +465,57 @@ None of this is a rule in the code — the race decides every cell.
 
 ---
 
-## 8. Planner, wisdom, front door
+## 8. Execution: the bound call lists
 
-### 8.1 Candidates
+Execution does no planning work. At bind time (`vfft_ilfd_bind` — run
+by create, by the forms token, by the form race and by the scrambled
+builder: every writer of a form field) the plan derives, from the form
+fields and the stage geometry, ONE call record per stage for each of
+its three pipelines:
+
+    cf[s]   the forward                       (leaf, stages 1..K−1)
+    cb[s]   the conjugate backward            (natural class, same order)
+    ct[i]   the transposed backward           (scrambled class: stages K−1..1, then the leaf)
+
+A record (`vfft_ilfd_call_t`) holds the kernel pointer, which buffer
+each of the two z arguments is (the plane, zin, zout, or none), the
+table pointers and the five strides/counts of the z ABI — everything the
+call needs except the caller's zin/zout addresses. The executor
+(`_ilfd_run`) walks the list and calls; per stage that is two indexed
+loads and one indirect call. No division, no digit-weight product, no
+form or direction branch and no resolver runs at execute time; the front
+door's dispatch (`vfft_execute` → route `VFFT_K1_IL_FLAT`) is the only
+code between the API and the records.
+
+Three record shapes exist:
+
+- **ONE** — one kernel call for the whole stage. The leaf; msz (its own
+  block loop, Gs = blocks); t2csgn (its own group loop, Gs = groups);
+  and t2cp in place or on the scrambled last stage: the t2cp kernel
+  carries an outer loop over OGs blocks with Gs as the block pitch and
+  its record pointer advancing R−1 records per block, so a mid stage of
+  nb blocks is ONE call with OGs = nb, Gs = R·D. The per-block driver
+  loop this replaced paid a call and a prologue per block; the same-run
+  A/B (`benches/bind_ab.c`, spectra bitwise identical) put it at
+  1.01–1.05× the bound list (4095 1.036, 6561 t.t.t 1.035–1.042, 98415
+  1.049, 19683/59049 1.011), while the per-stage arithmetic itself was
+  within noise (0.99–1.06).
+- **COL** — the t2csg per-column tail form (letter t on a tail stage):
+  ngrp × D calls, the group's T2 record advancing per group, the natural
+  last stage redirected through `natbase`.
+- **BLK** — t2cp per block on a natural last stage without a tail form
+  (no pool radix lacks one; kept for completeness).
+
+`vfft_ilfd_stage(p, s, …)` binds stage s from the CURRENT fields into a
+local record and runs it: the form race and the probes flip a field and
+time a stage without rebinding the plan, and rebind when done. The
+served path never rebinds.
+
+---
+
+## 9. Planner, wisdom, front door
+
+### 9.1 Candidates
 
 `_il_dp_enumerate_flat` (dp_planner_il.h) walks the ordered
 compositions of N over the pool in the pool's order (so the greedy seed
@@ -442,7 +528,7 @@ contracts and the existence of the inverse are validated by
 `vfft_ilfd_create_chain` at build — a chain that cannot build or cannot
 invert is dropped, never patched.
 
-### 8.2 Measurement
+### 9.2 Measurement
 
 The planner's bench builds the candidate, runs the per-stage form race
 on the planner's own data and clock, writes the resulting token into the
@@ -452,40 +538,62 @@ DIT in long double (`_il_dp_ref_dft_mixed`, O(N·Σp) — it shares no code,
 table or plan with the engines), itself spot-checked against direct
 sums. The tolerance is 10⁻¹² relative to the reference's scale.
 
-### 8.3 Banking and replay
+### 9.3 Banking and replay: one cell per order
 
-The winner banks its route, chain and token on the kind-3 IL row:
+The winner banks its route, chain and token on the kind-3 IL row of the
+cell's ORDER. Natural and scrambled are separate cells, keyed `ord=nat`
+and `ord=scr`, each with its own race and its own verdict; the two are
+never compared and neither is derived from the other:
 
     @cell t=c2c n=19683 q=1 ord=nat place=oop role=comp lay=il |
-        eng=k1 il_route=flat il_flat=9.3.9.9.9 il_forms=t.t.t.n il_kv=0 | ran=1 ns=… src=race
+        eng=k1 il_route=flat il_flat=9.9.9.9.3 il_forms=t.t.n.o il_kv=0 | ran=1 ns=… src=race
+    @cell t=c2c n=19683 q=1 ord=scr place=oop role=comp lay=il |
+        eng=k1 il_route=flat il_flat=9.9.3.9.9 il_forms=t.t.m.n il_kv=0 | ran=1 ns=… src=race
 
-`il_flat` is a structural field; `il_forms` is a local one (kernel
-placement is machine-tied and re-raced on a host mismatch, like every
-kv). A create with a banked flat row builds the chain and applies the
-token — there is no default flat build anywhere: the planner is the
-only source of a flat plan. Replay is bit-identical to the raced plan
-(the gate checks this by comparing spectra).
+The scrambled pool, at every cell the K=1 IL tier races (below 2048, or
+any N without a factor of 4), is every natural engine (the solo kernels,
+the pair, the chain — a scrambled request that only a natural-writing
+engine wins is served natural, and the row says so) plus, at a
+non-power-of-two, the flat chains in their scrambled class; a `chain3`
+or pair verdict on an ord=scr row means a natural-writing engine won
+that cell's scrambled race. The in-place mode row of a SCRAMBLED
+request signposts that ord=scr row (`ref=cell(…,ord=scr,place=oop,
+role=comp,lay=il)`); `vfft_ilp_front_gate` holds the power-of-two cells
+to it (own verdict, replay without a race). `il_flat` is a
+structural field; `il_forms` is a local one (kernel placement is
+machine-tied and re-raced on a host mismatch, like every kv). A create
+with a banked flat row builds the chain and applies the token —
+`vfft_ilfd_create_scr_of` for an ord=scr row — there is no default flat
+build anywhere: the planner is the only source of a flat plan. Replay is
+bit-identical to the raced plan (the gate checks this by comparing
+spectra).
 
-### 8.4 Front door
+### 9.4 Front door
 
-- OOP create (`c2c_oop_create.h`): a banked `il_route=flat` row replays
-  into `hk->k1ilfd`; a miss below 2048 or at any N without a factor of 4
-  (up to `VFFT_K1_IL_PLAN_ODD_MAX_N` = 2¹⁸) runs the plan race first.
-- In-place create (`c2c_ip_create.h`): `_k1_il_candidate` returns the
-  flat plan; it is raced against the cascade where one exists and
-  attached as the cell's ILP engine.
+- OOP create (`c2c_oop_create.h`): the IL axis reads the request's order
+  cell — `vw2_oop_lookup_k1` (ord=nat) for DEFAULT and NATURAL,
+  `vw2_oop_lookup_k1_scr` (ord=scr) for SCRAMBLED. A banked
+  `il_route=flat` row replays into `hk->k1ilfd` (an ord=scr row through
+  `vfft_ilfd_create_scr_of`); a miss below 2048 or at any N without a
+  factor of 4 (up to `VFFT_K1_IL_PLAN_ODD_MAX_N` = 2¹⁸) runs the plan
+  race for that order first.
+- In-place create (`c2c_ip_create.h` → `k1_commit.h`): the same order
+  cell; `_k1_il_candidate` returns the flat plan of the request's class,
+  raced against the cascade where one exists and attached as the cell's
+  ILP engine.
 - Execute (`vfft_execute.h`): route `VFFT_K1_IL_FLAT` dispatches
   `vfft_ilfd_execute_fwd/bwd`; in place with zin == zout.
 - The plan is engine-pure (own staging plane, no pool), so the
   transform-contiguous batch tier may clone it per worker.
-- `benches/flatdit_gate.c` (cold wisdom dir) is the machine proof:
-  forward against sampled bins, roundtrips in both placements, bitwise
-  replay, and `il_route=flat` asserted above 27³ where no other native
-  route exists.
+- `benches/flatdit_gate.c` (cold wisdom dir) is the machine proof: a
+  natural pass and a scrambled pass — forward against sampled bins (the
+  scrambled pass through the digit-reversal map), roundtrips in both
+  placements, bitwise replay, `il_route=flat` asserted above 27³ where
+  no other native route exists, and the ord=scr rows read back.
 
 ---
 
-## 9. The insights behind the design
+## 10. The insights behind the design
 
 **Un-turned, natural throughout.** The transform never transposes and
 never digit-reverses. Each stage is a contiguous sweep in place on one
@@ -530,7 +638,7 @@ plan.
 
 ---
 
-## 10. How this differs from the power-of-two cascade
+## 11. How this differs from the power-of-two cascade
 
 The cascade (`oop/zturn.h`, the ZTURN-S route for N with a factor of 4
 at or above 2048) and the flat DIT are both multi-stage
@@ -544,9 +652,9 @@ interleaved at the API. Everything else differs:
 | ingest | radix-4 leaf with the corner turn fused into its stores | plain leaf, no turn |
 | mids | `msg`: split planes in memory, per-lane splat-pair tables per group | `t2cp` (packed) or `msz` (split in registers only), one broadcast record set per block, raced per stage |
 | terminator | section taps, no load shuffles, reinterleaving comb stores | tail kinds over block groups with a generated twiddle stream and the in-kernel group loop |
-| output order | SCRAMBLED (digit-reversed) by default; natural through the `stfn` variants | natural always, by the last stage's redirected stores |
+| output order | SCRAMBLED (digit-reversed) by default; natural through the `stfn` variants | natural by the last stage's redirected stores; the SCRAMBLED class (digit-reversed) by the same stage in block order — its own wisdom cell |
 | twiddle streams | per-lane tables tiled by section | per-block broadcast records; two small tables at the tails |
-| backward | transposed pipeline (terminator first, un-turn last) | conjugate pipeline, same order |
+| backward | transposed pipeline (terminator first, un-turn last) | natural class: conjugate pipeline, same order; scrambled class: transposed pipeline, reverse order |
 | where lanes are ordered | the plane holds ordered lanes; the boundary kernels pay two permutes per leg per four columns | lanes stay in unpack order inside msz; nothing else cares |
 
 The cascade buys contiguous terminator loads by paying for the turn at
@@ -555,7 +663,7 @@ the scatter at the end and then arranging that scatter to be cheap.
 
 ---
 
-## 11. Limits and extension points
+## 12. Limits and extension points
 
 - **Radix pool.** A new radix needs the pure-IL kinds n1c, t2cp/t2c
   (both directions), t2csg and t2csgn (both directions) — all emitted
@@ -578,20 +686,21 @@ the scatter at the end and then arranging that scatter to be cheap.
 
 ---
 
-## 12. File map
+## 13. File map
 
-    src/core/oop/il_flatdit.h                 the engine: plan, create, tables, stages, race_forms, forms token
-    src/core/oop/il2p.h                       resolvers: t2cp, t2csg(_bwd), t2csgn(_bwd), msz(_bwd), n1c, t2c
+    src/core/oop/il_flatdit.h                 the engine: plan, create, tables, bind + the executor, race_forms, forms token, the scrambled builder
+    src/core/oop/il2p.h                       resolvers: t2cp(_bwd), t2csg(_bwd, t_bwd), t2csgn(_bwd, t_bwd), msz(_bwd, t_bwd), n1c, t2c
     src/core/planning/dp_planner_il.h         flat candidates, bench-time form race, mixed-radix reference, banking
-    src/core/oop/k1_commit.h                  plan-race admission (odd N to 2^18), the replay for in-place
-    src/core/oop/c2c_oop_create.h             OOP replay of a banked flat row
+    src/core/oop/k1_commit.h                  plan-race admission (odd N to 2^18), the replay for in-place, the request's order cell
+    src/core/oop/c2c_oop_create.h             OOP replay of a banked flat row from the request's order cell
     src/core/oop/c2c_ip_create.h              in-place candidate and attach
     src/core/vfft_execute.h                   dispatch both placements, destroy
-    src/core/wisdom2/wisdom2_oop_reader.h     il_flat= / il_forms= parse and write
-    codelets/zil/avx2/pure_il/*_t2cp_*, *_t2csg_*, *_t2csgn_*, *_n1c_*, *_t2c_*
-    codelets/zil/avx2/boundary_split/*_msz_*  (forward and backward)
+    src/core/wisdom2/wisdom2_oop_reader.h     il_flat= / il_forms= parse and write; the ord=nat / ord=scr lookups
+    codelets/zil/avx2/pure_il/*_t2cp_*, *_t2csg_*, *_t2csgn_*, *_n1c_*, *_t2c_*  (each with its _bwd, the tails with _t_bwd)
+    codelets/zil/avx2/boundary_split/*_msz_*, *_msz_bwd_*, *_mszt_bwd_*
     generator/lib/gen/c2c_il.ml               t2cp / t2cs / t2csg / t2csgn emission, the group-loop wrapper
     generator/lib/gen/cascade_z.ml            msz / mszb: interleaved edges, unordered lanes, the narrow arms
     build_tuned/benches/flatdit_gate.c        the front-door gate
     build_tuned/benches/ilfd_probe.c          the standalone probe (chains raced, vs MKL)
     build_tuned/benches/msz_probe.c           the per-stage form A/B
+    build_tuned/benches/bind_ab.c             the executor's identity check + same-run A/B (bound list vs per-stage vs per-block)

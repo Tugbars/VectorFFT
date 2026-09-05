@@ -100,7 +100,9 @@ typedef struct {
     int     ref_ilp;                         /* mode=ilp bank: which recipe row the signpost
                                               * names — 0 none (mono), 1 the kind-3 row
                                               * lay=il, 2 kind-3 lay=split, 3 kind-3 lay-less,
-                                              * 4 the PRIME shard row (2026-09-02). */
+                                              * 4 the PRIME shard row (2026-09-02),
+                                              * 5 the ord=scr kind-3 IL row — an explicit
+                                              * SCRAMBLED request's own cell (2026-09-05). */
     int     ref_comp;                        /* mode=zcasc bank: 1 = the signpost names
                                               * the role=comp kind-4 RECIPE (banked by an
                                               * in-place / odd race); 0 = the OOP problem
