@@ -191,6 +191,16 @@ let kind_of_string (s : string) : zs_kind =
   | "ms" -> mid
   | "msb" -> { mid with bwd = true }
   | "msg" -> { mid with base = "msg"; group_loop = true }
+  | "msz" ->
+    (* MKL's Fact form on our contract (2026-09-05, owner: "kernel-level
+       boundary IL, split body is fine"): the msg mid with INTERLEAVED z on
+       BOTH edges — deinterleave on load, the shuffle-free split body,
+       reinterleave on store — no split planes in memory, no extra pass.
+       The lane order inside is left as unpacklo/hi produce it ([0,2,1,3]):
+       the two 0xD8 permutes of the ordered z edges are skipped (zu_noperm),
+       which is what takes the boundary from 2.0 to 1.0 shuffles per point;
+       the per-block record-sets are broadcast, so lane order is moot. *)
+    { mid with base = "msz"; group_loop = true; in_edge = E_z "Ls"; out_edge = E_z "Ls" }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
   | "msd" ->
     (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
@@ -496,6 +506,10 @@ module ZSched = Schedule.Make (ZNode)
 
 (* ─── emission ────────────────────────────────────────────────────── *)
 
+(* msz: the z edges skip the lane-order permutes (see kind_of_string). Set
+   per emission from the kind; gen_set runs many cells in one process. *)
+let zu_noperm = ref false
+
 let emit_codelet
       ~store_on_compute
       ~(kind : string)
@@ -513,6 +527,7 @@ let emit_codelet
      the Tw_zsplit payload is set at the point the record offset is known. *)
   let cfg = ref { Emit_render.Cfg.default with Emit_render.Cfg.store_on_compute } in
   let k = kind_of_string kind in
+  zu_noperm := (k.base = "msz");
   (* ── --zp-sink admission gate (the r0_dep-gate precedent: fail loudly,
         never silently emit the unsunk shape under the sunk name). Only a
         SINGLETON-ready store edge can sink — E_sect_tap's direct record
@@ -610,7 +625,7 @@ let emit_codelet
         carry it (provenance stability)"
    | _ -> ());
   if radix <> 4 && radix <> 8
-     && not (k.base = "msg" && List.mem radix [ 3; 5; 7; 9; 15 ])
+     && not ((k.base = "msg" || k.base = "msz") && List.mem radix [ 3; 5; 7; 9; 15 ])
   then
     failwith
       "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
@@ -1121,11 +1136,15 @@ let emit_codelet
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_re_%d" sl)
-                 (Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unlo sl sl))
+                 (if !zu_noperm
+                  then Printf.sprintf "%s(_zl_%d, _zh_%d)" unlo sl sl
+                  else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unlo sl sl))
               (Isa.const_decl
                  isa
                  (Printf.sprintf "lane_im_%d" sl)
-                 (Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unhi sl sl)))
+                 (if !zu_noperm
+                  then Printf.sprintf "%s(_zl_%d, _zh_%d)" unhi sl sl
+                  else Printf.sprintf "%s(%s(_zl_%d, _zh_%d), 0xD8)" p44 unhi sl sl)))
        done
      | E_blocks ->
        (* ── Block load edge (TR4): per column, load the R/VW block halves
@@ -1293,11 +1312,15 @@ let emit_codelet
                   (Isa.const_decl
                      isa
                      (Printf.sprintf "_pr_%d" sl)
-                     (Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(sl)))
+                     (if !zu_noperm
+                      then Printf.sprintf "t%d" re_tag.(sl)
+                      else Printf.sprintf "%s(t%d, 0xD8)" p44 re_tag.(sl)))
                   (Isa.const_decl
                      isa
                      (Printf.sprintf "_qi_%d" sl)
-                     (Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
+                     (if !zu_noperm
+                      then Printf.sprintf "t%d" im_tag.(sl)
+                      else Printf.sprintf "%s(t%d, 0xD8)" p44 im_tag.(sl)))
                   (Isa.storeu_pd
                      isa
                      (leg_addr "zout" leg s colo 0)

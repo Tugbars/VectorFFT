@@ -78,6 +78,7 @@ type zs_kind =
   | Msd
   | Msg
   | Msgb
+  | Msz
   | S0s
   | S0sb
   | S0t

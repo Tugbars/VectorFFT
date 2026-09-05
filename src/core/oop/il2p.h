@@ -239,6 +239,27 @@ static inline vfft_il2p_fn vfft_il2p_t2cs_fn(int R)
     }
 }
 
+/* msz — MKL's Fact form on our contract (2026-09-05, owner: "kernel-level
+ * boundary IL, split body is fine"): the zsplit odd mid (msg body: split
+ * planes in REGISTERS, shuffle-free, splat-pair records) with INTERLEAVED
+ * z on both edges and UNORDERED lanes (unpack only, no permute4x64: 1.0
+ * shuffle/point at the boundary, MKL's figure). One call per stage: Gs =
+ * blocks (in-kernel group loop), Ls = count = D (count % 4 == 0), tw_re =
+ * per block (R-1) [c x4][s x4] records, plain sin. fwd only, IN PLACE on
+ * zout (zin ignored). Files: codelets/zil/avx2/boundary_split/; the
+ * registry derives VFFT_IL_MSZ_FWD_RADICES like every other kind. */
+static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_MSZ_FWD_RADICES
+#define C(R) case R: return radix##R##_z_msz_fwd_avx2;
+    VFFT_IL_MSZ_FWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* t2csg — t2cs with the GENERATED twiddle stream (gen2, 2026-09-04): the
  * kernel forms W^1 per column pair as T1[pair] (tw_re, the cursor: one
  * VTW2 pair record per pair) times T2 (tw_im: ONE broadcast record per

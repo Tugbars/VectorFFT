@@ -45,6 +45,11 @@ typedef struct {
     vfft_il2p_fn fcs[VFFT_ILFD_MAX_K];/* t2cs / t2csg fwd for the TAIL stages (D <= VFFT_ILFD_TAIL_D) */
     int tail[VFFT_ILFD_MAX_K];        /* 1 = t2cs (per-pair stream), 2 = t2csg (generated) */
     double *t2g[VFFT_ILFD_MAX_K];     /* gen2: per-group broadcast records (T2), 8 doubles each */
+    vfft_il2p_fn fz[VFFT_ILFD_MAX_K]; /* msz fwd (split body, IL edges, unordered lanes) */
+    double *tz[VFFT_ILFD_MAX_K];      /* msz: per block (R-1) [c x4][s x4] records (plain sin);
+                                       * non-null = the stage is msz-ELIGIBLE (D % 4 == 0, s < K-1) */
+    int msz[VFFT_ILFD_MAX_K];         /* 1 = run the stage on msz (default where eligible;
+                                       * VFFT_ILFD_NO_MSZ=1 at create turns it off; A/B flips it) */
     double *tf[VFFT_ILFD_MAX_K];      /* t2cp: per block (R-1) broadcast records;
                                        * t2cs: per GROUP, per block-pair, (R-1) VTW2 records */
     size_t *natbase;                  /* last stage: block -> natural index */
@@ -55,7 +60,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
 {
     int s;
     if (!p) return;
-    for (s = 0; s < VFFT_ILFD_MAX_K; s++) { VFFT_IL2P_FREE(p->tf[s]); VFFT_IL2P_FREE(p->t2g[s]); }
+    for (s = 0; s < VFFT_ILFD_MAX_K; s++) { VFFT_IL2P_FREE(p->tf[s]); VFFT_IL2P_FREE(p->t2g[s]); VFFT_IL2P_FREE(p->tz[s]); }
     free(p->natbase);
     VFFT_IL2P_FREE(p->stg);
     free(p);
@@ -106,6 +111,27 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
             double *tf;
             size_t bi;
             int l, lane;
+            /* msz (2026-09-05): every non-last stage whose run is a multiple
+             * of 4 can run on the Fact-form kernel; its records are built
+             * alongside the t2cp/tail ones so a probe can A/B the two forms
+             * on ONE plan by flipping p->msz[s]. */
+            p->msz[s] = 0;
+            if ((D & 3) == 0 && s < K - 1 && vfft_il2p_msz_fn(R[s])) {
+                double *tz = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
+                if (!tz) { vfft_ilfd_destroy(p); return 0; }
+                for (bi = 0; bi < nb; bi++) {
+                    const size_t Q = _ilfd_block_Q(p, s, bi);
+                    for (l = 1; l < R[s]; l++) {
+                        const double a = -2.0 * VFFT_IL2P_PI * (double)((size_t)l * Q % L) / (double)L;
+                        const double c = cos(a), sn = sin(a);
+                        double *rf = tz + (bi * recs_blk + (size_t)(l - 1)) * 8;
+                        for (lane = 0; lane < 4; lane++) { rf[lane] = c; rf[4 + lane] = sn; }
+                    }
+                }
+                p->tz[s] = tz;
+                p->fz[s] = vfft_il2p_msz_fn(R[s]);
+                p->msz[s] = !getenv("VFFT_ILFD_NO_MSZ");
+            }
             p->tail[s] = 0;
             if (D <= (size_t)VFFT_ILFD_TAIL_D) {
                 if (vfft_il2p_t2csg_fn(R[s]) && !getenv("VFFT_ILFD_NO_GEN2")) p->tail[s] = 2;
@@ -245,6 +271,12 @@ static inline void vfft_ilfd_stage(const vfft_ilfd_plan_t *p, int s,
         const size_t recs_blk = (size_t)(p->R[s] - 1);
         const size_t nstride = N / (size_t)p->R[s];
         size_t bi;
+        if (p->msz[s]) {
+            /* msz: ONE call, Gs = blocks (in-kernel group loop: bp += 2*R*Ls,
+             * twg += (R-1)*8 per block), Ls = count = D, in place on stg. */
+            p->fz[s](0, 0, stg, 0, p->tz[s], 0, D, nb, 0, 0, D);
+            return;
+        }
         if (p->tail[s]) {
             /* t2cs: per group of G = R[s-1] blocks, per inner column c:
              * columns = the G blocks (in stride Gs = L, out stride OGs =
