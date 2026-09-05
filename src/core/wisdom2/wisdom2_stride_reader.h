@@ -458,6 +458,9 @@ static inline int vw2_stride_rec_from_nat(vw2_rec_t *r,
         if (e->ref_ilp == 4)
             snprintf(refbuf, sizeof refbuf,
                      "cell(t=c2c,n=%d,q=1,ord=scr,place=ip,role=comp,lay=il)", e->N);
+        else if (e->ref_ilp == 5)   /* the SCRAMBLED request's own order cell (2026-09-05) */
+            snprintf(refbuf, sizeof refbuf,
+                     "cell(t=c2c,n=%d,q=1,ord=scr,place=oop,role=comp,lay=il)", e->N);
         else
             snprintf(refbuf, sizeof refbuf,
                      "cell(t=c2c,n=%d,q=1,ord=nat,place=oop,role=comp%s)", e->N,

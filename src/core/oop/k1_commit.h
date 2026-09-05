@@ -321,9 +321,13 @@ static int _k1_il_plan_race(struct vfft_wisdom_s *W, const vfft_config_t *cfg, i
     if (lines > 0)
         _vw2_persist(W, cfg);
     if (getenv("VFFT_NAT_LOG") &&
-        vfft_il_dp_rank(&_k1_il_dp_ctx, N, VFFT_IL_ORD_NATURAL, &top, 1) == 1)
-        fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked)\n",
-                N, top.cost_ns, top.route, top.R1, top.R2, lines);
+        vfft_il_dp_rank(&_k1_il_dp_ctx, N,
+                        cfg->order == VFFT_ORDER_SCRAMBLED ? VFFT_IL_ORD_SCRAMBLED
+                                                           : VFFT_IL_ORD_NATURAL,
+                        &top, 1) == 1)
+        fprintf(stderr, "[k1plan] N=%d: ilp=%.0fns -> ILP (route %d, %d.%d, %d line(s) banked, %s cell)\n",
+                N, top.cost_ns, top.route, top.R1, top.R2, lines,
+                cfg->order == VFFT_ORDER_SCRAMBLED ? "ord=scr" : "ord=nat");
     return lines;
 }
 
@@ -527,6 +531,7 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                     ne.k1_il_route = VFFT_K1_IL_2P_PURE;
                     ne.il_R1 = picked_swap ? iR2 : iR1;
                     ne.il_R2 = picked_swap ? iR1 : iR2;
+                    ne.ord_scr = scr_req;   /* the request's own order cell (2026-09-05) */
                     if (vw2_oop_bank_k1_lay(&W->vw2, &ne, VW2_LAY_IL) == VW2_OK)
                         _vw2_persist(W, cfg);
                 }
@@ -560,10 +565,13 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
  * in-place race banked one, else the OOP verdict); mode=ilp emits neither. */
 /* the ILP recipe row, AS KEYED: the kind-3 row at N (lay=il / split /
  * lay-less, exact keys) else the PRIME shard row; 0 = none (mono) */
-static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode)
+static int _ilp_ref_of(struct vfft_wisdom_s *W, int N, int mode, int scr_req)
 {
     int lay;
     if (mode != VFFT_NAT_ILP || W->vw2_off_oop) return 0;
+    /* an explicit SCRAMBLED request is served from its own order cell
+     * (2026-09-05): the signpost names the ord=scr kind-3 IL row */
+    if (scr_req && vw2_oop_k1_row_lay_ord(&W->vw2, N, 1) == VW2_LAY_IL) return 5;
     lay = vw2_oop_k1_row_lay(&W->vw2, N);
     if (lay == VW2_LAY_IL) return 1;
     if (lay == VW2_LAY_SPLIT) return 2;
@@ -671,7 +679,7 @@ static void _bank_nat_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     nn.nf = nf;
     nn.use_dif = use_dif;
     nn.ref_comp = _zcasc_ref_is_comp(W, N, mode);
-    nn.ref_ilp = _ilp_ref_of(W, N, mode);
+    nn.ref_ilp = _ilp_ref_of(W, N, mode, 0);   /* the @nat cell: the ord=nat recipe */
     for (int s = 0; s < nf && s < STRIDE_MAX_STAGES; s++)
     {
         nn.factors[s] = fac[s];

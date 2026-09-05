@@ -191,7 +191,13 @@ int main(int argc, char **argv)
         if (reraced || (ilp_won && !replayed))
             ok = 0;
 
-        /* 3. SCRAMBLED in-place, hit-only */
+        /* 3. SCRAMBLED in-place: the cell's OWN verdict (owner 2026-09-05:
+         * ord=scr and ord=nat are separate cells, never compared). Below
+         * 2048 no IL engine writes scrambled order, so the arm's output is
+         * natural and must match the reference; bitwise identity with the
+         * natural arm is reported, never required. The first SCRAMBLED
+         * create may race (its own cell, cold); the second must replay —
+         * no race, the same bits. */
         const char *scrarm = "rt-only(tape)";
         {
             vfft_plan hs = mk(W, N, 1);
@@ -200,15 +206,17 @@ int main(int argc, char **argv)
                 ok = 0;
             else
             {
-                memcpy(a, x, 2 * (size_t)N * sizeof(double));
+                const size_t nb = 2 * (size_t)N * sizeof(double);
+                double *ys = az((size_t)N);
+                memcpy(a, x, nb);
                 vfft_execute(hs, VFFT_FORWARD, a, NULL, a, NULL);
+                memcpy(ys, a, nb);
                 if (ilp_won)
                 {
-                    scrarm = memcmp(a, yn,
-                                    2 * (size_t)N * sizeof(double)) == 0
-                                 ? "IDENT(ilp)"
-                                 : "DIFF(!)";
-                    if (strcmp(scrarm, "IDENT(ilp)") != 0)
+                    const int ident = memcmp(a, yn, nb) == 0;
+                    const double es = relerr(a, X, 2L * N);
+                    scrarm = ident ? "IDENT(ilp)" : (es < 1e-9 ? "OK(ilp)" : "WRONG(!)");
+                    if (!(es < 1e-9))
                         ok = 0;
                 }
                 vfft_execute(hs, VFFT_BACKWARD, a, NULL, a, NULL);
@@ -219,6 +227,27 @@ int main(int argc, char **argv)
                     ok = 0;
                 fz(nx2);
                 vfft_destroy(hs);
+                {   /* the scrambled cell replays: no race, same bits */
+                    vfft_plan hs2 = mk(W, N, 1);
+                    const char *log3 = err_tap_read();
+                    if (!hs2 || strstr(log3, "ilp=") != NULL)
+                    {
+                        scrarm = "SCR-RERACE(!)";
+                        ok = 0;
+                    }
+                    if (hs2)
+                    {
+                        memcpy(a, x, nb);
+                        vfft_execute(hs2, VFFT_FORWARD, a, NULL, a, NULL);
+                        if (memcmp(a, ys, nb) != 0)
+                        {
+                            scrarm = "SCR-REPLAY-DIFF(!)";
+                            ok = 0;
+                        }
+                        vfft_destroy(hs2);
+                    }
+                }
+                fz(ys);
             }
         }
 

@@ -490,6 +490,7 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         b->ifd = vfft_ilfd_create_chain(N, c->il_fl, c->il_fl_n);
         if (!b->ifd) return -1;
         b->ifd->scr = c->il_scr;   /* before the forms: the last stage's arms differ */
+        vfft_ilfd_bind(b->ifd);
         if (!b->ifd->bwd_ok || (c->il_scr && !b->ifd->scr_ok) ||
             (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)))
         { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
@@ -1684,17 +1685,22 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * Raced, then discarded, on every MEASURE create. Sharing the runtime's
      * gate keeps the boundary raceable via VFFT_NAT_ZCASC_MINN while costing
      * nothing by default. */
-    /* the K=1 IL tier's SCRAMBLED cell (2026-09-05): every engine that
+    /* the K=1 IL tier's SCRAMBLED cell (2026-09-05): at every cell the tier
+     * races (below 2048, or any N without a factor of 4) every engine that
      * legally answers a scrambled request competes here — the natural-output
-     * engines (identity is a legal scrambled permutation) and the flat
-     * DIT's SCRAMBLED class (block-order output, transposed backward) — and
-     * the winner banks on the cell's own ord=scr IL row. The natural flat
-     * is left out: its scrambled class is the same plan minus the scatter.
+     * engines (identity is a legal scrambled permutation) and, at a
+     * non-power-of-two, the flat DIT's SCRAMBLED class (block-order output,
+     * transposed backward) — and the winner banks on the cell's own ord=scr
+     * IL row. The natural flat is left out: its scrambled class is the same
+     * plan minus the scatter. A power of two below 2048 has no cascade (the
+     * gate below) and no flat chain: its scrambled cell is the natural
+     * engines' own race — without it the cell had NO scrambled verdict and
+     * every SCRAMBLED create re-raced and served a form-less default pair.
      * The cascade's own gate follows. */
-    if ((N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
+    if (N < 2048 || (N & 3))
     {
         _il_dp_enumerate_natural_engines(N, s, 0);
-        _il_dp_enumerate_flat_ord(N, s, 1);
+        if ((N & (N - 1)) != 0) _il_dp_enumerate_flat_ord(N, s, 1);
     }
     if (N < _vfft_zcasc_min_n()) return;
     {

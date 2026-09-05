@@ -1010,9 +1010,9 @@ cap bites), races each stage's kernel form on real data, gates every
 candidate against an independent mixed-radix long-double reference and
 banks the winner's chain and forms on the cell's kind-3 row
 (`il_route=flat il_flat=… il_forms=…`). Both placements, both
-directions (the inverse is the conjugate pipeline: same stage order,
-backward kernels, conjugated tables), replay bit-identical;
-`flatdit_gate` is the machine proof. Bluestein remains only for factors
+directions, both order classes (natural: the conjugate pipeline, same
+stage order; scrambled: the transposed pipeline, reverse order), replay
+bit-identical; `flatdit_gate` is the machine proof. Bluestein remains only for factors
 no chain expresses.
 
 Front door, `bench_1d_vs_mkl --k1noop` (K=1, natural order, out of
@@ -1041,6 +1041,37 @@ and paced, spectra cross-checked elementwise:
 Before this tier 1215 ran Bluestein at 15.1 µs and every odd N above
 19683 ran Bluestein at the next power of two, unmeasured; the real
 transforms' bridge inherits every cell through the front door.
+
+**The SCRAMBLED order class (2026-09-05).** A `VFFT_ORDER_SCRAMBLED`
+request at any cell the K=1 IL tier races is its own wisdom cell
+(`ord=scr`), raced from its own pool — every natural engine plus, at a
+non-power-of-two, the flat chains in their scrambled class — and never
+compared with the natural verdict. The
+scrambled flat DIT is the natural plan minus its final scatter: the last
+stage writes the plane's block order (the mixed-radix digit reversal,
+position b·R+l = bin natbase[b]+l·N/R) and its inverse is the transposed
+pipeline (stages in reverse, IDFT + post-twiddle-conjugate twins).
+Same-run engine measurement (`msz_probe`, seed chains, both classes on
+the bound executor, forward):
+
+```
+ N        natural (µs)   scrambled (µs)   natural/scrambled
+ 1215         2.4             2.3            1.04×
+ 4095         9.6             8.6            1.12×
+ 6561        14.0            13.0            1.08×
+ 19683       53.7            50.3            1.07×
+ 59049      154.8           137.9            1.12×
+ 78125      244.6           214.7            1.14×
+ 98415      346.3           309.0            1.12×
+```
+
+**Execution (2026-09-05).** The engine binds one call record per stage
+at plan time (kernel, buffers, tables, strides, counts) and execute
+walks the list: no planning arithmetic or resolution per call, and a
+t2cp stage runs as ONE call through the kernel's own block loop.
+Same-run A/B (`bind_ab`, spectra bitwise identical): the per-block
+driver loop it replaced cost 1.01–1.05× (98415 1.049, 4095 1.036,
+19683/59049 1.011).
 
 **The flat DIT engine.** An un-turned mixed-radix DIT: the plain leaf,
 then one in-place sweep per remaining factor with per-block broadcast

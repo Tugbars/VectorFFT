@@ -136,7 +136,7 @@ static void _bank_ipmode_1d(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
                                 * mode=zcasc emits the ref= signpost */
     nn.factors[0] = N;
     nn.ref_comp = _zcasc_ref_is_comp(W, N, mode); /* the recipe row that SERVED */
-    nn.ref_ilp = _ilp_ref_of(W, N, mode);
+    nn.ref_ilp = _ilp_ref_of(W, N, mode, cfg->order == VFFT_ORDER_SCRAMBLED);   /* the row that SERVED */
     if (cfg->order == VFFT_ORDER_NATURAL)
         vw2_stride_bank_nat(&W->vw2, &nn, /*is_oop=*/0, _vw2_lay_of(cfg));
     else

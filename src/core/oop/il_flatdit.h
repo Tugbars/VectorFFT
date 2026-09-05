@@ -21,7 +21,8 @@
  *            natural order: OLs = N/R[K-1], out base = the block's natural
  *            index (block-affine) — from the staging plane into zout, so
  *            the output is natural with no ordering pass.
- *   v0 = forward only, out of place, single thread. */
+ *   Both directions, both order classes (natural / scrambled), in place
+ *   legal, single thread; execution = the bound call lists (see below). */
 #ifndef VFFT_IL_FLATDIT_H
 #define VFFT_IL_FLATDIT_H
 
@@ -33,6 +34,29 @@
 #ifndef VFFT_ILFD_TAIL_D
 #define VFFT_ILFD_TAIL_D 4
 #endif
+
+/* ONE BOUND CALL of a stage — the executor's whole vocabulary (2026-09-05):
+ * the kernel, the buffers, the tables, the strides and the counts, resolved
+ * from the plan's form fields at bind time (vfft_ilfd_bind). The served
+ * path walks a list of these and calls: no division, no digit-weight loop,
+ * no form or direction branch, no resolver, per call. */
+enum { _ILFD_ONE = 0,   /* one kernel call: the leaf, msz, t2csgn, t2cp (its in-kernel
+                         * block loop: OGs = blocks, Gs = the block pitch R*D) */
+       _ILFD_COL = 1,   /* the t2csg per-column tail form 't': ngrp x D calls */
+       _ILFD_BLK = 2 }; /* t2cp per block, redirected (a natural last stage without a
+                         * tail form — no POOL radix lacks one) */
+enum { _ILFD_STG = 0, _ILFD_ZIN = 1, _ILFD_ZOUT = 2, _ILFD_NUL = 3 };  /* in_sel / out_sel */
+typedef struct {
+    vfft_il2p_fn fn;
+    int op, in_sel, out_sel;
+    const double *a1;             /* zin_unused: the base table (t2csgn) */
+    double *a3;                   /* zout_unused: the group order (t2csgn, natural last stage) */
+    const double *tw, *t2;
+    size_t Ls, Gs, OLs, OGs, count;
+    size_t D, L, G, ngrp, nb, tw_step, t2_step;   /* _ILFD_COL / _ILFD_BLK loops */
+    const size_t *obase;          /* COL: the group's first block's natural base; BLK: per
+                                   * block; NULL = in place (block order) */
+} vfft_ilfd_call_t;
 
 typedef struct {
     int N, K;
@@ -86,7 +110,17 @@ typedef struct {
     int bwd_ok;
     size_t *natbase;                  /* last stage: block -> natural index */
     double *stg;                      /* 2N staging plane */
+    /* THE BOUND CALL LISTS (2026-09-05): what execute walks. cf = the
+     * forward, cb = the conjugate backward (natural class), ct = the
+     * transposed backward (scrambled class), each in execution order, one
+     * record per stage. The form fields above (msz / gl / gord / scr / tail)
+     * are the SOURCE; vfft_ilfd_bind derives the lists from them, and every
+     * writer of those fields rebinds (create_chain, apply_forms, race_forms,
+     * create_scr_of, the planner's scr flip, the probes). */
+    vfft_ilfd_call_t cf[VFFT_ILFD_MAX_K], cb[VFFT_ILFD_MAX_K], ct[VFFT_ILFD_MAX_K];
 } vfft_ilfd_plan_t;
+
+static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p);
 
 static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
 {
@@ -323,6 +357,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
     }
     p->stg = (double *)VFFT_IL2P_ALLOC(2u * (size_t)N * sizeof(double));
     if (!p->stg) { vfft_ilfd_destroy(p); return 0; }
+    vfft_ilfd_bind(p);
     return p;
 }
 
@@ -348,15 +383,14 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create(int N)
     return vfft_ilfd_create_chain(N, R, K);
 }
 
-/* ONE stage: s == 0 is the leaf (zin -> stg); 1 <= s < K-1 in place on stg;
- * s == K-1 scatters stg -> zout in natural order. Exposed so a probe can
- * time stages one at a time through the exact serving path. */
-static inline void _ilfd_stage_dir(const vfft_ilfd_plan_t *p, int s,
-                                   const double *zin, double *zout, int bwd)
+/* ═══ BINDING: the form fields -> one call record per stage ══════════════
+ * _ilfd_bind_stage_dir mirrors the stage geometry for the forward (bwd = 0)
+ * and the conjugate backward (bwd = 1: backward kernels, conjugated tables,
+ * same shapes); _ilfd_bind_stage_T for the transposed backward. */
+static inline void _ilfd_bind_stage_dir(const vfft_ilfd_plan_t *p, int s, int bwd,
+                                        vfft_ilfd_call_t *c)
 {
     const size_t N = (size_t)p->N;
-    double *stg = p->stg;
-    /* the direction picks the kernel set and the tables; forms are shared */
     const vfft_il2p_fn lf = bwd ? p->lb : p->lf;
     const vfft_il2p_fn f = bwd ? p->fb[s] : p->f[s];
     const vfft_il2p_fn fcs = bwd ? p->fcsb[s] : p->fcs[s];
@@ -365,73 +399,168 @@ static inline void _ilfd_stage_dir(const vfft_ilfd_plan_t *p, int s,
     const double *tf = bwd ? p->tfb[s] : p->tf[s];
     const double *t2g = bwd ? p->t2gb[s] : p->t2g[s];
     const double *tz = bwd ? p->tzb[s] : p->tz[s];
-    if (s == 0) {
-        lf(zin, 0, stg, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
+    const int last = (s == p->K - 1);
+    memset(c, 0, sizeof *c);
+    if (s == 0) {   /* the leaf: zin -> the plane, one call */
+        c->op = _ILFD_ONE; c->fn = lf; c->in_sel = _ILFD_ZIN; c->out_sel = _ILFD_STG;
+        c->Ls = c->OLs = c->count = p->D[0];
         return;
     }
     {
         const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s]; /* L = block span */
         const size_t recs_blk = (size_t)(p->R[s] - 1);
         const size_t nstride = N / (size_t)p->R[s];
-        size_t bi;
+        c->in_sel = _ILFD_STG; c->out_sel = last ? _ILFD_ZOUT : _ILFD_STG;
+        c->D = D; c->L = L; c->nb = nb;
         if (p->msz[s]) {
             /* msz: ONE call, Gs = blocks (in-kernel group loop: bp += 2*R*Ls,
-             * twg += (R-1)*8 per block), Ls = count = D, in place on stg. */
-            fz(0, 0, stg, 0, tz, 0, D, nb, 0, 0, D);
+             * twg += (R-1)*8 per block), Ls = count = D, in place on the plane;
+             * never the last stage. zin unused (NULL, as ever). */
+            c->op = _ILFD_ONE; c->fn = fz; c->tw = tz; c->in_sel = _ILFD_NUL; c->out_sel = _ILFD_STG;
+            c->Ls = D; c->Gs = nb; c->count = D;
             return;
         }
         if (p->tail[s]) {
-            /* t2cs: per group of G = R[s-1] blocks, per inner column c:
-             * columns = the G blocks (in stride Gs = L, out stride OGs =
-             * L in place, or the natural weight W of q_{s-1} on the last
-             * stage), legs at Ls = D, count = G. */
+            /* the tail kinds: per group of G = R[s-1] blocks, columns = the G
+             * blocks (in stride Gs = L; out stride OGs = L in place, or the
+             * natural weight W of q_{s-1} on the natural last stage), legs at
+             * Ls = D, count = G. */
             const size_t G = (size_t)p->R[s - 1], ngrp = nb / G;
             const size_t recs_grp = ((G + 1) / 2) * recs_blk;
             const int gen2 = (p->tail[s] == 2);
-            size_t g, c, W = 1;
+            size_t W = 1;
             int j;
             for (j = 0; j < s - 1; j++) W *= (size_t)p->R[j];
+            c->Ls = D; c->count = G; c->G = G; c->ngrp = ngrp;
             if (gen2 && p->gl[s]) {
                 /* t2csgn: the whole stage in ONE call — the group loop runs
                  * in-kernel over the base table (stride G); Gs = the groups.
-                 * Last stage: natbase -> zout, optionally in natural-base
-                 * order; earlier tail stages: in place on stg, block order. */
-                if (s == p->K - 1 && !p->scr)
-                    fgl(stg, (const double *)p->natbase, zout,
-                        (double *)(p->gord ? p->gorder : 0), tf, t2g,
-                        D, ngrp, nstride, W, G);
-                else if (s == p->K - 1)
-                    fgl(stg, (const double *)p->ipb[s], zout, 0, tf, t2g,   /* scrambled: block order */
-                        D, ngrp, D, L, G);
-                else
-                    fgl(stg, (const double *)p->ipb[s], stg, 0, tf, t2g,
-                        D, ngrp, D, L, G);
+                 * Natural last stage: natbase -> zout, optionally in
+                 * natural-base order; scrambled last stage: zout in block
+                 * order; earlier tail stages: in place, block order. */
+                c->op = _ILFD_ONE; c->fn = fgl; c->tw = tf; c->t2 = t2g; c->Gs = ngrp;
+                if (last && !p->scr) {
+                    c->a1 = (const double *)p->natbase;
+                    c->a3 = (double *)(p->gord ? p->gorder : 0);
+                    c->OLs = nstride; c->OGs = W;
+                } else {
+                    c->a1 = (const double *)p->ipb[s];
+                    c->OLs = D; c->OGs = L;
+                }
                 return;
             }
-            for (g = 0; g < ngrp; g++) {
-                const double *tw = gen2 ? tf : tf + g * recs_grp * 8;
-                const double *t2 = gen2 ? t2g + g * 8 : 0;
-                for (c = 0; c < D; c++) {
-                    const double *in = stg + 2 * (g * G * L + c);
-                    if (s < p->K - 1)
-                        fcs(in, 0, stg + 2 * (g * G * L + c), 0, tw, t2, D, L, D, L, G);
-                    else
-                        fcs(in, 0, zout + 2 * (p->natbase[g * G] + c), 0, tw, t2,
-                                  D, L, nstride, W, G);
-                }
-            }
+            /* t2cs / t2csg per column (the tail form 't'): ngrp x D calls; the
+             * gen1 table advances per group, the gen2 T2 record does */
+            c->op = _ILFD_COL; c->fn = fcs; c->Gs = L;
+            c->tw = tf; c->tw_step = gen2 ? 0 : recs_grp * 8;
+            c->t2 = gen2 ? t2g : 0; c->t2_step = gen2 ? 8 : 0;
+            if (last && !p->scr) { c->obase = p->natbase; c->OLs = nstride; c->OGs = W; }
+            else { c->OLs = D; c->OGs = L; }      /* in place / the scrambled comb */
             return;
         }
-        /* t2cp call: Ls = D (legs), Gs unused (one digit), OLs, OGs = 1, count = D */
-        for (bi = 0; bi < nb; bi++) {
-            const double *blk = stg + 2 * bi * L;
-            const double *tw = tf + bi * recs_blk * 8;
-            if (s < p->K - 1)
-                f(blk, 0, stg + 2 * bi * L, 0, tw, 0, D, 0, D, 1, D);
-            else
-                f(blk, 0, zout + 2 * p->natbase[bi], 0, tw, 0, D, 0, nstride, 1, D);
+        /* t2cp: Ls = D (legs), count = D. In place, and on the scrambled last
+         * stage (block order into zout): ONE call — the kernel's own block loop
+         * (OGs = blocks, Gs = the block pitch L, the records advance R-1 per
+         * block). The natural last stage: per block, redirected to natbase. */
+        c->fn = f; c->tw = tf; c->Ls = D; c->count = D;
+        if (!last || p->scr) { c->op = _ILFD_ONE; c->Gs = L; c->OLs = D; c->OGs = nb; return; }
+        c->op = _ILFD_BLK; c->tw_step = recs_blk * 8; c->obase = p->natbase;
+        c->OLs = nstride; c->OGs = 1;
+    }
+}
+
+/* the scrambled class's backward, stage s transposed: the IDFT block then
+ * conj(w) on the output legs, same geometry; the last stage's transpose
+ * reads the comb (zin, block order) into the plane, every other stage runs
+ * in place on the plane. */
+static inline void _ilfd_bind_stage_T(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_call_t *c)
+{
+    const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
+    const int last = (s == p->K - 1);
+    memset(c, 0, sizeof *c);
+    c->in_sel = last ? _ILFD_ZIN : _ILFD_STG; c->out_sel = _ILFD_STG;
+    c->D = D; c->L = L; c->nb = nb;
+    if (p->msz[s]) {            /* never the last stage; in place */
+        c->op = _ILFD_ONE; c->fn = p->fzbt[s]; c->tw = p->tzb[s]; c->in_sel = _ILFD_NUL;
+        c->Ls = D; c->Gs = nb; c->count = D;
+        return;
+    }
+    if (p->tail[s]) {
+        const size_t G = (size_t)p->R[s - 1], ngrp = nb / G;
+        c->Ls = D; c->count = G; c->G = G; c->ngrp = ngrp; c->tw = p->tfb[s]; c->t2 = p->t2gb[s];
+        c->OLs = D; c->OGs = L;
+        if (p->gl[s]) {
+            c->op = _ILFD_ONE; c->fn = p->fglbt[s]; c->a1 = (const double *)p->ipb[s]; c->Gs = ngrp;
+            return;
+        }
+        c->op = _ILFD_COL; c->fn = p->fcsbt[s]; c->Gs = L; c->t2_step = 8;
+        return;
+    }
+    c->op = _ILFD_ONE; c->fn = p->fbt[s]; c->tw = p->tfb[s];
+    c->Ls = D; c->Gs = L; c->OLs = D; c->OGs = nb; c->count = D;
+}
+
+/* THE EXECUTOR: walk n records; the buffers are picked by index, the rest
+ * is the record. */
+static inline void _ilfd_run(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *c, int n,
+                             const double *zin, double *zout)
+{
+    const double *base[4];
+    int i;
+    base[_ILFD_STG] = p->stg; base[_ILFD_ZIN] = zin; base[_ILFD_ZOUT] = zout; base[_ILFD_NUL] = 0;
+    for (i = 0; i < n; i++, c++) {
+        const double *in = base[c->in_sel];
+        double *out = (double *)base[c->out_sel];
+        if (c->op == _ILFD_ONE) {
+            c->fn(in, c->a1, out, c->a3, c->tw, c->t2, c->Ls, c->Gs, c->OLs, c->OGs, c->count);
+        } else if (c->op == _ILFD_COL) {
+            const size_t GL = c->G * c->L;
+            size_t g, k;
+            for (g = 0; g < c->ngrp; g++) {
+                const double *tw = c->tw + g * c->tw_step;
+                const double *t2 = c->t2 ? c->t2 + g * c->t2_step : 0;
+                const size_t ib = g * GL, ob = c->obase ? c->obase[g * c->G] : ib;
+                for (k = 0; k < c->D; k++)
+                    c->fn(in + 2 * (ib + k), 0, out + 2 * (ob + k), 0, tw, t2,
+                          c->Ls, c->Gs, c->OLs, c->OGs, c->count);
+            }
+        } else {                                        /* _ILFD_BLK */
+            size_t b;
+            for (b = 0; b < c->nb; b++)
+                c->fn(in + 2 * b * c->L, 0, out + 2 * c->obase[b], 0, c->tw + b * c->tw_step, 0,
+                      c->Ls, 0, c->OLs, c->OGs, c->count);
         }
     }
+}
+
+/* bind all three lists from the form fields (see the plan struct) */
+static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p)
+{
+    int s;
+    for (s = 0; s < p->K; s++) {
+        _ilfd_bind_stage_dir(p, s, 0, &p->cf[s]);
+        _ilfd_bind_stage_dir(p, s, 1, &p->cb[s]);
+    }
+    for (s = p->K - 1; s >= 1; s--) _ilfd_bind_stage_T(p, s, &p->ct[p->K - 1 - s]);
+    {   /* the leaf's transpose last: the plane -> natural zout */
+        vfft_ilfd_call_t *c = &p->ct[p->K - 1];
+        memset(c, 0, sizeof *c);
+        c->op = _ILFD_ONE; c->fn = p->lb; c->in_sel = _ILFD_STG; c->out_sel = _ILFD_ZOUT;
+        c->Ls = c->OLs = c->count = p->D[0];
+    }
+}
+
+/* ONE stage through the exact serving record — bound from the CURRENT form
+ * fields on the spot, so a probe or the form race can flip a field and time
+ * the stage without rebinding the plan (the served lists stay as bound;
+ * flip sites rebind when done). s == 0 is the leaf (zin -> plane), the
+ * last stage writes zout. */
+static inline void _ilfd_stage_dir(const vfft_ilfd_plan_t *p, int s,
+                                   const double *zin, double *zout, int bwd)
+{
+    vfft_ilfd_call_t c;
+    _ilfd_bind_stage_dir(p, s, bwd, &c);
+    _ilfd_run(p, &c, 1, zin, zout);
 }
 
 static inline void vfft_ilfd_stage(const vfft_ilfd_plan_t *p, int s,
@@ -445,48 +574,12 @@ static inline void vfft_ilfd_stage_bwd(const vfft_ilfd_plan_t *p, int s,
     _ilfd_stage_dir(p, s, zin, zout, 1);
 }
 
+/* the forward: the bound list, K calls for a plan whose stages are all
+ * one-call forms */
 static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
                                          const double *zin, double *zout)
 {
-    int s;
-    for (s = 0; s < p->K; s++) vfft_ilfd_stage(p, s, zin, zout);
-}
-
-/* ONE TRANSPOSED stage of the scrambled class's backward: stage s's
- * transpose-conjugate — the IDFT block then conj(w) on the output legs —
- * with the same block geometry. The last stage's transpose reads the comb
- * (zin, block order, the layout the scrambled forward wrote) into the
- * plane; every other stage runs in place on the plane. */
-static inline void _ilfd_stage_T(const vfft_ilfd_plan_t *p, int s,
-                                 const double *zin, double *zout)
-{
-    double *stg = p->stg;
-    const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
-    const size_t recs_blk = (size_t)(p->R[s] - 1);
-    const double *in = (s == p->K - 1) ? zin : stg;
-    size_t bi;
-    (void)zout;
-    if (p->msz[s]) {            /* never the last stage; in place */
-        p->fzbt[s](0, 0, stg, 0, p->tzb[s], 0, D, nb, 0, 0, D);
-        return;
-    }
-    if (p->tail[s]) {
-        const size_t G = (size_t)p->R[s - 1], ngrp = nb / G;
-        size_t g, c;
-        if (p->gl[s]) {
-            p->fglbt[s](in, (const double *)p->ipb[s], stg, 0, p->tfb[s], p->t2gb[s],
-                        D, ngrp, D, L, G);
-            return;
-        }
-        for (g = 0; g < ngrp; g++)
-            for (c = 0; c < D; c++)
-                p->fcsbt[s](in + 2 * (g * G * L + c), 0, stg + 2 * (g * G * L + c), 0,
-                            p->tfb[s], p->t2gb[s] + g * 8, D, L, D, L, G);
-        return;
-    }
-    for (bi = 0; bi < nb; bi++)
-        p->fbt[s](in + 2 * bi * L, 0, stg + 2 * bi * L, 0,
-                  p->tfb[s] + bi * recs_blk * 8, 0, D, 0, D, 1, D);
+    _ilfd_run(p, p->cf, p->K, zin, zout);
 }
 
 /* the inverse (unnormalized, N * x on a roundtrip).
@@ -498,13 +591,7 @@ static inline void _ilfd_stage_T(const vfft_ilfd_plan_t *p, int s,
 static inline void vfft_ilfd_execute_bwd(const vfft_ilfd_plan_t *p,
                                          const double *zin, double *zout)
 {
-    int s;
-    if (p->scr) {
-        for (s = p->K - 1; s >= 1; s--) _ilfd_stage_T(p, s, zin, zout);
-        p->lb(p->stg, 0, zout, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
-        return;
-    }
-    for (s = 0; s < p->K; s++) vfft_ilfd_stage_bwd(p, s, zin, zout);
+    _ilfd_run(p, p->scr ? p->ct : p->cb, p->K, zin, zout);
 }
 
 /* The per-stage FORM verdict as text — the wisdom token il_forms= (one letter
@@ -546,6 +633,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_scr_of(int N, const int *R, int
         for (i = 0; flf[i]; i++) if (flf[i] == 'o') flf[i] = 'n';
         if (!vfft_ilfd_apply_forms(p, flf)) { vfft_ilfd_destroy(p); return 0; }
     }
+    vfft_ilfd_bind(p);
     return p;
 }
 
@@ -572,6 +660,7 @@ static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms)
     if (*q) return 0;
     for (s = 1; s < p->K; s++) { p->msz[s] = msz[s]; p->gl[s] = gl[s]; }
     p->gord = gord;
+    vfft_ilfd_bind(p);
     return 1;
 }
 
@@ -623,6 +712,7 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
         }
         vfft_ilfd_stage(p, s, zin, zout);
     }
+    vfft_ilfd_bind(p);
 }
 
 #endif /* VFFT_IL_FLATDIT_H */
