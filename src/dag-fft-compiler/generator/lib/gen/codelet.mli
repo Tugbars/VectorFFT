@@ -80,6 +80,7 @@ type zs_kind =
   | Msgb
   | Msz
   | Mszb
+  | Mszt
   | S0s
   | S0sb
   | S0t
@@ -135,6 +136,7 @@ type kind =
       ; colstride : bool (* --cil-t2cs: the column-stride tail form of t2 *)
       ; gen2 : bool (* --cil-t2csg: t2cs with the generated twiddle stream *)
       ; grouploop : bool (* --cil-t2csgn: t2csg with the in-kernel group loop *)
+      ; transposed : bool (* --cil-t2csgt / --cil-t2csgnt: the transposed backward tails *)
       ; form_tag : bool
         (* --cil-form-tag: name the FORM in the emitted symbol, so a split /
            tangent / wing variant is distinguishable without a post-emit sed *)

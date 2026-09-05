@@ -243,6 +243,20 @@ let kind_of_string (s : string) : zs_kind =
     ; lanes_u = true
     ; narrow_arms = true
     }
+  | "mszt" ->
+    (* msz's TRANSPOSED backward (2026-09-05): IDFT block then the
+       conjugated twiddle POST (dft.ml places (DIT, Bwd) POST) — the flat
+       DIT's scrambled class consumes the comb by running the stages in
+       reverse, each transposed. Own stem so it links beside mszb. *)
+    { mid with
+      base = "mszt"
+    ; group_loop = true
+    ; bwd = true
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_z "Ls"
+    ; lanes_u = true
+    ; narrow_arms = true
+    }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
   | "msd" ->
     (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
@@ -699,7 +713,7 @@ let emit_codelet
         carry it (provenance stability)"
    | _ -> ());
   if radix <> 4 && radix <> 8
-     && not ((k.base = "msg" || k.base = "msz") && List.mem radix [ 3; 5; 7; 9; 15 ])
+     && not ((k.base = "msg" || k.base = "msz" || k.base = "mszt") && List.mem radix [ 3; 5; 7; 9; 15 ])
   then
     failwith
       "codelet_zsplit: split family is radix 4/8 only (see TIER GATE) — except the \
@@ -890,6 +904,9 @@ let emit_codelet
            arms; per-block splat records), fwd."
         | "msz", true ->
           "mszb (msz's backward: the conjugate pipeline's PRE-twiddle conj + IDFT, dif=true), \
+           bwd."
+        | "mszt", true ->
+          "mszt (msz's TRANSPOSED backward: IDFT + POST-twiddle conj — the scrambled class), \
            bwd."
         | "s0t", false ->
           "s0t (ZTURN-S fused-turn ingest: natural z leg loads, twiddle-free radix-4, \
