@@ -32,7 +32,7 @@
 #include <windows.h>
 #include "vfft.h"
 
-static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415 };
+static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 177147 };   /* 177147: above the L2 edge, the tile axis's cell */
 
 static double now_ms(void)
 {
@@ -141,6 +141,7 @@ static int route_of_store(const char *wisdir, int N, const char *ord, char *chai
               : !strncmp(r, "flat", 4) ? 8 : -2;
         if ((r = strstr(line, "il_flat=")) != NULL) { sscanf(r + 8, "%63s", chain); chain[nc - 1] = 0; }
         if ((r = strstr(line, "il_forms=")) != NULL) { sscanf(r + 9, "%31s", forms); forms[nf - 1] = 0; }
+        if ((r = strstr(line, "il_tw=")) != NULL) { const size_t l = strlen(forms); snprintf(forms + l, nf - l, "/w%d", atoi(r + 6)); }   /* the tile width rides the forms column */
     }
     fclose(f);
     return route;

@@ -237,6 +237,8 @@ typedef struct
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
                                               * empty = unraced yet             */
+    int    il_tw;                            /* FLAT only: the raced tile width
+                                              * (il_tw=), 0 = untiled / unraced */
     /* Blocked-kernel VARIANT verdict for the 2P/IL routes, packed
      * mid | leaf<<4 (VFFT_IL_KV_PACK, il2p.h). 0 = the monolithic registry
      * kernels, i.e. exactly pre-axis behavior — so every existing candidate
@@ -492,7 +494,8 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
         b->ifd->scr = c->il_scr;   /* before the forms: the last stage's arms differ */
         vfft_ilfd_bind(b->ifd);
         if (!b->ifd->bwd_ok || (c->il_scr && !b->ifd->scr_ok) ||
-            (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)))
+            (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)) ||
+            (c->il_tw > 0 && !vfft_ilfd_apply_tw(b->ifd, c->il_tw)))
         { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
         return 0;
     }
@@ -974,6 +977,10 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
          * the candidate so the cell's winner banks it (il_forms=) */
         vfft_ilfd_race_forms(b.ifd, ctx->z_in, ctx->z_out, _il_dp_now_ns);
         (void)vfft_ilfd_forms_str(b.ifd, c->il_flf, sizeof c->il_flf);
+        /* then the TILE race (the cascade's tcut in flat form): the stage
+         * spans that fit L2, on the whole forward, banked as il_tw= */
+        c->il_tw = vfft_ilfd_race_tw(b.ifd, ctx->z_in, ctx->z_out,
+                                     vfft_cpu_l2_bytes(), _il_dp_now_ns);
     }
 
     /* warmup (+ joint roundtrip refusal for cascades) */
@@ -2011,6 +2018,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 memcpy(e.il_fl, nat->il_fl, sizeof e.il_fl);
                 e.il_fl_n = nat->il_fl_n;
                 memcpy(e.il_flf, nat->il_flf, sizeof e.il_flf);
+                e.il_tw = nat->il_tw;
             }
             e.ns = nat->cost_ns;
             if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
@@ -2085,6 +2093,7 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
             memcpy(e.il_fl, scr->il_fl, sizeof e.il_fl);
             e.il_fl_n = scr->il_fl_n;
             memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
+            e.il_tw = scr->il_tw;
         }
         e.ord_scr = 1;
         e.ns = scr->cost_ns;

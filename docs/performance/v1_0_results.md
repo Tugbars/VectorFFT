@@ -1073,6 +1073,19 @@ Same-run A/B (`bind_ab`, spectra bitwise identical): the per-block
 driver loop it replaced cost 1.01–1.05× (98415 1.049, 4095 1.036,
 19683/59049 1.011).
 
+**The tile axis (2026-09-06).** The cascade's tcut in flat form: the
+stage suffix runs depth-first per tile (one block of a raced stage
+span), raced by the planner after the forms and banked as `il_tw=`.
+Same-run A/B, tiled over untiled forward (natural / scrambled):
+
+```
+ N        plane    widest span   natural   scrambled
+ 98415    1.5 MB   10935          0.98      0.99   (fits L2: the race banks 0)
+ 177147   2.7 MB   19683          0.86      0.91
+ 194481   3.0 MB   21609          0.85      0.83
+ 245025   3.7 MB   27225          0.95      0.93
+```
+
 **The flat DIT engine.** An un-turned mixed-radix DIT: the plain leaf,
 then one in-place sweep per remaining factor with per-block broadcast
 twiddles (modulus N/D_s), natural order by redirecting the last stage's

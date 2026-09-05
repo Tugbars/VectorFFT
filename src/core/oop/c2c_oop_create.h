@@ -388,12 +388,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                 cfg->layout == VFFT_LAYOUT_INTERLEAVED && ki && ki->il_fl_n >= 2)
             {
                 if (scr_req)
-                    ilfd = vfft_ilfd_create_scr_of(N, ki->il_fl, ki->il_fl_n, ki->il_flf);
+                    ilfd = vfft_ilfd_create_scr_of(N, ki->il_fl, ki->il_fl_n, ki->il_flf, ki->il_tw);
                 else
                 {
                     ilfd = vfft_ilfd_create_chain(N, ki->il_fl, ki->il_fl_n);
                     if (ilfd && (!ilfd->bwd_ok ||
-                                 (ki->il_flf[0] && !vfft_ilfd_apply_forms(ilfd, ki->il_flf))))
+                                 (ki->il_flf[0] && !vfft_ilfd_apply_forms(ilfd, ki->il_flf)) ||
+                                 (ki->il_tw > 0 && !vfft_ilfd_apply_tw(ilfd, ki->il_tw))))
                     {
                         vfft_ilfd_destroy(ilfd);
                         ilfd = NULL;

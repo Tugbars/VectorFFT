@@ -394,11 +394,12 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     {
         vfft_ilfd_plan_t *fp;
         if (scr_req)
-            fp = vfft_ilfd_create_scr_of(N, ke->il_fl, ke->il_fl_n, ke->il_flf);
+            fp = vfft_ilfd_create_scr_of(N, ke->il_fl, ke->il_fl_n, ke->il_flf, ke->il_tw);
         else
         {
             fp = vfft_ilfd_create_chain(N, ke->il_fl, ke->il_fl_n);
-            if (fp && (!fp->bwd_ok || (ke->il_flf[0] && !vfft_ilfd_apply_forms(fp, ke->il_flf))))
+            if (fp && (!fp->bwd_ok || (ke->il_flf[0] && !vfft_ilfd_apply_forms(fp, ke->il_flf)) ||
+                       (ke->il_tw > 0 && !vfft_ilfd_apply_tw(fp, ke->il_tw))))
             {
                 vfft_ilfd_destroy(fp);
                 fp = NULL;

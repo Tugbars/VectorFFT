@@ -250,6 +250,7 @@ static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_sc
                 const char *ff = vw2_rec_get(ri, "il_forms");
                 if (nfl >= 2) { memcpy(e->il_fl, fl, sizeof(int) * (size_t)nfl); e->il_fl_n = nfl; }
                 if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
+                e->il_tw = vw2__oop_geti(ri, "il_tw", 0);
             }
             /* K/ns keep the pre-1.2 dual-line convention: when an IL
              * verdict is present they are the IL natural champion's
@@ -599,6 +600,7 @@ static inline int vw2_oop_rec_from_entry(vw2_rec_t *r,
                 }
                 VW2__OB_SET(1, "il_flat", flb);
                 if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
+                if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
             }
             if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
                 char ref[96];   /* the signpost: recipe lives in the cascade cell */
@@ -1033,6 +1035,7 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
             }
             VW2__OB_SET(1, "il_flat", flb);
             if (e->il_flf[0]) VW2__OB_SET(1, "il_forms", e->il_flf);
+            if (e->il_tw > 0) { char twb[16]; snprintf(twb, sizeof twb, "%d", e->il_tw); VW2__OB_SET(1, "il_tw", twb); }
         }
         if (e->k1_il_route == VFFT_K1_IL_CASCADE) {
             char ref[96];   /* the signpost: recipe lives in the cascade cell */

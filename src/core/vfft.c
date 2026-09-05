@@ -1394,7 +1394,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
     {   /* the flat DIT: same chain and the same per-stage forms */
         const vfft_ilfd_plan_t *x = a->k1ilfd, *y = b->k1ilfd;
         int s;
-        if (!y || x->K != y->K || x->gord != y->gord || x->scr != y->scr)
+        if (!y || x->K != y->K || x->gord != y->gord || x->scr != y->scr || x->tw != y->tw)
             return 0;
         for (s = 0; s < x->K; s++)
             if (x->R[s] != y->R[s] || x->msz[s] != y->msz[s] || x->gl[s] != y->gl[s])
