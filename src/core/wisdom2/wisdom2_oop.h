@@ -70,6 +70,10 @@ typedef struct {
                                               * per-stage form letters (2026-09-05) */
     int    il_fl_n;
     char   il_flf[24];
+    int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
+                                              * DIT's SCRAMBLED class (its own chain +
+                                              * forms, raced under the scrambled
+                                              * objective; 2026-09-05). 0 = ord=nat */
     /* kind 3, OPTIONAL TRAILING token after ns (2026-08-05): the IL BLOCKED
      * KERNEL VARIANT verdict for this cell, packed mid | leaf<<4.
      *   mid : 0 = registry t2 (monolithic), 1 = t2b [2·16], 2 = t2b48 [4·8]

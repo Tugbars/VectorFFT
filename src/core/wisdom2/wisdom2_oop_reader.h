@@ -117,8 +117,8 @@ static inline const char *vw2__oop_eng(const vw2_rec_t *r)
  * whole-row refusal let one layout's unknown token silently erase the
  * other layout's banked verdict. Exact-beats-wildcard is preserved inside
  * each tier. Returns 1 + fills e when ANY axis was found. */
-static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N,
-                                                uint8_t lay)
+static inline const vw2_rec_t *vw2__oop_k1_scan_ord(const vw2_store_t *s, int N,
+                                                uint8_t lay, int want_scr)
 {
     int i, pass;
     for (pass = 0; pass < 2; pass++)
@@ -126,6 +126,10 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N,
             const vw2_rec_t *c = &s->rec[i];
             if (c->key.t != VW2_T_C2C || c->key.rank != 1 || c->key.n[0] != N) continue;
             if (c->key.lay != lay) continue;
+            /* the ORDER axis (2026-09-05): the flat DIT's scrambled class
+             * banks its own kind-3 IL row keyed ord=scr; the natural lookup
+             * must never read it and the scrambled lookup reads only it */
+            if (want_scr ? (c->key.ord != VW2_ORD_SCR) : (c->key.ord == VW2_ORD_SCR)) continue;
             /* pin the axes this scan relies on (the vw2_key_serves law:
              * a hand scan silently mis-scopes on axes it does not name) —
              * every kind-3 writer stamps role=comp, fresh and migrated */
@@ -141,6 +145,38 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N,
             return c;
         }
     return NULL;
+}
+static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uint8_t lay)
+{
+    return vw2__oop_k1_scan_ord(s, N, lay, 0);
+}
+/* the SCRAMBLED class's kind-3 IL row (2026-09-05): il_route + il_flat +
+ * il_forms + ns from the ord=scr cell, nothing else. 1 = decoded. */
+static inline int vw2_oop_lookup_k1_scr(const vw2_store_t *s, int N,
+                                        vfft_oop_wisdom_entry_t *e)
+{
+    const vw2_rec_t *ri = vw2__oop_k1_scan_ord(s, N, VW2_LAY_IL, 1);
+    const char *il, *ff;
+    int ilr, fl[10], nfl;
+    memset(e, 0, sizeof *e);
+    e->kind = VFFT_OOP_KIND_BAILEY2V;
+    e->N = N; e->K = 1;
+    e->k1_sp_route = -1; e->k1_il_route = -1;
+    e->ord_scr = 1;
+    if (!ri) return 0;
+    il = vw2_rec_get(ri, "il_route");
+    if (!il) return 0;
+    ilr = vw2__oop_name_idx(vw2_oop_il_name, 9, il);
+    if (ilr < 0) return 0;
+    e->k1_il_route = ilr;
+    nfl = vw2__oop_split_ints(vw2_rec_get(ri, "il_flat"), fl, 10);
+    if (nfl >= 2) { memcpy(e->il_fl, fl, sizeof(int) * (size_t)nfl); e->il_fl_n = nfl; }
+    ff = vw2_rec_get(ri, "il_forms");
+    if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
+    e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
+    e->il_kv_raced = vw2_rec_get(ri, "il_kv") != NULL;
+    { const char *ns = vw2_rec_get(ri, "ns"); e->ns = ns ? atof(ns) : 0.0; }
+    return 1;
 }
 
 static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
@@ -936,7 +972,8 @@ static inline int vw2_oop_rec_k1_lay(vw2_rec_t *r,
     memset(r, 0, sizeof *r);
     snprintf(nsbuf, sizeof nsbuf, "%.1f", e->ns);
     r->key.t = VW2_T_C2C; r->key.rank = 1; r->key.n[0] = e->N;
-    r->key.q = 1; r->key.ord = VW2_ORD_NAT; r->key.pl = VW2_PL_OOP;
+    r->key.q = 1; r->key.pl = VW2_PL_OOP;
+    r->key.ord = e->ord_scr ? VW2_ORD_SCR : VW2_ORD_NAT;   /* the scrambled class's own cell */
     r->key.role = VW2_ROLE_COMP;
     r->key.lay  = lay;
 #define VW2__OB_SET(sect, n, v) do { \

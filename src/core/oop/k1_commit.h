@@ -378,22 +378,45 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
     }
     /* FLAT DIT verdict (2026-09-05): the banked chain + per-stage forms
      * replay as written (both validated by the engine's create/apply); a
-     * refusal falls through to the pair/default path */
-    if (ke && ke->k1_il_route == VFFT_K1_IL_FLAT && ke->il_fl_n >= 2 && ilfd_out)
+     * refusal falls through to the pair/default path. An EXPLICIT SCRAMBLED
+     * request takes the scrambled class's own ord=scr row when it is the
+     * faster of the two banked verdicts (block-order output, the transposed
+     * backward); DEFAULT and NATURAL keep the natural engines. */
+    if (ilfd_out)
     {
-        vfft_ilfd_plan_t *fp = vfft_ilfd_create_chain(N, ke->il_fl, ke->il_fl_n);
-        if (fp && (!fp->bwd_ok || (ke->il_flf[0] && !vfft_ilfd_apply_forms(fp, ke->il_flf))))
+        vfft_oop_wisdom_entry_t kse;
+        const vfft_oop_wisdom_entry_t *kf = NULL;
+        int scr = 0;
+        if (cfg->order == VFFT_ORDER_SCRAMBLED && !W->vw2_off_oop &&
+            vw2_oop_lookup_k1_scr(&W->vw2, N, &kse) &&
+            kse.k1_il_route == VFFT_K1_IL_FLAT && kse.il_fl_n >= 2 &&
+            (!ke || ke->k1_il_route <= VFFT_K1_IL_NONE || !(ke->ns > 0.0) ||
+             !(kse.ns > 0.0) || kse.ns < ke->ns))
         {
-            vfft_ilfd_destroy(fp);
-            fp = NULL;
+            kf = &kse;
+            scr = 1;
         }
-        if (fp)
+        else if (ke && ke->k1_il_route == VFFT_K1_IL_FLAT && ke->il_fl_n >= 2)
+            kf = ke;
+        if (kf)
         {
-            *ilfd_out = fp;
-            if (getenv("VFFT_NAT_LOG"))
-                fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s) src=wisdom\n",
-                        N, ke->il_fl_n, ke->il_flf[0] ? ke->il_flf : "-");
-            return;
+            vfft_ilfd_plan_t *fp = vfft_ilfd_create_chain(N, kf->il_fl, kf->il_fl_n);
+            if (fp) fp->scr = scr;
+            if (fp && (!fp->bwd_ok || (scr && !fp->scr_ok) ||
+                       (kf->il_flf[0] && !vfft_ilfd_apply_forms(fp, kf->il_flf))))
+            {
+                vfft_ilfd_destroy(fp);
+                fp = NULL;
+            }
+            if (fp)
+            {
+                *ilfd_out = fp;
+                if (getenv("VFFT_NAT_LOG"))
+                    fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s, %s) src=wisdom\n",
+                            N, kf->il_fl_n, kf->il_flf[0] ? kf->il_flf : "-",
+                            scr ? "SCRAMBLED" : "natural");
+                return;
+            }
         }
     }
     if (ke && ke->il_R1)
