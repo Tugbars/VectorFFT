@@ -237,7 +237,7 @@ static const vw2_field_t vw2_fields[] = {
     { "il_route",VW2_FC_STRUCTURAL }, { "il_pair", VW2_FC_STRUCTURAL },
     /* the flat DIT (2026-09-05): the chain is structural, the per-stage
        kernel forms are placement-luck like every kv (re-raced per host) */
-    { "il_flat", VW2_FC_STRUCTURAL }, { "il_forms", VW2_FC_LOCAL },
+    { "il_flat", VW2_FC_STRUCTURAL }, { "il_forms", VW2_FC_LOCAL }, { "il_tw", VW2_FC_LOCAL },
     { "t1p",     VW2_FC_STRUCTURAL },
     /* stride family (wave 4): chain orientation + the blocked-execution
      * triple (emitted only when blocked). */

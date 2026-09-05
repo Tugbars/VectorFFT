@@ -511,6 +511,37 @@ local record and runs it: the form race and the probes flip a field and
 time a stage without rebinding the plan, and rebind when done. The
 served path never rebinds.
 
+### 8.1 The tile axis (the cascade's tcut in flat form)
+
+Because each stage's blocks are the previous stage's legs, one block of
+stage `cut` (span L_cut = R_cut·D_cut) is closed under every later
+stage. With a tile width `tw` = such a span — the width is the INPUT,
+the cut is DERIVED, exactly the cascade's law — the executor runs the
+wide prefix (stages before `cut`), then the suffix DEPTH-FIRST per
+tile: every tiled record carries per-tile counts and base steps
+(`in_tstep`, `out_tstep`, `tw_tstep`, `t2_tstep`, `a1_tstep`, and for the
+column form the tile's first group), so tile t is the same kernel calls
+on the same blocks in a different order — bitwise identical to the
+untiled walk in both classes and both directions (`benches/bind_ab.c`
+checks every candidate width). The natural class keeps its LAST stage
+global (its natural-base scatter order fills output lines contiguously
+only across the whole plane); the scrambled class tiles it (block order
+is tile-local). The conjugate backward mirrors the forward; the
+transposed backward tiles its first K−cut records (the last stage's
+transpose reads the comb tile-locally) and runs the rest wide.
+
+Legal widths are the spans of the non-tail stages in [1, K−2]
+(`vfft_ilfd_apply_tw` is the validator; a tail stage's groups span its
+predecessor's block, so its span cannot cut). `vfft_ilfd_race_tw` times
+the untiled walk against every legal span whose tile fits L2, on the
+whole forward (tiling is a cross-stage locality property no per-stage
+clock can see), and the planner runs it after the form race; the verdict
+banks as `il_tw=` (local, like the forms). Same-run A/B on this host,
+tiled over untiled forward, natural / scrambled: 177147 0.86 / 0.91,
+194481 0.85 / 0.83, 245025 0.95 / 0.93 at the widest span; at and below
+98415, where the plane still fits L2, every width is within ±2% or
+loses — the race banks 0 there.
+
 ---
 
 ## 9. Planner, wisdom, front door
@@ -560,8 +591,9 @@ that cell's scrambled race. The in-place mode row of a SCRAMBLED
 request signposts that ord=scr row (`ref=cell(…,ord=scr,place=oop,
 role=comp,lay=il)`); `vfft_ilp_front_gate` holds the power-of-two cells
 to it (own verdict, replay without a race). `il_flat` is a
-structural field; `il_forms` is a local one (kernel placement is
-machine-tied and re-raced on a host mismatch, like every kv). A create
+structural field; `il_forms` and `il_tw` (the tile width, §8.1) are
+local ones (kernel placement and cache geometry are machine-tied and
+re-raced on a host mismatch, like every kv). A create
 with a banked flat row builds the chain and applies the token —
 `vfft_ilfd_create_scr_of` for an ord=scr row — there is no default flat
 build anywhere: the planner is the only source of a flat plan. Replay is
@@ -680,7 +712,14 @@ the scatter at the end and then arranging that scatter to be cheap.
   like the data; a generated stream for those stages (as the tails
   already have) would remove them.
 - **The candidate cap** (24 compositions) is a logged budget, not a
-  search; smooth N leave many orderings unraced.
+  search; smooth N leave many orderings unraced. Chains ending in `…9.3`
+  create a D=3 stage that runs on the narrow arms at 0.8–1.2 ns per
+  point even when cached; `…27` endings avoid it, and the cap may hide
+  them.
+- **The tail above L2.** The D≤3 stages and the natural scatter are
+  30–47% of the whole above 10⁵ points (177147: 475 of 771 µs); the tile
+  axis (§8.1) recovers the memory part of that, not the narrow-arm
+  compute.
 - **ISA.** Everything is AVX2. The pure-IL family emits AVX-512 from the
   same source; the split family's edges assume four columns.
 
@@ -688,7 +727,7 @@ the scatter at the end and then arranging that scatter to be cheap.
 
 ## 13. File map
 
-    src/core/oop/il_flatdit.h                 the engine: plan, create, tables, bind + the executor, race_forms, forms token, the scrambled builder
+    src/core/oop/il_flatdit.h                 the engine: plan, create, tables, bind + the executor (tiled), race_forms, forms token, the tile axis (apply_tw, race_tw), the scrambled builder
     src/core/oop/il2p.h                       resolvers: t2cp(_bwd), t2csg(_bwd, t_bwd), t2csgn(_bwd, t_bwd), msz(_bwd, t_bwd), n1c, t2c
     src/core/planning/dp_planner_il.h         flat candidates, bench-time form race, mixed-radix reference, banking
     src/core/oop/k1_commit.h                  plan-race admission (odd N to 2^18), the replay for in-place, the request's order cell

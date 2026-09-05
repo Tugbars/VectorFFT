@@ -56,6 +56,12 @@ typedef struct {
     size_t D, L, G, ngrp, nb, tw_step, t2_step;   /* _ILFD_COL / _ILFD_BLK loops */
     const size_t *obase;          /* COL: the group's first block's natural base; BLK: per
                                    * block; NULL = in place (block order) */
+    /* THE TILE AXIS (2026-09-05, the cascade's tcut in flat form): a record
+     * inside the tiled suffix holds PER-TILE counts above and advances its
+     * bases by these per tile t (doubles; a1 is a size_t table cast to
+     * double*, both 8 bytes, so its step is in entries). COL: g_tstep = the
+     * tile's first group. All zero = the record runs once, whole plane. */
+    size_t in_tstep, out_tstep, tw_tstep, t2_tstep, a1_tstep, g_tstep;
 } vfft_ilfd_call_t;
 
 typedef struct {
@@ -118,6 +124,17 @@ typedef struct {
      * writer of those fields rebinds (create_chain, apply_forms, race_forms,
      * create_scr_of, the planner's scr flip, the probes). */
     vfft_ilfd_call_t cf[VFFT_ILFD_MAX_K], cb[VFFT_ILFD_MAX_K], ct[VFFT_ILFD_MAX_K];
+    /* THE TILE AXIS (2026-09-05): tw = the tile width in complex = one block
+     * of stage tcut (a non-tail stage in [1, K-2]; the width is the INPUT,
+     * the cut is DERIVED — the cascade's tcut law), 0 = untiled. The stages
+     * tcut.. run depth-first per tile: the natural class to K-2 (its last
+     * stage stays global — the scatter's natural-base order fills output
+     * lines contiguously only across the whole plane), the scrambled class
+     * to K-1 (tile-local); both backward pipelines mirror it. Raced by the
+     * planner (vfft_ilfd_race_tw), banked as il_tw= on the kind-3 row,
+     * validated by vfft_ilfd_apply_tw. tlo/thi = the tiled range of cf/cb;
+     * ct tiles its first K-tcut records; ntile = N / tw. */
+    int tw, tcut, ntile, tlo, thi;
 } vfft_ilfd_plan_t;
 
 static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p);
@@ -500,36 +517,104 @@ static inline void _ilfd_bind_stage_T(const vfft_ilfd_plan_t *p, int s, vfft_ilf
     c->Ls = D; c->Gs = L; c->OLs = D; c->OGs = nb; c->count = D;
 }
 
-/* THE EXECUTOR: walk n records; the buffers are picked by index, the rest
- * is the record. */
+/* THE EXECUTOR: one record on tile t (t = 0 and zero steps = the whole
+ * plane); the buffers are picked by index, the rest is the record. */
+static inline void _ilfd_call(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *c, size_t t,
+                              const double *zin, double *zout)
+{
+    const double *base[4];
+    const double *in, *tw, *t2, *a1;
+    double *out;
+    base[_ILFD_STG] = p->stg; base[_ILFD_ZIN] = zin; base[_ILFD_ZOUT] = zout; base[_ILFD_NUL] = 0;
+    in = (c->in_sel == _ILFD_NUL) ? 0 : base[c->in_sel] + t * c->in_tstep;
+    out = (double *)base[c->out_sel] + t * c->out_tstep;
+    tw = c->tw ? c->tw + t * c->tw_tstep : 0;
+    t2 = c->t2 ? c->t2 + t * c->t2_tstep : 0;
+    a1 = c->a1 ? c->a1 + t * c->a1_tstep : 0;
+    if (c->op == _ILFD_ONE) {
+        c->fn(in, a1, out, c->a3, tw, t2, c->Ls, c->Gs, c->OLs, c->OGs, c->count);
+    } else if (c->op == _ILFD_COL) {
+        const size_t GL = c->G * c->L, g0 = t * c->g_tstep;
+        size_t g, k;
+        for (g = g0; g < g0 + c->ngrp; g++) {
+            const double *twg = c->tw + g * c->tw_step;
+            const double *t2g = c->t2 ? c->t2 + g * c->t2_step : 0;
+            const size_t ib = g * GL, ob = c->obase ? c->obase[g * c->G] : ib;
+            for (k = 0; k < c->D; k++)
+                c->fn(in + 2 * (ib + k), 0, out + 2 * (ob + k), 0, twg, t2g,
+                      c->Ls, c->Gs, c->OLs, c->OGs, c->count);
+        }
+    } else {                                        /* _ILFD_BLK: never tiled */
+        size_t b;
+        for (b = 0; b < c->nb; b++)
+            c->fn(in + 2 * b * c->L, 0, out + 2 * c->obase[b], 0, c->tw + b * c->tw_step, 0,
+                  c->Ls, 0, c->OLs, c->OGs, c->count);
+    }
+}
+/* n records, whole plane, in order */
 static inline void _ilfd_run(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *c, int n,
                              const double *zin, double *zout)
 {
-    const double *base[4];
     int i;
-    base[_ILFD_STG] = p->stg; base[_ILFD_ZIN] = zin; base[_ILFD_ZOUT] = zout; base[_ILFD_NUL] = 0;
-    for (i = 0; i < n; i++, c++) {
-        const double *in = base[c->in_sel];
-        double *out = (double *)base[c->out_sel];
-        if (c->op == _ILFD_ONE) {
-            c->fn(in, c->a1, out, c->a3, c->tw, c->t2, c->Ls, c->Gs, c->OLs, c->OGs, c->count);
-        } else if (c->op == _ILFD_COL) {
-            const size_t GL = c->G * c->L;
-            size_t g, k;
-            for (g = 0; g < c->ngrp; g++) {
-                const double *tw = c->tw + g * c->tw_step;
-                const double *t2 = c->t2 ? c->t2 + g * c->t2_step : 0;
-                const size_t ib = g * GL, ob = c->obase ? c->obase[g * c->G] : ib;
-                for (k = 0; k < c->D; k++)
-                    c->fn(in + 2 * (ib + k), 0, out + 2 * (ob + k), 0, tw, t2,
-                          c->Ls, c->Gs, c->OLs, c->OGs, c->count);
-            }
-        } else {                                        /* _ILFD_BLK */
-            size_t b;
-            for (b = 0; b < c->nb; b++)
-                c->fn(in + 2 * b * c->L, 0, out + 2 * c->obase[b], 0, c->tw + b * c->tw_step, 0,
-                      c->Ls, 0, c->OLs, c->OGs, c->count);
+    for (i = 0; i < n; i++) _ilfd_call(p, c + i, 0, zin, zout);
+}
+/* n records depth-first per tile: every record on tile 0, then on tile 1, ... */
+static inline void _ilfd_run_tiled(const vfft_ilfd_plan_t *p, const vfft_ilfd_call_t *c, int n,
+                                   size_t ntile, const double *zin, double *zout)
+{
+    size_t t;
+    int i;
+    for (t = 0; t < ntile; t++)
+        for (i = 0; i < n; i++) _ilfd_call(p, c + i, t, zin, zout);
+}
+
+/* the tile view of one stage record: per-tile counts and steps. bpt =
+ * blocks of stage s per tile (tw / L_s, exact by construction). */
+static inline void _ilfd_tile_rec(const vfft_ilfd_plan_t *p, int s, vfft_ilfd_call_t *c)
+{
+    const size_t Ls = (size_t)p->R[s] * p->D[s];
+    const size_t bpt = (size_t)p->tw / Ls;
+    const size_t recs = (size_t)(p->R[s] - 1) * 8;
+    c->in_tstep = c->out_tstep = c->tw_tstep = c->t2_tstep = c->a1_tstep = c->g_tstep = 0;
+    if (c->op == _ILFD_ONE) {
+        if (c->a1) {                  /* t2csgn: the wrapper reads zin by the RELATIVE group
+                                       * index (g*count*R*Ls) and writes by the ABSOLUTE base
+                                       * table (obase[g*count]): the input base steps per
+                                       * tile, the table pointer and the T2 records shift */
+            const size_t gpt = bpt / c->count;          /* count = G blocks per group */
+            c->Gs = gpt; c->in_tstep = 2 * (size_t)p->tw;
+            c->a1_tstep = gpt * c->count; c->t2_tstep = gpt * 8;
+        } else if (c->in_sel == _ILFD_NUL) {            /* msz: Gs = blocks, in place */
+            c->Gs = bpt; c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
+        } else {                                        /* t2cp: OGs = blocks, Gs = the pitch */
+            c->OGs = bpt; c->in_tstep = c->out_tstep = 2 * (size_t)p->tw; c->tw_tstep = bpt * recs;
         }
+    } else if (c->op == _ILFD_COL) {
+        const size_t gpt = bpt / c->G;
+        c->ngrp = gpt; c->g_tstep = gpt;
+    }
+    /* _ILFD_BLK (a natural last stage without a tail form) is never inside a tile */
+}
+
+/* derive the tiled range from tw (the validator: a non-tail stage in
+ * [1, K-2] whose block span is tw; anything else = untiled) and stamp the
+ * records of the three lists */
+static inline void _ilfd_bind_tiles(vfft_ilfd_plan_t *p)
+{
+    int s, cut = -1;
+    p->tcut = 0; p->ntile = 1; p->tlo = 0; p->thi = 0;
+    if (p->tw <= 0) { p->tw = 0; return; }
+    for (s = 1; s <= p->K - 2; s++)
+        if (!p->tail[s] && (long)p->R[s] * (long)p->D[s] == (long)p->tw) { cut = s; break; }
+    if (cut < 0) { p->tw = 0; return; }
+    p->tcut = cut;
+    p->ntile = p->N / p->tw;
+    p->tlo = cut;
+    p->thi = p->scr ? p->K : p->K - 1;
+    for (s = p->tlo; s < p->thi; s++) {
+        _ilfd_tile_rec(p, s, &p->cf[s]);
+        _ilfd_tile_rec(p, s, &p->cb[s]);
+        _ilfd_tile_rec(p, s, &p->ct[p->K - 1 - s]);
     }
 }
 
@@ -548,6 +633,7 @@ static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p)
         c->op = _ILFD_ONE; c->fn = p->lb; c->in_sel = _ILFD_STG; c->out_sel = _ILFD_ZOUT;
         c->Ls = c->OLs = c->count = p->D[0];
     }
+    _ilfd_bind_tiles(p);
 }
 
 /* ONE stage through the exact serving record — bound from the CURRENT form
@@ -574,11 +660,18 @@ static inline void vfft_ilfd_stage_bwd(const vfft_ilfd_plan_t *p, int s,
     _ilfd_stage_dir(p, s, zin, zout, 1);
 }
 
-/* the forward: the bound list, K calls for a plan whose stages are all
- * one-call forms */
+/* the forward: the bound list — K calls for a plan whose stages are all
+ * one-call forms; with a tile width, the wide prefix, the suffix
+ * depth-first per tile, then (natural) the global last stage */
 static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
                                          const double *zin, double *zout)
 {
+    if (p->tw > 0) {
+        _ilfd_run(p, p->cf, p->tlo, zin, zout);
+        _ilfd_run_tiled(p, p->cf + p->tlo, p->thi - p->tlo, (size_t)p->ntile, zin, zout);
+        _ilfd_run(p, p->cf + p->thi, p->K - p->thi, zin, zout);
+        return;
+    }
     _ilfd_run(p, p->cf, p->K, zin, zout);
 }
 
@@ -591,6 +684,18 @@ static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
 static inline void vfft_ilfd_execute_bwd(const vfft_ilfd_plan_t *p,
                                          const double *zin, double *zout)
 {
+    if (p->tw > 0) {
+        if (p->scr) {   /* transposed: the tiled stages K-1..tcut first, then the wide rest */
+            const int nt = p->K - p->tcut;
+            _ilfd_run_tiled(p, p->ct, nt, (size_t)p->ntile, zin, zout);
+            _ilfd_run(p, p->ct + nt, p->K - nt, zin, zout);
+            return;
+        }
+        _ilfd_run(p, p->cb, p->tlo, zin, zout);
+        _ilfd_run_tiled(p, p->cb + p->tlo, p->thi - p->tlo, (size_t)p->ntile, zin, zout);
+        _ilfd_run(p, p->cb + p->thi, p->K - p->thi, zin, zout);
+        return;
+    }
     _ilfd_run(p, p->scr ? p->ct : p->cb, p->K, zin, zout);
 }
 
@@ -618,8 +723,9 @@ static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms);
  * scr = 1 before the forms, a natural-base-order letter ('o') on the last
  * stage becoming the plain group loop ('n'). NULL when the chain has no
  * transposed backward or the token refuses. */
+static inline int vfft_ilfd_apply_tw(vfft_ilfd_plan_t *p, int w);
 static inline vfft_ilfd_plan_t *vfft_ilfd_create_scr_of(int N, const int *R, int K,
-                                                        const char *forms)
+                                                        const char *forms, int tw)
 {
     vfft_ilfd_plan_t *p = vfft_ilfd_create_chain(N, R, K);
     char flf[32];
@@ -633,6 +739,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_scr_of(int N, const int *R, int
         for (i = 0; flf[i]; i++) if (flf[i] == 'o') flf[i] = 'n';
         if (!vfft_ilfd_apply_forms(p, flf)) { vfft_ilfd_destroy(p); return 0; }
     }
+    if (tw > 0 && !vfft_ilfd_apply_tw(p, tw)) { vfft_ilfd_destroy(p); return 0; }
     vfft_ilfd_bind(p);
     return p;
 }
@@ -662,6 +769,66 @@ static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms)
     p->gord = gord;
     vfft_ilfd_bind(p);
     return 1;
+}
+
+/* THE TILE AXIS. Apply a width — the validator is the law: 0 = untiled;
+ * otherwise the block span of a non-tail stage in [1, K-2], anything else
+ * refuses (0) and leaves the plan untouched. */
+static inline int vfft_ilfd_apply_tw(vfft_ilfd_plan_t *p, int w)
+{
+    int s;
+    if (w <= 0) { p->tw = 0; vfft_ilfd_bind(p); return 1; }
+    for (s = 1; s <= p->K - 2; s++)
+        if (!p->tail[s] && (long)p->R[s] * (long)p->D[s] == (long)w) {
+            p->tw = w;
+            vfft_ilfd_bind(p);
+            return 1;
+        }
+    return 0;
+}
+
+/* the width candidates: 0 (untiled) and every legal stage span whose tile
+ * (16 bytes per complex) fits the given cache budget (<= 0 = no gate).
+ * Returns the count. The race decides; these are candidates, never a rule. */
+static inline int vfft_ilfd_tw_candidates(const vfft_ilfd_plan_t *p, long cache_bytes,
+                                          int *out, int max)
+{
+    int n = 0, s;
+    if (max < 1) return 0;
+    out[n++] = 0;
+    for (s = 1; s <= p->K - 2 && n < max; s++) {
+        const long w = (long)p->R[s] * (long)p->D[s];
+        if (p->tail[s]) continue;
+        if (cache_bytes > 0 && 16L * w > cache_bytes) continue;
+        out[n++] = (int)w;
+    }
+    return n;
+}
+
+/* the TILE race (2026-09-05): every candidate width timed on the whole
+ * forward (tiling is a cross-stage locality property, so a per-stage clock
+ * cannot see it), rounds alternating direction, min; the winner applied
+ * and returned (0 = untiled). Runs AFTER the form race: the forms are the
+ * kernels, the width is the walk. Leaves zout transformed. */
+static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, double *zout,
+                                    long cache_bytes, double (*now_ns)(void))
+{
+    int cand[VFFT_ILFD_MAX_K + 1], n, i, r, best = 0;
+    double tt[VFFT_ILFD_MAX_K + 1];
+    n = vfft_ilfd_tw_candidates(p, cache_bytes, cand, VFFT_ILFD_MAX_K + 1);
+    if (n <= 1) { vfft_ilfd_apply_tw(p, 0); return 0; }
+    for (i = 0; i < n; i++) tt[i] = 1e300;
+    for (r = 0; r < 4; r++)
+        for (i = 0; i < n; i++) {
+            const int a = (r & 1) ? n - 1 - i : i;
+            double t0;
+            if (!vfft_ilfd_apply_tw(p, cand[a])) continue;
+            t0 = now_ns(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = now_ns() - t0;
+            if (t0 < tt[a]) tt[a] = t0;
+        }
+    for (i = 1; i < n; i++) if (tt[i] < tt[best]) best = i;
+    vfft_ilfd_apply_tw(p, cand[best]);
+    return cand[best];
 }
 
 /* Per-stage FORM race (2026-09-05): on each msz-eligible stage, time the

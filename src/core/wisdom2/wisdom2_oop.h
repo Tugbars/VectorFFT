@@ -70,6 +70,8 @@ typedef struct {
                                               * per-stage form letters (2026-09-05) */
     int    il_fl_n;
     char   il_flf[24];
+    int    il_tw;                            /* il_tw= the flat DIT's tile width in
+                                              * complex (0 = untiled), 2026-09-05 */
     int    ord_scr;                          /* kind 3 IL row keyed ord=scr: the flat
                                               * DIT's SCRAMBLED class (its own chain +
                                               * forms, raced under the scrambled

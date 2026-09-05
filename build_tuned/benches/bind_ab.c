@@ -90,6 +90,9 @@ int main(void)
         { 19683, { 9, 9, 9, 9, 3 }, 5, "t.t.n.o" },
         { 59049, { 9, 9, 3, 3, 9, 9 }, 6, "t.t.t.m.o" },
         { 98415, { 9, 9, 9, 3, 9, 5 }, 6, "t.t.t.t.o" },
+        { 177147, { 9, 9, 9, 9, 9, 3 }, 6, "" },        /* above the L2 edge: the create defaults' forms */
+        { 194481, { 9, 9, 7, 7, 7, 7 }, 6, "" },
+        { 245025, { 9, 9, 5, 5, 11, 11 }, 6, "" },
     };
     const int nc = (int)(sizeof C / sizeof C[0]);
     int bad = 0;
@@ -97,7 +100,7 @@ int main(void)
     for (int i = 0; i < nc; i++) {
         const int N = C[i].N;
         vfft_ilfd_plan_t *p = vfft_ilfd_create_chain(N, C[i].R, C[i].K);
-        vfft_ilfd_plan_t *q = vfft_ilfd_create_scr_of(N, C[i].R, C[i].K, C[i].forms);
+        vfft_ilfd_plan_t *q = vfft_ilfd_create_scr_of(N, C[i].R, C[i].K, C[i].forms, 0);
         double *x = malloc(2 * (size_t)N * 8), *z = malloc(2 * (size_t)N * 8), *y = malloc(2 * (size_t)N * 8);
         uint64_t hf, hb, hs, ht;
         double en, es;
@@ -132,6 +135,33 @@ int main(void)
             vfft_ilfd_execute_fwd(p, x, z);
             race3(p, z, y, vfft_ilfd_execute_bwd, run_stages_bwd, vfft_ilfd_execute_bwd, &ta, &tb, &tc);
             printf("       nat bwd: bound %8.0f | per-stage %8.0f (%.3fx)\n", ta, tb, tb / ta);
+        }
+        {   /* THE TILE AXIS: every candidate width bitwise-identical to untiled on all four
+             * paths, then the candidates timed same-run (alternated, min of 15), forward */
+            int cand[12], nw = vfft_ilfd_tw_candidates(p, 2L << 20, cand, 12), a, r, same = 1;
+            double *w = malloc(2 * (size_t)N * 8), tn[12], ts[12];
+            for (a = 0; a < nw; a++) {
+                if (!vfft_ilfd_apply_tw(p, cand[a]) || !vfft_ilfd_apply_tw(q, cand[a])) { same = 0; continue; }
+                vfft_ilfd_execute_fwd(p, x, z); same &= (h64(z, 2 * (size_t)N) == hf);
+                vfft_ilfd_execute_bwd(p, z, w); same &= (h64(w, 2 * (size_t)N) == hb);
+                vfft_ilfd_execute_fwd(q, x, z); same &= (h64(z, 2 * (size_t)N) == hs);
+                vfft_ilfd_execute_bwd(q, z, w); same &= (h64(w, 2 * (size_t)N) == ht);
+                tn[a] = ts[a] = 1e300;
+            }
+            for (r = 0; r < 15; r++)
+                for (a = 0; a < nw; a++) {
+                    const int k = (r & 1) ? nw - 1 - a : a;
+                    double t0;
+                    vfft_ilfd_apply_tw(p, cand[k]);
+                    t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns() - t0; if (t0 < tn[k]) tn[k] = t0;
+                    vfft_ilfd_apply_tw(q, cand[k]);
+                    t0 = now_ns(); vfft_ilfd_execute_fwd(q, x, z); t0 = now_ns() - t0; if (t0 < ts[k]) ts[k] = t0;
+                }
+            printf("       tiles %s:", same ? "bitwise" : "DIFFER");
+            for (a = 0; a < nw; a++) printf("  w%d nat %.0f (%.3fx) scr %.0f (%.3fx)", cand[a], tn[a], tn[a] / tn[0], ts[a], ts[a] / ts[0]);
+            printf("\n");
+            if (!same) bad++;
+            free(w);
         }
         vfft_ilfd_destroy(p); vfft_ilfd_destroy(q);
         free(x); free(z); free(y);
