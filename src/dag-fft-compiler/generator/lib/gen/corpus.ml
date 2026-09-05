@@ -171,6 +171,19 @@ let zil_boundary_cells : (string * string list) list =
     , [ "15"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix15_z_msg_bwd_avx2.c"
     , [ "15"; "--zp-msgb"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+    (* msz (2026-09-05): the msg mid with interleaved z on both edges —
+       MKL's Fact form on our contract (split body, kernel-level IL
+       boundary, unordered lanes). fwd only. *)
+  ; ( "radix3_z_msz_avx2.c"
+    , [ "3"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix5_z_msz_avx2.c"
+    , [ "5"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix7_z_msz_avx2.c"
+    , [ "7"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix9_z_msz_avx2.c"
+    , [ "9"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
+  ; ( "radix15_z_msz_avx2.c"
+    , [ "15"; "--zp-msz"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_msg_avx2.c"
     , [ "8"; "--zp-msg"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ] )
   ; ( "radix8_z_msg_bwd_avx2.c"

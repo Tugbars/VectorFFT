@@ -83,6 +83,7 @@ type zs_kind =
   | Msd
   | Msg
   | Msgb
+  | Msz
   | S0s
   | S0sb
   | S0t
@@ -195,6 +196,7 @@ let zs_name = function
   | Msd -> "msd"
   | Msg -> "msg"
   | Msgb -> "msgb"
+  | Msz -> "msz"
   | S0s -> "s0s"
   | S0sb -> "s0sb"
   | S0t -> "s0t"
@@ -217,6 +219,7 @@ let zs_of_name = function
   | "msd" -> Msd
   | "msg" -> Msg
   | "msgb" -> Msgb
+  | "msz" -> Msz
   | "s0s" -> S0s
   | "s0sb" -> S0sb
   | "s0t" -> S0t

@@ -1,6 +1,6 @@
 # BOUNDARY-IL / SPLIT-INTERIOR — the cascade family (N ≥ 2048)
 
-**These 19 files are NOT pure IL, and that is deliberate. Do not "fix" them.**
+**These 48 files are NOT pure IL, and that is deliberate. Do not "fix" them.**
 
 Everything in the parent directory (`../`, 201 files) is **pure IL** — packed complex, re/im
 adjacent in the register, through all the arithmetic. Everything *here* is the opposite in the
@@ -15,6 +15,7 @@ silently pick up a split-interior kernel. Full context: [`../../README.md`](../.
 |---|---|---|
 | **ingest / the turn** | `s0t_r4`, `s0s` | reads **packed** input, writes **split planes** into the scratch. `s0s` = plain deinterleaving leaf; `s0t_r4` = fuses the corner-turn into its *stores* with 4 rate-matched cursors |
 | **mids** | `msg` | runs entirely on split planes. Complex multiply = 4 real multiplies, **zero lane operations** |
+| **IL-edged mids** | `msz` (3/5/7/9/15, fwd) | the `msg` body with **interleaved z on both edges** (deinterleave on load, reinterleave on store, lanes left unordered: unpack only, no `permute4x64`) — MKL's Fact form on our contract, for the flat odd-N DIT engine (`src/core/oop/il_flatdit.h`). Raced 2026-09-05: 2.1–2.5× on the run-4 stage, parity on long runs |
 | **terminators** | `sterm`, `stf_r4` | final butterfly, then **re-interleave on the stores**. `sterm` pays TR4 loads; `stf_r4` needs no load shuffles (ZTURN deleted the load-side TR4 by making the ingest store in the geometry the terminator wants to read) |
 | **twins** | `sterm2`, `stf2_r4` | 2-quad unroll-and-jam twins, **bit-identical** to their partners. Winner turns on ±5% placement luck ⇒ the `t2q` pick is measured per cell at create time, never hand-set |
 
