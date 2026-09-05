@@ -212,6 +212,7 @@ let run (argv : string array) : unit =
   let cil_colstride = ref false in
   let cil_gen2 = ref false in
   let cil_grouploop = ref false in
+  let cil_transposed = ref false in
   let cil_turnst = ref false in
   let cil_turnst_gs = ref false in
   let oop_spec_named = ref false in
@@ -469,6 +470,8 @@ let run (argv : string array) : unit =
     then zp_kind := "msz"
     else if arg = "--zp-mszb"
     then zp_kind := "mszb"
+    else if arg = "--zp-mszt"
+    then zp_kind := "mszt"
     else if arg = "--zp-msgb"
     then zp_kind := "msgb"
     else if arg = "--zp-s0s"
@@ -550,6 +553,21 @@ let run (argv : string array) : unit =
       cil_colstride := true;
       cil_gen2 := true;
       cil_grouploop := true)
+    else if arg = "--cil-t2csgt"
+    then (
+      (* the TRANSPOSED backward of t2csg (scrambled class, 2026-09-05) *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true;
+      cil_transposed := true)
+    else if arg = "--cil-t2csgnt"
+    then (
+      (* the TRANSPOSED backward of t2csgn *)
+      cil_kind := "t2";
+      cil_colstride := true;
+      cil_gen2 := true;
+      cil_grouploop := true;
+      cil_transposed := true)
     else if arg = "--cil-t2cs"
     then (
       (* the column-stride TAIL form of the T2 mid (t2cs, 2026-09-04): the
@@ -1381,6 +1399,7 @@ let run (argv : string array) : unit =
            ~colstride:!cil_colstride
            ~gen2:!cil_gen2
            ~grouploop:!cil_grouploop
+           ~transposed:!cil_transposed
            ~turnst:!cil_turnst
            ~turnst_gs:!cil_turnst_gs
            ~kind:(C2c_il.kind_of_string !cil_kind)

@@ -221,6 +221,7 @@ let emit
       ~(colstride : bool)
       ~(gen2 : bool)
       ~(grouploop : bool)
+      ~(transposed : bool)
       ~(tangent : bool)
       ~(form_tag : bool)
       ~(turnst : bool)
@@ -266,7 +267,13 @@ let emit
      backward tail is PRE-twiddle by definition — the placement --cil-pretw
      forces on a backward T2 (dft.ml: DIF x Bwd = PRE). Forced here, never
      spelled on the cell: t2cs/t2csg/t2csgn _bwd carry no "p" tag. *)
-  let pretw = pretw || (colstride && dir = Bwd) in
+  (* TRANSPOSED tails (2026-09-05): the scrambled class's backward consumes
+     the comb by running the stages in reverse, each transposed — the T2
+     backward's own placement (IDFT then conj POST-twiddle), so the pre
+     forcing is skipped. Backward only; the symbol carries a "t". *)
+  if transposed && (not colstride || dir <> Bwd)
+  then failwith "codelet_cil: --cil-t2csgt / --cil-t2csgnt are backward column-stride tails";
+  let pretw = pretw || (colstride && dir = Bwd && not transposed) in
   Cx_render.colstride := colstride;
   if kind = T2C && (turnst || turnst_gs)
   then
@@ -280,11 +287,12 @@ let emit
      twiddle depends only on the block's slow digits (one digit per call).
      bwd t2c is pre-twiddle already (the Hermitian transpose), so pretw on
      the bwd side would emit the same body under a second name: refused. *)
-  if kind = T2C && pretw && dir = Bwd
-  then
-    failwith
-      "codelet_cil: --cil-pretw on t2c is fwd-only (the bwd stage is pre-twiddle \
-       by construction — a second name for the same body is not a kind)";
+  (* t2cp BACKWARD (2026-09-05) = the TRANSPOSE of t2cp: IDFT block, then the
+     conjugated twiddle on the OUTPUT legs (POST). It is the scrambled
+     class's backward mid in the flat DIT (the comb is consumed by running
+     the stages in reverse, each transposed). Placement: --cil-pretw on T2C
+     TOGGLES the direction's default (fwd post -> pre = t2cp; bwd pre -> post
+     = t2cp_bwd), see pre_tw below. *)
   let ctx =
     make_ctx
       ~tw_group:(kind = T2C)
@@ -317,7 +325,7 @@ let emit
   (* Position is independent of direction — see `tw_pre`. `--cil-pretw` forces
      PRE on a backward T2, which is the combination the pure-IL inverse needs. *)
   let pre_tw =
-    (kind = T2 && (dir = Fwd || ctx.tw_pre)) || (kind = T2C && (dir = Bwd || ctx.tw_pre))
+    (kind = T2 && (dir = Fwd || ctx.tw_pre)) || (kind = T2C && (dir = Bwd) <> ctx.tw_pre)
   in
   (* T2C fwd is DIF: butterfly THEN stage twiddle W_L^{d*r}. T2C bwd is
      the HERMITIAN TRANSPOSE stage (the matched-roundtrip law — bwd
@@ -325,7 +333,7 @@ let emit
      derivation) applied PRE-butterfly; the driver runs the stages in
      REVERSE order. *)
   let post_tw =
-    (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && dir = Fwd && not ctx.tw_pre)
+    (kind = T2 && dir = Bwd && not ctx.tw_pre) || (kind = T2C && (dir = Fwd) <> ctx.tw_pre)
   in
   (* COMPLETE-IR (2026-08-09): monolithic inputs are CLoad nodes carrying
      their symbolic address — the load edge prints FROM the DAG instead of
@@ -1130,6 +1138,7 @@ let emit
              ^ (if ctx.tw_pre && (dir = Bwd || kind = T2C) && not ctx.colstride then "p" else "")
              ^ (if ctx.colstride then "cs" else "")
              ^ (if ctx.tw_gen2 then "g" else "")
+             ^ (if transposed then "t" else "")
              ^ (if ctx.st_turn then "t" else "")
              ^ (if ctx.st_turn_gs then "g" else "")
              (* "ct" = dft_small FACTORED this odd composite instead of taking
@@ -1372,8 +1381,9 @@ let emit
          ~alias_tolerant:true
          ~symbol:
            (Printf.sprintf
-              "radix%d_z_t2csgn_%s_%s"
+              "radix%d_z_t2csgn%s_%s_%s"
               radix
+              (if transposed then "t" else "")
               (if dir = Fwd then "fwd" else "bwd")
               isa.Isa.name)
          ~target_attr:isa.Isa.target_attr
