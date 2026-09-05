@@ -150,41 +150,33 @@ static inline const vw2_rec_t *vw2__oop_k1_scan(const vw2_store_t *s, int N, uin
 {
     return vw2__oop_k1_scan_ord(s, N, lay, 0);
 }
-/* the SCRAMBLED class's kind-3 IL row (2026-09-05): il_route + il_flat +
- * il_forms + ns from the ord=scr cell, nothing else. 1 = decoded. */
-static inline int vw2_oop_lookup_k1_scr(const vw2_store_t *s, int N,
-                                        vfft_oop_wisdom_entry_t *e)
-{
-    const vw2_rec_t *ri = vw2__oop_k1_scan_ord(s, N, VW2_LAY_IL, 1);
-    const char *il, *ff;
-    int ilr, fl[10], nfl;
-    memset(e, 0, sizeof *e);
-    e->kind = VFFT_OOP_KIND_BAILEY2V;
-    e->N = N; e->K = 1;
-    e->k1_sp_route = -1; e->k1_il_route = -1;
-    e->ord_scr = 1;
-    if (!ri) return 0;
-    il = vw2_rec_get(ri, "il_route");
-    if (!il) return 0;
-    ilr = vw2__oop_name_idx(vw2_oop_il_name, 9, il);
-    if (ilr < 0) return 0;
-    e->k1_il_route = ilr;
-    nfl = vw2__oop_split_ints(vw2_rec_get(ri, "il_flat"), fl, 10);
-    if (nfl >= 2) { memcpy(e->il_fl, fl, sizeof(int) * (size_t)nfl); e->il_fl_n = nfl; }
-    ff = vw2_rec_get(ri, "il_forms");
-    if (ff) { strncpy(e->il_flf, ff, sizeof e->il_flf - 1); e->il_flf[sizeof e->il_flf - 1] = 0; }
-    e->il_kv = vw2__oop_geti(ri, "il_kv", 0);
-    e->il_kv_raced = vw2_rec_get(ri, "il_kv") != NULL;
-    { const char *ns = vw2_rec_get(ri, "ns"); e->ns = ns ? atof(ns) : 0.0; }
-    return 1;
-}
 
+/* The kind-3 lookup by ORDER CELL (2026-09-05): want_scr = 0 reads the
+ * ord=nat cell (and the legacy ord=any rows), want_scr = 1 reads the
+ * ord=scr cell — the scrambled pool's own verdict (the natural-output
+ * engines answering a scrambled request, or the flat DIT's scrambled
+ * class). The two cells are separate verdicts: never compared, never
+ * substituted for one another. */
+static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_scr,
+                                        vfft_oop_wisdom_entry_t *e);
 static inline int vw2_oop_lookup_k1(const vw2_store_t *s, int N,
                                     vfft_oop_wisdom_entry_t *e)
 {
-    const vw2_rec_t *ril = vw2__oop_k1_scan(s, N, VW2_LAY_IL);
-    const vw2_rec_t *rsp = vw2__oop_k1_scan(s, N, VW2_LAY_SPLIT);
-    const vw2_rec_t *rlg = vw2__oop_k1_scan(s, N, VW2_LAY_ANY);
+    return vw2_oop_lookup_k1_ord(s, N, 0, e);
+}
+static inline int vw2_oop_lookup_k1_scr(const vw2_store_t *s, int N,
+                                        vfft_oop_wisdom_entry_t *e)
+{
+    const int got = vw2_oop_lookup_k1_ord(s, N, 1, e);
+    e->ord_scr = 1;
+    return got;
+}
+static inline int vw2_oop_lookup_k1_ord(const vw2_store_t *s, int N, int want_scr,
+                                        vfft_oop_wisdom_entry_t *e)
+{
+    const vw2_rec_t *ril = vw2__oop_k1_scan_ord(s, N, VW2_LAY_IL, want_scr);
+    const vw2_rec_t *rsp = vw2__oop_k1_scan_ord(s, N, VW2_LAY_SPLIT, want_scr);
+    const vw2_rec_t *rlg = vw2__oop_k1_scan_ord(s, N, VW2_LAY_ANY, want_scr);
     int pair[2], np, got = 0, si;
     memset(e, 0, sizeof *e);
     e->kind = VFFT_OOP_KIND_BAILEY2V;
