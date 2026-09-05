@@ -230,6 +230,10 @@ typedef struct
                                               * composite mid B); 2026-09-02 */
     int    il_fl[VFFT_ILFD_MAX_K];           /* FLAT only: the chain (leaf first) */
     int    il_fl_n;                          /* FLAT only: stages, else 0        */
+    int    il_scr;                           /* FLAT only: 1 = the SCRAMBLED class
+                                              * (block-order output, transposed
+                                              * backward); the SCRAMBLED pool's
+                                              * flat candidates (2026-09-05)   */
     char   il_flf[24];                       /* FLAT only: the per-stage forms
                                               * the bench raced (il_forms=);
                                               * empty = unraced yet             */
@@ -485,7 +489,9 @@ static int _il_dp_build(int N, const vfft_il_cand_t *c, _il_dp_built_t *b)
          * (the front door serves both directions from one handle) */
         b->ifd = vfft_ilfd_create_chain(N, c->il_fl, c->il_fl_n);
         if (!b->ifd) return -1;
-        if (!b->ifd->bwd_ok || (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)))
+        b->ifd->scr = c->il_scr;   /* before the forms: the last stage's arms differ */
+        if (!b->ifd->bwd_ok || (c->il_scr && !b->ifd->scr_ok) ||
+            (c->il_flf[0] && !vfft_ilfd_apply_forms(b->ifd, c->il_flf)))
         { vfft_ilfd_destroy(b->ifd); b->ifd = NULL; return -1; }
         return 0;
     }
@@ -837,8 +843,26 @@ static long _il_dp_bin_of(const vfft_il_cand_t *c, int N, long idx)
     case VFFT_K1_IL_3P:
     case VFFT_K1_IL_2P_PURE:
     case VFFT_K1_IL_CHAIN3:
-    case VFFT_K1_IL_FLAT:
         return idx;                                  /* natural by contract */
+    case VFFT_K1_IL_FLAT:
+        if (!c->il_scr) return idx;                  /* natural by contract */
+        {   /* the SCRAMBLED class: position b*R_last + l holds bin
+             * natbase[b] + l*N/R_last, natbase = the digits of b (q0 most
+             * significant in b) weighted by W_i = R0..R_{i-1} */
+            const int K = c->il_fl_n;
+            const long Rl = c->il_fl[K - 1];
+            long b = idx / Rl, l = idx % Rl, bin = 0, W = 1, div = 1;
+            int i;
+            for (i = 0; i < K - 1; i++) {
+                long d;
+                div = 1;
+                { int j; for (j = i + 1; j < K - 1; j++) div *= c->il_fl[j]; }
+                d = (b / div) % c->il_fl[i];
+                bin += d * W;
+                W *= c->il_fl[i];
+            }
+            return bin + l * W;                       /* W = N / R_last here */
+        }
     case VFFT_K1_IL_CASCADE:
     {
         if (c->nf < 1 || c->nf > VFFT_ZSPLIT_MAX_NF) return -1;
@@ -1399,7 +1423,12 @@ static void _il_dp_flat_rec(int L, int depth, int *cur,
             _il_dp_flat_rec(L / POOL[p], depth + 1, cur, out, lens, n, dropped);
         }
 }
+static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr);
 static void _il_dp_enumerate_flat(int N, vfft_il_cand_sink_t *s)
+{
+    _il_dp_enumerate_flat_ord(N, s, 0);
+}
+static void _il_dp_enumerate_flat_ord(int N, vfft_il_cand_sink_t *s, int scr)
 {
     int out[VFFT_IL_DP_FLAT_MAXCAND][VFFT_ILFD_MAX_K];
     int lens[VFFT_IL_DP_FLAT_MAXCAND], cur[VFFT_ILFD_MAX_K];
@@ -1416,6 +1445,7 @@ static void _il_dp_enumerate_flat(int N, vfft_il_cand_sink_t *s)
         c.route = VFFT_K1_IL_FLAT;
         memcpy(c.il_fl, out[i], sizeof(int) * VFFT_ILFD_MAX_K);
         c.il_fl_n = lens[i];
+        c.il_scr = scr;
         _il_dp_push(s, &c);
     }
 }
@@ -1643,6 +1673,11 @@ static void _il_dp_enumerate(int N, int ord, vfft_il_cand_sink_t *s)
      * Raced, then discarded, on every MEASURE create. Sharing the runtime's
      * gate keeps the boundary raceable via VFFT_NAT_ZCASC_MINN while costing
      * nothing by default. */
+    /* the flat DIT's SCRAMBLED class (2026-09-05): the same cells the
+     * natural pool offers it — block-order output, transposed backward;
+     * banked on its own ord=scr IL row. The cascade's own gate follows. */
+    if ((N & (N - 1)) != 0 && (N < 2048 || (N & 3)))
+        _il_dp_enumerate_flat_ord(N, s, 1);
     if (N < _vfft_zcasc_min_n()) return;
     {
         int chain[VFFT_ZSPLIT_MAX_NF];
@@ -1998,6 +2033,24 @@ static int vfft_il_dp_emit_wisdom(vw2_store_t *st, int N,
                 fprintf(stderr, "  [il-dp] N=%d bwd bank REFUSED: %s\n",
                         N, why ? why : "?");
         }
+    }
+    if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_FLAT)
+    {   /* the flat DIT's scrambled class: its own kind-3 IL row keyed ord=scr */
+        vfft_oop_wisdom_entry_t e;
+        memset(&e, 0, sizeof e);
+        e.N = N;
+        e.K = 1;
+        e.kind = VFFT_OOP_KIND_BAILEY2V;
+        e.k1_sp_route = -1;
+        e.k1_il_route = VFFT_K1_IL_FLAT;
+        e.il_kv_raced = 1;
+        memcpy(e.il_fl, scr->il_fl, sizeof e.il_fl);
+        e.il_fl_n = scr->il_fl_n;
+        memcpy(e.il_flf, scr->il_flf, sizeof e.il_flf);
+        e.ord_scr = 1;
+        e.ns = scr->cost_ns;
+        if (vw2_oop_bank_k1_lay(st, &e, VW2_LAY_IL) == VW2_OK)
+            lines++;
     }
     if (scr && scr->cost_ns < 1e17 && scr->route == VFFT_K1_IL_CASCADE)
     {
