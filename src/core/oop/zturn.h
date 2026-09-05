@@ -103,6 +103,17 @@ VFFT_ZT_DECL(radix4_z_stf_r4_bwd_avx2)  /* chains; r4term_sim E6-E15: ONE
                                          * 64-B record/section/group, OLs =
                                          * count = N/4, truncated squaring
                                          * tree w^2, w^3. NO stf2 twin. */
+VFFT_ZT_DECL(radix4_z_s0tu_r4_fwd_avx2)  /* UNORDERED-LANE twins (2026-09-05,
+                                          * MKL's Fact-form detail): the plane
+                                          * holds digit P[j] = [0,2,1,3] in
+                                          * lane j (ingest pairs (Y0,Y2),
+                                          * (Y1,Y3) at the same op count), the
+                                          * terminator stores unpack-only (no
+                                          * 0xD8 permutes). fwd only; the fwd
+                                          * tables are built at P[j]. */
+VFFT_ZT_DECL(radix4_z_stfu_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stfu_r4_fwd_avx2)
+VFFT_ZT_DECL(radix8_z_stf2u_r4_fwd_avx2)
 #undef VFFT_ZT_DECL
 
 typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
@@ -110,6 +121,24 @@ typedef void (*_vfft_zt_msg_fn)(const double *, const double *, double *,
                                 unsigned long long, unsigned long long,
                                 unsigned long long, unsigned long long,
                                 unsigned long long);
+
+/* plane lane j holds ingest digit P[j] when the plan runs the unordered
+ * twins (lanes_u); its own inverse. The fwd kernel picks live here so the
+ * untiled, tiled and MT dispatchers cannot disagree. */
+static const int _VFFT_ZT_LANE_P[4] = { 0, 2, 1, 3 };
+static inline _vfft_zt_msg_fn _vfft_zt_s0t_fwd_pick(int lanes_u)
+{
+    return lanes_u ? radix4_z_s0tu_r4_fwd_avx2 : radix4_z_s0t_r4_fwd_avx2;
+}
+static inline _vfft_zt_msg_fn _vfft_zt_stf4_fwd_pick(int lanes_u)
+{
+    return lanes_u ? radix4_z_stfu_r4_fwd_avx2 : radix4_z_stf_r4_fwd_avx2;
+}
+static inline _vfft_zt_msg_fn _vfft_zt_stf8_fwd_pick(int lanes_u, int t2q)
+{
+    if (lanes_u) return t2q ? radix8_z_stf2u_r4_fwd_avx2 : radix8_z_stfu_r4_fwd_avx2;
+    return t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2;
+}
 
 typedef struct {
     int N, nf;
@@ -132,6 +161,10 @@ typedef struct {
                                         * sized delta, so MEASURED per cell
                                         * (vfft.c create race), never
                                         * reasoned. bwd keeps single-quad. */
+    int lanes_u;                       /* fwd plane LANE ORDER: 0 = digit
+                                        * order (s0t/stf/stf2), 1 = P[j] =
+                                        * [0,2,1,3] (s0tu/stfu/stf2u; fwd
+                                        * tables at P[j]). bwd untouched. */
     /* ---- TILED MID STAGES (docs/research/tcut_spec.md; EXPERIMENTAL, env
      * gated, default OFF). All three fields are calloc-ZERO on every existing
      * path, and zero means EXACTLY today's untiled call-for-call driver —
@@ -354,6 +387,7 @@ static inline long _vfft_zt_rho0(long v, const int *r, int m)
 static inline int vfft_zturn2_set_natord(vfft_zturn2_plan_t *p, int on)
 {
     if (!p) return 0;
+    if (on && p->lanes_u) return 0;    /* no stfn twin of the unordered-lane terminator */
     if (!on)
     {
         free(p->ntf); free(p->ntb);
@@ -592,9 +626,10 @@ static inline _vfft_zt_msg_fn _vfft_zt_msg_pick(int R, int fwd)
     }
 }
 
-static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
-                                                           const int *chain,
-                                                           int nf)
+static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain_u(int N,
+                                                             const int *chain,
+                                                             int nf,
+                                                             int lanes_u)
 {
     if (nf < 3 || nf > VFFT_ZSPLIT_MAX_NF) return NULL;
     if (chain[0] != 4) return NULL;    /* ZTURN-S fence: 4-section geometry */
@@ -617,7 +652,7 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
 
     vfft_zturn2_plan_t *p = (vfft_zturn2_plan_t *)calloc(1, sizeof(*p));
     if (!p) return NULL;
-    p->N = N; p->nf = nf;
+    p->N = N; p->nf = nf; p->lanes_u = !!lanes_u;
     for (int s = 0; s < nf; s++) p->chain[s] = chain[s];
     for (int s = 0; s < nf; s++) {
         p->msg_f[s] = _vfft_zt_msg_pick(chain[s], 1);
@@ -643,12 +678,15 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
                 const long br = _vfft_zs_brev(g2, s - 1, chain + 1);
                 for (int l = 1; l < R; l++)
                     for (int j = 0; j < 4; j++) {
+                        const int ju = p->lanes_u ? _VFFT_ZT_LANE_P[j] : j;
                         const double a = -TAU
                             * (double)(((long)l * (j + 4 * br)) % M) / (double)M;
+                        const double au = -TAU
+                            * (double)(((long)l * (ju + 4 * br)) % M) / (double)M;
                         double *f = p->twz[s]  + ((size_t)g * Rm1 + (l - 1)) * 8;
                         double *b = p->twzb[s] + ((size_t)g * Rm1 + (l - 1)) * 8;
-                        f[j] = cos(a); f[4 + j] = sin(a);
-                        b[j] = cos(a); b[4 + j] = -sin(a);
+                        f[j] = cos(au); f[4 + j] = sin(au);   /* fwd: lane j = digit P[j] */
+                        b[j] = cos(a); b[4 + j] = -sin(a);    /* bwd: ordered kernels    */
                     }
             }
         }
@@ -665,9 +703,12 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
             for (long k2 = 0; k2 < K2; k2++) {
                 const long br = _vfft_zs_brev(k2, nf - 2, chain + 1);
                 for (int j = 0; j < 4; j++) {
+                    const int ju = p->lanes_u ? _VFFT_ZT_LANE_P[j] : j;
                     const double a = -TAU
                         * (double)((j + 4 * br) % (long)N) / (double)N;
-                    p->tzq[8 * k2 + j] = cos(a);  p->tzq[8 * k2 + 4 + j] = sin(a);
+                    const double au = -TAU
+                        * (double)((ju + 4 * br) % (long)N) / (double)N;
+                    p->tzq[8 * k2 + j] = cos(au); p->tzq[8 * k2 + 4 + j] = sin(au);
                     p->tzqb[8 * k2 + j] = cos(a); p->tzqb[8 * k2 + 4 + j] = -sin(a);
                 }
             }
@@ -689,6 +730,13 @@ static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
 fail:
     vfft_zturn2_destroy(p);
     return NULL;
+}
+
+static inline vfft_zturn2_plan_t *vfft_zturn2_create_chain(int N,
+                                                           const int *chain,
+                                                           int nf)
+{
+    return vfft_zturn2_create_chain_u(N, chain, nf, 0);
 }
 
 /* Default-chain wrapper: the calibrated legacy per-cell winners
@@ -742,19 +790,19 @@ static inline void _vfft_zt_term_fwd(const vfft_zturn2_plan_t *p, double *zout,
     const long N = p->N;
     if (p->chain[p->nf - 1] == 4) {
         if (whole)
-            radix4_z_stf_r4_fwd_avx2(p->plane, 0, zout, 0, p->tzq, 0,
+            _vfft_zt_stf4_fwd_pick(p->lanes_u)(p->plane, 0, zout, 0, p->tzq, 0,
                                      0, 0, (size_t)N / 4, 0, (size_t)N / 4);
         else
-            radix4_z_stf_r4_fwd_avx2(p->plane + 2 * t * w, 0,
+            _vfft_zt_stf4_fwd_pick(p->lanes_u)(p->plane + 2 * t * w, 0,
                                      zout + 2 * t * w, 0,
                                      p->tzq + 2 * t * w, 0,
                                      0, 0, (size_t)N / 4, 0, (size_t)w);
     } else if (whole) {
-        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+        _vfft_zt_stf8_fwd_pick(p->lanes_u, p->t2q)(
             p->plane, 0, zout, 0, p->tzq, 0,
             0, 0, (size_t)N / 8, 0, (size_t)N / 8);
     } else {
-        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+        _vfft_zt_stf8_fwd_pick(p->lanes_u, p->t2q)(
             p->plane + 2 * t * w, 0, zout + t * w, 0, p->tzq + t * w, 0,
             0, 0, (size_t)N / 8, 0, (size_t)w / 2);
     }
@@ -814,7 +862,7 @@ static inline void _vfft_zt_mids_a1(const vfft_zturn2_plan_t *p, int fwd)
 static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
                                            const double *zin, double *zout)
 {
-    radix4_z_s0t_r4_fwd_avx2(zin, 0, p->plane, 0, 0, 0,
+    _vfft_zt_s0t_fwd_pick(p->lanes_u)(zin, 0, p->plane, 0, 0, 0,
                              (size_t)p->N / 4, 0, 0, 0, (size_t)p->N / 4);
     /* the ingest is NEVER fused (spec §1.6): mid 1's group span is a WHOLE
      * section (SPAN(1) = D[0] = SEC for every legal chain), so mid 1 cannot
@@ -894,11 +942,11 @@ static inline void vfft_zturn2_execute_fwd(const vfft_zturn2_plan_t *p,
     else if (p->chain[p->nf - 1] == 4)
         /* RADIX-4 terminator (E6-E11): OLs = count = N/4, 4 columns/iter,
          * loop trip N/16. STRUCTURALLY no t2q consult — no stf2@r4 twin. */
-        radix4_z_stf_r4_fwd_avx2(
+        _vfft_zt_stf4_fwd_pick(p->lanes_u)(
             p->plane, 0, zout, 0, p->tzq, 0,
             0, 0, (size_t)p->N / 4, 0, (size_t)p->N / 4);
     else
-        (p->t2q ? radix8_z_stf2_r4_fwd_avx2 : radix8_z_stf_r4_fwd_avx2)(
+        _vfft_zt_stf8_fwd_pick(p->lanes_u, p->t2q)(
             p->plane, 0, zout, 0, p->tzq, 0,
             0, 0, (size_t)p->N / 8, 0, (size_t)p->N / 8);
 }

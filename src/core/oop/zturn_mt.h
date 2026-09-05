@@ -117,7 +117,7 @@ static void _zt_mt_tramp(void *v)
     {
     case 0: /* ingest: fwd = s0t zin->plane, bwd = s0tb plane->zout */
         if (a->fwd)
-            radix4_z_s0t_r4_fwd_avx2(a->zin + 2 * k0, 0,
+            _vfft_zt_s0t_fwd_pick(p->lanes_u)(a->zin + 2 * k0, 0,
                                      p->plane + 2 * k0, 0, 0, 0,
                                      (size_t)p->N / 4, 0, 0, 0,
                                      (size_t)w);
@@ -173,7 +173,7 @@ static void _zt_mt_tramp(void *v)
         if (p->chain[p->nf - 1] == 4)
         {
             if (a->fwd)
-                radix4_z_stf_r4_fwd_avx2(p->plane + 2 * k0, 0,
+                _vfft_zt_stf4_fwd_pick(p->lanes_u)(p->plane + 2 * k0, 0,
                                          a->zout + 2 * k0, 0,
                                          p->tzq + 2 * k0, 0, 0, 0,
                                          (size_t)p->N / 4, 0,
@@ -186,8 +186,7 @@ static void _zt_mt_tramp(void *v)
                                          (size_t)w);
         }
         else if (a->fwd)
-            (p->t2q ? radix8_z_stf2_r4_fwd_avx2
-                    : radix8_z_stf_r4_fwd_avx2)(
+            _vfft_zt_stf8_fwd_pick(p->lanes_u, p->t2q)(
                 p->plane + 2 * k0, 0, a->zout + k0, 0, p->tzq + k0, 0,
                 0, 0, (size_t)p->N / 8, 0, (size_t)w / 2);
         else

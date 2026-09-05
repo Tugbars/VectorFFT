@@ -204,6 +204,20 @@ let zil_boundary_cells : (string * string list) list =
   ; ( "radix8_z_stf_r4_avx2.c"
     , [ "8"; "--zp-stf"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )
+    (* unordered-lane twins (2026-09-05): the plane holds digit [0,2,1,3]
+       in lane j; stores unpack-only. fwd only; A/B beside the ordered kinds. *)
+  ; ( "radix4_z_s0tu_r4_avx2.c"
+    , [ "4"; "--zp-s0tu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix4_z_stfu_r4_avx2.c"
+    , [ "4"; "--zp-stfu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stfu_r4_avx2.c"
+    , [ "8"; "--zp-stfu"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
+  ; ( "radix8_z_stf2u_r4_avx2.c"
+    , [ "8"; "--zp-stf2u"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
+    )
   ; ( "radix8_z_stf_r4_bwd_avx2.c"
     , [ "8"; "--zp-stfb"; "--zp-r0"; "4"; "--isa"; "avx2"; "--uarch"; "raptor_lake_avx2" ]
     )

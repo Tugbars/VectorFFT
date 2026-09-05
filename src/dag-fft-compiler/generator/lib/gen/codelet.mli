@@ -83,8 +83,11 @@ type zs_kind =
   | S0sb
   | S0t
   | S0tb
+  | S0tu
   | Stf
   | Stf2
+  | Stf2u
+  | Stfu
   | Stfb
   | Stfbn
   | Stfn

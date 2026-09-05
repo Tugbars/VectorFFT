@@ -162,6 +162,15 @@ type zs_kind =
        DIFFERENT (wrong) kernel. Found by the conj-identity gate: dts/dtsn
        grossly wrong (maxabs ~ output magnitude) while the twiddle-free dtt
        was EXACT — the placement, not the block, was the bug. *)
+  ; lanes_u : bool
+    (* UNORDERED PLANE LANES (2026-09-05, MKL's Fact-form detail): the z
+       edges leave the lanes as unpacklo/hi produce them ([0,2,1,3]) and
+       skip the two 0xD8 permutes per leg per 4 columns (zu_noperm); the
+       s0t ingest pairs (Y0,Y2),(Y1,Y3) in its turn lattice so the plane
+       holds digit P[j] = [0,2,1,3] in lane j at the SAME instruction
+       count; zturn.h builds the fwd tables at P[j]. Twins s0tu / stfu /
+       stf2u stay linkable beside the ordered kinds (A/B side by side);
+       msz is unordered by construction. *)
   ; sched : zs_sched
     (* B2 --zp-sched: emit through the combined memory+arith node
        sequence (see zs_sched above). NEVER a kind-table default —
@@ -185,6 +194,7 @@ let kind_of_string (s : string) : zs_kind =
     ; nat_in = false
     ; nat_out = false
     ; dif = false
+    ; lanes_u = false
     }
   in
   match s with
@@ -200,7 +210,7 @@ let kind_of_string (s : string) : zs_kind =
        the two 0xD8 permutes of the ordered z edges are skipped (zu_noperm),
        which is what takes the boundary from 2.0 to 1.0 shuffles per point;
        the per-block record-sets are broadcast, so lane order is moot. *)
-    { mid with base = "msz"; group_loop = true; in_edge = E_z "Ls"; out_edge = E_z "Ls" }
+    { mid with base = "msz"; group_loop = true; in_edge = E_z "Ls"; out_edge = E_z "Ls"; lanes_u = true }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
   | "msd" ->
     (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
@@ -297,6 +307,35 @@ let kind_of_string (s : string) : zs_kind =
     ; tw_off = "2*(size_t)k"
     ; in_edge = E_sect_tap "OLs"
     ; out_edge = E_z "OLs"
+    }
+  (* ── unordered-lane twins (lanes_u): the s0t / stf / stf2 records with
+        the flag and their own C stem, nothing else. fwd only. ── *)
+  | "s0tu" ->
+    { mid with
+      base = "s0tu"
+    ; twiddled = false
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_sect_tr4 "Ls"
+    ; lanes_u = true
+    }
+  | "stfu" ->
+    { mid with
+      base = "stfu"
+    ; policy = Dft.TP_PowW1
+    ; tw_off = "2*(size_t)k"
+    ; in_edge = E_sect_tap "OLs"
+    ; out_edge = E_z "OLs"
+    ; lanes_u = true
+    }
+  | "stf2u" ->
+    { mid with
+      base = "stf2u"
+    ; uj2 = true
+    ; policy = Dft.TP_PowW1
+    ; tw_off = "2*(size_t)k"
+    ; in_edge = E_sect_tap "OLs"
+    ; out_edge = E_z "OLs"
+    ; lanes_u = true
     }
   | "stfn" ->
     (* NATURAL-ORDER terminator (fwd): stf edges with the IN side (section
@@ -527,7 +566,7 @@ let emit_codelet
      the Tw_zsplit payload is set at the point the record offset is known. *)
   let cfg = ref { Emit_render.Cfg.default with Emit_render.Cfg.store_on_compute } in
   let k = kind_of_string kind in
-  zu_noperm := (k.base = "msz");
+  zu_noperm := k.lanes_u;
   (* ── --zp-sink admission gate (the r0_dep-gate precedent: fail loudly,
         never silently emit the unsunk shape under the sunk name). Only a
         SINGLETON-ready store edge can sink — E_sect_tap's direct record
@@ -601,6 +640,9 @@ let emit_codelet
     k.base = "s0t"
     || k.base = "stf"
     || k.base = "stf2"
+    || k.base = "s0tu"
+    || k.base = "stfu"
+    || k.base = "stf2u"
     || k.base = "stfn"
     || k.base = "dts"
     || k.base = "dtsn"
@@ -640,14 +682,14 @@ let emit_codelet
      stf2 has NO r4 twin: the 2-quad instance B's "+1 section-record group"
      offset presumes 2 records/group (radix 8); at radix 4 zturn.h forces
      t2q = 0 and the planner races CHAINS instead. *)
-  if k.base = "stf2" && radix <> 8
+  if (k.base = "stf2" || k.base = "stf2u") && radix <> 8
   then
     failwith
       "codelet_zsplit: stf2 is radix-8 only — there is NO stf2@r4 twin (the radix-4 \
        terminator taps ONE record/section, so instance B's +1-record-group column offset \
        has no analog; zturn.h forces t2q=0 for last==4 chains and the planner races \
        chains instead)";
-  if (k.base = "s0t" || k.base = "dtt") && radix <> 4
+  if (k.base = "s0t" || k.base = "s0tu" || k.base = "dtt") && radix <> 4
   then
     failwith "codelet_zsplit: s0t/s0tb/dtt are radix-4 only (the r0=4 4-section geometry)";
   let vw = isa.Isa.vec_width in
@@ -841,6 +883,14 @@ let emit_codelet
           "stf2: 2-quad unroll-and-jam ZTURN-S terminator twin (SU-braided 2-instance \
            DAG + baseline-shaped tail; section-tap loads, instance B at +1 record group; \
            bit-identical pair with stf, per-cell t2q pick)."
+        | "s0tu", false ->
+          "s0tu (s0t with UNORDERED plane lanes: the turn lattice pairs (Y0,Y2),(Y1,Y3) \
+           so lane j holds digit [0,2,1,3][j]; same 18-op count), fwd."
+        | "stfu", false ->
+          "stfu (stf with UNORDERED plane lanes: unpack-only REINT stores, no 0xD8 \
+           permutes; tables built at P[j]), fwd."
+        | "stf2u", _ ->
+          "stf2u (stf2 twin with UNORDERED plane lanes: unpack-only REINT stores)."
         | "stfn", false ->
           "stfn (NATURAL-ORDER ZTURN-S terminator: section-tap loads + packed w^1 stream \
            at kn = 4*rhoinv[k/4] via the tw_im-carried table, REINT stores contiguous \
@@ -940,7 +990,7 @@ let emit_codelet
   (* s0t fwd's turn lattice needs the (im,re)-swap sign mask for x*(-i);
      file-scope const so gcc hoists ONE load out of the loop (prototype's
      _vzt_mim, zturn_proto.h). *)
-  if k.base = "s0t" && not k.bwd
+  if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
   then Buffer.add_string buf (Isa.im_mask_decl isa "_zs0t_mim" ^ "\n\n");
   (* TR4 rendering helper (E_blocks): 4 unpacks + 4 permute2f128 turning
      four column vectors into four leg/index vectors (or back). srcs/dsts
@@ -1733,6 +1783,9 @@ let emit_codelet
     let unlo = Isa.intr isa "unpacklo_pd"
     and unhi = Isa.intr isa "unpackhi_pd"
     and p2f = Isa.intr isa "permute2f128_pd" in
+    (* lanes_u: pair (Y0,Y2),(Y1,Y3) instead of (Y0,Y1),(Y2,Y3) — the
+       record then holds digits [0,2,1,3] per lane; same instructions. *)
+    let ya, yb, yc, yd = if k.lanes_u then "Y0", "Y2", "Y1", "Y3" else "Y0", "Y1", "Y2", "Y3" in
     let line s = Buffer.add_string buf ("        " ^ s ^ "\n") in
     let sline s = Buffer.add_string buf ("        " ^ s ^ ";\n") in
     Buffer.add_string buf "    for (size_t k = 0; k + 4 <= count; k += 4) {\n";
@@ -1773,22 +1826,22 @@ let emit_codelet
            (Isa.const_decl
               isa
               (v "u0")
-              (Printf.sprintf "%s(%s, %s)" unlo (v "Y0") (v "Y1")));
+              (Printf.sprintf "%s(%s, %s)" unlo (v ya) (v yb)));
          line
            (Isa.const_decl
               isa
               (v "u1")
-              (Printf.sprintf "%s(%s, %s)" unhi (v "Y0") (v "Y1")));
+              (Printf.sprintf "%s(%s, %s)" unhi (v ya) (v yb)));
          line
            (Isa.const_decl
               isa
               (v "u2")
-              (Printf.sprintf "%s(%s, %s)" unlo (v "Y2") (v "Y3")));
+              (Printf.sprintf "%s(%s, %s)" unlo (v yc) (v yd)));
          line
            (Isa.const_decl
               isa
               (v "u3")
-              (Printf.sprintf "%s(%s, %s)" unhi (v "Y2") (v "Y3")));
+              (Printf.sprintf "%s(%s, %s)" unhi (v yc) (v yd)));
          sline
            (Isa.storeu_pd
               isa
@@ -1812,7 +1865,7 @@ let emit_codelet
       [ "a", 0, 0, 2, "k", "k+1"; "b", vw, 1, 3, "k+2", "k+3" ];
     Buffer.add_string buf "    }\n"
   in
-  if k.base = "s0t" && not k.bwd
+  if (k.base = "s0t" || k.base = "s0tu") && not k.bwd
   then (
     (* ── s0t fwd: closed-form template — no DAG, no prepare ── *)
     emit_signature ();
