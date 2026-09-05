@@ -849,7 +849,7 @@ let emit_codelet
        \ * (codelet_zsplit.ml; docs/roadmap/zil_pipeline_port.md). Scratch = 64-B\n\
        \ * [re x%d][im x%d] blocks (z addressing +%d for im; one stream per leg row).\n\
        \ * %s\n\
-       \ * CONTRACT: count %% %d == 0 (%s).\n\
+       \ * CONTRACT: %s.\n\
        \ * %s%s */\n"
        vw
        vw
@@ -940,10 +940,18 @@ let emit_codelet
           "ms bwd twin (IDFT + POST-twiddle; table twspb pre-conjugated -> table_conj)."
         | _, false ->
           "ms (split mid, IN-PLACE zin==zout, SHUFFLE-FREE, splat-pair tw), fwd.")
-       vw
-       (if k.uj2
-        then Printf.sprintf "%d columns per main trip, %d-column tail" (2 * vw) vw
-        else Printf.sprintf "%d columns per iteration" vw)
+       (if k.narrow_arms
+        then
+          Printf.sprintf
+            "count: ANY >= 1 (%d-column wide loop, then 2-column VEX-128 and 1-column scalar arms — il_odd_count_tail.md §3)"
+            vw
+        else
+          Printf.sprintf
+            "count %% %d == 0 (%s)"
+            vw
+            (if k.uj2
+             then Printf.sprintf "%d columns per main trip, %d-column tail" (2 * vw) vw
+             else Printf.sprintf "%d columns per iteration" vw))
        (if not k.twiddled
         then "tw_re/tw_im unused (twiddle-free leaf)."
         else if k.policy = Dft.TP_PowW1

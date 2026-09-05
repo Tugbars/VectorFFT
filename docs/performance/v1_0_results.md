@@ -1067,66 +1067,64 @@ front-door integration yet — those are the next levers, in that order,
 together with the two-group interior kinds that retire the leaf turn and
 the rotor sweep.
 
-### 1D ODD c2c — the flat DIT engine and the `msz` kernel form (2026-09-05)
+### 1D ODD c2c — the flat DIT engine (2026-09-05)
 
-A second odd engine (`src/core/oop/il_flatdit.h`): an un-turned flat
-mixed-radix DIT — the plain leaf, then one in-place sweep per remaining
-factor with per-block broadcast twiddles (modulus N/D_s), natural order
-by redirecting the last stage's stores. The two odd engines belong in
-the pool together and are raced per cell: the flat DIT wins the
-small-factor families (5^k: 1.27–1.28× over the four-step), the
-four-step wins the wide-leaf chains.
+The odd-N engine above the three-stage chain's ceiling is an un-turned
+flat mixed-radix DIT (`src/core/oop/il_flatdit.h`): the plain leaf, then
+one in-place sweep per remaining factor with per-block broadcast
+twiddles (modulus N/D_s), natural order by redirecting the last stage's
+stores. Three kernel forms serve its stages and are raced per stage at
+create:
 
-Every mid stage takes one of two kernel forms, A/B'd per stage on one
-plan:
+- **t2cp** — the packed-complex pre-twiddle column kernel, one digit per
+  call, any run.
+- **msz** — the split-body kernel with interleaved edges
+  (`codelets/zil/avx2/boundary_split/radix{3,5,7,9,15}_z_msz_avx2.c`,
+  emitter kind `--zp-msz`): the msg mid's body between an unpack-only
+  deinterleave and reinterleave, lanes left unordered, plus the
+  il_odd_count_tail §3 arms (the same DAG re-rendered at 2 columns
+  VEX-128 and at 1 column scalar) so it takes any run. Wins the run-4
+  stages 2.1–2.5×; parity on long runs of 5 and 7; loses 10–20% at
+  radix 9 and on runs of 3, where the race keeps t2cp.
+- **t2csgn** — the short-run tail kernel (t2csg: two-group column form,
+  generated twiddle stream) with its group loop moved in-kernel over a
+  base table (`codelets/zil/avx2/pure_il/radix*_z_t2csgn_avx2.c`,
+  `--cil-t2csgn`): one call per stage instead of one per group. On the
+  last stage the driver hands it the groups in ascending natural-base
+  order, so consecutive groups fill adjacent output lines (one
+  write-allocate per line instead of one per complex). The count-1 last
+  stage goes from 1.6–1.7 to 0.9–1.0 ns per point at 98k–138k (137781:
+  240 → 124 µs); the count-3 stage before it drops the same way.
 
-- **t2cp** — the packed-complex pre-twiddle column kernel (the 2D
-  family's), one digit per call;
-- **msz** — MKL's Fact form on our contract: interleaved z on both
-  edges, split re/im planes in registers (the zsplit mid body:
-  shuffle-free complex multiply), lanes left unordered (unpack only —
-  1.0 shuffle per point at the boundary, no `permute4x64`).
-  `codelets/zil/avx2/boundary_split/radix{3,5,7,9,15}_z_msz_avx2.c`,
-  emitter kind `--zp-msz`, contract `count % 4 == 0`, one call per
-  stage (in-kernel block loop).
-
-Per stage, same plan, alternated min-of-7, ns per point:
-
-```
- stage run      radix      t2cp / tail   msz          verdict
-────────────────────────────────────────────────────────────────────
- D ≥ 20         5, 7       0.22–0.31     0.23–0.28    parity (msz 0–12% up)
- D ≥ 12         9          0.31–0.40     0.35–0.40    t2cp (msz 10% down)
- D = 4          3,5,7,9    0.45–0.72     0.22–0.45    msz 1.6–2.5×
- D = 1 (last)   4          0.88–1.57     —            19–32 ns PER CALL
-────────────────────────────────────────────────────────────────────
-```
-
-Whole transform (msz wherever eligible) vs **MKL DFTI complex**, single
-thread, same run, alternated min-of-9, spectra checked against a naive
-DFT at natural indices:
+Flat DIT (forms raced) versus the four-step bridge (chains raced) versus
+**MKL DFTI complex**, single thread, same run, two runs, spectra checked
+against a naive DFT at natural indices:
 
 ```
- N        chain             t2cp (µs)   msz (µs)   MKL (µs)   msz vs MKL
-──────────────────────────────────────────────────────────────────────────
- 972      9·9·3·4               2.7        2.4        2.2       0.92×
- 1372     7·7·7·4               2.6        2.1        2.3       1.10×
- 2500     5·5·5·5·4             5.8        4.9        5.0       1.02×
- 9604     7·7·7·7·4            23.8       20.0       23.3       1.17×
- 12500    5·5·5·5·5·4          32.8       28.4       29.2       1.03×
- 26244    9·9·9·9·4            71.1       63.8       67.2       1.05×
- 62500    5·5·5·5·5·5·4       211.0      189.4      176.4       0.93×
- 67228    7·7·7·7·7·4         231.4      202.7      186.3       0.92×
- 78732    9·9·9·9·3·4         285.0      274.3      245.4       0.89×
-──────────────────────────────────────────────────────────────────────────
+ N        flat chain        flat / four-step   flat / MKL
+──────────────────────────────────────────────────────────
+ 405      9·9·5              1.00   1.00        0.88   0.88
+ 1215     9·9·3·5            1.05   1.00        1.10   1.05
+ 3125     5·5·5·5·5          1.42   1.32        0.95   0.98
+ 4095     15·3·13·7          1.08   1.05        1.00   1.02
+ 6561     9·9·9·9            1.05   0.97        1.15   1.08
+ 15625    5·5·5·5·5·5        1.36   1.49        0.99   1.01
+ 16807    7·7·7·7·7          1.33   1.08        1.00   0.94
+ 19683    9·9·9·9·3          1.01   0.99        1.07   1.04
+ 59049    9·9·9·9·9          1.13   1.04        1.22   1.16
+ 78125    5·5·5·5·5·5·5      1.73   1.76        1.02   1.08
+ 98415    9·9·9·9·5·3        1.06   1.09        1.20   1.15
+ 117649   7·7·7·7·7·7        1.41   1.26        0.97   1.00
+ 137781   9·9·9·9·7·3        1.04   1.22        1.13   1.13
+──────────────────────────────────────────────────────────
 ```
 
-The msz form's win is the D = 4 stage (2.1–2.5×): a full four-column
-iteration per block where the tail form ran half-width. On long runs
-both forms sit at the same sweep rate — the shuffle count is not the
-lever there. What remains against MKL above 60k is the count-1 last
-stage, 19–32 ns per call at one group per call (33–45% of the
-transform); its lever is blocks per call, not the kernel body.
+The flat DIT matches or beats the four-step at every cell (the two
+readings under 1.00 are inside this box's run-to-run noise) and beats
+MKL on the radix-9 family by 4–22%. What remains against MKL is the 5^k
+family at 3125–78125, where MKL's radix-5 sweep is cheaper per element,
+and 405, a three-stage cell that belongs to the chain tier. Neither
+engine is in the front door yet.
 
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
 

@@ -17,7 +17,7 @@
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
 /* the plan's chain with an "m" on every stage that races onto msz */
-static void plan_s(const vfft_ilfd_plan_t *p, char *cs, size_t n) { int off = 0; for (int s = 0; s < p->K; s++) off += snprintf(cs + off, n - off, "%s%d%s", s ? "." : "", p->R[s], (s && p->msz[s]) ? "m" : (s == p->K - 1 && p->gl[s]) ? (p->gord ? "o" : "n") : ""); }
+static void plan_s(const vfft_ilfd_plan_t *p, char *cs, size_t n) { int off = 0; for (int s = 0; s < p->K; s++) off += snprintf(cs + off, n - off, "%s%d%s", s ? "." : "", p->R[s], (s && p->msz[s]) ? "m" : (s && p->gl[s]) ? ((s == p->K - 1 && p->gord) ? "o" : "n") : ""); }
 /* --stages: per-stage timing of the flat DIT (seed chain) — where does a
  * sweep's time go: the leaf, the long-run mids, the short-run tail? */
 static void stage_times(const vfft_ilfd_plan_t *p, const double *zin, double *zout) {
