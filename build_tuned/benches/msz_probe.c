@@ -74,19 +74,45 @@ int main(int argc, char **argv) {
             if (!p->tz[s] && p->fgl[s]) {
                 /* the last stage: t2csg (one call per group) vs t2csgn in block
                  * order vs t2csgn in natural-base order — three arms, rotated */
-                double tc = 1e300;
+                double tc = 1e300, ts = 1e300;
                 for (int r = 0; r < 9; r++) {
-                    for (int a2 = 0; a2 < 3; a2++) {
-                        const int arm = (a2 + r) % 3;
+                    for (int a2 = 0; a2 < 4; a2++) {
+                        const int arm = (a2 + r) % 4;
                         double t0;
-                        p->gl[s] = (arm != 0); p->gord = (arm == 2);
+                        p->gl[s] = (arm != 0); p->gord = (arm == 2); p->scr = (arm == 3);
                         t0 = now_ns(); vfft_ilfd_stage(p, s, x, z); t0 = now_ns()-t0;
-                        if (arm == 0) { if (t0 < ta) ta = t0; } else if (arm == 1) { if (t0 < tb) tb = t0; } else { if (t0 < tc) tc = t0; }
+                        if (arm == 0) { if (t0 < ta) ta = t0; } else if (arm == 1) { if (t0 < tb) tb = t0; }
+                        else if (arm == 2) { if (t0 < tc) tc = t0; } else { if (t0 < ts) ts = t0; }
                     }
                 }
-                p->gl[s] = 1; p->gord = 1;
-                printf("      R%-2d cnt%-6zu x%-6zu t2csg %7.0f | t2csgn %7.0f | t2csgn+order %7.0f ns | %.2fx %.2fx  (%.2f -> %.2f -> %.2f ns/pt)\n", p->R[s], p->D[s], p->nblk[s],
-                       ta, tb, tc, ta / tb, ta / tc, ta / N, tb / N, tc / N);
+                p->gl[s] = 1; p->gord = 1; p->scr = 0;
+                printf("      R%-2d cnt%-6zu x%-6zu t2csg %7.0f | t2csgn %7.0f | +order %7.0f | SCRAMBLED %7.0f ns | nat %.2f -> scr %.2f ns/pt\n", p->R[s], p->D[s], p->nblk[s],
+                       ta, tb, tc, ts, tc / N, ts / N);
+                {   /* the scrambled output = the mixed-radix digit reversal of the natural spectrum */
+                    const size_t R = (size_t)p->R[s], nstride = (size_t)N / R;
+                    double mx = 0;
+                    p->scr = 0; vfft_ilfd_execute_fwd(p, x, z);
+                    p->scr = 1; vfft_ilfd_execute_fwd(p, x, y);
+                    for (size_t b = 0; b < p->nblk[s]; b++)
+                        for (size_t l = 0; l < R; l++) {
+                            const size_t ps = b * R + l, pn = p->natbase[b] + l * nstride;
+                            const double d = fabs(y[2*ps] - z[2*pn]) + fabs(y[2*ps+1] - z[2*pn+1]);
+                            if (d > mx) mx = d;
+                        }
+                    p->scr = 0;
+                    printf("      scrambled order check: max |scr[b*R+l] - nat[natbase[b]+l*N/R]| = %.1e %s\n", mx, mx < 1e-9 ? "OK" : "BAD");
+                    if (!(mx < 1e-9)) bad++;
+                }
+                {   /* whole transform, natural vs scrambled, alternated */
+                    double tn = 1e300, tsc = 1e300;
+                    for (int r = 0; r < 9; r++) {
+                        double t0;
+                        p->scr = 0; t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tn) tn = t0;
+                        p->scr = 1; t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, y); t0 = now_ns()-t0; if (t0 < tsc) tsc = t0;
+                    }
+                    p->scr = 0;
+                    printf("      whole fwd: natural %7.0f | scrambled %7.0f ns | scrambled %.2fx faster\n", tn, tsc, tn / tsc);
+                }
                 continue;
             }
             if (!p->tz[s]) {

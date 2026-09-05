@@ -54,6 +54,11 @@ typedef struct {
                                        * output lines); NULL = block order */
     int gord;                         /* 1 = pass gorder to t2csgn (default; VFFT_ILFD_NO_GORD=1
                                        * turns it off; A/B flips it) */
+    int scr;                          /* 1 = SCRAMBLED output: the last stage writes zout in the
+                                       * plane's own block order (position b*R + l holds bin
+                                       * natbase[b] + l*N/R = the mixed-radix digit reversal), no
+                                       * scatter, no order table. Forward only so far (a probe
+                                       * axis, 2026-09-05). */
     vfft_il2p_fn fz[VFFT_ILFD_MAX_K]; /* msz fwd (split body, IL edges, unordered lanes) */
     double *tz[VFFT_ILFD_MAX_K];      /* msz: per block (R-1) [c x4][s x4] records (plain sin);
                                        * non-null = the stage is msz-ELIGIBLE (s < K-1; any run
@@ -184,9 +189,10 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->fcsb[s] = vfft_il2p_t2csg_bwd_fn(R[s]);
                 p->fglb[s] = p->fgl[s] ? vfft_il2p_t2csgn_bwd_fn(R[s]) : 0;
                 if (!p->fcsb[s] || (p->fgl[s] && !p->fglb[s])) p->bwd_ok = 0;
-                if (p->fgl[s] && s < K - 1) {
-                    /* in place: the group loop's base table is the identity
-                     * in complex units (group g starts at block g*G = g*G*L) */
+                if (p->fgl[s]) {
+                    /* the identity base table in complex units (group g starts
+                     * at block g*G = g*G*L): in place on the tail stages, and
+                     * the SCRAMBLED last stage's block-order output */
                     size_t gg;
                     p->ipb[s] = (size_t *)malloc(nb * sizeof(size_t));
                     if (!p->ipb[s]) { vfft_ilfd_destroy(p); return 0; }
@@ -373,13 +379,16 @@ static inline void _ilfd_stage_dir(const vfft_ilfd_plan_t *p, int s,
                  * in-kernel over the base table (stride G); Gs = the groups.
                  * Last stage: natbase -> zout, optionally in natural-base
                  * order; earlier tail stages: in place on stg, block order. */
-                if (s == p->K - 1)
+                if (s == p->K - 1 && !p->scr)
                     fgl(stg, (const double *)p->natbase, zout,
-                              (double *)(p->gord ? p->gorder : 0), tf, t2g,
-                              D, ngrp, nstride, W, G);
+                        (double *)(p->gord ? p->gorder : 0), tf, t2g,
+                        D, ngrp, nstride, W, G);
+                else if (s == p->K - 1)
+                    fgl(stg, (const double *)p->ipb[s], zout, 0, tf, t2g,   /* scrambled: block order */
+                        D, ngrp, D, L, G);
                 else
                     fgl(stg, (const double *)p->ipb[s], stg, 0, tf, t2g,
-                              D, ngrp, D, L, G);
+                        D, ngrp, D, L, G);
                 return;
             }
             for (g = 0; g < ngrp; g++) {
