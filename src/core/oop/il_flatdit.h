@@ -48,6 +48,8 @@ typedef struct {
     vfft_il2p_fn fgl[VFFT_ILFD_MAX_K];/* t2csgn fwd: the LAST stage's group loop in-kernel (non-null = available) */
     int gl[VFFT_ILFD_MAX_K];          /* 1 = run the last stage on t2csgn (default when available;
                                        * VFFT_ILFD_NO_GL=1 at create turns it off; A/B flips it) */
+    size_t *ipb[VFFT_ILFD_MAX_K];     /* in-place tail stages (s < K-1) on t2csgn: the group base
+                                       * table (entry g*G = g*G*L, complex units), block order */
     size_t *gorder;                   /* last stage: the groups in ascending natural-base order
                                        * (t2csgn walks them so consecutive groups fill adjacent
                                        * output lines); NULL = block order */
@@ -71,6 +73,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
     if (!p) return;
     for (s = 0; s < VFFT_ILFD_MAX_K; s++) { VFFT_IL2P_FREE(p->tf[s]); VFFT_IL2P_FREE(p->t2g[s]); VFFT_IL2P_FREE(p->tz[s]); }
     free(p->gorder);
+    for (s = 0; s < VFFT_ILFD_MAX_K; s++) free(p->ipb[s]);
     free(p->natbase);
     VFFT_IL2P_FREE(p->stg);
     free(p);
@@ -159,8 +162,17 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 int j;
                 for (j = 0; j < s - 1; j++) W *= (size_t)R[j];
                 p->fcs[s] = vfft_il2p_t2csg_fn(R[s]);
-                p->fgl[s] = (s == K - 1) ? vfft_il2p_t2csgn_fn(R[s]) : 0;
+                p->fgl[s] = vfft_il2p_t2csgn_fn(R[s]);
                 p->gl[s] = (p->fgl[s] != 0) && !getenv("VFFT_ILFD_NO_GL");
+                if (p->fgl[s] && s < K - 1) {
+                    /* in place: the group loop's base table is the identity
+                     * in complex units (group g starts at block g*G = g*G*L) */
+                    size_t gg;
+                    p->ipb[s] = (size_t *)malloc(nb * sizeof(size_t));
+                    if (!p->ipb[s]) { vfft_ilfd_destroy(p); return 0; }
+                    /* block span = R*D here (create's L is the twiddle modulus N/D) */
+                    for (gg = 0; gg < ngrp; gg++) p->ipb[s][gg * G] = gg * G * (size_t)R[s] * D;
+                }
                 tf = (double *)VFFT_IL2P_ALLOC(npair * 8 * sizeof(double));
                 p->t2g[s] = (double *)VFFT_IL2P_ALLOC(ngrp * 8 * sizeof(double));
                 if (!tf || !p->t2g[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
@@ -240,7 +252,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
         for (bi = 0; bi < p->nblk[s]; bi++) p->natbase[bi] = _ilfd_block_Q(p, s, bi);
         /* t2csgn group order = groups sorted by their natural base (a counting
          * sort over the base values: they are distinct and bounded by N). */
-        if (s >= 1 && p->fgl[s]) {
+        if (s == K - 1 && s >= 1 && p->fgl[s]) {
             const size_t G = (size_t)p->R[s - 1], ngrp = p->nblk[s] / G;
             size_t *pos = (size_t *)calloc((size_t)N + 1, sizeof(size_t));
             size_t g, n;
@@ -314,12 +326,18 @@ static inline void vfft_ilfd_stage(const vfft_ilfd_plan_t *p, int s,
             size_t g, c, W = 1;
             int j;
             for (j = 0; j < s - 1; j++) W *= (size_t)p->R[j];
-            if (gen2 && s == p->K - 1 && p->gl[s]) {
-                /* t2csgn: the whole last stage in ONE call — the group loop
-                 * runs in-kernel over natbase (stride G); Gs = the groups. */
-                p->fgl[s](stg, (const double *)p->natbase, zout,
-                          (double *)(p->gord ? p->gorder : 0), p->tf[s], p->t2g[s],
-                          D, ngrp, nstride, W, G);
+            if (gen2 && p->gl[s]) {
+                /* t2csgn: the whole stage in ONE call — the group loop runs
+                 * in-kernel over the base table (stride G); Gs = the groups.
+                 * Last stage: natbase -> zout, optionally in natural-base
+                 * order; earlier tail stages: in place on stg, block order. */
+                if (s == p->K - 1)
+                    p->fgl[s](stg, (const double *)p->natbase, zout,
+                              (double *)(p->gord ? p->gorder : 0), p->tf[s], p->t2g[s],
+                              D, ngrp, nstride, W, G);
+                else
+                    p->fgl[s](stg, (const double *)p->ipb[s], stg, 0, p->tf[s], p->t2g[s],
+                              D, ngrp, D, L, G);
                 return;
             }
             for (g = 0; g < ngrp; g++) {
@@ -367,7 +385,27 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
     int s;
     vfft_ilfd_stage(p, 0, zin, zout);
     for (s = 1; s < p->K; s++) {
+        if (p->fgl[s]) {
+            /* the tail forms: t2csg per group, t2csgn in block order, and on
+             * the last stage t2csgn in natural-base order (msz off meanwhile) */
+            const int narm = (s == p->K - 1) ? 3 : 2;
+            double tt[3] = { 1e300, 1e300, 1e300 };
+            int r, arm, best = 0;
+            p->msz[s] = 0;
+            for (r = 0; r < 7; r++)
+                for (arm = 0; arm < narm; arm++) {
+                    double t0;
+                    p->gl[s] = (arm != 0);
+                    if (s == p->K - 1) p->gord = (arm == 2);
+                    t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
+                    if (t0 < tt[arm]) tt[arm] = t0;
+                }
+            for (arm = 1; arm < narm; arm++) if (tt[arm] < tt[best]) best = arm;
+            p->gl[s] = (best != 0);
+            if (s == p->K - 1) p->gord = (best == 2);
+        }
         if (p->tz[s]) {
+            /* msz against the best non-msz form of this stage */
             double ta = 1e300, tb = 1e300;
             int r;
             for (r = 0; r < 3; r++) {
@@ -380,21 +418,6 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
                 if (t0 < tb) tb = t0;
             }
             p->msz[s] = (tb < ta);
-        }
-        if (p->fgl[s]) {
-            /* the last stage's three forms: t2csg per group, t2csgn in block
-             * order, t2csgn in natural-base order */
-            double tt[3] = { 1e300, 1e300, 1e300 };
-            int r, arm, best = 0;
-            for (r = 0; r < 7; r++)
-                for (arm = 0; arm < 3; arm++) {
-                    double t0;
-                    p->gl[s] = (arm != 0); p->gord = (arm == 2);
-                    t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
-                    if (t0 < tt[arm]) tt[arm] = t0;
-                }
-            for (arm = 1; arm < 3; arm++) if (tt[arm] < tt[best]) best = arm;
-            p->gl[s] = (best != 0); p->gord = (best == 2);
         }
         vfft_ilfd_stage(p, s, zin, zout);
     }
