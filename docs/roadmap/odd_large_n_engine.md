@@ -1,12 +1,14 @@
 # Large fully-odd N: the engine question
 
-**STATUS: v1 ENGINE BUILT AND MEASURED (2026-09-04), not yet in the front
-door.** The owner chose the flat / MKL-shaped direction over the four-step
-("we are in total agreement, we can proceed"). `src/core/oop/il_flat.h`
-serves any odd N to arbitrary depth at parity-to-1.18× vs MKL single-threaded
-(table below); the front-door route, threading, banding and the two-group
-interior kinds are the levers left, in that order. The option analysis below
-is kept as the record of how the design was chosen.
+**STATUS: SHIPPED IN THE FRONT DOOR (2026-09-05).** The flat mixed-radix
+DIT (`src/core/oop/il_flatdit.h`, route `VFFT_K1_IL_FLAT`) serves odd N to
+2¹⁸ in both placements and directions, raced per cell by the K=1 planner
+(chains and per-stage kernel forms), banked as `il_flat=`/`il_forms=` on
+the kind-3 row; results in docs/performance/v1_0_results.md ("the K=1 IL
+tier for odd N"). The four-step bridge (`il_flat.h`) it was raced against
+was deleted the same day: the flat DIT matched or beat it at every cell.
+Threading and banding are the levers left. The option analysis below is
+kept as the record of how the design was chosen.
 
 ## v1: what was built and what it measures
 
