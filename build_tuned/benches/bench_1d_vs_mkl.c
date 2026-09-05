@@ -5246,7 +5246,10 @@ int main(int argc, char **argv)
      * reach them. With an explicit [N] below 2048 the cell runs directly:
      * the front-door NATURAL in-place create serves the @nat ILP verdict
      * (racing + banking it on first touch, replaying after). */
-    if (g_k1nat && target_N && target_N < 2048 && benched == 0)
+    /* ... and (2026-09-05) any N above 2048 WITHOUT a factor of 4: the flat
+     * mixed-radix DIT's cells, served natively by the same K=1 IL tier
+     * (route=flat) — no kind-4 line exists there either. */
+    if (g_k1nat && target_N && (target_N < 2048 || (target_N & 3)) && benched == 0)
     {
         run_k1z_cell(target_N, NULL, out, cool_ms, flip);
         benched++;

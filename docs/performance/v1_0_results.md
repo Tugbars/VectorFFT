@@ -998,133 +998,76 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
 
-### 1D ODD c2c — the three-stage chain made odd-legal, raced (2026-09-04)
+### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-05)
 
-An all-odd N (1215 = 3⁵·5, 4095 = 3²·5·7·13, 2187, 3645, 6561) has no
-two-factor split with both factors within the emitted kernel range, and
-the three-stage chain refused odd factors — so those cells were served
-by Bluestein at the next power of two, unmeasured. The chain's twiddle
-tables are now laid per block with a ceiling pair count (the kernels'
-odd-count tails do the rest), odd leaves joined the planner's chain
-pool, and the K=1 plan race is admitted above 2048 for any N without a
-factor of 4 (no cascade route exists there). Every cell below raced
-pair × forms against chain × forms and banked its winner.
+Odd N (and odd·2) is served by the K=1 IL tier's own engines, raced per
+cell at plan time and banked: the pair, the three-stage chain (odd-legal
+since 09-04, expressible to 27³) and the flat mixed-radix DIT
+(`src/core/oop/il_flatdit.h`, route `flat`), which reaches any N over the
+registry radices up to 2¹⁸. The planner enumerates the flat chains
+beside the pairs and the chain (24 compositions per cell, logged when the
+cap bites), races each stage's kernel form on real data, gates every
+candidate against an independent mixed-radix long-double reference and
+banks the winner's chain and forms on the cell's kind-3 row
+(`il_route=flat il_flat=… il_forms=…`). Both placements, both
+directions (the inverse is the conjugate pipeline: same stage order,
+backward kernels, conjugated tables), replay bit-identical;
+`flatdit_gate` is the machine proof. Bluestein remains only for factors
+no chain expresses.
 
-vs **MKL DFTI complex** (1D, `mkl_set_num_threads(1)`, same run,
-alternated min-of-15, spectra cross-checked bin-for-bin):
-
-```
- N      before (route)        now (banked chain)      vs MKL
-─────────────────────────────────────────────────────────────
- 255    0.4 µs  pair 15·17    0.4 µs  pair            2.00×
- 405    —                     0.5 µs  pair 15·27      1.00×
- 675    —                     0.9 µs  pair 27·25      1.11×
- 945    —                     1.3 µs  chain 21·5·9    1.15×
- 1050   —                     1.8 µs  chain 10·15·7   1.06×
- 1215   15.1 µs Bluestein     3.7 µs  chain 9·15·9    0.81×
- 2187   Bluestein             5.3 µs  chain 9·27·9    0.85×
- 3645   Bluestein             9.8 µs  chain 9·15·27   0.79×
- 4095   26.9 µs Bluestein     6.8 µs  chain 21·13·15  1.24×
- 6561   Bluestein            18.1 µs  chain (27 leaf) 0.87×
-─────────────────────────────────────────────────────────────
-```
-
-The consumers inherit it through the front door: the real bridge's
-c2r at 1215 moved from 0.12× to 0.46× of MKL and both real directions
-at 4095 from ~0.3× to ~0.8×, with no change to the real tier itself.
-
-### 1D ODD c2c to 137 781 — the flat odd-N engine, v1 (2026-09-04)
-
-Beyond the three-stage chain's 27³ ceiling, odd N is served by a new
-engine (`src/core/oop/il_flat.h`, standalone in v1): a corner-turned
-leaf over R₀ legs at full lanes, one streaming sweep for the four-step's
-outer twiddle (generated per row from a table of N/R₀ entries), then the
-2D column chain over N/R₀ rows × R₀ lanes to any depth — per-digit
-twiddle tables, natural output by the column chain's leaf scatter, no
-ordering pass. Every kernel is a shipped one. The chain (leaf × interior)
-is raced per cell; the seed (radix 27 first) loses 1.5–2× to the raced
-winners, which avoid 27 altogether.
-
-vs **MKL DFTI complex**, single thread, same run, alternated min-of-9,
-spectra checked against a naive DFT at natural indices:
+Front door, `bench_1d_vs_mkl --k1noop` (K=1, natural order, out of
+place, INTERLEAVED) vs **MKL DFTI complex**, single thread, cachebusted
+and paced, spectra cross-checked elementwise:
 
 ```
- N        raced chain      vfft (µs)   MKL (µs)   vs MKL
-──────────────────────────────────────────────────────────
- 405      9 | 5·9              1.7        1.8      1.06×
- 1215     9 | 9·3·5            2.0        2.2      1.10×
- 4095     9 | 7·5·13           9.0        8.5      0.94×
- 6561     9 | 9·9·9           14.2       15.5      1.09×
- 19683    9 | 9·3·9·9         46.1       52.4      1.14×
- 59049    9 | 9·9·9·9        163.1      192.5      1.18×
- 98415   15 | 9·9·9·9        389.0      373.7      0.96×
- 137781   9 | 21·9·9·9       548.9      539.1      0.98×
-──────────────────────────────────────────────────────────
+ N        route (banked)                  vfft (µs)   MKL (µs)   vs MKL
+───────────────────────────────────────────────────────────────────────
+ 405      chain3                             0.39       0.55      1.43×
+ 1215     chain3                             2.24       2.09      0.93×
+ 3125     chain3                             5.92       6.03      1.02×
+ 4095     chain3                             7.32       8.37      1.14×
+ 6561     chain3                            13.41      15.55      1.16×
+ 15625    chain3                            33.09      35.77      1.08×
+ 16807    flat 7·7·7·7·7  t.t.t.n           39.91      37.10      0.93×
+ 19683    flat 9·3·9·9·9  t.t.t.n           47.81      52.13      1.09×
+ 59049    flat 9·9·9·9·9  t.t.t.n          182.9      187.2       1.02×
+ 78125    flat 5·5·5·5·5·5·5 t.t.t.t.m.o   224.5      236.3       1.05×
+ 98415    flat 9·9·9·3·9·5 t.t.m.t.o       338.1      352.7       1.04×
+ 117649   flat 7·7·7·7·7·7 t.t.m.m.o       396.4      380.2       0.96×
+ 137781   flat 9·9·9·3·9·7 t.t.m.t.o       505.7      537.5       1.06×
+───────────────────────────────────────────────────────────────────────
 ```
 
-Parity to 1.18× across the range with no banding, no threading and no
-front-door integration yet — those are the next levers, in that order,
-together with the two-group interior kinds that retire the leaf turn and
-the rotor sweep.
+Before this tier 1215 ran Bluestein at 15.1 µs and every odd N above
+19683 ran Bluestein at the next power of two, unmeasured; the real
+transforms' bridge inherits every cell through the front door.
 
-### 1D ODD c2c — the flat DIT engine (2026-09-05)
-
-The odd-N engine above the three-stage chain's ceiling is an un-turned
-flat mixed-radix DIT (`src/core/oop/il_flatdit.h`): the plain leaf, then
-one in-place sweep per remaining factor with per-block broadcast
+**The flat DIT engine.** An un-turned mixed-radix DIT: the plain leaf,
+then one in-place sweep per remaining factor with per-block broadcast
 twiddles (modulus N/D_s), natural order by redirecting the last stage's
-stores. Three kernel forms serve its stages and are raced per stage at
-create:
+stores. Three kernel forms serve its stages, raced per stage:
 
 - **t2cp** — the packed-complex pre-twiddle column kernel, one digit per
   call, any run.
 - **msz** — the split-body kernel with interleaved edges
   (`codelets/zil/avx2/boundary_split/radix{3,5,7,9,15}_z_msz_avx2.c`,
-  emitter kind `--zp-msz`): the msg mid's body between an unpack-only
-  deinterleave and reinterleave, lanes left unordered, plus the
-  il_odd_count_tail §3 arms (the same DAG re-rendered at 2 columns
-  VEX-128 and at 1 column scalar) so it takes any run. Wins the run-4
-  stages 2.1–2.5×; parity on long runs of 5 and 7; loses 10–20% at
-  radix 9 and on runs of 3, where the race keeps t2cp.
+  `--zp-msz`; `mszb` backward): the msg mid's body between an
+  unpack-only deinterleave and reinterleave, lanes left unordered, with
+  the il_odd_count_tail §3 arms so it takes any run. Wins the run-4
+  stages 2.1–2.5×; parity on long runs of 5 and 7; loses at radix 9 and
+  on runs of 3, where the race keeps t2cp.
 - **t2csgn** — the short-run tail kernel (t2csg: two-group column form,
-  generated twiddle stream) with its group loop moved in-kernel over a
-  base table (`codelets/zil/avx2/pure_il/radix*_z_t2csgn_avx2.c`,
-  `--cil-t2csgn`): one call per stage instead of one per group. On the
-  last stage the driver hands it the groups in ascending natural-base
-  order, so consecutive groups fill adjacent output lines (one
-  write-allocate per line instead of one per complex). The count-1 last
-  stage goes from 1.6–1.7 to 0.9–1.0 ns per point at 98k–138k (137781:
-  240 → 124 µs); the count-3 stage before it drops the same way.
+  generated twiddle stream) with its group loop in-kernel over a base
+  table (`codelets/zil/avx2/pure_il/radix*_z_t2csgn_avx2.c`,
+  `--cil-t2csgn`, backward twins), one call per stage; on the last stage
+  the driver hands it the groups in ascending natural-base order, so
+  consecutive groups fill adjacent output lines. The count-1 last stage
+  goes from 1.6–1.7 to 0.9–1.0 ns per point at 98k–138k.
 
-Flat DIT (forms raced) versus the four-step bridge (chains raced) versus
-**MKL DFTI complex**, single thread, same run, two runs, spectra checked
-against a naive DFT at natural indices:
-
-```
- N        flat chain        flat / four-step   flat / MKL
-──────────────────────────────────────────────────────────
- 405      9·9·5              1.00   1.00        0.88   0.88
- 1215     9·9·3·5            1.05   1.00        1.10   1.05
- 3125     5·5·5·5·5          1.42   1.32        0.95   0.98
- 4095     15·3·13·7          1.08   1.05        1.00   1.02
- 6561     9·9·9·9            1.05   0.97        1.15   1.08
- 15625    5·5·5·5·5·5        1.36   1.49        0.99   1.01
- 16807    7·7·7·7·7          1.33   1.08        1.00   0.94
- 19683    9·9·9·9·3          1.01   0.99        1.07   1.04
- 59049    9·9·9·9·9          1.13   1.04        1.22   1.16
- 78125    5·5·5·5·5·5·5      1.73   1.76        1.02   1.08
- 98415    9·9·9·9·5·3        1.06   1.09        1.20   1.15
- 117649   7·7·7·7·7·7        1.41   1.26        0.97   1.00
- 137781   9·9·9·9·7·3        1.04   1.22        1.13   1.13
-──────────────────────────────────────────────────────────
-```
-
-The flat DIT matches or beats the four-step at every cell (the two
-readings under 1.00 are inside this box's run-to-run noise) and beats
-MKL on the radix-9 family by 4–22%. What remains against MKL is the 5^k
-family at 3125–78125, where MKL's radix-5 sweep is cheaper per element,
-and 405, a three-stage cell that belongs to the chain tier. Neither
-engine is in the front door yet.
+Standalone (`ilfd_probe --race`) the engine runs 0.88–1.22× MKL across
+405–137781 in both directions; the planner's per-cell pick above decides
+where it serves. Its remaining deficit is the 5^k and 7^k families, where
+MKL's radix-5/7 sweeps are cheaper per element.
 
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
 
