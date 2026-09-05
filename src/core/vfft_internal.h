@@ -376,9 +376,13 @@ struct vfft_plan_s
      * the scr->nat table, block-affine by construction (asserted at
      * create: perm[bR+r] == perm[bR] + r*(N1/R) — a wrong digit
      * convention fails the create, never serves silently). Natural
-     * cells pin wl=0 (the leaf scatters across bands) and skip the MT
-     * arms (v1). Single-stage cells stay natural-native as before;
-     * blu cells are natural BY CONSTRUCTION and now accept the order. */
+     * cells race the band axes like scrambled ones (2026-09-05: the
+     * NATURAL BANDED walk in vfft_execute.h — suffix stages per band on
+     * the pre-leaf scratch, the band's leaf blocks scattered, the
+     * scattered rows transformed while hot; wl / cut / tfuse / rowoop
+     * banked on the ord=nat row) and race the natural x MT partitions.
+     * Single-stage cells stay natural-native as before; blu cells are
+     * natural BY CONSTRUCTION and now accept the order. */
     int il2d_nat;
     int il2d_natarm; /* natural x MT partition, RACED at create: 0 = the
                       * matched arm (digit-split prefix + block-range

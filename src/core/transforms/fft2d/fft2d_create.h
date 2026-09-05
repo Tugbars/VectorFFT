@@ -745,8 +745,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * anything else warns and stays unbanded. VFFT_IL2D_TFUSE
                  * =0 opts out of the per-band row pass (default ON when
                  * banded — the fusion is the point). */
-                if (il2d_row && !il2d_blu && !il2d_nat)
-                {
+                if (il2d_row && !il2d_blu)
+                {   /* natural cells too (2026-09-05): the natural banded
+                     * walk in vfft_execute.h honours wl / cut / tfuse */
                     const char *we = getenv("VFFT_IL2D_WL");
                     const char *tfe = getenv("VFFT_IL2D_TFUSE");
                     int wl = we ? atoi(we) : (il2d_bwl > 0 ? il2d_bwl : 0);
@@ -775,7 +776,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                             il2d_tfuse = !(tfe && atoi(tfe) == 0);
                         }
                     }
-                    if (il2d_wl > 0 && getenv("VFFT_IL2D_STAGED") &&
+                    if (il2d_wl > 0 && !il2d_nat && getenv("VFFT_IL2D_STAGED") &&
                         atoi(getenv("VFFT_IL2D_STAGED")) == 1)
                     {
                         /* skew selection: smallest even pad where every
@@ -1452,7 +1453,7 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
          * c2c ONLY: the real tier has no banded walk / row route to race
          * (§2.5 — banding+tfuse on a real plan is the illegal fusion). */
         if (h->transform == VFFT_C2C && h->il2d_row && !il2d_blu &&
-            !il2d_rof && !il2d_nat &&
+            !il2d_rof &&   /* natural cells race the axes too (2026-09-05) */
             !getenv("VFFT_IL2D_WL") &&
             !getenv("VFFT_IL2D_ROWOOP") && !getenv("VFFT_IL2D_TFUSE") &&
             (il2d_bwl < 0 || il2d_bro < 0))

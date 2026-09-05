@@ -568,6 +568,107 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * because columns are independent within the column
                      * pass; Gs stays the FULL row pitch. wc = rn is the
                      * untiled M2 walk, path-identical. */
+                    if (h->il2d_nat && h->il2d_wl > 0)
+                    {
+                        /* ── NATURAL BANDED walk (2026-09-05): the natural
+                         * pass with the scrambled walk's cache banding.
+                         * fwd = wide prefix stages 0..cut-1 sre -> natscr
+                         * (stage 0 is the OOP move, the rest in place),
+                         * then per band of wl rows: the suffix stages
+                         * cut..nst-2 in place on the band, the band's leaf
+                         * blocks SCATTERED to their natural rows of dre
+                         * (perm is block-affine: block b's R rows land at
+                         * perm[bR] + r*(N1/R)), and (tfuse) the row pass
+                         * of exactly those rows while hot. Same kernel
+                         * calls, same tables, same count as the unbanded
+                         * natural pass — only the traversal order across
+                         * independent blocks differs (bitwise-identical;
+                         * the row pass sees the same leaf output either
+                         * way, so the MT partitions stay bitwise too).
+                         * bwd = the Hermitian chain: per band the leaf
+                         * GATHERS its blocks from sre's natural rows into
+                         * the scratch comb, the suffix runs REVERSED on
+                         * the band (into dre when nothing is left wide),
+                         * then the reversed prefix wide scratch -> dre;
+                         * the rows LAST on dre — unfused, so that bwd
+                         * stays bitwise with the MT arms (which run rows
+                         * after every column stage). The width verdict
+                         * is a forward measurement anyway. */
+                        const int cut = h->il2d_cut, nst = h->il2d_nst;
+                        const int Rl = h->il2d_R[nst - 1];
+                        const size_t wl = (size_t)h->il2d_wl;
+                        const size_t nstride = (size_t)h->N / (size_t)Rl;
+                        const int *perm = h->il2d_natperm;
+                        double *scr = h->il2d_natscr;
+                        vfft_il2p_fn const *fns = fwd ? h->il2d_f
+                                                      : h->il2d_b;
+                        double *const *tabs = fwd ? h->il2d_tf
+                                                  : h->il2d_tb;
+                        size_t b0;
+                        if (fwd)
+                        {
+                            if (cut > 0)
+                                _il2d_col_stages(sre, scr, h->N, rn, 0, cut,
+                                                 h->il2d_R, h->il2d_L, fns,
+                                                 tabs, 0);
+                            for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+                            {
+                                const size_t blo = b0 / (size_t)Rl;
+                                const size_t bhi = (b0 + wl) / (size_t)Rl;
+                                const double *lf_from = (cut > 0) ? scr : sre;
+                                size_t b;
+                                if (cut < nst - 1)
+                                {
+                                    _il2d_col_stages(lf_from + 2 * b0 * rn,
+                                                     scr + 2 * b0 * rn,
+                                                     (int)wl, rn, cut,
+                                                     nst - 1, h->il2d_R,
+                                                     h->il2d_L, fns, tabs, 0);
+                                    lf_from = scr;
+                                }
+                                _il2d_nat_leaf_range(lf_from, dre, h->N, rn,
+                                                     Rl, fns[nst - 1], perm,
+                                                     blo, bhi, 0);
+                                if (h->il2d_tfuse)
+                                    for (b = blo; b < bhi; b++)
+                                    {
+                                        const size_t r0 =
+                                            (size_t)perm[b * (size_t)Rl];
+                                        for (i = 0; i < (size_t)Rl; i++)
+                                            _il2d_row_exec(
+                                                h, dir,
+                                                dre + 2 * (r0 + i * nstride) * rn,
+                                                rn);
+                                    }
+                            }
+                            if (!h->il2d_tfuse)
+                                for (i = 0; i < (size_t)h->N; i++)
+                                    _il2d_row_exec(h, dir, dre + 2 * i * rn,
+                                                   rn);
+                            return;
+                        }
+                        for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+                        {
+                            const size_t blo = b0 / (size_t)Rl;
+                            const size_t bhi = (b0 + wl) / (size_t)Rl;
+                            _il2d_nat_leaf_range(sre, scr, h->N, rn, Rl,
+                                                 fns[nst - 1], perm, blo, bhi,
+                                                 1);
+                            if (cut < nst - 1)
+                                _il2d_col_stages(scr + 2 * b0 * rn,
+                                                 (cut > 0 ? scr : dre) + 2 * b0 * rn,
+                                                 (int)wl, rn, cut, nst - 1,
+                                                 h->il2d_R, h->il2d_L, fns,
+                                                 tabs, 1);
+                        }
+                        if (cut > 0)
+                            _il2d_col_stages(scr, dre, h->N, rn, 0, cut,
+                                             h->il2d_R, h->il2d_L, fns, tabs,
+                                             1);
+                        for (i = 0; i < (size_t)h->N; i++)
+                            _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
+                        return;
+                    }
                     if (h->il2d_wl > 0)
                     {
                         /* ── BANDED walk (the cascade's tcut, 2D form):
