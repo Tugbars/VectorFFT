@@ -260,6 +260,43 @@ static inline vfft_il2p_fn vfft_il2p_msz_fn(int R)
     }
 }
 
+/* BACKWARD twins of the flat DIT's kinds (2026-09-05): the inverse is the
+ * CONJUGATE pipeline — same stage order and forms, IDFT blocks, PRE-twiddle
+ * with the driver's conjugated tables. Registry-derived like the forward. */
+static inline vfft_il2p_fn vfft_il2p_msz_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_MSZ_BWD_RADICES
+#define C(R) case R: return radix##R##_z_msz_bwd_avx2;
+    VFFT_IL_MSZ_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_t2csg_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSG_BWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csg_bwd_avx2;
+    VFFT_IL_T2CSG_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_t2csgn_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSGN_BWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csgn_bwd_avx2;
+    VFFT_IL_T2CSGN_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* t2csgn — t2csg with the in-kernel GROUP LOOP over the natural-base table
  * (2026-09-05): one call per stage; zin_unused = (const size_t *) obase
  * (one entry per block, the driver's natbase), Gs = the group count, the

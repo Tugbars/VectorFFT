@@ -52,7 +52,17 @@ int main(int argc, char **argv) {
         }
         const int ok = (wn < 1e-9 * sqrt((double)N) && dc < 1e-9 * N);
         if (!ok) bad++;
-        printf("%-7d %-14s | dft@nat %.1e dc %.1e %s\n", N, cs, wn, dc, ok ? "OK " : "BAD");
+        printf("%-7d %-14s | dft@nat %.1e dc %.1e %s", N, cs, wn, dc, ok ? "OK " : "BAD");
+        {   /* the inverse: bwd(fwd(x)) / N == x */
+            double rt = 0;
+            if (p->bwd_ok) {
+                vfft_ilfd_execute_bwd(p, z, y);
+                for (int j = 0; j < 2 * N; j++) { double d = fabs(y[j] / N - x[j]); if (d > rt) rt = d; }
+            }
+            const int okb = p->bwd_ok && (rt < 1e-9 * sqrt((double)N));
+            if (!okb) bad++;
+            printf(" | roundtrip %.1e %s\n", rt, !p->bwd_ok ? "NO BWD" : okb ? "OK " : "BAD");
+        }
         /* the leaf (stage 0: n1c, no A/B) so the whole-transform split is complete */
         {
             double tl = 1e300;
@@ -111,9 +121,18 @@ int main(int argc, char **argv) {
                     set_all(p, 1); t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tb) tb = t0;
                     t0 = now_ns(); DftiComputeForward(hm, x, y); t0 = now_ns()-t0; if (t0 < tm) tm = t0;
                 }
+                printf("      whole: t2cp %7.0f | msz %7.0f | mkl %7.0f | msz/t2cp %5.2fx | mkl/msz %5.2fx\n", ta, tb, tm, ta / tb, tm / tb);
+                if (p->bwd_ok) {   /* the inverse vs MKL's, same protocol */
+                    double tbw = 1e300, tmb = 1e300;
+                    for (int r = 0; r < 9; r++) {
+                        double t0;
+                        t0 = now_ns(); vfft_ilfd_execute_bwd(p, z, y); t0 = now_ns()-t0; if (t0 < tbw) tbw = t0;
+                        t0 = now_ns(); DftiComputeBackward(hm, z, y); t0 = now_ns()-t0; if (t0 < tmb) tmb = t0;
+                    }
+                    printf("      bwd:   flat %7.0f | mkl %7.0f | mkl/flat %5.2fx\n", tbw, tmb, tmb / tbw);
+                }
                 DftiFreeDescriptor(&hm);
             }
-            printf("      whole: t2cp %7.0f | msz %7.0f | mkl %7.0f | msz/t2cp %5.2fx | mkl/msz %5.2fx\n", ta, tb, tm, ta / tb, tm / tb);
         }
         fflush(stdout);
         vfft_ilfd_destroy(p); free(x); free(z); free(y);

@@ -228,6 +228,21 @@ let kind_of_string (s : string) : zs_kind =
     ; lanes_u = true
     ; narrow_arms = true
     }
+  | "mszb" ->
+    (* the flat DIT's backward msz (2026-09-05): the CONJUGATE pipeline keeps
+       the stage order, so this is PRE-twiddle (conj table, driver-side) +
+       IDFT — dft.ml places (DIF, Bwd) PRE, hence dif = true here (msgb, the
+       cascade's transposed mid, is POST). Same edges, lanes and arms. *)
+    { mid with
+      base = "msz"
+    ; group_loop = true
+    ; bwd = true
+    ; dif = true
+    ; in_edge = E_z "Ls"
+    ; out_edge = E_z "Ls"
+    ; lanes_u = true
+    ; narrow_arms = true
+    }
   | "msgb" -> { mid with base = "msg"; group_loop = true; bwd = true }
   | "msd" ->
     (* DIT-FORWARD mid = conj(msgb) (dit_cascade_spec.md): msg's group-loop
@@ -870,6 +885,12 @@ let emit_codelet
           "msg (GROUP-LOOPED split mid: one call/stage, in-kernel bp/twg bumps), fwd."
         | "msg", true ->
           "msg bwd twin (group loop over IDFT+POST-tw body; table twspb pre-conjugated)."
+        | "msz", false ->
+          "msz (the msg body between interleaved edges, unordered lanes, il_odd_count_tail §3 \
+           arms; per-block splat records), fwd."
+        | "msz", true ->
+          "mszb (msz's backward: the conjugate pipeline's PRE-twiddle conj + IDFT, dif=true), \
+           bwd."
         | "s0t", false ->
           "s0t (ZTURN-S fused-turn ingest: natural z leg loads, twiddle-free radix-4, \
            ONE 64-B record per position at section bitrev2(p mod 4), 4 rate-matched \
