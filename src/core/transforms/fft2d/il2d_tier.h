@@ -1460,6 +1460,31 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
  * chain+wl+tf+ro as one lay=il verdict. Falsifier-grounded: wl wins
  * +15-21% at some cells and LOSES at others; rowoop wins 1.6-2x at
  * N2<=64 and loses at large N2 — per-cell only, never defaults. */
+/* one (wl, rowoop) configuration of the axis race, as a race ARM: sets the
+ * plan's band axes, then one full forward execute through the serving path
+ * (the natural banded walk under NATURAL, the scrambled one otherwise). */
+typedef struct
+{
+    struct vfft_plan_s *h;
+    double *z;
+    struct vfft_plan_s *rowo;
+    double *rowscr;
+    int wl, cut, ro;
+    char name[24];
+} _il2d_axis_arm_t;
+static void _il2d_arm_axis(void *v)
+{
+    _il2d_axis_arm_t *c = (_il2d_axis_arm_t *)v;
+    struct vfft_plan_s *h = c->h;
+    h->il2d_wl = c->wl;
+    h->il2d_cut = c->cut;
+    h->il2d_tfuse = (c->wl > 0);
+    h->il2d_rowoop = c->ro;
+    h->il2d_rowo = c->ro ? c->rowo : NULL;
+    h->il2d_rowscr = c->ro ? c->rowscr : NULL;
+    vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
+}
+
 static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             const vfft_config_t *cfg, int N1, int N2)
 {
@@ -1548,40 +1573,64 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             }
         }
     }
-    for (ro = 0; ro <= (rowo ? 1 : 0); ro++)
-        for (wi = 0; wi < nwl; wi++)
+    /* every (rowoop, wl) configuration is an ARM of ONE race, rounds
+     * alternating direction — the house protocol (2026-09-05). The
+     * sequential per-configuration loop it replaces timed each arm in
+     * its own block, so drift favoured whichever ran in the cooler
+     * moment: at 405x405 natural it banked wl=9 while a same-run
+     * alternated A/B put wl=81 6.5% ahead. Same samples per arm as
+     * before (min of 2 x reps), same candidates. */
+    {
+        _il2d_axis_arm_t ac[VFFT_RACE_MAX_ARMS];
+        vfft_race_arm_t arms[VFFT_RACE_MAX_ARMS];
+        double ns[VFFT_RACE_MAX_ARMS];
+        int na = 0, a;
+        for (ro = 0; ro <= (rowo ? 1 : 0); ro++)
+            for (wi = 0; wi < nwl && na < VFFT_RACE_MAX_ARMS; wi++)
+            {
+                int s2, cut = 0;
+                const int w = wlc[wi];
+                if (w > 0)
+                    for (s2 = 0; s2 < h->il2d_nst; s2++)
+                        if (w % h->il2d_L[s2] == 0)
+                        {
+                            cut = s2;
+                            break;
+                        }
+                ac[na].h = h;
+                ac[na].z = z;
+                ac[na].rowo = rowo;
+                ac[na].rowscr = rowscr;
+                ac[na].wl = w;
+                ac[na].cut = cut;
+                ac[na].ro = ro;
+                snprintf(ac[na].name, sizeof ac[na].name, "wl%d%s", w,
+                         ro ? "+rowoop" : "");
+                arms[na].name = ac[na].name;
+                arms[na].run = _il2d_arm_axis;
+                arms[na].ctx = &ac[na];
+                na++;
+            }
         {
-            double ns = 1e300;
-            int p2, s2, cut = 0;
-            const int w = wlc[wi];
-            if (w > 0)
-                for (s2 = 0; s2 < h->il2d_nst; s2++)
-                    if (w % h->il2d_L[s2] == 0)
-                    {
-                        cut = s2;
-                        break;
-                    }
-            h->il2d_wl = w;
-            h->il2d_cut = cut;
-            h->il2d_tfuse = (w > 0);
-            h->il2d_rowoop = ro;
-            h->il2d_rowo = ro ? rowo : NULL;
-            h->il2d_rowscr = ro ? rowscr : NULL;
-            {
-                _il2d_race_ctx_t rc = { h, NULL, z, 0, 1, 0, 0, 0, NULL, NULL, NULL, NULL };
-                const vfft_race_arm_t arm = { "config", _il2d_arm_exec, &rc };
-                /* min of 2 passes of reps full executes, this configuration */
-                const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 0, 0, NULL, NULL };
-                (void)p2;
-                vfft_race_run(&proto, &arm, 1, &ns);
-            }
-            if (ns < best)
-            {
-                best = ns;
-                bwl = w;
-                bro = ro;
-            }
+            const vfft_race_proto_t proto = { 2, reps, VFFT_RACE_MIN, 1, 0, NULL, NULL };
+            vfft_race_run(&proto, arms, na, ns);
         }
+        for (a = 0; a < na; a++)
+            if (ns[a] < best)
+            {
+                best = ns[a];
+                bwl = ac[a].wl;
+                bro = ac[a].ro;
+            }
+        if (getenv("VFFT_IL2D_LOG"))
+        {
+            fprintf(stderr, "[il2d] axis race %dx%d (%s):", N1, N2,
+                    h->il2d_nat ? "nat" : "scr");
+            for (a = 0; a < na; a++)
+                fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
+            fprintf(stderr, " -> wl=%d ro=%d\n", bwl, bro);
+        }
+    }
     /* set the winner, keep or drop the OOP child */
     {
         int s2, cut = 0;
