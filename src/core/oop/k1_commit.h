@@ -409,9 +409,15 @@ static void _k1_il_candidate(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
         {
             *ilfd_out = fp;
             if (getenv("VFFT_NAT_LOG"))
-                fprintf(stderr, "[k1fd] N=%d: replay flat chain (%d stages, forms %s, %s) src=wisdom\n",
-                        N, ke->il_fl_n, ke->il_flf[0] ? ke->il_flf : "-",
+            {
+                char chs[48];
+                int q, off = 0;
+                for (q = 0; q < ke->il_fl_n && off < (int)sizeof chs - 4; q++)
+                    off += snprintf(chs + off, sizeof chs - (size_t)off, "%s%d", q ? "." : "", ke->il_fl[q]);
+                fprintf(stderr, "[k1fd] N=%d: replay flat chain %s (forms %s, tw %d, %s) src=wisdom\n",
+                        N, chs, ke->il_flf[0] ? ke->il_flf : "-", ke->il_tw,
                         scr_req ? "SCRAMBLED class" : "natural");
+            }
             return;
         }
     }

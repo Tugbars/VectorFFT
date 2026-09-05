@@ -998,7 +998,7 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
 
-### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-05)
+### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
 Odd N (and odd·2) is served by the K=1 IL tier's own engines, raced per
 cell at plan time and banked: the pair, the three-stage chain (odd-legal
@@ -1008,8 +1008,8 @@ registry radices up to 2¹⁸. The planner enumerates the flat chains
 beside the pairs and the chain (24 compositions per cell, logged when the
 cap bites), races each stage's kernel form on real data, gates every
 candidate against an independent mixed-radix long-double reference and
-banks the winner's chain and forms on the cell's kind-3 row
-(`il_route=flat il_flat=… il_forms=…`). Both placements, both
+banks the winner's chain, forms and tile width on the cell's kind-3 row
+(`il_route=flat il_flat=… il_forms=… il_tw=…`). Both placements, both
 directions, both order classes (natural: the conjugate pipeline, same
 stage order; scrambled: the transposed pipeline, reverse order), replay
 bit-identical; `flatdit_gate` is the machine proof. Bluestein remains only for factors
@@ -1017,26 +1017,38 @@ no chain expresses.
 
 Front door, `bench_1d_vs_mkl --k1noop` (K=1, natural order, out of
 place, INTERLEAVED) vs **MKL DFTI complex**, single thread, cachebusted
-and paced, spectra cross-checked elementwise:
+and paced, one cell per process, spectra cross-checked elementwise.
+Measured 2026-09-06 with the bound executor and the tile axis; a run
+whose rate column fell out of the bench's normal band (the host's
+throttled state) was discarded and the cell rerun after a cool-down.
+Run-to-run spread of the ratio at a quiet cell is about ±4%.
 
 ```
- N        route (banked)                  vfft (µs)   MKL (µs)   vs MKL
-───────────────────────────────────────────────────────────────────────
- 405      chain3                             0.39       0.55      1.43×
- 1215     chain3                             2.24       2.09      0.93×
- 3125     chain3                             5.92       6.03      1.02×
- 4095     chain3                             7.32       8.37      1.14×
- 6561     chain3                            13.41      15.55      1.16×
- 15625    chain3                            33.09      35.77      1.08×
- 16807    flat 7·7·7·7·7  t.t.t.n           39.91      37.10      0.93×
- 19683    flat 9·3·9·9·9  t.t.t.n           47.81      52.13      1.09×
- 59049    flat 9·9·9·9·9  t.t.t.n          182.9      187.2       1.02×
- 78125    flat 5·5·5·5·5·5·5 t.t.t.t.m.o   224.5      236.3       1.05×
- 98415    flat 9·9·9·3·9·5 t.t.m.t.o       338.1      352.7       1.04×
- 117649   flat 7·7·7·7·7·7 t.t.m.m.o       396.4      380.2       0.96×
- 137781   flat 9·9·9·3·9·7 t.t.m.t.o       505.7      537.5       1.06×
-───────────────────────────────────────────────────────────────────────
+ N        route (banked)                          vfft (µs)   MKL (µs)   vs MKL
+───────────────────────────────────────────────────────────────────────────────
+ 405      chain3 9·9·5                               0.39       0.55      1.42×
+ 1215     chain3 15·9·9                              2.00       2.11      1.06×
+ 3125     flat 5·5·5·5·5 t.t.t.o                     5.92       6.13      1.04×
+ 4095     chain3 21·13·15                            6.77       8.40      1.24×
+ 6561     flat 9·9·9·9 t.t.o tw729                  13.82      15.73      1.14×
+ 15625    flat 5·5·5·5·5·5 t.t.t.t.o tw625          32.40      35.72      1.10×
+ 16807    flat 7·7·7·7·7 t.t.t.o                    35.70      38.53      1.08×
+ 19683    flat 9·3·9·9·9 t.t.t.o tw729              43.94      52.69      1.20×
+ 59049    flat 9·9·3·9·3·9 t.t.t.t.n               183.5      185.7       1.01×
+ 78125    flat 5·5·5·5·5·5·5 t.t.t.t.t.o tw625     215.4      277.3       1.29×
+ 98415    flat 9·9·5·9·9·3 t.m.t.n.o               295.7      353.9       1.20×
+ 117649   flat 6 stages m.t.t.t.o                  326.3      370.5       1.14×
+ 137781   flat 6 stages t.t.m.t.o                  447.6      537.5       1.20×
+ 177147   flat 9·9·9·3·9·9 t.t.t.t.o tw19683       540.1      699.7       1.30×
+ 194481   flat 6 stages t.t.t.t.o                  623.4      802.2       1.29×
+───────────────────────────────────────────────────────────────────────────────
 ```
+
+245025 (the largest cell the tile probe used) has no quiet-state bench
+run yet and is left out rather than quoted from a throttled one. The
+previous table (2026-09-05, before the bound executor and the tile
+axis) had 1215 at 0.93×, 16807 at 0.93×, 117649 at 0.96× and 137781
+at 1.06×.
 
 Before this tier 1215 ran Bluestein at 15.1 µs and every odd N above
 19683 ran Bluestein at the next power of two, unmeasured; the real
