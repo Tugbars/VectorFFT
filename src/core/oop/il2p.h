@@ -297,6 +297,55 @@ static inline vfft_il2p_fn vfft_il2p_t2csgn_bwd_fn(int R)
     }
 }
 
+/* TRANSPOSED backward twins (2026-09-05): the flat DIT's SCRAMBLED class
+ * consumes the comb by running the stages in reverse, each transposed —
+ * IDFT block, then the conjugated twiddle POST on the output legs. Same
+ * argument contracts and tables as the forward kinds they transpose. */
+static inline vfft_il2p_fn vfft_il2p_t2cp_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CP_BWD_RADICES
+#define C(R) case R: return radix##R##_z_t2cp_bwd_avx2;
+    VFFT_IL_T2CP_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_mszt_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_MSZT_BWD_RADICES
+#define C(R) case R: return radix##R##_z_mszt_bwd_avx2;
+    VFFT_IL_MSZT_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_t2csgt_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSGT_BWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csgt_bwd_avx2;
+    VFFT_IL_T2CSGT_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+static inline vfft_il2p_fn vfft_il2p_t2csgnt_bwd_fn(int R)
+{
+    switch (R) {
+#ifdef VFFT_IL_T2CSGNT_BWD_RADICES
+#define C(R) case R: return radix##R##_z_t2csgnt_bwd_avx2;
+    VFFT_IL_T2CSGNT_BWD_RADICES(C)
+#undef C
+#endif
+    default: return 0;
+    }
+}
+
 /* t2csgn — t2csg with the in-kernel GROUP LOOP over the natural-base table
  * (2026-09-05): one call per stage; zin_unused = (const size_t *) obase
  * (one entry per block, the driver's natbase), Gs = the group count, the

@@ -54,11 +54,19 @@ typedef struct {
                                        * output lines); NULL = block order */
     int gord;                         /* 1 = pass gorder to t2csgn (default; VFFT_ILFD_NO_GORD=1
                                        * turns it off; A/B flips it) */
-    int scr;                          /* 1 = SCRAMBLED output: the last stage writes zout in the
-                                       * plane's own block order (position b*R + l holds bin
-                                       * natbase[b] + l*N/R = the mixed-radix digit reversal), no
-                                       * scatter, no order table. Forward only so far (a probe
-                                       * axis, 2026-09-05). */
+    int scr;                          /* 1 = the SCRAMBLED class: the forward's last stage writes
+                                       * zout in the plane's own block order (position b*R + l
+                                       * holds bin natbase[b] + l*N/R = the mixed-radix digit
+                                       * reversal — no scatter, no order table) and the backward
+                                       * CONSUMES that comb: the TRANSPOSED pipeline (stages in
+                                       * reverse, each IDFT + conj POST-twiddle, the leaf's
+                                       * transpose last). Requires scr_ok. */
+    /* the transposed kernel set (the scrambled class's backward): t2cp's
+     * transpose, msz's transpose, the transposed tails; conj tables shared
+     * with the conjugate pipeline (post-multiplying by conj(w) reads the
+     * same records). scr_ok = every stage has its transposed twin. */
+    vfft_il2p_fn fbt[VFFT_ILFD_MAX_K], fcsbt[VFFT_ILFD_MAX_K], fglbt[VFFT_ILFD_MAX_K], fzbt[VFFT_ILFD_MAX_K];
+    int scr_ok;
     vfft_il2p_fn fz[VFFT_ILFD_MAX_K]; /* msz fwd (split body, IL edges, unordered lanes) */
     double *tz[VFFT_ILFD_MAX_K];      /* msz: per block (R-1) [c x4][s x4] records (plain sin);
                                        * non-null = the stage is msz-ELIGIBLE (s < K-1; any run
@@ -125,6 +133,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
         if (!p->lf || !p->lb) { vfft_ilfd_destroy(p); return 0; }
     }
     p->bwd_ok = 1;
+    p->scr_ok = 1;
     D = (size_t)N;
     for (s = 0; s < K; s++) {
         D /= (size_t)R[s];
@@ -145,7 +154,8 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
              * are built alongside the t2cp/tail ones so a probe can A/B the
              * two forms on ONE plan by flipping p->msz[s]. */
             p->msz[s] = 0;
-            if (s < K - 1 && vfft_il2p_msz_fn(R[s]) && vfft_il2p_msz_bwd_fn(R[s])) {
+            if (s < K - 1 && vfft_il2p_msz_fn(R[s]) && vfft_il2p_msz_bwd_fn(R[s]) &&
+                vfft_il2p_mszt_bwd_fn(R[s])) {
                 double *tz = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 double *tzb = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 if (!tz || !tzb) { VFFT_IL2P_FREE(tz); VFFT_IL2P_FREE(tzb); vfft_ilfd_destroy(p); return 0; }
@@ -165,6 +175,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->tz[s] = tz; p->tzb[s] = tzb;
                 p->fz[s] = vfft_il2p_msz_fn(R[s]);
                 p->fzb[s] = vfft_il2p_msz_bwd_fn(R[s]);
+                p->fzbt[s] = vfft_il2p_mszt_bwd_fn(R[s]);
                 p->msz[s] = !getenv("VFFT_ILFD_NO_MSZ");
             }
             p->tail[s] = 0;
@@ -189,6 +200,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->fcsb[s] = vfft_il2p_t2csg_bwd_fn(R[s]);
                 p->fglb[s] = p->fgl[s] ? vfft_il2p_t2csgn_bwd_fn(R[s]) : 0;
                 if (!p->fcsb[s] || (p->fgl[s] && !p->fglb[s])) p->bwd_ok = 0;
+                p->fcsbt[s] = vfft_il2p_t2csgt_bwd_fn(R[s]);
+                p->fglbt[s] = p->fgl[s] ? vfft_il2p_t2csgnt_bwd_fn(R[s]) : 0;
+                if (!p->fcsbt[s] || (p->fgl[s] && !p->fglbt[s])) p->scr_ok = 0;
                 if (p->fgl[s]) {
                     /* the identity base table in complex units (group g starts
                      * at block g*G = g*G*L): in place on the tail stages, and
@@ -232,7 +246,9 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                  * block (the 2D per-digit record: [c x4][sign-folded s x4]) */
                 p->f[s] = vfft_il2p_t2cp_fn(R[s]);
                 p->fb[s] = vfft_il2p_t2c_fn(R[s], 1);   /* t2c bwd = PRE-twiddle conj + IDFT */
+                p->fbt[s] = vfft_il2p_t2cp_bwd_fn(R[s]); /* t2cp's transpose: IDFT + POST conj */
                 if (!p->f[s] || !p->fb[s]) { vfft_ilfd_destroy(p); return 0; }
+                if (!p->fbt[s]) p->scr_ok = 0;
                 tf = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 p->tfb[s] = (double *)VFFT_IL2P_ALLOC(nb * recs_blk * 8 * sizeof(double));
                 if (!tf || !p->tfb[s]) { VFFT_IL2P_FREE(tf); vfft_ilfd_destroy(p); return 0; }
@@ -254,6 +270,7 @@ static inline vfft_ilfd_plan_t *vfft_ilfd_create_chain(int N, const int *R, int 
                 p->tf[s] = tf;
             } else {
                 p->bwd_ok = 0;   /* t2cs has no backward twin: forward-only plan */
+                p->scr_ok = 0;
                 /* t2cs: columns = blocks. A GROUP = the R[s-1] consecutive
                  * blocks sharing every slow digit but q_{s-1} (so a group's
                  * natural bases step by a constant W). Per group: ceil(G/2)
@@ -435,12 +452,58 @@ static inline void vfft_ilfd_execute_fwd(const vfft_ilfd_plan_t *p,
     for (s = 0; s < p->K; s++) vfft_ilfd_stage(p, s, zin, zout);
 }
 
-/* the inverse (unnormalized, N * x on a roundtrip): the conjugate pipeline
- * in the SAME stage order — requires p->bwd_ok. */
+/* ONE TRANSPOSED stage of the scrambled class's backward: stage s's
+ * transpose-conjugate — the IDFT block then conj(w) on the output legs —
+ * with the same block geometry. The last stage's transpose reads the comb
+ * (zin, block order, the layout the scrambled forward wrote) into the
+ * plane; every other stage runs in place on the plane. */
+static inline void _ilfd_stage_T(const vfft_ilfd_plan_t *p, int s,
+                                 const double *zin, double *zout)
+{
+    double *stg = p->stg;
+    const size_t D = p->D[s], L = (size_t)p->R[s] * D, nb = p->nblk[s];
+    const size_t recs_blk = (size_t)(p->R[s] - 1);
+    const double *in = (s == p->K - 1) ? zin : stg;
+    size_t bi;
+    (void)zout;
+    if (p->msz[s]) {            /* never the last stage; in place */
+        p->fzbt[s](0, 0, stg, 0, p->tzb[s], 0, D, nb, 0, 0, D);
+        return;
+    }
+    if (p->tail[s]) {
+        const size_t G = (size_t)p->R[s - 1], ngrp = nb / G;
+        size_t g, c;
+        if (p->gl[s]) {
+            p->fglbt[s](in, (const double *)p->ipb[s], stg, 0, p->tfb[s], p->t2gb[s],
+                        D, ngrp, D, L, G);
+            return;
+        }
+        for (g = 0; g < ngrp; g++)
+            for (c = 0; c < D; c++)
+                p->fcsbt[s](in + 2 * (g * G * L + c), 0, stg + 2 * (g * G * L + c), 0,
+                            p->tfb[s], p->t2gb[s] + g * 8, D, L, D, L, G);
+        return;
+    }
+    for (bi = 0; bi < nb; bi++)
+        p->fbt[s](in + 2 * bi * L, 0, stg + 2 * bi * L, 0,
+                  p->tfb[s] + bi * recs_blk * 8, 0, D, 0, D, 1, D);
+}
+
+/* the inverse (unnormalized, N * x on a roundtrip).
+ * NATURAL class: the conjugate pipeline in the SAME stage order (bwd_ok).
+ * SCRAMBLED class (p->scr): the TRANSPOSED pipeline — the last stage's
+ * transpose consumes the comb first, the mids and tails follow in reverse
+ * order in place, the leaf's transpose writes natural zout last (scr_ok).
+ * In place is legal in both: zin is fully consumed before zout is written. */
 static inline void vfft_ilfd_execute_bwd(const vfft_ilfd_plan_t *p,
                                          const double *zin, double *zout)
 {
     int s;
+    if (p->scr) {
+        for (s = p->K - 1; s >= 1; s--) _ilfd_stage_T(p, s, zin, zout);
+        p->lb(p->stg, 0, zout, 0, 0, 0, p->D[0], 0, p->D[0], 0, p->D[0]);
+        return;
+    }
     for (s = 0; s < p->K; s++) vfft_ilfd_stage_bwd(p, s, zin, zout);
 }
 
@@ -455,7 +518,7 @@ static inline int vfft_ilfd_forms_str(const vfft_ilfd_plan_t *p, char *buf, size
     if (n == 0) return 0;
     buf[0] = 0;
     for (s = 1; s < p->K; s++) {
-        const char c = p->msz[s] ? 'm' : p->gl[s] ? ((s == p->K - 1 && p->gord) ? 'o' : 'n') : 't';
+        const char c = p->msz[s] ? 'm' : p->gl[s] ? ((s == p->K - 1 && p->gord && !p->scr) ? 'o' : 'n') : 't';
         const int r = snprintf(buf + off, n - off, "%s%c", s > 1 ? "." : "", c);
         if (r < 0 || (size_t)r >= n - off) return 0;
         off += (size_t)r;
@@ -478,7 +541,7 @@ static inline int vfft_ilfd_apply_forms(vfft_ilfd_plan_t *p, const char *forms)
         case 't': break;
         case 'm': if (!p->tz[s]) return 0; msz[s] = 1; break;
         case 'n': if (!p->fgl[s]) return 0; gl[s] = 1; break;
-        case 'o': if (!p->fgl[s] || s != p->K - 1 || !p->gorder) return 0; gl[s] = 1; gord = 1; break;
+        case 'o': if (!p->fgl[s] || s != p->K - 1 || !p->gorder || p->scr) return 0; gl[s] = 1; gord = 1; break;
         default: return 0;
         }
         if (s < p->K - 1) { if (*q != '.') return 0; q++; }
@@ -504,7 +567,7 @@ static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
         if (p->fgl[s]) {
             /* the tail forms: t2csg per group, t2csgn in block order, and on
              * the last stage t2csgn in natural-base order (msz off meanwhile) */
-            const int narm = (s == p->K - 1) ? 3 : 2;
+            const int narm = (s == p->K - 1 && !p->scr) ? 3 : 2;
             double tt[3] = { 1e300, 1e300, 1e300 };
             int r, arm, best = 0;
             p->msz[s] = 0;

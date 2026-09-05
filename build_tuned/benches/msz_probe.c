@@ -99,9 +99,18 @@ int main(int argc, char **argv) {
                             const double d = fabs(y[2*ps] - z[2*pn]) + fabs(y[2*ps+1] - z[2*pn+1]);
                             if (d > mx) mx = d;
                         }
-                    p->scr = 0;
-                    printf("      scrambled order check: max |scr[b*R+l] - nat[natbase[b]+l*N/R]| = %.1e %s\n", mx, mx < 1e-9 ? "OK" : "BAD");
+                    printf("      scrambled order check: max |scr[b*R+l] - nat[natbase[b]+l*N/R]| = %.1e %s", mx, mx < 1e-9 ? "OK" : "BAD");
                     if (!(mx < 1e-9)) bad++;
+                    {   /* the scrambled class's inverse: the transposed pipeline consumes the comb */
+                        double rt = 0;
+                        if (p->scr_ok) {
+                            vfft_ilfd_execute_bwd(p, y, z);   /* y = the comb -> z = N x */
+                            for (int j = 0; j < 2 * N; j++) { double d = fabs(z[j] / N - x[j]); if (d > rt) rt = d; }
+                        }
+                        printf(" | scr roundtrip %.1e %s\n", rt, !p->scr_ok ? "NO SCR BWD" : rt < 1e-9 * sqrt((double)N) ? "OK" : "BAD");
+                        if (!p->scr_ok || !(rt < 1e-9 * sqrt((double)N))) bad++;
+                    }
+                    p->scr = 0;
                 }
                 {   /* whole transform, natural vs scrambled, alternated */
                     double tn = 1e300, tsc = 1e300;
