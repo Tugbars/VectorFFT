@@ -53,6 +53,47 @@ spans (9 at 27, 45, 81). Bluestein and natural axes stay unbanded.
 `VFFT_IL2D_LOG` prints the `[ilnd]` create lines (every arm's ns, the
 structure and width sources).
 
+### 2b. Multithreading (the 2D tier's INC-C at rank 3)
+
+Two partition arms, both pure loop restrictions of the serial walk (no
+arithmetic changes, so MT output is BITWISE the serial output; the probe
+gates it), RACED against serial at create per (cell, T) TOGETHER WITH THE
+STRUCTURE — the structure that wins at one thread is not the one that
+wins threaded (64³: child + band 70 µs, flat + plane 103 µs, a tie at one
+thread), so at T > 1 both structures stay alive with their clones until
+the threaded verdict: arms = serial (one-thread structure) + {band,
+plane} × {child, flat}. Banked:
+
+| arm | `cmt=` | partition |
+|---|---|---|
+| serial | 0 | — |
+| band | 1 | the wide prefix stages digit-split over the workers (whole planes per digit, one dispatch per stage), then workers take disjoint BANDS of `wl` planes: suffix stages + the fused per-plane structure, exchange-free. Needs a banded axis 0 with at least two bands. |
+| plane | 2 | workers take disjoint COLUMN STRIPS of the virtual plane and run the whole axis-0 chain (barrier-free: a column pass never mixes columns; Bluestein windows share their scratch disjointly), then disjoint PLANE ranges for the structure. The only arm of an unbanded axis 0. |
+
+`cmts=` names the structure the threaded verdict runs with (it may differ
+from `s=`, the one-thread verdict, which stays what a T=1 plan replays).
+
+Every race sample runs REPS executes after two warm passes, REPS sized
+from one serial timing to ~20 ms of serial-equivalent work: a worker's
+cache partition settles over the first milliseconds of executes (round-0
+means 1.5–5× the steady state at every cell measured), and single-execute
+samples alternating between arms time that transient, never the steady
+state (measured 45³: single-execute race band 49 / plane 51 µs, steady
+state band 45 / plane 52; 81×27×27 single-execute plane 131 µs, steady 40).
+
+The per-plane structure mutates plan state, so worker t > 0 runs a CLONE:
+a 2D child clone that must be route-equivalent to the primary (chain,
+kernel pointers, band, N-arm, natural class, row route, row plan), or a
+row-plan clone (`_tc_clone_equiv`) plus its own axis-1 Bluestein scratch.
+Clones read warm wisdom and never bank; any clone failure tears the set
+down and MT declines, loudly — never a half-cloned dispatch. The pool is
+the one owner (`support/threads.h`): the plan's T is the snapshot,
+`stride_pool_workers_for` the one clamp, `stride_pool_run` the one
+fork-join. `cmtt=` is the T the verdict was raced at; a banked verdict
+serves only at its own T. `VFFT_ILND_MT=0|1|2` pins (never banks);
+`vfft_ilnd_mt_passes()` is the engagement counter, and a threaded number
+without it is vacuous; `VFFT_ILND_PROF=1` prints per-phase ns.
+
 ## 3. Wisdom
 
 One row per cell in `wisdom2_3d.txt`: `t=c2c n=N1xN2xN3 q=1 ord=scr place=oop lay=il`.
@@ -63,7 +104,7 @@ One row per cell in `wisdom2_3d.txt`: `t=c2c n=N1xN2xN3 q=1 ord=scr place=oop la
 | `wl= tf=` | axis 0, the joint race | the banded walk's width (0 = unbanded) and its fusion flag |
 | `chain1= blu1= forms1=` | axis 1 (flat arm) | the same verdicts with the axis as suffix |
 | `s=` | the joint race | 1 = child, 2 = flat |
-| `cmt= cmtt=` | axis 0 | not raced yet (phase 4) |
+| `cmt= cmtt= cmts=` | the MT race | 0 serial, 1 band, 2 plane; the T raced at; the structure the threaded verdict runs with |
 
 Axis 0's chain bank creates the row; every later verdict is a field update
 on it. The child's verdicts live on the child's own rank-2 cell, never
@@ -81,9 +122,9 @@ this; at this tier's axis 0 nothing did).
 | phase | contract | status |
 |---|---|---|
 | 2 | C2C, rank 3, howmany 1, OUT OF PLACE, order DEFAULT/SCRAMBLED, one thread | SHIPPED 2026-09-06 |
+| 4 | MT: band arm vs plane arm vs serial, raced per (cell, T), clones per worker | SHIPPED 2026-09-07 |
 | 3 | NATURAL order (its own cell) and in place | next |
-| 4 | MT: plane-parallel child clones vs an axis-0 column/band MT (`cmt`), raced | after 3 |
-| 5 | real 3D (r2c/c2r) | after 4 |
+| 5 | real 3D (r2c/c2r) | after 3 |
 | 6 | rank 4 (axis 0 wide, then per plane the rank-3 tier or the flat form, raced) | after 5 |
 
 Anything outside the shipped contract is refused loudly by `_vfft_create_fftnd_il`
@@ -108,8 +149,11 @@ address finds it exactly as the 2D consumer does, per axis.
   races. Cells: 16³, 32×16×64, 27×9×15, 36×20×28, 64³, 128×64×32.
 - `api_matrix_gate`: 3D c2c OOP IL 16³ DEFAULT and SCRAMBLED and 9×15×27
   are served; NATURAL and howmany 2 are refused.
-- The plan fingerprint carries `ilnd=[arm ax0=nst/blu/wl ax1=nst/blu]` and
-  recurses into the child and row plans.
+- The probe's fifth pass creates the cell at T=8: its output must be
+  memcmp-equal to the T=1 verdict's, and the engagement counter must move
+  once per execute (`engaged=7/7`).
+- The plan fingerprint carries `ilnd=[arm ax0=nst/blu/wl ax1=nst/blu
+  mt=verdict/T/clones]` and recurses into the child and row plans.
 
 ## 7. Measurement
 
@@ -118,8 +162,12 @@ O-NATIVE (this tier), M-inter (DFTI 3D CCE NOT_INPLACE, the yardstick),
 M-split (DFTI REAL_REAL NOT_INPLACE, shows CCE is MKL's best), ctl memcpy —
 all out of place, median + spread, a delta below the ctl spread is not a
 result. The split rank-N tier is not an arm and not a comparison (owner,
-2026-09-06: "split is not our concern. IL is what matters"). Numbers live
-in `docs/performance/v1_0_results.md` (the 3D section), never here.
+2026-09-06: "split is not our concern. IL is what matters"). `--3dil --mt`
+runs both sides at T (`VFFT_MT`, default 8) under the two-team protocol
+(the `--ilmt` traps plus a third found here: MKL's OpenMP team must be
+created BEFORE our pool pins the caller to core 0, or its workers inherit
+the one-core mask); the engagement count is printed per cell. Numbers
+live in `docs/performance/v1_0_results.md` (the 3D section), never here.
 
 ## 8. File map
 

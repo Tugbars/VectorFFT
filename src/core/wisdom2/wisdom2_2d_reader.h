@@ -887,7 +887,8 @@ static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck
 /* the rank-N IL tier's STRUCTURE verdict (fftnd_il.h): s= on the rank-3
  * lay=il row that axis 0's chain bank created — 1 = the child per plane,
  * 2 = the flat tier; 0 = absent */
-static inline int vw2_ilnd_arm_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
+static inline int vw2_ilnd_int_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                      const char *name)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
@@ -895,16 +896,36 @@ static inline int vw2_ilnd_arm_lookup(const vw2_store_t *s, const vw2_ilcol_key_
     vw2__ilcol_key(ck, &k);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    v = vw2_rec_get(r, "s");
+    v = vw2_rec_get(r, name);
     return v ? atoi(v) : 0;
+}
+static inline int vw2_ilnd_int_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                    const char *name, int val)
+{
+    vw2_key_t k;
+    char b[16];
+    vw2__ilcol_key(ck, &k);
+    snprintf(b, sizeof b, "%d", val);
+    return vw2_update_field(s, &k, name, b) == VW2_OK;
+}
+static inline int vw2_ilnd_arm_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
+{
+    return vw2_ilnd_int_lookup(s, ck, "s");
 }
 static inline int vw2_ilnd_arm_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, int arm)
 {
-    vw2_key_t k;
-    char b[8];
-    vw2__ilcol_key(ck, &k);
-    snprintf(b, sizeof b, "%d", arm);
-    return vw2_update_field(s, &k, "s", b) == VW2_OK;
+    return vw2_ilnd_int_bank(s, ck, "s", arm);
+}
+/* cmts= : the STRUCTURE the MT verdict (cmt= at cmtt=) runs with — raced
+ * jointly with the partition arm at the plan's T (2026-09-07); it may
+ * differ from s=, the one-thread verdict, and serves only with cmt/cmtt */
+static inline int vw2_ilnd_mts_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
+{
+    return vw2_ilnd_int_lookup(s, ck, "cmts");
+}
+static inline int vw2_ilnd_mts_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, int arm)
+{
+    return vw2_ilnd_int_bank(s, ck, "cmts", arm);
 }
 
 static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,

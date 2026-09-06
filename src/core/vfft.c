@@ -2148,7 +2148,7 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->ilnd ? h->ilnd->ax0.wl : 0,
             h->ilnd ? h->ilnd->ax1.nst : 0, h->ilnd ? h->ilnd->ax1.blu : 0,
             h->ilnd ? h->ilnd->mt : 0, h->ilnd ? h->ilnd->mt_t : 0,
-            h->ilnd ? h->ilnd->wn : 0);
+            h->ilnd ? (h->ilnd->arm == 1 ? h->ilnd->wn1 : h->ilnd->wn2) : 0);
 
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */

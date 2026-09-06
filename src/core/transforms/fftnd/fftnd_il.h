@@ -45,9 +45,7 @@
  *
  * MULTITHREADING (the 2D tier's INC-C ported, 2026-09-07): two partition
  * arms, both pure loop restrictions of the serving walk (no arithmetic
- * change => MT == ST bitwise, gated by the probe), RACED against serial at
- * create per (cell, T) and banked cmt= (0 serial | 1 band | 2 plane) with
- * cmtt= (the T raced at) on the rank-3 row:
+ * change => MT == ST bitwise, gated by the probe):
  *   BAND arm  (wl > 0): the wide prefix stages digit-split (INC-3b: whole
  *             planes per digit, one dispatch per stage), then workers take
  *             disjoint BANDS — each band = suffix stages + the fused
@@ -58,15 +56,30 @@
  *             pass never mixes columns), then disjoint PLANE ranges for
  *             the structure. The only arm of an unbanded or Bluestein
  *             axis 0.
+ * At the plan's T the partition arm and the STRUCTURE are raced together
+ * (serial with the one-thread structure, then band and plane with each
+ * buildable structure): the structure that wins at one thread is not the
+ * one that wins threaded (measured 64^3: child+band 70 us, flat+plane
+ * 103 us, while at one thread the two structures tie). Banked on the
+ * rank-3 row as cmt= (0 serial | 1 band | 2 plane), cmtt= (the T raced
+ * at) and cmts= (the structure the threaded verdict runs with); s= stays
+ * the one-thread verdict. A verdict serves only at its own T.
+ * Every threaded sample runs REPS executes after warm passes: a worker's
+ * cache partition settles over the first milliseconds of executes
+ * (measured: round-0 means 1.5-5x the steady state), and single-execute
+ * samples alternating between arms time the transient, never the steady
+ * state.
  * The per-plane structure mutates plan state (a 2D child's scratch, the
  * row plan's scratch, an axis-1 Bluestein scratch), so worker t > 0 runs
- * its CLONE: a 2D child clone fingerprint-identical to the primary, or a
- * row-plan clone route-equivalent (_tc_clone_equiv) plus its own axis-1
- * scratch. Any clone failure tears the set down and MT declines — never a
+ * its CLONE: a 2D child clone route-equivalent to the primary
+ * (_ilnd_child_equiv), or a row-plan clone route-equivalent
+ * (_tc_clone_equiv) plus its own axis-1 scratch. Any clone failure tears
+ * that structure's set down; with no clones MT declines — never a
  * half-cloned dispatch. The pool is the one owner (support/threads.h);
  * the plan's T is the snapshot, stride_pool_workers_for the one clamp.
- * VFFT_ILND_MT=0|1|2 pins for a probe (never banks). Engagement counter:
- * vfft_ilnd_mt_passes() (vfft.c) — a threaded result without it is vacuous.
+ * VFFT_ILND_MT=0|1|2 pins the partition for a probe (never banks).
+ * Engagement counter: vfft_ilnd_mt_passes() (vfft.c) — a threaded result
+ * without it is vacuous. VFFT_ILND_PROF=1 prints per-phase ns.
  *
  * Every pass commutes with every other (each is a Kronecker factor), so
  * forward and backward run the same pass order. Output order: DEFAULT/
@@ -119,7 +132,7 @@ typedef struct vfft_ilnd_s {
     int rank;
     int N[4];
     size_t plane;                 /* complex per axis-0 row: N[1] * ... * N[rank-1] */
-    int arm;                      /* the RACED structure: 1 = the child per plane, 2 = flat */
+    int arm;                      /* the SERVING structure: 1 = the child per plane, 2 = flat */
     vfft_ilcol_t ax0;             /* axis 0: N[0] rows over `plane` complex (wl/cut = the banded walk) */
     struct vfft_plan_s *child;    /* arm 1: the rank-(n-1) IL c2c plan, in place, per plane */
     vfft_ilcol_t ax1;             /* arm 2: N[1] rows over N[2] complex, per plane */
@@ -128,7 +141,7 @@ typedef struct vfft_ilnd_s {
     /* MT: the raced verdict and the per-worker clones (worker t > 0 = slot t-1) */
     int mt;                       /* 0 serial | 1 band | 2 plane */
     int mt_t;                     /* the plan's thread snapshot (create's nthreads) */
-    int wn;                       /* clones built (= T-1) or 0: MT declines */
+    int wn1, wn2;                 /* clones built per structure (= T-1) or 0: that structure cannot thread */
     struct vfft_plan_s **childw;  /* arm 1 clones */
     struct vfft_plan_s **roww;    /* arm 2 row clones */
     vfft_ilcol_t *ax1w;           /* arm 2 axis-1 descriptors: shared tables, own scratch */
@@ -175,23 +188,54 @@ static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
         vfft_il2p_fn const *fns = rev ? c->b : c->f;
         double *const *tabs = rev ? c->tb : c->tf;
         size_t b0;
+        static int prof = -1;
+        double t0 = 0, tp = 0, tsuf = 0, tpl = 0;
+        if (prof < 0)
+            prof = getenv("VFFT_ILND_PROF") != NULL;
+        if (prof)
+            t0 = _il_ab_now();
         if (!rev && cut > 0)
             _il2d_col_stages(src, dst, c->N, rn, 0, cut, c->R, c->L, fns, tabs, 0);
+        if (prof)
+            tp = _il_ab_now() - t0;
         for (b0 = 0; b0 < N0; b0 += wl)
         {
             const double *bs = (!rev && cut > 0) ? dst + 2 * b0 * rn : src + 2 * b0 * rn;
             double *bd = dst + 2 * b0 * rn;
+            double ta = prof ? _il_ab_now() : 0, tb;
             _il2d_col_stages(bs, bd, (int)wl, rn, cut, nst, c->R, c->L, fns, tabs, rev);
+            tb = prof ? _il_ab_now() : 0;
             for (p = 0; p < wl; p++)
                 _ilnd_plane(d, dir, bd + 2 * p * rn);
+            if (prof)
+            {
+                tsuf += tb - ta;
+                tpl += _il_ab_now() - tb;
+            }
         }
         if (rev && cut > 0)
             _il2d_col_stages(dst, dst, c->N, rn, 0, cut, c->R, c->L, fns, tabs, 1);
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] serial-banded s=%d wl=%d cut=%d prefix=%.0f suffix=%.0f planes=%.0f total=%.0f\n",
+                    d->arm, c->wl, cut, tp, tsuf, tpl, _il_ab_now() - t0);
         return;
     }
-    _il2d_col_exec(c, src, dst, rev);
-    for (p = 0; p < N0; p++)
-        _ilnd_plane(d, dir, dst + 2 * p * rn);
+    {
+        static int prof = -1;
+        double t0 = 0, t1 = 0;
+        if (prof < 0)
+            prof = getenv("VFFT_ILND_PROF") != NULL;
+        if (prof)
+            t0 = _il_ab_now();
+        _il2d_col_exec(c, src, dst, rev);
+        if (prof)
+            t1 = _il_ab_now();
+        for (p = 0; p < N0; p++)
+            _ilnd_plane(d, dir, dst + 2 * p * rn);
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] serial-unbanded s=%d axis0=%.0f planes=%.0f total=%.0f\n",
+                    d->arm, t1 - t0, _il_ab_now() - t1, _il_ab_now() - t0);
+    }
 }
 
 /* ── the MT partitions: pure loop restrictions of the serial walk ───── */
@@ -268,7 +312,11 @@ static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
     stride_pool_run(T, _ilnd_mt_tramp, a, sizeof a[0]);
 }
 
-/* Returns 1 when it ran threaded, 0 when the caller must run serial. */
+static int _ilnd_clones_of(const vfft_ilnd_t *d) { return d->arm == 1 ? d->wn1 : d->wn2; }
+
+/* Returns 1 when it ran threaded, 0 when the caller must run serial.
+ * VFFT_ILND_PROF=1 prints the per-phase ns of every threaded execute
+ * (diagnostic only; the env is read once). */
 static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
                             const double *src, double *dst)
 {
@@ -276,8 +324,15 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     const int rev = (dir == VFFT_BACKWARD);
     const size_t N0 = (size_t)d->N[0], rn = d->plane;
     const int T = stride_pool_workers_for(d->mt_t);
-    if (T < 2 || d->wn < T - 1 || c->nat)
+    static int prof = -1;
+    double t0 = 0, t1 = 0, t2 = 0;
+    int nsplit = 0, nserial = 0;
+    if (prof < 0)
+        prof = getenv("VFFT_ILND_PROF") != NULL;
+    if (T < 2 || _ilnd_clones_of(d) < T - 1 || c->nat)
         return 0; /* every arm runs the structure => clones are mandatory */
+    if (prof)
+        t0 = _il_ab_now();
     if (d->mt == 1)
     {
         const size_t nb = c->wl > 0 ? N0 / (size_t)c->wl : 0;
@@ -295,16 +350,28 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
                 const double *ssrc = (s == 0) ? src : dst;
                 if (!_il2d_stage_digits_mt(ssrc, dst, c->N, rn, rn, c->R[s], c->L[s],
                                            c->f[s], c->tf[s], T))
+                {
                     _il2d_col_stages(ssrc, dst, c->N, rn, s, s + 1, c->R, c->L,
                                      c->f, c->tf, 0);
+                    nserial++;
+                }
+                else
+                    nsplit++;
             }
+        if (prof)
+            t1 = _il_ab_now();
         _ilnd_mt_phase(d, (!rev && c->cut > 0) ? dst : src, dst, dir, 0, nb, Tb);
+        if (prof)
+            t2 = _il_ab_now();
         if (rev && c->cut > 0)
             for (s = c->cut - 1; s >= 0; s--)
                 if (!_il2d_stage_digits_mt(dst, dst, c->N, rn, rn, c->R[s], c->L[s],
                                            c->b[s], c->tb[s], T))
                     _il2d_col_stages(dst, dst, c->N, rn, s, s + 1, c->R, c->L,
                                      c->b, c->tb, 0);
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] band s=%d T=%d Tb=%d nb=%zu prefix=%.0f (split %d, serial %d, D0=%d) bands=%.0f total=%.0f\n",
+                    d->arm, T, Tb, nb, t1 - t0, nsplit, nserial, c->L[0] / c->R[0], t2 - t1, _il_ab_now() - t0);
     }
     else if (d->mt == 2)
     {
@@ -316,7 +383,12 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
         else
             _il2d_col_exec(c, src, dst, rev);
+        if (prof)
+            t1 = _il_ab_now();
         _ilnd_mt_phase(d, src, dst, dir, 2, N0, Tp);
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] plane s=%d T=%d Ts=%d Tp=%d strips=%.0f planes=%.0f total=%.0f\n",
+                    d->arm, T, Ts, Tp, t1 - t0, _il_ab_now() - t1, _il_ab_now() - t0);
     }
     else
         return 0;
@@ -333,60 +405,79 @@ static void vfft_ilnd_execute(const vfft_ilnd_t *d, vfft_dir_t dir,
 }
 
 /* ── clones: worker t > 0 needs its own mutable structure state ─────── */
-static void _ilnd_free_clones(vfft_ilnd_t *d)
+static void _ilnd_free_clones(vfft_ilnd_t *d, int arm)
 {
     int t;
-    if (d->childw)
+    if (arm == 1 && d->childw)
     {
-        for (t = 0; t < d->wn; t++)
+        for (t = 0; t < d->wn1; t++)
             if (d->childw[t])
                 vfft_destroy((vfft_plan)d->childw[t]);
         free(d->childw);
         d->childw = NULL;
+        d->wn1 = 0;
     }
-    if (d->roww)
+    if (arm == 2)
     {
-        for (t = 0; t < d->wn; t++)
-            if (d->roww[t])
-                vfft_destroy((vfft_plan)d->roww[t]);
-        free(d->roww);
-        d->roww = NULL;
+        if (d->roww)
+        {
+            for (t = 0; t < d->wn2; t++)
+                if (d->roww[t])
+                    vfft_destroy((vfft_plan)d->roww[t]);
+            free(d->roww);
+            d->roww = NULL;
+        }
+        if (d->ax1w)
+        {
+            for (t = 0; t < d->wn2; t++)
+                free(d->ax1w[t].bluscr); /* the only per-clone allocation */
+            free(d->ax1w);
+            d->ax1w = NULL;
+        }
+        d->wn2 = 0;
     }
-    if (d->ax1w)
+}
+
+static void _ilnd_free_arm(vfft_ilnd_t *d, int arm)
+{
+    _ilnd_free_clones(d, arm);
+    if (arm == 1 && d->child)
     {
-        for (t = 0; t < d->wn; t++)
-            free(d->ax1w[t].bluscr); /* the only per-clone allocation */
-        free(d->ax1w);
-        d->ax1w = NULL;
+        vfft_destroy((vfft_plan)d->child);
+        d->child = NULL;
     }
-    d->wn = 0;
+    if (arm == 2)
+    {
+        _il2d_col_free(&d->ax1);
+        if (d->row)
+            vfft_destroy((vfft_plan)d->row);
+        d->row = NULL;
+    }
 }
 
 static void vfft_ilnd_destroy(vfft_ilnd_t *d)
 {
     if (!d)
         return;
-    _ilnd_free_clones(d);
+    _ilnd_free_arm(d, 1);
+    _ilnd_free_arm(d, 2);
     _il2d_col_free(&d->ax0);
-    _il2d_col_free(&d->ax1);
-    if (d->child)
-        vfft_destroy((vfft_plan)d->child);
-    if (d->row)
-        vfft_destroy((vfft_plan)d->row);
     free(d);
 }
 
-/* build T-1 clones of the WINNING structure; clones read warm wisdom and
- * never bank. Returns the count built (0 = MT declines, loud). */
-static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T)
+/* build T-1 clones of one structure; clones read warm wisdom and never
+ * bank. Returns the count built (0 = that structure cannot thread, loud). */
+static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, int arm)
 {
     const int n = (T > STRIDE_POOL_MAX_DISPATCH ? STRIDE_POOL_MAX_DISPATCH : T) - 1;
     int t;
-    if (n <= 0 || d->wn)
-        return d->wn;
-    if (d->arm == 1)
+    if (n <= 0)
+        return 0;
+    if (arm == 1)
     {
         vfft_config_t cc;
+        if (d->wn1 || !d->child)
+            return d->wn1;
         memset(&cc, 0, sizeof cc);
         cc.transform = VFFT_C2C;
         cc.placement = VFFT_INPLACE;
@@ -409,18 +500,23 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T)
             d->childw[t] = c;
             if (!c || !_ilnd_child_equiv(d->child, c) || c->nthreads > 1)
             {
-                _vfft_warn("ilnd MT: 2D child clone %d %s at %dx%d — MT declines for this plan",
+                _vfft_warn("ilnd MT: 2D child clone %d %s at %dx%d — the child structure "
+                           "cannot thread for this plan",
                            t, c ? "route-mismatched" : "failed to create",
                            d->N[1], d->N[2]);
-                d->wn = t + 1;
-                _ilnd_free_clones(d);
+                d->wn1 = t + 1;
+                _ilnd_free_clones(d, 1);
                 return 0;
             }
         }
+        d->wn1 = n;
+        return n;
     }
     else
     {
         vfft_config_t rc;
+        if (d->wn2 || !d->row)
+            return d->wn2;
         memset(&rc, 0, sizeof rc);
         rc.transform = VFFT_C2C;
         rc.placement = VFFT_INPLACE;
@@ -452,16 +548,17 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T)
             if (!c || !_tc_clone_equiv(d->row, c) || c->tcb || c->tcbw ||
                 (d->ax1.blu && !d->ax1w[t].bluscr))
             {
-                _vfft_warn("ilnd MT: row clone %d %s at N3=%d — MT declines for this plan",
+                _vfft_warn("ilnd MT: row clone %d %s at N3=%d — the flat structure cannot "
+                           "thread for this plan",
                            t, c ? "route-mismatched" : "failed to create", d->N[2]);
-                d->wn = t + 1;
-                _ilnd_free_clones(d);
+                d->wn2 = t + 1;
+                _ilnd_free_clones(d, 2);
                 return 0;
             }
         }
+        d->wn2 = n;
+        return n;
     }
-    d->wn = n;
-    return n;
 }
 
 /* ── the banded walk's width: legal iff wl | N and a suffix stage's span
@@ -518,6 +615,8 @@ static int _ilnd_wl_pool(const vfft_ilcol_t *c, int *out, int max)
 static int _ilnd_build_child(vfft_ilnd_t *d, const vfft_config_t *cfg)
 {
     vfft_config_t cc;
+    if (d->child)
+        return 1;
     memset(&cc, 0, sizeof cc);
     cc.transform = VFFT_C2C;
     cc.placement = VFFT_INPLACE;
@@ -542,6 +641,8 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     vw2_ilcol_key_t key1 = *key0;
     vfft_config_t rc;
     int bwl, btf, bro, bcmt, bcmtt, bblu;
+    if (d->row)
+        return 1;
     key1.axis = 1;
     if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2], 0, &d->ax1,
                          d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
@@ -567,22 +668,6 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     return 1;
 }
 
-static void _ilnd_free_arm(vfft_ilnd_t *d, int arm)
-{
-    if (arm == 1 && d->child)
-    {
-        vfft_destroy((vfft_plan)d->child);
-        d->child = NULL;
-    }
-    if (arm == 2)
-    {
-        _il2d_col_free(&d->ax1);
-        if (d->row)
-            vfft_destroy((vfft_plan)d->row);
-        d->row = NULL;
-    }
-}
-
 /* the (structure, width) race: the whole forward, in place on scratch,
  * every configuration an arm of ONE alternated race */
 typedef struct { vfft_ilnd_t *d; double *z; int arm; int wl; char name[24]; } _ilnd_arm_ctx_t;
@@ -594,12 +679,14 @@ static void _ilnd_arm_run(void *v)
     _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
 }
 
-/* the MT race: serial vs each partition arm that can ENGAGE, the whole
- * forward through the very code execute serves with */
-typedef struct { vfft_ilnd_t *d; double *z; int mt; int ok; } _ilnd_mt_ctx_t;
+/* the MT race at the plan's T: serial (the one-thread structure) vs each
+ * (partition, structure) that can ENGAGE, the whole forward through the
+ * very code execute serves with. Returns the winning (mt, structure). */
+typedef struct { vfft_ilnd_t *d; double *z; int mt; int arm; int ok; char name[24]; } _ilnd_mt_ctx_t;
 static void _ilnd_mt_arm_run(void *v)
 {
     _ilnd_mt_ctx_t *c = (_ilnd_mt_ctx_t *)v;
+    c->d->arm = c->arm;
     if (c->mt == 0)
     {
         _ilnd_execute_st(c->d, VFFT_FORWARD, c->z, c->z);
@@ -609,54 +696,68 @@ static void _ilnd_mt_arm_run(void *v)
     if (c->ok && !_ilnd_execute_mt(c->d, VFFT_FORWARD, c->z, c->z))
         c->ok = 0; /* the arm cannot engage on this cell */
 }
-static void _ilnd_mt_race(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
-                          const vfft_config_t *cfg, const vw2_ilcol_key_t *key0,
-                          int usable_w)
+static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_out)
 {
     const size_t T = (size_t)d->N[0] * d->plane;
     double *z = (double *)malloc(2 * T * sizeof(double));
-    _ilnd_mt_ctx_t cx[3];
-    vfft_race_arm_t arms[3];
-    double ns[3] = { 1e300, 1e300, 1e300 };
-    int na = 0, a, best = 0, verdict = 0;
+    _ilnd_mt_ctx_t cx[5];
+    vfft_race_arm_t arms[5];
+    double ns[5] = { 1e300, 1e300, 1e300, 1e300, 1e300 };
+    int na = 0, a, best = 0, st, reps;
     size_t i;
+    *mt_out = 0;
+    *arm_out = s0;
     if (!z)
-    {
-        d->mt = 0;
         return;
-    }
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
-    cx[na].d = d; cx[na].z = z; cx[na].mt = 0; cx[na].ok = 1;
-    arms[na].name = "serial"; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++;
-    if (d->ax0.wl > 0 && !d->ax0.blu && (size_t)d->N[0] / (size_t)d->ax0.wl >= 2)
+    /* reps from ONE serial timing: every sample runs >= ~20 ms of serial-
+     * equivalent work so a threaded arm's steady state is what gets timed */
     {
-        cx[na].d = d; cx[na].z = z; cx[na].mt = 1; cx[na].ok = 1;
-        arms[na].name = "band"; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++;
+        double t0;
+        d->arm = s0;
+        _ilnd_execute_st(d, VFFT_FORWARD, z, z);
+        t0 = _il_ab_now();
+        _ilnd_execute_st(d, VFFT_FORWARD, z, z);
+        t0 = _il_ab_now() - t0;
+        reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
+        if (reps < 2) reps = 2;
+        if (reps > 256) reps = 256;
     }
-    cx[na].d = d; cx[na].z = z; cx[na].mt = 2; cx[na].ok = 1;
-    arms[na].name = "plane"; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++;
+#define ILND_ARM(MT, ARM, NAME) do { \
+        cx[na].d = d; cx[na].z = z; cx[na].mt = (MT); cx[na].arm = (ARM); cx[na].ok = 1; \
+        snprintf(cx[na].name, sizeof cx[na].name, "%s/%s", NAME, (ARM) == 1 ? "child" : "flat"); \
+        arms[na].name = cx[na].name; arms[na].run = _ilnd_mt_arm_run; arms[na].ctx = &cx[na]; na++; \
+    } while (0)
+    ILND_ARM(0, s0, "serial");
+    for (st = 1; st <= 2; st++)
     {
-        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL };
+        const int have = (st == 1) ? (d->child != NULL && d->wn1 > 0) : (d->row != NULL && d->wn2 > 0);
+        if (!have)
+            continue;
+        if (d->ax0.wl > 0 && !d->ax0.blu && (size_t)d->N[0] / (size_t)d->ax0.wl >= 2)
+            ILND_ARM(1, st, "band");
+        ILND_ARM(2, st, "plane");
+    }
+#undef ILND_ARM
+    {
+        const vfft_race_proto_t proto = { 3, reps, VFFT_RACE_MIN, 1, 2, NULL, NULL };
         vfft_race_run(&proto, arms, na, ns);
     }
     for (a = 1; a < na; a++)
         if (cx[a].ok && ns[a] < ns[best])
             best = a;
-    verdict = cx[best].mt;
+    *mt_out = cx[best].mt;
+    *arm_out = cx[best].arm;
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[ilnd] %dx%dx%d: MT race T=%d", d->N[0], d->N[1], d->N[2], d->mt_t);
+        fprintf(stderr, "[ilnd] %dx%dx%d: MT race T=%d reps=%d", d->N[0], d->N[1], d->N[2], d->mt_t, reps);
         for (a = 0; a < na; a++)
-            fprintf(stderr, " %s=%.0f%s", arms[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
-        fprintf(stderr, " -> %s\n", verdict == 0 ? "serial" : verdict == 1 ? "band" : "plane");
+            fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
+        fprintf(stderr, " -> %s/%s\n", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
+                *arm_out == 1 ? "child" : "flat");
     }
-    d->mt = verdict;
-    if (usable_w && cfg->wisdom_write &&
-        vw2_ilcol_chain_bank(&W->vw2, key0, d->ax0.R, d->ax0.nst, -1, -1, -1,
-                             verdict, d->mt_t, -1, 0.0) == VW2_OK)
-        _vw2_persist(W, cfg);
 }
 
 /* ── the create: rank-3 interleaved c2c, out of place, DEFAULT/SCRAMBLED ── */
@@ -672,6 +773,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     int bwl, btf, bro, bcmt, bcmtt, bblu;
     int sarm[2], nsarm = 0, wls[16], nwl = 0;
     int arm = 0, wl = 0, s_src = 0, wl_src = 0, mt_src = 0; /* src: 1 env, 2 wisdom, 3 race, 4 only-buildable */
+    int mts = 0; /* the structure the threaded verdict runs with */
     const int usable_w = (W && !W->vw2_off_2d);
     const int nthr = _vfft_plan_threads(cfg);
     const char *pin = getenv("VFFT_ILND_ARM");
@@ -849,55 +951,93 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         }
     }
     d->arm = arm;
+    mts = arm;
     _ilnd_apply_wl(&d->ax0, wl);
-    _ilnd_free_arm(d, arm == 1 ? 2 : 1);
-    /* ── MT: clones of the winning structure, then the verdict — env pin
-     * > the banked cmt at THIS T > the race. No clones = declines (cmt=0
-     * is banked exactly like a yes: that IS the verdict). */
+    /* ── MT at the plan's T: env pin > the banked (cmt, cmts) at THIS T >
+     * the race of (partition x structure) — the structure that wins at one
+     * thread need not win threaded, so both structures stay alive with
+     * their clones until the threaded verdict. No clones for a structure =
+     * it cannot thread; no clones at all = cmt=0, banked like a yes. */
     d->mt = 0;
     if (nthr > 1)
     {
-        if (!_ilnd_build_clones(d, cfg, nthr))
-        {
-            d->mt = 0;
-            mt_src = 4;
-            if (usable_w && cfg->wisdom_write && !mpin &&
-                vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst, -1, -1, -1,
-                                     0, nthr, -1, 0.0) == VW2_OK)
-                _vw2_persist(W, cfg);
-        }
-        else if (mpin)
+        int c1 = 0, c2 = 0;
+        if (mpin)
         {
             d->mt = atoi(mpin);
             if (d->mt < 0 || d->mt > 2) d->mt = 0;
+            if (d->mt > 0 && !_ilnd_build_clones(d, cfg, nthr, arm))
+                d->mt = 0;
             mt_src = 1;
         }
         else if (usable_w && !cfg->recalibrate && bcmt >= 0 && bcmtt == nthr)
         {
+            const int bs = vw2_ilnd_mts_lookup(&W->vw2, &key0);
             d->mt = (bcmt >= 0 && bcmt <= 2) ? bcmt : 0;
+            mts = (bs == 1 || bs == 2) ? bs : arm;
+            if (d->mt > 0)
+            {   /* the threaded structure may differ from the one-thread one */
+                const int okb = (mts == 1) ? _ilnd_build_child(d, cfg) : _ilnd_build_flat(d, W, cfg, &key0);
+                if (!okb || !_ilnd_build_clones(d, cfg, nthr, mts))
+                {
+                    _vfft_warn("ilnd: the banked threaded structure (cmts=%d) cannot be served at "
+                               "%dx%dx%d T=%d — serial", mts, N1, N2, N3, nthr);
+                    d->mt = 0;
+                    mts = arm;
+                }
+            }
             mt_src = 2;
         }
         else
         {
-            _ilnd_mt_race(d, W, cfg, &key0, usable_w);
-            mt_src = 3;
+            /* both structures, each with its clones, race against serial */
+            int mt_v = 0, arm_v = arm;
+            if (_ilnd_build_child(d, cfg))
+                c1 = _ilnd_build_clones(d, cfg, nthr, 1);
+            if (_ilnd_build_flat(d, W, cfg, &key0))
+                c2 = _ilnd_build_clones(d, cfg, nthr, 2);
+            if (c1 || c2)
+                _ilnd_mt_race(d, arm, &mt_v, &arm_v);
+            d->mt = mt_v;
+            mts = (mt_v > 0) ? arm_v : arm;
+            mt_src = (c1 || c2) ? 3 : 4;
+            if (usable_w && cfg->wisdom_write && !pin && !wpin)
+            {
+                int banked = 0;
+                if (vw2_ilcol_chain_bank(&W->vw2, &key0, d->ax0.R, d->ax0.nst, -1, -1, -1,
+                                         d->mt, nthr, -1, 0.0) == VW2_OK)
+                    banked = 1;
+                if (vw2_ilnd_mts_bank(&W->vw2, &key0, mts))
+                    banked = 1;
+                if (banked)
+                    _vw2_persist(W, cfg);
+            }
         }
         if (d->mt == 1 && (d->ax0.wl <= 0 || d->ax0.blu))
         {
             _vfft_warn("ilnd: the band MT arm needs a banded axis 0 at %dx%dx%d — serial",
                        N1, N2, N3);
             d->mt = 0;
+            mts = arm;
         }
     }
+    /* the serving structure: the threaded one when the plan threads (it is
+     * correct serially too, and the pool clamp may leave it serial), else
+     * the one-thread verdict; the other structure and its clones go */
+    d->arm = (d->mt > 0) ? mts : arm;
+    _ilnd_free_arm(d, d->arm == 1 ? 2 : 1);
+    if (d->mt == 0)
+        _ilnd_free_clones(d, d->arm);
     if (getenv("VFFT_IL2D_LOG"))
     {
         static const char *SRC[] = { "?", "env", "wisdom", "race", "only-buildable" };
         fprintf(stderr, "[ilnd] %dx%dx%d: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
-                        " | T=%d mt=%s src=%s clones=%d\n",
+                        " | T=%d mt=%s/%s src=%s clones=%d\n",
                 N1, N2, N3, arm == 1 ? "child" : "flat", SRC[s_src],
                 d->ax0.wl, d->ax0.cut, SRC[wl_src], nthr,
                 d->mt == 0 ? "serial" : d->mt == 1 ? "band" : "plane",
-                nthr > 1 ? SRC[mt_src] : "-", d->wn);
+                d->arm == 1 ? "child" : "flat",
+                nthr > 1 ? SRC[mt_src] : "-", _ilnd_clones_of(d));
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)

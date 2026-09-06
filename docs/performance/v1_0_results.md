@@ -864,8 +864,79 @@ the column pass streaming the cube per stage). With the width raced
 925,163 → 711,612 ns (the race's own arms: unbanded 857 µs, wl32 630 µs)
 and wins 1.18×; 64³ moved 1.35× → 1.49× (`wl=16`). The odd cells have
 only the chain's own spans as legal widths (9 at 27/45/81) and raced to
-unbanded or to a tie. Column MT at axis 0 (`cmt`) is the remaining
-phase-4 lever.
+unbanded or to a tie.
+
+#### 3D C2C — the native tier MULTITHREADED (2026-09-07)
+
+Two partition arms, both loop restrictions of the serving walk (MT == ST
+bitwise, probe-gated at every cell): the BAND arm (wide prefix stages
+digit-split, then workers take disjoint bands of `wl` planes with the
+per-plane structure fused) and the PLANE arm (column strips of the
+virtual plane for the whole axis-0 chain, then plane ranges). At the
+plan's T the partition and the STRUCTURE are raced together against
+serial (the one-thread winner is not the threaded winner: 64³ child +
+band 70 µs vs flat + plane 103 µs, a tie at one thread), banked `cmt=`
+`cmtt=` `cmts=`; the per-plane structure runs on per-worker clones
+(route-equivalence-checked at create); `vfft_ilnd_mt_passes()` counts
+engagement and every number below carries it.
+
+**Same-run, the create race itself** (T=8, every sample = REPS executes
+after two warm passes, min of 3 alternated rounds — the steady state, not
+the first-millisecond transient; serial = the same tier at one thread
+in the same race):
+
+```
+ cell        serial (ns)    MT (ns)   speedup   verdict (arm/structure)
+────────────────────────────────────────────────────────────────────────
+ 16³               5,239      2,987     1.8×    plane/flat
+ 32³              42,909     17,600     2.4×    plane/child
+ 64³             423,477     72,991     5.8×    plane/child
+ 128³          4,935,300    590,500     8.4×    band/child
+ 32×16×64         37,492     18,935     2.0×    plane/flat
+ 64×128×32       463,286     75,916     6.1×    band/flat
+ 256×64×16       545,200    139,572     3.9×    plane/flat
+ 27×9×15           6,690      4,573     1.5×    plane/flat
+ 36×20×28         30,714     13,757     2.2×    plane/flat
+ 45³             162,146     44,616     3.6×    band/flat
+ 81×27×27        107,903     27,700     3.9×    band/flat
+────────────────────────────────────────────────────────────────────────
+```
+
+**vs MKL CCE at the same T=8** (`--3dil --mt`: both engines confined to
+the 8 P-cores, MKL's team created before our pool pins the caller, our
+pool torn down before every MKL sample, MKL parked before every one of
+ours, ≥ 5 ms of untimed warm executes per sample on both sides; 9
+rounds, medians, spreads in parentheses, `~` = inside the control
+spread). ⚠ Taken while the machine was in use — MKL's own spreads reach
+300% here; the steady-state column repeats the race's MT time above so
+the two can be read side by side:
+
+```
+ cell          O-NATIVE (ns)   steady (ns)   MKL-CCE T=8 (ns)   bench ratio   steady/MKL
+────────────────────────────────────────────────────────────────────────────────────────
+ 16³                4,058 (11%)      2,987        2,859 (43%)      0.70×        1.0×
+ 32³               16,400 (113%)    17,600       14,295 (127%)     0.87×~       0.8×
+ 64³               71,512 (45%)     72,991      113,063 (18%)      1.58×        1.5×
+ 128³           1,161,725 (34%)    590,500    1,663,163 (23%)      1.43×        2.8×
+ 32×16×64          16,449 (32%)     18,935       14,977 (288%)     0.91×~       0.8×
+ 64×128×32         83,950 (14%)     75,916      110,175  (8%)      1.31×~       1.5×
+ 256×64×16        150,100 (19%)    139,572      107,337 (17%)      0.72×~       0.8×
+ 27×9×15            5,659 (30%)      4,573        5,934 (45%)      1.05×~       1.3×
+ 36×20×28          13,967 (23%)     13,757       16,287 (18%)      1.17×        1.2×
+ 45³               56,262 (43%)     44,616       42,776 (304%)     0.76×~       1.0×
+ 81×27×27          32,915 (90%)     27,700       31,900 (17%)      0.97×~       1.2×
+────────────────────────────────────────────────────────────────────────────────────────
+```
+
+The reading: at T=8 the tier wins or ties at 8 of 11 cells once its
+steady state is what gets timed; the remaining losses are the two 512 KB
+cubes (32³, 32×16×64: a 15 µs transform where two fork-joins plus a
+per-plane child execute per plane cost more than MKL's fan-out) and
+256×64×16, whose one-thread width verdict (`wl=64` this run, `wl=32`
+the run before) decides the threaded arms' shape without being raced at
+T. Levers, all measured items: race `wl` at T with the structure and the
+partition; one fork-join per execute for the small cubes. The
+single-thread standings above are unchanged by any of this.
 
 ## 3. vs MKL — 1D R2C
 

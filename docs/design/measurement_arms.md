@@ -892,6 +892,28 @@ F1.4 the N-arm bank at axis 0        FIXED 2026-09-06: a verdict banked without 
                                      UPDATE (before, a fresh record lost to the
                                      measured row and the N-arm re-raced on
                                      every create; the 2D axis race masked it).
+F1.5 cmt - the MT partition          RACED, BANKED with cmtt + cmts (2026-09-07):
+                                     serial (the one-thread structure) vs BAND
+                                     (prefix digit-split + disjoint bands of wl
+                                     planes with the structure fused; needs >= 2
+                                     bands) vs PLANE (column strips of the virtual
+                                     plane, then plane ranges; the only arm of an
+                                     unbanded/Bluestein axis 0), EACH x {child,
+                                     flat} — the structure is re-raced at T because
+                                     the one-thread winner need not win threaded
+                                     (64^3: child+band 70 us vs flat+plane 103).
+                                     Samples = REPS executes after 2 warm passes,
+                                     REPS from one serial timing (~20 ms of serial
+                                     work): a worker's cache partition settles over
+                                     the first ms of executes and single-execute
+                                     alternated samples time that transient (81x27x27
+                                     plane: 131 us single-execute, 40 us steady).
+                                     min-of-3 alternated; an arm that cannot engage
+                                     is excluded. Worker clones of the structure are
+                                     mandatory (2D child route-equivalent, or row
+                                     clone + own axis-1 scratch); no clones = cmt=0
+                                     banked as the verdict. VFFT_ILND_MT pins, never
+                                     banks. MT == ST bitwise (ilnd_probe pass 5).
 ```
 
 ## 8. Cross-cutting
@@ -932,7 +954,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | `il2d.blu` | E1.7 | 2D IL with **prime N1** (127x100 -> blu=256) |
 | `il2d.rw` | E2.1 | 2D IL r2c asymmetric (4096x16 -> rw=64) |
 | `il2d.roop` | E1.5 | 2D IL c2c at large N1 (16384x64) |
-| `ilnd.arm` `ilnd.ax0` `ilnd.ax1` | F1.1-F1.3 | 3D IL c2c (the structure, each axis's nst/blu, axis 0's wl); recurses into ilndchild / ilndrow |
+| `ilnd.arm` `ilnd.ax0` `ilnd.ax1` `ilnd.mt` | F1.1-F1.5 | 3D IL c2c (the structure, each axis's nst/blu, axis 0's wl, the MT verdict/T/clones); recurses into ilndchild / ilndrow |
 | `tcbsn` `tcbdn` | X4 | K=8 + BATCH_TRANSFORM_CONTIGUOUS |
 | `tcbw` | X3 | as above **plus** MT |
 | `tcmt` | B5.1 | as above **plus** MT: the raced serial-vs-slabs verdict (0 = serial) |

@@ -2284,20 +2284,47 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             a = (r & 1) ? 3 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
-            if (T > 1 && !getenv("VFFT_3DIL_NOHYGIENE")) {
-                /* THREAD HYGIENE (the --ilmt traps): (a) our pool workers
-                 * spin forever, so every MKL arm is preceded by a real
-                 * teardown; (b) MKL's OpenMP team spins KMP_BLOCKTIME
+            if (T > 1) {
+                /* THREAD HYGIENE (the --ilmt traps): (a) the library's pool
+                 * workers spin forever, so every MKL arm is preceded by a
+                 * real teardown; (b) MKL's OpenMP team spins KMP_BLOCKTIME
                  * (200 ms) after a compute, so our arm after an MKL arm
                  * gets 300 ms of cool first. Pool rebuilt before ours,
-                 * outside the timed region. */
+                 * outside the timed region. THROUGH THE PUBLIC API: this
+                 * TU includes threads.h and therefore owns a SECOND copy
+                 * of the pool state — stride_set_num_threads here would
+                 * act on the bench's copy, not on the pool the plan runs
+                 * (trap (d), found 2026-09-07: the bench's own startup
+                 * pool = 7 idle spinners on the plan's worker cores,
+                 * every threaded arm in the process 100x slow). */
                 if (a == 1 || a == 2)
-                    stride_set_num_threads(1);
+                    vfft_set_num_threads(1);
                 else if (a == 0) {
-                    stride_set_num_threads(T);
+                    vfft_set_num_threads(T);
                     if (prev_mkl) pace(300);
                 }
                 prev_mkl = (a == 1 || a == 2);
+                /* UNTIMED warm-up of >= 5 ms per sample, both sides alike:
+                 * the rebuilt pool's workers start up, MKL's parked team
+                 * wakes, each worker's cache partition settles, and the
+                 * caller core (asleep through pace) is back at full clock.
+                 * Measured 2026-09-07: a threaded plan's first ~2-3 ms of
+                 * executes after a pool rebuild run 1.5-5x slow (81x27x27:
+                 * round-0 mean 57-223 us, steady 40 us), so one warm
+                 * execute left the timed reps inside that transient. */
+                {
+                    const double tw = vfft_proto_now_ns();
+                    do {
+                        switch (a) {
+                        case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
+#ifdef VFFT_HAS_MKL
+                        case 1: DftiComputeForward(hMi, mz, mo); break;
+                        case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+#endif
+                        default: break;
+                        }
+                    } while (a != 3 && vfft_proto_now_ns() - tw < 5e6);
+                }
             }
             t0 = vfft_proto_now_ns();
             for (k = 0; k < reps; k++) {
@@ -4583,6 +4610,11 @@ int main(int argc, char **argv)
         W = vfft_wisdom_load(wd);
         if (mt)
             ilmt_pin_pcores(); /* the 8 distinct P-cores for BOTH engines, before any OpenMP init */
+        /* trap (d): the bench's startup pool is THIS TU's copy of the pool
+         * state (threads.h is static inline) — 7 idle spinners pinned to
+         * the very cores the library's workers use. Torn down here; the
+         * library's pool is driven through vfft_set_num_threads below. */
+        stride_set_num_threads(1);
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(mt ? g_mt : 1); /* like-for-like: MKL threads 3D at the same T */
         if (mt)
