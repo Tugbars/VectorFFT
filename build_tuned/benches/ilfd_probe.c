@@ -15,6 +15,7 @@
 #include <mkl_service.h>
 #include "vfft.h"
 #include "../../src/core/oop/il_flatdit.h"
+#include "../../src/core/oop/il_flatdit_race.h"
 #include "../../src/core/transforms/fft2d/il2d_cols.h"   /* _il2d_enum_rec for --race */
 static double now_ns(void){LARGE_INTEGER f,t;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&t);return (double)t.QuadPart*1e9/(double)f.QuadPart;}
 static void chain_s(const int *R, int K, char *cs, size_t n) { int off = 0; for (int s = 0; s < K; s++) off += snprintf(cs + off, n - off, "%s%d", s ? "." : "", R[s]); }
@@ -67,7 +68,7 @@ int main(int argc, char **argv) {
         {   vfft_ilfd_plan_t *best = p; int owned = 0;
             double tf = 1e300;
             if (race) {
-                vfft_ilfd_race_forms(p, x, z, now_ns);   /* per-stage form race on the seed too */
+                vfft_ilfd_race_forms(p, x, z);   /* per-stage form race on the seed too */
                 vfft_ilfd_execute_fwd(p, x, z);
                 for (int r = 0; r < 3; r++) { double t0 = now_ns(); vfft_ilfd_execute_fwd(p, x, z); t0 = now_ns()-t0; if (t0 < tf) tf = t0; }
                 int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND], cur[8], nc = 0, dropped = 0;
@@ -75,7 +76,7 @@ int main(int argc, char **argv) {
                 for (int c = 0; c < nc; c++) {
                     vfft_ilfd_plan_t *q = vfft_ilfd_create_chain(N, cand[c], lens[c]);
                     if (!q) continue;
-                    vfft_ilfd_race_forms(q, x, z, now_ns);
+                    vfft_ilfd_race_forms(q, x, z);
                     vfft_ilfd_execute_fwd(q, x, z);
                     double tq = 1e300;
                     for (int r = 0; r < 3; r++) { double t0 = now_ns(); vfft_ilfd_execute_fwd(q, x, z); t0 = now_ns()-t0; if (t0 < tq) tq = t0; }

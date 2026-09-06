@@ -400,6 +400,76 @@ static void _ilfd_serve(struct vfft_plan_s *h, vfft_dir_t dir,
         vfft_ilfd_execute_bwd(p, zin, zout);
 }
 
+/* ── THE BOUND K=1 IL DISPATCH (2026-09-07) ──────────────────────────────
+ * One entry per engine, the exact call the general dispatch below makes
+ * for that engine (both placements: zout = dre ? dre : sre, validated by
+ * _vfft_sig_bad). Bound once at create by _vfft_k1_bind_exec; the general
+ * dispatch stays as the path for everything else and for a trampoline that
+ * returns nonzero. */
+static int _k1x_mono(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{   /* ONE LEG: Ls = OLs = 1, count = 1 (the solo kernels index zin[2*(r*Ls + k)]) */
+    (dir == VFFT_FORWARD ? h->k1_mono_ilf : h->k1_mono_ilb)(zin, 0, zout, 0, 0, 0, 1, 0, 1, 0, 1);
+    return 0;
+}
+static int _k1x_il2p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    if (dir == VFFT_FORWARD) { vfft_il2p_execute_fwd(h->k1il2p, zin, zout); return 0; }
+    return vfft_il2p_execute_bwd(h->k1il2p, zin, zout);   /* nonzero: the general path decides */
+}
+static int _k1x_il3p(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    if (dir == VFFT_FORWARD) vfft_il3p_execute_fwd(h->k1il3p, zin, zout);
+    else vfft_il3p_execute_bwd(h->k1il3p, zin, zout);
+    return 0;
+}
+static int _k1x_ilfd(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    _ilfd_serve(h, dir, zin, zout);
+    return 0;
+}
+static int _k1x_ilpr(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout)
+{
+    if (dir == VFFT_FORWARD) vfft_ilprime_execute_fwd(h->k1ilpr, zin, zout);
+    else vfft_ilprime_execute_bwd(h->k1ilpr, zin, zout);
+    return 0;
+}
+/* Bind at the c2c create exits. The conditions are exactly those under
+ * which the general dispatch reaches the K=1 IL engines: 1D, K == 1,
+ * INTERLEAVED, no wrapper (tcb / plane queue / odd-real bridge / rank-N),
+ * not the cascade (its dispatcher carries the MT arm). Out of place the
+ * route is the committed k1_il_route (route truthfulness at create); in
+ * place the engine pointer, in the dispatch's own order. NULL plans pass. */
+static vfft_plan _vfft_k1_bind_exec(vfft_plan hp)
+{
+    struct vfft_plan_s *h = (struct vfft_plan_s *)hp;
+    if (!h) return hp;
+    h->k1_exec = NULL;
+    if (h->transform != VFFT_C2C || h->layout != (int)VFFT_LAYOUT_INTERLEAVED) return hp;
+    if (h->K != 1 || h->N2 > 0 || h->tcb || h->pq_inner || h->oddr_child || h->ilnd) return hp;
+    if (h->zsplit || h->zturn) return hp;
+    if (h->placement == VFFT_OUTOFPLACE)
+    {
+        if (!h->k1_on) return hp;
+        switch (h->k1_il_route)
+        {
+        case VFFT_K1_IL_MONO:    if (h->k1_mono_ilf && h->k1_mono_ilb) h->k1_exec = _k1x_mono; break;
+        case VFFT_K1_IL_2P_PURE: if (h->k1il2p) h->k1_exec = _k1x_il2p; break;
+        case VFFT_K1_IL_CHAIN3:  if (h->k1il3p) h->k1_exec = _k1x_il3p; break;
+        case VFFT_K1_IL_FLAT:    if (h->k1ilfd) h->k1_exec = _k1x_ilfd; break;
+        case VFFT_K1_IL_PRIME:   if (h->k1ilpr) h->k1_exec = _k1x_ilpr; break;
+        default: break;
+        }
+        return hp;
+    }
+    if (h->placement != VFFT_INPLACE) return hp;
+    if (h->k1_mono_ilf && h->k1_mono_ilb) h->k1_exec = _k1x_mono;
+    else if (h->k1il2p) h->k1_exec = _k1x_il2p;
+    else if (h->k1il3p) h->k1_exec = _k1x_il3p;
+    else if (h->k1ilfd) h->k1_exec = _k1x_ilfd;
+    else if (h->k1ilpr) h->k1_exec = _k1x_ilpr;
+    return hp;
+}
+
 void vfft_execute(vfft_plan h, vfft_dir_t dir,
                   double *sre, double *sim, double *dre, double *dim)
 {
@@ -418,6 +488,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
     }
     if (_vfft_sig_bad(h, dir, sre, sim, dre, dim))
         return;
+    if (h->k1_exec && h->k1_exec(h, dir, sre, dre ? dre : sre) == 0)
+        return; /* THE BOUND K=1 IL DISPATCH: one indirect call, bound at create */
     if (h->pq_inner)
     { /* 2D PLANE QUEUE (howmany > 1): loop or atomic-counter queue per
        * the raced verdict — see _pq_execute. */

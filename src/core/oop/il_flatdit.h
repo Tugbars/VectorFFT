@@ -121,7 +121,7 @@ typedef struct {
      * transposed backward (scrambled class), each in execution order, one
      * record per stage. The form fields above (msz / gl / gord / scr / tail)
      * are the SOURCE; vfft_ilfd_bind derives the lists from them, and every
-     * writer of those fields rebinds (create_chain, apply_forms, race_forms,
+     * writer of those fields rebinds (create_chain, apply_forms, the races,
      * create_scr_of, the planner's scr flip, the probes). */
     vfft_ilfd_call_t cf[VFFT_ILFD_MAX_K], cb[VFFT_ILFD_MAX_K], ct[VFFT_ILFD_MAX_K];
     /* THE TILE AXIS (2026-09-05): tw = the tile width in complex = one block
@@ -131,7 +131,7 @@ typedef struct {
      * stage stays global — the scatter's natural-base order fills output
      * lines contiguously only across the whole plane), the scrambled class
      * to K-1 (tile-local); both backward pipelines mirror it. Raced by the
-     * planner (vfft_ilfd_race_tw), banked as il_tw= on the kind-3 row,
+     * planner (il_flatdit_race.h), banked as il_tw= on the kind-3 row,
      * validated by vfft_ilfd_apply_tw. tlo/thi = the tiled range of cf/cb;
      * ct tiles its first K-tcut records; ntile = N / tw. */
     int tw, tcut, ntile, tlo, thi;
@@ -812,81 +812,9 @@ static inline int vfft_ilfd_tw_candidates(const vfft_ilfd_plan_t *p, long cache_
     return n;
 }
 
-/* the TILE race (2026-09-05): every candidate width timed on the whole
- * forward (tiling is a cross-stage locality property, so a per-stage clock
- * cannot see it), rounds alternating direction, min; the winner applied
- * and returned (0 = untiled). Runs AFTER the form race: the forms are the
- * kernels, the width is the walk. Leaves zout transformed. */
-static inline int vfft_ilfd_race_tw(vfft_ilfd_plan_t *p, const double *zin, double *zout,
-                                    long cache_bytes, double (*now_ns)(void))
-{
-    int cand[VFFT_ILFD_MAX_K + 1], n, i, r, best = 0;
-    double tt[VFFT_ILFD_MAX_K + 1];
-    n = vfft_ilfd_tw_candidates(p, cache_bytes, cand, VFFT_ILFD_MAX_K + 1);
-    if (n <= 1) { vfft_ilfd_apply_tw(p, 0); return 0; }
-    for (i = 0; i < n; i++) tt[i] = 1e300;
-    for (r = 0; r < 4; r++)
-        for (i = 0; i < n; i++) {
-            const int a = (r & 1) ? n - 1 - i : i;
-            double t0;
-            if (!vfft_ilfd_apply_tw(p, cand[a])) continue;
-            t0 = now_ns(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = now_ns() - t0;
-            if (t0 < tt[a]) tt[a] = t0;
-        }
-    for (i = 1; i < n; i++) if (tt[i] < tt[best]) best = i;
-    vfft_ilfd_apply_tw(p, cand[best]);
-    return cand[best];
-}
-
-/* Per-stage FORM race (2026-09-05): on each msz-eligible stage, time the
- * t2cp/tail form against msz on real data in pipeline order (a stage's
- * input is the previous stages' output) and keep the faster in
- * p->msz[s]. The probes' stand-in for the wisdom axis the front door will
- * bank; never a rule. Leaves the staging plane transformed (call the
- * plain execute afterwards for a spectrum). now_ns = the caller's clock. */
-static inline void vfft_ilfd_race_forms(vfft_ilfd_plan_t *p, const double *zin,
-                                        double *zout, double (*now_ns)(void))
-{
-    int s;
-    vfft_ilfd_stage(p, 0, zin, zout);
-    for (s = 1; s < p->K; s++) {
-        if (p->fgl[s]) {
-            /* the tail forms: t2csg per group, t2csgn in block order, and on
-             * the last stage t2csgn in natural-base order (msz off meanwhile) */
-            const int narm = (s == p->K - 1 && !p->scr) ? 3 : 2;
-            double tt[3] = { 1e300, 1e300, 1e300 };
-            int r, arm, best = 0;
-            p->msz[s] = 0;
-            for (r = 0; r < 7; r++)
-                for (arm = 0; arm < narm; arm++) {
-                    double t0;
-                    p->gl[s] = (arm != 0);
-                    if (s == p->K - 1) p->gord = (arm == 2);
-                    t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
-                    if (t0 < tt[arm]) tt[arm] = t0;
-                }
-            for (arm = 1; arm < narm; arm++) if (tt[arm] < tt[best]) best = arm;
-            p->gl[s] = (best != 0);
-            if (s == p->K - 1) p->gord = (best == 2);
-        }
-        if (p->tz[s]) {
-            /* msz against the best non-msz form of this stage */
-            double ta = 1e300, tb = 1e300;
-            int r;
-            for (r = 0; r < 3; r++) {
-                double t0;
-                p->msz[s] = 0;
-                t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
-                if (t0 < ta) ta = t0;
-                p->msz[s] = 1;
-                t0 = now_ns(); vfft_ilfd_stage(p, s, zin, zout); t0 = now_ns() - t0;
-                if (t0 < tb) tb = t0;
-            }
-            p->msz[s] = (tb < ta);
-        }
-        vfft_ilfd_stage(p, s, zin, zout);
-    }
-    vfft_ilfd_bind(p);
-}
+/* The FORM race (il_forms=) and the TILE race (il_tw=) live in
+ * il_flatdit_race.h on the shared race body: whole-forward arms, batched
+ * samples. This header stays engine-pure — the plan, the bind, the
+ * executor, the form validators. */
 
 #endif /* VFFT_IL_FLATDIT_H */

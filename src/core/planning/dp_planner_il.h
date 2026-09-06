@@ -110,6 +110,7 @@
 #include "zturn.h"      /* ZTURN-S route: create_chain / execute (route axis) */
 #include "il2p.h"       /* PURE-IL two-pass (fwd)                             */
 #include "il_flatdit.h" /* the FLAT mixed-radix DIT: the odd-N engine (2026-09-05) */
+#include "il_flatdit_race.h" /* its FORM and TILE races on the shared race body (2026-09-07) */
 #include "cpu_cache.h"  /* L1d capacity for the tcut width filter; PLANNING   */
 #include "wisdom2_oop.h" /* THE oop family entry struct + codecs (wisdom2 folder) */
 
@@ -975,12 +976,14 @@ static double _il_dp_bench_dir(vfft_il_dp_context_t *ctx, int N,
     {   /* the flat DIT's per-stage FORM race, on the planner's own data and
          * clock (real stage inputs, pipeline order); the verdict rides in
          * the candidate so the cell's winner banks it (il_forms=) */
-        vfft_ilfd_race_forms(b.ifd, ctx->z_in, ctx->z_out, _il_dp_now_ns);
+        vfft_ilfd_race_forms(b.ifd, ctx->z_in, ctx->z_out);
         (void)vfft_ilfd_forms_str(b.ifd, c->il_flf, sizeof c->il_flf);
         /* then the TILE race (the cascade's tcut in flat form): the stage
-         * spans that fit L2, on the whole forward, banked as il_tw= */
+         * spans that fit the budget, on the whole forward, banked as il_tw=.
+         * The budget is L1d below 2048 (the plane is 2-32 KB there and a
+         * tile that fits L2 gates nothing), L2 above. */
         c->il_tw = vfft_ilfd_race_tw(b.ifd, ctx->z_in, ctx->z_out,
-                                     vfft_cpu_l2_bytes(), _il_dp_now_ns);
+                                     N < 2048 ? vfft_cpu_l1d_bytes() : vfft_cpu_l2_bytes());
     }
 
     /* warmup (+ joint roundtrip refusal for cascades) */

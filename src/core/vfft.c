@@ -34,6 +34,7 @@
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
+#include "il_flatdit_race.h"    /* its FORM / TILE races on the shared race body      */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -139,6 +140,11 @@ long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
 /* the flat DIT's (odd-N K=1 IL) intra-transform MT engagement (il_flatdit_mt.h) */
 long _vfft_ilfd_mt_count = 0;
 long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
+/* the flat DIT's race property (il_flatdit_race.h): arms whose timed batch
+ * was under half the sample target — reads 0 when every verdict was
+ * decided above the clock's tick */
+long _vfft_ilfd_short_count = 0;
+long vfft_ilfd_race_short_samples(void) { return _vfft_ilfd_short_count; }
 
 /* ── HARNESS COUNTERS (refactor safety, docs/design/refactor_safety_harness.md)
  *
@@ -1419,6 +1425,7 @@ static int _tc_clone_equiv(const struct vfft_plan_s *a,
     return 1;
 }
 
+static vfft_plan _vfft_k1_bind_exec(vfft_plan hp); /* vfft_execute.h: the bound K=1 IL dispatch */
 static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
 {
     if (!cfg)
@@ -1783,12 +1790,12 @@ static vfft_plan _vfft_create_inner(const vfft_config_t *cfg, vfft_batch ob)
      * Kp CT plan -> plan_create_ex returns NULL -> NULL (padding unsupported there for now). */
     /* c2c in-place create tier (step 24) */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_INPLACE)
-        return _vfft_create_c2c_ip(cfg, ob, W, reg, N, K);
+        return _vfft_k1_bind_exec(_vfft_create_c2c_ip(cfg, ob, W, reg, N, K));
 
     /* ── c2c OUT-OF-PLACE ── */
     /* c2c out-of-place create tier (step 25) */
     if (cfg->transform == VFFT_C2C && cfg->placement == VFFT_OUTOFPLACE)
-        return _vfft_create_c2c_oop(cfg, ob, W, reg, N, K);
+        return _vfft_k1_bind_exec(_vfft_create_c2c_oop(cfg, ob, W, reg, N, K));
 
     /* ── r2c (real -> complex, forward; split output) ── */
     /* the odd-real bridge (struct comment at oddr_child): serves

@@ -186,6 +186,16 @@ struct vfft_plan_s
      * consumes zin before the last stage writes zout). Same IL-only-handle
      * rules as k1il3p. Owned. */
     vfft_ilfd_plan_t *k1ilfd;
+    /* THE BOUND K=1 IL DISPATCH (2026-09-07, feedback_execution_purity: bind
+     * at plan time, execute = pure dispatch). For a 1D c2c INTERLEAVED K=1
+     * plan served by one of the IL engines above or the mono solo, create
+     * binds the engine's entry here (_vfft_k1_bind_exec) and vfft_execute
+     * calls it right after the signature check: no route switch, no engine
+     * probing, no placement or layout branch per call. Returns 0 when
+     * served; nonzero = fall through to the general dispatch (the il2p
+     * backward's unresolvable arm keeps its convert-or-warn path there).
+     * NULL = the general dispatch (batches, 2D/3D, the cascade, split). */
+    int (*k1_exec)(struct vfft_plan_s *h, vfft_dir_t dir, const double *zin, double *zout);
     /* TRANSFORM-CONTIGUOUS batch (config.batch_geom, 1D C2C interleaved,
      * K>1): this handle is a thin WRAPPER — `tcb` is a fully-built K=1
      * handle and execute simply runs it K times at 2*N-double strides.

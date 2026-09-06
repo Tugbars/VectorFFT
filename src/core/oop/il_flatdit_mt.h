@@ -284,7 +284,8 @@ static inline int vfft_ilfd_mt_race(vfft_ilfd_plan_t *p, int T, int tw0,
         t0 = _il_ab_now(); vfft_ilfd_execute_fwd(p, zin, zout); t0 = _il_ab_now() - t0;
         reps = (int)(20e6 / (t0 > 1.0 ? t0 : 1.0));
         if (reps < 2) reps = 2;
-        if (reps > 256) reps = 256;
+        if (reps > (1 << 19)) reps = 1 << 19;   /* 20 ms at 128 is 285k executes; the old
+                                                 * cap of 256 left an 18 us sample there */
     }
 #define ILFD_ARM(MT, TW, NAME) do { \
         cx[na].p = p; cx[na].zin = zin; cx[na].zout = zout; cx[na].mt = (MT); cx[na].tw = (TW); cx[na].ok = 1; \

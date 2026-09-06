@@ -602,8 +602,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                                 double ns[2]; /* [0] incumbent, [1] zcasc */
-                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, 0, rz, r0,
-                                                        2 * (size_t)N * sizeof(double) };
+                                /* DESIGNATED: the positional form drifted when the ctx gained
+                                 * .ifd (2026-09-05) — twelve values into thirteen slots put
+                                 * the seed pointer into .rz, the byte count into .r0, and
+                                 * every cold natural OOP create at N >= 2048 read its input
+                                 * from address 0x8000 (k1_pow2_gate, 2026-09-07). */
+                                _c2c_race_ctx_t rc = { .h = hk, .oop = 1, .zt = zct, .zroute = 1,
+                                                       .rz = rz, .r0 = r0, .nb = 2 * (size_t)N * sizeof(double) };
                                 const vfft_race_arm_t arms[2] = {
                                     { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
                                 /* 5 rounds, odd rounds reversed, median-of-5; no reseed: src is
@@ -706,8 +711,13 @@ static vfft_plan _vfft_create_c2c_oop(const vfft_config_t *cfg,
                                 const int reps =
                                     N <= 4096 ? 24 : (N <= 16384 ? 10 : 6);
                                 double ns[2]; /* [0] incumbent, [1] zcasc */
-                                _c2c_race_ctx_t rc = { hk, 1, zct, NULL, 1, NULL, NULL, NULL, 0, rz, r0,
-                                                        2 * (size_t)N * sizeof(double) };
+                                /* DESIGNATED: the positional form drifted when the ctx gained
+                                 * .ifd (2026-09-05) — twelve values into thirteen slots put
+                                 * the seed pointer into .rz, the byte count into .r0, and
+                                 * every cold natural OOP create at N >= 2048 read its input
+                                 * from address 0x8000 (k1_pow2_gate, 2026-09-07). */
+                                _c2c_race_ctx_t rc = { .h = hk, .oop = 1, .zt = zct, .zroute = 1,
+                                                       .rz = rz, .r0 = r0, .nb = 2 * (size_t)N * sizeof(double) };
                                 const vfft_race_arm_t arms[2] = {
                                     { "incumbent", _c2c_race_inc, &rc }, { "zcasc", _c2c_race_chal, &rc } };
                                 const vfft_race_proto_t proto = { 5, reps, VFFT_RACE_MEDIAN, 1, 0, NULL, NULL };

@@ -38,6 +38,7 @@
 #include <windows.h>
 #include "vfft.h"
 long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h */
+long vfft_ilfd_race_short_samples(void); /* the race-clock PROPERTY: 0 = every verdict above the tick */
 
 static const int NS[] = { 405, 1215, 4095, 6561, 19683, 59049, 98415, 177147 };   /* 177147: above the L2 edge, the tile axis's cell */
 
@@ -316,6 +317,12 @@ int main(int argc, char **argv)
             free(ys); free(rs); free(ys2);
         }
         free(x); free(y); free(r); free(z); free(y2);
+    }
+    {   /* the race-clock property (il_flatdit_race.h): no arm of any form or
+         * tile race was decided on a batch under half the sample target */
+        const long short_samples = vfft_ilfd_race_short_samples();
+        printf("\nrace clock: short samples = %ld%s\n", short_samples, short_samples ? "   *** FAIL ***" : "");
+        if (short_samples) fails++;
     }
     printf("\n=== %s ===\n", fails ? "*** FAIL ***" : "ALL PASS");
     return fails ? 1 : 0;

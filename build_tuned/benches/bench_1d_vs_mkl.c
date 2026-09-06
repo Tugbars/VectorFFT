@@ -431,6 +431,7 @@ static int g_k1dir = 0;              /* --k1dir: time K=1 IL in-place BOTH
 static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
+static void bench_pin_one_thread(void); /* the one-thread protocol helper (defined beside ilmt_pin_pcores) */
 static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
                                        * (il_flatdit_mt.h) vs MKL at the same T — the
                                        * two-team protocol of --3dil --mt (traps a-d) */
@@ -613,6 +614,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
                            * engine is the K=1 IL route or the convert
                            * fallback (exactly what D1 measures). */
 
+    if (!g_k1noop_mt) bench_pin_one_thread();   /* the one-thread protocol (once per process) */
     vfft_wisdom *W = k1z_bundle();
     if (!W)
     {
@@ -1138,6 +1140,33 @@ static void run_kzb_cell(int N, int K, FILE *out, int cool_ms, int flip)
  * ════════════════════════════════════════════════════════════════════════ */
 static int g_ilmt = 0;
 static int g_zr2c = 0;   /* --zr2c: D2 interleaved r2c/c2r vs MKL real-CCE in-place */
+
+/* THE ONE-THREAD PROTOCOL (2026-09-07): the calling thread PINNED to core 2
+ * (mask 0x4) at HIGH priority. Without the pin a paced sample wakes on
+ * whichever core the scheduler picks (cold caches, that core's own
+ * frequency ramp) and the pace measures the migration, not the transform;
+ * MKL at one thread runs on this same calling thread, so both arms sit on
+ * the same core. Every one-thread cell runner calls this once; the threaded
+ * runners use ilmt_pin_pcores() instead. VFFT_BENCH_PIN=0 lifts it (the
+ * control for "did the pin itself move a number?"). */
+static void bench_pin_one_thread(void)
+{
+    static int done = 0;
+    const char *e = getenv("VFFT_BENCH_PIN");
+    if (done) return;
+    done = 1;
+    if (e && !strcmp(e, "0")) {
+        printf("# one-thread protocol: pin LIFTED (VFFT_BENCH_PIN=0) — the caller floats\n");
+        return;
+    }
+#ifdef _WIN32
+    SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
+    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+    printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority (VFFT_BENCH_PIN=0 lifts)\n");
+#else
+    printf("# one-thread protocol: pin is Win32-only here; the caller floats\n");
+#endif
+}
 
 /* the 8 distinct P-cores; VFFT_PCORE_MASK overrides for a different CPU. */
 static void ilmt_pin_pcores(void)
@@ -2256,15 +2285,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
     DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
 #endif
     if (rounds > 64) rounds = 64;
-    if (T <= 1 && !(getenv("VFFT_3DIL_PIN") && !strcmp(getenv("VFFT_3DIL_PIN"), "0"))) {
-        /* the one-thread protocol: the calling thread PINNED to core 2 (mask 0x4)
-         * at HIGH priority. Without the pin a paced sample wakes on whichever core
-         * the scheduler picks (cold caches, that core's own frequency ramp) and the
-         * pace measures the migration, not the transform. MKL at one thread runs on
-         * this same calling thread: both arms on the same core. VFFT_3DIL_PIN=0 lifts. */
-        SetThreadAffinityMask(GetCurrentThread(), (DWORD_PTR)0x4);
-        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-    }
+    if (T <= 1) bench_pin_one_thread();   /* the one-thread protocol (once per process) */
     fprintf(stderr, "[3dil] %dx%dx%d create (wisdom miss => races here)...\n", N1, N2, N3);
     srand(17 + N1 + N2 + N3);
     for (i = 0; i < TN; i++) {
@@ -4737,9 +4758,8 @@ int main(int argc, char **argv)
                    "the teams, the warm-up re-wakes them, spreads still widen: quote the unpaced run.\n",
                    g_mt, g_trial_pace_ms);
         else
-            printf("# one-thread protocol: caller pinned core 2 (mask 0x4) at HIGH priority%s; "
-                   "per-sample pace %d ms (VFFT_TRIAL_PACE_MS) before the cachebust + >= 5 ms warm-up.\n",
-                   (getenv("VFFT_3DIL_PIN") && !strcmp(getenv("VFFT_3DIL_PIN"), "0")) ? " (LIFTED: VFFT_3DIL_PIN=0)" : "",
+            printf("# one-thread samples: per-sample pace %d ms (VFFT_TRIAL_PACE_MS) before the "
+                   "cachebust + >= 5 ms warm-up; the pin line follows at the first cell.\n",
                    g_trial_pace_ms);
         printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
                "structure from wisdom); M-inter = DFTI 3D CCE NOT_INPLACE (MKL best); "

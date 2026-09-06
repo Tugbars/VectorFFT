@@ -143,6 +143,7 @@ ARGSTYLE = {
     "il_solo_gate":            ("flag", False),
     # COLD: the FLAT DIT (odd N) races once per cell, banks, replays bit-identically; route=flat above 27^3
     "flatdit_gate":            ("flag", False),
+    "k1_pow2_gate":            ("flag", False),   # the K=1 IL tier at pow2 N through the front door (sub-2048 campaign)
     # COLD on purpose: seeding makes every measure cell report NO RACE, because it
     # correctly replays the banked verdict instead of racing.
     "vfft_natural_front_gate": ("flag", False),
@@ -172,6 +173,7 @@ TEXTUAL = {"sp_ccol_decode_gate"}       # #includes vfft.c; must NOT add --vfft
 # Wall-clock budget overrides, seconds (see run()). Only gates whose honest
 # runtime does not fit the flat seeded/cold split belong here.
 BUDGET_OVERRIDE = {
+    "k1_pow2_gate":            900,    # cold races at 6 pow2 cells x 2 order classes x (T=1 + T=8)
     "vfft_natural_front_gate": 1800,   # cold races at 5 N x 4 passes + reload: 12-18 min on the i9
     "zturn_tcut_gate":         900,    # 4 cells x (arms + naive-DFT reference per tiled arm): 576 s measured uncapped on a store that already serves its cells (2026-09-02); the time is the correctness work, not recalibration
     "odd_partner_cells_gate":  900,    # 20 cells x (correctness + A/B build pair) and wisdom_write=0: it cannot seed itself, so it recalibrates every run (464 s measured uncapped, 2026-09-02)
