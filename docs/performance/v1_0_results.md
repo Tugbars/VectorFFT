@@ -1249,6 +1249,76 @@ Standalone (`ilfd_probe --race`) the engine runs 0.88–1.22× MKL across
 where it serves. Its remaining deficit is the 5^k and 7^k families, where
 MKL's radix-5/7 sweeps are cheaper per element.
 
+### 1D ODD c2c — the K=1 IL tier MULTITHREADED (2026-09-07)
+
+The flat mixed-radix DIT threads its own bound call lists
+(`oop/il_flatdit_mt.h`, `docs/design/odd_n_engine.md` §8.2): every stage
+is a set of independent units (the leaf's columns, a mid stage's blocks, a
+tail stage's groups) and the tile axis's tiles are self-contained, so the
+two arms are BLOCKS (every stage by units, one dispatch per stage) and
+TILES (the wide prefix by units, then disjoint tile ranges walked
+depth-first, then the wide tail by units). Both are loop restrictions of
+the serving lists — threaded output is bitwise the serial output, gated
+both classes and both directions (`flatdit_gate`). The verdict is raced
+at the plan's T against serial with every legal tile width as an arm of
+the tiles family (the threaded width differs from the one-thread width at
+19683, 59049 and 177147), steady-state samples, banked `il_mt= il_mt_t=
+il_mt_tw=` on the class's kind-3 row; below L2 the race banks serial (405,
+1215, 4095). Nothing is cloned. `vfft_ilfd_mt_passes()` counts engagement;
+every number below carries it.
+
+**Same-run, the create race itself** (T=8, REPS executes per sample after
+two warm passes, min of 3 alternated rounds; serial = the same tier at one
+thread in the same race):
+
+```
+ N         serial (ns)   MT (ns)   speedup   verdict
+──────────────────────────────────────────────────────
+ 6561          14,759     8,890     1.7×    tiles/tw729
+ 15625         38,053    17,167     2.2×    tiles/tw625
+ 16807         38,134    16,461     2.3×    tiles/tw2401
+ 19683         46,438    16,786     2.8×    tiles/tw729
+ 59049        160,497    39,382     4.1×    tiles/tw729
+ 78125        280,064    89,413     3.1×    tiles/tw125
+ 98415        287,983    54,429     5.3×    tiles/tw1215
+ 117649       353,283    59,150     6.0×    tiles/tw16807
+ 137781       389,016    83,332     4.7×    tiles/tw1701
+ 177147       593,023   100,606     5.9×    tiles/tw2187
+ 194481       594,571   118,306     5.0×    tiles/tw3087
+──────────────────────────────────────────────────────
+```
+
+**vs MKL at the same T=8** (`bench_1d_vs_mkl --k1noop --mt <N>`, one
+process per cell, both engines confined to the 8 P-cores, MKL's team born
+before our pool pins the caller, the library pool torn down before MKL's
+arm and rebuilt before ours, ≥ 300 ms cool after MKL, ≥ 5 ms of untimed
+warm executes per arm on both sides, best-of-5; MKL = `DFTI_NOT_INPLACE`
+at 8 threads; correctness = cross-engine elementwise, both natural):
+
+```
+ N          O-NATIVE T=8 (ns)   MKL T=8 (ns)   vs MKL   elementwise
+──────────────────────────────────────────────────────────────────────
+ 6561                 8,125          11,908    1.47×    1.1e-15
+ 15625               16,247          19,790    1.22×    6.9e-16
+ 16807               13,997          25,336    1.81×    1.3e-15
+ 19683               16,982          24,141    1.42×    1.5e-15
+ 59049               40,424          55,958    1.38×    1.5e-15
+ 78125               77,712          62,168    0.80×    1.1e-15
+ 98415               51,840         104,995    2.03×    1.6e-15
+ 117649              59,569         118,100    1.98×    1.1e-15
+ 137781              70,507         121,657    1.73×    1.5e-15
+ 177147              90,027         159,173    1.77×    1.4e-15
+ 194481              97,440         195,170    2.00×    1.3e-15
+──────────────────────────────────────────────────────────────────────
+                                              10/11 win, median ~1.73×
+```
+
+The one loss is 78125 = 5⁷: its all-radix-5 chain offers the shallowest
+tiles and MKL's 5-power path scales well; the single-thread cell (1.29×)
+is unchanged. Like-for-like now exists at T=8 for the whole odd table;
+the single-thread table above stays measured against MKL pinned to one
+thread.
+
 ### 1D ODD/PRIME r2c/c2r — full coverage, priced vs MKL (2026-08-27)
 
 The 1D real transforms now serve **every odd N in both directions and

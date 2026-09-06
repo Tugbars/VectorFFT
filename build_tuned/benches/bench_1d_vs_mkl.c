@@ -4554,8 +4554,9 @@ int main(int argc, char **argv)
         const char *tp = getenv("VFFT_TRIAL_PACE_MS");
         g_trial_pace_ms = tp ? atoi(tp) : 0;
     }
-    if (mt)
-        target_N = 0; /* MT = full in-process sweep; OOP honors isolation (target_N,target_K) */
+    if (mt && !g_k1noop_mt)
+        target_N = 0; /* MT = full in-process sweep; OOP honors isolation (target_N,target_K);
+                       * --k1noop --mt keeps the one-process-per-cell form */
 
     stride_env_init();
     /* --ilmt: confine the PROCESS to the 8 distinct P-cores before any MKL /
@@ -5286,8 +5287,8 @@ int main(int argc, char **argv)
             pace(pace_ms);
         }
     }
-    while (fgets(line, sizeof line, f))
-    {
+    while (!g_k1noop_mt && fgets(line, sizeof line, f))
+    {   /* the legacy wisdom sweep; --k1noop --mt runs only its front-door cell below */
         if (line[0] == '#' || line[0] == '@' || line[0] == '\n')
             continue;
         char *save;
