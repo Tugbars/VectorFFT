@@ -779,6 +779,16 @@ E1.6 cmt - column/band MT             RACED, banked WITH cmtt (the per-T class).
                                       mode 3 of the c2c walk / the real strip);
                                       the banded walk (E1.2) stays structural
                                       for them (no chain walk to tile).
+E1.0 the ORDER KEY of every bank   FIXED 2026-09-07: the axis race (E1.2/E1.5), the
+                                 c2c MT race (E1.6) and the real tier's row and
+                                 column-MT races keyed the order by the PASS's
+                                 natural flag (il2d_col.nat), not the CELL's order;
+                                 a natural cell whose chain is natural by
+                                 construction (one stage, Bluestein) banked its
+                                 verdicts on the SCRAMBLED row — re-raced on every
+                                 create, and the scrambled cell served a natural
+                                 measurement. Found by the 3D natural class's
+                                 child cells (64x64, 32x32); now cfg->order.
 E1.7 N1-arm                      RACED, BANKED (2026-09-02): native odd chain vs
                                  COLUMN-AXIS Bluestein -> sets blu, rewrites
                                  nst/R/L. Verdict token blu= on the lay=il row
@@ -933,6 +943,19 @@ F1.5 cmt - the MT partition          RACED, BANKED with cmtt + cmts (2026-09-07)
                                      clone + own axis-1 scratch); no clones = cmt=0
                                      banked as the verdict. VFFT_ILND_MT pins, never
                                      banks. MT == ST bitwise (ilnd_probe pass 5).
+F1.6 the NATURAL class               ITS OWN ord=nat CELL (2026-09-07,
+                                     docs/design/3D_natural_il_design.md): axis 0
+                                     = the scrambled pass; the per-plane structure
+                                     runs OUT OF PLACE along the digit-reversal
+                                     cycles with one plane buffer (fixed points in
+                                     place); bwd = the inverse walk first (oop: a
+                                     direct permuted copy), then axis 0. Every
+                                     verdict of F1.1-F1.5 raced again on this cell
+                                     (child = the natural 2D plan out of place, flat
+                                     = the natural axis-1 pass + rows); MT adds a
+                                     CYCLES phase (disjoint cycles per worker,
+                                     longest first, one buffer each); band fusion
+                                     is off. Never compared with the ord=scr cell.
 ```
 
 ## 8. Cross-cutting

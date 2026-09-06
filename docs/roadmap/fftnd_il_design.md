@@ -127,7 +127,7 @@ this; at this tier's axis 0 nothing did).
 | 2 | C2C, rank 3, howmany 1, OUT OF PLACE, order DEFAULT/SCRAMBLED, one thread | SHIPPED 2026-09-06 |
 | 4 | MT: band arm vs plane arm vs serial, raced per (cell, T), clones per worker | SHIPPED 2026-09-07 |
 | 3a | IN PLACE: the same plan and row serve both placements (every pass alias-tolerant; output bitwise the out-of-place output) | SHIPPED 2026-09-07 |
-| 3b | NATURAL order (its own `ord=nat` cell) | next |
+| 3b | NATURAL order (its own `ord=nat` cell): axis 0 stays scrambled, the per-plane pass writes each finished plane to its natural position along the digit-reversal cycles with one plane of buffer — `docs/design/3D_natural_il_design.md` | SHIPPED 2026-09-07 |
 | 5 | real 3D (r2c/c2r) | after 3 |
 | 6 | rank 4 (axis 0 wide, then per plane the rank-3 tier or the flat form, raced) | after 5 |
 

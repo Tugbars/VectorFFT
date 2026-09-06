@@ -2276,8 +2276,9 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
         cfg.n[1] = N2;
         cfg.n[2] = N3;
         cfg.howmany = 1;
-        cfg.order = VFFT_ORDER_DEFAULT;
-        cfg.nthreads = T; /* --mt: the plan's thread snapshot; MKL gets the same TN */
+        cfg.order = (getenv("VFFT_3DIL_ORDER") && !strcmp(getenv("VFFT_3DIL_ORDER"), "nat"))
+                        ? VFFT_ORDER_NATURAL : VFFT_ORDER_DEFAULT; /* natural: the like-for-like order (MKL's output is natural) */
+        cfg.nthreads = T; /* --mt: the plan's thread snapshot; MKL gets the same T */
         cfg.wisdom = W;
         cfg.wisdom_write = 0; /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
@@ -2367,6 +2368,8 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
                     } while (a != 3 && vfft_proto_now_ns() - tw < 5e6);
                 }
             }
+            if (g_trial_pace_ms > 0)
+                pace(g_trial_pace_ms); /* the per-SAMPLE pace (env VFFT_TRIAL_PACE_MS): thermal headroom between arms */
             t0 = vfft_proto_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
@@ -4697,6 +4700,8 @@ int main(int argc, char **argv)
         printf("=== 3DIL: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (front door; "
                "wisdom=%s %s; rounds=%d, T=%d, core%d) ===\n",
                wd, W ? "loaded" : "MISSING", rounds, mt ? g_mt : 1, core);
+        printf("# order: %s\n", (getenv("VFFT_3DIL_ORDER") && !strcmp(getenv("VFFT_3DIL_ORDER"), "nat"))
+                                    ? "NATURAL (the like-for-like order: MKL's output is natural)" : "DEFAULT (scrambled)");
         printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
                "structure from wisdom); M-inter = DFTI 3D CCE NOT_INPLACE (MKL best); "
                "M-split = DFTI REAL_REAL NOT_INPLACE; ctl = memcpy. '~' = delta "

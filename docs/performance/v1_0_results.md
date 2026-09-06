@@ -1126,6 +1126,53 @@ Source: `bench_1d_vs_mkl.c --zr2c` -> `vfft_perf_tuned_1d_zr2c_fd.csv`.
 > host is up to ~0.2 per cell (thermal) and MKL's own arm moved ~26% between runs at 2048 -
 > quote the **shape**, not one day's third digit.
 
+#### 3D C2C — the NATURAL class (2026-09-07)
+
+`order=NATURAL` is its own `ord=nat` cell (`docs/design/3D_natural_il_design.md`):
+axis 0 runs the scrambled pass unchanged, and the per-plane structure,
+which reads and writes every plane anyway, runs out of place and writes
+each finished plane to its natural position along the digit-reversal
+cycles with one plane of buffer — no scratch cube, no extra sweep. Inside
+a plane the natural 2D child or the natural axis-1 pass plus the row plan
+give natural order. Both placements; threaded with a cycles phase
+(disjoint cycles per worker, one buffer each). This is the LIKE-FOR-LIKE
+order against MKL, whose output is natural. Same protocol as the tables
+above (`--3dil` with `VFFT_3DIL_ORDER=nat`; medians, spreads, `~` =
+inside the control spread); machine in use, MKL's spreads to 290% at T=8.
+
+```
+ cell         natural T=1 (ns)   MKL T=1 (ns)   vs MKL   over scrambled   | natural T=8 (ns)   MKL T=8 (ns)   vs MKL
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 16³                 6,828 (8%)     7,175 (16%)   1.05×      1.06×          |     3,686 (13%)      2,852 (17%)   0.77×
+ 32³                51,964 (8%)    63,116  (6%)   1.21×      1.00×          |    23,472 (20%)     13,944 (291%)  0.59×
+ 64³               772,688 (22%)  891,000 (12%)   1.15×~     1.37×          |    99,075 (15%)    112,450 (120%)  1.13×~
+ 128³            8,557,762 (9%) 9,905,325 (14%)   1.16×~     1.23×          | 1,564,175 (24%)  1,323,250 (14%)   0.85×~
+ 32×16×64           57,718 (6%)    53,048 (15%)   0.92×~     1.23×          |    16,695 (27%)     14,728 (24%)   0.88×~
+ 64×128×32         884,663 (25%)  926,013 (22%)   1.05×~     1.48×          |   116,025 (36%)    110,950  (5%)   0.96×~
+ 256×64×16         857,300 (19%)  743,825 (17%)   0.87×~     1.20×          |   124,075 (12%)    108,375 (66%)   0.87×~
+ 27×9×15             8,261 (9%)     9,215  (8%)   1.12×~     1.46×          |     4,943 (23%)      5,359 (42%)   1.08×
+ 36×20×28           38,594 (32%)   58,317  (7%)   1.51×      1.16×          |    17,585 (51%)     16,397 (27%)   0.93×~
+ 45³               221,100 (4%)   271,905  (7%)   1.23×~     1.03×          |    63,776 (34%)     43,938 (138%)  0.69×
+ 81×27×27          138,585 (22%)  171,315  (8%)   1.24×~     1.14×          |    34,194 (78%)     32,842 (37%)   0.96×~
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                9/11 win or tie             |                                     2/11
+```
+
+"Over scrambled" is the natural cell's one-thread time divided by the
+scrambled cell's from the table above: the natural class costs nothing
+at the small cubes and up to 37% at 64³. That cost is the band fusion it
+gives up, not the cold writes: the natural cell's width race banks `wl=0`
+at 64³ because a band with nothing fused into it buys nothing, so every
+axis-0 stage streams the cube and the plane pass streams it once more.
+Threaded, the same fusion loss is what separates the natural cell from
+the scrambled one (whose threaded verdicts are band arms at most cells);
+the cycles-per-worker balance is 0.75–1.0 of ideal at every cell and is
+not the cause. Levers, both measured items for the natural cell's race:
+a fused natural arm (the scratch-cube form, which keeps band fusion at
+the price of a cube of scratch), and the natural axis-1 pass's own
+scratch sweep per plane. The single-thread standing — natural beats MKL's
+natural at 9 of 11 cells — is the like-for-like order result.
+
 ### 1D ODD c2c — the K=1 IL tier for odd N (2026-09-06)
 
 Odd N (and odd·2) is served by the K=1 IL tier's own engines, raced per

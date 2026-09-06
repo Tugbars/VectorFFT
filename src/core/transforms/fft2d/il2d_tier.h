@@ -1124,7 +1124,7 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                     cbest);
         vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst, bw,
                        bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                       bestns + cbest, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                       bestns + cbest, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
     }
 }
@@ -1171,7 +1171,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
                            h->il2d_col.R, h->il2d_col.nst,
                            h->il2d_rw, h->il2d_col.wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
             _vw2_persist(W, cfg);
             return;
         }
@@ -1187,7 +1187,7 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
                    h->il2d_col.R, h->il2d_col.nst, h->il2d_rw,
                    h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
                    (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                   h->il2d_col.colmt ? mt : st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                   h->il2d_col.colmt ? mt : st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 
@@ -2010,6 +2010,14 @@ static void _il2d_arm_axis(void *v)
     vfft_execute((vfft_plan)h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 
+/* ORDER CELLS (2026-09-07): every bank below keys the order by the CELL's
+ * order (cfg->order), never by the pass's natural flag — a natural cell
+ * whose chain is natural by construction (a single stage, a Bluestein
+ * axis) has il2d_col.nat == 0, and keying by that flag banked its axis and
+ * MT verdicts on the SCRAMBLED row: the natural cell re-raced on every
+ * create and the scrambled cell served a natural measurement (found by the
+ * 3D natural class's child cells; the owner's law: order cells are never
+ * compared, never mixed). */
 static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                             const vfft_config_t *cfg, int N1, int N2)
 {
@@ -2186,7 +2194,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     }
     vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                          h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
-                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -2292,7 +2300,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
                              h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                              0, h->nthreads,
-                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
         return;
     }
@@ -2333,7 +2341,7 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
                          h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                          h->il2d_col.colmt, h->nthreads,
                          (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
-                         h->il2d_col.colmt ? mt : st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                         h->il2d_col.colmt ? mt : st, (cfg->order == VFFT_ORDER_NATURAL ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 

@@ -19,9 +19,9 @@
  * THE STRUCTURE IS A RACED ARM (owner 2026-09-06, "only racing both to each
  * other can tell"), never an architectural default:
  *   arm 1, the RECURSION : axis 0 wide, then a plain 2D IL c2c CHILD plan
- *            (its own (N2,N3) wisdom cell, in place) executed per plane —
- *            axis 1 and the rows with every 2D verdict (chain, forms,
- *            band, row route) raced as a standalone 2D transform;
+ *            (its own (N2,N3) wisdom cell) executed per plane — axis 1
+ *            and the rows with every 2D verdict (chain, forms, band, row
+ *            route) raced as a standalone 2D transform;
  *   arm 2, the FLAT tier : axis 0 wide, then per plane this tier's OWN
  *            axis-1 column pass (its chain raced in the 3D context, the
  *            same build function) and the row pass over the plane's rows.
@@ -43,6 +43,23 @@
  * verdicts live on the child's cell. VFFT_ILND_ARM=1|2 and VFFT_ILND_WL=w
  * pin for a probe and never bank.
  *
+ * THE NATURAL CLASS (2026-09-07; docs/design/3D_natural_il_design.md): its
+ * own ord=nat cell. Axis 0 stays the SCRAMBLED pass (in place, banded,
+ * threaded as above), so after it position q holds the plane whose
+ * natural index is natp[q] (the chain's digit reversal — the very table
+ * the 2D natural class scatters by). The per-plane structure, which reads
+ * and writes every plane anyway, is run OUT OF PLACE and writes each
+ * finished plane to its natural position, following the permutation's
+ * cycles with ONE plane of buffer: save the cycle's first plane, fill each
+ * vacated position with the plane that belongs there, the saved plane
+ * closes the cycle; fixed points run in place. Inside the plane, axes 1
+ * and 2 are natural by the natural 2D child (out of place) or the natural
+ * axis-1 pass plus the natural row plan. Backward: the plane pass runs
+ * first with the inverse permutation (out of place: a direct permuted
+ * copy per plane; in place: the inverse cycle walk), then the scrambled
+ * axis-0 backward in place. No scratch cube, no extra sweep; the cost is
+ * cold destination writes and one plane copy per cycle. Both placements.
+ *
  * MULTITHREADING (the 2D tier's INC-C ported, 2026-09-07): two partition
  * arms, both pure loop restrictions of the serving walk (no arithmetic
  * change => MT == ST bitwise, gated by the probe):
@@ -56,6 +73,9 @@
  *             pass never mixes columns), then disjoint PLANE ranges for
  *             the structure. The only arm of an unbanded or Bluestein
  *             axis 0.
+ * In the natural class the structure is not fused into the bands (it runs
+ * in cycle order): both arms finish with a CYCLES phase in which workers
+ * own disjoint cycles (assigned longest first) and one plane buffer each.
  * At the plan's T the partition arm and the STRUCTURE are raced together
  * (serial with the one-thread structure, then band and plane with each
  * buildable structure): the structure that wins at one thread is not the
@@ -70,8 +90,8 @@
  * samples alternating between arms time the transient, never the steady
  * state.
  * The per-plane structure mutates plan state (a 2D child's scratch, the
- * row plan's scratch, an axis-1 Bluestein scratch), so worker t > 0 runs
- * its CLONE: a 2D child clone route-equivalent to the primary
+ * row plan's scratch, an axis-1 Bluestein or natural scratch), so worker
+ * t > 0 runs its CLONE: a 2D child clone route-equivalent to the primary
  * (_ilnd_child_equiv), or a row-plan clone route-equivalent
  * (_tc_clone_equiv) plus its own axis-1 scratch. Any clone failure tears
  * that structure's set down; with no clones MT declines — never a
@@ -81,14 +101,14 @@
  * Engagement counter: vfft_ilnd_mt_passes() (vfft.c) — a threaded result
  * without it is vacuous. VFFT_ILND_PROF=1 prints per-phase ns.
  *
- * Every pass commutes with every other (each is a Kronecker factor), so
- * forward and backward run the same pass order. Output order: DEFAULT/
- * SCRAMBLED = each column axis digit-reversed by its chain, rows natural.
+ * Every pass commutes with every other (each is a Kronecker factor). Output
+ * order: DEFAULT/SCRAMBLED = each column axis digit-reversed by its chain,
+ * rows natural; NATURAL = natural.
  *
- * Contracts (phase 2 + MT + in place): C2C, rank 3, howmany == 1, either
- * placement (one plan, one wisdom row: every pass is alias-tolerant), order
- * DEFAULT or SCRAMBLED. NATURAL, real and rank 4 follow in later phases —
- * refused loudly until then, never bridged.
+ * Contracts: C2C, rank 3, howmany == 1, either placement (one plan, one
+ * wisdom row per order cell: every pass is alias-tolerant), every order.
+ * Real and rank 4 follow in later phases — refused loudly until then,
+ * never bridged.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after il2d_tier.h (the column build
  * and execute, _tc_clone_equiv's declaration), k1_commit.h (support/race.h)
@@ -135,7 +155,7 @@ typedef struct vfft_ilnd_s {
     size_t plane;                 /* complex per axis-0 row: N[1] * ... * N[rank-1] */
     int arm;                      /* the SERVING structure: 1 = the child per plane, 2 = flat */
     vfft_ilcol_t ax0;             /* axis 0: N[0] rows over `plane` complex (wl/cut = the banded walk) */
-    struct vfft_plan_s *child;    /* arm 1: the rank-(n-1) IL c2c plan, in place, per plane */
+    struct vfft_plan_s *child;    /* arm 1: the rank-(n-1) IL c2c plan (in place; natural: out of place) */
     vfft_ilcol_t ax1;             /* arm 2: N[1] rows over N[2] complex, per plane */
     struct vfft_plan_s *row;      /* arm 2: the K=1 IL row plan, in place, natural */
     char forms0[64], forms1[64];
@@ -146,16 +166,29 @@ typedef struct vfft_ilnd_s {
     struct vfft_plan_s **childw;  /* arm 1 clones */
     struct vfft_plan_s **roww;    /* arm 2 row clones */
     vfft_ilcol_t *ax1w;           /* arm 2 axis-1 descriptors: shared tables, own scratch */
+    /* THE NATURAL CLASS (nat = 1): the axis-0 permutation and its cycle walks */
+    int nat;
+    int *natp, *natinv;           /* position q after the scrambled axis 0 holds plane natp[q]; natinv = its inverse */
+    int ncyc;                     /* cycles of the permutation, fixed points included (length 1) */
+    int *walk_f, *walk_b;         /* the walks: cycle c = positions walk[coff[c]..coff[c+1]) in fill order */
+    int *coff;                    /* ncyc + 1 offsets (the same for both walks) */
+    int *cycw;                    /* MT: the worker each cycle belongs to (bound for mt_t workers), NULL = unbound */
+    double *buf;                  /* one plane: the serial walker's buffer */
+    double **bufw;                /* mt_t - 1 planes: the workers' buffers */
+    int nbufw;
 } vfft_ilnd_t;
 
-/* ── the per-plane structure (tid 0 = the primary, t > 0 = its clone) ── */
-static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir, double *pl)
+/* ── the per-plane structure (tid 0 = the primary, t > 0 = its clone),
+ * src -> dst (src == dst = in place; the child and the row plan are
+ * alias-tolerant, the axis-1 natural pass goes through its scratch) ─── */
+static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir,
+                          const double *src, double *dst)
 {
     const int rev = (dir == VFFT_BACKWARD);
     if (d->arm == 1)
     {
         struct vfft_plan_s *c = tid > 0 ? d->childw[tid - 1] : d->child;
-        vfft_execute((vfft_plan)c, dir, pl, NULL, pl, NULL);
+        vfft_execute((vfft_plan)c, dir, (double *)src, NULL, dst, NULL);
     }
     else
     {
@@ -163,18 +196,44 @@ static void _ilnd_plane_t(const vfft_ilnd_t *d, int tid, vfft_dir_t dir, double 
         struct vfft_plan_s *row = tid > 0 ? d->roww[tid - 1] : d->row;
         const size_t rn = (size_t)d->N[2];
         size_t r;
-        _il2d_col_exec(ax1, pl, pl, rev);
+        _il2d_col_exec(ax1, src, dst, rev);
         for (r = 0; r < (size_t)d->N[1]; r++)
-            vfft_execute((vfft_plan)row, dir, pl + 2 * r * rn, NULL,
-                         pl + 2 * r * rn, NULL);
+            vfft_execute((vfft_plan)row, dir, dst + 2 * r * rn, NULL,
+                         dst + 2 * r * rn, NULL);
     }
 }
 static void _ilnd_plane(const vfft_ilnd_t *d, vfft_dir_t dir, double *pl)
 {
-    _ilnd_plane_t(d, 0, dir, pl);
+    _ilnd_plane_t(d, 0, dir, pl, pl);
 }
 
-/* ── the serial execute: axis 0 (src -> dst), the structure on dst ──── */
+/* ── the natural class's cycle walk over cycles [c_lo, c_hi) of one
+ * direction's walk, in place on the cube with one plane buffer: save the
+ * cycle's first plane, fill each vacated position with the plane that
+ * belongs there (processed out of place), the saved plane closes the
+ * cycle; a fixed point runs in place ─────────────────────────────────── */
+static void _ilnd_nat_cycles(const vfft_ilnd_t *d, int tid, vfft_dir_t dir, double *cube,
+                             double *buf, const int *walk, int c_lo, int c_hi)
+{
+    const size_t P = 2 * d->plane;
+    int c, i;
+    for (c = c_lo; c < c_hi; c++)
+    {
+        const int lo = d->coff[c], hi = d->coff[c + 1], len = hi - lo;
+        if (len == 1)
+        {
+            double *pl = cube + (size_t)walk[lo] * P;
+            _ilnd_plane_t(d, tid, dir, pl, pl);
+            continue;
+        }
+        memcpy(buf, cube + (size_t)walk[lo] * P, P * sizeof(double));
+        for (i = lo + 1; i < hi; i++)
+            _ilnd_plane_t(d, tid, dir, cube + (size_t)walk[i] * P, cube + (size_t)walk[i - 1] * P);
+        _ilnd_plane_t(d, tid, dir, buf, cube + (size_t)walk[hi - 1] * P);
+    }
+}
+
+/* ── the serial execute ─────────────────────────────────────────────── */
 static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
                              const double *src, double *dst)
 {
@@ -182,6 +241,22 @@ static void _ilnd_execute_st(const vfft_ilnd_t *d, vfft_dir_t dir,
     const vfft_ilcol_t *c = &d->ax0;
     const size_t N0 = (size_t)d->N[0], rn = d->plane;
     size_t p;
+    if (d->nat)
+    {   /* the natural class: the scrambled axis 0, the plane pass permuting */
+        if (!rev)
+        {
+            _il2d_col_exec(c, src, dst, 0);
+            _ilnd_nat_cycles(d, 0, dir, dst, d->buf, d->walk_f, 0, d->ncyc);
+            return;
+        }
+        if (src != dst)
+            for (p = 0; p < N0; p++)   /* out of place: the direct permuted copy, no cycles */
+                _ilnd_plane_t(d, 0, dir, src + 2 * p * rn, dst + 2 * (size_t)d->natinv[p] * rn);
+        else
+            _ilnd_nat_cycles(d, 0, dir, dst, d->buf, d->walk_b, 0, d->ncyc);
+        _il2d_col_exec(c, dst, dst, 1);
+        return;
+    }
     if (c->wl > 0 && !c->blu && !c->nat)
     {   /* the banded walk: bands of wl planes, the structure fused */
         const int cut = c->cut, nst = c->nst;
@@ -246,7 +321,7 @@ typedef struct
     const double *src;
     double *dst;
     vfft_dir_t dir;
-    int mode, tid;   /* 0 bands, 1 column strips, 2 planes */
+    int mode, tid;   /* 0 bands, 1 column strips, 2 planes, 3 cycles (natural), 4 permuted planes (natural bwd, oop) */
     size_t lo, hi;
 } _ilnd_mt_arg;
 
@@ -262,8 +337,8 @@ static void _ilnd_mt_tramp(void *v)
     size_t i, b;
     switch (a->mode)
     {
-    case 0: /* bands of wl planes: the suffix stages, then the planes —
-             * the serving order in both directions */
+    case 0: /* bands of wl planes: the suffix stages, then (scrambled) the
+             * planes — the serving order in both directions */
         for (b = a->lo; b < a->hi; b++)
         {
             const size_t b0 = b * (size_t)c->wl;
@@ -272,8 +347,9 @@ static void _ilnd_mt_tramp(void *v)
             double *bd = a->dst + 2 * b0 * rn;
             _il2d_col_stages(bs, bd, c->wl, rn, c->cut, c->nst, c->R, c->L,
                              fns, tabs, rev);
-            for (i = 0; i < (size_t)c->wl; i++)
-                _ilnd_plane_t(d, a->tid, a->dir, bd + 2 * i * rn);
+            if (!d->nat)
+                for (i = 0; i < (size_t)c->wl; i++)
+                    _ilnd_plane_t(d, a->tid, a->dir, bd + 2 * i * rn, bd + 2 * i * rn);
         }
         break;
     case 1: /* a column strip of the virtual plane: the whole axis-0 chain
@@ -287,9 +363,25 @@ static void _ilnd_mt_tramp(void *v)
             _il2d_col_pass_range(a->src, a->dst, c->N, rn, a->lo, a->hi, c->nst,
                                  c->R, c->L, fns, tabs, rev);
         break;
-    default: /* planes [lo, hi) on dst */
+    case 3: /* natural: this worker's cycles, its own plane buffer */
+    {
+        double *buf = a->tid > 0 ? d->bufw[a->tid - 1] : d->buf;
+        const int *walk = rev ? d->walk_b : d->walk_f;
+        int cyc;
+        for (cyc = 0; cyc < d->ncyc; cyc++)
+            if (d->cycw[cyc] == a->tid)
+                _ilnd_nat_cycles(d, a->tid, a->dir, a->dst, buf, walk, cyc, cyc + 1);
+        break;
+    }
+    case 4: /* natural backward, out of place: planes [lo, hi) of src to their
+             * scrambled positions in dst (a direct permuted copy) */
         for (i = a->lo; i < a->hi; i++)
-            _ilnd_plane_t(d, a->tid, a->dir, a->dst + 2 * i * rn);
+            _ilnd_plane_t(d, a->tid, a->dir, a->src + 2 * i * rn,
+                          a->dst + 2 * (size_t)d->natinv[i] * rn);
+        break;
+    default: /* planes [lo, hi) on dst, in place */
+        for (i = a->lo; i < a->hi; i++)
+            _ilnd_plane_t(d, a->tid, a->dir, a->dst + 2 * i * rn, a->dst + 2 * i * rn);
     }
 }
 
@@ -315,6 +407,54 @@ static void _ilnd_mt_phase(const vfft_ilnd_t *d, const double *src, double *dst,
 
 static int _ilnd_clones_of(const vfft_ilnd_t *d) { return d->arm == 1 ? d->wn1 : d->wn2; }
 
+/* the axis-0 partition of one direction: the band arm (prefix digit-split,
+ * bands) or the plane arm's strips, src -> dst. Returns 0 = cannot engage. */
+static int _ilnd_mt_axis0(const vfft_ilnd_t *d, vfft_dir_t dir, const double *src, double *dst,
+                          int T, int *prof_split, int *prof_serial)
+{
+    const vfft_ilcol_t *c = &d->ax0;
+    const int rev = (dir == VFFT_BACKWARD);
+    const size_t N0 = (size_t)d->N[0], rn = d->plane;
+    if (d->mt == 1)
+    {
+        const size_t nb = c->wl > 0 ? N0 / (size_t)c->wl : 0;
+        const int Tb = nb < (size_t)T ? (int)nb : T;
+        int s;
+        if (c->wl <= 0 || c->blu || nb < 2)
+            return 0;
+        if (!rev && c->cut > 0)
+            for (s = 0; s < c->cut; s++)
+            {
+                const double *ssrc = (s == 0) ? src : dst;
+                if (!_il2d_stage_digits_mt(ssrc, dst, c->N, rn, rn, c->R[s], c->L[s],
+                                           c->f[s], c->tf[s], T))
+                {
+                    _il2d_col_stages(ssrc, dst, c->N, rn, s, s + 1, c->R, c->L,
+                                     c->f, c->tf, 0);
+                    (*prof_serial)++;
+                }
+                else
+                    (*prof_split)++;
+            }
+        _ilnd_mt_phase(d, (!rev && c->cut > 0) ? dst : src, dst, dir, 0, nb, Tb);
+        if (rev && c->cut > 0)
+            for (s = c->cut - 1; s >= 0; s--)
+                if (!_il2d_stage_digits_mt(dst, dst, c->N, rn, rn, c->R[s], c->L[s],
+                                           c->b[s], c->tb[s], T))
+                    _il2d_col_stages(dst, dst, c->N, rn, s, s + 1, c->R, c->L,
+                                     c->b, c->tb, 0);
+        return 1;
+    }
+    {
+        const int Ts = rn < (size_t)T ? (int)rn : T;
+        if (Ts >= 2)
+            _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
+        else
+            _il2d_col_exec(c, src, dst, rev);
+        return 1;
+    }
+}
+
 /* Returns 1 when it ran threaded, 0 when the caller must run serial.
  * VFFT_ILND_PROF=1 prints the per-phase ns of every threaded execute
  * (diagnostic only; the env is read once). */
@@ -326,64 +466,65 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
     const size_t N0 = (size_t)d->N[0], rn = d->plane;
     const int T = stride_pool_workers_for(d->mt_t);
     static int prof = -1;
-    double t0 = 0, t1 = 0, t2 = 0;
+    double t0 = 0, t1 = 0;
     int nsplit = 0, nserial = 0;
     if (prof < 0)
         prof = getenv("VFFT_ILND_PROF") != NULL;
-    if (T < 2 || _ilnd_clones_of(d) < T - 1 || c->nat)
+    if (T < 2 || _ilnd_clones_of(d) < T - 1 || c->nat || d->mt <= 0 || d->mt > 2)
         return 0; /* every arm runs the structure => clones are mandatory */
+    if (d->nat && (!d->cycw || d->nbufw < T - 1))
+        return 0;
     if (prof)
         t0 = _il_ab_now();
+    if (d->nat)
+    {
+        const int Tp = N0 < (size_t)T ? (int)N0 : T;
+        if (!rev)
+        {
+            if (!_ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial))
+                return 0;
+            if (prof)
+                t1 = _il_ab_now();
+            _ilnd_mt_phase(d, dst, dst, dir, 3, N0, T);
+        }
+        else
+        {
+            if (src != dst)
+                _ilnd_mt_phase(d, src, dst, dir, 4, N0, Tp);
+            else
+                _ilnd_mt_phase(d, dst, dst, dir, 3, N0, T);
+            if (prof)
+                t1 = _il_ab_now();
+            if (!_ilnd_mt_axis0(d, dir, dst, dst, T, &nsplit, &nserial))
+                return 0; /* unreachable in practice: engagement was settled at create */
+        }
+        if (prof)
+            fprintf(stderr, "[ilnd-prof] natural %s s=%d T=%d axis0=%.0f planes=%.0f total=%.0f\n",
+                    d->mt == 1 ? "band" : "plane", d->arm, T,
+                    rev ? _il_ab_now() - t1 : t1 - t0, rev ? t1 - t0 : _il_ab_now() - t1,
+                    _il_ab_now() - t0);
+        _vfft_ilnd_mt_count++;
+        return 1;
+    }
     if (d->mt == 1)
     {
         const size_t nb = c->wl > 0 ? N0 / (size_t)c->wl : 0;
         const int Tb = nb < (size_t)T ? (int)nb : T;
-        int s;
         if (c->wl <= 0 || c->blu || nb < 2)
             return 0;
-        /* fwd: the wide prefix must complete before ANY band (stage 0's
-         * legs span the cube): each prefix stage's digits over the
-         * workers, stages ordered, one dispatch each; a stage that cannot
-         * split runs serial. bwd: the reversed prefix runs after. */
-        if (!rev && c->cut > 0)
-            for (s = 0; s < c->cut; s++)
-            {
-                const double *ssrc = (s == 0) ? src : dst;
-                if (!_il2d_stage_digits_mt(ssrc, dst, c->N, rn, rn, c->R[s], c->L[s],
-                                           c->f[s], c->tf[s], T))
-                {
-                    _il2d_col_stages(ssrc, dst, c->N, rn, s, s + 1, c->R, c->L,
-                                     c->f, c->tf, 0);
-                    nserial++;
-                }
-                else
-                    nsplit++;
-            }
+        if (!_ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial))
+            return 0;
         if (prof)
-            t1 = _il_ab_now();
-        _ilnd_mt_phase(d, (!rev && c->cut > 0) ? dst : src, dst, dir, 0, nb, Tb);
-        if (prof)
-            t2 = _il_ab_now();
-        if (rev && c->cut > 0)
-            for (s = c->cut - 1; s >= 0; s--)
-                if (!_il2d_stage_digits_mt(dst, dst, c->N, rn, rn, c->R[s], c->L[s],
-                                           c->b[s], c->tb[s], T))
-                    _il2d_col_stages(dst, dst, c->N, rn, s, s + 1, c->R, c->L,
-                                     c->b, c->tb, 0);
-        if (prof)
-            fprintf(stderr, "[ilnd-prof] band s=%d T=%d Tb=%d nb=%zu prefix=%.0f (split %d, serial %d, D0=%d) bands=%.0f total=%.0f\n",
-                    d->arm, T, Tb, nb, t1 - t0, nsplit, nserial, c->L[0] / c->R[0], t2 - t1, _il_ab_now() - t0);
+            fprintf(stderr, "[ilnd-prof] band s=%d T=%d Tb=%d nb=%zu prefix(split %d, serial %d, D0=%d) total=%.0f\n",
+                    d->arm, T, Tb, nb, nsplit, nserial, c->L[0] / c->R[0], _il_ab_now() - t0);
     }
-    else if (d->mt == 2)
+    else
     {
         const int Ts = rn < (size_t)T ? (int)rn : T;
         const int Tp = N0 < (size_t)T ? (int)N0 : T;
         if (Ts < 2 && Tp < 2)
             return 0;
-        if (Ts >= 2)
-            _ilnd_mt_phase(d, src, dst, dir, 1, rn, Ts);
-        else
-            _il2d_col_exec(c, src, dst, rev);
+        _ilnd_mt_axis0(d, dir, src, dst, T, &nsplit, &nserial);
         if (prof)
             t1 = _il_ab_now();
         _ilnd_mt_phase(d, src, dst, dir, 2, N0, Tp);
@@ -391,8 +532,6 @@ static int _ilnd_execute_mt(const vfft_ilnd_t *d, vfft_dir_t dir,
             fprintf(stderr, "[ilnd-prof] plane s=%d T=%d Ts=%d Tp=%d strips=%.0f planes=%.0f total=%.0f\n",
                     d->arm, T, Ts, Tp, t1 - t0, _il_ab_now() - t1, _il_ab_now() - t0);
     }
-    else
-        return 0;
     _vfft_ilnd_mt_count++; /* engagement, see vfft_ilnd_mt_passes() */
     return 1;
 }
@@ -431,7 +570,10 @@ static void _ilnd_free_clones(vfft_ilnd_t *d, int arm)
         if (d->ax1w)
         {
             for (t = 0; t < d->wn2; t++)
-                free(d->ax1w[t].bluscr); /* the only per-clone allocation */
+            {
+                free(d->ax1w[t].bluscr); /* the per-clone allocations */
+                free(d->ax1w[t].natscr);
+            }
             free(d->ax1w);
             d->ax1w = NULL;
         }
@@ -456,12 +598,29 @@ static void _ilnd_free_arm(vfft_ilnd_t *d, int arm)
     }
 }
 
+static void _ilnd_free_nat(vfft_ilnd_t *d)
+{
+    int t;
+    free(d->natp); free(d->natinv); free(d->walk_f); free(d->walk_b); free(d->coff); free(d->cycw);
+    d->natp = d->natinv = d->walk_f = d->walk_b = d->coff = d->cycw = NULL;
+    free(d->buf); d->buf = NULL;
+    if (d->bufw)
+    {
+        for (t = 0; t < d->nbufw; t++)
+            free(d->bufw[t]);
+        free(d->bufw);
+        d->bufw = NULL;
+    }
+    d->nbufw = 0;
+}
+
 static void vfft_ilnd_destroy(vfft_ilnd_t *d)
 {
     if (!d)
         return;
     _ilnd_free_arm(d, 1);
     _ilnd_free_arm(d, 2);
+    _ilnd_free_nat(d);
     _il2d_col_free(&d->ax0);
     free(d);
 }
@@ -481,7 +640,7 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
             return d->wn1;
         memset(&cc, 0, sizeof cc);
         cc.transform = VFFT_C2C;
-        cc.placement = VFFT_INPLACE;
+        cc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE;
         cc.rigor = cfg->rigor;
         cc.dims = 2;
         cc.n[0] = d->N[1];
@@ -540,14 +699,18 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         for (t = 0; t < n; t++)
         {
             struct vfft_plan_s *c = (struct vfft_plan_s *)vfft_create(&rc);
+            const size_t pl = (size_t)d->N[1] * (size_t)d->N[2];
             d->roww[t] = c;
             d->ax1w[t] = d->ax1;            /* shared read-only tables */
             d->ax1w[t].bluscr = NULL;
+            d->ax1w[t].natscr = NULL;
             if (d->ax1.blu)
                 d->ax1w[t].bluscr = (double *)malloc(
                     2 * (size_t)d->ax1.blu * (size_t)d->N[2] * sizeof(double));
+            if (d->ax1.nat)
+                d->ax1w[t].natscr = (double *)malloc(2 * pl * sizeof(double));
             if (!c || !_tc_clone_equiv(d->row, c) || c->tcb || c->tcbw ||
-                (d->ax1.blu && !d->ax1w[t].bluscr))
+                (d->ax1.blu && !d->ax1w[t].bluscr) || (d->ax1.nat && !d->ax1w[t].natscr))
             {
                 _vfft_warn("ilnd MT: row clone %d %s at N3=%d — the flat structure cannot "
                            "thread for this plan",
@@ -560,6 +723,139 @@ static int _ilnd_build_clones(vfft_ilnd_t *d, const vfft_config_t *cfg, int T, i
         d->wn2 = n;
         return n;
     }
+}
+
+/* ── the natural class's tables: the axis-0 permutation, its cycles, the
+ * two walks, the serial buffer ─────────────────────────────────────── */
+static int _ilnd_nat_build(vfft_ilnd_t *d)
+{
+    const int N0 = d->N[0];
+    int q, c, n = 0;
+    int *visited;
+    d->natp = (int *)malloc((size_t)N0 * sizeof(int));
+    d->natinv = (int *)malloc((size_t)N0 * sizeof(int));
+    d->walk_f = (int *)malloc((size_t)N0 * sizeof(int));
+    d->walk_b = (int *)malloc((size_t)N0 * sizeof(int));
+    d->coff = (int *)malloc(((size_t)N0 + 1) * sizeof(int));
+    visited = (int *)calloc((size_t)N0, sizeof(int));
+    d->buf = (double *)malloc(2 * d->plane * sizeof(double));
+    if (!d->natp || !d->natinv || !d->walk_f || !d->walk_b || !d->coff || !visited || !d->buf)
+    {
+        free(visited);
+        return 0;
+    }
+    if (d->ax0.blu || d->ax0.nst < 2)
+    {   /* a Bluestein or single-stage axis 0 leaves natural order */
+        for (q = 0; q < N0; q++)
+            d->natp[q] = q;
+    }
+    else
+    {
+        int *perm = _il2d_nat_perm(d->ax0.R, d->ax0.nst, N0);
+        if (!perm)
+        {
+            free(visited);
+            _vfft_warn("vfft_create: 3D INTERLEAVED c2c NATURAL — the axis-0 permutation "
+                       "could not be built for this chain; unsupported");
+            return 0;
+        }
+        memcpy(d->natp, perm, (size_t)N0 * sizeof(int));
+        free(perm);
+    }
+    for (q = 0; q < N0; q++)
+        d->natinv[d->natp[q]] = q;
+    /* the walks: fwd fills position p with the plane at natinv[p] (its
+     * plane belongs at natp[q]); bwd the other way round. Both share the
+     * cycle offsets (a permutation and its inverse have the same cycles). */
+    d->coff[0] = 0;
+    for (q = 0; q < N0; q++)
+    {
+        const int base = d->coff[n];
+        int p, len = 0;
+        if (visited[q])
+            continue;
+        p = q;
+        do
+        {
+            visited[p] = 1;
+            d->walk_f[base + len] = p;
+            len++;
+            p = d->natinv[p];
+        } while (p != q);
+        /* the backward walk over the same cycle: from q via natp */
+        p = q;
+        len = 0;
+        do
+        {
+            d->walk_b[base + len] = p;
+            len++;
+            p = d->natp[p];
+        } while (p != q);
+        d->coff[n + 1] = base + len;
+        n++;
+    }
+    (void)c;
+    d->ncyc = n;
+    free(visited);
+    return 1;
+}
+
+/* MT: the cycles over T workers, longest first to the least-loaded worker
+ * (fixed points count 1), and one plane buffer per helper worker */
+static int _ilnd_nat_bind(vfft_ilnd_t *d, int T)
+{
+    int *order, *load, i, j, t;
+    if (T < 2 || !d->coff)
+        return 0;
+    if (d->cycw && d->nbufw >= T - 1)
+        return 1;
+    free(d->cycw);
+    d->cycw = (int *)malloc((size_t)d->ncyc * sizeof(int));
+    order = (int *)malloc((size_t)d->ncyc * sizeof(int));
+    load = (int *)calloc((size_t)T, sizeof(int));
+    if (!d->cycw || !order || !load)
+    {
+        free(order); free(load); free(d->cycw); d->cycw = NULL;
+        return 0;
+    }
+    for (i = 0; i < d->ncyc; i++)
+        order[i] = i;
+    for (i = 1; i < d->ncyc; i++)   /* insertion sort by length, descending */
+    {
+        const int k = order[i], lk = d->coff[k + 1] - d->coff[k];
+        for (j = i - 1; j >= 0 && d->coff[order[j] + 1] - d->coff[order[j]] < lk; j--)
+            order[j + 1] = order[j];
+        order[j + 1] = k;
+    }
+    for (i = 0; i < d->ncyc; i++)
+    {
+        const int k = order[i];
+        int best = 0;
+        for (t = 1; t < T; t++)
+            if (load[t] < load[best])
+                best = t;
+        d->cycw[k] = best;
+        load[best] += d->coff[k + 1] - d->coff[k];
+    }
+    free(order); free(load);
+    if (d->nbufw < T - 1)
+    {
+        double **nb = (double **)realloc(d->bufw, (size_t)(T - 1) * sizeof *nb);
+        if (!nb)
+            return 0;
+        d->bufw = nb;
+        for (t = d->nbufw; t < T - 1; t++)
+        {
+            d->bufw[t] = (double *)malloc(2 * d->plane * sizeof(double));
+            if (!d->bufw[t])
+            {
+                d->nbufw = t;
+                return 0;
+            }
+        }
+        d->nbufw = T - 1;
+    }
+    return 1;
 }
 
 /* ── the banded walk's width: legal iff wl | N and a suffix stage's span
@@ -620,7 +916,7 @@ static int _ilnd_build_child(vfft_ilnd_t *d, const vfft_config_t *cfg)
         return 1;
     memset(&cc, 0, sizeof cc);
     cc.transform = VFFT_C2C;
-    cc.placement = VFFT_INPLACE;
+    cc.placement = d->nat ? VFFT_OUTOFPLACE : VFFT_INPLACE; /* natural: the plane pass moves planes */
     cc.rigor = cfg->rigor;
     cc.dims = 2;
     cc.n[0] = d->N[1];
@@ -645,7 +941,7 @@ static int _ilnd_build_flat(vfft_ilnd_t *d, struct vfft_wisdom_s *W,
     if (d->row)
         return 1;
     key1.axis = 1;
-    if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2], 0, &d->ax1,
+    if (!_il2d_col_build(W, cfg, &key1, d->N[1], (size_t)d->N[2], d->nat, &d->ax1,
                          d->forms1, sizeof d->forms1, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
         return 0;
     memset(&rc, 0, sizeof rc);
@@ -753,7 +1049,8 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_ou
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
     {
-        fprintf(stderr, "[ilnd] %dx%dx%d: MT race T=%d reps=%d", d->N[0], d->N[1], d->N[2], d->mt_t, reps);
+        fprintf(stderr, "[ilnd] %dx%dx%d%s: MT race T=%d reps=%d", d->N[0], d->N[1], d->N[2],
+                d->nat ? " nat" : "", d->mt_t, reps);
         for (a = 0; a < na; a++)
             fprintf(stderr, " %s=%.0f%s", cx[a].name, ns[a], cx[a].ok ? "" : "(no engage)");
         fprintf(stderr, " -> %s/%s\n", *mt_out == 0 ? "serial" : *mt_out == 1 ? "band" : "plane",
@@ -761,13 +1058,14 @@ static void _ilnd_mt_race(vfft_ilnd_t *d, const int s0, int *mt_out, int *arm_ou
     }
 }
 
-/* ── the create: rank-3 interleaved c2c, out of place, DEFAULT/SCRAMBLED ── */
+/* ── the create: rank-3 interleaved c2c, either placement, every order ── */
 static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
                                        struct vfft_wisdom_s *W,
                                        const vfft_proto_registry_t *reg,
                                        size_t K)
 {
     const int N1 = cfg->n[0], N2 = cfg->n[1], N3 = cfg->n[2];
+    const int nat = (cfg->order == VFFT_ORDER_NATURAL);
     vfft_ilnd_t *d;
     struct vfft_plan_s *h;
     vw2_ilcol_key_t key0;
@@ -784,16 +1082,16 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     /* IN PLACE (2026-09-07): the same plan and the same wisdom row serve
      * both placements — every pass is the 2D tier's alias-tolerant kind
      * (axis 0 src -> dst with src == dst, the bands and the structure in
-     * place by construction, the strips per column), and the create race
-     * already times in place on scratch. Output bitwise the out-of-place
-     * output (the probe checks it). */
-    if (cfg->transform != VFFT_C2C || cfg->dims != 3 || K != 1 ||
-        (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
+     * place by construction, the strips per column; the natural plane pass
+     * is in place by construction), and the create race already times in
+     * place on scratch. Output bitwise the out-of-place output (the probe
+     * checks it). */
+    if (cfg->transform != VFFT_C2C || cfg->dims != 3 || K != 1)
     {
         _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C, howmany==1, either placement, "
-                   "order DEFAULT/SCRAMBLED today (got %s, howmany=%zu, order=%d); "
-                   "natural order, real and rank 4 are the tier's next phases",
-                   _vfft_tname(cfg->transform), K, cfg->order);
+                   "every order today (got %s, howmany=%zu); real and rank 4 are the tier's "
+                   "next phases",
+                   _vfft_tname(cfg->transform), K);
         return NULL;
     }
     if (N1 < 2 || N2 < 2 || N3 < 2)
@@ -809,17 +1107,25 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     d->N[0] = N1; d->N[1] = N2; d->N[2] = N3;
     d->plane = (size_t)N2 * (size_t)N3;
     d->mt_t = nthr;
+    d->nat = nat;
     /* the column build's Bluestein inner-chain provider reads this create */
     _il2d_blu_ctx.W = W;
     _il2d_blu_ctx.cfg = cfg;
-    /* axis 0: the rank-3 row's own tokens; the wisdom order cell is the
-     * scrambled one (DEFAULT and SCRAMBLED spell the same serving) */
+    /* axis 0: the rank-3 row's own tokens; the order cell is the plan's
+     * (DEFAULT and SCRAMBLED spell the scrambled serving; NATURAL is its
+     * own cell). The axis-0 PASS is the scrambled class in both: the natural
+     * class orders planes in its plane pass, never in the column pass. */
     key0.rank = 3; key0.n0 = N1; key0.n1 = N2; key0.n2 = N3;
-    key0.ord = VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
+    key0.ord = nat ? VW2_ORD_NAT : VW2_ORD_SCR; key0.axis = 0; key0.real = 0;
     if (!_il2d_col_build(W, cfg, &key0, N1, d->plane, 0, &d->ax0,
                          d->forms0, sizeof d->forms0, &bwl, &btf, &bro, &bcmt, &bcmtt, &bblu))
     {
         free(d);
+        return NULL;
+    }
+    if (nat && !_ilnd_nat_build(d))
+    {
+        vfft_ilnd_destroy(d);
         return NULL;
     }
     /* the STRUCTURE candidates: env pin (never banks) > banked s= > both */
@@ -870,8 +1176,8 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         if (want2) ok2 = _ilnd_build_flat(d, W, cfg, &key0);
         if (!ok1 && !ok2)
         {
-            _vfft_warn("vfft_create: 3D INTERLEAVED c2c %dx%dx%d — no structure arm could "
-                       "be built (%s)", N1, N2, N3,
+            _vfft_warn("vfft_create: 3D INTERLEAVED c2c %dx%dx%d%s — no structure arm could "
+                       "be built (%s)", N1, N2, N3, nat ? " NATURAL" : "",
                        s_src == 1 ? "env pin" : s_src == 2 ? "banked verdict"
                                   : "no 2D IL plan at the plane and no axis-1 chain");
             vfft_ilnd_destroy(d);
@@ -935,7 +1241,7 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
         free(z);
         if (getenv("VFFT_IL2D_LOG"))
         {
-            fprintf(stderr, "[ilnd] %dx%dx%d: race", N1, N2, N3);
+            fprintf(stderr, "[ilnd] %dx%dx%d%s: race", N1, N2, N3, nat ? " nat" : "");
             for (a = 0; a < na; a++)
                 fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
             fprintf(stderr, " -> %s wl=%d\n", arm == 1 ? "child" : "flat", wl);
@@ -967,7 +1273,13 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     if (nthr > 1)
     {
         int c1 = 0, c2 = 0;
-        if (mpin)
+        const int natok = !nat || _ilnd_nat_bind(d, nthr);
+        if (!natok)
+        {
+            d->mt = 0;
+            mt_src = 4;
+        }
+        else if (mpin)
         {
             d->mt = atoi(mpin);
             if (d->mt < 0 || d->mt > 2) d->mt = 0;
@@ -1036,13 +1348,16 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     if (getenv("VFFT_IL2D_LOG"))
     {
         static const char *SRC[] = { "?", "env", "wisdom", "race", "only-buildable" };
-        fprintf(stderr, "[ilnd] %dx%dx%d: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
-                        " | T=%d mt=%s/%s src=%s clones=%d\n",
-                N1, N2, N3, arm == 1 ? "child" : "flat", SRC[s_src],
+        fprintf(stderr, "[ilnd] %dx%dx%d%s: structure %s src=%s | axis-0 wl=%d cut=%d src=%s"
+                        " | T=%d mt=%s/%s src=%s clones=%d%s\n",
+                N1, N2, N3, nat ? " nat" : "", arm == 1 ? "child" : "flat", SRC[s_src],
                 d->ax0.wl, d->ax0.cut, SRC[wl_src], nthr,
                 d->mt == 0 ? "serial" : d->mt == 1 ? "band" : "plane",
                 d->arm == 1 ? "child" : "flat",
-                nthr > 1 ? SRC[mt_src] : "-", _ilnd_clones_of(d));
+                nthr > 1 ? SRC[mt_src] : "-", _ilnd_clones_of(d),
+                nat ? " (natural: cycles" : "");
+        if (nat)
+            fprintf(stderr, "%d)\n", d->ncyc);
     }
     h = (struct vfft_plan_s *)calloc(1, sizeof *h);
     if (!h)
