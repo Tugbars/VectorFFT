@@ -24,7 +24,8 @@
  *   ("Inconsistent configuration parameters" at DftiCommit).
  *
  * Usage: bench_1d_vs_mkl [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
- *   --3dil : the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (VFFT_3DIL_CELLS, VFFT_3DIL_ROUNDS)
+ *   --3dil : the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (VFFT_3DIL_CELLS, VFFT_3DIL_ROUNDS);
+ *            --3dil --mt = both sides at T (VFFT_MT, default 8), engagement printed per cell
  *   N=0      : legacy full in-process loop over K=BENCH_K wisdom cells (quick-look).
  *   N>0      : ISOLATED single cell (N,K) — fresh process per cell (run_bench.py),
  *              kills cross-cell carryover. K = target K (multi-K: 4/32/256...).
@@ -2170,14 +2171,15 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
  * by ilnd_probe: naive-DFT spot bins found across the two digit-reversed
  * column axes).
  * ════════════════════════════════════════════════════════════════════════ */
-static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
+long vfft_ilnd_mt_passes(void); /* vfft_diagnostics.h: the 3D IL MT engagement counter */
+static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, int T)
 {
-    size_t T = (size_t)N1 * N2 * N3, i;
-    double *xr = alloc_d(T), *xi = alloc_d(T);         /* M-split input   */
-    double *z = alloc_d(2 * T), *zo = alloc_d(2 * T);  /* O-NATIVE in/out */
-    double *mz = alloc_d(2 * T), *mo = alloc_d(2 * T); /* M-inter in/out  */
-    double *mr = alloc_d(T), *mi = alloc_d(T);         /* M-split output  */
-    double *cs = alloc_d(2 * T), *cd = alloc_d(2 * T); /* ctl memcpy      */
+    size_t TN = (size_t)N1 * N2 * N3, i;
+    double *xr = alloc_d(TN), *xi = alloc_d(TN);         /* M-split input   */
+    double *z = alloc_d(2 * TN), *zo = alloc_d(2 * TN);  /* O-NATIVE in/out */
+    double *mz = alloc_d(2 * TN), *mo = alloc_d(2 * TN); /* M-inter in/out  */
+    double *mr = alloc_d(TN), *mi = alloc_d(TN);         /* M-split output  */
+    double *cs = alloc_d(2 * TN), *cd = alloc_d(2 * TN); /* ctl memcpy      */
     double smp[4][64];
     double med[4], spr[4];
     double rtn = -1;
@@ -2190,13 +2192,13 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
     if (rounds > 64) rounds = 64;
     fprintf(stderr, "[3dil] %dx%dx%d create (wisdom miss => races here)...\n", N1, N2, N3);
     srand(17 + N1 + N2 + N3);
-    for (i = 0; i < T; i++) {
+    for (i = 0; i < TN; i++) {
         xr[i] = (double)rand() / RAND_MAX - 0.5;
         xi[i] = (double)rand() / RAND_MAX - 0.5;
         z[2 * i] = xr[i];
         z[2 * i + 1] = xi[i];
     }
-    for (i = 0; i < 2 * T; i++) cs[i] = (double)rand() / RAND_MAX - 0.5;
+    for (i = 0; i < 2 * TN; i++) cs[i] = (double)rand() / RAND_MAX - 0.5;
     {
         vfft_config_t cfg;
         memset(&cfg, 0, sizeof cfg);
@@ -2209,7 +2211,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
         cfg.n[2] = N3;
         cfg.howmany = 1;
         cfg.order = VFFT_ORDER_DEFAULT;
-        cfg.nthreads = 1;
+        cfg.nthreads = T; /* --mt: the plan's thread snapshot; MKL gets the same TN */
         cfg.wisdom = W;
         cfg.wisdom_write = 0; /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
@@ -2223,8 +2225,8 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
         vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL);
         vfft_execute(hn, VFFT_BACKWARD, zo, NULL, mo, NULL);
         rtn = 0;
-        for (i = 0; i < 2 * T; i++) {
-            double d = fabs(mo[i] / (double)T - z[i]);
+        for (i = 0; i < 2 * TN; i++) {
+            double d = fabs(mo[i] / (double)TN - z[i]);
             if (d > rtn) rtn = d;
         }
     }
@@ -2243,30 +2245,57 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
             DftiSetValue(hMs, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
             have[2] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
         }
-        for (i = 0; i < 2 * T; i++) mz[i] = z[i];
+        for (i = 0; i < 2 * TN; i++) mz[i] = z[i];
     }
 #endif
+    {
+    const long eng0 = vfft_ilnd_mt_passes();
+    long nexec = 0;
+    int prev_mkl = 0;
     for (r = 0; r < rounds; r++) {
         for (a0 = 0; a0 < 4; a0++) {
-            int reps = reps_for(T);
+            int reps = reps_for(TN);
             double t0, ns;
             a = (r & 1) ? 3 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
+            if (T > 1) {
+                /* THREAD HYGIENE (the --ilmt traps): (a) our pool workers
+                 * spin forever, so every MKL arm is preceded by a real
+                 * teardown; (b) MKL's OpenMP team spins KMP_BLOCKTIME
+                 * (200 ms) after a compute, so our arm after an MKL arm
+                 * gets 300 ms of cool first. Pool rebuilt before ours,
+                 * outside the timed region. */
+                if (a == 1 || a == 2)
+                    stride_set_num_threads(1);
+                else if (a == 0) {
+                    stride_set_num_threads(T);
+                    if (prev_mkl) pace(300);
+                }
+                prev_mkl = (a == 1 || a == 2);
+            }
             t0 = vfft_proto_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
-                case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); break;
+                case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); nexec++; break;
 #ifdef VFFT_HAS_MKL
                 case 1: DftiComputeForward(hMi, mz, mo); break;
                 case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
 #endif
-                case 3: memcpy(cd, cs, 2 * T * 8); break;
+                case 3: memcpy(cd, cs, 2 * TN * 8); break;
                 }
             }
             ns = (vfft_proto_now_ns() - t0) / reps;
             smp[a][r] = ns;
         }
+    }
+    /* the engagement proof (mt_results_need_engagement_proof): a threaded
+     * plan whose counter did not move every execute ran SERIAL */
+    if (TN > 1)
+        printf("  [3dil] %dx%dx%d TN=%d: engaged %ld of %ld executes%s\n", N1, N2, N3, T,
+               vfft_ilnd_mt_passes() - eng0, nexec,
+               (vfft_ilnd_mt_passes() - eng0) == nexec ? "" :
+               (vfft_ilnd_mt_passes() - eng0) == 0 ? " (SERIAL verdict or declined)" : " (PARTIAL)");
     }
 #ifdef VFFT_HAS_MKL
     if (hMi) DftiFreeDescriptor(&hMi);
@@ -4525,12 +4554,14 @@ int main(int argc, char **argv)
         if (!wd) wd = ".";
         setvbuf(stdout, NULL, _IONBF, 0); /* live lines even when redirected */
         W = vfft_wisdom_load(wd);
+        if (mt)
+            ilmt_pin_pcores(); /* the 8 distinct P-cores for BOTH engines, before any OpenMP init */
 #ifdef VFFT_HAS_MKL
-        mkl_set_num_threads(1);
+        mkl_set_num_threads(mt ? g_mt : 1); /* like-for-like: MKL threads 3D at the same T */
 #endif
         printf("=== 3DIL: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (front door; "
-               "wisdom=%s %s; rounds=%d, core%d) ===\n",
-               wd, W ? "loaded" : "MISSING", rounds, core);
+               "wisdom=%s %s; rounds=%d, T=%d, core%d) ===\n",
+               wd, W ? "loaded" : "MISSING", rounds, mt ? g_mt : 1, core);
         printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
                "structure from wisdom); M-inter = DFTI 3D CCE NOT_INPLACE (MKL best); "
                "M-split = DFTI REAL_REAL NOT_INPLACE; ctl = memcpy. '~' = delta "
@@ -4548,7 +4579,7 @@ int main(int argc, char **argv)
                     snprintf(tag, sizeof tag, "%dx%dx%d", cells[ci][0], cells[ci][1], cells[ci][2]);
                     if (!strstr(cf, tag)) continue;
                 }
-                run_3dil_cell(cells[ci][0], cells[ci][1], cells[ci][2], rounds, W);
+                run_3dil_cell(cells[ci][0], cells[ci][1], cells[ci][2], rounds, W, mt ? g_mt : 1);
                 pace(pace_ms);
             }
         }

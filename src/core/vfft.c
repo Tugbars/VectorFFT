@@ -132,6 +132,9 @@ long vfft_tc_mt_dispatches(void) { return _vfft_tc_mt_dispatch_count; }
  * Step 21 does the same for the remaining engagement counters. */
 long _vfft_il2d_col_mt_count = 0;
 long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
+/* the rank-N INTERLEAVED tier's MT engagement (fftnd_il.h, 2026-09-07) */
+long _vfft_ilnd_mt_count = 0;
+long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
 
 /* ── HARNESS COUNTERS (refactor safety, docs/design/refactor_safety_harness.md)
  *
@@ -2139,11 +2142,13 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
     /* the rank-N INTERLEAVED tier (fftnd_il.h): the raced structure and
      * each column axis's chain length + Bluestein M (0 = a chain) */
-    FP__ADD(" ilnd=[arm=%d ax0=%d/%d/wl%d ax1=%d/%d]\n",
+    FP__ADD(" ilnd=[arm=%d ax0=%d/%d/wl%d ax1=%d/%d mt=%d/%d/%d]\n",
             h->ilnd ? h->ilnd->arm : 0,
             h->ilnd ? h->ilnd->ax0.nst : 0, h->ilnd ? h->ilnd->ax0.blu : 0,
             h->ilnd ? h->ilnd->ax0.wl : 0,
-            h->ilnd ? h->ilnd->ax1.nst : 0, h->ilnd ? h->ilnd->ax1.blu : 0);
+            h->ilnd ? h->ilnd->ax1.nst : 0, h->ilnd ? h->ilnd->ax1.blu : 0,
+            h->ilnd ? h->ilnd->mt : 0, h->ilnd ? h->ilnd->mt_t : 0,
+            h->ilnd ? h->ilnd->wn : 0);
 
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */
