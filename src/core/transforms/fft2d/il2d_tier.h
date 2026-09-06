@@ -1511,6 +1511,475 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
 
 
 
+typedef struct
+{
+    double *sc;
+    int N1;
+    size_t N2;
+    int nst;
+    const int *R;
+    int *L;
+    vfft_il2p_fn *f;
+    double **tf;
+    int M2, bnst;
+    int *bR, *bL;
+    vfft_il2p_fn *bf, *bb;
+    double **btf, **btb;
+    double *bchf, *bkf, *bscr;
+    /* NATURAL cells: the chain arm must be timed under the serving it
+     * will run - the M4-lite leaf-redirected pass (scratch round trip +
+     * strided scatter), never the scrambled pass (a strawman arm). */
+    int nat;
+    const int *perm;
+    double *nscr;
+} _il2d_n1arm_ctx_t;
+static void _il2d_n1arm_chain(void *v)
+{
+    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    if (c->nat)
+        _il2d_col_pass_nat(c->sc, c->sc, c->N1, c->N2, c->nst, c->R, c->L,
+                           c->f, c->tf, 0, c->perm, c->nscr);
+    else
+        _il2d_col_pass(c->sc, c->sc, c->N1, c->N2, c->N2, c->nst, c->R,
+                       c->L, c->f, c->tf, 0);
+}
+static void _il2d_n1arm_blu(void *v)
+{
+    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
+    _il2d_blu_cols(c->sc, c->sc, c->N1, c->N2, c->M2, c->bnst, c->bR, c->bL,
+                   c->bf, c->bb, c->btf, c->btb, c->bchf, c->bkf, c->bscr);
+}
+
+/* free everything a column-axis pass owns (tables, natural, Bluestein,
+ * the staged scratch); the descriptor is zero afterwards */
+static void _il2d_col_free(vfft_ilcol_t *c)
+{
+    int s;
+    for (s = 0; s < c->nst && s < 8; s++)
+    {
+        free(c->tf[s]);
+        free(c->tb[s]);
+    }
+    free(c->natperm);
+    free(c->natscr);
+    free(c->bluchf);
+    free(c->bluchb);
+    free(c->blukf);
+    free(c->blukb);
+    free(c->bluscr);
+    free(c->bandscr);
+    memset(c, 0, sizeof *c);
+}
+
+/* the forms axis by the column row's key (rank/axis-general twin of
+ * _il2d_forms_serve, which keys rank 2 axis 0) */
+static void _il2d_forms_serve_key(struct vfft_wisdom_s *W,
+                                  const vfft_config_t *cfg,
+                                  const vw2_ilcol_key_t *key, int N, size_t rn,
+                                  const int *Rs, int nst,
+                                  vfft_il2p_fn *ff, vfft_il2p_fn *fb,
+                                  char *forms, size_t fsz)
+{
+    const char *pin = getenv("VFFT_IL2D_FORMS");
+    int s, any = 0;
+    forms[0] = 0;
+    for (s = 0; s < nst; s++)
+        if (Rs[s] == 32 || Rs[s] == 64)
+            any = 1;
+    if (!any)
+        return;
+    if (pin && *pin)
+    {
+        if (_il2d_apply_forms(Rs, nst, pin, ff, fb))
+            snprintf(forms, fsz, "%s", pin);
+        else
+            _vfft_warn("VFFT_IL2D_FORMS=%s does not fit chain at %dx%d - ignored",
+                       pin, N, (int)rn);
+        return;
+    }
+    if (!W || W->vw2_off_2d)
+        return;
+    if (!cfg->recalibrate &&
+        vw2_ilcol_forms_lookup(&W->vw2, key, forms, fsz))
+    {
+        if (_il2d_apply_forms(Rs, nst, forms, ff, fb))
+        {
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d] forms %dx%d: replay %s src=wisdom\n", N, (int)rn, forms);
+            return;
+        }
+        _vfft_warn("banked forms=%s does not fit chain at %dx%d - re-racing",
+                   forms, N, (int)rn);
+        (void)_il2d_resolve(Rs, nst, ff, fb);
+    }
+    if (_il2d_race_forms(N, (int)rn, Rs, nst, ff, fb, forms, fsz) && forms[0])
+    {
+        const int banked = vw2_ilcol_forms_bank(&W->vw2, key, forms);
+        if (banked)
+            _vw2_persist(W, cfg);
+        if (getenv("VFFT_IL2D_LOG"))
+            fprintf(stderr, "[il2d] forms %dx%d: raced -> %s, %s\n", N, (int)rn, forms,
+                    banked ? "banked" : "NOT banked yet (no chain row; the create re-banks once it lands)");
+    }
+}
+
+/* ═══ THE COLUMN-AXIS PASS BUILD (2026-09-06, phase 2 of the rank-N IL
+ * tier). One column axis of an interleaved c2c plan — N rows over rn
+ * complex per row — under the cell's wisdom key: the chain (env > banked
+ * > raced over the composition pool > greedy), its per-stage forms, the
+ * column-axis Bluestein where no chain exists, the natural leaf
+ * redirection when the caller asks for NATURAL, the N1-arm race (chain vs
+ * Bluestein where a chain carries an odd radix), and the stage tables.
+ * Lifted verbatim from the 2D create's c2c branch (2026-09-06), which now
+ * calls it with a rank-2 key; a rank-N IL plan calls it per column axis
+ * with a rank-3 key and the axis as the token suffix. The banked axis
+ * verdicts (band width, fusion, row route, column MT + its T, the N1-arm
+ * verdict) come back through the out-parameters, -1 = unraced. Returns 1;
+ * 0 = REFUSED (loud), the descriptor freed. */
+static int _il2d_col_build(struct vfft_wisdom_s *W, const vfft_config_t *cfg,
+                           const vw2_ilcol_key_t *key, int N, size_t rn, int nat_req,
+                           vfft_ilcol_t *c, char *forms, size_t fsz,
+                           int *bwl, int *btf, int *bro, int *bcmt, int *bcmtt, int *bblu)
+{
+    int il2d_bwl = -1, il2d_btf = -1, il2d_bro = -1;
+    int il2d_bcmt = -1, il2d_bcmtt = -1, il2d_bblu = -1;
+    int il2d_tbl_done = 0;
+    _il2d_blu_ctx.N2 = (int)rn;   /* the Bluestein inner's chain provider: this axis's row length */
+    int chain_ok = 0;
+    {
+        /* chain precedence: env > banked lay=il verdict > RACE
+         * the full composition pool (multi-stage cells only;
+         * component-pinned: the race times the column pass, the
+         * only thing the axis changes) > greedy. */
+        if (getenv("VFFT_IL2D_CHAIN"))
+            chain_ok = _il2d_build_chain(N, c->R, c->f,
+                                         c->b, &c->nst);
+        else if (vw2_ilcol_chain_lookup(&W->vw2, key, c->R,
+                                        &c->nst, &il2d_bwl,
+                                        &il2d_btf, &il2d_bro,
+                                        &il2d_bcmt,
+                                        &il2d_bcmtt, &il2d_bblu) &&
+                 _il2d_chain_prod(c->R, c->nst) ==
+                     (il2d_bblu > 0 ? il2d_bblu : N) &&
+                 _il2d_resolve(c->R, c->nst, c->f, c->b))
+            chain_ok = 1;
+        else
+        {
+            int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
+            int cur[8], ncand = 0, dropped = 0;
+            _il2d_enum_rec(N, 0, cur, cand, lens, &ncand,
+                           &dropped);
+            if (dropped)
+                _vfft_warn("il2d chain race: pool capped at %d "
+                           "(%d candidate(s) dropped) at %dx%d",
+                           VFFT_IL2D_MAXCAND, dropped, N, (int)rn);
+            if (ncand > 1)
+            {
+                double bns = 0;
+                int win = _il2d_race_chains(N, (int)rn, ncand, cand,
+                                            lens, &bns, key->ord == VW2_ORD_NAT);
+                if (win >= 0 &&
+                    _il2d_resolve(cand[win], lens[win], c->f,
+                                  c->b))
+                {
+                    memcpy(c->R, cand[win],
+                           sizeof cand[win]);
+                    c->nst = lens[win];
+                    chain_ok = 1;
+                    vw2_ilcol_chain_bank(&W->vw2, key,
+                                         c->R, c->nst,
+                                         -1, -1, -1, -1, -1, -1,
+                                         bns);
+                    _vw2_persist(W, cfg);
+                }
+            }
+            if (!chain_ok)
+                chain_ok = _il2d_build_chain(N, c->R, c->f,
+                                             c->b, &c->nst);
+        }
+    }
+    if (chain_ok && il2d_bblu <= 0)
+    {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
+         * Bluestein cell's forms live on its (M, (int)rn) row */
+        _il2d_forms_serve_key(W, cfg, key, N, rn, c->R, c->nst,
+                          c->f, c->b, forms, fsz);
+    }
+    if (!chain_ok)
+    {
+        /* ODD/PRIME N: the COLUMN-AXIS BLUESTEIN (struct
+         * comment at c->blu; _il2d_blu_build). Reached only
+         * when no chain exists — with the odd t2c/n1c kinds
+         * emitted, that now means prime / unexpressible N.
+         * n1 comes out NATURAL by construction, so ALL order
+         * spellings are served (M4-lite closed the old
+         * DEFAULT-only gate 2026-08-27). */
+        c->blu = _il2d_blu_build(N, rn, c->R,
+                                   c->L, c->f, c->b,
+                                   c->tf, c->tb, &c->nst,
+                                   &c->bluchf, &c->bluchb,
+                                   &c->blukf, &c->blukb,
+                                   &c->bluscr);
+        if (c->blu)
+            chain_ok = 1;
+    }
+    if (chain_ok && !c->blu && il2d_bblu <= 0 && c->nst > 1 &&
+        nat_req)
+    {
+        /* (il2d_bblu > 0 = a banked Bluestein cell: c->R is the
+         * length-M chain, n1 natural by construction, the perm
+         * would divide by zero - pre-existing, fixed 2026-09-02) */
+        /* M4-lite (struct comment at c->nat): natural n1 via
+         * the LEAF REDIRECTION - driver-only, any chain. Built
+         * BEFORE the N-arm race below so the chain arm is
+         * timed under the serving it will actually run. The
+         * perm builder refuses on any convention mismatch. */
+        c->natperm = _il2d_nat_perm(c->R, c->nst, N);
+        if (c->natperm)
+            c->natscr = (double *)malloc(
+                2 * (size_t)N * (int)rn * sizeof(double));
+        if (!c->natperm || !c->natscr)
+        {
+            free(c->natperm);
+            c->natperm = NULL;
+            _vfft_warn("vfft_create: IL 2D c2c %dx%d "
+                       "order=NATURAL - the natural leaf "
+                       "permutation could not be built for "
+                       "this chain; unsupported",
+                       N, (int)rn);
+            { _il2d_col_free(c); return 0; }
+        }
+        c->nat = 1;
+    }
+    if (chain_ok && !c->blu && !getenv("VFFT_IL2D_CHAIN"))
+    {
+        /* THE RACED CHAIN ARM (owner directive): for a chain
+         * that carries an ODD radix (the newly emitted kinds),
+         * race it against the Bluestein column route. DEFAULT
+         * order: the two serve different n1 orders (chain =
+         * scrambled comb, blu = natural), both self-consistent.
+         * NATURAL order (2026-08-28): BOTH arms are natural -
+         * the chain via the leaf redirection, blu by
+         * construction - so the race is the only lawful pick;
+         * the chain arm runs the natural pass. Pick is pure
+         * speed either way. Env VFFT_IL2D_BLU=1 pins blu,
+         * =0 pins the chain (env never banks); unset = race
+         * min-of-3 alternated on scratch through the SERVING
+         * functions. pow2 chains never race (blu is pointless
+         * there). Verdict plan-local (the wisdom banking of a
+         * blu marker rides the layout-audit wave). */
+        int hasodd = 0, s3;
+        const char *be = getenv("VFFT_IL2D_BLU");
+        for (s3 = 0; s3 < c->nst; s3++)
+            if (c->R[s3] & 1)
+                hasodd = 1;
+        /* the chain arm times the SERVING column pass, so the
+         * N tables must exist BEFORE the race (they are
+         * otherwise built at the row-child block below — timing
+         * with empty tabs was a NULL-load crash, caught by the
+         * cell sweep 2026-08-27). il2d_tbl_done stops the later
+         * shared build from double-building the winner's. */
+        /* REPLAY the banked N-arm verdict (E1.7, 2026-09-02):
+         * blu > 0 = Bluestein won (the row's chain IS the M
+         * chain, already resolved above — build the Bluestein
+         * tables and adopt, no timing); blu == 0 = the chain won
+         * (nothing to do). Only an unraced cell (-1) or an env
+         * pin runs the race below. */
+        /* blu > 0 REGARDLESS of hasodd (2026-09-02): a banked Bluestein
+         * row carries the pow2 M chain, which has no odd factor — the
+         * old guard skipped the adoption for a PRIME N and the create
+         * ran the M chain as the N chain (wrong output, caught by the
+         * naive-DFT probe at 127x100 the day prime rows first banked) */
+        if (il2d_bblu > 0 && !be && !cfg->recalibrate)
+        {
+            int bR[8], bL[8], bnst = 0, M2;
+            vfft_il2p_fn bf[8], bb[8];
+            double *btf[8], *btb[8];
+            double *bchf, *bchb, *bkf, *bkb, *bscr;
+            memset(btf, 0, sizeof btf);
+            memset(btb, 0, sizeof btb);
+            M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
+                                 btf, btb, &bnst, &bchf, &bchb,
+                                 &bkf, &bkb, &bscr);
+            if (M2 == il2d_bblu)
+            {
+                memcpy(c->R, bR, sizeof bR);
+                memcpy(c->L, bL, sizeof bL);
+                memcpy(c->f, bf, sizeof bf);
+                memcpy(c->b, bb, sizeof bb);
+                memcpy(c->tf, btf, sizeof btf);
+                memcpy(c->tb, btb, sizeof btb);
+                c->nst = bnst;
+                c->blu = M2;
+                c->bluchf = bchf;
+                c->bluchb = bchb;
+                c->blukf = bkf;
+                c->blukb = bkb;
+                c->bluscr = bscr;
+                il2d_tbl_done = 1;
+                if (c->nat)
+                {
+                    free(c->natperm);
+                    free(c->natscr);
+                    c->natperm = NULL;
+                    c->natscr = NULL;
+                    c->nat = 0;
+                }
+                if (getenv("VFFT_IL2D_LOG"))
+                    fprintf(stderr, "[il2d] N-arm %dx%d (c2c): "
+                                    "replay BLUESTEIN M=%d src=wisdom\n",
+                            N, (int)rn, M2);
+                hasodd = 0;            /* verdict served */
+            }
+            else
+            {
+                for (s3 = 0; s3 < bnst; s3++)
+                {
+                    free(btf[s3]);
+                    free(btb[s3]);
+                }
+                free(bchf); free(bchb); free(bkf); free(bkb); free(bscr);
+            }
+        }
+        else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
+        {
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[il2d] N-arm %dx%d (c2c): replay "
+                                "chain src=wisdom\n", N, (int)rn);
+            hasodd = 0;                /* the chain won: no race */
+        }
+        if (hasodd && (!be || atoi(be) == 1) &&
+            !_il2d_build_tables(N, c->nst, c->R, c->L,
+                                c->tf, c->tb))
+        {
+            il2d_tbl_done = 1;
+            int bR[8], bL[8], bnst = 0, M2;
+            vfft_il2p_fn bf[8], bb[8];
+            double *btf[8], *btb[8];
+            double *bchf, *bchb, *bkf, *bkb, *bscr;
+            memset(btf, 0, sizeof btf);
+            memset(btb, 0, sizeof btb);
+            M2 = _il2d_blu_build(N, rn, bR, bL, bf, bb,
+                                 btf, btb, &bnst, &bchf, &bchb,
+                                 &bkf, &bkb, &bscr);
+            if (M2)
+            {
+                double *sc = (double *)malloc(
+                    2 * (size_t)N * (int)rn * sizeof(double));
+                double tc = 1e300, tbu = 1e300;
+                int rr, use_blu = (be != NULL); /* env pin */
+                size_t i3;
+                if (sc && !use_blu)
+                {
+                    for (i3 = 0; i3 < 2 * (size_t)N * (int)rn; i3++)
+                        sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
+                    {
+                        _il2d_n1arm_ctx_t rc = {
+                            sc, N, rn, c->nst, c->R,
+                            c->L, c->f, c->tf, M2, bnst, bR,
+                            bL, bf, bb, btf, btb, bchf, bkf, bscr,
+                            c->nat, c->natperm, c->natscr };
+                        const vfft_race_arm_t arms[2] = {
+                            { "chain", _il2d_n1arm_chain, &rc },
+                            { "bluestein", _il2d_n1arm_blu, &rc } };
+                        const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
+                        double ns[2];
+                        (void)rr;
+                        vfft_race_run(&proto, arms, 2, ns);
+                        tc = ns[0];
+                        tbu = ns[1];
+                    }
+                }
+                free(sc);
+                if (!use_blu)
+                    use_blu = (tbu < tc);
+                if (getenv("VFFT_IL2D_LOG"))
+                    fprintf(stderr, "[il2d] N-arm race %dx%d "
+                                    "(c2c %s): chain=%.0f blu=%.0f "
+                                    "-> %s\n",
+                            N, (int)rn, c->nat ? "nat" : "scr",
+                            tc, tbu,
+                            use_blu ? "BLUESTEIN" : "chain");
+                if (!be)
+                {   /* bank the verdict with the chain that SERVES */
+                    vw2_ilcol_chain_bank(&W->vw2, key,
+                                         use_blu ? bR : c->R,
+                                         use_blu ? bnst : c->nst,
+                                         -1, -1, -1, -1, -1,
+                                         use_blu ? M2 : 0, 0.0);
+                    _vw2_persist(W, cfg);
+                }
+                if (use_blu)
+                {
+                    for (s3 = 0; s3 < c->nst; s3++)
+                    {
+                        free(c->tf[s3]);
+                        free(c->tb[s3]);
+                    }
+                    memcpy(c->R, bR, sizeof bR);
+                    memcpy(c->L, bL, sizeof bL);
+                    memcpy(c->f, bf, sizeof bf);
+                    memcpy(c->b, bb, sizeof bb);
+                    memcpy(c->tf, btf, sizeof btf);
+                    memcpy(c->tb, btb, sizeof btb);
+                    c->nst = bnst;
+                    c->blu = M2;
+                    c->bluchf = bchf;
+                    c->bluchb = bchb;
+                    c->blukf = bkf;
+                    c->blukb = bkb;
+                    c->bluscr = bscr;
+                    if (c->nat)
+                    { /* blu is natural by construction */
+                        free(c->natperm);
+                        free(c->natscr);
+                        c->natperm = NULL;
+                        c->natscr = NULL;
+                        c->nat = 0;
+                    }
+                }
+                else
+                {
+                    for (s3 = 0; s3 < bnst; s3++)
+                    {
+                        free(btf[s3]);
+                        free(btb[s3]);
+                    }
+                    free(bchf); free(bchb);
+                    free(bkf); free(bkb); free(bscr);
+                }
+            }
+        }
+        else if (hasodd && be && atoi(be) == 0)
+            ; /* env pins the chain: nothing to do */
+    }
+    if (!chain_ok)
+    {
+        /* OWNER LAW: split is NOT a fallback of IL — no convert
+         * wrapper. An inexpressible N refuses loudly. */
+        _vfft_warn("vfft_create: IL 2D c2c %dx%d — N has no "
+                   "native column chain (radices 4..64, no "
+                   "leftover factor)%s",
+                   N, (int)rn,
+                   " and the Bluestein column route could "
+                   "not be built");
+        { _il2d_col_free(c); return 0; }
+    }
+
+    if (!c->blu && !il2d_tbl_done &&
+        _il2d_build_tables(N, c->nst, c->R, c->L, c->tf, c->tb))
+    {
+        _vfft_warn("vfft_create: IL column pass %dx%d — stage tables failed; unsupported",
+                   N, (int)rn);
+        _il2d_col_free(c);
+        return 0;
+    }
+    c->N = N;
+    c->rn = rn;
+    *bwl = il2d_bwl; *btf = il2d_btf; *bro = il2d_bro;
+    *bcmt = il2d_bcmt; *bcmtt = il2d_bcmtt; *bblu = il2d_bblu;
+    return 1;
+}
+
 /* the §10a axis race: time the FULL execute (column chain + rows) over
  * the wl candidates x the row routes, set the winner on the plan, bank
  * chain+wl+tf+ro as one lay=il verdict. Falsifier-grounded: wl wins

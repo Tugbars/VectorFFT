@@ -1047,6 +1047,7 @@ static void _vw2_persist(struct vfft_wisdom_s *W, const vfft_config_t *cfg)
 
 #include "planning/dp_planner_il.h" /* the IL plan race at create (2026-09-03): pair x forms, chain3 x forms */
 #include "oop/k1_commit.h" /* K=1 replay, race-and-bank, commit (step 19) */
+#include "transforms/fftnd/fftnd_il.h"     /* the rank-N INTERLEAVED c2c tier (2026-09-06) */
 #include "transforms/fftnd/fftnd_create.h" /* rank-3/rank-4 create tier (step 22) */
 #include "transforms/fft2d/fft2d_create.h" /* 2D create tier (step 23) */
 /* ── THE pad-vs-tail ladder, written once (A1, 2026-09-02). The owned-batch
@@ -2133,9 +2134,15 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(tcb), FP__P(tcbw), FP__P(rplan), FP__P(c2rdisp),
             FP__P(zr2c_child), FP__P(oddr_child), FP__P(tplan),
             FP__P(own_batch), FP__JIT); /* cplan_il retired 2026-09-03 */
-    FP__ADD(" il2dhave=%d%d%d%d%d%d\n",
+    FP__ADD(" il2dhave=%d%d%d%d%d%d",
             FP__P(il2d_row), FP__P(il2d_rowo), FP__P(il2d_roww),
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
+    /* the rank-N INTERLEAVED tier (fftnd_il.h): the raced structure and
+     * each column axis's chain length + Bluestein M (0 = a chain) */
+    FP__ADD(" ilnd=[arm=%d ax0=%d/%d ax1=%d/%d]\n",
+            h->ilnd ? h->ilnd->arm : 0,
+            h->ilnd ? h->ilnd->ax0.nst : 0, h->ilnd ? h->ilnd->ax0.blu : 0,
+            h->ilnd ? h->ilnd->ax1.nst : 0, h->ilnd ? h->ilnd->ax1.blu : 0);
 
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
      * TREE; a child that silently changed route is otherwise invisible. */
@@ -2146,6 +2153,11 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
     used = vfft__fp_child(h->il2d_row, "il2drow", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_rowo, "il2drowo", depth + 1, out, cap, used);
     used = vfft__fp_child(h->il2d_rows, "il2drows", depth + 1, out, cap, used);
+    if (h->ilnd)
+    {
+        used = vfft__fp_child(h->ilnd->child, "ilndchild", depth + 1, out, cap, used);
+        used = vfft__fp_child(h->ilnd->row, "ilndrow", depth + 1, out, cap, used);
+    }
     return used;
 }
 

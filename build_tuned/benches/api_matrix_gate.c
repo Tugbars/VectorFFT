@@ -81,7 +81,11 @@ int main(int argc, char **argv) {
         { "2D r2c OOP SPLIT 256x64",              1, VFFT_R2C, OOP, SP, DEF, 2, 256, 64, 0, 0, 1, 0 },
         { "2D r2c OOP SPLIT prime 127x100",       0, VFFT_R2C, OOP, SP, DEF, 2, 127, 100, 0, 0, 1, 0 },
         /* ── 3D / 4D ── */
-        { "3D c2c OOP IL 16^3",                   0, VFFT_C2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D c2c OOP IL 16^3",                   1, VFFT_C2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D c2c OOP IL 16^3 SCRAMBLED",         1, VFFT_C2C, OOP, IL, SCR, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D c2c OOP IL odd 9x15x27",            1, VFFT_C2C, OOP, IL, DEF, 3, 9, 15, 27, 0, 1, 0 },
+        { "3D c2c OOP IL 16^3 NATURAL",           0, VFFT_C2C, OOP, IL, NAT, 3, 16, 16, 16, 0, 1, 0 },
+        { "3D c2c OOP IL 16^3 howmany=2",         0, VFFT_C2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 2, 0 },
         { "3D c2c IP IL 16^3",                    0, VFFT_C2C, IP,  IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
         { "3D r2c OOP IL 16^3",                   0, VFFT_R2C, OOP, IL, DEF, 3, 16, 16, 16, 0, 1, 0 },
         { "3D c2c OOP SPLIT 16^3",                1, VFFT_C2C, OOP, SP, DEF, 3, 16, 16, 16, 0, 1, 0 },

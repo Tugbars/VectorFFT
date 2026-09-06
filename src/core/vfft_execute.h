@@ -518,6 +518,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
             size_t plane = (size_t)h->N * h->N2 * (h->N3 ? (size_t)h->N3 : 1) * (h->N4 ? (size_t)h->N4 : 1);
             if (h->layout == (int)VFFT_LAYOUT_INTERLEAVED)
             {
+                if (h->ilnd)
+                {   /* the rank-N INTERLEAVED c2c tier (fftnd_il.h): axis 0
+                     * src -> dst, then the raced per-plane arm on dst */
+                    if (!dre)
+                        dre = sre;
+                    vfft_ilnd_execute(h->ilnd, dir, sre, dre);
+                    return;
+                }
                 if (h->il2d_row)
                 {
                     /* ── native IL 2D tier (M1/M2): the column chain —
@@ -1190,6 +1198,12 @@ void vfft_destroy(vfft_plan h)
         { /* the odd-real bridge: the child + one buffer */
             vfft_destroy((vfft_plan)h->oddr_child);
             free(h->oddr_buf);
+            free(h);
+            return;
+        }
+        if (h->ilnd)
+        { /* the rank-N interleaved tier owns its axes, child and row plan */
+            vfft_ilnd_destroy(h->ilnd);
             free(h);
             return;
         }

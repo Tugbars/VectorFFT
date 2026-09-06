@@ -49,44 +49,6 @@
 
 /* the two arms of the N1-arm race: the pow2 chain column pass vs the
  * Bluestein column pass, both in place on one scratch plane */
-typedef struct
-{
-    double *sc;
-    int N1;
-    size_t N2;
-    int nst;
-    const int *R;
-    int *L;
-    vfft_il2p_fn *f;
-    double **tf;
-    int M2, bnst;
-    int *bR, *bL;
-    vfft_il2p_fn *bf, *bb;
-    double **btf, **btb;
-    double *bchf, *bkf, *bscr;
-    /* NATURAL cells: the chain arm must be timed under the serving it
-     * will run - the M4-lite leaf-redirected pass (scratch round trip +
-     * strided scatter), never the scrambled pass (a strawman arm). */
-    int nat;
-    const int *perm;
-    double *nscr;
-} _il2d_n1arm_ctx_t;
-static void _il2d_n1arm_chain(void *v)
-{
-    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
-    if (c->nat)
-        _il2d_col_pass_nat(c->sc, c->sc, c->N1, c->N2, c->nst, c->R, c->L,
-                           c->f, c->tf, 0, c->perm, c->nscr);
-    else
-        _il2d_col_pass(c->sc, c->sc, c->N1, c->N2, c->N2, c->nst, c->R,
-                       c->L, c->f, c->tf, 0);
-}
-static void _il2d_n1arm_blu(void *v)
-{
-    _il2d_n1arm_ctx_t *c = (_il2d_n1arm_ctx_t *)v;
-    _il2d_blu_cols(c->sc, c->sc, c->N1, c->N2, c->M2, c->bnst, c->bR, c->bL,
-                   c->bf, c->bb, c->btf, c->btb, c->bchf, c->bkf, c->bscr);
-}
 static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                                  struct vfft_wisdom_s *W,
                                  const vfft_proto_registry_t *reg,
@@ -283,324 +245,35 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         if (cfg->transform == VFFT_C2C &&
             cfg->layout == VFFT_LAYOUT_INTERLEAVED)
         {
-            int chain_ok = 0;
-            {
-                /* chain precedence: env > banked lay=il verdict > RACE
-                 * the full composition pool (multi-stage cells only;
-                 * component-pinned: the race times the column pass, the
-                 * only thing the axis changes) > greedy. */
-                if (getenv("VFFT_IL2D_CHAIN"))
-                    chain_ok = _il2d_build_chain(N1, il2d_R, il2d_f,
-                                                 il2d_b, &il2d_nst);
-                else if (vw2_2d_il_chain_lookup(&W->vw2, N1, N2, il2d_R,
-                                                &il2d_nst, &il2d_bwl,
-                                                &il2d_btf, &il2d_bro,
-                                                &il2d_bcmt,
-                                                &il2d_bcmtt, &il2d_bblu, il2d_ord) &&
-                         _il2d_chain_prod(il2d_R, il2d_nst) ==
-                             (il2d_bblu > 0 ? il2d_bblu : N1) &&
-                         _il2d_resolve(il2d_R, il2d_nst, il2d_f, il2d_b))
-                    chain_ok = 1;
-                else
-                {
-                    int cand[VFFT_IL2D_MAXCAND][8], lens[VFFT_IL2D_MAXCAND];
-                    int cur[8], ncand = 0, dropped = 0;
-                    _il2d_enum_rec(N1, 0, cur, cand, lens, &ncand,
-                                   &dropped);
-                    if (dropped)
-                        _vfft_warn("il2d chain race: pool capped at %d "
-                                   "(%d candidate(s) dropped) at %dx%d",
-                                   VFFT_IL2D_MAXCAND, dropped, N1, N2);
-                    if (ncand > 1)
-                    {
-                        double bns = 0;
-                        int win = _il2d_race_chains(N1, N2, ncand, cand,
-                                                    lens, &bns, il2d_ord == VW2_ORD_NAT);
-                        if (win >= 0 &&
-                            _il2d_resolve(cand[win], lens[win], il2d_f,
-                                          il2d_b))
-                        {
-                            memcpy(il2d_R, cand[win],
-                                   sizeof cand[win]);
-                            il2d_nst = lens[win];
-                            chain_ok = 1;
-                            vw2_2d_il_chain_bank(&W->vw2, N1, N2,
-                                                 il2d_R, il2d_nst,
-                                                 -1, -1, -1, -1, -1, -1,
-                                                 bns, il2d_ord);
-                            _vw2_persist(W, cfg);
-                        }
-                    }
-                    if (!chain_ok)
-                        chain_ok = _il2d_build_chain(N1, il2d_R, il2d_f,
-                                                     il2d_b, &il2d_nst);
-                }
-            }
-            if (chain_ok && il2d_bblu <= 0)
-            {   /* E1.11 per-stage kernel forms (2026-09-02); a banked
-                 * Bluestein cell's forms live on its (M, N2) row */
-                _il2d_forms_serve(W, cfg, 0, N1, N2, il2d_R, il2d_nst,
-                                  il2d_f, il2d_b, il2d_fm, sizeof il2d_fm, il2d_ord);
-            }
-            if (!chain_ok)
-            {
-                /* ODD/PRIME N1: the COLUMN-AXIS BLUESTEIN (struct
-                 * comment at il2d_blu; _il2d_blu_build). Reached only
-                 * when no chain exists — with the odd t2c/n1c kinds
-                 * emitted, that now means prime / unexpressible N1.
-                 * n1 comes out NATURAL by construction, so ALL order
-                 * spellings are served (M4-lite closed the old
-                 * DEFAULT-only gate 2026-08-27). */
-                il2d_blu = _il2d_blu_build(N1, (size_t)N2, il2d_R,
-                                           il2d_L, il2d_f, il2d_b,
-                                           il2d_tf, il2d_tb, &il2d_nst,
-                                           &il2d_bluchf, &il2d_bluchb,
-                                           &il2d_blukf, &il2d_blukb,
-                                           &il2d_bluscr);
-                if (il2d_blu)
-                    chain_ok = 1;
-            }
-            if (chain_ok && !il2d_blu && il2d_bblu <= 0 && il2d_nst > 1 &&
-                cfg->order == VFFT_ORDER_NATURAL)
-            {
-                /* (il2d_bblu > 0 = a banked Bluestein cell: il2d_R is the
-                 * length-M chain, n1 natural by construction, the perm
-                 * would divide by zero - pre-existing, fixed 2026-09-02) */
-                /* M4-lite (struct comment at il2d_nat): natural n1 via
-                 * the LEAF REDIRECTION - driver-only, any chain. Built
-                 * BEFORE the N1-arm race below so the chain arm is
-                 * timed under the serving it will actually run. The
-                 * perm builder refuses on any convention mismatch. */
-                il2d_natperm = _il2d_nat_perm(il2d_R, il2d_nst, N1);
-                if (il2d_natperm)
-                    il2d_natscr = (double *)malloc(
-                        2 * (size_t)N1 * N2 * sizeof(double));
-                if (!il2d_natperm || !il2d_natscr)
-                {
-                    free(il2d_natperm);
-                    il2d_natperm = NULL;
-                    _vfft_warn("vfft_create: IL 2D c2c %dx%d "
-                               "order=NATURAL - the natural leaf "
-                               "permutation could not be built for "
-                               "this chain; unsupported",
-                               N1, N2);
+            {   /* THE COLUMN-AXIS PASS BUILD (2026-09-06): chain (env > banked
+                 * > raced > greedy), forms, Bluestein, the natural leaf
+                 * redirection, the N1-arm race, tables — _il2d_col_build in
+                 * il2d_tier.h, the same function a rank-N IL plan runs per
+                 * column axis. The tier's locals below take its result; the
+                 * plan commit further down copies them into h->il2d_col. */
+                const vw2_ilcol_key_t ck = { 2, N1, N2, 0, il2d_ord, 0, 0 };
+                vfft_ilcol_t col;
+                memset(&col, 0, sizeof col);
+                if (!_il2d_col_build(W, cfg, &ck, N1, (size_t)N2,
+                                     cfg->order == VFFT_ORDER_NATURAL, &col,
+                                     il2d_fm, sizeof il2d_fm, &il2d_bwl, &il2d_btf,
+                                     &il2d_bro, &il2d_bcmt, &il2d_bcmtt, &il2d_bblu))
                     return NULL;
-                }
-                il2d_nat = 1;
-            }
-            if (chain_ok && !il2d_blu && !getenv("VFFT_IL2D_CHAIN"))
-            {
-                /* THE RACED CHAIN ARM (owner directive): for a chain
-                 * that carries an ODD radix (the newly emitted kinds),
-                 * race it against the Bluestein column route. DEFAULT
-                 * order: the two serve different n1 orders (chain =
-                 * scrambled comb, blu = natural), both self-consistent.
-                 * NATURAL order (2026-08-28): BOTH arms are natural -
-                 * the chain via the leaf redirection, blu by
-                 * construction - so the race is the only lawful pick;
-                 * the chain arm runs the natural pass. Pick is pure
-                 * speed either way. Env VFFT_IL2D_BLU=1 pins blu,
-                 * =0 pins the chain (env never banks); unset = race
-                 * min-of-3 alternated on scratch through the SERVING
-                 * functions. pow2 chains never race (blu is pointless
-                 * there). Verdict plan-local (the wisdom banking of a
-                 * blu marker rides the layout-audit wave). */
-                int hasodd = 0, s3;
-                const char *be = getenv("VFFT_IL2D_BLU");
-                for (s3 = 0; s3 < il2d_nst; s3++)
-                    if (il2d_R[s3] & 1)
-                        hasodd = 1;
-                /* the chain arm times the SERVING column pass, so the
-                 * N1 tables must exist BEFORE the race (they are
-                 * otherwise built at the row-child block below — timing
-                 * with empty tabs was a NULL-load crash, caught by the
-                 * cell sweep 2026-08-27). il2d_tbl_done stops the later
-                 * shared build from double-building the winner's. */
-                /* REPLAY the banked N1-arm verdict (E1.7, 2026-09-02):
-                 * blu > 0 = Bluestein won (the row's chain IS the M
-                 * chain, already resolved above — build the Bluestein
-                 * tables and adopt, no timing); blu == 0 = the chain won
-                 * (nothing to do). Only an unraced cell (-1) or an env
-                 * pin runs the race below. */
-                /* blu > 0 REGARDLESS of hasodd (2026-09-02): a banked Bluestein
-                 * row carries the pow2 M chain, which has no odd factor — the
-                 * old guard skipped the adoption for a PRIME N1 and the create
-                 * ran the M chain as the N1 chain (wrong output, caught by the
-                 * naive-DFT probe at 127x100 the day prime rows first banked) */
-                if (il2d_bblu > 0 && !be && !cfg->recalibrate)
-                {
-                    int bR[8], bL[8], bnst = 0, M2;
-                    vfft_il2p_fn bf[8], bb[8];
-                    double *btf[8], *btb[8];
-                    double *bchf, *bchb, *bkf, *bkb, *bscr;
-                    memset(btf, 0, sizeof btf);
-                    memset(btb, 0, sizeof btb);
-                    M2 = _il2d_blu_build(N1, (size_t)N2, bR, bL, bf, bb,
-                                         btf, btb, &bnst, &bchf, &bchb,
-                                         &bkf, &bkb, &bscr);
-                    if (M2 == il2d_bblu)
-                    {
-                        memcpy(il2d_R, bR, sizeof bR);
-                        memcpy(il2d_L, bL, sizeof bL);
-                        memcpy(il2d_f, bf, sizeof bf);
-                        memcpy(il2d_b, bb, sizeof bb);
-                        memcpy(il2d_tf, btf, sizeof btf);
-                        memcpy(il2d_tb, btb, sizeof btb);
-                        il2d_nst = bnst;
-                        il2d_blu = M2;
-                        il2d_bluchf = bchf;
-                        il2d_bluchb = bchb;
-                        il2d_blukf = bkf;
-                        il2d_blukb = bkb;
-                        il2d_bluscr = bscr;
-                        il2d_tbl_done = 1;
-                        if (il2d_nat)
-                        {
-                            free(il2d_natperm);
-                            free(il2d_natscr);
-                            il2d_natperm = NULL;
-                            il2d_natscr = NULL;
-                            il2d_nat = 0;
-                        }
-                        if (getenv("VFFT_IL2D_LOG"))
-                            fprintf(stderr, "[il2d] N1-arm %dx%d (c2c): "
-                                            "replay BLUESTEIN M=%d src=wisdom\n",
-                                    N1, N2, M2);
-                        hasodd = 0;            /* verdict served */
-                    }
-                    else
-                    {
-                        for (s3 = 0; s3 < bnst; s3++)
-                        {
-                            free(btf[s3]);
-                            free(btb[s3]);
-                        }
-                        free(bchf); free(bchb); free(bkf); free(bkb); free(bscr);
-                    }
-                }
-                else if (hasodd && il2d_bblu == 0 && !be && !cfg->recalibrate)
-                {
-                    if (getenv("VFFT_IL2D_LOG"))
-                        fprintf(stderr, "[il2d] N1-arm %dx%d (c2c): replay "
-                                        "chain src=wisdom\n", N1, N2);
-                    hasodd = 0;                /* the chain won: no race */
-                }
-                if (hasodd && (!be || atoi(be) == 1) &&
-                    !_il2d_build_tables(N1, il2d_nst, il2d_R, il2d_L,
-                                        il2d_tf, il2d_tb))
-                {
-                    il2d_tbl_done = 1;
-                    int bR[8], bL[8], bnst = 0, M2;
-                    vfft_il2p_fn bf[8], bb[8];
-                    double *btf[8], *btb[8];
-                    double *bchf, *bchb, *bkf, *bkb, *bscr;
-                    memset(btf, 0, sizeof btf);
-                    memset(btb, 0, sizeof btb);
-                    M2 = _il2d_blu_build(N1, (size_t)N2, bR, bL, bf, bb,
-                                         btf, btb, &bnst, &bchf, &bchb,
-                                         &bkf, &bkb, &bscr);
-                    if (M2)
-                    {
-                        double *sc = (double *)malloc(
-                            2 * (size_t)N1 * N2 * sizeof(double));
-                        double tc = 1e300, tbu = 1e300;
-                        int rr, use_blu = (be != NULL); /* env pin */
-                        size_t i3;
-                        if (sc && !use_blu)
-                        {
-                            for (i3 = 0; i3 < 2 * (size_t)N1 * N2; i3++)
-                                sc[i3] = 1.0 + 1e-6 * (double)(i3 & 511);
-                            {
-                                _il2d_n1arm_ctx_t rc = {
-                                    sc, N1, (size_t)N2, il2d_nst, il2d_R,
-                                    il2d_L, il2d_f, il2d_tf, M2, bnst, bR,
-                                    bL, bf, bb, btf, btb, bchf, bkf, bscr,
-                                    il2d_nat, il2d_natperm, il2d_natscr };
-                                const vfft_race_arm_t arms[2] = {
-                                    { "chain", _il2d_n1arm_chain, &rc },
-                                    { "bluestein", _il2d_n1arm_blu, &rc } };
-                                const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-                                double ns[2];
-                                (void)rr;
-                                vfft_race_run(&proto, arms, 2, ns);
-                                tc = ns[0];
-                                tbu = ns[1];
-                            }
-                        }
-                        free(sc);
-                        if (!use_blu)
-                            use_blu = (tbu < tc);
-                        if (getenv("VFFT_IL2D_LOG"))
-                            fprintf(stderr, "[il2d] N1-arm race %dx%d "
-                                            "(c2c %s): chain=%.0f blu=%.0f "
-                                            "-> %s\n",
-                                    N1, N2, il2d_nat ? "nat" : "scr",
-                                    tc, tbu,
-                                    use_blu ? "BLUESTEIN" : "chain");
-                        if (!be)
-                        {   /* bank the verdict with the chain that SERVES */
-                            vw2_2d_il_chain_bank(&W->vw2, N1, N2,
-                                                 use_blu ? bR : il2d_R,
-                                                 use_blu ? bnst : il2d_nst,
-                                                 -1, -1, -1, -1, -1,
-                                                 use_blu ? M2 : 0, 0.0, il2d_ord);
-                            _vw2_persist(W, cfg);
-                        }
-                        if (use_blu)
-                        {
-                            for (s3 = 0; s3 < il2d_nst; s3++)
-                            {
-                                free(il2d_tf[s3]);
-                                free(il2d_tb[s3]);
-                            }
-                            memcpy(il2d_R, bR, sizeof bR);
-                            memcpy(il2d_L, bL, sizeof bL);
-                            memcpy(il2d_f, bf, sizeof bf);
-                            memcpy(il2d_b, bb, sizeof bb);
-                            memcpy(il2d_tf, btf, sizeof btf);
-                            memcpy(il2d_tb, btb, sizeof btb);
-                            il2d_nst = bnst;
-                            il2d_blu = M2;
-                            il2d_bluchf = bchf;
-                            il2d_bluchb = bchb;
-                            il2d_blukf = bkf;
-                            il2d_blukb = bkb;
-                            il2d_bluscr = bscr;
-                            if (il2d_nat)
-                            { /* blu is natural by construction */
-                                free(il2d_natperm);
-                                free(il2d_natscr);
-                                il2d_natperm = NULL;
-                                il2d_natscr = NULL;
-                                il2d_nat = 0;
-                            }
-                        }
-                        else
-                        {
-                            for (s3 = 0; s3 < bnst; s3++)
-                            {
-                                free(btf[s3]);
-                                free(btb[s3]);
-                            }
-                            free(bchf); free(bchb);
-                            free(bkf); free(bkb); free(bscr);
-                        }
-                    }
-                }
-                else if (hasodd && be && atoi(be) == 0)
-                    ; /* env pins the chain: nothing to do */
-            }
-            if (!chain_ok)
-            {
-                /* OWNER LAW: split is NOT a fallback of IL — no convert
-                 * wrapper. An inexpressible N1 refuses loudly. */
-                _vfft_warn("vfft_create: IL 2D c2c %dx%d — N1 has no "
-                           "native column chain (radices 4..64, no "
-                           "leftover factor)%s",
-                           N1, N2,
-                           " and the Bluestein column route could "
-                           "not be built");
-                return NULL;
+                il2d_nst = col.nst;
+                memcpy(il2d_R, col.R, sizeof il2d_R);
+                memcpy(il2d_L, col.L, sizeof il2d_L);
+                memcpy(il2d_f, col.f, sizeof il2d_f);
+                memcpy(il2d_b, col.b, sizeof il2d_b);
+                memcpy(il2d_tf, col.tf, sizeof il2d_tf);
+                memcpy(il2d_tb, col.tb, sizeof il2d_tb);
+                il2d_blu = col.blu;
+                il2d_bluchf = col.bluchf; il2d_bluchb = col.bluchb;
+                il2d_blukf = col.blukf; il2d_blukb = col.blukb;
+                il2d_bluscr = col.bluscr;
+                il2d_nat = col.nat;
+                il2d_natperm = col.natperm;
+                il2d_natscr = col.natscr;
+                il2d_tbl_done = 1;         /* the builder built the tables */
             }
             {
                 vfft_config_t rc;

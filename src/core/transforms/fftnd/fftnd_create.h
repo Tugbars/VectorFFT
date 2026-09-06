@@ -60,6 +60,10 @@ static vfft_plan _vfft_create_rank34(const vfft_config_t *cfg,
      * convert. No fallback: refuse, never bridge. */
     if (cfg->layout == VFFT_LAYOUT_INTERLEAVED)
     {
+        /* the rank-N INTERLEAVED c2c tier (fftnd_il.h, 2026-09-06): rank 3
+         * c2c is native; real rank >= 3 and rank 4 stay refused loudly */
+        if (cfg->transform == VFFT_C2C && cfg->dims == 3)
+            return _vfft_create_fftnd_il(cfg, W, reg, K);
         _vfft_warn("vfft_create: %dD %s with layout=INTERLEAVED is not wired yet "
                    "(the rank-3+ interleaved tier is a planned feature); use "
                    "VFFT_LAYOUT_SPLIT",

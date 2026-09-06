@@ -260,6 +260,7 @@ struct vfft_plan_s
     double *zr2c_aff;               /* affS ++ affC (one allocation)      */
     double *zr2c_scratch;           /* N+2 dbl, route-0 placements only   */
     stride_plan_t *tplan;      /* trig DCT/DST/DHT (owned)  */
+    struct vfft_ilnd_s *ilnd;  /* the rank-N INTERLEAVED c2c tier (fftnd_il.h), owned */
     vfft_r2c_plan_t *rfft_row; /* §6a31: 2D row-pass rfft inner (owned)   */
     vfft_c2r_disp_t *c2r_row;  /* §6a32: 2D bwd row-pass c2r inner (owned) */
     /* config.owned_buffers: the planes THIS plan allocated and will free.

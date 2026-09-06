@@ -519,11 +519,37 @@ static inline int vw2_3d_bank_entry(vw2_store_t *st,
 /* blu (E1.7, 2026-09-02): the N1-arm verdict — 0 = the odd chain won,
  * M > 0 = the column-axis Bluestein of length M won (chain= is then the
  * M chain that serves), absent = -1 = unraced. Same token on the real row. */
-static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
-                                         int N2, int *Rs, int *nst,
+/* ═══ the COLUMN-AXIS ROW of an interleaved c2c plan, keyed by rank and
+ * axis (2026-09-06, the rank-N IL tier). The 2D tier's row is rank 2, axis 0
+ * with the historical token names (chain= wl= tf= ro= cmt= cmtt= blu=
+ * forms=); a rank-N plan keys rank 3 and names axis a >= 1's tokens with
+ * the axis as a suffix (chain1= wl1= ...) on the SAME row, so one cell is
+ * one row. axis 0 creates the row, a later axis updates fields on it. */
+typedef struct {
+    int rank;          /* 2 or 3 */
+    int n0, n1, n2;    /* the cell's dims (n2 = 0 at rank 2) */
+    int ord;           /* VW2_ORD_SCR / VW2_ORD_NAT */
+    int axis;          /* 0 = the historical tokens; a >= 1 = suffixed */
+    int real;          /* 1 = the real tier's row (t=r2c) */
+} vw2_ilcol_key_t;
+
+static inline const char *vw2__ilcol_tok(const vw2_ilcol_key_t *k, const char *base,
+                                         char *buf, size_t sz)
+{
+    if (k->axis <= 0) return base;
+    snprintf(buf, sz, "%s%d", base, k->axis);
+    return buf;
+}
+static inline void vw2__ilcol_key(const vw2_ilcol_key_t *ck, vw2_key_t *k)
+{
+    vw2__2d_key(k, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1,
+                ck->n2, ck->ord, VW2_LAY_IL);
+}
+
+static inline int vw2_ilcol_chain_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                         int *Rs, int *nst,
                                          int *wl, int *tf, int *ro,
-                                         int *cmt, int *cmtt, int *blu,
-                                         int ord)
+                                         int *cmt, int *cmtt, int *blu)
 {
     /* ord (2026-09-04): VW2_ORD_SCR = the scrambled-comb serving (the
      * historical row); VW2_ORD_NAT = the M4-lite natural cell — its chain
@@ -531,21 +557,22 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *cv;
+    char tb[16];
     int m = 0;
-    vw2__2d_key(&k, VW2_T_C2C, 2, N1, N2, 0, ord, VW2_LAY_IL);
+    vw2__ilcol_key(ck, &k);
     r = vw2_lookup(s, &k);
     if (!r) return 0;
-    cv = vw2_rec_get(r, "chain");
+    cv = vw2_rec_get(r, vw2__ilcol_tok(ck, "chain", tb, sizeof tb));
     if (!cv) return 0;                       /* an ANY/split row: refuse */
     /* the axis verdicts; ABSENT = -1 (chain-only vintage / unraced) */
-    if (wl) { const char *v = vw2_rec_get(r, "wl"); *wl = v ? atoi(v) : -1; }
-    if (tf) { const char *v = vw2_rec_get(r, "tf"); *tf = v ? atoi(v) : -1; }
-    if (ro) { const char *v = vw2_rec_get(r, "ro"); *ro = v ? atoi(v) : -1; }
+    if (wl) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "wl", tb, sizeof tb)); *wl = v ? atoi(v) : -1; }
+    if (tf) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "tf", tb, sizeof tb)); *tf = v ? atoi(v) : -1; }
+    if (ro) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "ro", tb, sizeof tb)); *ro = v ? atoi(v) : -1; }
     /* the MT verdict + the thread count it was RACED AT (validity: a
      * cmtt != the requesting pool re-races — same law as the rl cell) */
-    if (cmt) { const char *v = vw2_rec_get(r, "cmt"); *cmt = v ? atoi(v) : -1; }
-    if (cmtt) { const char *v = vw2_rec_get(r, "cmtt"); *cmtt = v ? atoi(v) : -1; }
-    if (blu) { const char *v = vw2_rec_get(r, "blu"); *blu = v ? atoi(v) : -1; }
+    if (cmt) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "cmt", tb, sizeof tb)); *cmt = v ? atoi(v) : -1; }
+    if (cmtt) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "cmtt", tb, sizeof tb)); *cmtt = v ? atoi(v) : -1; }
+    if (blu) { const char *v = vw2_rec_get(r, vw2__ilcol_tok(ck, "blu", tb, sizeof tb)); *blu = v ? atoi(v) : -1; }
     while (*cv && m < 8) {
         int v = 0;
         if (*cv < '0' || *cv > '9') return 0;
@@ -559,24 +586,66 @@ static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
     *nst = m;
     return 1;
 }
+static inline int vw2_2d_il_chain_lookup(const vw2_store_t *s, int N1,
+                                         int N2, int *Rs, int *nst,
+                                         int *wl, int *tf, int *ro,
+                                         int *cmt, int *cmtt, int *blu,
+                                         int ord)
+{
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    return vw2_ilcol_chain_lookup(s, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu);
+}
 
-static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
+/* bank one axis's chain and verdicts: axis 0 writes the row (the 2D
+ * tier's record, unchanged), a later axis updates its suffixed tokens on
+ * the row axis 0 wrote — the row must exist. Negative verdicts are not
+ * emitted (unraced). Returns VW2_OK or -1. */
+static inline int vw2_ilcol_chain_bank(vw2_store_t *st, const vw2_ilcol_key_t *ck,
                                        const int *Rs, int nst,
                                        int wl, int tf, int ro,
-                                       int cmt, int cmtt, int blu, double ns,
-                                       int ord)
+                                       int cmt, int cmtt, int blu, double ns)
 {
     vw2_rec_t rec;
     vw2_rec_t *r = &rec;
     const char *why = NULL;
     char b[64];
     int i, off = 0;
-    memset(r, 0, sizeof *r);
-    vw2__2d_rec_key(r, VW2_T_C2C, 2, N1, N2, 0, ord,
-                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
     for (i = 0; i < nst && off < (int)sizeof b - 8; i++)
         off += snprintf(b + off, sizeof b - off, "%s%d", i ? "." : "",
                         Rs[i]);
+    /* the field-update path: a later axis always (its tokens live on the
+     * row axis 0 wrote), and axis 0 itself when the row EXISTS and this
+     * bank carries no measurement (ns <= 0: the N-arm verdict banked after
+     * the chain race, or after a replayed chain). Before 2026-09-06 that
+     * case built a fresh record and the measured row was kept, so the
+     * N-arm verdict never landed and re-raced on every create wherever no
+     * axis race re-banked it (the rank-3 tier's axis 0). */
+    {
+        vw2_key_t k;
+        char tb[16], vb[24];
+        vw2__ilcol_key(ck, &k);
+        if (ck->axis > 0 && !vw2_lookup(st, &k)) {
+            fprintf(stderr, "[wisdom2] il column axis %d bank refused (no row)\n", ck->axis);
+            return -1;
+        }
+        if (ck->axis > 0 || (ns <= 0.0 && vw2_lookup(st, &k))) {
+        if (vw2_update_field(st, &k, vw2__ilcol_tok(ck, "chain", tb, sizeof tb), b) != VW2_OK) return -1;
+#define VW2__ILCOL_UPD(base, val) do { \
+        snprintf(vb, sizeof vb, "%d", (val)); \
+        if (vw2_update_field(st, &k, vw2__ilcol_tok(ck, base, tb, sizeof tb), vb) != VW2_OK) return -1; \
+    } while (0)
+        if (wl >= 0) VW2__ILCOL_UPD("wl", wl);
+        if (tf >= 0) VW2__ILCOL_UPD("tf", tf);
+        if (ro >= 0) VW2__ILCOL_UPD("ro", ro);
+        if (cmt >= 0 && cmtt > 0) { VW2__ILCOL_UPD("cmt", cmt); VW2__ILCOL_UPD("cmtt", cmtt); }
+        if (blu >= 0) VW2__ILCOL_UPD("blu", blu);
+#undef VW2__ILCOL_UPD
+        return VW2_OK;
+        }
+    }
+    memset(r, 0, sizeof *r);
+    vw2__2d_rec_key(r, ck->real ? VW2_T_R2C : VW2_T_C2C, ck->rank, ck->n0, ck->n1, ck->n2, ck->ord,
+                    /*migrated=*/0, /*ord_blind=*/0, VW2_LAY_IL);
     if (vw2_rec_set(r, 1, "chain", b) != VW2_OK) {
         vw2_rec_free(r);
         fprintf(stderr, "[wisdom2] il2d chain bank refused (token)\n");
@@ -617,6 +686,15 @@ static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
         return -1;
     }
     return vw2__2d_bank(st, r, 0);
+}
+static inline int vw2_2d_il_chain_bank(vw2_store_t *st, int N1, int N2,
+                                       const int *Rs, int nst,
+                                       int wl, int tf, int ro,
+                                       int cmt, int cmtt, int blu, double ns,
+                                       int ord)
+{
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, 0 };
+    return vw2_ilcol_chain_bank(st, &ck, Rs, nst, wl, tf, ro, cmt, cmtt, blu, ns);
 }
 
 /* ═══ native IL 2D REAL tier cells (lay=il ord=scr —
@@ -783,29 +861,64 @@ static inline int vw2_2d_rl_bank(vw2_store_t *st, int N1, int N2,
  * ("-" = the stage's single form; r32 b48|b84, r64 b88|b416). Merged onto
  * the existing row (vw2_update_field) after the chain is banked; a row
  * without a chain carries no forms. */
-static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
-                                      int N2, char *out, size_t osz,
-                                      int ord)
+static inline int vw2_ilcol_forms_lookup(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                         char *out, size_t osz)
 {
     vw2_key_t k;
     const vw2_rec_t *r;
     const char *v;
-    vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
-                ord, VW2_LAY_IL);
+    char tb[16];
+    vw2__ilcol_key(ck, &k);
     r = vw2_lookup(s, &k);
-    if (!r || !vw2_rec_get(r, "chain")) return 0;
-    v = vw2_rec_get(r, "forms");
+    if (!r || !vw2_rec_get(r, vw2__ilcol_tok(ck, "chain", tb, sizeof tb))) return 0;
+    v = vw2_rec_get(r, vw2__ilcol_tok(ck, "forms", tb, sizeof tb));
     if (!v || !*v) return 0;
     snprintf(out, osz, "%s", v);
     return 1;
 }
+static inline int vw2_ilcol_forms_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck,
+                                       const char *forms)
+{
+    vw2_key_t k;
+    char tb[16];
+    vw2__ilcol_key(ck, &k);
+    return vw2_update_field(s, &k, vw2__ilcol_tok(ck, "forms", tb, sizeof tb), forms) == VW2_OK;
+}
+/* the rank-N IL tier's STRUCTURE verdict (fftnd_il.h): s= on the rank-3
+ * lay=il row that axis 0's chain bank created — 1 = the child per plane,
+ * 2 = the flat tier; 0 = absent */
+static inline int vw2_ilnd_arm_lookup(const vw2_store_t *s, const vw2_ilcol_key_t *ck)
+{
+    vw2_key_t k;
+    const vw2_rec_t *r;
+    const char *v;
+    vw2__ilcol_key(ck, &k);
+    r = vw2_lookup(s, &k);
+    if (!r) return 0;
+    v = vw2_rec_get(r, "s");
+    return v ? atoi(v) : 0;
+}
+static inline int vw2_ilnd_arm_bank(vw2_store_t *s, const vw2_ilcol_key_t *ck, int arm)
+{
+    vw2_key_t k;
+    char b[8];
+    vw2__ilcol_key(ck, &k);
+    snprintf(b, sizeof b, "%d", arm);
+    return vw2_update_field(s, &k, "s", b) == VW2_OK;
+}
+
+static inline int vw2_2d_forms_lookup(vw2_store_t *s, int is_real, int N1,
+                                      int N2, char *out, size_t osz,
+                                      int ord)
+{
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    return vw2_ilcol_forms_lookup(s, &ck, out, osz);
+}
 static inline int vw2_2d_forms_bank(vw2_store_t *s, int is_real, int N1,
                                     int N2, const char *forms, int ord)
 {
-    vw2_key_t k;
-    vw2__2d_key(&k, is_real ? VW2_T_R2C : VW2_T_C2C, 2, N1, N2, 0,
-                ord, VW2_LAY_IL);
-    return vw2_update_field(s, &k, "forms", forms) == VW2_OK;
+    vw2_ilcol_key_t ck = { 2, N1, N2, 0, ord, 0, is_real };
+    return vw2_ilcol_forms_bank(s, &ck, forms);
 }
 
 #endif /* VFFT_WISDOM2_2D_READER_H */
