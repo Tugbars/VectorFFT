@@ -126,7 +126,8 @@ this; at this tier's axis 0 nothing did).
 |---|---|---|
 | 2 | C2C, rank 3, howmany 1, OUT OF PLACE, order DEFAULT/SCRAMBLED, one thread | SHIPPED 2026-09-06 |
 | 4 | MT: band arm vs plane arm vs serial, raced per (cell, T), clones per worker | SHIPPED 2026-09-07 |
-| 3 | NATURAL order (its own cell) and in place | next |
+| 3a | IN PLACE: the same plan and row serve both placements (every pass alias-tolerant; output bitwise the out-of-place output) | SHIPPED 2026-09-07 |
+| 3b | NATURAL order (its own `ord=nat` cell) | next |
 | 5 | real 3D (r2c/c2r) | after 3 |
 | 6 | rank 4 (axis 0 wide, then per plane the rank-3 tier or the flat form, raced) | after 5 |
 
@@ -150,8 +151,11 @@ address finds it exactly as the 2D consumer does, per axis.
   legal width (its output memcmp-equal to the unbanded one), then the raced
   verdict; a second run on the warm store must show `src=wisdom` and zero
   races. Cells: 16³, 32×16×64, 27×9×15, 36×20×28, 64³, 128×64×32.
-- `api_matrix_gate`: 3D c2c OOP IL 16³ DEFAULT and SCRAMBLED and 9×15×27
-  are served; NATURAL and howmany 2 are refused.
+- `api_matrix_gate`: 3D c2c OOP IL 16³ DEFAULT and SCRAMBLED, 9×15×27, and
+  IN PLACE 16³ and 9×15×27 SCRAMBLED are served; NATURAL and howmany 2 are
+  refused.
+- The probe's sixth and seventh passes create the cell IN PLACE at T=1 and
+  T=8: their outputs must be memcmp-equal to the out-of-place verdict's.
 - The probe's fifth pass creates the cell at T=8: its output must be
   memcmp-equal to the T=1 verdict's, and the engagement counter must move
   once per execute (`engaged=7/7`).

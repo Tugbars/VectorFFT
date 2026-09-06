@@ -824,6 +824,10 @@ walk + tfuse at rank 3); per plane the RACED structure — a 2D IL child
 plan or the flat axis-1 column pass + K=1 rows. Structure × width are
 arms of one race at create, banked `s=` `wl=` on the rank-3 row. Out of
 place, order DEFAULT, single thread, served through the front door.
+IN PLACE (2026-09-07) is the same plan and the same wisdom row — every
+pass is alias-tolerant, and the in-place output is bitwise the
+out-of-place output at every probed cell, at one thread and at T=8 — so
+its numbers are these.
 
 Arms (one process, `bench_1d_vs_mkl.c --3dil`, 9 rounds with reversed
 arm order, cachebust between arms, medians, all arms OUT OF PLACE):

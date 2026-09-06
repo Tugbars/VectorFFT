@@ -71,29 +71,33 @@ int main(int argc, char **argv)
         /* passes: 1 = child wl0, 2 = flat wl0, 3 = flat wl pinned (bitwise
          * vs pass 2), 4 = the raced verdict (structure x wl) at T=1,
          * 5 = the same cell at T=TMT: the MT verdict raced, output bitwise
-         * vs pass 4, the engagement counter must move when mt > 0 */
-        for (int arm = 1; arm <= 5; arm++)
+         * vs pass 4, the engagement counter must move when mt > 0;
+         * 6 = IN PLACE at T=1 (z -> z), bitwise vs pass 4; 7 = in place at
+         * T=TMT, bitwise vs pass 4 (2026-09-07: one plan, either placement) */
+        for (int arm = 1; arm <= 7; arm++)
         {
             vfft_config_t cfg;
             vfft_plan h;
             double dc, rt = 0, best = 1e300, tmin = 1e300;
             int bit = 1;
             long eng0 = vfft_ilnd_mt_passes(), eng = 0;
-            const char *label = arm == 5 ? "mt" : arm == 4 ? "raced" : arm == 1 ? "child" : arm == 2 ? "flat" : "flatwl";
+            const int ip = (arm >= 6);
+            const char *label = arm == 7 ? "ip-mt" : arm == 6 ? "ip" : arm == 5 ? "mt" : arm == 4 ? "raced" : arm == 1 ? "child" : arm == 2 ? "flat" : "flatwl";
             if (arm == 3 && !wlpin) continue;
             env_set("VFFT_ILND_ARM", arm >= 4 ? NULL : (arm == 1 ? "1" : "2"));
             env_set("VFFT_ILND_WL", arm >= 4 ? NULL : (arm == 3 ? wlbuf : "0"));
             memset(&cfg, 0, sizeof cfg);
-            cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
+            cfg.transform = VFFT_C2C; cfg.placement = ip ? VFFT_INPLACE : VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
             cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1;
-            cfg.order = VFFT_ORDER_DEFAULT; cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = arm == 5 ? TMT : 1;
+            cfg.order = VFFT_ORDER_DEFAULT; cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = (arm == 5 || arm == 7) ? TMT : 1;
             cfg.wisdom = W; cfg.wisdom_write = 1;
             h = vfft_create(&cfg);
             eng0 = vfft_ilnd_mt_passes(); /* after create: the MT race's own executes count too */
             if (!h) { printf("%dx%dx%-4d %-6s | REFUSED\n", N1, N2, N3, label); bad++; continue; }
-            vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL);
+            if (ip) { memcpy(z, x, 2 * T * 8); vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL); }
+            else vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL);
             if (arm == 2 || arm == 4) memcpy(zref, z, 2 * T * 8);
-            if (arm == 3 || arm == 5) bit = memcmp(zref, z, 2 * T * 8) == 0;
+            if (arm == 3 || arm >= 5) bit = memcmp(zref, z, 2 * T * 8) == 0;
             dc = fabs(z[0] - s0r) + fabs(z[1] - s0i);
             for (int a = 0; a < N1; a++) for (int b = 0; b < N2; b++)
             {
@@ -101,17 +105,26 @@ int main(int argc, char **argv)
                 const double d = fabs(z[2 * j] - er) + fabs(z[2 * j + 1] - ei);
                 if (d < best) best = d;
             }
-            vfft_execute(h, VFFT_BACKWARD, z, NULL, y, NULL);
+            if (ip) { memcpy(y, z, 2 * T * 8); vfft_execute(h, VFFT_BACKWARD, y, NULL, y, NULL); }
+            else vfft_execute(h, VFFT_BACKWARD, z, NULL, y, NULL);
             for (size_t j = 0; j < 2 * T; j++) { const double d = fabs(y[j] / (double)T - x[j]); if (d > rt) rt = d; }
-            for (int r = 0; r < 5; r++) { double t0 = now_ns(); vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL); t0 = now_ns() - t0; if (t0 < tmin) tmin = t0; }
+            for (int r = 0; r < 5; r++)
+            {
+                double t0;
+                if (ip) memcpy(z, x, 2 * T * 8);
+                t0 = now_ns();
+                if (ip) vfft_execute(h, VFFT_FORWARD, z, NULL, z, NULL); else vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL);
+                t0 = now_ns() - t0; if (t0 < tmin) tmin = t0;
+            }
             {
                 const int ok = dc < 1e-8 * T && rt < 1e-9 && best < 1e-8 * sqrt((double)T) && bit;
                 eng = vfft_ilnd_mt_passes() - eng0;
                 printf("%dx%dx%-4d %-6s | %.1e  %.1e  %.1e | %.0f %s%s", N1, N2, N3,
                        label, dc, rt, best, tmin, ok ? "OK" : "*** BAD ***",
                        arm == 3 ? (bit ? " bitwise=unbanded" : " NOT BITWISE")
-                       : arm == 5 ? (bit ? " bitwise=serial" : " NOT BITWISE") : "");
-                if (arm == 5) printf(" engaged=%ld/%d", eng, 7);
+                       : arm == 5 ? (bit ? " bitwise=serial" : " NOT BITWISE")
+                       : arm >= 6 ? (bit ? " bitwise=oop" : " NOT BITWISE") : "");
+                if (arm == 5 || arm == 7) printf(" engaged=%ld/%d", eng, 7);
                 printf("\n");
                 if (!ok) bad++;
             }

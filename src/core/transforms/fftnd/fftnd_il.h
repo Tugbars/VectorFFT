@@ -85,9 +85,10 @@
  * forward and backward run the same pass order. Output order: DEFAULT/
  * SCRAMBLED = each column axis digit-reversed by its chain, rows natural.
  *
- * Contracts (phase 2 + MT): C2C, rank 3, howmany == 1, OUT OF PLACE, order
- * DEFAULT or SCRAMBLED. NATURAL, in place, real and rank 4 follow in later
- * phases — refused loudly until then, never bridged.
+ * Contracts (phase 2 + MT + in place): C2C, rank 3, howmany == 1, either
+ * placement (one plan, one wisdom row: every pass is alias-tolerant), order
+ * DEFAULT or SCRAMBLED. NATURAL, real and rank 4 follow in later phases —
+ * refused loudly until then, never bridged.
  *
  * POSITION IN vfft.c IS LOAD-BEARING: after il2d_tier.h (the column build
  * and execute, _tc_clone_equiv's declaration), k1_commit.h (support/race.h)
@@ -780,15 +781,19 @@ static vfft_plan _vfft_create_fftnd_il(const vfft_config_t *cfg,
     const char *wpin = getenv("VFFT_ILND_WL");
     const char *mpin = getenv("VFFT_ILND_MT");
     (void)reg;
+    /* IN PLACE (2026-09-07): the same plan and the same wisdom row serve
+     * both placements — every pass is the 2D tier's alias-tolerant kind
+     * (axis 0 src -> dst with src == dst, the bands and the structure in
+     * place by construction, the strips per column), and the create race
+     * already times in place on scratch. Output bitwise the out-of-place
+     * output (the probe checks it). */
     if (cfg->transform != VFFT_C2C || cfg->dims != 3 || K != 1 ||
-        cfg->placement != VFFT_OUTOFPLACE ||
         (cfg->order != VFFT_ORDER_DEFAULT && cfg->order != VFFT_ORDER_SCRAMBLED))
     {
-        _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C, howmany==1, out of place, "
-                   "order DEFAULT/SCRAMBLED today (got %s, howmany=%zu, %s, order=%d); "
-                   "natural order, in place, real and rank 4 are the tier's next phases",
-                   _vfft_tname(cfg->transform), K,
-                   cfg->placement == VFFT_INPLACE ? "in place" : "out of place", cfg->order);
+        _vfft_warn("vfft_create: 3D INTERLEAVED serves C2C, howmany==1, either placement, "
+                   "order DEFAULT/SCRAMBLED today (got %s, howmany=%zu, order=%d); "
+                   "natural order, real and rank 4 are the tier's next phases",
+                   _vfft_tname(cfg->transform), K, cfg->order);
         return NULL;
     }
     if (N1 < 2 || N2 < 2 || N3 < 2)

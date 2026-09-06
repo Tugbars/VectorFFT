@@ -34,12 +34,12 @@
  *       prime and odd dims through odd chains or the column-axis
  *       Bluestein). There is NO layout-conversion tier anywhere: a cell
  *       either serves natively or refuses loudly. 3D INTERLEAVED C2C is
- *       native (out of place, howmany==1, order DEFAULT/SCRAMBLED: the
- *       rank-N interleaved tier, axis passes over the cube with the
- *       per-plane structure raced and banked); 3D INTERLEAVED real, 3D
- *       in place / NATURAL and 4D INTERLEAVED are refused as the tier's
- *       next phases — use SPLIT there; trig transforms have no complex
- *       layout.
+ *       native (either placement, howmany==1, order DEFAULT/SCRAMBLED:
+ *       the rank-N interleaved tier, axis passes over the cube with the
+ *       per-plane structure and the threading raced and banked); 3D
+ *       INTERLEAVED real, 3D NATURAL and 4D INTERLEAVED are refused as
+ *       the tier's next phases — use SPLIT there; trig transforms have no
+ *       complex layout.
  *   **  order is a C2C axis in 1D and 2D (NATURAL is native in both, for
  *       any factorization) and the ROW-order axis of 2D INTERLEAVED
  *       r2c/c2r (their bins are always natural; NATURAL orders the rows
@@ -489,9 +489,9 @@ extern "C"
    *   2D C2C / R2C / C2R x SPLIT: NATIVE split 2D engines, howmany == 1
    *       (howmany>1 on SPLIT 2D: REJECT); SPLIT 2D real at a prime dim:
    *       REJECT.
-   *   3D C2C            x INTERLEAVED: NATIVE out of place, howmany == 1,
+   *   3D C2C            x INTERLEAVED: NATIVE, either placement, howmany == 1,
    *       order DEFAULT/SCRAMBLED (each column axis digit-reversed by its
-   *       chain, rows natural); in place, NATURAL, howmany > 1: REJECT.
+   *       chain, rows natural); NATURAL, howmany > 1: REJECT.
    *   3D real, 4D       x INTERLEAVED: REJECT ("the tier's next phases")
    *       — use SPLIT. 3D/4D SPLIT: C2C with
    *       howmany == 1 and order DEFAULT/SCRAMBLED, and out-of-place R2C/C2R
