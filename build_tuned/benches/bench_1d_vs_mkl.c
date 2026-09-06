@@ -49,6 +49,7 @@
 #include "executor.h"
 #include "threads.h" /* pool K-split for --mt (set/get threads, dispatch) */
 #include "env.h"     /* stride_env_init + stride_pin_thread */
+long vfft_ilfd_mt_passes(void); /* vfft_diagnostics.h: the odd-N flat DIT MT engagement counter */
 #include "planner.h"
 #include "dp_planner.h" /* vfft_proto_now_ns + dp_set_patient */
 #include "measure.h"    /* --pad: vfft_proto_dp_plan_measure (the strongest planner, measured refine) */
@@ -430,6 +431,9 @@ static int g_k1dir = 0;              /* --k1dir: time K=1 IL in-place BOTH
 static int g_k1zip = 0;              /* --k1zip: K=1 kind-4 cells IN-PLACE
                                       * (both engines) — the apples-to-
                                       * apples in-place interleaved cell */
+static int g_k1noop_mt = 0;          /* --k1noop --mt: the odd-N flat DIT's threaded verdict
+                                       * (il_flatdit_mt.h) vs MKL at the same T — the
+                                       * two-team protocol of --3dil --mt (traps a-d) */
 static int g_k1nat = 0;              /* --k1nat (B6): --k1zip discipline +
                                       * order=NATURAL on our side. MKL is
                                       * ALWAYS natural — this mode finally
@@ -497,9 +501,19 @@ static double k1z_time_vfft_d(vfft_plan h, double *z0, double *S, size_t total,
      * buffer — mirrors the MKL in-place arm's discipline exactly. */
     if (g_k1zip)
         memcpy(S, z0, 2 * total * sizeof(double));
-    for (int w = 0; w < 10; w++)
-        g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
-                : vfft_execute(h, dir, z0, NULL, S, NULL);
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: the pool rebuilt before this arm starts up, the
+         * workers' cache partition settles, the caller core is back at full
+         * clock (3D_mt_il_strategy.md, the transient rule) */
+        const double tw = vfft_proto_now_ns();
+        do
+            vfft_execute(h, dir, z0, NULL, S, NULL);
+        while (vfft_proto_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            g_k1zip ? vfft_execute(h, dir, S, NULL, S, NULL)
+                    : vfft_execute(h, dir, z0, NULL, S, NULL);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -539,8 +553,16 @@ static double k1z_time_mkl(int N, const double *z0, size_t total)
     }
     double *zi = alloc_d(2 * total), *zo = alloc_d(2 * total);
     memcpy(zi, z0, 2 * total * sizeof(double));
-    for (int w = 0; w < 10; w++)
-        g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
+    if (g_k1noop_mt)
+    {   /* >= 5 ms untimed: MKL's parked team wakes and settles */
+        const double tw = vfft_proto_now_ns();
+        do
+            DftiComputeForward(d, zi, zo);
+        while (vfft_proto_now_ns() - tw < 5e6);
+    }
+    else
+        for (int w = 0; w < 10; w++)
+            g_k1zip ? DftiComputeForward(d, zi) : DftiComputeForward(d, zi, zo);
     int reps = reps_for(total);
     double best = 1e18;
     for (int t = 0; t < 5; t++)
@@ -607,7 +629,7 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     cfg.howmany = 1;
     cfg.order = g_k1nat ? VFFT_ORDER_NATURAL : VFFT_ORDER_SCRAMBLED;
     cfg.layout = VFFT_LAYOUT_INTERLEAVED; /* k1z cells run the committed z contract */
-    cfg.nthreads = 1;
+    cfg.nthreads = g_k1noop_mt ? g_mt : 1;
     cfg.wisdom = W;
     vfft_plan h = vfft_create(&cfg);
     if (!h)
@@ -689,21 +711,37 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     }
 #endif
 
-    /* A/B — measure_ab's fairness shape (cachebust + cool between engines, flip) */
+    /* A/B — measure_ab's fairness shape (cachebust + cool between engines, flip).
+     * --mt: the two-team protocol — the library pool torn down before the
+     * MKL arm (trap a), rebuilt before ours; cool_ms >= 300 after MKL so its
+     * team parks (trap b); the timing helpers warm >= 5 ms each. */
     double vns = 0, mns = 0;
+    long eng = 0;
 #ifdef VFFT_HAS_MKL
     if (flip)
     { /* MKL first */
+        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_mkl(N, z0, total);
         cachebust();
         pace(cool_ms);
-        vns = k1z_time_vfft(h, z0, S, total);
+        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
+        {
+            const long e0 = vfft_ilfd_mt_passes();
+            vns = k1z_time_vfft(h, z0, S, total);
+            eng = vfft_ilfd_mt_passes() - e0;
+        }
     }
     else
     { /* vfft first */
-        vns = k1z_time_vfft(h, z0, S, total);
+        if (g_k1noop_mt) vfft_set_num_threads(g_mt);
+        {
+            const long e0 = vfft_ilfd_mt_passes();
+            vns = k1z_time_vfft(h, z0, S, total);
+            eng = vfft_ilfd_mt_passes() - e0;
+        }
         cachebust();
         pace(cool_ms);
+        if (g_k1noop_mt) vfft_set_num_threads(1);
         mns = k1z_time_mkl(N, z0, total);
     }
 #else
@@ -721,6 +759,9 @@ static void run_k1z_cell(int N, const vfft_oop_wisdom_entry_t *ze,
     double vgf = (vns > 0) ? 5.0 * N * log2((double)N) / vns : 0;
     printf("%-8d %-16s %-7s %12.0f %12.0f %8.2f %5.2fx %10.2e\n",
            N, plan_s, path, vns, mns, vgf, ratio, rel);
+    if (g_k1noop_mt)
+        printf("         k1noop-mt N=%-6d T=%d: engaged %ld threaded executes in the timed arm%s\n",
+               N, g_mt, eng, eng > 0 ? "" : " (SERIAL verdict or declined)");
     if (g_k1dir)
         printf("         k1dir N=%-6d fwd %10.0f  bwd %10.0f  bwd/fwd %6.3f  "
                "NO_ILBLK=%s\n",
@@ -4440,6 +4481,32 @@ int main(int argc, char **argv)
         argc--;
     }
     g_oop_mt = (oop && mt);
+    g_k1noop_mt = (g_k1nat && !g_k1zip && mt);
+    if (g_k1noop_mt)
+    {
+        /* the two-team protocol's setup (3D_mt_il_strategy.md §5): the 8
+         * P-cores for both engines, and MKL's OpenMP team created BEFORE
+         * this thread is pinned to core 0 below (trap c: threads inherit
+         * the creator's affinity). */
+        ilmt_pin_pcores();
+#ifdef VFFT_HAS_MKL
+        {
+            DFTI_DESCRIPTOR_HANDLE d = NULL;
+            double *a = alloc_d(2 * 4096), *b = alloc_d(2 * 4096);
+            size_t i;
+            for (i = 0; i < 2 * 4096; i++) a[i] = 1.0;
+            mkl_set_num_threads(g_mt);
+            if (DftiCreateDescriptor(&d, DFTI_DOUBLE, DFTI_COMPLEX, 1, (MKL_LONG)4096) == DFTI_NO_ERROR)
+            {
+                DftiSetValue(d, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+                if (DftiCommitDescriptor(d) == DFTI_NO_ERROR)
+                    for (i = 0; i < 4; i++) DftiComputeForward(d, a, b);
+                DftiFreeDescriptor(&d);
+            }
+            free_d(a); free_d(b);
+        }
+#endif
+    }
     g_2d_mt = (twod && mt);
     g_2dr2c_mt = (r2c2d && mt);
     g_2dc2r_mt = (r2c2d_bwd && mt);
@@ -4474,6 +4541,8 @@ int main(int argc, char **argv)
     int target_N = (argc >= 5) ? atoi(argv[4]) : 0;
     long target_K = (argc >= 6) ? atol(argv[5]) : BENCH_K;
     int cool_ms = (argc >= 7) ? atoi(argv[6]) : 0; /* inter-engine idle (order-bias fix) */
+    if (g_k1noop_mt && cool_ms < 300)
+        cool_ms = 300; /* trap (b): MKL's OpenMP spins KMP_BLOCKTIME (200 ms) before parking */
     int flip = (argc >= 8) ? atoi(argv[7]) : 0;    /* 1 = MKL first (alternate per cell) */
     /* 🔴 g_zr2c belongs in this disjunction: a bare --zr2c ran UNPINNED
      * while docs/performance/v1_0_results.md described its numbers as
@@ -4501,7 +4570,11 @@ int main(int argc, char **argv)
     if (core >= 0 && stride_pin_thread(core) != 0)
         fprintf(stderr, "warn: pin cpu%d failed\n", core);
     if (mt)
-        stride_set_num_threads(g_mt); /* size the worker pool for K-split */
+        if (!g_k1noop_mt)             /* trap (d): the front-door MT mode must not own a
+                                       * second pool in this TU (idle spinners on the
+                                       * library workers' cores); the library's pool is
+                                       * driven through vfft_set_num_threads */
+            stride_set_num_threads(g_mt); /* size the worker pool for K-split */
 
 #ifdef VFFT_HAS_MKL
     mkl_set_num_threads(mt ? g_mt : 1); /* --ilmt sets it per arm instead */

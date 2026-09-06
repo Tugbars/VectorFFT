@@ -163,7 +163,23 @@ measured items for the tier's next pass.
 - The plan fingerprint carries `ilnd=[arm ax0 ax1 mt=verdict/T/clones]`
   and recurses into the child and row plans.
 
-## 8. File map
+## 8. The same method at rank 1: the odd-N flat DIT
+
+The 1D flat mixed-radix DIT (`oop/il_flatdit.h`, odd N at K=1) threads by
+the same three rules and nothing else. Its units are the bound lists' own
+independent pieces (the leaf's columns, a mid stage's blocks, a tail
+stage's groups) and its tiles are the tile axis's tiles, so the arms are
+"blocks" (every stage by units, one dispatch per stage) and "tiles" (the
+wide prefix by units, then tile ranges depth-first, then the wide tail).
+The per-worker unit records are bound at plan time; nothing is cloned
+because the staging plane is written in disjoint units. The verdict is
+raced at T with steady-state samples, with every legal tile width as an
+arm of the tiles family, and banked `il_mt= il_mt_t= il_mt_tw=` on the
+class's kind-3 row; serial is banked below L2 and that is the verdict.
+Measured at T=8, same-run: 6561 1.7×, 19683 2.7×, 59049 5.0×, 98415 5.1×,
+177147 6.1× over the same tier at one thread, bitwise (flatdit_gate).
+
+## 9. File map
 
 | file | role |
 |---|---|

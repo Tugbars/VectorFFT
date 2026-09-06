@@ -544,6 +544,40 @@ loses — the race banks 0 there.
 
 ---
 
+### 8.2 Threading: two partition arms of the bound lists
+
+Every stage of the bound lists is a set of independent units — the leaf's
+columns, a mid stage's blocks, a tail stage's groups — and the tile axis
+already walks the suffix stages `[tlo, thi)` as self-contained tiles. The
+threaded execute (`oop/il_flatdit_mt.h`) is two loop restrictions of the
+serving lists, the same kernels with the same tables in the same
+per-element order, so the threaded output is bitwise the serial output
+(the gate checks it, both classes, both directions):
+
+| arm | `il_mt=` | what a worker runs |
+|---|---|---|
+| blocks | 1 | every stage split over the workers by units; one dispatch per stage in list order |
+| tiles | 2 | the wide prefix `[0, tlo)` by units, then ONE dispatch in which workers take disjoint tile ranges and walk the suffix depth-first per tile, then the wide tail `[thi, K)` by units; the scrambled backward tiles its first `K − tcut` transposed records the same way |
+
+The per-worker unit records are bound at plan time (`vfft_ilfd_mt_bind`):
+one record per (list, stage, worker) carrying the counts of its unit range
+and the base steps of one unit, executed by the same `_ilfd_call` with the
+range start as the tile index. A t2csgn last stage in natural-base order
+steps its order table instead of its bases; the BLK last stage steps its
+absolute base table. The staging plane is shared (workers write disjoint
+units), the tables are read-only: nothing is cloned.
+
+The verdict is raced at the plan's T against serial, with every tile width
+the chain offers as an arm of the tiles family (the width raced at one
+thread need not be the threaded one: 19683 banks `il_tw=2187` and
+`il_mt_tw=729`), steady-state samples (REPS executes after warm passes), and
+banks `il_mt= il_mt_t= il_mt_tw=` on the class's own kind-3 row beside
+`il_tw=`; a verdict serves only at its own T. Below L2 the race banks serial
+and that is the verdict (1215: serial 1.8 µs, blocks 2.9, tiles 2.1).
+`VFFT_ILFD_MT=0|1|2` pins, never banks; `vfft_ilfd_mt_passes()` counts
+engagement. The method is the one declared in
+`docs/design/3D_mt_il_strategy.md`.
+
 ## 9. Planner, wisdom, front door
 
 ### 9.1 Candidates

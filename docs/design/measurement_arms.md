@@ -566,6 +566,25 @@ DIRECTION  forward executes only; one plan serves both directions. STRUCTURAL
 
 ---
 
+### B4a. IL flat DIT (odd N, route 8) - the THREADING verdict (2026-09-07)
+
+```
+B4a.1 il_mt - the partition arm      RACED, BANKED with il_mt_t + il_mt_tw on the
+                                     class's kind-3 IL row (ord=nat and ord=scr
+                                     each their own): serial vs BLOCKS (every
+                                     stage by units, one dispatch per stage) vs
+                                     TILES at EVERY legal width (wide prefix by
+                                     units, tile ranges depth-first, wide tail by
+                                     units). Steady-state samples (REPS from one
+                                     serial timing, 2 warm passes), min-of-3
+                                     alternated; an arm that cannot engage is
+                                     excluded. Nothing cloned: the staging plane
+                                     is shared by disjoint units. il_tw= stays
+                                     the one-thread width. VFFT_ILFD_MT pins,
+                                     never banks. MT == ST bitwise (flatdit_gate,
+                                     both classes). Serves only at il_mt_t.
+```
+
 ### B5. K>1 transform-contiguous batch - the THREADING verdict
 
 ```
@@ -954,6 +973,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | `il2d.blu` | E1.7 | 2D IL with **prime N1** (127x100 -> blu=256) |
 | `il2d.rw` | E2.1 | 2D IL r2c asymmetric (4096x16 -> rw=64) |
 | `il2d.roop` | E1.5 | 2D IL c2c at large N1 (16384x64) |
+| `ilfd.mt` `ilfd.tw` | B4a.1 | 1D IL flat DIT (odd N) at nthreads > 1: verdict/T and one-thread/threaded widths |
 | `ilnd.arm` `ilnd.ax0` `ilnd.ax1` `ilnd.mt` | F1.1-F1.5 | 3D IL c2c (the structure, each axis's nst/blu, axis 0's wl, the MT verdict/T/clones); recurses into ilndchild / ilndrow |
 | `tcbsn` `tcbdn` | X4 | K=8 + BATCH_TRANSFORM_CONTIGUOUS |
 | `tcbw` | X3 | as above **plus** MT |
