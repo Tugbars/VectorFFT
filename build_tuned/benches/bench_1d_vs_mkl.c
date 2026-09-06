@@ -24,6 +24,7 @@
  *   ("Inconsistent configuration parameters" at DftiCommit).
  *
  * Usage: bench_1d_vs_mkl [wisdom] [csv] [pace_ms] [N] [K] [cool_ms] [flip] [core]
+ *   --3dil : the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (VFFT_3DIL_CELLS, VFFT_3DIL_ROUNDS)
  *   N=0      : legacy full in-process loop over K=BENCH_K wisdom cells (quick-look).
  *   N>0      : ISOLATED single cell (N,K) — fresh process per cell (run_bench.py),
  *              kills cross-cell carryover. K = target K (multi-K: 4/32/256...).
@@ -2152,6 +2153,182 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+ * --3dil : the rank-3 INTERLEAVED c2c tier (transforms/fftnd/fftnd_il.h)
+ * vs MKL DFTI 3D, OUT OF PLACE on both sides (the tier's contract). Arms:
+ *   O-NATIVE = vfft 3D INTERLEAVED OOP DEFAULT — the per-plane structure
+ *              (2D child vs flat axis-1 + rows) replays from wisdom; a
+ *              cold store races it at create (stderr says so);
+ *   O-split  = vfft 3D SPLIT OOP DEFAULT (the split rank-N tier, fftnd.h);
+ *   M-inter  = DFTI 3D COMPLEX_COMPLEX NOT_INPLACE (MKL's CCE, its best);
+ *   M-split  = DFTI 3D REAL_REAL NOT_INPLACE;
+ *   ctl      = memcpy of the cube (the noise floor).
+ * Protocol as --2dil: cachebust before every sample, reps_for(T)
+ * executions per sample, arm order alternated on odd rounds, median +
+ * spread; '~' = a delta below the ctl spread (NOT A RESULT). Correctness
+ * pre-gate: roundtrip bwd(fwd(x))/T == x on both vfft arms (the forward is
+ * gated elementwise by ilnd_probe: naive-DFT spot bins found across the
+ * two digit-reversed column axes).
+ * ════════════════════════════════════════════════════════════════════════ */
+static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
+{
+    size_t T = (size_t)N1 * N2 * N3, i;
+    double *xr = alloc_d(T), *xi = alloc_d(T);         /* split input     */
+    double *sr = alloc_d(T), *si = alloc_d(T);         /* O-split output  */
+    double *z = alloc_d(2 * T), *zo = alloc_d(2 * T);  /* O-NATIVE in/out */
+    double *mz = alloc_d(2 * T), *mo = alloc_d(2 * T); /* M-inter in/out  */
+    double *mr = alloc_d(T), *mi = alloc_d(T);         /* M-split output  */
+    double *cs = alloc_d(2 * T), *cd = alloc_d(2 * T); /* ctl memcpy      */
+    double smp[5][64];
+    double med[5], spr[5];
+    double rtn = -1, rts = -1;
+    int have[5] = { 0, 0, 0, 0, 1 }; /* On, Os, Mi, Ms, ctl */
+    vfft_plan hn = NULL, hs = NULL;
+    int r, a0, a, k;
+#ifdef VFFT_HAS_MKL
+    DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
+#endif
+    if (rounds > 64) rounds = 64;
+    fprintf(stderr, "[3dil] %dx%dx%d create (wisdom miss => races here)...\n", N1, N2, N3);
+    srand(17 + N1 + N2 + N3);
+    for (i = 0; i < T; i++) {
+        xr[i] = (double)rand() / RAND_MAX - 0.5;
+        xi[i] = (double)rand() / RAND_MAX - 0.5;
+        z[2 * i] = xr[i];
+        z[2 * i + 1] = xi[i];
+    }
+    for (i = 0; i < 2 * T; i++) cs[i] = (double)rand() / RAND_MAX - 0.5;
+    {
+        vfft_config_t cfg;
+        memset(&cfg, 0, sizeof cfg);
+        cfg.transform = VFFT_C2C;
+        cfg.placement = VFFT_OUTOFPLACE;
+        cfg.rigor = VFFT_MEASURE;
+        cfg.dims = 3;
+        cfg.n[0] = N1;
+        cfg.n[1] = N2;
+        cfg.n[2] = N3;
+        cfg.howmany = 1;
+        cfg.order = VFFT_ORDER_DEFAULT;
+        cfg.nthreads = 1;
+        cfg.wisdom = W;
+        cfg.wisdom_write = 0; /* benches never mutate the store */
+        cfg.layout = VFFT_LAYOUT_INTERLEAVED;
+        hn = vfft_create(&cfg);
+        cfg.layout = VFFT_LAYOUT_SPLIT;
+        hs = vfft_create(&cfg);
+    }
+    have[0] = (hn != NULL);
+    have[1] = (hs != NULL);
+    fprintf(stderr, "[3dil] %dx%dx%d created (native=%s split=%s); gating + timing %d rounds...\n",
+            N1, N2, N3, hn ? "yes" : "REFUSED", hs ? "yes" : "REFUSED", rounds);
+    /* roundtrip pre-gates on fresh data (mo / mr,mi as the bwd scratch) */
+    if (hn) {
+        vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL);
+        vfft_execute(hn, VFFT_BACKWARD, zo, NULL, mo, NULL);
+        rtn = 0;
+        for (i = 0; i < 2 * T; i++) {
+            double d = fabs(mo[i] / (double)T - z[i]);
+            if (d > rtn) rtn = d;
+        }
+    }
+    if (hs) {
+        vfft_execute(hs, VFFT_FORWARD, xr, xi, sr, si);
+        vfft_execute(hs, VFFT_BACKWARD, sr, si, mr, mi);
+        rts = 0;
+        for (i = 0; i < T; i++) {
+            double a1 = fabs(mr[i] / (double)T - xr[i]);
+            double b1 = fabs(mi[i] / (double)T - xi[i]);
+            if (a1 > rts) rts = a1;
+            if (b1 > rts) rts = b1;
+        }
+    }
+#ifdef VFFT_HAS_MKL
+    {
+        MKL_LONG dims[3];
+        dims[0] = N1;
+        dims[1] = N2;
+        dims[2] = N3;
+        if (DftiCreateDescriptor(&hMi, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) == DFTI_NO_ERROR) {
+            DftiSetValue(hMi, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+            have[2] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
+        }
+        if (DftiCreateDescriptor(&hMs, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) == DFTI_NO_ERROR) {
+            DftiSetValue(hMs, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
+            DftiSetValue(hMs, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+            have[3] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
+        }
+        for (i = 0; i < 2 * T; i++) mz[i] = z[i];
+    }
+#endif
+    for (r = 0; r < rounds; r++) {
+        for (a0 = 0; a0 < 5; a0++) {
+            int reps = reps_for(T);
+            double t0, ns;
+            a = (r & 1) ? 4 - a0 : a0;
+            if (!have[a]) continue;
+            cachebust();
+            t0 = vfft_proto_now_ns();
+            for (k = 0; k < reps; k++) {
+                switch (a) {
+                case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); break;
+                case 1: vfft_execute(hs, VFFT_FORWARD, xr, xi, sr, si); break;
+#ifdef VFFT_HAS_MKL
+                case 2: DftiComputeForward(hMi, mz, mo); break;
+                case 3: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+#endif
+                case 4: memcpy(cd, cs, 2 * T * 8); break;
+                }
+            }
+            ns = (vfft_proto_now_ns() - t0) / reps;
+            smp[a][r] = ns;
+        }
+    }
+#ifdef VFFT_HAS_MKL
+    if (hMi) DftiFreeDescriptor(&hMi);
+    if (hMs) DftiFreeDescriptor(&hMs);
+#endif
+    for (a = 0; a < 5; a++) {
+        if (!have[a]) { med[a] = 0; spr[a] = 0; continue; }
+        med[a] = il2d__med(smp[a], rounds); /* sorts in place */
+        spr[a] = il2d__spread(smp[a], rounds, med[a]);
+    }
+    {
+        const double cspr = spr[4]; /* ctl spread %, the noise floor */
+        printf("  %4dx%-4dx%-4d rt %.1e/%.1e | ctl %9.0f (%4.1f%%) |",
+               N1, N2, N3, rtn, rts, med[4], spr[4]);
+        if (have[0]) printf(" O-NATIVE %10.0f (%4.1f%%) |", med[0], spr[0]);
+        else         printf(" O-NATIVE    REFUSED |");
+        if (have[1]) printf(" O-split %10.0f (%4.1f%%)", med[1], spr[1]);
+        else         printf(" O-split    REFUSED");
+#ifdef VFFT_HAS_MKL
+        printf(" | M-inter %10.0f (%4.1f%%) | M-split %10.0f (%4.1f%%)\n",
+               med[2], spr[2], med[3], spr[3]);
+        if (have[0] && med[2] > 0) {
+            double q1 = med[2] / med[0]; /* O-NATIVE xMKLcce: >1 = we win */
+            printf("        O-NATIVE xMKLcce %.2f%s", q1, fabs(1 - q1) * 100 < cspr ? "~" : "");
+            if (have[1] && med[1] > 0) {
+                double q2 = med[2] / med[1], q3 = med[1] / med[0];
+                printf(" | O-split xMKLcce %.2f%s | native uplift O-split/O-NATIVE %.2f%s",
+                       q2, fabs(1 - q2) * 100 < cspr ? "~" : "",
+                       q3, fabs(1 - q3) * 100 < cspr ? "~" : "");
+            }
+            if (med[3] > 0) printf(" | M-split/M-inter %.2f", med[3] / med[2]);
+            printf("\n");
+        }
+#else
+        printf("  (no MKL)\n");
+        if (have[0] && have[1] && med[0] > 0)
+            printf("        native uplift O-split/O-NATIVE %.2f\n", med[1] / med[0]);
+#endif
+    }
+    if (hn) vfft_destroy(hn);
+    if (hs) vfft_destroy(hs);
+    free_d(xr); free_d(xi); free_d(sr); free_d(si);
+    free_d(z); free_d(zo); free_d(mz); free_d(mo);
+    free_d(mr); free_d(mi); free_d(cs); free_d(cd);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
  * --2d : 2D c2c (fft2d.h, tiled) vs MKL DFTI 2D. Same fairness as the 1D paths:
  * identical split NOT_INPLACE layout, per-cell order-flip, cachebust + pace, ns
  * timing, best-of-5. 2D forward output is SCRAMBLED order (dag DIT), so the
@@ -4054,7 +4231,7 @@ int main(int argc, char **argv)
     /* --mt: rerun the wisdom cells multi-threaded (dag pool K-split + MKL threads),
      * pinned core 0, into a SEPARATE csv. Detect + strip argv[1] so the positional
      * args below keep their meaning. Thread count = $VFFT_MT (default 8). */
-    int mt = 0, oop = 0, twod = 0, il2d = 0, real2d = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
+    int mt = 0, oop = 0, twod = 0, il2d = 0, il3d = 0, real2d = 0, r2c = 0, r2c2d = 0, r2c2d_bwd = 0, c2r1d = 0, c2rcalib = 0, pad = 0, padr2c = 0;
     int tcut_mode = 0; /* --tcut=... seen: forces a DISTINCT default csv so a
                         * tiling probe can never overwrite a banked baseline. */
     /* leading flags, any order: --mt (K-split + MKL threads), --oop (out-of-place
@@ -4091,6 +4268,10 @@ int main(int argc, char **argv)
         else if (strcmp(argv[1], "--2dil") == 0)
         {
             il2d = 1; /* three-arm interleaved-2D scoping cell (M0a) */
+        }
+        else if (strcmp(argv[1], "--3dil") == 0)
+        {
+            il3d = 1; /* the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D */
         }
         else if (strcmp(argv[1], "--2dreal") == 0)
         {
@@ -4241,7 +4422,7 @@ int main(int argc, char **argv)
      * while docs/performance/v1_0_results.md described its numbers as
      * "pinned core 2". An explicit core argument always wins; this only
      * fixes the default. */
-    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || il2d || r2c || r2c2d || r2c2d_bwd || c2r1d || g_zr2c) ? 2
+    int core = (argc >= 9) ? atoi(argv[8]) : (mt ? 0 : (oop || twod || il2d || il3d || r2c || r2c2d || r2c2d_bwd || c2r1d || g_zr2c) ? 2
                                                                                                            : -1); /* MT->0, OOP/2D/R2C/zr2c->P-core 2 */
     {
         const char *tp = getenv("VFFT_TRIAL_PACE_MS");
@@ -4352,6 +4533,49 @@ int main(int argc, char **argv)
                     if (!strstr(cf, tag)) continue;
                 }
                 run_2dil_cell(cells[ci][0], cells[ci][1], rounds, W);
+                pace(pace_ms);
+            }
+        }
+        if (W) vfft_wisdom_free(W);
+        return 0;
+    }
+
+    /* --3dil: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D, then done. */
+    if (il3d)
+    {
+        const char *wd = getenv("VFFT_WISDOM_DIR");
+        vfft_wisdom *W;
+        int rounds;
+        const char *re_ = getenv("VFFT_3DIL_ROUNDS");
+        rounds = (re_ && atoi(re_) > 0) ? atoi(re_) : 9;
+        if (!wd) wd = ".";
+        setvbuf(stdout, NULL, _IONBF, 0); /* live lines even when redirected */
+        W = vfft_wisdom_load(wd);
+#ifdef VFFT_HAS_MKL
+        mkl_set_num_threads(1);
+#endif
+        printf("=== 3DIL: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (front door; "
+               "wisdom=%s %s; rounds=%d, core%d) ===\n",
+               wd, W ? "loaded" : "MISSING", rounds, core);
+        printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
+               "structure from wisdom); O-split = vfft 3D SPLIT (fftnd.h); M-inter = "
+               "DFTI 3D CCE NOT_INPLACE (MKL best); M-split = DFTI REAL_REAL "
+               "NOT_INPLACE; ctl = memcpy. '~' = delta below ctl spread (NOT A "
+               "RESULT).\n");
+        {
+            int cells[][3] = { { 16, 16, 16 },   { 32, 32, 32 },   { 64, 64, 64 },
+                               { 128, 128, 128 }, { 32, 16, 64 },  { 64, 128, 32 },
+                               { 256, 64, 16 },   { 27, 9, 15 },   { 36, 20, 28 },
+                               { 45, 45, 45 },    { 81, 27, 27 } };
+            int nc = (int)(sizeof cells / sizeof cells[0]), ci;
+            const char *cf = getenv("VFFT_3DIL_CELLS"); /* "16x16x16,64x64x64" filter */
+            for (ci = 0; ci < nc; ci++) {
+                if (cf) {
+                    char tag[40];
+                    snprintf(tag, sizeof tag, "%dx%dx%d", cells[ci][0], cells[ci][1], cells[ci][2]);
+                    if (!strstr(cf, tag)) continue;
+                }
+                run_3dil_cell(cells[ci][0], cells[ci][1], cells[ci][2], rounds, W);
                 pace(pace_ms);
             }
         }

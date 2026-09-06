@@ -858,6 +858,34 @@ WITNESS: `2d.il.oop.r2c.256` -> `nst=2 wl=8 cut=1`, children `[il2drow, tcb, zr2
 
 ---
 
+## 7a. 3D C2C - INTERLEAVED (the fftnd IL tier, `transforms/fftnd/fftnd_il.h`)
+
+### F1. IL - the rank-3 tier (2026-09-06)
+
+```
+F1.1 s - the per-plane STRUCTURE      RACED, BANKED (s=1 child | s=2 flat) on the
+                                     rank-3 lay=il row. Arm 1 = a plain 2D IL
+                                     c2c child plan on (N2,N3) per plane (its
+                                     verdicts on its own rank-2 cell); arm 2 =
+                                     this tier's axis-1 column pass + the K=1
+                                     row plan. The whole forward timed on a
+                                     scratch cube, {3,1,MIN,alternate}; the
+                                     loser freed. VFFT_ILND_ARM=1|2 pins, never
+                                     banks. Never an architectural default.
+F1.2 axis-0 chain / forms / N-arm    RACED by _il2d_col_build with the rank-3
+                                     key (E1.1, E1.7, the forms axis): chain=
+                                     blu= forms= on the rank-3 row. wl/roop/cmt
+                                     are NOT raced at this axis yet (phase 4).
+F1.3 axis-1 chain / forms / N-arm    RACED by the same build with axis=1 on the
+                                     key (the flat arm only): chain1= blu1=
+                                     forms1= on the same row.
+F1.4 the N-arm bank at axis 0        FIXED 2026-09-06: a verdict banked without a
+                                     measurement on an existing row is a FIELD
+                                     UPDATE (before, a fresh record lost to the
+                                     measured row and the N-arm re-raced on
+                                     every create; the 2D axis race masked it).
+```
+
 ## 8. Cross-cutting
 
 ```
@@ -896,6 +924,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | `il2d.blu` | E1.7 | 2D IL with **prime N1** (127x100 -> blu=256) |
 | `il2d.rw` | E2.1 | 2D IL r2c asymmetric (4096x16 -> rw=64) |
 | `il2d.roop` | E1.5 | 2D IL c2c at large N1 (16384x64) |
+| `ilnd.arm` `ilnd.ax0` `ilnd.ax1` | F1.1-F1.3 | 3D IL c2c (the structure, each axis's nst/blu); recurses into ilndchild / ilndrow |
 | `tcbsn` `tcbdn` | X4 | K=8 + BATCH_TRANSFORM_CONTIGUOUS |
 | `tcbw` | X3 | as above **plus** MT |
 | `tcmt` | B5.1 | as above **plus** MT: the raced serial-vs-slabs verdict (0 = serial) |
