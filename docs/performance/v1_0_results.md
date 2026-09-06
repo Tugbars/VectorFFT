@@ -818,53 +818,54 @@ min-of-20, MT == ST bitwise gated both directions:
 
 The rank-3 interleaved tier (`docs/roadmap/fftnd_il_design.md`,
 `src/core/transforms/fftnd/fftnd_il.h`): axis 0 = the 2D column-axis
-pass over the virtual N1 × (N2·N3) plane, then per plane the RACED
-structure — a 2D IL child plan or the flat axis-1 column pass + K=1 rows
-(banked `s=` on the rank-3 row). Out of place, order DEFAULT, single
-thread, served through the front door (no env opt-in).
+pass over the virtual N1 × (N2·N3) plane, walked in BANDS of `wl` planes
+with the per-plane structure fused into the band (the 2D tier's banded
+walk + tfuse at rank 3); per plane the RACED structure — a 2D IL child
+plan or the flat axis-1 column pass + K=1 rows. Structure × width are
+arms of one race at create, banked `s=` `wl=` on the rank-3 row. Out of
+place, order DEFAULT, single thread, served through the front door.
 
 Arms (one process, `bench_1d_vs_mkl.c --3dil`, 9 rounds with reversed
 arm order, cachebust between arms, medians, all arms OUT OF PLACE):
 O-NATIVE = this tier; M-inter = MKL rank-3 `DFTI_COMPLEX_COMPLEX`
 `DFTI_NOT_INPLACE` (its measured-fastest 3D configuration — its
-`REAL_REAL` split arm ran 1.5–2.1× slower in the same runs). Correctness
+`REAL_REAL` split arm ran 1.6–2.2× slower in the same runs). Correctness
 behind the numbers: `ilnd_probe` (DC, roundtrip, naive-DFT spot bins
-across the two digit-reversed column axes, both structure arms and the
-raced verdict, replay with zero races), `api_matrix_gate`.
+across the two digit-reversed column axes, both structure arms, the
+banded walk BITWISE the unbanded one, the raced verdict, replay with
+zero races), `api_matrix_gate`.
 
 ⚠ **Noise note:** measured while the machine was in use; arm spreads
 are in parentheses and a ratio marked `~` sits inside the control
-(memcpy) spread — sign-reliable at best, not quotable.
+(memcpy) spread — sign-reliable, not two-decimal quotable.
 
 ```
- N1×N2×N3      O-NATIVE (ns)     MKL-CCE (ns)     vs MKL-CCE
-──────────────────────────────────────────────────────────────
- 16³                 6,566 (11%)       7,490 (13%)    1.14×
- 32³                53,720 (10%)      66,911  (9%)    1.25×
- 64³               630,150 (16%)     851,850 (13%)    1.35×
- 128³            6,117,700*       9,240,000*          1.51×
- 32×16×64           43,152 (359%)     54,070 (20%)    1.25×~
- 64×128×32         635,100  (5%)     826,500  (6%)    1.30×~
- 256×64×16         925,163 (15%)     796,875 (13%)    0.86×~
- 27×9×15             8,426 (30%)       8,939  (5%)    1.06×~
- 36×20×28           31,840 (11%)      59,105 (19%)    1.86×
- 45³               197,648 (17%)     286,043  (9%)    1.45×
- 81×27×27          114,352 (19%)     180,876 (29%)    1.58×
-──────────────────────────────────────────────────────────────
-                                    10/11 win, median ~1.30×
+ N1×N2×N3    s / wl     O-NATIVE (ns)     MKL-CCE (ns)     vs MKL-CCE
+──────────────────────────────────────────────────────────────────────
+ 16³         flat  8          6,416 (78%)       7,077  (4%)    1.10×~
+ 32³         child 8         51,734 (10%)      65,989  (6%)    1.28×
+ 64³         flat  16       562,312  (8%)     838,813 (29%)    1.49×
+ 128³        child 8      6,982,763  (6%)  10,320,225  (7%)    1.48×
+ 32×16×64    child 8         46,867 (15%)      54,470 (11%)    1.16×~
+ 64×128×32   child 8        597,663 (21%)     829,650  (7%)    1.39×~
+ 256×64×16   flat  32       711,612 (11%)     841,825 (22%)    1.18×~
+ 27×9×15     flat  9          8,336 (60%)       8,861 (19%)    1.06×~
+ 36×20×28    flat  0         33,290 (80%)      60,926 (11%)    1.83×~
+ 45³         flat  0        214,014 (33%)     290,305 (10%)    1.36×~
+ 81×27×27    flat  0        121,361 (17%)     175,430  (9%)    1.45×
+──────────────────────────────────────────────────────────────────────
+                                              11/11 win, median ~1.36×
 ```
 
-*128³ (33 MB, the L3 regime): the ratio is the run's; the two absolute
-times are reconstructed from it and the structure race's own forward
-timing, not the bench's median line (lost to a log filter).
-
-**The one loss, 256×64×16 (0.86×).** The long-axis-0 shape: 256 rows
-over a 1024-complex plane, where the axis-0 column pass dominates and
-runs UNBANDED — the banded column walk (`wl`, E1.2) and the column MT
-(`cmt`) are not raced at axis 0 of the rank-3 row yet. That is the
-tier's next lever; this cell is the first to re-measure once it lands.
-The odd cells (36×20×28, 45³, 81×27×27) are the widest wins: MKL has no
-good radix there, the flat mixed-radix chains do.
+**The axis-0 banded walk (same day).** Before it, the long-axis-0 cell
+256×64×16 was the one loss (0.86×: 256 rows over a 1024-complex plane,
+the column pass streaming the cube per stage). With the width raced
+(`wl=32`, the band = 32 planes = 512 KB, L2-resident), the cell moved
+925,163 → 711,612 ns (the race's own arms: unbanded 857 µs, wl32 630 µs)
+and wins 1.18×; 64³ moved 1.35× → 1.49× (`wl=16`). The odd cells have
+only the chain's own spans as legal widths (9 at 27/45/81) and raced to
+unbanded or to a tie. Column MT at axis 0 (`cmt`) is the remaining
+phase-4 lever.
 
 ## 3. vs MKL — 1D R2C
 

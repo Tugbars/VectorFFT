@@ -874,8 +874,16 @@ F1.1 s - the per-plane STRUCTURE      RACED, BANKED (s=1 child | s=2 flat) on th
                                      banks. Never an architectural default.
 F1.2 axis-0 chain / forms / N-arm    RACED by _il2d_col_build with the rank-3
                                      key (E1.1, E1.7, the forms axis): chain=
-                                     blu= forms= on the rank-3 row. wl/roop/cmt
-                                     are NOT raced at this axis yet (phase 4).
+                                     blu= forms= on the rank-3 row.
+F1.2a axis-0 wl - the banded walk     RACED JOINTLY with F1.1 (every (s, wl) an
+                                     arm of the one race; 2026-09-06): E1.2's
+                                     pool + the chain's L2-gated spans, cut
+                                     DERIVED; bands of wl PLANES with the
+                                     per-plane structure fused (the 2D tfuse).
+                                     Banks wl= tf= on the rank-3 row. Bitwise
+                                     the unbanded walk (ilnd_probe). roop has
+                                     no meaning here; cmt is NOT raced at this
+                                     axis yet (phase 4).
 F1.3 axis-1 chain / forms / N-arm    RACED by the same build with axis=1 on the
                                      key (the flat arm only): chain1= blu1=
                                      forms1= on the same row.
@@ -924,7 +932,7 @@ X5 mtunsafe                          STRUCTURAL - a CORRECTNESS self-check, not 
 | `il2d.blu` | E1.7 | 2D IL with **prime N1** (127x100 -> blu=256) |
 | `il2d.rw` | E2.1 | 2D IL r2c asymmetric (4096x16 -> rw=64) |
 | `il2d.roop` | E1.5 | 2D IL c2c at large N1 (16384x64) |
-| `ilnd.arm` `ilnd.ax0` `ilnd.ax1` | F1.1-F1.3 | 3D IL c2c (the structure, each axis's nst/blu); recurses into ilndchild / ilndrow |
+| `ilnd.arm` `ilnd.ax0` `ilnd.ax1` | F1.1-F1.3 | 3D IL c2c (the structure, each axis's nst/blu, axis 0's wl); recurses into ilndchild / ilndrow |
 | `tcbsn` `tcbdn` | X4 | K=8 + BATCH_TRANSFORM_CONTIGUOUS |
 | `tcbw` | X3 | as above **plus** MT |
 | `tcmt` | B5.1 | as above **plus** MT: the raced serial-vs-slabs verdict (0 = serial) |

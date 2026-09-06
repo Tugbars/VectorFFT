@@ -3,6 +3,9 @@
  * then the raced verdict: the DC identity, the roundtrip bwd(fwd(x)) =
  * N x, and a naive-DFT spot bin found by searching the two column axes
  * (each digit-reversed by its chain) at the bin's natural row column.
+ * The axis-0 BANDED walk (wl, 2026-09-06): the flat arm pinned at a legal
+ * width must be BITWISE the unbanded flat arm (same kernels and tables,
+ * another loop order — the 2D tier's F0 law), checked with memcmp.
  * Build: build.py --compile --src <this> --vfft ; run: ilnd_probe.exe <wisdir> */
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +43,10 @@ int main(int argc, char **argv)
         const int N1 = C[i][0], N2 = C[i][1], N3 = C[i][2];
         const size_t T = (size_t)N1 * N2 * N3;
         double *x = malloc(2 * T * 8), *z = malloc(2 * T * 8), *y = malloc(2 * T * 8);
+        double *zref = malloc(2 * T * 8);
+        const int wlpin = (N1 % 8 == 0) ? 8 : (N1 % 3 == 0 ? 3 : 0);
+        char wlbuf[16];
+        snprintf(wlbuf, sizeof wlbuf, "%d", wlpin);
         double s0r = 0, s0i = 0;
         const int k1 = 3 % N1, k2 = 5 % N2, k3 = 7 % N3;
         double er = 0, ei = 0;
@@ -54,20 +61,28 @@ int main(int argc, char **argv)
             er += x[2 * j] * cos(ang) - x[2 * j + 1] * sin(ang);
             ei += x[2 * j] * sin(ang) + x[2 * j + 1] * cos(ang);
         }
-        for (int arm = 1; arm <= 3; arm++)
+        /* passes: 1 = child wl0, 2 = flat wl0, 3 = flat wl pinned (bitwise
+         * vs pass 2), 4 = the raced verdict (structure x wl) */
+        for (int arm = 1; arm <= 4; arm++)
         {
             vfft_config_t cfg;
             vfft_plan h;
             double dc, rt = 0, best = 1e300, tmin = 1e300;
-            env_set("VFFT_ILND_ARM", arm == 3 ? NULL : (arm == 1 ? "1" : "2"));
+            int bit = 1;
+            const char *label = arm == 4 ? "raced" : arm == 1 ? "child" : arm == 2 ? "flat" : "flatwl";
+            if (arm == 3 && !wlpin) continue;
+            env_set("VFFT_ILND_ARM", arm == 4 ? NULL : (arm == 1 ? "1" : "2"));
+            env_set("VFFT_ILND_WL", arm == 4 ? NULL : (arm == 3 ? wlbuf : "0"));
             memset(&cfg, 0, sizeof cfg);
             cfg.transform = VFFT_C2C; cfg.placement = VFFT_OUTOFPLACE; cfg.rigor = VFFT_MEASURE;
             cfg.dims = 3; cfg.n[0] = N1; cfg.n[1] = N2; cfg.n[2] = N3; cfg.howmany = 1;
             cfg.order = VFFT_ORDER_DEFAULT; cfg.layout = VFFT_LAYOUT_INTERLEAVED; cfg.nthreads = 1;
             cfg.wisdom = W; cfg.wisdom_write = 1;
             h = vfft_create(&cfg);
-            if (!h) { printf("%dx%dx%-4d %-6s | REFUSED\n", N1, N2, N3, arm == 3 ? "raced" : arm == 1 ? "child" : "flat"); bad++; continue; }
+            if (!h) { printf("%dx%dx%-4d %-6s | REFUSED\n", N1, N2, N3, label); bad++; continue; }
             vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL);
+            if (arm == 2) memcpy(zref, z, 2 * T * 8);
+            if (arm == 3) bit = memcmp(zref, z, 2 * T * 8) == 0;
             dc = fabs(z[0] - s0r) + fabs(z[1] - s0i);
             for (int a = 0; a < N1; a++) for (int b = 0; b < N2; b++)
             {
@@ -79,14 +94,15 @@ int main(int argc, char **argv)
             for (size_t j = 0; j < 2 * T; j++) { const double d = fabs(y[j] / (double)T - x[j]); if (d > rt) rt = d; }
             for (int r = 0; r < 5; r++) { double t0 = now_ns(); vfft_execute(h, VFFT_FORWARD, x, NULL, z, NULL); t0 = now_ns() - t0; if (t0 < tmin) tmin = t0; }
             {
-                const int ok = dc < 1e-8 * T && rt < 1e-9 && best < 1e-8 * sqrt((double)T);
-                printf("%dx%dx%-4d %-6s | %.1e  %.1e  %.1e | %.0f %s\n", N1, N2, N3,
-                       arm == 3 ? "raced" : arm == 1 ? "child" : "flat", dc, rt, best, tmin, ok ? "OK" : "*** BAD ***");
+                const int ok = dc < 1e-8 * T && rt < 1e-9 && best < 1e-8 * sqrt((double)T) && bit;
+                printf("%dx%dx%-4d %-6s | %.1e  %.1e  %.1e | %.0f %s%s\n", N1, N2, N3,
+                       label, dc, rt, best, tmin, ok ? "OK" : "*** BAD ***",
+                       arm == 3 ? (bit ? " bitwise=unbanded" : " NOT BITWISE") : "");
                 if (!ok) bad++;
             }
             vfft_destroy(h);
         }
-        free(x); free(z); free(y);
+        free(x); free(z); free(y); free(zref);
     }
     vfft_wisdom_free(W);
     printf(bad ? "=== %d BAD ===\n" : "=== ALL OK ===\n", bad);

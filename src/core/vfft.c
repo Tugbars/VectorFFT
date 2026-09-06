@@ -2139,9 +2139,10 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             FP__P(il2d_rows), FP__P(il2d_natperm), FP__P(pq_inner));
     /* the rank-N INTERLEAVED tier (fftnd_il.h): the raced structure and
      * each column axis's chain length + Bluestein M (0 = a chain) */
-    FP__ADD(" ilnd=[arm=%d ax0=%d/%d ax1=%d/%d]\n",
+    FP__ADD(" ilnd=[arm=%d ax0=%d/%d/wl%d ax1=%d/%d]\n",
             h->ilnd ? h->ilnd->arm : 0,
             h->ilnd ? h->ilnd->ax0.nst : 0, h->ilnd ? h->ilnd->ax0.blu : 0,
+            h->ilnd ? h->ilnd->ax0.wl : 0,
             h->ilnd ? h->ilnd->ax1.nst : 0, h->ilnd ? h->ilnd->ax1.blu : 0);
 
     /* 4 — recurse. create re-enters itself for these, so the fingerprint is a
