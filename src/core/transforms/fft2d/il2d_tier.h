@@ -217,68 +217,80 @@ static void _il2d_real_rows_bwd(struct vfft_plan_s *h, const double *zsrc,
  * transpose chain) = per band the REVERSED suffix (its first executed
  * stage does the OOP move for c2r's z->rscr), then the reversed prefix
  * in place on dst. */
-static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
-                            double *dst, int reverse)
+/* THE COLUMN-ONLY SERIAL EXECUTE (2026-09-06): the pass a rank-N IL plan
+ * runs on each column axis and the real tier runs on its hp1-wide plane —
+ * natural (leaf-redirected), Bluestein, banded (no row fusion: the owning
+ * plan runs the rows) or unbanded, both directions, by the descriptor alone.
+ * The c2c 2D serial walk with the fused row pass lives in vfft_execute.h. */
+static void _il2d_col_exec(const vfft_ilcol_t *c, const double *src,
+                           double *dst, int reverse)
 {
-    const size_t hp1 = (size_t)h->N2 / 2 + 1;
-    if (h->il2d_nat)
+    const size_t hp1 = c->rn;
+    if (c->nat)
     { /* NATURAL n1 (M4-lite): the leaf-redirected pass, unbanded by
        * construction (wl pinned 0 at create). */
-        _il2d_col_pass_nat(src, dst, h->N, hp1, h->il2d_nst, h->il2d_R,
-                           h->il2d_L,
-                           reverse ? h->il2d_b : h->il2d_f,
-                           reverse ? h->il2d_tb : h->il2d_tf, reverse,
-                           h->il2d_natperm, h->il2d_natscr);
+        _il2d_col_pass_nat(src, dst, c->N, hp1, c->nst, c->R,
+                           c->L,
+                           reverse ? c->b : c->f,
+                           reverse ? c->tb : c->tf, reverse,
+                           c->natperm, c->natscr);
         return;
     }
-    if (h->il2d_blu)
+    if (c->blu)
     { /* prime N1: the shared Bluestein pipeline over the CCE plane;
        * reverse = the inverse transform (conjugated chirp/kernel). */
-        _il2d_blu_cols(src, dst, h->N, hp1, h->il2d_blu, h->il2d_nst,
-                       h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_b,
-                       h->il2d_tf, h->il2d_tb,
-                       reverse ? h->il2d_bluchb : h->il2d_bluchf,
-                       reverse ? h->il2d_blukb : h->il2d_blukf,
-                       h->il2d_bluscr);
+        _il2d_blu_cols(src, dst, c->N, hp1, c->blu, c->nst,
+                       c->R, c->L, c->f, c->b,
+                       c->tf, c->tb,
+                       reverse ? c->bluchb : c->bluchf,
+                       reverse ? c->blukb : c->blukf,
+                       c->bluscr);
         return;
     }
-    if (h->il2d_wl > 0)
+    if (c->wl > 0)
     {
-        const int cut = h->il2d_cut, nst = h->il2d_nst;
-        const size_t wl = (size_t)h->il2d_wl;
-        vfft_il2p_fn const *fns = reverse ? h->il2d_b : h->il2d_f;
-        double *const *tabs = reverse ? h->il2d_tb : h->il2d_tf;
+        const int cut = c->cut, nst = c->nst;
+        const size_t wl = (size_t)c->wl;
+        vfft_il2p_fn const *fns = reverse ? c->b : c->f;
+        double *const *tabs = reverse ? c->tb : c->tf;
         size_t b0;
         if (!reverse)
         {
             if (cut > 0)
-                _il2d_col_stages(src, dst, h->N, hp1, 0, cut,
-                                 h->il2d_R, h->il2d_L, fns, tabs, 0);
-            for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+                _il2d_col_stages(src, dst, c->N, hp1, 0, cut,
+                                 c->R, c->L, fns, tabs, 0);
+            for (b0 = 0; b0 < (size_t)c->N; b0 += wl)
             {
                 const double *bs = (cut > 0) ? dst + 2 * b0 * hp1
                                              : src + 2 * b0 * hp1;
                 _il2d_col_stages(bs, dst + 2 * b0 * hp1, (int)wl, hp1,
-                                 cut, nst, h->il2d_R, h->il2d_L, fns,
+                                 cut, nst, c->R, c->L, fns,
                                  tabs, 0);
             }
         }
         else
         {
-            for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
+            for (b0 = 0; b0 < (size_t)c->N; b0 += wl)
                 _il2d_col_stages(src + 2 * b0 * hp1,
                                  dst + 2 * b0 * hp1, (int)wl, hp1, cut,
-                                 nst, h->il2d_R, h->il2d_L, fns, tabs,
+                                 nst, c->R, c->L, fns, tabs,
                                  1);
             if (cut > 0)
-                _il2d_col_stages(dst, dst, h->N, hp1, 0, cut,
-                                 h->il2d_R, h->il2d_L, fns, tabs, 1);
+                _il2d_col_stages(dst, dst, c->N, hp1, 0, cut,
+                                 c->R, c->L, fns, tabs, 1);
         }
         return;
     }
-    _il2d_col_pass(src, dst, h->N, hp1, 0, h->il2d_nst, h->il2d_R,
-                   h->il2d_L, reverse ? h->il2d_b : h->il2d_f,
-                   reverse ? h->il2d_tb : h->il2d_tf, reverse);
+    _il2d_col_pass(src, dst, c->N, hp1, 0, c->nst, c->R,
+                   c->L, reverse ? c->b : c->f,
+                   reverse ? c->tb : c->tf, reverse);
+}
+
+/* the real tier's column pass: the descriptor's, over hp1 columns */
+static void _il2d_real_cols(struct vfft_plan_s *h, const double *src,
+                            double *dst, int reverse)
+{
+    _il2d_col_exec(&h->il2d_col, src, dst, reverse);
 }
 
 /* ══ MT column pass (INC-3, docs/design/il2d_real_mt.md) ═════════════
@@ -373,43 +385,43 @@ static void _il2d_cmt_tramp(void *v)
     _il2d_cmt_arg *a = (_il2d_cmt_arg *)v;
     struct vfft_plan_s *h = a->h;
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
-    vfft_il2p_fn const *fns = a->reverse ? h->il2d_b : h->il2d_f;
-    double *const *tabs = a->reverse ? h->il2d_tb : h->il2d_tf;
+    vfft_il2p_fn const *fns = a->reverse ? h->il2d_col.b : h->il2d_col.f;
+    double *const *tabs = a->reverse ? h->il2d_col.tb : h->il2d_col.tf;
     if (a->natleaf)
     {   /* natural x MT: the leaf scatter/gather over [lo,hi) blocks */
         _il2d_nat_leaf_range(a->src, a->dst, h->N, hp1,
-                             h->il2d_R[h->il2d_nst - 1], fns[h->il2d_nst - 1],
-                             h->il2d_natperm, a->lo, a->hi, a->reverse);
+                             h->il2d_col.R[h->il2d_col.nst - 1], fns[h->il2d_col.nst - 1],
+                             h->il2d_col.natperm, a->lo, a->hi, a->reverse);
         return;
     }
     if (a->strip)
     {
-        if (h->il2d_blu)
+        if (h->il2d_col.blu)
         {   /* Bluestein column axis: the window pipeline (2026-09-02) */
             _il2d_blu_cols_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
-                                 h->il2d_blu, h->il2d_nst, h->il2d_R,
-                                 h->il2d_L, h->il2d_f, h->il2d_b,
-                                 h->il2d_tf, h->il2d_tb,
-                                 a->reverse ? h->il2d_bluchb : h->il2d_bluchf,
-                                 a->reverse ? h->il2d_blukb : h->il2d_blukf,
-                                 h->il2d_bluscr);
+                                 h->il2d_col.blu, h->il2d_col.nst, h->il2d_col.R,
+                                 h->il2d_col.L, h->il2d_col.f, h->il2d_col.b,
+                                 h->il2d_col.tf, h->il2d_col.tb,
+                                 a->reverse ? h->il2d_col.bluchb : h->il2d_col.bluchf,
+                                 a->reverse ? h->il2d_col.blukb : h->il2d_col.blukf,
+                                 h->il2d_col.bluscr);
             return;
         }
         _il2d_col_pass_range(a->src, a->dst, h->N, hp1, a->lo, a->hi,
-                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
                              tabs, a->reverse);
         return;
     }
     {
-        const size_t wl = (size_t)h->il2d_wl;
+        const size_t wl = (size_t)h->il2d_col.wl;
         size_t b;
         for (b = a->lo; b < a->hi; b++)
         {
             const size_t b0 = b * wl;
             const double *bs = a->src + 2 * b0 * hp1;
             _il2d_col_stages(bs, a->dst + 2 * b0 * hp1, (int)wl, hp1,
-                             h->il2d_cut, h->il2d_nst, h->il2d_R,
-                             h->il2d_L, fns, tabs, a->reverse);
+                             h->il2d_col.cut, h->il2d_col.nst, h->il2d_col.R,
+                             h->il2d_col.L, fns, tabs, a->reverse);
         }
     }
 }
@@ -419,38 +431,38 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
                               double *dst, int reverse, int T)
 {
     const size_t hp1 = (size_t)h->N2 / 2 + 1;
-    const int strip = (h->il2d_wl <= 0);
-    size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_wl);
+    const int strip = (h->il2d_col.wl <= 0);
+    size_t units = strip ? hp1 : ((size_t)h->N / (size_t)h->il2d_col.wl);
     _il2d_cmt_arg a[STRIDE_POOL_MAX_DISPATCH];
     int t;
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
      * bounds it by the live pool and the arg-array size. */
     T = stride_pool_workers_for(T);
-    if (T >= 2 && h->il2d_nat)
+    if (T >= 2 && h->il2d_col.nat)
     {
         /* NATURAL x MT (2026-09-04): the matched partition of the
          * natural pass — prefix stages digit-split (src -> scratch, then
          * in place), the leaf scatter by BLOCK RANGE (scratch -> dst),
          * mirrored for bwd (gather first, reversed prefix after, stage 0
          * scratch -> dst). No band arm: the scatter crosses bands. */
-        const int Rl = h->il2d_R[h->il2d_nst - 1];
+        const int Rl = h->il2d_col.R[h->il2d_col.nst - 1];
         const size_t nb = (size_t)h->N / (size_t)Rl;
         const int Tb = nb < (size_t)T ? (int)nb : T;
-        double *scr = h->il2d_natscr;
+        double *scr = h->il2d_col.natscr;
         int s;
-        if (Tb < 2 || h->il2d_nst < 2)
+        if (Tb < 2 || h->il2d_col.nst < 2)
             return 0;
         if (!reverse)
         {
-            for (s = 0; s < h->il2d_nst - 1; s++)
+            for (s = 0; s < h->il2d_col.nst - 1; s++)
             {
                 const double *ssrc = (s == 0) ? src : scr;
                 if (!_il2d_stage_digits_mt(ssrc, scr, h->N, hp1, hp1,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_f[s], h->il2d_tf[s], T))
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.f[s], h->il2d_col.tf[s], T))
                     _il2d_col_stages(ssrc, scr, h->N, hp1, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_f,
-                                     h->il2d_tf, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                     h->il2d_col.tf, 0);
             }
         }
         for (t = 0; t < Tb; t++)
@@ -467,15 +479,15 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         stride_pool_run(Tb, _il2d_cmt_tramp, a, sizeof a[0]);
         if (reverse)
         {
-            for (s = h->il2d_nst - 2; s >= 0; s--)
+            for (s = h->il2d_col.nst - 2; s >= 0; s--)
             {
                 double *out = (s == 0) ? dst : scr;
                 if (!_il2d_stage_digits_mt(scr, out, h->N, hp1, hp1,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_b[s], h->il2d_tb[s], T))
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.b[s], h->il2d_col.tb[s], T))
                     _il2d_col_stages(scr, out, h->N, hp1, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_b,
-                                     h->il2d_tb, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                                     h->il2d_col.tb, 0);
             }
         }
         _vfft_il2d_col_mt_count++;
@@ -485,7 +497,7 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
         return 0; /* not enough independent units to be worth splitting */
     /* fwd: the wide prefix must complete before ANY band (stage 0's legs
      * span the whole plane). bwd: the reversed prefix runs after. */
-    if (!strip && !reverse && h->il2d_cut > 0)
+    if (!strip && !reverse && h->il2d_col.cut > 0)
     {
         /* INC-3b: each prefix stage's DIGITS split over the workers
          * (whole rows, count untouched); stages stay ordered, one
@@ -493,22 +505,22 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
          * per-stage join is free at these sizes. A stage that cannot
          * split (D < T, or the table-free D==1 leaf) runs serial. */
         int s;
-        for (s = 0; s < h->il2d_cut; s++)
+        for (s = 0; s < h->il2d_col.cut; s++)
         {
             const double *ssrc = (s == 0) ? src : dst;
             if (!_il2d_stage_digits_mt(ssrc, dst, h->N, hp1, hp1,
-                                       h->il2d_R[s], h->il2d_L[s],
-                                       h->il2d_f[s], h->il2d_tf[s], T))
+                                       h->il2d_col.R[s], h->il2d_col.L[s],
+                                       h->il2d_col.f[s], h->il2d_col.tf[s], T))
                 _il2d_col_stages(ssrc, dst, h->N, hp1, s, s + 1,
-                                 h->il2d_R, h->il2d_L, h->il2d_f,
-                                 h->il2d_tf, 0);
+                                 h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                 h->il2d_col.tf, 0);
         }
     }
     for (t = 0; t < T; t++)
     {
         a[t].h = h;
         /* after a fwd prefix the band source IS dst (in place) */
-        a[t].src = (!strip && !reverse && h->il2d_cut > 0) ? dst : src;
+        a[t].src = (!strip && !reverse && h->il2d_col.cut > 0) ? dst : src;
         a[t].dst = dst;
         a[t].reverse = reverse;
         a[t].strip = strip;
@@ -518,18 +530,18 @@ static int _il2d_real_cols_mt(struct vfft_plan_s *h, const double *src,
     }
     stride_pool_run(T, _il2d_cmt_tramp, a, sizeof a[0]); /* caller = a[0] */
     _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
-    if (!strip && reverse && h->il2d_cut > 0)
+    if (!strip && reverse && h->il2d_col.cut > 0)
     {
         /* the Hermitian-transpose chain: prefix stages in REVERSE order,
          * in place on dst, each digit-split the same way. */
         int s;
-        for (s = h->il2d_cut - 1; s >= 0; s--)
+        for (s = h->il2d_col.cut - 1; s >= 0; s--)
             if (!_il2d_stage_digits_mt(dst, dst, h->N, hp1, hp1,
-                                       h->il2d_R[s], h->il2d_L[s],
-                                       h->il2d_b[s], h->il2d_tb[s], T))
+                                       h->il2d_col.R[s], h->il2d_col.L[s],
+                                       h->il2d_col.b[s], h->il2d_col.tb[s], T))
                 _il2d_col_stages(dst, dst, h->N, hp1, s, s + 1,
-                                 h->il2d_R, h->il2d_L, h->il2d_b,
-                                 h->il2d_tb, 0);
+                                 h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                                 h->il2d_col.tb, 0);
     }
     return 1;
 }
@@ -582,8 +594,8 @@ static void _il2d_c2c_mt_tramp(void *v)
     _il2d_c2c_mt_arg *a = (_il2d_c2c_mt_arg *)v;
     struct vfft_plan_s *h = a->h;
     const size_t rn = (size_t)h->N2;
-    vfft_il2p_fn const *fns = a->fwd ? h->il2d_f : h->il2d_b;
-    double *const *tabs = a->fwd ? h->il2d_tf : h->il2d_tb;
+    vfft_il2p_fn const *fns = a->fwd ? h->il2d_col.f : h->il2d_col.b;
+    double *const *tabs = a->fwd ? h->il2d_col.tf : h->il2d_col.tb;
     size_t i, b;
     switch (a->mode)
     {
@@ -592,46 +604,46 @@ static void _il2d_c2c_mt_tramp(void *v)
              * order (bwd runs the reversed suffix via !fwd) */
         for (b = a->lo; b < a->hi; b++)
         {
-            const size_t b0 = b * (size_t)h->il2d_wl;
-            const double *bs = (a->fwd && h->il2d_cut > 0)
+            const size_t b0 = b * (size_t)h->il2d_col.wl;
+            const double *bs = (a->fwd && h->il2d_col.cut > 0)
                                    ? a->dst + 2 * b0 * rn
                                    : a->src + 2 * b0 * rn;
             double *bd = a->dst + 2 * b0 * rn;
-            _il2d_col_stages(bs, bd, h->il2d_wl, rn, h->il2d_cut,
-                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+            _il2d_col_stages(bs, bd, h->il2d_col.wl, rn, h->il2d_col.cut,
+                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
                              tabs, !a->fwd);
-            if (h->il2d_tfuse)
-                for (i = 0; i < (size_t)h->il2d_wl; i++)
+            if (h->il2d_col.tfuse)
+                for (i = 0; i < (size_t)h->il2d_col.wl; i++)
                     _il2d_row_exec_t(h, a->tid, a->dir,
                                      bd + 2 * i * rn, rn);
         }
         break;
     case 1: /* column strip: the whole chain over [lo,hi) columns */
         _il2d_col_pass_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
-                             h->il2d_nst, h->il2d_R, h->il2d_L, fns,
+                             h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
                              tabs, !a->fwd);
         break;
     case 5: /* natural x MT, the STRIP arm: the whole natural pass over
              * [lo,hi) columns (shared scratch, disjoint columns) */
         _il2d_col_pass_nat_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
-                                 h->il2d_nst, h->il2d_R, h->il2d_L, fns,
-                                 tabs, !a->fwd, h->il2d_natperm,
-                                 h->il2d_natscr);
+                                 h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L, fns,
+                                 tabs, !a->fwd, h->il2d_col.natperm,
+                                 h->il2d_col.natscr);
         break;
     case 4: /* natural x MT: the leaf scatter (fwd: src = scratch, dst =
              * plane) / gather (bwd: src = natural plane, dst = scratch)
              * over [lo,hi) blocks */
         _il2d_nat_leaf_range(a->src, a->dst, h->N, rn,
-                             h->il2d_R[h->il2d_nst - 1], fns[h->il2d_nst - 1],
-                             h->il2d_natperm, a->lo, a->hi, !a->fwd);
+                             h->il2d_col.R[h->il2d_col.nst - 1], fns[h->il2d_col.nst - 1],
+                             h->il2d_col.natperm, a->lo, a->hi, !a->fwd);
         break;
     case 3: /* Bluestein column axis: the window pipeline (2026-09-02) */
         _il2d_blu_cols_range(a->src, a->dst, h->N, rn, a->lo, a->hi,
-                             h->il2d_blu, h->il2d_nst, h->il2d_R, h->il2d_L,
-                             h->il2d_f, h->il2d_b, h->il2d_tf, h->il2d_tb,
-                             a->fwd ? h->il2d_bluchf : h->il2d_bluchb,
-                             a->fwd ? h->il2d_blukf : h->il2d_blukb,
-                             h->il2d_bluscr);
+                             h->il2d_col.blu, h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L,
+                             h->il2d_col.f, h->il2d_col.b, h->il2d_col.tf, h->il2d_col.tb,
+                             a->fwd ? h->il2d_col.bluchf : h->il2d_col.bluchb,
+                             a->fwd ? h->il2d_col.blukf : h->il2d_col.blukb,
+                             h->il2d_col.bluscr);
         break;
     default: /* row slab on the destination plane */
         for (i = a->lo; i < a->hi; i++)
@@ -669,7 +681,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     const size_t rn = (size_t)h->N2;
     const int fwd = (dir == VFFT_FORWARD);
     int s;
-    if (h->il2d_staged)
+    if (h->il2d_col.staged)
         return 0; /* env-experimental route: one shared band scratch —
                    * per-worker slots are not built for it */
     /* T arrives as the plan's snapshot (h->nthreads); the pool's one clamp
@@ -677,7 +689,7 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
     T = stride_pool_workers_for(T);
     if (T < 2 || h->il2d_roww_n < T - 1)
         return 0; /* every arm here runs rows => clones are mandatory */
-    if (h->il2d_blu)
+    if (h->il2d_col.blu)
     {   /* Bluestein column axis (2026-09-02): column windows, then rows —
          * the same order the unbanded chain walk uses */
         const int Ts = rn < (size_t)T ? (int)rn : T;
@@ -687,31 +699,31 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (Ts >= 2)
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 3, rn, Ts);
         else
-            _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_blu, h->il2d_nst,
-                           h->il2d_R, h->il2d_L, h->il2d_f, h->il2d_b,
-                           h->il2d_tf, h->il2d_tb,
-                           fwd ? h->il2d_bluchf : h->il2d_bluchb,
-                           fwd ? h->il2d_blukf : h->il2d_blukb,
-                           h->il2d_bluscr);
+            _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_col.blu, h->il2d_col.nst,
+                           h->il2d_col.R, h->il2d_col.L, h->il2d_col.f, h->il2d_col.b,
+                           h->il2d_col.tf, h->il2d_col.tb,
+                           fwd ? h->il2d_col.bluchf : h->il2d_col.bluchb,
+                           fwd ? h->il2d_col.blukf : h->il2d_col.blukb,
+                           h->il2d_col.bluscr);
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
         _vfft_il2d_col_mt_count++;
         return 1;
     }
-    if (h->il2d_nat)
+    if (h->il2d_col.nat)
     {
         /* NATURAL x MT (2026-09-04): digit-split prefix (sre -> scratch,
          * then in place), the leaf scatter by BLOCK RANGE (mode 4,
          * scratch -> dre), then row slabs on dre; bwd mirrors (gather
          * first, reversed prefix, stage 0 scratch -> dre). The band arm
          * is structurally out (the scatter crosses bands). */
-        const int Rl = h->il2d_R[h->il2d_nst - 1];
+        const int Rl = h->il2d_col.R[h->il2d_col.nst - 1];
         const size_t nb = (size_t)h->N / (size_t)Rl;
         const int Tb = nb < (size_t)T ? (int)nb : T;
         const int Tr = (size_t)h->N < (size_t)T ? h->N : T;
-        double *scr = h->il2d_natscr;
-        if (h->il2d_nst < 2 || (Tb < 2 && Tr < 2))
+        double *scr = h->il2d_col.natscr;
+        if (h->il2d_col.nst < 2 || (Tb < 2 && Tr < 2))
             return 0;
-        if (h->il2d_natarm == 1)
+        if (h->il2d_col.natarm == 1)
         {   /* the STRIP arm (raced against the block arm at create) */
             const int Ts = rn < (size_t)T ? (int)rn : T;
             if (Ts < 2 && Tr < 2)
@@ -719,33 +731,33 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
             if (Ts >= 2)
                 _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 5, rn, Ts);
             else
-                _il2d_col_pass_nat(sre, dre, h->N, rn, h->il2d_nst,
-                                   h->il2d_R, h->il2d_L,
-                                   fwd ? h->il2d_f : h->il2d_b,
-                                   fwd ? h->il2d_tf : h->il2d_tb, !fwd,
-                                   h->il2d_natperm, scr);
+                _il2d_col_pass_nat(sre, dre, h->N, rn, h->il2d_col.nst,
+                                   h->il2d_col.R, h->il2d_col.L,
+                                   fwd ? h->il2d_col.f : h->il2d_col.b,
+                                   fwd ? h->il2d_col.tf : h->il2d_col.tb, !fwd,
+                                   h->il2d_col.natperm, scr);
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
             _vfft_il2d_col_mt_count++;
             return 1;
         }
         if (fwd)
         {
-            for (s = 0; s < h->il2d_nst - 1; s++)
+            for (s = 0; s < h->il2d_col.nst - 1; s++)
             {
                 const double *ssrc = (s == 0) ? sre : scr;
                 if (!_il2d_stage_digits_mt(ssrc, scr, h->N, rn, rn,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_f[s], h->il2d_tf[s], T))
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.f[s], h->il2d_col.tf[s], T))
                     _il2d_col_stages(ssrc, scr, h->N, rn, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_f,
-                                     h->il2d_tf, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                     h->il2d_col.tf, 0);
             }
             if (Tb >= 2)
                 _il2d_c2c_mt_phase(h, scr, dre, dir, fwd, 4, nb, Tb);
             else
                 _il2d_nat_leaf_range(scr, dre, h->N, rn, Rl,
-                                     h->il2d_f[h->il2d_nst - 1],
-                                     h->il2d_natperm, 0, nb, 0);
+                                     h->il2d_col.f[h->il2d_col.nst - 1],
+                                     h->il2d_col.natperm, 0, nb, 0);
         }
         else
         {
@@ -753,57 +765,57 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
                 _il2d_c2c_mt_phase(h, sre, scr, dir, fwd, 4, nb, Tb);
             else
                 _il2d_nat_leaf_range(sre, scr, h->N, rn, Rl,
-                                     h->il2d_b[h->il2d_nst - 1],
-                                     h->il2d_natperm, 0, nb, 1);
-            for (s = h->il2d_nst - 2; s >= 0; s--)
+                                     h->il2d_col.b[h->il2d_col.nst - 1],
+                                     h->il2d_col.natperm, 0, nb, 1);
+            for (s = h->il2d_col.nst - 2; s >= 0; s--)
             {
                 double *out = (s == 0) ? dre : scr;
                 if (!_il2d_stage_digits_mt(scr, out, h->N, rn, rn,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_b[s], h->il2d_tb[s], T))
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.b[s], h->il2d_col.tb[s], T))
                     _il2d_col_stages(scr, out, h->N, rn, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_b,
-                                     h->il2d_tb, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                                     h->il2d_col.tb, 0);
             }
         }
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
         _vfft_il2d_col_mt_count++;
         return 1;
     }
-    if (h->il2d_wl > 0)
+    if (h->il2d_col.wl > 0)
     {
         /* fewer bands than workers is a CLAMP, not a decline: 4 bands
          * across 4 workers still beats serial, and the prefix digit
          * split keeps the full T regardless (its axis is D, not nb). */
-        const size_t nb = (size_t)h->N / (size_t)h->il2d_wl;
+        const size_t nb = (size_t)h->N / (size_t)h->il2d_col.wl;
         const int Tb = nb < (size_t)T ? (int)nb : T;
         if (Tb < 2)
             return 0;
-        if (fwd && h->il2d_cut > 0)
-            for (s = 0; s < h->il2d_cut; s++)
+        if (fwd && h->il2d_col.cut > 0)
+            for (s = 0; s < h->il2d_col.cut; s++)
             {
                 const double *ssrc = (s == 0) ? sre : dre;
                 if (!_il2d_stage_digits_mt(ssrc, dre, h->N, rn, rn,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_f[s], h->il2d_tf[s],
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.f[s], h->il2d_col.tf[s],
                                            T))
                     _il2d_col_stages(ssrc, dre, h->N, rn, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_f,
-                                     h->il2d_tf, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.f,
+                                     h->il2d_col.tf, 0);
             }
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 0, nb, Tb);
-        if (!h->il2d_tfuse)
+        if (!h->il2d_col.tfuse)
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N,
                                T);
-        if (!fwd && h->il2d_cut > 0)
-            for (s = h->il2d_cut - 1; s >= 0; s--)
+        if (!fwd && h->il2d_col.cut > 0)
+            for (s = h->il2d_col.cut - 1; s >= 0; s--)
                 if (!_il2d_stage_digits_mt(dre, dre, h->N, rn, rn,
-                                           h->il2d_R[s], h->il2d_L[s],
-                                           h->il2d_b[s], h->il2d_tb[s],
+                                           h->il2d_col.R[s], h->il2d_col.L[s],
+                                           h->il2d_col.b[s], h->il2d_col.tb[s],
                                            T))
                     _il2d_col_stages(dre, dre, h->N, rn, s, s + 1,
-                                     h->il2d_R, h->il2d_L, h->il2d_b,
-                                     h->il2d_tb, 0);
+                                     h->il2d_col.R, h->il2d_col.L, h->il2d_col.b,
+                                     h->il2d_col.tb, 0);
         _vfft_il2d_col_mt_count++; /* engagement, see vfft.h */
         return 1;
     }
@@ -817,10 +829,10 @@ static int _il2d_c2c_mt(struct vfft_plan_s *h, const double *sre,
         if (Ts >= 2)
             _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 1, rn, Ts);
         else
-            _il2d_col_pass(sre, dre, h->N, rn, rn, h->il2d_nst,
-                           h->il2d_R, h->il2d_L,
-                           fwd ? h->il2d_f : h->il2d_b,
-                           fwd ? h->il2d_tf : h->il2d_tb, !fwd);
+            _il2d_col_pass(sre, dre, h->N, rn, rn, h->il2d_col.nst,
+                           h->il2d_col.R, h->il2d_col.L,
+                           fwd ? h->il2d_col.f : h->il2d_col.b,
+                           fwd ? h->il2d_col.tf : h->il2d_col.tb, !fwd);
         _il2d_c2c_mt_phase(h, sre, dre, dir, fwd, 2, (size_t)h->N, Tr);
     }
     _vfft_il2d_col_mt_count++;
@@ -834,8 +846,8 @@ static int _il2d_real_wl_cut(const struct vfft_plan_s *h, int wl)
     int s2;
     if (wl <= 0 || wl > h->N || h->N % wl != 0)
         return -1;
-    for (s2 = 0; s2 < h->il2d_nst; s2++)
-        if (wl % h->il2d_L[s2] == 0)
+    for (s2 = 0; s2 < h->il2d_col.nst; s2++)
+        if (wl % h->il2d_col.L[s2] == 0)
             return s2;
     return -1;
 }
@@ -938,21 +950,21 @@ static void _il2d_arm_rows(void *v)
 static void _il2d_arm_exec_st(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    c->h->il2d_colmt = 0;
+    c->h->il2d_col.colmt = 0;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 static void _il2d_arm_exec_mt(void *v)
 {
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    c->h->il2d_colmt = 1;
-    c->h->il2d_natarm = 0;
+    c->h->il2d_col.colmt = 1;
+    c->h->il2d_col.natarm = 0;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 static void _il2d_arm_exec_mt_strip(void *v)
 {   /* natural cells only: the strip partition of the natural pass */
     _il2d_race_ctx_t *c = (_il2d_race_ctx_t *)v;
-    c->h->il2d_colmt = 1;
-    c->h->il2d_natarm = 1;
+    c->h->il2d_col.colmt = 1;
+    c->h->il2d_col.natarm = 1;
     vfft_execute((vfft_plan)c->h, VFFT_FORWARD, c->z, NULL, c->z, NULL);
 }
 static void _il2d_arm_exec(void *v)
@@ -1067,15 +1079,15 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         int wlc[14], nwl = 0, wi, s2;
         double cbest = 1e300;
         int bwl = 0, bcut = 0;
-        h->il2d_wl = 0;
-        h->il2d_cut = 0;
+        h->il2d_col.wl = 0;
+        h->il2d_col.cut = 0;
         vfft_race_run(&proto, &cols_arm, 1, &cbest);
         for (wi = 0; wi < 6 && nwl < 14; wi++)
             if (_il2d_real_wl_cut(h, WPOOL[wi]) >= 0 && WPOOL[wi] < N1)
                 wlc[nwl++] = WPOOL[wi];
-        for (s2 = 1; s2 < h->il2d_nst && nwl < 14; s2++)
+        for (s2 = 1; s2 < h->il2d_col.nst && nwl < 14; s2++)
         {
-            const int w2 = h->il2d_L[s2];
+            const int w2 = h->il2d_col.L[s2];
             int dup = 0;
             if ((long)w2 * (long)hp1 * 16 > vfft_cpu_l2_bytes())
                 continue;
@@ -1091,8 +1103,8 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
         {
             const int cut = _il2d_real_wl_cut(h, wlc[wi]);
             double ns = 1e300;
-            h->il2d_wl = wlc[wi];
-            h->il2d_cut = cut;
+            h->il2d_col.wl = wlc[wi];
+            h->il2d_col.cut = cut;
             vfft_race_run(&proto, &cols_arm, 1, &ns);
             if (ns < cbest)
             {
@@ -1101,8 +1113,8 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                 bcut = cut;
             }
         }
-        h->il2d_wl = bwl;
-        h->il2d_cut = bcut;
+        h->il2d_col.wl = bwl;
+        h->il2d_col.cut = bcut;
         free(a);
         free(bz);
         if (getenv("VFFT_IL2D_LOG"))
@@ -1110,9 +1122,9 @@ static void _il2d_real_rowrace(struct vfft_plan_s *h,
                             "wl=%d (%.0f ns rows / %.0f ns cols)\n",
                     isr ? "r2c" : "c2r", N1, N2, bw, bwl, bestns,
                     cbest);
-        vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_R, h->il2d_nst, bw,
-                       bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                       bestns + cbest, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+        vw2_2d_rl_bank(&W->vw2, N1, N2, !isr, h->il2d_col.R, h->il2d_col.nst, bw,
+                       bwl, -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
+                       bestns + cbest, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
     }
 }
@@ -1155,27 +1167,27 @@ static void _il2d_real_colmt_race(struct vfft_plan_s *h,
         {
             /* the threaded arm cannot even engage on this cell */
             free(z);
-            h->il2d_colmt = 0;
+            h->il2d_col.colmt = 0;
             vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                           h->il2d_R, h->il2d_nst,
-                           h->il2d_rw, h->il2d_wl, 0, h->nthreads,
-                           (N1 & (N1 - 1)) ? h->il2d_blu : -1, st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                           h->il2d_col.R, h->il2d_col.nst,
+                           h->il2d_rw, h->il2d_col.wl, 0, h->nthreads,
+                           (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
             _vw2_persist(W, cfg);
             return;
         }
     }
-    h->il2d_colmt = (mt < st);
+    h->il2d_col.colmt = (mt < st);
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-real] colmt race %dx%d T=%d: st=%.0f "
                         "mt=%.0f -> %s\n",
                 N1, N2, h->nthreads, st, mt,
-                h->il2d_colmt ? "THREADED" : "serial");
+                h->il2d_col.colmt ? "THREADED" : "serial");
     vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                   h->il2d_R, h->il2d_nst, h->il2d_rw,
-                   h->il2d_wl, h->il2d_colmt, h->nthreads,
-                   (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                   h->il2d_colmt ? mt : st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                   h->il2d_col.R, h->il2d_col.nst, h->il2d_rw,
+                   h->il2d_col.wl, h->il2d_col.colmt, h->nthreads,
+                   (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
+                   h->il2d_col.colmt ? mt : st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 
@@ -1520,9 +1532,9 @@ static void _il2d_arm_axis(void *v)
 {
     _il2d_axis_arm_t *c = (_il2d_axis_arm_t *)v;
     struct vfft_plan_s *h = c->h;
-    h->il2d_wl = c->wl;
-    h->il2d_cut = c->cut;
-    h->il2d_tfuse = (c->wl > 0);
+    h->il2d_col.wl = c->wl;
+    h->il2d_col.cut = c->cut;
+    h->il2d_col.tfuse = (c->wl > 0);
     h->il2d_rowoop = c->ro;
     h->il2d_rowo = c->ro ? c->rowo : NULL;
     h->il2d_rowscr = c->ro ? c->rowscr : NULL;
@@ -1556,8 +1568,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             int cut = -1;
             if (w > N1 || N1 % w)
                 continue;
-            for (s2 = 0; s2 < h->il2d_nst; s2++)
-                if (w % h->il2d_L[s2] == 0)
+            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
+                if (w % h->il2d_col.L[s2] == 0)
                 {
                     cut = s2;
                     break;
@@ -1576,9 +1588,9 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
          * (w * N2 * 16 <= vfft_cpu_l2_bytes(), the hardware-derived
          * fence — never a platform-baked constant), and the RACE still
          * decides: these are candidates, not defaults. */
-        for (s2 = 1; s2 < h->il2d_nst && nwl < 14; s2++)
+        for (s2 = 1; s2 < h->il2d_col.nst && nwl < 14; s2++)
         {
-            const int w = h->il2d_L[s2];
+            const int w = h->il2d_col.L[s2];
             int dup = 0, p2;
             if (w > N1 || N1 % w || w < 8)
                 continue;
@@ -1635,8 +1647,8 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
                 int s2, cut = 0;
                 const int w = wlc[wi];
                 if (w > 0)
-                    for (s2 = 0; s2 < h->il2d_nst; s2++)
-                        if (w % h->il2d_L[s2] == 0)
+                    for (s2 = 0; s2 < h->il2d_col.nst; s2++)
+                        if (w % h->il2d_col.L[s2] == 0)
                         {
                             cut = s2;
                             break;
@@ -1669,7 +1681,7 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
         if (getenv("VFFT_IL2D_LOG"))
         {
             fprintf(stderr, "[il2d] axis race %dx%d (%s):", N1, N2,
-                    h->il2d_nat ? "nat" : "scr");
+                    h->il2d_col.nat ? "nat" : "scr");
             for (a = 0; a < na; a++)
                 fprintf(stderr, " %s=%.0f", ac[a].name, ns[a]);
             fprintf(stderr, " -> wl=%d ro=%d\n", bwl, bro);
@@ -1679,15 +1691,15 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
     {
         int s2, cut = 0;
         if (bwl > 0)
-            for (s2 = 0; s2 < h->il2d_nst; s2++)
-                if (bwl % h->il2d_L[s2] == 0)
+            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
+                if (bwl % h->il2d_col.L[s2] == 0)
                 {
                     cut = s2;
                     break;
                 }
-        h->il2d_wl = bwl;
-        h->il2d_cut = cut;
-        h->il2d_tfuse = (bwl > 0);
+        h->il2d_col.wl = bwl;
+        h->il2d_col.cut = cut;
+        h->il2d_col.tfuse = (bwl > 0);
         h->il2d_rowoop = bro;
         if (bro && rowo)
         {
@@ -1703,9 +1715,9 @@ static void _il2d_axis_race(struct vfft_plan_s *h, struct vfft_wisdom_s *W,
             free(rowscr);
         }
     }
-    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
-                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
-                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_blu : -1, best, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
+                         h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
+                         -1, -1, (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, best, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
     free(z);
 }
@@ -1806,12 +1818,12 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         z[i] = 1.0 + 1e-6 * (double)(i & 511);
     if (!_il2d_c2c_mt(h, z, z, VFFT_FORWARD, h->nthreads))
     {
-        h->il2d_colmt = 0; /* cannot engage — that IS the verdict */
+        h->il2d_col.colmt = 0; /* cannot engage — that IS the verdict */
         free(z);
-        vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
-                             h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
+        vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
+                             h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
                              0, h->nthreads,
-                             (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                             (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
         _vw2_persist(W, cfg);
         return;
     }
@@ -1826,33 +1838,33 @@ static void _il2d_c2c_mt_race(struct vfft_plan_s *h,
         /* natural cells race THREE arms (serial, block, strips — the
          * natural pass has two legal partitions and no band arm); every
          * other cell keeps its two. */
-        vfft_race_run(&proto, arms, h->il2d_nat ? 3 : 2, ns);
+        vfft_race_run(&proto, arms, h->il2d_col.nat ? 3 : 2, ns);
         st = ns[0];
         mt = ns[1];
-        h->il2d_natarm = 0;
-        if (h->il2d_nat && ns[2] < mt)
+        h->il2d_col.natarm = 0;
+        if (h->il2d_col.nat && ns[2] < mt)
         {
             mt = ns[2];
-            h->il2d_natarm = 1;
+            h->il2d_col.natarm = 1;
         }
-        if (getenv("VFFT_IL2D_LOG") && h->il2d_nat)
+        if (getenv("VFFT_IL2D_LOG") && h->il2d_col.nat)
             fprintf(stderr, "[il2d-c2c] natural arms %dx%d T=%d: block=%.0f "
                             "strips=%.0f\n",
                     N1, N2, h->nthreads, ns[1], ns[2]);
     }
-    h->il2d_colmt = (mt < st);
+    h->il2d_col.colmt = (mt < st);
     free(z);
     if (getenv("VFFT_IL2D_LOG"))
         fprintf(stderr, "[il2d-c2c] colmt race %dx%d T=%d: st=%.0f "
                         "mt=%.0f -> %s%s\n",
                 N1, N2, h->nthreads, st, mt,
-                h->il2d_colmt ? "THREADED" : "serial",
-                (h->il2d_colmt && h->il2d_natarm) ? " (strips)" : "");
-    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_R, h->il2d_nst,
-                         h->il2d_wl, h->il2d_tfuse, h->il2d_rowoop,
-                         h->il2d_colmt, h->nthreads,
-                         (N1 & (N1 - 1)) ? h->il2d_blu : -1,
-                         h->il2d_colmt ? mt : st, (h->il2d_nat ? VW2_ORD_NAT : VW2_ORD_SCR));
+                h->il2d_col.colmt ? "THREADED" : "serial",
+                (h->il2d_col.colmt && h->il2d_col.natarm) ? " (strips)" : "");
+    vw2_2d_il_chain_bank(&W->vw2, N1, N2, h->il2d_col.R, h->il2d_col.nst,
+                         h->il2d_col.wl, h->il2d_col.tfuse, h->il2d_rowoop,
+                         h->il2d_col.colmt, h->nthreads,
+                         (N1 & (N1 - 1)) ? h->il2d_col.blu : -1,
+                         h->il2d_col.colmt ? mt : st, (h->il2d_col.nat ? VW2_ORD_NAT : VW2_ORD_SCR));
     _vw2_persist(W, cfg);
 }
 

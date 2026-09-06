@@ -30,6 +30,7 @@
 #include "zturn.h"              /* ZTURN-S route twin (Phase 5 tranche 2; cascade_load_path_restructure §6.4) */
 #include "cpu_cache.h"          /* L1d capacity for the tcut width stamp; PLANNING ONLY */
 #include "il2p.h"               /* PURE-IL 2-pass K=1 route (fwd); see il2p.h header */
+#include "transforms/fft2d/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
@@ -2121,9 +2122,9 @@ static size_t vfft__fp_node(const struct vfft_plan_s *h, int depth,
             h->pq_wn, h->pq_mt, (long)h->pq_n);
     FP__ADD(" il2d=[nst=%d wc=%d wl=%d cut=%d tf=%d roop=%d rw=%d cmt=%d"
             " oddn2=%d nat=%d blu=%d norowz=%d]",
-            h->il2d_nst, h->il2d_wc, h->il2d_wl, h->il2d_cut, h->il2d_tfuse,
-            h->il2d_rowoop, h->il2d_rw, h->il2d_colmt, h->il2d_oddn2,
-            h->il2d_nat, h->il2d_blu, h->il2d_norowz);
+            h->il2d_col.nst, h->il2d_col.wc, h->il2d_col.wl, h->il2d_col.cut, h->il2d_col.tfuse,
+            h->il2d_rowoop, h->il2d_rw, h->il2d_col.colmt, h->il2d_oddn2,
+            h->il2d_col.nat, h->il2d_col.blu, h->il2d_norowz);
 
     /* 3 — subplan PRESENCE bitmap, in a fixed order */
     FP__ADD(" | have=%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d%d",

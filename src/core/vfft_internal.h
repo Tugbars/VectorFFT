@@ -280,21 +280,22 @@ struct vfft_plan_s
      * fallback of IL, the convert wrapper is GONE; inexpressible cells
      * REFUSE at create. Cold cells race + bank (lay=il) + serve. */
     struct vfft_plan_s *il2d_row;
-    /* the column chain: stage s has radix il2d_R[s] over sub-length
-     * il2d_L[s] (D = L/R); stages 0..nst-2 are t2c with driver-built
-     * d-major record tables (il2d_tf fwd / il2d_tb conjugated bwd), the
+    /* the column chain: stage s has radix il2d_col.R[s] over sub-length
+     * il2d_col.L[s] (D = L/R); stages 0..nst-2 are t2c with driver-built
+     * d-major record tables (il2d_col.tf fwd / il2d_col.tb conjugated bwd), the
      * last stage is the twiddle-free n1c. nst == 1 = the M1 single-stage
      * tier (identity order along i); nst > 1 leaves i digit-reversed by
      * the chain (the scrambled contract; natural = M4 rho tables). */
-    int il2d_nst;
-    int il2d_wc; /* column-tile width (complex); 0 = full N2 (untiled) */
+    /* THE COLUMN-AXIS PASS (2026-09-06): chain, tables, banded walk, natural
+     * redirection, Bluestein, column-MT verdict — il2d_col.h. The design notes
+     * below describe its fields by that name. */
+    vfft_ilcol_t il2d_col;
     /* banded walk (the cascade's tcut mapped to 2D — zturn.h §TILING AXIS):
-     * il2d_wl = band width in ROWS (0 = unbanded); il2d_cut = DERIVED
+     * il2d_col.wl = band width in ROWS (0 = unbanded); il2d_col.cut = DERIVED
      * (stages cut..nst-1 run depth-first per band — the suffix whose
-     * L_s | wl; wide prefix stages run first); il2d_tfuse folds the ROW
+     * L_s | wl; wide prefix stages run first); il2d_col.tfuse folds the ROW
      * PASS per band (the terminator analog). F0 law: banding changes only
      * loop order + base pointers — output memcmp-identical to unbanded. */
-    int il2d_wl, il2d_cut, il2d_tfuse;
     /* row route (the small-N2 lever): 0 = in-place NATURAL child (the
      * default; pays the 1D in-place service floor ~180ns/row at tiny N);
      * 1 = OOP NATURAL child + L1-hot row scratch + memcpy back (the mono
@@ -312,15 +313,10 @@ struct vfft_plan_s
     int il2d_roww_n;
     double *il2d_rowscr_w;          /* rowoop: T-1 slots x 2*N2 */
     double *il2d_rowscr;           /* 2*N2 doubles */
-    /* staged band route (§10b): copy each band into scratch at il2d_pitch
+    /* staged band route (§10b): copy each band into scratch at il2d_col.pitch
      * (skew-selected so every suffix-stage leg stride and the leaf stride
      * are non-0 mod 4096 — the priced 2.4-3x aliasing cure), run the
-     * suffix + rows there, copy back. Requires il2d_wl > 0. */
-    int il2d_staged, il2d_pitch;
-    double *il2d_bandscr;          /* 2 * wl * pitch doubles */
-    int il2d_R[8], il2d_L[8];
-    vfft_il2p_fn il2d_f[8], il2d_b[8];
-    double *il2d_tf[8], *il2d_tb[8];
+     * suffix + rows there, copy back. Requires il2d_col.wl > 0. */
     /* native IL 2D REAL tier (docs/roadmap/fft2d_real_il_design.md): the
      * same il2d_* chain machinery over hp1 = N2/2+1 columns; il2d_row =
      * the TC K=N1 batched zr2c row door (one plan, one dispatch per
@@ -342,7 +338,7 @@ struct vfft_plan_s
      * serving verdicts are M3's route race). */
     struct vfft_plan_s *il2d_rows;
     int il2d_rw;
-    int il2d_colmt;  /* INC-3: the RACED column-MT verdict for this cell
+    /* il2d_col.colmt: INC-3: the RACED column-MT verdict for this cell
                       * (1 = thread the column pass, 0 = serial). Never a
                       * structural default — at 512x32 (hp1=17, so the
                       * strip arm over 17 columns) threading the columns
@@ -363,8 +359,8 @@ struct vfft_plan_s
      * chain consumes the comb, demodulate. n1 comes out NATURAL. Zero
      * new codelets. The odd t2c/n1c EMISSION (the corpus has the odd
      * DFT bodies, radix 3..27 — the column kind was never emitted) is
-     * the future raced arm for smooth-odd N1. il2d_blu = M (0 = off);
-     * il2d_R/L/f/b/tf/tb hold the M-chain. */
+     * the future raced arm for smooth-odd N1. il2d_col.blu = M (0 = off);
+     * il2d_col.R/L/f/b/tf/tb hold the M-chain. */
     /* ── NATURAL n1 (2026-08-27, "M4-lite"): the leaf-only pitch
      * theorem (n1c loads legs at Ls, stores at OLs, independent —
      * verified in the emitted body) makes natural output a DRIVER
@@ -372,7 +368,7 @@ struct vfft_plan_s
      * out-base perm[b*R] with OLs = (N1/R)*pitch — natural n1, zero
      * new codelets, any chain (pow2 AND odd). bwd mirrors on the
      * SOURCE side (the leaf runs first in the reversed chain and
-     * gathers its legs from natural positions via Ls). il2d_natperm =
+     * gathers its legs from natural positions via Ls). il2d_col.natperm =
      * the scr->nat table, block-affine by construction (asserted at
      * create: perm[bR+r] == perm[bR] + r*(N1/R) — a wrong digit
      * convention fails the create, never serves silently). Natural
@@ -383,22 +379,16 @@ struct vfft_plan_s
      * banked on the ord=nat row) and race the natural x MT partitions.
      * Single-stage cells stay natural-native as before; blu cells are
      * natural BY CONSTRUCTION and now accept the order. */
-    int il2d_nat;
-    int il2d_natarm; /* natural x MT partition, RACED at create: 0 = the
+    /* il2d_col.natarm: natural x MT partition, RACED at create: 0 = the
                       * matched arm (digit-split prefix + block-range
                       * leaf + row slabs), 1 = column STRIPS (the whole
                       * natural pass over a column range). Plan-local
                       * (banking rides the wisdom wave). */
-    int *il2d_natperm; /* N1 entries, scr row -> natural row */
-    double *il2d_natscr; /* 2*N1*rn: the pre-leaf plane — the natural
+    /* il2d_col.natscr: 2*N1*rn: the pre-leaf plane — the natural
                           * leaf SCATTERS, so it must never write the
                           * plane it still reads (block b's natural
                           * targets can be block b' > b's unread comb
                           * rows — the clobber the first cut shipped) */
-    int il2d_blu;
-    double *il2d_bluchf, *il2d_bluchb; /* chirp, 2*N1 each, fwd/bwd  */
-    double *il2d_blukf, *il2d_blukb;   /* comb-order kernels, 2*M    */
-    double *il2d_bluscr;               /* the M x N2 plane, 2*M*N2   */
     int il2d_norowz; /* 1 = skip the fused row-mode doors (the staged
                       * 3-pass route serves) — the A/B race knob, read
                       * from VFFT_IL2D_NO_ROWZ at CREATE (env cost never

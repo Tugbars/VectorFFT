@@ -1407,31 +1407,33 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->nthreads = _vfft_plan_threads(cfg);
         h->tplan = tp; /* NULL when the native IL 2D tier engaged */
         h->il2d_row = il2d_row;
-        h->il2d_nst = il2d_nst;
-        h->il2d_wc = il2d_wc;
-        h->il2d_wl = il2d_wl;
-        h->il2d_cut = il2d_cut;
-        h->il2d_tfuse = il2d_tfuse;
+        h->il2d_col.N = N1;
+        h->il2d_col.rn = (cfg->transform == VFFT_C2C) ? (size_t)N2 : (size_t)N2 / 2 + 1;
+        h->il2d_col.nst = il2d_nst;
+        h->il2d_col.wc = il2d_wc;
+        h->il2d_col.wl = il2d_wl;
+        h->il2d_col.cut = il2d_cut;
+        h->il2d_col.tfuse = il2d_tfuse;
         h->il2d_rowoop = il2d_rowoop;
         h->il2d_rowo = il2d_rowo;
         h->il2d_rowscr = il2d_rowscr;
-        h->il2d_staged = il2d_staged;
-        h->il2d_pitch = il2d_pitch;
-        h->il2d_bandscr = il2d_bandscr;
+        h->il2d_col.staged = il2d_staged;
+        h->il2d_col.pitch = il2d_pitch;
+        h->il2d_col.bandscr = il2d_bandscr;
         h->il2d_rscr = il2d_rscr;
         h->il2d_rows = il2d_rows;
         h->il2d_rw = il2d_rw;
         h->il2d_oddn2 = il2d_oddn2;
         h->il2d_orbuf = il2d_orbuf;
-        h->il2d_nat = il2d_nat;
-        h->il2d_natperm = il2d_natperm;
-        h->il2d_natscr = il2d_natscr;
-        h->il2d_blu = il2d_blu;
-        h->il2d_bluchf = il2d_bluchf;
-        h->il2d_bluchb = il2d_bluchb;
-        h->il2d_blukf = il2d_blukf;
-        h->il2d_blukb = il2d_blukb;
-        h->il2d_bluscr = il2d_bluscr;
+        h->il2d_col.nat = il2d_nat;
+        h->il2d_col.natperm = il2d_natperm;
+        h->il2d_col.natscr = il2d_natscr;
+        h->il2d_col.blu = il2d_blu;
+        h->il2d_col.bluchf = il2d_bluchf;
+        h->il2d_col.bluchb = il2d_bluchb;
+        h->il2d_col.blukf = il2d_blukf;
+        h->il2d_col.blukb = il2d_blukb;
+        h->il2d_col.bluscr = il2d_bluscr;
         /* A/B race knob (struct comment): create-time env read only. */
         h->il2d_norowz = getenv("VFFT_IL2D_NO_ROWZ") != NULL;
         h->il2d_lx = il2d_lx;
@@ -1439,12 +1441,12 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         h->il2d_lim = il2d_lim;
         h->il2d_tre = il2d_tre;
         h->il2d_tim = il2d_tim;
-        memcpy(h->il2d_R, il2d_R, sizeof il2d_R);
-        memcpy(h->il2d_L, il2d_L, sizeof il2d_L);
-        memcpy(h->il2d_f, il2d_f, sizeof il2d_f);
-        memcpy(h->il2d_b, il2d_b, sizeof il2d_b);
-        memcpy(h->il2d_tf, il2d_tf, sizeof il2d_tf);
-        memcpy(h->il2d_tb, il2d_tb, sizeof il2d_tb);
+        memcpy(h->il2d_col.R, il2d_R, sizeof il2d_R);
+        memcpy(h->il2d_col.L, il2d_L, sizeof il2d_L);
+        memcpy(h->il2d_col.f, il2d_f, sizeof il2d_f);
+        memcpy(h->il2d_col.b, il2d_b, sizeof il2d_b);
+        memcpy(h->il2d_col.tf, il2d_tf, sizeof il2d_tf);
+        memcpy(h->il2d_col.tb, il2d_tb, sizeof il2d_tb);
         /* ── the AXIS RACE (§10a): wl and rowoop timed on the FULL
          * execute (they involve the rows), the winner set on the plan
          * and banked WITH the chain as one verdict. Runs only when the
@@ -1469,9 +1471,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             _il2d_c2c_build_clones(h, cfg, h->nthreads);
             if (ce)
-                h->il2d_colmt = (atoi(ce) == 0);
+                h->il2d_col.colmt = (atoi(ce) == 0);
             else if (il2d_bcmt >= 0 && il2d_bcmtt == h->nthreads)
-                h->il2d_colmt = il2d_bcmt;
+                h->il2d_col.colmt = il2d_bcmt;
             else
                 _il2d_c2c_mt_race(h, W, cfg, N1, N2);
         }
@@ -1503,8 +1505,8 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
                  * chain and NO row-axis tokens (rw/wl unraced, never erased:
                  * a later rowrace MERGES into this row). */
                 vw2_2d_rl_bank(&W->vw2, N1, N2, h->transform == VFFT_C2R,
-                               h->il2d_R, h->il2d_nst, -1, -1, -1, 0,
-                               (N1 & (N1 - 1)) ? h->il2d_blu : -1, 0.0, il2d_ord);
+                               h->il2d_col.R, h->il2d_col.nst, -1, -1, -1, 0,
+                               (N1 & (N1 - 1)) ? h->il2d_col.blu : -1, 0.0, il2d_ord);
                 ok = vw2_2d_forms_bank(&W->vw2, 1, N1, N2, il2d_fm, il2d_ord);
             }
             if (ok)
@@ -1521,9 +1523,9 @@ static vfft_plan _vfft_create_2d(const vfft_config_t *cfg,
         {   /* (Bluestein cells race too since 2026-09-02) */
             const char *ce = getenv("VFFT_IL2D_NO_COLMT");
             if (ce)
-                h->il2d_colmt = (atoi(ce) == 0);
+                h->il2d_col.colmt = (atoi(ce) == 0);
             else if (il2d_bcmt >= 0 && il2d_bcmtt == h->nthreads)
-                h->il2d_colmt = il2d_bcmt;
+                h->il2d_col.colmt = il2d_bcmt;
             else
                 _il2d_real_colmt_race(h, W, cfg, N1, N2);
         }

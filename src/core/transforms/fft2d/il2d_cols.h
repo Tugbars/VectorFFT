@@ -15,7 +15,7 @@
  *     the MT races). They carry the create-time protocol and the banking, and
  *     they belong with the wisdom write path, not with the kernels.
  *   - anything that dereferences a plan. _il2d_real_wl_cut reads h->N,
- *     h->il2d_nst and h->il2d_L, so it stays in vfft.c until step 15 lifts
+ *     h->il2d_col.nst and h->il2d_col.L, so it stays in vfft.c until step 15 lifts
  *     vfft_plan_s into vfft_internal.h. Ten lines, deliberately left behind.
  *
  * WHY THE FORWARD DECLARATIONS SURVIVED THE MOVE

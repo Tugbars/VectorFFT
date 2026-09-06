@@ -532,8 +532,8 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * the chain (the scrambled contract). */
                     const int fwd = (dir == VFFT_FORWARD);
                     size_t i, rn = (size_t)h->N2;
-                    const size_t wc = (h->il2d_wc > 0)
-                                          ? (size_t)h->il2d_wc
+                    const size_t wc = (h->il2d_col.wc > 0)
+                                          ? (size_t)h->il2d_col.wc
                                           : rn;
                     if (!dre)
                         dre = sre; /* in-place convenience */
@@ -541,22 +541,22 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * [suffix + fused rows] units because rows commute —
                      * the same fact that legalizes tfuse). Declines back
                      * to the serial walk below when it cannot engage. */
-                    if (h->il2d_colmt && h->nthreads > 1 &&
+                    if (h->il2d_col.colmt && h->nthreads > 1 &&
                         _il2d_c2c_mt(h, sre, dre, dir, h->nthreads))
                         return;
-                    if (h->il2d_blu)
+                    if (h->il2d_col.blu)
                     { /* ODD/PRIME N1: the column-axis Bluestein — the
                        * shared pipeline (_il2d_blu_cols), then the rows
                        * (commute). n1 NATURAL on this route. */
-                        _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_blu,
-                                       h->il2d_nst, h->il2d_R, h->il2d_L,
-                                       h->il2d_f, h->il2d_b, h->il2d_tf,
-                                       h->il2d_tb,
-                                       fwd ? h->il2d_bluchf
-                                           : h->il2d_bluchb,
-                                       fwd ? h->il2d_blukf
-                                           : h->il2d_blukb,
-                                       h->il2d_bluscr);
+                        _il2d_blu_cols(sre, dre, h->N, rn, h->il2d_col.blu,
+                                       h->il2d_col.nst, h->il2d_col.R, h->il2d_col.L,
+                                       h->il2d_col.f, h->il2d_col.b, h->il2d_col.tf,
+                                       h->il2d_col.tb,
+                                       fwd ? h->il2d_col.bluchf
+                                           : h->il2d_col.bluchb,
+                                       fwd ? h->il2d_col.blukf
+                                           : h->il2d_col.blukb,
+                                       h->il2d_col.bluscr);
                         for (i = 0; i < (size_t)h->N; i++)
                             _il2d_row_exec(h, dir, dre + 2 * i * rn,
                                            rn);
@@ -568,7 +568,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * because columns are independent within the column
                      * pass; Gs stays the FULL row pitch. wc = rn is the
                      * untiled M2 walk, path-identical. */
-                    if (h->il2d_nat && h->il2d_wl > 0)
+                    if (h->il2d_col.nat && h->il2d_col.wl > 0)
                     {
                         /* ── NATURAL BANDED walk (2026-09-05): the natural
                          * pass with the scrambled walk's cache banding.
@@ -594,22 +594,22 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                          * stays bitwise with the MT arms (which run rows
                          * after every column stage). The width verdict
                          * is a forward measurement anyway. */
-                        const int cut = h->il2d_cut, nst = h->il2d_nst;
-                        const int Rl = h->il2d_R[nst - 1];
-                        const size_t wl = (size_t)h->il2d_wl;
+                        const int cut = h->il2d_col.cut, nst = h->il2d_col.nst;
+                        const int Rl = h->il2d_col.R[nst - 1];
+                        const size_t wl = (size_t)h->il2d_col.wl;
                         const size_t nstride = (size_t)h->N / (size_t)Rl;
-                        const int *perm = h->il2d_natperm;
-                        double *scr = h->il2d_natscr;
-                        vfft_il2p_fn const *fns = fwd ? h->il2d_f
-                                                      : h->il2d_b;
-                        double *const *tabs = fwd ? h->il2d_tf
-                                                  : h->il2d_tb;
+                        const int *perm = h->il2d_col.natperm;
+                        double *scr = h->il2d_col.natscr;
+                        vfft_il2p_fn const *fns = fwd ? h->il2d_col.f
+                                                      : h->il2d_col.b;
+                        double *const *tabs = fwd ? h->il2d_col.tf
+                                                  : h->il2d_col.tb;
                         size_t b0;
                         if (fwd)
                         {
                             if (cut > 0)
                                 _il2d_col_stages(sre, scr, h->N, rn, 0, cut,
-                                                 h->il2d_R, h->il2d_L, fns,
+                                                 h->il2d_col.R, h->il2d_col.L, fns,
                                                  tabs, 0);
                             for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
                             {
@@ -622,14 +622,14 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                     _il2d_col_stages(lf_from + 2 * b0 * rn,
                                                      scr + 2 * b0 * rn,
                                                      (int)wl, rn, cut,
-                                                     nst - 1, h->il2d_R,
-                                                     h->il2d_L, fns, tabs, 0);
+                                                     nst - 1, h->il2d_col.R,
+                                                     h->il2d_col.L, fns, tabs, 0);
                                     lf_from = scr;
                                 }
                                 _il2d_nat_leaf_range(lf_from, dre, h->N, rn,
                                                      Rl, fns[nst - 1], perm,
                                                      blo, bhi, 0);
-                                if (h->il2d_tfuse)
+                                if (h->il2d_col.tfuse)
                                     for (b = blo; b < bhi; b++)
                                     {
                                         const size_t r0 =
@@ -641,7 +641,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                                 rn);
                                     }
                             }
-                            if (!h->il2d_tfuse)
+                            if (!h->il2d_col.tfuse)
                                 for (i = 0; i < (size_t)h->N; i++)
                                     _il2d_row_exec(h, dir, dre + 2 * i * rn,
                                                    rn);
@@ -658,18 +658,18 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                 _il2d_col_stages(scr + 2 * b0 * rn,
                                                  (cut > 0 ? scr : dre) + 2 * b0 * rn,
                                                  (int)wl, rn, cut, nst - 1,
-                                                 h->il2d_R, h->il2d_L, fns,
+                                                 h->il2d_col.R, h->il2d_col.L, fns,
                                                  tabs, 1);
                         }
                         if (cut > 0)
                             _il2d_col_stages(scr, dre, h->N, rn, 0, cut,
-                                             h->il2d_R, h->il2d_L, fns, tabs,
+                                             h->il2d_col.R, h->il2d_col.L, fns, tabs,
                                              1);
                         for (i = 0; i < (size_t)h->N; i++)
                             _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
                         return;
                     }
-                    if (h->il2d_wl > 0)
+                    if (h->il2d_col.wl > 0)
                     {
                         /* ── BANDED walk (the cascade's tcut, 2D form):
                          * fwd = wide prefix stages 0..cut-1, then per
@@ -688,16 +688,16 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                          * rows]; bwd = per band [suffix REVERSED (the
                          * Hermitian chain), rows-bwd], then prefix
                          * reversed wide (in place on dre by then). */
-                        const int cut = h->il2d_cut, nst = h->il2d_nst;
-                        const size_t wl = (size_t)h->il2d_wl;
-                        vfft_il2p_fn const *fns = fwd ? h->il2d_f
-                                                      : h->il2d_b;
-                        double *const *tabs = fwd ? h->il2d_tf
-                                                  : h->il2d_tb;
+                        const int cut = h->il2d_col.cut, nst = h->il2d_col.nst;
+                        const size_t wl = (size_t)h->il2d_col.wl;
+                        vfft_il2p_fn const *fns = fwd ? h->il2d_col.f
+                                                      : h->il2d_col.b;
+                        double *const *tabs = fwd ? h->il2d_col.tf
+                                                  : h->il2d_col.tb;
                         size_t b0;
                         if (fwd && cut > 0)
                             _il2d_col_stages(sre, dre, h->N, rn, 0, cut,
-                                             h->il2d_R, h->il2d_L, fns,
+                                             h->il2d_col.R, h->il2d_col.L, fns,
                                              tabs, 0);
                         for (b0 = 0; b0 < (size_t)h->N; b0 += wl)
                         {
@@ -705,7 +705,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                 (fwd && cut > 0) ? dre + 2 * b0 * rn
                                                  : sre + 2 * b0 * rn;
                             double *bd = dre + 2 * b0 * rn;
-                            if (h->il2d_staged)
+                            if (h->il2d_col.staged)
                             {
                                 /* §10b staged: band -> skewed scratch
                                  * (kills the 4KB set-group aliasing,
@@ -713,17 +713,17 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                  * + rows there, copy back. count stays
                                  * rn: identical arithmetic (F0). */
                                 const size_t pit =
-                                    (size_t)h->il2d_pitch;
-                                double *sc = h->il2d_bandscr;
+                                    (size_t)h->il2d_col.pitch;
+                                double *sc = h->il2d_col.bandscr;
                                 for (i = 0; i < wl; i++)
                                     memcpy(sc + 2 * i * pit,
                                            bs + 2 * i * rn,
                                            2 * rn * sizeof(double));
                                 _il2d_col_stages2(sc, sc, (int)wl,
                                                   pit, rn, cut, nst,
-                                                  h->il2d_R, h->il2d_L,
+                                                  h->il2d_col.R, h->il2d_col.L,
                                                   fns, tabs, !fwd);
-                                if (h->il2d_tfuse)
+                                if (h->il2d_col.tfuse)
                                     for (i = 0; i < wl; i++)
                                         _il2d_row_exec(h, dir,
                                                        sc + 2 * i * pit,
@@ -735,39 +735,39 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                                 continue;
                             }
                             _il2d_col_stages(bs, bd, (int)wl, rn, cut,
-                                             nst, h->il2d_R, h->il2d_L,
+                                             nst, h->il2d_col.R, h->il2d_col.L,
                                              fns, tabs, !fwd);
-                            if (h->il2d_tfuse)
+                            if (h->il2d_col.tfuse)
                                 for (i = 0; i < wl; i++)
                                     _il2d_row_exec(h, dir,
                                                    bd + 2 * i * rn, rn);
                         }
                         if (!fwd && cut > 0)
                             _il2d_col_stages(dre, dre, h->N, rn, 0, cut,
-                                             h->il2d_R, h->il2d_L, fns,
+                                             h->il2d_col.R, h->il2d_col.L, fns,
                                              tabs, 1);
-                        if (!h->il2d_tfuse)
+                        if (!h->il2d_col.tfuse)
                             for (i = 0; i < (size_t)h->N; i++)
                                 _il2d_row_exec(h, dir, dre + 2 * i * rn,
                                                rn);
                         return;
                     }
-                    if (h->il2d_nat)
+                    if (h->il2d_col.nat)
                         _il2d_col_pass_nat(sre, dre, h->N, rn,
-                                           h->il2d_nst, h->il2d_R,
-                                           h->il2d_L,
-                                           fwd ? h->il2d_f : h->il2d_b,
-                                           fwd ? h->il2d_tf
-                                               : h->il2d_tb,
+                                           h->il2d_col.nst, h->il2d_col.R,
+                                           h->il2d_col.L,
+                                           fwd ? h->il2d_col.f : h->il2d_col.b,
+                                           fwd ? h->il2d_col.tf
+                                               : h->il2d_col.tb,
                                            /*reverse=*/!fwd,
-                                           h->il2d_natperm,
-                                           h->il2d_natscr);
+                                           h->il2d_col.natperm,
+                                           h->il2d_col.natscr);
                     else
                         _il2d_col_pass(sre, dre, h->N, rn, wc,
-                                       h->il2d_nst, h->il2d_R,
-                                       h->il2d_L,
-                                       fwd ? h->il2d_f : h->il2d_b,
-                                       fwd ? h->il2d_tf : h->il2d_tb,
+                                       h->il2d_col.nst, h->il2d_col.R,
+                                       h->il2d_col.L,
+                                       fwd ? h->il2d_col.f : h->il2d_col.b,
+                                       fwd ? h->il2d_col.tf : h->il2d_col.tb,
                                        /*reverse=*/!fwd);
                     for (i = 0; i < (size_t)h->N; i++)
                         _il2d_row_exec(h, dir, dre + 2 * i * rn, rn);
@@ -835,7 +835,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * loop restrictions => bitwise identical); falls through to
              * the serial pass when there is not enough independent work
              * or the pool is absent. */
-            if (!h->il2d_colmt ||
+            if (!h->il2d_col.colmt ||
                 !_il2d_real_cols_mt(h, dre, dre, 0, h->nthreads))
                 _il2d_real_cols(h, dre, dre, /*reverse=*/0);
         }
@@ -850,7 +850,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
              * door folds rows scratch -> the caller's real plane. dir is
              * ignored (c2r = inverse math, unnormalized: caller divides
              * by N1*N2). */
-            if (!h->il2d_colmt ||
+            if (!h->il2d_col.colmt ||
                 !_il2d_real_cols_mt(h, sre, h->il2d_rscr, 1,
                                     h->nthreads))
                 _il2d_real_cols(h, sre, h->il2d_rscr, /*reverse=*/1);
@@ -1206,15 +1206,15 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_roww);
             free(h->il2d_rowscr_w);
             free(h->il2d_orbuf); /* the odd-N2 row pair buffer */
-            free(h->il2d_natperm);
-            free(h->il2d_natscr);
-            free(h->il2d_bluchf);
-            free(h->il2d_bluchb);
-            free(h->il2d_blukf);
-            free(h->il2d_blukb);
-            free(h->il2d_bluscr);
+            free(h->il2d_col.natperm);
+            free(h->il2d_col.natscr);
+            free(h->il2d_col.bluchf);
+            free(h->il2d_col.bluchb);
+            free(h->il2d_col.blukf);
+            free(h->il2d_col.blukb);
+            free(h->il2d_col.bluscr);
             free(h->il2d_rowscr);
-            free(h->il2d_bandscr);
+            free(h->il2d_col.bandscr);
             free(h->il2d_rscr); /* the real tier's c2r column-inverse plane */
             if (h->il2d_rows)
                 vfft_destroy(h->il2d_rows); /* the rowsplit band engine */
@@ -1223,10 +1223,10 @@ void vfft_destroy(vfft_plan h)
             free(h->il2d_lim);
             free(h->il2d_tre);
             free(h->il2d_tim);
-            for (s2 = 0; s2 < h->il2d_nst; s2++)
+            for (s2 = 0; s2 < h->il2d_col.nst; s2++)
             {
-                free(h->il2d_tf[s2]);
-                free(h->il2d_tb[s2]);
+                free(h->il2d_col.tf[s2]);
+                free(h->il2d_col.tb[s2]);
             }
         }
     }
