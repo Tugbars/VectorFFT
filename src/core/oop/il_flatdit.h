@@ -135,6 +135,12 @@ typedef struct {
      * validated by vfft_ilfd_apply_tw. tlo/thi = the tiled range of cf/cb;
      * ct tiles its first K-tcut records; ntile = N / tw. */
     int tw, tcut, ntile, tlo, thi;
+    /* THE THREADING VERDICT (2026-09-07, il_flatdit_mt.h): mt = 0 serial |
+     * 1 blocks | 2 tiles, raced at the plan's T (mt_t) and banked as il_mt=
+     * il_mt_t= il_mt_tw= on the kind-3 row; mtb = the per-worker unit
+     * records bound for mt_t workers (one allocation), NULL = unbound. */
+    int mt, mt_t, mt_tw;
+    void *mtb;
 } vfft_ilfd_plan_t;
 
 static inline void vfft_ilfd_bind(vfft_ilfd_plan_t *p);
@@ -151,6 +157,7 @@ static inline void vfft_ilfd_destroy(vfft_ilfd_plan_t *p)
     for (s = 0; s < VFFT_ILFD_MAX_K; s++) free(p->ipb[s]);
     free(p->natbase);
     VFFT_IL2P_FREE(p->stg);
+    free(p->mtb);
     free(p);
 }
 

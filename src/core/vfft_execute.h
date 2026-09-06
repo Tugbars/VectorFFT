@@ -932,10 +932,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                 }
                 else if (h->k1ilfd)
                 {   /* the flat DIT, z -> z legal (the leaf consumes zin first) */
-                    if (dir == VFFT_FORWARD)
-                        vfft_ilfd_execute_fwd(h->k1ilfd, sre, zo);
-                    else
-                        vfft_ilfd_execute_bwd(h->k1ilfd, sre, zo);
+                    _ilfd_serve(h, dir, sre, zo);
                 }
                 else
                 {
@@ -1015,10 +1012,7 @@ void vfft_execute(vfft_plan h, vfft_dir_t dir,
                      * k1ilfd non-NULL here, the guard is defensive. */
                     if (h->k1ilfd)
                     {
-                        if (fwd)
-                            vfft_ilfd_execute_fwd(h->k1ilfd, sre, dre);
-                        else
-                            vfft_ilfd_execute_bwd(h->k1ilfd, sre, dre);
+                        _ilfd_serve(h, dir, sre, dre);
                         return;
                     }
                     break; /* -> convert fallback (NEVER a silent no-op) */

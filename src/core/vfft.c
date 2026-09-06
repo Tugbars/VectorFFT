@@ -33,6 +33,7 @@
 #include "transforms/fft2d/il2d_col.h" /* the column-axis pass descriptor the plan embeds */
 #include "il_prime.h"           /* PRIME-N K=1 on the IL machinery (Rader/Bluestein) */
 #include "il_flatdit.h"         /* the FLAT mixed-radix DIT: odd-N K=1 (2026-09-05)  */
+#include "il_flatdit_mt.h"      /* its intra-transform threading (2026-09-07)         */
 #include "natorder_scatter.h"   /* ORDER_NATURAL: SCR scatter terminator             */
 #include "natorder_calibrate.h" /* ORDER_NATURAL: PURE-vs-PSWAP-vs-SCR race          */
 #ifndef VFFT_RFFT_MAX_RADIX
@@ -135,6 +136,9 @@ long vfft_il2d_col_mt_passes(void) { return _vfft_il2d_col_mt_count; }
 /* the rank-N INTERLEAVED tier's MT engagement (fftnd_il.h, 2026-09-07) */
 long _vfft_ilnd_mt_count = 0;
 long vfft_ilnd_mt_passes(void) { return _vfft_ilnd_mt_count; }
+/* the flat DIT's (odd-N K=1 IL) intra-transform MT engagement (il_flatdit_mt.h) */
+long _vfft_ilfd_mt_count = 0;
+long vfft_ilfd_mt_passes(void) { return _vfft_ilfd_mt_count; }
 
 /* ── HARNESS COUNTERS (refactor safety, docs/design/refactor_safety_harness.md)
  *

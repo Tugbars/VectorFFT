@@ -61,6 +61,9 @@ extern "C"
   /* the rank-N INTERLEAVED c2c tier (3D IL): threaded executes (band or
    * plane arm engaged); serial serves leave it unchanged. */
   long vfft_ilnd_mt_passes(void);
+  /* the flat mixed-radix DIT (odd-N K=1 interleaved): threaded executes of
+   * the blocks or tiles arm; serial serves leave it unchanged. */
+  long vfft_ilfd_mt_passes(void);
 
   /* And for the K=1 1D cascade (zturn): threaded cascade walks actually
    * run. The verdict is raced per cell at create (VFFT_ZT_NO_MT=1 kills,
