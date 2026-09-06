@@ -55,6 +55,9 @@ structure and width sources).
 
 ### 2b. Multithreading (the 2D tier's INC-C at rank 3)
 
+The strategy paper is `docs/design/3D_mt_il_strategy.md` (the arms, the joint race at T,
+the measurement rules); this section is the tier's summary of it.
+
 Two partition arms, both pure loop restrictions of the serial walk (no
 arithmetic changes, so MT output is BITWISE the serial output; the probe
 gates it), RACED against serial at create per (cell, T) TOGETHER WITH THE
