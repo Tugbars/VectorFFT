@@ -93,6 +93,8 @@ type zs_kind =
   | Stfb
   | Stfbn
   | Stfn
+  | Stfl
+  | Stfnl
   | Sterm
   | Sterm2
   | Stermb

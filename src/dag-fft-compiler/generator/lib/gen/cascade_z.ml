@@ -398,6 +398,36 @@ let kind_of_string (s : string) : zs_kind =
     ; out_edge = E_z "OLs"
     ; nat_in = true
     }
+  | "stfl" ->
+    (* LOADED-STREAM terminator twin of stf (2026-09-07, the sub-2048
+       campaign): stf's section-tap loads and REINT drev-comb stores, with
+       the MIDS' twiddle policy — TP_Flat: every power w^1..w^(R-1) of every
+       column is a LOADED record, (R-1) records of [c x4][s x4] per
+       4-column group at tw_re + 2*(R-1)*k, consumed as memory operands.
+       Kills the packed squaring tree (0.5-0.75 FP/pt on the critical path)
+       and the 14 live twiddle ymm that spill the radix-8 natural twin.
+       Stream = 2N*(R-1)/R doubles (14N bytes at r8 — MKL's 16N shape).
+       Radix 8 AND 4, like stf. *)
+    { mid with
+      base = "stfl"
+    ; policy = Dft.TP_Flat
+    ; tw_off = "%TWF*(size_t)k"
+    ; in_edge = E_sect_tap "OLs"
+    ; out_edge = E_z "OLs"
+    }
+  | "stfnl" ->
+    (* the NATURAL-ORDER loaded-stream terminator: stfn's edges (section
+       taps at kn, stores contiguous ascending) with the loaded stream
+       addressed at kn — ONE table (the plane column's records) serves
+       stfl and stfnl. *)
+    { mid with
+      base = "stfnl"
+    ; policy = Dft.TP_Flat
+    ; tw_off = "%TWF*(size_t)kn"
+    ; in_edge = E_sect_tap "OLs"
+    ; out_edge = E_z "OLs"
+    ; nat_in = true
+    }
   | "stfbn" ->
     (* NATURAL-ORDER bwd terminator: consumes a NATURAL spectrum -- the z
        (user) LOAD edge reads at kn (tbl = rho: the value scrambled-bwd
@@ -593,6 +623,28 @@ module ZSched = Schedule.Make (ZNode)
 
 (* msz: the z edges skip the lane-order permutes (see kind_of_string). Set
    per emission from the kind; gen_set runs many cells in one process. *)
+(* "%TWF" in a kind's tw_off = the loaded-stream group pitch, 2*(R-1)
+   doubles per column ((R-1) records of 2*VW doubles per 4-column group —
+   the mids' TP_Flat record shape on the terminator's column axis), resolved
+   at emission where the radix is known. *)
+let resolve_tw_off (radix : int) (s : string) : string =
+  let tag = "%TWF" in
+  let n = String.length s
+  and m = String.length tag in
+  let b = Buffer.create n in
+  let i = ref 0 in
+  while !i < n do
+    if !i + m <= n && String.sub s !i m = tag
+    then (
+      Buffer.add_string b (string_of_int (2 * (radix - 1)));
+      i := !i + m)
+    else (
+      Buffer.add_char b s.[!i];
+      incr i)
+  done;
+  Buffer.contents b
+;;
+
 let zu_noperm = ref false
 
 let emit_codelet
@@ -690,6 +742,8 @@ let emit_codelet
     || k.base = "stfu"
     || k.base = "stf2u"
     || k.base = "stfn"
+    || k.base = "stfl"
+    || k.base = "stfnl"
     || k.base = "dts"
     || k.base = "dtsn"
     || k.base = "dtt"
@@ -954,6 +1008,14 @@ let emit_codelet
           "stfbn (NATURAL-ORDER ZTURN-S bwd terminator: NATURAL z in, read at kn = \
            4*rho[k/4] via the tw_im-carried table, IDFT + POST conj-w^1 at k, \
            section-record stores at k), bwd."
+        | "stfl", false ->
+          "stfl (ZTURN-S terminator, LOADED twiddle stream: section-tap loads, every \
+           power w^1..w^(R-1) a loaded [c x4][s x4] record as a memory operand — no \
+           squaring tree, no live twiddle registers — REINT drev-comb stores), fwd."
+        | "stfnl", false ->
+          "stfnl (NATURAL-ORDER ZTURN-S terminator, LOADED twiddle stream at kn = \
+           4*rhoinv[k/4] via the tw_im-carried table, REINT stores contiguous ascending \
+           = natural interleaved out), fwd."
         | "msd", false ->
           "msd (DIT-FORWARD mid = conj(msgb): group loop over DFT + POST-twiddle body, \
            fwd table twz as loaded), fwd."
@@ -992,6 +1054,18 @@ let emit_codelet
              else Printf.sprintf "%d columns per iteration" vw))
        (if not k.twiddled
         then "tw_re/tw_im unused (twiddle-free leaf)."
+        else if k.base = "stfl" || k.base = "stfnl"
+        then
+          Printf.sprintf
+            "tw_re = LOADED per-column stream at tw_re + %d*%s: per %d-column group \
+             (R-1) records [c(k..k+%d)][s(k..k+%d)] of w^1..w^%d in leg order. %s"
+            (2 * (radix - 1))
+            (if k.nat_in then "kn" else "k")
+            vw
+            (vw - 1)
+            (vw - 1)
+            (radix - 1)
+            (if k.nat_in then "tw_im carries the rho table." else "tw_im unused.")
         else if k.policy = Dft.TP_PowW1
         then
           Printf.sprintf
@@ -1577,7 +1651,7 @@ let emit_codelet
         (fun () ->
            cfg :=
              { !cfg with
-               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off
+               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit (resolve_tw_off radix k.tw_off)
              ; Emit_render.Cfg.tw_vw = wide_vw
              };
            let seen : (int, unit) Hashtbl.t = Hashtbl.create 256 in
@@ -1749,7 +1823,7 @@ let emit_codelet
         (fun () ->
            cfg :=
              { !cfg with
-               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit k.tw_off
+               Emit_render.Cfg.tw = Emit_render.Cfg.Tw_zsplit (resolve_tw_off radix k.tw_off)
              ; Emit_render.Cfg.tw_vw = wide_vw
              };
            List.iter

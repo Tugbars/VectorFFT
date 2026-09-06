@@ -373,6 +373,11 @@ VFFT_IL_DECL(radix8_z_stf_r4_bwd_avx2)
 VFFT_IL_DECL(radix8_z_stf_r4sk_bwd_avx2)
 #define VFFT_IL_STF_R4SK_BWD_RADICES(X) X(8)
 
+/* ── stfl_r4 ── fwd 2 · bwd 0 · pair 0 */
+VFFT_IL_DECL(radix4_z_stfl_r4_fwd_avx2)
+VFFT_IL_DECL(radix8_z_stfl_r4_fwd_avx2)
+#define VFFT_IL_STFL_R4_FWD_RADICES(X) X(4) X(8)
+
 /* ── stfn_r4 ── fwd 2 · bwd 2 · pair 2 */
 VFFT_IL_DECL(radix4_z_stfn_r4_fwd_avx2)
 VFFT_IL_DECL(radix8_z_stfn_r4_fwd_avx2)
@@ -381,6 +386,11 @@ VFFT_IL_DECL(radix8_z_stfn_r4_bwd_avx2)
 #define VFFT_IL_STFN_R4_FWD_RADICES(X) X(4) X(8)
 #define VFFT_IL_STFN_R4_BWD_RADICES(X) X(4) X(8)
 #define VFFT_IL_STFN_R4_PAIR_RADICES(X) X(4) X(8)
+
+/* ── stfnl_r4 ── fwd 2 · bwd 0 · pair 0 */
+VFFT_IL_DECL(radix4_z_stfnl_r4_fwd_avx2)
+VFFT_IL_DECL(radix8_z_stfnl_r4_fwd_avx2)
+#define VFFT_IL_STFNL_R4_FWD_RADICES(X) X(4) X(8)
 
 /* ── stfu_r4 ── fwd 2 · bwd 0 · pair 0 */
 VFFT_IL_DECL(radix4_z_stfu_r4_fwd_avx2)
@@ -816,6 +826,6 @@ VFFT_IL_DECL(radix32_z_t2tg_bwd_avx2)
 VFFT_IL_DECL(radix64_z_t2tg_bwd_avx2)
 #define VFFT_IL_T2TG_BWD_RADICES(X) X(3) X(4) X(5) X(6) X(7) X(8) X(9) X(10) X(11) X(12) X(13) X(15) X(16) X(17) X(19) X(21) X(25) X(27) X(32) X(64)
 
-/* 554 declarations over 60 kinds */
+/* 558 declarations over 62 kinds */
 
 #endif

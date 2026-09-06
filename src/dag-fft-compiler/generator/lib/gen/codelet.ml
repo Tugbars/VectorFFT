@@ -98,6 +98,8 @@ type zs_kind =
   | Stfb
   | Stfbn
   | Stfn
+  | Stfl (* loaded-stream terminator twin of Stf (2026-09-07) *)
+  | Stfnl (* its natural-order twin *)
   | Sterm
   | Sterm2
   | Stermb
@@ -218,6 +220,8 @@ let zs_name = function
   | Stfb -> "stfb"
   | Stfbn -> "stfbn"
   | Stfn -> "stfn"
+  | Stfl -> "stfl"
+  | Stfnl -> "stfnl"
   | Sterm -> "sterm"
   | Sterm2 -> "sterm2"
   | Stermb -> "stermb"
@@ -246,6 +250,8 @@ let zs_of_name = function
   | "stfb" -> Stfb
   | "stfbn" -> Stfbn
   | "stfn" -> Stfn
+  | "stfl" -> Stfl
+  | "stfnl" -> Stfnl
   | "sterm" -> Sterm
   | "sterm2" -> Sterm2
   | "stermb" -> Stermb
