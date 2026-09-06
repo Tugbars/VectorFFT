@@ -2172,6 +2172,31 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
  * column axes).
  * ════════════════════════════════════════════════════════════════════════ */
 long vfft_ilnd_mt_passes(void); /* vfft_diagnostics.h: the 3D IL MT engagement counter */
+#ifdef VFFT_HAS_MKL
+/* TRAP (c) of the two-team protocol (found 2026-09-07 on the 3D cells): our
+ * pool pins the CALLER to logical core 0 when it arms, and Windows threads
+ * inherit the creating thread's affinity — so an OpenMP team MKL creates
+ * AFTER our first threaded create lands entirely on core 0 (measured: 3D
+ * CCE 16^3 at T=8 = 34 ms instead of 3 us). MKL's team is therefore
+ * created HERE, before any vfft plan pins anything; it persists for the
+ * process (parked between arms by KMP_BLOCKTIME). */
+static void mkl3d_warm_team(int T)
+{
+    DFTI_DESCRIPTOR_HANDLE h = 0;
+    MKL_LONG dims[3] = { 16, 16, 16 };
+    double *x = alloc_d(2 * 4096), *y = alloc_d(2 * 4096);
+    size_t i;
+    for (i = 0; i < 2 * 4096; i++) x[i] = 1.0;
+    mkl_set_num_threads(T);
+    if (DftiCreateDescriptor(&h, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) == DFTI_NO_ERROR) {
+        DftiSetValue(h, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
+        if (DftiCommitDescriptor(h) == DFTI_NO_ERROR)
+            for (i = 0; i < 4; i++) DftiComputeForward(h, x, y);
+        DftiFreeDescriptor(&h);
+    }
+    free_d(x); free_d(y);
+}
+#endif
 static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, int T)
 {
     size_t TN = (size_t)N1 * N2 * N3, i;
@@ -2259,7 +2284,7 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             a = (r & 1) ? 3 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
-            if (T > 1) {
+            if (T > 1 && !getenv("VFFT_3DIL_NOHYGIENE")) {
                 /* THREAD HYGIENE (the --ilmt traps): (a) our pool workers
                  * spin forever, so every MKL arm is preceded by a real
                  * teardown; (b) MKL's OpenMP team spins KMP_BLOCKTIME
@@ -2287,6 +2312,8 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W, in
             }
             ns = (vfft_proto_now_ns() - t0) / reps;
             smp[a][r] = ns;
+            if (getenv("VFFT_IL2D_LOG"))
+                fprintf(stderr, "[3dil] r%d arm%d reps=%d %.0f ns\n", r, a, reps, ns);
         }
     }
     /* the engagement proof (mt_results_need_engagement_proof): a threaded
@@ -4558,6 +4585,8 @@ int main(int argc, char **argv)
             ilmt_pin_pcores(); /* the 8 distinct P-cores for BOTH engines, before any OpenMP init */
 #ifdef VFFT_HAS_MKL
         mkl_set_num_threads(mt ? g_mt : 1); /* like-for-like: MKL threads 3D at the same T */
+        if (mt)
+            mkl3d_warm_team(g_mt); /* trap (c): MKL's team born before our pool pins the caller */
 #endif
         printf("=== 3DIL: the rank-3 INTERLEAVED c2c tier vs MKL DFTI 3D (front door; "
                "wisdom=%s %s; rounds=%d, T=%d, core%d) ===\n",
