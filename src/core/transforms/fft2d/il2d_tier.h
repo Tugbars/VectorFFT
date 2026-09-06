@@ -1405,46 +1405,90 @@ static int _il2d_race_chains(int N1, int N2, int ncand, int (*cand)[8],
     }
     for (i = 0; i < 2 * T; i++)
         z[i] = 1.0 + 1e-6 * (double)(i & 1023);
-    for (ci = 0; ci < ncand; ci++)
+    /* Every buildable candidate is an ARM of ONE race (2026-09-06): the
+     * tables and (natural) the permutation of all candidates are built up
+     * front, then vfft_race_run samples every arm once per round with the
+     * rounds alternating direction — the house protocol — so a drift of
+     * the host (its throttled state lasts minutes) hits all chains alike.
+     * The per-candidate loop it replaces timed each chain in its own burst
+     * of three, one after another, and two cold runs at 1215x243 natural
+     * banked different chains. Same samples per arm as before (min of 3
+     * single executes); the arm count is VFFT_IL2D_MAXCAND <= the
+     * template's VFFT_RACE_MAX_ARMS. */
     {
-        vfft_il2p_fn ff[8], fb[8];
-        int Ls[8];
-        double *tf[8], *tb[8];
-        double ns = 1e300;
-        int *perm = NULL;
-        int p, s2;
-        if (!_il2d_resolve(cand[ci], lens[ci], ff, fb))
-            continue;
-        if (nat && lens[ci] > 1)
+        struct
         {
-            perm = _il2d_nat_perm(cand[ci], lens[ci], N1);
-            if (!perm)
-                continue; /* no natural leaf for this chain: not a candidate */
+            vfft_il2p_fn ff[8], fb[8];
+            int Ls[8];
+            double *tf[8], *tb[8];
+            int *perm;
+            int ci;
+        } cb[VFFT_IL2D_MAXCAND];
+        _il2d_race_ctx_t rc[VFFT_IL2D_MAXCAND];
+        vfft_race_arm_t arms[VFFT_IL2D_MAXCAND];
+        double ns[VFFT_IL2D_MAXCAND];
+        int na = 0, a, s2;
+        for (ci = 0; ci < ncand && na < VFFT_IL2D_MAXCAND; ci++)
+        {
+            int *perm = NULL;
+            if (!_il2d_resolve(cand[ci], lens[ci], cb[na].ff, cb[na].fb))
+                continue;
+            if (nat && lens[ci] > 1)
+            {
+                perm = _il2d_nat_perm(cand[ci], lens[ci], N1);
+                if (!perm)
+                    continue; /* no natural leaf for this chain: not a candidate */
+            }
+            if (_il2d_build_tables(N1, lens[ci], cand[ci], cb[na].Ls, cb[na].tf, cb[na].tb))
+            {
+                free(perm);
+                continue;
+            }
+            cb[na].perm = perm;
+            cb[na].ci = ci;
+            {
+                _il2d_race_ctx_t c0 = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
+                                        lens[ci], cand[ci], cb[na].Ls, cb[na].ff, cb[na].tf,
+                                        nat && perm != NULL, perm, nscr };
+                rc[na] = c0;
+            }
+            arms[na].name = "chain";
+            arms[na].run = _il2d_arm_chain;
+            arms[na].ctx = &rc[na];
+            na++;
         }
-        if (_il2d_build_tables(N1, lens[ci], cand[ci], Ls, tf, tb))
+        if (na > 0)
         {
-            free(perm);
-            continue;
+            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 1, 0, NULL, NULL }; /* min-of-3, alternated */
+            const int best = vfft_race_run(&proto, arms, na, ns);
+            if (best >= 0)
+            {
+                win = cb[best].ci;
+                wns = ns[best];
+            }
+            if (getenv("VFFT_IL2D_LOG"))
+            {
+                fprintf(stderr, "[il2d] chain race %dx%d (%s): %d arm(s)", N1, N2,
+                        nat ? "nat" : "scr", na);
+                for (a = 0; a < na; a++)
+                {
+                    int q;
+                    fprintf(stderr, " ");
+                    for (q = 0; q < lens[cb[a].ci]; q++)
+                        fprintf(stderr, "%s%d", q ? "." : "", cand[cb[a].ci][q]);
+                    fprintf(stderr, "=%.0f", ns[a]);
+                }
+                fprintf(stderr, " -> arm %d\n", best);
+            }
         }
+        for (a = 0; a < na; a++)
         {
-            _il2d_race_ctx_t rc = { NULL, NULL, z, 0, 1, N1, (size_t)N2,
-                                    lens[ci], cand[ci], Ls, ff, tf,
-                                    nat && perm != NULL, perm, nscr };
-            const vfft_race_arm_t arm = { "chain", _il2d_arm_chain, &rc };
-            const vfft_race_proto_t proto = { 3, 1, VFFT_RACE_MIN, 0, 0, NULL, NULL }; /* min-of-3, A then B */
-            (void)p;
-            vfft_race_run(&proto, &arm, 1, &ns);
-        }
-        for (s2 = 0; s2 < lens[ci]; s2++)
-        {
-            free(tf[s2]);
-            free(tb[s2]);
-        }
-        free(perm);
-        if (ns < wns)
-        {
-            wns = ns;
-            win = ci;
+            for (s2 = 0; s2 < lens[cb[a].ci]; s2++)
+            {
+                free(cb[a].tf[s2]);
+                free(cb[a].tb[s2]);
+            }
+            free(cb[a].perm);
         }
     }
     free(z);

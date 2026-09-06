@@ -739,6 +739,9 @@ D1.3 2D split threading                                   STRUCTURAL
 E1.1 il2d chain (sets nst, R[], L[])  RACED. Every factorization of N1 over
      POOL {64,32,16,8,4, 27,25,21,19,17,15,13,11,9,7,5,3}, depth <= 4, capped at
      24 candidates with the drop LOGGED.
+     Every buildable candidate is an ARM of ONE alternated race (2026-09-06);
+     the per-candidate burst loop it replaced banked different chains on two
+     cold runs of the same cell.
 E1.2 wl - banded column walk width    RACED. {0 unbanded} + WPOOL
      {8,16,32,64,128,256} filtered by (w<=N1, N1%w==0, some stage with w%L[s]==0)
      + the L2-gated cascade width. NATURAL cells race it too (2026-09-05:
