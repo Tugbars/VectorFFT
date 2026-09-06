@@ -94,10 +94,12 @@ address finds it exactly as the 2D consumer does, per axis.
 ## 7. Measurement
 
 `bench_1d_vs_mkl --3dil` (env `VFFT_3DIL_CELLS`, `VFFT_3DIL_ROUNDS`): arms
-O-NATIVE (this tier), O-split (the split rank-N tier), M-inter (DFTI 3D CCE
-NOT_INPLACE), M-split (DFTI REAL_REAL NOT_INPLACE), ctl memcpy — all out of
-place, median + spread, a delta below the ctl spread is not a result. No
-numbers are declared here until a quiet-machine run exists.
+O-NATIVE (this tier), M-inter (DFTI 3D CCE NOT_INPLACE, the yardstick),
+M-split (DFTI REAL_REAL NOT_INPLACE, shows CCE is MKL's best), ctl memcpy —
+all out of place, median + spread, a delta below the ctl spread is not a
+result. The split rank-N tier is not an arm and not a comparison (owner,
+2026-09-06: "split is not our concern. IL is what matters"). No numbers are
+declared here until a quiet-machine run exists.
 
 ## 8. File map
 

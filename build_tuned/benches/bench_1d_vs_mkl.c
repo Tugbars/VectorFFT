@@ -2154,35 +2154,35 @@ static void run_2dil_cell(int N1, int N2, int rounds, vfft_wisdom *W)
 
 /* ════════════════════════════════════════════════════════════════════════
  * --3dil : the rank-3 INTERLEAVED c2c tier (transforms/fftnd/fftnd_il.h)
- * vs MKL DFTI 3D, OUT OF PLACE on both sides (the tier's contract). Arms:
+ * vs MKL DFTI 3D, OUT OF PLACE on both sides (the tier's contract). The
+ * split rank-N tier is NOT an arm (owner, 2026-09-06: "split is not our
+ * concern. IL is what matters"; its create calibrates, too). Arms:
  *   O-NATIVE = vfft 3D INTERLEAVED OOP DEFAULT — the per-plane structure
  *              (2D child vs flat axis-1 + rows) replays from wisdom; a
  *              cold store races it at create (stderr says so);
- *   O-split  = vfft 3D SPLIT OOP DEFAULT (the split rank-N tier, fftnd.h);
  *   M-inter  = DFTI 3D COMPLEX_COMPLEX NOT_INPLACE (MKL's CCE, its best);
- *   M-split  = DFTI 3D REAL_REAL NOT_INPLACE;
+ *   M-split  = DFTI 3D REAL_REAL NOT_INPLACE (shows CCE is MKL's best);
  *   ctl      = memcpy of the cube (the noise floor).
  * Protocol as --2dil: cachebust before every sample, reps_for(T)
  * executions per sample, arm order alternated on odd rounds, median +
  * spread; '~' = a delta below the ctl spread (NOT A RESULT). Correctness
- * pre-gate: roundtrip bwd(fwd(x))/T == x on both vfft arms (the forward is
- * gated elementwise by ilnd_probe: naive-DFT spot bins found across the
- * two digit-reversed column axes).
+ * pre-gate: roundtrip bwd(fwd(x))/T == x (the forward is gated elementwise
+ * by ilnd_probe: naive-DFT spot bins found across the two digit-reversed
+ * column axes).
  * ════════════════════════════════════════════════════════════════════════ */
 static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
 {
     size_t T = (size_t)N1 * N2 * N3, i;
-    double *xr = alloc_d(T), *xi = alloc_d(T);         /* split input     */
-    double *sr = alloc_d(T), *si = alloc_d(T);         /* O-split output  */
+    double *xr = alloc_d(T), *xi = alloc_d(T);         /* M-split input   */
     double *z = alloc_d(2 * T), *zo = alloc_d(2 * T);  /* O-NATIVE in/out */
     double *mz = alloc_d(2 * T), *mo = alloc_d(2 * T); /* M-inter in/out  */
     double *mr = alloc_d(T), *mi = alloc_d(T);         /* M-split output  */
     double *cs = alloc_d(2 * T), *cd = alloc_d(2 * T); /* ctl memcpy      */
-    double smp[5][64];
-    double med[5], spr[5];
-    double rtn = -1, rts = -1;
-    int have[5] = { 0, 0, 0, 0, 1 }; /* On, Os, Mi, Ms, ctl */
-    vfft_plan hn = NULL, hs = NULL;
+    double smp[4][64];
+    double med[4], spr[4];
+    double rtn = -1;
+    int have[4] = { 0, 0, 0, 1 }; /* On, Mi, Ms, ctl */
+    vfft_plan hn = NULL;
     int r, a0, a, k;
 #ifdef VFFT_HAS_MKL
     DFTI_DESCRIPTOR_HANDLE hMi = 0, hMs = 0;
@@ -2214,14 +2214,11 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
         cfg.wisdom_write = 0; /* benches never mutate the store */
         cfg.layout = VFFT_LAYOUT_INTERLEAVED;
         hn = vfft_create(&cfg);
-        cfg.layout = VFFT_LAYOUT_SPLIT;
-        hs = vfft_create(&cfg);
     }
     have[0] = (hn != NULL);
-    have[1] = (hs != NULL);
-    fprintf(stderr, "[3dil] %dx%dx%d created (native=%s split=%s); gating + timing %d rounds...\n",
-            N1, N2, N3, hn ? "yes" : "REFUSED", hs ? "yes" : "REFUSED", rounds);
-    /* roundtrip pre-gates on fresh data (mo / mr,mi as the bwd scratch) */
+    fprintf(stderr, "[3dil] %dx%dx%d created (%s); gating + timing %d rounds...\n",
+            N1, N2, N3, hn ? "native" : "REFUSED", rounds);
+    /* roundtrip pre-gate on fresh data (mo as the bwd scratch) */
     if (hn) {
         vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL);
         vfft_execute(hn, VFFT_BACKWARD, zo, NULL, mo, NULL);
@@ -2229,17 +2226,6 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
         for (i = 0; i < 2 * T; i++) {
             double d = fabs(mo[i] / (double)T - z[i]);
             if (d > rtn) rtn = d;
-        }
-    }
-    if (hs) {
-        vfft_execute(hs, VFFT_FORWARD, xr, xi, sr, si);
-        vfft_execute(hs, VFFT_BACKWARD, sr, si, mr, mi);
-        rts = 0;
-        for (i = 0; i < T; i++) {
-            double a1 = fabs(mr[i] / (double)T - xr[i]);
-            double b1 = fabs(mi[i] / (double)T - xi[i]);
-            if (a1 > rts) rts = a1;
-            if (b1 > rts) rts = b1;
         }
     }
 #ifdef VFFT_HAS_MKL
@@ -2250,33 +2236,32 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
         dims[2] = N3;
         if (DftiCreateDescriptor(&hMi, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) == DFTI_NO_ERROR) {
             DftiSetValue(hMi, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
-            have[2] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
+            have[1] = (DftiCommitDescriptor(hMi) == DFTI_NO_ERROR);
         }
         if (DftiCreateDescriptor(&hMs, DFTI_DOUBLE, DFTI_COMPLEX, 3, dims) == DFTI_NO_ERROR) {
             DftiSetValue(hMs, DFTI_COMPLEX_STORAGE, DFTI_REAL_REAL);
             DftiSetValue(hMs, DFTI_PLACEMENT, DFTI_NOT_INPLACE);
-            have[3] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
+            have[2] = (DftiCommitDescriptor(hMs) == DFTI_NO_ERROR);
         }
         for (i = 0; i < 2 * T; i++) mz[i] = z[i];
     }
 #endif
     for (r = 0; r < rounds; r++) {
-        for (a0 = 0; a0 < 5; a0++) {
+        for (a0 = 0; a0 < 4; a0++) {
             int reps = reps_for(T);
             double t0, ns;
-            a = (r & 1) ? 4 - a0 : a0;
+            a = (r & 1) ? 3 - a0 : a0;
             if (!have[a]) continue;
             cachebust();
             t0 = vfft_proto_now_ns();
             for (k = 0; k < reps; k++) {
                 switch (a) {
                 case 0: vfft_execute(hn, VFFT_FORWARD, z, NULL, zo, NULL); break;
-                case 1: vfft_execute(hs, VFFT_FORWARD, xr, xi, sr, si); break;
 #ifdef VFFT_HAS_MKL
-                case 2: DftiComputeForward(hMi, mz, mo); break;
-                case 3: DftiComputeForward(hMs, xr, xi, mr, mi); break;
+                case 1: DftiComputeForward(hMi, mz, mo); break;
+                case 2: DftiComputeForward(hMs, xr, xi, mr, mi); break;
 #endif
-                case 4: memcpy(cd, cs, 2 * T * 8); break;
+                case 3: memcpy(cd, cs, 2 * T * 8); break;
                 }
             }
             ns = (vfft_proto_now_ns() - t0) / reps;
@@ -2287,43 +2272,32 @@ static void run_3dil_cell(int N1, int N2, int N3, int rounds, vfft_wisdom *W)
     if (hMi) DftiFreeDescriptor(&hMi);
     if (hMs) DftiFreeDescriptor(&hMs);
 #endif
-    for (a = 0; a < 5; a++) {
+    for (a = 0; a < 4; a++) {
         if (!have[a]) { med[a] = 0; spr[a] = 0; continue; }
         med[a] = il2d__med(smp[a], rounds); /* sorts in place */
         spr[a] = il2d__spread(smp[a], rounds, med[a]);
     }
     {
-        const double cspr = spr[4]; /* ctl spread %, the noise floor */
-        printf("  %4dx%-4dx%-4d rt %.1e/%.1e | ctl %9.0f (%4.1f%%) |",
-               N1, N2, N3, rtn, rts, med[4], spr[4]);
-        if (have[0]) printf(" O-NATIVE %10.0f (%4.1f%%) |", med[0], spr[0]);
-        else         printf(" O-NATIVE    REFUSED |");
-        if (have[1]) printf(" O-split %10.0f (%4.1f%%)", med[1], spr[1]);
-        else         printf(" O-split    REFUSED");
+        const double cspr = spr[3]; /* ctl spread %, the noise floor */
+        printf("  %4dx%-4dx%-4d rt %.1e | ctl %9.0f (%4.1f%%) |",
+               N1, N2, N3, rtn, med[3], spr[3]);
+        if (have[0]) printf(" O-NATIVE %10.0f (%4.1f%%)", med[0], spr[0]);
+        else         printf(" O-NATIVE    REFUSED");
 #ifdef VFFT_HAS_MKL
         printf(" | M-inter %10.0f (%4.1f%%) | M-split %10.0f (%4.1f%%)\n",
-               med[2], spr[2], med[3], spr[3]);
-        if (have[0] && med[2] > 0) {
-            double q1 = med[2] / med[0]; /* O-NATIVE xMKLcce: >1 = we win */
+               med[1], spr[1], med[2], spr[2]);
+        if (have[0] && med[1] > 0) {
+            double q1 = med[1] / med[0]; /* O-NATIVE xMKLcce: >1 = we win */
             printf("        O-NATIVE xMKLcce %.2f%s", q1, fabs(1 - q1) * 100 < cspr ? "~" : "");
-            if (have[1] && med[1] > 0) {
-                double q2 = med[2] / med[1], q3 = med[1] / med[0];
-                printf(" | O-split xMKLcce %.2f%s | native uplift O-split/O-NATIVE %.2f%s",
-                       q2, fabs(1 - q2) * 100 < cspr ? "~" : "",
-                       q3, fabs(1 - q3) * 100 < cspr ? "~" : "");
-            }
-            if (med[3] > 0) printf(" | M-split/M-inter %.2f", med[3] / med[2]);
+            if (med[2] > 0) printf(" | M-split/M-inter %.2f", med[2] / med[1]);
             printf("\n");
         }
 #else
         printf("  (no MKL)\n");
-        if (have[0] && have[1] && med[0] > 0)
-            printf("        native uplift O-split/O-NATIVE %.2f\n", med[1] / med[0]);
 #endif
     }
     if (hn) vfft_destroy(hn);
-    if (hs) vfft_destroy(hs);
-    free_d(xr); free_d(xi); free_d(sr); free_d(si);
+    free_d(xr); free_d(xi);
     free_d(z); free_d(zo); free_d(mz); free_d(mo);
     free_d(mr); free_d(mi); free_d(cs); free_d(cd);
 }
@@ -4558,10 +4532,9 @@ int main(int argc, char **argv)
                "wisdom=%s %s; rounds=%d, core%d) ===\n",
                wd, W ? "loaded" : "MISSING", rounds, core);
         printf("# arms, all OUT OF PLACE: O-NATIVE = vfft 3D INTERLEAVED (fftnd_il.h, "
-               "structure from wisdom); O-split = vfft 3D SPLIT (fftnd.h); M-inter = "
-               "DFTI 3D CCE NOT_INPLACE (MKL best); M-split = DFTI REAL_REAL "
-               "NOT_INPLACE; ctl = memcpy. '~' = delta below ctl spread (NOT A "
-               "RESULT).\n");
+               "structure from wisdom); M-inter = DFTI 3D CCE NOT_INPLACE (MKL best); "
+               "M-split = DFTI REAL_REAL NOT_INPLACE; ctl = memcpy. '~' = delta "
+               "below ctl spread (NOT A RESULT).\n");
         {
             int cells[][3] = { { 16, 16, 16 },   { 32, 32, 32 },   { 64, 64, 64 },
                                { 128, 128, 128 }, { 32, 16, 64 },  { 64, 128, 32 },
